@@ -905,6 +905,30 @@ export function effectToNativeDescriptor(effect: any): string | null {
       Math.max(0, Math.min(1, interlaceRaw)).toFixed(4),
     ].join(':');
   }
+  if (type === 'fmscanlines' || type === 'fm-scanlines') {
+    const modeRaw = firstFiniteParam(params, ['fmLinesMode', 'mode'], 0);
+    const countRaw = firstFiniteParam(params, ['fmLinesCount', 'count'], 140);
+    const widthRaw = firstFiniteParam(params, ['fmLinesWidth', 'width'], 0.32);
+    const freqRaw = firstFiniteParam(params, ['fmLinesFreq', 'frequency', 'freq'], 0.25);
+    const depthRaw = firstFiniteParam(params, ['fmLinesFmDepth', 'fmDepth', 'depth'], 0.55);
+    const ampRaw = firstFiniteParam(params, ['fmLinesAmp', 'amp', 'amplitude'], 0.5);
+    const speedRaw = firstFiniteParam(params, ['fmLinesSpeed', 'speed'], 0.6);
+    const colorMixRaw = firstFiniteParam(params, ['fmLinesColorMix', 'colorMix'], 0);
+    const invertRaw = firstFiniteParam(params, ['fmLinesInvert', 'invert'], 0);
+    return [
+      'fm-scanlines',
+      '1.0000',
+      Math.max(0, Math.min(2, Math.round(modeRaw))).toFixed(0),
+      Math.max(4, Math.min(800, countRaw)).toFixed(4),
+      Math.max(0, Math.min(1, widthRaw)).toFixed(4),
+      Math.max(0, Math.min(1, freqRaw)).toFixed(4),
+      Math.max(0, Math.min(1, depthRaw)).toFixed(4),
+      Math.max(0, Math.min(1, ampRaw)).toFixed(4),
+      Math.max(0, Math.min(2, speedRaw)).toFixed(4),
+      Math.max(0, Math.min(1, colorMixRaw)).toFixed(4),
+      Math.max(0, Math.min(1, invertRaw)).toFixed(0),
+    ].join(':');
+  }
   if (type === 'blur') {
     const radiusRaw =
       (typeof params.blurRadius === 'number' && Number.isFinite(params.blurRadius) ? params.blurRadius : null)
@@ -2134,6 +2158,18 @@ export function nativeEffectPassFromDescriptor(descriptor: string | null): Nativ
       rollingBar: Number(rawParam3 ?? 0),
       curvature: Number(rawParam4 ?? 0),
       interlace: Number(rawParam5 ?? 0),
+    };
+  } else if (effect === 'fm-scanlines') {
+    params = {
+      mode: Number(rawParam0 ?? 0),
+      count: Number(rawParam1 ?? 140),
+      width: Number(rawParam2 ?? 0.32),
+      freq: Number(rawParam3 ?? 0.25),
+      fmDepth: Number(rawParam4 ?? 0.55),
+      amp: Number(rawParam5 ?? 0.5),
+      speed: Number(rawParam6 ?? 0.6),
+      colorMix: Number(rawParam7 ?? 0),
+      invert: Number(rawParam8 ?? 0),
     };
   } else if (effect === 'blur') {
     params = {

@@ -233,6 +233,7 @@ describe('Native effect-pass template', () => {
       ['color-balance', 60],
       ['lift-gamma-gain', 61],
       ['strobe-flash', 62],
+      ['fm-scanlines', 63],
     ]);
     expect(nativeEffectPassManifestEntry('posterize')).toMatchObject({
       code: 8,
@@ -255,6 +256,7 @@ describe('Native effect-pass template', () => {
     expect(source.source).toContain('code == 59u');
     expect(source.source).toContain('code == 61u');
     expect(source.source).toContain('code == 62u');
+    expect(source.source).toContain('code == 63u');
     expect(source.source).not.toMatch(/^\s*#include\b/m);
   });
 
@@ -1892,6 +1894,39 @@ describe('Native effect-pass template', () => {
             const lineA = snapshotPixelLuma(snapshot, pixels, 0.5, 0.48);
             const lineB = snapshotPixelLuma(snapshot, pixels, 0.5, 0.52);
             expect(Math.abs(lineA - lineB)).toBeGreaterThan(0.01);
+          },
+        },
+        {
+          id: 'fm-scanlines',
+          graph: buildNativeEffectPassGraph({
+            sourceId,
+            targetSourceId: 'native-effect-pass-fixture-fm-scanlines',
+            effect: 'fm-scanlines',
+            width: 160,
+            height: 90,
+            time: 0.33,
+            frameDelta: 1 / 30,
+            frameIndex: 7,
+            amount: 1,
+            params: {
+              mode: 0,
+              count: 96,
+              width: 0.32,
+              freq: 0.34,
+              fmDepth: 0.6,
+              amp: 0.58,
+              speed: 0.5,
+              colorMix: 0.25,
+              invert: 0,
+            },
+          }),
+          assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
+            const lineA = snapshotPixelLuma(snapshot, pixels, 0.5, 0.47);
+            const lineB = snapshotPixelLuma(snapshot, pixels, 0.5, 0.53);
+            const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, 0.5, 0.5);
+            const effectRgb = snapshotPixelRgb(snapshot, pixels, 0.5, 0.5);
+            expect(Math.abs(lineA - lineB)).toBeGreaterThan(0.01);
+            expect(rgbDistance(sourceRgb, effectRgb)).toBeGreaterThan(0.01);
           },
         },
         {

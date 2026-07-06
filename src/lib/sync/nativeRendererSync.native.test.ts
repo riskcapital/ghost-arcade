@@ -1044,6 +1044,21 @@ describe('native renderer sync effect-pass descriptors', () => {
         strobeTintB: 1,
       },
     })).toBe('strobe-flash:0.8800:4.0000:0.5200:2:0.1800:0.8500:1.0000');
+
+    expect(effectToNativeDescriptor({
+      type: 'fmScanlines',
+      params: {
+        fmLinesMode: 2,
+        fmLinesCount: 180,
+        fmLinesWidth: 0.4,
+        fmLinesFreq: 0.2,
+        fmLinesFmDepth: 0.7,
+        fmLinesAmp: 0.8,
+        fmLinesSpeed: 1.1,
+        fmLinesColorMix: 0.35,
+        fmLinesInvert: 1,
+      },
+    })).toBe('fm-scanlines:1.0000:2:180.0000:0.4000:0.2000:0.7000:0.8000:1.1000:0.3500:1');
   });
 
   it('rebuilds native effect-pass runtime params from hero effect descriptors', () => {
@@ -1086,6 +1101,22 @@ describe('native renderer sync effect-pass descriptors', () => {
         crtGlow: 0.7,
         crtRollingBar: 0.2,
         crtChromatic: 0.35,
+      },
+    });
+
+    expect(nativeEffectPassFromDescriptor('fm-scanlines:1.0000:2:180.0000:0.4000:0.2000:0.7000:0.8000:1.1000:0.3500:1')).toMatchObject({
+      effect: 'fm-scanlines',
+      amount: 1,
+      params: {
+        mode: 2,
+        count: 180,
+        width: 0.4,
+        freq: 0.2,
+        fmDepth: 0.7,
+        amp: 0.8,
+        speed: 1.1,
+        colorMix: 0.35,
+        invert: 1,
       },
     });
 
