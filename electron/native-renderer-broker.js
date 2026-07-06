@@ -98,6 +98,7 @@ const NATIVE_EFFECT_PASS_DESCRIPTORS = [
   { id: 'color-balance', code: 60 },
   { id: 'lift-gamma-gain', code: 61 },
   { id: 'strobe-flash', code: 62 },
+  { id: 'fm-scanlines', code: 63 },
 ];
 
 function nativeGraphReadinessId(id) {

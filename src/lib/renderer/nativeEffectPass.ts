@@ -12,6 +12,7 @@ export type NativeEffectPassId =
   | 'vignette'
   | 'rgb-shift'
   | 'scanlines'
+  | 'fm-scanlines'
   | 'blur'
   | 'chromatic-aberration'
   | 'glitch'
@@ -87,6 +88,11 @@ export interface NativeEffectPassOptions {
     amount: number;
     amount2: number;
     mix: number;
+    width: number;
+    freq: number;
+    fmDepth: number;
+    amp: number;
+    colorMix: number;
     param0: number;
     param1: number;
     param2: number;
@@ -487,6 +493,7 @@ export const NATIVE_EFFECT_PASS_MANIFEST: NativeEffectPassManifestEntry[] = [
   { id: 'color-balance', code: 60, defaultAmount: 1, amountMin: 0, amountMax: 1 },
   { id: 'lift-gamma-gain', code: 61, defaultAmount: 1, amountMin: 0, amountMax: 1 },
   { id: 'strobe-flash', code: 62, defaultAmount: 1, amountMin: 0, amountMax: 2 },
+  { id: 'fm-scanlines', code: 63, defaultAmount: 1, amountMin: 0, amountMax: 1 },
 ];
 
 const NATIVE_EFFECT_PASS_BY_ID = new Map(
@@ -1113,6 +1120,43 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
       rgb *= mix(1.0, mix(0.82, 1.08, field), interlace);
     }
     return vec4<f32>(rgb, src.a);
+  }
+  if (code == 63u) {
+    let mode = u32(round(clamp(u.params0.x, 0.0, 2.0)));
+    let count = max(4.0, u.params0.y);
+    let line_width = clamp(u.params0.z, 0.0, 1.0);
+    let base_freq = clamp(u.params0.w, 0.0, 1.0) * 40.0;
+    let fm_depth = clamp(u.params1.x, 0.0, 1.0);
+    let amp_amount = clamp(u.params1.y, 0.0, 1.0);
+    let speed = clamp(u.params1.z, 0.0, 2.0);
+    let color_mix = clamp(u.params1.w, 0.0, 1.0);
+    let invert_lines = u.params2.x > 0.5;
+    let lum = luma(color);
+    let spacing = 1.0 / count;
+    let freq = base_freq + lum * fm_depth * 140.0;
+    let amp = spacing * (0.25 + lum * amp_amount * 6.0);
+    let phase = u.resolution_time.z * speed * 3.0;
+    var coord = uv.y;
+    var along = uv.x;
+    if (mode == 1u) {
+      coord = uv.x;
+      along = uv.y;
+    } else if (mode == 2u) {
+      var centered = uv - vec2<f32>(0.5);
+      centered.x *= u.resolution_time.x / max(u.resolution_time.y, 1.0);
+      coord = length(centered) * 1.4;
+      along = coord;
+    }
+    let disp = sin(along * freq + phase) * amp;
+    let line_pos = (coord + disp) * count;
+    let tri = abs(fract1(line_pos) - 0.5);
+    let w = mix(0.04, 0.5, line_width);
+    let line_mask = (1.0 - smoothstep(w * 0.6, w, tri)) * clamp(amount, 0.0, 1.0);
+    let line_col = mix(vec3<f32>(1.0), color, color_mix);
+    if (invert_lines) {
+      return vec4<f32>(line_col * (1.0 - line_mask), src.a);
+    }
+    return vec4<f32>(line_col * line_mask, line_mask * src.a);
   }
   if (code == 14u) {
     let radius = max(0.0, amount);
@@ -2699,6 +2743,16 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param5 = clampNumber(params.interlace ?? params.param5, 0, 1, 0);
     param6 = 0;
     param7 = 0;
+  } else if (options.effect === 'fm-scanlines') {
+    param0 = clampNumber(params.mode ?? params.param0, 0, 2, 0);
+    param1 = clampNumber(params.count ?? params.param1, 4, 800, 140);
+    param2 = clampNumber(params.width ?? params.param2, 0, 1, 0.32);
+    param3 = clampNumber(params.freq ?? params.frequency ?? params.param3, 0, 1, 0.25);
+    param4 = clampNumber(params.fmDepth ?? params.param4, 0, 1, 0.55);
+    param5 = clampNumber(params.amp ?? params.param5, 0, 1, 0.5);
+    param6 = clampNumber(params.speed ?? params.param6, 0, 2, 0.6);
+    param7 = clampNumber(params.colorMix ?? params.param7, 0, 1, 0);
+    param8 = clampNumber(params.invert ?? params.param8, 0, 1, 0);
   } else if (options.effect === 'blur') {
     param0 = clampNumber(params.mode ?? params.param0, 0, 3, 1);
     param1 = clampNumber(params.angle ?? params.param1, 0, 360, 0);
