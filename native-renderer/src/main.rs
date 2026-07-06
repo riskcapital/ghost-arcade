@@ -22,11 +22,12 @@ use audio::{GhostAudioUniforms, ghost_audio_uniform_layout};
 use base64::Engine;
 use bytemuck::{Pod, Zeroable};
 use capabilities::{
-    CORE_COMMAND_TYPES, CORE_RPC_METHODS, native_compute_host_readiness, native_graph_readiness,
-    output_shared_texture_export_ready_detail, output_shared_texture_export_unavailable_detail,
-    shared_texture_media_transport_note, shared_texture_media_transport_ready_detail,
-    shared_texture_source_frame_upload_detail, texture_share_sender_label,
-    texture_share_sender_pending_detail, texture_share_sender_ready_detail,
+    CORE_COMMAND_TYPES, CORE_RPC_METHODS, native_compute_host_readiness,
+    native_graph_readiness_checks, output_shared_texture_export_ready_detail,
+    output_shared_texture_export_unavailable_detail, shared_texture_media_transport_note,
+    shared_texture_media_transport_ready_detail, shared_texture_source_frame_upload_detail,
+    texture_share_sender_label, texture_share_sender_pending_detail,
+    texture_share_sender_ready_detail,
 };
 use compositor::{
     blend_mode_code, effect_descriptor_code, native_compositor_blend_manifest,
@@ -2768,342 +2769,34 @@ impl App {
                 let renderer_ready = self.renderer.is_some();
                 let (compute_instrument_host_ok, compute_instrument_host_detail) =
                     native_compute_host_readiness(&capabilities, renderer_ready);
-                let (native_planet_graph_ok, native_planet_graph_detail) = native_graph_readiness(
-                    &capabilities,
-                    renderer_ready,
-                    "planet",
-                    "Native Planet graph",
-                    &["planet/render"],
-                    &[
-                        "compute_shader_host",
-                        "compute_graph_host",
-                        "compute_graph_render",
-                        "compute_graph_instanced_render",
-                        "compute_graph_clear_color",
-                        "compute_graph_source_frame_target",
-                        "native_planet_graph",
-                    ],
-                    &[
-                        "compute_graph_host",
-                        "compute_graph_render",
-                        "compute_graph_instanced_render",
-                        "compute_graph_clear_color",
-                        "compute_graph_source_frame_target",
-                        "native_planet_graph",
-                    ],
-                );
-                let (native_3d_smoke_graph_ok, native_3d_smoke_graph_detail) =
-                    native_graph_readiness(
-                        &capabilities,
-                        renderer_ready,
-                        "smoke-3d",
-                        "Native 3D Smoke graph",
-                        &[
-                            "3d-smoke/splat",
-                            "3d-smoke/advect-velocity",
-                            "3d-smoke/divergence",
-                            "3d-smoke/jacobi",
-                            "3d-smoke/subtract-gradient",
-                            "3d-smoke/advect-density",
-                            "3d-smoke/render",
-                        ],
-                        &[
-                            "compute_shader_host",
-                            "compute_graph_host",
-                            "compute_graph_render",
-                            "compute_graph_multi_render",
-                            "compute_graph_instanced_render",
-                            "compute_graph_indirect_render",
-                            "compute_graph_texture_sampling",
-                            "compute_graph_depth_render",
-                            "compute_graph_line_render",
-                            "compute_graph_clear_color",
-                            "compute_graph_source_frame_target",
-                            "persistent_compute_buffers",
-                            "native_3d_smoke_graph",
-                        ],
-                        &[
-                            "compute_graph_host",
-                            "compute_graph_render",
-                            "compute_graph_multi_render",
-                            "compute_graph_instanced_render",
-                            "compute_graph_indirect_render",
-                            "compute_graph_texture_sampling",
-                            "compute_graph_depth_render",
-                            "compute_graph_line_render",
-                            "compute_graph_clear_color",
-                            "compute_graph_source_frame_target",
-                            "persistent_compute_buffers",
-                            "native_3d_smoke_graph",
-                        ],
-                    );
-                let (native_particle_field_graph_ok, native_particle_field_graph_detail) =
-                    native_graph_readiness(
-                        &capabilities,
-                        renderer_ready,
-                        "particle-field",
-                        "Native Particle Field graph",
-                        &[
-                            "particle-field/behavior",
-                            "particle-field/edges",
-                            "particle-field/fog",
-                            "particle-field/render",
-                            "particle-field/lines",
-                        ],
-                        &[
-                            "compute_shader_host",
-                            "compute_graph_host",
-                            "compute_graph_render",
-                            "compute_graph_multi_render",
-                            "compute_graph_instanced_render",
-                            "compute_graph_texture_sampling",
-                            "compute_graph_depth_render",
-                            "compute_graph_line_render",
-                            "compute_graph_clear_color",
-                            "compute_graph_source_frame_target",
-                            "persistent_compute_buffers",
-                            "native_particle_field_graph",
-                        ],
-                        &[
-                            "compute_graph_host",
-                            "compute_graph_render",
-                            "compute_graph_multi_render",
-                            "compute_graph_instanced_render",
-                            "compute_graph_texture_sampling",
-                            "compute_graph_depth_render",
-                            "compute_graph_line_render",
-                            "compute_graph_clear_color",
-                            "compute_graph_source_frame_target",
-                            "persistent_compute_buffers",
-                            "native_particle_field_graph",
-                        ],
-                    );
-                let (native_volumetric_spheres_graph_ok, native_volumetric_spheres_graph_detail) =
-                    native_graph_readiness(
-                        &capabilities,
-                        renderer_ready,
-                        "volumetric-spheres",
-                        "Native Volumetric Spheres graph",
-                        &["volumetric-spheres/sim", "volumetric-spheres/render"],
-                        &[
-                            "compute_shader_host",
-                            "compute_graph_host",
-                            "compute_graph_render",
-                            "compute_graph_instanced_render",
-                            "compute_graph_depth_render",
-                            "compute_graph_clear_color",
-                            "compute_graph_source_frame_target",
-                            "persistent_compute_buffers",
-                            "native_volumetric_spheres_graph",
-                        ],
-                        &[
-                            "compute_graph_host",
-                            "compute_graph_render",
-                            "compute_graph_instanced_render",
-                            "compute_graph_depth_render",
-                            "compute_graph_clear_color",
-                            "compute_graph_source_frame_target",
-                            "persistent_compute_buffers",
-                            "native_volumetric_spheres_graph",
-                        ],
-                    );
-                let (native_smoke_riders_graph_ok, native_smoke_riders_graph_detail) =
-                    native_graph_readiness(
-                        &capabilities,
-                        renderer_ready,
-                        "smoke-riders",
-                        "Native Smoke Riders graph",
-                        &[
-                            "3d-smoke/splat",
-                            "3d-smoke/advect-velocity",
-                            "3d-smoke/divergence",
-                            "3d-smoke/jacobi",
-                            "3d-smoke/subtract-gradient",
-                            "3d-smoke/advect-density",
-                            "3d-smoke/render",
-                            "volumetric-spheres/sim",
-                            "volumetric-spheres/render",
-                        ],
-                        &[
-                            "compute_shader_host",
-                            "compute_graph_host",
-                            "compute_graph_render",
-                            "compute_graph_multi_render",
-                            "compute_graph_instanced_render",
-                            "compute_graph_depth_render",
-                            "compute_graph_clear_color",
-                            "compute_graph_source_frame_target",
-                            "persistent_compute_buffers",
-                            "native_3d_smoke_graph",
-                            "native_volumetric_spheres_graph",
-                            "native_smoke_riders_graph",
-                        ],
-                        &[
-                            "compute_graph_host",
-                            "compute_graph_render",
-                            "compute_graph_multi_render",
-                            "compute_graph_instanced_render",
-                            "compute_graph_depth_render",
-                            "compute_graph_clear_color",
-                            "compute_graph_source_frame_target",
-                            "persistent_compute_buffers",
-                            "native_3d_smoke_graph",
-                            "native_volumetric_spheres_graph",
-                            "native_smoke_riders_graph",
-                        ],
-                    );
-                let (native_ink_cloud_graph_ok, native_ink_cloud_graph_detail) =
-                    native_graph_readiness(
-                        &capabilities,
-                        renderer_ready,
-                        "ink-cloud",
-                        "Native Ink Cloud graph",
-                        &["ink-cloud/sim", "ink-cloud/render", "ink-cloud/background"],
-                        &[
-                            "compute_shader_host",
-                            "compute_graph_host",
-                            "compute_graph_render",
-                            "compute_graph_multi_render",
-                            "compute_graph_instanced_render",
-                            "compute_graph_clear_color",
-                            "compute_graph_source_frame_target",
-                            "persistent_compute_buffers",
-                            "native_ink_cloud_graph",
-                        ],
-                        &[
-                            "compute_graph_host",
-                            "compute_graph_render",
-                            "compute_graph_multi_render",
-                            "compute_graph_instanced_render",
-                            "compute_graph_clear_color",
-                            "compute_graph_source_frame_target",
-                            "persistent_compute_buffers",
-                            "native_ink_cloud_graph",
-                        ],
-                    );
-                let (native_flythrough_graph_ok, native_flythrough_graph_detail) =
-                    native_graph_readiness(
-                        &capabilities,
-                        renderer_ready,
-                        "flythrough",
-                        "Native Flythrough graph",
-                        &["flythrough/compute", "flythrough/render"],
-                        &[
-                            "compute_shader_host",
-                            "compute_graph_host",
-                            "compute_graph_render",
-                            "compute_graph_instanced_render",
-                            "compute_graph_texture_sampling",
-                            "compute_graph_clear_color",
-                            "compute_graph_source_frame_target",
-                            "persistent_compute_buffers",
-                            "native_flythrough_graph",
-                        ],
-                        &[
-                            "compute_graph_host",
-                            "compute_graph_render",
-                            "compute_graph_instanced_render",
-                            "compute_graph_texture_sampling",
-                            "compute_graph_clear_color",
-                            "compute_graph_source_frame_target",
-                            "persistent_compute_buffers",
-                            "native_flythrough_graph",
-                        ],
-                    );
-                let (native_pixel_particles_graph_ok, native_pixel_particles_graph_detail) =
-                    native_graph_readiness(
-                        &capabilities,
-                        renderer_ready,
-                        "pixel-particles",
-                        "Native Pixel Particles graph",
-                        &["pixel-particles/compute", "pixel-particles/render"],
-                        &[
-                            "compute_shader_host",
-                            "compute_graph_host",
-                            "compute_graph_render",
-                            "compute_graph_instanced_render",
-                            "compute_graph_texture_sampling",
-                            "compute_graph_clear_color",
-                            "compute_graph_source_frame_target",
-                            "persistent_compute_buffers",
-                            "native_pixel_particles_graph",
-                        ],
-                        &[
-                            "compute_graph_host",
-                            "compute_graph_render",
-                            "compute_graph_instanced_render",
-                            "compute_graph_texture_sampling",
-                            "compute_graph_clear_color",
-                            "compute_graph_source_frame_target",
-                            "persistent_compute_buffers",
-                            "native_pixel_particles_graph",
-                        ],
-                    );
-                let (native_point_cloud_fx_graph_ok, native_point_cloud_fx_graph_detail) =
-                    native_graph_readiness(
-                        &capabilities,
-                        renderer_ready,
-                        "point-cloud-fx",
-                        "Native Point Cloud FX graph",
-                        &[
-                            "point-cloud-fx/compute",
-                            "point-cloud-fx/sort-fill",
-                            "point-cloud-fx/sort-step",
-                            "point-cloud-fx/render",
-                        ],
-                        &[
-                            "compute_shader_host",
-                            "compute_graph_host",
-                            "compute_graph_render",
-                            "compute_graph_instanced_render",
-                            "compute_graph_clear_color",
-                            "compute_graph_source_frame_target",
-                            "persistent_compute_buffers",
-                            "native_point_cloud_fx_graph",
-                        ],
-                        &[
-                            "compute_graph_host",
-                            "compute_graph_render",
-                            "compute_graph_instanced_render",
-                            "compute_graph_clear_color",
-                            "compute_graph_source_frame_target",
-                            "persistent_compute_buffers",
-                            "native_point_cloud_fx_graph",
-                        ],
-                    );
-                Ok(json!({
-                "timestamp_ms": epoch_ms(),
-                "overall_ready": renderer_ready,
-                "blockers": if renderer_ready { Vec::<String>::new() } else { vec!["native renderer has not created a wgpu device".to_string()] },
-                "capabilities": capabilities,
-                "checks": [
-                    {
+                let mut checks = vec![
+                    json!({
                         "id": "wgpu-device",
                         "label": "Native wgpu device",
                         "ok": renderer_ready,
                         "detail": self.adapter_name.clone().unwrap_or_else(|| "not initialized".to_string())
-                    },
-                    {
+                    }),
+                    json!({
                         "id": "shared-texture-source-frame-upload",
                         "label": "Shared texture source-frame transport",
                         "ok": cfg!(any(target_os = "macos", target_os = "windows")),
                         "detail": shared_texture_source_frame_upload_detail()
-                    },
-                    {
+                    }),
+                    json!({
                         "id": "shared-texture-upload",
                         "label": "Shared texture media transport",
                         "ok": self.shared_texture_media_transport_ready(),
                         "detail": if self.shared_texture_media_transport_ready() {
                             shared_texture_media_transport_ready_detail()
                         } else { "full media shared texture transport is pending for this backend" }
-                    },
-                    {
+                    }),
+                    json!({
                         "id": "native-output-mirror",
                         "label": "Native offscreen output mirror",
                         "ok": renderer_ready,
                         "detail": if renderer_ready { "composite renders into a native offscreen output texture before swapchain present" } else { "native renderer has not created a wgpu device" }
-                    },
-                    {
+                    }),
+                    json!({
                         "id": "shared-texture-output-export",
                         "label": "Native output shared-texture export",
                         "ok": self.renderer.as_ref().is_some_and(RenderState::output_export_ready),
@@ -3112,8 +2805,8 @@ impl App {
                         } else {
                             output_shared_texture_export_unavailable_detail()
                         }
-                    },
-                    {
+                    }),
+                    json!({
                         "id": "native-texture-share-sender",
                         "label": texture_share_sender_label(),
                         "ok": false,
@@ -3122,80 +2815,40 @@ impl App {
                         } else {
                             texture_share_sender_pending_detail()
                         }
-                    },
-                    {
+                    }),
+                    json!({
                         "id": "compute-instrument-host",
                         "label": "Native compute/multi-pass instrument host",
                         "ok": compute_instrument_host_ok,
                         "detail": compute_instrument_host_detail
-                    },
-                    {
-                        "id": "native-planet-graph",
-                        "label": "Native Planet graph",
-                        "ok": native_planet_graph_ok,
-                        "detail": native_planet_graph_detail
-                    },
-                    {
-                        "id": "native-3d-smoke-graph",
-                        "label": "Native 3D Smoke graph",
-                        "ok": native_3d_smoke_graph_ok,
-                        "detail": native_3d_smoke_graph_detail
-                    },
-                    {
+                    }),
+                ];
+                checks.extend(
+                    native_graph_readiness_checks(&capabilities, renderer_ready)
+                        .into_iter()
+                        .map(|check| {
+                            json!({
+                                "id": check.id,
+                                "label": check.label,
+                                "ok": check.ok,
+                                "detail": check.detail
+                            })
+                        }),
+                );
+                checks.extend([
+                    json!({
                         "id": "native-frame-sequence-export",
                         "label": "Native frame sequence export",
                         "ok": renderer_ready,
                         "detail": if renderer_ready { "native output snapshots can be stepped by render clock and exported as raw frame files" } else { "native renderer has not created a wgpu device" }
-                    },
-                    {
+                    }),
+                    json!({
                         "id": "native-frame-export",
                         "label": "Native frame export",
                         "ok": renderer_ready,
                         "detail": if renderer_ready { "render core can export deterministic raw frame snapshots for MP4/JPEG encoders" } else { "native renderer has not created a wgpu device" }
-                    },
-                    {
-                        "id": "native-particle-field-graph",
-                        "label": "Native Particle Field graph",
-                        "ok": native_particle_field_graph_ok,
-                        "detail": native_particle_field_graph_detail
-                    },
-                    {
-                        "id": "native-volumetric-spheres-graph",
-                        "label": "Native Volumetric Spheres graph",
-                        "ok": native_volumetric_spheres_graph_ok,
-                        "detail": native_volumetric_spheres_graph_detail
-                    },
-                    {
-                        "id": "native-smoke-riders-graph",
-                        "label": "Native Smoke Riders graph",
-                        "ok": native_smoke_riders_graph_ok,
-                        "detail": native_smoke_riders_graph_detail
-                    },
-                    {
-                        "id": "native-ink-cloud-graph",
-                        "label": "Native Ink Cloud graph",
-                        "ok": native_ink_cloud_graph_ok,
-                        "detail": native_ink_cloud_graph_detail
-                    },
-                    {
-                        "id": "native-flythrough-graph",
-                        "label": "Native Flythrough graph",
-                        "ok": native_flythrough_graph_ok,
-                        "detail": native_flythrough_graph_detail
-                    },
-                    {
-                        "id": "native-pixel-particles-graph",
-                        "label": "Native Pixel Particles graph",
-                        "ok": native_pixel_particles_graph_ok,
-                        "detail": native_pixel_particles_graph_detail
-                    },
-                    {
-                        "id": "native-point-cloud-fx-graph",
-                        "label": "Native Point Cloud FX graph",
-                        "ok": native_point_cloud_fx_graph_ok,
-                        "detail": native_point_cloud_fx_graph_detail
-                    },
-                    {
+                    }),
+                    json!({
                         "id": "managed-output",
                         "label": "Managed output window",
                         "ok": self.status().output_present_healthy,
@@ -3208,14 +2861,20 @@ impl App {
                         } else {
                             format!("native output presented {} frame(s)", self.stats.swapchain_presented)
                         }
-                    },
-                    {
+                    }),
+                    json!({
                         "id": "native-recording",
                         "label": "Native recording",
                         "ok": false,
                         "detail": if self.renderer.is_some() { "render core provides raw frame export only; query the Electron broker readiness for MP4/JPEG encoder sessions" } else { "native renderer has not created a wgpu device" }
-                    }
-                ]
+                    }),
+                ]);
+                Ok(json!({
+                "timestamp_ms": epoch_ms(),
+                "overall_ready": renderer_ready,
+                "blockers": if renderer_ready { Vec::<String>::new() } else { vec!["native renderer has not created a wgpu device".to_string()] },
+                "capabilities": capabilities,
+                "checks": checks
                 }))
             }
             "reset_stats" => {
