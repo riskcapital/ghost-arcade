@@ -1844,10 +1844,18 @@ try {
         outputTexture.platform === expectedSharedTexturePlatform &&
         String(outputTexture.handle ?? '').length > 0 &&
         String(outputTexture.handle_encoding ?? '').length > 0 &&
+        String(outputTexture.handle_scope ?? '') === (process.platform === 'win32' ? 'process-local' : 'global-id') &&
+        String(outputTexture.preferred_transport ?? '') === (process.platform === 'win32' ? 'shared_name' : 'handle') &&
         Number(outputTexture.width ?? 0) > 0 &&
         Number(outputTexture.height ?? 0) > 0,
       `broker output shared-texture metadata is incomplete: ${JSON.stringify(outputTexture)}`,
     );
+    if (process.platform === 'win32') {
+      assert(
+        String(outputTexture.shared_name ?? '').includes('GhostArcadeNativeOutput'),
+        `broker DXGI output shared-texture metadata is missing the shared resource name: ${JSON.stringify(outputTexture)}`,
+      );
+    }
   } else {
     assert(
       !outputTexture?.available,

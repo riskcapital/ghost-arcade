@@ -190,6 +190,15 @@ describe('Native render-core RPC contract', () => {
         expect(Number(outputTexture?.handle_byte_length ?? 0)).toBe(
           nativeSharedTexturePlatform === 'iosurface' ? 4 : 8,
         );
+        expect(outputTexture?.handle_scope).toBe(
+          nativeSharedTexturePlatform === 'iosurface' ? 'global-id' : 'process-local',
+        );
+        expect(outputTexture?.preferred_transport).toBe(
+          nativeSharedTexturePlatform === 'iosurface' ? 'handle' : 'shared_name',
+        );
+        if (nativeSharedTexturePlatform === 'dxgi') {
+          expect(String(outputTexture?.shared_name ?? '')).toContain('GhostArcadeNativeOutput');
+        }
         expect(Number(outputTexture?.frame ?? 0)).toBeGreaterThan(0);
         expect(Number(outputTexture?.width ?? 0)).toBeGreaterThan(0);
         expect(Number(outputTexture?.height ?? 0)).toBeGreaterThan(0);
