@@ -14,6 +14,11 @@ if (typeof globalThis.btoa !== 'function') {
     (globalThis as any).Buffer.from(value, 'binary').toString('base64');
 }
 
+function floatsFromBase64(value: string): Float32Array {
+  const bytes = (globalThis as any).Buffer.from(value, 'base64');
+  return new Float32Array(bytes.buffer, bytes.byteOffset, Math.floor(bytes.byteLength / 4));
+}
+
 function makePoints(count: number) {
   const positions = new Float32Array(count * 3);
   const colors = new Float32Array(count * 3);
@@ -46,6 +51,8 @@ describe('Point Cloud FX native graph', () => {
     expect(byId.get(POINT_CLOUD_FX_NATIVE_SHADER_IDS.render)?.source).toContain('GHOST_GAUSSIAN_SIGMA_EXTENT');
     expect(byId.get(POINT_CLOUD_FX_NATIVE_SHADER_IDS.render)?.source).toContain('GHOST_GAUSSIAN_MAX_SIGMA_NDC');
     expect(byId.get(POINT_CLOUD_FX_NATIVE_SHADER_IDS.render)?.source).toContain('GHOST_GAUSSIAN_SCREEN_BASIS_STEP');
+    expect(byId.get(POINT_CLOUD_FX_NATIVE_SHADER_IDS.render)?.source).toContain('gaussianAaPixels');
+    expect(byId.get(POINT_CLOUD_FX_NATIVE_SHADER_IDS.render)?.source).toContain('opacityScale');
     expect(byId.get(POINT_CLOUD_FX_NATIVE_SHADER_IDS.render)?.source).toContain('projectSplatAxisNdc');
     expect(byId.get(POINT_CLOUD_FX_NATIVE_SHADER_IDS.render)?.source).toContain('solveScreenToWorldOffset');
     expect(byId.get(POINT_CLOUD_FX_NATIVE_SHADER_IDS.render)?.source).toContain('gaussianScreenAxes');
@@ -262,6 +269,11 @@ describe('Point Cloud FX native graph', () => {
     expect(home?.initial_buffer).toBe(pointData.homeInitialBuffer);
     expect(live?.initial_buffer).toBe(pointData.liveInitialBuffer);
     expect(sortPairs?.initial_buffer).toBe(pointData.sortInitialBuffer);
+    const renderUniform = first.config.buffers.find((buffer) => buffer.id.endsWith(':render-uniform'));
+    const renderFloats = floatsFromBase64(renderUniform?.initial_b64 ?? '');
+    expect(renderFloats[29]).toBeCloseTo(1920);
+    expect(renderFloats[30]).toBeCloseTo(1080);
+    expect(renderFloats[31]).toBeCloseTo(0.75);
 
     const second = buildPointCloudFXNativeComputeGraph({
       sourceId: 'gpu:layer-cloud:point-cloud-fx',
