@@ -1,5 +1,23 @@
 import { describe, expect, it } from 'vitest';
+// @ts-expect-error The Electron broker is authored as ESM JavaScript; this test exercises it directly.
 import { createNativeRendererBroker } from '../../../electron/native-renderer-broker.js';
+
+type ReadinessCheck = {
+  id: string;
+  ok?: boolean;
+  detail?: string;
+};
+
+type TextureShareStatus = {
+  available: boolean;
+  platform: string;
+  label: string;
+  senderMode?: string;
+  nativeOutputCapable?: boolean;
+  nativeOutputActive?: boolean;
+  nativeOutputWaitingForFrame?: boolean;
+  nativeOutputLastPublishedFrame?: number;
+};
 
 const nativeGraphManifests = [
   {
@@ -107,7 +125,13 @@ function coreCapabilities(features: Record<string, unknown> = {}, overrides: Rec
   };
 }
 
-function createBroker({ encoderAvailable = true, textureShareStatus = null } = {}) {
+function createBroker({
+  encoderAvailable = true,
+  textureShareStatus = null,
+}: {
+  encoderAvailable?: boolean;
+  textureShareStatus?: TextureShareStatus | null;
+} = {}) {
   const broker = createNativeRendererBroker({
     appRoot: process.cwd(),
     resourcesPath: process.cwd(),
@@ -153,7 +177,9 @@ describe('native renderer broker capability overlay', () => {
     expect(capabilities.features.native_mp4_frame_encoder).toBe(true);
     expect(capabilities.features.native_recording).toBe(true);
 
-    const checks = new Map(broker.readinessReport().checks.map((check: any) => [check.id, check]));
+    const checks = new Map<string, ReadinessCheck>(
+      broker.readinessReport().checks.map((check: ReadinessCheck) => [check.id, check]),
+    );
     expect(checks.get('native-frame-export')?.ok).toBe(true);
     expect(checks.get('native-recording')?.ok).toBe(true);
     expect(String(checks.get('native-recording')?.detail ?? '')).toContain('MP4/JPEG encoders');
@@ -171,7 +197,9 @@ describe('native renderer broker capability overlay', () => {
     expect(capabilities.features.native_mp4_frame_encoder).toBe(false);
     expect(capabilities.features.native_recording).toBe(false);
 
-    const checks = new Map(broker.readinessReport().checks.map((check: any) => [check.id, check]));
+    const checks = new Map<string, ReadinessCheck>(
+      broker.readinessReport().checks.map((check: ReadinessCheck) => [check.id, check]),
+    );
     expect(checks.get('native-frame-export')?.ok).toBe(true);
     expect(checks.get('native-recording')?.ok).toBe(false);
     expect(String(checks.get('native-recording')?.detail ?? '')).toContain('ffmpeg unavailable');
@@ -245,7 +273,9 @@ describe('native renderer broker capability overlay', () => {
     expect(report.modes.full_v2.ok).toBe(true);
     expect(report.modes.full_v2.blockers).toEqual([]);
 
-    const checks = new Map(report.checks.map((check: any) => [check.id, check]));
+    const checks = new Map<string, ReadinessCheck>(
+      report.checks.map((check: ReadinessCheck) => [check.id, check]),
+    );
     expect(checks.get('native-texture-share-sender')?.ok).toBe(true);
     expect(checks.get('native-media-decode')?.ok).toBe(true);
     expect(checks.get('native-recording')?.ok).toBe(true);
