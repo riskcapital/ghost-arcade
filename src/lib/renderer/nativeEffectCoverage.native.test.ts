@@ -10,12 +10,12 @@ import { NATIVE_EFFECT_PASS_MANIFEST } from './nativeEffectPass';
 describe('native effect coverage', () => {
   it('tracks public effect coverage separately from native helper passes', () => {
     expect(PUBLIC_EFFECT_TYPES).toHaveLength(184);
-    expect(NATIVE_EFFECT_PASS_MANIFEST).toHaveLength(67);
-    expect(NATIVE_EFFECT_COVERAGE.nativePublicEffectCount).toBe(66);
-    expect(NATIVE_EFFECT_COVERAGE.missingPublicEffectCount).toBe(118);
+    expect(NATIVE_EFFECT_PASS_MANIFEST).toHaveLength(68);
+    expect(NATIVE_EFFECT_COVERAGE.nativePublicEffectCount).toBe(67);
+    expect(NATIVE_EFFECT_COVERAGE.missingPublicEffectCount).toBe(117);
     expect(NATIVE_EFFECT_COVERAGE.sourceFramePassEligibleEffectCount).toBe(182);
-    expect(NATIVE_EFFECT_COVERAGE.nativeSourceFramePassEffectCount).toBe(66);
-    expect(NATIVE_EFFECT_COVERAGE.missingSourceFramePassEffectCount).toBe(116);
+    expect(NATIVE_EFFECT_COVERAGE.nativeSourceFramePassEffectCount).toBe(67);
+    expect(NATIVE_EFFECT_COVERAGE.missingSourceFramePassEffectCount).toBe(115);
     expect(NATIVE_EFFECT_COVERAGE.deferredNativeGraphEffectTypes).toEqual([
       'gpuFluidSim',
       'eulerianMagnify',
@@ -24,13 +24,15 @@ describe('native effect coverage', () => {
     expect(NATIVE_EFFECT_COVERAGE.nativePublicEffectTypes).toContain('plasma');
     expect(NATIVE_EFFECT_COVERAGE.nativePublicEffectTypes).toContain('halftone');
     expect(NATIVE_EFFECT_COVERAGE.nativePublicEffectTypes).toContain('toon');
+    expect(NATIVE_EFFECT_COVERAGE.nativePublicEffectTypes).toContain('kuwahara');
     expect(NATIVE_EFFECT_COVERAGE.missingPublicEffectTypes).toContain('sphereWireframe');
     expect(NATIVE_EFFECT_COVERAGE.missingPublicEffectTypes).toContain('gpuFluidSim');
     expect(NATIVE_EFFECT_COVERAGE.missingPublicEffectTypes).toContain('eulerianMagnify');
     expect(NATIVE_EFFECT_COVERAGE.missingSourceFramePassEffectTypes).not.toContain('gpuFluidSim');
     expect(NATIVE_EFFECT_COVERAGE.missingSourceFramePassEffectTypes).not.toContain('eulerianMagnify');
+    expect(NATIVE_EFFECT_COVERAGE.missingSourceFramePassEffectTypes).not.toContain('kuwahara');
     expect(NATIVE_EFFECT_COVERAGE.missingSourceFramePassEffectTypes).toContain('phaseLab');
-    expect(NATIVE_EFFECT_COVERAGE.detail).toContain('native source-frame effect-pass coverage 66/182');
+    expect(NATIVE_EFFECT_COVERAGE.detail).toContain('native source-frame effect-pass coverage 67/182');
     expect(NATIVE_EFFECT_COVERAGE.detail).toContain('stateful/multi-frame effects tracked outside the effect-pass route');
   });
 

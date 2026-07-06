@@ -65,7 +65,8 @@ export type NativeEffectPassId =
   | 'strobe-flash'
   | 'plasma'
   | 'halftone'
-  | 'toon';
+  | 'toon'
+  | 'kuwahara';
 
 export interface NativeEffectPassManifestEntry {
   id: NativeEffectPassId;
@@ -426,6 +427,10 @@ export interface NativeEffectPassOptions {
     toonEdgeThreshold: number;
     levels: number;
     edgeStrength: number;
+    kuwaharaMix: number;
+    kuwaharaRadius: number;
+    kuwaharaEdgeSharpness: number;
+    kuwaharaColorPunch: number;
   }>;
   clear?: boolean;
   seq?: number;
@@ -532,6 +537,7 @@ export const NATIVE_EFFECT_PASS_MANIFEST: NativeEffectPassManifestEntry[] = [
   { id: 'plasma', code: 65, defaultAmount: 0.85, amountMin: 0, amountMax: 1 },
   { id: 'halftone', code: 66, defaultAmount: 0.9, amountMin: 0, amountMax: 1 },
   { id: 'toon', code: 67, defaultAmount: 0.85, amountMin: 0, amountMax: 1 },
+  { id: 'kuwahara', code: 68, defaultAmount: 1, amountMin: 0, amountMax: 1 },
 ];
 
 const NATIVE_EFFECT_PASS_BY_ID = new Map(
@@ -1315,6 +1321,52 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let poster = floor(clamp(saturated, vec3<f32>(0.0), vec3<f32>(1.0)) * levels + vec3<f32>(0.5)) / levels;
     let toon_rgb = poster * (1.0 - edge * edge_strength * 0.8);
     return vec4<f32>(mix(color, toon_rgb, clamp(amount, 0.0, 1.0)), src.a);
+  }
+  if (code == 68u) {
+    let radius = max(1.0, u.params0.x);
+    let edge_sharpness = clamp(u.params0.y, 0.0, 1.0);
+    let color_punch = clamp(u.params0.z, 0.0, 1.0);
+    let wet = clamp(amount, 0.0, 1.0);
+    let tx = effect_texel() * radius;
+    var best_mean = color;
+    var best_var = 1000000.0;
+    for (var q = 0u; q < 4u; q = q + 1u) {
+      var dir = vec2<f32>(1.0, 1.0);
+      if (q == 0u || q == 2u) {
+        dir.x = -1.0;
+      }
+      if (q >= 2u) {
+        dir.y = -1.0;
+      }
+      var sum = vec3<f32>(0.0);
+      var sum_sq = vec3<f32>(0.0);
+      var n = 0.0;
+      for (var i = 0u; i <= 2u; i = i + 1u) {
+        for (var j = 0u; j <= 2u; j = j + 1u) {
+          let off = vec2<f32>(f32(i), f32(j)) * dir * tx;
+          let c = sample_rgb(uv + off);
+          sum += c;
+          sum_sq += c * c;
+          n += 1.0;
+        }
+      }
+      let mean = sum / n;
+      let variance = sum_sq / n - mean * mean;
+      let v = variance.r + variance.g + variance.b;
+      if (v < best_var) {
+        best_var = v;
+        best_mean = mean;
+      }
+    }
+    var result = best_mean;
+    if (edge_sharpness > 0.001) {
+      result = mix(result, result + (result - color) * 0.5, edge_sharpness);
+    }
+    if (color_punch > 0.001) {
+      let lum = luma(result);
+      result = mix(vec3<f32>(lum), result, 1.0 + color_punch);
+    }
+    return vec4<f32>(mix(color, clamp(result, vec3<f32>(0.0), vec3<f32>(1.0)), wet), src.a);
   }
   if (code == 14u) {
     let radius = max(0.0, amount);
@@ -2950,6 +3002,16 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param1 = clampNumber(params.toonEdgeStrength ?? params.edgeStrength ?? params.param1, 0, 2, 0.8);
     param2 = clampNumber(params.toonSaturation ?? params.saturation ?? params.param2, 0, 2, 1.15);
     param3 = clampNumber(params.toonEdgeThreshold ?? params.threshold ?? params.param3, 0, 1, 0.05);
+    param4 = 0;
+    param5 = 0;
+    param6 = 0;
+    param7 = 0;
+  } else if (options.effect === 'kuwahara') {
+    amount = clampNumber(options.amount ?? params.kuwaharaMix ?? params.outputMix ?? params.amount, 0, 1, 1);
+    param0 = clampNumber(params.kuwaharaRadius ?? params.radius ?? params.param0, 1, 8, 3);
+    param1 = clampNumber(params.kuwaharaEdgeSharpness ?? params.edgeStrength ?? params.param1, 0, 1, 0.3);
+    param2 = clampNumber(params.kuwaharaColorPunch ?? params.colorMix ?? params.param2, 0, 1, 0.2);
+    param3 = 0;
     param4 = 0;
     param5 = 0;
     param6 = 0;
