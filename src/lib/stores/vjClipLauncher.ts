@@ -78,6 +78,8 @@ export interface VJClip {
   playbackMode?: 'loop' | 'once';
   /** 0.25 / 0.5 / 1 / 1.5 / 2 / 4. Maps to `videoElement.playbackRate`. */
   playbackRate?: number;
+  /** If set, the trimmed clip span is fit to this many beats at master BPM. */
+  playbackSyncBeats?: number | null;
   /** 0..1 fraction of duration. Out-of-trim playback is clamped on the
    *  next per-frame update. Default 0 (start of source). */
   trimStart?: number;
@@ -153,6 +155,10 @@ export interface VJBlock {
   clipGrid: (VJClip | null)[][];
   bankBClipGrid?: (VJClip | null)[][];
 }
+
+type VJTransformableClip = VJClip & { type: 'video' | 'image' };
+type VJTransformProps = Pick<VJTransformableClip, 'zoom' | 'fit' | 'anchorX' | 'anchorY' | 'rotation' | 'opacity' | 'mirrorX'>;
+type VJVideoPlaybackProps = Pick<VJClip, 'playbackMode' | 'playbackRate' | 'playbackSyncBeats' | 'trimStart' | 'trimEnd' | 'isPlaying'>;
 
 // VJ Layer state (per layer). Bank A and Bank B each get their own parallel
 // VJLayerState array — see `layerStates` (Bank A) and `bankBLayerStates`
@@ -585,6 +591,10 @@ function mediaTypeForClip(clip: VJClip): 'shader' | 'video' | 'image' | 'threejs
   if (clip.type === 'spout') return 'spout';
   if (clip.type === 'effect') return 'effect';
   return 'image';
+}
+
+function isTransformableMediaClip(clip: VJClip | null | undefined): clip is VJTransformableClip {
+  return !!clip && (clip.type === 'video' || clip.type === 'image');
 }
 
 function ensureClipVideoElement(clip: VJClip): HTMLVideoElement | undefined {
@@ -1420,21 +1430,31 @@ function createVJClipLauncherStore() {
       });
     },
 
-    // Update video playback props (playbackMode / playbackRate / trimStart /
-    // trimEnd / isPlaying) on the active clip of a layer. Mirrors the
-    // splat/model3d shape so the VJ video controls panel can write through to
-    // the store without touching the live videoElement (the panel does that
-    // separately on the DOM node).
-    updateActiveClipVideoProps(layerIndex: number, updates: Partial<Pick<VJClip, 'playbackMode' | 'playbackRate' | 'trimStart' | 'trimEnd' | 'isPlaying' | 'zoom' | 'fit' | 'anchorX' | 'anchorY' | 'rotation' | 'opacity' | 'mirrorX'>>, deck: VJDeck = 'A') {
+    // Update video playback props plus shared visual transform props on the
+    // active clip of a layer. Still images use the same transform fields as
+    // videos; playback fields are ignored unless the clip is a video.
+    updateActiveClipVideoProps(layerIndex: number, updates: Partial<VJVideoPlaybackProps & VJTransformProps>, deck: VJDeck = 'A') {
       update(state => {
         const targetLayerStates = pickLayerStates(state, deck);
         const targetGrid = pickGrid(state, deck);
         const newLayerStates = [...targetLayerStates];
         if (layerIndex < 0 || layerIndex >= newLayerStates.length) return state;
         const activeClip = newLayerStates[layerIndex]?.activeClip;
-        if (!activeClip || activeClip.type !== 'video') return state;
+        if (!isTransformableMediaClip(activeClip)) return state;
 
-        const newClip = { ...activeClip, ...updates };
+        const allowedUpdates: Partial<VJVideoPlaybackProps & VJTransformProps> = {};
+        const transformKeys: (keyof VJTransformProps)[] = ['zoom', 'fit', 'anchorX', 'anchorY', 'rotation', 'opacity', 'mirrorX'];
+        for (const key of transformKeys) {
+          if (key in updates) (allowedUpdates as any)[key] = (updates as any)[key];
+        }
+        if (activeClip.type === 'video') {
+          const playbackKeys: (keyof VJVideoPlaybackProps)[] = ['playbackMode', 'playbackRate', 'playbackSyncBeats', 'trimStart', 'trimEnd', 'isPlaying'];
+          for (const key of playbackKeys) {
+            if (key in updates) (allowedUpdates as any)[key] = (updates as any)[key];
+          }
+        }
+
+        const newClip = { ...activeClip, ...allowedUpdates };
         newLayerStates[layerIndex] = { ...newLayerStates[layerIndex], activeClip: newClip };
 
         // Mirror the change into the grid for any cells whose clip.id matches
@@ -1884,6 +1904,20 @@ function createVJClipLauncherStore() {
           block.id === blockId ? { ...block, name: newName } : block
         );
         return { ...state, blocks: newBlocks };
+      });
+    },
+
+    // Reorder blocks without changing their saved grids. Used by the VJ
+    // block tab strip so performers can arrange scenes in show order.
+    reorderBlocks(fromIndex: number, toIndex: number) {
+      update(state => {
+        if (fromIndex < 0 || fromIndex >= state.blocks.length) return state;
+        if (toIndex < 0 || toIndex >= state.blocks.length) return state;
+        if (fromIndex === toIndex) return state;
+        const nextBlocks = [...state.blocks];
+        const [moved] = nextBlocks.splice(fromIndex, 1);
+        nextBlocks.splice(toIndex, 0, moved);
+        return { ...state, blocks: nextBlocks };
       });
     },
 
@@ -2359,6 +2393,7 @@ export const vjOutputLayers = derived(
           // and just plays the whole file end-to-end on loop.
           playbackMode: clip.playbackMode || 'loop',
           playbackRate: clip.playbackRate ?? 1,
+          playbackSyncBeats: clip.playbackSyncBeats ?? null,
           trimStart: clip.trimStart ?? 0,
           trimEnd: clip.trimEnd ?? 1,
           isPlaying: clip.isPlaying !== false,
@@ -2427,6 +2462,7 @@ export const vjOutputLayers = derived(
         if (clip.type === 'video') {
           source.playbackMode = clip.playbackMode || 'loop';
           source.playbackRate = clip.playbackRate ?? 1;
+          source.playbackSyncBeats = clip.playbackSyncBeats ?? null;
           source.trimStart = clip.trimStart ?? 0;
           source.trimEnd = clip.trimEnd ?? 1;
           source.isPlaying = clip.isPlaying !== false;
@@ -2490,15 +2526,16 @@ export const vjOutputLayers = derived(
       // contentFit + opacity are still consumed via the existing
       // shader uniforms (they're UV-based and per-layer-multiply,
       // not corner-based).
-      const clipZoom = clip.type === 'video' ? (clip.zoom ?? 1) : 1;
-      const clipRotation = clip.type === 'video' ? (clip.rotation ?? 0) : 0;
-      const clipOpacity = clip.type === 'video' ? (clip.opacity ?? 1) : 1;
-      const clipMirrorX = clip.type === 'video' ? !!clip.mirrorX : false;
-      const ax = clip.type === 'video' ? (clip.anchorX ?? 0.5) : 0.5;
-      const ay = clip.type === 'video' ? (clip.anchorY ?? 0.5) : 0.5;
+      const transformableClip = isTransformableMediaClip(clip);
+      const clipZoom = transformableClip ? (clip.zoom ?? 1) : 1;
+      const clipRotation = transformableClip ? (clip.rotation ?? 0) : 0;
+      const clipOpacity = transformableClip ? (clip.opacity ?? 1) : 1;
+      const clipMirrorX = transformableClip ? !!clip.mirrorX : false;
+      const ax = transformableClip ? (clip.anchorX ?? 0.5) : 0.5;
+      const ay = transformableClip ? (clip.anchorY ?? 0.5) : 0.5;
       // Map VJ-friendly fit names to engine ContentFitMode.
       let clipContentFit: 'stretch' | 'fill' | 'crop' | undefined;
-      if (clip.type === 'video') {
+      if (transformableClip) {
         const f = clip.fit ?? 'cover';
         clipContentFit = f === 'cover' ? 'fill' : f === 'contain' ? 'crop' : 'stretch';
       }

@@ -205,7 +205,9 @@
     }
   }
 
-  // Open fullscreen on external monitor (or primary if no external)
+  // Open fullscreen on an external monitor/projector. On single-monitor
+  // systems this is intentionally a no-op; the separate Output Window
+  // button is the local preview path.
   export async function openFullscreenExternal() {
     const { experimentalWebRTC, experimentalZeroCopy } = readExperimentalTransports();
     if (experimentalZeroCopy) {
@@ -215,8 +217,11 @@
       // bounds and sets fullscreen:true on the BrowserWindow options.
       try {
         const displays: any[] = await invoke('get_displays');
-        const primary = displays.find((d: any) => d.isPrimary ?? d.primary) || displays[0];
-        const target = displays.find((d: any) => !(d.isPrimary ?? d.primary)) || primary;
+        const target = displays.find((d: any) => !(d.isPrimary ?? d.primary));
+        if (!target) {
+          console.warn('[Output] Fullscreen output requires an external display/projector.');
+          return false;
+        }
         await invoke('configure_next_output_window', {
           displayId: target.id,
           fullscreen: true,
@@ -232,18 +237,25 @@
         console.log(`[Output] Fullscreen on display ${target.label || target.id} [WebGPU zero-copy]`);
         const { attachOutputWindow } = await import('$lib/sync/outputSharedTexturePresenter');
         attachOutputWindow(newWin);
+        return true;
       } catch (err) {
         console.error('[Output] zero-copy fullscreen open failed:', err);
+        return false;
       }
-      return;
     }
     const transportTag = experimentalWebRTC ? ' [WebRTC]' : '';
     try {
       const result: any = await invoke('output_fullscreen_external', { experimentalWebRTC, experimentalZeroCopy: false });
+      if (result && result.ok === false) {
+        console.warn(`[Output] Fullscreen unavailable: ${result.error || 'no external display'}`);
+        return false;
+      }
       isOpen = true;
       console.log(`[Output] Fullscreen on display ${result.displayId}, external=${result.isExternal}${transportTag}`);
+      return true;
     } catch (error) {
       console.error('Failed to open fullscreen output:', error);
+      return false;
     }
   }
 
@@ -254,6 +266,15 @@
     } catch (error) {
       console.error('Failed to toggle fullscreen:', error);
       return false;
+    }
+  }
+
+  export async function getStatus(): Promise<{ exists: boolean; fullScreen: boolean; isExternal: boolean } | null> {
+    try {
+      return await invoke('output_window_status');
+    } catch (error) {
+      console.warn('Failed to read output window status:', error);
+      return null;
     }
   }
 

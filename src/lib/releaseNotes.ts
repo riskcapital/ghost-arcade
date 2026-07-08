@@ -8,6 +8,26 @@ export interface AppReleaseNotes {
 }
 
 const RELEASE_NOTES: Record<string, AppReleaseNotes> = {
+  '1.9.96': {
+    title: 'VJ media polish, preset reliability, and MIDI clock routing',
+    summary: [
+      'VJ media cells stay stable when images are dropped into the grid.',
+      'Mapping presets with video sources restore playback more reliably.',
+      'MIDI clock can use its own input while controller mappings use another.',
+    ],
+    highlights: [
+      'Expanded VJ Effect Bundle parameters now show the effect name at the top of the parameter list so it is clear which effect is being edited.',
+      'VJ clip cells keep fixed sizing during drag/drop, fixing image drops that could make rows and columns grow unexpectedly.',
+      'Still-image clips now expose the same fit, mirror, zoom, anchor, rotation, opacity, and reset transform controls as video clips.',
+      'Animated GIF image sources are refreshed in the renderer so output playback advances instead of freezing on the first uploaded frame.',
+      'Mapping media layers auto-rename to the dropped image or video name when the layer still has a generic media-layer name.',
+      'Mapping presets and VJ blocks can be drag-reordered, with MIDI preset indexes following the visual order.',
+      'Mapping presets that contain video sources now rehydrate video elements when recalled, avoiding the Replace workaround.',
+      'Settings now supports Cmd/Ctrl+, and MIDI Learn can be toggled with Cmd/Ctrl+M.',
+      'MIDI clock can be received from a separate input device while controller mappings stay on the main MIDI device.',
+      'VJ video speed can be free-running or synced so the clip/trim span fits 1 beat, 2 beats, 1 bar, 2 bars, or 4 bars at the master BPM.',
+    ],
+  },
   '1.9.95': {
     title: 'Marquee select no longer blocks mask and light-painting clicks',
     summary: [

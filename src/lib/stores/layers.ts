@@ -42,6 +42,46 @@ export function setHistoryCallback(fn: () => void) { _onDiscreteAction = fn; }
 function recordDiscreteAction() { if (_onDiscreteAction) _onDiscreteAction(); }
 const selectedLayerIdsState = writable<string[]>([]);
 
+function cleanMediaSourceName(source: MediaSource): string {
+  return (source.name || '').replace(/\.[^.]+$/, '').trim() || source.name || 'Media';
+}
+
+function shouldAutoRenameMediaLayer(layer: Layer, source: MediaSource | null): source is MediaSource {
+  if (!source || (source.type !== 'image' && source.type !== 'video')) return false;
+  const currentName = (layer.name || '').trim();
+  if (!currentName) return true;
+  return /^(media|media layer|image|video|new layer|layer \d+)$/i.test(currentName);
+}
+
+function isVideoSource(source: MediaSource | null | undefined): source is MediaSource {
+  return !!source && source.type === 'video' && !!source.src;
+}
+
+function shouldSkipVideoCors(src: string): boolean {
+  return /^(blob:|data:|file:|ghost-asset:|app:|ga-asset:)/i.test(src);
+}
+
+function rehydrateVideoSource(source: MediaSource) {
+  if (typeof document === 'undefined' || source.videoElement || !isVideoSource(source)) return;
+  const video = document.createElement('video');
+  if (!shouldSkipVideoCors(source.src)) video.crossOrigin = 'anonymous';
+  video.loop = source.playbackMode !== 'once';
+  video.muted = true;
+  video.playsInline = true;
+  video.preload = 'auto';
+  video.playbackRate = source.playbackRate ?? 1;
+  video.src = source.src;
+  source.videoElement = video;
+  source.isPlaying = true;
+  try { video.load(); } catch { /* best-effort preset video rehydrate */ }
+  const play = () => {
+    if (source.isPlaying === false) return;
+    video.play().catch(() => { /* autoplay can be retried by Canvas */ });
+  };
+  video.addEventListener('loadeddata', play, { once: true });
+  queueMicrotask(play);
+}
+
 function normalizeSelectedLayerIds(layerIds: string[], validIds: string[]): string[] {
   const validSet = new Set(validIds);
   const deduped: string[] = [];
@@ -2134,7 +2174,12 @@ void main() {
 
         return {
           ...project,
-          layers: project.layers.map((l) => (l.id === id ? { ...l, source } : l)),
+          layers: project.layers.map((l) => {
+            if (l.id !== id) return l;
+            const nextName = shouldAutoRenameMediaLayer(l, source) ? cleanMediaSourceName(source) : l.name;
+            if (isVideoSource(source)) rehydrateVideoSource(source);
+            return { ...l, name: nextName, source };
+          }),
         };
       });
       recordDiscreteAction();
@@ -3854,6 +3899,26 @@ void main() {
       });
     },
 
+    reorderComposition(fromIndex: number, toIndex: number) {
+      update((project) => {
+        if (!project.vjMode) return project;
+        const comps = project.vjMode.compositions || [];
+        if (fromIndex < 0 || fromIndex >= comps.length) return project;
+        if (toIndex < 0 || toIndex >= comps.length) return project;
+        if (fromIndex === toIndex) return project;
+        const nextCompositions = [...comps];
+        const [moved] = nextCompositions.splice(fromIndex, 1);
+        nextCompositions.splice(toIndex, 0, moved);
+        return {
+          ...project,
+          vjMode: {
+            ...project.vjMode,
+            compositions: nextCompositions,
+          },
+        };
+      });
+    },
+
     /**
      * Update composition thumbnail
      */
@@ -3893,6 +3958,11 @@ void main() {
 
         // Deep clone the composition's layers
         const loadedLayers = structuredClone(composition.layers);
+        loadedLayers.forEach((layer) => {
+          if (isVideoSource(layer.source)) {
+            rehydrateVideoSource(layer.source);
+          }
+        });
 
         return {
           ...project,

@@ -8,6 +8,7 @@ import { get } from 'svelte/store';
 class MidiManager {
   private access: MIDIAccess | null = null;
   private activeInput: MIDIInput | null = null;
+  private activeClockInput: MIDIInput | null = null;
   private activeOutput: MIDIOutput | null = null;
   private boundMessageHandler = this.handleMessage.bind(this);
 
@@ -152,6 +153,18 @@ class MidiManager {
       }
     }
 
+    const clockInputId = state.selectedClockInputId || state.selectedDeviceId;
+    if (clockInputId) {
+      const clockDev = inputs.find(d => d.id === clockInputId);
+      if (!clockDev || clockDev.state === 'disconnected') {
+        this.detachClockInput();
+      } else if (!this.activeClockInput || this.activeClockInput.id !== clockInputId) {
+        this.attachClockInput(clockInputId);
+      }
+    } else {
+      this.detachClockInput();
+    }
+
     // Auto-select first input if none selected (or try remembered device)
     if (!state.selectedDeviceId || !inputs.find(d => d.id === state.selectedDeviceId && d.state === 'connected')) {
       const firstConnected = inputs.find(d => d.state === 'connected');
@@ -178,6 +191,16 @@ class MidiManager {
     this.detachInput();
     midiStore.selectDevice(deviceId);
     this.attachInput(deviceId);
+    if (!get(midiStore).selectedClockInputId) {
+      this.attachClockInput(deviceId);
+    }
+  }
+
+  selectClockInputDevice(deviceId: string | null) {
+    this.detachClockInput();
+    midiStore.selectClockInput(deviceId);
+    const targetId = deviceId || get(midiStore).selectedDeviceId;
+    if (targetId) this.attachClockInput(targetId);
   }
 
   /** Public toggle for clock IN. When disabled, incoming clock bytes are
@@ -223,8 +246,29 @@ class MidiManager {
 
   private detachInput() {
     if (this.activeInput) {
-      this.activeInput.onmidimessage = null;
+      if (this.activeInput !== this.activeClockInput) {
+        this.activeInput.onmidimessage = null;
+      }
       this.activeInput = null;
+    }
+  }
+
+  private attachClockInput(deviceId: string) {
+    if (!this.access) return;
+    const input = this.access.inputs.get(deviceId);
+    if (input) {
+      input.onmidimessage = this.boundMessageHandler;
+      this.activeClockInput = input;
+      console.log(`[MIDI] Clock attached to: ${input.name}`);
+    }
+  }
+
+  private detachClockInput() {
+    if (this.activeClockInput) {
+      if (this.activeClockInput !== this.activeInput) {
+        this.activeClockInput.onmidimessage = null;
+      }
+      this.activeClockInput = null;
     }
   }
 
@@ -233,14 +277,22 @@ class MidiManager {
     if (!data || data.length < 1) return;
 
     const status = data[0];
+    const inputId = ((event.currentTarget || event.target) as MIDIInput | null)?.id ?? null;
+    const state = get(midiStore);
+    const controlInputId = state.selectedDeviceId;
+    const clockInputId = state.selectedClockInputId || state.selectedDeviceId;
 
     // ===== System Real-Time messages (no channel, status byte only) =====
     // Handled BEFORE the channel/type split because their status byte's
     // upper nibble is 0xF and a lower-nibble channel mask doesn't apply.
     if (status === 0xF8 || status === 0xFA || status === 0xFB || status === 0xFC) {
-      this.handleClockByte(status);
+      if (!clockInputId || inputId === clockInputId) {
+        this.handleClockByte(status);
+      }
       return;
     }
+
+    if (controlInputId && inputId && inputId !== controlInputId) return;
 
     if (data.length < 2) return;
     const channel = status & 0x0F;
@@ -283,7 +335,6 @@ class MidiManager {
     }
 
     // Check if we're in learn mode
-    const state = get(midiStore);
     if (state.learn.active && state.learn.targetPath) {
       // For note messages, only learn on Note On (velocity > 0)
       if (type === 'note' && value === 0) return;
