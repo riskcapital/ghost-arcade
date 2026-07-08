@@ -407,6 +407,8 @@
   let editingBlockId: string | null = null;
   let editingBlockName: string = '';
   let blockInputEl: HTMLInputElement | null = null;
+  let draggedBlockIndex: number | null = null;
+  let dragOverBlockIndex: number | null = null;
 
   // Preview canvas
   let previewCanvas: HTMLCanvasElement;
@@ -541,7 +543,11 @@
     const v = clip?.videoElement;
     if (!clip) return;
     if (v) v.playbackRate = rate;
-    vjClipLauncher.updateActiveClipVideoProps(layerIdx, { playbackRate: rate }, paramDeck);
+    vjClipLauncher.updateActiveClipVideoProps(layerIdx, { playbackRate: rate, playbackSyncBeats: null }, paramDeck);
+  }
+
+  function vjSetPlaybackSync(layerIdx: number, beats: number | null) {
+    vjClipLauncher.updateActiveClipVideoProps(layerIdx, { playbackSyncBeats: beats }, paramDeck);
   }
 
   function vjSetPlaybackMode(layerIdx: number, mode: 'loop' | 'once') {
@@ -2788,6 +2794,41 @@
     vjClipLauncher.deleteBlock(blockId);
   }
 
+  function handleBlockDragStart(e: DragEvent, blockIdx: number) {
+    if (editingBlockId) {
+      e.preventDefault();
+      return;
+    }
+    draggedBlockIndex = blockIdx;
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('application/x-ghost-vj-block', String(blockIdx));
+    }
+  }
+
+  function handleBlockDragOver(e: DragEvent, blockIdx: number) {
+    if (draggedBlockIndex === null) return;
+    e.preventDefault();
+    dragOverBlockIndex = blockIdx;
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+  }
+
+  function handleBlockDrop(e: DragEvent, blockIdx: number) {
+    e.preventDefault();
+    const rawIndex = e.dataTransfer?.getData('application/x-ghost-vj-block');
+    const fromIndex = draggedBlockIndex ?? (rawIndex ? Number(rawIndex) : NaN);
+    if (Number.isFinite(fromIndex)) {
+      vjClipLauncher.reorderBlocks(fromIndex, blockIdx);
+    }
+    draggedBlockIndex = null;
+    dragOverBlockIndex = null;
+  }
+
+  function handleBlockDragEnd() {
+    draggedBlockIndex = null;
+    dragOverBlockIndex = null;
+  }
+
   // Layer drag handlers for reordering
   function handleLayerDragStart(layerIndex: number, e: DragEvent) {
     draggedLayerIndex = layerIndex;
@@ -3675,6 +3716,10 @@
                       </div>
                       {#if expandedEffectId === effect.id}
                         <div class="effect-params">
+                          <div class="effect-param-title">
+                            <span>Effect</span>
+                            <strong>{effect.type}</strong>
+                          </div>
                           {#if getEffectPresets(effect.type).length > 0}
                             <details open>
                               <summary>Presets</summary>
@@ -4116,12 +4161,14 @@
             {/if}
           {/if}
 
-          <!-- Video Controls Panel (matches LayerPanel mapping-mode controls) -->
-          {#if selectedLayerIndex !== null && selectedLayerState?.activeClip?.type === 'video' && selectedLayerState?.activeClip?.videoElement}
+          <!-- Media Controls Panel (matches LayerPanel mapping-mode controls) -->
+          {#if selectedLayerIndex !== null && selectedLayerState?.activeClip && (selectedLayerState.activeClip.type === 'video' || selectedLayerState.activeClip.type === 'image')}
             {@const vClip = selectedLayerState.activeClip}
-            {@const vEl = vClip.videoElement!}
+            {@const isVideoClip = vClip.type === 'video'}
+            {@const vEl = isVideoClip ? vClip.videoElement : null}
             {@const vMode = vClip.playbackMode || 'loop'}
             {@const vRate = vClip.playbackRate ?? 1.0}
+            {@const vSyncBeats = vClip.playbackSyncBeats ?? null}
             {@const vTrimS = vClip.trimStart ?? 0}
             {@const vTrimE = vClip.trimEnd ?? 1}
             {@const vIsPlaying = vClip.isPlaying !== false}
@@ -4135,12 +4182,15 @@
             <div class="shader-params-panel video-params-panel">
               <div class="shader-params-panel-header">
                 <span class="shader-params-overlay-title">
-                  {vClip.name || 'Video'}
-                  <span class="shader-params-layer-badge" style="background: rgba(96, 165, 250, 0.3); color: #60a5fa;">VID</span>
+                  {vClip.name || (isVideoClip ? 'Video' : 'Image')}
+                  <span class="shader-params-layer-badge" style={isVideoClip ? 'background: rgba(96, 165, 250, 0.3); color: #60a5fa;' : 'background: rgba(52, 211, 153, 0.26); color: #34d399;'}>
+                    {isVideoClip ? 'VID' : 'IMG'}
+                  </span>
                 </span>
               </div>
               <div class="shader-params-panel-list">
                 <div class="video-controls-panel">
+                  {#if isVideoClip && vEl}
                   <!-- Transport row -->
                   <div class="vt-transport">
                     <button
@@ -4174,6 +4224,8 @@
                       class="vt-speed"
                       value={String(vRate)}
                       onchange={(e) => vjSetPlaybackRate(selectedLayerIndex!, parseFloat((e.target as HTMLSelectElement).value))}
+                      disabled={!!vSyncBeats}
+                      title={vSyncBeats ? 'Speed is locked to beat/bar sync' : 'Playback speed'}
                     >
                       <option value="0.25">0.25x</option>
                       <option value="0.5">0.5x</option>
@@ -4181,6 +4233,22 @@
                       <option value="1.5">1.5x</option>
                       <option value="2">2x</option>
                       <option value="4">4x</option>
+                    </select>
+                    <select
+                      class="vt-speed"
+                      value={vSyncBeats ? String(vSyncBeats) : ''}
+                      onchange={(e) => {
+                        const raw = (e.target as HTMLSelectElement).value;
+                        vjSetPlaybackSync(selectedLayerIndex!, raw ? parseFloat(raw) : null);
+                      }}
+                      title="Fit this video to the master BPM"
+                    >
+                      <option value="">Free</option>
+                      <option value="1">1 beat</option>
+                      <option value="2">2 beats</option>
+                      <option value="4">1 bar</option>
+                      <option value="8">2 bars</option>
+                      <option value="16">4 bars</option>
                     </select>
                   </div>
 
@@ -4238,6 +4306,7 @@
                       Once
                     </button>
                   </div>
+                  {/if}
 
                   <!-- Per-clip transform: zoom, fit, anchor, rotation, opacity.
                        Maps to VJClip.zoom/fit/anchorX/anchorY/rotation/opacity
@@ -4381,9 +4450,15 @@
               <div
                 class="block-tab"
                 class:active={$vjClipLauncher.activeBlockId === block.id}
+                class:dragover={dragOverBlockIndex === blockIdx}
+                draggable={editingBlockId !== block.id}
                 onclick={() => handleSelectBlock(block.id)}
                 ondblclick={(e) => startEditingBlock(block, e)}
                 oncontextmenu={(e) => openBlockContextMenu(e, block.id)}
+                ondragstart={(e) => handleBlockDragStart(e, blockIdx)}
+                ondragover={(e) => handleBlockDragOver(e, blockIdx)}
+                ondrop={(e) => handleBlockDrop(e, blockIdx)}
+                ondragend={handleBlockDragEnd}
                 role="tab"
                 tabindex="0"
                 data-midi-path="vj:block:{blockIdx}"
@@ -6780,6 +6855,31 @@
     gap: 2px;
   }
 
+  .effect-param-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 2px 0 8px;
+    margin-bottom: 2px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: rgba(148, 163, 184, 0.74);
+  }
+
+  .effect-param-title strong {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    color: var(--text-primary, #eee);
+    font-size: 12px;
+    letter-spacing: 0.02em;
+    text-transform: none;
+  }
+
   .param-row {
     display: flex;
     align-items: center;
@@ -7162,8 +7262,10 @@
   }
 
   .column-trigger {
-    flex: 1 1 0;
+    flex: 0 0 148px;
+    width: 148px;
     min-width: 76px;
+    max-width: 148px;
     box-sizing: border-box;
     height: 28px;
     background: #222;
@@ -7188,6 +7290,7 @@
     margin-bottom: 4px;
     min-width: 100%;
     width: max-content;
+    align-items: stretch;
   }
 
   /* Reversed layout: controls on right, clips flow left-to-right */
@@ -7336,7 +7439,9 @@
 
   /* Clip Cells */
   .clip-cell {
-    flex: 1 1 0;
+    flex: 0 0 148px;
+    width: 148px;
+    max-width: 148px;
     aspect-ratio: 16 / 9;
     min-width: 76px;
     min-height: 60px;
@@ -7970,6 +8075,9 @@
     transition: all 0.15s;
     white-space: nowrap;
     min-width: 80px;
+    max-width: 180px;
+    flex: 0 0 auto;
+    user-select: none;
   }
 
   .block-tab:hover {
@@ -7985,6 +8093,12 @@
 
   .block-tab.active .block-name {
     color: #000;
+  }
+
+  .block-tab.dragover {
+    border-color: var(--accent-primary, #BB86FC);
+    box-shadow: 0 0 0 1px rgba(187, 134, 252, 0.55), 0 0 12px rgba(187, 134, 252, 0.22);
+    transform: translateY(-1px);
   }
 
   .block-name {

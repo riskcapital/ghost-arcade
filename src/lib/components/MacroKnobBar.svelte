@@ -386,6 +386,10 @@
 
                 {#if isExpanded}
                   <div class="macro-fx-params">
+                    <div class="macro-fx-params-title">
+                      <span>Effect</span>
+                      <strong>{EFFECT_LABEL_BY_TYPE[fx.type] ?? fx.type}</strong>
+                    </div>
                     {#if paramMetas.length === 0}
                       <div class="macro-fx-params-empty">
                         This effect has no editable parameters — just toggle on/off
@@ -723,6 +727,30 @@
     border-top: 1px solid rgba(187, 134, 252, 0.18);
     background: rgba(0, 0, 0, 0.18);
   }
+  .macro-fx-params-title {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 0 0 6px;
+    margin-bottom: 2px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    color: var(--text-muted, #888);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+  .macro-fx-params-title strong {
+    min-width: 0;
+    color: var(--text-primary, #fff);
+    font-size: 13px;
+    letter-spacing: 0.02em;
+    text-transform: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .macro-fx-params-empty {
     font-size: 13px;
     color: #777;
@@ -796,7 +824,7 @@
   }
   .macro-fx-handle:active { cursor: grabbing; }
   .macro-fx-meta {
-    flex: 1;
+    flex: 1 1 150px;
     min-width: 0;
     display: flex;
     flex-direction: column;
@@ -819,7 +847,8 @@
     white-space: nowrap;
   }
   .macro-fx-opacity {
-    width: 80px;
+    width: 110px;
+    flex: 0 0 110px;
     height: 4px;
     -webkit-appearance: none;
     appearance: none;

@@ -65,6 +65,7 @@
   // EULAModal removed — no EULA in the open-source build.
   import UpdateModal from './lib/components/UpdateModal.svelte';
   import { updateModalOpen, leftSidebarTab } from './lib/stores/uiState';
+  import { showToast } from './lib/stores/errorToast';
   import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, setHistoryCallback } from './lib/stores/layers';
   import { keyframeTimeline } from './lib/stores/keyframeTimeline';
   import { layerSequencer } from './lib/stores/layerSequencer';
@@ -1019,6 +1020,23 @@
       // ESC exits MIDI edit mode
       if (e.key === 'Escape' && get(midiStore).editMode) {
         midiStore.setEditMode(false);
+        e.preventDefault();
+        return;
+      }
+
+      // Classic Settings shortcut: Cmd+, on macOS, Ctrl+, elsewhere.
+      if ((e.metaKey || e.ctrlKey) && e.key === ',' && !e.shiftKey && !e.altKey) {
+        showSettings = true;
+        e.preventDefault();
+        return;
+      }
+
+      // Toggle MIDI Learn edit mode. Kept on Cmd/Ctrl+M so it is easy to
+      // reach during setup without stealing normal single-key performance
+      // shortcuts from VJ mode.
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'm' || e.key === 'M') && !e.shiftKey && !e.altKey) {
+        const currentMidi = get(midiStore);
+        midiStore.setEditMode(!currentMidi.editMode);
         e.preventDefault();
         return;
       }
@@ -3460,7 +3478,7 @@
   // because the effect throws on every tick. Strip them here once and
   // the mobile companion still gets the data it actually needs (ids,
   // names, params, layouts).
-  const _SKIP_KEYS = new Set(['texture', 'videoElement', 'iframeElement', 'renderTarget', 'synthVisionCanvas', 'threejsCanvas']);
+  const _SKIP_KEYS = new Set(['texture', 'imageElement', 'videoElement', 'iframeElement', 'renderTarget', 'synthVisionCanvas', 'threejsCanvas']);
   function _sanitizeForSync(key: string, value: any): any {
     if (_SKIP_KEYS.has(key)) return undefined;
     if (typeof key === 'string' && key.startsWith('_')) return undefined;
@@ -3827,36 +3845,53 @@
   }
 
   async function toggleFullscreen() {
-    // If a projector window is already attached, toggle its fullscreen
-    // rather than re-opening (the latter reloads 'ga-output' → re-
-    // handshake storm). Check the presenter's real attached state, not
-    // just the local intent flag.
-    if ((outputIsOpen || isOutputAttached()) && outputWindow) {
-      outputIsOpen = true;
-      await matchOutputDisplayResolution('fullscreen output');
-      const isFs = await outputWindow.toggleFullscreen();
-      outputMode = isFs ? 'fullscreen' : 'window';
-      return;
-    }
-
-    // Open fullscreen output on external monitor (or primary if no external)
-    if (outputMode !== 'fullscreen') {
-      if (outputWindow) {
-        await matchOutputDisplayResolution('fullscreen output');
-        await outputWindow.openFullscreenExternal();
-        outputIsOpen = true;
-        outputMode = 'fullscreen';
-        settings.setOutputWindowOpen(true);
-      }
-    } else {
-      // Close the fullscreen output
+    const status = outputWindow ? await outputWindow.getStatus() : null;
+    if (outputMode === 'fullscreen' || (status?.exists && status.isExternal)) {
+      // Close the dedicated projector/external fullscreen output.
       if (outputWindow) {
         outputWindow.close();
       }
       outputIsOpen = false;
       outputMode = 'embedded';
       settings.setOutputWindowOpen(false);
+      return;
     }
+
+    if (!outputWindow) return;
+
+    try {
+      const displays: any[] = await invoke('get_displays');
+      const external = displays.find((d: any) => !(d.isPrimary ?? d.primary));
+      if (!external) {
+        showToast('Connect an external display or projector to use fullscreen output.', 'info');
+        return;
+      }
+    } catch {
+      // If display probing fails, keep the old behavior rather than
+      // blocking a real projector setup.
+    }
+
+    // Fullscreen means "dedicated projector output". If a preview output
+    // window is already open, close it first so window.open does not reuse
+    // the named ga-output window and ignore the fullscreen placement.
+    if (outputIsOpen || isOutputAttached()) {
+      outputWindow.close();
+      outputIsOpen = false;
+      settings.setOutputWindowOpen(false);
+      await new Promise((resolve) => setTimeout(resolve, 120));
+    }
+
+    await matchOutputDisplayResolution('fullscreen output');
+    const opened = await outputWindow.openFullscreenExternal();
+    if (!opened) {
+      outputMode = 'embedded';
+      outputIsOpen = false;
+      settings.setOutputWindowOpen(false);
+      return;
+    }
+    outputIsOpen = true;
+    outputMode = 'fullscreen';
+    settings.setOutputWindowOpen(true);
   }
 
   // Show mobile connection info

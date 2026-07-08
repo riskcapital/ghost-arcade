@@ -75,6 +75,7 @@ const ALLOWED_IPC_COMMANDS = new Set([
   // Output window controls
   'output_toggle_fullscreen',
   'output_fullscreen_external',
+  'output_window_status',
   'output_set_cursor',
   // Per-slice multi-output windows (Phase 2 multi-output system)
   'output_open_slice_window',

@@ -251,12 +251,18 @@
   // MIDI
   $: midiDevices = $midiStore.devices.filter((d: any) => d.state === 'connected');
   $: midiSelectedId = $midiStore.selectedDeviceId;
+  $: midiClockSelectedId = $midiStore.selectedClockInputId;
   $: midiAvailable = $midiStore.available;
   $: midiEditMode = $midiStore.editMode;
 
   function handleMidiDeviceChange(e: Event) {
     const id = (e.target as HTMLSelectElement).value;
     if (id) midiManager.selectDevice(id);
+  }
+
+  function handleMidiClockDeviceChange(e: Event) {
+    const id = (e.target as HTMLSelectElement).value;
+    midiManager.selectClockInputDevice(id || null);
   }
 
   // ── Sidebar nav ──────────────────────────────────────────────────────
@@ -1641,7 +1647,7 @@
             <div class="setting-row">
               <div class="setting-label">
                 <span class="label-text">Receive MIDI Clock</span>
-                <span class="label-hint">Sync BPM from a DAW, drum machine, or other clock master via the selected input device</span>
+                <span class="label-hint">Sync BPM from a DAW, drum machine, or other clock master</span>
               </div>
               <label class="toggle">
                 <input type="checkbox"
@@ -1653,6 +1659,18 @@
             </div>
 
             {#if $midiStore.clockInEnabled}
+              <div class="setting-row" style="padding-left: 16px;">
+                <div class="setting-label">
+                  <span class="label-text">Clock Input</span>
+                  <span class="label-hint">Use a separate virtual MIDI port when clock and controls come from different places</span>
+                </div>
+                <select value={midiClockSelectedId || ''} onchange={handleMidiClockDeviceChange}>
+                  <option value="">Same as MIDI Device</option>
+                  {#each midiDevices as device}
+                    <option value={device.id}>{device.name}</option>
+                  {/each}
+                </select>
+              </div>
               <div class="setting-row" style="padding-left: 16px;">
                 <div class="setting-label">
                   <span class="label-text">Clock Status</span>

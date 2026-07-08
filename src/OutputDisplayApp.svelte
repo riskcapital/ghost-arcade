@@ -37,6 +37,7 @@
    * Cross-platform: pure browser APIs. Same code runs on Windows + Mac.
    */
   import { onMount, onDestroy } from 'svelte';
+  import { invoke } from '$lib/bridge';
 
   const SIGNAL_CHANNEL = 'ghostarcade-output-pixels';
 
@@ -338,9 +339,20 @@
   // of the `?stats=1` URL flag so a user troubleshooting an external
   // display can flip diagnostics on without rebooting the output window.
   function handleKeydown(e: KeyboardEvent) {
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      exitOutputFullscreen();
+      return;
+    }
     if (e.key === 's' || e.key === 'S') {
       showStats = !showStats;
     }
+  }
+
+  function exitOutputFullscreen() {
+    invoke('output_exit_fullscreen').catch((err: any) => {
+      console.warn('[OutputDisplay] Failed to exit fullscreen:', err);
+    });
   }
 
   onMount(async () => {

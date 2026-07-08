@@ -68,6 +68,8 @@
   let editingId: string | null = null;
   let editingName = '';
   let newPresetName = '';
+  let draggedPresetIndex: number | null = null;
+  let dragOverPresetIndex: number | null = null;
 
   // ─── Auto-Play Engine ──────────────────────────────────────────────
   type TimingMode = 'fixed' | 'beat';
@@ -194,6 +196,41 @@
     }
     editingId = null;
     editingName = '';
+  }
+
+  function handlePresetDragStart(e: DragEvent, compIdx: number) {
+    if (editingId) {
+      e.preventDefault();
+      return;
+    }
+    draggedPresetIndex = compIdx;
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('application/x-ghost-mapping-preset', String(compIdx));
+    }
+  }
+
+  function handlePresetDragOver(e: DragEvent, compIdx: number) {
+    if (draggedPresetIndex === null) return;
+    e.preventDefault();
+    dragOverPresetIndex = compIdx;
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+  }
+
+  function handlePresetDrop(e: DragEvent, compIdx: number) {
+    e.preventDefault();
+    const rawIndex = e.dataTransfer?.getData('application/x-ghost-mapping-preset');
+    const fromIndex = draggedPresetIndex ?? (rawIndex ? Number(rawIndex) : NaN);
+    if (Number.isFinite(fromIndex)) {
+      project.reorderComposition(fromIndex, compIdx);
+    }
+    draggedPresetIndex = null;
+    dragOverPresetIndex = null;
+  }
+
+  function handlePresetDragEnd() {
+    draggedPresetIndex = null;
+    dragOverPresetIndex = null;
   }
 
   // Delete preset
@@ -482,8 +519,14 @@
           <div
             class="preset-item"
             class:active={$activeCompositionId === comp.id}
+            class:dragover={dragOverPresetIndex === compIdx}
+            draggable={editingId !== comp.id}
             onclick={() => loadPreset(comp.id)}
             oncontextmenu={(e) => openCtxMenu(e, comp)}
+            ondragstart={(e) => handlePresetDragStart(e, compIdx)}
+            ondragover={(e) => handlePresetDragOver(e, compIdx)}
+            ondrop={(e) => handlePresetDrop(e, compIdx)}
+            ondragend={handlePresetDragEnd}
             role="button"
             tabindex="0"
             onkeydown={(e) => e.key === 'Enter' && loadPreset(comp.id)}
@@ -985,6 +1028,12 @@
   .preset-item.active {
     border-color: #BB86FC;
     box-shadow: 0 0 12px rgba(0, 170, 255, 0.3);
+  }
+
+  .preset-item.dragover {
+    border-color: #7EC8E3;
+    box-shadow: 0 0 0 1px rgba(126, 200, 227, 0.7), 0 0 14px rgba(126, 200, 227, 0.26);
+    transform: translateY(-2px);
   }
 
   .preset-thumb {

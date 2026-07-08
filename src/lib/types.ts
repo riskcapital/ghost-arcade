@@ -701,6 +701,7 @@ export interface MediaSource {
   src: string; // URL or path
   name: string;
   texture?: THREE.Texture;
+  imageElement?: HTMLImageElement;
   videoElement?: HTMLVideoElement;
   iframeElement?: HTMLIFrameElement; // For three.js HTML sources
   threejsCanvas?: HTMLCanvasElement; // Offscreen canvas to capture iframe content
@@ -715,6 +716,7 @@ export interface MediaSource {
   mirrorX?: boolean; // Source-owned horizontal mirror, used for webcam/selfie feeds
   playbackMode?: VideoPlaybackMode; // Video playback mode (default: 'loop')
   playbackRate?: number; // Playback speed multiplier (default: 1.0)
+  playbackSyncBeats?: number | null; // If set, fit full clip/trim span to this many beats
   trimStart?: number; // 0-1 normalized start point (default 0)
   trimEnd?: number; // 0-1 normalized end point (default 1)
   _lastFrameTime?: number; // Internal: timestamp for manual frame stepping

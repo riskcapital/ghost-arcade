@@ -529,6 +529,14 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   // need an obvious escape hatch. The hint reuses Esc → IPC close.
   let showEscHint = true;
 
+  function closeSliceOutput(): void {
+    invoke('output_close_slice_window', { sliceId }).catch(() => {
+      // Fallback: if IPC fails (preload not exposing the channel
+      // yet), close the renderer window itself.
+      window.close();
+    });
+  }
+
   // Look up the slice's live config every render. The BroadcastChannel
   // state-sync pushes settings into this window's store automatically,
   // so editing the slice in the editor immediately reflects here.
@@ -800,11 +808,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') {
         e.preventDefault();
-        invoke('output_close_slice_window', { sliceId }).catch(() => {
-          // Fallback: if IPC fails (preload not exposing the channel
-          // yet), close the renderer window itself.
-          window.close();
-        });
+        closeSliceOutput();
       }
     };
     window.addEventListener('keydown', onKey);
@@ -857,6 +861,9 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
          monitor and covers everything else. -->
     <div class="esc-hint">Press <kbd>Esc</kbd> to close</div>
   {/if}
+  <button class="fullscreen-exit" onclick={closeSliceOutput} title="Close fullscreen slice output (Esc)">
+    Close Output
+  </button>
   <!-- Canvas is mounted but visually hidden — it still runs the
        state-synced render loop, just behind the presentation canvas.
        Set to a fixed 1920×1080 box so it doesn't fight the window
@@ -973,6 +980,36 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     margin: 0 2px;
     font-family: inherit;
     font-size: 12px;
+  }
+  .fullscreen-exit {
+    position: fixed;
+    top: 54px;
+    right: 16px;
+    z-index: 102;
+    border: 1px solid rgba(255, 122, 99, 0.55);
+    border-radius: 6px;
+    background: rgba(0, 0, 0, 0.72);
+    color: #ffd4cc;
+    padding: 8px 12px;
+    font: 700 12px/1.1 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    letter-spacing: 0;
+    opacity: 0;
+    transform: translateY(-3px);
+    transition: opacity 140ms ease, transform 140ms ease, border-color 140ms ease, background 140ms ease;
+    cursor: pointer !important;
+  }
+  .slice-output:hover .fullscreen-exit,
+  .fullscreen-exit:hover,
+  .fullscreen-exit:focus-visible {
+    opacity: 1;
+    transform: translateY(0);
+  }
+  .fullscreen-exit:hover,
+  .fullscreen-exit:focus-visible {
+    background: rgba(255, 122, 99, 0.92);
+    border-color: rgba(255, 172, 152, 0.95);
+    color: #120806;
+    outline: none;
   }
   @keyframes esc-fade {
     0% { opacity: 0; transform: translateY(-4px); }

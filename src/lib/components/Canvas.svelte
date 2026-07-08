@@ -15,6 +15,7 @@
   import { keyframeTimeline } from '../stores/keyframeTimeline';
   import { createLayer, VJ_MIX_SOURCE_INDEX, type Layer, type MappingCompositionState } from '../types';
   import * as THREE from 'three';
+  import { parseGIF, decompressFrames, type ParsedFrame } from 'gifuct-js';
   import { createISFShader, updateISFShader, setISFInputValue, setISFInputTexture, type ISFShaderInstance } from '../isf/renderer';
   import { LinesRenderer } from '../lines/renderer';
   import { DrawingRenderer } from '../drawing/renderer';
@@ -2785,6 +2786,109 @@
   // cachedStageLayers). Then the next frame rebuilds them. That's what was
   // recreating the VJ shader RT each frame and leaving the stage-injected
   // screens sampling a freshly-allocated, never-rendered texture.
+  function isAnimatedGifSource(source: import('../types').MediaSource): boolean {
+    if (source.type !== 'image') return false;
+    const src = source.src || '';
+    const name = source.name || '';
+    const asset = (source as any)._assetRef;
+    const mime = String((source as any).mime || asset?.mime || '').toLowerCase();
+    const originalPath = String(asset?.originalPath || asset?.name || '').toLowerCase();
+    return mime === 'image/gif'
+      || /^data:image\/gif/i.test(src)
+      || /\.gif(?:$|[?#])/i.test(src)
+      || /\.gif(?:$|[?#])/i.test(name)
+      || /\.gif(?:$|[?#])/i.test(originalPath);
+  }
+
+  type DecodedGifState = {
+    frames: ParsedFrame[];
+    width: number;
+    height: number;
+    frameIndex: number;
+    nextFrameAt: number;
+    canvas: HTMLCanvasElement;
+    ctx: CanvasRenderingContext2D;
+    patchCanvas: HTMLCanvasElement;
+    patchCtx: CanvasRenderingContext2D;
+    scratch?: ImageData;
+    didLogAdvance?: boolean;
+  };
+
+  function drawDecodedGifFrame(state: DecodedGifState, frame: ParsedFrame) {
+    const dims = frame.dims;
+    if (!state.scratch || state.scratch.width !== dims.width || state.scratch.height !== dims.height) {
+      state.patchCanvas.width = Math.max(1, dims.width);
+      state.patchCanvas.height = Math.max(1, dims.height);
+      state.scratch = state.patchCtx.createImageData(dims.width, dims.height);
+    }
+    if (frame.disposalType === 2) {
+      state.ctx.clearRect(0, 0, state.width, state.height);
+    }
+    state.scratch.data.set(frame.patch);
+    state.patchCtx.putImageData(state.scratch, 0, 0);
+    state.ctx.drawImage(state.patchCanvas, dims.left, dims.top);
+  }
+
+  async function loadAnimatedGifTexture(source: import('../types').MediaSource): Promise<THREE.Texture> {
+    const resp = await fetch(source.src);
+    if (!resp.ok) throw new Error(`GIF failed to load (${resp.status})`);
+    const gif = parseGIF(await resp.arrayBuffer());
+    const frames = decompressFrames(gif, true).filter((f) => f.patch && f.dims?.width > 0 && f.dims?.height > 0);
+    if (frames.length === 0) throw new Error('GIF had no decodable frames');
+    const width = Math.max(1, gif.lsd.width || frames[0].dims.width);
+    const height = Math.max(1, gif.lsd.height || frames[0].dims.height);
+    const canvas = document.createElement('canvas');
+    canvas.width = width;
+    canvas.height = height;
+    const ctx = canvas.getContext('2d', { alpha: true });
+    const patchCanvas = document.createElement('canvas');
+    const patchCtx = patchCanvas.getContext('2d', { alpha: true });
+    if (!ctx || !patchCtx) throw new Error('GIF canvas unavailable');
+    const state: DecodedGifState = {
+      frames,
+      width,
+      height,
+      frameIndex: 0,
+      nextFrameAt: performance.now() + Math.max(20, frames[0].delay || 100),
+      canvas,
+      ctx,
+      patchCanvas,
+      patchCtx,
+    };
+    drawDecodedGifFrame(state, frames[0]);
+
+    const texture = new THREE.CanvasTexture(canvas);
+    texture.minFilter = THREE.LinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.format = THREE.RGBAFormat;
+    texture.needsUpdate = true;
+    (texture as any).__animatedGif = state;
+    console.log('[GIF] Animated texture loaded:', source.name || source.src, `${width}x${height}`, `${frames.length} frames`);
+    return texture;
+  }
+
+  function updateAnimatedGifTexture(texture: THREE.Texture | null | undefined): void {
+    const gif = (texture as any)?.__animatedGif as DecodedGifState | undefined;
+    if (!texture || !gif?.frames?.length) return;
+    const now = performance.now();
+    if (now < gif.nextFrameAt) return;
+    let guard = 0;
+    while (now >= gif.nextFrameAt && guard++ < 8) {
+      gif.frameIndex = (gif.frameIndex + 1) % gif.frames.length;
+      const frame = gif.frames[gif.frameIndex];
+      drawDecodedGifFrame(gif, frame);
+      gif.nextFrameAt += Math.max(20, frame.delay || 100);
+    }
+    if (!gif.didLogAdvance) {
+      gif.didLogAdvance = true;
+      console.log('[GIF] Animated texture advancing frames:', gif.frames.length);
+    }
+    if (now - gif.nextFrameAt > 1000) {
+      gif.nextFrameAt = now + Math.max(20, gif.frames[gif.frameIndex].delay || 100);
+    }
+    texture.needsUpdate = true;
+  }
+
   function updateTexturesSync(layerList: Layer[], cleanupStale: boolean = true) {
     // Track which layers are currently active
     const currentLayerIds = new Set<string>();
@@ -2896,6 +3000,10 @@
         loadTextureAsync(layer.id, layer.source, lookupKey);
       }
 
+      if (layer.source.type === 'image' && layer.source.texture && isAnimatedGifSource(layer.source)) {
+        updateAnimatedGifTexture(layer.source.texture);
+      }
+
       // Video textures need to be marked for update every frame so the
       // GPU resamples each decoded frame — but ONLY when the video has
       // actual frame data. Setting `needsUpdate=true` while the element
@@ -2969,11 +3077,20 @@
         if (video && isFinite(video.duration) && video.duration > 0) {
           const source = layer.source;
           const mode = source.playbackMode || 'loop';
-          const rate = source.playbackRate ?? 1.0;
+          let rate = source.playbackRate ?? 1.0;
           const trimS = source.trimStart ?? 0;
           const trimE = source.trimEnd ?? 1;
           const trimStartTime = trimS * video.duration;
           const trimEndTime = trimE * video.duration;
+          const syncBeats = source.playbackSyncBeats ?? null;
+          if (syncBeats && syncBeats > 0) {
+            const audio = get(audioStore);
+            const bpm = audio.manualBPM || audio.bpm || 120;
+            const trimDuration = Math.max(0.01, trimEndTime - trimStartTime);
+            const targetDuration = Math.max(0.01, (60 / bpm) * syncBeats);
+            rate = Math.max(0.05, Math.min(8, trimDuration / targetDuration));
+            source.playbackRate = rate;
+          }
           // Whether the user wants the video playing (UI toggle)
           const wantsPlaying = source.isPlaying !== false;
 
@@ -3123,7 +3240,9 @@
       let texture: THREE.Texture | null = null;
 
       if (source.type === 'image') {
-        texture = await loadImageTexture(source.src);
+        texture = isAnimatedGifSource(source)
+          ? await loadAnimatedGifTexture(source)
+          : await loadImageTexture(source.src);
       } else if (source.type === 'video') {
         // Get video element - either from source or create a new one
         let video = source.videoElement;

@@ -3269,12 +3269,15 @@ function registerIpcHandlers() {
     const allDisplays = screen.getAllDisplays();
     const primary = screen.getPrimaryDisplay();
     const external = allDisplays.find(d => d.id !== primary.id);
-    const target = external || primary;
+    if (!external) {
+      return { ok: false, displayId: primary.id, isExternal: false, error: 'No external display connected' };
+    }
+    const target = external;
     const experimentalWebRTC = !!(args && args.experimentalWebRTC);
     const experimentalZeroCopy = !!(args && args.experimentalZeroCopy);
 
     createOutputWindow(target.bounds.width, target.bounds.height, target.bounds.x, target.bounds.y, true, target.id, experimentalWebRTC, experimentalZeroCopy);
-    return { displayId: target.id, isExternal: !!external };
+    return { ok: true, displayId: target.id, isExternal: true };
   });
 
   // --- Toggle output fullscreen ---
@@ -3286,6 +3289,43 @@ function registerIpcHandlers() {
       return !isFs;
     }
     return false;
+  });
+
+  ipcMain.handle('output_exit_fullscreen', () => {
+    if (outputWindow && !outputWindow.isDestroyed()) {
+      const wasSimpleFs = typeof outputWindow.isSimpleFullScreen === 'function' && outputWindow.isSimpleFullScreen();
+      const wasFs = outputWindow.isFullScreen() || wasSimpleFs;
+      if (wasFs) {
+        if (wasSimpleFs) outputWindow.setSimpleFullScreen(false);
+        outputWindow.setFullScreen(false);
+        outputWindow.setMenuBarVisibility(true);
+        outputWindow.show();
+        outputWindow.focus();
+      }
+      return { ok: true, wasFullScreen: wasFs, fullScreen: false };
+    }
+    return { ok: false, wasFullScreen: false, fullScreen: false };
+  });
+
+  ipcMain.handle('output_window_status', () => {
+    if (!outputWindow || outputWindow.isDestroyed()) {
+      return { exists: false, fullScreen: false, isExternal: false };
+    }
+    const primary = screen.getPrimaryDisplay();
+    const bounds = outputWindow.getBounds();
+    const cx = bounds.x + bounds.width / 2;
+    const cy = bounds.y + bounds.height / 2;
+    const target = screen.getDisplayNearestPoint({ x: Math.round(cx), y: Math.round(cy) });
+    const simpleFullScreen = typeof outputWindow.isSimpleFullScreen === 'function' && outputWindow.isSimpleFullScreen();
+    const fullScreen = outputWindow.isFullScreen() || simpleFullScreen;
+    return {
+      exists: true,
+      fullScreen,
+      simpleFullScreen,
+      isExternal: target.id !== primary.id,
+      displayId: target.id,
+      bounds,
+    };
   });
 
   // --- Set cursor visibility on output window ---
@@ -4891,6 +4931,7 @@ function createMainWindow() {
             try { existing.close(); } catch { /* */ }
           }
           sliceWindows.set(sliceId, newWindow);
+          installOutputEscapeHandler(newWindow, { closeOnEscape: true });
           newWindow.on('closed', () => {
             if (sliceWindows.get(sliceId) === newWindow) sliceWindows.delete(sliceId);
           });
@@ -4906,6 +4947,7 @@ function createMainWindow() {
       return;
     }
     outputWindow = newWindow;
+    installOutputEscapeHandler(newWindow);
     try { newWindow.setMenuBarVisibility(false); } catch { /* */ }
     console.log('[Output] zero-copy output window captured into outputWindow global');
     // DevTools opt-in via env var to match the perf baseline of the
@@ -5108,6 +5150,31 @@ function createProjectionSimWindow() {
   projectionSimWindow.on('leave-full-screen', () => publishProjectionSimFullscreenState(false));
 }
 
+function installOutputEscapeHandler(win, { closeOnEscape = false } = {}) {
+  if (!win || win.isDestroyed()) return;
+  win.webContents.on('before-input-event', (event, input) => {
+    if (input.type !== 'keyDown' || input.key !== 'Escape') return;
+    event.preventDefault();
+    if (closeOnEscape) {
+      try { win.close(); } catch { /* noop */ }
+      return;
+    }
+    try {
+      if (typeof win.isSimpleFullScreen === 'function' && win.isSimpleFullScreen()) {
+        win.setSimpleFullScreen(false);
+      }
+      if (win.isFullScreen()) {
+        win.setFullScreen(false);
+      }
+      win.setMenuBarVisibility(true);
+      win.show();
+      win.focus();
+    } catch (err) {
+      console.warn('[Output] Escape fullscreen fallback failed:', err?.message || err);
+    }
+  });
+}
+
 function createOutputWindow(width, height, x, y, fullscreen = false, displayId = null, experimentalWebRTC = false, experimentalZeroCopy = false) {
   // Validate dimensions
   width = Math.max(320, Math.min(8192, Number(width) || 1920));
@@ -5162,6 +5229,7 @@ function createOutputWindow(width, height, x, y, fullscreen = false, displayId =
     },
   });
   outputWindow = win;
+  installOutputEscapeHandler(win);
 
   // Hide menu bar for clean look
   win.setMenuBarVisibility(false);
