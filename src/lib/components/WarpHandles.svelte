@@ -6,6 +6,7 @@
   import type { WarpCorners, Point2D, Layer } from '../types';
   import { onMount, onDestroy } from 'svelte';
   import { findSnapTarget, getOtherLayerOutlines, type SnapTarget } from '../utils/snapUtils';
+  import { normalizedWarpNudge, warpNudgeStepPixels } from '../utils/warpNudge';
 
   // Container dimensions (set by parent)
   export let containerWidth: number = 800;
@@ -126,10 +127,6 @@
       ? { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 }
       : null;
   }
-
-  // Movement delta for arrow keys (normalized coordinates)
-  const MOVE_DELTA = 0.005;  // Small step
-  const MOVE_DELTA_LARGE = 0.02;  // Large step with Shift
 
   // Edge snap threshold (normalized coords, ~2% of canvas)
   const SNAP_THRESHOLD = 0.02;
@@ -269,32 +266,28 @@
     ) return;
 
     // Resolve project-pixel step from settings.
-    const granularity = get(settings).ui.warpDragGranularity ?? '1px';
-    const stepPx =
-      granularity === 'sub'  ? 0.5 :
-      granularity === '5px'  ? 5 :
-      granularity === '10px' ? 10 :
-      granularity === 'free' ? 1 : 1;
     const proj = get(project);
-    const pw = Math.max(1, proj.width);
-    const ph = Math.max(1, proj.height);
-    const dxStep = (stepPx * (e.shiftKey ? 10 : 1)) / pw;
-    const dyStep = (stepPx * (e.shiftKey ? 10 : 1)) / ph;
+    const step = normalizedWarpNudge(
+      proj.width,
+      proj.height,
+      get(settings).ui.warpDragGranularity,
+      e.shiftKey ? 10 : 1,
+    );
     let dx = 0;
     let dy = 0;
 
     switch (e.key) {
       case 'ArrowUp':
-        dy = dyStep;
+        dy = step.y;
         break;
       case 'ArrowDown':
-        dy = -dyStep;
+        dy = -step.y;
         break;
       case 'ArrowLeft':
-        dx = -dxStep;
+        dx = -step.x;
         break;
       case 'ArrowRight':
-        dx = dxStep;
+        dx = step.x;
         break;
       case 'Escape':
         selectedCorner = null;
@@ -628,11 +621,7 @@
    *  sets the snap to 5px gets 5px nudges from the arrows too. */
   function nudgeFineTune(dxPx: number, dyPx: number) {
     if (!fineTuneCorner || !$selectedLayer || $selectedLayer.locked) return;
-    const granularity = get(settings).ui.warpDragGranularity ?? '1px';
-    const step =
-      granularity === 'sub'  ? 0.5 :
-      granularity === '5px'  ? 5 :
-      granularity === '10px' ? 10 : 1;
+    const step = warpNudgeStepPixels(get(settings).ui.warpDragGranularity);
     const proj = get(project);
     const pw = Math.max(1, proj.width);
     const ph = Math.max(1, proj.height);

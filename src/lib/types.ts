@@ -332,7 +332,7 @@ export interface JSAnimationSource {
 // 'stretch' = distort to fill (default), 'fill' = maintain aspect + crop overflow (CSS cover), 'crop' = maintain aspect + letterbox (CSS contain)
 export type ContentFitMode = 'stretch' | 'fill' | 'crop';
 
-export type LayerType = 'media' | 'lines' | 'svg' | 'color' | 'lightpainting' | 'adv-lightpaint' | 'text' | 'splat' | 'model3d' | 'screen' | 'group' | 'pixel-fx' | 'gpu' | 'arcade';
+export type LayerType = 'media' | 'mask' | 'lines' | 'svg' | 'color' | 'lightpainting' | 'adv-lightpaint' | 'text' | 'splat' | 'model3d' | 'screen' | 'group' | 'pixel-fx' | 'gpu' | 'arcade';
 
 /**
  * GPU layer — hosts a swappable WebGPU shader (similar to how a
@@ -2492,7 +2492,7 @@ export const VJ_MIX_SOURCE_INDEX = -1;
 export interface Layer {
   id: string;
   name: string;
-  type: LayerType;  // 'media', 'lines', 'svg', 'color', 'lightpainting', 'text', 'splat', or 'model3d'
+  type: LayerType;
   visible: boolean;
   locked: boolean;
   opacity: number;
@@ -5164,7 +5164,9 @@ export function createLayer(id: string, name: string, type: LayerType = 'media')
     warpMode: 'corners',
     corners: createDefaultCorners(),
     meshGrid: null,
-    mask: null,
+    mask: type === 'mask'
+      ? { enabled: true, shapes: [], inverted: false, feather: 0 }
+      : null,
     cropRegion: null,
     layerShape: type === 'media' ? createDefaultLayerShape('rectangle') : null,
     effects: [],

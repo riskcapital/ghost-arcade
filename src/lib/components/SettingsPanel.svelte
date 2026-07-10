@@ -762,8 +762,8 @@
                drop the snap entirely (free). -->
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Warp drag granularity</span>
-              <span class="label-hint">How precise mouse drags are in mapping mode. Snaps to the project's pixel grid (1920×1080 at default), independent of editor zoom. Lower = more precise; "free" disables snap entirely.</span>
+              <span class="label-text">Warp movement granularity</span>
+              <span class="label-hint">Controls mapping-mode mouse snapping and every arrow-key nudge, including corner, whole-layer, and mesh-point movement. Measured in project pixels and independent of editor zoom.</span>
             </div>
             <select
               class="port-input"
