@@ -304,7 +304,7 @@ void main() {
     update,
 
     // Layer management
-    addLayer(name?: string, type: LayerType = 'media', initialShapeType?: LayerShapeType) {
+    addLayer(name?: string, type: LayerType = 'media', initialShapeType?: LayerShapeType): string | undefined {
       const currentProject = get({ subscribe });
       const limit = get(maxLayers);
       if (currentProject.layers.length >= limit) {
@@ -313,13 +313,17 @@ void main() {
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('license-layer-limit', { detail: { limit } }));
         }
-        return;
+        return undefined;
       }
       const id = generateUUID();
       update((project) => {
-        const layerName = name || (type === 'lines'
-          ? `Lines ${project.layers.filter(l => l.type === 'lines').length + 1}`
-          : `Layer ${project.layers.filter(l => l.type === 'media').length + 1}`);
+        const layerName = name || (
+          type === 'lines'
+            ? `Lines ${project.layers.filter(l => l.type === 'lines').length + 1}`
+            : type === 'mask'
+              ? `Mask ${project.layers.filter(l => l.type === 'mask').length + 1}`
+              : `Layer ${project.layers.filter(l => l.type === 'media').length + 1}`
+        );
         const newLayer = createLayer(id, layerName, type);
         if (type === 'media' && initialShapeType) {
           newLayer.layerShape = createDefaultLayerShape(initialShapeType);
@@ -336,6 +340,7 @@ void main() {
       if (type === 'media') {
         autoApplyDefaultShader(id);
       }
+      return id;
     },
 
     addLinesLayer(name?: string) {
@@ -2141,6 +2146,10 @@ void main() {
       update((project) => {
         // Find the old layer source to clean up
         const oldLayer = project.layers.find(l => l.id === id);
+        if (oldLayer?.type === 'mask' && source) {
+          console.warn('[setLayerSource] Mask layers do not accept media sources.');
+          return project;
+        }
         const oldSource = oldLayer?.source;
 
         // Compare on `src` (the actual media identity), NOT on `id` (a fresh

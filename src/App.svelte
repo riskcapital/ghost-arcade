@@ -70,6 +70,7 @@
   import { keyframeTimeline } from './lib/stores/keyframeTimeline';
   import { layerSequencer } from './lib/stores/layerSequencer';
   import { settings, outputFrozen } from './lib/stores/settings';
+  import { maskEditingLayerId } from './lib/stores/maskEditing';
   import { checkForUpdate, type VersionCheckResult } from './lib/utils/versionCheck';
   import { startRecording as startRec, formatRecordingDuration, type RecorderHandle } from './lib/recording/recorder';
   import { vjClipLauncher } from './lib/stores/vjClipLauncher';
@@ -1690,7 +1691,7 @@
     // their own click-to-add-point / click-to-stroke handlers on full-viewport
     // overlays; because the marquee begins on pointerdown (which those overlays
     // don't stop), without this guard it hijacks those clicks.
-    if ($selectedLayer?.mask?.enabled) return false;
+    if ($selectedLayer?.mask?.enabled && $maskEditingLayerId === $selectedLayer.id) return false;
     if ($selectedLightPaintingLayer && (lpDrawingEnabled || lpIsPathEditMode)) return false;
     const target = e.target instanceof Element ? e.target : null;
     if (
@@ -5903,7 +5904,7 @@
             <MasterWarpHandles containerWidth={canvasWidth} containerHeight={canvasHeight} zoom={viewportZoom} />
           </div>
         {/if}
-        {#if $selectedLayer && $leftSidebarTab !== 'screens'}
+        {#if $selectedLayer && $selectedLayer.type !== 'mask' && $leftSidebarTab !== 'screens'}
           <!-- Warp handles positioned to match the aspect-ratio-constrained canvas -->
           <div class="warp-handles-offset" style="left: {canvasOffsetX}px; top: {canvasOffsetY}px;">
             <WarpHandles containerWidth={canvasWidth} containerHeight={canvasHeight} zoom={viewportZoom} hideCorners={$selectedLayer.warpMode === 'mesh'} shapeWarpActive={shapeWarpModeEnabled} />
@@ -6261,7 +6262,7 @@
         {/if}
 
         <!-- Mask editing overlay (multi-shape bezier pen tool) -->
-        {#if $selectedLayer?.mask?.enabled}
+        {#if $selectedLayer?.mask?.enabled && $maskEditingLayerId === $selectedLayer.id}
           {@const maskShapes = $selectedLayer.mask.shapes ?? []}
           {@const maskHasClosedShape = maskShapes.some(s => s.closed)}
           <div

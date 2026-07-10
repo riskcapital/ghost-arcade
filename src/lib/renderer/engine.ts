@@ -6,6 +6,7 @@ import { getShapeVertices } from '../types';
 // ── Group rendering types ──────────────────────────────────────────────────
 type RenderUnit =
   | { kind: 'standalone'; layer: Layer }
+  | { kind: 'mask'; layer: Layer }
   | { kind: 'group'; group: Layer; children: Layer[] };
 // Edge effects still use old drawing types for temporary element construction
 import type { DrawingElement, PointClickLineShape } from '../drawing/types';
@@ -1695,10 +1696,13 @@ export class RenderEngine {
       if (layer.parentGroupId) continue;
       if (!layer.visible) continue;
 
-      if (layer.type === 'group') {
+      if (layer.type === 'mask') {
+        units.push({ kind: 'mask', layer });
+      } else if (layer.type === 'group') {
         const groupHasSource = !!(layer.source?.texture);
         const children = layers.filter(l =>
-          l.parentGroupId === layer.id && l.visible && (groupHasSource || this.hasLayerTexture(l))
+          l.parentGroupId === layer.id && l.visible &&
+          (l.type === 'mask' || groupHasSource || this.hasLayerTexture(l))
         );
         if (children.length > 0) {
           units.push({ kind: 'group', group: layer, children });
@@ -1997,6 +2001,23 @@ export class RenderEngine {
     }
   }
 
+  /** Apply a mask-only hierarchy layer to the composite accumulated so far. */
+  private applyHierarchyMask(layer: Layer): boolean {
+    const mask = layer.mask;
+    if (
+      !mask?.enabled ||
+      !mask.shapes?.some((shape) => shape.closed && shape.points.length >= 3)
+    ) return false;
+
+    const maskedTexture = this.applyMask(this.compositeTarget.texture, mask, layer.id);
+    if (maskedTexture === this.compositeTarget.texture) return false;
+
+    this._copyMaterial.map = maskedTexture;
+    this.renderer.setRenderTarget(this.compositeTarget);
+    this.renderer.render(this._copyScene, this.camera);
+    return true;
+  }
+
   /**
    * Render a group's children to a group render target and return the texture.
    * Individual mode: each child renders normally to the group target.
@@ -2028,7 +2049,13 @@ export class RenderEngine {
     this.compositeTarget = groupTarget;
 
     let childIdx = 0;
+    let activeHierarchyMask: Layer | null = null;
     for (const child of children) {
+      if (child.type === 'mask') {
+        activeHierarchyMask = child;
+        continue;
+      }
+
       // Determine texture source for this child
       const useGroupTexture = groupSourceTexture != null;
 
@@ -2085,7 +2112,14 @@ export class RenderEngine {
       const obj = this.getOrCreateLayerObject(child);
       const layerTexture = this.getLayerTexture(child, obj);
       if (layerTexture) {
-        const finalTexture = this.processLayerPipeline(child, obj, layerTexture);
+        let finalTexture = this.processLayerPipeline(child, obj, layerTexture);
+        if (activeHierarchyMask?.mask?.enabled) {
+          finalTexture = this.applyMask(
+            finalTexture,
+            activeHierarchyMask.mask,
+            activeHierarchyMask.id,
+          );
+        }
         // Continuous-mode gate (see renderUnitsToCurrentTarget comment).
         const childSeqGate = (child as any)._seqGate;
         const childCompositeOpacity = child.opacity * (typeof childSeqGate === 'number' ? childSeqGate : 1);
@@ -3052,6 +3086,10 @@ export class RenderEngine {
   private renderUnitsToCurrentTarget(units: RenderUnit[], startIdx: number = 0): void {
     let compositeIdx = startIdx;
     for (const unit of units) {
+      if (unit.kind === 'mask') {
+        if (compositeIdx > 0) this.applyHierarchyMask(unit.layer);
+        continue;
+      }
       if (unit.kind === 'group') {
         const groupTexture = this.renderGroupToTexture(unit.group, unit.children);
         if (groupTexture) {

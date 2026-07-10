@@ -19,6 +19,7 @@
   import { generateCachedThumbnail } from '../isf/thumbnail';
   import { webgpuSupportedStore } from '../renderer/webgpuCapability';
   import { createAssetRefFromFile } from '../storage/assetRegistry';
+  import { maskEditingLayerId } from '../stores/maskEditing';
 
   // WebGPU capability — reactive store, NOT a snapshot. The probe is
   // async and may not have resolved when this panel first mounts;
@@ -737,6 +738,18 @@
               </svg>
               Custom Shape
             </button>
+            <button onclick={() => {
+              const id = project.addLayer(undefined, 'mask');
+              if (id) maskEditingLayerId.set(id);
+              showAddLayerMenu = false;
+            }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 3a9 9 0 1 0 0 18a9 9 0 0 0 0-18Z"/>
+                <path d="M12 3v18"/>
+                <path d="M12 3a9 9 0 0 1 0 18" fill="currentColor" opacity="0.35"/>
+              </svg>
+              Mask Layer
+            </button>
             <button onclick={() => { project.addLinesLayer(); showAddLayerMenu = false; }}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline points="4 17 10 7 16 13 20 6"/>
@@ -1246,6 +1259,14 @@
                 <rect x="3" y="14" width="7" height="7" rx="1"/>
               </svg>
             </div>
+          {:else if layer.type === 'mask'}
+            <div class="mask-layer-thumb">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <circle cx="12" cy="12" r="9"/>
+                <path d="M12 3v18"/>
+                <path d="M12 3a9 9 0 0 1 0 18" fill="currentColor" opacity="0.35"/>
+              </svg>
+            </div>
           {:else if layer.type === 'lines'}
             <!-- Lines layer icon -->
             <div class="lines-thumb">
@@ -1650,7 +1671,7 @@
           {:else}
 
           <div class="layer-properties">
-        <h4>Properties ({layer.type === 'lines' ? 'Lines' : layer.type === 'svg' ? 'SVG' : layer.type === 'color' ? 'Color' : layer.type === 'splat' ? 'Point Cloud' : layer.type === 'model3d' ? '3D Model' : 'Media'})</h4>
+        <h4>Properties ({layer.type === 'mask' ? 'Mask' : layer.type === 'lines' ? 'Lines' : layer.type === 'svg' ? 'SVG' : layer.type === 'color' ? 'Color' : layer.type === 'splat' ? 'Point Cloud' : layer.type === 'model3d' ? '3D Model' : 'Media'})</h4>
 
         <!-- VJ Source dropdown — only on screen/VJ-slice layers, NOT standard media layers -->
         <!-- Group layers and screen layers have their own VJ source selectors -->
@@ -1823,6 +1844,8 @@
               {/each}
             </select>
           </div>
+        {:else if layer.type === 'mask'}
+          <!-- Mask-only layers deliberately have no media source. -->
         {:else}
           <!-- Media layer: Source (not shown for shader sources) -->
           {#if layer.source?.type !== 'shader'}
@@ -2178,8 +2201,10 @@
                 onchange={() => {
                   if (layer.mask?.enabled) {
                     project.disableMask(layer.id);
+                    if ($maskEditingLayerId === layer.id) maskEditingLayerId.set(null);
                   } else {
                     project.enableMask(layer.id);
+                    maskEditingLayerId.set(layer.id);
                   }
                 }}
               />
@@ -2240,7 +2265,10 @@
                     <button
                       class="mask-shape-edit"
                       title="Edit points (drag to move, right-click anchor to delete)"
-                      onclick={() => project.enableMask(layer.id)}
+                      onclick={() => {
+                        project.enableMask(layer.id);
+                        maskEditingLayerId.set(layer.id);
+                      }}
                       aria-label="Edit shape {sIdx + 1}"
                     >
                       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -2266,14 +2294,25 @@
               <span class="mask-hint">Click to add points · Click+drag for curves · Click first point or right-click empty area to close · Right-click anchor to delete</span>
             </div>
 
-            <div class="property-row mask-done">
-              <button
-                class="btn-primary mask-done-btn"
-                onclick={() => project.disableMask(layer.id)}
-              >
-                Done Editing Mask
-              </button>
-            </div>
+            {#if $maskEditingLayerId === layer.id}
+              <div class="property-row mask-done">
+                <button
+                  class="btn-primary mask-done-btn"
+                  onclick={() => maskEditingLayerId.set(null)}
+                >
+                  Done Editing Mask
+                </button>
+              </div>
+            {:else}
+              <div class="property-row mask-done">
+                <button
+                  class="btn-secondary mask-done-btn"
+                  onclick={() => maskEditingLayerId.set(layer.id)}
+                >
+                  Edit Mask
+                </button>
+              </div>
+            {/if}
           {/if}
           </div>
           <!-- End mask-section -->

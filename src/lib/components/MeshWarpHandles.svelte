@@ -6,6 +6,7 @@
   import type { Point2D, MeshWarpGrid, WarpCorners } from '../types';
   import { onMount, onDestroy } from 'svelte';
   import { findSnapTarget, getOtherLayerOutlines, type SnapTarget } from '../utils/snapUtils';
+  import { normalizedWarpNudge } from '../utils/warpNudge';
 
   export let containerWidth: number = 800;
   export let containerHeight: number = 600;
@@ -27,10 +28,6 @@
     if (!meshGrid) return false;
     return row === 0 || row === meshGrid.rows - 1 || col === 0 || col === meshGrid.cols - 1;
   }
-
-  // Movement delta for arrow keys (normalized coordinates)
-  const MOVE_DELTA = 0.005;  // Small step
-  const MOVE_DELTA_LARGE = 0.02;  // Large step with Shift
 
   // Transform a mesh point (0-1 local coords) to screen position via corner warp
   // This maps the mesh grid onto the warped quad defined by corners
@@ -121,23 +118,36 @@
   function handleKeyDown(e: KeyboardEvent) {
     if (!selectedPoint || !$selectedLayer || $selectedLayer.locked || !$selectedLayer.meshGrid) return;
 
-    const delta = e.shiftKey ? MOVE_DELTA_LARGE : MOVE_DELTA;
+    const active = document.activeElement as HTMLElement | null;
+    const activeTag = active?.tagName;
+    if (
+      activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT' ||
+      active?.isContentEditable
+    ) return;
+
+    const proj = get(project);
+    const step = normalizedWarpNudge(
+      proj.width,
+      proj.height,
+      get(settings).ui.warpDragGranularity,
+      e.shiftKey ? 10 : 1,
+    );
     const currentPos = $selectedLayer.meshGrid.points[selectedPoint.row][selectedPoint.col];
     let dx = 0;
     let dy = 0;
 
     switch (e.key) {
       case 'ArrowUp':
-        dy = delta;
+        dy = step.y;
         break;
       case 'ArrowDown':
-        dy = -delta;
+        dy = -step.y;
         break;
       case 'ArrowLeft':
-        dx = -delta;
+        dx = -step.x;
         break;
       case 'ArrowRight':
-        dx = delta;
+        dx = step.x;
         break;
       case 'Escape':
         selectedPoint = null;

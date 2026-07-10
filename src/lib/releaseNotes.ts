@@ -8,6 +8,20 @@ export interface AppReleaseNotes {
 }
 
 const RELEASE_NOTES: Record<string, AppReleaseNotes> = {
+  '1.9.97': {
+    title: 'Mapping precision, persistent masks, and hierarchy mattes',
+    summary: [
+      'Mesh warp nudges now follow the global mapping movement granularity.',
+      'Finished masks stay enabled while you return to corner or mesh editing.',
+      'New mask-only layers matte every layer beneath them in the hierarchy.',
+    ],
+    highlights: [
+      'The mapping movement granularity setting now applies consistently to corner, whole-layer, fine-tune, and individual mesh-point arrow nudges, with Shift retaining the 10x movement multiplier.',
+      'Done Editing Mask now exits mask-point editing without disabling or removing the visible mask.',
+      'The mask pencil control reopens an existing mask for editing, while active masks no longer block corner or mesh warp work.',
+      'The new Mask Layer type accepts no media and masks all layers beneath its stack position, including layers organized inside groups.',
+    ],
+  },
   '1.9.96': {
     title: 'VJ media polish, preset reliability, and MIDI clock routing',
     summary: [
