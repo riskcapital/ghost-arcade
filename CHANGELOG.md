@@ -2,6 +2,13 @@
 
 ---
 
+## Unreleased
+
+- Fixed the OSC listener control in Settings by replacing the hidden toggle with a visible button, allowing users to start and stop the OSC UDP listener from the desktop app.
+- Fixed slice display fullscreen sizing on Windows so Screens > Open on display fills the selected physical output without border clipping.
+
+---
+
 ## v0.5.0 — Dual-Deck VJ, Macros, X-Fader Blend Modes, Mobile Companion (May 2026)
 
 The biggest VJ release since the launcher shipped. Adds a full Bank A/Bank B

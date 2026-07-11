@@ -1773,14 +1773,13 @@
               <span class="label-text">Enable OSC Listener</span>
               <span class="label-hint">UDP socket in the desktop app — point TouchOSC / Lemur / your DAW at this machine's IP on the configured port.</span>
             </div>
-            <label class="toggle">
-              <input
-                type="checkbox"
-                checked={$oscStore.enabled}
-                onchange={(e) => oscStore.setEnabled((e.target as HTMLInputElement).checked)}
-              />
-              <span class="slider"></span>
-            </label>
+            <button
+              type="button"
+              class="osc-add-btn"
+              onclick={() => oscStore.setEnabled(!$oscStore.enabled)}
+            >
+              {$oscStore.enabled ? 'Disable OSC' : 'Enable OSC'}
+            </button>
           </div>
 
           <div class="setting-row">

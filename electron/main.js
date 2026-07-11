@@ -4882,7 +4882,8 @@ function createMainWindow() {
         title: isSliceWin ? 'Ghost Arcade Output — slice' : 'Ghost Arcade Output',
         resizable: !isSliceWin,
         frame: !isSliceWin,
-        fullscreen: isSliceWin ? true : fullscreen,
+        kiosk: isSliceWin,
+        fullscreen: isSliceWin ? false : fullscreen,
         simpleFullscreen: process.platform === 'darwin',
         autoHideMenuBar: true,
         skipTaskbar: false,
@@ -4940,7 +4941,20 @@ function createMainWindow() {
       } catch (err) {
         console.warn('[Output] slice display capture failed:', err);
       }
+
       try { newWindow.setMenuBarVisibility(false); } catch { /* */ }
+
+      try {
+        const display = screen.getDisplayMatching(newWindow.getBounds());
+        const b = display.bounds;
+        newWindow.setContentBounds({
+          x: b.x,
+          y: b.y,
+          width: b.width,
+          height: b.height,
+        });
+      } catch { /* best-effort projector sizing */ }
+
       if (process.env.GHOSTARCADE_SLICE_DEVTOOLS === '1') {
         try { newWindow.webContents.openDevTools({ mode: 'detach' }); } catch { /* */ }
       }
