@@ -36,6 +36,7 @@ let nativeLayerMaskState: typeof import('./nativeRendererSync').nativeLayerMaskS
 let nativeLayerEdgeEffectsState: typeof import('./nativeRendererSync').nativeLayerEdgeEffectsState;
 let nativeGraphCompositeSourceId: typeof import('./nativeRendererSync').nativeGraphCompositeSourceId;
 let nativeGraphInstrumentSourceId: typeof import('./nativeRendererSync').nativeGraphInstrumentSourceId;
+let nativeLayerSourceFromMediaSource: typeof import('./nativeRendererSync').nativeLayerSourceFromMediaSource;
 
 beforeAll(async () => {
   const storage = new Map<string, string>();
@@ -87,6 +88,7 @@ beforeAll(async () => {
     nativeLayerEdgeEffectsState,
     nativeGraphCompositeSourceId,
     nativeGraphInstrumentSourceId,
+    nativeLayerSourceFromMediaSource,
   } = await import('./nativeRendererSync'));
 });
 
@@ -250,6 +252,86 @@ describe('native renderer sync shared-texture source frames', () => {
       seq: 7,
     });
     expect((command as any).shared_texture_platform).toBeUndefined();
+  });
+
+  it('routes each live source through its explicit native transport', () => {
+    const webcam = nativeLayerSourceFromMediaSource({
+      id: 'camera-layer',
+      type: 'video',
+      src: 'live://webcam/camera-session',
+      liveSourceType: 'webcam',
+      liveSourceSessionId: 'camera-session',
+    } as any);
+    const ndi = nativeLayerSourceFromMediaSource({
+      id: 'ndi-layer',
+      type: 'spout',
+      src: 'live://ndi/ndi-session',
+      liveSourceType: 'ndi',
+      ndiSource: { senderName: 'Studio NDI' },
+    } as any);
+    const syphon = nativeLayerSourceFromMediaSource({
+      id: 'syphon-layer',
+      type: 'spout',
+      src: 'live://spout/syphon-session',
+      liveSourceType: 'syphon',
+      spoutSource: { senderName: 'Resolume Output' },
+    } as any);
+
+    expect(webcam).toMatchObject({
+      sourceType: 'live:webcam',
+      uri: 'native-live://webcam/camera-session',
+      shouldPrefetch: false,
+      shouldPreview: true,
+    });
+    expect(ndi).toMatchObject({
+      sourceType: 'live:ndi',
+      uri: 'native-live://ndi/Studio%20NDI',
+    });
+    expect(syphon).toMatchObject({
+      sourceType: 'live:syphon',
+      uri: 'native-live://syphon/Resolume%20Output',
+    });
+  });
+
+  it('schedules live shared textures at frame cadence instead of thumbnail cadence', () => {
+    const sync = new NativeRendererSyncCtor() as any;
+    sync.nativeFeatureFlags = { shared_texture_source_frame_upload: true };
+    const source = {
+      id: 'camera-layer',
+      type: 'video',
+      src: 'live://webcam/camera-session',
+      liveSourceType: 'webcam',
+      liveSourceSessionId: 'camera-session',
+    };
+    const infoKey = sync.sharedTextureInfoKey(source, 'live:webcam');
+    sync.sharedTextureInfoCache.set(infoKey, {
+      info: {
+        available: true,
+        platform: 'iosurface',
+        width: 1920,
+        height: 1080,
+        format: 80,
+        frame: 1,
+        handle: '42',
+        handleEncoding: 'integer',
+        handleByteLength: 4,
+      },
+      updatedAt: 1000,
+    });
+
+    const commands: any[] = [];
+    expect(sync.appendSharedTextureSourceFrameCommand(
+      commands,
+      source,
+      'live:webcam',
+      1000,
+      false,
+      null,
+    )).toBe(true);
+
+    expect(commands).toHaveLength(1);
+    expect(commands[0].type).toBe('upload_source_gpu_shared_texture');
+    expect(sync.sourcePreviewNextAt.get(sync.sourceCacheKey(source.id, source.src))).toBe(1016);
   });
 });
 

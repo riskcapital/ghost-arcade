@@ -145,10 +145,14 @@
     thumbnail?: string;
     spoutSenderName?: string; // Spout sender name for direct receiver in Canvas.svelte
     ndiSourceName?: string; // NDI sender name for direct receiver in Canvas.svelte
+    nativeSessionId?: string;
   }
 
   let liveSources: LiveSource[] = [];
-  let availableWebcams: MediaDeviceInfo[] = [];
+  let availableWebcams: Array<{ id: string; name: string }> = [];
+  let nativeCaptureAvailable = !isDesktopApp;
+  let nativeCaptureChecked = !isDesktopApp;
+  let nativeCaptureHint = 'Native camera and screen capture unavailable';
   let availableSpoutSenders: string[] = []; // Populated from spout store
   let sourcesInitialized = false;
   let showSpoutPicker = false;
@@ -204,6 +208,10 @@
     if (source.type === 'ndi') {
       const senderName = source.ndiSourceName || source.name.replace('NDI: ', '');
       (window as any).ghostNDI?.destroyReceiver?.(senderName).catch((err: any) => console.warn('Failed to stop NDI receiver:', err));
+    }
+    if ((source.type === 'webcam' || source.type === 'capture') && source.nativeSessionId && isDesktop) {
+      bridgeInvoke('native_live_capture_stop', { sessionId: source.nativeSessionId })
+        .catch((err: any) => console.warn('Failed to stop native live source:', err));
     }
   }
 
@@ -281,14 +289,74 @@
     ? ($textureShareInfo?.error || `${tsLabel} native addon unavailable`)
     : `Open a ${tsLabel} sender in MadMapper, Resolume, OBS, or another VJ app`;
 
+  type NativeLiveTextureInfo = {
+    available?: boolean;
+    width?: number;
+    height?: number;
+    handle?: unknown;
+  } | null | undefined;
+
+  function hasNativeLiveFrame(info: NativeLiveTextureInfo): boolean {
+    return !!info?.available
+      && Number(info.width || 0) > 0
+      && Number(info.height || 0) > 0
+      && info.handle !== undefined
+      && info.handle !== null;
+  }
+
+  async function waitForNativeLiveFrame(
+    receive: () => Promise<NativeLiveTextureInfo>,
+    timeoutMs = 12_000,
+  ): Promise<boolean> {
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      try {
+        if (hasNativeLiveFrame(await receive())) return true;
+      } catch {
+        // The receiver may still be waiting for permission or its first frame.
+      }
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    return false;
+  }
+
+  function setLiveSourceStatus(id: string, status: LiveSource['status']) {
+    liveSources = liveSources.map(source => source.id === id ? { ...source, status } : source);
+  }
+
   // Enumerate webcams
   async function enumerateWebcams() {
+    if (isDesktop) {
+      try {
+        const availability = await bridgeInvoke<{ available?: boolean; error?: string }>('native_live_capture_available');
+        nativeCaptureChecked = true;
+        nativeCaptureAvailable = !!availability?.available;
+        nativeCaptureHint = availability?.error || 'Native camera and screen capture unavailable';
+        if (!availability?.available) {
+          availableWebcams = [];
+          return;
+        }
+        const devices = await bridgeInvoke<Array<{ id?: string; name?: string }>>('native_live_capture_list_cameras');
+        availableWebcams = (Array.isArray(devices) ? devices : [])
+          .map((device) => ({ id: String(device?.id || ''), name: String(device?.name || 'Camera') }))
+          .filter((device) => !!device.id);
+      } catch (err) {
+        console.warn('Could not enumerate native cameras:', err);
+        nativeCaptureChecked = true;
+        nativeCaptureAvailable = false;
+        nativeCaptureHint = err instanceof Error ? err.message : String(err);
+        availableWebcams = [];
+      }
+      return;
+    }
     try {
       // Request permission first
       const tempStream = await navigator.mediaDevices.getUserMedia({ video: true });
       tempStream.getTracks().forEach(t => t.stop());
       const devices = await navigator.mediaDevices.enumerateDevices();
-      availableWebcams = devices.filter(d => d.kind === 'videoinput');
+      availableWebcams = devices
+        .filter(d => d.kind === 'videoinput')
+        .map(d => ({ id: d.deviceId, name: d.label || 'Camera' }));
     } catch (err) {
       console.warn('Could not enumerate webcams:', err);
       availableWebcams = [];
@@ -297,6 +365,38 @@
 
   // Start a webcam source
   async function startWebcam(deviceId?: string) {
+    if (isDesktop) {
+      const sessionId = generateUUID();
+      const selected = availableWebcams.find(device => device.id === deviceId);
+      try {
+        const result = await bridgeInvoke<{ ok?: boolean; error?: string }>('native_live_capture_start_camera', {
+          sessionId,
+          deviceId: deviceId || '',
+        });
+        if (!result?.ok) throw new Error(result?.error || 'Native camera did not start');
+        const source: LiveSource = {
+          id: sessionId,
+          name: selected?.name || 'Webcam',
+          type: 'webcam',
+          status: 'connecting',
+          deviceId,
+          nativeSessionId: sessionId,
+        };
+        liveSources = [...liveSources, source];
+        const ready = await waitForNativeLiveFrame(() =>
+          bridgeInvoke<NativeLiveTextureInfo>('native_live_capture_texture_info', { sessionId })
+        );
+        setLiveSourceStatus(source.id, ready ? 'live' : 'disconnected');
+        if (!ready) {
+          await bridgeInvoke('native_live_capture_stop', { sessionId }).catch(() => {});
+          showToast('Camera started but did not produce a native frame.', 'error');
+        }
+      } catch (err) {
+        console.error('Failed to start native webcam:', err);
+        showToast((err as Error)?.message || 'Could not start camera.', 'error');
+      }
+      return;
+    }
     const constraints: MediaStreamConstraints = {
       video: deviceId ? { deviceId: { exact: deviceId } } : true,
       audio: false,
@@ -346,7 +446,13 @@
 
   async function startScreenCapture() {
     // Non-Electron context: keep the old behaviour so the app still runs in browsers.
-    if (!screenCaptureSourcePickerAvailable()) return startScreenCaptureBrowserFallback();
+    if (!screenCaptureSourcePickerAvailable()) {
+      if (isDesktop) {
+        showToast(nativeCaptureHint, 'error');
+        return;
+      }
+      return startScreenCaptureBrowserFallback();
+    }
 
     screenPickerOpen = true;
     screenPickerLoading = true;
@@ -370,6 +476,39 @@
 
   async function pickScreenSource(picked: ScreenSource) {
     closeScreenPicker();
+    if (isDesktop) {
+      const sessionId = generateUUID();
+      try {
+        const result = await bridgeInvoke<{ ok?: boolean; error?: string }>('native_live_capture_start_screen', {
+          sessionId,
+          sourceId: picked.id,
+          displayId: picked.display_id || '',
+          kind: picked.kind,
+        });
+        if (!result?.ok) throw new Error(result?.error || 'Native screen capture did not start');
+        const source: LiveSource = {
+          id: sessionId,
+          name: picked.name || 'Capture',
+          type: 'capture',
+          status: 'connecting',
+          thumbnail: picked.thumbnailDataUrl || undefined,
+          nativeSessionId: sessionId,
+        };
+        liveSources = [...liveSources, source];
+        const ready = await waitForNativeLiveFrame(() =>
+          bridgeInvoke<NativeLiveTextureInfo>('native_live_capture_texture_info', { sessionId })
+        );
+        setLiveSourceStatus(source.id, ready ? 'live' : 'disconnected');
+        if (!ready) {
+          await bridgeInvoke('native_live_capture_stop', { sessionId }).catch(() => {});
+          showToast('Capture started but did not produce a native frame.', 'error');
+        }
+      } catch (err) {
+        console.error('Failed to start native capture for', picked.name, err);
+        showToast((err as Error)?.message || `Could not capture "${picked.name}".`, 'error');
+      }
+      return;
+    }
     try {
       // Chrome legacy mandatory constraints — the only way to pin
       // getUserMedia to a specific desktopCapturer source id in Electron.
@@ -484,10 +623,13 @@
       const result = await bridgeInvoke('spout_start_receiver', { senderName });
       console.log('[Spout] Receiver started:', result);
 
-      // Mark as live
-      liveSources = liveSources.map(s =>
-        s.id === source.id ? { ...s, status: 'live' as const } : s
+      const ready = await waitForNativeLiveFrame(() =>
+        bridgeInvoke<NativeLiveTextureInfo>('spout_receive_texture_info', { senderName })
       );
+      setLiveSourceStatus(source.id, ready ? 'live' : 'disconnected');
+      if (!ready) {
+        await bridgeInvoke('spout_stop_receiver', { senderName }).catch(() => {});
+      }
     } catch (err) {
       console.error('Failed to start Spout receiver:', err);
       liveSources = liveSources.map(s =>
@@ -573,7 +715,7 @@
     }
   }
 
-  function addNdiSource(sourceName: string) {
+  async function addNdiSource(sourceName: string) {
     const senderName = sourceName.trim();
     if (!senderName) return;
 
@@ -581,12 +723,35 @@
       id: generateUUID(),
       name: `NDI: ${senderName}`,
       type: 'ndi',
-      status: 'live',
+      status: 'connecting',
       ndiSourceName: senderName,
     };
     liveSources = [...liveSources, source];
     showNdiPicker = false;
     stopNdiScan();
+
+    const ndi = getNdiBridge();
+    if (!ndi?.createReceiver) {
+      liveSources = liveSources.map(item =>
+        item.id === source.id ? { ...item, status: 'disconnected' as const } : item
+      );
+      return;
+    }
+    try {
+      const result = await ndi.createReceiver(senderName);
+      if (result?.ok === false) {
+        setLiveSourceStatus(source.id, 'disconnected');
+        return;
+      }
+      const ready = await waitForNativeLiveFrame(() => ndi.receiveTextureInfo(senderName));
+      setLiveSourceStatus(source.id, ready ? 'live' : 'disconnected');
+      if (!ready) await ndi.destroyReceiver?.(senderName).catch(() => {});
+    } catch (err) {
+      console.error('Failed to start NDI receiver:', err);
+      liveSources = liveSources.map(item =>
+        item.id === source.id ? { ...item, status: 'disconnected' as const } : item
+      );
+    }
   }
 
   // Stop and remove a live source
@@ -617,6 +782,8 @@
             width: 1920,
             height: 1080,
           },
+          liveSourceType: 'syphon',
+          liveSourceSessionId: source.id,
         };
         project.setLayerSource(layerId, ms);
       } else if (source.type === 'ndi') {
@@ -631,10 +798,11 @@
             width: 1920,
             height: 1080,
           },
+          liveSourceType: 'ndi',
+          liveSourceSessionId: source.id,
         };
         project.setLayerSource(layerId, ms);
       } else {
-        if (!source.videoEl) continue;
         const ms: MediaSource = {
           id: `${source.id}-${layerId}-${Date.now()}`,
           type: 'video',
@@ -643,6 +811,8 @@
           videoElement: source.videoEl,
           isPlaying: true,
           mirrorX: source.type === 'webcam',
+          liveSourceType: source.type,
+          liveSourceSessionId: source.nativeSessionId || source.id,
         };
         project.setLayerSource(layerId, ms);
       }
@@ -3854,13 +4024,23 @@
       <!-- Live Sources Panel -->
       <div class="sources-panel">
         <div class="sources-add-row">
-          <button class="source-add-btn" onclick={() => startWebcam()}>
+          <button
+            class="source-add-btn"
+            disabled={isDesktop && (!nativeCaptureChecked || !nativeCaptureAvailable)}
+            title={isDesktop && !nativeCaptureAvailable ? nativeCaptureHint : 'Add webcam source'}
+            onclick={() => startWebcam()}
+          >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
             </svg>
             Webcam
           </button>
-          <button class="source-add-btn" onclick={() => startScreenCapture()}>
+          <button
+            class="source-add-btn"
+            disabled={isDesktop && (!nativeCaptureChecked || !nativeCaptureAvailable)}
+            title={isDesktop && !nativeCaptureAvailable ? nativeCaptureHint : 'Capture a screen or window'}
+            onclick={() => startScreenCapture()}
+          >
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
             </svg>
@@ -3948,7 +4128,7 @@
             <select class="device-select" onchange={(e) => { const v = (e.target as HTMLSelectElement).value; if (v) startWebcam(v); }}>
               <option value="">Select camera...</option>
               {#each availableWebcams as cam}
-                <option value={cam.deviceId}>{cam.label || `Camera ${availableWebcams.indexOf(cam) + 1}`}</option>
+                <option value={cam.id}>{cam.name || `Camera ${availableWebcams.indexOf(cam) + 1}`}</option>
               {/each}
             </select>
           </div>
@@ -4023,7 +4203,7 @@
                   </span>
                 </div>
                 <div class="source-actions">
-                  {#if source.status === 'live' && (source.videoEl || source.type === 'spout' || source.type === 'ndi')}
+                  {#if source.status === 'live'}
                     <button class="source-apply-btn" onclick={(e) => { e.stopPropagation(); addLiveSourceToCurrentMode(source); }} title={vjMode ? 'Add to VJ deck' : 'Apply to selected layer'}>
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polyline points="20 6 9 17 4 12"/>
@@ -6860,10 +7040,15 @@
     transition: all 0.15s;
   }
 
-  .source-add-btn:hover {
+  .source-add-btn:hover:not(:disabled) {
     border-color: #BB86FC;
     color: #BB86FC;
     background: #1a2a2d;
+  }
+
+  .source-add-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.42;
   }
 
   .source-add-btn.spout {

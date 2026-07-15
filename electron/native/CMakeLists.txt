@@ -223,6 +223,52 @@ elseif(APPLE)
         COMMENT "Re-signing native_preview_addon for Apple Silicon"
     )
 
+    # --- macOS: native webcam + ScreenCaptureKit source acquisition ---
+    add_library(live_capture_addon SHARED
+        live_capture_addon.mm
+        ${CMAKE_JS_SRC}
+    )
+
+    find_library(AVFOUNDATION_FRAMEWORK AVFoundation)
+    find_library(COREMEDIA_FRAMEWORK CoreMedia)
+    find_library(SCREENCAPTUREKIT_FRAMEWORK ScreenCaptureKit)
+
+    target_include_directories(live_capture_addon PRIVATE
+        ${CMAKE_JS_INC}
+        ${NODE_ADDON_API_DIR}
+    )
+
+    target_link_libraries(live_capture_addon PRIVATE
+        ${CMAKE_JS_LIB}
+        ${COCOA_FRAMEWORK}
+        ${AVFOUNDATION_FRAMEWORK}
+        ${COREMEDIA_FRAMEWORK}
+        ${COREVIDEO_FRAMEWORK}
+        ${IOSURFACE_FRAMEWORK}
+        ${METAL_FRAMEWORK}
+        ${SCREENCAPTUREKIT_FRAMEWORK}
+    )
+
+    target_compile_definitions(live_capture_addon PRIVATE
+        NAPI_VERSION=9
+        NODE_ADDON_API_DISABLE_DEPRECATED
+    )
+
+    set_target_properties(live_capture_addon PROPERTIES
+        PREFIX ""
+        SUFFIX ".node"
+        CXX_STANDARD 17
+    )
+
+    set_source_files_properties(live_capture_addon.mm PROPERTIES
+        COMPILE_FLAGS "-x objective-c++ -fobjc-arc"
+    )
+
+    add_custom_command(TARGET live_capture_addon POST_BUILD
+        COMMAND codesign --force --sign - "$<TARGET_FILE:live_capture_addon>" || true
+        COMMENT "Re-signing live_capture_addon for Apple Silicon"
+    )
+
 endif()
 
 # ============================================================
@@ -379,6 +425,10 @@ if(NDI_FOUND)
     )
 
     if(APPLE)
+        target_link_libraries(ndi_addon PRIVATE
+            "-framework CoreFoundation"
+            "-framework IOSurface"
+        )
         # libndi.dylib's install_name points at the SDK install path.
         # Rewrite to @rpath for local developer testing. Release packaging
         # excludes NDI runtime binaries unless we replace this with a proper

@@ -2152,6 +2152,38 @@ function loadNativePreviewAddon() {
   }
 }
 
+let liveCaptureAddon = null;
+let liveCaptureAddonLoadAttempted = false;
+let liveCaptureAddonLoadPath = null;
+let liveCaptureAddonLoadError = null;
+
+function loadLiveCaptureAddon() {
+  if (liveCaptureAddon) return liveCaptureAddon;
+  if (liveCaptureAddonLoadAttempted) return null;
+  liveCaptureAddonLoadAttempted = true;
+  if (!isMac) {
+    liveCaptureAddonLoadError = 'native live capture is currently implemented on macOS only';
+    return null;
+  }
+  const candidates = getTextureShareAddonCandidates('live_capture_addon.node');
+  try {
+    const addonPath = candidates.find(candidate => fs.existsSync(candidate));
+    if (!addonPath) {
+      liveCaptureAddonLoadError = 'live_capture_addon.node not built';
+      console.warn(`[LiveCapture] ${liveCaptureAddonLoadError}. Checked: ${candidates.join(', ')}`);
+      return null;
+    }
+    liveCaptureAddonLoadPath = addonPath;
+    liveCaptureAddon = require(addonPath);
+    console.log(`[LiveCapture] Native capture addon loaded: ${addonPath}`);
+    return liveCaptureAddon;
+  } catch (err) {
+    liveCaptureAddonLoadError = err?.message || String(err);
+    console.error('[LiveCapture] Failed to load addon:', liveCaptureAddonLoadError);
+    return null;
+  }
+}
+
 function normalizeNativePreviewRect(rect = {}) {
   const number = (value, fallback, min = 0) => {
     const n = Number(value);
@@ -4131,6 +4163,33 @@ function registerIpcHandlers() {
     try { return a.receiveFrame({ sourceName }) || null; }
     catch (err) { return null; }
   });
+  ipcMain.handle('ndi_receive_texture_info', (_, { sourceName }) => {
+    const a = loadNdiAddon();
+    if (!a || typeof a.receiveTextureInfo !== 'function') return null;
+    try {
+      const info = a.receiveTextureInfo({ sourceName });
+      if (!info || !info.available) return null;
+      const handle = normalizeSharedTextureHandle(info.handle);
+      const handlePayload = sharedTextureHandlePayload(handle);
+      if (!handlePayload) return null;
+      return {
+        available: true,
+        platform: 'iosurface',
+        senderName: String(info.senderName || sourceName || ''),
+        width: Number(info.width || 0),
+        height: Number(info.height || 0),
+        format: Number(info.format || 80),
+        frame: Number(info.frame || 0),
+        updated: true,
+        isNewFrame: true,
+        handle: handlePayload.handle,
+        handleEncoding: handlePayload.handleEncoding,
+        handleByteLength: handlePayload.handleByteLength,
+      };
+    } catch (err) {
+      return null;
+    }
+  });
 
   // Restart the app. Used when toggling experimental flags
   // (editorWebGPU, etc.) that change which renderer path the
@@ -4810,6 +4869,91 @@ function registerIpcHandlers() {
     } catch (err) {
       console.error('[screen_sources_list] failed:', err);
       return [];
+    }
+  });
+
+  ipcMain.handle('native_live_capture_available', () => {
+    const addon = loadLiveCaptureAddon();
+    if (!addon) return { available: false, error: liveCaptureAddonLoadError };
+    try {
+      return { ...addon.available(), addonPath: liveCaptureAddonLoadPath };
+    } catch (err) {
+      return { available: false, error: err?.message || String(err) };
+    }
+  });
+
+  ipcMain.handle('native_live_capture_list_cameras', () => {
+    const addon = loadLiveCaptureAddon();
+    if (!addon) return [];
+    try { return addon.listCameras(); }
+    catch (err) {
+      console.error('[LiveCapture] Camera enumeration failed:', err?.message || err);
+      return [];
+    }
+  });
+
+  ipcMain.handle('native_live_capture_start_camera', (_event, args = {}) => {
+    const addon = loadLiveCaptureAddon();
+    if (!addon) return { ok: false, error: liveCaptureAddonLoadError || 'native capture unavailable' };
+    try {
+      const ok = !!addon.startCamera({
+        sessionId: String(args.sessionId || ''),
+        deviceId: String(args.deviceId || ''),
+      });
+      return { ok, error: ok ? null : 'camera did not start' };
+    } catch (err) {
+      return { ok: false, error: err?.message || String(err) };
+    }
+  });
+
+  ipcMain.handle('native_live_capture_start_screen', (_event, args = {}) => {
+    const addon = loadLiveCaptureAddon();
+    if (!addon) return { ok: false, error: liveCaptureAddonLoadError || 'native capture unavailable' };
+    try {
+      const ok = !!addon.startScreen({
+        sessionId: String(args.sessionId || ''),
+        sourceId: String(args.sourceId || ''),
+        displayId: String(args.displayId || ''),
+        kind: args.kind === 'screen' ? 'screen' : 'window',
+      });
+      return { ok, error: ok ? null : 'screen capture did not start' };
+    } catch (err) {
+      return { ok: false, error: err?.message || String(err) };
+    }
+  });
+
+  ipcMain.handle('native_live_capture_stop', (_event, args = {}) => {
+    const addon = loadLiveCaptureAddon();
+    if (!addon) return { ok: false };
+    try { return { ok: !!addon.stop({ sessionId: String(args.sessionId || '') }) }; }
+    catch (err) { return { ok: false, error: err?.message || String(err) }; }
+  });
+
+  ipcMain.handle('native_live_capture_texture_info', (_event, args = {}) => {
+    const addon = loadLiveCaptureAddon();
+    if (!addon) return { available: false, reason: liveCaptureAddonLoadError || 'native capture unavailable' };
+    try {
+      const info = addon.receiveTextureInfo({ sessionId: String(args.sessionId || '') });
+      if (!info || !info.available) return info || null;
+      const handle = normalizeSharedTextureHandle(info.handle);
+      const handlePayload = sharedTextureHandlePayload(handle);
+      if (!handlePayload) return null;
+      return {
+        available: true,
+        platform: 'iosurface',
+        label: info.kind === 'webcam' ? 'Webcam' : 'Capture',
+        width: Number(info.width || 0),
+        height: Number(info.height || 0),
+        format: Number(info.format || 80),
+        frame: Number(info.frame || 0),
+        updated: true,
+        isNewFrame: true,
+        handle: handlePayload.handle,
+        handleEncoding: handlePayload.handleEncoding,
+        handleByteLength: handlePayload.handleByteLength,
+      };
+    } catch (err) {
+      return { available: false, reason: err?.message || String(err) };
     }
   });
 
