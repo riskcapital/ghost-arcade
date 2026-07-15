@@ -2354,6 +2354,21 @@ function attachNativeEditorPreview(rectArgs = {}) {
   }
 }
 
+function stabilizeNativeEditorHost() {
+  if (process.platform !== 'darwin' || !mainWindow || mainWindow.isDestroyed()) return false;
+  const addon = loadNativePreviewAddon();
+  if (!addon || typeof addon.stabilizeHost !== 'function') return false;
+  try {
+    const handle = mainWindow.getNativeWindowHandle();
+    if (!Buffer.isBuffer(handle) || handle.length === 0) return false;
+    return addon.stabilizeHost(handle) !== false;
+  } catch (err) {
+    nativePreviewAddonLoadError = err?.message || String(err);
+    console.warn('[NativePreview] failed to stabilize AppKit host:', nativePreviewAddonLoadError);
+    return false;
+  }
+}
+
 function updateNativeEditorPreview(rectArgs = {}) {
   const addon = nativePreviewAddon || loadNativePreviewAddon();
   if (!addon || typeof addon.update !== 'function') return getNativePreviewStatus();
@@ -6412,6 +6427,12 @@ function createMainWindow() {
       backgroundThrottling: false,
     },
   });
+
+  // Keep Chromium alpha-capable for the embedded Metal underlay, but make the
+  // owning NSWindow itself opaque before the first renderer frame arrives.
+  // The native addon reapplies this contract on every preview attach/update.
+  stabilizeNativeEditorHost();
+  mainWindow.once('ready-to-show', stabilizeNativeEditorHost);
 
   if (process.platform === 'darwin') {
     mainWindow.setWindowButtonVisibility(true);
