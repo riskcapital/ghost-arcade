@@ -4049,6 +4049,7 @@ export class NativeRendererSync {
   private nativeVideoDecodeWarnings = 0;
   private nativeVideoPlaybackState = new Map<string, NativeVideoPlaybackSyncState>();
   private nativeVideoDecodeDimensionCache = new Map<string, { width: number; height: number; metadata: boolean }>();
+  private nativeSourceAspectCache = new Map<string, number>();
   private previewImageElements = new Map<string, HTMLImageElement>();
   private previewImageLoads = new Set<string>();
   private nativeComputeGraphSourceFrames = false;
@@ -5160,9 +5161,30 @@ export class NativeRendererSync {
     );
     const sourceKey = this.sourceCacheKey(src.id, src.src);
     const element = src.videoElement ?? null;
+    if (element && !this.videoMetadataWatches.has(element)) {
+      this.videoMetadataWatches.add(element);
+      element.addEventListener('loadedmetadata', () => {
+        const width = Number(element.videoWidth);
+        const height = Number(element.videoHeight);
+        if (!(width > 0 && height > 0)) return;
+        const aspect = clampNumber(width / height, 0.001, 128);
+        const previous = this.nativeSourceAspectCache.get(sourceKey);
+        this.nativeSourceAspectCache.set(sourceKey, aspect);
+        this.nativeVideoDecodeDimensionCache.delete(sourceKey);
+        if (this.running && previous !== aspect) {
+          this.scheduleSync(this.desiredWidth, this.desiredHeight, this.latestLayers);
+        }
+      }, { once: true });
+    }
     const sourceWidth = Number(element?.videoWidth ?? (src as any).videoWidth ?? (src as any).width ?? 0);
     const sourceHeight = Number(element?.videoHeight ?? (src as any).videoHeight ?? (src as any).height ?? 0);
     const hasMetadata = sourceWidth > 0 && sourceHeight > 0;
+    if (hasMetadata) {
+      this.nativeSourceAspectCache.set(
+        sourceKey,
+        clampNumber(sourceWidth / sourceHeight, 0.001, 128),
+      );
+    }
     const fallbackAspect = this.desiredWidth > 0 && this.desiredHeight > 0
       ? this.desiredWidth / this.desiredHeight
       : 16 / 9;
@@ -5420,6 +5442,7 @@ export class NativeRendererSync {
     this.videoRefreshAt.clear();
     this.nativeVideoPrefetchAt.clear();
     this.nativeVideoDecodeDimensionCache.clear();
+    this.nativeSourceAspectCache.clear();
     this.sourcePreviewSeq.clear();
     this.sourcePreviewNextAt.clear();
     this.sourcePreviewSig.clear();
@@ -6438,6 +6461,17 @@ export class NativeRendererSync {
       return clampNumber(nativeSource.aspect, 0.001, 128);
     }
     const source = nativeSource.source;
+    const sourceKey = source ? this.sourceCacheKey(source.id, source.src) : null;
+    if (sourceKey) {
+      const cachedAspect = this.nativeSourceAspectCache.get(sourceKey);
+      if (cachedAspect) return cachedAspect;
+    }
+    const rememberAspect = (width: number, height: number): number | null => {
+      if (!(width > 0 && height > 0)) return null;
+      const aspect = clampNumber(width / height, 0.001, 128);
+      if (sourceKey) this.nativeSourceAspectCache.set(sourceKey, aspect);
+      return aspect;
+    };
     const candidates: Array<CanvasImageSource | null | undefined> = [
       nativeSource.previewElement,
       source?.videoElement,
@@ -6449,12 +6483,36 @@ export class NativeRendererSync {
     for (const candidate of candidates) {
       if (!candidate) continue;
       const dims = this.previewElementDimensions(candidate);
-      if (dims) return clampNumber(dims.width / dims.height, 0.001, 128);
+      if (dims) return rememberAspect(dims.width, dims.height) ?? fallback;
     }
     const anySource = source as any;
     const sourceWidth = Number(anySource?.width ?? anySource?.videoWidth ?? anySource?.naturalWidth ?? 0);
     const sourceHeight = Number(anySource?.height ?? anySource?.videoHeight ?? anySource?.naturalHeight ?? 0);
-    if (sourceWidth > 0 && sourceHeight > 0) return clampNumber(sourceWidth / sourceHeight, 0.001, 128);
+    const explicitAspect = rememberAspect(sourceWidth, sourceHeight);
+    if (explicitAspect) return explicitAspect;
+
+    if (sourceKey) {
+      const decodedVideo = this.nativeVideoDecodeDimensionCache.get(sourceKey);
+      if (decodedVideo?.metadata) {
+        return rememberAspect(decodedVideo.width, decodedVideo.height) ?? fallback;
+      }
+      const decodedImage = this.previewImageElements.get(sourceKey);
+      if (decodedImage?.complete && decodedImage.naturalWidth > 0 && decodedImage.naturalHeight > 0) {
+        return rememberAspect(decodedImage.naturalWidth, decodedImage.naturalHeight) ?? fallback;
+      }
+    }
+
+    if (source && nativeSource.sourceType === 'image') {
+      const resolvedImage = this.resolvePreviewElement(
+        source,
+        nativeSource.sourceType,
+        nativeSource.previewElement ?? null,
+      );
+      if (resolvedImage) {
+        const dims = this.previewElementDimensions(resolvedImage);
+        if (dims) return rememberAspect(dims.width, dims.height) ?? fallback;
+      }
+    }
     return fallback;
   }
 
@@ -6530,6 +6588,12 @@ fn fs_main() -> @location(0) vec4<f32> {
       img.crossOrigin = 'anonymous';
       img.onload = () => {
         this.previewImageElements.set(key, img);
+        if (img.naturalWidth > 0 && img.naturalHeight > 0) {
+          this.nativeSourceAspectCache.set(
+            key,
+            clampNumber(img.naturalWidth / img.naturalHeight, 0.001, 128),
+          );
+        }
         this.sourcePreviewFailures.delete(key);
         if (this.running) this.scheduleSync(this.desiredWidth, this.desiredHeight, this.latestLayers);
       };

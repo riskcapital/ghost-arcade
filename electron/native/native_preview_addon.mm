@@ -609,6 +609,29 @@ static NSView* gParentWebView = nil;
 static NSView* gPreviewHostView = nil;
 static std::mutex gMutex;
 
+static void StabilizeHostWindow(NSView* parentWebView) {
+  if (!parentWebView) return;
+  NSWindow* window = parentWebView.window;
+  if (!window) return;
+
+  // Electron needs an alpha-capable Chromium surface so the Metal child view
+  // can show through the editor viewport. The containing AppKit window must
+  // still be opaque, otherwise every transparent Chromium pixel becomes a
+  // literal hole through to applications behind Ghost Arcade.
+  NSColor* backingColor = [NSColor colorWithCalibratedRed:(5.0 / 255.0)
+                                                    green:(7.0 / 255.0)
+                                                     blue:(11.0 / 255.0)
+                                                    alpha:1.0];
+  window.opaque = YES;
+  window.backgroundColor = backingColor;
+
+  NSView* contentView = window.contentView;
+  if (contentView) {
+    contentView.wantsLayer = YES;
+    contentView.layer.backgroundColor = backingColor.CGColor;
+  }
+}
+
 struct PreviewRectValues {
   double x = 0.0;
   double y = 0.0;
@@ -719,12 +742,16 @@ static Napi::Value Attach(const Napi::CallbackInfo& info) {
   std::lock_guard<std::mutex> lock(gMutex);
   RunOnMainSync(^{
     gParentWebView = parentWebView;
-    // DOM client coordinates are relative to the web contents, not the
-    // containing NSWindow (whose content coordinates can include titlebar
-    // and safe-area offsets). Parenting to the web view gives us one exact
-    // coordinate system for resize, zoom, and Retina scaling.
-    NSView* coordinateView = gParentWebView;
-    NSView* hostView = coordinateView;
+    StabilizeHostWindow(gParentWebView);
+    // Browser client coordinates span the complete BrowserWindow content
+    // area. Electron's native handle can point at an intermediate Chromium
+    // view whose bounds are narrower than that area; parenting the preview
+    // there clips the right/bottom whenever the DOM rect has a non-zero
+    // origin. The NSWindow content view owns the complete client coordinate
+    // space and keeps the Metal underlay independent of Chromium's internal
+    // view hierarchy.
+    NSView* hostView = gParentWebView.window.contentView ?: gParentWebView;
+    NSView* coordinateView = hostView;
     NSRect frame = RectFromTopLeftValues(rectValues, coordinateView);
     if (!gPreviewView) {
       gPreviewView = [[GhostNativePreviewView alloc] initWithFrame:frame];
@@ -756,9 +783,10 @@ static Napi::Value Update(const Napi::CallbackInfo& info) {
   std::lock_guard<std::mutex> lock(gMutex);
   RunOnMainSync(^{
     if (!gPreviewView) return;
-    NSView* coordinateView = gParentWebView;
+    NSView* coordinateView = gParentWebView.window.contentView ?: gParentWebView;
     NSView* hostView = gPreviewHostView ?: gPreviewView.superview ?: coordinateView;
     if (!coordinateView || !hostView) return;
+    StabilizeHostWindow(coordinateView);
     gPreviewView.frame = RectFromTopLeftValues(rectValues, coordinateView);
     [gPreviewView setContentRect:NSMakeRect(
       rectValues.contentX,
@@ -768,6 +796,23 @@ static Napi::Value Update(const Napi::CallbackInfo& info) {
     )];
   });
   return StatusObject(env);
+}
+
+static Napi::Value StabilizeHost(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 1) {
+    Napi::TypeError::New(env, "stabilizeHost(parentViewHandle) expected").ThrowAsJavaScriptException();
+    return Napi::Boolean::New(env, false);
+  }
+  NSView* parentWebView = ParentViewFromBuffer(info[0]);
+  if (!parentWebView) {
+    Napi::Error::New(env, "Invalid parent NSView handle").ThrowAsJavaScriptException();
+    return Napi::Boolean::New(env, false);
+  }
+  RunOnMainSync(^{
+    StabilizeHostWindow(parentWebView);
+  });
+  return Napi::Boolean::New(env, true);
 }
 
 static Napi::Value PresentIOSurface(const Napi::CallbackInfo& info) {
@@ -887,6 +932,7 @@ static Napi::Value Status(const Napi::CallbackInfo& info) {
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("attach", Napi::Function::New(env, Attach));
   exports.Set("update", Napi::Function::New(env, Update));
+  exports.Set("stabilizeHost", Napi::Function::New(env, StabilizeHost));
   exports.Set("presentIOSurface", Napi::Function::New(env, PresentIOSurface));
   exports.Set("setIOSurface", Napi::Function::New(env, SetIOSurface));
   exports.Set("setOverlay", Napi::Function::New(env, SetOverlay));

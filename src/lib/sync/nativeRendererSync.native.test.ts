@@ -160,6 +160,61 @@ describe('native renderer sync render clock routing', () => {
   });
 });
 
+describe('native renderer sync content fit routing', () => {
+  it('uses cached native media dimensions for stretch, fill, and contain UV modes', () => {
+    const sync = new NativeRendererSyncCtor() as any;
+    const source = {
+      id: 'wide-video',
+      src: 'file:///tmp/wide-video.mp4',
+      type: 'video',
+    };
+    const nativeSource = {
+      id: source.id,
+      uri: source.src,
+      sourceType: 'video',
+      source,
+      shouldPrefetch: true,
+      shouldPreview: true,
+    };
+    const sourceKey = sync.sourceCacheKey(source.id, source.src);
+    sync.nativeVideoDecodeDimensionCache.set(sourceKey, {
+      width: 1920,
+      height: 1080,
+      metadata: true,
+    });
+    const baseLayer = {
+      contentFit: 'stretch',
+      corners: {
+        topLeft: { x: 0, y: 0 },
+        topRight: { x: 1, y: 0 },
+        bottomRight: { x: 1, y: 1 },
+        bottomLeft: { x: 0, y: 1 },
+      },
+      flipH: false,
+      flipV: false,
+      cropRegion: null,
+    };
+
+    const stretch = sync.nativeLayerUvState(baseLayer, nativeSource, 1000, 1000);
+    const fill = sync.nativeLayerUvState(
+      { ...baseLayer, contentFit: 'fill' },
+      nativeSource,
+      1000,
+      1000,
+    );
+    const contain = sync.nativeLayerUvState(
+      { ...baseLayer, contentFit: 'crop' },
+      nativeSource,
+      1000,
+      1000,
+    );
+
+    expect(stretch.uvFlags).toEqual([0, 1.77778, 0, 0]);
+    expect(fill.uvFlags).toEqual([1, 1.77778, 0, 0]);
+    expect(contain.uvFlags).toEqual([2, 1.77778, 0, 0]);
+  });
+});
+
 describe('native renderer sync shared-texture source frames', () => {
   it('uses the dedicated GPU shared-texture command shape', () => {
     const command = buildNativeSharedTextureSourceFrameCommand({
