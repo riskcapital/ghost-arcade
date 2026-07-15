@@ -21,6 +21,17 @@ type TextureShareStatus = {
   nativeOutputLastPublishedFrame?: number;
 };
 
+type NativeEditorPreviewStatus = {
+  available: boolean;
+  attached: boolean;
+  pumpActive: boolean;
+  mode: string;
+  presentation: string;
+  transport?: string;
+  lastPresentedFrame: number;
+  framesPresented: number;
+};
+
 const nativeGraphManifests = [
   {
     id: 'planet',
@@ -86,26 +97,22 @@ const nativeGraphManifests = [
     feature: 'native_pixel_particles_graph',
     shader_ids: ['pixel-particles/compute', 'pixel-particles/render'],
   },
-  {
-    id: 'point-cloud-fx',
-    feature: 'native_point_cloud_fx_graph',
-    shader_ids: [
-      'point-cloud-fx/compute',
-      'point-cloud-fx/sort-fill',
-      'point-cloud-fx/sort-step',
-      'point-cloud-fx/render',
-    ],
-  },
 ];
 
 function coreCapabilities(features: Record<string, unknown> = {}, overrides: Record<string, unknown> = {}) {
   const sharedSourceFrameReady = features.shared_texture_source_frame_upload === true;
   const backend = String(overrides.backend ?? 'metal');
-  const outputSharedTextureExport = overrides.output_shared_texture_export ??
-    (features.shared_texture_output_export === true
-      ? outputSharedTextureExportContractForBackend(backend, true)
-      : outputSharedTextureExportContractForBackend(backend, false));
-  return {
+	  const outputSharedTextureExport = (overrides.output_shared_texture_export as { available?: boolean } | undefined) ??
+	    (features.shared_texture_output_export === true
+	      ? outputSharedTextureExportContractForBackend(backend, true)
+	      : outputSharedTextureExportContractForBackend(backend, false));
+	  const nativeEditorPreview = overrides.native_editor_preview
+	    ?? nativeEditorPreviewContract(
+	      outputSharedTextureExport?.available === true
+	        && features.native_editor_preview_frame_source === true,
+	      backend,
+	    );
+	  return {
     schema_version: 1,
     core_version: 'test-core',
     backend,
@@ -149,19 +156,31 @@ function coreCapabilities(features: Record<string, unknown> = {}, overrides: Rec
           accepted_formats: [],
           reason: 'native renderer is not running',
         },
-    output_shared_texture_export: outputSharedTextureExport,
-    notes: [],
-    ...overrides,
-  };
-}
+	    output_shared_texture_export: outputSharedTextureExport,
+	    native_editor_preview: nativeEditorPreview,
+	    notes: [],
+	    ...overrides,
+	  };
+	}
 
 function createBroker({
   encoderAvailable = true,
   textureShareStatus = null,
+  nativeEditorPreviewStatus = {
+    available: true,
+    attached: true,
+    pumpActive: true,
+    mode: 'shared-texture-import-blit',
+    presentation: 'underlay-zero-copy',
+    transport: '',
+    lastPresentedFrame: 8,
+    framesPresented: 8,
+  },
   platform = 'darwin',
 }: {
   encoderAvailable?: boolean;
   textureShareStatus?: TextureShareStatus | null;
+  nativeEditorPreviewStatus?: NativeEditorPreviewStatus | null;
   platform?: NodeJS.Platform;
 } = {}) {
   const broker = createNativeRendererBroker({
@@ -182,6 +201,11 @@ function createBroker({
       reason: encoderAvailable ? null : 'ffmpeg unavailable in test',
     }),
     textureShareStatusProvider: textureShareStatus ? () => textureShareStatus : null,
+    nativeEditorPreviewStatusProvider: nativeEditorPreviewStatus ? () => ({
+      ...nativeEditorPreviewStatus,
+      transport: nativeEditorPreviewStatus.transport ||
+        (platform === 'win32' ? 'dxgi' : platform === 'darwin' ? 'iosurface' : 'none'),
+    }) : null,
   }) as any;
   broker.child = { killed: false };
   broker.lastStatus = {
@@ -204,6 +228,9 @@ function completeNativeV2Features() {
     compute_graph_source_frame_target: true,
     persistent_compute_buffers: true,
     native_output_mirror_texture: true,
+    native_editor_preview_frame_source: true,
+    isf_glsl_parse_probe: true,
+    isf_glsl_host: true,
     shared_texture_source_frame_upload: true,
     shared_texture_upload: true,
     shared_texture_output_export: true,
@@ -228,6 +255,7 @@ function completeNativeV2Features() {
 }
 
 function completeGraphManifestOverrides(overrides: Record<string, unknown> = {}) {
+  const backend = String(overrides.backend ?? 'metal');
   return {
     native_graph_instruments: nativeGraphManifests.map((entry) => entry.id),
     native_graph_instrument_manifest: nativeGraphManifests.map((entry) => ({
@@ -240,6 +268,7 @@ function completeGraphManifestOverrides(overrides: Record<string, unknown> = {})
       render_target: 'source_frame',
       parity: `${entry.id}-parity`,
     })),
+    native_editor_preview: nativeEditorPreviewContract(true, backend, true),
     ...overrides,
   };
 }
@@ -258,6 +287,15 @@ function windowsSharedTextureImportContract() {
 }
 
 function outputSharedTextureExportContractForBackend(backend: string, available = true) {
+  const colorContract = {
+    color_space: 'srgb',
+    storage_format: 'bgra8unorm',
+    storage_encoding: 'srgb-encoded-bgra8unorm',
+    alpha_mode: 'opaque',
+    premultiplied_alpha: false,
+    single_render_source: 'core-output-composite',
+    zero_conversions: true,
+  };
   if (backend === 'd3d12') {
     return {
       available,
@@ -269,7 +307,8 @@ function outputSharedTextureExportContractForBackend(backend: string, available 
       handle_encoding: available ? 'integer' : '',
       handle_byte_length: available ? 8 : 0,
       name_scope: available ? 'local-session' : '',
-      exported_formats: available ? ['bgra8unorm', 'bgra8unorm-srgb'] : [],
+      exported_formats: available ? ['bgra8unorm'] : [],
+      ...colorContract,
       publisher: available ? 'SpoutOutput.sendTextureByName' : 'none',
       reason: available ? null : 'native output shared texture export is unavailable',
     };
@@ -283,9 +322,33 @@ function outputSharedTextureExportContractForBackend(backend: string, available 
     preferred_transport: available ? 'handle' : '',
     handle_encoding: available ? 'integer' : '',
     handle_byte_length: available ? 4 : 0,
-    exported_formats: available ? ['bgra8unorm', 'bgra8unorm-srgb'] : [],
+    exported_formats: available ? ['bgra8unorm'] : [],
+    ...colorContract,
     publisher: available ? 'SyphonOutput.publishIOSurface' : 'none',
     reason: available ? null : 'native output shared texture export is unavailable',
+  };
+}
+
+function nativeEditorPreviewContract(available = true, backend = 'metal', productionReady = false) {
+  return {
+    available,
+    mode: available ? (productionReady ? 'shared-texture-import-blit' : 'embedded-presenter-pending') : 'unavailable',
+    presentation: available ? (productionReady ? 'underlay-zero-copy' : 'unavailable') : 'unavailable',
+    needs_underlay_lock_in: available && !productionReady,
+    production_ready: productionReady,
+    parented: productionReady,
+    source: available ? 'core-output-composite' : 'native-unavailable',
+    single_render: available,
+    transport: backend === 'd3d12' ? 'dxgi' : backend === 'metal' ? 'iosurface' : 'none',
+    color_space: 'srgb',
+    storage_format: 'bgra8unorm',
+    storage_encoding: 'srgb-encoded-bgra8unorm',
+    alpha_mode: 'opaque',
+    premultiplied_alpha: false,
+    zero_conversions: true,
+    reason: available
+      ? (productionReady ? null : 'native core-output composite is available; editor embedded shared-texture presenter is pending')
+      : 'native renderer is not running',
   };
 }
 
@@ -332,6 +395,71 @@ describe('native renderer broker capability overlay', () => {
     expect(String(checks.get('native-recording')?.detail ?? '')).toContain('ffmpeg unavailable');
   });
 
+  it('does not promote the Electron FFmpeg video bridge into native-only readiness', async () => {
+    const broker = createBroker({
+      encoderAvailable: true,
+      textureShareStatus: {
+        available: true,
+        platform: 'syphon',
+        label: 'Syphon',
+        senderMode: 'native-iosurface',
+        nativeOutputCapable: true,
+        nativeOutputActive: true,
+        nativeOutputWaitingForFrame: false,
+        nativeOutputLastPublishedFrame: 8,
+      },
+    });
+    broker.lastStatus = {
+      ...broker.lastStatus,
+      output_window_attached: true,
+      output_swapchain_ready: true,
+      output_present_healthy: true,
+      swapchain_presented: 5,
+      frames_presented: 5,
+      scene_layers_active: 1,
+      output_last_presented_layer_count: 1,
+      swapchain_last_present_result: 'ok',
+    };
+    broker.send = async (method: string) => {
+      expect(method).toBe('get_capabilities');
+      return coreCapabilities(
+        {
+          ...completeNativeV2Features(),
+          native_video_frame_decode: false,
+          native_video_frame_prefetch: false,
+          native_video_decode_pump: false,
+          native_video_decode_pump_window: false,
+        },
+        completeGraphManifestOverrides(),
+      );
+    };
+
+    const capabilities = await broker.refreshCapabilities({ requireCore: true });
+    expect(capabilities.features.native_video_frame_prefetch).toBe(false);
+    expect(capabilities.features.video_frame_prefetch).toBe(false);
+
+    const decodeCapabilities = await broker.invoke('native_renderer_get_decode_capabilities');
+    expect(decodeCapabilities.video_decode).toBe(false);
+    expect(decodeCapabilities.native_video_frame_prefetch).toBe(false);
+    expect(decodeCapabilities.video_frame_prefetch).toBe(false);
+    expect(decodeCapabilities.supported_source_types).toEqual(['image']);
+
+    await expect(
+      broker.invoke('native_renderer_prefetch_media', {
+        source_id: 'native-only-video',
+        uri: '/tmp/native-only-video.mp4',
+        source_type: 'video',
+      }),
+    ).rejects.toThrow(/render-core video decode pump/);
+
+    const report = broker.readinessReport();
+    expect(report.modes.output_driver.ok).toBe(true);
+    expect(report.modes.full_v2.ok).toBe(false);
+    expect(report.modes.full_v2.blockers).toEqual([
+      'native render-clock video decode pump is not fully ready',
+    ]);
+  });
+
   it('promotes full-v2 when native output, graph routes, media, recording, and texture share are ready', async () => {
     const broker = createBroker({
       encoderAvailable: true,
@@ -358,6 +486,9 @@ describe('native renderer broker capability overlay', () => {
           compute_graph_source_frame_target: true,
           persistent_compute_buffers: true,
           native_output_mirror_texture: true,
+          native_editor_preview_frame_source: true,
+          isf_glsl_parse_probe: true,
+          isf_glsl_host: true,
           shared_texture_source_frame_upload: true,
           shared_texture_upload: true,
           shared_texture_output_export: true,
@@ -380,6 +511,7 @@ describe('native renderer broker capability overlay', () => {
           ...graphFeatures,
         },
         {
+          native_editor_preview: nativeEditorPreviewContract(true, 'metal', true),
           native_graph_instruments: nativeGraphManifests.map((entry) => entry.id),
           native_graph_instrument_manifest: nativeGraphManifests.map((entry) => ({
             id: entry.id,
@@ -489,12 +621,19 @@ describe('native renderer broker capability overlay', () => {
             platform: 'dxgi',
             exporter: 'd3d12-open-shared-handle',
             handle_scope: 'process-local',
-            preferred_transport: 'handle',
-            handle_encoding: 'integer',
-            handle_byte_length: 8,
-            exported_formats: ['bgra8unorm', 'bgra8unorm-srgb'],
-            publisher: 'SpoutOutput.sendTexture',
-            reason: null,
+	            preferred_transport: 'handle',
+	            handle_encoding: 'integer',
+	            handle_byte_length: 8,
+	            exported_formats: ['bgra8unorm'],
+	            color_space: 'srgb',
+	            storage_format: 'bgra8unorm',
+	            storage_encoding: 'srgb-encoded-bgra8unorm',
+	            alpha_mode: 'opaque',
+	            premultiplied_alpha: false,
+	            single_render_source: 'core-output-composite',
+	            zero_conversions: true,
+	            publisher: 'SpoutOutput.sendTexture',
+	            reason: null,
           },
         }),
       );
@@ -525,7 +664,7 @@ describe('native renderer broker capability overlay', () => {
         available: true,
         platform: 'spout',
         label: 'Spout',
-        senderMode: 'source-frame-fallback',
+        senderMode: 'native-texture-share-pending',
         nativeOutputCapable: false,
         nativeOutputTransport: 'dxgi-shared-name',
         nativeOutputRequiresNamedTexture: true,
@@ -589,6 +728,9 @@ describe('native renderer broker capability overlay', () => {
           compute_graph_source_frame_target: true,
           persistent_compute_buffers: true,
           native_output_mirror_texture: true,
+          native_editor_preview_frame_source: true,
+          isf_glsl_parse_probe: true,
+          isf_glsl_host: true,
           shared_texture_source_frame_upload: true,
           shared_texture_upload: true,
           shared_texture_output_export: true,
@@ -611,6 +753,7 @@ describe('native renderer broker capability overlay', () => {
           ...graphFeatures,
         },
         {
+          native_editor_preview: nativeEditorPreviewContract(true, 'metal', true),
           native_graph_instruments: nativeGraphManifests.map((entry) => entry.id),
           native_graph_instrument_manifest: nativeGraphManifests.map((entry) => ({
             id: entry.id,
@@ -671,6 +814,9 @@ describe('native renderer broker capability overlay', () => {
           compute_graph_source_frame_target: true,
           persistent_compute_buffers: true,
           native_output_mirror_texture: true,
+          native_editor_preview_frame_source: true,
+          isf_glsl_parse_probe: true,
+          isf_glsl_host: true,
           shared_texture_source_frame_upload: true,
           shared_texture_upload: true,
           shared_texture_output_export: true,
@@ -693,6 +839,7 @@ describe('native renderer broker capability overlay', () => {
           ...graphFeatures,
         },
         {
+          native_editor_preview: nativeEditorPreviewContract(true, 'metal', true),
           native_graph_instruments: nativeGraphManifests.map((entry) => entry.id),
           native_graph_instrument_manifest: nativeGraphManifests.map((entry) => ({
             id: entry.id,
@@ -735,6 +882,8 @@ describe('native renderer broker capability overlay', () => {
       output_present_healthy: true,
       swapchain_presented: 5,
       frames_presented: 0,
+      scene_layers_active: 1,
+      output_last_presented_layer_count: 1,
       swapchain_last_present_result: 'ok',
     };
     broker.send = async (method: string) => {
@@ -754,5 +903,106 @@ describe('native renderer broker capability overlay', () => {
     expect(String(report.modes.output_active.detail)).toContain('5 native swapchain frame');
     expect(checks.get('managed-output')?.ok).toBe(true);
     expect(String(checks.get('managed-output')?.detail ?? '')).toContain('5 native swapchain frame');
+  });
+
+  it('does not treat diagnostic-only native output frames as active scene output', async () => {
+    const broker = createBroker({ encoderAvailable: true });
+    broker.lastStatus = {
+      ...broker.lastStatus,
+      output_window_attached: true,
+      output_swapchain_ready: true,
+      output_present_healthy: true,
+      swapchain_presented: 5,
+      scene_layers_active: 2,
+      output_last_presented_layer_count: 0,
+      swapchain_last_present_result: 'ok',
+    };
+    broker.send = async (method: string) => {
+      expect(method).toBe('get_capabilities');
+      return coreCapabilities({
+        managed_output_attach: true,
+      });
+    };
+
+    await broker.refreshCapabilities({ requireCore: true });
+    const report = broker.readinessReport();
+    const checks = new Map<string, ReadinessCheck>(
+      report.checks.map((check: ReadinessCheck) => [check.id, check]),
+    );
+
+    expect(report.modes.output_active.ok).toBe(false);
+    expect(checks.get('managed-output')?.ok).toBe(false);
+    expect(String(checks.get('managed-output')?.detail ?? '')).toContain('no scene layers');
+  });
+
+  it('keeps the last healthy backend state when a frame submit RPC times out', async () => {
+    const broker = createBroker({ encoderAvailable: true });
+    broker.send = async (method: string) => {
+      expect(method).toBe('submit_batch');
+      throw new Error('Native render core timed out handling submit_batch');
+    };
+
+    const result = await broker.invoke('native_renderer_submit_batch', { batch: { commands: [] } });
+
+    expect(result).toBeNull();
+    expect(broker.lastStatus.backend_ready).toBe(true);
+    expect(broker.lastStatus.last_frame_error).toBe('');
+    expect(broker.lastStatus.last_rpc_error).toContain('timed out handling submit_batch');
+    expect(broker.lastStatus.last_rpc_error_method).toBe('submit_batch');
+  });
+
+  it('sends viewport interactions as acknowledgement-free notifications', () => {
+    const broker = createBroker({ encoderAvailable: true });
+    const writes: string[] = [];
+    broker.child = {
+      killed: false,
+      stdin: {
+        writable: true,
+        write(payload: string) {
+          writes.push(payload);
+          return true;
+        },
+      },
+    };
+
+    expect(broker.notify('set_layer_interaction', {
+      layer_id: 'layer-1',
+      corners: {
+        topLeft: { x: 0, y: 0 },
+        topRight: { x: 1, y: 0 },
+        bottomRight: { x: 1, y: 1 },
+        bottomLeft: { x: 0, y: 1 },
+      },
+    })).toBe(true);
+    expect(JSON.parse(writes[0])).toMatchObject({
+      id: 0,
+      method: 'set_layer_interaction',
+      params: { layer_id: 'layer-1' },
+    });
+    expect(broker.pending.size).toBe(0);
+  });
+
+  it('keeps status polling timeouts from poisoning native output driver readiness', async () => {
+    const broker = createBroker({ encoderAvailable: true });
+    broker.lastStatus = {
+      ...broker.lastStatus,
+      output_window_attached: true,
+      output_swapchain_ready: true,
+      output_present_healthy: true,
+      swapchain_presented: 4,
+      scene_layers_active: 1,
+      output_last_presented_layer_count: 1,
+      swapchain_last_present_result: 'ok',
+    };
+    broker.send = async (method: string) => {
+      expect(method).toBe('status');
+      throw new Error('Native render core timed out handling status');
+    };
+
+    const status = await broker.invoke('native_renderer_get_status');
+
+    expect(status.backend_ready).toBe(true);
+    expect(status.last_rpc_error).toContain('timed out handling status');
+    expect(status.last_rpc_error_method).toBe('status');
   });
 });

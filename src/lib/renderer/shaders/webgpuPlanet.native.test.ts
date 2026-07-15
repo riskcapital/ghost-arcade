@@ -20,6 +20,9 @@ describe('Planet native shader bundle', () => {
     expect(source.entry).toBe('fs_planet');
     expect(source.source).toContain('fn vs_full');
     expect(source.source).toContain('fn fs_planet');
+    expect(source.source).toContain('@fragment fn fs_planet(in: V)');
+    expect(source.source).toContain('let frag = in.uv * u.resolution;');
+    expect(source.source).not.toContain('@fragment fn fs_planet(@builtin(position)');
     expect(source.source).toContain('@vertex');
     expect(source.source).toContain('@fragment');
     expect(source.source).not.toMatch(/^\s*#include\b/m);

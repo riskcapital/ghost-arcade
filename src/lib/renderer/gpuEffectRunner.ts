@@ -2,7 +2,8 @@
  * gpuEffectRunner — legacy WebGL→WebGPU bridge for mid-chain GPU effects.
  *
  * ──────────────────────────────────────────────────────────────────────
- * STATUS: DEMOTED. Off by default in the GPU edition.
+ * STATUS: LEGACY COMPARISON ONLY. Disabled whenever native core is the
+ * active renderer.
  *
  * This runner exists for one job: take a Three.js texture sitting in the
  * middle of a WebGL effect chain (warp / blend / colour) and run a
@@ -41,12 +42,11 @@
  * to extract a WebGL texture's GpuMemoryBuffer at an arbitrary moment
  * in a chain. Until one ships, this runner can't be made zero-copy.
  *
- * So in the GPU edition we gate this whole path behind the experimental
- * flag `experimental.allowMidChainGpuEffects` (default OFF). When the
- * flag is off, `runGpuEffect()` early-returns the input texture
- * unchanged — the layer renders as if the GPU effect weren't there.
- * Users who specifically need a GPU effect to compose with downstream
- * WebGL effects (warp, blend, etc.) can opt in and pay the 3ms cost.
+ * So this path is now restricted to the legacy comparison renderer.
+ * When native core is enabled, `runGpuEffect()` early-returns the input
+ * texture unchanged. We do not allow this CPU readback bridge to make
+ * the in-app WebGL preview appear to support something the native output
+ * does not actually render.
  *
  * ──────────────────────────────────────────────────────────────────────
  * CONSTRAINT NOTE: `texture_external` is FRAGMENT-SHADER ONLY.
@@ -187,13 +187,11 @@ export class GpuEffectRunner {
     width: number,
     height: number,
   ): THREE.Texture {
-    // GATE: mid-chain GPU effects are demoted to opt-in in the GPU
-    // edition. The CPU-readback bridge below costs ~3ms at 1080p per
-    // call (readRenderTargetPixels → writeTexture round-trip); off by
-    // default to keep the steady-state path purely WebGL until the
-    // downstream-compositor bridge in WebGPUCanvas takes over at
-    // output time. See the architecture comment at the top of this
-    // file and the `allowMidChainGpuEffects` field in settings.ts.
+    // GATE: mid-chain GPU effects are a legacy comparison-only bridge.
+    // The CPU-readback path below costs ~3ms at 1080p per call
+    // (readRenderTargetPixels -> writeTexture round-trip). Native v2
+    // must not use this to make the editor preview diverge from the
+    // native output. Native effects need native graph/effect-pass ports.
     //
     // Cheap synchronous read — the settings store caches its value
     // and `get()` is O(1). Doing the check per frame (rather than via
@@ -201,7 +199,7 @@ export class GpuEffectRunner {
     // see the change on the very next frame without any plumbing.
     try {
       const s = getStore(settings);
-      if (!s?.experimental?.allowMidChainGpuEffects) {
+      if (s?.experimental?.outputNativeCore || !s?.experimental?.allowMidChainGpuEffects) {
         return sourceTexture;
       }
     } catch {

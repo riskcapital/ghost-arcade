@@ -10,6 +10,8 @@
   import { getDefaultEffectParams } from '../renderer/effects';
   import { applyPresetToEffect, getEffectPresets, getNumericEffectParams, effectParamLabels } from '../effects/effectUX';
   import { EFFECT_CATALOG } from '../effects/effectCatalog';
+  import { isNativeSelectableEffect } from '../renderer/nativeEffectCoverage';
+  import { isNativeReadyGpuShaderId } from '../renderer/gpuShaderCatalog';
   import { createDefaultStageEffect, getEffectDef, STAGE_EFFECT_CATALOG } from '../stores/stageEffects';
   import EffectPickerModal from './EffectPickerModal.svelte';
   import EdgeEffectsPanel from './EdgeEffectsPanel.svelte';
@@ -19,6 +21,11 @@
   import { generateCachedThumbnail } from '../isf/thumbnail';
   import { webgpuSupportedStore } from '../renderer/webgpuCapability';
   import { createAssetRefFromFile } from '../storage/assetRegistry';
+  import { NATIVE_ENGINE_ONLY, settings } from '../stores/settings';
+  import { nativeRendererRuntime } from '../stores/nativeRenderer';
+  import { submitNativeRendererCommands } from '../api/native-renderer';
+  import { maskEditingLayerId } from '../stores/maskEditing';
+  import { nativeUnsupportedEffectTypes, nativeUnsupportedSourceReason } from '../sync/nativeRendererSync';
 
   // WebGPU capability — reactive store, NOT a snapshot. The probe is
   // async and may not have resolved when this panel first mounts;
@@ -29,6 +36,47 @@
   // Shader thumbnail cache: layerId -> { url, codeSnippet }
   let shaderThumbnails: Record<string, string> = {};
   let shaderThumbCodes: Record<string, string> = {}; // track which code generated the thumb
+  $: nativeInventoryLocked = NATIVE_ENGINE_ONLY && Boolean($settings.experimental?.outputNativeCore);
+
+  function nativeEffectPending(effectType: EffectType | string): boolean {
+    return nativeInventoryLocked && !isNativeSelectableEffect(effectType);
+  }
+
+  function nativeEffectBadge(effectType: EffectType | string): 'NATIVE' | 'PENDING' | '' {
+    if (!nativeInventoryLocked) return '';
+    return isNativeSelectableEffect(effectType) ? 'NATIVE' : 'PENDING';
+  }
+
+  function toggleLayerEffectIfNativeReady(layerId: string, effect: Effect) {
+    if (nativeEffectPending(effect.type) && !effect.enabled) return;
+    project.toggleEffect(layerId, effect.id);
+  }
+
+  function toggleCompositionEffectIfNativeReady(effect: Effect) {
+    if (nativeEffectPending(effect.type) && !effect.enabled) return;
+    project.toggleMappingCompositionEffect(effect.id);
+  }
+
+  function nativeLayerPendingReason(layer: any): string | null {
+    if (!nativeInventoryLocked) return null;
+    const effects = nativeUnsupportedEffectTypes(layer);
+    if (effects.length > 0) return `effect:${effects.join(',')}:not-native`;
+    const sourceReason = nativeUnsupportedSourceReason(layer, false, {
+      nativeVideoDecodePumpReady: $nativeRendererRuntime.fullV2Ready,
+    });
+    if (
+      layer?.type === 'gpu' &&
+      typeof sourceReason === 'string' &&
+      sourceReason.endsWith(':route-unavailable') &&
+      isNativeReadyGpuShaderId(layer.gpuLayerContent?.shaderId)
+    ) {
+      return null;
+    }
+    return sourceReason;
+  }
+
+  const nativeGeneratedLayerPendingTitle =
+    'Pending native renderer implementation. Use local media or GPU Shader layers in native v2.';
 
   // Reactively generate thumbnails for shader layers
   $: {
@@ -238,6 +286,10 @@
   let timelineScrubbing = false;
   let timelineEl: HTMLDivElement | null = null;
   let videoTickFrame: number | null = null;
+  let timelinePendingSeekTime = 0;
+  let timelineScrubFrame: number | null = null;
+  let timelineScrubRequestSeq = 0;
+  let timelineScrubRequest: { source: MediaSource; time: number } | null = null;
 
   function formatTime(seconds: number): string {
     if (!isFinite(seconds) || isNaN(seconds)) return '0:00';
@@ -246,13 +298,63 @@
     return `${m}:${s.toString().padStart(2, '0')}`;
   }
 
+  function sourceDuration(source: MediaSource): number {
+    const duration = Number(source.durationSeconds ?? source.videoElement?.duration);
+    return Number.isFinite(duration) && duration > 0 ? duration : 0;
+  }
+
+  function sourcePlaybackTime(source: MediaSource, now = performance.now()): number {
+    const duration = sourceDuration(source);
+    const nativeTime = Number(source._nativePlaybackTimeSeconds);
+    const elementTime = Number(source.videoElement?.currentTime);
+    let time = Number.isFinite(nativeTime) && nativeTime >= 0
+      ? nativeTime
+      : Number.isFinite(elementTime) && elementTime >= 0
+        ? elementTime
+        : 0;
+    const anchorMs = Number(source._nativePlaybackUpdatedAtMs);
+    if (source.isPlaying !== false && Number.isFinite(anchorMs)) {
+      time += Math.max(0, now - anchorMs) / 1000 * (Number(source.playbackRate) || 1);
+    }
+    if (duration <= 0) return Math.max(0, time);
+    const start = duration * Math.max(0, Math.min(1, source.trimStart ?? 0));
+    const end = duration * Math.max(0, Math.min(1, source.trimEnd ?? 1));
+    const range = Math.max(0.001, end - start);
+    if ((source.playbackMode ?? 'loop') !== 'once') {
+      time = start + ((time - start) % range + range) % range;
+    } else {
+      time = Math.max(start, Math.min(end, time));
+    }
+    return time;
+  }
+
+  function setNativePlaybackTime(layerId: string, source: MediaSource, time: number) {
+    const duration = sourceDuration(source);
+    const nextTime = Math.max(0, duration > 0 ? Math.min(duration, time) : time);
+    source.durationSeconds = duration || source.durationSeconds;
+    source._nativePlaybackTimeSeconds = nextTime;
+    source._nativePlaybackUpdatedAtMs = performance.now();
+    source._nativePlaybackSeekSeq = Math.max(0, source._nativePlaybackSeekSeq ?? 0) + 1;
+    videoCurrentTime = nextTime;
+    if (source.videoElement) {
+      try { source.videoElement.currentTime = nextTime; } catch { /* native transport remains authoritative */ }
+    }
+    project.updateLayer(layerId, { source: { ...source } });
+  }
+
+  function previewPlaybackTime(source: MediaSource, time: number) {
+    const duration = sourceDuration(source);
+    const nextTime = Math.max(0, duration > 0 ? Math.min(duration, time) : time);
+    videoCurrentTime = nextTime;
+  }
+
   function startVideoTick() {
     if (videoTickFrame !== null) return;
     function tick() {
       const layer = $selectedLayer;
-      if (layer?.source?.type === 'video' && layer.source.videoElement) {
-        videoCurrentTime = layer.source.videoElement.currentTime;
-        videoDuration = layer.source.videoElement.duration || 0;
+      if (layer?.source?.type === 'video') {
+        videoDuration = sourceDuration(layer.source);
+        if (!timelineScrubbing) videoCurrentTime = sourcePlaybackTime(layer.source);
       }
       videoTickFrame = requestAnimationFrame(tick);
     }
@@ -267,33 +369,45 @@
   }
 
   // Start tick when selected layer is a video
-  $: if ($selectedLayer?.source?.type === 'video' && $selectedLayer.source.videoElement) {
+  $: if ($selectedLayer?.source?.type === 'video') {
     startVideoTick();
   } else {
     stopVideoTick();
   }
 
-  onDestroy(() => stopVideoTick());
+  onDestroy(() => {
+    stopVideoTick();
+    if (timelineScrubFrame !== null) cancelAnimationFrame(timelineScrubFrame);
+    timelineScrubFrame = null;
+    timelineScrubRequest = null;
+  });
 
   function setPlaybackMode(layerId: string, source: MediaSource, mode: VideoPlaybackMode) {
+    source._nativePlaybackTimeSeconds = sourcePlaybackTime(source);
+    source._nativePlaybackUpdatedAtMs = performance.now();
     source.playbackMode = mode;
     source._lastFrameTime = performance.now();
-    project.updateLayer(layerId, {});
+    project.updateLayer(layerId, { source: { ...source } });
   }
 
   function setPlaybackRate(layerId: string, source: MediaSource, rate: number) {
+    source._nativePlaybackTimeSeconds = sourcePlaybackTime(source);
+    source._nativePlaybackUpdatedAtMs = performance.now();
     source.playbackRate = rate;
-    project.updateLayer(layerId, {});
+    project.updateLayer(layerId, { source: { ...source } });
   }
 
   function handleTimelineMouseDown(e: MouseEvent, layerId: string, source: MediaSource) {
-    if (!timelineEl || !source.videoElement) return;
+    if (!timelineEl) return;
     e.stopPropagation();
+    e.preventDefault();
     timelineScrubbing = true;
     seekToPosition(e, source);
 
     const onMove = (me: MouseEvent) => seekToPosition(me, source);
-    const onUp = () => {
+    const onUp = (me: MouseEvent) => {
+      seekToPosition(me, source, true);
+      setNativePlaybackTime(layerId, source, timelinePendingSeekTime);
       timelineScrubbing = false;
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
@@ -302,11 +416,57 @@
     window.addEventListener('mouseup', onUp);
   }
 
-  function seekToPosition(e: MouseEvent, source: MediaSource) {
-    if (!timelineEl || !source.videoElement) return;
+  function seekToPosition(e: MouseEvent, source: MediaSource, flush = false) {
+    if (!timelineEl) return;
     const rect = timelineEl.getBoundingClientRect();
     const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / (rect.width || 1)));
-    source.videoElement.currentTime = pct * (source.videoElement.duration || 0);
+    const nextTime = pct * sourceDuration(source);
+    timelinePendingSeekTime = nextTime;
+    previewPlaybackTime(source, nextTime);
+    queueNativeScrubPreview(source, nextTime, flush);
+  }
+
+  function nativeScrubDimensions(source: MediaSource): { width: number; height: number } {
+    const sourceWidth = Math.max(1, Math.round(source.videoElement?.videoWidth || 1280));
+    const sourceHeight = Math.max(1, Math.round(source.videoElement?.videoHeight || 720));
+    const scale = Math.min(1, 1280 / Math.max(sourceWidth, sourceHeight));
+    return {
+      width: Math.max(1, Math.round(sourceWidth * scale)),
+      height: Math.max(1, Math.round(sourceHeight * scale)),
+    };
+  }
+
+  function queueNativeScrubPreview(source: MediaSource, time: number, flush = false) {
+    if (!$nativeRendererRuntime.running || !source.src) return;
+    timelineScrubRequest = { source, time };
+
+    const submitLatest = () => {
+      timelineScrubFrame = null;
+      const request = timelineScrubRequest;
+      timelineScrubRequest = null;
+      if (!request) return;
+      const dimensions = nativeScrubDimensions(request.source);
+      void submitNativeRendererCommands([{
+        type: 'decode_media_source',
+        source_id: request.source.id,
+        uri: request.source.src,
+        source_type: 'video',
+        decode_width: dimensions.width,
+        decode_height: dimensions.height,
+        time_seconds: request.time,
+        scrub_preview: true,
+        seq: ++timelineScrubRequestSeq,
+      }]).catch((error) => {
+        console.warn('[native video scrub] exact-frame request failed', error);
+      });
+    };
+
+    if (flush) {
+      if (timelineScrubFrame !== null) cancelAnimationFrame(timelineScrubFrame);
+      submitLatest();
+    } else if (timelineScrubFrame === null) {
+      timelineScrubFrame = requestAnimationFrame(submitLatest);
+    }
   }
 
   function handleTrimMouseDown(e: MouseEvent, which: 'start' | 'end', layerId: string, source: MediaSource) {
@@ -324,7 +484,7 @@
       } else {
         source.trimEnd = Math.max(pct, (source.trimStart ?? 0) + 0.02);
       }
-      project.updateLayer(layerId, {});
+      project.updateLayer(layerId, { source: { ...source } });
     };
 
     const onUp = () => {
@@ -385,6 +545,10 @@
       // Autoplay the video immediately
       source.videoElement = video;
       source.isPlaying = true;
+      source.durationSeconds = Number.isFinite(video.duration) ? video.duration : undefined;
+      source._nativePlaybackTimeSeconds = 0;
+      source._nativePlaybackUpdatedAtMs = performance.now();
+      source._nativePlaybackSeekSeq = 1;
       try {
         await video.play();
       } catch (err) {
@@ -717,6 +881,24 @@
         {#if showAddLayerMenu}
           <div class="add-layer-backdrop" onclick={() => showAddLayerMenu = false}></div>
           <div class="add-layer-menu" style="top:{addMenuPos.top}px;left:{addMenuPos.left}px">
+            {#if nativeInventoryLocked}
+              <div class="add-layer-section-label">Native Ready</div>
+              <button class:native-ready={nativeInventoryLocked} onclick={() => { project.addGPULayer('Planet', 'planet'); showAddLayerMenu = false; }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <circle cx="12" cy="12" r="8"/>
+                  <path d="M4 12c3 2.4 13 2.4 16 0"/>
+                  <path d="M12 4c2.4 3 2.4 13 0 16"/>
+                </svg>
+                Planet Shader <span class="native-layer-badge">NATIVE</span>
+              </button>
+              <button class:native-ready={nativeInventoryLocked} onclick={() => { project.addColorLayer(); showAddLayerMenu = false; }}>
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <rect x="4" y="4" width="16" height="16" rx="2"/>
+                </svg>
+                Color Layer <span class="native-layer-badge">NATIVE</span>
+              </button>
+              <div class="add-layer-section-label">Native Media</div>
+            {/if}
             <button onclick={() => { project.addLayer(undefined, 'media', 'rectangle'); showAddLayerMenu = false; }}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="3" y="3" width="18" height="18" rx="2"/>
@@ -725,7 +907,12 @@
               </svg>
               Media Layer
             </button>
-            <button onclick={() => { project.addLayer(undefined, 'media', 'custom'); showAddLayerMenu = false; }}>
+            <button
+              class:native-pending={nativeInventoryLocked}
+              disabled={nativeInventoryLocked}
+              title={nativeInventoryLocked ? 'Custom media shapes are pending in the native compositor.' : 'Add custom shape media layer'}
+              onclick={() => { project.addLayer(undefined, 'media', 'custom'); showAddLayerMenu = false; }}
+            >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polygon points="4,18 2,8 8,2 18,4 22,14 16,20" />
                 <circle cx="4" cy="18" r="1.5" fill="currentColor"/>
@@ -736,28 +923,47 @@
                 <circle cx="16" cy="20" r="1.5" fill="currentColor"/>
               </svg>
               Custom Shape
+              {#if nativeInventoryLocked}<span class="native-layer-badge pending">PENDING</span>{/if}
             </button>
-            <button onclick={() => { project.addLinesLayer(); showAddLayerMenu = false; }}>
+            <button
+              class:native-pending={nativeInventoryLocked}
+              disabled={nativeInventoryLocked}
+              title={nativeInventoryLocked ? nativeGeneratedLayerPendingTitle : 'Add lines layer'}
+              onclick={() => { project.addLinesLayer(); showAddLayerMenu = false; }}
+            >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline points="4 17 10 7 16 13 20 6"/>
                 <line x1="4" y1="20" x2="20" y2="20"/>
               </svg>
               Lines Layer
+              {#if nativeInventoryLocked}<span class="native-layer-badge pending">PENDING</span>{/if}
             </button>
-            <button onclick={() => { project.addSVGLayer(); showAddLayerMenu = false; }}>
+            <button
+              class:native-pending={nativeInventoryLocked}
+              disabled={nativeInventoryLocked}
+              title={nativeInventoryLocked ? nativeGeneratedLayerPendingTitle : 'Add SVG layer'}
+              onclick={() => { project.addSVGLayer(); showAddLayerMenu = false; }}
+            >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polygon points="12,2 22,20 2,20"/>
                 <polygon points="12,8 17,16 7,16"/>
               </svg>
               SVG Layer
+              {#if nativeInventoryLocked}<span class="native-layer-badge pending">PENDING</span>{/if}
             </button>
-            <button onclick={() => { project.addLightPaintingLayer(); showAddLayerMenu = false; }}>
+            <button
+              class:native-pending={nativeInventoryLocked}
+              disabled={nativeInventoryLocked}
+              title={nativeInventoryLocked ? nativeGeneratedLayerPendingTitle : 'Add light painting layer'}
+              onclick={() => { project.addLightPaintingLayer(); showAddLayerMenu = false; }}
+            >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M9 2L7.17 4H4c-1.1 0-2 .9-2 2v0c0 1.1.9 2 2 2h.5"/>
                 <path d="M12 2c3 4 7 5 7 10a7 7 0 1 1-14 0c0-5 4-6 7-10z"/>
                 <path d="M12 18c-2.2 0-4-1.8-4-4 0-2.5 2-3 4-6"/>
               </svg>
               Light Painting
+              {#if nativeInventoryLocked}<span class="native-layer-badge pending">PENDING</span>{/if}
             </button>
             <!-- Adv Light Paint button hidden — superseded by the
                  in-progress "Light Painting GPU" effort that adds GPU
@@ -771,15 +977,26 @@
             </button>
             -->
 
-            <button onclick={() => { project.addTextLayer(); showAddLayerMenu = false; }}>
+            <button
+              class:native-pending={nativeInventoryLocked}
+              disabled={nativeInventoryLocked}
+              title={nativeInventoryLocked ? nativeGeneratedLayerPendingTitle : 'Add text layer'}
+              onclick={() => { project.addTextLayer(); showAddLayerMenu = false; }}
+            >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline points="4 7 4 4 20 4 20 7"/>
                 <line x1="9" y1="20" x2="15" y2="20"/>
                 <line x1="12" y1="4" x2="12" y2="20"/>
               </svg>
               Text Layer
+              {#if nativeInventoryLocked}<span class="native-layer-badge pending">PENDING</span>{/if}
             </button>
-            <button onclick={() => { project.addSplatLayer(); showAddLayerMenu = false; }}>
+            <button
+              class:native-pending={nativeInventoryLocked}
+              disabled={nativeInventoryLocked}
+              title={nativeInventoryLocked ? 'Use GPU Shader > Point Cloud FX for native point clouds.' : 'Add splat / point cloud layer'}
+              onclick={() => { project.addSplatLayer(); showAddLayerMenu = false; }}
+            >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <circle cx="12" cy="12" r="2"/>
                 <circle cx="6" cy="6" r="1.5"/>
@@ -793,14 +1010,21 @@
                 <circle cx="15" cy="13" r="0.8"/>
               </svg>
               Splat / Point Cloud
+              {#if nativeInventoryLocked}<span class="native-layer-badge pending">PENDING</span>{/if}
             </button>
-            <button onclick={() => { project.addModel3DLayer(); showAddLayerMenu = false; }}>
+            <button
+              class:native-pending={nativeInventoryLocked}
+              disabled={nativeInventoryLocked}
+              title={nativeInventoryLocked ? nativeGeneratedLayerPendingTitle : 'Add 3D model layer'}
+              onclick={() => { project.addModel3DLayer(); showAddLayerMenu = false; }}
+            >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <path d="M12 2L2 7L12 12L22 7L12 2Z"/>
                 <path d="M2 17L12 22L22 17"/>
                 <path d="M2 12L12 17L22 12"/>
               </svg>
               3D Model
+              {#if nativeInventoryLocked}<span class="native-layer-badge pending">PENDING</span>{/if}
             </button>
             <!-- Legacy Pixel FX layer button hidden — Pixel Particles
                  now ships as a shader inside the GPU Shader layer
@@ -813,31 +1037,46 @@
             </button>
             -->
 
-            {#if $webgpuSupportedStore}
+            {#if $webgpuSupportedStore || nativeInventoryLocked}
               <button onclick={() => { project.addGPULayer(); showAddLayerMenu = false; }}>
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <circle cx="12" cy="12" r="9"/>
                   <ellipse cx="12" cy="12" rx="9" ry="3.2"/>
                   <path d="M3 12 a9 9 0 0 0 18 0"/>
                 </svg>
-                GPU Shader <span style="font-size:10px; opacity:0.7; padding:1px 4px; background:linear-gradient(135deg,#1e3a8a,#7c2d12); border-radius:2px; margin-left:4px;">WebGPU</span>
+                GPU Shader
+                <span style="font-size:10px; opacity:0.7; padding:1px 4px; background:linear-gradient(135deg,#1e3a8a,#7c2d12); border-radius:2px; margin-left:4px;">
+                  {nativeInventoryLocked ? 'Native' : 'WebGPU'}
+                </span>
               </button>
             {/if}
-            <button onclick={() => { project.addScreenLayer(); showAddLayerMenu = false; }}>
+            <button
+              class:native-pending={nativeInventoryLocked}
+              disabled={nativeInventoryLocked}
+              title={nativeInventoryLocked ? 'VJ output-as-layer needs a native graph source path before it can run in native v2.' : 'Add screen layer'}
+              onclick={() => { project.addScreenLayer(); showAddLayerMenu = false; }}
+            >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="2" y="3" width="20" height="14" rx="2"/>
                 <line x1="8" y1="21" x2="16" y2="21"/>
                 <line x1="12" y1="17" x2="12" y2="21"/>
               </svg>
               Screen (VJ Output)
+              {#if nativeInventoryLocked}<span class="native-layer-badge pending">PENDING</span>{/if}
             </button>
-            <button onclick={() => { project.addGroupLayer(); showAddLayerMenu = false; }}>
+            <button
+              class:native-pending={nativeInventoryLocked}
+              disabled={nativeInventoryLocked}
+              title={nativeInventoryLocked ? 'Group compositing is pending in the native compositor.' : 'Add group layer'}
+              onclick={() => { project.addGroupLayer(); showAddLayerMenu = false; }}
+            >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="3" y="3" width="7" height="7" rx="1"/>
                 <rect x="14" y="3" width="7" height="7" rx="1"/>
                 <rect x="3" y="14" width="7" height="7" rx="1"/>
               </svg>
               Group
+              {#if nativeInventoryLocked}<span class="native-layer-badge pending">PENDING</span>{/if}
             </button>
           </div>
         {/if}
@@ -884,17 +1123,29 @@
           {#if mappingComposition.effects.length > 0}
             <div class="composition-effect-list">
               {#each mappingComposition.effects as effect, index (effect.id)}
-                <div class="composition-effect-item" class:disabled={!effect.enabled}>
+                {@const pendingNativeEffect = nativeEffectPending(effect.type)}
+                <div
+                  class="composition-effect-item"
+                  class:disabled={!effect.enabled}
+                  class:native-pending={pendingNativeEffect}
+                >
                   <div class="composition-effect-header">
                     <input
                       type="checkbox"
                       checked={effect.enabled}
-                      onchange={() => project.toggleMappingCompositionEffect(effect.id)}
+                      disabled={pendingNativeEffect && !effect.enabled}
+                      title={pendingNativeEffect ? 'Pending native port' : (effect.enabled ? 'Disable effect' : 'Enable effect')}
+                      onchange={() => toggleCompositionEffectIfNativeReady(effect)}
                     />
                     <button
                       class="composition-effect-name"
                       onclick={() => expandedCompositionEffectId = expandedCompositionEffectId === effect.id ? null : effect.id}
                     >{getEffectLabel(effect.type)}</button>
+                    {#if nativeInventoryLocked}
+                      <span class="native-effect-badge" class:pending={pendingNativeEffect}>
+                        {nativeEffectBadge(effect.type)}
+                      </span>
+                    {/if}
                     <button
                       class="composition-mini-btn"
                       disabled={index === 0}
@@ -921,6 +1172,11 @@
 
                   {#if expandedCompositionEffectId === effect.id}
                     <div class="composition-effect-params">
+                      {#if pendingNativeEffect}
+                        <div class="native-effect-lockout">
+                          Pending native port. Disable or remove this effect to keep the composition renderable in native v2.
+                        </div>
+                      {/if}
                       <div class="effect-mix-row">
                         <div class="effect-opacity-ctrl">
                           <span class="param-label">Opacity</span>
@@ -1195,6 +1451,7 @@
       {@const isChild = !!layer.parentGroupId}
       {@const parentGroup = isChild ? $layers.find(l => l.id === layer.parentGroupId) : null}
       {@const isHiddenByCollapse = isChild && parentGroup?.groupCollapsed}
+      {@const nativeLayerReason = nativeLayerPendingReason(layer)}
       {#if !isHiddenByCollapse}
       <div
         class="layer-item"
@@ -1206,6 +1463,7 @@
         class:drag-over-into={dragOverIndex === index && draggedIndex !== index && dragOverZone === 'into'}
         class:group-layer={layer.type === 'group'}
         class:group-child={isChild}
+        class:native-pending={!!nativeLayerReason}
         onclick={(e) => selectLayerWithModifiers(layer.id, index, e)}
         oncontextmenu={(e) => handleLayerContextMenu(layer.id, e)}
         role="button"
@@ -1338,6 +1596,13 @@
             ondblclick={(e) => { e.stopPropagation(); renamingLayerId = layer.id; }}
             title="Double-click to rename"
           >{layer.name}</span>
+        {/if}
+
+        {#if nativeLayerReason}
+          <span
+            class="native-layer-row-badge"
+            title={`Native v2 pending: ${nativeLayerReason}`}
+          >PENDING</span>
         {/if}
 
         <button
@@ -1863,9 +2128,8 @@
         {/if}
 
         <!-- Video Controls (only for video sources) -->
-        {#if layer.type === 'media' && layer.source?.type === 'video' && layer.source.videoElement}
+        {#if layer.type === 'media' && layer.source?.type === 'video'}
           {@const vSrc = layer.source}
-          {@const vEl = layer.source.videoElement}
           {@const vMode = vSrc.playbackMode || 'loop'}
           {@const vRate = vSrc.playbackRate ?? 1.0}
           {@const vTrimS = vSrc.trimStart ?? 0}
@@ -1878,16 +2142,18 @@
                 class="vt-btn vt-play"
                 onclick={() => {
                   const playing = vSrc.isPlaying !== false;
+                  vSrc._nativePlaybackTimeSeconds = sourcePlaybackTime(vSrc);
+                  vSrc._nativePlaybackUpdatedAtMs = performance.now();
                   if (playing) {
-                    vEl.pause();
+                    vSrc.videoElement?.pause();
                     vSrc.isPlaying = false;
-                  } else {
-                    vSrc.isPlaying = true;
-                    vSrc._lastFrameTime = performance.now();
-                    vEl.play().catch(() => {});
-                  }
-                  project.updateLayer(layer.id, {});
-                }}
+	                  } else {
+	                    vSrc.isPlaying = true;
+	                    vSrc._lastFrameTime = performance.now();
+	                    vSrc.videoElement?.play().catch(() => {});
+	                  }
+	                  project.updateLayer(layer.id, { source: { ...vSrc } });
+	                }}
                 title={(vSrc.isPlaying !== false) ? 'Pause' : 'Play'}
               >
                 {#if vSrc.isPlaying === false}
@@ -1899,10 +2165,12 @@
               <button
                 class="vt-btn"
                 onclick={() => {
-                  vEl.currentTime = (vSrc.trimStart ?? 0) * (vEl.duration || 0);
-                  vEl.play(); vSrc.isPlaying = true;
-                  project.updateLayer(layer.id, {});
-                }}
+                  setNativePlaybackTime(layer.id, vSrc, (vSrc.trimStart ?? 0) * sourceDuration(vSrc));
+	                  vSrc.isPlaying = true;
+	                  vSrc._nativePlaybackUpdatedAtMs = performance.now();
+	                  vSrc.videoElement?.play().catch(() => {});
+	                  project.updateLayer(layer.id, { source: { ...vSrc } });
+	                }}
                 title="Restart"
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
@@ -2178,8 +2446,10 @@
                 onchange={() => {
                   if (layer.mask?.enabled) {
                     project.disableMask(layer.id);
+                    if ($maskEditingLayerId === layer.id) maskEditingLayerId.set(null);
                   } else {
                     project.enableMask(layer.id);
+                    maskEditingLayerId.set(layer.id);
                   }
                 }}
               />
@@ -2240,7 +2510,7 @@
                     <button
                       class="mask-shape-edit"
                       title="Edit points (drag to move, right-click anchor to delete)"
-                      onclick={() => project.enableMask(layer.id)}
+                      onclick={() => maskEditingLayerId.set(layer.id)}
                       aria-label="Edit shape {sIdx + 1}"
                     >
                       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -2266,14 +2536,25 @@
               <span class="mask-hint">Click to add points · Click+drag for curves · Click first point or right-click empty area to close · Right-click anchor to delete</span>
             </div>
 
-            <div class="property-row mask-done">
-              <button
-                class="btn-primary mask-done-btn"
-                onclick={() => project.disableMask(layer.id)}
-              >
-                Done Editing Mask
-              </button>
-            </div>
+            {#if $maskEditingLayerId === layer.id}
+              <div class="property-row mask-done">
+                <button
+                  class="btn-primary mask-done-btn"
+                  onclick={() => maskEditingLayerId.set(null)}
+                >
+                  Done Editing Mask
+                </button>
+              </div>
+            {:else}
+              <div class="property-row mask-done">
+                <button
+                  class="btn-secondary mask-done-btn"
+                  onclick={() => maskEditingLayerId.set(layer.id)}
+                >
+                  Edit Mask
+                </button>
+              </div>
+            {/if}
           {/if}
           </div>
           <!-- End mask-section -->
@@ -2557,9 +2838,11 @@
             {#if layer.effects.length > 0}
               <div class="effect-list">
               {#each layer.effects as effect, index (effect.id)}
+                {@const pendingNativeEffect = nativeEffectPending(effect.type)}
                 <div
                   class="effect-item"
                   class:disabled={!effect.enabled}
+                  class:native-pending={pendingNativeEffect}
                   class:expanded={expandedEffectId === effect.id}
                   class:dragging={draggedEffectIndex === index}
                   class:drag-over={dragOverEffectIndex === index && draggedEffectIndex !== index}
@@ -2586,8 +2869,9 @@
                     <input
                       type="checkbox"
                       checked={effect.enabled}
-                      onchange={() => project.toggleEffect(layer.id, effect.id)}
-                      title={effect.enabled ? 'Disable effect' : 'Enable effect'}
+                      disabled={pendingNativeEffect && !effect.enabled}
+                      onchange={() => toggleLayerEffectIfNativeReady(layer.id, effect)}
+                      title={pendingNativeEffect ? 'Pending native port' : (effect.enabled ? 'Disable effect' : 'Enable effect')}
                     />
 
                     <!-- Effect name (clickable to expand) -->
@@ -2597,6 +2881,11 @@
                     >
                       {getEffectLabel(effect.type)}
                     </button>
+                    {#if nativeInventoryLocked}
+                      <span class="native-effect-badge" class:pending={pendingNativeEffect}>
+                        {nativeEffectBadge(effect.type)}
+                      </span>
+                    {/if}
 
                     <!-- Reset button — snaps params back to the
                          catalog defaults from getDefaultEffectParams.
@@ -2627,6 +2916,11 @@
                       class="effect-params"
                       ondragstart={(e) => e.stopPropagation()}
                       draggable="false">
+                      {#if pendingNativeEffect}
+                        <div class="native-effect-lockout">
+                          Pending native port. Disable or remove this effect to render this layer in native v2.
+                        </div>
+                      {/if}
                       <!-- Per-effect opacity & blend mode -->
                       <div class="effect-mix-row">
                         <div class="effect-opacity-ctrl">
@@ -3100,6 +3394,12 @@
     opacity: 0.58;
   }
 
+  .composition-effect-item.native-pending,
+  .effect-item.native-pending {
+    border-color: rgba(255, 180, 70, 0.32);
+    background: rgba(255, 160, 50, 0.045);
+  }
+
   .composition-effect-item.live {
     border-color: rgba(55, 178, 227, 0.5);
   }
@@ -3125,6 +3425,36 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .native-effect-badge {
+    flex: 0 0 auto;
+    border: 1px solid rgba(88, 231, 255, 0.38);
+    background: rgba(88, 231, 255, 0.08);
+    color: #58e7ff;
+    border-radius: 3px;
+    padding: 2px 5px;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    line-height: 1;
+  }
+
+  .native-effect-badge.pending {
+    border-color: rgba(255, 170, 64, 0.42);
+    background: rgba(255, 170, 64, 0.1);
+    color: #ffb85f;
+  }
+
+  .native-effect-lockout {
+    border: 1px solid rgba(255, 170, 64, 0.28);
+    background: rgba(255, 170, 64, 0.08);
+    color: #ffcf91;
+    border-radius: 4px;
+    padding: 7px 8px;
+    margin-bottom: 8px;
+    font-size: 11px;
+    line-height: 1.35;
   }
 
   .composition-effect-params {
@@ -3440,6 +3770,10 @@
     border: 1px solid var(--ga-blue-line, rgba(91, 141, 239, 0.38));
   }
 
+  .layer-item.native-pending {
+    border-color: rgba(255, 170, 64, 0.28);
+  }
+
   .layer-item.dragging {
     opacity: 0.5;
     background: rgba(255, 255, 255, 0.08);
@@ -3687,6 +4021,22 @@
 
   .layer-item.selected .layer-name {
     color: var(--ga-ink-0, #eef0f4);
+  }
+
+  .native-layer-row-badge {
+    flex: 0 0 auto;
+    border: 1px solid rgba(255, 170, 64, 0.42);
+    background: rgba(255, 170, 64, 0.1);
+    color: #ffb85f;
+    border-radius: 3px;
+    padding: 2px 4px;
+    font-size: 8px;
+    font-weight: 800;
+    letter-spacing: 0.05em;
+    line-height: 1;
+    max-width: 54px;
+    overflow: hidden;
+    text-overflow: clip;
   }
 
   /* Inline rename input — sits in the same flex slot as `.layer-name`
@@ -4682,6 +5032,16 @@
     overflow-y: auto;
   }
 
+  .add-layer-section-label {
+    padding: 8px 12px 4px;
+    color: var(--accent-primary, #BB86FC);
+    font-size: 10px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    opacity: 0.9;
+  }
+
   .add-layer-menu button {
     display: flex;
     align-items: center;
@@ -4701,8 +5061,51 @@
     background: #2a2a30;
   }
 
+  .add-layer-menu button.native-ready {
+    background: rgba(70, 209, 138, 0.07);
+    color: var(--text-primary, #eee);
+  }
+
+  .add-layer-menu button.native-ready:hover {
+    background: rgba(70, 209, 138, 0.13);
+  }
+
+  .add-layer-menu button.native-ready svg {
+    color: var(--ga-green, #46d18a);
+  }
+
+  .add-layer-menu button:disabled,
+  .add-layer-menu button.native-pending {
+    cursor: not-allowed;
+    color: rgba(238, 240, 244, 0.42);
+    background: rgba(255, 170, 64, 0.035);
+  }
+
+  .add-layer-menu button:disabled:hover,
+  .add-layer-menu button.native-pending:hover {
+    background: rgba(255, 170, 64, 0.045);
+  }
+
   .add-layer-menu button svg {
     color: #BB86FC;
+  }
+
+  .add-layer-menu button:disabled svg,
+  .add-layer-menu button.native-pending svg {
+    color: rgba(255, 184, 95, 0.55);
+  }
+
+  .native-layer-badge {
+    margin-left: auto;
+    border: 1px solid rgba(255, 170, 64, 0.42);
+    background: rgba(255, 170, 64, 0.1);
+    color: #ffb85f;
+    border-radius: 3px;
+    padding: 2px 5px;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    line-height: 1;
   }
 
   /* Lines layer thumbnail */

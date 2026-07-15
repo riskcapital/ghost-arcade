@@ -18,6 +18,7 @@ import { stage3dScene } from '../stage3d/store';
 // snap an effect back to its baseline values when the user hits the
 // per-effect reset button in LayerPanel.
 import { getDefaultEffectParams } from '../renderer/effects';
+import { isNativeSelectableEffect } from '../renderer/nativeEffectCoverage';
 import { oscStore } from '../osc/oscStore';
 import { keyboardStore } from '../keyboard/keyboardStore';
 import { mediaPipeBus } from '../mediapipe/mediaPipeBus';
@@ -25,7 +26,7 @@ import { geoDeckStore } from './geoDeck';
 import { createDefaultShapeMesh } from '../drawing/types';
 import type { LineElement, LineShape, LinesContent, LineDrawAnimation, LineStroke } from '../lines/types';
 import { maxLayers } from './license';
-import { settings, migrateOutputSlice } from './settings';
+import { NATIVE_ENGINE_ONLY, settings, migrateOutputSlice } from './settings';
 import { createLineElement, createDefaultLinesContent, createDefaultDrawAnimation } from '../lines/types';
 
 // History recording callback — set from App.svelte to avoid circular imports.
@@ -122,6 +123,28 @@ function placeNewLayer(layers: Layer[], newLayer: Layer, selectedLayerId: string
     default:
       return [newLayer, ...layers];
   }
+}
+
+const NATIVE_READY_LAYER_TYPES = new Set<LayerType>(['media', 'gpu', 'color']);
+
+function nativeLayerTypePending(type: LayerType): boolean {
+  return NATIVE_ENGINE_ONLY && Boolean(get(settings).experimental?.outputNativeCore) && !NATIVE_READY_LAYER_TYPES.has(type);
+}
+
+function blockNativePendingLayerType(type: LayerType): boolean {
+  if (!nativeLayerTypePending(type)) return false;
+  console.warn(`[layers] blocked non-native layer type in native-only mode: ${type}`);
+  return true;
+}
+
+function blockNativePendingInitialShape(type: LayerType, initialShapeType?: LayerShapeType): boolean {
+  if (!NATIVE_ENGINE_ONLY || !get(settings).experimental?.outputNativeCore) return false;
+  if (type !== 'media' || !initialShapeType) return false;
+  if (initialShapeType === 'rectangle' || initialShapeType === 'circle' || initialShapeType === 'triangle') {
+    return false;
+  }
+  console.warn(`[layers] blocked non-native initial media shape in native-only mode: ${initialShapeType}`);
+  return true;
 }
 
 // Main project store
@@ -265,6 +288,8 @@ void main() {
 
     // Layer management
     addLayer(name?: string, type: LayerType = 'media', initialShapeType?: LayerShapeType) {
+      if (blockNativePendingLayerType(type)) return;
+      if (blockNativePendingInitialShape(type, initialShapeType)) return;
       const currentProject = get({ subscribe });
       const limit = get(maxLayers);
       if (currentProject.layers.length >= limit) {
@@ -293,12 +318,13 @@ void main() {
       recordDiscreteAction();
 
       // Auto-apply crosshair shader to media layers so the user can see placement
-      if (type === 'media') {
+      if (type === 'media' && !(NATIVE_ENGINE_ONLY && Boolean(get(settings).experimental?.outputNativeCore))) {
         autoApplyDefaultShader(id);
       }
     },
 
     addLinesLayer(name?: string) {
+      if (blockNativePendingLayerType('lines')) return;
       update((project) => {
         const id = generateUUID();
         const layerName = name || `Lines ${project.layers.filter(l => l.type === 'lines').length + 1}`;
@@ -313,6 +339,7 @@ void main() {
     },
 
     addSVGLayer(name?: string) {
+      if (blockNativePendingLayerType('svg')) return;
       update((project) => {
         const id = generateUUID();
         const layerName = name || `SVG ${project.layers.filter(l => l.type === 'svg').length + 1}`;
@@ -327,6 +354,7 @@ void main() {
     },
 
     addColorLayer(name?: string) {
+      if (blockNativePendingLayerType('color')) return;
       update((project) => {
         const id = generateUUID();
         const layerName = name || `Color ${project.layers.filter(l => l.type === 'color').length + 1}`;
@@ -478,6 +506,7 @@ void main() {
     },
 
     addLightPaintingLayer(name?: string) {
+      if (blockNativePendingLayerType('lightpainting')) return;
       update((project) => {
         const id = generateUUID();
         const layerName = name || `Light Paint ${project.layers.filter(l => l.type === 'lightpainting').length + 1}`;
@@ -498,6 +527,7 @@ void main() {
      *  intentional, so the project file stays portable across the
      *  flag flip. */
     addAdvLightPaintingLayer(name?: string) {
+      if (blockNativePendingLayerType('adv-lightpaint')) return;
       update((project) => {
         const id = generateUUID();
         const layerName = name || `Adv Light Paint ${project.layers.filter(l => l.type === 'adv-lightpaint').length + 1}`;
@@ -513,6 +543,7 @@ void main() {
 
     // Text layer methods
     addTextLayer(name?: string) {
+      if (blockNativePendingLayerType('text')) return;
       update((project) => {
         const id = generateUUID();
         const layerName = name || `Text ${project.layers.filter(l => l.type === 'text').length + 1}`;
@@ -528,6 +559,7 @@ void main() {
 
     // Splat layer methods (Point Cloud / Gaussian Splat)
     addSplatLayer(name?: string) {
+      if (blockNativePendingLayerType('splat')) return;
       update((project) => {
         const id = generateUUID();
         const layerName = name || `Splat ${project.layers.filter(l => l.type === 'splat').length + 1}`;
@@ -645,6 +677,7 @@ void main() {
 
     // 3D Model layer methods
     addModel3DLayer(name?: string) {
+      if (blockNativePendingLayerType('model3d')) return;
       update((project) => {
         const id = generateUUID();
         const layerName = name || `3D Model ${project.layers.filter(l => l.type === 'model3d').length + 1}`;
@@ -667,6 +700,7 @@ void main() {
      *  visible result is the source displaced into 3D space — most
      *  immediately demos the WebGPU magic. */
     addPixelFXLayer(name?: string) {
+      if (blockNativePendingLayerType('pixel-fx')) return;
       update((project) => {
         const id = generateUUID();
         const layerName = name || `Pixel FX ${project.layers.filter(l => l.type === 'pixel-fx').length + 1}`;
@@ -687,13 +721,16 @@ void main() {
      *  particle, etc). The selected shader's defaults are populated
      *  by the renderer on first frame so the new layer starts with
      *  a useful look immediately. */
-    addGPULayer(name?: string) {
+    addGPULayer(name?: string, shaderId = 'planet') {
+      if (blockNativePendingLayerType('gpu')) return;
       update((project) => {
         const id = generateUUID();
         const layerName = name || `GPU ${project.layers.filter(l => l.type === 'gpu').length + 1}`;
+        const gpuLayerContent = createDefaultGPULayerContent();
+        gpuLayerContent.shaderId = shaderId;
         const newLayer: Layer = {
           ...createLayer(id, layerName, 'gpu'),
-          gpuLayerContent: createDefaultGPULayerContent(),
+          gpuLayerContent,
         };
         return {
           ...project,
@@ -732,6 +769,7 @@ void main() {
     },
 
     addScreenLayer(name?: string) {
+      if (blockNativePendingLayerType('screen')) return;
       const id = generateUUID();
       update((project) => {
         const layerName = name || `Screen ${project.layers.filter(l => l.type === 'screen').length + 1}`;
@@ -754,6 +792,7 @@ void main() {
     // ── Group layer methods ────────────────────────────────────────────────
 
     addGroupLayer(name?: string) {
+      if (blockNativePendingLayerType('group')) return;
       update((project) => {
         const id = generateUUID();
         const layerName = name || `Group ${project.layers.filter(l => l.type === 'group').length + 1}`;
@@ -2363,6 +2402,10 @@ void main() {
 
     // Effect management
     addEffect(layerId: string, effectType: EffectType, params?: EffectParams) {
+      if (NATIVE_ENGINE_ONLY && !isNativeSelectableEffect(effectType)) {
+        console.warn(`[layers] blocked non-native effect in native-only mode: ${effectType}`);
+        return;
+      }
       update((project) => ({
         ...project,
         layers: project.layers.map((l) => {
@@ -2380,6 +2423,10 @@ void main() {
     },
 
     addEffectInstance(layerId: string, effect: Effect) {
+      if (NATIVE_ENGINE_ONLY && !isNativeSelectableEffect(effect.type)) {
+        console.warn(`[layers] blocked non-native effect instance in native-only mode: ${effect.type}`);
+        return;
+      }
       update((project) => ({
         ...project,
         layers: project.layers.map((l) => {
@@ -2597,6 +2644,10 @@ void main() {
     },
 
     addMappingCompositionEffect(effectType: EffectType, params?: EffectParams) {
+      if (NATIVE_ENGINE_ONLY && !isNativeSelectableEffect(effectType)) {
+        console.warn(`[layers] blocked non-native mapping composition effect in native-only mode: ${effectType}`);
+        return;
+      }
       update((p) => {
         const mappingComposition = normalizeMappingCompositionState(p.mappingComposition);
         const effect: Effect = {

@@ -20,6 +20,12 @@
   // When true, shape warp editing is active — offset move handle to avoid blocking center focus handle
   export let shapeWarpActive: boolean = false;
 
+  // Native-primary mode draws the visible controls in the Metal presenter.
+  // Keep these DOM elements as invisible hit targets so the established
+  // interaction, snapping, history, keyboard, and multi-select logic remains
+  // the single input authority.
+  export let interactionOnly: boolean = false;
+
   let dragging: 'corner' | 'edge' | 'move' | 'rotate' | 'scale' | null = null;
   let dragTarget: keyof WarpCorners | 'top' | 'bottom' | 'left' | 'right' | 'center' | 'rotate' | 'scale' | null = null;
   let containerEl: HTMLDivElement;
@@ -813,6 +819,7 @@
 
 <div
   class="warp-handles"
+  class:interaction-only={interactionOnly}
   bind:this={containerEl}
   style="width: {containerWidth}px; height: {containerHeight}px;"
 >
@@ -1039,6 +1046,7 @@
     top: 0;
     left: 0;
     pointer-events: none;
+    overflow: visible;
   }
 
   .handle {
@@ -1046,6 +1054,14 @@
     pointer-events: auto;
     transition: transform 0.1s ease, background 0.1s ease;
     z-index: 50;
+  }
+
+  /* In native mode, the opaque canvas-sized Metal presenter naturally hides
+     this DOM chrome inside the project canvas. Overflow stays visible in the
+     surrounding workspace, so handles retain their true off-canvas position
+     instead of being clamped or disappearing. */
+  .warp-handles.interaction-only .handle {
+    transition: none;
   }
 
   /* Corner handles (circles) */

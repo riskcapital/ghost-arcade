@@ -80,8 +80,9 @@ impl NativeQualityState {
         let tier = normalize_native_tier(caps_tier);
         self.caps_tier = tier.to_string();
         if self.policy == "auto" {
-            self.active_tier = tier.to_string();
-            self.quality_scale = tier_quality_scale(tier);
+            let startup_tier = auto_start_tier(tier);
+            self.active_tier = startup_tier.to_string();
+            self.quality_scale = tier_quality_scale(startup_tier);
             self.overload_frames = 0;
             self.recovery_frames = 0;
         }
@@ -89,9 +90,13 @@ impl NativeQualityState {
 
     pub(crate) fn set_policy(&mut self, policy: &str) {
         let normalized = policy.trim().to_ascii_lowercase();
-        if normalized == "auto" || normalized.is_empty() {
+        if normalized == "fixed" || normalized == "native" {
+            self.policy = "fixed".to_string();
+            self.active_tier = "native".to_string();
+            self.quality_scale = 1.0;
+        } else if normalized == "auto" || normalized.is_empty() {
             self.policy = "auto".to_string();
-            let tier = normalize_native_tier(&self.caps_tier);
+            let tier = auto_start_tier(&self.caps_tier);
             self.active_tier = tier.to_string();
             self.quality_scale = tier_quality_scale(tier);
         } else {
@@ -175,6 +180,15 @@ impl NativeQualityState {
         self.active_tier = tier.to_string();
         self.quality_scale = tier_quality_scale(tier);
         true
+    }
+}
+
+fn auto_start_tier(caps_tier: &str) -> &'static str {
+    let tier = normalize_native_tier(caps_tier);
+    if native_tier_index(tier) > native_tier_index("balanced") {
+        "balanced"
+    } else {
+        tier
     }
 }
 

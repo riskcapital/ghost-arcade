@@ -181,13 +181,15 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
         features: &[
             "compute_graph_host",
             "compute_graph_render",
+            "compute_graph_multi_render",
             "compute_graph_instanced_render",
+            "compute_graph_texture_sampling",
             "compute_graph_clear_color",
             "compute_graph_source_frame_target",
             "persistent_compute_buffers",
             "native_point_cloud_fx_graph",
         ],
-        parity: "compute-render-point-buffer-shared-wgsl",
+        parity: "native-point-cloud-gaussian-buffer-render-shared-wgsl",
     },
 ];
 

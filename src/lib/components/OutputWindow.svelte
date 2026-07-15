@@ -1,17 +1,16 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import { get } from 'svelte/store';
-  import { invoke, isMac, isWindows } from '$lib/bridge';
+  import { invoke, isDesktopApp, isMac, isWindows } from '$lib/bridge';
   import {
     getNativeRendererCapabilities,
     getNativeRendererReadinessReport,
     getNativeRendererStatus,
-    detachNativeRendererOutputWindow,
     setNativeRendererOutputWindow,
     startNativeRenderer,
   } from '$lib/api/native-renderer';
   import type { RenderEngine } from '../renderer/engine';
-  import { settings } from '../stores/settings';
+  import { NATIVE_ENGINE_ONLY, settings } from '../stores/settings';
   import { project } from '../stores/layers';
   import {
     inferNativeGraphRuntimeFlags,
@@ -24,8 +23,10 @@
   export let mainEngine: RenderEngine | null = null;
 
   const NATIVE_OUTPUT_READY_WAIT_MS = 1500;
-  const NATIVE_OUTPUT_ACTIVE_WAIT_MS = 2500;
+  const NATIVE_OUTPUT_ACTIVE_WAIT_MS = 5000;
   const NATIVE_OUTPUT_READY_POLL_MS = 100;
+  const NATIVE_OUTPUT_MONITOR_MS = 250;
+  let nativeOutputMonitor: ReturnType<typeof setInterval> | null = null;
 
   // NOTE: rotation / cropRegion / showCursor used to be props bound from
   // App.svelte. They now live in $settings.output and reach the output
@@ -74,21 +75,18 @@
     // Cursor clearing can be added later
   }
 
-  // Read the output-transport flags once at the call site (synchronous get
-  // from the settings store). The open helpers apply
-  // the precedence ordering (nativeCore > zeroCopy > webrtc > legacy).
-  //   outputNativeCore    → opens the Rust/wgpu managed output window.
-  //   zeroCopy            → mounts OutputSharedTextureDisplayApp
-  //                          (`?mode=webgpu-display`). Fallback default.
-  //   webRTC              → mounts OutputDisplayApp
-  //                          (`?mode=webrtc-display`). Escape hatch.
-  // Both off → SpoutOutputApp (`?mode=output`), legacy default.
+  // Read the output-transport flags once at the call site. Desktop native
+  // builds are locked to the Rust/wgpu managed output path; the WebGPU/WebRTC
+  // routes remain available only in non-native builds for comparison work.
   // The settings still live under `experimental` for migration stability.
   function readOutputTransports(): {
     webRTC: boolean;
     zeroCopy: boolean;
     nativeCore: boolean;
   } {
+    if (NATIVE_ENGINE_ONLY && isDesktopApp) {
+      return { webRTC: false, zeroCopy: false, nativeCore: true };
+    }
     const s = get(settings);
     return {
       webRTC: !!s.experimental?.outputWebRTC,
@@ -98,13 +96,14 @@
   }
 
   // Open output window — opens a draggable window (double-click to fullscreen)
-  export async function openPopup(preferExternal: boolean = true) {
+  export async function openPopup(preferExternal: boolean = true): Promise<boolean> {
     const { webRTC, zeroCopy, nativeCore } = readOutputTransports();
-    if (nativeCore && await openNativeCoreOutput(preferExternal, false)) {
-      return;
+    if (nativeCore) {
+      return openNativeCoreOutput(preferExternal, false);
     }
     if (zeroCopy) {
-      return openPopupZeroCopy(preferExternal);
+      await openPopupZeroCopy(preferExternal);
+      return true;
     }
     const transportTag = webRTC ? ' [WebRTC]' : '';
     try {
@@ -136,6 +135,7 @@
       });
       isOpen = true;
       console.log(`[Output] Window opened on display "${target.label}" (${winW}x${winH})${transportTag}`);
+      return true;
     } catch (error) {
       console.error('Failed to create output window:', error);
       // Fallback: open without display info
@@ -148,8 +148,10 @@
           experimentalZeroCopy: false,
         });
         isOpen = true;
+        return true;
       } catch (e2) {
         alert('Could not open output window: ' + e2);
+        return false;
       }
     }
   }
@@ -249,8 +251,11 @@
       const status = await ensureNativeCoreReady(winW, winH);
       if (!status) {
         console.warn(
-          '[Output] Native render-core output requested but the core is not ready; falling back.',
+          '[Output] Native render-core output requested but the core is not ready. No fallback output was opened.',
         );
+        if (NATIVE_ENGINE_ONLY && typeof window !== 'undefined') {
+          window.alert('Native output is not ready yet. Check Settings > Performance > Native runtime for the output-driver blocker.');
+        }
         return false;
       }
 
@@ -268,28 +273,34 @@
         resizable: !fullscreen,
       });
       await publishNativeRuntimeHandshake(configuredStatus).catch(() => {});
+      const expectedLayerCount = expectedNativeOutputLayerCount();
+      requestNativeOutputSceneResync('managed-output-open');
 
-      const activeStatus = nativeManagedOutputIsActive(configuredStatus)
+      const activeStatus = nativeManagedOutputIsActive(configuredStatus, expectedLayerCount)
         ? configuredStatus
-        : await waitForNativeManagedOutputActive();
-      if (!nativeManagedOutputIsActive(activeStatus)) {
+        : await waitForNativeManagedOutputActive(expectedLayerCount);
+      if (!nativeManagedOutputIsActive(activeStatus, expectedLayerCount)) {
         console.warn(
-          `[Output] Native render-core output did not present; falling back. ${nativeOutputActivationDetail(activeStatus)}`,
+          `[Output] Native render-core output did not present the app scene. Closing native output because no fallback output is available. ${nativeOutputActivationDetail(activeStatus, expectedLayerCount)}`,
         );
-        await detachNativeRendererOutputWindow().catch(() => {});
-        const detachedStatus = await getNativeRendererStatus().catch(() => null);
-        if (detachedStatus) await publishNativeRuntimeHandshake(detachedStatus).catch(() => {});
+        if (activeStatus) await publishNativeRuntimeHandshake(activeStatus).catch(() => {});
+        await setNativeRendererOutputWindow({ attached: false, visible: false }).catch(() => {});
+        isOpen = false;
+        if (NATIVE_ENGINE_ONLY && typeof window !== 'undefined') {
+          window.alert(`Native output did not present the app scene. ${nativeOutputActivationDetail(activeStatus, expectedLayerCount)}`);
+        }
         return false;
       }
 
       if (activeStatus) await publishNativeRuntimeHandshake(activeStatus).catch(() => {});
       isOpen = true;
+      startNativeOutputMonitor();
       console.log(
         `[Output] Native render-core output opened on display "${target?.label || target?.id || 'default'}" (${winW}x${winH})`,
       );
       return true;
     } catch (err) {
-      console.warn('[Output] Native render-core output failed; falling back:', err);
+      console.warn('[Output] Native render-core output failed. No fallback output was opened:', err);
       return false;
     }
   }
@@ -337,19 +348,24 @@
 
   function nativeManagedOutputIsActive(
     status: Awaited<ReturnType<typeof getNativeRendererStatus>> | null | undefined,
+    expectedLayerCount = expectedNativeOutputLayerCount(),
   ): boolean {
+    const layerCountOk = expectedLayerCount <= 0 ||
+      Number(status?.output_last_presented_layer_count ?? 0) > 0;
     return !!(
       status?.running &&
       status.backend_ready &&
       status.output_window_attached &&
       status.output_swapchain_ready &&
       status.output_present_healthy &&
-      Number(status.swapchain_presented ?? 0) > 0
+      Number(status.swapchain_presented ?? 0) > 0 &&
+      layerCountOk
     );
   }
 
   function nativeOutputActivationDetail(
     status: Awaited<ReturnType<typeof getNativeRendererStatus>> | null | undefined,
+    expectedLayerCount = expectedNativeOutputLayerCount(),
   ): string {
     if (!status) return 'No status was returned from the native render-core.';
     if (!status.running) return 'Native render-core is not running.';
@@ -357,6 +373,9 @@
     if (!status.output_window_attached) return 'Native output window is detached.';
     if (Number(status.swapchain_presented ?? 0) <= 0) {
       return `No native frames presented yet; last=${status.swapchain_last_present_result || 'none'}.`;
+    }
+    if (expectedLayerCount > 0 && Number(status.output_last_presented_layer_count ?? 0) <= 0) {
+      return `Native output presented frames, but the last frame had no scene layers; app expected ${expectedLayerCount}.`;
     }
     if (!status.output_swapchain_ready) {
       return `Native output swapchain is not ready; last=${status.swapchain_last_present_result || 'none'}.`;
@@ -368,6 +387,7 @@
   }
 
   async function waitForNativeManagedOutputActive(
+    expectedLayerCount = expectedNativeOutputLayerCount(),
     deadlineMs = NATIVE_OUTPUT_ACTIVE_WAIT_MS,
   ): Promise<Awaited<ReturnType<typeof getNativeRendererStatus>> | null> {
     const startedAt = Date.now();
@@ -375,13 +395,26 @@
     while (
       last?.running &&
       last.backend_ready &&
-      !nativeManagedOutputIsActive(last) &&
+      !nativeManagedOutputIsActive(last, expectedLayerCount) &&
       Date.now() - startedAt < deadlineMs
     ) {
       await new Promise((resolve) => setTimeout(resolve, NATIVE_OUTPUT_READY_POLL_MS));
       last = await getNativeRendererStatus().catch(() => null);
     }
     return last;
+  }
+
+  function expectedNativeOutputLayerCount(): number {
+    const p = get(project);
+    return (p.layers ?? []).filter((layer: any) =>
+      layer?.visible !== false && Number(layer?.opacity ?? 1) > 0,
+    ).length;
+  }
+
+  function requestNativeOutputSceneResync(reason: string) {
+    window.dispatchEvent(new CustomEvent('ghost:native-output-scene-resync', {
+      detail: { reason },
+    }));
   }
 
   async function ensureNativeCoreReady(fallbackWidth: number, fallbackHeight: number): Promise<boolean> {
@@ -435,11 +468,30 @@
     return true;
   }
 
+  function stopNativeOutputMonitor(): void {
+    if (nativeOutputMonitor !== null) clearInterval(nativeOutputMonitor);
+    nativeOutputMonitor = null;
+  }
+
+  function startNativeOutputMonitor(): void {
+    stopNativeOutputMonitor();
+    nativeOutputMonitor = setInterval(() => {
+      void getNativeRendererStatus()
+        .then((status) => {
+          if (!isOpen || status.output_window_attached) return;
+          stopNativeOutputMonitor();
+          isOpen = false;
+          onClose();
+        })
+        .catch(() => {});
+    }, NATIVE_OUTPUT_MONITOR_MS);
+  }
+
   // Open fullscreen on external monitor (or primary if no external)
-  export async function openFullscreenExternal() {
+  export async function openFullscreenExternal(): Promise<boolean> {
     const { webRTC, zeroCopy, nativeCore } = readOutputTransports();
-    if (nativeCore && await openNativeCoreOutput(true, true)) {
-      return;
+    if (nativeCore) {
+      return openNativeCoreOutput(true, true);
     }
     if (zeroCopy) {
       // Reuse the openPopup zero-copy path with a fullscreen flag.
@@ -459,30 +511,37 @@
         const newWin = window.open(url.toString(), 'ga-output', 'popup=true');
         if (!newWin) {
           alert('Output window failed to open. Check Chromium popup-blocker behaviour.');
-          return;
+          return false;
         }
         isOpen = true;
         console.log(`[Output] Fullscreen on display ${target.label || target.id} [WebGPU zero-copy]`);
         const { attachOutputWindow } = await import('$lib/sync/outputSharedTexturePresenter');
         attachOutputWindow(newWin);
+        return true;
       } catch (err) {
         console.error('[Output] zero-copy fullscreen open failed:', err);
+        return false;
       }
-      return;
     }
     const transportTag = webRTC ? ' [WebRTC]' : '';
     try {
       const result: any = await invoke('output_fullscreen_external', { experimentalWebRTC: webRTC, experimentalZeroCopy: false });
       isOpen = true;
       console.log(`[Output] Fullscreen on display ${result.displayId}, external=${result.isExternal}${transportTag}`);
+      return true;
     } catch (error) {
       console.error('Failed to open fullscreen output:', error);
+      return false;
     }
   }
 
   // Toggle fullscreen on existing output window
   export async function toggleFullscreen() {
     try {
+      if (NATIVE_ENGINE_ONLY && isDesktopApp) {
+        close();
+        return false;
+      }
       return await invoke('output_toggle_fullscreen');
     } catch (error) {
       console.error('Failed to toggle fullscreen:', error);
@@ -498,6 +557,7 @@
   }
 
   export function close() {
+    stopNativeOutputMonitor();
     invoke('close_output_window').catch(() => {});
     setNativeRendererOutputWindow({ attached: false, visible: false }).catch(() => {});
     isOpen = false;

@@ -112,9 +112,10 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'native_renderer_set_metadata_cache_caps', 'native_renderer_attach_output_window',
   'native_renderer_detach_output_window', 'native_renderer_get_status',
   'native_renderer_get_stats', 'native_renderer_get_snapshot',
-  'native_renderer_get_frame_snapshot',
-  'native_renderer_get_output_shared_texture',
-  'native_renderer_set_stage3d_scene',
+	  'native_renderer_get_frame_snapshot',
+	  'native_renderer_get_output_shared_texture',
+	  'native_renderer_get_output_shared_texture_snapshot',
+	  'native_renderer_set_stage3d_scene',
   'native_renderer_get_stage3d_scene_summary',
   'native_renderer_set_projection_sim_scene',
   'native_renderer_get_projection_sim_scene_summary',
@@ -123,6 +124,9 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'native_renderer_reset_stats', 'native_renderer_set_decode_policy',
   'native_renderer_set_prefetch_policy', 'native_renderer_get_decode_capabilities',
   'native_renderer_set_output_window',
+  'native_preview_attach', 'native_preview_update', 'native_preview_set_overlay', 'native_preview_detach',
+  'native_preview_get_status',
+  'native_viewport_set_layer_interaction',
   // WLED — UDP DRGB packets to LED controllers on the LAN
   'wled_send_frame', 'wled_close_socket',
   // Ableton Link — LAN tempo/beat sync (session lives in main; the

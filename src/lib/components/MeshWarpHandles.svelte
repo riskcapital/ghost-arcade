@@ -13,6 +13,10 @@
   // Zoom level for correct coordinate transformation
   export let zoom: number = 1;
 
+  // The native presenter owns visuals in native-primary mode. DOM handles
+  // remain mounted and interactive as transparent hit targets.
+  export let interactionOnly: boolean = false;
+
   let dragging: { row: number; col: number } | null = null;
   let containerEl: HTMLDivElement;
 
@@ -308,6 +312,7 @@
 
 <div
   class="mesh-warp-handles"
+  class:interaction-only={interactionOnly}
   bind:this={containerEl}
   style="width: {containerWidth}px; height: {containerHeight}px;"
 >
@@ -402,6 +407,7 @@
     top: 0;
     left: 0;
     pointer-events: none;
+    overflow: visible;
   }
 
   .handle {
@@ -410,6 +416,10 @@
     transition: transform 0.1s ease, background 0.1s ease;
     z-index: 51;
     cursor: grab;
+  }
+
+  .mesh-warp-handles.interaction-only .handle {
+    transition: none;
   }
 
   /* Corner handles - largest */

@@ -16,11 +16,13 @@
  */
 
 import { WebGPUPointCloudFX, type PointCloudFXParams, type ColorMode, type ColorMap, type PointCloudFilterMode, type PointCloudFilterAxis } from '../webgpuPointCloudFX';
-import { parsePLYBuffer } from '../../splat/plyLoader';
+import { parsePLYPointBuffers, pointCloudBuffersFromPLYData } from '../../splat/plyLoader';
 import { parseSplatBuffer } from '../../splat/splatLoader';
-import type { PLYData } from '../../splat/plyLoader';
 import type { GpuShaderImpl, ParamControl } from '../gpuShaderTypes';
 import { deriveDefaults } from '../gpuShaderTypes';
+
+const POINT_CLOUD_FX_INTERACTIVE_MAX_POINTS = 500_000;
+const POINT_CLOUD_FX_INTERACTIVE_GAUSSIAN_MAX_POINTS = 300_000;
 
 export const pointCloudFXParamSchema: ParamControl[] = [
   // ── Source ─────────────────────────────────────────────────────
@@ -357,73 +359,42 @@ export class WebGPUPointCloudFXShader implements GpuShaderImpl {
    *  file when only unrelated params changed. */
   setSourceBuffer(buf: ArrayBuffer, kind: 'ply' | 'splat', key: string): void {
     if (key === this.loadedBufferKey) return;
-    let data: PLYData;
+    let pointData: ReturnType<typeof parsePLYPointBuffers>;
     try {
-      data = kind === 'splat' ? parseSplatBuffer(buf) : parsePLYBuffer(buf);
+      pointData = kind === 'splat'
+        ? pointCloudBuffersFromPLYData(parseSplatBuffer(buf), {
+            maxPoints: POINT_CLOUD_FX_INTERACTIVE_MAX_POINTS,
+            maxGaussianPoints: POINT_CLOUD_FX_INTERACTIVE_GAUSSIAN_MAX_POINTS,
+          })
+        : parsePLYPointBuffers(buf, {
+            maxPoints: POINT_CLOUD_FX_INTERACTIVE_MAX_POINTS,
+            maxGaussianPoints: POINT_CLOUD_FX_INTERACTIVE_GAUSSIAN_MAX_POINTS,
+          });
     } catch (e: any) {
       console.warn('[pointcloud-fx] parse failed:', e?.message || e);
       return;
     }
-    if (!data.vertices || data.vertices.length === 0) {
+    if (!pointData.sampleCount) {
       console.warn('[pointcloud-fx] empty point cloud — nothing to render');
       return;
     }
-    // Convert into the Float32Array views the renderer wants. PLY
-    // colors are 0..255; normalize to 0..1.
-    const n = data.vertices.length;
-    const positions = new Float32Array(n * 3);
-    const colors    = new Float32Array(n * 3);
-    const alpha = new Float32Array(n);
-    const splatScale = new Float32Array(n * 3);
-    const splatRotation = new Float32Array(n * 4);
-    const shCoeffCount = data.sphericalHarmonicsCoefficientCount ?? 0;
-    const shRestStride = shCoeffCount >= 9 ? 9 : 0;
-    const shRest = shRestStride > 0 ? new Float32Array(n * shRestStride) : undefined;
-    let gaussian = data.dataType === 'gaussian';
-    for (let i = 0; i < n; i++) {
-      const v = data.vertices[i];
-      positions[i * 3 + 0] = v.x;
-      positions[i * 3 + 1] = v.y;
-      positions[i * 3 + 2] = v.z;
-      colors[i * 3 + 0] = Math.max(0, Math.min(1, (v.r ?? 255) / 255));
-      colors[i * 3 + 1] = Math.max(0, Math.min(1, (v.g ?? 255) / 255));
-      colors[i * 3 + 2] = Math.max(0, Math.min(1, (v.b ?? 255) / 255));
-      alpha[i] = Math.max(0, Math.min(1, (v.a ?? 255) / 255));
-      const scaleOff = i * 3;
-      splatScale[scaleOff + 0] = Number.isFinite(v.scale_0) ? v.scale_0! : 0;
-      splatScale[scaleOff + 1] = Number.isFinite(v.scale_1) ? v.scale_1! : 0;
-      splatScale[scaleOff + 2] = Number.isFinite(v.scale_2) ? v.scale_2! : 0;
-      if (
-        Number.isFinite(v.scale_0) ||
-        Number.isFinite(v.scale_1) ||
-        Number.isFinite(v.scale_2)
-      ) {
-        gaussian = true;
-      }
-      const rotOff = i * 4;
-      splatRotation[rotOff + 0] = Number.isFinite(v.rot_0) ? v.rot_0! : 1;
-      splatRotation[rotOff + 1] = Number.isFinite(v.rot_1) ? v.rot_1! : 0;
-      splatRotation[rotOff + 2] = Number.isFinite(v.rot_2) ? v.rot_2! : 0;
-      splatRotation[rotOff + 3] = Number.isFinite(v.rot_3) ? v.rot_3! : 0;
-      if (shRest && v.f_rest?.length) {
-        const shOff = i * shRestStride;
-        const copyCount = Math.min(shRestStride, v.f_rest.length);
-        for (let j = 0; j < copyCount; j++) {
-          const coeff = v.f_rest[j];
-          shRest[shOff + j] = Number.isFinite(coeff) ? coeff : 0;
-        }
-      }
-    }
-    this.inner.setPointCloudData(positions, colors, {
-      alpha,
-      splatScale: gaussian ? splatScale : undefined,
-      splatRotation: gaussian ? splatRotation : undefined,
-      sphericalHarmonicsRest: shRest,
-      sphericalHarmonicsRestStride: shRestStride,
-      sphericalHarmonicsDegree: data.sphericalHarmonicsDegree ?? 0,
-      sphericalHarmonicsCoefficientCount: shCoeffCount,
-      gaussian,
+    this.inner.setPointCloudData(pointData.positions, pointData.colors, {
+      alpha: pointData.alpha,
+      splatScale: pointData.gaussian ? pointData.splatScale : undefined,
+      splatRotation: pointData.gaussian ? pointData.splatRotation : undefined,
+      sphericalHarmonicsRest: pointData.sphericalHarmonicsRest,
+      sphericalHarmonicsRestStride: pointData.sphericalHarmonicsRestStride,
+      sphericalHarmonicsDegree: pointData.sphericalHarmonicsDegree,
+      sphericalHarmonicsCoefficientCount: pointData.sphericalHarmonicsCoefficientCount,
+      gaussian: pointData.gaussian,
     });
+    console.log(
+      '[pointcloud-fx] source prepared',
+      pointData.sampleCount,
+      'samples from',
+      pointData.sourceVertexCount,
+      pointData.gaussian ? 'gaussian splats' : 'points',
+    );
     this.loadedBufferKey = key;
   }
 

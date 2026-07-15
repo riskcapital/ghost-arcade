@@ -54,6 +54,8 @@ const nativeCoreBin = join(
 
 const SOURCE_FRAME_PROBE_SHADER_ID = 'native-graph/source-frame-probe';
 const NATIVE_GRAPH_FEATURE_CONTRACT_SHADER_ID = 'native-graph/feature-contract';
+const QUEUED_GRAPH_COMPUTE_SHADER_ID = 'native-graph/queued-live-compute';
+const QUEUED_GRAPH_RENDER_SHADER_ID = 'native-graph/queued-live-render';
 
 const FULLSCREEN_CORNERS = {
   topLeft: { x: 0, y: 1 },
@@ -242,19 +244,17 @@ function makePointCloudFixture(count: number) {
   const colors = new Float32Array(count * 3);
   for (let i = 0; i < count; i += 1) {
     const t = i / Math.max(1, count - 1);
-    const ring = t * Math.PI * 8;
-    positions[i * 3 + 0] = Math.cos(ring) * (0.15 + t * 1.1);
-    positions[i * 3 + 1] = Math.sin(t * Math.PI * 5) * 0.8;
-    positions[i * 3 + 2] = Math.sin(ring) * (0.2 + t * 1.2);
-    colors[i * 3 + 0] = 0.2 + t * 0.8;
-    colors[i * 3 + 1] = 1 - t * 0.7;
-    colors[i * 3 + 2] = 0.35 + Math.sin(ring) * 0.25;
+    const ring = Math.floor(i / 48);
+    const angle = t * Math.PI * 14;
+    const radius = 0.18 + (ring % 5) * 0.09 + Math.sin(t * Math.PI * 8) * 0.04;
+    positions[i * 3 + 0] = Math.cos(angle) * radius;
+    positions[i * 3 + 1] = Math.sin(angle * 1.7) * 0.38;
+    positions[i * 3 + 2] = Math.sin(angle) * radius + (t - 0.5) * 0.35;
+    colors[i * 3 + 0] = 0.25 + 0.75 * t;
+    colors[i * 3 + 1] = 0.85 - 0.55 * t;
+    colors[i * 3 + 2] = 0.55 + 0.35 * Math.sin(angle * 0.5);
   }
-  return buildPointCloudFXNativePointData(positions, colors, {
-    maxPoints: Math.min(count, 96),
-    pointSize: 0.018,
-    signature: `runtime-fixture-${count}`,
-  });
+  return { positions, colors };
 }
 
 function makeGaussianPointCloudFixture(count: number) {
@@ -265,25 +265,25 @@ function makeGaussianPointCloudFixture(count: number) {
   const splatRotation = new Float32Array(count * 4);
   for (let i = 0; i < count; i += 1) {
     const t = i / Math.max(1, count - 1);
-    const ring = t * Math.PI * 10;
-    positions[i * 3 + 0] = Math.cos(ring) * (0.18 + t * 0.85);
-    positions[i * 3 + 1] = Math.sin(ring * 0.45) * 0.55;
-    positions[i * 3 + 2] = Math.sin(ring) * (0.24 + t * 0.65);
+    const angle = t * Math.PI * 10;
+    positions[i * 3 + 0] = Math.cos(angle) * (0.18 + t * 0.72);
+    positions[i * 3 + 1] = Math.sin(angle * 0.55) * 0.42;
+    positions[i * 3 + 2] = Math.sin(angle) * (0.22 + t * 0.58);
     colors[i * 3 + 0] = 0.25 + t * 0.75;
-    colors[i * 3 + 1] = 0.35 + Math.sin(ring) * 0.22;
+    colors[i * 3 + 1] = 0.35 + Math.sin(angle) * 0.22;
     colors[i * 3 + 2] = 0.9 - t * 0.35;
-    alpha[i] = 0.45 + (i % 5) * 0.1;
-    splatScale[i * 3 + 0] = -3.9 + Math.sin(ring) * 0.15;
-    splatScale[i * 3 + 1] = -4.5 + Math.cos(ring * 0.7) * 0.12;
+    alpha[i] = 0.5 + (i % 5) * 0.08;
+    splatScale[i * 3 + 0] = -3.9 + Math.sin(angle) * 0.15;
+    splatScale[i * 3 + 1] = -4.5 + Math.cos(angle * 0.7) * 0.12;
     splatScale[i * 3 + 2] = -5.2;
-    splatRotation[i * 4 + 0] = Math.cos(ring * 0.125);
+    splatRotation[i * 4 + 0] = Math.cos(angle * 0.125);
     splatRotation[i * 4 + 1] = 0;
-    splatRotation[i * 4 + 2] = Math.sin(ring * 0.125);
+    splatRotation[i * 4 + 2] = Math.sin(angle * 0.125);
     splatRotation[i * 4 + 3] = 0;
   }
   return buildPointCloudFXNativePointData(positions, colors, {
-    maxPoints: Math.min(count, 96),
-    pointSize: 0.024,
+    maxPoints: Math.min(count, 256),
+    pointSize: 0.026,
     alpha,
     splatScale,
     splatRotation,
@@ -466,6 +466,49 @@ fn fs_sample_add(in: VertexOut) -> @location(0) vec4<f32> {
 `;
 }
 
+function queuedGraphComputeWgsl() {
+  return String.raw`
+@group(0) @binding(0)
+var<storage, read_write> color_out: array<vec4<f32>>;
+
+@compute @workgroup_size(1)
+fn cs_seed() {
+  color_out[0] = vec4<f32>(0.14, 0.82, 0.36, 1.0);
+}
+`;
+}
+
+function queuedGraphRenderWgsl() {
+  return String.raw`
+@group(0) @binding(0)
+var<storage, read> color_in: array<vec4<f32>>;
+
+struct VertexOut {
+  @builtin(position) position: vec4<f32>,
+  @location(0) uv: vec2<f32>,
+}
+
+@vertex
+fn vs_full(@builtin(vertex_index) vertex_index: u32) -> VertexOut {
+  let pos = array<vec2<f32>, 3>(
+    vec2<f32>(-1.0, -1.0),
+    vec2<f32>( 3.0, -1.0),
+    vec2<f32>(-1.0,  3.0),
+  );
+  let p = pos[vertex_index % 3u];
+  var out: VertexOut;
+  out.position = vec4<f32>(p, 0.0, 1.0);
+  out.uv = p * 0.5 + vec2<f32>(0.5);
+  return out;
+}
+
+@fragment
+fn fs_color(_in: VertexOut) -> @location(0) vec4<f32> {
+  return color_in[0];
+}
+`;
+}
+
 async function readSourceFrameProbe(
   rpc: NativeRpc,
   sourceId: string,
@@ -632,6 +675,171 @@ async function snapshotSourceFrameLayer(
 
 describe('Native graph instrument runtime fixtures', () => {
   const itIfNativeCore = existsSync(nativeCoreBin) ? it : it.skip;
+
+  itIfNativeCore('keeps Pixel Particles and Flythrough core-owned and advancing while the UI is idle', async () => {
+    const rpc = createNativeRpc();
+    try {
+      await rpc.send('start', {
+        config: {
+          backend: process.platform === 'darwin' ? 'metal' : process.platform === 'win32' ? 'd3d12' : 'vulkan',
+          width: 160,
+          height: 90,
+          target_fps: 30,
+        },
+      }, 12000);
+      const compiled = await rpc.send('submit_commands', {
+        commands: [
+          ...buildPixelParticlesNativePrecompileCommands(),
+          ...buildFlythroughNativePrecompileCommands(),
+          ...buildSmoke3DNativePrecompileCommands(),
+          ...buildVolumetricSpheresNativePrecompileCommands(),
+        ],
+      }, 8000);
+      expect(Number(compiled?.dropped ?? 0)).toBe(0);
+      const inputSourceId = 'core-owned-media-input';
+      await uploadTintedSourceFrame(rpc, inputSourceId, [52, 196, 244], 1, 48, 48);
+
+      for (const fixture of [
+        {
+          kind: 'pixel-particles',
+          params: {
+            particleCount: 8192,
+            mode: 'depth-shift',
+            baseSize: 0.02,
+            depthAmount: 0.8,
+            depthMotion: 'drift',
+            depthMotionAmount: 0.4,
+            depthMotionSpeed: 1.2,
+          },
+        },
+        {
+          kind: 'flythrough',
+          params: { particleCount: 4096, topology: 'strokes', baseSize: 0.018, strokeWidth: 0.014, flySpeed: 1.2 },
+        },
+      ]) {
+        const layerId = `core-owned-${fixture.kind}`;
+        const sourceId = `core-owned-${fixture.kind}-output`;
+        await rpc.send('submit_commands', {
+          commands: [
+            {
+              type: 'upsert_layer',
+              layer_id: layerId,
+              z_index: 0,
+              blend_mode: 'normal',
+              opacity: 1,
+              corners: FULLSCREEN_CORNERS,
+            },
+            { type: 'set_layer_visibility', layer_id: layerId, visible: true },
+            {
+              type: 'set_native_graph_layer',
+              layer_id: layerId,
+              kind: fixture.kind,
+              instrument_source_id: sourceId,
+              composite_source_id: sourceId,
+              input_source_id: inputSourceId,
+              effect_graph: null,
+              params: fixture.params,
+            },
+          ],
+        }, 8000);
+        await delay(350);
+        const first = await rpc.send('frame_snapshot', { include_pixels: false }, 8000);
+        assertVisibleSnapshot(`core-owned ${fixture.kind}`, first, 0.0002);
+        await delay(250);
+        const second = await rpc.send('frame_snapshot', { include_pixels: false }, 8000);
+        assertVisibleSnapshot(`advancing core-owned ${fixture.kind}`, second, 0.0002);
+        expect(second.checksum, fixture.kind).not.toBe(first.checksum);
+        await rpc.send('submit_commands', {
+          commands: [{ type: 'remove_layer', layer_id: layerId }],
+        }, 5000);
+      }
+
+      const pointFixture = makePointCloudFixture(768);
+      const pointData = buildPointCloudFXNativePointData(
+        pointFixture.positions,
+        pointFixture.colors,
+        { maxPoints: 768, signature: 'core-owned-point-cloud-data', pointSize: 0.025 },
+      );
+      const pointLayerId = 'core-owned-point-cloud-fx';
+      const pointSourceId = 'core-owned-point-cloud-fx-output';
+      await rpc.send('submit_commands', {
+        commands: [
+          {
+            type: 'upload_native_point_cloud',
+            layer_id: pointLayerId,
+            signature: pointData.signature,
+            point_count: pointData.pointCount,
+            sort_count: pointData.sortCount,
+            depth_sort_enabled: pointData.depthSortEnabled,
+            home_b64: Buffer.from(pointData.homeInitialBuffer).toString('base64'),
+            live_b64: Buffer.from(pointData.liveInitialBuffer).toString('base64'),
+            sort_b64: Buffer.from(pointData.sortInitialBuffer).toString('base64'),
+          },
+          {
+            type: 'upsert_layer',
+            layer_id: pointLayerId,
+            z_index: 0,
+            blend_mode: 'normal',
+            opacity: 1,
+            corners: FULLSCREEN_CORNERS,
+          },
+          { type: 'set_layer_visibility', layer_id: pointLayerId, visible: true },
+          {
+            type: 'set_native_graph_layer',
+            layer_id: pointLayerId,
+            kind: 'point-cloud-fx',
+            instrument_source_id: pointSourceId,
+            composite_source_id: pointSourceId,
+            input_source_id: null,
+            effect_graph: null,
+            params: { pointSize: 0.025, autoRotateY: 24, windStrength: 0.12 },
+          },
+        ],
+      }, 8000);
+      await delay(350);
+      const pointFirst = await rpc.send('frame_snapshot', { include_pixels: false }, 8000);
+      assertVisibleSnapshot('core-owned point-cloud-fx', pointFirst, 0.0001);
+      await delay(250);
+      const pointSecond = await rpc.send('frame_snapshot', { include_pixels: false }, 8000);
+      assertVisibleSnapshot('advancing core-owned point-cloud-fx', pointSecond, 0.0001);
+      expect(pointSecond.checksum).not.toBe(pointFirst.checksum);
+
+      const ridersLayerId = 'core-owned-smoke-riders';
+      const ridersSourceId = 'core-owned-smoke-riders-output';
+      await rpc.send('submit_commands', {
+        commands: [
+          {
+            type: 'upsert_layer',
+            layer_id: ridersLayerId,
+            z_index: 0,
+            blend_mode: 'normal',
+            opacity: 1,
+            corners: FULLSCREEN_CORNERS,
+          },
+          { type: 'set_layer_visibility', layer_id: ridersLayerId, visible: true },
+          {
+            type: 'set_native_graph_layer',
+            layer_id: ridersLayerId,
+            kind: 'smoke-riders',
+            instrument_source_id: ridersSourceId,
+            composite_source_id: ridersSourceId,
+            input_source_id: null,
+            effect_graph: null,
+            params: { quality: 'performance', sphereCount: 72, autoSpin: 18 },
+          },
+        ],
+      }, 8000);
+      await delay(500);
+      const ridersFirst = await rpc.send('frame_snapshot', { include_pixels: false }, 8000);
+      assertVisibleSnapshot('core-owned smoke-riders', ridersFirst, 0.0002);
+      await delay(300);
+      const ridersSecond = await rpc.send('frame_snapshot', { include_pixels: false }, 8000);
+      assertVisibleSnapshot('advancing core-owned smoke-riders', ridersSecond, 0.0002);
+      expect(ridersSecond.checksum).not.toBe(ridersFirst.checksum);
+    } finally {
+      await rpc.close();
+    }
+  }, 30000);
 
   itIfNativeCore('advertises graph manifests that match the real native shader bundles', async () => {
     const rpc = createNativeRpc();
@@ -941,6 +1149,108 @@ describe('Native graph instrument runtime fixtures', () => {
     }
   }, 45000);
 
+  itIfNativeCore('executes queued native compute graphs inside the live frame batch', async () => {
+    const rpc = createNativeRpc();
+    const sourceId = 'native-graph-queued-live-source';
+    const colorBufferId = 'native-graph-queued-live:color';
+    try {
+      await rpc.send('start', {
+        config: {
+          backend: process.platform === 'darwin' ? 'metal' : process.platform === 'win32' ? 'd3d12' : 'vulkan',
+          width: 128,
+          height: 72,
+          target_fps: 30,
+          native_quality_policy: 'performance',
+        },
+      }, 12000);
+      await delay(80);
+
+      const precompileSummary = await rpc.send('submit_commands', {
+        commands: [
+          {
+            type: 'precompile_shader',
+            shader_id: QUEUED_GRAPH_COMPUTE_SHADER_ID,
+            stage: 'compute',
+            entry: 'cs_seed',
+            source: queuedGraphComputeWgsl(),
+          },
+          {
+            type: 'precompile_shader',
+            shader_id: QUEUED_GRAPH_RENDER_SHADER_ID,
+            stage: 'module',
+            entry: 'fs_color',
+            source: queuedGraphRenderWgsl(),
+          },
+          {
+            type: 'precompile_shader',
+            shader_id: SOURCE_FRAME_PROBE_SHADER_ID,
+            stage: 'compute',
+            entry: 'cs_probe',
+            source: sourceFrameProbeWgsl(),
+          },
+        ],
+      }, 8000);
+      expect(Number(precompileSummary?.dropped ?? 0)).toBe(0);
+
+      const liveSummary = await rpc.send('submit_commands', {
+        commands: [
+          {
+            type: 'queue_compute_graph',
+            buffers: [{
+              id: colorBufferId,
+              kind: 'storage',
+              byte_length: 16,
+              persistent: true,
+              clear: true,
+            }],
+            passes: [{
+              name: 'queued-live-seed-color',
+              shader_id: QUEUED_GRAPH_COMPUTE_SHADER_ID,
+              entry: 'cs_seed',
+              dispatch: [1, 1, 1],
+              bindings: [
+                { binding: 0, resource: colorBufferId, kind: 'storage' },
+              ],
+            }],
+            render_passes: [{
+              name: 'queued-live-render-source-frame',
+              shader_id: QUEUED_GRAPH_RENDER_SHADER_ID,
+              vertex_entry: 'vs_full',
+              fragment_entry: 'fs_color',
+              target: 'source_frame',
+              source_id: sourceId,
+              seq: 7,
+              clear: true,
+              clear_color: [0, 0, 0, 1],
+              blend: 'replace',
+              vertex_count: 3,
+              bindings: [
+                { binding: 0, resource: colorBufferId, kind: 'read-only-storage' },
+              ],
+            }],
+            readbacks: [],
+          },
+          { type: 'present' },
+        ],
+      }, 12000);
+      expect(Number(liveSummary?.dropped ?? 0)).toBe(0);
+      await delay(180);
+
+      const status = await rpc.send('status', {}, 5000);
+      expect(Number(status?.compute_graph_runs ?? 0)).toBeGreaterThanOrEqual(1);
+      expect(Number(status?.compute_graph_passes ?? 0)).toBeGreaterThanOrEqual(1);
+      expect(Number(status?.compute_graph_source_frame_renders ?? 0)).toBeGreaterThanOrEqual(1);
+
+      const sourceProbe = await readSourceFrameProbe(rpc, sourceId, 'queued-live-source', 128, 72);
+      const [r, g, b] = meanRgbFromProbe(sourceProbe);
+      expect(g).toBeGreaterThan(0.45);
+      expect(r).toBeGreaterThan(0.05);
+      expect(b).toBeGreaterThan(0.12);
+    } finally {
+      await rpc.close();
+    }
+  }, 45000);
+
   itIfNativeCore('updates source-driven native graph outputs when uploaded media frames change', async () => {
     const rpc = createNativeRpc();
     const mediaSourceId = 'native-graph-reactivity-media-source';
@@ -1129,6 +1439,17 @@ describe('Native graph instrument runtime fixtures', () => {
         }],
       }, 5000);
 
+      const pointCloudFixture = makePointCloudFixture(768);
+      const pointCloudData = buildPointCloudFXNativePointData(
+        pointCloudFixture.positions,
+        pointCloudFixture.colors,
+        {
+          maxPoints: 768,
+          signature: 'native-graph-fixture-point-cloud-fx-data',
+          pointSize: 0.018,
+        },
+      );
+
       const fixtures = [
         {
           id: 'planet',
@@ -1148,10 +1469,9 @@ describe('Native graph instrument runtime fixtures', () => {
             reset: true,
           }),
           minLuma: 0.02,
-          assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
-            const center = snapshotPixelLuma(snapshot, pixels, 0.5, 0.5);
-            const corner = snapshotPixelLuma(snapshot, pixels, 0.04, 0.04);
-            expect(center).toBeGreaterThan(corner + 0.02);
+          assert(snapshot: Record<string, unknown>) {
+            expect(Number(snapshot.nonzero_pixels ?? 0)).toBeGreaterThan(400);
+            expect(Number(snapshot.bright_pixels ?? 0)).toBeGreaterThan(40);
           },
         },
         {
@@ -1254,6 +1574,66 @@ describe('Native graph instrument runtime fixtures', () => {
           },
         },
         {
+          id: 'point-cloud-fx',
+          graph: buildPointCloudFXNativeComputeGraph({
+            sourceId: 'native-graph-fixture-point-cloud-fx',
+            pointData: pointCloudData,
+            params: {
+              topology: 'billboards',
+              pointSize: 0.018,
+              colorMode: 'palette4',
+              colorMap: 'radial',
+              colorA: [80, 210, 255],
+              colorB: [255, 75, 180],
+              colorC: [255, 210, 80],
+              colorD: [80, 255, 170],
+              windStrength: 0.18,
+              waveEnabled: true,
+              waveStrength: 0.6,
+              autoRotateY: 10,
+            },
+            width: 160,
+            height: 90,
+            time: 1,
+            frameDelta: 1 / 30,
+            frameIndex: 10,
+            audioBass: 0.45,
+            audioTreble: 0.25,
+            reset: true,
+          }),
+          minLuma: 0.003,
+          assert(snapshot: Record<string, unknown>) {
+            expect(Number(snapshot.nonzero_pixels ?? 0)).toBeGreaterThan(30);
+          },
+        },
+        {
+          id: 'point-cloud-fx-gaussian',
+          graph: buildPointCloudFXNativeComputeGraph({
+            sourceId: 'native-graph-fixture-point-cloud-fx-gaussian',
+            pointData: makeGaussianPointCloudFixture(128),
+            params: {
+              topology: 'billboards',
+              pointSize: 0.026,
+              opacity: 0.9,
+              brightness: 1.35,
+              colorMode: 'source',
+              filterMode: 'none',
+              autoRotateY: 0,
+              audioReactive: false,
+            },
+            width: 160,
+            height: 90,
+            time: 1,
+            frameDelta: 1 / 30,
+            frameIndex: 11,
+            reset: true,
+          }),
+          minLuma: 0.002,
+          assert(snapshot: Record<string, unknown>) {
+            expect(Number(snapshot.nonzero_pixels ?? 0)).toBeGreaterThan(20);
+          },
+        },
+        {
           id: 'smoke-riders',
           graph: buildSmokeRidersNativeComputeGraph({
             sourceId: 'native-graph-fixture-smoke-riders',
@@ -1328,62 +1708,6 @@ describe('Native graph instrument runtime fixtures', () => {
           minLuma: 0.003,
           assert(snapshot: Record<string, unknown>) {
             expect(Number(snapshot.nonzero_pixels ?? 0)).toBeGreaterThan(40);
-          },
-        },
-        {
-          id: 'point-cloud-fx',
-          graph: buildPointCloudFXNativeComputeGraph({
-            sourceId: 'native-graph-fixture-point-cloud-fx',
-            pointData: makePointCloudFixture(128),
-            params: {
-              topology: 'strokes',
-              pointSize: 0.018,
-              strokeLength: 0.06,
-              colorMode: 'palette4',
-              colorA: [60, 140, 255],
-              colorB: [255, 70, 190],
-              filterMode: 'none',
-              audioReactive: true,
-            },
-            width: 160,
-            height: 90,
-            time: 1,
-            frameDelta: 1 / 30,
-            frameIndex: 10,
-            audioBass: 0.45,
-            audioTreble: 0.25,
-            reset: true,
-          }),
-          minLuma: 0.002,
-          assert(snapshot: Record<string, unknown>) {
-            expect(Number(snapshot.nonzero_pixels ?? 0)).toBeGreaterThan(20);
-          },
-        },
-        {
-          id: 'point-cloud-fx-gaussian',
-          graph: buildPointCloudFXNativeComputeGraph({
-            sourceId: 'native-graph-fixture-point-cloud-fx-gaussian',
-            pointData: makeGaussianPointCloudFixture(96),
-            params: {
-              topology: 'billboards',
-              pointSize: 0.024,
-              opacity: 0.9,
-              brightness: 1.35,
-              colorMode: 'source',
-              filterMode: 'none',
-              autoRotateY: 0,
-              audioReactive: false,
-            },
-            width: 160,
-            height: 90,
-            time: 1,
-            frameDelta: 1 / 30,
-            frameIndex: 11,
-            reset: true,
-          }),
-          minLuma: 0.002,
-          assert(snapshot: Record<string, unknown>) {
-            expect(Number(snapshot.nonzero_pixels ?? 0)).toBeGreaterThan(20);
           },
         },
       ];

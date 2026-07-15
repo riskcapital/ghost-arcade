@@ -10,9 +10,15 @@
    */
   import { onMount, onDestroy } from 'svelte';
   import { project, selectedLayer, layers } from '../stores/layers';
+  import { NATIVE_ENGINE_ONLY, settings } from '../stores/settings';
   import EffectParamRow from './EffectParamRow.svelte';
   import { clearGPUParamRanges } from '../audio/modulation';
-  import { GPU_SHADER_CATALOG, getShaderDef } from '../renderer/gpuShaderCatalog';
+  import {
+    GPU_SHADER_CATALOG,
+    NATIVE_READY_GPU_SHADER_CATALOG,
+    getShaderDef,
+    isNativeReadyGpuShaderId,
+  } from '../renderer/gpuShaderCatalog';
   import { keyframeTimeline } from '../stores/keyframeTimeline';
   import { mediaLibrary } from '../stores/media';
   import { spoutSenders, startSpoutScanner } from '../stores/spout';
@@ -20,7 +26,7 @@
   import type { GPULayerContent, Layer } from '../types';
   import type { MediaItem } from '../stores/media';
   import type { ParamControl } from '../renderer/gpuShaderTypes';
-  import { createAssetRefFromFile } from '../storage/assetRegistry';
+  import { createAssetRefFromFile, resolveAssetRefForRuntime } from '../storage/assetRegistry';
   import NumericInput from './NumericInput.svelte';
 
   // Media-source picker support (for shaders with kind: 'media-source'
@@ -135,6 +141,46 @@
   $: content = (layer && layer.type === 'gpu' ? layer.gpuLayerContent : null) as GPULayerContent | null;
   $: layerId = layer?.id ?? null;
   $: shaderDef = content ? getShaderDef(content.shaderId) : null;
+  $: nativeOutputCoreEnabled = !!$settings.experimental?.outputNativeCore;
+  $: nativeSourceInventoryLocked = NATIVE_ENGINE_ONLY && nativeOutputCoreEnabled;
+  $: shaderPickerCatalog = nativeOutputCoreEnabled ? NATIVE_READY_GPU_SHADER_CATALOG : GPU_SHADER_CATALOG;
+  $: currentShaderNativeReady = !nativeOutputCoreEnabled || !content || isNativeReadyGpuShaderId(content.shaderId);
+
+  function nativeReadablePickerUri(src: string | undefined | null, ref: any): string {
+    return resolveAssetRefForRuntime(ref, undefined, String(src ?? '')) ?? String(src ?? '');
+  }
+
+  function isNativeLocalMediaUri(uri: string | undefined | null): boolean {
+    const value = String(uri ?? '').trim();
+    if (!value) return false;
+    if (/^(blob:|data:|https?:)/i.test(value)) return false;
+    if (/^(ghost-asset:\/\/|file:\/\/)/i.test(value)) return true;
+    if (value.startsWith('/')) return true;
+    if (/^[A-Za-z]:[\\/]/.test(value)) return true;
+    return false;
+  }
+
+  function mediaItemNativeReady(item: MediaItem): boolean {
+    if (!nativeSourceInventoryLocked) return true;
+    if (item.broken) return false;
+    return isNativeLocalMediaUri(nativeReadablePickerUri(item.src, item._assetRef));
+  }
+
+  function mediaItemNativeReason(item: MediaItem): string {
+    if (!nativeSourceInventoryLocked) return item.name;
+    if (item.broken) return item.brokenReason || 'Media is marked broken.';
+    return mediaItemNativeReady(item)
+      ? item.name
+      : 'Native mode needs a local file-backed source. Re-import this media from disk.';
+  }
+
+  function mediaLayerNativeReady(mediaLayer: Layer): boolean {
+    if (!nativeSourceInventoryLocked) return true;
+    const src = mediaLayer.source;
+    if (!src || (src.type !== 'image' && src.type !== 'video')) return false;
+    if (src.broken) return false;
+    return isNativeLocalMediaUri(nativeReadablePickerUri(src.src, (src as any)._assetRef));
+  }
 
   // Helper: a param is visible if it has no `showWhen`, OR every
   // key in `showWhen` matches the current params value. Lets shaders
@@ -175,6 +221,7 @@
 
   function setShader(id: string) {
     if (!layerId || !content || content.shaderId === id) return;
+    if (nativeOutputCoreEnabled && !isNativeReadyGpuShaderId(id)) return;
     const def = getShaderDef(id);
     if (!def) return;
     // The new shader will have a different set of param keys; clear
@@ -244,7 +291,7 @@
 
     <!-- Shader picker — every entry in the catalog, grouped by category. -->
     <div class="shader-grid">
-      {#each GPU_SHADER_CATALOG as s}
+      {#each shaderPickerCatalog as s}
         <button
           class="shader-btn"
           class:active={content.shaderId === s.id}
@@ -258,36 +305,32 @@
         </button>
       {/each}
     </div>
-
-    {#if shaderDef.description}
-      <div class="hint">{shaderDef.description}</div>
-    {/if}
-
-    <!-- Universal layer-level controls (apply to every GPU shader,
-         not just the current one). Background Opacity keys out the
-         shader's dark areas so the layer below shows through. -->
-    <div class="sec-label sub">Layer</div>
-    <div class="slider-col">
-      <NumericInput
-        label="Background Opacity"
-        value={content.bgOpacity ?? 1.0}
-        min={0}
-        max={1}
-        step={0.01}
-        midiPath="map:gpu:__bgOpacity"
-        midiLabel="GPU Background Opacity"
-        on:input={(e) => setBgOpacity(e.detail)}
-      />
-    </div>
-
-    <!-- Dynamic per-shader params, grouped. -->
-    {#each groupedParams as [groupName, params]}
-      {#if groupName}
-        <div class="sec-label sub">{groupName}</div>
-      {/if}
+    {#if currentShaderNativeReady}
+      <!-- Universal layer-level controls (apply to every GPU shader,
+           not just the current one). Background Opacity keys out the
+           shader's dark areas so the layer below shows through. -->
+      <div class="sec-label sub">Layer</div>
       <div class="slider-col">
-        {#each params as p}
-          {#if p.kind === 'slider'}
+        <NumericInput
+          label="Background Opacity"
+          value={content.bgOpacity ?? 1.0}
+          min={0}
+          max={1}
+          step={0.01}
+          midiPath="map:gpu:__bgOpacity"
+          midiLabel="GPU Background Opacity"
+          on:input={(e) => setBgOpacity(e.detail)}
+        />
+      </div>
+
+      <!-- Dynamic per-shader params, grouped. -->
+      {#each groupedParams as [groupName, params]}
+        {#if groupName}
+          <div class="sec-label sub">{groupName}</div>
+        {/if}
+        <div class="slider-col">
+          {#each params as p}
+            {#if p.kind === 'slider'}
             <EffectParamRow
               label={p.label}
               value={paramValue(p)}
@@ -372,10 +415,13 @@
               {#if libraryItems.length > 0}
                 <div class="media-grid">
                   {#each libraryItems as item}
+                    {@const _nativeMediaReady = mediaItemNativeReady(item)}
                     <button class="media-cell"
                       class:active={_src && _src.type === 'media' && _src.mediaId === item.id}
-                      title={item.name}
-                      onclick={() => pickMediaSource(p.key, item)}>
+                      class:native-pending={!_nativeMediaReady}
+                      title={mediaItemNativeReason(item)}
+                      disabled={!_nativeMediaReady}
+                      onclick={() => _nativeMediaReady && pickMediaSource(p.key, item)}>
                       {#if item.thumbnail}
                         <img src={item.thumbnail} alt={item.name} class="media-thumb" />
                       {:else if item.type === 'image'}
@@ -383,12 +429,13 @@
                       {:else}
                         <div class="media-thumb video-placeholder">▶</div>
                       {/if}
+                      {#if !_nativeMediaReady}
+                        <span class="native-badge">pending</span>
+                      {/if}
                       <span class="media-cell-label">{item.name}</span>
                     </button>
                   {/each}
                 </div>
-              {:else}
-                <div class="hint mini">No media in library — drop files on the Media Tray, or use the file upload below.</div>
               {/if}
             {/if}
             {#if _showLayer && mediaLayers.length > 0}
@@ -397,7 +444,10 @@
                 onchange={(e) => pickLayerSource(p.key, (e.target as HTMLSelectElement).value)}>
                 <option value="">— pick a media layer —</option>
                 {#each mediaLayers as ml}
-                  <option value={ml.id}>{ml.name} ({ml.source?.type})</option>
+                  {@const _nativeLayerReady = mediaLayerNativeReady(ml)}
+                  <option value={ml.id} disabled={!_nativeLayerReady}>
+                    {ml.name} ({ml.source?.type}){_nativeLayerReady ? '' : ' · pending native source'}
+                  </option>
                 {/each}
               </select>
             {/if}
@@ -413,7 +463,7 @@
             {#if _showLive}
               <div class="live-sources">
                 <div class="live-label">Live capture</div>
-                {#if cameraDevices.length > 0}
+                {#if !nativeSourceInventoryLocked && cameraDevices.length > 0}
                   <select class="src-select"
                     value={_src && _src.type === 'camera' ? (_src.deviceId || '') : ''}
                     onchange={(e) => {
@@ -427,13 +477,13 @@
                       <option value={cam.deviceId}>{cam.label || `Camera ${i + 1}`}</option>
                     {/each}
                   </select>
-                {:else}
+                {:else if !nativeSourceInventoryLocked}
                   <button class="mini-action wide" onclick={enumerateCameras}>
                     Detect cameras…
                   </button>
                 {/if}
 
-                {#if isDesktopApp}
+                {#if !nativeSourceInventoryLocked && isDesktopApp}
                   {#if $spoutSenders.length > 0}
                     <select class="src-select"
                       value={_src && _src.type === 'spout' ? (_src.senderName || '') : ''}
@@ -447,8 +497,6 @@
                         <option value={sender}>{sender}</option>
                       {/each}
                     </select>
-                  {:else}
-                    <div class="hint mini">No active {textureShareLabel} senders. Start a sender from another app (Resolume, OBS plugin, TouchDesigner, etc.) and it'll appear here.</div>
                   {/if}
                 {/if}
               </div>
@@ -472,10 +520,11 @@
                   ]);
                 }} />
             </div>
-          {/if}
-        {/each}
-      </div>
-    {/each}
+            {/if}
+          {/each}
+        </div>
+      {/each}
+    {/if}
   </div>
   <!-- accept includes .ply / .splat for the Point Cloud FX shader.
        The runner detects those extensions in the URL and routes to
@@ -508,7 +557,6 @@
   .shader-btn.active { background: linear-gradient(135deg, #1e3a8a 0%, #1e293b 100%); border-color: #67e8f9; color: #67e8f9; }
   .shader-btn-label { font-size: 13px; font-weight: 500; }
   .shader-btn-cat { font-size: 10.5px; opacity: 0.7; margin-top: 2px; }
-  .hint { margin-top: 8px; padding: 6px 8px; background: #14171f; border-left: 2px solid #67e8f9; font-size: 11.5px; color: #8a96a6; line-height: 1.4; border-radius: 0 3px 3px 0; }
   .slider-col { display: flex; flex-direction: column; gap: 8px; }
   .toggle-row { display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; }
   .toggle-row input { accent-color: #67e8f9; }
@@ -532,15 +580,33 @@
   .mini-x { background: transparent; border: 1px solid #333a4a; color: var(--text-secondary, #aaa); width: 22px; height: 22px; border-radius: 3px; cursor: pointer; font-size: 14px; }
   .mini-x:hover { background: #262b3a; color: #fff; }
   .src-select { width: 100%; background: #1f2330; border: 1px solid #333a4a; color: #d4d8e0; padding: 5px 8px; border-radius: 3px; font-size: 12px; cursor: pointer; margin-top: 6px; }
+  .src-select option:disabled { color: #6b7280; }
   .live-sources { margin-top: 10px; padding-top: 8px; border-top: 1px dashed #2a2f3d; display: flex; flex-direction: column; gap: 0; }
   .live-label { font-size: 10.5px; text-transform: uppercase; letter-spacing: 0.5px; color: #8a96a6; opacity: 0.8; margin-bottom: 4px; }
   .mini-action.wide { width: 100%; background: #1a1d27; border: 1px solid #2a2f3d; color: #b0b6c0; padding: 6px 10px; border-radius: 3px; cursor: pointer; font-size: 12px; margin-top: 6px; }
   .mini-action.wide:hover { background: #262b3a; color: #fff; border-color: #4a5366; }
-  .hint.mini { padding: 5px 8px; font-size: 11px; }
   .media-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(64px, 1fr)); gap: 4px; max-height: 200px; overflow-y: auto; padding: 2px; background: #14171f; border: 1px solid #2a2f3d; border-radius: 4px; }
   .media-cell { position: relative; background: #1a1d27; border: 1px solid #2a2f3d; border-radius: 3px; padding: 0; cursor: pointer; overflow: hidden; aspect-ratio: 1; display: flex; flex-direction: column; }
   .media-cell:hover { border-color: #4a5366; }
   .media-cell.active { border-color: #67e8f9; box-shadow: 0 0 0 1px rgba(103, 232, 249, 0.3); }
+  .media-cell:disabled { cursor: not-allowed; opacity: 0.48; filter: grayscale(0.55); }
+  .media-cell:disabled:hover { border-color: #2a2f3d; }
+  .media-cell.native-pending::after { content: ''; position: absolute; inset: 0; background: rgba(5, 7, 10, 0.28); pointer-events: none; }
+  .native-badge {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    z-index: 1;
+    border: 1px solid rgba(167, 139, 250, 0.55);
+    background: rgba(18, 14, 30, 0.88);
+    color: #c4b5fd;
+    border-radius: 3px;
+    font-size: 9px;
+    line-height: 1;
+    padding: 3px 4px;
+    text-transform: uppercase;
+    letter-spacing: 0.25px;
+  }
   .media-thumb { width: 100%; height: 100%; object-fit: cover; display: block; }
   .video-placeholder { background: #232838; color: #67e8f9; display: flex; align-items: center; justify-content: center; font-size: 19px; width: 100%; height: 100%; }
   .media-cell-label { position: absolute; left: 0; right: 0; bottom: 0; background: linear-gradient(transparent, rgba(0,0,0,0.85)); color: #d4d8e0; font-size: 10px; padding: 10px 4px 3px; text-overflow: ellipsis; white-space: nowrap; overflow: hidden; text-align: left; }

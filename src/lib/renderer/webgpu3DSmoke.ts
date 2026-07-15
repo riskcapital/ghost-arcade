@@ -1010,6 +1010,7 @@ export interface Smoke3DNativeGraphConfig {
     source_id: string;
     seq: number;
     clear: boolean;
+    clear_color?: [number, number, number, number];
     include_snapshot: boolean;
     bindings: Smoke3DNativeGraphBinding[];
   };
@@ -1025,23 +1026,30 @@ export interface Smoke3DNativeGraphBuildResult {
 }
 
 function clampFinite(value: unknown, min: number, max: number, fallback: number): number {
-  const n = typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+  const parsed = typeof value === 'number' || typeof value === 'string' ? Number(value) : NaN;
+  const n = Number.isFinite(parsed) ? parsed : fallback;
   return Math.min(max, Math.max(min, n));
 }
 
 function color3(value: unknown, fallback: [number, number, number]): [number, number, number] {
-  if (!Array.isArray(value) || value.length < 3) return fallback;
+  if (!Array.isArray(value) || value.length < 3) return [...fallback];
+  const r = Number(value[0]);
+  const g = Number(value[1]);
+  const b = Number(value[2]);
+  if (!Number.isFinite(r) || !Number.isFinite(g) || !Number.isFinite(b)) return [...fallback];
+  const divisor = Math.max(r, g, b) > 1.01 ? 255 : 1;
   return [
-    clampFinite(value[0], 0, 8, fallback[0]),
-    clampFinite(value[1], 0, 8, fallback[1]),
-    clampFinite(value[2], 0, 8, fallback[2]),
+    clampFinite(r / divisor, 0, 1, fallback[0]),
+    clampFinite(g / divisor, 0, 1, fallback[1]),
+    clampFinite(b / divisor, 0, 1, fallback[2]),
   ];
 }
 
-function normalizeEmitterColors(value: unknown): [number, number, number][] {
-  if (!Array.isArray(value)) return DEFAULT_PARAMS.emitterColors;
-  const colors = value
-    .map((entry) => color3(entry, [1, 1, 1]))
+function normalizeEmitterColors(raw: Record<string, any>): [number, number, number][] {
+  const colors = Array.from({ length: MAX_EMITTERS }, (_, index) => {
+    const fallback = DEFAULT_PARAMS.emitterColors[index] ?? [1, 1, 1];
+    return color3(raw[`emitterColor${index + 1}`] ?? raw.emitterColors?.[index], fallback);
+  })
     .filter((entry) => entry.some((channel) => channel > 0));
   return colors.length ? colors.slice(0, MAX_EMITTERS) : DEFAULT_PARAMS.emitterColors;
 }
@@ -1069,7 +1077,7 @@ function normalizeSmoke3DParams(input?: Partial<Smoke3DParams> | Record<string, 
     bass: clampFinite(raw.bass, 0, 1, DEFAULT_PARAMS.bass),
     treble: clampFinite(raw.treble, 0, 1, DEFAULT_PARAMS.treble),
     audioBurst: clampFinite(raw.audioBurst, 0, 8, DEFAULT_PARAMS.audioBurst),
-    emitterColors: normalizeEmitterColors(raw.emitterColors),
+    emitterColors: normalizeEmitterColors(raw),
     volumeScaleX: clampFinite(raw.volumeScaleX, 0.05, 8, DEFAULT_PARAMS.volumeScaleX),
     volumeScaleZ: clampFinite(raw.volumeScaleZ, 0.05, 8, DEFAULT_PARAMS.volumeScaleZ),
     windX: clampFinite(raw.windX, -8, 8, DEFAULT_PARAMS.windX),
@@ -1378,6 +1386,7 @@ export function buildSmoke3DNativeComputeGraph(options: Smoke3DNativeGraphOption
         source_id: sourceId,
         seq: Math.max(0, Math.round(options.frameIndex ?? 0)),
         clear: true,
+        clear_color: [0, 0, 0, 0],
         include_snapshot: !!options.includeSnapshot,
         bindings: [
           { binding: 0, resource: id('render-uniform'), kind: 'uniform' },

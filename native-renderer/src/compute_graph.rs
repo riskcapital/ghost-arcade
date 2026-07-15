@@ -1,4 +1,4 @@
-use std::fs;
+use std::{fs, sync::Arc};
 
 use base64::Engine;
 use serde_json::Value;
@@ -144,7 +144,7 @@ pub(crate) struct NativeComputeGraphBindingSpec {
 pub(crate) struct NativeComputeGraphPassPlan {
     pub(crate) name: String,
     pub(crate) cache_key: String,
-    pub(crate) source: String,
+    pub(crate) source: Arc<str>,
     pub(crate) entry: String,
     pub(crate) dispatch: [u32; 3],
     pub(crate) bindings: Vec<NativeComputeGraphBindingSpec>,
@@ -288,11 +288,12 @@ impl NativeComputeGraphPrimitiveTopology {
 pub(crate) struct NativeComputeGraphRenderPlan {
     pub(crate) name: String,
     pub(crate) cache_key: String,
-    pub(crate) source: String,
+    pub(crate) source: Arc<str>,
     pub(crate) vertex_entry: String,
     pub(crate) fragment_entry: String,
     pub(crate) clear: bool,
     pub(crate) include_snapshot: bool,
+    pub(crate) generate_mips: bool,
     pub(crate) target: NativeComputeGraphRenderTarget,
     pub(crate) blend: NativeComputeGraphRenderBlend,
     pub(crate) vertex_count: u32,

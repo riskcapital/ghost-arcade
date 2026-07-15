@@ -189,6 +189,19 @@ function directCoreNativeShareSenderState(features = {}) {
   return 'pending';
 }
 
+function editorPreviewDetail(capabilities) {
+  const features = capabilities?.features ?? {};
+  const preview = capabilities?.native_editor_preview ?? {};
+  const presentation = preview.presentation ? `/${preview.presentation}` : '';
+  const presenter = preview.needs_underlay_lock_in ? '/needs-embedded-presenter' : '';
+  const production = preview.production_ready ? '/production' : '/diagnostic';
+  if (features.native_editor_preview_frame_source && preview.source === 'core-output-composite') {
+    return `${preview.mode || 'native'}${presentation}${presenter}${production}:${preview.source}`;
+  }
+  if (preview.source) return `${preview.mode || 'unavailable'}${presentation}${presenter}${production}:${preview.source}`;
+  return 'native-unavailable';
+}
+
 function expectedOutputTextureTransport() {
   if (process.platform === 'darwin') {
     return { platform: 'iosurface', handleScope: 'global-id', preferredTransport: 'handle' };
@@ -248,9 +261,17 @@ function outputTextureTransportOk(texture, expected = expectedOutputTextureTrans
   if (expected.platform === 'unsupported') return !texture?.available;
   if (!texture?.available) return false;
   if (String(texture.platform ?? '') !== expected.platform) return false;
-  if (String(texture.handle_scope ?? '') !== expected.handleScope) return false;
-  if (String(texture.preferred_transport ?? '') !== expected.preferredTransport) return false;
-  if (!(Number(texture.width ?? 0) > 0 && Number(texture.height ?? 0) > 0)) return false;
+	  if (String(texture.handle_scope ?? '') !== expected.handleScope) return false;
+	  if (String(texture.preferred_transport ?? '') !== expected.preferredTransport) return false;
+	  if (String(texture.format ?? '') !== 'bgra8unorm') return false;
+	  if (String(texture.color_space ?? '') !== 'srgb') return false;
+	  if (String(texture.storage_format ?? '') !== 'bgra8unorm') return false;
+	  if (String(texture.storage_encoding ?? '') !== 'srgb-encoded-bgra8unorm') return false;
+	  if (String(texture.alpha_mode ?? '') !== 'opaque') return false;
+	  if (texture.premultiplied_alpha !== false) return false;
+	  if (texture.single_render_source !== 'core-output-composite') return false;
+	  if (texture.zero_conversions !== true) return false;
+	  if (!(Number(texture.width ?? 0) > 0 && Number(texture.height ?? 0) > 0)) return false;
   if (!String(texture.handle ?? '').length) return false;
   if (expected.platform === 'dxgi') {
     return String(texture.shared_name ?? '').includes('GhostArcadeNativeOutput');
@@ -266,11 +287,12 @@ function outputTextureTransportDetail(texture, expected = expectedOutputTextureT
     return `missing(${String(texture?.reason ?? 'not available').replace(/\s+/g, '-')})`;
   }
   const parts = [
-    String(texture.platform ?? 'unknown'),
-    String(texture.preferred_transport ?? 'unknown'),
-    String(texture.handle_scope ?? 'unknown'),
-    `${Number(texture.width ?? 0)}x${Number(texture.height ?? 0)}`,
-  ];
+	    String(texture.platform ?? 'unknown'),
+	    String(texture.preferred_transport ?? 'unknown'),
+	    String(texture.handle_scope ?? 'unknown'),
+	    `${String(texture.color_space ?? 'unknown')}-${String(texture.storage_format ?? 'unknown')}`,
+	    `${Number(texture.width ?? 0)}x${Number(texture.height ?? 0)}`,
+	  ];
   if (texture.shared_name) parts.push('named');
   if (!outputTextureTransportOk(texture, expected)) parts.push('mismatch');
   return parts.join('/');
@@ -392,15 +414,15 @@ async function inspectCore() {
         `graphDepth=${features.compute_graph_depth_render ? 'on' : 'missing'}`,
         `graphLines=${features.compute_graph_line_render ? 'on' : 'missing'}`,
         `graphClearColor=${features.compute_graph_clear_color ? 'on' : 'missing'}`,
-        `proxyFallback=${proxyFallbackDisabled ? 'off' : 'on'}`,
+        `legacyProxy=${proxyFallbackDisabled ? 'off' : 'on'}`,
         `audioLayout=${audioLayoutOk ? `v${expectedAudioLayout.schema_version}` : 'mismatch'}`,
         `outputFormat=${status?.output_format ?? 'unknown'}`,
         `outputMirror=${features.native_output_mirror_texture ? 'on' : 'missing'}`,
         `frameExport=${features.native_frame_export ? 'on' : 'missing'}`,
         `frameSequence=${features.native_frame_sequence_export ? 'on' : 'missing'}`,
-        `staticImageDecode=${features.native_static_image_decode ? 'native' : 'fallback'}`,
-        `staticImagePrefetch=${features.native_static_image_prefetch ? 'native' : 'fallback'}`,
-        `normalMediaDecode=${features.native_media_decode ? 'native' : features.native_static_image_decode ? 'static-native/video-source-frame' : 'source-frame-fallback'}`,
+        `staticImageDecode=${features.native_static_image_decode ? 'native' : 'missing'}`,
+        `staticImagePrefetch=${features.native_static_image_prefetch ? 'native' : 'missing'}`,
+        `normalMediaDecode=${features.native_media_decode ? 'native' : features.native_static_image_decode ? 'static-native/video-native-pending' : 'missing'}`,
         `videoFrameWindow=${features.native_video_frame_prefetch_window ? 'on' : 'pending'}`,
         `mediaSourceClock=${features.native_media_source_playback_state ? 'on' : 'pending'}`,
         `videoDecodePump=${features.native_video_decode_pump ? 'on' : 'pending'}`,
@@ -418,13 +440,14 @@ async function inspectCore() {
         nativeEffectCoverage.missingSample ? `effectPassNext=${nativeEffectCoverage.missingSample}` : '',
         `blendParity=${blendParityChecksum}`,
         `effectParity=${effectParityChecksum}`,
-        `outputSharedTexture=${features.shared_texture_output_export ? 'on' : 'pending'}`,
-        `outputTransport=${outputTextureTransportDetail(outputTexture)}`,
-        `nativeShareSender=${directCoreNativeShareSenderState(features)}`,
+	        `outputSharedTexture=${features.shared_texture_output_export ? 'on' : 'pending'}`,
+	        `outputTransport=${outputTextureTransportDetail(outputTexture)}`,
+	        `editorPreview=${editorPreviewDetail(capabilities)}`,
+	        `nativeShareSender=${directCoreNativeShareSenderState(features)}`,
         outputTransportOk ? '' : 'outputTransportMismatch=1',
         missingFeatures.length ? `missingFeatures=${missingFeatures.join(',')}` : '',
         missingInstruments.length ? `missingGraphs=${missingInstruments.join(',')}` : '',
-        proxyFallbackDisabled ? '' : 'legacyProxyFallback=enabled',
+        proxyFallbackDisabled ? '' : 'legacyProxy=enabled',
         blockers.length ? `blockers=${blockers.join('|')}` : '',
       ].filter(Boolean).join(' '),
     };
@@ -452,7 +475,7 @@ async function inspectAppBridge() {
       error: process.platform === 'darwin' ? null : 'native texture-share sender bridge is pending on this platform',
       nativeOutputCapable: process.platform === 'darwin',
       nativeOutputActive: false,
-      senderMode: process.platform === 'darwin' ? 'native-iosurface-capable' : 'source-frame-fallback',
+      senderMode: process.platform === 'darwin' ? 'native-iosurface-capable' : 'native-texture-share-pending',
     }),
     nativeFrameEncoderStatusProvider: () => ({
       available: true,
@@ -523,9 +546,10 @@ async function inspectAppBridge() {
         `bridge=${process.platform === 'darwin' ? 'Syphon' : process.platform === 'win32' ? 'Spout' : 'unsupported'}`,
         `outputFormat=${status?.output_format ?? 'unknown'}`,
         `decodeBackend=${status?.decode_backend ?? 'unknown'}`,
-        `outputSharedTexture=${features.shared_texture_output_export ? 'on' : 'pending'}`,
-        `outputTransport=${outputTextureTransportDetail(outputTexture)}`,
-        outputTransportOk ? '' : 'outputTransportMismatch=1',
+	        `outputSharedTexture=${features.shared_texture_output_export ? 'on' : 'pending'}`,
+	        `outputTransport=${outputTextureTransportDetail(outputTexture)}`,
+	        `editorPreview=${editorPreviewDetail(capabilities)}`,
+	        outputTransportOk ? '' : 'outputTransportMismatch=1',
         `nativeShareSender=${features.native_texture_share_sender ? 'on' : 'pending'}`,
         `nativeMp4Encoder=${features.native_mp4_frame_encoder ? 'on' : 'missing'}`,
         `audioLayout=${audioLayoutOk ? `v${expectedAudioLayout.schema_version}` : 'mismatch'}`,
@@ -561,9 +585,9 @@ async function inspectAppBridge() {
         `projectionTransforms=${features.native_projection_sim_xyz_mesh_transforms ? 'xyz' : 'pending'}`,
         `projectionRenderer=${features.native_projection_sim_output_renderer ? 'on' : 'pending'}`,
         `projectionRecordingParity=${features.native_projection_sim_recording_parity ? 'on' : 'pending'}`,
-        `staticImageDecode=${features.native_static_image_decode ? 'native' : 'fallback'}`,
-        `staticImagePrefetch=${features.native_static_image_prefetch ? 'native' : 'fallback'}`,
-        `normalMediaDecode=${features.native_media_decode ? 'native' : features.native_static_image_decode ? 'static-native/video-source-frame' : 'source-frame-fallback'}`,
+        `staticImageDecode=${features.native_static_image_decode ? 'native' : 'missing'}`,
+        `staticImagePrefetch=${features.native_static_image_prefetch ? 'native' : 'missing'}`,
+        `normalMediaDecode=${features.native_media_decode ? 'native' : features.native_static_image_decode ? 'static-native/video-native-pending' : 'missing'}`,
         `videoFramePrefetch=${decodeCapabilities?.native_video_frame_prefetch ? 'on' : 'pending'}`,
         `videoFrameWindow=${decodeCapabilities?.native_video_frame_prefetch_window ? 'on' : 'pending'}`,
         `mediaSourceClock=${features.native_media_source_playback_state ? 'on' : 'pending'}`,

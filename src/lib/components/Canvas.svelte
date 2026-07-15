@@ -91,6 +91,15 @@
   // start is triggered by user action in OutputWindow.openPopup().
   // We DO call stop on teardown to be safe.
   import { NativeRendererSync, getProjectOutputSize } from '$lib/sync/nativeRendererSync';
+  import {
+    attachNativeEditorPreview,
+    detachNativeEditorPreview,
+    detachNativeRendererOutputWindow,
+    setNativeViewportLayerInteraction,
+    setNativeRendererOutputWindow,
+    updateNativeEditorPreview,
+  } from '$lib/api/native-renderer';
+  import { nativeRendererRuntime } from '$lib/stores/nativeRenderer';
   // hasWatermark removed — OSS build has no watermark.
   import { fpsStore } from '$lib/stores/fps';
   import type { OutputSlice } from '$lib/stores/settings';
@@ -159,7 +168,52 @@
   let nativeRendererStatusTimer: ReturnType<typeof setInterval> | null = null;
   let nativeLayersUnsub: (() => void) | null = null;
   let nativeProjectUnsub: (() => void) | null = null;
+  let nativeInteractionRaf: number | null = null;
+  const nativeInteractionSignatures = new Map<string, string>();
+  const pendingNativeInteractions = new Map<string, import('$lib/api/native-renderer').NativeViewportLayerInteraction>();
+  let nativeOutputSceneResyncUnsub: (() => void) | null = null;
+  let nativePreviewSyncRaf: number | null = null;
+  let nativePreviewResizeObserver: ResizeObserver | null = null;
+  let nativePreviewWindowEventUnsub: (() => void) | null = null;
+  let nativePreviewLastSignature = '';
+  // Native-active preview follows the single-render contract: the Rust/wgpu
+  // core renders once and the editor views that core frame. Browser GPU
+  // instruments are only allowed when the native core is unavailable.
+  // The editor preview must be a real UI-integrated native surface, not a
+  // managed output window floating over the app with OS chrome.
+  const nativeEditorPreviewWindowEnabled = false;
+  const nativeEmbeddedPreviewEnabled = true;
+  let nativeEmbeddedPresenterAttached = false;
   let stopOsrStatusListener: (() => void) | null = null;
+
+  function queueNativeLayerInteractions(projectLayers: Layer[]): void {
+    if (!nativeEngineRequested() || typeof requestAnimationFrame === 'undefined') return;
+    const liveIds = new Set<string>();
+    for (const layer of projectLayers) {
+      liveIds.add(layer.id);
+      const meshGrid = layer.warpMode === 'mesh' ? layer.meshGrid ?? null : null;
+      const signature = JSON.stringify([layer.corners, meshGrid]);
+      if (nativeInteractionSignatures.get(layer.id) === signature) continue;
+      nativeInteractionSignatures.set(layer.id, signature);
+      pendingNativeInteractions.set(layer.id, {
+        layer_id: layer.id,
+        corners: layer.corners,
+        mesh_grid: meshGrid,
+      });
+    }
+    for (const layerId of nativeInteractionSignatures.keys()) {
+      if (!liveIds.has(layerId)) nativeInteractionSignatures.delete(layerId);
+    }
+    if (nativeInteractionRaf !== null || pendingNativeInteractions.size === 0) return;
+    nativeInteractionRaf = requestAnimationFrame(() => {
+      nativeInteractionRaf = null;
+      const interactions = Array.from(pendingNativeInteractions.values());
+      pendingNativeInteractions.clear();
+      for (const interaction of interactions) {
+        setNativeViewportLayerInteraction(interaction);
+      }
+    });
+  }
 
   // Multi-slice zero-copy atlas fan-out. When ≥1 Spout/Syphon SENDER
   // slice exists, main runs a hidden slice-atlas OSR window + native
@@ -908,7 +962,123 @@
     void ensureWebGPUDevice().catch((e: any) => console.warn('[Canvas] gpu-layer: WebGPU init failed', e?.message || e));
   }
 
+  function disposeGpuLayerPreviewTextures(): void {
+    for (const texture of gpuLayerTextures.values()) {
+      const image = texture?.image as ImageBitmap | undefined;
+      if (image && typeof (image as any).close === 'function') {
+        try { (image as any).close(); } catch { /* */ }
+      }
+      try { texture?.dispose(); } catch { /* */ }
+    }
+    gpuLayerTextures.clear();
+  }
+
+  function disposeGpuLayerRenderersForNativePreview(reason = 'native-core-preview'): void {
+    if (gpuLayerRenderers.size === 0 && gpuLayerTextures.size === 0) return;
+    for (const renderer of gpuLayerRenderers.values()) {
+      try { renderer.dispose(); } catch { /* */ }
+    }
+    gpuLayerRenderers.clear();
+    disposeGpuLayerPreviewTextures();
+    for (const layer of get(project).layers ?? []) {
+      if (layer.type !== 'gpu') continue;
+      delete (layer as any)._gpuLayerPreviewCanvas;
+      delete (layer as any)._gpuLayerTexture;
+    }
+    if ((window as any).__NATIVE_PREVIEW_DEBUG__) {
+      console.log('[Canvas] disposed browser GPU layer renderers for', reason);
+    }
+  }
+
+  function clearBrowserPreviewLayerScratch(layer: Layer): void {
+    delete (layer as any)._linesTexture;
+    delete (layer as any)._svgTexture;
+    delete (layer as any)._lightPaintingTexture;
+    delete (layer as any)._textTexture;
+    delete (layer as any)._splatTexture;
+    delete (layer as any)._model3dTexture;
+    delete (layer as any)._gpuLayerPreviewCanvas;
+    delete (layer as any)._gpuLayerTexture;
+  }
+
+  function disposeBrowserPreviewRenderersForNativeCore(reason = 'native-core-preview'): void {
+    const hadResources = (
+      gpuLayerRenderers.size > 0 ||
+      gpuLayerTextures.size > 0 ||
+      shaderInstances.size > 0 ||
+      shaderRenderTargets.size > 0 ||
+      linesRenderTargets.size > 0 ||
+      svgRenderers.size > 0 ||
+      svgRenderTargets.size > 0 ||
+      lightPaintingRenderers.size > 0 ||
+      textRenderers.size > 0 ||
+      splatRenderers.size > 0 ||
+      model3dRenderers.size > 0 ||
+      integratedEffects.size > 0
+    );
+
+    for (const layer of get(project).layers ?? []) {
+      clearBrowserPreviewLayerScratch(layer);
+    }
+
+    disposeGpuLayerRenderersForNativePreview(reason);
+
+    for (const shader of shaderInstances.values()) {
+      try { shader.material.dispose(); } catch { /* */ }
+    }
+    shaderInstances.clear();
+    for (const rt of shaderRenderTargets.values()) {
+      try { rt.dispose(); } catch { /* */ }
+    }
+    shaderRenderTargets.clear();
+
+    for (const rt of linesRenderTargets.values()) {
+      try { rt.dispose(); } catch { /* */ }
+    }
+    linesRenderTargets.clear();
+
+    for (const svgRenderer of svgRenderers.values()) {
+      try { svgRenderer.dispose(); } catch { /* */ }
+    }
+    svgRenderers.clear();
+    for (const rt of svgRenderTargets.values()) {
+      try { rt.dispose(); } catch { /* */ }
+    }
+    svgRenderTargets.clear();
+
+    for (const renderer of lightPaintingRenderers.values()) {
+      try { renderer.dispose(); } catch { /* */ }
+    }
+    lightPaintingRenderers.clear();
+
+    for (const renderer of textRenderers.values()) {
+      try { renderer.dispose(); } catch { /* */ }
+    }
+    textRenderers.clear();
+
+    for (const splatCtx of splatRenderers.values()) {
+      try { splatCtx.renderer.dispose(); } catch { /* */ }
+      try { splatCtx.renderTarget.dispose(); } catch { /* */ }
+    }
+    splatRenderers.clear();
+
+    for (const model3dCtx of model3dRenderers.values()) {
+      disposeModel3DContext(model3dCtx);
+    }
+    model3dRenderers.clear();
+
+    for (const effect of integratedEffects.values()) {
+      disposeIntegratedEffectContext(effect);
+    }
+    integratedEffects.clear();
+
+    if (hadResources && (window as any).__NATIVE_PREVIEW_DEBUG__) {
+      console.log('[Canvas] disposed browser preview renderers for', reason);
+    }
+  }
+
   async function prewarmGpuShaderForLayer(layerId: string, shaderId: string): Promise<void> {
+    if (nativeEngineRequested()) return;
     const projectData = get(project);
     const layer = projectData?.layers?.find((l: Layer) => l.id === layerId);
     if (!layer || layer.type !== 'gpu' || !layer.gpuLayerContent || layer.gpuLayerContent.shaderId === shaderId) return;
@@ -1053,7 +1223,7 @@
 
   function updateGpuQualityGovernor(avgFrameMs: number): void {
     const runtime = getGhostGpuRuntime();
-    if (!runtime || gpuLayerRenderers.size === 0 || isOutputMode || isOsrMode) return;
+    if (!runtime || gpuLayerRenderers.size === 0 || isOutputMode || isOsrMode || nativeEngineRequested()) return;
     if ((get(settings).performance.gpuInstrumentQuality ?? 'auto') !== 'auto') {
       gpuGovernorSnapshot = null;
       return;
@@ -1297,6 +1467,133 @@
     const { w: wrapW, h: wrapH } = getWrapperLayoutSize();
     const projW = $project.width || 1920;
     const projH = $project.height || 1080;
+
+    function startNativeRendererSyncLifecycle(): void {
+      if (!((isTauriRuntime || isElectron) && !isOsrMode && !isOutputMode)) return;
+      if (nativeRendererSync) return;
+      nativeRendererSync = new NativeRendererSync();
+      const size = getProjectOutputSize();
+      void nativeRendererSync.start(size.width, size.height).then(() => {
+        console.log('[NativeRendererSync] sync loop armed');
+        void nativeRendererSync?.logStatus();
+        nativeRendererStatusTimer = setInterval(() => {
+          void nativeRendererSync?.logStatus();
+        }, 3000);
+      }).catch((err) => {
+        console.warn('[NativeRendererSync] failed to start native renderer:', err);
+      });
+
+      nativeLayersUnsub = layers.subscribe(($layers) => {
+        const p = get(project);
+        nativeRendererSync?.scheduleSync(p.width || 1920, p.height || 1080, $layers);
+      });
+
+      nativeProjectUnsub = project.subscribe(($project) => {
+        queueNativeLayerInteractions($project.layers || []);
+        nativeRendererSync?.scheduleSync(
+          $project.width || 1920,
+          $project.height || 1080,
+          $project.layers || []
+        );
+        if (nativeEditorPreviewWindowEnabled || nativeEmbeddedPreviewEnabled) {
+          scheduleNativePreviewWindowSync('project');
+        }
+      });
+
+      const handleNativeOutputSceneResync = () => {
+        const p = get(project);
+        nativeRendererSync?.forceSync(p.width || 1920, p.height || 1080, get(layers));
+      };
+      window.addEventListener('ghost:native-output-scene-resync', handleNativeOutputSceneResync);
+      nativeOutputSceneResyncUnsub = () => {
+        window.removeEventListener('ghost:native-output-scene-resync', handleNativeOutputSceneResync);
+      };
+
+      if (nativeEditorPreviewWindowEnabled || nativeEmbeddedPreviewEnabled) {
+        scheduleNativePreviewWindowSync('initial');
+        if (typeof ResizeObserver !== 'undefined') {
+          nativePreviewResizeObserver = new ResizeObserver(() => {
+            scheduleNativePreviewWindowSync('resize');
+          });
+          if (containerEl) nativePreviewResizeObserver.observe(containerEl);
+        }
+        const handleNativePreviewWindowEvent = () => scheduleNativePreviewWindowSync('window');
+        window.addEventListener('resize', handleNativePreviewWindowEvent);
+        window.addEventListener('orientationchange', handleNativePreviewWindowEvent);
+        nativePreviewWindowEventUnsub = () => {
+          window.removeEventListener('resize', handleNativePreviewWindowEvent);
+          window.removeEventListener('orientationchange', handleNativePreviewWindowEvent);
+        };
+      }
+    }
+
+    if (nativeEngineRequested()) {
+      canvas.width = projW;
+      canvas.height = projH;
+      sizeContainer(wrapW, wrapH);
+
+      if (!isOsrMode && !isOutputMode) {
+        initStateBroadcast('sender');
+        startAudioBroadcast();
+        startModulationBroadcast();
+      }
+      startNativeRendererSyncLifecycle();
+
+      canvas.addEventListener('mousemove', handleCanvasMouseMove);
+      canvas.addEventListener('mouseleave', handleCanvasMouseLeave);
+      canvas.addEventListener('mouseenter', handleCanvasMouseEnter);
+
+      let _nativeShellFrames = 0;
+      function animateNativeShell() {
+        nativeRendererSync?.setRenderClock(null);
+        // The native presenter is an AppKit child view, so Chromium cannot
+        // move it for us when sidebars, trays, or startup UI settle. Measure
+        // every UI frame; the rect signature prevents redundant IPC calls.
+        scheduleNativePreviewWindowSync('layout-frame');
+        fpsFrameCount++;
+        const fpsNow = performance.now();
+        const fpsElapsed = fpsNow - fpsLastTime;
+        if (fpsElapsed >= 500) {
+          const measuredFrames = Math.max(1, fpsFrameCount);
+          const fpsValue = Math.round((measuredFrames * 1000) / fpsElapsed);
+          fpsStore.set(fpsValue);
+          fpsFrameCount = 0;
+          fpsLastTime = fpsNow;
+          if (!((_fpsLogCount++) % 10)) {
+            const layerCount = ($project?.layers?.length ?? 0);
+            console.log(
+              `[UI] mode=native-shell FPS=${fpsValue} layers=${layerCount} canvas=${canvas.width}x${canvas.height}`,
+            );
+          }
+        }
+        if (_nativeShellFrames < 3) {
+          _nativeShellFrames++;
+          console.log('[native-shell] frame', _nativeShellFrames, '— legacy RenderEngine disabled');
+        }
+        animationId = requestAnimationFrame(animateNativeShell);
+      }
+      animateNativeShell();
+
+      const nativeResizeObserver = new ResizeObserver(() => {
+        const { w: parentW, h: parentH } = getWrapperLayoutSize();
+        if (parentW <= 0 || parentH <= 0) return;
+        const pW = $project.width || 1920;
+        const pH = $project.height || 1080;
+        sizeContainer(parentW, parentH);
+        canvas.width = pW;
+        canvas.height = pH;
+        nativeRendererSync?.scheduleSync(pW, pH, get(layers));
+      });
+      nativeResizeObserver.observe(wrapperEl);
+
+      return () => {
+        nativeResizeObserver.disconnect();
+        canvas.removeEventListener('mousemove', handleCanvasMouseMove);
+        canvas.removeEventListener('mouseleave', handleCanvasMouseLeave);
+        canvas.removeEventListener('mouseenter', handleCanvasMouseEnter);
+      };
+    }
+
     // preserveDrawingBuffer false unconditionally — was previously true
     // for the editor to support one-shot canvas.toBlob/toDataURL
     // thumbnails, but the cost was paid on every paint. Any thumbnail
@@ -1489,35 +1786,10 @@
 
     // Start native renderer command-stream synchronization. The 2.0 path uses
     // Electron as the UI shell and a separate Rust/wgpu render-core process as
-    // the main renderer. If the native process is missing or fails, the catch
-    // below leaves the existing WebGL renderer running as a compatibility
-    // fallback.
-    if ((isTauriRuntime || isElectron) && !isOsrMode && !isOutputMode) {
-      nativeRendererSync = new NativeRendererSync();
-      const size = getProjectOutputSize();
-      void nativeRendererSync.start(size.width, size.height).then(() => {
-        console.log('[NativeRendererSync] sync loop armed');
-        void nativeRendererSync?.logStatus();
-        nativeRendererStatusTimer = setInterval(() => {
-          void nativeRendererSync?.logStatus();
-        }, 10000);
-      }).catch((err) => {
-        console.warn('[NativeRendererSync] failed to start native renderer:', err);
-      });
-
-      nativeLayersUnsub = layers.subscribe(($layers) => {
-        const p = get(project);
-        nativeRendererSync?.scheduleSync(p.width || 1920, p.height || 1080, $layers);
-      });
-
-      nativeProjectUnsub = project.subscribe(($project) => {
-        nativeRendererSync?.scheduleSync(
-          $project.width || 1920,
-          $project.height || 1080,
-          $project.layers || []
-        );
-      });
-    }
+    // the main renderer. If the native process is missing or fails, the error
+    // should stay visible; the native path is no longer treated as an optional
+    // compatibility layer.
+    startNativeRendererSyncLifecycle();
 
     // Listen for OSR zero-copy status from main process
     if (window.electronOSR?.onOsrStatus) {
@@ -1666,6 +1938,25 @@
         const vjLayers = $vjOutputLayers;
         const normalLayers = $layers;
         const vjState = $vjClipLauncher;
+        const nativeRequested = nativeEngineRequested();
+        const nativePreviewOwnsFrame = nativeCorePreviewActive();
+        if (nativeRequested) {
+          disposeBrowserPreviewRenderersForNativeCore(
+            nativePreviewOwnsFrame ? 'native-core-frame-source' : 'native-core-pending'
+          );
+          const renderClockSeconds = typeof engine.manualTime === 'number' && Number.isFinite(engine.manualTime)
+            ? engine.manualTime
+            : null;
+          nativeRendererSync?.setRenderClock(renderClockSeconds);
+          const legacyRenderer = engine.getRenderer();
+          legacyRenderer.setRenderTarget(null);
+          legacyRenderer.setClearColor(0x020407, 1);
+          legacyRenderer.clear(true, true, true);
+          tickWLEDSenders();
+          _consecutiveFrameErrors = 0;
+          animationId = requestAnimationFrame(animate);
+          return;
+        }
 
         engine.setCrossfade(
           vjState.crossfaderEnabled === true && vjState.isLive,
@@ -1759,7 +2050,9 @@
           }
           layersToRender = presetLayers;
           compEffects = vjState.compositionEffects;
-          updateAllTextures(layersToRender, null);
+          if (browserEditorPreviewActive()) {
+            updateAllTextures(layersToRender, null);
+          }
           didStageTexturePrepass = true;
         } else if (vjState.stageMode && vjState.isLive) {
           // ── STAGE MODE: VJ layers feed into mapping layers ──
@@ -1768,7 +2061,9 @@
           const allManagedLayers: Layer[] = [...(vjLayers || []), ...normalLayers];
 
           // 2. Update all textures in one batch
-          updateAllTextures(allManagedLayers, normalLayers);
+          if (browserEditorPreviewActive()) {
+            updateAllTextures(allManagedLayers, normalLayers);
+          }
           didStageTexturePrepass = true;
 
           // 3. Build VJ source lookup, A/B-aware.
@@ -2010,7 +2305,7 @@
 
         // ── Update all textures AFTER keyframe overrides so shader uniforms reflect new values ──
         const hasKeyframeOverrides = Object.keys(kfOverrides).length > 0;
-        if (!didStageTexturePrepass || hasKeyframeOverrides) {
+        if (browserEditorPreviewActive() && (!didStageTexturePrepass || hasKeyframeOverrides)) {
           updateAllTextures(layersToRender, null);
         }
 
@@ -2114,17 +2409,24 @@
               updatedAt: Date.now(),
             }));
           }
-          engine.render(layersToRender, null, compEffects, macroBundles);
-          if (stage3DOutput) {
-            if (!stage3DRenderer) stage3DRenderer = new Stage3DRenderer(glCanvas);
-            stage3DRenderer.render(
-              engine.getRenderer(),
-              get(stage3dScene),
-              engine.getCompositeTexture(),
-              $settings?.output?.slices ?? [],
-              stage3DSourceLayers,
-              renderClockSeconds,
-            );
+          if (!browserEditorPreviewActive()) {
+            const legacyRenderer = engine.getRenderer();
+            legacyRenderer.setRenderTarget(null);
+            legacyRenderer.setClearColor(0x020407, 1);
+            legacyRenderer.clear(true, true, true);
+          } else {
+            engine.render(layersToRender, null, compEffects, macroBundles);
+            if (stage3DOutput) {
+              if (!stage3DRenderer) stage3DRenderer = new Stage3DRenderer(glCanvas);
+              stage3DRenderer.render(
+                engine.getRenderer(),
+                get(stage3dScene),
+                engine.getCompositeTexture(),
+                $settings?.output?.slices ?? [],
+                stage3DSourceLayers,
+                renderClockSeconds,
+              );
+            }
           }
         } catch (e) {
           console.error('[Canvas] Render error:', e);
@@ -2469,7 +2771,8 @@
         } // end else (not skipped frame)
         }
       }
-      // FPS tracking — smooth average every 500ms
+      // FPS tracking — smooth average every 500ms. In native-core preview mode
+      // this measures editor/UI rAF cadence, not native render throughput.
       fpsFrameCount++;
       const fpsNow = performance.now();
       const fpsElapsed = fpsNow - fpsLastTime;
@@ -2483,7 +2786,7 @@
         fpsFrameCount = 0;
         fpsLastTime = fpsNow;
 
-        // Periodic FPS log to the main-process log file. Prefix `[GPU]` is
+        // Periodic FPS log to the main-process log file. Prefixes are
         // whitelisted in the console-message forwarder. Log every ~5s so it's
         // useful without being spammy — and only when something is rendering.
         if (!((_fpsLogCount++ ) % 10)) {
@@ -2491,7 +2794,12 @@
           const dpr = window.devicePixelRatio || 1;
           const displayW = canvas.clientWidth;
           const displayH = canvas.clientHeight;
-          console.log(`[GPU] mode=${isOutputMode ? 'output' : 'main'} FPS=${fpsValue}  layers=${layerCount}  drawingBuffer=${canvas.width}x${canvas.height}  display=${displayW}x${displayH}  dpr=${dpr}`);
+          const nativeOwnsFrame = nativeCorePreviewActive();
+          const logPrefix = nativeOwnsFrame ? 'UI' : 'GPU';
+          const modeLabel = nativeOwnsFrame
+            ? 'native-core-presenter'
+            : isOutputMode ? 'output' : 'main';
+          console.log(`[${logPrefix}] mode=${modeLabel} FPS=${fpsValue}  layers=${layerCount}  drawingBuffer=${canvas.width}x${canvas.height}  display=${displayW}x${displayH}  dpr=${dpr}`);
           logGpuDebugSnapshot();
           if (isOutputMode && (Math.abs(canvas.width - Math.round(displayW * dpr)) > 1 || Math.abs(canvas.height - Math.round(displayH * dpr)) > 1)) {
             console.warn(`[Output] Canvas backing store ${canvas.width}x${canvas.height} does not match display ${displayW}x${displayH} @ DPR ${dpr}. Use fullscreen output or Match Output Display to avoid compositor scaling.`);
@@ -2884,6 +3192,37 @@
     if (nativeProjectUnsub) {
       nativeProjectUnsub();
       nativeProjectUnsub = null;
+    }
+    if (nativeInteractionRaf !== null) {
+      cancelAnimationFrame(nativeInteractionRaf);
+      nativeInteractionRaf = null;
+    }
+    pendingNativeInteractions.clear();
+    nativeInteractionSignatures.clear();
+    if (nativeOutputSceneResyncUnsub) {
+      nativeOutputSceneResyncUnsub();
+      nativeOutputSceneResyncUnsub = null;
+    }
+    if (nativePreviewSyncRaf !== null) {
+      cancelAnimationFrame(nativePreviewSyncRaf);
+      nativePreviewSyncRaf = null;
+    }
+    if (nativePreviewResizeObserver) {
+      try { nativePreviewResizeObserver.disconnect(); } catch { /* */ }
+      nativePreviewResizeObserver = null;
+    }
+    if (nativePreviewWindowEventUnsub) {
+      nativePreviewWindowEventUnsub();
+      nativePreviewWindowEventUnsub = null;
+    }
+    if (nativeEmbeddedPresenterAttached || (nativeEmbeddedPreviewEnabled && nativePreviewLastSignature)) {
+      nativeEmbeddedPresenterAttached = false;
+      nativePreviewLastSignature = '';
+      void detachNativeEditorPreview('canvas-destroy').catch(() => {});
+    }
+    if (nativePreviewLastSignature && !get(settings)?.output?.outputWindowOpen) {
+      nativePreviewLastSignature = '';
+      void detachNativeRendererOutputWindow().catch(() => {});
     }
     if (nativeRendererSync) {
       void nativeRendererSync.stop();
@@ -4656,6 +4995,16 @@
   // sees a texture.
   function updateGpuLayerTextures(layerList: Layer[]) {
     if (!engine) return;
+    if (!browserEditorPreviewActive()) {
+      for (const layer of layerList) {
+        if (layer.type === 'gpu') {
+          delete (layer as any)._gpuLayerPreviewCanvas;
+          delete (layer as any)._gpuLayerTexture;
+        }
+      }
+      disposeGpuLayerRenderersForNativePreview('gpu-layer-update-suppressed');
+      return;
+    }
     ensureWebGPUForGpuLayers();
     if (!isWebGPUReady()) return;
     const device = getWebGPUDevice();
@@ -6046,6 +6395,233 @@
   // visible (opacity:1) by default — no behavioural change for the
   // existing WebGL-only path.
   export let bridgeMode: boolean = false;
+  // Native v2 primary driver. The browser canvas remains mounted for
+  // interaction geometry and store synchronization, but it must not run
+  // its own GPU shader/compositor image while the Rust/wgpu renderer is
+  // the live graphics source.
+  export let nativePrimary: boolean = false;
+  export let nativePresenterSuspended: boolean = false;
+  let nativeCorePreviewIsReady = false;
+  let nativeEnginePendingVisible = false;
+  let nativeEnginePendingTitle = '';
+  let nativeEnginePendingDetail = '';
+  $: {
+    const previewSourceReady = $nativeRendererRuntime.readinessChecks
+      ?.find((check) => check.id === 'native-editor-preview-frame-source')
+      ?.ok === true;
+    nativeCorePreviewIsReady = !!(
+      nativePrimary
+      && !isOutputMode
+      && !isOsrMode
+      && $nativeRendererRuntime.running
+      && $nativeRendererRuntime.backendReady
+      && $nativeRendererRuntime.sharedTextureOutputExportReady
+      && previewSourceReady
+    );
+  }
+  $: {
+    const nativeRequested = nativePrimary && !isOutputMode && !isOsrMode;
+    const layerCount = $layers.length;
+    nativeEnginePendingVisible = nativeRequested && (layerCount === 0 || !nativeCorePreviewIsReady);
+    nativeEnginePendingTitle = layerCount === 0
+      ? 'Native engine ready'
+      : 'Native engine starting';
+    nativeEnginePendingDetail = layerCount === 0
+      ? 'Create a native layer to start the core graph'
+      : 'Native-only mode: waiting for core frame source';
+  }
+  $: if ((nativeEditorPreviewWindowEnabled || nativeEmbeddedPreviewEnabled) && nativeCorePreviewIsReady && !isOutputMode && !isOsrMode) {
+    scheduleNativePreviewWindowSync('ready');
+  }
+  $: if (nativeEmbeddedPreviewEnabled && nativeCorePreviewIsReady && !isOutputMode && !isOsrMode) {
+    // The editor presenter consumes the core's IOSurface while the projector
+    // window presents the same composite through its own swapchain. They are
+    // independent presentation sinks, so opening output must not blank or
+    // detach the embedded editor preview.
+    scheduleNativePreviewWindowSync('output-occlusion');
+  }
+
+  function nativePrimaryActive(): boolean {
+    return nativeEngineRequested();
+  }
+
+  function nativeEngineRequested(): boolean {
+    return nativePrimary && !isOutputMode && !isOsrMode;
+  }
+
+  function nativeCorePreviewActive(): boolean {
+    return nativeCorePreviewIsReady;
+  }
+
+  function nativePreviewParentedActive(): boolean {
+    if (!nativeCorePreviewActive()) return false;
+    return get(nativeRendererRuntime).nativeEditorPreviewParented;
+  }
+
+  function browserEditorPreviewActive(): boolean {
+    return !nativeEngineRequested();
+  }
+
+  function nativeEmbeddedPreviewActive(): boolean {
+    return nativeEmbeddedPreviewEnabled
+      && !nativePresenterSuspended
+      && nativeCorePreviewActive()
+      && nativeEmbeddedPresenterAttached;
+  }
+
+  function nativeEditorPreviewWindowActive(): boolean {
+    return nativeEditorPreviewWindowEnabled && nativeCorePreviewActive();
+  }
+
+  function addNativeStarterLayer(): void {
+    project.addGPULayer('Planet', 'planet');
+  }
+
+  function nativePreviewChromeOffsetY(): number {
+    if (typeof window === 'undefined') return 0;
+    const offset = Number(window.outerHeight || 0) - Number(window.innerHeight || 0);
+    return Number.isFinite(offset) ? Math.max(0, Math.min(96, offset)) : 0;
+  }
+
+  function nativePreviewWindowRect(): { x: number; y: number; width: number; height: number } | null {
+    if (!containerEl || typeof window === 'undefined') return null;
+    const rect = containerEl.getBoundingClientRect();
+    const width = Math.max(1, Math.round(rect.width));
+    const height = Math.max(1, Math.round(rect.height));
+    if (width <= 1 || height <= 1) return null;
+    return {
+      x: Math.round(Number(window.screenX || 0) + rect.left),
+      y: Math.round(Number(window.screenY || 0) + nativePreviewChromeOffsetY() + rect.top),
+      width,
+      height,
+    };
+  }
+
+  function nativePreviewEmbeddedRect(): {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+    contentX: number;
+    contentY: number;
+    contentWidth: number;
+    contentHeight: number;
+  } | null {
+    if (!containerEl || typeof window === 'undefined') return null;
+    const contentRect = containerEl.getBoundingClientRect();
+    const viewportEl = containerEl.closest('.viewport') as HTMLElement | null;
+    const rect = viewportEl?.getBoundingClientRect() ?? contentRect;
+    const width = Math.max(1, Math.round(rect.width));
+    const height = Math.max(1, Math.round(rect.height));
+    if (width <= 1 || height <= 1) return null;
+    if (
+      rect.left < -1
+      || rect.top < -1
+      || rect.right > window.innerWidth + 1
+      || rect.bottom > window.innerHeight + 1
+    ) return null;
+    return {
+      x: Math.round(rect.left),
+      y: Math.round(rect.top),
+      width,
+      height,
+      contentX: contentRect.left - rect.left,
+      contentY: contentRect.top - rect.top,
+      contentWidth: contentRect.width,
+      contentHeight: contentRect.height,
+    };
+  }
+
+  function scheduleNativePreviewWindowSync(reason = 'schedule'): void {
+    if (nativePreviewSyncRaf !== null || typeof requestAnimationFrame === 'undefined') return;
+    nativePreviewSyncRaf = requestAnimationFrame(() => {
+      nativePreviewSyncRaf = null;
+      void syncNativePreviewWindow(reason);
+    });
+  }
+
+  async function syncNativePreviewWindow(reason = 'tick'): Promise<void> {
+    if (!isElectron || isOutputMode || isOsrMode) return;
+    const outputWindowOpen = !!get(settings)?.output?.outputWindowOpen;
+    if (nativeEmbeddedPreviewEnabled) {
+      if (nativePresenterSuspended || !nativeCorePreviewActive()) {
+        if (nativeEmbeddedPresenterAttached || nativePreviewLastSignature) {
+          nativeEmbeddedPresenterAttached = false;
+          nativePreviewLastSignature = '';
+          const reason = nativePresenterSuspended ? 'native-preview-suspended' : 'native-preview-inactive';
+          await detachNativeEditorPreview(reason).catch(() => {});
+        }
+        return;
+      }
+      const rect = nativePreviewEmbeddedRect();
+      if (!rect) return;
+      const signature = `embedded:${rect.x},${rect.y},${rect.width}x${rect.height}:content=${rect.contentX.toFixed(2)},${rect.contentY.toFixed(2)},${rect.contentWidth.toFixed(2)}x${rect.contentHeight.toFixed(2)}`;
+      if (signature === nativePreviewLastSignature && nativeEmbeddedPresenterAttached) return;
+      nativePreviewLastSignature = signature;
+      try {
+        const status = nativeEmbeddedPresenterAttached
+          ? await updateNativeEditorPreview(rect)
+          : await attachNativeEditorPreview(rect);
+        nativeEmbeddedPresenterAttached = !!status?.attached;
+        if (!nativeEmbeddedPresenterAttached) {
+          nativePreviewLastSignature = '';
+        }
+      } catch (err) {
+        nativeEmbeddedPresenterAttached = false;
+        nativePreviewLastSignature = '';
+        if ((window as any).__NATIVE_PREVIEW_DEBUG__) {
+          console.warn('[NativePreview] failed to sync embedded native preview:', reason, err);
+        }
+      }
+      return;
+    }
+    if (!nativeEditorPreviewWindowEnabled) {
+      if (nativePreviewLastSignature && !outputWindowOpen) {
+        nativePreviewLastSignature = '';
+        await detachNativeRendererOutputWindow().catch(() => {});
+      }
+      return;
+    }
+    if (!nativeCorePreviewActive()) {
+      if (nativePreviewLastSignature && !outputWindowOpen) {
+        nativePreviewLastSignature = '';
+        await detachNativeRendererOutputWindow().catch(() => {});
+      }
+      return;
+    }
+    if (outputWindowOpen) {
+      nativePreviewLastSignature = '';
+      return;
+    }
+    const rect = nativePreviewWindowRect();
+    if (!rect) return;
+    const parented = nativePreviewParentedActive();
+    const signature = `${rect.x},${rect.y},${rect.width}x${rect.height}:${parented ? 'parented' : 'floating'}:underlay-probe`;
+    if (signature === nativePreviewLastSignature) return;
+    nativePreviewLastSignature = signature;
+    await setNativeRendererOutputWindow({
+      title: 'Ghost Arcade Native Preview',
+      label: 'Ghost Arcade Native Preview',
+      width: rect.width,
+      height: rect.height,
+      x: rect.x,
+      y: rect.y,
+      attached: true,
+      visible: true,
+      fullscreen: false,
+      decorations: false,
+      resizable: false,
+      input_transparent: true,
+      always_on_top: false,
+      always_on_bottom: true,
+      underlay: true,
+    }).catch((err) => {
+      nativePreviewLastSignature = '';
+      if ((window as any).__NATIVE_PREVIEW_DEBUG__) {
+        console.warn('[NativePreview] failed to sync native preview window:', reason, err);
+      }
+    });
+  }
 
   // Expose actual container dimensions for warp handle alignment
   export function getContainerRect(): { x: number; y: number; width: number; height: number } {
@@ -6064,15 +6640,42 @@
   }
 </script>
 
-<div class="canvas-wrapper" class:output-mode={isOsrMode || isOutputMode} bind:this={wrapperEl}>
+<div
+  class="canvas-wrapper"
+  class:output-mode={isOsrMode || isOutputMode}
+  class:native-primary-source={nativePrimaryActive()}
+  bind:this={wrapperEl}
+>
   <div
     class="canvas-container"
     class:output-mode={isOsrMode || isOutputMode}
+    class:native-primary-source={nativePrimaryActive()}
     bind:this={containerEl}
   >
-    <canvas class="main-canvas" class:bridge-source={bridgeMode} bind:this={canvas}></canvas>
+    <canvas
+      class="main-canvas"
+      class:bridge-source={bridgeMode}
+      class:native-primary-source={nativeEmbeddedPreviewEnabled && nativeCorePreviewIsReady}
+      class:native-window-source={nativeEditorPreviewWindowActive()}
+      bind:this={canvas}
+    ></canvas>
     <!-- Edge blend + test pattern overlay -->
     <canvas class="output-overlay" bind:this={outputOverlayCanvas}></canvas>
+    {#if nativeEnginePendingVisible}
+      <div class="native-engine-pending">
+        <div class="native-engine-pending__title">
+          {nativeEnginePendingTitle}
+        </div>
+        <div class="native-engine-pending__detail">
+          {nativeEnginePendingDetail}
+        </div>
+        {#if $layers.length === 0}
+          <div class="native-engine-pending__actions">
+            <button type="button" onclick={addNativeStarterLayer}>Add Planet Shader</button>
+          </div>
+        {/if}
+      </div>
+    {/if}
     <!-- Mapping grid mount lives in App.svelte (sibling to both this
          Canvas and the WebGPU bridge) so it stays visible when
          experimental.editorWebGPU is on — WebGPUCanvas's overlay
@@ -6139,6 +6742,10 @@
     justify-content: stretch;
   }
 
+  .canvas-wrapper.native-primary-source {
+    background: transparent;
+  }
+
   .canvas-container {
     position: relative;
     background: #000;
@@ -6148,6 +6755,10 @@
        JS calculates the largest rectangle matching the project aspect ratio
        that fits within the wrapper. This is more reliable than CSS aspect-ratio
        in flex/transform contexts (Tauri WebView). */
+  }
+
+  .canvas-container.native-primary-source {
+    background: transparent;
   }
 
   /* Output/OSR mode: fill entire window, no aspect ratio constraints */
@@ -6164,6 +6775,11 @@
     display: block;
   }
 
+  .main-canvas {
+    position: relative;
+    z-index: 2;
+  }
+
   /* Phase 3 WebGPU bridge: when bridgeMode is on, hide the WebGL
      canvas via opacity so a sibling WebGPU presenter (mounted by
      App.svelte) shows on top instead. opacity:0 keeps the canvas
@@ -6175,6 +6791,14 @@
     opacity: 0;
   }
 
+  .main-canvas.native-primary-source {
+    opacity: 0;
+  }
+
+  .main-canvas.native-window-source {
+    opacity: 0;
+  }
+
   .output-overlay {
     position: absolute;
     top: 0;
@@ -6182,7 +6806,59 @@
     width: 100%;
     height: 100%;
     pointer-events: none;
-    z-index: 1;
+    z-index: 3;
+  }
+
+  .native-engine-pending {
+    position: absolute;
+    inset: 0;
+    z-index: 4;
+    display: grid;
+    place-content: center;
+    gap: 8px;
+    pointer-events: none;
+    background:
+      linear-gradient(135deg, rgba(20, 255, 240, 0.06), transparent 38%),
+      rgba(0, 0, 0, 0.74);
+    color: #e8fdff;
+    text-align: center;
+    font-family: inherit;
+  }
+
+  .native-engine-pending__title {
+    font-size: 13px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .native-engine-pending__detail {
+    font-size: 12px;
+    color: rgba(232, 253, 255, 0.68);
+  }
+
+  .native-engine-pending__actions {
+    pointer-events: auto;
+    display: flex;
+    justify-content: center;
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  .native-engine-pending__actions button {
+    height: 32px;
+    padding: 0 12px;
+    border: 1px solid rgba(74, 242, 255, 0.42);
+    border-radius: 2px;
+    background: rgba(8, 18, 22, 0.88);
+    color: #e8fdff;
+    font: 700 12px/1 var(--ga-font-ui, system-ui, sans-serif);
+    cursor: pointer;
+  }
+
+  .native-engine-pending__actions button:hover {
+    border-color: rgba(74, 242, 255, 0.78);
+    background: rgba(20, 255, 240, 0.14);
   }
 
   .blackout-overlay {

@@ -40,6 +40,8 @@ pub const CORE_RPC_METHODS: &[&str] = &[
     "upload_source_gpu_shared_texture",
     "output_shared_texture",
     "get_output_shared_texture",
+    "output_shared_texture_snapshot",
+    "get_output_shared_texture_snapshot",
     "set_stage3d_scene",
     "get_stage3d_scene_summary",
     "set_projection_sim_scene",
@@ -104,6 +106,10 @@ pub const CORE_COMMAND_TYPES: &[&str] = &[
     "set_layer_visibility",
     "set_layer_color",
     "set_layer_native_params",
+    "set_native_graph_layer",
+    "remove_native_graph_layer",
+    "queue_compute_graph",
+    "enqueue_compute_graph",
     "set_effect_chain",
     "set_texture_pool_cap",
     "set_shader_precompile_policy",
@@ -127,7 +133,7 @@ pub const CORE_COMMAND_TYPES: &[&str] = &[
 ];
 
 pub fn shared_texture_media_transport_note() -> &'static str {
-    "Canvas/base64 source-frame upload is a development fallback; native shared-texture source-frame handles ingest through IOSurfaceID on macOS and DXGI HANDLE on Windows."
+    "Native source-frame ingest uses IOSurfaceID on macOS and DXGI HANDLE on Windows; browser canvas/base64 upload is not a native-engine presentation path."
 }
 
 pub fn shared_texture_media_transport_ready_detail() -> &'static str {
@@ -372,14 +378,36 @@ pub fn output_shared_texture_export_readiness(capabilities: &Value) -> (bool, St
         ));
     }
 
-    missing.extend(
-        string_array_missing(
-            contract.get("exported_formats"),
-            &["bgra8unorm", "bgra8unorm-srgb"],
-        )
-        .into_iter()
-        .map(|format| format!("exported format {format}")),
-    );
+    let exported_formats = contract
+        .get("exported_formats")
+        .and_then(Value::as_array)
+        .map(|items| items.iter().filter_map(Value::as_str).collect::<Vec<_>>())
+        .unwrap_or_default();
+    if exported_formats != ["bgra8unorm"] {
+        missing.push(format!(
+            "exported_formats {:?} != [\"bgra8unorm\"]",
+            exported_formats
+        ));
+    }
+
+    for (key, expected) in [
+        ("color_space", "srgb"),
+        ("storage_format", "bgra8unorm"),
+        ("storage_encoding", "srgb-encoded-bgra8unorm"),
+        ("alpha_mode", "opaque"),
+        ("single_render_source", "core-output-composite"),
+    ] {
+        let actual = contract_string(contract, key);
+        if actual != expected {
+            missing.push(format!("{key} {actual:?} != {expected:?}"));
+        }
+    }
+    if contract.get("premultiplied_alpha").and_then(Value::as_bool) != Some(false) {
+        missing.push("premultiplied_alpha must be false".to_string());
+    }
+    if contract.get("zero_conversions").and_then(Value::as_bool) != Some(true) {
+        missing.push("zero_conversions must be true".to_string());
+    }
 
     if missing.is_empty() {
         (
@@ -671,7 +699,14 @@ mod tests {
                 "preferred_transport": "handle",
                 "handle_encoding": "integer",
                 "handle_byte_length": 4,
-                "exported_formats": ["bgra8unorm", "bgra8unorm-srgb"],
+                "exported_formats": ["bgra8unorm"],
+                "color_space": "srgb",
+                "storage_format": "bgra8unorm",
+                "storage_encoding": "srgb-encoded-bgra8unorm",
+                "alpha_mode": "opaque",
+                "premultiplied_alpha": false,
+                "single_render_source": "core-output-composite",
+                "zero_conversions": true,
                 "reason": null
             }
         });
@@ -696,7 +731,14 @@ mod tests {
                 "preferred_transport": "shared_name",
                 "handle_encoding": "integer",
                 "handle_byte_length": 8,
-                "exported_formats": ["bgra8unorm", "bgra8unorm-srgb"],
+                "exported_formats": ["bgra8unorm"],
+                "color_space": "srgb",
+                "storage_format": "bgra8unorm",
+                "storage_encoding": "srgb-encoded-bgra8unorm",
+                "alpha_mode": "opaque",
+                "premultiplied_alpha": false,
+                "single_render_source": "core-output-composite",
+                "zero_conversions": true,
                 "reason": null
             }
         });
@@ -730,8 +772,9 @@ mod tests {
         assert!(!ok);
         assert!(detail.contains("exporter"));
         assert!(detail.contains("preferred_transport"));
-        assert!(detail.contains("exported format bgra8unorm"));
-        assert!(detail.contains("exported format bgra8unorm-srgb"));
+        assert!(detail.contains("exported_formats"));
+        assert!(detail.contains("color_space"));
+        assert!(detail.contains("single_render_source"));
     }
 
     #[test]

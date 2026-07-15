@@ -173,6 +173,16 @@ function expectedSourceFrameSharedTextureImport() {
 }
 
 function expectedOutputSharedTextureExport() {
+  const colorContract = {
+    exported_formats: ['bgra8unorm'],
+    color_space: 'srgb',
+    storage_format: 'bgra8unorm',
+    storage_encoding: 'srgb-encoded-bgra8unorm',
+    alpha_mode: 'opaque',
+    premultiplied_alpha: false,
+    single_render_source: 'core-output-composite',
+    zero_conversions: true,
+  };
   if (process.platform === 'darwin') {
     return {
       available: true,
@@ -183,7 +193,7 @@ function expectedOutputSharedTextureExport() {
       preferred_transport: 'handle',
       handle_encoding: 'integer',
       handle_byte_length: 4,
-      exported_formats: ['bgra8unorm', 'bgra8unorm-srgb'],
+      ...colorContract,
       reason: null,
     };
   }
@@ -197,7 +207,7 @@ function expectedOutputSharedTextureExport() {
       preferred_transport: 'shared_name',
       handle_encoding: 'integer',
       handle_byte_length: 8,
-      exported_formats: ['bgra8unorm', 'bgra8unorm-srgb'],
+      ...colorContract,
       reason: null,
     };
   }
@@ -210,7 +220,7 @@ function expectedOutputSharedTextureExport() {
     preferred_transport: '',
     handle_encoding: '',
     handle_byte_length: 0,
-    exported_formats: [],
+    ...colorContract,
     reason: 'native output shared-texture export is only implemented for Metal IOSurface and D3D12 DXGI',
   };
 }
@@ -429,10 +439,10 @@ const broker = createNativeRendererBroker({
     platform: process.platform === 'darwin' ? 'syphon' : 'spout',
     label: process.platform === 'darwin' ? 'Syphon' : 'Spout',
     available: process.platform === 'darwin',
-    error: process.platform === 'darwin' ? null : 'contract test uses source-frame fallback',
+    error: process.platform === 'darwin' ? null : 'contract test requires native texture-share sender on this platform',
     nativeOutputCapable: process.platform === 'darwin',
     nativeOutputActive: false,
-    senderMode: process.platform === 'darwin' ? 'native-iosurface-capable' : 'source-frame-fallback',
+    senderMode: process.platform === 'darwin' ? 'native-iosurface-capable' : 'native-texture-share-pending',
   }),
   nativeFrameEncoderStatusProvider: () => ({
     available: true,
@@ -735,7 +745,7 @@ try {
   const expectedDecodeBackend = process.platform === 'win32' ? 'ffmpeg_d3d11va' : 'ffmpeg_software';
   assert(
     policyStatus.decode_store_cpu_backup_frames === true &&
-      policyStatus.decode_allow_synthetic_fallback === true &&
+      policyStatus.decode_allow_synthetic_fallback === false &&
       policyStatus.decode_backend === expectedDecodeBackend &&
       Number(policyStatus.media_queue_capacity) === 3333 &&
       Number(policyStatus.decode_handoff_queue_capacity) === 4444 &&
@@ -1476,7 +1486,7 @@ try {
     `native video frame prefetch did not upload a decoded source frame: ${JSON.stringify(videoPrefetchStatus)}`,
   );
   assert(
-    ['native-video-frame', 'file'].includes(videoPrefetchStatus.source_frame_last_upload_transport) &&
+    videoPrefetchStatus.source_frame_last_upload_transport === 'native-video-frame' &&
       Number(videoPrefetchStatus.source_frame_last_upload_width ?? 0) === 64 &&
       Number(videoPrefetchStatus.source_frame_last_upload_height ?? 0) === 64 &&
       Number(videoPrefetchStatus.source_frame_last_input_bytes ?? 0) === 64 * 64 * 4 &&
@@ -1542,22 +1552,9 @@ try {
   assert(
     redVideoFrameSnapshot?.checksum !== blueVideoFrameSnapshot?.checksum &&
       Number(redVideoMean[0] ?? 0) > Number(blueVideoMean[0] ?? 0) + 0.08 &&
-      Number(blueVideoMean[2] ?? 0) > Number(redVideoMean[2] ?? 0) + 0.08,
+    Number(blueVideoMean[2] ?? 0) > Number(redVideoMean[2] ?? 0) + 0.08,
     `native video frame prefetch did not honor requested timestamp: ${JSON.stringify({ redVideoFrameSnapshot, blueVideoFrameSnapshot })}`,
   );
-  const coreVideoFrameDecode = !!capabilities?.features?.native_video_frame_decode;
-  let videoFrameCacheStatsBeforeRepeat = null;
-  let videoFrameCacheHitsBeforeRepeat = 0;
-  let videoFrameCacheMissesBeforeRepeat = 0;
-  if (!coreVideoFrameDecode) {
-    assert(
-      Number(blueVideoPrefetchStatus.video_frame_prefetch_cache_entries ?? 0) > 0,
-      `native video frame prefetch should expose broker cache entries in status: ${JSON.stringify(blueVideoPrefetchStatus)}`,
-    );
-    videoFrameCacheStatsBeforeRepeat = await broker.invoke('native_renderer_get_stats');
-    videoFrameCacheHitsBeforeRepeat = Number(videoFrameCacheStatsBeforeRepeat.video_frame_prefetch_cache_hits ?? 0);
-    videoFrameCacheMissesBeforeRepeat = Number(videoFrameCacheStatsBeforeRepeat.video_frame_prefetch_cache_misses ?? 0);
-  }
   const repeatedBlueVideoPrefetchStatus = await broker.invoke('native_renderer_prefetch_media', {
     source_id: 'broker-prefetch-video-timed',
     uri: timedVideoPath,
@@ -1568,7 +1565,7 @@ try {
     time_seconds: 0.75,
     seq: 751,
   });
-  if (coreVideoFrameDecode) {
+  {
     assert(
       Number(secondBlueVideoPrefetchStatus.native_video_frame_decodes ?? 0) > 0 &&
         secondBlueVideoPrefetchStatus.source_frame_last_upload_transport === 'native-video-frame',
@@ -1750,58 +1747,6 @@ try {
         Number(clearedVideoFramePrefetchStatus.cleared_native_video_frame_cache_entries ?? 0) > 0,
       `native prefetch clear should clear core video-frame signatures and decoded-frame cache: ${JSON.stringify(clearedVideoFramePrefetchStatus)}`,
     );
-  } else {
-    assert(
-      Number(repeatedBlueVideoPrefetchStatus.video_frame_prefetch_cache_entries ?? 0) > 0,
-      `native video frame prefetch status should retain broker cache entries after reuse: ${JSON.stringify(repeatedBlueVideoPrefetchStatus)}`,
-    );
-    const videoFrameCacheStatsAfterRepeat = await broker.invoke('native_renderer_get_stats');
-    assert(
-      Number(videoFrameCacheStatsAfterRepeat.video_frame_prefetch_cache_hits ?? 0) >
-        videoFrameCacheHitsBeforeRepeat &&
-        Number(videoFrameCacheStatsAfterRepeat.video_frame_prefetch_cache_misses ?? 0) ===
-          videoFrameCacheMissesBeforeRepeat,
-      `native video frame prefetch should reuse the broker timestamp cache: ${JSON.stringify({ before: videoFrameCacheStatsBeforeRepeat, after: videoFrameCacheStatsAfterRepeat })}`,
-    );
-    const brokerWindowStatsBefore = await broker.invoke('native_renderer_get_stats');
-    const brokerWindowBaseTime = 0.05;
-    const brokerWindowNextTime = brokerWindowBaseTime + 1 / 30;
-    const brokerWindowBaseStatus = await broker.invoke('native_renderer_prefetch_media', {
-      source_id: 'broker-prefetch-video-window',
-      uri: timedVideoPath,
-      source_type: 'video',
-      decode_width: 64,
-      decode_height: 64,
-      priority: 2,
-      time_seconds: brokerWindowBaseTime,
-      prefetch_window_frames: 1,
-      prefetch_fps: 30,
-      seq: 805,
-    });
-    const brokerWindowNextStatus = await broker.invoke('native_renderer_prefetch_media', {
-      source_id: 'broker-prefetch-video-window-next',
-      uri: timedVideoPath,
-      source_type: 'video',
-      decode_width: 64,
-      decode_height: 64,
-      priority: 2,
-      time_seconds: brokerWindowNextTime,
-      seq: 806,
-    });
-    const brokerWindowStatsAfter = await broker.invoke('native_renderer_get_stats');
-    assert(
-      Number(brokerWindowNextStatus.video_frame_prefetch_cache_hits ?? 0) >
-        Number(brokerWindowBaseStatus.video_frame_prefetch_cache_hits ?? 0) &&
-        Number(brokerWindowStatsAfter.video_frame_prefetch_cache_hits ?? 0) >
-          Number(brokerWindowStatsBefore.video_frame_prefetch_cache_hits ?? 0),
-      `native video frame prefetch window should warm the next timestamp in the broker cache: ${JSON.stringify({ base: brokerWindowBaseStatus, next: brokerWindowNextStatus, before: brokerWindowStatsBefore, after: brokerWindowStatsAfter })}`,
-    );
-    const clearedVideoFramePrefetchStatus = await broker.invoke('native_renderer_clear_prefetch_cache');
-    assert(
-      Number(clearedVideoFramePrefetchStatus.cleared_video_frame_prefetch_entries ?? 0) > 0 &&
-        Number(clearedVideoFramePrefetchStatus.video_frame_prefetch_cache_entries ?? -1) === 0,
-      `native prefetch clear should empty the broker video-frame cache: ${JSON.stringify(clearedVideoFramePrefetchStatus)}`,
-    );
   }
 
   const readiness = await broker.invoke('native_renderer_get_readiness_report');
@@ -1971,15 +1916,23 @@ try {
 
   const outputTexture = await broker.invoke('native_renderer_get_output_shared_texture');
   if (outputExportExpected) {
-    assert(
-      outputTexture?.available &&
-        outputTexture.platform === expectedSharedTexturePlatform &&
-        String(outputTexture.handle ?? '').length > 0 &&
-        String(outputTexture.handle_encoding ?? '').length > 0 &&
-        String(outputTexture.handle_scope ?? '') === (process.platform === 'win32' ? 'process-local' : 'global-id') &&
-        String(outputTexture.preferred_transport ?? '') === (process.platform === 'win32' ? 'shared_name' : 'handle') &&
-        Number(outputTexture.width ?? 0) > 0 &&
-        Number(outputTexture.height ?? 0) > 0,
+	    assert(
+	      outputTexture?.available &&
+	        outputTexture.platform === expectedSharedTexturePlatform &&
+	        String(outputTexture.handle ?? '').length > 0 &&
+	        String(outputTexture.handle_encoding ?? '').length > 0 &&
+	        String(outputTexture.handle_scope ?? '') === (process.platform === 'win32' ? 'process-local' : 'global-id') &&
+	        String(outputTexture.preferred_transport ?? '') === (process.platform === 'win32' ? 'shared_name' : 'handle') &&
+	        String(outputTexture.format ?? '') === 'bgra8unorm' &&
+	        String(outputTexture.color_space ?? '') === 'srgb' &&
+	        String(outputTexture.storage_format ?? '') === 'bgra8unorm' &&
+	        String(outputTexture.storage_encoding ?? '') === 'srgb-encoded-bgra8unorm' &&
+	        String(outputTexture.alpha_mode ?? '') === 'opaque' &&
+	        outputTexture.premultiplied_alpha === false &&
+	        outputTexture.single_render_source === 'core-output-composite' &&
+	        outputTexture.zero_conversions === true &&
+	        Number(outputTexture.width ?? 0) > 0 &&
+	        Number(outputTexture.height ?? 0) > 0,
       `broker output shared-texture metadata is incomplete: ${JSON.stringify(outputTexture)}`,
     );
     if (process.platform === 'win32') {

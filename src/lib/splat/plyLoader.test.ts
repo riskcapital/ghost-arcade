@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { parsePLYBuffer } from './plyLoader';
+import { parsePLYBuffer, parsePLYPointBuffers, pointCloudBuffersFromPLYData } from './plyLoader';
 
 function stringToBuffer(str: string): ArrayBuffer {
   const encoder = new TextEncoder();
@@ -88,6 +88,39 @@ end_header
 4 0 1 2 3
 `;
 
+function binaryGaussianPLY(rows: number[][]): ArrayBuffer {
+  const header = `ply
+format binary_little_endian 1.0
+element vertex ${rows.length}
+property float x
+property float y
+property float z
+property float scale_0
+property float scale_1
+property float scale_2
+property float f_dc_0
+property float f_dc_1
+property float f_dc_2
+property float opacity
+property float rot_0
+property float rot_1
+property float rot_2
+property float rot_3
+end_header
+`;
+  const headerBytes = new TextEncoder().encode(header);
+  const stride = 14 * Float32Array.BYTES_PER_ELEMENT;
+  const bytes = new Uint8Array(headerBytes.byteLength + rows.length * stride);
+  bytes.set(headerBytes, 0);
+  const view = new DataView(bytes.buffer);
+  for (let i = 0; i < rows.length; i++) {
+    for (let j = 0; j < 14; j++) {
+      view.setFloat32(headerBytes.byteLength + i * stride + j * 4, rows[i][j] ?? 0, true);
+    }
+  }
+  return bytes.buffer;
+}
+
 describe('parsePLYBuffer', () => {
   it('parses ASCII point cloud PLY', () => {
     const result = parsePLYBuffer(stringToBuffer(POINT_CLOUD_PLY));
@@ -174,5 +207,40 @@ end_header
     const result = parsePLYBuffer(stringToBuffer(longHeaderPly));
     expect(result.vertices).toHaveLength(1);
     expect(result.vertices[0].x).toBe(1);
+  });
+
+  it('samples binary Gaussian splat PLY directly into point buffers', () => {
+    const buffer = binaryGaussianPLY([
+      [0, 0, 0, -4, -4, -4, 0, 0, 0, 0, 1, 0, 0, 0],
+      [1, 2, 3, -3, -3, -3, 0.5, 0, -0.5, 1, 0.5, 0.5, 0.5, 0.5],
+      [2, 4, 6, -2, -2, -2, 1, 0, -1, -1, 0, 1, 0, 0],
+      [3, 6, 9, -1, -1, -1, -0.5, 0.5, 0, 2, 0, 0, 1, 0],
+    ]);
+
+    const result = parsePLYPointBuffers(buffer, { maxGaussianPoints: 2 });
+
+    expect(result.gaussian).toBe(true);
+    expect(result.sourceVertexCount).toBe(4);
+    expect(result.sampleCount).toBe(2);
+    expect(Array.from(result.positions)).toEqual([0, 0, 0, 3, 6, 9]);
+    expect(result.colors[0]).toBeCloseTo(128 / 255, 4);
+    expect(result.colors[1]).toBeCloseTo(128 / 255, 4);
+    expect(result.colors[2]).toBeCloseTo(128 / 255, 4);
+    expect(result.alpha[0]).toBeCloseTo(128 / 255, 4);
+    expect(result.alpha[1]).toBeGreaterThan(0.87);
+    expect(result.splatScale?.[0]).toBeCloseTo(-4);
+    expect(result.splatScale?.[3]).toBeCloseTo(-1);
+    expect(result.splatRotation?.[0]).toBeCloseTo(1);
+    expect(result.splatRotation?.[6]).toBeCloseTo(1);
+  });
+
+  it('converts parsed PLY data into sampled point buffers', () => {
+    const parsed = parsePLYBuffer(stringToBuffer(POINT_CLOUD_PLY));
+    const result = pointCloudBuffersFromPLYData(parsed, { maxPoints: 2 });
+    expect(result.sourceVertexCount).toBe(3);
+    expect(result.sampleCount).toBe(2);
+    expect(Array.from(result.positions)).toEqual([1, 2, 3, 7, 8, 9]);
+    expect(result.colors[0]).toBe(1);
+    expect(result.colors[5]).toBe(1);
   });
 });

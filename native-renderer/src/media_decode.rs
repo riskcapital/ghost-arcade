@@ -1,8 +1,15 @@
 use std::{
+    collections::VecDeque,
     fs,
+    io::Read,
     path::{Path, PathBuf},
-    process::Command,
-    time::UNIX_EPOCH,
+    process::{Child, ChildStdout, Command, Stdio},
+    sync::{
+        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+    },
+    thread,
+    time::{Duration, UNIX_EPOCH},
 };
 
 pub const MAX_NATIVE_IMAGE_DECODE_BYTES: u64 = 256 * 1024 * 1024;
@@ -20,6 +27,279 @@ pub struct NativeVideoFrameDecodeOutput {
     pub frame_bucket: u64,
     pub signature: String,
     pub rgba: Vec<u8>,
+}
+
+#[derive(Debug)]
+pub struct NativeVideoStreamFrame {
+    pub width: usize,
+    pub height: usize,
+    pub rgba: Vec<u8>,
+}
+
+pub struct NativeVideoStream {
+    frames: Arc<Mutex<VecDeque<Result<NativeVideoStreamFrame, String>>>>,
+    stop: Arc<AtomicBool>,
+    playing: Arc<AtomicBool>,
+    children: Arc<Mutex<Vec<Child>>>,
+}
+
+impl NativeVideoStream {
+    pub fn stop(&self) {
+        self.stop.store(true, Ordering::Release);
+        // Kill decoder processes immediately. Without this, a producer thread
+        // blocked in read_exact() only notices the stop flag when ffmpeg emits
+        // its next frame — which can be arbitrarily late right after a seek —
+        // and rapid scrubbing piles up orphaned decoders until process slots
+        // are exhausted. Killing here makes the pipe EOF instantly; reaping
+        // (wait) stays on the producer thread.
+        if let Ok(mut children) = self.children.lock() {
+            for child in children.iter_mut() {
+                let _ = child.kill();
+            }
+        }
+    }
+
+    pub fn set_playing(&self, playing: bool) {
+        self.playing.store(playing, Ordering::Release);
+    }
+
+    pub fn buffered_frames(&self) -> usize {
+        self.frames.lock().map(|frames| frames.len()).unwrap_or(0)
+    }
+
+    pub fn try_pop(&self) -> Option<Result<NativeVideoStreamFrame, String>> {
+        self.frames.lock().ok()?.pop_front()
+    }
+}
+
+impl Drop for NativeVideoStream {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+const NATIVE_VIDEO_PREROLL_FRAMES: usize = 8;
+
+pub fn spawn_native_video_stream(
+    path: PathBuf,
+    width: usize,
+    height: usize,
+    start_time_seconds: f64,
+    playback_rate: f64,
+    loop_enabled: bool,
+    duration_seconds: Option<f64>,
+    trim_start: f64,
+    trim_end: f64,
+) -> NativeVideoStream {
+    let frames = Arc::new(Mutex::new(VecDeque::with_capacity(
+        NATIVE_VIDEO_PREROLL_FRAMES,
+    )));
+    let stop = Arc::new(AtomicBool::new(false));
+    let playing = Arc::new(AtomicBool::new(false));
+    let children = Arc::new(Mutex::new(Vec::<Child>::new()));
+    let thread_frames = frames.clone();
+    let thread_stop = stop.clone();
+    let thread_children = children.clone();
+    thread::spawn(move || {
+        let target_width = width.clamp(16, MAX_NATIVE_VIDEO_FRAME_DECODE_DIMENSION);
+        let target_height = height.clamp(16, MAX_NATIVE_VIDEO_FRAME_DECODE_DIMENSION);
+        let frame_bytes = target_width.saturating_mul(target_height).saturating_mul(4);
+        let rate = playback_rate.clamp(0.01, 16.0);
+        let fps = 60.0;
+        let range_start = duration_seconds
+            .map(|duration| duration * trim_start.clamp(0.0, 1.0))
+            .unwrap_or(0.0);
+        let range_end = duration_seconds.map(|duration| duration * trim_end.clamp(trim_start, 1.0));
+        let mut segment_start = start_time_seconds.max(range_start).clamp(0.0, 3600.0);
+        // Each emitted output frame advances the source timeline by this much
+        // (the filter rescales PTS by `rate` and resamples to `fps`).
+        let source_secs_per_frame = rate / fps;
+        // Spawn the next loop segment this many source-seconds before the
+        // current one ends so ffmpeg startup + keyframe seek are hidden behind
+        // the ring's runway instead of stalling the loop boundary.
+        let standby_lead_secs = 0.75_f64 * rate.max(1.0);
+
+        let spawn_segment = |seg_start: f64| -> Result<(u32, ChildStdout), String> {
+            let ffmpeg = ffmpeg_binary();
+            let scale = format!(
+                "scale={target_width}:{target_height}:force_original_aspect_ratio=decrease"
+            );
+            let pad = format!("pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2:color=black");
+            let filter = format!("{scale},{pad},setpts=PTS/{rate:.6},fps={fps:.3},format=rgba");
+            let mut command = Command::new(&ffmpeg);
+            command
+                .arg("-hide_banner")
+                .arg("-loglevel")
+                .arg("error")
+                .arg("-nostdin")
+                .arg("-ss")
+                .arg(format!("{seg_start:.6}"))
+                .arg("-i")
+                .arg(&path)
+                .arg("-an")
+                .arg("-sn")
+                .arg("-dn");
+            if let Some(end) = range_end {
+                command
+                    .arg("-t")
+                    .arg(format!("{:.6}", (end - seg_start).max(0.001)));
+            }
+            let mut child = command
+                .arg("-vf")
+                .arg(filter)
+                .arg("-f")
+                .arg("rawvideo")
+                .arg("-pix_fmt")
+                .arg("rgba")
+                .arg("pipe:1")
+                .stdout(Stdio::piped())
+                .stderr(Stdio::piped())
+                .spawn()
+                .map_err(|err| {
+                    format!(
+                        "native video stream failed to launch `{ffmpeg}` for `{}`: {err}",
+                        path.display()
+                    )
+                })?;
+            let stdout = child.stdout.take().ok_or_else(|| {
+                let _ = child.kill();
+                format!(
+                    "native video stream child had no stdout for `{}`",
+                    path.display()
+                )
+            })?;
+            // Drain stderr on a helper thread. ffmpeg blocks mid-stream once an
+            // unread stderr pipe fills, which starves the frame ring after a
+            // handful of frames and cascades into pre-roll never completing —
+            // the observed "armed sessions stuck at buffered=0". Draining is
+            // load-bearing; surfacing the text is diagnostics.
+            if let Some(mut stderr) = child.stderr.take() {
+                let stderr_pid = child.id();
+                thread::spawn(move || {
+                    let mut buf = String::new();
+                    let _ = stderr.read_to_string(&mut buf);
+                    let trimmed = buf.trim();
+                    if !trimmed.is_empty() {
+                        eprintln!("[native-video] ffmpeg stderr (pid {stderr_pid}): {trimmed}");
+                    }
+                });
+            }
+            let pid = child.id();
+            // Register in the shared table so stop() can kill it immediately
+            // even while this thread is blocked reading the pipe.
+            if let Ok(mut guard) = thread_children.lock() {
+                guard.push(child);
+            }
+            Ok((pid, stdout))
+        };
+        let reap = |pid: u32| {
+            if let Ok(mut guard) = thread_children.lock()
+                && let Some(index) = guard.iter().position(|child| child.id() == pid)
+            {
+                let mut child = guard.swap_remove(index);
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        };
+
+        // A pre-spawned decoder for the next loop iteration, handed off at EOF.
+        let mut pending_standby: Option<(u32, ChildStdout)> = None;
+        'stream: loop {
+            if thread_stop.load(Ordering::Acquire) {
+                break;
+            }
+            let (pid, mut stdout) = match pending_standby.take() {
+                Some(handoff) => handoff,
+                None => match spawn_segment(segment_start) {
+                    Ok(spawned) => spawned,
+                    Err(err) => {
+                        if let Ok(mut queue) = thread_frames.lock() {
+                            queue.push_back(Err(err));
+                        }
+                        break;
+                    }
+                },
+            };
+            let segment_source_len = range_end
+                .map(|end| (end - segment_start).max(0.0))
+                .or_else(|| duration_seconds.map(|d| (d - segment_start).max(0.0)));
+            let mut emitted_frames = 0u64;
+            loop {
+                if thread_stop.load(Ordering::Acquire) {
+                    reap(pid);
+                    break 'stream;
+                }
+                let mut rgba = vec![0u8; frame_bytes];
+                if let Err(err) = stdout.read_exact(&mut rgba) {
+                    if err.kind() != std::io::ErrorKind::UnexpectedEof {
+                        if let Ok(mut queue) = thread_frames.lock() {
+                            queue.push_back(Err(format!(
+                                "native video stream read failed for `{}`: {err}",
+                                path.display()
+                            )));
+                        }
+                    }
+                    break;
+                }
+                emitted_frames = emitted_frames.saturating_add(1);
+
+                // Near the loop boundary, warm the next segment's decoder so
+                // the handoff at EOF is seamless. The standby blocks on its
+                // full pipe buffer until we start reading it, costing nothing.
+                if loop_enabled
+                    && pending_standby.is_none()
+                    && let Some(segment_len) = segment_source_len
+                {
+                    let consumed = emitted_frames as f64 * source_secs_per_frame;
+                    if segment_len - consumed <= standby_lead_secs
+                        && let Ok(spawned) = spawn_segment(range_start)
+                    {
+                        pending_standby = Some(spawned);
+                    }
+                }
+
+                // Decode ahead into a bounded ring. Presentation cadence is
+                // owned by the native render clock, so producer/consumer phase
+                // jitter cannot empty a healthy stream.
+                loop {
+                    if thread_stop.load(Ordering::Acquire) {
+                        reap(pid);
+                        break 'stream;
+                    }
+                    if let Ok(mut queue) = thread_frames.lock() {
+                        if queue.len() < NATIVE_VIDEO_PREROLL_FRAMES {
+                            queue.push_back(Ok(NativeVideoStreamFrame {
+                                width: target_width,
+                                height: target_height,
+                                rgba,
+                            }));
+                            break;
+                        }
+                    }
+                    thread::sleep(Duration::from_millis(2));
+                }
+            }
+            reap(pid);
+            if !loop_enabled {
+                break;
+            }
+            segment_start = range_start;
+        }
+        // Final sweep: kill and reap anything still registered (including an
+        // unused standby) so no decoder outlives the stream.
+        if let Ok(mut guard) = thread_children.lock() {
+            for mut child in guard.drain(..) {
+                let _ = child.kill();
+                let _ = child.wait();
+            }
+        }
+    });
+    NativeVideoStream {
+        frames,
+        stop,
+        playing,
+        children,
+    }
 }
 
 pub fn decode_native_image_rgba(path: &Path) -> Result<(usize, usize, Vec<u8>), String> {
@@ -89,6 +369,25 @@ pub fn decode_native_video_frame_rgba(
     height: usize,
     time_seconds: f64,
 ) -> Result<(usize, usize, Vec<u8>), String> {
+    decode_native_video_frame_rgba_with_seek(path, width, height, time_seconds, false)
+}
+
+pub fn decode_native_video_frame_exact_rgba(
+    path: &Path,
+    width: usize,
+    height: usize,
+    time_seconds: f64,
+) -> Result<(usize, usize, Vec<u8>), String> {
+    decode_native_video_frame_rgba_with_seek(path, width, height, time_seconds, true)
+}
+
+fn decode_native_video_frame_rgba_with_seek(
+    path: &Path,
+    width: usize,
+    height: usize,
+    time_seconds: f64,
+    accurate_seek: bool,
+) -> Result<(usize, usize, Vec<u8>), String> {
     let metadata = fs::metadata(path).map_err(|err| {
         format!(
             "native video frame decode failed to stat `{}`: {err}",
@@ -108,15 +407,19 @@ pub fn decode_native_video_frame_rgba(
     let scale =
         format!("scale={target_width}:{target_height}:force_original_aspect_ratio=decrease");
     let pad = format!("pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2:color=black");
-    let output = Command::new(&ffmpeg)
+    let mut command = Command::new(&ffmpeg);
+    command
         .arg("-hide_banner")
         .arg("-loglevel")
         .arg("error")
-        .arg("-nostdin")
-        .arg("-ss")
-        .arg(format!("{:.3}", time_seconds.clamp(0.0, 3600.0)))
-        .arg("-i")
-        .arg(path)
+        .arg("-nostdin");
+    let seek_time = format!("{:.6}", time_seconds.clamp(0.0, 3600.0));
+    if accurate_seek {
+        command.arg("-i").arg(path).arg("-ss").arg(seek_time);
+    } else {
+        command.arg("-ss").arg(seek_time).arg("-i").arg(path);
+    }
+    let output = command
         .arg("-frames:v")
         .arg("1")
         .arg("-vf")

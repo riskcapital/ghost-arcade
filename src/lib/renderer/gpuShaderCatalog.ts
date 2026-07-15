@@ -267,6 +267,28 @@ export const GPU_SHADER_CATALOG: GpuShaderDef[] = [
   SMOKE_3D_DEF,
 ];
 
+// Native v2 picker surface.
+export const NATIVE_READY_GPU_SHADER_IDS = new Set<string>([
+  'planet',
+  'particle-field',
+  'gravity-wells',
+  'pixel-particles',
+  'flythrough',
+  'point-cloud-fx',
+  'smoke-riders',
+  'ink-cloud',
+  'smoke-3d',
+  'volumetric-balls',
+]);
+
+export const NATIVE_READY_GPU_SHADER_CATALOG: GpuShaderDef[] = GPU_SHADER_CATALOG.filter((shader) =>
+  NATIVE_READY_GPU_SHADER_IDS.has(shader.id),
+);
+
+export function isNativeReadyGpuShaderId(id: string | undefined | null): boolean {
+  return NATIVE_READY_GPU_SHADER_IDS.has(String(id ?? '').trim().toLowerCase());
+}
+
 const BY_ID: Map<string, GpuShaderDef> = new Map(GPU_SHADER_CATALOG.map((s) => [s.id, s]));
 
 export function getShaderDef(id: string): GpuShaderDef | undefined {

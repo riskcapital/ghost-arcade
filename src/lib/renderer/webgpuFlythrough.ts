@@ -97,9 +97,11 @@ function perspective(fovDeg: number, aspect: number, near: number, far: number):
   const m = new Float32Array(16);
   m[0] = f / aspect;
   m[5] = f;
-  m[10] = far / (near - far);
-  m[11] = -1;
-  m[14] = (near * far) / (near - far);
+  // Flythrough's tunnel is authored in front of the camera along +Z.
+  // WebGPU clip depth is 0..1, so use a forward-Z projection (w = +z).
+  m[10] = far / (far - near);
+  m[11] = 1;
+  m[14] = -(near * far) / (far - near);
   return m;
 }
 

@@ -1,6 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
-  import { settings, getSupportedFormats, COLOR_SCHEMES, CLAUDE_MODELS, GEMINI_MODELS, VEO_MODELS, LUMA_MODELS, DEFAULT_LAYER_SHADERS, type RecordingSettings, type OutputSettings, type ColorSchemeId, type FluidQualityMode, type ShaderQualityMode, type GpuInstrumentQualityMode, type ShaderAIProvider, type VideoAIProvider } from '../stores/settings';
+  import { NATIVE_ENGINE_ONLY, settings, getSupportedFormats, COLOR_SCHEMES, CLAUDE_MODELS, GEMINI_MODELS, VEO_MODELS, LUMA_MODELS, DEFAULT_LAYER_SHADERS, type RecordingSettings, type OutputSettings, type ColorSchemeId, type FluidQualityMode, type ShaderQualityMode, type GpuInstrumentQualityMode, type ShaderAIProvider, type VideoAIProvider } from '../stores/settings';
   // Theme template registry — full visual style swap (fonts + surfaces
   // + corners + accents). See src/lib/theming/themes/.
   import { activeThemeId, themes } from '../theming/store';
@@ -94,9 +94,8 @@
   import { getErrorLog, clearErrorLog, type ErrorEntry } from '../utils/errorReporter';
   import { isWebGPUSupported, probeWebGPU, getWebGPUInfo, type WebGPUInfo } from '../renderer/webgpuCapability';
 
-  // Renderer panel state — populated by the WebGPU capability probe. Native
-  // output is the primary path; these controls expose the editor bridge and
-  // fallback transports without moving their persisted keys.
+  // Renderer panel state. Desktop native builds keep the legacy bridge flags
+  // persisted for migration, but the controls are locked out by policy.
   let webgpuSupported = isWebGPUSupported();
   let webgpuInfo: WebGPUInfo = getWebGPUInfo();
   let webgpuProbing = false;
@@ -113,8 +112,8 @@
 
   // Snapshot of the renderer bridge flags at the time this settings
   // panel script first ran. The Electron renderer wires up which
-  // canvas/bridge to mount at boot, so toggling editorWebGPU or
-  // allowMidChainGpuEffects mid-session leaves the engine in a
+  // canvas/bridge to mount at boot, so toggling editorWebGPU or the
+  // legacy GPU effect bridge mid-session leaves the engine in a
   // half-broken state (grid disappears, layers stop receiving frames,
   // etc.). We compare current values against this snapshot to know
   // when a restart is required. Using $settings.experimental directly
@@ -123,12 +122,13 @@
   const bootRendererFlags = {
     editorWebGPU: $settings.experimental?.editorWebGPU ?? true,
     outputZeroCopy: $settings.experimental?.outputZeroCopy ?? true,
-    allowMidChainGpuEffects: $settings.experimental?.allowMidChainGpuEffects ?? true,
+    allowMidChainGpuEffects: $settings.experimental?.allowMidChainGpuEffects ?? false,
   };
-  $: gpuRestartRequired =
+  $: gpuRestartRequired = !(NATIVE_ENGINE_ONLY && isDesktopApp) && (
     $settings.experimental?.editorWebGPU !== bootRendererFlags.editorWebGPU ||
     $settings.experimental?.outputZeroCopy !== bootRendererFlags.outputZeroCopy ||
-    $settings.experimental?.allowMidChainGpuEffects !== bootRendererFlags.allowMidChainGpuEffects;
+    $settings.experimental?.allowMidChainGpuEffects !== bootRendererFlags.allowMidChainGpuEffects
+  );
 
   let restarting = false;
   async function restartApp() {
@@ -1290,10 +1290,9 @@
              next to the rest of the projector calibration tools. Their
              underlying $settings.output.* fields stay in the store so
              any leftover bindings continue to compile cleanly. -->
-        <!-- The standalone WebRTC output transport toggle that used to
-             live here was removed. Native core output is the default,
-             WebGPU zero-copy is the fallback, and WebRTC remains a hidden
-             escape hatch for debugging transport regressions. -->
+        <!-- The standalone WebRTC/WebGPU output transport toggles that used
+             to live here are removed in the native branch. Desktop output is
+             the render core's managed output window or unavailable. -->
 
         <!-- Performance Tab — opt-in knobs for users on weaker hardware.
              Defaults match the historical full-quality behaviour. Intro
@@ -1316,9 +1315,10 @@
         </section>
 
         <!-- ─────────────────────────────────────────────────────────────
-             Renderer & Output — native renderer first, WebGPU fallback
-             second, and legacy paths kept for diagnostics. The fields
-             still live in $settings.experimental for migration stability.
+             Renderer & Output — native renderer is the v2 path. The old
+             transport fields still live in $settings.experimental for
+             migration stability, but native-only desktop builds force them
+             off.
              When WebGPU is unavailable, WebGPU-specific controls are
              disabled and the section explains why so users do not waste
              time hunting for an unavailable effect or output path.
@@ -1367,11 +1367,19 @@
                     <br/><span style="color: #fbbf24;">⚠ Software fallback adapter — performance will be limited.</span>
                   {/if}
                   <br/>
-                  Native core output is the primary path. WebGPU is available for the editor bridge, GPU effects, and the zero-copy fallback output.
+                  {#if NATIVE_ENGINE_ONLY && isDesktopApp}
+                    Native-only mode is locked on. Preview, output, and recording are driven by the Rust/wgpu core; unavailable capabilities stay listed as blockers.
+                  {:else}
+                    Native core output is the v2 target path.
+                  {/if}
                 {:else}
                   {webgpuInfo.failReason ? `Reason: ${webgpuInfo.failReason}.` : 'Your browser/device did not return a WebGPU adapter.'}
                   <br/>
-                  Effects and layers that require WebGPU (e.g. <em>Fluid Sim</em>, the GPU Shader layer) are hidden in the picker so you don't try to add something that won't run. The legacy WebGL pipeline keeps the rest of the app working normally.
+                  {#if NATIVE_ENGINE_ONLY && isDesktopApp}
+                    Browser WebGPU is not used as a fallback in this build. Missing native capabilities are shown as blockers instead.
+                  {:else}
+                    Effects and layers that require WebGPU (e.g. <em>Fluid Sim</em>, the GPU Shader layer) are hidden in the picker so you don't try to add something that won't run.
+                  {/if}
                 {/if}
               </span>
             </div>
@@ -1394,7 +1402,7 @@
                 {#if $nativeRendererRuntime.nativeGraphRouteFailures > 0}
                   <br/>
                   <span class="native-runtime-warning">
-                    Graph fallbacks:
+                    Native graph misses:
                     {$nativeRendererRuntime.nativeGraphRouteFailures}
                     {#if $nativeRendererRuntime.nativeGraphRouteSuppressedFailures > 0}
                       ({$nativeRendererRuntime.nativeGraphRouteSuppressedFailures} suppressed)
@@ -1409,7 +1417,20 @@
                 <br/>
                 Native effect passes {$nativeRendererRuntime.nativeEffectCoverageNative}/{$nativeRendererRuntime.nativeEffectCoverageTotal}
                 {#if $nativeRendererRuntime.nativeEffectCoverageMissing > 0}
-                  · {$nativeRendererRuntime.nativeEffectCoverageMissing} pass-eligible still WebGL-backed
+                  · {$nativeRendererRuntime.nativeEffectCoverageMissing} pass-eligible not native yet
+                {/if}
+                {#if $nativeRendererRuntime.nativeBlockedLayerCount > 0}
+                  <br/>
+                  <span class="native-runtime-warning">
+                    Native inventory blocked:
+                    {$nativeRendererRuntime.nativeBlockedLayerCount}
+                    layer{$nativeRendererRuntime.nativeBlockedLayerCount === 1 ? '' : 's'}
+                    ({$nativeRendererRuntime.nativeBlockedEffectLayerCount} effect,
+                    {$nativeRendererRuntime.nativeBlockedSourceLayerCount} source)
+                    {#if $nativeRendererRuntime.nativeBlockedLayerLastReason}
+                      · {$nativeRendererRuntime.nativeBlockedLayerLastReason}
+                    {/if}
+                  </span>
                 {/if}
               </span>
             </div>
@@ -1443,85 +1464,55 @@
             </div>
           {/if}
 
-          <div class="setting-row">
-            <div class="setting-label">
-              <span class="label-text">Editor frame bridge</span>
-              <span class="label-hint">
-                Use the WebGPU + VideoFrame bridge for the editor → renderer handoff. When off, falls back to the legacy WebGL transport (works everywhere, slightly higher latency, no zero-copy).
-                {#if !webgpuSupported}
-                  <br/><em style="color: #999;">Disabled — requires WebGPU.</em>
-                {/if}
-              </span>
+          {#if NATIVE_ENGINE_ONLY && isDesktopApp}
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="label-text">Native engine mode</span>
+                <span class="label-hint">
+                  Locked on for this build. Browser/WebGPU comparison renderers and CPU-readback bridges are disabled; missing renderer capabilities stay visible as native blockers until they are implemented.
+                </span>
+              </div>
+              <span class="native-runtime-pill warn">Native only</span>
             </div>
-            <label class="toggle">
-              <input
-                type="checkbox"
-                checked={$settings.experimental.editorWebGPU}
-                disabled={!webgpuSupported}
-                onchange={(e) => settings.update(s => ({ ...s, experimental: { ...s.experimental, editorWebGPU: (e.target as HTMLInputElement).checked } }))}
-              />
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
+          {:else}
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="label-text">Editor frame bridge</span>
+                <span class="label-hint">
+                  Use the WebGPU + VideoFrame bridge for the editor -> renderer handoff.
+                  {#if !webgpuSupported}
+                    <br/><em style="color: #999;">Disabled - requires WebGPU.</em>
+                  {/if}
+                </span>
+              </div>
+              <label class="toggle">
+                <input
+                  type="checkbox"
+                  checked={$settings.experimental.editorWebGPU}
+                  disabled={!webgpuSupported}
+                  onchange={(e) => settings.update(s => ({ ...s, experimental: { ...s.experimental, editorWebGPU: (e.target as HTMLInputElement).checked } }))}
+                />
+                <span class="toggle-slider"></span>
+              </label>
+            </div>
 
-          <div class="setting-row">
-            <div class="setting-label">
-              <span class="label-text">Native output driver</span>
-              <span class="label-hint">
-                Primary v2 output path using the Rust/wgpu managed output window. Leave this on for normal use; turn it off only when diagnosing the WebGPU fallback. Applies on next output-window open.
-              </span>
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="label-text">Native output driver</span>
+                <span class="label-hint">
+                  Use the Rust/wgpu managed output window. Applies on next output-window open.
+                </span>
+              </div>
+              <label class="toggle">
+                <input
+                  type="checkbox"
+                  checked={$settings.experimental.outputNativeCore}
+                  onchange={(e) => settings.update(s => ({ ...s, experimental: { ...s.experimental, outputNativeCore: (e.target as HTMLInputElement).checked } }))}
+                />
+                <span class="toggle-slider"></span>
+              </label>
             </div>
-            <label class="toggle">
-              <input
-                type="checkbox"
-                checked={$settings.experimental.outputNativeCore}
-                onchange={(e) => settings.update(s => ({ ...s, experimental: { ...s.experimental, outputNativeCore: (e.target as HTMLInputElement).checked } }))}
-              />
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-
-          <div class="setting-row">
-            <div class="setting-label">
-              <span class="label-text">Fallback zero-copy output</span>
-              <span class="label-hint">
-                Send frames to the fallback output window via WebGPU's <code>importExternalTexture</code> — no encode/decode round trip, true 4K60. Used only when native core output is off or unavailable. Applies on next output-window open.
-                {#if !webgpuSupported}
-                  <br/><em style="color: #999;">Disabled — requires WebGPU.</em>
-                {/if}
-              </span>
-            </div>
-            <label class="toggle">
-              <input
-                type="checkbox"
-                checked={$settings.experimental.outputZeroCopy}
-                disabled={!webgpuSupported}
-                onchange={(e) => settings.update(s => ({ ...s, experimental: { ...s.experimental, outputZeroCopy: (e.target as HTMLInputElement).checked } }))}
-              />
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
-
-          <div class="setting-row">
-            <div class="setting-label">
-              <span class="label-text">GPU effect bridge</span>
-              <span class="label-hint">
-                Allow WebGPU effects (e.g. <em>Fluid Sim</em>) in the middle of a layer's effect chain. Adds a ~3 ms GPU↔CPU round-trip per affected effect; turn off if you're not using GPU effects and want the steady-state path purely WebGL.
-                {#if !webgpuSupported}
-                  <br/><em style="color: #999;">Disabled — requires WebGPU.</em>
-                {/if}
-              </span>
-            </div>
-            <label class="toggle">
-              <input
-                type="checkbox"
-                checked={$settings.experimental.allowMidChainGpuEffects}
-                disabled={!webgpuSupported}
-                onchange={(e) => settings.update(s => ({ ...s, experimental: { ...s.experimental, allowMidChainGpuEffects: (e.target as HTMLInputElement).checked } }))}
-              />
-              <span class="toggle-slider"></span>
-            </label>
-          </div>
+          {/if}
         </section>
 
         {/if}

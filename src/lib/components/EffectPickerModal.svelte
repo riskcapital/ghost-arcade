@@ -9,8 +9,9 @@
   } from '../effects/customEffects';
   // licenseTier + canAccessEffect + getTierBadgeLabel imports removed —
   // every effect is unlocked in OSS build.
+  import { isNativeSelectableEffect } from '../renderer/nativeEffectCoverage';
   import { webgpuSupportedStore } from '../renderer/webgpuCapability';
-  import { get } from 'svelte/store';
+  import { NATIVE_ENGINE_ONLY, settings } from '../stores/settings';
 
   // WebGPU capability — reactive store, NOT a snapshot. The probe is
   // async and may not have resolved by the time this modal first
@@ -108,10 +109,27 @@
   });
 
   const customTypeSet = $derived(new Set(customEntries.map((e) => e.type as unknown as string)));
+  const nativeInventoryLocked = $derived(NATIVE_ENGINE_ONLY && Boolean($settings.experimental?.outputNativeCore));
 
   function isCustomEntry(entry: EffectCatalogEntry): boolean {
     return customTypeSet.has(entry.type as unknown as string);
   }
+
+  function isNativeAvailable(entry: EffectCatalogEntry): boolean {
+    return !nativeInventoryLocked || isNativeSelectableEffect(entry.type);
+  }
+
+  function nativeUnavailableLabel(entry: EffectCatalogEntry): string {
+    return isNativeSelectableEffect(entry.type)
+      ? entry.description
+      : `${entry.description}\n\nNative v2: this effect is pending a core implementation.`;
+  }
+
+  $effect(() => {
+    if (!nativeInventoryLocked || selected.size === 0) return;
+    const next = new Set([...selected].filter((type) => isNativeSelectableEffect(type)));
+    if (next.size !== selected.size) selected = next;
+  });
 
   // Filter by search across ALL categories — search overrides the
   // accordion (results from collapsed sections still show up when you
@@ -188,6 +206,7 @@
   // No tier locks in the OSS build — every effect is selectable.
 
   function handleCardClick(entry: EffectCatalogEntry) {
+    if (!isNativeAvailable(entry)) return;
     const next = new Set(selected);
     if (next.has(entry.type)) next.delete(entry.type);
     else next.add(entry.type);
@@ -195,6 +214,7 @@
   }
 
   function handleDoubleClick(entry: EffectCatalogEntry) {
+    if (!isNativeAvailable(entry)) return;
     onAdd([entry.type]);
     selected = new Set();
     searchQuery = '';
@@ -203,7 +223,11 @@
 
   function handleAdd() {
     if (selected.size === 0) return;
-    onAdd([...selected]);
+    const selectable = nativeInventoryLocked
+      ? [...selected].filter((type) => isNativeSelectableEffect(type))
+      : [...selected];
+    if (selectable.length === 0) return;
+    onAdd(selectable);
     selected = new Set();
     searchQuery = '';
     open = false;
@@ -233,6 +257,7 @@
     role="dialog"
     aria-modal="true"
     aria-label="Effect Picker"
+    tabindex="0"
   >
     <div class="modal-panel">
       <!-- Header -->
@@ -308,13 +333,17 @@
                 <div class="cat-grid" id={`cat-grid-${cat}`}>
                   {#each entries as entry (entry.type)}
                     {@const custom = isCustomEntry(entry)}
+                    {@const nativeUnavailable = !isNativeAvailable(entry)}
                     <button
                       class="effect-row"
                       class:selected={selected.has(entry.type)}
                       class:custom
+                      class:native-unavailable={nativeUnavailable}
                       onclick={() => handleCardClick(entry)}
                       ondblclick={() => handleDoubleClick(entry)}
-                      title="{entry.description}\nTap to select · Double-click to add instantly"
+                      disabled={nativeUnavailable}
+                      aria-disabled={nativeUnavailable}
+                      title="{nativeUnavailableLabel(entry)}\n{nativeUnavailable ? '' : 'Tap to select · Double-click to add instantly'}"
                     >
                       <div class="row-thumb" style="background: {entry.previewCSS};"></div>
                       <div class="row-info">
@@ -322,6 +351,11 @@
                           {entry.label}
                           {#if custom}
                             <span class="custom-badge">CUSTOM</span>
+                          {/if}
+                          {#if nativeInventoryLocked}
+                            <span class:native-badge={!nativeUnavailable} class:pending-badge={nativeUnavailable}>
+                              {nativeUnavailable ? 'PENDING' : 'NATIVE'}
+                            </span>
                           {/if}
                         </span>
                         <span class="row-desc">{entry.description}</span>
@@ -352,7 +386,11 @@
 
       <!-- Footer -->
       <div class="modal-footer">
-        <span class="hint">Tap to select · Double-click to add one · Click a category to collapse</span>
+        <span class="hint">
+          {nativeInventoryLocked
+            ? 'Native v2 inventory: pending effects are disabled until the core owns them.'
+            : 'Tap to select · Double-click to add one · Click a category to collapse'}
+        </span>
         <div class="footer-actions">
           <button class="secondary-btn" onclick={handleClose}>Cancel</button>
           <button
@@ -606,6 +644,17 @@
     border-color: #BB86FC;
   }
 
+  .effect-row.native-unavailable {
+    opacity: 0.38;
+    cursor: not-allowed;
+    filter: grayscale(0.75);
+  }
+
+  .effect-row.native-unavailable:hover {
+    background: transparent;
+    border-color: transparent;
+  }
+
   .row-thumb {
     width: 36px;
     height: 36px;
@@ -635,6 +684,30 @@
 
   .effect-row.selected .row-name {
     color: #BB86FC;
+  }
+
+  .native-badge,
+  .pending-badge {
+    display: inline-block;
+    margin-left: 5px;
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-size: 8px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    vertical-align: middle;
+  }
+
+  .native-badge {
+    background: rgba(34, 211, 238, 0.16);
+    border: 1px solid rgba(34, 211, 238, 0.35);
+    color: #67e8f9;
+  }
+
+  .pending-badge {
+    background: rgba(148, 163, 184, 0.11);
+    border: 1px solid rgba(148, 163, 184, 0.22);
+    color: #94a3b8;
   }
 
   .row-desc {

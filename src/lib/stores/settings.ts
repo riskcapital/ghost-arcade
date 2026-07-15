@@ -677,8 +677,9 @@ export const DEFAULT_LAYER_SHADERS: { id: DefaultLayerShader; label: string }[] 
  *
  * These still live under `experimental` in persisted settings so older
  * installs migrate cleanly, but several of them are now production controls:
- * native core output is the primary v2 route, WebGPU zero-copy is the fallback
- * route, and the editor VideoFrame bridge is enabled by default.
+ * native core output is the v2 target route. The schema keeps the older
+ * transport flags so 1.9-era settings load cleanly, but native-only desktop
+ * builds force them off in `enforceNativeEngineOnly()`.
  */
 export interface ExperimentalSettings {
   /** S4 pilot: enable the WebGPU + TSL particle-flow effect.
@@ -694,23 +695,17 @@ export interface ExperimentalSettings {
    *  presentation-only `<video srcObject>` fed by the editor's
    *  `canvas.captureStream(60)` over a same-process WebRTC peer.
    *
-   *  Now superseded by `outputZeroCopy` below — kept as an escape
-   *  hatch in case the WebGPU presenter falls back to CPU on a
-   *  specific driver/GPU combo and we need to diff transports
-   *  in the field. The selection precedence is:
-   *      outputNativeCore                     →  Rust/wgpu managed output
-   *      outputZeroCopy && WebGPU available  →  webgpu-display
-   *      outputWebRTC                         →  webrtc-display
-   *      else                                 →  output (legacy)
+   *  Superseded in native-only desktop builds. Remains in the schema for
+   *  loading older settings and non-native diagnostic builds.
    */
   outputWebRTC: boolean;
 
-  /** Editor VideoFrame bridge. Default true: Canvas.svelte keeps the WebGL
-   *  editor compositor live while WebGPUCanvas handles GPU-backed handoff and
-   *  preview/output bridge work. */
+  /** Editor VideoFrame bridge for non-native diagnostic builds. Native-only
+   *  desktop mode disables it because the editor preview must be the core's
+   *  single composite, not a browser-rendered copy. */
   editorWebGPU: boolean;
 
-  /** Zero-copy GPU output transport — the fallback path behind native output.
+  /** Zero-copy GPU output transport for non-native diagnostic builds.
    *
    *  When true (default), the visible output window mounts
    *  OutputSharedTextureDisplayApp: a WebGPU presenter that receives
@@ -734,10 +729,8 @@ export interface ExperimentalSettings {
    *      what Resolume builds in C++. We just consume it through web
    *      APIs.
    *
-   *  Used when `outputNativeCore` is disabled or unavailable. Falls back to
-   *  `outputWebRTC` (if also true) or to the legacy
-   *  SpoutOutputApp when WebGPU is unavailable (`webgpuCapability`
-   *  probe fails) or when MessagePortMain delivery fails.
+   *  Native-only desktop builds force this off; output comes from the
+   *  Rust/wgpu core or stays unavailable.
    *
    *  Health monitoring: each VideoFrame's `format` field is logged on
    *  the first 5 frames; `'NV12'` / `'I420'` indicate GPU-backed
@@ -746,23 +739,19 @@ export interface ExperimentalSettings {
    *  a degraded link mid-show. */
   outputZeroCopy: boolean;
   /** Route the visible output command to the Rust/wgpu render core's
-   *  managed window. This is the v2.0 target transport. It is the default
-   *  desktop output route now; if the core is not ready, the app falls
-   *  back to the current WebGPU zero-copy output path. */
+   *  managed window. This is the v2.0 desktop output transport. */
   outputNativeCore: boolean;
   /**
-   * Allow the legacy `gpuEffectRunner` CPU-readback bridge to run when
-   * the user has a WebGPU effect (e.g. `gpuFluidSim`) in their layer's
-   * effect chain.
+   * Allow the legacy `gpuEffectRunner` CPU-readback bridge to run in the
+   * comparison renderer when the user has a WebGPU effect (e.g. `gpuFluidSim`)
+   * in their layer's effect chain.
    *
-   * Default true now so GPU effects visibly work when selected. Power users
-   * can disable it to avoid the per-frame GPU→CPU→GPU transfer cost when they
-   * are not using mid-chain GPU effects.
+   * Native v2 always ignores this bridge. If an effect cannot be expressed
+   * as a native graph/effect-pass, it should be disabled or ported rather
+   * than mirrored through CPU pixels.
    *
-   * When ON: mid-chain WebGPU effects work as before, paying the
-   * CPU-readback cost. Useful when the effect needs to compose with
-   * downstream WebGL effects (warp, blend, etc.) before the final
-   * bridge to WebGPU at output time.
+   * When ON with native output disabled: mid-chain WebGPU effects work as
+   * before, paying the CPU-readback cost.
    */
   allowMidChainGpuEffects: boolean;
 }
@@ -818,6 +807,26 @@ export interface AppSettings {
   performance: PerformanceSettings;
 }
 
+// Ghost Arcade 2.0 native branch policy. The old renderer flags remain in the
+// schema so older projects/settings load cleanly, but the desktop app no
+// longer exposes or honors legacy renderer routes while this is true.
+export const NATIVE_ENGINE_ONLY = true;
+
+function enforceNativeEngineOnly(settings: AppSettings): AppSettings {
+  if (!NATIVE_ENGINE_ONLY || !isDesktopApp) return settings;
+  return {
+    ...settings,
+    experimental: {
+      ...settings.experimental,
+      outputNativeCore: true,
+      outputZeroCopy: false,
+      outputWebRTC: false,
+      editorWebGPU: false,
+      allowMidChainGpuEffects: false,
+    },
+  };
+}
+
 // Check which formats are supported by this browser
 export function getSupportedFormats(): { id: string; label: string; mimeType: string; supported: boolean }[] {
   const formats = [
@@ -856,7 +865,7 @@ function createDefaultSettings(): AppSettings {
     || supported.find(f => f.id === 'webm-vp8')?.id
     || 'webm-vp8';
 
-  return {
+  return enforceNativeEngineOnly({
     recording: {
       format: defaultFormat as RecordingSettings['format'],
       videoBitrate: 5000000, // 5 Mbps
@@ -947,38 +956,20 @@ function createDefaultSettings(): AppSettings {
       // toggle in dev preferences AND `webgpuCapability.probeWebGPU()`
       // succeeding — neither alone unlocks the pilot.
       webgpuPilot: false,
-      // WebRTC output transport. Off by default — the legacy
-      // SpoutOutputApp renderer is the proven baseline. Flipping
-      // this on routes the output window to OutputDisplayApp +
-      // canvas.captureStream + RTCPeerConnection. Stays opt-in
-      // until the success-criteria sweep proves out.
+      // Non-native diagnostic transport only. Native-only desktop builds
+      // force this off through enforceNativeEngineOnly().
       outputWebRTC: false,
-      // S5: WebGPU + MediaStreamTrackProcessor + GPUExternalTexture.
-      // Default ON — this is the production zero-copy path. Falls
-      // back to outputWebRTC (if also on) or legacy SpoutOutputApp
-      // when the WebGPU capability probe says no or when the
-      // MessagePort handshake fails.
-      outputZeroCopy: true,
-      // Native render-core managed output. This is the v2.0 output-driver
-      // path now; the Output Window command falls back to zero-copy WebGPU
-      // if the core is missing or not ready.
+      // Non-native diagnostic transport only. Native-only desktop builds
+      // force this off through enforceNativeEngineOnly().
+      outputZeroCopy: false,
+      // Native render-core managed output. This is the v2.0 desktop path.
       outputNativeCore: true,
-      // Phase 2 of the WebGPU migration. Default ON in the GPU edition
-      // as of the bridge-as-default shift — the VideoFrame +
-      // importExternalTexture bridge in WebGPUCanvas.svelte is the
-      // primary WebGL → WebGPU path now, and the output zero-copy
-      // transport above depends on it. Falls back automatically when
-      // `webgpuCapability.probeWebGPU()` fails.
-      editorWebGPU: true,
-      // Mid-chain CPU-readback bridge (gpuEffectRunner). Was opt-in to
-      // protect users from the ~3ms GPU→CPU→GPU round-trip per affected
-      // effect — but that meant dropping the only WebGPU effect we
-      // ship (`gpuFluidSim`) on a layer did nothing, which is a wrong
-      // default for the GPU edition. Now ON by default: users who add
-      // a `gpu*` effect actually get the effect. Power users can flip
-      // it off in Settings → Performance → Renderer to keep the steady-state
-      // path purely WebGL when they're not using GPU effects.
-      allowMidChainGpuEffects: true,
+      // Non-native diagnostic bridge only. Native-only desktop builds
+      // force this off so preview pixels come from the core composite.
+      editorWebGPU: false,
+      // Legacy comparison-only CPU-readback bridge (gpuEffectRunner).
+      // Native v2 ignores this even if a saved project has it enabled.
+      allowMidChainGpuEffects: false,
     },
     performance: {
       // Defaults match the historical full-quality behaviour. Users on
@@ -994,7 +985,7 @@ function createDefaultSettings(): AppSettings {
       stage3DFrameRate: 30,           // external Stage 3D view renders its own compositor
       useWebGL2LightPainting: true,   // WebGL2 instanced renderer ON by default
     },
-  };
+  });
 }
 
 // Local storage key
@@ -1002,9 +993,9 @@ const STORAGE_KEY = 'ghost-arcade_settings';
 const APP_VERSION_KEY = 'ill_app_version';
 // Bump this whenever stale localStorage may break the new build.
 // Any mismatch clears problematic caches on startup.
-// 0.3.9 bump: routes existing installs to the Rust/wgpu native output
-// driver by default, with the WebGPU zero-copy path still acting as fallback.
-const CURRENT_APP_VERSION = '0.3.9';
+// 0.3.10 bump: clears stale renderer/output state after native compositor
+// fixes while keeping the v2 native managed output path enabled for testing.
+const CURRENT_APP_VERSION = '0.3.10';
 
 /**
  * Clear known-problematic localStorage on version change so a fresh install
@@ -1047,27 +1038,15 @@ function runVersionMigration(): { versionChanged: boolean } {
         if (parsed.defaultLayerShader === 'crosshair' || parsed.defaultLayerShader == null) {
           parsed.defaultLayerShader = 'grid';
         }
-        // Flip `allowMidChainGpuEffects` from old default (false) to new
-        // default (true) for existing users. Without this migration,
-        // anyone who launched a prior version keeps `false` saved and
-        // the only WebGPU effect (`gpuFluidSim`) silently does nothing
-        // when added to a layer. We only flip the explicit `false`;
-        // if the user has explicitly toggled it off in Settings →
-        // Experimental, that's a `false` too — but we have no way to
-        // distinguish "default" from "explicitly turned off" without
-        // versioning the field, so we forcibly enable for everyone on
-        // the version that introduces hero `gpuFluidSim` integration.
-        if (parsed.experimental && parsed.experimental.allowMidChainGpuEffects === false) {
-          parsed.experimental.allowMidChainGpuEffects = true;
-        }
-        // v2 native renderer cutover: fresh defaults now use the Rust/wgpu
-        // managed output path, but existing localStorage would otherwise keep
-        // whatever value was saved while this was an opt-in switch. Force it
-        // on once for all upgraded installs; users can still turn it off
-        // afterwards to force the zero-copy WebGPU fallback.
+        // v2 native renderer target: keep existing installs on the native
+        // managed output path and disable comparison transports in this branch.
         parsed.experimental = {
           ...(parsed.experimental || {}),
           outputNativeCore: true,
+          outputZeroCopy: false,
+          outputWebRTC: false,
+          editorWebGPU: false,
+          allowMidChainGpuEffects: false,
         };
         localStorage.setItem(STORAGE_KEY, JSON.stringify(parsed));
       }
@@ -1097,7 +1076,7 @@ function loadSettings(): AppSettings {
       const legacyGemini = localStorage.getItem('ai_gemini_key') || '';
       const legacyProvider = localStorage.getItem('ai_provider') || '';
 
-      const settings = {
+      const settings = enforceNativeEngineOnly({
         ...defaults,
         ...parsed,
         recording: {
@@ -1149,7 +1128,7 @@ function loadSettings(): AppSettings {
           ...defaults.performance,
           ...(parsed.performance || {}),
         },
-      };
+      });
 
       // Clean up legacy keys after migration
       if (legacyClaude) localStorage.removeItem('ai_claude_key');
@@ -1199,7 +1178,7 @@ function loadSettings(): AppSettings {
       // localStorage might be full or blocked. Nothing more we can do.
     }
   }
-  const defaults = createDefaultSettings();
+  const defaults = enforceNativeEngineOnly(createDefaultSettings());
   // Apply default color scheme
   applyColorScheme(getColorScheme(defaults.ui.colorScheme));
   return defaults;
@@ -1208,6 +1187,7 @@ function loadSettings(): AppSettings {
 // Save settings to localStorage (with API key encryption)
 function saveSettings(settings: AppSettings) {
   try {
+    settings = enforceNativeEngineOnly(settings);
     // Don't save the directory handle (not serializable)
     const toSave = {
       ...settings,
@@ -1682,7 +1662,7 @@ function createSettingsStore() {
     // Generic update — for settings sections without dedicated setters
     update(fn: (s: AppSettings) => AppSettings) {
       update(s => {
-        const newSettings = fn(s);
+        const newSettings = enforceNativeEngineOnly(fn(s));
         saveSettings(newSettings);
         return newSettings;
       });

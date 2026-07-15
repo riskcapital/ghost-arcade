@@ -9,9 +9,7 @@ import { NATIVE_EFFECT_COVERAGE } from '$lib/renderer/nativeEffectCoverage';
 
 export type NativeRendererDriverMode =
   | 'offline'
-  | 'degraded'
-  | 'shadow'
-  | 'output-driver'
+  | 'native-enabled'
   | 'full-v2';
 
 export interface NativeRendererRuntimeState {
@@ -27,9 +25,15 @@ export interface NativeRendererRuntimeState {
   graphCatalogComplete: boolean;
   nativeGraphSourceFrames: boolean;
   nativeGraphSourceFrameLayers: number;
+  sceneLayersActive: number;
+  outputLastPresentedLayerCount: number;
   nativeGraphRouteFailures: number;
   nativeGraphRouteSuppressedFailures: number;
   nativeGraphRouteLastFailure: string | null;
+  nativeBlockedLayerCount: number;
+  nativeBlockedEffectLayerCount: number;
+  nativeBlockedSourceLayerCount: number;
+  nativeBlockedLayerLastReason: string | null;
   computeGraphRuns: number;
   computeGraphPasses: number;
   sourceFrameSize: number;
@@ -56,6 +60,10 @@ export interface NativeRendererRuntimeState {
   nativeRecordingReady: boolean;
   nativeStage3DReady: boolean;
   nativeProjectionSimReady: boolean;
+  nativeEditorPreviewPresentation: string;
+  nativeEditorPreviewParented: boolean;
+  nativeEditorPreviewNeedsUnderlay: boolean;
+  nativeEditorPreviewProductionReady: boolean;
   readinessChecks: NativeRendererRuntimeCheck[];
   nativeOutputShareCapable: boolean;
   nativeOutputShareActive: boolean;
@@ -87,9 +95,15 @@ export const initialNativeRendererRuntimeState: NativeRendererRuntimeState = {
   graphCatalogComplete: false,
   nativeGraphSourceFrames: false,
   nativeGraphSourceFrameLayers: 0,
+  sceneLayersActive: 0,
+  outputLastPresentedLayerCount: 0,
   nativeGraphRouteFailures: 0,
   nativeGraphRouteSuppressedFailures: 0,
   nativeGraphRouteLastFailure: null,
+  nativeBlockedLayerCount: 0,
+  nativeBlockedEffectLayerCount: 0,
+  nativeBlockedSourceLayerCount: 0,
+  nativeBlockedLayerLastReason: null,
   computeGraphRuns: 0,
   computeGraphPasses: 0,
   sourceFrameSize: 0,
@@ -116,6 +130,10 @@ export const initialNativeRendererRuntimeState: NativeRendererRuntimeState = {
   nativeRecordingReady: false,
   nativeStage3DReady: false,
   nativeProjectionSimReady: false,
+  nativeEditorPreviewPresentation: 'unavailable',
+  nativeEditorPreviewParented: false,
+  nativeEditorPreviewNeedsUnderlay: true,
+  nativeEditorPreviewProductionReady: false,
   readinessChecks: [],
   nativeOutputShareCapable: false,
   nativeOutputShareActive: false,
@@ -192,16 +210,7 @@ function deriveDriverMode(
   readiness: RendererReadinessReport | null | undefined,
 ): NativeRendererDriverMode {
   if (readinessModeOk(readiness, 'full_v2')) return 'full-v2';
-  return deriveFallbackDriverMode(status, readiness);
-}
-
-function deriveFallbackDriverMode(
-  status: RendererStatus | null | undefined,
-  readiness: RendererReadinessReport | null | undefined,
-): NativeRendererDriverMode {
-  if (readinessModeOk(readiness, 'output_driver')) return 'output-driver';
-  if (readinessModeOk(readiness, 'shadow')) return 'shadow';
-  if (status?.running || status?.backend_ready) return 'degraded';
+  if (status?.running || status?.backend_ready) return 'native-enabled';
   return 'offline';
 }
 
@@ -212,13 +221,27 @@ function featureEnabled(
   return features?.[feature] === true;
 }
 
-function readinessCheckOkOrFallback(
+function nativeEditorPreviewProductionReady(
+  preview: NativeRendererCapabilities['native_editor_preview'] | null | undefined,
+): boolean {
+  if (!preview || preview.source !== 'core-output-composite' || preview.single_render !== true) return false;
+  if (preview.production_ready !== true || preview.needs_underlay_lock_in !== false) return false;
+  const mode = String(preview.mode ?? '');
+  const presentation = String(preview.presentation ?? '');
+  return (
+    presentation === 'underlay-zero-copy' ||
+    mode === 'shared-texture-import-blit' ||
+    mode === 'external-texture-import'
+  );
+}
+
+function readinessCheckOkOrCapability(
   readiness: RendererReadinessReport | null | undefined,
   id: string,
-  fallback: boolean,
+  capabilityValue: boolean,
 ): boolean {
   const check = readinessCheck(readiness, id);
-  return check ? !!check.ok : fallback;
+  return check ? !!check.ok : capabilityValue;
 }
 
 function localMainDriverBlockers(options: {
@@ -227,6 +250,9 @@ function localMainDriverBlockers(options: {
   capabilities: NativeRendererCapabilities | null | undefined;
   graphCatalogComplete: boolean;
   nativeGraphSourceFrames: boolean;
+  nativeGraphRouteFailures?: number;
+  nativeBlockedLayerCount?: number;
+  nativeBlockedLayerLastReason?: string | null;
 }): string[] {
   const {
     status,
@@ -234,13 +260,24 @@ function localMainDriverBlockers(options: {
     capabilities,
     graphCatalogComplete,
     nativeGraphSourceFrames,
+    nativeGraphRouteFailures = 0,
+    nativeBlockedLayerCount = 0,
+    nativeBlockedLayerLastReason = null,
   } = options;
   const features = capabilities?.features ?? readiness?.capabilities?.features ?? {};
   const blockers: string[] = [];
   if (!nativeGraphSourceFrames) blockers.push('native graph source-frame rendering is unavailable');
   if (!graphCatalogComplete) blockers.push('native graph instrument catalog is incomplete');
+  if (nativeGraphRouteFailures > 0) {
+    blockers.push(`${nativeGraphRouteFailures} native graph route miss${nativeGraphRouteFailures === 1 ? '' : 'es'}`);
+  }
+  if (nativeBlockedLayerCount > 0) {
+    blockers.push(
+      `${nativeBlockedLayerCount} visible layer${nativeBlockedLayerCount === 1 ? '' : 's'} blocked by native inventory${nativeBlockedLayerLastReason ? `: ${nativeBlockedLayerLastReason}` : ''}`,
+    );
+  }
 
-  const nativeEffectPassReady = readinessCheckOkOrFallback(
+  const nativeEffectPassReady = readinessCheckOkOrCapability(
     readiness,
     'native-effect-pass-manifest',
     !!(
@@ -250,7 +287,7 @@ function localMainDriverBlockers(options: {
       featureEnabled(features, 'compute_graph_source_frame_target')
     ),
   );
-  const nativeOutputDriverReady = readinessCheckOkOrFallback(
+  const nativeOutputDriverReady = readinessCheckOkOrCapability(
     readiness,
     'native-output-driver',
     !!(
@@ -265,22 +302,32 @@ function localMainDriverBlockers(options: {
       featureEnabled(features, 'native_static_image_prefetch')
     ),
   );
-  const sharedTextureUploadReady = readinessCheckOkOrFallback(
+  const sharedTextureUploadReady = readinessCheckOkOrCapability(
     readiness,
     'shared-texture-upload',
     featureEnabled(features, 'shared_texture_upload'),
   );
-  const outputSharedTextureExportReady = readinessCheckOkOrFallback(
+  const outputSharedTextureExportReady = readinessCheckOkOrCapability(
     readiness,
     'shared-texture-output-export',
     featureEnabled(features, 'shared_texture_output_export'),
   );
-  const nativeTextureShareSenderReady = readinessCheckOkOrFallback(
+  const nativeTextureShareSenderReady = readinessCheckOkOrCapability(
     readiness,
     'native-texture-share-sender',
     featureEnabled(features, 'native_texture_share_sender'),
   );
-  const nativeMediaDecodeReady = readinessCheckOkOrFallback(
+  const nativeEditorPreviewFrameSourceReady = readinessCheckOkOrCapability(
+    readiness,
+    'native-editor-preview-frame-source',
+    featureEnabled(features, 'native_editor_preview_frame_source'),
+  );
+  const nativeEditorPreviewProductionCheck = readinessCheck(readiness, 'native-editor-preview-production');
+  const nativeEditorPreviewProductionReadyValue = !!(
+    nativeEditorPreviewProductionCheck?.ok ??
+    nativeEditorPreviewProductionReady(capabilities?.native_editor_preview)
+  );
+  const nativeMediaDecodeReady = readinessCheckOkOrCapability(
     readiness,
     'native-media-decode',
     !!(
@@ -292,7 +339,7 @@ function localMainDriverBlockers(options: {
       featureEnabled(features, 'native_video_decode_pump_window')
     ),
   );
-  const nativeRecordingReady = readinessCheckOkOrFallback(
+  const nativeRecordingReady = readinessCheckOkOrCapability(
     readiness,
     'native-recording',
     featureEnabled(features, 'native_recording'),
@@ -313,6 +360,8 @@ function localMainDriverBlockers(options: {
   if (!sharedTextureUploadReady) blockers.push('full shared-texture media transport is pending');
   if (!outputSharedTextureExportReady) blockers.push('native output shared-texture export is unavailable');
   if (!nativeTextureShareSenderReady) blockers.push('native texture-share sender is not active-ready');
+  if (!nativeEditorPreviewFrameSourceReady) blockers.push('editor preview is not consuming the native core frame source');
+  if (!nativeEditorPreviewProductionReadyValue) blockers.push('editor preview presenter is not production zero-copy');
   if (!nativeMediaDecodeReady) blockers.push('native render-clock video decode pump is not fully ready');
   if (!nativeRecordingReady) blockers.push('native recording/MP4 frame path is not fully ready');
   if (!nativeStage3DReady) blockers.push('native Stage3D renderer/recording parity is pending');
@@ -327,9 +376,12 @@ function readinessDetailForMode(
   readiness: RendererReadinessReport | null | undefined,
 ): string {
   if (mode === 'full-v2') return readinessModeDetail(readiness, 'full_v2') || 'native main driver gates are ready';
-  if (mode === 'output-driver') return readinessModeDetail(readiness, 'output_driver') || 'native output driver is ready';
-  if (mode === 'shadow') return readinessModeDetail(readiness, 'shadow') || 'native scene sync is active';
-  if (mode === 'degraded') return status?.last_frame_error || readiness?.blockers?.[0] || 'native renderer is starting with incomplete readiness gates';
+  if (mode === 'native-enabled') {
+    const blocker = readiness?.modes?.full_v2?.blockers?.[0] || readiness?.blockers?.[0];
+    return blocker
+      ? `native surfaces enabled; full-v2 pending: ${blocker}`
+      : status?.last_frame_error || readinessModeDetail(readiness, 'full_v2') || 'native surfaces enabled';
+  }
   return 'native renderer is offline';
 }
 
@@ -372,6 +424,10 @@ export function deriveNativeRendererRuntimeState(
     nativeGraphRouteFailures?: number;
     nativeGraphRouteSuppressedFailures?: number;
     nativeGraphRouteLastFailure?: string | null;
+    nativeBlockedLayerCount?: number;
+    nativeBlockedEffectLayerCount?: number;
+    nativeBlockedSourceLayerCount?: number;
+    nativeBlockedLayerLastReason?: string | null;
     updatedAtMs?: number;
   } = {},
 ): NativeRendererRuntimeState {
@@ -387,13 +443,15 @@ export function deriveNativeRendererRuntimeState(
     capabilities,
     graphCatalogComplete,
     nativeGraphSourceFrames,
+    nativeGraphRouteFailures: options.nativeGraphRouteFailures,
+    nativeBlockedLayerCount: options.nativeBlockedLayerCount,
+    nativeBlockedLayerLastReason: options.nativeBlockedLayerLastReason,
   });
-  const exposedLocalBlockers = advertisedMode === 'full-v2' ? localBlockers : [];
   const mode = advertisedMode === 'full-v2' && localBlockers.length > 0
-    ? deriveFallbackDriverMode(status, readiness)
+    ? 'native-enabled'
     : advertisedMode;
   const readinessDetail = advertisedMode === 'full-v2' && localBlockers.length > 0
-    ? `native output driver is ready; main driver waiting on ${localBlockers[0]}`
+    ? `native surfaces enabled; full-v2 pending: ${localBlockers[0]}`
     : readinessDetailForMode(mode, status, readiness);
   const textureShare = readiness?.texture_share ?? null;
   const sourceFrameUploadCheck = readinessCheck(readiness, 'shared-texture-source-frame-upload');
@@ -406,6 +464,15 @@ export function deriveNativeRendererRuntimeState(
   const nativeStage3DRecordingCheck = readinessCheck(readiness, 'native-stage3d-recording-parity');
   const nativeProjectionOutputCheck = readinessCheck(readiness, 'native-projection-sim-output-renderer');
   const nativeProjectionRecordingCheck = readinessCheck(readiness, 'native-projection-sim-recording-parity');
+  const nativeEditorPreviewProductionCheck = readinessCheck(readiness, 'native-editor-preview-production');
+  const nativeEditorPreview = (capabilities?.native_editor_preview ?? {}) as NonNullable<
+    NativeRendererCapabilities['native_editor_preview']
+  >;
+  const nativeEditorPreviewPresentation = String(nativeEditorPreview.presentation ?? 'unavailable');
+  const nativeEditorPreviewProductionReadyValue = !!(
+    nativeEditorPreviewProductionCheck?.ok ??
+    nativeEditorPreviewProductionReady(nativeEditorPreview)
+  );
 
   return {
     running: !!status?.running,
@@ -420,10 +487,18 @@ export function deriveNativeRendererRuntimeState(
     graphCatalogComplete,
     nativeGraphSourceFrames,
     nativeGraphSourceFrameLayers: Number(status?.native_graph_source_frame_layers ?? 0),
+    sceneLayersActive: Number(status?.scene_layers_active ?? 0),
+    outputLastPresentedLayerCount: Number(status?.output_last_presented_layer_count ?? 0),
     nativeGraphRouteFailures: Math.max(0, Number(options.nativeGraphRouteFailures ?? 0)),
     nativeGraphRouteSuppressedFailures: Math.max(0, Number(options.nativeGraphRouteSuppressedFailures ?? 0)),
     nativeGraphRouteLastFailure: options.nativeGraphRouteLastFailure !== undefined
       ? options.nativeGraphRouteLastFailure
+      : null,
+    nativeBlockedLayerCount: Math.max(0, Number(options.nativeBlockedLayerCount ?? 0)),
+    nativeBlockedEffectLayerCount: Math.max(0, Number(options.nativeBlockedEffectLayerCount ?? 0)),
+    nativeBlockedSourceLayerCount: Math.max(0, Number(options.nativeBlockedSourceLayerCount ?? 0)),
+    nativeBlockedLayerLastReason: options.nativeBlockedLayerLastReason !== undefined
+      ? options.nativeBlockedLayerLastReason
       : null,
     computeGraphRuns: Number(status?.compute_graph_runs ?? 0),
     computeGraphPasses: Number(status?.compute_graph_passes ?? 0),
@@ -432,7 +507,7 @@ export function deriveNativeRendererRuntimeState(
     sourceFrameMipLevels: Number(status?.source_frame_mip_levels ?? capabilities?.limits?.source_frame_mip_levels ?? 1),
     averageGpuMs: Number.isFinite(status?.avg_render_gpu_ms) ? Number(status?.avg_render_gpu_ms) : null,
     readinessDetail,
-    blockers: blockersForMode(mode, readiness, exposedLocalBlockers),
+    blockers: blockersForMode(mode, readiness, localBlockers),
     textureShareLabel: textureShare?.label ?? null,
     textureSharePlatform: textureShare?.platform ?? null,
     textureShareAvailable: !!textureShare?.available,
@@ -457,6 +532,12 @@ export function deriveNativeRendererRuntimeState(
       (nativeProjectionOutputCheck?.ok ?? features.native_projection_sim_output_renderer) &&
       (nativeProjectionRecordingCheck?.ok ?? features.native_projection_sim_recording_parity)
     ),
+    nativeEditorPreviewPresentation,
+    nativeEditorPreviewParented: nativeEditorPreview.parented === true ||
+      nativeEditorPreviewPresentation === 'parented-overlay' ||
+      nativeEditorPreviewPresentation === 'parented-underlay-probe',
+    nativeEditorPreviewNeedsUnderlay: nativeEditorPreview.needs_underlay_lock_in !== false,
+    nativeEditorPreviewProductionReady: nativeEditorPreviewProductionReadyValue,
     readinessChecks: normalizeRuntimeChecks(readiness?.checks),
     nativeOutputShareCapable: !!textureShare?.nativeOutputCapable,
     nativeOutputShareActive: !!textureShare?.nativeOutputActive,
@@ -497,6 +578,10 @@ export function updateNativeRendererRuntimeFromStatus(
     nativeGraphRouteFailures?: number;
     nativeGraphRouteSuppressedFailures?: number;
     nativeGraphRouteLastFailure?: string | null;
+    nativeBlockedLayerCount?: number;
+    nativeBlockedEffectLayerCount?: number;
+    nativeBlockedSourceLayerCount?: number;
+    nativeBlockedLayerLastReason?: string | null;
   } = {},
 ) {
   nativeRendererRuntime.update((current) => {
@@ -513,6 +598,12 @@ export function updateNativeRendererRuntimeFromStatus(
         nativeGraphRouteLastFailure: options.nativeGraphRouteLastFailure !== undefined
           ? options.nativeGraphRouteLastFailure
           : current.nativeGraphRouteLastFailure,
+        nativeBlockedLayerCount: options.nativeBlockedLayerCount ?? current.nativeBlockedLayerCount,
+        nativeBlockedEffectLayerCount: options.nativeBlockedEffectLayerCount ?? current.nativeBlockedEffectLayerCount,
+        nativeBlockedSourceLayerCount: options.nativeBlockedSourceLayerCount ?? current.nativeBlockedSourceLayerCount,
+        nativeBlockedLayerLastReason: options.nativeBlockedLayerLastReason !== undefined
+          ? options.nativeBlockedLayerLastReason
+          : current.nativeBlockedLayerLastReason,
       },
     );
     if (options.readiness || !status?.running) return next;
@@ -560,10 +651,8 @@ export function resetNativeRendererRuntime(reason = 'native renderer is offline'
 
 export function nativeRendererModeLabel(mode: NativeRendererDriverMode): string {
   if (mode === 'full-v2') return 'Native Main Driver';
-  if (mode === 'output-driver') return 'Native Output Driver';
-  if (mode === 'shadow') return 'Native Scene Sync';
-  if (mode === 'degraded') return 'Native Starting';
-  return 'WebGL Fallback';
+  if (mode === 'native-enabled') return 'Native Enabled';
+  return 'Native Offline';
 }
 
 export function nativeRendererOutputShareTransportLabel(
@@ -617,6 +706,14 @@ export function nativeRendererMainDriverGateChecks(
 
   return [
     {
+      id: 'native-inventory',
+      label: 'Native inventory',
+      ok: state.nativeBlockedLayerCount === 0,
+      detail: state.nativeBlockedLayerCount === 0
+        ? 'all visible project layers are owned by the native renderer'
+        : `${state.nativeBlockedLayerCount} blocked layer${state.nativeBlockedLayerCount === 1 ? '' : 's'} (${state.nativeBlockedEffectLayerCount} effect, ${state.nativeBlockedSourceLayerCount} source); ${state.nativeBlockedLayerLastReason ?? 'reason unavailable'}`,
+    },
+    {
       id: 'native-graph-routing',
       label: 'Native graph routing',
       ok: graphReady,
@@ -657,6 +754,20 @@ export function nativeRendererMainDriverGateChecks(
       `${state.textureShareLabel || 'Texture-share'} sender`,
       state.nativeTextureShareSenderReady,
       state.nativeTextureShareSenderDetail || 'native texture-share sender is not active-ready',
+    ),
+    gate(
+      'native-editor-preview-frame-source',
+      'Editor preview source',
+      !!checks.get('native-editor-preview-frame-source')?.ok,
+      checks.get('native-editor-preview-frame-source')?.detail ||
+        'editor preview is not consuming the native core frame source',
+    ),
+    gate(
+      'native-editor-preview-production',
+      'Editor preview zero-copy',
+      state.nativeEditorPreviewProductionReady,
+      checks.get('native-editor-preview-production')?.detail ||
+        'editor preview presenter is not production zero-copy',
     ),
     gate(
       'native-output-driver',

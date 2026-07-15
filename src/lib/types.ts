@@ -717,6 +717,10 @@ export interface MediaSource {
   playbackRate?: number; // Playback speed multiplier (default: 1.0)
   trimStart?: number; // 0-1 normalized start point (default 0)
   trimEnd?: number; // 0-1 normalized end point (default 1)
+  durationSeconds?: number; // Native transport metadata; retained when no browser video is attached
+  _nativePlaybackTimeSeconds?: number; // Runtime anchor for the native decoder clock
+  _nativePlaybackUpdatedAtMs?: number; // performance.now() corresponding to the native time anchor
+  _nativePlaybackSeekSeq?: number; // Incremented for every explicit native seek/restart
   _lastFrameTime?: number; // Internal: timestamp for manual frame stepping
   // Timelapse mode properties
   timelapseInterval?: number; // Seconds between frames (1-30)
