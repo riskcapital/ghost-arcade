@@ -10,6 +10,7 @@
   import type { MediaSource, ISFInputDef, ImageInputRef, JSAnimationSource, VideoPlaybackMode, MediaTrayFolder, IntegratedEffectSource, IntegratedEffectType } from '../types';
   import { generateUUID } from '../types';
   import { videoLibrary, type SavedVideo } from '../stores/videoLibrary';
+  import { armNativeLibraryVideo } from '../sync/nativeRendererSync';
   import { parseISF, getInputDefault } from '../isf/parser';
   import { generateCachedThumbnail as generateShaderThumbnail } from '../isf/thumbnail';
   import { estimateShaderLoadRating, type ShaderLoadRating } from '../isf/loadRating';
@@ -1771,6 +1772,10 @@
 
           source.videoElement = video;
           source.isPlaying = !video.paused;
+          source.durationSeconds = Number.isFinite(video.duration) ? video.duration : undefined;
+          source._nativePlaybackTimeSeconds = 0;
+          source._nativePlaybackUpdatedAtMs = performance.now();
+          source._nativePlaybackSeekSeq = 1;
         }
 
         project.setLayerSource(layerId, source);
@@ -2729,6 +2734,18 @@
 
   function getVisibleItemsForSelection() {
     return currentItems;
+  }
+
+  /** Hover/drag-start pre-arm so a subsequent click triggers the clip with
+   *  zero decoder cold-start — the native core pre-rolls a paused `library:`
+   *  session and hands it over at bind time (music-sync trigger latency). */
+  function armTrayVideoItem(item: MediaItem | ShaderItem | JSAnimationItem) {
+    if (!('type' in item) || item.type !== 'video' || !item.src) return;
+    armNativeLibraryVideo({
+      id: item.id,
+      src: item.src,
+      videoElement: (item as MediaItem).videoElement ?? null,
+    });
   }
 
   function handleTrayItemClick(itemId: string, e: MouseEvent, apply: () => void) {
@@ -4353,8 +4370,9 @@
               class:drag-over-reorder={dragOverTrayItemId === item.id}
               onclick={(e) => handleTrayItemClick(item.id, e, () => addTrayItemToCurrentMode(item))}
               oncontextmenu={(e) => openTrayContextMenu(item.id, e)}
+              onpointerenter={() => armTrayVideoItem(item)}
               draggable="true"
-              ondragstart={(e) => onTrayItemDragStart(item, e)}
+              ondragstart={(e) => { armTrayVideoItem(item); onTrayItemDragStart(item, e); }}
               ondragover={(e) => { e.preventDefault(); dragOverTrayItemId = item.id; }}
               ondragleave={() => { if (dragOverTrayItemId === item.id) dragOverTrayItemId = null; }}
               ondrop={(e) => { e.preventDefault(); e.stopPropagation(); reorderTrayItem(item.id); }}

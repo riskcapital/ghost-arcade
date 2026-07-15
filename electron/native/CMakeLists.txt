@@ -178,6 +178,51 @@ elseif(APPLE)
         COMMENT "Rewriting Syphon install_name to @rpath, staging Syphon.framework, and re-signing for Apple Silicon"
     )
 
+    # --- macOS: embedded native editor preview presenter ---
+    add_library(native_preview_addon SHARED
+        native_preview_addon.mm
+        ${CMAKE_JS_SRC}
+    )
+
+    find_library(QUARTZCORE_FRAMEWORK QuartzCore)
+    find_library(METAL_FRAMEWORK Metal)
+    find_library(IOSURFACE_FRAMEWORK IOSurface)
+    find_library(COREVIDEO_FRAMEWORK CoreVideo)
+
+    target_include_directories(native_preview_addon PRIVATE
+        ${CMAKE_JS_INC}
+        ${NODE_ADDON_API_DIR}
+    )
+
+    target_link_libraries(native_preview_addon PRIVATE
+        ${CMAKE_JS_LIB}
+        ${COCOA_FRAMEWORK}
+        ${QUARTZCORE_FRAMEWORK}
+        ${METAL_FRAMEWORK}
+        ${IOSURFACE_FRAMEWORK}
+        ${COREVIDEO_FRAMEWORK}
+    )
+
+    target_compile_definitions(native_preview_addon PRIVATE
+        NAPI_VERSION=9
+        NODE_ADDON_API_DISABLE_DEPRECATED
+    )
+
+    set_target_properties(native_preview_addon PROPERTIES
+        PREFIX ""
+        SUFFIX ".node"
+        CXX_STANDARD 17
+    )
+
+    set_source_files_properties(native_preview_addon.mm PROPERTIES
+        COMPILE_FLAGS "-x objective-c++ -fobjc-arc"
+    )
+
+    add_custom_command(TARGET native_preview_addon POST_BUILD
+        COMMAND codesign --force --sign - "$<TARGET_FILE:native_preview_addon>" || true
+        COMMENT "Re-signing native_preview_addon for Apple Silicon"
+    )
+
 endif()
 
 # ============================================================

@@ -26,8 +26,8 @@ function status(overrides: Partial<RendererStatus> = {}): RendererStatus {
     backend_ready: true,
     backend: 'metal',
     adapter_name: 'Apple M1 Max',
-    source_frame_size: 2048,
-    source_frame_format: 'rgba16float',
+    source_frame_size: 1024,
+    source_frame_format: 'rgba8unorm',
     source_frame_mip_levels: 4,
     native_graph_source_frame_layers: 3,
     compute_graph_runs: 12,
@@ -55,6 +55,26 @@ function capabilities(features: Record<string, boolean> = {}): NativeRendererCap
     },
     limits: {},
     notes: [],
+  };
+}
+
+function productionNativeEditorPreview(): NonNullable<NativeRendererCapabilities['native_editor_preview']> {
+  return {
+    available: true,
+    mode: 'shared-texture-import-blit',
+    presentation: 'underlay-zero-copy',
+    production_ready: true,
+    needs_underlay_lock_in: false,
+    parented: true,
+    source: 'core-output-composite',
+    single_render: true,
+    transport: 'iosurface',
+    color_space: 'srgb',
+    storage_format: 'bgra8unorm',
+    storage_encoding: 'srgb-encoded-bgra8unorm',
+    alpha_mode: 'opaque',
+    premultiplied_alpha: false,
+    zero_conversions: true,
   };
 }
 
@@ -115,16 +135,6 @@ const graphManifests = [
     feature: 'native_pixel_particles_graph',
     shaderIds: ['pixel-particles/compute', 'pixel-particles/render'],
   },
-  {
-    id: 'point-cloud-fx',
-    feature: 'native_point_cloud_fx_graph',
-    shaderIds: [
-      'point-cloud-fx/compute',
-      'point-cloud-fx/sort-fill',
-      'point-cloud-fx/sort-step',
-      'point-cloud-fx/render',
-    ],
-  },
 ];
 
 function completeGraphCapabilities(
@@ -166,6 +176,9 @@ const mainDriverFeatureSet = {
   shared_texture_upload: true,
   shared_texture_output_export: true,
   native_texture_share_sender: true,
+  native_editor_preview_frame_source: true,
+  isf_glsl_parse_probe: true,
+  isf_glsl_host: true,
   native_media_decode: true,
   media_prefetch: true,
   native_video_frame_decode: true,
@@ -187,6 +200,7 @@ function completeMainDriverCapabilities(features: Record<string, boolean> = {}):
       ...mainDriverFeatureSet,
       ...features,
     }),
+    native_editor_preview: productionNativeEditorPreview(),
     implemented_methods: ['export_frame_snapshot'],
   };
 }
@@ -209,9 +223,9 @@ function readiness(
 describe('native renderer runtime state', () => {
   it.each([
     ['full-v2', { shadow: true, output_driver: true, full_v2: true }],
-    ['output-driver', { shadow: true, output_driver: true, full_v2: false }],
-    ['shadow', { shadow: true, output_driver: false, full_v2: false }],
-    ['degraded', { shadow: false, output_driver: false, full_v2: false }],
+    ['native-enabled', { shadow: true, output_driver: true, full_v2: false }],
+    ['native-enabled', { shadow: true, output_driver: false, full_v2: false }],
+    ['native-enabled', { shadow: false, output_driver: false, full_v2: false }],
   ] as Array<[NativeRendererDriverMode, Record<string, boolean>]>)(
     'derives %s mode from readiness gates',
     (expected, gateState) => {
@@ -245,8 +259,8 @@ describe('native renderer runtime state', () => {
       expect(state.nativeGraphRouteLastFailure).toBeNull();
       expect(state.computeGraphRuns).toBe(12);
       expect(state.computeGraphPasses).toBe(48);
-      expect(state.sourceFrameSize).toBe(2048);
-      expect(state.sourceFrameFormat).toBe('rgba16float');
+      expect(state.sourceFrameSize).toBe(1024);
+      expect(state.sourceFrameFormat).toBe('rgba8unorm');
       expect(state.sourceFrameMipLevels).toBe(4);
       expect(state.averageGpuMs).toBe(2.25);
     },
@@ -279,11 +293,11 @@ describe('native renderer runtime state', () => {
       { capabilities: completeGraphCapabilities(), updatedAtMs: 125 },
     );
 
-    expect(state.driverMode).toBe('output-driver');
-    expect(state.blockers).toEqual([
+    expect(state.driverMode).toBe('native-enabled');
+    expect(state.blockers).toEqual(expect.arrayContaining([
       'shared-texture media transport is pending',
       'native Stage3D renderer is pending',
-    ]);
+    ]));
   });
 
   it('surfaces native output texture-share readiness for the toolbar', () => {
@@ -339,6 +353,12 @@ describe('native renderer runtime state', () => {
               ok: false,
               detail: 'native output IOSurface pump is waiting for the first rendered frame',
             },
+            {
+              id: 'native-editor-preview-frame-source',
+              label: 'Native editor preview source',
+              ok: false,
+              detail: 'editor preview is still a separate surface',
+            },
           ],
         },
       ),
@@ -358,11 +378,11 @@ describe('native renderer runtime state', () => {
     expect(state.sharedTextureOutputExportReady).toBe(true);
     expect(state.nativeEffectPassReady).toBe(true);
     expect(state.nativeEffectPassDetail).toContain('source-frame layer effects');
-    expect(state.nativeEffectCoverageNative).toBe(67);
+    expect(state.nativeEffectCoverageNative).toBe(71);
     expect(state.nativeEffectCoverageTotal).toBe(182);
-    expect(state.nativeEffectCoverageMissing).toBe(115);
+    expect(state.nativeEffectCoverageMissing).toBe(111);
     expect(state.nativeEffectCoverageComplete).toBe(false);
-    expect(state.nativeEffectCoverageDetail).toContain('native source-frame effect-pass coverage 67/182');
+    expect(state.nativeEffectCoverageDetail).toContain('native source-frame effect-pass coverage 71/182');
     expect(state.nativeEffectCoverageDetail).toContain('stateful/multi-frame effects tracked outside the effect-pass route');
     expect(state.nativeTextureShareSenderReady).toBe(false);
     expect(state.nativeTextureShareSenderDetail).toContain('waiting for the first rendered frame');
@@ -373,20 +393,24 @@ describe('native renderer runtime state', () => {
       'shared-texture-output-export',
       'native-effect-pass-manifest',
       'native-texture-share-sender',
+      'native-editor-preview-frame-source',
     ]);
     const gates = nativeRendererMainDriverGateChecks(state);
     expect(gates.map((gate) => [gate.id, gate.ok])).toEqual([
+      ['native-inventory', true],
       ['native-graph-routing', true],
       ['native-effect-pass-manifest', true],
       ['native-effect-coverage', false],
       ['shared-texture-upload', false],
       ['shared-texture-output-export', true],
       ['native-texture-share-sender', false],
+      ['native-editor-preview-frame-source', false],
+      ['native-editor-preview-production', false],
       ['native-output-driver', true],
       ['native-recording', false],
       ['native-3d-scene-renderers', false],
     ]);
-    expect(gates.find((gate) => gate.id === 'native-effect-coverage')?.detail).toContain('115 pass-eligible public effects still WebGL-backed');
+    expect(gates.find((gate) => gate.id === 'native-effect-coverage')?.detail).toContain('111 pass-eligible public effects awaiting native implementation');
     expect(gates.find((gate) => gate.id === 'native-texture-share-sender')?.label).toBe('Native Syphon sender');
     expect(state.nativeOutputShareCapable).toBe(true);
     expect(state.nativeOutputShareActive).toBe(false);
@@ -413,10 +437,10 @@ describe('native renderer runtime state', () => {
       },
     );
 
-    expect(state.driverMode).toBe('output-driver');
+    expect(state.driverMode).toBe('native-enabled');
     expect(state.fullV2Ready).toBe(false);
     expect(state.blockers).toContain('native graph instrument catalog is incomplete');
-    expect(state.readinessDetail).toContain('main driver waiting on native graph instrument catalog');
+    expect(state.readinessDetail).toContain('native surfaces enabled; full-v2 pending');
   });
 
   it('uses broker graph checks to keep incomplete native catalogs out of main-driver mode', () => {
@@ -457,7 +481,7 @@ describe('native renderer runtime state', () => {
       graphCatalogComplete: false,
       nativeGraphSourceFrames: true,
     });
-    expect(state.driverMode).toBe('output-driver');
+    expect(state.driverMode).toBe('native-enabled');
     expect(state.fullV2Ready).toBe(false);
     expect(state.blockers).toContain('native graph instrument catalog is incomplete');
   });
@@ -487,7 +511,7 @@ describe('native renderer runtime state', () => {
       graphCatalogComplete: false,
       nativeGraphSourceFrames: true,
     });
-    expect(state.driverMode).toBe('output-driver');
+    expect(state.driverMode).toBe('native-enabled');
     expect(state.fullV2Ready).toBe(false);
   });
 
@@ -515,7 +539,7 @@ describe('native renderer runtime state', () => {
       graphCatalogComplete: false,
       nativeGraphSourceFrames: true,
     });
-    expect(state.driverMode).toBe('output-driver');
+    expect(state.driverMode).toBe('native-enabled');
     expect(state.fullV2Ready).toBe(false);
   });
 
@@ -549,7 +573,7 @@ describe('native renderer runtime state', () => {
       graphCatalogComplete: false,
       nativeGraphSourceFrames: true,
     });
-    expect(state.driverMode).toBe('output-driver');
+    expect(state.driverMode).toBe('native-enabled');
     expect(state.fullV2Ready).toBe(false);
   });
 
@@ -562,10 +586,10 @@ describe('native renderer runtime state', () => {
       },
       {
         capabilities: completeGraphCapabilities({}, (entry) =>
-          entry.id === 'point-cloud-fx'
+          entry.id === 'pixel-particles'
             ? {
               ...entry,
-              shader_ids: ['point-cloud-fx/compute'],
+              shader_ids: ['pixel-particles/compute'],
             }
             : entry,
         ),
@@ -582,7 +606,7 @@ describe('native renderer runtime state', () => {
       graphCatalogComplete: false,
       nativeGraphSourceFrames: true,
     });
-    expect(state.driverMode).toBe('output-driver');
+    expect(state.driverMode).toBe('native-enabled');
     expect(state.fullV2Ready).toBe(false);
   });
 
@@ -594,10 +618,9 @@ describe('native renderer runtime state', () => {
         full_v2: { ok: true, detail: 'full ready', blockers: [] },
       },
       {
-        capabilities: completeGraphCapabilities({
+        capabilities: completeMainDriverCapabilities({
           native_3d_smoke_graph: true,
           native_particle_field_graph: true,
-          ...mainDriverFeatureSet,
         }),
         checks: [],
       },
@@ -635,9 +658,42 @@ describe('native renderer runtime state', () => {
       updatedAtMs: 134,
     });
 
-    expect(state.driverMode).toBe('output-driver');
+    expect(state.driverMode).toBe('native-enabled');
     expect(state.fullV2Ready).toBe(false);
     expect(state.blockers).toContain('native recording/MP4 frame path is not fully ready');
+  });
+
+  it('does not promote to the main driver when the live project has native graph misses or blocked inventory', () => {
+    const report = readiness(
+      {
+        shadow: { ok: true, detail: 'shadow ready' },
+        output_driver: { ok: true, detail: 'output ready' },
+        full_v2: { ok: true, detail: 'full ready', blockers: [] },
+      },
+      {
+        capabilities: completeMainDriverCapabilities(),
+        checks: [],
+      },
+    );
+
+    const graphMissState = deriveNativeRendererRuntimeState(status(), report, {
+      capabilities: report.capabilities,
+      nativeGraphRouteFailures: 2,
+      updatedAtMs: 135,
+    });
+    expect(graphMissState.driverMode).toBe('native-enabled');
+    expect(graphMissState.fullV2Ready).toBe(false);
+    expect(graphMissState.blockers).toContain('2 native graph route misses');
+
+    const inventoryBlockedState = deriveNativeRendererRuntimeState(status(), report, {
+      capabilities: report.capabilities,
+      nativeBlockedLayerCount: 1,
+      nativeBlockedLayerLastReason: 'layer-a:native-unsupported-source:mask:native-compositor-pending',
+      updatedAtMs: 136,
+    });
+    expect(inventoryBlockedState.driverMode).toBe('native-enabled');
+    expect(inventoryBlockedState.fullV2Ready).toBe(false);
+    expect(inventoryBlockedState.blockers[0]).toContain('1 visible layer blocked by native inventory');
   });
 
   it('uses broker readiness checks to down-promote stale full-v2 reports', () => {
@@ -664,7 +720,7 @@ describe('native renderer runtime state', () => {
       updatedAtMs: 135,
     });
 
-    expect(state.driverMode).toBe('output-driver');
+    expect(state.driverMode).toBe('native-enabled');
     expect(state.fullV2Ready).toBe(false);
     expect(state.blockers).toContain('native source-frame effect-pass route is incomplete');
     expect(state.nativeEffectPassReady).toBe(false);
@@ -695,6 +751,12 @@ describe('native renderer runtime state', () => {
             ok: false,
             detail: 'native output IOSurface pump is waiting for the first rendered frame',
           },
+          {
+            id: 'native-editor-preview-frame-source',
+            label: 'Native editor preview source',
+            ok: false,
+            detail: 'editor preview is still a separate surface',
+          },
         ],
       },
     );
@@ -703,7 +765,7 @@ describe('native renderer runtime state', () => {
       updatedAtMs: 136,
     });
 
-    expect(state.driverMode).toBe('output-driver');
+    expect(state.driverMode).toBe('native-enabled');
     expect(state.fullV2Ready).toBe(false);
     expect(state.blockers).toContain('native texture-share sender is not active-ready');
     expect(state.nativeTextureShareSenderReady).toBe(false);
@@ -712,9 +774,8 @@ describe('native renderer runtime state', () => {
   });
 
   it('uses compact, user-readable labels for the toolbar', () => {
-    expect(nativeRendererModeLabel('offline')).toBe('WebGL Fallback');
-    expect(nativeRendererModeLabel('shadow')).toBe('Native Scene Sync');
-    expect(nativeRendererModeLabel('output-driver')).toBe('Native Output Driver');
+    expect(nativeRendererModeLabel('offline')).toBe('Native Offline');
+    expect(nativeRendererModeLabel('native-enabled')).toBe('Native Enabled');
     expect(nativeRendererModeLabel('full-v2')).toBe('Native Main Driver');
   });
 
@@ -778,15 +839,15 @@ describe('native renderer runtime state', () => {
     });
 
     expect(get(nativeRendererRuntime)).toMatchObject({
-      driverMode: 'output-driver',
+      driverMode: 'native-enabled',
       outputDriverReady: true,
       computeGraphRuns: 16,
       computeGraphPasses: 64,
       nativeGraphRouteFailures: 4,
       nativeGraphRouteSuppressedFailures: 1,
       nativeGraphRouteLastFailure: 'particle-field:layer-a:missing source-frame render',
-      readinessDetail: 'output ready',
-      blockers: ['shared texture pending'],
+      readinessDetail: 'native surfaces enabled; full-v2 pending: shared texture pending',
+      blockers: expect.arrayContaining(['shared texture pending']),
     });
 
     updateNativeRendererRuntimeFromStatus(status({ compute_graph_runs: 17, compute_graph_passes: 68 }), {

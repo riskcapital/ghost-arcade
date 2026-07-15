@@ -65,10 +65,11 @@
   // EULAModal removed — no EULA in the open-source build.
   import UpdateModal from './lib/components/UpdateModal.svelte';
   import { updateModalOpen, leftSidebarTab } from './lib/stores/uiState';
+  import { maskEditingLayerId } from './lib/stores/maskEditing';
   import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, setHistoryCallback } from './lib/stores/layers';
   import { keyframeTimeline } from './lib/stores/keyframeTimeline';
   import { layerSequencer } from './lib/stores/layerSequencer';
-  import { settings, outputFrozen } from './lib/stores/settings';
+  import { NATIVE_ENGINE_ONLY, settings, outputFrozen } from './lib/stores/settings';
   import { checkForUpdate, type VersionCheckResult } from './lib/utils/versionCheck';
   import { startRecording as startRec, formatRecordingDuration, type RecorderHandle } from './lib/recording/recorder';
   import { vjClipLauncher } from './lib/stores/vjClipLauncher';
@@ -108,7 +109,13 @@
   import { linesStore } from './lib/stores/lines';
   import { loadShadersFromServer, loadCloudShadersFromDisk, shaderLibrary } from './lib/stores/shaderLibrary';
   import { mediaTrayShaders } from './lib/stores/mediaTrayShaders';
-  import { getNativeRendererStatus } from './lib/api/native-renderer';
+  import {
+    getNativeRendererStatus,
+    setNativeEditorPreviewOverlay,
+    type NativeEditorPreviewOverlay,
+    type NativeEditorPreviewOverlayHandle,
+    type NativeEditorPreviewOverlayPoint,
+  } from './lib/api/native-renderer';
   import {
     nativeRendererModeLabel,
     nativeRendererOutputShareSummary,
@@ -143,6 +150,152 @@
   let linesDrawingMode: 'none' | 'freehand' | 'pointClick' = 'none';
   let linesDrawingPoints: Point2D[] = [];
   let isLinesDrawing = false;
+  let nativePreviewOverlayRaf: number | null = null;
+  let nativePreviewOverlaySignature = '';
+
+  function presenterPoint(point: Point2D): NativeEditorPreviewOverlayPoint {
+    return { x: point.x, y: 1 - point.y };
+  }
+
+  function appendPresenterSegment(
+    lines: NativeEditorPreviewOverlayPoint[],
+    a: Point2D,
+    b: Point2D,
+  ): void {
+    lines.push(presenterPoint(a), presenterPoint(b));
+  }
+
+  function selectedLayerPresenterOverlay(): NativeEditorPreviewOverlay {
+    const layer = get(selectedLayer);
+    if (!layer?.corners || get(leftSidebarTab) === 'screens') {
+      return { lines: [], points: [], handles: [] };
+    }
+
+    const corners = layer.corners;
+    const lines: NativeEditorPreviewOverlayPoint[] = [];
+    const points: NativeEditorPreviewOverlayPoint[] = [];
+    const handles: NativeEditorPreviewOverlayHandle[] = [];
+    if (layer.warpMode === 'mesh' && layer.meshGrid) {
+      const rows = Math.max(0, Math.min(layer.meshGrid.rows, layer.meshGrid.points.length));
+      const cols = Math.max(0, layer.meshGrid.cols);
+      const warped: Point2D[][] = [];
+      for (let row = 0; row < rows; row++) {
+        const sourceRow = layer.meshGrid.points[row] ?? [];
+        const outputRow: Point2D[] = [];
+        for (let col = 0; col < Math.min(cols, sourceRow.length); col++) {
+          const point = sourceRow[col];
+          const screenPoint = warpPointThroughCorners(corners, point.x, point.y);
+          outputRow.push(screenPoint);
+          points.push(presenterPoint(screenPoint));
+        }
+        warped.push(outputRow);
+      }
+      for (let row = 0; row < warped.length; row++) {
+        for (let col = 0; col + 1 < warped[row].length; col++) {
+          appendPresenterSegment(lines, warped[row][col], warped[row][col + 1]);
+        }
+      }
+      for (let row = 0; row + 1 < warped.length; row++) {
+        const sharedCols = Math.min(warped[row].length, warped[row + 1].length);
+        for (let col = 0; col < sharedCols; col++) {
+          appendPresenterSegment(lines, warped[row][col], warped[row + 1][col]);
+        }
+      }
+    } else {
+      appendPresenterSegment(lines, corners.topLeft, corners.topRight);
+      appendPresenterSegment(lines, corners.topRight, corners.bottomRight);
+      appendPresenterSegment(lines, corners.bottomRight, corners.bottomLeft);
+      appendPresenterSegment(lines, corners.bottomLeft, corners.topLeft);
+      handles.push(
+        { ...presenterPoint(corners.topLeft), kind: 'corner' },
+        { ...presenterPoint(corners.topRight), kind: 'corner' },
+        { ...presenterPoint(corners.bottomRight), kind: 'corner' },
+        { ...presenterPoint(corners.bottomLeft), kind: 'corner' },
+      );
+    }
+
+    const topMidpoint = {
+      x: (corners.topLeft.x + corners.topRight.x) / 2,
+      y: (corners.topLeft.y + corners.topRight.y) / 2,
+    };
+    const bottomMidpoint = {
+      x: (corners.bottomLeft.x + corners.bottomRight.x) / 2,
+      y: (corners.bottomLeft.y + corners.bottomRight.y) / 2,
+    };
+    const center = {
+      x: (corners.topLeft.x + corners.topRight.x + corners.bottomLeft.x + corners.bottomRight.x) / 4,
+      y: (corners.topLeft.y + corners.topRight.y + corners.bottomLeft.y + corners.bottomRight.y) / 4,
+    };
+    const topPresenter = presenterPoint(topMidpoint);
+    const bottomPresenter = presenterPoint(bottomMidpoint);
+    const leftPresenter = presenterPoint({
+      x: (corners.topLeft.x + corners.bottomLeft.x) / 2,
+      y: (corners.topLeft.y + corners.bottomLeft.y) / 2,
+    });
+    const rightPresenter = presenterPoint({
+      x: (corners.topRight.x + corners.bottomRight.x) / 2,
+      y: (corners.topRight.y + corners.bottomRight.y) / 2,
+    });
+    const rotatePoint = {
+      x: topPresenter.x,
+      y: topPresenter.y - 40 / Math.max(1, canvasHeight),
+    };
+    const scalePoint = {
+      x: bottomPresenter.x,
+      y: bottomPresenter.y + 40 / Math.max(1, canvasHeight),
+    };
+    const movePoint = layer.warpMode === 'mesh'
+      ? {
+          x: corners.topLeft.x - 30 / Math.max(1, canvasWidth),
+          y: 1 - corners.topLeft.y - 30 / Math.max(1, canvasHeight),
+        }
+      : presenterPoint(center);
+
+    lines.push(topPresenter, rotatePoint, bottomPresenter, scalePoint);
+    handles.push(
+      { ...topPresenter, kind: 'edge-horizontal' },
+      { ...bottomPresenter, kind: 'edge-horizontal' },
+      { ...leftPresenter, kind: 'edge-vertical' },
+      { ...rightPresenter, kind: 'edge-vertical' },
+      { ...movePoint, kind: 'move' },
+      { ...rotatePoint, kind: 'rotate' },
+      { ...scalePoint, kind: 'scale' },
+    );
+    return { lines, points, handles };
+  }
+
+  function scheduleNativePresenterOverlay(): void {
+    if (nativePreviewOverlayRaf !== null || typeof requestAnimationFrame === 'undefined') return;
+    nativePreviewOverlayRaf = requestAnimationFrame(() => {
+      nativePreviewOverlayRaf = null;
+      // Metal now renders below Chromium. Editor chrome belongs exclusively to
+      // the DOM so controls, menus, and modals share one z-order and hit-test
+      // system; the native presenter supplies composite pixels only.
+      const overlay = { lines: [], points: [], handles: [] };
+      const signature = JSON.stringify(overlay);
+      if (signature === nativePreviewOverlaySignature) return;
+      nativePreviewOverlaySignature = signature;
+      void setNativeEditorPreviewOverlay(overlay).catch(() => {
+        nativePreviewOverlaySignature = '';
+      });
+    });
+  }
+
+  $: {
+    void $selectedLayer;
+    void $leftSidebarTab;
+    void $nativeRendererRuntime.nativeEditorPreviewProductionReady;
+    void canvasWidth;
+    void canvasHeight;
+    scheduleNativePresenterOverlay();
+  }
+
+  onDestroy(() => {
+    if (nativePreviewOverlayRaf !== null) cancelAnimationFrame(nativePreviewOverlayRaf);
+    nativePreviewOverlayRaf = null;
+    nativePreviewOverlaySignature = '';
+    void setNativeEditorPreviewOverlay({ lines: [], points: [], handles: [] }).catch(() => {});
+  });
 
   // File menu state
   let fileMenuOpen = false;
@@ -223,7 +376,23 @@
   let webgpuBridgeComponent: WebGPUCanvas | null = null;
   let lastReactiveBridgeSource: HTMLCanvasElement | null = null;
   let lastReactiveBridge: WebGPUCanvas | null = null;
-  $: if ($settings.experimental?.editorWebGPU && !showStage3D && canvasComponent && webgpuBridgeComponent) {
+  let nativePrimaryRenderer = false;
+  let nativePreviewGlassActive = false;
+  $: nativePrimaryRenderer = isDesktopApp && NATIVE_ENGINE_ONLY;
+  $: nativePreviewGlassActive = !!(
+    nativePrimaryRenderer
+    && $nativeRendererRuntime.running
+    && $nativeRendererRuntime.backendReady
+    && $nativeRendererRuntime.sharedTextureOutputExportReady
+    && $nativeRendererRuntime.readinessChecks
+      ?.find((check) => check.id === 'native-editor-preview-frame-source')
+      ?.ok === true
+  );
+  $: if (typeof document !== 'undefined') {
+    document.documentElement.classList.toggle('native-primary-presenter', nativePreviewGlassActive);
+    document.body.classList.toggle('native-primary-presenter', nativePreviewGlassActive);
+  }
+  $: if (!nativePrimaryRenderer && $settings.experimental?.editorWebGPU && !showStage3D && canvasComponent && webgpuBridgeComponent) {
     const source = canvasComponent.getCanvas?.();
     if (source && (source !== lastReactiveBridgeSource || webgpuBridgeComponent !== lastReactiveBridge)) {
       webgpuBridgeComponent.setSourceCanvas(source);
@@ -247,13 +416,27 @@
     const mode: NativeRendererDriverMode = state.driverMode;
     if (state.outputActive) return 'LIVE';
     if (mode === 'full-v2') return 'NATIVE';
-    if (mode === 'output-driver') return 'NATIVE';
-    if (mode === 'shadow') return 'SYNC';
-    if (mode === 'degraded') return 'INIT';
-    return 'GPU';
+    if (mode === 'native-enabled') return 'NATIVE';
+    return nativePrimaryRenderer ? 'INIT' : 'GPU';
   }
   function nativeRendererShareSummary(state: NativeRendererRuntimeState) {
     return nativeRendererOutputShareSummary(state);
+  }
+  function nativeRendererSurfaceSummary(state: NativeRendererRuntimeState): string {
+    const preview = state.nativeEditorPreviewProductionReady
+      ? `native zero-copy (${state.nativeEditorPreviewPresentation || 'underlay'})`
+      : state.driverMode !== 'offline'
+        ? 'embedded presenter pending (native-only)'
+        : nativePrimaryRenderer
+          ? 'native unavailable'
+          : 'browser renderer';
+    const output = state.outputActive
+      ? 'native live'
+      : state.fullV2Ready
+        ? 'native ready'
+        : 'unavailable';
+    const recording = state.nativeRecordingReady ? 'native ready' : 'unavailable';
+    return `Preview: ${preview}. Output: ${output}. Recording: ${recording}.`;
   }
   function nativeRendererToolbarTitle(
     state: NativeRendererRuntimeState,
@@ -263,7 +446,17 @@
     const shareDetail = state.nativeTextureShareSenderDetail
       ? ` ${state.nativeTextureShareSenderDetail}`
       : '';
-    return `${info.renderer} (${info.vendor}) • Native renderer: ${nativeRendererModeLabel(state.driverMode)}${state.outputActive ? ' live output active' : ''}. ${state.readinessDetail}${share ? ` • ${share}.${shareDetail}` : ''}${info.isIntegrated ? ' — WARNING: Integrated GPU. Set this app to High Performance in Windows Graphics Settings.' : ''}`;
+    return `${info.renderer} (${info.vendor}) • Native renderer: ${nativeRendererModeLabel(state.driverMode)}${state.outputActive ? ' live output active' : ''}. ${nativeRendererSurfaceSummary(state)} ${state.readinessDetail}${share ? ` • ${share}.${shareDetail}` : ''}${info.isIntegrated ? ' — WARNING: Integrated GPU. Set this app to High Performance in Windows Graphics Settings.' : ''}`;
+  }
+  function fpsCounterLabel(state: NativeRendererRuntimeState, fps: number): string {
+    return state.driverMode !== 'offline' || nativePrimaryRenderer ? `UI ${fps} FPS` : `${fps} FPS`;
+  }
+  function fpsCounterTitle(state: NativeRendererRuntimeState): string {
+    if (state.driverMode === 'offline' && !nativePrimaryRenderer) return 'Editor render loop frame rate';
+    const nativeMs = Number.isFinite(state.averageGpuMs ?? NaN)
+      ? ` Native render average: ${Number(state.averageGpuMs).toFixed(2)} ms.`
+      : '';
+    return `Editor UI refresh rate while the native core owns rendering.${nativeMs}`;
   }
   async function checkGPU() {
     // First try native render-core status (this is the real GPU for native shader rendering)
@@ -282,9 +475,14 @@
         console.log(`[GPU] Native ${status.backend ?? 'render-core'} renderer on: ${name} (${isDiscrete ? 'discrete' : 'integrated'})`);
         return;
       }
-    } catch (_) { /* native renderer not running yet, fall through to WebGL */ }
+    } catch (_) {
+      if (nativePrimaryRenderer) {
+        gpuInfo = { renderer: 'Native renderer unavailable', vendor: 'Native', isIntegrated: false };
+        return;
+      }
+    }
 
-    // Fallback: read from WebGL engine (this reports WebView2's GPU, often integrated)
+    // Non-native builds can still read from the browser engine.
     const engine = canvasComponent?.getEngine();
     if (engine) {
       gpuInfo = engine.getGPUInfo();
@@ -482,6 +680,10 @@
 
   // Auto-save cleanup
   onDestroy(() => {
+    if (typeof document !== 'undefined') {
+      document.documentElement.classList.remove('native-primary-presenter');
+      document.body.classList.remove('native-primary-presenter');
+    }
     if (autosaveInterval) {
       clearInterval(autosaveInterval);
       autosaveInterval = null;
@@ -765,6 +967,7 @@
     let _lastWiredBridge: WebGPUCanvas | null = null;
     const unsubscribeSettings = settings.subscribe((s) => {
       if (!appMounted) return;
+      if (isDesktopApp && s.experimental?.outputNativeCore) return;
       if (!s.experimental?.editorWebGPU) return;
       // Idempotent — only re-wire when the canvas or bridge instance
       // actually changes (component remount). Otherwise every settings
@@ -1624,6 +1827,8 @@
     '.mask-handle',
     '.mask-pen-toolbar',
     '.light-painting-overlay',
+    '.native-engine-pending',
+    '.native-engine-pending__actions',
   ].join(', ');
 
   function viewportClientToCanvasCoords(clientX: number, clientY: number): Point2D {
@@ -1696,6 +1901,7 @@
       e.preventDefault();
       return true;
     }
+    if ($selectedLayer?.mask?.enabled && $maskEditingLayerId === $selectedLayer.id) return false;
     const target = e.target instanceof Element ? e.target : null;
     if (
       target?.closest(VIEWPORT_SELECTION_INTERACTIVE_SELECTOR)
@@ -3808,7 +4014,7 @@
   // Output window state
   let outputMode: 'embedded' | 'window' | 'fullscreen' = 'embedded';
 
-  function openOutputWindow() {
+  async function openOutputWindow() {
     outputMode = 'window';
     // Already attached (e.g. after an editor reload) — don't re-open the
     // 'ga-output' window; that reloads it and re-handshakes. Just resync
@@ -3819,9 +4025,10 @@
       return;
     }
     if (outputWindow) {
-      outputWindow.openPopup();
-      outputIsOpen = true;
-      settings.setOutputWindowOpen(true);
+      const opened = await outputWindow.openPopup();
+      outputIsOpen = !!opened;
+      outputMode = opened ? 'window' : 'embedded';
+      settings.setOutputWindowOpen(!!opened);
     }
   }
 
@@ -3849,6 +4056,20 @@
   }
 
   async function toggleFullscreen() {
+    if (isDesktopApp && NATIVE_ENGINE_ONLY) {
+      if (outputIsOpen && outputMode === 'fullscreen' && outputWindow) {
+        closeOutputWindow();
+        return;
+      }
+      if (outputWindow) {
+        const opened = await outputWindow.openFullscreenExternal();
+        outputIsOpen = !!opened;
+        outputMode = opened ? 'fullscreen' : 'embedded';
+        settings.setOutputWindowOpen(!!opened);
+      }
+      return;
+    }
+
     // If a projector window is already attached, toggle its fullscreen
     // rather than re-opening (the latter reloads 'ga-output' → re-
     // handshake storm). Check the presenter's real attached state, not
@@ -3865,10 +4086,10 @@
     if (outputMode !== 'fullscreen') {
       if (outputWindow) {
         await matchOutputDisplayResolution('fullscreen output');
-        await outputWindow.openFullscreenExternal();
-        outputIsOpen = true;
-        outputMode = 'fullscreen';
-        settings.setOutputWindowOpen(true);
+        const opened = await outputWindow.openFullscreenExternal();
+        outputIsOpen = !!opened;
+        outputMode = opened ? 'fullscreen' : 'embedded';
+        settings.setOutputWindowOpen(!!opened);
       }
     } else {
       // Close the fullscreen output
@@ -5322,7 +5543,10 @@
 {#if isMobile}
   <MobileApp />
 {:else}
-  <div class="app">
+  <div class="app" class:native-primary-presenter={nativePreviewGlassActive}>
+    {#if isDesktopApp && isMac}
+      <div class="mac-window-titlebar" aria-hidden="true"></div>
+    {/if}
     <!-- Integrated/software GPU warning banner. Surfaces ONCE per
          install when the detected renderer is integrated/software.
          Routes the user to Settings → Performance. -->
@@ -5359,11 +5583,10 @@
           <span
             class="gpu-indicator"
             class:integrated={gpuInfo.isIntegrated}
-            class:native={$nativeRendererRuntime.driverMode !== 'offline'}
-            class:native-ready={$nativeRendererRuntime.driverMode === 'output-driver' || $nativeRendererRuntime.driverMode === 'full-v2'}
+            class:native={nativePrimaryRenderer || $nativeRendererRuntime.driverMode !== 'offline'}
+            class:native-ready={$nativeRendererRuntime.driverMode === 'full-v2'}
             class:native-active={$nativeRendererRuntime.outputActive}
-            class:native-shadow={$nativeRendererRuntime.driverMode === 'shadow'}
-            class:native-degraded={$nativeRendererRuntime.driverMode === 'degraded'}
+            class:native-diagnostic={nativePrimaryRenderer && !$nativeRendererRuntime.nativeEditorPreviewProductionReady && !$nativeRendererRuntime.outputActive}
             title={nativeRendererToolbarTitle($nativeRendererRuntime, gpuInfo)}
           >
             <span class="gpu-dot"></span>
@@ -5809,6 +6032,7 @@
     <!-- Main Content -->
     <main
       class="main-content"
+      class:native-primary-presenter={nativePreviewGlassActive}
       class:preset-tray-open={presetTrayOpen}
       class:seq-tray-open={$layerSequencer.isOpen}
       class:kf-tray-open={$keyframeTimeline.isOpen}
@@ -5822,6 +6046,7 @@
       <!-- Viewport with canvas and warp handles -->
       <div
         class="viewport"
+        class:native-primary-presenter={nativePreviewGlassActive}
         bind:this={viewportEl}
         onpointerdown={handleViewportPointerDown}
         onmousedown={handleViewportMouseDown}
@@ -5842,19 +6067,18 @@
           When the editor frame bridge is OFF: mount Canvas alone —
           the existing WebGL renderer path.
 
-          When ON (default): mount BOTH:
+          When ON (default, only when the native core is not primary): mount BOTH:
             - Canvas in bridgeMode (its WebGL <canvas> is hidden via
               opacity:0 but still painted by Chromium each frame)
             - WebGPUCanvas overlaid on top, sourcing the WebGL canvas
               and presenting it via VideoFrame + importExternalTexture
               on a WebGPU canvas
 
-          Net effect: the editor visually renders identically to the
-          WebGL path, but the FINAL present surface (which captureStream
-          pulls from for the output presenter) is now WebGPU. This
-          unblocks Phase 3.x — per-layer WebGPU renderers can be
-          composited on top of the bridge surface incrementally,
-          eventually replacing it.
+          Native v2 is different: when outputNativeCore is enabled in
+          the desktop shell, nativePrimaryRenderer disables this bridge.
+          The browser canvas remains mounted for editor hit-testing and
+          state sync, but it no longer presents a competing graphics
+          interpretation. The Rust/wgpu renderer is the live source.
 
           canvasComponent is bound to the Canvas instance in BOTH
           cases so all downstream code that calls getEngine() etc.
@@ -5862,11 +6086,15 @@
 
           See docs/WEBGPU_MIGRATION.md for the full roadmap.
         -->
-        {#if $settings.experimental?.editorWebGPU && !showStage3D}
+        {#if !nativePrimaryRenderer && $settings.experimental?.editorWebGPU && !showStage3D}
           <Canvas bind:this={canvasComponent} bridgeMode={true} stage3DOutput={showStage3D} />
           <WebGPUCanvas bind:this={webgpuBridgeComponent} />
         {:else}
-          <Canvas bind:this={canvasComponent} stage3DOutput={showStage3D} />
+          <Canvas
+            bind:this={canvasComponent}
+            stage3DOutput={showStage3D}
+            nativePrimary={nativePrimaryRenderer && !showStage3D}
+          />
         {/if}
         <!-- Grid overlay — mounted at App.svelte level (sibling to
              Canvas + WebGPUCanvas) so it stays visible regardless of
@@ -5900,9 +6128,9 @@
         {#if $selectedLayer && $leftSidebarTab !== 'screens'}
           <!-- Warp handles positioned to match the aspect-ratio-constrained canvas -->
           <div class="warp-handles-offset" style="left: {canvasOffsetX}px; top: {canvasOffsetY}px;">
-            <WarpHandles containerWidth={canvasWidth} containerHeight={canvasHeight} zoom={viewportZoom} hideCorners={$selectedLayer.warpMode === 'mesh'} shapeWarpActive={shapeWarpModeEnabled} />
+            <WarpHandles containerWidth={canvasWidth} containerHeight={canvasHeight} zoom={viewportZoom} hideCorners={$selectedLayer.warpMode === 'mesh'} shapeWarpActive={shapeWarpModeEnabled} interactionOnly={nativePrimaryRenderer} />
             {#if $selectedLayer.warpMode === 'mesh'}
-              <MeshWarpHandles containerWidth={canvasWidth} containerHeight={canvasHeight} zoom={viewportZoom} />
+              <MeshWarpHandles containerWidth={canvasWidth} containerHeight={canvasHeight} zoom={viewportZoom} interactionOnly={nativePrimaryRenderer} />
             {/if}
 
             {#if $selectedLayer.layerShape?.type === 'custom'}
@@ -6255,7 +6483,7 @@
         {/if}
 
         <!-- Mask editing overlay (multi-shape bezier pen tool) -->
-        {#if $selectedLayer?.mask?.enabled}
+        {#if $selectedLayer?.mask?.enabled && $maskEditingLayerId === $selectedLayer.id}
           {@const maskShapes = $selectedLayer.mask.shapes ?? []}
           {@const maskHasClosedShape = maskShapes.some(s => s.closed)}
           <div
@@ -6707,8 +6935,7 @@
       onClose={() => showSettings = false}
     />
 
-    <!-- Browser fallback: the main Canvas switches to stage3DOutput
-         and this component supplies only the floating authoring UI. -->
+    <!-- Stage designer authoring UI; Canvas owns the render viewport. -->
     {#if showStage3D}
       <Stage3DDesigner
         renderViewport={false}
@@ -6827,7 +7054,14 @@
       </button>
 
       <span class="spacer"></span>
-      <span class="fps-counter" class:fps-good={$fpsStore > 50} class:fps-warn={$fpsStore >= 30 && $fpsStore <= 50} class:fps-bad={$fpsStore < 30 && $fpsStore > 0}>{$fpsStore} FPS</span>
+      <span
+        class="fps-counter"
+        class:native={nativePrimaryRenderer || $nativeRendererRuntime.driverMode !== 'offline'}
+        class:fps-good={$fpsStore > 50}
+        class:fps-warn={$fpsStore >= 30 && $fpsStore <= 50}
+        class:fps-bad={$fpsStore < 30 && $fpsStore > 0}
+        title={fpsCounterTitle($nativeRendererRuntime)}
+      >{fpsCounterLabel($nativeRendererRuntime, $fpsStore)}</span>
       {#if versionInfo?.hasUpdate && versionInfo.releaseUrl}
         <!-- Update available — clickable badge that opens the download page. -->
         <a
@@ -7277,6 +7511,20 @@
     font-size: 15px;
     -webkit-font-smoothing: antialiased;
   }
+  .app.native-primary-presenter {
+    background: transparent;
+  }
+
+  .mac-window-titlebar {
+    flex: 0 0 30px;
+    width: 100%;
+    background: #20262a;
+    border-bottom: 1px solid #30373c;
+    -webkit-app-region: drag;
+    user-select: none;
+    position: relative;
+    z-index: 2000;
+  }
 
   /* Toolbar — uses theme tokens with the legacy accent vars as
      fallback so existing component CSS keeps working before each
@@ -7394,15 +7642,15 @@
     border-color: rgba(92, 225, 230, 0.70);
     box-shadow: 0 0 14px rgba(92, 225, 230, 0.22);
   }
-  .gpu-indicator.native-shadow {
-    color: #b48cff;
-    background: rgba(180, 140, 255, 0.09);
-    border-color: rgba(180, 140, 255, 0.34);
+  .gpu-indicator.native-blocked {
+    color: #ffd36e;
+    background: rgba(255, 211, 110, 0.10);
+    border-color: rgba(255, 211, 110, 0.38);
   }
-  .gpu-indicator.native-degraded {
-    color: #ffb86b;
-    background: rgba(255, 184, 107, 0.10);
-    border-color: rgba(255, 184, 107, 0.38);
+  .gpu-indicator.native-diagnostic {
+    color: #ffd36e;
+    background: rgba(255, 211, 110, 0.10);
+    border-color: rgba(255, 211, 110, 0.38);
   }
   .gpu-dot {
     width: 7px;
@@ -8500,6 +8748,9 @@
     background: var(--ga-void, #070809);
     transition: margin-bottom 0.2s ease-out;
   }
+  .main-content.native-primary-presenter {
+    background: transparent;
+  }
   .main-content.preset-tray-open {
     margin-bottom: calc(180px + var(--ga-bottom-rail-offset, 74px));
   }
@@ -8517,6 +8768,9 @@
     overflow: hidden;
     user-select: none;
     touch-action: none;
+  }
+  .viewport.native-primary-presenter {
+    background: transparent;
   }
 
   .viewport.panning {

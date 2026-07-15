@@ -41,6 +41,8 @@ import { writable, get } from 'svelte/store';
 import { registerMacroValueSetter } from '../midi/midiRouter';
 import { audioStore } from './audio';
 import type { Effect, EffectType, EffectParams } from '../types';
+import { isNativeSelectableEffect } from '../renderer/nativeEffectCoverage';
+import { NATIVE_ENGINE_ONLY } from './settings';
 
 /** Auto-pulse mode for a macro. When set, the macro value cycles
  *  automatically at the specified beat division using the master BPM
@@ -200,6 +202,10 @@ function createMacrosStore() {
 
     /** Add an effect to a macro's chain. Returns the new effect's id. */
     addEffect(macroId: string, type: EffectType, params: EffectParams = {} as EffectParams): string {
+      if (NATIVE_ENGINE_ONLY && !isNativeSelectableEffect(type)) {
+        console.warn(`[macros] blocked non-native effect in native-only mode: ${type}`);
+        return '';
+      }
       const newId = generateUUID();
       const newEffect: Effect = {
         id: newId,

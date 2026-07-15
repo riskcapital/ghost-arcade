@@ -87,7 +87,7 @@ export function summarizeNativeEffectCoverage(
   const deferredSample = deferredNativeGraphEffectTypes.map(effectLabel).join(', ');
   const detail = [
     `native source-frame effect-pass coverage ${nativeSourceFramePassEffectTypes.length}/${sourceFramePassEligibleEffectTypes.length}`,
-    `${missingSourceFramePassEffectTypes.length} pass-eligible public effect${missingSourceFramePassEffectTypes.length === 1 ? '' : 's'} still WebGL-backed`,
+    `${missingSourceFramePassEffectTypes.length} pass-eligible public effect${missingSourceFramePassEffectTypes.length === 1 ? '' : 's'} awaiting native implementation`,
     deferredSample
       ? `${deferredNativeGraphEffectTypes.length} stateful/multi-frame effect${deferredNativeGraphEffectTypes.length === 1 ? '' : 's'} tracked outside the effect-pass route: ${deferredSample}`
       : '',
@@ -124,3 +124,11 @@ export const NATIVE_EFFECT_COVERAGE = summarizeNativeEffectCoverage(
   PUBLIC_EFFECT_TYPES,
   NATIVE_EFFECT_PASS_MANIFEST.map((entry) => entry.id),
 );
+
+const NATIVE_SELECTABLE_EFFECT_TYPES = new Set<EffectType>(
+  NATIVE_EFFECT_COVERAGE.nativeSourceFramePassEffectTypes,
+);
+
+export function isNativeSelectableEffect(effectType: EffectType | string): boolean {
+  return NATIVE_SELECTABLE_EFFECT_TYPES.has(effectType as EffectType);
+}

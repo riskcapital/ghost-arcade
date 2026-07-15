@@ -35,6 +35,8 @@ import {
 import { maxOutputSlices } from './license';
 import type { Effect, EffectType } from '../types';
 import { getDefaultEffectParams } from '../renderer/effects';
+import { isNativeSelectableEffect } from '../renderer/nativeEffectCoverage';
+import { NATIVE_ENGINE_ONLY } from './settings';
 
 // Derived store mirroring $settings.output.slices. Components subscribe
 // to this for reactive screen-list updates.
@@ -195,6 +197,10 @@ export const screenActions = {
   /** Append a per-screen effect. Effects are applied to the screen's
    *  rendered output AFTER warp+blend, before present. */
   addEffect(screenId: string, effectType: EffectType): string {
+    if (NATIVE_ENGINE_ONLY && !isNativeSelectableEffect(effectType)) {
+      console.warn(`[screens] blocked non-native screen effect in native-only mode: ${effectType}`);
+      return '';
+    }
     const id = generateId('fx');
     const effect: Effect = {
       id,

@@ -45,6 +45,7 @@ if (process.platform !== 'darwin') {
 
 const outputDir = path.join(nativeDir, 'build', 'Release');
 const syphonNode = path.join(outputDir, 'syphon_addon.node');
+const nativePreviewNode = path.join(outputDir, 'native_preview_addon.node');
 const ndiNode = path.join(outputDir, 'ndi_addon.node');
 const linkNode = path.join(outputDir, 'link_addon.node');
 const sliceDir = path.join(nativeDir, '.native-build-slices');
@@ -84,8 +85,13 @@ for (const slice of slices) {
     console.error(`[native-build] Expected build output missing: ${syphonNode}`);
     process.exit(1);
   }
+  if (!fs.existsSync(nativePreviewNode)) {
+    console.error(`[native-build] Expected build output missing: ${nativePreviewNode}`);
+    process.exit(1);
+  }
 
   fs.copyFileSync(syphonNode, path.join(sliceDir, `syphon_addon-${slice.lipoArch}.node`));
+  fs.copyFileSync(nativePreviewNode, path.join(sliceDir, `native_preview_addon-${slice.lipoArch}.node`));
   if (fs.existsSync(ndiNode)) {
     fs.copyFileSync(ndiNode, path.join(sliceDir, `ndi_addon-${slice.lipoArch}.node`));
   }
@@ -95,6 +101,7 @@ for (const slice of slices) {
 }
 
 lipoSlices(syphonNode, 'syphon_addon', { required: true });
+lipoSlices(nativePreviewNode, 'native_preview_addon', { required: true });
 lipoSlices(ndiNode, 'ndi_addon');
 lipoSlices(linkNode, 'link_addon');
 fs.rmSync(sliceDir, { recursive: true, force: true });

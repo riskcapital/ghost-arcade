@@ -47,6 +47,30 @@ export interface PLYData {
   center: { x: number; y: number; z: number };
 }
 
+export interface PLYPointBufferData {
+  positions: Float32Array;
+  colors: Float32Array;
+  alpha: Float32Array;
+  splatScale?: Float32Array;
+  splatRotation?: Float32Array;
+  sphericalHarmonicsRest?: Float32Array;
+  sphericalHarmonicsRestStride: number;
+  sphericalHarmonicsDegree: number;
+  sphericalHarmonicsCoefficientCount: number;
+  gaussian: boolean;
+  dataType: SplatDataType;
+  sourceVertexCount: number;
+  sampleCount: number;
+  boundingBox: PLYData['boundingBox'];
+  center: PLYData['center'];
+}
+
+export interface PLYPointBufferOptions {
+  maxPoints?: number;
+  maxGaussianPoints?: number;
+  sphericalHarmonicsRestStride?: number;
+}
+
 interface PLYProperty {
   name: string;
   type: string;
@@ -195,6 +219,53 @@ function makeColorChannels(
     r: red ? normalizeColorValue(red.value, red.type) : (fDc0 ? gaussianDcToByte(fDc0.value) : 255),
     g: green ? normalizeColorValue(green.value, green.type) : (fDc1 ? gaussianDcToByte(fDc1.value) : 255),
     b: blue ? normalizeColorValue(blue.value, blue.type) : (fDc2 ? gaussianDcToByte(fDc2.value) : 255),
+  };
+}
+
+function sourceIndexForSample(sampleIndex: number, sampleCount: number, sourceCount: number): number {
+  if (sourceCount <= 0) return 0;
+  if (sourceCount <= sampleCount || sampleCount <= 1) {
+    return Math.min(sourceCount - 1, Math.max(0, Math.floor(sampleIndex)));
+  }
+  return Math.min(
+    sourceCount - 1,
+    Math.floor(sampleIndex * (sourceCount - 1) / (sampleCount - 1)),
+  );
+}
+
+function maxSampleCountForPLYData(
+  sourceVertexCount: number,
+  gaussian: boolean,
+  options: PLYPointBufferOptions,
+): number {
+  const defaultMax = sourceVertexCount;
+  const requested = gaussian
+    ? (options.maxGaussianPoints ?? options.maxPoints ?? defaultMax)
+    : (options.maxPoints ?? defaultMax);
+  const finiteRequested = Number.isFinite(requested) ? Math.floor(requested) : defaultMax;
+  return Math.max(0, Math.min(sourceVertexCount, Math.max(1, finiteRequested)));
+}
+
+function emptyPointBufferData(
+  dataType: SplatDataType = 'pointcloud',
+  sourceVertexCount = 0,
+): PLYPointBufferData {
+  return {
+    positions: new Float32Array(0),
+    colors: new Float32Array(0),
+    alpha: new Float32Array(0),
+    sphericalHarmonicsRestStride: 0,
+    sphericalHarmonicsDegree: 0,
+    sphericalHarmonicsCoefficientCount: 0,
+    gaussian: dataType === 'gaussian',
+    dataType,
+    sourceVertexCount,
+    sampleCount: 0,
+    boundingBox: {
+      min: { x: 0, y: 0, z: 0 },
+      max: { x: 0, y: 0, z: 0 },
+    },
+    center: { x: 0, y: 0, z: 0 },
   };
 }
 
@@ -658,6 +729,20 @@ function getElementStride(element: PLYElement): number {
   return stride;
 }
 
+function getElementFixedOffsets(element: PLYElement): {
+  stride: number;
+  propOffsets: Record<string, { offset: number; type: string }>;
+} | null {
+  if (element.properties.some((prop) => prop.isList)) return null;
+  let stride = 0;
+  const propOffsets: Record<string, { offset: number; type: string }> = {};
+  for (const prop of element.properties) {
+    propOffsets[prop.name] = { offset: stride, type: prop.type };
+    stride += getTypeSize(prop.type);
+  }
+  return { stride, propOffsets };
+}
+
 // Skip past a binary element that may contain list properties
 // Returns the byte offset after skipping all rows of this element
 function skipBinaryElement(
@@ -788,6 +873,254 @@ function readBinaryMultiTextureFaces(
   }
 
   return { texFaces, endOffset: offset };
+}
+
+export function pointCloudBuffersFromPLYData(
+  data: PLYData,
+  options: PLYPointBufferOptions = {},
+): PLYPointBufferData {
+  const vertices = data.vertices ?? [];
+  const sourceVertexCount = vertices.length;
+  const gaussian = data.dataType === 'gaussian' ||
+    vertices.some((v) => Number.isFinite(v.scale_0) || Number.isFinite(v.scale_1) || Number.isFinite(v.scale_2));
+  const sampleCount = maxSampleCountForPLYData(sourceVertexCount, gaussian, options);
+  if (sampleCount <= 0) return emptyPointBufferData(data.dataType, sourceVertexCount);
+
+  const positions = new Float32Array(sampleCount * 3);
+  const colors = new Float32Array(sampleCount * 3);
+  const alpha = new Float32Array(sampleCount);
+  const splatScale = gaussian ? new Float32Array(sampleCount * 3) : undefined;
+  const splatRotation = gaussian ? new Float32Array(sampleCount * 4) : undefined;
+  const shCoeffCount = data.sphericalHarmonicsCoefficientCount ?? 0;
+  const requestedShRestStride = Math.max(0, Math.floor(options.sphericalHarmonicsRestStride ?? 9));
+  const shRestStride = shCoeffCount >= requestedShRestStride && requestedShRestStride > 0
+    ? requestedShRestStride
+    : 0;
+  const shRest = shRestStride > 0 ? new Float32Array(sampleCount * shRestStride) : undefined;
+
+  let minX = Infinity, minY = Infinity, minZ = Infinity;
+  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+
+  for (let i = 0; i < sampleCount; i++) {
+    const sourceIndex = sourceIndexForSample(i, sampleCount, sourceVertexCount);
+    const v = vertices[sourceIndex];
+    const dst = i * 3;
+    const x = Number.isFinite(v.x) ? v.x : 0;
+    const y = Number.isFinite(v.y) ? v.y : 0;
+    const z = Number.isFinite(v.z) ? v.z : 0;
+    positions[dst + 0] = x;
+    positions[dst + 1] = y;
+    positions[dst + 2] = z;
+    colors[dst + 0] = Math.max(0, Math.min(1, (v.r ?? 255) / 255));
+    colors[dst + 1] = Math.max(0, Math.min(1, (v.g ?? 255) / 255));
+    colors[dst + 2] = Math.max(0, Math.min(1, (v.b ?? 255) / 255));
+    alpha[i] = Math.max(0, Math.min(1, (v.a ?? 255) / 255));
+
+    if (splatScale) {
+      splatScale[dst + 0] = Number.isFinite(v.scale_0) ? v.scale_0! : 0;
+      splatScale[dst + 1] = Number.isFinite(v.scale_1) ? v.scale_1! : 0;
+      splatScale[dst + 2] = Number.isFinite(v.scale_2) ? v.scale_2! : 0;
+    }
+    if (splatRotation) {
+      const rotOff = i * 4;
+      splatRotation[rotOff + 0] = Number.isFinite(v.rot_0) ? v.rot_0! : 1;
+      splatRotation[rotOff + 1] = Number.isFinite(v.rot_1) ? v.rot_1! : 0;
+      splatRotation[rotOff + 2] = Number.isFinite(v.rot_2) ? v.rot_2! : 0;
+      splatRotation[rotOff + 3] = Number.isFinite(v.rot_3) ? v.rot_3! : 0;
+    }
+    if (shRest && v.f_rest?.length) {
+      const shOff = i * shRestStride;
+      const copyCount = Math.min(shRestStride, v.f_rest.length);
+      for (let j = 0; j < copyCount; j++) {
+        const coeff = v.f_rest[j];
+        shRest[shOff + j] = Number.isFinite(coeff) ? coeff : 0;
+      }
+    }
+
+    if (x < minX) minX = x;
+    if (y < minY) minY = y;
+    if (z < minZ) minZ = z;
+    if (x > maxX) maxX = x;
+    if (y > maxY) maxY = y;
+    if (z > maxZ) maxZ = z;
+  }
+
+  return {
+    positions,
+    colors,
+    alpha,
+    splatScale,
+    splatRotation,
+    sphericalHarmonicsRest: shRest,
+    sphericalHarmonicsRestStride: shRestStride,
+    sphericalHarmonicsDegree: data.sphericalHarmonicsDegree ?? 0,
+    sphericalHarmonicsCoefficientCount: shCoeffCount,
+    gaussian,
+    dataType: gaussian ? 'gaussian' : data.dataType,
+    sourceVertexCount,
+    sampleCount,
+    boundingBox: {
+      min: { x: minX, y: minY, z: minZ },
+      max: { x: maxX, y: maxY, z: maxZ },
+    },
+    center: {
+      x: (minX + maxX) / 2,
+      y: (minY + maxY) / 2,
+      z: (minZ + maxZ) / 2,
+    },
+  };
+}
+
+export function parsePLYPointBuffers(
+  buffer: ArrayBuffer,
+  options: PLYPointBufferOptions = {},
+): PLYPointBufferData {
+  const { text: headerText, headerLength } = extractPLYHeader(buffer);
+  const { elements, format } = parseHeader(headerText);
+  const vertexElement = elements.find(e => e.name === 'vertex');
+  if (!vertexElement) {
+    throw new Error('PLY file does not contain vertex element');
+  }
+
+  const gaussian = isGaussianSplat(vertexElement.properties);
+  const dataType: SplatDataType = gaussian ? 'gaussian' : 'pointcloud';
+  const sourceVertexCount = vertexElement.count;
+  const sampleCount = maxSampleCountForPLYData(sourceVertexCount, gaussian, options);
+  if (sampleCount <= 0) return emptyPointBufferData(dataType, sourceVertexCount);
+
+  if (format === 'ascii') {
+    return pointCloudBuffersFromPLYData(parsePLYBuffer(buffer), options);
+  }
+
+  const fixedOffsets = getElementFixedOffsets(vertexElement);
+  if (!fixedOffsets) {
+    return pointCloudBuffersFromPLYData(parsePLYBuffer(buffer), options);
+  }
+
+  const littleEndian = format === 'binary_little_endian';
+  const view = new DataView(buffer, headerLength);
+  let vertexStartOffset = 0;
+  for (const element of elements) {
+    if (element.name === 'vertex') break;
+    vertexStartOffset = skipBinaryElement(view, vertexStartOffset, element, littleEndian);
+  }
+
+  const { stride, propOffsets } = fixedOffsets;
+  const shRestPropertyNames = sphericalHarmonicsRestPropertyNames(vertexElement.properties);
+  const shCoeffCount = shRestPropertyNames.length;
+  const shDegree = sphericalHarmonicsDegreeForRestCount(shCoeffCount);
+  const requestedShRestStride = Math.max(0, Math.floor(options.sphericalHarmonicsRestStride ?? 9));
+  const shRestStride = shCoeffCount >= requestedShRestStride && requestedShRestStride > 0
+    ? requestedShRestStride
+    : 0;
+  const positions = new Float32Array(sampleCount * 3);
+  const colors = new Float32Array(sampleCount * 3);
+  const alpha = new Float32Array(sampleCount);
+  const splatScale = gaussian ? new Float32Array(sampleCount * 3) : undefined;
+  const splatRotation = gaussian ? new Float32Array(sampleCount * 4) : undefined;
+  const shRest = shRestStride > 0 ? new Float32Array(sampleCount * shRestStride) : undefined;
+
+  const readAt = (baseOffset: number, name: string): number | undefined => {
+    const info = propOffsets[name];
+    if (!info) return undefined;
+    const offset = baseOffset + info.offset;
+    if (offset < 0 || offset + getTypeSize(info.type) > view.byteLength) return undefined;
+    return readValue(view, offset, info.type, littleEndian);
+  };
+  const readProperty = (
+    baseOffset: number,
+    names: string[],
+  ): ParsedPropertyValue | undefined => getBinaryProperty(
+    propOffsets,
+    (name) => readAt(baseOffset, name),
+    names,
+  );
+
+  let minX = Infinity, minY = Infinity, minZ = Infinity;
+  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+
+  for (let i = 0; i < sampleCount; i++) {
+    const sourceIndex = sourceIndexForSample(i, sampleCount, sourceVertexCount);
+    const baseOffset = vertexStartOffset + sourceIndex * stride;
+    const dst = i * 3;
+    const fDc0 = readProperty(baseOffset, ['f_dc_0']);
+    const fDc1 = readProperty(baseOffset, ['f_dc_1']);
+    const fDc2 = readProperty(baseOffset, ['f_dc_2']);
+    const color = makeColorChannels(
+      readProperty(baseOffset, RED_PROPERTY_NAMES),
+      readProperty(baseOffset, GREEN_PROPERTY_NAMES),
+      readProperty(baseOffset, BLUE_PROPERTY_NAMES),
+      fDc0,
+      fDc1,
+      fDc2,
+    );
+    const alphaProperty = readProperty(baseOffset, ALPHA_PROPERTY_NAMES);
+    const x = readAt(baseOffset, 'x') ?? 0;
+    const y = readAt(baseOffset, 'y') ?? 0;
+    const z = readAt(baseOffset, 'z') ?? 0;
+
+    positions[dst + 0] = x;
+    positions[dst + 1] = y;
+    positions[dst + 2] = z;
+    colors[dst + 0] = color.r / 255;
+    colors[dst + 1] = color.g / 255;
+    colors[dst + 2] = color.b / 255;
+    alpha[i] = alphaProperty
+      ? normalizeAlphaValue(alphaProperty.value, alphaProperty.type, alphaProperty.name, gaussian) / 255
+      : 1;
+
+    if (splatScale) {
+      splatScale[dst + 0] = readAt(baseOffset, 'scale_0') ?? 0;
+      splatScale[dst + 1] = readAt(baseOffset, 'scale_1') ?? 0;
+      splatScale[dst + 2] = readAt(baseOffset, 'scale_2') ?? 0;
+    }
+    if (splatRotation) {
+      const rotOff = i * 4;
+      splatRotation[rotOff + 0] = readAt(baseOffset, 'rot_0') ?? 1;
+      splatRotation[rotOff + 1] = readAt(baseOffset, 'rot_1') ?? 0;
+      splatRotation[rotOff + 2] = readAt(baseOffset, 'rot_2') ?? 0;
+      splatRotation[rotOff + 3] = readAt(baseOffset, 'rot_3') ?? 0;
+    }
+    if (shRest) {
+      const shOff = i * shRestStride;
+      for (let j = 0; j < shRestStride; j++) {
+        const value = readAt(baseOffset, shRestPropertyNames[j]);
+        shRest[shOff + j] = Number.isFinite(value) ? value! : 0;
+      }
+    }
+
+    if (x < minX) minX = x;
+    if (y < minY) minY = y;
+    if (z < minZ) minZ = z;
+    if (x > maxX) maxX = x;
+    if (y > maxY) maxY = y;
+    if (z > maxZ) maxZ = z;
+  }
+
+  return {
+    positions,
+    colors,
+    alpha,
+    splatScale,
+    splatRotation,
+    sphericalHarmonicsRest: shRest,
+    sphericalHarmonicsRestStride: shRestStride,
+    sphericalHarmonicsDegree: shDegree,
+    sphericalHarmonicsCoefficientCount: shCoeffCount,
+    gaussian,
+    dataType,
+    sourceVertexCount,
+    sampleCount,
+    boundingBox: {
+      min: { x: minX, y: minY, z: minZ },
+      max: { x: maxX, y: maxY, z: maxZ },
+    },
+    center: {
+      x: (minX + maxX) / 2,
+      y: (minY + maxY) / 2,
+      z: (minZ + maxZ) / 2,
+    },
+  };
 }
 
 // Parse PLY from ArrayBuffer (useful when file is already loaded)

@@ -90,6 +90,11 @@ struct LayerData {
   effect1: vec4<f32>,
   effect2: vec4<f32>,
   effect3: vec4<f32>,
+  edge_effects: array<array<vec4<f32>, 7>, 4>,
+  mask_info: vec4<f32>,
+  mask: array<vec4<f32>, 64>,
+  mesh: array<vec4<f32>, 128>,
+  source_rect: vec4<f32>,
 }
 
 @group(0) @binding(1)
@@ -451,6 +456,82 @@ fn quad_local_uv(p: vec2<f32>, tl: vec2<f32>, tr: vec2<f32>, br: vec2<f32>, bl: 
   return vec3<f32>(0.0, 0.0, 0.0);
 }
 
+fn cross2(a: vec2<f32>, b: vec2<f32>) -> f32 {
+  return a.x * b.y - a.y * b.x;
+}
+
+fn inverse_bilinear(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>, c: vec2<f32>, d: vec2<f32>) -> vec2<f32> {
+  let e = b - a;
+  let f = d - a;
+  let g = a - b + c - d;
+  let h = p - a;
+  let k2 = cross2(g, f);
+  let k1 = cross2(e, f) + cross2(h, g);
+  let k0 = cross2(h, e);
+  var u_coord = -1.0;
+  var v_coord = -1.0;
+  if (abs(k2) < 0.0001) {
+    if (abs(k1) < 0.0001) { return vec2<f32>(-1.0); }
+    v_coord = -k0 / k1;
+  } else {
+    let discriminant = k1 * k1 - 4.0 * k0 * k2;
+    if (discriminant < 0.0) { return vec2<f32>(-1.0); }
+    let root = sqrt(discriminant);
+    let v0 = (-k1 - root) / (2.0 * k2);
+    let v1 = (-k1 + root) / (2.0 * k2);
+    v_coord = select(v1, v0, v0 >= 0.0 && v0 <= 1.0);
+  }
+  let denom_x = e.x + g.x * v_coord;
+  let denom_y = e.y + g.y * v_coord;
+  if (abs(denom_x) > 0.0001) {
+    u_coord = (h.x - f.x * v_coord) / denom_x;
+  } else if (abs(denom_y) > 0.0001) {
+    u_coord = (h.y - f.y * v_coord) / denom_y;
+  }
+  return vec2<f32>(u_coord, v_coord);
+}
+
+fn layer_mesh_point(layer_index: u32, index: u32) -> vec2<f32> {
+  let packed = layers[layer_index].mesh[index / 2u];
+  return select(packed.zw, packed.xy, (index & 1u) == 0u);
+}
+
+fn layer_mesh_uv(local_uv: vec2<f32>, layer_index: u32) -> vec3<f32> {
+  let rows = u32(clamp(floor(layers[layer_index].style.z + 0.5), 0.0, 16.0));
+  let cols = u32(clamp(floor(layers[layer_index].style.w + 0.5), 0.0, 16.0));
+  if (rows < 2u || cols < 2u) {
+    return vec3<f32>(1.0, local_uv);
+  }
+  // Small grids are cheap enough to search exactly. Larger grids use the
+  // regular-grid cell as a spatial index and inspect its immediate neighbors.
+  // This keeps interactive 12x12 warps bounded to nine inverse solves instead
+  // of 121 for every output pixel.
+  let exact_search = rows <= 4u && cols <= 4u;
+  let estimated_row = min(rows - 2u, u32(clamp(floor(local_uv.y * f32(rows - 1u)), 0.0, f32(rows - 2u))));
+  let estimated_col = min(cols - 2u, u32(clamp(floor(local_uv.x * f32(cols - 1u)), 0.0, f32(cols - 2u))));
+  for (var row = 0u; row < 15u; row = row + 1u) {
+    if (row >= rows - 1u) { break; }
+    if (!exact_search && (row + 1u < estimated_row || row > estimated_row + 1u)) { continue; }
+    for (var col = 0u; col < 15u; col = col + 1u) {
+      if (col >= cols - 1u) { break; }
+      if (!exact_search && (col + 1u < estimated_col || col > estimated_col + 1u)) { continue; }
+      let top_left = layer_mesh_point(layer_index, row * cols + col);
+      let top_right = layer_mesh_point(layer_index, row * cols + col + 1u);
+      let bottom_right = layer_mesh_point(layer_index, (row + 1u) * cols + col + 1u);
+      let bottom_left = layer_mesh_point(layer_index, (row + 1u) * cols + col);
+      let cell_uv = inverse_bilinear(local_uv, top_left, top_right, bottom_right, bottom_left);
+      if (cell_uv.x >= 0.0 && cell_uv.x <= 1.0 && cell_uv.y >= 0.0 && cell_uv.y <= 1.0) {
+        return vec3<f32>(
+          1.0,
+          (f32(col) + cell_uv.x) / f32(cols - 1u),
+          (f32(row) + cell_uv.y) / f32(rows - 1u),
+        );
+      }
+    }
+  }
+  return vec3<f32>(0.0, local_uv);
+}
+
 fn sample_source_preview_pixel(slot: i32, x: i32, y: i32) -> vec4<f32> {
   let safe_slot = clamp(slot, 0, MAX_SOURCE_PREVIEW_SLOTS - 1);
   let sx = clamp(x, 0, SOURCE_PREVIEW_SIZE - 1);
@@ -489,9 +570,7 @@ fn sample_source_preview(slot_plus_one: f32, uv: vec2<f32>) -> vec4<f32> {
       total += w;
     }
   }
-  sampled = sampled / max(total, 0.0001);
-  let rgb = clamp((sampled.rgb - vec3<f32>(0.5)) * 1.035 + vec3<f32>(0.5), vec3<f32>(0.0), vec3<f32>(1.0));
-  return vec4<f32>(rgb, sampled.a);
+  return sampled / max(total, 0.0001);
 }
 
 fn sample_source_frame_texel(slot: i32, x: i32, y: i32) -> vec4<f32> {
@@ -504,7 +583,15 @@ fn sample_source_frame_texel(slot: i32, x: i32, y: i32) -> vec4<f32> {
 
 fn sample_source_frame_linear(slot: i32, uv: vec2<f32>) -> vec4<f32> {
   let sample_uv = clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0));
-  return textureSample(source_frames, source_frame_sampler, sample_uv, slot);
+  return textureSampleLevel(source_frames, source_frame_sampler, sample_uv, slot, 0.0);
+}
+
+fn sample_source_frame_live(slot: i32, uv: vec2<f32>) -> vec4<f32> {
+  let sample_uv = clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0));
+  // Streaming video replaces level zero every frame and deliberately skips
+  // per-frame mip generation. Pin live media to the resident level so the
+  // sampler can never select an untouched (black) mip.
+  return textureSampleLevel(source_frames, source_frame_sampler, sample_uv, slot, 0.0);
 }
 
 fn sample_source_frame_minified(slot: i32, uv: vec2<f32>, footprint: f32) -> vec4<f32> {
@@ -532,53 +619,41 @@ fn sample_source_frame_minified(slot: i32, uv: vec2<f32>, footprint: f32) -> vec
 fn sample_source_frame(slot_code: f32, uv: vec2<f32>) -> vec4<f32> {
   let slot = clamp(i32(floor(slot_code - SOURCE_FRAME_SLOT_OFFSET - 1.0)), 0, MAX_SOURCE_FRAME_SLOTS - 1);
   let sample_uv = clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0));
-  let dims = vec2<f32>(textureDimensions(source_frames, 0));
-  let pixel_dx = dpdx(sample_uv) * dims;
-  let pixel_dy = dpdy(sample_uv) * dims;
-  let footprint = max(length(pixel_dx), length(pixel_dy));
-  let linear = sample_source_frame_linear(slot, sample_uv);
-  if (footprint > 1.35) {
-    return sample_source_frame_minified(slot, sample_uv, footprint);
-  }
-
-  let coord = clamp(sample_uv, vec2<f32>(0.0), vec2<f32>(0.999999)) * dims - vec2<f32>(0.5);
-  let base = floor(coord);
-  let f = fract(coord);
-  var sampled = vec4<f32>(0.0);
-  var total = 0.0;
-  for (var oy: i32 = -1; oy <= 2; oy = oy + 1) {
-    let wy = cubic_weight(f.y - f32(oy));
-    for (var ox: i32 = -1; ox <= 2; ox = ox + 1) {
-      let wx = cubic_weight(f.x - f32(ox));
-      let w = wx * wy;
-      sampled += sample_source_frame_texel(slot, i32(base.x) + ox, i32(base.y) + oy) * w;
-      total += w;
-    }
-  }
-  let cubic = sampled / max(total, 0.0001);
-  let cubic_amount = 1.0 - smoothstep(0.95, 1.35, footprint);
-  return mix(linear, max(cubic, vec4<f32>(0.0)), cubic_amount);
+  return sample_source_frame_linear(slot, sample_uv);
 }
 
-fn sample_source_content(slot_code: f32, uv: vec2<f32>) -> vec4<f32> {
+fn sample_source_content(slot_code: f32, uv: vec2<f32>, layer_index: u32) -> vec4<f32> {
   if (slot_code >= SOURCE_FRAME_SLOT_OFFSET) {
-    return sample_source_frame(slot_code, uv);
+    let rect = layers[layer_index].source_rect;
+    let slot = clamp(i32(floor(slot_code - SOURCE_FRAME_SLOT_OFFSET - 1.0)), 0, MAX_SOURCE_FRAME_SLOTS - 1);
+    let sample_uv = rect.xy + uv * rect.zw;
+    if (layers[layer_index].info.z > 2.5 && layers[layer_index].info.z < 3.5) {
+      return sample_source_frame_live(slot, sample_uv);
+    }
+    return sample_source_frame(slot_code, sample_uv);
   }
   return sample_source_preview(slot_code, uv);
 }
 
-fn layer_sample_uv(raw_uv: vec2<f32>, layer: LayerData) -> vec3<f32> {
+fn source_content_for_layer(sampled: vec4<f32>, source_kind: f32) -> vec4<f32> {
+  if (source_kind >= 9.0 && sampled.a > 0.0001) {
+    return vec4<f32>(sampled.rgb / sampled.a, sampled.a);
+  }
+  return sampled;
+}
+
+fn layer_sample_uv(raw_uv: vec2<f32>, layer_index: u32) -> vec3<f32> {
   var sampled_uv = raw_uv;
-  if (layer.uv1.z > 0.5) {
+  if (layers[layer_index].uv1.z > 0.5) {
     sampled_uv.x = 1.0 - sampled_uv.x;
   }
-  if (layer.uv1.w > 0.5) {
+  if (layers[layer_index].uv1.w > 0.5) {
     sampled_uv.y = 1.0 - sampled_uv.y;
   }
 
   var content_mask = 1.0;
-  let fit_mode = i32(floor(layer.uv1.x + 0.5));
-  let ratio = max(layer.uv1.y, 0.0001);
+  let fit_mode = i32(floor(layers[layer_index].uv1.x + 0.5));
+  let ratio = max(layers[layer_index].uv1.y, 0.0001);
   if (fit_mode == 1) {
     if (ratio > 1.0) {
       sampled_uv.x = (sampled_uv.x - 0.5) / ratio + 0.5;
@@ -595,7 +670,7 @@ fn layer_sample_uv(raw_uv: vec2<f32>, layer: LayerData) -> vec3<f32> {
     content_mask = select(0.0, 1.0, in_bounds);
   }
 
-  sampled_uv = layer.uv0.xy + sampled_uv * layer.uv0.zw;
+  sampled_uv = layers[layer_index].uv0.xy + sampled_uv * layers[layer_index].uv0.zw;
   return vec3<f32>(sampled_uv, content_mask);
 }
 
@@ -648,13 +723,13 @@ fn apply_native_effect(color_in: vec3<f32>, effect: vec4<f32>, uv: vec2<f32>, t:
   return color;
 }
 
-fn apply_native_effects(color: vec3<f32>, layer: LayerData, uv: vec2<f32>, t: f32) -> vec3<f32> {
-  let count = i32(floor(layer.style.y + 0.5));
+fn apply_native_effects(color: vec3<f32>, layer_index: u32, uv: vec2<f32>, t: f32) -> vec3<f32> {
+  let count = i32(floor(layers[layer_index].style.y + 0.5));
   var out = color;
-  if (count > 0) { out = apply_native_effect(out, layer.effect0, uv, t); }
-  if (count > 1) { out = apply_native_effect(out, layer.effect1, uv, t); }
-  if (count > 2) { out = apply_native_effect(out, layer.effect2, uv, t); }
-  if (count > 3) { out = apply_native_effect(out, layer.effect3, uv, t); }
+  if (count > 0) { out = apply_native_effect(out, layers[layer_index].effect0, uv, t); }
+  if (count > 1) { out = apply_native_effect(out, layers[layer_index].effect1, uv, t); }
+  if (count > 2) { out = apply_native_effect(out, layers[layer_index].effect2, uv, t); }
+  if (count > 3) { out = apply_native_effect(out, layers[layer_index].effect3, uv, t); }
   return out;
 }
 
@@ -769,22 +844,24 @@ fn triangle_signed_distance(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>, c: vec2<f3
   return select(edge_dist, -edge_dist, point_in_triangle(p, a, b, c));
 }
 
-fn native_layer_shape(local_uv: vec2<f32>, layer: LayerData) -> vec2<f32> {
-  let shape_type = i32(floor(layer.shape.x + 0.5));
-  if (shape_type == 0) {
-    return vec2<f32>(1.0, 0.0);
-  }
-  let feather = max(layer.shape.y, 0.0);
-  let rotation = layer.shape.z;
-  let scale = max(layer.shape.w, 0.0001);
-  var dist = 1.0;
+fn native_shape_signed_distance(local_uv: vec2<f32>, layer_index: u32) -> f32 {
+  let shape_type = i32(floor(layers[layer_index].shape.x + 0.5));
+  let rotation = layers[layer_index].shape.z;
+  let scale = max(layers[layer_index].shape.w, 0.0001);
+  let centered = rotate2d((local_uv - vec2<f32>(0.5)) / scale, -rotation);
   if (shape_type == 1) {
-    let p = rotate2d((local_uv - vec2<f32>(0.5)) / scale, -rotation);
-    dist = length(p) - 0.5;
-  } else if (shape_type == 2) {
-    let p = rotate2d((local_uv - vec2<f32>(0.5)) / scale, -rotation) + vec2<f32>(0.5);
-    dist = triangle_signed_distance(p, vec2<f32>(0.5, 0.88), vec2<f32>(0.14, 0.14), vec2<f32>(0.86, 0.14));
+    return length(centered) - 0.5;
   }
+  if (shape_type == 2) {
+    return triangle_signed_distance(centered + vec2<f32>(0.5), vec2<f32>(0.5, 0.88), vec2<f32>(0.14, 0.14), vec2<f32>(0.86, 0.14));
+  }
+  let q = abs(centered) - vec2<f32>(0.5);
+  return length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0);
+}
+
+fn native_layer_shape(local_uv: vec2<f32>, layer_index: u32) -> vec2<f32> {
+  let feather = max(layers[layer_index].shape.y, 0.0);
+  let dist = native_shape_signed_distance(local_uv, layer_index);
   let mask = select(
     select(0.0, 1.0, dist < 0.0),
     1.0 - smoothstep(-feather, 0.0, dist),
@@ -793,6 +870,203 @@ fn native_layer_shape(local_uv: vec2<f32>, layer: LayerData) -> vec2<f32> {
   let edge_width = max(0.0065, feather * 0.42 + 0.0065);
   let edge = 1.0 - smoothstep(0.0015, edge_width, abs(dist));
   return vec2<f32>(clamp(mask, 0.0, 1.0), clamp(edge, 0.0, 1.0));
+}
+
+fn native_edge_path_phase(uv: vec2<f32>, layer_index: u32) -> f32 {
+  let shape_type = i32(floor(layers[layer_index].shape.x + 0.5));
+  if (shape_type == 0) {
+    let d = vec4<f32>(uv.y, 1.0 - uv.x, 1.0 - uv.y, uv.x);
+    let side = min(min(d.x, d.y), min(d.z, d.w));
+    if (side == d.x) { return uv.x * 0.25; }
+    if (side == d.y) { return 0.25 + uv.y * 0.25; }
+    if (side == d.z) { return 0.75 - uv.x * 0.25; }
+    return 1.0 - uv.y * 0.25;
+  }
+  let p = uv - vec2<f32>(0.5);
+  return fract(atan2(p.y, p.x) / 6.28318530718 + 1.0);
+}
+
+fn native_edge_palette(t: f32) -> vec3<f32> {
+  return 0.55 + 0.45 * cos(6.28318530718 * (t + vec3<f32>(0.0, 0.33, 0.67)));
+}
+
+fn native_edge_fill_color(
+  fill_code: i32,
+  uv: vec2<f32>,
+  color0: vec4<f32>,
+  color1: vec4<f32>,
+  params: vec4<f32>,
+  t: f32,
+) -> vec4<f32> {
+  if (fill_code == 1) {
+    return vec4<f32>(color0.rgb, color0.a * clamp(params.y, 0.0, 1.0));
+  }
+  let scale = max(0.1, abs(params.y));
+  let speed = params.w;
+  let n = fbm(uv * scale + vec2<f32>(t * speed * 0.16, -t * speed * 0.12));
+  if (fill_code == 2) {
+    let wave = sin((uv.x + uv.y + n * 0.8) * scale * 3.0 + t * speed * 1.8);
+    return vec4<f32>(native_edge_palette(wave * 0.12 + t * 0.04), 0.72);
+  }
+  if (fill_code == 3) {
+    let liquid = smoothstep(0.18, 0.88, n + 0.18 * sin(uv.y * 9.0 + t * speed));
+    return vec4<f32>(mix(color0.rgb * 0.32, color0.rgb * 1.35, liquid), color0.a * 0.78);
+  }
+  if (fill_code == 4) {
+    let flame = smoothstep(0.24, 0.9, n + (1.0 - uv.y) * 0.42);
+    return vec4<f32>(mix(vec3<f32>(0.45, 0.015, 0.0), vec3<f32>(1.0, 0.72, 0.08), flame), flame * 0.9);
+  }
+  if (fill_code == 5) {
+    let arcs = pow(abs(sin((uv.x - uv.y + n * 0.22) * max(2.0, params.z) * 6.283 + t * speed * 2.0)), 18.0);
+    return vec4<f32>(color0.rgb * (0.22 + arcs * 2.2), color0.a * (0.25 + arcs * 0.75));
+  }
+  if (fill_code == 6) {
+    let holo = native_edge_palette(uv.x * 0.7 + uv.y * 0.3 + t * max(0.1, params.y) * 0.1);
+    let scan = 0.72 + 0.28 * sin(uv.y * u.resolution.y * 0.35);
+    return vec4<f32>(holo * scan, 0.7);
+  }
+  if (fill_code == 7) {
+    return vec4<f32>(mix(color0.rgb, color1.rgb, n), mix(color0.a, color1.a, n) * 0.8);
+  }
+  if (fill_code == 8) {
+    let angle = params.y * 0.01745329252;
+    let axis = vec2<f32>(cos(angle), sin(angle));
+    return vec4<f32>(mix(color0.rgb, color1.rgb, clamp(dot(uv - vec2<f32>(0.5), axis) + 0.5, 0.0, 1.0)), mix(color0.a, color1.a, 0.5));
+  }
+  return vec4<f32>(0.0);
+}
+
+fn apply_native_edge_effects(base: vec3<f32>, uv: vec2<f32>, shape_mask: f32, layer_index: u32, t: f32) -> vec4<f32> {
+  var result = base;
+  var coverage = 0.0;
+  let signed_dist = native_shape_signed_distance(uv, layer_index);
+  let pixel_uv = max(fwidth(signed_dist), 1.0 / max(1.0, min(u.resolution.x, u.resolution.y)));
+  let path_phase = native_edge_path_phase(uv, layer_index);
+  for (var effect_index: i32 = 0; effect_index < 4; effect_index = effect_index + 1) {
+    let edge_info = layers[layer_index].edge_effects[effect_index][0];
+    if (edge_info.x < 0.5 || edge_info.y <= 0.001) { continue; }
+    let stroke_color_raw = layers[layer_index].edge_effects[effect_index][1];
+    let stroke_params = layers[layer_index].edge_effects[effect_index][2];
+    let fill_params = layers[layer_index].edge_effects[effect_index][3];
+    let fill_color0 = layers[layer_index].edge_effects[effect_index][4];
+    let fill_color1 = layers[layer_index].edge_effects[effect_index][5];
+    let animation = layers[layer_index].edge_effects[effect_index][6];
+    let stroke_code = i32(floor(edge_info.w + 0.5));
+    let fill_code = i32(floor(fill_params.x + 0.5));
+    let animation_code = i32(floor(animation.x + 0.5));
+    let speed = animation.y;
+    var animated_dist = signed_dist;
+    var animated_phase = path_phase;
+    var animation_gain = 1.0;
+    if (animation_code == 2) {
+      animation_gain = mix(max(0.05, animation.z), max(animation.z, animation.w), 0.5 + 0.5 * sin(t * speed * 3.14159265));
+    } else if (animation_code == 3) {
+      animated_phase = fract(animated_phase + t * speed * 0.12);
+    } else if (animation_code == 5 || animation_code == 6) {
+      animated_dist += sin(animated_phase * 6.2831853 * max(1.0, animation.z) - t * speed * 3.0) * animation.w * 0.12;
+    } else if (animation_code == 7) {
+      animated_phase = fract(animated_phase + (hash21(vec2<f32>(floor(t * max(1.0, speed) * 8.0), f32(effect_index))) - 0.5) * animation.z * 0.2);
+      animation_gain = 0.68 + 0.32 * step(0.18, hash21(vec2<f32>(floor(t * max(1.0, speed) * 14.0), uv.y * 31.0)));
+    }
+
+    let fill_sample = native_edge_fill_color(fill_code, uv, fill_color0, fill_color1, fill_params, t);
+    let fill_alpha = fill_sample.a * shape_mask * edge_info.y * animation_gain;
+    if (fill_code > 0 && fill_alpha > 0.001) {
+      result = native_blend(result, fill_sample.rgb, fill_alpha, edge_info.z);
+      coverage = max(coverage, fill_alpha);
+    }
+
+    if (stroke_code > 0) {
+      let width_px = max(0.5, stroke_params.x) * animation_gain;
+      var stroke_alpha = 1.0 - smoothstep(width_px * pixel_uv, (width_px + 1.5) * pixel_uv, abs(animated_dist));
+      var stroke_color = stroke_color_raw.rgb;
+      if (stroke_code == 2 || stroke_code == 3) {
+        let glow_px = max(width_px + 2.0, stroke_params.y);
+        let glow = 1.0 - smoothstep(width_px * pixel_uv, glow_px * pixel_uv, abs(animated_dist));
+        let pulse = 1.0 + 0.28 * sin(t * stroke_params.w * 6.2831853);
+        stroke_alpha = max(stroke_alpha, glow * clamp(stroke_params.z, 0.0, 3.0) * 0.55) * pulse;
+        if (stroke_code == 3) { stroke_color = mix(vec3<f32>(1.0), stroke_color, 0.7); }
+      } else if (stroke_code == 4) {
+        let snake_count = max(1.0, stroke_params.w);
+        let snake_phase = fract(animated_phase * snake_count - t * stroke_params.z * 0.18);
+        let snake_length = clamp(stroke_params.y, 0.02, 0.98);
+        stroke_alpha *= 1.0 - smoothstep(snake_length, min(1.0, snake_length + 0.08), snake_phase);
+      } else if (stroke_code == 5) {
+        stroke_color = native_edge_palette(animated_phase + t * stroke_params.z * 0.08);
+      } else if (stroke_code == 6) {
+        let dash = max(0.01, stroke_params.y);
+        let gap = max(0.005, stroke_params.z);
+        stroke_alpha *= step(gap / (dash + gap), fract(animated_phase * 4.0 / (dash + gap) - t * stroke_params.w * 0.25));
+      } else if (stroke_code == 7) {
+        let arc = hash21(vec2<f32>(floor(animated_phase * 96.0), floor(t * max(0.1, stroke_params.z) * 20.0)));
+        stroke_alpha *= 0.35 + step(0.42, arc) * clamp(stroke_params.y, 0.1, 2.0);
+      } else if (stroke_code == 8) {
+        let pulses = max(1.0, stroke_params.y);
+        let pulse = abs(fract(animated_phase * pulses - t * stroke_params.z * 0.25) - 0.5) * 2.0;
+        stroke_alpha *= 1.0 - smoothstep(0.08, max(0.1, stroke_params.w), pulse);
+      } else if (stroke_code == 9) {
+        let beam = abs(fract(animated_phase - t * stroke_params.z * 0.15) - 0.5) * 2.0;
+        stroke_alpha *= 1.0 - smoothstep(max(0.01, stroke_params.y), max(0.02, stroke_params.y) + 0.12, beam);
+      } else if (stroke_code == 10) {
+        let flame = fbm(vec2<f32>(animated_phase * 18.0, t * max(0.1, stroke_params.z) * 1.4));
+        stroke_color = mix(vec3<f32>(1.0, 0.08, 0.0), stroke_color, flame);
+        stroke_alpha *= 0.45 + flame * clamp(stroke_params.y, 0.1, 2.0);
+      }
+      if (animation_code == 1) {
+        let spacing = max(0.004, animation.w);
+        let ring = abs(fract((-signed_dist / spacing) - t * speed * 0.3) - 0.5) * 2.0;
+        stroke_alpha = max(stroke_alpha, (1.0 - smoothstep(0.04, 0.22, ring)) * shape_mask);
+      } else if (animation_code == 4) {
+        let rays = max(2.0, animation.z);
+        let ray = pow(abs(sin((atan2(uv.y - 0.5, uv.x - 0.5) + t * speed) * rays * 0.5)), 18.0);
+        stroke_alpha = max(stroke_alpha, ray * shape_mask * 0.75);
+      }
+      stroke_alpha = clamp(stroke_alpha * stroke_color_raw.a * edge_info.y, 0.0, 1.0) * shape_mask;
+      result = native_blend(result, stroke_color, stroke_alpha, edge_info.z);
+      coverage = max(coverage, stroke_alpha);
+    }
+  }
+  return vec4<f32>(result, coverage);
+}
+
+fn native_polygon_mask(local_uv: vec2<f32>, layer_index: u32) -> f32 {
+  let point_count = min(64, i32(floor(layers[layer_index].mask_info.w + 0.5)));
+  if (layers[layer_index].mask_info.x < 0.5 || point_count < 3) {
+    return 1.0;
+  }
+
+  var inside_union = false;
+  var min_edge_distance = 1000.0;
+  for (var shape_index: i32 = 0; shape_index < 8; shape_index = shape_index + 1) {
+    var crossings = 0;
+    var shape_points = 0;
+    for (var i: i32 = 0; i < 64; i = i + 1) {
+      if (i >= point_count) { break; }
+      let packed = layers[layer_index].mask[i];
+      if (i32(floor(packed.w + 0.5)) != shape_index) { continue; }
+      let next_index = clamp(i32(floor(packed.z + 0.5)), 0, point_count - 1);
+      let a = packed.xy;
+      let b = layers[layer_index].mask[next_index].xy;
+      shape_points = shape_points + 1;
+      let crosses = ((a.y <= local_uv.y && b.y > local_uv.y) || (a.y > local_uv.y && b.y <= local_uv.y)) &&
+        (local_uv.x < (b.x - a.x) * (local_uv.y - a.y) / max(abs(b.y - a.y), 0.000001) * sign(b.y - a.y) + a.x);
+      if (crosses) { crossings = crossings + 1; }
+      min_edge_distance = min(min_edge_distance, segment_distance(local_uv, a, b));
+    }
+    if (shape_points >= 3 && (crossings % 2) == 1) {
+      inside_union = true;
+    }
+  }
+
+  var alpha = select(0.0, 1.0, inside_union);
+  let feather = max(0.0, layers[layer_index].mask_info.z);
+  if (inside_union && feather > 0.001) {
+    alpha = smoothstep(0.0, feather, min_edge_distance);
+  }
+  if (layers[layer_index].mask_info.y > 0.5) {
+    alpha = 1.0 - alpha;
+  }
+  return clamp(alpha, 0.0, 1.0);
 }
 
 @fragment
@@ -810,74 +1084,74 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
   let audio_drive = clamp(audio_level * 0.36 + audio_bass * 0.30 + audio_beat * 0.42 + audio_kick * 0.26 + audio_snare * 0.18, 0.0, 1.8);
   let core = vec2<f32>(0.0, 0.02 * sin(t * 0.9));
 
-  var color = vec3<f32>(0.006, 0.008, 0.012);
-  let vignette = smoothstep(1.45, 0.18, length(p));
-  color += vec3<f32>(0.01, 0.025, 0.04) * vignette * (1.0 + audio_drive * 0.8);
-
-  let rings = abs(sin((length(p - core) * (18.0 + audio_bass * 5.0) - t * (3.0 + audio_level * 2.0)) + u.command_phase * 0.015));
-  color += vec3<f32>(0.02, 0.18 + audio_treble * 0.16, 0.28 + audio_bass * 0.18) * pow(1.0 - rings, 8.0) * vignette * (1.0 + audio_beat * 1.35);
-
   let layer_energy = clamp(u.layer_count / 16.0, 0.0, 1.0);
-  for (var i: i32 = 0; i < 10; i = i + 1) {
-    let fi = f32(i);
-    let a = fi * 0.6283185 + t * (0.18 + 0.05 * sin(fi) + audio_level * 0.12) + u.command_phase * 0.004 + audio_beat * 0.08;
-    let dir = vec2<f32>(cos(a), sin(a));
-    let beam = glow_line(p, core, dir, 0.0018 + layer_energy * 0.002 + audio_kick * 0.0015);
-    let palette = 0.5 + 0.5 * cos(vec3<f32>(0.0, 2.1, 4.2) + a + vec3<f32>(0.0, 0.7, 1.6) + audio_treble * 0.9);
-    color += palette * beam * (0.22 + layer_energy * 0.45 + audio_drive * 0.34);
-  }
+  var color = vec3<f32>(0.0);
+  if (u.layer_count < -0.5) {
+    let vignette = smoothstep(1.45, 0.18, length(p));
+    color += vec3<f32>(0.006, 0.008, 0.012);
+    color += vec3<f32>(0.01, 0.025, 0.04) * vignette * (1.0 + audio_drive * 0.8);
 
-  let grid = abs(fract((p.x + p.y + t * 0.15) * 24.0) - 0.5);
-  let grid_glow = smoothstep(0.025 + audio_snare * 0.01, 0.0, grid) * (0.06 + audio_drive * 0.08);
-  color += vec3<f32>(0.0, 0.7 + audio_treble * 0.2, 1.0) * grid_glow * vignette;
+    let rings = abs(sin((length(p - core) * (18.0 + audio_bass * 5.0) - t * (3.0 + audio_level * 2.0)) + u.command_phase * 0.015));
+    color += vec3<f32>(0.02, 0.18 + audio_treble * 0.16, 0.28 + audio_bass * 0.18) * pow(1.0 - rings, 8.0) * vignette * (1.0 + audio_beat * 1.35);
+
+    for (var i: i32 = 0; i < 10; i = i + 1) {
+      let fi = f32(i);
+      let a = fi * 0.6283185 + t * (0.18 + 0.05 * sin(fi) + audio_level * 0.12) + u.command_phase * 0.004 + audio_beat * 0.08;
+      let dir = vec2<f32>(cos(a), sin(a));
+      let beam = glow_line(p, core, dir, 0.0018 + layer_energy * 0.002 + audio_kick * 0.0015);
+      let palette = 0.5 + 0.5 * cos(vec3<f32>(0.0, 2.1, 4.2) + a + vec3<f32>(0.0, 0.7, 1.6) + audio_treble * 0.9);
+      color += palette * beam * (0.22 + layer_energy * 0.45 + audio_drive * 0.34);
+    }
+
+    let grid = abs(fract((p.x + p.y + t * 0.15) * 24.0) - 0.5);
+    let grid_glow = smoothstep(0.025 + audio_snare * 0.01, 0.0, grid) * (0.06 + audio_drive * 0.08);
+    color += vec3<f32>(0.0, 0.7 + audio_treble * 0.2, 1.0) * grid_glow * vignette;
+  }
 
   let canvas_uv = in.uv;
   for (var i: i32 = 0; i < 64; i = i + 1) {
     if (f32(i) >= u.layer_count) {
       break;
     }
-    let layer = layers[i];
-    if (layer.info.x < 0.5 || layer.color.a <= 0.001) {
+    let layer_index = u32(i);
+    if (layers[layer_index].info.x < 0.5 || layers[layer_index].color.a <= 0.001) {
       continue;
     }
-    let tl = layer.p0.xy;
-    let tr = layer.p0.zw;
-    let br = layer.p1.xy;
-    let bl = layer.p1.zw;
+    let tl = layers[layer_index].p0.xy;
+    let tr = layers[layer_index].p0.zw;
+    let br = layers[layer_index].p1.xy;
+    let bl = layers[layer_index].p1.zw;
     let local = quad_local_uv(canvas_uv, tl, tr, br, bl);
     let inside = local.x > 0.5;
-    let uv_sample = layer_sample_uv(local.yz, layer);
+    let mesh_sample = layer_mesh_uv(local.yz, layer_index);
+    let inside_mesh = inside && mesh_sample.x > 0.5;
+    let uv_sample = layer_sample_uv(mesh_sample.yz, layer_index);
     let sample_uv = uv_sample.xy;
     let content_mask = uv_sample.z;
-    let shape_sample = native_layer_shape(local.yz, layer);
-    let shape_mask = select(0.0, shape_sample.x, inside);
-    let edge_dist = quad_edge_distance(canvas_uv, tl, tr, br, bl);
-    let quad_edge = 1.0 - smoothstep(0.0015, 0.0065, edge_dist);
-    let edge = select(quad_edge, shape_sample.y * select(0.0, 1.0, inside), layer.shape.x > 0.5);
-    var layer_rgb = layer.color.rgb;
-    var fill_alpha = layer.color.a * 0.56 * shape_mask;
-    if (inside && layer.info.w > 0.5) {
-    let preview = sample_source_content(layer.info.w, sample_uv);
-    let source_alpha = preview.a * content_mask * shape_mask;
-    layer_rgb = mix(layer_rgb, preview.rgb, source_alpha);
-    fill_alpha = layer.color.a * 0.88 * source_alpha;
-    } else if (inside && layer.info.z >= 9.0) {
-      let proxy = gpu_proxy(layer.info.z, sample_uv, t, layer.info.y, layer.params0, layer.params1);
+    let shape_sample = native_layer_shape(local.yz, layer_index);
+    let polygon_mask = native_polygon_mask(local.yz, layer_index);
+    let shape_mask = select(0.0, shape_sample.x * polygon_mask, inside_mesh);
+    var layer_rgb = layers[layer_index].color.rgb;
+    var fill_alpha = layers[layer_index].color.a * 0.56 * shape_mask;
+    if (inside_mesh && layers[layer_index].info.w > 0.5) {
+      let preview = source_content_for_layer(sample_source_content(layers[layer_index].info.w, sample_uv, layer_index), layers[layer_index].info.z);
+      let source_alpha = preview.a * content_mask * shape_mask;
+      layer_rgb = preview.rgb;
+      fill_alpha = layers[layer_index].color.a * source_alpha;
+    } else if (inside_mesh && layers[layer_index].info.z >= 9.0) {
+      let proxy = gpu_proxy(layers[layer_index].info.z, sample_uv, t, layers[layer_index].info.y, layers[layer_index].params0, layers[layer_index].params1);
       let proxy_alpha = proxy.a * content_mask * shape_mask;
-      layer_rgb = mix(layer_rgb, proxy.rgb, proxy_alpha);
-      fill_alpha = layer.color.a * (0.62 + 0.28 * proxy_alpha) * content_mask * shape_mask;
+      layer_rgb = proxy.rgb;
+      fill_alpha = layers[layer_index].color.a * (0.62 + 0.28 * proxy_alpha) * content_mask * shape_mask;
     }
-    layer_rgb = apply_native_effects(layer_rgb, layer, sample_uv, t);
-    let pulse = 0.88 + 0.12 * sin(t * 2.2 + layer.info.y * 0.73 + u.command_phase * 6.2831);
-    if (inside && shape_mask > 0.001) {
-      color = native_blend(color, layer_rgb, fill_alpha, layer.style.x);
-      color += layer_rgb * 0.04 * pulse * fill_alpha;
+    layer_rgb = apply_native_effects(layer_rgb, layer_index, sample_uv, t);
+    let edge_composite = apply_native_edge_effects(layer_rgb, local.yz, shape_mask, layer_index, t);
+    layer_rgb = edge_composite.rgb;
+    fill_alpha = max(fill_alpha, layers[layer_index].color.a * edge_composite.a);
+    if (inside_mesh && shape_mask > 0.001) {
+      color = native_blend(color, layer_rgb, fill_alpha, layers[layer_index].style.x);
     }
-    color += layer_rgb * edge * (0.34 + 0.16 * pulse);
   }
 
-  let grain = value_noise(in.uv * u.resolution.xy * 0.36 + vec2<f32>(t * 21.0, u.frame_count * 0.23));
-  color += (grain - 0.5) * 0.0015;
-  color = pow(max(color, vec3<f32>(0.0)), vec3<f32>(0.82));
-  return vec4<f32>(color, 1.0);
+  return vec4<f32>(clamp(color, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
 }

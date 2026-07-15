@@ -19,6 +19,8 @@
   import EffectPickerModal from './EffectPickerModal.svelte';
   import { effectParamLabels, type ParamMeta } from '../effects/effectUX';
   import { EFFECT_CATALOG } from '../effects/effectCatalog';
+  import { isNativeSelectableEffect } from '../renderer/nativeEffectCoverage';
+  import { NATIVE_ENGINE_ONLY, settings } from '../stores/settings';
   import type { EffectType, Effect, EffectParams } from '../types';
 
   // Drag state — track which knob is being dragged + start position.
@@ -48,6 +50,21 @@
   // Inline name-edit state.
   let renamingId: string | null = null;
   let renameDraft = '';
+  $: nativeInventoryLocked = NATIVE_ENGINE_ONLY && Boolean($settings.experimental?.outputNativeCore);
+
+  function nativeEffectPending(effectType: EffectType | string): boolean {
+    return nativeInventoryLocked && !isNativeSelectableEffect(effectType);
+  }
+
+  function nativeEffectBadge(effectType: EffectType | string): 'NATIVE' | 'PENDING' | '' {
+    if (!nativeInventoryLocked) return '';
+    return isNativeSelectableEffect(effectType) ? 'NATIVE' : 'PENDING';
+  }
+
+  function toggleMacroEffectIfNativeReady(macroId: string, fx: Effect) {
+    if (nativeEffectPending(fx.type) && !fx.enabled) return;
+    macros.toggleEffect(macroId, fx.id);
+  }
 
   // Cache: effect type → human label (from EFFECT_CATALOG). Falls back to
   // the type string if no entry. Used in the effect-row title.
@@ -317,9 +334,11 @@
             {#each m.effects as fx, fxIdx (fx.id)}
               {@const paramMetas = getParamMetas(fx.type)}
               {@const isExpanded = expandedFxId === fx.id}
+              {@const pendingNativeEffect = nativeEffectPending(fx.type)}
               <div
                 class="macro-fx-card"
                 class:disabled={!fx.enabled}
+                class:native-pending={pendingNativeEffect}
                 class:dragging={dragEffectIdx === fxIdx}
                 class:expanded={isExpanded}
                 ondragover={(e) => { e.preventDefault(); e.dataTransfer!.dropEffect = 'move'; }}
@@ -350,8 +369,9 @@
                     }}
                   >⋮⋮</span>
                   <button class="macro-dest-toggle"
-                    title={fx.enabled ? 'Bypass this effect' : 'Enable this effect'}
-                    onclick={() => macros.toggleEffect(m.id, fx.id)}>
+                    disabled={pendingNativeEffect && !fx.enabled}
+                    title={pendingNativeEffect ? 'Pending native port' : (fx.enabled ? 'Bypass this effect' : 'Enable this effect')}
+                    onclick={() => toggleMacroEffectIfNativeReady(m.id, fx)}>
                     {fx.enabled ? '●' : '○'}
                   </button>
                   <button
@@ -371,6 +391,11 @@
                       {#if paramMetas.length > 0} · {paramMetas.length} param{paramMetas.length === 1 ? '' : 's'}{/if}
                     </div>
                   </button>
+                  {#if nativeInventoryLocked}
+                    <span class="native-effect-badge" class:pending={pendingNativeEffect}>
+                      {nativeEffectBadge(fx.type)}
+                    </span>
+                  {/if}
                   <input
                     class="macro-fx-opacity"
                     type="range"
@@ -386,6 +411,11 @@
 
                 {#if isExpanded}
                   <div class="macro-fx-params">
+                    {#if pendingNativeEffect}
+                      <div class="native-effect-lockout">
+                        Pending native port. Disable or remove this effect before using the macro in native v2.
+                      </div>
+                    {/if}
                     {#if paramMetas.length === 0}
                       <div class="macro-fx-params-empty">
                         This effect has no editable parameters — just toggle on/off
@@ -673,6 +703,10 @@
   }
   .macro-fx-card:hover { border-color: rgba(255, 255, 255, 0.12); }
   .macro-fx-card.disabled { opacity: 0.45; }
+  .macro-fx-card.native-pending {
+    border-color: rgba(255, 170, 64, 0.32);
+    background: rgba(255, 170, 64, 0.045);
+  }
   .macro-fx-card.dragging { opacity: 0.55; background: rgba(187, 134, 252, 0.06); border-color: rgba(187, 134, 252, 0.4); }
   .macro-fx-card.expanded { background: rgba(255, 255, 255, 0.045); border-color: rgba(187, 134, 252, 0.35); }
   .macro-fx-row {
@@ -817,6 +851,33 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  .native-effect-badge {
+    flex: 0 0 auto;
+    border: 1px solid rgba(88, 231, 255, 0.38);
+    background: rgba(88, 231, 255, 0.08);
+    color: #58e7ff;
+    border-radius: 3px;
+    padding: 2px 5px;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    line-height: 1;
+  }
+  .native-effect-badge.pending {
+    border-color: rgba(255, 170, 64, 0.42);
+    background: rgba(255, 170, 64, 0.1);
+    color: #ffb85f;
+  }
+  .native-effect-lockout {
+    border: 1px solid rgba(255, 170, 64, 0.28);
+    background: rgba(255, 170, 64, 0.08);
+    color: #ffcf91;
+    border-radius: 4px;
+    padding: 7px 8px;
+    margin-bottom: 7px;
+    font-size: 11px;
+    line-height: 1.35;
   }
   .macro-fx-opacity {
     width: 80px;

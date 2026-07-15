@@ -537,7 +537,6 @@ function createKeyframeTimelineStore() {
       const state = get({ subscribe });
       const armKey = `${layerId}:${trackKey}`;
       const isArmed = !!state.armedTracks[armKey];
-      console.log('[KF Store] autoRecord:', layerId, trackKey, 'armed=', isArmed, 'armKeys=', Object.keys(state.armedTracks));
       if (!isArmed) return;
       // Ensure track exists
       this.ensureTrack(layerId, trackKey, label, type);

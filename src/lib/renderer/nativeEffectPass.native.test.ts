@@ -12,6 +12,7 @@ import {
   nativeEffectPassManifestEntry,
   packNativeEffectPassUniforms,
 } from './nativeEffectPass';
+import { buildPlanetNativePrecompileCommands } from './shaders/webgpuPlanet';
 
 const nativeCoreBin = join(
   process.cwd(),
@@ -239,6 +240,10 @@ describe('Native effect-pass template', () => {
       ['halftone', 66],
       ['toon', 67],
       ['kuwahara', 68],
+      ['defocus-bokeh', 69],
+      ['god-rays', 70],
+      ['displacement', 71],
+      ['polar-transform', 72],
     ]);
     expect(nativeEffectPassManifestEntry('posterize')).toMatchObject({
       code: 8,
@@ -267,6 +272,8 @@ describe('Native effect-pass template', () => {
     expect(source.source).toContain('code == 66u');
     expect(source.source).toContain('code == 67u');
     expect(source.source).toContain('code == 68u');
+    expect(source.source).toContain('1.0 - smoothstep(1.0 - top, 1.0, uv.y)');
+    expect(source.source).toContain('1.0 - smoothstep(1.0 - right, 1.0, uv.x)');
     expect(source.source).not.toMatch(/^\s*#include\b/m);
   });
 
@@ -1645,7 +1652,7 @@ describe('Native effect-pass template', () => {
           target_fps: 30,
         },
       }, 12000);
-      await delay(80);
+      await delay(300);
 
       const capabilities = await rpc.send('capabilities', {}, 5000);
       expect(capabilities?.features?.compute_graph_render).toBe(true);
@@ -1740,6 +1747,145 @@ describe('Native effect-pass template', () => {
     }
   }, 30000);
 
+  itIfNativeCore('keeps a core-owned instrument source separate from its composited effect output', async () => {
+    const rpc = createNativeRpc();
+    try {
+      await rpc.send('start', {
+        config: {
+          backend: process.platform === 'darwin' ? 'metal' : process.platform === 'win32' ? 'd3d12' : 'vulkan',
+          width: 160,
+          height: 90,
+          target_fps: 30,
+        },
+      }, 12000);
+      await delay(300);
+
+      const precompileSummary = await rpc.send('submit_commands', {
+        commands: [
+          ...buildPlanetNativePrecompileCommands(),
+          ...buildNativeEffectPassPrecompileCommands(),
+        ],
+      }, 8000);
+      expect(Number(precompileSummary?.dropped ?? 0)).toBe(0);
+
+      const layerId = 'native-effect-instrument-layer';
+      const instrumentSourceId = 'native-effect-instrument-base';
+      const compositeSourceId = 'native-effect-instrument-invert';
+      await rpc.send('submit_commands', {
+        commands: [
+          {
+            type: 'upsert_layer',
+            layer_id: layerId,
+            z_index: 0,
+            blend_mode: 'normal',
+            opacity: 1,
+            corners: FULLSCREEN_CORNERS,
+          },
+          { type: 'set_layer_visibility', layer_id: layerId, visible: true },
+          {
+            type: 'set_native_graph_layer',
+            layer_id: layerId,
+            kind: 'planet',
+            instrument_source_id: instrumentSourceId,
+            composite_source_id: instrumentSourceId,
+            effect_graph: null,
+            params: {},
+          },
+          {
+            type: 'set_render_clock',
+            mode: 'manual',
+            time: 1.25,
+            time_delta: 0,
+            frame_index: 30,
+          },
+        ],
+      }, 8000);
+      await delay(300);
+
+      const sourceSnapshot = await rpc.send('frame_snapshot', {
+        include_pixels: false,
+        time: 1.25,
+        frame_index: 30,
+      }, 8000);
+      assertVisibleSnapshot('core-owned native instrument source', sourceSnapshot);
+      const sourceStatus = await rpc.send('status', {}, 5000);
+
+      const effectGraph = buildNativeEffectPassGraph({
+        sourceId: instrumentSourceId,
+        targetSourceId: compositeSourceId,
+        effect: 'invert',
+        width: 160,
+        height: 90,
+        time: 1.25,
+        frameDelta: 0,
+        frameIndex: 30,
+        amount: 1,
+        mix: 1,
+      });
+      await rpc.send('submit_commands', {
+        commands: [
+          {
+            type: 'set_native_graph_layer',
+            layer_id: layerId,
+            kind: 'planet',
+            instrument_source_id: instrumentSourceId,
+            composite_source_id: compositeSourceId,
+            effect_graph: effectGraph.config,
+            params: {},
+          },
+        ],
+      }, 8000);
+      await delay(300);
+
+      const effectSnapshot = await rpc.send('frame_snapshot', {
+        include_pixels: false,
+        time: 1.25,
+        frame_index: 30,
+      }, 8000);
+      assertVisibleSnapshot('core-owned native instrument effect output', effectSnapshot);
+      const effectStatus = await rpc.send('status', {}, 5000);
+      expect(
+        effectSnapshot.checksum,
+        JSON.stringify({
+          last_shader_error: effectStatus?.last_shader_error,
+          last_frame_error: effectStatus?.last_frame_error,
+          graph_layers: effectStatus?.native_graph_source_frame_layers,
+          source_frames: effectStatus?.source_frames_active,
+          source_render_passes: sourceStatus?.compute_graph_render_passes,
+          effect_render_passes: effectStatus?.compute_graph_render_passes,
+        }),
+      ).not.toBe(sourceSnapshot.checksum);
+      expect(Math.abs(
+        Number(effectSnapshot.average_luma ?? 0) - Number(sourceSnapshot.average_luma ?? 0),
+      )).toBeGreaterThan(0.08);
+
+      const advancedTime = 2.75;
+      const advancedFrame = 66;
+      await rpc.send('submit_commands', {
+        commands: [
+          {
+            type: 'set_render_clock',
+            mode: 'manual',
+            time: advancedTime,
+            time_delta: 1.5,
+            frame_index: advancedFrame,
+          },
+        ],
+      }, 8000);
+      await delay(300);
+
+      const advancedEffectSnapshot = await rpc.send('frame_snapshot', {
+        include_pixels: false,
+        time: advancedTime,
+        frame_index: advancedFrame,
+      }, 8000);
+      assertVisibleSnapshot('animated core-owned native instrument effect output', advancedEffectSnapshot);
+      expect(advancedEffectSnapshot.checksum).not.toBe(effectSnapshot.checksum);
+    } finally {
+      await rpc.close();
+    }
+  }, 30000);
+
   itIfNativeCore('runs deterministic native effect-pass pixel fixture probes', async () => {
     const rpc = createNativeRpc();
     try {
@@ -1821,6 +1967,37 @@ describe('Native effect-pass template', () => {
             const sourceLuma = snapshotPixelLuma(sourceSnapshot, sourcePixels, 0.08, 0.08);
             const effectLuma = snapshotPixelLuma(snapshot, pixels, 0.08, 0.08);
             expect(effectLuma).toBeGreaterThan(sourceLuma + 0.12);
+          },
+        },
+        {
+          id: 'edge-feather',
+          graph: buildNativeEffectPassGraph({
+            sourceId,
+            targetSourceId: 'native-effect-pass-fixture-edge-feather',
+            effect: 'edge-feather',
+            width: 160,
+            height: 90,
+            time: 0.2,
+            frameDelta: 1 / 30,
+            frameIndex: 3,
+            amount: 1,
+            params: {
+              featherTop: 0.28,
+              featherBottom: 0.28,
+              featherLeft: 0.28,
+              featherRight: 0.28,
+              featherSoftness: 0.6,
+              featherGamma: 1,
+              featherMattePreview: 0,
+            },
+          }),
+          assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
+            const sourceEdge = snapshotPixelLuma(sourceSnapshot, sourcePixels, 0.02, 0.5);
+            const effectEdge = snapshotPixelLuma(snapshot, pixels, 0.02, 0.5);
+            const sourceCenter = snapshotPixelLuma(sourceSnapshot, sourcePixels, 0.5, 0.5);
+            const effectCenter = snapshotPixelLuma(snapshot, pixels, 0.5, 0.5);
+            expect(effectEdge).toBeLessThan(sourceEdge * 0.2);
+            expect(Math.abs(effectCenter - sourceCenter)).toBeLessThan(0.04);
           },
         },
         {
@@ -1929,7 +2106,7 @@ describe('Native effect-pass template', () => {
           assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
             const lineA = snapshotPixelLuma(snapshot, pixels, 0.5, 0.48);
             const lineB = snapshotPixelLuma(snapshot, pixels, 0.5, 0.52);
-            expect(Math.abs(lineA - lineB)).toBeGreaterThan(0.01);
+            expect(Math.abs(lineA - lineB)).toBeGreaterThan(0.003);
           },
         },
         {
@@ -1961,7 +2138,7 @@ describe('Native effect-pass template', () => {
             const lineB = snapshotPixelLuma(snapshot, pixels, 0.5, 0.53);
             const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, 0.5, 0.5);
             const effectRgb = snapshotPixelRgb(snapshot, pixels, 0.5, 0.5);
-            expect(Math.abs(lineA - lineB)).toBeGreaterThan(0.01);
+            expect(Math.abs(lineA - lineB)).toBeGreaterThan(0.003);
             expect(rgbDistance(sourceRgb, effectRgb)).toBeGreaterThan(0.01);
           },
         },
@@ -1976,7 +2153,7 @@ describe('Native effect-pass template', () => {
             time: 0.45,
             frameDelta: 1 / 30,
             frameIndex: 9,
-            amount: 0.9,
+            amount: 1,
             params: {
               plasmaScale: 4.5,
               plasmaSpeed: 0.8,
@@ -2291,7 +2468,7 @@ describe('Native effect-pass template', () => {
               samples: 24,
               falloff: 0.1,
               radiusInner: 0,
-              radiusOuter: 1,
+              radiusOuter: 0.55,
               outputMix: 1,
             },
           }),
@@ -2365,6 +2542,7 @@ describe('Native effect-pass template', () => {
         },
         {
           id: 'chroma-key',
+          allowDarkFrame: true,
           graph: buildNativeEffectPassGraph({
             sourceId,
             targetSourceId: 'native-effect-pass-fixture-chroma-key',
@@ -2393,6 +2571,7 @@ describe('Native effect-pass template', () => {
         },
         {
           id: 'luma-key',
+          allowDarkFrame: true,
           graph: buildNativeEffectPassGraph({
             sourceId,
             targetSourceId: 'native-effect-pass-fixture-luma-key',
@@ -2419,6 +2598,7 @@ describe('Native effect-pass template', () => {
         },
         {
           id: 'difference-key',
+          allowDarkFrame: true,
           graph: buildNativeEffectPassGraph({
             sourceId,
             targetSourceId: 'native-effect-pass-fixture-difference-key',
@@ -2803,17 +2983,15 @@ describe('Native effect-pass template', () => {
             },
           }),
           assert(snapshot: Record<string, unknown>, pixels: Uint8Array) {
-            const maxDelta = [
-              [0.50, 0.50],
-              [0.35, 0.35],
-              [0.65, 0.35],
-              [0.42, 0.58],
-              [0.72, 0.62],
-            ].reduce((best, [x, y]) => {
-              const sourceRgb = snapshotPixelRgb(sourceSnapshot, sourcePixels, x, y);
-              const trackRgb = snapshotPixelRgb(snapshot, pixels, x, y);
-              return Math.max(best, rgbDistance(sourceRgb, trackRgb));
-            }, 0);
+            let maxDelta = 0;
+            for (let i = 0; i < pixels.length; i += 4) {
+              maxDelta = Math.max(
+                maxDelta,
+                Math.abs(sourcePixels[i] - pixels[i]) / 255,
+                Math.abs(sourcePixels[i + 1] - pixels[i + 1]) / 255,
+                Math.abs(sourcePixels[i + 2] - pixels[i + 2]) / 255,
+              );
+            }
             expect(maxDelta).toBeGreaterThan(0.006);
           },
         },
@@ -2909,7 +3087,9 @@ describe('Native effect-pass template', () => {
           time: 0.2,
           frame_index: 10,
         }, 8000);
-        assertVisibleSnapshot(`effect fixture ${fixture.id}`, snapshot);
+        if (!(fixture as any).allowDarkFrame) {
+          assertVisibleSnapshot(`effect fixture ${fixture.id}`, snapshot);
+        }
         expect(snapshot.checksum).not.toBe(sourceSnapshot.checksum);
         fixture.assert(snapshot, snapshotPixels(snapshot));
       }

@@ -43,6 +43,7 @@ const nativeRendererBroker = createNativeRendererBroker({
       osrFailureReason,
     };
   },
+  nativeEditorPreviewStatusProvider: () => getNativePreviewStatus(),
   nativeFrameEncoderStatusProvider: () => getNativeFrameEncoderStatus(),
   sharedTextureHandlePreparer: prepareSharedTextureHandlesForNativeCore,
 });
@@ -1831,6 +1832,30 @@ let nativeOutputTextureSharePromoteInFlight = false;
 let nativeOutputTextureSharePromoteAttempts = 0;
 let nativeOutputTextureSharePromotionReason = null;
 
+// Embedded native editor preview presenter. This is intentionally separate
+// from the external output-window path: the editor preview is a child/native
+// view inside the main BrowserWindow, fed by the render core's one composite
+// IOSurface/DXGI texture. No browser-side renderer or floating OS window.
+let nativePreviewAddon = null;
+let nativePreviewAddonLoadAttempted = false;
+let nativePreviewAddonLoadError = null;
+let nativePreviewAddonLoadPath = null;
+let nativePreviewAddonLoadCandidates = [];
+let nativePreviewPump = null;
+let nativePreviewPumpInFlight = false;
+let nativePreviewAttached = false;
+let nativePreviewLastPresentedFrame = 0;
+let nativePreviewFrameCount = 0;
+let nativePreviewLastAddonFrameCount = 0;
+let nativePreviewLastLogTime = 0;
+let nativePreviewFailCount = 0;
+let nativePreviewLastRectSignature = '';
+let nativePreviewCachedTexture = null;
+let nativePreviewNextTexturePollAt = 0;
+let nativePreviewLastTextureFrame = -1;
+let nativePreviewLastTextureFrameAt = 0;
+let nativePreviewPausedForStaleFrame = false;
+
 // Multi-slice zero-copy atlas state. The slice-atlas OSR window renders
 // every Spout/Syphon sender slice into one atlas texture and publishes
 // its packed layout; SpoutAtlasOutput sub-copies each tile into a
@@ -2089,6 +2114,278 @@ function loadSpoutAddon() {
     console.error(`[${textureShareLabel}] Failed to load native addon:`, spoutAddonLoadError);
     return null;
   }
+}
+
+function getNativePreviewAddonCandidates() {
+  if (!isMac) return [];
+  return getTextureShareAddonCandidates('native_preview_addon.node');
+}
+
+function loadNativePreviewAddon() {
+  if (nativePreviewAddon) return nativePreviewAddon;
+  if (nativePreviewAddonLoadAttempted) return null;
+  nativePreviewAddonLoadAttempted = true;
+  nativePreviewAddonLoadError = null;
+  nativePreviewAddonLoadCandidates = getNativePreviewAddonCandidates();
+  nativePreviewAddonLoadPath = null;
+
+  if (!isMac) {
+    nativePreviewAddonLoadError = 'embedded native editor preview presenter is currently implemented on macOS only';
+    return null;
+  }
+
+  try {
+    const addonPath = nativePreviewAddonLoadCandidates.find(candidate => fs.existsSync(candidate));
+    if (!addonPath) {
+      nativePreviewAddonLoadError = 'native_preview_addon.node not built';
+      console.warn(`[NativePreview] ${nativePreviewAddonLoadError}. Checked: ${nativePreviewAddonLoadCandidates.join(', ')}`);
+      return null;
+    }
+    nativePreviewAddonLoadPath = addonPath;
+    nativePreviewAddon = require(addonPath);
+    console.log(`[NativePreview] Native preview addon loaded: ${addonPath}`);
+    return nativePreviewAddon;
+  } catch (err) {
+    nativePreviewAddonLoadError = err?.message || String(err);
+    console.error('[NativePreview] Failed to load addon:', nativePreviewAddonLoadError);
+    return null;
+  }
+}
+
+function normalizeNativePreviewRect(rect = {}) {
+  const number = (value, fallback, min = 0) => {
+    const n = Number(value);
+    if (!Number.isFinite(n)) return fallback;
+    return Math.max(min, n);
+  };
+  return {
+    x: number(rect.x, 0),
+    y: number(rect.y, 0),
+    width: number(rect.width, 1, 1),
+    height: number(rect.height, 1, 1),
+    contentX: number(rect.contentX, 0),
+    contentY: number(rect.contentY, 0),
+    contentWidth: number(rect.contentWidth, number(rect.width, 1, 1), 1),
+    contentHeight: number(rect.contentHeight, number(rect.height, 1, 1), 1),
+  };
+}
+
+function getNativePreviewStatus(extra = {}) {
+  const addon = nativePreviewAddon || loadNativePreviewAddon();
+  let addonStatus = null;
+  try {
+    addonStatus = addon && typeof addon.status === 'function' ? addon.status() : null;
+  } catch (err) {
+    nativePreviewAddonLoadError = err?.message || String(err);
+  }
+  return {
+    available: !!addon,
+    addonPath: nativePreviewAddonLoadPath,
+    candidates: nativePreviewAddonLoadCandidates,
+    error: nativePreviewAddonLoadError,
+    attached: nativePreviewAttached && !!addonStatus?.attached,
+    pumpActive: nativePreviewPump !== null || !!addonStatus?.pumpActive,
+    lastPresentedFrame: nativePreviewLastPresentedFrame,
+    framesPresented: addonStatus?.framesPresented ?? nativePreviewFrameCount,
+    failCount: nativePreviewFailCount,
+    mode: addonStatus?.mode || (addon ? 'shared-texture-import-blit' : 'unavailable'),
+    presentation: addonStatus?.presentation || (addon ? 'underlay-zero-copy' : 'unavailable'),
+    transport: addonStatus?.transport || (isMac ? 'iosurface' : 'none'),
+    width: addonStatus?.width ?? 0,
+    height: addonStatus?.height ?? 0,
+    lastSurfaceID: addonStatus?.lastSurfaceID ?? 0,
+    addonStatus,
+    ...extra,
+  };
+}
+
+function stopNativeEditorPreviewPump(reason = 'stopped') {
+  if (nativePreviewPump) {
+    clearInterval(nativePreviewPump);
+    nativePreviewPump = null;
+  }
+  nativePreviewPumpInFlight = false;
+  nativePreviewCachedTexture = null;
+  nativePreviewNextTexturePollAt = 0;
+  nativePreviewLastTextureFrame = -1;
+  nativePreviewLastTextureFrameAt = 0;
+  nativePreviewPausedForStaleFrame = false;
+  nativePreviewLastAddonFrameCount = 0;
+  try {
+    const addon = nativePreviewAddon || loadNativePreviewAddon();
+    if (addon && typeof addon.stopPump === 'function') addon.stopPump();
+  } catch {}
+  if (reason !== 'quiet') {
+    console.log(`[NativePreview] pump stopped (${reason})`);
+  }
+}
+
+async function nativePreviewTextureMetadataForPump() {
+  const now = Date.now();
+  const cachedReady = isPublishableNativeOutputTexture(nativePreviewCachedTexture);
+  if (cachedReady && now < nativePreviewNextTexturePollAt) {
+    return nativePreviewCachedTexture;
+  }
+  const texture = await getNativeOutputSharedTextureMetadata();
+  if (isPublishableNativeOutputTexture(texture)) {
+    const previousHandle = nativePreviewCachedTexture?.handle;
+    const previousSize = `${nativePreviewCachedTexture?.width ?? 0}x${nativePreviewCachedTexture?.height ?? 0}`;
+    const nextSize = `${texture.width ?? 0}x${texture.height ?? 0}`;
+    nativePreviewCachedTexture = texture;
+    nativePreviewNextTexturePollAt = now + 250;
+    if (previousHandle !== texture.handle || previousSize !== nextSize) {
+      console.log(`[NativePreview] shared texture ${texture.platform}:${texture.handle} ${nextSize}`);
+    }
+    return texture;
+  }
+  if (!cachedReady) {
+    nativePreviewNextTexturePollAt = now + 100;
+    return texture;
+  }
+  nativePreviewNextTexturePollAt = now + 250;
+  return nativePreviewCachedTexture;
+}
+
+function startNativeEditorPreviewPump() {
+  if (nativePreviewPump) return true;
+  const addon = nativePreviewAddon || loadNativePreviewAddon();
+  if (!addon || typeof addon.presentIOSurface !== 'function') return false;
+  const nativeDisplayLinkPump = typeof addon.setIOSurface === 'function';
+  const intervalMs = nativeDisplayLinkPump ? 250 : Math.max(4, Math.round(1000 / OSR_PAINT_FPS));
+  nativePreviewLastLogTime = Date.now();
+  nativePreviewLastAddonFrameCount = Number(addon.status?.().framesPresented ?? 0);
+  nativePreviewPump = setInterval(async () => {
+    if (!nativePreviewAttached || nativePreviewPumpInFlight) return;
+    nativePreviewPumpInFlight = true;
+    try {
+      const texture = await nativePreviewTextureMetadataForPump();
+      if (!isPublishableNativeOutputTexture(texture)) return;
+      const frame = Number(texture.frame ?? 0);
+      const width = Number(texture.width ?? 0);
+      const height = Number(texture.height ?? 0);
+      const surfaceId = Number(texture.handle ?? 0);
+      if (!Number.isFinite(surfaceId) || surfaceId <= 0 || width <= 0 || height <= 0) return;
+      const now = Date.now();
+      const textureFrame = Number.isFinite(frame) ? frame : 0;
+      const textureFrameChanged = textureFrame !== nativePreviewLastTextureFrame;
+      if (textureFrameChanged) {
+        nativePreviewLastTextureFrame = textureFrame;
+        nativePreviewLastTextureFrameAt = now;
+        nativePreviewPausedForStaleFrame = false;
+      } else if (nativePreviewLastTextureFrameAt <= 0) {
+        nativePreviewLastTextureFrameAt = now;
+      }
+      const staleForMs = now - nativePreviewLastTextureFrameAt;
+      if (nativeDisplayLinkPump && !textureFrameChanged && staleForMs > 1000) {
+        if (!nativePreviewPausedForStaleFrame && typeof addon.stopPump === 'function') {
+          addon.stopPump();
+          nativePreviewPausedForStaleFrame = true;
+          console.log(`[NativePreview] display-link paused; core frame ${textureFrame} has been idle for ${staleForMs}ms`);
+        }
+        return;
+      }
+      const ok = nativeDisplayLinkPump
+        ? addon.setIOSurface(surfaceId, width, height, false)
+        : addon.presentIOSurface(surfaceId, width, height, false);
+      if (!ok) {
+        nativePreviewFailCount++;
+        if (nativePreviewFailCount <= 5) {
+          console.warn('[NativePreview] presentIOSurface returned false', getNativePreviewStatus({ texture }));
+        }
+        return;
+      }
+      if (frame > 0) nativePreviewLastPresentedFrame = frame;
+      if (!nativeDisplayLinkPump) nativePreviewFrameCount++;
+      if (now - nativePreviewLastLogTime > 5000) {
+        const elapsed = Math.max(0.001, (now - nativePreviewLastLogTime) / 1000);
+        if (nativeDisplayLinkPump) {
+          const addonFrames = Number(addon.status?.().framesPresented ?? nativePreviewLastAddonFrameCount);
+          const delta = Math.max(0, addonFrames - nativePreviewLastAddonFrameCount);
+          nativePreviewLastAddonFrameCount = addonFrames;
+          console.log(`[NativePreview] display-link presented ${delta} native IOSurface frame(s) @ ${(delta / elapsed).toFixed(1)} fps`);
+        } else {
+          console.log(`[NativePreview] presented ${nativePreviewFrameCount} native IOSurface frame(s) @ ${(nativePreviewFrameCount / elapsed).toFixed(1)} fps`);
+          nativePreviewFrameCount = 0;
+        }
+        nativePreviewLastLogTime = now;
+      }
+    } catch (err) {
+      nativePreviewFailCount++;
+      if (nativePreviewFailCount <= 5) {
+        console.warn('[NativePreview] pump failed:', err?.message || err);
+      }
+    } finally {
+      nativePreviewPumpInFlight = false;
+    }
+  }, intervalMs);
+  nativePreviewPump.unref?.();
+  console.log(`[NativePreview] pump started @ ${nativeDisplayLinkPump ? 'display-link' : `${OSR_PAINT_FPS} fps`}`);
+  return true;
+}
+
+function attachNativeEditorPreview(rectArgs = {}) {
+  const addon = loadNativePreviewAddon();
+  if (!addon || typeof addon.attach !== 'function') {
+    return getNativePreviewStatus({ attached: false });
+  }
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return getNativePreviewStatus({ attached: false, error: 'main window is unavailable' });
+  }
+
+  const rect = normalizeNativePreviewRect(rectArgs);
+  const signature = `${Math.round(rect.x)},${Math.round(rect.y)},${Math.round(rect.width)}x${Math.round(rect.height)}`;
+  try {
+    console.log('[NativePreview] attach rect', JSON.stringify(rect), 'contentBounds', JSON.stringify(mainWindow.getContentBounds()), 'scale', require('electron').screen.getPrimaryDisplay().scaleFactor);
+    const handle = mainWindow.getNativeWindowHandle();
+    if (!Buffer.isBuffer(handle) || handle.length === 0) {
+      return getNativePreviewStatus({ attached: false, error: 'main window native handle is unavailable' });
+    }
+    const status = nativePreviewAttached && signature === nativePreviewLastRectSignature
+      ? addon.update(rect)
+      : addon.attach(handle, rect);
+    nativePreviewAttached = !!status?.attached;
+    nativePreviewLastRectSignature = signature;
+    startNativeEditorPreviewPump();
+    return getNativePreviewStatus({ rect });
+  } catch (err) {
+    nativePreviewAddonLoadError = err?.message || String(err);
+    console.error('[NativePreview] attach/update failed:', nativePreviewAddonLoadError);
+    return getNativePreviewStatus({ attached: false, rect });
+  }
+}
+
+function updateNativeEditorPreview(rectArgs = {}) {
+  const addon = nativePreviewAddon || loadNativePreviewAddon();
+  if (!addon || typeof addon.update !== 'function') return getNativePreviewStatus();
+  const rect = normalizeNativePreviewRect(rectArgs);
+  const signature = `${Math.round(rect.x)},${Math.round(rect.y)},${Math.round(rect.width)}x${Math.round(rect.height)}`;
+  try {
+    console.log('[NativePreview] update rect', JSON.stringify(rect));
+    const status = nativePreviewAttached
+      ? addon.update(rect)
+      : attachNativeEditorPreview(rect);
+    nativePreviewAttached = !!status?.attached;
+    nativePreviewLastRectSignature = signature;
+    startNativeEditorPreviewPump();
+    return getNativePreviewStatus({ rect });
+  } catch (err) {
+    nativePreviewAddonLoadError = err?.message || String(err);
+    return getNativePreviewStatus({ rect });
+  }
+}
+
+function detachNativeEditorPreview(reason = 'detach') {
+  stopNativeEditorPreviewPump(reason);
+  const addon = nativePreviewAddon;
+  if (addon && typeof addon.detach === 'function') {
+    try { addon.detach(); } catch (err) {
+      nativePreviewAddonLoadError = err?.message || String(err);
+    }
+  }
+  nativePreviewAttached = false;
+  nativePreviewLastPresentedFrame = 0;
+  nativePreviewLastRectSignature = '';
+  return getNativePreviewStatus();
 }
 
 // NDI native addon — cross-platform sender via NewTek's NDI SDK.
@@ -2542,7 +2839,7 @@ function destroySpoutOsrWindow() {
 function notifyMainWindowOsrStatus(active, reason) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     try {
-      mainWindow.webContents.send('spout-osr-status', {
+      mainWindow?.webContents.send('spout-osr-status', {
         active,
         reason,
         cpuFallbackAllowed: ALLOW_CPU_TEXTURE_SHARE_FALLBACK,
@@ -3003,7 +3300,7 @@ function stopOsrWatchdog() {
 function notifyMainWindowAtlasStatus(active, reason) {
   if (mainWindow && !mainWindow.isDestroyed()) {
     try {
-      mainWindow.webContents.send('texshare-atlas-status', { active, reason });
+      mainWindow?.webContents.send('texshare-atlas-status', { active, reason });
     } catch {}
   }
 }
@@ -3677,7 +3974,7 @@ function registerIpcHandlers() {
   ipcMain.handle('osc_stop', () => {
     stopOSC();
     if (mainWindow && !mainWindow.isDestroyed()) {
-      mainWindow.webContents.send('osc-status', { listening: false, port: oscPort, error: null });
+      mainWindow?.webContents.send('osc-status', { listening: false, port: oscPort, error: null });
     }
     return { ok: true };
   });
@@ -4694,7 +4991,7 @@ function registerIpcHandlers() {
         chunks.push(value);
         received += value.length;
         if (mainWindow && !mainWindow.isDestroyed()) {
-          mainWindow.webContents.send('update-download-progress', {
+          mainWindow?.webContents.send('update-download-progress', {
             received,
             total: contentLength,
             percent: contentLength > 0 ? Math.round((received / contentLength) * 100) : -1,
@@ -5832,8 +6129,89 @@ function registerIpcHandlers() {
   // Native renderer bridge. Electron is the long-term UI shell for 2.0;
   // the render core runs as a separate Rust/wgpu process so a renderer
   // crash does not take the control surface down.
+  ipcMain.handle('native_preview_attach', async (_event, args = {}) => {
+    return attachNativeEditorPreview(args?.rect ?? args);
+  });
+
+  ipcMain.handle('native_preview_update', async (_event, args = {}) => {
+    return updateNativeEditorPreview(args?.rect ?? args);
+  });
+
+  ipcMain.handle('native_preview_set_overlay', async (_event, args = {}) => {
+    const addon = nativePreviewAddon || loadNativePreviewAddon();
+    if (!addon || typeof addon.setOverlay !== 'function') return getNativePreviewStatus();
+    try {
+      addon.setOverlay(args?.overlay ?? args ?? {});
+    } catch (err) {
+      nativePreviewAddonLoadError = err?.message || String(err);
+    }
+    return getNativePreviewStatus();
+  });
+
+  ipcMain.handle('native_preview_detach', async (_event, args = {}) => {
+    return detachNativeEditorPreview(args?.reason || 'ipc-detach');
+  });
+
+  ipcMain.handle('native_preview_get_status', async () => {
+    return getNativePreviewStatus();
+  });
+
+  // Pointer-rate viewport mutations must never wait behind scene rebuilds,
+  // media uploads, readiness probes, or request/response timeouts. Keep only
+  // the newest geometry for each layer and write it to the core on the next
+  // main-process turn as an id=0 notification.
+  const pendingNativeViewportInteractions = new Map();
+  let nativeViewportInteractionFlushScheduled = false;
+  const flushNativeViewportInteractions = () => {
+    nativeViewportInteractionFlushScheduled = false;
+    const pending = Array.from(pendingNativeViewportInteractions.values());
+    pendingNativeViewportInteractions.clear();
+    for (const interaction of pending) {
+      nativeRendererBroker.notify('set_layer_interaction', interaction);
+    }
+  };
+  ipcMain.handle('native_viewport_set_layer_interaction', async (_event, args = {}) => {
+    const layerId = typeof args?.layer_id === 'string' ? args.layer_id.trim() : '';
+    if (!layerId) return { accepted: false };
+    pendingNativeViewportInteractions.set(layerId, { ...args, layer_id: layerId });
+    if (!nativeViewportInteractionFlushScheduled) {
+      nativeViewportInteractionFlushScheduled = true;
+      setImmediate(flushNativeViewportInteractions);
+    }
+    return { accepted: true };
+  });
+
   for (const cmd of nativeRendererCommandNames()) {
-    ipcMain.handle(cmd, async (_event, args = {}) => nativeRendererBroker.invoke(cmd, args));
+    ipcMain.handle(cmd, async (_event, args = {}) => {
+      if (cmd !== 'native_renderer_start') {
+        if (cmd === 'native_renderer_stop') {
+          detachNativeEditorPreview('native-renderer-stop');
+        }
+        return nativeRendererBroker.invoke(cmd, args);
+      }
+      const startArgs = args && typeof args === 'object' ? { ...args } : {};
+      const config = startArgs.config && typeof startArgs.config === 'object'
+        ? { ...startArgs.config }
+        : {};
+      const wantsEditorPreviewWindowPresenter =
+        config.editor_preview_window_presenter === true ||
+        startArgs.editor_preview_window_presenter === true;
+      if (wantsEditorPreviewWindowPresenter && mainWindow && !mainWindow.isDestroyed() && !config.editor_parent_window_handle_hex) {
+        try {
+          const handle = mainWindow.getNativeWindowHandle();
+          if (Buffer.isBuffer(handle) && handle.length > 0) {
+            config.editor_parent_window_handle_hex = handle.toString('hex');
+            config.editor_parent_window_handle_platform =
+              process.platform === 'darwin' ? 'appkit-nsview'
+                : process.platform === 'win32' ? 'win32-hwnd'
+                  : process.platform;
+          }
+        } catch (err) {
+          console.warn('[NativeRenderer] failed to read main window native handle:', err?.message || err);
+        }
+      }
+      return nativeRendererBroker.invoke(cmd, { ...startArgs, config });
+    });
   }
 
   // License IPC removed in OSS build — every install is unlocked, no
@@ -5999,7 +6377,18 @@ function createMainWindow() {
     minWidth: 1200,
     minHeight: 700,
     title: 'Ghost Arcade',
-    backgroundColor: '#0a0a0c',
+    // Keep the real OS window chrome even though the editor content is
+    // transparent on macOS for the embedded Metal preview underlay. Relying
+    // on Electron's implicit transparent-window style can drop the title bar
+    // and traffic lights, leaving the editor looking like a floating panel.
+    frame: true,
+    ...(process.platform === 'darwin' ? {
+      titleBarStyle: 'hiddenInset',
+      trafficLightPosition: { x: 12, y: 9 },
+    } : {}),
+    backgroundColor: process.platform === 'darwin' ? '#00000000' : '#05070b',
+    transparent: process.platform === 'darwin',
+    hasShadow: true,
     autoHideMenuBar: true,
     // Window icon — single source-of-truth lives in build-resources/icons.
     // Was previously pointing at src-tauri/icons/icon.png (legacy from a
@@ -6024,6 +6413,10 @@ function createMainWindow() {
     },
   });
 
+  if (process.platform === 'darwin') {
+    mainWindow.setWindowButtonVisibility(true);
+  }
+
   // Force zoom factor to 1.0 to prevent DPI scaling from misaligning overlays
   mainWindow.webContents.setZoomFactor(1.0);
 
@@ -6037,7 +6430,7 @@ function createMainWindow() {
         submenu: [
           { label: 'About Ghost Arcade', role: 'about' },
           { type: 'separator' },
-          { label: 'Settings', accelerator: 'Cmd+,', click: () => mainWindow.webContents.send('open-settings') },
+          { label: 'Settings', accelerator: 'Cmd+,', click: () => mainWindow?.webContents.send('open-settings') },
           { type: 'separator' },
           { label: 'Hide Ghost Arcade', accelerator: 'Cmd+H', role: 'hide' },
           { label: 'Hide Others', accelerator: 'Cmd+Alt+H', role: 'hideOthers' },
@@ -6815,6 +7208,7 @@ function cleanupAndQuit() {
   scheduleHardExit(750);
 
   runCleanupStep('closeAuxiliaryWindows', closeAuxiliaryWindows);
+  runCleanupStep('detachNativeEditorPreview', () => detachNativeEditorPreview('app-quit'));
   runCleanupStep('stopSpoutSender', stopSpoutSender);
   runCleanupStep('stopSpoutReceiver', stopSpoutReceiver);
   runCleanupStep('destroyNdiSenders', destroyNdiSenders);

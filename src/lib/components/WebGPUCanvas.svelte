@@ -55,14 +55,10 @@
    *
    * ───────────────────────────────────────────────────────────────
    * RELATED: mid-chain GPU effects (gpuEffectRunner.ts) can still run
-   * through `experimental.allowMidChainGpuEffects` (default ON so GPU
-   * effects visibly work when selected). That runner does CPU-readback
-   * because it has to
-   * bridge mid-WebGL-chain — no public API gives us a zero-copy
-   * import at an arbitrary point in a WebGL effect chain. This
-   * downstream-compositor bridge runs ONCE per frame AFTER the WebGL
-   * chain is fully composited, which is the only spot where
-   * `new VideoFrame(canvas)` gets us the GpuMemoryBuffer for free.
+   * in the legacy comparison renderer through
+   * `experimental.allowMidChainGpuEffects`. That runner does CPU
+   * readback because it has to bridge mid-WebGL-chain. Native v2
+   * disables it and requires a native graph/effect-pass port instead.
    *
    * See docs/WEBGPU_MIGRATION.md for the full roadmap.
    */

@@ -9,6 +9,8 @@ import { createThreeJSIframeContext, getThreeJSIframeContext, createJSAnimationC
 import { keyframeTimeline } from './keyframeTimeline';
 import { parseISF } from '../isf/parser';
 import { vjLayerSequencer } from './vjLayerSequencer';
+import { isNativeSelectableEffect } from '../renderer/nativeEffectCoverage';
+import { NATIVE_ENGINE_ONLY } from './settings';
 
 // Cache parsed ISF shader inputs per shader code to avoid re-parsing every
 // frame. Bounded: keys are entire shader source strings, so an unbounded
@@ -18,6 +20,11 @@ import { vjLayerSequencer } from './vjLayerSequencer';
 // miss is cheap next to leaking sources for a whole show.
 const vjShaderInputCache = new Map<string, ISFInputDef[]>();
 const VJ_SHADER_INPUT_CACHE_MAX = 128;
+function allowNativeOnlyEffect(effect: Effect, scope: string): boolean {
+  if (!NATIVE_ENGINE_ONLY || isNativeSelectableEffect(effect.type)) return true;
+  console.warn(`[vjClipLauncher] blocked non-native ${scope} effect in native-only mode: ${effect.type}`);
+  return false;
+}
 function getShaderInputs(shaderCode: string | undefined): ISFInputDef[] | undefined {
   if (!shaderCode) return undefined;
   const cached = vjShaderInputCache.get(shaderCode);
@@ -78,6 +85,10 @@ export interface VJClip {
   playbackMode?: 'loop' | 'once';
   /** 0.25 / 0.5 / 1 / 1.5 / 2 / 4. Maps to `videoElement.playbackRate`. */
   playbackRate?: number;
+  durationSeconds?: number;
+  _nativePlaybackTimeSeconds?: number;
+  _nativePlaybackUpdatedAtMs?: number;
+  _nativePlaybackSeekSeq?: number;
   /** 0..1 fraction of duration. Out-of-trim playback is clamped on the
    *  next per-frame update. Default 0 (start of source). */
   trimStart?: number;
@@ -1253,6 +1264,7 @@ function createVJClipLauncherStore() {
 
     // Add effect to layer on the given deck
     addLayerEffect(layerIndex: number, effect: Effect, deck: VJDeck = 'A') {
+      if (!allowNativeOnlyEffect(effect, 'layer')) return;
       update(state => {
         const targetLayerStates = pickLayerStates(state, deck);
         const newLayerStates = [...targetLayerStates];
@@ -1425,7 +1437,7 @@ function createVJClipLauncherStore() {
     // splat/model3d shape so the VJ video controls panel can write through to
     // the store without touching the live videoElement (the panel does that
     // separately on the DOM node).
-    updateActiveClipVideoProps(layerIndex: number, updates: Partial<Pick<VJClip, 'playbackMode' | 'playbackRate' | 'trimStart' | 'trimEnd' | 'isPlaying' | 'zoom' | 'fit' | 'anchorX' | 'anchorY' | 'rotation' | 'opacity' | 'mirrorX'>>, deck: VJDeck = 'A') {
+    updateActiveClipVideoProps(layerIndex: number, updates: Partial<Pick<VJClip, 'playbackMode' | 'playbackRate' | 'durationSeconds' | '_nativePlaybackTimeSeconds' | '_nativePlaybackUpdatedAtMs' | '_nativePlaybackSeekSeq' | 'trimStart' | 'trimEnd' | 'isPlaying' | 'zoom' | 'fit' | 'anchorX' | 'anchorY' | 'rotation' | 'opacity' | 'mirrorX'>>, deck: VJDeck = 'A') {
       update(state => {
         const targetLayerStates = pickLayerStates(state, deck);
         const targetGrid = pickGrid(state, deck);
@@ -1564,6 +1576,7 @@ function createVJClipLauncherStore() {
     // ========== Composition Effects ==========
 
     addCompositionEffect(effect: Effect) {
+      if (!allowNativeOnlyEffect(effect, 'composition')) return;
       update(state => ({
         ...state,
         compositionEffects: [...state.compositionEffects, effect]
@@ -1598,6 +1611,7 @@ function createVJClipLauncherStore() {
     // ========== Clip Effects ==========
 
     addClipEffect(layerIndex: number, columnIndex: number, effect: Effect, deck: VJDeck = 'A') {
+      if (!allowNativeOnlyEffect(effect, 'clip')) return;
       update(state => {
         const targetGrid = pickGrid(state, deck);
         const targetLayerStates = pickLayerStates(state, deck);

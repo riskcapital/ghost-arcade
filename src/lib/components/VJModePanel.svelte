@@ -41,7 +41,7 @@
   import AIVideoGenerator from './AIVideoGenerator.svelte';
   import { shaderLibrary } from '../stores/shaderLibrary';
   import { videoLibrary } from '../stores/videoLibrary';
-  import { settings } from '../stores/settings';
+  import { NATIVE_ENGINE_ONLY, settings } from '../stores/settings';
   import { startRecording as startRec, formatRecordingDuration, type RecorderHandle } from '../recording/recorder';
   import { showLoading } from '../stores/loading';
   import { showToast } from '../stores/errorToast';
@@ -60,6 +60,7 @@
   import { applyPresetToEffect, getEffectPresets, getNumericEffectParams, effectParamLabels } from '../effects/effectUX';
   import { EFFECT_CATALOG } from '../effects/effectCatalog';
   import { EFFECT_PARAM_DEFS } from '../effects/effectParamDefs';
+  import { isNativeSelectableEffect } from '../renderer/nativeEffectCoverage';
   import EffectParamRow from './EffectParamRow.svelte';
   // Tier-related imports removed — recording / Particles3D always available.
   import { getDefaultEffectParams as getRendererDefaultEffectParams } from '../renderer/effects';
@@ -438,12 +439,61 @@
     return `${m}:${s.toString().padStart(2, '0')}`;
   }
 
+  function vjClipDuration(clip: VJClip): number {
+    const duration = Number(clip.durationSeconds ?? clip.videoElement?.duration);
+    return Number.isFinite(duration) && duration > 0 ? duration : 0;
+  }
+
+  function vjClipPlaybackTime(clip: VJClip, now = performance.now()): number {
+    const duration = vjClipDuration(clip);
+    const nativeTime = Number(clip._nativePlaybackTimeSeconds);
+    const elementTime = Number(clip.videoElement?.currentTime);
+    let time = Number.isFinite(nativeTime) && nativeTime >= 0
+      ? nativeTime
+      : Number.isFinite(elementTime) && elementTime >= 0
+        ? elementTime
+        : 0;
+    const anchorMs = Number(clip._nativePlaybackUpdatedAtMs);
+    if (clip.isPlaying !== false && Number.isFinite(anchorMs)) {
+      time += Math.max(0, now - anchorMs) / 1000 * (Number(clip.playbackRate) || 1);
+    }
+    if (duration <= 0) return Math.max(0, time);
+    const start = duration * Math.max(0, Math.min(1, clip.trimStart ?? 0));
+    const end = duration * Math.max(0, Math.min(1, clip.trimEnd ?? 1));
+    const range = Math.max(0.001, end - start);
+    if ((clip.playbackMode ?? 'loop') !== 'once') {
+      time = start + ((time - start) % range + range) % range;
+    } else {
+      time = Math.max(start, Math.min(end, time));
+    }
+    return time;
+  }
+
+  function vjSetNativePlaybackTime(layerIdx: number, clip: VJClip, time: number, play = clip.isPlaying !== false) {
+    const duration = vjClipDuration(clip);
+    const nextTime = Math.max(0, duration > 0 ? Math.min(duration, time) : time);
+    if (clip.videoElement) {
+      try { clip.videoElement.currentTime = nextTime; } catch { /* native transport remains authoritative */ }
+    }
+    vjVideoCurrentTime = nextTime;
+    vjClipLauncher.updateActiveClipVideoProps(layerIdx, {
+      durationSeconds: duration || clip.durationSeconds,
+      _nativePlaybackTimeSeconds: nextTime,
+      _nativePlaybackUpdatedAtMs: performance.now(),
+      _nativePlaybackSeekSeq: Math.max(0, clip._nativePlaybackSeekSeq ?? 0) + 1,
+      isPlaying: play,
+    }, paramDeck);
+  }
+
   function startVjVideoTick() {
     if (vjVideoTickFrame !== null) return;
     function tick() {
       const clip = selectedLayerState?.activeClip;
       const v = clip?.videoElement;
-      if (clip?.type === 'video' && v) {
+      if (clip?.type === 'video') {
+        vjVideoDuration = vjClipDuration(clip);
+        if (!vjTimelineScrubbing) vjVideoCurrentTime = vjClipPlaybackTime(clip);
+      } else if (v) {
         vjVideoCurrentTime = v.currentTime;
         vjVideoDuration = v.duration || 0;
       }
@@ -471,7 +521,11 @@
     const trimS = clip?.trimStart ?? 0;
     const trimE = clip?.trimEnd ?? 1;
     const clamped = Math.max(trimS, Math.min(trimE, pct));
-    vEl.currentTime = clamped * (vEl.duration || 0);
+    if (!clip || selectedLayerIndex === null) {
+      vEl.currentTime = clamped * (vEl.duration || 0);
+      return;
+    }
+    vjSetNativePlaybackTime(selectedLayerIndex, clip, clamped * vjClipDuration(clip));
   }
 
   function vjHandleTimelineMouseDown(e: MouseEvent, vEl: HTMLVideoElement) {
@@ -519,35 +573,51 @@
     const clip = paramLayerStates[layerIdx]?.activeClip;
     const v = clip?.videoElement;
     if (!clip || !v) return;
+    const time = vjClipPlaybackTime(clip);
     if (playing) {
       v.play().catch(() => {});
     } else {
       v.pause();
     }
-    vjClipLauncher.updateActiveClipVideoProps(layerIdx, { isPlaying: playing }, paramDeck);
+    vjClipLauncher.updateActiveClipVideoProps(layerIdx, {
+      isPlaying: playing,
+      durationSeconds: vjClipDuration(clip) || clip.durationSeconds,
+      _nativePlaybackTimeSeconds: time,
+      _nativePlaybackUpdatedAtMs: performance.now(),
+    }, paramDeck);
   }
 
   function vjRestartVideo(layerIdx: number) {
     const clip = paramLayerStates[layerIdx]?.activeClip;
     const v = clip?.videoElement;
     if (!clip || !v) return;
-    v.currentTime = (clip.trimStart ?? 0) * (v.duration || 0);
+    vjSetNativePlaybackTime(layerIdx, clip, (clip.trimStart ?? 0) * vjClipDuration(clip), true);
     v.play().catch(() => {});
-    vjClipLauncher.updateActiveClipVideoProps(layerIdx, { isPlaying: true }, paramDeck);
   }
 
   function vjSetPlaybackRate(layerIdx: number, rate: number) {
     const clip = paramLayerStates[layerIdx]?.activeClip;
     const v = clip?.videoElement;
     if (!clip) return;
+    const time = vjClipPlaybackTime(clip);
     if (v) v.playbackRate = rate;
-    vjClipLauncher.updateActiveClipVideoProps(layerIdx, { playbackRate: rate }, paramDeck);
+    vjClipLauncher.updateActiveClipVideoProps(layerIdx, {
+      playbackRate: rate,
+      durationSeconds: vjClipDuration(clip) || clip.durationSeconds,
+      _nativePlaybackTimeSeconds: time,
+      _nativePlaybackUpdatedAtMs: performance.now(),
+    }, paramDeck);
   }
 
   function vjSetPlaybackMode(layerIdx: number, mode: 'loop' | 'once') {
     const clip = paramLayerStates[layerIdx]?.activeClip;
     if (!clip) return;
-    vjClipLauncher.updateActiveClipVideoProps(layerIdx, { playbackMode: mode }, paramDeck);
+    vjClipLauncher.updateActiveClipVideoProps(layerIdx, {
+      playbackMode: mode,
+      durationSeconds: vjClipDuration(clip) || clip.durationSeconds,
+      _nativePlaybackTimeSeconds: vjClipPlaybackTime(clip),
+      _nativePlaybackUpdatedAtMs: performance.now(),
+    }, paramDeck);
   }
   // ─── End VJ Video Controls ──────────────────────────────────────────
 
@@ -896,6 +966,21 @@
       return selectedLayerState?.effects || [];
     }
   })();
+  $: nativeInventoryLocked = NATIVE_ENGINE_ONLY && Boolean($settings.experimental?.outputNativeCore);
+
+  function nativeEffectPending(effectType: EffectType | string): boolean {
+    return nativeInventoryLocked && !isNativeSelectableEffect(effectType);
+  }
+
+  function nativeEffectBadge(effectType: EffectType | string): 'NATIVE' | 'PENDING' | '' {
+    if (!nativeInventoryLocked) return '';
+    return isNativeSelectableEffect(effectType) ? 'NATIVE' : 'PENDING';
+  }
+
+  function toggleVJEffectIfNativeReady(effect: Effect) {
+    if (nativeEffectPending(effect.type) && !effect.enabled) return;
+    toggleEffect(effect.id);
+  }
 
   // Get label for current effects tab context
   $: effectsTabLabel = (() => {
@@ -3663,18 +3748,31 @@
                 </div>
                 <div class="effects-list">
                   {#each currentEffects as effect (effect.id)}
-                    <div class="effect-item" class:disabled={!effect.enabled}>
+                    {@const pendingNativeEffect = nativeEffectPending(effect.type)}
+                    <div class="effect-item" class:disabled={!effect.enabled} class:native-pending={pendingNativeEffect}>
                       <div class="effect-header" onclick={() => expandedEffectId = expandedEffectId === effect.id ? null : effect.id}>
                         <button class="effect-toggle" class:active={effect.enabled}
-                          onclick={(e) => { e.stopPropagation(); toggleEffect(effect.id); }}>
+                          disabled={pendingNativeEffect && !effect.enabled}
+                          title={pendingNativeEffect ? 'Pending native port' : (effect.enabled ? 'Bypass this effect' : 'Enable this effect')}
+                          onclick={(e) => { e.stopPropagation(); toggleVJEffectIfNativeReady(effect); }}>
                           {effect.enabled ? '●' : '○'}
                         </button>
                         <span class="effect-name">{effect.type}</span>
+                        {#if nativeInventoryLocked}
+                          <span class="native-effect-badge" class:pending={pendingNativeEffect}>
+                            {nativeEffectBadge(effect.type)}
+                          </span>
+                        {/if}
                         <span class="effect-expand">{expandedEffectId === effect.id ? '▼' : '▶'}</span>
                         <button class="effect-delete" onclick={(e) => { e.stopPropagation(); deleteEffect(effect.id); }}>×</button>
                       </div>
                       {#if expandedEffectId === effect.id}
                         <div class="effect-params">
+                          {#if pendingNativeEffect}
+                            <div class="native-effect-lockout">
+                              Pending native port. Disable or remove this effect before using it in native v2.
+                            </div>
+                          {/if}
                           {#if getEffectPresets(effect.type).length > 0}
                             <details open>
                               <summary>Presets</summary>
@@ -6710,6 +6808,11 @@
     border: 1px solid rgba(255, 255, 255, 0.04);
   }
 
+  .effect-item.native-pending {
+    border-color: rgba(255, 170, 64, 0.32);
+    background: rgba(255, 170, 64, 0.045);
+  }
+
   .effect-item + .effect-item {
     margin-top: 3px;
   }
@@ -6749,6 +6852,36 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+
+  .native-effect-badge {
+    flex: 0 0 auto;
+    border: 1px solid rgba(88, 231, 255, 0.38);
+    background: rgba(88, 231, 255, 0.08);
+    color: #58e7ff;
+    border-radius: 3px;
+    padding: 2px 5px;
+    font-size: 9px;
+    font-weight: 800;
+    letter-spacing: 0.08em;
+    line-height: 1;
+  }
+
+  .native-effect-badge.pending {
+    border-color: rgba(255, 170, 64, 0.42);
+    background: rgba(255, 170, 64, 0.1);
+    color: #ffb85f;
+  }
+
+  .native-effect-lockout {
+    border: 1px solid rgba(255, 170, 64, 0.28);
+    background: rgba(255, 170, 64, 0.08);
+    color: #ffcf91;
+    border-radius: 4px;
+    padding: 7px 8px;
+    margin-bottom: 8px;
+    font-size: 11px;
+    line-height: 1.35;
   }
 
   .effect-expand {

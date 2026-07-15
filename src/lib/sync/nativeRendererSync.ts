@@ -11,7 +11,9 @@ import { invoke, isElectron, isMac, isWindows } from '$lib/bridge';
 import { getVisualAudioSnapshot, visualAudio, type VisualAudioState } from '$lib/audio/visualAudio';
 import { ghostAudioCommandFieldsFromVisualAudio } from '$lib/audio/ghostAudioUniform';
 import { WGSL_STDLIB, resolveGhostWgsl } from '$lib/renderer/wgsl';
-import { gravityWellsDefaultParams } from '$lib/renderer/gpuShaderCatalog';
+import { gravityWellsDefaultParams, isNativeReadyGpuShaderId } from '$lib/renderer/gpuShaderCatalog';
+import { nativeShaderSourceFromJavascript } from '$lib/renderer/nativeJsShaderSource';
+import { resolveAssetRefForRuntime } from '$lib/storage/assetRegistry';
 import {
   receiveSpoutTextureInfo,
   type SpoutSharedTextureInfo,
@@ -45,6 +47,7 @@ import {
   buildPointCloudFXNativeComputeGraph,
   buildPointCloudFXNativePointData,
   buildPointCloudFXNativePrecompileCommands,
+  POINT_CLOUD_FX_NATIVE_DEPTH_SORT_MAX_POINTS,
   type PointCloudFXNativeGraphState,
   type PointCloudFXNativePointData,
 } from '$lib/renderer/webgpuPointCloudFX';
@@ -69,18 +72,18 @@ import {
   type NativeEffectPassId,
   type NativeEffectPassOptions,
 } from '$lib/renderer/nativeEffectPass';
-import { parsePLYBuffer } from '$lib/splat/plyLoader';
+import { parsePLYPointBuffers, pointCloudBuffersFromPLYData } from '$lib/splat/plyLoader';
 import { parseSplatBuffer } from '$lib/splat/splatLoader';
 import {
   clearNativeRendererDecodePreviewCache,
   clearNativeRendererRuntimeCaches,
   detachNativeRendererOutputWindow,
+  getNativeEditorPreviewStatus,
   getNativeRendererCapabilities,
   getNativeRendererReadinessReport,
   getNativeRendererStatus,
   prefetchNativeRendererMedia,
   resetNativeRendererStats,
-  runNativeRendererComputeGraph,
   setNativeRendererDecodeCpuBackupPolicy,
   setNativeRendererDecodeSyntheticFallbackPolicy,
   setNativeRendererDecodePreviewPolicy,
@@ -121,9 +124,11 @@ type LayerSnapshot = {
   geometrySig: string;
   uvSig: string;
   shapeSig: string;
+  maskSig: string;
   sourceSig: string;
   nativeParamsSig: string;
   effectsSig: string;
+  edgeEffectsSig: string;
   colorSig: string;
 };
 
@@ -178,8 +183,23 @@ type NativeVideoDecodeState = {
   submittedAt: number;
 };
 
+type NativeVideoPlaybackSyncState = {
+  signature: string;
+  timeSeconds: number;
+  clockTimeSeconds: number;
+  playbackRate: number;
+  paused: boolean;
+  seekGeneration: number;
+};
+
 type NativeLayerShapeState = {
   shape: NativeVec4;
+  signature: string;
+};
+
+type NativeLayerMaskState = {
+  info: NativeVec4;
+  points: NativeVec4[];
   signature: string;
 };
 
@@ -194,6 +214,7 @@ type NativeRenderClockCommand = {
 export type PresentPolicyProfile = 'vsync-live' | 'low-latency-safe' | 'low-latency-aggressive';
 
 type NativeGraphRouteKind = 'planet' | 'smoke-3d' | 'particle-field' | 'volumetric-spheres' | 'smoke-riders' | 'ink-cloud' | 'flythrough' | 'pixel-particles' | 'point-cloud-fx' | 'effect-pass';
+
 export type NativeEffectPassRuntime = {
   effect: NativeEffectPassId;
   descriptor: string;
@@ -206,6 +227,19 @@ export type NativeGraphRouteRequirement = {
   instrument: string;
   shaderIds: readonly string[];
 };
+
+const NATIVE_CORE_OWNED_GRAPH_KINDS = new Set<NativeGraphRouteKind>([
+  'planet',
+  'particle-field',
+  'pixel-particles',
+  'flythrough',
+  'point-cloud-fx',
+  'smoke-riders',
+  'ink-cloud',
+  'smoke-3d',
+  'volumetric-spheres',
+]);
+
 const NATIVE_GRAPH_ROUTE_REQUIREMENTS: ReadonlyArray<NativeGraphRouteRequirement> = [
   { kind: 'planet', feature: 'native_planet_graph', instrument: 'planet', shaderIds: ['planet/render'] },
   {
@@ -310,6 +344,18 @@ type NativeGraphLayerRoute = {
   inputSource: NativeLayerSource | null;
   effectPasses?: NativeEffectPassRuntime[];
 };
+
+export function nativeGraphCompositeSourceId(
+  route: Pick<NativeGraphLayerRoute, 'source'>,
+): string {
+  return route.source.id;
+}
+
+export function nativeGraphInstrumentSourceId(
+  route: Pick<NativeGraphLayerRoute, 'source' | 'baseSource'>,
+): string {
+  return (route.baseSource ?? route.source).id;
+}
 
 type NativeGraphRouteState = {
   inFlight: boolean;
@@ -554,7 +600,13 @@ function sourceSignature(layer: Layer): string {
   if (!s) {
     return generatedLayerPreview(layer)?.signature ?? 'none';
   }
-  return `${s.type}:${s.id}:${s.src}:${s.name}:${s.shaderCode ? hashString(s.shaderCode) : 'no-shader'}`;
+  const javascriptSignature = s.jsAnimation
+    ? hashString(`${s.jsAnimation.htmlCode}:${JSON.stringify(s.jsAnimation.params ?? [])}:${JSON.stringify(s.jsAnimation.paramValues ?? {})}`)
+    : 'no-js';
+  const shaderValuesSignature = s.shaderValues
+    ? hashString(stableNativeGraphKey(s.shaderValues))
+    : 'no-shader-values';
+  return `${s.type}:${s.id}:${s.src}:${s.name}:${s.shaderCode ? hashString(s.shaderCode) : 'no-shader'}:${shaderValuesSignature}:${javascriptSignature}`;
 }
 
 function nativeEffectDescriptors(layer: Layer): string[] {
@@ -1000,6 +1052,103 @@ export function effectToNativeDescriptor(effect: any): string | null {
       Math.max(0, Math.min(2, edgeRaw)).toFixed(4),
       Math.max(0, Math.min(2, saturationRaw)).toFixed(4),
       Math.max(0, Math.min(1, thresholdRaw)).toFixed(4),
+    ].join(':');
+  }
+  if (type === 'kuwahara') {
+    const amountRaw = firstFiniteParam(params, ['kuwaharaMix', 'outputMix', 'amount'], 1);
+    const radiusRaw = firstFiniteParam(params, ['kuwaharaRadius', 'radius'], 3);
+    const edgeRaw = firstFiniteParam(params, ['kuwaharaEdgeSharpness', 'edgeStrength'], 0.3);
+    const punchRaw = firstFiniteParam(params, ['kuwaharaColorPunch', 'colorPunch', 'colorMix'], 0.2);
+    return [
+      'kuwahara',
+      Math.max(0, Math.min(1, amountRaw)).toFixed(4),
+      Math.max(1, Math.min(8, radiusRaw)).toFixed(4),
+      Math.max(0, Math.min(1, edgeRaw)).toFixed(4),
+      Math.max(0, Math.min(1, punchRaw)).toFixed(4),
+    ].join(':');
+  }
+  if (type === 'defocusbokeh') {
+    const radiusRaw = firstFiniteParam(params, ['bokehRadius', 'radius', 'amount'], 12);
+    const samplesRaw = firstFiniteParam(params, ['bokehSamples', 'samples'], 24);
+    const brightRaw = firstFiniteParam(params, ['bokehBrightWeight', 'brightWeight'], 0.8);
+    const thresholdRaw = firstFiniteParam(params, ['bokehThreshold', 'threshold'], 0.7);
+    const chromaRaw = firstFiniteParam(params, ['bokehChromaFringe', 'chromaFringe'], 0);
+    const shapeRaw = firstFiniteParam(params, ['bokehShape', 'shape'], 0);
+    const rotationRaw = firstFiniteParam(params, ['bokehRotation', 'rotation'], 0);
+    const mixRaw = firstFiniteParam(params, ['bokehMix', 'outputMix', 'mix'], 1);
+    return [
+      'defocus-bokeh',
+      Math.max(0, Math.min(30, radiusRaw)).toFixed(4),
+      Math.max(8, Math.min(48, samplesRaw)).toFixed(4),
+      Math.max(0, Math.min(2, brightRaw)).toFixed(4),
+      Math.max(0, Math.min(1, thresholdRaw)).toFixed(4),
+      Math.max(0, Math.min(1, chromaRaw)).toFixed(4),
+      Math.max(0, Math.min(2, Math.round(shapeRaw))).toFixed(0),
+      (((rotationRaw % 360) + 360) % 360).toFixed(4),
+      Math.max(0, Math.min(1, mixRaw)).toFixed(4),
+    ].join(':');
+  }
+  if (type === 'godrays') {
+    const intensityRaw = firstFiniteParam(params, ['godRaysIntensity', 'intensity', 'amount'], 0.7);
+    const decayRaw = firstFiniteParam(params, ['godRaysDecay', 'decay'], 0.95);
+    const exposureRaw = firstFiniteParam(params, ['godRaysExposure', 'exposure'], 0.4);
+    const densityRaw = firstFiniteParam(params, ['godRaysDensity', 'density'], 0.95);
+    const thresholdRaw = firstFiniteParam(params, ['godRaysThreshold', 'threshold'], 0.7);
+    const centerXRaw = firstFiniteParam(params, ['godRaysCenterX', 'centerX'], 0.5);
+    const centerYRaw = firstFiniteParam(params, ['godRaysCenterY', 'centerY'], 0.2);
+    const samplesRaw = firstFiniteParam(params, ['godRaysSamples', 'samples'], 64);
+    const tintRRaw = firstFiniteParam(params, ['godRaysTintR', 'tintR'], 1);
+    const tintGRaw = firstFiniteParam(params, ['godRaysTintG', 'tintG'], 0.95);
+    const tintBRaw = firstFiniteParam(params, ['godRaysTintB', 'tintB'], 0.85);
+    const mixRaw = firstFiniteParam(params, ['godRaysMix', 'outputMix', 'mix'], 1);
+    return [
+      'god-rays',
+      Math.max(0, Math.min(2, intensityRaw)).toFixed(4),
+      Math.max(0.85, Math.min(1, decayRaw)).toFixed(4),
+      Math.max(0.1, Math.min(1, exposureRaw)).toFixed(4),
+      Math.max(0, Math.min(1, densityRaw)).toFixed(4),
+      Math.max(0, Math.min(1, thresholdRaw)).toFixed(4),
+      Math.max(0, Math.min(1, centerXRaw)).toFixed(4),
+      Math.max(0, Math.min(1, centerYRaw)).toFixed(4),
+      Math.max(8, Math.min(128, samplesRaw)).toFixed(4),
+      Math.max(0, Math.min(1.5, tintRRaw)).toFixed(4),
+      Math.max(0, Math.min(1.5, tintGRaw)).toFixed(4),
+      Math.max(0, Math.min(1.5, tintBRaw)).toFixed(4),
+      Math.max(0, Math.min(1, mixRaw)).toFixed(4),
+    ].join(':');
+  }
+  if (type === 'displacement') {
+    const amountRaw = firstFiniteParam(params, ['dispAmount', 'amount'], 0.4);
+    const scaleRaw = firstFiniteParam(params, ['dispScale', 'scale'], 6);
+    const speedRaw = firstFiniteParam(params, ['dispSpeed', 'speed'], 1);
+    const modeRaw = firstFiniteParam(params, ['dispMode', 'mode'], 0);
+    const turbulenceRaw = firstFiniteParam(params, ['dispTurbulence', 'turbulence'], 0.5);
+    const chromaticRaw = firstFiniteParam(params, ['dispChromatic', 'chromatic'], 0);
+    return [
+      'displacement',
+      Math.max(0, Math.min(1, amountRaw)).toFixed(4),
+      Math.max(1, Math.min(32, scaleRaw)).toFixed(4),
+      Math.max(0, Math.min(3, speedRaw)).toFixed(4),
+      Math.max(0, Math.min(3, Math.round(modeRaw))).toFixed(0),
+      Math.max(0, Math.min(1, turbulenceRaw)).toFixed(4),
+      Math.max(0, Math.min(1, chromaticRaw)).toFixed(4),
+    ].join(':');
+  }
+  if (type === 'polartransform') {
+    const mixRaw = firstFiniteParam(params, ['polarMix', 'outputMix', 'mix', 'amount'], 1);
+    const modeRaw = firstFiniteParam(params, ['polarMode', 'mode'], 0);
+    const rotationRaw = firstFiniteParam(params, ['polarRotation', 'rotation'], 0);
+    const zoomRaw = firstFiniteParam(params, ['polarZoom', 'zoom'], 1);
+    const centerXRaw = firstFiniteParam(params, ['polarCenterX', 'centerX'], 0.5);
+    const centerYRaw = firstFiniteParam(params, ['polarCenterY', 'centerY'], 0.5);
+    return [
+      'polar-transform',
+      Math.max(0, Math.min(1, mixRaw)).toFixed(4),
+      Math.max(0, Math.min(2, Math.round(modeRaw))).toFixed(0),
+      (((rotationRaw % 360) + 360) % 360).toFixed(4),
+      Math.max(0.25, Math.min(4, zoomRaw)).toFixed(4),
+      Math.max(0, Math.min(1, centerXRaw)).toFixed(4),
+      Math.max(0, Math.min(1, centerYRaw)).toFixed(4),
     ].join(':');
   }
   if (type === 'blur') {
@@ -2279,6 +2428,52 @@ export function nativeEffectPassFromDescriptor(descriptor: string | null): Nativ
       toonSaturation: Number(rawParam2 ?? 1.15),
       toonEdgeThreshold: Number(rawParam3 ?? 0.05),
     };
+  } else if (effect === 'kuwahara') {
+    params = {
+      kuwaharaRadius: Number(rawParam0 ?? 3),
+      kuwaharaEdgeSharpness: Number(rawParam1 ?? 0.3),
+      kuwaharaColorPunch: Number(rawParam2 ?? 0.2),
+    };
+  } else if (effect === 'defocus-bokeh') {
+    params = {
+      bokehSamples: Number(rawParam0 ?? 24),
+      bokehBrightWeight: Number(rawParam1 ?? 0.8),
+      bokehThreshold: Number(rawParam2 ?? 0.7),
+      bokehChromaFringe: Number(rawParam3 ?? 0),
+      bokehShape: Number(rawParam4 ?? 0),
+      bokehRotation: Number(rawParam5 ?? 0),
+      bokehMix: Number(rawParam6 ?? 1),
+    };
+  } else if (effect === 'god-rays') {
+    params = {
+      godRaysDecay: Number(rawParam0 ?? 0.95),
+      godRaysExposure: Number(rawParam1 ?? 0.4),
+      godRaysDensity: Number(rawParam2 ?? 0.95),
+      godRaysThreshold: Number(rawParam3 ?? 0.7),
+      godRaysCenterX: Number(rawParam4 ?? 0.5),
+      godRaysCenterY: Number(rawParam5 ?? 0.2),
+      godRaysSamples: Number(rawParam6 ?? 64),
+      godRaysTintR: Number(rawParam7 ?? 1),
+      godRaysTintG: Number(rawParam8 ?? 0.95),
+      godRaysTintB: Number(rawParam9 ?? 0.85),
+      godRaysMix: Number(rawParam10 ?? 1),
+    };
+  } else if (effect === 'displacement') {
+    params = {
+      dispScale: Number(rawParam0 ?? 6),
+      dispSpeed: Number(rawParam1 ?? 1),
+      dispMode: Number(rawParam2 ?? 0),
+      dispTurbulence: Number(rawParam3 ?? 0.5),
+      dispChromatic: Number(rawParam4 ?? 0),
+    };
+  } else if (effect === 'polar-transform') {
+    params = {
+      polarMode: Number(rawParam0 ?? 0),
+      polarRotation: Number(rawParam1 ?? 0),
+      polarZoom: Number(rawParam2 ?? 1),
+      polarCenterX: Number(rawParam3 ?? 0.5),
+      polarCenterY: Number(rawParam4 ?? 0.5),
+    };
   } else if (effect === 'blur') {
     params = {
       mode: Number(rawParam0 ?? 1),
@@ -2729,6 +2924,129 @@ function nativeEffectPassesForLayer(layer: Layer): NativeEffectPassRuntime[] | n
   return passes as NativeEffectPassRuntime[];
 }
 
+export function nativeUnsupportedEffectTypes(layer: Pick<Layer, 'effects'>): string[] {
+  const unsupported = new Set<string>();
+  for (const effect of layer.effects || []) {
+    if (!effect || effect.enabled === false) continue;
+    if (nativeEffectPassFromDescriptor(effectToNativeDescriptor(effect))) continue;
+    unsupported.add(String(effect.type || 'unknown'));
+  }
+  return [...unsupported];
+}
+
+interface NativeUnsupportedSourceOptions {
+  nativeVideoDecodePumpReady?: boolean;
+}
+
+const NATIVE_READY_LAYER_TYPES = new Set(['media', 'gpu', 'color']);
+
+function nativeUnsupportedGeometryReason(layer: Layer): string | null {
+  const warpMode = String(layer.warpMode || 'corners').trim().toLowerCase();
+  if (warpMode && warpMode !== 'corners' && warpMode !== 'none' && warpMode !== 'mesh') {
+    return `warp:${warpMode}:native-compositor-pending`;
+  }
+  if (warpMode === 'mesh') {
+    const grid = layer.meshGrid;
+    if (!grid || grid.rows < 2 || grid.cols < 2 || grid.rows > 16 || grid.cols > 16) {
+      return 'warp:mesh:invalid-grid';
+    }
+  }
+
+  const shape = layer.layerShape;
+  if (shape?.enabled) {
+    const type = String(shape.type || 'rectangle').trim().toLowerCase();
+    if (shape.params?.invert) return 'layer-shape:invert:native-compositor-pending';
+    if (shape.controlPoints?.length) return 'layer-shape:warp:native-compositor-pending';
+    if (type !== 'rectangle' && type !== 'circle' && type !== 'triangle') {
+      return `layer-shape:${type || 'unknown'}:not-native`;
+    }
+  }
+
+  return null;
+}
+
+function nativeGpuSourceParamUnsupportedReason(
+  layer: Layer,
+  options: NativeUnsupportedSourceOptions = {},
+): string | null {
+  if (layer.type !== 'gpu' || !layer.gpuLayerContent) return null;
+  const shaderId = String(layer.gpuLayerContent.shaderId || 'gpu').trim().toLowerCase();
+  const params = layer.gpuLayerContent.params ?? {};
+  const sourceParam = params.source;
+  const requiresSource =
+    shaderId === 'pixel-particles' ||
+    shaderId === 'flythrough' ||
+    shaderId === 'point-cloud-fx' ||
+    (
+      (shaderId === 'particle-field' || shaderId === 'gravity-wells') &&
+      String(params.mode ?? '').trim().toLowerCase() === 'media'
+    );
+  if (!sourceParam || typeof sourceParam !== 'object') {
+    return requiresSource ? `gpu-shader:${shaderId || 'gpu'}:source-required` : null;
+  }
+
+  if (sourceParam.type === 'media') {
+    if (!sourceParam.mediaId) return `gpu-source:media:missing-id`;
+    const item = get(mediaLibrary).find((media: MediaItem) => media.id === sourceParam.mediaId);
+    if (!item) return `gpu-source:media:${sourceParam.mediaId}:missing`;
+    const source = mediaItemToNativeLayerSource(item).source;
+    return source ? nativeMediaSourceUnsupportedReason(source, options) : `gpu-source:media:${sourceParam.mediaId}:invalid`;
+  }
+
+  if (sourceParam.type === 'layer') {
+    if (!sourceParam.layerId) return `gpu-source:layer:missing-id`;
+    const sourceLayer = get(project).layers.find((candidate) => candidate.id === sourceParam.layerId);
+    if (!sourceLayer?.source) return `gpu-source:layer:${sourceParam.layerId}:no-native-source`;
+    return nativeMediaSourceUnsupportedReason(sourceLayer.source, options);
+  }
+
+  if (sourceParam.type === 'file') {
+    return nativeFileSourceParamUnsupportedReason(sourceParam);
+  }
+
+  if (sourceParam.type === 'camera') {
+    return 'gpu-source:camera:native-ingest-pending';
+  }
+
+  if (sourceParam.type === 'spout') {
+    return 'gpu-source:shared-texture:graph-input-pending';
+  }
+
+  return `gpu-source:${String(sourceParam.type || 'unknown')}:native-ingest-pending`;
+}
+
+export function nativeUnsupportedSourceReason(
+  layer: Layer,
+  hasNativeGraphRoute = false,
+  options: NativeUnsupportedSourceOptions = {},
+): string | null {
+  if ((layer as any).parentGroupId) return 'group-child:native-compositor-pending';
+  if (!NATIVE_READY_LAYER_TYPES.has(String(layer.type))) {
+    return `layer-type:${String(layer.type || 'unknown')}:not-native`;
+  }
+  const geometryReason = nativeUnsupportedGeometryReason(layer);
+  if (geometryReason) return geometryReason;
+
+  if (layer.type === 'gpu' && layer.gpuLayerContent) {
+    if (hasNativeGraphRoute) return null;
+    const shaderId = String(layer.gpuLayerContent.shaderId || 'gpu').trim().toLowerCase();
+    if (!isNativeReadyGpuShaderId(shaderId)) return `gpu-shader:${shaderId || 'unknown'}:not-native`;
+    const sourceReason = nativeGpuSourceParamUnsupportedReason(layer, options);
+    if (sourceReason) return sourceReason;
+    return `gpu-shader:${shaderId || 'unknown'}:route-unavailable`;
+  }
+
+  if (layer.source) {
+    return nativeMediaSourceUnsupportedReason(layer.source, options);
+  }
+
+  if (!layer.source && generatedLayerPreview(layer)) {
+    return `generated-layer:${layer.type}:not-native-source`;
+  }
+
+  return null;
+}
+
 function hslToRgb(h: number, s: number, l: number): [number, number, number] {
   const hh = ((h % 360) + 360) % 360;
   const ss = Math.max(0, Math.min(1, s / 100));
@@ -2772,12 +3090,19 @@ function colorSignature(layer: Layer): string {
 function geometrySignature(layer: Layer): string {
   const c = layer.corners;
   if (!c) return 'none';
-  return [
+  const corners = [
     c.topLeft.x, c.topLeft.y,
     c.topRight.x, c.topRight.y,
     c.bottomRight.x, c.bottomRight.y,
     c.bottomLeft.x, c.bottomLeft.y,
   ].map((v) => Number.isFinite(v) ? v.toFixed(5) : 'nan').join(':');
+  if (layer.warpMode !== 'mesh' || !layer.meshGrid) return `corners:${corners}`;
+  const grid = layer.meshGrid;
+  const points = grid.points
+    .flatMap((row) => row.flatMap((point) => [point.x, point.y]))
+    .map((value) => Number.isFinite(value) ? value.toFixed(5) : 'nan')
+    .join(':');
+  return `mesh:${corners}:${grid.rows}x${grid.cols}:${points}`;
 }
 
 function contentFitCode(value: Layer['contentFit']): number {
@@ -2835,6 +3160,160 @@ function nativeLayerShapeState(layer: Layer): NativeLayerShapeState {
     shape: payload,
     signature: payload.map((value, index) => value.toFixed(index === 0 ? 0 : 5)).join(':'),
   };
+}
+
+const NATIVE_EDGE_EFFECT_LIMIT = 4;
+const NATIVE_EDGE_BLEND_CODES: Record<string, number> = {
+  normal: 0, add: 1, multiply: 2, screen: 3, overlay: 4, subtract: 5,
+  difference: 6, lighten: 7, darken: 8, average: 9, hardlight: 10,
+  softlight: 11, exclusion: 12, 'color-dodge': 13, 'color-burn': 14,
+  hue: 15, saturation: 16, color: 17, luminosity: 18, divide: 19,
+  negation: 20, phoenix: 21, 'linear-light': 22, 'hard-mix': 23,
+  'vivid-light': 24, 'pin-light': 25,
+};
+const NATIVE_EDGE_STROKE_CODES: Record<string, number> = {
+  none: 0, solid: 1, glow: 2, neon: 3, snake: 4, rainbow: 5,
+  dashed: 6, dotted: 6, electric: 7, pulse: 8, scanner: 9, fire: 10,
+};
+const NATIVE_EDGE_FILL_CODES: Record<string, number> = {
+  none: 0, solid: 1, plasma: 2, liquid: 3, fire: 4, electric: 5,
+  holographic: 6, noise: 7, gradient: 8, radialGradient: 8,
+};
+const NATIVE_EDGE_ANIMATION_CODES: Record<string, number> = {
+  none: 0, concentric: 1, breathe: 2, rotate: 3, radiate: 4,
+  ripple: 5, wave: 6, glitch: 7,
+};
+
+function nativeEdgeRgba(value: unknown, fallback: NativeVec4): NativeVec4 {
+  if (!Array.isArray(value)) return fallback;
+  return [0, 1, 2, 3].map((index) =>
+    quantizeNative(clampNumber(Number(value[index] ?? fallback[index]), 0, 1)),
+  ) as NativeVec4;
+}
+
+function nativeEdgePaletteCode(value: unknown): number {
+  const codes: Record<string, number> = {
+    rainbow: 0, neon: 1, fire: 2, orange: 2, ocean: 3, blue: 3, green: 4, purple: 5,
+  };
+  return codes[String(value ?? '')] ?? 0;
+}
+
+/** Seven vec4s per effect form the stable UI-to-native compositor boundary. */
+export function nativeLayerEdgeEffectsState(layer: Pick<Layer, 'edgeEffects'>): {
+  packed: NativeVec4[][];
+  signature: string;
+} {
+  if (!layer.edgeEffects?.enabled) return { packed: [], signature: 'none' };
+  const packed = layer.edgeEffects.effects
+    .filter((effect) => effect?.enabled !== false)
+    .slice(0, NATIVE_EDGE_EFFECT_LIMIT)
+    .map((effect): NativeVec4[] => {
+      const stroke: any = effect.stroke ?? { type: 'none' };
+      const fill: any = effect.fill ?? { type: 'none' };
+      const animation: any = effect.animation ?? { type: 'none' };
+      const strokeType = String(stroke.type ?? 'none');
+      const fillType = String(fill.type ?? 'none');
+      const animationType = String(animation.type ?? 'none');
+      const strokeColor = nativeEdgeRgba(stroke.color, [1, 1, 1, 1]);
+      let fillColor = nativeEdgeRgba(fill.color ?? fill.color1 ?? fill.baseColor, [1, 1, 1, 1]);
+      let fillColor2 = nativeEdgeRgba(fill.color2, [0.1, 0.35, 1, 1]);
+      if (Array.isArray(fill.stops) && fill.stops.length) {
+        fillColor = nativeEdgeRgba(fill.stops[0]?.color, fillColor);
+        fillColor2 = nativeEdgeRgba(fill.stops[fill.stops.length - 1]?.color, fillColor2);
+      }
+      const strokeParams: NativeVec4 = [
+        quantizeNative(clampNumber(Number(stroke.width ?? 3), 0, 80)),
+        quantizeNative(Number(stroke.glowSize ?? stroke.length ?? stroke.dashLength ?? stroke.arcIntensity ?? stroke.pulseCount ?? stroke.beamWidth ?? stroke.intensity ?? 0)),
+        quantizeNative(Number(stroke.glowIntensity ?? stroke.speed ?? stroke.animationSpeed ?? stroke.gapLength ?? 1)),
+        quantizeNative(Number(stroke.pulseSpeed ?? stroke.snakeCount ?? stroke.branches ?? stroke.fadeLength ?? stroke.trailLength ?? stroke.trail ?? 0)),
+      ];
+      const fillParams: NativeVec4 = [
+        NATIVE_EDGE_FILL_CODES[fillType] ?? 0,
+        quantizeNative(Number(fill.opacity ?? fill.scale ?? fill.viscosity ?? fill.intensity ?? fill.shiftAmount ?? fill.hueShift ?? fill.angle ?? 1)),
+        quantizeNative(Number(fill.complexity ?? fill.turbulence ?? fill.arcCount ?? fill.scanlines ?? fill.octaves ?? fill.speed ?? fill.animationSpeed ?? 1)),
+        quantizeNative(Number(fill.speed ?? fill.metallic ?? fill.flicker ?? nativeEdgePaletteCode(fill.palette))),
+      ];
+      const animationParams: NativeVec4 = [
+        NATIVE_EDGE_ANIMATION_CODES[animationType] ?? 0,
+        quantizeNative(Number(animation.speed ?? 0)),
+        quantizeNative(Number(animation.count ?? animation.minScale ?? animation.rays ?? animation.wavelength ?? animation.frequency ?? animation.intensity ?? 0)),
+        quantizeNative(Number(animation.spacing ?? animation.maxScale ?? animation.length ?? animation.amplitude ?? animation.rgbSplit ?? 0)),
+      ];
+      return [
+        [1, quantizeNative(clampNumber(Number(effect.opacity ?? 1), 0, 1)), NATIVE_EDGE_BLEND_CODES[canonicalBlendMode(effect.blendMode)] ?? 0, NATIVE_EDGE_STROKE_CODES[strokeType] ?? 0],
+        strokeColor,
+        strokeParams,
+        fillParams,
+        fillColor,
+        fillColor2,
+        animationParams,
+      ];
+    });
+  return { packed, signature: packed.length ? packed.flat(2).join(':') : 'none' };
+}
+
+function tessellateNativeMaskShape(points: NonNullable<Layer['mask']>['shapes'][number]['points']): Array<{ x: number; y: number }> {
+  const output: Array<{ x: number; y: number }> = [];
+  for (let index = 0; index < points.length; index++) {
+    const current = points[index];
+    const next = points[(index + 1) % points.length];
+    output.push({ x: current.x, y: current.y });
+    if (!current.cpOut && !next.cpIn) continue;
+    const cp1 = current.cpOut ?? current;
+    const cp2 = next.cpIn ?? next;
+    for (let step = 1; step < 12; step++) {
+      const t = step / 12;
+      const mt = 1 - t;
+      output.push({
+        x: mt * mt * mt * current.x + 3 * mt * mt * t * cp1.x + 3 * mt * t * t * cp2.x + t * t * t * next.x,
+        y: mt * mt * mt * current.y + 3 * mt * mt * t * cp1.y + 3 * mt * t * t * cp2.y + t * t * t * next.y,
+      });
+    }
+  }
+  return output;
+}
+
+export function nativeLayerMaskState(layer: Layer): NativeLayerMaskState {
+  const mask = layer.mask;
+  const shapes = mask?.enabled
+    ? (mask.shapes ?? []).filter((shape) => shape.closed && shape.points.length >= 3).slice(0, 8)
+    : [];
+  if (!mask?.enabled || shapes.length === 0) {
+    return { info: [0, 0, 0, 0], points: [], signature: 'none' };
+  }
+
+  const packed: NativeVec4[] = [];
+  for (let shapeIndex = 0; shapeIndex < shapes.length && packed.length < 64; shapeIndex++) {
+    const tessellated = tessellateNativeMaskShape(shapes[shapeIndex].points);
+    const remainingShapes = shapes.length - shapeIndex;
+    const shapeBudget = Math.max(3, Math.floor((64 - packed.length) / remainingShapes));
+    const count = Math.min(shapeBudget, tessellated.length);
+    const start = packed.length;
+    for (let index = 0; index < count; index++) {
+      const sourceIndex = count === tessellated.length
+        ? index
+        : Math.min(tessellated.length - 1, Math.floor(index * tessellated.length / count));
+      const point = tessellated[sourceIndex];
+      const nextIndex = index + 1 < count ? start + index + 1 : start;
+      packed.push([
+        quantizeNative(point.x),
+        // Mask anchors are stored in the editor's canvas coordinates, where
+        // y=1 is the top edge. The compositor's layer-local UV uses y=0 at
+        // the top, so convert exactly once at this boundary.
+        quantizeNative(1 - point.y),
+        nextIndex,
+        shapeIndex,
+      ]);
+    }
+  }
+  const info: NativeVec4 = [
+    packed.length >= 3 ? 1 : 0,
+    mask.inverted ? 1 : 0,
+    quantizeNative(clampNumber(Number(mask.feather ?? 0), 0, 1)),
+    packed.length,
+  ];
+  const signature = `${info.join(':')}:${packed.map((point) => point.join(',')).join(';')}`;
+  return { info, points: packed, signature };
 }
 
 function clampNumber(value: number, min: number, max: number): number {
@@ -2980,33 +3459,100 @@ function gpuNativeSourceType(shaderId: string | undefined | null): string {
   return `gpu:${id || 'gpu'}`;
 }
 
+function nativeReadableMediaUri(src: NonNullable<Layer['source']>): string {
+  const fallbackSrc = String(src.src ?? '');
+  const ref = (src as any)._assetRef ?? (src as any).assetRef;
+  return resolveAssetRefForRuntime(ref, undefined, fallbackSrc) ?? fallbackSrc;
+}
+
+function nativeReadableFileParamUri(src: Record<string, any>): string {
+  const fallbackSrc = typeof src.url === 'string' ? src.url : '';
+  const ref = src.assetRef ?? src._assetRef;
+  return resolveAssetRefForRuntime(ref, undefined, fallbackSrc) ?? fallbackSrc;
+}
+
+function isNativeLocalMediaUri(uri: string | undefined | null): boolean {
+  const value = String(uri ?? '').trim();
+  if (!value) return false;
+  if (/^(blob:|data:|https?:)/i.test(value)) return false;
+  if (/^(ghost-asset:\/\/|file:\/\/)/i.test(value)) return true;
+  if (value.startsWith('/')) return true;
+  if (/^[A-Za-z]:[\\/]/.test(value)) return true;
+  return false;
+}
+
+function nativeMediaSourceUnsupportedReason(
+  src: NonNullable<Layer['source']>,
+  options: NativeUnsupportedSourceOptions = {},
+): string | null {
+  const sourceType = isSharedTextureUri(src.src) ? 'video' : String(src.type || 'none').trim().toLowerCase();
+  if (src.type === 'spout' || isSharedTextureUri(src.src)) return null;
+  if (sourceType === 'shader') {
+    return typeof src.shaderCode === 'string' && src.shaderCode.trim().length > 0
+      ? null
+      : 'shader:source-required';
+  }
+  if (sourceType === 'threejs' || sourceType === 'p5js' || sourceType === 'javascript') {
+    return nativeShaderSourceFromJavascript(src.jsAnimation)
+      ? null
+      : `${sourceType}:native-scene-graph-required`;
+  }
+  if (sourceType === 'image' || sourceType === 'video') {
+    const uri = nativeReadableMediaUri(src);
+    if (!isNativeLocalMediaUri(uri)) return `${sourceType}:native-readable-uri-required`;
+    if (sourceType === 'video' && !options.nativeVideoDecodePumpReady) {
+      return 'video:native-decode-pump-required';
+    }
+    return null;
+  }
+  return `${sourceType || 'source'}:native-ingest-pending`;
+}
+
+function nativeFileSourceParamUnsupportedReason(src: Record<string, any>): string | null {
+  const uri = nativeReadableFileParamUri(src);
+  return isNativeLocalMediaUri(uri) ? null : 'file:native-readable-uri-required';
+}
+
 function nativeLayerSourceFromMediaSource(
   src: NonNullable<Layer['source']>,
   previewElement: CanvasImageSource | null = null,
 ): NativeLayerSource {
-  const sourceType = isSharedTextureUri(src.src) ? 'video' : (src.type || 'none');
+  const nativeJavascript = nativeShaderSourceFromJavascript(src.jsAnimation);
+  const javascriptSource = nativeJavascript
+    ? {
+        ...src,
+        type: 'shader' as const,
+        src: `native-js://${src.id}/${hashString(nativeJavascript.shaderCode)}`,
+        shaderCode: nativeJavascript.shaderCode,
+        shaderValues: nativeJavascript.shaderValues,
+      }
+    : src;
+  const uri = nativeReadableMediaUri(javascriptSource);
+  const normalizedSrc = uri !== javascriptSource.src ? { ...javascriptSource, src: uri } : javascriptSource;
+  const sourceType = isSharedTextureUri(uri) ? 'video' : (javascriptSource.type || 'none');
+  const shouldPrefetch = sourceType === 'image' || sourceType === 'video';
+  const shouldPreview = shouldPrefetch || !!previewElement;
   return {
     id: src.id,
-    uri: src.src,
+    uri,
     sourceType,
-    source: src,
-    shouldPrefetch: true,
-    shouldPreview: true,
+    source: normalizedSrc,
+    shouldPrefetch,
+    shouldPreview,
     previewElement,
   };
 }
 
 function nativeGraphOutputSource(layer: Layer, kind: NativeGraphRouteKind): NativeLayerSource {
   const shaderId = layer.gpuLayerContent?.shaderId || 'gpu';
-  const previewElement = ((layer as any)._gpuLayerPreviewCanvas ?? null) as CanvasImageSource | null;
   return {
     id: `gpu:${layer.id}:${shaderId}`,
     uri: `native-graph://${kind}/${layer.id}`,
-    sourceType: 'image',
+    sourceType: `gpu:${kind}`,
     source: null,
     shouldPrefetch: false,
     shouldPreview: false,
-    previewElement,
+    previewElement: null,
   };
 }
 
@@ -3103,17 +3649,97 @@ function nativeSourceIdentity(source: NativeLayerSource | null | undefined): str
   return `${source.sourceType}:${source.id}:${source.uri}`;
 }
 
-function nativeGraphParamsForLayer(layer: Layer, kind: NativeGraphRouteKind): Record<string, any> {
+function scaledIntegerParam(
+  params: Record<string, any>,
+  key: string,
+  scale: number,
+  fallback: number,
+  min: number,
+): number {
+  const raw = Number(params[key]);
+  const base = Number.isFinite(raw) && raw > 0 ? raw : fallback;
+  return Math.max(min, Math.round(base * scale));
+}
+
+function scaledSmokeGrid(gridSize: unknown, scale: number): 32 | 48 | 64 {
+  const raw = Math.round(Number(gridSize));
+  const base = raw === 32 || raw === 48 || raw === 64 ? raw : 48;
+  if (scale <= 0.6) return 32;
+  if (scale <= 0.8) return base >= 48 ? 48 : 32;
+  return base === 64 ? 64 : base === 32 ? 32 : 48;
+}
+
+function nativeGraphQualityLabelForScale(scale: number, current: unknown): string {
+  if (scale <= 0.6) return 'performance';
+  if (scale <= 0.8) return 'balanced';
+  if (scale <= 0.93) return 'high';
+  return String(current || 'ultra');
+}
+
+function applyNativeGraphWorkloadScale(
+  params: Record<string, any>,
+  kind: NativeGraphRouteKind,
+  scale: number,
+): Record<string, any> {
+  const safeScale = clampNumber(scale, 0.45, 1);
+  if (safeScale >= 0.995) return params;
+  const next = { ...params };
+  switch (kind) {
+    case 'smoke-3d':
+      next.gridSize = scaledSmokeGrid(next.gridSize, safeScale);
+      next.emitterCount = scaledIntegerParam(next, 'emitterCount', safeScale, 4, 1);
+      next.shadowSteps = Math.max(0, Math.round((Number(next.shadowSteps) || 4) * safeScale));
+      break;
+    case 'smoke-riders':
+      next.quality = nativeGraphQualityLabelForScale(safeScale, next.quality);
+      next.emitters = scaledIntegerParam(next, 'emitters', safeScale, 5, 1);
+      next.sphereCount = scaledIntegerParam(next, 'sphereCount', safeScale, 192, 1);
+      break;
+    case 'ink-cloud':
+      next.particleCount = scaledIntegerParam(next, 'particleCount', safeScale, 150_000, 1024);
+      next.emitterCount = scaledIntegerParam(next, 'emitterCount', safeScale, 4, 1);
+      break;
+    case 'flythrough':
+      next.particleCount = scaledIntegerParam(next, 'particleCount', safeScale, 250_000, 1024);
+      next.slabCount = scaledIntegerParam(next, 'slabCount', Math.max(0.5, safeScale), 4, 1);
+      break;
+    case 'pixel-particles':
+      next.particleCount = scaledIntegerParam(next, 'particleCount', safeScale, 250_000, 1024);
+      break;
+    case 'particle-field':
+      next.particleCount = scaledIntegerParam(next, 'particleCount', safeScale, 80_000, 1024);
+      next.partnerCount = scaledIntegerParam(next, 'partnerCount', safeScale, 6, 1);
+      next.gravityWells = scaledIntegerParam(next, 'gravityWells', Math.max(0.65, safeScale), 3, 1);
+      break;
+    case 'volumetric-spheres':
+      next.sphereCount = scaledIntegerParam(next, 'sphereCount', safeScale, 192, 1);
+      break;
+    default:
+      break;
+  }
+  return next;
+}
+
+function nativeGraphParamsForLayer(layer: Layer, kind: NativeGraphRouteKind, workloadScale = 1): Record<string, any> {
   const params = layer.gpuLayerContent?.params ?? {};
   const shaderId = String(layer.gpuLayerContent?.shaderId || '').trim().toLowerCase();
   if (kind === 'particle-field' && shaderId === 'gravity-wells') {
-    return {
+    return applyNativeGraphWorkloadScale({
       ...gravityWellsDefaultParams,
       ...params,
       mode: params.mode ?? gravityWellsDefaultParams.mode ?? 'gravity',
-    };
+    }, kind, workloadScale);
   }
-  return params;
+  return applyNativeGraphWorkloadScale(params, kind, workloadScale);
+}
+
+function nativePointCloudBufferBase64(buffer: ArrayBuffer): string {
+  const bytes = new Uint8Array(buffer);
+  let binary = '';
+  for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+    binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+  }
+  return btoa(binary);
 }
 
 function mediaItemToNativeLayerSource(item: MediaItem): NativeLayerSource {
@@ -3127,12 +3753,13 @@ function mediaItemToNativeLayerSource(item: MediaItem): NativeLayerSource {
     type: item.type,
     videoElement: item.videoElement,
     texture: item.texture,
+    _assetRef: item._assetRef,
   } as NonNullable<Layer['source']>;
   return nativeLayerSourceFromMediaSource(source, previewElement);
 }
 
 function fileSourceParamToNativeLayerSource(layer: Layer, src: Record<string, any>): NativeLayerSource | null {
-  const url = typeof src.url === 'string' ? src.url : '';
+  const url = nativeReadableFileParamUri(src);
   if (!url) return null;
   const mime = String(src.mime ?? '');
   const filename = String(src.name ?? url);
@@ -3166,18 +3793,17 @@ function nativeLayerSource(layer: Layer): NativeLayerSource {
 
   if (layer.type === 'gpu' && layer.gpuLayerContent) {
     const shaderId = layer.gpuLayerContent.shaderId || 'gpu';
-    const previewElement = ((layer as any)._gpuLayerPreviewCanvas ?? null) as CanvasImageSource | null;
     // Supported GPU layers are routed through nativeGraphOutputSource before
-    // this fallback. Unsupported GPU layers use the actual WebGPU preview
-    // canvas instead of legacy native lookalike proxies.
+    // this point. Unsupported GPU shaders intentionally stay blank in native
+    // output instead of smuggling in the WebGPU preview canvas.
     return {
       id: `gpu:${layer.id}:${shaderId}`,
-      uri: `gpu-preview://${shaderId}`,
-      sourceType: 'image',
+      uri: '',
+      sourceType: 'none',
       source: null,
       shouldPrefetch: false,
-      shouldPreview: !!previewElement,
-      previewElement,
+      shouldPreview: false,
+      previewElement: null,
     };
   }
 
@@ -3206,17 +3832,25 @@ function nativeLayerSource(layer: Layer): NativeLayerSource {
 
 function nativeLayerNeedsContinuousSync(layer: Layer): boolean {
   if (!layer.visible) return false;
-  if (nativeEffectPassesForLayer(layer)?.some((effect) => effect.effect === 'noise')) return true;
-  if (
-    (layer.source?.type === 'shader' && layer.source?.shaderCode) ||
-    (layer.type === 'gpu' && !!layer.gpuLayerContent)
-  ) {
+  if (nativeUnsupportedEffectTypes(layer).length > 0) return false;
+  // The decoder advances local videos inside the core, but effect-pass
+  // graphs are still queued by this sync heartbeat. Keep every supported
+  // effect chain ticking so it consumes newly decoded source textures rather
+  // than preserving a black first pass submitted before pre-roll completed.
+  if (nativeEffectPassesForLayer(layer)?.length) return true;
+  if (layer.type === 'gpu' && layer.gpuLayerContent) {
+    const shaderId = String(layer.gpuLayerContent.shaderId || '').trim().toLowerCase();
+    if (isNativeReadyGpuShaderId(shaderId)) return true;
+  }
+  if (layer.source?.type === 'shader' && layer.source?.shaderCode) return true;
+  if (layer.type === 'gpu' && !!layer.gpuLayerContent) {
     return true;
   }
 
   const src = layer.source;
+  if (src?.jsAnimation && nativeShaderSourceFromJavascript(src.jsAnimation)) return true;
+  if (src?.type === 'video' && isNativeLocalMediaUri(nativeReadableMediaUri(src))) return true;
   if (
-    src?.type === 'video' ||
     src?.type === 'spout' ||
     isSharedTextureUri(src?.src) ||
     !!src?.videoElement ||
@@ -3312,11 +3946,62 @@ function isNativeStaticImageDecodeUri(uri: string | undefined | null): boolean {
   );
 }
 
+// The Canvas-owned live sync instance, registered on start() so UI surfaces
+// (media library hover-arming) can reach the active session without threading
+// the instance through props.
+let activeNativeRendererSync: NativeRendererSync | null = null;
+
+const armedLibraryVideoAt = new Map<string, number>();
+const LIBRARY_ARM_REFRESH_MS = 20_000;
+
+/**
+ * Pre-arm a media-library video BEFORE the user commits to placing it
+ * (pointer-enter / drag-start). The core pre-rolls a paused decoder under a
+ * `library:` source id; when a click later binds the real source, the core's
+ * warm-claim hands the prerolled session over by signature match, so
+ * trigger-to-first-motion is one frame instead of a decoder cold start —
+ * required for triggering clips in sync with music.
+ *
+ * Fire-and-forget and safe to over-call: re-arms are debounced per item, and
+ * core-side the armed-session cap plus orphan GC bound the pool.
+ */
+export function armNativeLibraryVideo(item: {
+  id: string;
+  src: string;
+  videoElement?: HTMLVideoElement | null;
+}): void {
+  const sync = activeNativeRendererSync;
+  if (!sync || !item?.id || !item?.src) return;
+  const now = Date.now();
+  if (now - (armedLibraryVideoAt.get(item.id) ?? 0) < LIBRARY_ARM_REFRESH_MS) return;
+  armedLibraryVideoAt.set(item.id, now);
+  // Mirror the source shape a real placement produces (applyToLayer in
+  // MediaTray): rate 1, loop, untrimmed, duration via the library element.
+  const syntheticSrc = {
+    id: item.id,
+    src: item.src,
+    type: 'video',
+    videoElement: item.videoElement ?? undefined,
+    playbackRate: 1,
+    playbackMode: 'loop',
+    trimStart: 0,
+    trimEnd: 1,
+  } as unknown as NonNullable<Layer['source']>;
+  const options = sync.libraryVideoPrefetchOptions(syntheticSrc);
+  void prefetchNativeRendererMedia(`library:${item.id}`, item.src, 1, 'video', options).catch(
+    () => {
+      armedLibraryVideoAt.delete(item.id);
+    },
+  );
+}
+
 export class NativeRendererSync {
   private running = false;
   private startupReady = false;
   private frameId = 0;
   private pendingSync = false;
+  private flushInFlight = false;
+  private flushAgain = false;
   private desiredWidth = 0;
   private desiredHeight = 0;
   private latestLayers: Layer[] = [];
@@ -3340,6 +4025,8 @@ export class NativeRendererSync {
   private nativeFeatureFlags: Record<string, boolean> = {};
   private nativeGraphInstruments = new Set<string>();
   private prefetchedSources = new Set<string>();
+  private armedVjSources = new Set<string>();
+  private videoMetadataWatches = new WeakSet<HTMLVideoElement>();
   private videoRefreshAt = new Map<string, number>();
   private nativeVideoPrefetchAt = new Map<string, number>();
   private sourcePreviewSeq = new Map<string, number>();
@@ -3360,10 +4047,10 @@ export class NativeRendererSync {
   private nativeVideoLastDecodeFailures = 0;
   private nativeVideoLastDecodes = 0;
   private nativeVideoDecodeWarnings = 0;
+  private nativeVideoPlaybackState = new Map<string, NativeVideoPlaybackSyncState>();
+  private nativeVideoDecodeDimensionCache = new Map<string, { width: number; height: number; metadata: boolean }>();
   private previewImageElements = new Map<string, HTMLImageElement>();
   private previewImageLoads = new Set<string>();
-  private previewCanvas: HTMLCanvasElement | null = null;
-  private previewContext: CanvasRenderingContext2D | null = null;
   private nativeComputeGraphSourceFrames = false;
   private nativeGraphCatalogComplete = false;
   private nativeGraphReadyKinds = new Set<NativeGraphRouteKind>();
@@ -3372,8 +4059,14 @@ export class NativeRendererSync {
   private nativeGraphRouteFailures = 0;
   private nativeGraphRouteSuppressedFailures = 0;
   private nativeGraphRouteLastFailure: string | null = null;
+  private nativeBlockedLayerCount = 0;
+  private nativeBlockedEffectLayerCount = 0;
+  private nativeBlockedSourceLayerCount = 0;
+  private nativeBlockedLayerLastReason: string | null = null;
   private nativePointCloudDataCache = new Map<string, Promise<PointCloudFXNativePointData>>();
+  private nativePointCloudUploadSignatures = new Map<string, string>();
   private nativeSourceFrameSize = SOURCE_FRAME_SIZE_FALLBACK;
+  private latestNativeStatus: RendererStatus | null = null;
   private dynamicSourceFrameCaptureSize = SOURCE_FRAME_SIZE_FALLBACK;
   private presentProfile: PresentPolicyProfile = 'low-latency-safe';
   private targetFps = 60;
@@ -3408,6 +4101,7 @@ export class NativeRendererSync {
   private sharedTextureReceiverSender: string | null = null;
   private nextStatusPollAt = 0;
   private nextReadinessPollAt = 0;
+  private statusPollInFlight = false;
   private degradedModeActive = false;
   private decodeBackpressureActive = false;
   private decodeHandoffBackpressureActive = false;
@@ -3419,6 +4113,9 @@ export class NativeRendererSync {
   private decodeEstimateCacheBackpressureActive = false;
   private commandBackpressureActive = false;
   private nativeCommandDropWarnings = 0;
+  private lastStatusLogAt = 0;
+  private lastStatusFrameCount = 0;
+  private lastStatusPreviewFrameCount = 0;
   private decodeGpuBridgePath: string | undefined =
     (import.meta as any)?.env?.VITE_DECODE_GPU_BRIDGE_PATH || undefined;
 
@@ -3469,6 +4166,7 @@ export class NativeRendererSync {
     this.nativeVideoLastDecodeFailures = 0;
     this.nativeVideoLastDecodes = 0;
     this.nativeVideoDecodeWarnings = 0;
+    this.nativeVideoPlaybackState.clear();
   }
 
   private resetNativeGraphRouteTelemetry() {
@@ -3570,7 +4268,7 @@ export class NativeRendererSync {
         this.nativeImageDecodeBypass.add(sourceKey);
       }
       if (pending.length && this.nativeImageDecodeWarnings < 5) {
-        console.warn('[NativeRendererSync] native image decode failed; source frame will use preview fallback', {
+        console.warn('[NativeRendererSync] native image decode failed; source remains unavailable in native-only mode', {
           failureDelta: failures - this.nativeImageLastDecodeFailures,
           pendingSources: pending.map(([, decode]) => decode.sourceId),
           error: status.native_image_decode_last_error,
@@ -3616,7 +4314,7 @@ export class NativeRendererSync {
         this.nativeVideoDecodeBypass.add(sourceKey);
       }
       if (pending.length && this.nativeVideoDecodeWarnings < 5) {
-        console.warn('[NativeRendererSync] native video decode pump failed; source frame will use preview fallback', {
+        console.warn('[NativeRendererSync] native video decode pump failed; source remains unavailable in native-only mode', {
           failureDelta: failures - this.nativeVideoLastDecodeFailures,
           pendingSources: pending.map(([, decode]) => decode.sourceId),
           error: status.native_video_frame_decode_last_error,
@@ -3636,6 +4334,11 @@ export class NativeRendererSync {
     const size = Number(status?.source_frame_size ?? SOURCE_FRAME_SIZE_FALLBACK);
     this.nativeSourceFrameSize = clampNumber(Math.round(size), 512, 4096);
     this.dynamicSourceFrameCaptureSize = this.nativeSourceFrameSize;
+  }
+
+  private nativeGraphWorkloadScale(): number {
+    const scale = Number(this.latestNativeStatus?.native_quality?.quality_scale ?? 0);
+    return Number.isFinite(scale) && scale > 0 ? clampNumber(scale, 0.45, 1) : 0.72;
   }
 
   private supportsNativeMethod(method: string): boolean {
@@ -3694,19 +4397,27 @@ export class NativeRendererSync {
     const params = layer.gpuLayerContent?.params ?? {};
     const sourceParam = params.source;
     if (!sourceParam || typeof sourceParam !== 'object') return null;
+    const unsupportedSourceOptions = {
+      nativeVideoDecodePumpReady: this.nativeVideoDecodePumpReady(),
+    };
 
     if (sourceParam.type === 'media' && sourceParam.mediaId) {
       const item = get(mediaLibrary).find((media: MediaItem) => media.id === sourceParam.mediaId);
-      return item ? mediaItemToNativeLayerSource(item) : null;
+      if (!item) return null;
+      const source = mediaItemToNativeLayerSource(item);
+      return source.source && !nativeMediaSourceUnsupportedReason(source.source, unsupportedSourceOptions) ? source : null;
     }
 
     if (sourceParam.type === 'layer' && sourceParam.layerId) {
       const layers = this.latestLayers.length ? this.latestLayers : get(project).layers;
       const sourceLayer = layers.find((candidate) => candidate.id === sourceParam.layerId);
-      return sourceLayer?.source ? nativeLayerSourceFromMediaSource(sourceLayer.source) : null;
+      if (!sourceLayer?.source) return null;
+      const source = nativeLayerSourceFromMediaSource(sourceLayer.source);
+      return source.source && !nativeMediaSourceUnsupportedReason(source.source, unsupportedSourceOptions) ? source : null;
     }
 
     if (sourceParam.type === 'file') {
+      if (nativeFileSourceParamUnsupportedReason(sourceParam)) return null;
       return fileSourceParamToNativeLayerSource(layer, sourceParam);
     }
 
@@ -3761,72 +4472,36 @@ export class NativeRendererSync {
             throw new Error(`point cloud fetch failed: ${response.status} ${response.statusText}`);
           }
           const buffer = await response.arrayBuffer();
-          const parsed = isSplat ? parseSplatBuffer(buffer) : parsePLYBuffer(buffer);
-          const vertices = parsed.vertices ?? [];
-          if (!vertices.length) {
+          const pointData = isSplat
+            ? pointCloudBuffersFromPLYData(parseSplatBuffer(buffer), {
+                maxPoints: NATIVE_POINT_CLOUD_MAX_POINTS,
+                maxGaussianPoints: POINT_CLOUD_FX_NATIVE_DEPTH_SORT_MAX_POINTS,
+              })
+            : parsePLYPointBuffers(buffer, {
+                maxPoints: NATIVE_POINT_CLOUD_MAX_POINTS,
+                maxGaussianPoints: POINT_CLOUD_FX_NATIVE_DEPTH_SORT_MAX_POINTS,
+              });
+          if (!pointData.sampleCount) {
             throw new Error('point cloud source contained no vertices');
           }
-          const positions = new Float32Array(vertices.length * 3);
-          const colors = new Float32Array(vertices.length * 3);
-          const alpha = new Float32Array(vertices.length);
-          const splatScale = new Float32Array(vertices.length * 3);
-          const splatRotation = new Float32Array(vertices.length * 4);
-          const shCoeffCount = parsed.sphericalHarmonicsCoefficientCount ?? 0;
-          const shRestStride = shCoeffCount >= 9 ? 9 : 0;
-          const shRest = shRestStride > 0 ? new Float32Array(vertices.length * shRestStride) : undefined;
-          let gaussian = parsed.dataType === 'gaussian';
-          for (let i = 0; i < vertices.length; i++) {
-            const v = vertices[i];
-            positions[i * 3 + 0] = v.x;
-            positions[i * 3 + 1] = v.y;
-            positions[i * 3 + 2] = v.z;
-            colors[i * 3 + 0] = clampNumber((v.r ?? 255) / 255, 0, 1);
-            colors[i * 3 + 1] = clampNumber((v.g ?? 255) / 255, 0, 1);
-            colors[i * 3 + 2] = clampNumber((v.b ?? 255) / 255, 0, 1);
-            alpha[i] = clampNumber((v.a ?? 255) / 255, 0, 1);
-            const scaleOff = i * 3;
-            splatScale[scaleOff + 0] = Number.isFinite(v.scale_0) ? v.scale_0! : 0;
-            splatScale[scaleOff + 1] = Number.isFinite(v.scale_1) ? v.scale_1! : 0;
-            splatScale[scaleOff + 2] = Number.isFinite(v.scale_2) ? v.scale_2! : 0;
-            if (
-              Number.isFinite(v.scale_0) ||
-              Number.isFinite(v.scale_1) ||
-              Number.isFinite(v.scale_2)
-            ) {
-              gaussian = true;
-            }
-            const rotOff = i * 4;
-            splatRotation[rotOff + 0] = Number.isFinite(v.rot_0) ? v.rot_0! : 1;
-            splatRotation[rotOff + 1] = Number.isFinite(v.rot_1) ? v.rot_1! : 0;
-            splatRotation[rotOff + 2] = Number.isFinite(v.rot_2) ? v.rot_2! : 0;
-            splatRotation[rotOff + 3] = Number.isFinite(v.rot_3) ? v.rot_3! : 0;
-            if (shRest && v.f_rest?.length) {
-              const shOff = i * shRestStride;
-              const copyCount = Math.min(shRestStride, v.f_rest.length);
-              for (let j = 0; j < copyCount; j++) {
-                const coeff = v.f_rest[j];
-                shRest[shOff + j] = Number.isFinite(coeff) ? coeff : 0;
-              }
-            }
-          }
-          return buildPointCloudFXNativePointData(positions, colors, {
+          return buildPointCloudFXNativePointData(pointData.positions, pointData.colors, {
             maxPoints: NATIVE_POINT_CLOUD_MAX_POINTS,
-            alpha,
-            splatScale: gaussian ? splatScale : undefined,
-            splatRotation: gaussian ? splatRotation : undefined,
-            sphericalHarmonicsRest: shRest,
-            sphericalHarmonicsRestStride: shRestStride,
-            gaussian,
+            alpha: pointData.alpha,
+            splatScale: pointData.gaussian ? pointData.splatScale : undefined,
+            splatRotation: pointData.gaussian ? pointData.splatRotation : undefined,
+            sphericalHarmonicsRest: pointData.sphericalHarmonicsRest,
+            sphericalHarmonicsRestStride: pointData.sphericalHarmonicsRestStride,
+            gaussian: pointData.gaussian,
             signature: [
               cacheKey,
               buffer.byteLength,
-              vertices.length,
-              Math.min(vertices.length, NATIVE_POINT_CLOUD_MAX_POINTS),
-              gaussian ? 'gaussian' : 'points',
-              `sh${parsed.sphericalHarmonicsDegree ?? 0}:${parsed.sphericalHarmonicsCoefficientCount ?? 0}`,
+              pointData.sourceVertexCount,
+              pointData.sampleCount,
+              pointData.gaussian ? 'gaussian' : 'points',
+              `sh${pointData.sphericalHarmonicsDegree}:${pointData.sphericalHarmonicsCoefficientCount}`,
             ].join(':'),
-            sphericalHarmonicsDegree: parsed.sphericalHarmonicsDegree ?? 0,
-            sphericalHarmonicsCoefficientCount: parsed.sphericalHarmonicsCoefficientCount ?? 0,
+            sphericalHarmonicsDegree: pointData.sphericalHarmonicsDegree,
+            sphericalHarmonicsCoefficientCount: pointData.sphericalHarmonicsCoefficientCount,
           });
         })
         .catch((err) => {
@@ -3853,8 +4528,7 @@ export class NativeRendererSync {
     const inputReady =
       this.nativeSourceFrameUploaded(inputSource) ||
       this.canUseNativeStaticImageDecode(inputSource.source, inputSource.sourceType) ||
-      this.canUseNativeVideoDecodePump(inputSource, inputSource.sourceType) ||
-      !!this.resolvePreviewElement(inputSource.source, inputSource.sourceType, inputSource.previewElement ?? null);
+      this.canUseNativeVideoDecodePump(inputSource, inputSource.sourceType);
     if (!inputReady) return null;
     const source = nativeEffectPassOutputSource(layer, inputSource);
     const key = this.nativeGraphRouteKey('effect-pass', source.id);
@@ -3871,6 +4545,7 @@ export class NativeRendererSync {
     if (layer.type !== 'gpu' || !layer.gpuLayerContent) return null;
     const shaderId = String(layer.gpuLayerContent.shaderId || '').trim();
     const normalizedShaderId = shaderId.toLowerCase();
+    if (!isNativeReadyGpuShaderId(normalizedShaderId)) return null;
     let kind: NativeGraphRouteKind | null = null;
     if (
       normalizedShaderId === 'planet' &&
@@ -3976,6 +4651,18 @@ export class NativeRendererSync {
     );
   }
 
+  private nativeVideoDecodePumpReady(): boolean {
+    return (
+      this.supportsNativeFeature('native_media_decode') &&
+      this.supportsNativeFeature('media_prefetch') &&
+      this.supportsNativeFeature('native_video_decode_pump') &&
+      this.supportsNativeFeature('native_video_decode_pump_window') &&
+      this.supportsNativeFeature('native_video_frame_decode') &&
+      this.supportsNativeFeature('native_video_frame_prefetch') &&
+      this.supportsNativeFeature('native_media_source_playback_state')
+    );
+  }
+
   private canUseNativeVideoDecodePump(
     nativeSource: NativeLayerSource | null | undefined,
     sourceType: string,
@@ -3983,9 +4670,7 @@ export class NativeRendererSync {
     const src = nativeSource?.source;
     if (!src || sourceType !== 'video' || !nativeSource.shouldPrefetch) return false;
     return (
-      this.supportsNativeFeature('native_video_decode_pump') &&
-      this.supportsNativeFeature('native_video_frame_decode') &&
-      this.supportsNativeFeature('native_media_source_playback_state') &&
+      this.nativeVideoDecodePumpReady() &&
       !this.nativeVideoDecodeBypass.has(this.sourceCacheKey(src.id, src.src))
     );
   }
@@ -4042,15 +4727,37 @@ export class NativeRendererSync {
     height: number,
     clock: NativeRenderClockCommand,
     visual: VisualAudioState,
-  ) {
+  ): Promise<RendererCommand[]> {
+    const queuedCommands: RendererCommand[] = [];
     if (!this.nativeComputeGraphSourceFrames) {
       this.nativeGraphRoutes.clear();
-      return;
+      return queuedCommands;
     }
     const activeRouteKeys = new Set<string>();
     for (const layer of layers) {
       const possibleRoute = this.nativeGraphRouteForLayer(layer, true);
       if (!possibleRoute) continue;
+      if (NATIVE_CORE_OWNED_GRAPH_KINDS.has(possibleRoute.kind)) {
+        activeRouteKeys.add(possibleRoute.key);
+        if (possibleRoute.kind === 'point-cloud-fx') {
+          const pointData = await this.nativePointCloudDataForRoute(layer, possibleRoute);
+          if (pointData && this.nativePointCloudUploadSignatures.get(layer.id) !== pointData.signature) {
+            queuedCommands.push({
+              type: 'upload_native_point_cloud',
+              layer_id: layer.id,
+              signature: pointData.signature,
+              point_count: pointData.pointCount,
+              sort_count: pointData.sortCount,
+              depth_sort_enabled: pointData.depthSortEnabled,
+              home_b64: nativePointCloudBufferBase64(pointData.homeInitialBuffer),
+              live_b64: nativePointCloudBufferBase64(pointData.liveInitialBuffer),
+              sort_b64: nativePointCloudBufferBase64(pointData.sortInitialBuffer),
+            });
+            this.nativePointCloudUploadSignatures.set(layer.id, pointData.signature);
+          }
+        }
+        continue;
+      }
       activeRouteKeys.add(possibleRoute.key);
 
       const route = this.nativeGraphRouteForLayer(layer);
@@ -4074,7 +4781,11 @@ export class NativeRendererSync {
         : routeState.seq + 1;
       const audioBass = visual.isActive ? Math.max(visual.bass, visual.bassFast * 0.9) : 0;
       const audioTreble = visual.isActive ? visual.treble : 0;
-      const nativeGraphParams = nativeGraphParamsForLayer(layer, route.kind);
+      const nativeGraphParams = nativeGraphParamsForLayer(
+        layer,
+        route.kind,
+        this.nativeGraphWorkloadScale(),
+      );
       const graphSource = nativeGraphRenderSource(route);
       const effectPassSig = route.effectPasses?.map((effectPass) => effectPass.descriptor).join('>') ?? 'none';
       const inputSourceFrameSeq = route.inputSource?.source
@@ -4125,16 +4836,10 @@ export class NativeRendererSync {
             frameIndex: graphFrameIndex,
             seq: graphSeq * 16,
           });
-          const result = await runNativeRendererComputeGraph(effectGraph.config as unknown as Record<string, unknown>);
-          const renders = Array.isArray((result as any)?.renders)
-            ? (result as any).renders
-            : [(result as any)?.render].filter(Boolean);
-          const renderedSourceFrame = renders.some((render: any) =>
-            render?.target === 'source_frame' && render?.source_id === route.source.id,
-          );
-          if (!renderedSourceFrame) {
-            throw new Error(`native effect-pass graph returned no source-frame render for ${route.source.id}`);
-          }
+          queuedCommands.push({
+            type: 'queue_compute_graph',
+            ...(effectGraph.config as unknown as Record<string, unknown>),
+          });
           routeState.state = null;
           routeState.lastGraphFrameIndex = graphFrameIndex;
           routeState.lastManualClockKey = manualClockKey || undefined;
@@ -4281,16 +4986,10 @@ export class NativeRendererSync {
             reset: resetGraphState,
           });
         })();
-        const result = await runNativeRendererComputeGraph(graph.config as unknown as Record<string, unknown>);
-        const renders = Array.isArray((result as any)?.renders)
-          ? (result as any).renders
-          : [(result as any)?.render].filter(Boolean);
-        const renderedSourceFrame = renders.some((render: any) =>
-          render?.target === 'source_frame' && render?.source_id === graphSource.id,
-        );
-        if (!renderedSourceFrame) {
-          throw new Error(`native ${route.kind} graph returned no source-frame render`);
-        }
+        queuedCommands.push({
+          type: 'queue_compute_graph',
+          ...(graph.config as unknown as Record<string, unknown>),
+        });
         if (route.effectPasses?.length && route.source.id !== graphSource.id) {
           const effectGraph = buildNativeEffectPassChainGraph({
             sourceId: graphSource.id,
@@ -4309,16 +5008,10 @@ export class NativeRendererSync {
             frameIndex: graphFrameIndex,
             seq: graphSeq * 16 + 8,
           });
-          const effectResult = await runNativeRendererComputeGraph(effectGraph.config as unknown as Record<string, unknown>);
-          const effectRenders = Array.isArray((effectResult as any)?.renders)
-            ? (effectResult as any).renders
-            : [(effectResult as any)?.render].filter(Boolean);
-          const renderedEffectFrame = effectRenders.some((render: any) =>
-            render?.target === 'source_frame' && render?.source_id === route.source.id,
-          );
-          if (!renderedEffectFrame) {
-            throw new Error(`native ${route.kind} effect-pass graph returned no source-frame render`);
-          }
+          queuedCommands.push({
+            type: 'queue_compute_graph',
+            ...(effectGraph.config as unknown as Record<string, unknown>),
+          });
         }
         routeState.state = graph.state ?? null;
         routeState.lastGraphFrameIndex = graphFrameIndex;
@@ -4340,6 +5033,7 @@ export class NativeRendererSync {
     if (inactiveGraphBufferPrefixes.length > 0) {
       await this.clearNativeGraphBuffers(inactiveGraphBufferPrefixes);
     }
+    return queuedCommands;
   }
 
   private scheduleAudioSync() {
@@ -4361,10 +5055,71 @@ export class NativeRendererSync {
     if (this.latestRenderClockSeconds !== null) {
       return this.latestRenderClockSeconds;
     }
+    const nativeTime = Number(src._nativePlaybackTimeSeconds);
+    if (Number.isFinite(nativeTime) && nativeTime >= 0) {
+      const anchorMs = Number(src._nativePlaybackUpdatedAtMs);
+      const elapsedSeconds = src.isPlaying === false || !Number.isFinite(anchorMs)
+        ? 0
+        : Math.max(0, now - anchorMs) / 1000;
+      return Math.max(0, nativeTime + elapsedSeconds * (Number(src.playbackRate) || 1));
+    }
     const videoTime = Number(src.videoElement?.currentTime);
     return Number.isFinite(videoTime)
       ? Math.max(0, videoTime)
-      : Math.max(0, (now - this.liveClockOriginMs) / 1000);
+      : 0;
+  }
+
+  private nativeVideoPlaybackControlSignature(src: NonNullable<Layer['source']>): string {
+    const element = src.videoElement ?? null;
+    const duration = Number(src.durationSeconds ?? element?.duration);
+    const seekGeneration = Number(src._nativePlaybackSeekSeq ?? 0);
+    const explicitTime = Number(src._nativePlaybackTimeSeconds);
+    return [
+      src.isPlaying !== false ? 'play' : 'pause',
+      Number(src.playbackRate ?? element?.playbackRate ?? 1).toFixed(6),
+      src.playbackMode ?? (element?.loop ? 'loop' : 'loop'),
+      Number(src.trimStart ?? 0).toFixed(6),
+      Number(src.trimEnd ?? 1).toFixed(6),
+      Number.isFinite(duration) && duration > 0 ? duration.toFixed(6) : 'unknown',
+      Number.isFinite(seekGeneration) ? Math.max(0, Math.round(seekGeneration)) : 0,
+      Number.isFinite(explicitTime) && explicitTime >= 0 ? explicitTime.toFixed(6) : 'live',
+    ].join(':');
+  }
+
+  private nativeVideoPlaybackCommandIfChanged(
+    src: NonNullable<Layer['source']>,
+    sourceType: string,
+    now: number,
+    renderClock: NativeRenderClockCommand,
+  ): RendererCommand | null {
+    const sourceKey = this.sourceCacheKey(src.id, src.src);
+    const signature = this.nativeVideoPlaybackControlSignature(src);
+    const previous = this.nativeVideoPlaybackState.get(sourceKey);
+    if (previous?.signature === signature) return null;
+    const clockTimeSeconds = Number(renderClock.time ?? 0);
+    const explicitNativeTime = Number(src._nativePlaybackTimeSeconds);
+    const elementTime = Number(src.videoElement?.currentTime);
+    const estimatedPreviousTime = previous
+      ? previous.paused
+        ? previous.timeSeconds
+        : previous.timeSeconds + Math.max(0, clockTimeSeconds - previous.clockTimeSeconds) * previous.playbackRate
+      : 0;
+    const timeSeconds = Number.isFinite(explicitNativeTime) && explicitNativeTime >= 0
+      ? explicitNativeTime
+      : Number.isFinite(elementTime) && elementTime >= 0
+      ? elementTime
+      : Math.max(0, estimatedPreviousTime);
+    const playbackRate = Number(src.playbackRate ?? src.videoElement?.playbackRate ?? 1) || 1;
+    const paused = src.isPlaying === false;
+    this.nativeVideoPlaybackState.set(sourceKey, {
+      signature,
+      timeSeconds,
+      clockTimeSeconds,
+      playbackRate,
+      paused,
+      seekGeneration: Math.max(0, Math.round(Number(src._nativePlaybackSeekSeq ?? 0))),
+    });
+    return this.nativeVideoPlaybackCommand(src, sourceType, now, renderClock, timeSeconds);
   }
 
   private nativeVideoPlaybackCommand(
@@ -4372,22 +5127,63 @@ export class NativeRendererSync {
     sourceType: string,
     now: number,
     renderClock: NativeRenderClockCommand,
+    explicitTimeSeconds?: number,
   ): RendererCommand {
     const element = src.videoElement ?? null;
-    const duration = Number(element?.duration);
+    const duration = Number(src.durationSeconds ?? element?.duration);
+    const playbackMode = src.playbackMode ?? (element?.loop ? 'loop' : 'loop');
+    const decodeDimensions = this.nativeVideoDecodeDimensions(src);
     return {
       type: 'set_media_source_playback',
       source_id: src.id,
       uri: src.src,
       source_type: sourceType,
-      time_seconds: Number(this.nativeVideoPlaybackTimeSeconds(src, now).toFixed(6)),
+      time_seconds: Number((explicitTimeSeconds ?? this.nativeVideoPlaybackTimeSeconds(src, now)).toFixed(6)),
       clock_time_seconds: Number((renderClock.time ?? 0).toFixed(6)),
-      playback_rate: Number((Number(element?.playbackRate) || 1).toFixed(6)),
-      paused: !!element?.paused,
-      loop_enabled: !!element?.loop,
+      playback_rate: Number((Number(src.playbackRate ?? element?.playbackRate) || 1).toFixed(6)),
+      paused: src.isPlaying === false,
+      loop_enabled: playbackMode !== 'once',
+      trim_start: Math.max(0, Math.min(1, Number(src.trimStart ?? 0))),
+      trim_end: Math.max(0, Math.min(1, Number(src.trimEnd ?? 1))),
       duration_seconds: Number.isFinite(duration) && duration > 0 ? Number(duration.toFixed(6)) : undefined,
-      seq: Math.max(1, Math.round((renderClock.time ?? 0) * 1000)),
+      decode_width: decodeDimensions.width,
+      decode_height: decodeDimensions.height,
+      seek_generation: Math.max(0, Math.round(Number(src._nativePlaybackSeekSeq ?? 0))),
+      seq: Math.max(1, Math.round(now * 1000)),
     };
+  }
+
+  private nativeVideoDecodeDimensions(src: NonNullable<Layer['source']>) {
+    const maxDimension = Math.max(
+      64,
+      Math.min(2048, Math.round(this.dynamicSourceFrameCaptureSize || this.nativeSourceFrameSize)),
+    );
+    const sourceKey = this.sourceCacheKey(src.id, src.src);
+    const element = src.videoElement ?? null;
+    const sourceWidth = Number(element?.videoWidth ?? (src as any).videoWidth ?? (src as any).width ?? 0);
+    const sourceHeight = Number(element?.videoHeight ?? (src as any).videoHeight ?? (src as any).height ?? 0);
+    const hasMetadata = sourceWidth > 0 && sourceHeight > 0;
+    const fallbackAspect = this.desiredWidth > 0 && this.desiredHeight > 0
+      ? this.desiredWidth / this.desiredHeight
+      : 16 / 9;
+    const aspect = hasMetadata
+      ? sourceWidth / sourceHeight
+      : fallbackAspect;
+    const width = aspect >= 1 ? maxDimension : Math.max(16, Math.round(maxDimension * aspect));
+    const height = aspect >= 1 ? Math.max(16, Math.round(maxDimension / aspect)) : maxDimension;
+    const next = {
+      width: Math.max(16, width - (width % 2)),
+      height: Math.max(16, height - (height % 2)),
+    };
+    const cached = this.nativeVideoDecodeDimensionCache.get(sourceKey);
+    if (cached) {
+      const targetChanged = cached.width !== next.width || cached.height !== next.height;
+      if (cached.metadata || !hasMetadata || !targetChanged) {
+        return { width: cached.width, height: cached.height };
+      }
+    }
+    this.nativeVideoDecodeDimensionCache.set(sourceKey, { ...next, metadata: hasMetadata });
+    return next;
   }
 
   private nativeVideoPrefetchOptions(
@@ -4397,20 +5193,38 @@ export class NativeRendererSync {
     useNativePlaybackClock = false,
   ) {
     const timeSeconds = this.nativeVideoPlaybackTimeSeconds(src, now);
-    const decodeSize = Math.max(64, Math.min(2048, Math.round(this.dynamicSourceFrameCaptureSize || this.nativeSourceFrameSize)));
+    const decodeDimensions = this.nativeVideoDecodeDimensions(src);
     return {
       timeSeconds: useNativePlaybackClock ? undefined : timeSeconds,
-      decodeWidth: decodeSize,
-      decodeHeight: decodeSize,
+      decodeWidth: decodeDimensions.width,
+      decodeHeight: decodeDimensions.height,
       prefetchWindowFrames,
       prefetchFps: NATIVE_VIDEO_PREFETCH_WINDOW_FPS,
+      playbackRate: Number(src.playbackRate ?? 1) || 1,
+      loopEnabled: (src.playbackMode ?? 'loop') !== 'once',
+      durationSeconds: Number.isFinite(Number(src.durationSeconds ?? src.videoElement?.duration))
+        ? Number(src.durationSeconds ?? src.videoElement?.duration)
+        : undefined,
+      trimStart: Math.max(0, Math.min(1, Number(src.trimStart ?? 0))),
+      trimEnd: Math.max(0, Math.min(1, Number(src.trimEnd ?? 1))),
       seq: Math.max(1, Math.round(timeSeconds * 1000)),
     };
+  }
+
+  /**
+   * Public wrapper so the media library can derive the exact same arm
+   * parameters a real placement would produce — the core's `library:`
+   * warm-claim only hands a prerolled session over when the signatures
+   * (uri, decode dims, rate, trims, duration, loop) match.
+   */
+  libraryVideoPrefetchOptions(src: NonNullable<Layer['source']>) {
+    return this.nativeVideoPrefetchOptions(src, Date.now());
   }
 
   async start(width: number, height: number) {
     if (this.running) return;
     this.startupReady = false;
+    activeNativeRendererSync = this;
     const backend: BackendKind = isMac ? 'metal' : isWindows ? 'd3d12' : 'vulkan';
     const decodeBackend: DecodeBackendKind = isWindows ? 'ffmpeg_d3d11va' : 'ffmpeg_software';
     await startNativeRenderer({
@@ -4418,10 +5232,12 @@ export class NativeRendererSync {
       decode_backend: decodeBackend,
       width,
       height,
-      target_fps: 60,
-      present_mode: 'immediate',
+      // One coherent native baseline: canonical workload, project output
+      // resolution, and the 120 Hz display budget. No adaptive governor.
+      target_fps: 120,
+      present_mode: 'vsync',
       allow_tearing: false,
-      max_frame_latency: 2,
+      max_frame_latency: 1,
       use_waitable_object: true,
       shader_metadata_cache_cap: 16384,
       pipeline_metadata_cache_cap: 16384,
@@ -4432,10 +5248,11 @@ export class NativeRendererSync {
       decode_predecode_estimate_cache_cap_entries:
         this.decodePredecodeEstimateCacheCapEntries,
       decode_use_output_resolution: this.decodeUseOutputResolution,
-      native_quality_policy: 'auto',
+      native_quality_policy: 'fixed',
       decode_gpu_bridge_path: this.decodeGpuBridgePath,
     });
     const startupStatus = await getNativeRendererStatus().catch(() => null);
+    this.latestNativeStatus = startupStatus;
     this.assertNativeReady(startupStatus);
     this.syncNativeSourceFrameSize(startupStatus);
     const startupCapabilities = await getNativeRendererCapabilities().catch(() => null);
@@ -4472,7 +5289,7 @@ export class NativeRendererSync {
     );
     if (computeGraphSourceFrameHost && missingGraphRequirements.length > 0) {
       console.warn(
-        '[NativeRendererSync] native graph catalog is incomplete; unsupported routes will fall back to WebGL',
+        '[NativeRendererSync] native graph catalog is incomplete; unsupported GPU routes will stay blank in native output',
         missingGraphRequirements,
       );
     }
@@ -4491,6 +5308,9 @@ export class NativeRendererSync {
     this.lastRenderClockSentSeconds = null;
     this.lastAudioSig = '';
     this.nativeCommandDropWarnings = 0;
+    this.lastStatusLogAt = performance.now();
+    this.lastStatusFrameCount = Number(startupStatus?.frames_presented ?? 0);
+    this.lastStatusPreviewFrameCount = 0;
     this.audioUnsub?.();
     this.audioUnsub = visualAudio.subscribe(() => this.scheduleAudioSync());
     this.desiredWidth = width;
@@ -4521,7 +5341,8 @@ export class NativeRendererSync {
         `nativeGraphs=${graphCatalogStatus === 'complete' ? 'on' : graphCatalogStatus}`,
         `driver=${startupReadiness?.modes?.output_driver?.ok ? 'on' : 'pending'}`,
         `fullV2=${startupReadiness?.modes?.full_v2?.ok ? 'ready' : 'pending'}`,
-        `tier=${nativeCaps?.recommended_quality_tier ?? 'unknown'}`,
+        `tier=${startupQuality?.active_tier ?? 'unknown'}`,
+        `cap=${nativeCaps?.recommended_quality_tier ?? 'unknown'}`,
         `f16=${nativeCaps?.requested_shader_f16 ? 'on' : 'off'}`,
         `floatFilter=${nativeCaps?.requested_float32_filterable ? 'on' : 'off'}`,
       ].join(' '),
@@ -4578,6 +5399,10 @@ export class NativeRendererSync {
     if (!this.running) return;
     this.running = false;
     this.startupReady = false;
+    this.flushAgain = false;
+    if (activeNativeRendererSync === this) {
+      activeNativeRendererSync = null;
+    }
     this.stopShaderAnimation();
     if (this.audioSyncRaf !== null) {
       cancelAnimationFrame(this.audioSyncRaf);
@@ -4590,8 +5415,11 @@ export class NativeRendererSync {
     this.latestLayers = [];
     this.precompiledShaders.clear();
     this.prefetchedSources.clear();
+    this.armedVjSources.clear();
+    this.videoMetadataWatches = new WeakSet<HTMLVideoElement>();
     this.videoRefreshAt.clear();
     this.nativeVideoPrefetchAt.clear();
+    this.nativeVideoDecodeDimensionCache.clear();
     this.sourcePreviewSeq.clear();
     this.sourcePreviewNextAt.clear();
     this.sourcePreviewSig.clear();
@@ -4600,6 +5428,7 @@ export class NativeRendererSync {
     this.resetNativeImageDecodeTracking();
     this.resetNativeVideoDecodeTracking();
     this.resetNativeGraphRouteTelemetry();
+    this.latestNativeStatus = null;
     this.previewImageElements.clear();
     this.previewImageLoads.clear();
     this.nativeComputeGraphSourceFrames = false;
@@ -4608,11 +5437,17 @@ export class NativeRendererSync {
     this.nativeEffectPassDescriptorIds.clear();
     this.nativeGraphRoutes.clear();
     this.nativePointCloudDataCache.clear();
+    this.nativePointCloudUploadSignatures.clear();
     this.nativeGraphInstruments.clear();
     this.nativeWgslStdlibWarmed = false;
     this.latestRenderClockSeconds = null;
     this.lastRenderClockSentSeconds = null;
+    this.nextStatusPollAt = 0;
     this.nextReadinessPollAt = 0;
+    this.statusPollInFlight = false;
+    this.lastStatusLogAt = 0;
+    this.lastStatusFrameCount = 0;
+    this.lastStatusPreviewFrameCount = 0;
     if (this.supportsNativeMethod('clear_decode_preview_cache')) {
       await clearNativeRendererDecodePreviewCache().catch(() => {});
     }
@@ -4639,7 +5474,9 @@ export class NativeRendererSync {
     this.latestLayers = layers;
     if (!this.startupReady) return;
 
-    const hasContinuousNativeLayers = layers.some((layer) => nativeLayerNeedsContinuousSync(layer));
+    const hasVisibleNativeLayers = layers.some((layer) => layer.visible);
+    const hasContinuousNativeLayers =
+      hasVisibleNativeLayers || layers.some((layer) => nativeLayerNeedsContinuousSync(layer));
     if (hasContinuousNativeLayers && this.shaderAnimationRaf === null) {
       const loop = () => {
         if (!this.running) {
@@ -4662,6 +5499,19 @@ export class NativeRendererSync {
     }, 16);
   }
 
+  forceSync(width: number, height: number, layers: Layer[]) {
+    if (!this.running) return;
+    this.desiredWidth = width;
+    this.desiredHeight = height;
+    this.latestLayers = layers;
+    this.sentWidth = 0;
+    this.sentHeight = 0;
+    this.lastLayers.clear();
+    this.pendingSync = false;
+    if (!this.startupReady) return;
+    void this.flush(this.desiredWidth, this.desiredHeight, this.latestLayers);
+  }
+
   setRenderClock(seconds: number | null | undefined) {
     this.latestRenderClockSeconds =
       typeof seconds === 'number' && Number.isFinite(seconds)
@@ -4676,44 +5526,24 @@ export class NativeRendererSync {
     }
   }
 
-  async flush(width: number, height: number, layers: Layer[]) {
-    if (!this.running || !this.startupReady) return;
+  private scheduleNativeStatusPoll(now: number) {
+    if (now < this.nextStatusPollAt || this.statusPollInFlight) return;
+    this.nextStatusPollAt = now + 500;
+    const pollReadiness = now >= this.nextReadinessPollAt;
+    if (pollReadiness) this.nextReadinessPollAt = now + 2000;
+    this.statusPollInFlight = true;
+    void (async () => {
+      try {
+        const status = await getNativeRendererStatus().catch(() => null);
+        if (!status || !this.running) return;
 
-    this.latestLayers = layers;
-    const commands: RendererCommand[] = [];
-    const graphInputCommands: RendererCommand[] = [];
-    const current = new Map<string, LayerSnapshot>();
-    const activeVideoKeys = new Set<string>();
-    const playbackSourcesSent = new Set<string>();
-    const visual = getVisualAudioSnapshot();
-
-    if (width !== this.sentWidth || height !== this.sentHeight) {
-      commands.push({
-        type: 'set_output',
-        width,
-        height,
-        refresh_hz: 60,
-      });
-      this.sentWidth = width;
-      this.sentHeight = height;
-    }
-
-    const renderClock = this.renderClockCommand();
-    commands.push(renderClock);
-
-    const audioCommand = this.audioCommand(visual);
-    if (audioCommand) commands.push(audioCommand);
-
-    const now = Date.now();
-    if (now >= this.nextStatusPollAt) {
-      this.nextStatusPollAt = now + 500;
-      const status = await getNativeRendererStatus().catch(() => null);
-      if (status) {
         let readiness: RendererReadinessReport | null = null;
-        if (now >= this.nextReadinessPollAt) {
-          this.nextReadinessPollAt = now + 2000;
+        if (pollReadiness) {
           readiness = await getNativeRendererReadinessReport().catch(() => null);
+          if (!this.running) return;
         }
+
+        this.latestNativeStatus = status;
         this.syncNativeSourceFrameSize(status);
         this.reconcileSharedTextureUploads(status);
         this.reconcileNativeImageDecodes(status);
@@ -4748,9 +5578,67 @@ export class NativeRendererSync {
           nativeGraphRouteFailures: this.nativeGraphRouteFailures,
           nativeGraphRouteSuppressedFailures: this.nativeGraphRouteSuppressedFailures,
           nativeGraphRouteLastFailure: this.nativeGraphRouteLastFailure,
+          nativeBlockedLayerCount: this.nativeBlockedLayerCount,
+          nativeBlockedEffectLayerCount: this.nativeBlockedEffectLayerCount,
+          nativeBlockedSourceLayerCount: this.nativeBlockedSourceLayerCount,
+          nativeBlockedLayerLastReason: this.nativeBlockedLayerLastReason,
         });
+      } finally {
+        this.statusPollInFlight = false;
       }
+    })();
+  }
+
+  async flush(width: number, height: number, layers: Layer[]) {
+    this.desiredWidth = width;
+    this.desiredHeight = height;
+    this.latestLayers = layers;
+    if (this.flushInFlight) {
+      this.flushAgain = true;
+      return;
     }
+
+    this.flushInFlight = true;
+    try {
+      do {
+        this.flushAgain = false;
+        await this.flushOnce(this.desiredWidth, this.desiredHeight, this.latestLayers);
+      } while (this.running && this.startupReady && this.flushAgain);
+    } finally {
+      this.flushInFlight = false;
+    }
+  }
+
+  private async flushOnce(width: number, height: number, layers: Layer[]) {
+    if (!this.running || !this.startupReady) return;
+
+    this.latestLayers = layers;
+    const commands: RendererCommand[] = [];
+    const graphInputCommands: RendererCommand[] = [];
+    const current = new Map<string, LayerSnapshot>();
+    const activeVideoKeys = new Set<string>();
+    const playbackSourcesSent = new Set<string>();
+    const visual = getVisualAudioSnapshot();
+
+    if (width !== this.sentWidth || height !== this.sentHeight) {
+      commands.push({
+        type: 'set_output',
+        width,
+        height,
+        refresh_hz: 60,
+      });
+      this.sentWidth = width;
+      this.sentHeight = height;
+    }
+
+    const renderClock = this.renderClockCommand();
+    commands.push(renderClock);
+
+    const audioCommand = this.audioCommand(visual);
+    if (audioCommand) commands.push(audioCommand);
+
+    const now = Date.now();
+    this.scheduleNativeStatusPoll(now);
     const overloadActive =
       this.degradedModeActive ||
       this.decodeBackpressureActive ||
@@ -4803,16 +5691,86 @@ export class NativeRendererSync {
       staticRemaining: overloadActive ? 1 : 3,
       dynamicRemaining: overloadActive ? 1 : 2,
     };
+    let blockedLayerCount = 0;
+    let blockedEffectLayerCount = 0;
+    let blockedSourceLayerCount = 0;
+    let blockedLayerLastReason: string | null = null;
+    const unsupportedSourceOptions = {
+      nativeVideoDecodePumpReady: this.nativeVideoDecodePumpReady(),
+    };
+
+    // Start decoder warm-up as soon as a video enters the scene, but never let
+    // pre-roll hold the whole scene flush hostage. The core handles video
+    // binding transactionally once the first native frame is resident.
+    const videoPrerolls = new Set<string>();
+    for (const layer of layers) {
+      const candidate = nativeLayerSource(layer);
+      const src = candidate.source;
+      if (
+        !layer.visible ||
+        !src ||
+        candidate.sourceType !== 'video' ||
+        !candidate.shouldPrefetch ||
+        !this.canUseNativeVideoDecodePump(candidate, candidate.sourceType)
+      ) {
+        continue;
+      }
+      const sourceKey = this.sourceCacheKey(src.id, src.src);
+      if (this.prefetchedSources.has(sourceKey) || videoPrerolls.has(sourceKey)) continue;
+      this.prefetchedSources.add(sourceKey);
+      videoPrerolls.add(sourceKey);
+      void prefetchNativeRendererMedia(
+        src.id,
+        src.src,
+        videoPrefetchPriority,
+        candidate.sourceType,
+        this.nativeVideoPrefetchOptions(src, now),
+      ).catch((err) => {
+        this.prefetchedSources.delete(sourceKey);
+        console.warn('[NativeRendererSync] native video pre-roll failed', err);
+      });
+    }
+
     layers.forEach((layer, index) => {
       const rawVjIndex = Number((layer as any).vjLayerIndex);
       const vjLayerIndex = Number.isFinite(rawVjIndex) ? Math.round(rawVjIndex) : null;
-      const nativeGraphRoute = this.nativeGraphRouteForLayer(layer);
+      const unsupportedNativeEffects = nativeUnsupportedEffectTypes(layer);
+      const nativeGraphRouteCandidate = unsupportedNativeEffects.length > 0
+        ? null
+        : this.nativeGraphRouteForLayer(layer);
+      const unsupportedNativeSource = unsupportedNativeEffects.length > 0
+        ? null
+        : nativeUnsupportedSourceReason(layer, !!nativeGraphRouteCandidate, unsupportedSourceOptions);
+      const nativeLayerBlocked = unsupportedNativeEffects.length > 0 || !!unsupportedNativeSource;
+      const nativeBlockSig = unsupportedNativeEffects.length > 0
+        ? `native-unsupported-effects:${unsupportedNativeEffects.join(',')}`
+        : unsupportedNativeSource
+          ? `native-unsupported-source:${unsupportedNativeSource}`
+          : '';
+      if (layer.visible && nativeLayerBlocked) {
+        blockedLayerCount += 1;
+        if (unsupportedNativeEffects.length > 0) blockedEffectLayerCount += 1;
+        if (unsupportedNativeSource) blockedSourceLayerCount += 1;
+        blockedLayerLastReason = `${layer.id}:${nativeBlockSig}`.slice(0, 240);
+      }
+      const effectiveVisible = layer.visible && !nativeLayerBlocked;
+      const nativeGraphRoute = nativeLayerBlocked ? null : nativeGraphRouteCandidate;
       const nativeSource = nativeGraphRoute?.source ?? nativeLayerSource(layer);
       const sourceType = nativeSource.sourceType;
       const nativeParams = nativeGpuParams(layer);
       const nativeUv = this.nativeLayerUvState(layer, nativeSource, width, height);
       const nativeShape = nativeLayerShapeState(layer);
-      const effectIds = nativeGraphRoute?.kind === 'effect-pass' || nativeGraphRoute?.effectPasses?.length
+      const nativeMask = nativeLayerMaskState(layer);
+      const nativeEdgeEffects = nativeLayerEdgeEffectsState(layer);
+      const nativeGraphWorkloadScale = this.nativeGraphWorkloadScale();
+      const nativeGraphScaledParams = nativeGraphRoute
+        ? nativeGraphParamsForLayer(layer, nativeGraphRoute.kind, nativeGraphWorkloadScale)
+        : null;
+      const nativeGraphParamsSig = nativeGraphScaledParams
+        ? stableNativeGraphKey(nativeGraphScaledParams)
+        : 'none';
+      const nativeGraphEffectSig = nativeGraphRoute?.effectPasses?.map((effectPass) => effectPass.descriptor).join('>') ?? 'none';
+      const effectIds = nativeLayerBlocked || nativeGraphRoute?.kind === 'effect-pass' || nativeGraphRoute?.effectPasses?.length
         ? []
         : nativeHeartbeatEffectDescriptors(layer);
       const effectsSig = effectIds.length ? effectIds.join('|') : 'none';
@@ -4821,15 +5779,21 @@ export class NativeRendererSync {
         id: layer.id,
         z: index,
         vjIndex: vjLayerIndex,
-        visible: layer.visible,
+        visible: effectiveVisible,
         blend: canonicalBlendMode(layer.blendMode),
         opacity: layer.opacity,
         geometrySig: geometrySignature(layer),
         uvSig: nativeUv.signature,
         shapeSig: nativeShape.signature,
-        sourceSig: `${sourceSignature(layer)}:${sourceType}:${nativeSource.uri}:input=${graphInputSig}`,
+        maskSig: nativeMask.signature,
+        sourceSig: nativeLayerBlocked
+          ? nativeBlockSig
+          : `${sourceSignature(layer)}:${sourceType}:${nativeSource.uri}:input=${graphInputSig}:graph=${nativeGraphRoute?.kind ?? 'none'}:${nativeGraphParamsSig}:effects=${nativeGraphEffectSig}`,
         nativeParamsSig: nativeParamsSignature(layer),
-        effectsSig,
+        effectsSig: nativeLayerBlocked
+          ? nativeBlockSig
+          : effectsSig,
+        edgeEffectsSig: nativeLayerBlocked ? nativeBlockSig : nativeEdgeEffects.signature,
         colorSig: colorSignature(layer),
       };
       current.set(layer.id, snap);
@@ -4862,12 +5826,13 @@ export class NativeRendererSync {
             ).catch(() => {});
           }
           if (!playbackSourcesSent.has(sourceKey)) {
-            graphInputCommands.push(this.nativeVideoPlaybackCommand(
+            const playbackCommand = this.nativeVideoPlaybackCommandIfChanged(
               graphInputSrc,
               graphInput.sourceType,
               now,
               renderClock,
-            ));
+            );
+            if (playbackCommand) graphInputCommands.push(playbackCommand);
             playbackSourcesSent.add(sourceKey);
           }
         } else {
@@ -4883,7 +5848,7 @@ export class NativeRendererSync {
         }
       }
 
-      if (!prev || prev.z !== snap.z || prev.vjIndex !== snap.vjIndex || prev.visible !== snap.visible || prev.blend !== snap.blend || prev.opacity !== snap.opacity || prev.geometrySig !== snap.geometrySig || prev.uvSig !== snap.uvSig || prev.shapeSig !== snap.shapeSig) {
+      if (!prev || prev.z !== snap.z || prev.vjIndex !== snap.vjIndex || prev.visible !== snap.visible || prev.blend !== snap.blend || prev.opacity !== snap.opacity || prev.geometrySig !== snap.geometrySig || prev.uvSig !== snap.uvSig || prev.shapeSig !== snap.shapeSig || prev.maskSig !== snap.maskSig) {
         commands.push({
           type: 'upsert_layer',
           layer_id: layer.id,
@@ -4895,12 +5860,32 @@ export class NativeRendererSync {
           uv_transform: nativeUv.uvTransform,
           uv_flags: nativeUv.uvFlags,
           shape: nativeShape.shape,
+          mask_info: nativeMask.info,
+          mask_points: nativeMask.points,
+          mesh_grid: layer.warpMode === 'mesh' ? layer.meshGrid : null,
         });
         commands.push({
           type: 'set_layer_visibility',
           layer_id: layer.id,
-          visible: layer.visible,
+          visible: effectiveVisible,
         });
+      }
+
+      if (nativeLayerBlocked) {
+        if (!prev || prev.effectsSig !== snap.effectsSig) {
+          commands.push({
+            type: 'set_effect_chain',
+            layer_id: layer.id,
+            effect_ids: [],
+          });
+        }
+        if (!prev || prev.sourceSig !== snap.sourceSig) {
+          commands.push({
+            type: 'remove_native_graph_layer',
+            layer_id: layer.id,
+          });
+        }
+        return;
       }
 
       if (!prev || prev.sourceSig !== snap.sourceSig) {
@@ -4927,6 +5912,7 @@ export class NativeRendererSync {
           if (
             nativeSource.shouldPrefetch &&
             !sharedTextureSource &&
+            (sourceType !== 'video' || nativeVideoDecodePump) &&
             !this.prefetchedSources.has(sourceKey)
           ) {
             this.prefetchedSources.add(sourceKey);
@@ -4974,52 +5960,74 @@ export class NativeRendererSync {
         });
       }
 
+      if (
+        nativeGraphRoute &&
+        NATIVE_CORE_OWNED_GRAPH_KINDS.has(nativeGraphRoute.kind) &&
+        (!prev || prev.sourceSig !== snap.sourceSig || prev.nativeParamsSig !== snap.nativeParamsSig)
+      ) {
+        const graphSource = nativeGraphRenderSource(nativeGraphRoute);
+        const graphTime = typeof renderClock.time === 'number' ? renderClock.time : 0;
+        const graphDelta = typeof renderClock.time_delta === 'number' ? renderClock.time_delta : 1 / this.targetFps;
+        const graphFrameIndex = typeof renderClock.frame_index === 'number' ? renderClock.frame_index : 0;
+        const effectGraph = nativeGraphRoute.effectPasses?.length && nativeGraphRoute.source.id !== graphSource.id
+          ? buildNativeEffectPassChainGraph({
+              sourceId: graphSource.id,
+              targetSourceId: nativeGraphRoute.source.id,
+              intermediatePrefix: `${nativeGraphRoute.source.id}:chain`,
+              effects: nativeGraphRoute.effectPasses.map((effectPass) => ({
+                effect: effectPass.effect,
+                amount: effectPass.amount,
+                mix: 1,
+                params: effectPass.params,
+              })),
+              width,
+              height,
+              time: graphTime,
+              frameDelta: graphDelta,
+              frameIndex: graphFrameIndex,
+              seq: graphFrameIndex * 16 + 8,
+            })
+          : null;
+        commands.push({
+          type: 'set_native_graph_layer',
+          layer_id: layer.id,
+          kind: nativeGraphRoute.kind,
+          // The core renders the instrument into its base texture while the
+          // compositor samples the post-effect texture. Keeping these IDs
+          // distinct prevents the instrument render from overwriting effects.
+          instrument_source_id: nativeGraphInstrumentSourceId(nativeGraphRoute),
+          composite_source_id: nativeGraphCompositeSourceId(nativeGraphRoute),
+          input_source_id: nativeGraphRoute.inputSource?.id ?? null,
+          effect_graph: effectGraph?.config ?? null,
+          params: nativeGraphScaledParams ?? {},
+        });
+      } else if (!nativeGraphRoute && prev && prev.sourceSig !== snap.sourceSig) {
+        commands.push({
+          type: 'remove_native_graph_layer',
+          layer_id: layer.id,
+        });
+      }
+
       const src = nativeSource.source;
       if (src && isDynamicSourceFrameSource(src, sourceType)) {
         const sourceKey = this.sourceCacheKey(src.id, src.src);
         activeVideoKeys.add(sourceKey);
         const nativeVideoDecodePump = this.canUseNativeVideoDecodePump(nativeSource, sourceType);
         if (sourceType === 'video' && !playbackSourcesSent.has(sourceKey)) {
-          commands.push(this.nativeVideoPlaybackCommand(src, sourceType, now, renderClock));
+          const playbackCommand = this.nativeVideoPlaybackCommandIfChanged(
+            src,
+            sourceType,
+            now,
+            renderClock,
+          );
+          if (playbackCommand) commands.push(playbackCommand);
           if (nativeVideoDecodePump) {
             this.markNativeVideoDecodePumpFrameReady(src);
           }
           playbackSourcesSent.add(sourceKey);
         }
         const sharedTextureSource = isNativeSharedTextureSource(src, sourceType);
-        const continuousNativeVideoPrefetch =
-          this.supportsNativeFeature('native_media_decode') &&
-          this.supportsNativeFeature('media_prefetch');
-        const brokerVideoFramePrefetch =
-          this.supportsNativeFeature('native_video_frame_prefetch') ||
-          this.supportsNativeFeature('video_frame_prefetch');
-        if (
-          !sharedTextureSource &&
-          !nativeVideoDecodePump &&
-          sourceType === 'video' &&
-          nativeSource.shouldPrefetch &&
-          (continuousNativeVideoPrefetch || brokerVideoFramePrefetch)
-        ) {
-          const prefetchDueAt = this.nativeVideoPrefetchAt.get(sourceKey) ?? 0;
-          if (now >= prefetchDueAt) {
-            const prefetchRefreshMs = overloadActive
-              ? NATIVE_VIDEO_PREFETCH_OVERLOAD_REFRESH_MS
-              : NATIVE_VIDEO_PREFETCH_REFRESH_MS;
-            this.nativeVideoPrefetchAt.set(sourceKey, now + prefetchRefreshMs);
-            void prefetchNativeRendererMedia(
-              src.id,
-              src.src,
-              videoPrefetchPriority,
-              sourceType,
-              this.nativeVideoPrefetchOptions(
-                src,
-                now,
-                overloadActive ? 0 : NATIVE_VIDEO_PREFETCH_WINDOW_FRAMES,
-                !!prev && this.supportsNativeFeature('native_media_source_playback_state'),
-              ),
-            ).catch(() => {});
-          }
-        }
+        if (sharedTextureSource) this.nativeVideoPrefetchAt.delete(sourceKey);
         if (nativeSource.shouldPreview && !nativeVideoDecodePump) {
           this.appendSourcePreviewCommand(commands, src, sourceType, now, false, null, previewBudget);
         }
@@ -5060,9 +6068,18 @@ export class NativeRendererSync {
         });
       }
 
-      // ── ISF shader: send uniforms + render every frame ──
-      const src2 = layer.source;
-      if (src2?.shaderCode && layer.visible) {
+      if (!prev || prev.edgeEffectsSig !== snap.edgeEffectsSig) {
+        commands.push({
+          type: 'set_layer_edge_effects',
+          layer_id: layer.id,
+          edge_effects: nativeEdgeEffects.packed,
+        });
+      }
+
+      // The core owns live cadence and renders every bound shader itself.
+      // Electron only sends user-controlled uniforms when their source state changes.
+      const src2 = nativeSource.source;
+      if (src2?.shaderCode && layer.visible && (!prev || prev.sourceSig !== snap.sourceSig)) {
         const shaderId = `${src2.id}:${hashString(src2.shaderCode)}`;
         const shaderTime =
           typeof renderClock.time === 'number' && Number.isFinite(renderClock.time)
@@ -5093,8 +6110,8 @@ export class NativeRendererSync {
             } else if (Array.isArray(val)) {
               if (val.length === 2) {
                 pointInputs[key] = [val[0], val[1]];
-              } else if (val.length >= 4) {
-                colorInputs[key] = [val[0], val[1], val[2], val[3]];
+              } else if (val.length >= 3) {
+                colorInputs[key] = [val[0], val[1], val[2], val[3] ?? 1];
               }
             }
           }
@@ -5127,15 +6144,17 @@ export class NativeRendererSync {
           color_inputs: colorInputs,
         });
 
-        commands.push({
-          type: 'render_isf_to_layer',
-          layer_id: layer.id,
-        });
       }
     });
 
+    this.nativeBlockedLayerCount = blockedLayerCount;
+    this.nativeBlockedEffectLayerCount = blockedEffectLayerCount;
+    this.nativeBlockedSourceLayerCount = blockedSourceLayerCount;
+    this.nativeBlockedLayerLastReason = blockedLayerLastReason;
+
     this.lastLayers.forEach((_snap, id) => {
       if (!current.has(id)) {
+        this.nativePointCloudUploadSignatures.delete(id);
         commands.push({
           type: 'remove_layer',
           layer_id: id,
@@ -5148,13 +6167,22 @@ export class NativeRendererSync {
     this.nativeVideoPrefetchAt.forEach((_due, key) => {
       if (!activeVideoKeys.has(key)) this.nativeVideoPrefetchAt.delete(key);
     });
+    this.nativeVideoPlaybackState.forEach((_state, key) => {
+      if (!activeVideoKeys.has(key)) this.nativeVideoPlaybackState.delete(key);
+    });
+    this.nativeVideoDecodeDimensionCache.forEach((_dimensions, key) => {
+      if (!activeVideoKeys.has(key) && !this.prefetchedSources.has(key)) {
+        this.nativeVideoDecodeDimensionCache.delete(key);
+      }
+    });
 
     if (graphInputCommands.length) {
       const graphInputSummary = await submitNativeRendererCommands(graphInputCommands);
       this.warnNativeCommandDrops(graphInputSummary, 'graph-input-source-frames');
     }
 
-    await this.renderNativeGraphSources(layers, width, height, renderClock, visual);
+    const graphSourceCommands = await this.renderNativeGraphSources(layers, width, height, renderClock, visual);
+    commands.push(...graphSourceCommands);
 
     if (!commands.length) return;
 
@@ -5347,42 +6375,14 @@ export class NativeRendererSync {
     ) {
       return;
     }
-    if (budget) {
-      const remaining = isVideoLike ? budget.dynamicRemaining : budget.staticRemaining;
-      if (remaining <= 0) return;
+    // Native 2.0 policy: the browser preview is not a renderer and is not
+    // allowed to patch missing native source frames with canvas readback.
+    // Unsupported sources stay blank until their native ingest path exists.
+    if (isVideoLike) {
+      this.sourcePreviewNextAt.set(sourceKey, now + previewRefreshMs);
+    } else {
+      this.sourcePreviewNextAt.set(sourceKey, now + STATIC_PREVIEW_RETRY_MS);
     }
-
-    const captureSize = this.sourcePreviewCaptureSize(sourceType, isVideoLike);
-    const captured = this.captureSourcePreview(src, sourceType, previewElement, captureSize);
-    if (!captured) {
-      if (isVideoLike) {
-        this.sourcePreviewNextAt.set(sourceKey, now + previewRefreshMs);
-      }
-      return;
-    }
-
-    const previousSig = this.sourcePreviewSig.get(sourceKey);
-    if (!force && previousSig === captured.signature && !isVideoLike) return;
-
-    const seq = (this.sourcePreviewSeq.get(sourceKey) ?? 0) + 1;
-    this.sourcePreviewSeq.set(sourceKey, seq);
-    this.sourcePreviewSig.set(sourceKey, captured.signature);
-    this.sourcePreviewNextAt.set(
-      sourceKey,
-      now + (isVideoLike ? previewRefreshMs : STATIC_PREVIEW_RETRY_MS),
-    );
-    if (budget) {
-      if (isVideoLike) budget.dynamicRemaining -= 1;
-      else budget.staticRemaining -= 1;
-    }
-    commands.push({
-      type: 'upload_source_frame',
-      source_id: src.id,
-      width: captureSize,
-      height: captureSize,
-      rgba_buffer: captured.rgbaBuffer,
-      seq,
-    });
   }
 
   private sourcePreviewCaptureSize(sourceType: string, isVideoLike: boolean): number {
@@ -5507,56 +6507,6 @@ fn fs_main() -> @location(0) vec4<f32> {
     }
   }
 
-  private captureSourcePreview(
-    src: NonNullable<Layer['source']>,
-    sourceType: string,
-    previewElement: CanvasImageSource | null = null,
-    captureSize = SOURCE_PREVIEW_SIZE,
-  ): { rgbaBuffer: Uint8Array; signature: string } | null {
-    const element = this.resolvePreviewElement(src, sourceType, previewElement);
-    if (!element) return null;
-    const dimensions = this.previewElementDimensions(element);
-    if (!dimensions) return null;
-
-    if (!this.previewCanvas) {
-      this.previewCanvas = document.createElement('canvas');
-      this.previewContext = this.previewCanvas.getContext('2d', { willReadFrequently: true });
-    }
-    const canvas = this.previewCanvas;
-    const ctx = this.previewContext;
-    if (!ctx) return null;
-    if (canvas.width !== captureSize || canvas.height !== captureSize) {
-      canvas.width = captureSize;
-      canvas.height = captureSize;
-    }
-    ctx.imageSmoothingEnabled = true;
-    ctx.imageSmoothingQuality = 'high';
-
-    try {
-      ctx.clearRect(0, 0, captureSize, captureSize);
-      ctx.drawImage(element, 0, 0, captureSize, captureSize);
-      const imageData = ctx.getImageData(0, 0, captureSize, captureSize);
-      const videoTime =
-        element instanceof HTMLVideoElement
-          ? Math.floor((element.currentTime || 0) * 8)
-          : 0;
-      return {
-        rgbaBuffer: new Uint8Array(imageData.data),
-        signature: `${src.id}:${sourceType}:${captureSize}:${dimensions.width}x${dimensions.height}:${videoTime}:${hashString(src.src || '')}`,
-      };
-    } catch (err) {
-      const key = this.sourceCacheKey(src.id, src.src);
-      const seen = this.sourcePreviewFailures.get(key) ?? 0;
-      if (seen < 3) {
-        console.warn('[NativeRendererSync] source preview capture failed', src.name || src.id, err);
-        this.sourcePreviewFailures.set(key, seen + 1);
-      }
-      return null;
-    } finally {
-      ctx.clearRect(0, 0, canvas.width, canvas.height);
-    }
-  }
-
   private resolvePreviewElement(
     src: NonNullable<Layer['source']>,
     sourceType: string,
@@ -5626,11 +6576,34 @@ fn fs_main() -> @location(0) vec4<f32> {
 
   async logStatus() {
     if (!this.running) return;
-    const status = await getNativeRendererStatus().catch(() => null);
+    const [status, previewStatus] = await Promise.all([
+      getNativeRendererStatus().catch(() => null),
+      getNativeEditorPreviewStatus().catch(() => null),
+    ]);
     if (status) {
+      this.latestNativeStatus = status;
       this.reconcileSharedTextureUploads(status);
       this.reconcileNativeImageDecodes(status);
       this.reconcileNativeVideoDecodes(status);
+      const now = performance.now();
+      const elapsed = this.lastStatusLogAt > 0
+        ? Math.max(0.001, (now - this.lastStatusLogAt) / 1000)
+        : 0;
+      const framesPresented = Number(status.frames_presented ?? 0);
+      const nativeFps = elapsed > 0
+        ? Math.max(0, framesPresented - this.lastStatusFrameCount) / elapsed
+        : 0;
+      const previewFramesPresented = Number(
+        (previewStatus as any)?.framesPresented ??
+        (previewStatus as any)?.addonStatus?.framesPresented ??
+        0,
+      );
+      const previewFps = elapsed > 0
+        ? Math.max(0, previewFramesPresented - this.lastStatusPreviewFrameCount) / elapsed
+        : 0;
+      this.lastStatusLogAt = now;
+      this.lastStatusFrameCount = framesPresented;
+      this.lastStatusPreviewFrameCount = previewFramesPresented;
       const sourceUploadBreakdown =
         `${status.source_frame_cpu_fallback_uploads}cpu/` +
         `${status.source_frame_file_uploads}file/` +
@@ -5638,9 +6611,9 @@ fn fs_main() -> @location(0) vec4<f32> {
         `${status.source_frame_json_uploads}json/` +
         `${status.source_frame_shared_texture_uploads}shared/` +
         `${status.source_frame_shared_texture_rejected_uploads}sharedReject/` +
-        `${status.source_frame_rejected_uploads}reject`;
+          `${status.source_frame_rejected_uploads}reject`;
       console.log(
-        `[NativeRendererSync] status backend=${status.backend} ready=${status.backend_ready} adapter=${status.adapter_name ?? 'unknown'} quality=${status.native_quality.active_tier}@${status.native_quality.quality_scale.toFixed(2)} clock=${status.render_clock_mode}@${status.render_clock_time.toFixed(3)}s#${status.render_clock_frame_index} layers=${status.layers_seen} shaders=${status.shader_cache_entries} compiled=${status.shader_precompile_compiled} failed=${status.shader_precompile_failed} procedural=${status.native_procedural_layers} graphLayers=${status.native_graph_source_frame_layers} proxyLayers=${status.native_instrument_proxy_layers} nativeShaderLayers=${status.native_shader_layers}/${status.isf_shader_bindings} uniforms=${status.isf_uniform_sets} frames=${status.source_frames_active}/${status.source_frame_slots}@${status.source_frame_size}px/${status.source_frame_format}/mips${status.source_frame_mip_levels ?? 1} uploads=${status.source_frame_uploads}(${sourceUploadBreakdown}) last=${status.source_frame_last_upload_transport}:${status.source_frame_last_upload_width}x${status.source_frame_last_upload_height}/${status.source_frame_last_input_bytes}->${status.source_frame_last_upload_bytes}b graphs=${status.compute_graph_runs}/${status.compute_graph_passes} render=${status.compute_graph_render_passes} sourceGraph=${status.compute_graph_source_frame_renders} graphBuffers=${status.compute_graph_persistent_buffers} present=${status.swapchain_last_present_result}:${status.swapchain_presented}/${status.swapchain_present_attempts} fail=${status.output_present_consecutive_failures} preview=${status.source_previews_active}/${status.source_preview_slots}@${status.source_preview_size}px cpu=${status.avg_render_cpu_ms.toFixed(2)}ms gpu=${status.gpu_timing_supported ? status.avg_render_gpu_ms.toFixed(2) : 'off'}ms samples=${status.gpu_timing_samples ?? 0}`,
+        `[NativeRendererSync] status backend=${status.backend} ready=${status.backend_ready} adapter=${status.adapter_name ?? 'unknown'} nativeFps=${nativeFps.toFixed(1)} previewFps=${previewFps.toFixed(1)} previewMode=${(previewStatus as any)?.mode ?? 'unknown'} previewAttached=${!!(previewStatus as any)?.attached} quality=${status.native_quality.active_tier}@${status.native_quality.quality_scale.toFixed(2)} clock=${status.render_clock_mode}@${status.render_clock_time.toFixed(3)}s#${status.render_clock_frame_index} layers=${status.layers_seen} blocked=${this.nativeBlockedLayerCount}(${this.nativeBlockedEffectLayerCount}fx/${this.nativeBlockedSourceLayerCount}src) lastBlock=${this.nativeBlockedLayerLastReason ?? 'none'} shaders=${status.shader_cache_entries} compiled=${status.shader_precompile_compiled} failed=${status.shader_precompile_failed} procedural=${status.native_procedural_layers} graphLayers=${status.native_graph_source_frame_layers} proxyLayers=${status.native_instrument_proxy_layers} nativeShaderLayers=${status.native_shader_layers}/${status.isf_shader_bindings} uniforms=${status.isf_uniform_sets} frames=${status.source_frames_active}/${status.source_frame_slots}@${status.source_frame_size}px/${status.source_frame_format}/mips${status.source_frame_mip_levels ?? 1} uploads=${status.source_frame_uploads}(${sourceUploadBreakdown}) last=${status.source_frame_last_upload_transport}:${status.source_frame_last_upload_width}x${status.source_frame_last_upload_height}/${status.source_frame_last_input_bytes}->${status.source_frame_last_upload_bytes}b graphs=${status.compute_graph_runs}/${status.compute_graph_passes} render=${status.compute_graph_render_passes} sourceGraph=${status.compute_graph_source_frame_renders} graphBuffers=${status.compute_graph_persistent_buffers} present=${status.swapchain_last_present_result}:${status.swapchain_presented}/${status.swapchain_present_attempts} fail=${status.output_present_consecutive_failures} preview=${status.source_previews_active}/${status.source_preview_slots}@${status.source_preview_size}px cpu=${status.avg_render_cpu_ms.toFixed(2)}ms gpu=${status.gpu_timing_supported ? status.avg_render_gpu_ms.toFixed(2) : 'off'}ms samples=${status.gpu_timing_samples ?? 0}`,
       );
     }
   }
@@ -5710,20 +6683,26 @@ fn fs_main() -> @location(0) vec4<f32> {
   }
 
   async setDecodeCpuBackupPolicy(decodeStoreCpuBackupFrames: boolean) {
-    this.decodeStoreCpuBackupFrames = !!decodeStoreCpuBackupFrames;
+    if (decodeStoreCpuBackupFrames) {
+      console.warn('[NativeRendererSync] CPU decode backup frames are disabled in native-engine-only mode');
+    }
+    this.decodeStoreCpuBackupFrames = false;
     if (!this.running) return;
     if (!this.supportsNativeMethod('set_decode_cpu_backup_policy')) return;
     await setNativeRendererDecodeCpuBackupPolicy({
-      decode_store_cpu_backup_frames: this.decodeStoreCpuBackupFrames,
+      decode_store_cpu_backup_frames: false,
     }).catch(() => {});
   }
 
   async setDecodeSyntheticFallbackPolicy(decodeAllowSyntheticFallback: boolean) {
-    this.decodeAllowSyntheticFallback = !!decodeAllowSyntheticFallback;
+    if (decodeAllowSyntheticFallback) {
+      console.warn('[NativeRendererSync] Synthetic decode fallback is disabled in native-engine-only mode');
+    }
+    this.decodeAllowSyntheticFallback = false;
     if (!this.running) return;
     if (!this.supportsNativeMethod('set_decode_synthetic_fallback_policy')) return;
     await setNativeRendererDecodeSyntheticFallbackPolicy({
-      decode_allow_synthetic_fallback: this.decodeAllowSyntheticFallback,
+      decode_allow_synthetic_fallback: false,
     }).catch(() => {});
   }
 

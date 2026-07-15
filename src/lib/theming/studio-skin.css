@@ -2136,6 +2136,30 @@ body,
   text-rendering: optimizeLegibility;
 }
 
+/* Native renderer shell --------------------------------------------------
+   The native editor presenter is a real Metal view under Chromium. In this
+   mode the browser is UI glass over the render core, so global theme
+   backgrounds must not paint over the preview aperture. Toolbars, sidebars,
+   trays, and dialogs keep their own opaque tokenized surfaces. */
+html.native-primary-presenter,
+html.native-primary-presenter body,
+html.native-primary-presenter body.native-primary-presenter,
+html.native-primary-presenter .app.native-primary-presenter,
+html.native-primary-presenter .main-content.native-primary-presenter,
+html[data-theme="arcade"].native-primary-presenter body,
+html[data-theme="arcade"].native-primary-presenter .app.native-primary-presenter {
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+}
+
+html.native-primary-presenter .viewport.native-primary-presenter,
+html.native-primary-presenter .viewport-content {
+  background: transparent !important;
+  background-color: transparent !important;
+  background-image: none !important;
+}
+
 :is(.app, .vj-overlay, .stage-overlay, .stage3d-root, .projection-sim-root, .settings-panel, .mobile-app, .standalone-app, .output-app)
 :is(button, input, select, textarea, label) {
   font-family: var(--ga-font-ui, 'Space Grotesk', system-ui, sans-serif) !important;

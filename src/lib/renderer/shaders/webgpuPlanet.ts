@@ -998,8 +998,8 @@ struct V { @builtin(position) clip: vec4<f32>, @location(0) uv: vec2<f32> };
 }
 
 // ── Fragment: the planet ──
-@fragment fn fs_planet(@builtin(position) pos: vec4<f32>) -> @location(0) vec4<f32> {
-  let frag = pos.xy;
+@fragment fn fs_planet(in: V) -> @location(0) vec4<f32> {
+  let frag = in.uv * u.resolution;
   // Centered, aspect-corrected screen UV.
   let uv = (frag - u.resolution * 0.5) / u.resolution.y;
   // Y in clip space goes down for fragment coords; flip so UP is positive y.

@@ -3,7 +3,7 @@ import { invoke } from '$lib/bridge';
 export type BackendKind = 'd3d11' | 'd3d12' | 'vulkan' | 'metal';
 export type DecodeBackendKind = 'synthetic' | 'ffmpeg_software' | 'ffmpeg_d3d11va';
 export type PresentMode = 'vsync' | 'immediate';
-export type NativeQualityPolicy = 'auto' | 'performance' | 'balanced' | 'ultra' | 'insane';
+export type NativeQualityPolicy = 'fixed' | 'auto' | 'performance' | 'balanced' | 'ultra' | 'insane';
 
 export interface RendererStartConfig {
   backend: BackendKind;
@@ -43,6 +43,8 @@ export interface RendererStartConfig {
   native_quality_policy?: NativeQualityPolicy;
   ffmpeg_path?: string;
   decode_gpu_bridge_path?: string;
+  editor_parent_window_handle_hex?: string;
+  editor_parent_window_handle_platform?: 'appkit-nsview' | 'win32-hwnd' | string;
 }
 
 export interface PresentPolicyConfig {
@@ -68,6 +70,44 @@ export interface OutputWindowConfig {
   resizable?: boolean;
   decorations?: boolean;
   decorated?: boolean;
+  cursor_hittest?: boolean;
+  input_enabled?: boolean;
+  input_transparent?: boolean;
+  click_through?: boolean;
+  always_on_top?: boolean;
+  always_on_bottom?: boolean;
+  underlay?: boolean;
+}
+
+export interface NativeEditorPreviewRect {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  contentX?: number;
+  contentY?: number;
+  contentWidth?: number;
+  contentHeight?: number;
+}
+
+export interface NativeEditorPreviewPresenterStatus {
+  available: boolean;
+  attached: boolean;
+  pumpActive?: boolean;
+  addonPath?: string | null;
+  candidates?: readonly string[];
+  error?: string | null;
+  mode?: 'shared-texture-import-blit' | 'unavailable' | string;
+  presentation?: 'underlay-zero-copy' | 'unavailable' | string;
+  transport?: 'iosurface' | 'dxgi' | 'none' | string;
+  lastPresentedFrame?: number;
+  framesPresented?: number;
+  failCount?: number;
+  width?: number;
+  height?: number;
+  lastSurfaceID?: number;
+  rect?: NativeEditorPreviewRect;
+  addonStatus?: Record<string, unknown> | null;
 }
 
 export interface TargetFpsConfig {
@@ -174,7 +214,12 @@ export type RendererCommand =
       playback_rate: number;
       paused: boolean;
       loop_enabled: boolean;
+      trim_start?: number;
+      trim_end?: number;
       duration_seconds?: number;
+      decode_width?: number;
+      decode_height?: number;
+      seek_generation?: number;
       seq?: number;
     }
   | { type: 'set_command_drain_limit'; max_commands_per_tick: number }
@@ -230,11 +275,41 @@ export type RendererCommand =
       uv_transform?: [number, number, number, number];
       uv_flags?: [number, number, number, number];
       shape?: [number, number, number, number];
+      mesh_grid?: {
+        rows: number;
+        cols: number;
+        points: Array<Array<{ x: number; y: number }>>;
+      } | null;
+      mask_info?: [number, number, number, number];
+      mask_points?: Array<[number, number, number, number]>;
     }
   | { type: 'set_layer_visibility'; layer_id: string; visible: boolean }
   | { type: 'set_layer_color'; layer_id: string; rgba: [number, number, number, number] }
   | { type: 'set_layer_source_color'; layer_id: string; rgb: [number, number, number] }
   | { type: 'set_layer_native_params'; layer_id: string; params: [number, number, number, number, number, number, number, number] }
+  | { type: 'set_layer_edge_effects'; layer_id: string; edge_effects: number[][][] }
+  | {
+      type: 'set_native_graph_layer';
+      layer_id: string;
+      kind: string;
+      instrument_source_id: string;
+      composite_source_id: string;
+      input_source_id?: string | null;
+      effect_graph: Record<string, unknown> | null;
+      params: Record<string, unknown>;
+    }
+  | { type: 'remove_native_graph_layer'; layer_id: string }
+  | {
+      type: 'upload_native_point_cloud';
+      layer_id: string;
+      signature: string;
+      point_count: number;
+      sort_count: number;
+      depth_sort_enabled: boolean;
+      home_b64: string;
+      live_b64: string;
+      sort_b64: string;
+    }
   | {
       type: 'set_audio_state';
       active: boolean;
@@ -298,6 +373,7 @@ export type RendererCommand =
       time_seconds?: number;
       prefetch_window_frames?: number;
       prefetch_fps?: number;
+      scrub_preview?: boolean;
       seq?: number;
     }
   | { type: 'set_stage3d_scene'; scene: unknown }
@@ -305,7 +381,7 @@ export type RendererCommand =
   | { type: 'set_native_quality_policy'; native_quality_policy: NativeQualityPolicy }
   | { type: 'precompile_shader'; shader_id: string; stage: string; source: string; entry: string }
   | { type: 'set_effect_chain'; layer_id: string; effect_ids: string[] }
-  | { type: 'bind_isf_shader'; layer_id: string; shader_id: string }
+  | { type: 'bind_isf_shader'; layer_id: string; shader_id: string; input_source_id?: string | null }
   | {
       type: 'update_isf_uniforms';
       shader_id: string;
@@ -343,6 +419,7 @@ export type RendererCommand =
       color_inputs: Record<string, [number, number, number, number]>;
     }
   | { type: 'render_isf_to_layer'; layer_id: string }
+  | ({ type: 'queue_compute_graph' } & Record<string, unknown>)
   | { type: 'present' };
 
 export interface CommandBatch {
@@ -422,20 +499,45 @@ export interface NativeRendererCapabilities {
     accepted_formats: readonly string[];
     reason?: string | null;
   };
-  output_shared_texture_export?: {
-    available: boolean;
-    backend: string;
-    platform: 'iosurface' | 'dxgi' | 'unsupported' | string;
-    exporter: string;
-    handle_scope: string;
-    preferred_transport: 'handle' | 'shared_name' | string;
-    handle_encoding: string;
-    handle_byte_length: number;
-    name_scope?: string;
-    exported_formats: readonly string[];
-    publisher?: string;
-    reason?: string | null;
-  };
+	  output_shared_texture_export?: {
+	    available: boolean;
+	    backend: string;
+	    platform: 'iosurface' | 'dxgi' | 'unsupported' | string;
+	    exporter: string;
+	    handle_scope: string;
+	    preferred_transport: 'handle' | 'shared_name' | string;
+	    handle_encoding: string;
+	    handle_byte_length: number;
+	    name_scope?: string;
+	    exported_formats: readonly string[];
+	    color_space?: 'srgb' | string;
+	    storage_format?: 'bgra8unorm' | string;
+	    storage_encoding?: 'srgb-encoded-bgra8unorm' | string;
+	    alpha_mode?: 'opaque' | string;
+	    premultiplied_alpha?: boolean;
+	    single_render_source?: 'core-output-composite' | string;
+	    zero_conversions?: boolean;
+	    publisher?: string;
+	    reason?: string | null;
+	  };
+	  native_editor_preview?: {
+	    available: boolean;
+	    mode: 'embedded-presenter-pending' | 'managed-native-overlay-window' | 'managed-native-underlay-window' | 'managed-native-output-window' | 'shared-texture-import-blit' | 'unavailable' | string;
+	    presentation?: 'floating-overlay' | 'parented-overlay' | 'parented-underlay-probe' | 'underlay' | 'underlay-zero-copy' | 'frame-stream' | 'unavailable' | string;
+	    production_ready?: boolean;
+	    needs_underlay_lock_in?: boolean;
+	    parented?: boolean;
+	    source: 'core-output-composite' | 'native-unavailable' | string;
+	    single_render: boolean;
+	    transport: 'iosurface' | 'dxgi' | 'none' | string;
+	    color_space: 'srgb' | string;
+	    storage_format: 'bgra8unorm' | string;
+	    storage_encoding: 'srgb-encoded-bgra8unorm' | string;
+	    alpha_mode: 'opaque' | string;
+	    premultiplied_alpha: boolean;
+	    zero_conversions: boolean;
+	    reason?: string | null;
+	  };
   native_scene_bridge?: {
     stage3d: NativeSceneBridgeSummary;
     projection_sim: NativeSceneBridgeSummary;
@@ -499,6 +601,20 @@ export interface RendererStatus {
   native_video_frame_cache_hits: number;
   native_video_frame_cache_misses: number;
   native_video_frame_cache_evictions: number;
+  native_video_sessions: Array<{
+    source_id: string;
+    state: 'armed' | 'prerolled' | 'playing' | 'evicted';
+    buffered_frames: number;
+    frames_presented: number;
+  }>;
+  native_video_sessions_armed: number;
+  native_video_sessions_prerolled: number;
+  native_video_sessions_playing: number;
+  native_video_session_evictions: number;
+  video_oneshot_decodes_during_playback: number;
+  native_video_trigger_last_latency_us: number;
+  native_video_trigger_max_latency_us: number;
+  native_video_stream_underflows: number;
   native_instrument_frame_renders: number;
   compute_graph_runs: number;
   compute_graph_passes: number;
@@ -540,6 +656,9 @@ export interface RendererStatus {
   decode_backend_ready: boolean;
   decode_backend_last_error: string | null;
   last_frame_error: string | null;
+  last_rpc_error?: string | null;
+  last_rpc_error_method?: string | null;
+  last_rpc_error_at_ms?: number;
   ffmpeg_active_video_sessions: number;
   decode_hw_frames: number;
   decode_predecode_estimate_cache_entries: number;
@@ -555,6 +674,8 @@ export interface RendererStatus {
   shader_precompile_dropped: number;
   last_shader_error: string | null;
   layers_seen: number;
+  scene_layers_active: number;
+  output_last_presented_layer_count: number;
   target_fps: number;
   present_mode: PresentMode;
   surface_present_mode: string;
@@ -596,6 +717,10 @@ export interface RendererStatus {
   output_present_consecutive_failures: number;
   swapchain_present_attempts: number;
   swapchain_presented: number;
+  gpu_frames_submitted: number;
+  gpu_frames_completed: number;
+  gpu_backpressure_skips: number;
+  frames_presented?: number;
   swapchain_present_failures: number;
   swapchain_last_present_result: string;
   swapchain_last_present_error: string;
@@ -680,6 +805,9 @@ export interface RendererStatus {
 
 export interface RendererStats {
   frames_submitted: number;
+  gpu_frames_submitted: number;
+  gpu_frames_completed: number;
+  gpu_backpressure_skips: number;
   frames_presented: number;
   frames_presented_explicit: number;
   frames_presented_auto: number;
@@ -852,6 +980,7 @@ export interface RendererStats {
   last_render_wait_ms: number;
   last_frame_budget_ms: number;
   effective_target_fps: number;
+  output_last_presented_layer_count: number;
   swapchain_present_attempts: number;
   swapchain_presented: number;
   swapchain_present_failures: number;
@@ -934,11 +1063,18 @@ export interface NativeRendererOutputSharedTexture {
   handle_byte_length?: number;
   name?: string;
   shared_name?: string;
-  width?: number;
-  height?: number;
-  format?: string;
-  frame?: number;
-  flipped?: boolean;
+	  width?: number;
+	  height?: number;
+	  format?: string;
+	  color_space?: 'srgb' | string;
+	  storage_format?: 'bgra8unorm' | string;
+	  storage_encoding?: 'srgb-encoded-bgra8unorm' | string;
+	  alpha_mode?: 'opaque' | string;
+	  premultiplied_alpha?: boolean;
+	  single_render_source?: 'core-output-composite' | string;
+	  zero_conversions?: boolean;
+	  frame?: number;
+	  flipped?: boolean;
   reason?: string;
 }
 
@@ -1074,7 +1210,7 @@ export async function startNativeRenderer(config?: Partial<RendererStartConfig>)
       media_high_burst_limit: config?.media_high_burst_limit ?? 7,
       prefetch_cache_max_entries: config?.prefetch_cache_max_entries ?? 4096,
       prefetch_cache_prune_count: config?.prefetch_cache_prune_count ?? 256,
-      target_fps: config?.target_fps ?? 60,
+      target_fps: config?.target_fps ?? 120,
       present_mode: config?.present_mode ?? 'vsync',
       allow_tearing: config?.allow_tearing ?? false,
       max_frame_latency: config?.max_frame_latency ?? 2,
@@ -1095,9 +1231,11 @@ export async function startNativeRenderer(config?: Partial<RendererStartConfig>)
       shader_metadata_cache_cap: config?.shader_metadata_cache_cap ?? 16384,
       pipeline_metadata_cache_cap: config?.pipeline_metadata_cache_cap ?? 16384,
       texture_pool_cap_mb: config?.texture_pool_cap_mb ?? 512,
-      native_quality_policy: config?.native_quality_policy ?? 'auto',
+      native_quality_policy: config?.native_quality_policy ?? 'fixed',
       ffmpeg_path: config?.ffmpeg_path ?? null,
       decode_gpu_bridge_path: config?.decode_gpu_bridge_path ?? null,
+      editor_parent_window_handle_hex: config?.editor_parent_window_handle_hex ?? null,
+      editor_parent_window_handle_platform: config?.editor_parent_window_handle_platform ?? null,
     },
   });
 }
@@ -1154,6 +1292,11 @@ export type NativeMediaPrefetchOptions = {
   decodeHeight?: number;
   prefetchWindowFrames?: number;
   prefetchFps?: number;
+  playbackRate?: number;
+  loopEnabled?: boolean;
+  durationSeconds?: number;
+  trimStart?: number;
+  trimEnd?: number;
   seq?: number;
 };
 
@@ -1174,6 +1317,11 @@ export async function prefetchNativeRendererMedia(
     decode_height: options.decodeHeight,
     prefetch_window_frames: options.prefetchWindowFrames,
     prefetch_fps: options.prefetchFps,
+    playback_rate: options.playbackRate,
+    loop_enabled: options.loopEnabled,
+    duration_seconds: options.durationSeconds,
+    trim_start: options.trimStart,
+    trim_end: options.trimEnd,
     seq: options.seq,
   });
 }
@@ -1284,6 +1432,62 @@ export async function detachNativeRendererOutputWindow() {
   return invoke<void>('native_renderer_detach_output_window');
 }
 
+export async function attachNativeEditorPreview(rect: NativeEditorPreviewRect) {
+  return invoke<NativeEditorPreviewPresenterStatus>('native_preview_attach', { rect });
+}
+
+export async function updateNativeEditorPreview(rect: NativeEditorPreviewRect) {
+  return invoke<NativeEditorPreviewPresenterStatus>('native_preview_update', { rect });
+}
+
+export interface NativeEditorPreviewOverlayPoint {
+  x: number;
+  y: number;
+}
+
+export interface NativeEditorPreviewOverlayHandle extends NativeEditorPreviewOverlayPoint {
+  kind: 'corner' | 'mesh' | 'edge-horizontal' | 'edge-vertical' | 'move' | 'rotate' | 'scale';
+}
+
+export interface NativeEditorPreviewOverlay {
+  lines: NativeEditorPreviewOverlayPoint[];
+  points: NativeEditorPreviewOverlayPoint[];
+  handles?: NativeEditorPreviewOverlayHandle[];
+}
+
+export interface NativeViewportLayerInteraction {
+  layer_id: string;
+  corners?: {
+    topLeft: NativeEditorPreviewOverlayPoint;
+    topRight: NativeEditorPreviewOverlayPoint;
+    bottomRight: NativeEditorPreviewOverlayPoint;
+    bottomLeft: NativeEditorPreviewOverlayPoint;
+  };
+  mesh_grid?: {
+    rows: number;
+    cols: number;
+    points: NativeEditorPreviewOverlayPoint[][];
+  } | null;
+}
+
+export async function setNativeEditorPreviewOverlay(overlay: NativeEditorPreviewOverlay) {
+  return invoke<NativeEditorPreviewPresenterStatus>('native_preview_set_overlay', { overlay });
+}
+
+export function setNativeViewportLayerInteraction(interaction: NativeViewportLayerInteraction): void {
+  // Deliberately fire-and-forget. The Electron main process coalesces this
+  // pointer-rate stream by layer, and the core accepts it as an id=0 RPC.
+  void invoke<{ accepted: boolean }>('native_viewport_set_layer_interaction', interaction).catch(() => {});
+}
+
+export async function detachNativeEditorPreview(reason = 'renderer-detach') {
+  return invoke<NativeEditorPreviewPresenterStatus>('native_preview_detach', { reason });
+}
+
+export async function getNativeEditorPreviewStatus() {
+  return invoke<NativeEditorPreviewPresenterStatus>('native_preview_get_status');
+}
+
 export async function getNativeRendererStatus() {
   return invoke<RendererStatus>('native_renderer_get_status');
 }
@@ -1318,6 +1522,10 @@ export async function exportNativeRendererFrameSnapshot(
 
 export async function getNativeRendererOutputSharedTexture() {
   return invoke<NativeRendererOutputSharedTexture>('native_renderer_get_output_shared_texture');
+}
+
+export async function getNativeRendererOutputSharedTextureSnapshot(options: { include_pixels?: boolean } = {}) {
+  return invoke<RendererFrameSnapshot | null>('native_renderer_get_output_shared_texture_snapshot', options);
 }
 
 export async function setNativeRendererStage3DScene(scene: unknown) {

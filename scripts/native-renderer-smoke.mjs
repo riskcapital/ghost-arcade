@@ -221,6 +221,27 @@ fn fs_main(@location(0) uv: vec2<f32>) -> @location(0) vec4<f32> {
 }
 `;
 
+const NATIVE_ISF_GLSL_PROBE_SOURCE = `
+/*{
+  "ISFVSN": "2",
+  "CATEGORIES": ["TEST"],
+  "INPUTS": [
+    { "NAME": "intensity", "TYPE": "float", "DEFAULT": 1.0 },
+    { "NAME": "scale", "TYPE": "float", "DEFAULT": 1.0 }
+  ]
+}*/
+void main() {
+  vec2 uv = isf_FragNormCoord;
+  vec2 centered = uv - vec2(0.5);
+  float rings = 0.5 + 0.5 * sin(length(centered) * 38.0 - TIME * 4.0);
+  float bars = smoothstep(0.42, 0.5, fract(uv.x * 18.0 + TIME * 0.31));
+  vec3 ramp = vec3(uv.x, uv.y, 1.0 - uv.x);
+  vec3 color = mix(ramp, vec3(0.04, 0.86, 1.0), rings * 0.55);
+  color += vec3(0.75, 0.08, 0.52) * bars * 0.35;
+  gl_FragColor = vec4(color, 1.0);
+}
+`;
+
 const NATIVE_COMPUTE_PROBE_SOURCE = `
 struct ComputeProbeUniforms {
   element_count: u32,
@@ -1013,6 +1034,8 @@ async function renderNativeShaderProbe(rpc, probe, frameIndex, baseline) {
       { type: 'remove_layer', layer_id: 'smoke-gpu' },
       { type: 'remove_layer', layer_id: 'particle-gpu' },
       { type: 'remove_layer', layer_id: layerId },
+      { type: 'remove_layer', layer_id: 'registered-wgsl' },
+      { type: 'remove_layer', layer_id: 'registered-isf-glsl' },
       { type: 'upsert_layer', layer_id: layerId, z_index: 0, blend_mode: 'screen', opacity: 1, corners: FULLSCREEN_CORNERS },
       { type: 'set_layer_visibility', layer_id: layerId, visible: true },
       {
@@ -1126,6 +1149,101 @@ async function renderRegisteredWgslProbe(rpc, frameIndex, baseline) {
   return { first, second };
 }
 
+async function renderRegisteredIsfGlslProbe(rpc, frameIndex, baseline) {
+  const shaderId = 'smoke-real-isf-glsl';
+  const layerId = 'registered-isf-glsl';
+  const precompile = await rpc.send('submit_commands', {
+    commands: [
+      { type: 'remove_layer', layer_id: 'registered-wgsl' },
+      { type: 'remove_layer', layer_id: 'catalog-gpu' },
+      { type: 'remove_layer', layer_id: 'smoke-gpu' },
+      { type: 'remove_layer', layer_id: 'particle-gpu' },
+      { type: 'remove_layer', layer_id: layerId },
+      {
+        type: 'precompile_shader',
+        shader_id: shaderId,
+        stage: 'pixel',
+        source: NATIVE_ISF_GLSL_PROBE_SOURCE,
+        entry: 'main',
+      },
+      { type: 'upsert_layer', layer_id: layerId, z_index: 0, blend_mode: 'normal', opacity: 1, corners: FULLSCREEN_CORNERS },
+      { type: 'set_layer_visibility', layer_id: layerId, visible: true },
+      { type: 'bind_isf_shader', layer_id: layerId, shader_id: shaderId },
+      {
+        type: 'update_isf_uniforms',
+        shader_id: shaderId,
+        time: 0.9,
+        time_delta: 1 / 30,
+        frame_index: frameIndex,
+        render_width: 320,
+        render_height: 180,
+        active: true,
+        level: 0.5,
+        bass: 0.4,
+        mid: 0.33,
+        treble: 0.29,
+        high: 0.47,
+        beat: 0.54,
+        beat_phase: 0.22,
+        bpm: 124,
+        centroid: 0.57,
+        kick: 0.41,
+        snare: 0.25,
+        audio_bass: 0.4,
+        audio_beat: 0.54,
+        audio_spectral_centroid: 0.57,
+        audio_kick: 0.41,
+        audio_snare: 0.25,
+        float_inputs: { intensity: 1.1, scale: 0.85 },
+      },
+      { type: 'render_isf_to_layer', layer_id: layerId },
+    ],
+  }, 8000);
+  if (Number(precompile?.dropped ?? 0) !== 0) {
+    throw new Error(`registered native ISF/GLSL shader command was dropped: ${JSON.stringify(precompile)}`);
+  }
+  const first = await snapshot(rpc, 'registered-isf-glsl-a', 0.9, frameIndex);
+  assertFrame('registered ISF/GLSL shader layer', first, 0.02);
+  assertDifferent('registered ISF/GLSL shader vs baseline', baseline, first);
+
+  await rpc.send('submit_commands', {
+    commands: [
+      {
+        type: 'update_isf_uniforms',
+        shader_id: shaderId,
+        time: 2.1,
+        time_delta: 1 / 30,
+        frame_index: frameIndex + 1,
+        render_width: 320,
+        render_height: 180,
+        active: true,
+        level: 0.16,
+        bass: 0.18,
+        mid: 0.46,
+        treble: 0.69,
+        high: 0.76,
+        beat: 0.12,
+        beat_phase: 0.72,
+        bpm: 96,
+        centroid: 0.34,
+        kick: 0.07,
+        snare: 0.61,
+        audio_bass: 0.18,
+        audio_beat: 0.12,
+        audio_spectral_centroid: 0.34,
+        audio_kick: 0.07,
+        audio_snare: 0.61,
+        float_inputs: { intensity: 1.1, scale: 0.85 },
+      },
+      { type: 'render_isf_to_layer', layer_id: layerId },
+    ],
+  }, 8000);
+  const second = await snapshot(rpc, 'registered-isf-glsl-b', 2.1, frameIndex + 1);
+  assertFrame('registered ISF/GLSL shader layer animated', second, 0.02);
+  assertDifferent('registered ISF/GLSL shader clock/uniform update', first, second);
+  return { first, second };
+}
+
 async function main() {
   const requireManagedOutput = process.env.NATIVE_SMOKE_REQUIRE_OUTPUT === '1';
   const rpc = createRpcProcess();
@@ -1150,6 +1268,22 @@ async function main() {
     const outputExportExpected = process.platform === 'darwin' || process.platform === 'win32';
     const expectedSharedTexturePlatform = process.platform === 'win32' ? 'dxgi' : 'iosurface';
     const sharedTextureLabel = process.platform === 'win32' ? 'DXGI' : 'IOSurface';
+    const outputTextureContractOk = (texture) => (
+      texture?.available &&
+      texture.platform === expectedSharedTexturePlatform &&
+      String(texture.handle ?? '').length > 0 &&
+      texture.handle_encoding === 'integer' &&
+      Number(texture.width ?? 0) > 0 &&
+      Number(texture.height ?? 0) > 0 &&
+      texture.format === 'bgra8unorm' &&
+      texture.color_space === 'srgb' &&
+      texture.storage_format === 'bgra8unorm' &&
+      texture.storage_encoding === 'srgb-encoded-bgra8unorm' &&
+      texture.alpha_mode === 'opaque' &&
+      texture.premultiplied_alpha === false &&
+      texture.single_render_source === 'core-output-composite' &&
+      texture.zero_conversions === true
+    );
     if (!capabilities?.features?.layer_compositor || !capabilities?.features?.fragment_wgsl_host) {
       throw new Error(`native capabilities missing implemented core features: ${JSON.stringify(capabilities)}`);
     }
@@ -1229,15 +1363,7 @@ async function main() {
     }
     const outputTexture = await rpc.send('output_shared_texture', {}, 5000);
     if (outputExportExpected) {
-      if (
-        !outputTexture?.available ||
-        outputTexture.platform !== expectedSharedTexturePlatform ||
-        !String(outputTexture.handle ?? '').length ||
-        outputTexture.handle_encoding !== 'integer' ||
-        Number(outputTexture.width ?? 0) <= 0 ||
-        Number(outputTexture.height ?? 0) <= 0 ||
-        !String(outputTexture.format ?? '').includes('bgra')
-      ) {
+      if (!outputTextureContractOk(outputTexture)) {
         throw new Error(`native output shared-texture metadata is incomplete: ${JSON.stringify(outputTexture)}`);
       }
     } else if (outputTexture?.available) {
@@ -1968,7 +2094,36 @@ async function main() {
           corners: FULLSCREEN_CORNERS,
           uv_transform: [0, 0, 1, 1],
           uv_flags: [0, 1, 0, 0],
+          shape: [0, 0, 0, 1],
+          mesh_grid: {
+            rows: 3,
+            cols: 3,
+            points: [
+              [{ x: 0, y: 1 }, { x: 0.5, y: 1 }, { x: 1, y: 1 }],
+              [{ x: 0, y: 0.5 }, { x: 0.72, y: 0.34 }, { x: 1, y: 0.5 }],
+              [{ x: 0, y: 0 }, { x: 0.5, y: 0 }, { x: 1, y: 0 }],
+            ],
+          },
+        },
+      ],
+    });
+    const previewMesh = await snapshot(rpc, 'preview-mesh', 0.325, 5);
+    assertFrame('source preview mesh-warped layer', previewMesh, 0.02);
+    assertDifferent('preview native mesh warp', preview, previewMesh);
+
+    await rpc.send('submit_commands', {
+      commands: [
+        {
+          type: 'upsert_layer',
+          layer_id: 'smoke-preview',
+          z_index: 0,
+          blend_mode: 'normal',
+          opacity: 1,
+          corners: FULLSCREEN_CORNERS,
+          uv_transform: [0, 0, 1, 1],
+          uv_flags: [0, 1, 0, 0],
           shape: [1, 0.02, 0, 1],
+          mesh_grid: null,
         },
       ],
     });
@@ -2097,14 +2252,7 @@ async function main() {
     if (outputExportExpected) {
       const beforeSharedFrameStatus = await rpc.send('status', {}, 5000);
       const loopbackTexture = await rpc.send('output_shared_texture', {}, 5000);
-      if (
-        !loopbackTexture?.available ||
-        loopbackTexture.platform !== expectedSharedTexturePlatform ||
-        !String(loopbackTexture.handle ?? '').length ||
-        loopbackTexture.handle_encoding !== 'integer' ||
-        Number(loopbackTexture.width ?? 0) <= 0 ||
-        Number(loopbackTexture.height ?? 0) <= 0
-      ) {
+      if (!outputTextureContractOk(loopbackTexture)) {
         throw new Error(`native output ${sharedTextureLabel} loopback metadata is incomplete: ${JSON.stringify(loopbackTexture)}`);
       }
       await rpc.send('submit_commands', {
@@ -2155,9 +2303,10 @@ async function main() {
     const noLayers = await snapshot(rpc, 'no-layers', 0.75, 9);
 
     const registeredWgsl = await renderRegisteredWgslProbe(rpc, 10, noLayers);
+    const registeredIsfGlsl = await renderRegisteredIsfGlslProbe(rpc, 12, noLayers);
 
     const catalogResults = [];
-    let catalogFrameIndex = 11;
+    let catalogFrameIndex = 14;
     for (const probe of NATIVE_SHADER_CATALOG_PROBES) {
       catalogResults.push(await renderNativeShaderProbe(rpc, probe, catalogFrameIndex, noLayers));
       catalogFrameIndex += 2;
@@ -2234,8 +2383,14 @@ async function main() {
     if (Number(stats.compute_graph_runs ?? 0) < 6 || Number(stats.compute_graph_persistent_buffers ?? 0) < 2) {
       throw new Error(`native compute graph stats were not reported: ${JSON.stringify(stats)}`);
     }
-    if (Number(status.source_frame_size ?? 0) < 1536) {
-      throw new Error(`native source frame size regressed below 1536px: ${JSON.stringify(status)}`);
+    if (Number(status.source_frame_size ?? 0) < 1024) {
+      throw new Error(`native source frame size regressed below realtime baseline: ${JSON.stringify(status)}`);
+    }
+    if (status.source_frame_hdr) {
+      throw new Error(`native auto source-frame path should be SDR unless HDR is explicitly requested: ${JSON.stringify(status)}`);
+    }
+    if (String(status.source_frame_format || '') !== 'rgba8unorm') {
+      throw new Error(`native auto source-frame format should be rgba8unorm: ${JSON.stringify(status)}`);
     }
     if (Number(status.source_frame_mip_levels ?? 1) < 2) {
       throw new Error(`native source frame mip chain was not created: ${JSON.stringify(status)}`);
@@ -2245,9 +2400,6 @@ async function main() {
     }
     if (!status.source_frame_format) {
       throw new Error(`native source frame format missing from status: ${JSON.stringify(status)}`);
-    }
-    if (Number(status.source_frame_cpu_fallback_uploads ?? 0) < 1) {
-      throw new Error(`native source-frame CPU fallback uploads were not counted: ${JSON.stringify(status)}`);
     }
     if (Number(status.source_frame_file_uploads ?? 0) < 1) {
       throw new Error(`native source-frame file uploads were not counted: ${JSON.stringify(status)}`);
@@ -2282,10 +2434,7 @@ async function main() {
     ) {
       throw new Error(`native shared source-frame uploads were not counted: ${JSON.stringify(status)}`);
     }
-    if (
-      Number(stats.source_frame_cpu_fallback_uploads ?? 0) < 1 ||
-      Number(stats.source_frame_file_uploads ?? 0) < 1
-    ) {
+    if (Number(stats.source_frame_file_uploads ?? 0) < 1) {
       throw new Error(`native source-frame transport stats were not reported: ${JSON.stringify(stats)}`);
     }
     if (Number(stats.native_image_decodes ?? 0) < 1) {
@@ -2390,6 +2539,7 @@ async function main() {
       `frameExport=${exportedFrame.checksum}`,
       `frameShared=${sourceFrameSharedTextureSnapshot?.checksum ?? 'none'}`,
       `wgsl=${registeredWgsl.first.checksum}->${registeredWgsl.second.checksum}`,
+      `isfGlsl=${registeredIsfGlsl.first.checksum}->${registeredIsfGlsl.second.checksum}`,
       `uv=${previewCrop.checksum}/${previewFlip.checksum}`,
       `shape=${previewCircle.checksum}/${previewTriangle.checksum}`,
       `compute=${computeProbe.checksum}/${computeProbe.nonzero_words}`,

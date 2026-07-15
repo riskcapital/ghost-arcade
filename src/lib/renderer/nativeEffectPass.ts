@@ -66,7 +66,11 @@ export type NativeEffectPassId =
   | 'plasma'
   | 'halftone'
   | 'toon'
-  | 'kuwahara';
+  | 'kuwahara'
+  | 'defocus-bokeh'
+  | 'god-rays'
+  | 'displacement'
+  | 'polar-transform';
 
 export interface NativeEffectPassManifestEntry {
   id: NativeEffectPassId;
@@ -138,6 +142,7 @@ export interface NativeEffectPassOptions {
     tintAmount: number;
     breathing: number;
     angle: number;
+    rotation: number;
     count: number;
     intensity: number;
     speed: number;
@@ -420,6 +425,11 @@ export interface NativeEffectPassOptions {
     cellSize: number;
     dotGain: number;
     colorMode: number;
+    brightWeight: number;
+    chromaFringe: number;
+    tintR: number;
+    tintG: number;
+    tintB: number;
     toonMix: number;
     toonLevels: number;
     toonEdgeStrength: number;
@@ -431,6 +441,38 @@ export interface NativeEffectPassOptions {
     kuwaharaRadius: number;
     kuwaharaEdgeSharpness: number;
     kuwaharaColorPunch: number;
+    bokehRadius: number;
+    bokehSamples: number;
+    bokehBrightWeight: number;
+    bokehThreshold: number;
+    bokehChromaFringe: number;
+    bokehShape: number;
+    bokehRotation: number;
+    bokehMix: number;
+    godRaysIntensity: number;
+    godRaysDecay: number;
+    godRaysExposure: number;
+    godRaysDensity: number;
+    godRaysThreshold: number;
+    godRaysCenterX: number;
+    godRaysCenterY: number;
+    godRaysSamples: number;
+    godRaysTintR: number;
+    godRaysTintG: number;
+    godRaysTintB: number;
+    godRaysMix: number;
+    dispAmount: number;
+    dispScale: number;
+    dispSpeed: number;
+    dispMode: number;
+    dispTurbulence: number;
+    dispChromatic: number;
+    polarMode: number;
+    polarRotation: number;
+    polarZoom: number;
+    polarCenterX: number;
+    polarCenterY: number;
+    polarMix: number;
   }>;
   clear?: boolean;
   seq?: number;
@@ -538,6 +580,10 @@ export const NATIVE_EFFECT_PASS_MANIFEST: NativeEffectPassManifestEntry[] = [
   { id: 'halftone', code: 66, defaultAmount: 0.9, amountMin: 0, amountMax: 1 },
   { id: 'toon', code: 67, defaultAmount: 0.85, amountMin: 0, amountMax: 1 },
   { id: 'kuwahara', code: 68, defaultAmount: 1, amountMin: 0, amountMax: 1 },
+  { id: 'defocus-bokeh', code: 69, defaultAmount: 12, amountMin: 0, amountMax: 30 },
+  { id: 'god-rays', code: 70, defaultAmount: 0.7, amountMin: 0, amountMax: 2 },
+  { id: 'displacement', code: 71, defaultAmount: 0.4, amountMin: 0, amountMax: 1 },
+  { id: 'polar-transform', code: 72, defaultAmount: 1, amountMin: 0, amountMax: 1 },
 ];
 
 const NATIVE_EFFECT_PASS_BY_ID = new Map(
@@ -597,6 +643,79 @@ fn value_noise2d(p: vec2<f32>) -> f32 {
   let d = hash21(i + vec2<f32>(1.0, 1.0));
   let v = f * f * (3.0 - 2.0 * f);
   return mix(mix(a, b, v.x), mix(c, d, v.x), v.y);
+}
+
+fn fbm2d(p0: vec2<f32>) -> f32 {
+  var p = p0;
+  var v = 0.0;
+  var amp = 0.5;
+  for (var i = 0u; i < 4u; i = i + 1u) {
+    v += value_noise2d(p) * amp;
+    p *= 2.0;
+    amp *= 0.5;
+  }
+  return v;
+}
+
+fn cellular2d(p: vec2<f32>) -> f32 {
+  let i = floor(p);
+  let f = fract(p);
+  var min_d = 1.0;
+  for (var yy = -1i; yy <= 1i; yy = yy + 1i) {
+    for (var xx = -1i; xx <= 1i; xx = xx + 1i) {
+      let g = vec2<f32>(f32(xx), f32(yy));
+      let o = vec2<f32>(
+        hash21(i + g),
+        hash21(i + g + vec2<f32>(13.0)),
+      );
+      let r = g + o - f;
+      min_d = min(min_d, dot(r, r));
+    }
+  }
+  return sqrt(min_d);
+}
+
+fn aperture_mask(p: vec2<f32>, shape: u32) -> f32 {
+  let r = length(p);
+  if (r > 1.0) {
+    return 0.0;
+  }
+  if (shape == 0u) {
+    return 1.0;
+  }
+  let sides = select(8.0, 6.0, shape == 1u);
+  let half_ang = 3.14159265 / sides;
+  let ang = atan2(p.y, p.x);
+  let folded = fract1((ang + half_ang) / (2.0 * half_ang)) * (2.0 * half_ang) - half_ang;
+  let poly_r = cos(half_ang) / max(0.001, cos(folded));
+  return select(0.0, 1.0, r <= poly_r);
+}
+
+fn displacement_offset(uv: vec2<f32>, t: f32, amount: f32) -> vec2<f32> {
+  let scale = max(1.0, u.params0.x);
+  let mode = u32(round(clamp(u.params0.z, 0.0, 3.0)));
+  let turbulence = clamp(u.params0.w, 0.0, 1.0);
+  let p = uv * scale + vec2<f32>(t, t * 0.7);
+  var nx = 0.0;
+  var ny = 0.0;
+  if (mode == 0u) {
+    nx = mix(value_noise2d(p), fbm2d(p), step(0.5, turbulence)) - 0.5;
+    ny = mix(value_noise2d(p + vec2<f32>(71.3)), fbm2d(p + vec2<f32>(71.3)), step(0.5, turbulence)) - 0.5;
+  } else if (mode == 1u) {
+    nx = cellular2d(p) - 0.5;
+    ny = cellular2d(p + vec2<f32>(71.3)) - 0.5;
+  } else if (mode == 2u) {
+    nx = sin(uv.y * scale * 6.28318530718 + t * 2.0);
+    ny = sin(uv.x * scale * 6.28318530718 + t * 2.0);
+  } else {
+    let d = uv - vec2<f32>(0.5);
+    let r = length(d);
+    let ripple = sin(r * scale * 6.28318530718 - t * 3.0);
+    let dir = select(vec2<f32>(1.0, 0.0), d / r, r > 0.001);
+    nx = dir.x * ripple;
+    ny = dir.y * ripple;
+  }
+  return vec2<f32>(nx, ny) * clamp(amount, 0.0, 1.0) * 0.05;
 }
 
 fn vhs_hash11(seed: f32) -> f32 {
@@ -2072,7 +2191,7 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let matte_preview = u.params1.z > 0.5;
     var alpha = 1.0;
     if (top > 0.0001) {
-      alpha *= smoothstep(1.0, 1.0 - top, uv.y);
+      alpha *= 1.0 - smoothstep(1.0 - top, 1.0, uv.y);
     }
     if (bottom > 0.0001) {
       alpha *= smoothstep(0.0, bottom, uv.y);
@@ -2081,7 +2200,7 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
       alpha *= smoothstep(0.0, left, uv.x);
     }
     if (right > 0.0001) {
-      alpha *= smoothstep(1.0, 1.0 - right, uv.x);
+      alpha *= 1.0 - smoothstep(1.0 - right, 1.0, uv.x);
     }
     alpha = pow(clamp(alpha, 0.0, 1.0), 1.0 / max(softness + 0.5, 0.1));
     alpha = pow(alpha, feather_gamma) * clamp(amount, 0.0, 1.0);
@@ -2821,6 +2940,134 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     }
     return vec4<f32>(clamp(result, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
   }
+  if (code == 69u) {
+    let radius = max(0.0, amount);
+    if (radius < 0.5) {
+      return src;
+    }
+    let samples = clamp(u.params0.x, 8.0, 48.0);
+    let bright_weight = clamp(u.params0.y, 0.0, 2.0);
+    let threshold = clamp(u.params0.z, 0.0, 1.0);
+    let chroma = clamp(u.params0.w, 0.0, 1.0);
+    let shape = u32(round(clamp(u.params1.x, 0.0, 2.0)));
+    let rot = u.params1.y * 0.01745329252;
+    let wet = clamp(u.params1.z, 0.0, 1.0);
+    let c = cos(rot);
+    let s = sin(rot);
+    let texel = effect_texel();
+    var acc = vec3<f32>(0.0);
+    var wsum = 0.0;
+    for (var i = 0u; i < 48u; i = i + 1u) {
+      let fi = f32(i);
+      if (fi < samples) {
+        let t = fi / max(samples, 1.0);
+        let angle = fi * 2.39996323;
+        let disc = vec2<f32>(cos(angle), sin(angle)) * sqrt(t);
+        let rot_disc = vec2<f32>(disc.x * c - disc.y * s, disc.x * s + disc.y * c);
+        let mask = aperture_mask(rot_disc, shape);
+        if (mask > 0.5) {
+          let off = rot_disc * radius * texel;
+          var sample_col = vec3<f32>(0.0);
+          if (chroma > 0.001) {
+            let dir = normalize(rot_disc + vec2<f32>(0.000001));
+            let r_off = radius * (1.0 + chroma * 0.05);
+            let b_off = radius * (1.0 - chroma * 0.05);
+            sample_col = vec3<f32>(
+              sample_rgb(uv + dir * r_off * texel + (off - dir * radius * texel)).r,
+              sample_rgb(uv + off).g,
+              sample_rgb(uv + dir * b_off * texel + (off - dir * radius * texel)).b,
+            );
+          } else {
+            sample_col = sample_rgb(uv + off);
+          }
+          let hi = smoothstep(threshold, threshold + 0.2, luma(sample_col));
+          let w = mix(1.0, 1.0 + bright_weight * 6.0, hi);
+          acc += sample_col * w;
+          wsum += w;
+        }
+      }
+    }
+    let blurred = select(color, acc / max(0.0001, wsum), wsum > 0.0);
+    return vec4<f32>(mix(color, blurred, wet), src.a);
+  }
+  if (code == 70u) {
+    let intensity = clamp(amount, 0.0, 2.0);
+    if (intensity < 0.001) {
+      return src;
+    }
+    let decay = clamp(u.params0.x, 0.85, 1.0);
+    let exposure = clamp(u.params0.y, 0.1, 1.0);
+    let density = clamp(u.params0.z, 0.0, 1.0);
+    let threshold = clamp(u.params0.w, 0.0, 1.0);
+    let sun = clamp(u.params1.xy, vec2<f32>(0.0), vec2<f32>(1.0));
+    let samples = clamp(u.params1.z, 8.0, 128.0);
+    let tint = clamp(vec3<f32>(u.params1.w, u.params2.x, u.params2.y), vec3<f32>(0.0), vec3<f32>(1.5));
+    let wet = clamp(u.params2.z, 0.0, 1.0);
+    let delta_uv = (uv - sun) * (density / max(samples, 1.0));
+    var cur = uv;
+    var illum = 1.0;
+    var acc = vec3<f32>(0.0);
+    for (var i = 0u; i < 128u; i = i + 1u) {
+      if (f32(i) < samples) {
+        cur -= delta_uv;
+        let s_col = sample_rgb(cur);
+        let gate = smoothstep(threshold, threshold + 0.15, luma(s_col));
+        acc += s_col * gate * illum;
+        illum *= decay;
+      }
+    }
+    let rays = acc * exposure * intensity * tint;
+    return vec4<f32>(color + rays * wet, src.a);
+  }
+  if (code == 71u) {
+    let speed = clamp(u.params0.y, 0.0, 3.0);
+    let chromatic = clamp(u.params1.x, 0.0, 1.0);
+    let t = u.resolution_time.z * speed;
+    let base_off = displacement_offset(uv, t, amount);
+    var displaced = vec3<f32>(0.0);
+    if (chromatic > 0.001) {
+      let off_r = displacement_offset(uv, t + 0.3 * chromatic, amount);
+      let off_b = displacement_offset(uv, t - 0.3 * chromatic, amount);
+      displaced = vec3<f32>(
+        sample_rgb(uv + off_r).r,
+        sample_rgb(uv + base_off).g,
+        sample_rgb(uv + off_b).b,
+      );
+    } else {
+      displaced = sample_rgb(uv + base_off);
+    }
+    return vec4<f32>(displaced, src.a);
+  }
+  if (code == 72u) {
+    let mode = u32(round(clamp(u.params0.x, 0.0, 2.0)));
+    let rotation = u.params0.y / 360.0;
+    let zoom = max(0.25, u.params0.z);
+    let center = clamp(vec2<f32>(u.params0.w, u.params1.x), vec2<f32>(0.0), vec2<f32>(1.0));
+    let wet = clamp(amount, 0.0, 1.0);
+    let aspect = u.resolution_time.x / max(u.resolution_time.y, 1.0);
+    var sample_uv = uv;
+    if (mode == 0u) {
+      var d = uv - center;
+      d.x *= aspect;
+      let r = length(d) * 2.0;
+      let a = fract1(atan2(d.y, d.x) / 6.28318530718 + 0.5 + rotation);
+      sample_uv = vec2<f32>(a, r * zoom);
+    } else if (mode == 1u) {
+      let a = (uv.x - 0.5 + rotation) * 6.28318530718;
+      let r = uv.y * zoom;
+      var d = vec2<f32>(cos(a), sin(a)) * r * 0.5;
+      d.x /= aspect;
+      sample_uv = center + d;
+    } else {
+      var d = uv - center;
+      d.x *= aspect;
+      let r = log(length(d) * 2.0 + 1.0);
+      let a = fract1(atan2(d.y, d.x) / 6.28318530718 + 0.5 + rotation);
+      sample_uv = vec2<f32>(a, r * zoom);
+    }
+    let mapped = sample_rgb(clamp(sample_uv, vec2<f32>(0.0), vec2<f32>(1.0)));
+    return vec4<f32>(mix(color, mapped, wet), src.a);
+  }
   return src;
 }
 
@@ -3013,6 +3260,50 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param2 = clampNumber(params.kuwaharaColorPunch ?? params.colorMix ?? params.param2, 0, 1, 0.2);
     param3 = 0;
     param4 = 0;
+    param5 = 0;
+    param6 = 0;
+    param7 = 0;
+  } else if (options.effect === 'defocus-bokeh') {
+    amount = clampNumber(options.amount ?? params.bokehRadius ?? params.radius ?? params.param0, 0, 30, 12);
+    param0 = clampNumber(params.bokehSamples ?? params.samples ?? params.param1, 8, 48, 24);
+    param1 = clampNumber(params.bokehBrightWeight ?? params.brightWeight ?? params.param2, 0, 2, 0.8);
+    param2 = clampNumber(params.bokehThreshold ?? params.threshold ?? params.param3, 0, 1, 0.7);
+    param3 = clampNumber(params.bokehChromaFringe ?? params.chromaFringe ?? params.param4, 0, 1, 0);
+    param4 = clampNumber(params.bokehShape ?? params.shape ?? params.param5, 0, 2, 0);
+    param5 = clampNumber(params.bokehRotation ?? params.rotation ?? params.param6, 0, 360, 0);
+    param6 = clampNumber(params.bokehMix ?? params.outputMix ?? params.mix ?? params.param7, 0, 1, 1);
+    param7 = 0;
+  } else if (options.effect === 'god-rays') {
+    amount = clampNumber(options.amount ?? params.godRaysIntensity ?? params.amount, 0, 2, 0.7);
+    param0 = clampNumber(params.godRaysDecay ?? params.param0, 0.85, 1, 0.95);
+    param1 = clampNumber(params.godRaysExposure ?? params.param1, 0.1, 1, 0.4);
+    param2 = clampNumber(params.godRaysDensity ?? params.param2, 0, 1, 0.95);
+    param3 = clampNumber(params.godRaysThreshold ?? params.threshold ?? params.param3, 0, 1, 0.7);
+    param4 = clampNumber(params.godRaysCenterX ?? params.centerX ?? params.param4, 0, 1, 0.5);
+    param5 = clampNumber(params.godRaysCenterY ?? params.centerY ?? params.param5, 0, 1, 0.2);
+    param6 = clampNumber(params.godRaysSamples ?? params.samples ?? params.param6, 8, 128, 64);
+    param7 = clampNumber(params.godRaysTintR ?? params.tintR ?? params.param7, 0, 1.5, 1);
+    param8 = clampNumber(params.godRaysTintG ?? params.tintG ?? params.param8, 0, 1.5, 0.95);
+    param9 = clampNumber(params.godRaysTintB ?? params.tintB ?? params.param9, 0, 1.5, 0.85);
+    param10 = clampNumber(params.godRaysMix ?? params.outputMix ?? params.mix ?? params.param10, 0, 1, 1);
+    param11 = 0;
+  } else if (options.effect === 'displacement') {
+    amount = clampNumber(options.amount ?? params.dispAmount ?? params.amount, 0, 1, 0.4);
+    param0 = clampNumber(params.dispScale ?? params.scale ?? params.param0, 1, 32, 6);
+    param1 = clampNumber(params.dispSpeed ?? params.speed ?? params.param1, 0, 3, 1);
+    param2 = clampNumber(params.dispMode ?? params.mode ?? params.param2, 0, 3, 0);
+    param3 = clampNumber(params.dispTurbulence ?? params.turbulence ?? params.param3, 0, 1, 0.5);
+    param4 = clampNumber(params.dispChromatic ?? params.chromatic ?? params.param4, 0, 1, 0);
+    param5 = 0;
+    param6 = 0;
+    param7 = 0;
+  } else if (options.effect === 'polar-transform') {
+    amount = clampNumber(options.amount ?? params.polarMix ?? params.outputMix ?? params.mix ?? params.amount, 0, 1, 1);
+    param0 = clampNumber(params.polarMode ?? params.mode ?? params.param0, 0, 2, 0);
+    param1 = clampNumber(params.polarRotation ?? params.rotation ?? params.param1, 0, 360, 0);
+    param2 = clampNumber(params.polarZoom ?? params.zoom ?? params.param2, 0.25, 4, 1);
+    param3 = clampNumber(params.polarCenterX ?? params.centerX ?? params.param3, 0, 1, 0.5);
+    param4 = clampNumber(params.polarCenterY ?? params.centerY ?? params.param4, 0, 1, 0.5);
     param5 = 0;
     param6 = 0;
     param7 = 0;

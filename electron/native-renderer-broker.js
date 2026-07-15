@@ -3,14 +3,11 @@ import fs from 'fs';
 import { createRequire } from 'module';
 import os from 'os';
 import path from 'path';
-import { fileURLToPath } from 'url';
 
 const require = createRequire(import.meta.url);
 const COMMAND_PREFIX = 'native_renderer_';
 const SOURCE_FRAME_FILE_HANDOFF_B64_THRESHOLD = 512 * 1024;
 const VIDEO_FRAME_PREFETCH_TIMEOUT_MS = 8000;
-const VIDEO_FRAME_PREFETCH_CACHE_MAX_ENTRIES = 24;
-const VIDEO_FRAME_PREFETCH_CACHE_FPS = 30;
 const defaultDecodeBackend = (platform = process.platform) => (platform === 'win32' ? 'ffmpeg_d3d11va' : 'ffmpeg_software');
 const STATIC_IMAGE_EXTENSIONS = new Set([
   '.avif',
@@ -104,6 +101,10 @@ const NATIVE_EFFECT_PASS_DESCRIPTORS = [
   { id: 'halftone', code: 66 },
   { id: 'toon', code: 67 },
   { id: 'kuwahara', code: 68 },
+  { id: 'defocus-bokeh', code: 69 },
+  { id: 'god-rays', code: 70 },
+  { id: 'displacement', code: 71 },
+  { id: 'polar-transform', code: 72 },
 ];
 
 function nativeGraphReadinessId(id) {
@@ -182,6 +183,7 @@ const RENDERER_COMMANDS = [
   'native_renderer_get_frame_snapshot',
   'native_renderer_export_frame_snapshot',
   'native_renderer_get_output_shared_texture',
+  'native_renderer_get_output_shared_texture_snapshot',
   'native_renderer_set_stage3d_scene',
   'native_renderer_get_stage3d_scene_summary',
   'native_renderer_set_projection_sim_scene',
@@ -214,20 +216,6 @@ function normalizeSourceFrameBuffer(value) {
   return null;
 }
 
-function resolveLocalMediaPath(uri) {
-  const value = String(uri || '').trim();
-  if (!value) return null;
-  if (/^file:/i.test(value)) {
-    try {
-      return fileURLToPath(value);
-    } catch {
-      return null;
-    }
-  }
-  if (/^[a-z][a-z0-9+.-]*:/i.test(value)) return null;
-  return path.resolve(value);
-}
-
 function resolveFfmpegPath(env = process.env, platform = process.platform) {
   const envPath = env?.GA_FFMPEG_PATH;
   if (envPath && fs.existsSync(envPath)) return envPath;
@@ -252,129 +240,11 @@ function resolveFfmpegPath(env = process.env, platform = process.platform) {
 }
 
 function videoFramePrefetchStatus(env = process.env, platform = process.platform) {
-  const ffmpegPath = resolveFfmpegPath(env, platform);
-  if (!ffmpegPath) {
-    return {
-      available: false,
-      ffmpegPath: null,
-      reason: 'ffmpeg-static/PATH ffmpeg was not resolved',
-    };
-  }
   return {
-    available: true,
-    ffmpegPath,
-    reason: null,
+    available: false,
+    ffmpegPath: null,
+    reason: 'Electron FFmpeg video prefetch bridge is disabled; native video frames must come from the render-core decode pump',
   };
-}
-
-function decodeVideoFrameToRgba({
-  uri,
-  width,
-  height,
-  timeSeconds = 0,
-  env = process.env,
-  platform = process.platform,
-}) {
-  const localPath = resolveLocalMediaPath(uri);
-  if (!localPath) {
-    return Promise.reject(new Error('native video frame prefetch currently supports local video files only'));
-  }
-  let stat = null;
-  try {
-    stat = fs.statSync(localPath);
-  } catch (err) {
-    return Promise.reject(new Error(`native video frame prefetch cannot read ${localPath}: ${err?.message || err}`));
-  }
-  if (!stat.isFile()) {
-    return Promise.reject(new Error(`native video frame prefetch expected a file: ${localPath}`));
-  }
-
-  const targetWidth = Math.max(16, Math.min(4096, Math.round(Number(width) || 256)));
-  const targetHeight = Math.max(16, Math.min(4096, Math.round(Number(height) || targetWidth)));
-  const expectedBytes = targetWidth * targetHeight * 4;
-  const ffmpegPath = resolveFfmpegPath(env, platform);
-  const seconds = Math.max(0, Math.min(3600, Number(timeSeconds) || 0));
-  const scale = `scale=${targetWidth}:${targetHeight}:force_original_aspect_ratio=decrease`;
-  const pad = `pad=${targetWidth}:${targetHeight}:(ow-iw)/2:(oh-ih)/2:color=black`;
-  const args = [
-    '-hide_banner',
-    '-loglevel',
-    'error',
-    '-nostdin',
-    '-ss',
-    seconds.toFixed(3),
-    '-i',
-    localPath,
-    '-frames:v',
-    '1',
-    '-vf',
-    `${scale},${pad},format=rgba`,
-    '-f',
-    'rawvideo',
-    '-pix_fmt',
-    'rgba',
-    'pipe:1',
-  ];
-
-  return new Promise((resolve, reject) => {
-    const child = spawn(ffmpegPath, args, { stdio: ['ignore', 'pipe', 'pipe'], env: { ...process.env, ...env } });
-    const chunks = [];
-    const stderr = [];
-    let outputBytes = 0;
-    let settled = false;
-    let timer = null;
-
-    const finish = (err, result) => {
-      if (settled) return;
-      settled = true;
-      if (timer) clearTimeout(timer);
-      if (err) reject(err);
-      else resolve(result);
-    };
-
-    timer = setTimeout(() => {
-      try { child.kill('SIGKILL'); } catch {}
-      finish(new Error(`native video frame prefetch timed out after ${VIDEO_FRAME_PREFETCH_TIMEOUT_MS}ms`));
-    }, VIDEO_FRAME_PREFETCH_TIMEOUT_MS);
-    timer.unref?.();
-
-    child.stdout.on('data', (chunk) => {
-      outputBytes += chunk.length;
-      if (outputBytes > expectedBytes + 4096) {
-        try { child.kill('SIGKILL'); } catch {}
-        finish(new Error(`native video frame prefetch produced too much data (${outputBytes} bytes)`));
-        return;
-      }
-      chunks.push(chunk);
-    });
-    child.stderr.on('data', (chunk) => {
-      stderr.push(Buffer.from(chunk));
-    });
-    child.on('error', (err) => {
-      finish(new Error(`native video frame prefetch failed to launch ffmpeg: ${err?.message || err}`));
-    });
-    child.on('close', (code, signal) => {
-      if (settled) return;
-      const output = Buffer.concat(chunks, outputBytes);
-      if (code !== 0) {
-        const detail = Buffer.concat(stderr).toString('utf8').trim();
-        finish(new Error(`native video frame prefetch ffmpeg failed (${code ?? signal ?? 'unknown'}): ${detail}`));
-        return;
-      }
-      if (output.length < expectedBytes) {
-        const detail = Buffer.concat(stderr).toString('utf8').trim();
-        finish(new Error(`native video frame prefetch decoded ${output.length}/${expectedBytes} bytes${detail ? `: ${detail}` : ''}`));
-        return;
-      }
-      finish(null, {
-        rgba: output.length === expectedBytes ? output : output.subarray(0, expectedBytes),
-        width: targetWidth,
-        height: targetHeight,
-        localPath,
-        byteLength: expectedBytes,
-      });
-    });
-  });
 }
 
 export function nativeRendererCommandNames() {
@@ -388,6 +258,7 @@ export function createNativeRendererBroker({
   platform,
   env = process.env,
   textureShareStatusProvider = null,
+  nativeEditorPreviewStatusProvider = null,
   nativeFrameEncoderStatusProvider = null,
   sharedTextureHandlePreparer = null,
 }) {
@@ -398,6 +269,7 @@ export function createNativeRendererBroker({
     platform,
     env,
     textureShareStatusProvider,
+    nativeEditorPreviewStatusProvider,
     nativeFrameEncoderStatusProvider,
     sharedTextureHandlePreparer,
   });
@@ -411,6 +283,7 @@ class NativeRendererBroker {
     platform,
     env,
     textureShareStatusProvider,
+    nativeEditorPreviewStatusProvider,
     nativeFrameEncoderStatusProvider,
     sharedTextureHandlePreparer,
   }) {
@@ -421,6 +294,8 @@ class NativeRendererBroker {
     this.env = env;
     this.textureShareStatusProvider =
       typeof textureShareStatusProvider === 'function' ? textureShareStatusProvider : null;
+    this.nativeEditorPreviewStatusProvider =
+      typeof nativeEditorPreviewStatusProvider === 'function' ? nativeEditorPreviewStatusProvider : null;
     this.nativeFrameEncoderStatusProvider =
       typeof nativeFrameEncoderStatusProvider === 'function' ? nativeFrameEncoderStatusProvider : null;
     this.sharedTextureHandlePreparer =
@@ -437,8 +312,6 @@ class NativeRendererBroker {
       last_frame_error: 'Native render core has not started',
     });
     this.stats = makeDefaultStats();
-    this.videoFramePrefetchCache = new Map();
-    this.videoFramePrefetchCacheMaxEntries = VIDEO_FRAME_PREFETCH_CACHE_MAX_ENTRIES;
     this.capabilities = makeDefaultCapabilities({
       backend: this.lastStatus.backend,
       platform: this.platform,
@@ -470,6 +343,7 @@ class NativeRendererBroker {
       if (command === 'native_renderer_get_output_shared_texture') {
         return makeDefaultOutputSharedTexture(this.platform);
       }
+      if (command === 'native_renderer_get_output_shared_texture_snapshot') return null;
       if (command === 'native_renderer_get_capabilities') return this.capabilities;
       if (command === 'native_renderer_get_decode_capabilities') return this.withBrokerDecodeCapabilities(this.decodeCapabilities());
       if (command === 'native_renderer_get_readiness_report') return this.readinessReport();
@@ -497,6 +371,8 @@ class NativeRendererBroker {
           fallback: makeDefaultOutputSharedTexture(this.platform),
           timeoutMs: 2500,
         });
+      case 'native_renderer_get_output_shared_texture_snapshot':
+        return this.sendIfRunning('output_shared_texture_snapshot', args, { fallback: null, timeoutMs: 10000 });
       case 'native_renderer_set_stage3d_scene':
         return this.sendIfRunning('set_stage3d_scene', args, { fallback: null, timeoutMs: 2500 });
       case 'native_renderer_get_stage3d_scene_summary':
@@ -521,9 +397,9 @@ class NativeRendererBroker {
         };
         return this.sendIfRunning('reset_stats', args, { fallback: null });
       case 'native_renderer_submit_batch':
-        return this.sendNativeCommandPayloadIfRunning('submit_batch', args, { fallback: null, timeoutMs: 2500 });
+        return this.sendNativeCommandPayloadIfRunning('submit_batch', args, { fallback: null, timeoutMs: 5000 });
       case 'native_renderer_submit_commands':
-        return this.sendNativeCommandPayloadIfRunning('submit_commands', args, { fallback: null, timeoutMs: 2500 });
+        return this.sendNativeCommandPayloadIfRunning('submit_commands', args, { fallback: null, timeoutMs: 5000 });
       case 'native_renderer_run_compute_graph':
         return this.sendNativeComputeGraphPayloadIfRunning('compute_graph', args, { fallback: null, timeoutMs: 10000 });
       case 'native_renderer_upload_source_gpu_shared_texture':
@@ -640,13 +516,15 @@ class NativeRendererBroker {
       const features = this.capabilities?.features && typeof this.capabilities.features === 'object'
         ? this.capabilities.features
         : {};
-      if (
+      const coreVideoPrefetchReady = !!(
         features.native_video_frame_decode &&
+        features.native_video_frame_prefetch &&
+        features.native_video_decode_pump &&
         (this.capabilities?.implemented_methods ?? []).includes('prefetch_media') &&
-        this.env.GA_FORCE_BROKER_VIDEO_PREFETCH !== '1' &&
         this.child &&
         !this.child.killed
-      ) {
+      );
+      if (coreVideoPrefetchReady) {
         try {
           const result = await this.send(
             'prefetch_media',
@@ -661,6 +539,11 @@ class NativeRendererBroker {
               prefetch_window_frames:
                 args.prefetch_window_frames ?? args.prefetchWindowFrames ?? args.window_frames ?? args.windowFrames,
               prefetch_fps: args.prefetch_fps ?? args.prefetchFps ?? args.fps,
+              playback_rate: args.playback_rate ?? args.playbackRate,
+              loop_enabled: args.loop_enabled ?? args.loopEnabled,
+              duration_seconds: args.duration_seconds ?? args.durationSeconds,
+              trim_start: args.trim_start ?? args.trimStart,
+              trim_end: args.trim_end ?? args.trimEnd,
               seq: args.seq,
             },
             { timeoutMs: VIDEO_FRAME_PREFETCH_TIMEOUT_MS + 2500 },
@@ -673,12 +556,9 @@ class NativeRendererBroker {
           }
         }
       }
-      return this.prefetchVideoFrame({
-        ...args,
-        source_id: sourceId,
-        sourceId,
-        uri,
-      });
+      throw new Error(
+        'native video prefetch requires the render-core video decode pump; Electron FFmpeg source-frame bridging is disabled in native-engine-only mode',
+      );
     }
     if (!imageSource) {
       throw new Error(
@@ -713,130 +593,6 @@ class NativeRendererBroker {
       { fallback: null, timeoutMs: 5000 },
     );
     return this.getStatus();
-  }
-
-  async prefetchVideoFrame(args = {}) {
-    const sourceId = String(args.source_id ?? args.sourceId ?? '').trim();
-    const uri = String(args.uri ?? args.src ?? '').trim();
-    if (!sourceId) {
-      throw new Error('native video frame prefetch requires source_id');
-    }
-    if (!uri) {
-      throw new Error('native video frame prefetch requires uri');
-    }
-    const width = Number(
-      args.decode_width ?? args.decodeWidth ?? args.width ?? args.decode_size ?? args.decodeSize ?? 256,
-    );
-    const height = Number(
-      args.decode_height ?? args.decodeHeight ?? args.height ?? args.decode_size ?? args.decodeSize ?? width,
-    );
-    const request = this.videoFramePrefetchRequest(
-      uri,
-      width,
-      height,
-      Number(args.time_seconds ?? args.timeSeconds ?? args.time ?? 0),
-    );
-    const prefetchWindowFrames = Math.max(
-      0,
-      Math.min(
-        4,
-        Math.round(
-          Number(args.prefetch_window_frames ?? args.prefetchWindowFrames ?? args.window_frames ?? args.windowFrames ?? 0),
-        ),
-      ),
-    );
-    const prefetchFps = Math.max(
-      1,
-      Math.min(120, Number(args.prefetch_fps ?? args.prefetchFps ?? args.fps ?? 30)),
-    );
-    let frame = this.getCachedVideoFramePrefetch(request);
-    if (!frame) {
-      this.stats.video_frame_prefetch_cache_misses =
-        Number(this.stats.video_frame_prefetch_cache_misses ?? 0) + 1;
-      this.stats.ffmpeg_decode_spawns = Number(this.stats.ffmpeg_decode_spawns ?? 0) + 1;
-      try {
-        frame = await decodeVideoFrameToRgba({
-          uri: request.localPath,
-          width: request.width,
-          height: request.height,
-          timeSeconds: request.seconds,
-          env: this.env,
-          platform: this.platform,
-        });
-        this.stats.ffmpeg_decode_successes = Number(this.stats.ffmpeg_decode_successes ?? 0) + 1;
-        this.storeVideoFramePrefetch(request, frame);
-      } catch (err) {
-        this.stats.ffmpeg_decode_failures = Number(this.stats.ffmpeg_decode_failures ?? 0) + 1;
-        throw err;
-      }
-    }
-    await this.prefetchVideoFrameWindow({
-      uri,
-      width: request.width,
-      height: request.height,
-      timeSeconds: request.seconds,
-      prefetchWindowFrames,
-      prefetchFps,
-    });
-    const submitResult = await this.sendNativeCommandPayloadIfRunning(
-      'submit_commands',
-      {
-        commands: [
-          {
-            type: 'upload_source_frame',
-            source_id: sourceId,
-            width: frame.width,
-            height: frame.height,
-            rgba_buffer: frame.rgba,
-            seq: Number(args.seq ?? Date.now()),
-          },
-        ],
-      },
-      { fallback: null, timeoutMs: VIDEO_FRAME_PREFETCH_TIMEOUT_MS + 2500 },
-    );
-    if (!submitResult) {
-      throw new Error('native video frame prefetch decoded a frame, but the native core did not accept the source-frame upload');
-    }
-    return this.withBrokerVideoFramePrefetchStats(await this.getStatus());
-  }
-
-  async prefetchVideoFrameWindow({
-    uri,
-    width,
-    height,
-    timeSeconds,
-    prefetchWindowFrames = 0,
-    prefetchFps = 30,
-  } = {}) {
-    if (!prefetchWindowFrames) return;
-    const frameStep = 1 / Math.max(1, Math.min(120, Number(prefetchFps) || 30));
-    for (let frameOffset = 1; frameOffset <= prefetchWindowFrames; frameOffset += 1) {
-      const request = this.videoFramePrefetchRequest(
-        uri,
-        width,
-        height,
-        Math.max(0, Number(timeSeconds ?? 0) + frameStep * frameOffset),
-      );
-      if (this.videoFramePrefetchCache.has(request.key)) continue;
-      this.stats.video_frame_prefetch_cache_misses =
-        Number(this.stats.video_frame_prefetch_cache_misses ?? 0) + 1;
-      this.stats.ffmpeg_decode_spawns = Number(this.stats.ffmpeg_decode_spawns ?? 0) + 1;
-      try {
-        const frame = await decodeVideoFrameToRgba({
-          uri: request.localPath,
-          width: request.width,
-          height: request.height,
-          timeSeconds: request.seconds,
-          env: this.env,
-          platform: this.platform,
-        });
-        this.stats.ffmpeg_decode_successes = Number(this.stats.ffmpeg_decode_successes ?? 0) + 1;
-        this.storeVideoFramePrefetch(request, frame);
-      } catch (err) {
-        this.stats.ffmpeg_decode_failures = Number(this.stats.ffmpeg_decode_failures ?? 0) + 1;
-        break;
-      }
-    }
   }
 
   async clearPrefetchCache() {
@@ -882,24 +638,38 @@ class NativeRendererBroker {
     const features = this.capabilities?.features && typeof this.capabilities.features === 'object'
       ? this.capabilities.features
       : {};
+    const nativeVideoReady = !!(
+      features.native_media_decode &&
+      features.media_prefetch &&
+      features.native_video_frame_decode &&
+      features.native_video_frame_prefetch &&
+      features.native_video_decode_pump &&
+      features.native_video_decode_pump_window
+    );
+    const supportedSourceTypes = features.native_static_image_decode ? ['image'] : [];
+    if (nativeVideoReady) supportedSourceTypes.push('video');
     return {
       schema_version: 1,
       native_static_image_decode: !!features.native_static_image_decode,
       native_static_image_prefetch: !!features.native_static_image_prefetch,
       native_media_decode: !!features.native_media_decode,
       media_prefetch: !!features.media_prefetch,
-      video_decode: !!features.native_media_decode,
-      source_frame_fallback: !!features.source_frame_upload,
+      video_decode: nativeVideoReady,
+      native_video_frame_decode: !!features.native_video_frame_decode,
+      native_video_frame_prefetch: !!features.native_video_frame_prefetch,
+      native_video_decode_pump: !!features.native_video_decode_pump,
+      native_video_decode_pump_window: !!features.native_video_decode_pump_window,
+      source_frame_fallback: false,
       shared_texture_source_frame_upload: !!features.shared_texture_source_frame_upload,
       shared_texture_upload: !!features.shared_texture_upload,
-      supported_source_types: features.native_static_image_decode ? ['image'] : [],
+      supported_source_types: supportedSourceTypes,
       supported_static_image_extensions: Array.from(STATIC_IMAGE_EXTENSIONS).map((ext) => ext.slice(1)),
       notes: features.native_static_image_decode
         ? [
             'Local still images can decode directly into native source-frame textures.',
-            features.native_media_decode && features.media_prefetch
+            nativeVideoReady
               ? 'Local videos decode through the native render-clock pump into source-frame textures; supported shared media sources use OS texture handles.'
-              : 'Video decode/prefetch falls back when the native media pump is unavailable in the current core capabilities.',
+              : 'Video decode/prefetch stays unavailable until the native media pump is present in the core capabilities.',
           ]
         : ['Native render core is not running or does not advertise static image decode.'],
     };
@@ -907,35 +677,36 @@ class NativeRendererBroker {
 
   withBrokerDecodeCapabilities(caps = {}) {
     const videoFramePrefetch = this.videoFramePrefetchStatus();
+    const coreVideoReady = !!(
+      caps.native_media_decode &&
+      caps.media_prefetch &&
+      caps.native_video_frame_decode &&
+      caps.native_video_frame_prefetch &&
+      caps.native_video_decode_pump &&
+      caps.native_video_decode_pump_window
+    );
     const supportedSourceTypes = new Set(
       Array.isArray(caps.supported_source_types) ? caps.supported_source_types.map(String) : [],
     );
-    if (videoFramePrefetch.available) supportedSourceTypes.add('video');
+    if (coreVideoReady) supportedSourceTypes.add('video');
     const notes = Array.isArray(caps.notes) ? caps.notes.map(String) : [];
     if (
-      videoFramePrefetch.available &&
-      caps.native_media_decode &&
-      caps.media_prefetch &&
+      coreVideoReady &&
       !notes.some((note) => note.includes('Local video files decode from native media clocks'))
     ) {
       notes.push(
-        'Local video files decode from native media clocks through the render-clock pump, with adjacent FFmpeg frame windows cached in core source-frame textures.',
-      );
-    } else if (
-      videoFramePrefetch.available &&
-      !notes.some((note) => note.includes('Local video files can prefetch bounded FFmpeg-decoded frames'))
-    ) {
-      notes.push(
-        'Local video files can prefetch bounded FFmpeg-decoded frames and adjacent-frame windows into native source-frame textures while the render-clock pump is unavailable.',
+        'Local video files decode from native media clocks through the render-clock pump, with adjacent frame windows cached in core source-frame textures.',
       );
     }
     return {
       ...caps,
-      native_video_frame_prefetch: !!videoFramePrefetch.available,
-      native_video_frame_prefetch_window: !!videoFramePrefetch.available,
-      video_frame_prefetch: !!videoFramePrefetch.available,
-      video_frame_prefetch_encoder: videoFramePrefetch.available ? 'ffmpeg' : null,
-      video_frame_prefetch_path: videoFramePrefetch.ffmpegPath ?? null,
+      native_video_frame_prefetch: !!(caps.native_video_frame_prefetch || coreVideoReady),
+      native_video_frame_prefetch_window: !!(caps.native_video_frame_prefetch_window || coreVideoReady),
+      video_frame_prefetch: !!(caps.video_frame_prefetch || coreVideoReady),
+      video_frame_prefetch_encoder: coreVideoReady
+        ? 'native-render-core'
+        : (videoFramePrefetch.available ? 'ffmpeg-diagnostic' : null),
+      video_frame_prefetch_path: videoFramePrefetch.available ? videoFramePrefetch.ffmpegPath : null,
       supported_source_types: Array.from(supportedSourceTypes),
       supported_video_extensions: Array.from(VIDEO_EXTENSIONS).map((ext) => ext.slice(1)),
       notes,
@@ -1025,6 +796,7 @@ class NativeRendererBroker {
         core_capabilities_error: null,
       },
       this.textureShareStatus(),
+      this.nativeEditorPreviewStatus(),
       this.nativeFrameEncoderStatus(),
       this.videoFramePrefetchStatus(),
       this.platform,
@@ -1156,12 +928,16 @@ class NativeRendererBroker {
     const managedOutputFrameCount = Number(
       this.lastStatus.swapchain_presented ?? this.lastStatus.frames_presented ?? 0,
     );
+    const managedSceneLayerCount = Number(this.lastStatus.scene_layers_active ?? this.lastStatus.layers_seen ?? 0);
+    const managedLastPresentedLayerCount = Number(this.lastStatus.output_last_presented_layer_count ?? 0);
+    const managedOutputHasScene = managedSceneLayerCount <= 0 || managedLastPresentedLayerCount > 0;
     const managedOutputOk = !!(
       features.managed_output_attach &&
       this.lastStatus.output_window_attached &&
       this.lastStatus.output_swapchain_ready &&
       this.lastStatus.output_present_healthy &&
-      managedOutputFrameCount > 0
+      managedOutputFrameCount > 0 &&
+      managedOutputHasScene
     );
     const managedOutputDetail = !features.managed_output_attach
       ? 'managed output attach is not implemented'
@@ -1169,9 +945,11 @@ class NativeRendererBroker {
         ? 'native output window is detached/hidden'
         : managedOutputFrameCount <= 0
           ? `waiting for first native swapchain present; last=${this.lastStatus.swapchain_last_present_result || 'none'}`
+          : !managedOutputHasScene
+            ? `native output is presenting, but the last presented frame had no scene layers (active scene layers=${managedSceneLayerCount})`
           : this.lastStatus.output_present_consecutive_failures > 0
             ? `native output present has ${this.lastStatus.output_present_consecutive_failures} consecutive failure(s); last=${this.lastStatus.swapchain_last_present_result || 'none'}`
-            : `presented ${managedOutputFrameCount} native swapchain frame(s)`;
+            : `presented ${managedOutputFrameCount} native swapchain frame(s), last layer count=${managedLastPresentedLayerCount}`;
     const nativeTextureShareSenderOk = !!(
       outputSharedTextureExport.ok &&
       textureShare?.available &&
@@ -1251,8 +1029,7 @@ class NativeRendererBroker {
       features.native_video_frame_decode &&
       features.native_video_frame_prefetch &&
       features.native_video_decode_pump &&
-      features.native_video_decode_pump_window &&
-      videoFramePrefetch.available
+      features.native_video_decode_pump_window
     );
     const nativeStage3DOutputOk = !!(
       features.native_stage3d &&
@@ -1264,11 +1041,52 @@ class NativeRendererBroker {
       features.native_projection_sim_output_renderer &&
       features.native_projection_sim_recording_parity
     );
+    const nativeIsfGlslParseProbeOk = !!features.isf_glsl_parse_probe;
+    const nativeIsfGlslParseProbeDetail = nativeIsfGlslParseProbeOk
+      ? 'raw ISF/GLSL .fs sources are classified and parsed inside the native core'
+      : 'native ISF/GLSL parser probe is unavailable';
+    const nativeIsfGlslHostOk = !!features.isf_glsl_host;
+    const nativeIsfGlslHostDetail = nativeIsfGlslHostOk
+      ? 'raw ISF/GLSL .fs shader hosting is active in the native renderer; corpus coverage is tracked by native:isf-corpus'
+      : 'raw ISF/GLSL .fs shader hosting is pending; WGSL fragment hosting is not the ISF translator';
+    const nativeEditorPreview = this.capabilities?.native_editor_preview && typeof this.capabilities.native_editor_preview === 'object'
+      ? this.capabilities.native_editor_preview
+      : {};
+    const nativeEditorPreviewFrameSourceOk = !!(
+      features.native_editor_preview_frame_source &&
+      outputSharedTextureExport.ok &&
+      nativeEditorPreview.source === 'core-output-composite' &&
+      nativeEditorPreview.single_render === true
+    );
+    const nativeEditorPreviewFrameSourceDetail = nativeEditorPreviewFrameSourceOk
+      ? `native core-output-composite frame source is available for the editor presenter; browser GPU instruments disabled`
+      : 'editor preview is unavailable or missing the native core-output-composite frame source';
+    const nativeEditorPreviewMode = String(nativeEditorPreview.mode || '');
+    const nativeEditorPreviewPresentation = String(nativeEditorPreview.presentation || '');
+    const nativeEditorPreviewProductionPresenterOk = (
+      nativeEditorPreviewPresentation === 'underlay-zero-copy' ||
+      nativeEditorPreviewMode === 'shared-texture-import-blit' ||
+      nativeEditorPreviewMode === 'external-texture-import'
+    );
+    const nativeEditorPreviewProductionOk = !!(
+      nativeEditorPreviewFrameSourceOk &&
+      nativeEditorPreview.production_ready === true &&
+      nativeEditorPreview.needs_underlay_lock_in === false &&
+      nativeEditorPreviewProductionPresenterOk
+    );
+    const nativeEditorPreviewProductionDetail = nativeEditorPreviewProductionOk
+      ? `editor preview is production zero-copy via ${nativeEditorPreviewMode || nativeEditorPreviewPresentation}`
+      : nativeEditorPreviewFrameSourceOk
+        ? `editor preview is native-sourced but not production zero-copy yet (mode=${nativeEditorPreviewMode || 'unknown'}, presentation=${nativeEditorPreviewPresentation || 'unknown'}, needsEmbeddedPresenter=${nativeEditorPreview.needs_underlay_lock_in !== false})`
+        : nativeEditorPreviewFrameSourceDetail;
     const fullNativeV2Blockers = [
       nativeOutputDriverOk ? null : 'native output driver is not ready',
       sourceFrameSharedTextureImport.ok ? null : 'source-frame shared texture import is not ready',
       outputSharedTextureExport.ok ? null : 'native output shared-texture export contract is not ready',
       effectPassManifestOk ? null : 'native source-frame effect-pass route is not ready',
+      nativeIsfGlslHostOk ? null : 'native ISF/GLSL shader host is pending',
+      nativeEditorPreviewFrameSourceOk ? null : 'editor preview is not using the native frame source',
+      nativeEditorPreviewProductionOk ? null : 'editor preview presenter is not production zero-copy',
       features.shared_texture_upload ? null : 'full shared-texture media transport is pending',
       nativeMediaDecodeOk ? null : 'native render-clock video decode pump is not fully ready',
       nativeTextureShareSenderOk ? null : `${this.platform === 'darwin' ? 'Syphon' : 'Spout'} native texture-share sender is not active-ready`,
@@ -1286,6 +1104,18 @@ class NativeRendererBroker {
       ],
       ['shared-texture-upload', 'Shared texture media transport', !!features.shared_texture_upload],
       [
+        'native-isf-glsl-parse-probe',
+        'Native ISF/GLSL parse probe',
+        nativeIsfGlslParseProbeOk,
+        nativeIsfGlslParseProbeDetail,
+      ],
+      [
+        'native-isf-glsl-host',
+        'Native ISF/GLSL shader host',
+        nativeIsfGlslHostOk,
+        nativeIsfGlslHostDetail,
+      ],
+      [
         'native-output-mirror',
         'Native offscreen output mirror',
         !!features.native_output_mirror_texture,
@@ -1302,6 +1132,18 @@ class NativeRendererBroker {
         this.platform === 'darwin' ? 'Native Syphon sender' : 'Native Spout sender',
         nativeTextureShareSenderOk,
         nativeTextureShareSenderDetail,
+      ],
+      [
+        'native-editor-preview-frame-source',
+        'Native editor preview source',
+        nativeEditorPreviewFrameSourceOk,
+        nativeEditorPreviewFrameSourceDetail,
+      ],
+      [
+        'native-editor-preview-production',
+        'Native editor preview zero-copy presenter',
+        nativeEditorPreviewProductionOk,
+        nativeEditorPreviewProductionDetail,
       ],
       [
         'native-frame-sequence-export',
@@ -1332,10 +1174,15 @@ class NativeRendererBroker {
       [
         'native-video-frame-prefetch',
         'Native local video frame prefetch',
-        !!features.native_video_frame_prefetch && !!videoFramePrefetch.available,
-        videoFramePrefetch.available
-          ? `local videos can prefetch a bounded FFmpeg-decoded timestamped frame via ${videoFramePrefetch.ffmpegPath}`
-          : (videoFramePrefetch.reason || 'desktop FFmpeg video frame prefetch is unavailable'),
+        !!(
+          features.native_media_decode &&
+          features.media_prefetch &&
+          features.native_video_frame_decode &&
+          features.native_video_frame_prefetch
+        ),
+        features.native_video_frame_prefetch
+          ? 'local videos prefetch timestamped frames through the native render-core decode path'
+          : 'native render-core video frame prefetch is unavailable',
       ],
       [
         'native-video-decode-pump',
@@ -1579,6 +1426,23 @@ class NativeRendererBroker {
     }
   }
 
+  nativeEditorPreviewStatus() {
+    if (!this.nativeEditorPreviewStatusProvider) return null;
+    try {
+      return this.nativeEditorPreviewStatusProvider() || null;
+    } catch (err) {
+      return {
+        available: false,
+        attached: false,
+        pumpActive: false,
+        mode: 'unavailable',
+        presentation: 'unavailable',
+        transport: this.platform === 'darwin' ? 'iosurface' : this.platform === 'win32' ? 'dxgi' : 'none',
+        error: err?.message || String(err),
+      };
+    }
+  }
+
   nativeFrameEncoderStatus() {
     if (!this.nativeFrameEncoderStatusProvider) {
       return {
@@ -1616,101 +1480,25 @@ class NativeRendererBroker {
     return videoFramePrefetchStatus(this.env, this.platform);
   }
 
-  videoFramePrefetchRequest(uri, width, height, timeSeconds = 0) {
-    const localPath = resolveLocalMediaPath(uri);
-    if (!localPath) {
-      throw new Error('native video frame prefetch currently supports local video files only');
-    }
-    let stat = null;
-    try {
-      stat = fs.statSync(localPath);
-    } catch (err) {
-      throw new Error(`native video frame prefetch cannot read ${localPath}: ${err?.message || err}`);
-    }
-    if (!stat.isFile()) {
-      throw new Error(`native video frame prefetch expected a file: ${localPath}`);
-    }
-    const targetWidth = Math.max(16, Math.min(4096, Math.round(Number(width) || 256)));
-    const targetHeight = Math.max(16, Math.min(4096, Math.round(Number(height) || targetWidth)));
-    const seconds = Math.max(0, Math.min(3600, Number(timeSeconds) || 0));
-    const frameBucket = Math.max(0, Math.round(seconds * VIDEO_FRAME_PREFETCH_CACHE_FPS));
-    const key = [
-      localPath,
-      Number(stat.size) || 0,
-      Math.round(Number(stat.mtimeMs) || 0),
-      targetWidth,
-      targetHeight,
-      frameBucket,
-    ].join('|');
-    return { key, localPath, width: targetWidth, height: targetHeight, seconds, frameBucket };
-  }
-
   videoFramePrefetchCacheStats() {
-    let bytes = 0;
-    for (const entry of this.videoFramePrefetchCache.values()) {
-      bytes += Number(entry?.byteLength ?? entry?.rgba?.length ?? 0);
-    }
     return {
-      video_frame_prefetch_cache_entries: this.videoFramePrefetchCache.size,
-      video_frame_prefetch_cache_bytes: bytes,
-      video_frame_prefetch_cache_hits: Number(this.stats.video_frame_prefetch_cache_hits ?? 0),
-      video_frame_prefetch_cache_misses: Number(this.stats.video_frame_prefetch_cache_misses ?? 0),
+      video_frame_prefetch_cache_entries: 0,
+      video_frame_prefetch_cache_bytes: 0,
+      video_frame_prefetch_cache_hits: 0,
+      video_frame_prefetch_cache_misses: 0,
       video_frame_prefetch_cache_clears: Number(this.stats.video_frame_prefetch_cache_clears ?? 0),
-      video_frame_prefetch_cache_max_entries: this.videoFramePrefetchCacheMaxEntries,
+      video_frame_prefetch_cache_max_entries: 0,
     };
-  }
-
-  withBrokerVideoFramePrefetchStats(status = this.lastStatus) {
-    const normalized = normalizeStatus(status, this.lastStatus);
-    this.lastStatus = {
-      ...normalized,
-      ...this.videoFramePrefetchCacheStats(),
-    };
-    return this.lastStatus;
-  }
-
-  getCachedVideoFramePrefetch(request) {
-    const entry = this.videoFramePrefetchCache.get(request.key);
-    if (!entry) return null;
-    this.videoFramePrefetchCache.delete(request.key);
-    this.videoFramePrefetchCache.set(request.key, entry);
-    this.stats.video_frame_prefetch_cache_hits =
-      Number(this.stats.video_frame_prefetch_cache_hits ?? 0) + 1;
-    return {
-      rgba: Buffer.from(entry.rgba),
-      width: entry.width,
-      height: entry.height,
-      localPath: request.localPath,
-      byteLength: entry.byteLength,
-    };
-  }
-
-  storeVideoFramePrefetch(request, frame) {
-    const byteLength = Number(frame.byteLength ?? frame.rgba?.length ?? request.width * request.height * 4);
-    this.videoFramePrefetchCache.set(request.key, {
-      rgba: Buffer.from(frame.rgba),
-      width: Number(frame.width ?? request.width),
-      height: Number(frame.height ?? request.height),
-      byteLength,
-      frameBucket: request.frameBucket,
-    });
-    while (this.videoFramePrefetchCache.size > this.videoFramePrefetchCacheMaxEntries) {
-      const oldestKey = this.videoFramePrefetchCache.keys().next().value;
-      if (!oldestKey) break;
-      this.videoFramePrefetchCache.delete(oldestKey);
-    }
   }
 
   clearBrokerVideoFramePrefetchCache() {
-    const cleared = this.videoFramePrefetchCache.size;
-    if (cleared > 0) this.videoFramePrefetchCache.clear();
     this.stats.video_frame_prefetch_cache_clears =
       Number(this.stats.video_frame_prefetch_cache_clears ?? 0) + 1;
     this.lastStatus = {
       ...this.lastStatus,
       ...this.videoFramePrefetchCacheStats(),
     };
-    return cleared;
+    return 0;
   }
 
   unsupportedError(command) {
@@ -1735,11 +1523,7 @@ class NativeRendererBroker {
   async sendIfRunning(method, params, { fallback = null, timeoutMs = 2500 } = {}) {
     if (!this.child || this.child.killed) return fallback;
     return this.send(method, params, { timeoutMs }).catch((err) => {
-      this.lastStatus = {
-        ...this.lastStatus,
-        backend_ready: false,
-        last_frame_error: err?.message || String(err),
-      };
+      this.noteTransientRpcFailure(method, err);
       return fallback;
     });
   }
@@ -1753,11 +1537,7 @@ class NativeRendererBroker {
       console.warn('[NativeRenderer] native command file handoff failed; falling back to JSON payload', err);
     }
     return this.send(method, prepared, { timeoutMs }).catch((err) => {
-      this.lastStatus = {
-        ...this.lastStatus,
-        backend_ready: false,
-        last_frame_error: err?.message || String(err),
-      };
+      this.noteTransientRpcFailure(method, err);
       return fallback;
     });
   }
@@ -1771,13 +1551,30 @@ class NativeRendererBroker {
       console.warn('[NativeRenderer] native compute graph file handoff failed; falling back to JSON payload', err);
     }
     return this.send(method, prepared, { timeoutMs }).catch((err) => {
-      this.lastStatus = {
-        ...this.lastStatus,
-        backend_ready: false,
-        last_frame_error: err?.message || String(err),
-      };
+      this.noteTransientRpcFailure(method, err);
       return fallback;
     });
+  }
+
+  noteTransientRpcFailure(method, err) {
+    const message = err?.message || String(err);
+    this.lastStatus = {
+      ...this.lastStatus,
+      last_rpc_error: message,
+      last_rpc_error_method: method,
+      last_rpc_error_at_ms: Date.now(),
+    };
+    console.warn(`[NativeRenderer] transient RPC failure during ${method}: ${message}`);
+  }
+
+  clearTransientRpcFailure() {
+    if (!this.lastStatus.last_rpc_error) return;
+    this.lastStatus = {
+      ...this.lastStatus,
+      last_rpc_error: '',
+      last_rpc_error_method: '',
+      last_rpc_error_at_ms: 0,
+    };
   }
 
   send(method, params = {}, { timeoutMs = 2500 } = {}) {
@@ -1792,7 +1589,7 @@ class NativeRendererBroker {
         reject(new Error(`Native render core timed out handling ${method}`));
       }, timeoutMs);
       timer.unref?.();
-      this.pending.set(id, { resolve, reject, timer });
+      this.pending.set(id, { resolve, reject, timer, method });
       this.child.stdin.write(`${payload}\n`, (err) => {
         if (!err) return;
         clearTimeout(timer);
@@ -1800,6 +1597,12 @@ class NativeRendererBroker {
         reject(err);
       });
     });
+  }
+
+  notify(method, params = {}) {
+    if (!this.child || !this.child.stdin?.writable) return false;
+    const payload = JSON.stringify({ id: 0, method, params });
+    return this.child.stdin.write(`${payload}\n`);
   }
 
   prepareNativeCommandPayload(params) {
@@ -1999,8 +1802,12 @@ class NativeRendererBroker {
     if (!pending) return;
     clearTimeout(pending.timer);
     this.pending.delete(message.id);
-    if (message.ok) pending.resolve(message.result);
-    else pending.reject(new Error(message.error || 'Native render core command failed'));
+    if (message.ok) {
+      this.clearTransientRpcFailure();
+      pending.resolve(message.result);
+    } else {
+      pending.reject(new Error(message.error || 'Native render core command failed'));
+    }
   }
 
   rejectPending(err) {
@@ -2215,8 +2022,27 @@ function outputSharedTextureExportReadiness(capabilities, platform = process.pla
   if (handleByteLength !== expected.handleByteLength) {
     missing.push(`handle_byte_length ${handleByteLength || 'missing'} != ${expected.handleByteLength}`);
   }
-  for (const format of stringListMissing(contract.exported_formats, ['bgra8unorm', 'bgra8unorm-srgb'])) {
-    missing.push(`exported format ${format}`);
+  const exportedFormats = Array.isArray(contract.exported_formats)
+    ? contract.exported_formats.map(String)
+    : [];
+  if (exportedFormats.length !== 1 || exportedFormats[0] !== 'bgra8unorm') {
+    missing.push(`exported_formats ${JSON.stringify(exportedFormats)} != ["bgra8unorm"]`);
+  }
+  for (const [key, expectedValue] of [
+    ['color_space', 'srgb'],
+    ['storage_format', 'bgra8unorm'],
+    ['storage_encoding', 'srgb-encoded-bgra8unorm'],
+    ['alpha_mode', 'opaque'],
+    ['single_render_source', 'core-output-composite'],
+  ]) {
+    const actual = String(contract[key] ?? '');
+    if (actual !== expectedValue) missing.push(`${key} ${JSON.stringify(actual)} != ${JSON.stringify(expectedValue)}`);
+  }
+  if (contract.premultiplied_alpha !== false) {
+    missing.push('premultiplied_alpha must be false');
+  }
+  if (contract.zero_conversions !== true) {
+    missing.push('zero_conversions must be true');
   }
 
   if (missing.length) {
@@ -2227,7 +2053,7 @@ function outputSharedTextureExportReadiness(capabilities, platform = process.pla
   }
   return {
     ok: true,
-    detail: `${expected.exporter} output export active for ${expected.platform} ${expected.preferredTransport} transport`,
+    detail: `${expected.exporter} output export active for ${expected.platform} ${expected.preferredTransport} transport; bgra8unorm storage tagged srgb`,
   };
 }
 
@@ -2315,7 +2141,14 @@ function normalizeCapabilities(capabilities, previous = makeDefaultCapabilities(
   };
 }
 
-function applyBrokerCapabilityOverlay(capabilities, textureShare, nativeFrameEncoder = null, videoFramePrefetch = null, platform = process.platform) {
+function applyBrokerCapabilityOverlay(
+  capabilities,
+  textureShare,
+  nativeEditorPreview = null,
+  nativeFrameEncoder = null,
+  videoFramePrefetch = null,
+  platform = process.platform,
+) {
   const features = capabilities?.features && typeof capabilities.features === 'object'
     ? { ...capabilities.features }
     : {};
@@ -2339,10 +2172,6 @@ function applyBrokerCapabilityOverlay(capabilities, textureShare, nativeFrameEnc
     nativeFrameExportReady &&
     (features.native_recording || features.native_mp4_frame_encoder)
   );
-  features.native_video_frame_prefetch = !!(
-    features.native_video_frame_prefetch ||
-    videoFramePrefetch?.available
-  );
   features.video_frame_prefetch = !!(
     features.video_frame_prefetch ||
     features.native_video_frame_prefetch
@@ -2356,6 +2185,66 @@ function applyBrokerCapabilityOverlay(capabilities, textureShare, nativeFrameEnc
   features.native_effect_pass_manifest = !!(
     features.native_effect_pass_manifest ||
     nativeEffectPassHostReady
+  );
+  const baseEditorPreview = capabilities?.native_editor_preview && typeof capabilities.native_editor_preview === 'object'
+    ? capabilities.native_editor_preview
+    : {};
+  const editorPreviewFrameSourceReady = !!(
+    outputSharedTextureExport.ok &&
+    baseEditorPreview.source === 'core-output-composite' &&
+    baseEditorPreview.single_render === true
+  );
+  const nativeEditorPreviewFramesPresented = Number(
+    nativeEditorPreview?.lastPresentedFrame ??
+    nativeEditorPreview?.framesPresented ??
+    nativeEditorPreview?.addonStatus?.framesPresented ??
+    0,
+  );
+  const nativeEditorPreviewProductionReady = !!(
+    editorPreviewFrameSourceReady &&
+    nativeEditorPreview?.available &&
+    nativeEditorPreview?.attached &&
+    nativeEditorPreview?.pumpActive &&
+    nativeEditorPreviewFramesPresented > 0 &&
+    (
+      nativeEditorPreview.presentation === 'underlay-zero-copy' ||
+      nativeEditorPreview.mode === 'shared-texture-import-blit' ||
+      nativeEditorPreview.mode === 'external-texture-import'
+    )
+  );
+  const nativeEditorPreviewMerged = {
+    ...baseEditorPreview,
+    available: !!nativeEditorPreview?.available,
+    mode: nativeEditorPreview?.mode || baseEditorPreview.mode || 'embedded-presenter-pending',
+    presentation: nativeEditorPreview?.presentation || baseEditorPreview.presentation || 'unavailable',
+    needs_underlay_lock_in: !nativeEditorPreviewProductionReady,
+    production_ready: nativeEditorPreviewProductionReady,
+    parented: !!nativeEditorPreview?.attached,
+    source: editorPreviewFrameSourceReady ? 'core-output-composite' : (baseEditorPreview.source || 'native-unavailable'),
+    single_render: editorPreviewFrameSourceReady,
+    transport: nativeEditorPreview?.transport || baseEditorPreview.transport || (platform === 'darwin' ? 'iosurface' : platform === 'win32' ? 'dxgi' : 'none'),
+    color_space: baseEditorPreview.color_space || 'srgb',
+    storage_format: baseEditorPreview.storage_format || 'bgra8unorm',
+    storage_encoding: baseEditorPreview.storage_encoding || 'srgb-encoded-bgra8unorm',
+    alpha_mode: baseEditorPreview.alpha_mode || 'opaque',
+    premultiplied_alpha: baseEditorPreview.premultiplied_alpha === true,
+    zero_conversions: baseEditorPreview.zero_conversions !== false,
+    frames_presented: nativeEditorPreviewFramesPresented,
+    reason: nativeEditorPreviewProductionReady
+      ? 'editor preview is attached as an embedded zero-copy presenter fed by the native core output composite'
+      : editorPreviewFrameSourceReady
+        ? (nativeEditorPreview?.error
+          ? `embedded native editor presenter is not ready: ${nativeEditorPreview.error}`
+          : 'native core-output composite is available; embedded editor presenter has not presented a frame yet')
+        : 'native output shared-texture export is unavailable',
+  };
+  features.native_editor_preview_frame_source = !!(
+    features.native_editor_preview_frame_source ||
+    editorPreviewFrameSourceReady
+  );
+  features.native_editor_preview_production = !!(
+    features.native_editor_preview_production ||
+    nativeEditorPreviewProductionReady
   );
 
   const notes = Array.isArray(capabilities?.notes) ? [...capabilities.notes] : [];
@@ -2375,11 +2264,18 @@ function applyBrokerCapabilityOverlay(capabilities, textureShare, nativeFrameEnc
     videoFramePrefetch?.available &&
     !notes.some((note) => String(note).includes('Electron video frame prefetch bridge'))
   ) {
-    notes.push('Electron video frame prefetch bridge can decode bounded local-video frames at requested timestamps into native source-frame textures.');
+    notes.push('Electron video frame prefetch bridge is enabled for diagnostics only; production video frames must come from the native render-core decode pump.');
+  }
+  if (
+    nativeEditorPreviewProductionReady &&
+    !notes.some((note) => String(note).includes('Editor preview is using the embedded native presenter'))
+  ) {
+    notes.push('Editor preview is using the embedded native presenter; browser-side GPU instrument rendering is not active.');
   }
 
   return {
     ...capabilities,
+    native_editor_preview: nativeEditorPreviewMerged,
     native_effect_pass_descriptors: nativeEffectPassHostReady
       ? NATIVE_EFFECT_PASS_DESCRIPTORS.map((entry) => ({ ...entry }))
       : capabilities?.native_effect_pass_descriptors ?? [],
@@ -2524,6 +2420,38 @@ function normalizeStatus(status, previous = makeDefaultStatus()) {
     native_video_frame_cache_evictions: Number(
       status.native_video_frame_cache_evictions ?? previous.native_video_frame_cache_evictions ?? 0,
     ),
+    native_video_sessions: Array.isArray(status.native_video_sessions)
+      ? status.native_video_sessions.map((session) => ({
+          source_id: String(session?.source_id ?? ''),
+          state: String(session?.state ?? 'armed'),
+          buffered_frames: Number(session?.buffered_frames ?? 0),
+          frames_presented: Number(session?.frames_presented ?? 0),
+        }))
+      : (previous.native_video_sessions ?? []),
+    native_video_sessions_armed: Number(
+      status.native_video_sessions_armed ?? previous.native_video_sessions_armed ?? 0,
+    ),
+    native_video_sessions_prerolled: Number(
+      status.native_video_sessions_prerolled ?? previous.native_video_sessions_prerolled ?? 0,
+    ),
+    native_video_sessions_playing: Number(
+      status.native_video_sessions_playing ?? previous.native_video_sessions_playing ?? 0,
+    ),
+    native_video_session_evictions: Number(
+      status.native_video_session_evictions ?? previous.native_video_session_evictions ?? 0,
+    ),
+    video_oneshot_decodes_during_playback: Number(
+      status.video_oneshot_decodes_during_playback ?? previous.video_oneshot_decodes_during_playback ?? 0,
+    ),
+    native_video_trigger_last_latency_us: Number(
+      status.native_video_trigger_last_latency_us ?? previous.native_video_trigger_last_latency_us ?? 0,
+    ),
+    native_video_trigger_max_latency_us: Number(
+      status.native_video_trigger_max_latency_us ?? previous.native_video_trigger_max_latency_us ?? 0,
+    ),
+    native_video_stream_underflows: Number(
+      status.native_video_stream_underflows ?? previous.native_video_stream_underflows ?? 0,
+    ),
     native_instrument_frame_renders: Number(status.native_instrument_frame_renders ?? previous.native_instrument_frame_renders ?? 0),
     compute_graph_runs: Number(status.compute_graph_runs ?? previous.compute_graph_runs ?? 0),
     compute_graph_passes: Number(status.compute_graph_passes ?? previous.compute_graph_passes ?? 0),
@@ -2558,6 +2486,13 @@ function normalizeStatus(status, previous = makeDefaultStatus()) {
     render_clock_frame_index: Number(status.render_clock_frame_index ?? previous.render_clock_frame_index ?? 0),
     render_clock_updates: Number(status.render_clock_updates ?? previous.render_clock_updates ?? 0),
     decode_backend: status.decode_backend || previous.decode_backend || defaultDecodeBackend(),
+    last_rpc_error: status.last_rpc_error
+      ? String(status.last_rpc_error)
+      : String(previous.last_rpc_error ?? ''),
+    last_rpc_error_method: status.last_rpc_error_method
+      ? String(status.last_rpc_error_method)
+      : String(previous.last_rpc_error_method ?? ''),
+    last_rpc_error_at_ms: Number(status.last_rpc_error_at_ms || previous.last_rpc_error_at_ms || 0),
     output_width: Number(status.output_width ?? status.width ?? previous.output_width ?? 1920),
     output_height: Number(status.output_height ?? status.height ?? previous.output_height ?? 1080),
     output_format: String(status.output_format ?? previous.output_format ?? 'unknown'),
@@ -2607,7 +2542,7 @@ function normalizeStatus(status, previous = makeDefaultStatus()) {
     video_frame_prefetch_cache_max_entries: Number(
       status.video_frame_prefetch_cache_max_entries ??
         previous.video_frame_prefetch_cache_max_entries ??
-        VIDEO_FRAME_PREFETCH_CACHE_MAX_ENTRIES,
+        0,
     ),
     media_drop_command_pressure_pct: Number(
       status.media_drop_command_pressure_pct ?? previous.media_drop_command_pressure_pct ?? 90,
@@ -2754,6 +2689,10 @@ function normalizeStatus(status, previous = makeDefaultStatus()) {
     shader_precompile_failed: Number(status.shader_precompile_failed ?? previous.shader_precompile_failed ?? 0),
     shader_precompile_dropped: Number(status.shader_precompile_dropped ?? previous.shader_precompile_dropped ?? 0),
     layers_seen: Number(status.layers_seen ?? previous.layers_seen ?? 0),
+    scene_layers_active: Number(status.scene_layers_active ?? previous.scene_layers_active ?? 0),
+    output_last_presented_layer_count: Number(
+      status.output_last_presented_layer_count ?? previous.output_last_presented_layer_count ?? 0,
+    ),
     frames_presented: Number(status.frames_presented ?? previous.frames_presented ?? 0),
     commands_applied: Number(status.commands_applied ?? previous.commands_applied ?? 0),
     gpu_timing_supported: !!(status.gpu_timing_supported ?? previous.gpu_timing_supported ?? false),
@@ -2904,6 +2843,9 @@ function normalizeStats(stats, previous = makeDefaultStats()) {
     gpu_timing_resolve_misses: Number(
       stats.gpu_timing_resolve_misses ?? previous.gpu_timing_resolve_misses ?? 0,
     ),
+    output_last_presented_layer_count: Number(
+      stats.output_last_presented_layer_count ?? previous.output_last_presented_layer_count ?? 0,
+    ),
     swapchain_present_attempts: Number(
       stats.swapchain_present_attempts ?? previous.swapchain_present_attempts ?? 0,
     ),
@@ -2994,6 +2936,8 @@ function makeDefaultCapabilities(overrides = {}) {
       gpu_timing: false,
       shader_precompile: false,
       fragment_wgsl_host: false,
+      isf_glsl_parse_probe: false,
+      isf_glsl_host: false,
       native_instrument_proxies: false,
       source_preview_upload: false,
       source_frame_upload: false,
@@ -3033,6 +2977,7 @@ function makeDefaultCapabilities(overrides = {}) {
       shared_texture_upload: false,
       shared_texture_output_export: false,
       native_texture_share_sender: false,
+      native_editor_preview_frame_source: false,
       native_mp4_frame_encoder: false,
       native_media_decode: false,
       media_prefetch: false,
@@ -3084,8 +3029,9 @@ function makeDefaultCapabilities(overrides = {}) {
     },
     source_frame_shared_texture_import: makeDefaultSourceFrameSharedTextureImport(overrides.platform ?? process.platform),
     output_shared_texture_export: makeDefaultOutputSharedTextureExportContract(overrides.platform ?? process.platform),
+    native_editor_preview: makeDefaultNativeEditorPreview(),
     notes: overrides.running === false
-      ? ['Native render core is not running; capabilities are the broker fallback shape.']
+      ? ['Native render core is not running; no renderer fallback is available in this build.']
       : [],
     ...overrides,
   };
@@ -3124,8 +3070,35 @@ function makeDefaultOutputSharedTextureExportContract(platform = process.platfor
     handle_encoding: '',
     handle_byte_length: 0,
     exported_formats: [],
+    color_space: 'srgb',
+    storage_format: 'bgra8unorm',
+    storage_encoding: 'srgb-encoded-bgra8unorm',
+    alpha_mode: 'opaque',
+    premultiplied_alpha: false,
+    single_render_source: 'core-output-composite',
+    zero_conversions: true,
     publisher: 'none',
     reason: 'native output shared texture export is unavailable',
+  };
+}
+
+function makeDefaultNativeEditorPreview() {
+  return {
+    available: false,
+    mode: 'unavailable',
+    presentation: 'unavailable',
+    needs_underlay_lock_in: true,
+    production_ready: false,
+    source: 'native-unavailable',
+    single_render: false,
+    transport: 'none',
+    color_space: 'srgb',
+    storage_format: 'bgra8unorm',
+    storage_encoding: 'srgb-encoded-bgra8unorm',
+    alpha_mode: 'opaque',
+    premultiplied_alpha: false,
+    zero_conversions: true,
+    reason: 'native renderer is not running; no browser renderer fallback is available in this build',
   };
 }
 
@@ -3186,6 +3159,15 @@ function makeDefaultStatus(overrides = {}) {
     native_video_frame_cache_hits: 0,
     native_video_frame_cache_misses: 0,
     native_video_frame_cache_evictions: 0,
+    native_video_sessions: [],
+    native_video_sessions_armed: 0,
+    native_video_sessions_prerolled: 0,
+    native_video_sessions_playing: 0,
+    native_video_session_evictions: 0,
+    video_oneshot_decodes_during_playback: 0,
+    native_video_trigger_last_latency_us: 0,
+    native_video_trigger_max_latency_us: 0,
+    native_video_stream_underflows: 0,
     native_instrument_frame_renders: 0,
     compute_graph_runs: 0,
     compute_graph_passes: 0,
@@ -3213,6 +3195,9 @@ function makeDefaultStatus(overrides = {}) {
     decode_backend_ready: true,
     decode_backend_last_error: null,
     last_frame_error: overrides.last_frame_error ?? null,
+    last_rpc_error: overrides.last_rpc_error ?? '',
+    last_rpc_error_method: overrides.last_rpc_error_method ?? '',
+    last_rpc_error_at_ms: Number(overrides.last_rpc_error_at_ms ?? 0),
     ffmpeg_active_video_sessions: 0,
     decode_hw_frames: 0,
     decode_predecode_estimate_cache_entries: 0,
@@ -3274,6 +3259,8 @@ function makeDefaultStatus(overrides = {}) {
     last_frame_dark: false,
     last_shader_error: null,
     layers_seen: 0,
+    scene_layers_active: 0,
+    output_last_presented_layer_count: 0,
     target_fps: 60,
     present_mode: 'vsync',
     surface_present_mode: 'unconfigured',
@@ -3297,7 +3284,7 @@ function makeDefaultStatus(overrides = {}) {
     video_frame_prefetch_cache_hits: 0,
     video_frame_prefetch_cache_misses: 0,
     video_frame_prefetch_cache_clears: 0,
-    video_frame_prefetch_cache_max_entries: VIDEO_FRAME_PREFETCH_CACHE_MAX_ENTRIES,
+    video_frame_prefetch_cache_max_entries: 0,
     media_drop_command_pressure_pct: 90,
     media_drop_decode_pressure_pct: 90,
     media_drop_io_pressure_pct: 90,
@@ -3651,6 +3638,7 @@ function makeDefaultStats() {
     last_render_wait_ms: 0,
     last_frame_budget_ms: 16.66,
     effective_target_fps: 60,
+    output_last_presented_layer_count: 0,
     swapchain_present_attempts: 0,
     swapchain_presented: 0,
     swapchain_present_failures: 0,
