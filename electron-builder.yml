@@ -101,6 +101,8 @@ mac:
   entitlementsInherit: build-resources/entitlements.mac.plist
   notarize: true
   gatekeeperAssess: false
+  extendInfo:
+    NSCameraUsageDescription: "Ghost Arcade uses the selected camera as a live visual source."
   signIgnore:
     - '/Syphon\.framework/Syphon$'
     - '/Syphon\.framework/Versions/Current/Syphon$'

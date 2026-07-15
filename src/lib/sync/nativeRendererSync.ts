@@ -143,6 +143,8 @@ type NativeLayerSource = {
   aspect?: number;
 };
 
+type NativeLiveSourceType = 'webcam' | 'capture' | 'syphon' | 'ndi';
+
 type NativeVec4 = [number, number, number, number];
 
 type NativeLayerUvState = {
@@ -467,6 +469,7 @@ const SOURCE_FRAME_SIZE_OVERLOAD = 1536;
 const SOURCE_FRAME_DYNAMIC_CAPTURE_MAX = 2048;
 const STATIC_PREVIEW_RETRY_MS = 1000;
 const VIDEO_PREVIEW_REFRESH_MS = 360;
+const LIVE_SHARED_TEXTURE_REFRESH_MS = 16;
 const NATIVE_VIDEO_PREFETCH_REFRESH_MS = 750;
 const NATIVE_VIDEO_PREFETCH_OVERLOAD_REFRESH_MS = 1200;
 const NATIVE_VIDEO_PREFETCH_WINDOW_FRAMES = 1;
@@ -3481,10 +3484,48 @@ function isNativeLocalMediaUri(uri: string | undefined | null): boolean {
   return false;
 }
 
+function nativeLiveSourceType(
+  src: NonNullable<Layer['source']>,
+): NativeLiveSourceType | null {
+  const explicit = String((src as any).liveSourceType ?? '').trim().toLowerCase();
+  if (explicit === 'webcam' || explicit === 'capture' || explicit === 'syphon' || explicit === 'ndi') {
+    return explicit;
+  }
+  if ((src as any).ndiSource) return 'ndi';
+  if ((src as any).spoutSource || src.type === 'spout' || isSharedTextureUri(src.src)) return 'syphon';
+  const uri = String(src.src ?? '').trim().toLowerCase();
+  if (uri.startsWith('live://webcam/')) return 'webcam';
+  if (uri.startsWith('live://capture/')) return 'capture';
+  return null;
+}
+
+function nativeLiveSourceIdentity(src: NonNullable<Layer['source']>): string {
+  const kind = nativeLiveSourceType(src);
+  if (kind === 'webcam' || kind === 'capture') {
+    return String((src as any).liveSourceSessionId ?? src.id ?? '').trim();
+  }
+  if (kind === 'ndi') {
+    const ndiSource = (src as any).ndiSource;
+    if (typeof ndiSource === 'string') return ndiSource.trim();
+    if (ndiSource && typeof ndiSource === 'object') {
+      return String(ndiSource.sourceName ?? ndiSource.senderName ?? ndiSource.name ?? '').trim();
+    }
+    return '';
+  }
+  if (kind === 'syphon') return sharedTextureSenderName(src);
+  return '';
+}
+
 function nativeMediaSourceUnsupportedReason(
   src: NonNullable<Layer['source']>,
   options: NativeUnsupportedSourceOptions = {},
 ): string | null {
+  const liveSourceType = nativeLiveSourceType(src);
+  if (liveSourceType) {
+    return nativeLiveSourceIdentity(src)
+      ? null
+      : `${liveSourceType}:native-source-identity-required`;
+  }
   const sourceType = isSharedTextureUri(src.src) ? 'video' : String(src.type || 'none').trim().toLowerCase();
   if (src.type === 'spout' || isSharedTextureUri(src.src)) return null;
   if (sourceType === 'shader') {
@@ -3513,10 +3554,23 @@ function nativeFileSourceParamUnsupportedReason(src: Record<string, any>): strin
   return isNativeLocalMediaUri(uri) ? null : 'file:native-readable-uri-required';
 }
 
-function nativeLayerSourceFromMediaSource(
+export function nativeLayerSourceFromMediaSource(
   src: NonNullable<Layer['source']>,
   previewElement: CanvasImageSource | null = null,
 ): NativeLayerSource {
+  const liveSourceType = nativeLiveSourceType(src);
+  if (liveSourceType) {
+    const identity = nativeLiveSourceIdentity(src);
+    return {
+      id: src.id,
+      uri: `native-live://${liveSourceType}/${encodeURIComponent(identity)}`,
+      sourceType: `live:${liveSourceType}`,
+      source: src,
+      shouldPrefetch: false,
+      shouldPreview: true,
+      previewElement: null,
+    };
+  }
   const nativeJavascript = nativeShaderSourceFromJavascript(src.jsAnimation);
   const javascriptSource = nativeJavascript
     ? {
@@ -3848,6 +3902,7 @@ function nativeLayerNeedsContinuousSync(layer: Layer): boolean {
   }
 
   const src = layer.source;
+  if (src && nativeLiveSourceType(src)) return true;
   if (src?.jsAnimation && nativeShaderSourceFromJavascript(src.jsAnimation)) return true;
   if (src?.type === 'video' && isNativeLocalMediaUri(nativeReadableMediaUri(src))) return true;
   if (
@@ -3871,6 +3926,7 @@ function isSharedTextureUri(uri: string | undefined | null): boolean {
 }
 
 function sharedTextureSenderName(src: NonNullable<Layer['source']>): string {
+  if (nativeLiveSourceType(src) !== 'syphon') return '';
   const spoutSource = (src as any).spoutSource;
   if (typeof spoutSource === 'string') return spoutSource.trim();
   if (spoutSource && typeof spoutSource === 'object') {
@@ -3887,6 +3943,7 @@ function isNativeSharedTextureSource(
   src: NonNullable<Layer['source']>,
   sourceType: string,
 ): boolean {
+  if (nativeLiveSourceType(src)) return true;
   return (
     src.type === 'spout' ||
     sourceType === 'spout' ||
@@ -6243,8 +6300,8 @@ export class NativeRendererSync {
   }
 
   private sharedTextureInfoKey(src: NonNullable<Layer['source']>, sourceType: string): string {
-    const senderName = sharedTextureSenderName(src);
-    if (senderName) return `${sourceType || src.type || 'shared'}:${senderName}`;
+    const identity = nativeLiveSourceIdentity(src) || sharedTextureSenderName(src);
+    if (identity) return `${sourceType || src.type || 'shared'}:${identity}`;
     return this.sourceCacheKey(src.id, src.src);
   }
 
@@ -6259,20 +6316,26 @@ export class NativeRendererSync {
     const nextPollAt = this.sharedTextureInfoNextPollAt.get(key) ?? 0;
     if (now < nextPollAt || this.sharedTextureInfoInFlight.has(key)) return;
 
-    this.sharedTextureInfoNextPollAt.set(key, now + 80);
+    this.sharedTextureInfoNextPollAt.set(key, now + 16);
     this.sharedTextureInfoInFlight.add(key);
     void (async () => {
       try {
+        const liveSourceType = nativeLiveSourceType(src);
+        const identity = nativeLiveSourceIdentity(src);
         const senderName = sharedTextureSenderName(src);
-        if (senderName && this.sharedTextureReceiverSender !== senderName) {
+        if (liveSourceType === 'syphon' && senderName && this.sharedTextureReceiverSender !== senderName) {
           const result = await invoke<{ connected?: boolean }>('spout_start_receiver', { senderName });
           if (result?.connected === false) return;
           this.sharedTextureReceiverSender = senderName;
         }
 
-        const info = await receiveSpoutTextureInfo();
+        const info = liveSourceType === 'webcam' || liveSourceType === 'capture'
+          ? await invoke<SpoutSharedTextureInfo>('native_live_capture_texture_info', { sessionId: identity })
+          : liveSourceType === 'ndi'
+            ? await (window as any).ghostNDI?.receiveTextureInfo?.(identity)
+            : await receiveSpoutTextureInfo();
         if (!info?.available || !info.handle || !info.width || !info.height) return;
-        if (senderName && info.senderName && info.senderName !== senderName) return;
+        if (liveSourceType === 'syphon' && senderName && info.senderName && info.senderName !== senderName) return;
         this.sharedTextureInfoCache.set(key, { info, updatedAt: performance.now() });
       } catch (err) {
         const failures = this.sharedTextureInfoNextPollAt.get(`${key}:failures`) ?? 0;
@@ -6329,7 +6392,7 @@ export class NativeRendererSync {
     const seq = (this.sourcePreviewSeq.get(sourceKey) ?? 0) + 1;
     this.sourcePreviewSeq.set(sourceKey, seq);
     this.sourcePreviewSig.set(sourceKey, signature);
-    this.sourcePreviewNextAt.set(sourceKey, now + VIDEO_PREVIEW_REFRESH_MS);
+    this.sourcePreviewNextAt.set(sourceKey, now + LIVE_SHARED_TEXTURE_REFRESH_MS);
     this.sharedTextureUploadPending.set(sourceKey, {
       sourceId: src.id,
       signature,
@@ -6382,9 +6445,11 @@ export class NativeRendererSync {
       !!src.videoElement ||
       !!src.threejsCanvas ||
       !!src.synthVisionCanvas;
-    const previewRefreshMs = sourceType.startsWith('gpu:')
-      ? GPU_PREVIEW_REFRESH_MS
-      : VIDEO_PREVIEW_REFRESH_MS;
+    const previewRefreshMs = isNativeSharedTextureSource(src, sourceType)
+      ? LIVE_SHARED_TEXTURE_REFRESH_MS
+      : sourceType.startsWith('gpu:')
+        ? GPU_PREVIEW_REFRESH_MS
+        : VIDEO_PREVIEW_REFRESH_MS;
     if (!force && now < dueAt) return;
     if (
       this.appendSharedTextureSourceFrameCommand(

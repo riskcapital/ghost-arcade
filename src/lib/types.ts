@@ -736,6 +736,10 @@ export interface MediaSource {
   spoutSource?: SpoutSource;
   // NDI receiver source (network video stream from another app/machine)
   ndiSource?: NdiSource;
+  /** Native 2.0 live-ingest identity. Live pixels are acquired outside the
+   * browser and imported into the render core as shared GPU surfaces. */
+  liveSourceType?: 'webcam' | 'capture' | 'syphon' | 'ndi';
+  liveSourceSessionId?: string;
   // Integrated effect source (native WebGL fluid/particles)
   effectSource?: IntegratedEffectSource;
   // SynthVision: shared offscreen canvas the texture mirrors

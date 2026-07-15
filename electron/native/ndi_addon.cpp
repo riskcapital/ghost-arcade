@@ -36,7 +36,13 @@
 #include <napi.h>
 #include <Processing.NDI.Lib.h>
 
+#if defined(__APPLE__)
+#include <CoreFoundation/CoreFoundation.h>
+#include <IOSurface/IOSurface.h>
+#endif
+
 #include <map>
+#include <cstring>
 #include <memory>
 #include <mutex>
 #include <string>
@@ -222,6 +228,9 @@ struct NdiReceiver {
   // Monotonic counter so callers can detect "is there a NEW frame?"
   // without comparing pixel content.
   uint64_t framesReceived = 0;
+#if defined(__APPLE__)
+  IOSurfaceRef sharedSurface = nullptr;
+#endif
 };
 std::map<std::string, std::unique_ptr<NdiReceiver>> g_receivers;
 std::mutex g_recv_mutex;
@@ -235,6 +244,12 @@ void CleanupAddonResources() {
         NDIlib_recv_destroy(entry.second->instance);
         entry.second->instance = nullptr;
       }
+#if defined(__APPLE__)
+      if (entry.second && entry.second->sharedSurface) {
+        CFRelease(entry.second->sharedSurface);
+        entry.second->sharedSurface = nullptr;
+      }
+#endif
     }
     g_receivers.clear();
   }
@@ -353,6 +368,12 @@ Napi::Value CreateReceiver(const Napi::CallbackInfo& info) {
     auto it = g_receivers.find(sourceName);
     if (it != g_receivers.end() && it->second->instance) {
       NDIlib_recv_destroy(it->second->instance);
+#if defined(__APPLE__)
+      if (it->second->sharedSurface) {
+        CFRelease(it->second->sharedSurface);
+        it->second->sharedSurface = nullptr;
+      }
+#endif
       g_receivers.erase(it);
     }
     g_receivers[sourceName] = std::move(receiver);
@@ -373,7 +394,106 @@ Napi::Value DestroyReceiver(const Napi::CallbackInfo& info) {
     g_receivers.erase(it);
   }
   if (recv && recv->instance) NDIlib_recv_destroy(recv->instance);
+#if defined(__APPLE__)
+  if (recv && recv->sharedSurface) {
+    CFRelease(recv->sharedSurface);
+    recv->sharedSurface = nullptr;
+  }
+#endif
   return Napi::Boolean::New(env, true);
+}
+
+#if defined(__APPLE__)
+IOSurfaceRef EnsureReceiverSurface(NdiReceiver* recv, int width, int height) {
+  if (recv->sharedSurface &&
+      IOSurfaceGetWidth(recv->sharedSurface) == static_cast<size_t>(width) &&
+      IOSurfaceGetHeight(recv->sharedSurface) == static_cast<size_t>(height)) {
+    return recv->sharedSurface;
+  }
+  if (recv->sharedSurface) {
+    CFRelease(recv->sharedSurface);
+    recv->sharedSurface = nullptr;
+  }
+
+  CFMutableDictionaryRef properties = CFDictionaryCreateMutable(
+    kCFAllocatorDefault,
+    0,
+    &kCFTypeDictionaryKeyCallBacks,
+    &kCFTypeDictionaryValueCallBacks
+  );
+  int bytesPerElement = 4;
+  int bytesPerRow = width * bytesPerElement;
+  int allocSize = bytesPerRow * height;
+  uint32_t pixelFormat = static_cast<uint32_t>(NDIlib_FourCC_type_BGRA);
+  CFNumberRef widthValue = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &width);
+  CFNumberRef heightValue = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &height);
+  CFNumberRef elementValue = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &bytesPerElement);
+  CFNumberRef rowValue = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &bytesPerRow);
+  CFNumberRef sizeValue = CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &allocSize);
+  CFNumberRef formatValue = CFNumberCreate(kCFAllocatorDefault, kCFNumberSInt32Type, &pixelFormat);
+  CFDictionarySetValue(properties, kIOSurfaceWidth, widthValue);
+  CFDictionarySetValue(properties, kIOSurfaceHeight, heightValue);
+  CFDictionarySetValue(properties, kIOSurfaceBytesPerElement, elementValue);
+  CFDictionarySetValue(properties, kIOSurfaceBytesPerRow, rowValue);
+  CFDictionarySetValue(properties, kIOSurfaceAllocSize, sizeValue);
+  CFDictionarySetValue(properties, kIOSurfacePixelFormat, formatValue);
+  recv->sharedSurface = IOSurfaceCreate(properties);
+  CFRelease(widthValue);
+  CFRelease(heightValue);
+  CFRelease(elementValue);
+  CFRelease(rowValue);
+  CFRelease(sizeValue);
+  CFRelease(formatValue);
+  CFRelease(properties);
+  return recv->sharedSurface;
+}
+#endif
+
+bool CaptureReceiverFrame(NdiReceiver* recv, bool keepCpuFrame) {
+  NDIlib_video_frame_v2_t videoFrame = {};
+  NDIlib_frame_type_e ft = NDIlib_recv_capture_v2(recv->instance, &videoFrame, nullptr, nullptr, 0);
+  if (ft != NDIlib_frame_type_video) return false;
+
+  const int width = videoFrame.xres;
+  const int height = videoFrame.yres;
+  const size_t sourceStride = videoFrame.line_stride_in_bytes > 0
+    ? static_cast<size_t>(videoFrame.line_stride_in_bytes)
+    : static_cast<size_t>(width) * 4;
+  const size_t rowBytes = static_cast<size_t>(width) * 4;
+
+  if (keepCpuFrame) {
+    recv->lastFrame.resize(rowBytes * static_cast<size_t>(height));
+    for (int row = 0; row < height; row++) {
+      memcpy(
+        recv->lastFrame.data() + static_cast<size_t>(row) * rowBytes,
+        videoFrame.p_data + static_cast<size_t>(row) * sourceStride,
+        rowBytes
+      );
+    }
+  }
+
+#if defined(__APPLE__)
+  IOSurfaceRef surface = EnsureReceiverSurface(recv, width, height);
+  if (surface) {
+    IOSurfaceLock(surface, 0, nullptr);
+    auto* destination = static_cast<uint8_t*>(IOSurfaceGetBaseAddress(surface));
+    const size_t destinationStride = IOSurfaceGetBytesPerRow(surface);
+    for (int row = 0; row < height; row++) {
+      memcpy(
+        destination + static_cast<size_t>(row) * destinationStride,
+        videoFrame.p_data + static_cast<size_t>(row) * sourceStride,
+        rowBytes
+      );
+    }
+    IOSurfaceUnlock(surface, 0, nullptr);
+  }
+#endif
+
+  recv->lastWidth = width;
+  recv->lastHeight = height;
+  recv->framesReceived++;
+  NDIlib_recv_free_video_v2(recv->instance, &videoFrame);
+  return true;
 }
 
 // Pull the next frame from a receiver. Returns:
@@ -396,26 +516,8 @@ Napi::Value ReceiveFrame(const Napi::CallbackInfo& info) {
     recv = it->second.get();
   }
 
-  NDIlib_video_frame_v2_t videoFrame = {};
-  // Timeout 0 = non-blocking. We poll from the renderer at frame rate.
-  NDIlib_frame_type_e ft = NDIlib_recv_capture_v2(recv->instance, &videoFrame, nullptr, nullptr, 0);
-  if (ft != NDIlib_frame_type_video) {
-    // Audio / metadata / nothing — caller polls again next tick.
-    if (ft == NDIlib_frame_type_audio || ft == NDIlib_frame_type_metadata) {
-      // Free non-video frames immediately; we don't expose them.
-      NDIlib_recv_free_video_v2(recv->instance, &videoFrame);
-    }
-    return env.Null();
-  }
-  // Copy the BGRA pixels into our persistent buffer THEN free the NDI
-  // frame — keeping NDI's buffer around violates the "free before
-  // next capture" contract and breaks bandwidth.
-  size_t bytes = static_cast<size_t>(videoFrame.xres) * videoFrame.yres * 4;
-  recv->lastFrame.assign(videoFrame.p_data, videoFrame.p_data + bytes);
-  recv->lastWidth = videoFrame.xres;
-  recv->lastHeight = videoFrame.yres;
-  recv->framesReceived++;
-  NDIlib_recv_free_video_v2(recv->instance, &videoFrame);
+  if (!CaptureReceiverFrame(recv, true)) return env.Null();
+  const size_t bytes = static_cast<size_t>(recv->lastWidth) * recv->lastHeight * 4;
 
   Napi::Object out = Napi::Object::New(env);
   out.Set("width",  Napi::Number::New(env, recv->lastWidth));
@@ -426,6 +528,41 @@ Napi::Value ReceiveFrame(const Napi::CallbackInfo& info) {
   // can hold the data across ticks.
   out.Set("data", Napi::Buffer<uint8_t>::Copy(env, recv->lastFrame.data(), bytes));
   return out;
+}
+
+Napi::Value ReceiveTextureInfo(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 1 || !info[0].IsObject()) return env.Null();
+  const std::string sourceName = info[0].As<Napi::Object>().Get("sourceName").As<Napi::String>().Utf8Value();
+
+  NdiReceiver* recv = nullptr;
+  {
+    std::lock_guard<std::mutex> lock(g_recv_mutex);
+    auto it = g_receivers.find(sourceName);
+    if (it == g_receivers.end()) return env.Null();
+    recv = it->second.get();
+  }
+  CaptureReceiverFrame(recv, false);
+
+#if defined(__APPLE__)
+  if (!recv->sharedSurface || recv->lastWidth <= 0 || recv->lastHeight <= 0) return env.Null();
+  IOSurfaceID surfaceID = IOSurfaceGetID(recv->sharedSurface);
+  Napi::Object out = Napi::Object::New(env);
+  out.Set("available", Napi::Boolean::New(env, true));
+  out.Set("handle", Napi::Buffer<uint8_t>::Copy(
+    env,
+    reinterpret_cast<uint8_t*>(&surfaceID),
+    sizeof(surfaceID)
+  ));
+  out.Set("width", Napi::Number::New(env, recv->lastWidth));
+  out.Set("height", Napi::Number::New(env, recv->lastHeight));
+  out.Set("frame", Napi::Number::New(env, static_cast<double>(recv->framesReceived)));
+  out.Set("format", Napi::Number::New(env, 80));
+  out.Set("senderName", Napi::String::New(env, recv->sourceName));
+  return out;
+#else
+  return env.Null();
+#endif
 }
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
@@ -444,6 +581,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("createReceiver",  Napi::Function::New(env, CreateReceiver));
   exports.Set("destroyReceiver", Napi::Function::New(env, DestroyReceiver));
   exports.Set("receiveFrame",    Napi::Function::New(env, ReceiveFrame));
+  exports.Set("receiveTextureInfo", Napi::Function::New(env, ReceiveTextureInfo));
   return exports;
 }
 

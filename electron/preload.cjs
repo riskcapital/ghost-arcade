@@ -46,6 +46,9 @@ const ALLOWED_IPC_COMMANDS = new Set([
   // SRC tab Capture chooser — enumerates screens + app windows
   // with thumbnails so the renderer can show a Zoom/Slack-style picker.
   'screen_sources_list',
+  'native_live_capture_available', 'native_live_capture_list_cameras',
+  'native_live_capture_start_camera', 'native_live_capture_start_screen',
+  'native_live_capture_stop', 'native_live_capture_texture_info',
   // License
   'license_get_status', 'license_activate', 'license_deactivate', 'license_validate_online',
   // HTTP proxy
@@ -215,6 +218,7 @@ contextBridge.exposeInMainWorld('ghostNDI', {
   createReceiver: (sourceName) => ipcRenderer.invoke('ndi_create_receiver', { sourceName }),
   destroyReceiver: (sourceName) => ipcRenderer.invoke('ndi_destroy_receiver', { sourceName }),
   receiveFrame: (sourceName) => ipcRenderer.invoke('ndi_receive_frame', { sourceName }),
+  receiveTextureInfo: (sourceName) => ipcRenderer.invoke('ndi_receive_texture_info', { sourceName }),
 });
 
 // OSC (Open Sound Control) UDP listener bridge.
