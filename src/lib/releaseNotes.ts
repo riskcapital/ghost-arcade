@@ -8,6 +8,22 @@ export interface AppReleaseNotes {
 }
 
 const RELEASE_NOTES: Record<string, AppReleaseNotes> = {
+  '1.9.98': {
+    title: 'Reliable stage presets, live LED performance, and restored loop transitions',
+    summary: [
+      'Stage effects and WLED output now follow every stage preset.',
+      'VJ videos display upright and unmirrored by default.',
+      'The full grouped video-loop transition library is restored.',
+    ],
+    highlights: [
+      'Stage effects now resolve against each recalled stage preset instead of remaining attached only to the newest preset.',
+      'WLED output stays active while switching presets and now includes Auto, Strip, Matrix, and Custom spatial maps; source-region cropping; serpentine and reverse wiring; linear-light per-controller color matching; live shader palette sampling; and LED-order, chase, and solid-color test patterns.',
+      'The new LED FX performance tab contains 47 patterns across Movement, Organic, Rhythmic, Spatial, Content Aware, and Glitch collections, with latch and push-hold triggering, BPM sync, automatic sequencing, blend controls, and MIDI or keyboard assignment.',
+      'Named controller ranges and multi-controller LED groups let one WLED controller drive multiple strips while effects target the whole rig, one controller, one strip, or a combined fixture group.',
+      'VJ video clips now use the correct vertical texture orientation without introducing a horizontal mirror.',
+      'Video Loop Creator restores the expanded Essentials, Motion, Glitch, Loop FX, and Reveals transition groups, including the custom scanline, block, chroma, tape-tear, and signal-pulse treatments.',
+    ],
+  },
   '1.9.97': {
     title: 'Mapping precision, persistent masks, and hierarchy mattes',
     summary: [

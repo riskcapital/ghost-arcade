@@ -66,6 +66,7 @@
   import EffectPickerModal from './EffectPickerModal.svelte';
   import SplatPanel from './SplatPanel.svelte';
   import Model3DPanel from './Model3DPanel.svelte';
+  import LEDFXPanel from './LEDFXPanel.svelte';
   // Same build-time JS animation catalog used by mapping-mode MediaTray.
   // @ts-expect-error virtual module supplied by vite plugin
   import bundledThreeJSItems from 'virtual:threejs-bundles';
@@ -114,12 +115,12 @@
   // Media tray collapse state
   let mediaTrayCollapsed = false;
 
-  // Effects tab: Composition / Layer / Clip / Stage.
+  // Effects tab: Composition / Layer / Clip / Stage / LED.
   // Stage is the new tab — manages procedural per-slice stage effects
   // (radial pulse, sweep, chase, strobe, beat-pulse, …) that modulate
   // the bound mapping layers created by Apply Stage. Always available;
   // the only way to activate stage effects.
-  let effectsTab: 'composition' | 'layer' | 'clip' | 'stage' = 'layer';
+  let effectsTab: 'composition' | 'layer' | 'clip' | 'stage' | 'led' = 'layer';
 
   // Effect types available
   const effectTypes: { value: EffectType; label: string }[] =
@@ -140,6 +141,14 @@
     ...$globalStagePresets.map(p => ({ ...p, _scope: 'global' as const })),
   ];
 
+  function loadStagePresetFromUI(preset: (typeof allStagePresets)[number]) {
+    if (preset._scope === 'global') {
+      project.loadStagePresetSnapshot(preset);
+    } else {
+      project.loadStagePreset(preset.id);
+    }
+  }
+
   // MIDI: bridge vj:stage:<index> triggers into loadStagePreset(). The
   // router fires `midi-stage-preset` events but nothing listened until
   // now. Index targets the combined project+global list (allStagePresets)
@@ -149,7 +158,7 @@
     const idx = (e as CustomEvent<{ index: number }>).detail?.index;
     if (typeof idx !== 'number') return;
     const preset = allStagePresets[idx];
-    if (preset) project.loadStagePreset(preset.id);
+    if (preset) loadStagePresetFromUI(preset);
   };
 
   let heldStageEffects: Record<string, boolean> = {};
@@ -161,6 +170,15 @@
     const surfaceId = $activeSurface?.id;
     if (!surfaceId) return;
     surfaceStore.setActiveEffect(surfaceId, effectId);
+  }
+
+  function toggleStageActiveEffect(effectId: string) {
+    const surface = $activeSurface;
+    if (!surface) return;
+    if (surface.effectAutomation?.playing) {
+      surfaceStore.updateEffectAutomation({ playing: false });
+    }
+    setStageActiveEffect(surface.activeEffectId === effectId ? null : effectId);
   }
 
   function setStageEffectHeld(effectId: string, held: boolean) {
@@ -289,19 +307,7 @@
   function saveStagePresetWithScope() {
     const name = `Preset ${allStagePresets.length + 1}`;
     if (stageSaveScope === 'global') {
-      const currentProject = get(project);
-      const layersSnapshot = JSON.parse(JSON.stringify(currentProject.layers, (key, value) => {
-        if (key === 'texture' || key === 'videoElement') return undefined;
-        if (typeof value === 'object' && value !== null && value.constructor && value.constructor.name.startsWith('_')) return undefined;
-        return value;
-      }));
-      globalStagePresets.add({
-        id: generateUUID(),
-        name,
-        createdAt: Date.now(),
-        layers: layersSnapshot,
-        scope: 'global',
-      });
+      globalStagePresets.add(project.createStagePresetSnapshot(name, undefined, 'global'));
     } else {
       project.saveStagePreset(name);
     }
@@ -320,14 +326,13 @@
   // re-saving when iterating on a layout under the same name.
   function updateStagePresetInPlace(preset: any) {
     if (preset._scope === 'global') {
-      // Global presets: re-snapshot the project layers and overwrite.
-      const currentProject = get(project);
-      const layersSnapshot = JSON.parse(JSON.stringify(currentProject.layers, (key, value) => {
-        if (key === 'texture' || key === 'videoElement') return undefined;
-        if (typeof value === 'object' && value !== null && value.constructor && value.constructor.name.startsWith('_')) return undefined;
-        return value;
-      }));
-      globalStagePresets.updateContents(preset.id, layersSnapshot);
+      const snapshot = project.createStagePresetSnapshot(
+        preset.name,
+        preset.thumbnail,
+        'global',
+        preset.id,
+      );
+      globalStagePresets.updateContents(preset.id, snapshot);
     } else {
       project.updateStagePreset(preset.id);
     }
@@ -909,6 +914,7 @@
     const _grid = paramClipGrid;
     const deckTag = $vjClipLauncher.crossfaderEnabled ? ` (Deck ${paramDeck})` : '';
     if (effectsTab === 'composition') return 'COMPOSITION FX';
+    if (effectsTab === 'led') return 'LED FX';
     if (effectsTab === 'clip') {
       if (selectedLayerIndex === null) return 'CLIP FX';
       const activeCol = _states[selectedLayerIndex].activeColumn;
@@ -3409,7 +3415,7 @@
             <button
               class="stage-preset-btn"
               class:active={$vjClipLauncher.stagePresetId === preset.id}
-              onclick={() => stageRenamingPresetId !== preset.id && project.loadStagePreset(preset.id)}
+              onclick={() => stageRenamingPresetId !== preset.id && loadStagePresetFromUI(preset)}
               oncontextmenu={(e) => openStageContextMenu(e, preset)}
               title="{preset.name} — double-click name to rename · right-click for Update / Delete"
               data-midi-path={`vj:stage:${presetIdx}`}
@@ -3513,10 +3519,18 @@
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="11"/></svg>
               Stage
             </button>
+            {#if ($project.wledControllers ?? []).some(controller => controller.enabled)}
+              <button class="fx-tab" class:active={effectsTab === 'led'} onclick={() => effectsTab = 'led'} title="LED patterns and performance controls">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/><path d="M7 12h3m4 0h3"/></svg>
+                LED
+              </button>
+            {/if}
           </div>
 
           <div class="effects-panel-content">
-            {#if effectsTab === 'stage'}
+            {#if effectsTab === 'led'}
+              <LEDFXPanel />
+            {:else if effectsTab === 'stage'}
               <!-- Stage Effects — procedural per-slice modulation that
                    drives the brightness of slice-bound mapping layers.
                    Effects live on the active Surface (Surface.effects[]),
@@ -3594,12 +3608,16 @@
                       {@const isLive = activeId === eff.id}
                       <div class="effect-item" class:live={isLive}>
                         <div class="effect-header" onclick={() => expandedEffectId = expandedEffectId === eff.id ? null : eff.id}>
-                          <!-- Live radio — exactly one effect runs at a time. -->
+                          <!-- Live toggle — selecting an effect enters manual mode;
+                               selecting the live effect again turns it off. -->
                           <button
                             class="effect-live-radio"
                             class:active={isLive}
-                            onclick={(e) => { e.stopPropagation(); surfaceStore.setActiveEffect(eff.id); }}
-                            title="Activate this effect (only one runs at a time)"
+                            aria-pressed={isLive}
+                            onclick={(e) => { e.stopPropagation(); toggleStageActiveEffect(eff.id); }}
+                            title={isLive
+                              ? 'Turn off this effect and stop auto play'
+                              : 'Activate this effect manually and stop auto play'}
                           >{isLive ? '◉' : '○'}</button>
                           <span class="effect-name">
                             <span class="stage-fx-icon">{def?.icon ?? '◆'}</span>

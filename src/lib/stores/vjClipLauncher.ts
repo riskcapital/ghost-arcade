@@ -2602,6 +2602,8 @@ export const vjOutputLayers = derived(
         scale: { x: 1, y: 1 },
         rotation: 0,
         flipH: clipMirrorX,
+        // VideoTexture already normalizes DOM video frames for the renderer.
+        // Keep the VJ adapter neutral so rotation 0 / mirror off matches Mapping.
         flipV: false,
         contentFit: clipContentFit,
         // Warping - corners computed from per-clip zoom/anchor/rotation

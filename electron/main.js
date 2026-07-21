@@ -564,16 +564,59 @@ function makeConcatList(frames, fps) {
 
 const LOOP_TRANSITIONS = new Set([
   'fade', 'dissolve', 'pixelize',
+  'rectcrop', 'distance',
+  'fadeblack', 'fadewhite', 'fadegrays', 'fadefast', 'fadeslow',
   'wipeleft', 'wiperight', 'wipeup', 'wipedown',
+  'wipetl', 'wipetr', 'wipebl', 'wipebr',
   'slideleft', 'slideright', 'slideup', 'slidedown',
   'smoothleft', 'smoothright', 'smoothup', 'smoothdown',
   'circlecrop', 'circleclose', 'circleopen',
   'radial', 'horzclose', 'horzopen', 'vertclose', 'vertopen',
+  'diagtl', 'diagtr', 'diagbl', 'diagbr',
+  'hlslice', 'hrslice', 'vuslice', 'vdslice',
+  'hblur', 'squeezeh', 'squeezev', 'zoomin',
+  'hlwind', 'hrwind', 'vuwind', 'vdwind',
+  'coverleft', 'coverright', 'coverup', 'coverdown',
+  'revealleft', 'revealright', 'revealup', 'revealdown',
+  'ghost-scanline-glitch',
+  'ghost-block-glitch',
+  'ghost-chroma-stagger',
+  'ghost-tape-tear',
+  'ghost-signal-pulse',
+]);
+
+const LOOP_CUSTOM_TRANSITION_EXPRESSIONS = new Map([
+  ['ghost-scanline-glitch', 'if(gt(P+0.08*PLANE,0.18+0.64*mod(floor(Y/6),7)/6),B,A)'],
+  ['ghost-block-glitch', 'if(gt(P,0.12+0.76*mod(floor(X/64)*13+floor(Y/48)*7,19)/18),B,A)'],
+  ['ghost-chroma-stagger', 'if(gt(P+0.13*(PLANE-1),0.15+0.7*mod(floor(Y/20)+floor(X/80),5)/4),B,A)'],
+  ['ghost-tape-tear', 'if(gt(P+0.25*sin(Y*0.12+P*12),0.48),B,A)'],
+  ['ghost-signal-pulse', 'if(gt(P+0.18*sin((floor(Y/18)+floor(X/90))*2+P*18),0.58),B,A)'],
+  ['hlwind', 'if(gt(P+0.12*sin(Y*0.14),X/W),B,A)'],
+  ['hrwind', 'if(gt(P+0.12*sin(Y*0.14),(W-X)/W),B,A)'],
+  ['vuwind', 'if(gt(P+0.12*sin(X*0.14),(H-Y)/H),B,A)'],
+  ['vdwind', 'if(gt(P+0.12*sin(X*0.14),Y/H),B,A)'],
+  ['coverleft', 'if(gt(P,X/W),B,A)'],
+  ['coverright', 'if(gt(P,(W-X)/W),B,A)'],
+  ['coverup', 'if(gt(P,(H-Y)/H),B,A)'],
+  ['coverdown', 'if(gt(P,Y/H),B,A)'],
+  ['revealleft', 'A*(1-clip((P-X/W)*8+0.5,0,1))+B*clip((P-X/W)*8+0.5,0,1)'],
+  ['revealright', 'A*(1-clip((P-(W-X)/W)*8+0.5,0,1))+B*clip((P-(W-X)/W)*8+0.5,0,1)'],
+  ['revealup', 'A*(1-clip((P-(H-Y)/H)*8+0.5,0,1))+B*clip((P-(H-Y)/H)*8+0.5,0,1)'],
+  ['revealdown', 'A*(1-clip((P-Y/H)*8+0.5,0,1))+B*clip((P-Y/H)*8+0.5,0,1)'],
 ]);
 
 function safeLoopTransition(value) {
   const name = String(value || 'fade').trim();
   return LOOP_TRANSITIONS.has(name) ? name : 'fade';
+}
+
+function loopXfadeOptions(value, fadeDuration, xfadeOffset) {
+  const transition = safeLoopTransition(value);
+  const expr = LOOP_CUSTOM_TRANSITION_EXPRESSIONS.get(transition);
+  if (expr) {
+    return `transition=custom:duration=${fadeDuration.toFixed(3)}:offset=${xfadeOffset.toFixed(3)}:expr='${expr}'`;
+  }
+  return `transition=${transition}:duration=${fadeDuration.toFixed(3)}:offset=${xfadeOffset.toFixed(3)}`;
 }
 
 function evenDimension(value, fallback) {
@@ -623,6 +666,9 @@ function videoLoopEncoderArgs(outputPath, meta = {}, preferHardware = true) {
     '-movflags', '+faststart',
     '-max_muxing_queue_size', '1024',
     '-an',
+    ...(meta.transition
+      ? ['-metadata', `ghost_arcade_transition=${safeLoopTransition(meta.transition)}`]
+      : []),
     outputPath,
   ];
 
@@ -4068,12 +4114,17 @@ function registerIpcHandlers() {
         0.5,
       );
       const xfadeOffset = Math.max(0, secondHalfDuration - fadeDuration);
-      const transition = safeLoopTransition(args.transitionType);
-      const normalize = 'fps=30,scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1,format=yuv420p';
+      // xfade is strict about matching dimensions, frame rate, format,
+      // sample aspect ratio, and timebase. Normalize every boundary so
+      // VFR camera/AI clips behave like the synthetic fixtures.
+      const targetW = evenDimension(meta.width, 1920);
+      const targetH = evenDimension(meta.height, 1080);
+      const normalize =
+        `fps=30,scale=${targetW}:${targetH}:flags=lanczos,setsar=1,format=yuv420p,settb=AVTB`;
       const xfadeFilter =
         `[0:v]trim=start=${midpoint.toFixed(3)},setpts=PTS-STARTPTS,${normalize}[v0];` +
         `[1:v]trim=end=${midpoint.toFixed(3)},setpts=PTS-STARTPTS,${normalize}[v1];` +
-        `[v0][v1]xfade=transition=${transition}:duration=${fadeDuration.toFixed(3)}:offset=${xfadeOffset.toFixed(3)}[outv]`;
+        `[v0][v1]xfade=${loopXfadeOptions(args.transitionType, fadeDuration, xfadeOffset)}[outv]`;
 
       const makeXfadeArgs = (preferHardware) => [
         '-hide_banner',
@@ -4084,7 +4135,11 @@ function registerIpcHandlers() {
         '-i', input.filePath,
         '-i', input.filePath,
         '-filter_complex', xfadeFilter,
-        ...videoLoopEncoderArgs(outputPath, meta, preferHardware),
+        ...videoLoopEncoderArgs(
+          outputPath,
+          { ...meta, transition: safeLoopTransition(args.transitionType) },
+          preferHardware,
+        ),
       ];
 
       try {
@@ -4115,35 +4170,22 @@ function registerIpcHandlers() {
           });
         }
       } catch (xfadeErr) {
-        console.warn('[VideoLoop] xfade pass failed, trying concat fallback:', xfadeErr?.message || xfadeErr);
         try { fs.rmSync(outputPath, { force: true }); } catch { /* ignore */ }
-        const concatFilter =
-          `[0:v]trim=start=${midpoint.toFixed(3)},setpts=PTS-STARTPTS,${normalize}[v0];` +
-          `[1:v]trim=end=${midpoint.toFixed(3)},setpts=PTS-STARTPTS,${normalize}[v1];` +
-          `[v0][v1]concat=n=2:v=1:a=0[outv]`;
-        await spawnFfmpegVideoLoop({
-          sender: event.sender,
-          jobId,
-          durationSec: duration,
-          outputPath,
-          startMessage: 'Crossfade failed; creating hard-cut loop...',
-          completeMessage: 'Loop video complete.',
-          args: [
-            '-hide_banner',
-            '-nostdin',
-            '-y',
-            '-progress', 'pipe:2',
-            '-nostats',
-            '-i', input.filePath,
-            '-i', input.filePath,
-            '-filter_complex', concatFilter,
-            ...videoLoopEncoderArgs(outputPath, meta, false),
-          ],
-        });
+        const transition = safeLoopTransition(args.transitionType);
+        throw new Error(
+          `The ${transition} loop transition could not be rendered. `
+          + `${xfadeErr?.message || xfadeErr}`,
+        );
       }
 
       const stat = fs.statSync(outputPath);
-      return { success: true, outputPath, size: stat.size, duration };
+      return {
+        success: true,
+        outputPath,
+        size: stat.size,
+        duration,
+        transitionApplied: safeLoopTransition(args.transitionType),
+      };
     } catch (err) {
       if (outputPath) {
         try { fs.rmSync(outputPath, { force: true }); } catch { /* ignore */ }

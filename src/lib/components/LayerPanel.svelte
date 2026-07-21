@@ -530,6 +530,15 @@
     return !!effectId && mappingComposition.stageEffects.some(effect => effect.id === effectId);
   }
 
+  function toggleMappingStageActiveEffect(effectId: string) {
+    if (mappingComposition.stageEffectAutomation?.playing) {
+      project.updateMappingStageEffectAutomation({ playing: false });
+    }
+    project.setMappingStageEffectActive(
+      mappingComposition.activeStageEffectId === effectId ? null : effectId
+    );
+  }
+
   function setMappingStageEffectHeld(effectId: string, held: boolean) {
     const next = { ...heldMappingStageEffects };
     if (held) next[effectId] = true;
@@ -1113,8 +1122,11 @@
                     <button
                       class="effect-live-radio"
                       class:active={isLive}
-                      onclick={(e) => { e.stopPropagation(); project.setMappingStageEffectActive(eff.id); }}
-                      title="Activate this effect"
+                      aria-pressed={isLive}
+                      onclick={(e) => { e.stopPropagation(); toggleMappingStageActiveEffect(eff.id); }}
+                      title={isLive
+                        ? 'Turn off this effect and stop auto play'
+                        : 'Activate this effect manually and stop auto play'}
                     >{isLive ? '◉' : '○'}</button>
                     <span class="effect-name"
                     >

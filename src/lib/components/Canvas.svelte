@@ -11,7 +11,7 @@
   import { vjLayerSequencer } from '../stores/vjLayerSequencer';
   import { macros } from '../stores/macros';
   import { layerSequencer } from '../stores/layerSequencer';
-  import { evaluateStageEffectForScreen, stageEffectsRuntime } from '../stores/stageEffects';
+  import { evaluateStageEffectForScreen, resolveStageEffectForLayer, stageEffectsRuntime } from '../stores/stageEffects';
   import { keyframeTimeline } from '../stores/keyframeTimeline';
   import { createLayer, VJ_MIX_SOURCE_INDEX, type Layer, type MappingCompositionState } from '../types';
   import * as THREE from 'three';
@@ -285,7 +285,11 @@
     effects: [],
   };
 
-  function injectVjIntoLayer(layer: Layer, resolved: { layer: Layer; texture: THREE.Texture }): Layer {
+  function injectVjIntoLayer(
+    layer: Layer,
+    resolved: { layer: Layer; texture: THREE.Texture },
+    stageTextureCoordinates = false,
+  ): Layer {
     let entry = stageInjectCache.get(layer.id);
     if (
       !entry
@@ -313,7 +317,12 @@
     // __vjStage so updateTexturesSync / updateShaderTextures skip this
     // layer on the second pass — the VJ deck already produced the
     // texture, the screen just samples it.
-    (entry.clone as any).source = { ...resolved.layer.source, texture: resolved.texture, __vjStage: true };
+    (entry.clone as any).source = {
+      ...resolved.layer.source,
+      texture: resolved.texture,
+      __vjStage: true,
+      __stageTextureCoordinates: stageTextureCoordinates,
+    };
     return entry.clone;
   }
 
@@ -1133,7 +1142,7 @@
     // and reconciles tap canvases when controllers are added/removed.
     // The per-frame tap+send happens via tickWLEDSenders() from
     // inside the animate loop.
-    startWLEDSenders(canvas);
+    startWLEDSenders(canvas, isOutputMode ? 'output' : isOsrMode ? 'osr' : 'editor');
     // Set initial container size from wrapper layout dimensions
     sizeContainer(wrapW, wrapH);
 
@@ -1673,7 +1682,7 @@
           layersToRender = normalLayers.map(layer => {
             if (layer.vjLayerIndex !== undefined) {
               const resolved = vjResolved.get(layer.vjLayerIndex);
-              if (resolved) return injectVjIntoLayer(layer, resolved);
+              if (resolved) return injectVjIntoLayer(layer, resolved, true);
             }
             return layer;
           });
@@ -1846,13 +1855,11 @@
         // sequencer says "show/hide this beat", stage says "while
         // shown, ride the cascading pulse").
         const stageRt = get(stageEffectsRuntime);
-        if (stageRt.sliceOutputs.size > 0 && stageRt.layerToSlice.size > 0) {
+        if (stageRt.sliceOutputs.size > 0) {
           for (let i = 0; i < layersToRender.length; i++) {
             const layer = layersToRender[i];
-            const sliceId = stageRt.layerToSlice.get(layer.id);
-            if (!sliceId) continue;
-            const brightness = stageRt.sliceOutputs.get(sliceId);
-            if (brightness === undefined || brightness >= 1) continue;
+            const { brightness } = resolveStageEffectForLayer(layer, stageRt);
+            if (brightness >= 1) continue;
             applyLayerOpacityModulation(layer, brightness);
           }
         }
@@ -2307,7 +2314,7 @@
       // WLED tap: after frame is rendered, push pixel data to any
       // configured LED controllers. Cheap (32-490 byte readback +
       // UDP send to main process); throttled to ~60Hz per controller.
-      tickWLEDSenders();
+      tickWLEDSenders(canvas);
 
       _consecutiveFrameErrors = 0; // successful frame — reset the error streak
       } catch (err) {
@@ -2628,7 +2635,7 @@
 
   onDestroy(() => {
     cancelAnimationFrame(animationId);
-    stopWLEDSenders();
+    if (canvas) stopWLEDSenders(canvas);
     engine?.dispose();
 
     // S4 pilot teardown — unsubscribe from the settings reactive and
