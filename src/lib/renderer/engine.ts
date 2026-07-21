@@ -18,6 +18,7 @@ import { TemporalMagnificationRunner, isTemporalMagnificationEffect } from './te
 import { domeProjectionShader } from './shaders/dome';
 import { getTransition, applyFaderCurve, type TransitionDef } from './crossfadeTransitions';
 import { getVisualAudioSnapshot } from '../audio/visualAudio';
+import { stageTextureNeedsVerticalFlip } from '../utils/stageTextureOrientation';
 // Geometry imports kept for potential future use with shape control point warping
 // import { createShapeGeometry, updateGeometryFromControlPoints } from './geometry';
 
@@ -2063,15 +2064,33 @@ export class RenderEngine {
 
       // ── Inject group's texture as child's source ──────────────────────
       let origChildTexture: any = null;
+      let hadChildSource = false;
       let origContentFit: any = null;
       let origCropRegion: any = null;
       let origCropEnabled: boolean = false;
+      let hadStageTextureCoordinates = false;
+      let origStageTextureCoordinates: unknown;
       if (useGroupTexture) {
+        hadChildSource = child.source != null;
         if (!child.source) {
-          (child as any).source = { texture: groupSourceTexture, type: 'shader', src: '', id: 'group-inject', name: 'group' };
+          (child as any).source = {
+            texture: groupSourceTexture,
+            type: 'shader',
+            src: '',
+            id: 'group-inject',
+            name: 'group',
+            __stageTextureCoordinates: (group.source as any)?.__stageTextureCoordinates === true,
+          };
         } else {
           origChildTexture = child.source.texture;
+          hadStageTextureCoordinates = Object.prototype.hasOwnProperty.call(
+            child.source,
+            '__stageTextureCoordinates',
+          );
+          origStageTextureCoordinates = (child.source as any).__stageTextureCoordinates;
           (child.source as any).texture = groupSourceTexture;
+          (child.source as any).__stageTextureCoordinates =
+            (group.source as any)?.__stageTextureCoordinates === true;
         }
 
         origContentFit = child.contentFit;
@@ -2135,8 +2154,13 @@ export class RenderEngine {
         (child as any).edgeEffects = origEdge;
       }
       if (useGroupTexture) {
-        if (origChildTexture !== null && child.source) {
+        if (hadChildSource && child.source) {
           (child.source as any).texture = origChildTexture;
+          if (hadStageTextureCoordinates) {
+            (child.source as any).__stageTextureCoordinates = origStageTextureCoordinates;
+          } else {
+            delete (child.source as any).__stageTextureCoordinates;
+          }
         } else if ((child.source as any)?.id === 'group-inject') {
           (child as any).source = null;
         }
@@ -2355,7 +2379,10 @@ export class RenderEngine {
 
     // Flip, content fit, aspect
     obj.material.uniforms.uFlipH.value = !!layer.flipH !== !!layer.source?.mirrorX;
-    obj.material.uniforms.uFlipV.value = layer.flipV || false;
+    const stageTextureFlipV =
+      (layer.source as any)?.__stageTextureCoordinates === true
+      && stageTextureNeedsVerticalFlip(layer);
+    obj.material.uniforms.uFlipV.value = !!layer.flipV !== stageTextureFlipV;
     const contentFitMap: Record<string, number> = { stretch: 0, fill: 1, crop: 2 };
     obj.material.uniforms.uContentFit.value = contentFitMap[layer.contentFit || 'stretch'] ?? 0;
     let sourceAspect = this.width / this.height;

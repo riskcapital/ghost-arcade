@@ -15,6 +15,7 @@ import type { Surface, SurfaceSlice, SurfaceSliceBinding, Point2D, BezierPoint, 
 import { generateUUID } from '../utils/uuid';
 import { syncStageEffectsFromSurfaces, createDefaultStageEffect } from './stageEffects';
 import { getStageTemplate } from './stageTemplates';
+import { restoreStagePresetSurface } from './stagePresetSurfaces';
 
 // ─── State ───────────────────────────────────────────────
 
@@ -487,6 +488,19 @@ function createSurfaceStore() {
 	    setActiveSurface(id: string | null) {
 	      update(s => ({ ...s, activeSurfaceId: id, selectedSliceId: null, selectedSliceIds: [] }));
 	    },
+
+    /** Atomically restore the complete Surface owned by a Stage preset.
+     *  This reinstates geometry, slice-to-layer bindings, and Stage FX
+     *  before the effects runtime evaluates the newly-loaded layers. */
+    restorePresetSurface(snapshot: Surface) {
+      update(s => ({
+        ...s,
+        surfaces: restoreStagePresetSurface(s.surfaces, snapshot),
+        activeSurfaceId: snapshot.id,
+        selectedSliceId: null,
+        selectedSliceIds: [],
+      }));
+    },
 
     deleteSurface(id: string) {
       update(s => {

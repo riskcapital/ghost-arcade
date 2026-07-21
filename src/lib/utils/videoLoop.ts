@@ -68,6 +68,7 @@ export interface LoopCreateResult {
   outputPath?: string;
   size?: number;
   duration?: number;
+  transitionApplied?: LoopTransitionType;
 }
 
 export interface NativeLoopOptions {
@@ -82,10 +83,21 @@ export type LoopTransitionType =
   | 'fade'
   | 'dissolve'
   | 'pixelize'
+  | 'rectcrop'
+  | 'distance'
+  | 'fadeblack'
+  | 'fadewhite'
+  | 'fadegrays'
+  | 'fadefast'
+  | 'fadeslow'
   | 'wipeleft'
   | 'wiperight'
   | 'wipeup'
   | 'wipedown'
+  | 'wipetl'
+  | 'wipetr'
+  | 'wipebl'
+  | 'wipebr'
   | 'slideleft'
   | 'slideright'
   | 'slideup'
@@ -101,27 +113,148 @@ export type LoopTransitionType =
   | 'horzclose'
   | 'horzopen'
   | 'vertclose'
-  | 'vertopen';
+  | 'vertopen'
+  | 'diagtl'
+  | 'diagtr'
+  | 'diagbl'
+  | 'diagbr'
+  | 'hlslice'
+  | 'hrslice'
+  | 'vuslice'
+  | 'vdslice'
+  | 'hblur'
+  | 'squeezeh'
+  | 'squeezev'
+  | 'zoomin'
+  | 'hlwind'
+  | 'hrwind'
+  | 'vuwind'
+  | 'vdwind'
+  | 'coverleft'
+  | 'coverright'
+  | 'coverup'
+  | 'coverdown'
+  | 'revealleft'
+  | 'revealright'
+  | 'revealup'
+  | 'revealdown'
+  | 'ghost-scanline-glitch'
+  | 'ghost-block-glitch'
+  | 'ghost-chroma-stagger'
+  | 'ghost-tape-tear'
+  | 'ghost-signal-pulse';
 
-export const LOOP_TRANSITIONS: { value: LoopTransitionType; label: string }[] = [
-  { value: 'fade', label: 'Cross Dissolve' },
-  { value: 'dissolve', label: 'Dissolve (Dither)' },
-  { value: 'pixelize', label: 'Pixelate' },
-  { value: 'wipeleft', label: 'Wipe Left' },
-  { value: 'wiperight', label: 'Wipe Right' },
-  { value: 'wipeup', label: 'Wipe Up' },
-  { value: 'wipedown', label: 'Wipe Down' },
-  { value: 'slideleft', label: 'Slide Left' },
-  { value: 'slideright', label: 'Slide Right' },
-  { value: 'circlecrop', label: 'Circle Crop' },
-  { value: 'circleclose', label: 'Circle Close' },
-  { value: 'circleopen', label: 'Circle Open' },
-  { value: 'radial', label: 'Radial' },
-  { value: 'horzclose', label: 'Horizontal Close' },
-  { value: 'horzopen', label: 'Horizontal Open' },
-  { value: 'vertclose', label: 'Vertical Close' },
-  { value: 'vertopen', label: 'Vertical Open' },
+export type LoopTransitionGroup = 'Essentials' | 'Motion' | 'Glitch' | 'Loop FX' | 'Reveals';
+
+export interface LoopTransitionOption {
+  value: LoopTransitionType;
+  label: string;
+  group: LoopTransitionGroup;
+}
+
+export const LOOP_TRANSITIONS: LoopTransitionOption[] = [
+  { value: 'fade', label: 'Cross Dissolve', group: 'Essentials' },
+  { value: 'fadefast', label: 'Quick Dip', group: 'Essentials' },
+  { value: 'fadeslow', label: 'Slow Melt', group: 'Essentials' },
+  { value: 'dissolve', label: 'Dither Dissolve', group: 'Essentials' },
+  { value: 'pixelize', label: 'Pixel Burst', group: 'Essentials' },
+  { value: 'fadeblack', label: 'Black Flash', group: 'Essentials' },
+  { value: 'fadewhite', label: 'White Flash', group: 'Essentials' },
+  { value: 'fadegrays', label: 'Mono Flash', group: 'Essentials' },
+
+  { value: 'wipeleft', label: 'Wipe Left', group: 'Motion' },
+  { value: 'wiperight', label: 'Wipe Right', group: 'Motion' },
+  { value: 'wipeup', label: 'Wipe Up', group: 'Motion' },
+  { value: 'wipedown', label: 'Wipe Down', group: 'Motion' },
+  { value: 'slideleft', label: 'Slide Left', group: 'Motion' },
+  { value: 'slideright', label: 'Slide Right', group: 'Motion' },
+  { value: 'slideup', label: 'Slide Up', group: 'Motion' },
+  { value: 'slidedown', label: 'Slide Down', group: 'Motion' },
+  { value: 'smoothleft', label: 'Smooth Push Left', group: 'Motion' },
+  { value: 'smoothright', label: 'Smooth Push Right', group: 'Motion' },
+  { value: 'smoothup', label: 'Smooth Push Up', group: 'Motion' },
+  { value: 'smoothdown', label: 'Smooth Push Down', group: 'Motion' },
+
+  { value: 'ghost-scanline-glitch', label: 'Scanline Break', group: 'Glitch' },
+  { value: 'ghost-block-glitch', label: 'Block Scatter', group: 'Glitch' },
+  { value: 'ghost-chroma-stagger', label: 'Chroma Stagger', group: 'Glitch' },
+  { value: 'ghost-tape-tear', label: 'Tape Tear', group: 'Glitch' },
+  { value: 'ghost-signal-pulse', label: 'Signal Pulse', group: 'Glitch' },
+  { value: 'hlslice', label: 'Glitch Slice Left', group: 'Glitch' },
+  { value: 'hrslice', label: 'Glitch Slice Right', group: 'Glitch' },
+  { value: 'vuslice', label: 'Vertical Slice Up', group: 'Glitch' },
+  { value: 'vdslice', label: 'Vertical Slice Down', group: 'Glitch' },
+  { value: 'hblur', label: 'Blur Smash', group: 'Glitch' },
+
+  { value: 'zoomin', label: 'Zoom Punch', group: 'Loop FX' },
+  { value: 'distance', label: 'Distance Warp', group: 'Loop FX' },
+  { value: 'radial', label: 'Radial Spin', group: 'Loop FX' },
+  { value: 'rectcrop', label: 'Box Iris', group: 'Loop FX' },
+  { value: 'circlecrop', label: 'Circle Iris', group: 'Loop FX' },
+  { value: 'circleclose', label: 'Circle Close', group: 'Loop FX' },
+  { value: 'circleopen', label: 'Circle Open', group: 'Loop FX' },
+  { value: 'horzclose', label: 'Horizontal Close', group: 'Loop FX' },
+  { value: 'horzopen', label: 'Horizontal Open', group: 'Loop FX' },
+  { value: 'vertclose', label: 'Vertical Close', group: 'Loop FX' },
+  { value: 'vertopen', label: 'Vertical Open', group: 'Loop FX' },
+  { value: 'squeezeh', label: 'Squeeze Horizontal', group: 'Loop FX' },
+  { value: 'squeezev', label: 'Squeeze Vertical', group: 'Loop FX' },
+  { value: 'diagtl', label: 'Diagonal Top Left', group: 'Loop FX' },
+  { value: 'diagtr', label: 'Diagonal Top Right', group: 'Loop FX' },
+  { value: 'diagbl', label: 'Diagonal Bottom Left', group: 'Loop FX' },
+  { value: 'diagbr', label: 'Diagonal Bottom Right', group: 'Loop FX' },
+  { value: 'wipetl', label: 'Corner Wipe Top Left', group: 'Loop FX' },
+  { value: 'wipetr', label: 'Corner Wipe Top Right', group: 'Loop FX' },
+  { value: 'wipebl', label: 'Corner Wipe Bottom Left', group: 'Loop FX' },
+  { value: 'wipebr', label: 'Corner Wipe Bottom Right', group: 'Loop FX' },
+
+  { value: 'hlwind', label: 'Wind Left', group: 'Reveals' },
+  { value: 'hrwind', label: 'Wind Right', group: 'Reveals' },
+  { value: 'vuwind', label: 'Wind Up', group: 'Reveals' },
+  { value: 'vdwind', label: 'Wind Down', group: 'Reveals' },
+  { value: 'coverleft', label: 'Cover Left', group: 'Reveals' },
+  { value: 'coverright', label: 'Cover Right', group: 'Reveals' },
+  { value: 'coverup', label: 'Cover Up', group: 'Reveals' },
+  { value: 'coverdown', label: 'Cover Down', group: 'Reveals' },
+  { value: 'revealleft', label: 'Reveal Left', group: 'Reveals' },
+  { value: 'revealright', label: 'Reveal Right', group: 'Reveals' },
+  { value: 'revealup', label: 'Reveal Up', group: 'Reveals' },
+  { value: 'revealdown', label: 'Reveal Down', group: 'Reveals' },
 ];
+
+export const LOOP_TRANSITION_GROUPS: LoopTransitionGroup[] = ['Essentials', 'Motion', 'Glitch', 'Loop FX', 'Reveals'];
+
+const CUSTOM_LOOP_TRANSITION_EXPRESSIONS: Partial<Record<LoopTransitionType, string>> = {
+  'ghost-scanline-glitch': 'if(gt(P+0.08*PLANE,0.18+0.64*mod(floor(Y/6),7)/6),B,A)',
+  'ghost-block-glitch': 'if(gt(P,0.12+0.76*mod(floor(X/64)*13+floor(Y/48)*7,19)/18),B,A)',
+  'ghost-chroma-stagger': 'if(gt(P+0.13*(PLANE-1),0.15+0.7*mod(floor(Y/20)+floor(X/80),5)/4),B,A)',
+  'ghost-tape-tear': 'if(gt(P+0.25*sin(Y*0.12+P*12),0.48),B,A)',
+  'ghost-signal-pulse': 'if(gt(P+0.18*sin((floor(Y/18)+floor(X/90))*2+P*18),0.58),B,A)',
+  hlwind: 'if(gt(P+0.12*sin(Y*0.14),X/W),B,A)',
+  hrwind: 'if(gt(P+0.12*sin(Y*0.14),(W-X)/W),B,A)',
+  vuwind: 'if(gt(P+0.12*sin(X*0.14),(H-Y)/H),B,A)',
+  vdwind: 'if(gt(P+0.12*sin(X*0.14),Y/H),B,A)',
+  coverleft: 'if(gt(P,X/W),B,A)',
+  coverright: 'if(gt(P,(W-X)/W),B,A)',
+  coverup: 'if(gt(P,(H-Y)/H),B,A)',
+  coverdown: 'if(gt(P,Y/H),B,A)',
+  revealleft: 'A*(1-clip((P-X/W)*8+0.5,0,1))+B*clip((P-X/W)*8+0.5,0,1)',
+  revealright: 'A*(1-clip((P-(W-X)/W)*8+0.5,0,1))+B*clip((P-(W-X)/W)*8+0.5,0,1)',
+  revealup: 'A*(1-clip((P-(H-Y)/H)*8+0.5,0,1))+B*clip((P-(H-Y)/H)*8+0.5,0,1)',
+  revealdown: 'A*(1-clip((P-Y/H)*8+0.5,0,1))+B*clip((P-Y/H)*8+0.5,0,1)',
+};
+
+function loopXfadeOptions(
+  transitionType: LoopTransitionType,
+  fadeDuration: number,
+  xfadeOffset: number,
+): string {
+  const expr = CUSTOM_LOOP_TRANSITION_EXPRESSIONS[transitionType];
+  if (expr) {
+    return `transition=custom:duration=${fadeDuration.toFixed(3)}:offset=${xfadeOffset.toFixed(3)}:expr='${expr}'`;
+  }
+  return `transition=${transitionType}:duration=${fadeDuration.toFixed(3)}:offset=${xfadeOffset.toFixed(3)}`;
+}
 
 // ─── Helpers ────────────────────────────────────────────────
 
@@ -219,6 +352,7 @@ export async function createNativeLoopedVideo(
       outputPath?: string;
       size?: number;
       duration?: number;
+      transitionApplied?: LoopTransitionType;
     }>('video_loop_create', {
       jobId,
       ...input,
@@ -231,12 +365,25 @@ export async function createNativeLoopedVideo(
     if (!result?.success || !result.outputPath) {
       throw new Error(result?.error || 'Native loop creation failed.');
     }
-    onProgress?.({ stage: 'complete', progress: 1, message: 'Loop created!' });
+    if (result.transitionApplied !== transitionType) {
+      throw new Error(
+        `Loop encoder returned ${result.transitionApplied || 'no transition'} `
+        + `instead of the requested ${transitionType}.`,
+      );
+    }
+    const transitionLabel = LOOP_TRANSITIONS.find(option => option.value === transitionType)?.label
+      ?? transitionType;
+    onProgress?.({
+      stage: 'complete',
+      progress: 1,
+      message: `Loop created with ${transitionLabel}.`,
+    });
     return {
       url: pathToFileUrl(result.outputPath),
       outputPath: result.outputPath,
       size: result.size,
       duration: result.duration,
+      transitionApplied: result.transitionApplied,
     };
   } finally {
     unsubscribe?.();
@@ -604,15 +751,15 @@ export async function createLoopedVideo(
     //   [1:v]trim=end=midpoint,   reset PTS  → [v1] (becomes loop end)
     //   xfade [v0]→[v1] at offset = secondHalfDuration - fadeDuration
     //
-    // fps=30 + format=yuv420p normalize both inputs so xfade doesn't
-    // bail on aspect/format mismatches between trim outputs.
+    // xfade requires matching frame rate, sample aspect ratio, pixel
+    // format, and timebase. Normalize every boundary before mixing.
     await ff.exec([
       '-i', 'input.mp4',
       '-i', 'input.mp4',
       '-filter_complex',
-      `[0:v]trim=start=${midpoint.toFixed(3)},setpts=PTS-STARTPTS,fps=30,format=yuv420p[v0];` +
-      `[1:v]trim=end=${midpoint.toFixed(3)},setpts=PTS-STARTPTS,fps=30,format=yuv420p[v1];` +
-      `[v0][v1]xfade=transition=${transitionType}:duration=${fadeDuration.toFixed(3)}:offset=${xfadeOffset.toFixed(3)}[outv]`,
+      `[0:v]trim=start=${midpoint.toFixed(3)},setpts=PTS-STARTPTS,fps=30,setsar=1,format=yuv420p,settb=AVTB[v0];` +
+      `[1:v]trim=end=${midpoint.toFixed(3)},setpts=PTS-STARTPTS,fps=30,setsar=1,format=yuv420p,settb=AVTB[v1];` +
+      `[v0][v1]xfade=${loopXfadeOptions(transitionType, fadeDuration, xfadeOffset)}[outv]`,
       '-map', '[outv]',
       '-c:v', 'libx264',
       '-preset', 'fast',
@@ -635,31 +782,9 @@ export async function createLoopedVideo(
   }
 
   if (renderError) {
-    console.warn('[VideoLoop] xfade pass failed, attempting plain-concat fallback:', renderError);
-    // Fallback: drop the xfade — just concat the two halves. The
-    // junction will show a hard cut but at least the user gets
-    // *something*. Same trim layout, no xfade filter.
-    try {
-      await ff.exec([
-        '-i', 'input.mp4',
-        '-i', 'input.mp4',
-        '-filter_complex',
-        `[0:v]trim=start=${midpoint.toFixed(3)},setpts=PTS-STARTPTS,fps=30,format=yuv420p[v0];` +
-        `[1:v]trim=end=${midpoint.toFixed(3)},setpts=PTS-STARTPTS,fps=30,format=yuv420p[v1];` +
-        `[v0][v1]concat=n=2:v=1:a=0[outv]`,
-        '-map', '[outv]',
-        '-c:v', 'libx264',
-        '-preset', 'fast',
-        '-crf', '23',
-        '-movflags', '+faststart',
-        '-an',
-        'output.mp4',
-      ]);
-    } catch (err2) {
-      console.error('[VideoLoop] Concat fallback also failed:', err2);
-      try { await ff.deleteFile('input.mp4'); } catch { /* ignore */ }
-      throw new Error('Failed to create video loop — both xfade and plain-concat paths failed. The video may be unsupported.');
-    }
+    try { await ff.deleteFile('input.mp4'); } catch { /* ignore */ }
+    const detail = renderError instanceof Error ? renderError.message : String(renderError);
+    throw new Error(`The ${transitionType} loop transition could not be rendered. ${detail}`);
   }
 
   readProgress({ stage: 'rendering', progress: 0, message: 'Finalizing…' });
@@ -696,16 +821,11 @@ export async function createLoopWithResult(
   options: NativeLoopOptions = {},
 ): Promise<LoopCreateResult> {
   if (canUseNativeLoop()) {
-    try {
-      return await createNativeLoopedVideo(videoFile, crossfadeDuration, onProgress, transitionType, options);
-    } catch (err) {
-      console.warn('[VideoLoop] Native loop path failed; falling back to FFmpeg.wasm:', err);
-      onProgress?.({ stage: 'processing', progress: 0, message: 'Native loop failed, trying browser encoder...' });
-    }
+    return createNativeLoopedVideo(videoFile, crossfadeDuration, onProgress, transitionType, options);
   }
 
   const url = await createLoopedVideo(videoFile, crossfadeDuration, onProgress, transitionType);
-  return { url };
+  return { url, transitionApplied: transitionType };
 }
 
 export async function createLoop(

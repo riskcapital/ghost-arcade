@@ -490,6 +490,17 @@ class MidiRouter {
       return;
     }
 
+    if (layerPart === 'led-effect' && bank === 'A') {
+      const effectId = parts[2];
+      const action = parts[3];
+      if (effectId && (action === 'hold' || action === 'toggle')) {
+        window.dispatchEvent(new CustomEvent('vj-led-effect-control', {
+          detail: { effectId, action, pressed: value > 0, value },
+        }));
+      }
+      return;
+    }
+
     if (layerPart === 'stopall') {
       if (value > 0) vjClipLauncher.stopAll();
       return;

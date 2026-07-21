@@ -74,6 +74,7 @@
     const explicit = el.dataset.keyboardMode;
     if (isKeyActionMode(explicit)) return explicit;
     if (path.startsWith('vj:stage-effect:') && path.endsWith(':hold')) return 'momentary';
+    if (path.startsWith('vj:led-effect:') && path.endsWith(':hold')) return 'momentary';
     return undefined;
   }
 

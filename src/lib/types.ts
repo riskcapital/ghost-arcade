@@ -2547,6 +2547,11 @@ export interface Layer {
   // Stage Mode: which VJ layer feeds this mapping layer (undefined = use own source, -1 = VJ Mix)
   vjLayerIndex?: number;
 
+  // Stage Designer surfaces use canvas Y-down coordinates while source
+  // textures use UV Y-up coordinates. Set on Stage-generated screen layers
+  // so source orientation remains stable after users rotate or warp them.
+  stageTextureFlipV?: boolean;
+
   // ── Group nesting ──────────────────────────────────────────────────────
   /** ID of parent group layer (undefined/null = top-level layer) */
   parentGroupId?: string | null;
@@ -4418,6 +4423,13 @@ export interface StagePreset {
   createdAt: number;
   layers: Layer[];  // Deep clone of mapping layers with vjLayerIndex assignments
   scope?: 'project' | 'global';  // Two-tier: 'project' saved in .ghost-arcade, 'global' in localStorage
+  /** Surface whose slices and Stage FX own this preset. Added in 1.9.98;
+   *  older presets recover the relationship from slice-to-layer bindings. */
+  surfaceId?: string;
+  /** Complete Stage Designer surface at save time. Presets must restore
+   *  slice geometry, source bindings, and Stage FX together; otherwise
+   *  every preset silently shares whichever surface was edited last. */
+  surfaceSnapshot?: Surface;
   /** Stage Effects bundle — captured at save time so re-triggering
    *  the preset re-instates the entire animation setup (catalog of
    *  effects + which one is currently live + automation play state
@@ -4647,10 +4659,15 @@ export interface Project {
   // WLED LED-controller integration. Each entry describes one
   // controller on the local network that the engine pushes pixel
   // data to via UDP (DRGB protocol). Per-frame the renderer reads
-  // a tiny tap-texture (sized to ledCount × 1), packs it, and
+  // a tiny spatial tap texture sized to ledCount pixels, packs it, and
   // sends through the main process. Optional + defaults to empty
   // so legacy projects load unchanged.
   wledControllers?: WLEDController[];
+  /** Cross-controller fixture groups used by LED performance effects. */
+  wledGroups?: WLEDGroup[];
+  /** Project-scoped LED performance effects shown in VJ mode. */
+  wledEffects?: WLEDEffect[];
+  wledEffectAutomation?: WLEDEffectAutomation;
   /** Multi-output slices — saved with the project so a recalled
    *  show restores the operator's full projector / display layout
    *  (master canvas resolution, every slice's crop, blend, color
@@ -4711,6 +4728,185 @@ export interface OutputSliceShape {
  *  Project so the same lighting rig follows a saved show. The
  *  renderer subscribes to this list and runs one UDP sender per
  *  enabled controller. */
+export type WLEDMappingMode = 'auto-grid' | 'strip' | 'matrix' | 'custom';
+export type WLEDScanAxis = 'horizontal' | 'vertical';
+export type WLEDTestPattern = 'off' | 'solid' | 'rainbow' | 'chase';
+export type WLEDColorSamplingMode =
+  | 'exact'
+  | 'average'
+  | 'dominant'
+  | 'highlight'
+  | 'palette'
+  | 'luma-hue';
+export type WLEDEffectBlendMode = 'replace' | 'add' | 'multiply' | 'gate' | 'colorize';
+export type WLEDColorSource = 'shader' | 'palette' | 'custom' | 'rainbow';
+export type WLEDSpeedMode = 'manual' | 'bpm';
+export type WLEDPatternCategory =
+  | 'movement'
+  | 'organic'
+  | 'rhythmic'
+  | 'spatial'
+  | 'content'
+  | 'glitch';
+export type WLEDPatternId =
+  | 'chase'
+  | 'comet'
+  | 'scanner'
+  | 'dual-chase'
+  | 'bounce'
+  | 'orbit'
+  | 'marquee'
+  | 'theater-chase'
+  | 'firefly'
+  | 'twinkle'
+  | 'embers'
+  | 'fire'
+  | 'lightning'
+  | 'rain'
+  | 'ripple'
+  | 'aurora'
+  | 'breathing'
+  | 'plasma'
+  | 'beat-pulse'
+  | 'strobe'
+  | 'random-blink'
+  | 'bass-hits'
+  | 'hi-hat-sparkle'
+  | 'bar-sweep'
+  | 'euclidean-pulse'
+  | 'wave'
+  | 'sine-wave'
+  | 'radial-wave'
+  | 'center-out'
+  | 'edge-in'
+  | 'wipe'
+  | 'gradient-drift'
+  | 'pinwheel'
+  | 'snake'
+  | 'shader-color-chase'
+  | 'highlight-runner'
+  | 'palette-sparkle'
+  | 'luma-gate'
+  | 'saturation-pop'
+  | 'pixel-echo'
+  | 'content-freeze-chase'
+  | 'packet-drop'
+  | 'scan-tear'
+  | 'noise-blocks'
+  | 'random-blackout'
+  | 'rgb-split'
+  | 'signal-burst';
+
+export interface WLEDRange {
+  id: string;
+  name: string;
+  /** Zero-based physical LED index on the controller. */
+  start: number;
+  /** Number of consecutive physical LEDs in this fixture. */
+  count: number;
+}
+
+export interface WLEDGroupMember {
+  controllerId: string;
+  /** Omit to target the controller's entire LED span. */
+  rangeId?: string;
+}
+
+export interface WLEDGroup {
+  id: string;
+  name: string;
+  members: WLEDGroupMember[];
+}
+
+export interface WLEDEffectTarget {
+  mode: 'all' | 'controller' | 'range' | 'group';
+  controllerId?: string;
+  rangeId?: string;
+  groupId?: string;
+}
+
+export interface WLEDEffect {
+  id: string;
+  name: string;
+  pattern: WLEDPatternId;
+  /** Included in the automatic sequence. */
+  enabled: boolean;
+  /** Manually latched on. Multiple effects may stack. */
+  active: boolean;
+  amount: number;
+  speed: number;
+  speedMode: WLEDSpeedMode;
+  /** Pattern cycles per beat when BPM sync is active. */
+  beatDivision: number;
+  blendMode: WLEDEffectBlendMode;
+  colorSource: WLEDColorSource;
+  color: string;
+  secondaryColor: string;
+  target: WLEDEffectTarget;
+  /** Pattern-specific normalized controls such as width, density and tail. */
+  params: Record<string, number>;
+  seed: number;
+}
+
+export interface WLEDEffectAutomation {
+  playing: boolean;
+  mode: 'beat' | 'time';
+  beats: number;
+  seconds: number;
+  order: 'forward' | 'random' | 'pingpong';
+}
+
+export interface WLEDNormalizedPoint {
+  /** Horizontal coordinate inside the selected source region. */
+  x: number;
+  /** Vertical coordinate inside the selected source region. */
+  y: number;
+}
+
+export interface WLEDSourceRegion {
+  /** Normalized left edge in the final composite. */
+  x: number;
+  /** Normalized top edge in the final composite. */
+  y: number;
+  /** Normalized width in the final composite. */
+  width: number;
+  /** Normalized height in the final composite. */
+  height: number;
+}
+
+export interface WLEDMappingConfig {
+  mode: WLEDMappingMode;
+  /** Wiring traversal for strips and matrices. */
+  axis?: WLEDScanAxis;
+  /** Matrix width. Rows are derived from ledCount. */
+  columns?: number;
+  /** Reverse every other row/column to match serpentine wiring. */
+  serpentine?: boolean;
+  /** Reverse the final LED index order. */
+  reverse?: boolean;
+  flipX?: boolean;
+  flipY?: boolean;
+  /** Crop the final composite before LED coordinates are resolved. */
+  sourceRegion?: WLEDSourceRegion;
+  /** Ordered LED positions, relative to sourceRegion, in custom mode. */
+  points?: WLEDNormalizedPoint[];
+  /** Spatial averaging radius, normalized to the sampled frame. */
+  sampleRadius?: number;
+}
+
+export interface WLEDColorCalibration {
+  redGain?: number;
+  greenGain?: number;
+  blueGain?: number;
+  saturation?: number;
+  /** Values below this normalized luminance are treated as black. */
+  blackThreshold?: number;
+  /** Temporal smoothing amount. 0 is immediate; 0.95 is very smooth. */
+  smoothing?: number;
+  /** Row-major 3x3 linear-light color correction matrix. */
+  colorMatrix?: number[];
+}
+
 export interface WLEDController {
   id: string;
   /** Display name for the UI ("stage left strip", "back wall matrix"). */
@@ -4734,6 +4930,18 @@ export interface WLEDController {
    *  often need ~2.2 to look right because the eye perceives
    *  brightness non-linearly. */
   gamma?: number;
+  /** Spatial mapping from the final composite into physical LED order. */
+  mapping?: WLEDMappingConfig;
+  /** Per-controller color matching and temporal response. */
+  calibration?: WLEDColorCalibration;
+  /** How local source pixels are reduced to one LED color. */
+  samplingMode?: WLEDColorSamplingMode;
+  /** Named physical spans for controllers driving more than one strip. */
+  ranges?: WLEDRange[];
+  /** Setup-only pattern used to identify wiring and LED order. */
+  testPattern?: WLEDTestPattern;
+  /** Hex color used by the solid setup pattern. */
+  testColor?: string;
 }
 
 // ═══════════════════════════════════════════════════
@@ -5300,6 +5508,15 @@ export function createProject(name: string): Project {
     stagePresets: [],
     svKeyboardPresets: [],
     wledControllers: [],
+    wledGroups: [],
+    wledEffects: [],
+    wledEffectAutomation: {
+      playing: false,
+      mode: 'beat',
+      beats: 8,
+      seconds: 4,
+      order: 'forward',
+    },
   };
 }
 
