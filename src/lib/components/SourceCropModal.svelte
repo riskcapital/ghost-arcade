@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { onDestroy } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
   import { project } from '../stores/layers';
   import type { CropRegion, MediaSource } from '../types';
   import { createDefaultCropRegion } from '../types';
@@ -44,7 +44,7 @@
       syncPreviewSizeFromSource();
     } else if (!open && wasOpen) {
       wasOpen = false;
-      drag = null;
+      endDrag();
     }
   }
 
@@ -194,6 +194,19 @@
     window.removeEventListener('mousemove', moveDrag);
     window.removeEventListener('mouseup', endDrag);
   }
+
+  function onVisibilityChange() {
+    if (document.hidden) endDrag();
+  }
+
+  onMount(() => {
+    window.addEventListener('blur', endDrag);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+    return () => {
+      window.removeEventListener('blur', endDrag);
+      document.removeEventListener('visibilitychange', onVisibilityChange);
+    };
+  });
 
   onDestroy(() => {
     endDrag();

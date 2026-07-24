@@ -37,11 +37,12 @@ function makeSource(count = controller.ledCount): Uint8Array {
 }
 
 describe('WLED pattern catalog', () => {
-  it('contains the complete unique 47-pattern performance catalog', () => {
+  it('contains the complete unique 48-pattern performance catalog', () => {
     const ids = WLED_PATTERN_CATALOG.map(pattern => pattern.id);
-    expect(ids).toHaveLength(47);
+    expect(ids).toHaveLength(48);
     expect(new Set(ids).size).toBe(ids.length);
     expect(WLED_PATTERN_CATEGORIES.map(category => category.id)).toEqual([
+      'color',
       'movement',
       'organic',
       'rhythmic',
@@ -53,6 +54,7 @@ describe('WLED pattern catalog', () => {
 
   it('keeps every category populated with its expected inventory', () => {
     const expected: Record<WLEDPatternCategory, number> = {
+      color: 1,
       movement: 8,
       organic: 10,
       rhythmic: 7,
@@ -91,6 +93,27 @@ describe('WLED pattern catalog', () => {
 });
 
 describe('WLED effect targeting and automation', () => {
+  it('renders custom color layouts from the color effect', () => {
+    const source = makeSource();
+    const output = new Uint8Array(source.length);
+    const effect = createWLEDEffect('solid-color');
+    effect.active = true;
+    effect.color = '#ff0000';
+    effect.secondaryColor = '#00ff00';
+    effect.tertiaryColor = '#0000ff';
+    effect.params.colorCount = 3;
+    effect.params.colorPattern = 2;
+    effect.blendMode = 'replace';
+
+    applyWLEDEffects(source, output, controller, [], [effect], undefined, 1000, 120);
+
+    expect(Array.from(output.slice(0, 9))).toEqual([
+      255, 0, 0,
+      0, 255, 0,
+      0, 0, 255,
+    ]);
+  });
+
   it('changes only the selected physical controller range', () => {
     const source = makeSource();
     const output = new Uint8Array(source.length);

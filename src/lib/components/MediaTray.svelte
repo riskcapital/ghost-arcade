@@ -97,6 +97,13 @@
     effectSource: IntegratedEffectSource;
   };
 
+  type VJTrayCreatorPayload = {
+    id: 'gpu-shader' | 'text-creator';
+    type: 'gpu' | 'text';
+    name: string;
+    src: 'gpu-layer' | 'text-layer';
+  };
+
   type VJTrayMediaPayload = {
     id: string;
     type: 'shader' | 'video' | 'image' | 'threejs' | 'p5js';
@@ -111,7 +118,7 @@
     _assetRef?: any;
   };
 
-  type VJTrayAddPayload = VJTrayLiveSourcePayload | VJTrayPluginPayload | VJTrayMediaPayload;
+  type VJTrayAddPayload = VJTrayLiveSourcePayload | VJTrayPluginPayload | VJTrayCreatorPayload | VJTrayMediaPayload;
 
   // Apply an integrated plugin to the selected layer
   async function applyPluginToLayer(plugin: PluginManifest) {
@@ -248,6 +255,12 @@
       effectType: plugin.effectType,
       effectSource,
     };
+  }
+
+  function vjCreatorPayload(type: 'gpu' | 'text'): VJTrayCreatorPayload {
+    return type === 'gpu'
+      ? { id: 'gpu-shader', type: 'gpu', name: 'GPU Shader', src: 'gpu-layer' }
+      : { id: 'text-creator', type: 'text', name: 'Text Creator', src: 'text-layer' };
   }
 
   function notifyVJLiveSourcesChanged() {
@@ -666,6 +679,11 @@
     onVJAddPayload?.(vjPluginPayload(plugin));
   }
 
+  function addCreatorToVJDeck(type: 'gpu' | 'text') {
+    if (!vjMode) return;
+    onVJAddPayload?.(vjCreatorPayload(type));
+  }
+
   function liveSourceCardTitle(source: LiveSource): string {
     if (source.status !== 'live') return '';
     return vjMode ? 'Click or drag to add to VJ deck' : 'Double-click to apply to layer';
@@ -708,6 +726,20 @@
       effectType: plugin.effectType,
     }));
     e.dataTransfer.setData('text/plain', plugin.id);
+  }
+
+  function onCreatorCardDragStart(type: 'gpu' | 'text', e: DragEvent) {
+    if (!vjMode || !e.dataTransfer) return;
+    const payload = vjCreatorPayload(type);
+    (window as any).__ghostVJMediaTrayDragPayload = payload;
+    e.dataTransfer.effectAllowed = 'copy';
+    e.dataTransfer.setData('application/x-ghost-media-source', JSON.stringify(payload));
+    e.dataTransfer.setData('application/x-ghost-vj-clip', JSON.stringify({
+      type: payload.type,
+      id: payload.id,
+      pluginName: payload.name,
+    }));
+    e.dataTransfer.setData('text/plain', payload.id);
   }
 
   function clearVJMediaTrayDragPayload() {
@@ -4041,6 +4073,43 @@
           <span class="plugins-hint">{vjMode ? 'Click or drag to add to VJ deck' : 'Click to apply to selected layer'}</span>
         </div>
         <div class="plugins-grid">
+          {#if vjMode}
+            <button
+              class="plugin-card creator-card"
+              onclick={() => addCreatorToVJDeck('gpu')}
+              draggable="true"
+              ondragstart={(e) => onCreatorCardDragStart('gpu', e)}
+              ondragend={clearVJMediaTrayDragPayload}
+              title="Add GPU Shader to VJ deck"
+            >
+              <div class="plugin-preview creator-icon gpu-icon">
+                <PluginIcon pluginId="gpu-shader" size={34} />
+              </div>
+              <div class="plugin-info">
+                <span class="plugin-name">GPU Shader</span>
+                <span class="plugin-desc">Native generative shaders with live controls</span>
+                <span class="plugin-tier creator-tier">VJ CONTENT</span>
+              </div>
+            </button>
+            <button
+              class="plugin-card creator-card"
+              onclick={() => addCreatorToVJDeck('text')}
+              draggable="true"
+              ondragstart={(e) => onCreatorCardDragStart('text', e)}
+              ondragend={clearVJMediaTrayDragPayload}
+              title="Add Text Creator to VJ deck"
+            >
+              <div class="plugin-preview creator-icon text-icon">
+                <PluginIcon pluginId="text-creator" size={34} />
+              </div>
+              <div class="plugin-info">
+                <span class="plugin-name">Text Creator</span>
+                <span class="plugin-desc">Animated typography with transforms and depth</span>
+                <span class="plugin-tier creator-tier">VJ CONTENT</span>
+              </div>
+            </button>
+          {/if}
+
           <!-- Integrated plugins (from registry) -->
           {#each availablePlugins as plugin (plugin.id)}
             <button

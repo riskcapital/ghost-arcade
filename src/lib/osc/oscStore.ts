@@ -22,8 +22,14 @@
 import { writable, get, derived } from 'svelte/store';
 import { midiRouter } from '../midi/midiRouter';
 import { generateUUID } from '../utils/uuid';
+import {
+  createVjOscTemplateBindings,
+  inferOscBindingMode,
+  resolveOscBindingValue,
+  type OscBindingSpec,
+} from './oscBindings';
 
-export interface OscBinding {
+export interface OscBinding extends OscBindingSpec {
   id: string;
   /** OSC address pattern that triggers this binding. Exact match for
    *  MVP (e.g. '/layer/1/opacity'); pattern matching (wildcards) is a
@@ -43,8 +49,6 @@ export interface OscBinding {
   /** When true, invert the rescaled value (1 - x). Useful for
    *  knobs that map "up = less" semantically. */
   invert: boolean;
-  /** Optional user label for the bindings table. */
-  label?: string;
 }
 
 export interface OscState {
@@ -144,6 +148,7 @@ function createOscStore() {
         sourceMax: sMax,
         invert: false,
         label: state.learnTarget.label,
+        mode: inferOscBindingMode(state.learnTarget.path),
       };
       update(s => ({ ...s, bindings: [...s.bindings, binding], learnTarget: null }));
       console.log('[OSC] learned binding:', msg.address, '→', binding.path);
@@ -154,14 +159,9 @@ function createOscStore() {
     // could legitimately be bound to multiple params).
     for (const b of state.bindings) {
       if (b.address !== msg.address) continue;
-      const raw = msg.args[b.argIndex];
-      const num = typeof raw === 'number' ? raw : (raw === true ? 1 : raw === false ? 0 : NaN);
-      if (!isFinite(num)) continue;
-      const span = b.sourceMax - b.sourceMin || 1;
-      let v = (num - b.sourceMin) / span;
-      v = Math.max(0, Math.min(1, v));
-      if (b.invert) v = 1 - v;
-      midiRouter.dispatchPath(b.path, v);
+      const value = resolveOscBindingValue(b, msg.args);
+      if (value === null) continue;
+      midiRouter.dispatchPath(b.path, value);
     }
   }
 
@@ -200,6 +200,18 @@ function createOscStore() {
 
     addBinding(binding: Omit<OscBinding, 'id'>) {
       update(s => ({ ...s, bindings: [...s.bindings, { id: generateUUID(), ...binding }] }));
+    },
+    installVjTemplate(layerCount = 4, columnCount = 8) {
+      const template = createVjOscTemplateBindings(layerCount, columnCount);
+      update(s => {
+        const existing = new Set(s.bindings.map(b => `${b.address}\n${b.path}`));
+        const additions = template
+          .filter(b => !existing.has(`${b.address}\n${b.path}`))
+          .map(b => ({ id: generateUUID(), ...b }));
+        return additions.length > 0
+          ? { ...s, bindings: [...s.bindings, ...additions] }
+          : s;
+      });
     },
     updateBinding(id: string, patch: Partial<OscBinding>) {
       update(s => ({

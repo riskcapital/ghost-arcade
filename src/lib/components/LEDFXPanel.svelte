@@ -16,7 +16,24 @@
     getWLEDPatternDefinition,
   } from '../wled/effects';
 
-  let selectedPattern: WLEDPatternId = 'chase';
+  const COLOR_PATTERN_OPTIONS = [
+    { id: 0, label: 'Solid' },
+    { id: 1, label: 'Gradient' },
+    { id: 2, label: 'Every other' },
+    { id: 3, label: 'Blocks' },
+    { id: 4, label: 'Random' },
+    { id: 5, label: 'Wave' },
+  ];
+  const COLOR_PALETTES = [
+    { label: 'White', colors: ['#ffffff', '#ffffff', '#ffffff', '#ffffff'] },
+    { label: 'Fire embers', colors: ['#ff3100', '#ff8a00', '#ffd166', '#3a0900'] },
+    { label: 'Green lanterns', colors: ['#00ff8a', '#7cff6b', '#1a5f35', '#d8ffe0'] },
+    { label: 'Fireflies', colors: ['#ecff91', '#a8ff4f', '#2a5d18', '#fff6a6'] },
+    { label: 'Cyber', colors: ['#00f0ff', '#ff2bd6', '#6633ff', '#ffffff'] },
+    { label: 'Ocean', colors: ['#00d4ff', '#006eff', '#00ffb3', '#001a3a'] },
+  ];
+
+  let selectedPattern: WLEDPatternId = 'solid-color';
   let expandedEffectId: string | null = null;
   let heldEffects: Record<string, boolean> = {};
   let holdRestore: Record<string, boolean> = {};
@@ -93,6 +110,24 @@
 
   function updateParam(effect: WLEDEffect, key: string, value: number) {
     updateEffect(effect.id, { params: { ...effect.params, [key]: value } });
+  }
+
+  function patternDescription(pattern: WLEDPatternId): string {
+    return getWLEDPatternDefinition(pattern).description;
+  }
+
+  function setColorCount(effect: WLEDEffect, count: number) {
+    updateParam(effect, 'colorCount', Math.max(1, Math.min(4, count)));
+  }
+
+  function applyColorPalette(effect: WLEDEffect, colors: string[]) {
+    updateEffect(effect.id, {
+      color: colors[0] ?? effect.color,
+      secondaryColor: colors[1] ?? effect.secondaryColor,
+      tertiaryColor: colors[2] ?? effect.tertiaryColor,
+      quaternaryColor: colors[3] ?? effect.quaternaryColor,
+      colorSource: 'custom',
+    });
   }
 
   onMount(() => {
@@ -187,21 +222,22 @@
       <span>Pattern Catalog</span>
       <small>{WLED_PATTERN_CATALOG.length} patterns</small>
     </div>
-    {#each WLED_PATTERN_CATEGORIES as category (category.id)}
-      {@const patterns = WLED_PATTERN_CATALOG.filter(pattern => pattern.category === category.id)}
-      <details open={category.id === 'movement'}>
-        <summary>{category.label}<span>{patterns.length}</span></summary>
-        <div class="pattern-grid">
-          {#each patterns as pattern (pattern.id)}
-            <button
-              class:selected={selectedPattern === pattern.id}
-              onclick={() => selectedPattern = pattern.id}
-              title={pattern.description}
-            >{pattern.label}</button>
-          {/each}
-        </div>
-      </details>
-    {/each}
+    <label class="catalog-picker">
+      <span>Pattern</span>
+      <select
+        value={selectedPattern}
+        title={patternDescription(selectedPattern)}
+        onchange={(event) => selectedPattern = (event.target as HTMLSelectElement).value as WLEDPatternId}
+      >
+        {#each WLED_PATTERN_CATEGORIES as category (category.id)}
+          <optgroup label={category.label}>
+            {#each WLED_PATTERN_CATALOG.filter(pattern => pattern.category === category.id) as pattern (pattern.id)}
+              <option value={pattern.id}>{pattern.label}</option>
+            {/each}
+          </optgroup>
+        {/each}
+      </select>
+    </label>
     <div class="catalog-add">
       <div>
         <strong>{getWLEDPatternDefinition(selectedPattern).label}</strong>
@@ -364,21 +400,46 @@
                 />
               </label>
             {/if}
-            <label class="wide">
-              <span>Color source</span>
-              <select
-                value={effect.colorSource}
-                onchange={(event) => updateEffect(effect.id, {
-                  colorSource: (event.target as HTMLSelectElement).value as WLEDColorSource
-                })}
-              >
-                <option value="shader">Live content pixels</option>
-                <option value="palette">Dominant content palette</option>
-                <option value="custom">Custom colors</option>
-                <option value="rainbow">Rainbow</option>
-              </select>
-            </label>
-            {#if effect.colorSource === 'custom'}
+            {#if effect.pattern === 'solid-color'}
+              <label class="wide">
+                <span>Color preset</span>
+                <select
+                  value=""
+                  onchange={(event) => {
+                    const preset = COLOR_PALETTES.find(item => item.label === (event.target as HTMLSelectElement).value);
+                    if (preset) applyColorPalette(effect, preset.colors);
+                    (event.target as HTMLSelectElement).value = '';
+                  }}
+                >
+                  <option value="">Choose preset…</option>
+                  {#each COLOR_PALETTES as preset (preset.label)}
+                    <option value={preset.label}>{preset.label}</option>
+                  {/each}
+                </select>
+              </label>
+              <label>
+                <span>Color count</span>
+                <select
+                  value={Math.round(effect.params.colorCount ?? 1)}
+                  onchange={(event) => setColorCount(effect, parseInt((event.target as HTMLSelectElement).value, 10))}
+                >
+                  <option value="1">1 color</option>
+                  <option value="2">2 colors</option>
+                  <option value="3">3 colors</option>
+                  <option value="4">4 colors</option>
+                </select>
+              </label>
+              <label>
+                <span>Pattern</span>
+                <select
+                  value={Math.round(effect.params.colorPattern ?? 0)}
+                  onchange={(event) => updateParam(effect, 'colorPattern', parseInt((event.target as HTMLSelectElement).value, 10))}
+                >
+                  {#each COLOR_PATTERN_OPTIONS as option (option.id)}
+                    <option value={option.id}>{option.label}</option>
+                  {/each}
+                </select>
+              </label>
               <label>
                 <span>Color A</span>
                 <input
@@ -389,16 +450,79 @@
                   })}
                 />
               </label>
-              <label>
-                <span>Color B</span>
-                <input
-                  type="color"
-                  value={effect.secondaryColor}
-                  oninput={(event) => updateEffect(effect.id, {
-                    secondaryColor: (event.target as HTMLInputElement).value
+              {#if (effect.params.colorCount ?? 1) >= 2}
+                <label>
+                  <span>Color B</span>
+                  <input
+                    type="color"
+                    value={effect.secondaryColor}
+                    oninput={(event) => updateEffect(effect.id, {
+                      secondaryColor: (event.target as HTMLInputElement).value
+                    })}
+                  />
+                </label>
+              {/if}
+              {#if (effect.params.colorCount ?? 1) >= 3}
+                <label>
+                  <span>Color C</span>
+                  <input
+                    type="color"
+                    value={effect.tertiaryColor ?? '#ffd166'}
+                    oninput={(event) => updateEffect(effect.id, {
+                      tertiaryColor: (event.target as HTMLInputElement).value
+                    })}
+                  />
+                </label>
+              {/if}
+              {#if (effect.params.colorCount ?? 1) >= 4}
+                <label>
+                  <span>Color D</span>
+                  <input
+                    type="color"
+                    value={effect.quaternaryColor ?? '#7cff6b'}
+                    oninput={(event) => updateEffect(effect.id, {
+                      quaternaryColor: (event.target as HTMLInputElement).value
+                    })}
+                  />
+                </label>
+              {/if}
+            {:else}
+              <label class="wide">
+                <span>Color source</span>
+                <select
+                  value={effect.colorSource}
+                  onchange={(event) => updateEffect(effect.id, {
+                    colorSource: (event.target as HTMLSelectElement).value as WLEDColorSource
                   })}
-                />
+                >
+                  <option value="shader">Live content pixels</option>
+                  <option value="palette">Dominant content palette</option>
+                  <option value="custom">Custom colors</option>
+                  <option value="rainbow">Rainbow</option>
+                </select>
               </label>
+              {#if effect.colorSource === 'custom'}
+                <label>
+                  <span>Color A</span>
+                  <input
+                    type="color"
+                    value={effect.color}
+                    oninput={(event) => updateEffect(effect.id, {
+                      color: (event.target as HTMLInputElement).value
+                    })}
+                  />
+                </label>
+                <label>
+                  <span>Color B</span>
+                  <input
+                    type="color"
+                    value={effect.secondaryColor}
+                    oninput={(event) => updateEffect(effect.id, {
+                      secondaryColor: (event.target as HTMLInputElement).value
+                    })}
+                  />
+                </label>
+              {/if}
             {/if}
             {#each ['width', 'tail', 'density'] as key}
               <label>
@@ -451,21 +575,9 @@
   .automation-bar span { color: #71717a; }
   .catalog { border: 1px solid #2d2d34; background: #0e0e13; }
   .catalog-title { justify-content: space-between; padding: 8px; border-bottom: 1px solid #28282e; }
-  details { border-bottom: 1px solid #24242b; }
-  summary {
-    display: flex; justify-content: space-between; padding: 7px 8px; color: #a8a8b0;
-    cursor: pointer; text-transform: uppercase; letter-spacing: 0.7px;
-  }
-  summary span { color: #555560; }
-  .pattern-grid {
-    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 3px; padding: 0 7px 7px;
-  }
-  .pattern-grid button {
-    min-height: 28px; padding: 4px 6px; overflow: hidden; color: #8f8f99;
-    text-align: left; text-overflow: ellipsis; white-space: nowrap;
-  }
-  .pattern-grid button:hover, .pattern-grid button.selected { border-color: #ff7768; color: #f0f0f3; }
-  .pattern-grid button.selected { background: #291817; }
+  .catalog-picker { padding: 8px; border-bottom: 1px solid #24242b; }
+  .catalog-picker span { color: #85858f; text-transform: uppercase; letter-spacing: 0.7px; }
+  .catalog-picker select { min-width: 0; width: 100%; padding: 6px; }
   .catalog-add { gap: 7px; padding: 8px; }
   .catalog-add div { display: grid; min-width: 0; gap: 2px; }
   .catalog-add strong { color: #eeeeef; }
