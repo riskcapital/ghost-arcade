@@ -17,3 +17,20 @@ export function stageTextureNeedsVerticalFlip(
   const bottomY = (layer.corners.bottomLeft.y + layer.corners.bottomRight.y) * 0.5;
   return topY < bottomY;
 }
+
+/**
+ * Unified groups inherit the Stage Designer texture convention from their
+ * generated screen children. This marker must survive VJ-source injection or
+ * vertical crop bands are sampled in reverse order.
+ */
+export function layerUsesStageTextureCoordinates(
+  layer: Pick<Layer, 'id' | 'type' | 'stageTextureFlipV'>,
+  allLayers: Array<Pick<Layer, 'parentGroupId' | 'stageTextureFlipV'>>,
+): boolean {
+  if (layer.stageTextureFlipV === true) return true;
+  if (layer.type !== 'group') return false;
+
+  return allLayers.some(
+    child => child.parentGroupId === layer.id && child.stageTextureFlipV === true,
+  );
+}

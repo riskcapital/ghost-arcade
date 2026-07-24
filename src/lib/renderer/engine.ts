@@ -19,7 +19,6 @@ import { domeProjectionShader } from './shaders/dome';
 import { getTransition, applyFaderCurve, type TransitionDef } from './crossfadeTransitions';
 import { getVisualAudioSnapshot } from '../audio/visualAudio';
 import { stageTextureNeedsVerticalFlip } from '../utils/stageTextureOrientation';
-import { addLayerBlendInfluenceUniform, layerBlendInfluence } from './blendOpacity';
 // Geometry imports kept for potential future use with shape control point warping
 // import { createShapeGeometry, updateGeometryFromControlPoints } from './geometry';
 
@@ -603,14 +602,11 @@ export class RenderEngine {
   private createBlendMaterial(mode: BlendMode): THREE.ShaderMaterial {
     return new THREE.ShaderMaterial({
       vertexShader: passthroughVertexShader,
-      fragmentShader: addLayerBlendInfluenceUniform(blendShaders[mode] || blendShaders.normal),
+      fragmentShader: blendShaders[mode] || blendShaders.normal,
       uniforms: {
         uBase: { value: null },
         uLayer: { value: null },
         uOpacity: { value: 1.0 },
-        // Internal effect passes keep full blend strength. Layer draws
-        // override this with the opacity-driven influence curve.
-        uBlendInfluence: { value: 1.0 },
       },
       transparent: true,
       depthTest: false,
@@ -1985,43 +1981,25 @@ export class RenderEngine {
   /**
    * Composite a texture onto the main compositeTarget using blend mode.
    */
-  private compositeTexture(
-    texture: THREE.Texture,
-    opacity: number,
-    blendMode: BlendMode,
-    isFirst: boolean,
-    blendInfluence = 1,
-  ): void {
+  private compositeTexture(texture: THREE.Texture, opacity: number, blendMode: BlendMode, isFirst: boolean): void {
     if (isFirst) {
       const blendMat = this.blendMaterials.get('normal')!;
       blendMat.uniforms.uBase.value = this.createBlackTexture();
       blendMat.uniforms.uLayer.value = texture;
       blendMat.uniforms.uOpacity.value = opacity;
-      blendMat.uniforms.uBlendInfluence.value = 0;
       this.compositeQuad.material = blendMat;
       this.renderer.setRenderTarget(this.compositeTarget);
       this.renderer.render(this.compositeScene, this.camera);
-      blendMat.uniforms.uBlendInfluence.value = 1;
     } else {
       this.swapTargets();
       const blendMat = this.blendMaterials.get(blendMode) || this.blendMaterials.get('normal')!;
       blendMat.uniforms.uBase.value = this.tempTarget.texture;
       blendMat.uniforms.uLayer.value = texture;
       blendMat.uniforms.uOpacity.value = opacity;
-      blendMat.uniforms.uBlendInfluence.value = blendInfluence;
       this.compositeQuad.material = blendMat;
       this.renderer.setRenderTarget(this.compositeTarget);
       this.renderer.render(this.compositeScene, this.camera);
-      blendMat.uniforms.uBlendInfluence.value = 1;
     }
-  }
-
-  private getLayerBlendInfluence(layer: Layer): number {
-    const explicitOpacity = (layer as any)._blendControlOpacity;
-    const controlOpacity = typeof explicitOpacity === 'number'
-      ? explicitOpacity
-      : layer.opacity;
-    return layerBlendInfluence(controlOpacity, layer.blendMode);
   }
 
   /** Apply a mask-only hierarchy layer to the composite accumulated so far. */
@@ -2164,13 +2142,7 @@ export class RenderEngine {
         // Continuous-mode gate (see renderUnitsToCurrentTarget comment).
         const childSeqGate = (child as any)._seqGate;
         const childCompositeOpacity = child.opacity * (typeof childSeqGate === 'number' ? childSeqGate : 1);
-        this.compositeTexture(
-          finalTexture,
-          childCompositeOpacity,
-          child.blendMode,
-          childIdx === 0,
-          this.getLayerBlendInfluence(child),
-        );
+        this.compositeTexture(finalTexture, childCompositeOpacity, child.blendMode, childIdx === 0);
         childIdx++;
       }
 
@@ -3150,13 +3122,7 @@ export class RenderEngine {
         if (groupTexture) {
           const groupSeqGate = (unit.group as any)._seqGate;
           const groupCompositeOpacity = unit.group.opacity * (typeof groupSeqGate === 'number' ? groupSeqGate : 1);
-          this.compositeTexture(
-            groupTexture,
-            groupCompositeOpacity,
-            unit.group.blendMode,
-            compositeIdx === 0,
-            this.getLayerBlendInfluence(unit.group),
-          );
+          this.compositeTexture(groupTexture, groupCompositeOpacity, unit.group.blendMode, compositeIdx === 0);
           compositeIdx++;
         }
         continue;
@@ -3173,13 +3139,7 @@ export class RenderEngine {
       // hides the layer at composite time. Default 1 = unaffected.
       const seqGate = (layer as any)._seqGate;
       const compositeOpacity = layer.opacity * (typeof seqGate === 'number' ? seqGate : 1);
-      this.compositeTexture(
-        finalTexture,
-        compositeOpacity,
-        layer.blendMode,
-        compositeIdx === 0,
-        this.getLayerBlendInfluence(layer),
-      );
+      this.compositeTexture(finalTexture, compositeOpacity, layer.blendMode, compositeIdx === 0);
       compositeIdx++;
 
       // GPU stroke-particle brushes sit at the light-paint layer's z.

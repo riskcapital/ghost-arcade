@@ -35,6 +35,7 @@
   import { showToast } from '../stores/errorToast';
   import { getTextureShareLabel, invoke, isDesktopApp, isOsrMode, isOutputMode } from '$lib/bridge';
   import { drawTestPattern, type TestPatternType } from '../utils/testPatterns';
+  import { layerUsesStageTextureCoordinates } from '../utils/stageTextureOrientation';
   import { applyEdgeBlending } from '../output/outputPostProcess';
   import { renderSlicePixelsAsync, pruneSliceReadbackStates, isBlendRendererAvailable } from '../output/blendRenderer';
   import { isAtlasSenderSlice } from '../output/atlasLayout';
@@ -1560,7 +1561,6 @@
             // to mutate without invalidating cached child layers.
             entry.group.opacity = groupOpacity;
             entry.group.blendMode = ls.blendMode;
-            (entry.group as any)._blendControlOpacity = ls.opacity;
             entry.group.name = `MAP L${i + 1}: ${comp.name}`;
             // VJ-layer FX chain → applied to the preset's group composite
             // as a single post-pass (see renderGroupToTexture's
@@ -1735,7 +1735,11 @@
               if (layer.vjLayerIndex === undefined) return layer;
               const resolved = vjResolvedMap.get(layer.vjLayerIndex);
               if (!resolved) return layer;
-              return injectVjIntoLayer(layer, resolved);
+              return injectVjIntoLayer(
+                layer,
+                resolved,
+                layerUsesStageTextureCoordinates(layer, normalLayers),
+              );
             });
           }
         }

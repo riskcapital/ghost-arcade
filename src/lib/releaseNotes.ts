@@ -8,6 +8,22 @@ export interface AppReleaseNotes {
 }
 
 const RELEASE_NOTES: Record<string, AppReleaseNotes> = {
+  '1.9.991': {
+    title: 'Stage editing and VJ playback reliability',
+    summary: [
+      'VJ videos launch from a decoded trim-start frame without a black transition frame.',
+      'Unified stage slices preserve their intended visual order.',
+      'Stage geometry editing gains reliable undo and multi-slice stretching.',
+    ],
+    highlights: [
+      'VJ video triggers and column launches use a pre-armed decoded frame at the clip trim start, avoiding the one-frame delay seen when switching from shaders.',
+      'Unified Stage Designer groups preserve the Stage texture orientation used by their generated slices, including layouts with vertical rows.',
+      'Stage Designer geometry edits support Cmd/Ctrl+Z, redo, grouped drag history, and canceling an active drag with Escape.',
+      'Multi-selected mapping slices can be stretched from any side as a group while retaining the existing uniform scale control.',
+      'Layer blend modes are restored to full-strength compositing, with opacity acting as the straightforward layer mix amount.',
+      'Imported Mapping Mode projects recreate saved video sources after resolving their portable asset references.',
+    ],
+  },
   '1.9.99': {
     title: 'Live performance and control polish',
     summary: [
