@@ -4028,6 +4028,135 @@
       "defaults": {},
       "featured": false,
       "enabled": true
+    },
+    {
+      "file": "LIVE-NebulaCathedral.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "space",
+        "volumetric",
+        "clouds",
+        "audio",
+        "live-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "LIVE-LaserLattice.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [
+        "tunnel",
+        "neon",
+        "grid",
+        "audio",
+        "live-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "LIVE-ObsidianFlow.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "liquid",
+        "chrome",
+        "metal",
+        "audio",
+        "live-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "LIVE-AuroraSpectrum.fs",
+      "tier": "demo",
+      "category": "Audio Reactive",
+      "tags": [
+        "aurora",
+        "fft",
+        "spectrum",
+        "curtains",
+        "live-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "LIVE-FractalBloom.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "fractal",
+        "kaleidoscope",
+        "mandala",
+        "audio",
+        "live-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "LIVE-PulseHalo.fs",
+      "tier": "demo",
+      "category": "Audio Reactive",
+      "tags": [
+        "minimal",
+        "rings",
+        "beat",
+        "techno",
+        "live-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "LIVE-PrismStorm.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [
+        "crystal",
+        "prism",
+        "raymarch",
+        "audio",
+        "live-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "LIVE-TheWitness.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "eye",
+        "organism",
+        "fractal",
+        "audio",
+        "live-pack",
+        "headliner"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
     }
   ]
 }

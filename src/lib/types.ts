@@ -4742,6 +4742,7 @@ export type WLEDEffectBlendMode = 'replace' | 'add' | 'multiply' | 'gate' | 'col
 export type WLEDColorSource = 'shader' | 'palette' | 'custom' | 'rainbow';
 export type WLEDSpeedMode = 'manual' | 'bpm';
 export type WLEDPatternCategory =
+  | 'color'
   | 'movement'
   | 'organic'
   | 'rhythmic'
@@ -4749,6 +4750,7 @@ export type WLEDPatternCategory =
   | 'content'
   | 'glitch';
 export type WLEDPatternId =
+  | 'solid-color'
   | 'chase'
   | 'comet'
   | 'scanner'
@@ -4842,6 +4844,8 @@ export interface WLEDEffect {
   colorSource: WLEDColorSource;
   color: string;
   secondaryColor: string;
+  tertiaryColor?: string;
+  quaternaryColor?: string;
   target: WLEDEffectTarget;
   /** Pattern-specific normalized controls such as width, density and tail. */
   params: Record<string, number>;

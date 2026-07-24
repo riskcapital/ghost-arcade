@@ -22,7 +22,7 @@
   import { parseISF, getInputDefault } from '../isf/parser';
   import { generateCachedThumbnail as generateShaderThumbnail } from '../isf/thumbnail';
   import type { BlendMode, Effect, EffectType, ISFInputDef, JSAnimationSource, SplatContent, Model3DContent, Model3DFormat, SplatAnimationType, SplatDisplacementType, Model3DAnimationType, Model3DDeformationType, Model3DMaterialType, Model3DWireframeMode, Model3DLightingPreset } from '../types';
-  import { generateUUID, createDefaultSplatContent, createDefaultModel3DContent } from '../types';
+  import { generateUUID, createDefaultSplatContent, createDefaultModel3DContent, createDefaultGPULayerContent, createDefaultTextContent } from '../types';
   import { audioStore } from '../stores/audio';
   import { createAssetRefFromFile, createAssetRefFromGeneratedBlob } from '../storage/assetRegistry';
   import ClipPreviewPanel from './ClipPreviewPanel.svelte';
@@ -66,7 +66,10 @@
   import EffectPickerModal from './EffectPickerModal.svelte';
   import SplatPanel from './SplatPanel.svelte';
   import Model3DPanel from './Model3DPanel.svelte';
+  import VJGPUClipPanel from './VJGPUClipPanel.svelte';
+  import VJTextClipPanel from './VJTextClipPanel.svelte';
   import LEDFXPanel from './LEDFXPanel.svelte';
+  import { getShaderDef } from '../renderer/gpuShaderCatalog';
   // Same build-time JS animation catalog used by mapping-mode MediaTray.
   // @ts-expect-error virtual module supplied by vite plugin
   import bundledThreeJSItems from 'virtual:threejs-bundles';
@@ -83,19 +86,20 @@
   // (the shared plugin registry) so the two stay identical. Each card is
   // draggable: drop onto a clip slot to spawn an effect clip (the drop
   // handler seeds defaults from the manifest via getPluginByEffectType).
-  // Point Cloud + 3D Model are VJ content types the registry doesn't
-  // cover, appended at the end with their own inline icons.
+  // Editor-native content types are appended with their own inline icons.
   type VJPluginCard = {
     id: string;
     name: string;
     description: string;
     tier: string;
-    clipType: 'effect' | 'splat' | 'model3d';
+    clipType: 'effect' | 'splat' | 'model3d' | 'gpu' | 'text';
     effectType?: IntegratedEffectType;
-    inlineIcon?: 'splat' | 'model3d';
+    inlineIcon?: 'splat' | 'model3d' | 'gpu' | 'text';
   };
 
   const vjPluginCards: VJPluginCard[] = [
+    { id: 'gpu-shader', name: 'GPU Shader', description: 'GPU visual instruments and particle shaders', tier: 'free', clipType: 'gpu', inlineIcon: 'gpu' },
+    { id: 'text-creator', name: 'Text Creator', description: 'Live typography, animation, glow, and 3D text', tier: 'free', clipType: 'text', inlineIcon: 'text' },
     ...getAllPlugins().map((p): VJPluginCard => ({
       id: p.id,
       name: p.name,
@@ -759,7 +763,7 @@
   }
 
   type VJDragPayload = {
-    type: 'shader' | 'video' | 'image' | 'threejs' | 'spout' | 'effect' | 'splat' | 'model3d' | 'preset' | 'live-source';
+    type: 'shader' | 'video' | 'image' | 'threejs' | 'spout' | 'effect' | 'splat' | 'model3d' | 'gpu' | 'text' | 'preset' | 'live-source';
     id: string;
     spoutName?: string;
     pluginName?: string;
@@ -801,7 +805,14 @@
     effectSource?: IntegratedEffectSource;
   };
 
-  type MediaTrayDropPayload = MediaTrayMediaPayload | MediaTrayLiveSourcePayload | MediaTrayPluginPayload;
+  type MediaTrayCreatorPayload = {
+    id: 'gpu-shader' | 'text-creator';
+    type: 'gpu' | 'text';
+    name: string;
+    src: 'gpu-layer' | 'text-layer';
+  };
+
+  type MediaTrayDropPayload = MediaTrayMediaPayload | MediaTrayLiveSourcePayload | MediaTrayPluginPayload | MediaTrayCreatorPayload;
 
   // Drag state for clips
   let draggedClip: VJDragPayload | null = null;
@@ -2372,6 +2383,29 @@
   }
 
   function createVJClipFromMediaTrayPayload(payload: MediaTrayDropPayload): VJClip | null {
+    if (payload.type === 'gpu') {
+      const gpuLayerContent = createDefaultGPULayerContent();
+      const shaderDef = getShaderDef(gpuLayerContent.shaderId);
+      gpuLayerContent.params = { ...(shaderDef?.defaultParams || {}) };
+      return {
+        id: generateUUID(),
+        type: 'gpu',
+        name: payload.name,
+        src: payload.src,
+        gpuLayerContent,
+      };
+    }
+
+    if (payload.type === 'text') {
+      return {
+        id: generateUUID(),
+        type: 'text',
+        name: payload.name,
+        src: payload.src,
+        textContent: createDefaultTextContent(),
+      };
+    }
+
     if (payload.type === 'live-source') {
       const registeredSource = findMediaTrayLiveSource(payload.id);
       const source = (payload.videoEl || payload.stream) ? payload : (registeredSource ?? payload);
@@ -2418,7 +2452,7 @@
       };
     }
 
-    if (payload.jsAnimation) {
+    if ('jsAnimation' in payload && payload.jsAnimation) {
       return {
         id: generateUUID(),
         type: payload.type === 'p5js' ? 'p5js' : 'jsanimation',
@@ -2598,6 +2632,27 @@
         },
       };
       vjClipLauncher.setClip(layerIndex, columnIndex, vjClip, bank);
+    } else if (draggedClip.type === 'gpu') {
+      const gpuLayerContent = createDefaultGPULayerContent();
+      const shaderDef = getShaderDef(gpuLayerContent.shaderId);
+      gpuLayerContent.params = { ...(shaderDef?.defaultParams || {}) };
+      const vjClip: VJClip = {
+        id: generateUUID(),
+        type: 'gpu',
+        name: 'GPU Shader',
+        src: 'gpu-layer',
+        gpuLayerContent,
+      };
+      vjClipLauncher.setClip(layerIndex, columnIndex, vjClip, bank);
+    } else if (draggedClip.type === 'text') {
+      const vjClip: VJClip = {
+        id: generateUUID(),
+        type: 'text',
+        name: 'Text Creator',
+        src: 'text-layer',
+        textContent: createDefaultTextContent(),
+      };
+      vjClipLauncher.setClip(layerIndex, columnIndex, vjClip, bank);
     } else if (draggedClip.type === 'splat') {
       // Handle point cloud / splat clip
       const vjClip: VJClip = {
@@ -2652,7 +2707,11 @@
       }
     }
 
-    // Don't auto-trigger - user clicks to play
+    // Don't auto-trigger - user clicks to play. Keep the destination selected
+    // so newly-created GPU and text clips are ready to edit immediately.
+    selectedLayerIndex = layerIndex;
+    showShaderParams = true;
+    if ($vjClipLauncher.crossfaderEnabled) vjClipLauncher.setSelectedDeck(bank);
     draggedClip = null;
   }
 
@@ -4117,6 +4176,44 @@
             {/if}
           {/if}
 
+          {#if selectedLayerIndex !== null && selectedLayerState?.activeClip?.type === 'gpu'}
+            {@const gpuClip = selectedLayerState.activeClip}
+            {@const vjGPUContent = gpuClip.gpuLayerContent || createDefaultGPULayerContent()}
+            <div class="shader-params-panel gpu-params-panel">
+              <div class="shader-params-panel-header">
+                <span class="shader-params-overlay-title">
+                  {gpuClip.name || 'GPU Shader'}
+                  <span class="shader-params-layer-badge" style="background: rgba(85, 215, 239, 0.22); color: #6ee7f7;">GPU</span>
+                </span>
+              </div>
+              <div class="shader-params-panel-list">
+                <VJGPUClipPanel
+                  content={vjGPUContent}
+                  onUpdate={(updates) => vjClipLauncher.updateActiveClipGPUContent(selectedLayerIndex!, updates, paramDeck)}
+                />
+              </div>
+            </div>
+          {/if}
+
+          {#if selectedLayerIndex !== null && selectedLayerState?.activeClip?.type === 'text'}
+            {@const textClip = selectedLayerState.activeClip}
+            {@const vjTextContent = textClip.textContent || createDefaultTextContent()}
+            <div class="shader-params-panel text-params-panel">
+              <div class="shader-params-panel-header">
+                <span class="shader-params-overlay-title">
+                  {textClip.name || 'Text Creator'}
+                  <span class="shader-params-layer-badge" style="background: rgba(244, 114, 182, 0.22); color: #f9a8d4;">TXT</span>
+                </span>
+              </div>
+              <div class="shader-params-panel-list">
+                <VJTextClipPanel
+                  content={vjTextContent}
+                  onUpdate={(updates) => vjClipLauncher.updateActiveClipTextContent(selectedLayerIndex!, updates, paramDeck)}
+                />
+              </div>
+            </div>
+          {/if}
+
           <!-- Point Cloud (Splat) Parameters — Full controls via reusable SplatPanel -->
           {#if selectedLayerIndex !== null && selectedLayerState?.activeClip?.type === 'splat'}
             {@const splatClip = selectedLayerState.activeClip}
@@ -4701,7 +4798,7 @@
                         <img src={clip.thumbnail} alt={clip.name} class="clip-thumb" />
                       {:else}
                         <div class="clip-placeholder {clip.type}">
-                          {clip.type === 'shader' ? 'ISF' : clip.type === 'video' ? 'VID' : clip.type === 'spout' ? 'SPT' : clip.type === 'threejs' ? '3JS' : clip.type === 'splat' ? 'PLY' : clip.type === 'model3d' ? '3DM' : clip.type === 'effect' ? 'FX' : clip.type === 'preset' ? 'MAP' : 'IMG'}
+                          {clip.type === 'shader' ? 'ISF' : clip.type === 'video' ? 'VID' : clip.type === 'spout' ? 'SPT' : clip.type === 'threejs' ? '3JS' : clip.type === 'splat' ? 'PLY' : clip.type === 'model3d' ? '3DM' : clip.type === 'gpu' ? 'GPU' : clip.type === 'text' ? 'TXT' : clip.type === 'effect' ? 'FX' : clip.type === 'preset' ? 'MAP' : 'IMG'}
                         </div>
                       {/if}
                       <span class="clip-name">{clip.name}</span>
@@ -5210,7 +5307,16 @@
                   title="Drag {plugin.name} onto a clip slot"
                 >
                   <div class="vj-plugin-icon">
-                    {#if plugin.inlineIcon === 'splat'}
+                    {#if plugin.inlineIcon === 'gpu'}
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <circle cx="12" cy="12" r="9"/>
+                        <path d="M3 12h18M12 3c3 3 4 6 4 9s-1 6-4 9c-3-3-4-6-4-9s1-6 4-9Z"/>
+                      </svg>
+                    {:else if plugin.inlineIcon === 'text'}
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M4 5h16M12 5v14M8 19h8"/>
+                      </svg>
+                    {:else if plugin.inlineIcon === 'splat'}
                       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                         <circle cx="12" cy="12" r="1.5"/>
                         <circle cx="8" cy="8" r="1"/>
@@ -5243,8 +5349,8 @@
                 </div>
               {/each}
               <div class="vj-plugin-hint">
-                <p>Drag effect onto a clip slot to use it</p>
-                <p>Same plugin set as the editor's Plugins tab</p>
+                <p>Drag content onto a clip slot to use it</p>
+                <p>GPU visuals and text use the same renderer as mapping layers</p>
               </div>
             </div>
           {:else if vjMediaTab === 'maps'}
@@ -9102,10 +9208,13 @@
 
   /* Plugin Panel Styles */
   .vj-plugins-panel {
+    flex: 1;
+    min-height: 0;
     padding: 8px;
     display: flex;
     flex-direction: column;
     gap: 8px;
+    overflow-y: auto;
   }
 
   /* App-native VJ plugin card — matches MediaTray's coral-on-dark style.

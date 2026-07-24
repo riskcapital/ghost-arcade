@@ -13,7 +13,7 @@
  * No pixels touch CPU memory in the send path.
  */
 
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, net as electronNet, protocol, screen, session, shell, utilityProcess } from 'electron';
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, net as electronNet, powerSaveBlocker, protocol, screen, session, shell, utilityProcess } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { spawn, fork, execSync } from 'child_process';
@@ -135,6 +135,22 @@ console.warn = (...args) => {
   try { _origWarn(...args); } catch {}
 };
 console.log(`[Main] Projection safe mode=${PROJECTION_SAFE_MODE} experimentalGpuPresent=${EXPERIMENTAL_GPU_PRESENT} cpuTextureShareFallback=${ALLOW_CPU_TEXTURE_SHARE_FALLBACK} osrPaintFps=${OSR_PAINT_FPS}`);
+
+let powerSaveBlockerId = null;
+
+function startPowerSaveBlocker() {
+  if (powerSaveBlockerId !== null && powerSaveBlocker.isStarted(powerSaveBlockerId)) return;
+  powerSaveBlockerId = powerSaveBlocker.start('prevent-display-sleep');
+  console.log(`[Main] Display sleep and screensaver prevention active (id=${powerSaveBlockerId})`);
+}
+
+function stopPowerSaveBlocker() {
+  if (powerSaveBlockerId === null) return;
+  if (powerSaveBlocker.isStarted(powerSaveBlockerId)) {
+    powerSaveBlocker.stop(powerSaveBlockerId);
+  }
+  powerSaveBlockerId = null;
+}
 
 // Prevent EPIPE crashes from killing the process
 process.stdout?.on?.('error', () => {});
@@ -5387,6 +5403,8 @@ app.on('second-instance', () => {
 });
 
 app.whenReady().then(async () => {
+  startPowerSaveBlocker();
+
   app.setAboutPanelOptions({
     applicationName: 'Ghost Arcade',
     applicationVersion: app.getVersion(),
@@ -5608,6 +5626,7 @@ function cleanupAndQuit() {
   runCleanupStep('stopServer', stopServer);
   runCleanupStep('closeAllWledSockets', closeAllWledSockets);
   runCleanupStep('killPluginProcesses', killPluginProcesses);
+  runCleanupStep('stopPowerSaveBlocker', stopPowerSaveBlocker);
 
   app.exit(0);
 }

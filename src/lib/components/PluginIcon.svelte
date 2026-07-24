@@ -118,6 +118,25 @@
     <path d="M3 19 Q 6 17, 9 19 T 15 19 T 21 19" stroke="currentColor" stroke-width="1.1" stroke-linecap="round"/>
   </svg>
 
+{:else if resolvedId === 'gpu-shader'}
+  <!-- GPU Shader: a warped render grid passing through a shader core. -->
+  <svg class="plugin-icon-svg" width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <path d="M4 7.2C7 4.8 9.2 8.7 12 6.2s5.1 1.5 8-1" stroke="currentColor" stroke-width="1.25" stroke-linecap="round"/>
+    <path d="M4 12c3-2.4 5.2 1.5 8-1s5.1 1.5 8-1" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" opacity="0.78"/>
+    <path d="M4 16.8c3-2.4 5.2 1.5 8-1s5.1 1.5 8-1" stroke="currentColor" stroke-width="1.25" stroke-linecap="round" opacity="0.56"/>
+    <path d="M7.2 4v16M12 4v16M16.8 4v16" stroke="currentColor" stroke-width="0.8" opacity="0.34"/>
+    <circle cx="12" cy="11" r="2.15" fill="var(--ga-panel, #0b0d11)" stroke="currentColor" stroke-width="1.25"/>
+    <circle cx="12" cy="11" r="0.75" fill="currentColor"/>
+  </svg>
+
+{:else if resolvedId === 'text-creator'}
+  <!-- Text Creator: type baseline with editable transform handles. -->
+  <svg class="plugin-icon-svg" width={size} height={size} viewBox="0 0 24 24" fill="none">
+    <path d="M6 5h12M12 5v13M8.5 18h7" stroke="currentColor" stroke-width="1.45" stroke-linecap="round"/>
+    <path d="M5 3.5H3.5V5M19 3.5h1.5V5M5 20.5H3.5V19M19 20.5h1.5V19" stroke="currentColor" stroke-width="1" stroke-linecap="round" opacity="0.62"/>
+    <path d="M5 20.5h14" stroke="currentColor" stroke-width="0.8" opacity="0.38"/>
+  </svg>
+
 {:else}
   <!-- Fallback: manifest's unicode icon char -->
   <span class="plugin-icon-emoji" style="font-size:{Math.round(size * 0.66) + 2}px">{fallbackGlyph}</span>

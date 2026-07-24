@@ -108,6 +108,7 @@
     if ($selectedLayer?.locked) return;
     e.preventDefault();
     e.stopPropagation();
+    cancelDrag(false);
     dragging = { row, col };
     selectedPoint = { row, col };  // Set selected point for keyboard navigation
     window.addEventListener('mousemove', handleMouseMove);
@@ -171,11 +172,42 @@
   // Set up keyboard event listener
   onMount(() => {
     window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('blur', handleWindowBlur);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
   });
 
   onDestroy(() => {
+    cancelDrag(false);
     window.removeEventListener('keydown', handleKeyDown);
+    window.removeEventListener('blur', handleWindowBlur);
+    document.removeEventListener('visibilitychange', handleVisibilityChange);
   });
+
+  function removeMouseDragListeners() {
+    window.removeEventListener('mousemove', handleMouseMove);
+    window.removeEventListener('mouseup', handleMouseUp);
+  }
+
+  function removeTouchDragListeners() {
+    window.removeEventListener('touchmove', handleTouchMove);
+    window.removeEventListener('touchend', handleTouchEnd);
+  }
+
+  function cancelDrag(record = true) {
+    if (record && dragging) history.record(get(project));
+    dragging = null;
+    activeSnapTarget = null;
+    removeMouseDragListeners();
+    removeTouchDragListeners();
+  }
+
+  function handleVisibilityChange() {
+    if (document.hidden) cancelDrag();
+  }
+
+  function handleWindowBlur() {
+    cancelDrag();
+  }
 
   function handleMouseMove(e: MouseEvent) {
     if (!dragging || !$selectedLayer || !containerEl) return;
@@ -215,16 +247,13 @@
   }
 
   function handleMouseUp() {
-    if (dragging) history.record(get(project));
-    dragging = null;
-    activeSnapTarget = null;
-    window.removeEventListener('mousemove', handleMouseMove);
-    window.removeEventListener('mouseup', handleMouseUp);
+    cancelDrag();
   }
 
   function handleTouchStart(row: number, col: number, e: TouchEvent) {
     if ($selectedLayer?.locked) return;
     e.preventDefault();
+    cancelDrag(false);
     dragging = { row, col };
     window.addEventListener('touchmove', handleTouchMove, { passive: false });
     window.addEventListener('touchend', handleTouchEnd);
@@ -268,11 +297,7 @@
   }
 
   function handleTouchEnd() {
-    if (dragging) history.record(get(project));
-    dragging = null;
-    activeSnapTarget = null;
-    window.removeEventListener('touchmove', handleTouchMove);
-    window.removeEventListener('touchend', handleTouchEnd);
+    cancelDrag();
   }
 
   // Get mesh grid and corners from selected layer

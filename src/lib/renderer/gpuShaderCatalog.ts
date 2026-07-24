@@ -21,6 +21,7 @@ import { WebGPUInkCloudShader, inkCloudParamSchema, inkCloudParamDefaults } from
 // The shader file remains on disk for now as dead code; can clean up
 // later if we're sure we won't bring it back.
 import { WebGPU3DSmokeShader, smoke3DParamSchema, smoke3DParamDefaults } from './shaders/webgpu3DSmokeShader';
+import { WebGPUWarpLoom, warpLoomParamSchema, warpLoomParamDefaults } from './shaders/webgpuWarpLoom';
 
 const PLANET_DEF: GpuShaderDef = {
   id: 'planet',
@@ -268,8 +269,20 @@ const SMOKE_3D_DEF: GpuShaderDef = {
   create: (device, presentFormat) => new WebGPU3DSmokeShader(device, presentFormat),
 };
 
+const WARP_LOOM_DEF: GpuShaderDef = {
+  id: 'warp-loom',
+  label: 'Warp Loom',
+  description: 'Original horizontal conduit and web instrument. Braided tubes stream through turbulent spatial warps while crosslinks form a luminous elastic membrane between them.',
+  category: 'Generative',
+  paramSchema: warpLoomParamSchema,
+  defaultParams: warpLoomParamDefaults,
+  needsSource: false,
+  create: (device, presentFormat) => new WebGPUWarpLoom(device, presentFormat),
+};
+
 export const GPU_SHADER_CATALOG: GpuShaderDef[] = [
   PLANET_DEF,
+  WARP_LOOM_DEF,
   PIXEL_PARTICLES_DEF,
   FLYTHROUGH_DEF,
   POINTCLOUD_FX_DEF,

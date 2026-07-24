@@ -8,6 +8,23 @@ export interface AppReleaseNotes {
 }
 
 const RELEASE_NOTES: Record<string, AppReleaseNotes> = {
+  '1.9.99': {
+    title: 'Live performance and control polish',
+    summary: [
+      'Video triggering, layer blending, warp editing, and control surfaces are more reliable.',
+      'LED FX adds multi-color patterns and compact live controls.',
+      'GPU Shader and Text Creator sources are now available in the VJ plugin library.',
+    ],
+    highlights: [
+      'Armed VJ videos reuse their warmed texture on launch, removing the black-frame flash that could briefly expose layers beneath a new clip.',
+      'Layer blend modes follow opacity, preserving normal opaque coverage at 100% while building to their strongest interaction around the midpoint.',
+      'Master corner and mesh warp points use the same configurable keyboard nudge sensitivity as Mapping Mode.',
+      'LED FX adds a compact pattern selector, one-to-four-color layouts, custom colors, and performance-ready palettes.',
+      'GPU Shader and Text Creator sources can be launched directly from the VJ plugin library, alongside eight new audio-reactive ISF visuals and Warp Loom.',
+      'OSC bindings now expose stable clip, preset, transport, crossfader, macro, and LED routes for DAWs and Pro DJ Link bridge software.',
+      'Ghost Arcade prevents display sleep and the screensaver while the desktop app is running.',
+    ],
+  },
   '1.9.98': {
     title: 'Reliable stage presets, live LED performance, and restored loop transitions',
     summary: [

@@ -1842,9 +1842,25 @@
             </div>
           {/if}
 
+          <div class="osc-template">
+            <div>
+              <strong>VJ / Pro DJ Link OSC template</strong>
+              <p>
+                Installs A/B clip and column triggers for a 4 × 8 deck, plus master,
+                stop-all, and crossfader controls. Send from Beat Link Trigger,
+                Open Beat Control, a DAW, or any OSC controller.
+              </p>
+              <code>/ghost/vj/a/layer/1/clip/1</code>
+              <span>→ Deck A, layer 1, clip 1</span>
+            </div>
+            <button class="osc-add-btn template" onclick={() => oscStore.installVjTemplate()}>
+              Install template
+            </button>
+          </div>
+
           <h4 style="margin-top: 14px;">Bindings ({$oscStore.bindings.length})</h4>
           <p class="settings-hint" style="margin-bottom: 8px;">
-            Each row maps an OSC address to a param path (the same path strings the MIDI router uses, e.g. <code>vj:layer:0:opacity</code>). Use <strong>+ Add</strong> to enter one manually, or <strong>+ Learn</strong> to bind by sending the next OSC message.
+            Each row maps an OSC address to a param path (the same path strings the MIDI router uses, e.g. <code>vj:0:opacity</code>). Trigger bindings accept numeric/boolean values, argument-less messages, and OSC Impulse.
           </p>
 
           {#if $oscStore.bindings.length === 0}
@@ -1856,6 +1872,7 @@
               <div class="osc-binding-head">
                 <span>OSC Address</span>
                 <span>Param Path</span>
+                <span>Mode</span>
                 <span>Min</span>
                 <span>Max</span>
                 <span>Inv</span>
@@ -1873,8 +1890,22 @@
                     type="text"
                     value={b.path}
                     onchange={(e) => oscStore.updateBinding(b.id, { path: (e.target as HTMLInputElement).value })}
-                    placeholder="vj:layer:0:opacity"
+                    placeholder="vj:0:opacity"
                   />
+                  <select
+                    value={b.mode ?? 'auto'}
+                    onchange={(e) => {
+                      const value = (e.target as HTMLSelectElement).value;
+                      oscStore.updateBinding(b.id, {
+                        mode: value === 'auto' ? undefined : value as 'continuous' | 'trigger',
+                      });
+                    }}
+                    title="Auto infers button-style paths; use Trigger for OSC bang/Impulse messages"
+                  >
+                    <option value="auto">Auto</option>
+                    <option value="continuous">Control</option>
+                    <option value="trigger">Trigger</option>
+                  </select>
                   <input
                     type="number" step="any"
                     value={b.sourceMin}
@@ -1905,12 +1936,12 @@
           <div class="osc-add-row">
             <button
               class="osc-add-btn"
-              onclick={() => oscStore.addBinding({ address: '/example', argIndex: 0, path: 'vj:layer:0:opacity', sourceMin: 0, sourceMax: 1, invert: false })}
+              onclick={() => oscStore.addBinding({ address: '/ghost/vj/master', argIndex: 0, path: 'vj:master:opacity', sourceMin: 0, sourceMax: 1, invert: false, mode: 'continuous' })}
             >+ Add binding</button>
             <button
               class="osc-add-btn learn"
               onclick={() => {
-                const path = prompt('Target param path (e.g. vj:layer:0:opacity):');
+                const path = prompt('Target param path (e.g. vj:0:opacity):');
                 if (path && path.trim()) oscStore.startLearn(path.trim());
               }}
               title="Wait for the next OSC message and bind it to a param path"
@@ -1927,7 +1958,7 @@
         <section class="settings-section">
           <h3>Keyboard Control</h3>
           <p class="settings-hint" style="margin-bottom: 12px;">
-            Map computer-keyboard keys to any control — the same param paths MIDI and OSC use (e.g. <code>vj:column:0</code>, <code>vj:layer:0:opacity</code>). Works with or without a controller plugged in.
+            Map computer-keyboard keys to any control — the same param paths MIDI and OSC use (e.g. <code>vj:column:0</code>, <code>vj:0:opacity</code>). Works with or without a controller plugged in.
           </p>
 
           <div class="setting-row">
@@ -2005,7 +2036,7 @@
                     type="text"
                     value={b.path}
                     onchange={(e) => keyboardStore.updateBinding(b.id, { path: (e.target as HTMLInputElement).value })}
-                    placeholder="vj:layer:0:opacity"
+                    placeholder="vj:0:opacity"
                   />
                   <select
                     value={b.mode}
@@ -2892,7 +2923,7 @@
   }
   .osc-binding-head, .osc-binding-row {
     display: grid;
-    grid-template-columns: 2fr 2fr 60px 60px 32px 28px;
+    grid-template-columns: minmax(130px, 2fr) minmax(130px, 2fr) 82px 60px 60px 32px 28px;
     gap: 6px;
     align-items: center;
   }
@@ -2903,7 +2934,7 @@
     text-transform: uppercase;
     padding: 4px 4px;
   }
-  .osc-binding-row input[type="text"], .osc-binding-row input[type="number"] {
+  .osc-binding-row input[type="text"], .osc-binding-row input[type="number"], .osc-binding-row select {
     background: var(--bg-tertiary, #14141a);
     border: 1px solid #2a2a30;
     color: var(--text-primary, #ddd);
@@ -2913,7 +2944,7 @@
     font-size: 12px;
     width: 100%;
   }
-  .osc-binding-row input:focus { border-color: #4cd1ff; outline: none; }
+  .osc-binding-row input:focus, .osc-binding-row select:focus { border-color: #4cd1ff; outline: none; }
   .osc-inv { display: flex; align-items: center; justify-content: center; cursor: pointer; }
   .osc-binding-del {
     background: transparent;
@@ -2929,6 +2960,22 @@
     gap: 6px;
     margin-top: 10px;
   }
+  .osc-template {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 12px;
+    margin-top: 12px;
+    border: 1px solid rgba(76, 209, 255, 0.28);
+    background: rgba(76, 209, 255, 0.06);
+    border-radius: 5px;
+  }
+  .osc-template strong { color: var(--text-primary, #ddd); font-size: 13px; }
+  .osc-template p { color: var(--text-muted, #888); font-size: 12px; margin: 4px 0 7px; }
+  .osc-template code { color: #4cd1ff; font-size: 11px; }
+  .osc-template span { color: var(--text-muted, #888); font-size: 11px; margin-left: 6px; }
+  .osc-add-btn.template { flex: 0 0 auto; border-color: rgba(76, 209, 255, 0.45); color: #4cd1ff; }
   .osc-add-btn {
     background: var(--bg-tertiary, #14141a);
     border: 1px solid #2a2a30;

@@ -3,9 +3,10 @@
 // Works with shaders and videos directly (not compositions)
 
 import { writable, derived, get } from 'svelte/store';
-import type { BlendMode, Layer, MediaSource, Effect, JSAnimationSource, IntegratedEffectSource, SplatContent, Model3DContent, ISFInputDef } from '../types';
-import { createDefaultSplatContent, createDefaultModel3DContent } from '../types';
-import { createThreeJSIframeContext, getThreeJSIframeContext, createJSAnimationContext } from '../renderer/engine';
+import type { BlendMode, Layer, MediaSource, Effect, JSAnimationSource, IntegratedEffectSource, SplatContent, Model3DContent, GPULayerContent, TextContent, ISFInputDef } from '../types';
+import { createDefaultSplatContent, createDefaultModel3DContent, createDefaultGPULayerContent, createDefaultTextContent } from '../types';
+import { createThreeJSIframeContext, getThreeJSIframeContext, createJSAnimationContext, createVideoTexture } from '../renderer/engine';
+import { hasDecodedVideoFrame } from '../renderer/videoReadiness';
 import { keyframeTimeline } from './keyframeTimeline';
 import { parseISF } from '../isf/parser';
 import { vjLayerSequencer } from './vjLayerSequencer';
@@ -49,7 +50,7 @@ export const NUM_VJ_COLUMNS = DEFAULT_VJ_COLUMNS;
 // A clip in the grid - can be a shader, video, image, three.js HTML, AI-generated JS animation, Spout source, integrated effect, point cloud, 3D model, or mapping preset (loads a saved composition on fire)
 export interface VJClip {
   id: string;
-  type: 'shader' | 'video' | 'image' | 'threejs' | 'p5js' | 'jsanimation' | 'synthvision' | 'spout' | 'effect' | 'splat' | 'model3d' | 'preset';
+  type: 'shader' | 'video' | 'image' | 'threejs' | 'p5js' | 'jsanimation' | 'synthvision' | 'spout' | 'effect' | 'splat' | 'model3d' | 'gpu' | 'text' | 'preset';
   /** For type='preset' clips: id of the saved Composition (mapping preset)
    *  this cell loads when fired. Firing a preset clip calls
    *  project.loadComposition() — a side effect on the mapping layers —
@@ -73,6 +74,9 @@ export interface VJClip {
   // Defaults: native loop=true (set on the element at create time),
   // playbackRate=1, trim full range, isPlaying=true on first trigger.
   videoElement?: HTMLVideoElement;
+  /** Runtime-only GPU texture, created while the clip is armed so firing it
+   *  never inserts a black placeholder while Canvas creates a texture. */
+  videoTexture?: MediaSource['texture'];
   /** 'loop' | 'once'. Loop is the historical default and matches the
    *  hardcoded `videoEl.loop = true` set at clip-element creation. */
   playbackMode?: 'loop' | 'once';
@@ -139,6 +143,10 @@ export interface VJClip {
   splatContent?: SplatContent;
   // For 3D model clips
   model3dContent?: Model3DContent;
+  // For WebGPU shader clips
+  gpuLayerContent?: GPULayerContent;
+  // For live typography clips
+  textContent?: TextContent;
   // Per-clip effects
   effects?: Effect[];
 }
@@ -556,16 +564,64 @@ let immediateTriggerClip: (layerIndex: number, columnIndex: number, deck: VJDeck
 // Cache for video elements to persist playback
 const videoElementCache = new Map<string, HTMLVideoElement>();
 
+// VideoTexture creation is part of arming a clip, not triggering it. Keeping
+// one stable texture per clip also prevents Three.js from sampling a newly
+// constructed (and not-yet-uploadable) texture on the trigger frame.
+const videoTextureCache = new Map<string, MediaSource['texture']>();
+
 // Cache for VJ source objects (keeps textures persistent)
 const vjSourceCache = new Map<string, MediaSource>();
 
 function releaseVJSourceCacheEntry(key: string): void {
   const source = vjSourceCache.get(key);
-  if (source?.texture) {
+  const armedVideoTexture = source?.type === 'video'
+    ? videoTextureCache.get(source.id)
+    : undefined;
+  if (source?.texture && source.texture !== armedVideoTexture) {
     try { source.texture.dispose?.(); } catch { /* ignore */ }
     source.texture = undefined;
   }
   vjSourceCache.delete(key);
+}
+
+function ensureClipVideoTexture(clip: VJClip, videoEl: HTMLVideoElement): MediaSource['texture'] {
+  let texture = videoTextureCache.get(clip.id);
+  if (texture && texture.image !== videoEl) {
+    try { texture.dispose?.(); } catch { /* ignore */ }
+    videoTextureCache.delete(clip.id);
+    texture = undefined;
+  }
+  if (!texture) {
+    texture = createVideoTexture(videoEl);
+    videoTextureCache.set(clip.id, texture);
+  }
+  clip.videoTexture = texture;
+  return texture;
+}
+
+function waitForDecodedClipFrame(clip: VJClip, videoEl: HTMLVideoElement): Promise<void> {
+  if (hasDecodedVideoFrame(videoEl)) return Promise.resolve();
+
+  return new Promise((resolve, reject) => {
+    const cleanup = () => {
+      videoEl.removeEventListener('loadeddata', onReady);
+      videoEl.removeEventListener('canplay', onReady);
+      videoEl.removeEventListener('error', onError);
+    };
+    const onReady = () => {
+      if (!hasDecodedVideoFrame(videoEl)) return;
+      cleanup();
+      ensureClipVideoTexture(clip, videoEl);
+      resolve();
+    };
+    const onError = () => {
+      cleanup();
+      reject(new Error(`Video clip failed to decode: ${clip.name}`));
+    };
+    videoEl.addEventListener('loadeddata', onReady);
+    videoEl.addEventListener('canplay', onReady);
+    videoEl.addEventListener('error', onError, { once: true });
+  });
 }
 
 function clearVJSourceCache(): void {
@@ -590,6 +646,7 @@ function mediaTypeForClip(clip: VJClip): 'shader' | 'video' | 'image' | 'threejs
   if (clip.type === 'p5js') return 'p5js';
   if (clip.type === 'spout') return 'spout';
   if (clip.type === 'effect') return 'effect';
+  if (clip.type === 'gpu' || clip.type === 'text') return 'color';
   return 'image';
 }
 
@@ -602,6 +659,7 @@ function ensureClipVideoElement(clip: VJClip): HTMLVideoElement | undefined {
 
   if (clip.videoElement && (clip.src?.startsWith('live://') || clip.videoElement.srcObject)) {
     videoElementCache.set(clip.id, clip.videoElement);
+    ensureClipVideoTexture(clip, clip.videoElement);
     clip.isPlaying = clip.isPlaying ?? true;
     return clip.videoElement;
   }
@@ -613,6 +671,10 @@ function ensureClipVideoElement(clip: VJClip): HTMLVideoElement | undefined {
     try { videoEl.pause(); } catch { /* ignore */ }
     videoEl.removeAttribute('src');
     videoElementCache.delete(clip.id);
+    const staleTexture = videoTextureCache.get(clip.id);
+    try { staleTexture?.dispose?.(); } catch { /* ignore */ }
+    videoTextureCache.delete(clip.id);
+    clip.videoTexture = undefined;
     videoEl = undefined;
   }
 
@@ -639,6 +701,7 @@ function ensureClipVideoElement(clip: VJClip): HTMLVideoElement | undefined {
   }
 
   clip.videoElement = videoEl;
+  ensureClipVideoTexture(clip, videoEl);
   return videoEl;
 }
 
@@ -673,6 +736,9 @@ function releaseClipRuntimeIfOrphaned(nextState: any, clipId: string): void {
   video.removeAttribute('src');
   try { video.load(); } catch { /* ignore */ }
   videoElementCache.delete(clipId);
+  const texture = videoTextureCache.get(clipId);
+  try { texture?.dispose?.(); } catch { /* ignore */ }
+  videoTextureCache.delete(clipId);
 }
 
 // Create the store
@@ -682,7 +748,7 @@ function createVJClipLauncherStore() {
   // Wire the module-level immediateTriggerClip closure so triggerClip() can
   // delegate to it AND so the rAF tick can fire queued triggers without
   // needing access to the store closure scope.
-  immediateTriggerClip = (layerIndex, columnIndex, deck) => {
+  const commitImmediateTriggerClip = (layerIndex: number, columnIndex: number, deck: VJDeck) => {
     let didTrigger = false;
     let isReclick = false;
     let outgoingClip: VJClip | null = null;
@@ -796,6 +862,35 @@ function createVJClipLauncherStore() {
     }
   };
 
+  // A clip cannot enter the visible stack until Chromium has decoded a frame.
+  // Usually this is synchronous because setClip arms videos in advance. The
+  // async branch only covers a user firing immediately after adding a clip;
+  // the outgoing layer remains visible instead of flashing black.
+  const pendingVideoTriggers = new Map<string, number>();
+  let videoTriggerSerial = 0;
+  immediateTriggerClip = (layerIndex, columnIndex, deck) => {
+    const triggerKey = `${deck}:${layerIndex}`;
+    const requestId = ++videoTriggerSerial;
+    pendingVideoTriggers.set(triggerKey, requestId);
+
+    const state = get({ subscribe });
+    const clip = pickGrid(state, deck)[layerIndex]?.[columnIndex];
+    if (clip?.type === 'video') {
+      const videoEl = ensureClipVideoElement(clip);
+      if (videoEl && !hasDecodedVideoFrame(videoEl)) {
+        void waitForDecodedClipFrame(clip, videoEl)
+          .then(() => {
+            if (pendingVideoTriggers.get(triggerKey) !== requestId) return;
+            commitImmediateTriggerClip(layerIndex, columnIndex, deck);
+          })
+          .catch((error) => console.warn('[vjClipLauncher] trigger held; video is not ready:', error));
+        return;
+      }
+    }
+
+    commitImmediateTriggerClip(layerIndex, columnIndex, deck);
+  };
+
   return {
     subscribe,
     set,
@@ -810,6 +905,10 @@ function createVJClipLauncherStore() {
       }
       videoElementCache.clear();
       clearVJSourceCache();
+      for (const texture of videoTextureCache.values()) {
+        try { texture?.dispose?.(); } catch { /* ignore */ }
+      }
+      videoTextureCache.clear();
       set(createDefaultState());
     },
 
@@ -890,6 +989,7 @@ function createVJClipLauncherStore() {
             videoElementCache.set(clip.id, videoEl);
           }
           clip.videoElement = videoEl;
+          ensureClipVideoTexture(clip, videoEl);
         }
 
         // If setting a threejs clip (built-in), create/get the iframe context
@@ -1427,6 +1527,58 @@ function createVJClipLauncherStore() {
         }
 
         return withDeck(state, deck, newLayerStates, newGrid);
+      });
+    },
+
+    updateActiveClipGPUContent(layerIndex: number, updates: Partial<GPULayerContent>, deck: VJDeck = 'A') {
+      update(state => {
+        const targetLayerStates = pickLayerStates(state, deck);
+        const targetGrid = pickGrid(state, deck);
+        const newLayerStates = [...targetLayerStates];
+        if (layerIndex < 0 || layerIndex >= newLayerStates.length) return state;
+        const activeClip = newLayerStates[layerIndex]?.activeClip;
+        if (!activeClip || activeClip.type !== 'gpu') return state;
+
+        const newClip = {
+          ...activeClip,
+          gpuLayerContent: { ...(activeClip.gpuLayerContent || createDefaultGPULayerContent()), ...updates },
+        };
+        newLayerStates[layerIndex] = { ...newLayerStates[layerIndex], activeClip: newClip };
+
+        const newGrid = targetGrid.map(row => [...row]);
+        for (let col = 0; col < state.numColumns; col++) {
+          const gridClip = newGrid[layerIndex]?.[col];
+          if (gridClip?.id === activeClip.id) newGrid[layerIndex][col] = newClip;
+        }
+
+        const next = withDeck(state, deck, newLayerStates, newGrid);
+        return { ...next, blocks: blocksWithDeckGrid(state, deck, newGrid) };
+      });
+    },
+
+    updateActiveClipTextContent(layerIndex: number, updates: Partial<TextContent>, deck: VJDeck = 'A') {
+      update(state => {
+        const targetLayerStates = pickLayerStates(state, deck);
+        const targetGrid = pickGrid(state, deck);
+        const newLayerStates = [...targetLayerStates];
+        if (layerIndex < 0 || layerIndex >= newLayerStates.length) return state;
+        const activeClip = newLayerStates[layerIndex]?.activeClip;
+        if (!activeClip || activeClip.type !== 'text') return state;
+
+        const newClip = {
+          ...activeClip,
+          textContent: { ...(activeClip.textContent || createDefaultTextContent()), ...updates },
+        };
+        newLayerStates[layerIndex] = { ...newLayerStates[layerIndex], activeClip: newClip };
+
+        const newGrid = targetGrid.map(row => [...row]);
+        for (let col = 0; col < state.numColumns; col++) {
+          const gridClip = newGrid[layerIndex]?.[col];
+          if (gridClip?.id === activeClip.id) newGrid[layerIndex][col] = newClip;
+        }
+
+        const next = withDeck(state, deck, newLayerStates, newGrid);
+        return { ...next, blocks: blocksWithDeckGrid(state, deck, newGrid) };
       });
     },
 
@@ -2385,6 +2537,7 @@ export const vjOutputLayers = derived(
           shaderValues: clip.shaderValues || {},
           jsAnimation: clip.jsAnimation,
           videoElement: clip.videoElement,
+          texture: clip.type === 'video' ? clip.videoTexture : undefined,
           iframeElement: clip.iframeElement,
           // Forward video playback props so Canvas.svelte's updateTexturesSync
           // sees them. Canvas already has trim-aware loop/clamp/once logic
@@ -2450,6 +2603,9 @@ export const vjOutputLayers = derived(
         if (clip.videoElement) {
           source.videoElement = clip.videoElement;
         }
+        if (clip.type === 'video' && clip.videoTexture) {
+          source.texture = clip.videoTexture;
+        }
         source._assetRef = clip._assetRef;
         if (clip.iframeElement) {
           source.iframeElement = clip.iframeElement;
@@ -2501,10 +2657,13 @@ export const vjOutputLayers = derived(
         }
       }
 
-      // Map clip type to layer type (splat/model3d get their own layer types for proper rendering)
+      // Map content clips to their native layer types so Canvas creates the
+      // same renderers used by mapping mode.
       let layerType: Layer['type'] = 'media';
       if (clip.type === 'splat') layerType = 'splat';
       else if (clip.type === 'model3d') layerType = 'model3d';
+      else if (clip.type === 'gpu') layerType = 'gpu';
+      else if (clip.type === 'text') layerType = 'text';
 
       // Create Layer object with all required properties.
       // ID includes the bank suffix when in dual-bank mode so the render
@@ -2588,11 +2747,11 @@ export const vjOutputLayers = derived(
         colorContent: null,
         lightPaintingContent: null,
         advLightPaintingContent: null,
-        textContent: null,
+        textContent: clip.type === 'text' ? (clip.textContent || createDefaultTextContent()) : null,
         splatContent: clip.type === 'splat' ? (clip.splatContent || createDefaultSplatContent()) : null,
         model3dContent: clip.type === 'model3d' ? (clip.model3dContent || createDefaultModel3DContent()) : null,
         pixelFXContent: null,
-        gpuLayerContent: null,
+        gpuLayerContent: clip.type === 'gpu' ? (clip.gpuLayerContent || createDefaultGPULayerContent()) : null,
         arcadeContent: null,
         // Transform identity — per-clip transforms are baked into
         // `corners` below so the engine's warp pipeline applies them
@@ -2622,6 +2781,11 @@ export const vjOutputLayers = derived(
         // Bank tag — read by engine.render() to route to A or B FBO when crossfader is on.
         bank: activeLayer.bank ?? undefined,
       };
+
+      // The layer fader owns special-blend strength. Master level,
+      // sequencer gates, clip opacity, and A/B mixing still affect final
+      // visibility without reshaping the blend curve.
+      (layer as any)._blendControlOpacity = activeLayer.opacity;
 
       outputLayers.push(layer);
     }

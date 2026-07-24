@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
   import { RenderEngine, loadImageTexture, createVideoTexture, getThreeJSIframeContext, createThreeJSIframeContext, getJSAnimationContext, createJSAnimationContext } from '../renderer/engine';
+  import { isReusableVideoTexture } from '../renderer/videoReadiness';
   import { project, layers, compositions } from '../stores/layers';
   import { stage3dScene } from '../stage3d/store';
   import { Stage3DRenderer } from '../stage3d/Stage3DRenderer';
@@ -1559,6 +1560,7 @@
             // to mutate without invalidating cached child layers.
             entry.group.opacity = groupOpacity;
             entry.group.blendMode = ls.blendMode;
+            (entry.group as any)._blendControlOpacity = ls.opacity;
             entry.group.name = `MAP L${i + 1}: ${comp.name}`;
             // VJ-layer FX chain → applied to the preset's group composite
             // as a single post-pass (see renderGroupToTexture's
@@ -2959,6 +2961,10 @@
       // Check if source changed for this layer - if so, cleanup old resources
       // Use textureCacheKey for comparison to properly detect AI-generated content changes
       const oldCacheKey = activeLayerSources.get(layer.id);
+      const warmedVjVideoTexture = isVJVideoLayer &&
+        isReusableVideoTexture(layer.source.texture, layer.source.videoElement)
+          ? layer.source.texture
+          : null;
       if (oldCacheKey && oldCacheKey !== textureCacheKey) {
         cleanupLayerShader(layer.id, oldCacheKey);
         // Hold black while the replacement compiles/loads. The real
@@ -2966,7 +2972,9 @@
         // below or the async load completion); until then the layer
         // stays in the render plan painting opaque black instead of
         // exposing the layer underneath for a few frames.
-        layer.source.texture = getBlackHoldTexture();
+        if (!warmedVjVideoTexture) {
+          layer.source.texture = getBlackHoldTexture();
+        }
       }
       activeLayerSources.set(layer.id, textureCacheKey);
 
@@ -2975,6 +2983,15 @@
       // For shaders, use the full shaderCacheKey; for other media, use textureCacheKey
       const isShader = layer.source.type === 'shader';
       const lookupKey = isShader ? shaderCacheKey : textureCacheKey;
+
+      // VJ videos are armed with a persistent VideoTexture before trigger.
+      // Adopt it into Canvas's LRU cache instead of starting an async texture
+      // load (whose black hold frame used to flash over the mix).
+      if (warmedVjVideoTexture && !textureCache.has(lookupKey)) {
+        textureCache.set(lookupKey, warmedVjVideoTexture);
+        touchTextureCacheEntry(lookupKey);
+        evictTextureCache();
+      }
 
       if (textureCache.has(lookupKey)) {
         const cachedTexture = textureCache.get(lookupKey)!;

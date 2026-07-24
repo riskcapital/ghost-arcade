@@ -19,6 +19,18 @@ export interface WLEDPatternDefinition {
   params: Record<string, number>;
 }
 
+const color: WLEDPatternDefinition[] = [
+  ['solid-color', 'Color', 'User-defined LED colors with solid, alternating, random, block, gradient, and wave layouts.', 0.25, 'replace', { width: 0.5, tail: 0.5, density: 0.5, colorCount: 1, colorPattern: 0 }],
+].map(([id, label, description, speed, blendMode, params]) => ({
+  id: id as WLEDPatternId,
+  label: label as string,
+  category: 'color',
+  description: description as string,
+  speed: speed as number,
+  blendMode: blendMode as WLEDEffectBlendMode,
+  params: params as Record<string, number>,
+}));
+
 const movement: WLEDPatternDefinition[] = [
   ['chase', 'Chase', 'A clean runner through the fixture.', 0.65, 'replace', { width: 0.12, tail: 0.35, density: 0.5 }],
   ['comet', 'Comet', 'Bright head with a long luminous tail.', 0.45, 'add', { width: 0.08, tail: 0.7, density: 0.5 }],
@@ -133,6 +145,7 @@ const glitch: WLEDPatternDefinition[] = [
 }));
 
 export const WLED_PATTERN_CATALOG: WLEDPatternDefinition[] = [
+  ...color,
   ...movement,
   ...organic,
   ...rhythmic,
@@ -142,6 +155,7 @@ export const WLED_PATTERN_CATALOG: WLEDPatternDefinition[] = [
 ];
 
 export const WLED_PATTERN_CATEGORIES: Array<{ id: WLEDPatternCategory; label: string }> = [
+  { id: 'color', label: 'Color' },
   { id: 'movement', label: 'Movement' },
   { id: 'organic', label: 'Organic' },
   { id: 'rhythmic', label: 'Rhythmic' },
@@ -156,6 +170,7 @@ export function getWLEDPatternDefinition(pattern: WLEDPatternId): WLEDPatternDef
 
 export function createWLEDEffect(pattern: WLEDPatternId, index = 0): WLEDEffect {
   const definition = getWLEDPatternDefinition(pattern);
+  const isColorEffect = pattern === 'solid-color';
   return {
     id: `led-fx-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`,
     name: definition.label,
@@ -167,9 +182,11 @@ export function createWLEDEffect(pattern: WLEDPatternId, index = 0): WLEDEffect 
     speedMode: definition.category === 'rhythmic' ? 'bpm' : 'manual',
     beatDivision: 1,
     blendMode: definition.blendMode,
-    colorSource: definition.category === 'content' ? 'shader' : 'palette',
-    color: '#ff6f61',
-    secondaryColor: '#28d7ff',
+    colorSource: isColorEffect ? 'custom' : definition.category === 'content' ? 'shader' : 'palette',
+    color: isColorEffect ? '#ffffff' : '#ff6f61',
+    secondaryColor: isColorEffect ? '#28d7ff' : '#28d7ff',
+    tertiaryColor: '#ffd166',
+    quaternaryColor: '#7cff6b',
     target: { mode: 'all' },
     params: { ...definition.params },
     seed: (Date.now() + index * 7919) >>> 0,
@@ -237,6 +254,56 @@ function sourceColor(buffer: Uint8Array, index: number): [number, number, number
   const safeIndex = ((Math.floor(index) % count) + count) % count;
   const offset = safeIndex * 3;
   return [buffer[offset] ?? 0, buffer[offset + 1] ?? 0, buffer[offset + 2] ?? 0];
+}
+
+function effectColorStops(effect: WLEDEffect): Array<[number, number, number]> {
+  const stops = [
+    parseWLEDHexColor(effect.color),
+    parseWLEDHexColor(effect.secondaryColor),
+    parseWLEDHexColor(effect.tertiaryColor ?? '#ffd166'),
+    parseWLEDHexColor(effect.quaternaryColor ?? '#7cff6b'),
+  ];
+  const count = Math.max(1, Math.min(4, Math.round(effect.params.colorCount ?? 1)));
+  return stops.slice(0, count);
+}
+
+function steppedColor(stops: Array<[number, number, number]>, index: number): [number, number, number] {
+  if (stops.length === 0) return [255, 255, 255];
+  return stops[((index % stops.length) + stops.length) % stops.length];
+}
+
+function gradientColor(stops: Array<[number, number, number]>, position: number): [number, number, number] {
+  if (stops.length <= 1) return steppedColor(stops, 0);
+  const scaled = clamp(position) * (stops.length - 1);
+  const left = Math.floor(scaled);
+  const right = Math.min(stops.length - 1, left + 1);
+  return mixColor(stops[left], stops[right], scaled - left);
+}
+
+function colorEffectColor(
+  effect: WLEDEffect,
+  position: number,
+  index: number,
+  count: number,
+  time: number
+): [number, number, number] {
+  const stops = effectColorStops(effect);
+  const pattern = Math.round(effect.params.colorPattern ?? 0);
+  if (pattern === 1) return gradientColor(stops, position);
+  if (pattern === 2) return steppedColor(stops, index);
+  if (pattern === 3) {
+    const blockSize = Math.max(1, Math.round((effect.params.width ?? 0.5) * Math.max(1, count / 4)));
+    return steppedColor(stops, Math.floor(index / blockSize));
+  }
+  if (pattern === 4) {
+    const step = Math.floor(time * Math.max(1, 2 + (effect.params.density ?? 0.5) * 10));
+    return steppedColor(stops, Math.floor(hash(index * 11.7 + step * 3.1 + effect.seed) * stops.length));
+  }
+  if (pattern === 5) {
+    const wave = 0.5 + 0.5 * Math.sin(position * Math.PI * 2 * Math.max(1, stops.length) - time * Math.PI * 2);
+    return gradientColor(stops, wave);
+  }
+  return steppedColor(stops, 0);
 }
 
 function extractPalette(buffer: Uint8Array): Array<[number, number, number]> {
@@ -339,6 +406,8 @@ function patternSample(
   const saturation = (Math.max(...base) - Math.min(...base)) / Math.max(1, Math.max(...base));
 
   switch (effect.pattern) {
+    case 'solid-color':
+      return { mask: 1, colorMix: position };
     case 'chase':
     case 'shader-color-chase':
     case 'highlight-runner':
@@ -534,7 +603,9 @@ export function applyWLEDEffects(
           }
         }
         let color: [number, number, number];
-        if (effect.colorSource === 'shader') color = base;
+        if (effect.pattern === 'solid-color') {
+          color = colorEffectColor(effect, position, localIndex, span.count, time);
+        } else if (effect.colorSource === 'shader') color = base;
         else if (effect.colorSource === 'rainbow') color = hsvToRgb(position + time * 0.08, 1, 1);
         else if (effect.colorSource === 'palette' && palette.length > 0) {
           const palettePosition = sample.colorMix ?? position + time * 0.05;
