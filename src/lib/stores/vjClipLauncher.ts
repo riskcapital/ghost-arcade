@@ -568,6 +568,12 @@ const videoElementCache = new Map<string, HTMLVideoElement>();
 // one stable texture per clip also prevents Three.js from sampling a newly
 // constructed (and not-yet-uploadable) texture on the trigger frame.
 const videoTextureCache = new Map<string, MediaSource['texture']>();
+type ArmedVideoState = {
+  key: string;
+  ready: boolean;
+  promise?: Promise<HTMLVideoElement>;
+};
+const armedVideoStates = new Map<string, ArmedVideoState>();
 
 // Cache for VJ source objects (keeps textures persistent)
 const vjSourceCache = new Map<string, MediaSource>();
@@ -705,12 +711,151 @@ function ensureClipVideoElement(clip: VJClip): HTMLVideoElement | undefined {
   return videoEl;
 }
 
+function videoArmKey(clip: VJClip): string {
+  return `${clip.src}|${Math.max(0, Math.min(1, clip.trimStart ?? 0)).toFixed(6)}`;
+}
+
+function waitForVideoEvent(
+  videoEl: HTMLVideoElement,
+  eventName: 'loadedmetadata' | 'seeked',
+  timeoutMs = 1500,
+): Promise<void> {
+  return new Promise((resolve) => {
+    let settled = false;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      videoEl.removeEventListener(eventName, finish);
+      clearTimeout(timeout);
+      resolve();
+    };
+    const timeout = window.setTimeout(finish, timeoutMs);
+    videoEl.addEventListener(eventName, finish, { once: true });
+  });
+}
+
+function waitForPresentedVideoFrame(videoEl: HTMLVideoElement, timeoutMs = 500): Promise<void> {
+  return new Promise((resolve) => {
+    let settled = false;
+    let frameHandle: number | undefined;
+    const finish = () => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timeout);
+      if (frameHandle !== undefined && typeof videoEl.cancelVideoFrameCallback === 'function') {
+        videoEl.cancelVideoFrameCallback(frameHandle);
+      }
+      resolve();
+    };
+    const timeout = window.setTimeout(finish, timeoutMs);
+    if (typeof videoEl.requestVideoFrameCallback === 'function') {
+      frameHandle = videoEl.requestVideoFrameCallback(finish);
+    } else {
+      requestAnimationFrame(() => requestAnimationFrame(finish));
+    }
+  });
+}
+
+function isVideoArmedAtTrimStart(clip: VJClip, videoEl: HTMLVideoElement): boolean {
+  const state = armedVideoStates.get(clip.id);
+  if (!state?.ready || state.key !== videoArmKey(clip)) return false;
+  if (!hasDecodedVideoFrame(videoEl) || !videoEl.paused) return false;
+  const duration = videoEl.duration;
+  if (!Number.isFinite(duration) || duration <= 0) return false;
+  const target = Math.max(0, Math.min(1, clip.trimStart ?? 0)) * duration;
+  return Math.abs(videoEl.currentTime - target) <= Math.max(1 / 120, duration * 0.00001);
+}
+
+/**
+ * Decode and park the exact first visible frame while the clip is inactive.
+ * Triggering then becomes play + reveal; no seek or decoder wait occurs in
+ * the frame where the active clip changes.
+ */
+function armVideoClipForTrigger(clip: VJClip): Promise<HTMLVideoElement> {
+  const videoEl = ensureClipVideoElement(clip);
+  if (!videoEl) return Promise.reject(new Error(`Video clip has no source: ${clip.name}`));
+
+  const key = videoArmKey(clip);
+  const current = armedVideoStates.get(clip.id);
+  if (current?.key === key) {
+    if (current.ready && isVideoArmedAtTrimStart(clip, videoEl)) return Promise.resolve(videoEl);
+    if (current.promise) return current.promise;
+  }
+
+  const state: ArmedVideoState = { key, ready: false };
+  const promise = (async () => {
+    clip.isPlaying = false;
+    try { videoEl.pause(); } catch { /* ignore */ }
+
+    if (!Number.isFinite(videoEl.duration) || videoEl.duration <= 0) {
+      await waitForVideoEvent(videoEl, 'loadedmetadata');
+    }
+
+    const duration = videoEl.duration;
+    if (!Number.isFinite(duration) || duration <= 0) {
+      throw new Error(`Video duration is unavailable: ${clip.name}`);
+    }
+
+    const target = Math.max(0, Math.min(1, clip.trimStart ?? 0)) * duration;
+    if (!hasDecodedVideoFrame(videoEl) ||
+        Math.abs(videoEl.currentTime - target) > Math.max(1 / 120, duration * 0.00001)) {
+      const seeked = waitForVideoEvent(videoEl, 'seeked');
+      videoEl.currentTime = target;
+      await seeked;
+      // `seeked` means the media timeline moved; it does not guarantee the
+      // corresponding frame has reached Chromium's presentation queue yet.
+      // Waiting for rVFC prevents activation from winning that race by one
+      // compositor frame.
+      await waitForPresentedVideoFrame(videoEl);
+    }
+
+    await waitForDecodedClipFrame(clip, videoEl);
+    const texture = ensureClipVideoTexture(clip, videoEl);
+    if (texture) texture.needsUpdate = true;
+    state.ready = true;
+    state.promise = undefined;
+    return videoEl;
+  })().catch((error) => {
+    if (armedVideoStates.get(clip.id) === state) armedVideoStates.delete(clip.id);
+    throw error;
+  });
+
+  state.promise = promise;
+  armedVideoStates.set(clip.id, state);
+  return promise;
+}
+
+/**
+ * Put an already-armed video into motion before publishing it as active.
+ *
+ * Svelte store subscribers render synchronously during update(). If the
+ * activation happens after that update, videos visibly trail shaders.
+ */
+function prepareVideoClipForTrigger(clip: VJClip): HTMLVideoElement | undefined {
+  if (clip.type !== 'video') return undefined;
+  const videoEl = ensureClipVideoElement(clip);
+  if (!videoEl) return undefined;
+
+  clip.isPlaying = true;
+  armedVideoStates.delete(clip.id);
+  if (videoEl.paused) {
+    videoEl.play().catch(() => { /* AbortError on rapid retrigger is fine */ });
+  }
+  if (clip.videoTexture) {
+    clip.videoTexture.needsUpdate = true;
+  }
+  return videoEl;
+}
+
 function pauseClipRuntime(clip: VJClip | null | undefined): void {
   if (!clip || clip.type !== 'video') return;
   const videoEl = clip.videoElement || videoElementCache.get(clip.id);
   if (!videoEl) return;
   try { videoEl.pause(); } catch { /* ignore */ }
   clip.isPlaying = false;
+  void armVideoClipForTrigger(clip).catch((error) => {
+    console.warn('[vjClipLauncher] video re-arm failed:', error);
+  });
 }
 
 /** Release a removed clip's cached video element unless the same clip id
@@ -736,6 +881,7 @@ function releaseClipRuntimeIfOrphaned(nextState: any, clipId: string): void {
   video.removeAttribute('src');
   try { video.load(); } catch { /* ignore */ }
   videoElementCache.delete(clipId);
+  armedVideoStates.delete(clipId);
   const texture = videoTextureCache.get(clipId);
   try { texture?.dispose?.(); } catch { /* ignore */ }
   videoTextureCache.delete(clipId);
@@ -753,6 +899,16 @@ function createVJClipLauncherStore() {
     let isReclick = false;
     let outgoingClip: VJClip | null = null;
     let incomingClip: VJClip | null = null;
+
+    // Prepare the decoded frame before the store publishes this clip as
+    // active. Store subscribers (including the compositor adapter) run
+    // synchronously inside update(), so this ordering is the difference
+    // between same-frame video/shader triggering and a one-frame video lag.
+    const before = get({ subscribe });
+    const requestedClip = pickGrid(before, deck)[layerIndex]?.[columnIndex];
+    if (requestedClip?.type === 'video') {
+      prepareVideoClipForTrigger(requestedClip);
+    }
 
     update(state => {
       const targetGrid = pickGrid(state, deck);
@@ -802,10 +958,6 @@ function createVJClipLauncherStore() {
         const next = withDeck(state, deck, newLayerStates);
         return { ...next, stoppedAll: false };
       }
-      if (clip.type === 'video') {
-        ensureClipVideoElement(clip);
-      }
-
       const current = newLayerStates[layerIndex].activeClip;
       isReclick = !!(current && current.id === clip.id);
       outgoingClip = !isReclick ? current : null;
@@ -831,7 +983,7 @@ function createVJClipLauncherStore() {
       return { ...next, stoppedAll: false };
     });
 
-    // VJ semantics: clicking a clip ALWAYS restarts it at frame 0,
+    // VJ semantics: clicking a clip ALWAYS restarts it at its trim start,
     // never resumes from where it last paused. Combined with pausing
     // the outgoing clip on this same layer/deck, this stops the
     // "videos play forever in the background and resume mid-stream"
@@ -841,19 +993,13 @@ function createVJClipLauncherStore() {
     // inside the update() closure across closure boundaries.
     const inc = incomingClip as VJClip | null;
     const out = outgoingClip as VJClip | null;
-    if (inc && inc.type === 'video' && inc.videoElement) {
-      try { inc.videoElement.currentTime = 0; } catch { /* */ }
-      if (inc.videoElement.paused) {
-        inc.videoElement.play().catch(() => { /* AbortError on rapid retrigger is fine */ });
-      }
-    }
     // Pause the OUTGOING video so it doesn't keep decoding in the
     // background. Only when it's a different element from the
     // incoming clip's — same element (e.g. re-clicking same clip on
     // the layer) doesn't get paused mid-restart.
     if (out && out.type === 'video' && out.videoElement &&
         out.videoElement !== inc?.videoElement) {
-      try { out.videoElement.pause(); } catch { /* */ }
+      pauseClipRuntime(out);
     }
 
     if (didTrigger) {
@@ -877,8 +1023,8 @@ function createVJClipLauncherStore() {
     const clip = pickGrid(state, deck)[layerIndex]?.[columnIndex];
     if (clip?.type === 'video') {
       const videoEl = ensureClipVideoElement(clip);
-      if (videoEl && !hasDecodedVideoFrame(videoEl)) {
-        void waitForDecodedClipFrame(clip, videoEl)
+      if (videoEl && !isVideoArmedAtTrimStart(clip, videoEl)) {
+        void armVideoClipForTrigger(clip)
           .then(() => {
             if (pendingVideoTriggers.get(triggerKey) !== requestId) return;
             commitImmediateTriggerClip(layerIndex, columnIndex, deck);
@@ -904,6 +1050,7 @@ function createVJClipLauncherStore() {
         video.src = '';
       }
       videoElementCache.clear();
+      armedVideoStates.clear();
       clearVJSourceCache();
       for (const texture of videoTextureCache.values()) {
         try { texture?.dispose?.(); } catch { /* ignore */ }
@@ -990,6 +1137,9 @@ function createVJClipLauncherStore() {
           }
           clip.videoElement = videoEl;
           ensureClipVideoTexture(clip, videoEl);
+          void armVideoClipForTrigger(clip).catch((error) => {
+            console.warn('[vjClipLauncher] video arm failed:', error);
+          });
         }
 
         // If setting a threejs clip (built-in), create/get the iframe context
@@ -1033,6 +1183,11 @@ function createVJClipLauncherStore() {
 
     // Clear a clip from the grid for the given deck
     clearClip(layerIndex: number, columnIndex: number, deck: VJDeck = 'A') {
+      const before = get({ subscribe });
+      const activeBefore = pickLayerStates(before, deck)[layerIndex]?.activeClip;
+      if (activeBefore && pickLayerStates(before, deck)[layerIndex]?.activeColumn === columnIndex) {
+        pauseClipRuntime(activeBefore);
+      }
       update(state => {
         const targetGrid = pickGrid(state, deck);
         const targetLayerStates = pickLayerStates(state, deck);
@@ -1188,6 +1343,29 @@ function createVJClipLauncherStore() {
       let didTrigger = false;
       const incomingVideos: VJClip[] = [];
       const outgoingVideos: VJClip[] = [];
+
+      // Match single-cell triggering: every incoming video is already
+      // rewound and moving before the column swap reaches subscribers.
+      const before = get({ subscribe });
+      const beforeGrid = pickGrid(before, deck);
+      const videosToArm: VJClip[] = [];
+      for (let layerIndex = 0; layerIndex < beforeGrid.length; layerIndex++) {
+        const clip = beforeGrid[layerIndex]?.[columnIndex];
+        if (clip?.type !== 'video') continue;
+        const videoEl = ensureClipVideoElement(clip);
+        if (videoEl && !isVideoArmedAtTrimStart(clip, videoEl)) videosToArm.push(clip);
+      }
+      if (videosToArm.length > 0) {
+        void Promise.all(videosToArm.map((clip) => armVideoClipForTrigger(clip)))
+          .then(() => vjClipLauncher.triggerColumn(columnIndex, deck))
+          .catch((error) => console.warn('[vjClipLauncher] column trigger held; video is not ready:', error));
+        return;
+      }
+      for (let layerIndex = 0; layerIndex < beforeGrid.length; layerIndex++) {
+        const clip = beforeGrid[layerIndex]?.[columnIndex];
+        if (clip?.type === 'video') prepareVideoClipForTrigger(clip);
+      }
+
       update(state => {
         const targetGrid = pickGrid(state, deck);
         const targetLayerStates = pickLayerStates(state, deck);
@@ -1222,16 +1400,12 @@ function createVJClipLauncherStore() {
           const videoEl = clip.videoElement || videoElementCache.get(clip.id);
           if (!videoEl) continue;
           incomingEls.add(videoEl);
-          try { videoEl.currentTime = 0; } catch { /* */ }
-          if (videoEl.paused) {
-            videoEl.play().catch(() => { /* AbortError on rapid column fire is fine */ });
-          }
         }
         for (const clip of outgoingVideos) {
           if (clip.type !== 'video') continue;
           const videoEl = clip.videoElement || videoElementCache.get(clip.id);
           if (!videoEl || incomingEls.has(videoEl)) continue;
-          try { videoEl.pause(); } catch { /* */ }
+          pauseClipRuntime(clip);
         }
       }
       if (didTrigger) {
@@ -1242,6 +1416,8 @@ function createVJClipLauncherStore() {
 
     // Stop all clips on a layer for the given deck
     stopLayer(layerIndex: number, deck: VJDeck = 'A') {
+      const before = get({ subscribe });
+      pauseClipRuntime(pickLayerStates(before, deck)[layerIndex]?.activeClip);
       update(state => {
         const targetLayerStates = pickLayerStates(state, deck);
         const newLayerStates = [...targetLayerStates];
@@ -2781,11 +2957,6 @@ export const vjOutputLayers = derived(
         // Bank tag — read by engine.render() to route to A or B FBO when crossfader is on.
         bank: activeLayer.bank ?? undefined,
       };
-
-      // The layer fader owns special-blend strength. Master level,
-      // sequencer gates, clip opacity, and A/B mixing still affect final
-      // visibility without reshaping the blend curve.
-      (layer as any)._blendControlOpacity = activeLayer.opacity;
 
       outputLayers.push(layer);
     }

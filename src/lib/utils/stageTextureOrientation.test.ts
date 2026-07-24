@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import type { WarpCorners } from '../types';
-import { stageTextureNeedsVerticalFlip } from './stageTextureOrientation';
+import {
+  layerUsesStageTextureCoordinates,
+  stageTextureNeedsVerticalFlip,
+} from './stageTextureOrientation';
 
 const yDownCorners: WarpCorners = {
   topLeft: { x: 0, y: 0.1 },
@@ -37,5 +40,31 @@ describe('stageTextureNeedsVerticalFlip', () => {
       corners: yDownCorners,
       stageTextureFlipV: false,
     })).toBe(false);
+  });
+});
+
+describe('layerUsesStageTextureCoordinates', () => {
+  it('recognizes a generated Stage screen directly', () => {
+    expect(layerUsesStageTextureCoordinates(
+      { id: 'screen-1', type: 'screen', stageTextureFlipV: true },
+      [],
+    )).toBe(true);
+  });
+
+  it('inherits the coordinate contract for a unified group of Stage screens', () => {
+    expect(layerUsesStageTextureCoordinates(
+      { id: 'group-1', type: 'group' },
+      [
+        { parentGroupId: 'group-1', stageTextureFlipV: true },
+        { parentGroupId: 'group-1', stageTextureFlipV: true },
+      ],
+    )).toBe(true);
+  });
+
+  it('does not tag an ordinary mapping group', () => {
+    expect(layerUsesStageTextureCoordinates(
+      { id: 'group-1', type: 'group' },
+      [{ parentGroupId: 'group-1' }],
+    )).toBe(false);
   });
 });

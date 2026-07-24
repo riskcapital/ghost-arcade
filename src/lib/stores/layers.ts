@@ -5623,6 +5623,9 @@ void main() {
                 (imported.source as any)._assetRef,
                 imported.source.src,
               );
+              if (isVideoSource(imported.source)) {
+                rehydrateVideoSource(imported.source);
+              }
             }
             if (imported.splatContent) {
               if (imported.splatContent.filePath || (imported.splatContent as any)._assetRef) {

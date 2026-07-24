@@ -28,6 +28,8 @@
 	  activeSurfaceSlices,
 	  selectedSlice,
 	  selectedSliceIds,
+	  surfaceCanUndo,
+	  surfaceCanRedo,
 	  parseSurfaceSVG,
 	} from '../stores/surface';
   import { layers as projectLayers } from '../stores/layers';
@@ -77,6 +79,10 @@
 	    | { kind: 'sliceRotate'; sliceId: string; centroid: Point2D; startAngle: number; startPolygon: BezierPoint[] }
 	    | { kind: 'sliceScale';  sliceId: string; centroid: Point2D; startDist: number; startPolygon: BezierPoint[] };
 	  let vertexDrag: VertexDrag | null = null;
+	  function beginVertexDrag(next: VertexDrag) {
+	    surfaceStore.beginHistoryGesture();
+	    vertexDrag = next;
+	  }
 	  const DRAG_SELECT_THRESHOLD_PX = 5;
 	  let sliceDragSelect: {
 	    startSurface: Point2D;
@@ -257,17 +263,17 @@
         // Handles only show while selected; check them first so a
         // handle on top of an anchor still wins.
         if (v.cpIn && Math.hypot(v.cpIn.x - pt.x, v.cpIn.y - pt.y) < hitR) {
-          vertexDrag = { kind: 'cpIn', sliceId: sl.id, idx };
+          beginVertexDrag({ kind: 'cpIn', sliceId: sl.id, idx });
           e.preventDefault();
           return;
         }
         if (v.cpOut && Math.hypot(v.cpOut.x - pt.x, v.cpOut.y - pt.y) < hitR) {
-          vertexDrag = { kind: 'cpOut', sliceId: sl.id, idx };
+          beginVertexDrag({ kind: 'cpOut', sliceId: sl.id, idx });
           e.preventDefault();
           return;
         }
         if (Math.hypot(v.x - pt.x, v.y - pt.y) < hitR) {
-          vertexDrag = { kind: 'anchor', sliceId: sl.id, idx };
+          beginVertexDrag({ kind: 'anchor', sliceId: sl.id, idx });
           e.preventDefault();
           return;
         }
@@ -278,11 +284,11 @@
 	        const startPolygons = $activeSurfaceSlices
 	          .filter(slice => selectedSet.has(slice.id) && !slice.locked)
 	          .map(slice => ({ sliceId: slice.id, polygon: clonePolygon(slice.polygon) }));
-	        vertexDrag = {
+	        beginVertexDrag({
 	          kind: 'sliceMove', sliceId: sl.id,
 	          startMouse: pt,
 	          startPolygons,
-	        };
+	        });
 	        e.preventDefault();
 	        return;
 	      }
@@ -461,6 +467,7 @@
 	    }
 	    isPanning = false;
 	    penPulling = null;
+	    if (vertexDrag) surfaceStore.endHistoryGesture();
 	    vertexDrag = null;
 	  }
 
@@ -535,7 +542,19 @@
     if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable)) {
       return;
     }
+    if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'z') {
+      if (e.shiftKey) surfaceStore.redo();
+      else surfaceStore.undo();
+      e.preventDefault();
+      return;
+    }
     if (e.key === 'Escape') {
+      if (vertexDrag) {
+        surfaceStore.cancelHistoryGesture();
+        vertexDrag = null;
+        e.preventDefault();
+        return;
+      }
       if (penDraft) { penDraft = null; penCursor = null; e.preventDefault(); return; }
       workspace.closeAll();
       return;
@@ -549,7 +568,9 @@
     }
 	    if ((e.key === 'Delete' || e.key === 'Backspace') && ($selectedSliceIds.length > 0 || $selectedSlice)) {
 	      const ids = $selectedSliceIds.length > 0 ? $selectedSliceIds : [$selectedSlice!.id];
+	      surfaceStore.beginHistoryGesture();
 	      for (const id of ids) surfaceStore.deleteSlice(id);
+	      surfaceStore.endHistoryGesture();
 	      e.preventDefault();
 	      return;
 	    }
@@ -792,6 +813,20 @@
     />
 
     <div class="header-right">
+      <button
+        class="zoom-btn"
+        disabled={!$surfaceCanUndo}
+        onclick={() => surfaceStore.undo()}
+        title="Undo stage edit (⌘Z)"
+        aria-label="Undo stage edit"
+      >↶</button>
+      <button
+        class="zoom-btn"
+        disabled={!$surfaceCanRedo}
+        onclick={() => surfaceStore.redo()}
+        title="Redo stage edit (⇧⌘Z)"
+        aria-label="Redo stage edit"
+      >↷</button>
       <button class="zoom-btn" onclick={fitToViewport} title="Fit to viewport">⛶</button>
       <span class="zoom-readout">{Math.round(zoom * 100)}%</span>
       <span class="header-sep"></span>
@@ -1054,7 +1089,7 @@
                   onmousedown={(e) => {
                     e.stopPropagation();
                     const c = polygonCentroid(slice.polygon);
-                    vertexDrag = {
+                    beginVertexDrag({
                       kind: 'sliceRotate',
                       sliceId: slice.id,
                       centroid: c,
@@ -1064,7 +1099,7 @@
                         cpIn:  p.cpIn  ? { ...p.cpIn  } : undefined,
                         cpOut: p.cpOut ? { ...p.cpOut } : undefined,
                       })),
-                    };
+                    });
                   }}
                 />
                 <text
@@ -1096,7 +1131,7 @@
                   onmousedown={(e) => {
                     e.stopPropagation();
                     const c = polygonCentroid(slice.polygon);
-                    vertexDrag = {
+                    beginVertexDrag({
                       kind: 'sliceScale',
                       sliceId: slice.id,
                       centroid: c,
@@ -1106,7 +1141,7 @@
                         cpIn:  p.cpIn  ? { ...p.cpIn  } : undefined,
                         cpOut: p.cpOut ? { ...p.cpOut } : undefined,
                       })),
-                    };
+                    });
                   }}
                 />
                 <text
