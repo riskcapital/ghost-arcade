@@ -52,6 +52,7 @@
   import { midiManager } from '../midi/midiManager';
   import { abletonLink } from '../sync/abletonLink';
   import { oscStore } from '../osc/oscStore';
+  import { CONTROL_PATH_EXAMPLES, normalizeControlPath, validateControlPath } from '../control/controlPaths';
   import { keyboardStore, formatKeyCombo, type KeyActionMode } from '../keyboard/keyboardStore';
   import WLEDMappingPanel from './WLEDMappingPanel.svelte';
   import WLEDGroupsPanel from './WLEDGroupsPanel.svelte';
@@ -61,6 +62,21 @@
   let keyboardAddMin = 0;
   let keyboardAddMax = 1;
   let keyboardAddStep = 0.05;
+  let oscLearnOpen = false;
+  let oscLearnPath = 'vj:0:trigger:0';
+
+  function beginOscLearn() {
+    oscLearnOpen = true;
+    oscLearnPath = 'vj:0:trigger:0';
+  }
+
+  function confirmOscLearn() {
+    const validation = validateControlPath(oscLearnPath);
+    if (!validation.valid) return;
+    if (oscStore.startLearn(validation.normalized)) {
+      oscLearnOpen = false;
+    }
+  }
 
   function beginKeyboardAdd() {
     keyboardAddOpen = true;
@@ -1891,6 +1907,9 @@
                     value={b.path}
                     onchange={(e) => oscStore.updateBinding(b.id, { path: (e.target as HTMLInputElement).value })}
                     placeholder="vj:0:opacity"
+                    class:invalid-path={!validateControlPath(b.path).valid}
+                    aria-invalid={!validateControlPath(b.path).valid}
+                    title={validateControlPath(b.path).reason ?? `Valid path: ${normalizeControlPath(b.path)}`}
                   />
                   <select
                     value={b.mode ?? 'auto'}
@@ -1940,13 +1959,57 @@
             >+ Add binding</button>
             <button
               class="osc-add-btn learn"
-              onclick={() => {
-                const path = prompt('Target param path (e.g. vj:0:opacity):');
-                if (path && path.trim()) oscStore.startLearn(path.trim());
-              }}
+              class:active={oscLearnOpen}
+              onclick={beginOscLearn}
               title="Wait for the next OSC message and bind it to a param path"
             >+ Learn binding</button>
           </div>
+
+          {#if oscLearnOpen}
+            <div class="osc-learn-form">
+              <label for="osc-learn-path">Target parameter</label>
+              <div class="osc-learn-controls">
+                <input
+                  id="osc-learn-path"
+                  type="text"
+                  list="osc-path-examples"
+                  bind:value={oscLearnPath}
+                  class:invalid-path={!validateControlPath(oscLearnPath).valid}
+                  onkeydown={(e) => {
+                    if (e.key === 'Enter') confirmOscLearn();
+                    if (e.key === 'Escape') oscLearnOpen = false;
+                  }}
+                />
+                <button class="osc-add-btn learn" disabled={!validateControlPath(oscLearnPath).valid} onclick={confirmOscLearn}>
+                  Listen
+                </button>
+                <button class="osc-add-btn" onclick={() => oscLearnOpen = false}>Cancel</button>
+              </div>
+              {#if validateControlPath(oscLearnPath).valid}
+                <span class="osc-path-valid">Routes to <code>{normalizeControlPath(oscLearnPath)}</code></span>
+              {:else}
+                <span class="osc-path-error">{validateControlPath(oscLearnPath).reason}</span>
+              {/if}
+              <datalist id="osc-path-examples">
+                {#each CONTROL_PATH_EXAMPLES as example}
+                  <option value={example.path}>{example.label}</option>
+                {/each}
+              </datalist>
+            </div>
+          {/if}
+
+          <details class="osc-path-reference">
+            <summary>Parameter path reference</summary>
+            <div class="osc-path-grid">
+              {#each CONTROL_PATH_EXAMPLES as example}
+                <button type="button" onclick={() => { oscLearnPath = example.path; oscLearnOpen = true; }}>
+                  <code>{example.path}</code>
+                  <span>{example.label}</span>
+                </button>
+              {/each}
+            </div>
+            <p>Legacy paths such as <code>vj:layer:0:opacity</code> are accepted and normalized automatically.</p>
+          </details>
         </section>
 
         {/if}
@@ -2945,6 +3008,10 @@
     width: 100%;
   }
   .osc-binding-row input:focus, .osc-binding-row select:focus { border-color: #4cd1ff; outline: none; }
+  .osc-binding-row input.invalid-path, .osc-learn-form input.invalid-path {
+    border-color: #ff6868;
+    box-shadow: 0 0 0 1px rgba(255, 104, 104, 0.18);
+  }
   .osc-inv { display: flex; align-items: center; justify-content: center; cursor: pointer; }
   .osc-binding-del {
     background: transparent;
@@ -2994,6 +3061,63 @@
     color: #fff;
     box-shadow: 0 0 12px rgba(255,214,102,0.22);
   }
+  .osc-learn-form {
+    display: grid;
+    gap: 7px;
+    margin-top: 10px;
+    padding: 12px;
+    border: 1px solid rgba(255,214,102,0.35);
+    background: rgba(255,214,102,0.05);
+    border-radius: 5px;
+  }
+  .osc-learn-form label {
+    color: var(--text-primary, #ddd);
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .osc-learn-controls {
+    display: grid;
+    grid-template-columns: minmax(180px, 1fr) auto auto;
+    gap: 6px;
+  }
+  .osc-learn-controls input {
+    min-width: 0;
+    padding: 6px 8px;
+    color: var(--text-primary, #ddd);
+    background: var(--bg-tertiary, #14141a);
+    border: 1px solid #2a2a30;
+    border-radius: 4px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+  }
+  .osc-path-valid, .osc-path-error { font-size: 11px; }
+  .osc-path-valid { color: #4ade80; }
+  .osc-path-error { color: #ff7d7d; }
+  .osc-path-reference {
+    margin-top: 12px;
+    color: var(--text-muted, #888);
+    font-size: 12px;
+  }
+  .osc-path-reference summary { cursor: pointer; color: #4cd1ff; }
+  .osc-path-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 5px;
+    margin-top: 8px;
+  }
+  .osc-path-grid button {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+    padding: 7px;
+    text-align: left;
+    background: var(--bg-tertiary, #14141a);
+    border: 1px solid #2a2a30;
+    border-radius: 4px;
+    color: var(--text-muted, #888);
+    cursor: pointer;
+  }
+  .osc-path-grid button:hover { border-color: #4cd1ff; }
+  .osc-path-grid code { color: #4cd1ff; overflow-wrap: anywhere; }
   .keyboard-add-bindings { margin-top: 8px; }
   .keyboard-edit-row {
     align-items: center;

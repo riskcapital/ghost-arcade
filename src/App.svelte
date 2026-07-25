@@ -120,6 +120,7 @@
   // qrcode is lazy-loaded inside generateQRCode() so it stays out of the
   // main App chunk — it's only needed when the mobile-connect panel opens.
   import { midiManager } from './lib/midi/midiManager';
+  import { oscStore } from './lib/osc/oscStore';
   import { midiStore } from './lib/midi/midiStore';
   import { keyboardStore } from './lib/keyboard/keyboardStore';
   import { synthVisionStore, sessionClipCache, isfShaderCache } from './lib/stores/synthVision';
@@ -461,6 +462,7 @@
     }
     viewportEl?.removeEventListener('wheel', handleViewportWheel);
     destroyPhoneVisionSession(true);
+    oscStore.destroy();
   });
 
   // Recovery modal actions
@@ -931,6 +933,7 @@
     midiManager.init().then(ok => {
       if (ok) console.log('[MIDI] Ready — devices detected');
     });
+    void oscStore.initialize();
 
     // Rejoin the Ableton Link session if the user had it enabled last
     // run (no-op otherwise; lazy — doesn't load the native addon until

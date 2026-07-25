@@ -20,6 +20,7 @@
   import { webgpuSupportedStore } from '../renderer/webgpuCapability';
   import { createAssetRefFromFile } from '../storage/assetRegistry';
   import { maskEditingLayerId } from '../stores/maskEditing';
+  import { syncTrimmedVideoPlayback } from '../utils/videoTrimPlayback';
 
   // WebGPU capability — reactive store, NOT a snapshot. The probe is
   // async and may not have resolved when this panel first mounts;
@@ -279,6 +280,7 @@
   function setPlaybackMode(layerId: string, source: MediaSource, mode: VideoPlaybackMode) {
     source.playbackMode = mode;
     source._lastFrameTime = performance.now();
+    if (source.videoElement) syncTrimmedVideoPlayback(source.videoElement, source);
     project.updateLayer(layerId, {});
   }
 
@@ -307,7 +309,10 @@
     if (!timelineEl || !source.videoElement) return;
     const rect = timelineEl.getBoundingClientRect();
     const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / (rect.width || 1)));
-    source.videoElement.currentTime = pct * (source.videoElement.duration || 0);
+    const trimStart = source.trimStart ?? 0;
+    const trimEnd = source.trimEnd ?? 1;
+    const clamped = Math.max(trimStart, Math.min(trimEnd, pct));
+    source.videoElement.currentTime = clamped * (source.videoElement.duration || 0);
   }
 
   function handleTrimMouseDown(e: MouseEvent, which: 'start' | 'end', layerId: string, source: MediaSource) {
@@ -325,6 +330,7 @@
       } else {
         source.trimEnd = Math.max(pct, (source.trimStart ?? 0) + 0.02);
       }
+      if (source.videoElement) syncTrimmedVideoPlayback(source.videoElement, source);
       project.updateLayer(layerId, {});
     };
 
@@ -363,7 +369,7 @@
       const video = document.createElement('video');
       // crossOrigin BEFORE src — order matters on Chromium 130.
       video.crossOrigin = 'anonymous';
-      video.loop = true;
+      video.loop = false;
       video.muted = true;
       video.playsInline = true;
       video.preload = 'auto';
@@ -386,6 +392,7 @@
       // Autoplay the video immediately
       source.videoElement = video;
       source.isPlaying = true;
+      syncTrimmedVideoPlayback(video, source);
       try {
         await video.play();
       } catch (err) {
@@ -1911,6 +1918,11 @@
             <div class="vt-transport">
               <button
                 class="vt-btn vt-play"
+                data-midi-path="map:media:play"
+                data-midi-label="Media Play / Pause"
+                data-midi-min="0"
+                data-midi-max="1"
+                data-midi-mode="toggle"
                 onclick={() => {
                   const playing = vSrc.isPlaying !== false;
                   if (playing) {
@@ -1933,6 +1945,11 @@
               </button>
               <button
                 class="vt-btn"
+                data-midi-path="map:media:restart"
+                data-midi-label="Media Restart"
+                data-midi-min="0"
+                data-midi-max="1"
+                data-midi-mode="toggle"
                 onclick={() => {
                   vEl.currentTime = (vSrc.trimStart ?? 0) * (vEl.duration || 0);
                   vEl.play(); vSrc.isPlaying = true;
@@ -1963,6 +1980,11 @@
             <div
               class="vt-timeline"
               bind:this={timelineEl}
+              data-midi-path="map:media:position"
+              data-midi-label="Media Position"
+              data-midi-min="0"
+              data-midi-max="1"
+              data-midi-step="0.001"
               onmousedown={(e) => handleTimelineMouseDown(e, layer.id, vSrc)}
               role="slider"
               tabindex="0"

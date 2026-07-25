@@ -2422,10 +2422,21 @@ function stopOSC() {
 }
 function startOSC(port, win) {
   stopOSC();
+  port = Number(port);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    return Promise.resolve({ ok: false, error: 'OSC port must be between 1 and 65535' });
+  }
   oscPort = port;
   oscLastError = null;
   return new Promise((resolve) => {
-    const sock = dgram.createSocket('udp4');
+    const sock = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+    oscSocket = sock;
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
     sock.on('error', (err) => {
       oscLastError = String(err.message || err);
       console.error('[OSC] socket error:', err);
@@ -2436,7 +2447,7 @@ function startOSC(port, win) {
       if (win && !win.isDestroyed()) {
         win.webContents.send('osc-status', { listening: false, port, error: oscLastError });
       }
-      resolve({ ok: false, error: oscLastError });
+      finish({ ok: false, error: oscLastError });
     });
     sock.on('message', (buf, rinfo) => {
       try {
@@ -2457,14 +2468,14 @@ function startOSC(port, win) {
         console.warn('[OSC] parse error:', e);
       }
     });
-    sock.bind(port, () => {
-      oscSocket = sock;
+    sock.once('listening', () => {
       console.log('[OSC] listening on UDP port', port);
       if (win && !win.isDestroyed()) {
         win.webContents.send('osc-status', { listening: true, port, error: null });
       }
-      resolve({ ok: true, port });
+      finish({ ok: true, port, address: '0.0.0.0' });
     });
+    sock.bind({ port, address: '0.0.0.0', exclusive: false });
   });
 }
 

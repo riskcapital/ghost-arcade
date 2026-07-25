@@ -32,6 +32,8 @@ import type { LineElement, LineShape, LinesContent, LineDrawAnimation, LineStrok
 import { maxLayers } from './license';
 import { settings, migrateOutputSlice } from './settings';
 import { createLineElement, createDefaultLinesContent, createDefaultDrawAnimation } from '../lines/types';
+import { syncTrimmedVideoPlayback } from '../utils/videoTrimPlayback';
+import { recoverVJClipAssetRef } from '../storage/vjAssetPersistence';
 
 // History recording callback — set from App.svelte to avoid circular imports.
 // We record SYNCHRONOUSLY (no setTimeout) so each discrete action lands in its
@@ -70,7 +72,7 @@ function rehydrateVideoSource(source: MediaSource) {
   if (typeof document === 'undefined' || source.videoElement || !isVideoSource(source)) return;
   const video = document.createElement('video');
   if (!shouldSkipVideoCors(source.src)) video.crossOrigin = 'anonymous';
-  video.loop = source.playbackMode !== 'once';
+  video.loop = false;
   video.muted = true;
   video.playsInline = true;
   video.preload = 'auto';
@@ -78,6 +80,7 @@ function rehydrateVideoSource(source: MediaSource) {
   video.src = source.src;
   source.videoElement = video;
   source.isPlaying = true;
+  syncTrimmedVideoPlayback(video, source);
   try { video.load(); } catch { /* best-effort preset video rehydrate */ }
   const play = () => {
     if (source.isPlaying === false) return;
@@ -4633,6 +4636,17 @@ void main() {
       const currentVjClipLauncher = get(vjClipLauncher);
       const exportClip = (clip: VJClip | null) => {
         if (!clip) return null;
+        const recoveredAssetRef = recoverVJClipAssetRef(clip as any, currentMedia);
+        if (
+          !recoveredAssetRef &&
+          (clip.type === 'video' || clip.type === 'image') &&
+          clip.src?.startsWith('blob:')
+        ) {
+          console.warn(
+            `[Project Save] VJ clip "${clip.name}" has only a session blob URL; ` +
+            'it will require relinking after restart.',
+          );
+        }
         return {
           id: clip.id,
           type: clip.type,
@@ -4661,7 +4675,7 @@ void main() {
           // contents survives save/reload.
           splatContent: (clip as any).splatContent,
           model3dContent: (clip as any).model3dContent || (clip as any).model3DContent,
-          _assetRef: (clip as any)._assetRef,
+          _assetRef: recoveredAssetRef,
           // Exclude runtime objects: videoElement / iframeElement / synthVisionCanvas
         };
       };

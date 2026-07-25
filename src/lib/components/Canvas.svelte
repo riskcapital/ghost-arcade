@@ -36,6 +36,7 @@
   import { getTextureShareLabel, invoke, isDesktopApp, isOsrMode, isOutputMode } from '$lib/bridge';
   import { drawTestPattern, type TestPatternType } from '../utils/testPatterns';
   import { layerUsesStageTextureCoordinates } from '../utils/stageTextureOrientation';
+  import { syncTrimmedVideoPlayback } from '../utils/videoTrimPlayback';
   import { applyEdgeBlending } from '../output/outputPostProcess';
   import { renderSlicePixelsAsync, pruneSliceReadbackStates, isBlendRendererAvailable } from '../output/blendRenderer';
   import { isAtlasSenderSlice } from '../output/atlasLayout';
@@ -3122,8 +3123,9 @@
           // Whether the user wants the video playing (UI toggle)
           const wantsPlaying = source.isPlaying !== false;
 
-          // Always disable native loop — we manage looping manually for trim
-          video.loop = false;
+          // Keep browser-native looping disabled. The shared controller owns
+          // trim boundaries for VJ and mapping, even when this canvas is idle.
+          syncTrimmedVideoPlayback(video, source);
 
           // Set playback rate for forward-playing modes
           if (mode !== 'timelapse') {
@@ -3142,11 +3144,6 @@
             if (video.paused && wantsPlaying) {
               video.play().catch(() => {});
             }
-            // Reached trim end? Loop back to trim start
-            if (video.currentTime >= trimEndTime - 0.05) {
-              video.currentTime = trimStartTime;
-            }
-
           } else if (mode === 'once') {
             // Play once within trim region
             if (video.currentTime >= trimEndTime - 0.08) {
@@ -3160,11 +3157,6 @@
             }
           }
 
-          // Gentle trim start clamping — only jump if video is significantly before trim start
-          // (avoids fighting with seeks and dragging trim handles)
-          if (mode !== 'timelapse' && video.currentTime < trimStartTime - 0.15) {
-            video.currentTime = trimStartTime;
-          }
         }
       }
 
@@ -3282,11 +3274,12 @@
           if (!source.src.startsWith('blob:')) {
             video.crossOrigin = 'anonymous';
           }
-          video.loop = true;
+          video.loop = false;
           video.muted = true;
           video.playsInline = true;
           video.preload = 'auto';
           video.src = source.src;
+          syncTrimmedVideoPlayback(video, source);
 
           // Wait for video to load. The src setter SHOULD auto-trigger
           // the resource selection algorithm but for custom protocol URLs

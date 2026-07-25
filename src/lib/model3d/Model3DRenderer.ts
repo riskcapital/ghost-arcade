@@ -913,6 +913,10 @@ export class Model3DRenderer {
         let meshIndex = 0;
         this.model.traverse((child) => {
           if (child instanceof THREE.Mesh) {
+            // Keep the loader-provided material alive. GLB/GLTF textures live
+            // on these materials; replacing and disposing them is what made
+            // textured scans render as flat gray.
+            child.userData.sourceMaterial = child.material;
             const geometry = child.geometry;
             const positions = geometry.attributes.position.array as Float32Array;
             const normals = geometry.attributes.normal?.array as Float32Array || new Float32Array(positions.length);
@@ -1504,8 +1508,49 @@ export class Model3DRenderer {
   private _cachedMaterialKey: string = '';
   private _cachedMaterial: THREE.Material | null = null;
 
+  private materialList(material: THREE.Material | THREE.Material[] | undefined): THREE.Material[] {
+    if (!material) return [];
+    return Array.isArray(material) ? material : [material];
+  }
+
+  private disposeGeneratedMeshMaterial(mesh: THREE.Mesh) {
+    const sourceMaterials = new Set(this.materialList(mesh.userData.sourceMaterial));
+    for (const material of this.materialList(mesh.material)) {
+      if (!sourceMaterials.has(material)) material.dispose();
+    }
+  }
+
+  private applySourceMaterialOpacity(mesh: THREE.Mesh, opacity: number) {
+    for (const material of this.materialList(mesh.material)) {
+      material.opacity = opacity;
+      material.transparent = opacity < 1;
+      material.needsUpdate = true;
+    }
+  }
+
   private applyMaterial(content: Model3DContent, time: number, audioLevel: number = 0) {
     if (!this.model) return;
+
+    if (content.materialType === 'source') {
+      if (this._cachedMaterialKey !== 'source') {
+        this._cachedMaterialKey = 'source';
+        if (this._cachedMaterial) {
+          this._cachedMaterial.dispose();
+          this._cachedMaterial = null;
+        }
+        this.model.traverse((child) => {
+          if (!(child instanceof THREE.Mesh)) return;
+          const sourceMaterial = child.userData.sourceMaterial as THREE.Material | THREE.Material[] | undefined;
+          if (!sourceMaterial) return;
+          this.disposeGeneratedMeshMaterial(child);
+          child.material = sourceMaterial;
+        });
+      }
+      this.model.traverse((child) => {
+        if (child instanceof THREE.Mesh) this.applySourceMaterialOpacity(child, content.materialOpacity);
+      });
+      return;
+    }
 
     // Build a key from STRUCTURAL properties only — those that require a different
     // shader program or Three.js material config. Numeric/color values (color,
@@ -1524,13 +1569,7 @@ export class Model3DRenderer {
       // Apply to all meshes (only when material type changes)
       this.model.traverse((child) => {
         if (child instanceof THREE.Mesh) {
-          if (child.material) {
-            if (Array.isArray(child.material)) {
-              child.material.forEach(m => m.dispose());
-            } else {
-              child.material.dispose();
-            }
-          }
+          this.disposeGeneratedMeshMaterial(child);
           child.material = this._cachedMaterial!.clone();
         }
       });
@@ -2262,11 +2301,12 @@ export class Model3DRenderer {
     obj.traverse((child) => {
       if (child instanceof THREE.Mesh) {
         child.geometry?.dispose();
-        if (Array.isArray(child.material)) {
-          child.material.forEach((m) => m.dispose());
-        } else {
-          child.material?.dispose();
-        }
+        const materials = new Set<THREE.Material>([
+          ...this.materialList(child.material),
+          ...this.materialList(child.userData.sourceMaterial),
+        ]);
+        materials.forEach((material) => material.dispose());
+        delete child.userData.sourceMaterial;
       }
       if (child instanceof THREE.LineSegments) {
         child.geometry?.dispose();

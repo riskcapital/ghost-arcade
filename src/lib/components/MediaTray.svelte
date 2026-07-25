@@ -34,6 +34,7 @@
   import { mediaTrayShaders } from '../stores/mediaTrayShaders';
   import { createAssetRefFromFile, createAssetRefFromGeneratedBlob } from '../storage/assetRegistry';
   import { listScreenCaptureSources, screenCaptureSourcePickerAvailable, type ScreenCaptureSource } from '$lib/capture/screenSources';
+  import { syncTrimmedVideoPlayback } from '../utils/videoTrimPlayback';
   // Built-in Three.js / p5.js animations — auto-discovered from
   // public/threejs/ at build time by the vite plugin (see vite.config.ts).
   // Add a folder there, rebuild, it appears in the JS tab automatically.
@@ -1769,7 +1770,9 @@
           if (prevVideo && prevVideo !== video) {
             try { prevVideo.pause(); } catch { /* ignore */ }
           }
-          video.loop = true;
+          // The layer playback controller owns looping. Native browser
+          // looping always seeks to source time zero and breaks trim-in.
+          video.loop = false;
           video.muted = true;
           video.playsInline = true;
           video.preload = 'auto';
@@ -1803,6 +1806,7 @@
 
           source.videoElement = video;
           source.isPlaying = !video.paused;
+          syncTrimmedVideoPlayback(video, source);
         }
 
         project.setLayerSource(layerId, source);

@@ -8,6 +8,23 @@ export interface AppReleaseNotes {
 }
 
 const RELEASE_NOTES: Record<string, AppReleaseNotes> = {
+  '1.9.992': {
+    title: 'Reliable OSC, trimmed playback, and portable media',
+    summary: [
+      'OSC listening and Learn Binding now work reliably in the desktop app.',
+      'Trimmed videos loop and restart from their selected in point.',
+      'Saved VJ clips recover durable media paths more consistently.',
+    ],
+    highlights: [
+      'The OSC listener starts with the app, opens the configured UDP port reliably, and reports its live socket status.',
+      'OSC Learn now uses an in-app binding editor instead of the unsupported Electron prompt dialog, with path validation and documented examples.',
+      'OSC and MIDI controls can trigger VJ clips, Mapping presets, and Mapping or VJ video transport controls through normalized parameter paths.',
+      'Trimmed videos stay inside their selected range, loop back to trim-in, and keep the timeline playhead aligned with the active trim.',
+      'VJ project saves recover durable local-file references from the media library, reducing unexpected relink prompts after reopening a project.',
+      'Imported GLB models preserve embedded materials and textures by default instead of replacing them with a flat gray material.',
+      'VJ block removal is available from the context menu while individual clip cells retain their quick remove control.',
+    ],
+  },
   '1.9.991': {
     title: 'Stage editing and VJ playback reliability',
     summary: [

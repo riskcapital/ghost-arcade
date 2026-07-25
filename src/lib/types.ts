@@ -2036,6 +2036,7 @@ export type Model3DFormat = 'glb' | 'gltf' | 'obj' | 'fbx';
 
 // Material types for 3D models
 export type Model3DMaterialType =
+  | 'source'        // Preserve materials and textures embedded in the model
   | 'standard'      // PBR material
   | 'wireframe'     // Lines only
   | 'glass'         // Transparent refraction
@@ -2339,7 +2340,7 @@ export function createDefaultModel3DContent(): Model3DContent {
     vertexCount: 0,
     faceCount: 0,
 
-    materialType: 'standard',
+    materialType: 'source',
     materialColor: [200, 200, 200],
     materialRoughness: 0.5,
     materialMetalness: 0.0,

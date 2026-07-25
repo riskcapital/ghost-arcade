@@ -10,6 +10,7 @@ import { hasDecodedVideoFrame } from '../renderer/videoReadiness';
 import { keyframeTimeline } from './keyframeTimeline';
 import { parseISF } from '../isf/parser';
 import { vjLayerSequencer } from './vjLayerSequencer';
+import { syncTrimmedVideoPlayback } from '../utils/videoTrimPlayback';
 
 // Cache parsed ISF shader inputs per shader code to avoid re-parsing every
 // frame. Bounded: keys are entire shader source strings, so an unbounded
@@ -71,14 +72,14 @@ export interface VJClip {
   // The other fields control playback the same way MediaSource does for
   // mapping-mode video layers — exposed in the right-side panel that
   // opens when a video clip is selected (mirrors the shader-params panel).
-  // Defaults: native loop=true (set on the element at create time),
-  // playbackRate=1, trim full range, isPlaying=true on first trigger.
+  // Defaults: Ghost-owned trim-aware looping, playbackRate=1, trim full
+  // range, isPlaying=true on first trigger.
   videoElement?: HTMLVideoElement;
   /** Runtime-only GPU texture, created while the clip is armed so firing it
    *  never inserts a black placeholder while Canvas creates a texture. */
   videoTexture?: MediaSource['texture'];
-  /** 'loop' | 'once'. Loop is the historical default and matches the
-   *  hardcoded `videoEl.loop = true` set at clip-element creation. */
+  /** 'loop' | 'once'. Ghost owns trim-aware loop boundaries; native
+   *  browser looping stays disabled on active playback elements. */
   playbackMode?: 'loop' | 'once';
   /** 0.25 / 0.5 / 1 / 1.5 / 2 / 4. Maps to `videoElement.playbackRate`. */
   playbackRate?: number;
@@ -689,7 +690,7 @@ function ensureClipVideoElement(clip: VJClip): HTMLVideoElement | undefined {
     if (!shouldSkipVideoCors(clip.src)) {
       videoEl.crossOrigin = 'anonymous';
     }
-    videoEl.loop = true;
+    videoEl.loop = false;
     videoEl.muted = true;
     videoEl.playsInline = true;
     videoEl.preload = 'auto';
@@ -707,6 +708,7 @@ function ensureClipVideoElement(clip: VJClip): HTMLVideoElement | undefined {
   }
 
   clip.videoElement = videoEl;
+  syncTrimmedVideoPlayback(videoEl, clip);
   ensureClipVideoTexture(clip, videoEl);
   return videoEl;
 }
@@ -1113,7 +1115,7 @@ function createVJClipLauncherStore() {
             if (!clip.src.startsWith('blob:') && !clip.src.startsWith('file:')) {
               videoEl.crossOrigin = 'anonymous';
             }
-            videoEl.loop = true;
+            videoEl.loop = false;
             videoEl.muted = true;
             videoEl.playsInline = true;
             videoEl.preload = 'auto';
@@ -1122,6 +1124,7 @@ function createVJClipLauncherStore() {
             // the deck, so playback should start. UI toggle (pause from the
             // VJ video controls panel) flips this to false later.
             clip.isPlaying = clip.isPlaying ?? true;
+            syncTrimmedVideoPlayback(videoEl, clip);
             // Wait for the first frame to decode, then play. DON'T call
             // `.load()` here — the `.src=` setter above already initiated
             // the resource selection algorithm. A second load() races the
@@ -1783,6 +1786,9 @@ function createVJClipLauncherStore() {
         }
 
         const newClip = { ...activeClip, ...allowedUpdates };
+        if (newClip.type === 'video' && newClip.videoElement) {
+          syncTrimmedVideoPlayback(newClip.videoElement, newClip);
+        }
         newLayerStates[layerIndex] = { ...newLayerStates[layerIndex], activeClip: newClip };
 
         // Mirror the change into the grid for any cells whose clip.id matches
