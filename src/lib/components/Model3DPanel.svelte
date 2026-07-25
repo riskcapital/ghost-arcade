@@ -16,6 +16,7 @@
 
   // Material types with descriptions
   const materialTypes: { value: Model3DMaterialType; label: string; description: string }[] = [
+    { value: 'source', label: 'Model Materials', description: 'Embedded colors and textures' },
     { value: 'standard', label: 'Standard PBR', description: 'Physically-based rendering' },
     { value: 'wireframe', label: 'Wireframe Only', description: 'Lines only, no faces' },
     { value: 'glass', label: 'Glass', description: 'Transparent with refraction' },
@@ -349,9 +350,9 @@
               data-midi-path="map:model3d:materialType"
               data-midi-label="Material Type"
               data-midi-min="0"
-              data-midi-max="14"
+              data-midi-max="15"
               data-midi-step="1"
-              data-midi-discrete="standard,wireframe,glass,chrome,hologram,lava,ice,neon,xray,toon,fresnel,dissolve,glitch,normal,depth"
+              data-midi-discrete="source,standard,wireframe,glass,chrome,hologram,lava,ice,neon,xray,toon,fresnel,dissolve,glitch,normal,depth"
             >
               {#each materialTypes as mat}
                 <option value={mat.value} title={mat.description}>{mat.label}</option>

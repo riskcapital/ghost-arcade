@@ -70,6 +70,7 @@
   import VJTextClipPanel from './VJTextClipPanel.svelte';
   import LEDFXPanel from './LEDFXPanel.svelte';
   import { getShaderDef } from '../renderer/gpuShaderCatalog';
+  import { syncTrimmedVideoPlayback } from '../utils/videoTrimPlayback';
   // Same build-time JS animation catalog used by mapping-mode MediaTray.
   // @ts-expect-error virtual module supplied by vite plugin
   import bundledThreeJSItems from 'virtual:threejs-bundles';
@@ -452,11 +453,17 @@
   function startVjVideoTick() {
     if (vjVideoTickFrame !== null) return;
     function tick() {
-      const clip = selectedLayerState?.activeClip;
+      const clip = selectedLayerIndex !== null
+        ? paramLayerStates[selectedLayerIndex]?.activeClip
+        : null;
       const v = clip?.videoElement;
       if (clip?.type === 'video' && v) {
+        syncTrimmedVideoPlayback(v, clip);
         vjVideoCurrentTime = v.currentTime;
         vjVideoDuration = v.duration || 0;
+      } else {
+        vjVideoCurrentTime = 0;
+        vjVideoDuration = 0;
       }
       vjVideoTickFrame = requestAnimationFrame(tick);
     }
@@ -478,7 +485,9 @@
     // pull currentTime back to trimStart anyway if we seek outside, but
     // clamping at the input layer makes the playhead "stick" inside the
     // trim region the moment the user releases (no visual snap-back).
-    const clip = selectedLayerState?.activeClip;
+    const clip = selectedLayerIndex !== null
+      ? paramLayerStates[selectedLayerIndex]?.activeClip
+      : null;
     const trimS = clip?.trimStart ?? 0;
     const trimE = clip?.trimEnd ?? 1;
     const clamped = Math.max(trimS, Math.min(trimE, pct));
@@ -515,6 +524,9 @@
       const updates: { trimStart?: number; trimEnd?: number } = {};
       if (which === 'start') updates.trimStart = Math.min(pct, trimE - 0.02);
       else updates.trimEnd = Math.max(pct, trimS + 0.02);
+      if (clip.videoElement) {
+        syncTrimmedVideoPlayback(clip.videoElement, { ...clip, ...updates });
+      }
       vjClipLauncher.updateActiveClipVideoProps(layerIdx, updates, paramDeck);
     };
     const onUp = () => {
@@ -531,6 +543,7 @@
     const v = clip?.videoElement;
     if (!clip || !v) return;
     if (playing) {
+      syncTrimmedVideoPlayback(v, { ...clip, isPlaying: true });
       v.play().catch(() => {});
     } else {
       v.pause();
@@ -562,6 +575,9 @@
   function vjSetPlaybackMode(layerIdx: number, mode: 'loop' | 'once') {
     const clip = paramLayerStates[layerIdx]?.activeClip;
     if (!clip) return;
+    if (clip.videoElement) {
+      syncTrimmedVideoPlayback(clip.videoElement, { ...clip, playbackMode: mode });
+    }
     vjClipLauncher.updateActiveClipVideoProps(layerIdx, { playbackMode: mode }, paramDeck);
   }
   // ─── End VJ Video Controls ──────────────────────────────────────────
@@ -2224,7 +2240,7 @@
     if (kind === 'video') {
       const video = document.createElement('video');
       // crossOrigin BEFORE src — order matters on Chromium 130.
-      video.crossOrigin = 'anonymous'; video.loop = true; video.muted = true; video.playsInline = true; video.preload = 'auto';
+      video.crossOrigin = 'anonymous'; video.loop = false; video.muted = true; video.playsInline = true; video.preload = 'auto';
       video.src = url;
       // `.src=` already initiated the load — don't call `.load()`.
       await new Promise<void>((resolve) => {
@@ -2725,7 +2741,6 @@
     if ($vjClipLauncher.crossfaderEnabled) vjClipLauncher.setSelectedDeck(bank);
   }
 
-  // Clear a clip from cell
   function handleClearClip(layerIndex: number, columnIndex: number, e: Event, bank: VJDeck = 'A') {
     e.stopPropagation();
     vjClipLauncher.clearClip(layerIndex, columnIndex, bank);
@@ -2852,11 +2867,6 @@
       editingBlockId = null;
       editingBlockName = '';
     }
-  }
-
-  function handleDeleteBlock(blockId: string, e: MouseEvent) {
-    e.stopPropagation();
-    vjClipLauncher.deleteBlock(blockId);
   }
 
   function handleBlockDragStart(e: DragEvent, blockIdx: number) {
@@ -3119,7 +3129,7 @@
     );
 
     const video = document.createElement('video');
-    video.loop = true;
+    video.loop = false;
     video.muted = true;
     video.playsInline = true;
     video.preload = 'auto';
@@ -4593,15 +4603,6 @@
                 {:else}
                   <span class="block-name">{block.name}</span>
                 {/if}
-                {#if $vjClipLauncher.blocks.length > 1}
-                  <button
-                    class="block-delete-btn"
-                    onclick={(e) => handleDeleteBlock(block.id, e)}
-                    title="Delete block"
-                  >
-                    x
-                  </button>
-                {/if}
               </div>
             {/each}
           </div>
@@ -4802,7 +4803,13 @@
                         </div>
                       {/if}
                       <span class="clip-name">{clip.name}</span>
-                      <button class="clear-btn" onclick={(e) => handleClearClip(layerIdx, colIdx, e, bank)}>×</button>
+                      <button
+                        class="clear-btn"
+                        onclick={(e) => handleClearClip(layerIdx, colIdx, e, bank)}
+                        title="Remove clip"
+                      >
+                        ×
+                      </button>
                     </div>
                   {:else}
                     <div class="empty-cell"></div>
@@ -4985,7 +4992,7 @@
             <button class="ctx-item" onclick={pasteClipFromClipboard}>Paste</button>
           {/if}
           {#if ctxClip}
-            <button class="ctx-item ctx-danger" onclick={clearClipFromMenu}>Clear</button>
+            <button class="ctx-item ctx-danger" onclick={clearClipFromMenu}>Remove</button>
           {/if}
           {#if !ctxClip && !clipboardClip}
             <div class="ctx-item ctx-disabled">No actions</div>
@@ -8244,41 +8251,6 @@
     padding: 2px 6px;
     width: 80px;
     outline: none;
-  }
-
-  .block-delete-btn {
-    background: none;
-    border: none;
-    color: #666;
-    font-size: 13px;
-    font-weight: 700;
-    cursor: pointer;
-    padding: 0;
-    width: 16px;
-    height: 16px;
-    line-height: 16px;
-    text-align: center;
-    border-radius: 50%;
-    opacity: 0;
-    transition: all 0.1s;
-  }
-
-  .block-tab:hover .block-delete-btn {
-    opacity: 1;
-  }
-
-  .block-delete-btn:hover {
-    background: rgba(255, 68, 68, 0.3);
-    color: #ff4444;
-  }
-
-  .block-tab.active .block-delete-btn {
-    color: #333;
-  }
-
-  .block-tab.active .block-delete-btn:hover {
-    background: rgba(0, 0, 0, 0.2);
-    color: #000;
   }
 
   .add-block-btn {
