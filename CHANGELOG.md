@@ -2,6 +2,16 @@
 
 ---
 
+## Unreleased
+
+- Fixed VJ deck activation for live webcam and screen capture sources (`live://`
+  URLs). Live feeds no longer fail the file-video arming path that required a
+  finite duration, seek-to-trim, and a paused first frame.
+- Switching away from a live deck cell no longer pauses the feed and re-arms it
+  into the same readiness failure.
+
+---
+
 ## v1.9.99 - Live Performance and Control Polish (July 2026)
 
 - Layer blending, armed video triggering, master-warp keyboard nudging, and
