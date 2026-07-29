@@ -661,10 +661,20 @@ function isTransformableMediaClip(clip: VJClip | null | undefined): clip is VJTr
   return !!clip && (clip.type === 'video' || clip.type === 'image');
 }
 
+function isLiveVideoClip(clip: VJClip): boolean {
+  return (
+    clip.type === 'video' &&
+    (
+      !!clip.src?.startsWith('live://') ||
+      !!clip.videoElement?.srcObject
+    )
+  );
+}
+
 function ensureClipVideoElement(clip: VJClip): HTMLVideoElement | undefined {
   if (!clip || clip.type !== 'video') return clip.videoElement;
 
-  if (clip.videoElement && (clip.src?.startsWith('live://') || clip.videoElement.srcObject)) {
+  if (clip.videoElement && isLiveVideoClip(clip)) {
     videoElementCache.set(clip.id, clip.videoElement);
     ensureClipVideoTexture(clip, clip.videoElement);
     clip.isPlaying = clip.isPlaying ?? true;
@@ -768,6 +778,13 @@ function isVideoArmedAtTrimStart(clip: VJClip, videoEl: HTMLVideoElement): boole
   return Math.abs(videoEl.currentTime - target) <= Math.max(1 / 120, duration * 0.00001);
 }
 
+function isVideoReadyForTrigger(clip: VJClip, videoEl: HTMLVideoElement): boolean {
+  if (isLiveVideoClip(clip)) {
+    return hasDecodedVideoFrame(videoEl);
+  }
+  return isVideoArmedAtTrimStart(clip, videoEl);
+}
+
 /**
  * Decode and park the exact first visible frame while the clip is inactive.
  * Triggering then becomes play + reveal; no seek or decoder wait occurs in
@@ -780,11 +797,36 @@ function armVideoClipForTrigger(clip: VJClip): Promise<HTMLVideoElement> {
   const key = videoArmKey(clip);
   const current = armedVideoStates.get(clip.id);
   if (current?.key === key) {
-    if (current.ready && isVideoArmedAtTrimStart(clip, videoEl)) return Promise.resolve(videoEl);
+    if (current.ready && isVideoReadyForTrigger(clip, videoEl)) return Promise.resolve(videoEl);
     if (current.promise) return current.promise;
   }
 
   const state: ArmedVideoState = { key, ready: false };
+
+  if (isLiveVideoClip(clip)) {
+    clip.isPlaying = true;
+
+    const promise = Promise.resolve(
+      videoEl.paused ? videoEl.play().catch(() => { /* autoplay policy */ }) : undefined,
+    ).then(async () => {
+      await waitForDecodedClipFrame(clip, videoEl);
+
+      const texture = ensureClipVideoTexture(clip, videoEl);
+      if (texture) texture.needsUpdate = true;
+
+      state.ready = true;
+      state.promise = undefined;
+      return videoEl;
+    }).catch((error) => {
+      if (armedVideoStates.get(clip.id) === state) armedVideoStates.delete(clip.id);
+      throw error;
+    });
+
+    state.promise = promise;
+    armedVideoStates.set(clip.id, state);
+    return promise;
+  }
+
   const promise = (async () => {
     clip.isPlaying = false;
     try { videoEl.pause(); } catch { /* ignore */ }
@@ -851,6 +893,12 @@ function prepareVideoClipForTrigger(clip: VJClip): HTMLVideoElement | undefined 
 
 function pauseClipRuntime(clip: VJClip | null | undefined): void {
   if (!clip || clip.type !== 'video') return;
+  if (isLiveVideoClip(clip)) {
+    // Live feeds stay running while assigned to the deck; do not pause or
+    // enter seek-and-trim arming when switching away from them.
+    armedVideoStates.delete(clip.id);
+    return;
+  }
   const videoEl = clip.videoElement || videoElementCache.get(clip.id);
   if (!videoEl) return;
   try { videoEl.pause(); } catch { /* ignore */ }
@@ -1025,7 +1073,7 @@ function createVJClipLauncherStore() {
     const clip = pickGrid(state, deck)[layerIndex]?.[columnIndex];
     if (clip?.type === 'video') {
       const videoEl = ensureClipVideoElement(clip);
-      if (videoEl && !isVideoArmedAtTrimStart(clip, videoEl)) {
+      if (videoEl && !isVideoReadyForTrigger(clip, videoEl)) {
         void armVideoClipForTrigger(clip)
           .then(() => {
             if (pendingVideoTriggers.get(triggerKey) !== requestId) return;
@@ -1356,7 +1404,7 @@ function createVJClipLauncherStore() {
         const clip = beforeGrid[layerIndex]?.[columnIndex];
         if (clip?.type !== 'video') continue;
         const videoEl = ensureClipVideoElement(clip);
-        if (videoEl && !isVideoArmedAtTrimStart(clip, videoEl)) videosToArm.push(clip);
+        if (videoEl && !isVideoReadyForTrigger(clip, videoEl)) videosToArm.push(clip);
       }
       if (videosToArm.length > 0) {
         void Promise.all(videosToArm.map((clip) => armVideoClipForTrigger(clip)))
