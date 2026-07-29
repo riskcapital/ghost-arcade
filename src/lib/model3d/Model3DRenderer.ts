@@ -5,6 +5,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { OBJLoader } from 'three/addons/loaders/OBJLoader.js';
 import { FBXLoader } from 'three/addons/loaders/FBXLoader.js';
+import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
 import type {
   Model3DContent,
   Model3DMaterialType,
@@ -15,6 +16,102 @@ import type {
   Model3DVertexDecoration,
   Model3DLightingPreset,
 } from '../types';
+
+export type Model3DLightingProfile = {
+  ambientScale: number;
+  keyScale: number;
+  fillScale: number;
+  rimScale: number;
+  environmentScale: number;
+  azimuthOffset: number;
+  elevationOffset: number;
+  selfShadowStrength: number;
+};
+
+export function getModel3DLightingProfile(
+  preset: Model3DLightingPreset,
+): Model3DLightingProfile {
+  switch (preset) {
+    case 'dramatic':
+      return {
+        ambientScale: 0.25,
+        keyScale: 1.65,
+        fillScale: 0.3,
+        rimScale: 1.25,
+        environmentScale: 0.22,
+        azimuthOffset: -55,
+        elevationOffset: -18,
+        selfShadowStrength: 0.85,
+      };
+    case 'neon':
+      return {
+        ambientScale: 0.38,
+        keyScale: 1.15,
+        fillScale: 0.65,
+        rimScale: 1.9,
+        environmentScale: 0.28,
+        azimuthOffset: 35,
+        elevationOffset: -10,
+        selfShadowStrength: 0.65,
+      };
+    case 'sunrise':
+      return {
+        ambientScale: 0.52,
+        keyScale: 1.35,
+        fillScale: 0.55,
+        rimScale: 0.55,
+        environmentScale: 0.4,
+        azimuthOffset: -85,
+        elevationOffset: -34,
+        selfShadowStrength: 0.68,
+      };
+    case 'moonlight':
+      return {
+        ambientScale: 0.28,
+        keyScale: 0.85,
+        fillScale: 0.35,
+        rimScale: 1.5,
+        environmentScale: 0.3,
+        azimuthOffset: 110,
+        elevationOffset: 10,
+        selfShadowStrength: 0.78,
+      };
+    case 'disco':
+      return {
+        ambientScale: 0.4,
+        keyScale: 1.1,
+        fillScale: 0.7,
+        rimScale: 1.35,
+        environmentScale: 0.26,
+        azimuthOffset: 20,
+        elevationOffset: -8,
+        selfShadowStrength: 0.58,
+      };
+    case 'none':
+      return {
+        ambientScale: 1,
+        keyScale: 0,
+        fillScale: 0,
+        rimScale: 0,
+        environmentScale: 0,
+        azimuthOffset: 0,
+        elevationOffset: 0,
+        selfShadowStrength: 0,
+      };
+    case 'studio':
+    default:
+      return {
+        ambientScale: 1,
+        keyScale: 1,
+        fillScale: 1,
+        rimScale: 1,
+        environmentScale: 0.7,
+        azimuthOffset: 0,
+        elevationOffset: 0,
+        selfShadowStrength: 0.48,
+      };
+  }
+}
 
 // ============================================================================
 // UNIFIED VERTEX SHADER WITH MORPHING
@@ -39,6 +136,7 @@ const morphingVertexShader = `
   uniform float morphScale;
   uniform float morphPhase;
   uniform vec3 morphCenter;
+  uniform float morphReferenceSize;
   uniform float audioLevel;
   uniform float audioMorphResponse;
   // Spread = how far displacement-style morphs push pieces from their rest position.
@@ -108,6 +206,14 @@ const morphingVertexShader = `
     float intensity = morphIntensity + audioLevel * audioMorphResponse;
     if (morphType == 0 || intensity < 0.001) return pos;
 
+    // Imported assets arrive in wildly different coordinate scales. Perform
+    // deformation in the same canonical two-unit space used by the viewer,
+    // then convert back to source coordinates before Three.js applies the
+    // model's normalization transform.
+    float assetToCanonical = 2.0 / max(morphReferenceSize, 0.0001);
+    pos *= assetToCanonical;
+    vec3 center = morphCenter * assetToCanonical;
+
     float t = time * morphSpeed + morphPhase;
     vec3 offset = vec3(0.0);
     float localIntensity = 0.0;
@@ -123,7 +229,7 @@ const morphingVertexShader = `
 
     // 2: Pulse from center - heartbeat ripple
     else if (morphType == 2) {
-      vec3 toCenter = pos - morphCenter;
+      vec3 toCenter = pos - center;
       float dist = length(toCenter);
       float pulse = sin(dist * morphScale * 3.0 - t * 4.0) * 0.5 + 0.5;
       pulse = pow(pulse, 2.0);
@@ -174,7 +280,7 @@ const morphingVertexShader = `
       float wobble1 = sin(pos.y * 3.0 + t * 4.0) * sin(pos.x * 2.0 + t * 3.0);
       float wobble2 = sin(pos.z * 2.5 + t * 3.5) * cos(pos.y * 2.0 + t * 2.5);
       float jelly = (wobble1 + wobble2) * 0.5;
-      float lag = length(pos - morphCenter) * 0.5;
+      float lag = length(pos - center) * 0.5;
       jelly = sin(jelly * 3.14159 + lag);
       offset = norm * jelly * intensity * 0.4 * morphSpread;
       localIntensity = abs(jelly);
@@ -183,7 +289,7 @@ const morphingVertexShader = `
     // 8: Explode outward — STEADY at full intensity (no time oscillation).
     // Pair with the Animation "Rotate" type for the classic "exploded view spin".
     else if (morphType == 8) {
-      vec3 dir = normalize(pos - morphCenter);
+      vec3 dir = normalize(pos - center);
       // Per-vertex noise so fragments fly at varied distances.
       float noise = snoise(pos * 10.0) * 0.3 + 0.7;
       offset = dir * intensity * noise * morphSpread;
@@ -192,7 +298,7 @@ const morphingVertexShader = `
 
     // 9: Implode - steady inward pull (no time oscillation)
     else if (morphType == 9) {
-      vec3 toCenter = morphCenter - pos;
+      vec3 toCenter = center - pos;
       float noise = snoise(pos * 10.0) * 0.3 + 0.7;
       // Clamp so vertices can fully reach center but don't overshoot wildly.
       float pull = clamp(intensity * morphSpread, 0.0, 1.5);
@@ -202,7 +308,7 @@ const morphingVertexShader = `
 
     // 10: Melt - droop downward
     else if (morphType == 10) {
-      float height = (pos.y - morphCenter.y + 1.0) * 0.5;
+      float height = (pos.y - center.y + 1.0) * 0.5;
       float melt = pow(height, 2.0) * intensity * morphSpread;
       float noise = snoise(pos * morphScale + t * 0.2);
       offset.y = -melt * 0.5;
@@ -213,18 +319,18 @@ const morphingVertexShader = `
 
     // 11: Spherify - pull toward unit sphere (steady — easier to combine with rotate)
     else if (morphType == 11) {
-      vec3 toCenter = pos - morphCenter;
+      vec3 toCenter = pos - center;
       float dist = length(toCenter);
-      vec3 spherePos = morphCenter + normalize(toCenter) * morphSpread; // Sphere radius scales with spread
+      vec3 spherePos = center + normalize(toCenter) * morphSpread; // Sphere radius scales with spread
       offset = (spherePos - pos) * intensity;
       localIntensity = intensity;
     }
 
     // 12: Taper - pinch ends toward axis (steady)
     else if (morphType == 12) {
-      float y = pos.y - morphCenter.y;
+      float y = pos.y - center.y;
       float pinch = abs(y) * intensity * morphSpread;
-      vec3 horizontal = vec3(pos.x - morphCenter.x, 0.0, pos.z - morphCenter.z);
+      vec3 horizontal = vec3(pos.x - center.x, 0.0, pos.z - center.z);
       offset = -normalize(horizontal) * pinch * length(horizontal);
       localIntensity = intensity;
     }
@@ -233,8 +339,8 @@ const morphingVertexShader = `
     else if (morphType == 13) {
       float wave = sin(pos.y * morphScale * 4.0 - t * 3.0 + pos.x * 2.0);
       float wave2 = sin(pos.y * morphScale * 4.0 - t * 3.0 + pos.z * 2.0 + 1.0);
-      offset.x = wave * intensity * 0.3 * (pos.y - morphCenter.y + 1.0) * morphSpread;
-      offset.z = wave2 * intensity * 0.3 * (pos.y - morphCenter.y + 1.0) * morphSpread;
+      offset.x = wave * intensity * 0.3 * (pos.y - center.y + 1.0) * morphSpread;
+      offset.z = wave2 * intensity * 0.3 * (pos.y - center.y + 1.0) * morphSpread;
       localIntensity = abs(wave);
     }
 
@@ -242,7 +348,7 @@ const morphingVertexShader = `
     else if (morphType == 14) {
       // Quantize position into chunks so neighbors share a fragment offset.
       vec3 chunk = floor(pos * morphScale * 0.8) / (morphScale * 0.8);
-      vec3 dir = normalize(pos - morphCenter + 0.001);
+      vec3 dir = normalize(pos - center + 0.001);
       // Per-chunk pseudo-random scatter direction
       float n1 = snoise(chunk * 5.0);
       float n2 = snoise(chunk * 5.0 + 100.0);
@@ -255,15 +361,15 @@ const morphingVertexShader = `
     // 15: Magnetic - pull toward poles
     else if (morphType == 15) {
       float pull = sin(t) * 0.5 + 0.5;
-      offset.y = sign(pos.y - morphCenter.y) * pull * intensity * 0.5 * morphSpread;
-      offset.x = -(pos.x - morphCenter.x) * pull * intensity * 0.2 * morphSpread;
-      offset.z = -(pos.z - morphCenter.z) * pull * intensity * 0.2 * morphSpread;
+      offset.y = sign(pos.y - center.y) * pull * intensity * 0.5 * morphSpread;
+      offset.x = -(pos.x - center.x) * pull * intensity * 0.2 * morphSpread;
+      offset.z = -(pos.z - center.z) * pull * intensity * 0.2 * morphSpread;
       localIntensity = pull;
     }
 
     // 16: Bend - true arc deformation around X axis (steady)
     else if (morphType == 16) {
-      float bendAngle = (pos.y - morphCenter.y) * intensity * morphSpread;
+      float bendAngle = (pos.y - center.y) * intensity * morphSpread;
       float c = cos(bendAngle);
       float s = sin(bendAngle);
       // Rotate around X axis: y/z plane
@@ -283,16 +389,16 @@ const morphingVertexShader = `
 
     // 18: Swirl - helical vortex (twist + outward push, both scale with spread)
     else if (morphType == 18) {
-      float r = length(vec2(pos.x - morphCenter.x, pos.z - morphCenter.z));
-      float angle = atan(pos.z - morphCenter.z, pos.x - morphCenter.x);
+      float r = length(vec2(pos.x - center.x, pos.z - center.z));
+      float angle = atan(pos.z - center.z, pos.x - center.x);
       // Twist angle grows with height and time
-      float swirl = (pos.y - morphCenter.y) * morphScale + t * morphSpeed * 0.5;
+      float swirl = (pos.y - center.y) * morphScale + t * morphSpeed * 0.5;
       angle += swirl * intensity;
       float pushR = r * (1.0 + intensity * morphSpread * 0.3);
       vec3 swirled = vec3(
-        morphCenter.x + cos(angle) * pushR,
+        center.x + cos(angle) * pushR,
         pos.y,
-        morphCenter.z + sin(angle) * pushR
+        center.z + sin(angle) * pushR
       );
       offset = swirled - pos;
       localIntensity = intensity;
@@ -307,7 +413,7 @@ const morphingVertexShader = `
         snoise(chunkId * 3.1 + 11.0),
         snoise(chunkId * 3.1 + 22.0),
         snoise(chunkId * 3.1 + 33.0)
-      ) + (pos - morphCenter) * 0.4);
+      ) + (pos - center) * 0.4);
       // Slight per-chunk separation amount based on seed
       float separation = (0.6 + abs(seed) * 0.6) * intensity * morphSpread;
       offset = chunkDir * separation;
@@ -315,7 +421,7 @@ const morphingVertexShader = `
     }
 
     vMorphIntensity = localIntensity;
-    return pos + offset;
+    return (pos + offset) / assetToCanonical;
   }
 
   void main() {
@@ -365,6 +471,245 @@ const morphingVertexShader = `
   }
 `;
 
+const wireframeVertexShader = morphingVertexShader
+  .replace(
+    'varying float vMorphIntensity;',
+    'varying float vMorphIntensity;\n  attribute vec3 barycentric;\n  varying vec3 vBarycentric;',
+  )
+  .replace(
+    'void main() {\n    vUv = uv;',
+    'void main() {\n    vBarycentric = barycentric;\n    vUv = uv;',
+  );
+
+const wireframeFragmentShader = `
+  varying vec3 vBarycentric;
+  varying vec3 vWorldPosition;
+
+  uniform float time;
+  uniform int wireMode;
+  uniform vec3 wireColor;
+  uniform float wireOpacity;
+  uniform float wireThickness;
+  uniform float wireAnimSpeed;
+
+  vec3 hueToRgb(float hue) {
+    return clamp(
+      abs(mod(hue * 6.0 + vec3(0.0, 4.0, 2.0), 6.0) - 3.0) - 1.0,
+      0.0,
+      1.0
+    );
+  }
+
+  void main() {
+    vec3 pixelWidth = fwidth(vBarycentric);
+    float thickness = max(wireThickness, 0.25);
+    if (wireMode == 8) thickness = max(thickness * 2.4, 3.5);
+
+    vec3 edgeDistance = smoothstep(
+      vec3(0.0),
+      pixelWidth * thickness,
+      vBarycentric
+    );
+    float edge = 1.0 - min(min(edgeDistance.x, edgeDistance.y), edgeDistance.z);
+    float alpha = edge * wireOpacity;
+    vec3 color = wireColor;
+
+    if (wireMode == 2) {
+      // Bright packets travel through the mesh instead of merely changing
+      // the whole overlay's opacity.
+      float flow = fract(
+        dot(vWorldPosition, vec3(1.7, 2.3, 1.1))
+        - time * max(wireAnimSpeed, 0.01) * 1.8
+      );
+      float packet = smoothstep(0.05, 0.28, flow) * (1.0 - smoothstep(0.45, 0.72, flow));
+      alpha *= 0.18 + packet * 1.25;
+      color = mix(color * 0.45, min(vec3(1.0), color * 1.8), packet);
+    } else if (wireMode == 3 || wireMode == 4) {
+      vec3 haloDistance = smoothstep(
+        vec3(0.0),
+        pixelWidth * thickness * (wireMode == 3 ? 3.8 : 2.4),
+        vBarycentric
+      );
+      float halo = 1.0 - min(min(haloDistance.x, haloDistance.y), haloDistance.z);
+      float core = pow(edge, wireMode == 4 ? 0.3 : 0.75);
+      alpha = (halo * 0.38 + core) * wireOpacity;
+      if (wireMode == 4) color = mix(color, vec3(1.0), core * 0.65);
+    } else if (wireMode == 5) {
+      float pulse = 0.5 + 0.5 * sin(time * max(wireAnimSpeed, 0.01) * 4.0);
+      alpha *= 0.3 + pulse * 0.9;
+      color = mix(color * 0.55, min(vec3(1.0), color * 1.75), pulse);
+    } else if (wireMode == 6) {
+      float hue = fract(
+        dot(vWorldPosition, vec3(0.19, 0.27, 0.13))
+        - time * max(wireAnimSpeed, 0.01) * 0.12
+      );
+      color = hueToRgb(hue);
+    } else if (wireMode == 7) {
+      // Screen-space stippling remains crisp at any model scale.
+      float dotted = step(
+        0.48,
+        fract((gl_FragCoord.x + gl_FragCoord.y * 0.65) * 0.105
+          - time * wireAnimSpeed * 0.9)
+      );
+      alpha *= dotted;
+    }
+
+    if (alpha <= 0.001) discard;
+    gl_FragColor = vec4(color, clamp(alpha, 0.0, 1.0));
+  }
+`;
+
+export function createModel3DWireframeGeometry(
+  source: THREE.BufferGeometry,
+): THREE.BufferGeometry {
+  const geometry = source.index ? source.toNonIndexed() : source.clone();
+  const positions = geometry.getAttribute('position');
+  const barycentric = new Float32Array(positions.count * 3);
+
+  for (let index = 0; index < positions.count; index += 3) {
+    barycentric.set([
+      1, 0, 0,
+      0, 1, 0,
+      0, 0, 1,
+    ], index * 3);
+  }
+
+  geometry.setAttribute('barycentric', new THREE.BufferAttribute(barycentric, 3));
+  return geometry;
+}
+
+export function getModel3DMorphReferenceSize(modelSize: number): number {
+  return Number.isFinite(modelSize) ? Math.max(modelSize, 0.0001) : 1;
+}
+
+export function getModel3DWireframeModeIndex(mode: Model3DWireframeMode): number {
+  const shaderMap: Record<Model3DWireframeMode, number> = {
+    none: 0,
+    classic: 1,
+    animated: 2,
+    glow: 3,
+    neon: 4,
+    pulse: 5,
+    rainbow: 6,
+    dotted: 7,
+    thick: 8,
+  };
+  return shaderMap[mode];
+}
+
+// Source materials keep the GLB/FBX textures and PBR setup supplied by the
+// model. Inject only the deformation stage into Three's stock vertex shader so
+// those materials can use the same effects as Ghost Arcade's custom materials.
+const sourceMaterialMorphChunk = morphingVertexShader
+  .slice(
+    morphingVertexShader.indexOf('attribute vec3 originalPosition;'),
+    morphingVertexShader.indexOf('void main()'),
+  )
+  .replace('varying vec3 vPosition;', '')
+  .replace('varying vec3 vNormal;', '')
+  .replace('varying vec3 vWorldPosition;', '')
+  .replace('varying vec2 vUv;', '');
+
+const vertexDecorationMorphChunk = sourceMaterialMorphChunk
+  .replace('attribute vec3 originalPosition;', '')
+  .replace('attribute vec3 originalNormal;', '');
+
+const vertexDecorationVertexShader = `
+  attribute vec3 markerRestPosition;
+  attribute vec3 markerRestNormal;
+
+  ${vertexDecorationMorphChunk}
+
+  void main() {
+    vMorphIntensity = 0.0;
+    vec3 markerCenter = applyMorph(markerRestPosition, normalize(markerRestNormal));
+    gl_Position = projectionMatrix * modelViewMatrix * vec4(markerCenter + position, 1.0);
+  }
+`;
+
+const vertexDecorationFragmentShader = `
+  uniform vec3 markerColor;
+  uniform float markerOpacity;
+
+  void main() {
+    gl_FragColor = vec4(markerColor, markerOpacity);
+  }
+`;
+
+export function injectModel3DSourceMorphVertexShader(vertexShader: string): string {
+  const requiredChunks = [
+    '#include <common>',
+    '#include <beginnormal_vertex>',
+    '#include <begin_vertex>',
+  ];
+  const missingChunk = requiredChunks.find((chunk) => !vertexShader.includes(chunk));
+  if (missingChunk) {
+    throw new Error(`Model3D deformation shader is missing Three.js hook ${missingChunk}`);
+  }
+
+  return vertexShader
+    .replace(
+      '#include <common>',
+      `#include <common>\n${sourceMaterialMorphChunk}`,
+    )
+    .replace(
+      '#include <beginnormal_vertex>',
+      [
+        '#include <beginnormal_vertex>',
+        'objectNormal = originalNormal;',
+      ].join('\n'),
+    )
+    .replace(
+      '#include <begin_vertex>',
+      [
+        '#include <begin_vertex>',
+        'vMorphIntensity = 0.0;',
+        'transformed = applyMorph(originalPosition, originalNormal);',
+      ].join('\n'),
+    );
+}
+
+type SourceMorphUniforms = {
+  time: THREE.IUniform<number>;
+  morphIntensity: THREE.IUniform<number>;
+  morphType: THREE.IUniform<number>;
+  morphSpeed: THREE.IUniform<number>;
+  morphScale: THREE.IUniform<number>;
+  morphPhase: THREE.IUniform<number>;
+  morphCenter: THREE.IUniform<THREE.Vector3>;
+  morphReferenceSize: THREE.IUniform<number>;
+  audioLevel: THREE.IUniform<number>;
+  audioMorphResponse: THREE.IUniform<number>;
+  morphSpread: THREE.IUniform<number>;
+};
+
+export function getModel3DMorphTypeIndex(type: Model3DDeformationType): number {
+  const shaderMap: Record<Model3DDeformationType, number> = {
+    'none': 0,
+    'noise': 1,
+    'pulse': 2,
+    'wave': 3,
+    'twist': 4,
+    'inflate': 5,
+    'breathe': 5,
+    'bulge': 6,
+    'jelly': 7,
+    'explode': 8,
+    'implode': 9,
+    'melt': 10,
+    'spherify': 11,
+    'taper': 12,
+    'tentacle': 13,
+    'shatter': 14,
+    'magnetic': 15,
+    'bend': 16,
+    'pixelate': 17,
+    'swirl': 18,
+    'fracture': 19,
+  };
+  return shaderMap[type] ?? 0;
+}
+
 // ============================================================================
 // FRAGMENT SHADERS FOR DIFFERENT MATERIALS
 // ============================================================================
@@ -380,6 +725,9 @@ const standardFragmentShader = `
   uniform vec3 lightColor;
   uniform float ambientIntensity;
   uniform float directionalIntensity;
+  uniform float shadowsEnabled;
+  uniform float shadowStrength;
+  uniform float shadowSoftness;
   uniform float time;
 
   varying vec3 vPosition;
@@ -392,12 +740,27 @@ const standardFragmentShader = `
     vec3 normal = normalize(vNormal);
     vec3 light = normalize(lightDir);
 
-    // Simple PBR-like shading
-    float NdotL = max(dot(normal, light), 0.0);
-    vec3 diffuse = baseColor * NdotL * lightColor * directionalIntensity;
+    // Custom deformation materials do not participate in Three.js shadow-map
+    // chunks, so preserve a visible self-shadow response in the same lighting
+    // profile used by source PBR materials.
+    float signedNdotL = dot(normal, light);
+    float NdotL = max(signedNdotL, 0.0);
+    float edge = mix(0.02, 0.45, clamp(shadowSoftness / 4.0, 0.0, 1.0));
+    float litFacing = smoothstep(-edge, edge, signedNdotL);
+    float selfShadow = mix(
+      1.0,
+      mix(0.28, 1.0, litFacing),
+      clamp(shadowsEnabled * shadowStrength, 0.0, 1.0)
+    );
+    vec3 diffuse = baseColor * NdotL * lightColor * directionalIntensity * selfShadow;
 
     // Ambient (driven by panel slider — was hard-coded 0.3 before).
-    vec3 ambient = baseColor * ambientIntensity;
+    float ambientShadow = mix(
+      1.0,
+      0.72 + 0.28 * litFacing,
+      clamp(shadowsEnabled * shadowStrength, 0.0, 1.0)
+    );
+    vec3 ambient = baseColor * ambientIntensity * ambientShadow;
 
     // Emissive
     vec3 emissive = emissiveColor * emissiveIntensity;
@@ -464,6 +827,7 @@ const hologramFragmentShader = `
 const lavaFragmentShader = `
   uniform float time;
   uniform float opacity;
+  uniform vec3 baseColor;
   uniform vec3 glowColor;
   uniform float flowSpeed;
   uniform float crackIntensity;
@@ -504,8 +868,8 @@ const lavaFragmentShader = `
 
     float cracks = pow(1.0 - fbm(uv * 3.0 + flow * 0.5), 3.0 * crackIntensity);
 
-    vec3 darkLava = vec3(0.1, 0.02, 0.0);
-    vec3 midLava = vec3(0.8, 0.2, 0.0);
+    vec3 darkLava = baseColor * 0.08;
+    vec3 midLava = baseColor;
     vec3 brightLava = glowColor;
 
     float heat = flow * 0.6 + flow2 * 0.4;
@@ -698,6 +1062,7 @@ const chromeFragmentShader = `
   uniform float time;
   uniform float opacity;
   uniform float reflectivity;
+  uniform vec3 tintColor;
 
   varying vec3 vPosition;
   varying vec3 vNormal;
@@ -715,6 +1080,7 @@ const chromeFragmentShader = `
 
     // Chrome tint
     vec3 color = mix(vec3(0.8, 0.8, 0.85), skyColor, reflectivity);
+    color *= mix(vec3(1.0), tintColor, 0.75);
 
     // Morph area highlights
     color += vec3(1.0) * vMorphIntensity * 0.3;
@@ -767,9 +1133,15 @@ export class Model3DRenderer {
   private canvas: HTMLCanvasElement | null = null;
   private model: THREE.Group | null = null;
   private echoInstances: THREE.Group[] = [];
-  private wireframe: THREE.Group | null = null;
-  private vertexDecorations: THREE.Group | null = null;
   private lights: THREE.Light[] = [];
+  private ambientLight: THREE.AmbientLight | null = null;
+  private keyLight: THREE.DirectionalLight | null = null;
+  private fillLight: THREE.DirectionalLight | null = null;
+  private rimLight: THREE.DirectionalLight | null = null;
+  private environmentMap: THREE.Texture | null = null;
+  private environmentRenderer: THREE.WebGLRenderer | null = null;
+  private environmentBackdrop: THREE.Mesh<THREE.SphereGeometry, THREE.MeshBasicMaterial> | null = null;
+  private rendererClearColor = new THREE.Color();
   private startTime: number = 0;
 
   // Per-frame rebuild caches — these scenegraphs are expensive to construct
@@ -782,10 +1154,13 @@ export class Model3DRenderer {
   private _echoMeshPairs: { sourceMesh: THREE.Mesh; echoMesh: THREE.Mesh }[][] = [];
 
   private _wireframeCacheKey: string | null = null;
-  private _wireframeMeshes: { line: THREE.LineSegments; src: THREE.Mesh }[] = [];
+  private _wireframeMeshes: { overlay: THREE.Mesh; src: THREE.Mesh }[] = [];
   private _vertexDecoCacheKey: string | null = null;
-  private _vertexDecoMaterial: THREE.MeshBasicMaterial | null = null;
+  private _vertexDecorationMeshes: THREE.InstancedMesh[] = [];
+  private _vertexDecorationMaterials: THREE.ShaderMaterial[] = [];
   private _echoCacheKey: string | null = null;
+  private modelTriangleCount = 0;
+  private modelMeshCount = 0;
 
   // Original geometry data for morphing
   private originalPositions: Map<string, Float32Array> = new Map();
@@ -801,6 +1176,7 @@ export class Model3DRenderer {
   private modelBounds: THREE.Box3 = new THREE.Box3();
   private modelCenter: THREE.Vector3 = new THREE.Vector3();
   private modelSize: number = 1;
+  private lastShadowSignature = '';
 
   // GLTF/FBX embedded animation support
   private mixer: THREE.AnimationMixer | null = null;
@@ -860,6 +1236,9 @@ export class Model3DRenderer {
   async loadModel(dataUrl: string, format: string): Promise<{ vertexCount: number; faceCount: number; hasAnimations: boolean }> {
     return new Promise((resolve, reject) => {
       // Clear existing model
+      this.clearWireframeOverlays();
+      this.clearVertexDecorations();
+      this.clearEchoInstances();
       if (this.model) {
         this.scene.remove(this.model);
         this.disposeObject(this.model);
@@ -871,9 +1250,12 @@ export class Model3DRenderer {
       this._wireframeCacheKey = null;
       this._wireframeMeshes = [];
       this._vertexDecoCacheKey = null;
-      this._vertexDecoMaterial = null;
+      this._vertexDecorationMeshes = [];
+      this._vertexDecorationMaterials = [];
       this._echoCacheKey = null;
       this._echoMeshPairs = [];
+      this.modelTriangleCount = 0;
+      this.modelMeshCount = 0;
       // Force the morph ShaderMaterial to be re-applied to the freshly-loaded
       // model's meshes — otherwise the original GLB/FBX materials stay in
       // place and the user sees the embedded textures with no morph shader,
@@ -894,20 +1276,23 @@ export class Model3DRenderer {
       this.clock = new THREE.Clock();
 
       const onLoad = (object: THREE.Object3D) => {
-        // Wrap in group if needed
-        this.model = object instanceof THREE.Group ? object : new THREE.Group().add(object);
+        const sourceRoot = object instanceof THREE.Group ? object : new THREE.Group().add(object);
 
-        // Calculate bounds
-        this.modelBounds.setFromObject(this.model);
+        // Normalize the imported hierarchy inside a stable transform root.
+        // The root owns all user transforms, while the source stays centered
+        // permanently so rotations occur around the object's actual center.
+        this.modelBounds.setFromObject(sourceRoot);
         this.modelBounds.getCenter(this.modelCenter);
-        this.modelSize = this.modelBounds.getSize(new THREE.Vector3()).length();
-
-        // Center model
-        this.model.position.sub(this.modelCenter);
+        this.modelSize = Math.max(this.modelBounds.getSize(new THREE.Vector3()).length(), 0.0001);
+        sourceRoot.position.sub(this.modelCenter);
+        this.model = new THREE.Group();
+        this.model.name = 'GhostArcadeModelTransformRoot';
+        this.model.add(sourceRoot);
 
         // Auto-scale to fit view
         const scale = 2 / this.modelSize;
         this.model.scale.setScalar(scale);
+        this.lastShadowSignature = '';
 
         // Store original positions for morphing and add attributes
         let meshIndex = 0;
@@ -917,9 +1302,14 @@ export class Model3DRenderer {
             // on these materials; replacing and disposing them is what made
             // textured scans render as flat gray.
             child.userData.sourceMaterial = child.material;
+            child.castShadow = true;
+            child.receiveShadow = true;
             const geometry = child.geometry;
+            if (!geometry.attributes.normal) {
+              geometry.computeVertexNormals();
+            }
             const positions = geometry.attributes.position.array as Float32Array;
-            const normals = geometry.attributes.normal?.array as Float32Array || new Float32Array(positions.length);
+            const normals = geometry.attributes.normal.array as Float32Array;
 
             // Store originals
             const key = `mesh_${meshIndex}`;
@@ -940,7 +1330,9 @@ export class Model3DRenderer {
         // Setup AnimationMixer for embedded animations (GLTF/FBX)
         if (this.animationClips.length > 0) {
           this.hasFileAnimations = true;
-          this.mixer = new THREE.AnimationMixer(this.model);
+          // Animation track paths belong to the imported hierarchy, not the
+          // normalization wrapper that Ghost Arcade adds around it.
+          this.mixer = new THREE.AnimationMixer(sourceRoot);
           for (const clip of this.animationClips) {
             const action = this.mixer.clipAction(clip);
             action.play();
@@ -952,9 +1344,11 @@ export class Model3DRenderer {
         // Count vertices and faces
         let vertexCount = 0;
         let faceCount = 0;
+        let meshCount = 0;
 
         this.model.traverse((child) => {
           if (child instanceof THREE.Mesh) {
+            meshCount++;
             const geometry = child.geometry;
             if (geometry.attributes.position) {
               vertexCount += geometry.attributes.position.count;
@@ -966,6 +1360,8 @@ export class Model3DRenderer {
             }
           }
         });
+        this.modelTriangleCount = faceCount;
+        this.modelMeshCount = meshCount;
 
         resolve({ vertexCount, faceCount, hasAnimations: this.hasFileAnimations });
       };
@@ -1007,99 +1403,90 @@ export class Model3DRenderer {
   private _lastLightingPreset: string = '';
 
   private setupLighting(preset: Model3DLightingPreset) {
-    // Only recreate lights when the preset actually changes
+    // Rebuild only when the preset changes. The four-light rig remains stable
+    // between frames so live parameter edits do not churn scene objects.
     if (preset === this._lastLightingPreset) return;
     this._lastLightingPreset = preset;
 
-    // Remove existing lights
     this.lights.forEach((light) => this.scene.remove(light));
     this.lights = [];
+    this.ambientLight = new THREE.AmbientLight(0xffffff, 0.4);
+    this.keyLight = new THREE.DirectionalLight(0xffffff, 1);
+    this.fillLight = new THREE.DirectionalLight(0x9bbcff, 0.35);
+    this.rimLight = new THREE.DirectionalLight(0x78b4ff, 0.4);
 
-    switch (preset) {
-      case 'studio': {
-        const key = new THREE.DirectionalLight(0xffffff, 1.2);
-        key.position.set(5, 5, 5);
-        this.lights.push(key);
+    this.keyLight.castShadow = true;
+    this.keyLight.shadow.camera.near = 0.1;
+    this.keyLight.shadow.camera.far = 30;
+    this.keyLight.shadow.camera.left = -5;
+    this.keyLight.shadow.camera.right = 5;
+    this.keyLight.shadow.camera.top = 5;
+    this.keyLight.shadow.camera.bottom = -5;
+    this.lastShadowSignature = '';
 
-        const fill = new THREE.DirectionalLight(0x88aaff, 0.6);
-        fill.position.set(-5, 0, 5);
-        this.lights.push(fill);
+    this.lights.push(this.ambientLight, this.keyLight, this.fillLight, this.rimLight);
 
-        const back = new THREE.DirectionalLight(0xffffff, 0.4);
-        back.position.set(0, 5, -5);
-        this.lights.push(back);
-
-        const ambient = new THREE.AmbientLight(0x404040, 0.5);
-        this.lights.push(ambient);
-        break;
-      }
-
-      case 'dramatic': {
-        const main = new THREE.SpotLight(0xffffff, 2.5);
-        main.position.set(0, 10, 5);
-        main.angle = 0.3;
-        main.penumbra = 0.5;
-        this.lights.push(main);
-
-        const ambient = new THREE.AmbientLight(0x111111, 0.2);
-        this.lights.push(ambient);
-        break;
-      }
-
-      case 'neon': {
-        const pink = new THREE.PointLight(0xff00ff, 1.5);
-        pink.position.set(3, 0, 3);
-        this.lights.push(pink);
-
-        const cyan = new THREE.PointLight(0x00ffff, 1.5);
-        cyan.position.set(-3, 0, 3);
-        this.lights.push(cyan);
-
-        const ambient = new THREE.AmbientLight(0x111122, 0.3);
-        this.lights.push(ambient);
-        break;
-      }
-
-      case 'sunrise': {
-        const sun = new THREE.DirectionalLight(0xffaa55, 1.5);
-        sun.position.set(10, 2, 0);
-        this.lights.push(sun);
-
-        const sky = new THREE.HemisphereLight(0xffffcc, 0x080820, 0.6);
-        this.lights.push(sky);
-        break;
-      }
-
-      case 'moonlight': {
-        const moon = new THREE.DirectionalLight(0x8899ff, 1.0);
-        moon.position.set(-5, 10, 5);
-        this.lights.push(moon);
-
-        const ambient = new THREE.AmbientLight(0x112244, 0.4);
-        this.lights.push(ambient);
-        break;
-      }
-
-      case 'disco': {
-        const colors = [0xff0000, 0x00ff00, 0x0000ff, 0xffff00, 0xff00ff, 0x00ffff];
-        colors.forEach((color, i) => {
-          const angle = (i / colors.length) * Math.PI * 2;
-          const light = new THREE.PointLight(color, 1.0);
-          light.position.set(Math.cos(angle) * 5, 2, Math.sin(angle) * 5);
-          light.userData.discoIndex = i;
-          this.lights.push(light);
-        });
-        break;
-      }
-
-      case 'none':
-      default:
-        const ambient = new THREE.AmbientLight(0xffffff, 0.8);
-        this.lights.push(ambient);
-        break;
+    if (preset === 'disco') {
+      const colors = [0xff3355, 0x33ff88, 0x4488ff, 0xffcc33, 0xff33dd, 0x33ddff];
+      colors.forEach((color, i) => {
+        const light = new THREE.PointLight(color, 0.5, 16, 2);
+        const angle = (i / colors.length) * Math.PI * 2;
+        light.position.set(Math.cos(angle) * 5, 2, Math.sin(angle) * 5);
+        light.userData.discoIndex = i;
+        this.lights.push(light);
+      });
     }
 
     this.lights.forEach((light) => this.scene.add(light));
+  }
+
+  private updateLightingRig(content: Model3DContent, time: number) {
+    if (!this.ambientLight || !this.keyLight || !this.fillLight || !this.rimLight) return;
+
+    const preset = content.lightingPreset;
+    const profile = getModel3DLightingProfile(preset);
+
+    this.ambientLight.intensity = (content.ambientIntensity ?? 0.4) * profile.ambientScale;
+    this.keyLight.intensity = (content.directionalIntensity ?? 1) * profile.keyScale;
+    this.fillLight.intensity = (content.fillIntensity ?? 0.35) * profile.fillScale;
+    this.rimLight.intensity = (content.rimIntensity ?? 0.4) * profile.rimScale;
+
+    const keyColor = this.getLightColorForPreset(preset, content.lightColor, time);
+    this.keyLight.color.copy(keyColor);
+    this.fillLight.color.copy(keyColor).lerp(new THREE.Color(0x88aaff), 0.45);
+    const rim = content.rimColor ?? [120, 180, 255];
+    this.rimLight.color.setRGB(rim[0] / 255, rim[1] / 255, rim[2] / 255);
+
+    const lightDirection = this.getLightDirForPreset(
+      preset,
+      content.keyLightAzimuth ?? 45,
+      content.keyLightElevation ?? 50,
+    );
+    const radius = 7;
+    this.keyLight.position.copy(lightDirection).multiplyScalar(radius);
+    this.fillLight.position.copy(this.keyLight.position).multiplyScalar(-0.75);
+    this.fillLight.position.y = Math.max(0.5, Math.abs(this.fillLight.position.y) * 0.4);
+    this.rimLight.position.set(-this.keyLight.position.x, 3.5, -this.keyLight.position.z);
+
+    const shadowsEnabled = content.shadowsEnabled ?? true;
+    const quality = content.shadowQuality ?? 'medium';
+    const mapSize = quality === 'high' ? 2048 : quality === 'low' ? 512 : 1024;
+    const signature = `${shadowsEnabled}:${mapSize}`;
+    this.keyLight.castShadow = shadowsEnabled;
+    this.keyLight.shadow.bias = content.shadowBias ?? -0.0005;
+    this.keyLight.shadow.normalBias = Math.max(0, content.shadowSoftness ?? 1) * 0.015;
+    this.keyLight.shadow.radius = Math.max(0, content.shadowSoftness ?? 1) * 2;
+    if (signature !== this.lastShadowSignature) {
+      this.lastShadowSignature = signature;
+      this.keyLight.shadow.mapSize.set(mapSize, mapSize);
+      this.keyLight.shadow.map?.dispose();
+      this.model?.traverse((child) => {
+        if (child instanceof THREE.Mesh) {
+          child.castShadow = shadowsEnabled;
+          child.receiveShadow = shadowsEnabled;
+        }
+      });
+    }
   }
 
   // ── Lighting preset → shader uniforms ─────────────────────────────────────
@@ -1108,17 +1495,25 @@ export class Model3DRenderer {
   // these shader uniforms to actually change how the material looks.
   private _lightDirScratch = new THREE.Vector3();
   private _lightColorScratch = new THREE.Color();
-  private getLightDirForPreset(preset: Model3DLightingPreset): THREE.Vector3 {
-    switch (preset) {
-      case 'studio':    this._lightDirScratch.set(1, 1, 1); break;
-      case 'dramatic':  this._lightDirScratch.set(0, 1, 0.3); break;
-      case 'neon':      this._lightDirScratch.set(0.5, 0.5, 1); break;
-      case 'sunrise':   this._lightDirScratch.set(1, 0.2, 0); break;
-      case 'moonlight': this._lightDirScratch.set(-0.5, 1, 0.5); break;
-      case 'disco':     this._lightDirScratch.set(0.5, 1, 0.5); break;
-      case 'none':
-      default:          this._lightDirScratch.set(0.3, 1, 0.5); break;
-    }
+  private getLightDirForPreset(
+    preset: Model3DLightingPreset,
+    azimuthDegrees?: number,
+    elevationDegrees?: number,
+  ): THREE.Vector3 {
+    const profile = getModel3DLightingProfile(preset);
+    const azimuth = THREE.MathUtils.degToRad(
+      (Number.isFinite(azimuthDegrees) ? azimuthDegrees! : 45) + profile.azimuthOffset,
+    );
+    const elevation = THREE.MathUtils.degToRad(THREE.MathUtils.clamp(
+      (Number.isFinite(elevationDegrees) ? elevationDegrees! : 50) + profile.elevationOffset,
+      -89,
+      89,
+    ));
+    this._lightDirScratch.set(
+      Math.cos(elevation) * Math.cos(azimuth),
+      Math.sin(elevation),
+      Math.cos(elevation) * Math.sin(azimuth),
+    );
     return this._lightDirScratch.normalize();
   }
   private getLightColorForPreset(preset: Model3DLightingPreset, panelColor: [number, number, number] | undefined, time: number): THREE.Color {
@@ -1154,33 +1549,7 @@ export class Model3DRenderer {
 
   // Get morph type index
   private getMorphTypeIndex(type: Model3DDeformationType): number {
-    // Maps the user-facing deformation name to the morph index used by the vertex shader.
-    // Each entry should resolve to a unique shader implementation (no aliasing) — fixing
-    // the previous bugs where 'bend'→twist and 'pixelate'→shatter shared other effects.
-    const shaderMap: Record<Model3DDeformationType, number> = {
-      'none': 0,
-      'noise': 1,
-      'pulse': 2,
-      'wave': 3,
-      'twist': 4,
-      'inflate': 5,
-      'breathe': 5,   // Same family as inflate — pulsating normal-direction push.
-      'bulge': 6,
-      'jelly': 7,
-      'explode': 8,
-      'implode': 9,
-      'melt': 10,
-      'spherify': 11,
-      'taper': 12,
-      'tentacle': 13,
-      'shatter': 14,
-      'magnetic': 15,
-      'bend': 16,
-      'pixelate': 17,
-      'swirl': 18,
-      'fracture': 19,
-    };
-    return shaderMap[type] ?? 0;
+    return getModel3DMorphTypeIndex(type);
   }
 
   // Create shader material based on type
@@ -1191,8 +1560,13 @@ export class Model3DRenderer {
       content.materialColor[2] / 255
     );
 
-    const lightDirVec = this.getLightDirForPreset(content.lightingPreset);
+    const lightDirVec = this.getLightDirForPreset(
+      content.lightingPreset,
+      content.keyLightAzimuth ?? 45,
+      content.keyLightElevation ?? 50,
+    );
     const lightColorVec = this.getLightColorForPreset(content.lightingPreset, content.lightColor, time);
+    const lightingProfile = getModel3DLightingProfile(content.lightingPreset);
 
     const commonUniforms = {
       time: { value: time },
@@ -1203,12 +1577,16 @@ export class Model3DRenderer {
       morphSpread: { value: content.deformationSpread ?? 1 },
       morphPhase: { value: 0.0 },
       morphCenter: { value: new THREE.Vector3(0, 0, 0) },
+      morphReferenceSize: { value: getModel3DMorphReferenceSize(this.modelSize) },
       audioLevel: { value: 0.0 },
       audioMorphResponse: { value: content.audio.deformResponse },
-      ambientIntensity: { value: content.ambientIntensity ?? 0.4 },
-      directionalIntensity: { value: content.directionalIntensity ?? 1.0 },
-      lightDir: { value: lightDirVec },
-      lightColor: { value: lightColorVec },
+      ambientIntensity: { value: (content.ambientIntensity ?? 0.4) * lightingProfile.ambientScale },
+      directionalIntensity: { value: (content.directionalIntensity ?? 1.0) * lightingProfile.keyScale },
+      shadowsEnabled: { value: (content.shadowsEnabled ?? true) ? 1 : 0 },
+      shadowStrength: { value: lightingProfile.selfShadowStrength },
+      shadowSoftness: { value: content.shadowSoftness ?? 1 },
+      lightDir: { value: lightDirVec.clone() },
+      lightColor: { value: lightColorVec.clone() },
     };
 
     switch (content.materialType) {
@@ -1275,6 +1653,7 @@ export class Model3DRenderer {
             ...commonUniforms,
             opacity: { value: content.materialOpacity },
             reflectivity: { value: content.chromeReflectivity },
+            tintColor: { value: color },
           },
           side: THREE.DoubleSide,
         });
@@ -1309,6 +1688,7 @@ export class Model3DRenderer {
           uniforms: {
             ...commonUniforms,
             opacity: { value: content.materialOpacity },
+            baseColor: { value: color },
             glowColor: { value: new THREE.Color(
               content.lavaGlowColor[0] / 255,
               content.lavaGlowColor[1] / 255,
@@ -1327,10 +1707,10 @@ export class Model3DRenderer {
           fragmentShader: iceFragmentShader,
           uniforms: {
             ...commonUniforms,
-            baseColor: { value: new THREE.Color(0.7, 0.85, 1.0) },
+            baseColor: { value: color },
             opacity: { value: content.materialOpacity },
             refraction: { value: content.iceRefraction },
-            frostiness: { value: 0.5 },
+            frostiness: { value: content.iceFrostIntensity },
           },
           transparent: true,
           side: THREE.DoubleSide,
@@ -1358,7 +1738,7 @@ export class Model3DRenderer {
           fragmentShader: xrayFragmentShader,
           uniforms: {
             ...commonUniforms,
-            baseColor: { value: new THREE.Color(0, 1, 1) },
+            baseColor: { value: color },
             opacity: { value: content.materialOpacity },
             edgeIntensity: { value: 2.5 },
           },
@@ -1513,6 +1893,48 @@ export class Model3DRenderer {
     return Array.isArray(material) ? material : [material];
   }
 
+  private disposeOwnedMeshMaterials(root: THREE.Object3D) {
+    root.traverse((child) => {
+      if (child instanceof THREE.Mesh) {
+        this.materialList(child.material).forEach((material) => material.dispose());
+      }
+    });
+  }
+
+  private clearWireframeOverlays() {
+    for (const { overlay } of this._wireframeMeshes) {
+      overlay.removeFromParent();
+      overlay.geometry.dispose();
+      this.materialList(overlay.material).forEach((material) => material.dispose());
+    }
+    this._wireframeMeshes = [];
+    this._wireframeCacheKey = null;
+  }
+
+  private clearVertexDecorations() {
+    for (const markers of this._vertexDecorationMeshes) {
+      markers.removeFromParent();
+      markers.geometry.dispose();
+      this.materialList(markers.material).forEach((material) => material.dispose());
+    }
+    this._vertexDecorationMeshes = [];
+    this._vertexDecorationMaterials = [];
+    this._vertexDecoCacheKey = null;
+  }
+
+  private clearEchoInstances() {
+    for (const echo of this.echoInstances) {
+      this.scene.remove(echo);
+      // Echoes share immutable geometry with the source model. They own only
+      // their cloned materials, so disposing the full object would corrupt
+      // the source model and turn later renders black.
+      this.disposeOwnedMeshMaterials(echo);
+    }
+    this.echoInstances = [];
+    this._echoMeshPairs = [];
+    this._echoCacheKey = null;
+  }
+
   private disposeGeneratedMeshMaterial(mesh: THREE.Mesh) {
     const sourceMaterials = new Set(this.materialList(mesh.userData.sourceMaterial));
     for (const material of this.materialList(mesh.material)) {
@@ -1522,10 +1944,66 @@ export class Model3DRenderer {
 
   private applySourceMaterialOpacity(mesh: THREE.Mesh, opacity: number) {
     for (const material of this.materialList(mesh.material)) {
+      const shouldBeTransparent = opacity < 1;
+      if (material.transparent !== shouldBeTransparent) {
+        material.transparent = shouldBeTransparent;
+        material.needsUpdate = true;
+      }
       material.opacity = opacity;
-      material.transparent = opacity < 1;
-      material.needsUpdate = true;
     }
+  }
+
+  private installSourceMaterialMorph(material: THREE.Material): SourceMorphUniforms {
+    const existing = material.userData.ghostArcadeMorphUniforms as SourceMorphUniforms | undefined;
+    if (existing) return existing;
+
+    const uniforms: SourceMorphUniforms = {
+      time: { value: 0 },
+      morphIntensity: { value: 0 },
+      morphType: { value: 0 },
+      morphSpeed: { value: 1 },
+      morphScale: { value: 1 },
+      morphPhase: { value: 0 },
+      morphCenter: { value: new THREE.Vector3() },
+      morphReferenceSize: { value: getModel3DMorphReferenceSize(this.modelSize) },
+      audioLevel: { value: 0 },
+      audioMorphResponse: { value: 0 },
+      morphSpread: { value: 1 },
+    };
+    const previousOnBeforeCompile = material.onBeforeCompile.bind(material);
+    const previousProgramCacheKey = material.customProgramCacheKey.bind(material);
+
+    material.userData.ghostArcadeMorphUniforms = uniforms;
+    material.onBeforeCompile = (shader, renderer) => {
+      previousOnBeforeCompile(shader, renderer);
+      Object.assign(shader.uniforms, uniforms);
+      shader.vertexShader = injectModel3DSourceMorphVertexShader(shader.vertexShader);
+    };
+    material.customProgramCacheKey = () => `${previousProgramCacheKey()}|ghost-arcade-source-morph-v3`;
+    material.needsUpdate = true;
+    return uniforms;
+  }
+
+  private updateMorphUniformValues(
+    uniforms: SourceMorphUniforms,
+    content: Model3DContent,
+    time: number,
+    audioLevel: number,
+    beatIntensity: number,
+  ) {
+    let intensity = content.deformationIntensity;
+    if (content.beatExplode > 0 && beatIntensity > 0) {
+      intensity += content.beatExplode * beatIntensity * 0.5;
+    }
+    uniforms.time.value = time;
+    uniforms.morphIntensity.value = intensity;
+    uniforms.morphType.value = this.getMorphTypeIndex(content.deformationType);
+    uniforms.morphSpeed.value = content.deformationSpeed;
+    uniforms.morphScale.value = content.deformationScale;
+    uniforms.morphSpread.value = content.deformationSpread ?? 1;
+    uniforms.morphReferenceSize.value = getModel3DMorphReferenceSize(this.modelSize);
+    uniforms.audioLevel.value = audioLevel;
+    uniforms.audioMorphResponse.value = content.audio.deformResponse;
   }
 
   private applyMaterial(content: Model3DContent, time: number, audioLevel: number = 0) {
@@ -1539,15 +2017,30 @@ export class Model3DRenderer {
           this._cachedMaterial = null;
         }
         this.model.traverse((child) => {
-          if (!(child instanceof THREE.Mesh)) return;
+          if (
+            !(child instanceof THREE.Mesh)
+            || child.userData.modelWireframeOverlay
+            || child.userData.modelVertexDecoration
+          ) return;
           const sourceMaterial = child.userData.sourceMaterial as THREE.Material | THREE.Material[] | undefined;
           if (!sourceMaterial) return;
           this.disposeGeneratedMeshMaterial(child);
           child.material = sourceMaterial;
+          for (const material of this.materialList(sourceMaterial)) {
+            this.installSourceMaterialMorph(material);
+          }
         });
       }
       this.model.traverse((child) => {
-        if (child instanceof THREE.Mesh) this.applySourceMaterialOpacity(child, content.materialOpacity);
+        if (
+          !(child instanceof THREE.Mesh)
+          || child.userData.modelWireframeOverlay
+          || child.userData.modelVertexDecoration
+        ) return;
+        for (const material of this.materialList(child.material)) {
+          this.installSourceMaterialMorph(material);
+        }
+        this.applySourceMaterialOpacity(child, content.materialOpacity);
       });
       return;
     }
@@ -1568,7 +2061,11 @@ export class Model3DRenderer {
 
       // Apply to all meshes (only when material type changes)
       this.model.traverse((child) => {
-        if (child instanceof THREE.Mesh) {
+        if (
+          child instanceof THREE.Mesh
+          && !child.userData.modelWireframeOverlay
+          && !child.userData.modelVertexDecoration
+        ) {
           this.disposeGeneratedMeshMaterial(child);
           child.material = this._cachedMaterial!.clone();
         }
@@ -1578,7 +2075,13 @@ export class Model3DRenderer {
     // Update audio level uniform on existing materials (cheap, no recompile)
     if (this._cachedMaterial instanceof THREE.ShaderMaterial && this._cachedMaterial.uniforms.audioLevel) {
       this.model.traverse((child) => {
-        if (child instanceof THREE.Mesh && child.material instanceof THREE.ShaderMaterial && child.material.uniforms.audioLevel) {
+        if (
+          child instanceof THREE.Mesh
+          && !child.userData.modelWireframeOverlay
+          && !child.userData.modelVertexDecoration
+          && child.material instanceof THREE.ShaderMaterial
+          && child.material.uniforms.audioLevel
+        ) {
           child.material.uniforms.audioLevel.value = audioLevel;
         }
       });
@@ -1588,9 +2091,19 @@ export class Model3DRenderer {
   // Update shader uniforms (with beat reactivity)
   private updateShaderUniforms(content: Model3DContent, time: number, audioLevel: number = 0, beatIntensity: number = 0, beatPhase: number = 0) {
     if (!this.model) return;
+    const lightingProfile = getModel3DLightingProfile(content.lightingPreset);
 
     this.model.traverse((child) => {
-      if (child instanceof THREE.Mesh && child.material instanceof THREE.ShaderMaterial) {
+      if (!(child instanceof THREE.Mesh)) return;
+
+      for (const material of this.materialList(child.material)) {
+        const sourceMorphUniforms = material.userData.ghostArcadeMorphUniforms as SourceMorphUniforms | undefined;
+        if (sourceMorphUniforms) {
+          this.updateMorphUniformValues(sourceMorphUniforms, content, time, audioLevel, beatIntensity);
+        }
+      }
+
+      if (child.material instanceof THREE.ShaderMaterial) {
         const uniforms = child.material.uniforms;
         if (uniforms.time) uniforms.time.value = time;
         if (uniforms.morphIntensity) {
@@ -1605,13 +2118,37 @@ export class Model3DRenderer {
         if (uniforms.morphSpeed) uniforms.morphSpeed.value = content.deformationSpeed;
         if (uniforms.morphScale) uniforms.morphScale.value = content.deformationScale;
         if (uniforms.morphSpread) uniforms.morphSpread.value = content.deformationSpread ?? 1;
+        if (uniforms.morphReferenceSize) {
+          uniforms.morphReferenceSize.value = getModel3DMorphReferenceSize(this.modelSize);
+        }
         if (uniforms.audioLevel) uniforms.audioLevel.value = audioLevel;
         // Live lighting (panel sliders + preset → shader). Without this the
         // Lighting controls do nothing because the morph shader can't sample
         // the scene's THREE.Light objects.
-        if (uniforms.ambientIntensity) uniforms.ambientIntensity.value = content.ambientIntensity ?? 0.4;
-        if (uniforms.directionalIntensity) uniforms.directionalIntensity.value = content.directionalIntensity ?? 1.0;
-        if (uniforms.lightDir) uniforms.lightDir.value.copy(this.getLightDirForPreset(content.lightingPreset));
+        if (uniforms.ambientIntensity) {
+          uniforms.ambientIntensity.value =
+            (content.ambientIntensity ?? 0.4) * lightingProfile.ambientScale;
+        }
+        if (uniforms.directionalIntensity) {
+          uniforms.directionalIntensity.value =
+            (content.directionalIntensity ?? 1.0) * lightingProfile.keyScale;
+        }
+        if (uniforms.shadowsEnabled) {
+          uniforms.shadowsEnabled.value = (content.shadowsEnabled ?? true) ? 1 : 0;
+        }
+        if (uniforms.shadowStrength) {
+          uniforms.shadowStrength.value = lightingProfile.selfShadowStrength;
+        }
+        if (uniforms.shadowSoftness) {
+          uniforms.shadowSoftness.value = content.shadowSoftness ?? 1;
+        }
+        if (uniforms.lightDir) {
+          uniforms.lightDir.value.copy(this.getLightDirForPreset(
+            content.lightingPreset,
+            content.keyLightAzimuth ?? 45,
+            content.keyLightElevation ?? 50,
+          ));
+        }
         if (uniforms.lightColor) uniforms.lightColor.value.copy(this.getLightColorForPreset(content.lightingPreset, content.lightColor, time));
         if (uniforms.dissolveAmount) uniforms.dissolveAmount.value = content.dissolveAmount;
 
@@ -1629,6 +2166,13 @@ export class Model3DRenderer {
         if (uniforms.opacity) uniforms.opacity.value = content.materialOpacity;
         if (uniforms.roughness) uniforms.roughness.value = content.materialRoughness;
         if (uniforms.metalness) uniforms.metalness.value = content.materialMetalness;
+        if (uniforms.tintColor && content.materialColor) {
+          uniforms.tintColor.value.setRGB(
+            content.materialColor[0] / 255,
+            content.materialColor[1] / 255,
+            content.materialColor[2] / 255
+          );
+        }
         if (uniforms.emissiveColor && content.materialEmissive) {
           uniforms.emissiveColor.value.setRGB(
             content.materialEmissive[0] / 255,
@@ -1646,6 +2190,58 @@ export class Model3DRenderer {
         }
         // Neon uses glowIntensity (mapped from materialEmissiveIntensity)
         if (uniforms.glowIntensity) uniforms.glowIntensity.value = content.materialEmissiveIntensity;
+        if (uniforms.pulseSpeed) uniforms.pulseSpeed.value = content.animationSpeed;
+
+        // Material-specific controls must update the live shader instances as
+        // well as the cached template. Rebuilding a material for every slider
+        // event is both expensive and prone to leaving cloned mesh materials
+        // with their creation-time defaults.
+        if (uniforms.fresnelColor && content.fresnelColor) {
+          uniforms.fresnelColor.value.setRGB(
+            content.fresnelColor[0] / 255,
+            content.fresnelColor[1] / 255,
+            content.fresnelColor[2] / 255
+          );
+        }
+        if (uniforms.fresnelPower) uniforms.fresnelPower.value = content.fresnelPower;
+        if (uniforms.rimColor && content.materialType === 'hologram') {
+          uniforms.rimColor.value.setRGB(
+            content.hologramRimColor[0] / 255,
+            content.hologramRimColor[1] / 255,
+            content.hologramRimColor[2] / 255
+          );
+        }
+        if (uniforms.scanSpeed && content.materialType === 'hologram') {
+          uniforms.scanSpeed.value = content.hologramScanSpeed;
+        }
+        if (uniforms.scanCount && content.materialType === 'hologram') {
+          uniforms.scanCount.value = content.hologramScanCount;
+        }
+        if (uniforms.glitchIntensity && content.materialType === 'hologram') {
+          uniforms.glitchIntensity.value = content.hologramGlitchIntensity;
+        }
+        if (uniforms.glowColor && content.lavaGlowColor) {
+          uniforms.glowColor.value.setRGB(
+            content.lavaGlowColor[0] / 255,
+            content.lavaGlowColor[1] / 255,
+            content.lavaGlowColor[2] / 255
+          );
+        }
+        if (uniforms.flowSpeed) uniforms.flowSpeed.value = content.lavaFlowSpeed;
+        if (uniforms.crackIntensity) uniforms.crackIntensity.value = content.lavaCrackIntensity;
+        if (uniforms.thickness) uniforms.thickness.value = content.glassThickness;
+        if (uniforms.ior) uniforms.ior.value = content.glassIOR;
+        if (uniforms.reflectivity) uniforms.reflectivity.value = content.chromeReflectivity;
+        if (uniforms.refraction) uniforms.refraction.value = content.iceRefraction;
+        if (uniforms.frostiness) uniforms.frostiness.value = content.iceFrostIntensity;
+        if (uniforms.edgeColor && content.dissolveEdgeColor) {
+          uniforms.edgeColor.value.setRGB(
+            content.dissolveEdgeColor[0] / 255,
+            content.dissolveEdgeColor[1] / 255,
+            content.dissolveEdgeColor[2] / 255
+          );
+        }
+        if (uniforms.edgeWidth) uniforms.edgeWidth.value = content.dissolveEdgeWidth;
       }
     });
   }
@@ -1655,102 +2251,118 @@ export class Model3DRenderer {
     if (!this.model) return;
 
     if (content.wireframeMode === 'none') {
-      if (this.wireframe) {
-        this.scene.remove(this.wireframe);
-        this.disposeObject(this.wireframe);
-        this.wireframe = null;
-        this._wireframeMeshes = [];
-        this._wireframeCacheKey = null;
-      }
+      this.clearWireframeOverlays();
       return;
     }
 
-    // Rebuild only when model identity OR mode (which controls baseline opacity behavior) changes.
-    const cacheKey = `${(this.model as any).uuid}|${content.wireframeMode}`;
+    // Three's built-in wireframe flag uses fixed one-pixel GL lines on modern
+    // WebGL/Metal implementations. Barycentric coordinates give us a real
+    // screen-space thickness control while retaining each source mesh's exact
+    // hierarchy and deformation.
+    const cacheKey = `${this.model.uuid}|${content.wireframeMode}|${this._cachedMaterialKey}`;
     if (this._wireframeCacheKey !== cacheKey) {
-      if (this.wireframe) {
-        this.scene.remove(this.wireframe);
-        this.disposeObject(this.wireframe);
-      }
-      const wireframeGroup = new THREE.Group();
-      this._wireframeMeshes = [];
+      this.clearWireframeOverlays();
+      const sourceMeshes: THREE.Mesh[] = [];
       this.model.traverse((child) => {
-        if (child instanceof THREE.Mesh) {
-          const edges = new THREE.EdgesGeometry(child.geometry, 15);
-          const lineMaterial = new THREE.LineBasicMaterial({
-            color: 0xffffff,
-            opacity: content.wireframeOpacity,
-            transparent: true,
-          });
-          const wireframeMesh = new THREE.LineSegments(edges, lineMaterial);
-          wireframeMesh.position.copy(child.position);
-          wireframeMesh.rotation.copy(child.rotation);
-          wireframeMesh.scale.copy(child.scale);
-          wireframeGroup.add(wireframeMesh);
-          this._wireframeMeshes.push({ line: wireframeMesh, src: child });
+        if (
+          child instanceof THREE.Mesh
+          && !child.userData.modelWireframeOverlay
+          && !child.userData.modelVertexDecoration
+        ) {
+          sourceMeshes.push(child);
         }
       });
-      this.wireframe = wireframeGroup;
-      this.scene.add(wireframeGroup);
+      for (const source of sourceMeshes) {
+        const material = new THREE.ShaderMaterial({
+          vertexShader: wireframeVertexShader,
+          fragmentShader: wireframeFragmentShader,
+          uniforms: {
+            time: { value: time },
+            morphIntensity: { value: content.deformationIntensity },
+            morphType: { value: this.getMorphTypeIndex(content.deformationType) },
+            morphSpeed: { value: content.deformationSpeed },
+            morphScale: { value: content.deformationScale },
+            morphSpread: { value: content.deformationSpread ?? 1 },
+            morphPhase: { value: 0 },
+            morphCenter: { value: new THREE.Vector3() },
+            morphReferenceSize: { value: getModel3DMorphReferenceSize(this.modelSize) },
+            audioLevel: { value: 0 },
+            audioMorphResponse: { value: content.audio.deformResponse },
+            wireMode: { value: getModel3DWireframeModeIndex(content.wireframeMode) },
+            wireColor: { value: new THREE.Color() },
+            wireOpacity: { value: content.wireframeOpacity },
+            wireThickness: { value: content.wireframeThickness },
+            wireAnimSpeed: { value: content.wireframeAnimSpeed },
+          },
+          transparent: true,
+          depthWrite: false,
+          polygonOffset: true,
+          polygonOffsetFactor: -1,
+          polygonOffsetUnits: -1,
+          side: THREE.DoubleSide,
+        });
+        const overlay = new THREE.Mesh(
+          createModel3DWireframeGeometry(source.geometry),
+          material,
+        );
+        overlay.name = 'GhostArcadeModelWireframeOverlay';
+        overlay.userData.modelWireframeOverlay = true;
+        overlay.renderOrder = source.renderOrder + 1;
+        overlay.frustumCulled = source.frustumCulled;
+        source.add(overlay);
+        this._wireframeMeshes.push({ overlay, src: source });
+      }
       this._wireframeCacheKey = cacheKey;
     }
-
-    // Per-frame: keep wireframe transform locked to the model and update animated material props.
-    this.wireframe!.position.copy(this.model.position);
-    this.wireframe!.rotation.copy(this.model.rotation);
-    this.wireframe!.scale.copy(this.model.scale);
 
     const baseR = content.wireframeColor[0] / 255;
     const baseG = content.wireframeColor[1] / 255;
     const baseB = content.wireframeColor[2] / 255;
-    let opacity = content.wireframeOpacity;
-    let useRainbow = false;
-    let rainbowHue = 0;
-    switch (content.wireframeMode) {
-      case 'pulse':
-        opacity *= Math.sin(time * content.wireframeAnimSpeed * 3) * 0.3 + 0.7;
-        break;
-      case 'rainbow':
-        useRainbow = true;
-        rainbowHue = (time * content.wireframeAnimSpeed * 0.1) % 1;
-        break;
-      case 'glow':
-      case 'neon':
-        opacity = Math.min(1, content.wireframeOpacity * 1.5);
-        break;
-    }
-    for (const { line } of this._wireframeMeshes) {
-      const mat = line.material as THREE.LineBasicMaterial;
-      if (useRainbow) mat.color.setHSL(rainbowHue, 1, 0.5);
-      else mat.color.setRGB(baseR, baseG, baseB);
-      mat.opacity = opacity;
+    const wireColor = new THREE.Color(baseR, baseG, baseB);
+
+    for (const { overlay } of this._wireframeMeshes) {
+      const material = overlay.material as THREE.ShaderMaterial;
+      material.uniforms.time.value = time;
+      material.uniforms.wireMode.value = getModel3DWireframeModeIndex(content.wireframeMode);
+      material.uniforms.wireColor.value.copy(wireColor);
+      material.uniforms.wireOpacity.value = content.wireframeOpacity;
+      material.uniforms.wireThickness.value = content.wireframeThickness;
+      material.uniforms.wireAnimSpeed.value = content.wireframeAnimSpeed;
+      material.blending =
+        content.wireframeMode === 'glow' || content.wireframeMode === 'neon'
+          ? THREE.AdditiveBlending
+          : THREE.NormalBlending;
     }
   }
 
-  // Create vertex decorations
-  private updateVertexDecorations(content: Model3DContent) {
+  // Create vertex decorations. Markers are attached to each source mesh and
+  // evaluate the same GPU morph as that mesh, so they remain registered while
+  // the model deforms instead of preserving a stale import-time snapshot.
+  private updateVertexDecorations(
+    content: Model3DContent,
+    time: number,
+    audioLevel: number,
+    beatIntensity: number,
+  ) {
     if (!this.model) return;
 
     if (content.vertexDecoration === 'none') {
-      if (this.vertexDecorations) {
-        this.scene.remove(this.vertexDecorations);
-        this.disposeObject(this.vertexDecorations);
-        this.vertexDecorations = null;
-        this._vertexDecoMaterial = null;
-        this._vertexDecoCacheKey = null;
-      }
+      this.clearVertexDecorations();
       return;
     }
 
     // Rebuild only when shape OR size OR model identity changes.
-    const cacheKey = `${(this.model as any).uuid}|${content.vertexDecoration}|${content.vertexDecorationSize}`;
+    const cacheKey = `${this.model.uuid}|${content.vertexDecoration}|${content.vertexDecorationSize}`;
     if (this._vertexDecoCacheKey !== cacheKey) {
-      if (this.vertexDecorations) {
-        this.scene.remove(this.vertexDecorations);
-        this.disposeObject(this.vertexDecorations);
-      }
-      const decorationGroup = new THREE.Group();
-      const size = content.vertexDecorationSize;
+      this.clearVertexDecorations();
+
+      // The model is normalized to two scene units after import. Build marker
+      // geometry in source-local scale so the panel's Size value remains a
+      // stable scene-space measurement for tiny and huge assets alike.
+      const size = Math.max(
+        0.0001,
+        content.vertexDecorationSize * getModel3DMorphReferenceSize(this.modelSize) * 0.5,
+      );
       let decoGeometry: THREE.BufferGeometry;
       switch (content.vertexDecoration) {
         case 'spheres':  decoGeometry = new THREE.SphereGeometry(size, 8, 6); break;
@@ -1759,103 +2371,258 @@ export class Model3DRenderer {
         case 'diamonds': decoGeometry = new THREE.OctahedronGeometry(size); break;
         default:         decoGeometry = new THREE.SphereGeometry(size * 0.5, 4, 4);
       }
-      const decoMaterial = new THREE.MeshBasicMaterial({
-        color: 0xffffff,
-        transparent: true,
-        opacity: 0.8,
-      });
-      this._vertexDecoMaterial = decoMaterial;
+
+      const sourceMeshes: THREE.Mesh[] = [];
+      let totalVertices = 0;
       this.model.traverse((child) => {
-        if (child instanceof THREE.Mesh) {
-          const positions = child.geometry.attributes.position;
-          const step = Math.max(1, Math.floor(positions.count / 300));
-          for (let i = 0; i < positions.count; i += step) {
-            const mesh = new THREE.Mesh(decoGeometry, decoMaterial);
-            mesh.position.set(positions.getX(i), positions.getY(i), positions.getZ(i));
-            mesh.position.applyMatrix4(child.matrixWorld);
-            decorationGroup.add(mesh);
-          }
+        if (
+          child instanceof THREE.Mesh
+          && !child.userData.modelWireframeOverlay
+          && !child.userData.modelVertexDecoration
+        ) {
+          sourceMeshes.push(child);
+          totalVertices += child.geometry.getAttribute('position')?.count ?? 0;
         }
       });
-      this.vertexDecorations = decorationGroup;
-      this.scene.add(decorationGroup);
+
+      // One InstancedMesh keeps a scanned model to a single marker draw call.
+      const maxDecorations = 800;
+      const sampleStep = Math.max(1, Math.ceil(totalVertices / maxDecorations));
+      let visitedVertices = 0;
+      let createdDecorations = 0;
+      for (const source of sourceMeshes) {
+        const positions = source.geometry.getAttribute('position');
+        if (!positions) continue;
+        const normals = source.geometry.getAttribute('normal');
+        const markerPositions: number[] = [];
+        const markerNormals: number[] = [];
+
+        for (
+          let index = 0;
+          index < positions.count && createdDecorations < maxDecorations;
+          index++
+        ) {
+          if (visitedVertices++ % sampleStep !== 0) continue;
+          markerPositions.push(
+            positions.getX(index),
+            positions.getY(index),
+            positions.getZ(index),
+          );
+          markerNormals.push(
+            normals?.getX(index) ?? 0,
+            normals?.getY(index) ?? 1,
+            normals?.getZ(index) ?? 0,
+          );
+          createdDecorations++;
+        }
+        if (markerPositions.length === 0) continue;
+
+        const markerGeometry = decoGeometry.clone();
+        markerGeometry.setAttribute(
+          'markerRestPosition',
+          new THREE.InstancedBufferAttribute(new Float32Array(markerPositions), 3),
+        );
+        markerGeometry.setAttribute(
+          'markerRestNormal',
+          new THREE.InstancedBufferAttribute(new Float32Array(markerNormals), 3),
+        );
+        const markerMaterial = new THREE.ShaderMaterial({
+          vertexShader: vertexDecorationVertexShader,
+          fragmentShader: vertexDecorationFragmentShader,
+          uniforms: {
+            time: { value: time },
+            morphIntensity: { value: content.deformationIntensity },
+            morphType: { value: this.getMorphTypeIndex(content.deformationType) },
+            morphSpeed: { value: content.deformationSpeed },
+            morphScale: { value: content.deformationScale },
+            morphSpread: { value: content.deformationSpread ?? 1 },
+            morphPhase: { value: 0 },
+            morphCenter: { value: new THREE.Vector3() },
+            morphReferenceSize: { value: getModel3DMorphReferenceSize(this.modelSize) },
+            audioLevel: { value: audioLevel },
+            audioMorphResponse: { value: content.audio.deformResponse },
+            markerColor: { value: new THREE.Color() },
+            markerOpacity: { value: 0.8 },
+          },
+          transparent: true,
+          depthWrite: false,
+        });
+        const markerCount = markerPositions.length / 3;
+        const markers = new THREE.InstancedMesh(
+          markerGeometry,
+          markerMaterial,
+          markerCount,
+        );
+        markers.name = 'GhostArcadeModelVertexMarkers';
+        markers.userData.modelVertexDecoration = true;
+        markers.frustumCulled = false;
+
+        // The custom shader uses markerRestPosition for placement. Identity
+        // matrices keep Three's instancing state valid without duplicating the
+        // sampled position in an instance transform.
+        const identity = new THREE.Matrix4();
+        for (let index = 0; index < markerCount; index++) {
+          markers.setMatrixAt(index, identity);
+        }
+        markers.instanceMatrix.needsUpdate = true;
+        source.add(markers);
+        this._vertexDecorationMeshes.push(markers);
+        this._vertexDecorationMaterials.push(markerMaterial);
+      }
+
+      decoGeometry.dispose();
       this._vertexDecoCacheKey = cacheKey;
     }
 
-    // Per-frame: color is animatable, update on the shared material in place.
-    if (this._vertexDecoMaterial) {
-      this._vertexDecoMaterial.color.setRGB(
+    for (const markerMaterial of this._vertexDecorationMaterials) {
+      this.updateMorphUniformValues(
+        markerMaterial.uniforms as unknown as SourceMorphUniforms,
+        content,
+        time,
+        audioLevel,
+        beatIntensity,
+      );
+      (markerMaterial.uniforms.markerColor.value as THREE.Color).setRGB(
         content.vertexDecorationColor[0] / 255,
         content.vertexDecorationColor[1] / 255,
-        content.vertexDecorationColor[2] / 255
+        content.vertexDecorationColor[2] / 255,
       );
     }
+  }
+
+  private echoTargetCount(requestedCount: number) {
+    const requested = THREE.MathUtils.clamp(Math.floor(requestedCount), 0, 24);
+    if (requested === 0) return 0;
+
+    // Echo geometry is shared, but every copy still submits its meshes and
+    // triangles. Bound both costs so a scanned asset cannot generate hundreds
+    // of millions of fragments or draw calls in one click.
+    const triangleBudget = 2_000_000;
+    const drawCallBudget = 160;
+    const byTriangles = this.modelTriangleCount > 0
+      ? Math.max(1, Math.floor(triangleBudget / this.modelTriangleCount))
+      : requested;
+    const byDrawCalls = this.modelMeshCount > 0
+      ? Math.max(1, Math.floor(drawCallBudget / this.modelMeshCount))
+      : requested;
+    return Math.min(requested, byTriangles, byDrawCalls);
+  }
+
+  private createEchoInstance(instanceIndex: number) {
+    if (!this.model) return null;
+
+    const sourceMeshes: THREE.Mesh[] = [];
+    this.model.traverse((child) => {
+      if (
+        child instanceof THREE.Mesh
+        && !child.userData.modelWireframeOverlay
+        && !child.userData.modelVertexDecoration
+      ) {
+        sourceMeshes.push(child);
+      }
+    });
+
+    const echo = this.model.clone(true);
+    echo.name = 'GhostArcadeModelEcho';
+    echo.userData.modelEcho = true;
+
+    // Presentation helpers are rebuilt from the live source. Never clone them
+    // into an echo or they become additional source meshes with stale state.
+    const clonedOverlays: THREE.Mesh[] = [];
+    echo.traverse((child) => {
+      if (
+        child instanceof THREE.Mesh
+        && (child.userData.modelWireframeOverlay || child.userData.modelVertexDecoration)
+      ) {
+        clonedOverlays.push(child);
+      }
+    });
+    clonedOverlays.forEach((overlay) => overlay.removeFromParent());
+
+    const echoMeshes: THREE.Mesh[] = [];
+    echo.traverse((child) => {
+      if (
+        child instanceof THREE.Mesh
+        && !child.userData.modelWireframeOverlay
+        && !child.userData.modelVertexDecoration
+      ) {
+        echoMeshes.push(child);
+      }
+    });
+
+    const pairs: { sourceMesh: THREE.Mesh; echoMesh: THREE.Mesh }[] = [];
+    for (let index = 0; index < echoMeshes.length; index++) {
+      const echoMesh = echoMeshes[index];
+      const sourceMesh = sourceMeshes[index];
+      const clonedMaterials = this.materialList(echoMesh.material).map((material) => {
+        const clone = material.clone();
+        clone.transparent = true;
+        clone.depthWrite = false;
+        // Echoes are a presentation pass. Leaving depth testing enabled makes
+        // copies behind an opaque source mesh disappear completely.
+        clone.depthTest = false;
+        return clone;
+      });
+      echoMesh.material = Array.isArray(echoMesh.material)
+        ? clonedMaterials
+        : clonedMaterials[0];
+      echoMesh.renderOrder = 20 + instanceIndex;
+      if (sourceMesh) pairs.push({ sourceMesh, echoMesh });
+    }
+
+    this.scene.add(echo);
+    return { echo, pairs };
   }
 
   // Create echo/trail instances
   private updateEchoInstances(content: Model3DContent, time: number) {
     if (!this.model || !content.echo.enabled || content.echo.type === 'none') {
-      if (this.echoInstances.length) {
-        this.echoInstances.forEach((echo) => {
-          this.scene.remove(echo);
-          this.disposeObject(echo);
-        });
-        this.echoInstances = [];
-        this._echoCacheKey = null;
-      }
+      this.clearEchoInstances();
       return;
     }
 
-    const count = content.echo.count;
+    const count = this.echoTargetCount(content.echo.count);
+    if (count === 0) {
+      this.clearEchoInstances();
+      return;
+    }
 
-    // Rebuild only when count OR model identity OR material structure changes.
-    // (Material structural changes — material type, opacity-transparency toggle —
-    // get a brand-new ShaderMaterial on the source so we must re-clone too.)
-    const cacheKey = `${(this.model as any).uuid}|${count}|${content.materialType}|${content.materialOpacity < 1 ? 1 : 0}`;
+    // Count changes do not invalidate existing echoes. Structural material
+    // changes do, because each echo owns a compatible clone of that material.
+    const cacheKey = `${this.model.uuid}|${content.materialType}|${content.materialOpacity < 1 ? 1 : 0}`;
     if (this._echoCacheKey !== cacheKey) {
-      this.echoInstances.forEach((echo) => {
-        this.scene.remove(echo);
-        this.disposeObject(echo);
-      });
-      this.echoInstances = [];
-      this._echoMeshPairs = [];
-
-      // Snapshot the source-mesh order once so per-echo mappings line up.
-      const sourceMeshes: THREE.Mesh[] = [];
-      this.model.traverse((c) => {
-        if (c instanceof THREE.Mesh) sourceMeshes.push(c);
-      });
-
-      for (let i = 1; i <= count; i++) {
-        const echo = this.model.clone(true);
-        const echoMeshes: THREE.Mesh[] = [];
-        echo.traverse((c) => {
-          if (c instanceof THREE.Mesh) echoMeshes.push(c);
-        });
-        // Clone materials so per-echo opacity can differ; everything else is
-        // synced from source every frame in the loop below.
-        const pairs: { sourceMesh: THREE.Mesh; echoMesh: THREE.Mesh }[] = [];
-        for (let m = 0; m < echoMeshes.length; m++) {
-          const echoMesh = echoMeshes[m];
-          const sourceMesh = sourceMeshes[m];
-          if (echoMesh.material) {
-            const cloned = (echoMesh.material as THREE.Material).clone();
-            (cloned as any).transparent = true;
-            echoMesh.material = cloned;
-          }
-          if (sourceMesh) pairs.push({ sourceMesh, echoMesh });
-        }
-        this._echoMeshPairs.push(pairs);
-        this.echoInstances.push(echo);
-        this.scene.add(echo);
-      }
+      this.clearEchoInstances();
       this._echoCacheKey = cacheKey;
     }
 
-    for (let i = 1; i <= count; i++) {
+    while (this.echoInstances.length > count) {
+      const echo = this.echoInstances.pop();
+      this._echoMeshPairs.pop();
+      if (echo) {
+        this.scene.remove(echo);
+        this.disposeOwnedMeshMaterials(echo);
+      }
+    }
+
+    // Add at most one deep hierarchy clone per rendered frame. Echoes become
+    // visible immediately, while complex models ramp to the requested count
+    // without freezing the UI.
+    if (this.echoInstances.length < count) {
+      const instance = this.createEchoInstance(this.echoInstances.length);
+      if (instance) {
+        this.echoInstances.push(instance.echo);
+        this._echoMeshPairs.push(instance.pairs);
+      }
+    }
+
+    for (let i = 1; i <= this.echoInstances.length; i++) {
       const echo = this.echoInstances[i - 1];
       const t = i / count;
-      const opacity = Math.max(0.05, 1 - t * content.echo.fadeRate * 3);
+      const opacity = THREE.MathUtils.clamp(
+        content.materialOpacity * (1 - t * THREE.MathUtils.clamp(content.echo.fadeRate, 0, 1)),
+        0.08,
+        0.95,
+      );
 
       // Note: scale and rotation variation are deterministic per-index now
       // (was Math.random() per frame, which jittered echoes every frame anyway).
@@ -1863,24 +2630,66 @@ export class Model3DRenderer {
       const scaleVar = 1 + ((seed % 1) - 0.5) * content.echo.scaleVariation * 0.5;
       const rotVar = (((seed * 7.31) % 1) - 0.5) * content.echo.rotationVariation * Math.PI * 0.5;
       const phase = t * content.echo.phaseOffset * Math.PI * 2;
+      const cycle = time * content.echo.speed;
+      const hash = (salt: number) => {
+        const value = Math.sin(i * 12.9898 + salt * 78.233) * 43758.5453;
+        return value - Math.floor(value);
+      };
 
       let offset = new THREE.Vector3();
 
       switch (content.echo.type) {
         case 'ghostTrail':
-          offset.z = -i * content.echo.spacing * 0.5;
-          offset.y = Math.sin(i * 0.5) * content.echo.spacing * 0.1;
+          offset.set(
+            -i * content.echo.spacing * 0.12,
+            Math.sin(i * 0.7) * content.echo.spacing * 0.18,
+            -i * content.echo.spacing * 0.35,
+          );
           break;
+
+        case 'motionBlur':
+          offset.set(
+            -i * content.echo.spacing * 0.22,
+            0,
+            i * content.echo.spacing * 0.05,
+          );
+          break;
+
+        case 'afterimage':
+          offset.set(
+            Math.sin(phase + i) * content.echo.spacing * 0.25,
+            Math.cos(phase * 0.7 + i) * content.echo.spacing * 0.2,
+            -i * content.echo.spacing * 0.08,
+          );
+          break;
+
+        case 'strobeCopies': {
+          const step = Math.floor(cycle * 4) * 0.35;
+          offset.set(
+            Math.sin(step + i * 1.7) * content.echo.spacing,
+            Math.cos(step * 0.8 + i) * content.echo.spacing * 0.55,
+            Math.sin(step * 0.5 + i * 2.1) * content.echo.spacing * 0.35,
+          );
+          break;
+        }
 
         case 'stream':
           offset.set(
-            Math.sin(time * content.echo.speed + phase) * content.echo.spacing * 0.3,
+            Math.sin(cycle + phase) * content.echo.spacing * 0.3,
             i * content.echo.spacing * 0.2,
             -i * content.echo.spacing * 0.4
           );
           break;
 
-        case 'radial':
+        case 'swarm':
+          offset.set(
+            Math.sin(cycle * 0.7 + hash(1) * Math.PI * 2) * content.echo.spacing * (0.4 + hash(2)),
+            Math.cos(cycle * 0.9 + hash(3) * Math.PI * 2) * content.echo.spacing * (0.3 + hash(4)),
+            Math.sin(cycle * 0.5 + hash(5) * Math.PI * 2) * content.echo.spacing * (0.4 + hash(6)),
+          );
+          break;
+
+        case 'radial': {
           const angle = (i / count) * Math.PI * 2;
           offset.set(
             Math.cos(angle) * content.echo.spacing,
@@ -1888,8 +2697,9 @@ export class Model3DRenderer {
             Math.sin(angle) * content.echo.spacing
           );
           break;
+        }
 
-        case 'spiral':
+        case 'spiral': {
           const spiralAngle = (i / count) * Math.PI * 4 + time * content.echo.speed * 0.5;
           const spiralRadius = i * content.echo.spacing * 0.3;
           offset.set(
@@ -1898,20 +2708,42 @@ export class Model3DRenderer {
             Math.sin(spiralAngle) * spiralRadius
           );
           break;
+        }
 
-        case 'grid':
+        case 'grid': {
           const gridSize = Math.ceil(Math.cbrt(count));
-          const gx = i % gridSize;
-          const gy = Math.floor(i / gridSize) % gridSize;
-          const gz = Math.floor(i / (gridSize * gridSize));
+          const gridIndex = i - 1;
+          const gx = gridIndex % gridSize;
+          const gy = Math.floor(gridIndex / gridSize) % gridSize;
+          const gz = Math.floor(gridIndex / (gridSize * gridSize));
           offset.set(
-            (gx - gridSize / 2) * content.echo.spacing * 0.5,
-            (gy - gridSize / 2) * content.echo.spacing * 0.5,
-            (gz - gridSize / 2) * content.echo.spacing * 0.5
+            (gx - (gridSize - 1) / 2) * content.echo.spacing * 0.65,
+            (gy - (gridSize - 1) / 2) * content.echo.spacing * 0.65,
+            (gz - (gridSize - 1) / 2) * content.echo.spacing * 0.65
+          );
+          break;
+        }
+
+        case 'random':
+          offset.set(
+            (hash(1) * 2 - 1) * content.echo.spacing * 1.5,
+            (hash(2) * 2 - 1) * content.echo.spacing * 1.5,
+            (hash(3) * 2 - 1) * content.echo.spacing,
           );
           break;
 
-        case 'orbit':
+        case 'fountain': {
+          const fountainPhase = (cycle * 0.35 + t) % 1;
+          const fountainArc = 4 * fountainPhase * (1 - fountainPhase);
+          offset.set(
+            (hash(1) * 2 - 1) * content.echo.spacing * fountainPhase,
+            content.echo.spacing * (fountainArc * 1.8 - fountainPhase * 0.5),
+            (hash(2) * 2 - 1) * content.echo.spacing * fountainPhase,
+          );
+          break;
+        }
+
+        case 'orbit': {
           const orbitAngle = (i / count) * Math.PI * 2 + time * content.echo.speed * 0.3;
           offset.set(
             Math.cos(orbitAngle) * content.echo.spacing,
@@ -1919,8 +2751,9 @@ export class Model3DRenderer {
             Math.sin(orbitAngle) * content.echo.spacing
           );
           break;
+        }
 
-        case 'tornado':
+        case 'tornado': {
           const tornadoAngle = (i / count) * Math.PI * 6 + time * content.echo.speed;
           const tornadoRadius = (1 - t) * content.echo.spacing;
           offset.set(
@@ -1929,8 +2762,33 @@ export class Model3DRenderer {
             Math.sin(tornadoAngle) * tornadoRadius
           );
           break;
+        }
 
-        case 'dna':
+        case 'explosion': {
+          const burst = (cycle * 0.35) % 1;
+          const theta = hash(1) * Math.PI * 2;
+          const z = hash(2) * 2 - 1;
+          const radius = Math.sqrt(Math.max(0, 1 - z * z));
+          const distance = content.echo.spacing * (0.25 + hash(3)) * burst * 2;
+          offset.set(
+            Math.cos(theta) * radius * distance,
+            z * distance,
+            Math.sin(theta) * radius * distance,
+          );
+          break;
+        }
+
+        case 'matrix': {
+          const fall = (cycle * 0.25 + hash(1)) % 1;
+          offset.set(
+            (hash(2) * 2 - 1) * content.echo.spacing * 1.5,
+            content.echo.spacing * (1.5 - fall * 3),
+            (hash(3) * 2 - 1) * content.echo.spacing * 0.35,
+          );
+          break;
+        }
+
+        case 'dna': {
           const dnaAngle = (i / count) * Math.PI * 4;
           const strand = i % 2;
           offset.set(
@@ -1939,8 +2797,9 @@ export class Model3DRenderer {
             Math.sin(dnaAngle + strand * Math.PI) * content.echo.spacing * 0.5
           );
           break;
+        }
 
-        case 'kaleidoscope':
+        case 'kaleidoscope': {
           const kSegments = 6;
           const kAngle = (i % kSegments) / kSegments * Math.PI * 2;
           const kRadius = Math.floor(i / kSegments) * content.echo.spacing * 0.5 + 0.5;
@@ -1950,9 +2809,10 @@ export class Model3DRenderer {
             Math.sin(kAngle) * kRadius
           );
           break;
+        }
 
         default:
-          offset.z = -i * content.echo.spacing * 0.5;
+          offset.x = -i * content.echo.spacing * 0.2;
       }
 
       echo.position.copy(this.model.position).add(offset);
@@ -1967,29 +2827,34 @@ export class Model3DRenderer {
       const pairs = this._echoMeshPairs[i - 1];
       if (pairs) {
         for (const { sourceMesh, echoMesh } of pairs) {
-          const sm = sourceMesh.material;
-          const em = echoMesh.material;
-          if (sm instanceof THREE.ShaderMaterial && em instanceof THREE.ShaderMaterial) {
-            for (const k in sm.uniforms) {
-              if (k === 'opacity') continue; // per-echo override below
-              const su = sm.uniforms[k];
-              const eu = em.uniforms[k];
-              if (!eu || su.value === undefined) continue;
-              const v: any = su.value;
-              if (v && typeof v === 'object') {
-                // THREE.Color/Vector3/Vector2/Matrix etc. all have .copy()
-                if (typeof v.copy === 'function' && typeof eu.value?.copy === 'function') {
-                  eu.value.copy(v);
+          const sourceMaterials = this.materialList(sourceMesh.material);
+          const echoMaterials = this.materialList(echoMesh.material);
+          for (let materialIndex = 0; materialIndex < echoMaterials.length; materialIndex++) {
+            const sm = sourceMaterials[Math.min(materialIndex, sourceMaterials.length - 1)];
+            const em = echoMaterials[materialIndex];
+            if (sm instanceof THREE.ShaderMaterial && em instanceof THREE.ShaderMaterial) {
+              for (const k in sm.uniforms) {
+                if (k === 'opacity') continue;
+                const su = sm.uniforms[k];
+                const eu = em.uniforms[k];
+                if (!eu || su.value === undefined) continue;
+                const v: any = su.value;
+                if (v && typeof v === 'object') {
+                  if (typeof v.copy === 'function' && typeof eu.value?.copy === 'function') {
+                    eu.value.copy(v);
+                  } else {
+                    eu.value = v;
+                  }
                 } else {
                   eu.value = v;
                 }
-              } else {
-                eu.value = v;
               }
+              if (em.uniforms.opacity) em.uniforms.opacity.value = opacity;
             }
-            if (em.uniforms.opacity) em.uniforms.opacity.value = opacity;
-          } else if (em) {
-            (em as any).opacity = opacity;
+            em.opacity = opacity;
+            em.transparent = true;
+            em.depthTest = false;
+            em.depthWrite = false;
           }
         }
       }
@@ -2003,14 +2868,9 @@ export class Model3DRenderer {
     this.camera.fov = camera.fov;
     this.camera.updateProjectionMatrix();
 
-    let orbitY = camera.orbitY * Math.PI / 180;
-
-    if (camera.autoRotate) {
-      orbitY += time * camera.rotateSpeed * 0.3;
-    }
-
-    const orbitX = camera.orbitX * Math.PI / 180;
-    const distance = camera.distance;
+    const orbitY = camera.orbitY * Math.PI / 180;
+    const orbitX = THREE.MathUtils.clamp(camera.orbitX, -89, 89) * Math.PI / 180;
+    const distance = Math.max(0.25, camera.distance);
 
     this.camera.position.x = Math.sin(orbitY) * Math.cos(orbitX) * distance + camera.panX;
     this.camera.position.y = Math.sin(orbitX) * distance + camera.panY;
@@ -2174,6 +3034,103 @@ export class Model3DRenderer {
     });
   }
 
+  private ensureEnvironment(renderer: THREE.WebGLRenderer) {
+    if (this.environmentMap && this.environmentRenderer === renderer) return;
+    this.environmentMap?.dispose();
+    const pmrem = new THREE.PMREMGenerator(renderer);
+    const room = new RoomEnvironment();
+    this.environmentMap = pmrem.fromScene(room).texture;
+    this.environmentRenderer = renderer;
+    if (this.environmentBackdrop) {
+      this.environmentBackdrop.material.envMap = this.environmentMap;
+      this.environmentBackdrop.material.needsUpdate = true;
+    }
+    room.dispose();
+    pmrem.dispose();
+  }
+
+  private ensureEnvironmentBackdrop() {
+    if (this.environmentBackdrop) return this.environmentBackdrop;
+
+    const material = new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      envMap: this.environmentMap,
+      side: THREE.BackSide,
+      depthTest: false,
+      depthWrite: false,
+      toneMapped: true,
+    });
+    // Keep the backdrop in the opaque queue so it renders before the model,
+    // while custom alpha blending lets lower compositor layers show through.
+    material.blending = THREE.CustomBlending;
+    material.blendEquation = THREE.AddEquation;
+    material.blendSrc = THREE.SrcAlphaFactor;
+    material.blendDst = THREE.OneMinusSrcAlphaFactor;
+    material.blendEquationAlpha = THREE.AddEquation;
+    material.blendSrcAlpha = THREE.OneFactor;
+    material.blendDstAlpha = THREE.OneMinusSrcAlphaFactor;
+
+    const backdrop = new THREE.Mesh(new THREE.SphereGeometry(500, 32, 16), material);
+    backdrop.frustumCulled = false;
+    backdrop.renderOrder = -10000;
+    this.scene.add(backdrop);
+    this.environmentBackdrop = backdrop;
+    return backdrop;
+  }
+
+  private backgroundAlpha(content: Model3DContent) {
+    if ((content.backgroundMode ?? 'transparent') === 'transparent') return 0;
+    return THREE.MathUtils.clamp(content.backgroundOpacity ?? 1, 0, 1);
+  }
+
+  private applyBackgroundClear(renderer: THREE.WebGLRenderer, content: Model3DContent) {
+    const color = content.backgroundMode === 'color'
+      ? new THREE.Color(
+        (content.backgroundColor?.[0] ?? 8) / 255,
+        (content.backgroundColor?.[1] ?? 8) / 255,
+        (content.backgroundColor?.[2] ?? 12) / 255,
+      )
+      : new THREE.Color(0x000000);
+    renderer.setClearColor(color, this.backgroundAlpha(content));
+  }
+
+  private updateScenePresentation(content: Model3DContent, renderer?: THREE.WebGLRenderer | null) {
+    if (renderer && (content.environmentEnabled ?? true)) {
+      this.ensureEnvironment(renderer);
+    }
+
+    const environmentEnabled = content.environmentEnabled ?? true;
+    const lightingProfile = getModel3DLightingProfile(content.lightingPreset);
+    this.scene.environment = environmentEnabled ? this.environmentMap : null;
+    (this.scene as THREE.Scene & { environmentIntensity?: number }).environmentIntensity =
+      environmentEnabled
+        ? Math.max(0, content.environmentIntensity ?? 1) * lightingProfile.environmentScale
+        : 0;
+
+    // Backgrounds must preserve alpha in the layer compositor. A Three.js
+    // Scene.background always writes opaque pixels, so solid colors use the
+    // renderer clear and environments use a blended camera-locked backdrop.
+    this.scene.background = null;
+    const environmentBackdrop = this.ensureEnvironmentBackdrop();
+    const backgroundMode = content.backgroundMode ?? 'transparent';
+    environmentBackdrop.visible =
+      backgroundMode === 'environment'
+      && !!this.environmentMap
+      && this.backgroundAlpha(content) > 0;
+    environmentBackdrop.material.envMap = this.environmentMap;
+    environmentBackdrop.material.opacity = this.backgroundAlpha(content);
+    environmentBackdrop.material.color.setScalar(Math.max(0, content.environmentIntensity ?? 1));
+
+  }
+
+  private configureRenderer(renderer: THREE.WebGLRenderer, content: Model3DContent) {
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = Math.max(0.05, content.toneMappingExposure ?? 1);
+    renderer.shadowMap.enabled = content.shadowsEnabled ?? true;
+    renderer.shadowMap.type = THREE.PCFShadowMap;
+  }
+
   // Main update function (audioState provides beat/phase data for enhanced reactivity)
   update(content: Model3DContent, audioLevel: number = 0, audioState?: any) {
     if (!this.model) return;
@@ -2197,6 +3154,9 @@ export class Model3DRenderer {
 
     // Setup lighting if changed
     this.setupLighting(content.lightingPreset);
+    this.updateLightingRig(content, time);
+    this.updateScenePresentation(content, this.renderer);
+    if (this.renderer) this.configureRenderer(this.renderer, content);
 
     // Update disco lights animation
     if (content.lightingPreset === 'disco') {
@@ -2208,7 +3168,8 @@ export class Model3DRenderer {
     this.model.scale.setScalar(content.scaleUniform * baseScale);
     this.model.rotation.set(
       content.rotationX * Math.PI / 180,
-      content.rotationY * Math.PI / 180,
+      content.rotationY * Math.PI / 180
+        + (content.camera.autoRotate ? time * content.camera.rotateSpeed * 0.3 : 0),
       content.rotationZ * Math.PI / 180
     );
     this.model.position.set(content.positionX, content.positionY, content.positionZ);
@@ -2261,7 +3222,12 @@ export class Model3DRenderer {
     this.updateWireframe(content, time);
 
     // Update vertex decorations
-    this.updateVertexDecorations(content);
+    this.updateVertexDecorations(
+      content,
+      time,
+      content.audio.enabled ? audioLevel : 0,
+      beatIntensity,
+    );
 
     // Update echo instances
     this.updateEchoInstances(content, time);
@@ -2273,6 +3239,8 @@ export class Model3DRenderer {
   // Render the scene
   render() {
     if (this.renderer) {
+      if (this.currentContent) this.applyBackgroundClear(this.renderer, this.currentContent);
+      this.environmentBackdrop?.position.copy(this.camera.position);
       this.renderer.render(this.scene, this.camera);
     }
   }
@@ -2280,11 +3248,42 @@ export class Model3DRenderer {
   /** Render this 3D scene to an external WebGLRenderTarget using a shared renderer.
    *  This avoids cross-context issues by keeping everything in one WebGL context. */
   renderTo(externalRenderer: THREE.WebGLRenderer, target: THREE.WebGLRenderTarget) {
-    externalRenderer.setRenderTarget(target);
-    externalRenderer.setClearColor(0x000000, 0); // transparent clear
-    externalRenderer.clear();
-    externalRenderer.render(this.scene, this.camera);
-    externalRenderer.setRenderTarget(null);
+    const content = this.currentContent;
+    if (!content) return;
+
+    // Model layers share the main compositor renderer. Every piece of mutable
+    // renderer state must be restored so exposure, shadows, or color settings
+    // from this scene cannot leak into the next layer.
+    const previousTarget = externalRenderer.getRenderTarget();
+    const previousClearAlpha = externalRenderer.getClearAlpha();
+    externalRenderer.getClearColor(this.rendererClearColor);
+    const previousClearColor = this.rendererClearColor.clone();
+    const previousToneMapping = externalRenderer.toneMapping;
+    const previousExposure = externalRenderer.toneMappingExposure;
+    const previousOutputColorSpace = externalRenderer.outputColorSpace;
+    const previousShadowEnabled = externalRenderer.shadowMap.enabled;
+    const previousShadowType = externalRenderer.shadowMap.type;
+    const previousAutoClear = externalRenderer.autoClear;
+
+    try {
+      this.configureRenderer(externalRenderer, content);
+      this.updateScenePresentation(content, externalRenderer);
+      externalRenderer.autoClear = false;
+      externalRenderer.setRenderTarget(target);
+      this.applyBackgroundClear(externalRenderer, content);
+      externalRenderer.clear(true, true, true);
+      this.environmentBackdrop?.position.copy(this.camera.position);
+      externalRenderer.render(this.scene, this.camera);
+    } finally {
+      externalRenderer.setRenderTarget(previousTarget);
+      externalRenderer.setClearColor(previousClearColor, previousClearAlpha);
+      externalRenderer.toneMapping = previousToneMapping;
+      externalRenderer.toneMappingExposure = previousExposure;
+      externalRenderer.outputColorSpace = previousOutputColorSpace;
+      externalRenderer.shadowMap.enabled = previousShadowEnabled;
+      externalRenderer.shadowMap.type = previousShadowType;
+      externalRenderer.autoClear = previousAutoClear;
+    }
   }
 
   // Resize renderer
@@ -2329,23 +3328,35 @@ export class Model3DRenderer {
     this.animationClips = [];
     this.hasFileAnimations = false;
 
+    // Attached wireframe overlays and echo instances share the source model's
+    // geometry. Remove their owned materials before the source geometry is
+    // disposed so shutdown cannot double-dispose or corrupt a later load.
+    this.clearWireframeOverlays();
+    this.clearVertexDecorations();
+    this.clearEchoInstances();
+
     if (this.model) {
       this.scene.remove(this.model);
       this.disposeObject(this.model);
+      this.model = null;
     }
-    if (this.wireframe) {
-      this.scene.remove(this.wireframe);
-      this.disposeObject(this.wireframe);
-    }
-    if (this.vertexDecorations) {
-      this.scene.remove(this.vertexDecorations);
-      this.disposeObject(this.vertexDecorations);
-    }
-    this.echoInstances.forEach((echo) => {
-      this.scene.remove(echo);
-      this.disposeObject(echo);
-    });
     this.lights.forEach((light) => this.scene.remove(light));
+    this.lights = [];
+    this.ambientLight = null;
+    this.keyLight = null;
+    this.fillLight = null;
+    this.rimLight = null;
+    this.environmentMap?.dispose();
+    this.environmentMap = null;
+    this.environmentRenderer = null;
+    if (this.environmentBackdrop) {
+      this.scene.remove(this.environmentBackdrop);
+      this.environmentBackdrop.geometry.dispose();
+      this.environmentBackdrop.material.dispose();
+      this.environmentBackdrop = null;
+    }
+    this.scene.environment = null;
+    this.scene.background = null;
     this.originalPositions.clear();
     this.originalNormals.clear();
     if (this.renderer) this.renderer.dispose();

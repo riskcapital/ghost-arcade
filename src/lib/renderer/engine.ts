@@ -215,6 +215,14 @@ export class RenderEngine {
   // sweep when this is non-zero. See crossfadeTransitions.ts.
   private crossfadeBlendModeIndex: number = 0;
   private crossfadeStartTime: number = performance.now() / 1000;
+  // Operator confidence monitors. These display the already-rendered bank
+  // targets; they never create another layer renderer or rerun a source.
+  private deckMonitorCanvasA: HTMLCanvasElement | null = null;
+  private deckMonitorCanvasB: HTMLCanvasElement | null = null;
+  private deckMonitorContextA: CanvasRenderingContext2D | null = null;
+  private deckMonitorContextB: CanvasRenderingContext2D | null = null;
+  private deckMonitorLastUpdate = 0;
+  private readonly deckMonitorFrameInterval = 1000 / 30;
 
   // Per-VJ-layer crossfade FBOs. When stage mode is on AND a single VJ
   // layer index has both Bank A and Bank B clips active, we crossfade
@@ -1889,6 +1897,12 @@ export class RenderEngine {
     // Apply dome projection (after watermark, before final output)
     this.applyDomeProjection();
 
+    // Refresh the editor-only A/B confidence monitors from the two bank
+    // render targets. This is deliberately before the final program blit:
+    // the renderer canvas is restored to the clean master below before
+    // output capture, recording, or the browser compositor can observe it.
+    this.updateDeckMonitorFrames();
+
     // Render final composite to screen
     if (this.transitionProgress < 1) {
       // Transition active: blend snapshot with live composite
@@ -2947,6 +2961,7 @@ export class RenderEngine {
     this.bankBTarget?.dispose();
     this.bankATarget = null;
     this.bankBTarget = null;
+    this.setDeckMonitorCanvases(null, null);
     for (const mat of this.crossfadeMaterials.values()) {
       try { mat.dispose(); } catch {}
     }
@@ -3061,6 +3076,77 @@ export class RenderEngine {
 
   public isCrossfadeActive(): boolean {
     return this.crossfadeActive;
+  }
+
+  /**
+   * Attach the VJ operator's A/B confidence-monitor canvases. The monitor
+   * pixels come from bankATarget / bankBTarget in this renderer, so stateful
+   * shaders and videos still execute exactly once per frame.
+   */
+  public setDeckMonitorCanvases(
+    deckA: HTMLCanvasElement | null,
+    deckB: HTMLCanvasElement | null,
+  ): void {
+    if (this.deckMonitorCanvasA === deckA && this.deckMonitorCanvasB === deckB) return;
+    this.deckMonitorCanvasA = deckA;
+    this.deckMonitorCanvasB = deckB;
+    this.deckMonitorContextA = deckA
+      ? deckA.getContext('2d', { alpha: false, desynchronized: true })
+      : null;
+    this.deckMonitorContextB = deckB
+      ? deckB.getContext('2d', { alpha: false, desynchronized: true })
+      : null;
+    this.deckMonitorLastUpdate = 0;
+  }
+
+  private updateDeckMonitorFrames(): void {
+    if (
+      !this.crossfadeActive ||
+      !this.bankATarget ||
+      !this.bankBTarget ||
+      !this.deckMonitorCanvasA ||
+      !this.deckMonitorCanvasB ||
+      !this.deckMonitorContextA ||
+      !this.deckMonitorContextB
+    ) return;
+
+    const now = performance.now();
+    if (now - this.deckMonitorLastUpdate < this.deckMonitorFrameInterval) return;
+    this.deckMonitorLastUpdate = now;
+
+    const outputMaterial = this.outputQuad.material as THREE.ShaderMaterial;
+    const previousTexture = outputMaterial.uniforms.uTexture.value;
+    const sourceCanvas = this.renderer.domElement;
+    const monitors = [
+      {
+        target: this.bankATarget,
+        canvas: this.deckMonitorCanvasA,
+        context: this.deckMonitorContextA,
+      },
+      {
+        target: this.bankBTarget,
+        canvas: this.deckMonitorCanvasB,
+        context: this.deckMonitorContextB,
+      },
+    ];
+
+    this.renderer.setRenderTarget(null);
+    for (const monitor of monitors) {
+      outputMaterial.uniforms.uTexture.value = monitor.target.texture;
+      this.renderer.render(this.outputScene, this.camera);
+      monitor.context.drawImage(
+        sourceCanvas,
+        0,
+        0,
+        sourceCanvas.width,
+        sourceCanvas.height,
+        0,
+        0,
+        monitor.canvas.width,
+        monitor.canvas.height,
+      );
+    }
+    outputMaterial.uniforms.uTexture.value = previousTexture;
   }
 
   /** Allocate the bank FBOs the first time the crossfader is enabled.

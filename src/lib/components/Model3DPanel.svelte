@@ -264,6 +264,30 @@
     }
   }
 
+  function frameCamera() {
+    updateCamera({
+      distance: 5,
+      fov: 50,
+      orbitX: 0,
+      orbitY: 20,
+      roll: 0,
+      panX: 0,
+      panY: 0,
+    });
+  }
+
+  function resetModelTransform() {
+    updateContent({
+      scaleUniform: 1,
+      rotationX: 0,
+      rotationY: 0,
+      rotationZ: 0,
+      positionX: 0,
+      positionY: 0,
+      positionZ: 0,
+    });
+  }
+
   // Helper to update nested audio config
   function updateAudio(updates: Partial<Model3DContent['audio']>) {
     if (mc) {
@@ -365,7 +389,7 @@
             <input
               type="color"
               value={rgbToHex(mc.materialColor[0], mc.materialColor[1], mc.materialColor[2])}
-              onchange={(e) => updateContent({ materialColor: hexToRgb((e.target as HTMLInputElement).value) })}
+              oninput={(e) => updateContent({ materialColor: hexToRgb((e.target as HTMLInputElement).value) })}
             />
           </div>
 
@@ -420,7 +444,7 @@
               <input
                 type="color"
                 value={rgbToHex(mc.materialEmissive[0], mc.materialEmissive[1], mc.materialEmissive[2])}
-                onchange={(e) => updateContent({ materialEmissive: hexToRgb((e.target as HTMLInputElement).value) })}
+                oninput={(e) => updateContent({ materialEmissive: hexToRgb((e.target as HTMLInputElement).value) })}
               />
             </div>
 
@@ -491,7 +515,7 @@
               <input
                 type="color"
                 value={rgbToHex(mc.hologramRimColor[0], mc.hologramRimColor[1], mc.hologramRimColor[2])}
-                onchange={(e) => updateContent({ hologramRimColor: hexToRgb((e.target as HTMLInputElement).value) })}
+                oninput={(e) => updateContent({ hologramRimColor: hexToRgb((e.target as HTMLInputElement).value) })}
               />
             </div>
           {/if}
@@ -532,7 +556,7 @@
               <input
                 type="color"
                 value={rgbToHex(mc.lavaGlowColor[0], mc.lavaGlowColor[1], mc.lavaGlowColor[2])}
-                onchange={(e) => updateContent({ lavaGlowColor: hexToRgb((e.target as HTMLInputElement).value) })}
+                oninput={(e) => updateContent({ lavaGlowColor: hexToRgb((e.target as HTMLInputElement).value) })}
               />
             </div>
           {/if}
@@ -590,7 +614,7 @@
               <input
                 type="color"
                 value={rgbToHex(mc.dissolveEdgeColor[0], mc.dissolveEdgeColor[1], mc.dissolveEdgeColor[2])}
-                onchange={(e) => updateContent({ dissolveEdgeColor: hexToRgb((e.target as HTMLInputElement).value) })}
+                oninput={(e) => updateContent({ dissolveEdgeColor: hexToRgb((e.target as HTMLInputElement).value) })}
               />
             </div>
 
@@ -631,7 +655,7 @@
               <input
                 type="color"
                 value={rgbToHex(mc.fresnelColor[0], mc.fresnelColor[1], mc.fresnelColor[2])}
-                onchange={(e) => updateContent({ fresnelColor: hexToRgb((e.target as HTMLInputElement).value) })}
+                oninput={(e) => updateContent({ fresnelColor: hexToRgb((e.target as HTMLInputElement).value) })}
               />
             </div>
           {/if}
@@ -739,7 +763,7 @@
               <span class="value">{mc.wireframeThickness.toFixed(1)}</span>
             </div>
 
-            {#if mc.wireframeMode === 'animated' || mc.wireframeMode === 'pulse' || mc.wireframeMode === 'rainbow'}
+            {#if mc.wireframeMode === 'animated' || mc.wireframeMode === 'pulse' || mc.wireframeMode === 'rainbow' || mc.wireframeMode === 'dotted'}
               <div class="property-row">
                 <label>Anim Speed</label>
                 <input
@@ -779,16 +803,16 @@
             <div class="property-row">
               <label>Size</label>
               <input
-                type="range" min="0.01" max="0.2" step="0.01"
+                type="range" min="0.001" max="0.2" step="0.001"
                 value={mc.vertexDecorationSize}
                 oninput={(e) => updateContent({ vertexDecorationSize: parseFloat((e.target as HTMLInputElement).value) })}
                 data-midi-path="map:model3d:vertexDecorationSize"
                 data-midi-label="Vertex Size"
-                data-midi-min="0.01"
+                data-midi-min="0.001"
                 data-midi-max="0.2"
-                data-midi-step="0.01"
+                data-midi-step="0.001"
               />
-              <span class="value">{mc.vertexDecorationSize.toFixed(2)}</span>
+              <span class="value">{mc.vertexDecorationSize.toFixed(3)}</span>
             </div>
 
             <div class="property-row">
@@ -1053,7 +1077,13 @@
               <input
                 type="checkbox"
                 checked={mc.echo.enabled}
-                onchange={(e) => updateEcho({ enabled: (e.target as HTMLInputElement).checked })}
+            onchange={(e) => {
+              const enabled = (e.target as HTMLInputElement).checked;
+              updateEcho({
+                enabled,
+                ...(enabled && mc.echo.type === 'none' ? { type: 'ghostTrail' } : {})
+              });
+            }}
                 data-midi-path="map:model3d:echo.enabled"
                 data-midi-label="Enable Echo"
                 data-midi-mode="toggle"
@@ -1316,6 +1346,11 @@
       </button>
       {#if showCamera}
         <div class="section-content">
+          <div class="button-row">
+            <button class="secondary-button" type="button" onclick={frameCamera}>Frame Model</button>
+            <button class="secondary-button" type="button" onclick={resetModelTransform}>Reset Model</button>
+          </div>
+
           <div class="property-row checkbox">
             <label>
               <input
@@ -1481,6 +1516,95 @@
             </select>
           </div>
 
+          <span class="subsection-label">Environment</span>
+
+          <div class="property-row checkbox">
+            <label>
+              <input
+                type="checkbox"
+                checked={mc.environmentEnabled ?? true}
+                onchange={(e) => updateContent({ environmentEnabled: (e.target as HTMLInputElement).checked })}
+                data-midi-path="map:model3d:environmentEnabled"
+                data-midi-label="Environment Lighting"
+                data-midi-mode="toggle"
+              />
+              Environment Light
+            </label>
+          </div>
+
+          <div class="property-row">
+            <label>Environment</label>
+            <input
+              type="range" min="0" max="3" step="0.05"
+              value={mc.environmentIntensity ?? 1}
+              oninput={(e) => updateContent({ environmentIntensity: parseFloat((e.target as HTMLInputElement).value) })}
+              data-midi-path="map:model3d:environmentIntensity"
+              data-midi-label="Environment Intensity"
+              data-midi-min="0"
+              data-midi-max="3"
+              data-midi-step="0.05"
+            />
+            <span class="value">{(mc.environmentIntensity ?? 1).toFixed(2)}</span>
+          </div>
+
+          <div class="property-row">
+            <label>Exposure</label>
+            <input
+              type="range" min="0.1" max="3" step="0.05"
+              value={mc.toneMappingExposure ?? 1}
+              oninput={(e) => updateContent({ toneMappingExposure: parseFloat((e.target as HTMLInputElement).value) })}
+              data-midi-path="map:model3d:toneMappingExposure"
+              data-midi-label="Scene Exposure"
+              data-midi-min="0.1"
+              data-midi-max="3"
+              data-midi-step="0.05"
+            />
+            <span class="value">{(mc.toneMappingExposure ?? 1).toFixed(2)}</span>
+          </div>
+
+          <div class="property-row">
+            <label>Background</label>
+            <select
+              value={mc.backgroundMode ?? 'transparent'}
+              onchange={(e) => updateContent({ backgroundMode: (e.target as HTMLSelectElement).value as Model3DContent['backgroundMode'] })}
+            >
+              <option value="transparent">Transparent</option>
+              <option value="color">Solid Color</option>
+              <option value="environment">Environment</option>
+            </select>
+          </div>
+
+          {#if (mc.backgroundMode ?? 'transparent') === 'color'}
+            <div class="property-row">
+              <label>BG Color</label>
+              <input
+                type="color"
+                value={rgbToHex(...(mc.backgroundColor ?? [8, 8, 12]))}
+                onchange={(e) => updateContent({ backgroundColor: hexToRgb((e.target as HTMLInputElement).value) })}
+              />
+            </div>
+          {/if}
+
+          {#if (mc.backgroundMode ?? 'transparent') !== 'transparent'}
+            <div class="property-row">
+              <label>BG Opacity</label>
+              <input
+                type="range" min="0" max="1" step="0.01"
+                value={mc.backgroundOpacity ?? 1}
+                oninput={(e) => updateContent({ backgroundOpacity: parseFloat((e.target as HTMLInputElement).value) })}
+                data-midi-path="map:model3d:backgroundOpacity"
+                data-midi-label="Background Opacity"
+                data-midi-min="0"
+                data-midi-max="1"
+                data-midi-step="0.01"
+              />
+              <span class="value">{Math.round((mc.backgroundOpacity ?? 1) * 100)}%</span>
+            </div>
+          {/if}
+
+          <div class="section-divider"></div>
+          <span class="subsection-label">Key / Fill / Rim</span>
+
           <div class="property-row">
             <label>Ambient</label>
             <input
@@ -1497,7 +1621,7 @@
           </div>
 
           <div class="property-row">
-            <label>Directional</label>
+            <label>Key Power</label>
             <input
               type="range" min="0" max="3" step="0.1"
               value={mc.directionalIntensity}
@@ -1512,13 +1636,144 @@
           </div>
 
           <div class="property-row">
-            <label>Light Color</label>
+            <label>Key Color</label>
             <input
               type="color"
               value={rgbToHex(mc.lightColor[0], mc.lightColor[1], mc.lightColor[2])}
               onchange={(e) => updateContent({ lightColor: hexToRgb((e.target as HTMLInputElement).value) })}
             />
           </div>
+
+          <div class="property-row">
+            <label>Key Azimuth</label>
+            <input
+              type="range" min="-180" max="180" step="1"
+              value={mc.keyLightAzimuth ?? 45}
+              oninput={(e) => updateContent({ keyLightAzimuth: parseFloat((e.target as HTMLInputElement).value) })}
+              data-midi-path="map:model3d:keyLightAzimuth"
+              data-midi-label="Key Light Azimuth"
+              data-midi-min="-180"
+              data-midi-max="180"
+              data-midi-step="1"
+            />
+            <span class="value">{(mc.keyLightAzimuth ?? 45).toFixed(0)}°</span>
+          </div>
+
+          <div class="property-row">
+            <label>Key Elevation</label>
+            <input
+              type="range" min="-10" max="90" step="1"
+              value={mc.keyLightElevation ?? 50}
+              oninput={(e) => updateContent({ keyLightElevation: parseFloat((e.target as HTMLInputElement).value) })}
+              data-midi-path="map:model3d:keyLightElevation"
+              data-midi-label="Key Light Elevation"
+              data-midi-min="-10"
+              data-midi-max="90"
+              data-midi-step="1"
+            />
+            <span class="value">{(mc.keyLightElevation ?? 50).toFixed(0)}°</span>
+          </div>
+
+          <div class="property-row">
+            <label>Fill Power</label>
+            <input
+              type="range" min="0" max="3" step="0.05"
+              value={mc.fillIntensity ?? 0.35}
+              oninput={(e) => updateContent({ fillIntensity: parseFloat((e.target as HTMLInputElement).value) })}
+              data-midi-path="map:model3d:fillIntensity"
+              data-midi-label="Fill Light Intensity"
+              data-midi-min="0"
+              data-midi-max="3"
+              data-midi-step="0.05"
+            />
+            <span class="value">{(mc.fillIntensity ?? 0.35).toFixed(2)}</span>
+          </div>
+
+          <div class="property-row">
+            <label>Rim Power</label>
+            <input
+              type="range" min="0" max="3" step="0.05"
+              value={mc.rimIntensity ?? 0.4}
+              oninput={(e) => updateContent({ rimIntensity: parseFloat((e.target as HTMLInputElement).value) })}
+              data-midi-path="map:model3d:rimIntensity"
+              data-midi-label="Rim Light Intensity"
+              data-midi-min="0"
+              data-midi-max="3"
+              data-midi-step="0.05"
+            />
+            <span class="value">{(mc.rimIntensity ?? 0.4).toFixed(2)}</span>
+          </div>
+
+          <div class="property-row">
+            <label>Rim Color</label>
+            <input
+              type="color"
+              value={rgbToHex(...(mc.rimColor ?? [120, 180, 255]))}
+              onchange={(e) => updateContent({ rimColor: hexToRgb((e.target as HTMLInputElement).value) })}
+            />
+          </div>
+
+          <div class="section-divider"></div>
+          <span class="subsection-label">Shadows</span>
+
+          <div class="property-row checkbox">
+            <label>
+              <input
+                type="checkbox"
+                checked={mc.shadowsEnabled ?? true}
+                onchange={(e) => updateContent({ shadowsEnabled: (e.target as HTMLInputElement).checked })}
+                data-midi-path="map:model3d:shadowsEnabled"
+                data-midi-label="Model Shadows"
+                data-midi-mode="toggle"
+              />
+              Enable Shadows
+            </label>
+          </div>
+
+          {#if mc.shadowsEnabled ?? true}
+            <div class="property-row">
+              <label>Quality</label>
+              <select
+                value={mc.shadowQuality ?? 'medium'}
+                onchange={(e) => updateContent({ shadowQuality: (e.target as HTMLSelectElement).value as Model3DContent['shadowQuality'] })}
+              >
+                <option value="low">Low (512)</option>
+                <option value="medium">Medium (1024)</option>
+                <option value="high">High (2048)</option>
+              </select>
+            </div>
+
+            <div class="property-row">
+              <label>Softness</label>
+              <input
+                type="range" min="0" max="4" step="0.1"
+                value={mc.shadowSoftness ?? 1}
+                oninput={(e) => updateContent({ shadowSoftness: parseFloat((e.target as HTMLInputElement).value) })}
+                data-midi-path="map:model3d:shadowSoftness"
+                data-midi-label="Shadow Softness"
+                data-midi-min="0"
+                data-midi-max="4"
+                data-midi-step="0.1"
+              />
+              <span class="value">{(mc.shadowSoftness ?? 1).toFixed(1)}</span>
+            </div>
+
+            <div class="property-row">
+              <label>Bias</label>
+              <input
+                type="range" min="-0.01" max="0.01" step="0.0001"
+                value={mc.shadowBias ?? -0.0005}
+                oninput={(e) => updateContent({ shadowBias: parseFloat((e.target as HTMLInputElement).value) })}
+                data-midi-path="map:model3d:shadowBias"
+                data-midi-label="Shadow Bias"
+                data-midi-min="-0.01"
+                data-midi-max="0.01"
+                data-midi-step="0.0001"
+              />
+              <span class="value">{(mc.shadowBias ?? -0.0005).toFixed(4)}</span>
+            </div>
+          {/if}
+
         </div>
       {/if}
     </div>
@@ -1761,6 +2016,36 @@
     margin-bottom: 6px;
     text-transform: uppercase;
     letter-spacing: 0.5px;
+  }
+
+  .subsection-label {
+    color: var(--text-secondary, #888);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+
+  .button-row {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 6px;
+  }
+
+  .secondary-button {
+    min-width: 0;
+    padding: 6px 8px;
+    border: 1px solid var(--border-color, #333);
+    border-radius: 4px;
+    background: var(--bg-secondary, #161618);
+    color: var(--text-primary, #e0e0e0);
+    font-size: 11px;
+    cursor: pointer;
+  }
+
+  .secondary-button:hover {
+    border-color: var(--accent-primary, #BB86FC);
+    color: var(--accent-primary, #BB86FC);
   }
 
   .collapsible {

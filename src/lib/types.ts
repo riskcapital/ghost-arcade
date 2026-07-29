@@ -83,16 +83,51 @@ export type BlendMode =
   | 'vivid-light'
   | 'pin-light';
 
-export type MediaType = 'image' | 'video' | 'shader' | 'color' | 'threejs' | 'p5js' | 'javascript' | 'spout' | 'effect' | 'synthvision';
+export type MediaType =
+  | 'image'
+  | 'video'
+  | 'shader'
+  | 'color'
+  | 'threejs'
+  | 'p5js'
+  | 'javascript'
+  | 'spout'
+  | 'effect'
+  | 'synthvision';
 
 // Integrated effect types (FluidGen, Particles3D, Point Cloud, 3D Models running natively in WebGL)
-export type IntegratedEffectType = 'fluid' | 'particles' | 'splat' | 'model3d' | 'milkdrop' | 'audiomotion' | 'wavejs' | 'hydra' | 'ghostfx' | 'analyzerlab' | 'handfx' | 'ghostpilot';
+export type IntegratedEffectType =
+  | 'fluid'
+  | 'particles'
+  | 'splat'
+  | 'model3d'
+  | 'milkdrop'
+  | 'audiomotion'
+  | 'wavejs'
+  | 'hydra'
+  | 'ghostfx'
+  | 'analyzerlab'
+  | 'handfx'
+  | 'ghostpilot';
 
 // Stem identifiers for the multi-stem routing matrix (Milkdrop plugin).
 // 'full' is the unsplit mix; the rest match standard Demucs output names plus a
 // few common DAW stem buses. Routing matrix cells are stored as
 // Record<MilkdropStem, Record<MilkdropTarget, number>>.
-export type MilkdropStem = 'full' | 'drums' | 'bass' | 'vocals' | 'other' | 'ch1' | 'ch2' | 'ch3' | 'ch4' | 'ch5' | 'ch6' | 'ch7' | 'ch8';
+export type MilkdropStem =
+  | 'full'
+  | 'drums'
+  | 'bass'
+  | 'vocals'
+  | 'other'
+  | 'ch1'
+  | 'ch2'
+  | 'ch3'
+  | 'ch4'
+  | 'ch5'
+  | 'ch6'
+  | 'ch7'
+  | 'ch8';
 export type MilkdropTarget = 'bass' | 'mid' | 'treb';
 
 // Integrated effect source configuration
@@ -187,7 +222,17 @@ export interface IntegratedEffectSource {
   audiomotionBgAlpha?: number;
   audiomotionSmoothing?: number;
   // Wave.js params (@foobar404/wave by Curtis Hutten / Austin Michaud, MIT)
-  wavejsAnimation?: 'Wave' | 'Arcs' | 'Circles' | 'Cubes' | 'Flower' | 'Glob' | 'Lines' | 'Shine' | 'Square' | 'Turntable';
+  wavejsAnimation?:
+    | 'Wave'
+    | 'Arcs'
+    | 'Circles'
+    | 'Cubes'
+    | 'Flower'
+    | 'Glob'
+    | 'Lines'
+    | 'Shine'
+    | 'Square'
+    | 'Turntable';
   wavejsSensitivity?: number;             // input gain (0.25..6) applied before FFT
   wavejsLineWidth?: number;
   wavejsColorA?: [number, number, number];
@@ -332,7 +377,22 @@ export interface JSAnimationSource {
 // 'stretch' = distort to fill (default), 'fill' = maintain aspect + crop overflow (CSS cover), 'crop' = maintain aspect + letterbox (CSS contain)
 export type ContentFitMode = 'stretch' | 'fill' | 'crop';
 
-export type LayerType = 'media' | 'mask' | 'lines' | 'svg' | 'color' | 'lightpainting' | 'adv-lightpaint' | 'text' | 'splat' | 'model3d' | 'screen' | 'group' | 'pixel-fx' | 'gpu' | 'arcade';
+export type LayerType =
+  | 'media'
+  | 'mask'
+  | 'lines'
+  | 'svg'
+  | 'color'
+  | 'lightpainting'
+  | 'adv-lightpaint'
+  | 'text'
+  | 'splat'
+  | 'model3d'
+  | 'screen'
+  | 'group'
+  | 'pixel-fx'
+  | 'gpu'
+  | 'arcade';
 
 /**
  * GPU layer — hosts a swappable WebGPU shader (similar to how a
@@ -463,7 +523,15 @@ export function createDefaultArcadeContent(): ArcadeLayerContent {
  *                   the camera model + topology are fundamentally
  *                   different. See `flythrough*` fields below for
  *                   tuning. */
-export type PixelFXMode = 'identity' | 'depth-shift' | 'sand-fall' | 'scatter' | 'halftone' | 'stipple-noise' | 'dissolve' | 'flythrough';
+export type PixelFXMode =
+  | 'identity'
+  | 'depth-shift'
+  | 'sand-fall'
+  | 'scatter'
+  | 'halftone'
+  | 'stipple-noise'
+  | 'dissolve'
+  | 'flythrough';
 
 /** Particle-rendering topology for the flythrough mode.
  *   points  — billboard sprites (cheap, classic point-cloud look)
@@ -752,7 +820,16 @@ export interface MediaSource {
 // (LinesContent replaces the old GenerativeContent)
 
 // SVG layer fill modes
-export type SVGFillMode = 'liquid' | 'solid' | 'gradient' | 'shimmer' | 'pulse' | 'noise' | 'particles' | 'fluid' | 'flow';
+export type SVGFillMode =
+  | 'liquid'
+  | 'solid'
+  | 'gradient'
+  | 'shimmer'
+  | 'pulse'
+  | 'noise'
+  | 'particles'
+  | 'fluid'
+  | 'flow';
 
 // SVG layer color modes
 export type SVGColorMode = 'perShape' | 'rainbow' | 'monochrome' | 'complementary' | 'analogous' | 'white';
@@ -1574,6 +1651,14 @@ export function createDefaultTextContent(): TextContent {
 
 // Type of 3D point data
 export type SplatDataType = 'pointcloud' | 'gaussian';
+export type SplatImportOrientation =
+  | 'authored'
+  | 'yUp'
+  | 'zUp'
+  | 'zUpInverted'
+  | 'xUp'
+  | 'auto'
+  | 'custom';
 
 // Animation types for splat layers
 export type SplatAnimationType =
@@ -1589,7 +1674,11 @@ export type SplatAnimationType =
   | 'orbit'             // Points orbit around center
   | 'wave3d'            // 3D wave propagation
   | 'scatter'           // Random scatter and reassemble
-  | 'spiral';           // Spiral in/out animation
+  | 'spiral' // Spiral in/out animation
+  | 'tumble' // Continuous multi-axis rotation
+  | 'breathe' // Rhythmic expansion and contraction
+  | 'drift' // Coherent floating motion
+  | 'vortex'; // Position-dependent continuous twist
 
 // Displacement effect types
 export type SplatDisplacementType =
@@ -1600,7 +1689,11 @@ export type SplatDisplacementType =
   | 'glitch'            // Random offset glitching
   | 'wind'              // Turbulent wind simulation
   | 'magnetic'          // Attraction/repulsion to points
-  | 'ripple';           // Ripple from interaction point
+  | 'ripple' // Ripple from interaction point
+  | 'curlNoise' // Organic vector-field turbulence
+  | 'twist' // Axis-based torsion
+  | 'radialPulse' // Concentric expanding pressure waves
+  | 'scanline'; // Traveling planar displacement
 
 // Color effect types
 export type SplatColorEffectType =
@@ -1696,6 +1789,7 @@ export interface SplatContent {
   dataType: SplatDataType;        // Point cloud or gaussian splat
   filePath: string;               // Path to .ply/.splat file
   pointCount: number;             // Number of points (read-only, set on load)
+  sourcePointCount?: number; // Original file count before display LOD
   pointDensity: number;           // 0-1, percentage of points to render (1 = all)
   activePointCount: number;       // Current number of active points (read-only)
 
@@ -1750,6 +1844,18 @@ export interface SplatContent {
   positionX: number;              // Position offset
   positionY: number;
   positionZ: number;
+  showTransformGizmo: boolean;
+  // Source-coordinate correction. This is applied before the manual gizmo
+  // transform so animation, interaction, and camera controls all see Y-up data.
+  importOrientation: SplatImportOrientation;
+  importRotationX: number;
+  importRotationY: number;
+  importRotationZ: number;
+  // Best-effort recommendation computed once when source data loads.
+  autoLevelRotationX?: number;
+  autoLevelRotationY?: number;
+  autoLevelRotationZ?: number;
+  autoLevelConfidence?: number;
 
   // Animation
   animationType: SplatAnimationType;
@@ -1761,13 +1867,37 @@ export interface SplatContent {
 
   // Animation-specific params
   explodeForce: number;           // 0-5
+  explodeTurbulence: number; // 0-2
   implodeForce: number;           // 0-5
+  implodeSpin: number; // 0-4
   voxelGridSize: number;          // 2-64
   peelAxis: 'x' | 'y' | 'z';
   peelDirection: 1 | -1;
+  peelWidth: number; // 0.05-2
+  peelCurl: number; // 0-4
+  sliceWidth: number; // 0.05-2
+  sliceSoftness: number; // 0-1
+  sliceTravel: number; // 0.25-3
+  waveAxis: 'x' | 'y' | 'z';
+  animationWaveFrequency: number; // 0.25-12
+  animationWaveAmplitude: number; // 0-2
+  scatterDistance: number; // 0-5
+  scatterRandomness: number; // 0-2
+  spiralRadius: number; // 0-4
+  spiralTurns: number; // 0.25-8
+  spiralLift: number; // -3 to 3
   swarmCohesion: number;          // 0-1
   swarmSeparation: number;        // 0-1
   swarmAlignment: number;         // 0-1
+  gravityStrength: number; // 0-20
+  gravitySpread: number; // 0-2
+  gravityFloor: number; // -3 to 1
+  turntableTilt: number; // -90 to 90
+  tumbleSpread: number; // 0-2
+  breatheAmount: number; // 0-1
+  driftAmount: number; // 0-2
+  vortexTwist: number; // 0-6
+  morphRoundness: number; // 0-1
 
   // Slice plane
   slicePlane: SplatSlicePlane;
@@ -1802,6 +1932,7 @@ export interface SplatContent {
   audioDisplacement: number;      // 0-1
   audioScale: number;             // 0-1
   audioColor: number;             // 0-1
+  audioSmoothing: number; // 0-0.98
 
   // Color effects
   colorEffectType: SplatColorEffectType;
@@ -1812,6 +1943,9 @@ export interface SplatContent {
   tintStrength: number;           // 0-1
   heatmapMin: number;             // 0-1
   heatmapMax: number;             // 0-1
+  depthColorNear: string; // Near color for depth gradient
+  depthColorFar: string; // Far color for depth gradient
+  depthGradientBias: number; // 0-1 depth gradient midpoint
   hologramSpeed: number;          // 0-10
   hologramDensity: number;        // 1-50
 
@@ -1827,6 +1961,28 @@ export interface SplatContent {
   pulseSpeed: number;             // 0-5
   proximityRadius: number;        // 0-1
   dissolveProgress: number;       // 0-1
+
+  // Lighting and atmosphere
+  lightingEnabled: boolean;
+  ambientIntensity: number; // 0-2
+  keyLightIntensity: number; // 0-4
+  keyLightColor: string;
+  keyLightAzimuth: number; // -180 to 180
+  keyLightElevation: number; // -90 to 90
+  rimLightIntensity: number; // 0-4
+  rimLightColor: string;
+  rimLightAzimuth: number; // -180 to 180
+  shadowStrength: number; // 0-1
+  shadowSoftness: number; // 0-1
+  specularStrength: number; // 0-2
+  atmosphereEnabled: boolean;
+  atmosphereDensity: number; // 0-1
+  atmosphereColor: string;
+  atmosphereScale: number; // 0.1-8
+  atmosphereTurbulence: number; // 0-2
+  atmosphereSpeed: number; // 0-3
+  backgroundOpacity: number; // 0-1
+  backgroundColor: string;
 
   // Creative effects
   creativeEffectType: SplatCreativeEffectType;
@@ -1855,6 +2011,10 @@ export interface SplatContent {
   bloomThreshold: number;         // 0-1
   chromatic: number;              // 0-0.02
   vignette: number;               // 0-1
+
+  // Per-parameter Auto playheads. Audio/LFO routing lives in the
+  // modulation store; Auto persists with the splat layer itself.
+  paramAuto?: Record<string, AutoConfig>;
 }
 
 export function createDefaultSplatContent(): SplatContent {
@@ -1891,7 +2051,7 @@ export function createDefaultSplatContent(): SplatContent {
     cameraOrbitEnabled: true,
     autoRotate: false,
     autoRotateSpeed: 1,
-    cameraDistance: 50,  // Default to zoomed out
+    cameraDistance: 5,
     cameraFov: 60,
     cameraOrbitX: 0,
     cameraOrbitY: 0,
@@ -1907,6 +2067,11 @@ export function createDefaultSplatContent(): SplatContent {
     positionX: 0,
     positionY: 0,
     positionZ: 0,
+    showTransformGizmo: true,
+    importOrientation: 'authored',
+    importRotationX: 0,
+    importRotationY: 0,
+    importRotationZ: 0,
 
     animationType: 'none',
     animationSpeed: 1,
@@ -1916,13 +2081,37 @@ export function createDefaultSplatContent(): SplatContent {
     animationIntensity: 1,
 
     explodeForce: 1,
+    explodeTurbulence: 0.25,
     implodeForce: 1,
+    implodeSpin: 0.5,
     voxelGridSize: 16,
     peelAxis: 'y',
     peelDirection: 1,
+    peelWidth: 0.5,
+    peelCurl: 1.5,
+    sliceWidth: 0.35,
+    sliceSoftness: 0.25,
+    sliceTravel: 1,
+    waveAxis: 'y',
+    animationWaveFrequency: 3,
+    animationWaveAmplitude: 0.35,
+    scatterDistance: 1.5,
+    scatterRandomness: 0.75,
+    spiralRadius: 1,
+    spiralTurns: 2,
+    spiralLift: 0.75,
     swarmCohesion: 0.5,
     swarmSeparation: 0.5,
     swarmAlignment: 0.5,
+    gravityStrength: 5,
+    gravitySpread: 0.25,
+    gravityFloor: -2,
+    turntableTilt: 0,
+    tumbleSpread: 1,
+    breatheAmount: 0.25,
+    driftAmount: 0.5,
+    vortexTwist: 2,
+    morphRoundness: 0.85,
 
     slicePlane: {
       enabled: false,
@@ -1961,6 +2150,7 @@ export function createDefaultSplatContent(): SplatContent {
     audioDisplacement: 0.5,
     audioScale: 0.3,
     audioColor: 0.5,
+    audioSmoothing: 0.7,
 
     // Physics flattened
     physicsEnabled: false,
@@ -1982,6 +2172,9 @@ export function createDefaultSplatContent(): SplatContent {
     tintStrength: 0,
     heatmapMin: 0,
     heatmapMax: 1,
+    depthColorNear: '#ff5c33',
+    depthColorFar: '#3377ff',
+    depthGradientBias: 0.5,
     hologramSpeed: 2,
     hologramDensity: 20,
 
@@ -1997,6 +2190,28 @@ export function createDefaultSplatContent(): SplatContent {
     pulseSpeed: 1,
     proximityRadius: 0.3,
     dissolveProgress: 0,
+
+    // Lighting and atmosphere
+    lightingEnabled: true,
+    ambientIntensity: 1,
+    keyLightIntensity: 1.25,
+    keyLightColor: '#ffffff',
+    keyLightAzimuth: 35,
+    keyLightElevation: 45,
+    rimLightIntensity: 0.65,
+    rimLightColor: '#59d9ff',
+    rimLightAzimuth: -135,
+    shadowStrength: 0.35,
+    shadowSoftness: 0.5,
+    specularStrength: 0.35,
+    atmosphereEnabled: false,
+    atmosphereDensity: 0.25,
+    atmosphereColor: '#6a7da8',
+    atmosphereScale: 1.5,
+    atmosphereTurbulence: 0.7,
+    atmosphereSpeed: 0.25,
+    backgroundOpacity: 0,
+    backgroundColor: '#000000',
 
     // Creative effects
     creativeEffectType: 'none',
@@ -2309,6 +2524,21 @@ export interface Model3DContent {
   ambientIntensity: number;
   directionalIntensity: number;
   lightColor: [number, number, number];
+  environmentEnabled: boolean;
+  environmentIntensity: number;
+  toneMappingExposure: number;
+  backgroundMode: 'transparent' | 'color' | 'environment';
+  backgroundColor: [number, number, number];
+  backgroundOpacity: number;
+  keyLightAzimuth: number;
+  keyLightElevation: number;
+  fillIntensity: number;
+  rimIntensity: number;
+  rimColor: [number, number, number];
+  shadowsEnabled: boolean;
+  shadowQuality: 'low' | 'medium' | 'high';
+  shadowSoftness: number;
+  shadowBias: number;
 
   // Audio reactivity
   audio: Model3DAudioMapping;
@@ -2434,6 +2664,21 @@ export function createDefaultModel3DContent(): Model3DContent {
     ambientIntensity: 0.4,
     directionalIntensity: 1.0,
     lightColor: [255, 255, 255],
+    environmentEnabled: true,
+    environmentIntensity: 1,
+    toneMappingExposure: 1,
+    backgroundMode: 'transparent',
+    backgroundColor: [8, 8, 12],
+    backgroundOpacity: 1,
+    keyLightAzimuth: 45,
+    keyLightElevation: 50,
+    fillIntensity: 0.35,
+    rimIntensity: 0.4,
+    rimColor: [120, 180, 255],
+    shadowsEnabled: true,
+    shadowQuality: 'medium',
+    shadowSoftness: 1,
+    shadowBias: -0.0005,
 
     audio: {
       enabled: false,
@@ -3070,9 +3315,15 @@ export interface EffectParams {
   tempAutoCycle?: number;         // 0-1 auto temperature oscillation
 
   // Color Balance (hero) — three-zone RGB
-  cbShadowR?: number;  cbShadowG?: number;  cbShadowB?: number;   // -1..+1 each
-  cbMidR?: number;     cbMidG?: number;     cbMidB?: number;
-  cbHighR?: number;    cbHighG?: number;    cbHighB?: number;
+  cbShadowR?: number;
+  cbShadowG?: number;
+  cbShadowB?: number; // -1..+1 each
+  cbMidR?: number;
+  cbMidG?: number;
+  cbMidB?: number;
+  cbHighR?: number;
+  cbHighG?: number;
+  cbHighB?: number;
   cbPreserveLuma?: number;        // 0-1 keep brightness stable
   cbMix?: number;
 
@@ -3084,9 +3335,15 @@ export interface EffectParams {
   curvesMix?: number;
 
   // Lift / Gamma / Gain (hero) — three-zone color wheels
-  lggLiftR?: number;  lggLiftG?: number;  lggLiftB?: number;     // -0.5..+0.5
-  lggGammaR?: number; lggGammaG?: number; lggGammaB?: number;    // 0.5..1.5
-  lggGainR?: number;  lggGainG?: number;  lggGainB?: number;     // 0.5..2.0
+  lggLiftR?: number;
+  lggLiftG?: number;
+  lggLiftB?: number; // -0.5..+0.5
+  lggGammaR?: number;
+  lggGammaG?: number;
+  lggGammaB?: number; // 0.5..1.5
+  lggGainR?: number;
+  lggGainG?: number;
+  lggGainB?: number; // 0.5..2.0
   lggLumaOnly?: number;           // 0=color shifts, 1=luma-only
   lggMix?: number;
 
@@ -4732,24 +4989,11 @@ export interface OutputSliceShape {
 export type WLEDMappingMode = 'auto-grid' | 'strip' | 'matrix' | 'custom';
 export type WLEDScanAxis = 'horizontal' | 'vertical';
 export type WLEDTestPattern = 'off' | 'solid' | 'rainbow' | 'chase';
-export type WLEDColorSamplingMode =
-  | 'exact'
-  | 'average'
-  | 'dominant'
-  | 'highlight'
-  | 'palette'
-  | 'luma-hue';
+export type WLEDColorSamplingMode = 'exact' | 'average' | 'dominant' | 'highlight' | 'palette' | 'luma-hue';
 export type WLEDEffectBlendMode = 'replace' | 'add' | 'multiply' | 'gate' | 'colorize';
 export type WLEDColorSource = 'shader' | 'palette' | 'custom' | 'rainbow';
 export type WLEDSpeedMode = 'manual' | 'bpm';
-export type WLEDPatternCategory =
-  | 'color'
-  | 'movement'
-  | 'organic'
-  | 'rhythmic'
-  | 'spatial'
-  | 'content'
-  | 'glitch';
+export type WLEDPatternCategory = 'color' | 'movement' | 'organic' | 'rhythmic' | 'spatial' | 'content' | 'glitch';
 export type WLEDPatternId =
   | 'solid-color'
   | 'chase'
@@ -5351,16 +5595,27 @@ export function createLayer(id: string, name: string, type: LayerType = 'media')
     visible: true,
     locked: false,
     opacity: 1,
-    blendMode: type === 'lines' || type === 'svg' || type === 'lightpainting' || type === 'adv-lightpaint' || type === 'splat' || type === 'model3d' ? 'add' : 'normal',
+    blendMode:
+      type === 'lines' ||
+      type === 'svg' ||
+      type === 'lightpainting' ||
+      type === 'adv-lightpaint' ||
+      type === 'splat' ||
+      type === 'model3d'
+        ? 'add'
+        : 'normal',
     source: null,
     linesContent: type === 'lines' ? createDefaultLinesContent() : null,
     svgContent: type === 'svg' ? createDefaultSVGContent() : null,
-    colorContent: type === 'color' ? {
+    colorContent:
+      type === 'color'
+        ? {
       hue: 0,
       saturation: 100,
       lightness: 50,
       alpha: 1,
-    } : null,
+          }
+        : null,
     lightPaintingContent: type === 'lightpainting' ? createDefaultLightPaintingContent() : null,
     advLightPaintingContent: type === 'adv-lightpaint' ? createDefaultAdvLightPaintingContent() : null,
     textContent: type === 'text' ? createDefaultTextContent() : null,
@@ -5377,9 +5632,7 @@ export function createLayer(id: string, name: string, type: LayerType = 'media')
     warpMode: 'corners',
     corners: createDefaultCorners(),
     meshGrid: null,
-    mask: type === 'mask'
-      ? { enabled: true, shapes: [], inverted: false, feather: 0 }
-      : null,
+    mask: type === 'mask' ? { enabled: true, shapes: [], inverted: false, feather: 0 } : null,
     cropRegion: null,
     layerShape: type === 'media' ? createDefaultLayerShape('rectangle') : null,
     effects: [],
@@ -5472,12 +5725,7 @@ export function createDefaultVJModeState(): VJModeState {
   return {
     enabled: false,
     compositions: [],
-    decks: [
-      createVJDeck('deck-a'),
-      createVJDeck('deck-b'),
-      createVJDeck('deck-c'),
-      createVJDeck('deck-d'),
-    ],
+    decks: [createVJDeck('deck-a'), createVJDeck('deck-b'), createVJDeck('deck-c'), createVJDeck('deck-d')],
     timeline: createDefaultTimeline(),
     activeCompositionId: null,
     masterOpacity: 1,
@@ -5592,7 +5840,10 @@ export function createDefaultLayerShape(type: LayerShapeType = 'rectangle'): Lay
         params: {
           ...baseParams,
           lineWidth: 0.05,
-          linePoints: [{ x: 0.2, y: 0.5 }, { x: 0.8, y: 0.5 }],
+          linePoints: [
+            { x: 0.2, y: 0.5 },
+            { x: 0.8, y: 0.5 },
+          ],
           lineCap: 'round',
         },
       };
@@ -5658,7 +5909,7 @@ export function createDefaultEdgeEffect(): EdgeEffect {
  */
 export function convertShapeToCustom(shape: LayerShape): LayerShape {
   const points: Point2D[] = [];
-  const rotation = (shape.params.rotation ?? 0) * Math.PI / 180;
+  const rotation = ((shape.params.rotation ?? 0) * Math.PI) / 180;
   const scale = shape.params.scale ?? 1.0;
 
   const rotatePoint = (x: number, y: number): Point2D => {
@@ -5669,7 +5920,8 @@ export function convertShapeToCustom(shape: LayerShape): LayerShape {
 
   switch (shape.type) {
     case 'rectangle': {
-      const hw = 0.5 * scale, hh = 0.5 * scale;
+      const hw = 0.5 * scale,
+        hh = 0.5 * scale;
       points.push(rotatePoint(-hw, hh));   // top-left
       points.push(rotatePoint(hw, hh));    // top-right
       points.push(rotatePoint(hw, -hh));   // bottom-right
@@ -5801,7 +6053,7 @@ export function getShapeVertices(shape: LayerShape): Point2D[] {
     const [tl, tr, bl, br, center] = shape.controlPoints;
     // Forward bilinear warp: map each UV-space vertex through the quad
     // defined by the 4 corner control points.
-    pts = pts.map(p => {
+    pts = pts.map((p) => {
       const topX = tl.x + (tr.x - tl.x) * p.x;
       const topY = tl.y + (tr.y - tl.y) * p.x;
       const botX = bl.x + (br.x - bl.x) * p.x;

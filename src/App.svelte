@@ -13,6 +13,7 @@
   import MeshWarpHandles from './lib/components/MeshWarpHandles.svelte';
   import ScreenWarpHandles from './lib/components/ScreenWarpHandles.svelte';
   import MasterWarpHandles from './lib/components/MasterWarpHandles.svelte';
+  import Object3DTransformGizmo from './lib/components/Object3DTransformGizmo.svelte';
   import CustomShapeHandles from './lib/components/CustomShapeHandles.svelte';
   // LayerPanel now mounts via LeftSidebar (which swaps it for
   // ScreenPanel when the user is on the Screens tab).
@@ -5911,6 +5912,9 @@
           <!-- Warp handles positioned to match the aspect-ratio-constrained canvas -->
           <div class="warp-handles-offset" style="left: {canvasOffsetX}px; top: {canvasOffsetY}px;">
             <WarpHandles containerWidth={canvasWidth} containerHeight={canvasHeight} zoom={viewportZoom} hideCorners={$selectedLayer.warpMode === 'mesh'} shapeWarpActive={shapeWarpModeEnabled} />
+            {#if $selectedLayer.type !== 'splat' || $selectedLayer.splatContent?.showTransformGizmo !== false}
+              <Object3DTransformGizmo containerWidth={canvasWidth} containerHeight={canvasHeight} zoom={viewportZoom} />
+            {/if}
             {#if $selectedLayer.warpMode === 'mesh'}
               <MeshWarpHandles containerWidth={canvasWidth} containerHeight={canvasHeight} zoom={viewportZoom} />
             {/if}
@@ -6651,6 +6655,7 @@
 
     <!-- VJ Mode Panel (full screen overlay) -->
     <VJModePanel
+      renderEngine={canvasComponent?.getEngine() ?? null}
       onFileAction={(action) => {
         if (action === 'new') newComposition();
         else if (action === 'open') loadComposition();

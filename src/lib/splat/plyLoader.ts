@@ -7,10 +7,10 @@ export interface PLYVertex {
   x: number;
   y: number;
   z: number;
-  r: number;  // 0-255
+  r: number; // 0-255
   g: number;
   b: number;
-  a: number;  // opacity 0-255
+  a: number; // opacity 0-255
   // Normal (optional)
   nx?: number;
   ny?: number;
@@ -19,7 +19,7 @@ export interface PLYVertex {
   scale_0?: number;
   scale_1?: number;
   scale_2?: number;
-  rot_0?: number;  // Quaternion rotation
+  rot_0?: number; // Quaternion rotation
   rot_1?: number;
   rot_2?: number;
   rot_3?: number;
@@ -34,7 +34,10 @@ export interface PLYVertex {
 
 export interface PLYData {
   vertices: PLYVertex[];
+  sourceVertexCount: number;
+  wasDecimated: boolean;
   dataType: SplatDataType;
+  scaleEncoding?: 'log' | 'linear';
   hasUVs: boolean;
   boundingBox: {
     min: { x: number; y: number; z: number };
@@ -42,6 +45,20 @@ export interface PLYData {
   };
   center: { x: number; y: number; z: number };
 }
+
+export interface PLYLoadProgress {
+  phase: 'read' | 'parse';
+  progress: number;
+  sourceVertexCount?: number;
+  loadedVertexCount?: number;
+}
+
+export interface PLYLoadOptions {
+  maxPoints?: number;
+  onProgress?: (status: PLYLoadProgress) => void;
+}
+
+export const DEFAULT_SPLAT_POINT_BUDGET = 1_500_000;
 
 interface PLYProperty {
   name: string;
@@ -54,6 +71,40 @@ interface PLYElement {
   name: string;
   count: number;
   properties: PLYProperty[];
+}
+
+const SH_C0 = 0.28209479177387814;
+
+function clampByte(value: number): number {
+  return Math.max(0, Math.min(255, Math.round(value)));
+}
+
+function gaussianChannel(dc: number | undefined): number {
+  return clampByte((0.5 + SH_C0 * (dc ?? 0)) * 255);
+}
+
+function gaussianOpacity(logit: number | undefined): number {
+  if (logit === undefined) return 255;
+  return clampByte((1 / (1 + Math.exp(-logit))) * 255);
+}
+
+function applyGaussianAppearance(
+  vertex: PLYVertex,
+  read: (name: string) => number | undefined,
+  hasRgb: boolean,
+  hasAlpha: boolean,
+): void {
+  const dc0 = read('f_dc_0');
+  const dc1 = read('f_dc_1');
+  const dc2 = read('f_dc_2');
+  if (!hasRgb && (dc0 !== undefined || dc1 !== undefined || dc2 !== undefined)) {
+    vertex.r = gaussianChannel(dc0);
+    vertex.g = gaussianChannel(dc1);
+    vertex.b = gaussianChannel(dc2);
+  }
+  if (!hasAlpha) {
+    vertex.a = gaussianOpacity(read('opacity'));
+  }
 }
 
 // Parse PLY header to extract element and property info
@@ -177,23 +228,19 @@ function readValue(view: DataView, offset: number, type: string, littleEndian: b
 
 // Detect if the PLY contains gaussian splat data
 function isGaussianSplat(properties: PLYProperty[]): boolean {
-  const propNames = properties.map(p => p.name);
+  const propNames = properties.map((p) => p.name);
   // Gaussian splats typically have scale and rotation properties
-  const hasScale = propNames.some(n => n.startsWith('scale_'));
-  const hasRotation = propNames.some(n => n.startsWith('rot_'));
+  const hasScale = propNames.some((n) => n.startsWith('scale_'));
+  const hasRotation = propNames.some((n) => n.startsWith('rot_'));
   return hasScale && hasRotation;
 }
 
 // Parse ASCII PLY data
-function parseASCII(
-  text: string,
-  headerLength: number,
-  elements: PLYElement[]
-): PLYVertex[] {
+function parseASCII(text: string, headerLength: number, elements: PLYElement[]): PLYVertex[] {
   const vertices: PLYVertex[] = [];
   const dataLines = text.substring(headerLength).trim().split('\n');
 
-  const vertexElement = elements.find(e => e.name === 'vertex');
+  const vertexElement = elements.find((e) => e.name === 'vertex');
   if (!vertexElement) return vertices;
 
   const propIndices: Record<string, number> = {};
@@ -203,15 +250,21 @@ function parseASCII(
 
   for (let i = 0; i < vertexElement.count && i < dataLines.length; i++) {
     const values = dataLines[i].trim().split(/\s+/).map(Number);
+    const read = (name: string) => {
+      const index = propIndices[name];
+      return index === undefined ? undefined : values[index];
+    };
+    const hasRgb = propIndices.red !== undefined && propIndices.green !== undefined && propIndices.blue !== undefined;
+    const hasAlpha = propIndices.alpha !== undefined;
 
     const vertex: PLYVertex = {
-      x: values[propIndices.x] ?? 0,
-      y: values[propIndices.y] ?? 0,
-      z: values[propIndices.z] ?? 0,
-      r: propIndices.red !== undefined ? values[propIndices.red] : 255,
-      g: propIndices.green !== undefined ? values[propIndices.green] : 255,
-      b: propIndices.blue !== undefined ? values[propIndices.blue] : 255,
-      a: propIndices.alpha !== undefined ? values[propIndices.alpha] : 255,
+      x: read('x') ?? 0,
+      y: read('y') ?? 0,
+      z: read('z') ?? 0,
+      r: read('red') ?? 255,
+      g: read('green') ?? 255,
+      b: read('blue') ?? 255,
+      a: read('alpha') ?? 255,
     };
 
     // Normal
@@ -232,6 +285,7 @@ function parseASCII(
     if (propIndices.f_dc_0 !== undefined) vertex.f_dc_0 = values[propIndices.f_dc_0];
     if (propIndices.f_dc_1 !== undefined) vertex.f_dc_1 = values[propIndices.f_dc_1];
     if (propIndices.f_dc_2 !== undefined) vertex.f_dc_2 = values[propIndices.f_dc_2];
+    applyGaussianAppearance(vertex, read, hasRgb, hasAlpha);
 
     // UV coordinates (various naming conventions)
     const uIdx = propIndices.u ?? propIndices.s ?? propIndices.texture_u;
@@ -250,12 +304,13 @@ function parseBinary(
   buffer: ArrayBuffer,
   headerLength: number,
   elements: PLYElement[],
-  littleEndian: boolean
+  littleEndian: boolean,
+  vertexDataOffset = 0,
 ): PLYVertex[] {
   const vertices: PLYVertex[] = [];
   const view = new DataView(buffer, headerLength);
 
-  const vertexElement = elements.find(e => e.name === 'vertex');
+  const vertexElement = elements.find((e) => e.name === 'vertex');
   if (!vertexElement) return vertices;
 
   // Calculate vertex stride
@@ -267,7 +322,7 @@ function parseBinary(
   }
 
   for (let i = 0; i < vertexElement.count; i++) {
-    const baseOffset = i * stride;
+    const baseOffset = vertexDataOffset + i * stride;
 
     const getValue = (name: string): number | undefined => {
       const info = propOffsets[name];
@@ -275,6 +330,8 @@ function parseBinary(
       return readValue(view, baseOffset + info.offset, info.type, littleEndian);
     };
 
+    const hasRgb = !!(propOffsets.red && propOffsets.green && propOffsets.blue);
+    const hasAlpha = !!propOffsets.alpha;
     const vertex: PLYVertex = {
       x: getValue('x') ?? 0,
       y: getValue('y') ?? 0,
@@ -291,6 +348,9 @@ function parseBinary(
       vertex.r = Math.floor(vertex.r * 255);
       vertex.g = Math.floor(vertex.g * 255);
       vertex.b = Math.floor(vertex.b * 255);
+    }
+    const alphaInfo = propOffsets.alpha;
+    if (alphaInfo && (alphaInfo.type === 'float' || alphaInfo.type === 'float32')) {
       vertex.a = Math.floor(vertex.a * 255);
     }
 
@@ -325,6 +385,7 @@ function parseBinary(
     if (f_dc_0 !== undefined) vertex.f_dc_0 = f_dc_0;
     if (f_dc_1 !== undefined) vertex.f_dc_1 = f_dc_1;
     if (f_dc_2 !== undefined) vertex.f_dc_2 = f_dc_2;
+    applyGaussianAppearance(vertex, getValue, hasRgb, hasAlpha);
 
     // UV coordinates (various naming conventions)
     const tex_u = getValue('u') ?? getValue('s') ?? getValue('texture_u');
@@ -335,6 +396,235 @@ function parseBinary(
     vertices.push(vertex);
   }
 
+  return vertices;
+}
+
+function getVertexDataOffset(
+  buffer: ArrayBuffer,
+  headerLength: number,
+  elements: PLYElement[],
+  littleEndian: boolean,
+): number {
+  const view = new DataView(buffer, headerLength);
+  let offset = 0;
+  for (const element of elements) {
+    if (element.name === 'vertex') return offset;
+    offset = skipBinaryElement(view, offset, element, littleEndian);
+  }
+  return offset;
+}
+
+function sampledSourceIndex(outputIndex: number, sourceCount: number, outputCount: number): number {
+  if (outputCount >= sourceCount) return outputIndex;
+  if (outputCount <= 1) return 0;
+  return Math.min(sourceCount - 1, Math.floor((outputIndex * sourceCount) / outputCount));
+}
+
+function yieldToBrowser(): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, 0));
+}
+
+async function parseBinaryProgressive(
+  buffer: ArrayBuffer,
+  headerLength: number,
+  elements: PLYElement[],
+  littleEndian: boolean,
+  maxPoints: number,
+  onProgress?: PLYLoadOptions['onProgress'],
+): Promise<PLYVertex[]> {
+  const vertexElement = elements.find((e) => e.name === 'vertex');
+  if (!vertexElement) return [];
+  if (vertexElement.properties.some((property) => property.isList)) {
+    throw new Error('PLY vertex list properties are not supported');
+  }
+
+  const view = new DataView(buffer, headerLength);
+  const vertexDataOffset = getVertexDataOffset(buffer, headerLength, elements, littleEndian);
+  let stride = 0;
+  const propOffsets: Record<string, { offset: number; type: string }> = {};
+  for (const prop of vertexElement.properties) {
+    propOffsets[prop.name] = { offset: stride, type: prop.type };
+    stride += getTypeSize(prop.type);
+  }
+
+  const outputCount = Math.min(vertexElement.count, maxPoints);
+  const vertices = new Array<PLYVertex>(outputCount);
+  const hasRgb = !!(propOffsets.red && propOffsets.green && propOffsets.blue);
+  const hasAlpha = !!propOffsets.alpha;
+  const redInfo = propOffsets.red;
+  const alphaInfo = propOffsets.alpha;
+
+  for (let outputIndex = 0; outputIndex < outputCount; outputIndex++) {
+    const sourceIndex = sampledSourceIndex(outputIndex, vertexElement.count, outputCount);
+    const baseOffset = vertexDataOffset + sourceIndex * stride;
+    if (baseOffset + stride > view.byteLength) {
+      throw new Error(
+        `PLY vertex data ended early at ${sourceIndex.toLocaleString()} of ${vertexElement.count.toLocaleString()} points`,
+      );
+    }
+    const read = (name: string): number | undefined => {
+      const info = propOffsets[name];
+      return info ? readValue(view, baseOffset + info.offset, info.type, littleEndian) : undefined;
+    };
+    const vertex: PLYVertex = {
+      x: read('x') ?? 0,
+      y: read('y') ?? 0,
+      z: read('z') ?? 0,
+      r: read('red') ?? 255,
+      g: read('green') ?? 255,
+      b: read('blue') ?? 255,
+      a: read('alpha') ?? 255,
+    };
+
+    if (redInfo && (redInfo.type === 'float' || redInfo.type === 'float32')) {
+      vertex.r = clampByte(vertex.r * 255);
+      vertex.g = clampByte(vertex.g * 255);
+      vertex.b = clampByte(vertex.b * 255);
+    }
+    if (alphaInfo && (alphaInfo.type === 'float' || alphaInfo.type === 'float32')) {
+      vertex.a = clampByte(vertex.a * 255);
+    }
+
+    for (const name of [
+      'nx',
+      'ny',
+      'nz',
+      'scale_0',
+      'scale_1',
+      'scale_2',
+      'rot_0',
+      'rot_1',
+      'rot_2',
+      'rot_3',
+      'f_dc_0',
+      'f_dc_1',
+      'f_dc_2',
+    ] as const) {
+      const value = read(name);
+      if (value !== undefined) vertex[name] = value;
+    }
+    applyGaussianAppearance(vertex, read, hasRgb, hasAlpha);
+    const textureU = read('u') ?? read('s') ?? read('texture_u');
+    const textureV = read('v') ?? read('t') ?? read('texture_v');
+    if (textureU !== undefined) vertex.texture_u = textureU;
+    if (textureV !== undefined) vertex.texture_v = textureV;
+    vertices[outputIndex] = vertex;
+
+    if ((outputIndex + 1) % 25_000 === 0) {
+      onProgress?.({
+        phase: 'parse',
+        progress: (outputIndex + 1) / outputCount,
+        sourceVertexCount: vertexElement.count,
+        loadedVertexCount: outputIndex + 1,
+      });
+      await yieldToBrowser();
+    }
+  }
+  onProgress?.({
+    phase: 'parse',
+    progress: 1,
+    sourceVertexCount: vertexElement.count,
+    loadedVertexCount: outputCount,
+  });
+  return vertices;
+}
+
+async function parseASCIIProgressive(
+  text: string,
+  headerLength: number,
+  elements: PLYElement[],
+  maxPoints: number,
+  onProgress?: PLYLoadOptions['onProgress'],
+): Promise<PLYVertex[]> {
+  const vertexElement = elements.find((e) => e.name === 'vertex');
+  if (!vertexElement) return [];
+  const outputCount = Math.min(vertexElement.count, maxPoints);
+  const vertices = new Array<PLYVertex>(outputCount);
+  const propIndices: Record<string, number> = {};
+  vertexElement.properties.forEach((property, index) => {
+    propIndices[property.name] = index;
+  });
+  const rowsBeforeVertex = elements
+    .slice(0, elements.indexOf(vertexElement))
+    .reduce((sum, element) => sum + element.count, 0);
+  let cursor = headerLength;
+  for (let row = 0; row < rowsBeforeVertex; row++) {
+    const newline = text.indexOf('\n', cursor);
+    cursor = newline < 0 ? text.length : newline + 1;
+  }
+
+  let sourceIndex = 0;
+  let outputIndex = 0;
+  let nextSample = sampledSourceIndex(outputIndex, vertexElement.count, outputCount);
+  while (sourceIndex < vertexElement.count && cursor < text.length && outputIndex < outputCount) {
+    const newline = text.indexOf('\n', cursor);
+    const lineEnd = newline < 0 ? text.length : newline;
+    if (sourceIndex === nextSample) {
+      const values = text.slice(cursor, lineEnd).trim().split(/\s+/).map(Number);
+      const read = (name: string): number | undefined => {
+        const index = propIndices[name];
+        return index === undefined ? undefined : values[index];
+      };
+      const hasRgb = propIndices.red !== undefined && propIndices.green !== undefined && propIndices.blue !== undefined;
+      const hasAlpha = propIndices.alpha !== undefined;
+      const vertex: PLYVertex = {
+        x: read('x') ?? 0,
+        y: read('y') ?? 0,
+        z: read('z') ?? 0,
+        r: read('red') ?? 255,
+        g: read('green') ?? 255,
+        b: read('blue') ?? 255,
+        a: read('alpha') ?? 255,
+      };
+      for (const name of [
+        'nx',
+        'ny',
+        'nz',
+        'scale_0',
+        'scale_1',
+        'scale_2',
+        'rot_0',
+        'rot_1',
+        'rot_2',
+        'rot_3',
+        'f_dc_0',
+        'f_dc_1',
+        'f_dc_2',
+      ] as const) {
+        const value = read(name);
+        if (value !== undefined) vertex[name] = value;
+      }
+      applyGaussianAppearance(vertex, read, hasRgb, hasAlpha);
+      const textureU = read('u') ?? read('s') ?? read('texture_u');
+      const textureV = read('v') ?? read('t') ?? read('texture_v');
+      if (textureU !== undefined) vertex.texture_u = textureU;
+      if (textureV !== undefined) vertex.texture_v = textureV;
+      vertices[outputIndex++] = vertex;
+      nextSample = sampledSourceIndex(outputIndex, vertexElement.count, outputCount);
+      if (outputIndex % 10_000 === 0) {
+        onProgress?.({
+          phase: 'parse',
+          progress: outputIndex / outputCount,
+          sourceVertexCount: vertexElement.count,
+          loadedVertexCount: outputIndex,
+        });
+        await yieldToBrowser();
+      }
+    }
+    sourceIndex++;
+    cursor = newline < 0 ? text.length : newline + 1;
+  }
+  if (outputIndex !== outputCount) {
+    throw new Error(
+      `ASCII PLY ended after ${sourceIndex.toLocaleString()} of ${vertexElement.count.toLocaleString()} vertex rows`,
+    );
+  }
+  onProgress?.({
+    phase: 'parse',
+    progress: 1,
+    sourceVertexCount: vertexElement.count,
+    loadedVertexCount: outputCount,
+  });
   return vertices;
 }
 
@@ -353,8 +643,12 @@ function calculateBounds(vertices: PLYVertex[]): {
     };
   }
 
-  let minX = Infinity, minY = Infinity, minZ = Infinity;
-  let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+  let minX = Infinity,
+    minY = Infinity,
+    minZ = Infinity;
+  let maxX = -Infinity,
+    maxY = -Infinity,
+    maxZ = -Infinity;
 
   for (const v of vertices) {
     if (v.x < minX) minX = v.x;
@@ -379,21 +673,19 @@ function calculateBounds(vertices: PLYVertex[]): {
 }
 
 // Load PLY from file path or URL
-export async function loadPLY(pathOrUrl: string): Promise<PLYData> {
+export async function loadPLY(pathOrUrl: string, options: PLYLoadOptions = {}): Promise<PLYData> {
   let buffer: ArrayBuffer;
 
-  // Handle Tauri file paths vs URLs
-  if (pathOrUrl.startsWith('http://') || pathOrUrl.startsWith('https://')) {
-    const response = await fetch(pathOrUrl);
-    buffer = await response.arrayBuffer();
-  } else {
-    // For local files in Tauri, we need to use the Tauri fs API
-    // This will be called from the frontend which handles the file reading
-    const response = await fetch(pathOrUrl);
-    buffer = await response.arrayBuffer();
+  const response = await fetch(pathOrUrl);
+  if (!response.ok && !pathOrUrl.startsWith('blob:')) {
+    throw new Error(`Failed to read PLY: ${response.status} ${response.statusText}`);
   }
+  options.onProgress?.({ phase: 'read', progress: 0 });
+  buffer = await response.arrayBuffer();
+  options.onProgress?.({ phase: 'read', progress: 1 });
 
-  return parsePLYBuffer(buffer);
+  await yieldToBrowser();
+  return parsePLYBufferProgressive(buffer, options);
 }
 
 // Calculate the byte size of one element row (non-list properties only)
@@ -409,13 +701,8 @@ function getElementStride(element: PLYElement): number {
 
 // Skip past a binary element that may contain list properties
 // Returns the byte offset after skipping all rows of this element
-function skipBinaryElement(
-  view: DataView,
-  startOffset: number,
-  element: PLYElement,
-  littleEndian: boolean
-): number {
-  const hasList = element.properties.some(p => p.isList);
+function skipBinaryElement(view: DataView, startOffset: number, element: PLYElement, littleEndian: boolean): number {
+  const hasList = element.properties.some((p) => p.isList);
 
   if (!hasList) {
     // Fixed-size rows — skip by stride × count
@@ -446,7 +733,7 @@ function readBinaryFaces(
   view: DataView,
   startOffset: number,
   faceElement: PLYElement,
-  littleEndian: boolean
+  littleEndian: boolean,
 ): { faces: number[][]; endOffset: number } {
   const faces: number[][] = [];
   let offset = startOffset;
@@ -477,7 +764,7 @@ function readBinaryMultiTextureVertices(
   view: DataView,
   startOffset: number,
   element: PLYElement,
-  littleEndian: boolean
+  littleEndian: boolean,
 ): { uvs: { tx: number; u: number; v: number }[]; endOffset: number } {
   const uvs: { tx: number; u: number; v: number }[] = [];
 
@@ -512,7 +799,7 @@ function readBinaryMultiTextureFaces(
   view: DataView,
   startOffset: number,
   element: PLYElement,
-  littleEndian: boolean
+  littleEndian: boolean,
 ): { texFaces: number[][]; endOffset: number } {
   const texFaces: number[][] = [];
   let offset = startOffset;
@@ -547,23 +834,25 @@ export function parsePLYBuffer(buffer: ArrayBuffer): PLYData {
 
   const { elements, format, headerLength } = parseHeader(headerText);
 
-  const vertexElement = elements.find(e => e.name === 'vertex');
+  const vertexElement = elements.find((e) => e.name === 'vertex');
   if (!vertexElement) {
     throw new Error('PLY file does not contain vertex element');
   }
 
   // Determine if this is a gaussian splat or point cloud
-  const dataType: SplatDataType = isGaussianSplat(vertexElement.properties)
-    ? 'gaussian'
-    : 'pointcloud';
+  const dataType: SplatDataType = isGaussianSplat(vertexElement.properties) ? 'gaussian' : 'pointcloud';
 
   let vertices: PLYVertex[];
 
   if (format === 'ascii') {
-    vertices = parseASCII(headerText, headerLength, elements);
+    // The former 10 KB header probe was also used as the entire ASCII file,
+    // truncating every substantial ASCII PLY.
+    const fullText = decoder.decode(buffer);
+    vertices = parseASCII(fullText, headerLength, elements);
   } else {
     const littleEndian = format === 'binary_little_endian';
-    vertices = parseBinary(buffer, headerLength, elements, littleEndian);
+    const vertexDataOffset = getVertexDataOffset(buffer, headerLength, elements, littleEndian);
+    vertices = parseBinary(buffer, headerLength, elements, littleEndian, vertexDataOffset);
   }
 
   // Check if vertices already have UVs (from vertex element properties)
@@ -571,9 +860,9 @@ export function parsePLYBuffer(buffer: ArrayBuffer): PLYData {
 
   // If no per-vertex UVs, try to read multi_texture elements (Artec 3D scanner format)
   if (!hasUVs && format !== 'ascii') {
-    const faceElement = elements.find(e => e.name === 'face');
-    const multiTexVertElement = elements.find(e => e.name === 'multi_texture_vertex');
-    const multiTexFaceElement = elements.find(e => e.name === 'multi_texture_face');
+    const faceElement = elements.find((e) => e.name === 'face');
+    const multiTexVertElement = elements.find((e) => e.name === 'multi_texture_vertex');
+    const multiTexFaceElement = elements.find((e) => e.name === 'multi_texture_face');
 
     if (faceElement && multiTexVertElement && multiTexFaceElement) {
       try {
@@ -591,26 +880,30 @@ export function parsePLYBuffer(buffer: ArrayBuffer): PLYData {
         }
 
         // Read face vertex indices
-        const { faces } = readBinaryFaces(
-          view, elementOffsets['face'], faceElement, littleEndian
-        );
+        const { faces } = readBinaryFaces(view, elementOffsets['face'], faceElement, littleEndian);
 
         // Read multi_texture_vertex UVs
         const { uvs: texVerts } = readBinaryMultiTextureVertices(
-          view, elementOffsets['multi_texture_vertex'], multiTexVertElement, littleEndian
+          view,
+          elementOffsets['multi_texture_vertex'],
+          multiTexVertElement,
+          littleEndian,
         );
 
         // Read multi_texture_face texture vertex indices
         const { texFaces } = readBinaryMultiTextureFaces(
-          view, elementOffsets['multi_texture_face'], multiTexFaceElement, littleEndian
+          view,
+          elementOffsets['multi_texture_face'],
+          multiTexFaceElement,
+          littleEndian,
         );
 
         // Map UVs from texture vertices to geometry vertices via face connectivity
         // For each face, pair geometry vertex indices with texture vertex indices
         const numFaces = Math.min(faces.length, texFaces.length);
         for (let fi = 0; fi < numFaces; fi++) {
-          const geomFace = faces[fi];     // geometry vertex indices
-          const texFace = texFaces[fi];   // texture vertex indices
+          const geomFace = faces[fi]; // geometry vertex indices
+          const texFace = texFaces[fi]; // texture vertex indices
 
           const count = Math.min(geomFace.length, texFace.length);
           for (let ci = 0; ci < count; ci++) {
@@ -618,18 +911,22 @@ export function parsePLYBuffer(buffer: ArrayBuffer): PLYData {
             const texVertIdx = texFace[ci];
 
             // Only assign if vertex doesn't already have UVs (first-write wins)
-            if (vertIdx < vertices.length &&
-                texVertIdx < texVerts.length &&
-                vertices[vertIdx].texture_u === undefined) {
+            if (
+              vertIdx < vertices.length &&
+              texVertIdx < texVerts.length &&
+              vertices[vertIdx].texture_u === undefined
+            ) {
               vertices[vertIdx].texture_u = texVerts[texVertIdx].u;
               vertices[vertIdx].texture_v = texVerts[texVertIdx].v;
             }
           }
         }
 
-        hasUVs = vertices.some(v => v.texture_u !== undefined);
+        hasUVs = vertices.some((v) => v.texture_u !== undefined);
         if (hasUVs) {
-          console.log(`[PLY] Mapped UVs from multi_texture elements to ${vertices.filter(v => v.texture_u !== undefined).length}/${vertices.length} vertices`);
+          console.log(
+            `[PLY] Mapped UVs from multi_texture elements to ${vertices.filter((v) => v.texture_u !== undefined).length}/${vertices.length} vertices`,
+          );
         }
       } catch (err) {
         console.warn('[PLY] Failed to parse multi_texture elements:', err);
@@ -641,7 +938,53 @@ export function parsePLYBuffer(buffer: ArrayBuffer): PLYData {
 
   return {
     vertices,
+    sourceVertexCount: vertexElement.count,
+    wasDecimated: false,
     dataType,
+    scaleEncoding: dataType === 'gaussian' ? 'log' : undefined,
+    hasUVs,
+    boundingBox,
+    center,
+  };
+}
+
+export async function parsePLYBufferProgressive(buffer: ArrayBuffer, options: PLYLoadOptions = {}): Promise<PLYData> {
+  if (buffer.byteLength < 16) throw new Error('PLY file is empty or incomplete');
+  const decoder = new TextDecoder('ascii');
+  const headerProbe = decoder.decode(buffer.slice(0, Math.min(buffer.byteLength, 64 * 1024)));
+  if (!headerProbe.includes('end_header')) {
+    throw new Error('PLY header is incomplete or exceeds the supported 64 KB header limit');
+  }
+  const { elements, format, headerLength } = parseHeader(headerProbe);
+  const vertexElement = elements.find((element) => element.name === 'vertex');
+  if (!vertexElement) throw new Error('PLY file does not contain vertex element');
+  if (headerLength >= buffer.byteLength) throw new Error('PLY file contains a header but no vertex data');
+
+  const maxPoints = Math.max(1, Math.floor(options.maxPoints ?? DEFAULT_SPLAT_POINT_BUDGET));
+  const dataType: SplatDataType = isGaussianSplat(vertexElement.properties) ? 'gaussian' : 'pointcloud';
+  let vertices: PLYVertex[];
+  if (format === 'ascii') {
+    const fullText = decoder.decode(buffer);
+    vertices = await parseASCIIProgressive(fullText, headerLength, elements, maxPoints, options.onProgress);
+  } else {
+    vertices = await parseBinaryProgressive(
+      buffer,
+      headerLength,
+      elements,
+      format === 'binary_little_endian',
+      maxPoints,
+      options.onProgress,
+    );
+  }
+
+  const hasUVs = vertices.length > 0 && vertices.some((vertex) => vertex.texture_u !== undefined);
+  const { boundingBox, center } = calculateBounds(vertices);
+  return {
+    vertices,
+    sourceVertexCount: vertexElement.count,
+    wasDecimated: vertices.length < vertexElement.count,
+    dataType,
+    scaleEncoding: dataType === 'gaussian' ? 'log' : undefined,
     hasUVs,
     boundingBox,
     center,
@@ -649,18 +992,10 @@ export function parsePLYBuffer(buffer: ArrayBuffer): PLYData {
 }
 
 // Load PLY from File object (for drag-and-drop or file input)
-export async function loadPLYFromFile(file: File): Promise<PLYData> {
-  return new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => {
-      try {
-        const result = parsePLYBuffer(reader.result as ArrayBuffer);
-        resolve(result);
-      } catch (err) {
-        reject(err);
-      }
-    };
-    reader.onerror = () => reject(reader.error);
-    reader.readAsArrayBuffer(file);
-  });
+export async function loadPLYFromFile(file: File, options: PLYLoadOptions = {}): Promise<PLYData> {
+  options.onProgress?.({ phase: 'read', progress: 0 });
+  const buffer = await file.arrayBuffer();
+  options.onProgress?.({ phase: 'read', progress: 1 });
+  await yieldToBrowser();
+  return parsePLYBufferProgressive(buffer, options);
 }

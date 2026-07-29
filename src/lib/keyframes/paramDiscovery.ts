@@ -1,6 +1,7 @@
 import type { Layer } from '../types';
 import { effectParamLabels } from '../effects/effectUX';
 import { getShaderDef } from '../renderer/gpuShaderCatalog';
+import { SPLAT_AUTOMATABLE_PARAMS } from '../splat/splatParamSchema';
 
 export interface KeyframeableParam {
   key: string;             // track key: "shader:speed", "fx:abc:blurRadius", "fx:abc:enabled"
@@ -101,7 +102,15 @@ export function discoverKeyframeableParams(layer: Layer): KeyframeableParam[] {
       { path: 'dissolveAmount',            label: 'Dissolve',        min: 0,  max: 1, step: 0.01, group: '3D Material' },
       // Lighting
       { path: 'ambientIntensity',     label: 'Ambient',     min: 0, max: 2, step: 0.01, group: '3D Lighting' },
-      { path: 'directionalIntensity', label: 'Directional', min: 0, max: 3, step: 0.01, group: '3D Lighting' },
+      { path: 'directionalIntensity', label: 'Key Power',   min: 0, max: 3, step: 0.01, group: '3D Lighting' },
+      { path: 'environmentIntensity', label: 'Environment', min: 0, max: 3, step: 0.01, group: '3D Lighting' },
+      { path: 'toneMappingExposure',  label: 'Exposure',    min: 0.1, max: 3, step: 0.01, group: '3D Lighting' },
+      { path: 'keyLightAzimuth',      label: 'Key Azimuth', min: -180, max: 180, step: 1, group: '3D Lighting' },
+      { path: 'keyLightElevation',    label: 'Key Elevation', min: -10, max: 90, step: 1, group: '3D Lighting' },
+      { path: 'fillIntensity',        label: 'Fill Power',  min: 0, max: 3, step: 0.01, group: '3D Lighting' },
+      { path: 'rimIntensity',         label: 'Rim Power',   min: 0, max: 3, step: 0.01, group: '3D Lighting' },
+      { path: 'shadowSoftness',       label: 'Shadow Softness', min: 0, max: 4, step: 0.01, group: '3D Shadows' },
+      { path: 'shadowBias',           label: 'Shadow Bias', min: -0.01, max: 0.01, step: 0.0001, group: '3D Shadows' },
       // Wireframe / Decorations
       { path: 'wireframeOpacity',     label: 'Wireframe Opacity', min: 0, max: 1, step: 0.01, group: '3D Style' },
       { path: 'wireframeAnimSpeed',   label: 'Wireframe Speed',   min: 0, max: 5, step: 0.01, group: '3D Style' },
@@ -127,6 +136,23 @@ export function discoverKeyframeableParams(layer: Layer): KeyframeableParam[] {
         step: def.step,
         defaultValue: typeof cur === 'number' ? cur : 0,
         group: def.group,
+      });
+    }
+  }
+
+  if (layer.type === 'splat' && layer.splatContent) {
+    const content = layer.splatContent as unknown as Record<string, unknown>;
+    for (const def of SPLAT_AUTOMATABLE_PARAMS) {
+      const value = content[def.key];
+      params.push({
+        key: `splat:${def.key}`,
+        label: def.label,
+        type: 'number',
+        min: def.min,
+        max: def.max,
+        step: def.step,
+        defaultValue: typeof value === 'number' ? value : def.min,
+        group: `Splat · ${def.group}`,
       });
     }
   }
