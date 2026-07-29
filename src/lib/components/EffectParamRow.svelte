@@ -19,12 +19,12 @@
    * in both editor and projector output windows (the engine ticks in
    * both via modulationBroadcast).
    */
-  import { modulationStore, registerEffectParamRange, registerEdgeEffectParamRange, registerGPUParamRange, type ModSource, type ParamModulation } from '../audio/modulation';
+  import { modulationStore, registerEffectParamRange, registerEdgeEffectParamRange, registerGPUParamRange, registerSplatParamRange, type ModSource, type ParamModulation } from '../audio/modulation';
   import { project, layers } from '../stores/layers';
   import { vjClipLauncher } from '../stores/vjClipLauncher';
   import { defaultAutoFor } from '../audio/autoEngine';
   import type { AutoConfig } from '../types';
-  import { tick } from 'svelte';
+  import { onMount, tick } from 'svelte';
   import ModTray, { modSourceLabel } from './ModTray.svelte';
 
   export let label: string;
@@ -41,10 +41,11 @@
    *    'fx'   — `layer.effects[].params[paramName]`  (default)
    *    'edge' — `layer.edgeEffects.effects[].<paramName>` (nested path)
    *    'gpu'  — `layer.gpuLayerContent.params[paramName]` (mapping-only)
+   *    'splat' — `layer.splatContent[paramName]` (mapping-only)
    *  Defaults to 'fx' so existing call sites don't need updates. For
    *  'gpu' the `effectId` prop is unused (every GPU layer has exactly
    *  one shader at a time, so addressing is just layerIndex + paramKey). */
-  export let effectKind: 'fx' | 'edge' | 'gpu' = 'fx';
+  export let effectKind: 'fx' | 'edge' | 'gpu' | 'splat' = 'fx';
   /** Which render graph this row writes to:
    *    'mapping' — project.layers (LayerPanel, EdgeEffectsPanel)
    *    'vj'      — vjClipLauncher.layerStates (VJ Mode performer panel)
@@ -56,6 +57,29 @@
   export let vjBank: 'A' | 'B' = 'A';
   export let onChange: (v: number) => void = () => {};
   export let displayValue: ((v: number) => string) | undefined = undefined;
+  /** Render only the compact modulation button. This lets panels keep
+   *  their established slider/value UI while sharing the exact same
+   *  Manual / Audio / LFO / Beat / Auto routing used by shader params. */
+  export let buttonOnly: boolean = false;
+
+  let rootEl: HTMLDivElement | null = null;
+
+  // SplatPanel already owns its established range input. In mapping mode,
+  // buttonOnly replaces that input with this component's shader-style track
+  // so Auto can draw its min/max slippers on the same slider. Do this
+  // explicitly instead of relying on a cross-component :has() selector,
+  // which is not reliable after Svelte scopes the packaged CSS.
+  onMount(() => {
+    if (!buttonOnly || !rootEl) return;
+    const originalSlider = rootEl.previousElementSibling;
+    if (!(originalSlider instanceof HTMLInputElement) || originalSlider.type !== 'range') return;
+
+    const previousDisplay = originalSlider.style.display;
+    originalSlider.style.display = 'none';
+    return () => {
+      originalSlider.style.display = previousDisplay;
+    };
+  });
 
   // ---- Range registration so engine clamps modulated output ----
   // Routes to whichever registry matches the kind so engine reads
@@ -64,6 +88,8 @@
     registerEdgeEffectParamRange(layerIndex, effectId, paramName, min, max);
   } else if (effectKind === 'gpu') {
     registerGPUParamRange(layerIndex, paramName, min, max);
+  } else if (effectKind === 'splat') {
+    registerSplatParamRange(layerIndex, paramName, min, max);
   } else {
     registerEffectParamRange(layerIndex, effectId, paramName, min, max);
   }
@@ -115,6 +141,8 @@
     ? `map:${layerIndex}:edge:${effectId}:${paramName}`
     : effectKind === 'gpu'
       ? `map:${layerIndex}:gpu:${paramName}`
+      : effectKind === 'splat'
+        ? `map:${layerIndex}:splat:${paramName}`
       : target === 'vj'
         ? `${vjBank === 'B' ? 'B:' : ''}${layerIndex}:fx:${effectId}:${paramName}`
         : `map:${layerIndex}:fx:${effectId}:${paramName}`;
@@ -122,11 +150,11 @@
 
   // Look up the live effect (mapping layer OR VJ layer state) so we
   // can read the paramAuto sidecar for the Auto UI state.
-  $: currentMappingLayer = target === 'mapping' || effectKind === 'gpu' ? $layers[layerIndex] : undefined;
-  $: currentVjLayerState = target === 'vj' && effectKind !== 'gpu'
+  $: currentMappingLayer = target === 'mapping' || effectKind === 'gpu' || effectKind === 'splat' ? $layers[layerIndex] : undefined;
+  $: currentVjLayerState = target === 'vj' && effectKind !== 'gpu' && effectKind !== 'splat'
     ? (vjBank === 'B' ? vjLauncherState.bankBLayerStates : vjLauncherState.layerStates)[layerIndex]
     : undefined;
-  $: currentEffect = effectKind === 'gpu'
+  $: currentEffect = effectKind === 'gpu' || effectKind === 'splat'
     ? null
     : target === 'vj'
       ? currentVjLayerState?.effects.find(e => e.id === effectId)
@@ -136,6 +164,8 @@
   // For gpu, the paramAuto sidecar lives on gpuLayerContent itself.
   $: existingAuto = effectKind === 'gpu'
     ? (currentMappingLayer?.gpuLayerContent?.paramAuto as Record<string, AutoConfig> | undefined)?.[paramName]
+    : effectKind === 'splat'
+      ? (currentMappingLayer?.splatContent?.paramAuto as Record<string, AutoConfig> | undefined)?.[paramName]
     : (currentEffect?.paramAuto as Record<string, AutoConfig> | undefined)?.[paramName];
 
   $: currentSource = existingAuto
@@ -149,6 +179,8 @@
       modulationStore.setEdgeEffectModulation(layerIndex, effectId, paramName, mod, 'mapping');
     } else if (effectKind === 'gpu') {
       modulationStore.setGPUParamModulation(layerIndex, paramName, mod);
+    } else if (effectKind === 'splat') {
+      modulationStore.setSplatParamModulation(layerIndex, paramName, mod);
     } else if (target === 'vj') {
       modulationStore.setEffectModulation(layerIndex, effectId, paramName, mod, vjBank, 'vj');
     } else {
@@ -168,6 +200,12 @@
     if (effectKind === 'gpu') {
       if (currentMappingLayer) {
         project.setGPULayerParamAuto(currentMappingLayer.id, paramName, auto);
+      }
+      return;
+    }
+    if (effectKind === 'splat') {
+      if (currentMappingLayer) {
+        project.setSplatParamAuto(currentMappingLayer.id, paramName, auto);
       }
       return;
     }
@@ -218,78 +256,130 @@
   }
 </script>
 
-<div class="epr" class:modulated={isModulated}>
-  <!-- Row 1: label · source dropdown · value -->
-  <div class="epr-head">
-    <span class="epr-label" title={label}>{label}</span>
-    <button
-      bind:this={chipEl}
-      type="button"
-      class="epr-source"
-      class:active={isModulated}
-      class:open={trayOpen}
-      title="Modulation — audio bands, LFO with BPM sync, auto playhead"
-      onclick={() => trayOpen = !trayOpen}
-    >{modSourceLabel(currentSource, isAuto)}</button>
-    {#if editing}
-      <input
-        bind:this={editEl}
-        bind:value={editBuffer}
-        class="epr-edit"
-        type="text"
-        inputmode="decimal"
-        onblur={commit}
-        onkeydown={onEditKey}
-      />
-    {:else}
-      <button type="button" class="epr-value" title="Click to type a precise value" onclick={startEdit} ondblclick={startEdit}>
-        {shown}
-      </button>
-    {/if}
-  </div>
+<div bind:this={rootEl} class="epr" class:modulated={isModulated} class:button-only={buttonOnly}>
+  {#if buttonOnly}
+    <div class="epr-compact-track">
+      <div class="epr-track-wrap">
+        <input
+          class="epr-slider"
+          type="range"
+          {min}
+          {max}
+          {step}
+          {value}
+          data-midi-path={effectKind === 'edge' ? `map:edge:${effectId}:${paramName}` : effectKind === 'gpu' ? `map:gpu:${paramName}` : effectKind === 'splat' ? `map:splat:${paramName}` : `map:effect:${effectId}:${paramName}`}
+          data-midi-label={label}
+          data-midi-min={min}
+          data-midi-max={max}
+          data-midi-step={step}
+          oninput={(e) => onChange(parseFloat((e.target as HTMLInputElement).value))}
+        />
+        {#if isAuto && existingAuto}
+          {@const _rSpan = (max - min) || 1}
+          {@const _aMin = existingAuto.min}
+          {@const _aMax = existingAuto.max}
+          {@const _aMinFrac = (_aMin - min) / _rSpan}
+          {@const _aMaxFrac = (_aMax - min) / _rSpan}
+          <div class="epr-slipper-fill" style="left: {_aMinFrac * 100}%; right: {(1 - _aMaxFrac) * 100}%"></div>
+          <input type="range" min={min} max={max} step={_rSpan / 200} value={_aMin}
+            class="epr-slipper epr-slipper-min"
+            aria-label={`${label} auto minimum`}
+            oninput={(e) => {
+              const v = parseFloat((e.target as HTMLInputElement).value);
+              setAutoField('min', Math.min(v, _aMax - _rSpan * 0.02));
+            }} />
+          <input type="range" min={min} max={max} step={_rSpan / 200} value={_aMax}
+            class="epr-slipper epr-slipper-max"
+            aria-label={`${label} auto maximum`}
+            oninput={(e) => {
+              const v = parseFloat((e.target as HTMLInputElement).value);
+              setAutoField('max', Math.max(v, _aMin + _rSpan * 0.02));
+            }} />
+        {/if}
+      </div>
+      <button
+        bind:this={chipEl}
+        type="button"
+        class="epr-source"
+        class:active={isModulated}
+        class:open={trayOpen}
+        title="Modulation — audio bands, LFO with BPM sync, auto playhead"
+        onclick={() => trayOpen = !trayOpen}
+      >{modSourceLabel(currentSource, isAuto)}</button>
+    </div>
+  {:else}
+    <!-- Row 1: label · source dropdown · value -->
+    <div class="epr-head">
+      <span class="epr-label" title={label}>{label}</span>
+      <button
+        bind:this={chipEl}
+        type="button"
+        class="epr-source"
+        class:active={isModulated}
+        class:open={trayOpen}
+        title="Modulation — audio bands, LFO with BPM sync, auto playhead"
+        onclick={() => trayOpen = !trayOpen}
+      >{modSourceLabel(currentSource, isAuto)}</button>
+      {#if editing}
+        <input
+          bind:this={editEl}
+          bind:value={editBuffer}
+          class="epr-edit"
+          type="text"
+          inputmode="decimal"
+          onblur={commit}
+          onkeydown={onEditKey}
+        />
+      {:else}
+        <button type="button" class="epr-value" title="Click to type a precise value" onclick={startEdit} ondblclick={startEdit}>
+          {shown}
+        </button>
+      {/if}
+    </div>
 
-  <!-- Row 2: the actual param slider (+ optional Auto-mode slippers
-       overlaid on the same track when source='auto'). -->
-  <div class="epr-track-wrap">
-    <input
-      class="epr-slider"
-      type="range"
-      {min}
-      {max}
-      {step}
-      {value}
-      data-midi-path={effectKind === 'edge' ? `map:edge:${effectId}:${paramName}` : effectKind === 'gpu' ? `map:gpu:${paramName}` : `map:effect:${effectId}:${paramName}`}
-      data-midi-label={label}
-      data-midi-min={min}
-      data-midi-max={max}
-      data-midi-step={step}
-      oninput={(e) => onChange(parseFloat((e.target as HTMLInputElement).value))}
-    />
-    <!-- Slippers — two range inputs overlaid on the main slider so
-         their 0..1 axis lines up 1:1 with min..max above. Same
-         pattern as the shader-params overlay; cyan thumbs + a faint
-         fill band between them mark the active sweep sub-range. -->
-    {#if isAuto && existingAuto}
-      {@const _rSpan = (max - min) || 1}
-      {@const _aMin = existingAuto.min}
-      {@const _aMax = existingAuto.max}
-      {@const _aMinFrac = (_aMin - min) / _rSpan}
-      {@const _aMaxFrac = (_aMax - min) / _rSpan}
-      <div class="epr-slipper-fill" style="left: {_aMinFrac * 100}%; right: {(1 - _aMaxFrac) * 100}%"></div>
-      <input type="range" min={min} max={max} step={_rSpan / 200} value={_aMin}
-        class="epr-slipper epr-slipper-min"
-        oninput={(e) => {
-          const v = parseFloat((e.target as HTMLInputElement).value);
-          setAutoField('min', Math.min(v, _aMax - _rSpan * 0.02));
-        }} />
-      <input type="range" min={min} max={max} step={_rSpan / 200} value={_aMax}
-        class="epr-slipper epr-slipper-max"
-        oninput={(e) => {
-          const v = parseFloat((e.target as HTMLInputElement).value);
-          setAutoField('max', Math.max(v, _aMin + _rSpan * 0.02));
-        }} />
-    {/if}
-  </div>
+    <!-- Row 2: the actual param slider (+ optional Auto-mode slippers
+         overlaid on the same track when source='auto'). -->
+    <div class="epr-track-wrap">
+      <input
+        class="epr-slider"
+        type="range"
+        {min}
+        {max}
+        {step}
+        {value}
+        data-midi-path={effectKind === 'edge' ? `map:edge:${effectId}:${paramName}` : effectKind === 'gpu' ? `map:gpu:${paramName}` : effectKind === 'splat' ? `map:splat:${paramName}` : `map:effect:${effectId}:${paramName}`}
+        data-midi-label={label}
+        data-midi-min={min}
+        data-midi-max={max}
+        data-midi-step={step}
+        oninput={(e) => onChange(parseFloat((e.target as HTMLInputElement).value))}
+      />
+      <!-- Slippers — two range inputs overlaid on the main slider so
+           their 0..1 axis lines up 1:1 with min..max above. Same
+           pattern as the shader-params overlay; cyan thumbs + a faint
+           fill band between them mark the active sweep sub-range. -->
+      {#if isAuto && existingAuto}
+        {@const _rSpan = (max - min) || 1}
+        {@const _aMin = existingAuto.min}
+        {@const _aMax = existingAuto.max}
+        {@const _aMinFrac = (_aMin - min) / _rSpan}
+        {@const _aMaxFrac = (_aMax - min) / _rSpan}
+        <div class="epr-slipper-fill" style="left: {_aMinFrac * 100}%; right: {(1 - _aMaxFrac) * 100}%"></div>
+        <input type="range" min={min} max={max} step={_rSpan / 200} value={_aMin}
+          class="epr-slipper epr-slipper-min"
+          oninput={(e) => {
+            const v = parseFloat((e.target as HTMLInputElement).value);
+            setAutoField('min', Math.min(v, _aMax - _rSpan * 0.02));
+          }} />
+        <input type="range" min={min} max={max} step={_rSpan / 200} value={_aMax}
+          class="epr-slipper epr-slipper-max"
+          oninput={(e) => {
+            const v = parseFloat((e.target as HTMLInputElement).value);
+            setAutoField('max', Math.max(v, _aMin + _rSpan * 0.02));
+          }} />
+      {/if}
+    </div>
+  {/if}
 
   <!-- All modulation tuning (depth, invert, LFO speed / BPM-sync
        rate, auto transport) lives in the ModTray popover — keeps the
@@ -320,6 +410,28 @@
     border-bottom: 1px solid rgba(255, 255, 255, 0.04);
   }
   .epr:last-child { border-bottom: none; }
+  .epr.button-only {
+    flex: 1 1 auto;
+    display: flex;
+    min-width: 0;
+    padding: 0;
+    border-bottom: 0;
+    gap: 0;
+  }
+  .epr-compact-track {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    width: 100%;
+    min-width: 0;
+  }
+  .epr-compact-track .epr-track-wrap {
+    flex: 1 1 auto;
+    min-width: 0;
+  }
+  .epr.button-only .epr-source {
+    min-width: 44px;
+  }
 
   /* Row 1: label · source · value */
   .epr-head {
@@ -439,25 +551,26 @@
   .epr-slipper::-webkit-slider-runnable-track { background: transparent; height: 100%; }
   .epr-slipper::-moz-range-track             { background: transparent; height: 100%; }
   .epr-slipper::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    pointer-events: auto;
-    cursor: ew-resize;
-    width: 6px;
-    height: 18px;
-    border-radius: 2px;
-    background: #5ce1e6;
-    box-shadow: 0 0 4px rgba(92, 225, 230, 0.5);
-    border: none;
+    -webkit-appearance: none !important;
+    pointer-events: auto !important;
+    cursor: ew-resize !important;
+    width: 6px !important;
+    height: 18px !important;
+    margin-top: 0 !important;
+    border-radius: 2px !important;
+    background: #5ce1e6 !important;
+    box-shadow: 0 0 4px rgba(92, 225, 230, 0.5) !important;
+    border: none !important;
   }
   .epr-slipper::-moz-range-thumb {
-    pointer-events: auto;
-    cursor: ew-resize;
-    width: 6px;
-    height: 18px;
-    border-radius: 2px;
-    background: #5ce1e6;
-    box-shadow: 0 0 4px rgba(92, 225, 230, 0.5);
-    border: none;
+    pointer-events: auto !important;
+    cursor: ew-resize !important;
+    width: 6px !important;
+    height: 18px !important;
+    border-radius: 2px !important;
+    background: #5ce1e6 !important;
+    box-shadow: 0 0 4px rgba(92, 225, 230, 0.5) !important;
+    border: none !important;
   }
   .epr-slipper-fill {
     position: absolute;

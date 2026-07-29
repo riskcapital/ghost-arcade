@@ -41,6 +41,11 @@ let _mappingEdgeEffectReader: ((layerIndex: number, effectId: string, paramPath:
 let _mappingGPUUpdater: ((layerIndex: number, values: Record<string, number>) => void) | null = null;
 let _mappingGPUReader: ((layerIndex: number, paramKey: string) => number | undefined) | null = null;
 
+// Splat / point-cloud param read/write callbacks. These mirror the GPU
+// callbacks but write directly into layer.splatContent.
+let _mappingSplatUpdater: ((layerIndex: number, values: Record<string, number>) => void) | null = null;
+let _mappingSplatReader: ((layerIndex: number, paramKey: string) => number | undefined) | null = null;
+
 /** Register mapping mode callbacks — called once from layers store init */
 export function registerMappingLayerCallbacks(
   updater: (layerIndex: number, values: Record<string, number>) => void,
@@ -52,6 +57,8 @@ export function registerMappingLayerCallbacks(
   edgeEffectReader?: (layerIndex: number, effectId: string, paramPath: string) => number | undefined,
   gpuUpdater?: (layerIndex: number, values: Record<string, number>) => void,
   gpuReader?: (layerIndex: number, paramKey: string) => number | undefined,
+  splatUpdater?: (layerIndex: number, values: Record<string, number>) => void,
+  splatReader?: (layerIndex: number, paramKey: string) => number | undefined,
 ) {
   _mappingLayerUpdater = updater;
   _mappingLayerReader = reader;
@@ -62,6 +69,8 @@ export function registerMappingLayerCallbacks(
   if (edgeEffectReader) _mappingEdgeEffectReader = edgeEffectReader;
   if (gpuUpdater) _mappingGPUUpdater = gpuUpdater;
   if (gpuReader) _mappingGPUReader = gpuReader;
+  if (splatUpdater) _mappingSplatUpdater = splatUpdater;
+  if (splatReader) _mappingSplatReader = splatReader;
 }
 
 // Modulation source types
@@ -189,6 +198,7 @@ interface ParsedModEntry {
   isEffect: boolean;     // true for regular pixel effects (`layer.effects[]`)
   isEdgeEffect: boolean; // true for edge effects (`layer.edgeEffects.effects[]`)
   isGPU: boolean;        // true for GPU shader-layer params (`layer.gpuLayerContent.params[]`)
+  isSplat: boolean;      // true for splat / point-cloud content params
   effectId: string;      // '' for shader params
   paramName: string;     // for edge effects this is the nested path, e.g. 'stroke.width'
 }
@@ -282,6 +292,15 @@ export function modKeyGPU(
   return `${layerIndex}:gpu:${paramKey}`;
 }
 
+export function modKeySplat(
+  layerIndex: number,
+  paramKey: string,
+  target: ModTarget = 'mapping',
+): string {
+  if (target === 'mapping') return `map:${layerIndex}:splat:${paramKey}`;
+  return `${layerIndex}:splat:${paramKey}`;
+}
+
 export const MOD_KEY_XFADE_VALUE = 'xfade:value';
 
 // Pre-parsed cache rebuilt on store change — avoids per-frame string parsing
@@ -334,6 +353,15 @@ export function registerGPUParamRange(
   max: number,
 ) {
   paramRanges.set(`map:${layerIndex}:gpu:${paramKey}`, { min, max });
+}
+
+export function registerSplatParamRange(
+  layerIndex: number,
+  paramKey: string,
+  min: number,
+  max: number,
+) {
+  paramRanges.set(`map:${layerIndex}:splat:${paramKey}`, { min, max });
 }
 
 /** Drop every GPU-range entry for a layer. Call when the layer's
@@ -461,6 +489,7 @@ function rebuildParsedCache(map: ModulationMap) {
         isEffect: false,
         isEdgeEffect: false,
         isGPU: false,
+        isSplat: false,
         effectId: '',
         paramName: '',
       });
@@ -489,6 +518,7 @@ function rebuildParsedCache(map: ModulationMap) {
         isEffect: false,
         isEdgeEffect: false,
         isGPU: false,
+        isSplat: false,
         effectId: '',
         paramName: parts.slice(2).join(':'),
       });
@@ -514,6 +544,7 @@ function rebuildParsedCache(map: ModulationMap) {
         isEffect: true,
         isEdgeEffect: false,
         isGPU: false,
+        isSplat: false,
         effectId: parts[cursor + 2],
         paramName: parts[cursor + 3],
       });
@@ -529,6 +560,7 @@ function rebuildParsedCache(map: ModulationMap) {
         isEffect: false,
         isEdgeEffect: true,
         isGPU: false,
+        isSplat: false,
         effectId: parts[cursor + 2],
         paramName: parts.slice(cursor + 3).join(':'),
       });
@@ -543,6 +575,20 @@ function rebuildParsedCache(map: ModulationMap) {
         isEffect: false,
         isEdgeEffect: false,
         isGPU: true,
+        isSplat: false,
+        effectId: '',
+        paramName: parts.slice(cursor + 2).join(':'),
+      });
+    } else if (parts[cursor + 1] === 'splat') {
+      parsedCache.push({
+        mod,
+        bank,
+        target,
+        layerIndex,
+        isEffect: false,
+        isEdgeEffect: false,
+        isGPU: false,
+        isSplat: true,
         effectId: '',
         paramName: parts.slice(cursor + 2).join(':'),
       });
@@ -555,6 +601,7 @@ function rebuildParsedCache(map: ModulationMap) {
         isEffect: false,
         isEdgeEffect: false,
         isGPU: false,
+        isSplat: false,
         effectId: '',
         paramName: parts[cursor + 1],
       });
@@ -697,6 +744,25 @@ function createModulationStore() {
     getGPUParamModulation(layerIndex: number, paramKey: string): ParamModulation | undefined {
       const map = get({ subscribe });
       return map.get(modKeyGPU(layerIndex, paramKey, 'mapping'));
+    },
+
+    setSplatParamModulation(layerIndex: number, paramKey: string, mod: ParamModulation) {
+      const stored: ParamModulation = { ...mod, target: 'mapping' };
+      update(map => {
+        const newMap = new Map(map);
+        const key = modKeySplat(layerIndex, paramKey, 'mapping');
+        if (stored.source === 'manual') {
+          newMap.delete(key);
+        } else {
+          newMap.set(key, stored);
+        }
+        return newMap;
+      });
+    },
+
+    getSplatParamModulation(layerIndex: number, paramKey: string): ParamModulation | undefined {
+      const map = get({ subscribe });
+      return map.get(modKeySplat(layerIndex, paramKey, 'mapping'));
     },
 
     /** Set modulation on the global VJ A/B crossfader value (0..1).
@@ -965,12 +1031,13 @@ class ModulationEngine {
     // mapping-only. Batched per-layer just like shader params so one
     // updater call writes all modulated entries for the frame.
     const mappingGPUBatch = new Map<number, Record<string, number>>();
+    const mappingSplatBatch = new Map<number, Record<string, number>>();
 
     for (const entry of parsedCache) {
       // Per-iteration shadowing of bank/layerIndex — clip-keyed
       // entries override these from the runtime deck search below.
       let { bank, layerIndex } = entry;
-      const { mod, isEffect, isEdgeEffect, isGPU, effectId, paramName, special } = entry;
+      const { mod, isEffect, isEdgeEffect, isGPU, isSplat, effectId, paramName, special } = entry;
 
       // Auto-source modulations are handled exclusively by autoEngine.ts
       // now — state lives on the layer / clip data itself. Legacy
@@ -1123,6 +1190,30 @@ class ModulationEngine {
         if (!gBatch) { gBatch = {}; mappingGPUBatch.set(layerIndex, gBatch); }
         gBatch[paramName] = modulatedG;
         lastModulatedValues.set(gpuKey, modulatedG);
+      } else if (isSplat) {
+        const splatKey = `M:${layerIndex}:splat:${paramName}`;
+        const splatRange = paramRanges.get(`map:${layerIndex}:splat:${paramName}`);
+        const sMin = splatRange?.min ?? 0;
+        const sMax = splatRange?.max ?? 1;
+        const sSpan = sMax - sMin;
+        let sBase = baseValues.get(splatKey);
+        if (sBase === undefined) {
+          const sourceValue = _mappingSplatReader
+            ? _mappingSplatReader(layerIndex, paramName)
+            : undefined;
+          if (typeof sourceValue !== 'number') continue;
+          sBase = sourceValue;
+          baseValues.set(splatKey, sBase);
+        }
+        const rawSplat = sBase + (signal - 0.5) * mod.amount * sSpan;
+        const modulatedSplat = Math.max(sMin, Math.min(sMax, rawSplat));
+        let splatBatch = mappingSplatBatch.get(layerIndex);
+        if (!splatBatch) {
+          splatBatch = {};
+          mappingSplatBatch.set(layerIndex, splatBatch);
+        }
+        splatBatch[paramName] = modulatedSplat;
+        lastModulatedValues.set(splatKey, modulatedSplat);
       } else if (isEffect) {
         // Effect param modulation. Mapping mode + VJ mode share the same
         // math (capture base on first hit, signal-driven offset, clamp to
@@ -1280,6 +1371,12 @@ class ModulationEngine {
     if (_mappingGPUUpdater) {
       for (const [layerIndex, values] of mappingGPUBatch) {
         _mappingGPUUpdater(layerIndex, values);
+      }
+    }
+
+    if (_mappingSplatUpdater) {
+      for (const [layerIndex, values] of mappingSplatBatch) {
+        _mappingSplatUpdater(layerIndex, values);
       }
     }
   }

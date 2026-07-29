@@ -99,6 +99,7 @@ function tick(now: number) {
   const effectBatches = new Map<string, EffectBatch>();   // layerId → batches
   const shaderBatches = new Map<string, Record<string, number>>(); // layerId → values
   const gpuBatches = new Map<string, Record<string, number>>();    // layerId → gpu param values
+  const splatBatches = new Map<string, Record<string, number>>();  // layerId → splat param values
 
   for (let layerIdx = 0; layerIdx < layers.length; layerIdx++) {
     const layer = layers[layerIdx];
@@ -200,6 +201,20 @@ function tick(now: number) {
         batch[paramKey] = value;
       }
     }
+
+    if (layer.splatContent?.paramAuto) {
+      for (const [paramKey, auto] of Object.entries(layer.splatContent.paramAuto)) {
+        if (!auto || !auto.playing) continue;
+        auto.phase = advancePhase(auto, dt);
+        const value = resolveValue(auto);
+        let batch = splatBatches.get(layer.id);
+        if (!batch) {
+          batch = {};
+          splatBatches.set(layer.id, batch);
+        }
+        batch[paramKey] = value;
+      }
+    }
   }
 
   // Commit effect writes
@@ -215,6 +230,9 @@ function tick(now: number) {
   // Commit GPU param writes (mapping-only).
   for (const [layerId, values] of gpuBatches) {
     project.updateGPULayerParams(layerId, values);
+  }
+  for (const [layerId, values] of splatBatches) {
+    project.updateSplatContent(layerId, values as any);
   }
 
   // ──────────────────────────────────────────────────────────

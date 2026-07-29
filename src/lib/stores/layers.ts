@@ -34,6 +34,7 @@ import { settings, migrateOutputSlice } from './settings';
 import { createLineElement, createDefaultLinesContent, createDefaultDrawAnimation } from '../lines/types';
 import { syncTrimmedVideoPlayback } from '../utils/videoTrimPlayback';
 import { recoverVJClipAssetRef } from '../storage/vjAssetPersistence';
+import { restoreVideoSourceElement } from '../media/videoSourceRestore';
 
 // History recording callback — set from App.svelte to avoid circular imports.
 // We record SYNCHRONOUSLY (no setTimeout) so each discrete action lands in its
@@ -64,30 +65,9 @@ function isVideoSource(source: MediaSource | null | undefined): source is MediaS
   return !!source && source.type === 'video' && !!source.src;
 }
 
-function shouldSkipVideoCors(src: string): boolean {
-  return /^(blob:|data:|file:|ghost-asset:|app:|ga-asset:)/i.test(src);
-}
-
 function rehydrateVideoSource(source: MediaSource) {
   if (typeof document === 'undefined' || source.videoElement || !isVideoSource(source)) return;
-  const video = document.createElement('video');
-  if (!shouldSkipVideoCors(source.src)) video.crossOrigin = 'anonymous';
-  video.loop = false;
-  video.muted = true;
-  video.playsInline = true;
-  video.preload = 'auto';
-  video.playbackRate = source.playbackRate ?? 1;
-  video.src = source.src;
-  source.videoElement = video;
-  source.isPlaying = true;
-  syncTrimmedVideoPlayback(video, source);
-  try { video.load(); } catch { /* best-effort preset video rehydrate */ }
-  const play = () => {
-    if (source.isPlaying === false) return;
-    video.play().catch(() => { /* autoplay can be retried by Canvas */ });
-  };
-  video.addEventListener('loadeddata', play, { once: true });
-  queueMicrotask(play);
+  restoreVideoSourceElement(source);
 }
 
 function normalizeSelectedLayerIds(layerIds: string[], validIds: string[]): string[] {
@@ -2657,6 +2637,30 @@ void main() {
           return {
             ...l,
             gpuLayerContent: hasAny ? { ...rest, paramAuto: nextAuto } : rest,
+          };
+        }),
+      }));
+    },
+
+    /** Set or clear the Auto playhead config for a splat / point-cloud
+     * parameter. The sidecar lives with splatContent so project saves
+     * preserve automation without introducing a second state owner. */
+    setSplatParamAuto(layerId: string, paramKey: string, auto: AutoConfig | null) {
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((l) => {
+          if (l.id !== layerId || !l.splatContent) return l;
+          const nextAuto = { ...(l.splatContent.paramAuto ?? {}) };
+          if (auto === null) {
+            delete nextAuto[paramKey];
+          } else {
+            nextAuto[paramKey] = auto;
+          }
+          const hasAny = Object.keys(nextAuto).length > 0;
+          const { paramAuto: _drop, ...rest } = l.splatContent;
+          return {
+            ...l,
+            splatContent: hasAny ? { ...rest, paramAuto: nextAuto } : rest,
           };
         }),
       }));
@@ -6106,5 +6110,19 @@ registerMappingLayerCallbacks(
     const layer = p.layers[layerIndex];
     const v = layer?.gpuLayerContent?.params?.[paramKey];
     return typeof v === 'number' ? v : undefined;
+  },
+  // splatUpdater: batch-apply audio / auto values to splat content.
+  (layerIndex: number, values: Record<string, number>) => {
+    const p = get(project);
+    const layer = p.layers[layerIndex];
+    if (!layer?.splatContent) return;
+    project.updateSplatContent(layer.id, values as Partial<SplatContent>);
+  },
+  // splatReader: capture the current splat value as modulation base.
+  (layerIndex: number, paramKey: string) => {
+    const p = get(project);
+    const layer = p.layers[layerIndex];
+    const value = (layer?.splatContent as unknown as Record<string, unknown> | undefined)?.[paramKey];
+    return typeof value === 'number' ? value : undefined;
   },
 );

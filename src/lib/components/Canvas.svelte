@@ -1,7 +1,15 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
-  import { RenderEngine, loadImageTexture, createVideoTexture, getThreeJSIframeContext, createThreeJSIframeContext, getJSAnimationContext, createJSAnimationContext } from '../renderer/engine';
+  import {
+    RenderEngine,
+    loadImageTexture,
+    createVideoTexture,
+    getThreeJSIframeContext,
+    createThreeJSIframeContext,
+    getJSAnimationContext,
+    createJSAnimationContext,
+  } from '../renderer/engine';
   import { isReusableVideoTexture } from '../renderer/videoReadiness';
   import { project, layers, compositions } from '../stores/layers';
   import { stage3dScene } from '../stage3d/store';
@@ -12,12 +20,22 @@
   import { vjLayerSequencer } from '../stores/vjLayerSequencer';
   import { macros } from '../stores/macros';
   import { layerSequencer } from '../stores/layerSequencer';
-  import { evaluateStageEffectForScreen, resolveStageEffectForLayer, stageEffectsRuntime } from '../stores/stageEffects';
+  import {
+    evaluateStageEffectForScreen,
+    resolveStageEffectForLayer,
+    stageEffectsRuntime,
+  } from '../stores/stageEffects';
   import { keyframeTimeline } from '../stores/keyframeTimeline';
   import { createLayer, VJ_MIX_SOURCE_INDEX, type Layer, type MappingCompositionState } from '../types';
   import * as THREE from 'three';
   import { parseGIF, decompressFrames, type ParsedFrame } from 'gifuct-js';
-  import { createISFShader, updateISFShader, setISFInputValue, setISFInputTexture, type ISFShaderInstance } from '../isf/renderer';
+  import {
+    createISFShader,
+    updateISFShader,
+    setISFInputValue,
+    setISFInputTexture,
+    type ISFShaderInstance,
+  } from '../isf/renderer';
   import { LinesRenderer } from '../lines/renderer';
   import { DrawingRenderer } from '../drawing/renderer';
   import type { SVGLayerRenderer } from '../svg/renderer';
@@ -26,13 +44,19 @@
   import { getGPUBrushCanvas } from '../lightpainting/gpuBrushBridge';
   import { TextRenderer } from '../text/renderer';
   import { SplatRenderer } from '../splat/SplatRenderer';
-  import { loadPLY, loadSplatFromUrl } from '../splat';
+  import { loadPLY, loadSplatFromUrl, suggestSplatAutoLevel } from '../splat';
   import type { Model3DRenderer } from '../model3d/Model3DRenderer';
   import { GpuLayerRenderer } from '$lib/renderer/gpuLayerRenderer';
-  import { ensureWebGPUDevice, isWebGPUReady, getWebGPUDevice, getPreferredCanvasFormat } from '$lib/renderer/webgpuShared';
+  import {
+    ensureWebGPUDevice,
+    isWebGPUReady,
+    getWebGPUDevice,
+    getPreferredCanvasFormat,
+  } from '$lib/renderer/webgpuShared';
   import { getShaderDef } from '$lib/renderer/gpuShaderCatalog';
   import { settings, outputFrozen, SHADER_QUALITY_MULTIPLIERS, masterWarpIsActive } from '../stores/settings';
   import { showToast } from '../stores/errorToast';
+  import { beginOwnedLoading, endOwnedLoading, updateOwnedLoading } from '../stores/loading';
   import { getTextureShareLabel, invoke, isDesktopApp, isOsrMode, isOutputMode } from '$lib/bridge';
   import { drawTestPattern, type TestPatternType } from '../utils/testPatterns';
   import { layerUsesStageTextureCoordinates } from '../utils/stageTextureOrientation';
@@ -60,12 +84,17 @@
   let _HydraVisualizerCtor: typeof import('../effects/hydraVisualizer').HydraVisualizer | null = null;
   let _hydraPresetsMod: typeof import('../effects/hydraPresets') | null = null;
   let _GhostFXVisualizerCtor: typeof import('../effects/ghostfx/ghostfxVisualizer').GhostFXVisualizer | null = null;
-  let _GhostPilotVisualizerCtor: typeof import('../effects/ghostPilot/ghostPilotVisualizer').GhostPilotVisualizer | null = null;
+  let _GhostPilotVisualizerCtor:
+    | typeof import('../effects/ghostPilot/ghostPilotVisualizer').GhostPilotVisualizer
+    | null = null;
   const _lazyLoading = new Set<string>();
   function _lazyLoad(key: string, load: () => Promise<void>): void {
     if (_lazyLoading.has(key)) return;
     _lazyLoading.add(key);
-    load().catch((e) => { console.warn(`[Canvas] lazy-load ${key} failed:`, e); _lazyLoading.delete(key); });
+    load().catch((e) => {
+      console.warn(`[Canvas] lazy-load ${key} failed:`, e);
+      _lazyLoading.delete(key);
+    });
   }
   // ParticleSystem removed — Particles3D runs as standalone Bevy app via Spout
   import { audioStore, getLastRawAnalysis } from '../stores/audio';
@@ -81,10 +110,13 @@
   import { startWLEDSenders, stopWLEDSenders, tickWLEDSenders } from '$lib/wled/sender';
   import { startModulationBroadcast, stopModulationBroadcast } from '$lib/sync/modulationBroadcast';
   import { stopOutputPixelBroadcast } from '$lib/sync/outputPixelBroadcast';
-  import { tickMasterWarpOutput, getMasterWarpCanvas, reconcileMasterWarpOutput, disposeMasterWarpOutput } from '$lib/sync/outputComposite';
   import {
-    stopOutputSharedTexturePresenter,
-  } from '$lib/sync/outputSharedTexturePresenter';
+    tickMasterWarpOutput,
+    getMasterWarpCanvas,
+    reconcileMasterWarpOutput,
+    disposeMasterWarpOutput,
+  } from '$lib/sync/outputComposite';
+  import { stopOutputSharedTexturePresenter } from '$lib/sync/outputSharedTexturePresenter';
   // Note: zero-copy presenter is NOT auto-started by the reconcile.
   // Unlike WebRTC (which broadcasts to anyone listening on the
   // BroadcastChannel), the zero-copy path requires a target Window
@@ -102,7 +134,12 @@
   // WebGPUPilot.create(), so the WebGPU bundle stays out of the
   // main Canvas chunk for users who never enable the pilot.
   import type { WebGPUPilot } from '$lib/renderer/webgpuPilot';
-  import { probeWebGPU, getWebGPUInfo, isWebGPUSupported, isPilotEffectivelyEnabled } from '$lib/renderer/webgpuCapability';
+  import {
+    probeWebGPU,
+    getWebGPUInfo,
+    isWebGPUSupported,
+    isPilotEffectivelyEnabled,
+  } from '$lib/renderer/webgpuCapability';
   import { webgpuPilotMetrics, resetWebgpuPilotMetrics } from '$lib/stores/webgpuPilotStore';
 
   // FPS tracking
@@ -129,7 +166,7 @@
   let spoutCpuFallbackAllowed = !isElectron;
   let spoutZeroCopyFailed = false;
   let spoutWasEnabled = false;
-  let spoutFrameSkip = 0;     // Counter for frame skipping on CPU send path
+  let spoutFrameSkip = 0; // Counter for frame skipping on CPU send path
   let spoutSendLogCount = 0; // Limit console spam from send errors
   const isTauriRuntime = typeof window !== 'undefined' && !!window.__TAURI_INTERNALS__;
 
@@ -180,7 +217,7 @@
   interface SpoutReceiverContext {
     senderName: string;
     texture: THREE.DataTexture;
-    frameWs: WebSocket | null;     // Dedicated WS for binary frame push
+    frameWs: WebSocket | null; // Dedicated WS for binary frame push
     width: number;
     height: number;
     _stopPolling?: () => void;
@@ -203,7 +240,7 @@
     texture: THREE.DataTexture;
     width: number;
     height: number;
-    lastFrameCounter: number;   // monotonic counter from the addon — skip uploads when unchanged
+    lastFrameCounter: number; // monotonic counter from the addon — skip uploads when unchanged
     _stopPolling?: () => void;
   }
   const ndiReceivers = new Map<string, NdiReceiverContext>();
@@ -214,11 +251,17 @@
 
     receiver._stopPolling?.();
     if (receiver.frameWs) {
-      try { receiver.frameWs.send(JSON.stringify({ type: 'unsubscribe_spout' })); } catch {}
-      try { receiver.frameWs.close(); } catch {}
+      try {
+        receiver.frameWs.send(JSON.stringify({ type: 'unsubscribe_spout' }));
+      } catch {}
+      try {
+        receiver.frameWs.close();
+      } catch {}
       receiver.frameWs = null;
     }
-    try { receiver.texture.dispose(); } catch {}
+    try {
+      receiver.texture.dispose();
+    } catch {}
     spoutReceivers.delete(cacheKey);
     textureCache.delete(cacheKey);
     void invoke('spout_stop_receiver', { senderName: receiver.senderName }).catch(() => {});
@@ -229,7 +272,9 @@
     if (!receiver) return;
 
     receiver._stopPolling?.();
-    try { receiver.texture.dispose(); } catch {}
+    try {
+      receiver.texture.dispose();
+    } catch {}
     ndiReceivers.delete(cacheKey);
     textureCache.delete(cacheKey);
     void (window as any).ghostNDI?.destroyReceiver(receiver.sourceName).catch(() => {});
@@ -253,7 +298,7 @@
   interface MapPresetCacheEntry {
     compositionRef: import('../types').Composition;
     group: Layer;
-    layers: Layer[];  // cloned + namespaced preset layers (does NOT include group)
+    layers: Layer[]; // cloned + namespaced preset layers (does NOT include group)
   }
   const mapPresetLayerCache = new Map<string, MapPresetCacheEntry>();
 
@@ -295,11 +340,11 @@
   ): Layer {
     let entry = stageInjectCache.get(layer.id);
     if (
-      !entry
-      || entry.layerRef !== layer
-      || entry.resolvedLayerRef !== resolved.layer
-      || entry.layerFxRef !== layer.effects
-      || entry.resolvedFxRef !== resolved.layer.effects
+      !entry ||
+      entry.layerRef !== layer ||
+      entry.resolvedLayerRef !== resolved.layer ||
+      entry.layerFxRef !== layer.effects ||
+      entry.resolvedFxRef !== resolved.layer.effects
     ) {
       entry = {
         layerRef: layer,
@@ -310,9 +355,10 @@
         // renderGroupToTexture — no effects merge. Screen layers keep
         // layer.type unchanged (engine treats 'screen' like 'media');
         // VJ-layer effects run before the screen's own effects.
-        clone: layer.type === 'group'
-          ? { ...layer }
-          : { ...layer, effects: [...(resolved.layer.effects || []), ...layer.effects] },
+        clone:
+          layer.type === 'group'
+            ? { ...layer }
+            : { ...layer, effects: [...(resolved.layer.effects || []), ...layer.effects] },
       };
       stageInjectCache.set(layer.id, entry);
     }
@@ -335,7 +381,7 @@
     if (stageInjectLayersRef === normalLayers) return;
     stageInjectLayersRef = normalLayers;
     if (stageInjectCache.size === 0) return;
-    const liveIds = new Set(normalLayers.map(l => l.id));
+    const liveIds = new Set(normalLayers.map((l) => l.id));
     for (const id of stageInjectCache.keys()) {
       if (!liveIds.has(id)) stageInjectCache.delete(id);
     }
@@ -383,12 +429,21 @@
   // with `_` and objects whose constructor begins with `_` are
   // private-by-convention runtime state; same treatment.
   function _mapCleanCloneLayer(l: Layer): Layer {
-    return JSON.parse(JSON.stringify(l, (key, value) => {
-      if (key === 'texture' || key === 'videoElement' || key === 'renderTarget' || key === 'iframeElement' || key === 'synthVisionCanvas') return undefined;
-      if (typeof key === 'string' && key.startsWith('_')) return undefined;
-      if (value && typeof value === 'object' && value.constructor?.name?.startsWith('_')) return undefined;
-      return value;
-    }));
+    return JSON.parse(
+      JSON.stringify(l, (key, value) => {
+        if (
+          key === 'texture' ||
+          key === 'videoElement' ||
+          key === 'renderTarget' ||
+          key === 'iframeElement' ||
+          key === 'synthVisionCanvas'
+        )
+          return undefined;
+        if (typeof key === 'string' && key.startsWith('_')) return undefined;
+        if (value && typeof value === 'object' && value.constructor?.name?.startsWith('_')) return undefined;
+        return value;
+      }),
+    );
   }
 
   // Construct a synthetic group + cloned layer stack for one MAP-mode
@@ -628,13 +683,16 @@
 
   function updateOutputOverlay(
     testPattern: TestPatternType,
-    blendL: number, blendR: number, blendT: number, blendB: number,
+    blendL: number,
+    blendR: number,
+    blendT: number,
+    blendB: number,
     blendGamma: number,
   ) {
     if (!outputOverlayCanvas) return;
     const w = outputOverlayCanvas.parentElement?.clientWidth || 1920;
     const h = outputOverlayCanvas.parentElement?.clientHeight || 1080;
-    const ratio = isOutputMode ? (window.devicePixelRatio || 1) : 1;
+    const ratio = isOutputMode ? window.devicePixelRatio || 1 : 1;
     const backingW = Math.max(1, Math.round(w * ratio));
     const backingH = Math.max(1, Math.round(h * ratio));
     if (outputOverlayCanvas.width !== backingW) outputOverlayCanvas.width = backingW;
@@ -739,12 +797,13 @@
           (!layer.source.src && (layer.source as any).synthVisionCanvas) ||
           (layer.source.type === 'threejs' && (layer.source as any).threejsCanvas && !layer.source.src);
         const isVJVideoLayer =
-          layer.source.type === 'video' &&
-          typeof layer.id === 'string' && layer.id.startsWith('vj-layer-');
+          layer.source.type === 'video' && typeof layer.id === 'string' && layer.id.startsWith('vj-layer-');
         const textureCacheKey =
-          (isAIGenerated || isSynthVision) ? layer.source.id
-          : isVJVideoLayer ? `${layer.id}:${layer.source.src}`
-          : layer.source.src;
+          isAIGenerated || isSynthVision
+            ? layer.source.id
+            : isVJVideoLayer
+              ? `${layer.id}:${layer.source.src}`
+              : layer.source.src;
         const isShader = layer.source.type === 'shader';
         const lookupKey = isShader ? `${layer.id}:${textureCacheKey}` : textureCacheKey;
         if (lookupKey) pinned.add(lookupKey);
@@ -764,8 +823,16 @@
     }
 
     if ((window as any).__VIDEO_DEBUG__ && keysToDelete.length > 0) {
-      console.log('[textureCache] evicting', keysToDelete.length, 'of', textureCache.size,
-        '— pinned:', pinned.size, 'keys:', keysToDelete);
+      console.log(
+        '[textureCache] evicting',
+        keysToDelete.length,
+        'of',
+        textureCache.size,
+        '— pinned:',
+        pinned.size,
+        'keys:',
+        keysToDelete,
+      );
     }
 
     for (const key of keysToDelete) {
@@ -775,8 +842,13 @@
     }
 
     if (textureCache.size > targetCount && (window as any).__VIDEO_DEBUG__) {
-      console.warn('[textureCache] cache size', textureCache.size,
-        'exceeds target', targetCount, '— all entries pinned, allowing growth');
+      console.warn(
+        '[textureCache] cache size',
+        textureCache.size,
+        'exceeds target',
+        targetCount,
+        '— all entries pinned, allowing growth',
+      );
     }
   }
 
@@ -805,13 +877,13 @@
       for (let y = 0; y < size; y++) {
         for (let x = 0; x < size; x++) {
           const i = (y * size + x) * 4;
-          const checker = ((Math.floor(x / 8) + Math.floor(y / 8)) % 2) === 0;
+          const checker = (Math.floor(x / 8) + Math.floor(y / 8)) % 2 === 0;
           if (checker) {
-            data[i]     = 180; // R
+            data[i] = 180; // R
             data[i + 1] = 100; // G
             data[i + 2] = 220; // B
           } else {
-            data[i]     = 60;
+            data[i] = 60;
             data[i + 1] = 160;
             data[i + 2] = 200;
           }
@@ -888,6 +960,7 @@
     renderTarget: THREE.WebGLRenderTarget;
     plyUrl: string | null;
     loadingPly: boolean;
+    loadGeneration: number;
   }
   const splatRenderers = new Map<string, SplatRendererContext>();
   // ── GPU layer renderers ──
@@ -900,8 +973,8 @@
   // a WebGPU OffscreenCanvas is bridged through transferToImageBitmap()
   // into the WebGL compositor. Default to the stable canvas-backed
   // texture path; keep bitmap handoff available as an explicit dev opt-in.
-  const gpuLayerUseBitmapHandoff = typeof window !== 'undefined'
-    && new URLSearchParams(window.location.search).get('gpu-layer-bitmap') === '1';
+  const gpuLayerUseBitmapHandoff =
+    typeof window !== 'undefined' && new URLSearchParams(window.location.search).get('gpu-layer-bitmap') === '1';
   // Texture wrapper for each gpu layer. Default path is CanvasTexture;
   // `?gpu-layer-bitmap=1` uses a bare THREE.Texture fed by ImageBitmap.
   const gpuLayerTextures = new Map<string, THREE.Texture>();
@@ -911,7 +984,9 @@
   function ensureWebGPUForGpuLayers(): void {
     if (_gpuLayerWebGpuTried) return;
     _gpuLayerWebGpuTried = true;
-    void ensureWebGPUDevice().catch((e: any) => console.warn('[Canvas] gpu-layer: WebGPU init failed', e?.message || e));
+    void ensureWebGPUDevice().catch((e: any) =>
+      console.warn('[Canvas] gpu-layer: WebGPU init failed', e?.message || e),
+    );
   }
 
   // Model3D renderers (per layer) - 3D Model rendering
@@ -926,8 +1001,12 @@
 
   function disposeModel3DContext(ctx: Model3DRendererContext): void {
     (ctx as any)._disposed = true;
-    try { ctx.renderer.dispose(); } catch {}
-    try { ctx.renderTarget.dispose(); } catch {}
+    try {
+      ctx.renderer.dispose();
+    } catch {}
+    try {
+      ctx.renderTarget.dispose();
+    } catch {}
     try {
       const offCanvas = (ctx as any)._offCanvas as HTMLCanvasElement | undefined;
       offCanvas?.remove();
@@ -938,7 +1017,17 @@
 
   // Integrated effects (FluidSimulation, ParticleSystem3D)
   interface IntegratedEffectContext {
-    type: 'fluid' | 'particles' | 'milkdrop' | 'audiomotion' | 'wavejs' | 'hydra' | 'ghostfx' | 'analyzerlab' | 'handfx' | 'ghostpilot';
+    type:
+      | 'fluid'
+      | 'particles'
+      | 'milkdrop'
+      | 'audiomotion'
+      | 'wavejs'
+      | 'hydra'
+      | 'ghostfx'
+      | 'analyzerlab'
+      | 'handfx'
+      | 'ghostpilot';
     fluid?: FluidSimulation;
     particles?: ParticleSystem3D;
     milkdrop?: import('../effects/milkdropVisualizer').MilkdropVisualizer;
@@ -956,17 +1045,17 @@
     ghostpilot?: import('../effects/ghostPilot/ghostPilotVisualizer').GhostPilotVisualizer;
     // Milkdrop preset cycling state
     milkdropPresets?: Record<string, any>;
-    milkdropPresetNames?: string[];      // cached sorted name list for next/prev navigation
+    milkdropPresetNames?: string[]; // cached sorted name list for next/prev navigation
     milkdropPresetPack?: string;
     milkdropLoadedPresetName?: string;
-    milkdropLastEvolveAt?: number;       // performance.now()
-    milkdropLastEvolveBeat?: number;     // beatCount snapshot
+    milkdropLastEvolveAt?: number; // performance.now()
+    milkdropLastEvolveBeat?: number; // beatCount snapshot
     milkdropAudioAttached?: boolean;
     milkdropAudioSource?: 'mono' | 'stems'; // which audio source butterchurn is currently wired to
-    milkdropStemRouter?: import('../audio/stemRouter').StemRouter;  // active when audioSource='stems'
-    milkdropLastCommandTag?: number;     // for edge-triggered next/prev/random/cut/load
-    milkdropLastHardCutAt?: number;      // refractory to avoid every-beat cut on dense kicks
-    milkdropLayerId?: string;            // first layer id in the group — used for store keying
+    milkdropStemRouter?: import('../audio/stemRouter').StemRouter; // active when audioSource='stems'
+    milkdropLastCommandTag?: number; // for edge-triggered next/prev/random/cut/load
+    milkdropLastHardCutAt?: number; // refractory to avoid every-beat cut on dense kicks
+    milkdropLayerId?: string; // first layer id in the group — used for store keying
     renderTarget: THREE.WebGLRenderTarget;
     simulationWidth: number;
     simulationHeight: number;
@@ -998,8 +1087,10 @@
 
   function disposeIntegratedCameraFeed(ctx: IntegratedEffectContext): void {
     try {
-      ctx.cameraStream?.getTracks().forEach(track => {
-        try { track.onended = null; } catch {}
+      ctx.cameraStream?.getTracks().forEach((track) => {
+        try {
+          track.onended = null;
+        } catch {}
         track.stop();
       });
     } catch {}
@@ -1012,10 +1103,18 @@
         ctx.cameraVideoEl.remove();
       }
     } catch {}
-    try { ctx.cameraTexture?.dispose(); } catch {}
-    try { ctx.prevCameraTarget?.dispose(); } catch {}
-    try { ctx._camCopyMat?.dispose(); } catch {}
-    try { ctx._camCopyMesh?.geometry?.dispose(); } catch {}
+    try {
+      ctx.cameraTexture?.dispose();
+    } catch {}
+    try {
+      ctx.prevCameraTarget?.dispose();
+    } catch {}
+    try {
+      ctx._camCopyMat?.dispose();
+    } catch {}
+    try {
+      ctx._camCopyMesh?.geometry?.dispose();
+    } catch {}
     try {
       if (ctx._camCopyScene && ctx._camCopyMesh) {
         ctx._camCopyScene.remove(ctx._camCopyMesh);
@@ -1035,18 +1134,62 @@
 
   function disposeIntegratedEffectContext(ctx: IntegratedEffectContext): void {
     disposeIntegratedCameraFeed(ctx);
-    try { ctx.fluid?.dispose(); } catch (e) { console.warn('[Canvas] fluid dispose error:', e); }
-    try { ctx.particles?.dispose(); } catch (e) { console.warn('[Canvas] particles dispose error:', e); }
-    try { ctx.milkdrop?.dispose(); } catch (e) { console.warn('[Canvas] milkdrop dispose error:', e); }
-    try { ctx.milkdropStemRouter?.dispose(); } catch {}
-    try { ctx.audiomotion?.dispose(); } catch (e) { console.warn('[Canvas] audiomotion dispose error:', e); }
-    try { ctx.wavejs?.dispose(); } catch (e) { console.warn('[Canvas] wavejs dispose error:', e); }
-    try { ctx.hydra?.dispose(); } catch (e) { console.warn('[Canvas] hydra dispose error:', e); }
-    try { ctx.ghostfx?.dispose(); } catch (e) { console.warn('[Canvas] ghostfx dispose error:', e); }
-    try { ctx.ghostpilot?.dispose(); } catch (e) { console.warn('[Canvas] ghostpilot dispose error:', e); }
-    try { ctx.analyzerlab?.dispose(); } catch (e) { console.warn('[Canvas] analyzerlab dispose error:', e); }
-    try { ctx.handfx?.dispose(); } catch (e) { console.warn('[Canvas] handfx dispose error:', e); }
-    try { ctx.renderTarget.dispose(); } catch {}
+    try {
+      ctx.fluid?.dispose();
+    } catch (e) {
+      console.warn('[Canvas] fluid dispose error:', e);
+    }
+    try {
+      ctx.particles?.dispose();
+    } catch (e) {
+      console.warn('[Canvas] particles dispose error:', e);
+    }
+    try {
+      ctx.milkdrop?.dispose();
+    } catch (e) {
+      console.warn('[Canvas] milkdrop dispose error:', e);
+    }
+    try {
+      ctx.milkdropStemRouter?.dispose();
+    } catch {}
+    try {
+      ctx.audiomotion?.dispose();
+    } catch (e) {
+      console.warn('[Canvas] audiomotion dispose error:', e);
+    }
+    try {
+      ctx.wavejs?.dispose();
+    } catch (e) {
+      console.warn('[Canvas] wavejs dispose error:', e);
+    }
+    try {
+      ctx.hydra?.dispose();
+    } catch (e) {
+      console.warn('[Canvas] hydra dispose error:', e);
+    }
+    try {
+      ctx.ghostfx?.dispose();
+    } catch (e) {
+      console.warn('[Canvas] ghostfx dispose error:', e);
+    }
+    try {
+      ctx.ghostpilot?.dispose();
+    } catch (e) {
+      console.warn('[Canvas] ghostpilot dispose error:', e);
+    }
+    try {
+      ctx.analyzerlab?.dispose();
+    } catch (e) {
+      console.warn('[Canvas] analyzerlab dispose error:', e);
+    }
+    try {
+      ctx.handfx?.dispose();
+    } catch (e) {
+      console.warn('[Canvas] handfx dispose error:', e);
+    }
+    try {
+      ctx.renderTarget.dispose();
+    } catch {}
   }
 
   let lastEffectUpdateTime = 0;
@@ -1074,7 +1217,8 @@
     balanced: { scale: 0.78, minSize: 256, pressureIterations: 14 },
     quality: { scale: 1.0, minSize: 384, pressureIterations: 20 },
   } as const;
-  let fluidQualityPreset: typeof FLUID_QUALITY_PRESETS[keyof typeof FLUID_QUALITY_PRESETS] = FLUID_QUALITY_PRESETS.live;
+  let fluidQualityPreset: (typeof FLUID_QUALITY_PRESETS)[keyof typeof FLUID_QUALITY_PRESETS] =
+    FLUID_QUALITY_PRESETS.live;
   $: fluidQualityPreset = FLUID_QUALITY_PRESETS[$settings.ui.fluidQuality ?? 'live'];
 
   function getFluidSimulationSize(width: number, height: number) {
@@ -1153,7 +1297,7 @@
     const unsubWatermark = () => {};
 
     // Sync dome projection settings
-    const unsubDome = settings.subscribe(s => {
+    const unsubDome = settings.subscribe((s) => {
       if (!engine) return;
       // In editor WebGPU bridge mode the hidden WebGL canvas is the raw
       // source frame; WebGPUCanvas owns output-space reprojection so dome
@@ -1245,7 +1389,7 @@
         ...m,
         adapter: info.description || `${info.vendor ?? '?'}/${info.architecture ?? '?'}`,
         inactiveReason: info.supported
-          ? (m.inactiveReason || 'pilot disabled in settings')
+          ? m.inactiveReason || 'pilot disabled in settings'
           : `WebGPU not supported (${info.failReason || 'reason unknown'})`,
         updatedAt: Date.now(),
       }));
@@ -1267,10 +1411,7 @@
     // `?webgpu-disable=1` on the output window's load URL is the
     // belt-and-suspenders defense (see electron/main.js).
     webgpuPilotUnsub = settings.subscribe(async (s) => {
-      const wantPilot =
-        !isOutputMode &&
-        !isOsrMode &&
-        isPilotEffectivelyEnabled(!!s.experimental?.webgpuPilot);
+      const wantPilot = !isOutputMode && !isOsrMode && isPilotEffectivelyEnabled(!!s.experimental?.webgpuPilot);
       if (wantPilot && !webgpuPilot && !webgpuPilotInitInFlight) {
         webgpuPilotInitInFlight = true;
         try {
@@ -1311,7 +1452,11 @@
         // re-created mid-session).
         if (webgpuHandoffTexture) {
           const gl2 = canvas?.getContext('webgl2') as WebGL2RenderingContext | null;
-          try { gl2?.deleteTexture(webgpuHandoffTexture); } catch { /* */ }
+          try {
+            gl2?.deleteTexture(webgpuHandoffTexture);
+          } catch {
+            /* */
+          }
           webgpuHandoffTexture = null;
         }
         webgpuHandoffMsEma = 0;
@@ -1325,13 +1470,16 @@
     if (isTauriRuntime && !isOsrMode && !isOutputMode) {
       nativeRendererSync = new NativeRendererSync();
       const size = getProjectOutputSize();
-      void nativeRendererSync.start(size.width, size.height).then(() => {
-        nativeRendererStatusTimer = setInterval(() => {
-          void nativeRendererSync?.logStatus();
-        }, 10000);
-      }).catch((err) => {
-        console.warn('[NativeRendererSync] failed to start native renderer:', err);
-      });
+      void nativeRendererSync
+        .start(size.width, size.height)
+        .then(() => {
+          nativeRendererStatusTimer = setInterval(() => {
+            void nativeRendererSync?.logStatus();
+          }, 10000);
+        })
+        .catch((err) => {
+          console.warn('[NativeRendererSync] failed to start native renderer:', err);
+        });
 
       nativeLayersUnsub = layers.subscribe(($layers) => {
         const p = get(project);
@@ -1339,11 +1487,7 @@
       });
 
       nativeProjectUnsub = project.subscribe(($project) => {
-        nativeRendererSync?.scheduleSync(
-          $project.width || 1920,
-          $project.height || 1080,
-          $project.layers || []
-        );
+        nativeRendererSync?.scheduleSync($project.width || 1920, $project.height || 1080, $project.layers || []);
       });
     }
 
@@ -1361,7 +1505,11 @@
           const wasAlreadyFailed = spoutZeroCopyFailed;
           spoutZeroCopyFailed = true;
           spoutOutputActive = false;
-          console.warn('[Canvas] OSR zero-copy unavailable (reason:', status.reason, ') — CPU sendImage fallback is disabled');
+          console.warn(
+            '[Canvas] OSR zero-copy unavailable (reason:',
+            status.reason,
+            ') — CPU sendImage fallback is disabled',
+          );
           if (!wasAlreadyFailed) {
             showToast(`${getTextureShareLabel()} zero-copy unavailable; CPU fallback is disabled.`, 'error');
           }
@@ -1378,7 +1526,9 @@
     if (isElectron && !isOsrMode && !isOutputMode && (window as any).electronAPI?.on) {
       const offAtlas = (window as any).electronAPI.on('texshare-atlas-status', (status: any) => {
         atlasFanoutActive = !!status?.active;
-        console.log(`[Canvas] Atlas fan-out ${atlasFanoutActive ? 'active' : `inactive (${status?.reason ?? 'unknown'})`}`);
+        console.log(
+          `[Canvas] Atlas fan-out ${atlasFanoutActive ? 'active' : `inactive (${status?.reason ?? 'unknown'})`}`,
+        );
       });
       stopAtlasStatusListener = typeof offAtlas === 'function' ? offAtlas : null;
     }
@@ -1416,7 +1566,6 @@
     canvas.addEventListener('mouseleave', handleCanvasMouseLeave);
     canvas.addEventListener('mouseenter', handleCanvasMouseEnter);
 
-
     /** Run all texture update passes for a given layer list */
     function updateAllTextures(layerList: Layer[], normalOnly: Layer[] | null) {
       // If normalOnly is null, this is the stage-mode second pass where
@@ -1424,18 +1573,58 @@
       // that otherwise disposes any "missing" layer — in that pass every
       // VJ layer is "missing" from layerList but very much alive upstream.
       const cleanupStale = normalOnly !== null || !(get(vjClipLauncher).stageMode && get(vjClipLauncher).isLive);
-      try { updateTexturesSync(layerList, cleanupStale); } catch (e) { console.error('[Canvas] Media texture error:', e); }
-      try { updateShaderTextures(layerList); } catch (e) { console.error('[Canvas] Shader update error:', e); }
-      try { updateIntegratedEffectTextures(layerList); } catch (e) { console.error('[Canvas] Integrated effect error:', e); }
+      try {
+        updateTexturesSync(layerList, cleanupStale);
+      } catch (e) {
+        console.error('[Canvas] Media texture error:', e);
+      }
+      try {
+        updateShaderTextures(layerList);
+      } catch (e) {
+        console.error('[Canvas] Shader update error:', e);
+      }
+      try {
+        updateIntegratedEffectTextures(layerList);
+      } catch (e) {
+        console.error('[Canvas] Integrated effect error:', e);
+      }
       // These only apply to normal layers (not VJ)
       const target = normalOnly || layerList;
-      try { updateLinesLayerTextures(target); } catch (e) { console.error('[Canvas] Lines update error:', e); }
-      try { updateSVGLayerTextures(target); } catch (e) { console.error('[Canvas] SVG update error:', e); }
-      try { updateLightPaintingLayerTextures(target); } catch (e) { console.error('[Canvas] Light painting error:', e); }
-      try { updateTextLayerTextures(target); } catch (e) { console.error('[Canvas] Text update error:', e); }
-      try { updateSplatLayerTextures(target); } catch (e) { console.error('[Canvas] Splat update error:', e); }
-      try { updateModel3DTextures(target); } catch (e) { console.error('[Canvas] Model3D update error:', e); }
-      try { updateGpuLayerTextures(target); } catch (e) { console.error('[Canvas] GPU layer update error:', e); }
+      try {
+        updateLinesLayerTextures(target);
+      } catch (e) {
+        console.error('[Canvas] Lines update error:', e);
+      }
+      try {
+        updateSVGLayerTextures(target);
+      } catch (e) {
+        console.error('[Canvas] SVG update error:', e);
+      }
+      try {
+        updateLightPaintingLayerTextures(target);
+      } catch (e) {
+        console.error('[Canvas] Light painting error:', e);
+      }
+      try {
+        updateTextLayerTextures(target);
+      } catch (e) {
+        console.error('[Canvas] Text update error:', e);
+      }
+      try {
+        updateSplatLayerTextures(target);
+      } catch (e) {
+        console.error('[Canvas] Splat update error:', e);
+      }
+      try {
+        updateModel3DTextures(target);
+      } catch (e) {
+        console.error('[Canvas] Model3D update error:', e);
+      }
+      try {
+        updateGpuLayerTextures(target);
+      } catch (e) {
+        console.error('[Canvas] GPU layer update error:', e);
+      }
     }
 
     // Start render loop
@@ -1464,17 +1653,28 @@
       if (!(window as any).__animTick) (window as any).__animTick = 0;
       if ((window as any).__animTick < 3) {
         (window as any).__animTick++;
-        console.log('[animate-tick] frame', (window as any).__animTick,
-          '— engine=', !!engine, 'contextLost=', contextLost, 'outputFrozen=', $outputFrozen,
-          'spoutOutputActive=', spoutOutputActive, 'outputWindowOpen=', $settings?.output?.outputWindowOpen,
-          'glCanvas=', !!glCanvas);
+        console.log(
+          '[animate-tick] frame',
+          (window as any).__animTick,
+          '— engine=',
+          !!engine,
+          'contextLost=',
+          contextLost,
+          'outputFrozen=',
+          $outputFrozen,
+          'spoutOutputActive=',
+          spoutOutputActive,
+          'outputWindowOpen=',
+          $settings?.output?.outputWindowOpen,
+          'glCanvas=',
+          !!glCanvas,
+        );
       }
 
       // Render-rate gate. Reschedule rAF unconditionally so input
       // handlers stay responsive; bypass render body when early.
-      const _stage3DFpsCap = stage3DOutput && isOutputMode
-        ? (($settings as any)?.performance?.stage3DFrameRate ?? 30)
-        : 0;
+      const _stage3DFpsCap =
+        stage3DOutput && isOutputMode ? (($settings as any)?.performance?.stage3DFrameRate ?? 30) : 0;
       const _editorFpsCap = ($settings as any)?.performance?.editorMaxFps ?? 0;
       const _fpsCap = _stage3DFpsCap > 0 ? _stage3DFpsCap : _editorFpsCap;
       if (_fpsCap > 0 && engine?.manualTime === null) {
@@ -1488,842 +1688,940 @@
       }
 
       try {
-      if (engine && !contextLost && !$outputFrozen) {
-        // Use reactive $ subscriptions (persistent, no per-frame subscribe/unsubscribe)
-        const vjLayers = $vjOutputLayers;
-        const normalLayers = $layers;
-        const vjState = $vjClipLauncher;
+        if (engine && !contextLost && !$outputFrozen) {
+          // Use reactive $ subscriptions (persistent, no per-frame subscribe/unsubscribe)
+          const vjLayers = $vjOutputLayers;
+          const normalLayers = $layers;
+          const vjState = $vjClipLauncher;
 
-        engine.setCrossfade(
-          vjState.crossfaderEnabled === true && vjState.isLive,
-          vjState.crossfaderValue ?? 0,
-          vjState.crossfaderTransition || 'dissolve',
-          vjState.crossfaderCurve || 'constant-power',
-          vjState.crossfaderBlendMode || 'normal'
-        );
+          engine.setCrossfade(
+            vjState.crossfaderEnabled === true && vjState.isLive,
+            vjState.crossfaderValue ?? 0,
+            vjState.crossfaderTransition || 'dissolve',
+            vjState.crossfaderCurve || 'constant-power',
+            vjState.crossfaderBlendMode || 'normal',
+          );
 
-        let layersToRender: Layer[];
-        let compEffects: import('../types').Effect[] | undefined;
-        let didStageTexturePrepass = false;
+          let layersToRender: Layer[];
+          let compEffects: import('../types').Effect[] | undefined;
+          let didStageTexturePrepass = false;
 
-        // VJ Stop All — render nothing (black output) until a clip is triggered
-        if (vjState.stoppedAll && vjState.isLive) {
-          layersToRender = [];
-          compEffects = undefined;
-        } else if (vjState.mapMode && vjState.isLive) {
-          // ── MAP sub-mode: preset-only mixer ─────────────────────────
-          // Each VJ layer slot holding a preset clip is rendered as a
-          // synthetic GROUP layer wrapping that preset's composition
-          // layers. The group's opacity = VJ-layer-opacity × master,
-          // its blendMode = the VJ-layer blendMode. Fading the slot
-          // fader thus fades the entire preset as a single composite
-          // unit instead of making each surface partially transparent
-          // (which produced no visible crossfade when surfaces didn't
-          // overlap).
-          //
-          // CACHING: cloned layers + the synthetic group live across
-          // frames in mapPresetLayerCache, keyed by `mapvj-<i>-<clipId>`.
-          // We rebuild only on slot/clip changes or composition edits
-          // (compositionRef !== entry.compositionRef). Previously we
-          // cloned every frame, which threw away the videoElement that
-          // updateTexturesSync had just attached to source.videoElement
-          // — videos in MAP-mode presets ended up with a texture but
-          // no live needsUpdate signal, so they froze on the first
-          // frame. Opacity / blendMode are mutated in-place each frame
-          // (pure scalars, safe to write).
-          const presetLayers: Layer[] = [];
-          const lsArr = vjState.layerStates;
-          const hasSolo = lsArr.some((l) => l.solo);
-          const activeKeys = new Set<string>();
-          for (let i = 0; i < lsArr.length; i++) {
-            const ls = lsArr[i];
-            if (ls.mute) continue;
-            if (hasSolo && !ls.solo) continue;
-            const clip = ls.activeClip;
-            if (!clip || clip.type !== 'preset' || !clip.presetId) continue;
-            const comp = $compositions.find((c) => c.id === clip.presetId);
-            if (!comp) continue;
-            const seqState = $vjLayerSequencer;
-            const sequenceOpacity = seqState.isPlaying
-              ? (seqState.opacityOverrides?.[i] ?? 1)
-              : 1;
-            const groupOpacity = ls.opacity * sequenceOpacity * (vjState.masterOpacity ?? 1);
-            if (groupOpacity <= 0) continue;
+          // VJ Stop All — render nothing (black output) until a clip is triggered
+          if (vjState.stoppedAll && vjState.isLive) {
+            layersToRender = [];
+            compEffects = undefined;
+          } else if (vjState.mapMode && vjState.isLive) {
+            // ── MAP sub-mode: preset-only mixer ─────────────────────────
+            // Each VJ layer slot holding a preset clip is rendered as a
+            // synthetic GROUP layer wrapping that preset's composition
+            // layers. The group's opacity = VJ-layer-opacity × master,
+            // its blendMode = the VJ-layer blendMode. Fading the slot
+            // fader thus fades the entire preset as a single composite
+            // unit instead of making each surface partially transparent
+            // (which produced no visible crossfade when surfaces didn't
+            // overlap).
+            //
+            // CACHING: cloned layers + the synthetic group live across
+            // frames in mapPresetLayerCache, keyed by `mapvj-<i>-<clipId>`.
+            // We rebuild only on slot/clip changes or composition edits
+            // (compositionRef !== entry.compositionRef). Previously we
+            // cloned every frame, which threw away the videoElement that
+            // updateTexturesSync had just attached to source.videoElement
+            // — videos in MAP-mode presets ended up with a texture but
+            // no live needsUpdate signal, so they froze on the first
+            // frame. Opacity / blendMode are mutated in-place each frame
+            // (pure scalars, safe to write).
+            const presetLayers: Layer[] = [];
+            const lsArr = vjState.layerStates;
+            const hasSolo = lsArr.some((l) => l.solo);
+            const activeKeys = new Set<string>();
+            for (let i = 0; i < lsArr.length; i++) {
+              const ls = lsArr[i];
+              if (ls.mute) continue;
+              if (hasSolo && !ls.solo) continue;
+              const clip = ls.activeClip;
+              if (!clip || clip.type !== 'preset' || !clip.presetId) continue;
+              const comp = $compositions.find((c) => c.id === clip.presetId);
+              if (!comp) continue;
+              const seqState = $vjLayerSequencer;
+              const sequenceOpacity = seqState.isPlaying ? (seqState.opacityOverrides?.[i] ?? 1) : 1;
+              const groupOpacity = ls.opacity * sequenceOpacity * (vjState.masterOpacity ?? 1);
+              if (groupOpacity <= 0) continue;
 
-            const groupId = `mapvj-${i}-${clip.id}`;
-            activeKeys.add(groupId);
+              const groupId = `mapvj-${i}-${clip.id}`;
+              activeKeys.add(groupId);
 
-            let entry = mapPresetLayerCache.get(groupId);
-            if (!entry || entry.compositionRef !== comp) {
-              entry = buildMapPresetCacheEntry(groupId, comp, i, groupOpacity, ls.blendMode);
-              mapPresetLayerCache.set(groupId, entry);
+              let entry = mapPresetLayerCache.get(groupId);
+              if (!entry || entry.compositionRef !== comp) {
+                entry = buildMapPresetCacheEntry(groupId, comp, i, groupOpacity, ls.blendMode);
+                mapPresetLayerCache.set(groupId, entry);
+              }
+              // Live updates — these are scalars / array-of-data refs, safe
+              // to mutate without invalidating cached child layers.
+              entry.group.opacity = groupOpacity;
+              entry.group.blendMode = ls.blendMode;
+              entry.group.name = `MAP L${i + 1}: ${comp.name}`;
+              // VJ-layer FX chain → applied to the preset's group composite
+              // as a single post-pass (see renderGroupToTexture's
+              // `_postCompositeEffects` handler). Echo / displacement /
+              // chroma key on the VJ layer now wrap the entire preset
+              // render, matching the user's mental model of "this slot's
+              // effects act on whatever's playing in this slot." Empty
+              // array is a no-op in applyEffects so it's safe to set even
+              // when the slot has no effects.
+              (entry.group as any)._postCompositeEffects = ls.effects ?? [];
+
+              presetLayers.push(entry.group);
+              for (const child of entry.layers) presetLayers.push(child);
             }
-            // Live updates — these are scalars / array-of-data refs, safe
-            // to mutate without invalidating cached child layers.
-            entry.group.opacity = groupOpacity;
-            entry.group.blendMode = ls.blendMode;
-            entry.group.name = `MAP L${i + 1}: ${comp.name}`;
-            // VJ-layer FX chain → applied to the preset's group composite
-            // as a single post-pass (see renderGroupToTexture's
-            // `_postCompositeEffects` handler). Echo / displacement /
-            // chroma key on the VJ layer now wrap the entire preset
-            // render, matching the user's mental model of "this slot's
-            // effects act on whatever's playing in this slot." Empty
-            // array is a no-op in applyEffects so it's safe to set even
-            // when the slot has no effects.
-            (entry.group as any)._postCompositeEffects = ls.effects ?? [];
+            // Prune cache entries whose slot+clip no longer maps to a
+            // live preset (slot emptied, clip removed, mode toggled).
+            // Keeps the cache from growing unbounded across a session of
+            // shuffling clips between slots.
+            for (const key of mapPresetLayerCache.keys()) {
+              if (!activeKeys.has(key)) mapPresetLayerCache.delete(key);
+            }
+            layersToRender = presetLayers;
+            compEffects = vjState.compositionEffects;
+            updateAllTextures(layersToRender, null);
+            didStageTexturePrepass = true;
+          } else if (vjState.stageMode && vjState.isLive) {
+            // ── STAGE MODE: VJ layers feed into mapping layers ──
 
-            presetLayers.push(entry.group);
-            for (const child of entry.layers) presetLayers.push(child);
-          }
-          // Prune cache entries whose slot+clip no longer maps to a
-          // live preset (slot emptied, clip removed, mode toggled).
-          // Keeps the cache from growing unbounded across a session of
-          // shuffling clips between slots.
-          for (const key of mapPresetLayerCache.keys()) {
-            if (!activeKeys.has(key)) mapPresetLayerCache.delete(key);
-          }
-          layersToRender = presetLayers;
-          compEffects = vjState.compositionEffects;
-          updateAllTextures(layersToRender, null);
-          didStageTexturePrepass = true;
-        } else if (vjState.stageMode && vjState.isLive) {
-          // ── STAGE MODE: VJ layers feed into mapping layers ──
+            // 1. Build combined layer list
+            const allManagedLayers: Layer[] = [...(vjLayers || []), ...normalLayers];
 
-          // 1. Build combined layer list
-          const allManagedLayers: Layer[] = [...(vjLayers || []), ...normalLayers];
+            // 2. Update all textures in one batch
+            updateAllTextures(allManagedLayers, normalLayers);
+            didStageTexturePrepass = true;
 
-          // 2. Update all textures in one batch
-          updateAllTextures(allManagedLayers, normalLayers);
-          didStageTexturePrepass = true;
+            // 3. Build VJ source lookup, A/B-aware.
+            //
+            // When the A/B crossfader is ON, vjOutputLayers emits TWO entries
+            // per VJ layer (one per bank, IDs `vj-layer-N-A` / `vj-layer-N-B`).
+            // For stage mode we want each mapped Screen to see the SAME live
+            // crossfade between A and B that the user dialled with the fader,
+            // applied PER VJ LAYER INDEX (so different screens can show
+            // different VJ layers, each independently mixing A↔B).
+            //
+            // We bucket layers by VJ index, then for any index that has both
+            // banks active we ask the engine to render a per-layer crossfade
+            // FBO and use that as the canonical texture. Single-bank indices
+            // pass through unchanged (cheap path).
+            // Bucket per VJ layer index → { A?, B?, single? }. `single` is set
+            // for entries with no bank tag (crossfader off — only Bank A).
+            // Texture resolution + id parsing hoisted to component scope
+            // (resolveVjLayerTexture / parseVjLayerId) so the frame body
+            // doesn't re-allocate closures or re-run regexes.
+            type VjBucket = { a?: Layer; b?: Layer; single?: Layer };
+            const vjByIndex = new Map<number, VjBucket>();
+            if (vjLayers) {
+              for (const vjLayer of vjLayers) {
+                const parsed = parseVjLayerId(vjLayer.id);
+                if (!parsed) continue;
+                const slot = vjByIndex.get(parsed.idx) ?? {};
+                if (parsed.bank === 'A') slot.a = vjLayer;
+                else if (parsed.bank === 'B') slot.b = vjLayer;
+                else slot.single = vjLayer;
+                vjByIndex.set(parsed.idx, slot);
+              }
+            }
 
-          // 3. Build VJ source lookup, A/B-aware.
-          //
-          // When the A/B crossfader is ON, vjOutputLayers emits TWO entries
-          // per VJ layer (one per bank, IDs `vj-layer-N-A` / `vj-layer-N-B`).
-          // For stage mode we want each mapped Screen to see the SAME live
-          // crossfade between A and B that the user dialled with the fader,
-          // applied PER VJ LAYER INDEX (so different screens can show
-          // different VJ layers, each independently mixing A↔B).
-          //
-          // We bucket layers by VJ index, then for any index that has both
-          // banks active we ask the engine to render a per-layer crossfade
-          // FBO and use that as the canonical texture. Single-bank indices
-          // pass through unchanged (cheap path).
-          // Bucket per VJ layer index → { A?, B?, single? }. `single` is set
-          // for entries with no bank tag (crossfader off — only Bank A).
-          // Texture resolution + id parsing hoisted to component scope
-          // (resolveVjLayerTexture / parseVjLayerId) so the frame body
-          // doesn't re-allocate closures or re-run regexes.
-          type VjBucket = { a?: Layer; b?: Layer; single?: Layer };
-          const vjByIndex = new Map<number, VjBucket>();
-          if (vjLayers) {
-            for (const vjLayer of vjLayers) {
-              const parsed = parseVjLayerId(vjLayer.id);
-              if (!parsed) continue;
-              const slot = vjByIndex.get(parsed.idx) ?? {};
-              if (parsed.bank === 'A') slot.a = vjLayer;
-              else if (parsed.bank === 'B') slot.b = vjLayer;
-              else slot.single = vjLayer;
-              vjByIndex.set(parsed.idx, slot);
+            // Pre-render per-VJ-layer crossfades for indices that have both
+            // banks. Engine reuses the chosen transition shader + fader value.
+            // Resolves to a Map<idx, { layer: Layer, texture: Texture }> for
+            // the injection step below.
+            const vjResolved = new Map<number, { layer: Layer; texture: THREE.Texture }>();
+            for (const [idx, slot] of vjByIndex.entries()) {
+              // Single-bank or crossfader-off — fast path: use whichever side
+              // exists, no merge.
+              if (slot.single) {
+                const tex = resolveVjLayerTexture(slot.single);
+                if (tex) vjResolved.set(idx, { layer: slot.single, texture: tex });
+                continue;
+              }
+              if (slot.a && !slot.b) {
+                const tex = resolveVjLayerTexture(slot.a);
+                if (tex) vjResolved.set(idx, { layer: slot.a, texture: tex });
+                continue;
+              }
+              if (slot.b && !slot.a) {
+                const tex = resolveVjLayerTexture(slot.b);
+                if (tex) vjResolved.set(idx, { layer: slot.b, texture: tex });
+                continue;
+              }
+              // Both banks present — run per-layer crossfade.
+              if (slot.a && slot.b) {
+                const texA = resolveVjLayerTexture(slot.a);
+                const texB = resolveVjLayerTexture(slot.b);
+                if (!texA && !texB) continue;
+                const target = engine.getOrCreateVJCrossfadeTarget(idx);
+                engine.renderVJCrossfadeToTarget(target, texA, texB);
+                // Use Bank A's layer envelope as the carrier (effects stack +
+                // source meta). The texture override below is what actually
+                // reaches the screen. Bank A's effects win — stage-mode VJ
+                // effects on top of the crossfade are A's choice; Bank B's
+                // per-layer effects already baked into texB before the merge.
+                vjResolved.set(idx, { layer: slot.a, texture: target.texture });
+              }
             }
-          }
 
-          // Pre-render per-VJ-layer crossfades for indices that have both
-          // banks. Engine reuses the chosen transition shader + fader value.
-          // Resolves to a Map<idx, { layer: Layer, texture: Texture }> for
-          // the injection step below.
-          const vjResolved = new Map<number, { layer: Layer; texture: THREE.Texture }>();
-          for (const [idx, slot] of vjByIndex.entries()) {
-            // Single-bank or crossfader-off — fast path: use whichever side
-            // exists, no merge.
-            if (slot.single) {
-              const tex = resolveVjLayerTexture(slot.single);
-              if (tex) vjResolved.set(idx, { layer: slot.single, texture: tex });
-              continue;
+            if (
+              normalLayers.some((layer) => layer.vjLayerIndex === VJ_MIX_SOURCE_INDEX) &&
+              vjLayers &&
+              vjLayers.length > 0
+            ) {
+              const mixTexture = engine.renderVJMixToTexture(vjLayers);
+              if (mixTexture) vjResolved.set(VJ_MIX_SOURCE_INDEX, { layer: vjMixCarrierLayer, texture: mixTexture });
             }
-            if (slot.a && !slot.b) {
-              const tex = resolveVjLayerTexture(slot.a);
-              if (tex) vjResolved.set(idx, { layer: slot.a, texture: tex });
-              continue;
-            }
-            if (slot.b && !slot.a) {
-              const tex = resolveVjLayerTexture(slot.b);
-              if (tex) vjResolved.set(idx, { layer: slot.b, texture: tex });
-              continue;
-            }
-            // Both banks present — run per-layer crossfade.
-            if (slot.a && slot.b) {
-              const texA = resolveVjLayerTexture(slot.a);
-              const texB = resolveVjLayerTexture(slot.b);
-              if (!texA && !texB) continue;
-              const target = engine.getOrCreateVJCrossfadeTarget(idx);
-              engine.renderVJCrossfadeToTarget(target, texA, texB);
-              // Use Bank A's layer envelope as the carrier (effects stack +
-              // source meta). The texture override below is what actually
-              // reaches the screen. Bank A's effects win — stage-mode VJ
-              // effects on top of the crossfade are A's choice; Bank B's
-              // per-layer effects already baked into texB before the merge.
-              vjResolved.set(idx, { layer: slot.a, texture: target.texture });
-            }
-          }
 
-          if (normalLayers.some(layer => layer.vjLayerIndex === VJ_MIX_SOURCE_INDEX) && vjLayers && vjLayers.length > 0) {
-            const mixTexture = engine.renderVJMixToTexture(vjLayers);
-            if (mixTexture) vjResolved.set(VJ_MIX_SOURCE_INDEX, { layer: vjMixCarrierLayer, texture: mixTexture });
-          }
-
-          // 4. Inject VJ sources into Screen / Group layers.
-          //
-          //    The injected source is rebuilt every frame — VJ textures
-          //    change each frame (synthvision canvas, shaders, crossfade
-          //    mix) and caching causes stale texture references when
-          //    clips swap. The layer clone + merged effects array are
-          //    cached per layer (injectVjIntoLayer) and rebuilt only on
-          //    identity change.
-          pruneStageInjectCache(normalLayers);
-          layersToRender = normalLayers.map(layer => {
-            if (layer.vjLayerIndex !== undefined) {
-              const resolved = vjResolved.get(layer.vjLayerIndex);
-              if (resolved) return injectVjIntoLayer(layer, resolved, true);
-            }
-            return layer;
-          });
-          compEffects = vjState.compositionEffects;
-        } else if (vjLayers) {
-          // ── PURE VJ MODE: VJ layers replace mapping layers ──
-          layersToRender = vjLayers;
-          compEffects = vjState.compositionEffects;
-        } else {
-          // ── NORMAL MAPPING MODE ──
-          // VJ Source injection for groups + screen layers in regular
-          // mapping mode. When the user selects a VJ Layer from the
-          // group's "VJ Source" dropdown in the LayerPanel, that VJ
-          // Layer's currently-active clip should drive the group's
-          // unified shader — even without entering Stage live mode.
-          // We mirror the texture-resolution + injection path the
-          // stage-mode branch uses, gated on the presence of any
-          // vjLayerIndex bindings so the cost is paid only when needed.
-          layersToRender = normalLayers;
-          const mappingComposition = $project.mappingComposition;
-          compEffects = mappingComposition?.enabled && mappingComposition.effects.length > 0
-            ? mappingComposition.effects
-            : undefined;
-          const mappedVjLayers = (vjLayers ?? []) as Layer[];
-          const anyVjBinding = mappedVjLayers.length > 0 && normalLayers.some(l => l.vjLayerIndex !== undefined);
-          if (anyVjBinding) {
-            // Bucket per VJ layer index → resolved texture. Simpler than
-            // the stage path because mapping mode doesn't currently run
-            // the A/B crossfader merge — single bank only.
-            const vjResolvedMap = new Map<number, { layer: Layer; texture: THREE.Texture }>();
-            for (const vjLayer of mappedVjLayers) {
-              const parsed = parseVjLayerId(vjLayer.id);
-              if (!parsed) continue;
-              // Take Bank A or the single-bank entry; ignore Bank B in
-              // mapping mode for now.
-              if (parsed.bank === 'B' && vjResolvedMap.has(parsed.idx)) continue;
-              const tex = resolveVjLayerTexture(vjLayer);
-              if (tex) vjResolvedMap.set(parsed.idx, { layer: vjLayer, texture: tex });
-            }
-            if (normalLayers.some(layer => layer.vjLayerIndex === VJ_MIX_SOURCE_INDEX)) {
-              const mixTexture = engine.renderVJMixToTexture(mappedVjLayers, vjState.compositionEffects);
-              if (mixTexture) vjResolvedMap.set(VJ_MIX_SOURCE_INDEX, { layer: vjMixCarrierLayer, texture: mixTexture });
-            }
-            // Inject the resolved VJ texture into each managed layer via
-            // the shared per-layer clone cache (see injectVjIntoLayer).
+            // 4. Inject VJ sources into Screen / Group layers.
+            //
+            //    The injected source is rebuilt every frame — VJ textures
+            //    change each frame (synthvision canvas, shaders, crossfade
+            //    mix) and caching causes stale texture references when
+            //    clips swap. The layer clone + merged effects array are
+            //    cached per layer (injectVjIntoLayer) and rebuilt only on
+            //    identity change.
             pruneStageInjectCache(normalLayers);
-            layersToRender = normalLayers.map(layer => {
-              if (layer.vjLayerIndex === undefined) return layer;
-              const resolved = vjResolvedMap.get(layer.vjLayerIndex);
-              if (!resolved) return layer;
-              return injectVjIntoLayer(
-                layer,
-                resolved,
-                layerUsesStageTextureCoordinates(layer, normalLayers),
-              );
+            layersToRender = normalLayers.map((layer) => {
+              if (layer.vjLayerIndex !== undefined) {
+                const resolved = vjResolved.get(layer.vjLayerIndex);
+                if (resolved) return injectVjIntoLayer(layer, resolved, true);
+              }
+              return layer;
             });
-          }
-        }
-
-        // ── Keyframe timeline overrides (applied only during playback so sliders work freely when paused) ──
-        const kfState = get(keyframeTimeline);
-        const kfOverrides = kfState.config.isPlaying ? kfState.activeOverrides : {};
-        const kfStash: Array<{ layer: any; key: string; orig: any; target: any; prop: string }> = [];
-
-        // Debug: log once per second during playback. Behind a manual
-        // flag — serializing the whole override map + layer-id array is
-        // pure waste in a show. Enable from devtools: __GA_KF_DEBUG__=1
-        if ((window as any).__GA_KF_DEBUG__ && kfState.config.isPlaying && Object.keys(kfOverrides).length > 0) {
-          const now = performance.now();
-          if (!(window as any)._kfCanvasLogTime || now - (window as any)._kfCanvasLogTime > 1000) {
-            (window as any)._kfCanvasLogTime = now;
-            console.log('[KF Canvas] applying overrides:', JSON.stringify(kfOverrides), 'layers:', layersToRender.map(l => l.id));
-          }
-        }
-
-        for (let i = 0; i < layersToRender.length; i++) {
-          const layer = layersToRender[i] as any;
-          // For VJ layers, overrides are keyed by clip ID (vj-${clipId}) not layer.id
-          const isVJLayer = layer.id?.startsWith('vj-layer-');
-          const overrideKey = isVJLayer && layer.source?.id ? `vj-${layer.source.id}` : layer.id;
-          const overrides = kfOverrides[overrideKey];
-          if (!overrides) continue;
-
-          for (const [key, value] of Object.entries(overrides)) {
-            if (key === 'layer:opacity') {
-              kfStash.push({ layer, key, orig: layer.opacity, target: layer, prop: 'opacity' });
-              layer.opacity = value as number;
-            } else if (key.startsWith('shader:') && layer.source?.shaderValues) {
-              const param = key.slice(7);
-              kfStash.push({ layer, key, orig: layer.source.shaderValues[param], target: layer.source.shaderValues, prop: param });
-              layer.source.shaderValues[param] = value;
-            } else if (key.startsWith('fx:')) {
-              const parts = key.split(':');
-              const fxId = parts[1];
-              const prop = parts[2];
-              const effect = layer.effects?.find((e: any) => e.id === fxId);
-              if (effect) {
-                if (prop === 'enabled') {
-                  kfStash.push({ layer, key, orig: effect.enabled, target: effect, prop: 'enabled' });
-                  effect.enabled = value as boolean;
-                } else if (prop === 'opacity') {
-                  kfStash.push({ layer, key, orig: effect.opacity, target: effect, prop: 'opacity' });
-                  effect.opacity = value as number;
-                } else {
-                  kfStash.push({ layer, key, orig: effect.params?.[prop], target: effect.params, prop });
-                  if (effect.params) effect.params[prop] = value;
-                }
-              }
-            } else if (key.startsWith('edge:')) {
-              const parts = key.split(':');
-              const edgeId = parts[1];
-              const prop = parts[2];
-              const edge = layer.edgeEffects?.effects?.find((e: any) => e.id === edgeId);
-              if (edge) {
-                if (prop === 'enabled') {
-                  kfStash.push({ layer, key, orig: edge.enabled, target: edge, prop: 'enabled' });
-                  edge.enabled = value as boolean;
-                } else if (prop === 'opacity') {
-                  kfStash.push({ layer, key, orig: edge.opacity, target: edge, prop: 'opacity' });
-                  edge.opacity = value as number;
-                }
-              }
-            } else if (key.startsWith('model3d:') && layer.model3dContent) {
-              // Dot-path support: model3d:echo.count → layer.model3dContent.echo.count
-              const path = key.slice('model3d:'.length).split('.');
-              const last = path.pop()!;
-              let target: any = layer.model3dContent;
-              for (const p of path) {
-                if (target?.[p] == null) { target = null; break; }
-                target = target[p];
-              }
-              if (target) {
-                kfStash.push({ layer, key, orig: target[last], target, prop: last });
-                target[last] = value;
-              }
-            } else if (key.startsWith('gpu:') && layer.gpuLayerContent) {
-              // GPU-shader param keyframes — `gpu:${paramKey}` writes
-              // into layer.gpuLayerContent.params[paramKey]. Works
-              // for any shader in the catalog because params are a
-              // free-form record. The renderer reads params each
-              // frame so the override surfaces immediately.
-              const paramKey = key.slice('gpu:'.length);
-              const params = layer.gpuLayerContent.params || (layer.gpuLayerContent.params = {});
-              kfStash.push({ layer, key, orig: params[paramKey], target: params, prop: paramKey });
-              params[paramKey] = value;
-            }
-          }
-        }
-
-        // ── Update all textures AFTER keyframe overrides so shader uniforms reflect new values ──
-        const hasKeyframeOverrides = Object.keys(kfOverrides).length > 0;
-        if (!didStageTexturePrepass || hasKeyframeOverrides) {
-          updateAllTextures(layersToRender, null);
-        }
-
-        // Phase integration now happens inside updateShaderTextures (per-layer, right before each shader renders)
-        // We just need to clear phase state when playback stops
-        if (!kfState.config.isPlaying) {
-          shaderPhases.clear();
-        }
-
-        // ── Sequencer opacity overrides (non-destructive: stash & restore per frame) ──
-        const seqState = get(layerSequencer);
-        const seqOverrides = (seqState.isPlaying || Object.keys(seqState.opacityOverrides).length > 0) ? seqState.opacityOverrides : null;
-
-        // ── Stage Effects opacity modulation (per-slice brightness) ──
-        // For any layer that's bound to a Surface slice (via Apply
-        // Stage), look up the slice's current effect-driven brightness
-        // and multiply the layer's opacity by it.  Stash the original
-        // in `_stageOrigOpacity` and restore at the end of the frame
-        // alongside the sequencer's `_seqOrigOpacity` restore.  Done
-        // BEFORE the sequencer-override block so the sequencer's
-        // continuous-mode gate stacks on top (the two systems compose:
-        // sequencer says "show/hide this beat", stage says "while
-        // shown, ride the cascading pulse").
-        const stageRt = get(stageEffectsRuntime);
-        if (stageRt.sliceOutputs.size > 0) {
-          for (let i = 0; i < layersToRender.length; i++) {
-            const layer = layersToRender[i];
-            const { brightness } = resolveStageEffectForLayer(layer, stageRt);
-            if (brightness >= 1) continue;
-            applyLayerOpacityModulation(layer, brightness);
-          }
-        }
-
-        const renderClockSeconds = typeof engine.manualTime === 'number' && Number.isFinite(engine.manualTime)
-          ? engine.manualTime
-          : null;
-        const stageEffectNowMs = renderClockSeconds !== null ? renderClockSeconds * 1000 : performance.now();
-        applyMappingCompositionStageEffects($project.mappingComposition, layersToRender, stageEffectNowMs);
-
-        if (seqOverrides) {
-          // Continuous-mode rows take a separate side-channel path:
-          // their `layer.opacity` stays unchanged so the engine still
-          // renders the layer's content pass every frame (shader TIME,
-          // keyframe-driven uniforms, particle integrators all keep
-          // advancing). Only the FINAL composite alpha gets gated, via
-          // `_seqGate` which the engine reads when uploading uniforms
-          // to the layer's display material — see engine.ts uMultiplier
-          // path. Non-continuous rows keep the legacy behavior:
-          // opacity is multiplied at the layer level (which still
-          // renders the pass but can cascade into shader resets
-          // elsewhere in the pipeline — exactly the symptom the ∞
-          // toggle was added to escape).
-          const contMap = seqState.pattern?.continuousLayers ?? {};
-          for (let i = 0; i < layersToRender.length; i++) {
-            const layer = layersToRender[i];
-            const mult = seqOverrides[layer.id];
-            if (mult === undefined) continue;
-            if (contMap[layer.id]) {
-              (layer as any)._seqGate = mult;
-            } else if (mult < 1) {
-              (layer as any)._seqOrigOpacity = layer.opacity;
-              layer.opacity = layer.opacity * mult;
-            }
-          }
-        }
-
-        try {
-          // Macro bundles: post-composition effect chains scaled by
-          // each macro's wet/dry value. Stored as a thin shape (id,
-          // value, effects) so the renderer doesn't pull in the whole
-          // macros store API. Skipped at the call site when no macro
-          // is open or has effects so we don't pay the array build
-          // cost on every frame of a typical session.
-          const macroState = $macros;
-          let macroBundles: { id: string; value: number; effects: typeof macroState.macros[0]['effects'] }[] | undefined;
-          for (const m of macroState.macros) {
-            if (m.value > 0.001 && m.effects.length > 0) {
-              if (!macroBundles) macroBundles = [];
-              macroBundles.push({ id: m.id, value: m.value, effects: m.effects });
-            }
-          }
-          // S4 pilot: tick the pilot before the main render so the pilot's
-          // canvas has a fresh frame when a future compositor migration
-          // wants to sample it. Hard-gated to !output && !osr (the
-          // settings-store sub already enforces this on creation, but
-          // defense-in-depth — even a stale pilot ref leaking past a
-          // window-mode flip stays inert here).
-          if (webgpuPilot && !isOutputMode && !isOsrMode) {
-            webgpuPilot.tick();
-            // Push the latest metrics into the diagnostics store so the
-            // pilot panel updates without subscribing to the pilot directly.
-            webgpuPilotMetrics.update((m) => ({
-              ...m,
-              webgpuRenderMs: Math.round(webgpuPilot!.metrics.webgpuRenderMs * 100) / 100,
-              pilotFramesRendered: webgpuPilot!.metrics.framesRendered,
-              pilotFramesFailed: webgpuPilot!.metrics.framesFailed,
-              lastError: webgpuPilot!.metrics.lastError,
-              updatedAt: Date.now(),
-            }));
-          }
-          engine.render(layersToRender, null, compEffects, macroBundles);
-          if (stage3DOutput) {
-            if (!stage3DRenderer) stage3DRenderer = new Stage3DRenderer(glCanvas);
-            stage3DRenderer.render(
-              engine.getRenderer(),
-              get(stage3dScene),
-              engine.getCompositeTexture(),
-              $settings?.output?.slices ?? [],
-              layersToRender,
-              renderClockSeconds,
-            );
-          }
-        } catch (e) {
-          console.error('[Canvas] Render error:', e);
-        }
-
-        // Restore keyframe stashed values
-        for (const entry of kfStash) {
-          if (entry.orig === undefined) delete entry.target[entry.prop];
-          else entry.target[entry.prop] = entry.orig;
-        }
-
-        // Shader uniforms are restored inside updateShaderTextures now (no-op here)
-
-        // Restore sequencer original opacities + clear continuous-mode
-        // alpha-gate side channel after render. Both fields must be
-        // wiped each frame so a row toggled off the sequencer (or out
-        // of continuous mode) doesn't carry stale state into later
-        // frames. Also restore the stage-effect opacity stash for the
-        // same reason — disabling all stage effects mid-frame should
-        // visibly snap layers back to full opacity, not leave them
-        // dimmed from a previous frame's brightness.
-        for (let i = 0; i < layersToRender.length; i++) {
-          const layer = layersToRender[i];
-          if ((layer as any)._seqOrigOpacity !== undefined) {
-            layer.opacity = (layer as any)._seqOrigOpacity;
-            delete (layer as any)._seqOrigOpacity;
-          }
-          if ((layer as any)._seqGate !== undefined) {
-            delete (layer as any)._seqGate;
-          }
-          if ((layer as any)._stageOrigOpacity !== undefined) {
-            layer.opacity = (layer as any)._stageOrigOpacity;
-            delete (layer as any)._stageOrigOpacity;
-          }
-        }
-
-        // Master-warp output composite — tick HERE, in the render loop,
-        // right after the editor canvas is drawn. The editor canvas is
-        // preserveDrawingBuffer:false, so its pixels are only readable in
-        // the same frame they're rendered; a standalone rAF would read an
-        // empty buffer → black output. No-op unless the warp is active.
-        // Skip in bridgeMode — WebGPUCanvas owns the warp tick there
-        // (its present canvas is the real output surface).
-        if (!isOsrMode && !isOutputMode && !bridgeMode && canvas) {
-          tickMasterWarpOutput(canvas);
-        }
-
-        // Send rendered frame to Spout output / output window
-        // readPixels → send to native Spout sender (CPU fallback path)
-        // Skip when: OSR zero-copy is active OR running inside OSR window
-        const outputWindowOpen = $settings?.output?.outputWindowOpen ?? false;
-        const allSlices = $settings?.output?.slices ?? [];
-        const activeSlices = allSlices.filter((s: OutputSlice) => s.enabled);
-
-        // Inner-gate diagnostic: outer gate is passing (animate-dbg is silent)
-        // but the send block isn't firing either. Log once/sec which of the
-        // inner-gate flags is blocking. Remove once the flow is confirmed.
-        // Spout-send gate: skip without logging unless the user explicitly
-        // opted into the diagnostic via `?spout-debug=1`. The legacy
-        // per-second log was useful when bringing up the OSR Spout pipeline
-        // but in steady state it's pure noise — fires every tick on output
-        // and OSR renderers (which legitimately never send), and clutters
-        // the console for every actual debugging task. Gate it.
-        // CPU Spout-send gate. Pre-fix this fired when EITHER spoutOutputActive
-        // OR outputWindowOpen was true — meaning just opening the visible output
-        // window made the editor do a 1920×1080 RGBA readback (8 MB) every other
-        // frame even when Spout output was off and the output window had its
-        // own renderer. That single coupling has been the "editor slow when
-        // output is open" symptom we've chased all session. The visible output
-        // window already presents itself; the editor has zero reason to read
-        // back pixels for it.
-        //
-        // Correct gate: ONLY run the CPU send path for actual user-explicit
-        // Spout output (spoutOutputActive) when zero-copy OSR isn't already
-        // handling it (osrSpoutActive). Output-window state is window state,
-        // not a CPU-readback trigger.
-        const cpuTextureShareSendAllowed = !isElectron || spoutCpuFallbackAllowed;
-        const __syphonGateSkipped =
-          !spoutOutputActive || !glCanvas || osrSpoutActive || isOsrMode || isOutputMode || !cpuTextureShareSendAllowed;
-        if (__syphonGateSkipped && (window as any).__SPOUT_DEBUG__) {
-          const __now2 = Date.now();
-          if (!(window as any).__spoutInnerDbgLast || __now2 - (window as any).__spoutInnerDbgLast > 1000) {
-            (window as any).__spoutInnerDbgLast = __now2;
-            console.log('[syphon-gate] send skipped — spoutOutputActive=', spoutOutputActive,
-              'outputWindowOpen=', outputWindowOpen,
-              'glCanvas=', !!glCanvas,
-              'osrSpoutActive=', osrSpoutActive,
-              'cpuFallbackAllowed=', spoutCpuFallbackAllowed,
-              'isOsrMode=', isOsrMode,
-              'isOutputMode=', isOutputMode);
-          }
-        }
-
-        if (spoutOutputActive && glCanvas && !osrSpoutActive && !isOsrMode && !isOutputMode && cpuTextureShareSendAllowed) {
-          // Skip every other frame on the CPU path — getImageData is expensive
-          // (~15-30ms for 1080p). This halves the readback overhead while still
-          // delivering 30fps output at 60fps render rate.
-          spoutFrameSkip++;
-          if (spoutFrameSkip % 2 !== 0 && !spoutSendInFlight) {
-            // Skip this frame — let the render loop continue at full speed
+            compEffects = vjState.compositionEffects;
+          } else if (vjLayers) {
+            // ── PURE VJ MODE: VJ layers replace mapping layers ──
+            layersToRender = vjLayers;
+            compEffects = vjState.compositionEffects;
           } else {
-          // Determine Spout output resolution from settings
-          const spoutRes = $settings?.output?.spoutResolution || 'match';
-          let targetW = 1920, targetH = 1080;
-          if (spoutRes === '4K') { targetW = 3840; targetH = 2160; }
-          else if (spoutRes === '720p') { targetW = 1280; targetH = 720; }
-          else if (spoutRes === 'WXGA') { targetW = 1280; targetH = 800; }
-          else if (spoutRes === 'WUXGA') { targetW = 1920; targetH = 1200; }
-          else if (spoutRes === 'custom') { targetW = $settings?.output?.customWidth || 1920; targetH = $settings?.output?.customHeight || 1080; }
-          else if (spoutRes === 'output' && _detectedOutputRes) { targetW = _detectedOutputRes.width; targetH = _detectedOutputRes.height; }
-          else if (spoutRes === 'match') { targetW = glCanvas.width; targetH = glCanvas.height; }
-          else { targetW = 1920; targetH = 1080; }
-
-          // Use 2D canvas to grab the WebGL frame and downscale if needed
-          // This avoids readPixels (which blocks the GL pipeline) and uses the
-          // browser's GPU-accelerated 2D canvas compositing for the copy+scale.
-          const canvasW = glCanvas.width;
-          const canvasH = glCanvas.height;
-          const needsScale = targetW !== canvasW || targetH !== canvasH;
-
-          if (!spoutScaleCanvas || spoutTargetW !== targetW || spoutTargetH !== targetH) {
-            spoutScaleCanvas = document.createElement('canvas');
-            spoutScaleCanvas.width = targetW;
-            spoutScaleCanvas.height = targetH;
-            spoutScaleCtx = spoutScaleCanvas.getContext('2d', { willReadFrequently: true });
-            spoutTargetW = targetW;
-            spoutTargetH = targetH;
+            // ── NORMAL MAPPING MODE ──
+            // VJ Source injection for groups + screen layers in regular
+            // mapping mode. When the user selects a VJ Layer from the
+            // group's "VJ Source" dropdown in the LayerPanel, that VJ
+            // Layer's currently-active clip should drive the group's
+            // unified shader — even without entering Stage live mode.
+            // We mirror the texture-resolution + injection path the
+            // stage-mode branch uses, gated on the presence of any
+            // vjLayerIndex bindings so the cost is paid only when needed.
+            layersToRender = normalLayers;
+            const mappingComposition = $project.mappingComposition;
+            compEffects =
+              mappingComposition?.enabled && mappingComposition.effects.length > 0
+                ? mappingComposition.effects
+                : undefined;
+            const mappedVjLayers = (vjLayers ?? []) as Layer[];
+            const anyVjBinding = mappedVjLayers.length > 0 && normalLayers.some((l) => l.vjLayerIndex !== undefined);
+            if (anyVjBinding) {
+              // Bucket per VJ layer index → resolved texture. Simpler than
+              // the stage path because mapping mode doesn't currently run
+              // the A/B crossfader merge — single bank only.
+              const vjResolvedMap = new Map<number, { layer: Layer; texture: THREE.Texture }>();
+              for (const vjLayer of mappedVjLayers) {
+                const parsed = parseVjLayerId(vjLayer.id);
+                if (!parsed) continue;
+                // Take Bank A or the single-bank entry; ignore Bank B in
+                // mapping mode for now.
+                if (parsed.bank === 'B' && vjResolvedMap.has(parsed.idx)) continue;
+                const tex = resolveVjLayerTexture(vjLayer);
+                if (tex) vjResolvedMap.set(parsed.idx, { layer: vjLayer, texture: tex });
+              }
+              if (normalLayers.some((layer) => layer.vjLayerIndex === VJ_MIX_SOURCE_INDEX)) {
+                const mixTexture = engine.renderVJMixToTexture(mappedVjLayers, vjState.compositionEffects);
+                if (mixTexture)
+                  vjResolvedMap.set(VJ_MIX_SOURCE_INDEX, { layer: vjMixCarrierLayer, texture: mixTexture });
+              }
+              // Inject the resolved VJ texture into each managed layer via
+              // the shared per-layer clone cache (see injectVjIntoLayer).
+              pruneStageInjectCache(normalLayers);
+              layersToRender = normalLayers.map((layer) => {
+                if (layer.vjLayerIndex === undefined) return layer;
+                const resolved = vjResolvedMap.get(layer.vjLayerIndex);
+                if (!resolved) return layer;
+                return injectVjIntoLayer(layer, resolved, layerUsesStageTextureCoordinates(layer, normalLayers));
+              });
+            }
           }
 
-          // Senders slice the TOTAL MAIN OUTPUT. When the master warp is
-          // active, that total output is the warped composite (the tick
-          // earlier this frame already filled getMasterWarpCanvas()), so
-          // each slice crops from the warped frame — not the raw editor
-          // canvas. Otherwise fall back to the raw WebGL canvas.
-          const _mwSenderSource = masterWarpIsActive($settings?.output?.masterWarp)
-            ? getMasterWarpCanvas()
-            : null;
-          const senderSource: CanvasImageSource =
-            _mwSenderSource && _mwSenderSource.width > 0 ? _mwSenderSource : glCanvas;
+          // ── Keyframe timeline overrides (applied only during playback so sliders work freely when paused) ──
+          const kfState = get(keyframeTimeline);
+          const kfOverrides = kfState.config.isPlaying ? kfState.activeOverrides : {};
+          const kfStash: Array<{ layer: any; key: string; orig: any; target: any; prop: string }> = [];
 
-          // Draw source → 2D canvas (GPU-accelerated, handles Y-flip).
-          // scale(1,-1) flips to the bottom-up orientation the native
-          // senders expect; both the WebGL canvas and the (upright) warped
-          // canvas are drawn upright by drawImage, so the same flip applies.
-          spoutScaleCtx!.save();
-          spoutScaleCtx!.scale(1, -1); // Flip Y (sender convention is bottom-up)
-          spoutScaleCtx!.drawImage(senderSource, 0, -targetH, targetW, targetH);
-          spoutScaleCtx!.restore();
+          // Debug: log once per second during playback. Behind a manual
+          // flag — serializing the whole override map + layer-id array is
+          // pure waste in a show. Enable from devtools: __GA_KF_DEBUG__=1
+          if ((window as any).__GA_KF_DEBUG__ && kfState.config.isPlaying && Object.keys(kfOverrides).length > 0) {
+            const now = performance.now();
+            if (!(window as any)._kfCanvasLogTime || now - (window as any)._kfCanvasLogTime > 1000) {
+              (window as any)._kfCanvasLogTime = now;
+              console.log(
+                '[KF Canvas] applying overrides:',
+                JSON.stringify(kfOverrides),
+                'layers:',
+                layersToRender.map((l) => l.id),
+              );
+            }
+          }
 
-          // getImageData is the CPU readback — but at the target resolution, not canvas resolution
-          const w = targetW;
-          const h = targetH;
+          for (let i = 0; i < layersToRender.length; i++) {
+            const layer = layersToRender[i] as any;
+            // For VJ layers, overrides are keyed by clip ID (vj-${clipId}) not layer.id
+            const isVJLayer = layer.id?.startsWith('vj-layer-');
+            const overrideKey = isVJLayer && layer.source?.id ? `vj-${layer.source.id}` : layer.id;
+            const overrides = kfOverrides[overrideKey];
+            if (!overrides) continue;
 
-          {
-            if (activeSlices.length > 0) {
-              // ── Multi-output slice path ──────────────────────────────────
-              // spoutScaleCanvas already has the frame right-side-up at Spout
-              // resolution. Each slice crops a normalized region; the GPU
-              // blend renderer (blendRenderer.ts) handles crop + rotation +
-              // brightness/contrast/gamma + edge-blend alpha + black-level
-              // lift in ONE shader pass, returning ready-to-send RGBA bytes.
-              // The legacy 2D path (sliceCanvas + applyEdgeBlending) is
-              // kept as a fallback when WebGL initialization fails.
-              // NOTE: the slice path re-renders each slice from
-              // spoutScaleCanvas, so we deliberately SKIP the full-frame
-              // getImageData readback here — it's only consumed by the
-              // single-output branch below. (Was an ~8/33 MB readback +
-              // memcpy per frame of dead work whenever slices exist.)
-              fullFrameCanvas = spoutScaleCanvas;
-              fullFrameCtx = spoutScaleCtx;
-              const gpuPathAvailable = isBlendRendererAvailable();
-
-              // Drop PBO state for deleted slices (cheap string compare
-              // per frame; the prune itself only runs on config change).
-              const sliceIdsKey = activeSlices.map(s => s.id).join('|');
-              if (sliceIdsKey !== lastSliceIdsKey) {
-                lastSliceIdsKey = sliceIdsKey;
-                pruneSliceReadbackStates(new Set(activeSlices.map(s => s.id)));
-              }
-
-              for (const slice of activeSlices) {
-                if (sliceSendInFlight.has(slice.id)) continue; // Backpressure per-slice
-
-                // Atlas fan-out handles Spout/Syphon sender slices natively
-                // (zero-copy) — skip their CPU readback + send entirely.
-                // Predicate MUST match packAtlas's so the skip set equals
-                // the atlas set; NDI + display slices fall through.
-                if (atlasFanoutActive && isAtlasSenderSlice(slice)) continue;
-
-                // Slice output dimensions = its fraction of the source
-                // canvas. For rotated 90°/270° slices the GPU shader
-                // rotates the sample uv, so output stays at sw × sh.
-                const sw = Math.round(slice.cropW * w);
-                const sh = Math.round(slice.cropH * h);
-                if (sw <= 0 || sh <= 0) continue;
-
-                // ── Pixel readout ────────────────────────────────────
-                // GPU path: async PBO readback — kicks this frame's
-                // render + returns LAST frame's completed bytes, so the
-                // render thread never stalls on the GPU. One frame of
-                // stream latency, invisible on Spout/Syphon/NDI. While
-                // the pipeline warms (null), skip the send this frame —
-                // do NOT fall into the 2D path, which would pay the
-                // exact synchronous readback this exists to avoid.
-                // 2D fallback: only when WebGL init failed entirely.
-                let slicePixels: Uint8Array | Uint8ClampedArray | null = null;
-                if (gpuPathAvailable) {
-                  slicePixels = renderSlicePixelsAsync(fullFrameCanvas!, slice, sw, sh);
-                  if (!slicePixels) continue;
-                }
-                if (!slicePixels) {
-                  // 2D fallback. Same code as the v1.5 path; only entered
-                  // if the WebGL renderer failed to initialize (rare).
-                  const sx = Math.round(slice.cropX * w);
-                  const sy = Math.round(slice.cropY * h);
-                  if (!sliceCanvas || sliceCanvas.width !== sw || sliceCanvas.height !== sh) {
-                    sliceCanvas = document.createElement('canvas');
-                    sliceCanvas.width = sw;
-                    sliceCanvas.height = sh;
-                    sliceCtx = sliceCanvas.getContext('2d');
-                  }
-                  sliceCtx!.clearRect(0, 0, sw, sh);
-                  if (slice.rotation === 0) {
-                    sliceCtx!.drawImage(fullFrameCanvas!, sx, sy, sw, sh, 0, 0, sw, sh);
+            for (const [key, value] of Object.entries(overrides)) {
+              if (key === 'layer:opacity') {
+                kfStash.push({ layer, key, orig: layer.opacity, target: layer, prop: 'opacity' });
+                layer.opacity = value as number;
+              } else if (key.startsWith('shader:') && layer.source?.shaderValues) {
+                const param = key.slice(7);
+                kfStash.push({
+                  layer,
+                  key,
+                  orig: layer.source.shaderValues[param],
+                  target: layer.source.shaderValues,
+                  prop: param,
+                });
+                layer.source.shaderValues[param] = value;
+              } else if (key.startsWith('fx:')) {
+                const parts = key.split(':');
+                const fxId = parts[1];
+                const prop = parts[2];
+                const effect = layer.effects?.find((e: any) => e.id === fxId);
+                if (effect) {
+                  if (prop === 'enabled') {
+                    kfStash.push({ layer, key, orig: effect.enabled, target: effect, prop: 'enabled' });
+                    effect.enabled = value as boolean;
+                  } else if (prop === 'opacity') {
+                    kfStash.push({ layer, key, orig: effect.opacity, target: effect, prop: 'opacity' });
+                    effect.opacity = value as number;
                   } else {
-                    sliceCtx!.save();
-                    sliceCtx!.translate(sw / 2, sh / 2);
-                    sliceCtx!.rotate((slice.rotation * Math.PI) / 180);
-                    if (slice.rotation === 90 || slice.rotation === 270) {
-                      sliceCtx!.drawImage(fullFrameCanvas!, sx, sy, sw, sh, -sh / 2, -sw / 2, sh, sw);
-                    } else {
-                      sliceCtx!.drawImage(fullFrameCanvas!, sx, sy, sw, sh, -sw / 2, -sh / 2, sw, sh);
-                    }
-                    sliceCtx!.restore();
-                  }
-                  const hasBlend = slice.edgeBlendLeft > 0 || slice.edgeBlendRight > 0 || slice.edgeBlendTop > 0 || slice.edgeBlendBottom > 0;
-                  if (hasBlend) {
-                    if (!sliceBlendCanvas || sliceBlendCanvas.width !== sw || sliceBlendCanvas.height !== sh) {
-                      sliceBlendCanvas = document.createElement('canvas');
-                      sliceBlendCanvas.width = sw;
-                      sliceBlendCanvas.height = sh;
-                      sliceBlendCtx = sliceBlendCanvas.getContext('2d');
-                    }
-                    sliceBlendCtx!.clearRect(0, 0, sw, sh);
-                    sliceBlendCtx!.drawImage(sliceCanvas, 0, 0);
-                    applyEdgeBlending(sliceBlendCtx!, sw, sh, {
-                      edgeBlendLeft: slice.edgeBlendLeft,
-                      edgeBlendRight: slice.edgeBlendRight,
-                      edgeBlendTop: slice.edgeBlendTop,
-                      edgeBlendBottom: slice.edgeBlendBottom,
-                      edgeBlendGamma: slice.edgeBlendGamma,
-                    });
-                    slicePixels = sliceBlendCtx!.getImageData(0, 0, sw, sh).data;
-                  } else {
-                    slicePixels = sliceCtx!.getImageData(0, 0, sw, sh).data;
+                    kfStash.push({ layer, key, orig: effect.params?.[prop], target: effect.params, prop });
+                    if (effect.params) effect.params[prop] = value;
                   }
                 }
-
-                sliceSendInFlight.add(slice.id);
-                const senderName = slice.spoutName || `ghostArcade-${slice.name}`;
-                // Skip "physical display" target slices — the per-display
-                // window (Phase 2) handles its own send pipeline. Sender
-                // path stays for 'sender' target only.
-                const targetType = slice.targetType ?? 'sender';
-                if (targetType === 'display') {
-                  sliceSendInFlight.delete(slice.id);
-                  continue;
+              } else if (key.startsWith('edge:')) {
+                const parts = key.split(':');
+                const edgeId = parts[1];
+                const prop = parts[2];
+                const edge = layer.edgeEffects?.effects?.find((e: any) => e.id === edgeId);
+                if (edge) {
+                  if (prop === 'enabled') {
+                    kfStash.push({ layer, key, orig: edge.enabled, target: edge, prop: 'enabled' });
+                    edge.enabled = value as boolean;
+                  } else if (prop === 'opacity') {
+                    kfStash.push({ layer, key, orig: edge.opacity, target: edge, prop: 'opacity' });
+                    edge.opacity = value as number;
+                  }
                 }
-                // Route by transport. 'ndi' goes to the new ndi_send_image
-                // IPC handler; the existing 'spout' / 'syphon' paths keep
-                // their behavior unchanged. Slice managers ensure
-                // ndi_create_sender was called for senderName before any
-                // sends (sliceNdiActive tracks this).
-                const outputType = (slice as any).outputType ?? (isElectron ? (isMac ? 'syphon' : 'spout') : 'spout');
-                // Re-wrap as Uint8Array for IPC (NDI/Spout expect Uint8Array).
-                // GPU path already returns Uint8Array; 2D fallback returns
-                // Uint8ClampedArray.
-                const sendBytes: Uint8Array = slicePixels instanceof Uint8Array
-                  ? slicePixels
-                  : new Uint8Array(slicePixels.buffer, slicePixels.byteOffset, slicePixels.byteLength);
-
-                if (outputType === 'ndi' && isElectron) {
-                  if (!sliceNdiActive.has(senderName)) {
-                    // Lazy-create the NDI sender on first send. The
-                    // store/UI tracks intent (outputType=ndi), but the
-                    // actual sender lifecycle lives here so it survives
-                    // slice rename / re-config without UI complexity.
-                    sliceNdiActive.add(senderName);
-                    (window as any).ghostNDI?.createSender(senderName).catch(() => { sliceNdiActive.delete(senderName); });
+              } else if (key.startsWith('model3d:') && layer.model3dContent) {
+                // Dot-path support: model3d:echo.count → layer.model3dContent.echo.count
+                const path = key.slice('model3d:'.length).split('.');
+                const last = path.pop()!;
+                let target: any = layer.model3dContent;
+                for (const p of path) {
+                  if (target?.[p] == null) {
+                    target = null;
+                    break;
                   }
-                  (window as any).ghostNDI?.sendImage(senderName, sendBytes, sw, sh)
-                    .catch(() => {}).finally(() => { sliceSendInFlight.delete(slice.id); });
-                } else if (isElectron) {
-                  invoke('spout_send_image', { data: sendBytes, width: sw, height: sh, senderName })
-                    .catch(() => {}).finally(() => { sliceSendInFlight.delete(slice.id); });
-                } else {
-                  fetch(`http://127.0.0.1:9002/spout/send?width=${sw}&height=${sh}&sender=${encodeURIComponent(senderName)}`, {
-                    method: 'POST',
-                    // BodyInit doesn't include the Uint8Array<ArrayBufferLike>
-                    // shape that TS 5.7+ produces for our bytes; coerce via
-                    // any to silence — the runtime accepts a typed array fine.
-                    body: sendBytes as any,
-                  }).catch(() => {}).finally(() => { sliceSendInFlight.delete(slice.id); });
+                  target = target[p];
                 }
-              }
-            } else if (!spoutSendInFlight) {
-              // ── Legacy single-output path (no slices configured) ─────────
-              // Full-frame readback lives HERE (only consumer). Reuse the
-              // Uint8Array buffer across frames; the .set() is the lone
-              // memcpy (the wrapper is a zero-copy view over imgData).
-              const imgData = spoutScaleCtx!.getImageData(0, 0, w, h);
-              const expectedBytes = w * h * 4;
-              if (!spoutSendPixels || spoutSendPixels.byteLength !== expectedBytes) {
-                spoutSendPixels = new Uint8Array(expectedBytes);
-              }
-              spoutSendPixels.set(new Uint8Array(imgData.data.buffer, imgData.data.byteOffset, imgData.data.byteLength));
-              spoutSendW = w;
-              spoutSendH = h;
-              spoutSendInFlight = true;
-              if (isElectron) {
-                invoke('spout_send_image', { data: spoutSendPixels, width: w, height: h })
-                  .catch(() => {}).finally(() => { spoutSendInFlight = false; });
-              } else {
-                // Tauri / browser: HTTP binary POST to sidecar on port 9002
-                fetch(`http://127.0.0.1:9002/spout/send?width=${w}&height=${h}`, {
-                  method: 'POST',
-                  body: spoutSendPixels as BodyInit,
-                }).then(resp => {
-                  if (!resp.ok && spoutSendLogCount < 5) {
-                    spoutSendLogCount++;
-                    console.warn(`Spout send HTTP ${resp.status}: ${resp.statusText}`);
-                  }
-                }).catch((e) => {
-                  if (spoutSendLogCount < 5) {
-                    spoutSendLogCount++;
-                    console.warn('Spout send fetch error:', e);
-                  }
-                }).finally(() => { spoutSendInFlight = false; });
+                if (target) {
+                  kfStash.push({ layer, key, orig: target[last], target, prop: last });
+                  target[last] = value;
+                }
+              } else if (key.startsWith('splat:') && layer.splatContent) {
+                const paramKey = key.slice('splat:'.length);
+                const target = layer.splatContent as unknown as Record<string, unknown>;
+                kfStash.push({ layer, key, orig: target[paramKey], target, prop: paramKey });
+                target[paramKey] = value;
+              } else if (key.startsWith('gpu:') && layer.gpuLayerContent) {
+                // GPU-shader param keyframes — `gpu:${paramKey}` writes
+                // into layer.gpuLayerContent.params[paramKey]. Works
+                // for any shader in the catalog because params are a
+                // free-form record. The renderer reads params each
+                // frame so the override surfaces immediately.
+                const paramKey = key.slice('gpu:'.length);
+                const params = layer.gpuLayerContent.params || (layer.gpuLayerContent.params = {});
+                kfStash.push({ layer, key, orig: params[paramKey], target: params, prop: paramKey });
+                params[paramKey] = value;
               }
             }
           }
-        } // end else (not skipped frame)
-        }
-      }
-      // FPS tracking — smooth average every 500ms
-      fpsFrameCount++;
-      const fpsNow = performance.now();
-      const fpsElapsed = fpsNow - fpsLastTime;
-      if (fpsElapsed >= 500) {
-        const fpsValue = Math.round((fpsFrameCount * 1000) / fpsElapsed);
-        fpsStore.set(fpsValue);
-        fpsFrameCount = 0;
-        fpsLastTime = fpsNow;
 
-        // Periodic FPS log to the main-process log file. Prefix `[GPU]` is
-        // whitelisted in the console-message forwarder. Log every ~5s so it's
-        // useful without being spammy — and only when something is rendering.
-        if (!((_fpsLogCount++ ) % 10)) {
-          const layerCount = ($project?.layers?.length ?? 0);
-          const dpr = window.devicePixelRatio || 1;
-          const displayW = canvas.clientWidth;
-          const displayH = canvas.clientHeight;
-          console.log(`[GPU] mode=${isOutputMode ? 'output' : 'main'} FPS=${fpsValue}  layers=${layerCount}  drawingBuffer=${canvas.width}x${canvas.height}  display=${displayW}x${displayH}  dpr=${dpr}`);
-          if (isOutputMode && (Math.abs(canvas.width - Math.round(displayW * dpr)) > 1 || Math.abs(canvas.height - Math.round(displayH * dpr)) > 1)) {
-            console.warn(`[Output] Canvas backing store ${canvas.width}x${canvas.height} does not match display ${displayW}x${displayH} @ DPR ${dpr}. Use fullscreen output or Match Output Display to avoid compositor scaling.`);
+          // ── Update all textures AFTER keyframe overrides so shader uniforms reflect new values ──
+          const hasKeyframeOverrides = Object.keys(kfOverrides).length > 0;
+          if (!didStageTexturePrepass || hasKeyframeOverrides) {
+            updateAllTextures(layersToRender, null);
+          }
+
+          // Phase integration now happens inside updateShaderTextures (per-layer, right before each shader renders)
+          // We just need to clear phase state when playback stops
+          if (!kfState.config.isPlaying) {
+            shaderPhases.clear();
+          }
+
+          // ── Sequencer opacity overrides (non-destructive: stash & restore per frame) ──
+          const seqState = get(layerSequencer);
+          const seqOverrides =
+            seqState.isPlaying || Object.keys(seqState.opacityOverrides).length > 0 ? seqState.opacityOverrides : null;
+
+          // ── Stage Effects opacity modulation (per-slice brightness) ──
+          // For any layer that's bound to a Surface slice (via Apply
+          // Stage), look up the slice's current effect-driven brightness
+          // and multiply the layer's opacity by it.  Stash the original
+          // in `_stageOrigOpacity` and restore at the end of the frame
+          // alongside the sequencer's `_seqOrigOpacity` restore.  Done
+          // BEFORE the sequencer-override block so the sequencer's
+          // continuous-mode gate stacks on top (the two systems compose:
+          // sequencer says "show/hide this beat", stage says "while
+          // shown, ride the cascading pulse").
+          const stageRt = get(stageEffectsRuntime);
+          if (stageRt.sliceOutputs.size > 0) {
+            for (let i = 0; i < layersToRender.length; i++) {
+              const layer = layersToRender[i];
+              const { brightness } = resolveStageEffectForLayer(layer, stageRt);
+              if (brightness >= 1) continue;
+              applyLayerOpacityModulation(layer, brightness);
+            }
+          }
+
+          const renderClockSeconds =
+            typeof engine.manualTime === 'number' && Number.isFinite(engine.manualTime) ? engine.manualTime : null;
+          const stageEffectNowMs = renderClockSeconds !== null ? renderClockSeconds * 1000 : performance.now();
+          applyMappingCompositionStageEffects($project.mappingComposition, layersToRender, stageEffectNowMs);
+
+          if (seqOverrides) {
+            // Continuous-mode rows take a separate side-channel path:
+            // their `layer.opacity` stays unchanged so the engine still
+            // renders the layer's content pass every frame (shader TIME,
+            // keyframe-driven uniforms, particle integrators all keep
+            // advancing). Only the FINAL composite alpha gets gated, via
+            // `_seqGate` which the engine reads when uploading uniforms
+            // to the layer's display material — see engine.ts uMultiplier
+            // path. Non-continuous rows keep the legacy behavior:
+            // opacity is multiplied at the layer level (which still
+            // renders the pass but can cascade into shader resets
+            // elsewhere in the pipeline — exactly the symptom the ∞
+            // toggle was added to escape).
+            const contMap = seqState.pattern?.continuousLayers ?? {};
+            for (let i = 0; i < layersToRender.length; i++) {
+              const layer = layersToRender[i];
+              const mult = seqOverrides[layer.id];
+              if (mult === undefined) continue;
+              if (contMap[layer.id]) {
+                (layer as any)._seqGate = mult;
+              } else if (mult < 1) {
+                (layer as any)._seqOrigOpacity = layer.opacity;
+                layer.opacity = layer.opacity * mult;
+              }
+            }
+          }
+
+          try {
+            // Macro bundles: post-composition effect chains scaled by
+            // each macro's wet/dry value. Stored as a thin shape (id,
+            // value, effects) so the renderer doesn't pull in the whole
+            // macros store API. Skipped at the call site when no macro
+            // is open or has effects so we don't pay the array build
+            // cost on every frame of a typical session.
+            const macroState = $macros;
+            let macroBundles:
+              | { id: string; value: number; effects: (typeof macroState.macros)[0]['effects'] }[]
+              | undefined;
+            for (const m of macroState.macros) {
+              if (m.value > 0.001 && m.effects.length > 0) {
+                if (!macroBundles) macroBundles = [];
+                macroBundles.push({ id: m.id, value: m.value, effects: m.effects });
+              }
+            }
+            // S4 pilot: tick the pilot before the main render so the pilot's
+            // canvas has a fresh frame when a future compositor migration
+            // wants to sample it. Hard-gated to !output && !osr (the
+            // settings-store sub already enforces this on creation, but
+            // defense-in-depth — even a stale pilot ref leaking past a
+            // window-mode flip stays inert here).
+            if (webgpuPilot && !isOutputMode && !isOsrMode) {
+              webgpuPilot.tick();
+              // Push the latest metrics into the diagnostics store so the
+              // pilot panel updates without subscribing to the pilot directly.
+              webgpuPilotMetrics.update((m) => ({
+                ...m,
+                webgpuRenderMs: Math.round(webgpuPilot!.metrics.webgpuRenderMs * 100) / 100,
+                pilotFramesRendered: webgpuPilot!.metrics.framesRendered,
+                pilotFramesFailed: webgpuPilot!.metrics.framesFailed,
+                lastError: webgpuPilot!.metrics.lastError,
+                updatedAt: Date.now(),
+              }));
+            }
+            engine.render(layersToRender, null, compEffects, macroBundles);
+            if (stage3DOutput) {
+              if (!stage3DRenderer) stage3DRenderer = new Stage3DRenderer(glCanvas);
+              stage3DRenderer.render(
+                engine.getRenderer(),
+                get(stage3dScene),
+                engine.getCompositeTexture(),
+                $settings?.output?.slices ?? [],
+                layersToRender,
+                renderClockSeconds,
+              );
+            }
+          } catch (e) {
+            console.error('[Canvas] Render error:', e);
+          }
+
+          // Restore keyframe stashed values
+          for (const entry of kfStash) {
+            if (entry.orig === undefined) delete entry.target[entry.prop];
+            else entry.target[entry.prop] = entry.orig;
+          }
+
+          // Shader uniforms are restored inside updateShaderTextures now (no-op here)
+
+          // Restore sequencer original opacities + clear continuous-mode
+          // alpha-gate side channel after render. Both fields must be
+          // wiped each frame so a row toggled off the sequencer (or out
+          // of continuous mode) doesn't carry stale state into later
+          // frames. Also restore the stage-effect opacity stash for the
+          // same reason — disabling all stage effects mid-frame should
+          // visibly snap layers back to full opacity, not leave them
+          // dimmed from a previous frame's brightness.
+          for (let i = 0; i < layersToRender.length; i++) {
+            const layer = layersToRender[i];
+            if ((layer as any)._seqOrigOpacity !== undefined) {
+              layer.opacity = (layer as any)._seqOrigOpacity;
+              delete (layer as any)._seqOrigOpacity;
+            }
+            if ((layer as any)._seqGate !== undefined) {
+              delete (layer as any)._seqGate;
+            }
+            if ((layer as any)._stageOrigOpacity !== undefined) {
+              layer.opacity = (layer as any)._stageOrigOpacity;
+              delete (layer as any)._stageOrigOpacity;
+            }
+          }
+
+          // Master-warp output composite — tick HERE, in the render loop,
+          // right after the editor canvas is drawn. The editor canvas is
+          // preserveDrawingBuffer:false, so its pixels are only readable in
+          // the same frame they're rendered; a standalone rAF would read an
+          // empty buffer → black output. No-op unless the warp is active.
+          // Skip in bridgeMode — WebGPUCanvas owns the warp tick there
+          // (its present canvas is the real output surface).
+          if (!isOsrMode && !isOutputMode && !bridgeMode && canvas) {
+            tickMasterWarpOutput(canvas);
+          }
+
+          // Send rendered frame to Spout output / output window
+          // readPixels → send to native Spout sender (CPU fallback path)
+          // Skip when: OSR zero-copy is active OR running inside OSR window
+          const outputWindowOpen = $settings?.output?.outputWindowOpen ?? false;
+          const allSlices = $settings?.output?.slices ?? [];
+          const activeSlices = allSlices.filter((s: OutputSlice) => s.enabled);
+
+          // Inner-gate diagnostic: outer gate is passing (animate-dbg is silent)
+          // but the send block isn't firing either. Log once/sec which of the
+          // inner-gate flags is blocking. Remove once the flow is confirmed.
+          // Spout-send gate: skip without logging unless the user explicitly
+          // opted into the diagnostic via `?spout-debug=1`. The legacy
+          // per-second log was useful when bringing up the OSR Spout pipeline
+          // but in steady state it's pure noise — fires every tick on output
+          // and OSR renderers (which legitimately never send), and clutters
+          // the console for every actual debugging task. Gate it.
+          // CPU Spout-send gate. Pre-fix this fired when EITHER spoutOutputActive
+          // OR outputWindowOpen was true — meaning just opening the visible output
+          // window made the editor do a 1920×1080 RGBA readback (8 MB) every other
+          // frame even when Spout output was off and the output window had its
+          // own renderer. That single coupling has been the "editor slow when
+          // output is open" symptom we've chased all session. The visible output
+          // window already presents itself; the editor has zero reason to read
+          // back pixels for it.
+          //
+          // Correct gate: ONLY run the CPU send path for actual user-explicit
+          // Spout output (spoutOutputActive) when zero-copy OSR isn't already
+          // handling it (osrSpoutActive). Output-window state is window state,
+          // not a CPU-readback trigger.
+          const cpuTextureShareSendAllowed = !isElectron || spoutCpuFallbackAllowed;
+          const __syphonGateSkipped =
+            !spoutOutputActive ||
+            !glCanvas ||
+            osrSpoutActive ||
+            isOsrMode ||
+            isOutputMode ||
+            !cpuTextureShareSendAllowed;
+          if (__syphonGateSkipped && (window as any).__SPOUT_DEBUG__) {
+            const __now2 = Date.now();
+            if (!(window as any).__spoutInnerDbgLast || __now2 - (window as any).__spoutInnerDbgLast > 1000) {
+              (window as any).__spoutInnerDbgLast = __now2;
+              console.log(
+                '[syphon-gate] send skipped — spoutOutputActive=',
+                spoutOutputActive,
+                'outputWindowOpen=',
+                outputWindowOpen,
+                'glCanvas=',
+                !!glCanvas,
+                'osrSpoutActive=',
+                osrSpoutActive,
+                'cpuFallbackAllowed=',
+                spoutCpuFallbackAllowed,
+                'isOsrMode=',
+                isOsrMode,
+                'isOutputMode=',
+                isOutputMode,
+              );
+            }
+          }
+
+          if (
+            spoutOutputActive &&
+            glCanvas &&
+            !osrSpoutActive &&
+            !isOsrMode &&
+            !isOutputMode &&
+            cpuTextureShareSendAllowed
+          ) {
+            // Skip every other frame on the CPU path — getImageData is expensive
+            // (~15-30ms for 1080p). This halves the readback overhead while still
+            // delivering 30fps output at 60fps render rate.
+            spoutFrameSkip++;
+            if (spoutFrameSkip % 2 !== 0 && !spoutSendInFlight) {
+              // Skip this frame — let the render loop continue at full speed
+            } else {
+              // Determine Spout output resolution from settings
+              const spoutRes = $settings?.output?.spoutResolution || 'match';
+              let targetW = 1920,
+                targetH = 1080;
+              if (spoutRes === '4K') {
+                targetW = 3840;
+                targetH = 2160;
+              } else if (spoutRes === '720p') {
+                targetW = 1280;
+                targetH = 720;
+              } else if (spoutRes === 'WXGA') {
+                targetW = 1280;
+                targetH = 800;
+              } else if (spoutRes === 'WUXGA') {
+                targetW = 1920;
+                targetH = 1200;
+              } else if (spoutRes === 'custom') {
+                targetW = $settings?.output?.customWidth || 1920;
+                targetH = $settings?.output?.customHeight || 1080;
+              } else if (spoutRes === 'output' && _detectedOutputRes) {
+                targetW = _detectedOutputRes.width;
+                targetH = _detectedOutputRes.height;
+              } else if (spoutRes === 'match') {
+                targetW = glCanvas.width;
+                targetH = glCanvas.height;
+              } else {
+                targetW = 1920;
+                targetH = 1080;
+              }
+
+              // Use 2D canvas to grab the WebGL frame and downscale if needed
+              // This avoids readPixels (which blocks the GL pipeline) and uses the
+              // browser's GPU-accelerated 2D canvas compositing for the copy+scale.
+              const canvasW = glCanvas.width;
+              const canvasH = glCanvas.height;
+              const needsScale = targetW !== canvasW || targetH !== canvasH;
+
+              if (!spoutScaleCanvas || spoutTargetW !== targetW || spoutTargetH !== targetH) {
+                spoutScaleCanvas = document.createElement('canvas');
+                spoutScaleCanvas.width = targetW;
+                spoutScaleCanvas.height = targetH;
+                spoutScaleCtx = spoutScaleCanvas.getContext('2d', { willReadFrequently: true });
+                spoutTargetW = targetW;
+                spoutTargetH = targetH;
+              }
+
+              // Senders slice the TOTAL MAIN OUTPUT. When the master warp is
+              // active, that total output is the warped composite (the tick
+              // earlier this frame already filled getMasterWarpCanvas()), so
+              // each slice crops from the warped frame — not the raw editor
+              // canvas. Otherwise fall back to the raw WebGL canvas.
+              const _mwSenderSource = masterWarpIsActive($settings?.output?.masterWarp) ? getMasterWarpCanvas() : null;
+              const senderSource: CanvasImageSource =
+                _mwSenderSource && _mwSenderSource.width > 0 ? _mwSenderSource : glCanvas;
+
+              // Draw source → 2D canvas (GPU-accelerated, handles Y-flip).
+              // scale(1,-1) flips to the bottom-up orientation the native
+              // senders expect; both the WebGL canvas and the (upright) warped
+              // canvas are drawn upright by drawImage, so the same flip applies.
+              spoutScaleCtx!.save();
+              spoutScaleCtx!.scale(1, -1); // Flip Y (sender convention is bottom-up)
+              spoutScaleCtx!.drawImage(senderSource, 0, -targetH, targetW, targetH);
+              spoutScaleCtx!.restore();
+
+              // getImageData is the CPU readback — but at the target resolution, not canvas resolution
+              const w = targetW;
+              const h = targetH;
+
+              {
+                if (activeSlices.length > 0) {
+                  // ── Multi-output slice path ──────────────────────────────────
+                  // spoutScaleCanvas already has the frame right-side-up at Spout
+                  // resolution. Each slice crops a normalized region; the GPU
+                  // blend renderer (blendRenderer.ts) handles crop + rotation +
+                  // brightness/contrast/gamma + edge-blend alpha + black-level
+                  // lift in ONE shader pass, returning ready-to-send RGBA bytes.
+                  // The legacy 2D path (sliceCanvas + applyEdgeBlending) is
+                  // kept as a fallback when WebGL initialization fails.
+                  // NOTE: the slice path re-renders each slice from
+                  // spoutScaleCanvas, so we deliberately SKIP the full-frame
+                  // getImageData readback here — it's only consumed by the
+                  // single-output branch below. (Was an ~8/33 MB readback +
+                  // memcpy per frame of dead work whenever slices exist.)
+                  fullFrameCanvas = spoutScaleCanvas;
+                  fullFrameCtx = spoutScaleCtx;
+                  const gpuPathAvailable = isBlendRendererAvailable();
+
+                  // Drop PBO state for deleted slices (cheap string compare
+                  // per frame; the prune itself only runs on config change).
+                  const sliceIdsKey = activeSlices.map((s) => s.id).join('|');
+                  if (sliceIdsKey !== lastSliceIdsKey) {
+                    lastSliceIdsKey = sliceIdsKey;
+                    pruneSliceReadbackStates(new Set(activeSlices.map((s) => s.id)));
+                  }
+
+                  for (const slice of activeSlices) {
+                    if (sliceSendInFlight.has(slice.id)) continue; // Backpressure per-slice
+
+                    // Atlas fan-out handles Spout/Syphon sender slices natively
+                    // (zero-copy) — skip their CPU readback + send entirely.
+                    // Predicate MUST match packAtlas's so the skip set equals
+                    // the atlas set; NDI + display slices fall through.
+                    if (atlasFanoutActive && isAtlasSenderSlice(slice)) continue;
+
+                    // Slice output dimensions = its fraction of the source
+                    // canvas. For rotated 90°/270° slices the GPU shader
+                    // rotates the sample uv, so output stays at sw × sh.
+                    const sw = Math.round(slice.cropW * w);
+                    const sh = Math.round(slice.cropH * h);
+                    if (sw <= 0 || sh <= 0) continue;
+
+                    // ── Pixel readout ────────────────────────────────────
+                    // GPU path: async PBO readback — kicks this frame's
+                    // render + returns LAST frame's completed bytes, so the
+                    // render thread never stalls on the GPU. One frame of
+                    // stream latency, invisible on Spout/Syphon/NDI. While
+                    // the pipeline warms (null), skip the send this frame —
+                    // do NOT fall into the 2D path, which would pay the
+                    // exact synchronous readback this exists to avoid.
+                    // 2D fallback: only when WebGL init failed entirely.
+                    let slicePixels: Uint8Array | Uint8ClampedArray | null = null;
+                    if (gpuPathAvailable) {
+                      slicePixels = renderSlicePixelsAsync(fullFrameCanvas!, slice, sw, sh);
+                      if (!slicePixels) continue;
+                    }
+                    if (!slicePixels) {
+                      // 2D fallback. Same code as the v1.5 path; only entered
+                      // if the WebGL renderer failed to initialize (rare).
+                      const sx = Math.round(slice.cropX * w);
+                      const sy = Math.round(slice.cropY * h);
+                      if (!sliceCanvas || sliceCanvas.width !== sw || sliceCanvas.height !== sh) {
+                        sliceCanvas = document.createElement('canvas');
+                        sliceCanvas.width = sw;
+                        sliceCanvas.height = sh;
+                        sliceCtx = sliceCanvas.getContext('2d');
+                      }
+                      sliceCtx!.clearRect(0, 0, sw, sh);
+                      if (slice.rotation === 0) {
+                        sliceCtx!.drawImage(fullFrameCanvas!, sx, sy, sw, sh, 0, 0, sw, sh);
+                      } else {
+                        sliceCtx!.save();
+                        sliceCtx!.translate(sw / 2, sh / 2);
+                        sliceCtx!.rotate((slice.rotation * Math.PI) / 180);
+                        if (slice.rotation === 90 || slice.rotation === 270) {
+                          sliceCtx!.drawImage(fullFrameCanvas!, sx, sy, sw, sh, -sh / 2, -sw / 2, sh, sw);
+                        } else {
+                          sliceCtx!.drawImage(fullFrameCanvas!, sx, sy, sw, sh, -sw / 2, -sh / 2, sw, sh);
+                        }
+                        sliceCtx!.restore();
+                      }
+                      const hasBlend =
+                        slice.edgeBlendLeft > 0 ||
+                        slice.edgeBlendRight > 0 ||
+                        slice.edgeBlendTop > 0 ||
+                        slice.edgeBlendBottom > 0;
+                      if (hasBlend) {
+                        if (!sliceBlendCanvas || sliceBlendCanvas.width !== sw || sliceBlendCanvas.height !== sh) {
+                          sliceBlendCanvas = document.createElement('canvas');
+                          sliceBlendCanvas.width = sw;
+                          sliceBlendCanvas.height = sh;
+                          sliceBlendCtx = sliceBlendCanvas.getContext('2d');
+                        }
+                        sliceBlendCtx!.clearRect(0, 0, sw, sh);
+                        sliceBlendCtx!.drawImage(sliceCanvas, 0, 0);
+                        applyEdgeBlending(sliceBlendCtx!, sw, sh, {
+                          edgeBlendLeft: slice.edgeBlendLeft,
+                          edgeBlendRight: slice.edgeBlendRight,
+                          edgeBlendTop: slice.edgeBlendTop,
+                          edgeBlendBottom: slice.edgeBlendBottom,
+                          edgeBlendGamma: slice.edgeBlendGamma,
+                        });
+                        slicePixels = sliceBlendCtx!.getImageData(0, 0, sw, sh).data;
+                      } else {
+                        slicePixels = sliceCtx!.getImageData(0, 0, sw, sh).data;
+                      }
+                    }
+
+                    sliceSendInFlight.add(slice.id);
+                    const senderName = slice.spoutName || `ghostArcade-${slice.name}`;
+                    // Skip "physical display" target slices — the per-display
+                    // window (Phase 2) handles its own send pipeline. Sender
+                    // path stays for 'sender' target only.
+                    const targetType = slice.targetType ?? 'sender';
+                    if (targetType === 'display') {
+                      sliceSendInFlight.delete(slice.id);
+                      continue;
+                    }
+                    // Route by transport. 'ndi' goes to the new ndi_send_image
+                    // IPC handler; the existing 'spout' / 'syphon' paths keep
+                    // their behavior unchanged. Slice managers ensure
+                    // ndi_create_sender was called for senderName before any
+                    // sends (sliceNdiActive tracks this).
+                    const outputType =
+                      (slice as any).outputType ?? (isElectron ? (isMac ? 'syphon' : 'spout') : 'spout');
+                    // Re-wrap as Uint8Array for IPC (NDI/Spout expect Uint8Array).
+                    // GPU path already returns Uint8Array; 2D fallback returns
+                    // Uint8ClampedArray.
+                    const sendBytes: Uint8Array =
+                      slicePixels instanceof Uint8Array
+                        ? slicePixels
+                        : new Uint8Array(slicePixels.buffer, slicePixels.byteOffset, slicePixels.byteLength);
+
+                    if (outputType === 'ndi' && isElectron) {
+                      if (!sliceNdiActive.has(senderName)) {
+                        // Lazy-create the NDI sender on first send. The
+                        // store/UI tracks intent (outputType=ndi), but the
+                        // actual sender lifecycle lives here so it survives
+                        // slice rename / re-config without UI complexity.
+                        sliceNdiActive.add(senderName);
+                        (window as any).ghostNDI?.createSender(senderName).catch(() => {
+                          sliceNdiActive.delete(senderName);
+                        });
+                      }
+                      (window as any).ghostNDI
+                        ?.sendImage(senderName, sendBytes, sw, sh)
+                        .catch(() => {})
+                        .finally(() => {
+                          sliceSendInFlight.delete(slice.id);
+                        });
+                    } else if (isElectron) {
+                      invoke('spout_send_image', { data: sendBytes, width: sw, height: sh, senderName })
+                        .catch(() => {})
+                        .finally(() => {
+                          sliceSendInFlight.delete(slice.id);
+                        });
+                    } else {
+                      fetch(
+                        `http://127.0.0.1:9002/spout/send?width=${sw}&height=${sh}&sender=${encodeURIComponent(senderName)}`,
+                        {
+                          method: 'POST',
+                          // BodyInit doesn't include the Uint8Array<ArrayBufferLike>
+                          // shape that TS 5.7+ produces for our bytes; coerce via
+                          // any to silence — the runtime accepts a typed array fine.
+                          body: sendBytes as any,
+                        },
+                      )
+                        .catch(() => {})
+                        .finally(() => {
+                          sliceSendInFlight.delete(slice.id);
+                        });
+                    }
+                  }
+                } else if (!spoutSendInFlight) {
+                  // ── Legacy single-output path (no slices configured) ─────────
+                  // Full-frame readback lives HERE (only consumer). Reuse the
+                  // Uint8Array buffer across frames; the .set() is the lone
+                  // memcpy (the wrapper is a zero-copy view over imgData).
+                  const imgData = spoutScaleCtx!.getImageData(0, 0, w, h);
+                  const expectedBytes = w * h * 4;
+                  if (!spoutSendPixels || spoutSendPixels.byteLength !== expectedBytes) {
+                    spoutSendPixels = new Uint8Array(expectedBytes);
+                  }
+                  spoutSendPixels.set(
+                    new Uint8Array(imgData.data.buffer, imgData.data.byteOffset, imgData.data.byteLength),
+                  );
+                  spoutSendW = w;
+                  spoutSendH = h;
+                  spoutSendInFlight = true;
+                  if (isElectron) {
+                    invoke('spout_send_image', { data: spoutSendPixels, width: w, height: h })
+                      .catch(() => {})
+                      .finally(() => {
+                        spoutSendInFlight = false;
+                      });
+                  } else {
+                    // Tauri / browser: HTTP binary POST to sidecar on port 9002
+                    fetch(`http://127.0.0.1:9002/spout/send?width=${w}&height=${h}`, {
+                      method: 'POST',
+                      body: spoutSendPixels as BodyInit,
+                    })
+                      .then((resp) => {
+                        if (!resp.ok && spoutSendLogCount < 5) {
+                          spoutSendLogCount++;
+                          console.warn(`Spout send HTTP ${resp.status}: ${resp.statusText}`);
+                        }
+                      })
+                      .catch((e) => {
+                        if (spoutSendLogCount < 5) {
+                          spoutSendLogCount++;
+                          console.warn('Spout send fetch error:', e);
+                        }
+                      })
+                      .finally(() => {
+                        spoutSendInFlight = false;
+                      });
+                  }
+                }
+              }
+            } // end else (not skipped frame)
           }
         }
-      }
+        // FPS tracking — smooth average every 500ms
+        fpsFrameCount++;
+        const fpsNow = performance.now();
+        const fpsElapsed = fpsNow - fpsLastTime;
+        if (fpsElapsed >= 500) {
+          const fpsValue = Math.round((fpsFrameCount * 1000) / fpsElapsed);
+          fpsStore.set(fpsValue);
+          fpsFrameCount = 0;
+          fpsLastTime = fpsNow;
 
-      // WLED tap: after frame is rendered, push pixel data to any
-      // configured LED controllers. Cheap (32-490 byte readback +
-      // UDP send to main process); throttled to ~60Hz per controller.
-      tickWLEDSenders(canvas);
+          // Periodic FPS log to the main-process log file. Prefix `[GPU]` is
+          // whitelisted in the console-message forwarder. Log every ~5s so it's
+          // useful without being spammy — and only when something is rendering.
+          if (!(_fpsLogCount++ % 10)) {
+            const layerCount = $project?.layers?.length ?? 0;
+            const dpr = window.devicePixelRatio || 1;
+            const displayW = canvas.clientWidth;
+            const displayH = canvas.clientHeight;
+            console.log(
+              `[GPU] mode=${isOutputMode ? 'output' : 'main'} FPS=${fpsValue}  layers=${layerCount}  drawingBuffer=${canvas.width}x${canvas.height}  display=${displayW}x${displayH}  dpr=${dpr}`,
+            );
+            if (
+              isOutputMode &&
+              (Math.abs(canvas.width - Math.round(displayW * dpr)) > 1 ||
+                Math.abs(canvas.height - Math.round(displayH * dpr)) > 1)
+            ) {
+              console.warn(
+                `[Output] Canvas backing store ${canvas.width}x${canvas.height} does not match display ${displayW}x${displayH} @ DPR ${dpr}. Use fullscreen output or Match Output Display to avoid compositor scaling.`,
+              );
+            }
+          }
+        }
 
-      _consecutiveFrameErrors = 0; // successful frame — reset the error streak
+        // WLED tap: after frame is rendered, push pixel data to any
+        // configured LED controllers. Cheap (32-490 byte readback +
+        // UDP send to main process); throttled to ~60Hz per controller.
+        tickWLEDSenders(canvas);
+
+        _consecutiveFrameErrors = 0; // successful frame — reset the error streak
       } catch (err) {
         _consecutiveFrameErrors++;
         // Always log so errorReporter picks it up.
@@ -2346,30 +2644,30 @@
     const resizeObserver = new ResizeObserver(() => {
       const { w: parentW, h: parentH } = getWrapperLayoutSize();
       if (engine && parentW > 0 && parentH > 0) {
-          const pW = $project.width || 1920;
-          const pH = $project.height || 1080;
-          // Resize the container to fit the project aspect ratio within the wrapper
-          sizeContainer(parentW, parentH);
-          // Resize the engine drawing buffer to project resolution
-          engine.resize(pW, pH);
-          if (linesRenderer) {
-            linesRenderer.resize(pW, pH);
-          }
-          // Resize SVG renderers
-          for (const svgRenderer of svgRenderers.values()) {
-            svgRenderer.resize(pW, pH);
-          }
-          // Resize SVG render targets
-          for (const rt of svgRenderTargets.values()) {
-            rt.setSize(pW, pH);
-          }
-          // Resize shader render targets (scale by per-layer quality)
-          for (const [key, rt] of shaderRenderTargets.entries()) {
-            const quality = shaderRenderTargetQualities.get(key) ?? 1.0;
-            const rtW = Math.max(64, Math.round(pW * quality));
-            const rtH = Math.max(64, Math.round(pH * quality));
-            rt.setSize(rtW, rtH);
-          }
+        const pW = $project.width || 1920;
+        const pH = $project.height || 1080;
+        // Resize the container to fit the project aspect ratio within the wrapper
+        sizeContainer(parentW, parentH);
+        // Resize the engine drawing buffer to project resolution
+        engine.resize(pW, pH);
+        if (linesRenderer) {
+          linesRenderer.resize(pW, pH);
+        }
+        // Resize SVG renderers
+        for (const svgRenderer of svgRenderers.values()) {
+          svgRenderer.resize(pW, pH);
+        }
+        // Resize SVG render targets
+        for (const rt of svgRenderTargets.values()) {
+          rt.setSize(pW, pH);
+        }
+        // Resize shader render targets (scale by per-layer quality)
+        for (const [key, rt] of shaderRenderTargets.entries()) {
+          const quality = shaderRenderTargetQualities.get(key) ?? 1.0;
+          const rtW = Math.max(64, Math.round(pW * quality));
+          const rtH = Math.max(64, Math.round(pH * quality));
+          rt.setSize(rtW, rtH);
+        }
       }
     });
     resizeObserver.observe(wrapperEl);
@@ -2400,10 +2698,14 @@
   // project tick and tears down any that are no longer present.
   let _knownLayerIds = new Set<string>();
   $: if (engine && $project) {
-    const liveIds = new Set($project.layers.map(l => l.id));
+    const liveIds = new Set($project.layers.map((l) => l.id));
     for (const id of _knownLayerIds) {
       if (!liveIds.has(id)) {
-        try { engine.removeLayer(id); } catch (e) { console.warn('[Canvas] engine.removeLayer failed for', id, e); }
+        try {
+          engine.removeLayer(id);
+        } catch (e) {
+          console.warn('[Canvas] engine.removeLayer failed for', id, e);
+        }
       }
     }
     _knownLayerIds = liveIds;
@@ -2460,14 +2762,16 @@
 
   // Detect output display resolution for "Match Output Display" setting
   let _detectedOutputRes: { width: number; height: number } | null = null;
-  invoke('get_displays').then((displays: any) => {
-    if (Array.isArray(displays) && displays.length > 0) {
-      const external = displays.find((d: any) => !(d.isPrimary ?? d.primary));
-      const target = external || displays[0];
-      const bounds = target?.bounds || target;
-      if (bounds) _detectedOutputRes = { width: bounds.width, height: bounds.height };
-    }
-  }).catch(() => {});
+  invoke('get_displays')
+    .then((displays: any) => {
+      if (Array.isArray(displays) && displays.length > 0) {
+        const external = displays.find((d: any) => !(d.isPrimary ?? d.primary));
+        const target = external || displays[0];
+        const bounds = target?.bounds || target;
+        if (bounds) _detectedOutputRes = { width: bounds.width, height: bounds.height };
+      }
+    })
+    .catch(() => {});
 
   // Atlas fan-out lifecycle: driven purely by the sender-slice set —
   // ≥1 enabled Spout/Syphon sender slice starts the atlas, zero stops
@@ -2480,13 +2784,22 @@
       atlasStartInFlight = true;
       if (wantOn) {
         invoke('texshare_start_atlas')
-          .then((ok: any) => { atlasFanoutActive = !!ok; })
-          .catch(() => { atlasFanoutActive = false; })
-          .finally(() => { atlasStartInFlight = false; });
+          .then((ok: any) => {
+            atlasFanoutActive = !!ok;
+          })
+          .catch(() => {
+            atlasFanoutActive = false;
+          })
+          .finally(() => {
+            atlasStartInFlight = false;
+          });
       } else {
         invoke('texshare_stop_atlas')
           .catch(() => {})
-          .finally(() => { atlasFanoutActive = false; atlasStartInFlight = false; });
+          .finally(() => {
+            atlasFanoutActive = false;
+            atlasStartInFlight = false;
+          });
       }
     }
   }
@@ -2516,44 +2829,61 @@
     const resSetting = s?.spoutResolution || 'match';
     let spoutW = 1920;
     let spoutH = 1080;
-    if (resSetting === '4K') { spoutW = 3840; spoutH = 2160; }
-    else if (resSetting === '720p') { spoutW = 1280; spoutH = 720; }
-    else if (resSetting === 'WXGA') { spoutW = 1280; spoutH = 800; }
-    else if (resSetting === 'WUXGA') { spoutW = 1920; spoutH = 1200; }
-    else if (resSetting === 'custom') { spoutW = s?.customWidth || 1920; spoutH = s?.customHeight || 1080; }
-    else if (resSetting === 'output') {
+    if (resSetting === '4K') {
+      spoutW = 3840;
+      spoutH = 2160;
+    } else if (resSetting === '720p') {
+      spoutW = 1280;
+      spoutH = 720;
+    } else if (resSetting === 'WXGA') {
+      spoutW = 1280;
+      spoutH = 800;
+    } else if (resSetting === 'WUXGA') {
+      spoutW = 1920;
+      spoutH = 1200;
+    } else if (resSetting === 'custom') {
+      spoutW = s?.customWidth || 1920;
+      spoutH = s?.customHeight || 1080;
+    } else if (resSetting === 'output') {
       // Use detected output display resolution (cached from startup)
-      if (_detectedOutputRes) { spoutW = _detectedOutputRes.width; spoutH = _detectedOutputRes.height; }
+      if (_detectedOutputRes) {
+        spoutW = _detectedOutputRes.width;
+        spoutH = _detectedOutputRes.height;
+      }
+    } else if (resSetting === 'match' && canvas) {
+      spoutW = canvas.width;
+      spoutH = canvas.height;
     }
-    else if (resSetting === 'match' && canvas) { spoutW = canvas.width; spoutH = canvas.height; }
     invoke('spout_start_sender', {
       name: s?.spoutName || 'ghostArcade',
       width: spoutW,
       height: spoutH,
-    }).then((result: any) => {
-      if (!result?.success) {
-        throw new Error(result?.error || `${getTextureShareLabel()} sender failed`);
-      }
-      const mode = result?.mode || 'unknown';
-      spoutCpuFallbackAllowed = !isElectron || !!result?.cpuFallbackAllowed;
-      if (mode === 'zero-copy-unavailable' && !spoutCpuFallbackAllowed) {
+    })
+      .then((result: any) => {
+        if (!result?.success) {
+          throw new Error(result?.error || `${getTextureShareLabel()} sender failed`);
+        }
+        const mode = result?.mode || 'unknown';
+        spoutCpuFallbackAllowed = !isElectron || !!result?.cpuFallbackAllowed;
+        if (mode === 'zero-copy-unavailable' && !spoutCpuFallbackAllowed) {
+          spoutZeroCopyFailed = true;
+          throw new Error(`${getTextureShareLabel()} zero-copy unavailable`);
+        }
+        spoutOutputActive = true;
+        spoutZeroCopyFailed = false;
+        spoutStarting = false;
+        spoutSendLogCount = 0;
+        console.log(`Spout output started: ${s?.spoutName} (${mode})`);
+        const label = getTextureShareLabel();
+        const modeLabel = mode === 'zero-copy-pending' ? 'zero-copy starting' : mode;
+        showToast(`${label} ${modeLabel}: ${s?.spoutName} ${spoutW}x${spoutH}`, 'info');
+      })
+      .catch((e: any) => {
+        console.warn('Failed to start Spout sender:', e);
+        showToast(`Spout failed: ${e?.message || e}`, 'error');
         spoutZeroCopyFailed = true;
-        throw new Error(`${getTextureShareLabel()} zero-copy unavailable`);
-      }
-      spoutOutputActive = true;
-      spoutZeroCopyFailed = false;
-      spoutStarting = false;
-      spoutSendLogCount = 0;
-      console.log(`Spout output started: ${s?.spoutName} (${mode})`);
-      const label = getTextureShareLabel();
-      const modeLabel = mode === 'zero-copy-pending' ? 'zero-copy starting' : mode;
-      showToast(`${label} ${modeLabel}: ${s?.spoutName} ${spoutW}x${spoutH}`, 'info');
-    }).catch((e: any) => {
-      console.warn('Failed to start Spout sender:', e);
-      showToast(`Spout failed: ${e?.message || e}`, 'error');
-      spoutZeroCopyFailed = true;
-      spoutStarting = false;
-    });
+        spoutStarting = false;
+      });
   } else if (!spoutEnabled && spoutOutputActive) {
     invoke('spout_stop_sender').catch(() => {});
     spoutOutputActive = false;
@@ -2583,7 +2913,11 @@
     // would fail silently and the user would see a black canvas until a
     // full resize forced setSize(). Not recreating these was the biggest
     // hole in the context-restore path.
-    try { engine?.reinitAfterContextRestore?.(); } catch (e) { console.warn('[Canvas] engine reinit error:', e); }
+    try {
+      engine?.reinitAfterContextRestore?.();
+    } catch (e) {
+      console.warn('[Canvas] engine reinit error:', e);
+    }
 
     // Clear all caches so resources get recreated
     for (const texture of textureCache.values()) {
@@ -2651,7 +2985,11 @@
     // asynchronously but the renderer itself tears down its device
     // synchronously enough that we don't need to await here.
     if (webgpuPilotUnsub) {
-      try { webgpuPilotUnsub(); } catch { /* */ }
+      try {
+        webgpuPilotUnsub();
+      } catch {
+        /* */
+      }
       webgpuPilotUnsub = null;
     }
     if (webgpuPilot) {
@@ -2662,7 +3000,11 @@
     }
     if (webgpuHandoffTexture) {
       const gl2 = canvas?.getContext('webgl2') as WebGL2RenderingContext | null;
-      try { gl2?.deleteTexture(webgpuHandoffTexture); } catch { /* */ }
+      try {
+        gl2?.deleteTexture(webgpuHandoffTexture);
+      } catch {
+        /* */
+      }
       webgpuHandoffTexture = null;
     }
 
@@ -2671,7 +3013,11 @@
     // the BroadcastChannel close + RTCPeerConnection close are both
     // synchronous enough that we don't need to await.
     if (outputWebRTCUnsub) {
-      try { outputWebRTCUnsub(); } catch { /* */ }
+      try {
+        outputWebRTCUnsub();
+      } catch {
+        /* */
+      }
       outputWebRTCUnsub = null;
     }
     stopOutputPixelBroadcast();
@@ -2807,11 +3153,13 @@
     const asset = (source as any)._assetRef;
     const mime = String((source as any).mime || asset?.mime || '').toLowerCase();
     const originalPath = String(asset?.originalPath || asset?.name || '').toLowerCase();
-    return mime === 'image/gif'
-      || /^data:image\/gif/i.test(src)
-      || /\.gif(?:$|[?#])/i.test(src)
-      || /\.gif(?:$|[?#])/i.test(name)
-      || /\.gif(?:$|[?#])/i.test(originalPath);
+    return (
+      mime === 'image/gif' ||
+      /^data:image\/gif/i.test(src) ||
+      /\.gif(?:$|[?#])/i.test(src) ||
+      /\.gif(?:$|[?#])/i.test(name) ||
+      /\.gif(?:$|[?#])/i.test(originalPath)
+    );
   }
 
   type DecodedGifState = {
@@ -2877,7 +3225,12 @@
     texture.format = THREE.RGBAFormat;
     texture.needsUpdate = true;
     (texture as any).__animatedGif = state;
-    console.log('[GIF] Animated texture loaded:', source.name || source.src, `${width}x${height}`, `${frames.length} frames`);
+    console.log(
+      '[GIF] Animated texture loaded:',
+      source.name || source.src,
+      `${width}x${height}`,
+      `${frames.length} frames`,
+    );
     return texture;
   }
 
@@ -2954,20 +3307,21 @@
       // visible as a frozen frame from whatever the mapping clip last
       // sampled. Namespacing by layer.id + src keeps them isolated.
       const isVJVideoLayer =
-        layer.source.type === 'video' &&
-        typeof layer.id === 'string' && layer.id.startsWith('vj-layer-');
+        layer.source.type === 'video' && typeof layer.id === 'string' && layer.id.startsWith('vj-layer-');
       const textureCacheKey =
-        (isAIGenerated || isSynthVision) ? layer.source.id
-        : isVJVideoLayer ? `${layer.id}:${layer.source.src}`
-        : layer.source.src;
+        isAIGenerated || isSynthVision
+          ? layer.source.id
+          : isVJVideoLayer
+            ? `${layer.id}:${layer.source.src}`
+            : layer.source.src;
       // Layer-specific cache key for shader instances (which may have per-layer state)
       const shaderCacheKey = `${layer.id}:${textureCacheKey}`;
 
       // Check if source changed for this layer - if so, cleanup old resources
       // Use textureCacheKey for comparison to properly detect AI-generated content changes
       const oldCacheKey = activeLayerSources.get(layer.id);
-      const warmedVjVideoTexture = isVJVideoLayer &&
-        isReusableVideoTexture(layer.source.texture, layer.source.videoElement)
+      const warmedVjVideoTexture =
+        isVJVideoLayer && isReusableVideoTexture(layer.source.texture, layer.source.videoElement)
           ? layer.source.texture
           : null;
       if (oldCacheKey && oldCacheKey !== textureCacheKey) {
@@ -3003,8 +3357,11 @@
         // For SynthVision/canvas sources: if the underlying canvas element changed
         // (e.g., component was destroyed and remounted), invalidate the stale texture
         // and create a fresh one from the new canvas
-        if (isSynthVision && layer.source.threejsCanvas &&
-            (cachedTexture as THREE.CanvasTexture).image !== layer.source.threejsCanvas) {
+        if (
+          isSynthVision &&
+          layer.source.threejsCanvas &&
+          (cachedTexture as THREE.CanvasTexture).image !== layer.source.threejsCanvas
+        ) {
           console.log('[Canvas] SynthVision canvas changed, invalidating stale texture for:', lookupKey);
           cachedTexture.dispose();
           textureCache.delete(lookupKey);
@@ -3071,11 +3428,12 @@
             srcShort: (vEl?.src || '').slice(-50),
             hasTexture: !!tex,
             textureImageMatchesElement: tex?.image === vEl,
-            elId: elIdHandle?.__gaElId ?? 'n/a',                     // identifies WHICH HTMLVideoElement
+            elId: elIdHandle?.__gaElId ?? 'n/a', // identifies WHICH HTMLVideoElement
             textureImageElId: (tex?.image as any)?.__gaElId ?? 'n/a', // and which one the texture wraps
           };
           const prev = (window as any)[dbgKey];
-          const changed = !prev ||
+          const changed =
+            !prev ||
             prev.ready !== cur.ready ||
             prev.paused !== cur.paused ||
             prev.readyState !== cur.readyState ||
@@ -3138,7 +3496,6 @@
           if (mode === 'timelapse') {
             // Timelapse: video is paused, frame stepping is driven by a timer in MediaTray
             if (!video.paused) video.pause();
-
           } else if (mode === 'loop') {
             // Loop with trim support — only auto-play if user hasn't paused
             if (video.paused && wantsPlaying) {
@@ -3156,7 +3513,6 @@
               video.play().catch(() => {});
             }
           }
-
         }
       }
 
@@ -3291,27 +3647,34 @@
           // AbortError on Chromium 130.
           await new Promise<void>((resolve, reject) => {
             const v = video!;
-            const onLoaded = () => { cleanup(); resolve(); };
-            const onError = () => { cleanup(); reject(new Error('Video failed to load')); };
+            const onLoaded = () => {
+              cleanup();
+              resolve();
+            };
+            const onError = () => {
+              cleanup();
+              reject(new Error('Video failed to load'));
+            };
             const cleanup = () => {
               v.removeEventListener('loadeddata', onLoaded);
               v.removeEventListener('error', onError);
             };
             v.addEventListener('loadeddata', onLoaded, { once: true });
             v.addEventListener('error', onError, { once: true });
-            v.load();  // Fresh element only — see big comment above.
+            v.load(); // Fresh element only — see big comment above.
           });
 
           // Store reference on the layer's source
           const currentLayers = $layers;
-          const layer = currentLayers.find(l => l.id === layerId);
+          const layer = currentLayers.find((l) => l.id === layerId);
           if (layer?.source) {
             layer.source.videoElement = video;
           }
         }
 
         // Wait for video to have actual frame data
-        if (video.readyState < 2) { // HAVE_CURRENT_DATA
+        if (video.readyState < 2) {
+          // HAVE_CURRENT_DATA
           await new Promise<void>((resolve) => {
             const checkReady = () => {
               if (video!.readyState >= 2) {
@@ -3335,18 +3698,14 @@
         }
 
         // Wait one more frame to ensure video has rendered
-        await new Promise(resolve => requestAnimationFrame(resolve));
+        await new Promise((resolve) => requestAnimationFrame(resolve));
 
         texture = createVideoTexture(video);
         source.isPlaying = !video.paused;
       } else if (source.type === 'shader' && source.shaderCode) {
         // Create ISF shader instance
         console.log('Creating ISF shader for layer:', layerId, 'shader:', source.name);
-        const shaderInstance = createISFShader(
-          source.id,
-          source.name,
-          source.shaderCode
-        );
+        const shaderInstance = createISFShader(source.id, source.name, source.shaderCode);
 
         if (shaderInstance) {
           console.log('Shader instance created successfully for:', source.name);
@@ -3358,8 +3717,9 @@
           const projectData = get(project);
           const baseWidth = projectData.width || 1920;
           const baseHeight = projectData.height || 1080;
-          const currentLayer = get(layers).find(l => l.id === layerId);
-          const quality = currentLayer?.renderQuality ?? SHADER_QUALITY_MULTIPLIERS[get(settings).ui.shaderQuality] ?? 1.0;
+          const currentLayer = get(layers).find((l) => l.id === layerId);
+          const quality =
+            currentLayer?.renderQuality ?? SHADER_QUALITY_MULTIPLIERS[get(settings).ui.shaderQuality] ?? 1.0;
           const rtWidth = Math.max(64, Math.round(baseWidth * quality));
           const rtHeight = Math.max(64, Math.round(baseHeight * quality));
           console.log(`Creating shader render target: ${rtWidth}x${rtHeight} (quality: ${quality})`);
@@ -3410,7 +3770,12 @@
           texture = new THREE.DataTexture(data, 1, 1, THREE.RGBAFormat);
           texture.needsUpdate = true;
         }
-      } else if (source.type === 'threejs' && !source.jsAnimation && source.threejsCanvas && !getThreeJSIframeContext(source.id)) {
+      } else if (
+        source.type === 'threejs' &&
+        !source.jsAnimation &&
+        source.threejsCanvas &&
+        !getThreeJSIframeContext(source.id)
+      ) {
         // Direct canvas source (e.g., SynthVision) - create CanvasTexture directly
         const canvasTex = new THREE.CanvasTexture(source.threejsCanvas);
         canvasTex.minFilter = THREE.LinearFilter;
@@ -3429,7 +3794,7 @@
         }
         if (iframeContext) {
           // Wait for iframe to load (give it a moment to initialize)
-          await new Promise(resolve => setTimeout(resolve, 1000));
+          await new Promise((resolve) => setTimeout(resolve, 1000));
           // Update once to capture initial frame
           iframeContext.updateTexture();
           texture = iframeContext.texture;
@@ -3451,7 +3816,7 @@
         }
         if (jsContext) {
           // Wait for iframe to load (give it a moment to initialize)
-          await new Promise(resolve => setTimeout(resolve, 1500));
+          await new Promise((resolve) => setTimeout(resolve, 1500));
           // Update once to capture initial frame
           jsContext.updateTexture();
           texture = jsContext.texture;
@@ -3475,7 +3840,10 @@
         if (!receiver) {
           try {
             console.log('[Spout] Calling spout_start_receiver for:', senderName);
-            const info = await invoke<{ name: string; width: number; height: number; connected: boolean }>('spout_start_receiver', { senderName });
+            const info = await invoke<{ name: string; width: number; height: number; connected: boolean }>(
+              'spout_start_receiver',
+              { senderName },
+            );
             console.log('[Spout] Receiver started, info:', info);
 
             const width = info.width || source.spoutSource.width || 1920;
@@ -3484,7 +3852,10 @@
             // Create DataTexture with initial purple test pattern
             const pixelData = new Uint8Array(width * height * 4);
             for (let i = 0; i < pixelData.length; i += 4) {
-              pixelData[i] = 128; pixelData[i+1] = 0; pixelData[i+2] = 128; pixelData[i+3] = 255;
+              pixelData[i] = 128;
+              pixelData[i + 1] = 0;
+              pixelData[i + 2] = 128;
+              pixelData[i + 3] = 255;
             }
             const dataTexture = new THREE.DataTexture(pixelData, width, height, THREE.RGBAFormat);
             dataTexture.minFilter = THREE.LinearFilter;
@@ -3546,7 +3917,17 @@
                         for (let i = 0; i < checkLen; i++) {
                           if (frameData[i] !== 0) nonZero++;
                         }
-                        console.log(`[Spout] IPC frame #${recvFrameCount} for:`, senderName, w, 'x', h, 'bytes:', frameData.length, 'nonZero:', nonZero + '/' + checkLen);
+                        console.log(
+                          `[Spout] IPC frame #${recvFrameCount} for:`,
+                          senderName,
+                          w,
+                          'x',
+                          h,
+                          'bytes:',
+                          frameData.length,
+                          'nonZero:',
+                          nonZero + '/' + checkLen,
+                        );
                       }
 
                       if (frameData.length !== expectedSize) {
@@ -3591,7 +3972,10 @@
                       recvNullCount++;
                       const now = Date.now();
                       if (now - recvLastDiag > 5000) {
-                        console.log(`[Spout] Recv poll: ${recvFrameCount} frames, ${recvNullCount} nulls, active=${recvActive}`, senderName);
+                        console.log(
+                          `[Spout] Recv poll: ${recvFrameCount} frames, ${recvNullCount} nulls, active=${recvActive}`,
+                          senderName,
+                        );
                         recvLastDiag = now;
                       }
                     }
@@ -3619,7 +4003,6 @@
                   recvRafId = null;
                 }
               };
-
             } else {
               // Tauri path: HTTP polling for Spout receive frames.
               // The Rust worker thread receives frames via DX11 and stores them in a HashMap.
@@ -3632,8 +4015,14 @@
               const pollHttpFrame = async () => {
                 if (!httpRecvActive) return;
                 const recv = spoutReceivers.get(recvCacheKey);
-                if (!recv) { httpRecvActive = false; return; }
-                if (httpRecvInFlight) { requestAnimationFrame(pollHttpFrame); return; }
+                if (!recv) {
+                  httpRecvActive = false;
+                  return;
+                }
+                if (httpRecvInFlight) {
+                  requestAnimationFrame(pollHttpFrame);
+                  return;
+                }
 
                 httpRecvInFlight = true;
                 try {
@@ -3653,7 +4042,15 @@
 
                   httpRecvCount++;
                   if (httpRecvCount <= 3) {
-                    console.log(`[Spout] HTTP recv #${httpRecvCount}:`, senderName, w, 'x', h, 'bytes:', frameData.length);
+                    console.log(
+                      `[Spout] HTTP recv #${httpRecvCount}:`,
+                      senderName,
+                      w,
+                      'x',
+                      h,
+                      'bytes:',
+                      frameData.length,
+                    );
                   }
 
                   if (frameData.length === expectedSize) {
@@ -3685,7 +4082,15 @@
               };
             }
 
-            console.log('[Spout] Receiver created for:', senderName, 'resolution:', width, 'x', height, isElectron ? '(IPC)' : '(WS)');
+            console.log(
+              '[Spout] Receiver created for:',
+              senderName,
+              'resolution:',
+              width,
+              'x',
+              height,
+              isElectron ? '(IPC)' : '(WS)',
+            );
           } catch (err) {
             console.error('[Spout] Failed to start receiver:', err);
             const data = new Uint8Array([0, 255, 255, 255]);
@@ -3719,7 +4124,10 @@
               // exists before the first network frame arrives.
               const initPixels = new Uint8Array(initW * initH * 4);
               for (let i = 0; i < initPixels.length; i += 4) {
-                initPixels[i] = 20; initPixels[i+1] = 50; initPixels[i+2] = 70; initPixels[i+3] = 255;
+                initPixels[i] = 20;
+                initPixels[i + 1] = 50;
+                initPixels[i + 2] = 70;
+                initPixels[i + 3] = 255;
               }
               const tex = new THREE.DataTexture(initPixels, initW, initH, THREE.RGBAFormat);
               tex.minFilter = THREE.LinearFilter;
@@ -3743,55 +4151,68 @@
               const poll = () => {
                 if (!pollActive) return;
                 const recv = ndiReceivers.get(recvKey);
-                if (!recv) { pollActive = false; return; }
-                if (inFlight) { rafId = requestAnimationFrame(poll); return; }
-                inFlight = true;
-                api.receiveFrame(ndiName).then((frame: any) => {
-                  inFlight = false;
-                  if (!pollActive) return;
-                  if (!frame || !frame.data) {
-                    rafId = requestAnimationFrame(poll);
-                    return;
-                  }
-                  // Frame counter advances monotonically in the addon —
-                  // skip uploads when the same frame is returned twice
-                  // (NDI senders below display refresh).
-                  if (frame.frame === recv.lastFrameCounter) {
-                    rafId = requestAnimationFrame(poll);
-                    return;
-                  }
-                  recv.lastFrameCounter = frame.frame;
-                  const w = frame.width, h = frame.height;
-                  const bytes = new Uint8Array(frame.data);
-                  const t = recv.texture;
-                  if (t.image.width !== w || t.image.height !== h) {
-                    // Dimension change — rebuild the texture and
-                    // re-point the cache so downstream materials pick
-                    // up the new size.
-                    const replaced = new THREE.DataTexture(bytes, w, h, THREE.RGBAFormat);
-                    replaced.minFilter = THREE.LinearFilter;
-                    replaced.magFilter = THREE.LinearFilter;
-                    replaced.needsUpdate = true;
-                    recv.texture = replaced;
-                    recv.width = w;
-                    recv.height = h;
-                    t.dispose();
-                    textureCache.set(recvKey, replaced);
-                    evictTextureCache();
-                  } else if (t.image.data) {
-                    t.image.data.set(bytes);
-                    t.needsUpdate = true;
-                  }
+                if (!recv) {
+                  pollActive = false;
+                  return;
+                }
+                if (inFlight) {
                   rafId = requestAnimationFrame(poll);
-                }).catch(() => {
-                  inFlight = false;
-                  if (pollActive) rafId = requestAnimationFrame(poll);
-                });
+                  return;
+                }
+                inFlight = true;
+                api
+                  .receiveFrame(ndiName)
+                  .then((frame: any) => {
+                    inFlight = false;
+                    if (!pollActive) return;
+                    if (!frame || !frame.data) {
+                      rafId = requestAnimationFrame(poll);
+                      return;
+                    }
+                    // Frame counter advances monotonically in the addon —
+                    // skip uploads when the same frame is returned twice
+                    // (NDI senders below display refresh).
+                    if (frame.frame === recv.lastFrameCounter) {
+                      rafId = requestAnimationFrame(poll);
+                      return;
+                    }
+                    recv.lastFrameCounter = frame.frame;
+                    const w = frame.width,
+                      h = frame.height;
+                    const bytes = new Uint8Array(frame.data);
+                    const t = recv.texture;
+                    if (t.image.width !== w || t.image.height !== h) {
+                      // Dimension change — rebuild the texture and
+                      // re-point the cache so downstream materials pick
+                      // up the new size.
+                      const replaced = new THREE.DataTexture(bytes, w, h, THREE.RGBAFormat);
+                      replaced.minFilter = THREE.LinearFilter;
+                      replaced.magFilter = THREE.LinearFilter;
+                      replaced.needsUpdate = true;
+                      recv.texture = replaced;
+                      recv.width = w;
+                      recv.height = h;
+                      t.dispose();
+                      textureCache.set(recvKey, replaced);
+                      evictTextureCache();
+                    } else if (t.image.data) {
+                      t.image.data.set(bytes);
+                      t.needsUpdate = true;
+                    }
+                    rafId = requestAnimationFrame(poll);
+                  })
+                  .catch(() => {
+                    inFlight = false;
+                    if (pollActive) rafId = requestAnimationFrame(poll);
+                  });
               };
               rafId = requestAnimationFrame(poll);
               (ndiRecv as any)._stopPolling = () => {
                 pollActive = false;
-                if (rafId !== null) { cancelAnimationFrame(rafId); rafId = null; }
+                if (rafId !== null) {
+                  cancelAnimationFrame(rafId);
+                  rafId = null;
+                }
               };
             }
           } catch (err) {
@@ -3818,7 +4239,11 @@
       const n = (failedTextureLogCount.get(cacheKey) ?? 0) + 1;
       failedTextureLogCount.set(cacheKey, n);
       if (n <= FAILED_TEXTURE_LOG_LIMIT) {
-        console.error(`Failed to load texture (${cacheKey}):`, err, n === FAILED_TEXTURE_LOG_LIMIT ? '— further retries suppressed' : '');
+        console.error(
+          `Failed to load texture (${cacheKey}):`,
+          err,
+          n === FAILED_TEXTURE_LOG_LIMIT ? '— further retries suppressed' : '',
+        );
       }
     } finally {
       loadingTextures.delete(cacheKey);
@@ -3829,7 +4254,7 @@
   function getImageInputTexture(ref: import('../types').ImageInputRef, layerList: Layer[]): THREE.Texture | null {
     if (ref.type === 'layer') {
       // Get texture from another layer
-      const sourceLayer = layerList.find(l => l.id === ref.id);
+      const sourceLayer = layerList.find((l) => l.id === ref.id);
       if (sourceLayer?.source?.texture) {
         return sourceLayer.source.texture;
       }
@@ -3847,7 +4272,7 @@
 
       // Get texture from media library store
       const mediaItems = $mediaLibrary;
-      const mediaItem = mediaItems.find(m => m.id === ref.id);
+      const mediaItem = mediaItems.find((m) => m.id === ref.id);
       if (mediaItem) {
         // If we already have a texture cached for this media item, use it
         if (mediaItem.texture) {
@@ -3873,7 +4298,7 @@
           console.log('[ISF Image Input] Loading texture for media item:', mediaItem.name, mediaItem.src);
           loadMediaTexture(mediaItem, cacheKey).then(() => {
             // After load, also put in local cache
-            const updated = get(mediaLibrary).find(m => m.id === ref.id);
+            const updated = get(mediaLibrary).find((m) => m.id === ref.id);
             if (updated?.texture) {
               imageInputTextureCache.set(localCacheKey, updated.texture);
               console.log('[ISF Image Input] Texture loaded and cached for:', mediaItem.name);
@@ -3921,7 +4346,14 @@
 
       if (texture) {
         // Update the media store with the texture
-        console.log('[Media Texture] Successfully loaded texture for:', mediaItem.name, 'size:', (texture.image as any)?.width, 'x', (texture.image as any)?.height);
+        console.log(
+          '[Media Texture] Successfully loaded texture for:',
+          mediaItem.name,
+          'size:',
+          (texture.image as any)?.width,
+          'x',
+          (texture.image as any)?.height,
+        );
         mediaLibrary.setTexture(mediaItem.id, texture);
       } else {
         console.warn('[Media Texture] No texture created for:', mediaItem.name, 'type:', mediaItem.type);
@@ -3934,7 +4366,13 @@
       const n = (failedTextureLogCount.get(cacheKey) ?? 0) + 1;
       failedTextureLogCount.set(cacheKey, n);
       if (n <= FAILED_TEXTURE_LOG_LIMIT) {
-        console.error('[Media Texture] Failed to load media texture:', mediaItem.name, mediaItem.src, err, n === FAILED_TEXTURE_LOG_LIMIT ? '— further retries suppressed' : '');
+        console.error(
+          '[Media Texture] Failed to load media texture:',
+          mediaItem.name,
+          mediaItem.src,
+          err,
+          n === FAILED_TEXTURE_LOG_LIMIT ? '— further retries suppressed' : '',
+        );
       }
     } finally {
       loadingTextures.delete(cacheKey);
@@ -4176,7 +4614,7 @@
           layer.linesContent.staggerMode,
           layer.linesContent.staggerDelay,
           sharedTexture,
-          layer.linesContent.waveWindowSize ?? 3
+          layer.linesContent.waveWindowSize ?? 3,
         );
 
         // Store texture on layer for engine to pick up
@@ -4210,7 +4648,9 @@
       if (!svgRenderer) {
         if (!_SVGLayerRendererCtor) {
           // Lazy-load the SVG renderer chunk; skip this layer until ready.
-          _lazyLoad('svg', async () => { _SVGLayerRendererCtor = (await import('../svg/renderer')).SVGLayerRenderer; });
+          _lazyLoad('svg', async () => {
+            _SVGLayerRendererCtor = (await import('../svg/renderer')).SVGLayerRenderer;
+          });
           continue;
         }
         // Pass the main renderer to avoid creating multiple WebGL contexts
@@ -4374,7 +4814,7 @@
 
     // Clean up renderers for removed layers
     for (const [layerId, renderer] of lightPaintingRenderers) {
-      if (!layerList.find(l => l.id === layerId && l.type === 'lightpainting')) {
+      if (!layerList.find((l) => l.id === layerId && l.type === 'lightpainting')) {
         renderer.dispose();
         lightPaintingRenderers.delete(layerId);
       }
@@ -4414,7 +4854,7 @@
 
     // Clean up renderers for removed layers
     for (const [layerId, renderer] of textRenderers) {
-      if (!layerList.find(l => l.id === layerId && l.type === 'text')) {
+      if (!layerList.find((l) => l.id === layerId && l.type === 'text')) {
         renderer.dispose();
         textRenderers.delete(layerId);
       }
@@ -4456,6 +4896,7 @@
           renderTarget,
           plyUrl: null,
           loadingPly: false,
+          loadGeneration: 0,
         };
         splatRenderers.set(layer.id, splatCtx);
         console.log('[Canvas] Created splat renderer for layer:', layer.id, '(WebGLRenderTarget)');
@@ -4466,50 +4907,99 @@
       if (currentPlyUrl && currentPlyUrl !== splatCtx.plyUrl && !splatCtx.loadingPly) {
         splatCtx.loadingPly = true;
         splatCtx.plyUrl = currentPlyUrl;
+        const loadGeneration = ++splatCtx.loadGeneration;
 
         // Detect .splat format by original filename or URL pattern
         const originalFileName = (layer.splatContent as any)._originalFileName || '';
         const isSplatFormat = originalFileName.toLowerCase().endsWith('.splat');
+        const layerId = layer.id;
+        const sourceLabel = originalFileName || (isSplatFormat ? 'Gaussian splat' : 'Point cloud');
+        const loadingOwner = beginOwnedLoading(`Loading ${sourceLabel}`, 0, 'Reading source data');
 
-        if (isSplatFormat) {
-          console.log('[Canvas] Loading .splat file:', originalFileName);
-          const layerId = layer.id;
-          loadSplatFromUrl(currentPlyUrl)
-            .then((splatData) => {
-              console.log('[Canvas] .splat loaded:', splatData.vertices.length, 'splats');
-              const ctx = splatRenderers.get(layerId);
-              if (ctx) {
-                ctx.renderer.loadData(splatData);
-                ctx.loadingPly = false;
-                project.updateSplatContent(layerId, { pointCount: splatData.vertices.length });
-              }
-            })
-            .catch((err) => {
-              console.error('[Canvas] Failed to load .splat:', err);
-              showToast('Failed to load .splat file: ' + (err instanceof Error ? err.message : String(err)));
-              const ctx = splatRenderers.get(layerId);
-              if (ctx) { ctx.loadingPly = false; ctx.plyUrl = null; } // Reset URL so retry works
+        void (async () => {
+          try {
+            // Let Svelte paint the overlay before parsing a local blob.
+            await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+
+            const onLoadProgress = (event: {
+              phase: 'read' | 'parse';
+              progress: number;
+              sourceVertexCount?: number;
+              loadedVertexCount?: number;
+            }) => {
+              const progress = event.phase === 'read' ? event.progress * 0.12 : 0.12 + event.progress * 0.53;
+              const detail =
+                event.phase === 'read'
+                  ? 'Reading source data'
+                  : event.sourceVertexCount
+                    ? `Parsing ${Math.min(event.loadedVertexCount ?? 0, event.sourceVertexCount).toLocaleString()} of ${event.sourceVertexCount.toLocaleString()} points`
+                    : 'Parsing point data';
+              updateOwnedLoading(loadingOwner, `Loading ${sourceLabel}`, progress, detail);
+            };
+
+            const data = isSplatFormat
+              ? await loadSplatFromUrl(currentPlyUrl, { onProgress: onLoadProgress })
+              : await loadPLY(currentPlyUrl, { onProgress: onLoadProgress });
+            const autoLevel = suggestSplatAutoLevel(data);
+
+            const ctx = splatRenderers.get(layerId);
+            if (!ctx || ctx !== splatCtx || ctx.loadGeneration !== loadGeneration || ctx.plyUrl !== currentPlyUrl) {
+              return;
+            }
+
+            await ctx.renderer.loadData(data, (progress, detail) => {
+              updateOwnedLoading(loadingOwner, 'Preparing point cloud', 0.65 + progress * 0.34, detail);
             });
-        } else {
-          console.log('[Canvas] Loading PLY file:', currentPlyUrl);
-          const layerId = layer.id;
-          loadPLY(currentPlyUrl)
-            .then((plyData) => {
-              console.log('[Canvas] PLY loaded:', plyData.vertices.length, 'vertices');
-              const ctx = splatRenderers.get(layerId);
-              if (ctx) {
-                ctx.renderer.loadData(plyData);
-                ctx.loadingPly = false;
-                project.updateSplatContent(layerId, { pointCount: plyData.vertices.length });
-              }
-            })
-            .catch((err) => {
-              console.error('[Canvas] Failed to load PLY:', err);
-              showToast('Failed to load PLY file: ' + (err instanceof Error ? err.message : String(err)));
-              const ctx = splatRenderers.get(layerId);
-              if (ctx) { ctx.loadingPly = false; ctx.plyUrl = null; } // Reset URL so retry works
+
+            if (
+              splatRenderers.get(layerId) !== ctx ||
+              ctx.loadGeneration !== loadGeneration ||
+              ctx.plyUrl !== currentPlyUrl
+            ) {
+              return;
+            }
+
+            ctx.loadingPly = false;
+            project.updateSplatContent(layerId, {
+              pointCount: data.vertices.length,
+              activePointCount: data.vertices.length,
+              sourcePointCount: data.sourceVertexCount,
+              dataType: data.dataType,
+              renderMode: data.dataType === 'gaussian' ? 'gaussians' : (layer.splatContent?.renderMode ?? 'points'),
+              hasNativeUVs: data.hasUVs,
+              autoLevelRotationX: autoLevel.rotationX,
+              autoLevelRotationY: autoLevel.rotationY,
+              autoLevelRotationZ: autoLevel.rotationZ,
+              autoLevelConfidence: autoLevel.confidence,
+              ...(data.hasUVs ? { textureEnabled: true, textureProjection: 'native' as const } : {}),
             });
-        }
+
+            const readyDetail = data.wasDecimated
+              ? `${data.vertices.length.toLocaleString()} display points from ${data.sourceVertexCount.toLocaleString()} source points`
+              : `${data.vertices.length.toLocaleString()} points ready`;
+            updateOwnedLoading(loadingOwner, 'Point cloud ready', 1, readyDetail);
+
+            // Keep the overlay until the replacement buffers have survived a
+            // complete render opportunity, not merely until parsing returns.
+            await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+            await new Promise<void>((resolve) => requestAnimationFrame(() => resolve()));
+            if (ctx.loadGeneration === loadGeneration) endOwnedLoading(loadingOwner);
+          } catch (err) {
+            console.error(`[Canvas] Failed to load ${isSplatFormat ? '.splat' : 'PLY'}:`, err);
+            const ctx = splatRenderers.get(layerId);
+            if (ctx && ctx.loadGeneration === loadGeneration) {
+              ctx.loadingPly = false;
+              ctx.plyUrl = null;
+              endOwnedLoading(loadingOwner);
+            }
+            showToast(
+              `Failed to load ${isSplatFormat ? '.splat' : 'PLY'} file: ` +
+                (err instanceof Error ? err.message : String(err)),
+            );
+          } finally {
+            endOwnedLoading(loadingOwner);
+          }
+        })();
       }
 
       // Resize render target if project dimensions changed
@@ -4520,26 +5010,25 @@
 
       // Pass mouse position to splat renderer for mouse interactions
       if (mouseOnCanvas) {
-        splatCtx.renderer.setMouseNormalized(mouseNormalizedX, mouseNormalizedY);
+        splatCtx.renderer.setMouseNormalized(
+          layer.flipH ? -mouseNormalizedX : mouseNormalizedX,
+          layer.flipV ? -mouseNormalizedY : mouseNormalizedY,
+        );
       } else {
         splatCtx.renderer.clearMousePosition();
       }
 
       // Update texture if enabled
       if (layer.splatContent.textureEnabled && layer.splatContent.texturePath) {
-        splatCtx.renderer.setTexture(
-          layer.splatContent.texturePath,
-          layer.splatContent.textureType || 'image'
-        );
+        splatCtx.renderer.setTexture(layer.splatContent.texturePath, layer.splatContent.textureType || 'image');
       } else if (!layer.splatContent.textureEnabled) {
         splatCtx.renderer.setTexture('');
       }
 
       // Update and render splat to the shared render target
       const splatBand = layer.splatContent.audioBand || 'all';
-      const splatBandLevel = splatBand === 'all'
-        ? visual.level
-        : (visual.bands[splatBand as keyof typeof visual.bands] || 0);
+      const splatBandLevel =
+        splatBand === 'all' ? visual.level : visual.bands[splatBand as keyof typeof visual.bands] || 0;
       const splatSensitivity = layer.splatContent.audioSensitivity || 1;
       splatCtx.renderer.update(layer.splatContent, splatBandLevel * splatSensitivity, visual);
 
@@ -4556,7 +5045,7 @@
 
     // Clean up renderers for removed layers
     for (const [layerId, ctx] of splatRenderers) {
-      if (!layerList.find(l => l.id === layerId && l.type === 'splat')) {
+      if (!layerList.find((l) => l.id === layerId && l.type === 'splat')) {
         ctx.renderer.dispose();
         ctx.renderTarget.dispose();
         splatRenderers.delete(layerId);
@@ -4634,13 +5123,21 @@
         const gpuQuality = layer.renderQuality ?? SHADER_QUALITY_MULTIPLIERS[get(settings).ui.shaderQuality] ?? 1.0;
         const gpuW = Math.max(64, Math.round(width * gpuQuality));
         const gpuH = Math.max(64, Math.round(height * gpuQuality));
-        renderer.renderFrame(c.shaderId, mergedParams, gpuW, gpuH, sourceCtx, {
-          bass: bandsSnap.bassFast ?? 0,
-          mid: bandsSnap.mid ?? 0,
-          treble: bandsSnap.high ?? 0,
-        }, {
-          time: engine.manualTime,
-        });
+        renderer.renderFrame(
+          c.shaderId,
+          mergedParams,
+          gpuW,
+          gpuH,
+          sourceCtx,
+          {
+            bass: bandsSnap.bassFast ?? 0,
+            mid: bandsSnap.mid ?? 0,
+            treble: bandsSnap.high ?? 0,
+          },
+          {
+            time: engine.manualTime,
+          },
+        );
       } catch (err: any) {
         console.warn('[Canvas] gpu-layer: render failed', err?.message || err);
         continue;
@@ -4651,9 +5148,7 @@
       // ImageBitmap path for profiling on runtimes where it is stable.
       let tex = gpuLayerTextures.get(layer.id);
       if (!tex) {
-        tex = gpuLayerUseBitmapHandoff
-          ? new THREE.Texture()
-          : new THREE.CanvasTexture(renderer.canvas as any);
+        tex = gpuLayerUseBitmapHandoff ? new THREE.Texture() : new THREE.CanvasTexture(renderer.canvas as any);
         tex.minFilter = THREE.LinearFilter;
         tex.magFilter = THREE.LinearFilter;
         tex.generateMipmaps = false;
@@ -4668,7 +5163,11 @@
         if (bitmap) {
           const prev = tex.image as ImageBitmap | undefined;
           if (prev && typeof (prev as any).close === 'function') {
-            try { (prev as any).close(); } catch { /* */ }
+            try {
+              (prev as any).close();
+            } catch {
+              /* */
+            }
           }
           tex.image = bitmap;
           tex.needsUpdate = true;
@@ -4683,14 +5182,26 @@
     // Reap renderers for removed/hidden layers.
     for (const [id, r] of gpuLayerRenderers) {
       if (!liveIds.has(id)) {
-        try { r.dispose(); } catch { /* */ }
+        try {
+          r.dispose();
+        } catch {
+          /* */
+        }
         gpuLayerRenderers.delete(id);
         const t = gpuLayerTextures.get(id);
         const img = t?.image as ImageBitmap | undefined;
         if (img && typeof (img as any).close === 'function') {
-          try { (img as any).close(); } catch { /* */ }
+          try {
+            (img as any).close();
+          } catch {
+            /* */
+          }
         }
-        try { t?.dispose(); } catch { /* */ }
+        try {
+          t?.dispose();
+        } catch {
+          /* */
+        }
         gpuLayerTextures.delete(id);
       }
     }
@@ -4717,7 +5228,9 @@
       if (!model3dCtx) {
         if (!_Model3DRendererCtor) {
           // Lazy-load the model3d chunk (GLTF/FBX/OBJ loaders); skip until ready.
-          _lazyLoad('model3d', async () => { _Model3DRendererCtor = (await import('../model3d/Model3DRenderer')).Model3DRenderer; });
+          _lazyLoad('model3d', async () => {
+            _Model3DRendererCtor = (await import('../model3d/Model3DRenderer')).Model3DRenderer;
+          });
           continue;
         }
         // Create in standalone mode with its OWN WebGL context + offscreen
@@ -4739,7 +5252,18 @@
         canvasTex.magFilter = THREE.LinearFilter;
 
         // Keep a dummy render target for API compat (dispose, resize checks)
-        const renderTarget = { width, height, texture: canvasTex, setSize(w: number, h: number) { this.width = w; this.height = h; }, dispose() { canvasTex.dispose(); } } as any;
+        const renderTarget = {
+          width,
+          height,
+          texture: canvasTex,
+          setSize(w: number, h: number) {
+            this.width = w;
+            this.height = h;
+          },
+          dispose() {
+            canvasTex.dispose();
+          },
+        } as any;
 
         model3dCtx = {
           renderer: model3dRenderer,
@@ -4758,19 +5282,32 @@
       const currentModelUrl = layer.model3dContent.modelData || null;
       const failedUrl = (model3dCtx as any)._failedUrl;
 
-      if (currentModelUrl && currentModelUrl !== model3dCtx.modelUrl && currentModelUrl !== failedUrl && !model3dCtx.loadingModel) {
+      if (
+        currentModelUrl &&
+        currentModelUrl !== model3dCtx.modelUrl &&
+        currentModelUrl !== failedUrl &&
+        !model3dCtx.loadingModel
+      ) {
         model3dCtx.loadingModel = true;
         model3dCtx.modelUrl = currentModelUrl;
         console.log('[Canvas] Loading 3D model:', layer.model3dContent.modelName);
 
         const ctx = model3dCtx;
         const layerId = layer.id;
-        ctx.renderer.loadModel(currentModelUrl, layer.model3dContent.modelFormat)
+        ctx.renderer
+          .loadModel(currentModelUrl, layer.model3dContent.modelFormat)
           .then((result) => {
             if ((ctx as any)._disposed || model3dRenderers.get(layerId) !== ctx) return;
             const { vertexCount, faceCount } = result;
             const hasAnimations = (result as any).hasAnimations ?? false;
-            console.log('[Canvas] Model loaded:', vertexCount, 'vertices,', faceCount, 'faces', hasAnimations ? `(${hasAnimations} animations)` : '');
+            console.log(
+              '[Canvas] Model loaded:',
+              vertexCount,
+              'vertices,',
+              faceCount,
+              'faces',
+              hasAnimations ? `(${hasAnimations} animations)` : '',
+            );
             project.updateModel3DContent(layerId, { vertexCount, faceCount, hasFileAnimations: hasAnimations });
             ctx.loadingModel = false;
             (ctx as any)._failedUrl = null;
@@ -4790,16 +5327,18 @@
       if (model3dCtx.renderTarget.width !== width || model3dCtx.renderTarget.height !== height) {
         model3dCtx.renderTarget.setSize(width, height);
         const offCanvas = (model3dCtx as any)._offCanvas as HTMLCanvasElement;
-        if (offCanvas) { offCanvas.width = width; offCanvas.height = height; }
+        if (offCanvas) {
+          offCanvas.width = width;
+          offCanvas.height = height;
+        }
         model3dCtx.renderer.resize(width, height);
       }
 
       // Update and render model to its own offscreen canvas (separate GL context)
       const content = layer.model3dContent;
       const modelBand = content.audio?.audioBand || 'all';
-      const modelBandLevel = modelBand === 'all'
-        ? visual.level
-        : (visual.bands[modelBand as keyof typeof visual.bands] || 0);
+      const modelBandLevel =
+        modelBand === 'all' ? visual.level : visual.bands[modelBand as keyof typeof visual.bands] || 0;
       model3dCtx.renderer.update(content, modelBandLevel, visual);
       model3dCtx.renderer.render();
 
@@ -4813,7 +5352,7 @@
 
     // Clean up renderers for removed layers
     for (const [layerId, ctx] of model3dRenderers) {
-      if (!layerList.find(l => l.id === layerId && l.type === 'model3d')) {
+      if (!layerList.find((l) => l.id === layerId && l.type === 'model3d')) {
         disposeModel3DContext(ctx);
         model3dRenderers.delete(layerId);
         console.log('[Canvas] Disposed model3d renderer for layer:', layerId);
@@ -4860,17 +5399,33 @@
       // Get or create effect context
       let effectCtx = integratedEffects.get(cacheKey);
       // Only handle integrated effect types
-      if (effectSource.effectType !== 'fluid' && effectSource.effectType !== 'particles' && effectSource.effectType !== 'milkdrop' && effectSource.effectType !== 'audiomotion' && effectSource.effectType !== 'wavejs' && effectSource.effectType !== 'hydra' && effectSource.effectType !== 'ghostfx' && effectSource.effectType !== 'analyzerlab' && effectSource.effectType !== 'handfx' && effectSource.effectType !== 'ghostpilot') continue;
+      if (
+        effectSource.effectType !== 'fluid' &&
+        effectSource.effectType !== 'particles' &&
+        effectSource.effectType !== 'milkdrop' &&
+        effectSource.effectType !== 'audiomotion' &&
+        effectSource.effectType !== 'wavejs' &&
+        effectSource.effectType !== 'hydra' &&
+        effectSource.effectType !== 'ghostfx' &&
+        effectSource.effectType !== 'analyzerlab' &&
+        effectSource.effectType !== 'handfx' &&
+        effectSource.effectType !== 'ghostpilot'
+      )
+        continue;
 
       // Lazy-load the sim class chunk; skip this group until the ctor is
       // ready (only matters on the very first frame the effect appears).
       if (!effectCtx) {
         if (effectSource.effectType === 'fluid' && !_FluidSimulationCtor) {
-          _lazyLoad('fluid', async () => { _FluidSimulationCtor = (await import('../effects/fluidSimulation')).FluidSimulation; });
+          _lazyLoad('fluid', async () => {
+            _FluidSimulationCtor = (await import('../effects/fluidSimulation')).FluidSimulation;
+          });
           continue;
         }
         if (effectSource.effectType === 'particles' && !_ParticleSystem3DCtor) {
-          _lazyLoad('particles3d', async () => { _ParticleSystem3DCtor = (await import('../effects/particleSystem3D')).ParticleSystem3D; });
+          _lazyLoad('particles3d', async () => {
+            _ParticleSystem3DCtor = (await import('../effects/particleSystem3D')).ParticleSystem3D;
+          });
           continue;
         }
         if (effectSource.effectType === 'milkdrop' && (!_MilkdropVisualizerCtor || !_milkdropLoadPresetPack)) {
@@ -4958,7 +5513,16 @@
         });
 
         effectCtx = {
-          type: effectSource.effectType as 'fluid' | 'particles' | 'milkdrop' | 'audiomotion' | 'wavejs' | 'hydra' | 'ghostfx' | 'analyzerlab' | 'handfx',
+          type: effectSource.effectType as
+            | 'fluid'
+            | 'particles'
+            | 'milkdrop'
+            | 'audiomotion'
+            | 'wavejs'
+            | 'hydra'
+            | 'ghostfx'
+            | 'analyzerlab'
+            | 'handfx',
           renderTarget,
           simulationWidth: width,
           simulationHeight: height,
@@ -5025,7 +5589,10 @@
           const pixelRatio = effectSource.milkdropPixelRatio ?? 1;
           const meshSize = effectSource.milkdropMeshSize ?? 48;
           const mk = new _MilkdropVisualizerCtor!(audioCtx, {
-            width, height, pixelRatio, meshSize,
+            width,
+            height,
+            pixelRatio,
+            meshSize,
           });
           mk.init(renderer);
           mk.setSensitivity(effectSource.milkdropSensitivity ?? 1.5);
@@ -5061,7 +5628,7 @@
             sensitivity: effectSource.wavejsSensitivity ?? 1.5,
             lineWidth: effectSource.wavejsLineWidth ?? 4,
             colorA: effectSource.wavejsColorA ?? [1.0, 0.42, 0.42],
-            colorB: effectSource.wavejsColorB ?? [1.0, 0.55, 0.30],
+            colorB: effectSource.wavejsColorB ?? [1.0, 0.55, 0.3],
             useGradient: effectSource.wavejsUseGradient ?? true,
             gradientRotate: effectSource.wavejsGradientRotate ?? 0,
             glowStrength: effectSource.wavejsGlowStrength ?? 15,
@@ -5085,96 +5652,96 @@
           const fx = new _GhostFXVisualizerCtor!(width, height);
           fx.init(renderer);
           fx.setParams({
-            scenePreset:        effectSource.ghostfxScenePreset        ?? 'drift',
-            sensitivity:        effectSource.ghostfxSensitivity        ?? 1.4,
-            hueDriftSpeed:      effectSource.ghostfxHueDriftSpeed      ?? 0.15,
-            bloomIntensity:     effectSource.ghostfxBloomIntensity     ?? 1.4,
-            bloomThreshold:     effectSource.ghostfxBloomThreshold     ?? 0.45,
-            vignette:           effectSource.ghostfxVignette           ?? 0.7,
-            exposure:           effectSource.ghostfxExposure           ?? 0.1,
-            bgAlpha:            effectSource.ghostfxBgAlpha            ?? 1.0,
-            vortexStrength:     effectSource.ghostfxVortexStrength     ?? 2.0,
-            latticeThreshold:   effectSource.ghostfxLatticeThreshold   ?? 2.5,
-            trailIntensity:     effectSource.ghostfxTrailIntensity     ?? 1.0,
-            feedbackAmount:     effectSource.ghostfxFeedbackAmount     ?? 0.35,
-            feedbackZoom:       effectSource.ghostfxFeedbackZoom       ?? 1.003,
-            ribbonWidth:        effectSource.ghostfxRibbonWidth        ?? 0.10,
-            ribbonSpawn:        effectSource.ghostfxRibbonSpawn        ?? 1.0,
+            scenePreset: effectSource.ghostfxScenePreset ?? 'drift',
+            sensitivity: effectSource.ghostfxSensitivity ?? 1.4,
+            hueDriftSpeed: effectSource.ghostfxHueDriftSpeed ?? 0.15,
+            bloomIntensity: effectSource.ghostfxBloomIntensity ?? 1.4,
+            bloomThreshold: effectSource.ghostfxBloomThreshold ?? 0.45,
+            vignette: effectSource.ghostfxVignette ?? 0.7,
+            exposure: effectSource.ghostfxExposure ?? 0.1,
+            bgAlpha: effectSource.ghostfxBgAlpha ?? 1.0,
+            vortexStrength: effectSource.ghostfxVortexStrength ?? 2.0,
+            latticeThreshold: effectSource.ghostfxLatticeThreshold ?? 2.5,
+            trailIntensity: effectSource.ghostfxTrailIntensity ?? 1.0,
+            feedbackAmount: effectSource.ghostfxFeedbackAmount ?? 0.35,
+            feedbackZoom: effectSource.ghostfxFeedbackZoom ?? 1.003,
+            ribbonWidth: effectSource.ghostfxRibbonWidth ?? 0.1,
+            ribbonSpawn: effectSource.ghostfxRibbonSpawn ?? 1.0,
             ribbonTranslucency: effectSource.ghostfxRibbonTranslucency ?? 0.35,
-            ribbonBlend:        effectSource.ghostfxRibbonBlend        ?? 'additive',
-            lightAzimuth:       effectSource.ghostfxLightAzimuth       ?? 35,
-            lightElevation:     effectSource.ghostfxLightElevation     ?? 55,
-            lightStrength:      effectSource.ghostfxLightStrength      ?? 0.9,
-            ambient:            effectSource.ghostfxAmbient            ?? 0.30,
-            liquidSplatForce:   effectSource.ghostfxLiquidSplatForce   ?? 1.0,
-            liquidSplatRadius:  effectSource.ghostfxLiquidSplatRadius  ?? 0.08,
-            liquidDyeDecay:     effectSource.ghostfxLiquidDyeDecay     ?? 0.995,
-            liquidVelDecay:     effectSource.ghostfxLiquidVelDecay     ?? 0.992,
-            liquidBassRate:     effectSource.ghostfxLiquidBassRate     ?? 1.0,
+            ribbonBlend: effectSource.ghostfxRibbonBlend ?? 'additive',
+            lightAzimuth: effectSource.ghostfxLightAzimuth ?? 35,
+            lightElevation: effectSource.ghostfxLightElevation ?? 55,
+            lightStrength: effectSource.ghostfxLightStrength ?? 0.9,
+            ambient: effectSource.ghostfxAmbient ?? 0.3,
+            liquidSplatForce: effectSource.ghostfxLiquidSplatForce ?? 1.0,
+            liquidSplatRadius: effectSource.ghostfxLiquidSplatRadius ?? 0.08,
+            liquidDyeDecay: effectSource.ghostfxLiquidDyeDecay ?? 0.995,
+            liquidVelDecay: effectSource.ghostfxLiquidVelDecay ?? 0.992,
+            liquidBassRate: effectSource.ghostfxLiquidBassRate ?? 1.0,
           });
           effectCtx.ghostfx = fx;
         } else if (effectSource.effectType === 'ghostpilot') {
           const gpv = new _GhostPilotVisualizerCtor!(width, height);
           gpv.init(renderer);
           gpv.setParams({
-            sensitivity:  effectSource.ghostpilotSensitivity  ?? 1.4,
-            speedScale:   effectSource.ghostpilotSpeedScale   ?? 1.0,
-            hueBase:      effectSource.ghostpilotHueBase      ?? 0.0,
-            autopilot:    effectSource.ghostpilotAutopilot    ?? true,
-            steerAssist:  effectSource.ghostpilotSteerAssist  ?? 1.0,
+            sensitivity: effectSource.ghostpilotSensitivity ?? 1.4,
+            speedScale: effectSource.ghostpilotSpeedScale ?? 1.0,
+            hueBase: effectSource.ghostpilotHueBase ?? 0.0,
+            autopilot: effectSource.ghostpilotAutopilot ?? true,
+            steerAssist: effectSource.ghostpilotSteerAssist ?? 1.0,
           });
           effectCtx.ghostpilot = gpv;
         } else if (effectSource.effectType === 'analyzerlab') {
           const al = new _AnalyzerLabVisualizerCtor!(width, height);
           al.init(renderer);
           al.setParams({
-            layout:             effectSource.analyzerLabLayout             ?? 'stack',
-            colormap:           effectSource.analyzerLabColormap           ?? 'inferno',
+            layout: effectSource.analyzerLabLayout ?? 'stack',
+            colormap: effectSource.analyzerLabColormap ?? 'inferno',
             spectroOrientation: effectSource.analyzerLabSpectroOrientation ?? 'horizontal',
-            spectroGain:        effectSource.analyzerLabSpectroGain        ?? 1.0,
-            spectroMinDb:       effectSource.analyzerLabSpectroMinDb       ?? -85,
-            spectroMaxDb:       effectSource.analyzerLabSpectroMaxDb       ?? -25,
-            scrollSpeed:        effectSource.analyzerLabScrollSpeed        ?? 1.0,
-            chromaStyle:        effectSource.analyzerLabChromaStyle        ?? 'bars',
-            chromaGlow:         effectSource.analyzerLabChromaGlow         ?? 0.5,
-            waveStyle:          effectSource.analyzerLabWaveStyle          ?? 'line',
-            waveLineWidth:      effectSource.analyzerLabWaveLineWidth      ?? 1.5,
-            showBeats:          effectSource.analyzerLabShowBeats          ?? true,
-            showLabels:         effectSource.analyzerLabShowLabels         ?? true,
-            bgAlpha:            effectSource.analyzerLabBgAlpha            ?? 1.0,
+            spectroGain: effectSource.analyzerLabSpectroGain ?? 1.0,
+            spectroMinDb: effectSource.analyzerLabSpectroMinDb ?? -85,
+            spectroMaxDb: effectSource.analyzerLabSpectroMaxDb ?? -25,
+            scrollSpeed: effectSource.analyzerLabScrollSpeed ?? 1.0,
+            chromaStyle: effectSource.analyzerLabChromaStyle ?? 'bars',
+            chromaGlow: effectSource.analyzerLabChromaGlow ?? 0.5,
+            waveStyle: effectSource.analyzerLabWaveStyle ?? 'line',
+            waveLineWidth: effectSource.analyzerLabWaveLineWidth ?? 1.5,
+            showBeats: effectSource.analyzerLabShowBeats ?? true,
+            showLabels: effectSource.analyzerLabShowLabels ?? true,
+            bgAlpha: effectSource.analyzerLabBgAlpha ?? 1.0,
           });
           effectCtx.analyzerlab = al;
         } else if (effectSource.effectType === 'handfx') {
           const hx = new _HandFXVisualizerCtor!(width, height);
           hx.init(renderer);
           hx.setParams({
-            mode:                effectSource.handfxMode                ?? 'trails',
-            cameraOn:            effectSource.handfxCameraOn            ?? false,
-            smoothing:           effectSource.handfxSmoothing           ?? 0.15,
-            predictMs:           effectSource.handfxPredictMs           ?? 18,
-            showHelp:            effectSource.handfxShowHelp            ?? true,
-            bgAlpha:             effectSource.handfxBgAlpha             ?? 0.0,
-            panelColor:          effectSource.handfxPanelColor          ?? '#FFFFFF',
-            panelOpacity:        effectSource.handfxPanelOpacity        ?? 1.0,
-            panelPadding:        effectSource.handfxPanelPadding        ?? 0.04,
-            panelCornerRadius:   effectSource.handfxPanelCornerRadius   ?? 0.02,
-            trailFade:           effectSource.handfxTrailFade           ?? 0.985,
-            trailColorMode:      effectSource.handfxTrailColorMode      ?? 'rainbow',
-            trailThickness:      effectSource.handfxTrailThickness      ?? 3,
-            trailVelocityScale:  effectSource.handfxTrailVelocityScale  ?? 1.5,
-            trailSparkDensity:   effectSource.handfxTrailSparkDensity   ?? 0.5,
-            trailFlowStrength:   effectSource.handfxTrailFlowStrength   ?? 0.7,
-            inkColorMode:        effectSource.handfxInkColorMode        ?? 'coral',
-            inkSize:             effectSource.handfxInkSize             ?? 55,
-            inkOpacity:          effectSource.handfxInkOpacity          ?? 0.28,
-            inkDrift:            effectSource.handfxInkDrift            ?? 1.0,
-            skeletonColor:       effectSource.handfxSkeletonColor       ?? '#FF6B6B',
-            skeletonGlow:        effectSource.handfxSkeletonGlow        ?? 1.5,
-            sprayColorMode:      effectSource.handfxSprayColorMode      ?? 'rainbow',
-            sprayIntensity:      effectSource.handfxSprayIntensity      ?? 1.5,
-            sprayThreshold:      effectSource.handfxSprayThreshold      ?? 0.25,
-            showCamera:          effectSource.handfxShowCamera          ?? false,
-            cameraOpacity:       effectSource.handfxCameraOpacity       ?? 0.5,
+            mode: effectSource.handfxMode ?? 'trails',
+            cameraOn: effectSource.handfxCameraOn ?? false,
+            smoothing: effectSource.handfxSmoothing ?? 0.15,
+            predictMs: effectSource.handfxPredictMs ?? 18,
+            showHelp: effectSource.handfxShowHelp ?? true,
+            bgAlpha: effectSource.handfxBgAlpha ?? 0.0,
+            panelColor: effectSource.handfxPanelColor ?? '#FFFFFF',
+            panelOpacity: effectSource.handfxPanelOpacity ?? 1.0,
+            panelPadding: effectSource.handfxPanelPadding ?? 0.04,
+            panelCornerRadius: effectSource.handfxPanelCornerRadius ?? 0.02,
+            trailFade: effectSource.handfxTrailFade ?? 0.985,
+            trailColorMode: effectSource.handfxTrailColorMode ?? 'rainbow',
+            trailThickness: effectSource.handfxTrailThickness ?? 3,
+            trailVelocityScale: effectSource.handfxTrailVelocityScale ?? 1.5,
+            trailSparkDensity: effectSource.handfxTrailSparkDensity ?? 0.5,
+            trailFlowStrength: effectSource.handfxTrailFlowStrength ?? 0.7,
+            inkColorMode: effectSource.handfxInkColorMode ?? 'coral',
+            inkSize: effectSource.handfxInkSize ?? 55,
+            inkOpacity: effectSource.handfxInkOpacity ?? 0.28,
+            inkDrift: effectSource.handfxInkDrift ?? 1.0,
+            skeletonColor: effectSource.handfxSkeletonColor ?? '#FF6B6B',
+            skeletonGlow: effectSource.handfxSkeletonGlow ?? 1.5,
+            sprayColorMode: effectSource.handfxSprayColorMode ?? 'rainbow',
+            sprayIntensity: effectSource.handfxSprayIntensity ?? 1.5,
+            sprayThreshold: effectSource.handfxSprayThreshold ?? 0.25,
+            showCamera: effectSource.handfxShowCamera ?? false,
+            cameraOpacity: effectSource.handfxCameraOpacity ?? 0.5,
           });
           effectCtx.handfx = hx;
         }
@@ -5183,20 +5750,14 @@
         console.log('[Canvas] Created integrated effect:', effectSource.effectType, 'for', cacheKey);
       }
 
-      if (
-        effectCtx.renderTarget.width !== width ||
-        effectCtx.renderTarget.height !== height
-      ) {
+      if (effectCtx.renderTarget.width !== width || effectCtx.renderTarget.height !== height) {
         effectCtx.renderTarget.setSize(width, height);
       }
 
       // ── Fluid path ──────────────────────────────────────────────────────
       if (effectCtx.fluid && effectSource.effectType === 'fluid') {
         const simSize = getFluidSimulationSize(width, height);
-        if (
-          effectCtx.simulationWidth !== simSize.width ||
-          effectCtx.simulationHeight !== simSize.height
-        ) {
+        if (effectCtx.simulationWidth !== simSize.width || effectCtx.simulationHeight !== simSize.height) {
           effectCtx.fluid.resize(simSize.width, simSize.height);
           effectCtx.simulationWidth = simSize.width;
           effectCtx.simulationHeight = simSize.height;
@@ -5209,99 +5770,110 @@
         // detection so passing the same object repeatedly is a no-op.
         if (!effectCtx._fluidRenderParams) {
           effectCtx._fluidRenderParams = {
-            intensity: 1.0, contrast: 1.0, saturation: 1.0,
-            hueShift: 0.0, glow: 0.5, bgColor: [0, 0, 0],
+            intensity: 1.0,
+            contrast: 1.0,
+            saturation: 1.0,
+            hueShift: 0.0,
+            glow: 0.5,
+            bgColor: [0, 0, 0],
           };
         }
         const frp = effectCtx._fluidRenderParams;
-        frp.intensity  = effectSource.fluidIntensity ?? 1.0;
-        frp.contrast   = effectSource.fluidContrast ?? 1.0;
+        frp.intensity = effectSource.fluidIntensity ?? 1.0;
+        frp.contrast = effectSource.fluidContrast ?? 1.0;
         frp.saturation = effectSource.fluidSaturation ?? 1.0;
-        frp.hueShift   = effectSource.fluidHueShift ?? 0.0;
-        frp.glow       = effectSource.fluidGlow ?? 0.5;
-        frp.bgColor    = effectSource.fluidBgColor ?? frp.bgColor;
+        frp.hueShift = effectSource.fluidHueShift ?? 0.0;
+        frp.glow = effectSource.fluidGlow ?? 0.5;
+        frp.bgColor = effectSource.fluidBgColor ?? frp.bgColor;
         effectCtx.fluid.setRenderParams(frp);
 
         if (!effectCtx._fluidSimParams) {
           effectCtx._fluidSimParams = {
-            viscosity: 0.0001, vorticity: 30.0, dissipation: 1.0,
-            velocityDissipation: 0.5, pressureIterations: 14,
+            viscosity: 0.0001,
+            vorticity: 30.0,
+            dissipation: 1.0,
+            velocityDissipation: 0.5,
+            pressureIterations: 14,
           };
         }
         const fsp = effectCtx._fluidSimParams;
-        fsp.viscosity           = effectSource.fluidViscosity ?? 0.0001;
-        fsp.vorticity           = effectSource.fluidVorticity ?? 30.0;
-        fsp.dissipation         = effectSource.fluidDissipation ?? 1.0;
+        fsp.viscosity = effectSource.fluidViscosity ?? 0.0001;
+        fsp.vorticity = effectSource.fluidVorticity ?? 30.0;
+        fsp.dissipation = effectSource.fluidDissipation ?? 1.0;
         fsp.velocityDissipation = effectSource.fluidVelDissipation ?? 0.5;
-        fsp.pressureIterations  = effectSource.fluidPressureIters ?? fluidQualityPreset.pressureIterations;
+        fsp.pressureIterations = effectSource.fluidPressureIters ?? fluidQualityPreset.pressureIterations;
         effectCtx.fluid.setParams(fsp);
 
-      // --- Camera feed management for fluid ---
-      //
-      // Helper that tears down a webcam-backed effect context. Called both on
-      // explicit disable and on hotplug (USB webcam yanked mid-set).
-      function _teardownFluidWebcam(ctx: IntegratedEffectContext) {
-        disposeIntegratedCameraFeed(ctx);
-      }
+        // --- Camera feed management for fluid ---
+        //
+        // Helper that tears down a webcam-backed effect context. Called both on
+        // explicit disable and on hotplug (USB webcam yanked mid-set).
+        function _teardownFluidWebcam(ctx: IntegratedEffectContext) {
+          disposeIntegratedCameraFeed(ctx);
+        }
 
-      if (effectCtx.fluid && effectSource.cameraEnabled && !effectCtx.cameraStream && !effectCtx.cameraRequested) {
-        effectCtx.cameraRequested = true;
-        const thisKey = cacheKey; // capture for async closure
-        console.log('[Canvas] Requesting webcam for fluid camera feed...');
-        navigator.mediaDevices.getUserMedia({ video: { width: 640, height: 480 }, audio: false })
-          .then(stream => {
-            const ctx = integratedEffects.get(thisKey);
-            if (!ctx) { stream.getTracks().forEach(t => t.stop()); return; }
-            const videoEl = document.createElement('video');
-            videoEl.srcObject = stream;
-            videoEl.muted = true;
-            videoEl.playsInline = true;
-            videoEl.autoplay = true;
-            videoEl.play();
-            const tex = new THREE.VideoTexture(videoEl);
-            tex.minFilter = THREE.LinearFilter;
-            tex.magFilter = THREE.LinearFilter;
-            const prevTarget = new THREE.WebGLRenderTarget(640, 480, {
-              minFilter: THREE.LinearFilter,
-              magFilter: THREE.LinearFilter,
-              format: THREE.RGBAFormat,
+        if (effectCtx.fluid && effectSource.cameraEnabled && !effectCtx.cameraStream && !effectCtx.cameraRequested) {
+          effectCtx.cameraRequested = true;
+          const thisKey = cacheKey; // capture for async closure
+          console.log('[Canvas] Requesting webcam for fluid camera feed...');
+          navigator.mediaDevices
+            .getUserMedia({ video: { width: 640, height: 480 }, audio: false })
+            .then((stream) => {
+              const ctx = integratedEffects.get(thisKey);
+              if (!ctx) {
+                stream.getTracks().forEach((t) => t.stop());
+                return;
+              }
+              const videoEl = document.createElement('video');
+              videoEl.srcObject = stream;
+              videoEl.muted = true;
+              videoEl.playsInline = true;
+              videoEl.autoplay = true;
+              videoEl.play();
+              const tex = new THREE.VideoTexture(videoEl);
+              tex.minFilter = THREE.LinearFilter;
+              tex.magFilter = THREE.LinearFilter;
+              const prevTarget = new THREE.WebGLRenderTarget(640, 480, {
+                minFilter: THREE.LinearFilter,
+                magFilter: THREE.LinearFilter,
+                format: THREE.RGBAFormat,
+              });
+              ctx.cameraStream = stream;
+              ctx.cameraVideoEl = videoEl;
+              ctx.cameraTexture = tex;
+              ctx.prevCameraTarget = prevTarget;
+              ctx.prevCameraCopied = false;
+
+              // Hotplug resilience: if the user yanks the USB webcam mid-set,
+              // the video track emits `ended`. Without this listener the fluid
+              // effect stays "readyState>=2 from last frame" forever and the
+              // user sees a frozen motion input until the app is restarted.
+              // On end we tear everything down and clear `cameraRequested` so
+              // the auto-retry path above can re-acquire if the webcam comes
+              // back (e.g., replug).
+              stream.getVideoTracks().forEach((track) => {
+                track.onended = () => {
+                  console.warn('[Canvas] Webcam track ended (device unplugged?) — tearing down fluid camera feed');
+                  const c = integratedEffects.get(thisKey);
+                  if (c) _teardownFluidWebcam(c);
+                };
+              });
+
+              console.log('[Canvas] Webcam started for fluid camera feed');
+            })
+            .catch((err) => {
+              console.error('[Canvas] Webcam access denied or failed:', err);
+              const ctx = integratedEffects.get(thisKey);
+              if (ctx) ctx.cameraRequested = false; // allow retry
             });
-            ctx.cameraStream = stream;
-            ctx.cameraVideoEl = videoEl;
-            ctx.cameraTexture = tex;
-            ctx.prevCameraTarget = prevTarget;
-            ctx.prevCameraCopied = false;
+        }
+        if (effectCtx.fluid && !effectSource.cameraEnabled && effectCtx.cameraStream) {
+          // Stop webcam (user-disabled path — shares the teardown helper)
+          _teardownFluidWebcam(effectCtx);
+          console.log('[Canvas] Webcam stopped (user-disabled)');
+        }
 
-            // Hotplug resilience: if the user yanks the USB webcam mid-set,
-            // the video track emits `ended`. Without this listener the fluid
-            // effect stays "readyState>=2 from last frame" forever and the
-            // user sees a frozen motion input until the app is restarted.
-            // On end we tear everything down and clear `cameraRequested` so
-            // the auto-retry path above can re-acquire if the webcam comes
-            // back (e.g., replug).
-            stream.getVideoTracks().forEach(track => {
-              track.onended = () => {
-                console.warn('[Canvas] Webcam track ended (device unplugged?) — tearing down fluid camera feed');
-                const c = integratedEffects.get(thisKey);
-                if (c) _teardownFluidWebcam(c);
-              };
-            });
-
-            console.log('[Canvas] Webcam started for fluid camera feed');
-          })
-          .catch(err => {
-            console.error('[Canvas] Webcam access denied or failed:', err);
-            const ctx = integratedEffects.get(thisKey);
-            if (ctx) ctx.cameraRequested = false; // allow retry
-          });
-      }
-      if (effectCtx.fluid && !effectSource.cameraEnabled && effectCtx.cameraStream) {
-        // Stop webcam (user-disabled path — shares the teardown helper)
-        _teardownFluidWebcam(effectCtx);
-        console.log('[Canvas] Webcam stopped (user-disabled)');
-      }
-
-      // Run simulation step and render
+        // Run simulation step and render
         // Inject camera motion into fluid if webcam is active
         if (effectCtx.cameraTexture && effectCtx.prevCameraTarget && (effectCtx.cameraVideoEl?.readyState ?? 0) >= 2) {
           if (effectCtx.prevCameraCopied) {
@@ -5309,7 +5881,7 @@
               renderer,
               effectCtx.cameraTexture,
               effectCtx.prevCameraTarget.texture,
-              effectSource.fluidCameraStrength ?? 3.0
+              effectSource.fluidCameraStrength ?? 3.0,
             );
           }
           // Copy current frame to prevCameraTarget for next frame's diff
@@ -5345,8 +5917,15 @@
             const velY = -dmy * forceScale; // negate Y: screen down = negative fluid Y
             effectCtx.fluid.addVelocity(renderer, mx, 1.0 - my, velX, velY, 0.01);
 
-            effectCtx.fluid.addDensity(renderer, mx, 1.0 - my,
-              fluidCol[0] * 5, fluidCol[1] * 5, fluidCol[2] * 5, 0.008);
+            effectCtx.fluid.addDensity(
+              renderer,
+              mx,
+              1.0 - my,
+              fluidCol[0] * 5,
+              fluidCol[1] * 5,
+              fluidCol[2] * 5,
+              0.008,
+            );
           }
 
           effectCtx.lastMouseX = mx;
@@ -5373,51 +5952,73 @@
         // change-detection internally so identical values are a no-op.
         if (!effectCtx._particleParams) {
           effectCtx._particleParams = {
-            mode: 0, count: 3000, size: 0.8, speed: 2.0,
-            gravity: -0.5, turbulence: 2.0, vortex: 1.0, drag: 0.98,
-            mouseForce: 50, mouseRadius: 15, emission: 2.0,
-            bloom: 0.6, bloomThreshold: 0.35, material: 0,
-            colorA: [0.2, 0.5, 1.0], colorB: [1.0, 0.3, 0.8], colorC: [0.3, 1.0, 0.5],
-            colorMode: 0, connectors: false, connectorDist: 5, connectorOpacity: 0.4,
-            textureUrl: '', lightCount: 3, lightIntensity: 4.0,
-            lightOrbitSpeed: 0.5, lightColorA: [0.3, 0.5, 1.0], lightColorB: [1.0, 0.3, 0.6],
-            lightConeAngle: 0.6, ambient: 0.35, autoRotate: true, rotationSpeed: 0.15,
+            mode: 0,
+            count: 3000,
+            size: 0.8,
+            speed: 2.0,
+            gravity: -0.5,
+            turbulence: 2.0,
+            vortex: 1.0,
+            drag: 0.98,
+            mouseForce: 50,
+            mouseRadius: 15,
+            emission: 2.0,
+            bloom: 0.6,
+            bloomThreshold: 0.35,
+            material: 0,
+            colorA: [0.2, 0.5, 1.0],
+            colorB: [1.0, 0.3, 0.8],
+            colorC: [0.3, 1.0, 0.5],
+            colorMode: 0,
+            connectors: false,
+            connectorDist: 5,
+            connectorOpacity: 0.4,
+            textureUrl: '',
+            lightCount: 3,
+            lightIntensity: 4.0,
+            lightOrbitSpeed: 0.5,
+            lightColorA: [0.3, 0.5, 1.0],
+            lightColorB: [1.0, 0.3, 0.6],
+            lightConeAngle: 0.6,
+            ambient: 0.35,
+            autoRotate: true,
+            rotationSpeed: 0.15,
           };
         }
         const pp = effectCtx._particleParams;
-        pp.mode            = (effectSource.particleMode ?? 0) as any;
-        pp.count           = effectSource.particleCount ?? 3000;
-        pp.size            = effectSource.particleSize ?? 0.8;
-        pp.speed           = effectSource.particleSpeed ?? 2.0;
-        pp.gravity         = effectSource.particleGravity ?? -0.5;
-        pp.turbulence      = effectSource.particleTurbulence ?? 2.0;
-        pp.vortex          = effectSource.particleVortex ?? 1.0;
-        pp.drag            = effectSource.particleDrag ?? 0.98;
-        pp.mouseForce      = effectSource.particleMouseForce ?? 50;
-        pp.mouseRadius     = effectSource.particleMouseRadius ?? 15;
-        pp.emission        = effectSource.particleEmission ?? 2.0;
-        pp.bloom           = effectSource.particleBloom ?? 0.6;
-        pp.bloomThreshold  = effectSource.particleBloomThreshold ?? 0.35;
-        pp.material        = effectSource.particleMaterial ?? 0;
+        pp.mode = (effectSource.particleMode ?? 0) as any;
+        pp.count = effectSource.particleCount ?? 3000;
+        pp.size = effectSource.particleSize ?? 0.8;
+        pp.speed = effectSource.particleSpeed ?? 2.0;
+        pp.gravity = effectSource.particleGravity ?? -0.5;
+        pp.turbulence = effectSource.particleTurbulence ?? 2.0;
+        pp.vortex = effectSource.particleVortex ?? 1.0;
+        pp.drag = effectSource.particleDrag ?? 0.98;
+        pp.mouseForce = effectSource.particleMouseForce ?? 50;
+        pp.mouseRadius = effectSource.particleMouseRadius ?? 15;
+        pp.emission = effectSource.particleEmission ?? 2.0;
+        pp.bloom = effectSource.particleBloom ?? 0.6;
+        pp.bloomThreshold = effectSource.particleBloomThreshold ?? 0.35;
+        pp.material = effectSource.particleMaterial ?? 0;
         // Keep the previous cached array reference when no override is present —
         // `?? [0.2, 0.5, 1.0]` would allocate fresh every frame.
-        pp.colorA          = effectSource.particleColorA ?? pp.colorA;
-        pp.colorB          = effectSource.particleColorB ?? pp.colorB;
-        pp.colorC          = effectSource.particleColorC ?? pp.colorC;
-        pp.colorMode       = effectSource.particleColorMode ?? 0;
-        pp.connectors      = effectSource.particleConnectors ?? false;
-        pp.connectorDist   = effectSource.particleConnectorDist ?? 5;
-        pp.connectorOpacity= effectSource.particleConnectorOpacity ?? 0.4;
-        pp.textureUrl      = effectSource.particleTextureUrl ?? '';
-        pp.lightCount      = effectSource.particleLightCount ?? 3;
-        pp.lightIntensity  = effectSource.particleLightIntensity ?? 4.0;
+        pp.colorA = effectSource.particleColorA ?? pp.colorA;
+        pp.colorB = effectSource.particleColorB ?? pp.colorB;
+        pp.colorC = effectSource.particleColorC ?? pp.colorC;
+        pp.colorMode = effectSource.particleColorMode ?? 0;
+        pp.connectors = effectSource.particleConnectors ?? false;
+        pp.connectorDist = effectSource.particleConnectorDist ?? 5;
+        pp.connectorOpacity = effectSource.particleConnectorOpacity ?? 0.4;
+        pp.textureUrl = effectSource.particleTextureUrl ?? '';
+        pp.lightCount = effectSource.particleLightCount ?? 3;
+        pp.lightIntensity = effectSource.particleLightIntensity ?? 4.0;
         pp.lightOrbitSpeed = effectSource.particleLightOrbitSpeed ?? 0.5;
-        pp.lightColorA     = effectSource.particleLightColorA ?? pp.lightColorA;
-        pp.lightColorB     = effectSource.particleLightColorB ?? pp.lightColorB;
-        pp.lightConeAngle  = effectSource.particleLightConeAngle ?? 0.6;
-        pp.ambient         = effectSource.particleAmbient ?? 0.35;
-        pp.autoRotate      = effectSource.particleAutoRotate ?? true;
-        pp.rotationSpeed   = effectSource.particleRotationSpeed ?? 0.15;
+        pp.lightColorA = effectSource.particleLightColorA ?? pp.lightColorA;
+        pp.lightColorB = effectSource.particleLightColorB ?? pp.lightColorB;
+        pp.lightConeAngle = effectSource.particleLightConeAngle ?? 0.6;
+        pp.ambient = effectSource.particleAmbient ?? 0.35;
+        pp.autoRotate = effectSource.particleAutoRotate ?? true;
+        pp.rotationSpeed = effectSource.particleRotationSpeed ?? 0.15;
         effectCtx.particles.setParams(pp);
 
         // Mouse interaction
@@ -5444,10 +6045,7 @@
         effectCtx.milkdropLayerId = layerId;
 
         // Resize on project-size change
-        if (
-          effectCtx.renderTarget.width !== width ||
-          effectCtx.renderTarget.height !== height
-        ) {
+        if (effectCtx.renderTarget.width !== width || effectCtx.renderTarget.height !== height) {
           mk.resize(width, height, effectSource.milkdropPixelRatio ?? 1);
         }
 
@@ -5461,7 +6059,9 @@
         if (wantSource !== effectCtx.milkdropAudioSource) {
           // Source mode flipped — rebuild
           if (effectCtx.milkdropStemRouter) {
-            try { effectCtx.milkdropStemRouter.dispose(); } catch {}
+            try {
+              effectCtx.milkdropStemRouter.dispose();
+            } catch {}
             effectCtx.milkdropStemRouter = undefined;
           }
           if (wantStems) {
@@ -5505,17 +6105,19 @@
         if (effectCtx.milkdropPresetPack !== wantPack && _milkdropLoadPresetPack) {
           effectCtx.milkdropPresetPack = wantPack;
           // Fire-and-forget; once resolved, the next frame picks a preset.
-          _milkdropLoadPresetPack(wantPack as any).then(presets => {
-            effectCtx!.milkdropPresets = presets;
-            effectCtx!.milkdropPresetNames = Object.keys(presets).sort();
-            const first = _milkdropPickNextPreset!(presets, null);
-            if (first) {
-              mk.loadPreset(first, presets[first], 0);
-              effectCtx!.milkdropLoadedPresetName = first;
-              effectCtx!.milkdropLastEvolveAt = performance.now();
-              if (layerId) milkdropStore.reportPreset(layerId, first);
-            }
-          }).catch(e => console.warn('[Canvas] milkdrop preset pack load failed', e));
+          _milkdropLoadPresetPack(wantPack as any)
+            .then((presets) => {
+              effectCtx!.milkdropPresets = presets;
+              effectCtx!.milkdropPresetNames = Object.keys(presets).sort();
+              const first = _milkdropPickNextPreset!(presets, null);
+              if (first) {
+                mk.loadPreset(first, presets[first], 0);
+                effectCtx!.milkdropLoadedPresetName = first;
+                effectCtx!.milkdropLastEvolveAt = performance.now();
+                if (layerId) milkdropStore.reportPreset(layerId, first);
+              }
+            })
+            .catch((e) => console.warn('[Canvas] milkdrop preset pack load failed', e));
         }
 
         const presets = effectCtx.milkdropPresets;
@@ -5562,7 +6164,7 @@
               mk.loadPreset(target, presets[target], cutBlend);
               effectCtx.milkdropLoadedPresetName = target;
               effectCtx.milkdropLastEvolveAt = performance.now();
-              effectCtx.milkdropLastEvolveBeat = (getLastRawAnalysis()?.beat?.beatCount ?? 0);
+              effectCtx.milkdropLastEvolveBeat = getLastRawAnalysis()?.beat?.beatCount ?? 0;
               milkdropStore.reportPreset(layerId, target);
             }
           }
@@ -5572,18 +6174,14 @@
         const lockedState = layerId ? get(milkdropStore).locked[layerId] : false;
 
         // Hard-cut on beat (independent of auto-evolve; fires on strong beats only)
-        if (
-          !lockedState &&
-          presets && names.length > 0 &&
-          (effectSource.milkdropHardCutEnabled ?? false)
-        ) {
+        if (!lockedState && presets && names.length > 0 && (effectSource.milkdropHardCutEnabled ?? false)) {
           const audio = getLastRawAnalysis();
           const beatIntensity = audio?.beat?.beatIntensity ?? 0;
           const threshold = effectSource.milkdropHardCutThreshold ?? 0.8;
           const now = performance.now();
           // 500ms refractory — at 140 BPM that's ~1.2 beats, so we cut once
           // per phrase-grade beat instead of every kick.
-          const refractoryOk = (now - (effectCtx.milkdropLastHardCutAt ?? 0)) > 500;
+          const refractoryOk = now - (effectCtx.milkdropLastHardCutAt ?? 0) > 500;
           if (audio?.beat?.isBeat && beatIntensity >= threshold && refractoryOk && _milkdropPickNextPreset) {
             const next = _milkdropPickNextPreset(presets, effectCtx.milkdropLoadedPresetName ?? null);
             if (next) {
@@ -5604,7 +6202,7 @@
           if (mode === 0) {
             const intervalMs = (effectSource.milkdropEvolveInterval ?? 22) * 1000;
             const lastAt = effectCtx.milkdropLastEvolveAt ?? 0;
-            shouldEvolve = (performance.now() - lastAt) >= intervalMs;
+            shouldEvolve = performance.now() - lastAt >= intervalMs;
           } else {
             const audio = getLastRawAnalysis();
             const beatCount = audio?.beat?.beatCount ?? 0;
@@ -5623,7 +6221,7 @@
               if (layerId) milkdropStore.reportPreset(layerId, next);
             }
             effectCtx.milkdropLastEvolveAt = performance.now();
-            effectCtx.milkdropLastEvolveBeat = (getLastRawAnalysis()?.beat?.beatCount ?? 0);
+            effectCtx.milkdropLastEvolveBeat = getLastRawAnalysis()?.beat?.beatCount ?? 0;
           }
         }
 
@@ -5673,20 +6271,20 @@
           al.resize(width, height);
         }
         al.setParams({
-          layout:             effectSource.analyzerLabLayout             ?? 'stack',
-          colormap:           effectSource.analyzerLabColormap           ?? 'inferno',
+          layout: effectSource.analyzerLabLayout ?? 'stack',
+          colormap: effectSource.analyzerLabColormap ?? 'inferno',
           spectroOrientation: effectSource.analyzerLabSpectroOrientation ?? 'horizontal',
-          spectroGain:        effectSource.analyzerLabSpectroGain        ?? 1.0,
-          spectroMinDb:       effectSource.analyzerLabSpectroMinDb       ?? -85,
-          spectroMaxDb:       effectSource.analyzerLabSpectroMaxDb       ?? -25,
-          scrollSpeed:        effectSource.analyzerLabScrollSpeed        ?? 1.0,
-          chromaStyle:        effectSource.analyzerLabChromaStyle        ?? 'bars',
-          chromaGlow:         effectSource.analyzerLabChromaGlow         ?? 0.5,
-          waveStyle:          effectSource.analyzerLabWaveStyle          ?? 'line',
-          waveLineWidth:      effectSource.analyzerLabWaveLineWidth      ?? 1.5,
-          showBeats:          effectSource.analyzerLabShowBeats          ?? true,
-          showLabels:         effectSource.analyzerLabShowLabels         ?? true,
-          bgAlpha:            effectSource.analyzerLabBgAlpha            ?? 1.0,
+          spectroGain: effectSource.analyzerLabSpectroGain ?? 1.0,
+          spectroMinDb: effectSource.analyzerLabSpectroMinDb ?? -85,
+          spectroMaxDb: effectSource.analyzerLabSpectroMaxDb ?? -25,
+          scrollSpeed: effectSource.analyzerLabScrollSpeed ?? 1.0,
+          chromaStyle: effectSource.analyzerLabChromaStyle ?? 'bars',
+          chromaGlow: effectSource.analyzerLabChromaGlow ?? 0.5,
+          waveStyle: effectSource.analyzerLabWaveStyle ?? 'line',
+          waveLineWidth: effectSource.analyzerLabWaveLineWidth ?? 1.5,
+          showBeats: effectSource.analyzerLabShowBeats ?? true,
+          showLabels: effectSource.analyzerLabShowLabels ?? true,
+          bgAlpha: effectSource.analyzerLabBgAlpha ?? 1.0,
         });
         al.render(renderer, effectCtx.renderTarget);
       }
@@ -5698,33 +6296,33 @@
           hx.resize(width, height);
         }
         hx.setParams({
-          mode:                effectSource.handfxMode                ?? 'trails',
-          cameraOn:            effectSource.handfxCameraOn            ?? false,
-          smoothing:           effectSource.handfxSmoothing           ?? 0.15,
-          predictMs:           effectSource.handfxPredictMs           ?? 18,
-          showHelp:            effectSource.handfxShowHelp            ?? true,
-          bgAlpha:             effectSource.handfxBgAlpha             ?? 0.0,
-          panelColor:          effectSource.handfxPanelColor          ?? '#FFFFFF',
-          panelOpacity:        effectSource.handfxPanelOpacity        ?? 1.0,
-          panelPadding:        effectSource.handfxPanelPadding        ?? 0.04,
-          panelCornerRadius:   effectSource.handfxPanelCornerRadius   ?? 0.02,
-          trailFade:           effectSource.handfxTrailFade           ?? 0.985,
-          trailColorMode:      effectSource.handfxTrailColorMode      ?? 'rainbow',
-          trailThickness:      effectSource.handfxTrailThickness      ?? 3,
-          trailVelocityScale:  effectSource.handfxTrailVelocityScale  ?? 1.5,
-          trailSparkDensity:   effectSource.handfxTrailSparkDensity   ?? 0.5,
-          trailFlowStrength:   effectSource.handfxTrailFlowStrength   ?? 0.7,
-          inkColorMode:        effectSource.handfxInkColorMode        ?? 'coral',
-          inkSize:             effectSource.handfxInkSize             ?? 55,
-          inkOpacity:          effectSource.handfxInkOpacity          ?? 0.28,
-          inkDrift:            effectSource.handfxInkDrift            ?? 1.0,
-          skeletonColor:       effectSource.handfxSkeletonColor       ?? '#FF6B6B',
-          skeletonGlow:        effectSource.handfxSkeletonGlow        ?? 1.5,
-          sprayColorMode:      effectSource.handfxSprayColorMode      ?? 'rainbow',
-          sprayIntensity:      effectSource.handfxSprayIntensity      ?? 1.5,
-          sprayThreshold:      effectSource.handfxSprayThreshold      ?? 0.25,
-          showCamera:          effectSource.handfxShowCamera          ?? false,
-          cameraOpacity:       effectSource.handfxCameraOpacity       ?? 0.5,
+          mode: effectSource.handfxMode ?? 'trails',
+          cameraOn: effectSource.handfxCameraOn ?? false,
+          smoothing: effectSource.handfxSmoothing ?? 0.15,
+          predictMs: effectSource.handfxPredictMs ?? 18,
+          showHelp: effectSource.handfxShowHelp ?? true,
+          bgAlpha: effectSource.handfxBgAlpha ?? 0.0,
+          panelColor: effectSource.handfxPanelColor ?? '#FFFFFF',
+          panelOpacity: effectSource.handfxPanelOpacity ?? 1.0,
+          panelPadding: effectSource.handfxPanelPadding ?? 0.04,
+          panelCornerRadius: effectSource.handfxPanelCornerRadius ?? 0.02,
+          trailFade: effectSource.handfxTrailFade ?? 0.985,
+          trailColorMode: effectSource.handfxTrailColorMode ?? 'rainbow',
+          trailThickness: effectSource.handfxTrailThickness ?? 3,
+          trailVelocityScale: effectSource.handfxTrailVelocityScale ?? 1.5,
+          trailSparkDensity: effectSource.handfxTrailSparkDensity ?? 0.5,
+          trailFlowStrength: effectSource.handfxTrailFlowStrength ?? 0.7,
+          inkColorMode: effectSource.handfxInkColorMode ?? 'coral',
+          inkSize: effectSource.handfxInkSize ?? 55,
+          inkOpacity: effectSource.handfxInkOpacity ?? 0.28,
+          inkDrift: effectSource.handfxInkDrift ?? 1.0,
+          skeletonColor: effectSource.handfxSkeletonColor ?? '#FF6B6B',
+          skeletonGlow: effectSource.handfxSkeletonGlow ?? 1.5,
+          sprayColorMode: effectSource.handfxSprayColorMode ?? 'rainbow',
+          sprayIntensity: effectSource.handfxSprayIntensity ?? 1.5,
+          sprayThreshold: effectSource.handfxSprayThreshold ?? 0.25,
+          showCamera: effectSource.handfxShowCamera ?? false,
+          cameraOpacity: effectSource.handfxCameraOpacity ?? 0.5,
         });
         hx.render(renderer, effectCtx.renderTarget);
       }
@@ -5748,7 +6346,7 @@
           sensitivity: effectSource.wavejsSensitivity ?? 1.5,
           lineWidth: effectSource.wavejsLineWidth ?? 4,
           colorA: effectSource.wavejsColorA ?? [1.0, 0.42, 0.42],
-          colorB: effectSource.wavejsColorB ?? [1.0, 0.55, 0.30],
+          colorB: effectSource.wavejsColorB ?? [1.0, 0.55, 0.3],
           useGradient: effectSource.wavejsUseGradient ?? true,
           gradientRotate: effectSource.wavejsGradientRotate ?? 0,
           glowStrength: effectSource.wavejsGlowStrength ?? 15,
@@ -5789,18 +6387,20 @@
             let target = null as null | { name: string; code: string };
             switch (latest.kind) {
               case 'next': {
-                const idx = curName ? presets.findIndex(p => p.name === curName) : -1;
+                const idx = curName ? presets.findIndex((p) => p.name === curName) : -1;
                 target = presets[(idx + 1 + presets.length) % presets.length];
                 break;
               }
               case 'prev': {
-                const idx = curName ? presets.findIndex(p => p.name === curName) : 0;
+                const idx = curName ? presets.findIndex((p) => p.name === curName) : 0;
                 target = presets[(idx - 1 + presets.length) % presets.length];
                 break;
               }
-              case 'random': target = pickNext(curName); break;
+              case 'random':
+                target = pickNext(curName);
+                break;
               case 'load': {
-                if (latest.presetName) target = presets.find(p => p.name === latest.presetName) ?? null;
+                if (latest.presetName) target = presets.find((p) => p.name === latest.presetName) ?? null;
                 break;
               }
             }
@@ -5840,32 +6440,32 @@
           fx.resize(width, height);
         }
         fx.setParams({
-          scenePreset:        effectSource.ghostfxScenePreset        ?? 'drift',
-          sensitivity:        effectSource.ghostfxSensitivity        ?? 1.4,
-          hueDriftSpeed:      effectSource.ghostfxHueDriftSpeed      ?? 0.15,
-          exposure:           effectSource.ghostfxExposure           ?? 0,
-          bgAlpha:            effectSource.ghostfxBgAlpha            ?? 1.0,
-          bloomIntensity:     effectSource.ghostfxBloomIntensity     ?? 1.4,
-          bloomThreshold:     effectSource.ghostfxBloomThreshold     ?? 0.45,
-          vignette:           effectSource.ghostfxVignette           ?? 0.7,
-          vortexStrength:     effectSource.ghostfxVortexStrength     ?? 2.0,
-          latticeThreshold:   effectSource.ghostfxLatticeThreshold   ?? 2.5,
-          trailIntensity:     effectSource.ghostfxTrailIntensity     ?? 1.0,
-          feedbackAmount:     effectSource.ghostfxFeedbackAmount     ?? 0.35,
-          feedbackZoom:       effectSource.ghostfxFeedbackZoom       ?? 1.003,
-          ribbonWidth:        effectSource.ghostfxRibbonWidth        ?? 0.10,
-          ribbonSpawn:        effectSource.ghostfxRibbonSpawn        ?? 1.0,
+          scenePreset: effectSource.ghostfxScenePreset ?? 'drift',
+          sensitivity: effectSource.ghostfxSensitivity ?? 1.4,
+          hueDriftSpeed: effectSource.ghostfxHueDriftSpeed ?? 0.15,
+          exposure: effectSource.ghostfxExposure ?? 0,
+          bgAlpha: effectSource.ghostfxBgAlpha ?? 1.0,
+          bloomIntensity: effectSource.ghostfxBloomIntensity ?? 1.4,
+          bloomThreshold: effectSource.ghostfxBloomThreshold ?? 0.45,
+          vignette: effectSource.ghostfxVignette ?? 0.7,
+          vortexStrength: effectSource.ghostfxVortexStrength ?? 2.0,
+          latticeThreshold: effectSource.ghostfxLatticeThreshold ?? 2.5,
+          trailIntensity: effectSource.ghostfxTrailIntensity ?? 1.0,
+          feedbackAmount: effectSource.ghostfxFeedbackAmount ?? 0.35,
+          feedbackZoom: effectSource.ghostfxFeedbackZoom ?? 1.003,
+          ribbonWidth: effectSource.ghostfxRibbonWidth ?? 0.1,
+          ribbonSpawn: effectSource.ghostfxRibbonSpawn ?? 1.0,
           ribbonTranslucency: effectSource.ghostfxRibbonTranslucency ?? 0.35,
-          ribbonBlend:        effectSource.ghostfxRibbonBlend        ?? 'additive',
-          lightAzimuth:       effectSource.ghostfxLightAzimuth       ?? 35,
-          lightElevation:     effectSource.ghostfxLightElevation     ?? 55,
-          lightStrength:      effectSource.ghostfxLightStrength      ?? 0.9,
-          ambient:            effectSource.ghostfxAmbient            ?? 0.30,
-          liquidSplatForce:   effectSource.ghostfxLiquidSplatForce   ?? 1.0,
-          liquidSplatRadius:  effectSource.ghostfxLiquidSplatRadius  ?? 0.08,
-          liquidDyeDecay:     effectSource.ghostfxLiquidDyeDecay     ?? 0.995,
-          liquidVelDecay:     effectSource.ghostfxLiquidVelDecay     ?? 0.992,
-          liquidBassRate:     effectSource.ghostfxLiquidBassRate     ?? 1.0,
+          ribbonBlend: effectSource.ghostfxRibbonBlend ?? 'additive',
+          lightAzimuth: effectSource.ghostfxLightAzimuth ?? 35,
+          lightElevation: effectSource.ghostfxLightElevation ?? 55,
+          lightStrength: effectSource.ghostfxLightStrength ?? 0.9,
+          ambient: effectSource.ghostfxAmbient ?? 0.3,
+          liquidSplatForce: effectSource.ghostfxLiquidSplatForce ?? 1.0,
+          liquidSplatRadius: effectSource.ghostfxLiquidSplatRadius ?? 0.08,
+          liquidDyeDecay: effectSource.ghostfxLiquidDyeDecay ?? 0.995,
+          liquidVelDecay: effectSource.ghostfxLiquidVelDecay ?? 0.992,
+          liquidBassRate: effectSource.ghostfxLiquidBassRate ?? 1.0,
         });
         // Pass the raw AudioAnalysis through; GhostFX's internal
         // smoother + BPM-sync handle the "anticipate not react"
@@ -5880,11 +6480,11 @@
           gpv.resize(width, height);
         }
         gpv.setParams({
-          sensitivity:  effectSource.ghostpilotSensitivity  ?? 1.4,
-          speedScale:   effectSource.ghostpilotSpeedScale   ?? 1.0,
-          hueBase:      effectSource.ghostpilotHueBase      ?? 0.0,
-          autopilot:    effectSource.ghostpilotAutopilot    ?? true,
-          steerAssist:  effectSource.ghostpilotSteerAssist  ?? 1.0,
+          sensitivity: effectSource.ghostpilotSensitivity ?? 1.4,
+          speedScale: effectSource.ghostpilotSpeedScale ?? 1.0,
+          hueBase: effectSource.ghostpilotHueBase ?? 0.0,
+          autopilot: effectSource.ghostpilotAutopilot ?? true,
+          steerAssist: effectSource.ghostpilotSteerAssist ?? 1.0,
         });
         // Reads the live gamepad internally each frame; audio builds the
         // world; deltaTime drives physics + verb scheduling.
@@ -5959,11 +6559,7 @@
 </script>
 
 <div class="canvas-wrapper" class:output-mode={isOsrMode || isOutputMode} bind:this={wrapperEl}>
-  <div
-    class="canvas-container"
-    class:output-mode={isOsrMode || isOutputMode}
-    bind:this={containerEl}
-  >
+  <div class="canvas-container" class:output-mode={isOsrMode || isOutputMode} bind:this={containerEl}>
     <canvas class="main-canvas" class:bridge-source={bridgeMode} bind:this={canvas}></canvas>
     <!-- Edge blend + test pattern overlay -->
     <canvas class="output-overlay" bind:this={outputOverlayCanvas}></canvas>

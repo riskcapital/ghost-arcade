@@ -2,10 +2,10 @@
   // VJ Mode Panel - Layers/Columns Grid
   // Uses vjClipLauncher store for state management
 
-  import { onMount, onDestroy } from 'svelte';
+  import { onMount, onDestroy, afterUpdate } from 'svelte';
   import { isMac, getTextureShareLabel } from '$lib/bridge';
   import { get } from 'svelte/store';
-  import { mediaLibrary } from '../stores/media';
+  import { mediaLibrary, type MediaItem } from '../stores/media';
   import { vjClipLauncher, type VJClip, type VJBlock, type VJDeck } from '../stores/vjClipLauncher';
   import { vjLayerSequencer } from '../stores/vjLayerSequencer';
   import { keyframeTimeline } from '../stores/keyframeTimeline';
@@ -71,12 +71,14 @@
   import LEDFXPanel from './LEDFXPanel.svelte';
   import { getShaderDef } from '../renderer/gpuShaderCatalog';
   import { syncTrimmedVideoPlayback } from '../utils/videoTrimPlayback';
+  import type { RenderEngine } from '../renderer/engine';
   // Same build-time JS animation catalog used by mapping-mode MediaTray.
   // @ts-expect-error virtual module supplied by vite plugin
   import bundledThreeJSItems from 'virtual:threejs-bundles';
 
   // File menu callback (wired by parent App.svelte)
   export let onFileAction: ((action: 'new' | 'open' | 'save' | 'saveAs' | 'importPresets' | 'undo' | 'redo') => void) | null = null;
+  export let renderEngine: RenderEngine | null = null;
   let vjFileMenuOpen = false;
   function vjFileAction(action: 'new' | 'open' | 'save' | 'saveAs' | 'importPresets' | 'undo' | 'redo') {
     vjFileMenuOpen = false;
@@ -424,6 +426,11 @@
   let previewCanvas: HTMLCanvasElement;
   let previewCtx: CanvasRenderingContext2D | null = null;
   let previewAnimationFrame: number | null = null;
+  let deckAPreviewCanvas: HTMLCanvasElement;
+  let deckBPreviewCanvas: HTMLCanvasElement;
+  let registeredDeckMonitorEngine: RenderEngine | null = null;
+  let registeredDeckMonitorA: HTMLCanvasElement | null = null;
+  let registeredDeckMonitorB: HTMLCanvasElement | null = null;
 
   // Resizable preview section
   let previewSectionHeight = 350;
@@ -686,8 +693,43 @@
     stopPreviewLoop();
   }
 
+  // Register only while the A/B operator view is visible. afterUpdate is
+  // used because the monitor canvases are conditionally mounted with the
+  // crossfader UI and must exist before the engine can bind them.
+  afterUpdate(() => {
+    const engine = renderEngine;
+    const shouldMonitor = (
+      $vjClipLauncher.isOpen &&
+      $vjClipLauncher.crossfaderEnabled &&
+      engine &&
+      deckAPreviewCanvas &&
+      deckBPreviewCanvas
+    );
+
+    if (shouldMonitor) {
+      if (
+        registeredDeckMonitorEngine !== engine ||
+        registeredDeckMonitorA !== deckAPreviewCanvas ||
+        registeredDeckMonitorB !== deckBPreviewCanvas
+      ) {
+        registeredDeckMonitorEngine?.setDeckMonitorCanvases(null, null);
+        engine.setDeckMonitorCanvases(deckAPreviewCanvas, deckBPreviewCanvas);
+        registeredDeckMonitorEngine = engine;
+        registeredDeckMonitorA = deckAPreviewCanvas;
+        registeredDeckMonitorB = deckBPreviewCanvas;
+      }
+    } else if (registeredDeckMonitorEngine) {
+      registeredDeckMonitorEngine.setDeckMonitorCanvases(null, null);
+      registeredDeckMonitorEngine = null;
+      registeredDeckMonitorA = null;
+      registeredDeckMonitorB = null;
+    }
+  });
+
   // Cleanup on destroy
   onDestroy(() => {
+    registeredDeckMonitorEngine?.setDeckMonitorCanvases(null, null);
+    registeredDeckMonitorEngine = null;
     stopPreviewLoop();
     stopModGhostLoop();
     stopCrossfaderAutoLoop();
@@ -836,6 +878,19 @@
   // the crossfader is on (drag from Bank A cell → Bank B cell, etc.)
   let dragOverCell: { layer: number; column: number; bank: VJDeck } | null = null;
   let dragSourceCell: { layer: number; column: number; bank: VJDeck } | null = null;
+  type VJCellPress = {
+    pointerId: number;
+    layer: number;
+    column: number;
+    bank: VJDeck;
+    startX: number;
+    startY: number;
+    moved: boolean;
+  };
+  let cellPress: VJCellPress | null = null;
+  let cellDragInProgress = false;
+  let lastPointerTriggerAt = -Infinity;
+  const CELL_PRESS_SLOP_PX = 12;
 
   // Copy/paste state
   let clipboardClip: VJClip | null = null;
@@ -2189,6 +2244,8 @@
 
   // Drag handlers
   function handleDragStart(e: DragEvent, clip: VJDragPayload) {
+    cellDragInProgress = true;
+    cellPress = null;
     draggedClip = clip;
     // Electron/Chromium requires dataTransfer.setData() for drag to work
     if (e.dataTransfer) {
@@ -2203,6 +2260,10 @@
     draggedClip = null;
     dragOverCell = null;
     dragSourceCell = null;
+    cellPress = null;
+    // Native dragend can arrive just before pointerup on macOS. Keep the
+    // guard through this task so releasing a trackpad drag cannot fire a clip.
+    setTimeout(() => { cellDragInProgress = false; }, 0);
   }
 
   // ─── VJ Media Library File Import (drag/drop + file picker) ────────
@@ -2231,9 +2292,9 @@
     });
   }
 
-  async function vjAddMediaFile(file: File) {
+  function vjAddMediaFile(file: File): MediaItem | null {
     const kind = vjMediaGetType(file);
-    if (!kind) { console.warn('[VJ Media] Unsupported file type:', file.name); return; }
+    if (!kind) { console.warn('[VJ Media] Unsupported file type:', file.name); return null; }
     // Capture both runtime URL and durable AssetRef so VJ media library entries
     // survive save/reload (the blob URL alone won't).
     const { assetRef, runtimeUrl: url } = createAssetRefFromFile(file);
@@ -2242,32 +2303,56 @@
       // crossOrigin BEFORE src — order matters on Chromium 130.
       video.crossOrigin = 'anonymous'; video.loop = false; video.muted = true; video.playsInline = true; video.preload = 'auto';
       video.src = url;
-      // `.src=` already initiated the load — don't call `.load()`.
-      await new Promise<void>((resolve) => {
-        const done = () => { video.removeEventListener('loadeddata', done); video.removeEventListener('error', done); resolve(); };
-        video.addEventListener('loadeddata', done, { once: true });
-        video.addEventListener('error', done, { once: true });
-        if (video.readyState >= 2) done();
-      });
-      mediaLibrary.addItem({
+      const item: MediaItem = {
         id: generateUUID(),
         name: file.name,
         src: url,
         type: 'video',
         videoElement: video,
-        thumbnail: await vjCaptureVideoThumb(video),
         _assetRef: assetRef,
-      } as any);
+      };
+      // Make the item available to the deck immediately. Thumbnail extraction
+      // uses a separate element so seeking it never disturbs live playback.
+      mediaLibrary.addItem(item);
+      void (async () => {
+        const thumbnailVideo = document.createElement('video');
+        thumbnailVideo.crossOrigin = 'anonymous';
+        thumbnailVideo.muted = true;
+        thumbnailVideo.playsInline = true;
+        thumbnailVideo.preload = 'metadata';
+        thumbnailVideo.src = url;
+        await new Promise<void>((resolve) => {
+          const done = () => {
+            thumbnailVideo.removeEventListener('loadeddata', done);
+            thumbnailVideo.removeEventListener('error', done);
+            resolve();
+          };
+          thumbnailVideo.addEventListener('loadeddata', done, { once: true });
+          thumbnailVideo.addEventListener('error', done, { once: true });
+          if (thumbnailVideo.readyState >= 2) done();
+        });
+        if (thumbnailVideo.readyState >= 2) {
+          const thumbnail = await vjCaptureVideoThumb(thumbnailVideo);
+          if (thumbnail) mediaLibrary.updateItem(item.id, { thumbnail });
+        }
+        thumbnailVideo.pause();
+        thumbnailVideo.removeAttribute('src');
+        thumbnailVideo.load();
+      })();
+      return item;
     } else if (kind === 'image') {
-      mediaLibrary.addItem({
+      const item: MediaItem = {
         id: generateUUID(),
         name: file.name,
         src: url,
         type: 'image',
         thumbnail: url,
         _assetRef: assetRef,
-      } as any);
+      };
+      mediaLibrary.addItem(item);
+      return item;
     }
+    return null;
   }
 
   async function vjHandleMediaDrop(e: DragEvent) {
@@ -2275,7 +2360,7 @@
     if (!files || files.length === 0) return;
     e.preventDefault();
     vjMediaDragOver = false;
-    for (const f of Array.from(files)) { await vjAddMediaFile(f); }
+    for (const f of Array.from(files)) vjAddMediaFile(f);
   }
 
   function vjHandleMediaDragOver(e: DragEvent) {
@@ -2291,17 +2376,19 @@
     if ((e.currentTarget as HTMLElement) === e.target) vjMediaDragOver = false;
   }
 
-  async function vjHandleMediaFilePick(e: Event) {
+  function vjHandleMediaFilePick(e: Event) {
     const input = e.target as HTMLInputElement;
     const files = input.files;
     if (!files) return;
-    for (const f of Array.from(files)) { await vjAddMediaFile(f); }
+    for (const f of Array.from(files)) vjAddMediaFile(f);
     input.value = '';
   }
 
   function handleClipCellDragStart(e: DragEvent, layerIndex: number, columnIndex: number, bank: VJDeck = 'A') {
     const clip = deckGrid(bank)[layerIndex]?.[columnIndex];
     if (!clip || !e.dataTransfer) return;
+    cellDragInProgress = true;
+    cellPress = null;
     dragSourceCell = { layer: layerIndex, column: columnIndex, bank };
     draggedClip = { type: clip.type as any, id: clip.id };
     e.dataTransfer.effectAllowed = 'move';
@@ -2310,6 +2397,9 @@
 
   function handleCellDragOver(e: DragEvent, layerIndex: number, columnIndex: number, bank: VJDeck = 'A') {
     e.preventDefault();
+    if (e.dataTransfer) {
+      e.dataTransfer.dropEffect = e.dataTransfer.files.length > 0 ? 'copy' : (dragSourceCell ? 'move' : 'copy');
+    }
     dragOverCell = { layer: layerIndex, column: columnIndex, bank };
   }
 
@@ -2492,10 +2582,58 @@
     return null;
   }
 
+  function createVJClipFromMediaItem(item: MediaItem): VJClip {
+    return {
+      id: generateUUID(),
+      type: item.type,
+      name: item.name,
+      src: item.src,
+      thumbnail: item.thumbnail,
+      _assetRef: item._assetRef,
+    };
+  }
+
   function handleCellDrop(e: DragEvent, layerIndex: number, columnIndex: number, bank: VJDeck = 'A') {
     e.preventDefault();
     e.stopPropagation();
     dragOverCell = null;
+
+    // Finder / Explorer files can go straight to the performance deck. The
+    // target cell receives the first supported file; additional files fill
+    // empty cells in deck order. Every file also enters the Media Library.
+    const externalFiles = Array.from(e.dataTransfer?.files ?? []);
+    if (externalFiles.length > 0) {
+      const grid = deckGrid(bank);
+      const targets = [
+        { layer: layerIndex, column: columnIndex },
+        ...layerIndices.flatMap((layer) => columnIndices.map((column) => ({ layer, column })))
+          .filter(({ layer, column }) =>
+            !(layer === layerIndex && column === columnIndex) && !grid[layer]?.[column]
+          ),
+      ];
+      let placed = 0;
+      for (const file of externalFiles) {
+        const item = vjAddMediaFile(file);
+        if (!item) continue;
+        const target = targets[placed];
+        if (!target) {
+          showToast('Media imported, but there are no more empty VJ deck slots.', 'warning');
+          break;
+        }
+        vjClipLauncher.setClip(target.layer, target.column, createVJClipFromMediaItem(item), bank);
+        placed += 1;
+      }
+      if (placed > 0) {
+        selectedLayerIndex = layerIndex;
+        showShaderParams = true;
+        if ($vjClipLauncher.crossfaderEnabled) vjClipLauncher.setSelectedDeck(bank);
+      }
+      draggedClip = null;
+      dragSourceCell = null;
+      cellPress = null;
+      cellDragInProgress = false;
+      return;
+    }
 
     // Cell-to-cell move OR swap. Resolume-style behavior: if the
     // destination cell is empty, move the source clip into it (clearing
@@ -2739,6 +2877,62 @@
     selectedLayerIndex = layerIndex;
     showShaderParams = true;
     if ($vjClipLauncher.crossfaderEnabled) vjClipLauncher.setSelectedDeck(bank);
+  }
+
+  function isCellControlTarget(target: EventTarget | null): boolean {
+    return target instanceof Element && Boolean(target.closest('button, input, select, textarea, a'));
+  }
+
+  function handleCellPointerDown(e: PointerEvent, layerIndex: number, columnIndex: number, bank: VJDeck) {
+    if (!e.isPrimary || e.button !== 0 || isCellControlTarget(e.target)) return;
+    cellPress = {
+      pointerId: e.pointerId,
+      layer: layerIndex,
+      column: columnIndex,
+      bank,
+      startX: e.clientX,
+      startY: e.clientY,
+      moved: false,
+    };
+  }
+
+  function handleCellPointerMove(e: PointerEvent) {
+    if (!cellPress || cellPress.pointerId !== e.pointerId || cellPress.moved) return;
+    cellPress.moved = Math.hypot(e.clientX - cellPress.startX, e.clientY - cellPress.startY) > CELL_PRESS_SLOP_PX;
+  }
+
+  function handleCellPointerUp(e: PointerEvent, layerIndex: number, columnIndex: number, bank: VJDeck) {
+    const press = cellPress;
+    cellPress = null;
+    if (
+      !press ||
+      press.pointerId !== e.pointerId ||
+      press.layer !== layerIndex ||
+      press.column !== columnIndex ||
+      press.bank !== bank ||
+      press.moved ||
+      cellDragInProgress ||
+      isCellControlTarget(e.target)
+    ) return;
+    lastPointerTriggerAt = performance.now();
+    handleCellClick(layerIndex, columnIndex, bank);
+  }
+
+  function handleCellPointerCancel() {
+    cellPress = null;
+  }
+
+  function handleCellClickEvent(e: MouseEvent, layerIndex: number, columnIndex: number, bank: VJDeck) {
+    // Pointerup already handled physical clicks. Keep zero-detail synthetic
+    // clicks available for accessibility and external control integrations.
+    if (e.detail > 0 && performance.now() - lastPointerTriggerAt < 350) return;
+    handleCellClick(layerIndex, columnIndex, bank);
+  }
+
+  function handleCellKeyDown(e: KeyboardEvent, layerIndex: number, columnIndex: number, bank: VJDeck) {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault();
+    handleCellClick(layerIndex, columnIndex, bank);
   }
 
   function handleClearClip(layerIndex: number, columnIndex: number, e: Event, bank: VJDeck = 'A') {
@@ -3969,10 +4163,48 @@
         </div>
 
         <!-- CENTER: Preview 16:9 -->
-        <div class="preview-wrapper">
-          <div class="preview-container">
+        <div class="preview-wrapper" class:ab-monitoring={$vjClipLauncher.crossfaderEnabled}>
+          <div class="preview-layout">
+          <div class="preview-container program-preview">
             <canvas bind:this={previewCanvas} class="preview-canvas"></canvas>
-            <div class="preview-label">OUTPUT PREVIEW</div>
+            <div class="preview-label">PROGRAM</div>
+          </div>
+          {#if $vjClipLauncher.crossfaderEnabled}
+            <div class="deck-preview-stack" aria-label="Deck confidence monitors">
+              <div
+                class="deck-preview-container"
+                class:deck-live={$vjClipLauncher.crossfaderValue < 0.5}
+              >
+                <canvas
+                  bind:this={deckAPreviewCanvas}
+                  class="deck-preview-canvas"
+                  width="320"
+                  height="180"
+                  aria-label="Deck A preview"
+                ></canvas>
+                <div class="deck-preview-label">
+                  <strong>A</strong>
+                  <span>DECK A</span>
+                </div>
+              </div>
+              <div
+                class="deck-preview-container"
+                class:deck-live={$vjClipLauncher.crossfaderValue >= 0.5}
+              >
+                <canvas
+                  bind:this={deckBPreviewCanvas}
+                  class="deck-preview-canvas"
+                  width="320"
+                  height="180"
+                  aria-label="Deck B preview"
+                ></canvas>
+                <div class="deck-preview-label">
+                  <strong>B</strong>
+                  <span>DECK B</span>
+                </div>
+              </div>
+            </div>
+          {/if}
           </div>
         </div>
 
@@ -4779,10 +5011,16 @@
                   class:queued={isQueued}
                   class:dragover={dragOverCell?.layer === layerIdx && dragOverCell?.column === colIdx && dragOverCell?.bank === bank}
                   class:wrong-mode={clip != null && !isClipFirable}
-                  draggable={clip != null ? 'true' : 'false'}
-                  onclick={() => clip && isClipFirable && handleCellClick(layerIdx, colIdx, bank)}
+                  draggable={clip != null}
+                  onclick={(e) => clip && isClipFirable && handleCellClickEvent(e, layerIdx, colIdx, bank)}
+                  onpointerdown={(e) => clip && isClipFirable && handleCellPointerDown(e, layerIdx, colIdx, bank)}
+                  onpointermove={handleCellPointerMove}
+                  onpointerup={(e) => clip && isClipFirable && handleCellPointerUp(e, layerIdx, colIdx, bank)}
+                  onpointercancel={handleCellPointerCancel}
+                  onkeydown={(e) => clip && isClipFirable && handleCellKeyDown(e, layerIdx, colIdx, bank)}
                   ondragstart={(e) => clip && handleClipCellDragStart(e, layerIdx, colIdx, bank)}
                   ondragend={handleDragEnd}
+                  ondragenter={(e) => handleCellDragOver(e, layerIdx, colIdx, bank)}
                   ondragover={(e) => handleCellDragOver(e, layerIdx, colIdx, bank)}
                   ondragleave={handleCellDragLeave}
                   ondrop={(e) => handleCellDrop(e, layerIdx, colIdx, bank)}
@@ -7075,12 +7313,18 @@
     min-width: 0;
   }
 
-  .preview-container {
+  .preview-layout {
     position: absolute;
-    top: 0;
-    bottom: 0;
-    left: calc(50% + ((var(--vj-media-tray-center-offset) - var(--vj-effects-center-offset)) / 2));
-    transform: translateX(-50%);
+    inset: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  .preview-container {
+    position: relative;
     height: 100%;
     aspect-ratio: 16 / 9;
     max-width: 100%;
@@ -7090,7 +7334,21 @@
     overflow: hidden;
   }
 
+  .preview-wrapper:not(.ab-monitoring) .preview-layout {
+    transform: translateX(calc((var(--vj-media-tray-center-offset) - var(--vj-effects-center-offset)) / 2));
+  }
+
+  .preview-wrapper.ab-monitoring .program-preview {
+    flex: 1 1 auto;
+    width: auto;
+    height: auto;
+    max-width: calc(100% - clamp(124px, 18vw, 220px) - 10px);
+    max-height: 100%;
+    aspect-ratio: 16 / 9;
+  }
+
   .preview-canvas {
+    display: block;
     width: 100%;
     height: 100%;
     object-fit: contain;
@@ -7108,6 +7366,84 @@
     padding: 2px 6px;
     border-radius: 3px;
     letter-spacing: 0.5px;
+  }
+
+  .deck-preview-stack {
+    flex: 0 1 clamp(124px, 18vw, 220px);
+    width: clamp(124px, 18vw, 220px);
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 8px;
+  }
+
+  .deck-preview-container {
+    position: relative;
+    aspect-ratio: 16 / 9;
+    min-height: 0;
+    overflow: hidden;
+    background: #000;
+    border: 1px solid rgba(154, 123, 255, 0.38);
+    border-radius: 3px;
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.75);
+    transition: border-color 120ms ease, box-shadow 120ms ease;
+  }
+
+  .deck-preview-container.deck-live {
+    border-color: rgba(255, 115, 96, 0.9);
+    box-shadow:
+      0 0 10px rgba(255, 98, 80, 0.16),
+      inset 0 0 0 1px rgba(255, 115, 96, 0.2);
+  }
+
+  .deck-preview-canvas {
+    display: block;
+    width: 100%;
+    height: 100%;
+    background: #000;
+  }
+
+  .deck-preview-label {
+    position: absolute;
+    top: 5px;
+    left: 5px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    color: rgba(226, 231, 240, 0.78);
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-size: 8px;
+    letter-spacing: 0;
+    pointer-events: none;
+  }
+
+  .deck-preview-label strong {
+    display: grid;
+    place-items: center;
+    width: 18px;
+    height: 16px;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.72);
+    border: 1px solid rgba(255, 255, 255, 0.24);
+    font-size: 10px;
+    line-height: 1;
+  }
+
+  @media (max-width: 1180px) {
+    .preview-layout {
+      gap: 6px;
+    }
+
+    .preview-wrapper.ab-monitoring .program-preview {
+      max-width: calc(100% - 118px - 6px);
+    }
+
+    .deck-preview-stack {
+      flex-basis: 118px;
+      width: 118px;
+      gap: 5px;
+    }
   }
 
   /* RIGHT: Shader Params Panel (above media tabs) */
@@ -7585,6 +7921,9 @@
     transition: all 0.1s;
     position: relative;
     contain: layout paint;
+    user-select: none;
+    -webkit-user-drag: element;
+    touch-action: manipulation;
   }
 
   .clip-cell:hover {

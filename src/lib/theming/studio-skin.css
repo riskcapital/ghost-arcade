@@ -378,8 +378,8 @@ html[data-theme="arcade"] body {
 }
 
 /* Ranges / faders inside left panel */
-.layer-panel input[type="range"]:not(.hue-slider),
-.property-row input[type="range"]:not(.hue-slider) {
+.layer-panel input[type="range"]:not(.hue-slider):not(.slipper):not(.epr-slipper):not(.auto-range-input),
+.property-row input[type="range"]:not(.hue-slider):not(.slipper):not(.epr-slipper):not(.auto-range-input) {
   appearance: none !important;
   -webkit-appearance: none !important;
   width: 100% !important;
@@ -405,14 +405,14 @@ html[data-theme="arcade"] body {
   outline: none !important;
   padding: 0 !important;
 }
-.layer-panel input[type="range"]:not(.hue-slider)::-webkit-slider-runnable-track,
-.property-row input[type="range"]:not(.hue-slider)::-webkit-slider-runnable-track {
+.layer-panel input[type="range"]:not(.hue-slider):not(.slipper):not(.epr-slipper):not(.auto-range-input)::-webkit-slider-runnable-track,
+.property-row input[type="range"]:not(.hue-slider):not(.slipper):not(.epr-slipper):not(.auto-range-input)::-webkit-slider-runnable-track {
   height: 12px !important;
   border-radius: 8px !important;
   background: transparent !important;
 }
-.layer-panel input[type="range"]:not(.hue-slider)::-webkit-slider-thumb,
-.property-row input[type="range"]:not(.hue-slider)::-webkit-slider-thumb {
+.layer-panel input[type="range"]:not(.hue-slider):not(.slipper):not(.epr-slipper):not(.auto-range-input)::-webkit-slider-thumb,
+.property-row input[type="range"]:not(.hue-slider):not(.slipper):not(.epr-slipper):not(.auto-range-input)::-webkit-slider-thumb {
   appearance: none !important;
   -webkit-appearance: none !important;
   width: 22px !important;
@@ -1695,12 +1695,12 @@ html[data-theme="arcade"] input[type="checkbox"]:checked::after {
 
 html[data-theme="arcade"] :is(
   input[type="range"]:not(.slipper):not(.epr-slipper):not(.auto-range-input):not(.xfade-fader):not(.sv-xf-range):not(.xfade-vertical-input):not(.hue-slider),
-  .layer-panel input[type="range"]:not(.hue-slider),
-  .property-row input[type="range"]:not(.hue-slider),
-  .media-library input[type="range"]:not(.hue-slider),
-  .media-tray input[type="range"]:not(.hue-slider),
+  .layer-panel input[type="range"]:not(.hue-slider):not(.slipper):not(.epr-slipper):not(.auto-range-input),
+  .property-row input[type="range"]:not(.hue-slider):not(.slipper):not(.epr-slipper):not(.auto-range-input),
+  .media-library input[type="range"]:not(.hue-slider):not(.slipper):not(.epr-slipper):not(.auto-range-input),
+  .media-tray input[type="range"]:not(.hue-slider):not(.slipper):not(.epr-slipper):not(.auto-range-input),
   .epr-slider,
-  .fx-panel input[type="range"]:not(.hue-slider)
+  .fx-panel input[type="range"]:not(.hue-slider):not(.slipper):not(.epr-slipper):not(.auto-range-input)
 ) {
   height: 8px !important;
   border-radius: 3px !important;
@@ -1725,23 +1725,23 @@ html[data-theme="arcade"] :is(
 }
 
 html[data-theme="arcade"] input[type="range"]:not(.slipper):not(.epr-slipper):not(.auto-range-input):not(.xfade-fader):not(.sv-xf-range):not(.xfade-vertical-input):not(.hue-slider)::-webkit-slider-runnable-track,
-html[data-theme="arcade"] .layer-panel input[type="range"]:not(.hue-slider)::-webkit-slider-runnable-track,
-html[data-theme="arcade"] .property-row input[type="range"]:not(.hue-slider)::-webkit-slider-runnable-track,
-html[data-theme="arcade"] .media-library input[type="range"]:not(.hue-slider)::-webkit-slider-runnable-track,
-html[data-theme="arcade"] .media-tray input[type="range"]:not(.hue-slider)::-webkit-slider-runnable-track,
+html[data-theme="arcade"] .layer-panel input[type="range"]:not(.hue-slider):not(.slipper):not(.epr-slipper):not(.auto-range-input)::-webkit-slider-runnable-track,
+html[data-theme="arcade"] .property-row input[type="range"]:not(.hue-slider):not(.slipper):not(.epr-slipper):not(.auto-range-input)::-webkit-slider-runnable-track,
+html[data-theme="arcade"] .media-library input[type="range"]:not(.hue-slider):not(.slipper):not(.epr-slipper):not(.auto-range-input)::-webkit-slider-runnable-track,
+html[data-theme="arcade"] .media-tray input[type="range"]:not(.hue-slider):not(.slipper):not(.epr-slipper):not(.auto-range-input)::-webkit-slider-runnable-track,
 html[data-theme="arcade"] .epr-slider::-webkit-slider-runnable-track,
-html[data-theme="arcade"] .fx-panel input[type="range"]:not(.hue-slider)::-webkit-slider-runnable-track {
+html[data-theme="arcade"] .fx-panel input[type="range"]:not(.hue-slider):not(.slipper):not(.epr-slipper):not(.auto-range-input)::-webkit-slider-runnable-track {
   height: 8px !important;
   border-radius: 3px !important;
 }
 
 html[data-theme="arcade"] input[type="range"]:not(.slipper):not(.epr-slipper):not(.auto-range-input):not(.xfade-fader):not(.sv-xf-range):not(.xfade-vertical-input):not(.hue-slider)::-webkit-slider-thumb,
-html[data-theme="arcade"] .layer-panel input[type="range"]:not(.hue-slider)::-webkit-slider-thumb,
-html[data-theme="arcade"] .property-row input[type="range"]:not(.hue-slider)::-webkit-slider-thumb,
-html[data-theme="arcade"] .media-library input[type="range"]:not(.hue-slider)::-webkit-slider-thumb,
-html[data-theme="arcade"] .media-tray input[type="range"]:not(.hue-slider)::-webkit-slider-thumb,
+html[data-theme="arcade"] .layer-panel input[type="range"]:not(.hue-slider):not(.slipper):not(.epr-slipper):not(.auto-range-input)::-webkit-slider-thumb,
+html[data-theme="arcade"] .property-row input[type="range"]:not(.hue-slider):not(.slipper):not(.epr-slipper):not(.auto-range-input)::-webkit-slider-thumb,
+html[data-theme="arcade"] .media-library input[type="range"]:not(.hue-slider):not(.slipper):not(.epr-slipper):not(.auto-range-input)::-webkit-slider-thumb,
+html[data-theme="arcade"] .media-tray input[type="range"]:not(.hue-slider):not(.slipper):not(.epr-slipper):not(.auto-range-input)::-webkit-slider-thumb,
 html[data-theme="arcade"] .epr-slider::-webkit-slider-thumb,
-html[data-theme="arcade"] .fx-panel input[type="range"]:not(.hue-slider)::-webkit-slider-thumb {
+html[data-theme="arcade"] .fx-panel input[type="range"]:not(.hue-slider):not(.slipper):not(.epr-slipper):not(.auto-range-input)::-webkit-slider-thumb {
   width: 15px !important;
   height: 22px !important;
   margin-top: -7px !important;
