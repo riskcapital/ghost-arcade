@@ -15,6 +15,7 @@ import type { Surface, SurfaceSlice, SurfaceSliceBinding, Point2D, BezierPoint, 
 import { generateUUID } from '../utils/uuid';
 import { syncStageEffectsFromSurfaces, createDefaultStageEffect } from './stageEffects';
 import { getStageTemplate } from './stageTemplates';
+import { restoreStagePresetSurface } from './stagePresetSurfaces';
 
 // ─── State ───────────────────────────────────────────────
 
@@ -33,6 +34,12 @@ const INITIAL_STATE: SurfaceState = {
   selectedSliceId: null,
   selectedSliceIds: [],
 };
+
+const SURFACE_HISTORY_LIMIT = 100;
+const surfaceHistoryState = writable({ canUndo: false, canRedo: false });
+
+export const surfaceCanUndo = derived(surfaceHistoryState, state => state.canUndo);
+export const surfaceCanRedo = derived(surfaceHistoryState, state => state.canRedo);
 
 // ─── SVG → polygon import ────────────────────────────────
 // Uses the browser's native SVGGeometryElement (getTotalLength +
@@ -426,6 +433,45 @@ export function parseSurfaceSVG(svgSource: string): {
 
 function createSurfaceStore() {
   const { subscribe, update, set } = writable<SurfaceState>({ ...INITIAL_STATE });
+  let undoStack: SurfaceState[] = [];
+  let redoStack: SurfaceState[] = [];
+  let gestureStart: SurfaceState | null = null;
+
+  const cloneState = (state: SurfaceState): SurfaceState => structuredClone(state);
+  const statesMatch = (a: SurfaceState, b: SurfaceState): boolean =>
+    JSON.stringify(a) === JSON.stringify(b);
+
+  function refreshHistoryState() {
+    surfaceHistoryState.set({
+      canUndo: undoStack.length > 0,
+      canRedo: redoStack.length > 0,
+    });
+  }
+
+  function pushUndo(snapshot: SurfaceState) {
+    undoStack.push(cloneState(snapshot));
+    if (undoStack.length > SURFACE_HISTORY_LIMIT) undoStack.shift();
+    redoStack = [];
+    refreshHistoryState();
+  }
+
+  function clearHistory() {
+    undoStack = [];
+    redoStack = [];
+    gestureStart = null;
+    refreshHistoryState();
+  }
+
+  function mutateWithHistory(mutator: (state: SurfaceState) => SurfaceState) {
+    const before = cloneState(get({ subscribe }));
+    let changed = false;
+    update(state => {
+      const next = mutator(state);
+      changed = !statesMatch(state, next);
+      return next;
+    });
+    if (changed && !gestureStart) pushUndo(before);
+  }
 
   function makeEmptySurface(name: string, width: number, height: number): Surface {
     return {
@@ -474,7 +520,7 @@ function createSurfaceStore() {
     /** Create a new empty surface and make it active. */
 	    createSurface(name = 'Untitled Stage', width = 1920, height = 1080) {
 	      const surface = makeEmptySurface(name, width, height);
-	      update(s => ({
+	      mutateWithHistory(s => ({
 	        ...s,
 	        surfaces: [...s.surfaces, surface],
 	        activeSurfaceId: surface.id,
@@ -488,8 +534,21 @@ function createSurfaceStore() {
 	      update(s => ({ ...s, activeSurfaceId: id, selectedSliceId: null, selectedSliceIds: [] }));
 	    },
 
+    /** Atomically restore the complete Surface owned by a Stage preset.
+     *  This reinstates geometry, slice-to-layer bindings, and Stage FX
+     *  before the effects runtime evaluates the newly-loaded layers. */
+    restorePresetSurface(snapshot: Surface) {
+      mutateWithHistory(s => ({
+        ...s,
+        surfaces: restoreStagePresetSurface(s.surfaces, snapshot),
+        activeSurfaceId: snapshot.id,
+        selectedSliceId: null,
+        selectedSliceIds: [],
+      }));
+    },
+
     deleteSurface(id: string) {
-      update(s => {
+      mutateWithHistory(s => {
         const surfaces = s.surfaces.filter(x => x.id !== id);
         const activeSurfaceId = s.activeSurfaceId === id
           ? (surfaces[0]?.id ?? null)
@@ -499,7 +558,7 @@ function createSurfaceStore() {
 	    },
 
     renameSurface(id: string, name: string) {
-      update(s => ({
+      mutateWithHistory(s => ({
         ...s,
         surfaces: s.surfaces.map(x => x.id === id ? { ...x, name } : x),
       }));
@@ -515,7 +574,7 @@ function createSurfaceStore() {
         console.warn('[surface] importSVG: no polygons extracted');
         return false;
       }
-      update(s => {
+      mutateWithHistory(s => {
         // Pick the target surface — active if present, else create one
         // sized to the SVG's viewBox so polygon coords land naturally.
         let surfaces = s.surfaces;
@@ -557,7 +616,7 @@ function createSurfaceStore() {
         console.warn('[surface] applyTemplate: unknown template', templateId);
         return false;
       }
-      update(s => {
+      mutateWithHistory(s => {
         let surfaces = s.surfaces;
         let activeId = s.activeSurfaceId;
         let target = surfaces.find(x => x.id === activeId);
@@ -600,7 +659,7 @@ function createSurfaceStore() {
         locked: false,
         sourceBinding: null,
       };
-      update(s => ({
+      mutateWithHistory(s => ({
         ...s,
 	        surfaces: s.surfaces.map(x =>
 	          x.id === target.id ? { ...x, slices: [...x.slices, slice] } : x
@@ -612,7 +671,7 @@ function createSurfaceStore() {
 	    },
 
     updateSlice(sliceId: string, patch: Partial<SurfaceSlice>) {
-      update(s => ({
+      mutateWithHistory(s => ({
         ...s,
         surfaces: s.surfaces.map(surface =>
           surface.id === s.activeSurfaceId
@@ -628,7 +687,7 @@ function createSurfaceStore() {
     },
 
 	    deleteSlice(sliceId: string) {
-	      update(s => {
+	      mutateWithHistory(s => {
 	        const selectedSliceIds = s.selectedSliceIds.filter(id => id !== sliceId);
 	        const selectedSliceId = s.selectedSliceId === sliceId
 	          ? selectedSliceIds[0] ?? null
@@ -647,7 +706,7 @@ function createSurfaceStore() {
 	    },
 
     reorderSlice(sliceId: string, toIndex: number) {
-      update(s => ({
+      mutateWithHistory(s => ({
         ...s,
         surfaces: s.surfaces.map(surface => {
           if (surface.id !== s.activeSurfaceId) return surface;
@@ -667,7 +726,7 @@ function createSurfaceStore() {
      *  Anchors with bezier handles are protected (handles encode
      *  curvature that can't be recovered after deletion). */
     simplifySlice(sliceId: string, targetAnchors = 24) {
-      update(s => {
+      mutateWithHistory(s => {
         if (!s.activeSurfaceId) return s;
         return {
           ...s,
@@ -717,6 +776,44 @@ function createSurfaceStore() {
 	        };
 	      });
 	    },
+
+    beginHistoryGesture() {
+      if (!gestureStart) gestureStart = cloneState(get({ subscribe }));
+    },
+
+    endHistoryGesture() {
+      if (!gestureStart) return;
+      const before = gestureStart;
+      gestureStart = null;
+      const current = get({ subscribe });
+      if (!statesMatch(before, current)) pushUndo(before);
+    },
+
+    cancelHistoryGesture() {
+      if (!gestureStart) return;
+      const before = gestureStart;
+      gestureStart = null;
+      set(cloneState(before));
+      refreshHistoryState();
+    },
+
+    undo() {
+      if (gestureStart) this.endHistoryGesture();
+      const previous = undoStack.pop();
+      if (!previous) return;
+      redoStack.push(cloneState(get({ subscribe })));
+      set(cloneState(previous));
+      refreshHistoryState();
+    },
+
+    redo() {
+      if (gestureStart) this.endHistoryGesture();
+      const next = redoStack.pop();
+      if (!next) return;
+      undoStack.push(cloneState(get({ subscribe })));
+      set(cloneState(next));
+      refreshHistoryState();
+    },
 
     // ─── Stage Effects ─────────────────────────────────────────────
     // Effects live on the active surface. CRUD is identical in shape
@@ -934,6 +1031,7 @@ function createSurfaceStore() {
      *  loaded data with this store's prior state. */
     hydrateFromProject(surfaces: Surface[], activeId: string | null) {
       _isHydrating = true;
+      clearHistory();
 	      set({
 	        surfaces: surfaces ?? [],
 	        activeSurfaceId: activeId ?? null,
@@ -995,6 +1093,7 @@ function createSurfaceStore() {
 
     /** Wipe everything — used on project reset / new project. */
     reset() {
+      clearHistory();
       set({ ...INITIAL_STATE });
     },
   };

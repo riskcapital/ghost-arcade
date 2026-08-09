@@ -1,5 +1,5 @@
 // Studio — the v10 reference design. Cool near-black depth ladder,
-// matte/restrained accent palette, Space Grotesk + IBM Plex Mono.
+// matte/restrained accent palette, Geist + Geist Mono.
 // This is the default theme.
 
 import type { Theme } from '../types';
@@ -9,9 +9,9 @@ export const STUDIO_THEME: Theme = {
   name: 'Studio Coral',
   description: 'Cool near-black, soft restrained accents — the default Ghost Arcade look.',
   tokens: {
-    fontUi:      "'Space Grotesk', system-ui, sans-serif",
-    fontDisplay: "'Space Grotesk', system-ui, sans-serif",
-    fontMono:    "'IBM Plex Mono', ui-monospace, monospace",
+    fontUi:      "'Geist', system-ui, sans-serif",
+    fontDisplay: "'Geist', system-ui, sans-serif",
+    fontMono:    "'Geist Mono', ui-monospace, monospace",
 
     void:  '#070809',
     bar:   '#0e1014',

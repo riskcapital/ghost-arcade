@@ -6,6 +6,12 @@
   import type { WarpCorners, Point2D, Layer } from '../types';
   import { onMount, onDestroy } from 'svelte';
   import { findSnapTarget, getOtherLayerOutlines, type SnapTarget } from '../utils/snapUtils';
+  import { normalizedWarpNudge, warpNudgeStepPixels } from '../utils/warpNudge';
+  import {
+    scaleWarpCornersFromSelectionEdge,
+    type SelectionBounds,
+    type SelectionEdge,
+  } from '../utils/selectionEdgeScale';
 
   // Container dimensions (set by parent)
   export let containerWidth: number = 800;
@@ -44,6 +50,7 @@
   // Multi-select: store initial corners for selected layers during batch transforms.
   let batchInitialCorners: Map<string, WarpCorners> = new Map();
   let batchScaleCenter: Point2D | null = null;
+  let batchEdgeBounds: SelectionBounds | null = null;
 
   // Get all selected layers that should be batch-transformed (excluding locked)
   function getBatchLayers(includePrimary = false): Layer[] {
@@ -75,6 +82,26 @@
       project.setCorner(layerId, 'topRight', { x: cx + (initial.topRight.x - cx) * scaleFactor, y: cy + (initial.topRight.y - cy) * scaleFactor });
       project.setCorner(layerId, 'bottomLeft', { x: cx + (initial.bottomLeft.x - cx) * scaleFactor, y: cy + (initial.bottomLeft.y - cy) * scaleFactor });
       project.setCorner(layerId, 'bottomRight', { x: cx + (initial.bottomRight.x - cx) * scaleFactor, y: cy + (initial.bottomRight.y - cy) * scaleFactor });
+    }
+  }
+
+  // Stretch every selected layer from a shared selection edge — dragging the
+  // top edge of a multi-selection scales all layers vertically from the
+  // selection's bottom edge, preserving relative placement.
+  function applyBatchEdgeScale(edge: SelectionEdge, deltaX: number, deltaY: number) {
+    if (!batchEdgeBounds) return;
+    for (const [layerId, initial] of batchInitialCorners) {
+      const next = scaleWarpCornersFromSelectionEdge(
+        initial,
+        batchEdgeBounds,
+        edge,
+        deltaX,
+        deltaY,
+      );
+      project.setCorner(layerId, 'topLeft', next.topLeft);
+      project.setCorner(layerId, 'topRight', next.topRight);
+      project.setCorner(layerId, 'bottomLeft', next.bottomLeft);
+      project.setCorner(layerId, 'bottomRight', next.bottomRight);
     }
   }
 
@@ -274,33 +301,30 @@
       active?.isContentEditable
     ) return;
 
-    // Resolve project-pixel step from settings.
-    const granularity = get(settings).ui.warpDragGranularity ?? '1px';
-    const stepPx =
-      granularity === 'sub'  ? 0.5 :
-      granularity === '5px'  ? 5 :
-      granularity === '10px' ? 10 :
-      granularity === 'free' ? 1 : 1;
+    // Resolve project-pixel step from settings — one shared helper so
+    // arrow-key nudges everywhere use the same sensitivity.
     const proj = get(project);
-    const pw = Math.max(1, proj.width);
-    const ph = Math.max(1, proj.height);
-    const dxStep = (stepPx * (e.shiftKey ? 10 : 1)) / pw;
-    const dyStep = (stepPx * (e.shiftKey ? 10 : 1)) / ph;
+    const step = normalizedWarpNudge(
+      proj.width,
+      proj.height,
+      get(settings).ui.warpDragGranularity,
+      e.shiftKey ? 10 : 1,
+    );
     let dx = 0;
     let dy = 0;
 
     switch (e.key) {
       case 'ArrowUp':
-        dy = dyStep;
+        dy = step.y;
         break;
       case 'ArrowDown':
-        dy = -dyStep;
+        dy = -step.y;
         break;
       case 'ArrowLeft':
-        dx = -dxStep;
+        dx = -step.x;
         break;
       case 'ArrowRight':
-        dx = dxStep;
+        dx = step.x;
         break;
       case 'Escape':
         selectedCorner = null;
@@ -364,7 +388,11 @@
     const rect = containerEl.getBoundingClientRect();
     // Account for zoom when storing initial position
     dragStartPos = { x: (e.clientX - rect.left) / zoom, y: (e.clientY - rect.top) / zoom };
-    initialCorners = $selectedLayer ? { ...$selectedLayer.corners } : null;
+    initialCorners = $selectedLayer ? structuredClone($selectedLayer.corners) : null;
+    captureBatchInitial(true);
+    batchEdgeBounds = batchInitialCorners.size > 1
+      ? getCornersBounds(batchInitialCorners.values())
+      : null;
 
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
@@ -440,6 +468,10 @@
       const dy = -(y - dragStartPos.y) / containerHeight; // Flip Y
 
       const edge = dragTarget as 'top' | 'bottom' | 'left' | 'right';
+      if (batchEdgeBounds && batchInitialCorners.size > 1) {
+        applyBatchEdgeScale(edge, dx, dy);
+        return;
+      }
       const newCorners = structuredClone(initialCorners);
 
       // Move both corners on the edge (no clamping - allow off-screen)
@@ -581,6 +613,7 @@
     scaleStartY = 0;
     scaleInitialCorners = null;
     batchScaleCenter = null;
+    batchEdgeBounds = null;
     activeSnapTarget = null;
     batchInitialCorners.clear();
     window.removeEventListener('mousemove', handleMouseMove);
@@ -634,11 +667,7 @@
    *  sets the snap to 5px gets 5px nudges from the arrows too. */
   function nudgeFineTune(dxPx: number, dyPx: number) {
     if (!fineTuneCorner || !$selectedLayer || $selectedLayer.locked) return;
-    const granularity = get(settings).ui.warpDragGranularity ?? '1px';
-    const step =
-      granularity === 'sub'  ? 0.5 :
-      granularity === '5px'  ? 5 :
-      granularity === '10px' ? 10 : 1;
+    const step = warpNudgeStepPixels(get(settings).ui.warpDragGranularity);
     const proj = get(project);
     const pw = Math.max(1, proj.width);
     const ph = Math.max(1, proj.height);
@@ -784,6 +813,29 @@
     ? { x: selectionBoundsPx.right + 26, y: selectionBoundsPx.bottom + 26 }
     : null;
   $: visibleScalePosition = groupScalePosition ?? scalePosition;
+  // Multi-select: edge handles sit on the shared selection bounds so a
+  // drag stretches the whole selection from that edge.
+  $: selectionEdgePositions = selectionBoundsPx
+    ? {
+        top: {
+          x: (selectionBoundsPx.left + selectionBoundsPx.right) / 2,
+          y: selectionBoundsPx.top,
+        },
+        bottom: {
+          x: (selectionBoundsPx.left + selectionBoundsPx.right) / 2,
+          y: selectionBoundsPx.bottom,
+        },
+        left: {
+          x: selectionBoundsPx.left,
+          y: (selectionBoundsPx.top + selectionBoundsPx.bottom) / 2,
+        },
+        right: {
+          x: selectionBoundsPx.right,
+          y: (selectionBoundsPx.top + selectionBoundsPx.bottom) / 2,
+        },
+      }
+    : null;
+  $: visibleEdgePositions = selectionEdgePositions ?? edgePositions;
 
   // Draw the dashed bounding rectangle connecting the four corner
   // warp handles. We HIDE this rectangle whenever the layer has a
@@ -932,7 +984,7 @@
 
     <!-- Edge handles (bars) — also suppressed for non-rect shapes
          (same reasoning as the corner handles above). -->
-    {#each (nonRectShape ? [] : Object.entries(edgePositions)) as [edge, pos]}
+    {#each (nonRectShape || !visibleEdgePositions ? [] : Object.entries(visibleEdgePositions)) as [edge, pos]}
       <div
         class="handle edge-handle edge-{edge}"
         class:dragging={dragging === 'edge' && dragTarget === edge}
@@ -941,7 +993,7 @@
         onmousedown={(e) => handleEdgeMouseDown(edge as 'top' | 'bottom' | 'left' | 'right', e)}
         role="button"
         tabindex="0"
-        aria-label="Move {edge} edge"
+        aria-label={selectionBoundsPx ? `Stretch selected layers from ${edge} edge` : `Move ${edge} edge`}
       >
       </div>
     {/each}

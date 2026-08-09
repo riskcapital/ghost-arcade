@@ -114,6 +114,7 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'native_renderer_set_decode_estimate_cache_policy', 'native_renderer_set_present_policy',
   'native_renderer_set_metadata_cache_caps', 'native_renderer_attach_output_window',
   'native_renderer_detach_output_window', 'native_renderer_get_status',
+  'native_renderer_get_layers_snapshot',
   'native_renderer_get_stats', 'native_renderer_get_snapshot',
 	  'native_renderer_get_frame_snapshot',
 	  'native_renderer_get_output_shared_texture',
@@ -129,6 +130,8 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'native_renderer_set_output_window',
   'native_preview_attach', 'native_preview_update', 'native_preview_set_overlay', 'native_preview_detach',
   'native_preview_get_status',
+  // Deck A/B confidence monitors — named presenter views beside Program
+  'deck_monitor_attach', 'deck_monitor_detach',
   'native_viewport_set_layer_interaction',
   // WLED — UDP DRGB packets to LED controllers on the LAN
   'wled_send_frame', 'wled_close_socket',

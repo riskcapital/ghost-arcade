@@ -81,7 +81,7 @@
     overflow-y: auto;
     box-shadow: 0 8px 40px rgba(0, 0, 0, 0.6), 0 0 0 1px rgba(255, 255, 255, 0.04);
     color: var(--text-primary, #ddd);
-    font-family: var(--ga-font-ui, 'Space Grotesk', system-ui, sans-serif);
+    font-family: var(--ga-font-ui, 'Geist', system-ui, sans-serif);
     cursor: default;
   }
   .shortcut-overlay-close {
@@ -136,7 +136,7 @@
     background: #2a2a30;
     border: 1px solid #444;
     border-radius: 3px;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: 12px;
     color: var(--text-primary, #e0e0e0);
     min-width: 18px;

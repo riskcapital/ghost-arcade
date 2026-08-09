@@ -2,6 +2,8 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import { buildNativePluginPrecompileCommands } from './nativePluginGraphs';
+import { buildVJCrossfadePrecompileCommands } from './vjCrossfadeNative';
 import {
   buildSmoke3DNativeComputeGraph,
   buildSmoke3DNativePrecompileCommands,
@@ -27,6 +29,12 @@ import {
   buildPointCloudFXNativePointData,
   buildPointCloudFXNativePrecompileCommands,
 } from './webgpuPointCloudFX';
+import { buildLinesNativePrecompileCommands } from './linesNative';
+import { buildLightPaintingNativePrecompileCommands } from './lightPaintingNative';
+import { buildTextNativePrecompileCommands } from './textNative';
+import { buildSplatNativePrecompileCommands } from './splatNative';
+import { buildModel3DNativePrecompileCommands } from './model3dNative';
+import { buildSvgNativePrecompileCommands } from './svgNative';
 import {
   buildPlanetNativeComputeGraph,
   buildPlanetNativePrecompileCommands,
@@ -80,6 +88,36 @@ function sortedStrings(values: Iterable<string>): string[] {
 
 const EXPECTED_NATIVE_GRAPH_MANIFEST: NativeGraphManifestExpectation[] = [
   {
+    id: 'svg',
+    feature: 'native_svg_graph',
+    shaderIds: shaderIdsFromPrecompileCommands(buildSvgNativePrecompileCommands()),
+  },
+  {
+    id: 'lines',
+    feature: 'native_lines_graph',
+    shaderIds: shaderIdsFromPrecompileCommands(buildLinesNativePrecompileCommands()),
+  },
+  {
+    id: 'light-painting',
+    feature: 'native_light_painting_graph',
+    shaderIds: shaderIdsFromPrecompileCommands(buildLightPaintingNativePrecompileCommands()),
+  },
+  {
+    id: 'text',
+    feature: 'native_text_graph',
+    shaderIds: shaderIdsFromPrecompileCommands(buildTextNativePrecompileCommands()),
+  },
+  {
+    id: 'splat',
+    feature: 'native_splat_graph',
+    shaderIds: shaderIdsFromPrecompileCommands(buildSplatNativePrecompileCommands()),
+  },
+  {
+    id: 'model3d',
+    feature: 'native_model3d_graph',
+    shaderIds: shaderIdsFromPrecompileCommands(buildModel3DNativePrecompileCommands()),
+  },
+  {
     id: 'planet',
     feature: 'native_planet_graph',
     shaderIds: shaderIdsFromPrecompileCommands(buildPlanetNativePrecompileCommands()),
@@ -126,6 +164,35 @@ const EXPECTED_NATIVE_GRAPH_MANIFEST: NativeGraphManifestExpectation[] = [
     id: 'point-cloud-fx',
     feature: 'native_point_cloud_fx_graph',
     shaderIds: shaderIdsFromPrecompileCommands(buildPointCloudFXNativePrecompileCommands()),
+  },
+  {
+    id: 'ghostfx',
+    feature: 'native_ghostfx_graph',
+    shaderIds: shaderIdsFromPrecompileCommands(
+      buildNativePluginPrecompileCommands().filter((command) =>
+        String(command.shader_id).startsWith('ghostfx/')),
+    ),
+  },
+  {
+    id: 'handfx',
+    feature: 'native_handfx_graph',
+    shaderIds: shaderIdsFromPrecompileCommands(
+      buildNativePluginPrecompileCommands().filter((command) =>
+        String(command.shader_id).startsWith('handfx/')),
+    ),
+  },
+  {
+    id: 'vj-crossfade',
+    feature: 'native_vj_crossfade_graph',
+    shaderIds: shaderIdsFromPrecompileCommands(buildVJCrossfadePrecompileCommands()),
+  },
+  {
+    id: 'performer-world',
+    feature: 'native_performer_world_graph',
+    shaderIds: shaderIdsFromPrecompileCommands(
+      buildNativePluginPrecompileCommands().filter((command) =>
+        String(command.shader_id).startsWith('performer-world/')),
+    ),
   },
 ];
 

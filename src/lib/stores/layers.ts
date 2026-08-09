@@ -1,5 +1,5 @@
 import { writable, derived, get } from 'svelte/store';
-import type { Layer, Project, WarpCorners, Point2D, BezierPoint, MaskShape, MediaSource, BlendMode, WarpMode, Effect, EffectType, EffectParams, LayerType, SVGContent, SVGFillMode, SVGColorMode, ColorContent, LightPaintingContent, LightPaintingStroke, CropRegion, LayerShape, LayerShapeType, Composition, VJModeState, VJDeck, Timeline, TimelineClip, TextContent, TextAnimation, SplatContent, Model3DContent, MediaTrayFolder, StagePreset, SVKeyboardPreset, EdgeEffect, EdgeEffectsConfig, PixelFXContent, GPULayerContent, AutoConfig, WLEDController, StageEffect, SurfaceEffectAutomation, MappingCompositionState } from '../types';
+import type { Layer, Project, WarpCorners, Point2D, BezierPoint, MaskShape, MediaSource, BlendMode, WarpMode, Effect, EffectType, EffectParams, LayerType, SVGContent, SVGFillMode, SVGColorMode, ColorContent, LightPaintingContent, LightPaintingStroke, CropRegion, LayerShape, LayerShapeType, Composition, VJModeState, VJDeck, Timeline, TimelineClip, TextContent, TextAnimation, SplatContent, Model3DContent, MediaTrayFolder, StagePreset, SVKeyboardPreset, EdgeEffect, EdgeEffectsConfig, PixelFXContent, GPULayerContent, AutoConfig, WLEDController, WLEDEffect, WLEDEffectAutomation, WLEDGroup, StageEffect, SurfaceEffectAutomation, MappingCompositionState } from '../types';
 import { createLayer, createProject, createDefaultCorners, createMeshGrid, createLinesLayer, createSVGLayer, createColorLayer, createLightPaintingLayer, createAdvLightPaintingLayer, createTextLayer, createSplatLayer, createDefaultSVGContent, createDefaultCropRegion, createDefaultLayerShape, createDefaultVJModeState, createDefaultMappingCompositionState, createDefaultTimeline, generateUUID, createDefaultModel3DContent, createDefaultEdgeEffect, convertShapeToCustom, createGroupLayer, createDefaultPixelFXContent, createDefaultGPULayerContent } from '../types';
 import type { GroupConfig } from '../types';
 import { mediaLibrary } from './media';
@@ -13,6 +13,11 @@ import { macros } from './macros';
 import { snapshots } from './snapshots';
 import { layerSequencer } from './layerSequencer';
 import { surfaceStore } from './surface';
+import {
+  captureStagePresetSurfaceState,
+  cloneStagePresetSurface,
+  resolveStagePresetSurfaceId,
+} from './stagePresetSurfaces';
 import { stage3dScene } from '../stage3d/store';
 // Catalog of per-effect default params. Used by resetEffectParams to
 // snap an effect back to its baseline values when the user hits the
@@ -28,6 +33,9 @@ import type { LineElement, LineShape, LinesContent, LineDrawAnimation, LineStrok
 import { maxLayers } from './license';
 import { NATIVE_ENGINE_ONLY, settings, migrateOutputSlice } from './settings';
 import { createLineElement, createDefaultLinesContent, createDefaultDrawAnimation } from '../lines/types';
+import { syncTrimmedVideoPlayback } from '../utils/videoTrimPlayback';
+import { recoverVJClipAssetRef } from '../storage/vjAssetPersistence';
+import { restoreVideoSourceElement } from '../media/videoSourceRestore';
 
 // History recording callback — set from App.svelte to avoid circular imports.
 // We record SYNCHRONOUSLY (no setTimeout) so each discrete action lands in its
@@ -42,6 +50,26 @@ let _onDiscreteAction: (() => void) | null = null;
 export function setHistoryCallback(fn: () => void) { _onDiscreteAction = fn; }
 function recordDiscreteAction() { if (_onDiscreteAction) _onDiscreteAction(); }
 const selectedLayerIdsState = writable<string[]>([]);
+
+function cleanMediaSourceName(source: MediaSource): string {
+  return (source.name || '').replace(/\.[^.]+$/, '').trim() || source.name || 'Media';
+}
+
+function shouldAutoRenameMediaLayer(layer: Layer, source: MediaSource | null): source is MediaSource {
+  if (!source || (source.type !== 'image' && source.type !== 'video')) return false;
+  const currentName = (layer.name || '').trim();
+  if (!currentName) return true;
+  return /^(media|media layer|image|video|new layer|layer \d+)$/i.test(currentName);
+}
+
+function isVideoSource(source: MediaSource | null | undefined): source is MediaSource {
+  return !!source && source.type === 'video' && !!source.src;
+}
+
+function rehydrateVideoSource(source: MediaSource) {
+  if (typeof document === 'undefined' || source.videoElement || !isVideoSource(source)) return;
+  restoreVideoSourceElement(source);
+}
 
 function normalizeSelectedLayerIds(layerIds: string[], validIds: string[]): string[] {
   const validSet = new Set(validIds);
@@ -80,6 +108,71 @@ function normalizeMappingCompositionState(input: unknown): MappingCompositionSta
       seconds: typeof auto.seconds === 'number' ? Math.max(0.1, auto.seconds) : base.stageEffectAutomation.seconds,
       beats: typeof auto.beats === 'number' ? Math.max(1, Math.round(auto.beats)) : base.stageEffectAutomation.beats,
     },
+  };
+}
+
+function cloneStagePresetLayers(layers: Layer[], action: string): Layer[] {
+  const snapshot: Layer[] = [];
+  for (const layer of layers) {
+    try {
+      const cleanLayer = JSON.parse(JSON.stringify(layer, (key, value) => {
+        if (key === 'texture' || key === 'videoElement') return undefined;
+        if (value && typeof value === 'object' && value.constructor?.name?.startsWith('_')) {
+          return undefined;
+        }
+        return value;
+      }));
+      snapshot.push(cleanLayer);
+    } catch (err) {
+      console.warn(`[Store] Failed to clone layer for stage preset ${action}:`, layer.id, err);
+    }
+  }
+  return snapshot;
+}
+
+function captureStagePresetSnapshot(
+  currentProject: Project,
+  name: string,
+  thumbnail?: string,
+  scope: 'project' | 'global' = 'project',
+  id: string = generateUUID(),
+): StagePreset {
+  let surfaceId: string | undefined;
+  let surfaceSnapshot: StagePreset['surfaceSnapshot'];
+  let stageEffects: StagePreset['stageEffects'];
+  try {
+    const surfaceState = get(surfaceStore);
+    const activeSurface = surfaceState.surfaces.find(
+      surface => surface.id === surfaceState.activeSurfaceId
+    );
+    if (activeSurface) {
+      const captured = captureStagePresetSurfaceState(activeSurface);
+      surfaceId = captured.surfaceId;
+      surfaceSnapshot = captured.surfaceSnapshot;
+      stageEffects = captured.stageEffects;
+    }
+  } catch (err) {
+    console.warn('[Store] Stage preset surface snapshot failed', err);
+  }
+
+  let stage3d: unknown;
+  try {
+    stage3d = JSON.parse(JSON.stringify(get(stage3dScene)));
+  } catch (err) {
+    console.warn('[Store] Stage preset 3D scene snapshot failed', err);
+  }
+
+  return {
+    id,
+    name,
+    thumbnail,
+    createdAt: Date.now(),
+    layers: cloneStagePresetLayers(currentProject.layers, 'capture'),
+    scope,
+    surfaceId,
+    surfaceSnapshot,
+    stageEffects,
+    stage3d,
   };
 }
 
@@ -125,7 +218,7 @@ function placeNewLayer(layers: Layer[], newLayer: Layer, selectedLayerId: string
   }
 }
 
-const NATIVE_READY_LAYER_TYPES = new Set<LayerType>(['media', 'gpu', 'color']);
+const NATIVE_READY_LAYER_TYPES = new Set<LayerType>(['media', 'gpu', 'color', 'lines', 'svg', 'lightpainting', 'text', 'splat', 'model3d', 'group', 'screen']);
 
 function nativeLayerTypePending(type: LayerType): boolean {
   return NATIVE_ENGINE_ONLY && Boolean(get(settings).experimental?.outputNativeCore) && !NATIVE_READY_LAYER_TYPES.has(type);
@@ -140,7 +233,8 @@ function blockNativePendingLayerType(type: LayerType): boolean {
 function blockNativePendingInitialShape(type: LayerType, initialShapeType?: LayerShapeType): boolean {
   if (!NATIVE_ENGINE_ONLY || !get(settings).experimental?.outputNativeCore) return false;
   if (type !== 'media' || !initialShapeType) return false;
-  if (initialShapeType === 'rectangle' || initialShapeType === 'circle' || initialShapeType === 'triangle') {
+  // The native compositor renders every shape type except line/polyline.
+  if (initialShapeType !== 'line' && initialShapeType !== 'polyline') {
     return false;
   }
   console.warn(`[layers] blocked non-native initial media shape in native-only mode: ${initialShapeType}`);
@@ -281,15 +375,58 @@ void main() {
     })();
   };
 
+  const restoreStagePresetSnapshot = (preset: StagePreset) => {
+    const effectsSnapshot = preset.stageEffects;
+    const stage3dSnapshot = preset.stage3d as any;
+    const surfaceSnapshot = preset.surfaceSnapshot
+      ? cloneStagePresetSurface(preset.surfaceSnapshot)
+      : undefined;
+    const surfaceState = get(surfaceStore);
+    const surfaceId = resolveStagePresetSurfaceId(
+      preset,
+      surfaceState.surfaces,
+      surfaceState.activeSurfaceId,
+    );
+
+    update(currentProject => ({
+      ...currentProject,
+      layers: structuredClone(preset.layers),
+    }));
+    vjClipLauncher.setStagePreset(preset.id);
+
+    if (surfaceSnapshot) {
+      surfaceStore.restorePresetSurface(surfaceSnapshot);
+    } else if (surfaceId) {
+      surfaceStore.setActiveSurface(surfaceId);
+    }
+    if (effectsSnapshot) {
+      surfaceStore.setStageEffectsBundle({
+        effects: effectsSnapshot.effects ?? [],
+        activeEffectId: effectsSnapshot.activeEffectId ?? null,
+        automation: effectsSnapshot.automation ?? null,
+      });
+    }
+
+    if (stage3dSnapshot?.schemaVersion === 1 && Array.isArray(stage3dSnapshot?.nodes)) {
+      queueMicrotask(() => {
+        try {
+          stage3dScene.loadScene(stage3dSnapshot);
+        } catch (err) {
+          console.warn('[Store] loadStagePreset: 3D scene restore failed', err);
+        }
+      });
+    }
+  };
+
   const store = {
     subscribe,
     set,
     update,
 
     // Layer management
-    addLayer(name?: string, type: LayerType = 'media', initialShapeType?: LayerShapeType) {
-      if (blockNativePendingLayerType(type)) return;
-      if (blockNativePendingInitialShape(type, initialShapeType)) return;
+    addLayer(name?: string, type: LayerType = 'media', initialShapeType?: LayerShapeType): string | undefined {
+      if (blockNativePendingLayerType(type)) return undefined;
+      if (blockNativePendingInitialShape(type, initialShapeType)) return undefined;
       const currentProject = get({ subscribe });
       const limit = get(maxLayers);
       if (currentProject.layers.length >= limit) {
@@ -298,13 +435,17 @@ void main() {
         if (typeof window !== 'undefined') {
           window.dispatchEvent(new CustomEvent('license-layer-limit', { detail: { limit } }));
         }
-        return;
+        return undefined;
       }
       const id = generateUUID();
       update((project) => {
-        const layerName = name || (type === 'lines'
-          ? `Lines ${project.layers.filter(l => l.type === 'lines').length + 1}`
-          : `Layer ${project.layers.filter(l => l.type === 'media').length + 1}`);
+        const layerName = name || (
+          type === 'lines'
+            ? `Lines ${project.layers.filter(l => l.type === 'lines').length + 1}`
+            : type === 'mask'
+              ? `Mask ${project.layers.filter(l => l.type === 'mask').length + 1}`
+              : `Layer ${project.layers.filter(l => l.type === 'media').length + 1}`
+        );
         const newLayer = createLayer(id, layerName, type);
         if (type === 'media' && initialShapeType) {
           newLayer.layerShape = createDefaultLayerShape(initialShapeType);
@@ -321,6 +462,7 @@ void main() {
       if (type === 'media' && !(NATIVE_ENGINE_ONLY && Boolean(get(settings).experimental?.outputNativeCore))) {
         autoApplyDefaultShader(id);
       }
+      return id;
     },
 
     addLinesLayer(name?: string) {
@@ -453,12 +595,14 @@ void main() {
               ...l,
               name: slice.name,
               corners,
+              stageTextureFlipV: true,
               layerShape: {
                 type: 'custom' as const,
                 enabled: true,
                 params: {
                   ...(l.layerShape?.params ?? { feather: 0, rotation: 0 }),
                   customPoints: localPoly,
+                  customBasePoints: localPoly.map((point) => ({ ...point })),
                   customClosed: true,
                 },
               },
@@ -476,6 +620,7 @@ void main() {
             const fresh: Layer = {
               ...createLayer(id, slice.name, 'screen'),
               vjLayerIndex: 0,
+              stageTextureFlipV: true,
             };
             fresh.corners = corners;
             fresh.layerShape = {
@@ -485,6 +630,7 @@ void main() {
                 feather: 0,
                 rotation: 0,
                 customPoints: localPoly,
+                customBasePoints: localPoly.map((point) => ({ ...point })),
                 customClosed: true,
               },
             };
@@ -1562,7 +1708,13 @@ void main() {
             ...layer,
             layerShape: {
               ...layer.layerShape,
-              params: { ...layer.layerShape.params, customClosed: true },
+              params: {
+                ...layer.layerShape.params,
+                customClosed: true,
+                // Snapshot the outline as drawn: later vertex drags warp the
+                // content against this base (content-follow).
+                customBasePoints: pts.map((point) => ({ ...point })),
+              },
             },
           };
         }),
@@ -2140,6 +2292,10 @@ void main() {
       update((project) => {
         // Find the old layer source to clean up
         const oldLayer = project.layers.find(l => l.id === id);
+        if (oldLayer?.type === 'mask' && source) {
+          console.warn('[setLayerSource] Mask layers do not accept media sources.');
+          return project;
+        }
         const oldSource = oldLayer?.source;
 
         // Compare on `src` (the actual media identity), NOT on `id` (a fresh
@@ -2173,7 +2329,12 @@ void main() {
 
         return {
           ...project,
-          layers: project.layers.map((l) => (l.id === id ? { ...l, source } : l)),
+          layers: project.layers.map((l) => {
+            if (l.id !== id) return l;
+            const nextName = shouldAutoRenameMediaLayer(l, source) ? cleanMediaSourceName(source) : l.name;
+            if (isVideoSource(source)) rehydrateVideoSource(source);
+            return { ...l, name: nextName, source };
+          }),
         };
       });
       recordDiscreteAction();
@@ -2532,6 +2693,30 @@ void main() {
           return {
             ...l,
             gpuLayerContent: hasAny ? { ...rest, paramAuto: nextAuto } : rest,
+          };
+        }),
+      }));
+    },
+
+    /** Set or clear the Auto playhead config for a splat / point-cloud
+     * parameter. The sidecar lives with splatContent so project saves
+     * preserve automation without introducing a second state owner. */
+    setSplatParamAuto(layerId: string, paramKey: string, auto: AutoConfig | null) {
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((l) => {
+          if (l.id !== layerId || !l.splatContent) return l;
+          const nextAuto = { ...(l.splatContent.paramAuto ?? {}) };
+          if (auto === null) {
+            delete nextAuto[paramKey];
+          } else {
+            nextAuto[paramKey] = auto;
+          }
+          const hasAny = Object.keys(nextAuto).length > 0;
+          const { paramAuto: _drop, ...rest } = l.splatContent;
+          return {
+            ...l,
+            splatContent: hasAny ? { ...rest, paramAuto: nextAuto } : rest,
           };
         }),
       }));
@@ -2909,126 +3094,40 @@ void main() {
     /** Save current mapping layers (with VJ assignments) as a stage preset */
     saveStagePreset(name: string, thumbnail?: string): string {
       const currentProject = get({ subscribe });
-      const presetId = generateUUID();
-
-      // Deep clone layers, strip runtime objects
-      const layersSnapshot: Layer[] = [];
-      for (const layer of currentProject.layers) {
-        try {
-          const cleanLayer = JSON.parse(JSON.stringify(layer, (key, value) => {
-            if (key === 'texture' || key === 'videoElement') return undefined;
-            if (value && typeof value === 'object' && value.constructor?.name?.startsWith('_')) return undefined;
-            return value;
-          }));
-          layersSnapshot.push(cleanLayer);
-        } catch (e) {
-          console.warn('[Store] Failed to clone layer for stage preset:', layer.id, e);
-        }
-      }
-
-      // Capture the active surface's effects setup (catalog + live
-      // selection + automation) so re-triggering the preset restores
-      // the whole animation bundle.  Late-bound `get` against the
-      // surfaceStore module so we don't introduce a circular import.
-      let stageEffectsSnap: StagePreset['stageEffects'] = undefined;
-      try {
-        // Sync-friendly: surfaceStore is already imported elsewhere
-        // in this file (see hydrateFromProject); subscribe() reads
-        // the current value without async.
-        const surfState = get(surfaceStore);
-        const activeSurf = surfState.surfaces.find(s => s.id === surfState.activeSurfaceId);
-        if (activeSurf) {
-          stageEffectsSnap = {
-            effects: JSON.parse(JSON.stringify(activeSurf.effects ?? [])),
-            activeEffectId: activeSurf.activeEffectId ?? null,
-            automation: activeSurf.effectAutomation
-              ? JSON.parse(JSON.stringify(activeSurf.effectAutomation))
-              : null,
-          };
-        }
-      } catch (err) {
-        console.warn('[Store] saveStagePreset: surface effects snapshot failed', err);
-      }
-
-      // Snapshot the 3D Ghost Stage too so loading the preset restores
-      // BOTH the 2D mapping layout AND the matching 3D viewport (venue,
-      // lighting, scenery overrides, user-placed elements, per-screen
-      // 3D tweaks). Stored as an opaque JSON blob — Stage3DScene's
-      // schemaVersion guards the load path.
-      let stage3dSnap: unknown;
-      try {
-        stage3dSnap = JSON.parse(JSON.stringify(get(stage3dScene)));
-      } catch (err) {
-        console.warn('[Store] saveStagePreset: 3D scene snapshot failed', err);
-      }
-
-      const preset: StagePreset = {
-        id: presetId,
-        name,
-        thumbnail,
-        createdAt: Date.now(),
-        layers: layersSnapshot,
-        stageEffects: stageEffectsSnap,
-        stage3d: stage3dSnap,
-      };
+      const preset = captureStagePresetSnapshot(currentProject, name, thumbnail);
 
       update((project) => ({
         ...project,
         stagePresets: [...(project.stagePresets || []), preset],
       }));
 
-      return presetId;
+      return preset.id;
+    },
+
+    /** Capture a complete preset without adding it to the project.
+     * Global presets use this so they own the same surface/FX/3D state
+     * as project presets. */
+    createStagePresetSnapshot(
+      name: string,
+      thumbnail?: string,
+      scope: 'project' | 'global' = 'project',
+      id?: string,
+    ): StagePreset {
+      return captureStagePresetSnapshot(get({ subscribe }), name, thumbnail, scope, id);
     },
 
     /** Load a stage preset — replaces project.layers with the preset's saved layers */
     loadStagePreset(presetId: string) {
-      // Capture the preset's effects + 3D snapshot here so we can apply
-      // them AFTER the update() call returns (avoids nested-mutation
-      // hazards across multiple stores).
-      let effectsSnap: StagePreset['stageEffects'] | undefined;
-      let stage3dSnap: any;
+      const preset = (get({ subscribe }).stagePresets || []).find(
+        candidate => candidate.id === presetId
+      );
+      if (preset) restoreStagePresetSnapshot(preset);
+    },
 
-      update((project) => {
-        const preset = (project.stagePresets || []).find(p => p.id === presetId);
-        if (!preset) return project;
-        effectsSnap = preset.stageEffects;
-        stage3dSnap = preset.stage3d;
-
-        const loadedLayers = structuredClone(preset.layers);
-        return { ...project, layers: loadedLayers };
-      });
-
-      // Also update VJ clip launcher's active preset reference
-      vjClipLauncher.setStagePreset(presetId);
-
-      // Restore the surface's effects setup. Deferred a microtask
-      // so the layers update flushes first; the mirror subscriber
-      // inside surfaceStore writes back to project.surfaces so the
-      // round trip stays consistent for project save.
-      if (effectsSnap) {
-        queueMicrotask(() => {
-          surfaceStore.setStageEffectsBundle({
-            effects: effectsSnap!.effects ?? [],
-            activeEffectId: effectsSnap!.activeEffectId ?? null,
-            automation: effectsSnap!.automation ?? null,
-          });
-        });
-      }
-
-      // Restore the 3D Ghost Stage view if the preset captured one.
-      // schemaVersion guard keeps malformed / outdated blobs from
-      // clobbering the live scene. Deferred so it flushes after the
-      // layers update so the auto-built LEDs see the new screen layers
-      // and the new lighting / venue together.
-      if (stage3dSnap?.schemaVersion === 1 && Array.isArray(stage3dSnap?.nodes)) {
-        queueMicrotask(() => {
-          try {
-            stage3dScene.loadScene(stage3dSnap);
-          } catch (err) {
-            console.warn('[Store] loadStagePreset: 3D scene restore failed', err);
-          }
-        });
-      }
+    /** Restore an external/global Stage preset through the exact same
+     * complete path as a project preset. */
+    loadStagePresetSnapshot(preset: StagePreset) {
+      restoreStagePresetSnapshot(preset);
     },
 
     /** Delete a stage preset */
@@ -3067,54 +3166,25 @@ void main() {
      * (layers + active surface's effects/active/automation). */
     updateStagePreset(presetId: string, thumbnail?: string) {
       const currentProject = get({ subscribe });
-      const layersSnapshot: Layer[] = [];
-      for (const layer of currentProject.layers) {
-        try {
-          const cleanLayer = JSON.parse(JSON.stringify(layer, (key, value) => {
-            if (key === 'texture' || key === 'videoElement') return undefined;
-            if (value && typeof value === 'object' && value.constructor?.name?.startsWith('_')) return undefined;
-            return value;
-          }));
-          layersSnapshot.push(cleanLayer);
-        } catch (e) {
-          console.warn('[Store] Failed to clone layer for stage preset update:', layer.id, e);
-        }
-      }
-      // Capture the active surface's effects bundle, same as saveStagePreset.
-      let stageEffectsSnap: StagePreset['stageEffects'] = undefined;
-      try {
-        const surfState = get(surfaceStore);
-        const activeSurf = surfState.surfaces.find(s => s.id === surfState.activeSurfaceId);
-        if (activeSurf) {
-          stageEffectsSnap = {
-            effects: JSON.parse(JSON.stringify(activeSurf.effects ?? [])),
-            activeEffectId: activeSurf.activeEffectId ?? null,
-            automation: activeSurf.effectAutomation
-              ? JSON.parse(JSON.stringify(activeSurf.effectAutomation))
-              : null,
-          };
-        }
-      } catch (err) {
-        console.warn('[Store] updateStagePreset: surface effects snapshot failed', err);
-      }
-
-      let stage3dSnap: unknown;
-      try {
-        stage3dSnap = JSON.parse(JSON.stringify(get(stage3dScene)));
-      } catch (err) {
-        console.warn('[Store] updateStagePreset: 3D scene snapshot failed', err);
-      }
+      const existingPreset = (currentProject.stagePresets || []).find(
+        preset => preset.id === presetId
+      );
+      if (!existingPreset) return;
+      const snapshot = captureStagePresetSnapshot(
+        currentProject,
+        existingPreset.name,
+        thumbnail ?? existingPreset.thumbnail,
+        existingPreset.scope ?? 'project',
+        existingPreset.id,
+      );
 
       update((project) => ({
         ...project,
         stagePresets: (project.stagePresets || []).map(p =>
           p.id === presetId
             ? {
-                ...p,
-                layers: layersSnapshot,
-                thumbnail: thumbnail ?? p.thumbnail,
-                stageEffects: stageEffectsSnap,
-                stage3d: stage3dSnap ?? p.stage3d,
+                ...snapshot,
+                createdAt: p.createdAt,
                 updatedAt: Date.now(),
               }
             : p
@@ -3145,6 +3215,65 @@ void main() {
         wledControllers: (project.wledControllers || []).map(c =>
           c.id === controllerId ? { ...c, ...fields, id: controllerId } : c
         ),
+      }));
+    },
+    addWLEDGroup(group: WLEDGroup) {
+      update((project) => ({
+        ...project,
+        wledGroups: [...(project.wledGroups || []), group],
+      }));
+    },
+    updateWLEDGroup(groupId: string, fields: Partial<WLEDGroup>) {
+      update((project) => ({
+        ...project,
+        wledGroups: (project.wledGroups || []).map(group =>
+          group.id === groupId ? { ...group, ...fields, id: groupId } : group
+        ),
+      }));
+    },
+    removeWLEDGroup(groupId: string) {
+      update((project) => ({
+        ...project,
+        wledGroups: (project.wledGroups || []).filter(group => group.id !== groupId),
+        wledEffects: (project.wledEffects || []).map(effect =>
+          effect.target.mode === 'group' && effect.target.groupId === groupId
+            ? { ...effect, target: { mode: 'all' as const } }
+            : effect
+        ),
+      }));
+    },
+    addWLEDEffect(effect: WLEDEffect) {
+      update((project) => ({
+        ...project,
+        wledEffects: [...(project.wledEffects || []), effect],
+      }));
+    },
+    updateWLEDEffect(effectId: string, fields: Partial<WLEDEffect>) {
+      update((project) => ({
+        ...project,
+        wledEffects: (project.wledEffects || []).map(effect =>
+          effect.id === effectId ? { ...effect, ...fields, id: effectId } : effect
+        ),
+      }));
+    },
+    removeWLEDEffect(effectId: string) {
+      update((project) => ({
+        ...project,
+        wledEffects: (project.wledEffects || []).filter(effect => effect.id !== effectId),
+      }));
+    },
+    updateWLEDEffectAutomation(fields: Partial<WLEDEffectAutomation>) {
+      update((project) => ({
+        ...project,
+        wledEffectAutomation: {
+          playing: false,
+          mode: 'beat',
+          beats: 8,
+          seconds: 4,
+          order: 'forward',
+          ...(project.wledEffectAutomation ?? {}),
+          ...fields,
+        },
       }));
     },
 
@@ -3905,6 +4034,26 @@ void main() {
       });
     },
 
+    reorderComposition(fromIndex: number, toIndex: number) {
+      update((project) => {
+        if (!project.vjMode) return project;
+        const comps = project.vjMode.compositions || [];
+        if (fromIndex < 0 || fromIndex >= comps.length) return project;
+        if (toIndex < 0 || toIndex >= comps.length) return project;
+        if (fromIndex === toIndex) return project;
+        const nextCompositions = [...comps];
+        const [moved] = nextCompositions.splice(fromIndex, 1);
+        nextCompositions.splice(toIndex, 0, moved);
+        return {
+          ...project,
+          vjMode: {
+            ...project.vjMode,
+            compositions: nextCompositions,
+          },
+        };
+      });
+    },
+
     /**
      * Update composition thumbnail
      */
@@ -3944,6 +4093,11 @@ void main() {
 
         // Deep clone the composition's layers
         const loadedLayers = structuredClone(composition.layers);
+        loadedLayers.forEach((layer) => {
+          if (isVideoSource(layer.source)) {
+            rehydrateVideoSource(layer.source);
+          }
+        });
 
         return {
           ...project,
@@ -4546,6 +4700,17 @@ void main() {
       const currentVjClipLauncher = get(vjClipLauncher);
       const exportClip = (clip: VJClip | null) => {
         if (!clip) return null;
+        const recoveredAssetRef = recoverVJClipAssetRef(clip as any, currentMedia);
+        if (
+          !recoveredAssetRef &&
+          (clip.type === 'video' || clip.type === 'image') &&
+          clip.src?.startsWith('blob:')
+        ) {
+          console.warn(
+            `[Project Save] VJ clip "${clip.name}" has only a session blob URL; ` +
+            'it will require relinking after restart.',
+          );
+        }
         return {
           id: clip.id,
           type: clip.type,
@@ -4574,7 +4739,7 @@ void main() {
           // contents survives save/reload.
           splatContent: (clip as any).splatContent,
           model3dContent: (clip as any).model3dContent || (clip as any).model3DContent,
-          _assetRef: (clip as any)._assetRef,
+          _assetRef: recoveredAssetRef,
           // Exclude runtime objects: videoElement / iframeElement / synthVisionCanvas
         };
       };
@@ -5536,6 +5701,9 @@ void main() {
                 (imported.source as any)._assetRef,
                 imported.source.src,
               );
+              if (isVideoSource(imported.source)) {
+                rehydrateVideoSource(imported.source);
+              }
             }
             if (imported.splatContent) {
               if (imported.splatContent.filePath || (imported.splatContent as any)._assetRef) {
@@ -6002,5 +6170,19 @@ registerMappingLayerCallbacks(
     const layer = p.layers[layerIndex];
     const v = layer?.gpuLayerContent?.params?.[paramKey];
     return typeof v === 'number' ? v : undefined;
+  },
+  // splatUpdater: batch-apply audio / auto values to splat content.
+  (layerIndex: number, values: Record<string, number>) => {
+    const p = get(project);
+    const layer = p.layers[layerIndex];
+    if (!layer?.splatContent) return;
+    project.updateSplatContent(layer.id, values as Partial<SplatContent>);
+  },
+  // splatReader: capture the current splat value as modulation base.
+  (layerIndex: number, paramKey: string) => {
+    const p = get(project);
+    const layer = p.layers[layerIndex];
+    const value = (layer?.splatContent as unknown as Record<string, unknown> | undefined)?.[paramKey];
+    return typeof value === 'number' ? value : undefined;
   },
 );

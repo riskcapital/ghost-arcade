@@ -201,7 +201,7 @@
   }
   .field label .v {
     color: #4af2ff;
-    font-family: 'IBM Plex Mono', monospace;
+    font-family: 'Geist Mono', monospace;
     font-size: 12px;
   }
   .field input[type=range] {
@@ -257,7 +257,7 @@
   }
   .xyz input {
     font: inherit;
-    font-family: 'IBM Plex Mono', monospace;
+    font-family: 'Geist Mono', monospace;
     font-size: 12px;
     background: #10131a;
     border: 1px solid rgba(255, 255, 255, 0.08);

@@ -531,7 +531,7 @@
     text-align: right;
     font-size: 10px;
     color: var(--text-muted, #888);
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
 
   .button-group {

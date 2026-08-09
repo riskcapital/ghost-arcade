@@ -26,7 +26,7 @@ export interface PluginParamDef {
   max?: number;
   step?: number;
   default: any;
-  options?: { value: any; label: string }[];
+  options?: { value: any; label: string; disabled?: boolean; unavailableReason?: string }[];
   /** Optional conditional visibility. When set, the param only shows in
    *  the panel if the current value of `showWhen.param` is in
    *  `showWhen.values`. Used by GhostFX to show scene-specific knobs
@@ -314,13 +314,15 @@ registerPlugin({
       options: [
         { value: 'drift',   label: 'Drift — Particle Vortex' },
         { value: 'ribbons', label: 'Ribbons — Aurora Trails' },
-        { value: 'liquid',  label: 'Liquid — Fluid Sim' },
+        { value: 'liquid',  label: 'Liquid — Fluid Simulation' },
+        { value: 'spheres', label: 'Spheres — Orb Flow' },
         // Next: SDF Tunnel (raymarched fractal), Nebula (volumetric
         // smoke) — each built as its own pipeline, registered here.
       ]},
     // ── Global (all scenes) ──
     { name: 'Sensitivity', param: 'ghostfxSensitivity', type: 'slider', min: 0.25, max: 4, step: 0.05, default: 1.4 },
     { name: 'Hue Drift', param: 'ghostfxHueDriftSpeed', type: 'slider', min: 0, max: 2, step: 0.05, default: 0.15 },
+    { name: 'Reactivity', param: 'ghostfxReactivity', type: 'slider', min: 0, max: 1, step: 0.02, default: 0.4 },
 
     // ── Drift-only ──
     { name: 'Vortex Strength', param: 'ghostfxVortexStrength', type: 'slider', min: 0, max: 6, step: 0.05, default: 2.0,
@@ -345,13 +347,32 @@ registerPlugin({
       ],
       showWhen: { param: 'ghostfxScenePreset', values: ['ribbons'] } },
     { name: 'Light Azimuth', param: 'ghostfxLightAzimuth', type: 'slider', min: 0, max: 360, step: 1, default: 35,
-      showWhen: { param: 'ghostfxScenePreset', values: ['ribbons'] } },
+      showWhen: { param: 'ghostfxScenePreset', values: ['ribbons', 'liquid'] } },
     { name: 'Light Elevation', param: 'ghostfxLightElevation', type: 'slider', min: -90, max: 90, step: 1, default: 55,
-      showWhen: { param: 'ghostfxScenePreset', values: ['ribbons'] } },
+      showWhen: { param: 'ghostfxScenePreset', values: ['ribbons', 'liquid'] } },
     { name: 'Light Strength', param: 'ghostfxLightStrength', type: 'slider', min: 0, max: 2, step: 0.05, default: 0.9,
-      showWhen: { param: 'ghostfxScenePreset', values: ['ribbons'] } },
+      showWhen: { param: 'ghostfxScenePreset', values: ['ribbons', 'liquid'] } },
     { name: 'Ambient', param: 'ghostfxAmbient', type: 'slider', min: 0, max: 1, step: 0.02, default: 0.30,
+      showWhen: { param: 'ghostfxScenePreset', values: ['ribbons', 'liquid', 'spheres'] } },
+    { name: 'Color Amount', param: 'ghostfxRibbonColorAmount', type: 'slider', min: 0, max: 1, step: 0.02, default: 0.25,
       showWhen: { param: 'ghostfxScenePreset', values: ['ribbons'] } },
+    { name: 'Depth Blur', param: 'ghostfxRibbonDof', type: 'slider', min: 0, max: 1, step: 0.02, default: 0.55,
+      showWhen: { param: 'ghostfxScenePreset', values: ['ribbons'] } },
+
+    // ── Spheres-only ──
+    { name: 'Flow Speed', param: 'ghostfxSpheresFlow', type: 'slider', min: 0.2, max: 3, step: 0.05, default: 1.0,
+      showWhen: { param: 'ghostfxScenePreset', values: ['spheres'] } },
+    { name: 'Sphere Size', param: 'ghostfxSpheresSize', type: 'slider', min: 0.4, max: 2.2, step: 0.05, default: 1.0,
+      showWhen: { param: 'ghostfxScenePreset', values: ['spheres'] } },
+    { name: 'Fluid Mass', param: 'ghostfxSpheresPuffs', type: 'slider', min: 0, max: 2, step: 0.05, default: 1.0,
+      showWhen: { param: 'ghostfxScenePreset', values: ['spheres'] } },
+    { name: 'Palette', param: 'ghostfxSpheresPalette', type: 'select', default: 0,
+      options: [
+        { value: 0, label: 'Pastel (milk + aqua)' },
+        { value: 1, label: 'Candy' },
+        { value: 2, label: 'Ember' },
+      ],
+      showWhen: { param: 'ghostfxScenePreset', values: ['spheres'] } },
 
     // ── Liquid-only ──
     { name: 'Splat Force', param: 'ghostfxLiquidSplatForce', type: 'slider', min: 0.2, max: 3.0, step: 0.05, default: 1.0,
@@ -363,6 +384,14 @@ registerPlugin({
     { name: 'Fluid Damping', param: 'ghostfxLiquidVelDecay', type: 'slider', min: 0.95, max: 1.0, step: 0.002, default: 0.992,
       showWhen: { param: 'ghostfxScenePreset', values: ['liquid'] } },
     { name: 'Bass Drop Rate', param: 'ghostfxLiquidBassRate', type: 'slider', min: 0, max: 2, step: 0.05, default: 1.0,
+      showWhen: { param: 'ghostfxScenePreset', values: ['liquid'] } },
+    { name: 'Swirl', param: 'ghostfxLiquidVorticity', type: 'slider', min: 0, max: 3, step: 0.05, default: 1.3,
+      showWhen: { param: 'ghostfxScenePreset', values: ['liquid'] } },
+    { name: 'Gloss', param: 'ghostfxLiquidGloss', type: 'slider', min: 0, max: 1, step: 0.02, default: 0.7,
+      showWhen: { param: 'ghostfxScenePreset', values: ['liquid'] } },
+    { name: 'Depth', param: 'ghostfxLiquidDepth', type: 'slider', min: 0.05, max: 1, step: 0.01, default: 0.35,
+      showWhen: { param: 'ghostfxScenePreset', values: ['liquid'] } },
+    { name: 'Bubbles', param: 'ghostfxLiquidBubbles', type: 'slider', min: 0, max: 2, step: 0.05, default: 1.0,
       showWhen: { param: 'ghostfxScenePreset', values: ['liquid'] } },
 
     // ── Global post-stack (all scenes) ──
@@ -376,6 +405,7 @@ registerPlugin({
     ghostfxScenePreset: 'drift',
     ghostfxSensitivity: 1.4,
     ghostfxHueDriftSpeed: 0.15,
+    ghostfxReactivity: 0.4,
     // Drift
     ghostfxVortexStrength: 2.0,
     ghostfxTrailIntensity: 1.0,
@@ -385,6 +415,12 @@ registerPlugin({
     ghostfxRibbonSpawn: 1.0,
     ghostfxRibbonTranslucency: 0.35,
     ghostfxRibbonBlend: 'additive',
+    ghostfxRibbonColorAmount: 0.25,
+    ghostfxRibbonDof: 0.55,
+    ghostfxSpheresFlow: 1.0,
+    ghostfxSpheresSize: 1.0,
+    ghostfxSpheresPuffs: 1.0,
+    ghostfxSpheresPalette: 0,
     ghostfxLightAzimuth: 35,
     ghostfxLightElevation: 55,
     ghostfxLightStrength: 0.9,
@@ -393,8 +429,12 @@ registerPlugin({
     ghostfxLiquidSplatForce: 1.0,
     ghostfxLiquidSplatRadius: 0.08,
     ghostfxLiquidDyeDecay: 0.995,
-    ghostfxLiquidVelDecay: 0.992,
+    ghostfxLiquidVelDecay: 0.996,
     ghostfxLiquidBassRate: 1.0,
+    ghostfxLiquidVorticity: 1.3,
+    ghostfxLiquidGloss: 0.7,
+    ghostfxLiquidDepth: 0.35,
+    ghostfxLiquidBubbles: 1.0,
     // Post
     ghostfxBloomIntensity: 1.4,
     ghostfxBloomThreshold: 0.45,
@@ -658,91 +698,6 @@ registerPlugin({
   },
 });
 
-// ─── Analyzer Lab ──────────────────────────────────────────────────────
-// Original Canvas-2D multi-panel analyzer (spectrogram + chromagram +
-// waveform). Visual inspiration: Sonic Visualiser (Chris Cannam et al.,
-// GPL) — none of their code is used, just the aesthetic.
-registerPlugin({
-  id: 'analyzerlab',
-  name: 'Analyzer Lab',
-  description: 'Multi-panel real-time spectral analyzer — spectrogram waterfall, chromagram, waveform',
-  category: 'Generators',
-  version: '0.1.0',
-  author: 'Ghost Arcade (original; inspired by Sonic Visualiser)',
-  tier: 'free',
-  icon: '⎍',
-  previewCSS: 'linear-gradient(180deg, #110, #310, #720 35%, #b40 55%, #f80 70%, #ffc 90%)',
-  effectType: 'analyzerlab',
-  paramDefs: [
-    { name: 'Layout', param: 'analyzerLabLayout', type: 'select', default: 'stack',
-      options: [
-        { value: 'stack',       label: 'Stack (3 panels)' },
-        { value: 'spectrogram', label: 'Spectrogram (full)' },
-        { value: 'chromagram',  label: 'Chromagram (full)' },
-        { value: 'waveform',    label: 'Waveform (full)' },
-        { value: 'mirror',      label: 'Mirror (spectro)' },
-      ]},
-    { name: 'Colormap', param: 'analyzerLabColormap', type: 'select', default: 'inferno',
-      options: [
-        { value: 'inferno', label: 'Inferno' },
-        { value: 'viridis', label: 'Viridis' },
-        { value: 'magma',   label: 'Magma' },
-        { value: 'coral',   label: 'Coral (brand)' },
-        { value: 'ice',     label: 'Ice' },
-        { value: 'mono',    label: 'Monochrome' },
-      ]},
-    // ── Spectrogram-specific ──
-    { name: 'Spectro Orientation', param: 'analyzerLabSpectroOrientation', type: 'select', default: 'horizontal',
-      options: [
-        { value: 'horizontal', label: 'Horizontal (scroll left)' },
-        { value: 'vertical',   label: 'Vertical (scroll up)' },
-        { value: 'radial',     label: 'Radial (radar)' },
-      ],
-      showWhen: { param: 'analyzerLabLayout', values: ['stack', 'spectrogram', 'mirror'] } },
-    { name: 'Brightness', param: 'analyzerLabSpectroGain', type: 'slider', min: 0, max: 2, step: 0.05, default: 1.0 },
-    { name: 'Quiet Floor (dB)', param: 'analyzerLabSpectroMinDb', type: 'slider', min: -110, max: -40, step: 1, default: -85 },
-    { name: 'Loud Ceiling (dB)', param: 'analyzerLabSpectroMaxDb', type: 'slider', min: -40, max: 0, step: 1, default: -25 },
-    { name: 'Scroll Speed', param: 'analyzerLabScrollSpeed', type: 'slider', min: 0.25, max: 4, step: 0.05, default: 1.0 },
-    // ── Chromagram-specific ──
-    { name: 'Chroma Style', param: 'analyzerLabChromaStyle', type: 'select', default: 'bars',
-      options: [
-        { value: 'bars',   label: 'Bars (12 vertical)' },
-        { value: 'radial', label: 'Radial wheel (clock)' },
-      ],
-      showWhen: { param: 'analyzerLabLayout', values: ['stack', 'chromagram'] } },
-    { name: 'Chroma Glow', param: 'analyzerLabChromaGlow', type: 'slider', min: 0, max: 1, step: 0.02, default: 0.5 },
-    // ── Waveform-specific ──
-    { name: 'Wave Style', param: 'analyzerLabWaveStyle', type: 'select', default: 'line',
-      options: [
-        { value: 'line',   label: 'Line' },
-        { value: 'mirror', label: 'Mirror (top + bottom)' },
-        { value: 'filled', label: 'Filled area' },
-      ],
-      showWhen: { param: 'analyzerLabLayout', values: ['stack', 'waveform'] } },
-    { name: 'Wave Line Width', param: 'analyzerLabWaveLineWidth', type: 'slider', min: 1, max: 4, step: 0.5, default: 1.5 },
-    // ── Global ──
-    { name: 'Beat Markers', param: 'analyzerLabShowBeats', type: 'toggle', default: true },
-    { name: 'Show Labels', param: 'analyzerLabShowLabels', type: 'toggle', default: true },
-    { name: 'Background Opacity', param: 'analyzerLabBgAlpha', type: 'slider', min: 0, max: 1, step: 0.01, default: 1.0 },
-  ],
-  defaultSourceParams: {
-    analyzerLabLayout: 'stack',
-    analyzerLabColormap: 'inferno',
-    analyzerLabSpectroOrientation: 'horizontal',
-    analyzerLabSpectroGain: 1.0,
-    analyzerLabSpectroMinDb: -85,
-    analyzerLabSpectroMaxDb: -25,
-    analyzerLabScrollSpeed: 1.0,
-    analyzerLabChromaStyle: 'bars',
-    analyzerLabChromaGlow: 0.5,
-    analyzerLabWaveStyle: 'line',
-    analyzerLabWaveLineWidth: 1.5,
-    analyzerLabShowBeats: true,
-    analyzerLabShowLabels: true,
-    analyzerLabBgAlpha: 1.0,
-  },
-});
-
 // ─── HandFX (MediaPipe POC) ────────────────────────────────────────────
 // Original hand-gesture visualizer driven by the shared MediaPipe worker.
 // 5 modes; the headline "Panel" mode pairs with the layer's Difference
@@ -772,10 +727,6 @@ registerPlugin({
     { name: 'Smoothing', param: 'handfxSmoothing', type: 'slider', min: 0, max: 1, step: 0.01, default: 0.15 },
     { name: 'Predict Ahead (ms)', param: 'handfxPredictMs', type: 'slider', min: 0, max: 40, step: 1, default: 18 },
     { name: 'Background Opacity', param: 'handfxBgAlpha', type: 'slider', min: 0, max: 1, step: 0.01, default: 0.0 },
-    { name: 'Show Camera Feed', param: 'handfxShowCamera', type: 'toggle', default: false },
-    { name: 'Camera Opacity', param: 'handfxCameraOpacity', type: 'slider', min: 0, max: 1, step: 0.01, default: 0.5,
-      showWhen: { param: 'handfxShowCamera', values: [true] } },
-
     // ── Panel ──
     { name: 'Panel Opacity', param: 'handfxPanelOpacity', type: 'slider', min: 0, max: 1, step: 0.01, default: 1.0,
       showWhen: { param: 'handfxMode', values: ['panel'] } },

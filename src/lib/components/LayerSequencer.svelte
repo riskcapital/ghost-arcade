@@ -338,7 +338,7 @@
   .seq-loop-label input { display: none; }
   .seq-loop-label input:checked ~ svg { color: #FF6B6B; }
   .seq-step-display {
-    font-size: 13px; color: #FF6B6B; font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-size: 13px; color: #FF6B6B; font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     min-width: 40px; text-align: center; font-weight: 700;
   }
   .seq-step-sep { color: #555; }
@@ -387,7 +387,7 @@
   .seq-step-header {
     display: flex; align-items: center; justify-content: center;
     font-size: 10px; font-weight: 600; color: #555;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     position: sticky; top: 0; z-index: 2;
     background: var(--bg-primary, #0a0a0c);
   }

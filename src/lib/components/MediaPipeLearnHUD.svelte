@@ -305,7 +305,7 @@
     position: absolute;
     right: 4px;
     top: -1px;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: 9px;
     color: var(--text-secondary, #aaa);
     line-height: 8px;
@@ -313,7 +313,7 @@
 
   .mp-learn-dash { color: #555; font-size: 12px; }
   .mp-learn-check { display: flex; align-items: center; gap: 3px; font-size: 10px; color: var(--text-secondary, #aaa); cursor: pointer; }
-  .mp-learn-val { font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace); font-size: 11px; color: var(--text-secondary, #aaa); width: 32px; text-align: right; }
+  .mp-learn-val { font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); font-size: 11px; color: var(--text-secondary, #aaa); width: 32px; text-align: right; }
 
   .mp-learn-toggle {
     background: transparent;
@@ -350,7 +350,7 @@
     border-top: 1px solid #1a1428;
     margin-top: 4px;
   }
-  .mp-learn-count { color: var(--text-muted, #888); font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace); }
+  .mp-learn-count { color: var(--text-muted, #888); font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); }
 
   .mp-learn-list {
     display: flex;
@@ -369,7 +369,7 @@
   }
   .mp-learn-item-sig {
     color: #ffd166;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

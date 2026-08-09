@@ -429,9 +429,6 @@
                       {:else}
                         <div class="media-thumb video-placeholder">▶</div>
                       {/if}
-                      {#if !_nativeMediaReady}
-                        <span class="native-badge">pending</span>
-                      {/if}
                       <span class="media-cell-label">{item.name}</span>
                     </button>
                   {/each}

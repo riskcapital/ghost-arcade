@@ -214,7 +214,7 @@
       {#if mode === 'corners'}
         <polygon points={cornersPath(corners)} fill="none" stroke="#f0a35e" stroke-width="2" />
         <text x={px(corners.topLeft.x) + 6} y={py(corners.topLeft.y) + 16} fill="#f0a35e"
-          font-size="13" font-family="IBM Plex Mono, ui-monospace, monospace"
+          font-size="13" font-family="Geist Mono, ui-monospace, monospace"
           paint-order="stroke" stroke="rgba(0,0,0,0.7)" stroke-width="3">Master warp</text>
       {:else if mode === 'mesh' && meshGrid}
         {@const g = meshGrid}
@@ -231,7 +231,7 @@
           {/each}
         {/each}
         <text x={meshPx(g.points[0][0].x, g.points[0][0].y) + 6} y={meshPy(g.points[0][0].x, g.points[0][0].y) + 16} fill="#f0a35e"
-          font-size="13" font-family="IBM Plex Mono, ui-monospace, monospace"
+          font-size="13" font-family="Geist Mono, ui-monospace, monospace"
           paint-order="stroke" stroke="rgba(0,0,0,0.7)" stroke-width="3">Master warp</text>
       {/if}
     </svg>

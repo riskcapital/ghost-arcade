@@ -42,11 +42,6 @@
     return nativeInventoryLocked && !isNativeSelectableEffect(effectType);
   }
 
-  function nativeEffectBadge(effectType: EffectType | string): 'NATIVE' | 'PENDING' | '' {
-    if (!nativeInventoryLocked) return '';
-    return isNativeSelectableEffect(effectType) ? 'NATIVE' : 'PENDING';
-  }
-
   function toggleLayerEffectIfNativeReady(layerId: string, effect: Effect) {
     if (nativeEffectPending(effect.type) && !effect.enabled) return;
     project.toggleEffect(layerId, effect.id);
@@ -98,6 +93,7 @@
   // Layer type dropdown state
   let showAddLayerMenu = false;
   let addMenuPos = { top: 0, left: 0 };
+  let addLayerBtnEl: HTMLElement | null = null;
   let showSourceCropModal = false;
   $: sourceCropLayer = showSourceCropModal ? $selectedLayer : null;
   // Context menu state. We snapshot the multi-selection IDs at the moment
@@ -777,12 +773,26 @@
     else releaseMappingStageEffectHold(effectId);
   }
 
+  // Canvas's empty-state "Add Layer to Get Started" button opens this
+  // panel's Add Layer menu via a window event — the two components have
+  // no direct parent/child relationship.
+  function handleOpenAddLayerMenuEvent() {
+    const btn = addLayerBtnEl;
+    if (btn) {
+      const rect = btn.getBoundingClientRect();
+      addMenuPos = { top: rect.bottom + 4, left: Math.max(8, rect.right - 170) };
+    }
+    showAddLayerMenu = true;
+  }
+
   onMount(() => {
     window.addEventListener('map-stage-effect-hold', handleMappingStageEffectHoldEvent);
+    window.addEventListener('ghost:open-add-layer-menu', handleOpenAddLayerMenuEvent);
   });
 
   onDestroy(() => {
     window.removeEventListener('map-stage-effect-hold', handleMappingStageEffectHoldEvent);
+    window.removeEventListener('ghost:open-add-layer-menu', handleOpenAddLayerMenuEvent);
     releaseAllMappingStageEffectHolds();
   });
 
@@ -861,6 +871,20 @@
       })
     );
   }
+
+  // Picking a shape drops straight into its warp workflow: circle/triangle
+  // get on-canvas warp handles immediately; other shapes leave warp mode.
+  function chooseLayerShape(layerId: string, type: import('../types').LayerShapeType) {
+    project.setLayerShape(layerId, type);
+    const warpable = type === 'circle' || type === 'triangle' || type === 'ellipse' || type === 'polygon' || type === 'star';
+    if (warpable !== shapeWarpEditing) {
+      toggleShapeWarpEditing();
+    }
+  }
+
+  function resetShapeWarp(layerId: string) {
+    project.resetShapeControlPoints(layerId);
+  }
 </script>
 
 <div class="layer-panel">
@@ -869,7 +893,7 @@
     <div class="panel-header">
       <h3>Layers</h3>
       <div class="add-layer-wrapper">
-        <button class="btn-add" onclick={(e) => {
+        <button class="btn-add" bind:this={addLayerBtnEl} onclick={(e) => {
           showAddLayerMenu = !showAddLayerMenu;
           if (showAddLayerMenu) {
             const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -881,24 +905,6 @@
         {#if showAddLayerMenu}
           <div class="add-layer-backdrop" onclick={() => showAddLayerMenu = false}></div>
           <div class="add-layer-menu" style="top:{addMenuPos.top}px;left:{addMenuPos.left}px">
-            {#if nativeInventoryLocked}
-              <div class="add-layer-section-label">Native Ready</div>
-              <button class:native-ready={nativeInventoryLocked} onclick={() => { project.addGPULayer('Planet', 'planet'); showAddLayerMenu = false; }}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <circle cx="12" cy="12" r="8"/>
-                  <path d="M4 12c3 2.4 13 2.4 16 0"/>
-                  <path d="M12 4c2.4 3 2.4 13 0 16"/>
-                </svg>
-                Planet Shader <span class="native-layer-badge">NATIVE</span>
-              </button>
-              <button class:native-ready={nativeInventoryLocked} onclick={() => { project.addColorLayer(); showAddLayerMenu = false; }}>
-                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                  <rect x="4" y="4" width="16" height="16" rx="2"/>
-                </svg>
-                Color Layer <span class="native-layer-badge">NATIVE</span>
-              </button>
-              <div class="add-layer-section-label">Native Media</div>
-            {/if}
             <button onclick={() => { project.addLayer(undefined, 'media', 'rectangle'); showAddLayerMenu = false; }}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <rect x="3" y="3" width="18" height="18" rx="2"/>
@@ -908,9 +914,7 @@
               Media Layer
             </button>
             <button
-              class:native-pending={nativeInventoryLocked}
-              disabled={nativeInventoryLocked}
-              title={nativeInventoryLocked ? 'Custom media shapes are pending in the native compositor.' : 'Add custom shape media layer'}
+              title="Add custom shape media layer"
               onclick={() => { project.addLayer(undefined, 'media', 'custom'); showAddLayerMenu = false; }}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -923,12 +927,9 @@
                 <circle cx="16" cy="20" r="1.5" fill="currentColor"/>
               </svg>
               Custom Shape
-              {#if nativeInventoryLocked}<span class="native-layer-badge pending">PENDING</span>{/if}
             </button>
             <button
-              class:native-pending={nativeInventoryLocked}
-              disabled={nativeInventoryLocked}
-              title={nativeInventoryLocked ? nativeGeneratedLayerPendingTitle : 'Add lines layer'}
+              title="Add lines layer"
               onclick={() => { project.addLinesLayer(); showAddLayerMenu = false; }}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -936,12 +937,9 @@
                 <line x1="4" y1="20" x2="20" y2="20"/>
               </svg>
               Lines Layer
-              {#if nativeInventoryLocked}<span class="native-layer-badge pending">PENDING</span>{/if}
             </button>
             <button
-              class:native-pending={nativeInventoryLocked}
-              disabled={nativeInventoryLocked}
-              title={nativeInventoryLocked ? nativeGeneratedLayerPendingTitle : 'Add SVG layer'}
+              title="Add SVG layer"
               onclick={() => { project.addSVGLayer(); showAddLayerMenu = false; }}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -949,12 +947,9 @@
                 <polygon points="12,8 17,16 7,16"/>
               </svg>
               SVG Layer
-              {#if nativeInventoryLocked}<span class="native-layer-badge pending">PENDING</span>{/if}
             </button>
             <button
-              class:native-pending={nativeInventoryLocked}
-              disabled={nativeInventoryLocked}
-              title={nativeInventoryLocked ? nativeGeneratedLayerPendingTitle : 'Add light painting layer'}
+              title="Add light painting layer"
               onclick={() => { project.addLightPaintingLayer(); showAddLayerMenu = false; }}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -963,7 +958,6 @@
                 <path d="M12 18c-2.2 0-4-1.8-4-4 0-2.5 2-3 4-6"/>
               </svg>
               Light Painting
-              {#if nativeInventoryLocked}<span class="native-layer-badge pending">PENDING</span>{/if}
             </button>
             <!-- Adv Light Paint button hidden — superseded by the
                  in-progress "Light Painting GPU" effort that adds GPU
@@ -978,9 +972,7 @@
             -->
 
             <button
-              class:native-pending={nativeInventoryLocked}
-              disabled={nativeInventoryLocked}
-              title={nativeInventoryLocked ? nativeGeneratedLayerPendingTitle : 'Add text layer'}
+              title="Add text layer"
               onclick={() => { project.addTextLayer(); showAddLayerMenu = false; }}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -989,12 +981,9 @@
                 <line x1="12" y1="4" x2="12" y2="20"/>
               </svg>
               Text Layer
-              {#if nativeInventoryLocked}<span class="native-layer-badge pending">PENDING</span>{/if}
             </button>
             <button
-              class:native-pending={nativeInventoryLocked}
-              disabled={nativeInventoryLocked}
-              title={nativeInventoryLocked ? 'Use GPU Shader > Point Cloud FX for native point clouds.' : 'Add splat / point cloud layer'}
+              title="Add splat / point cloud layer"
               onclick={() => { project.addSplatLayer(); showAddLayerMenu = false; }}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1010,12 +999,9 @@
                 <circle cx="15" cy="13" r="0.8"/>
               </svg>
               Splat / Point Cloud
-              {#if nativeInventoryLocked}<span class="native-layer-badge pending">PENDING</span>{/if}
             </button>
             <button
-              class:native-pending={nativeInventoryLocked}
-              disabled={nativeInventoryLocked}
-              title={nativeInventoryLocked ? nativeGeneratedLayerPendingTitle : 'Add 3D model layer'}
+              title="Add 3D model layer"
               onclick={() => { project.addModel3DLayer(); showAddLayerMenu = false; }}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1024,7 +1010,6 @@
                 <path d="M2 12L12 17L22 12"/>
               </svg>
               3D Model
-              {#if nativeInventoryLocked}<span class="native-layer-badge pending">PENDING</span>{/if}
             </button>
             <!-- Legacy Pixel FX layer button hidden — Pixel Particles
                  now ships as a shader inside the GPU Shader layer
@@ -1045,15 +1030,10 @@
                   <path d="M3 12 a9 9 0 0 0 18 0"/>
                 </svg>
                 GPU Shader
-                <span style="font-size:10px; opacity:0.7; padding:1px 4px; background:linear-gradient(135deg,#1e3a8a,#7c2d12); border-radius:2px; margin-left:4px;">
-                  {nativeInventoryLocked ? 'Native' : 'WebGPU'}
-                </span>
               </button>
             {/if}
             <button
-              class:native-pending={nativeInventoryLocked}
-              disabled={nativeInventoryLocked}
-              title={nativeInventoryLocked ? 'VJ output-as-layer needs a native graph source path before it can run in native v2.' : 'Add screen layer'}
+              title="Add screen layer"
               onclick={() => { project.addScreenLayer(); showAddLayerMenu = false; }}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1062,12 +1042,9 @@
                 <line x1="12" y1="17" x2="12" y2="21"/>
               </svg>
               Screen (VJ Output)
-              {#if nativeInventoryLocked}<span class="native-layer-badge pending">PENDING</span>{/if}
             </button>
             <button
-              class:native-pending={nativeInventoryLocked}
-              disabled={nativeInventoryLocked}
-              title={nativeInventoryLocked ? 'Group compositing is pending in the native compositor.' : 'Add group layer'}
+              title="Add group layer"
               onclick={() => { project.addGroupLayer(); showAddLayerMenu = false; }}
             >
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -1076,7 +1053,6 @@
                 <rect x="3" y="14" width="7" height="7" rx="1"/>
               </svg>
               Group
-              {#if nativeInventoryLocked}<span class="native-layer-badge pending">PENDING</span>{/if}
             </button>
           </div>
         {/if}
@@ -1141,11 +1117,6 @@
                       class="composition-effect-name"
                       onclick={() => expandedCompositionEffectId = expandedCompositionEffectId === effect.id ? null : effect.id}
                     >{getEffectLabel(effect.type)}</button>
-                    {#if nativeInventoryLocked}
-                      <span class="native-effect-badge" class:pending={pendingNativeEffect}>
-                        {nativeEffectBadge(effect.type)}
-                      </span>
-                    {/if}
                     <button
                       class="composition-mini-btn"
                       disabled={index === 0}
@@ -1596,13 +1567,6 @@
             ondblclick={(e) => { e.stopPropagation(); renamingLayerId = layer.id; }}
             title="Double-click to rename"
           >{layer.name}</span>
-        {/if}
-
-        {#if nativeLayerReason}
-          <span
-            class="native-layer-row-badge"
-            title={`Native v2 pending: ${nativeLayerReason}`}
-          >PENDING</span>
         {/if}
 
         <button
@@ -2569,7 +2533,7 @@
                 <button
                   class="shape-icon-btn"
                   class:active={shapeType === 'rectangle'}
-                  onclick={() => project.setLayerShape(layer.id, 'rectangle')}
+                  onclick={() => chooseLayerShape(layer.id, 'rectangle')}
                   title="Rectangle"
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="6" width="16" height="12" rx="1.5"/></svg>
@@ -2577,7 +2541,7 @@
                 <button
                   class="shape-icon-btn"
                   class:active={shapeType === 'circle'}
-                  onclick={() => project.setLayerShape(layer.id, 'circle')}
+                  onclick={() => chooseLayerShape(layer.id, 'circle')}
                   title="Circle"
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/></svg>
@@ -2585,7 +2549,7 @@
                 <button
                   class="shape-icon-btn"
                   class:active={shapeType === 'ellipse'}
-                  onclick={() => project.setLayerShape(layer.id, 'ellipse')}
+                  onclick={() => chooseLayerShape(layer.id, 'ellipse')}
                   title="Ellipse"
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="12" rx="9" ry="6"/></svg>
@@ -2593,7 +2557,7 @@
                 <button
                   class="shape-icon-btn"
                   class:active={shapeType === 'triangle'}
-                  onclick={() => project.setLayerShape(layer.id, 'triangle')}
+                  onclick={() => chooseLayerShape(layer.id, 'triangle')}
                   title="Triangle"
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 4l8 16H4L12 4z"/></svg>
@@ -2601,20 +2565,25 @@
                 <button
                   class="shape-icon-btn"
                   class:active={shapeType === 'polygon'}
-                  onclick={() => project.setLayerShape(layer.id, 'polygon')}
-                  title="Polygon"
+                  onclick={() => chooseLayerShape(layer.id, 'polygon')}
+                  title="Hexagon"
                 >
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l9.5 7-3.5 11h-12L2.5 9z"/></svg>
+                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l8.66 5v10L12 22l-8.66-5V7z"/></svg>
                 </button>
                 <!-- Star shape hidden from UI (functionality retained) -->
               </div>
             </div>
 
-            {#if shapeType === 'circle' || shapeType === 'triangle'}
+            {#if shapeType === 'circle' || shapeType === 'triangle' || shapeType === 'ellipse' || shapeType === 'polygon' || shapeType === 'star'}
               <div class="property-row">
                 <button class="btn-secondary" onclick={toggleShapeWarpEditing}>
-                  {shapeWarpEditing ? 'Exit Shape Warp Edit' : 'Edit Shape Warp'}
+                  {shapeWarpEditing ? 'Done Warping' : 'Warp Shape'}
                 </button>
+                {#if layer.layerShape?.controlPoints?.length}
+                  <button class="btn-secondary" onclick={() => resetShapeWarp(layer.id)} title="Reset warp handles to their default positions">
+                    Reset Warp
+                  </button>
+                {/if}
               </div>
             {/if}
 
@@ -2627,20 +2596,7 @@
               </div>
             {/if}
             {#if layer.layerShape?.type === 'custom'}
-              <div class="property-row shape-help">
-                <span>Drag vertices on canvas. Click edges to add points. Right-click vertex to remove.</span>
-              </div>
-              <div class="property-row">
-                <label>Shape Fit</label>
-                <select
-                  value={layer.layerShape.params.customShapeFit || 'warp'}
-                  onchange={(e) => project.updateLayerShapeParams(layer.id, { customShapeFit: (e.target as HTMLSelectElement).value as 'warp' | 'fill' | 'mask' })}
-                >
-                  <option value="warp">Warp</option>
-                  <option value="fill">Fill</option>
-                  <option value="mask">Mask</option>
-                </select>
-              </div>
+
               <!-- Invert: turns the custom shape into a HOLE / cutout
                    instead of a fill. Stack a second layer underneath
                    and you get cool projection-mapping setups where the
@@ -2659,11 +2615,6 @@
 
           {#if layer.layerShape}
             {@const shapeT = layer.layerShape.type}
-            {#if shapeT === 'circle' || shapeT === 'triangle'}
-              <div class="property-row shape-help">
-                <span>Shape geometry is controlled directly on canvas via warp points.</span>
-              </div>
-            {/if}
 
             {#if shapeT !== 'rectangle' && shapeT !== 'custom'}
               <!-- Radius controls -->
@@ -2881,11 +2832,6 @@
                     >
                       {getEffectLabel(effect.type)}
                     </button>
-                    {#if nativeInventoryLocked}
-                      <span class="native-effect-badge" class:pending={pendingNativeEffect}>
-                        {nativeEffectBadge(effect.type)}
-                      </span>
-                    {/if}
 
                     <!-- Reset button — snaps params back to the
                          catalog defaults from getDefaultEffectParams.
@@ -3901,7 +3847,7 @@
   .property-value {
     font-size: 13px;
     color: var(--text-secondary, #aaa);
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
   .grouped-child-note {
     font-size: 12px;
@@ -4214,7 +4160,7 @@
   .vt-time {
     font-size: 12px;
     color: var(--text-muted, #888);
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     margin-left: 4px;
     flex: 1;
     white-space: nowrap;
@@ -4419,6 +4365,8 @@
 
   .vj-source-select {
     flex: 1;
+    min-width: 0;
+    max-width: 100%;
     background: var(--bg-tertiary, #1a1a1e);
     color: var(--text-primary, #eee);
     border: 1px solid #555;
@@ -5032,16 +4980,6 @@
     overflow-y: auto;
   }
 
-  .add-layer-section-label {
-    padding: 8px 12px 4px;
-    color: var(--accent-primary, #BB86FC);
-    font-size: 10px;
-    font-weight: 700;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    opacity: 0.9;
-  }
-
   .add-layer-menu button {
     display: flex;
     align-items: center;
@@ -5059,19 +4997,6 @@
 
   .add-layer-menu button:hover {
     background: #2a2a30;
-  }
-
-  .add-layer-menu button.native-ready {
-    background: rgba(70, 209, 138, 0.07);
-    color: var(--text-primary, #eee);
-  }
-
-  .add-layer-menu button.native-ready:hover {
-    background: rgba(70, 209, 138, 0.13);
-  }
-
-  .add-layer-menu button.native-ready svg {
-    color: var(--ga-green, #46d18a);
   }
 
   .add-layer-menu button:disabled,
@@ -5093,19 +5018,6 @@
   .add-layer-menu button:disabled svg,
   .add-layer-menu button.native-pending svg {
     color: rgba(255, 184, 95, 0.55);
-  }
-
-  .native-layer-badge {
-    margin-left: auto;
-    border: 1px solid rgba(255, 170, 64, 0.42);
-    background: rgba(255, 170, 64, 0.1);
-    color: #ffb85f;
-    border-radius: 3px;
-    padding: 2px 5px;
-    font-size: 9px;
-    font-weight: 800;
-    letter-spacing: 0.08em;
-    line-height: 1;
   }
 
   /* Lines layer thumbnail */

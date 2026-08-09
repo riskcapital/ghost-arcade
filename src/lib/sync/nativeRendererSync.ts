@@ -1,5 +1,10 @@
 import { get } from 'svelte/store';
-import type { Layer } from '$lib/types';
+import {
+  buildVJCrossfadeGraph,
+  buildVJCrossfadePrecompileCommands,
+  buildVJCrossfadeUniformUpdate,
+} from '$lib/renderer/vjCrossfadeNative';
+import type { Layer, Model3DContent, SplatContent } from '$lib/types';
 import { project } from '$lib/stores/layers';
 import { mediaLibrary, type MediaItem } from '$lib/stores/media';
 import {
@@ -9,6 +14,7 @@ import {
 } from '$lib/stores/nativeRenderer';
 import { invoke, isElectron, isMac, isWindows } from '$lib/bridge';
 import { getVisualAudioSnapshot, visualAudio, type VisualAudioState } from '$lib/audio/visualAudio';
+import { mediaPipeSource } from '$lib/mediapipe/mediaPipeSource';
 import { ghostAudioCommandFieldsFromVisualAudio } from '$lib/audio/ghostAudioUniform';
 import { WGSL_STDLIB, resolveGhostWgsl } from '$lib/renderer/wgsl';
 import { gravityWellsDefaultParams, isNativeReadyGpuShaderId } from '$lib/renderer/gpuShaderCatalog';
@@ -23,6 +29,43 @@ import {
   buildPlanetNativePrecompileCommands,
   type PlanetNativeGraphState,
 } from '$lib/renderer/shaders/webgpuPlanet';
+import {
+  buildLinesNativeComputeGraph,
+  buildLinesNativePrecompileCommands,
+} from '$lib/renderer/linesNative';
+import {
+  buildSvgNativeComputeGraph,
+  buildSvgNativePrecompileCommands,
+} from '$lib/renderer/svgNative';
+import {
+  buildLightPaintingNativeComputeGraph,
+  buildLightPaintingNativePrecompileCommands,
+} from '$lib/renderer/lightPaintingNative';
+import {
+  buildTextNativeAtlas,
+  buildTextNativeComputeGraph,
+  buildTextNativePrecompileCommands,
+  encodeAtlasBase64,
+  layoutTextGlyphs,
+  textAtlasSignature,
+  textNativeAtlasSourceId,
+  type TextGlyphMetric,
+  type TextNativeAtlas,
+} from '$lib/renderer/textNative';
+import {
+  buildSplatNativeComputeGraph,
+  buildSplatNativePrecompileCommands,
+  encodeSplatBufferBase64,
+  packSplatNativePoints,
+  SPLAT_MAX_POINTS as SPLAT_NATIVE_MAX_POINTS,
+} from '$lib/renderer/splatNative';
+import {
+  buildModel3DNativeComputeGraph,
+  buildModel3DNativePrecompileCommands,
+  loadModel3DNativeMesh,
+  MODEL3D_VERTEX_VEC4S,
+  type Model3DNativeMesh,
+} from '$lib/renderer/model3dNative';
 import {
   buildSmoke3DNativeComputeGraph,
   buildSmoke3DNativePrecompileCommands,
@@ -72,6 +115,16 @@ import {
   type NativeEffectPassId,
   type NativeEffectPassOptions,
 } from '$lib/renderer/nativeEffectPass';
+import {
+  buildNativePluginGraph,
+  buildNativeHandInputUpdate,
+  buildNativePluginPrecompileCommands,
+  type NativePluginGraphState,
+} from '$lib/renderer/nativePluginGraphs';
+import {
+  nativePluginEffectType,
+  nativePluginUnavailableReason,
+} from '$lib/renderer/nativePluginInventory';
 import { parsePLYPointBuffers, pointCloudBuffersFromPLYData } from '$lib/splat/plyLoader';
 import { parseSplatBuffer } from '$lib/splat/splatLoader';
 import {
@@ -81,6 +134,8 @@ import {
   getNativeEditorPreviewStatus,
   getNativeRendererCapabilities,
   getNativeRendererReadinessReport,
+  getNativeRendererFrameSnapshot,
+  getNativeRendererLayersSnapshot,
   getNativeRendererStatus,
   prefetchNativeRendererMedia,
   resetNativeRendererStats,
@@ -122,6 +177,7 @@ type LayerSnapshot = {
   blend: string;
   opacity: number;
   geometrySig: string;
+  deckMonitorSig: string;
   uvSig: string;
   shapeSig: string;
   maskSig: string;
@@ -196,6 +252,9 @@ type NativeVideoPlaybackSyncState = {
 
 type NativeLayerShapeState = {
   shape: NativeVec4;
+  shape2: NativeVec4;
+  shapeMeta: NativeVec4;
+  shapePoints: NativeVec4[];
   signature: string;
 };
 
@@ -215,7 +274,7 @@ type NativeRenderClockCommand = {
 
 export type PresentPolicyProfile = 'vsync-live' | 'low-latency-safe' | 'low-latency-aggressive';
 
-type NativeGraphRouteKind = 'planet' | 'smoke-3d' | 'particle-field' | 'volumetric-spheres' | 'smoke-riders' | 'ink-cloud' | 'flythrough' | 'pixel-particles' | 'point-cloud-fx' | 'effect-pass';
+type NativeGraphRouteKind = 'planet' | 'smoke-3d' | 'particle-field' | 'volumetric-spheres' | 'smoke-riders' | 'ink-cloud' | 'flythrough' | 'pixel-particles' | 'point-cloud-fx' | 'ghostfx' | 'handfx' | 'performer-world' | 'vj-crossfade' | 'effect-pass' | 'lines' | 'svg' | 'light-painting' | 'text' | 'splat' | 'model3d';
 
 export type NativeEffectPassRuntime = {
   effect: NativeEffectPassId;
@@ -240,10 +299,37 @@ const NATIVE_CORE_OWNED_GRAPH_KINDS = new Set<NativeGraphRouteKind>([
   'ink-cloud',
   'smoke-3d',
   'volumetric-spheres',
+  'ghostfx',
+  'handfx',
+  'performer-world',
+  'vj-crossfade',
 ]);
+
+const NATIVE_EXTERNALLY_QUEUED_GRAPH_KINDS = new Set<NativeGraphRouteKind>([
+  'lines',
+  'svg',
+  'light-painting',
+  'text',
+  'splat',
+  'model3d',
+]);
+
+export function isNativeCoreOwnedGraphKind(kind: string): boolean {
+  return NATIVE_CORE_OWNED_GRAPH_KINDS.has(kind as NativeGraphRouteKind);
+}
+
+export function isNativeExternallyQueuedGraphKind(kind: string): boolean {
+  return NATIVE_EXTERNALLY_QUEUED_GRAPH_KINDS.has(kind as NativeGraphRouteKind);
+}
 
 const NATIVE_GRAPH_ROUTE_REQUIREMENTS: ReadonlyArray<NativeGraphRouteRequirement> = [
   { kind: 'planet', feature: 'native_planet_graph', instrument: 'planet', shaderIds: ['planet/render'] },
+  { kind: 'lines', feature: 'native_lines_graph', instrument: 'lines', shaderIds: ['lines/render'] },
+  { kind: 'svg', feature: 'native_svg_graph', instrument: 'svg', shaderIds: ['svg/render-v5'] },
+  { kind: 'light-painting', feature: 'native_light_painting_graph', instrument: 'light-painting', shaderIds: ['light-painting/render-v7'] },
+  { kind: 'text', feature: 'native_text_graph', instrument: 'text', shaderIds: ['text/render-v1'] },
+  { kind: 'splat', feature: 'native_splat_graph', instrument: 'splat', shaderIds: ['splat/render-v1'] },
+  { kind: 'model3d', feature: 'native_model3d_graph', instrument: 'model3d', shaderIds: ['model3d/render-v1'] },
   {
     kind: 'smoke-3d',
     feature: 'native_3d_smoke_graph',
@@ -321,6 +407,47 @@ const NATIVE_GRAPH_ROUTE_REQUIREMENTS: ReadonlyArray<NativeGraphRouteRequirement
       'point-cloud-fx/render',
     ],
   },
+  {
+    kind: 'ghostfx',
+    feature: 'native_ghostfx_graph',
+    instrument: 'ghostfx',
+    shaderIds: [
+      'ghostfx/drift-compute',
+      'ghostfx/drift-render',
+      'ghostfx/ribbons-compute',
+      'ghostfx/ribbons-render',
+      'ghostfx/spheres-compute',
+      'ghostfx/spheres-render',
+      'ghostfx/liquid-splat',
+      'ghostfx/liquid-advect-vel',
+      'ghostfx/liquid-divergence',
+      'ghostfx/liquid-jacobi',
+      'ghostfx/liquid-subtract',
+      'ghostfx/liquid-advect-dye',
+      'ghostfx/liquid-render',
+      'ghostfx/liquid-bubbles-sim',
+      'ghostfx/liquid-bubbles-render',
+      'ghostfx/post',
+    ],
+  },
+  {
+    kind: 'handfx',
+    feature: 'native_handfx_graph',
+    instrument: 'handfx',
+    shaderIds: ['handfx/compute', 'handfx/render'],
+  },
+  {
+    kind: 'performer-world',
+    feature: 'native_performer_world_graph',
+    instrument: 'performer-world',
+    shaderIds: ['performer-world/render'],
+  },
+  {
+    kind: 'vj-crossfade',
+    feature: 'native_vj_crossfade_graph',
+    instrument: 'vj-crossfade',
+    shaderIds: ['vj-crossfade/render'],
+  },
 ] as const;
 
 export function nativeGraphRouteRequirements(): ReadonlyArray<NativeGraphRouteRequirement> {
@@ -336,7 +463,8 @@ type NativeGraphRouteSimulationState =
   | SmokeRidersNativeGraphState
   | FlythroughNativeGraphState
   | PixelParticlesNativeGraphState
-  | PointCloudFXNativeGraphState;
+  | PointCloudFXNativeGraphState
+  | NativePluginGraphState;
 
 type NativeGraphLayerRoute = {
   kind: NativeGraphRouteKind;
@@ -345,6 +473,12 @@ type NativeGraphLayerRoute = {
   source: NativeLayerSource;
   inputSource: NativeLayerSource | null;
   effectPasses?: NativeEffectPassRuntime[];
+  /** Binding id the graph should sample for the input, when it differs from
+   *  inputSource.id — core-rendered shader layers bind `layer-frame:<id>`. */
+  inputBindingId?: string;
+  /** Input pixels are produced BY the core (FS/ISF shader render), not by an
+   *  upload/decode pipeline — readiness checks on uploads don't apply. */
+  inputCoreRendered?: boolean;
 };
 
 export function nativeGraphCompositeSourceId(
@@ -367,6 +501,12 @@ type NativeGraphRouteState = {
   bufferPrefixes: string[];
   lastGraphFrameIndex?: number;
   lastManualClockKey?: string;
+  lastHandFrameTimestamp?: number;
+  lastVJCrossfadeTopologySig?: string;
+  lastVJCrossfadeUniformSig?: string;
+  lastQueuedClockFrame?: number;
+  queuedThisClockFrame?: number;
+  lastQueuedAtMs?: number;
 };
 
 type NativeGraphManifestEntry = NonNullable<NativeRendererCapabilities['native_graph_instrument_manifest']>[number];
@@ -470,6 +610,10 @@ const SOURCE_FRAME_DYNAMIC_CAPTURE_MAX = 2048;
 const STATIC_PREVIEW_RETRY_MS = 1000;
 const VIDEO_PREVIEW_REFRESH_MS = 360;
 const LIVE_SHARED_TEXTURE_REFRESH_MS = 16;
+// Live WebGL performance canvases (SynthVision, THREE.js) — 30fps capture:
+// full rate costs a GPU readback + IPC upload per frame, and 30 stays smooth
+// for projection while leaving headroom for the sim itself.
+const LIVE_CANVAS_REFRESH_MS = 33;
 const NATIVE_VIDEO_PREFETCH_REFRESH_MS = 750;
 const NATIVE_VIDEO_PREFETCH_OVERLOAD_REFRESH_MS = 1200;
 const NATIVE_VIDEO_PREFETCH_WINDOW_FRAMES = 1;
@@ -621,6 +765,7 @@ function nativeEffectDescriptors(layer: Layer): string[] {
     .filter((d: string | null): d is string => !!d);
 }
 
+import { nativeEffectPassIdForEffectType } from '$lib/renderer/nativeEffectCoverage';
 const NATIVE_EFFECT_PASS_IDS = new Set<NativeEffectPassId>(
   NATIVE_EFFECT_PASS_MANIFEST.map((entry) => entry.id),
 );
@@ -2321,11 +2466,44 @@ export function effectToNativeDescriptor(effect: any): string | null {
   // Keep explicit descriptor IDs compatible with native descriptor parser.
   const effectId = typeof effect.id === 'string' ? effect.id.trim() : '';
   if (effectId.includes(':')) return effectId.toLowerCase();
+
+  // Generic fallback: any effect covered by the native effect-pass manifest is
+  // routed through with its raw numeric params; packNativeEffectPassUniforms
+  // owns the per-effect param mapping.
+  const passthruId = nativeEffectPassIdForEffectType(String(effect.type || '')) as NativeEffectPassId;
+  if (NATIVE_EFFECT_PASS_IDS.has(passthruId)) {
+    const pairs: string[] = [];
+    for (const key of Object.keys(params).sort()) {
+      const value = Number((params as Record<string, unknown>)[key]);
+      if (Number.isFinite(value)) pairs.push(`${key}=${value.toFixed(4)}`);
+    }
+    return `passthru:${passthruId}:${pairs.join(',')}`;
+  }
   return null;
 }
 
 export function nativeEffectPassFromDescriptor(descriptor: string | null): NativeEffectPassRuntime | null {
   if (!descriptor) return null;
+  if (descriptor.startsWith('passthru:')) {
+    const rest = descriptor.slice('passthru:'.length);
+    const sep = rest.indexOf(':');
+    const effect = (sep >= 0 ? rest.slice(0, sep) : rest) as NativeEffectPassId;
+    if (!NATIVE_EFFECT_PASS_IDS.has(effect)) return null;
+    const passthruParams: Record<string, number> = {};
+    if (sep >= 0) {
+      for (const pair of rest.slice(sep + 1).split(',')) {
+        const eq = pair.indexOf('=');
+        if (eq <= 0) continue;
+        const value = Number(pair.slice(eq + 1));
+        if (Number.isFinite(value)) passthruParams[pair.slice(0, eq)] = value;
+      }
+    }
+    return {
+      effect,
+      descriptor,
+      params: passthruParams as NativeEffectPassRuntime['params'],
+    };
+  }
   const [
     rawId,
     rawAmount,
@@ -2941,7 +3119,7 @@ interface NativeUnsupportedSourceOptions {
   nativeVideoDecodePumpReady?: boolean;
 }
 
-const NATIVE_READY_LAYER_TYPES = new Set(['media', 'gpu', 'color']);
+const NATIVE_READY_LAYER_TYPES = new Set(['media', 'gpu', 'color', 'lines', 'svg', 'lightpainting', 'text', 'splat', 'model3d', 'screen', 'group']);
 
 function nativeUnsupportedGeometryReason(layer: Layer): string | null {
   const warpMode = String(layer.warpMode || 'corners').trim().toLowerCase();
@@ -2958,9 +3136,8 @@ function nativeUnsupportedGeometryReason(layer: Layer): string | null {
   const shape = layer.layerShape;
   if (shape?.enabled) {
     const type = String(shape.type || 'rectangle').trim().toLowerCase();
-    if (shape.params?.invert) return 'layer-shape:invert:native-compositor-pending';
-    if (shape.controlPoints?.length) return 'layer-shape:warp:native-compositor-pending';
-    if (type !== 'rectangle' && type !== 'circle' && type !== 'triangle') {
+    const nativeShapeTypes = ['rectangle', 'circle', 'triangle', 'ellipse', 'polygon', 'star', 'custom'];
+    if (!nativeShapeTypes.includes(type)) {
       return `layer-shape:${type || 'unknown'}:not-native`;
     }
   }
@@ -3023,7 +3200,6 @@ export function nativeUnsupportedSourceReason(
   hasNativeGraphRoute = false,
   options: NativeUnsupportedSourceOptions = {},
 ): string | null {
-  if ((layer as any).parentGroupId) return 'group-child:native-compositor-pending';
   if (!NATIVE_READY_LAYER_TYPES.has(String(layer.type))) {
     return `layer-type:${String(layer.type || 'unknown')}:not-native`;
   }
@@ -3038,6 +3214,14 @@ export function nativeUnsupportedSourceReason(
     if (sourceReason) return sourceReason;
     return `gpu-shader:${shaderId || 'unknown'}:route-unavailable`;
   }
+
+  // A native graph route replaces the source ingest path. Integrated plugins
+  // are represented as effect media in the project model, but their pixels are
+  // produced directly by the core graph rather than decoded from source.src.
+  if (hasNativeGraphRoute) return null;
+
+  const pluginReason = nativePluginUnavailableReason(layer.source?.effectSource);
+  if (pluginReason) return pluginReason;
 
   if (layer.source) {
     return nativeMediaSourceUnsupportedReason(layer.source, options);
@@ -3140,15 +3324,186 @@ function layerAspectFromCorners(layer: Layer, outputWidth: number, outputHeight:
   return height > 0 ? clampNumber(width / height, 0.001, 128) : 1;
 }
 
+
+// Layer Content Fit drives how content maps into an active shape:
+//   stretch -> content stretches/follows the shape surface
+//   fill    -> the shape is a pure mask over layer-filling content
+//   crop    -> content letterboxed (aspect-preserving) within the shape
+function shapeContentModeFromFit(fit: Layer['contentFit']): 'follow' | 'mask' | 'contain' {
+  if (fit === 'fill') return 'mask';
+  if (fit === 'crop') return 'contain';
+  return 'follow';
+}
+
 function nativeLayerShapeState(layer: Layer): NativeLayerShapeState {
   const shape = layer.layerShape;
   const activeType = shape?.enabled ? shape.type : 'rectangle';
   const params = shape?.params ?? {};
-  const unsupported = !!params.invert || activeType === 'custom';
+  const invert = params.invert ? 1 : 0;
+
+  if (activeType === 'custom') {
+    const customPoints = params.customPoints ?? [];
+    if (params.customClosed && customPoints.length >= 3) {
+      // Flatten beziers, downsample to the 32-point budget, flip y once at
+      // the boundary (editor y-up -> compositor local-UV y-down). The packed
+      // array carries the CURRENT (dragged) outline in vec4 slots 0-15 and
+      // the BASE outline in slots 16-31 so the compositor can content-follow
+      // via mean-value coordinates.
+      const flattenOutline = (source: typeof customPoints): Array<{ x: number; y: number }> => {
+        const tessellated = tessellateNativeMaskShape(source as any);
+        const count = Math.min(32, tessellated.length);
+        const flat: Array<{ x: number; y: number }> = [];
+        for (let index = 0; index < count; index++) {
+          const sourceIndex = count === tessellated.length
+            ? index
+            : Math.min(tessellated.length - 1, Math.floor(index * tessellated.length / count));
+          const point = tessellated[sourceIndex];
+          flat.push({
+            x: quantizeNative(clampNumber(Number(point.x), -1, 2)),
+            y: quantizeNative(clampNumber(1 - Number(point.y), -1, 2)),
+          });
+        }
+        return flat;
+      };
+      const flat = flattenOutline(customPoints);
+      const basePoints = params.customBasePoints;
+      let base = basePoints?.length ? flattenOutline(basePoints) : flat;
+      // Topology changed (points added/removed, beziers bent): re-anchor the
+      // content mapping to the current outline.
+      if (base.length !== flat.length) base = flat;
+      let bbMinX = 1; let bbMinY = 1; let bbMaxX = 0; let bbMaxY = 0;
+      for (const point of flat) {
+        bbMinX = Math.min(bbMinX, point.x);
+        bbMinY = Math.min(bbMinY, point.y);
+        bbMaxX = Math.max(bbMaxX, point.x);
+        bbMaxY = Math.max(bbMaxY, point.y);
+      }
+      const packOutline = (points: Array<{ x: number; y: number }>): NativeVec4[] => {
+        const packed: NativeVec4[] = [];
+        for (let index = 0; index < points.length; index += 2) {
+          const a = points[index];
+          const b = points[index + 1] ?? points[index];
+          packed.push([a.x, a.y, b.x, b.y]);
+        }
+        while (packed.length < 16) packed.push([0, 0, 0, 0]);
+        return packed;
+      };
+      const contentMode = shapeContentModeFromFit(layer.contentFit);
+      const fit = contentMode === 'mask' ? 0 : contentMode === 'contain' ? 2 : 1;
+      const contentFollow = contentMode === 'follow';
+      const shapePoints: NativeVec4[] = [
+        ...packOutline(flat),
+        ...(contentFollow ? packOutline(base) : []),
+      ];
+      const feather = quantizeNative(clampNumber(Number(params.feather ?? 0), 0, 1));
+      const payload: NativeVec4 = [6, feather, 0, 1];
+      const payload2: NativeVec4 = [
+        quantizeNative(bbMinX),
+        quantizeNative(bbMinY),
+        quantizeNative(Math.max(0.0001, bbMaxX - bbMinX)),
+        quantizeNative(Math.max(0.0001, bbMaxY - bbMinY)),
+      ];
+      const shapeMeta: NativeVec4 = [flat.length, invert, fit, contentFollow ? 3 : 0];
+      return {
+        shape: payload,
+        shape2: payload2,
+        shapeMeta,
+        shapePoints,
+        signature: [
+          ...payload,
+          ...payload2,
+          ...shapeMeta,
+          ...shapePoints.flat(),
+        ].map((value) => Number(value).toFixed(5)).join(':'),
+      };
+    }
+    // Open/incomplete custom shapes render as plain rectangles.
+    return {
+      shape: [0, 0, 0, 1],
+      shape2: [1, 0.7, 6, 0.4],
+      shapeMeta: [0, 0, 0, 0],
+      shapePoints: [],
+      signature: 'rect',
+    };
+  }
+
+  // Polygon (hexagon) with vertex handles: the handles ARE the polygon's
+  // vertices — render through the MVC surface path so mask and content
+  // deform together per-vertex (same feel as the triangle).
+  if (activeType === 'polygon' && (shape?.controlPoints?.length ?? 0) >= 3) {
+    const vertices = shape!.controlPoints!;
+    const n = Math.min(12, vertices.length);
+    const current: Array<{ x: number; y: number }> = [];
+    for (let index = 0; index < n; index++) {
+      current.push({
+        x: quantizeNative(clampNumber(Number(vertices[index].x), -1, 2)),
+        y: quantizeNative(clampNumber(1 - Number(vertices[index].y), -1, 2)),
+      });
+    }
+    if (current.every((point) => Number.isFinite(point.x) && Number.isFinite(point.y))) {
+      // Base outline: the regular polygon the content was authored against.
+      const rotationRad = (Number(params.rotation ?? 0) * Math.PI) / 180;
+      const scale = clampNumber(Number(params.scale ?? 1), 0.0001, 8);
+      const circumradius = (0.4 / Math.cos(Math.PI / n)) * scale;
+      const base: Array<{ x: number; y: number }> = [];
+      for (let index = 0; index < n; index++) {
+        const angle = ((2 * index + 1) * Math.PI) / n + rotationRad;
+        base.push({
+          x: quantizeNative(0.5 + circumradius * Math.cos(angle)),
+          y: quantizeNative(1 - (0.5 + circumradius * Math.sin(angle))),
+        });
+      }
+      let bbMinX = 1; let bbMinY = 1; let bbMaxX = 0; let bbMaxY = 0;
+      for (const point of current) {
+        bbMinX = Math.min(bbMinX, point.x);
+        bbMinY = Math.min(bbMinY, point.y);
+        bbMaxX = Math.max(bbMaxX, point.x);
+        bbMaxY = Math.max(bbMaxY, point.y);
+      }
+      const packOutline = (points: Array<{ x: number; y: number }>): NativeVec4[] => {
+        const packed: NativeVec4[] = [];
+        for (let index = 0; index < points.length; index += 2) {
+          const a = points[index];
+          const b = points[index + 1] ?? points[index];
+          packed.push([a.x, a.y, b.x, b.y]);
+        }
+        while (packed.length < 16) packed.push([0, 0, 0, 0]);
+        return packed;
+      };
+      const feather = quantizeNative(clampNumber(Number(params.feather ?? 0), 0, 1));
+      const payload: NativeVec4 = [6, feather, 0, 1];
+      const payload2: NativeVec4 = [
+        quantizeNative(bbMinX),
+        quantizeNative(bbMinY),
+        quantizeNative(Math.max(0.0001, bbMaxX - bbMinX)),
+        quantizeNative(Math.max(0.0001, bbMaxY - bbMinY)),
+      ];
+      const contentMode = shapeContentModeFromFit(layer.contentFit);
+      const polyFit = contentMode === 'mask' ? 0 : contentMode === 'contain' ? 2 : 1;
+      const polyFollow = contentMode === 'follow';
+      const shapeMeta: NativeVec4 = [n, invert, polyFit, polyFollow ? 3 : 0];
+      const shapePoints = [...packOutline(current), ...(polyFollow ? packOutline(base) : [])];
+      return {
+        shape: payload,
+        shape2: payload2,
+        shapeMeta,
+        shapePoints,
+        signature: [...payload, ...payload2, ...shapeMeta, ...shapePoints.flat()]
+          .map((value) => Number(value).toFixed(5)).join(':'),
+      };
+    }
+  }
+
+  const unsupported =
+    activeType === 'line' ||
+    activeType === 'polyline';
   const shapeType =
     unsupported ? 0 :
     activeType === 'circle' ? 1 :
     activeType === 'triangle' ? 2 :
+    activeType === 'ellipse' ? 3 :
+    activeType === 'polygon' ? 4 :
+    activeType === 'star' ? 5 :
     0;
   const feather = shapeType > 0 ? clampNumber(Number(params.feather ?? 0), 0, 1) : 0;
   const rotation = shapeType > 0 ? (Number(params.rotation ?? 0) * Math.PI) / 180 : 0;
@@ -3159,9 +3514,47 @@ function nativeLayerShapeState(layer: Layer): NativeLayerShapeState {
     quantizeNative(rotation),
     quantizeNative(scale),
   ];
+  // Shape geometry params (mirrors the WebGL shape-mask uniforms):
+  // [radiusX, radiusY, sides, innerRadius]
+  const payload2: NativeVec4 = [
+    quantizeNative(clampNumber(Number(params.radiusX ?? 1), 0.01, 4)),
+    quantizeNative(clampNumber(Number(params.radiusY ?? 0.7), 0.01, 4)),
+    clampNumber(Math.round(Number(params.sides ?? 6)), 3, 12),
+    quantizeNative(clampNumber(Number(params.innerRadius ?? 0.4), 0.05, 1)),
+  ];
+  // Control-point warp (canvas warp handles). Circle uses 5 points
+  // (quad corners + center focus); triangle uses its 3 vertices. Points are
+  // layer-local with y up in the editor — flip once to compositor space.
+  let warpKind = 0;
+  const shapePoints: NativeVec4[] = [];
+  const controlPoints = shape?.enabled ? shape.controlPoints : undefined;
+  const quadWarpFamily =
+    activeType === 'circle' || activeType === 'ellipse' || activeType === 'star';
+  const requiredPoints = quadWarpFamily ? 5 : activeType === 'triangle' ? 3 : 0;
+  if (requiredPoints > 0 && (controlPoints?.length ?? 0) >= requiredPoints) {
+    const flat = controlPoints!.slice(0, requiredPoints).map((point) => ({
+      x: quantizeNative(clampNumber(Number(point.x), -1, 2)),
+      y: quantizeNative(clampNumber(1 - Number(point.y), -1, 2)),
+    }));
+    if (flat.every((point) => Number.isFinite(point.x) && Number.isFinite(point.y))) {
+      warpKind = quadWarpFamily ? 1 : 2;
+      for (let index = 0; index < flat.length; index += 2) {
+        const a = flat[index];
+        const b = flat[index + 1] ?? flat[index];
+        shapePoints.push([a.x, a.y, b.x, b.y]);
+      }
+    }
+  }
+  const parametricFollow = shapeContentModeFromFit(layer.contentFit) !== 'mask';
+  const shapeMeta: NativeVec4 = [0, shapeType > 0 ? invert : 0, parametricFollow ? 1 : 0, warpKind];
   return {
     shape: payload,
-    signature: payload.map((value, index) => value.toFixed(index === 0 ? 0 : 5)).join(':'),
+    shape2: payload2,
+    shapeMeta,
+    shapePoints,
+    signature: [...payload, ...payload2, ...shapeMeta, ...shapePoints.flat()]
+      .map((value, index) => Number(value).toFixed(index === 0 ? 0 : 5))
+      .join(':'),
   };
 }
 
@@ -3598,9 +3991,20 @@ export function nativeLayerSourceFromMediaSource(
 }
 
 function nativeGraphOutputSource(layer: Layer, kind: NativeGraphRouteKind): NativeLayerSource {
+  const pluginKind = kind === 'ghostfx'
+    || kind === 'handfx'
+    || kind === 'performer-world'
+    || kind === 'vj-crossfade';
+  const effectType = String(layer.source?.effectSource?.effectType ?? kind).trim().toLowerCase();
   const shaderId = layer.gpuLayerContent?.shaderId || 'gpu';
+  // Lines and SVG layers have no gpuLayerContent shader id. A generic `gpu`
+  // suffix lets the core reuse a stale source frame when one graph-backed
+  // layer replaces another, so keep their source identities kind-specific.
+  const graphSourceId = kind === 'lines' || kind === 'svg' || kind === 'light-painting' || kind === 'text' || kind === 'splat' || kind === 'model3d'
+    ? `gpu:${layer.id}:${kind}`
+    : `gpu:${layer.id}:${shaderId}`;
   return {
-    id: `gpu:${layer.id}:${shaderId}`,
+    id: pluginKind ? `plugin:${layer.id}:${effectType}` : graphSourceId,
     uri: `native-graph://${kind}/${layer.id}`,
     sourceType: `gpu:${kind}`,
     source: null,
@@ -3659,6 +4063,24 @@ function nativeGraphBufferPrefixesForRoute(route: NativeGraphLayerRoute): string
     case 'planet':
       prefixes = [`planet:${safeSourceId}`];
       break;
+    case 'lines':
+      prefixes = [`lines:${safeSourceId}`];
+      break;
+    case 'svg':
+      prefixes = [`svg:${safeSourceId}`];
+      break;
+    case 'light-painting':
+      prefixes = [`light-painting:${safeSourceId}`];
+      break;
+    case 'text':
+      prefixes = [`text:${safeSourceId}`];
+      break;
+    case 'splat':
+      prefixes = [`splat:${safeSourceId}`];
+      break;
+    case 'model3d':
+      prefixes = [`model3d:${safeSourceId}`];
+      break;
     case 'smoke-3d':
       prefixes = [`3d-smoke:${safeSourceId}`];
       break;
@@ -3682,6 +4104,18 @@ function nativeGraphBufferPrefixesForRoute(route: NativeGraphLayerRoute): string
       break;
     case 'point-cloud-fx':
       prefixes = [`${sourceId}:point-cloud-fx:`];
+      break;
+    case 'ghostfx':
+      prefixes = [`ghostfx:${safeSourceId}`];
+      break;
+    case 'handfx':
+      prefixes = [`handfx:${safeSourceId}`];
+      break;
+    case 'performer-world':
+      prefixes = [`performer-world:${safeSourceId}`];
+      break;
+    case 'vj-crossfade':
+      prefixes = [`vjxfade:${safeSourceId}`];
       break;
     case 'effect-pass':
       prefixes = [`effect-pass:${safeSourceId}`];
@@ -3775,7 +4209,12 @@ function applyNativeGraphWorkloadScale(
 }
 
 function nativeGraphParamsForLayer(layer: Layer, kind: NativeGraphRouteKind, workloadScale = 1): Record<string, any> {
-  const params = layer.gpuLayerContent?.params ?? {};
+  const params: Record<string, any> = kind === 'ghostfx'
+    || kind === 'handfx'
+    || kind === 'performer-world'
+    || kind === 'vj-crossfade'
+    ? layer.source?.effectSource ?? {}
+    : layer.gpuLayerContent?.params ?? {};
   const shaderId = String(layer.gpuLayerContent?.shaderId || '').trim().toLowerCase();
   if (kind === 'particle-field' && shaderId === 'gravity-wells') {
     return applyNativeGraphWorkloadScale({
@@ -4008,8 +4447,118 @@ function isNativeStaticImageDecodeUri(uri: string | undefined | null): boolean {
 // the instance through props.
 let activeNativeRendererSync: NativeRendererSync | null = null;
 
+type NativeLibraryVideoArmRequest = {
+  id: string;
+  src: string;
+  /** Asset registry ref — REQUIRED to resolve a core-readable uri for
+   *  imported media whose `src` is a browser blob: URL. */
+  assetRef?: unknown;
+  videoElement?: HTMLVideoElement | null;
+  seekGeneration?: number;
+  playbackRate?: number;
+  playbackMode?: 'loop' | 'once';
+  durationSeconds?: number;
+  trimStart?: number;
+  trimEnd?: number;
+};
+
+const pendingLibraryVideoArms = new Map<string, NativeLibraryVideoArmRequest>();
 const armedLibraryVideoAt = new Map<string, number>();
+const armedLibraryVideoSignatures = new Map<string, string>();
 const LIBRARY_ARM_REFRESH_MS = 20_000;
+const NATIVE_LIBRARY_TRIGGER_SEEK_GENERATION = 1;
+
+function nativeLibraryArmGeneration(item: NativeLibraryVideoArmRequest): number {
+  const generation = Number(item.seekGeneration ?? NATIVE_LIBRARY_TRIGGER_SEEK_GENERATION);
+  return Number.isFinite(generation) ? Math.max(0, Math.floor(generation)) : 1;
+}
+
+function nativeLibraryArmKey(item: NativeLibraryVideoArmRequest): string {
+  return `${item.id}\u0000${nativeLibraryArmGeneration(item)}`;
+}
+
+function nativeLibraryArmSignature(item: NativeLibraryVideoArmRequest): string {
+  const trimStart = Math.max(0, Math.min(1, Number(item.trimStart ?? 0)));
+  const trimEnd = Math.max(trimStart, Math.min(1, Number(item.trimEnd ?? 1)));
+  const duration = Number(item.durationSeconds ?? item.videoElement?.duration);
+  return JSON.stringify([
+    item.src,
+    Number(item.playbackRate ?? 1) || 1,
+    item.playbackMode ?? 'loop',
+    Number.isFinite(duration) && duration > 0 ? duration : null,
+    trimStart,
+    trimEnd,
+    nativeLibraryArmGeneration(item),
+  ]);
+}
+
+function prefetchArmedLibraryVideo(
+  sync: NativeRendererSync,
+  item: NativeLibraryVideoArmRequest,
+  force = false,
+): void {
+  if (!sync.canArmLibraryVideos()) return;
+  const now = Date.now();
+  const armKey = nativeLibraryArmKey(item);
+  const signature = nativeLibraryArmSignature(item);
+  if (
+    !force &&
+    armedLibraryVideoSignatures.get(armKey) === signature &&
+    now - (armedLibraryVideoAt.get(armKey) ?? 0) < LIBRARY_ARM_REFRESH_MS
+  ) {
+    return;
+  }
+  armedLibraryVideoAt.set(armKey, now);
+  armedLibraryVideoSignatures.set(armKey, signature);
+  const duration = Number(item.durationSeconds ?? item.videoElement?.duration);
+  const durationSeconds = Number.isFinite(duration) && duration > 0 ? duration : undefined;
+  const trimStart = Math.max(0, Math.min(1, Number(item.trimStart ?? 0)));
+  const trimEnd = Math.max(trimStart, Math.min(1, Number(item.trimEnd ?? 1)));
+  const trimStartSeconds = durationSeconds ? durationSeconds * trimStart : 0;
+  const syntheticSrc = {
+    id: item.id,
+    src: item.src,
+    _assetRef: item.assetRef,
+    type: 'video',
+    videoElement: item.videoElement ?? undefined,
+    playbackRate: Number(item.playbackRate ?? 1) || 1,
+    playbackMode: item.playbackMode ?? 'loop',
+    durationSeconds,
+    trimStart,
+    trimEnd,
+    _nativePlaybackTimeSeconds: trimStartSeconds,
+    _nativePlaybackSeekSeq: nativeLibraryArmGeneration(item),
+  } as unknown as NonNullable<Layer['source']>;
+  const options = sync.libraryVideoPrefetchOptions(syntheticSrc);
+  // The core's decoder reads files, not the browser's blob: object URLs —
+  // resolve through the asset registry exactly like real layer playback
+  // does. Arming with a raw blob: src spawns a session that dies on its
+  // first read, which is why the warm pool sat empty ("armed:1 → 0").
+  const readableUri = nativeReadableMediaUri(syntheticSrc);
+  if (!isNativeLocalMediaUri(readableUri)) {
+    armedLibraryVideoAt.delete(armKey);
+    armedLibraryVideoSignatures.delete(armKey);
+    return;
+  }
+  void prefetchNativeRendererMedia(
+    `library:${item.id}:g${nativeLibraryArmGeneration(item)}`,
+    readableUri,
+    1,
+    'video',
+    options,
+  ).catch(
+    () => {
+      armedLibraryVideoAt.delete(armKey);
+      armedLibraryVideoSignatures.delete(armKey);
+    },
+  );
+}
+
+function flushPendingLibraryVideoArms(sync: NativeRendererSync): void {
+  for (const item of pendingLibraryVideoArms.values()) {
+    prefetchArmedLibraryVideo(sync, item, true);
+  }
+}
 
 /**
  * Pre-arm a media-library video BEFORE the user commits to placing it
@@ -4022,43 +4571,31 @@ const LIBRARY_ARM_REFRESH_MS = 20_000;
  * Fire-and-forget and safe to over-call: re-arms are debounced per item, and
  * core-side the armed-session cap plus orphan GC bound the pool.
  */
-export function armNativeLibraryVideo(item: {
-  id: string;
-  src: string;
-  videoElement?: HTMLVideoElement | null;
-}): void {
-  const sync = activeNativeRendererSync;
-  if (!sync || !item?.id || !item?.src) return;
-  const now = Date.now();
-  if (now - (armedLibraryVideoAt.get(item.id) ?? 0) < LIBRARY_ARM_REFRESH_MS) return;
-  armedLibraryVideoAt.set(item.id, now);
-  // Mirror the source shape a real placement produces (applyToLayer in
-  // MediaTray): rate 1, loop, untrimmed, duration via the library element.
-  const syntheticSrc = {
-    id: item.id,
-    src: item.src,
-    type: 'video',
-    videoElement: item.videoElement ?? undefined,
-    playbackRate: 1,
-    playbackMode: 'loop',
-    trimStart: 0,
-    trimEnd: 1,
-  } as unknown as NonNullable<Layer['source']>;
-  const options = sync.libraryVideoPrefetchOptions(syntheticSrc);
-  void prefetchNativeRendererMedia(`library:${item.id}`, item.src, 1, 'video', options).catch(
-    () => {
-      armedLibraryVideoAt.delete(item.id);
-    },
-  );
+export function armNativeLibraryVideo(item: NativeLibraryVideoArmRequest): void {
+  if (!item?.id || !item?.src) return;
+  const armKey = nativeLibraryArmKey(item);
+  for (const [key, pending] of pendingLibraryVideoArms) {
+    if (pending.id !== item.id || key === armKey) continue;
+    pendingLibraryVideoArms.delete(key);
+    armedLibraryVideoAt.delete(key);
+    armedLibraryVideoSignatures.delete(key);
+  }
+  pendingLibraryVideoArms.set(armKey, item);
+  if (activeNativeRendererSync) {
+    prefetchArmedLibraryVideo(activeNativeRendererSync, item);
+  }
 }
 
 export class NativeRendererSync {
   private running = false;
   private startupReady = false;
+  private lifecycleGeneration = 0;
   private frameId = 0;
   private pendingSync = false;
+  private pendingSyncTimer: ReturnType<typeof setTimeout> | null = null;
   private flushInFlight = false;
   private flushAgain = false;
+  private urgentVideoRevision = 0;
   private desiredWidth = 0;
   private desiredHeight = 0;
   private latestLayers: Layer[] = [];
@@ -4087,6 +4624,135 @@ export class NativeRendererSync {
   private videoRefreshAt = new Map<string, number>();
   private nativeVideoPrefetchAt = new Map<string, number>();
   private sourcePreviewSeq = new Map<string, number>();
+  // Text layers: CPU-rasterized glyph atlas + cached layout, re-uploaded
+  // only when the text signature changes (never per frame).
+  private nativeTextState = new Map<string, {
+    atlasSig: string;
+    atlasSeq: number;
+    atlasUploaded: boolean;
+    atlas: TextNativeAtlas | null;
+    layoutKey: string;
+    letters: TextGlyphMetric[];
+  }>();
+
+  // Splat layers: parsed + packed point buffers, uploaded once per file.
+  private nativeSplatState = new Map<string, {
+    fileSig: string;
+    uploadedSig: string;
+    loading: boolean;
+    packed: { buffer: Float32Array; pointCount: number } | null;
+  }>();
+
+  private nativeSplatStateFor(layerId: string) {
+    let state = this.nativeSplatState.get(layerId);
+    if (!state) {
+      state = { fileSig: '', uploadedSig: '', loading: false, packed: null };
+      this.nativeSplatState.set(layerId, state);
+    }
+    return state;
+  }
+
+  private async loadNativeSplatPoints(layerId: string, content: SplatContent, fileSig: string) {
+    const state = this.nativeSplatStateFor(layerId);
+    const originalName = String((content as { _originalFileName?: string })._originalFileName ?? content.filePath);
+    const isSplat = /\.splat(\?|$)/i.test(originalName);
+    const sourceLabel = originalName.split('/').pop() || (isSplat ? 'Gaussian splat' : 'Point cloud');
+    const { beginOwnedLoading, updateOwnedLoading, endOwnedLoading } = await import('$lib/stores/loading');
+    const { loadPLY } = await import('$lib/splat/plyLoader');
+    const { loadSplatFromUrl } = await import('$lib/splat/splatLoader');
+    const owner = beginOwnedLoading(`Loading ${sourceLabel}`, 0, 'Reading source data');
+    try {
+      const density = Math.min(1, Math.max(0.01, Number(content.pointDensity) || 1));
+      const maxPoints = Math.max(1000, Math.round(SPLAT_NATIVE_MAX_POINTS * density));
+      const onProgress = (event: { phase: 'read' | 'parse'; progress: number; sourceVertexCount?: number; loadedVertexCount?: number }) => {
+        const progress = event.phase === 'read' ? event.progress * 0.15 : 0.15 + event.progress * 0.7;
+        const detail = event.phase === 'read'
+          ? 'Reading source data'
+          : event.sourceVertexCount
+            ? `Parsing ${Math.min(event.loadedVertexCount ?? 0, event.sourceVertexCount).toLocaleString()} of ${event.sourceVertexCount.toLocaleString()} points`
+            : 'Parsing point data';
+        updateOwnedLoading(owner, `Loading ${sourceLabel}`, progress, detail);
+      };
+      const plyData = isSplat
+        ? await loadSplatFromUrl(content.filePath, { maxPoints, onProgress })
+        : await loadPLY(content.filePath, { maxPoints, onProgress });
+      if (state.fileSig !== fileSig) return; // superseded
+      updateOwnedLoading(owner, `Loading ${sourceLabel}`, 0.88, 'Packing GPU point buffer');
+      const pointData = pointCloudBuffersFromPLYData(plyData, { maxPoints });
+      if (state.fileSig !== fileSig) return; // superseded
+      state.packed = packSplatNativePoints(pointData);
+      state.uploadedSig = '';
+      // Surface the real counts in the panel (the release UI expects the
+      // renderer that owns parsing to report them).
+      try {
+        const { project } = await import('$lib/stores/layers');
+        project.updateSplatContent(layerId, {
+          pointCount: pointData.sourceVertexCount ?? state.packed.pointCount,
+          activePointCount: state.packed.pointCount,
+        } as Partial<SplatContent>);
+      } catch { /* store unavailable in tests */ }
+    } catch (err) {
+      console.warn('[NativeRendererSync] native splat point load failed', layerId, err);
+    } finally {
+      endOwnedLoading(owner);
+      if (state.fileSig === fileSig) state.loading = false;
+    }
+  }
+
+  // 3D model layers: flattened mesh + baked texture, uploaded once per file.
+  private nativeModel3DState = new Map<string, {
+    fileSig: string;
+    meshUploadedSig: string;
+    textureUploadedSig: string;
+    textureSeq: number;
+    mesh: Model3DNativeMesh | null;
+  }>();
+
+  private nativeModel3DStateFor(layerId: string) {
+    let state = this.nativeModel3DState.get(layerId);
+    if (!state) {
+      state = { fileSig: '', meshUploadedSig: '', textureUploadedSig: '', textureSeq: 0, mesh: null };
+      this.nativeModel3DState.set(layerId, state);
+    }
+    return state;
+  }
+
+  private async loadNativeModel3DMesh(layerId: string, content: Model3DContent, fileSig: string) {
+    const state = this.nativeModel3DStateFor(layerId);
+    const label = content.modelName || 'model';
+    const { beginOwnedLoading, updateOwnedLoading, endOwnedLoading } = await import('$lib/stores/loading');
+    const owner = beginOwnedLoading(`Loading ${label}`, 0, 'Reading model data');
+    try {
+      const mesh = await loadModel3DNativeMesh(content.modelData!, content.modelFormat, (progress, detail) => {
+        updateOwnedLoading(owner, `Loading ${label}`, progress, detail);
+      });
+      if (state.fileSig !== fileSig) return; // superseded
+      state.mesh = mesh;
+      state.meshUploadedSig = '';
+      state.textureUploadedSig = '';
+      try {
+        const { project } = await import('$lib/stores/layers');
+        (project as unknown as { updateModel3DContent?: (id: string, updates: Partial<Model3DContent>) => void })
+          .updateModel3DContent?.(layerId, {
+            vertexCount: mesh.sourceVertexCount,
+            faceCount: mesh.faceCount,
+          });
+      } catch { /* store unavailable in tests */ }
+    } catch (err) {
+      console.warn('[NativeRendererSync] native model3d mesh load failed', layerId, err);
+    } finally {
+      endOwnedLoading(owner);
+    }
+  }
+
+  private nativeTextStateFor(layerId: string) {
+    let state = this.nativeTextState.get(layerId);
+    if (!state) {
+      state = { atlasSig: '', atlasSeq: 0, atlasUploaded: false, atlas: null, layoutKey: '', letters: [] };
+      this.nativeTextState.set(layerId, state);
+    }
+    return state;
+  }
   private sourcePreviewNextAt = new Map<string, number>();
   private sourcePreviewSig = new Map<string, string>();
   private sourcePreviewFailures = new Map<string, number>();
@@ -4582,8 +5248,13 @@ export class NativeRendererSync {
     if (!effectPasses?.length) return null;
     if (!this.supportsNativeEffectPassRoute(effectPasses)) return null;
     const inputSource = nativeLayerSource(layer);
-    if (!inputSource.source || !inputSource.shouldPreview || inputSource.sourceType === 'none') return null;
+    if (!inputSource.source || !inputSource.sourceType || inputSource.sourceType === 'none') return null;
+    // FS/ISF shader sources are rendered BY the core into the layer's frame
+    // slot — they never pass the upload/decode readiness checks, but their
+    // pixels are always available via the layer-frame binding.
+    const coreRendered = !!inputSource.source.shaderCode;
     const inputReady =
+      coreRendered ||
       this.nativeSourceFrameUploaded(inputSource) ||
       this.canUseNativeStaticImageDecode(inputSource.source, inputSource.sourceType) ||
       this.canUseNativeVideoDecodePump(inputSource, inputSource.sourceType);
@@ -4593,13 +5264,78 @@ export class NativeRendererSync {
     if (!includeWarningDisabled && (this.nativeGraphRoutes.get(key)?.warnings ?? 0) >= 3) {
       return null;
     }
-    return { kind: 'effect-pass', key, source, inputSource, effectPasses };
+    return {
+      kind: 'effect-pass',
+      key,
+      source,
+      inputSource,
+      effectPasses,
+      // Bind the layer's raw shader render (shader-frame), NOT its displayed
+      // frame (layer-frame): once the effect-pass output claims the display
+      // slot, layer-frame would resolve to the chain's own output — a
+      // self-feedback loop that starts from the empty checkerboard slot.
+      inputBindingId: coreRendered ? `shader-frame:${layer.id}` : inputSource.id,
+      inputCoreRendered: coreRendered,
+    };
+  }
+
+  // Route for drawing-instrument layers (lines / svg / light painting):
+  // the instrument renders into its base source frame, and any layer
+  // effects chain from that frame into a distinct display source — the
+  // same instrument-vs-display split the GPU graph kinds use.
+  private nativeInstrumentGraphRoute(
+    layer: Layer,
+    kind: 'lines' | 'svg' | 'light-painting' | 'text' | 'splat' | 'model3d',
+    includeWarningDisabled: boolean,
+  ): NativeGraphLayerRoute | null {
+    const baseSource = nativeGraphOutputSource(layer, kind);
+    const key = this.nativeGraphRouteKey(kind, baseSource.id);
+    if (!includeWarningDisabled && (this.nativeGraphRoutes.get(key)?.warnings ?? 0) >= 3) return null;
+    const candidateEffectPasses = nativeEffectPassesForLayer(layer);
+    const effectPasses = candidateEffectPasses?.length && this.supportsNativeEffectPassRoute(candidateEffectPasses)
+      ? candidateEffectPasses
+      : null;
+    return {
+      kind,
+      key,
+      baseSource: effectPasses?.length ? baseSource : undefined,
+      source: effectPasses?.length ? nativeEffectPassOutputSource(layer, baseSource) : baseSource,
+      inputSource: null,
+      effectPasses: effectPasses ?? undefined,
+    };
   }
 
   private nativeGraphRouteForLayer(layer: Layer, includeWarningDisabled = false): NativeGraphLayerRoute | null {
     if (!this.nativeComputeGraphSourceFrames || !this.nativeWgslStdlibWarmed || !layer.visible) return null;
+    const pluginKind = nativePluginEffectType(layer.source?.effectSource?.effectType);
+    if (pluginKind) {
+      if (!this.supportsNativeGraphRoute(pluginKind)) return null;
+      if (nativePluginUnavailableReason(layer.source?.effectSource)) return null;
+      const source = nativeGraphOutputSource(layer, pluginKind);
+      const key = this.nativeGraphRouteKey(pluginKind, source.id);
+      if (!includeWarningDisabled && (this.nativeGraphRoutes.get(key)?.warnings ?? 0) >= 3) return null;
+      return { kind: pluginKind, key, source, inputSource: null };
+    }
     const effectPassRoute = this.nativeEffectPassRouteForLayer(layer, includeWarningDisabled);
     if (effectPassRoute) return effectPassRoute;
+    if (layer.type === 'lines' && layer.linesContent && this.supportsNativeGraphRoute('lines')) {
+      return this.nativeInstrumentGraphRoute(layer, 'lines', includeWarningDisabled);
+    }
+    if (layer.type === 'svg' && layer.svgContent?.svgSource && this.supportsNativeGraphRoute('svg')) {
+      return this.nativeInstrumentGraphRoute(layer, 'svg', includeWarningDisabled);
+    }
+    if (layer.type === 'lightpainting' && layer.lightPaintingContent && this.supportsNativeGraphRoute('light-painting')) {
+      return this.nativeInstrumentGraphRoute(layer, 'light-painting', includeWarningDisabled);
+    }
+    if (layer.type === 'text' && layer.textContent && this.supportsNativeGraphRoute('text')) {
+      return this.nativeInstrumentGraphRoute(layer, 'text', includeWarningDisabled);
+    }
+    if (layer.type === 'splat' && layer.splatContent?.filePath && this.supportsNativeGraphRoute('splat')) {
+      return this.nativeInstrumentGraphRoute(layer, 'splat', includeWarningDisabled);
+    }
+    if (layer.type === 'model3d' && layer.model3dContent?.modelData && this.supportsNativeGraphRoute('model3d')) {
+      return this.nativeInstrumentGraphRoute(layer, 'model3d', includeWarningDisabled);
+    }
     if (layer.type !== 'gpu' || !layer.gpuLayerContent) return null;
     const shaderId = String(layer.gpuLayerContent.shaderId || '').trim();
     const normalizedShaderId = shaderId.toLowerCase();
@@ -4779,6 +5515,125 @@ export class NativeRendererSync {
     return true;
   }
 
+  // Native group support: the group container itself renders nothing; each
+  // child becomes an effective layer whose source is the group's shader.
+  // Unified mode maps the child's canvas bbox onto the shared full-canvas
+  // shader via the ordinary cropRegion path (top-origin normalized coords),
+  // so slice strips sample exactly their screen region — same UV machinery
+  // media cropping already uses, which keeps vertical ordering correct.
+  private resolveNativeGroupLayers(layers: Layer[]): Layer[] {
+    let hasGroups = false;
+    let hasVjFeed = false;
+    for (const layer of layers) {
+      if (String(layer.type) === 'group' || (layer as { parentGroupId?: string | null }).parentGroupId) {
+        hasGroups = true;
+      }
+      if (String(layer.id).startsWith('vj-')) hasVjFeed = true;
+    }
+    if (!hasGroups && !hasVjFeed) return layers;
+    // VJ feed lookup: crossfade output preferred over single-bank rows.
+    const vjFeed = new Map<number, Layer>();
+    for (const layer of layers) {
+      const xfade = /^vj-xfade-(\d+)$/.exec(String(layer.id));
+      if (xfade) { vjFeed.set(Number(xfade[1]), layer); continue; }
+      const row = /^vj-layer-(\d+)/.exec(String(layer.id));
+      if (row && !vjFeed.has(Number(row[1]))) vjFeed.set(Number(row[1]), layer);
+    }
+    const redirectVjSource = (target: Layer) => {
+      if (String(target.id).startsWith('vj-')) return;
+      const raw = Number((target as { vjLayerIndex?: number | null }).vjLayerIndex);
+      if (!Number.isFinite(raw) || vjFeed.size === 0) return;
+      const index = Math.round(raw);
+      // VJ Mix (-1) approximates with the lowest active row's feed.
+      const feed = index < 0
+        ? vjFeed.get(Math.min(...Array.from(vjFeed.keys())))
+        : vjFeed.get(index);
+      if (feed?.source) {
+        (target as { source: Layer['source'] }).source = feed.source;
+      }
+    };
+    const byId = new Map(layers.map((layer) => [layer.id, layer]));
+    const out: Layer[] = [];
+    for (const layer of layers) {
+      if (String(layer.type) === 'group') continue;
+      const groupId = (layer as { parentGroupId?: string | null }).parentGroupId;
+      if (!groupId) {
+        const solo = { ...layer } as Layer;
+        redirectVjSource(solo);
+        out.push(solo);
+        continue;
+      }
+      const group = byId.get(groupId);
+      if (!group) { out.push(layer); continue; }
+      if (!group.visible) continue;
+      const config = (group as { groupConfig?: { shaderMode?: string; overrideStyles?: boolean; shaderSource?: Layer['source'] } }).groupConfig;
+      const shaderSource = config?.shaderSource ?? group.source ?? null;
+      // A group set to a VJ source (VJ Mix = -1, or a specific deck row)
+      // routes that stream into every child — the group's own VJ selection
+      // is the master feed for its slices.
+      const groupVjRaw = Number((group as { vjLayerIndex?: number | null }).vjLayerIndex);
+      const hasGroupVj = Number.isFinite(groupVjRaw);
+      const child = { ...layer } as Layer;
+      (child as { opacity: number }).opacity = clampNumber((layer.opacity ?? 1) * (group.opacity ?? 1), 0, 1);
+      // The native scene has no group compositing pass — the container is
+      // dropped and children render flat. A non-normal blend on the group
+      // (the VJ MAP slot blend, or a group blend in the editor) therefore
+      // rides onto each child so "this slot blends with the stack below"
+      // still holds. Children keep their own blend under a 'normal' group.
+      if (group.blendMode && group.blendMode !== 'normal') {
+        (child as { blendMode: Layer['blendMode'] }).blendMode = group.blendMode;
+      }
+      if (config?.overrideStyles && (group.effects?.length ?? 0) > 0) {
+        (child as { effects: Layer['effects'] }).effects = group.effects;
+      }
+      if (hasGroupVj) {
+        (child as { vjLayerIndex?: number }).vjLayerIndex = Math.round(groupVjRaw);
+      } else if (shaderSource) {
+        (child as { source: Layer['source'] }).source = shaderSource;
+      }
+      redirectVjSource(child);
+      if (hasGroupVj || shaderSource) {
+        if (config?.shaderMode === 'unified') {
+          const c = layer.corners;
+          if (c) {
+            const minX = clampNumber(Math.min(c.topLeft.x, c.topRight.x, c.bottomLeft.x, c.bottomRight.x), 0, 1);
+            const maxX = clampNumber(Math.max(c.topLeft.x, c.topRight.x, c.bottomLeft.x, c.bottomRight.x), 0, 1);
+            const minY = clampNumber(Math.min(c.topLeft.y, c.topRight.y, c.bottomLeft.y, c.bottomRight.y), 0, 1);
+            const maxY = clampNumber(Math.max(c.topLeft.y, c.topRight.y, c.bottomLeft.y, c.bottomRight.y), 0, 1);
+            // The crop pipeline's `1 - y - h` convention matches decoded
+            // media frames (stored bottom-up). Core-rendered content —
+            // shader/effect sources AND vj_layer_index feeds (the core
+            // samples its own rendered deck frames, top-down regardless
+            // of clip type) — stores top-down, which needs BOTH
+            // corrections: the band-order pre-flip AND an intra-band
+            // vertical flip. The core applies uv flips inside the crop
+            // window (heartbeat.wgsl flips sampled_uv before the uv0
+            // crop transform), so the pre-flip alone reverses band
+            // order but leaves each band's content upside down — a
+            // continuous image then reads as a clean global mirror.
+            const src = child.source as { type?: string; shaderCode?: string } | null;
+            const coreRendered = hasGroupVj
+              || (!!src && (src.type === 'shader' || src.type === 'effect' || !!src.shaderCode));
+            (child as { cropRegion: Layer['cropRegion'] }).cropRegion = {
+              x: minX,
+              y: coreRendered ? clampNumber(1 - maxY, 0, 1) : minY,
+              width: Math.max(0.001, maxX - minX),
+              height: Math.max(0.001, maxY - minY),
+            };
+            if (coreRendered) {
+              (child as { flipV?: boolean }).flipV = !child.flipV;
+            }
+          }
+          (child as { contentFit: Layer['contentFit'] }).contentFit = 'stretch';
+        } else if (config?.overrideStyles && group.contentFit) {
+          (child as { contentFit: Layer['contentFit'] }).contentFit = group.contentFit;
+        }
+      }
+      out.push(child);
+    }
+    return out;
+  }
+
   private async renderNativeGraphSources(
     layers: Layer[],
     width: number,
@@ -4792,6 +5647,7 @@ export class NativeRendererSync {
       return queuedCommands;
     }
     const activeRouteKeys = new Set<string>();
+    layers = this.resolveNativeGroupLayers(layers);
     for (const layer of layers) {
       const possibleRoute = this.nativeGraphRouteForLayer(layer, true);
       if (!possibleRoute) continue;
@@ -4814,13 +5670,77 @@ export class NativeRendererSync {
             this.nativePointCloudUploadSignatures.set(layer.id, pointData.signature);
           }
         }
+        if (possibleRoute.kind === 'handfx') {
+          const routeState = this.nativeGraphRoutes.get(possibleRoute.key) ?? {
+            inFlight: false,
+            seq: 0,
+            warnings: 0,
+            state: null,
+            bufferPrefixes: nativeGraphBufferPrefixesForRoute(possibleRoute),
+          };
+          this.nativeGraphRoutes.set(possibleRoute.key, routeState);
+          const params = nativeGraphParamsForLayer(layer, possibleRoute.kind);
+          if (params.handfxCameraOn !== false && !mediaPipeSource.isRunning()) {
+            void mediaPipeSource.start({ useGesture: false, targetFps: 60, numHands: 2 }).catch((error) => {
+              console.warn('[NativeRendererSync] HandFX MediaPipe input failed to start', error);
+            });
+          }
+          const handFrame = mediaPipeSource.getLastFrame();
+          if (handFrame.timestamp !== routeState.lastHandFrameTimestamp) {
+            const graphTime = typeof clock.time === 'number'
+              ? clock.time
+              : Math.max(0, (performance.now() - this.liveClockOriginMs) / 1000);
+            const graphDelta = typeof clock.time_delta === 'number' ? clock.time_delta : 1 / this.targetFps;
+            const graphFrameIndex = typeof clock.frame_index === 'number' && Number.isFinite(clock.frame_index)
+              ? Math.max(0, Math.round(clock.frame_index))
+              : routeState.seq + 1;
+            const update = buildNativeHandInputUpdate({
+              sourceId: nativeGraphRenderSource(possibleRoute).id,
+              params,
+              width,
+              height,
+              time: graphTime,
+              frameDelta: graphDelta,
+              frameIndex: graphFrameIndex,
+              audio: {
+                active: visual.isActive,
+                bass: visual.isActive ? Math.max(visual.bass, visual.bassFast * 0.9) : 0,
+                mid: visual.isActive ? visual.mid : 0,
+                treble: visual.isActive ? visual.treble : 0,
+                energy: visual.isActive ? visual.energy : 0,
+                beatPhase: visual.beatPhase,
+                beatPulse: visual.isActive ? visual.beat : 0,
+                amplitude: visual.isActive ? visual.level : 0,
+              },
+              handFrame,
+              state: routeState.state as NativePluginGraphState | null,
+              reset: false,
+            });
+            for (const buffer of update.buffers) {
+              queuedCommands.push({
+                type: 'update_native_graph_buffer',
+                layer_id: layer.id,
+                buffer_id: buffer.id,
+                initial_b64: buffer.initialB64,
+              });
+            }
+            routeState.state = update.state;
+            routeState.lastHandFrameTimestamp = handFrame.timestamp;
+            routeState.seq = graphFrameIndex;
+          }
+        }
         continue;
       }
       activeRouteKeys.add(possibleRoute.key);
 
       const route = this.nativeGraphRouteForLayer(layer);
       if (!route) continue;
-      if (this.nativeGraphUsesSourceFrameInput(layer, route) && route.inputSource && !this.nativeSourceFrameUploaded(route.inputSource)) continue;
+      if (
+        this.nativeGraphUsesSourceFrameInput(layer, route) &&
+        route.inputSource &&
+        !route.inputCoreRendered &&
+        !this.nativeSourceFrameUploaded(route.inputSource)
+      ) continue;
 
       const routeState = this.nativeGraphRoutes.get(route.key) ?? {
         inFlight: false,
@@ -4865,6 +5785,27 @@ export class NativeRendererSync {
         : '';
       if (manualClockKey && routeState.lastManualClockKey === manualClockKey && routeState.state) continue;
       if (routeState.inFlight) continue;
+      // Backpressure: the core executes every queued graph, so when its
+      // clock stalls behind an expensive pass, unbounded queueing turns a
+      // slow frame into a death spiral. Cap submissions per core frame,
+      // with a slow time-based escape hatch so paused-clock edits still
+      // reach the screen.
+      if (clock.mode !== 'manual') {
+        const nowMs = Date.now();
+        if (routeState.lastQueuedClockFrame === graphFrameIndex) {
+          if (
+            (routeState.queuedThisClockFrame ?? 0) >= 2 &&
+            nowMs - (routeState.lastQueuedAtMs ?? 0) < 250
+          ) {
+            continue;
+          }
+        } else {
+          routeState.lastQueuedClockFrame = graphFrameIndex;
+          routeState.queuedThisClockFrame = 0;
+        }
+        routeState.queuedThisClockFrame = (routeState.queuedThisClockFrame ?? 0) + 1;
+        routeState.lastQueuedAtMs = nowMs;
+      }
       routeState.inFlight = true;
       try {
         const graphSeq = routeState.seq + 1;
@@ -4878,8 +5819,19 @@ export class NativeRendererSync {
           if (!route.inputSource || !route.effectPasses?.length) {
             throw new Error('native effect-pass route is missing input source or effect metadata');
           }
+          const nowMs = Date.now();
+          if (nowMs - ((this as any).__fxQueueDebugAt ?? 0) > 4000) {
+            (this as any).__fxQueueDebugAt = nowMs;
+            console.log('[NativeRendererSync] fx-chain queue', JSON.stringify({
+              layer: layer.id,
+              input: route.inputBindingId ?? route.inputSource.id,
+              coreRendered: !!route.inputCoreRendered,
+              out: route.source.id,
+              effects: route.effectPasses.map((e) => e.effect),
+            }));
+          }
           const effectGraph = buildNativeEffectPassChainGraph({
-            sourceId: route.inputSource.id,
+            sourceId: route.inputBindingId ?? route.inputSource.id,
             targetSourceId: route.source.id,
             effects: route.effectPasses.map((effectPass) => ({
               effect: effectPass.effect,
@@ -4905,6 +5857,174 @@ export class NativeRendererSync {
           continue;
         }
         const graph = await (async () => {
+          if (route.kind === 'lines') {
+            const audio = getVisualAudioSnapshot();
+            return buildLinesNativeComputeGraph({
+              sourceId: graphSource.id,
+              content: layer.linesContent ?? { elements: [] } as any,
+              width,
+              height,
+              time: graphTime,
+              frameDelta: graphDelta,
+              frameIndex: graphFrameIndex,
+              audioBass: audio.bass,
+              audioTreble: audio.treble,
+              audioBeat: audio.beat,
+            });
+          }
+          if (route.kind === 'svg') {
+            return buildSvgNativeComputeGraph({
+              sourceId: graphSource.id,
+              content: layer.svgContent!,
+              width,
+              height,
+              time: graphTime,
+              frameDelta: graphDelta,
+              frameIndex: graphFrameIndex,
+            });
+          }
+          if (route.kind === 'light-painting') {
+            const audio = getVisualAudioSnapshot();
+            return buildLightPaintingNativeComputeGraph({
+              sourceId: graphSource.id,
+              content: layer.lightPaintingContent!,
+              width,
+              height,
+              time: graphTime,
+              frameDelta: graphDelta,
+              frameIndex: graphFrameIndex,
+              audioBass: audio.bass,
+              audioTreble: audio.treble,
+              audioBeat: audio.beat,
+            });
+          }
+          if (route.kind === 'text') {
+            const content = layer.textContent!;
+            const state = this.nativeTextStateFor(layer.id);
+            const atlasSig = textAtlasSignature(content);
+            if (!state.atlas || state.atlasSig !== atlasSig) {
+              state.atlas = buildTextNativeAtlas(content);
+              state.atlasSig = atlasSig;
+              state.atlasUploaded = false;
+            }
+            if (!state.atlas) throw new Error('text atlas rasterization unavailable');
+            const layoutKey = [
+              content.text, content.fontFamily, content.fontSize, content.fontWeight,
+              content.fontStyle, content.letterSpacing, content.lineHeight,
+              content.alignment, width, height,
+            ].join('|');
+            if (state.layoutKey !== layoutKey) {
+              state.letters = layoutTextGlyphs(content, width, height);
+              state.layoutKey = layoutKey;
+            }
+            const atlasSourceId = textNativeAtlasSourceId(graphSource.id);
+            if (!state.atlasUploaded) {
+              state.atlasSeq += 1;
+              queuedCommands.push({
+                type: 'upload_source_frame',
+                source_id: atlasSourceId,
+                seq: state.atlasSeq,
+                width: state.atlas.width,
+                height: state.atlas.height,
+                rgba_b64: encodeAtlasBase64(state.atlas.rgba),
+              } as unknown as RendererCommand);
+              state.atlasUploaded = true;
+            }
+            return buildTextNativeComputeGraph({
+              sourceId: graphSource.id,
+              atlasSourceId,
+              content,
+              atlas: state.atlas,
+              letters: state.letters,
+              width,
+              height,
+              time: graphTime,
+              frameDelta: graphDelta,
+              frameIndex: graphFrameIndex,
+            });
+          }
+          if (route.kind === 'splat') {
+            const content = layer.splatContent!;
+            const state = this.nativeSplatStateFor(layer.id);
+            const fileSig = `${content.filePath}|${content.pointDensity ?? 1}`;
+            if (state.fileSig !== fileSig) {
+              state.fileSig = fileSig;
+              state.loading = true;
+              state.packed = null;
+              void this.loadNativeSplatPoints(layer.id, content, fileSig);
+            }
+            // While the file parses, render an empty frame — throwing here
+            // would warning-disable the route before the load resolves.
+            const audio = getVisualAudioSnapshot();
+            const graph = buildSplatNativeComputeGraph({
+              sourceId: graphSource.id,
+              content,
+              pointCount: state.packed?.pointCount ?? 0,
+              pointsBufferId: `splat:${nativeGraphBufferSafeId(graphSource.id)}:points`,
+              pointsB64: state.packed && state.uploadedSig !== fileSig
+                ? encodeSplatBufferBase64(state.packed.buffer)
+                : null,
+              width,
+              height,
+              time: graphTime,
+              frameDelta: graphDelta,
+              frameIndex: graphFrameIndex,
+              audioLevel: audio.level ?? Math.max(audio.bass, audio.treble),
+              audioBeat: audio.beat,
+            });
+            if (state.packed) state.uploadedSig = fileSig;
+            return graph;
+          }
+          if (route.kind === 'model3d') {
+            const content = layer.model3dContent!;
+            const state = this.nativeModel3DStateFor(layer.id);
+            const fileSig = `${content.modelData}|${content.modelFormat}`;
+            if (state.fileSig !== fileSig) {
+              state.fileSig = fileSig;
+              state.mesh = null;
+              void this.loadNativeModel3DMesh(layer.id, content, fileSig);
+            }
+            const textureSourceId = `${graphSource.id}:model3d-texture`;
+            if (state.mesh?.texture && state.textureUploadedSig !== fileSig) {
+              state.textureSeq += 1;
+              queuedCommands.push({
+                type: 'upload_source_frame',
+                source_id: textureSourceId,
+                seq: state.textureSeq,
+                width: state.mesh.texture.width,
+                height: state.mesh.texture.height,
+                rgba_b64: encodeAtlasBase64(state.mesh.texture.rgba),
+              } as unknown as RendererCommand);
+              state.textureUploadedSig = fileSig;
+            }
+            const audio = getVisualAudioSnapshot();
+            const graph = buildModel3DNativeComputeGraph({
+              sourceId: graphSource.id,
+              content,
+              vertexCount: state.mesh?.vertexCount ?? 0,
+              indexCount: state.mesh?.indexCount ?? 0,
+              meshBufferId: `model3d:${nativeGraphBufferSafeId(graphSource.id)}:mesh`,
+              meshB64: state.mesh && state.meshUploadedSig !== fileSig
+                ? encodeSplatBufferBase64(state.mesh.buffer)
+                : null,
+              meshByteLength: (state.mesh?.vertexCount ?? 0) * MODEL3D_VERTEX_VEC4S * 16,
+              indexBufferId: `model3d:${nativeGraphBufferSafeId(graphSource.id)}:indices`,
+              indexB64: state.mesh && state.meshUploadedSig !== fileSig
+                ? encodeSplatBufferBase64(new Float32Array(state.mesh.indices.buffer, state.mesh.indices.byteOffset, state.mesh.indices.length))
+                : null,
+              indexByteLength: (state.mesh?.indexCount ?? 0) * 4,
+              textureSourceId,
+              hasTexture: !!state.mesh?.texture,
+              width,
+              height,
+              time: graphTime,
+              frameDelta: graphDelta,
+              frameIndex: graphFrameIndex,
+              audioLevel: Math.max(audio.bass, audio.treble),
+            });
+            if (state.mesh) state.meshUploadedSig = fileSig;
+            return graph;
+          }
           if (route.kind === 'planet') {
             return buildPlanetNativeComputeGraph({
               sourceId: graphSource.id,
@@ -5297,11 +6417,29 @@ export class NativeRendererSync {
    * (uri, decode dims, rate, trims, duration, loop) match.
    */
   libraryVideoPrefetchOptions(src: NonNullable<Layer['source']>) {
-    return this.nativeVideoPrefetchOptions(src, Date.now());
+    const options = this.nativeVideoPrefetchOptions(src, Date.now());
+    const duration = Number(options.durationSeconds);
+    const rawSeekGeneration = Number(src._nativePlaybackSeekSeq);
+    const seekGeneration = Number.isFinite(rawSeekGeneration)
+      ? Math.max(0, Math.floor(rawSeekGeneration))
+      : NATIVE_LIBRARY_TRIGGER_SEEK_GENERATION;
+    const trimStartSeconds =
+      Number.isFinite(duration) && duration > 0 ? duration * options.trimStart : 0;
+    return {
+      ...options,
+      timeSeconds: trimStartSeconds,
+      seekGeneration,
+      seq: Math.max(1, Math.round(trimStartSeconds * 1000)),
+    };
+  }
+
+  canArmLibraryVideos() {
+    return this.running && this.startupReady;
   }
 
   async start(width: number, height: number) {
     if (this.running) return;
+    const lifecycleGeneration = ++this.lifecycleGeneration;
     this.startupReady = false;
     activeNativeRendererSync = this;
     const backend: BackendKind = isMac ? 'metal' : isWindows ? 'd3d12' : 'vulkan';
@@ -5330,12 +6468,16 @@ export class NativeRendererSync {
       native_quality_policy: 'fixed',
       decode_gpu_bridge_path: this.decodeGpuBridgePath,
     });
+    if (!this.ownsLifecycle(lifecycleGeneration)) return;
     const startupStatus = await getNativeRendererStatus().catch(() => null);
+    if (!this.ownsLifecycle(lifecycleGeneration)) return;
     this.latestNativeStatus = startupStatus;
     this.assertNativeReady(startupStatus);
     this.syncNativeSourceFrameSize(startupStatus);
     const startupCapabilities = await getNativeRendererCapabilities().catch(() => null);
+    if (!this.ownsLifecycle(lifecycleGeneration)) return;
     const startupReadiness = await getNativeRendererReadinessReport().catch(() => null);
+    if (!this.ownsLifecycle(lifecycleGeneration)) return;
     this.nativeCoreMethods = new Set((startupCapabilities?.implemented_methods ?? []).map(String));
     this.nativeFeatureFlags = startupCapabilities?.features ?? {};
     this.nativeGraphInstruments = new Set(nativeGraphInstrumentIds(startupCapabilities));
@@ -5356,6 +6498,10 @@ export class NativeRendererSync {
       nativeGraphManifest,
     );
     this.nativeEffectPassDescriptorIds = new Set(nativeEffectPassDescriptorIds(startupCapabilities));
+    console.log(
+      `[NativeRendererSync] effect-pass descriptors=${this.nativeEffectPassDescriptorIds.size}` +
+      ` manifestFlag=${!!startupCapabilities?.features?.native_effect_pass_manifest}`,
+    );
     this.nativeComputeGraphSourceFrames = computeGraphSourceFrameHost;
     this.nativeGraphCatalogComplete = computeGraphSourceFrameHost && missingGraphRequirements.length === 0;
     this.resetNativeGraphRouteTelemetry();
@@ -5400,11 +6546,13 @@ export class NativeRendererSync {
     await this.applyStartupPolicies().catch((err) => {
       console.warn('[NativeRendererSync] native startup policy task failed', err);
     });
+    if (!this.ownsLifecycle(lifecycleGeneration)) return;
     this.resetSharedTextureUploadTracking();
     this.resetNativeImageDecodeTracking();
     this.resetNativeVideoDecodeTracking();
     this.resetNativeGraphRouteTelemetry();
     this.startupReady = true;
+    flushPendingLibraryVideoArms(this);
     if (this.latestLayers.length) {
       this.scheduleSync(this.desiredWidth || width, this.desiredHeight || height, this.latestLayers);
     }
@@ -5426,6 +6574,10 @@ export class NativeRendererSync {
         `floatFilter=${nativeCaps?.requested_float32_filterable ? 'on' : 'off'}`,
       ].join(' '),
     );
+  }
+
+  private ownsLifecycle(generation: number): boolean {
+    return this.lifecycleGeneration === generation && activeNativeRendererSync === this;
   }
 
   private async applyStartupPolicies() {
@@ -5474,11 +6626,17 @@ export class NativeRendererSync {
     await Promise.allSettled(tasks);
   }
 
-  async stop() {
-    if (!this.running) return;
+  async stop(options: { stopCore?: boolean } = {}) {
+    const stopCore = options.stopCore ?? true;
+    ++this.lifecycleGeneration;
     this.running = false;
     this.startupReady = false;
     this.flushAgain = false;
+    if (this.pendingSyncTimer !== null) {
+      clearTimeout(this.pendingSyncTimer);
+      this.pendingSyncTimer = null;
+    }
+    this.pendingSync = false;
     if (activeNativeRendererSync === this) {
       activeNativeRendererSync = null;
     }
@@ -5528,9 +6686,18 @@ export class NativeRendererSync {
     this.lastStatusLogAt = 0;
     this.lastStatusFrameCount = 0;
     this.lastStatusPreviewFrameCount = 0;
+    if (!stopCore) {
+      return;
+    }
+    // A newer Canvas may have claimed the app-level renderer while this
+    // instance was tearing down. A stale owner must never stop that core.
+    if (activeNativeRendererSync && activeNativeRendererSync !== this) {
+      return;
+    }
     if (this.supportsNativeMethod('clear_decode_preview_cache')) {
       await clearNativeRendererDecodePreviewCache().catch(() => {});
     }
+    if (activeNativeRendererSync && activeNativeRendererSync !== this) return;
     await this.clearRuntimeCaches({
       clear_precompiled_shaders: false,
       clear_texture_pool: false,
@@ -5538,9 +6705,11 @@ export class NativeRendererSync {
       clear_prefetch_cache: true,
       clear_native_graph_buffers: true,
     }).catch(() => {});
+    if (activeNativeRendererSync && activeNativeRendererSync !== this) return;
     if (this.supportsNativeMethod('detach_output_window')) {
       await detachNativeRendererOutputWindow().catch(() => {});
     }
+    if (activeNativeRendererSync && activeNativeRendererSync !== this) return;
     await stopNativeRenderer().catch(() => {});
     this.nativeCoreMethods.clear();
     this.nativeFeatureFlags = {};
@@ -5573,10 +6742,127 @@ export class NativeRendererSync {
 
     if (this.pendingSync) return;
     this.pendingSync = true;
-    setTimeout(() => {
+    this.pendingSyncTimer = setTimeout(() => {
+      this.pendingSyncTimer = null;
       this.pendingSync = false;
       void this.flush(this.desiredWidth, this.desiredHeight, this.latestLayers);
     }, 16);
+  }
+
+  syncNow(width: number, height: number, layers: Layer[]) {
+    if (!this.running) return;
+    this.desiredWidth = width;
+    this.desiredHeight = height;
+    this.latestLayers = layers;
+    if (this.pendingSyncTimer !== null) {
+      clearTimeout(this.pendingSyncTimer);
+      this.pendingSyncTimer = null;
+    }
+    this.pendingSync = false;
+    if (!this.startupReady) return;
+    void this.flush(this.desiredWidth, this.desiredHeight, this.latestLayers);
+  }
+
+  /**
+   * Bind a triggered VJ video without waiting for a full scene diff/graph render.
+   * The clip launcher has already armed and pre-rolled these source ids, so the
+   * core can claim the warm decoder and present its first moving frame in one
+   * small transaction. The regular sync still follows to reconcile the scene.
+   */
+  syncUrgentVideoSources(
+    width: number,
+    height: number,
+    layers: Layer[],
+    sourceIds: string[],
+  ) {
+    if (!this.running || !this.startupReady || sourceIds.length === 0) return;
+
+    this.desiredWidth = width;
+    this.desiredHeight = height;
+    this.latestLayers = layers;
+    // A VJ store emission schedules a normal scene sync before the explicit
+    // urgent event reaches Canvas. Cancel that timer so layer diffing and graph
+    // work cannot jump ahead of the warm-decoder handoff.
+    if (this.pendingSyncTimer !== null) {
+      clearTimeout(this.pendingSyncTimer);
+      this.pendingSyncTimer = null;
+    }
+    this.pendingSync = false;
+    this.urgentVideoRevision += 1;
+
+    const requested = new Set(sourceIds);
+    const renderClock = this.renderClockCommand();
+    const now = Date.now();
+    const commands: RendererCommand[] = [renderClock];
+
+    for (const [index, layer] of layers.entries()) {
+      if (!layer.visible) continue;
+      const nativeSource = nativeLayerSource(layer);
+      const src = nativeSource.source;
+      if (!src || nativeSource.sourceType !== 'video' || !requested.has(src.id)) continue;
+
+      // The first clip launched on an empty VJ row has no resident compositor
+      // layer yet. Create only that layer here; waiting for the full scene diff
+      // would reintroduce the visible first-click delay this path avoids.
+      if (!this.lastLayers.has(layer.id)) {
+        const rawVjIndex = Number((layer as any).vjLayerIndex);
+        const vjLayerIndex = Number.isFinite(rawVjIndex) ? Math.round(rawVjIndex) : null;
+        const nativeUv = this.nativeLayerUvState(layer, nativeSource, width, height);
+        const nativeShape = nativeLayerShapeState(layer);
+        const nativeMask = nativeLayerMaskState(layer);
+        commands.push({
+          type: 'upsert_layer',
+          layer_id: layer.id,
+          z_index: index,
+          vj_layer_index: vjLayerIndex,
+          blend_mode: canonicalBlendMode(layer.blendMode),
+          opacity: layer.opacity,
+          deck_monitor_bank: layer._deckMonitorBank ?? null,
+          deck_monitor_opacity: layer._deckMonitorOpacity ?? 1,
+          corners: layer.corners,
+          uv_transform: nativeUv.uvTransform,
+          uv_flags: nativeUv.uvFlags,
+          shape: nativeShape.shape,
+          shape2: nativeShape.shape2,
+          shape_meta: nativeShape.shapeMeta,
+          shape_points: nativeShape.shapePoints,
+          mask_info: nativeMask.info,
+          mask_points: nativeMask.points,
+          mesh_grid: layer.warpMode === 'mesh' ? layer.meshGrid : null,
+        });
+      }
+
+      const explicitTime = Number(src._nativePlaybackTimeSeconds);
+      // Playback comes first so the core claims/drains the armed session before
+      // bind_media_source resolves the layer's texture for this presentation.
+      commands.push(this.nativeVideoPlaybackCommand(
+        src,
+        'video',
+        now,
+        renderClock,
+        Number.isFinite(explicitTime) && explicitTime >= 0 ? explicitTime : undefined,
+      ));
+      commands.push({
+        type: 'bind_media_source',
+        layer_id: layer.id,
+        source_id: nativeSource.id,
+        uri: nativeSource.uri,
+        source_type: 'video',
+      });
+      commands.push({
+        type: 'set_layer_visibility',
+        layer_id: layer.id,
+        visible: true,
+      });
+    }
+
+    if (commands.length === 1) return;
+    commands.push({ type: 'present' });
+    return submitNativeRendererCommands(commands)
+      .then((summary) => this.warnNativeCommandDrops(summary, 'urgent-vj-video-handoff'))
+      .catch((error) => {
+        console.warn('[NativeRendererSync] urgent VJ video handoff failed', error);
+      });
   }
 
   forceSync(width: number, height: number, layers: Layer[]) {
@@ -5587,6 +6873,10 @@ export class NativeRendererSync {
     this.sentWidth = 0;
     this.sentHeight = 0;
     this.lastLayers.clear();
+    if (this.pendingSyncTimer !== null) {
+      clearTimeout(this.pendingSyncTimer);
+      this.pendingSyncTimer = null;
+    }
     this.pendingSync = false;
     if (!this.startupReady) return;
     void this.flush(this.desiredWidth, this.desiredHeight, this.latestLayers);
@@ -5625,6 +6915,9 @@ export class NativeRendererSync {
 
         this.latestNativeStatus = status;
         this.syncNativeSourceFrameSize(status);
+        // Run the scene reconciler on the poll cadence too — a wedged layer
+        // must heal while the scene is idle, not only on the next edit.
+        void this.reconcileNativeLayerGeometry();
         this.reconcileSharedTextureUploads(status);
         this.reconcileNativeImageDecodes(status);
         this.reconcileNativeVideoDecodes(status);
@@ -5692,6 +6985,7 @@ export class NativeRendererSync {
   private async flushOnce(width: number, height: number, layers: Layer[]) {
     if (!this.running || !this.startupReady) return;
 
+    const urgentVideoRevisionAtStart = this.urgentVideoRevision;
     this.latestLayers = layers;
     const commands: RendererCommand[] = [];
     const graphInputCommands: RendererCommand[] = [];
@@ -5783,6 +7077,7 @@ export class NativeRendererSync {
     // pre-roll hold the whole scene flush hostage. The core handles video
     // binding transactionally once the first native frame is resident.
     const videoPrerolls = new Set<string>();
+    layers = this.resolveNativeGroupLayers(layers);
     for (const layer of layers) {
       const candidate = nativeLayerSource(layer);
       const src = candidate.source;
@@ -5849,6 +7144,12 @@ export class NativeRendererSync {
       const nativeGraphParamsSig = nativeGraphScaledParams
         ? stableNativeGraphKey(nativeGraphScaledParams)
         : 'none';
+      const nativeGraphSourceParamsSig = nativeGraphRoute?.kind === 'vj-crossfade'
+        ? stableNativeGraphKey({
+            layerA: nativeGraphScaledParams?.vjxfadeLayerA ?? '',
+            layerB: nativeGraphScaledParams?.vjxfadeLayerB ?? '',
+          })
+        : nativeGraphParamsSig;
       const nativeGraphEffectSig = nativeGraphRoute?.effectPasses?.map((effectPass) => effectPass.descriptor).join('>') ?? 'none';
       const effectIds = nativeLayerBlocked || nativeGraphRoute?.kind === 'effect-pass' || nativeGraphRoute?.effectPasses?.length
         ? []
@@ -5863,12 +7164,15 @@ export class NativeRendererSync {
         blend: canonicalBlendMode(layer.blendMode),
         opacity: layer.opacity,
         geometrySig: geometrySignature(layer),
+        deckMonitorSig: layer._deckMonitorBank
+          ? `${layer._deckMonitorBank}:${quantizeNative(layer._deckMonitorOpacity ?? 1)}`
+          : 'none',
         uvSig: nativeUv.signature,
         shapeSig: nativeShape.signature,
         maskSig: nativeMask.signature,
         sourceSig: nativeLayerBlocked
           ? nativeBlockSig
-          : `${sourceSignature(layer)}:${sourceType}:${nativeSource.uri}:input=${graphInputSig}:graph=${nativeGraphRoute?.kind ?? 'none'}:${nativeGraphParamsSig}:effects=${nativeGraphEffectSig}`,
+          : `${sourceSignature(layer)}:${sourceType}:${nativeSource.uri}:input=${graphInputSig}:graph=${nativeGraphRoute?.kind ?? 'none'}:${nativeGraphSourceParamsSig}:effects=${nativeGraphEffectSig}`,
         nativeParamsSig: nativeParamsSignature(layer),
         effectsSig: nativeLayerBlocked
           ? nativeBlockSig
@@ -5928,7 +7232,7 @@ export class NativeRendererSync {
         }
       }
 
-      if (!prev || prev.z !== snap.z || prev.vjIndex !== snap.vjIndex || prev.visible !== snap.visible || prev.blend !== snap.blend || prev.opacity !== snap.opacity || prev.geometrySig !== snap.geometrySig || prev.uvSig !== snap.uvSig || prev.shapeSig !== snap.shapeSig || prev.maskSig !== snap.maskSig) {
+      if (!prev || prev.z !== snap.z || prev.vjIndex !== snap.vjIndex || prev.visible !== snap.visible || prev.blend !== snap.blend || prev.opacity !== snap.opacity || prev.deckMonitorSig !== snap.deckMonitorSig || prev.geometrySig !== snap.geometrySig || prev.uvSig !== snap.uvSig || prev.shapeSig !== snap.shapeSig || prev.maskSig !== snap.maskSig) {
         commands.push({
           type: 'upsert_layer',
           layer_id: layer.id,
@@ -5936,10 +7240,15 @@ export class NativeRendererSync {
           vj_layer_index: vjLayerIndex,
           blend_mode: canonicalBlendMode(layer.blendMode),
           opacity: layer.opacity,
+          deck_monitor_bank: layer._deckMonitorBank ?? null,
+          deck_monitor_opacity: layer._deckMonitorOpacity ?? 1,
           corners: layer.corners,
           uv_transform: nativeUv.uvTransform,
           uv_flags: nativeUv.uvFlags,
           shape: nativeShape.shape,
+          shape2: nativeShape.shape2,
+          shape_meta: nativeShape.shapeMeta,
+          shape_points: nativeShape.shapePoints,
           mask_info: nativeMask.info,
           mask_points: nativeMask.points,
           mesh_grid: layer.warpMode === 'mesh' ? layer.meshGrid : null,
@@ -6042,13 +7351,129 @@ export class NativeRendererSync {
 
       if (
         nativeGraphRoute &&
+        NATIVE_EXTERNALLY_QUEUED_GRAPH_KINDS.has(nativeGraphRoute.kind) &&
+        (
+          !prev ||
+          prev.sourceSig !== snap.sourceSig ||
+          prev.nativeParamsSig !== snap.nativeParamsSig
+        )
+      ) {
+        commands.push({
+          type: 'set_native_graph_layer',
+          layer_id: layer.id,
+          kind: nativeGraphRoute.kind,
+          // Lines and SVG submit their own frame graphs, but the retained
+          // entry is still required for the compositor to sample that source.
+          instrument_source_id: nativeGraphInstrumentSourceId(nativeGraphRoute),
+          composite_source_id: nativeGraphCompositeSourceId(nativeGraphRoute),
+          input_source_id: null,
+          effect_graph: null,
+          params: nativeGraphScaledParams ?? {},
+        });
+      }
+
+      if (
+        nativeGraphRoute &&
         NATIVE_CORE_OWNED_GRAPH_KINDS.has(nativeGraphRoute.kind) &&
-        (!prev || prev.sourceSig !== snap.sourceSig || prev.nativeParamsSig !== snap.nativeParamsSig)
+        (
+          nativeGraphRoute.kind === 'vj-crossfade' ||
+          !prev ||
+          prev.sourceSig !== snap.sourceSig ||
+          prev.nativeParamsSig !== snap.nativeParamsSig
+        )
       ) {
         const graphSource = nativeGraphRenderSource(nativeGraphRoute);
         const graphTime = typeof renderClock.time === 'number' ? renderClock.time : 0;
         const graphDelta = typeof renderClock.time_delta === 'number' ? renderClock.time_delta : 1 / this.targetFps;
         const graphFrameIndex = typeof renderClock.frame_index === 'number' ? renderClock.frame_index : 0;
+        const pluginRoute = nativeGraphRoute.kind === 'ghostfx'
+          || nativeGraphRoute.kind === 'handfx'
+          || nativeGraphRoute.kind === 'performer-world'
+          || nativeGraphRoute.kind === 'vj-crossfade';
+        const routeState = this.nativeGraphRoutes.get(nativeGraphRoute.key) ?? {
+          inFlight: false,
+          seq: 0,
+          warnings: 0,
+          state: null,
+          bufferPrefixes: nativeGraphBufferPrefixesForRoute(nativeGraphRoute),
+        };
+        if (pluginRoute) this.nativeGraphRoutes.set(nativeGraphRoute.key, routeState);
+        let installPluginGraph = true;
+        let crossfadeGraphOptions: Parameters<typeof buildVJCrossfadeGraph>[0] | null = null;
+        if (nativeGraphRoute.kind === 'vj-crossfade') {
+          crossfadeGraphOptions = {
+            outputSourceId: graphSource.id,
+            sourceAId: `layer-frame:${String(nativeGraphScaledParams?.vjxfadeLayerA ?? '')}`,
+            sourceBId: `layer-frame:${String(nativeGraphScaledParams?.vjxfadeLayerB ?? '')}`,
+            width,
+            height,
+            mix: Number(nativeGraphScaledParams?.vjxfadeMix ?? 0),
+            transition: String(nativeGraphScaledParams?.vjxfadeTransition ?? 'dissolve'),
+            blendMode: String(nativeGraphScaledParams?.vjxfadeBlend ?? 'normal'),
+            opacityA: Number(nativeGraphScaledParams?.vjxfadeOpacityA ?? 1),
+            opacityB: Number(nativeGraphScaledParams?.vjxfadeOpacityB ?? 1),
+            time: graphTime,
+            frameIndex: graphFrameIndex,
+          };
+          const topologySig = [
+            crossfadeGraphOptions.outputSourceId,
+            crossfadeGraphOptions.sourceAId,
+            crossfadeGraphOptions.sourceBId,
+            width,
+            height,
+          ].join(':');
+          const uniform = buildVJCrossfadeUniformUpdate(crossfadeGraphOptions);
+          installPluginGraph = routeState.lastVJCrossfadeTopologySig !== topologySig;
+          if (!installPluginGraph && routeState.lastVJCrossfadeUniformSig !== uniform.signature) {
+            commands.push({
+              type: 'update_native_graph_buffer',
+              layer_id: layer.id,
+              buffer_id: uniform.bufferId,
+              initial_b64: uniform.initialB64,
+            });
+          }
+          routeState.lastVJCrossfadeTopologySig = topologySig;
+          routeState.lastVJCrossfadeUniformSig = uniform.signature;
+        }
+        if (
+          nativeGraphRoute.kind === 'handfx' &&
+          nativeGraphScaledParams?.handfxCameraOn !== false &&
+          !mediaPipeSource.isRunning()
+        ) {
+          void mediaPipeSource.start({ useGesture: false, targetFps: 60, numHands: 2 }).catch((error) => {
+            console.warn('[NativeRendererSync] HandFX MediaPipe input failed to start', error);
+          });
+        }
+        const pluginGraph = nativeGraphRoute.kind === 'vj-crossfade'
+          ? installPluginGraph && crossfadeGraphOptions
+            ? buildVJCrossfadeGraph(crossfadeGraphOptions)
+            : null
+          : pluginRoute
+          ? buildNativePluginGraph({
+              kind: nativeGraphRoute.kind as 'ghostfx' | 'handfx' | 'performer-world',
+              sourceId: graphSource.id,
+              params: nativeGraphScaledParams ?? {},
+              width,
+              height,
+              time: graphTime,
+              frameDelta: graphDelta,
+              frameIndex: graphFrameIndex,
+              audio: {
+                active: visual.isActive,
+                bass: visual.isActive ? Math.max(visual.bass, visual.bassFast * 0.9) : 0,
+                mid: visual.isActive ? visual.mid : 0,
+                treble: visual.isActive ? visual.treble : 0,
+                energy: visual.isActive ? visual.energy : 0,
+                beatPhase: visual.beatPhase,
+                beatPulse: visual.isActive ? visual.beat : 0,
+                amplitude: visual.isActive ? visual.level : 0,
+              },
+              handFrame: nativeGraphRoute.kind === 'handfx' ? mediaPipeSource.getLastFrame() : null,
+              state: routeState.state as NativePluginGraphState | null,
+              reset: !routeState.state,
+            })
+          : null;
+        if (pluginGraph && 'state' in pluginGraph) routeState.state = (pluginGraph as { state: NativePluginGraphState }).state;
         const effectGraph = nativeGraphRoute.effectPasses?.length && nativeGraphRoute.source.id !== graphSource.id
           ? buildNativeEffectPassChainGraph({
               sourceId: graphSource.id,
@@ -6068,19 +7493,21 @@ export class NativeRendererSync {
               seq: graphFrameIndex * 16 + 8,
             })
           : null;
-        commands.push({
-          type: 'set_native_graph_layer',
-          layer_id: layer.id,
-          kind: nativeGraphRoute.kind,
-          // The core renders the instrument into its base texture while the
-          // compositor samples the post-effect texture. Keeping these IDs
-          // distinct prevents the instrument render from overwriting effects.
-          instrument_source_id: nativeGraphInstrumentSourceId(nativeGraphRoute),
-          composite_source_id: nativeGraphCompositeSourceId(nativeGraphRoute),
-          input_source_id: nativeGraphRoute.inputSource?.id ?? null,
-          effect_graph: effectGraph?.config ?? null,
-          params: nativeGraphScaledParams ?? {},
-        });
+        if (nativeGraphRoute.kind !== 'vj-crossfade' || installPluginGraph) {
+          commands.push({
+            type: 'set_native_graph_layer',
+            layer_id: layer.id,
+            kind: nativeGraphRoute.kind,
+            // The core renders the instrument into its base texture while the
+            // compositor samples the post-effect texture. Keeping these IDs
+            // distinct prevents the instrument render from overwriting effects.
+            instrument_source_id: nativeGraphInstrumentSourceId(nativeGraphRoute),
+            composite_source_id: nativeGraphCompositeSourceId(nativeGraphRoute),
+            input_source_id: nativeGraphRoute.inputSource?.id ?? null,
+            effect_graph: pluginGraph?.config ?? effectGraph?.config ?? null,
+            params: nativeGraphScaledParams ?? {},
+          });
+        }
       } else if (!nativeGraphRoute && prev && prev.sourceSig !== snap.sourceSig) {
         commands.push({
           type: 'remove_native_graph_layer',
@@ -6264,6 +7691,14 @@ export class NativeRendererSync {
     const graphSourceCommands = await this.renderNativeGraphSources(layers, width, height, renderClock, visual);
     commands.push(...graphSourceCommands);
 
+    // A clip was fired while this expensive scene frame was being assembled.
+    // Do not let stale pre-trigger commands overwrite the urgent warm-session
+    // handoff; the flush loop will immediately rebuild from latestLayers.
+    if (urgentVideoRevisionAtStart !== this.urgentVideoRevision) {
+      this.flushAgain = true;
+      return;
+    }
+
     if (!commands.length) return;
 
     commands.push({ type: 'present' });
@@ -6276,6 +7711,158 @@ export class NativeRendererSync {
     const batchSummary = await submitNativeRendererBatch(batch);
     this.warnNativeCommandDrops(batchSummary, 'frame-batch');
     this.lastLayers = current;
+    void this.reconcileNativeLayerGeometry();
+  }
+
+  private nativeLayerReconcileAt = 0;
+  private nativeLayerReconcileInFlight = false;
+  private nativeLayerReconcileWarnings = 0;
+
+  // Scene reconciler: the diff-based sync only re-sends what IT believes
+  // changed, so a lost or misapplied upsert_layer wedges the picture until
+  // some unrelated edit happens to touch the same layer ("preview cropped
+  // and misplaced"). Compare the core's actual compositor geometry against
+  // what we last sent, and force a re-upsert on any drift.
+  private async reconcileNativeLayerGeometry(): Promise<void> {
+    const now = performance.now();
+    if (this.nativeLayerReconcileInFlight || now - this.nativeLayerReconcileAt < 1000) return;
+    this.nativeLayerReconcileAt = now;
+    this.nativeLayerReconcileInFlight = true;
+    try {
+      const snapshot = await getNativeRendererLayersSnapshot().catch((err) => {
+        if (this.nativeLayerReconcileWarnings < 3) {
+          console.log('[NativeRendererSync] layers_snapshot RPC failed:', err?.message ?? err);
+          this.nativeLayerReconcileWarnings += 1;
+        }
+        return null;
+      });
+      if (!snapshot?.layers) {
+        if (snapshot && this.nativeLayerReconcileWarnings < 3) {
+          console.log('[NativeRendererSync] layers_snapshot unexpected shape:', JSON.stringify(snapshot).slice(0, 300));
+          this.nativeLayerReconcileWarnings += 1;
+        }
+        return;
+      }
+      const coreLayers = new Map(snapshot.layers.map((layer) => [String(layer.layer_id), layer]));
+      const drifted: string[] = [];
+      this.lastLayers.forEach((snap, id) => {
+        const core = coreLayers.get(id);
+        let drift = '';
+        if (!core) {
+          drift = 'missing-from-core';
+        } else {
+          const sigCorners = snap.geometrySig.startsWith('corners:')
+            ? snap.geometrySig.slice('corners:'.length)
+            : snap.geometrySig.startsWith('mesh:')
+              ? snap.geometrySig.split(':').slice(1, 9).join(':')
+              : '';
+          if (sigCorners) {
+            const sent = sigCorners.split(':').map(Number);
+            const applied = (core.corners ?? []).flat().map(Number);
+            if (sent.length === 8 && applied.length === 8) {
+              for (let i = 0; i < 8; i += 1) {
+                if (Math.abs(sent[i] - applied[i]) > 2e-4) {
+                  drift = `corner[${i}] sent=${sent[i]} applied=${applied[i]}`;
+                  break;
+                }
+              }
+            }
+          }
+          if (!drift && snap.visible !== !!core.visible) {
+            drift = `visibility sent=${snap.visible} applied=${core.visible}`;
+          }
+          // Wide tolerance: the core smooths opacity over frames, so a
+          // mid-fade readback legitimately trails the sent value. Only a
+          // wedged opacity (wrong by a lot, forever) is drift.
+          if (!drift && snap.visible && Math.abs(snap.opacity - Number(core.opacity)) > 0.1) {
+            drift = `opacity sent=${snap.opacity} applied=${core.opacity}`;
+          }
+          if (!drift && typeof snap.uvSig === 'string' && snap.uvSig.includes('|')) {
+            // uvSig format: "x:y:w:h|fit:ratio:flipH:flipV" — matches the
+            // core's uv0/uv1 exactly. A drifted ratio squashes the picture
+            // inside the layer quad ("preview cropped/misplaced").
+            const [uv0Part, uv1Part] = snap.uvSig.split('|');
+            const sentUv = [...uv0Part.split(':'), ...uv1Part.split(':')].map(Number);
+            const appliedUv = [...(core.uv0 ?? []), ...(core.uv1 ?? [])].map(Number);
+            if (sentUv.length === 8 && appliedUv.length === 8) {
+              for (let i = 0; i < 8; i += 1) {
+                if (Math.abs(sentUv[i] - appliedUv[i]) > 2e-4) {
+                  drift = `uv[${i}] sent=${sentUv[i]} applied=${appliedUv[i]}`;
+                  break;
+                }
+              }
+            }
+          }
+        }
+        if (drift) drifted.push(`${id}: ${drift}`);
+        if (drift) this.lastLayers.delete(id);
+      });
+      if ((window as any).__NATIVE_SCENE_DEBUG__ !== false) {
+        const nowMs = Date.now();
+        if (this.lastLayers.size > 0 && nowMs - ((this as any).__sceneBboxAt ?? 0) > 15000) {
+          (this as any).__sceneBboxAt = nowMs;
+          void (async () => {
+            try {
+              const frame = await getNativeRendererFrameSnapshot(true);
+              const b64 = (frame as any)?.rgba_b64;
+              const fw = Number((frame as any)?.width ?? 0);
+              const fh = Number((frame as any)?.height ?? 0);
+              if (!b64 || !fw || !fh) {
+                console.log('[NativeRendererSync] scene-debug bbox: no pixels', JSON.stringify({ fw, fh, keys: Object.keys(frame ?? {}) }));
+                return;
+              }
+              const bin = atob(b64);
+              let minX = fw, maxX = -1, minY = fh, maxY = -1;
+              for (let y = 0; y < fh; y += 2) {
+                for (let x = 0; x < fw; x += 2) {
+                  const o = (y * fw + x) * 4;
+                  if (bin.charCodeAt(o) > 8 || bin.charCodeAt(o + 1) > 8 || bin.charCodeAt(o + 2) > 8) {
+                    if (x < minX) minX = x;
+                    if (x > maxX) maxX = x;
+                    if (y < minY) minY = y;
+                    if (y > maxY) maxY = y;
+                  }
+                }
+              }
+              let rSum = 0, gSum = 0, bSum = 0, count = 0;
+              for (let y = 0; y < fh; y += 8) {
+                for (let x = 0; x < fw; x += 8) {
+                  const o = (y * fw + x) * 4;
+                  rSum += bin.charCodeAt(o);
+                  gSum += bin.charCodeAt(o + 1);
+                  bSum += bin.charCodeAt(o + 2);
+                  count += 1;
+                }
+              }
+              console.log(`[NativeRendererSync] scene-debug lit bbox ${minX},${minY} -> ${maxX},${maxY} of ${fw}x${fh} meanRGB=${(rSum/count).toFixed(0)},${(gSum/count).toFixed(0)},${(bSum/count).toFixed(0)}`);
+            } catch (err: any) {
+              console.log('[NativeRendererSync] scene-debug bbox failed:', err?.message ?? err);
+            }
+          })();
+        }
+        if (nowMs - ((this as any).__sceneDebugAt ?? 0) > 5000) {
+          (this as any).__sceneDebugAt = nowMs;
+          console.log('[NativeRendererSync] scene-debug core layers', JSON.stringify(snapshot.layers));
+          console.log('[NativeRendererSync] scene-debug sent sigs', JSON.stringify(
+            [...this.lastLayers.entries()].map(([id, snap]) => ({
+              id,
+              geom: snap.geometrySig,
+              uv: (snap as any).uvSig,
+              shape: (snap as any).shapeSig,
+              visible: snap.visible,
+            })),
+          ));
+        }
+      }
+      if (!drifted.length) return;
+      if (this.nativeLayerReconcileWarnings < 20) {
+        console.log('[NativeRendererSync] scene reconciler repairing layer drift', JSON.stringify(drifted));
+      }
+      this.nativeLayerReconcileWarnings += 1;
+      this.scheduleSync(this.desiredWidth || 1920, this.desiredHeight || 1080, this.latestLayers);
+    } finally {
+      this.nativeLayerReconcileInFlight = false;
+    }
   }
 
   private renderClockCommand(): NativeRenderClockCommand {
@@ -6445,11 +8032,17 @@ export class NativeRendererSync {
       !!src.videoElement ||
       !!src.threejsCanvas ||
       !!src.synthVisionCanvas;
+    // SynthVision / THREE.js canvases are live performance sources — they
+    // animate every rAF, so the 360ms video-poster cadence renders them as a
+    // slideshow in the native compositor. Capture them at performance rate.
+    const liveCanvasSource = !!src.synthVisionCanvas || !!src.threejsCanvas;
     const previewRefreshMs = isNativeSharedTextureSource(src, sourceType)
       ? LIVE_SHARED_TEXTURE_REFRESH_MS
-      : sourceType.startsWith('gpu:')
-        ? GPU_PREVIEW_REFRESH_MS
-        : VIDEO_PREVIEW_REFRESH_MS;
+      : liveCanvasSource
+        ? LIVE_CANVAS_REFRESH_MS
+        : sourceType.startsWith('gpu:')
+          ? GPU_PREVIEW_REFRESH_MS
+          : VIDEO_PREVIEW_REFRESH_MS;
     if (!force && now < dueAt) return;
     if (
       this.appendSharedTextureSourceFrameCommand(
@@ -6495,14 +8088,38 @@ export class NativeRendererSync {
         ]
       : [0, 0, 1, 1];
 
-    let sourceAspect = this.nativeLayerSourceAspect(layer, nativeSource, outputWidth, outputHeight);
+    // Procedural sources (FS/ISF shaders, JS shaders, GPU instruments) are
+    // rendered BY the core at whatever aspect the layer needs — they have no
+    // intrinsic aspect. Measuring one from a DOM preview canvas (whose shape
+    // tracks UI panels, not content) and fit-correcting with it squashes the
+    // picture inside the quad — the recurring "preview cropped/misplaced".
+    const proceduralSource =
+      !!nativeSource.source?.shaderCode ||
+      layer.type === 'gpu' ||
+      nativeSource.sourceType === 'none' ||
+      nativeSource.source?.type === 'shader' ||
+      nativeSource.source?.type === 'effect';
+    // With Stretch (the default) procedural content simply fills the layer —
+    // ratio is unused. For explicit Fill/Contain, treat procedural content as
+    // project-aspect footage so the fit modes act on shader layers the same
+    // way they act on a 16:9 video (Contain letterboxes inside odd shapes).
+    const proceduralFitActive = proceduralSource && contentFitCode(layer.contentFit) > 0;
+    let sourceAspect = proceduralSource
+      ? (proceduralFitActive
+          ? clampNumber(outputWidth / Math.max(1, outputHeight), 0.001, 128)
+          : layerAspectFromCorners(layer, outputWidth, outputHeight))
+      : this.nativeLayerSourceAspect(layer, nativeSource, outputWidth, outputHeight);
     if (crop) {
       sourceAspect *= crop.width / crop.height;
     }
     const layerAspect = layerAspectFromCorners(layer, outputWidth, outputHeight);
     const ratio = clampNumber(sourceAspect / Math.max(0.001, layerAspect), 0.001, 128);
+    const shapeActive = !!layer.layerShape?.enabled &&
+      layer.layerShape.type !== 'rectangle' &&
+      layer.layerShape.type !== 'line' &&
+      layer.layerShape.type !== 'polyline';
     const uvFlags: NativeVec4 = [
-      contentFitCode(layer.contentFit),
+      shapeActive && layer.contentFit === 'fill' ? 0 : contentFitCode(layer.contentFit),
       quantizeNative(ratio),
       !!layer.flipH !== !!nativeSource.source?.mirrorX ? 1 : 0,
       layer.flipV ? 1 : 0,
@@ -6609,6 +8226,12 @@ fn fs_main() -> @location(0) vec4<f32> {
       entry: 'fs_main',
     });
     commands.push(...buildPlanetNativePrecompileCommands());
+    commands.push(...buildLinesNativePrecompileCommands());
+    commands.push(...buildSvgNativePrecompileCommands());
+    commands.push(...buildLightPaintingNativePrecompileCommands());
+    commands.push(...buildTextNativePrecompileCommands());
+    commands.push(...buildSplatNativePrecompileCommands());
+    commands.push(...buildModel3DNativePrecompileCommands());
     commands.push(...buildSmoke3DNativePrecompileCommands());
     commands.push(...buildInkCloudNativePrecompileCommands());
     commands.push(...buildParticleFieldNativePrecompileCommands());
@@ -6616,6 +8239,8 @@ fn fs_main() -> @location(0) vec4<f32> {
     commands.push(...buildFlythroughNativePrecompileCommands());
     commands.push(...buildPixelParticlesNativePrecompileCommands());
     commands.push(...buildPointCloudFXNativePrecompileCommands());
+    commands.push(...buildNativePluginPrecompileCommands());
+    commands.push(...buildVJCrossfadePrecompileCommands());
     commands.push(...buildNativeEffectPassPrecompileCommands());
     await submitNativeRendererBatch({
       frame_id: ++this.frameId,
@@ -6711,6 +8336,7 @@ fn fs_main() -> @location(0) vec4<f32> {
     ]);
     if (status) {
       this.latestNativeStatus = status;
+      void this.reconcileNativeLayerGeometry();
       this.reconcileSharedTextureUploads(status);
       this.reconcileNativeImageDecodes(status);
       this.reconcileNativeVideoDecodes(status);
@@ -6742,7 +8368,7 @@ fn fs_main() -> @location(0) vec4<f32> {
         `${status.source_frame_shared_texture_rejected_uploads}sharedReject/` +
           `${status.source_frame_rejected_uploads}reject`;
       console.log(
-        `[NativeRendererSync] status backend=${status.backend} ready=${status.backend_ready} adapter=${status.adapter_name ?? 'unknown'} nativeFps=${nativeFps.toFixed(1)} previewFps=${previewFps.toFixed(1)} previewMode=${(previewStatus as any)?.mode ?? 'unknown'} previewAttached=${!!(previewStatus as any)?.attached} quality=${status.native_quality.active_tier}@${status.native_quality.quality_scale.toFixed(2)} clock=${status.render_clock_mode}@${status.render_clock_time.toFixed(3)}s#${status.render_clock_frame_index} layers=${status.layers_seen} blocked=${this.nativeBlockedLayerCount}(${this.nativeBlockedEffectLayerCount}fx/${this.nativeBlockedSourceLayerCount}src) lastBlock=${this.nativeBlockedLayerLastReason ?? 'none'} shaders=${status.shader_cache_entries} compiled=${status.shader_precompile_compiled} failed=${status.shader_precompile_failed} procedural=${status.native_procedural_layers} graphLayers=${status.native_graph_source_frame_layers} proxyLayers=${status.native_instrument_proxy_layers} nativeShaderLayers=${status.native_shader_layers}/${status.isf_shader_bindings} uniforms=${status.isf_uniform_sets} frames=${status.source_frames_active}/${status.source_frame_slots}@${status.source_frame_size}px/${status.source_frame_format}/mips${status.source_frame_mip_levels ?? 1} uploads=${status.source_frame_uploads}(${sourceUploadBreakdown}) last=${status.source_frame_last_upload_transport}:${status.source_frame_last_upload_width}x${status.source_frame_last_upload_height}/${status.source_frame_last_input_bytes}->${status.source_frame_last_upload_bytes}b graphs=${status.compute_graph_runs}/${status.compute_graph_passes} render=${status.compute_graph_render_passes} sourceGraph=${status.compute_graph_source_frame_renders} graphBuffers=${status.compute_graph_persistent_buffers} present=${status.swapchain_last_present_result}:${status.swapchain_presented}/${status.swapchain_present_attempts} fail=${status.output_present_consecutive_failures} preview=${status.source_previews_active}/${status.source_preview_slots}@${status.source_preview_size}px cpu=${status.avg_render_cpu_ms.toFixed(2)}ms gpu=${status.gpu_timing_supported ? status.avg_render_gpu_ms.toFixed(2) : 'off'}ms samples=${status.gpu_timing_samples ?? 0}`,
+        `[NativeRendererSync] status backend=${status.backend} ready=${status.backend_ready} adapter=${status.adapter_name ?? 'unknown'} nativeFps=${nativeFps.toFixed(1)} previewFps=${previewFps.toFixed(1)} previewMode=${(previewStatus as any)?.mode ?? 'unknown'} previewAttached=${!!(previewStatus as any)?.attached} quality=${status.native_quality.active_tier}@${status.native_quality.quality_scale.toFixed(2)} clock=${status.render_clock_mode}@${status.render_clock_time.toFixed(3)}s#${status.render_clock_frame_index} layers=${status.layers_seen} blocked=${this.nativeBlockedLayerCount}(${this.nativeBlockedEffectLayerCount}fx/${this.nativeBlockedSourceLayerCount}src) lastBlock=${this.nativeBlockedLayerLastReason ?? 'none'} shaders=${status.shader_cache_entries} compiled=${status.shader_precompile_compiled} failed=${status.shader_precompile_failed} procedural=${status.native_procedural_layers} graphLayers=${status.native_graph_source_frame_layers} proxyLayers=${status.native_instrument_proxy_layers} nativeShaderLayers=${status.native_shader_layers}/${status.isf_shader_bindings} uniforms=${status.isf_uniform_sets} frames=${status.source_frames_active}/${status.source_frame_slots}@${status.source_frame_size}px/${status.source_frame_format}/mips${status.source_frame_mip_levels ?? 1} uploads=${status.source_frame_uploads}(${sourceUploadBreakdown}) last=${status.source_frame_last_upload_transport}:${status.source_frame_last_upload_width}x${status.source_frame_last_upload_height}/${status.source_frame_last_input_bytes}->${status.source_frame_last_upload_bytes}b graphs=${status.compute_graph_runs}/${status.compute_graph_passes} render=${status.compute_graph_render_passes} sourceGraph=${status.compute_graph_source_frame_renders} graphBuffers=${status.compute_graph_persistent_buffers} present=${status.swapchain_last_present_result}:${status.swapchain_presented}/${status.swapchain_present_attempts} fail=${status.output_present_consecutive_failures} preview=${status.source_previews_active}/${status.source_preview_slots}@${status.source_preview_size}px cpu=${status.avg_render_cpu_ms.toFixed(2)}ms gpu=${status.gpu_timing_supported ? status.avg_render_gpu_ms.toFixed(2) : 'off'}ms samples=${status.gpu_timing_samples ?? 0} vjTrig=${Number((status as any).native_video_trigger_last_latency_us ?? 0)}us/max${Number((status as any).native_video_trigger_max_latency_us ?? 0)}us sessions=armed:${Number((status as any).native_video_sessions_armed ?? 0)}+pre:${Number((status as any).native_video_sessions_prerolled ?? 0)} shaderErr=${(status as any).last_shader_error ?? 'none'}`,
       );
     }
   }

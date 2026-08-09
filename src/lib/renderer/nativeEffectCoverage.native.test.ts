@@ -11,12 +11,12 @@ import { NATIVE_EFFECT_PASS_MANIFEST } from './nativeEffectPass';
 describe('native effect coverage', () => {
   it('tracks public effect coverage separately from native helper passes', () => {
     expect(PUBLIC_EFFECT_TYPES).toHaveLength(184);
-    expect(NATIVE_EFFECT_PASS_MANIFEST).toHaveLength(72);
-    expect(NATIVE_EFFECT_COVERAGE.nativePublicEffectCount).toBe(71);
-    expect(NATIVE_EFFECT_COVERAGE.missingPublicEffectCount).toBe(113);
+    expect(NATIVE_EFFECT_PASS_MANIFEST).toHaveLength(183);
+    expect(NATIVE_EFFECT_COVERAGE.nativePublicEffectCount).toBe(182);
+    expect(NATIVE_EFFECT_COVERAGE.missingPublicEffectCount).toBe(2);
     expect(NATIVE_EFFECT_COVERAGE.sourceFramePassEligibleEffectCount).toBe(182);
-    expect(NATIVE_EFFECT_COVERAGE.nativeSourceFramePassEffectCount).toBe(71);
-    expect(NATIVE_EFFECT_COVERAGE.missingSourceFramePassEffectCount).toBe(111);
+    expect(NATIVE_EFFECT_COVERAGE.nativeSourceFramePassEffectCount).toBe(182);
+    expect(NATIVE_EFFECT_COVERAGE.missingSourceFramePassEffectCount).toBe(0);
     expect(NATIVE_EFFECT_COVERAGE.deferredNativeGraphEffectTypes).toEqual([
       'gpuFluidSim',
       'eulerianMagnify',
@@ -26,14 +26,15 @@ describe('native effect coverage', () => {
     expect(NATIVE_EFFECT_COVERAGE.nativePublicEffectTypes).toContain('halftone');
     expect(NATIVE_EFFECT_COVERAGE.nativePublicEffectTypes).toContain('toon');
     expect(NATIVE_EFFECT_COVERAGE.nativePublicEffectTypes).toContain('kuwahara');
-    expect(NATIVE_EFFECT_COVERAGE.missingPublicEffectTypes).toContain('sphereWireframe');
+    expect(NATIVE_EFFECT_COVERAGE.nativePublicEffectTypes).toContain('sphereWireframe');
     expect(NATIVE_EFFECT_COVERAGE.missingPublicEffectTypes).toContain('gpuFluidSim');
     expect(NATIVE_EFFECT_COVERAGE.missingPublicEffectTypes).toContain('eulerianMagnify');
     expect(NATIVE_EFFECT_COVERAGE.missingSourceFramePassEffectTypes).not.toContain('gpuFluidSim');
     expect(NATIVE_EFFECT_COVERAGE.missingSourceFramePassEffectTypes).not.toContain('eulerianMagnify');
     expect(NATIVE_EFFECT_COVERAGE.missingSourceFramePassEffectTypes).not.toContain('kuwahara');
-    expect(NATIVE_EFFECT_COVERAGE.missingSourceFramePassEffectTypes).toContain('phaseLab');
-    expect(NATIVE_EFFECT_COVERAGE.detail).toContain('native source-frame effect-pass coverage 71/182');
+    expect(NATIVE_EFFECT_COVERAGE.missingSourceFramePassEffectTypes).not.toContain('phaseLab');
+    expect(NATIVE_EFFECT_COVERAGE.missingSourceFramePassEffectTypes).toHaveLength(0);
+    expect(NATIVE_EFFECT_COVERAGE.detail).toContain('native source-frame effect-pass coverage 182/182');
     expect(NATIVE_EFFECT_COVERAGE.detail).toContain('stateful/multi-frame effects tracked outside the effect-pass route');
   });
 
@@ -46,7 +47,7 @@ describe('native effect coverage', () => {
   it('exposes the strict native-only picker inventory', () => {
     expect(isNativeSelectableEffect('invert')).toBe(true);
     expect(isNativeSelectableEffect('rgbShift')).toBe(true);
-    expect(isNativeSelectableEffect('phaseLab')).toBe(false);
+    expect(isNativeSelectableEffect('phaseLab')).toBe(true);
     expect(isNativeSelectableEffect('gpuFluidSim')).toBe(false);
   });
 

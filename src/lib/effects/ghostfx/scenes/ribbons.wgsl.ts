@@ -35,8 +35,8 @@ struct Uniforms {
   amp: f32,
   hueShift: f32,
   exposure: f32,
-  latticeThreshold: f32,
-  vortexStrength: f32,
+  colorAmount: f32,  // 0 = monochrome silver strands, 1 = full palette
+  dofAmount: f32,    // geometric depth-of-field strength
   ribbonWidth: f32,
   ribbonTranslucency: f32,
   lightDirAndStrength: vec4<f32>,
@@ -235,10 +235,11 @@ fn csAdvect(@builtin(global_invocation_id) gid: vec3<u32>) {
     }
   }
 
-  // Integrate position through curl-noise. vortexStrength is a user
-  // tunable; bassSlow modulates turbulence (still rates, not shapes).
+  // Integrate position through curl-noise; bassSlow modulates turbulence
+  // (still rates, not shapes). Turbulence is fixed now that slots 16/17
+  // carry the cinematic controls (colorAmount/dofAmount).
   let fieldP = p.pos * 0.12 + vec3<f32>(0.0, 0.0, u.time * 0.08);
-  let force = curlNoise(fieldP) * (1.5 + u.vortexStrength * 0.5) * (0.6 + u.bassSlow * 0.6);
+  let force = curlNoise(fieldP) * 2.5 * (0.6 + u.bassSlow * 0.6);
 
   // Forward drift: ribbons stream past the camera as it advances.
   // energy → faster current (visible velocity coupling).
@@ -329,6 +330,8 @@ struct VsR {
   @location(2) crossU: f32,   // [-1..1] across ribbon width
   @location(3) litFront: f32, // diffuse term on +normal side (0..1+)
   @location(4) litBack: f32,  // diffuse term on -normal side (0..1+)
+  @location(5) spec: f32,     // Kajiya-Kay strand highlight
+  @location(6) fx: vec2<f32>, // x = fog factor (0..1), y = DOF blur (0..1)
 };
 @vertex fn vsRibbon(@builtin(vertex_index) vid: u32) -> VsR {
   let vertsPerSeg: u32 = 6u;
@@ -364,6 +367,8 @@ struct VsR {
     out.crossU = 0.0;
     out.litFront = 0.0;
     out.litBack = 0.0;
+    out.spec = 0.0;
+    out.fx = vec2<f32>(0.0);
     return out;
   }
 
@@ -382,7 +387,17 @@ struct VsR {
   let wB = mix(widthHead, widthTail, tB);
 
   let p = select(p1, p0, endpoint == 0u);
-  let w = select(wB, wA, endpoint == 0u);
+  var w = select(wB, wA, endpoint == 0u);
+
+  // ── Geometric depth of field ────────────────────────────────────
+  // Strands far from the focus plane widen and fade — out-of-focus
+  // strands melt into soft streaks instead of staying razor thin.
+  let projCenter = projectToClip(p);
+  let focusDist = FLY_ZONE_LEN * 0.42;
+  let blur = clamp(abs(projCenter.depth - focusDist) / max(FLY_ZONE_LEN * 0.5, 1e-3), 0.0, 1.0)
+    * u.dofAmount;
+  w = w * (1.0 + blur * 5.0);
+
   let worldCorner = p + side * (sideSign * w);
   let proj = projectToClip(worldCorner);
 
@@ -393,6 +408,8 @@ struct VsR {
     out.crossU = 0.0;
     out.litFront = 0.0;
     out.litBack = 0.0;
+    out.spec = 0.0;
+    out.fx = vec2<f32>(0.0);
     return out;
   }
   out.pos = vec4<f32>(proj.clip.x, proj.clip.y, 0.0, 1.0);
@@ -400,7 +417,11 @@ struct VsR {
   // Color: per-ribbon hue from seed, slowly migrating with time.
   let pr = particles[ribbonIdx];
   let hueAtRibbon = fract(pr.seed * 0.73 + u.time * 0.015);
-  out.color = palette(hueAtRibbon, 0.95);
+  let paletteCol = palette(hueAtRibbon, 0.95);
+  // The photographic strand look is near-monochrome: silver-graphite
+  // body with only a whisper of hue unless the user dials color up.
+  let silver = vec3<f32>(0.78, 0.80, 0.86) * (0.55 + 0.45 * fract(pr.seed * 3.7));
+  out.color = mix(silver, paletteCol, clamp(u.colorAmount, 0.0, 1.0));
 
   // Brightness: head bright, tail dim (along-length falloff). Depth
   // fog adds atmosphere. No audio coupling on brightness here — the
@@ -428,28 +449,57 @@ struct VsR {
   // Subsurface scattering: back side gets some transmitted light too
   // (30% of front). Makes the ribbon feel translucent under back-lighting
   // rather than going pitch-black like opaque metal.
-  out.litFront = u.ambient + lightStr * (frontDot + 0.30 * backDot);
-  out.litBack  = u.ambient + lightStr * (backDot  + 0.30 * frontDot);
+  // Volumetric interior occlusion: strands buried inside the cluster
+  // and on the far side from the light sit in shadow — this is what
+  // gives the mass its dark, dense core.
+  let clusterR = clamp(length(p) / 1.15, 0.0, 1.0);
+  let lightSide = clamp(dot(normalize(p + vec3<f32>(1e-4)), lightDir) * 0.5 + 0.5, 0.0, 1.0);
+  let occl = mix(0.30, 1.0, clamp(clusterR * 0.55 + lightSide * 0.6, 0.0, 1.0));
+
+  out.litFront = (u.ambient + lightStr * (frontDot + 0.30 * backDot)) * occl;
+  out.litBack  = (u.ambient + lightStr * (backDot  + 0.30 * frontDot)) * occl;
+
+  // Kajiya-Kay strand specular: highlight runs along the fiber where
+  // the tangent is perpendicular to the half-vector. THE hair look.
+  let camV = normalize(cameraPos() - p);
+  let hVec = normalize(lightDir + camV);
+  let tangent = normalize(seg + vec3<f32>(1e-5));
+  let tDotH = clamp(dot(tangent, hVec), -1.0, 1.0);
+  let sinTH = sqrt(max(1.0 - tDotH * tDotH, 0.0));
+  out.spec = pow(sinTH, 90.0) * lightStr * occl * 1.6;
+
+  // Fog: depth past the focus plane dissolves into atmosphere.
+  let fogAmt = 1.0 - exp(-max(proj.depth - FLY_ZONE_LEN * 0.30, 0.0) * 0.55);
+  out.fx = vec2<f32>(clamp(fogAmt, 0.0, 0.85), blur);
 
   out.crossU = sideSign;
   return out;
 }
 @fragment fn fsRibbon(in: VsR) -> @location(0) vec4<f32> {
-  // Soft cross-section: bright core, alpha falls off at edges so the
-  // ribbon doesn't look like a hard quad.
-  let core = exp(-in.crossU * in.crossU * 2.2);
+  // Cross-section: out-of-focus strands soften from a crisp fiber into
+  // a wide gaussian streak (geometric DOF, part two — the vertex stage
+  // already widened the quad).
+  let blur = in.fx.y;
+  let sharp = mix(2.6, 0.55, blur);
+  let core = exp(-in.crossU * in.crossU * sharp);
 
-  // Pick front- or back-side lighting from the interpolated crossU sign.
-  // (Side > 0 = "front" face = the side the cross-product normal points to.)
   let lit = select(in.litBack, in.litFront, in.crossU >= 0.0);
 
-  // Final color is base * brightness * lighting * core. Translucency
-  // raises alpha so back-ribbons remain visible through front ones
-  // under glass-blend; under additive blend it just increases the
-  // additive contribution (visible as a slight brightness boost).
-  let col = in.color * in.brightness * lit * core * 1.2;
-  let alpha = in.brightness * core * (0.6 + u.ribbonTranslucency * 0.8);
-  return vec4<f32>(col, alpha);
+  // Strand highlight rides the fiber center; defocus washes it out.
+  let specCore = exp(-in.crossU * in.crossU * 9.0);
+  let specCol = vec3<f32>(1.0, 0.99, 0.96) * in.spec * specCore * (1.0 - blur * 0.8);
+
+  var col = in.color * in.brightness * lit * core * 1.2 + specCol;
+
+  // Atmospheric fog: distant strands sink into the backdrop's tone —
+  // dark warm gray, matching the graded background.
+  let fogCol = vec3<f32>(0.065, 0.058, 0.056);
+  col = mix(col, fogCol * (0.4 + in.brightness * 0.3), in.fx.x);
+
+  // DOF/energy conservation: wider streak = dimmer per-pixel.
+  let energyKeep = 1.0 / (1.0 + blur * 2.2);
+  let alpha = in.brightness * core * (0.6 + u.ribbonTranslucency * 0.8) * energyKeep;
+  return vec4<f32>(col * energyKeep, alpha);
 }
 `;
 

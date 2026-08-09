@@ -3,7 +3,12 @@ import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import type { SignalFrame } from '$lib/mediapipe/signals';
 import { nativeShaderSourceFromJavascript } from './nativeJsShaderSource';
+import {
+  buildNativePluginGraph,
+  buildNativePluginPrecompileCommands,
+} from './nativePluginGraphs';
 
 const nativeCoreBin = join(
   process.cwd(),
@@ -150,6 +155,155 @@ describe('Native render-core RPC contract', () => {
     process.platform === 'darwin' ? 'iosurface' : process.platform === 'win32' ? 'dxgi' : null;
   const nativeSharedTextureDetail =
     process.platform === 'darwin' ? 'IOSurfaceID' : process.platform === 'win32' ? 'DXGI shared HANDLE' : '';
+
+  itIfNativeCore('renders every enabled plugin through native graph source frames', async () => {
+    const rpc = createNativeRpc();
+    try {
+      const started = await rpc.send('start', {
+        config: { backend: nativeBackend, width: 160, height: 90, source_frame_size: 160, target_fps: 60 },
+      }, 15000);
+      expect(started?.backend_ready).toBe(true);
+
+      for (const command of buildNativePluginPrecompileCommands()) {
+        const precompileResult = await rpc.send('submit_commands', {
+          commands: [command],
+        }, 15000);
+        const precompileStatus = await rpc.send('status', {}, 5000);
+        expect(
+          precompileStatus.last_shader_error,
+          `${command.shader_id}: ${JSON.stringify(precompileResult)}`,
+        ).toBeNull();
+      }
+
+      const audio = {
+        active: true,
+        bass: 0.7,
+        mid: 0.45,
+        treble: 0.3,
+        energy: 0.6,
+        beatPhase: 0.25,
+        beatPulse: 0.9,
+        amplitude: 0.5,
+      };
+      const handFrame: SignalFrame = {
+        timestamp: 1,
+        values: {},
+        gestures: { 'gesture.right': '', 'gesture.left': '' },
+        confidence: {},
+        hands: (['Left', 'Right'] as const).map((handedness, handIndex) => ({
+          handedness,
+          landmarks: Array.from({ length: 21 }, (_, index) => {
+            const isPinchTip = index === 4 || index === 8;
+            return {
+              x: isPinchTip
+                ? 0.3 + handIndex * 0.42 + (index === 8 ? 0.003 : 0)
+                : 0.18 + handIndex * 0.42 + (index % 5) * 0.045,
+              y: isPinchTip
+                ? 0.34 + (index === 8 ? 0.003 : 0)
+                : 0.25 + Math.floor(index / 5) * 0.09,
+              z: 0,
+            };
+          }),
+        })),
+      };
+      const fixtures = [
+        {
+          name: 'ghostfx-drift',
+          kind: 'ghostfx' as const,
+          params: { ghostfxScenePreset: 'drift', ghostfxBgAlpha: 1 },
+        },
+        {
+          name: 'ghostfx-ribbons',
+          kind: 'ghostfx' as const,
+          params: { ghostfxScenePreset: 'ribbons', ghostfxBgAlpha: 1, ghostfxRibbonBlend: 'lighten' },
+        },
+        {
+          name: 'ghostfx-liquid',
+          kind: 'ghostfx' as const,
+          params: { ghostfxScenePreset: 'liquid', ghostfxBgAlpha: 1 },
+        },
+        ...(['trails', 'aurora', 'bursts', 'skeleton', 'panel'] as const).map((mode) => ({
+          name: `handfx-${mode}`,
+          kind: 'handfx' as const,
+          params: { handfxMode: mode, handfxBgAlpha: 0.15, handfxCameraOn: true },
+          handFrame,
+        })),
+      ];
+
+      for (let index = 0; index < fixtures.length; index += 1) {
+        const fixture = fixtures[index];
+        const layerId = `native-plugin-${fixture.name}`;
+        const sourceId = `plugin:${layerId}:${fixture.kind}`;
+        const graph = buildNativePluginGraph({
+          kind: fixture.kind,
+          sourceId,
+          params: fixture.params,
+          width: 160,
+          height: 90,
+          time: 1,
+          frameDelta: 1 / 60,
+          frameIndex: 60 + index,
+          audio,
+          handFrame: 'handFrame' in fixture ? fixture.handFrame : null,
+          reset: true,
+        });
+        await rpc.send('submit_commands', {
+          commands: [
+            {
+              type: 'upsert_layer',
+              layer_id: layerId,
+              z_index: index,
+              opacity: 1,
+              blend_mode: 'normal',
+              corners: {
+                topLeft: { x: 0, y: 0 },
+                topRight: { x: 1, y: 0 },
+                bottomRight: { x: 1, y: 1 },
+                bottomLeft: { x: 0, y: 1 },
+              },
+            },
+            { type: 'set_layer_visibility', layer_id: layerId, visible: true },
+            {
+              type: 'bind_media_source',
+              layer_id: layerId,
+              source_id: sourceId,
+              uri: `native-graph://${fixture.kind}/${layerId}`,
+              source_type: `gpu:${fixture.kind}`,
+            },
+            {
+              type: 'set_native_graph_layer',
+              layer_id: layerId,
+              kind: fixture.kind,
+              instrument_source_id: sourceId,
+              composite_source_id: sourceId,
+              input_source_id: null,
+              effect_graph: graph.config,
+              params: fixture.params,
+            },
+          ],
+        }, 20000);
+        await new Promise((resolve) => setTimeout(resolve, 120));
+        const snapshot = await rpc.send('frame_snapshot', { include_pixels: index === 0 }, 10000);
+        expect(snapshot.nonzero_pixels, fixture.name).toBeGreaterThan(0);
+        expect(snapshot.dark_frame, fixture.name).toBe(false);
+        if (index === 0) {
+          const firstPixels = assertSnapshotPixels(`${fixture.name} first frame`, snapshot);
+          await new Promise((resolve) => setTimeout(resolve, 100));
+          const nextSnapshot = await rpc.send('frame_snapshot', { include_pixels: true }, 10000);
+          const nextPixels = assertSnapshotPixels(`${fixture.name} next frame`, nextSnapshot);
+          expect(averagePixelDelta(firstPixels, nextPixels), `${fixture.name} must advance without graph resubmission`).toBeGreaterThan(0.05);
+        }
+        await rpc.send('submit_commands', {
+          commands: [{ type: 'set_layer_visibility', layer_id: layerId, visible: false }],
+        });
+      }
+
+      const status = await rpc.send('status', {}, 5000);
+      expect(status.last_shader_error).toBeNull();
+    } finally {
+      await rpc.close();
+    }
+  }, 60000);
 
   itIfNativeCore('advances bound ISF shaders on the core clock while Electron is idle', async () => {
     const rpc = createNativeRpc();
@@ -358,10 +512,11 @@ void main() {
       expect(Number(imageStatus.native_image_decodes ?? 0)).toBeGreaterThan(0);
 
       await rpc.send('prefetch_media', {
-        source_id: 'native-video',
+        source_id: 'library:native-video',
         uri: videoPath,
         source_type: 'video',
         time_seconds: 0,
+        seek_generation: 1,
         decode_width: 128,
         decode_height: 72,
         playback_rate: 1,
@@ -371,7 +526,7 @@ void main() {
         trim_end: 1,
         seq: 1,
       }, 10000);
-      await waitForPrerolledSession(rpc, 'native-video');
+      await waitForPrerolledSession(rpc, 'library:native-video');
       const armedVideoStatus = await rpc.send('status', {}, 5000);
       await rpc.send('submit_commands', {
         commands: [
@@ -394,7 +549,13 @@ void main() {
             duration_seconds: 1,
             trim_start: 0,
             trim_end: 1,
-            seq: 1,
+            decode_width: 128,
+            decode_height: 72,
+            // A real VJ trigger advances the live source generation after the
+            // library session was armed. The compatible pre-roll must still
+            // be claimed instead of spawning a cold decoder.
+            seek_generation: 2,
+            seq: 2,
           },
         ],
       }, 10000);
@@ -403,8 +564,15 @@ void main() {
         Number(immediateVideoStatus.native_video_trigger_last_latency_us ?? Number.MAX_SAFE_INTEGER),
         JSON.stringify(immediateVideoStatus.native_video_sessions),
       ).toBeLessThan(16_000);
+      // Target the claimed playing session by id: after a warm-claim the pump
+      // immediately re-arms a fresh `library:` slot for instant re-triggering,
+      // and session order in status is map-iteration order — indexing [0]
+      // races the re-warm.
+      const triggeredSession = (immediateVideoStatus.native_video_sessions ?? []).find(
+        (session: { source_id?: string }) => session?.source_id === 'native-video',
+      );
       expect(
-        Number(immediateVideoStatus.native_video_sessions?.[0]?.frames_presented ?? 0),
+        Number(triggeredSession?.frames_presented ?? 0),
         JSON.stringify({
           armed: armedVideoStatus.native_video_sessions,
           triggered: immediateVideoStatus.native_video_sessions,
@@ -433,7 +601,12 @@ void main() {
         }),
       ).toBeLessThan(16_000);
       expect(Number(videoStatus.native_video_stream_underflows ?? -1)).toBe(0);
-      expect(Number(videoStatus.native_video_sessions?.[0]?.frames_presented ?? 0)).toBeGreaterThanOrEqual(60);
+      // Target the playing session by id — the re-warmed `library:` slot
+      // shares the status array in map-iteration order.
+      const playingSession = (videoStatus.native_video_sessions ?? []).find(
+        (session: { source_id?: string }) => session?.source_id === 'native-video',
+      );
+      expect(Number(playingSession?.frames_presented ?? 0)).toBeGreaterThanOrEqual(60);
       expect(Number(videoStatus.source_frame_last_upload_width ?? 0)).toBe(128);
       expect(Number(videoStatus.source_frame_last_upload_height ?? 0)).toBe(72);
     } finally {
@@ -731,6 +904,37 @@ void main() {
       await rpc.close();
     }
   }, 10000);
+
+  itIfNativeCore('reports applied layer geometry through layers_snapshot for the scene reconciler', async () => {
+    const rpc = createNativeRpc();
+    try {
+      await rpc.send('start', { config: { width: 320, height: 180, target_fps: 60 } });
+      const corners = {
+        topLeft: { x: 0.1, y: 0.045 },
+        topRight: { x: 0.724, y: 0.045 },
+        bottomRight: { x: 0.724, y: 0.9 },
+        bottomLeft: { x: 0.1, y: 0.9 },
+      };
+      await rpc.send('submit_commands', {
+        commands: [
+          { type: 'upsert_layer', layer_id: 'recon-layer', z_index: 2, opacity: 0.75, blend_mode: 'normal', corners },
+          { type: 'set_layer_visibility', layer_id: 'recon-layer', visible: true },
+        ],
+      });
+      const snapshot = await rpc.send('layers_snapshot');
+      const layer = (snapshot?.layers ?? []).find((entry: any) => entry.layer_id === 'recon-layer');
+      expect(layer, JSON.stringify(snapshot)).toBeTruthy();
+      expect(layer.visible).toBe(true);
+      expect(layer.opacity).toBeCloseTo(0.75, 4);
+      // Corner order matches the upsert payload: TL, TR, BR, BL — this is
+      // the contract the Electron-side reconciler diffs against.
+      expect(layer.corners.flat().map((value: number) => Number(value.toFixed(5)))).toEqual([
+        0.1, 0.045, 0.724, 0.045, 0.724, 0.9, 0.1, 0.9,
+      ]);
+    } finally {
+      await rpc.close();
+    }
+  }, 15000);
 
   itIfNativeCore('keeps raw frame export distinct from Electron recording readiness', async () => {
     const rpc = createNativeRpc();

@@ -233,7 +233,7 @@
     padding: 14px;
     color: var(--text-primary, #ddd);
     background: #181820;
-    font-family: var(--ga-font-ui, 'Space Grotesk', system-ui, sans-serif);
+    font-family: var(--ga-font-ui, 'Geist', system-ui, sans-serif);
     font-size: 13px;
     box-sizing: border-box;
   }
@@ -310,7 +310,7 @@
   }
   .row span:first-child { color: var(--text-secondary, #aaa); font-size: 12px; }
   .row .num {
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: 11px;
     text-align: right;
     color: #6df;

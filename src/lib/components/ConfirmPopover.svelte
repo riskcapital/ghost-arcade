@@ -143,7 +143,7 @@
     border: 1px solid #3a3a42;
     border-radius: 8px;
     box-shadow: 0 8px 24px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(0, 0, 0, 0.4);
-    font-family: var(--ga-font-ui, 'Space Grotesk', system-ui, sans-serif);
+    font-family: var(--ga-font-ui, 'Geist', system-ui, sans-serif);
     font-size: 13px;
     line-height: 1.35;
     animation: confirm-pop 90ms ease-out;

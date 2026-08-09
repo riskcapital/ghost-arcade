@@ -447,7 +447,7 @@ press S to hide</pre>
     bottom: 8px;
     left: 8px;
     color: var(--text-muted, #888);
-    font-family: var(--ga-font-ui, 'Space Grotesk', system-ui, sans-serif);
+    font-family: var(--ga-font-ui, 'Geist', system-ui, sans-serif);
     font-size: 12px;
     background: rgba(0, 0, 0, 0.6);
     padding: 4px 8px;
@@ -459,7 +459,7 @@ press S to hide</pre>
     top: 8px;
     right: 8px;
     color: #0f0;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: 12px;
     line-height: 1.4;
     background: rgba(0, 0, 0, 0.7);
@@ -476,7 +476,7 @@ press S to hide</pre>
     bottom: 12px;
     right: 12px;
     color: #fff;
-    font-family: var(--ga-font-ui, 'Space Grotesk', system-ui, sans-serif);
+    font-family: var(--ga-font-ui, 'Geist', system-ui, sans-serif);
     font-size: 13px;
     font-weight: 600;
     padding: 6px 10px;

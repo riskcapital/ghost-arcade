@@ -251,6 +251,19 @@ export interface ShapeMeshWarp {
 }
 
 // ============================================================================
+// MOTION FX (whole-line motion, evaluated on the GPU — independent of the
+// draw animation so you can combine e.g. a drawing-on line that also waves)
+// ============================================================================
+
+export type LineMotionFxMode = 'none' | 'wave' | 'breathe' | 'shimmer' | 'spin' | 'orbit' | 'audioPulse';
+
+export interface LineMotionFx {
+  mode: LineMotionFxMode;
+  amount: number;   // 0-1 strength
+  speed: number;    // 0-4 rate
+}
+
+// ============================================================================
 // LINE ELEMENT (Shape + Stroke + DrawAnimation — no fill, no shape animation)
 // ============================================================================
 
@@ -274,6 +287,8 @@ export interface LineElement {
   // Compositing
   blendMode: 'normal' | 'add' | 'multiply' | 'screen';
   opacity: number;
+  // Whole-line motion (wave/breathe/shimmer/spin/orbit/audio pulse)
+  motionFx?: LineMotionFx;
 }
 
 // ============================================================================
@@ -388,6 +403,7 @@ export function createLineElement(shape: LineShape): LineElement {
     meshWarpEnabled: false,
     blendMode: 'add',
     opacity: 1,
+    motionFx: { mode: 'none', amount: 0.5, speed: 1 },
   };
 }
 

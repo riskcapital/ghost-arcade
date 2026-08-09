@@ -3,7 +3,8 @@
   // Uses vjClipLauncher store for state management
 
   import { onMount, onDestroy } from 'svelte';
-  import { isMac, getTextureShareLabel } from '$lib/bridge';
+  import { isMac, isDesktopApp, getTextureShareLabel, invoke } from '$lib/bridge';
+  import { nativePreviewHostEl } from '../stores/nativePreviewHost';
   import { get } from 'svelte/store';
   import { mediaLibrary } from '../stores/media';
   import { vjClipLauncher, type VJClip, type VJBlock, type VJDeck } from '../stores/vjClipLauncher';
@@ -22,7 +23,7 @@
   import { parseISF, getInputDefault } from '../isf/parser';
   import { generateCachedThumbnail as generateShaderThumbnail } from '../isf/thumbnail';
   import type { BlendMode, Effect, EffectType, ISFInputDef, JSAnimationSource, SplatContent, Model3DContent, Model3DFormat, SplatAnimationType, SplatDisplacementType, Model3DAnimationType, Model3DDeformationType, Model3DMaterialType, Model3DWireframeMode, Model3DLightingPreset } from '../types';
-  import { generateUUID, createDefaultSplatContent, createDefaultModel3DContent } from '../types';
+  import { generateUUID, createDefaultSplatContent, createDefaultModel3DContent, createDefaultGPULayerContent, createDefaultTextContent } from '../types';
   import { audioStore } from '../stores/audio';
   import { createAssetRefFromFile, createAssetRefFromGeneratedBlob } from '../storage/assetRegistry';
   import ClipPreviewPanel from './ClipPreviewPanel.svelte';
@@ -67,6 +68,10 @@
   import EffectPickerModal from './EffectPickerModal.svelte';
   import SplatPanel from './SplatPanel.svelte';
   import Model3DPanel from './Model3DPanel.svelte';
+  import VJGPUClipPanel from './VJGPUClipPanel.svelte';
+  import VJTextClipPanel from './VJTextClipPanel.svelte';
+  import LEDFXPanel from './LEDFXPanel.svelte';
+  import { getShaderDef } from '../renderer/gpuShaderCatalog';
   // Same build-time JS animation catalog used by mapping-mode MediaTray.
   // @ts-expect-error virtual module supplied by vite plugin
   import bundledThreeJSItems from 'virtual:threejs-bundles';
@@ -90,12 +95,14 @@
     name: string;
     description: string;
     tier: string;
-    clipType: 'effect' | 'splat' | 'model3d';
+    clipType: 'effect' | 'splat' | 'model3d' | 'gpu' | 'text';
     effectType?: IntegratedEffectType;
-    inlineIcon?: 'splat' | 'model3d';
+    inlineIcon?: 'splat' | 'model3d' | 'gpu' | 'text';
   };
 
   const vjPluginCards: VJPluginCard[] = [
+    { id: 'gpu-shader', name: 'GPU Shader', description: 'GPU visual instruments and particle shaders', tier: 'free', clipType: 'gpu', inlineIcon: 'gpu' },
+    { id: 'text-creator', name: 'Text Creator', description: 'Live typography, animation, glow, and 3D text', tier: 'free', clipType: 'text', inlineIcon: 'text' },
     ...getAllPlugins().map((p): VJPluginCard => ({
       id: p.id,
       name: p.name,
@@ -120,7 +127,7 @@
   // (radial pulse, sweep, chase, strobe, beat-pulse, …) that modulate
   // the bound mapping layers created by Apply Stage. Always available;
   // the only way to activate stage effects.
-  let effectsTab: 'composition' | 'layer' | 'clip' | 'stage' = 'layer';
+  let effectsTab: 'composition' | 'layer' | 'clip' | 'stage' | 'led' = 'layer';
 
   // Effect types available
   const effectTypes: { value: EffectType; label: string }[] =
@@ -411,8 +418,90 @@
 
   // Preview canvas
   let previewCanvas: HTMLCanvasElement;
+  let previewContainerEl: HTMLDivElement | null = null;
+  // Full-native mode: the render core's output is shown by repositioning the
+  // AppKit presenter underlay into our preview box (registered below) — the
+  // 2D canvas blit only exists for the legacy browser renderer.
+  const nativePreviewActive = isDesktopApp && NATIVE_ENGINE_ONLY;
+  $: if (nativePreviewActive) {
+    if ($vjClipLauncher.isOpen && previewContainerEl) {
+      nativePreviewHostEl.set(previewContainerEl);
+    } else if ($nativePreviewHostEl === previewContainerEl) {
+      nativePreviewHostEl.set(null);
+    }
+  }
   let previewCtx: CanvasRenderingContext2D | null = null;
   let previewAnimationFrame: number | null = null;
+
+  // ── Deck A/B confidence monitors (native split-deck mode) ──
+  // Two named AppKit presenter views track these hole divs, fed by the
+  // core's bank-monitor shared textures — no duplicate render, decode,
+  // or readback. Geometry re-measures on a low-rate tick so layout,
+  // resize, and panel changes are all picked up.
+  let deckMonitorAEl: HTMLDivElement | null = null;
+  let deckMonitorBEl: HTMLDivElement | null = null;
+  let deckMonitorTimer: ReturnType<typeof setInterval> | null = null;
+  let deckMonitorGeneration = 0;
+  let deckMonitorLastSig = '';
+  let deckMonitorsAttached = false;
+  $: deckMonitorsVisible = nativePreviewActive
+    && $vjClipLauncher.isOpen
+    && $vjClipLauncher.crossfaderEnabled;
+
+  function deckMonitorRect(el: HTMLElement) {
+    const rect = el.getBoundingClientRect();
+    const width = Math.max(1, Math.round(rect.width));
+    const height = Math.max(1, Math.round(rect.height));
+    return {
+      x: Math.round(rect.left),
+      y: Math.round(rect.top),
+      width,
+      height,
+      contentX: 0,
+      contentY: 0,
+      contentWidth: width,
+      contentHeight: height,
+      generation: ++deckMonitorGeneration,
+    };
+  }
+
+  async function syncDeckMonitors() {
+    if (!deckMonitorsVisible || !deckMonitorAEl?.isConnected || !deckMonitorBEl?.isConnected) {
+      if (deckMonitorsAttached) {
+        deckMonitorsAttached = false;
+        deckMonitorLastSig = '';
+        try { await invoke('deck_monitor_detach'); } catch { /* main may be gone */ }
+      }
+      return;
+    }
+    const rectA = deckMonitorRect(deckMonitorAEl);
+    const rectB = deckMonitorRect(deckMonitorBEl);
+    const sig = `${rectA.x}:${rectA.y}:${rectA.width}:${rectA.height}|${rectB.x}:${rectB.y}:${rectB.width}:${rectB.height}`;
+    if (deckMonitorsAttached && sig === deckMonitorLastSig) return;
+    try {
+      const result = await invoke('deck_monitor_attach', {
+        monitors: [
+          { name: 'deck-a', rect: rectA },
+          { name: 'deck-b', rect: rectB },
+        ],
+      }) as { attached?: boolean };
+      deckMonitorsAttached = !!result?.attached;
+      deckMonitorLastSig = deckMonitorsAttached ? sig : '';
+    } catch {
+      deckMonitorsAttached = false;
+    }
+  }
+
+  $: if (nativePreviewActive && (deckMonitorsVisible || deckMonitorsAttached)) {
+    if (!deckMonitorTimer) {
+      deckMonitorTimer = setInterval(() => { void syncDeckMonitors(); }, 250);
+    }
+    // Re-measure promptly on visibility flips (the interval covers layout).
+    setTimeout(() => { void syncDeckMonitors(); }, 0);
+  } else if (deckMonitorTimer) {
+    clearInterval(deckMonitorTimer);
+    deckMonitorTimer = null;
+  }
 
   // Resizable preview section
   let previewSectionHeight = 350;
@@ -690,6 +779,7 @@
       if (fpsTarget < 60 && now - _lastPreviewFrameTime < frameIntervalMs) return;
       _lastPreviewFrameTime = now;
 
+      if (nativePreviewActive) return;
       const mainCanvas = getMainCanvas();
       if (!previewCanvas || !mainCanvas || !previewCtx) return;
       const srcW = mainCanvas.width;
@@ -727,6 +817,14 @@
 
   // Cleanup on destroy
   onDestroy(() => {
+    if (deckMonitorTimer) {
+      clearInterval(deckMonitorTimer);
+      deckMonitorTimer = null;
+    }
+    if (deckMonitorsAttached) {
+      deckMonitorsAttached = false;
+      void invoke('deck_monitor_detach').catch(() => { /* main may be gone */ });
+    }
     stopPreviewLoop();
     stopModGhostLoop();
     stopCrossfaderAutoLoop();
@@ -818,7 +916,7 @@
   }
 
   type VJDragPayload = {
-    type: 'shader' | 'video' | 'image' | 'threejs' | 'spout' | 'effect' | 'splat' | 'model3d' | 'preset' | 'live-source';
+    type: 'shader' | 'video' | 'image' | 'threejs' | 'spout' | 'effect' | 'splat' | 'model3d' | 'gpu' | 'text' | 'preset' | 'live-source';
     id: string;
     spoutName?: string;
     pluginName?: string;
@@ -860,7 +958,20 @@
     effectSource?: IntegratedEffectSource;
   };
 
-  type MediaTrayDropPayload = MediaTrayMediaPayload | MediaTrayLiveSourcePayload | MediaTrayPluginPayload;
+  type MediaTrayCreatorPayload = {
+    id: 'gpu-shader' | 'text-creator';
+    type: 'gpu' | 'text';
+    name: string;
+    src: 'gpu-layer' | 'text-layer';
+  };
+
+  type MediaTrayPresetPayload = {
+    id: string;
+    type: 'preset';
+    name?: string;
+  };
+
+  type MediaTrayDropPayload = MediaTrayMediaPayload | MediaTrayLiveSourcePayload | MediaTrayPluginPayload | MediaTrayCreatorPayload | MediaTrayPresetPayload;
 
   // Drag state for clips
   let draggedClip: VJDragPayload | null = null;
@@ -972,11 +1083,6 @@
     return nativeInventoryLocked && !isNativeSelectableEffect(effectType);
   }
 
-  function nativeEffectBadge(effectType: EffectType | string): 'NATIVE' | 'PENDING' | '' {
-    if (!nativeInventoryLocked) return '';
-    return isNativeSelectableEffect(effectType) ? 'NATIVE' : 'PENDING';
-  }
-
   function toggleVJEffectIfNativeReady(effect: Effect) {
     if (nativeEffectPending(effect.type) && !effect.enabled) return;
     toggleEffect(effect.id);
@@ -988,6 +1094,7 @@
     const _grid = paramClipGrid;
     const deckTag = $vjClipLauncher.crossfaderEnabled ? ` (Deck ${paramDeck})` : '';
     if (effectsTab === 'composition') return 'COMPOSITION FX';
+    if (effectsTab === 'led') return 'LED FX';
     if (effectsTab === 'clip') {
       if (selectedLayerIndex === null) return 'CLIP FX';
       const activeCol = _states[selectedLayerIndex].activeColumn;
@@ -1860,6 +1967,29 @@
     setBaseValue(layerIndex, paramName, value); // Keep modulation base in sync with slider
   }
 
+  function setJSAnimationParamValue(
+    layerIndex: number,
+    paramName: string,
+    value: number | boolean | number[]
+  ) {
+    vjClipLauncher.updateActiveClipJSAnimationParam(layerIndex, paramName, value, paramDeck);
+  }
+
+  function jsAnimationColorHex(value: unknown): string {
+    if (!Array.isArray(value) || value.length < 3) return '#ffffff';
+    const channels = value.slice(0, 3).map((channel) => {
+      const numeric = Number(channel);
+      const byte = numeric <= 1 ? numeric * 255 : numeric;
+      return Math.max(0, Math.min(255, Math.round(byte))).toString(16).padStart(2, '0');
+    });
+    return `#${channels.join('')}`;
+  }
+
+  function jsAnimationColorValue(hex: string): number[] {
+    const normalized = hex.replace('#', '').padEnd(6, '0').slice(0, 6);
+    return [0, 2, 4].map((offset) => parseInt(normalized.slice(offset, offset + 2), 16) / 255);
+  }
+
   /** Reset every shader input on the currently-open shader-params
    *  panel back to the values the curator saved — the per-shader
    *  manifest defaults. Falls back to INPUT.DEFAULT (the ISF
@@ -2445,6 +2575,44 @@
   }
 
   function createVJClipFromMediaTrayPayload(payload: MediaTrayDropPayload): VJClip | null {
+    if (payload.type === 'preset') {
+      // Mapping preset dragged in from the bottom Presets tray (VJ MAP
+      // sub-mode) — same clip shape the in-panel Maps tab drag creates.
+      const comp = $compositions.find((c) => c.id === payload.id);
+      if (!comp) return null;
+      return {
+        id: generateUUID(),
+        type: 'preset',
+        name: comp.name,
+        src: comp.id,
+        thumbnail: comp.thumbnail,
+        presetId: comp.id,
+      };
+    }
+
+    if (payload.type === 'gpu') {
+      const gpuLayerContent = createDefaultGPULayerContent();
+      const shaderDef = getShaderDef(gpuLayerContent.shaderId);
+      gpuLayerContent.params = { ...(shaderDef?.defaultParams || {}) };
+      return {
+        id: generateUUID(),
+        type: 'gpu',
+        name: payload.name,
+        src: payload.src,
+        gpuLayerContent,
+      };
+    }
+
+    if (payload.type === 'text') {
+      return {
+        id: generateUUID(),
+        type: 'text',
+        name: payload.name,
+        src: payload.src,
+        textContent: createDefaultTextContent(),
+      };
+    }
+
     if (payload.type === 'live-source') {
       const registeredSource = findMediaTrayLiveSource(payload.id);
       const source = (payload.videoEl || payload.stream) ? payload : (registeredSource ?? payload);
@@ -2491,7 +2659,7 @@
       };
     }
 
-    if (payload.jsAnimation) {
+    if ('jsAnimation' in payload && payload.jsAnimation) {
       return {
         id: generateUUID(),
         type: payload.type === 'p5js' ? 'p5js' : 'jsanimation',
@@ -2669,6 +2837,27 @@
           effectType,
           ...(manifest?.defaultSourceParams ?? {}),
         },
+      };
+      vjClipLauncher.setClip(layerIndex, columnIndex, vjClip, bank);
+    } else if (draggedClip.type === 'gpu') {
+      const gpuLayerContent = createDefaultGPULayerContent();
+      const shaderDef = getShaderDef(gpuLayerContent.shaderId);
+      gpuLayerContent.params = { ...(shaderDef?.defaultParams || {}) };
+      const vjClip: VJClip = {
+        id: generateUUID(),
+        type: 'gpu',
+        name: 'GPU Shader',
+        src: 'gpu-layer',
+        gpuLayerContent,
+      };
+      vjClipLauncher.setClip(layerIndex, columnIndex, vjClip, bank);
+    } else if (draggedClip.type === 'text') {
+      const vjClip: VJClip = {
+        id: generateUUID(),
+        type: 'text',
+        name: 'Text Creator',
+        src: 'text-layer',
+        textContent: createDefaultTextContent(),
       };
       vjClipLauncher.setClip(layerIndex, columnIndex, vjClip, bank);
     } else if (draggedClip.type === 'splat') {
@@ -3225,7 +3414,12 @@
 />
 
 {#if $vjClipLauncher.isOpen}
-  <div class="vj-overlay" class:kf-tray-open={$keyframeTimeline.isOpen}>
+  <div
+    class="vj-overlay"
+    class:kf-tray-open={$keyframeTimeline.isOpen}
+    class:native-underlay={nativePreviewActive}
+    class:mac-titlebar-offset={isMac}
+  >
     <!-- Header -->
     <div class="vj-header">
       <div class="header-left">
@@ -3557,10 +3751,18 @@
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="11"/></svg>
               Stage
             </button>
+            {#if ($project.wledControllers ?? []).some(controller => controller.enabled)}
+              <button class="fx-tab" class:active={effectsTab === 'led'} onclick={() => effectsTab = 'led'} title="LED patterns and performance controls">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/><path d="M7 12h3m4 0h3"/></svg>
+                LED
+              </button>
+            {/if}
           </div>
 
           <div class="effects-panel-content">
-            {#if effectsTab === 'stage'}
+            {#if effectsTab === 'led'}
+              <LEDFXPanel />
+            {:else if effectsTab === 'stage'}
               <!-- Stage Effects — procedural per-slice modulation that
                    drives the brightness of slice-bound mapping layers.
                    Effects live on the active Surface (Surface.effects[]),
@@ -3758,11 +3960,6 @@
                           {effect.enabled ? '●' : '○'}
                         </button>
                         <span class="effect-name">{effect.type}</span>
-                        {#if nativeInventoryLocked}
-                          <span class="native-effect-badge" class:pending={pendingNativeEffect}>
-                            {nativeEffectBadge(effect.type)}
-                          </span>
-                        {/if}
                         <span class="effect-expand">{expandedEffectId === effect.id ? '▼' : '▶'}</span>
                         <button class="effect-delete" onclick={(e) => { e.stopPropagation(); deleteEffect(effect.id); }}>×</button>
                       </div>
@@ -3934,11 +4131,37 @@
           </div>
         </div>
 
-        <!-- CENTER: Preview 16:9 -->
-        <div class="preview-wrapper">
-          <div class="preview-container">
-            <canvas bind:this={previewCanvas} class="preview-canvas"></canvas>
-            <div class="preview-label">OUTPUT PREVIEW</div>
+        <!-- CENTER: Preview 16:9 (+ stacked deck confidence monitors in split-deck mode) -->
+        <div class="preview-wrapper" class:ab-monitoring={deckMonitorsVisible}>
+          <div class="preview-layout">
+            <div class="preview-container program-preview" class:native-hole={nativePreviewActive} bind:this={previewContainerEl}>
+              <canvas bind:this={previewCanvas} class="preview-canvas" class:hidden-for-native={nativePreviewActive}></canvas>
+              <div class="preview-label">{deckMonitorsVisible ? 'PROGRAM' : 'OUTPUT PREVIEW'}</div>
+            </div>
+            {#if deckMonitorsVisible}
+              <div class="deck-preview-stack" aria-label="Deck confidence monitors">
+                <div
+                  class="deck-preview-container deck-monitor-hole"
+                  class:deck-live={$vjClipLauncher.crossfaderValue < 0.5}
+                  bind:this={deckMonitorAEl}
+                >
+                  <div class="deck-preview-label">
+                    <strong>A</strong>
+                    <span>DECK A</span>
+                  </div>
+                </div>
+                <div
+                  class="deck-preview-container deck-monitor-hole"
+                  class:deck-live={$vjClipLauncher.crossfaderValue >= 0.5}
+                  bind:this={deckMonitorBEl}
+                >
+                  <div class="deck-preview-label">
+                    <strong>B</strong>
+                    <span>DECK B</span>
+                  </div>
+                </div>
+              </div>
+            {/if}
           </div>
         </div>
 
@@ -4150,6 +4373,133 @@
                 {/if}
               </div>
             {/if}
+          {/if}
+
+          <!-- JS Animation Parameters. VJ owns this editor; the embedded
+               MediaTray deliberately suppresses Mapping's selected-layer
+               parameter panels so stale editors cannot appear below it. -->
+          {#if selectedLayerIndex !== null
+            && selectedLayerState?.activeClip?.jsAnimation
+            && (selectedLayerState.activeClip.type === 'jsanimation' || selectedLayerState.activeClip.type === 'p5js')}
+            {@const jsClip = selectedLayerState.activeClip}
+            {@const jsAnimation = jsClip.jsAnimation}
+            {@const jsParams = jsAnimation?.params ?? []}
+            <div class="shader-params-panel js-animation-params-panel">
+              <div class="shader-params-panel-header">
+                <span class="shader-params-overlay-title">
+                  {jsClip.name || 'JS Animation'}
+                  <span class="shader-params-layer-badge js-animation-badge">
+                    {jsClip.type === 'p5js' ? 'P5' : 'JS'}
+                  </span>
+                  <span class="shader-params-layer-badge">L{selectedLayerIndex + 1}</span>
+                </span>
+              </div>
+              <div class="shader-params-panel-list">
+                {#if jsParams.length > 0}
+                  {#each jsParams as param (param.name)}
+                    {@const currentValue = jsAnimation?.paramValues?.[param.name] ?? param.default}
+                    <div class="shader-param">
+                      <div class="shader-param-header">
+                        <span class="shader-param-name">{param.label || param.name}</span>
+                      </div>
+                      {#if param.type === 'number'}
+                        {@const minimum = param.min ?? 0}
+                        {@const maximum = param.max ?? 1}
+                        {@const numericValue = typeof currentValue === 'number' ? currentValue : Number(param.default) || minimum}
+                        <div class="shader-param-slider">
+                          <input
+                            type="range"
+                            min={minimum}
+                            max={maximum}
+                            step={Math.max((maximum - minimum) / 200, 0.001)}
+                            value={numericValue}
+                            oninput={(event) => setJSAnimationParamValue(
+                              selectedLayerIndex!,
+                              param.name,
+                              parseFloat((event.target as HTMLInputElement).value)
+                            )}
+                            class="param-slider"
+                            data-midi-path="vj:{selectedLayerIndex}:js:{param.name}"
+                            data-midi-label={param.label || param.name}
+                            data-midi-min={minimum}
+                            data-midi-max={maximum}
+                            data-midi-step={Math.max((maximum - minimum) / 200, 0.001)}
+                          />
+                          <span class="param-val">{numericValue.toFixed(2)}</span>
+                        </div>
+                      {:else if param.type === 'boolean'}
+                        <div class="shader-param-toggle">
+                          <button
+                            class="bool-toggle"
+                            class:on={Boolean(currentValue)}
+                            onclick={() => setJSAnimationParamValue(selectedLayerIndex!, param.name, !Boolean(currentValue))}
+                            data-midi-path="vj:{selectedLayerIndex}:js:{param.name}"
+                            data-midi-label={param.label || param.name}
+                            data-midi-discrete="true"
+                          >
+                            {Boolean(currentValue) ? 'ON' : 'OFF'}
+                          </button>
+                        </div>
+                      {:else if param.type === 'color'}
+                        <div class="js-color-param">
+                          <input
+                            type="color"
+                            value={jsAnimationColorHex(currentValue)}
+                            oninput={(event) => setJSAnimationParamValue(
+                              selectedLayerIndex!,
+                              param.name,
+                              jsAnimationColorValue((event.target as HTMLInputElement).value)
+                            )}
+                            aria-label={param.label || param.name}
+                          />
+                          <span>{jsAnimationColorHex(currentValue).toUpperCase()}</span>
+                        </div>
+                      {/if}
+                    </div>
+                  {/each}
+                {:else}
+                  <div class="js-no-params">This visual has no adjustable parameters.</div>
+                {/if}
+              </div>
+            </div>
+          {/if}
+
+          {#if selectedLayerIndex !== null && selectedLayerState?.activeClip?.type === 'gpu'}
+            {@const gpuClip = selectedLayerState.activeClip}
+            {@const vjGPUContent = gpuClip.gpuLayerContent || createDefaultGPULayerContent()}
+            <div class="shader-params-panel gpu-params-panel">
+              <div class="shader-params-panel-header">
+                <span class="shader-params-overlay-title">
+                  {gpuClip.name || 'GPU Shader'}
+                  <span class="shader-params-layer-badge" style="background: rgba(85, 215, 239, 0.22); color: #6ee7f7;">GPU</span>
+                </span>
+              </div>
+              <div class="shader-params-panel-list">
+                <VJGPUClipPanel
+                  content={vjGPUContent}
+                  onUpdate={(updates) => vjClipLauncher.updateActiveClipGPUContent(selectedLayerIndex!, updates, paramDeck)}
+                />
+              </div>
+            </div>
+          {/if}
+
+          {#if selectedLayerIndex !== null && selectedLayerState?.activeClip?.type === 'text'}
+            {@const textClip = selectedLayerState.activeClip}
+            {@const vjTextContent = textClip.textContent || createDefaultTextContent()}
+            <div class="shader-params-panel text-params-panel">
+              <div class="shader-params-panel-header">
+                <span class="shader-params-overlay-title">
+                  {textClip.name || 'Text Creator'}
+                  <span class="shader-params-layer-badge" style="background: rgba(244, 114, 182, 0.22); color: #f9a8d4;">TXT</span>
+                </span>
+              </div>
+              <div class="shader-params-panel-list">
+                <VJTextClipPanel
+                  content={vjTextContent}
+                  onUpdate={(updates) => vjClipLauncher.updateActiveClipTextContent(selectedLayerIndex!, updates, paramDeck)}
+                />
+              </div>
+            </div>
           {/if}
 
           <!-- Point Cloud (Splat) Parameters — Full controls via reusable SplatPanel -->
@@ -4706,7 +5056,7 @@
                         <img src={clip.thumbnail} alt={clip.name} class="clip-thumb" />
                       {:else}
                         <div class="clip-placeholder {clip.type}">
-                          {clip.type === 'shader' ? 'ISF' : clip.type === 'video' ? 'VID' : clip.type === 'spout' ? 'SPT' : clip.type === 'threejs' ? '3JS' : clip.type === 'splat' ? 'PLY' : clip.type === 'model3d' ? '3DM' : clip.type === 'effect' ? 'FX' : clip.type === 'preset' ? 'MAP' : 'IMG'}
+                          {clip.type === 'shader' ? 'ISF' : clip.type === 'video' ? 'VID' : clip.type === 'spout' ? 'SPT' : clip.type === 'threejs' ? '3JS' : clip.type === 'splat' ? 'PLY' : clip.type === 'model3d' ? '3DM' : clip.type === 'gpu' ? 'GPU' : clip.type === 'text' ? 'TXT' : clip.type === 'effect' ? 'FX' : clip.type === 'preset' ? 'MAP' : 'IMG'}
                         </div>
                       {/if}
                       <span class="clip-name">{clip.name}</span>
@@ -5215,7 +5565,16 @@
                   title="Drag {plugin.name} onto a clip slot"
                 >
                   <div class="vj-plugin-icon">
-                    {#if plugin.inlineIcon === 'splat'}
+                    {#if plugin.inlineIcon === 'gpu'}
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <circle cx="12" cy="12" r="9"/>
+                        <path d="M3 12h18M12 3c3 3 4 6 4 9s-1 6-4 9c-3-3-4-6-4-9s1-6 4-9Z"/>
+                      </svg>
+                    {:else if plugin.inlineIcon === 'text'}
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                        <path d="M4 5h16M12 5v14M8 19h8"/>
+                      </svg>
+                    {:else if plugin.inlineIcon === 'splat'}
                       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
                         <circle cx="12" cy="12" r="1.5"/>
                         <circle cx="8" cy="8" r="1"/>
@@ -5454,7 +5813,10 @@
     >
       <div class="resize-grip"></div>
     </div>
-    <SynthVision onClose={() => showPerformer = false} visible={showPerformer} />
+    <SynthVision
+      onClose={() => showPerformer = false}
+      visible={showPerformer && $vjClipLauncher.isOpen}
+    />
   </div>
 {/if}
 
@@ -5575,7 +5937,7 @@
     box-shadow: 0 0 12px rgba(255, 133, 119, 0.45);
   }
   .ab-toggle-glyph {
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
   .ab-toggle-label {
     text-transform: uppercase;
@@ -5635,7 +5997,7 @@
     border-color: #555;
   }
   .deck-label {
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 0.18em;
@@ -5847,7 +6209,7 @@
   }
 
   .xfade-readout {
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: 11px;
     color: var(--accent-primary, #BB86FC);
     letter-spacing: 0.05em;
@@ -5863,7 +6225,7 @@
     gap: 3px;
     align-items: center;
     color: rgba(148, 163, 184, 0.72);
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: 8px;
     font-weight: 800;
     letter-spacing: 0.12em;
@@ -5878,7 +6240,7 @@
     border-radius: 4px;
     color: var(--text-primary, #ddd);
     font-size: 11px;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     cursor: pointer;
     text-align: center;
   }
@@ -6072,13 +6434,13 @@
     padding: 2px 4px;
     border-radius: 3px;
     cursor: pointer;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
   .header-quant-select:hover {
     border-color: rgba(255, 255, 255, 0.3);
   }
   .header-quant-pending {
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: calc(var(--vj-header-font) - 1px);
     font-weight: 700;
     color: var(--accent-primary, #BB86FC);
@@ -6117,7 +6479,7 @@
     font-size: 13px; padding: 7px 14px; cursor: pointer; text-align: left;
   }
   .vj-menu-item:hover { background: rgba(255,255,255,0.08); color: #fff; }
-  .vj-menu-sc { color: #666; font-size: 11px; margin-left: 16px; font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace); }
+  .vj-menu-sc { color: #666; font-size: 11px; margin-left: 16px; font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); }
   .vj-menu-sep { height: 1px; background: #333; margin: 4px 0; }
 
   @keyframes blink {
@@ -6265,7 +6627,7 @@
     font-size: var(--vj-header-font);
     font-weight: 600;
     color: #ff4444;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
 
   /* Compact square icon button — same footprint as mapping-mode's
@@ -6667,13 +7029,13 @@
     border-radius: 4px;
     padding: 3px 5px;
     font-size: 12px;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     height: 26px;
   }
   .stage-auto-unit {
     color: var(--text-muted, #888);
     font-size: 11px;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
   /* ── Stage Effects: live-radio + cycle toggle on each row ── */
   .effect-live-radio {
@@ -6952,7 +7314,7 @@
     width: 38px;
     text-align: right;
     color: #777;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: 10px;
     font-variant-numeric: tabular-nums;
   }
@@ -6990,6 +7352,143 @@
     border: 2px solid #333;
     border-radius: 4px;
     overflow: hidden;
+  }
+
+  /* Deck A/B confidence monitors — the layout wrapper is a passthrough
+     until split-deck monitoring is active, so the native absolute
+     centering above keeps working untouched. */
+  .preview-layout {
+    position: absolute;
+    inset: 0;
+  }
+
+  .preview-wrapper.ab-monitoring .preview-layout {
+    container-type: size;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 10px;
+    min-width: 0;
+  }
+
+  /* Fit the program box inside (available width − monitor stack) ×
+     available height while KEEPING the output aspect — sizing from
+     container units instead of flex-grow, because a flexed width plus
+     a clamped max-height silently overrides aspect-ratio and
+     stretches the picture. */
+  .preview-wrapper.ab-monitoring .program-preview {
+    position: relative;
+    top: auto;
+    bottom: auto;
+    left: auto;
+    transform: none;
+    flex: 0 0 auto;
+    aspect-ratio: 16 / 9;
+    width: min(calc(100cqw - clamp(124px, 18vw, 220px) - 10px), calc(100cqh * 16 / 9));
+    height: auto;
+    max-width: none;
+    max-height: 100%;
+  }
+
+  .deck-preview-stack {
+    flex: 0 1 clamp(124px, 18vw, 220px);
+    width: clamp(124px, 18vw, 220px);
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 8px;
+  }
+
+  .deck-preview-container {
+    position: relative;
+    aspect-ratio: 16 / 9;
+    min-height: 0;
+    overflow: hidden;
+    background: #000;
+    border: 1px solid rgba(154, 123, 255, 0.38);
+    border-radius: 3px;
+    box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.75);
+    transition: border-color 120ms ease, box-shadow 120ms ease;
+  }
+
+  .deck-preview-container.deck-live {
+    border-color: rgba(255, 115, 96, 0.9);
+    box-shadow:
+      0 0 10px rgba(255, 98, 80, 0.16),
+      inset 0 0 0 1px rgba(255, 115, 96, 0.2);
+  }
+
+  /* The native presenter shows through this hole — keep the DOM box
+     transparent so the Metal view beneath is visible. */
+  .deck-monitor-hole {
+    background: transparent;
+  }
+
+  .deck-preview-label {
+    position: absolute;
+    top: 5px;
+    left: 5px;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    color: rgba(226, 231, 240, 0.78);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
+    font-size: 8px;
+    letter-spacing: 0;
+    pointer-events: none;
+  }
+
+  .deck-preview-label strong {
+    display: grid;
+    place-items: center;
+    width: 18px;
+    height: 16px;
+    color: #fff;
+    background: rgba(0, 0, 0, 0.72);
+    border: 1px solid rgba(255, 255, 255, 0.24);
+    font-size: 10px;
+    line-height: 1;
+  }
+
+  @media (max-width: 1180px) {
+    .preview-wrapper.ab-monitoring .preview-layout {
+      gap: 6px;
+    }
+
+    .preview-wrapper.ab-monitoring .program-preview {
+      width: min(calc(100cqw - 118px - 6px), calc(100cqh * 16 / 9));
+    }
+
+    .deck-preview-stack {
+      flex-basis: 118px;
+      width: 118px;
+      gap: 5px;
+    }
+  }
+
+  /* Full-native: the preview box is a transparent hole in the VJ overlay —
+     the Metal underlay shows through wherever the whole DOM stack is
+     transparent. Every VJ section paints its own opaque background, so only
+     the ancestor chain above the preview box needs clearing; the window's
+     opaque backdrop (#05070b) fills the remaining gaps. App.svelte hides the
+     editor DOM while VJ mode is open in native so nothing bleeds through. */
+  .vj-overlay.native-underlay {
+    background: transparent;
+  }
+  /* Keep the VJ header clear of the macOS traffic-light strip — the app
+     titlebar (30px, z-index 2000) always paints above this overlay. */
+  .vj-overlay.mac-titlebar-offset {
+    top: 30px;
+  }
+  .vj-overlay.native-underlay .vj-preview-section {
+    background: transparent;
+  }
+  .preview-container.native-hole {
+    background: transparent;
+  }
+  .preview-canvas.hidden-for-native {
+    display: none;
   }
 
   .preview-canvas {
@@ -7140,7 +7639,11 @@
   }
 
   .vj-shared-media-host :global(.media-tray.embedded) {
+    flex: 1;
+    width: 100%;
+    height: 100%;
     min-height: 0;
+    overflow: hidden;
   }
 
   .shader-params-panel {
@@ -7183,6 +7686,38 @@
     border-radius: 3px;
     color: var(--accent-primary, #BB86FC);
     font-weight: 700;
+  }
+
+  .js-animation-badge {
+    background: rgba(92, 225, 230, 0.14);
+    border-color: rgba(92, 225, 230, 0.42);
+    color: #5ce1e6;
+  }
+
+  .js-color-param {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    color: #777;
+    font-size: 10px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .js-color-param input {
+    width: 42px;
+    height: 24px;
+    padding: 2px;
+    border: 1px solid #333;
+    border-radius: 3px;
+    background: var(--bg-primary, #0d0d10);
+    cursor: pointer;
+  }
+
+  .js-no-params {
+    padding: 14px 10px;
+    color: #666;
+    font-size: 11px;
+    text-align: center;
   }
 
   .shader-params-close {
@@ -7286,12 +7821,14 @@
     z-index: 10;
     padding-bottom: 8px;
     min-width: 100%;
-    width: max-content;
+    width: 100%;
+    box-sizing: border-box;
   }
 
   .layer-controls-header {
     width: 150px;
     flex-shrink: 0;
+    box-sizing: border-box;
   }
 
   .column-trigger {
@@ -7320,7 +7857,8 @@
     gap: 4px;
     margin-bottom: 4px;
     min-width: 100%;
-    width: max-content;
+    width: 100%;
+    box-sizing: border-box;
   }
 
   /* Reversed layout: controls on right, clips flow left-to-right */
@@ -7334,6 +7872,7 @@
   .layer-controls {
     width: 150px;
     flex-shrink: 0;
+    box-sizing: border-box;
     background: var(--bg-primary, #0d0d10);
     border: 1px solid #333;
     border-radius: 6px;
@@ -7470,6 +8009,7 @@
   /* Clip Cells */
   .clip-cell {
     flex: 1 1 0;
+    align-self: flex-start;
     aspect-ratio: 16 / 9;
     min-width: 76px;
     min-height: 60px;
@@ -7725,7 +8265,7 @@
     color: #ffa899;
   }
   .ctx-shortcut {
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: 11px;
     color: var(--text-muted, #888);
     font-weight: 400;
@@ -8204,6 +8744,7 @@
     width: 56px;
     height: 42px;
     flex-shrink: 0;
+    box-sizing: border-box;
     background: #0a0a0a;
     border: 2px solid #222;
     border-radius: 4px;
@@ -8303,6 +8844,7 @@
   .live-preview-header {
     width: 56px;
     flex-shrink: 0;
+    box-sizing: border-box;
     font-size: 10px;
     font-weight: 600;
     color: #666;
@@ -9580,7 +10122,7 @@
     letter-spacing: 0.05em;
     cursor: pointer;
     transition: all 0.15s;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
   .xfade-cut-btn:hover {
     background: rgba(255, 133, 119, 0.18);
@@ -9623,7 +10165,7 @@
     border-radius: 4px;
     padding: 4px 8px;
     font-size: 12px;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     text-transform: uppercase;
     letter-spacing: 0.06em;
     min-width: 110px;
@@ -9638,7 +10180,7 @@
     border-radius: 4px;
     padding: 4px 8px;
     font-size: 11px;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     cursor: pointer;
   }
 
@@ -9649,7 +10191,7 @@
     padding: 0 4px;
   }
   .xfade-end-label {
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: 12px;
     font-weight: 700;
     color: var(--text-muted, #888);
@@ -9729,7 +10271,7 @@
     color: var(--text-muted, #888);
     font-size: 10px;
     font-weight: 700;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     padding: 3px 6px;
     cursor: pointer;
     transition: background 0.15s, color 0.15s;
@@ -9779,7 +10321,7 @@
   .vt-time {
     font-size: 12px;
     color: var(--text-muted, #888);
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     margin-left: 4px;
     flex: 1;
     white-space: nowrap;
@@ -9896,7 +10438,7 @@
     color: var(--text-secondary, #aaa);
   }
   .vt-tf-num {
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: 11px;
     color: #6df;
     text-align: right;

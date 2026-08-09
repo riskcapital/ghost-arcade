@@ -57,7 +57,26 @@
   import { midiManager } from '../midi/midiManager';
   import { abletonLink } from '../sync/abletonLink';
   import { oscStore } from '../osc/oscStore';
+  import { CONTROL_PATH_EXAMPLES, normalizeControlPath, validateControlPath } from '../control/controlPaths';
   import { keyboardStore, formatKeyCombo, type KeyActionMode } from '../keyboard/keyboardStore';
+  import WLEDMappingPanel from './WLEDMappingPanel.svelte';
+  import WLEDGroupsPanel from './WLEDGroupsPanel.svelte';
+
+  // ── OSC Learn (in-app editor — never browser prompt()) ──
+  let oscLearnOpen = false;
+  let oscLearnPath = 'vj:0:trigger:0';
+  function beginOscLearn() {
+    oscLearnOpen = true;
+    oscLearnPath = 'vj:0:trigger:0';
+  }
+
+  function confirmOscLearn() {
+    const validation = validateControlPath(oscLearnPath);
+    if (!validation.valid) return;
+    if (oscStore.startLearn(validation.normalized)) {
+      oscLearnOpen = false;
+    }
+  }
   let keyboardAddOpen = false;
   let keyboardAddPath = '';
   let keyboardAddMode: KeyActionMode = 'momentary';
@@ -256,12 +275,18 @@
   // MIDI
   $: midiDevices = $midiStore.devices.filter((d: any) => d.state === 'connected');
   $: midiSelectedId = $midiStore.selectedDeviceId;
+  $: midiClockSelectedId = $midiStore.selectedClockInputId;
   $: midiAvailable = $midiStore.available;
   $: midiEditMode = $midiStore.editMode;
 
   function handleMidiDeviceChange(e: Event) {
     const id = (e.target as HTMLSelectElement).value;
     if (id) midiManager.selectDevice(id);
+  }
+
+  function handleMidiClockDeviceChange(e: Event) {
+    const id = (e.target as HTMLSelectElement).value;
+    midiManager.selectClockInputDevice(id || null);
   }
 
   // ── Sidebar nav ──────────────────────────────────────────────────────
@@ -1752,6 +1777,18 @@
             {#if $midiStore.clockInEnabled}
               <div class="setting-row" style="padding-left: 16px;">
                 <div class="setting-label">
+                  <span class="label-text">Clock Input</span>
+                  <span class="label-hint">Use a separate virtual MIDI port when clock and controls come from different places</span>
+                </div>
+                <select value={midiClockSelectedId || ''} onchange={handleMidiClockDeviceChange}>
+                  <option value="">Same as MIDI Device</option>
+                  {#each midiDevices as device}
+                    <option value={device.id}>{device.name}</option>
+                  {/each}
+                </select>
+              </div>
+              <div class="setting-row" style="padding-left: 16px;">
+                <div class="setting-label">
                   <span class="label-text">Clock Status</span>
                   <span class="label-hint">{$midiStore.clockInRunning ? 'Running' : 'Idle'}{$midiStore.clockInBPM ? ` · ${$midiStore.clockInBPM.toFixed(1)} BPM` : ''}</span>
                 </div>
@@ -1919,9 +1956,25 @@
             </div>
           {/if}
 
+          <div class="osc-template">
+            <div>
+              <strong>VJ / Pro DJ Link OSC template</strong>
+              <p>
+                Installs A/B clip and column triggers for a 4 × 8 deck, plus master,
+                stop-all, and crossfader controls. Send from Beat Link Trigger,
+                Open Beat Control, a DAW, or any OSC controller.
+              </p>
+              <code>/ghost/vj/a/layer/1/clip/1</code>
+              <span>→ Deck A, layer 1, clip 1</span>
+            </div>
+            <button class="osc-add-btn template" onclick={() => oscStore.installVjTemplate()}>
+              Install template
+            </button>
+          </div>
+
           <h4 style="margin-top: 14px;">Bindings ({$oscStore.bindings.length})</h4>
           <p class="settings-hint" style="margin-bottom: 8px;">
-            Each row maps an OSC address to a param path (the same path strings the MIDI router uses, e.g. <code>vj:layer:0:opacity</code>). Use <strong>+ Add</strong> to enter one manually, or <strong>+ Learn</strong> to bind by sending the next OSC message.
+            Each row maps an OSC address to a param path (the same path strings the MIDI router uses, e.g. <code>vj:0:opacity</code>). Trigger bindings accept numeric/boolean values, argument-less messages, and OSC Impulse.
           </p>
 
           {#if $oscStore.bindings.length === 0}
@@ -1933,6 +1986,7 @@
               <div class="osc-binding-head">
                 <span>OSC Address</span>
                 <span>Param Path</span>
+                <span>Mode</span>
                 <span>Min</span>
                 <span>Max</span>
                 <span>Inv</span>
@@ -1950,8 +2004,25 @@
                     type="text"
                     value={b.path}
                     onchange={(e) => oscStore.updateBinding(b.id, { path: (e.target as HTMLInputElement).value })}
-                    placeholder="vj:layer:0:opacity"
+                    placeholder="vj:0:opacity"
+                    class:invalid-path={!validateControlPath(b.path).valid}
+                    aria-invalid={!validateControlPath(b.path).valid}
+                    title={validateControlPath(b.path).reason ?? `Valid path: ${normalizeControlPath(b.path)}`}
                   />
+                  <select
+                    value={b.mode ?? 'auto'}
+                    onchange={(e) => {
+                      const value = (e.target as HTMLSelectElement).value;
+                      oscStore.updateBinding(b.id, {
+                        mode: value === 'auto' ? undefined : value as 'continuous' | 'trigger',
+                      });
+                    }}
+                    title="Auto infers button-style paths; use Trigger for OSC bang/Impulse messages"
+                  >
+                    <option value="auto">Auto</option>
+                    <option value="continuous">Control</option>
+                    <option value="trigger">Trigger</option>
+                  </select>
                   <input
                     type="number" step="any"
                     value={b.sourceMin}
@@ -1982,17 +2053,61 @@
           <div class="osc-add-row">
             <button
               class="osc-add-btn"
-              onclick={() => oscStore.addBinding({ address: '/example', argIndex: 0, path: 'vj:layer:0:opacity', sourceMin: 0, sourceMax: 1, invert: false })}
+              onclick={() => oscStore.addBinding({ address: '/ghost/vj/master', argIndex: 0, path: 'vj:master:opacity', sourceMin: 0, sourceMax: 1, invert: false, mode: 'continuous' })}
             >+ Add binding</button>
             <button
               class="osc-add-btn learn"
-              onclick={() => {
-                const path = prompt('Target param path (e.g. vj:layer:0:opacity):');
-                if (path && path.trim()) oscStore.startLearn(path.trim());
-              }}
+              class:active={oscLearnOpen}
+              onclick={beginOscLearn}
               title="Wait for the next OSC message and bind it to a param path"
             >+ Learn binding</button>
           </div>
+
+          {#if oscLearnOpen}
+            <div class="osc-learn-form">
+              <label for="osc-learn-path">Target parameter</label>
+              <div class="osc-learn-controls">
+                <input
+                  id="osc-learn-path"
+                  type="text"
+                  list="osc-path-examples"
+                  bind:value={oscLearnPath}
+                  class:invalid-path={!validateControlPath(oscLearnPath).valid}
+                  onkeydown={(e) => {
+                    if (e.key === 'Enter') confirmOscLearn();
+                    if (e.key === 'Escape') oscLearnOpen = false;
+                  }}
+                />
+                <button class="osc-add-btn learn" disabled={!validateControlPath(oscLearnPath).valid} onclick={confirmOscLearn}>
+                  Listen
+                </button>
+                <button class="osc-add-btn" onclick={() => oscLearnOpen = false}>Cancel</button>
+              </div>
+              {#if validateControlPath(oscLearnPath).valid}
+                <span class="osc-path-valid">Routes to <code>{normalizeControlPath(oscLearnPath)}</code></span>
+              {:else}
+                <span class="osc-path-error">{validateControlPath(oscLearnPath).reason}</span>
+              {/if}
+              <datalist id="osc-path-examples">
+                {#each CONTROL_PATH_EXAMPLES as example}
+                  <option value={example.path}>{example.label}</option>
+                {/each}
+              </datalist>
+            </div>
+          {/if}
+
+          <details class="osc-path-reference">
+            <summary>Parameter path reference</summary>
+            <div class="osc-path-grid">
+              {#each CONTROL_PATH_EXAMPLES as example}
+                <button type="button" onclick={() => { oscLearnPath = example.path; oscLearnOpen = true; }}>
+                  <code>{example.path}</code>
+                  <span>{example.label}</span>
+                </button>
+              {/each}
+            </div>
+            <p>Legacy paths such as <code>vj:layer:0:opacity</code> are accepted and normalized automatically.</p>
+          </details>
         </section>
 
         {/if}
@@ -2171,14 +2286,14 @@
         <!-- WLED LED-controller section. Each controller is a WLED
              device on the LAN that the renderer pushes per-frame pixel
              data to via UDP (DRGB protocol). The shader's composite
-             output is downsampled to (ledCount × 1) and shipped as RGB
-             bytes through the main-process socket. See
+             output is spatially sampled and shipped as RGB bytes
+             through the main-process socket. See
              src/lib/wled/sender.ts + electron/main.js → wled_send_frame. -->
         {#if selectedSection === 'integrations:wled'}
         <section class="settings-section">
           <h3>WLED LED Controllers</h3>
           <p class="settings-hint" style="margin-bottom: 12px;">
-            Send the shader's output to WLED LED strips on your local network. Each controller taps the final composite and ships RGB pixels over UDP at ~60Hz. WLED's default port is 21324; max 490 LEDs per controller for the DRGB protocol.
+            Send the final composite to WLED LEDs on your local network. Colors and bright regions are spatially sampled across the image and shipped over UDP at ~60Hz. WLED's default port is 21324; max 490 LEDs per controller for the DRGB protocol.
           </p>
 
           {#if ($project.wledControllers ?? []).length === 0}
@@ -2186,66 +2301,12 @@
               No WLED controllers configured. Click <strong>+ Add controller</strong> to send shader pixels to a WLED device on your LAN.
             </div>
           {:else}
-            <div class="osc-bindings" style="grid-template-columns: 1.4fr 1.4fr 0.8fr 0.8fr 1fr 1fr 0.6fr 36px;">
-              <div class="osc-binding-head" style="grid-template-columns: 1.4fr 1.4fr 0.8fr 0.8fr 1fr 1fr 0.6fr 36px;">
-                <span>Name</span>
-                <span>IP Address</span>
-                <span>Port</span>
-                <span>LEDs</span>
-                <span>Brightness</span>
-                <span>Gamma</span>
-                <span>On</span>
-                <span></span>
-              </div>
-              {#each ($project.wledControllers ?? []) as c (c.id)}
-                <div class="osc-binding-row" style="grid-template-columns: 1.4fr 1.4fr 0.8fr 0.8fr 1fr 1fr 0.6fr 36px;">
-                  <input
-                    type="text"
-                    value={c.name}
-                    onchange={(e) => project.updateWLEDController(c.id, { name: (e.target as HTMLInputElement).value })}
-                    placeholder="Strip name"
-                  />
-                  <input
-                    type="text"
-                    value={c.ipAddr}
-                    onchange={(e) => project.updateWLEDController(c.id, { ipAddr: (e.target as HTMLInputElement).value })}
-                    placeholder="192.168.1.50"
-                  />
-                  <input
-                    type="number" min="1" max="65535" step="1"
-                    value={c.port}
-                    onchange={(e) => project.updateWLEDController(c.id, { port: parseInt((e.target as HTMLInputElement).value) || 21324 })}
-                  />
-                  <input
-                    type="number" min="1" max="490" step="1"
-                    value={c.ledCount}
-                    onchange={(e) => project.updateWLEDController(c.id, { ledCount: Math.max(1, Math.min(490, parseInt((e.target as HTMLInputElement).value) || 1)) })}
-                  />
-                  <input
-                    type="number" min="0" max="1" step="0.05"
-                    value={c.brightness ?? 1}
-                    onchange={(e) => project.updateWLEDController(c.id, { brightness: Math.max(0, Math.min(1, parseFloat((e.target as HTMLInputElement).value))) })}
-                  />
-                  <input
-                    type="number" min="0.5" max="3" step="0.1"
-                    value={c.gamma ?? 1}
-                    onchange={(e) => project.updateWLEDController(c.id, { gamma: Math.max(0.5, Math.min(3, parseFloat((e.target as HTMLInputElement).value))) })}
-                  />
-                  <label class="osc-inv">
-                    <input
-                      type="checkbox"
-                      checked={c.enabled}
-                      onchange={(e) => project.updateWLEDController(c.id, { enabled: (e.target as HTMLInputElement).checked })}
-                    />
-                  </label>
-                  <button
-                    class="osc-binding-del"
-                    onclick={() => project.removeWLEDController(c.id)}
-                    title="Remove controller"
-                  >×</button>
-                </div>
-              {/each}
-            </div>
+            {#each ($project.wledControllers ?? []) as c (c.id)}
+              <WLEDMappingPanel
+                controller={c}
+                onRemove={() => project.removeWLEDController(c.id)}
+              />
+            {/each}
           {/if}
 
           <div class="osc-add-row">
@@ -2260,9 +2321,34 @@
                 enabled: false,
                 brightness: 1,
                 gamma: 1,
+                samplingMode: 'dominant',
+                ranges: [],
+                mapping: {
+                  mode: 'auto-grid',
+                  axis: 'horizontal',
+                  columns: 8,
+                  serpentine: false,
+                  reverse: false,
+                  flipX: false,
+                  flipY: false,
+                  sourceRegion: { x: 0, y: 0, width: 1, height: 1 },
+                  sampleRadius: 0.015,
+                },
+                calibration: {
+                  redGain: 1,
+                  greenGain: 1,
+                  blueGain: 1,
+                  saturation: 1,
+                  blackThreshold: 0,
+                  smoothing: 0,
+                  colorMatrix: [1, 0, 0, 0, 1, 0, 0, 0, 1],
+                },
+                testPattern: 'off',
+                testColor: '#ffffff',
               })}
             >+ Add controller</button>
           </div>
+          <WLEDGroupsPanel />
         </section>
 
         {/if}
@@ -3012,7 +3098,7 @@
     color: var(--text-primary, #ddd);
     border-radius: 4px;
     padding: 5px 8px;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: 13px;
   }
   .port-input:focus { border-color: #4cd1ff; outline: none; }
@@ -3027,7 +3113,7 @@
   .osc-status-dot.error     { background: #ff5252; }
   .osc-status-dot.idle      { background: #555; }
   .osc-last {
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     color: #b6e8ff;
     font-size: 12px;
     background: rgba(76,209,255,0.06);
@@ -3084,7 +3170,7 @@
   }
   .osc-binding-head, .osc-binding-row {
     display: grid;
-    grid-template-columns: 2fr 2fr 60px 60px 32px 28px;
+    grid-template-columns: minmax(130px, 2fr) minmax(130px, 2fr) 82px 60px 60px 32px 28px;
     gap: 6px;
     align-items: center;
   }
@@ -3101,11 +3187,15 @@
     color: var(--text-primary, #ddd);
     border-radius: 3px;
     padding: 4px 6px;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: 12px;
     width: 100%;
   }
-  .osc-binding-row input:focus { border-color: #4cd1ff; outline: none; }
+  .osc-binding-row input:focus, .osc-binding-row select:focus { border-color: #4cd1ff; outline: none; }
+  .osc-binding-row input.invalid-path, .osc-learn-form input.invalid-path {
+    border-color: #ff6868;
+    box-shadow: 0 0 0 1px rgba(255, 104, 104, 0.18);
+  }
   .osc-inv { display: flex; align-items: center; justify-content: center; cursor: pointer; }
   .osc-binding-del {
     background: transparent;
@@ -3121,6 +3211,22 @@
     gap: 6px;
     margin-top: 10px;
   }
+  .osc-template {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 16px;
+    padding: 12px;
+    margin-top: 12px;
+    border: 1px solid rgba(76, 209, 255, 0.28);
+    background: rgba(76, 209, 255, 0.06);
+    border-radius: 5px;
+  }
+  .osc-template strong { color: var(--text-primary, #ddd); font-size: 13px; }
+  .osc-template p { color: var(--text-muted, #888); font-size: 12px; margin: 4px 0 7px; }
+  .osc-template code { color: #4cd1ff; font-size: 11px; }
+  .osc-template span { color: var(--text-muted, #888); font-size: 11px; margin-left: 6px; }
+  .osc-add-btn.template { flex: 0 0 auto; border-color: rgba(76, 209, 255, 0.45); color: #4cd1ff; }
   .osc-add-btn {
     background: var(--bg-tertiary, #14141a);
     border: 1px solid #2a2a30;
@@ -3133,6 +3239,69 @@
   .osc-add-btn:hover { border-color: #4cd1ff; color: #4cd1ff; }
   .osc-add-btn.learn { border-color: rgba(255,214,102,0.5); color: #ffd166; }
   .osc-add-btn.learn:hover { background: rgba(255,214,102,0.1); color: #fff; }
+  .osc-add-btn.learn.active {
+    background: rgba(255,214,102,0.22);
+    border-color: #ffd166;
+    color: #fff;
+    box-shadow: 0 0 12px rgba(255,214,102,0.22);
+  }
+  .osc-learn-form {
+    display: grid;
+    gap: 7px;
+    margin-top: 10px;
+    padding: 12px;
+    border: 1px solid rgba(255,214,102,0.35);
+    background: rgba(255,214,102,0.05);
+    border-radius: 5px;
+  }
+  .osc-learn-form label {
+    color: var(--text-primary, #ddd);
+    font-size: 12px;
+    font-weight: 600;
+  }
+  .osc-learn-controls {
+    display: grid;
+    grid-template-columns: minmax(180px, 1fr) auto auto;
+    gap: 6px;
+  }
+  .osc-learn-controls input {
+    min-width: 0;
+    padding: 6px 8px;
+    color: var(--text-primary, #ddd);
+    background: var(--bg-tertiary, #14141a);
+    border: 1px solid #2a2a30;
+    border-radius: 4px;
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
+  }
+  .osc-path-valid, .osc-path-error { font-size: 11px; }
+  .osc-path-valid { color: #4ade80; }
+  .osc-path-error { color: #ff7d7d; }
+  .osc-path-reference {
+    margin-top: 12px;
+    color: var(--text-muted, #888);
+    font-size: 12px;
+  }
+  .osc-path-reference summary { cursor: pointer; color: #4cd1ff; }
+  .osc-path-grid {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 5px;
+    margin-top: 8px;
+  }
+  .osc-path-grid button {
+    display: grid;
+    gap: 2px;
+    min-width: 0;
+    padding: 7px;
+    text-align: left;
+    background: var(--bg-tertiary, #14141a);
+    border: 1px solid #2a2a30;
+    border-radius: 4px;
+    color: var(--text-muted, #888);
+    cursor: pointer;
+  }
+  .osc-path-grid button:hover { border-color: #4cd1ff; }
+  .osc-path-grid code { color: #4cd1ff; overflow-wrap: anywhere; }
   .osc-add-btn.learn.active {
     background: rgba(255,214,102,0.22);
     border-color: #ffd166;
@@ -3466,7 +3635,7 @@
 
   .key-input {
     flex: 1;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     min-width: 120px;
   }
 
@@ -3582,7 +3751,7 @@
     color: var(--text-muted, #888);
     min-width: 32px;
     text-align: right;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
 
   .crop-grid .secondary-btn {
@@ -3783,7 +3952,7 @@
     border-radius: 4px;
     padding: 4px 8px;
     font-size: 13px;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
   .slice-input:focus {
     border-color: rgba(187, 134, 252, 0.4);
@@ -3823,7 +3992,7 @@
   .master-canvas-row .dim-x {
     color: #777;
     margin: 0 -4px;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
   .secondary-btn.small {
     padding: 2px 8px;

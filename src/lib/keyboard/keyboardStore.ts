@@ -29,6 +29,7 @@
 import { writable, get, derived } from 'svelte/store';
 import { midiRouter } from '../midi/midiRouter';
 import { generateUUID } from '../utils/uuid';
+import { synthVisionStore } from '../stores/synthVision';
 
 export type KeyActionMode = 'trigger' | 'toggle' | 'momentary' | 'nudge';
 
@@ -196,6 +197,10 @@ function createKeyboardStore() {
       return;
     }
 
+    // The visible Performer surface owns its displayed keyboard. Keep
+    // learn mode above this guard so users can still remap a key there.
+    if (get(synthVisionStore).keyboardActive) return;
+
     if (isEditableTarget()) return;
 
     let consumed = false;
@@ -239,6 +244,7 @@ function createKeyboardStore() {
 
   function onKeyUp(e: KeyboardEvent) {
     if (MODIFIER_CODES.has(e.code)) return;
+    if (get(synthVisionStore).keyboardActive) return;
     if (isEditableTarget()) return;
     const state = get({ subscribe });
     for (const b of state.bindings) {

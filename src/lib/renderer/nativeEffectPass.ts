@@ -70,7 +70,118 @@ export type NativeEffectPassId =
   | 'defocus-bokeh'
   | 'god-rays'
   | 'displacement'
-  | 'polar-transform';
+  | 'polar-transform'
+  | 'oil-paint'
+  | 'watercolor'
+  | 'comic-ink'
+  | 'crosshatch'
+  | 'linocut'
+  | 'dot-matrix'
+  | 'ascii'
+  | 'matrix-rain'
+  | 'binary-code'
+  | 'block-mosaic'
+  | 'number-grid'
+  | 'braille-pattern'
+  | 'circuit-board'
+  | 'stained-glass'
+  | 'woven-fabric'
+  | 'mosaic-tile'
+  | 'neon-outline'
+  | 'topo-map'
+  | 'led-wall'
+  | 'hex-grid'
+  | 'geometric-tile'
+  | 'spiral-tile'
+  | 'voronoi-shatter'
+  | 'thermal-contour'
+  | 'phase-lab'
+  | 'lens-dirt'
+  | 'diffusion-promist'
+  | 'compression-artifacts'
+  | 'datamosh-lite'
+  | 'scanline-drift'
+  | 'tape-dropout'
+  | 'ripple-caustics'
+  | 'shockwave'
+  | 'droste-recursive'
+  | 'slit-scan'
+  | 'fractal-warp'
+  | 'fluid-distort'
+  | 'wormhole'
+  | 'vhs-full-deck'
+  | 'topo-warp'
+  | 'strobe-sequencer'
+  | 'mirror-shards'
+  | 'rorschach-mirror'
+  | 'glitch-quilt'
+  | 'poster-tear'
+  | 'paint-peel'
+  | 'liquid-glass'
+  | 'crystal-refract'
+  | 'infinite-mirror'
+  | 'tunnel-flight'
+  | 'volumetric-fog-overlay'
+  | 'rain-fog-snow-overlay'
+  | 'particle-overlay-fx'
+  | 'glint-starburst'
+  | 'emboss-relight'
+  | 'pixel-sort'
+  | 'neon-tube-trace'
+  | 'hologram-scan'
+  | 'laser-slice'
+  | 'aura-field'
+  | 'smoke-disintegrate'
+  | 'shimmer-cloth'
+  | 'cellular-automata-burn'
+  | 'spectral-prism-tunnel'
+  | 'led-volume'
+  | 'audio-shock-bloom'
+  | 'analog-feedback-rack'
+  | 'club-laser-grid'
+  | 'ghost-exposure'
+  | 'dream-diffusion'
+  | 'ghost-double'
+  | 'depth-parallax'
+  | 'pixel-sand'
+  | 'point-cloud-dissolve'
+  | 'explode3-d'
+  | 'terrain3-d'
+  | 'wrapped-terrain'
+  | 'string-orb'
+  | 'sphere-wireframe'
+  | 'voxel-cube-cluster'
+  | 'mobius-lattice'
+  | 'crystal-shard-field'
+  | 'tube-lattice'
+  | 'disco-mirror-ball'
+  | 'lissajous-knot'
+  | 'helix-particle-stream'
+  | 'donut-constellation'
+  | 'sphere-project'
+  | 'cube-project'
+  | 'cylinder-wrap'
+  | 'torus-tunnel'
+  | 'diamond-gem'
+  | 'shatter3-d'
+  | 'mobius-strip'
+  | 'voxel-displace'
+  | 'wave-surface'
+  | 'prism-split'
+  | 'origami-fold'
+  | 'mirror-room'
+  | 'geometric-tile-pro'
+  | 'shingle-stack'
+  | 'time-smear'
+  | 'chronophoto'
+  | 'optical-flow-datamosh'
+  | 'flow-field-trails'
+  | 'reaction-diffusion'
+  | 'feedback-zoom'
+  | 'motion-trails'
+  | 'echo-repeat'
+  | 'light-paint'
+  | 'recursive-echo';
 
 export interface NativeEffectPassManifestEntry {
   id: NativeEffectPassId;
@@ -473,6 +584,632 @@ export interface NativeEffectPassOptions {
     polarCenterX: number;
     polarCenterY: number;
     polarMix: number;
+    phaseLabMode: number;
+    phaseLabIntensity: number;
+    phaseLabScale: number;
+    phaseLabSpeed: number;
+    phaseLabPhase: number;
+    phaseLabMix: number;
+    phaseLabColorGain: number;
+    phaseLabSourceBleed: number;
+    phaseLabEdgeBoost: number;
+    phaseLabDistortion: number;
+    phaseLabLineDensity: number;
+    phaseLabPolarizerAngle: number;
+    phaseLabSpectralShift: number;
+    phaseLabFocus: number;
+    dirtAmount: number;
+    dirtScale: number;
+    dirtThreshold: number;
+    dirtTintWarmth: number;
+    dirtScratches: number;
+    dirtSpots: number;
+    dirtMode: number;
+    dirtAnimSpeed: number;
+    diffAmount: number;
+    diffRadius: number;
+    diffThreshold: number;
+    diffShadowLift: number;
+    diffHighlightBloom: number;
+    diffHaze: number;
+    diffHazeWarmth: number;
+    diffMix: number;
+    compArtBlockSize: number;
+    compArtQuality: number;
+    compArtChromaSubsample: number;
+    compArtBlockNoise: number;
+    compArtMode: number;
+    compArtMix: number;
+    amount3: number;
+    scanDriftIntensity: number;
+    scanDriftFrequency: number;
+    scanDriftSpeed: number;
+    scanDriftWaveform: number;
+    scanDriftChromaSplit: number;
+    scanDriftChunkiness: number;
+    tapeDropoutDensity: number;
+    tapeDropoutLength: number;
+    tapeDropoutColor: number;
+    tapeDropoutSpeed: number;
+    tapeDropoutNoise: number;
+    tapeDropoutMix: number;
+    causticsIntensity: number;
+    causticsScale: number;
+    causticsSpeed: number;
+    causticsRefraction: number;
+    causticsTintR: number;
+    causticsTintG: number;
+    causticsTintB: number;
+    causticsMode: number;
+    shockTriggerTime: number;
+    shockSpeed: number;
+    shockAmplitude: number;
+    shockRingWidth: number;
+    shockCenterX: number;
+    shockCenterY: number;
+    shockChromatic: number;
+    shockMode: number;
+    drosteZoom: number;
+    drosteRotation: number;
+    drosteIterations: number;
+    drosteOffsetX: number;
+    drosteOffsetY: number;
+    drosteFrameSize: number;
+    drosteMix: number;
+    slitScanIntensity: number;
+    slitScanMode: number;
+    slitScanPattern: number;
+    slitScanSpeed: number;
+    slitScanChromaSplit: number;
+    fractalWarpAmount: number;
+    fractalWarpScale: number;
+    fractalWarpOctaves: number;
+    fractalWarpSpeed: number;
+    fractalWarpChromatic: number;
+    fractalWarpMode: number;
+    fluidDistAmount: number;
+    fluidDistScale: number;
+    fluidDistSpeed: number;
+    fluidDistTurbulence: number;
+    fluidDistMode: number;
+    wormholePullStrength: number;
+    wormholeRotation: number;
+    wormholeCenterX: number;
+    wormholeCenterY: number;
+    wormholeTwist: number;
+    wormholeChromatic: number;
+    wormholeAnimSpeed: number;
+    vhsFdTracking: number;
+    vhsFdHeadSwitch: number;
+    vhsFdChromaBleed: number;
+    vhsFdDropouts: number;
+    vhsFdTapeNoise: number;
+    vhsFdScanlines: number;
+    vhsFdColorBleed: number;
+    vhsFdSaturation: number;
+    vhsFdTrackingJump: number;
+    vhsFdMode: number;
+    twContourCount: number;
+    twContourWidth: number;
+    twDisplacement: number;
+    twChromaticEdge: number;
+    twColorR: number;
+    twColorG: number;
+    twColorB: number;
+    twShadowRidges: number;
+    twMix: number;
+    ssBPM: number;
+    ssSteps: number;
+    ssPattern: number;
+    ssMode: number;
+    ssIntensity: number;
+    ssTintR: number;
+    ssTintG: number;
+    ssTintB: number;
+    ssSwing: number;
+    msShards: number;
+    msShardSize: number;
+    msRotation: number;
+    msDelayAmount: number;
+    msChromatic: number;
+    msMode: number;
+    rmMode: number;
+    rmInkAmount: number;
+    rmFluidEdges: number;
+    rmTintR: number;
+    rmTintG: number;
+    rmTintB: number;
+    rmBgR: number;
+    rmBgG: number;
+    rmBgB: number;
+    rmMixOriginal: number;
+    gqTileSize: number;
+    gqShuffleAmount: number;
+    gqRotateAmount: number;
+    gqDelayAmount: number;
+    gqChromaSplit: number;
+    gqTriggerRate: number;
+    gqMode: number;
+    ptTearAmount: number;
+    ptTearAngle: number;
+    ptTearJitter: number;
+    ptShiftBelow: number;
+    ptOffsetX: number;
+    ptOffsetY: number;
+    ptTearGlow: number;
+    ptMode: number;
+    ppAmount: number;
+    ppScale: number;
+    ppLumaBias: number;
+    ppCurl: number;
+    ppShadow: number;
+    ppBgR: number;
+    ppBgG: number;
+    ppBgB: number;
+    ppMode: number;
+    lgBlobs: number;
+    lgBlobSize: number;
+    lgRefraction: number;
+    lgChromatic: number;
+    lgSpecular: number;
+    lgCausticAmount: number;
+    lgSpeed: number;
+    lgTintR: number;
+    lgTintG: number;
+    lgTintB: number;
+    crystalScale: number;
+    crystalRefraction: number;
+    crystalSparkle: number;
+    crystalEdgeGlow: number;
+    crystalTintR: number;
+    crystalTintG: number;
+    crystalTintB: number;
+    crystalMode: number;
+    infMirrorIterations: number;
+    infMirrorShrink: number;
+    infMirrorRotation: number;
+    infMirrorTintFade: number;
+    infMirrorHueShift: number;
+    infMirrorMode: number;
+    infMirrorOffsetX: number;
+    infMirrorOffsetY: number;
+    tunnelSpeed: number;
+    tunnelTwist: number;
+    tunnelDepth: number;
+    tunnelCenterX: number;
+    tunnelCenterY: number;
+    tunnelMode: number;
+    tunnelChromatic: number;
+    fogDensity: number;
+    fogScale: number;
+    fogSpeed: number;
+    fogHeightFalloff: number;
+    fogDepthSim: number;
+    fogColorR: number;
+    fogColorG: number;
+    fogColorB: number;
+    fogTurbulence: number;
+    fogMode: number;
+    weatherType: number;
+    weatherDensity: number;
+    weatherSpeed: number;
+    weatherAngle: number;
+    weatherSize: number;
+    weatherFog: number;
+    weatherColorR: number;
+    weatherColorG: number;
+    weatherColorB: number;
+    partMode: number;
+    partDensity: number;
+    partSize: number;
+    partSpeed: number;
+    partTwinkle: number;
+    partColorR: number;
+    partColorG: number;
+    partColorB: number;
+    partBlend: number;
+    glintIntensity: number;
+    glintThreshold: number;
+    glintLength: number;
+    glintPoints: number;
+    glintRotation: number;
+    glintColorR: number;
+    glintColorG: number;
+    glintColorB: number;
+    embRelStrength: number;
+    embRelAngle: number;
+    embRelHeight: number;
+    embRelDetail: number;
+    embRelSpecular: number;
+    embRelColorPreserve: number;
+    embRelAmbient: number;
+    ntEdgeThreshold: number;
+    ntTubeWidth: number;
+    ntGlow: number;
+    ntGlowRadius: number;
+    ntTintR: number;
+    ntTintG: number;
+    ntTintB: number;
+    ntChase: number;
+    ntChaseSpeed: number;
+    ntFlicker: number;
+    ntBg: number;
+    hsIntensity: number;
+    hsScanFreq: number;
+    hsScanSpeed: number;
+    hsGridSpacing: number;
+    hsRGBFlicker: number;
+    hsBrokenBands: number;
+    hsTintR: number;
+    hsTintG: number;
+    hsTintB: number;
+    hsOpacityFlicker: number;
+    hsEdgeGlow: number;
+    lsMode: number;
+    lsSpeed: number;
+    lsBeamWidth: number;
+    lsGlow: number;
+    lsSparks: number;
+    lsEraseAmount: number;
+    lsTintR: number;
+    lsTintG: number;
+    lsTintB: number;
+    lsReveal: number;
+    lsPersistence: number;
+    afIntensity: number;
+    afRadius: number;
+    afEdgeAmount: number;
+    afLumaAmount: number;
+    afAudioReact: number;
+    afHueShift: number;
+    afTintR: number;
+    afTintG: number;
+    afTintB: number;
+    afMode: number;
+    smokeAmount: number;
+    smokeScale: number;
+    smokeSpeed: number;
+    smokeDirection: number;
+    smokeEdgeFade: number;
+    smokeColorR: number;
+    smokeColorG: number;
+    smokeColorB: number;
+    smokeMode: number;
+    clothAmplitude: number;
+    clothFrequency: number;
+    clothSpeed: number;
+    clothThreadDensity: number;
+    clothThreadDepth: number;
+    clothShimmer: number;
+    clothMode: number;
+    caCellSize: number;
+    caBirthThreshold: number;
+    caSurvivalLow: number;
+    caSurvivalHigh: number;
+    caColorR: number;
+    caColorG: number;
+    caColorB: number;
+    caMode: number;
+    caMix: number;
+    sptTunnelDepth: number;
+    sptPrismSpread: number;
+    sptRotation: number;
+    sptSpeed: number;
+    sptSlices: number;
+    sptFade: number;
+    ledVoxelSize: number;
+    ledDepthPulse: number;
+    ledDepthSpeed: number;
+    ledPosterize: number;
+    ledGlow: number;
+    ledPerspective: number;
+    ledMode: number;
+    ledBgR: number;
+    ledBgG: number;
+    ledBgB: number;
+    asbIntensity: number;
+    asbBloomThreshold: number;
+    asbBloomRadius: number;
+    asbShockSpeed: number;
+    asbShockAmplitude: number;
+    asbChromaSplit: number;
+    asbStrobeAmount: number;
+    asbTintR: number;
+    asbTintG: number;
+    asbTintB: number;
+    asbAudioGate: number;
+    afrMix: number;
+    afrZoom: number;
+    afrRotation: number;
+    afrDecay: number;
+    afrHueShift: number;
+    afrMaskCenter: number;
+    afrChromaSplit: number;
+    afrOffsetX: number;
+    afrOffsetY: number;
+    afrMode: number;
+    clgIntensity: number;
+    clgGridDensity: number;
+    clgPerspective: number;
+    clgSpeed: number;
+    clgIntersectionGlow: number;
+    clgLineWidth: number;
+    clgTintR: number;
+    clgTintG: number;
+    clgTintB: number;
+    clgAudioReact: number;
+    clgMode: number;
+    geExposure: number;
+    geDecay: number;
+    geHueShiftPerFrame: number;
+    geIntensity: number;
+    geMode: number;
+    geClamp: number;
+    ddBloomAmount: number;
+    ddBloomRadius: number;
+    ddHalation: number;
+    ddChromaticBlur: number;
+    ddPastelRolloff: number;
+    ddShadowLift: number;
+    ddSoftness: number;
+    ddTintR: number;
+    ddTintG: number;
+    ddTintB: number;
+    ghostOpacity: number;
+    ghostOffsetX: number;
+    ghostOffsetY: number;
+    ghostMirror: number;
+    ghostTintR: number;
+    ghostTintG: number;
+    ghostTintB: number;
+    ghostBlend: number;
+    dpDepthStrength: number;
+    dpPushIn: number;
+    dpLayers: number;
+    dpChromatic: number;
+    dpDepthBoost: number;
+    dpMode: number;
+    dpPanX: number;
+    dpPanY: number;
+    psGravity: number;
+    psTurbulence: number;
+    psThreshold: number;
+    psPersistence: number;
+    psMode: number;
+    psReplenish: number;
+    psChromaSplit: number;
+    psGrainSize: number;
+    pcdDissolve: number;
+    pcdDotSize: number;
+    pcdScatterRadius: number;
+    pcdAttract: number;
+    pcdTurbulence: number;
+    pcdMode: number;
+    pcdBgR: number;
+    pcdBgG: number;
+    pcdBgB: number;
+    pcdHueShift: number;
+    spinSpeed: number;
+    terrainMode: number;
+    terrainHeight: number;
+    terrainCamHeight: number;
+    terrainSpeed: number;
+    terrainFog: number;
+    terrainYaw: number;
+    terrainPitch: number;
+    terrainRoll: number;
+    terrainFogR: number;
+    terrainFogG: number;
+    terrainFogB: number;
+    terrainHorizonFade: number;
+    terrainSourceMix: number;
+    wtShape: number;
+    wtHeight: number;
+    wtRotateX: number;
+    wtRotateY: number;
+    wtAutoRotate: number;
+    wtCamDistance: number;
+    wtSpecular: number;
+    wtAmbient: number;
+    wtFogDistance: number;
+    wtFogR: number;
+    wtFogG: number;
+    wtFogB: number;
+    wtHorizonFade: number;
+    wtSourceMix: number;
+    wtTileScale: number;
+    soRadius: number;
+    soHeight: number;
+    soLatCount: number;
+    soLonCount: number;
+    soDiagCount: number;
+    soSlope: number;
+    soWidth: number;
+    soSpin: number;
+    soTilt: number;
+    soFlow: number;
+    soIntensity: number;
+    soGlow: number;
+    soGlowR: number;
+    soGlowG: number;
+    soGlowB: number;
+    soHorizonFade: number;
+    soTileScale: number;
+    swRadius: number;
+    swHeight: number;
+    swMeridians: number;
+    swParallels: number;
+    swWidth: number;
+    swSpin: number;
+    swTilt: number;
+    swIntensity: number;
+    swHaloGlow: number;
+    swColorR: number;
+    swColorG: number;
+    swColorB: number;
+    swHorizonFade: number;
+    swFillSource: number;
+    swTileScale: number;
+    vccGridSize: number;
+    vccCubeSize: number;
+    vccSpacing: number;
+    vccHeight: number;
+    vccSpin: number;
+    vccTilt: number;
+    vccCamDistance: number;
+    vccSpecular: number;
+    vccAmbient: number;
+    vccHorizonFade: number;
+    vccBgR: number;
+    vccBgG: number;
+    vccBgB: number;
+    mlMajorR: number;
+    mlRibbonW: number;
+    mlTwists: number;
+    mlSpin: number;
+    mlTilt: number;
+    mlLineDensity: number;
+    mlLineWidth: number;
+    mlIntensity: number;
+    mlLineR: number;
+    mlLineG: number;
+    mlLineB: number;
+    mlHorizonFade: number;
+    csfShardCount: number;
+    csfShardSize: number;
+    csfSpread: number;
+    csfChromaEdge: number;
+    csfRefraction: number;
+    csfSpin: number;
+    csfIntensity: number;
+    csfTintR: number;
+    csfTintG: number;
+    csfTintB: number;
+    csfHorizonFade: number;
+    tlTubeCount: number;
+    tlTubeRadius: number;
+    tlSpread: number;
+    tlSpin: number;
+    tlTilt: number;
+    tlTwist: number;
+    tlIntensity: number;
+    tlRimR: number;
+    tlRimG: number;
+    tlRimB: number;
+    tlHorizonFade: number;
+    dmbRadius: number;
+    dmbFacetCount: number;
+    dmbSpin: number;
+    dmbTilt: number;
+    dmbChaseSpeed: number;
+    dmbChaseHueWidth: number;
+    dmbSparkle: number;
+    dmbIntensity: number;
+    dmbHighlightR: number;
+    dmbHighlightG: number;
+    dmbHighlightB: number;
+    dmbHorizonFade: number;
+    lkRatioX: number;
+    lkRatioY: number;
+    lkRatioZ: number;
+    lkPhaseX: number;
+    lkPhaseY: number;
+    lkTubeRadius: number;
+    lkScale: number;
+    lkSpin: number;
+    lkTilt: number;
+    lkIntensity: number;
+    lkTubeR: number;
+    lkTubeG: number;
+    lkTubeB: number;
+    lkHorizonFade: number;
+    hpsHelices: number;
+    hpsHelixRadius: number;
+    hpsTurns: number;
+    hpsHeight: number;
+    hpsTubeRadius: number;
+    hpsRiseSpeed: number;
+    hpsSpin: number;
+    hpsTilt: number;
+    hpsIntensity: number;
+    hpsTintR: number;
+    hpsTintG: number;
+    hpsTintB: number;
+    hpsHorizonFade: number;
+    dcMajorR: number;
+    dcMinorR: number;
+    dcStarCount: number;
+    dcStarSize: number;
+    dcSpin: number;
+    dcTilt: number;
+    dcTintIntensity: number;
+    dcTorusR: number;
+    dcTorusG: number;
+    dcTorusB: number;
+    dcStarR: number;
+    dcStarG: number;
+    dcStarB: number;
+    dcHorizonFade: number;
+    geomProTileCount: number;
+    geomProFlipRange: number;
+    geomProSpeed: number;
+    geomProGap: number;
+    motionTrailsLength: number;
+    motionTrailsAngle: number;
+    motionTrailsSamples: number;
+    motionTrailsFalloff: number;
+    motionTrailsChromaSplit: number;
+    motionTrailsMode: number;
+    echoCount: number;
+    echoOffsetX: number;
+    echoOffsetY: number;
+    echoDecay: number;
+    echoHueShift: number;
+    echoMode: number;
+    lightPaintIntensity: number;
+    lightPaintThreshold: number;
+    lightPaintTrailLength: number;
+    lightPaintFlowAngle: number;
+    lightPaintFlowScale: number;
+    lightPaintChromaShift: number;
+    lightPaintTintR: number;
+    lightPaintTintG: number;
+    lightPaintTintB: number;
+    recEchoDepth: number;
+    recEchoZoom: number;
+    recEchoRotation: number;
+    recEchoOpacity: number;
+    recEchoHueShift: number;
+    recEchoOffsetX: number;
+    recEchoOffsetY: number;
+    recEchoMode: number;
+    ofdmIntensity: number;
+    ofdmMotionScale: number;
+    ofdmPersistence: number;
+    ofdmChromaSplit: number;
+    ofdmBlockSize: number;
+    ofdmFreeze: number;
+    ofdmMode: number;
+    fftFlowScale: number;
+    fftTrailLength: number;
+    fftSamples: number;
+    fftSpeed: number;
+    fftChromaSplit: number;
+    fftContrast: number;
+    fftMode: number;
+    fftColorCycle: number;
+    rdFeedRate: number;
+    rdKillRate: number;
+    rdDiffusionA: number;
+    rdDiffusionB: number;
+    rdPatternScale: number;
+    rdLumaMask: number;
+    rdMode: number;
+    rdColorR: number;
+    rdColorG: number;
+    rdColorB: number;
+    rdMix: number;
+    rdReseed: number;
   }>;
   clear?: boolean;
   seq?: number;
@@ -584,6 +1321,117 @@ export const NATIVE_EFFECT_PASS_MANIFEST: NativeEffectPassManifestEntry[] = [
   { id: 'god-rays', code: 70, defaultAmount: 0.7, amountMin: 0, amountMax: 2 },
   { id: 'displacement', code: 71, defaultAmount: 0.4, amountMin: 0, amountMax: 1 },
   { id: 'polar-transform', code: 72, defaultAmount: 1, amountMin: 0, amountMax: 1 },
+  { id: 'oil-paint', code: 73, defaultAmount: 4, amountMin: 1, amountMax: 8 },
+  { id: 'watercolor', code: 74, defaultAmount: 0.6, amountMin: 0, amountMax: 1.5 },
+  { id: 'comic-ink', code: 75, defaultAmount: 1, amountMin: 0.2, amountMax: 3 },
+  { id: 'crosshatch', code: 76, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
+  { id: 'linocut', code: 77, defaultAmount: 1, amountMin: 0.2, amountMax: 1.6 },
+  { id: 'dot-matrix', code: 78, defaultAmount: 8, amountMin: 0, amountMax: 16 },
+  { id: 'ascii', code: 79, defaultAmount: 8, amountMin: 0, amountMax: 15 },
+  { id: 'matrix-rain', code: 80, defaultAmount: 0.6, amountMin: 0, amountMax: 1.5 },
+  { id: 'binary-code', code: 81, defaultAmount: 8, amountMin: 0, amountMax: 16 },
+  { id: 'block-mosaic', code: 82, defaultAmount: 10, amountMin: 0, amountMax: 17 },
+  { id: 'number-grid', code: 83, defaultAmount: 8, amountMin: 0, amountMax: 14 },
+  { id: 'braille-pattern', code: 84, defaultAmount: 8, amountMin: 0, amountMax: 15 },
+  { id: 'circuit-board', code: 85, defaultAmount: 6, amountMin: 0, amountMax: 11 },
+  { id: 'stained-glass', code: 86, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
+  { id: 'woven-fabric', code: 87, defaultAmount: 8, amountMin: 0, amountMax: 15 },
+  { id: 'mosaic-tile', code: 88, defaultAmount: 15, amountMin: 0, amountMax: 17 },
+  { id: 'neon-outline', code: 89, defaultAmount: 1, amountMin: 0, amountMax: 3 },
+  { id: 'topo-map', code: 90, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
+  { id: 'led-wall', code: 91, defaultAmount: 5, amountMin: 0, amountMax: 20 },
+  { id: 'hex-grid', code: 92, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
+  { id: 'geometric-tile', code: 93, defaultAmount: 0.4, amountMin: 0, amountMax: 1 },
+  { id: 'spiral-tile', code: 94, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
+  { id: 'voronoi-shatter', code: 95, defaultAmount: 0.6, amountMin: 0, amountMax: 1 },
+  { id: 'thermal-contour', code: 96, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
+  { id: 'phase-lab', code: 97, defaultAmount: 1.35, amountMin: 0, amountMax: 4 },
+  { id: 'lens-dirt', code: 98, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
+  { id: 'diffusion-promist', code: 99, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
+  { id: 'compression-artifacts', code: 100, defaultAmount: 1, amountMin: 0, amountMax: 1 },
+  { id: 'datamosh-lite', code: 101, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
+  { id: 'scanline-drift', code: 102, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
+  { id: 'tape-dropout', code: 103, defaultAmount: 0.4, amountMin: 0, amountMax: 1 },
+  { id: 'ripple-caustics', code: 104, defaultAmount: 0.6, amountMin: 0, amountMax: 2 },
+  { id: 'shockwave', code: 105, defaultAmount: 0.06, amountMin: 0, amountMax: 0.2 },
+  { id: 'droste-recursive', code: 106, defaultAmount: 1.5, amountMin: 1.05, amountMax: 3 },
+  { id: 'slit-scan', code: 107, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
+  { id: 'fractal-warp', code: 108, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
+  { id: 'fluid-distort', code: 109, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
+  { id: 'wormhole', code: 110, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
+  { id: 'vhs-full-deck', code: 111, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
+  { id: 'topo-warp', code: 112, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
+  { id: 'strobe-sequencer', code: 113, defaultAmount: 1, amountMin: 0, amountMax: 2 },
+  { id: 'mirror-shards', code: 114, defaultAmount: 0.2, amountMin: 0.05, amountMax: 0.5 },
+  { id: 'rorschach-mirror', code: 115, defaultAmount: 0.4, amountMin: 0, amountMax: 1 },
+  { id: 'glitch-quilt', code: 116, defaultAmount: 0.4, amountMin: 0, amountMax: 1 },
+  { id: 'poster-tear', code: 117, defaultAmount: 0.3, amountMin: 0, amountMax: 1 },
+  { id: 'paint-peel', code: 118, defaultAmount: 0.3, amountMin: 0, amountMax: 1 },
+  { id: 'liquid-glass', code: 119, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
+  { id: 'crystal-refract', code: 120, defaultAmount: 0.4, amountMin: 0, amountMax: 1 },
+  { id: 'infinite-mirror', code: 121, defaultAmount: 0.8, amountMin: 0.5, amountMax: 0.95 },
+  { id: 'tunnel-flight', code: 122, defaultAmount: 1, amountMin: 0, amountMax: 3 },
+  { id: 'volumetric-fog-overlay', code: 123, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
+  { id: 'rain-fog-snow-overlay', code: 124, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
+  { id: 'particle-overlay-fx', code: 125, defaultAmount: 0.4, amountMin: 0, amountMax: 1 },
+  { id: 'glint-starburst', code: 126, defaultAmount: 0.7, amountMin: 0, amountMax: 2 },
+  { id: 'emboss-relight', code: 127, defaultAmount: 1, amountMin: 0, amountMax: 3 },
+  { id: 'pixel-sort', code: 128, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
+  { id: 'neon-tube-trace', code: 129, defaultAmount: 1, amountMin: 0, amountMax: 2 },
+  { id: 'hologram-scan', code: 130, defaultAmount: 0.7, amountMin: 0, amountMax: 1 },
+  { id: 'laser-slice', code: 131, defaultAmount: 1.2, amountMin: 0, amountMax: 2 },
+  { id: 'aura-field', code: 132, defaultAmount: 1, amountMin: 0, amountMax: 2 },
+  { id: 'smoke-disintegrate', code: 133, defaultAmount: 0.4, amountMin: 0, amountMax: 1 },
+  { id: 'shimmer-cloth', code: 134, defaultAmount: 0.3, amountMin: 0, amountMax: 1 },
+  { id: 'cellular-automata-burn', code: 135, defaultAmount: 0.7, amountMin: 0, amountMax: 1 },
+  { id: 'spectral-prism-tunnel', code: 136, defaultAmount: 1, amountMin: 0, amountMax: 2 },
+  { id: 'led-volume', code: 137, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
+  { id: 'audio-shock-bloom', code: 138, defaultAmount: 1, amountMin: 0, amountMax: 2 },
+  { id: 'analog-feedback-rack', code: 139, defaultAmount: 0.7, amountMin: 0, amountMax: 1 },
+  { id: 'club-laser-grid', code: 140, defaultAmount: 1, amountMin: 0, amountMax: 2 },
+  { id: 'ghost-exposure', code: 141, defaultAmount: 0.3, amountMin: 0, amountMax: 1 },
+  { id: 'dream-diffusion', code: 142, defaultAmount: 1.2, amountMin: 0, amountMax: 2 },
+  { id: 'ghost-double', code: 143, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
+  { id: 'depth-parallax', code: 144, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
+  { id: 'pixel-sand', code: 145, defaultAmount: 1, amountMin: 0, amountMax: 2 },
+  { id: 'point-cloud-dissolve', code: 146, defaultAmount: 0, amountMin: 0, amountMax: 1 },
+  { id: 'explode3-d', code: 147, defaultAmount: 0.3, amountMin: 0, amountMax: 2 },
+  { id: 'terrain3-d', code: 148, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
+  { id: 'wrapped-terrain', code: 149, defaultAmount: 0.4, amountMin: 0, amountMax: 1 },
+  { id: 'string-orb', code: 150, defaultAmount: 1, amountMin: 0, amountMax: 2 },
+  { id: 'sphere-wireframe', code: 151, defaultAmount: 1.2, amountMin: 0, amountMax: 2 },
+  { id: 'voxel-cube-cluster', code: 152, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
+  { id: 'mobius-lattice', code: 153, defaultAmount: 1, amountMin: 0, amountMax: 2 },
+  { id: 'crystal-shard-field', code: 154, defaultAmount: 1, amountMin: 0, amountMax: 2 },
+  { id: 'tube-lattice', code: 155, defaultAmount: 1, amountMin: 0, amountMax: 2 },
+  { id: 'disco-mirror-ball', code: 156, defaultAmount: 1.2, amountMin: 0, amountMax: 2 },
+  { id: 'lissajous-knot', code: 157, defaultAmount: 1, amountMin: 0, amountMax: 2 },
+  { id: 'helix-particle-stream', code: 158, defaultAmount: 1, amountMin: 0, amountMax: 2 },
+  { id: 'donut-constellation', code: 159, defaultAmount: 1, amountMin: 0, amountMax: 2 },
+  { id: 'sphere-project', code: 160, defaultAmount: 0.8, amountMin: 0, amountMax: 1 },
+  { id: 'cube-project', code: 161, defaultAmount: 0.6, amountMin: 0, amountMax: 1 },
+  { id: 'cylinder-wrap', code: 162, defaultAmount: 0.8, amountMin: 0, amountMax: 1 },
+  { id: 'torus-tunnel', code: 163, defaultAmount: 0.8, amountMin: 0, amountMax: 1 },
+  { id: 'diamond-gem', code: 164, defaultAmount: 0.8, amountMin: 0, amountMax: 1 },
+  { id: 'shatter3-d', code: 165, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
+  { id: 'mobius-strip', code: 166, defaultAmount: 0.8, amountMin: 0, amountMax: 1 },
+  { id: 'voxel-displace', code: 167, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
+  { id: 'wave-surface', code: 168, defaultAmount: 0.4, amountMin: 0, amountMax: 1 },
+  { id: 'prism-split', code: 169, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
+  { id: 'origami-fold', code: 170, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
+  { id: 'mirror-room', code: 171, defaultAmount: 0.8, amountMin: 0, amountMax: 1 },
+  { id: 'geometric-tile-pro', code: 172, defaultAmount: 0.4, amountMin: 0, amountMax: 1 },
+  { id: 'shingle-stack', code: 173, defaultAmount: 0.8, amountMin: 0, amountMax: 1 },
+  { id: 'time-smear', code: 174, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
+  { id: 'chronophoto', code: 175, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
+  { id: 'optical-flow-datamosh', code: 176, defaultAmount: 0.7, amountMin: 0, amountMax: 1 },
+  { id: 'flow-field-trails', code: 177, defaultAmount: 0.4, amountMin: 0, amountMax: 1 },
+  { id: 'reaction-diffusion', code: 178, defaultAmount: 0.6, amountMin: 0, amountMax: 1 },
+  { id: 'feedback-zoom', code: 179, defaultAmount: 0.5, amountMin: 0, amountMax: 1 },
+  { id: 'motion-trails', code: 180, defaultAmount: 0.4, amountMin: 0, amountMax: 1 },
+  { id: 'echo-repeat', code: 181, defaultAmount: 0.7, amountMin: 0.05, amountMax: 0.95 },
+  { id: 'light-paint', code: 182, defaultAmount: 0.7, amountMin: 0, amountMax: 2 },
+  { id: 'recursive-echo', code: 183, defaultAmount: 0.6, amountMin: 0.05, amountMax: 0.95 },
 ];
 
 const NATIVE_EFFECT_PASS_BY_ID = new Map(
@@ -1142,6 +1990,85 @@ fn blob_is_peak(cell_idx: vec2<f32>, grid_res: f32, threshold: f32) -> bool {
 
 fn effect_texel() -> vec2<f32> {
   return vec2<f32>(1.0) / max(u.resolution_time.xy, vec2<f32>(1.0));
+}
+
+fn w4_rot_x(a: f32) -> mat3x3<f32> {
+  let s = sin(a);
+  let c = cos(a);
+  return mat3x3<f32>(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(0.0, c, -s), vec3<f32>(0.0, s, c));
+}
+
+fn w4_rot_y(a: f32) -> mat3x3<f32> {
+  let s = sin(a);
+  let c = cos(a);
+  return mat3x3<f32>(vec3<f32>(c, 0.0, s), vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(-s, 0.0, c));
+}
+
+fn w4_rot_z(a: f32) -> mat3x3<f32> {
+  let s = sin(a);
+  let c = cos(a);
+  return mat3x3<f32>(vec3<f32>(c, -s, 0.0), vec3<f32>(s, c, 0.0), vec3<f32>(0.0, 0.0, 1.0));
+}
+
+fn w4_sphere_uv(n: vec3<f32>) -> vec2<f32> {
+  return vec2<f32>(atan2(n.z, n.x) / 6.28318530718 + 0.5, asin(clamp(n.y, -1.0, 1.0)) / 3.14159265359 + 0.5);
+}
+
+fn w4_fresnel(n: vec3<f32>, rd: vec3<f32>, power: f32) -> f32 {
+  return pow(1.0 - max(dot(n, -rd), 0.0), power);
+}
+
+fn w4_hash13(p0: vec3<f32>) -> f32 {
+  var p = fract(p0 * vec3<f32>(443.8975, 397.2973, 491.1871));
+  p = p + vec3<f32>(dot(p, p.yzx + vec3<f32>(19.19)));
+  return fract((p.x + p.y) * p.z);
+}
+
+fn w4_hsv2rgb(c: vec3<f32>) -> vec3<f32> {
+  let p = abs(fract(c.xxx + vec3<f32>(1.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - vec3<f32>(3.0));
+  return c.z * mix(vec3<f32>(1.0), clamp(p - vec3<f32>(1.0), vec3<f32>(0.0), vec3<f32>(1.0)), c.y);
+}
+
+// Ray-sphere: returns t, negative on miss
+fn w4_isect_sphere(ro: vec3<f32>, rd: vec3<f32>, r: f32) -> f32 {
+  let b = dot(ro, rd);
+  let c = dot(ro, ro) - r * r;
+  let h = b * b - c;
+  if (h < 0.0) { return -1.0; }
+  return -b - sqrt(h);
+}
+
+// Ray-AABB: returns vec4(normal.xyz, t); t negative on miss
+fn w4_isect_box(ro: vec3<f32>, rd: vec3<f32>, r: vec3<f32>) -> vec4<f32> {
+  let m = 1.0 / rd;
+  let n = m * ro;
+  let k = abs(m) * r;
+  let t1 = -n - k;
+  let t2 = -n + k;
+  let t_n = max(max(t1.x, t1.y), t1.z);
+  let t_f = min(min(t2.x, t2.y), t2.z);
+  if (t_n > t_f || t_f < 0.0) { return vec4<f32>(0.0, 0.0, 0.0, -1.0); }
+  let normal = -sign(rd) * step(vec3<f32>(t1.y, t1.z, t1.x), t1) * step(vec3<f32>(t1.z, t1.x, t1.y), t1);
+  return vec4<f32>(normal, t_n);
+}
+
+// Ray-infinite-cylinder along Y: returns vec4(normal.xyz, t); t negative on miss
+fn w4_isect_cyl_y(ro: vec3<f32>, rd: vec3<f32>, r: f32) -> vec4<f32> {
+  let a = rd.x * rd.x + rd.z * rd.z;
+  let b = 2.0 * (ro.x * rd.x + ro.z * rd.z);
+  let c = ro.x * ro.x + ro.z * ro.z - r * r;
+  let disc = b * b - 4.0 * a * c;
+  if (disc < 0.0 || a < 1e-6) { return vec4<f32>(0.0, 0.0, 0.0, -1.0); }
+  let t = (-b - sqrt(disc)) / (2.0 * a);
+  if (t < 0.0) { return vec4<f32>(0.0, 0.0, 0.0, -1.0); }
+  let hit = ro + rd * t;
+  let n = normalize(vec3<f32>(hit.x, 0.0, hit.z));
+  return vec4<f32>(n, t);
+}
+
+fn w4_sd_torus(p: vec3<f32>, big_r: f32, small_r: f32) -> f32 {
+  let q = vec2<f32>(length(p.xz) - big_r, p.y);
+  return length(q) - small_r;
 }
 
 fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
@@ -3068,6 +3995,4063 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let mapped = sample_rgb(clamp(sample_uv, vec2<f32>(0.0), vec2<f32>(1.0)));
     return vec4<f32>(mix(color, mapped, wet), src.a);
   }
+  // ── Wave 1: stylize / pattern passes (codes 73-96) ────────────────────
+  if (code == 73u) {
+    // OIL PAINT — 4-quadrant Kuwahara pick + palette quantization + brush grain.
+    let radius = clamp(amount, 1.0, 8.0) / u.resolution_time.xy;
+    var best = color;
+    var best_var = 1e9;
+    for (var q = 0u; q < 4u; q = q + 1u) {
+      let dir = vec2<f32>(select(-1.0, 1.0, (q & 1u) == 1u), select(-1.0, 1.0, (q & 2u) == 2u));
+      var mean = vec3<f32>(0.0);
+      var m2 = 0.0;
+      for (var j = 0u; j < 3u; j = j + 1u) {
+        for (var i = 0u; i < 3u; i = i + 1u) {
+          let o = dir * vec2<f32>(f32(i), f32(j)) * radius * 0.5;
+          let s = sample_rgb(uv + o);
+          mean += s;
+          m2 += luma(s) * luma(s);
+        }
+      }
+      mean /= 9.0;
+      let variance = m2 / 9.0 - luma(mean) * luma(mean);
+      if (variance < best_var) { best_var = variance; best = mean; }
+    }
+    let bins = clamp(u.params0.x * 32.0 + 8.0, 6.0, 40.0);
+    var painted = floor(best * bins + 0.5) / bins;
+    let grain = value_noise2d(uv * u.resolution_time.xy * 0.5) * 0.06 - 0.03;
+    painted = painted * (1.0 + grain);
+    return vec4<f32>(painted, src.a);
+  }
+  if (code == 74u) {
+    // WATERCOLOR — noise-bled sampling, granulation, darkened wet edges.
+    let px = 1.0 / u.resolution_time.xy;
+    let bleed = amount * 8.0;
+    let warp = vec2<f32>(
+      fbm2d(uv * 9.0 + vec2<f32>(0.0, u.resolution_time.z * 0.05)) - 0.5,
+      fbm2d(uv * 9.0 + vec2<f32>(7.3, 2.1)) - 0.5,
+    ) * bleed * px * 14.0;
+    var wc = sample_rgb(uv + warp);
+    let bins = 9.0;
+    wc = floor(wc * bins + 0.5) / bins;
+    let granulation = value_noise2d(uv * u.resolution_time.xy * 0.8);
+    wc *= 0.92 + granulation * 0.16;
+    let edge_l = abs(luma(sample_rgb(uv + vec2<f32>(px.x * 2.0, 0.0))) - luma(sample_rgb(uv - vec2<f32>(px.x * 2.0, 0.0))))
+               + abs(luma(sample_rgb(uv + vec2<f32>(0.0, px.y * 2.0))) - luma(sample_rgb(uv - vec2<f32>(0.0, px.y * 2.0))));
+    wc *= 1.0 - clamp(edge_l * 2.2, 0.0, 0.45);
+    let paper = vec3<f32>(0.96, 0.95, 0.90);
+    return vec4<f32>(mix(paper, wc, 0.9 - granulation * 0.08), src.a);
+  }
+  if (code == 75u) {
+    // COMIC INK — flat cel colors, sobel ink lines, shadow halftone dots.
+    let px = 1.0 / u.resolution_time.xy;
+    let bins = 5.0;
+    var cel = floor(color * bins + 0.5) / bins;
+    cel = cel * 1.1 + 0.02;
+    var gx = 0.0; var gy = 0.0;
+    gx += luma(sample_rgb(uv + px * vec2<f32>(1.0, 0.0))) - luma(sample_rgb(uv - px * vec2<f32>(1.0, 0.0)));
+    gy += luma(sample_rgb(uv + px * vec2<f32>(0.0, 1.0))) - luma(sample_rgb(uv - px * vec2<f32>(0.0, 1.0)));
+    let ink = smoothstep(0.12 / max(amount, 0.2), 0.4 / max(amount, 0.2), length(vec2<f32>(gx, gy)));
+    let shade = luma(color);
+    let dotgrid = fract(vec2<f32>(uv.x + uv.y * 0.5, uv.y) * u.resolution_time.xy / 7.0) - 0.5;
+    let dots = step(length(dotgrid), 0.34 * (1.0 - smoothstep(0.15, 0.5, shade)));
+    cel = mix(cel, cel * 0.45, dots);
+    return vec4<f32>(mix(cel, vec3<f32>(0.02), ink), src.a);
+  }
+  if (code == 76u) {
+    // CROSSHATCH — layered pencil strokes by tone.
+    let l = luma(color);
+    let sp = uv * u.resolution_time.xy / max(2.0, 8.0 - amount * 5.0);
+    let jitter = value_noise2d(sp * 0.35) * 2.0;
+    var tone = 1.0;
+    if (l < 0.85) { tone = min(tone, 0.72 + 0.28 * abs(sin(sp.x + sp.y + jitter))); }
+    if (l < 0.62) { tone = min(tone, 0.55 + 0.45 * abs(sin(sp.x - sp.y + jitter))); }
+    if (l < 0.40) { tone = min(tone, 0.42 + 0.58 * abs(sin(sp.x * 0.5 + sp.y + jitter))); }
+    if (l < 0.22) { tone = min(tone, 0.30 + 0.70 * abs(sin(sp.x + sp.y * 0.5 - jitter))); }
+    let paper = vec3<f32>(0.94, 0.93, 0.88);
+    let tinted = mix(vec3<f32>(0.1, 0.09, 0.12), paper, clamp(tone * (0.5 + l * 0.7), 0.0, 1.0));
+    return vec4<f32>(mix(tinted, tinted * (color / max(l, 0.05)), 0.25), src.a);
+  }
+  if (code == 77u) {
+    // LINOCUT — two-tone carve with directional gouge streaks.
+    let l = luma(color);
+    let streak_ang = 0.6;
+    let sd = vec2<f32>(cos(streak_ang), sin(streak_ang));
+    let carve = value_noise2d(vec2<f32>(dot(uv * u.resolution_time.xy, sd) * 0.12, dot(uv * u.resolution_time.xy, vec2<f32>(-sd.y, sd.x)) * 0.9));
+    let threshold = clamp(0.5 + (carve - 0.5) * 0.35, 0.1, 0.9) * clamp(amount, 0.2, 1.6);
+    let cut = smoothstep(threshold - 0.06, threshold + 0.06, l);
+    let paper = vec3<f32>(0.93, 0.9, 0.84);
+    let inkcol = vec3<f32>(0.08, 0.05, 0.07);
+    return vec4<f32>(mix(inkcol, paper, cut), src.a);
+  }
+  if (code == 78u) {
+    // DOT MATRIX — RGB dot triads on a coarse grid.
+    let cell = max(4.0, 24.0 - amount * 1.2);
+    let gridp = uv * u.resolution_time.xy / cell;
+    let base = sample_rgb((floor(gridp) + 0.5) * cell / u.resolution_time.xy);
+    let f = fract(gridp) - 0.5;
+    let sub = u32(floor(fract(gridp.x) * 3.0));
+    var channel = vec3<f32>(0.0);
+    if (sub == 0u) { channel = vec3<f32>(1.0, 0.0, 0.0); }
+    else if (sub == 1u) { channel = vec3<f32>(0.0, 1.0, 0.0); }
+    else { channel = vec3<f32>(0.0, 0.0, 1.0); }
+    let dotmask = smoothstep(0.44, 0.30, length(vec2<f32>(fract(gridp.x * 3.0) - 0.5, f.y)));
+    let lit = dot(base, channel);
+    return vec4<f32>(channel * lit * dotmask * 1.9 + base * 0.05, src.a);
+  }
+  if (code == 79u) {
+    // ASCII — luma-ranked procedural glyph masks per character cell.
+    let cell = max(6.0, 22.0 - amount * 1.0);
+    let gridp = uv * u.resolution_time.xy / cell;
+    let base = sample_rgb((floor(gridp) + 0.5) * cell / u.resolution_time.xy);
+    let l = luma(base);
+    let g = fract(gridp) * 2.0 - 1.0;
+    var glyph = 0.0;
+    if (l > 0.85)      { glyph = step(abs(g.x), 0.75) * step(abs(g.y), 0.75); }                       // block
+    else if (l > 0.65) { glyph = max(step(abs(g.x), 0.16), step(abs(g.y), 0.16)); }                    // plus
+    else if (l > 0.45) { glyph = step(abs(abs(g.x) - abs(g.y)), 0.22); }                               // x
+    else if (l > 0.28) { glyph = step(abs(g.y), 0.16); }                                               // dash
+    else if (l > 0.14) { glyph = step(length(g), 0.28); }                                              // dot
+    let green = vec3<f32>(0.55, 1.0, 0.6);
+    return vec4<f32>(mix(base * 0.12, green * (0.3 + l), glyph), src.a);
+  }
+  if (code == 80u) {
+    // MATRIX RAIN — glyph columns raining over the source.
+    let colw = 12.0;
+    let colx = floor(uv.x * u.resolution_time.xy.x / colw);
+    let speed = 2.0 + hash21(vec2<f32>(colx, 7.0)) * 6.0;
+    let head = fract(hash21(vec2<f32>(colx, 3.0)) + u.resolution_time.z * speed * 0.08);
+    let ypos = fract(uv.y + 0.0);
+    let dist = fract(ypos - head);
+    let tail = exp(-dist * 7.0 * (0.4 + amount));
+    let cellg = vec2<f32>(fract(uv.x * u.resolution_time.xy.x / colw) * 2.0 - 1.0,
+                          fract(uv.y * u.resolution_time.xy.y / colw) * 2.0 - 1.0);
+    let flick = hash21(vec2<f32>(colx, floor(uv.y * u.resolution_time.xy.y / colw) + floor(u.resolution_time.z * 9.0)));
+    let glyph = max(step(abs(cellg.x), 0.55) * step(abs(cellg.y), 0.65) * step(0.35, flick), 0.0)
+              * max(step(abs(abs(cellg.x) - abs(cellg.y * 0.6)), 0.3), step(abs(cellg.y), 0.18));
+    let matrix_green = vec3<f32>(0.35, 1.0, 0.45);
+    let rain = matrix_green * glyph * tail * 1.6 + matrix_green * glyph * step(dist, 0.02) * 1.4;
+    return vec4<f32>(color * (0.28 + luma(color) * 0.2) + rain * (0.4 + luma(color)), src.a);
+  }
+  if (code == 81u) {
+    // BINARY CODE — 0/1 glyph cells brightness-driven by the source.
+    let cell = max(8.0, 26.0 - amount * 1.2);
+    let gridp = uv * u.resolution_time.xy / cell;
+    let base = sample_rgb((floor(gridp) + 0.5) * cell / u.resolution_time.xy);
+    let l = luma(base);
+    let bit = step(0.5, hash21(floor(gridp) + floor(u.resolution_time.z * 2.0) * 0.13));
+    let g = fract(gridp) * 2.0 - 1.0;
+    let ring = step(abs(length(g * vec2<f32>(1.0, 0.75)) - 0.52), 0.16);
+    let bar = step(abs(g.x), 0.14) * step(abs(g.y), 0.6);
+    let glyph = select(ring, bar, bit > 0.5);
+    return vec4<f32>(base * 0.15 + vec3<f32>(0.5, 0.85, 1.0) * glyph * (0.15 + l * 1.2), src.a);
+  }
+  if (code == 82u) {
+    // BLOCK MOSAIC — beveled color blocks.
+    let cell = max(6.0, 40.0 - amount * 2.0);
+    let gridp = uv * u.resolution_time.xy / cell;
+    let base = sample_rgb((floor(gridp) + 0.5) * cell / u.resolution_time.xy);
+    let f = fract(gridp);
+    let bevel = clamp(1.0 + (f.x - f.y) * 0.35 - smoothstep(0.86, 1.0, max(f.x, f.y)) * 0.4
+                      + smoothstep(0.14, 0.0, min(f.x, f.y)) * 0.22, 0.4, 1.4);
+    return vec4<f32>(base * bevel, src.a);
+  }
+  if (code == 83u) {
+    // NUMBER GRID — seven-segment digits ranked by cell luma.
+    let cell = max(10.0, 30.0 - amount * 1.4);
+    let gridp = uv * u.resolution_time.xy / cell;
+    let base = sample_rgb((floor(gridp) + 0.5) * cell / u.resolution_time.xy);
+    let digit = u32(clamp(floor(luma(base) * 9.99), 0.0, 9.0));
+    let masks = array<u32, 10>(119u, 36u, 93u, 109u, 46u, 107u, 123u, 37u, 127u, 111u);
+    let segs = masks[digit];
+    let g = fract(gridp) * vec2<f32>(2.0, 2.0) - 1.0;
+    var seg = 0.0;
+    // top, top-right, bottom-right, bottom, bottom-left, top-left, middle
+    if ((segs & 1u) != 0u)  { seg = max(seg, step(abs(g.y - 0.8), 0.12) * step(abs(g.x), 0.5)); }
+    if ((segs & 2u) != 0u)  { seg = max(seg, step(abs(g.x - 0.55), 0.12) * step(abs(g.y - 0.4), 0.4)); }
+    if ((segs & 4u) != 0u)  { seg = max(seg, step(abs(g.x - 0.55), 0.12) * step(abs(g.y + 0.4), 0.4)); }
+    if ((segs & 8u) != 0u)  { seg = max(seg, step(abs(g.y + 0.8), 0.12) * step(abs(g.x), 0.5)); }
+    if ((segs & 16u) != 0u) { seg = max(seg, step(abs(g.x + 0.55), 0.12) * step(abs(g.y + 0.4), 0.4)); }
+    if ((segs & 32u) != 0u) { seg = max(seg, step(abs(g.x + 0.55), 0.12) * step(abs(g.y - 0.4), 0.4)); }
+    if ((segs & 64u) != 0u) { seg = max(seg, step(abs(g.y), 0.12) * step(abs(g.x), 0.5)); }
+    return vec4<f32>(base * 0.12 + vec3<f32>(1.0, 0.55, 0.2) * seg * (0.25 + luma(base) * 1.1), src.a);
+  }
+  if (code == 84u) {
+    // BRAILLE — 2x3 dot cells, dots raised by local luma bits.
+    let cell = max(8.0, 24.0 - amount * 1.0);
+    let gridp = uv * u.resolution_time.xy / cell;
+    let cid = floor(gridp);
+    let f = fract(gridp);
+    let sub = vec2<f32>(floor(f.x * 2.0), floor(f.y * 3.0));
+    let subCenter = (cid + (sub + 0.5) / vec2<f32>(2.0, 3.0)) * cell / u.resolution_time.xy;
+    let l = luma(sample_rgb(subCenter));
+    let bit = step(hash21(cid + sub * 0.37) * 0.55 + 0.2, l);
+    let d = length(fract(f * vec2<f32>(2.0, 3.0)) - 0.5);
+    let dotm = smoothstep(0.42, 0.3, d) * bit;
+    let base = sample_rgb((cid + 0.5) * cell / u.resolution_time.xy);
+    return vec4<f32>(base * 0.15 + (base / max(luma(base), 0.1)) * dotm * (0.2 + l), src.a);
+  }
+  if (code == 85u) {
+    // CIRCUIT BOARD — traces and pads etched from the image, signal pulses.
+    let sp = uv * u.resolution_time.xy / max(6.0, 18.0 - amount);
+    let cid = floor(sp);
+    let f = fract(sp);
+    let l = luma(sample_rgb((cid + 0.5) * max(6.0, 18.0 - amount) / u.resolution_time.xy));
+    let h = hash21(cid);
+    var trace = 0.0;
+    if (h < 0.4) { trace = step(abs(f.y - 0.5), 0.08); }
+    else if (h < 0.8) { trace = step(abs(f.x - 0.5), 0.08); }
+    else { trace = step(abs(f.x - f.y), 0.11); }
+    trace *= step(0.25, l);
+    let pad = smoothstep(0.16, 0.10, length(f - 0.5)) * step(0.55, l);
+    let pulse = pow(fract1(h * 7.0 - u.resolution_time.z * (0.4 + h)), 8.0);
+    let board = vec3<f32>(0.02, 0.10, 0.05) + color * 0.08;
+    let copper = vec3<f32>(0.75, 0.55, 0.25) * (0.5 + l);
+    let glow = vec3<f32>(0.3, 1.0, 0.55) * pulse * 1.6;
+    return vec4<f32>(board + copper * max(trace, pad) + glow * trace, src.a);
+  }
+  if (code == 86u) {
+    // STAINED GLASS — voronoi panes, lead came, angled light.
+    let sp = uv * (3.0 + amount * 5.0) * vec2<f32>(u.resolution_time.x / u.resolution_time.y, 1.0);
+    let i = floor(sp);
+    let f = fract(sp);
+    var md = 8.0; var md2 = 8.0; var mc = vec2<f32>(0.0);
+    for (var yy = -1i; yy <= 1i; yy = yy + 1i) {
+      for (var xx = -1i; xx <= 1i; xx = xx + 1i) {
+        let g = vec2<f32>(f32(xx), f32(yy));
+        let o = vec2<f32>(hash21(i + g), hash21(i + g + vec2<f32>(19.7)));
+        let r = g + o - f;
+        let d = dot(r, r);
+        if (d < md) { md2 = md; md = d; mc = i + g + o; }
+        else if (d < md2) { md2 = d; }
+      }
+    }
+    let edge = sqrt(md2) - sqrt(md);
+    let pane = sample_rgb(clamp(mc / ((3.0 + amount * 5.0) * vec2<f32>(u.resolution_time.x / u.resolution_time.y, 1.0)), vec2<f32>(0.0), vec2<f32>(1.0)));
+    var glass = pow(pane, vec3<f32>(0.75)) * 1.25;
+    glass *= 0.85 + 0.3 * hash21(mc);
+    let lead = smoothstep(0.09, 0.02, edge);
+    let lightAngle = 0.65 + 0.35 * sin(dot(mc, vec2<f32>(0.7, 1.3)) + u.resolution_time.z * 0.1);
+    return vec4<f32>(mix(glass * lightAngle, vec3<f32>(0.05, 0.05, 0.06), lead), src.a);
+  }
+  if (code == 87u) {
+    // WOVEN FABRIC — over/under warp and weft strips carrying the image.
+    let stripe = max(4.0, 20.0 - amount);
+    let sp = uv * u.resolution_time.xy / stripe;
+    let wx = floor(sp.x); let wy = floor(sp.y);
+    let over = step(0.5, fract((wx + wy) * 0.5));
+    let fx2 = fract(sp.x); let fy2 = fract(sp.y);
+    let warp_shade = 0.72 + 0.28 * sin(fx2 * 3.14159);
+    let weft_shade = 0.72 + 0.28 * sin(fy2 * 3.14159);
+    let cw = sample_rgb(vec2<f32>((wx + 0.5) * stripe / u.resolution_time.x, uv.y));
+    let cf = sample_rgb(vec2<f32>(uv.x, (wy + 0.5) * stripe / u.resolution_time.y));
+    let thread = select(cf * weft_shade, cw * warp_shade, over > 0.5);
+    let gap = smoothstep(0.02, 0.12, fx2) * smoothstep(1.0 - 0.02, 1.0 - 0.12, fx2)
+            * smoothstep(0.02, 0.12, fy2) * smoothstep(1.0 - 0.02, 1.0 - 0.12, fy2);
+    return vec4<f32>(thread * max(gap, 0.25), src.a);
+  }
+  if (code == 88u) {
+    // MOSAIC TILE — grouted tiles with glaze specular.
+    let cell = max(8.0, 42.0 - amount * 2.0);
+    let gridp = uv * u.resolution_time.xy / cell;
+    let cid = floor(gridp);
+    let f = fract(gridp);
+    var tile = sample_rgb((cid + 0.5) * cell / u.resolution_time.xy);
+    tile *= 0.9 + hash21(cid) * 0.2;
+    let grout = smoothstep(0.04, 0.10, f.x) * smoothstep(0.96, 0.90, f.x)
+              * smoothstep(0.04, 0.10, f.y) * smoothstep(0.96, 0.90, f.y);
+    let spec = pow(max(0.0, 1.0 - length(f - vec2<f32>(0.35, 0.3)) * 1.8), 3.0) * 0.35;
+    return vec4<f32>(mix(vec3<f32>(0.82, 0.8, 0.76), tile + spec, grout), src.a);
+  }
+  if (code == 89u) {
+    // NEON OUTLINE — edges as glowing tubes over darkness.
+    let px = 1.0 / u.resolution_time.xy;
+    var gx = 0.0; var gy = 0.0;
+    gx = luma(sample_rgb(uv + px * vec2<f32>(1.5, 0.0))) - luma(sample_rgb(uv - px * vec2<f32>(1.5, 0.0)));
+    gy = luma(sample_rgb(uv + px * vec2<f32>(0.0, 1.5))) - luma(sample_rgb(uv - px * vec2<f32>(0.0, 1.5)));
+    let e = length(vec2<f32>(gx, gy));
+    let core = smoothstep(0.10, 0.5, e * (1.0 + amount * 2.0));
+    var halo = 0.0;
+    for (var k = 0u; k < 4u; k = k + 1u) {
+      let a = f32(k) * 1.5707963;
+      let off = vec2<f32>(cos(a), sin(a)) * px * 3.0;
+      let hgx = luma(sample_rgb(uv + off + px * vec2<f32>(1.5, 0.0))) - luma(sample_rgb(uv + off - px * vec2<f32>(1.5, 0.0)));
+      let hgy = luma(sample_rgb(uv + off + px * vec2<f32>(0.0, 1.5))) - luma(sample_rgb(uv + off - px * vec2<f32>(0.0, 1.5)));
+      halo += smoothstep(0.10, 0.5, length(vec2<f32>(hgx, hgy)) * (1.0 + amount * 2.0));
+    }
+    halo *= 0.25;
+    let neon = normalize(color + vec3<f32>(0.15, 0.1, 0.3)) * 1.4;
+    return vec4<f32>(color * 0.06 + neon * (core * 1.5 + halo * 0.6), src.a);
+  }
+  if (code == 90u) {
+    // TOPO MAP — hypsometric tint + contour lines from luma elevation.
+    let elev = luma(sample_rgb(uv)) + fbm2d(uv * 5.0) * 0.06;
+    let bands = 8.0 + amount * 10.0;
+    let contour = abs(fract(elev * bands) - 0.5);
+    let line = smoothstep(0.10, 0.02, contour);
+    let major = smoothstep(0.10, 0.02, abs(fract(elev * bands / 5.0) - 0.5)) * 0.6;
+    var terrain = mix(vec3<f32>(0.15, 0.32, 0.22), vec3<f32>(0.75, 0.68, 0.5), elev);
+    terrain = mix(terrain, vec3<f32>(0.9, 0.9, 0.92), smoothstep(0.8, 0.98, elev));
+    let inkline = vec3<f32>(0.25, 0.16, 0.1);
+    return vec4<f32>(mix(terrain, inkline, max(line * 0.75, major)), src.a);
+  }
+  if (code == 91u) {
+    // LED WALL — RGB triads, panel seams, hot pixel bloom.
+    let pitch = max(3.0, 14.0 - amount * 0.5);
+    let gridp = uv * u.resolution_time.xy / pitch;
+    let base = sample_rgb((floor(gridp) + 0.5) * pitch / u.resolution_time.xy);
+    let f = fract(gridp);
+    let sub = u32(floor(f.x * 3.0));
+    var channel = vec3<f32>(0.0);
+    if (sub == 0u) { channel = vec3<f32>(1.0, 0.0, 0.0); }
+    else if (sub == 1u) { channel = vec3<f32>(0.0, 1.0, 0.0); }
+    else { channel = vec3<f32>(0.0, 0.0, 1.0); }
+    let px_mask = smoothstep(0.5, 0.32, abs(fract(f.x * 3.0) - 0.5)) * smoothstep(0.5, 0.3, abs(f.y - 0.5));
+    let panel = step(0.02, fract(gridp.x / 16.0)) * step(0.02, fract(gridp.y / 16.0));
+    let lit = dot(base, channel);
+    let bloom = base * 0.22;
+    return vec4<f32>((channel * lit * px_mask * 2.1 + bloom) * panel, src.a);
+  }
+  if (code == 92u) {
+    // HEX GRID — hexagonal mosaic with edge glow.
+    let scale = 6.0 + amount * 14.0;
+    let aspect2 = u.resolution_time.x / u.resolution_time.y;
+    let p = uv * vec2<f32>(aspect2, 1.0) * scale;
+    let hx = vec2<f32>(p.x * 1.1547, p.y + p.x * 0.5774);
+    let a2 = fract(hx) - 0.5;
+    let idA = floor(hx);
+    let hb = vec2<f32>(hx.x - 0.5, hx.y - 0.5);
+    let b2 = fract(hb) - 0.5;
+    let idB = floor(hb);
+    var hid = idA; var hf = a2;
+    if (dot(b2, b2) < dot(a2, a2)) { hid = idB + 0.5; hf = b2; }
+    let center = (hid + 0.5) / scale;
+    let hexuv = clamp(vec2<f32>(center.x / 1.1547, center.y - center.x / 1.1547 * 0.5774) / vec2<f32>(aspect2, 1.0), vec2<f32>(0.0), vec2<f32>(1.0));
+    let hex_col = sample_rgb(hexuv);
+    let hd = max(abs(hf.x) * 1.1547, abs(hf.x) * 0.5774 + abs(hf.y));
+    let edge = smoothstep(0.44, 0.5, hd);
+    return vec4<f32>(mix(hex_col, hex_col * 0.3 + vec3<f32>(0.05, 0.1, 0.14), edge), src.a);
+  }
+  if (code == 93u) {
+    // GEOMETRIC TILE — mirrored kaleidoscopic square tiling.
+    let reps = 1.0 + floor(amount * 5.0);
+    var tuv = fract(uv * reps);
+    tuv = abs(tuv * 2.0 - 1.0);
+    let rot_t = u.resolution_time.z * 0.05;
+    let cs = cos(rot_t); let sn = sin(rot_t);
+    let c2 = (tuv - 0.5) * mat2x2<f32>(vec2<f32>(cs, -sn), vec2<f32>(sn, cs)) + 0.5;
+    return vec4<f32>(sample_rgb(clamp(c2, vec2<f32>(0.0), vec2<f32>(1.0))), src.a);
+  }
+  if (code == 94u) {
+    // SPIRAL TILE — log-spiral remap of the frame.
+    let centered = (uv - 0.5) * vec2<f32>(u.resolution_time.x / u.resolution_time.y, 1.0);
+    let r = max(length(centered), 1e-4);
+    let theta = atan2(centered.y, centered.x);
+    let spiral = log(r) * (1.0 + amount * 2.0) + theta / 6.2831853 * (2.0 + floor(amount * 3.0));
+    let s_uv = vec2<f32>(fract(spiral - u.resolution_time.z * 0.07), fract(theta / 6.2831853 + 0.5 + r * 0.3));
+    let col2 = sample_rgb(s_uv);
+    return vec4<f32>(col2 * (0.65 + 0.35 * smoothstep(1.3, 0.2, r)), src.a);
+  }
+  if (code == 95u) {
+    // VORONOI SHATTER — glass shards, per-shard shift and crack lines.
+    let scale = 3.0 + amount * 8.0;
+    let sp = uv * scale * vec2<f32>(u.resolution_time.x / u.resolution_time.y, 1.0);
+    let i = floor(sp);
+    let f = fract(sp);
+    var md = 8.0; var md2 = 8.0; var mc = vec2<f32>(0.0);
+    for (var yy = -1i; yy <= 1i; yy = yy + 1i) {
+      for (var xx = -1i; xx <= 1i; xx = xx + 1i) {
+        let g = vec2<f32>(f32(xx), f32(yy));
+        let o = vec2<f32>(hash21(i + g), hash21(i + g + vec2<f32>(11.3)));
+        let r = g + o - f;
+        let d = dot(r, r);
+        if (d < md) { md2 = md; md = d; mc = i + g; }
+        else if (d < md2) { md2 = d; }
+      }
+    }
+    let shard_shift = (vec2<f32>(hash21(mc + 5.1), hash21(mc + 9.7)) - 0.5) * 0.03 * amount;
+    let shard = sample_rgb(clamp(uv + shard_shift, vec2<f32>(0.0), vec2<f32>(1.0)));
+    let crack = smoothstep(0.06, 0.0, sqrt(md2) - sqrt(md));
+    let glint = pow(1.0 - clamp(sqrt(md), 0.0, 1.0), 6.0) * 0.15;
+    return vec4<f32>(shard * (1.0 - crack * 0.7) + vec3<f32>(0.9, 0.95, 1.0) * (crack * 0.35 + glint), src.a);
+  }
+  if (code == 96u) {
+    // THERMAL CONTOUR — FLIR palette with isotherm rings.
+    let heat = luma(color);
+    var thermal = vec3<f32>(0.0);
+    if (heat < 0.25)      { thermal = mix(vec3<f32>(0.02, 0.0, 0.15), vec3<f32>(0.4, 0.0, 0.6), heat * 4.0); }
+    else if (heat < 0.5)  { thermal = mix(vec3<f32>(0.4, 0.0, 0.6), vec3<f32>(0.9, 0.25, 0.1), (heat - 0.25) * 4.0); }
+    else if (heat < 0.75) { thermal = mix(vec3<f32>(0.9, 0.25, 0.1), vec3<f32>(1.0, 0.8, 0.1), (heat - 0.5) * 4.0); }
+    else                  { thermal = mix(vec3<f32>(1.0, 0.8, 0.1), vec3<f32>(1.0, 1.0, 0.9), (heat - 0.75) * 4.0); }
+    let iso = smoothstep(0.1, 0.02, abs(fract(heat * (6.0 + amount * 8.0)) - 0.5));
+    return vec4<f32>(mix(thermal, vec3<f32>(0.0), iso * 0.5), src.a);
+  }
+  if (code == 97u) {
+    // phase-lab: scientific-imaging false-color modes (BOS/photoelastic/Lippmann/InSAR/catoptric/DTI)
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let mode = u32(round(u.params0.x));
+    let pl_scale = max(0.1, u.params0.y);
+    let pl_speed = u.params0.z;
+    let pl_phase = u.params0.w;
+    let color_gain = max(0.0, u.params1.x);
+    let source_bleed = clamp(u.params1.y, 0.0, 1.0);
+    let edge_boost = max(0.0, u.params1.z);
+    let distortion = u.params1.w;
+    let line_density = max(0.1, u.params2.x);
+    let polarizer_deg = u.params2.y;
+    let spectral_shift = u.params2.z;
+    let pl_focus = max(0.08, u.params2.w);
+    let intensity = amount;
+    let tau = 6.283185307179586;
+    let texel = 1.0 / max(res, vec2<f32>(2.0));
+
+    // luma gradient (BT.709)
+    let g_step = texel * max(1.0, 1.0 + pl_scale * 0.08);
+    let lum_l = dot(sample_rgb(uv - vec2<f32>(g_step.x, 0.0)), vec3<f32>(0.2126, 0.7152, 0.0722));
+    let lum_r = dot(sample_rgb(uv + vec2<f32>(g_step.x, 0.0)), vec3<f32>(0.2126, 0.7152, 0.0722));
+    let lum_d = dot(sample_rgb(uv - vec2<f32>(0.0, g_step.y)), vec3<f32>(0.2126, 0.7152, 0.0722));
+    let lum_u = dot(sample_rgb(uv + vec2<f32>(0.0, g_step.y)), vec3<f32>(0.2126, 0.7152, 0.0722));
+    let lum_c = dot(src.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let grad = vec2<f32>(lum_r - lum_l, lum_u - lum_d) * 0.5;
+    let lapl = lum_l + lum_r + lum_d + lum_u - 4.0 * lum_c;
+
+    var col = src.rgb;
+    if (mode == 0u || mode >= 7u) {
+      // BOS schlieren
+      let g = grad * edge_boost * 4.0;
+      let curl = vec2<f32>(
+        fbm2d(uv * pl_scale + vec2<f32>(0.0, time * pl_speed)) - 0.5,
+        fbm2d(uv.yx * pl_scale + vec2<f32>(4.7, -time * pl_speed * 0.77)) - 0.5
+      );
+      let flow = g + 0.18 * curl;
+      let refracted = sample_rgb(uv + flow * distortion * intensity);
+      let edge = pow(clamp(length(g) * intensity * 5.0 + abs(lapl) * 2.0, 0.0, 1.0), 0.55);
+      let angle01 = atan2(flow.y, flow.x) / tau + 0.5;
+      let hh = fract(angle01 + edge * 0.32 + pl_phase + time * pl_speed * 0.05);
+      let false_color = clamp(vec3<f32>(0.55, 0.48, 0.42) + vec3<f32>(0.48, 0.54, 0.58) * cos(tau * (vec3<f32>(hh) + vec3<f32>(0.0, 0.22, 0.58))), vec3<f32>(0.0), vec3<f32>(1.0));
+      let ca = vec3<f32>(
+        sample_rgb(uv + flow * distortion * 1.35).r,
+        sample_rgb(uv + flow * distortion * 0.70).g,
+        sample_rgb(uv - flow * distortion * 1.10).b
+      );
+      col = clamp(false_color * edge * color_gain + ca * (0.25 + 0.55 * edge), vec3<f32>(0.0), vec3<f32>(1.0));
+      col = mix(refracted, col, 0.92);
+    } else if (mode == 1u) {
+      // Photoelastic stress fringes
+      let g = grad * edge_boost;
+      let angle = atan2(g.y, g.x) + polarizer_deg * 0.017453292;
+      let stress = length(g) * intensity * 14.0 + fbm2d(uv * pl_scale + vec2<f32>(time * pl_speed * 0.15, 0.0)) * 2.2;
+      let ph = stress * line_density + pl_phase + 1.8 * sin(angle * 2.0 + time * pl_speed);
+      let iso = 0.5 + 0.5 * cos(vec3<f32>(0.0, 2.15, 4.32) + vec3<f32>(ph));
+      let isoclinic = pow(abs(sin(2.0 * angle)), 0.55);
+      let fringe = clamp(iso * (0.25 + 0.85 * isoclinic), vec3<f32>(0.0), vec3<f32>(1.0));
+      let dark = smoothstep(0.04, 0.42, abs(sin(ph * 0.5)));
+      let gh = fract(ph / tau + spectral_shift);
+      let glow = clamp(vec3<f32>(0.55, 0.48, 0.42) + vec3<f32>(0.48, 0.54, 0.58) * cos(tau * (vec3<f32>(gh) + vec3<f32>(0.0, 0.22, 0.58))), vec3<f32>(0.0), vec3<f32>(1.0)) * (0.25 + length(g) * 3.0);
+      col = clamp((fringe * dark + glow * 0.28) * color_gain, vec3<f32>(0.0), vec3<f32>(1.0));
+    } else if (mode == 2u) {
+      // Lippmann interference iridescence
+      let view = (uv.x - 0.5) * 2.0 + sin(time * pl_speed) * 0.25 + spectral_shift;
+      let micro = fbm2d(uv * pl_scale * 2.0 + vec2<f32>(time * pl_speed * 0.05, 0.0));
+      let standing = vec3<f32>(
+        cos(lum_c * 42.0 + view * 5.5 + micro * 6.0 + pl_phase),
+        cos(lum_c * 55.0 + view * 7.0 + micro * 4.5 + pl_phase + 1.8),
+        cos(lum_c * 69.0 + view * 8.5 + micro * 3.5 + pl_phase + 3.4)
+      ) * 0.5 + vec3<f32>(0.5);
+      let sh = fract(lum_c * 1.8 + view * 0.22 + micro * 0.35);
+      let spectral = clamp(vec3<f32>(0.55, 0.48, 0.42) + vec3<f32>(0.48, 0.54, 0.58) * cos(tau * (vec3<f32>(sh) + vec3<f32>(0.0, 0.22, 0.58))), vec3<f32>(0.0), vec3<f32>(1.0));
+      let irid = clamp(src.rgb * (vec3<f32>(0.35) + 0.9 * standing) + spectral * 0.45, vec3<f32>(0.0), vec3<f32>(1.0));
+      let glint = pow(clamp(standing.r * standing.g * standing.b, 0.0, 1.0), 3.0);
+      col = clamp((irid + glint * vec3<f32>(0.9, 0.95, 1.0)) * color_gain, vec3<f32>(0.0), vec3<f32>(1.0));
+    } else if (mode == 3u) {
+      // InSAR wrapped-phase fringes
+      let p = (uv - vec2<f32>(0.5)) * vec2<f32>(res.x / max(1.0, res.y), 1.0);
+      let elev = lum_c * intensity * 7.0 + fbm2d(uv * pl_scale + vec2<f32>(time * pl_speed * 0.08, 1.7)) * 2.0 + length(p) * 5.0;
+      let ph = elev * line_density + pl_phase + time * pl_speed;
+      let wrapped = fract(ph / tau);
+      let hp = abs(fract(vec3<f32>(wrapped) + vec3<f32>(1.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - vec3<f32>(3.0));
+      let fringe = 1.0 * mix(vec3<f32>(1.0), clamp(hp - vec3<f32>(1.0), vec3<f32>(0.0), vec3<f32>(1.0)), 0.86);
+      let contour = 1.0 - smoothstep(0.0, 0.055, abs(wrapped - 0.5));
+      let speckle_cell = floor(uv * res / max(1.0, pl_scale * 0.25));
+      let speckle = pow(hash21(speckle_cell + floor(time * 12.0)), 1.8);
+      col = clamp((fringe * (0.62 + speckle * 0.55) + contour * vec3<f32>(0.9, 1.0, 1.0) * 0.35) * color_gain, vec3<f32>(0.0), vec3<f32>(1.0));
+    } else if (mode == 4u || mode == 5u) {
+      // Catoptric anamorphic mirror
+      let p = uv - vec2<f32>(0.5);
+      let r = length(p);
+      let a = atan2(p.y, p.x);
+      let radius = 0.22;
+      let ring_start = radius * 1.05;
+      let ring_end = 0.72;
+      let ring_t = clamp((r - ring_start) / max(0.001, ring_end - ring_start), 0.0, 1.0);
+      let exponent = select(pl_focus, max(0.08, 1.0), mode == 5u);
+      let y = pow(ring_t, exponent);
+      let x = fract(a / tau + 0.5 + 0.03 * sin(time * pl_speed + y * tau));
+      let warped = sample_rgb(vec2<f32>(x, 1.0 - y));
+      let annulus = smoothstep(ring_start, ring_start + 0.02, r) * (1.0 - smoothstep(ring_end - 0.02, ring_end, r));
+      let mirror_body = 1.0 - smoothstep(radius * 0.85, radius, r);
+      let metal = vec3<f32>(0.78, 0.82, 0.86) * (0.35 + 0.65 * pow(1.0 - clamp(r / radius, 0.0, 1.0), 1.8));
+      let reflected = sample_rgb(vec2<f32>(fract(a / tau + 0.5), clamp(r / radius, 0.0, 1.0)));
+      let grid = 0.18 * (1.0 - smoothstep(0.01, 0.035, abs(fract(x * 24.0) - 0.5)));
+      let ph2 = fract(a / tau + time * 0.02);
+      let pal = clamp(vec3<f32>(0.55, 0.48, 0.42) + vec3<f32>(0.48, 0.54, 0.58) * cos(tau * (vec3<f32>(ph2) + vec3<f32>(0.0, 0.22, 0.58))), vec3<f32>(0.0), vec3<f32>(1.0));
+      let gh = fract(x + y + pl_phase);
+      let glow_pal = clamp(vec3<f32>(0.55, 0.48, 0.42) + vec3<f32>(0.48, 0.54, 0.58) * cos(tau * (vec3<f32>(gh) + vec3<f32>(0.0, 0.22, 0.58))), vec3<f32>(0.0), vec3<f32>(1.0));
+      col = clamp((warped * annulus + (mix(metal, reflected, 0.35) + pal * 0.18) * mirror_body + glow_pal * grid * annulus) * color_gain, vec3<f32>(0.0), vec3<f32>(1.0));
+    } else {
+      // DTI fiber-orientation ribbons
+      let g = grad * edge_boost;
+      let n = fbm2d(uv * pl_scale + vec2<f32>(time * pl_speed * 0.08, 0.0));
+      let angle = atan2(g.y, g.x) + (n - 0.5) * 3.14159265 * 1.2 + pl_phase;
+      let dir = vec2<f32>(cos(angle), sin(angle));
+      let normal = vec2<f32>(-dir.y, dir.x);
+      let along = dot(uv - vec2<f32>(0.5), dir);
+      let across = dot(uv - vec2<f32>(0.5), normal);
+      let ribbon_phase = across * line_density + sin(along * pl_scale * 8.0 + time * pl_speed) * 0.9;
+      let stripe = pow(1.0 - smoothstep(0.0, 0.42, abs(fract(ribbon_phase) - 0.5)), 1.7);
+      let anisotropy = clamp(length(g) * intensity * 7.0 + n * 0.4, 0.0, 1.0);
+      let twist = 0.5 + 0.5 * sin(along * line_density * 0.7 + time * pl_speed + angle * 2.0);
+      let fh = fract(angle / tau + twist * 0.18 + spectral_shift);
+      let fiber = clamp(vec3<f32>(0.55, 0.48, 0.42) + vec3<f32>(0.48, 0.54, 0.58) * cos(tau * (vec3<f32>(fh) + vec3<f32>(0.0, 0.22, 0.58))), vec3<f32>(0.0), vec3<f32>(1.0)) * stripe * (0.25 + anisotropy);
+      col = clamp((src.rgb * (0.18 + source_bleed) + fiber * (1.0 + anisotropy)) * color_gain, vec3<f32>(0.0), vec3<f32>(1.0));
+    }
+    return vec4<f32>(col, src.a);
+  }
+  if (code == 98u) {
+    // lens-dirt: dust/scratch overlay gated on bright areas
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let d_scale = max(0.5, u.params0.x);
+    let threshold = u.params0.y;
+    let tint_warmth = clamp(u.params0.z, 0.0, 1.0);
+    let scratches_amt = u.params0.w;
+    let spots_amt = u.params1.x;
+    let d_mode = u32(round(u.params1.y));
+    let anim_speed = u.params1.z;
+    let drift_uv = uv + vec2<f32>(time * anim_speed * 0.01, time * anim_speed * 0.005);
+    var spots = 0.0;
+    if (spots_amt > 0.001) {
+      let n1 = value_noise2d(drift_uv * d_scale * 4.0);
+      let n2 = value_noise2d(drift_uv * d_scale * 8.0 + vec2<f32>(13.7, 9.1));
+      let n3 = value_noise2d(drift_uv * d_scale * 12.0 + vec2<f32>(45.2, 71.3));
+      spots = smoothstep(0.3, 0.6, n1 * n2 * n3 * 4.0) * spots_amt;
+    }
+    var scratches = 0.0;
+    if (scratches_amt > 0.001) {
+      let xn = hash21(vec2<f32>(floor(drift_uv.x * res.x * 0.05), 0.0));
+      scratches = step(0.97, xn) * scratches_amt * 0.7;
+    }
+    var dirt = clamp(spots + scratches, 0.0, 1.0);
+    let bright = smoothstep(threshold, threshold + 0.2, luma(src.rgb));
+    dirt = dirt * bright * amount;
+    let dust_color = mix(vec3<f32>(0.9, 0.95, 1.0), vec3<f32>(1.0, 0.85, 0.65), tint_warmth);
+    let dirt_rgb = dust_color * dirt;
+    var result = src.rgb;
+    if (d_mode == 0u) {
+      result = vec3<f32>(1.0) - (vec3<f32>(1.0) - src.rgb) * (vec3<f32>(1.0) - dirt_rgb);
+    } else if (d_mode == 1u) {
+      result = src.rgb + dirt_rgb;
+    } else {
+      result = src.rgb * (1.0 - dirt * 0.5);
+    }
+    return vec4<f32>(result, src.a);
+  }
+  if (code == 99u) {
+    // diffusion-promist: highlight bloom + shadow lift + haze
+    let res = u.resolution_time.xy;
+    let radius = max(1.0, u.params0.x);
+    let threshold = u.params0.y;
+    let shadow_lift = u.params0.z;
+    let highlight_bloom = u.params0.w;
+    let haze = u.params1.x;
+    let haze_warmth = clamp(u.params1.y, 0.0, 1.0);
+    let texel = 1.0 / max(res, vec2<f32>(2.0));
+    var bloom = vec3<f32>(0.0);
+    var wsum = 0.0;
+    for (var y = -5; y <= 5; y = y + 1) {
+      for (var x = -5; x <= 5; x = x + 1) {
+        if (abs(x) + abs(y) > 7) { continue; }
+        let off = vec2<f32>(f32(x), f32(y)) * texel * radius * 0.4;
+        let s_col = sample_rgb(uv + off);
+        let gate = smoothstep(threshold, threshold + 0.2, luma(s_col));
+        let w = exp(-f32(x * x + y * y) / (2.0 * radius * radius));
+        bloom = bloom + s_col * gate * w;
+        wsum = wsum + w;
+      }
+    }
+    if (wsum > 0.0) { bloom = bloom / wsum; }
+    bloom = bloom * highlight_bloom * 1.5;
+    let lifted = src.rgb + (vec3<f32>(1.0) - src.rgb) * shadow_lift * 0.15;
+    let haze_color = mix(vec3<f32>(0.7, 0.75, 0.8), vec3<f32>(0.95, 0.85, 0.7), haze_warmth);
+    let hazed = mix(lifted, haze_color, haze * 0.3);
+    let screened = vec3<f32>(1.0) - (vec3<f32>(1.0) - hazed) * (vec3<f32>(1.0) - bloom);
+    return vec4<f32>(mix(src.rgb, screened, clamp(amount, 0.0, 1.0)), src.a);
+  }
+  if (code == 100u) {
+    // compression-artifacts: block quantize + chroma subsample + banding
+    let res = u.resolution_time.xy;
+    let block_size = max(2.0, u.params0.x);
+    let quality = clamp(u.params0.y, 0.0, 1.0);
+    let chroma_subsample = u.params0.z;
+    let block_noise = u.params0.w;
+    let c_mode = u32(round(u.params1.x));
+    let px = uv * res;
+    let block_id = floor(px / block_size);
+    var avg = vec3<f32>(0.0);
+    for (var y = 0; y < 4; y = y + 1) {
+      for (var x = 0; x < 4; x = x + 1) {
+        let sp = (block_id * block_size + vec2<f32>(f32(x), f32(y)) * block_size * 0.25) / res;
+        avg = avg + sample_rgb(sp);
+      }
+    }
+    avg = avg / 16.0;
+    var result = src.rgb;
+    if (c_mode == 0u || c_mode == 1u) {
+      let q_step = mix(0.01, 0.2, 1.0 - quality);
+      let quant = floor(src.rgb / q_step) * q_step;
+      let block_bias = select(0.45, 0.65, c_mode == 1u);
+      result = mix(quant, avg, block_bias * (1.0 - quality));
+      if (block_noise > 0.001) {
+        let bn = (hash21(block_id) - 0.5) * block_noise * 0.15;
+        result = result + vec3<f32>(bn);
+      }
+    } else {
+      let ycc = vec3<f32>(
+        0.299 * src.r + 0.587 * src.g + 0.114 * src.b,
+        -0.169 * src.r - 0.331 * src.g + 0.5 * src.b + 0.5,
+        0.5 * src.r - 0.419 * src.g - 0.081 * src.b + 0.5
+      );
+      let y_step = mix(0.005, 0.05, 1.0 - quality);
+      let c_step = mix(0.02, 0.2, 1.0 - quality);
+      let qy = floor(ycc.x / y_step) * y_step;
+      let qcb = floor(ycc.y / c_step) * c_step - 0.5;
+      let qcr = floor(ycc.z / c_step) * c_step - 0.5;
+      result = vec3<f32>(qy + 1.402 * qcr, qy - 0.344 * qcb - 0.714 * qcr, qy + 1.772 * qcb);
+    }
+    if (chroma_subsample > 0.001) {
+      let sub_y = 0.299 * avg.r + 0.587 * avg.g + 0.114 * avg.b;
+      let sub_cb = -0.169 * avg.r - 0.331 * avg.g + 0.5 * avg.b;
+      let sub_cr = 0.5 * avg.r - 0.419 * avg.g - 0.081 * avg.b;
+      let here_y = 0.299 * result.r + 0.587 * result.g + 0.114 * result.b;
+      let here_cb = -0.169 * result.r - 0.331 * result.g + 0.5 * result.b;
+      let here_cr = 0.5 * result.r - 0.419 * result.g - 0.081 * result.b;
+      let cb = mix(here_cb, sub_cb, chroma_subsample);
+      let cr = mix(here_cr, sub_cr, chroma_subsample);
+      result = vec3<f32>(here_y + 1.402 * cr, here_y - 0.344 * cb - 0.714 * cr, here_y + 1.772 * cb);
+    }
+    return vec4<f32>(mix(src.rgb, clamp(result, vec3<f32>(0.0), vec3<f32>(1.0)), clamp(amount, 0.0, 1.0)), src.a);
+  }
+  if (code == 101u) {
+    // datamosh-lite: pixel-sort-style offset by luminance bands
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let intensity = amount;
+    let band_width = 5.0 + u.params0.x * 30.0;
+    let color_shift = u.params0.y;
+    let l = dot(src.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let band = floor(l * band_width) / band_width;
+    let sort_offset = (band - 0.5) * intensity * 0.15;
+    let jitter = hash21(vec2<f32>(floor(uv.y * res.y * 0.5), floor(time * 3.0))) * 0.02 * intensity;
+    let sample_uv = uv + vec2<f32>(sort_offset + jitter, 0.0);
+    var col = sample_rgb(sample_uv);
+    if (color_shift > 0.01) {
+      col.r = sample_rgb(sample_uv + vec2<f32>(color_shift * 0.01, 0.0)).r;
+      col.b = sample_rgb(sample_uv - vec2<f32>(color_shift * 0.01, 0.0)).b;
+    }
+    return vec4<f32>(col, src.a);
+  }
+  if (code == 102u) {
+    // scanline-drift: per-line horizontal drift with waveform select
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let frequency = max(1.0, u.params0.x);
+    let speed = u.params0.y;
+    let waveform = u32(round(u.params0.z));
+    let chroma_split = u.params0.w;
+    let chunkiness = u.params1.x;
+    var y_line = uv.y;
+    if (chunkiness > 0.001) {
+      let chunk = mix(1.0, 32.0, chunkiness);
+      y_line = floor(uv.y * res.y / chunk) * chunk / res.y;
+    }
+    let t = time * speed;
+    var drift = 0.0;
+    if (waveform == 0u) {
+      drift = sin(y_line * frequency + t);
+    } else if (waveform == 1u) {
+      drift = (hash21(vec2<f32>(floor(y_line * frequency) + floor(t * 8.0), 0.0)) - 0.5) * 2.0;
+    } else {
+      drift = fract(y_line * frequency + t) * 2.0 - 1.0;
+    }
+    drift = drift * amount * 0.05;
+    var col = vec3<f32>(0.0);
+    if (chroma_split > 0.001) {
+      col.r = sample_rgb(vec2<f32>(uv.x + drift * (1.0 + chroma_split * 0.3), uv.y)).r;
+      col.g = sample_rgb(vec2<f32>(uv.x + drift, uv.y)).g;
+      col.b = sample_rgb(vec2<f32>(uv.x + drift * (1.0 - chroma_split * 0.3), uv.y)).b;
+    } else {
+      col = sample_rgb(vec2<f32>(uv.x + drift, uv.y));
+    }
+    return vec4<f32>(col, src.a);
+  }
+  if (code == 103u) {
+    // tape-dropout: random horizontal noise stripes
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let stripe_len = u.params0.x;
+    let color_mode = u32(round(u.params0.y));
+    let speed = u.params0.z;
+    let noise_amp = u.params0.w;
+    let t = floor(time * speed * 8.0) / 8.0;
+    let y_bucket = floor(uv.y * 80.0);
+    let trigger = hash21(vec2<f32>(y_bucket, t));
+    let len_h = hash21(vec2<f32>(y_bucket + 13.0, t));
+    let start_x = hash21(vec2<f32>(y_bucket + 27.0, t));
+    let seg_len = stripe_len * mix(0.05, 0.5, len_h);
+    let in_stripe = step(1.0 - amount * 0.4, trigger) * step(start_x, uv.x) * step(uv.x, start_x + seg_len);
+    if (in_stripe < 0.5) { return src; }
+    let n = hash21(vec2<f32>(uv.x * res.x, t * 100.0));
+    var stripe = vec3<f32>(n);
+    if (color_mode == 1u) {
+      stripe = vec3<f32>(n * 0.6 + 0.2);
+    } else if (color_mode >= 2u) {
+      let hue = hash21(vec2<f32>(y_bucket, t * 13.0));
+      stripe = mix(vec3<f32>(1.0, 0.0, 0.4), vec3<f32>(0.0, 1.0, 0.6), hue);
+      stripe = mix(stripe, vec3<f32>(0.4, 0.4, 1.0), n);
+    }
+    stripe = mix(stripe, src.rgb, 1.0 - noise_amp);
+    return vec4<f32>(mix(src.rgb, stripe, in_stripe), src.a);
+  }
+  if (code == 104u) {
+    // ripple-caustics: voronoi-ridge caustic light + refraction
+    let time = u.resolution_time.z;
+    let c_scale = max(0.5, u.params0.x);
+    let speed = u.params0.y;
+    let refraction = u.params0.z;
+    let tint = vec3<f32>(u.params0.w, u.params1.x, u.params1.y);
+    let c_mode = u32(round(u.params1.z));
+    let p = uv * c_scale;
+    let t = time * speed;
+    var min_d1a = 9.0; var min_d2a = 9.0;
+    var min_d1b = 9.0; var min_d2b = 9.0;
+    let pb = p + vec2<f32>(17.3);
+    let tb = t * 1.3 + 1.7;
+    let ia = floor(p); let fa = fract(p);
+    let ib = floor(pb); let fb = fract(pb);
+    for (var y = -1; y <= 1; y = y + 1) {
+      for (var x = -1; x <= 1; x = x + 1) {
+        let g = vec2<f32>(f32(x), f32(y));
+        var oa = vec2<f32>(hash21(ia + g), fract(sin(dot(ia + g, vec2<f32>(269.5, 183.3))) * 43758.5453));
+        oa = vec2<f32>(0.5) + 0.5 * sin(t + 6.28 * oa);
+        let ra = g + oa - fa;
+        let da = dot(ra, ra);
+        if (da < min_d1a) { min_d2a = min_d1a; min_d1a = da; } else if (da < min_d2a) { min_d2a = da; }
+        var ob = vec2<f32>(hash21(ib + g), fract(sin(dot(ib + g, vec2<f32>(269.5, 183.3))) * 43758.5453));
+        ob = vec2<f32>(0.5) + 0.5 * sin(tb + 6.28 * ob);
+        let rb = g + ob - fb;
+        let db = dot(rb, rb);
+        if (db < min_d1b) { min_d2b = min_d1b; min_d1b = db; } else if (db < min_d2b) { min_d2b = db; }
+      }
+    }
+    let c1 = sqrt(min_d2a) - sqrt(min_d1a);
+    let c2 = sqrt(min_d2b) - sqrt(min_d1b);
+    let c = pow(max(0.0, min(c1, c2)), 1.5) * amount;
+    var s_uv = uv;
+    if (refraction > 0.001) {
+      s_uv = s_uv + vec2<f32>(c1 - c2, c2 - c1) * refraction * 0.04;
+    }
+    let base = sample_rgb(s_uv);
+    let caust_color = tint * c;
+    var result = base + caust_color;
+    if (c_mode == 1u) {
+      result = base + caust_color * 1.5;
+    } else if (c_mode >= 2u) {
+      result = vec3<f32>(1.0) - (vec3<f32>(1.0) - base) * (vec3<f32>(1.0) - caust_color);
+    }
+    return vec4<f32>(result, src.a);
+  }
+  if (code == 105u) {
+    // shockwave: expanding refraction ring (looping or one-shot)
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let trigger_time = u.params0.x;
+    let speed = max(0.1, u.params0.y);
+    let ring_width = max(0.01, u.params0.z);
+    let center = vec2<f32>(u.params0.w, u.params1.x);
+    let chromatic = u.params1.y;
+    let s_mode = u32(round(u.params1.z));
+    var wave_time = time - floor(time * speed * 0.5) * (2.0 / speed);
+    if (s_mode == 0u) {
+      wave_time = time - floor(time / (2.0 / speed)) * (2.0 / speed);
+    } else {
+      wave_time = max(0.0, time - trigger_time);
+    }
+    let aspect = res.x / max(1.0, res.y);
+    var d0 = uv - center;
+    d0.x = d0.x * aspect;
+    let r = length(d0);
+    var dir = vec2<f32>(1.0, 0.0);
+    if (r > 0.001) { dir = d0 / r; }
+    dir.x = dir.x / aspect;
+    let ring_r0 = wave_time * speed;
+    let band0 = smoothstep(ring_width * 0.5, 0.0, abs(r - ring_r0));
+    let base_off = dir * band0 * amount;
+    var col = vec3<f32>(0.0);
+    if (chromatic > 0.001) {
+      let ring_rr = (wave_time + 0.05 * chromatic) * speed;
+      let ring_rb = (wave_time - 0.05 * chromatic) * speed;
+      let band_r = smoothstep(ring_width * 0.5, 0.0, abs(r - ring_rr));
+      let band_b = smoothstep(ring_width * 0.5, 0.0, abs(r - ring_rb));
+      col.r = sample_rgb(uv + dir * band_r * amount).r;
+      col.g = sample_rgb(uv + base_off).g;
+      col.b = sample_rgb(uv + dir * band_b * amount).b;
+    } else {
+      col = sample_rgb(uv + base_off);
+    }
+    return vec4<f32>(col, src.a);
+  }
+  if (code == 106u) {
+    // droste-recursive: iterative zoom-rotate toward center
+    let rotation_deg = u.params0.x;
+    let iterations = u32(clamp(round(u.params0.y), 1.0, 12.0));
+    let center = vec2<f32>(u.params0.z, u.params0.w);
+    let frame_size = u.params1.x;
+    let zoom = max(1.01, amount);
+    var s_uv = uv;
+    let ang = rotation_deg * 0.017453292;
+    let ca = cos(ang); let sa = sin(ang);
+    for (var i = 0u; i < 12u; i = i + 1u) {
+      if (i >= iterations) { break; }
+      var d = s_uv - center;
+      let r = length(d - vec2<f32>(0.5) + center);
+      if (r > frame_size) {
+        d = d * zoom;
+        d = vec2<f32>(d.x * ca - d.y * sa, d.x * sa + d.y * ca);
+        s_uv = center + d;
+      }
+    }
+    let droste = sample_rgb(clamp(s_uv, vec2<f32>(0.0), vec2<f32>(1.0)));
+    return vec4<f32>(droste, src.a);
+  }
+  if (code == 107u) {
+    // slit-scan: sweeping displacement bands
+    let time = u.resolution_time.z;
+    let s_mode = u32(round(u.params0.x));
+    let pattern = u32(round(u.params0.y));
+    let speed = u.params0.z;
+    let chroma_split = u.params0.w;
+    var col = vec3<f32>(0.0);
+    for (var ch = 0; ch < 3; ch = ch + 1) {
+      var phase_shift = 0.0;
+      if (chroma_split > 0.001) {
+        if (ch == 0) { phase_shift = 0.3 * chroma_split; }
+        if (ch == 2) { phase_shift = -0.3 * chroma_split; }
+      }
+      let coord = select(uv.y, uv.x, s_mode == 1u);
+      let t = time * speed + phase_shift;
+      var p = coord + t * 0.3;
+      if (pattern == 1u) {
+        p = sin(coord * 8.0 + t * 2.0);
+      } else if (pattern >= 2u) {
+        p = (hash21(vec2<f32>(floor(coord * 50.0) + floor(t * 8.0), 0.0)) - 0.5) * 2.0;
+      }
+      var off = vec2<f32>(0.0);
+      if (s_mode == 0u) {
+        off.x = p * amount * 0.3;
+      } else if (s_mode == 1u) {
+        off.y = p * amount * 0.3;
+      } else if (s_mode == 2u) {
+        let d = uv - vec2<f32>(0.5);
+        let r = length(d);
+        var dir = vec2<f32>(1.0, 0.0);
+        if (r > 0.001) { dir = d / r; }
+        off = dir * p * amount * 0.3;
+      } else {
+        off.x = (uv.y - 0.5) * amount * 0.5;
+        off.y = sin(t + uv.x * 6.28) * amount * 0.1;
+      }
+      let s = sample_rgb(uv + off);
+      if (ch == 0) { col.r = s.r; }
+      if (ch == 1) { col.g = s.g; }
+      if (ch == 2) { col.b = s.b; }
+      if (chroma_split <= 0.001) { col = s; break; }
+    }
+    return vec4<f32>(col, src.a);
+  }
+  if (code == 108u) {
+    // fractal-warp: fbm/ridged domain warp
+    let time = u.resolution_time.z;
+    let w_scale = max(0.1, u.params0.x);
+    let octaves = u32(clamp(round(u.params0.y), 1.0, 6.0));
+    let speed = u.params0.z;
+    let chromatic = u.params0.w;
+    let w_mode = u32(round(u.params1.x));
+    let t = time * speed * 0.2;
+    var col = vec3<f32>(0.0);
+    for (var ch = 0; ch < 3; ch = ch + 1) {
+      var chroma_shift = 0.0;
+      if (chromatic > 0.001) {
+        if (ch == 0) { chroma_shift = chromatic * 0.5; }
+        if (ch == 2) { chroma_shift = -chromatic * 0.5; }
+      }
+      let p = uv * w_scale + vec2<f32>(t + chroma_shift);
+      var nx = 0.0; var ny = 0.0;
+      var fx = 0.0; var fy = 0.0; var rx = 0.0; var ry = 0.0;
+      var amp = 0.5;
+      var pp = p;
+      var pq = p + vec2<f32>(31.7);
+      for (var i = 0u; i < 6u; i = i + 1u) {
+        if (i >= octaves) { break; }
+        let n1 = value_noise2d(pp);
+        let n2 = value_noise2d(pq);
+        fx = fx + n1 * amp;
+        fy = fy + n2 * amp;
+        rx = rx + (1.0 - abs(n1 - 0.5) * 2.0) * amp;
+        ry = ry + (1.0 - abs(n2 - 0.5) * 2.0) * amp;
+        pp = pp * 2.0;
+        pq = pq * 2.0;
+        amp = amp * 0.5;
+      }
+      if (w_mode == 0u) {
+        nx = fx - 0.5; ny = fy - 0.5;
+      } else if (w_mode == 1u) {
+        nx = rx - 0.5; ny = ry - 0.5;
+      } else {
+        nx = (fx + rx) * 0.5 - 0.5; ny = (fy + ry) * 0.5 - 0.5;
+      }
+      let off = vec2<f32>(nx, ny) * amount * 0.1;
+      let s = sample_rgb(uv + off);
+      if (ch == 0) { col.r = s.r; }
+      if (ch == 1) { col.g = s.g; }
+      if (ch == 2) { col.b = s.b; }
+      if (chromatic <= 0.001) { col = s; break; }
+    }
+    return vec4<f32>(col, src.a);
+  }
+  if (code == 109u) {
+    // fluid-distort: curl-noise flow displacement
+    let time = u.resolution_time.z;
+    let f_scale = max(0.1, u.params0.x);
+    let speed = u.params0.y;
+    let turbulence = u.params0.z;
+    let f_mode = u32(round(u.params0.w));
+    let p = uv * f_scale + vec2<f32>(time * speed * 0.1);
+    let e = 0.05;
+    var c = vec2<f32>(
+      value_noise2d(p + vec2<f32>(0.0, e)) - value_noise2d(p - vec2<f32>(0.0, e)),
+      -(value_noise2d(p + vec2<f32>(e, 0.0)) - value_noise2d(p - vec2<f32>(e, 0.0)))
+    );
+    if (turbulence > 0.001) {
+      let p2 = p * 2.0 + vec2<f32>(13.7);
+      let c2 = vec2<f32>(
+        value_noise2d(p2 + vec2<f32>(0.0, e)) - value_noise2d(p2 - vec2<f32>(0.0, e)),
+        -(value_noise2d(p2 + vec2<f32>(e, 0.0)) - value_noise2d(p2 - vec2<f32>(e, 0.0)))
+      );
+      c = c + c2 * turbulence * 0.5;
+    }
+    var off = c * amount * 0.1;
+    if (f_mode == 1u) {
+      let d = uv - vec2<f32>(0.5);
+      off = (c + normalize(d + vec2<f32>(1e-6)) * 0.3) * amount * 0.08;
+    } else if (f_mode >= 2u) {
+      off = clamp(c, vec2<f32>(-0.5), vec2<f32>(0.5)) * amount * 0.15;
+    }
+    return vec4<f32>(sample_rgb(uv + off), src.a);
+  }
+  if (code == 110u) {
+    // wormhole: twist + pull toward center
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let center = vec2<f32>(u.params0.y, u.params0.z);
+    let twist = u.params0.w;
+    let chromatic = u.params1.x;
+    let anim_speed = u.params1.y;
+    let aspect = res.x / max(1.0, res.y);
+    var col = vec3<f32>(0.0);
+    for (var ch = 0; ch < 3; ch = ch + 1) {
+      var chroma_shift = 0.0;
+      if (chromatic > 0.001) {
+        if (ch == 0) { chroma_shift = chromatic * 0.1; }
+        if (ch == 2) { chroma_shift = -chromatic * 0.1; }
+      }
+      var d = uv - center;
+      d.x = d.x * aspect;
+      var r = length(d);
+      var ang = atan2(d.y, d.x);
+      ang = ang + twist / max(0.05, r) + time * anim_speed * 0.3 + chroma_shift;
+      r = r * mix(1.0, 0.5 + 0.5 * (r * r), amount);
+      d = vec2<f32>(cos(ang), sin(ang)) * r;
+      d.x = d.x / aspect;
+      let s_uv = clamp(center + d, vec2<f32>(0.0), vec2<f32>(1.0));
+      let s = sample_rgb(s_uv);
+      if (ch == 0) { col.r = s.r; }
+      if (ch == 1) { col.g = s.g; }
+      if (ch == 2) { col.b = s.b; }
+      if (chromatic <= 0.001) { col = s; break; }
+    }
+    return vec4<f32>(col, src.a);
+  }
+  if (code == 111u) {
+    // vhs-full-deck: tracking + head switch + chroma bleed + dropouts + noise
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let head_switch = u.params0.x;
+    let chroma_bleed = u.params0.y;
+    let dropouts = u.params0.z;
+    let tape_noise = u.params0.w;
+    let scanlines_amt = u.params1.x;
+    let color_bleed = u.params1.y;
+    let saturation = u.params1.z;
+    let tracking_jump = u.params1.w;
+    let v_mode = u32(round(u.params2.x));
+    var mode_boost = 1.0;
+    if (v_mode == 1u) { mode_boost = 1.3; }
+    if (v_mode >= 2u) { mode_boost = 1.8; }
+    var s_uv = uv;
+    s_uv.x = s_uv.x + sin(uv.y * 30.0 + time * 2.0) * 0.005 * amount * mode_boost;
+    if (tracking_jump > 0.001) {
+      let jump = step(0.97, hash21(vec2<f32>(floor(time * 4.0), 0.0))) * tracking_jump;
+      if (s_uv.y < 0.4) { s_uv.x = s_uv.x + jump * 0.05; }
+    }
+    let head_band = smoothstep(0.05, 0.0, s_uv.y) * head_switch * mode_boost;
+    if (head_band > 0.01) {
+      s_uv.x = s_uv.x + (hash21(vec2<f32>(s_uv.y * 100.0, floor(time * 8.0))) - 0.5) * 0.04;
+    }
+    let cb = chroma_bleed * mode_boost * 0.04;
+    var col = vec3<f32>(
+      sample_rgb(s_uv + vec2<f32>(cb, 0.0)).r,
+      sample_rgb(s_uv).g,
+      sample_rgb(s_uv - vec2<f32>(cb, 0.0)).b
+    );
+    if (color_bleed > 0.001) {
+      let bleed = color_bleed * mode_boost;
+      col.r = mix(col.r, sample_rgb(s_uv + vec2<f32>(0.02 * bleed, 0.0)).r, 0.4);
+    }
+    let l = luma(col);
+    col = mix(vec3<f32>(l), col, saturation);
+    if (tape_noise > 0.001) {
+      let n = (hash21(uv * res + vec2<f32>(time * 60.0)) - 0.5) * tape_noise * mode_boost * 0.4;
+      col = col + vec3<f32>(n);
+    }
+    if (scanlines_amt > 0.001) {
+      let sl = sin(s_uv.y * 800.0) * 0.5 + 0.5;
+      col = col * mix(1.0, sl * 0.6 + 0.4, scanlines_amt * mode_boost);
+    }
+    if (dropouts > 0.001) {
+      let y_b = floor(s_uv.y * 60.0);
+      let drop = step(0.93, hash21(vec2<f32>(y_b, floor(time * 6.0))));
+      col = col + vec3<f32>(drop * dropouts * mode_boost * 0.6);
+    }
+    col = col + vec3<f32>(head_band * 0.5);
+    return vec4<f32>(clamp(col, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 112u) {
+    // topo-warp: luma contour bands with displacement + line overlay
+    let res = u.resolution_time.xy;
+    let contour_count = max(1.0, u.params0.x);
+    let contour_width = u.params0.y;
+    let chromatic_edge = u.params0.z;
+    let line_color = vec3<f32>(u.params0.w, u.params1.x, u.params1.y);
+    let shadow_ridges = u.params1.z;
+    let texel = 1.0 / max(res, vec2<f32>(2.0));
+    let l = luma(src.rgb);
+    let l_e = luma(sample_rgb(uv + texel * vec2<f32>(1.0, 0.0)));
+    let l_n = luma(sample_rgb(uv + texel * vec2<f32>(0.0, 1.0)));
+    let grad = vec2<f32>(l_e - l, l_n - l);
+    let band_pos = fract(l * contour_count);
+    let ridge = smoothstep(contour_width * 5.0, 0.0, abs(band_pos - 0.5));
+    let disp = grad * ridge * amount * 0.3;
+    var col = vec3<f32>(0.0);
+    if (chromatic_edge > 0.001) {
+      col.r = sample_rgb(uv + disp * (1.0 + chromatic_edge * 0.5)).r;
+      col.g = sample_rgb(uv + disp).g;
+      col.b = sample_rgb(uv + disp * (1.0 - chromatic_edge * 0.5)).b;
+    } else {
+      col = sample_rgb(uv + disp);
+    }
+    if (shadow_ridges > 0.001) {
+      let side = step(0.5, band_pos);
+      col = col * (1.0 - side * ridge * shadow_ridges * 0.5);
+    }
+    let result = col + line_color * ridge;
+    return vec4<f32>(clamp(result, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 113u) {
+    // strobe-sequencer: BPM step-gated flash/invert/tint/zoom
+    let time = u.resolution_time.z;
+    let bpm = max(1.0, u.params0.x);
+    let steps = clamp(round(u.params0.y), 1.0, 16.0);
+    let pattern = u.params0.z;
+    let s_mode = u32(round(u.params0.w));
+    let tint = vec3<f32>(u.params1.x, u.params1.y, u.params1.z);
+    let swing = u.params1.w;
+    let beat_len = 60.0 / bpm;
+    let step_len = beat_len / steps * 4.0;
+    let step_f = (time / step_len) - floor(time / step_len / steps) * steps;
+    let step_idx = floor(step_f);
+    var frac_part = fract(step_f);
+    if (floor(step_idx * 0.5) * 2.0 != step_idx) {
+      frac_part = clamp(frac_part - swing, 0.0, 1.0);
+    }
+    let bit_val = floor(pattern / exp2(step_idx)) - floor(floor(pattern / exp2(step_idx)) * 0.5) * 2.0;
+    var gate = 0.0;
+    if (bit_val > 0.5 && frac_part < 0.5) { gate = 1.0; }
+    var result = src.rgb;
+    if (s_mode == 0u) {
+      result = mix(src.rgb, src.rgb + tint * amount, gate);
+    } else if (s_mode == 1u) {
+      result = mix(src.rgb, vec3<f32>(1.0) - src.rgb, gate * amount);
+    } else if (s_mode == 2u) {
+      result = mix(src.rgb, src.rgb * tint + tint * 0.4, gate * amount);
+    } else {
+      let d = uv - vec2<f32>(0.5);
+      let zoom = 1.0 + gate * amount * 0.1;
+      let s_uv = clamp(vec2<f32>(0.5) + d / zoom, vec2<f32>(0.0), vec2<f32>(1.0));
+      result = sample_rgb(s_uv);
+    }
+    return vec4<f32>(clamp(result, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 114u) {
+    // mirror-shards: voronoi/hex/tri cells sampled with per-shard rotation
+    let time = u.resolution_time.z;
+    let shards = max(2.0, u.params0.x);
+    let rotation_deg = u.params0.y;
+    let chromatic = u.params0.z;
+    let m_mode = u32(round(u.params0.w));
+    var cell_id = vec2<f32>(0.0);
+    var cell_center = vec2<f32>(0.5);
+    var cell_uv = vec2<f32>(0.0);
+    if (m_mode == 0u) {
+      let p = uv * shards;
+      let i = floor(p); let f = fract(p);
+      var min_d = 9.0;
+      for (var y = -1; y <= 1; y = y + 1) {
+        for (var x = -1; x <= 1; x = x + 1) {
+          let g = vec2<f32>(f32(x), f32(y));
+          let o = vec2<f32>(hash21(i + g), hash21(i + g + vec2<f32>(13.7)));
+          let r = g + o - f;
+          let d = dot(r, r);
+          if (d < min_d) { min_d = d; cell_id = i + g; cell_uv = r; }
+        }
+      }
+      cell_center = (cell_id + vec2<f32>(0.5)) / shards;
+    } else if (m_mode == 1u) {
+      var q = vec2<f32>(uv.x * 1.1547, uv.y) * shards;
+      q.x = q.x + 0.5 * floor(q.y);
+      let i = floor(q);
+      cell_id = vec2<f32>(i.x - floor(i.y / 2.0), i.y);
+      cell_center = (cell_id + vec2<f32>(0.5)) / shards;
+      cell_uv = fract(q) - vec2<f32>(0.5);
+    } else {
+      let p = uv * shards;
+      cell_id = floor(p);
+      cell_center = (cell_id + vec2<f32>(0.5)) / shards;
+      cell_uv = fract(p) - vec2<f32>(0.5);
+    }
+    var ang = (hash21(cell_id) - 0.5) * rotation_deg * 0.017453292;
+    ang = ang + time * 0.1 * (hash21(cell_id + vec2<f32>(7.3)) - 0.5);
+    let ca = cos(ang); let sa = sin(ang);
+    let s_uv = clamp(cell_center + vec2<f32>(cell_uv.x * ca - cell_uv.y * sa, cell_uv.x * sa + cell_uv.y * ca) * amount, vec2<f32>(0.0), vec2<f32>(1.0));
+    var col = vec3<f32>(0.0);
+    if (chromatic > 0.001) {
+      let cd = vec2<f32>(chromatic * 0.005, 0.0);
+      col.r = sample_rgb(s_uv + cd).r;
+      col.g = sample_rgb(s_uv).g;
+      col.b = sample_rgb(s_uv - cd).b;
+    } else {
+      col = sample_rgb(s_uv);
+    }
+    return vec4<f32>(col, src.a);
+  }
+  if (code == 115u) {
+    // rorschach-mirror: fold mirror + ink threshold
+    let time = u.resolution_time.z;
+    let r_mode = u32(round(u.params0.x));
+    let fluid_edges = u.params0.y;
+    let ink_tint = vec3<f32>(u.params0.z, u.params0.w, u.params1.x);
+    let bg = vec3<f32>(u.params1.y, u.params1.z, u.params1.w);
+    let mix_original = u.params2.x;
+    var s_uv = uv;
+    let wobble = fluid_edges * (value_noise2d(uv * 8.0 + vec2<f32>(time * 0.5)) - 0.5) * 0.04;
+    if (r_mode == 0u || r_mode == 2u || r_mode == 3u) {
+      if (s_uv.x > 0.5 + wobble) { s_uv.x = 1.0 - s_uv.x; }
+    }
+    if (r_mode == 1u || r_mode == 2u || r_mode == 3u) {
+      if (s_uv.y > 0.5 + wobble) { s_uv.y = 1.0 - s_uv.y; }
+    }
+    if (r_mode == 3u) {
+      if (s_uv.x > s_uv.y) { s_uv = vec2<f32>(s_uv.y, s_uv.x); }
+    }
+    let mirrored = sample_rgb(clamp(s_uv, vec2<f32>(0.0), vec2<f32>(1.0)));
+    let ink = smoothstep(amount, 1.0, luma(mirrored));
+    let ink_color = mix(bg, ink_tint, ink);
+    let result = mix(ink_color, src.rgb, mix_original);
+    return vec4<f32>(result, src.a);
+  }
+  if (code == 116u) {
+    // glitch-quilt: tile shuffle + per-tile rotation + chroma split
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let tile_size = max(4.0, u.params0.x);
+    let rotate_amount = u.params0.y;
+    let chroma_split = u.params0.z;
+    let trigger_rate = u.params0.w;
+    let cell = floor(uv * res / tile_size);
+    let cell_origin = cell * tile_size / res;
+    let cell_size = vec2<f32>(tile_size) / res;
+    let cell_uv = (uv - cell_origin) / cell_size;
+    let t = floor(time * trigger_rate * 2.0);
+    let h = hash21(cell + vec2<f32>(t));
+    let h2 = hash21(cell + vec2<f32>(t + 13.7));
+    var src_cell = cell;
+    if (h < amount) {
+      src_cell.x = floor(hash21(cell + vec2<f32>(t + 7.3)) * res.x / tile_size);
+      src_cell.y = floor(hash21(cell + vec2<f32>(t + 17.5)) * res.y / tile_size);
+    }
+    var s_uv = cell_uv;
+    if (h2 < rotate_amount) {
+      let rot = u32(hash21(cell + vec2<f32>(t + 27.3)) * 4.0);
+      if (rot == 1u) { s_uv = vec2<f32>(s_uv.y, 1.0 - s_uv.x); }
+      else if (rot == 2u) { s_uv = vec2<f32>(1.0 - s_uv.x, 1.0 - s_uv.y); }
+      else if (rot == 3u) { s_uv = vec2<f32>(1.0 - s_uv.y, s_uv.x); }
+    }
+    let final_uv = clamp((src_cell * tile_size + s_uv * tile_size) / res, vec2<f32>(0.0), vec2<f32>(1.0));
+    var col = vec3<f32>(0.0);
+    if (chroma_split > 0.001) {
+      let cd = vec2<f32>(chroma_split * 0.005, 0.0);
+      col.r = sample_rgb(final_uv + cd).r;
+      col.g = sample_rgb(final_uv).g;
+      col.b = sample_rgb(final_uv - cd).b;
+    } else {
+      col = sample_rgb(final_uv);
+    }
+    return vec4<f32>(col, src.a);
+  }
+  if (code == 117u) {
+    // poster-tear: torn-poster reveal with ragged edge + glow
+    let angle_deg = u.params0.x;
+    let tear_jitter = u.params0.y;
+    let shift_below = u.params0.z;
+    let offset_xy = vec2<f32>(u.params0.w, u.params1.x);
+    let tear_glow = u.params1.y;
+    let p_mode = u32(round(u.params1.z));
+    let ang = angle_deg * 0.017453292;
+    let dir = vec2<f32>(cos(ang), sin(ang));
+    let norm = vec2<f32>(-dir.y, dir.x);
+    let d = uv - vec2<f32>(0.5);
+    let dist_to_line = dot(d, norm);
+    let jit = tear_jitter * (value_noise2d(uv * 30.0) - 0.5) * 0.05;
+    var teared = step(amount - 0.5, dist_to_line + jit);
+    if (p_mode == 1u) {
+      teared = step(amount * 0.7, length(d) + jit);
+    } else if (p_mode >= 2u) {
+      let ad = abs(d);
+      teared = step(amount * 0.5, max(ad.x, ad.y) + jit);
+    }
+    let below_uv = clamp(uv + offset_xy * shift_below, vec2<f32>(0.0), vec2<f32>(1.0));
+    let above = src.rgb;
+    let below = sample_rgb(below_uv) * 0.7;
+    var result = mix(above, below, 1.0 - teared);
+    if (tear_glow > 0.001) {
+      let edge = smoothstep(0.04, 0.0, abs(dist_to_line - (amount - 0.5)));
+      result = result + vec3<f32>(1.0, 0.95, 0.7) * edge * tear_glow;
+    }
+    return vec4<f32>(clamp(result, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 118u) {
+    // paint-peel: noise-field peel reveal with curl shading
+    let time = u.resolution_time.z;
+    let p_scale = max(0.5, u.params0.x);
+    let luma_bias = u.params0.y;
+    let curl_amt = u.params0.z;
+    let shadow_amt = u.params0.w;
+    let bg = vec3<f32>(u.params1.x, u.params1.y, u.params1.z);
+    let p_mode = u32(round(u.params1.w));
+    let p = uv * p_scale;
+    var field = fbm2d(p + vec2<f32>(time * 0.05));
+    if (p_mode == 1u) {
+      field = cellular2d(p);
+    } else if (p_mode >= 2u) {
+      field = abs(fbm2d(p) - fbm2d(p + vec2<f32>(13.7))) * 4.0;
+    }
+    let l = luma(src.rgb);
+    let luma_weight = mix(l, 1.0 - l, luma_bias);
+    let peel = step(field, amount * luma_weight + 0.1);
+    let lift = smoothstep(amount - 0.05, amount + 0.05, field) * curl_amt;
+    var above = src.rgb * (1.0 - lift * 0.4);
+    let shadow_edge = smoothstep(0.05, 0.0, abs(field - amount));
+    above = above * (1.0 - shadow_edge * shadow_amt * 0.6);
+    let result = mix(above, bg, peel);
+    return vec4<f32>(result, src.a);
+  }
+  if (code == 119u) {
+    // liquid-glass: moving refraction blobs with specular + caustics
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let blobs = clamp(round(u.params0.x), 1.0, 8.0);
+    let blob_size = max(0.02, u.params0.y);
+    let chromatic = u.params0.z;
+    let specular = u.params0.w;
+    let caustic_amount = u.params1.x;
+    let speed = u.params1.y;
+    let tint = vec3<f32>(u.params1.z, u.params1.w, u.params2.x);
+    let aspect = res.x / max(1.0, res.y);
+    var field = 0.0;
+    var grad = vec2<f32>(0.0);
+    for (var i = 0u; i < 8u; i = i + 1u) {
+      if (f32(i) >= blobs) { break; }
+      let fi = f32(i);
+      let c = vec2<f32>(
+        0.5 + 0.35 * sin(time * speed * 0.3 + fi * 1.7),
+        0.5 + 0.35 * cos(time * speed * 0.4 + fi * 2.3)
+      );
+      var d = uv - c;
+      d.x = d.x * aspect;
+      let r = length(d);
+      let w = exp(-r * r / (blob_size * blob_size));
+      field = field + w;
+      grad = grad - d * w / (blob_size * blob_size) * 2.0;
+    }
+    let blob = smoothstep(0.7, 1.3, field);
+    let refract_dir = -grad * amount * 0.04;
+    var col = vec3<f32>(0.0);
+    if (chromatic > 0.001) {
+      col.r = sample_rgb(uv + refract_dir * (1.0 + chromatic * 0.5)).r;
+      col.g = sample_rgb(uv + refract_dir).g;
+      col.b = sample_rgb(uv + refract_dir * (1.0 - chromatic * 0.5)).b;
+    } else {
+      col = sample_rgb(uv + refract_dir);
+    }
+    col = col * mix(vec3<f32>(1.0), tint, blob * 0.5);
+    if (specular > 0.001) {
+      let n = normalize(vec3<f32>(grad, 1.0));
+      let l_dir = normalize(vec3<f32>(-0.4, -0.6, 0.6));
+      let spec = pow(max(0.0, dot(n, l_dir)), 32.0);
+      col = col + vec3<f32>(spec) * specular * blob * 1.5;
+    }
+    if (caustic_amount > 0.001) {
+      let caust = (1.0 - blob) * (sin(field * 30.0 + time) * 0.5 + 0.5);
+      col = col + vec3<f32>(caustic_amount) * tint * caust * 0.4;
+    }
+    return vec4<f32>(clamp(col, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 120u) {
+    // crystal-refract: voronoi/hex facets refracting toward cell centers
+    let time = u.resolution_time.z;
+    let c_scale = max(0.5, u.params0.x);
+    let sparkle = u.params0.y;
+    let edge_glow = u.params0.z;
+    let tint = vec3<f32>(u.params0.w, u.params1.x, u.params1.y);
+    let c_mode = u32(round(u.params1.z));
+    let p = uv * c_scale;
+    var cell_center = vec2<f32>(0.5);
+    var min_d = 9.0;
+    var second_d = 9.0;
+    if (c_mode == 0u) {
+      let i = floor(p); let f = fract(p);
+      var best = vec2<f32>(0.0);
+      for (var y = -1; y <= 1; y = y + 1) {
+        for (var x = -1; x <= 1; x = x + 1) {
+          let g = vec2<f32>(f32(x), f32(y));
+          var o = vec2<f32>(hash21(i + g), hash21(i + g + vec2<f32>(13.7)));
+          o = vec2<f32>(0.5) + 0.45 * sin(time * 0.4 + 6.28 * o);
+          let r = g + o - f;
+          let d = dot(r, r);
+          if (d < min_d) { second_d = min_d; min_d = d; best = i + g; }
+          else if (d < second_d) { second_d = d; }
+        }
+      }
+      cell_center = (best + vec2<f32>(0.5)) / c_scale;
+    } else {
+      var q = vec2<f32>(p.x * 1.1547, p.y);
+      q.x = q.x + 0.5 * floor(q.y);
+      let i = floor(q);
+      cell_center = (vec2<f32>(i.x - floor(i.y / 2.0), i.y) + vec2<f32>(0.5)) / vec2<f32>(c_scale * 1.1547, c_scale);
+      let f = fract(q) - vec2<f32>(0.5);
+      min_d = dot(f, f);
+      second_d = min_d + 0.3;
+    }
+    let dir = uv - cell_center;
+    let s_uv = clamp(uv - dir * amount, vec2<f32>(0.0), vec2<f32>(1.0));
+    var col = sample_rgb(s_uv);
+    let edge = smoothstep(0.04, 0.0, sqrt(second_d) - sqrt(min_d));
+    col = col + tint * edge * edge_glow;
+    if (sparkle > 0.001) {
+      let d_center = length(uv - cell_center);
+      let spark = step(1.0 - sparkle * 0.3, hash21(floor(cell_center * 100.0)));
+      col = col + vec3<f32>(1.0) * smoothstep(0.04, 0.0, d_center) * spark * sparkle;
+    }
+    return vec4<f32>(clamp(col, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 121u) {
+    // infinite-mirror: recursive shrink/rotate accumulation with hue drift
+    let iterations = u32(clamp(round(u.params0.x), 1.0, 12.0));
+    let rotation_deg = u.params0.y;
+    let tint_fade = u.params0.z;
+    let hue_shift = u.params0.w;
+    let i_mode = u32(round(u.params1.x));
+    var center = vec2<f32>(0.5);
+    if (i_mode == 1u) { center = vec2<f32>(u.params1.y, u.params1.z); }
+    let ang = rotation_deg * 0.017453292;
+    let ca = cos(ang); let sa = sin(ang);
+    var acc = vec3<f32>(0.0);
+    var weight = 0.0;
+    var scale = 1.0;
+    var hue_off = 0.0;
+    var tint = 1.0;
+    for (var i = 0u; i < 12u; i = i + 1u) {
+      if (i >= iterations) { break; }
+      var d = (uv - center) / scale;
+      d = vec2<f32>(d.x * ca - d.y * sa, d.x * sa + d.y * ca);
+      let s_uv = clamp(center + d, vec2<f32>(0.0), vec2<f32>(1.0));
+      var s_col = sample_rgb(s_uv);
+      if (hue_shift > 0.001) {
+        s_col = hue_rotate(s_col, hue_off);
+      }
+      acc = acc + s_col * tint;
+      weight = weight + tint;
+      scale = scale * amount;
+      hue_off = hue_off + hue_shift;
+      tint = tint * (1.0 - tint_fade * 0.5);
+    }
+    return vec4<f32>(acc / max(weight, 0.0001), src.a);
+  }
+  if (code == 122u) {
+    // tunnel-flight: polar tunnel fly-through
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let twist = u.params0.x;
+    let depth = max(0.05, u.params0.y);
+    let center = vec2<f32>(u.params0.z, u.params0.w);
+    let t_mode = u32(round(u.params1.x));
+    let chromatic = u.params1.y;
+    let aspect = res.x / max(1.0, res.y);
+    var col = vec3<f32>(0.0);
+    for (var ch = 0; ch < 3; ch = ch + 1) {
+      var z_offset = 0.0;
+      if (chromatic > 0.001) {
+        if (ch == 0) { z_offset = 0.05 * chromatic; }
+        if (ch == 2) { z_offset = -0.05 * chromatic; }
+      }
+      var d = uv - center;
+      d.x = d.x * aspect;
+      var r = length(d);
+      var a = atan2(d.y, d.x);
+      a = a + twist * (time * amount * 0.5);
+      var depth_scale = depth;
+      if (t_mode == 1u) { depth_scale = r * depth; }
+      var z = (time * amount + z_offset) / max(0.05, r * depth_scale);
+      if (t_mode >= 2u) {
+        let sq = abs(d);
+        r = max(sq.x, sq.y);
+        z = (time * amount + z_offset) / max(0.05, r);
+      }
+      let s_uv = vec2<f32>(a / 6.28318 + 0.5, fract(z));
+      let s = sample_rgb(s_uv);
+      if (ch == 0) { col.r = s.r; }
+      if (ch == 1) { col.g = s.g; }
+      if (ch == 2) { col.b = s.b; }
+      if (chromatic <= 0.001) { col = s; break; }
+    }
+    let r_fade = length(uv - center);
+    col = col * smoothstep(0.0, 0.7, r_fade);
+    return vec4<f32>(col, src.a);
+  }
+  if (code == 123u) {
+    // volumetric-fog-overlay: animated noise fog with height falloff + fake depth
+    let time = u.resolution_time.z;
+    let f_scale = max(0.5, u.params0.x);
+    let speed = u.params0.y;
+    let height_falloff = u.params0.z;
+    let depth_sim = u.params0.w;
+    let fog_color = vec3<f32>(u.params1.x, u.params1.y, u.params1.z);
+    let turbulence = u.params1.w;
+    let f_mode = u32(round(u.params2.x));
+    let p = uv * f_scale + vec2<f32>(time * speed * 0.1, -time * speed * 0.05);
+    var fog = value_noise2d(p);
+    if (turbulence > 0.5) { fog = fbm2d(p); }
+    fog = fog * amount;
+    let height_w = mix(1.0 - uv.y, uv.y, (height_falloff + 1.0) * 0.5);
+    fog = fog * height_w;
+    if (depth_sim > 0.001) {
+      let fake_depth = 1.0 - luma(src.rgb);
+      fog = fog * mix(1.0, fake_depth, depth_sim);
+    }
+    fog = clamp(fog, 0.0, 1.0);
+    var result = src.rgb + fog_color * fog;
+    if (f_mode == 1u) {
+      result = mix(src.rgb, fog_color, fog);
+    } else if (f_mode >= 2u) {
+      result = src.rgb - fog_color * fog * 0.5;
+    }
+    return vec4<f32>(clamp(result, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 124u) {
+    // rain-fog-snow-overlay: cell-based weather particles
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let w_type = u32(round(u.params0.x));
+    let speed = u.params0.y;
+    let angle_deg = u.params0.z;
+    let size = u.params0.w;
+    let fog_amount = u.params1.x;
+    let part_color = vec3<f32>(u.params1.y, u.params1.z, u.params1.w);
+    let ang = angle_deg * 0.017453292;
+    var wind = vec2<f32>(sin(ang), -cos(ang));
+    if (w_type == 2u) { wind = wind * 0.3; }
+    if (w_type >= 3u) { wind = wind * -0.6; }
+    let t = time * speed;
+    var scale = 120.0;
+    if (w_type == 1u) { scale = 80.0; }
+    if (w_type == 2u) { scale = 30.0; }
+    if (w_type >= 3u) { scale = 90.0; }
+    scale = scale / max(0.5, size);
+    let p = uv * vec2<f32>(res.x / max(1.0, res.y), 1.0) * scale;
+    let cell_id = floor(p);
+    let life_time = hash21(cell_id) * 10.0;
+    let phase = fract(t * 0.5 + life_time);
+    var cell_uv = fract(p) - vec2<f32>(0.5);
+    cell_uv = cell_uv - wind * phase * 1.5;
+    cell_uv = vec2<f32>(cell_uv.x, fract(cell_uv.y + 0.5) - 0.5);
+    let d = length(cell_uv);
+    var particle = smoothstep(0.05, 0.0, abs(cell_uv.x)) * smoothstep(0.5, 0.0, abs(cell_uv.y));
+    if (w_type == 1u) {
+      particle = smoothstep(0.15, 0.0, d);
+    } else if (w_type == 2u) {
+      particle = smoothstep(0.3, 0.0, d) * 0.5;
+    } else if (w_type >= 3u) {
+      particle = smoothstep(0.05, 0.0, d) + smoothstep(0.2, 0.05, d) * 0.3;
+    }
+    let spawn = step(1.0 - amount, hash21(cell_id + vec2<f32>(17.0)));
+    particle = particle * spawn;
+    var result = src.rgb + part_color * particle;
+    if (fog_amount > 0.001) {
+      result = mix(result, part_color * 0.5, fog_amount * 0.4);
+    }
+    return vec4<f32>(clamp(result, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 125u) {
+    // particle-overlay-fx: stars/bokeh/sparkles/fireflies/dust overlay
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let p_mode = u32(round(u.params0.x));
+    let size = u.params0.y;
+    let speed = u.params0.z;
+    let twinkle = u.params0.w;
+    let part_color = vec3<f32>(u.params1.x, u.params1.y, u.params1.z);
+    let blend = u32(round(u.params1.w));
+    var scale = 60.0;
+    if (p_mode == 1u) { scale = 25.0; }
+    if (p_mode == 2u) { scale = 80.0; }
+    if (p_mode == 3u) { scale = 35.0; }
+    if (p_mode >= 4u) { scale = 100.0; }
+    scale = scale / max(0.5, size);
+    let p = uv * vec2<f32>(res.x / max(1.0, res.y), 1.0) * scale;
+    let cell_id = floor(p);
+    var cell_uv = fract(p) - vec2<f32>(0.5);
+    let spawn = step(1.0 - amount, hash21(cell_id));
+    if (spawn < 0.5) { return src; }
+    let t = time * speed;
+    let drift = vec2<f32>(hash21(cell_id + vec2<f32>(7.3)) - 0.5, hash21(cell_id + vec2<f32>(13.7)) - 0.5) * t * 0.05;
+    cell_uv = cell_uv - drift;
+    let d = length(cell_uv);
+    var particle = smoothstep(0.05, 0.0, d)
+      + smoothstep(0.02, 0.0, abs(cell_uv.x)) * smoothstep(0.3, 0.0, abs(cell_uv.y)) * 0.5
+      + smoothstep(0.02, 0.0, abs(cell_uv.y)) * smoothstep(0.3, 0.0, abs(cell_uv.x)) * 0.5;
+    if (p_mode == 1u) {
+      particle = smoothstep(0.4, 0.1, d) * 0.6 + smoothstep(0.45, 0.4, d) * 0.4;
+    } else if (p_mode == 2u) {
+      particle = smoothstep(0.04, 0.0, d) * 1.5;
+    } else if (p_mode == 3u) {
+      particle = smoothstep(0.15, 0.0, d) * 0.8;
+    } else if (p_mode >= 4u) {
+      particle = smoothstep(0.025, 0.0, d) * 0.6;
+    }
+    if (twinkle > 0.001) {
+      let blink = sin(t * 4.0 + hash21(cell_id) * 6.28) * 0.5 + 0.5;
+      particle = particle * mix(1.0, blink, twinkle);
+    }
+    var result = src.rgb + part_color * particle;
+    if (blend >= 1u) {
+      result = vec3<f32>(1.0) - (vec3<f32>(1.0) - src.rgb) * (vec3<f32>(1.0) - part_color * particle);
+    }
+    return vec4<f32>(clamp(result, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 126u) {
+    // glint-starburst: star flares marching outward from highlights
+    let threshold = u.params0.x;
+    let flare_len = u.params0.y;
+    let points = u32(clamp(round(u.params0.z), 2.0, 12.0)) * 2u;
+    let rotation_deg = u.params0.w;
+    let tint = vec3<f32>(u.params1.x, u.params1.y, u.params1.z);
+    let max_len = flare_len * 0.15;
+    var burst = vec3<f32>(0.0);
+    for (var i = 0u; i < 24u; i = i + 1u) {
+      if (i >= points) { break; }
+      let ang = rotation_deg * 0.017453292 + f32(i) * 6.28318 / f32(points);
+      let dir = vec2<f32>(cos(ang), sin(ang));
+      for (var s = 1; s <= 12; s = s + 1) {
+        let t = f32(s) / 12.0;
+        let sc = sample_rgb(uv + dir * max_len * t);
+        let gate = smoothstep(threshold, threshold + 0.15, luma(sc));
+        burst = burst + sc * gate * (1.0 - t) * (1.0 - t);
+      }
+    }
+    burst = burst / f32(points);
+    burst = burst * amount * tint;
+    let result = vec3<f32>(1.0) - (vec3<f32>(1.0) - src.rgb) * (vec3<f32>(1.0) - burst);
+    return vec4<f32>(clamp(result, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 127u) {
+    // emboss-relight: height-field relighting from luma gradient
+    let res = u.resolution_time.xy;
+    let angle_deg = u.params0.x;
+    let height = u.params0.y;
+    let detail = max(1.0, u.params0.z);
+    let specular = u.params0.w;
+    let color_preserve = u.params1.x;
+    let ambient = u.params1.y;
+    let texel = 1.0 / max(res, vec2<f32>(2.0));
+    let c = src.rgb;
+    let ll = sample_rgb(uv + texel * vec2<f32>(-detail, 0.0));
+    let rr = sample_rgb(uv + texel * vec2<f32>(detail, 0.0));
+    let tt = sample_rgb(uv + texel * vec2<f32>(0.0, detail));
+    let bb = sample_rgb(uv + texel * vec2<f32>(0.0, -detail));
+    let h0 = luma(c);
+    let gx = (luma(rr) - luma(ll)) * height;
+    let gy = (luma(tt) - luma(bb)) * height;
+    let n = normalize(vec3<f32>(-gx, -gy, 1.0));
+    let ang = angle_deg * 0.017453292;
+    let l_dir = normalize(vec3<f32>(cos(ang), sin(ang), 0.7));
+    let diff = max(0.0, dot(n, l_dir));
+    let h_vec = normalize(l_dir + vec3<f32>(0.0, 0.0, 1.0));
+    let spec = pow(max(0.0, dot(n, h_vec)), 32.0) * specular;
+    let lit = ambient + diff * amount + spec;
+    let surface_color = mix(vec3<f32>(h0), c, color_preserve);
+    return vec4<f32>(clamp(surface_color * lit, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 128u) {
+    // pixel-sort: vertical luminance-sort simulation with streaks
+    let res = u.resolution_time.xy;
+    let sort_dist = mix(0.0, 60.0, amount);
+    let sort_thresh = clamp(u.params0.x, 0.0, 1.0);
+    let chrom_sep = mix(0.0, 5.0, u.params0.y);
+    let texel = 1.0 / max(res, vec2<f32>(2.0));
+    let src_luma = dot(src.rgb, vec3<f32>(0.2126, 0.7152, 0.0722));
+    let sort_active = step(sort_thresh, src_luma);
+    var best_luma = src_luma;
+    var best_color = src.rgb;
+    for (var i = 1; i <= 60; i = i + 1) {
+      if (f32(i) > sort_dist) { break; }
+      let up_uv = uv - vec2<f32>(0.0, f32(i) * texel.y);
+      if (up_uv.y < 0.0) { break; }
+      let up_sample = sample_rgb(up_uv);
+      let up_luma = dot(up_sample, vec3<f32>(0.2126, 0.7152, 0.0722));
+      if (up_luma > sort_thresh && up_luma > best_luma) {
+        best_luma = up_luma;
+        best_color = up_sample;
+      }
+    }
+    let sort_strength = sort_active * smoothstep(sort_thresh, sort_thresh + 0.1, src_luma);
+    let sorted = mix(src.rgb, best_color, sort_strength * 0.6);
+    let chrom_offset = chrom_sep * texel.y * sort_strength;
+    let r_channel = sample_rgb(uv - vec2<f32>(0.0, chrom_offset)).r;
+    let b_channel = sample_rgb(uv + vec2<f32>(0.0, chrom_offset)).b;
+    var streak = 0.0;
+    for (var i = 1; i <= 60; i = i + 1) {
+      if (f32(i) > sort_dist * 0.5) { break; }
+      let above_uv = uv - vec2<f32>(0.0, f32(i) * texel.y);
+      if (above_uv.y < 0.0) { break; }
+      let above_luma = dot(sample_rgb(above_uv), vec3<f32>(0.2126, 0.7152, 0.0722));
+      if (above_luma > sort_thresh) {
+        let falloff = 1.0 - f32(i) / max(1.0, sort_dist * 0.5);
+        streak = max(streak, above_luma * falloff * 0.3);
+      }
+    }
+    var final_color = vec3<f32>(r_channel, sorted.g, b_channel) + vec3<f32>(streak) * sort_strength;
+    final_color = mix(src.rgb, final_color, sort_active * 0.8 + 0.2);
+    return vec4<f32>(final_color, src.a);
+  }
+  if (code == 129u) {
+    // neon-tube-trace: sobel edges as glowing neon tubes
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let edge_threshold = u.params0.x;
+    let tube_width = u.params0.y;
+    let glow_radius = u.params0.z;
+    let tint = vec3<f32>(u.params0.w, u.params1.x, u.params1.y);
+    let chase = u.params1.z;
+    let chase_speed = u.params1.w;
+    let flicker = u.params2.x;
+    let bg_mode = u32(round(u.params2.y));
+    let texel = 1.0 / max(res, vec2<f32>(2.0));
+    let l00 = luma(sample_rgb(uv + texel * vec2<f32>(-1.0, -1.0)));
+    let l10 = luma(sample_rgb(uv + texel * vec2<f32>(0.0, -1.0)));
+    let l20 = luma(sample_rgb(uv + texel * vec2<f32>(1.0, -1.0)));
+    let l01 = luma(sample_rgb(uv + texel * vec2<f32>(-1.0, 0.0)));
+    let l21 = luma(sample_rgb(uv + texel * vec2<f32>(1.0, 0.0)));
+    let l02 = luma(sample_rgb(uv + texel * vec2<f32>(-1.0, 1.0)));
+    let l12 = luma(sample_rgb(uv + texel * vec2<f32>(0.0, 1.0)));
+    let l22 = luma(sample_rgb(uv + texel * vec2<f32>(1.0, 1.0)));
+    let gx = (l20 + 2.0 * l21 + l22) - (l00 + 2.0 * l01 + l02);
+    let gy = (l02 + 2.0 * l12 + l22) - (l00 + 2.0 * l10 + l20);
+    let e = length(vec2<f32>(gx, gy));
+    var tube = smoothstep(edge_threshold, edge_threshold + 0.05 * tube_width, e);
+    var halo = 0.0;
+    if (amount > 0.001) {
+      for (var y = -3; y <= 3; y = y + 1) {
+        for (var x = -3; x <= 3; x = x + 1) {
+          let off = vec2<f32>(f32(x), f32(y)) * texel * glow_radius * 0.4;
+          let suv = uv + off;
+          let e00 = luma(sample_rgb(suv + texel * vec2<f32>(-1.0, 0.0)));
+          let e01 = luma(sample_rgb(suv + texel * vec2<f32>(1.0, 0.0)));
+          let e10 = luma(sample_rgb(suv + texel * vec2<f32>(0.0, -1.0)));
+          let e11 = luma(sample_rgb(suv + texel * vec2<f32>(0.0, 1.0)));
+          let ee = length(vec2<f32>(e01 - e00, e11 - e10)) * 2.0;
+          let w = exp(-f32(x * x + y * y) / 8.0);
+          halo = halo + smoothstep(edge_threshold, edge_threshold + 0.1, ee) * w;
+        }
+      }
+      halo = halo * amount / 16.0;
+    }
+    if (chase > 0.001 && tube > 0.5) {
+      let chase_v = sin(uv.x * 60.0 + time * chase_speed * 4.0) * 0.5 + 0.5;
+      tube = tube * mix(0.5, 1.0 + chase_v * 0.6, chase);
+    }
+    if (flicker > 0.001) {
+      let f = step(0.92, hash21(vec2<f32>(floor(time * 12.0), floor(time * 12.0))));
+      tube = tube * (1.0 - f * flicker * 0.4);
+    }
+    let neon = tint * (tube * 1.8 + halo);
+    var base_color = vec3<f32>(0.0);
+    if (bg_mode == 1u) { base_color = src.rgb; }
+    if (bg_mode >= 2u) { base_color = src.rgb * 0.25; }
+    let result = vec3<f32>(1.0) - (vec3<f32>(1.0) - base_color) * (vec3<f32>(1.0) - neon);
+    return vec4<f32>(clamp(result, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 130u) {
+    // hologram-scan: scanlines + scan beam + grid + tint + flicker
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let scan_freq = max(1.0, u.params0.x);
+    let scan_speed = u.params0.y;
+    let grid_spacing = u.params0.z;
+    let rgb_flicker = u.params0.w;
+    let broken_bands = u.params1.x;
+    let tint = vec3<f32>(u.params1.y, u.params1.z, u.params1.w);
+    let opacity_flicker = u.params2.x;
+    let edge_glow = u.params2.y;
+    var col = src.rgb;
+    if (rgb_flicker > 0.001) {
+      let t = floor(time * 30.0);
+      let r = (hash21(vec2<f32>(t, 0.0)) - 0.5) * rgb_flicker * 0.04;
+      let g = (hash21(vec2<f32>(t, 1.0)) - 0.5) * rgb_flicker * 0.04;
+      let b = (hash21(vec2<f32>(t, 2.0)) - 0.5) * rgb_flicker * 0.04;
+      col = vec3<f32>(
+        sample_rgb(uv + vec2<f32>(r, 0.0)).r,
+        sample_rgb(uv + vec2<f32>(g, 0.0)).g,
+        sample_rgb(uv + vec2<f32>(b, 0.0)).b
+      );
+    }
+    var scan = sin(uv.y * scan_freq * 3.14159 - time * scan_speed * 4.0);
+    scan = mix(1.0, scan * 0.4 + 0.6, amount);
+    col = col * scan;
+    let beam = smoothstep(0.04, 0.0, abs(uv.y - fract(time * scan_speed * 0.3)));
+    col = col + beam * tint * amount * 1.5;
+    if (grid_spacing > 0.5) {
+      let g = (uv * res) - floor(uv * res / grid_spacing) * grid_spacing;
+      let grid_line = step(grid_spacing - 1.0, max(g.x, g.y));
+      col = col + grid_line * tint * 0.2 * amount;
+    }
+    if (broken_bands > 0.001) {
+      let band_y = floor(uv.y * 60.0 + time * 2.0);
+      let dropout = step(0.94, hash21(vec2<f32>(band_y, floor(time * 4.0))));
+      col = col * (1.0 - dropout * broken_bands * 0.6);
+    }
+    col = mix(col, col * tint + tint * 0.15, amount * 0.5);
+    if (edge_glow > 0.001) {
+      let texel = 1.0 / max(res, vec2<f32>(2.0));
+      let l = luma(src.rgb);
+      let l_n = luma(sample_rgb(uv + texel * vec2<f32>(0.0, 1.0)));
+      let l_e = luma(sample_rgb(uv + texel * vec2<f32>(1.0, 0.0)));
+      let edge = abs(l - l_n) + abs(l - l_e);
+      col = col + tint * edge * edge_glow * 2.0;
+    }
+    if (opacity_flicker > 0.001) {
+      col = col * (1.0 - (sin(time * 8.0) * 0.5 + 0.5) * opacity_flicker * 0.3);
+    }
+    return vec4<f32>(clamp(col, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 131u) {
+    // laser-slice: sweeping laser beam with glow + sparks + erase side
+    let time = u.resolution_time.z;
+    let l_mode = u32(round(u.params0.x));
+    let speed = u.params0.y;
+    let beam_width = max(0.003, u.params0.z);
+    let sparks = u.params0.w;
+    let erase_amount = u.params1.x;
+    let tint = vec3<f32>(u.params1.y, u.params1.z, u.params1.w);
+    let reveal = u.params2.x;
+    let pos = (time * speed * 0.3) - floor(time * speed * 0.3 / 1.4) * 1.4 - 0.2;
+    var d = abs(uv.y - pos);
+    var side = step(uv.y, pos);
+    if (l_mode == 1u) {
+      d = abs(uv.x - pos);
+      side = step(uv.x, pos);
+    } else if (l_mode == 2u) {
+      d = abs((uv.x + uv.y) * 0.5 - pos);
+      side = step((uv.x + uv.y) * 0.5, pos);
+    } else if (l_mode >= 3u) {
+      let rd = uv - vec2<f32>(0.5);
+      d = abs(length(rd) - pos * 0.7);
+      side = step(length(rd), pos * 0.7);
+    }
+    let beam = smoothstep(beam_width * 1.5, 0.0, d);
+    let halo = exp(-d * d / (beam_width * beam_width * 8.0)) * amount;
+    var mask = 1.0 - side;
+    if (reveal > 0.5) { mask = side; }
+    var base = mix(vec3<f32>(0.0), src.rgb, mask);
+    base = mix(src.rgb, base, erase_amount);
+    var result = base + tint * (beam + halo);
+    if (sparks > 0.001 && beam > 0.001) {
+      let sp = step(0.97, hash21(floor(uv * 300.0) + vec2<f32>(floor(time * 30.0))));
+      result = result + sp * tint * 2.0 * sparks;
+    }
+    return vec4<f32>(clamp(result, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 132u) {
+    // aura-field: edge/brightness-weighted glow field (time-pulsed stand-in for audio)
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let radius = u.params0.x;
+    let edge_amount = u.params0.y;
+    let luma_amount = u.params0.z;
+    let audio_react = u.params0.w;
+    let hue_shift = u.params1.x;
+    let tint = vec3<f32>(u.params1.y, u.params1.z, u.params1.w);
+    let a_mode = u32(round(u.params2.x));
+    let audio = (0.5 + 0.5 * sin(time * 2.6)) * 0.5;
+    let texel = 1.0 / max(res, vec2<f32>(2.0));
+    var aura = vec3<f32>(0.0);
+    var wsum = 0.0;
+    let r = radius * (1.0 + audio * audio_react * 0.6);
+    for (var y = -4; y <= 4; y = y + 1) {
+      for (var x = -4; x <= 4; x = x + 1) {
+        if (abs(x) + abs(y) > 6) { continue; }
+        let off = vec2<f32>(f32(x), f32(y)) * texel * r * 0.4;
+        let s = sample_rgb(uv + off);
+        let dd = abs(s - src.rgb);
+        let edge_w = (dd.r + dd.g + dd.b) * edge_amount;
+        let luma_w = luma(s) * luma_amount;
+        let w = exp(-f32(x * x + y * y) / 8.0) * (edge_w + luma_w);
+        aura = aura + s * w;
+        wsum = wsum + w;
+      }
+    }
+    if (wsum > 0.0001) { aura = aura / wsum; }
+    aura = aura * amount * (1.0 + audio * audio_react);
+    if (hue_shift > 0.001) {
+      aura = mix(aura, hue_rotate(aura, fract(time * 0.1 + hue_shift)), hue_shift);
+    }
+    aura = aura * tint;
+    var result = src.rgb + aura;
+    if (a_mode == 1u) {
+      result = vec3<f32>(1.0) - (vec3<f32>(1.0) - src.rgb) * (vec3<f32>(1.0) - aura);
+    } else if (a_mode >= 2u) {
+      result = mix(src.rgb, aura, clamp(amount * 0.5, 0.0, 1.0));
+    }
+    return vec4<f32>(clamp(result, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 133u) {
+    // smoke-disintegrate: noise-driven dissolve into drifting smoke
+    let time = u.resolution_time.z;
+    let s_scale = max(0.5, u.params0.x);
+    let speed = u.params0.y;
+    let direction_deg = u.params0.z;
+    let edge_fade = u.params0.w;
+    let smoke_color_base = vec3<f32>(u.params1.x, u.params1.y, u.params1.z);
+    let s_mode = u32(round(u.params1.w));
+    let ang = direction_deg * 0.017453292;
+    let wind_dir = vec2<f32>(cos(ang), sin(ang));
+    var threshold = uv.y;
+    if (s_mode == 1u) {
+      threshold = 1.0 - length(uv - vec2<f32>(0.5)) * 1.4;
+    } else if (s_mode >= 2u) {
+      threshold = fbm2d(uv * 2.0);
+    }
+    let p = uv * s_scale + wind_dir * time * speed * 0.2;
+    var smoke = fbm2d(p);
+    smoke = smoke * 0.6 + fbm2d(p * 2.5 + vec2<f32>(time * speed * 0.15)) * 0.4;
+    let dissolve_edge = amount + smoke * 0.5 - 0.5;
+    let dissolve_mask = smoothstep(threshold - edge_fade * 0.2, threshold + edge_fade * 0.2, dissolve_edge);
+    let smoke_color = smoke_color_base * (0.6 + smoke * 0.4);
+    let result = mix(src.rgb, smoke_color, dissolve_mask);
+    let alpha = 1.0 - dissolve_mask * 0.6;
+    return vec4<f32>(result, src.a * alpha);
+  }
+  if (code == 134u) {
+    // shimmer-cloth: waving fabric with thread weave + silk shimmer
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let frequency = u.params0.x;
+    let speed = u.params0.y;
+    let thread_density = u.params0.z;
+    let thread_depth = u.params0.w;
+    let shimmer = u.params1.x;
+    let c_mode = u32(round(u.params1.y));
+    let t = time * speed;
+    let wave = vec2<f32>(
+      sin(uv.y * frequency + t) * amount * 0.04,
+      cos(uv.x * frequency * 0.8 + t * 0.7) * amount * 0.03
+    );
+    let s_uv = clamp(uv + wave, vec2<f32>(0.0), vec2<f32>(1.0));
+    var col = sample_rgb(s_uv);
+    let px = s_uv * res;
+    var thread = sin(px.y * thread_density * 0.1) * 0.5 + 0.5;
+    if (c_mode == 1u) {
+      thread = (sin(px.x * thread_density * 0.07) + sin(px.y * thread_density * 0.07)) * 0.25 + 0.5;
+    } else if (c_mode >= 2u) {
+      thread = sin((px.x + px.y) * thread_density * 0.06) * 0.5 + 0.5;
+    }
+    col = col * mix(1.0, thread, thread_depth * 0.4);
+    if (shimmer > 0.001) {
+      let specular = pow(max(0.0, sin(px.x * 0.1 + px.y * 0.05 + t * 1.5)), 8.0);
+      col = col + vec3<f32>(specular) * shimmer * 0.3;
+    }
+    return vec4<f32>(clamp(col, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 135u) {
+    // cellular-automata-burn: stateless burn frontier from luma seed
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let cell_size = max(1.0, u.params0.x);
+    let birth_threshold = u.params0.y;
+    let cell_color = vec3<f32>(u.params0.z, u.params0.w, u.params1.x);
+    let texel = vec2<f32>(cell_size) / max(res, vec2<f32>(2.0));
+    let alive = step(birth_threshold, luma(src.rgb));
+    var n = 0.0;
+    for (var y = -1; y <= 1; y = y + 1) {
+      for (var x = -1; x <= 1; x = x + 1) {
+        if (x == 0 && y == 0) { continue; }
+        n = n + step(birth_threshold, luma(sample_rgb(uv + texel * vec2<f32>(f32(x), f32(y)))));
+      }
+    }
+    // burn frontier: cells at the alive/dead boundary, flickered by noise
+    let frontier = alive * (1.0 - step(7.5, n)) + (1.0 - alive) * step(2.5, n);
+    let flicker = 0.7 + 0.3 * value_noise2d(uv * res / cell_size * 0.5 + vec2<f32>(time * 3.0));
+    let burn = cell_color * frontier * flicker + cell_color * alive * 0.25;
+    let result = mix(src.rgb, src.rgb + burn, clamp(amount, 0.0, 1.0));
+    return vec4<f32>(clamp(result, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 136u) {
+    // spectral-prism-tunnel: recursive rotated slices with prism tint
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let tunnel_depth = u.params0.x;
+    let rotation = u.params0.y;
+    let speed = u.params0.z;
+    let slices = u32(clamp(round(u.params0.w), 4.0, 32.0));
+    let fade = u.params1.x;
+    var d = uv - vec2<f32>(0.5);
+    d.x = d.x * (res.x / max(1.0, res.y));
+    let a = atan2(d.y, d.x);
+    let t = time * speed;
+    var acc = vec3<f32>(0.0);
+    var wsum = 0.0;
+    for (var i = 0u; i < 32u; i = i + 1u) {
+      if (i >= slices) { break; }
+      let fi = f32(i) / f32(slices);
+      let depth = exp(-fi * tunnel_depth);
+      var td = d / depth;
+      td.x = td.x * (res.y / max(1.0, res.x));
+      let ang = a + rotation * fi + t * 0.3;
+      var rot_d = vec2<f32>(cos(ang), sin(ang)) * length(td);
+      rot_d.x = rot_d.x * (res.y / max(1.0, res.x));
+      let s_uv = clamp(vec2<f32>(0.5) + rot_d, vec2<f32>(0.0), vec2<f32>(1.0));
+      let s_col = sample_rgb(s_uv);
+      let hh = fract(fi * amount + t * 0.1);
+      let hp = abs(fract(vec3<f32>(hh) + vec3<f32>(1.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - vec3<f32>(3.0));
+      let prism_tint = mix(vec3<f32>(1.0), clamp(hp - vec3<f32>(1.0), vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
+      let c = mix(s_col, s_col * prism_tint, amount * 0.5);
+      let w = 1.0 - fi * fade;
+      acc = acc + c * w;
+      wsum = wsum + w;
+    }
+    return vec4<f32>(clamp(acc / max(wsum, 0.0001), vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 137u) {
+    // led-volume: voxel LED wall with depth pulse + posterize + glow
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let voxel_size = max(2.0, u.params0.x);
+    let depth_pulse = u.params0.y;
+    let depth_speed = u.params0.z;
+    let posterize = max(1.0, u.params0.w);
+    let perspective = u.params1.x;
+    let v_mode = u32(round(u.params1.y));
+    let bg = vec3<f32>(u.params1.z, u.params1.w, u.params2.x);
+    let cell = floor(uv * res / voxel_size);
+    let cell_origin = cell * voxel_size / res;
+    let cell_size = vec2<f32>(voxel_size) / res;
+    let cell_uv = (uv - cell_origin) / cell_size - vec2<f32>(0.5);
+    var sample_col = sample_rgb(cell_origin + cell_size * 0.5);
+    sample_col = floor(sample_col * posterize + vec3<f32>(0.5)) / posterize;
+    var depth = luma(sample_col);
+    if (depth_pulse > 0.001) {
+      depth = depth + sin(time * depth_speed * 2.0 + depth * 8.0) * depth_pulse * 0.2;
+    }
+    let scale = 0.45 - perspective * 0.3 * (1.0 - depth);
+    let r = length(cell_uv);
+    let ad = abs(cell_uv);
+    var voxel = step(max(ad.x, ad.y), scale);
+    if (v_mode == 1u) {
+      voxel = smoothstep(scale + 0.05, scale - 0.05, r);
+    } else if (v_mode >= 2u) {
+      voxel = step(max(ad.x * 0.866 + ad.y * 0.5, ad.y), scale);
+    }
+    var result = mix(bg, sample_col, voxel);
+    if (amount > 0.001) {
+      let halo = smoothstep(scale * 1.6, scale, r);
+      result = result + sample_col * halo * amount * 0.4;
+    }
+    return vec4<f32>(clamp(result, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 138u) {
+    // audio-shock-bloom: beat-pulsed shockwave + bloom (time-pulsed audio stand-in)
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let bloom_threshold = u.params0.x;
+    let bloom_radius = u.params0.y;
+    let shock_speed = max(0.1, u.params0.z);
+    let shock_amplitude = u.params0.w;
+    let chroma_split = u.params1.x;
+    let strobe_amount = u.params1.y;
+    let tint = vec3<f32>(u.params1.z, u.params1.w, u.params2.x);
+    let audio_gate = u.params2.y;
+    let audio_raw = 0.5 + 0.5 * sin(time * 3.2);
+    let audio = max(0.0, audio_raw - audio_gate) * (1.0 / max(0.01, 1.0 - audio_gate));
+    let kick = audio * amount;
+    let d = uv - vec2<f32>(0.5);
+    let dist = length(d);
+    let ring_r = (time * shock_speed * 0.5) - floor(time * shock_speed * 0.5 / 1.4) * 1.4 - 0.2;
+    let band = smoothstep(0.06, 0.0, abs(dist - ring_r));
+    let dir = normalize(d + vec2<f32>(1e-6));
+    let shock_off = dir * band * shock_amplitude * (0.4 + kick);
+    var col = vec3<f32>(0.0);
+    let cs = chroma_split * (0.4 + kick * 0.8);
+    if (cs > 0.001) {
+      col.r = sample_rgb(uv + dir * cs * 0.025 + shock_off).r;
+      col.g = sample_rgb(uv + shock_off).g;
+      col.b = sample_rgb(uv - dir * cs * 0.025 + shock_off).b;
+    } else {
+      col = sample_rgb(uv + shock_off);
+    }
+    let texel = 1.0 / max(res, vec2<f32>(2.0));
+    var bloom = vec3<f32>(0.0);
+    var wsum = 0.0;
+    let br = bloom_radius * (0.5 + kick * 1.5);
+    for (var y = -3; y <= 3; y = y + 1) {
+      for (var x = -3; x <= 3; x = x + 1) {
+        if (abs(x) + abs(y) > 4) { continue; }
+        let off = vec2<f32>(f32(x), f32(y)) * texel * br * 0.4;
+        let s = sample_rgb(uv + off);
+        let gate = smoothstep(bloom_threshold, bloom_threshold + 0.15, luma(s));
+        let w = exp(-f32(x * x + y * y) / 8.0);
+        bloom = bloom + s * gate * w;
+        wsum = wsum + w;
+      }
+    }
+    if (wsum > 0.001) { bloom = bloom / wsum; }
+    bloom = bloom * tint * (1.0 + kick * 2.0);
+    col = col * (1.0 + strobe_amount * kick * 1.2);
+    let result = vec3<f32>(1.0) - (vec3<f32>(1.0) - col) * (vec3<f32>(1.0) - bloom);
+    return vec4<f32>(clamp(result, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 139u) {
+    // analog-feedback-rack: unrolled video-feedback echo stack
+    let zoom = clamp(u.params0.x, 0.85, 1.15);
+    let rotation = u.params0.y;
+    let decay = u.params0.z;
+    let hue_shift = u.params0.w;
+    let mask_center = u.params1.x;
+    let chroma_split = u.params1.y;
+    let offset_xy = vec2<f32>(u.params1.z, u.params1.w);
+    let fb_mode = u32(round(u.params2.x));
+    var fb = vec3<f32>(0.0);
+    var d = uv - vec2<f32>(0.5);
+    var gain = 1.0;
+    var hue_acc = 0.0;
+    for (var i = 1u; i <= 8u; i = i + 1u) {
+      d = d * zoom;
+      let ca = cos(rotation); let sa = sin(rotation);
+      d = vec2<f32>(d.x * ca - d.y * sa, d.x * sa + d.y * ca);
+      let fb_uv = vec2<f32>(0.5) + d - offset_xy * f32(i);
+      gain = gain * (1.0 - decay) * 0.72;
+      hue_acc = hue_acc + hue_shift;
+      var tap = vec3<f32>(0.0);
+      if (chroma_split > 0.001) {
+        tap.r = sample_rgb(fb_uv + vec2<f32>(chroma_split * 0.005, 0.0)).r;
+        tap.g = sample_rgb(fb_uv).g;
+        tap.b = sample_rgb(fb_uv - vec2<f32>(chroma_split * 0.005, 0.0)).b;
+      } else {
+        tap = sample_rgb(fb_uv);
+      }
+      if (hue_shift > 0.001) {
+        tap = hue_rotate(tap, hue_acc);
+      }
+      fb = fb + tap * gain;
+    }
+    fb = fb * 0.45;
+    if (mask_center > 0.001) {
+      let mask = 1.0 - smoothstep(0.2, 0.8, length(uv - vec2<f32>(0.5)));
+      fb = fb * mix(1.0, mask, mask_center);
+    }
+    var result = mix(src.rgb, src.rgb + fb, amount);
+    if (fb_mode == 1u) {
+      result = mix(src.rgb, vec3<f32>(1.0) - (vec3<f32>(1.0) - src.rgb) * (vec3<f32>(1.0) - fb), amount);
+    } else if (fb_mode >= 2u) {
+      result = mix(src.rgb, src.rgb * (vec3<f32>(1.0) + fb), amount);
+    }
+    return vec4<f32>(clamp(result, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 140u) {
+    // club-laser-grid: perspective laser grid overlay (time-pulsed audio stand-in)
+    let time = u.resolution_time.z;
+    let grid_density = max(1.0, u.params0.x);
+    let perspective = u.params0.y;
+    let speed = u.params0.z;
+    let intersection_glow = u.params0.w;
+    let line_width = u.params1.x;
+    let tint = vec3<f32>(u.params1.y, u.params1.z, u.params1.w);
+    let audio_react = u.params2.x;
+    let g_mode = u32(round(u.params2.y));
+    let audio = (0.5 + 0.5 * sin(time * 2.8)) * 0.5;
+    var g_uv = uv;
+    if (g_mode == 0u) {
+      let persp = mix(1.0, 0.2, g_uv.y * perspective);
+      g_uv.x = (g_uv.x - 0.5) / persp + 0.5;
+      g_uv.y = mix(g_uv.y, pow(g_uv.y, 2.0), perspective);
+    } else if (g_mode == 1u) {
+      let persp = mix(1.0, 0.2, (1.0 - g_uv.y) * perspective);
+      g_uv.x = (g_uv.x - 0.5) / persp + 0.5;
+      g_uv.y = mix(g_uv.y, 1.0 - pow(1.0 - g_uv.y, 2.0), perspective);
+    } else {
+      let d = g_uv - vec2<f32>(0.5);
+      let r = length(d);
+      g_uv = vec2<f32>(0.5) + d / max(0.01, r * perspective + (1.0 - perspective));
+    }
+    let t = time * speed;
+    let audio_boost = 1.0 + audio * audio_react;
+    let grid = abs(fract(g_uv * grid_density * audio_boost - vec2<f32>(0.0, t * 0.3)) - vec2<f32>(0.5));
+    let line_x = smoothstep(line_width * 0.02, 0.0, grid.x);
+    let line_y = smoothstep(line_width * 0.02, 0.0, grid.y);
+    let grid_line = max(line_x, line_y);
+    let intersect = line_x * line_y * intersection_glow * (1.0 + audio_boost);
+    let grid3 = tint * (grid_line + intersect * 2.0) * amount;
+    let result = vec3<f32>(1.0) - (vec3<f32>(1.0) - src.rgb) * (vec3<f32>(1.0) - grid3);
+    return vec4<f32>(clamp(result, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 141u) {
+    // ghost-exposure: unrolled long-exposure trail with hue drift
+    let decay = u.params0.x;
+    let hue_shift_per_frame = u.params0.y;
+    let intensity = u.params0.z;
+    let g_mode = u32(round(u.params0.w));
+    let clamp_amt = u.params1.x;
+    var acc = vec3<f32>(0.0);
+    var gain = 1.0;
+    var hue_acc = 0.0;
+    for (var i = 0u; i < 6u; i = i + 1u) {
+      let z = 1.0 + f32(i) * 0.012;
+      let s_uv = vec2<f32>(0.5) + (uv - vec2<f32>(0.5)) * z;
+      var tap = sample_rgb(s_uv) * amount;
+      if (hue_shift_per_frame > 0.001 && i > 0u) {
+        tap = hue_rotate(tap, hue_acc);
+      }
+      if (g_mode == 1u) {
+        acc = max(acc, tap * gain);
+      } else if (g_mode >= 2u) {
+        acc = vec3<f32>(1.0) - (vec3<f32>(1.0) - acc) * (vec3<f32>(1.0) - tap * gain);
+      } else {
+        acc = acc + tap * gain;
+      }
+      gain = gain * (1.0 - decay) * 0.62;
+      hue_acc = hue_acc + hue_shift_per_frame * 8.0;
+    }
+    var result = acc;
+    if (clamp_amt > 0.001) {
+      result = clamp(result, vec3<f32>(0.0), vec3<f32>(1.0));
+    }
+    result = result * intensity;
+    return vec4<f32>(clamp(result, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 142u) {
+    // dream-diffusion: pastel bloom + halation + chromatic softness
+    let res = u.resolution_time.xy;
+    let bloom_radius = u.params0.x;
+    let halation = u.params0.y;
+    let chromatic_blur = u.params0.z;
+    let pastel_rolloff = u.params0.w;
+    let shadow_lift = u.params1.x;
+    let softness = u.params1.y;
+    let tint = vec3<f32>(u.params1.z, u.params1.w, u.params2.x);
+    let texel = 1.0 / max(res, vec2<f32>(2.0));
+    var cb_col = src.rgb;
+    if (chromatic_blur > 0.001) {
+      let cb = chromatic_blur * 6.0;
+      var acc = vec3<f32>(0.0);
+      var wsum = 0.0;
+      for (var y = -2; y <= 2; y = y + 1) {
+        for (var x = -2; x <= 2; x = x + 1) {
+          let off = vec2<f32>(f32(x), f32(y)) * texel * cb;
+          let w = exp(-f32(x * x + y * y) / 4.0);
+          acc.r = acc.r + sample_rgb(uv + off * 1.05).r * w;
+          acc.g = acc.g + sample_rgb(uv + off).g * w;
+          acc.b = acc.b + sample_rgb(uv + off * 0.95).b * w;
+          wsum = wsum + w;
+        }
+      }
+      cb_col = acc / wsum;
+    }
+    var bloom = vec3<f32>(0.0);
+    var wsum2 = 0.0;
+    for (var y = -3; y <= 3; y = y + 1) {
+      for (var x = -3; x <= 3; x = x + 1) {
+        if (abs(x) + abs(y) > 4) { continue; }
+        let off = vec2<f32>(f32(x), f32(y)) * texel * bloom_radius * 0.4;
+        let s = sample_rgb(uv + off);
+        let gate = smoothstep(0.55, 0.85, luma(s));
+        let w = exp(-f32(x * x + y * y) / 8.0);
+        bloom = bloom + s * gate * w;
+        wsum2 = wsum2 + w;
+      }
+    }
+    if (wsum2 > 0.001) { bloom = bloom / wsum2; }
+    bloom = bloom * amount;
+    let halo = bloom * vec3<f32>(1.0, 0.6, 0.4) * halation;
+    let l = luma(cb_col);
+    if (pastel_rolloff > 0.001) {
+      cb_col = mix(cb_col, vec3<f32>(1.0), smoothstep(0.7, 1.0, l) * pastel_rolloff);
+    }
+    cb_col = cb_col + vec3<f32>(shadow_lift) * (1.0 - smoothstep(0.0, 0.4, l));
+    var result = (cb_col + bloom + halo) * tint;
+    result = mix(result, mix(result, src.rgb, 0.5), softness * 0.3);
+    return vec4<f32>(clamp(result, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 143u) {
+    // ghost-double: offset (optionally mirrored) tinted double exposure
+    let offset_xy = vec2<f32>(u.params0.x, u.params0.y);
+    let mirror = u.params0.z;
+    let tint = vec3<f32>(u.params0.w, u.params1.x, u.params1.y);
+    let blend = u32(round(u.params1.z));
+    var ghost_uv = uv - offset_xy;
+    if (mirror > 0.5) { ghost_uv.x = 1.0 - ghost_uv.x; }
+    ghost_uv = clamp(ghost_uv, vec2<f32>(0.0), vec2<f32>(1.0));
+    let ghost = sample_rgb(ghost_uv) * tint * amount;
+    var result = vec3<f32>(1.0) - (vec3<f32>(1.0) - src.rgb) * (vec3<f32>(1.0) - ghost);
+    if (blend == 1u) {
+      result = src.rgb + ghost;
+    } else if (blend >= 2u) {
+      result = src.rgb * (vec3<f32>(1.0) + ghost);
+    }
+    return vec4<f32>(clamp(result, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 144u) {
+    // depth-parallax: luma-depth layered parallax
+    let time = u.resolution_time.z;
+    let push_in = u.params0.x;
+    let layers = u32(clamp(round(u.params0.y), 1.0, 8.0));
+    let chromatic = u.params0.z;
+    let depth_boost = max(0.1, u.params0.w);
+    let dp_mode = u32(round(u.params1.x));
+    let pan = vec2<f32>(u.params1.y, u.params1.z);
+    var acc = vec3<f32>(0.0);
+    var wsum = 0.0;
+    for (var i = 0u; i < 8u; i = i + 1u) {
+      if (i >= layers) { break; }
+      let layer = f32(i) / max(1.0, f32(layers - 1u));
+      let slice_depth = mix(0.2, 0.95, layer);
+      var s_uv = uv;
+      if (dp_mode == 0u) {
+        let scale = 1.0 + (slice_depth - 0.5) * amount * 0.5 + push_in * 0.3 * (1.0 + layer * 0.1);
+        s_uv = vec2<f32>(0.5) + (uv - vec2<f32>(0.5)) / scale;
+      } else if (dp_mode == 1u) {
+        s_uv = uv + pan * (slice_depth - 0.5) * amount * 0.2 * (1.0 + layer * 0.2);
+      } else {
+        let sw = sin(time * 0.5 + layer * 0.3) * 0.5;
+        s_uv = uv + vec2<f32>(sw, sw * 0.4) * (slice_depth - 0.5) * amount * 0.15;
+      }
+      s_uv = clamp(s_uv, vec2<f32>(0.0), vec2<f32>(1.0));
+      var s_col = vec3<f32>(0.0);
+      if (chromatic > 0.001) {
+        let cd = (s_uv - vec2<f32>(0.5)) * chromatic * 0.04 * (1.0 - layer);
+        s_col.r = sample_rgb(s_uv + cd).r;
+        s_col.g = sample_rgb(s_uv).g;
+        s_col.b = sample_rgb(s_uv - cd).b;
+      } else {
+        s_col = sample_rgb(s_uv);
+      }
+      let pix_depth = pow(luma(s_col), depth_boost);
+      let w = exp(-pow((pix_depth - slice_depth) * 4.0, 2.0));
+      acc = acc + s_col * w;
+      wsum = wsum + w;
+    }
+    var result = src.rgb;
+    if (wsum > 0.0001) { result = acc / wsum; }
+    return vec4<f32>(result, src.a);
+  }
+  if (code == 145u) {
+    // pixel-sand: granular falling-sand look (stateless time-driven)
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let turbulence = u.params0.x;
+    let threshold = u.params0.y;
+    let s_mode = u32(round(u.params0.z));
+    let replenish = u.params0.w;
+    let chroma_split = u.params1.x;
+    let grain_size = max(1.0, u.params1.y);
+    let grain = floor(uv * res / grain_size);
+    let grain_center = (grain * grain_size + vec2<f32>(grain_size * 0.5)) / res;
+    let grain_seed = hash21(grain);
+    var dir = vec2<f32>(0.0, -1.0);
+    if (s_mode == 1u) { dir = vec2<f32>(0.0, 1.0); }
+    if (s_mode >= 2u) { dir = vec2<f32>(sin(time * 0.4 + grain_center.y * 6.28), 0.6); }
+    if (turbulence > 0.001) {
+      let jit = vec2<f32>(hash21(grain + vec2<f32>(time * 0.05)), hash21(grain * 1.3 + vec2<f32>(time * 0.05 + 7.3))) - vec2<f32>(0.5);
+      dir = dir + jit * turbulence;
+    }
+    // fall distance grows with time per grain (looping)
+    let fall = fract(time * 0.15 + grain_seed) * amount * 0.25;
+    let fb_uv = clamp(grain_center - dir * fall, vec2<f32>(0.0), vec2<f32>(1.0));
+    var fallen = vec3<f32>(0.0);
+    if (chroma_split > 0.001) {
+      fallen.r = sample_rgb(fb_uv + dir * chroma_split * 0.003).r;
+      fallen.g = sample_rgb(fb_uv).g;
+      fallen.b = sample_rgb(fb_uv - dir * chroma_split * 0.003).b;
+    } else {
+      fallen = sample_rgb(fb_uv);
+    }
+    let fallen_gate = smoothstep(threshold, threshold + 0.05, luma(fallen));
+    let sparkle = step(1.0 - replenish, grain_seed);
+    let sand = fallen * fallen_gate * sparkle;
+    let sand_alpha = fallen_gate * sparkle;
+    let src_dimmed = src.rgb * (1.0 - sand_alpha * 0.4);
+    let disp = mix(src_dimmed, sand, sand_alpha);
+    return vec4<f32>(clamp(disp, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 146u) {
+    // point-cloud-dissolve: image scatters into drifting dots
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let dot_size = max(1.0, u.params0.x);
+    let scatter_radius = u.params0.y;
+    let attract = u.params0.z;
+    let turbulence = u.params0.w;
+    let d_mode = u32(round(u.params1.x));
+    let bg = vec3<f32>(u.params1.y, u.params1.z, u.params1.w);
+    let hue_shift = u.params2.x;
+    let cell = floor(uv * res / dot_size);
+    let cell_origin = cell * dot_size / res;
+    let cell_size = vec2<f32>(dot_size) / res;
+    let home = cell_origin + cell_size * 0.5;
+    var sample_col = sample_rgb(home);
+    var dir = normalize(vec2<f32>(hash21(cell) - 0.5, hash21(cell + vec2<f32>(13.7)) - 0.5) + vec2<f32>(1e-6));
+    if (attract > 0.001) {
+      dir = mix(dir, normalize(vec2<f32>(0.5) - home + vec2<f32>(1e-6)), attract);
+    }
+    if (turbulence > 0.001) {
+      let wob = sin(time + hash21(cell + vec2<f32>(71.3)) * 6.28) * turbulence;
+      dir = normalize(dir + vec2<f32>(wob * 0.3, wob * 0.4));
+    }
+    let dot_pos = home + dir * amount * scatter_radius;
+    let to_dot = (uv - dot_pos) / cell_size;
+    let dot_r = mix(0.72, 0.42, amount);
+    let ad = abs(to_dot);
+    var mask = step(max(ad.x, ad.y), max(0.5, dot_r));
+    if (d_mode == 1u) {
+      mask = smoothstep(dot_r + 0.05, dot_r - 0.05, length(to_dot));
+    } else if (d_mode >= 2u) {
+      mask = max(
+        step(ad.x, dot_r * 0.2) * step(ad.y, dot_r),
+        step(ad.y, dot_r * 0.2) * step(ad.x, dot_r)
+      );
+    }
+    if (hue_shift > 0.001) {
+      sample_col = hue_rotate(sample_col, amount * hue_shift);
+    }
+    let dot_result = mix(bg, sample_col, mask);
+    let result = mix(src.rgb, dot_result, smoothstep(0.0, 0.05, amount));
+    return vec4<f32>(result, src.a);
+  }
+  if (code == 147u) {
+    // explode-3d: image particles on a 3D shape, scattered outward
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let scatter = amount;
+    let shape_id = floor(clamp(u.params0.x, 0.0, 0.999) * 5.99);
+    let spin_speed = u.params0.y * 2.0;
+    let bright = 0.5 + u.params0.z;
+    let cam_angle = u.params0.w + time * spin_speed;
+    let tint = vec3<f32>(u.params1.x, u.params1.y, u.params1.z);
+    let tau = 6.28318530718;
+    let grid_res = mix(25.0, 70.0, 1.0 - u.params0.x * 0.3);
+    let cell_count = vec2<f32>(grid_res, grid_res * res.y / max(1.0, res.x));
+    let cell_size = 1.0 / cell_count;
+    var final_color = vec3<f32>(0.0);
+    var total_weight = 0.0;
+    for (var ox = -2; ox <= 2; ox = ox + 1) {
+      for (var oy = -2; oy <= 2; oy = oy + 1) {
+        let cell_id = floor(uv * cell_count) + vec2<f32>(f32(ox), f32(oy));
+        if (cell_id.x < 0.0 || cell_id.y < 0.0 || cell_id.x >= cell_count.x || cell_id.y >= cell_count.y) { continue; }
+        let cell_center = (cell_id + vec2<f32>(0.5)) * cell_size;
+        let cell_color = sample_rgb(cell_center);
+        let rnd1 = hash21(cell_id);
+        let rnd2 = hash21(cell_id + vec2<f32>(137.0));
+        let rnd3 = hash21(cell_id + vec2<f32>(271.0));
+        let theta = cell_center.x * tau;
+        let phi = cell_center.y * 3.14159265;
+        var shape_pos = vec3<f32>(sin(phi) * cos(theta), cos(phi), sin(phi) * sin(theta));
+        if (shape_id >= 1.0 && shape_id < 2.0) {
+          let face = floor(rnd1 * 6.0);
+          let p3 = vec3<f32>(cell_center.x * 2.0 - 1.0, cell_center.y * 2.0 - 1.0, 1.0);
+          if (face < 1.0) { shape_pos = p3; }
+          else if (face < 2.0) { shape_pos = vec3<f32>(-p3.z, p3.y, p3.x); }
+          else if (face < 3.0) { shape_pos = vec3<f32>(p3.z, p3.y, -p3.x); }
+          else if (face < 4.0) { shape_pos = vec3<f32>(p3.x, p3.z, -p3.y); }
+          else if (face < 5.0) { shape_pos = vec3<f32>(p3.x, -p3.z, p3.y); }
+          else { shape_pos = vec3<f32>(p3.x, p3.y, -p3.z); }
+          shape_pos = normalize(shape_pos);
+        } else if (shape_id >= 2.0 && shape_id < 3.0) {
+          let h = cell_center.y;
+          let r = (1.0 - h) * 0.8;
+          let a = cell_center.x * tau;
+          let sides = floor(a / (tau / 4.0)) * (tau / 4.0) + tau / 8.0;
+          shape_pos = vec3<f32>(cos(sides) * r, h * 2.0 - 1.0, sin(sides) * r);
+        } else if (shape_id >= 3.0 && shape_id < 4.0) {
+          let big_r = 0.7; let r2 = 0.3;
+          shape_pos = vec3<f32>((big_r + r2 * cos(phi)) * cos(theta), r2 * sin(phi), (big_r + r2 * cos(phi)) * sin(theta));
+        } else if (shape_id >= 4.0 && shape_id < 5.0) {
+          shape_pos = vec3<f32>(0.6 * cos(theta), cell_center.y * 2.0 - 1.0, 0.6 * sin(theta));
+        } else if (shape_id >= 5.0) {
+          let tt = cell_center.y * 4.0 * 3.14159265;
+          shape_pos = vec3<f32>(0.5 * cos(tt + theta), cell_center.y * 2.0 - 1.0, 0.5 * sin(tt + theta));
+        }
+        let ca = cos(cam_angle); let sa = sin(cam_angle);
+        shape_pos = vec3<f32>(shape_pos.x * ca - shape_pos.z * sa, shape_pos.y, shape_pos.x * sa + shape_pos.z * ca);
+        let scatter_dir = normalize(shape_pos + vec3<f32>(rnd1 - 0.5, rnd2 - 0.5, rnd3 - 0.5) * 0.5);
+        let pos3d = shape_pos + scatter_dir * scatter * (0.5 + rnd1) * 1.5;
+        let z = pos3d.z + 3.0;
+        let proj = pos3d.xy / z * 0.5 + vec2<f32>(0.5);
+        let p_size = cell_size.x * (1.0 + u.params0.x) / max(z * 0.4, 0.1);
+        let diff2 = (uv - proj) / vec2<f32>(1.0, res.x / max(1.0, res.y));
+        let dist = length(diff2);
+        let particle = smoothstep(p_size, p_size * 0.2, dist);
+        if (particle > 0.01) {
+          let light_dir = normalize(vec3<f32>(0.5, 0.7, 1.0));
+          let diffuse = max(dot(normalize(shape_pos), light_dir), 0.0) * 0.7 + 0.3;
+          let lit = cell_color * diffuse * bright * tint;
+          let depth_fade = 1.0 / (1.0 + max(z - 2.0, 0.0) * 0.3);
+          final_color = final_color + lit * particle * depth_fade;
+          total_weight = total_weight + particle * depth_fade;
+        }
+      }
+    }
+    if (total_weight > 0.01) {
+      let base = src.rgb * (1.0 - scatter * 0.5);
+      return vec4<f32>(mix(base, final_color / total_weight, clamp(total_weight, 0.0, 1.0)), src.a);
+    }
+    return vec4<f32>(src.rgb * (1.0 - scatter * 0.5), src.a);
+  }
+  if (code == 148u) {
+    // terrain-3d: luma heightfield fly-over raymarch
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let height_scale = amount * 0.8;
+    let cam_height = 0.08 + u.params0.y * 0.35;
+    let speed = u.params0.z * 0.5;
+    let fog_density = u.params0.w * 3.0;
+    let cam_yaw = u.params1.x;
+    let cam_pitch = (u.params1.y - 0.5) * 3.14159265 * 0.5;
+    let cam_roll = u.params1.z * 6.28318530718;
+    let fog_color = vec3<f32>(u.params1.w, u.params2.x, u.params2.y);
+    let horizon_fade = u.params2.z;
+    let t_mode = u32(round(u.params0.x));
+    let forward = vec2<f32>(cos(cam_yaw), sin(cam_yaw));
+    let cam_pos_2d = forward * time * speed;
+    var screen_pos = uv * 2.0 - vec2<f32>(1.0);
+    screen_pos.x = screen_pos.x * (res.x / max(1.0, res.y));
+    let ro = vec3<f32>(cam_pos_2d.x, cam_height, cam_pos_2d.y);
+    var rd = normalize(vec3<f32>(screen_pos.x, screen_pos.y * 0.5 - 0.3, 1.5));
+    let crl = cos(cam_roll); let srl = sin(cam_roll);
+    rd = vec3<f32>(crl * rd.x - srl * rd.y, srl * rd.x + crl * rd.y, rd.z);
+    let cp = cos(cam_pitch); let sp = sin(cam_pitch);
+    rd = vec3<f32>(rd.x, cp * rd.y - sp * rd.z, sp * rd.y + cp * rd.z);
+    let cy = cos(cam_yaw); let sy = sin(cam_yaw);
+    let rd_xz = vec2<f32>(cy * rd.x - sy * rd.z, sy * rd.x + cy * rd.z);
+    rd = vec3<f32>(rd_xz.x, rd.y, rd_xz.y);
+    var t = 0.01;
+    var hit = false;
+    var hit_pos = ro;
+    let max_dist = 8.0;
+    for (var i = 0; i < 80; i = i + 1) {
+      hit_pos = ro + rd * t;
+      let sample_uv = fract(hit_pos.xz * 0.3);
+      let h = dot(sample_rgb(sample_uv), vec3<f32>(0.2126, 0.7152, 0.0722)) * height_scale;
+      if (hit_pos.y < h) { hit = true; break; }
+      t = t + max(0.005, (hit_pos.y - h) * 0.4);
+      if (t > max_dist) { break; }
+    }
+    let horizon_w = smoothstep(0.0, 0.4, rd.y);
+    let dist_fade = clamp(t / max_dist, 0.0, 1.0);
+    var terrain_alpha = 1.0;
+    var color = vec3<f32>(0.0);
+    if (hit) {
+      let s_uv = fract(hit_pos.xz * 0.3);
+      let tex_color = sample_rgb(s_uv);
+      let eps = 0.005;
+      let h_l = dot(sample_rgb(fract((hit_pos.xz + vec2<f32>(-eps, 0.0)) * 0.3)), vec3<f32>(0.2126, 0.7152, 0.0722)) * height_scale;
+      let h_r = dot(sample_rgb(fract((hit_pos.xz + vec2<f32>(eps, 0.0)) * 0.3)), vec3<f32>(0.2126, 0.7152, 0.0722)) * height_scale;
+      let h_d = dot(sample_rgb(fract((hit_pos.xz + vec2<f32>(0.0, -eps)) * 0.3)), vec3<f32>(0.2126, 0.7152, 0.0722)) * height_scale;
+      let h_u = dot(sample_rgb(fract((hit_pos.xz + vec2<f32>(0.0, eps)) * 0.3)), vec3<f32>(0.2126, 0.7152, 0.0722)) * height_scale;
+      let normal = normalize(vec3<f32>(h_l - h_r, 2.0 * eps, h_d - h_u));
+      let light_dir = normalize(vec3<f32>(0.5, 0.8, 0.3));
+      let diff = max(dot(normal, light_dir), 0.0) * 0.8 + 0.2;
+      color = tex_color * diff;
+      let fog_factor = 1.0 - exp(-t * fog_density * 0.5);
+      color = mix(color, fog_color, fog_factor);
+      terrain_alpha = mix(1.0, 1.0 - dist_fade, horizon_fade * 0.85);
+    } else {
+      let sky_grad = max(rd.y, 0.0);
+      color = mix(fog_color, fog_color * 1.3, sky_grad);
+      if (t_mode != 0u) { terrain_alpha = mix(1.0, 1.0 - horizon_w, horizon_fade); }
+    }
+    return vec4<f32>(clamp(color, vec3<f32>(0.0), vec3<f32>(1.0)), terrain_alpha * src.a);
+  }
+  if (code == 149u) {
+    // wrapped-terrain: luma-bumped sphere/cube raymarch
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let shape = u32(round(u.params0.x));
+    let rot_x_amt = u.params0.y;
+    let rot_y_amt = u.params0.z;
+    let auto_rotate = u.params0.w;
+    let cam_distance = max(1.5, u.params1.x);
+    let specular = u.params1.y;
+    let ambient = u.params1.z;
+    let fog_distance = u.params1.w;
+    let fog_color = vec3<f32>(u.params2.x, u.params2.y, u.params2.z);
+    let horizon_fade = u.params2.w;
+    var screen_pos = uv * 2.0 - vec2<f32>(1.0);
+    screen_pos.x = screen_pos.x * (res.x / max(1.0, res.y));
+    let ang_y = rot_y_amt * 6.28318530718 + time * auto_rotate * 0.4;
+    let ang_x = (rot_x_amt - 0.5) * 3.14159265;
+    let rot_mat = w4_rot_y(ang_y) * w4_rot_x(ang_x);
+    var ro = rot_mat * vec3<f32>(0.0, 0.0, cam_distance);
+    var rd = rot_mat * normalize(vec3<f32>(screen_pos, -1.5));
+    let base_r = 0.85;
+    var t = 0.0;
+    var hit = false;
+    var hp = ro;
+    for (var i = 0; i < 72; i = i + 1) {
+      hp = ro + rd * t;
+      var suv = w4_sphere_uv(normalize(hp + vec3<f32>(1e-6)));
+      if (shape >= 1u) {
+        let ap = abs(hp);
+        if (ap.x > ap.y && ap.x > ap.z) { suv = vec2<f32>(hp.z * sign(hp.x), hp.y) * 0.5 + vec2<f32>(0.5); }
+        else if (ap.y > ap.z) { suv = vec2<f32>(hp.x, hp.z * sign(hp.y)) * 0.5 + vec2<f32>(0.5); }
+        else { suv = vec2<f32>(hp.x * sign(hp.z), hp.y) * 0.5 + vec2<f32>(0.5); }
+        suv = clamp(suv, vec2<f32>(0.0), vec2<f32>(1.0));
+      }
+      let h = dot(sample_rgb(fract(suv)), vec3<f32>(0.2126, 0.7152, 0.0722)) * amount * 0.5;
+      var base_sdf = length(hp) - base_r;
+      if (shape >= 1u) {
+        let bd = abs(hp) - vec3<f32>(base_r);
+        base_sdf = length(max(bd, vec3<f32>(0.0))) + min(max(bd.x, max(bd.y, bd.z)), 0.0);
+      }
+      let d = base_sdf - h;
+      if (d < 0.002) { hit = true; break; }
+      t = t + max(d * 0.7, 0.005);
+      if (t > 8.0) { break; }
+    }
+    if (!hit) {
+      return vec4<f32>(fog_color, (1.0 - horizon_fade) * src.a);
+    }
+    let n_approx = normalize(hp + vec3<f32>(1e-6));
+    var suv = w4_sphere_uv(n_approx);
+    if (shape >= 1u) {
+      let ap = abs(hp);
+      if (ap.x > ap.y && ap.x > ap.z) { suv = vec2<f32>(hp.z * sign(hp.x), hp.y) * 0.5 + vec2<f32>(0.5); }
+      else if (ap.y > ap.z) { suv = vec2<f32>(hp.x, hp.z * sign(hp.y)) * 0.5 + vec2<f32>(0.5); }
+      else { suv = vec2<f32>(hp.x * sign(hp.z), hp.y) * 0.5 + vec2<f32>(0.5); }
+      suv = clamp(suv, vec2<f32>(0.0), vec2<f32>(1.0));
+    }
+    let tex_col = sample_rgb(fract(suv));
+    let light_dir = normalize(rot_mat * vec3<f32>(0.5, 0.7, 0.5));
+    let diff = max(dot(n_approx, light_dir), 0.0);
+    let spec = pow(max(dot(reflect(-light_dir, n_approx), -rd), 0.0), 32.0) * specular;
+    var lit = tex_col * (ambient + diff * 0.85) + vec3<f32>(spec);
+    let fog_factor = 1.0 - exp(-t * fog_distance * 0.3);
+    lit = mix(lit, fog_color, fog_factor);
+    let fres = 1.0 - max(dot(n_approx, -rd), 0.0);
+    let sil_alpha = 1.0 - smoothstep(0.7, 1.0, fres) * horizon_fade;
+    return vec4<f32>(clamp(lit, vec3<f32>(0.0), vec3<f32>(1.0)), sil_alpha * src.a);
+  }
+  if (code == 150u) {
+    // string-orb: bumped sphere with lat/lon/diagonal string lattice
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let radius = u.params0.x;
+    let height = u.params0.y;
+    let lat_count = u.params0.z;
+    let lon_count = u.params0.w;
+    let diag_count = u.params1.x;
+    let slope = u.params1.y;
+    let width = max(0.002, u.params1.z);
+    let spin = u.params1.w;
+    let tilt = u.params2.x;
+    let flow = u.params2.y;
+    let glow = u.params2.z;
+    let glow_color = vec3<f32>(0.4, 0.85, 1.0);
+    let horizon_fade = 0.7;
+    var p = (uv * 2.0 - vec2<f32>(1.0));
+    p.x = p.x * (res.x / max(1.0, res.y));
+    p.y = -p.y;
+    let rot = w4_rot_y(time * spin) * w4_rot_x(tilt * 3.14159265 * 0.5);
+    var ro = rot * vec3<f32>(0.0, 0.0, 2.8);
+    var rd = rot * normalize(vec3<f32>(p, -1.8));
+    var t = 0.0;
+    var hit = false;
+    var hp = ro;
+    for (var i = 0; i < 72; i = i + 1) {
+      hp = ro + rd * t;
+      let dir0 = normalize(hp + vec3<f32>(1e-6));
+      let suv0 = w4_sphere_uv(dir0);
+      let h = dot(sample_rgb(fract(suv0)), vec3<f32>(0.2126, 0.7152, 0.0722)) * height * 0.4;
+      let d = length(hp) - (radius + h);
+      if (d < 0.002) { hit = true; break; }
+      t = t + max(d * 0.7, 0.005);
+      if (t > 6.0) { break; }
+    }
+    if (!hit) {
+      return vec4<f32>(glow_color * 0.05, (1.0 - horizon_fade) * src.a);
+    }
+    let n = normalize(hp + vec3<f32>(1e-6));
+    let suv = w4_sphere_uv(n);
+    let lat = 1.0 - smoothstep(width, width * 2.0, abs(fract(suv.y * lat_count) - 0.5));
+    let lon = 1.0 - smoothstep(width, width * 2.0, abs(fract(suv.x * lon_count) - 0.5));
+    var diag = 0.0;
+    if (diag_count > 0.5) {
+      diag = 1.0 - smoothstep(width, width * 2.0, abs(fract((suv.x + suv.y * slope + time * flow) * diag_count) - 0.5));
+    }
+    let strings = max(max(lat, lon), diag);
+    let tex = sample_rgb(fract(suv));
+    let rim = w4_fresnel(n, rd, 2.2);
+    let col = tex * strings * amount + glow_color * (rim + strings * strings) * glow;
+    let alpha = clamp(max(strings * 0.95, rim * horizon_fade) + horizon_fade * 0.05, 0.0, 1.0);
+    return vec4<f32>(clamp(col, vec3<f32>(0.0), vec3<f32>(1.0)), alpha * src.a);
+  }
+  if (code == 151u) {
+    // sphere-wireframe: bumped sphere with meridian/parallel wireframe
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let radius = u.params0.x;
+    let height = u.params0.y;
+    let meridians = u.params0.z;
+    let parallels = u.params0.w;
+    let width = max(0.002, u.params1.x);
+    let spin = u.params1.y;
+    let tilt = u.params1.z;
+    let halo_glow = u.params1.w;
+    let wire_color = vec3<f32>(u.params2.x, u.params2.y, u.params2.z);
+    let fill_source = u.params2.w;
+    let horizon_fade = 0.7;
+    var p = (uv * 2.0 - vec2<f32>(1.0));
+    p.x = p.x * (res.x / max(1.0, res.y));
+    p.y = -p.y;
+    let rot = w4_rot_y(time * spin) * w4_rot_x(tilt * 3.14159265 * 0.5);
+    var ro = rot * vec3<f32>(0.0, 0.0, 2.8);
+    var rd = rot * normalize(vec3<f32>(p, -1.7));
+    var t = 0.0;
+    var hit = false;
+    var hp = ro;
+    for (var i = 0; i < 72; i = i + 1) {
+      hp = ro + rd * t;
+      let dir0 = normalize(hp + vec3<f32>(1e-6));
+      let suv0 = w4_sphere_uv(dir0);
+      let h = dot(sample_rgb(fract(suv0)), vec3<f32>(0.2126, 0.7152, 0.0722)) * height * 0.4;
+      let d = length(hp) - (radius + h);
+      if (d < 0.002) { hit = true; break; }
+      t = t + max(d * 0.7, 0.005);
+      if (t > 6.0) { break; }
+    }
+    if (!hit) {
+      return vec4<f32>(wire_color * 0.04, (1.0 - horizon_fade) * src.a);
+    }
+    let n = normalize(hp + vec3<f32>(1e-6));
+    let suv = w4_sphere_uv(n);
+    let merid = 1.0 - smoothstep(width, width * 1.8, abs(fract(suv.x * meridians) - 0.5));
+    let parll = 1.0 - smoothstep(width, width * 1.8, abs(fract(suv.y * parallels) - 0.5));
+    let wire = max(merid, parll);
+    let tex = sample_rgb(fract(suv));
+    var fill = mix(wire_color * 0.15, tex * 0.5, fill_source);
+    let light_dir = normalize(rot * vec3<f32>(0.5, 0.7, 0.5));
+    let diff = max(dot(n, light_dir), 0.0);
+    fill = fill * (0.4 + diff * 0.7);
+    let rim = w4_fresnel(n, rd, 2.5);
+    let col = mix(fill, wire_color, wire * amount) + wire_color * rim * halo_glow;
+    let alpha = clamp(max(wire, max(rim * horizon_fade, fill_source * 0.5)), 0.0, 1.0);
+    return vec4<f32>(clamp(col, vec3<f32>(0.0), vec3<f32>(1.0)), alpha * src.a);
+  }
+  if (code == 152u) {
+    // voxel-cube-cluster: grid of luma-displaced cubes
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let grid_f = clamp(round(u.params0.x), 1.0, 6.0);
+    let cube_size = u.params0.y;
+    let spacing = u.params0.z;
+    let spin = u.params0.w;
+    let tilt = u.params1.x;
+    let cam_distance = u.params1.y;
+    let specular = u.params1.z;
+    let ambient = u.params1.w;
+    let bg_color = vec3<f32>(u.params2.x, u.params2.y, u.params2.z);
+    let horizon_fade = u.params2.w;
+    var p = (uv * 2.0 - vec2<f32>(1.0));
+    p.x = p.x * (res.x / max(1.0, res.y));
+    p.y = -p.y;
+    let rot = w4_rot_y(time * spin * 0.3) * w4_rot_x((tilt - 0.5) * 3.14159265 * 0.6);
+    var ro = rot * vec3<f32>(0.0, 0.0, cam_distance);
+    var rd = rot * normalize(vec3<f32>(p, -1.5));
+    let grid = i32(grid_f);
+    var best_t = 1e9;
+    var best_n = vec3<f32>(0.0);
+    var best_center = vec3<f32>(0.0);
+    let half_grid = f32(grid - 1) * 0.5 * spacing;
+    for (var i = 0; i < 6; i = i + 1) {
+      if (i >= grid) { break; }
+      for (var j = 0; j < 6; j = j + 1) {
+        if (j >= grid) { break; }
+        for (var k = 0; k < 6; k = k + 1) {
+          if (k >= grid) { break; }
+          let cell_center = vec3<f32>(f32(i) * spacing - half_grid, f32(j) * spacing - half_grid, f32(k) * spacing - half_grid);
+          let s_uv = vec2<f32>(f32(i) / max(1.0, f32(grid - 1)), f32(j) / max(1.0, f32(grid - 1)));
+          let c = sample_rgb(s_uv);
+          let l = dot(c, vec3<f32>(0.2126, 0.7152, 0.0722));
+          let dir0 = normalize(cell_center + vec3<f32>(1e-4));
+          let cube_pos = cell_center + dir0 * l * amount * 0.8;
+          let box = w4_isect_box(ro - cube_pos, rd, vec3<f32>(cube_size));
+          if (box.w > 0.0 && box.w < best_t) {
+            best_t = box.w;
+            best_n = box.xyz;
+            best_center = cube_pos;
+          }
+        }
+      }
+    }
+    if (best_t > 1e8) {
+      return vec4<f32>(bg_color, (1.0 - horizon_fade) * src.a);
+    }
+    let hit = ro + rd * best_t;
+    let local_pos = hit - best_center;
+    let an = abs(best_n);
+    var face_uv = (local_pos.xy / cube_size) * 0.5 + vec2<f32>(0.5);
+    if (an.x > 0.5) { face_uv = (local_pos.zy / cube_size) * 0.5 + vec2<f32>(0.5); }
+    else if (an.y > 0.5) { face_uv = (local_pos.xz / cube_size) * 0.5 + vec2<f32>(0.5); }
+    let face_col = sample_rgb(clamp(face_uv, vec2<f32>(0.0), vec2<f32>(1.0)));
+    let light_dir = normalize(vec3<f32>(0.5, 0.7, 0.5));
+    let diff = max(dot(best_n, light_dir), 0.0);
+    let spec = pow(max(dot(reflect(-light_dir, best_n), -rd), 0.0), 32.0) * specular;
+    let col = face_col * (ambient + diff * 0.85) + vec3<f32>(spec);
+    let fade = 1.0 - clamp((best_t - cam_distance + 2.0) / 4.0, 0.0, 1.0);
+    let alpha = mix(1.0, fade, horizon_fade);
+    return vec4<f32>(clamp(col, vec3<f32>(0.0), vec3<f32>(1.0)), alpha * src.a);
+  }
+  if (code == 153u) {
+    // mobius-lattice: ribbon of boxes along a mobius loop with lattice lines
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let major_r = u.params0.x;
+    let ribbon_w = u.params0.y;
+    let twists = u.params0.z;
+    let spin = u.params0.w;
+    let tilt = u.params1.x;
+    let line_density = u.params1.y;
+    let line_width = max(0.002, u.params1.z);
+    let line_color = vec3<f32>(u.params1.w, u.params2.x, u.params2.y);
+    let horizon_fade = u.params2.z;
+    let tau = 6.28318530718;
+    var p = (uv * 2.0 - vec2<f32>(1.0));
+    p.x = p.x * (res.x / max(1.0, res.y));
+    p.y = -p.y;
+    let rot = w4_rot_y(time * spin * 0.3) * w4_rot_x(tilt * 3.14159265 * 0.6);
+    var ro = rot * vec3<f32>(0.0, 0.0, 3.0);
+    var rd = rot * normalize(vec3<f32>(p, -1.5));
+    var best_t = 1e9;
+    var best_uv = vec2<f32>(0.0);
+    for (var i = 0; i < 24; i = i + 1) {
+      let u0 = f32(i) / 24.0 * tau;
+      for (var j = -1; j <= 1; j = j + 1) {
+        let v0 = f32(j);
+        let half_twist = u0 * twists * 0.5;
+        let r = major_r + v0 * ribbon_w * cos(half_twist);
+        let pt = vec3<f32>(r * cos(u0), v0 * ribbon_w * sin(half_twist), r * sin(u0));
+        let box = w4_isect_box(ro - pt, rd, vec3<f32>(ribbon_w * 0.55));
+        if (box.w > 0.0 && box.w < best_t) {
+          best_t = box.w;
+          best_uv = vec2<f32>(u0 / tau, v0 * 0.5 + 0.5);
+        }
+      }
+    }
+    if (best_t > 1e8) {
+      return vec4<f32>(line_color * 0.05, (1.0 - horizon_fade) * src.a);
+    }
+    let tex = sample_rgb(best_uv);
+    let lin_u = 1.0 - smoothstep(line_width, line_width * 1.8, abs(fract(best_uv.x * line_density) - 0.5));
+    let lin_v = 1.0 - smoothstep(line_width, line_width * 1.8, abs(fract(best_uv.y * line_density * 0.3) - 0.5));
+    let lat = max(lin_u, lin_v);
+    let col = tex * amount + line_color * lat;
+    let fade = 1.0 - clamp((best_t - 2.0) / 2.5, 0.0, 1.0);
+    let alpha = mix(1.0, fade, horizon_fade);
+    return vec4<f32>(clamp(col, vec3<f32>(0.0), vec3<f32>(1.0)), alpha * src.a);
+  }
+  if (code == 154u) {
+    // crystal-shard-field: floating refractive shards
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let shard_count = clamp(round(u.params0.x), 4.0, 32.0);
+    let shard_size = u.params0.y;
+    let spread = u.params0.z;
+    let chroma_edge = u.params0.w;
+    let refraction = u.params1.x;
+    let spin = u.params1.y;
+    let tint = vec3<f32>(u.params1.z, u.params1.w, u.params2.x);
+    let horizon_fade = u.params2.y;
+    var p = (uv * 2.0 - vec2<f32>(1.0));
+    p.x = p.x * (res.x / max(1.0, res.y));
+    p.y = -p.y;
+    let rot = w4_rot_y(time * spin * 0.2);
+    var ro = rot * vec3<f32>(0.0, 0.0, 3.0);
+    var rd = rot * normalize(vec3<f32>(p, -1.5));
+    let n = i32(shard_count);
+    var best_t = 1e9;
+    var best_n = vec3<f32>(0.0);
+    for (var i = 0; i < 32; i = i + 1) {
+      if (i >= n) { break; }
+      let fi = f32(i);
+      var center = vec3<f32>(
+        (w4_hash13(vec3<f32>(fi, 0.0, 0.0)) - 0.5) * 2.0 * spread,
+        (w4_hash13(vec3<f32>(fi, 1.0, 0.0)) - 0.5) * 2.0 * spread,
+        (w4_hash13(vec3<f32>(fi, 2.0, 0.0)) - 0.5) * 2.0 * spread
+      );
+      center.y = center.y + sin(time * 0.3 + fi * 2.7) * 0.1;
+      center.x = center.x + cos(time * 0.4 + fi * 1.7) * 0.1;
+      let s_rot = w4_rot_y(fi * 1.7 + time * 0.1) * w4_rot_x(fi * 0.7);
+      let lro = s_rot * (ro - center);
+      let lrd = s_rot * rd;
+      let bs = shard_size * (0.6 + w4_hash13(vec3<f32>(fi, 5.0, 0.0)));
+      let box = w4_isect_box(lro, lrd, vec3<f32>(bs, bs * 0.4, bs));
+      if (box.w > 0.0 && box.w < best_t) {
+        best_t = box.w;
+        best_n = transpose(s_rot) * box.xyz;
+      }
+    }
+    if (best_t > 1e8) {
+      return vec4<f32>(tint * 0.04, (1.0 - horizon_fade) * src.a);
+    }
+    let best_pos = ro + rd * best_t;
+    let s_uv = best_pos.xy * 0.3 + vec2<f32>(0.5);
+    let refract_dir = best_n.xy * refraction * 0.06;
+    var col = vec3<f32>(0.0);
+    if (chroma_edge > 0.001) {
+      col.r = sample_rgb(s_uv + refract_dir + best_n.xy * chroma_edge * 0.02).r;
+      col.g = sample_rgb(s_uv + refract_dir).g;
+      col.b = sample_rgb(s_uv + refract_dir - best_n.xy * chroma_edge * 0.02).b;
+    } else {
+      col = sample_rgb(clamp(s_uv + refract_dir, vec2<f32>(0.0), vec2<f32>(1.0)));
+    }
+    col = col * tint;
+    let light_dir = normalize(vec3<f32>(0.5, 0.7, 0.5));
+    let spec = pow(max(dot(reflect(-light_dir, best_n), -rd), 0.0), 16.0);
+    col = (col + vec3<f32>(spec) * 0.6) * amount;
+    let fade = 1.0 - clamp((best_t - 2.0) / 3.0, 0.0, 1.0);
+    let alpha = mix(1.0, fade, horizon_fade);
+    return vec4<f32>(clamp(col, vec3<f32>(0.0), vec3<f32>(1.0)), alpha * src.a);
+  }
+  if (code == 155u) {
+    // tube-lattice: ring of vertical tubes wrapped with source
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let tube_count = clamp(round(u.params0.x), 1.0, 12.0);
+    let tube_radius = u.params0.y;
+    let spread = u.params0.z;
+    let spin = u.params0.w;
+    let tilt = u.params1.x;
+    let twist = u.params1.y;
+    let rim_color = vec3<f32>(u.params1.z, u.params1.w, u.params2.x);
+    let horizon_fade = u.params2.y;
+    let tau = 6.28318530718;
+    var p = (uv * 2.0 - vec2<f32>(1.0));
+    p.x = p.x * (res.x / max(1.0, res.y));
+    p.y = -p.y;
+    let rot = w4_rot_y(time * spin * 0.3) * w4_rot_x(tilt * 3.14159265 * 0.5);
+    var ro = rot * vec3<f32>(0.0, 0.0, 3.0);
+    var rd = rot * normalize(vec3<f32>(p, -1.5));
+    let n = i32(tube_count);
+    var best_t = 1e9;
+    var best_n = vec3<f32>(0.0);
+    var best_hit = vec3<f32>(0.0);
+    for (var i = 0; i < 12; i = i + 1) {
+      if (i >= n) { break; }
+      let fi = f32(i);
+      let ang = fi / tube_count * tau;
+      var offset = vec3<f32>(cos(ang), 0.0, sin(ang)) * spread;
+      offset = w4_rot_z(twist * sin(time * 0.2 + fi)) * offset;
+      let cyl = w4_isect_cyl_y(ro - offset, rd, tube_radius);
+      if (cyl.w > 0.0 && cyl.w < best_t) {
+        let hit = ro + rd * cyl.w;
+        if (abs(hit.y - offset.y) > 1.5) { continue; }
+        best_t = cyl.w;
+        best_n = cyl.xyz;
+        best_hit = hit;
+      }
+    }
+    if (best_t > 1e8) {
+      return vec4<f32>(rim_color * 0.04, (1.0 - horizon_fade) * src.a);
+    }
+    let ang2 = atan2(best_n.z, best_n.x) / tau + 0.5;
+    let y_u = best_hit.y * 0.5 + 0.5;
+    let tex = sample_rgb(vec2<f32>(ang2, y_u));
+    let rim = w4_fresnel(best_n, rd, 1.6);
+    let col = tex * amount + rim_color * rim * 0.7;
+    let fade = 1.0 - clamp((best_t - 2.0) / 3.0, 0.0, 1.0);
+    let alpha = mix(1.0, fade, horizon_fade);
+    return vec4<f32>(clamp(col, vec3<f32>(0.0), vec3<f32>(1.0)), alpha * src.a);
+  }
+  if (code == 156u) {
+    // disco-mirror-ball: faceted mirror sphere with chase lights
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let radius = u.params0.x;
+    let facet_count = max(2.0, u.params0.y);
+    let spin = u.params0.z;
+    let tilt = u.params0.w;
+    let chase_speed = u.params1.x;
+    let chase_hue_width = u.params1.y;
+    let sparkle = u.params1.z;
+    let highlight = vec3<f32>(u.params1.w, u.params2.x, u.params2.y);
+    let horizon_fade = u.params2.z;
+    var p = (uv * 2.0 - vec2<f32>(1.0));
+    p.x = p.x * (res.x / max(1.0, res.y));
+    p.y = -p.y;
+    let ro = vec3<f32>(0.0, 0.0, 2.8);
+    let rd = normalize(vec3<f32>(p, -1.7));
+    let t = w4_isect_sphere(ro, rd, radius);
+    if (t < 0.0) {
+      return vec4<f32>(highlight * 0.04, (1.0 - horizon_fade) * src.a);
+    }
+    let pos = ro + rd * t;
+    var n = normalize(pos);
+    n = w4_rot_y(time * spin * 0.3) * w4_rot_x(tilt * 3.14159265 * 0.5) * n;
+    let suv = w4_sphere_uv(n);
+    let facet_size = vec2<f32>(1.0 / facet_count, 1.0 / (facet_count * 0.5));
+    let facet_idx = floor(suv / facet_size);
+    let facet_center = (facet_idx + vec2<f32>(0.5)) * facet_size;
+    let tex = sample_rgb(facet_center);
+    let in_facet = fract(suv / facet_size);
+    var edge = smoothstep(0.92, 1.0, max(in_facet.x, in_facet.y)) + smoothstep(0.92, 1.0, max(1.0 - in_facet.x, 1.0 - in_facet.y));
+    edge = clamp(edge, 0.0, 1.0);
+    let chase = sin(time * chase_speed + facet_idx.x * 1.7 + facet_idx.y * 2.3) * 0.5 + 0.5;
+    let chase_tint = w4_hsv2rgb(vec3<f32>(fract(time * 0.05 + chase * chase_hue_width), 0.8, 1.0));
+    var col = mix(tex, tex * chase_tint, chase * 0.5);
+    let spark = step(1.0 - sparkle * 0.3, w4_hash13(vec3<f32>(facet_idx, floor(time * 4.0))));
+    col = col + highlight * spark * 1.5 + highlight * edge * 0.5;
+    col = col * amount;
+    let rim = w4_fresnel(n, rd, 2.5);
+    col = col + highlight * rim * 0.4;
+    let alpha = clamp(1.0 - rim * horizon_fade * 0.5, 0.0, 1.0);
+    return vec4<f32>(clamp(col, vec3<f32>(0.0), vec3<f32>(1.0)), alpha * src.a);
+  }
+  if (code == 157u) {
+    // lissajous-knot: tube along a 3D lissajous curve
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let ratio = vec3<f32>(u.params0.x, u.params0.y, u.params0.z);
+    let phase_x = u.params0.w;
+    let phase_y = u.params1.x;
+    let tube_radius = u.params1.y;
+    let k_scale = u.params1.z;
+    let spin = u.params1.w;
+    let tilt = u.params2.x;
+    let tube_color = vec3<f32>(u.params2.y, u.params2.z, u.params2.w);
+    let horizon_fade = 0.6;
+    let tau = 6.28318530718;
+    var p = (uv * 2.0 - vec2<f32>(1.0));
+    p.x = p.x * (res.x / max(1.0, res.y));
+    p.y = -p.y;
+    let rot = w4_rot_y(time * spin * 0.3) * w4_rot_x(tilt * 3.14159265 * 0.5);
+    var ro = rot * vec3<f32>(0.0, 0.0, 3.0);
+    var rd = rot * normalize(vec3<f32>(p, -1.5));
+    var best_t = 1e9;
+    var best_pt = vec3<f32>(0.0);
+    var best_u = 0.0;
+    for (var i = 0; i < 64; i = i + 1) {
+      let ti = f32(i) / 63.0 * tau;
+      let pt = vec3<f32>(
+        sin(ratio.x * ti + phase_x * tau),
+        sin(ratio.y * ti + phase_y * tau),
+        sin(ratio.z * ti)
+      ) * k_scale;
+      let t = w4_isect_sphere(ro - pt, rd, tube_radius);
+      if (t > 0.0 && t < best_t) {
+        best_t = t;
+        best_pt = pt;
+        best_u = ti / tau;
+      }
+    }
+    if (best_t > 1e8) {
+      return vec4<f32>(tube_color * 0.05, (1.0 - horizon_fade) * src.a);
+    }
+    let hit = ro + rd * best_t;
+    let n = normalize(hit - best_pt);
+    let ang = atan2(n.z, n.x) / tau + 0.5;
+    let tex = sample_rgb(vec2<f32>(best_u, ang));
+    let light_dir = normalize(vec3<f32>(0.5, 0.7, 0.5));
+    let diff = max(dot(n, light_dir), 0.0);
+    let col = (tex * amount + tube_color * 0.3) * (0.4 + diff * 0.7);
+    let fade = 1.0 - clamp((best_t - 2.0) / 2.5, 0.0, 1.0);
+    let alpha = mix(1.0, fade, horizon_fade);
+    return vec4<f32>(clamp(col, vec3<f32>(0.0), vec3<f32>(1.0)), alpha * src.a);
+  }
+  if (code == 158u) {
+    // helix-particle-stream: rising helix particle tubes
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let helices = clamp(round(u.params0.x), 1.0, 6.0);
+    let helix_radius = u.params0.y;
+    let turns = u.params0.z;
+    let height = u.params0.w;
+    let tube_radius = u.params1.x;
+    let rise_speed = u.params1.y;
+    let spin = u.params1.z;
+    let tilt = u.params1.w;
+    let tint = vec3<f32>(u.params2.x, u.params2.y, u.params2.z);
+    let horizon_fade = u.params2.w;
+    let tau = 6.28318530718;
+    var p = (uv * 2.0 - vec2<f32>(1.0));
+    p.x = p.x * (res.x / max(1.0, res.y));
+    p.y = -p.y;
+    let rot = w4_rot_y(time * spin * 0.3) * w4_rot_x(tilt * 3.14159265 * 0.5);
+    var ro = rot * vec3<f32>(0.0, 0.0, 3.0);
+    var rd = rot * normalize(vec3<f32>(p, -1.5));
+    let n_helix = i32(helices);
+    var best_t = 1e9;
+    var best_u = 0.0;
+    var best_pt = vec3<f32>(0.0);
+    var best_h = 0.0;
+    for (var h = 0; h < 6; h = h + 1) {
+      if (h >= n_helix) { break; }
+      for (var i = 0; i < 40; i = i + 1) {
+        var ti = f32(i) / 39.0;
+        ti = fract(ti + time * rise_speed * 0.05);
+        let ang = ti * turns * tau + f32(h) * (tau / helices);
+        let pt = vec3<f32>(cos(ang) * helix_radius, (ti - 0.5) * height, sin(ang) * helix_radius);
+        let t = w4_isect_sphere(ro - pt, rd, tube_radius);
+        if (t > 0.0 && t < best_t) {
+          best_t = t;
+          best_u = ti;
+          best_pt = pt;
+          best_h = f32(h);
+        }
+      }
+    }
+    if (best_t > 1e8) {
+      return vec4<f32>(tint * 0.04, (1.0 - horizon_fade) * src.a);
+    }
+    let hit = ro + rd * best_t;
+    let n = normalize(hit - best_pt);
+    let tex = sample_rgb(vec2<f32>(best_u, best_h / helices));
+    let light_dir = normalize(vec3<f32>(0.5, 0.7, 0.5));
+    let diff = max(dot(n, light_dir), 0.0);
+    let col = tex * amount * (0.5 + diff * 0.7);
+    let fade = 1.0 - clamp((best_t - 2.0) / 2.5, 0.0, 1.0);
+    let alpha = mix(1.0, fade, horizon_fade);
+    return vec4<f32>(clamp(col, vec3<f32>(0.0), vec3<f32>(1.0)), alpha * src.a);
+  }
+  if (code == 159u) {
+    // donut-constellation: textured torus with orbiting stars
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let major_r = u.params0.x;
+    let minor_r = u.params0.y;
+    let star_count = clamp(round(u.params0.z), 4.0, 32.0);
+    let star_size = u.params0.w;
+    let spin = u.params1.x;
+    let tilt = u.params1.y;
+    let torus_color = vec3<f32>(u.params1.z, u.params1.w, u.params2.x);
+    let star_color = vec3<f32>(u.params2.y, u.params2.z, u.params2.w);
+    let horizon_fade = 0.6;
+    let tau = 6.28318530718;
+    var p = (uv * 2.0 - vec2<f32>(1.0));
+    p.x = p.x * (res.x / max(1.0, res.y));
+    p.y = -p.y;
+    let rot = w4_rot_y(time * spin * 0.3) * w4_rot_x(tilt * 3.14159265 * 0.6);
+    var ro = rot * vec3<f32>(0.0, 0.0, 3.0);
+    var rd = rot * normalize(vec3<f32>(p, -1.5));
+    var t = 0.0;
+    var hit = false;
+    var hp = ro;
+    for (var i = 0; i < 72; i = i + 1) {
+      hp = ro + rd * t;
+      let d = w4_sd_torus(hp, major_r, minor_r);
+      if (d < 0.002) { hit = true; break; }
+      t = t + max(d * 0.8, 0.005);
+      if (t > 8.0) { break; }
+    }
+    if (!hit) {
+      return vec4<f32>(torus_color * 0.04, (1.0 - horizon_fade) * src.a);
+    }
+    let ring = normalize(vec3<f32>(hp.x, 0.0, hp.z)) * major_r;
+    let n = normalize(hp - ring);
+    let u_c = atan2(hp.z, hp.x) / tau + 0.5;
+    let v_c = atan2(hp.y, length(hp.xz) - major_r) / tau + 0.5;
+    let tex = sample_rgb(vec2<f32>(u_c, v_c));
+    let rim = w4_fresnel(n, rd, 2.5);
+    var col = tex * amount + torus_color * rim * 0.5;
+    let stars = i32(star_count);
+    for (var i = 0; i < 32; i = i + 1) {
+      if (i >= stars) { break; }
+      let fi = f32(i);
+      let star_ang = fi / star_count * tau + time * 0.05;
+      let star_pos = vec3<f32>(cos(star_ang) * major_r, 0.0, sin(star_ang) * major_r);
+      let d_star = distance(hp, star_pos);
+      col = col + star_color * smoothstep(star_size, 0.0, d_star) * 1.5;
+    }
+    let fade = 1.0 - clamp((t - 2.0) / 3.0, 0.0, 1.0);
+    let alpha = mix(1.0, fade, horizon_fade);
+    return vec4<f32>(clamp(col, vec3<f32>(0.0), vec3<f32>(1.0)), alpha * src.a);
+  }
+  if (code == 160u) {
+    // sphere-project: image projected on a lit sphere
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let roughness = u.params0.x;
+    let spin_spd = u.params0.y * 2.0;
+    let rim_glow = u.params0.z;
+    let tint = vec3<f32>(u.params0.w, u.params1.x, u.params1.y);
+    let tau = 6.28318530718;
+    var centered = (uv - vec2<f32>(0.5)) * vec2<f32>(res.x / max(1.0, res.y), 1.0);
+    centered.y = -centered.y;
+    let r = length(centered);
+    let sphere_r = 0.45;
+    if (r < sphere_r) {
+      let z = sqrt(sphere_r * sphere_r - r * r);
+      let normal = normalize(vec3<f32>(centered, z));
+      let angle = time * spin_spd;
+      let ca = cos(angle); let sa = sin(angle);
+      let rot_n = vec3<f32>(normal.x * ca - normal.z * sa, normal.y, normal.x * sa + normal.z * ca);
+      let suv = vec2<f32>(atan2(rot_n.z, rot_n.x) / tau + 0.5, asin(clamp(rot_n.y, -1.0, 1.0)) / 3.14159265 + 0.5);
+      let tex_color = sample_rgb(suv);
+      let light_dir = normalize(vec3<f32>(0.5, 0.7, 1.0));
+      let diff = max(dot(normal, light_dir), 0.0);
+      let spec = pow(max(dot(reflect(-light_dir, normal), vec3<f32>(0.0, 0.0, 1.0)), 0.0), mix(4.0, 64.0, roughness));
+      let fres = pow(1.0 - abs(normal.z), 3.0) * rim_glow;
+      let lit = tex_color * (diff * 0.7 + 0.3) * tint + vec3<f32>(spec * 0.3) + vec3<f32>(fres) * tint;
+      return vec4<f32>(clamp(mix(src.rgb, lit, amount), vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+    }
+    let edge_fade = smoothstep(sphere_r + 0.02, sphere_r, r);
+    return vec4<f32>(mix(src.rgb, src.rgb * 0.3, edge_fade * amount * 0.5), src.a);
+  }
+  if (code == 161u) {
+    // cube-project: image on the faces of a spinning cube
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let cube_size = 0.3 + u.params0.x * 0.5;
+    let edge_glow = u.params0.x;
+    let spin_spd = u.params0.y * 1.5;
+    let manual_rot = u.params0.z;
+    let tint = vec3<f32>(u.params0.w, u.params1.x, u.params1.y);
+    var centered = (uv - vec2<f32>(0.5)) * vec2<f32>(res.x / max(1.0, res.y), 1.0);
+    centered.y = -centered.y;
+    var ro = vec3<f32>(0.0, 0.0, -2.5);
+    var rd = normalize(vec3<f32>(centered, 1.0));
+    let angle = time * spin_spd + manual_rot;
+    let tilt = 0.4;
+    let ca = cos(angle); let sa = sin(angle);
+    rd = vec3<f32>(ca * rd.x - sa * rd.z, rd.y, sa * rd.x + ca * rd.z);
+    ro = vec3<f32>(ca * ro.x - sa * ro.z, ro.y, sa * ro.x + ca * ro.z);
+    let ct = cos(tilt); let st = sin(tilt);
+    rd = vec3<f32>(rd.x, ct * rd.y - st * rd.z, st * rd.y + ct * rd.z);
+    ro = vec3<f32>(ro.x, ct * ro.y - st * ro.z, st * ro.y + ct * ro.z);
+    let inv_rd = 1.0 / rd;
+    let t1 = (vec3<f32>(-cube_size) - ro) * inv_rd;
+    let t2 = (vec3<f32>(cube_size) - ro) * inv_rd;
+    let t_min = min(t1, t2);
+    let t_max = max(t1, t2);
+    let t_near = max(max(t_min.x, t_min.y), t_min.z);
+    let t_far = min(min(t_max.x, t_max.y), t_max.z);
+    if (t_near < t_far && t_far > 0.0) {
+      let t = select(t_far, t_near, t_near > 0.0);
+      let hit_pos = ro + rd * t;
+      let abs_hit = abs(hit_pos);
+      var face_uv = hit_pos.xy / cube_size * 0.5 + vec2<f32>(0.5);
+      var normal = vec3<f32>(0.0, 0.0, sign(hit_pos.z));
+      if (abs_hit.x > abs_hit.y - 0.001 && abs_hit.x > abs_hit.z - 0.001) {
+        face_uv = hit_pos.yz / cube_size * 0.5 + vec2<f32>(0.5);
+        normal = vec3<f32>(sign(hit_pos.x), 0.0, 0.0);
+      } else if (abs_hit.y > abs_hit.z - 0.001) {
+        face_uv = hit_pos.xz / cube_size * 0.5 + vec2<f32>(0.5);
+        normal = vec3<f32>(0.0, sign(hit_pos.y), 0.0);
+      }
+      let tex_color = sample_rgb(clamp(face_uv, vec2<f32>(0.0), vec2<f32>(1.0)));
+      let light_dir = normalize(vec3<f32>(0.5, 0.7, 1.0));
+      let diff = max(dot(normal, light_dir), 0.0) * 0.7 + 0.3;
+      var lit = tex_color * diff * tint;
+      let edge_dist = vec2<f32>(1.0) - abs(face_uv * 2.0 - vec2<f32>(1.0));
+      let edge = smoothstep(0.02, 0.08, min(edge_dist.x, edge_dist.y));
+      lit = lit + vec3<f32>(1.0 - edge) * edge_glow * tint;
+      return vec4<f32>(clamp(lit, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+    }
+    return vec4<f32>(src.rgb * 0.15, src.a);
+  }
+  if (code == 162u) {
+    // cylinder-wrap: image wrapped on a spinning cylinder
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let radius = 0.2 + u.params0.x * 0.8;
+    let spin_speed = u.params0.y * 2.0;
+    let perspective = 0.5 + u.params0.z * 2.0;
+    let tau = 6.28318530718;
+    var p = (uv - vec2<f32>(0.5)) * 2.0;
+    p.x = p.x * (res.x / max(1.0, res.y));
+    p.y = -p.y;
+    let angle = time * spin_speed;
+    let ro = vec3<f32>(0.0, 0.0, -2.0 - perspective);
+    let rd = normalize(vec3<f32>(p, 2.0));
+    let a = rd.x * rd.x + rd.z * rd.z;
+    let b = 2.0 * (ro.x * rd.x + ro.z * rd.z);
+    let c = ro.x * ro.x + ro.z * ro.z - radius * radius;
+    let disc = b * b - 4.0 * a * c;
+    var col = src.rgb * 0.1;
+    if (disc > 0.0) {
+      let t = (-b - sqrt(disc)) / (2.0 * a);
+      if (t > 0.0) {
+        let hit = ro + t * rd;
+        if (abs(hit.y) < 1.0) {
+          let theta = atan2(hit.x, hit.z) + angle;
+          let tex_u = fract(theta / tau);
+          let tex_v = hit.y * 0.5 + 0.5;
+          let tex_col = sample_rgb(vec2<f32>(tex_u, tex_v));
+          let normal = normalize(vec3<f32>(hit.x, 0.0, hit.z));
+          let light_dir = normalize(vec3<f32>(0.5, 0.7, -1.0));
+          let diff = max(dot(normal, light_dir), 0.0) * 0.6 + 0.4;
+          let view_dir = normalize(-rd);
+          let half_dir = normalize(light_dir + view_dir);
+          let spec = pow(max(dot(normal, half_dir), 0.0), 32.0) * 0.5;
+          col = tex_col * diff + vec3<f32>(spec);
+        }
+      }
+    }
+    return vec4<f32>(clamp(mix(src.rgb, col, amount), vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 163u) {
+    // torus-tunnel: fly through the inside of a torus
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let tube_radius = 0.3 + u.params0.x * 0.7;
+    let fly_speed = u.params0.y * 1.5;
+    let twist = u.params0.z * 4.0;
+    let tau = 6.28318530718;
+    var p = (uv - vec2<f32>(0.5)) * 2.0;
+    p.x = p.x * (res.x / max(1.0, res.y));
+    p.y = -p.y;
+    let major_r = 1.5;
+    let t = time * fly_speed;
+    let cam_angle = t;
+    var cam_pos = vec3<f32>(cos(cam_angle) * major_r, 0.0, sin(cam_angle) * major_r);
+    let cam_fwd = normalize(vec3<f32>(-sin(cam_angle), 0.0, cos(cam_angle)));
+    var cam_up = vec3<f32>(0.0, 1.0, 0.0);
+    let cam_right = normalize(cross(cam_fwd, cam_up));
+    cam_up = cross(cam_right, cam_fwd);
+    let tw = t * twist;
+    let t_right = cam_right * cos(tw) + cam_up * sin(tw);
+    let t_up = -cam_right * sin(tw) + cam_up * cos(tw);
+    let rd = normalize(cam_fwd + p.x * t_right * 0.8 + p.y * t_up * 0.8);
+    cam_pos = cam_pos + cam_fwd * 0.01;
+    var col = vec3<f32>(0.0);
+    var total_dist = 0.0;
+    var hit = false;
+    for (var i = 0; i < 60; i = i + 1) {
+      let pos = cam_pos + rd * total_dist;
+      let d = -w4_sd_torus(pos, major_r, tube_radius);
+      if (d < 0.002) { hit = true; break; }
+      if (total_dist > 10.0) { break; }
+      total_dist = total_dist + max(d, 0.005);
+    }
+    if (hit) {
+      let hit_pos = cam_pos + rd * total_dist;
+      let ring_angle = atan2(hit_pos.z, hit_pos.x);
+      let local_p = vec2<f32>(length(hit_pos.xz) - major_r, hit_pos.y);
+      let tube_angle = atan2(local_p.y, local_p.x);
+      let tex_uv = vec2<f32>(fract(ring_angle / tau + 0.5), fract(tube_angle / tau + 0.5));
+      let tex_col = sample_rgb(tex_uv);
+      let fog = exp(-total_dist * 0.3);
+      col = tex_col * fog + vec3<f32>(0.02, 0.01, 0.03);
+    }
+    return vec4<f32>(clamp(mix(src.rgb, col, amount), vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 164u) {
+    // diamond-gem: faceted gem with refraction + rainbow caustics
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let facets = 4.0 + u.params0.x * 16.0;
+    let rot_speed = u.params0.y * 2.0;
+    let sparkle = u.params0.z;
+    let tau = 6.28318530718;
+    var p = (uv - vec2<f32>(0.5)) * 2.0;
+    p.x = p.x * (res.x / max(1.0, res.y));
+    p.y = -p.y;
+    let t = time * rot_speed;
+    let ca = cos(t); let sa = sin(t);
+    let rp = vec2<f32>(p.x * ca - p.y * sa * 0.3, p.x * sa * 0.3 + p.y * ca);
+    let ax = abs(rp.x);
+    let top_width = 0.6;
+    let equator_y = -0.15;
+    let crown_y = -0.55;
+    let point_y = 0.75;
+    let t_crown = clamp((rp.y - equator_y) / (crown_y - equator_y), 0.0, 1.0);
+    let crown_width = mix(top_width, top_width * 0.7, t_crown);
+    let t_pav = clamp((rp.y - equator_y) / (point_y - equator_y), 0.0, 1.0);
+    let pav_width = mix(top_width, 0.0, t_pav);
+    let half_width = mix(pav_width, crown_width, step(rp.y, equator_y));
+    let in_diamond = step(ax, half_width) * step(crown_y, rp.y) * step(rp.y, point_y);
+    let angle = atan2(rp.y - equator_y, rp.x);
+    let q_angle = floor(angle * facets / tau + 0.5) * tau / facets;
+    let facet_n2 = vec2<f32>(cos(q_angle), sin(q_angle));
+    let facet_normal = normalize(vec3<f32>(facet_n2.x, facet_n2.y, 0.6));
+    let ref_xy = facet_n2 * 0.4;
+    let tex_col = sample_rgb(clamp(uv + ref_xy * 0.15, vec2<f32>(0.0), vec2<f32>(1.0)));
+    let tex_r = sample_rgb(clamp(uv + ref_xy * 0.20, vec2<f32>(0.0), vec2<f32>(1.0)));
+    let tex_b = sample_rgb(clamp(uv + ref_xy * 0.10, vec2<f32>(0.0), vec2<f32>(1.0)));
+    let dispersed = vec3<f32>(tex_r.r, tex_col.g, tex_b.b);
+    let light_dir = normalize(vec3<f32>(0.5, -0.8, 1.0));
+    let diff = max(dot(facet_normal, light_dir), 0.0);
+    let view_dir = vec3<f32>(0.0, 0.0, 1.0);
+    let half_v = normalize(light_dir + view_dir);
+    let spec = pow(max(dot(facet_normal, half_v), 0.0), 80.0);
+    let fres = pow(1.0 - max(dot(view_dir, facet_normal), 0.0), 3.0);
+    let caustic_angle = angle + t * 0.5;
+    let rainbow = vec3<f32>(0.5) + 0.5 * cos(tau * (vec3<f32>(caustic_angle / tau) + vec3<f32>(0.0, 0.33, 0.67)));
+    var gem_col = dispersed * (diff * 0.6 + 0.4);
+    gem_col = gem_col + rainbow * fres * 0.4 + vec3<f32>(spec) * sparkle * 3.0 + rainbow * spec * sparkle * 0.5;
+    let edge_dist = abs(ax - half_width * 0.97);
+    let edge = smoothstep(0.02, 0.0, edge_dist) * in_diamond;
+    gem_col = gem_col + vec3<f32>(0.8, 0.85, 1.0) * edge * 0.5;
+    var col = mix(src.rgb * 0.15, gem_col, in_diamond);
+    col = mix(src.rgb, col, amount);
+    return vec4<f32>(clamp(col, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 165u) {
+    // shatter-3d: voronoi shards exploding with gravity + rotation
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let force = amount * 2.0;
+    let shard_size = mix(4.0, 20.0, u.params0.x);
+    let speed = 0.5 + u.params0.y * 2.0;
+    let gravity = u.params0.z * 0.5;
+    let tau = 6.28318530718;
+    let phase = sin(time * speed) * 0.5 + 0.5;
+    let explode = phase * force;
+    let cell_size = vec2<f32>(shard_size) / res;
+    let cell_id = floor(uv / cell_size);
+    var min_dist = 10.0;
+    var closest_id = cell_id;
+    var closest_center = vec2<f32>(0.5);
+    for (var y = -1; y <= 1; y = y + 1) {
+      for (var x = -1; x <= 1; x = x + 1) {
+        let neighbor = cell_id + vec2<f32>(f32(x), f32(y));
+        let point = vec2<f32>(hash21(neighbor), hash21(neighbor + vec2<f32>(57.0)));
+        let diff2 = neighbor + point - uv / cell_size;
+        let d = dot(diff2, diff2);
+        if (d < min_dist) {
+          min_dist = d;
+          closest_id = neighbor;
+          closest_center = neighbor + point;
+        }
+      }
+    }
+    let shard_angle = hash21(closest_id) * tau;
+    let shard_delay = hash21(closest_id + vec2<f32>(57.0)) * 0.5;
+    let local_explode = max(explode - shard_delay, 0.0);
+    let dir = normalize(closest_center * cell_size - vec2<f32>(0.5) + vec2<f32>(1e-6));
+    var offset = dir * local_explode * 0.3;
+    offset.y = offset.y - gravity * local_explode * local_explode;
+    let rot = local_explode * shard_angle * 2.0;
+    let center = closest_center * cell_size;
+    var rot_uv = uv - center;
+    let cs = cos(rot); let sn = sin(rot);
+    rot_uv = vec2<f32>(rot_uv.x * cs - rot_uv.y * sn, rot_uv.x * sn + rot_uv.y * cs) + center;
+    let sample_uv = rot_uv - offset;
+    let edge = smoothstep(0.01, 0.03, sqrt(min_dist));
+    let depth = 1.0 - local_explode * 0.3;
+    var col = sample_rgb(clamp(sample_uv, vec2<f32>(0.0), vec2<f32>(1.0))) * depth * edge;
+    let edge_highlight = 1.0 - smoothstep(0.02, 0.06, sqrt(min_dist));
+    col = col + edge_highlight * vec3<f32>(0.3) * local_explode;
+    return vec4<f32>(clamp(col, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 166u) {
+    // mobius-strip: image wrapped along a rotating mobius band
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let strip_w = 0.1 + u.params0.x * 0.5;
+    let rot_speed = u.params0.y * 1.5;
+    let twist_amt = 1.0 + u.params0.z * 4.0;
+    let tau = 6.28318530718;
+    var p = (uv - vec2<f32>(0.5)) * 2.0;
+    p.x = p.x * (res.x / max(1.0, res.y));
+    p.y = -p.y;
+    let t = time * rot_speed;
+    let ro = vec3<f32>(0.0, 1.2, -3.0);
+    let fwd = normalize(-ro);
+    let right = normalize(cross(fwd, vec3<f32>(0.0, 1.0, 0.0)));
+    let up = cross(right, fwd);
+    let rd = normalize(fwd + p.x * right + p.y * up);
+    var min_dist = 100.0;
+    var best_u = 0.0;
+    var best_v = 0.0;
+    for (var i = 0; i < 48; i = i + 1) {
+      let u0 = f32(i) / 48.0 * tau;
+      for (var j = 0; j < 6; j = j + 1) {
+        let v0 = f32(j) / 5.0 * 2.0 - 1.0;
+        let half_twist = u0 * twist_amt * 0.5;
+        let big_r = 1.2;
+        let mp = vec3<f32>(
+          (big_r + v0 * strip_w * cos(half_twist)) * cos(u0 + t),
+          v0 * strip_w * sin(half_twist),
+          (big_r + v0 * strip_w * cos(half_twist)) * sin(u0 + t)
+        );
+        let diff3 = mp - ro;
+        let along = dot(diff3, rd);
+        if (along > 0.0) {
+          let closest = ro + rd * along;
+          let d = length(mp - closest);
+          if (d < min_dist) {
+            min_dist = d;
+            best_u = u0;
+            best_v = v0;
+          }
+        }
+      }
+    }
+    var col = src.rgb * 0.08;
+    if (min_dist < 0.08) {
+      var tex_col = sample_rgb(vec2<f32>(fract(best_u / tau), best_v * 0.5 + 0.5));
+      let shade = smoothstep(0.08, 0.01, min_dist);
+      let light = 0.5 + 0.5 * sin(best_u * 2.0 + t);
+      tex_col = tex_col * (0.6 + 0.4 * light);
+      col = tex_col * shade;
+    }
+    return vec4<f32>(clamp(mix(src.rgb, col, amount), vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 167u) {
+    // voxel-displace: isometric voxel height blocks from luma
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let depth_scale = 0.3 + amount * 1.5;
+    let grid_res = floor(mix(6.0, 32.0, u.params0.x));
+    let rot_angle = time * u.params0.y * 0.8;
+    let gap = u.params0.z * 0.3;
+    var p = (uv - vec2<f32>(0.5)) * 2.0;
+    p.x = p.x * (res.x / max(1.0, res.y));
+    p.y = -p.y;
+    let ca = cos(rot_angle); let sa = sin(rot_angle);
+    let rp = vec2<f32>(p.x * ca - p.y * sa, p.x * sa + p.y * ca);
+    let iso_p = vec2<f32>(rp.x, rp.y / 0.65);
+    let grid_uv = iso_p * 0.5 + vec2<f32>(0.5);
+    let voxel_id = floor(grid_uv * grid_res);
+    let cell_uv = fract(grid_uv * grid_res);
+    let tex_coord = (voxel_id + vec2<f32>(0.5)) / grid_res;
+    let tex_col = sample_rgb(clamp(tex_coord, vec2<f32>(0.0), vec2<f32>(1.0)));
+    let height = dot(tex_col, vec3<f32>(0.2126, 0.7152, 0.0722)) * depth_scale;
+    let in_grid = step(0.0, grid_uv.x) * step(grid_uv.x, 1.0) * step(0.0, grid_uv.y) * step(grid_uv.y, 1.0);
+    let half_gap = gap * 0.5;
+    let in_cell = step(half_gap, cell_uv.x) * step(cell_uv.x, 1.0 - half_gap) * step(half_gap, cell_uv.y) * step(cell_uv.y, 1.0 - half_gap);
+    let left_tex = sample_rgb(clamp((voxel_id + vec2<f32>(-0.5, 0.5)) / grid_res, vec2<f32>(0.0), vec2<f32>(1.0)));
+    let front_tex = sample_rgb(clamp((voxel_id + vec2<f32>(0.5, 1.5)) / grid_res, vec2<f32>(0.0), vec2<f32>(1.0)));
+    let left_h = dot(left_tex, vec3<f32>(0.2126, 0.7152, 0.0722)) * depth_scale;
+    let front_h = dot(front_tex, vec3<f32>(0.2126, 0.7152, 0.0722)) * depth_scale;
+    let side_exposure_x = max(height - left_h, 0.0);
+    let side_exposure_y = max(height - front_h, 0.0);
+    let top_face = in_cell;
+    let right_side = step(0.0, side_exposure_x) * step(cell_uv.x, half_gap * 3.0) * (1.0 - step(half_gap, cell_uv.x));
+    let front_side = step(0.0, side_exposure_y) * step(1.0 - half_gap * 3.0, cell_uv.y) * step(cell_uv.y, 1.0);
+    let voxel_col = tex_col * 1.1 * top_face + tex_col * 0.6 * right_side + tex_col * 0.4 * front_side;
+    let show_voxel = in_grid * max(top_face, max(right_side, front_side));
+    var col = mix(vec3<f32>(0.02), voxel_col, show_voxel);
+    let ao = smoothstep(0.0, half_gap * 2.0, min(cell_uv.x, min(cell_uv.y, min(1.0 - cell_uv.x, 1.0 - cell_uv.y))));
+    col = col * mix(0.7, 1.0, ao);
+    col = col * (0.6 + height * 0.6);
+    return vec4<f32>(clamp(col, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 168u) {
+    // wave-surface: refracting water plane
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let amp = 0.05 + amount * 0.3;
+    let freq = 2.0 + u.params0.x * 10.0;
+    let speed = 0.5 + u.params0.y * 3.0;
+    let specular = u.params0.z;
+    let t = time * speed;
+    var p = (uv - vec2<f32>(0.5)) * 2.0;
+    p.x = p.x * (res.x / max(1.0, res.y));
+    p.y = -p.y;
+    let ro = vec3<f32>(0.0, 2.0, -1.5);
+    let rd = normalize(vec3<f32>(p.x, -1.2, p.y + 0.5));
+    let t_plane = -ro.y / rd.y;
+    var col = vec3<f32>(0.01, 0.02, 0.05);
+    if (t_plane > 0.0) {
+      let hit_pos = ro + rd * t_plane;
+      let sp = hit_pos.xz;
+      let eps = 0.01;
+      var h = 0.0; var h_l = 0.0; var h_r = 0.0; var h_d = 0.0; var h_u = 0.0;
+      var f_muls = array<f32, 5>(1.0, 0.7, 0.5, 0.8, 2.0);
+      var t_muls = array<f32, 5>(1.3, 0.9, 1.7, 2.1, 2.5);
+      var a_muls = array<f32, 5>(0.5, 0.3, 0.2, 0.15, 0.1);
+      var dirs_a = array<vec2<f32>, 5>(vec2<f32>(1.0, 0.0), vec2<f32>(0.0, 1.0), vec2<f32>(1.0, 1.0), vec2<f32>(1.0, -1.0), vec2<f32>(2.0, 1.5));
+      for (var w = 0; w < 5; w = w + 1) {
+        let f_mul = f_muls[w];
+        let t_mul = t_muls[w];
+        let a_mul = a_muls[w];
+        let dir_a = dirs_a[w];
+        let norm_d = max(1.0, length(dir_a));
+        h = h + sin(dot(sp, dir_a) * freq * f_mul / norm_d + t * t_mul) * a_mul;
+        h_l = h_l + sin(dot(sp - vec2<f32>(eps, 0.0), dir_a) * freq * f_mul / norm_d + t * t_mul) * a_mul;
+        h_r = h_r + sin(dot(sp + vec2<f32>(eps, 0.0), dir_a) * freq * f_mul / norm_d + t * t_mul) * a_mul;
+        h_d = h_d + sin(dot(sp - vec2<f32>(0.0, eps), dir_a) * freq * f_mul / norm_d + t * t_mul) * a_mul;
+        h_u = h_u + sin(dot(sp + vec2<f32>(0.0, eps), dir_a) * freq * f_mul / norm_d + t * t_mul) * a_mul;
+      }
+      let normal = normalize(vec3<f32>((h_l - h_r) * amp, 2.0 * eps, (h_d - h_u) * amp));
+      let refr = refract(rd, normal, 0.75);
+      let tex_uv = fract(sp * 0.3 + vec2<f32>(0.5) + refr.xz * 0.1);
+      let tex_col = sample_rgb(tex_uv);
+      let light_dir = normalize(vec3<f32>(0.3, 1.0, -0.5));
+      let diff = max(dot(normal, light_dir), 0.0) * 0.6 + 0.4;
+      let view_dir = normalize(-rd);
+      let refl_dir = reflect(-light_dir, normal);
+      let spec = pow(max(dot(view_dir, refl_dir), 0.0), 32.0) * specular;
+      let fres = pow(1.0 - max(dot(view_dir, normal), 0.0), 4.0) * 0.3;
+      col = tex_col * diff + vec3<f32>(0.4, 0.6, 0.9) * fres + vec3<f32>(spec);
+      col = col * exp(-t_plane * 0.15);
+    }
+    return vec4<f32>(clamp(col, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 169u) {
+    // prism-split: triangular prism with chromatic dispersion
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let separation = amount * 0.15;
+    let prism_angle = u.params0.x * 3.14159265;
+    let rotation = u.params0.y * 6.28318530718;
+    let tint_intensity = u.params0.z;
+    let tint = vec3<f32>(u.params0.w, u.params1.x, u.params1.y);
+    let tau = 6.28318530718;
+    var p = (uv - vec2<f32>(0.5)) * 2.0;
+    p.x = p.x * (res.x / max(1.0, res.y));
+    p.y = -p.y;
+    let ra = rotation + time * 0.3;
+    let cra = cos(ra); let sra = sin(ra);
+    p = vec2<f32>(cra * p.x - sra * p.y, sra * p.x + cra * p.y);
+    let prism_size = 0.4 + prism_angle * 0.3;
+    // sdTriangle
+    let k = sqrt(3.0);
+    var tp = p;
+    tp.x = abs(tp.x) - prism_size;
+    tp.y = tp.y + prism_size / k;
+    if (tp.x + k * tp.y > 0.0) { tp = vec2<f32>(tp.x - k * tp.y, -k * tp.x - tp.y) / 2.0; }
+    tp.x = tp.x - clamp(tp.x, -2.0 * prism_size, 0.0);
+    let dist = -length(tp) * sign(tp.y);
+    let in_prism = smoothstep(0.02, -0.02, dist);
+    let base_angle = atan2(p.y, p.x);
+    let base_dist = length(p);
+    var red_offset = vec2<f32>(cos(base_angle - separation), sin(base_angle - separation)) * separation * base_dist;
+    var blue_offset = vec2<f32>(cos(base_angle + separation), sin(base_angle + separation)) * separation * base_dist;
+    red_offset = red_offset * (1.0 + in_prism * 4.0);
+    blue_offset = blue_offset * (1.0 + in_prism * 4.0);
+    var col = vec3<f32>(
+      sample_rgb(uv + red_offset).r,
+      src.g,
+      sample_rgb(uv + blue_offset).b
+    );
+    col = col * mix(vec3<f32>(1.0), tint, tint_intensity * in_prism);
+    let edge_glow = smoothstep(0.05, 0.0, abs(dist)) * 0.6;
+    let rainbow = vec3<f32>(0.5) + 0.5 * cos(tau * (vec3<f32>(base_angle / tau) + vec3<f32>(0.0, 0.33, 0.67)));
+    col = col + rainbow * edge_glow * separation * 5.0;
+    let highlight = pow(max(1.0 - abs(dist) * 5.0, 0.0), 8.0) * 0.2;
+    col = col + vec3<f32>(highlight);
+    return vec4<f32>(clamp(col, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 170u) {
+    // origami-fold: animated paper folds with creases
+    let time = u.resolution_time.z;
+    let fold_depth = 0.1 + amount * 0.9;
+    let fold_count = 2.0 + floor(u.params0.x * 10.0);
+    let speed = 0.5 + u.params0.y * 2.0;
+    let crease_sharpen = 2.0 + u.params0.z * 20.0;
+    let t = time * speed;
+    let fold_anim = (sin(t) * 0.5 + 0.5) * fold_depth;
+    let h_fold = uv.y * fold_count;
+    let h_fold_id = floor(h_fold);
+    let h_fold_frac = fract(h_fold);
+    let v_fold = uv.x * fold_count;
+    let v_fold_id = floor(v_fold);
+    let v_fold_frac = fract(v_fold);
+    let h_dir = (h_fold_id - floor(h_fold_id * 0.5) * 2.0) * 2.0 - 1.0;
+    let v_dir = (v_fold_id - floor(v_fold_id * 0.5) * 2.0) * 2.0 - 1.0;
+    let h_angle = (h_fold_frac - 0.5) * 2.0 * h_dir;
+    let v_angle = (v_fold_frac - 0.5) * 2.0 * v_dir;
+    let fold_normal_z = cos(h_angle * fold_anim * 3.14159265 * 0.5) * cos(v_angle * fold_anim * 3.14159265 * 0.5);
+    let fold_normal_x = sin(v_angle * fold_anim * 3.14159265 * 0.5) * 0.5;
+    let fold_normal_y = sin(h_angle * fold_anim * 3.14159265 * 0.5) * 0.5;
+    let normal = normalize(vec3<f32>(fold_normal_x, fold_normal_y, fold_normal_z));
+    let light_dir = normalize(vec3<f32>(0.5, 0.7, 1.0));
+    let diff = max(dot(normal, light_dir), 0.0) * 0.6 + 0.4;
+    let half_dir = normalize(light_dir + vec3<f32>(0.0, 0.0, 1.0));
+    let spec = pow(max(dot(normal, half_dir), 0.0), 16.0) * 0.3;
+    let disp_uv = clamp(uv + vec2<f32>(fold_normal_x, fold_normal_y) * fold_anim * 0.02, vec2<f32>(0.0), vec2<f32>(1.0));
+    let tex_col = sample_rgb(disp_uv);
+    let h_crease = pow(abs(h_fold_frac - 0.5) * 2.0, crease_sharpen);
+    let v_crease = pow(abs(v_fold_frac - 0.5) * 2.0, crease_sharpen);
+    let crease_dark = mix(0.6, 1.0, min(h_crease, v_crease));
+    let shadow = mix(1.0, fold_normal_z, fold_anim);
+    var col = tex_col * diff * crease_dark * shadow + vec3<f32>(spec) * fold_anim;
+    let edge_dist = min(abs(h_fold_frac - 0.5), abs(v_fold_frac - 0.5));
+    col = col + vec3<f32>(smoothstep(0.02, 0.0, edge_dist) * fold_anim * 0.4);
+    return vec4<f32>(clamp(col, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 171u) {
+    // mirror-room: bouncing reflections inside a textured box
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let room_size = 0.5 + u.params0.x * 2.0;
+    let cam_speed = u.params0.y * 0.5;
+    let refl_fade = 0.3 + u.params0.z * 0.65;
+    var p = (uv - vec2<f32>(0.5)) * 2.0;
+    p.x = p.x * (res.x / max(1.0, res.y));
+    p.y = -p.y;
+    let t = time;
+    let ro = vec3<f32>(
+      sin(t * cam_speed * 0.7) * room_size * 0.3,
+      sin(t * cam_speed * 0.5) * room_size * 0.2,
+      cos(t * cam_speed * 0.6) * room_size * 0.3
+    );
+    let look_angle = t * cam_speed * 0.4;
+    let fwd = normalize(vec3<f32>(cos(look_angle), sin(t * cam_speed * 0.2) * 0.3, sin(look_angle)));
+    let right = normalize(cross(fwd, vec3<f32>(0.0, 1.0, 0.0)));
+    let up = cross(right, fwd);
+    var ray_pos = ro;
+    var ray_dir = normalize(fwd + p.x * right * 0.8 + p.y * up * 0.8);
+    var col = vec3<f32>(0.0);
+    var energy = 1.0;
+    for (var bounce = 0; bounce < 6; bounce = bounce + 1) {
+      let t_min = (vec3<f32>(-room_size) - ray_pos) / ray_dir;
+      let t_max = (vec3<f32>(room_size) - ray_pos) / ray_dir;
+      let t2 = max(t_min, t_max);
+      var hit_t = min(min(t2.x, t2.y), t2.z);
+      if (hit_t < 0.001) { hit_t = 0.001; }
+      let hit_pos = ray_pos + ray_dir * hit_t;
+      let abs_hit = abs(hit_pos);
+      var normal = vec3<f32>(0.0, 0.0, -sign(ray_dir.z));
+      var face_uv = hit_pos.xy / room_size * 0.5 + vec2<f32>(0.5);
+      if (abs_hit.x >= abs_hit.y - 0.001 && abs_hit.x >= abs_hit.z - 0.001) {
+        normal = vec3<f32>(-sign(ray_dir.x), 0.0, 0.0);
+        face_uv = hit_pos.yz / room_size * 0.5 + vec2<f32>(0.5);
+      } else if (abs_hit.y >= abs_hit.z - 0.001) {
+        normal = vec3<f32>(0.0, -sign(ray_dir.y), 0.0);
+        face_uv = hit_pos.xz / room_size * 0.5 + vec2<f32>(0.5);
+      }
+      let tex_col = sample_rgb(clamp(face_uv, vec2<f32>(0.0), vec2<f32>(1.0)));
+      col = col + tex_col * energy * 0.35;
+      energy = energy * refl_fade;
+      if (energy < 0.01) { break; }
+      ray_pos = hit_pos + normal * 0.01;
+      ray_dir = reflect(ray_dir, normal);
+    }
+    return vec4<f32>(clamp(mix(src.rgb, col, amount), vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 172u) {
+    // geometric-tile-pro: 3D flip-board tiles
+    let time = u.resolution_time.z;
+    let tile_count = 3.0 + amount * 15.0;
+    let flip_range = u.params0.x * 3.14159265;
+    let speed = u.params0.y * 2.0;
+    let gap_size = u.params0.z * 0.1;
+    let tau = 6.28318530718;
+    let tile_id = floor(uv * tile_count);
+    let tile_uv = fract(uv * tile_count);
+    let border = step(vec2<f32>(gap_size), tile_uv) * step(vec2<f32>(gap_size), vec2<f32>(1.0) - tile_uv);
+    let in_tile = border.x * border.y;
+    if (in_tile > 0.5) {
+      let rnd = hash21(tile_id);
+      let flip_angle = sin(time * speed + rnd * tau) * flip_range;
+      let centered = tile_uv - vec2<f32>(0.5);
+      let cos_a = cos(flip_angle);
+      let persp_x = centered.x * cos_a;
+      let persp_scale = 1.0 / (1.0 + abs(centered.x * sin(flip_angle)) * 0.5);
+      let rotated_uv = vec2<f32>(persp_x, centered.y) * persp_scale + vec2<f32>(0.5);
+      let src_uv = (tile_id + clamp(rotated_uv, vec2<f32>(0.01), vec2<f32>(0.99))) / tile_count;
+      let tile_color = sample_rgb(src_uv);
+      let lighting = 0.6 + 0.4 * cos_a;
+      return vec4<f32>(clamp(tile_color * lighting, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+    }
+    return vec4<f32>(vec3<f32>(0.02), src.a);
+  }
+  if (code == 173u) {
+    // shingle-stack: overlapping animated shingles with parallax
+    let time = u.resolution_time.z;
+    let tile_count = floor(mix(3.0, 14.0, u.params0.x));
+    let slide_speed = u.params0.y * 2.0;
+    let overlap = 0.2 + u.params0.z * 0.4;
+    let tau = 6.28318530718;
+    var scaled = uv * tile_count;
+    let row = floor(scaled.y);
+    let row_offset = (row - floor(row * 0.5) * 2.0) * 0.5;
+    scaled.x = scaled.x + row_offset;
+    let tile_id = floor(scaled);
+    let tile_frac = fract(scaled);
+    let rnd = hash21(tile_id);
+    let rnd2 = hash21(tile_id + vec2<f32>(100.0));
+    let lift = sin(rnd * tau + time * slide_speed) * 0.5 + 0.5;
+    let parallax_amount = lift * overlap * 0.3;
+    let parallax_offset = vec2<f32>((rnd2 - 0.5) * parallax_amount, -parallax_amount * 0.5);
+    let tile_uv = (tile_id - vec2<f32>(row_offset, 0.0) + tile_frac) / tile_count;
+    let tex_col = sample_rgb(clamp(tile_uv + parallax_offset, vec2<f32>(0.0), vec2<f32>(1.0)));
+    let shadow_above = smoothstep(overlap, 0.0, tile_frac.y) * 0.4;
+    let shadow_side = smoothstep(overlap * 0.5, 0.0, tile_frac.x) * 0.2;
+    let lighting = 0.5 + lift * 0.5;
+    let edge_x = min(tile_frac.x, 1.0 - tile_frac.x);
+    let edge_y = min(tile_frac.y, 1.0 - tile_frac.y);
+    let bevel = smoothstep(0.0, 0.08, min(edge_x, edge_y));
+    var col = tex_col * lighting;
+    col = col * (1.0 - shadow_above - shadow_side);
+    col = col + vec3<f32>((1.0 - bevel) * lift * 0.3);
+    col = col * (bevel * 0.3 + 0.7);
+    return vec4<f32>(clamp(mix(src.rgb, col, amount), vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 174u) {
+    // time-smear: temporal smear approximated with decaying directional/zoom taps
+    let time = u.resolution_time.z;
+    let blend2 = u.params0.x;
+    let decay = clamp(u.params0.y, 0.0, 0.98);
+    let s_mode = u32(round(u.params0.z));
+    let speed = u.params0.w;
+    let t = time * speed;
+    let dir = vec2<f32>(cos(t * 0.7), sin(t * 0.7));
+    var acc = vec3<f32>(0.0);
+    var wsum = 0.0;
+    var w = 1.0;
+    for (var i = 0u; i < 16u; i = i + 1u) {
+      let fi = f32(i);
+      var s_uv = uv - dir * amount * 0.02 * fi * blend2;
+      if (s_mode >= 1u) {
+        s_uv = vec2<f32>(0.5) + (s_uv - vec2<f32>(0.5)) * (1.0 + fi * amount * 0.015);
+      }
+      acc = acc + sample_rgb(clamp(s_uv, vec2<f32>(0.0), vec2<f32>(1.0))) * w;
+      wsum = wsum + w;
+      w = w * (0.55 + decay * 0.45);
+      if (w < 0.01) { break; }
+    }
+    return vec4<f32>(acc / max(wsum, 0.001), src.a);
+  }
+  if (code == 175u) {
+    // chronophoto: strip-sequenced time-phase offsets
+    let time = u.resolution_time.z;
+    let strip_factor = u.params0.x;
+    let phase_amt = u.params0.y;
+    let c_mode = u32(round(u.params0.z));
+    let speed = u.params0.w;
+    let strips = 4.0 + strip_factor * 28.0;
+    var coord = uv.x;
+    if (c_mode >= 1u) { coord = uv.y; }
+    let strip_id = floor(coord * strips);
+    let golden = 2.39996;
+    let phase = sin(time * speed + strip_id * golden * phase_amt) * amount * 0.08;
+    var s_uv = uv + vec2<f32>(phase, 0.0);
+    if (c_mode >= 1u) { s_uv = uv + vec2<f32>(0.0, phase); }
+    var col = sample_rgb(clamp(s_uv, vec2<f32>(0.0), vec2<f32>(1.0)));
+    // older strips desaturate + darken slightly (sequence-photography feel)
+    let age = fract(strip_id / strips + time * speed * 0.05);
+    let l = luma(col);
+    col = mix(col, vec3<f32>(l), age * amount * 0.6);
+    col = col * (1.0 - age * amount * 0.25);
+    // strip seams
+    let seam = smoothstep(0.02, 0.0, abs(fract(coord * strips) - 0.5) - 0.47);
+    col = col * (1.0 - seam * amount * 0.5);
+    return vec4<f32>(col, src.a);
+  }
+  if (code == 176u) {
+    // optical-flow-datamosh: block-quantized gradient-flow displacement
+    let res = u.resolution_time.xy;
+    let time = u.resolution_time.z;
+    let motion_scale = u.params0.x;
+    let persistence = u.params0.y;
+    let chroma_split = u.params0.z;
+    let block_size = max(2.0, u.params0.w);
+    let freeze = u.params1.x;
+    let texel = 1.0 / max(res, vec2<f32>(2.0));
+    let block_id = floor(uv * res / block_size);
+    let block_center = (block_id + vec2<f32>(0.5)) * block_size / res;
+    let g_step = texel * block_size * 0.5;
+    let l_l = luma(sample_rgb(block_center - vec2<f32>(g_step.x, 0.0)));
+    let l_r = luma(sample_rgb(block_center + vec2<f32>(g_step.x, 0.0)));
+    let l_d = luma(sample_rgb(block_center - vec2<f32>(0.0, g_step.y)));
+    let l_u = luma(sample_rgb(block_center + vec2<f32>(0.0, g_step.y)));
+    var flow = vec2<f32>(l_r - l_l, l_u - l_d) * motion_scale;
+    // temporal jitter per block, like drifting mosh vectors
+    let jit = vec2<f32>(
+      hash21(block_id + vec2<f32>(floor(time * 3.0))) - 0.5,
+      hash21(block_id + vec2<f32>(floor(time * 3.0) + 13.7)) - 0.5
+    ) * 0.35 * (1.0 - freeze);
+    flow = (flow + jit * length(flow + vec2<f32>(0.05))) * amount * persistence;
+    var col = vec3<f32>(0.0);
+    if (chroma_split > 0.001) {
+      col.r = sample_rgb(clamp(uv - flow * (1.0 + chroma_split * 0.5), vec2<f32>(0.0), vec2<f32>(1.0))).r;
+      col.g = sample_rgb(clamp(uv - flow, vec2<f32>(0.0), vec2<f32>(1.0))).g;
+      col.b = sample_rgb(clamp(uv - flow * (1.0 - chroma_split * 0.5), vec2<f32>(0.0), vec2<f32>(1.0))).b;
+    } else {
+      col = sample_rgb(clamp(uv - flow, vec2<f32>(0.0), vec2<f32>(1.0)));
+    }
+    // smear along flow within the block for mosh streaks
+    var acc = col;
+    var wsum = 1.0;
+    for (var i = 1; i <= 5; i = i + 1) {
+      let fi = f32(i) / 5.0;
+      let s = sample_rgb(clamp(uv - flow * (1.0 + fi * 2.0), vec2<f32>(0.0), vec2<f32>(1.0)));
+      let w = (1.0 - fi) * persistence;
+      acc = acc + s * w;
+      wsum = wsum + w;
+    }
+    return vec4<f32>(acc / wsum, src.a);
+  }
+  if (code == 177u) {
+    // flow-field-trails: curl-noise advected luminance trails
+    let time = u.resolution_time.z;
+    let flow_scale = max(0.5, u.params0.x);
+    let samples = clamp(round(u.params0.y), 4.0, 32.0);
+    let speed = u.params0.z;
+    let chroma_split = u.params0.w;
+    let contrast = max(0.1, u.params1.x);
+    let color_cycle = u.params1.z;
+    var p = uv;
+    var acc = vec3<f32>(0.0);
+    var wsum = 0.0;
+    let steps = i32(samples);
+    for (var i = 0; i < 32; i = i + 1) {
+      if (i >= steps) { break; }
+      let fi = f32(i);
+      var s = sample_rgb(clamp(p, vec2<f32>(0.0), vec2<f32>(1.0)));
+      if (color_cycle > 0.001) {
+        s = hue_rotate(s, fi * color_cycle * 0.03);
+      }
+      let l = pow(luma(s), contrast);
+      let w = (1.0 - fi / samples) * l;
+      acc = acc + s * w;
+      wsum = wsum + w;
+      let noise_pos = p * flow_scale + vec2<f32>(time * speed * 0.3);
+      let n0 = fbm2d(noise_pos);
+      let nx = fbm2d(noise_pos + vec2<f32>(0.01, 0.0));
+      let ny = fbm2d(noise_pos + vec2<f32>(0.0, 0.01));
+      let flow = vec2<f32>(-(ny - n0), nx - n0) / 0.01;
+      p = p + normalize(flow + vec2<f32>(0.001)) * 0.01 * amount * 2.5;
+    }
+    var trails = vec3<f32>(0.0);
+    if (wsum > 0.01) { trails = acc / wsum; }
+    if (chroma_split > 0.001) {
+      let cd = vec2<f32>(chroma_split * 0.004, 0.0);
+      trails.r = mix(trails.r, sample_rgb(clamp(p + cd, vec2<f32>(0.0), vec2<f32>(1.0))).r, 0.3);
+      trails.b = mix(trails.b, sample_rgb(clamp(p - cd, vec2<f32>(0.0), vec2<f32>(1.0))).b, 0.3);
+    }
+    let result = max(src.rgb * 0.35, trails);
+    return vec4<f32>(clamp(result, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 178u) {
+    // reaction-diffusion: stateless Turing-pattern overlay masked by luma
+    let time = u.resolution_time.z;
+    let pattern_scale = max(0.1, u.params0.x);
+    let luma_mask = u.params0.y;
+    let rd_color = vec3<f32>(u.params0.w, u.params1.x, u.params1.y);
+    let feed = u.params1.z;
+    let kill = u.params1.w;
+    let scale = pattern_scale * 9.0;
+    let a = fbm2d(uv * scale + vec2<f32>(time * 0.03));
+    let b = cellular2d(uv * scale * 0.8 + vec2<f32>(7.3, 2.1));
+    let field = a - b * 0.9;
+    // feed/kill shift the pattern threshold + width (coral vs spots vs stripes)
+    let center = (kill - feed) * 8.0;
+    let width = 0.06 + feed * 1.5;
+    var spots = smoothstep(center - width, center, field) * smoothstep(center + width, center, field);
+    let stripes = smoothstep(0.0, 0.08, abs(fract(field * 6.0 + time * 0.05) - 0.5) - 0.2);
+    spots = max(spots, (1.0 - stripes) * 0.6);
+    let l = luma(src.rgb);
+    let mask = mix(1.0, smoothstep(luma_mask - 0.25, luma_mask + 0.25, l), 0.85);
+    let pattern = spots * mask;
+    let result = mix(src.rgb, mix(src.rgb * 0.35, rd_color, pattern), amount * clamp(pattern + 0.25, 0.0, 1.0));
+    return vec4<f32>(clamp(result, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 179u) {
+    // feedback-zoom: unrolled recursive zoom feedback with hue cycling
+    let zoom_rate = 0.9 + amount * 0.15;
+    let fb_mix = clamp(u.params0.x, 0.0, 0.98);
+    let rot_per_iter = (u.params0.y - 0.5) * 0.3;
+    let hue_cycle = u.params0.z * 0.15;
+    let center = vec2<f32>(u.params0.w, u.params1.x);
+    var p = uv;
+    var acc = vec3<f32>(0.0);
+    var wsum = 0.0;
+    let cr = cos(rot_per_iter); let sr = sin(rot_per_iter);
+    for (var i = 0u; i < 16u; i = i + 1u) {
+      let fi = f32(i);
+      let w = pow(fb_mix, fi);
+      if (w < 0.01) { break; }
+      var s = sample_rgb(clamp(p, vec2<f32>(0.0), vec2<f32>(1.0)));
+      if (hue_cycle > 0.0001) {
+        s = hue_rotate(s, fi * hue_cycle);
+      }
+      acc = acc + s * w;
+      wsum = wsum + w;
+      p = (p - center) * zoom_rate + center;
+      let d = p - center;
+      p = center + vec2<f32>(d.x * cr - d.y * sr, d.x * sr + d.y * cr);
+    }
+    return vec4<f32>(acc / max(wsum, 0.001), src.a);
+  }
+  if (code == 180u) {
+    // motion-trails: directional luma-gated trail accumulation
+    let angle_deg = u.params0.x;
+    let samples = clamp(round(u.params0.y), 4.0, 32.0);
+    let falloff = u.params0.z;
+    let chroma_split = u.params0.w;
+    let ang = angle_deg * 0.017453292;
+    let trail_dir = vec2<f32>(cos(ang), sin(ang));
+    let step_size = amount * 0.02;
+    var acc = src.rgb;
+    var total_weight = 1.0;
+    let steps = i32(samples);
+    for (var i = 1; i <= 32; i = i + 1) {
+      if (i > steps) { break; }
+      let fi = f32(i);
+      let sample_uv = uv - trail_dir * fi * step_size;
+      if (sample_uv.x < 0.0 || sample_uv.x > 1.0 || sample_uv.y < 0.0 || sample_uv.y > 1.0) { break; }
+      var s = sample_rgb(sample_uv);
+      if (chroma_split > 0.001) {
+        let cd = trail_dir * chroma_split * 0.004 * fi;
+        s.r = sample_rgb(clamp(sample_uv + cd, vec2<f32>(0.0), vec2<f32>(1.0))).r;
+        s.b = sample_rgb(clamp(sample_uv - cd, vec2<f32>(0.0), vec2<f32>(1.0))).b;
+      }
+      let l = luma(s);
+      if (l > 0.25) {
+        let weight = mix(1.0 - fi / samples, pow(0.85, fi), falloff);
+        acc = acc + s * weight;
+        total_weight = total_weight + weight;
+      }
+    }
+    return vec4<f32>(acc / total_weight, src.a);
+  }
+  if (code == 181u) {
+    // echo-repeat: offset/scaled echo copies with hue drift
+    let count = clamp(round(u.params0.x), 2.0, 12.0);
+    let offset_xy = vec2<f32>(u.params0.y, u.params0.z);
+    let hue_shift = u.params0.w;
+    let fade_rate = clamp(amount, 0.05, 0.95);
+    var acc = src.rgb;
+    var total_weight = 1.0;
+    let n = i32(count);
+    for (var i = 1; i <= 12; i = i + 1) {
+      if (i >= n) { break; }
+      let fi = f32(i);
+      let fade = pow(fade_rate, fi);
+      let scl = pow(0.92, fi);
+      let echo_uv = (uv - vec2<f32>(0.5) - offset_xy * fi) / scl + vec2<f32>(0.5);
+      if (echo_uv.x >= 0.0 && echo_uv.x <= 1.0 && echo_uv.y >= 0.0 && echo_uv.y <= 1.0) {
+        var s = sample_rgb(echo_uv);
+        if (hue_shift > 0.0001) {
+          s = hue_rotate(s, fi * hue_shift);
+        }
+        acc = acc + s * fade;
+        total_weight = total_weight + fade;
+      }
+    }
+    return vec4<f32>(acc / total_weight, src.a);
+  }
+  if (code == 182u) {
+    // light-paint: flow-advected glowing trails from bright pixels
+    let time = u.resolution_time.z;
+    let threshold = u.params0.x;
+    let trail_length = u.params0.y;
+    let flow_angle = u.params0.z * 0.017453292;
+    let flow_scale = max(0.5, u.params0.w);
+    let chroma_shift = u.params1.x;
+    let tint = vec3<f32>(u.params1.y, u.params1.z, u.params1.w);
+    var p = uv;
+    var acc = vec3<f32>(0.0);
+    var total_weight = 0.0;
+    let steps = 4 + i32(trail_length * 12.0);
+    let bias = vec2<f32>(cos(flow_angle), sin(flow_angle)) * 0.3;
+    for (var i = 0; i < 16; i = i + 1) {
+      if (i >= steps) { break; }
+      let fi = f32(i);
+      var s = sample_rgb(clamp(p, vec2<f32>(0.0), vec2<f32>(1.0)));
+      if (chroma_shift > 0.001) {
+        s = hue_rotate(s, fi * chroma_shift * 0.02);
+      }
+      let l = luma(s);
+      if (l > threshold) {
+        let weight = 1.0 - fi / f32(steps);
+        acc = acc + s * tint * weight;
+        total_weight = total_weight + weight;
+      }
+      let noise_pos = p * flow_scale + vec2<f32>(time * 0.6);
+      let n0 = fbm2d(noise_pos);
+      let nx = fbm2d(noise_pos + vec2<f32>(0.01, 0.0));
+      let ny = fbm2d(noise_pos + vec2<f32>(0.0, 0.01));
+      let flow = vec2<f32>(-(ny - n0), nx - n0) / 0.01 + bias;
+      p = p + normalize(flow + vec2<f32>(0.001)) * 0.01;
+    }
+    var result = src.rgb;
+    if (total_weight > 0.01) {
+      result = max(src.rgb, (acc / total_weight) * 0.8 * amount * 1.4);
+    }
+    return vec4<f32>(clamp(result, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
+  }
+  if (code == 183u) {
+    // recursive-echo: zoom+rotate+translate echo stack
+    let depth = clamp(round(u.params0.x), 2.0, 16.0);
+    let zoom = clamp(u.params0.y, 0.7, 1.1);
+    let rotation_deg = u.params0.z;
+    let hue_shift = u.params0.w;
+    let offset_xy = vec2<f32>(u.params1.x, u.params1.y);
+    let fade_rate = clamp(amount, 0.05, 0.95);
+    let rot = rotation_deg * 0.017453292;
+    let cr = cos(rot); let sr = sin(rot);
+    var p = uv;
+    var acc = vec3<f32>(0.0);
+    var total_weight = 0.0;
+    let n = i32(depth);
+    for (var i = 0; i < 16; i = i + 1) {
+      if (i >= n) { break; }
+      let fi = f32(i);
+      let fade = pow(fade_rate, fi);
+      var s = sample_rgb(clamp(p, vec2<f32>(0.0), vec2<f32>(1.0)));
+      if (hue_shift > 0.0001) {
+        s = hue_rotate(s, fi * hue_shift);
+      }
+      acc = acc + s * fade;
+      total_weight = total_weight + fade;
+      var d = (p - vec2<f32>(0.5)) * zoom;
+      d = vec2<f32>(d.x * cr - d.y * sr, d.x * sr + d.y * cr);
+      p = vec2<f32>(0.5) + d + offset_xy;
+    }
+    return vec4<f32>(acc / max(total_weight, 0.001), src.a);
+  }
   return src;
 }
 
@@ -3157,7 +8141,7 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     manifest.amountMax,
     manifest.defaultAmount,
   );
-  const mix = clampNumber(options.mix ?? 1, 0, 1, 1);
+  let mix = clampNumber(options.mix ?? 1, 0, 1, 1);
   const frameIndex = Math.max(0, Math.round(options.frameIndex ?? 0));
   const params = options.params ?? {};
   let param0 = clampNumber(params.scale ?? params.param0 ?? params.mode ?? 0.42, 0, 64, 0.42);
@@ -3778,6 +8762,947 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param9 = 0;
     param10 = 0;
     param11 = 0;
+  } else if (options.effect === 'phase-lab') {
+    amount = clampNumber(options.amount ?? params.phaseLabIntensity ?? params.amount, 0, 4, 1.35);
+    mix = clampNumber(params.phaseLabMix ?? options.mix, 0, 1, 0.92);
+    param0 = clampNumber(params.phaseLabMode ?? params.mode ?? params.param0, 0, 7, 0);
+    param1 = clampNumber(params.phaseLabScale ?? params.scale ?? params.param1, 0.1, 32, 6);
+    param2 = clampNumber(params.phaseLabSpeed ?? params.speed ?? params.param2, 0, 4, 0.35);
+    param3 = clampNumber(params.phaseLabPhase ?? params.param3, -100, 100, 0);
+    param4 = clampNumber(params.phaseLabColorGain ?? params.param4, 0, 4, 1.25);
+    param5 = clampNumber(params.phaseLabSourceBleed ?? params.param5, 0, 1, 0.22);
+    param6 = clampNumber(params.phaseLabEdgeBoost ?? params.param6, 0, 8, 2.4);
+    param7 = clampNumber(params.phaseLabDistortion ?? params.param7, 0, 1, 0.04);
+    param8 = clampNumber(params.phaseLabLineDensity ?? params.param8, 0.1, 64, 18);
+    param9 = clampNumber(params.phaseLabPolarizerAngle ?? params.param9, -360, 360, 35);
+    param10 = clampNumber(params.phaseLabSpectralShift ?? params.param10, -4, 4, 0.35);
+    param11 = clampNumber(params.phaseLabFocus ?? params.param11, 0.08, 4, 1.45);
+  } else if (options.effect === 'lens-dirt') {
+    amount = clampNumber(options.amount ?? params.dirtAmount ?? params.amount, 0, 1, 0.5);
+    param0 = clampNumber(params.dirtScale ?? params.scale ?? params.param0, 0.5, 32, 8);
+    param1 = clampNumber(params.dirtThreshold ?? params.param1, 0, 1, 0.6);
+    param2 = clampNumber(params.dirtTintWarmth ?? params.param2, 0, 1, 0.4);
+    param3 = clampNumber(params.dirtScratches ?? params.param3, 0, 1, 0.2);
+    param4 = clampNumber(params.dirtSpots ?? params.param4, 0, 1, 0.6);
+    param5 = clampNumber(params.dirtMode ?? params.param5, 0, 2, 0);
+    param6 = clampNumber(params.dirtAnimSpeed ?? params.param6, 0, 1, 0);
+    param7 = 0;
+    param8 = 0;
+    param9 = 0;
+    param10 = 0;
+    param11 = 0;
+  } else if (options.effect === 'diffusion-promist') {
+    amount = clampNumber(options.amount ?? params.diffAmount ?? params.amount, 0, 1, 0.5);
+    mix = clampNumber(params.diffMix ?? options.mix, 0, 1, 1);
+    param0 = clampNumber(params.diffRadius ?? params.param0, 1, 30, 12);
+    param1 = clampNumber(params.diffThreshold ?? params.param1, 0, 1, 0.6);
+    param2 = clampNumber(params.diffShadowLift ?? params.param2, 0, 1, 0.3);
+    param3 = clampNumber(params.diffHighlightBloom ?? params.param3, 0, 1, 0.5);
+    param4 = clampNumber(params.diffHaze ?? params.param4, 0, 1, 0.3);
+    param5 = clampNumber(params.diffHazeWarmth ?? params.param5, 0, 1, 0.5);
+    param6 = 0;
+    param7 = 0;
+    param8 = 0;
+    param9 = 0;
+    param10 = 0;
+    param11 = 0;
+  } else if (options.effect === 'compression-artifacts') {
+    amount = clampNumber(options.amount ?? params.compArtMix ?? params.amount, 0, 1, 1);
+    param0 = clampNumber(params.compArtBlockSize ?? params.param0, 2, 64, 8);
+    param1 = clampNumber(params.compArtQuality ?? params.param1, 0, 1, 0.4);
+    param2 = clampNumber(params.compArtChromaSubsample ?? params.param2, 0, 1, 0.6);
+    param3 = clampNumber(params.compArtBlockNoise ?? params.param3, 0, 1, 0.2);
+    param4 = clampNumber(params.compArtMode ?? params.param4, 0, 2, 0);
+    param5 = 0;
+    param6 = 0;
+    param7 = 0;
+    param8 = 0;
+    param9 = 0;
+    param10 = 0;
+    param11 = 0;
+  } else if (options.effect === 'datamosh-lite') {
+    amount = clampNumber(options.amount ?? params.amount, 0, 1, 0.5);
+    param0 = clampNumber(params.amount2 ?? params.param0, 0, 1, 0.3);
+    param1 = clampNumber(params.amount3 ?? params.param1, 0, 1, 0.4);
+    param2 = 0;
+    param3 = 0;
+    param4 = 0;
+    param5 = 0;
+    param6 = 0;
+    param7 = 0;
+    param8 = 0;
+    param9 = 0;
+    param10 = 0;
+    param11 = 0;
+  } else if (options.effect === 'scanline-drift') {
+    amount = clampNumber(options.amount ?? params.scanDriftIntensity ?? params.amount, 0, 1, 0.5);
+    param0 = clampNumber(params.scanDriftFrequency ?? params.param0, 1, 200, 80);
+    param1 = clampNumber(params.scanDriftSpeed ?? params.param1, 0, 3, 1);
+    param2 = clampNumber(params.scanDriftWaveform ?? params.param2, 0, 2, 0);
+    param3 = clampNumber(params.scanDriftChromaSplit ?? params.param3, 0, 1, 0.3);
+    param4 = clampNumber(params.scanDriftChunkiness ?? params.param4, 0, 1, 0);
+    param5 = 0;
+    param6 = 0;
+    param7 = 0;
+    param8 = 0;
+    param9 = 0;
+    param10 = 0;
+    param11 = 0;
+  } else if (options.effect === 'tape-dropout') {
+    amount = clampNumber(options.amount ?? params.tapeDropoutDensity ?? params.amount, 0, 1, 0.4);
+    mix = clampNumber(params.tapeDropoutMix ?? options.mix, 0, 1, 1);
+    param0 = clampNumber(params.tapeDropoutLength ?? params.param0, 0, 1, 0.5);
+    param1 = clampNumber(params.tapeDropoutColor ?? params.param1, 0, 2, 0);
+    param2 = clampNumber(params.tapeDropoutSpeed ?? params.param2, 0, 3, 1);
+    param3 = clampNumber(params.tapeDropoutNoise ?? params.param3, 0, 1, 0.7);
+    param4 = 0;
+    param5 = 0;
+    param6 = 0;
+    param7 = 0;
+    param8 = 0;
+    param9 = 0;
+    param10 = 0;
+    param11 = 0;
+  } else if (options.effect === 'ripple-caustics') {
+    amount = clampNumber(options.amount ?? params.causticsIntensity ?? params.amount, 0, 2, 0.6);
+    param0 = clampNumber(params.causticsScale ?? params.param0, 0.5, 32, 8);
+    param1 = clampNumber(params.causticsSpeed ?? params.param1, 0, 3, 0.6);
+    param2 = clampNumber(params.causticsRefraction ?? params.param2, 0, 1, 0.4);
+    param3 = clampNumber(params.causticsTintR ?? params.param3, 0, 1, 0.6);
+    param4 = clampNumber(params.causticsTintG ?? params.param4, 0, 1, 0.85);
+    param5 = clampNumber(params.causticsTintB ?? params.param5, 0, 1, 1);
+    param6 = clampNumber(params.causticsMode ?? params.param6, 0, 2, 0);
+    param7 = 0;
+    param8 = 0;
+    param9 = 0;
+    param10 = 0;
+    param11 = 0;
+  } else if (options.effect === 'shockwave') {
+    amount = clampNumber(options.amount ?? params.shockAmplitude ?? params.amount, 0, 0.2, 0.06);
+    param0 = clampNumber(params.shockTriggerTime ?? params.param0, 0, 1e9, 0);
+    param1 = clampNumber(params.shockSpeed ?? params.param1, 0.1, 3, 0.6);
+    param2 = clampNumber(params.shockRingWidth ?? params.param2, 0.01, 0.5, 0.15);
+    param3 = clampNumber(params.shockCenterX ?? params.param3, 0, 1, 0.5);
+    param4 = clampNumber(params.shockCenterY ?? params.param4, 0, 1, 0.5);
+    param5 = clampNumber(params.shockChromatic ?? params.param5, 0, 1, 0.3);
+    param6 = clampNumber(params.shockMode ?? params.param6, 0, 1, 0);
+    param7 = 0;
+    param8 = 0;
+    param9 = 0;
+    param10 = 0;
+    param11 = 0;
+  } else if (options.effect === 'droste-recursive') {
+    amount = clampNumber(options.amount ?? params.drosteZoom ?? params.amount, 1.05, 3, 1.5);
+    mix = clampNumber(params.drosteMix ?? options.mix, 0, 1, 1);
+    param0 = clampNumber(params.drosteRotation ?? params.param0, -360, 360, 5);
+    param1 = clampNumber(params.drosteIterations ?? params.param1, 1, 12, 6);
+    param2 = clampNumber(params.drosteOffsetX ?? params.param2, 0, 1, 0.5);
+    param3 = clampNumber(params.drosteOffsetY ?? params.param3, 0, 1, 0.5);
+    param4 = clampNumber(params.drosteFrameSize ?? params.param4, 0, 0.5, 0.4);
+    param5 = 0;
+    param6 = 0;
+    param7 = 0;
+    param8 = 0;
+    param9 = 0;
+    param10 = 0;
+    param11 = 0;
+  } else if (options.effect === 'slit-scan') {
+    amount = clampNumber(options.amount ?? params.slitScanIntensity ?? params.amount, 0, 1, 0.5);
+    param0 = clampNumber(params.slitScanMode ?? params.param0, 0, 3, 0);
+    param1 = clampNumber(params.slitScanPattern ?? params.param1, 0, 2, 0);
+    param2 = clampNumber(params.slitScanSpeed ?? params.param2, 0, 3, 1);
+    param3 = clampNumber(params.slitScanChromaSplit ?? params.param3, 0, 1, 0);
+    param4 = 0;
+    param5 = 0;
+    param6 = 0;
+    param7 = 0;
+    param8 = 0;
+    param9 = 0;
+    param10 = 0;
+    param11 = 0;
+  } else if (options.effect === 'fractal-warp') {
+    amount = clampNumber(options.amount ?? params.fractalWarpAmount ?? params.amount, 0, 1, 0.5);
+    param0 = clampNumber(params.fractalWarpScale ?? params.param0, 0.5, 16, 4);
+    param1 = clampNumber(params.fractalWarpOctaves ?? params.param1, 1, 6, 4);
+    param2 = clampNumber(params.fractalWarpSpeed ?? params.param2, 0, 3, 0.7);
+    param3 = clampNumber(params.fractalWarpChromatic ?? params.param3, 0, 1, 0.2);
+    param4 = clampNumber(params.fractalWarpMode ?? params.param4, 0, 2, 0);
+    param5 = 0;
+    param6 = 0;
+    param7 = 0;
+    param8 = 0;
+    param9 = 0;
+    param10 = 0;
+    param11 = 0;
+  } else if (options.effect === 'fluid-distort') {
+    amount = clampNumber(options.amount ?? params.fluidDistAmount ?? params.amount, 0, 1, 0.5);
+    param0 = clampNumber(params.fluidDistScale ?? params.param0, 0.5, 16, 4);
+    param1 = clampNumber(params.fluidDistSpeed ?? params.param1, 0, 3, 0.8);
+    param2 = clampNumber(params.fluidDistTurbulence ?? params.param2, 0, 1, 0.5);
+    param3 = clampNumber(params.fluidDistMode ?? params.param3, 0, 2, 0);
+    param4 = 0;
+    param5 = 0;
+    param6 = 0;
+    param7 = 0;
+    param8 = 0;
+    param9 = 0;
+    param10 = 0;
+    param11 = 0;
+  } else if (options.effect === 'wormhole') {
+    amount = clampNumber(options.amount ?? params.wormholePullStrength ?? params.amount, 0, 1, 0.5);
+    param0 = clampNumber(params.wormholeRotation ?? params.param0, 0, 3, 1);
+    param1 = clampNumber(params.wormholeCenterX ?? params.param1, 0, 1, 0.5);
+    param2 = clampNumber(params.wormholeCenterY ?? params.param2, 0, 1, 0.5);
+    param3 = clampNumber(params.wormholeTwist ?? params.param3, 0, 3, 0.5);
+    param4 = clampNumber(params.wormholeChromatic ?? params.param4, 0, 1, 0.3);
+    param5 = clampNumber(params.wormholeAnimSpeed ?? params.param5, 0, 2, 0.5);
+    param6 = 0;
+    param7 = 0;
+    param8 = 0;
+    param9 = 0;
+    param10 = 0;
+    param11 = 0;
+  } else if (options.effect === 'vhs-full-deck') {
+    amount = clampNumber(options.amount ?? params.vhsFdTracking ?? params.amount, 0, 1, 0.5);
+    param0 = clampNumber(params.vhsFdHeadSwitch ?? params.param0, 0, 1, 0.4);
+    param1 = clampNumber(params.vhsFdChromaBleed ?? params.param1, 0, 1, 0.5);
+    param2 = clampNumber(params.vhsFdDropouts ?? params.param2, 0, 1, 0.3);
+    param3 = clampNumber(params.vhsFdTapeNoise ?? params.param3, 0, 1, 0.4);
+    param4 = clampNumber(params.vhsFdScanlines ?? params.param4, 0, 1, 0.4);
+    param5 = clampNumber(params.vhsFdColorBleed ?? params.param5, 0, 1, 0.3);
+    param6 = clampNumber(params.vhsFdSaturation ?? params.param6, 0, 1.5, 0.85);
+    param7 = clampNumber(params.vhsFdTrackingJump ?? params.param7, 0, 1, 0.1);
+    param8 = clampNumber(params.vhsFdMode ?? params.param8, 0, 2, 1);
+    param9 = 0;
+    param10 = 0;
+    param11 = 0;
+  } else if (options.effect === 'topo-warp') {
+    amount = clampNumber(options.amount ?? params.twDisplacement ?? params.amount, 0, 1, 0.5);
+    mix = clampNumber(params.twMix ?? options.mix, 0, 1, 0.85);
+    param0 = clampNumber(params.twContourCount ?? params.param0, 1, 32, 12);
+    param1 = clampNumber(params.twContourWidth ?? params.param1, 0.001, 0.05, 0.008);
+    param2 = clampNumber(params.twChromaticEdge ?? params.param2, 0, 1, 0.3);
+    param3 = clampNumber(params.twColorR ?? params.param3, 0, 1, 0);
+    param4 = clampNumber(params.twColorG ?? params.param4, 0, 1, 0.85);
+    param5 = clampNumber(params.twColorB ?? params.param5, 0, 1, 1);
+    param6 = clampNumber(params.twShadowRidges ?? params.param6, 0, 1, 0.5);
+    param7 = 0;
+    param8 = 0;
+    param9 = 0;
+    param10 = 0;
+    param11 = 0;
+  } else if (options.effect === 'strobe-sequencer') {
+    amount = clampNumber(options.amount ?? params.ssIntensity ?? params.amount, 0, 2, 1);
+    param0 = clampNumber(params.ssBPM ?? params.param0, 30, 240, 120);
+    param1 = clampNumber(params.ssSteps ?? params.param1, 1, 16, 16);
+    param2 = clampNumber(params.ssPattern ?? params.param2, 0, 65535, 21845);
+    param3 = clampNumber(params.ssMode ?? params.param3, 0, 3, 0);
+    param4 = clampNumber(params.ssTintR ?? params.param4, 0, 1, 1);
+    param5 = clampNumber(params.ssTintG ?? params.param5, 0, 1, 1);
+    param6 = clampNumber(params.ssTintB ?? params.param6, 0, 1, 1);
+    param7 = clampNumber(params.ssSwing ?? params.param7, 0, 0.5, 0);
+    param8 = 0;
+    param9 = 0;
+    param10 = 0;
+    param11 = 0;
+  } else if (options.effect === 'mirror-shards') {
+    amount = clampNumber(options.amount ?? params.msShardSize ?? params.amount, 0.05, 0.5, 0.2);
+    param0 = clampNumber(params.msShards ?? params.param0, 2, 32, 8);
+    param1 = clampNumber(params.msRotation ?? params.param1, 0, 360, 60);
+    param2 = clampNumber(params.msChromatic ?? params.param2, 0, 1, 0.3);
+    param3 = clampNumber(params.msMode ?? params.param3, 0, 2, 0);
+    param4 = 0;
+    param5 = 0;
+    param6 = 0;
+    param7 = 0;
+    param8 = 0;
+    param9 = 0;
+    param10 = 0;
+    param11 = 0;
+  } else if (options.effect === 'rorschach-mirror') {
+    amount = clampNumber(options.amount ?? params.rmInkAmount ?? params.amount, 0, 1, 0.4);
+    param0 = clampNumber(params.rmMode ?? params.param0, 0, 3, 0);
+    param1 = clampNumber(params.rmFluidEdges ?? params.param1, 0, 1, 0.3);
+    param2 = clampNumber(params.rmTintR ?? params.param2, 0, 1, 0.05);
+    param3 = clampNumber(params.rmTintG ?? params.param3, 0, 1, 0.05);
+    param4 = clampNumber(params.rmTintB ?? params.param4, 0, 1, 0.05);
+    param5 = clampNumber(params.rmBgR ?? params.param5, 0, 1, 0.95);
+    param6 = clampNumber(params.rmBgG ?? params.param6, 0, 1, 0.95);
+    param7 = clampNumber(params.rmBgB ?? params.param7, 0, 1, 0.92);
+    param8 = clampNumber(params.rmMixOriginal ?? params.param8, 0, 1, 0);
+    param9 = 0;
+    param10 = 0;
+    param11 = 0;
+  } else if (options.effect === 'glitch-quilt') {
+    amount = clampNumber(options.amount ?? params.gqShuffleAmount ?? params.amount, 0, 1, 0.4);
+    param0 = clampNumber(params.gqTileSize ?? params.param0, 4, 128, 32);
+    param1 = clampNumber(params.gqRotateAmount ?? params.param1, 0, 1, 0.3);
+    param2 = clampNumber(params.gqChromaSplit ?? params.param2, 0, 1, 0.3);
+    param3 = clampNumber(params.gqTriggerRate ?? params.param3, 0, 3, 1);
+    param4 = 0;
+    param5 = 0;
+    param6 = 0;
+    param7 = 0;
+    param8 = 0;
+    param9 = 0;
+    param10 = 0;
+    param11 = 0;
+  } else if (options.effect === 'poster-tear') {
+    amount = clampNumber(options.amount ?? params.ptTearAmount ?? params.amount, 0, 1, 0.3);
+    param0 = clampNumber(params.ptTearAngle ?? params.param0, 0, 360, 35);
+    param1 = clampNumber(params.ptTearJitter ?? params.param1, 0, 1, 0.5);
+    param2 = clampNumber(params.ptShiftBelow ?? params.param2, 0, 1, 0.5);
+    param3 = clampNumber(params.ptOffsetX ?? params.param3, -0.3, 0.3, 0.05);
+    param4 = clampNumber(params.ptOffsetY ?? params.param4, -0.3, 0.3, 0.02);
+    param5 = clampNumber(params.ptTearGlow ?? params.param5, 0, 1, 0.3);
+    param6 = clampNumber(params.ptMode ?? params.param6, 0, 2, 0);
+    param7 = 0;
+    param8 = 0;
+    param9 = 0;
+    param10 = 0;
+    param11 = 0;
+  } else if (options.effect === 'paint-peel') {
+    amount = clampNumber(options.amount ?? params.ppAmount ?? params.amount, 0, 1, 0.3);
+    param0 = clampNumber(params.ppScale ?? params.param0, 0.5, 16, 4);
+    param1 = clampNumber(params.ppLumaBias ?? params.param1, 0, 1, 0.5);
+    param2 = clampNumber(params.ppCurl ?? params.param2, 0, 1, 0.5);
+    param3 = clampNumber(params.ppShadow ?? params.param3, 0, 1, 0.5);
+    param4 = clampNumber(params.ppBgR ?? params.param4, 0, 1, 0.15);
+    param5 = clampNumber(params.ppBgG ?? params.param5, 0, 1, 0.13);
+    param6 = clampNumber(params.ppBgB ?? params.param6, 0, 1, 0.1);
+    param7 = clampNumber(params.ppMode ?? params.param7, 0, 2, 0);
+    param8 = 0;
+    param9 = 0;
+    param10 = 0;
+    param11 = 0;
+  } else if (options.effect === 'liquid-glass') {
+    amount = clampNumber(options.amount ?? params.lgRefraction ?? params.amount, 0, 1, 0.5);
+    param0 = clampNumber(params.lgBlobs ?? params.param0, 1, 8, 3);
+    param1 = clampNumber(params.lgBlobSize ?? params.param1, 0.02, 0.4, 0.18);
+    param2 = clampNumber(params.lgChromatic ?? params.param2, 0, 1, 0.4);
+    param3 = clampNumber(params.lgSpecular ?? params.param3, 0, 1, 0.5);
+    param4 = clampNumber(params.lgCausticAmount ?? params.param4, 0, 1, 0.3);
+    param5 = clampNumber(params.lgSpeed ?? params.param5, 0, 3, 0.5);
+    param6 = clampNumber(params.lgTintR ?? params.param6, 0, 1, 0.85);
+    param7 = clampNumber(params.lgTintG ?? params.param7, 0, 1, 0.95);
+    param8 = clampNumber(params.lgTintB ?? params.param8, 0, 1, 1);
+    param9 = 0;
+    param10 = 0;
+    param11 = 0;
+  } else if (options.effect === 'crystal-refract') {
+    amount = clampNumber(options.amount ?? params.crystalRefraction ?? params.amount, 0, 1, 0.4);
+    param0 = clampNumber(params.crystalScale ?? params.param0, 0.5, 16, 6);
+    param1 = clampNumber(params.crystalSparkle ?? params.param1, 0, 1, 0.4);
+    param2 = clampNumber(params.crystalEdgeGlow ?? params.param2, 0, 1, 0.5);
+    param3 = clampNumber(params.crystalTintR ?? params.param3, 0, 1, 0.85);
+    param4 = clampNumber(params.crystalTintG ?? params.param4, 0, 1, 0.95);
+    param5 = clampNumber(params.crystalTintB ?? params.param5, 0, 1, 1);
+    param6 = clampNumber(params.crystalMode ?? params.param6, 0, 1, 0);
+    param7 = 0;
+    param8 = 0;
+    param9 = 0;
+    param10 = 0;
+    param11 = 0;
+  } else if (options.effect === 'infinite-mirror') {
+    amount = clampNumber(options.amount ?? params.infMirrorShrink ?? params.amount, 0.5, 0.95, 0.8);
+    param0 = clampNumber(params.infMirrorIterations ?? params.param0, 1, 12, 5);
+    param1 = clampNumber(params.infMirrorRotation ?? params.param1, -360, 360, 5);
+    param2 = clampNumber(params.infMirrorTintFade ?? params.param2, 0, 1, 0.4);
+    param3 = clampNumber(params.infMirrorHueShift ?? params.param3, 0, 1, 0.05);
+    param4 = clampNumber(params.infMirrorMode ?? params.param4, 0, 1, 0);
+    param5 = clampNumber(params.infMirrorOffsetX ?? params.param5, 0, 1, 0.5);
+    param6 = clampNumber(params.infMirrorOffsetY ?? params.param6, 0, 1, 0.5);
+    param7 = 0;
+    param8 = 0;
+    param9 = 0;
+    param10 = 0;
+    param11 = 0;
+  } else if (options.effect === 'tunnel-flight') {
+    amount = clampNumber(options.amount ?? params.tunnelSpeed ?? params.amount, 0, 3, 1);
+    param0 = clampNumber(params.tunnelTwist ?? params.param0, 0, 3, 0.5);
+    param1 = clampNumber(params.tunnelDepth ?? params.param1, 0.5, 3, 1.5);
+    param2 = clampNumber(params.tunnelCenterX ?? params.param2, 0, 1, 0.5);
+    param3 = clampNumber(params.tunnelCenterY ?? params.param3, 0, 1, 0.5);
+    param4 = clampNumber(params.tunnelMode ?? params.param4, 0, 2, 0);
+    param5 = clampNumber(params.tunnelChromatic ?? params.param5, 0, 1, 0.2);
+    param6 = 0;
+    param7 = 0;
+    param8 = 0;
+    param9 = 0;
+    param10 = 0;
+    param11 = 0;
+  } else if (options.effect === 'volumetric-fog-overlay') {
+    amount = clampNumber(options.amount ?? params.fogDensity ?? params.amount, 0, 1, 0.5);
+    param0 = clampNumber(params.fogScale ?? params.param0, 0.5, 32, 6);
+    param1 = clampNumber(params.fogSpeed ?? params.param1, 0, 2, 0.5);
+    param2 = clampNumber(params.fogHeightFalloff ?? params.param2, -1, 1, -0.3);
+    param3 = clampNumber(params.fogDepthSim ?? params.param3, 0, 1, 0.5);
+    param4 = clampNumber(params.fogColorR ?? params.param4, 0, 1, 0.85);
+    param5 = clampNumber(params.fogColorG ?? params.param5, 0, 1, 0.9);
+    param6 = clampNumber(params.fogColorB ?? params.param6, 0, 1, 0.95);
+    param7 = clampNumber(params.fogTurbulence ?? params.param7, 0, 1, 1);
+    param8 = clampNumber(params.fogMode ?? params.param8, 0, 2, 1);
+    param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'rain-fog-snow-overlay') {
+    amount = clampNumber(options.amount ?? params.weatherDensity ?? params.amount, 0, 1, 0.5);
+    param0 = clampNumber(params.weatherType ?? params.param0, 0, 3, 0);
+    param1 = clampNumber(params.weatherSpeed ?? params.param1, 0, 3, 1);
+    param2 = clampNumber(params.weatherAngle ?? params.param2, -45, 45, 10);
+    param3 = clampNumber(params.weatherSize ?? params.param3, 0.5, 3, 1);
+    param4 = clampNumber(params.weatherFog ?? params.param4, 0, 1, 0.2);
+    param5 = clampNumber(params.weatherColorR ?? params.param5, 0, 1, 0.85);
+    param6 = clampNumber(params.weatherColorG ?? params.param6, 0, 1, 0.9);
+    param7 = clampNumber(params.weatherColorB ?? params.param7, 0, 1, 1);
+    param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'particle-overlay-fx') {
+    amount = clampNumber(options.amount ?? params.partDensity ?? params.amount, 0, 1, 0.4);
+    param0 = clampNumber(params.partMode ?? params.param0, 0, 4, 0);
+    param1 = clampNumber(params.partSize ?? params.param1, 0.5, 4, 1);
+    param2 = clampNumber(params.partSpeed ?? params.param2, 0, 3, 1);
+    param3 = clampNumber(params.partTwinkle ?? params.param3, 0, 1, 0.5);
+    param4 = clampNumber(params.partColorR ?? params.param4, 0, 1, 1);
+    param5 = clampNumber(params.partColorG ?? params.param5, 0, 1, 1);
+    param6 = clampNumber(params.partColorB ?? params.param6, 0, 1, 0.9);
+    param7 = clampNumber(params.partBlend ?? params.param7, 0, 1, 0);
+    param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'glint-starburst') {
+    amount = clampNumber(options.amount ?? params.glintIntensity ?? params.amount, 0, 2, 0.7);
+    param0 = clampNumber(params.glintThreshold ?? params.param0, 0, 1, 0.75);
+    param1 = clampNumber(params.glintLength ?? params.param1, 0, 1, 0.4);
+    param2 = clampNumber(params.glintPoints ?? params.param2, 2, 12, 4);
+    param3 = clampNumber(params.glintRotation ?? params.param3, 0, 360, 0);
+    param4 = clampNumber(params.glintColorR ?? params.param4, 0, 1, 1);
+    param5 = clampNumber(params.glintColorG ?? params.param5, 0, 1, 0.95);
+    param6 = clampNumber(params.glintColorB ?? params.param6, 0, 1, 0.85);
+    param7 = 0; param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'emboss-relight') {
+    amount = clampNumber(options.amount ?? params.embRelStrength ?? params.amount, 0, 3, 1);
+    param0 = clampNumber(params.embRelAngle ?? params.param0, 0, 360, 135);
+    param1 = clampNumber(params.embRelHeight ?? params.param1, 0, 4, 1);
+    param2 = clampNumber(params.embRelDetail ?? params.param2, 1, 4, 1);
+    param3 = clampNumber(params.embRelSpecular ?? params.param3, 0, 1, 0.3);
+    param4 = clampNumber(params.embRelColorPreserve ?? params.param4, 0, 1, 0.5);
+    param5 = clampNumber(params.embRelAmbient ?? params.param5, 0, 1, 0.3);
+    param6 = 0; param7 = 0; param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'pixel-sort') {
+    amount = clampNumber(options.amount ?? params.amount, 0, 1, 0.5);
+    param0 = clampNumber(params.amount2 ?? params.param0, 0, 1, 0.4);
+    param1 = clampNumber(params.amount3 ?? params.param1, 0, 1, 0.3);
+    param2 = 0; param3 = 0; param4 = 0; param5 = 0;
+    param6 = 0; param7 = 0; param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'neon-tube-trace') {
+    amount = clampNumber(options.amount ?? params.ntGlow ?? params.amount, 0, 2, 1);
+    param0 = clampNumber(params.ntEdgeThreshold ?? params.param0, 0, 1, 0.15);
+    param1 = clampNumber(params.ntTubeWidth ?? params.param1, 0.5, 4, 1.5);
+    param2 = clampNumber(params.ntGlowRadius ?? params.param2, 1, 12, 6);
+    param3 = clampNumber(params.ntTintR ?? params.param3, 0, 1, 1);
+    param4 = clampNumber(params.ntTintG ?? params.param4, 0, 1, 0.2);
+    param5 = clampNumber(params.ntTintB ?? params.param5, 0, 1, 0.7);
+    param6 = clampNumber(params.ntChase ?? params.param6, 0, 1, 0);
+    param7 = clampNumber(params.ntChaseSpeed ?? params.param7, 0, 3, 1);
+    param8 = clampNumber(params.ntFlicker ?? params.param8, 0, 1, 0);
+    param9 = clampNumber(params.ntBg ?? params.param9, 0, 2, 2);
+    param10 = 0; param11 = 0;
+  } else if (options.effect === 'hologram-scan') {
+    amount = clampNumber(options.amount ?? params.hsIntensity ?? params.amount, 0, 1, 0.7);
+    param0 = clampNumber(params.hsScanFreq ?? params.param0, 50, 500, 200);
+    param1 = clampNumber(params.hsScanSpeed ?? params.param1, 0, 3, 1);
+    param2 = clampNumber(params.hsGridSpacing ?? params.param2, 0, 32, 12);
+    param3 = clampNumber(params.hsRGBFlicker ?? params.param3, 0, 1, 0.4);
+    param4 = clampNumber(params.hsBrokenBands ?? params.param4, 0, 1, 0.3);
+    param5 = clampNumber(params.hsTintR ?? params.param5, 0, 1, 0.4);
+    param6 = clampNumber(params.hsTintG ?? params.param6, 0, 1, 0.95);
+    param7 = clampNumber(params.hsTintB ?? params.param7, 0, 1, 1);
+    param8 = clampNumber(params.hsOpacityFlicker ?? params.param8, 0, 1, 0.3);
+    param9 = clampNumber(params.hsEdgeGlow ?? params.param9, 0, 1, 0.6);
+    param10 = 0; param11 = 0;
+  } else if (options.effect === 'laser-slice') {
+    amount = clampNumber(options.amount ?? params.lsGlow ?? params.amount, 0, 2, 1.2);
+    param0 = clampNumber(params.lsMode ?? params.param0, 0, 3, 0);
+    param1 = clampNumber(params.lsSpeed ?? params.param1, 0, 3, 1);
+    param2 = clampNumber(params.lsBeamWidth ?? params.param2, 0.005, 0.1, 0.02);
+    param3 = clampNumber(params.lsSparks ?? params.param3, 0, 1, 0.4);
+    param4 = clampNumber(params.lsEraseAmount ?? params.param4, 0, 1, 0.5);
+    param5 = clampNumber(params.lsTintR ?? params.param5, 0, 1, 1);
+    param6 = clampNumber(params.lsTintG ?? params.param6, 0, 1, 0.1);
+    param7 = clampNumber(params.lsTintB ?? params.param7, 0, 1, 0.1);
+    param8 = clampNumber(params.lsReveal ?? params.param8, 0, 1, 1);
+    param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'aura-field') {
+    amount = clampNumber(options.amount ?? params.afIntensity ?? params.amount, 0, 2, 1);
+    param0 = clampNumber(params.afRadius ?? params.param0, 4, 32, 12);
+    param1 = clampNumber(params.afEdgeAmount ?? params.param1, 0, 1, 0.6);
+    param2 = clampNumber(params.afLumaAmount ?? params.param2, 0, 1, 0.4);
+    param3 = clampNumber(params.afAudioReact ?? params.param3, 0, 2, 0.5);
+    param4 = clampNumber(params.afHueShift ?? params.param4, 0, 1, 0);
+    param5 = clampNumber(params.afTintR ?? params.param5, 0, 1, 0.6);
+    param6 = clampNumber(params.afTintG ?? params.param6, 0, 1, 0.85);
+    param7 = clampNumber(params.afTintB ?? params.param7, 0, 1, 1);
+    param8 = clampNumber(params.afMode ?? params.param8, 0, 2, 1);
+    param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'smoke-disintegrate') {
+    amount = clampNumber(options.amount ?? params.smokeAmount ?? params.amount, 0, 1, 0.4);
+    param0 = clampNumber(params.smokeScale ?? params.param0, 0.5, 16, 4);
+    param1 = clampNumber(params.smokeSpeed ?? params.param1, 0, 3, 1);
+    param2 = clampNumber(params.smokeDirection ?? params.param2, 0, 360, 90);
+    param3 = clampNumber(params.smokeEdgeFade ?? params.param3, 0, 1, 0.5);
+    param4 = clampNumber(params.smokeColorR ?? params.param4, 0, 1, 0.85);
+    param5 = clampNumber(params.smokeColorG ?? params.param5, 0, 1, 0.85);
+    param6 = clampNumber(params.smokeColorB ?? params.param6, 0, 1, 0.9);
+    param7 = clampNumber(params.smokeMode ?? params.param7, 0, 2, 0);
+    param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'shimmer-cloth') {
+    amount = clampNumber(options.amount ?? params.clothAmplitude ?? params.amount, 0, 1, 0.3);
+    param0 = clampNumber(params.clothFrequency ?? params.param0, 1, 30, 8);
+    param1 = clampNumber(params.clothSpeed ?? params.param1, 0, 3, 0.7);
+    param2 = clampNumber(params.clothThreadDensity ?? params.param2, 1, 200, 60);
+    param3 = clampNumber(params.clothThreadDepth ?? params.param3, 0, 1, 0.5);
+    param4 = clampNumber(params.clothShimmer ?? params.param4, 0, 2, 0.5);
+    param5 = clampNumber(params.clothMode ?? params.param5, 0, 2, 0);
+    param6 = 0; param7 = 0; param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'cellular-automata-burn') {
+    amount = clampNumber(options.amount ?? params.caMix ?? params.amount, 0, 1, 0.7);
+    param0 = clampNumber(params.caCellSize ?? params.param0, 1, 8, 2);
+    param1 = clampNumber(params.caBirthThreshold ?? params.param1, 0, 1, 0.5);
+    param2 = clampNumber(params.caColorR ?? params.param2, 0, 1, 1);
+    param3 = clampNumber(params.caColorG ?? params.param3, 0, 1, 0.5);
+    param4 = clampNumber(params.caColorB ?? params.param4, 0, 1, 0.1);
+    param5 = clampNumber(params.caMode ?? params.param5, 0, 2, 0);
+    param6 = 0; param7 = 0; param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'spectral-prism-tunnel') {
+    amount = clampNumber(options.amount ?? params.sptPrismSpread ?? params.amount, 0, 2, 1);
+    param0 = clampNumber(params.sptTunnelDepth ?? params.param0, 0.5, 3, 1.5);
+    param1 = clampNumber(params.sptRotation ?? params.param1, 0, 3, 1);
+    param2 = clampNumber(params.sptSpeed ?? params.param2, 0, 3, 1);
+    param3 = clampNumber(params.sptSlices ?? params.param3, 4, 32, 12);
+    param4 = clampNumber(params.sptFade ?? params.param4, 0, 1, 0.5);
+    param5 = 0; param6 = 0; param7 = 0; param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'led-volume') {
+    amount = clampNumber(options.amount ?? params.ledGlow ?? params.amount, 0, 1, 0.5);
+    param0 = clampNumber(params.ledVoxelSize ?? params.param0, 8, 32, 16);
+    param1 = clampNumber(params.ledDepthPulse ?? params.param1, 0, 1, 0.4);
+    param2 = clampNumber(params.ledDepthSpeed ?? params.param2, 0, 3, 1);
+    param3 = clampNumber(params.ledPosterize ?? params.param3, 1, 8, 4);
+    param4 = clampNumber(params.ledPerspective ?? params.param4, 0, 1, 0.4);
+    param5 = clampNumber(params.ledMode ?? params.param5, 0, 2, 1);
+    param6 = clampNumber(params.ledBgR ?? params.param6, 0, 1, 0);
+    param7 = clampNumber(params.ledBgG ?? params.param7, 0, 1, 0);
+    param8 = clampNumber(params.ledBgB ?? params.param8, 0, 1, 0);
+    param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'audio-shock-bloom') {
+    amount = clampNumber(options.amount ?? params.asbIntensity ?? params.amount, 0, 2, 1);
+    param0 = clampNumber(params.asbBloomThreshold ?? params.param0, 0, 1, 0.6);
+    param1 = clampNumber(params.asbBloomRadius ?? params.param1, 1, 30, 12);
+    param2 = clampNumber(params.asbShockSpeed ?? params.param2, 0.1, 3, 0.8);
+    param3 = clampNumber(params.asbShockAmplitude ?? params.param3, 0, 0.2, 0.05);
+    param4 = clampNumber(params.asbChromaSplit ?? params.param4, 0, 1, 0.4);
+    param5 = clampNumber(params.asbStrobeAmount ?? params.param5, 0, 1, 0.4);
+    param6 = clampNumber(params.asbTintR ?? params.param6, 0, 1, 1);
+    param7 = clampNumber(params.asbTintG ?? params.param7, 0, 1, 0.95);
+    param8 = clampNumber(params.asbTintB ?? params.param8, 0, 1, 0.85);
+    param9 = clampNumber(params.asbAudioGate ?? params.param9, 0, 1, 0.3);
+    param10 = 0; param11 = 0;
+  } else if (options.effect === 'analog-feedback-rack') {
+    amount = clampNumber(options.amount ?? params.afrMix ?? params.amount, 0, 1, 0.7);
+    param0 = clampNumber(params.afrZoom ?? params.param0, 0.85, 1.15, 1.02);
+    param1 = clampNumber(params.afrRotation ?? params.param1, -0.2, 0.2, 0.005);
+    param2 = clampNumber(params.afrDecay ?? params.param2, 0, 1, 0.04);
+    param3 = clampNumber(params.afrHueShift ?? params.param3, 0, 1, 0.01);
+    param4 = clampNumber(params.afrMaskCenter ?? params.param4, 0, 1, 0);
+    param5 = clampNumber(params.afrChromaSplit ?? params.param5, 0, 1, 0.2);
+    param6 = clampNumber(params.afrOffsetX ?? params.param6, -0.1, 0.1, 0);
+    param7 = clampNumber(params.afrOffsetY ?? params.param7, -0.1, 0.1, 0);
+    param8 = clampNumber(params.afrMode ?? params.param8, 0, 2, 0);
+    param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'club-laser-grid') {
+    amount = clampNumber(options.amount ?? params.clgIntensity ?? params.amount, 0, 2, 1);
+    param0 = clampNumber(params.clgGridDensity ?? params.param0, 4, 32, 12);
+    param1 = clampNumber(params.clgPerspective ?? params.param1, 0, 1, 0.7);
+    param2 = clampNumber(params.clgSpeed ?? params.param2, 0, 3, 1);
+    param3 = clampNumber(params.clgIntersectionGlow ?? params.param3, 0, 1, 0.7);
+    param4 = clampNumber(params.clgLineWidth ?? params.param4, 0.5, 4, 1.5);
+    param5 = clampNumber(params.clgTintR ?? params.param5, 0, 1, 0.2);
+    param6 = clampNumber(params.clgTintG ?? params.param6, 0, 1, 1);
+    param7 = clampNumber(params.clgTintB ?? params.param7, 0, 1, 0.5);
+    param8 = clampNumber(params.clgAudioReact ?? params.param8, 0, 2, 0.7);
+    param9 = clampNumber(params.clgMode ?? params.param9, 0, 2, 0);
+    param10 = 0; param11 = 0;
+  } else if (options.effect === 'ghost-exposure') {
+    amount = clampNumber(options.amount ?? params.geExposure ?? params.amount, 0, 1, 0.3);
+    param0 = clampNumber(params.geDecay ?? params.param0, 0, 1, 0.04);
+    param1 = clampNumber(params.geHueShiftPerFrame ?? params.param1, 0, 0.05, 0.005);
+    param2 = clampNumber(params.geIntensity ?? params.param2, 0, 2, 1);
+    param3 = clampNumber(params.geMode ?? params.param3, 0, 2, 0);
+    param4 = clampNumber(params.geClamp ?? params.param4, 0, 1, 0.85);
+    param5 = 0; param6 = 0; param7 = 0; param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'dream-diffusion') {
+    amount = clampNumber(options.amount ?? params.ddBloomAmount ?? params.amount, 0, 2, 1.2);
+    param0 = clampNumber(params.ddBloomRadius ?? params.param0, 1, 30, 14);
+    param1 = clampNumber(params.ddHalation ?? params.param1, 0, 1, 0.5);
+    param2 = clampNumber(params.ddChromaticBlur ?? params.param2, 0, 1, 0.4);
+    param3 = clampNumber(params.ddPastelRolloff ?? params.param3, 0, 1, 0.6);
+    param4 = clampNumber(params.ddShadowLift ?? params.param4, 0, 0.5, 0.15);
+    param5 = clampNumber(params.ddSoftness ?? params.param5, 0, 1, 0.4);
+    param6 = clampNumber(params.ddTintR ?? params.param6, 0, 2, 1.05);
+    param7 = clampNumber(params.ddTintG ?? params.param7, 0, 2, 1);
+    param8 = clampNumber(params.ddTintB ?? params.param8, 0, 2, 0.95);
+    param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'ghost-double') {
+    amount = clampNumber(options.amount ?? params.ghostOpacity ?? params.amount, 0, 1, 0.5);
+    param0 = clampNumber(params.ghostOffsetX ?? params.param0, -0.3, 0.3, 0.05);
+    param1 = clampNumber(params.ghostOffsetY ?? params.param1, -0.3, 0.3, 0);
+    param2 = clampNumber(params.ghostMirror ?? params.param2, 0, 1, 0);
+    param3 = clampNumber(params.ghostTintR ?? params.param3, 0, 1, 1);
+    param4 = clampNumber(params.ghostTintG ?? params.param4, 0, 1, 1);
+    param5 = clampNumber(params.ghostTintB ?? params.param5, 0, 1, 1);
+    param6 = clampNumber(params.ghostBlend ?? params.param6, 0, 2, 0);
+    param7 = 0; param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'depth-parallax') {
+    amount = clampNumber(options.amount ?? params.dpDepthStrength ?? params.amount, 0, 1, 0.5);
+    param0 = clampNumber(params.dpPushIn ?? params.param0, 0, 1, 0.3);
+    param1 = clampNumber(params.dpLayers ?? params.param1, 1, 8, 4);
+    param2 = clampNumber(params.dpChromatic ?? params.param2, 0, 1, 0.3);
+    param3 = clampNumber(params.dpDepthBoost ?? params.param3, 0.1, 2, 1);
+    param4 = clampNumber(params.dpMode ?? params.param4, 0, 2, 0);
+    param5 = clampNumber(params.dpPanX ?? params.param5, -1, 1, 0);
+    param6 = clampNumber(params.dpPanY ?? params.param6, -1, 1, 0);
+    param7 = 0; param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'pixel-sand') {
+    amount = clampNumber(options.amount ?? params.psGravity ?? params.amount, 0, 2, 1);
+    param0 = clampNumber(params.psTurbulence ?? params.param0, 0, 1, 0.3);
+    param1 = clampNumber(params.psThreshold ?? params.param1, 0, 1, 0.6);
+    param2 = clampNumber(params.psMode ?? params.param2, 0, 2, 0);
+    param3 = clampNumber(params.psReplenish ?? params.param3, 0, 1, 0.6);
+    param4 = clampNumber(params.psChromaSplit ?? params.param4, 0, 1, 0);
+    param5 = clampNumber(params.psGrainSize ?? params.param5, 1, 6, 3);
+    param6 = 0; param7 = 0; param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'point-cloud-dissolve') {
+    amount = clampNumber(options.amount ?? params.pcdDissolve ?? params.amount, 0, 1, 0);
+    param0 = clampNumber(params.pcdDotSize ?? params.param0, 1, 12, 4);
+    param1 = clampNumber(params.pcdScatterRadius ?? params.param1, 0, 1, 0.4);
+    param2 = clampNumber(params.pcdAttract ?? params.param2, 0, 1, 0);
+    param3 = clampNumber(params.pcdTurbulence ?? params.param3, 0, 1, 0.3);
+    param4 = clampNumber(params.pcdMode ?? params.param4, 0, 2, 1);
+    param5 = clampNumber(params.pcdBgR ?? params.param5, 0, 1, 0);
+    param6 = clampNumber(params.pcdBgG ?? params.param6, 0, 1, 0);
+    param7 = clampNumber(params.pcdBgB ?? params.param7, 0, 1, 0);
+    param8 = clampNumber(params.pcdHueShift ?? params.param8, 0, 1, 0);
+    param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'explode3-d') {
+    amount = clampNumber(options.amount ?? params.amount, 0, 2, 0.3);
+    param0 = clampNumber(params.amount2 ?? params.param0, 0, 1, 0);
+    param1 = clampNumber(params.amount3 ?? params.param1, 0, 1, 0.3);
+    param2 = clampNumber(params.threshold ?? params.param2, 0, 1, 0.7);
+    param3 = clampNumber(params.angle ?? params.param3, -100, 100, 0);
+    param4 = clampNumber(params.red ?? params.param4, 0, 1, 1);
+    param5 = clampNumber(params.green ?? params.param5, 0, 1, 0.95);
+    param6 = clampNumber(params.blue ?? params.param6, 0, 1, 0.9);
+    param7 = 0; param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'terrain3-d') {
+    amount = clampNumber(options.amount ?? params.terrainHeight ?? params.amount, 0, 1, 0.5);
+    param0 = clampNumber(params.terrainMode ?? params.param0, 0, 2, 1);
+    param1 = clampNumber(params.terrainCamHeight ?? params.param1, 0, 1, 0.5);
+    param2 = clampNumber(params.terrainSpeed ?? params.param2, 0, 3, 0.3);
+    param3 = clampNumber(params.terrainFog ?? params.param3, 0, 1, 0.4);
+    param4 = clampNumber(params.terrainYaw ?? params.param4, -10, 10, 0);
+    param5 = clampNumber(params.terrainPitch ?? params.param5, 0, 1, 0.5);
+    param6 = clampNumber(params.terrainRoll ?? params.param6, 0, 1, 0);
+    param7 = clampNumber(params.terrainFogR ?? params.param7, 0, 1, 0.05);
+    param8 = clampNumber(params.terrainFogG ?? params.param8, 0, 1, 0.07);
+    param9 = clampNumber(params.terrainFogB ?? params.param9, 0, 1, 0.12);
+    param10 = clampNumber(params.terrainHorizonFade ?? params.param10, 0, 1, 0.7);
+    param11 = clampNumber(params.terrainSourceMix ?? params.param11, 0, 1, 0);
+  } else if (options.effect === 'wrapped-terrain') {
+    amount = clampNumber(options.amount ?? params.wtHeight ?? params.amount, 0, 1, 0.4);
+    param0 = clampNumber(params.wtShape ?? params.param0, 0, 2, 0);
+    param1 = clampNumber(params.wtRotateX ?? params.param1, 0, 1, 0.5);
+    param2 = clampNumber(params.wtRotateY ?? params.param2, 0, 1, 0.5);
+    param3 = clampNumber(params.wtAutoRotate ?? params.param3, 0, 3, 0.4);
+    param4 = clampNumber(params.wtCamDistance ?? params.param4, 1.5, 6, 2.5);
+    param5 = clampNumber(params.wtSpecular ?? params.param5, 0, 1, 0.4);
+    param6 = clampNumber(params.wtAmbient ?? params.param6, 0, 1, 0.3);
+    param7 = clampNumber(params.wtFogDistance ?? params.param7, 0, 2, 0.2);
+    param8 = clampNumber(params.wtFogR ?? params.param8, 0, 1, 0.05);
+    param9 = clampNumber(params.wtFogG ?? params.param9, 0, 1, 0.07);
+    param10 = clampNumber(params.wtFogB ?? params.param10, 0, 1, 0.12);
+    param11 = clampNumber(params.wtHorizonFade ?? params.param11, 0, 1, 0.6);
+  } else if (options.effect === 'string-orb') {
+    amount = clampNumber(options.amount ?? params.soIntensity ?? params.amount, 0, 2, 1);
+    param0 = clampNumber(params.soRadius ?? params.param0, 0.6, 1.4, 0.85);
+    param1 = clampNumber(params.soHeight ?? params.param1, 0, 1, 0.4);
+    param2 = clampNumber(params.soLatCount ?? params.param2, 4, 64, 16);
+    param3 = clampNumber(params.soLonCount ?? params.param3, 4, 64, 24);
+    param4 = clampNumber(params.soDiagCount ?? params.param4, 0, 32, 8);
+    param5 = clampNumber(params.soSlope ?? params.param5, -2, 2, 1.5);
+    param6 = clampNumber(params.soWidth ?? params.param6, 0.005, 0.05, 0.012);
+    param7 = clampNumber(params.soSpin ?? params.param7, -3, 3, 0.4);
+    param8 = clampNumber(params.soTilt ?? params.param8, 0, 1, 0.15);
+    param9 = clampNumber(params.soFlow ?? params.param9, 0, 3, 0.5);
+    param10 = clampNumber(params.soGlow ?? params.param10, 0, 2, 0.7);
+    param11 = 0;
+  } else if (options.effect === 'sphere-wireframe') {
+    amount = clampNumber(options.amount ?? params.swIntensity ?? params.amount, 0, 2, 1.2);
+    param0 = clampNumber(params.swRadius ?? params.param0, 0.6, 1.4, 0.85);
+    param1 = clampNumber(params.swHeight ?? params.param1, 0, 1, 0.4);
+    param2 = clampNumber(params.swMeridians ?? params.param2, 4, 32, 16);
+    param3 = clampNumber(params.swParallels ?? params.param3, 4, 32, 12);
+    param4 = clampNumber(params.swWidth ?? params.param4, 0.005, 0.04, 0.012);
+    param5 = clampNumber(params.swSpin ?? params.param5, -3, 3, 0.4);
+    param6 = clampNumber(params.swTilt ?? params.param6, 0, 1, 0.2);
+    param7 = clampNumber(params.swHaloGlow ?? params.param7, 0, 2, 0.7);
+    param8 = clampNumber(params.swColorR ?? params.param8, 0, 1, 0.5);
+    param9 = clampNumber(params.swColorG ?? params.param9, 0, 1, 0.9);
+    param10 = clampNumber(params.swColorB ?? params.param10, 0, 1, 1);
+    param11 = clampNumber(params.swFillSource ?? params.param11, 0, 1, 0.4);
+  } else if (options.effect === 'voxel-cube-cluster') {
+    amount = clampNumber(options.amount ?? params.vccHeight ?? params.amount, 0, 1, 0.5);
+    param0 = clampNumber(params.vccGridSize ?? params.param0, 2, 6, 4);
+    param1 = clampNumber(params.vccCubeSize ?? params.param1, 0.1, 0.45, 0.22);
+    param2 = clampNumber(params.vccSpacing ?? params.param2, 0.4, 1.2, 0.7);
+    param3 = clampNumber(params.vccSpin ?? params.param3, 0, 3, 0.5);
+    param4 = clampNumber(params.vccTilt ?? params.param4, 0, 1, 0.5);
+    param5 = clampNumber(params.vccCamDistance ?? params.param5, 2, 6, 4);
+    param6 = clampNumber(params.vccSpecular ?? params.param6, 0, 1, 0.4);
+    param7 = clampNumber(params.vccAmbient ?? params.param7, 0, 1, 0.3);
+    param8 = clampNumber(params.vccBgR ?? params.param8, 0, 1, 0.04);
+    param9 = clampNumber(params.vccBgG ?? params.param9, 0, 1, 0.05);
+    param10 = clampNumber(params.vccBgB ?? params.param10, 0, 1, 0.08);
+    param11 = clampNumber(params.vccHorizonFade ?? params.param11, 0, 1, 0.6);
+  } else if (options.effect === 'mobius-lattice') {
+    amount = clampNumber(options.amount ?? params.mlIntensity ?? params.amount, 0, 2, 1);
+    param0 = clampNumber(params.mlMajorR ?? params.param0, 0.5, 1.2, 0.85);
+    param1 = clampNumber(params.mlRibbonW ?? params.param1, 0.1, 0.5, 0.3);
+    param2 = clampNumber(params.mlTwists ?? params.param2, 0.5, 4, 1);
+    param3 = clampNumber(params.mlSpin ?? params.param3, -3, 3, 0.5);
+    param4 = clampNumber(params.mlTilt ?? params.param4, 0, 1, 0.25);
+    param5 = clampNumber(params.mlLineDensity ?? params.param5, 4, 32, 16);
+    param6 = clampNumber(params.mlLineWidth ?? params.param6, 0.005, 0.04, 0.015);
+    param7 = clampNumber(params.mlLineR ?? params.param7, 0, 1, 1);
+    param8 = clampNumber(params.mlLineG ?? params.param8, 0, 1, 0.85);
+    param9 = clampNumber(params.mlLineB ?? params.param9, 0, 1, 0.4);
+    param10 = clampNumber(params.mlHorizonFade ?? params.param10, 0, 1, 0.6);
+    param11 = 0;
+  } else if (options.effect === 'crystal-shard-field') {
+    amount = clampNumber(options.amount ?? params.csfIntensity ?? params.amount, 0, 2, 1);
+    param0 = clampNumber(params.csfShardCount ?? params.param0, 6, 32, 16);
+    param1 = clampNumber(params.csfShardSize ?? params.param1, 0.1, 0.6, 0.28);
+    param2 = clampNumber(params.csfSpread ?? params.param2, 0.5, 2, 1.2);
+    param3 = clampNumber(params.csfChromaEdge ?? params.param3, 0, 1, 0.4);
+    param4 = clampNumber(params.csfRefraction ?? params.param4, 0, 1, 0.5);
+    param5 = clampNumber(params.csfSpin ?? params.param5, -3, 3, 0.4);
+    param6 = clampNumber(params.csfTintR ?? params.param6, 0, 1, 0.85);
+    param7 = clampNumber(params.csfTintG ?? params.param7, 0, 1, 0.95);
+    param8 = clampNumber(params.csfTintB ?? params.param8, 0, 1, 1);
+    param9 = clampNumber(params.csfHorizonFade ?? params.param9, 0, 1, 0.6);
+    param10 = 0; param11 = 0;
+  } else if (options.effect === 'tube-lattice') {
+    amount = clampNumber(options.amount ?? params.tlIntensity ?? params.amount, 0, 2, 1);
+    param0 = clampNumber(params.tlTubeCount ?? params.param0, 3, 12, 6);
+    param1 = clampNumber(params.tlTubeRadius ?? params.param1, 0.05, 0.3, 0.15);
+    param2 = clampNumber(params.tlSpread ?? params.param2, 0.4, 2, 0.9);
+    param3 = clampNumber(params.tlSpin ?? params.param3, -3, 3, 0.4);
+    param4 = clampNumber(params.tlTilt ?? params.param4, 0, 1, 0.3);
+    param5 = clampNumber(params.tlTwist ?? params.param5, 0, 3, 0.5);
+    param6 = clampNumber(params.tlRimR ?? params.param6, 0, 1, 0);
+    param7 = clampNumber(params.tlRimG ?? params.param7, 0, 1, 0.95);
+    param8 = clampNumber(params.tlRimB ?? params.param8, 0, 1, 1);
+    param9 = clampNumber(params.tlHorizonFade ?? params.param9, 0, 1, 0.6);
+    param10 = 0; param11 = 0;
+  } else if (options.effect === 'disco-mirror-ball') {
+    amount = clampNumber(options.amount ?? params.dmbIntensity ?? params.amount, 0, 2, 1.2);
+    param0 = clampNumber(params.dmbRadius ?? params.param0, 0.6, 1.4, 1);
+    param1 = clampNumber(params.dmbFacetCount ?? params.param1, 6, 32, 16);
+    param2 = clampNumber(params.dmbSpin ?? params.param2, -3, 3, 0.6);
+    param3 = clampNumber(params.dmbTilt ?? params.param3, 0, 1, 0.2);
+    param4 = clampNumber(params.dmbChaseSpeed ?? params.param4, 0, 3, 1.2);
+    param5 = clampNumber(params.dmbChaseHueWidth ?? params.param5, 0, 1, 0.3);
+    param6 = clampNumber(params.dmbSparkle ?? params.param6, 0, 1, 0.5);
+    param7 = clampNumber(params.dmbHighlightR ?? params.param7, 0, 1, 1);
+    param8 = clampNumber(params.dmbHighlightG ?? params.param8, 0, 1, 1);
+    param9 = clampNumber(params.dmbHighlightB ?? params.param9, 0, 1, 0.85);
+    param10 = clampNumber(params.dmbHorizonFade ?? params.param10, 0, 1, 0.5);
+    param11 = 0;
+  } else if (options.effect === 'lissajous-knot') {
+    amount = clampNumber(options.amount ?? params.lkIntensity ?? params.amount, 0, 2, 1);
+    param0 = clampNumber(params.lkRatioX ?? params.param0, 1, 7, 3);
+    param1 = clampNumber(params.lkRatioY ?? params.param1, 1, 7, 4);
+    param2 = clampNumber(params.lkRatioZ ?? params.param2, 1, 7, 5);
+    param3 = clampNumber(params.lkPhaseX ?? params.param3, 0, 1, 0.25);
+    param4 = clampNumber(params.lkPhaseY ?? params.param4, 0, 1, 0);
+    param5 = clampNumber(params.lkTubeRadius ?? params.param5, 0.04, 0.2, 0.08);
+    param6 = clampNumber(params.lkScale ?? params.param6, 0.5, 1.5, 1);
+    param7 = clampNumber(params.lkSpin ?? params.param7, -3, 3, 0.4);
+    param8 = clampNumber(params.lkTilt ?? params.param8, 0, 1, 0.25);
+    param9 = clampNumber(params.lkTubeR ?? params.param9, 0, 1, 1);
+    param10 = clampNumber(params.lkTubeG ?? params.param10, 0, 1, 0.5);
+    param11 = clampNumber(params.lkTubeB ?? params.param11, 0, 1, 0.85);
+  } else if (options.effect === 'helix-particle-stream') {
+    amount = clampNumber(options.amount ?? params.hpsIntensity ?? params.amount, 0, 2, 1);
+    param0 = clampNumber(params.hpsHelices ?? params.param0, 1, 6, 2);
+    param1 = clampNumber(params.hpsHelixRadius ?? params.param1, 0.2, 1, 0.5);
+    param2 = clampNumber(params.hpsTurns ?? params.param2, 1, 6, 3);
+    param3 = clampNumber(params.hpsHeight ?? params.param3, 1, 3, 2);
+    param4 = clampNumber(params.hpsTubeRadius ?? params.param4, 0.02, 0.15, 0.06);
+    param5 = clampNumber(params.hpsRiseSpeed ?? params.param5, 0, 3, 1);
+    param6 = clampNumber(params.hpsSpin ?? params.param6, -3, 3, 0.3);
+    param7 = clampNumber(params.hpsTilt ?? params.param7, 0, 1, 0.2);
+    param8 = clampNumber(params.hpsTintR ?? params.param8, 0, 1, 0.4);
+    param9 = clampNumber(params.hpsTintG ?? params.param9, 0, 1, 1);
+    param10 = clampNumber(params.hpsTintB ?? params.param10, 0, 1, 0.7);
+    param11 = clampNumber(params.hpsHorizonFade ?? params.param11, 0, 1, 0.6);
+  } else if (options.effect === 'donut-constellation') {
+    amount = clampNumber(options.amount ?? params.dcTintIntensity ?? params.amount, 0, 2, 1);
+    param0 = clampNumber(params.dcMajorR ?? params.param0, 0.5, 1.4, 1);
+    param1 = clampNumber(params.dcMinorR ?? params.param1, 0.05, 0.4, 0.18);
+    param2 = clampNumber(params.dcStarCount ?? params.param2, 4, 32, 12);
+    param3 = clampNumber(params.dcStarSize ?? params.param3, 0.005, 0.04, 0.025);
+    param4 = clampNumber(params.dcSpin ?? params.param4, -3, 3, 0.4);
+    param5 = clampNumber(params.dcTilt ?? params.param5, 0, 1, 0.4);
+    param6 = clampNumber(params.dcTorusR ?? params.param6, 0, 1, 0.8);
+    param7 = clampNumber(params.dcTorusG ?? params.param7, 0, 1, 0.4);
+    param8 = clampNumber(params.dcTorusB ?? params.param8, 0, 1, 1);
+    param9 = clampNumber(params.dcStarR ?? params.param9, 0, 1, 1);
+    param10 = clampNumber(params.dcStarG ?? params.param10, 0, 1, 1);
+    param11 = clampNumber(params.dcStarB ?? params.param11, 0, 1, 0.85);
+  } else if (options.effect === 'sphere-project') {
+    amount = clampNumber(options.amount ?? params.amount, 0, 1, 0.8);
+    param0 = clampNumber(params.amount2 ?? params.param0, 0, 1, 0.4);
+    param1 = clampNumber(params.amount3 ?? params.param1, 0, 1, 0.2);
+    param2 = clampNumber(params.threshold ?? params.param2, 0, 1, 0.5);
+    param3 = clampNumber(params.red ?? params.param3, 0, 1, 1);
+    param4 = clampNumber(params.green ?? params.param4, 0, 1, 0.95);
+    param5 = clampNumber(params.blue ?? params.param5, 0, 1, 0.9);
+    param6 = 0; param7 = 0; param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'cube-project') {
+    amount = clampNumber(options.amount ?? params.amount, 0, 1, 0.6);
+    param0 = clampNumber(params.amount2 ?? params.param0, 0, 1, 0.3);
+    param1 = clampNumber(params.amount3 ?? params.param1, 0, 1, 0.2);
+    param2 = clampNumber(params.angle ?? params.param2, -10, 10, 0.5);
+    param3 = clampNumber(params.red ?? params.param3, 0, 1, 1);
+    param4 = clampNumber(params.green ?? params.param4, 0, 1, 0.95);
+    param5 = clampNumber(params.blue ?? params.param5, 0, 1, 0.9);
+    param6 = 0; param7 = 0; param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'cylinder-wrap' || options.effect === 'torus-tunnel' || options.effect === 'shatter3-d'
+    || options.effect === 'mobius-strip' || options.effect === 'voxel-displace' || options.effect === 'wave-surface'
+    || options.effect === 'origami-fold' || options.effect === 'mirror-room' || options.effect === 'diamond-gem'
+    || options.effect === 'shingle-stack') {
+    amount = clampNumber(options.amount ?? params.amount, 0, 1, manifest.defaultAmount);
+    param0 = clampNumber(params.amount2 ?? params.param0, 0, 1, 0.4);
+    param1 = clampNumber(params.amount3 ?? params.param1, 0, 1, 0.2);
+    param2 = clampNumber(params.threshold ?? params.param2, 0, 1, 0.5);
+    param3 = clampNumber(params.red ?? params.param3, 0, 1, 1);
+    param4 = clampNumber(params.green ?? params.param4, 0, 1, 1);
+    param5 = clampNumber(params.blue ?? params.param5, 0, 1, 1);
+    param6 = 0; param7 = 0; param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'prism-split') {
+    amount = clampNumber(options.amount ?? params.amount, 0, 1, 0.5);
+    param0 = clampNumber(params.amount2 ?? params.param0, 0, 1, 0.5);
+    param1 = clampNumber(params.amount3 ?? params.param1, 0, 1, 0);
+    param2 = clampNumber(params.threshold ?? params.param2, 0, 1, 0.3);
+    param3 = clampNumber(params.red ?? params.param3, 0, 1, 1);
+    param4 = clampNumber(params.green ?? params.param4, 0, 1, 1);
+    param5 = clampNumber(params.blue ?? params.param5, 0, 1, 1);
+    param6 = 0; param7 = 0; param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'geometric-tile-pro') {
+    amount = clampNumber(options.amount ?? params.geomProTileCount ?? params.amount, 0, 1, 0.4);
+    param0 = clampNumber(params.geomProFlipRange ?? params.param0, 0, 1, 0.5);
+    param1 = clampNumber(params.geomProSpeed ?? params.param1, 0, 1, 0.3);
+    param2 = clampNumber(params.geomProGap ?? params.param2, 0, 1, 0.1);
+    param3 = 0; param4 = 0; param5 = 0;
+    param6 = 0; param7 = 0; param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'time-smear') {
+    amount = clampNumber(options.amount ?? params.amount, 0, 1, 0.5);
+    param0 = clampNumber(params.amount2 ?? params.param0, 0, 1, 0.5);
+    param1 = clampNumber(params.amount3 ?? params.param1, 0, 1, 0.7);
+    param2 = clampNumber(params.mode ?? params.param2, 0, 1, 0);
+    param3 = clampNumber(params.speed ?? params.param3, 0, 3, 1);
+    param4 = 0; param5 = 0;
+    param6 = 0; param7 = 0; param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'chronophoto') {
+    amount = clampNumber(options.amount ?? params.amount, 0, 1, 0.5);
+    param0 = clampNumber(params.amount2 ?? params.param0, 0, 1, 0.3);
+    param1 = clampNumber(params.amount3 ?? params.param1, 0, 1, 0.5);
+    param2 = clampNumber(params.mode ?? params.param2, 0, 1, 0);
+    param3 = clampNumber(params.speed ?? params.param3, 0, 3, 1);
+    param4 = 0; param5 = 0;
+    param6 = 0; param7 = 0; param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'optical-flow-datamosh') {
+    amount = clampNumber(options.amount ?? params.ofdmIntensity ?? params.amount, 0, 1, 0.7);
+    param0 = clampNumber(params.ofdmMotionScale ?? params.param0, 0, 3, 1);
+    param1 = clampNumber(params.ofdmPersistence ?? params.param1, 0, 1, 0.7);
+    param2 = clampNumber(params.ofdmChromaSplit ?? params.param2, 0, 1, 0.3);
+    param3 = clampNumber(params.ofdmBlockSize ?? params.param3, 2, 48, 12);
+    param4 = clampNumber(params.ofdmFreeze ?? params.param4, 0, 1, 0);
+    param5 = clampNumber(params.ofdmMode ?? params.param5, 0, 2, 0);
+    param6 = 0; param7 = 0; param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'flow-field-trails') {
+    amount = clampNumber(options.amount ?? params.fftTrailLength ?? params.amount, 0, 1, 0.4);
+    param0 = clampNumber(params.fftFlowScale ?? params.param0, 0.5, 16, 4);
+    param1 = clampNumber(params.fftSamples ?? params.param1, 4, 32, 24);
+    param2 = clampNumber(params.fftSpeed ?? params.param2, 0, 3, 0.8);
+    param3 = clampNumber(params.fftChromaSplit ?? params.param3, 0, 1, 0.3);
+    param4 = clampNumber(params.fftContrast ?? params.param4, 0.1, 4, 1);
+    param5 = clampNumber(params.fftMode ?? params.param5, 0, 2, 0);
+    param6 = clampNumber(params.fftColorCycle ?? params.param6, 0, 1, 0);
+    param7 = 0; param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'reaction-diffusion') {
+    amount = clampNumber(options.amount ?? params.rdMix ?? params.amount, 0, 1, 0.6);
+    param0 = clampNumber(params.rdPatternScale ?? params.param0, 0.1, 4, 1);
+    param1 = clampNumber(params.rdLumaMask ?? params.param1, 0, 1, 0.5);
+    param2 = clampNumber(params.rdMode ?? params.param2, 0, 2, 0);
+    param3 = clampNumber(params.rdColorR ?? params.param3, 0, 1, 0.4);
+    param4 = clampNumber(params.rdColorG ?? params.param4, 0, 1, 0.85);
+    param5 = clampNumber(params.rdColorB ?? params.param5, 0, 1, 1);
+    param6 = clampNumber(params.rdFeedRate ?? params.param6, 0, 0.2, 0.055);
+    param7 = clampNumber(params.rdKillRate ?? params.param7, 0, 0.2, 0.062);
+    param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'feedback-zoom') {
+    amount = clampNumber(options.amount ?? params.amount, 0, 1, 0.5);
+    param0 = clampNumber(params.amount2 ?? params.param0, 0, 0.98, 0.85);
+    param1 = clampNumber(params.amount3 ?? params.param1, 0, 1, 0.5);
+    param2 = clampNumber(params.threshold ?? params.param2, 0, 1, 0.3);
+    param3 = clampNumber(params.centerX ?? params.param3, 0, 1, 0.5);
+    param4 = clampNumber(params.centerY ?? params.param4, 0, 1, 0.5);
+    param5 = 0;
+    param6 = 0; param7 = 0; param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'motion-trails') {
+    amount = clampNumber(options.amount ?? params.motionTrailsLength ?? params.amount, 0, 1, 0.4);
+    param0 = clampNumber(params.motionTrailsAngle ?? params.param0, 0, 360, 0);
+    param1 = clampNumber(params.motionTrailsSamples ?? params.param1, 4, 32, 16);
+    param2 = clampNumber(params.motionTrailsFalloff ?? params.param2, 0, 1, 0.5);
+    param3 = clampNumber(params.motionTrailsChromaSplit ?? params.param3, 0, 1, 0.2);
+    param4 = clampNumber(params.motionTrailsMode ?? params.param4, 0, 2, 0);
+    param5 = 0;
+    param6 = 0; param7 = 0; param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'echo-repeat') {
+    amount = clampNumber(options.amount ?? params.echoDecay ?? params.amount, 0.05, 0.95, 0.7);
+    param0 = clampNumber(params.echoCount ?? params.param0, 2, 12, 5);
+    param1 = clampNumber(params.echoOffsetX ?? params.param1, -0.3, 0.3, 0.05);
+    param2 = clampNumber(params.echoOffsetY ?? params.param2, -0.3, 0.3, 0.05);
+    param3 = clampNumber(params.echoHueShift ?? params.param3, 0, 1, 0.02);
+    param4 = clampNumber(params.echoMode ?? params.param4, 0, 2, 0);
+    param5 = 0;
+    param6 = 0; param7 = 0; param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'light-paint') {
+    amount = clampNumber(options.amount ?? params.lightPaintIntensity ?? params.amount, 0, 2, 0.7);
+    param0 = clampNumber(params.lightPaintThreshold ?? params.param0, 0, 1, 0.5);
+    param1 = clampNumber(params.lightPaintTrailLength ?? params.param1, 0, 1, 0.4);
+    param2 = clampNumber(params.lightPaintFlowAngle ?? params.param2, 0, 360, 0);
+    param3 = clampNumber(params.lightPaintFlowScale ?? params.param3, 0.5, 16, 6);
+    param4 = clampNumber(params.lightPaintChromaShift ?? params.param4, 0, 1, 0.3);
+    param5 = clampNumber(params.lightPaintTintR ?? params.param5, 0, 1, 1);
+    param6 = clampNumber(params.lightPaintTintG ?? params.param6, 0, 1, 0.8);
+    param7 = clampNumber(params.lightPaintTintB ?? params.param7, 0, 1, 0.3);
+    param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'recursive-echo') {
+    amount = clampNumber(options.amount ?? params.recEchoOpacity ?? params.amount, 0.05, 0.95, 0.6);
+    param0 = clampNumber(params.recEchoDepth ?? params.param0, 2, 16, 5);
+    param1 = clampNumber(params.recEchoZoom ?? params.param1, 0.7, 1.1, 0.95);
+    param2 = clampNumber(params.recEchoRotation ?? params.param2, -180, 180, 5);
+    param3 = clampNumber(params.recEchoHueShift ?? params.param3, 0, 1, 0.05);
+    param4 = clampNumber(params.recEchoOffsetX ?? params.param4, -0.3, 0.3, 0.02);
+    param5 = clampNumber(params.recEchoOffsetY ?? params.param5, -0.3, 0.3, 0.02);
+    param6 = 0; param7 = 0; param8 = 0; param9 = 0; param10 = 0; param11 = 0;
   }
   return [
     width,

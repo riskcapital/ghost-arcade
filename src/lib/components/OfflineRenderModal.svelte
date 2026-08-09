@@ -496,7 +496,7 @@
     color: #4cd1ff;
   }
   .preset-label { font-size: 12px; font-weight: 500; }
-  .preset-dims { font-size: 11px; font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace); color: #666; }
+  .preset-dims { font-size: 11px; font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); color: #666; }
   .preset-btn.active .preset-dims { color: #4cd1ff; }
 
   .engine-grid {
@@ -617,7 +617,7 @@
     justify-content: space-between;
     margin-top: 6px;
     font-size: 12px;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     color: var(--text-muted, #888);
   }
   .success { text-align: center; }
@@ -632,7 +632,7 @@
     margin: 6px auto 12px;
   }
   .success h3 { margin: 0 0 4px; color: var(--text-primary, #ddd); font-size: 17px; }
-  .success-meta { color: var(--text-muted, #888); font-size: 12px; font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace); margin: 0 0 12px; }
+  .success-meta { color: var(--text-muted, #888); font-size: 12px; font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); margin: 0 0 12px; }
   .preview {
     width: 100%;
     max-height: 280px;
@@ -655,5 +655,5 @@
     font-weight: 700;
   }
   .error h3 { margin: 0 0 8px; color: var(--text-primary, #ddd); font-size: 17px; }
-  .error-msg { color: #ff8888; font-size: 13px; font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace); word-break: break-word; }
+  .error-msg { color: #ff8888; font-size: 13px; font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); word-break: break-word; }
 </style>

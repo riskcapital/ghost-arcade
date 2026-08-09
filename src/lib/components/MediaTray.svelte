@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
-  import { project, selectedLayerId, selectedLayer, selectedLayerIds, layers } from '../stores/layers';
+  import { project, selectedLayerId, selectedLayer, layers } from '../stores/layers';
+  import { activeMediaTargetLayerIds } from '../media/mediaTargeting';
   import PluginIcon from './PluginIcon.svelte';
   import { keyframeTimeline } from '../stores/keyframeTimeline';
   import { mediaLibrary, type MediaItem } from '../stores/media';
@@ -71,9 +72,10 @@
 
   // --- Plugin System (Integrated) ---
   import { getAllPlugins, getPlugin, type PluginManifest } from '../plugins/registry';
+  import { isNativePluginId } from '$lib/renderer/nativePluginInventory';
 
-  // Get all registered plugins
-  $: availablePlugins = getAllPlugins();
+  // Ghost 2.0 intentionally exposes only plugins with an enabled native graph.
+  $: availablePlugins = getAllPlugins().filter((plugin) => isNativePluginId(plugin.id));
 
   type VJTrayLiveSourcePayload = {
     id: string;
@@ -98,6 +100,13 @@
     effectSource: IntegratedEffectSource;
   };
 
+  type VJTrayCreatorPayload = {
+    id: 'gpu-shader' | 'text-creator';
+    type: 'gpu' | 'text';
+    name: string;
+    src: 'gpu-layer' | 'text-layer';
+  };
+
   type VJTrayMediaPayload = {
     id: string;
     type: 'shader' | 'video' | 'image' | 'threejs' | 'p5js';
@@ -112,7 +121,7 @@
     _assetRef?: any;
   };
 
-  type VJTrayAddPayload = VJTrayLiveSourcePayload | VJTrayPluginPayload | VJTrayMediaPayload;
+  type VJTrayAddPayload = VJTrayLiveSourcePayload | VJTrayPluginPayload | VJTrayCreatorPayload | VJTrayMediaPayload;
 
   // Apply an integrated plugin to the selected layer
   async function applyPluginToLayer(plugin: PluginManifest) {
@@ -257,6 +266,12 @@
       effectType: plugin.effectType,
       effectSource,
     };
+  }
+
+  function vjCreatorPayload(type: 'gpu' | 'text'): VJTrayCreatorPayload {
+    return type === 'gpu'
+      ? { id: 'gpu-shader', type: 'gpu', name: 'GPU Shader', src: 'gpu-layer' }
+      : { id: 'text-creator', type: 'text', name: 'Text Creator', src: 'text-layer' };
   }
 
   function notifyVJLiveSourcesChanged() {
@@ -837,6 +852,11 @@
     onVJAddPayload?.(vjPluginPayload(plugin));
   }
 
+  function addCreatorToVJDeck(type: 'gpu' | 'text') {
+    if (!vjMode) return;
+    onVJAddPayload?.(vjCreatorPayload(type));
+  }
+
   function liveSourceCardTitle(source: LiveSource): string {
     if (source.status !== 'live') return '';
     return vjMode ? 'Click or drag to add to VJ deck' : 'Double-click to apply to layer';
@@ -879,6 +899,20 @@
       effectType: plugin.effectType,
     }));
     e.dataTransfer.setData('text/plain', plugin.id);
+  }
+
+  function onCreatorCardDragStart(type: 'gpu' | 'text', e: DragEvent) {
+    if (!vjMode || !e.dataTransfer) return;
+    const payload = vjCreatorPayload(type);
+    (window as any).__ghostVJMediaTrayDragPayload = payload;
+    e.dataTransfer.effectAllowed = 'copy';
+    e.dataTransfer.setData('application/x-ghost-media-source', JSON.stringify(payload));
+    e.dataTransfer.setData('application/x-ghost-vj-clip', JSON.stringify({
+      type: payload.type,
+      id: payload.id,
+      pluginName: payload.name,
+    }));
+    e.dataTransfer.setData('text/plain', payload.id);
   }
 
   function clearVJMediaTrayDragPayload() {
@@ -1028,6 +1062,17 @@
   // Media library items (local reference to store)
   $: videos = $mediaLibrary.filter(m => m.type === 'video');
   $: images = $mediaLibrary.filter(m => m.type === 'image');
+  let autoArmedVideoLibrarySignature = '';
+  $: {
+    const armCandidates = videos.slice(0, 8);
+    const signature = armCandidates
+      .map((item) => `${item.id}:${item.src}:${Number(item.videoElement?.duration) || 0}`)
+      .join('|');
+    if (signature !== autoArmedVideoLibrarySignature) {
+      autoArmedVideoLibrarySignature = signature;
+      for (const item of armCandidates) armTrayVideoItem(item);
+    }
+  }
 
   // Shader library (not shared, local to this component)
   let shaders: ShaderItem[] = [];
@@ -1824,14 +1869,7 @@
   }
 
   function getTargetMediaLayerIds(): string[] {
-    const multiSelectionValid =
-      !!$selectedLayerId &&
-      $selectedLayerIds.length > 0 &&
-      $selectedLayerIds.includes($selectedLayerId);
-    const selectedIds = multiSelectionValid
-      ? $selectedLayerIds
-      : ($selectedLayerId ? [$selectedLayerId] : []);
-    return selectedIds.filter((id) => $layers.some((l) => l.id === id && (l.type === 'media' || l.type === 'screen' || l.type === 'group')));
+    return activeMediaTargetLayerIds($selectedLayerId, $layers);
   }
 
   async function applySourceToTargetMediaLayers(
@@ -1839,7 +1877,7 @@
   ) {
     const targetIds = getTargetMediaLayerIds();
     if (targetIds.length === 0) {
-      alert('Please select one or more media layers first');
+      alert('Please select a media layer first');
       return;
     }
     for (const layerId of targetIds) {
@@ -1917,31 +1955,11 @@
           // wherever it was last paused".
           try { video.currentTime = 0; } catch { /* ignore */ }
 
-          if (video.readyState < 2) {
-            await new Promise<void>((resolve) => {
-              const done = () => { cleanup(); resolve(); };
-              const cleanup = () => {
-                video.removeEventListener('loadeddata', done);
-                video.removeEventListener('canplaythrough', done);
-              };
-              video.addEventListener('loadeddata', done, { once: true });
-              video.addEventListener('canplaythrough', done, { once: true });
-            });
-          }
-
-          if (video.paused) {
-            try {
-              await video.play();
-              await new Promise(resolve => requestAnimationFrame(resolve));
-            } catch (e) {
-              if ((e as DOMException)?.name !== 'AbortError') {
-                console.warn('Video autoplay blocked:', e);
-              }
-            }
-          }
-
           source.videoElement = video;
-          source.isPlaying = !video.paused;
+          // Native playback owns the clock. Never wait for the browser video
+          // element to load or play before binding the layer; that put a
+          // 1-2 second HTML-media stall directly in the trigger path.
+          source.isPlaying = true;
           source.durationSeconds = Number.isFinite(video.duration) ? video.duration : undefined;
           source._nativePlaybackTimeSeconds = 0;
           source._nativePlaybackUpdatedAtMs = performance.now();
@@ -3779,7 +3797,7 @@
   {/if}
 
   <!-- Shader Parameters Panel (when shader is selected) -->
-  {#if selectedShader && selectedShader.inputs.length > 0}
+  {#if !vjMode && selectedShader && selectedShader.inputs.length > 0}
     <div class="shader-params">
       <div class="params-header">
         <h4>{selectedShader.name}</h4>
@@ -3974,7 +3992,7 @@
   {/if}
 
   <!-- JS Animation Parameters Panel (when JS animation is selected) -->
-  {#if selectedJSAnimation && selectedJSAnimation.jsAnimation.params && selectedJSAnimation.jsAnimation.params.length > 0}
+  {#if !vjMode && selectedJSAnimation && selectedJSAnimation.jsAnimation.params && selectedJSAnimation.jsAnimation.params.length > 0}
     <div class="shader-params js-params">
       <div class="params-header">
         <h4>{selectedJSAnimation.name}</h4>
@@ -4229,6 +4247,43 @@
           <span class="plugins-hint">{vjMode ? 'Click or drag to add to VJ deck' : 'Click to apply to selected layer'}</span>
         </div>
         <div class="plugins-grid">
+          {#if vjMode}
+            <button
+              class="plugin-card creator-card"
+              onclick={() => addCreatorToVJDeck('gpu')}
+              draggable="true"
+              ondragstart={(e) => onCreatorCardDragStart('gpu', e)}
+              ondragend={clearVJMediaTrayDragPayload}
+              title="Add GPU Shader to VJ deck"
+            >
+              <div class="plugin-preview creator-icon gpu-icon">
+                <PluginIcon pluginId="gpu-shader" size={34} />
+              </div>
+              <div class="plugin-info">
+                <span class="plugin-name">GPU Shader</span>
+                <span class="plugin-desc">Native generative shaders with live controls</span>
+                <span class="plugin-tier creator-tier">VJ CONTENT</span>
+              </div>
+            </button>
+            <button
+              class="plugin-card creator-card"
+              onclick={() => addCreatorToVJDeck('text')}
+              draggable="true"
+              ondragstart={(e) => onCreatorCardDragStart('text', e)}
+              ondragend={clearVJMediaTrayDragPayload}
+              title="Add Text Creator to VJ deck"
+            >
+              <div class="plugin-preview creator-icon text-icon">
+                <PluginIcon pluginId="text-creator" size={34} />
+              </div>
+              <div class="plugin-info">
+                <span class="plugin-name">Text Creator</span>
+                <span class="plugin-desc">Animated typography with transforms and depth</span>
+                <span class="plugin-tier creator-tier">VJ CONTENT</span>
+              </div>
+            </button>
+          {/if}
+
           <!-- Integrated plugins (from registry) -->
           {#each availablePlugins as plugin (plugin.id)}
             <button
@@ -6431,7 +6486,7 @@
     background: transparent;
     border: none;
     color: var(--ga-ink-1, #9aa0ac);
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', monospace);
     font-size: 11px;
     letter-spacing: 0.18em;
     text-transform: uppercase;

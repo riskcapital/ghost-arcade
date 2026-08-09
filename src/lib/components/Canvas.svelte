@@ -3,15 +3,23 @@
   import { get } from 'svelte/store';
   import { RenderEngine, loadImageTexture, createVideoTexture, getThreeJSIframeContext, createThreeJSIframeContext, getJSAnimationContext, createJSAnimationContext } from '../renderer/engine';
   import { project, layers, compositions } from '../stores/layers';
+  import { nativePreviewHostEl } from '../stores/nativePreviewHost';
   import { stage3dScene } from '../stage3d/store';
+  import { buildNativeStage3DScene } from '../stage3d/nativeSceneBridge';
+  import { setNativeRendererStage3DScene } from '$lib/api/native-renderer';
   import { Stage3DRenderer } from '../stage3d/Stage3DRenderer';
   import { mediaLibrary } from '../stores/media';
   import { phoneVision } from '../stores/phoneVision';
   import { vjOutputLayers, vjClipLauncher } from '../stores/vjClipLauncher';
+  import {
+    nativePerformerWorldOverlays,
+    type NativePerformerWorldOverlay,
+  } from '../stores/nativePerformerWorld';
+  import { applyFaderCurve } from '../renderer/crossfadeTransitions';
   import { vjLayerSequencer } from '../stores/vjLayerSequencer';
   import { macros } from '../stores/macros';
   import { layerSequencer } from '../stores/layerSequencer';
-  import { evaluateStageEffectForScreen, stageEffectsRuntime } from '../stores/stageEffects';
+  import { evaluateStageEffectForScreen, stageEffectsRuntime, resolveStageEffectForLayer } from '../stores/stageEffects';
   import { keyframeTimeline } from '../stores/keyframeTimeline';
   import { createLayer, VJ_MIX_SOURCE_INDEX, type Layer, type MappingCompositionState } from '../types';
   import * as THREE from 'three';
@@ -100,6 +108,10 @@
     updateNativeEditorPreview,
   } from '$lib/api/native-renderer';
   import { nativeRendererRuntime } from '$lib/stores/nativeRenderer';
+  import {
+    editorCanvasGeometry,
+    type EditorCanvasGeometry,
+  } from '$lib/stores/editorCanvasGeometry';
   // hasWatermark removed — OSS build has no watermark.
   import { fpsStore } from '$lib/stores/fps';
   import type { OutputSlice } from '$lib/stores/settings';
@@ -165,6 +177,13 @@
   let spoutTargetW = 0;
   let spoutTargetH = 0;
   let nativeRendererSync: NativeRendererSync | null = null;
+  // Set once the native sync lifecycle arms; lets the render loop push
+  // per-frame layer updates (stage-FX opacity rides) into the native scene.
+  let nativeLayersSyncRef: (() => void) | null = null;
+// Native stage3d scene publishing intentionally removed: the 3D stage
+  // window renders its view in WebGL and the recording flow manages the
+  // native scene explicitly. Live publishing overlaid the venue onto the
+  // 2D output.
   let nativeRendererStatusTimer: ReturnType<typeof setInterval> | null = null;
   let nativeLayersUnsub: (() => void) | null = null;
   let nativeProjectUnsub: (() => void) | null = null;
@@ -176,6 +195,14 @@
   let nativePreviewResizeObserver: ResizeObserver | null = null;
   let nativePreviewWindowEventUnsub: (() => void) | null = null;
   let nativePreviewLastSignature = '';
+  let nativePreviewSyncInFlight = false;
+  let nativePreviewSyncQueued = false;
+  let nativePreviewSyncQueuedReason = 'queued';
+  let nativePreviewRequestGeneration = 0;
+  let nativePreviewLastVerifiedAt = 0;
+  let editorCanvasGeometrySnapshot: EditorCanvasGeometry | null = null;
+  let editorCanvasGeometrySignature = '';
+  let editorCanvasGeometryRevision = 0;
   // Native-active preview follows the single-render contract: the Rust/wgpu
   // core renders once and the editor views that core frame. Browser GPU
   // instruments are only allowed when the native core is unavailable.
@@ -522,7 +549,12 @@
   function getMappingCompositionStageLayers(renderLayers: Layer[]): Layer[] {
     const seen = new Set<string>();
     return renderLayers.filter((layer) => {
-      if (!layer.visible || layer.parentGroupId) return false;
+      if (!layer.visible) return false;
+      // Group CHILDREN are the stage slices in the grouped-slice workflow —
+      // they must receive the effect chase. Only the group container itself
+      // and VJ feed layers are excluded.
+      if (String(layer.type) === 'group') return false;
+      if (String(layer.id).startsWith('vj-')) return false;
       if (seen.has(layer.id)) return false;
       seen.add(layer.id);
       return true;
@@ -1443,6 +1475,70 @@
         canvas.style.height = h + 'px';
       }
     }
+    publishEditorCanvasGeometry();
+  }
+
+  function layoutOffsetWithin(
+    element: HTMLElement,
+    ancestor: HTMLElement,
+  ): { x: number; y: number } | null {
+    let x = 0;
+    let y = 0;
+    let current: HTMLElement | null = element;
+    while (current && current !== ancestor) {
+      x += current.offsetLeft;
+      y += current.offsetTop;
+      current = current.offsetParent as HTMLElement | null;
+    }
+    return current === ancestor ? { x, y } : null;
+  }
+
+  function publishEditorCanvasGeometry(): EditorCanvasGeometry | null {
+    if (isOutputMode || isOsrMode || !containerEl || !wrapperEl) return null;
+    const layoutRoot = containerEl.closest('.viewport-content') as HTMLElement | null;
+    if (!layoutRoot) return null;
+
+    const layoutOffset = layoutOffsetWithin(containerEl, layoutRoot);
+    const clientRect = containerEl.getBoundingClientRect();
+    const layoutWidth = containerEl.offsetWidth;
+    const layoutHeight = containerEl.offsetHeight;
+    if (
+      !layoutOffset
+      || layoutWidth <= 1
+      || layoutHeight <= 1
+      || clientRect.width <= 1
+      || clientRect.height <= 1
+    ) return null;
+
+    const values = [
+      layoutOffset.x,
+      layoutOffset.y,
+      layoutWidth,
+      layoutHeight,
+      clientRect.left,
+      clientRect.top,
+      clientRect.width,
+      clientRect.height,
+    ];
+    const signature = values.map((value) => Number(value).toFixed(3)).join(',');
+    if (signature === editorCanvasGeometrySignature && editorCanvasGeometrySnapshot) {
+      return editorCanvasGeometrySnapshot;
+    }
+
+    editorCanvasGeometrySignature = signature;
+    editorCanvasGeometrySnapshot = {
+      layoutX: layoutOffset.x,
+      layoutY: layoutOffset.y,
+      layoutWidth,
+      layoutHeight,
+      clientX: clientRect.left,
+      clientY: clientRect.top,
+      clientWidth: clientRect.width,
+      clientHeight: clientRect.height,
+      revision: ++editorCanvasGeometryRevision,
+    };
+    editorCanvasGeometry.set(editorCanvasGeometrySnapshot);
+    return editorCanvasGeometrySnapshot;
   }
 
   /** Get wrapper layout dimensions (before CSS transforms like viewport zoom).
@@ -1484,21 +1580,403 @@
       });
 
       nativeLayersUnsub = layers.subscribe(($layers) => {
+        // Route through the VJ-aware effective-layers path once it is
+        // armed: pushing raw $layers here during a VJ-live set drops the
+        // deck feed layers and stomps the stage scene (visible as slices
+        // reverting to their default shaders whenever the project store
+        // churns — e.g. Stage FX automation advancing every beat).
+        if (nativeLayersSyncRef) {
+          nativeLayersSyncRef();
+          return;
+        }
         const p = get(project);
         nativeRendererSync?.scheduleSync(p.width || 1920, p.height || 1080, $layers);
       });
 
+      // The native compositor's layer list: VJ live sets replace the editor
+      // layers (the legacy engine did this merge inside its render loop,
+      // which the native path returns out of before reaching it — VJ clip
+      // triggers otherwise never reach the core and the output stays black).
+      // A/B crossfader weights for the native compositor: full-A means Bank B
+      // contributes NOTHING (opacity 0 — layers stay resident so riding the
+      // fader never re-warms sources), full-B mutes Bank A, and the middle
+      // blends per the selected fader curve. Dissolve is the native v1 mix;
+      // shader transitions (wipes etc.) need a core-side crossfade pass.
+      const nativeCrossfadeWeights = (vjState: {
+        crossfaderEnabled?: boolean;
+        crossfaderValue?: number;
+        crossfaderCurve?: 'linear' | 'constant-power' | 'sharp-cut';
+      }): { a: number; b: number } | null => {
+        if (!vjState.crossfaderEnabled) return null;
+        const value = Math.max(0, Math.min(1, vjState.crossfaderValue ?? 0));
+        const curve = vjState.crossfaderCurve || 'constant-power';
+        const shaped = applyFaderCurve(value, curve);
+        if (curve === 'constant-power') {
+          return { a: Math.cos(value * Math.PI / 2), b: Math.sin(value * Math.PI / 2) };
+        }
+        return { a: 1 - shaped, b: shaped };
+      };
+      const appendNativePerformerWorldLayers = (
+        baseLayers: Layer[],
+        vjLayers: Layer[],
+        weights: { a: number; b: number } | null,
+      ): Layer[] => {
+        const overlayState = get(nativePerformerWorldOverlays);
+        const overlays = (['A', 'B'] as const)
+          .map((deck): NativePerformerWorldOverlay | null => overlayState[deck])
+          .filter((overlay): overlay is NativePerformerWorldOverlay =>
+            !!overlay?.enabled,
+          )
+          .map((overlay): Layer | null => {
+            const sourceLayer = vjLayers.find((candidate) => {
+              const parsed = parseVjLayerId(candidate.id);
+              if (!parsed || parsed.idx !== overlay.layerIndex) return false;
+              return (parsed.bank ?? 'A') === overlay.deck;
+            });
+            if (!sourceLayer) return null;
+            const deckWeight = weights
+              ? overlay.deck === 'A' ? weights.a : weights.b
+              : 1;
+            return {
+              ...sourceLayer,
+              id: `performer-world-${overlay.deck}-${overlay.layerIndex}`,
+              name: 'Performer World',
+              opacity: sourceLayer.opacity * deckWeight,
+              blendMode: 'add',
+              source: {
+                id: `performer-world-src-${overlay.deck}-${overlay.layerIndex}`,
+                type: 'effect',
+                src: `plugin://performer-world/${overlay.deck}/${overlay.layerIndex}`,
+                name: 'Performer World',
+                effectSource: {
+                  effectType: 'performer-world',
+                  performerWorldIndex: overlay.worldIndex,
+                  performerWorldSpace: overlay.spaceIndex,
+                  performerWorldX: overlay.x,
+                  performerWorldY: overlay.y,
+                  performerWorldPointerDown: overlay.pointerDown,
+                  performerWorldParams: overlay.params,
+                  performerWorldPump: overlay.pump,
+                },
+              },
+              effects: [],
+              edgeEffects: null,
+            };
+          })
+          .filter((overlay): overlay is Layer => !!overlay);
+        return overlays.length ? [...overlays, ...baseLayers] : baseLayers;
+      };
+      const nativeEffectiveLayers = (): Layer[] | null => {
+        const vjState = get(vjClipLauncher);
+        // STAGE mode: the VJ feed layers render their frames invisibly while
+        // the mapping scene's Screen layers sample those streams core-side
+        // via vj_layer_index. Both lists must reach the native sync.
+        const stageWrap = (list: Layer[]): Layer[] => {
+          if (!vjState.stageMode) return list;
+          const mappingLayers = (get(layers) as Layer[])
+            .filter((l) => !String(l.id).startsWith('vj-'))
+            .map((l) => ({ ...l }));
+          return [
+            ...list.map((l) => ({ ...l, opacity: 0 })),
+            ...mappingLayers,
+          ];
+        };
+        if (vjState.isLive) {
+          if (vjState.mapMode) {
+            // ── MAP sub-mode, native path ──
+            // The WebGL preset mixer above never runs when the core owns
+            // the frame, so build the same synthetic group + namespaced
+            // preset children here. resolveNativeGroupLayers drops the
+            // group container and multiplies its opacity into the
+            // children, so slot faders act on the whole preset.
+            if (vjState.stoppedAll) return [];
+            const comps = get(compositions);
+            const seqState = get(vjLayerSequencer);
+            const presetLayers: Layer[] = [];
+            const lsArr = vjState.layerStates;
+            const hasSolo = lsArr.some((l) => l.solo);
+            const activeKeys = new Set<string>();
+            for (let i = 0; i < lsArr.length; i++) {
+              const ls = lsArr[i];
+              if (ls.mute) continue;
+              if (hasSolo && !ls.solo) continue;
+              const clip = ls.activeClip;
+              if (!clip || clip.type !== 'preset' || !clip.presetId) continue;
+              const comp = comps.find((c) => c.id === clip.presetId);
+              if (!comp) continue;
+              const sequenceOpacity = seqState.isPlaying
+                ? (seqState.opacityOverrides?.[i] ?? 1)
+                : 1;
+              const groupOpacity = ls.opacity * sequenceOpacity * (vjState.masterOpacity ?? 1);
+              if (groupOpacity <= 0) continue;
+              const groupId = `mapvj-${i}-${clip.id}`;
+              activeKeys.add(groupId);
+              let entry = mapPresetLayerCache.get(groupId);
+              if (!entry || entry.compositionRef !== comp) {
+                entry = buildMapPresetCacheEntry(groupId, comp, i, groupOpacity, ls.blendMode);
+                mapPresetLayerCache.set(groupId, entry);
+              }
+              entry.group.opacity = groupOpacity;
+              entry.group.blendMode = ls.blendMode;
+              presetLayers.push(entry.group);
+              for (const child of entry.layers) presetLayers.push(child);
+            }
+            for (const key of mapPresetLayerCache.keys()) {
+              if (!activeKeys.has(key)) mapPresetLayerCache.delete(key);
+            }
+            return presetLayers;
+          }
+          if (vjState.stoppedAll) return stageWrap([]);
+          const vjLayers = get(vjOutputLayers);
+          if (!vjLayers?.length) return stageWrap([]);
+          const weights = nativeCrossfadeWeights(vjState);
+          if (!weights) {
+            return stageWrap(appendNativePerformerWorldLayers(vjLayers, vjLayers, weights));
+          }
+          // A/B crossfade with a paired transition shader: both banks stay
+          // composited at opacity 0 (their frames keep rendering — the mix
+          // pass samples them via layer-frame bindings) and a synthetic
+          // layer per index shows the transition output. Single-bank rows
+          // fall back to fader-weighted opacity.
+          const byIndex = new Map<number, { a?: Layer; b?: Layer }>();
+          const output: Layer[] = [];
+          for (const layer of vjLayers) {
+            const parsed = parseVjLayerId(layer.id);
+            if (!parsed?.bank) {
+              output.push(layer);
+              continue;
+            }
+            const slot = byIndex.get(parsed.idx) ?? {};
+            if (parsed.bank === 'A') slot.a = layer;
+            else slot.b = layer;
+            byIndex.set(parsed.idx, slot);
+          }
+          const shapedMix = applyFaderCurve(
+            Math.max(0, Math.min(1, vjState.crossfaderValue ?? 0)),
+            vjState.crossfaderCurve || 'constant-power',
+          );
+          const stateA = vjState.layerStates ?? [];
+          const stateB = vjState.bankBLayerStates ?? [];
+          for (const [idx, slot] of byIndex.entries()) {
+            // Derived-store lag guard: the launcher state says both decks
+            // hold a clip on this row, but vjOutputLayers has only one bank
+            // materialized. Emitting the single-bank weighted version now
+            // would flip the scene shape for one tick (visible as a black
+            // blink and constant template churn). Signal "stale" instead.
+            const bothActive = !!stateA[idx]?.activeClip && !!stateB[idx]?.activeClip;
+            if (bothActive && (!slot.a || !slot.b)) {
+              return null;
+            }
+            if (slot.a && slot.b) {
+              output.push({ ...slot.a, opacity: 0, _deckMonitorBank: 'a', _deckMonitorOpacity: slot.a.opacity });
+              output.push({ ...slot.b, opacity: 0, _deckMonitorBank: 'b', _deckMonitorOpacity: slot.b.opacity });
+              output.push({
+                ...slot.a,
+                id: `vj-xfade-${idx}`,
+                // Bank opacity is applied inside the native transition pass.
+                // Keep the carrier fully live so either side can fade all the
+                // way to transparent without double-applying its envelope.
+                opacity: 1,
+                // Blend modes are discrete, so hand the carrier to whichever
+                // bank currently owns the larger share of the fader.
+                blendMode: shapedMix < 0.5 ? slot.a.blendMode : slot.b.blendMode,
+                source: {
+                  id: `vj-xfade-src-${idx}`,
+                  type: 'effect',
+                  src: `plugin://vj-crossfade/${idx}`,
+                  name: 'VJ Crossfade',
+                  effectSource: {
+                    effectType: 'vj-crossfade',
+                    vjxfadeLayerA: slot.a.id,
+                    vjxfadeLayerB: slot.b.id,
+                    vjxfadeOpacityA: slot.a.opacity,
+                    vjxfadeOpacityB: slot.b.opacity,
+                    vjxfadeMix: Number(shapedMix.toFixed(4)),
+                    vjxfadeTransition: vjState.crossfaderTransition || 'dissolve',
+                    vjxfadeBlend: vjState.crossfaderBlendMode || 'normal',
+                  },
+                } as NonNullable<Layer['source']>,
+              });
+              continue;
+            }
+            const single = slot.a ?? slot.b;
+            if (!single) continue;
+            const weight = slot.a ? weights.a : weights.b;
+            output.push({
+              ...single,
+              opacity: single.opacity * weight,
+              _deckMonitorBank: slot.a ? 'a' : 'b',
+              _deckMonitorOpacity: single.opacity,
+            });
+          }
+          return stageWrap(appendNativePerformerWorldLayers(output, vjLayers, weights));
+        }
+        // Shallow-copy so per-frame opacity rides (stage FX) captured at
+        // call time survive the end-of-frame restore before the sync flush.
+        return (get(layers) as Layer[]).map((l) => ({ ...l }));
+      };
+      let __vjFeedDebugAt = 0;
+      type NativeVjLayersSyncDetail = {
+        urgent?: boolean;
+        videoSourceIds?: string[];
+        triggeredAtMs?: number;
+      };
+      const scheduleNativeLayersSync = (
+        urgent = false,
+        retry = true,
+        videoSourceIds: string[] = [],
+        triggeredAtMs?: number,
+      ) => {
+        const p = get(project);
+        const effective = nativeEffectiveLayers();
+        if (!effective) {
+          // A trigger updates the launcher and derived VJ layers in adjacent
+          // store emissions. Give the derived layer one microtask to settle,
+          // then push the complete launch transaction immediately.
+          if (urgent && retry) {
+            queueMicrotask(() => scheduleNativeLayersSync(true, false, videoSourceIds, triggeredAtMs));
+          }
+          return;
+        }
+        const now = Date.now();
+        if (now - __vjFeedDebugAt > 3000) {
+          __vjFeedDebugAt = now;
+          const vjState = get(vjClipLauncher);
+          if (vjState.isLive) {
+            const vjLayers = get(vjOutputLayers);
+            console.log('[NativeRendererSync] vj-feed', JSON.stringify({
+              xfadeOn: vjState.crossfaderEnabled,
+              value: vjState.crossfaderValue,
+              transition: vjState.crossfaderTransition,
+              stoppedAll: vjState.stoppedAll,
+              vjOut: (vjLayers ?? []).map((l) => l.id + '@' + l.opacity.toFixed(2) + ':' + (l.source?.name ?? '?')),
+              effective: effective.map((l) => l.id + '@' + l.opacity.toFixed(2)),
+              activeA: vjState.layerStates.map((ls) => ls.activeClip?.name ?? null),
+              activeB: vjState.bankBLayerStates.map((ls) => ls.activeClip?.name ?? null),
+              pending: vjState.pendingTriggers?.length ?? 0,
+            }));
+          }
+        }
+        if (urgent) {
+          const handoff = videoSourceIds.length > 0
+            ? nativeRendererSync?.syncUrgentVideoSources(
+              p.width || 1920,
+              p.height || 1080,
+              effective,
+              videoSourceIds,
+            )
+            : undefined;
+          if (handoff) {
+            // Keep full graph/effect reconciliation behind the tiny decoder
+            // handoff so it cannot delay the first moving video frame.
+            void handoff.finally(() => {
+              if (typeof triggeredAtMs === 'number') {
+                console.log(
+                  `[NativeRendererSync] vj-trigger handoff acked in ${(performance.now() - triggeredAtMs).toFixed(1)}ms`,
+                  videoSourceIds.join(','),
+                );
+              }
+              nativeRendererSync?.syncNow(p.width || 1920, p.height || 1080, effective);
+            });
+          } else {
+            nativeRendererSync?.syncNow(p.width || 1920, p.height || 1080, effective);
+          }
+        } else {
+          nativeRendererSync?.scheduleSync(p.width || 1920, p.height || 1080, effective);
+        }
+      };
       nativeProjectUnsub = project.subscribe(($project) => {
         queueNativeLayerInteractions($project.layers || []);
-        nativeRendererSync?.scheduleSync(
-          $project.width || 1920,
-          $project.height || 1080,
-          $project.layers || []
-        );
+        scheduleNativeLayersSync();
         if (nativeEditorPreviewWindowEnabled || nativeEmbeddedPreviewEnabled) {
           scheduleNativePreviewWindowSync('project');
         }
       });
+      nativeLayersSyncRef = () => scheduleNativeLayersSync();
+      // ── Stage FX driver (native mode) ──
+      // When the native core owns the frame, the WebGL animate() loop
+      // never runs — so nothing was ticking the stage-effect engines
+      // into the native scene. This RAF loop is the native-mode driver:
+      // while either FX engine is live it modulates the bound layers'
+      // opacity in place, pushes the scene (the sync captures values by
+      // copy at call time), then restores the stashed opacities. Idle
+      // frames cost two map-size checks and nothing else.
+      let stageFxNativeRaf: number | null = null;
+      const stageFxNativeTick = () => {
+        stageFxNativeRaf = requestAnimationFrame(stageFxNativeTick);
+        const stageRt = get(stageEffectsRuntime);
+        const p = get(project);
+        const mc = p.mappingComposition;
+        const surfaceFx = stageRt.sliceOutputs.size > 0;
+        const mappingFx = !!(mc?.enabled && (mc.stageEffects?.length ?? 0) > 0);
+        if (!surfaceFx && !mappingFx) return;
+        const vjState = get(vjClipLauncher);
+        const vjLayers = get(vjOutputLayers);
+        const normalLayers = get(layers) as Layer[];
+        const working: Layer[] = vjState.isLive && vjState.stageMode
+          ? [...(vjLayers ?? []), ...normalLayers]
+          : [...normalLayers];
+        let fxMatched = 0;
+        if (surfaceFx) {
+          for (const layer of working) {
+            // Direct slice binding OR geometry fallback — same resolver
+            // the 3D LED path uses, so a stage whose slice→layer
+            // bindings weren't persisted still gets FX in native output.
+            const out = resolveStageEffectForLayer(layer, stageRt);
+            if (!out.sliceId) continue;
+            fxMatched += 1;
+            if (out.brightness >= 1) continue;
+            applyLayerOpacityModulation(layer, out.brightness);
+          }
+        }
+        if (mappingFx) {
+          applyMappingCompositionStageEffects(mc, working, performance.now());
+        }
+        scheduleNativeLayersSync();
+        for (const layer of working) {
+          const mutable = layer as { _stageOrigOpacity?: number; opacity: number };
+          if (mutable._stageOrigOpacity !== undefined) {
+            mutable.opacity = mutable._stageOrigOpacity;
+            delete mutable._stageOrigOpacity;
+          }
+        }
+        const nowDbg = performance.now();
+        if (nowDbg - ((window as unknown as { __stageFxNativeDbgAt?: number }).__stageFxNativeDbgAt ?? 0) > 2000) {
+          (window as unknown as { __stageFxNativeDbgAt?: number }).__stageFxNativeDbgAt = nowDbg;
+          console.log('[StageFX:native] surface=' + (surfaceFx ? stageRt.sliceOutputs.size : 0)
+            + ' mapping=' + (mappingFx ? 1 : 0)
+            + ' matched=' + fxMatched
+            + ' layers=' + working.length);
+        }
+      };
+      stageFxNativeRaf = requestAnimationFrame(stageFxNativeTick);
+      const nativeVjLayersUnsub = vjOutputLayers.subscribe(() => scheduleNativeLayersSync());
+      const nativeVjStateUnsub = vjClipLauncher.subscribe(() => scheduleNativeLayersSync());
+      const nativePerformerWorldUnsub = nativePerformerWorldOverlays.subscribe(() =>
+        scheduleNativeLayersSync(),
+      );
+      const handleVjLayersSyncEvent = (event: Event) => {
+        const detail = (event as CustomEvent<NativeVjLayersSyncDetail>).detail;
+        scheduleNativeLayersSync(
+          Boolean(detail?.urgent),
+          true,
+          Array.isArray(detail?.videoSourceIds) ? detail.videoSourceIds : [],
+          Number(detail?.triggeredAtMs) || undefined,
+        );
+      };
+      window.addEventListener('ghost:native-vj-layers-sync', handleVjLayersSyncEvent);
+      const previousNativeProjectUnsub = nativeProjectUnsub;
+      nativeProjectUnsub = () => {
+        previousNativeProjectUnsub();
+        nativeVjLayersUnsub();
+        nativeVjStateUnsub();
+        nativePerformerWorldUnsub();
+        if (stageFxNativeRaf !== null) {
+          cancelAnimationFrame(stageFxNativeRaf);
+          stageFxNativeRaf = null;
+        }
+        window.removeEventListener('ghost:native-vj-layers-sync', handleVjLayersSyncEvent);
+      };
 
       const handleNativeOutputSceneResync = () => {
         const p = get(project);
@@ -1515,7 +1993,14 @@
           nativePreviewResizeObserver = new ResizeObserver(() => {
             scheduleNativePreviewWindowSync('resize');
           });
-          if (containerEl) nativePreviewResizeObserver.observe(containerEl);
+          const geometryTargets = [
+            containerEl,
+            wrapperEl,
+            containerEl?.closest('.viewport') as HTMLElement | null,
+          ];
+          for (const target of new Set(geometryTargets.filter(Boolean) as Element[])) {
+            nativePreviewResizeObserver.observe(target);
+          }
         }
         const handleNativePreviewWindowEvent = () => scheduleNativePreviewWindowSync('window');
         window.addEventListener('resize', handleNativePreviewWindowEvent);
@@ -1546,9 +2031,10 @@
       let _nativeShellFrames = 0;
       function animateNativeShell() {
         nativeRendererSync?.setRenderClock(null);
-        // The native presenter is an AppKit child view, so Chromium cannot
-        // move it for us when sidebars, trays, or startup UI settle. Measure
-        // every UI frame; the rect signature prevents redundant IPC calls.
+        // Publish one atomic geometry revision for both the native presenter
+        // and every DOM overlay. The signature prevents redundant store/IPC
+        // updates while still following live resize, zoom, and pan each frame.
+        publishEditorCanvasGeometry();
         scheduleNativePreviewWindowSync('layout-frame');
         fpsFrameCount++;
         const fpsNow = performance.now();
@@ -1582,12 +2068,15 @@
         sizeContainer(parentW, parentH);
         canvas.width = pW;
         canvas.height = pH;
-        nativeRendererSync?.scheduleSync(pW, pH, get(layers));
+        window.dispatchEvent(new CustomEvent('ghost:native-vj-layers-sync'));
       });
       nativeResizeObserver.observe(wrapperEl);
 
       return () => {
         nativeResizeObserver.disconnect();
+        editorCanvasGeometrySnapshot = null;
+        editorCanvasGeometrySignature = '';
+        editorCanvasGeometry.set(null);
         canvas.removeEventListener('mousemove', handleCanvasMouseMove);
         canvas.removeEventListener('mouseleave', handleCanvasMouseLeave);
         canvas.removeEventListener('mouseenter', handleCanvasMouseEnter);
@@ -1609,7 +2098,7 @@
     // and reconciles tap canvases when controllers are added/removed.
     // The per-frame tap+send happens via tickWLEDSenders() from
     // inside the animate loop.
-    startWLEDSenders(canvas);
+    startWLEDSenders(canvas, isOutputMode ? 'output' : isOsrMode ? 'osr' : 'editor');
     // Set initial container size from wrapper layout dimensions
     sizeContainer(wrapW, wrapH);
 
@@ -1952,7 +2441,18 @@
           legacyRenderer.setRenderTarget(null);
           legacyRenderer.setClearColor(0x020407, 1);
           legacyRenderer.clear(true, true, true);
-          tickWLEDSenders();
+          // Stage FX are driven by the dedicated native-mode RAF loop
+          // installed next to scheduleNativeLayersSync — animate() does
+          // not reliably run when the native core owns the frame, so
+          // nothing FX-critical may live in this branch.
+          // TODO(native composite downsample — see
+          // docs/MAINTENANCE_TO_NATIVE_TRANSFER_2026-07-29.md ledger):
+          // when the native core owns the frame, this WebGL canvas is
+          // cleared each tick, so composite sampling degrades to the
+          // clear color. Pattern/test/effect generation (solid, chase,
+          // rainbow, LED FX, latch/hold/BPM) still runs fully; only
+          // content-derived sampling needs the native readback path.
+          tickWLEDSenders(canvas);
           _consecutiveFrameErrors = 0;
           animationId = requestAnimationFrame(animate);
           return;
@@ -2336,7 +2836,8 @@
             const sliceId = stageRt.layerToSlice.get(layer.id);
             if (!sliceId) continue;
             const brightness = stageRt.sliceOutputs.get(sliceId);
-            if (brightness === undefined || brightness >= 1) continue;
+            if (brightness === undefined) continue;
+            if (brightness >= 1) continue;
             applyLayerOpacityModulation(layer, brightness);
           }
         }
@@ -2345,8 +2846,16 @@
           ? engine.manualTime
           : null;
         nativeRendererSync?.setRenderClock(renderClockSeconds);
-        const stageEffectNowMs = renderClockSeconds !== null ? renderClockSeconds * 1000 : performance.now();
+        const stageEffectNowMs = browserEditorPreviewActive() && renderClockSeconds !== null
+          ? renderClockSeconds * 1000
+          : performance.now();
         applyMappingCompositionStageEffects($project.mappingComposition, layersToRender, stageEffectNowMs);
+        // Stage FX animate per frame by riding layer opacity; the native
+        // scene only updates through the sync, so push while any effect
+        // output is live (values are captured by copy in the sync path).
+        const stageFxActive = stageRt.sliceOutputs.size > 0
+          || !!($project.mappingComposition?.enabled && ($project.mappingComposition?.stageEffects?.length ?? 0) > 0);
+        if (stageFxActive) nativeLayersSyncRef?.();
 
         if (seqOverrides) {
           // Continuous-mode rows take a separate side-channel path:
@@ -2810,7 +3319,7 @@
       // WLED tap: after frame is rendered, push pixel data to any
       // configured LED controllers. Cheap (32-490 byte readback +
       // UDP send to main process); throttled to ~60Hz per controller.
-      tickWLEDSenders();
+      tickWLEDSenders(canvas);
 
       _consecutiveFrameErrors = 0; // successful frame — reset the error streak
       } catch (err) {
@@ -3141,7 +3650,7 @@
     }
 
     cancelAnimationFrame(animationId);
-    stopWLEDSenders();
+    if (canvas) stopWLEDSenders(canvas);
     engine?.dispose();
 
     // S4 pilot teardown — unsubscribe from the settings reactive and
@@ -3207,6 +3716,10 @@
       cancelAnimationFrame(nativePreviewSyncRaf);
       nativePreviewSyncRaf = null;
     }
+    nativePreviewSyncInFlight = false;
+    nativePreviewSyncQueued = false;
+    nativePreviewSyncQueuedReason = 'queued';
+    nativePreviewLastVerifiedAt = 0;
     if (nativePreviewResizeObserver) {
       try { nativePreviewResizeObserver.disconnect(); } catch { /* */ }
       nativePreviewResizeObserver = null;
@@ -3225,7 +3738,10 @@
       void detachNativeRendererOutputWindow().catch(() => {});
     }
     if (nativeRendererSync) {
-      void nativeRendererSync.stop();
+      // Canvas instances are temporary (HMR, mode changes, route remounts),
+      // while the native core is app-scoped. Dispose this sync owner without
+      // killing the process a replacement Canvas may already be using.
+      void nativeRendererSync.stop({ stopCore: false });
       nativeRendererSync = null;
     }
 
@@ -6473,8 +6989,8 @@
     return nativeEditorPreviewWindowEnabled && nativeCorePreviewActive();
   }
 
-  function addNativeStarterLayer(): void {
-    project.addGPULayer('Planet', 'planet');
+  function openAddLayerMenu(): void {
+    window.dispatchEvent(new CustomEvent('ghost:open-add-layer-menu'));
   }
 
   function nativePreviewChromeOffsetY(): number {
@@ -6507,40 +7023,83 @@
     contentWidth: number;
     contentHeight: number;
   } | null {
-    if (!containerEl || typeof window === 'undefined') return null;
-    const contentRect = containerEl.getBoundingClientRect();
-    const viewportEl = containerEl.closest('.viewport') as HTMLElement | null;
-    const rect = viewportEl?.getBoundingClientRect() ?? contentRect;
-    const width = Math.max(1, Math.round(rect.width));
-    const height = Math.max(1, Math.round(rect.height));
+    if (typeof window === 'undefined') return null;
+    // A fullscreen workspace (VJ mode, SynthVision performer) can claim the
+    // presenter by registering its preview element; the underlay then tracks
+    // that box instead of the editor viewport. Content letterboxes to the
+    // project aspect inside the host box.
+    const hostEl = get(nativePreviewHostEl);
+    if (hostEl?.isConnected) {
+      const host = hostEl.getBoundingClientRect();
+      const hostWidth = Math.max(1, Math.round(host.width));
+      const hostHeight = Math.max(1, Math.round(host.height));
+      if (hostWidth > 4 && hostHeight > 4) {
+        const proj = get(project);
+        const projAspect = Math.max(0.001, (proj.width || 1920) / Math.max(1, proj.height || 1080));
+        const hostAspect = hostWidth / hostHeight;
+        const contentWidth = hostAspect > projAspect ? hostHeight * projAspect : hostWidth;
+        const contentHeight = hostAspect > projAspect ? hostHeight : hostWidth / projAspect;
+        return {
+          x: Math.round(host.left),
+          y: Math.round(host.top),
+          width: hostWidth,
+          height: hostHeight,
+          contentX: (hostWidth - contentWidth) / 2,
+          contentY: (hostHeight - contentHeight) / 2,
+          contentWidth,
+          contentHeight,
+        };
+      }
+    }
+    const geometry = publishEditorCanvasGeometry();
+    if (!geometry) return null;
+    const width = Math.max(1, geometry.clientWidth);
+    const height = Math.max(1, geometry.clientHeight);
     if (width <= 1 || height <= 1) return null;
-    if (
-      rect.left < -1
-      || rect.top < -1
-      || rect.right > window.innerWidth + 1
-      || rect.bottom > window.innerHeight + 1
-    ) return null;
     return {
-      x: Math.round(rect.left),
-      y: Math.round(rect.top),
+      x: geometry.clientX,
+      y: geometry.clientY,
       width,
       height,
-      contentX: contentRect.left - rect.left,
-      contentY: contentRect.top - rect.top,
-      contentWidth: contentRect.width,
-      contentHeight: contentRect.height,
+      contentX: 0,
+      contentY: 0,
+      contentWidth: width,
+      contentHeight: height,
     };
   }
 
   function scheduleNativePreviewWindowSync(reason = 'schedule'): void {
+    nativePreviewSyncQueuedReason = reason;
+    if (nativePreviewSyncInFlight) {
+      nativePreviewSyncQueued = true;
+      return;
+    }
     if (nativePreviewSyncRaf !== null || typeof requestAnimationFrame === 'undefined') return;
     nativePreviewSyncRaf = requestAnimationFrame(() => {
       nativePreviewSyncRaf = null;
-      void syncNativePreviewWindow(reason);
+      void syncNativePreviewWindow(nativePreviewSyncQueuedReason);
     });
   }
 
   async function syncNativePreviewWindow(reason = 'tick'): Promise<void> {
+    if (nativePreviewSyncInFlight) {
+      nativePreviewSyncQueued = true;
+      nativePreviewSyncQueuedReason = reason;
+      return;
+    }
+    nativePreviewSyncInFlight = true;
+    try {
+      await syncNativePreviewWindowNow(reason);
+    } finally {
+      nativePreviewSyncInFlight = false;
+      if (nativePreviewSyncQueued) {
+        nativePreviewSyncQueued = false;
+        scheduleNativePreviewWindowSync(nativePreviewSyncQueuedReason);
+      }
+    }
+  }
+
+  async function syncNativePreviewWindowNow(reason = 'tick'): Promise<void> {
     if (!isElectron || isOutputMode || isOsrMode) return;
     const outputWindowOpen = !!get(settings)?.output?.outputWindowOpen;
     if (nativeEmbeddedPreviewEnabled) {
@@ -6556,19 +7115,38 @@
       const rect = nativePreviewEmbeddedRect();
       if (!rect) return;
       const signature = `embedded:${rect.x},${rect.y},${rect.width}x${rect.height}:content=${rect.contentX.toFixed(2)},${rect.contentY.toFixed(2)},${rect.contentWidth.toFixed(2)}x${rect.contentHeight.toFixed(2)}`;
-      if (signature === nativePreviewLastSignature && nativeEmbeddedPresenterAttached) return;
-      nativePreviewLastSignature = signature;
+      // AppKit can adjust child-view geometry while a live resize is being
+      // committed. Re-verify the acknowledged canvas rectangle periodically
+      // even when the DOM signature is unchanged; normal animation frames
+      // still avoid IPC between checks.
+      const now = performance.now();
+      const needsGeometryVerification = now - nativePreviewLastVerifiedAt >= 500;
+      if (
+        signature === nativePreviewLastSignature
+        && nativeEmbeddedPresenterAttached
+        && !needsGeometryVerification
+      ) return;
+      const requestRect = {
+        ...rect,
+        generation: ++nativePreviewRequestGeneration,
+      };
       try {
         const status = nativeEmbeddedPresenterAttached
-          ? await updateNativeEditorPreview(rect)
-          : await attachNativeEditorPreview(rect);
+          ? await updateNativeEditorPreview(requestRect)
+          : await attachNativeEditorPreview(requestRect);
         nativeEmbeddedPresenterAttached = !!status?.attached;
-        if (!nativeEmbeddedPresenterAttached) {
+        if (nativeEmbeddedPresenterAttached && status?.geometryMatches === true) {
+          nativePreviewLastSignature = signature;
+          nativePreviewLastVerifiedAt = performance.now();
+        } else {
           nativePreviewLastSignature = '';
+          nativePreviewLastVerifiedAt = 0;
+          scheduleNativePreviewWindowSync('geometry-retry');
         }
       } catch (err) {
         nativeEmbeddedPresenterAttached = false;
         nativePreviewLastSignature = '';
+        nativePreviewLastVerifiedAt = 0;
         if ((window as any).__NATIVE_PREVIEW_DEBUG__) {
           console.warn('[NativePreview] failed to sync embedded native preview:', reason, err);
         }
@@ -6663,15 +7241,16 @@
     <canvas class="output-overlay" bind:this={outputOverlayCanvas}></canvas>
     {#if nativeEnginePendingVisible}
       <div class="native-engine-pending">
-        <div class="native-engine-pending__title">
-          {nativeEnginePendingTitle}
-        </div>
-        <div class="native-engine-pending__detail">
-          {nativeEnginePendingDetail}
-        </div>
         {#if $layers.length === 0}
           <div class="native-engine-pending__actions">
-            <button type="button" onclick={addNativeStarterLayer}>Add Planet Shader</button>
+            <button type="button" onclick={openAddLayerMenu}>Add Layer to Get Started</button>
+          </div>
+        {:else}
+          <div class="native-engine-pending__title">
+            {nativeEnginePendingTitle}
+          </div>
+          <div class="native-engine-pending__detail">
+            {nativeEnginePendingDetail}
           </div>
         {/if}
       </div>

@@ -26,6 +26,7 @@
   ];
 
   const renderModes: { value: SVGRenderMode; label: string }[] = [
+    { value: 'source', label: 'Original SVG' },
     { value: 'flat', label: 'Flat (2D)' },
     { value: 'extrude', label: '3D Extrude' },
   ];
@@ -71,12 +72,15 @@
 
   // Preset configurations
   const presets = [
+    { name: 'Original SVG', key: 'original' },
     { name: 'Default', key: 'default' },
     { name: 'Electric', key: 'electric' },
     { name: 'Organic', key: 'organic' },
     { name: 'Neon', key: 'neon' },
     { name: 'Minimal', key: 'minimal' },
     { name: 'Chaos', key: 'chaos' },
+    { name: '✦ 3D Logo Spin', key: 'logoSpin' },
+    { name: '✦ Art Alive', key: 'artAlive' },
     { name: '✦ Hologram 3D', key: 'hologram' },
     { name: '✦ Chrome Logo', key: 'chrome3d' },
     { name: '✦ Liquid Glass', key: 'glass3d' },
@@ -188,7 +192,46 @@
     if (!$selectedSVGLayer) return;
 
     const presetConfigs: Record<string, Partial<SVGContent>> = {
+      original: {
+        renderMode: 'source',
+        fillMode: 'solid',
+        colorMode: 'perShape',
+        colorCycleEnabled: false,
+        contentScale: 1,
+        panX: 0,
+        panY: 0,
+        rotateX: 0,
+        rotateY: 0,
+        rotateZ: 0,
+        rotateSpeedX: 0,
+        rotateSpeedY: 0,
+        rotateSpeedZ: 0,
+        floatAmount: 0,
+        bloomStrength: 0,
+        chromatic: 0,
+        vignette: 0,
+        liquidEnabled: false,
+        particlesEnabled: false,
+        energyEnabled: false,
+        connectionsEnabled: false,
+        glowEnabled: false,
+        ripplesEnabled: false,
+        lightningEnabled: false,
+        edgeFlowEnabled: false,
+        innerGlowEnabled: false,
+        nebulaEnabled: false,
+        heartbeatEnabled: false,
+        plasmaEnabled: false,
+        particleLinksEnabled: false,
+        echoEnabled: false,
+        arcBridgesEnabled: false,
+        particleFillEnabled: false,
+        organicWarpEnabled: false,
+        growthEnabled: false,
+        breatheEnabled: false,
+      },
       default: {
+        renderMode: 'flat',
         fillMode: 'liquid',
         colorMode: 'perShape',
         liquidEnabled: true,
@@ -209,6 +252,7 @@
         colorCycleEnabled: true,
       },
       electric: {
+        renderMode: 'flat',
         fillMode: 'shimmer',
         colorMode: 'rainbow',
         particleSpeed: 200,
@@ -221,6 +265,7 @@
         colorCycleSpeed: 0.8,
       },
       organic: {
+        renderMode: 'flat',
         fillMode: 'liquid',
         colorMode: 'analogous',
         liquidSpeed: 0.2,
@@ -233,6 +278,7 @@
         plasmaSpeed: 1.0,
       },
       neon: {
+        renderMode: 'flat',
         fillMode: 'shimmer',
         colorMode: 'rainbow',
         shimmerSpeed: 10,
@@ -243,6 +289,7 @@
         outlineThickness: 4,
       },
       minimal: {
+        renderMode: 'flat',
         fillMode: 'solid',
         colorMode: 'monochrome',
         particlesEnabled: false,
@@ -259,6 +306,7 @@
         glowEnabled: false,
       },
       chaos: {
+        renderMode: 'flat',
         fillMode: 'noise',
         colorMode: 'rainbow',
         particlesEnabled: true,
@@ -273,6 +321,36 @@
         rippleSpeed: 3,
         colorCycleEnabled: true,
         colorCycleSpeed: 1,
+      },
+      logoSpin: {
+        renderMode: 'extrude', materialPreset: 'chrome',
+        extrudeDepth: 34, bevelEnabled: true, bevelSize: 2.5,
+        materialMetalness: 0.9, materialRoughness: 0.12, envIntensity: 1.35,
+        lightPreset: 'studio', lightIntensity: 1.2,
+        rotateX: -8, rotateY: 0, rotateZ: 0,
+        rotateSpeedX: 0.06, rotateSpeedY: 0.55, rotateSpeedZ: 0,
+        floatAmount: 5, floatSpeed: 0.7,
+        fillMode: 'solid', colorMode: 'perShape', colorCycleEnabled: false,
+        bloomStrength: 0.2, bloomThreshold: 0.35, chromatic: 0, vignette: 0,
+        liquidEnabled: false, particlesEnabled: false, energyEnabled: false,
+        connectionsEnabled: false, lightningEnabled: false, plasmaEnabled: false,
+        nebulaEnabled: false, echoEnabled: false, organicWarpEnabled: false,
+        growthEnabled: false, breatheEnabled: false,
+      },
+      artAlive: {
+        renderMode: 'source', fillMode: 'solid', colorMode: 'perShape',
+        colorCycleEnabled: false, rotateX: 0, rotateY: 0, rotateZ: 0,
+        rotateSpeedX: 0, rotateSpeedY: 0, rotateSpeedZ: 0, floatAmount: 0,
+        organicWarpEnabled: true, warpAmount: 3.5, warpSpeed: 0.22,
+        edgeFlowEnabled: true, edgeFlowSpeed: 0.45,
+        innerGlowEnabled: true, innerGlowIntensity: 0.22,
+        breatheEnabled: true, breatheAmount: 0.025, breatheSpeed: 0.28,
+        bloomStrength: 0.12, bloomThreshold: 0.45, chromatic: 0, vignette: 0,
+        liquidEnabled: false, particlesEnabled: false, energyEnabled: false,
+        connectionsEnabled: false, glowEnabled: false, ripplesEnabled: false,
+        lightningEnabled: false, nebulaEnabled: false, heartbeatEnabled: false,
+        plasmaEnabled: false, particleLinksEnabled: false, echoEnabled: false,
+        arcBridgesEnabled: false, particleFillEnabled: false, growthEnabled: false,
       },
       // ── 3D presets: drop a logo, pick one, it spins in 3D ──────────
       hologram: {
@@ -2171,7 +2249,7 @@
     flex: 0 0 45px;
     text-align: right;
     color: var(--text-muted, #888);
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: 11px;
   }
 
@@ -2278,7 +2356,7 @@
     text-align: right;
     font-size: 10px;
     color: var(--text-muted, #888);
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
 
   .layer-list {

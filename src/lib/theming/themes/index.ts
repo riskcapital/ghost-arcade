@@ -7,7 +7,7 @@ import { ARCADE_THEME } from './arcade';
 
 export const THEMES: Theme[] = [STUDIO_THEME, ARCADE_THEME];
 
-export const DEFAULT_THEME_ID = 'studio';
+export const DEFAULT_THEME_ID = 'arcade';
 
 export function findTheme(id: string): Theme {
   return THEMES.find(t => t.id === id) ?? STUDIO_THEME;

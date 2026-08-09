@@ -6,7 +6,7 @@
     sessionClipCache,
     isfShaderCache,
     SV_SHADERS, SV_STYLES, SV_SPACES, SV_WORLDS,
-    SV_ALL_CLIPS, SV_CLIP_ROW1, SV_CLIP_ROW2, SV_CLIP_ROW3, SV_CLIP_ROW4,
+    SV_CLIP_ROW1, SV_CLIP_ROW2, SV_CLIP_ROW3, SV_CLIP_ROW4,
     SV_PARAMS, SV_SPACE_FX, SV_CAM_MODES, SV_CAM_BLENDS,
     SV_SHADER_DEFS, SV_WORLD_DEFS,
     SV_REACTIVITY_MODES,
@@ -20,7 +20,7 @@
     geoDeckStore,
   } from '../stores/geoDeck';
   import { evaluateGeoDeck, type GeoEngineRuntime } from '../geo/engine';
-  import { vjClipLauncher, type VJClip } from '../stores/vjClipLauncher';
+  import { vjClipLauncher, type VJClip, type VJDeck } from '../stores/vjClipLauncher';
   import { mediaLibrary, type MediaItem } from '../stores/media';
   import { project, svKeyboardPresets } from '../stores/layers';
   import { globalSVKeyboardPresets } from '../stores/globalPresets';
@@ -43,6 +43,17 @@
   import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
   import AudioInputPicker from './AudioInputPicker.svelte';
   import { showLoading, hideLoading } from '../stores/loading';
+  import {
+    performerClipIndexForCode,
+    resolvePerformerKeyboardAction,
+  } from '../keyboard/performerKeyboard';
+  import {
+    createNativePerformerShaderClip,
+    performerAssignmentDeck,
+    performerTargetDeck,
+  } from '../performer/nativeClip';
+  import { nativePerformerWorldOverlays } from '../stores/nativePerformerWorld';
+  import { NATIVE_ENGINE_ONLY } from '../stores/settings';
 
   export let onClose: () => void = () => {};
   export let visible: boolean = true;
@@ -60,6 +71,7 @@
   let clipAssignments: Record<number, ClipAssignment> = {};
   let clipsDirty = false; // true when assignments changed since last save/load
   let performerEditMode = false;
+  let pressedClipPosition: number | null = null;
   let shaderMixActive = true; // Start with shader mix active by default
   let dragOverClipSlot: number | null = null;
   let editMediaTab: 'fx' | 'vid' | 'img' = 'fx';
@@ -89,12 +101,23 @@
   let activeISFName: string = '';
   let activeISFShaderCode: string = ''; // track to avoid re-parsing
 
+  function activePerformerDeck(): VJDeck {
+    return performerTargetDeck($vjClipLauncher);
+  }
+
+  function activePerformerLayerState() {
+    return activePerformerDeck() === 'B'
+      ? $vjClipLauncher.bankBLayerStates[assignedVJLayer]
+      : $vjClipLauncher.layerStates[assignedVJLayer];
+  }
+
   // ─── Layer Effects System ─────────────────────────
   let showEffectPicker = false;
   let expandedEffectId: string | null = null;
 
   // ─── 3D Worlds Toggle ─────────────────────────
   let worldsEnabled = true;
+  let lastNativeWorldDeck: VJDeck | null = null;
 
   // ─── ISF Inside SynthVision Pipeline ─────────────────────────
   // When ISF shaders are triggered from performer keys, they render INSIDE SynthVision
@@ -123,8 +146,7 @@
       activeISFShaderCode = isfShaderCode_internal;
     } else {
       // Fallback: check VJ clip launcher for ISF clips
-      const vjState = $vjClipLauncher;
-      const clip = vjState.layerStates[assignedVJLayer]?.activeClip;
+      const clip = activePerformerLayerState()?.activeClip;
       if (clip?.type === 'shader' && clip.shaderCode && clip.shaderCode !== activeISFShaderCode) {
         try {
           const parsed = parseISF(clip.shaderCode);
@@ -153,7 +175,7 @@
       const u = isfShaderInstance.uniforms[input.NAME];
       if (u !== undefined && u.value !== undefined) return u.value as number | boolean | number[];
     } else {
-      const clip = $vjClipLauncher.layerStates[assignedVJLayer]?.activeClip;
+      const clip = activePerformerLayerState()?.activeClip;
       if (clip?.shaderValues && input.NAME in clip.shaderValues) {
         return clip.shaderValues[input.NAME];
       }
@@ -171,13 +193,13 @@
         setBaseValue(assignedVJLayer, inputName, value);
       }
     } else {
-      vjClipLauncher.updateActiveClipShaderValue(assignedVJLayer, inputName, value);
+      vjClipLauncher.updateActiveClipShaderValue(assignedVJLayer, inputName, value, activePerformerDeck());
     }
   }
 
   // ─── Layer Effects Management ─────────────────────────
   // Reactive: current layer effects on the SynthVision VJ layer
-  $: svLayerEffects = $vjClipLauncher.layerStates[assignedVJLayer]?.effects ?? [];
+  $: svLayerEffects = activePerformerLayerState()?.effects ?? [];
 
   function handleEffectPickerAdd(types: EffectType[]) {
     for (const type of types) {
@@ -187,22 +209,27 @@
         enabled: true,
         params: getRendererDefaultEffectParams(type),
       };
-      vjClipLauncher.addLayerEffect(assignedVJLayer, newEffect);
+      vjClipLauncher.addLayerEffect(assignedVJLayer, newEffect, activePerformerDeck());
     }
     showEffectPicker = false;
   }
 
   function toggleSvEffect(effectId: string) {
-    vjClipLauncher.toggleLayerEffect(assignedVJLayer, effectId);
+    vjClipLauncher.toggleLayerEffect(assignedVJLayer, effectId, activePerformerDeck());
   }
 
   function deleteSvEffect(effectId: string) {
-    vjClipLauncher.removeLayerEffect(assignedVJLayer, effectId);
+    vjClipLauncher.removeLayerEffect(assignedVJLayer, effectId, activePerformerDeck());
     expandedEffectId = null;
   }
 
   function updateSvEffectParam(effectId: string, paramName: string, value: number | boolean) {
-    vjClipLauncher.updateLayerEffectParams(assignedVJLayer, effectId, { [paramName]: value });
+    vjClipLauncher.updateLayerEffectParams(
+      assignedVJLayer,
+      effectId,
+      { [paramName]: value },
+      activePerformerDeck(),
+    );
   }
 
   // Shader param modulation — thin wrapper for getter, shared setters from modulation.ts
@@ -234,7 +261,6 @@
 
   // VJ Layer assignment
   let assignedVJLayer: number = 0; // 0-3 for layers 1-4
-  let svClipId = `synthvision-${Date.now()}`;
 
   // WebGL2 context for 2D shaders
   let gl: WebGL2RenderingContext | null = null;
@@ -282,6 +308,7 @@
   // Reactive state
   let state: SVState;
   const unsub = synthVisionStore.subscribe(s => { state = s; });
+  $: synthVisionStore.setKeyboardActive(visible);
 
   // Camera stream for live cam layer
   let camVideo: HTMLVideoElement;
@@ -3467,7 +3494,7 @@ void main() {
           setISFInputValue(isfShaderInstance, 'effectStyle', newStyle);
         }
         // Still cycle world for 3D variety
-        synthVisionStore.cycleWorld(1);
+        cycleNativeWorld(1);
       } else {
         synthVisionStore.doRandom();
       }
@@ -3501,7 +3528,7 @@ void main() {
     }
 
     // Update 3D world (skip if worlds disabled)
-    if (worldsEnabled) {
+    if (worldsEnabled && !NATIVE_ENGINE_ONLY) {
       updateWorld(dt);
       updateCamera(dt);
     }
@@ -3591,7 +3618,7 @@ void main() {
     // Render Three.js (skip if worlds disabled). Goes through the
     // post chain (bloom + ACES tone map) when composer is up;
     // falls back to direct render if anything in initThree failed.
-    if (worldsEnabled && renderer && scene && camera) {
+    if (worldsEnabled && !NATIVE_ENGINE_ONLY && renderer && scene && camera) {
       if (composer) {
         composer.render();
       } else {
@@ -3647,7 +3674,7 @@ void main() {
       compCtx.globalCompositeOperation = 'source-over';
       compCtx.drawImage(shaderCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
       // Use additive blending for 3D layer (skip if worlds disabled)
-      if (worldsEnabled) {
+      if (worldsEnabled && !NATIVE_ENGINE_ONLY) {
         compCtx.globalCompositeOperation = 'lighter';
         compCtx.drawImage(threeCanvas, 0, 0, outputCanvas.width, outputCanvas.height);
         compCtx.globalCompositeOperation = 'source-over';
@@ -3752,6 +3779,63 @@ void main() {
     activeISFShaderCode = '';
   }
 
+  function publishNativeWorldOverlay(deck: VJDeck = activePerformerDeck()) {
+    if (!NATIVE_ENGINE_ONLY || !worldsEnabled || !state) {
+      nativePerformerWorldOverlays.clearAll();
+      lastNativeWorldDeck = null;
+      return;
+    }
+
+    if (lastNativeWorldDeck && lastNativeWorldDeck !== deck) {
+      nativePerformerWorldOverlays.clear(lastNativeWorldDeck);
+    }
+    lastNativeWorldDeck = deck;
+
+    const layerState = state.layers[state.focus];
+    const worldIndex = layerState?.world ?? 0;
+    const worldDefinition = SV_WORLD_DEFS[worldIndex];
+    const worldValues = state.worldParams[worldIndex] ?? {};
+    nativePerformerWorldOverlays.setOverlay({
+      deck,
+      layerIndex: assignedVJLayer,
+      enabled: true,
+      worldIndex,
+      spaceIndex: layerState?.space ?? 0,
+      x: Math.max(0, Math.min(1, state.mx ?? 0.5)),
+      y: Math.max(0, Math.min(1, state.my ?? 0.5)),
+      pointerDown: !!state.mDown,
+      params: (worldDefinition?.params ?? []).map((param) =>
+        Number(worldValues[param.k] ?? param.d),
+      ),
+      pump: Math.max(0, Number(state.pump ?? 0)),
+    });
+  }
+
+  function activateNativeWorld(worldIndex: number) {
+    synthVisionStore.setWorld(worldIndex);
+    publishNativeWorldOverlay();
+  }
+
+  function cycleNativeWorld(delta: number) {
+    const current = state.layers[state.focus].world;
+    const next = ((current + delta) % SV_WORLDS.length + SV_WORLDS.length) % SV_WORLDS.length;
+    activateNativeWorld(next);
+  }
+
+  function toggleNativeWorlds() {
+    worldsEnabled = !worldsEnabled;
+    if (worldsEnabled) {
+      publishNativeWorldOverlay();
+      return;
+    }
+    nativePerformerWorldOverlays.clearAll();
+    lastNativeWorldDeck = null;
+  }
+
+  $: if (NATIVE_ENGINE_ONLY && worldsEnabled && state?.worldParams) {
+    publishNativeWorldOverlay();
+  }
+
   function bridgeSVParamsToISF(mixP: Record<string, number>) {
     if (!isfShaderInstance) return;
     // Map SV globals to ISF uniform names (silently skip if uniform doesn't exist)
@@ -3810,11 +3894,19 @@ void main() {
         };
       }
     }
-    // Force re-creation of ISF instance so any edits to the library's shader
-    // code are always picked up (both for click and keyboard launches).
-    isfShaderCode_internal = '';
-    // Render ISF inside SynthVision pipeline instead of replacing SV on VJ layer
-    activateISFShader(liveAssignment);
+    const clip = createNativePerformerShaderClip(
+      liveAssignment,
+      `performer-shader-${generateUUID()}`,
+    );
+    if (!clip) return;
+
+    // Performer clips use the same native VJ clip contract as the main deck.
+    // A unique launch id guarantees that repeated triggers replace/restart the
+    // active source instead of being treated as a grid-cell re-click.
+    deactivateISF();
+    const deck = performerAssignmentDeck(liveAssignment);
+    vjClipLauncher.launchTransientClip(assignedVJLayer, clip, deck);
+    publishNativeWorldOverlay(deck);
   }
 
   // ─── Random All: ISF Params + Layer Effects ─────────────────────────
@@ -3836,7 +3928,8 @@ void main() {
     }
 
     // 2. Randomize layer effects params
-    const effects = $vjClipLauncher.layerStates[assignedVJLayer]?.effects ?? [];
+    const effects = activePerformerLayerState()?.effects ?? [];
+    const deck = activePerformerDeck();
     for (const effect of effects) {
       const defs = EFFECT_PARAM_DEFS[effect.type] || [];
       const patch: Record<string, number> = {};
@@ -3855,7 +3948,7 @@ void main() {
         }
       }
       if (Object.keys(patch).length > 0) {
-        vjClipLauncher.updateLayerEffectParams(assignedVJLayer, effect.id, patch);
+        vjClipLauncher.updateLayerEffectParams(assignedVJLayer, effect.id, patch, deck);
       }
     }
 
@@ -3896,9 +3989,6 @@ void main() {
     const assignment = clipAssignments[clipPos];
     if (!assignment) { console.log('[SV triggerClip] no assignment at', clipPos); return; }
 
-    // Re-activate SynthVision clip on VJ layer if STOP ALL cleared it
-    ensureSVClipActive();
-
     if (assignment.type === 'media' && assignment.mediaSrc) {
       applyMediaClip(assignment);
     } else if (assignment.type === 'shader' && assignment.shaderCode) {
@@ -3907,27 +3997,11 @@ void main() {
     }
   }
 
-  /** Ensure the synthvision clip is active on the VJ layer (re-triggers after STOP ALL) */
-  function ensureSVClipActive() {
-    const layerState = $vjClipLauncher.layerStates[assignedVJLayer];
-    if (!layerState?.activeClip || layerState.activeClip.id !== svClipId) {
-      // SynthVision clip was cleared (e.g. by STOP ALL) — re-set and re-trigger it
-      const svClip: VJClip = {
-        id: svClipId,
-        type: 'synthvision',
-        name: 'PERFORMER',
-        src: '',
-        synthVisionCanvas: outputCanvas
-      };
-      vjClipLauncher.setClip(assignedVJLayer, 0, svClip);
-      vjClipLauncher.triggerClip(assignedVJLayer, 0);
-    }
-  }
-
   function applyMediaClip(assignment: ClipAssignment) {
     if (!assignment.mediaSrc) return;
     const layerIdx = assignedVJLayer;
     const clipId = `perf-media-${assignment.mediaId || Date.now()}`;
+    const deck = performerAssignmentDeck(assignment);
 
     if (assignment.mediaType === 'video') {
       // Reuse library item's <video> element if available so rapid
@@ -3955,8 +4029,7 @@ void main() {
         thumbnail: assignment.mediaThumbnail || libraryItem?.thumbnail,
         videoElement: video,
       };
-      vjClipLauncher.setClip(layerIdx, 0, clip);
-      vjClipLauncher.triggerClip(layerIdx, 0);
+      vjClipLauncher.launchTransientClip(layerIdx, clip, deck);
     } else if (assignment.mediaType === 'image') {
       const clip: VJClip = {
         id: clipId,
@@ -3965,9 +4038,9 @@ void main() {
         src: assignment.mediaSrc,
         thumbnail: assignment.mediaThumbnail || assignment.mediaSrc,
       };
-      vjClipLauncher.setClip(layerIdx, 0, clip);
-      vjClipLauncher.triggerClip(layerIdx, 0);
+      vjClipLauncher.launchTransientClip(layerIdx, clip, deck);
     }
+    publishNativeWorldOverlay(deck);
   }
 
   // ─── Drag-Drop Assignment Handlers ─────────────────────
@@ -4016,6 +4089,7 @@ void main() {
       if (data.type === 'shader') {
         clipAssignments[clipPos] = {
           type: 'shader',
+          performerDeck: activePerformerDeck(),
           shaderId: data.id,
           shaderName: data.name,
           shaderSrc: data.src,
@@ -4028,6 +4102,7 @@ void main() {
       } else if (data.type === 'media') {
         clipAssignments[clipPos] = {
           type: 'media',
+          performerDeck: activePerformerDeck(),
           mediaId: data.mediaId,
           mediaName: data.mediaName,
           mediaSrc: data.mediaSrc,
@@ -4181,6 +4256,7 @@ void main() {
   function getClipLabel(clipPos: number, assignments: Record<number, ClipAssignment>): { name: string; desc: string; isMedia: boolean; isAssigned: boolean; thumbnail?: string } {
     const assignment = assignments[clipPos];
     if (!assignment) return { name: '', desc: 'EMPTY', isMedia: false, isAssigned: false };
+    const deck = performerAssignmentDeck(assignment);
     if (assignment.type === 'media') {
       let thumb = assignment.mediaThumbnail;
       if (!thumb && assignment.mediaId) {
@@ -4191,7 +4267,7 @@ void main() {
       if (!thumb && assignment.mediaType === 'image') thumb = assignment.mediaSrc;
       return {
         name: assignment.mediaName || 'Media',
-        desc: assignment.mediaType === 'video' ? 'VIDEO' : 'IMAGE',
+        desc: `${deck} ${assignment.mediaType === 'video' ? 'VIDEO' : 'IMAGE'}`,
         isMedia: true,
         isAssigned: true,
         thumbnail: thumb,
@@ -4199,68 +4275,80 @@ void main() {
     }
     return {
       name: assignment.shaderName || 'Shader',
-      desc: 'SHADER',
+      desc: `${deck} SHADER`,
       isMedia: false,
       isAssigned: true,
       thumbnail: assignment.shaderThumbnail,
     };
   }
 
-  const CODE_TO_CLIP: Record<string, number> = {};
-  SV_ALL_CLIPS.forEach((c, i) => { CODE_TO_CLIP[c.code] = i; });
   function handleKeydown(e: KeyboardEvent) {
-    if (!state.active) return;
-    // Don't capture if typing in an input
-    if ((e.target as HTMLElement)?.tagName === 'INPUT' || (e.target as HTMLElement)?.tagName === 'TEXTAREA') return;
+    if (!visible || !state.keyboardActive) return;
+    const target = e.target as HTMLElement | null;
+    if (target?.closest('input, textarea, select, [contenteditable="true"]')) return;
+
+    const action = resolvePerformerKeyboardAction(e, performerEditMode);
+    if (!action) return;
 
     // Dismiss splash on first interaction
     if (state.showSplash) dismissSplash();
 
-    const code = e.code;
-    const kl = e.key.toLowerCase();
-    const sh = e.shiftKey;
+    e.preventDefault();
+    e.stopPropagation();
 
-    // Clip trigger (all 36 keys)
-    if (CODE_TO_CLIP[code] !== undefined && !sh) {
-      e.preventDefault();
-      const clipPos = CODE_TO_CLIP[code];
-      if (clipPos !== undefined) triggerClip(clipPos);
-      return;
+    switch (action.type) {
+      case 'clip':
+        pressedClipPosition = action.clipPosition;
+        triggerClip(action.clipPosition);
+        break;
+      case 'randomize':
+        randomizeAll();
+        break;
+      case 'xfade':
+        synthVisionStore.nudgeXfade(action.delta);
+        break;
+      case 'space':
+        synthVisionStore.cycleSpace(action.delta);
+        break;
+      case 'world':
+        cycleNativeWorld(action.delta);
+        break;
+      case 'spaceFx':
+        synthVisionStore.triggerSpaceFx();
+        tapBPM();
+        break;
+      case 'focus':
+        synthVisionStore.toggleFocus();
+        break;
+      case 'invert':
+        synthVisionStore.toggleInvert();
+        break;
+      case 'blackout':
+        synthVisionStore.doBlackout();
+        break;
+      case 'glitch':
+        synthVisionStore.doGlitch();
+        break;
+      case 'drift':
+        synthVisionStore.toggleDrift();
+        break;
+      case 'resetMomentaries':
+        synthVisionStore.update(s => ({ ...s, blackout: 0, whiteout: 0, invert: false }));
+        break;
     }
+  }
 
-    if (e.repeat) return;
+  function handleKeyup(e: KeyboardEvent) {
+    if (!visible || !state.keyboardActive) return;
+    const clipPosition = performerClipIndexForCode(e.code);
+    if (clipPosition === null || pressedClipPosition !== clipPosition) return;
+    pressedClipPosition = null;
+    e.preventDefault();
+    e.stopPropagation();
+  }
 
-    // Tab = full random (shader, world, style, space, params, effects)
-    if (code === 'Tab') { e.preventDefault(); randomizeAll(); return; }
-
-    // Arrow left/right = crossfade nudge
-    if (code === 'ArrowLeft') { e.preventDefault(); synthVisionStore.nudgeXfade(-.05); return; }
-    if (code === 'ArrowRight') { e.preventDefault(); synthVisionStore.nudgeXfade(.05); return; }
-
-    // ; ' = space
-    if (code === 'Semicolon') { synthVisionStore.cycleSpace(-1); return; }
-    if (code === 'Quote') { synthVisionStore.cycleSpace(1); return; }
-
-    // , . = world (comma/period)
-    if (code === 'Comma') { synthVisionStore.cycleWorld(-1); return; }
-    if (code === 'Period') { synthVisionStore.cycleWorld(1); return; }
-
-    // Space = trigger selected spacebar effect + tap tempo
-    if (code === 'Space') { e.preventDefault(); synthVisionStore.triggerSpaceFx(); tapBPM(); return; }
-
-    // Backtick = toggle focus
-    if (code === 'Backquote') { synthVisionStore.toggleFocus(); return; }
-
-    // Actions
-    if (kl === 'n') { synthVisionStore.toggleInvert(); return; }
-    if (kl === 'b') { synthVisionStore.doBlackout(); return; }
-    if (kl === 'm') { synthVisionStore.doGlitch(); return; }
-    if (kl === 'x') { synthVisionStore.toggleDrift(); return; }
-    if (kl === 'c') { randomizeAll(); return; }
-    if (code === 'Escape') {
-      synthVisionStore.update(s => ({ ...s, blackout: 0, whiteout: 0, invert: false }));
-      return;
-    }
+  function handleKeyboardBlur() {
+    pressedClipPosition = null;
   }
 
   // Tap tempo
@@ -4345,31 +4433,12 @@ void main() {
   //  VJ Layer Assignment
   // ================================================================
   function assignToVJLayer(layerIdx: number) {
-    if (!outputCanvas) { console.error('[SV] assignToVJLayer: outputCanvas is null!'); return; }
-    console.log('[SV] assignToVJLayer:', layerIdx, 'canvas:', outputCanvas.width, 'x', outputCanvas.height, 'clipId:', svClipId);
     assignedVJLayer = layerIdx;
-
-    // Create Performer clip for VJ layer
-    const svClip: VJClip = {
-      id: svClipId,
-      type: 'synthvision',
-      name: 'PERFORMER',
-      src: '',
-      synthVisionCanvas: outputCanvas
-    };
-
-    // Set clip in first column of the target layer and trigger it
-    vjClipLauncher.setClip(layerIdx, 0, svClip);
-    vjClipLauncher.triggerClip(layerIdx, 0);
-
-    // Update store
     synthVisionStore.setAssignedLayer(layerIdx);
-    console.log('[SV] assignToVJLayer complete, activeClip:', $vjClipLauncher.layerStates[layerIdx]?.activeClip?.id);
   }
 
   function unassignFromVJLayer() {
     if (assignedVJLayer !== null) {
-      vjClipLauncher.clearClip(assignedVJLayer, 0);
       synthVisionStore.setAssignedLayer(null);
     }
   }
@@ -4444,8 +4513,10 @@ void main() {
       // initCamShaders(); -- will be called on first camera activation
 
       showLoading('Building 3D scene...');
-      initThree();
-      buildWorld(0);
+      if (!NATIVE_ENGINE_ONLY) {
+        initThree();
+        buildWorld(0);
+      }
     } catch (initErr) {
       console.error('SynthVision: Init failed, clearing loading overlay:', initErr);
       hideLoading();
@@ -4457,7 +4528,9 @@ void main() {
     lastTime = performance.now();
     animFrame = requestAnimationFrame(renderFrame);
 
-    document.addEventListener('keydown', handleKeydown);
+    document.addEventListener('keydown', handleKeydown, true);
+    document.addEventListener('keyup', handleKeyup, true);
+    window.addEventListener('blur', handleKeyboardBlur);
     document.addEventListener('mousemove', xfMouseMove);
     document.addEventListener('mouseup', xfMouseUp);
 
@@ -4576,10 +4649,15 @@ void main() {
 
     // Unassign from VJ layer
     unassignFromVJLayer();
+    nativePerformerWorldOverlays.clearAll();
+    lastNativeWorldDeck = null;
 
     synthVisionStore.deactivate();
     if (animFrame) cancelAnimationFrame(animFrame);
-    document.removeEventListener('keydown', handleKeydown);
+    synthVisionStore.setKeyboardActive(false);
+    document.removeEventListener('keydown', handleKeydown, true);
+    document.removeEventListener('keyup', handleKeyup, true);
+    window.removeEventListener('blur', handleKeyboardBlur);
     document.removeEventListener('mousemove', xfMouseMove);
     document.removeEventListener('mouseup', xfMouseUp);
     _detachDialListeners();
@@ -4927,6 +5005,7 @@ void main() {
                   class:assigned={label.isAssigned && !label.isMedia}
                   class:media-assigned={label.isMedia}
                   class:has-thumb={!!label.thumbnail}
+                  class:keyboard-pressed={pressedClipPosition === i}
                   class:drag-over={performerEditMode && dragOverClipSlot === i}
                   style={label.thumbnail ? `background-image:url('${label.thumbnail}')` : ''}
                   on:click={() => { if (!performerEditMode) triggerClip(i); }}
@@ -4952,6 +5031,7 @@ void main() {
                   class:assigned={label.isAssigned && !label.isMedia}
                   class:media-assigned={label.isMedia}
                   class:has-thumb={!!label.thumbnail}
+                  class:keyboard-pressed={pressedClipPosition === clipPos}
                   class:drag-over={performerEditMode && dragOverClipSlot === clipPos}
                   style={label.thumbnail ? `background-image:url('${label.thumbnail}')` : ''}
                   on:click={() => { if (!performerEditMode) triggerClip(clipPos); }}
@@ -4977,6 +5057,7 @@ void main() {
                   class:assigned={label.isAssigned && !label.isMedia}
                   class:media-assigned={label.isMedia}
                   class:has-thumb={!!label.thumbnail}
+                  class:keyboard-pressed={pressedClipPosition === clipPos}
                   class:drag-over={performerEditMode && dragOverClipSlot === clipPos}
                   style={label.thumbnail ? `background-image:url('${label.thumbnail}')` : ''}
                   on:click={() => { if (!performerEditMode) triggerClip(clipPos); }}
@@ -5002,6 +5083,7 @@ void main() {
                   class:assigned={label.isAssigned && !label.isMedia}
                   class:media-assigned={label.isMedia}
                   class:has-thumb={!!label.thumbnail}
+                  class:keyboard-pressed={pressedClipPosition === clipPos}
                   class:drag-over={performerEditMode && dragOverClipSlot === clipPos}
                   style={label.thumbnail ? `background-image:url('${label.thumbnail}')` : ''}
                   on:click={() => { if (!performerEditMode) triggerClip(clipPos); }}
@@ -5034,13 +5116,13 @@ void main() {
             {#each SV_WORLDS as world, i}
               <button class="sv-world-btn" class:on={worldsEnabled && focusedLayer && focusedLayer.world === i}
                 class:worlds-off={!worldsEnabled}
-                on:click={() => { if (worldsEnabled) synthVisionStore.setWorld(i); }}>
+                on:click={() => { if (worldsEnabled) void activateNativeWorld(i); }}>
                 {world}
               </button>
             {/each}
           </div>
           <button class="sv-worlds-toggle" class:on={worldsEnabled}
-            on:click={() => worldsEnabled = !worldsEnabled}>
+            on:click={toggleNativeWorlds}>
             {worldsEnabled ? '3D ON' : '3D OFF'}
           </button>
         </div>
@@ -5458,7 +5540,7 @@ void main() {
     height: 100%;
     background: var(--sv-bg);
     color: #fff;
-    font-family: 'IBM Plex Mono', 'Consolas', monospace;
+    font-family: 'Geist Mono', 'Consolas', monospace;
     user-select: none;
     overflow: hidden;
   }
@@ -6147,6 +6229,12 @@ void main() {
     overflow: hidden;
   }
   .sv-clip-btn:hover { border-color: rgba(255,255,255,.25); background-color: rgba(255,255,255,.05); }
+  .sv-clip-btn.keyboard-pressed {
+    border-color: var(--sv-c);
+    background-color: rgba(187,134,252,.2);
+    box-shadow: 0 0 16px rgba(187,134,252,.42);
+    transform: translateY(1px);
+  }
   .sv-clip-btn.on {
     border-color: var(--sv-c);
     background-color: rgba(187,134,252,.12);

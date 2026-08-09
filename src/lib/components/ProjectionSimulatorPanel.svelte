@@ -689,6 +689,7 @@
   });
 
   onDestroy(() => {
+    if (isDesktopApp) void setNativeRendererProjectionSimScene(null).catch(() => {});
     cancelAnimationFrame(raf);
     window.removeEventListener('keydown', handleKeydown);
     if (snapGuideTimer !== null) window.clearTimeout(snapGuideTimer);

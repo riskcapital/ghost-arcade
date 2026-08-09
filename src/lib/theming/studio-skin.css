@@ -16,7 +16,7 @@
    GLOBAL TYPOGRAPHY
    ============================================================ */
 body {
-  font-family: var(--ga-font-ui, 'Space Grotesk', system-ui, sans-serif);
+  font-family: var(--ga-font-ui, 'Geist', system-ui, sans-serif);
   -webkit-font-smoothing: antialiased;
   font-size: 15px;
   /* Studio: neon green glow trail under the knob. Solid (not
@@ -81,7 +81,7 @@ html[data-theme="arcade"] body {
   border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
   border-radius: var(--ga-r-hard, 2px) !important;
   background: var(--ga-card, #13161c) !important;
-  font-family: var(--ga-font-mono, 'IBM Plex Mono', monospace) !important;
+  font-family: var(--ga-font-mono, 'Geist Mono', monospace) !important;
   font-size: 12px !important;
   font-weight: 600 !important;
   color: var(--ga-ink-1, #9aa0ac) !important;
@@ -458,7 +458,7 @@ html[data-theme="arcade"] body {
   height: 26px !important;
   background: var(--ga-bar, #0e1014) !important;
   border-top: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
-  font-family: var(--ga-font-mono, 'IBM Plex Mono', monospace) !important;
+  font-family: var(--ga-font-mono, 'Geist Mono', monospace) !important;
   font-size: 11.5px !important;
   color: rgba(238, 240, 244, 0.74) !important;
 }
@@ -514,7 +514,7 @@ html[data-theme="arcade"] body {
   border: none !important;
   border-bottom: 2px solid transparent !important;
   color: var(--ga-ink-2, #5e6571) !important;
-  font-family: var(--ga-font-mono, 'IBM Plex Mono', monospace) !important;
+  font-family: var(--ga-font-mono, 'Geist Mono', monospace) !important;
   font-size: 10px !important;
   letter-spacing: 0.04em !important;
   text-transform: uppercase !important;
@@ -745,7 +745,7 @@ html[data-theme="arcade"] body {
 .mobile-app,
 .standalone-app,
 .output-app {
-  font-family: var(--ga-font-ui, 'Space Grotesk', system-ui, sans-serif) !important;
+  font-family: var(--ga-font-ui, 'Geist', system-ui, sans-serif) !important;
   color: var(--ga-ink-0, #eef0f4) !important;
 }
 
@@ -831,7 +831,7 @@ html[data-theme="arcade"] body {
 .amp-popover-title,
 .macro-popover-section-title {
   color: var(--ga-violet, #9b87f5) !important;
-  font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace) !important;
+  font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace) !important;
   font-size: 11.5px !important;
   font-weight: 700 !important;
   letter-spacing: 0.08em !important;
@@ -973,7 +973,7 @@ html[data-theme="arcade"] body {
 
 .sidebar-category {
   color: var(--ga-ink-3, #3a404a) !important;
-  font-family: var(--ga-font-mono, 'IBM Plex Mono', monospace) !important;
+  font-family: var(--ga-font-mono, 'Geist Mono', monospace) !important;
   letter-spacing: 0.10em !important;
 }
 
@@ -1024,7 +1024,7 @@ html[data-theme="arcade"] body {
    ============================================================ */
 .stage-overlay {
   background: var(--ga-void, #070809) !important;
-  font-family: var(--ga-font-ui, 'Space Grotesk', system-ui, sans-serif) !important;
+  font-family: var(--ga-font-ui, 'Geist', system-ui, sans-serif) !important;
 }
 
 .stage-header {
@@ -1046,7 +1046,7 @@ html[data-theme="arcade"] body {
 .slice-count,
 .effects-count {
   color: var(--ga-ink-2, #5e6571) !important;
-  font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace) !important;
+  font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace) !important;
 }
 
 .stage-body {
@@ -1062,7 +1062,7 @@ html[data-theme="arcade"] body {
 
 .palette-section {
   color: var(--ga-ink-3, #3a404a) !important;
-  font-family: var(--ga-font-mono, 'IBM Plex Mono', monospace) !important;
+  font-family: var(--ga-font-mono, 'Geist Mono', monospace) !important;
 }
 
 .palette-divider,
@@ -1118,7 +1118,7 @@ html[data-theme="arcade"] body {
    ============================================================ */
 .stage3d-root {
   background: var(--ga-void, #070809) !important;
-  font-family: var(--ga-font-ui, 'Space Grotesk', system-ui, sans-serif) !important;
+  font-family: var(--ga-font-ui, 'Geist', system-ui, sans-serif) !important;
 }
 
 .stage3d-root.external {
@@ -1153,7 +1153,7 @@ html[data-theme="arcade"] body {
 .stage3d-root .props h3,
 .stage3d-root .ghd {
   color: var(--ga-violet, #9b87f5) !important;
-  font-family: var(--ga-font-mono, 'IBM Plex Mono', monospace) !important;
+  font-family: var(--ga-font-mono, 'Geist Mono', monospace) !important;
 }
 
 .stage3d-root .ghd::before {
@@ -1196,7 +1196,7 @@ html[data-theme="arcade"] body {
 .mobile-app {
   background: var(--ga-void, #070809) !important;
   color: var(--ga-ink-0, #eef0f4) !important;
-  font-family: var(--ga-font-ui, 'Space Grotesk', system-ui, sans-serif) !important;
+  font-family: var(--ga-font-ui, 'Geist', system-ui, sans-serif) !important;
 }
 
 .connect-screen {
@@ -1312,7 +1312,7 @@ html[data-theme="arcade"] .stage3d-root {
     radial-gradient(rgba(245, 236, 222, 0.018) 1px, transparent 1px) 0 0 / 24px 24px,
     var(--ga-void, #0a0908) !important;
   color: var(--ga-ink-0, #f2ede4) !important;
-  font-family: var(--ga-font-ui, 'Space Grotesk', system-ui, sans-serif) !important;
+  font-family: var(--ga-font-ui, 'Geist', system-ui, sans-serif) !important;
   letter-spacing: 0.004em !important;
 }
 
@@ -1401,7 +1401,7 @@ html[data-theme="arcade"] :is(
   .stage3d-root .logo,
   .gridhead h4
 ) {
-  font-family: var(--ga-font-display, 'Space Grotesk', system-ui, sans-serif) !important;
+  font-family: var(--ga-font-display, 'Geist', system-ui, sans-serif) !important;
   color: var(--ga-ink-0, #f2ede4) !important;
   text-shadow: var(--ga-marquee-shadow) !important;
   letter-spacing: 0.03em !important;
@@ -1428,7 +1428,7 @@ html[data-theme="arcade"] :is(
   .stage3d-root .props h3,
   .stage3d-root .ghd
 ) {
-  font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace) !important;
+  font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace) !important;
   color: var(--ga-ink-2, #5e564a) !important;
   letter-spacing: 0.14em !important;
   text-transform: uppercase !important;
@@ -1480,7 +1480,7 @@ html[data-theme="arcade"] :is(
   border-radius: var(--ga-r-hard, 3px) !important;
   color: var(--ga-ink-1, #998f81) !important;
   box-shadow: var(--ga-hardware-shadow) !important;
-  font-family: var(--ga-font-display, 'Space Grotesk', system-ui, sans-serif) !important;
+  font-family: var(--ga-font-display, 'Geist', system-ui, sans-serif) !important;
 }
 
 html[data-theme="arcade"] :is(
@@ -1546,7 +1546,7 @@ html[data-theme="arcade"] :is(
   border: 1px solid var(--ga-coral, #ff6f5e) !important;
   border-radius: var(--ga-r-hard, 3px) !important;
   color: #231009 !important;
-  font-family: var(--ga-font-display, 'Space Grotesk', system-ui, sans-serif) !important;
+  font-family: var(--ga-font-display, 'Geist', system-ui, sans-serif) !important;
   font-weight: 700 !important;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.38),
@@ -1783,13 +1783,13 @@ html[data-theme="arcade"] .toggle input:checked + .toggle-slider::before {
 
 html[data-theme="arcade"] :is(.statusbar, .status-bar, .dock) {
   background: var(--ga-void, #0a0908) !important;
-  font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace) !important;
+  font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace) !important;
   color: var(--ga-ink-2, #5e564a) !important;
   letter-spacing: 0.06em !important;
 }
 
 html[data-theme="arcade"] :is(.fps-counter, .version-label, .statusbar b, .status-bar b, .param-value, .value, .shader-param-name, .dim-label, .surface-dims, .zoom-readout) {
-  font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace) !important;
+  font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace) !important;
 }
 
 html[data-theme="arcade"] :is(.fps-counter.fps-good, .version-label.version-update, .output-status) {
@@ -1930,7 +1930,7 @@ html[data-theme="arcade"] .bottom-dock .pill {
   border-color: var(--ga-line-2, rgba(245, 236, 222, 0.13)) !important;
   border-radius: var(--ga-r-hard, 3px) !important;
   color: var(--ga-ink-1, #998f81) !important;
-  font-family: var(--ga-font-display, 'Space Grotesk', system-ui, sans-serif) !important;
+  font-family: var(--ga-font-display, 'Geist', system-ui, sans-serif) !important;
   box-shadow: var(--ga-hardware-shadow) !important;
 }
 
@@ -2007,7 +2007,7 @@ html[data-theme="arcade"] .stage3d-root {
     radial-gradient(rgba(245, 236, 222, 0.018) 1px, transparent 1px) 0 0 / 24px 24px,
     var(--ga-void, #0a0908) !important;
   color: var(--ga-ink-0, #f2ede4) !important;
-  font-family: var(--ga-font-ui, 'Space Grotesk', system-ui, sans-serif) !important;
+  font-family: var(--ga-font-ui, 'Geist', system-ui, sans-serif) !important;
 }
 
 html[data-theme="arcade"] .stage3d-root :is(.topbar, .lib, .props, .hud, .toast, .show-panels-btn) {
@@ -2130,7 +2130,7 @@ html[data-theme="arcade"] .stage3d-root input[type="range"]::-moz-range-thumb {
 
 body,
 :is(.app, .vj-overlay, .stage-overlay, .stage3d-root, .projection-sim-root, .settings-panel, .mobile-app, .standalone-app, .output-app) {
-  font-family: var(--ga-font-ui, 'Space Grotesk', system-ui, sans-serif) !important;
+  font-family: var(--ga-font-ui, 'Geist', system-ui, sans-serif) !important;
   font-feature-settings: "kern" 1, "liga" 1, "tnum" 0 !important;
   letter-spacing: 0 !important;
   text-rendering: optimizeLegibility;
@@ -2162,7 +2162,7 @@ html.native-primary-presenter .viewport-content {
 
 :is(.app, .vj-overlay, .stage-overlay, .stage3d-root, .projection-sim-root, .settings-panel, .mobile-app, .standalone-app, .output-app)
 :is(button, input, select, textarea, label) {
-  font-family: var(--ga-font-ui, 'Space Grotesk', system-ui, sans-serif) !important;
+  font-family: var(--ga-font-ui, 'Geist', system-ui, sans-serif) !important;
 }
 
 :is(
@@ -2184,7 +2184,7 @@ html.native-primary-presenter .viewport-content {
   .stage3d-root .logo,
   .lib-title
 ) {
-  font-family: var(--ga-font-display, 'Space Grotesk', system-ui, sans-serif) !important;
+  font-family: var(--ga-font-display, 'Geist', system-ui, sans-serif) !important;
   font-weight: 700 !important;
   letter-spacing: -0.005em !important;
   text-transform: none !important;
@@ -2210,7 +2210,7 @@ html.native-primary-presenter .viewport-content {
   .stage-auto-play,
   .composition-edit-btn
 ) {
-  font-family: var(--ga-font-ui, 'Space Grotesk', system-ui, sans-serif) !important;
+  font-family: var(--ga-font-ui, 'Geist', system-ui, sans-serif) !important;
   font-weight: 600 !important;
   letter-spacing: var(--ga-type-command-tracking) !important;
   text-transform: none !important;
@@ -2235,7 +2235,7 @@ html.native-primary-presenter .viewport-content {
   .stage3d-root .ghd,
   .projection-sim-root h3
 ) {
-  font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace) !important;
+  font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace) !important;
   font-weight: 600 !important;
   letter-spacing: var(--ga-type-label-tracking) !important;
   text-transform: uppercase !important;
@@ -2267,7 +2267,7 @@ html.native-primary-presenter .viewport-content {
   .shader-param-name,
   .slider-val
 ) {
-  font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace) !important;
+  font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace) !important;
   font-variant-numeric: tabular-nums slashed-zero !important;
   font-feature-settings: "tnum" 1, "zero" 1, "kern" 1 !important;
   letter-spacing: var(--ga-type-data-tracking) !important;

@@ -287,7 +287,7 @@
     accent-color: #BB86FC;
   }
   .amp-row-value {
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: 13px;
     color: #BB86FC;
     text-align: right;

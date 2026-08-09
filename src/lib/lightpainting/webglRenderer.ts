@@ -88,6 +88,8 @@ const BRUSH_TYPE_ID: Record<LightPaintingBrushType, number> = {
   nebula: 19, kaleido: 20, ink: 21, crystal: 22, aurora: 23, bubbles: 24,
   // GPU compute brushes — never reach the shader, sentinel IDs.
   spiral: -1, 'sap-flow': -1, water: -1,
+  // Native-only particle brushes — no WebGL path, sentinel IDs.
+  orbit: -1, helix: -1,
 };
 
 // Brushes whose quad must be ROTATED by the stroke direction.
@@ -102,6 +104,7 @@ const ANGLE_DEPENDENT: Record<LightPaintingBrushType, boolean> = {
   aurora: false, bubbles: false,
   // GPU compute brushes — sentinel values, never read.
   spiral: false, 'sap-flow': false, water: false,
+  orbit: false, helix: false,
 };
 
 // Extent scale multiplier — how big the quad needs to be relative
@@ -120,6 +123,7 @@ const EXTENT_SCALE: Record<LightPaintingBrushType, number> = {
   aurora: 2.2, bubbles: 2.0,
   // GPU compute brushes — sentinel values, never read.
   spiral: 1.0, 'sap-flow': 1.0, water: 1.0,
+  orbit: 1.0, helix: 1.0,
 };
 
 // Brushes that need to re-render every frame because their fragment
@@ -139,6 +143,7 @@ const ANIMATED_BRUSH: Record<LightPaintingBrushType, boolean> = {
   aurora: true, bubbles: true,
   // GPU compute brushes — sentinel values, never read.
   spiral: false, 'sap-flow': false, water: false,
+  orbit: true, helix: true,
 };
 
 // Per-stamp attribute layout. 19 floats per instance (76 bytes).
