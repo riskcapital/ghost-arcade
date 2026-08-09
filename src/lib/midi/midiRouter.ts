@@ -10,6 +10,7 @@ import { setBaseValue as setModulationBase } from '../audio/modulation';
 import type { MidiMapping, MidiMessageType } from './midiTypes';
 import type { BlendMode } from '../types';
 import { getPluginByEffectType } from '../plugins/registry';
+import { normalizeControlPath } from '../control/controlPaths';
 
 // Prebuilt lookup: "cc:74" -> [MidiMapping, ...]
 // Rebuilt automatically when mappings change
@@ -170,6 +171,7 @@ class MidiRouter {
   }
 
   private dispatch(path: string, value: number, mapping: MidiMapping) {
+    path = normalizeControlPath(path);
     const parts = path.split(':');
     const scope = parts[0]; // 'map', 'vj', 'vj-b', 'sv'
 
@@ -226,6 +228,35 @@ class MidiRouter {
     const property = parts.slice(2).join('.'); // supports nested like 'echo.count'
     const layer = get(selectedLayer);
     if (!layer) return;
+
+    // Mapping media transport: map:media:play|restart|position
+    // These actions target the selected layer's live media object so they
+    // work outside VJ mode as well as from OSC/MIDI learn.
+    if (contentType === 'media') {
+      const source = layer.source;
+      const video = source?.videoElement;
+      if (!source || source.type !== 'video' || !video) return;
+
+      const trimStart = Math.max(0, Math.min(1, source.trimStart ?? 0));
+      const trimEnd = Math.max(trimStart, Math.min(1, source.trimEnd ?? 1));
+      const startTime = Number.isFinite(video.duration) ? video.duration * trimStart : 0;
+
+      if (property === 'play' && value > 0) {
+        const shouldPlay = video.paused || source.isPlaying === false;
+        project.setLayerSource(layer.id, { ...source, isPlaying: shouldPlay });
+        if (shouldPlay) void video.play().catch(() => undefined);
+        else video.pause();
+      } else if (property === 'restart' && value > 0) {
+        video.currentTime = startTime;
+        project.setLayerSource(layer.id, { ...source, isPlaying: true });
+        void video.play().catch(() => undefined);
+      } else if (property === 'position') {
+        const normalized = Math.max(0, Math.min(1, value));
+        const sourcePosition = trimStart + normalized * (trimEnd - trimStart);
+        if (Number.isFinite(video.duration)) video.currentTime = video.duration * sourcePosition;
+      }
+      return;
+    }
 
     // Layer-level properties (opacity, etc.)
     if (contentType === 'layer') {
@@ -490,6 +521,17 @@ class MidiRouter {
       return;
     }
 
+    if (layerPart === 'led-effect' && bank === 'A') {
+      const effectId = parts[2];
+      const action = parts[3];
+      if (effectId && (action === 'hold' || action === 'toggle')) {
+        window.dispatchEvent(new CustomEvent('vj-led-effect-control', {
+          detail: { effectId, action, pressed: value > 0, value },
+        }));
+      }
+      return;
+    }
+
     if (layerPart === 'stopall') {
       if (value > 0) vjClipLauncher.stopAll();
       return;
@@ -619,6 +661,36 @@ class MidiRouter {
         const modelProp = parts[3];
         if (modelProp) {
           vjClipLauncher.updateActiveClipModel3DContent(layerIndex, { [modelProp]: value } as any, bank);
+        }
+        break;
+      }
+      case 'video': {
+        const action = parts[3];
+        const state = get(vjClipLauncher);
+        const layerStates = bank === 'B' ? state.bankBLayerStates : state.layerStates;
+        const clip = layerStates[layerIndex]?.activeClip;
+        const video = clip?.type === 'video' ? clip.videoElement : undefined;
+        if (!clip || clip.type !== 'video' || !video) break;
+
+        const trimStart = Math.max(0, Math.min(1, clip.trimStart ?? 0));
+        const trimEnd = Math.max(trimStart, Math.min(1, clip.trimEnd ?? 1));
+        const startTime = Number.isFinite(video.duration) ? video.duration * trimStart : 0;
+
+        if (action === 'play' && value > 0) {
+          const shouldPlay = video.paused || clip.isPlaying === false;
+          vjClipLauncher.updateActiveClipVideoProps(layerIndex, { isPlaying: shouldPlay }, bank);
+          if (shouldPlay) void video.play().catch(() => undefined);
+          else video.pause();
+        } else if (action === 'restart' && value > 0) {
+          video.currentTime = startTime;
+          vjClipLauncher.updateActiveClipVideoProps(layerIndex, { isPlaying: true }, bank);
+          void video.play().catch(() => undefined);
+        } else if (action === 'mirror' && value > 0) {
+          vjClipLauncher.updateActiveClipVideoProps(layerIndex, { mirrorX: !clip.mirrorX }, bank);
+        } else if (action === 'position') {
+          const normalized = Math.max(0, Math.min(1, value));
+          const sourcePosition = trimStart + normalized * (trimEnd - trimStart);
+          if (Number.isFinite(video.duration)) video.currentTime = video.duration * sourcePosition;
         }
         break;
       }

@@ -584,7 +584,7 @@
     justify-content: space-between;
     margin-top: 6px;
     font-size: 12px;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     color: var(--text-muted, #888);
   }
   .error-box,

@@ -8,6 +8,8 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import { project, selectedLightPaintingLayer, selectedLightPaintingContent, selectedLayerId } from '../stores/layers';
+  import { NATIVE_ENGINE_ONLY, settings } from '../stores/settings';
+  import { isNativeLightPaintingBrush } from '$lib/renderer/lightPaintingNative';
   import {
     createDefaultLightPaintingBrush,
     generateUUID,
@@ -73,36 +75,33 @@
     [180, 50, 255],   [255, 100, 0],    [255, 255, 100],
   ];
 
-  const brushTypes: { type: LightPaintingBrushType; label: string; gpu?: boolean }[] = [
+  const brushTypes: { type: LightPaintingBrushType; label: string }[] = [
     { type: 'glow', label: 'Glow' },         { type: 'neon', label: 'Neon' },
     { type: 'flame', label: 'Flame' },       { type: 'electric', label: 'Electric' },
     { type: 'ribbon', label: 'Ribbon' },     { type: 'particle', label: 'Particle' },
     { type: 'smoke', label: 'Smoke' },       { type: 'laser', label: 'Laser' },
     { type: 'calligraphy', label: 'Callig.' }, { type: 'spray', label: 'Spray' },
     { type: 'paintbrush', label: 'Paint' },  { type: 'marker', label: 'Marker' },
-    { type: 'watercolor', label: 'Water' },
-    // ── WebGPU compute brushes ──
-    // Particles bound to the stroke's tangent + normal vectors,
-    // animated by per-frame compute shader. Best for projection-
-    // mapping plant/tree work — spiral wraps around limbs, firefly
-    // drifts outward like sparks, sap-flow simulates fluid motion.
-    { type: 'spiral', label: 'Spiral', gpu: true },
-    { type: 'firefly', label: 'Firefly', gpu: true },
-    { type: 'sap-flow', label: 'Sap Flow', gpu: true },
-    // 'water' (Ectoplasm) and 'smoke' GPU brushes intentionally hidden from
-    // the picker — kept in the type union + shader so any project files that
-    // already reference them keep loading without errors. Hide until we have
-    // proper fluid / volumetric simulation rather than glorified billboards.
-    // ── Premium WebGPU compute brushes ──
-    // Ported from community's WebGL2 fragment-shader stamps to real
-    // GPU particle systems — thousands of particles per stroke,
-    // additive HDR trails, true motion. Each one is what its WebGL2
-    // ancestor only hinted at.
-    { type: 'galaxy', label: 'Galaxy', gpu: true },
-    { type: 'nebula', label: 'Nebula', gpu: true },
-    { type: 'sparkle', label: 'Sparkle', gpu: true },
-    { type: 'vortex', label: 'Vortex', gpu: true },
-    { type: 'plasma', label: 'Plasma', gpu: true },
+    { type: 'watercolor', label: 'Watercolor' },
+    { type: 'spiral', label: 'Spiral' },
+    { type: 'firefly', label: 'Firefly' },
+    { type: 'sap-flow', label: 'Sap Flow' },
+    { type: 'water', label: 'Water Flow' },
+    { type: 'galaxy', label: 'Galaxy' },
+    { type: 'nebula', label: 'Nebula' },
+    { type: 'sparkle', label: 'Sparkle' },
+    { type: 'vortex', label: 'Vortex' },
+    { type: 'plasma', label: 'Plasma' },
+    { type: 'lightning', label: 'Lightning' },
+    { type: 'kaleido', label: 'Kaleido' },
+    { type: 'ink', label: 'Ink' },
+    { type: 'crystal', label: 'Crystal' },
+    { type: 'aurora', label: 'Aurora' },
+    { type: 'bubbles', label: 'Bubbles' },
+    // Native particle brushes — orbiting heads with motion trails,
+    // the looks the retired WebGPU compute-particle system had.
+    { type: 'orbit', label: 'Orbit' },
+    { type: 'helix', label: 'Helix' },
   ];
 
   // Detect whether the current brush is a GPU brush so the panel
@@ -132,6 +131,7 @@
   $: layer = $selectedLightPaintingLayer;
   $: content = $selectedLightPaintingContent;
   $: layerId = $selectedLayerId;
+  $: nativeInventoryLocked = NATIVE_ENGINE_ONLY && Boolean($settings.experimental?.outputNativeCore);
   $: strokeCount = content?.strokes?.length ?? 0;
   $: drawMode = content?.drawMode ?? 'freehand';
   $: livePreviewPath = buildSvgPath(livePreviewPoints);
@@ -905,7 +905,14 @@
     }
   }
 
-  function setBrushType(type: LightPaintingBrushType) { updateBrushAndMaybeStroke({ ...currentBrush, type }); }
+  function nativeBrushUnavailable(type: LightPaintingBrushType): boolean {
+    return nativeInventoryLocked && !isNativeLightPaintingBrush(type);
+  }
+
+  function setBrushType(type: LightPaintingBrushType) {
+    if (nativeBrushUnavailable(type)) return;
+    updateBrushAndMaybeStroke({ ...currentBrush, type });
+  }
   function setColor(color: [number, number, number]) { updateBrushAndMaybeStroke({ ...currentBrush, color }); }
   function setSecondaryColor(color: [number, number, number] | null) { updateBrushAndMaybeStroke({ ...currentBrush, secondaryColor: color }); }
   function setDrawMode(mode: LightPaintingDrawMode) {
@@ -944,7 +951,58 @@
   }
 
   function handleOverlayContextMenu(e: MouseEvent) {
+    e.stopPropagation();
     if (drawMode === 'pen') { e.preventDefault(); if (penPoints.length > 1) finishPenPath(); else { penPoints = []; penPreviewPoint = null; } }
+  }
+
+  function handleDrawingOverlayPointerDown(e: PointerEvent) {
+    e.stopPropagation();
+    const p = getOverlayPixelCoords(e);
+    cursorX = p.x;
+    cursorY = p.y;
+    if (onPathEditOverlayPointerDown(e)) return;
+    if (!drawingEnabled) return;
+    if (drawMode === 'pen') handlePenClick(e);
+    else startStroke(e);
+  }
+
+  function handleDrawingOverlayPointerMove(e: PointerEvent) {
+    e.stopPropagation();
+    const p = getOverlayPixelCoords(e);
+    cursorX = p.x;
+    cursorY = p.y;
+    if (onPathEditOverlayPointerMove(e)) return;
+    if (!drawingEnabled) return;
+    if (drawMode === 'pen' && isDraggingHandle) handlePenDrag(e);
+    else continueStroke(e);
+  }
+
+  function handleDrawingOverlayPointerUp(e: PointerEvent) {
+    e.stopPropagation();
+    if (onPathEditOverlayPointerUp(e)) return;
+    if (!drawingEnabled) return;
+    if (drawMode === 'pen') isDraggingHandle = false;
+    else endStroke();
+  }
+
+  function handleDrawingOverlayPointerCancel(e: PointerEvent) {
+    e.stopPropagation();
+    pathMarqueeStart = null;
+    pathMarqueeCurrent = null;
+    pathMarqueeStartNorm = null;
+    isDraggingHandle = false;
+    if (isDrawing) endStroke();
+  }
+
+  function handleDrawingOverlayPointerLeave(e: PointerEvent) {
+    e.stopPropagation();
+    cursorX = null;
+    cursorY = null;
+    if (!isPathEditMode && drawingEnabled && drawMode !== 'pen') endStroke();
+  }
+
+  function handleDrawingOverlayMouseDown(e: MouseEvent) {
+    e.stopPropagation();
   }
 </script>
 
@@ -955,13 +1013,16 @@
   {#if overlayOnly}
     <div
       class="lp-draw-overlay"
+      data-editor-pointer-owner="light-painting"
       class:recording={isDrawing}
       class:pen-mode={drawMode === 'pen'}
       class:inactive={!drawingEnabled && !isPathEditMode}
-      onpointerdown={(e) => { const p = getOverlayPixelCoords(e); cursorX = p.x; cursorY = p.y; if (onPathEditOverlayPointerDown(e)) return; if (!drawingEnabled) return; if (drawMode === 'pen') handlePenClick(e); else startStroke(e); }}
-      onpointermove={(e) => { const p = getOverlayPixelCoords(e); cursorX = p.x; cursorY = p.y; if (onPathEditOverlayPointerMove(e)) return; if (!drawingEnabled) return; if (drawMode === 'pen' && isDraggingHandle) handlePenDrag(e); else continueStroke(e); }}
-      onpointerup={(e) => { if (onPathEditOverlayPointerUp(e)) return; if (!drawingEnabled) return; if (drawMode === 'pen') { isDraggingHandle = false; } else endStroke(); }}
-      onpointerleave={() => { cursorX = null; cursorY = null; if (!isPathEditMode && drawingEnabled && drawMode !== 'pen') endStroke(); }}
+      onmousedown={handleDrawingOverlayMouseDown}
+      onpointerdown={handleDrawingOverlayPointerDown}
+      onpointermove={handleDrawingOverlayPointerMove}
+      onpointerup={handleDrawingOverlayPointerUp}
+      onpointercancel={handleDrawingOverlayPointerCancel}
+      onpointerleave={handleDrawingOverlayPointerLeave}
       oncontextmenu={handleOverlayContextMenu}
       role="application"
       aria-label="Light painting canvas"
@@ -1177,8 +1238,15 @@
           <div class="sec-label">Brush Type</div>
           <div class="brush-grid">
             {#each brushTypes as bt}
-              <button class="brush-btn" class:active={currentBrush.type === bt.type} class:gpu={bt.gpu} onclick={() => setBrushType(bt.type)}>
-                {bt.label}{#if bt.gpu}<span class="gpu-badge">GPU</span>{/if}
+              <button
+                class="brush-btn"
+                class:active={currentBrush.type === bt.type}
+                class:unavailable={nativeBrushUnavailable(bt.type)}
+                disabled={nativeBrushUnavailable(bt.type)}
+                title={nativeBrushUnavailable(bt.type) ? 'Native renderer support pending' : bt.label}
+                onclick={() => setBrushType(bt.type)}
+              >
+                {bt.label}
               </button>
             {/each}
           </div>
@@ -1277,9 +1345,7 @@
                consumes a different subset; the panel shows all relevant
                knobs and the WGSL ignores the irrelevant ones. -->
           {#if GPU_BRUSH_TYPES.has(currentBrush.type)}
-            <div class="sec-label">
-              GPU Brush <span class="gpu-badge inline">WebGPU</span>
-            </div>
+            <div class="sec-label">Particle Brush</div>
             <div class="slider-col">
               <div class="sc">
                 <label>Particles <b>{currentBrush.gpuParticleCount ?? 800}</b></label>
@@ -1711,7 +1777,7 @@
   .sc label {
     font-size: 12px; color: #bbb; margin-bottom: 4px; display: flex; align-items: baseline;
   }
-  .sc label b { color: #BB86FC; font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace); font-size: 12px; font-weight: 400; margin-left: auto; }
+  .sc label b { color: #BB86FC; font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); font-size: 12px; font-weight: 400; margin-left: auto; }
   .sc input[type="range"] {
     width: 100%; height: 4px; appearance: none; background: #333; border-radius: 2px; outline: none;
   }
@@ -1734,6 +1800,14 @@
   }
   .brush-btn:hover { background: var(--bg-tertiary, #161618); color: var(--text-primary, #eee); border-color: #555; }
   .brush-btn.active { background: rgba(103,232,249,0.1); color: #BB86FC; border-color: #BB86FC; }
+  .brush-btn.unavailable,
+  .brush-btn.unavailable:hover {
+    opacity: 0.38;
+    cursor: not-allowed;
+    color: var(--text-muted, #666);
+    border-color: #2a2a2d;
+    background: var(--bg-primary, #0d0d10);
+  }
   /* GPU brush buttons get a subtle gradient hint so they're visually
      distinct from the CPU-rasterised ones in the picker. */
   .brush-btn.gpu {

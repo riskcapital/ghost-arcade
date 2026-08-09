@@ -972,7 +972,7 @@
                   y={slice.polygon[0].y - 8 / zoom}
                   fill={slice.color}
                   font-size={11 / zoom}
-                  font-family="IBM Plex Mono, ui-monospace, monospace"
+                  font-family="Geist Mono, ui-monospace, monospace"
                   pointer-events="none"
                 >{slice.name}</text>
               {/if}
@@ -1073,7 +1073,7 @@
                   font-size={11 / zoom}
                   fill={slice.color}
                   pointer-events="none"
-                  font-family="Space Grotesk, system-ui, sans-serif"
+                  font-family="Geist, system-ui, sans-serif"
                 >↻</text>
                 <!-- Scale handle (square at bottom-right of bbox) -->
                 {@const scaleX = bbox.maxX + 24 / zoom}
@@ -1115,7 +1115,7 @@
                   font-size={11 / zoom}
                   fill={slice.color}
                   pointer-events="none"
-                  font-family="Space Grotesk, system-ui, sans-serif"
+                  font-family="Geist, system-ui, sans-serif"
                 >⤡</text>
               {/if}
             {/if}
@@ -1303,6 +1303,9 @@
   .stage-overlay {
     position: fixed;
     inset: 0;
+    /* Clear the macOS hiddenInset titlebar (30px drag strip) so the
+       designer's own header row isn't cropped under the traffic lights. */
+    padding-top: 30px;
     /* Must sit ABOVE the main .toolbar (z-index 1000 in App.svelte)
        so the Stage Designer's own header — Back to Mapping, Apply
        Stage, zoom controls — isn't cropped behind the app toolbar.
@@ -1312,7 +1315,7 @@
     color: var(--text-primary, #ddd);
     display: flex;
     flex-direction: column;
-    font-family: var(--ga-font-ui, 'Space Grotesk', system-ui, sans-serif);
+    font-family: var(--ga-font-ui, 'Geist', system-ui, sans-serif);
     user-select: none;
   }
 
@@ -1371,7 +1374,7 @@
   .surface-dims {
     color: #666;
     font-size: 12px;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
 
   /* ─── Toolbar ─── */
@@ -1458,7 +1461,7 @@
   }
   .zoom-btn:hover { background: rgba(255,255,255,0.06); color: #fff; }
   .zoom-readout {
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: 12px;
     color: var(--text-muted, #888);
     min-width: 44px;
@@ -1555,7 +1558,7 @@
   }
   .effects-count {
     color: #555;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-weight: normal;
   }
 
@@ -1710,7 +1713,7 @@
   }
   .slice-count {
     color: #555;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
   .slice-list {
     flex: 1;
@@ -1979,7 +1982,7 @@
   }
   .inspector-stat span:last-child {
     color: var(--text-primary, #ddd);
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
   .inspector-action {
     margin-top: 4px;

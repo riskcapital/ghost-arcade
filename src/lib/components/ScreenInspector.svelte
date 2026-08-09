@@ -599,7 +599,7 @@
     border-radius: 4px;
     color: #e7e1ef;
     font-size: 11.5px;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     text-align: right;
   }
   .no-unit .value-box {
@@ -609,7 +609,7 @@
     width: 11px;
     color: #77717d;
     font-size: 11px;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
   .swatch {
     width: 7px;
@@ -636,7 +636,7 @@
     border: 1px solid rgba(255, 255, 255, 0.2);
     border-radius: 3px;
     padding: 0 5px;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: 11px;
   }
   .ndi-attribution {

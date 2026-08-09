@@ -53,7 +53,7 @@ const RELEASE_NOTES: Record<string, AppReleaseNotes> = {
       'Map Sim top controls are reorganized for real work: New, Save, Load, Copy, Paste, Delete, transform tools, view controls, sync, fullscreen, and record are grouped with clearer iconography.',
       'New effect-library visuals include phase/magnification-inspired tools and the recent experimental visuals as reusable effects, so they can be applied to any source instead of living as isolated shader layers.',
       'SRC webcam feeds now mirror by default for natural performer-facing camera control.',
-      'The UI typography pass moves Ghost Arcade onto a consistent Space Grotesk + IBM Plex Mono system, trims front-facing UI type by 1px, and normalizes mixed font weights/casing across panels.',
+      'The UI typography pass moves Ghost Arcade onto a consistent Geist + Geist Mono system, trims front-facing UI type by 1px, and normalizes mixed font weights/casing across panels.',
       'The website download flow now starts the download immediately and then asks users to follow the project/community accounts, keeping the app free while helping the community grow.',
     ],
   },

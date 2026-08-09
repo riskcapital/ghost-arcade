@@ -56,11 +56,6 @@
     return nativeInventoryLocked && !isNativeSelectableEffect(effectType);
   }
 
-  function nativeEffectBadge(effectType: EffectType | string): 'NATIVE' | 'PENDING' | '' {
-    if (!nativeInventoryLocked) return '';
-    return isNativeSelectableEffect(effectType) ? 'NATIVE' : 'PENDING';
-  }
-
   function toggleMacroEffectIfNativeReady(macroId: string, fx: Effect) {
     if (nativeEffectPending(fx.type) && !fx.enabled) return;
     macros.toggleEffect(macroId, fx.id);
@@ -391,11 +386,6 @@
                       {#if paramMetas.length > 0} · {paramMetas.length} param{paramMetas.length === 1 ? '' : 's'}{/if}
                     </div>
                   </button>
-                  {#if nativeInventoryLocked}
-                    <span class="native-effect-badge" class:pending={pendingNativeEffect}>
-                      {nativeEffectBadge(fx.type)}
-                    </span>
-                  {/if}
                   <input
                     class="macro-fx-opacity"
                     type="range"
@@ -805,7 +795,7 @@
   }
   .macro-fx-param-value {
     font-size: 13px;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     color: #BB86FC;
     text-align: right;
     user-select: none;
@@ -1008,7 +998,7 @@
     white-space: nowrap;
   }
   .macro-dest-path {
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: 12px;
     color: #666;
     overflow: hidden;
@@ -1033,7 +1023,7 @@
     font-size: 13px;
     padding: 2px 4px;
     border-radius: 3px;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
   .macro-dest-remove {
     background: none;
@@ -1118,7 +1108,7 @@
 
   :global(html[data-theme="arcade"]) .macro-name {
     color: rgba(238, 240, 244, 0.50);
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     letter-spacing: 0.04em;
   }
 

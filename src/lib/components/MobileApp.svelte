@@ -4473,7 +4473,7 @@
     bottom: 0;
     background: var(--bg-primary, #0d0d10);
     color: var(--text-primary, #eee);
-    font-family: var(--ga-font-ui, 'Space Grotesk', system-ui, sans-serif);
+    font-family: var(--ga-font-ui, 'Geist', system-ui, sans-serif);
     display: flex;
     flex-direction: column;
     overflow: hidden;
@@ -5206,7 +5206,7 @@
   .gesture-zoom-label {
     font-size: 13px;
     color: var(--accent-primary, #BB86FC);
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-weight: 600;
   }
 
@@ -7035,5 +7035,5 @@
   }
   .slider-label { width: 48px; font-size: 12px; color: var(--text-muted, #888); flex-shrink: 0; }
   .paint-slider-row input[type='range'] { flex: 1; }
-  .slider-val { width: 36px; font-size: 11px; color: #666; text-align: right; font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace); }
+  .slider-val { width: 36px; font-size: 11px; color: #666; text-align: right; font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); }
 </style>

@@ -86,6 +86,9 @@ struct LayerData {
   uv0: vec4<f32>,
   uv1: vec4<f32>,
   shape: vec4<f32>,
+  shape2: vec4<f32>,
+  shape_meta: vec4<f32>,
+  shape_pts: array<vec4<f32>, 32>,
   effect0: vec4<f32>,
   effect1: vec4<f32>,
   effect2: vec4<f32>,
@@ -112,7 +115,7 @@ var source_frame_sampler: sampler;
 const SOURCE_PREVIEW_SIZE: i32 = 256;
 const SOURCE_PREVIEW_PIXELS: i32 = SOURCE_PREVIEW_SIZE * SOURCE_PREVIEW_SIZE;
 const MAX_SOURCE_PREVIEW_SLOTS: i32 = 16;
-const MAX_SOURCE_FRAME_SLOTS: i32 = 8;
+const MAX_SOURCE_FRAME_SLOTS: i32 = 24;
 const SOURCE_FRAME_SLOT_OFFSET: f32 = 100.0;
 const NATIVE_SHADER_SOURCE_KIND: f32 = 17.0;
 
@@ -443,6 +446,15 @@ fn barycentric_inside(b: vec3<f32>) -> bool {
 }
 
 fn quad_local_uv(p: vec2<f32>, tl: vec2<f32>, tr: vec2<f32>, br: vec2<f32>, bl: vec2<f32>) -> vec3<f32> {
+  // Smooth inverse-bilinear mapping across the whole warped quad. The old
+  // two-triangle barycentric split was affine per triangle, which sheared
+  // content along the tl-br diagonal into a visible hard edge. The
+  // triangle path remains as a fallback for concave handle layouts where
+  // the bilinear inverse has no solution.
+  let uvb = inverse_bilinear(p, tl, tr, br, bl);
+  if (uvb.x >= -0.0005 && uvb.x <= 1.0005 && uvb.y >= -0.0005 && uvb.y <= 1.0005) {
+    return vec3<f32>(1.0, clamp(uvb, vec2<f32>(0.0), vec2<f32>(1.0)));
+  }
   let b0 = barycentric(p, tl, tr, br);
   if (barycentric_inside(b0)) {
     let uv = b0.x * vec2<f32>(0.0, 0.0) + b0.y * vec2<f32>(1.0, 0.0) + b0.z * vec2<f32>(1.0, 1.0);
@@ -642,8 +654,155 @@ fn source_content_for_layer(sampled: vec4<f32>, source_kind: f32) -> vec4<f32> {
   return sampled;
 }
 
+// Surface-space transform for warped shapes. MadMapper-model: the shape is a
+// deformable surface — handles move the GEOMETRY, and both the mask and the
+// content are evaluated in the surface's local space, so they deform as one.
+fn native_shape_surface_uv(local_uv: vec2<f32>, layer_index: u32) -> vec2<f32> {
+  let warp_kind = i32(floor(layers[layer_index].shape_meta.w + 0.5));
+  if (warp_kind == 1) {
+    let pts0 = layers[layer_index].shape_pts[0];
+    let pts1 = layers[layer_index].shape_pts[1];
+    let pts2 = layers[layer_index].shape_pts[2];
+    var w = native_inverse_quad_warp(local_uv, pts0.xy, pts0.zw, pts1.xy, pts1.zw);
+    let center_offset = pts2.xy - vec2<f32>(0.5);
+    let center_weight = 1.0 - smoothstep(0.0, 0.5, length(w - vec2<f32>(0.5)));
+    w = w - center_offset * center_weight * 0.6;
+    return w;
+  }
+  return local_uv;
+}
+
+// Mean-value coordinates: content-follow for warped custom polygons. Maps a
+// pixel inside the CURRENT (dragged) polygon back to the BASE outline the
+// content was authored against, so the texture stretches smoothly with the
+// dragged vertices (HeavyM-style).
+fn native_custom_mvc_uv(p: vec2<f32>, layer_index: u32) -> vec2<f32> {
+  let count = min(32, i32(floor(layers[layer_index].shape_meta.x + 0.5)));
+  if (count < 3) {
+    return p;
+  }
+  var tans: array<f32, 32>;
+  var dists: array<f32, 32>;
+  for (var i: i32 = 0; i < 32; i = i + 1) {
+    if (i >= count) { break; }
+    let packed_a = layers[layer_index].shape_pts[i / 2];
+    let v_i = select(packed_a.zw, packed_a.xy, (i % 2) == 0);
+    let next = (i + 1) % count;
+    let packed_b = layers[layer_index].shape_pts[next / 2];
+    let v_n = select(packed_b.zw, packed_b.xy, (next % 2) == 0);
+    let e_i = v_i - p;
+    let e_n = v_n - p;
+    let d_i = length(e_i);
+    dists[i] = d_i;
+    if (d_i < 0.0005) {
+      // On a vertex: return its base position directly.
+      let base = layers[layer_index].shape_pts[16 + i / 2];
+      return select(base.zw, base.xy, (i % 2) == 0);
+    }
+    let cross_z = e_i.x * e_n.y - e_i.y * e_n.x;
+    let dot_v = dot(e_i, e_n);
+    // tan(angle/2) = (|a||b| - a.b) / cross — signed by winding
+    let denom = select(cross_z, sign(cross_z) * 0.000001, abs(cross_z) < 0.000001);
+    tans[i] = (d_i * length(e_n) - dot_v) / denom;
+  }
+  var uv = vec2<f32>(0.0);
+  var wsum = 0.0;
+  for (var i: i32 = 0; i < 32; i = i + 1) {
+    if (i >= count) { break; }
+    let prev = (i + count - 1) % count;
+    let w_i = (tans[prev] + tans[i]) / max(dists[i], 0.0005);
+    let base = layers[layer_index].shape_pts[16 + i / 2];
+    let b_i = select(base.zw, base.xy, (i % 2) == 0);
+    uv = uv + b_i * w_i;
+    wsum = wsum + w_i;
+  }
+  if (abs(wsum) < 0.000001) {
+    return p;
+  }
+  return uv / wsum;
+}
+
+// Iterative inverse bilinear: find uv such that bilerp(quad, uv) = p.
+fn native_inverse_quad_warp(p: vec2<f32>, tl: vec2<f32>, tr: vec2<f32>, bl: vec2<f32>, br: vec2<f32>) -> vec2<f32> {
+  var uv = vec2<f32>(0.5, 0.5);
+  for (var i = 0; i < 6; i = i + 1) {
+    let top = mix(tl, tr, uv.x);
+    let bottom = mix(bl, br, uv.x);
+    let predicted = mix(top, bottom, uv.y);
+    let error = p - predicted;
+    let d_x = mix(tr - tl, br - bl, uv.y);
+    let d_y = bottom - top;
+    let det = d_x.x * d_y.y - d_x.y * d_y.x;
+    if (abs(det) < 0.00001) { break; }
+    uv = uv + vec2<f32>(
+      (error.x * d_y.y - error.y * d_y.x) / det,
+      (d_x.x * error.y - d_x.y * error.x) / det
+    );
+  }
+  return uv;
+}
+
+fn native_barycentric(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>, c: vec2<f32>) -> vec3<f32> {
+  let v0 = b - a;
+  let v1 = c - a;
+  let v2 = p - a;
+  let d00 = dot(v0, v0);
+  let d01 = dot(v0, v1);
+  let d11 = dot(v1, v1);
+  let d20 = dot(v2, v0);
+  let d21 = dot(v2, v1);
+  let denom = d00 * d11 - d01 * d01;
+  if (abs(denom) < 0.000001) {
+    return vec3<f32>(1.0, 0.0, 0.0);
+  }
+  let v = (d11 * d20 - d01 * d21) / denom;
+  let w = (d00 * d21 - d01 * d20) / denom;
+  return vec3<f32>(1.0 - v - w, v, w);
+}
+
 fn layer_sample_uv(raw_uv: vec2<f32>, layer_index: u32) -> vec3<f32> {
   var sampled_uv = raw_uv;
+  // Shape control-point warp (MadMapper-style). Kind 1: circle quad+center —
+  // content is bilinearly warped through the 4 corner handles and pulled
+  // toward the center handle. Kind 2: triangle — content is barycentrically
+  // remapped so it stretches with the dragged vertices.
+  let warp_kind = i32(floor(layers[layer_index].shape_meta.w + 0.5));
+  let content_follow = layers[layer_index].shape_meta.z >= 0.5;
+  if (warp_kind == 1 && content_follow) {
+    sampled_uv = clamp(native_shape_surface_uv(raw_uv, layer_index), vec2<f32>(0.0), vec2<f32>(1.0));
+  } else if (warp_kind == 3) {
+    sampled_uv = clamp(native_custom_mvc_uv(raw_uv, layer_index), vec2<f32>(0.0), vec2<f32>(1.0));
+  } else if (warp_kind == 2 && content_follow) {
+    let pts0 = layers[layer_index].shape_pts[0];
+    let pts1 = layers[layer_index].shape_pts[1];
+    let bc = native_barycentric(raw_uv, pts0.xy, pts0.zw, pts1.xy);
+    if (bc.x >= 0.0 && bc.y >= 0.0 && bc.z >= 0.0) {
+      let d0 = vec2<f32>(0.5, 0.1);
+      let d1 = vec2<f32>(0.1, 0.9);
+      let d2 = vec2<f32>(0.9, 0.9);
+      sampled_uv = clamp(d0 * bc.x + d1 * bc.y + d2 * bc.z, vec2<f32>(0.0), vec2<f32>(1.0));
+    }
+  }
+  // Custom-shape content fit: 1 = warp (stretch content into the polygon's
+  // bounding box), 2 = fill (aspect-preserving cover of the bbox). shape2
+  // carries the polygon bbox [minX, minY, sizeX, sizeY] for custom shapes.
+  if (layers[layer_index].shape.x >= 5.5 && warp_kind != 3) {
+    let fit = i32(floor(layers[layer_index].shape_meta.z + 0.5));
+    if (fit >= 1) {
+      let bb_min = layers[layer_index].shape2.xy;
+      let bb_size = max(layers[layer_index].shape2.zw, vec2<f32>(0.0001));
+      var fitted = (sampled_uv - bb_min) / bb_size;
+      if (fit == 2) {
+        let bb_aspect = bb_size.x / bb_size.y;
+        if (bb_aspect > 1.0) {
+          fitted.y = (fitted.y - 0.5) / bb_aspect + 0.5;
+        } else {
+          fitted.x = (fitted.x - 0.5) * bb_aspect + 0.5;
+        }
+      }
+      sampled_uv = clamp(fitted, vec2<f32>(0.0), vec2<f32>(1.0));
+    }
+  }
   if (layers[layer_index].uv1.z > 0.5) {
     sampled_uv.x = 1.0 - sampled_uv.x;
   }
@@ -844,29 +1003,142 @@ fn triangle_signed_distance(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>, c: vec2<f3
   return select(edge_dist, -edge_dist, point_in_triangle(p, a, b, c));
 }
 
+fn native_regular_polygon_distance(p: vec2<f32>, r: f32, n: f32) -> f32 {
+  let an = 3.14159265359 / max(n, 3.0);
+  let a = atan2(p.y, p.x);
+  let bn = (a - floor(a / (2.0 * an)) * (2.0 * an)) - an;
+  let q = length(p) * vec2<f32>(cos(bn), abs(sin(bn)));
+  return q.x - r;
+}
+
+fn native_star_distance(p0: vec2<f32>, r: f32, inner_r: f32, n: f32) -> f32 {
+  let an = 3.14159265359 / max(n, 3.0);
+  let en = 3.14159265359 / (max(n, 3.0) * 2.0);
+  let acs = vec2<f32>(cos(an), sin(an));
+  let ecs = vec2<f32>(cos(en), sin(en));
+  let a = atan2(p0.y, p0.x);
+  let bn = (a - floor(a / (2.0 * an)) * (2.0 * an)) - an;
+  var p = length(p0) * vec2<f32>(cos(bn), abs(sin(bn)));
+  p = p - r * acs;
+  p = p + ecs * clamp(-dot(p, ecs), 0.0, r * acs.y / ecs.y);
+  return length(p) * sign(p.x);
+}
+
+fn native_ellipse_distance(p: vec2<f32>, r: vec2<f32>) -> f32 {
+  let k0 = length(p / r);
+  let k1 = length(p / (r * r));
+  return select(k0 * (k0 - 1.0) / max(k1, 0.0001), length(p) - min(r.x, r.y), k1 < 0.0001);
+}
+
+// Signed distance to the custom shape polygon (points packed 2 per vec4 in
+// shape_pts, already in compositor local-UV space with y down).
+fn native_custom_shape_distance(local_uv: vec2<f32>, layer_index: u32) -> f32 {
+  let count = min(32, i32(floor(layers[layer_index].shape_meta.x + 0.5)));
+  if (count < 3) {
+    return -1.0;
+  }
+  var crossings = 0;
+  var min_edge = 1000.0;
+  for (var i: i32 = 0; i < 32; i = i + 1) {
+    if (i >= count) { break; }
+    let packed_a = layers[layer_index].shape_pts[i / 2];
+    let a = select(packed_a.zw, packed_a.xy, (i % 2) == 0);
+    let next = (i + 1) % count;
+    let packed_b = layers[layer_index].shape_pts[next / 2];
+    let b = select(packed_b.zw, packed_b.xy, (next % 2) == 0);
+    let crosses = ((a.y <= local_uv.y && b.y > local_uv.y) || (a.y > local_uv.y && b.y <= local_uv.y)) &&
+      (local_uv.x < (b.x - a.x) * (local_uv.y - a.y) / max(abs(b.y - a.y), 0.000001) * sign(b.y - a.y) + a.x);
+    if (crosses) { crossings = crossings + 1; }
+    min_edge = min(min_edge, segment_distance(local_uv, a, b));
+  }
+  return select(min_edge, -min_edge, (crossings % 2) == 1);
+}
+
+fn native_warp_quad_signed_distance(p: vec2<f32>, layer_index: u32) -> f32 {
+  let pts0 = layers[layer_index].shape_pts[0];
+  let pts1 = layers[layer_index].shape_pts[1];
+  // Quad outline in draw order: tl -> tr -> br -> bl.
+  var quad: array<vec2<f32>, 4>;
+  quad[0] = pts0.xy;
+  quad[1] = pts0.zw;
+  quad[2] = pts1.zw;
+  quad[3] = pts1.xy;
+  var crossings = 0;
+  var min_edge = 1000.0;
+  for (var i = 0; i < 4; i = i + 1) {
+    let a = quad[i];
+    let b = quad[(i + 1) % 4];
+    let crosses = ((a.y <= p.y && b.y > p.y) || (a.y > p.y && b.y <= p.y)) &&
+      (p.x < (b.x - a.x) * (p.y - a.y) / max(abs(b.y - a.y), 0.000001) * sign(b.y - a.y) + a.x);
+    if (crosses) { crossings = crossings + 1; }
+    min_edge = min(min_edge, segment_distance(p, a, b));
+  }
+  return select(min_edge, -min_edge, (crossings % 2) == 1);
+}
+
 fn native_shape_signed_distance(local_uv: vec2<f32>, layer_index: u32) -> f32 {
   let shape_type = i32(floor(layers[layer_index].shape.x + 0.5));
+  if (shape_type == 6) {
+    return native_custom_shape_distance(local_uv, layer_index);
+  }
+  // Warped shapes: the SDF is evaluated in surface space so the mask deforms
+  // together with the content (the shape is a surface, not a crop window).
+  // The inverse-bilinear solver diverges far outside the quad and can fold
+  // back into "inside" values — clip against the quad polygon itself so
+  // nothing ever renders beyond the dragged surface.
+  var quad_clip = -1.0;
+  if (i32(floor(layers[layer_index].shape_meta.w + 0.5)) == 1) {
+    quad_clip = native_warp_quad_signed_distance(local_uv, layer_index);
+    if (quad_clip > 0.05) {
+      return quad_clip;
+    }
+  }
+  let eval_uv = native_shape_surface_uv(local_uv, layer_index);
   let rotation = layers[layer_index].shape.z;
   let scale = max(layers[layer_index].shape.w, 0.0001);
-  let centered = rotate2d((local_uv - vec2<f32>(0.5)) / scale, -rotation);
+  let extra = layers[layer_index].shape2;
+  var centered = rotate2d((eval_uv - vec2<f32>(0.5)) / scale, -rotation);
+  // Compositor local UV runs y-down; the WebGL shape shader (the visual
+  // reference) runs y-up. Mirror so orientation matches the editor overlay.
+  centered.y = -centered.y;
   if (shape_type == 1) {
-    return length(centered) - 0.5;
+    return max(length(centered) - max(extra.x, 0.01) * 0.5, quad_clip);
   }
   if (shape_type == 2) {
+    if (layers[layer_index].shape_meta.w > 1.5) {
+      // Warped triangle: control points are absolute layer-local vertices.
+      let pts0 = layers[layer_index].shape_pts[0];
+      let pts1 = layers[layer_index].shape_pts[1];
+      return triangle_signed_distance(local_uv, pts0.xy, pts0.zw, pts1.xy);
+    }
     return triangle_signed_distance(centered + vec2<f32>(0.5), vec2<f32>(0.5, 0.88), vec2<f32>(0.14, 0.14), vec2<f32>(0.86, 0.14));
   }
+  if (shape_type == 3) {
+    return max(native_ellipse_distance(centered, vec2<f32>(max(extra.x, 0.01), max(extra.y, 0.01)) * 0.5), quad_clip);
+  }
+  if (shape_type == 4) {
+    return max(native_regular_polygon_distance(centered, 0.4, extra.z), quad_clip);
+  }
+  if (shape_type == 5) {
+    return max(native_star_distance(centered, 0.4, max(extra.w, 0.05) * 0.4, extra.z), quad_clip);
+  }
   let q = abs(centered) - vec2<f32>(0.5);
-  return length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0);
+  return max(length(max(q, vec2<f32>(0.0))) + min(max(q.x, q.y), 0.0), quad_clip);
 }
 
 fn native_layer_shape(local_uv: vec2<f32>, layer_index: u32) -> vec2<f32> {
   let feather = max(layers[layer_index].shape.y, 0.0);
   let dist = native_shape_signed_distance(local_uv, layer_index);
-  let mask = select(
-    select(0.0, 1.0, dist < 0.0),
+  // ~1px anti-aliasing floor so unfeathered shapes still get clean edges.
+  let aa = 1.5 / max(min(u.resolution.x, u.resolution.y), 64.0);
+  var mask = select(
+    1.0 - smoothstep(-aa, aa, dist),
     1.0 - smoothstep(-feather, 0.0, dist),
     feather > 0.001
   );
+  if (layers[layer_index].shape_meta.y > 0.5) {
+    mask = 1.0 - mask;
+  }
   let edge_width = max(0.0065, feather * 0.42 + 0.0065);
   let edge = 1.0 - smoothstep(0.0015, edge_width, abs(dist));
   return vec2<f32>(clamp(mask, 0.0, 1.0), clamp(edge, 0.0, 1.0));

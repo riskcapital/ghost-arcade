@@ -289,7 +289,7 @@
   .cpp-header-left { min-width: 0; flex: 1; }
   .cpp-eyebrow {
     font-size: 11px;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     color: #7EC8E3;
     letter-spacing: 0.1em;
     margin-bottom: 2px;
@@ -381,7 +381,7 @@
   }
 
   .cpp-section-label {
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: 11px;
     color: var(--text-muted, #888);
     letter-spacing: 0.15em;
@@ -416,7 +416,7 @@
   }
   .cpp-reset:hover { color: #fff; }
   .cpp-value {
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: 11px;
     color: #7EC8E3;
     min-width: 36px;
@@ -500,6 +500,6 @@
   .cpp-hint {
     font-size: 11px;
     color: #666;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
 </style>

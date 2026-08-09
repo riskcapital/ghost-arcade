@@ -1,5 +1,12 @@
 // Performer Store - Visual Synthesizer State Management
 import { writable, get } from 'svelte/store';
+import {
+  PERFORMER_CLIP_KEYS,
+  PERFORMER_CLIP_ROW1,
+  PERFORMER_CLIP_ROW2,
+  PERFORMER_CLIP_ROW3,
+  PERFORMER_CLIP_ROW4,
+} from '../keyboard/performerKeyboard';
 
 // 36 SYNTH SHADERS - Full keyboard layout (1-0, Q-P, A-L, Z-M)
 // These match the inline GLSL shaders in SynthVision.svelte
@@ -143,26 +150,11 @@ export const SV_CAM_MODES = [
 export type SVCamModeId = typeof SV_CAM_MODES[number]['id'];
 
 // Keyboard clip mapping - full keyboard layout
-export const SV_CLIP_ROW1 = [
-  {key:'1',code:'Digit1'},{key:'2',code:'Digit2'},{key:'3',code:'Digit3'},{key:'4',code:'Digit4'},
-  {key:'5',code:'Digit5'},{key:'6',code:'Digit6'},{key:'7',code:'Digit7'},{key:'8',code:'Digit8'},
-  {key:'9',code:'Digit9'},{key:'0',code:'Digit0'}
-];
-export const SV_CLIP_ROW2 = [
-  {key:'Q',code:'KeyQ'},{key:'W',code:'KeyW'},{key:'E',code:'KeyE'},{key:'R',code:'KeyR'},
-  {key:'T',code:'KeyT'},{key:'Y',code:'KeyY'},{key:'U',code:'KeyU'},{key:'I',code:'KeyI'},
-  {key:'O',code:'KeyO'},{key:'P',code:'KeyP'}
-];
-export const SV_CLIP_ROW3 = [
-  {key:'A',code:'KeyA'},{key:'S',code:'KeyS'},{key:'D',code:'KeyD'},{key:'F',code:'KeyF'},
-  {key:'G',code:'KeyG'},{key:'H',code:'KeyH'},{key:'J',code:'KeyJ'},{key:'K',code:'KeyK'},
-  {key:'L',code:'KeyL'}
-];
-export const SV_CLIP_ROW4 = [
-  {key:'Z',code:'KeyZ'},{key:'X',code:'KeyX'},{key:'C',code:'KeyC'},{key:'V',code:'KeyV'},
-  {key:'B',code:'KeyB'},{key:'N',code:'KeyN'},{key:'M',code:'KeyM'}
-];
-export const SV_ALL_CLIPS = [...SV_CLIP_ROW1, ...SV_CLIP_ROW2, ...SV_CLIP_ROW3, ...SV_CLIP_ROW4];
+export const SV_CLIP_ROW1 = PERFORMER_CLIP_ROW1;
+export const SV_CLIP_ROW2 = PERFORMER_CLIP_ROW2;
+export const SV_CLIP_ROW3 = PERFORMER_CLIP_ROW3;
+export const SV_CLIP_ROW4 = PERFORMER_CLIP_ROW4;
+export const SV_ALL_CLIPS = PERFORMER_CLIP_KEYS;
 
 export const SV_PARAMS = [
   {k:'chaos',l:'CHAOS'},{k:'speed',l:'SPEED'},{k:'zoom',l:'ZOOM'},{k:'color',l:'COLOR'},
@@ -202,6 +194,7 @@ export const SV_REACTIVITY_MODES: { id: SVReactivityMode; label: string; descrip
 
 export interface SVState {
   active: boolean;         // is synth vision open/running
+  keyboardActive: boolean; // visible performer owns its displayed keyboard controls
   assignedLayer: number | null;  // VJ layer index it's assigned to
   layers: { a: SVLayer; b: SVLayer };
   focus: 'a' | 'b';
@@ -293,6 +286,7 @@ function defaultLayer(sh: number, world: number): SVLayer {
 function createDefaultState(): SVState {
   return {
     active: false,
+    keyboardActive: false,
     assignedLayer: null,
     layers: { a: defaultLayer(0, 0), b: defaultLayer(1, 1) },
     focus: 'a',
@@ -371,7 +365,10 @@ function createSynthVisionStore() {
     get: () => get({ subscribe }),
 
     activate: () => update(s => ({ ...s, active: true })),
-    deactivate: () => update(s => ({ ...s, active: false })),
+    deactivate: () => update(s => ({ ...s, active: false, keyboardActive: false })),
+    setKeyboardActive: (keyboardActive: boolean) => update(s => (
+      s.keyboardActive === keyboardActive ? s : { ...s, keyboardActive }
+    )),
 
     setAssignedLayer: (layerIdx: number | null) => update(s => ({ ...s, assignedLayer: layerIdx })),
 

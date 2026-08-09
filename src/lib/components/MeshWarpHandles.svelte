@@ -6,6 +6,7 @@
   import type { Point2D, MeshWarpGrid, WarpCorners } from '../types';
   import { onMount, onDestroy } from 'svelte';
   import { findSnapTarget, getOtherLayerOutlines, type SnapTarget } from '../utils/snapUtils';
+  import { normalizedWarpNudge } from '../utils/warpNudge';
 
   export let containerWidth: number = 800;
   export let containerHeight: number = 600;
@@ -31,10 +32,6 @@
     if (!meshGrid) return false;
     return row === 0 || row === meshGrid.rows - 1 || col === 0 || col === meshGrid.cols - 1;
   }
-
-  // Movement delta for arrow keys (normalized coordinates)
-  const MOVE_DELTA = 0.005;  // Small step
-  const MOVE_DELTA_LARGE = 0.02;  // Large step with Shift
 
   // Transform a mesh point (0-1 local coords) to screen position via corner warp
   // This maps the mesh grid onto the warped quad defined by corners
@@ -115,6 +112,7 @@
     if ($selectedLayer?.locked) return;
     e.preventDefault();
     e.stopPropagation();
+    cancelDrag(false);
     dragging = { row, col };
     selectedPoint = { row, col };  // Set selected point for keyboard navigation
     window.addEventListener('mousemove', handleMouseMove);
@@ -125,23 +123,36 @@
   function handleKeyDown(e: KeyboardEvent) {
     if (!selectedPoint || !$selectedLayer || $selectedLayer.locked || !$selectedLayer.meshGrid) return;
 
-    const delta = e.shiftKey ? MOVE_DELTA_LARGE : MOVE_DELTA;
+    const active = document.activeElement as HTMLElement | null;
+    const activeTag = active?.tagName;
+    if (
+      activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT' ||
+      active?.isContentEditable
+    ) return;
+
+    const proj = get(project);
+    const step = normalizedWarpNudge(
+      proj.width,
+      proj.height,
+      get(settings).ui.warpDragGranularity,
+      e.shiftKey ? 10 : 1,
+    );
     const currentPos = $selectedLayer.meshGrid.points[selectedPoint.row][selectedPoint.col];
     let dx = 0;
     let dy = 0;
 
     switch (e.key) {
       case 'ArrowUp':
-        dy = delta;
+        dy = step.y;
         break;
       case 'ArrowDown':
-        dy = -delta;
+        dy = -step.y;
         break;
       case 'ArrowLeft':
-        dx = -delta;
+        dx = -step.x;
         break;
       case 'ArrowRight':
-        dx = delta;
+        dx = step.x;
         break;
       case 'Escape':
         selectedPoint = null;
@@ -165,11 +176,45 @@
   // Set up keyboard event listener
   onMount(() => {
     window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('blur', handleWindowBlur);
+    document.addEventListener('visibilitychange', handleVisibilityChange);
   });
 
   onDestroy(() => {
+    cancelDrag(false);
     window.removeEventListener('keydown', handleKeyDown);
+    window.removeEventListener('blur', handleWindowBlur);
+    document.removeEventListener('visibilitychange', handleVisibilityChange);
   });
+
+  function removeMouseDragListeners() {
+    window.removeEventListener('mousemove', handleMouseMove);
+    window.removeEventListener('mouseup', handleMouseUp);
+  }
+
+  function removeTouchDragListeners() {
+    window.removeEventListener('touchmove', handleTouchMove);
+    window.removeEventListener('touchend', handleTouchEnd);
+  }
+
+  // Stale-drag guard: a drag interrupted by window blur, tab hide, or
+  // component teardown must release its global listeners or the next
+  // session inherits phantom mousemove handlers.
+  function cancelDrag(record = true) {
+    if (record && dragging) history.record(get(project));
+    dragging = null;
+    activeSnapTarget = null;
+    removeMouseDragListeners();
+    removeTouchDragListeners();
+  }
+
+  function handleVisibilityChange() {
+    if (document.hidden) cancelDrag();
+  }
+
+  function handleWindowBlur() {
+    cancelDrag();
+  }
 
   function handleMouseMove(e: MouseEvent) {
     if (!dragging || !$selectedLayer || !containerEl) return;
@@ -209,16 +254,13 @@
   }
 
   function handleMouseUp() {
-    if (dragging) history.record(get(project));
-    dragging = null;
-    activeSnapTarget = null;
-    window.removeEventListener('mousemove', handleMouseMove);
-    window.removeEventListener('mouseup', handleMouseUp);
+    cancelDrag();
   }
 
   function handleTouchStart(row: number, col: number, e: TouchEvent) {
     if ($selectedLayer?.locked) return;
     e.preventDefault();
+    cancelDrag(false);
     dragging = { row, col };
     window.addEventListener('touchmove', handleTouchMove, { passive: false });
     window.addEventListener('touchend', handleTouchEnd);
@@ -262,11 +304,7 @@
   }
 
   function handleTouchEnd() {
-    if (dragging) history.record(get(project));
-    dragging = null;
-    activeSnapTarget = null;
-    window.removeEventListener('touchmove', handleTouchMove);
-    window.removeEventListener('touchend', handleTouchEnd);
+    cancelDrag();
   }
 
   // Get mesh grid and corners from selected layer

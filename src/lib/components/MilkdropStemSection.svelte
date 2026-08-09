@@ -328,7 +328,7 @@
   .ss-stem-label {
     font-size: 11px;
     color: var(--text-secondary, #aaa);
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;

@@ -11,7 +11,9 @@ import { writable, get } from 'svelte/store';
 import { THEMES, DEFAULT_THEME_ID, findTheme } from './themes';
 import type { Theme, ThemeTokens } from './types';
 
-const STORAGE_KEY = 'ga-active-theme';
+// v2: retro (Arcade) became the default — the key bump re-defaults
+// everyone once; picking a theme afterwards still persists normally.
+const STORAGE_KEY = 'ga-active-theme-v2';
 
 /** snake-case → kebab-case for CSS variable names. `fontUi` → `font-ui`. */
 function tokenToVar(key: string): string {

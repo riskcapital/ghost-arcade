@@ -352,11 +352,6 @@
                           {#if custom}
                             <span class="custom-badge">CUSTOM</span>
                           {/if}
-                          {#if nativeInventoryLocked}
-                            <span class:native-badge={!nativeUnavailable} class:pending-badge={nativeUnavailable}>
-                              {nativeUnavailable ? 'PENDING' : 'NATIVE'}
-                            </span>
-                          {/if}
                         </span>
                         <span class="row-desc">{entry.description}</span>
                       </div>
@@ -686,7 +681,6 @@
     color: #BB86FC;
   }
 
-  .native-badge,
   .pending-badge {
     display: inline-block;
     margin-left: 5px;
@@ -696,12 +690,6 @@
     font-weight: 700;
     letter-spacing: 0.08em;
     vertical-align: middle;
-  }
-
-  .native-badge {
-    background: rgba(34, 211, 238, 0.16);
-    border: 1px solid rgba(34, 211, 238, 0.35);
-    color: #67e8f9;
   }
 
   .pending-badge {

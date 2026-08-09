@@ -93,7 +93,10 @@
   let canRedo = false;
   $: { void $historyVersion; const c = stage3dScene.getHistoryCounts(); canUndo = c.past > 0; canRedo = c.future > 0; }
   $: screenLayers = $project.layers.filter(l => l.type === 'screen' && l.visible !== false);
-  $: queueNativeStageScene($stage3dScene, screenLayers);
+  // Live native-scene publishing removed: the 3D window renders via WebGL.
+  // Publishing the scene into the shared core overlays the venue onto the
+  // 2D output for as long as the window is open. The native recording flow
+  // sets the scene explicitly per frame and clears it afterwards.
   $: userElements = $stage3dScene.userElements ?? [];
   $: venue = ($stage3dScene.venue ?? 'festival') as Stage3DVenue;
   // Venue scenery pieces (deck, trusses, movers, PA…) the renderer
@@ -384,8 +387,7 @@
               await setNativeRendererStage3DScene(nativeScene);
             },
             restore: async () => {
-              const nativeScene = buildNativeStage3DScene(get(stage3dScene), get(project).layers);
-              await setNativeRendererStage3DScene(nativeScene);
+              await setNativeRendererStage3DScene(null);
             },
             onDurationUpdate: (s) => { recordingDuration = s; },
             onComplete: () => {
@@ -655,6 +657,11 @@
     if (nativeScenePublishTimer) {
       clearTimeout(nativeScenePublishTimer);
       nativeScenePublishTimer = null;
+    }
+    // Clear the core's 3D stage scene on close so it can never bleed
+    // into the 2D editor or mapping output.
+    if (isDesktopApp) {
+      void setNativeRendererStage3DScene(null).catch(() => { /* core without stage3d */ });
     }
     recorderHandle?.stop();
     recorderHandle = null;
@@ -1001,7 +1008,7 @@
     z-index: 1000;
     overflow: hidden;
     color: #e9edf4;
-    font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-family: 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   }
   .stage3d-root.external { background: transparent; pointer-events: none; }
   .stage3d-root.external :global(button),
@@ -1153,7 +1160,7 @@
     background: rgba(255, 68, 91, 0.18);
     border-color: rgba(255, 68, 91, 0.72);
     color: #ff8d9b;
-    font-family: 'IBM Plex Mono', monospace;
+    font-family: 'Geist Mono', monospace;
     font-variant-numeric: tabular-nums;
   }
   .rec-btn.recording:hover {
@@ -1190,7 +1197,7 @@
   }
   .spacer { flex: 1 1 0; min-width: 0; }
   .dim-label {
-    font-family: 'IBM Plex Mono', monospace;
+    font-family: 'Geist Mono', monospace;
     font-size: 11px;
     color: #8a93a3;
     letter-spacing: 0.1em;
@@ -1340,7 +1347,7 @@
   .scenery-inspect { display: flex; flex-direction: column; gap: 8px; }
   .scenery-title { font-size: 16px; font-weight: 600; color: #e9edf4; }
   .scenery-sub {
-    font-family: 'IBM Plex Mono', monospace;
+    font-family: 'Geist Mono', monospace;
     font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase;
     color: #4af2ff;
   }
@@ -1454,7 +1461,7 @@
   }
   .hud b { color: #e9edf4; font-weight: 600; }
   .kbd {
-    font-family: 'IBM Plex Mono', monospace;
+    font-family: 'Geist Mono', monospace;
     background: rgba(255, 255, 255, 0.07);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 5px;

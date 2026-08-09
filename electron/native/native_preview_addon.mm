@@ -50,7 +50,9 @@ struct GhostOverlayHandle {
 - (void)setOverlayLines:(const std::vector<simd_float2>&)lines
                   points:(const std::vector<simd_float2>&)points
                  handles:(const std::vector<GhostOverlayHandle>&)handles;
-- (void)setContentRect:(NSRect)rect;
+- (void)setContentRect:(NSRect)rect generation:(uint64_t)generation;
+- (uint64_t)geometryGeneration;
+- (void)setGeometryCoordinateView:(NSView*)coordinateView;
 @end
 
 static CVReturn GhostNativePreviewDisplayLinkCallback(
@@ -89,6 +91,8 @@ static CVReturn GhostNativePreviewDisplayLinkCallback(
   NSUInteger overlayLineVertexCount_;
   NSUInteger overlayPointVertexCount_;
   NSRect contentRect_;
+  uint64_t geometryGeneration_;
+  __weak NSView* geometryCoordinateView_;
 }
 
 - (instancetype)initWithFrame:(NSRect)frame {
@@ -97,6 +101,8 @@ static CVReturn GhostNativePreviewDisplayLinkCallback(
 
   self.wantsLayer = YES;
   self.autoresizesSubviews = NO;
+  self.layer.backgroundColor = CGColorGetConstantColor(kCGColorBlack);
+  self.layer.masksToBounds = YES;
   contentRect_ = NSMakeRect(0.0, 0.0, frame.size.width, frame.size.height);
 
   device_ = MTLCreateSystemDefaultDevice();
@@ -118,7 +124,8 @@ static CVReturn GhostNativePreviewDisplayLinkCallback(
   metalLayer_.opaque = YES;
   metalLayer_.backgroundColor = CGColorGetConstantColor(kCGColorBlack);
   metalLayer_.contentsScale = self.window.screen.backingScaleFactor ?: NSScreen.mainScreen.backingScaleFactor ?: 1.0;
-  self.layer = metalLayer_;
+  metalLayer_.frame = self.bounds;
+  [self.layer addSublayer:metalLayer_];
 
   NSError* error = nil;
   NSString* source =
@@ -220,19 +227,63 @@ static CVReturn GhostNativePreviewDisplayLinkCallback(
 
 - (void)setFrame:(NSRect)frame {
   [super setFrame:frame];
+  // CAMetalLayer is a local child of the AppKit-owned backing layer. Keeping
+  // those coordinate spaces separate is essential: assigning self.bounds to a
+  // root backing layer displaces and clips the drawable by the NSView's frame
+  // origin whenever the editor canvas is not at window origin.
   metalLayer_.frame = self.bounds;
   CGFloat scale = self.window.screen.backingScaleFactor ?: NSScreen.mainScreen.backingScaleFactor ?: 1.0;
   metalLayer_.contentsScale = scale;
-  metalLayer_.drawableSize = CGSizeMake(MAX(1.0, frame.size.width * scale), MAX(1.0, frame.size.height * scale));
-}
-
-- (void)setContentRect:(NSRect)rect {
+  metalLayer_.drawableSize = CGSizeMake(
+    MAX(1.0, self.bounds.size.width * scale),
+    MAX(1.0, self.bounds.size.height * scale)
+  );
+  // The native view is attached directly to the DOM canvas rectangle. Its
+  // drawable content therefore always occupies the complete local view; a
+  // second independently updated crop rectangle is not permitted.
   @synchronized (self) {
-    contentRect_ = rect;
+    contentRect_ = self.bounds;
   }
 }
 
+- (void)setContentRect:(NSRect)rect generation:(uint64_t)generation {
+  @synchronized (self) {
+    contentRect_ = self.bounds;
+    geometryGeneration_ = generation;
+  }
+}
+
+- (uint64_t)geometryGeneration {
+  @synchronized (self) {
+    return geometryGeneration_;
+  }
+}
+
+- (void)setGeometryCoordinateView:(NSView*)coordinateView {
+  geometryCoordinateView_ = coordinateView;
+}
+
 - (NSDictionary*)statusDictionary {
+  NSRect contentRect;
+  uint64_t geometryGeneration = 0;
+  @synchronized (self) {
+    contentRect = contentRect_;
+    geometryGeneration = geometryGeneration_;
+  }
+  NSView* hostView = self.superview;
+  const NSRect hostBounds = hostView ? hostView.bounds : NSZeroRect;
+  NSView* coordinateView = geometryCoordinateView_ ?: hostView;
+  const NSRect coordinateBounds = coordinateView ? coordinateView.bounds : NSZeroRect;
+  const NSRect hostFrame = self.frame;
+  const NSRect coordinateFrame = (
+    hostView && coordinateView && hostView != coordinateView
+      ? [hostView convertRect:hostFrame toView:coordinateView]
+      : hostFrame
+  );
+  const CGFloat viewX = coordinateFrame.origin.x - coordinateBounds.origin.x;
+  const CGFloat viewY = coordinateView && coordinateView.isFlipped
+    ? coordinateFrame.origin.y - coordinateBounds.origin.y
+    : NSMaxY(coordinateBounds) - NSMaxY(coordinateFrame);
   return @{
     @"available": @(device_ != nil && commandQueue_ != nil && pipeline_ != nil && overlayLinePipeline_ != nil && overlayPointPipeline_ != nil),
     @"attached": @(self.superview != nil),
@@ -246,6 +297,23 @@ static CVReturn GhostNativePreviewDisplayLinkCallback(
     @"width": @(lastWidth_),
     @"height": @(lastHeight_),
     @"framesPresented": @(frameCount_),
+    @"geometryGeneration": @(geometryGeneration),
+    @"viewX": @(viewX),
+    @"viewY": @(viewY),
+    @"viewWidth": @(coordinateFrame.size.width),
+    @"viewHeight": @(coordinateFrame.size.height),
+    @"contentX": @(contentRect.origin.x),
+    @"contentY": @(contentRect.origin.y),
+    @"contentWidth": @(contentRect.size.width),
+    @"contentHeight": @(contentRect.size.height),
+    @"coordinateWidth": @(coordinateBounds.size.width),
+    @"coordinateHeight": @(coordinateBounds.size.height),
+    @"hostViewX": @(hostFrame.origin.x - hostBounds.origin.x),
+    @"hostViewY": @(hostView && hostView.isFlipped
+      ? hostFrame.origin.y - hostBounds.origin.y
+      : NSMaxY(hostBounds) - NSMaxY(hostFrame)),
+    @"hostWidth": @(hostBounds.size.width),
+    @"hostHeight": @(hostBounds.size.height),
     @"error": lastError_ ?: (id)[NSNull null],
   };
 }
@@ -329,14 +397,24 @@ static CVReturn GhostNativePreviewDisplayLinkCallback(
   const double pixelScaleX = (double)drawable.texture.width / boundsWidth;
   const double pixelScaleY = (double)drawable.texture.height / boundsHeight;
   {
-    static char lastGeomSig[256] = {0};
-    char geomSig[256];
-    snprintf(geomSig, sizeof(geomSig), "b=%.0fx%.0f d=%lux%lu c=%.1f,%.1f,%.1fx%.1f s=%.1f src=%lux%lu",
+    static char lastGeomSig[512] = {0};
+    char geomSig[512];
+    // onScreen: where AppKit actually shows this view (window coords, bottom
+    // -left) — the ground truth the JS rect math has to agree with.
+    NSRect onScreen = self.superview ? [self convertRect:self.bounds toView:nil] : NSZeroRect;
+    CGRect layerBounds = metalLayer_.bounds;
+    CGAffineTransform t = metalLayer_.affineTransform;
+    snprintf(geomSig, sizeof(geomSig),
+      "b=%.0fx%.0f d=%lux%lu c=%.1f,%.1f,%.1fx%.1f s=%.1f src=%lux%lu frame=%.0f,%.0f,%.0fx%.0f win=%.0f,%.0f,%.0fx%.0f lb=%.0fx%.0f xf=%.2f,%.2f",
       boundsWidth, boundsHeight,
       (unsigned long)drawable.texture.width, (unsigned long)drawable.texture.height,
       contentRect.origin.x, contentRect.origin.y, contentRect.size.width, contentRect.size.height,
       (double)metalLayer_.contentsScale,
-      (unsigned long)width, (unsigned long)height);
+      (unsigned long)width, (unsigned long)height,
+      self.frame.origin.x, self.frame.origin.y, self.frame.size.width, self.frame.size.height,
+      onScreen.origin.x, onScreen.origin.y, onScreen.size.width, onScreen.size.height,
+      layerBounds.size.width, layerBounds.size.height,
+      (double)t.a, (double)t.d);
     if (strncmp(lastGeomSig, geomSig, sizeof(geomSig)) != 0) {
       strncpy(lastGeomSig, geomSig, sizeof(lastGeomSig) - 1);
       fprintf(stderr, "[preview-geom] %s\n", geomSig);
@@ -641,6 +719,7 @@ struct PreviewRectValues {
   double contentY = 0.0;
   double contentWidth = 1.0;
   double contentHeight = 1.0;
+  uint64_t generation = 0;
 };
 
 static void RunOnMainSync(dispatch_block_t block) {
@@ -668,14 +747,15 @@ static double NumberProp(const Napi::Object& object, const char* key, double fal
 
 static PreviewRectValues ParseRectValues(const Napi::Object& rectObject) {
   PreviewRectValues rect;
-  rect.x = MAX(0.0, NumberProp(rectObject, "x", 0.0));
-  rect.y = MAX(0.0, NumberProp(rectObject, "y", 0.0));
+  rect.x = NumberProp(rectObject, "x", 0.0);
+  rect.y = NumberProp(rectObject, "y", 0.0);
   rect.width = MAX(1.0, NumberProp(rectObject, "width", 1.0));
   rect.height = MAX(1.0, NumberProp(rectObject, "height", 1.0));
   rect.contentX = NumberProp(rectObject, "contentX", 0.0);
   rect.contentY = NumberProp(rectObject, "contentY", 0.0);
   rect.contentWidth = MAX(1.0, NumberProp(rectObject, "contentWidth", rect.width));
   rect.contentHeight = MAX(1.0, NumberProp(rectObject, "contentHeight", rect.height));
+  rect.generation = (uint64_t)MAX(0.0, floor(NumberProp(rectObject, "generation", 0.0)));
   return rect;
 }
 
@@ -684,11 +764,23 @@ static NSRect RectFromTopLeftValues(const PreviewRectValues& rect, NSView* coord
   const CGFloat y = (CGFloat)rect.y;
   const CGFloat w = (CGFloat)rect.width;
   const CGFloat h = (CGFloat)rect.height;
+  const NSRect bounds = coordinateView ? coordinateView.bounds : NSZeroRect;
   if (coordinateView && coordinateView.isFlipped) {
-    return NSMakeRect(x, y, w, h);
+    return NSMakeRect(bounds.origin.x + x, bounds.origin.y + y, w, h);
   }
-  const CGFloat boundsHeight = coordinateView ? coordinateView.bounds.size.height : 0;
-  return NSMakeRect(x, MAX(0.0, boundsHeight - y - h), w, h);
+  return NSMakeRect(bounds.origin.x + x, NSMaxY(bounds) - y - h, w, h);
+}
+
+static NSRect HostFrameFromWebClientRect(
+  const PreviewRectValues& rect,
+  NSView* webView,
+  NSView* hostView
+) {
+  if (!webView || !hostView) return NSZeroRect;
+  const NSRect webFrame = RectFromTopLeftValues(rect, webView);
+  return webView == hostView
+    ? webFrame
+    : [webView convertRect:webFrame toView:hostView];
 }
 
 static Napi::Object StatusObject(Napi::Env env) {
@@ -703,6 +795,21 @@ static Napi::Object StatusObject(Napi::Env env) {
     @"width": @0,
     @"height": @0,
     @"framesPresented": @0,
+    @"geometryGeneration": @0,
+    @"viewX": @0,
+    @"viewY": @0,
+    @"viewWidth": @0,
+    @"viewHeight": @0,
+    @"contentX": @0,
+    @"contentY": @0,
+    @"contentWidth": @0,
+    @"contentHeight": @0,
+    @"coordinateWidth": @0,
+    @"coordinateHeight": @0,
+    @"hostViewX": @0,
+    @"hostViewY": @0,
+    @"hostWidth": @0,
+    @"hostHeight": @0,
     @"error": [NSNull null],
   };
   Napi::Object object = Napi::Object::New(env);
@@ -743,27 +850,26 @@ static Napi::Value Attach(const Napi::CallbackInfo& info) {
   RunOnMainSync(^{
     gParentWebView = parentWebView;
     StabilizeHostWindow(gParentWebView);
-    // Browser client coordinates span the complete BrowserWindow content
-    // area. Electron's native handle can point at an intermediate Chromium
-    // view whose bounds are narrower than that area; parenting the preview
-    // there clips the right/bottom whenever the DOM rect has a non-zero
-    // origin. The NSWindow content view owns the complete client coordinate
-    // space and keeps the Metal underlay independent of Chromium's internal
-    // view hierarchy.
+    // Browser getBoundingClientRect() values belong to Chromium's live client
+    // view, not NSWindow.contentView. Build the rect in that coordinate space,
+    // then convert it once into the stable window host. Metal stays parented to
+    // the host while every update refreshes the Chromium handle, so a replaced
+    // Chromium view cannot leave the presenter in a stale coordinate system.
     NSView* hostView = gParentWebView.window.contentView ?: gParentWebView;
-    NSView* coordinateView = hostView;
-    NSRect frame = RectFromTopLeftValues(rectValues, coordinateView);
+    NSView* coordinateView = gParentWebView;
+    NSRect frame = HostFrameFromWebClientRect(rectValues, coordinateView, hostView);
     if (!gPreviewView) {
       gPreviewView = [[GhostNativePreviewView alloc] initWithFrame:frame];
     }
+    // Chromium is the sole geometry owner. A flexible autoresizing mask lets
+    // AppKit mutate the child a second time after a browser rect has already
+    // been acknowledged, which can leave the preview permanently cropped
+    // after interactive window resizing.
+    gPreviewView.autoresizingMask = NSViewNotSizable;
     gPreviewHostView = hostView;
+    [gPreviewView setGeometryCoordinateView:coordinateView];
     gPreviewView.frame = frame;
-    [gPreviewView setContentRect:NSMakeRect(
-      rectValues.contentX,
-      rectValues.contentY,
-      rectValues.contentWidth,
-      rectValues.contentHeight
-    )];
+    [gPreviewView setContentRect:gPreviewView.bounds generation:rectValues.generation];
     if (gPreviewView.superview != hostView) {
       [gPreviewView removeFromSuperview];
       // The native composite is the workspace underlay. Chromium remains the
@@ -778,22 +884,38 @@ static Napi::Value Attach(const Napi::CallbackInfo& info) {
 
 static Napi::Value Update(const Napi::CallbackInfo& info) {
   Napi::Env env = info.Env();
-  if (info.Length() < 1 || !info[0].IsObject()) return StatusObject(env);
-  PreviewRectValues rectValues = ParseRectValues(info[0].As<Napi::Object>());
+  NSView* parentWebView = nil;
+  Napi::Object rectObject;
+  if (info.Length() >= 2 && info[0].IsBuffer() && info[1].IsObject()) {
+    parentWebView = ParentViewFromBuffer(info[0]);
+    rectObject = info[1].As<Napi::Object>();
+  } else if (info.Length() >= 1 && info[0].IsObject()) {
+    rectObject = info[0].As<Napi::Object>();
+  } else {
+    return StatusObject(env);
+  }
+  PreviewRectValues rectValues = ParseRectValues(rectObject);
   std::lock_guard<std::mutex> lock(gMutex);
   RunOnMainSync(^{
     if (!gPreviewView) return;
-    NSView* coordinateView = gParentWebView.window.contentView ?: gParentWebView;
-    NSView* hostView = gPreviewHostView ?: gPreviewView.superview ?: coordinateView;
+    if (parentWebView) gParentWebView = parentWebView;
+    NSView* currentWebView = gParentWebView;
+    NSView* hostView = currentWebView.window.contentView
+      ?: gPreviewHostView
+      ?: gPreviewView.superview
+      ?: currentWebView;
+    NSView* coordinateView = currentWebView;
     if (!coordinateView || !hostView) return;
-    StabilizeHostWindow(coordinateView);
-    gPreviewView.frame = RectFromTopLeftValues(rectValues, coordinateView);
-    [gPreviewView setContentRect:NSMakeRect(
-      rectValues.contentX,
-      rectValues.contentY,
-      rectValues.contentWidth,
-      rectValues.contentHeight
-    )];
+    if (rectValues.generation > 0 && rectValues.generation < [gPreviewView geometryGeneration]) return;
+    StabilizeHostWindow(currentWebView ?: coordinateView);
+    if (gPreviewView.superview != hostView) {
+      [gPreviewView removeFromSuperview];
+      [hostView addSubview:gPreviewView positioned:NSWindowBelow relativeTo:nil];
+    }
+    gPreviewHostView = hostView;
+    [gPreviewView setGeometryCoordinateView:coordinateView];
+    gPreviewView.frame = HostFrameFromWebClientRect(rectValues, coordinateView, hostView);
+    [gPreviewView setContentRect:gPreviewView.bounds generation:rectValues.generation];
   });
   return StatusObject(env);
 }
@@ -929,6 +1051,94 @@ static Napi::Value Status(const Napi::CallbackInfo& info) {
   return StatusObject(info.Env());
 }
 
+// ── Named monitor views ─────────────────────────────────────────────────
+// Small auxiliary presenters (deck A/B confidence monitors) that share the
+// exact IOSurface → Metal presentation path of the main preview. Additive:
+// nothing here touches the primary gPreviewView state.
+
+static NSMutableDictionary<NSString*, GhostNativePreviewView*>* gMonitorViews = nil;
+
+static Napi::Value MonitorAttach(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 3 || !info[0].IsString() || !info[2].IsObject()) {
+    Napi::TypeError::New(env, "monitorAttach(name, parentViewHandle, rect) expected").ThrowAsJavaScriptException();
+    return Napi::Boolean::New(env, false);
+  }
+  NSString* name = [NSString stringWithUTF8String:info[0].As<Napi::String>().Utf8Value().c_str()];
+  NSView* parentWebView = ParentViewFromBuffer(info[1]);
+  if (!parentWebView) {
+    Napi::Error::New(env, "Invalid parent NSView handle").ThrowAsJavaScriptException();
+    return Napi::Boolean::New(env, false);
+  }
+  PreviewRectValues rectValues = ParseRectValues(info[2].As<Napi::Object>());
+  __block BOOL ok = NO;
+  std::lock_guard<std::mutex> lock(gMutex);
+  RunOnMainSync(^{
+    if (!gMonitorViews) gMonitorViews = [NSMutableDictionary new];
+    StabilizeHostWindow(parentWebView);
+    NSView* hostView = parentWebView.window.contentView ?: parentWebView;
+    NSRect frame = HostFrameFromWebClientRect(rectValues, parentWebView, hostView);
+    GhostNativePreviewView* view = gMonitorViews[name];
+    if (!view) {
+      view = [[GhostNativePreviewView alloc] initWithFrame:frame];
+      gMonitorViews[name] = view;
+    }
+    view.autoresizingMask = NSViewNotSizable;
+    [view setGeometryCoordinateView:parentWebView];
+    view.frame = frame;
+    [view setContentRect:view.bounds generation:rectValues.generation];
+    if (view.superview != hostView) {
+      [view removeFromSuperview];
+      // Monitors sit above the main preview underlay but stay behind
+      // Chromium so DOM chrome keeps normal web z-order.
+      if (gPreviewView && gPreviewView.superview == hostView) {
+        [hostView addSubview:view positioned:NSWindowAbove relativeTo:gPreviewView];
+      } else {
+        [hostView addSubview:view positioned:NSWindowBelow relativeTo:nil];
+      }
+    }
+    ok = YES;
+  });
+  return Napi::Boolean::New(env, ok);
+}
+
+static Napi::Value MonitorSetIOSurface(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 4 || !info[0].IsString()) return Napi::Boolean::New(env, false);
+  NSString* name = [NSString stringWithUTF8String:info[0].As<Napi::String>().Utf8Value().c_str()];
+  IOSurfaceID surfaceID = (IOSurfaceID)info[1].As<Napi::Number>().Uint32Value();
+  NSUInteger width = (NSUInteger)info[2].As<Napi::Number>().Uint32Value();
+  NSUInteger height = (NSUInteger)info[3].As<Napi::Number>().Uint32Value();
+  BOOL flipped = info.Length() >= 5 && info[4].IsBoolean() ? info[4].As<Napi::Boolean>().Value() : NO;
+  __block BOOL ok = NO;
+  std::lock_guard<std::mutex> lock(gMutex);
+  RunOnMainSync(^{
+    GhostNativePreviewView* view = gMonitorViews ? gMonitorViews[name] : nil;
+    ok = view ? [view setIOSurfaceID:surfaceID width:width height:height flipped:flipped] : NO;
+  });
+  return Napi::Boolean::New(env, ok);
+}
+
+static Napi::Value MonitorDetach(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  NSString* name = info.Length() >= 1 && info[0].IsString()
+    ? [NSString stringWithUTF8String:info[0].As<Napi::String>().Utf8Value().c_str()]
+    : nil;
+  std::lock_guard<std::mutex> lock(gMutex);
+  RunOnMainSync(^{
+    if (!gMonitorViews) return;
+    NSArray<NSString*>* names = name ? @[name] : gMonitorViews.allKeys;
+    for (NSString* key in names) {
+      GhostNativePreviewView* view = gMonitorViews[key];
+      if (!view) continue;
+      [view stopPump];
+      [view removeFromSuperview];
+      [gMonitorViews removeObjectForKey:key];
+    }
+  });
+  return Napi::Boolean::New(env, true);
+}
+
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("attach", Napi::Function::New(env, Attach));
   exports.Set("update", Napi::Function::New(env, Update));
@@ -939,6 +1149,9 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("stopPump", Napi::Function::New(env, StopPump));
   exports.Set("detach", Napi::Function::New(env, Detach));
   exports.Set("status", Napi::Function::New(env, Status));
+  exports.Set("monitorAttach", Napi::Function::New(env, MonitorAttach));
+  exports.Set("monitorSetIOSurface", Napi::Function::New(env, MonitorSetIOSurface));
+  exports.Set("monitorDetach", Napi::Function::New(env, MonitorDetach));
   exports.Set("platform", Napi::String::New(env, "macos-native-preview"));
   return exports;
 }

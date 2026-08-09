@@ -281,7 +281,7 @@
     justify-content: center;
     font-size: 11px;
     font-weight: 700;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     transition: background 0.12s, border-color 0.12s, color 0.12s, transform 0.12s;
   }
   .snap-cell:hover {

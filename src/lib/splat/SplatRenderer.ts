@@ -2,59 +2,197 @@
 // Implements all animations, effects, and interactions for splat layers
 
 import * as THREE from 'three';
-import type { PLYData, PLYVertex } from './plyLoader';
-import type { SplatContent, SplatAnimationType, SplatDisplacementType, SplatColorEffectType, SplatOpacityEffectType, SplatCreativeEffectType } from '../types';
+import type { PLYData } from './plyLoader';
+import type {
+  SplatContent,
+  SplatAnimationType,
+  SplatDisplacementType,
+  SplatColorEffectType,
+  SplatOpacityEffectType,
+  SplatCreativeEffectType,
+} from '../types';
+import {
+  composeSplatRotationRadians,
+  computeSplatNormalization,
+  hexToRgb01,
+  normalizedGaussianScale,
+  normalizedSplatPosition,
+  resolveSplatCameraDistance,
+} from './splatTransform';
+import { resolveSplatAnimationClock, smoothSplatAudio } from './splatMotion';
 
-const SPLAT_AUTO_FIT_SIZE = 20;
-const MIN_AUTO_FIT_SCALE = 0.00001;
-const MAX_AUTO_FIT_SCALE = 10000;
-const MIN_GAUSSIAN_POINT_SCALE = 0.45;
-const MAX_GAUSSIAN_POINT_SCALE = 10;
-const MAX_WIREFRAME_SOURCE_POINTS = 20000;
+export function requiresAdvancedSplatMaterial(content: SplatContent): boolean {
+  const colorEffect = content.colorEffectType ?? content.colorEffect ?? 'none';
+  const opacityEffect = content.opacityEffectType ?? content.opacityEffect ?? 'none';
+  const creativeEffect = content.creativeEffectType ?? content.creativeEffect ?? 'none';
 
-function clamp(value: number, min: number, max: number): number {
-  return Math.max(min, Math.min(max, value));
-}
-
-function getBoundsSize(data: PLYData): number {
-  const bb = data.boundingBox;
-  return Math.max(
-    bb.max.x - bb.min.x,
-    bb.max.y - bb.min.y,
-    bb.max.z - bb.min.z
+  return (
+    (content.animationType ?? 'none') !== 'none' ||
+    (content.displacementType ?? 'none') !== 'none' ||
+    (content.audioEnabled ?? false) ||
+    (content.slicePlane?.enabled ?? false) ||
+    (content.mouseInfluence ?? 0) > 0 ||
+    colorEffect !== 'none' ||
+    (content.hueShift ?? 0) !== 0 ||
+    opacityEffect !== 'none' ||
+    creativeEffect !== 'none' ||
+    (content.textureEnabled ?? false) ||
+    (content.atmosphereEnabled ?? false)
   );
 }
 
-function getGaussianPointScale(vertex: PLYVertex, fitScale: number): number {
-  if (vertex.scale_0 === undefined || vertex.scale_1 === undefined || vertex.scale_2 === undefined) {
-    return 1;
-  }
+// The normal point/splat view deliberately uses a compact shader. Keeping the
+// optional motion and effects suite out of this program lets multi-million
+// point architectural captures render without compiling or scheduling every
+// advanced branch on the GPU.
+export const baselineVertexShader = `
+  uniform float pointSize;
+  uniform float maxPointSize;
+  uniform bool sizeAttenuation;
+  uniform float scaleUniform;
+  uniform vec3 rotation3D;
+  uniform vec3 position3D;
 
-  const averageLogScale = (vertex.scale_0 + vertex.scale_1 + vertex.scale_2) / 3;
-  const rawRadius = Math.exp(clamp(averageLogScale, -12, 8));
-  const normalizedRadius = rawRadius * fitScale;
-  return clamp(0.65 + normalizedRadius * 160, MIN_GAUSSIAN_POINT_SCALE, MAX_GAUSSIAN_POINT_SCALE);
-}
+  attribute vec3 originalPosition;
+  attribute vec3 color;
+  attribute float alpha;
+  attribute float gaussianScale;
+  attribute vec3 gaussianShape;
+
+  varying vec3 vColor;
+  varying float vAlpha;
+  varying vec3 vGaussianShape;
+
+  void main() {
+    vColor = color;
+    vAlpha = alpha;
+    vGaussianShape = gaussianShape;
+
+    vec3 pos = originalPosition * scaleUniform;
+    float cx = cos(rotation3D.x);
+    float sx = sin(rotation3D.x);
+    float cy = cos(rotation3D.y);
+    float sy = sin(rotation3D.y);
+    float cz = cos(rotation3D.z);
+    float sz = sin(rotation3D.z);
+    mat3 rotX = mat3(1, 0, 0, 0, cx, -sx, 0, sx, cx);
+    mat3 rotY = mat3(cy, 0, sy, 0, 1, 0, -sy, 0, cy);
+    mat3 rotZ = mat3(cz, -sz, 0, sz, cz, 0, 0, 0, 1);
+    pos = rotZ * rotY * rotX * pos + position3D;
+
+    vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
+    gl_Position = projectionMatrix * mvPosition;
+    float size = pointSize * gaussianScale;
+    if (sizeAttenuation) {
+      size *= 300.0 / max(-mvPosition.z, 0.001);
+    }
+    gl_PointSize = clamp(size, 0.0, maxPointSize);
+  }
+`;
+
+export const baselineFragmentShader = `
+  uniform float opacity;
+  uniform int renderMode;
+  uniform bool useOriginalColors;
+  uniform vec3 colorA;
+  uniform vec3 colorB;
+  uniform float colorMix;
+
+  varying vec3 vColor;
+  varying float vAlpha;
+  varying vec3 vGaussianShape;
+
+  void main() {
+    vec2 coord = gl_PointCoord - vec2(0.5);
+    float dist = length(coord);
+    float edgeAlpha = 1.0;
+
+    if (renderMode == 0) {
+      if (dist > 0.5) discard;
+      edgeAlpha = 1.0 - smoothstep(0.4, 0.5, dist);
+    } else if (renderMode == 1) {
+      vec2 rotated = vec2(
+        coord.x * vGaussianShape.y + coord.y * vGaussianShape.z,
+        -coord.x * vGaussianShape.z + coord.y * vGaussianShape.y
+      );
+      rotated.y /= max(vGaussianShape.x, 0.08);
+      float gaussian = exp(-dot(rotated, rotated) * 10.0);
+      if (gaussian < 0.01) discard;
+      edgeAlpha = gaussian;
+    } else if (renderMode == 2) {
+      if (dist > 0.5) discard;
+      float normalZ = sqrt(max(0.0, 1.0 - dot(coord * 2.0, coord * 2.0)));
+      vec3 normal = normalize(vec3(coord * 2.0, normalZ));
+      float diffuse = max(0.0, dot(normal, normalize(vec3(0.5, 0.5, 1.0))));
+      edgeAlpha = 0.3 + 0.7 * diffuse;
+    } else if (renderMode == 3) {
+      if (abs(coord.x) > 0.45 || abs(coord.y) > 0.45) discard;
+    } else if (renderMode == 4) {
+      float diamond = abs(coord.x) + abs(coord.y);
+      if (diamond > 0.5) discard;
+      edgeAlpha = 1.0 - diamond * 0.5;
+    }
+
+    vec3 color = useOriginalColors
+      ? vColor
+      : mix(colorA / 255.0, colorB / 255.0, colorMix);
+
+    gl_FragColor = vec4(color, vAlpha * opacity * edgeAlpha);
+  }
+`;
 
 // Vertex shader for point cloud rendering with all effects
-const vertexShader = `
+export const vertexShader = `
   uniform float time;
   uniform float pointSize;
+  uniform float maxPointSize;
   uniform bool sizeAttenuation;
 
   // Animation uniforms
   uniform float animationProgress;
+  uniform float animationPhase;
   uniform float animationIntensity;
   uniform int animationType;
   uniform float explodeForce;
+  uniform float explodeTurbulence;
+  uniform float implodeForce;
+  uniform float implodeSpin;
   uniform float voxelGridSize;
   uniform vec3 peelAxis;
+  uniform float peelDirection;
+  uniform float peelWidth;
+  uniform float peelCurl;
+  uniform float sliceWidth;
+  uniform float sliceSoftness;
+  uniform float sliceTravel;
+  uniform vec3 waveAxis;
+  uniform float animationWaveFrequency;
+  uniform float animationWaveAmplitude;
+  uniform float scatterDistance;
+  uniform float scatterRandomness;
+  uniform float spiralRadius;
+  uniform float spiralTurns;
+  uniform float spiralLift;
+  uniform float swarmCohesion;
+  uniform float swarmSeparation;
+  uniform float swarmAlignment;
+  uniform float gravityStrength;
+  uniform float gravitySpread;
+  uniform float gravityFloor;
+  uniform float turntableTilt;
+  uniform float tumbleSpread;
+  uniform float breatheAmount;
+  uniform float driftAmount;
+  uniform float vortexTwist;
+  uniform float morphRoundness;
   uniform float gravity;
   uniform float turbulence;
 
   // Displacement uniforms
   uniform int displacementType;
   uniform float displacementAmount;
+  uniform float displacementScale;
+  uniform float displacementSpeed;
   uniform float noiseScale;
   uniform float noiseSpeed;
   uniform float waveFrequency;
@@ -70,6 +208,25 @@ const vertexShader = `
   uniform float audioScale;
   uniform float beatIntensity;
   uniform float beatPhase;
+
+  // Lighting and atmosphere
+  uniform bool lightingEnabled;
+  uniform float ambientIntensity;
+  uniform vec3 keyLightColor;
+  uniform float keyLightIntensity;
+  uniform vec3 keyLightDirection;
+  uniform vec3 rimLightColor;
+  uniform float rimLightIntensity;
+  uniform vec3 rimLightDirection;
+  uniform float shadowStrength;
+  uniform float shadowSoftness;
+  uniform float specularStrength;
+  uniform bool atmosphereEnabled;
+  uniform float atmosphereDensity;
+  uniform vec3 atmosphereColor;
+  uniform float atmosphereScale;
+  uniform float atmosphereTurbulence;
+  uniform float atmosphereSpeed;
 
   // Transform uniforms
   uniform float scaleUniform;
@@ -91,10 +248,11 @@ const vertexShader = `
   attribute vec3 originalPosition;
   attribute vec3 color;
   attribute float alpha;
-  attribute float pointScale;
   attribute float vertexIndex;
   attribute vec3 velocity;
   attribute vec2 texUV;
+  attribute float gaussianScale;
+  attribute vec3 gaussianShape;
 
   varying vec3 vColor;
   varying float vAlpha;
@@ -103,6 +261,7 @@ const vertexShader = `
   varying float vVertexIndex;
   varying float vMouseDistance; // For reveal effect in fragment shader
   varying vec2 vTexUV;
+  varying vec3 vGaussianShape;
 
   // Simplex noise functions
   vec3 mod289(vec3 x) { return x - floor(x * (1.0 / 289.0)) * 289.0; }
@@ -158,28 +317,46 @@ const vertexShader = `
 
   // Apply animation to position
   vec3 applyAnimation(vec3 pos, vec3 origPos) {
-    float t = animationProgress * animationIntensity;
+    float progress = clamp(animationProgress, 0.0, 1.0);
+    float t = progress * animationIntensity;
+    vec3 radial = normalize(origPos + vec3(0.0001));
 
-    // Explode - points move outward from center
+    // Explode - coherent radial burst with controllable turbulent breakup.
     if (animationType == 1) {
-      vec3 dir = normalize(origPos);
-      return pos + dir * t * explodeForce;
+      vec3 breakup = vec3(
+        snoise(origPos * 2.7 + vec3(19.0, 0.0, animationPhase * 0.12)),
+        snoise(origPos * 2.7 + vec3(0.0, 43.0, animationPhase * 0.15)),
+        snoise(origPos * 2.7 + vec3(animationPhase * 0.1, 0.0, 71.0))
+      );
+      return pos + (radial + breakup * explodeTurbulence) * t * explodeForce;
     }
 
-    // Implode - points move toward center
+    // Implode - collapse inward while winding into the center.
     if (animationType == 2) {
-      vec3 dir = normalize(origPos);
-      return pos - dir * t * explodeForce;
+      float collapse = clamp(t * implodeForce, 0.0, 0.995);
+      vec3 collapsed = pos * (1.0 - collapse);
+      float angle = t * implodeSpin * (1.0 + length(origPos.xz));
+      float c = cos(angle);
+      float s = sin(angle);
+      return vec3(c * collapsed.x + s * collapsed.z, collapsed.y, -s * collapsed.x + c * collapsed.z);
     }
 
-    // Slice - plane reveals/hides
+    // Slice - traveling bands offset alternating slabs without discarding points.
     if (animationType == 3) {
-      float planePos = (t * 2.0 - 1.0) * 2.0;
-      float dist = dot(pos, normalize(peelAxis));
-      if (dist > planePos) {
-        vDiscard = 1.0;
-      }
-      return pos;
+      vec3 axis = normalize(peelAxis + vec3(0.0001));
+      float axisPosition = dot(origPos, axis);
+      float travel = animationPhase * sliceTravel;
+      float bandCoord = axisPosition * max(sliceWidth, 0.05) - travel;
+      float slab = floor(bandCoord);
+      float edge = abs(fract(bandCoord) - 0.5) * 2.0;
+      float bandMask = 1.0 - smoothstep(
+        clamp(sliceSoftness, 0.001, 0.99),
+        1.0,
+        edge
+      );
+      float direction = mod(abs(slab), 2.0) < 1.0 ? -1.0 : 1.0;
+      vec3 tangent = normalize(cross(axis, abs(axis.y) > 0.9 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0)));
+      return pos + tangent * direction * bandMask * t * 0.65;
     }
 
     // Voxel snap - points snap to grid
@@ -188,25 +365,34 @@ const vertexShader = `
       return mix(origPos, gridPos, t);
     }
 
-    // Peel - layer by layer reveal
+    // Peel - a traveling curl front that rolls points away instead of deleting them.
     if (animationType == 5) {
-      float layerPos = dot(origPos, normalize(peelAxis));
-      float revealThreshold = mix(-2.0, 2.0, t);
-      if (layerPos > revealThreshold) {
-        vDiscard = 1.0;
-      }
-      return pos;
+      vec3 axis = normalize(peelAxis + vec3(0.0001));
+      float axisPosition = dot(origPos, axis) * peelDirection;
+      float front = mix(-2.5, 2.5, progress);
+      float behindFront = front - axisPosition;
+      float peelMask = smoothstep(0.0, max(peelWidth, 0.01), behindFront)
+        * (1.0 - smoothstep(max(peelWidth, 0.01), max(peelWidth, 0.01) * 2.0, behindFront));
+      vec3 tangent = normalize(cross(axis, abs(axis.z) > 0.9 ? vec3(0.0, 1.0, 0.0) : vec3(0.0, 0.0, 1.0)));
+      float curlAngle = peelMask * peelCurl * animationIntensity;
+      return pos + tangent * sin(curlAngle) * peelWidth + axis * (1.0 - cos(curlAngle)) * peelWidth;
     }
 
-    // Gravity - points fall
+    // Gravity - staggered fall with lateral spread and a configurable floor.
     if (animationType == 6) {
-      float fallTime = max(0.0, t - vertexIndex * 0.0001);
-      return pos + vec3(0.0, -gravity * fallTime * fallTime, 0.0);
+      float delay = fract(sin(vertexIndex * 12.9898) * 43758.5453) * 0.35;
+      float fallTime = max(0.0, progress - delay) * animationIntensity;
+      vec2 spread = vec2(
+        snoise(origPos * 2.0 + vec3(13.0, animationPhase * 0.08, 0.0)),
+        snoise(origPos * 2.0 + vec3(0.0, animationPhase * 0.08, 37.0))
+      ) * gravitySpread;
+      vec3 fallen = pos + vec3(spread.x, -gravityStrength * fallTime * fallTime, spread.y) * t;
+      fallen.y = max(fallen.y, gravityFloor);
+      return fallen;
     }
 
     // Swarm - flocking behavior with noise-driven velocity fields
     if (animationType == 7) {
-      float id = vertexIndex * 0.00137;
       // Cohesion: drift toward local center with noise-based group assignment
       float groupPhase = floor(snoise(origPos * 0.5) * 4.0) * 1.57;
       vec3 groupCenter = vec3(
@@ -227,16 +413,19 @@ const vertexShader = `
         snoise(origPos * 0.8 + time * 0.6 + 300.0) * 0.5,
         snoise(origPos * 0.8 + time * 0.8 + 400.0)
       ) * 0.6;
-      vec3 swarmOffset = (toCenter * 0.3 + separation + flow) * t * turbulence;
+      vec3 swarmOffset = (
+        toCenter * swarmCohesion
+        + separation * swarmSeparation
+        + flow * swarmAlignment
+      ) * t * max(turbulence, 0.1);
       return pos + swarmOffset;
     }
 
     // Morph - points transition toward a sphere surface
     if (animationType == 8) {
       // Calculate target position on a sphere
-      float r = length(origPos);
-      float avgR = max(r, 0.001);
-      vec3 spherePos = normalize(origPos) * avgR;
+      float radius = mix(length(origPos), max(length(origPos), 0.75), morphRoundness);
+      vec3 spherePos = normalize(origPos + vec3(0.0001)) * radius;
       // Add some rotation on the sphere for visual interest
       float angle = t * 1.5 + vertexIndex * 0.0001;
       float cosA = cos(angle * 0.3);
@@ -249,35 +438,77 @@ const vertexShader = `
       return mix(pos, rotatedSphere, t);
     }
 
-    // Orbit - points rotate around center
+    // Turntable - rigid, continuous rotation around the vertical axis
     if (animationType == 9) {
-      float angle = t * 6.28318 + vertexIndex * 0.01;
-      float r = length(pos.xz);
-      return vec3(cos(angle) * r, pos.y, sin(angle) * r);
+      float tilt = turntableTilt;
+      vec3 tilted = vec3(pos.x, cos(tilt) * pos.y - sin(tilt) * pos.z, sin(tilt) * pos.y + cos(tilt) * pos.z);
+      float angle = animationPhase * animationIntensity;
+      float c = cos(angle);
+      float s = sin(angle);
+      return vec3(c * tilted.x + s * tilted.z, tilted.y, -s * tilted.x + c * tilted.z);
     }
 
-    // Wave 3D - wave propagation
+    // Wave 3D - directional wave field with independent frequency and amplitude.
     if (animationType == 10) {
-      float wave = sin(length(origPos.xz) * 5.0 - time * 3.0) * 0.3 * t;
-      return pos + vec3(0.0, wave, 0.0);
+      vec3 axis = normalize(waveAxis + vec3(0.0001));
+      vec3 travelAxis = normalize(cross(axis, abs(axis.y) > 0.9 ? vec3(1.0, 0.0, 0.0) : vec3(0.0, 1.0, 0.0)));
+      float phase = dot(origPos, travelAxis) * animationWaveFrequency - animationPhase * 2.0;
+      float wave = sin(phase) * animationWaveAmplitude * animationIntensity;
+      return pos + axis * wave;
     }
 
-    // Scatter - random dispersion
+    // Scatter - stable per-point offsets so it reads as dispersion, not noise drift.
     if (animationType == 11) {
       vec3 scatter = vec3(
-        snoise(origPos * 10.0 + time),
-        snoise(origPos * 10.0 + time + 100.0),
-        snoise(origPos * 10.0 + time + 200.0)
+        snoise(origPos * scatterRandomness + vec3(11.0, 0.0, 0.0)),
+        snoise(origPos * scatterRandomness + vec3(0.0, 29.0, 0.0)),
+        snoise(origPos * scatterRandomness + vec3(0.0, 0.0, 47.0))
       );
-      return pos + scatter * t * 2.0;
+      return pos + normalize(scatter + vec3(0.0001)) * t * scatterDistance;
     }
 
-    // Spiral - spiral motion
+    // Spiral - wind the existing cloud around Y with radial expansion and lift.
     if (animationType == 12) {
-      float angle = t * 6.28318 * 2.0 + vertexIndex * 0.001;
-      float spiral = t * 2.0;
-      vec3 spiralOffset = vec3(cos(angle) * spiral, t * 2.0, sin(angle) * spiral);
-      return pos + spiralOffset * 0.5;
+      float baseAngle = atan(pos.z, pos.x);
+      float radius = length(pos.xz) + t * spiralRadius;
+      float angle = baseAngle + animationPhase * spiralTurns + pos.y * spiralTurns * 0.35;
+      return vec3(cos(angle) * radius, pos.y + t * spiralLift, sin(angle) * radius);
+    }
+
+    // Tumble - continuous multi-axis rigid rotation
+    if (animationType == 13) {
+      float ax = animationPhase * 0.37 * animationIntensity * tumbleSpread;
+      float ay = animationPhase * 0.61 * animationIntensity * tumbleSpread;
+      float az = animationPhase * 0.23 * animationIntensity * tumbleSpread;
+      mat3 rx = mat3(1.0, 0.0, 0.0, 0.0, cos(ax), -sin(ax), 0.0, sin(ax), cos(ax));
+      mat3 ry = mat3(cos(ay), 0.0, sin(ay), 0.0, 1.0, 0.0, -sin(ay), 0.0, cos(ay));
+      mat3 rz = mat3(cos(az), -sin(az), 0.0, sin(az), cos(az), 0.0, 0.0, 0.0, 1.0);
+      return rz * ry * rx * pos;
+    }
+
+    // Breathe - coherent expansion while preserving the subject
+    if (animationType == 14) {
+      float pulse = sin(animationPhase) * breatheAmount * animationIntensity;
+      return pos * (1.0 + pulse);
+    }
+
+    // Drift - coherent three-dimensional noise motion
+    if (animationType == 15) {
+      vec3 samplePos = origPos * 0.7;
+      vec3 drift = vec3(
+        snoise(samplePos + vec3(animationPhase * 0.10, 17.0, 0.0)),
+        snoise(samplePos + vec3(0.0, animationPhase * 0.08, 41.0)),
+        snoise(samplePos + vec3(73.0, 0.0, animationPhase * 0.09))
+      );
+      return pos + drift * driftAmount * animationIntensity;
+    }
+
+    // Vortex - continuous height-dependent torsion
+    if (animationType == 16) {
+      float angle = animationPhase * 0.3 + origPos.y * vortexTwist * animationIntensity;
+      float c = cos(angle);
+      float s = sin(angle);
+      return vec3(c * pos.x + s * pos.z, pos.y, -s * pos.x + c * pos.z);
     }
 
     return pos;
@@ -289,28 +520,29 @@ const vertexShader = `
 
     // Noise displacement
     if (displacementType == 1) {
-      float noise = snoise(pos * noiseScale + time * noiseSpeed);
       vec3 noiseDir = vec3(
-        snoise(pos * noiseScale + vec3(100.0, 0.0, 0.0) + time * noiseSpeed),
-        snoise(pos * noiseScale + vec3(0.0, 100.0, 0.0) + time * noiseSpeed),
-        snoise(pos * noiseScale + vec3(0.0, 0.0, 100.0) + time * noiseSpeed)
+        snoise(pos * displacementScale + vec3(100.0, 0.0, 0.0) + time * displacementSpeed),
+        snoise(pos * displacementScale + vec3(0.0, 100.0, 0.0) + time * displacementSpeed),
+        snoise(pos * displacementScale + vec3(0.0, 0.0, 100.0) + time * displacementSpeed)
       );
       return pos + noiseDir * displacementAmount;
     }
 
-    // Audio reactive displacement (enhanced with beat pulse)
+    // Audio reactive displacement with a spatial envelope
     if (displacementType == 2 && audioEnabled) {
-      vec3 dir = normalize(pos);
-      float audioDisp = audioLevel * audioDisplacement;
-      // Beat pulse adds extra displacement burst
-      audioDisp += beatIntensity * audioDisplacement * 0.5;
+      vec3 dir = normalize(pos + vec3(0.0001));
+      float envelope = audioLevel + beatIntensity * 0.65;
+      float spatial = 0.65 + 0.35 * sin(
+        length(pos) * max(displacementScale, 0.1) * 3.0 - time * displacementSpeed * 4.0
+      );
+      float audioDisp = envelope * audioDisplacement * displacementAmount * spatial;
       return pos + dir * audioDisp;
     }
 
     // Wave displacement
     if (displacementType == 3) {
-      float wave = sin(pos.x * waveFrequency + time * 2.0) * waveAmplitude;
-      wave += sin(pos.z * waveFrequency + time * 1.5) * waveAmplitude;
+      float wave = sin(pos.x * displacementScale + time * displacementSpeed * 2.0);
+      wave += sin(pos.z * displacementScale + time * displacementSpeed * 1.5);
       return pos + vec3(0.0, wave * displacementAmount, 0.0);
     }
 
@@ -327,15 +559,65 @@ const vertexShader = `
 
     // Wind displacement
     if (displacementType == 5) {
-      float wind = snoise(pos * 2.0 + windDirection * time * windStrength);
+      float wind = snoise(pos * displacementScale + windDirection * time * displacementSpeed);
       return pos + windDirection * wind * displacementAmount;
+    }
+
+    // Magnetic field - attract toward the live interaction point, or origin
+    if (displacementType == 6) {
+      vec3 target = mouseInfluence > 0.0 ? mousePosition : vec3(0.0);
+      vec3 delta = target - pos;
+      float dist = max(length(delta), 0.05);
+      float field = 1.0 / (1.0 + dist * dist * max(displacementScale, 0.1));
+      return pos + normalize(delta) * field * displacementAmount;
     }
 
     // Ripple displacement
     if (displacementType == 7) {
       float dist = length(pos - mousePosition);
-      float ripple = sin(dist * 10.0 - time * 5.0) * exp(-dist * 2.0);
-      return pos + normalize(pos - mousePosition) * ripple * displacementAmount;
+      float ripple = sin(dist * displacementScale * 5.0 - time * displacementSpeed * 5.0);
+      ripple *= exp(-dist * max(displacementScale, 0.1) * 0.5);
+      return pos + normalize(pos - mousePosition + vec3(0.0001)) * ripple * displacementAmount;
+    }
+
+    // Curl-like vector field - organic advection without changing topology
+    if (displacementType == 8) {
+      vec3 p = pos * displacementScale;
+      float phase = time * displacementSpeed;
+      vec3 flow = vec3(
+        snoise(p + vec3(phase, 31.7, 12.1)),
+        snoise(p + vec3(47.3, phase * 0.83, 5.9)),
+        snoise(p + vec3(8.2, 19.4, phase * 1.13))
+      );
+      flow = normalize(flow + vec3(0.0001));
+      return pos + flow * displacementAmount;
+    }
+
+    // Twist - axis-based torsion
+    if (displacementType == 9) {
+      float angle = (pos.y * displacementScale + time * displacementSpeed) * displacementAmount;
+      float c = cos(angle);
+      float s = sin(angle);
+      return vec3(c * pos.x + s * pos.z, pos.y, -s * pos.x + c * pos.z);
+    }
+
+    // Radial pulse - expanding pressure rings through the cloud
+    if (displacementType == 10) {
+      float radius = length(pos);
+      float pulse = sin(radius * displacementScale * 4.0 - time * displacementSpeed * 5.0);
+      return pos + normalize(pos + vec3(0.0001)) * pulse * displacementAmount;
+    }
+
+    // Scanline - traveling planar field for scan/reconstruction looks
+    if (displacementType == 11) {
+      float plane = sin((pos.y + time * displacementSpeed) * displacementScale * 4.0);
+      float gate = smoothstep(0.65, 1.0, plane);
+      vec3 offset = vec3(
+        snoise(pos * displacementScale + time * displacementSpeed),
+        0.0,
+        snoise(pos * displacementScale + time * displacementSpeed + 50.0)
+      );
+      return pos + offset * gate * displacementAmount;
     }
 
     return pos;
@@ -407,11 +689,12 @@ const vertexShader = `
     mat3 rotY = mat3(cy, 0, sy, 0, 1, 0, -sy, 0, cy);
     mat3 rotZ = mat3(cz, -sz, 0, sz, cz, 0, 0, 0, 1);
 
-    pos = rotZ * rotY * rotX * pos;
+    mat3 objectRotation = rotZ * rotY * rotX;
+    pos = objectRotation * pos;
     pos += position3D;
 
     // Apply animation
-    pos = applyAnimation(pos, originalPosition);
+    pos = applyAnimation(pos, objectRotation * originalPosition);
 
     // Apply displacement
     pos = applyDisplacement(pos);
@@ -439,29 +722,49 @@ const vertexShader = `
     vPosition = pos;
     vVertexIndex = vertexIndex;
     vTexUV = texUV;
+    vGaussianShape = gaussianShape;
 
     vec4 mvPosition = modelViewMatrix * vec4(pos, 1.0);
     gl_Position = projectionMatrix * mvPosition;
 
     // Point size with optional attenuation + beat pulse
-    float size = pointSize * pointScale;
+    float size = pointSize * gaussianScale;
     if (audioEnabled) {
       size *= 1.0 + audioLevel * audioScale * 0.5;
       // Beat pulse on point size
       size *= 1.0 + beatIntensity * audioScale * 0.3;
     }
     if (sizeAttenuation) {
-      size *= (300.0 / -mvPosition.z);
+      size *= 300.0 / max(-mvPosition.z, 0.001);
     }
-    gl_PointSize = size;
+    gl_PointSize = clamp(size, 0.0, maxPointSize);
   }
 `;
 
 // Fragment shader with color, opacity, render mode, and creative effects
-const fragmentShader = `
+export const fragmentShader = `
   uniform float time;
   uniform float opacity;
   uniform int renderMode;
+
+  // Lighting and atmosphere
+  uniform bool lightingEnabled;
+  uniform float ambientIntensity;
+  uniform vec3 keyLightColor;
+  uniform float keyLightIntensity;
+  uniform vec3 keyLightDirection;
+  uniform vec3 rimLightColor;
+  uniform float rimLightIntensity;
+  uniform vec3 rimLightDirection;
+  uniform float shadowStrength;
+  uniform float shadowSoftness;
+  uniform float specularStrength;
+  uniform bool atmosphereEnabled;
+  uniform float atmosphereDensity;
+  uniform vec3 atmosphereColor;
+  uniform float atmosphereScale;
+  uniform float atmosphereTurbulence;
+  uniform float atmosphereSpeed;
 
   // Color effect uniforms
   uniform int colorEffectType;
@@ -473,6 +776,9 @@ const fragmentShader = `
   uniform float colorMix;
   uniform float hologramSpeed;
   uniform float hologramDensity;
+  uniform vec3 depthColorNear;
+  uniform vec3 depthColorFar;
+  uniform float depthGradientBias;
 
   // Opacity effect uniforms
   uniform int opacityEffectType;
@@ -513,6 +819,7 @@ const fragmentShader = `
   varying float vVertexIndex;
   varying float vMouseDistance;
   varying vec2 vTexUV;
+  varying vec3 vGaussianShape;
 
   // Mouse uniforms for reveal mode
   uniform int mouseMode;
@@ -686,10 +993,11 @@ const fragmentShader = `
 
     // 7: Depth gradient
     if (colorEffectType == 7) {
-      float depth = clamp((vPosition.z + 10.0) / 20.0, 0.0, 1.0);
-      vec3 near = vec3(1.0, 0.3, 0.1);
-      vec3 far = vec3(0.1, 0.3, 1.0);
-      return mix(color, mix(near, far, depth), intensity);
+      float depthRange = max(pointCloudMax.z - pointCloudMin.z, 0.0001);
+      float depth = clamp((vPosition.z - pointCloudMin.z) / depthRange, 0.0, 1.0);
+      float shapedDepth = smoothstep(0.0, max(depthGradientBias, 0.001), depth) * 0.5
+        + smoothstep(max(depthGradientBias, 0.001), 1.0, depth) * 0.5;
+      return mix(color, mix(depthColorNear, depthColorFar, shapedDepth), intensity);
     }
 
     // 8: Neon glow
@@ -865,6 +1173,8 @@ const fragmentShader = `
     vec2 coord = gl_PointCoord - vec2(0.5);
     float dist = length(coord);
     float edgeAlpha = 1.0;
+    float normalZ = sqrt(max(0.0, 1.0 - min(dot(coord * 2.0, coord * 2.0), 1.0)));
+    vec3 pointNormal = normalize(vec3(coord * 2.0, normalZ));
 
     // Render mode shapes
     // 0: points (circle), 1: gaussians (soft), 2: spheres (3D), 3: billboards (square), 4: cubes (diamond)
@@ -875,18 +1185,20 @@ const fragmentShader = `
       edgeAlpha = 1.0 - smoothstep(0.4, 0.5, dist);
     }
     else if (renderMode == 1) {
-      // Gaussians - very soft falloff
-      float gaussian = exp(-dist * dist * 8.0);
+      // Anisotropic gaussian footprint from the imported splat scale and rotation.
+      vec2 rotated = vec2(
+        coord.x * vGaussianShape.y + coord.y * vGaussianShape.z,
+        -coord.x * vGaussianShape.z + coord.y * vGaussianShape.y
+      );
+      rotated.y /= max(vGaussianShape.x, 0.08);
+      float gaussian = exp(-dot(rotated, rotated) * 10.0);
       if (gaussian < 0.01) discard;
       edgeAlpha = gaussian;
     }
     else if (renderMode == 2) {
       // Spheres - 3D shaded look
       if (dist > 0.5) discard;
-      float z = sqrt(max(0.0, 0.25 - dist * dist));
-      vec3 normal = normalize(vec3(coord, z));
-      vec3 light = normalize(vec3(0.5, 0.5, 1.0));
-      float diffuse = max(0.0, dot(normal, light));
+      float diffuse = max(0.0, dot(pointNormal, normalize(vec3(0.5, 0.5, 1.0))));
       edgeAlpha = 0.3 + 0.7 * diffuse;
     }
     else if (renderMode == 3) {
@@ -915,8 +1227,41 @@ const fragmentShader = `
     // Apply color effect
     color = applyColorEffect(color);
 
+    if (lightingEnabled) {
+      float keyDiffuse = max(0.0, dot(pointNormal, normalize(keyLightDirection)));
+      float rim = pow(1.0 - max(pointNormal.z, 0.0), mix(5.0, 1.25, shadowSoftness));
+      rim *= max(0.0, dot(pointNormal, normalize(rimLightDirection)) * 0.5 + 0.5);
+      vec3 halfVector = normalize(normalize(keyLightDirection) + vec3(0.0, 0.0, 1.0));
+      float specular = pow(max(0.0, dot(pointNormal, halfVector)), mix(48.0, 6.0, shadowSoftness));
+      float heightShadow = smoothstep(-1.5, 1.5, vPosition.y);
+      float shadow = mix(1.0 - shadowStrength, 1.0, mix(heightShadow, 1.0, shadowSoftness));
+      vec3 lit = color * max(ambientIntensity, 0.0);
+      lit += color * keyLightColor * keyDiffuse * keyLightIntensity * shadow;
+      lit += rimLightColor * rim * rimLightIntensity;
+      lit += keyLightColor * specular * specularStrength;
+      color = lit;
+    }
+
+    float atmosphereMix = 0.0;
+    if (atmosphereEnabled && atmosphereDensity > 0.0) {
+      vec2 fogUV = vPosition.xz * max(atmosphereScale, 0.01);
+      float fogNoise = noise2D(
+        fogUV
+        + vec2(time * atmosphereSpeed, -time * atmosphereSpeed * 0.63)
+        + noise2D(fogUV * 0.47) * atmosphereTurbulence
+      );
+      float depthFog = smoothstep(-3.0, 5.0, -vPosition.z);
+      atmosphereMix = clamp(
+        atmosphereDensity * (0.25 + fogNoise * 0.75) * (0.55 + depthFog * 0.45),
+        0.0,
+        0.95
+      );
+      color = mix(color, atmosphereColor, atmosphereMix);
+    }
+
     // Calculate alpha
     float alpha = vAlpha * opacity * edgeAlpha;
+    alpha *= 1.0 - atmosphereMix * 0.12;
 
     // Apply opacity effect
     alpha = applyOpacityEffect(alpha);
@@ -953,15 +1298,22 @@ export class SplatRenderer {
   private points: THREE.Points | null = null;
   private geometry: THREE.BufferGeometry | null = null;
   private material: THREE.ShaderMaterial | null = null;
+  private baselineMaterial: THREE.ShaderMaterial | null = null;
+  private advancedMaterial: THREE.ShaderMaterial | null = null;
+  private uniforms: Record<string, THREE.IUniform> | null = null;
   private startTime: number = 0;
   private plyData: PLYData | null = null;
+  private geometryGeneration = 0;
+  private smoothedAudioLevel = 0;
+  private backgroundOpacity = 0;
+  private backgroundColor = new THREE.Color(0x000000);
 
   // Wireframe rendering
   private wireframe: THREE.LineSegments | null = null;
   private wireframeGeometry: THREE.BufferGeometry | null = null;
   private wireframeMaterial: THREE.LineBasicMaterial | null = null;
   private currentRenderMode: string = 'points';
-  private wireframeAttemptedForGeometry = false;
+  private wireframeBuildPending = false;
 
   // Original positions for animations
   private originalPositions: Float32Array | null = null;
@@ -979,7 +1331,6 @@ export class SplatRenderer {
   private _mousePlane = new THREE.Plane();
   private _mouseIntersection = new THREE.Vector3();
   private pointCloudScale = 1; // Track current scale for mouse radius adjustment
-  private positionFitScale = 1;
   private pointCloudBounds = { min: new THREE.Vector3(), max: new THREE.Vector3(), size: 1 };
   private boundMouseMove = (event: MouseEvent) => this.onMouseMove(event);
   private boundMouseLeave = () => {
@@ -1068,33 +1419,27 @@ export class SplatRenderer {
   }
 
   // Load point cloud data
-  loadData(data: PLYData) {
-    this.plyData = data;
+  async loadData(data: PLYData, onProgress?: (progress: number, detail: string) => void): Promise<void> {
+    const generation = ++this.geometryGeneration;
 
-    const rawSize = getBoundsSize(data);
-    this.positionFitScale = rawSize > 0
-      ? clamp(SPLAT_AUTO_FIT_SIZE / rawSize, MIN_AUTO_FIT_SCALE, MAX_AUTO_FIT_SCALE)
-      : 1;
-
-    // Calculate fitted bounds for mouse interaction scaling and texture projection.
+    // Normalize every import into the same working volume. Architectural scans,
+    // face captures, and compact splats otherwise arrive several orders apart.
     const bb = data.boundingBox;
+    const normalization = computeSplatNormalization(data);
     this.pointCloudBounds.min.set(
-      (bb.min.x - data.center.x) * this.positionFitScale,
-      (bb.min.y - data.center.y) * this.positionFitScale,
-      (bb.min.z - data.center.z) * this.positionFitScale
+      (bb.min.x - normalization.center.x) * normalization.scale,
+      (bb.min.y - normalization.center.y) * normalization.scale,
+      (bb.min.z - normalization.center.z) * normalization.scale,
     );
     this.pointCloudBounds.max.set(
-      (bb.max.x - data.center.x) * this.positionFitScale,
-      (bb.max.y - data.center.y) * this.positionFitScale,
-      (bb.max.z - data.center.z) * this.positionFitScale
+      (bb.max.x - normalization.center.x) * normalization.scale,
+      (bb.max.y - normalization.center.y) * normalization.scale,
+      (bb.max.z - normalization.center.z) * normalization.scale,
     );
-    this.pointCloudBounds.size = Math.max(rawSize * this.positionFitScale, 1);
-    // Ensure we have a reasonable minimum size
-    if (this.pointCloudBounds.size < 0.1) {
-      this.pointCloudBounds.size = 1;
-    }
+    this.pointCloudBounds.size = 4;
 
-    this.createGeometry(data);
+    const loaded = await this.createGeometry(data, generation, onProgress);
+    if (loaded) this.plyData = data;
   }
 
   // Get the currently loaded PLY data
@@ -1102,52 +1447,59 @@ export class SplatRenderer {
     return this.plyData;
   }
 
-  private createGeometry(data: PLYData) {
-    // Dispose old geometry
-    if (this.geometry) {
-      this.geometry.dispose();
-    }
-    if (this.material) {
-      this.material.dispose();
-    }
-    if (this.points) {
-      this.scene.remove(this.points);
-    }
-    this.disposeWireframeGeometry();
-    this.wireframeAttemptedForGeometry = false;
-
+  private async createGeometry(
+    data: PLYData,
+    generation: number,
+    onProgress?: (progress: number, detail: string) => void,
+  ): Promise<boolean> {
     const vertices = data.vertices;
     const count = vertices.length;
+    if (count === 0) throw new Error('Point cloud contains no renderable points');
 
-    // Create buffer geometry
-    this.geometry = new THREE.BufferGeometry();
+    // Build replacement buffers off to the side so an existing cloud remains
+    // renderable until the new upload is complete.
+    const geometry = new THREE.BufferGeometry();
 
     // Position attribute
     const positions = new Float32Array(count * 3);
-    this.originalPositions = new Float32Array(count * 3);
+    const originalPositions = new Float32Array(count * 3);
     const colors = new Float32Array(count * 3);
     const alphas = new Float32Array(count);
-    const pointScales = new Float32Array(count);
     const indices = new Float32Array(count);
-    this.velocities = new Float32Array(count * 3);
+    const velocities = new Float32Array(count * 3);
     const uvs = new Float32Array(count * 2);
+    const gaussianScales = new Float32Array(count);
+    const gaussianShapes = new Float32Array(count * 3);
+    const normalization = computeSplatNormalization(data);
+    // A bounded sample is sufficient for footprint normalization. Sorting one
+    // value for every point doubled peak memory on architectural captures.
+    const scaleSampleCount = Math.min(count, 50_000);
+    const scaleMagnitudes = new Float32Array(scaleSampleCount);
+    for (let i = 0; i < scaleSampleCount; i++) {
+      const sourceIndex = Math.min(count - 1, Math.floor((i * count) / scaleSampleCount));
+      const decoded = normalizedGaussianScale(vertices[sourceIndex], normalization, data.scaleEncoding === 'linear');
+      scaleMagnitudes[i] = Math.max(decoded[0], decoded[1], decoded[2]);
+    }
+    const sortedScales = Array.from(scaleMagnitudes)
+      .filter(Number.isFinite)
+      .sort((a, b) => a - b);
+    const medianScale =
+      sortedScales.length > 0 ? Math.max(sortedScales[Math.floor(sortedScales.length / 2)], 0.0001) : 1;
 
-    // Center the point cloud
-    const center = data.center;
-
+    onProgress?.(0.08, `Preparing ${count.toLocaleString()} points`);
     for (let i = 0; i < count; i++) {
       const v = vertices[i];
       const i3 = i * 3;
 
-      // Center positions
-      positions[i3] = (v.x - center.x) * this.positionFitScale;
-      positions[i3 + 1] = (v.y - center.y) * this.positionFitScale;
-      positions[i3 + 2] = (v.z - center.z) * this.positionFitScale;
+      const normalizedPosition = normalizedSplatPosition(v, normalization);
+      positions[i3] = normalizedPosition[0];
+      positions[i3 + 1] = normalizedPosition[1];
+      positions[i3 + 2] = normalizedPosition[2];
 
       // Store original positions
-      this.originalPositions[i3] = positions[i3];
-      this.originalPositions[i3 + 1] = positions[i3 + 1];
-      this.originalPositions[i3 + 2] = positions[i3 + 2];
+      originalPositions[i3] = positions[i3];
+      originalPositions[i3 + 1] = positions[i3 + 1];
+      originalPositions[i3 + 2] = positions[i3 + 2];
 
       // Colors (normalized)
       colors[i3] = v.r / 255;
@@ -1157,67 +1509,173 @@ export class SplatRenderer {
       // Alpha
       alphas[i] = v.a / 255;
 
-      pointScales[i] = data.dataType === 'gaussian'
-        ? getGaussianPointScale(v, this.positionFitScale)
-        : 1;
-
       // Vertex index for effects
       indices[i] = i;
 
       // Initialize velocities
-      this.velocities[i3] = 0;
-      this.velocities[i3 + 1] = 0;
-      this.velocities[i3 + 2] = 0;
+      velocities[i3] = 0;
+      velocities[i3 + 1] = 0;
+      velocities[i3 + 2] = 0;
 
       // UV coordinates from file (if available)
       const i2 = i * 2;
       uvs[i2] = v.texture_u ?? 0;
       uvs[i2 + 1] = v.texture_v ?? 0;
+
+      const scales = normalizedGaussianScale(v, normalization, data.scaleEncoding === 'linear');
+      const major = Math.max(scales[0], scales[1], scales[2], 0.0001);
+      const minor = Math.max(Math.min(scales[0], scales[1], scales[2]), major * 0.08);
+      gaussianScales[i] = data.dataType === 'gaussian' ? Math.max(0.35, Math.min(4, major / medianScale)) : 1;
+
+      const qw = v.rot_0 ?? 1;
+      const qx = v.rot_1 ?? 0;
+      const qy = v.rot_2 ?? 0;
+      const qz = v.rot_3 ?? 0;
+      const angle = Math.atan2(2 * (qw * qz + qx * qy), 1 - 2 * (qy * qy + qz * qz));
+      gaussianShapes[i3] = data.dataType === 'gaussian' ? minor / major : 1;
+      gaussianShapes[i3 + 1] = Math.cos(angle);
+      gaussianShapes[i3 + 2] = Math.sin(angle);
+
+      if ((i + 1) % 25_000 === 0) {
+        onProgress?.(
+          0.08 + 0.72 * ((i + 1) / count),
+          `Preparing point ${Math.min(i + 1, count).toLocaleString()} of ${count.toLocaleString()}`,
+        );
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        if (generation !== this.geometryGeneration) {
+          geometry.dispose();
+          return false;
+        }
+      }
     }
 
-    this.geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
-    this.geometry.setAttribute('originalPosition', new THREE.BufferAttribute(this.originalPositions, 3));
-    this.geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
-    this.geometry.setAttribute('alpha', new THREE.BufferAttribute(alphas, 1));
-    this.geometry.setAttribute('pointScale', new THREE.BufferAttribute(pointScales, 1));
-    this.geometry.setAttribute('vertexIndex', new THREE.BufferAttribute(indices, 1));
-    this.geometry.setAttribute('velocity', new THREE.BufferAttribute(this.velocities, 3));
-    this.geometry.setAttribute('texUV', new THREE.BufferAttribute(uvs, 2));
+    onProgress?.(0.84, 'Creating GPU buffers');
+    geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+    geometry.setAttribute('originalPosition', new THREE.BufferAttribute(originalPositions, 3));
+    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+    geometry.setAttribute('alpha', new THREE.BufferAttribute(alphas, 1));
+    geometry.setAttribute('vertexIndex', new THREE.BufferAttribute(indices, 1));
+    geometry.setAttribute('velocity', new THREE.BufferAttribute(velocities, 3));
+    geometry.setAttribute('texUV', new THREE.BufferAttribute(uvs, 2));
+    geometry.setAttribute('gaussianScale', new THREE.BufferAttribute(gaussianScales, 1));
+    geometry.setAttribute('gaussianShape', new THREE.BufferAttribute(gaussianShapes, 3));
 
-    // Create shader material
-    this.material = new THREE.ShaderMaterial({
-      vertexShader,
-      fragmentShader,
-      uniforms: this.createUniforms(),
-      transparent: true,
-      depthWrite: false,
-      blending: THREE.AdditiveBlending,
-    });
+    // Start every import on the compact baseline program. The advanced shader
+    // is compiled lazily only when the layer actually enables an advanced
+    // feature, avoiding a multi-million-point GPU timeout during normal load.
+    const uniforms = this.createUniforms();
+    const material = this.createBaselineMaterial(uniforms);
 
     // Create points
-    this.points = new THREE.Points(this.geometry, this.material);
-    this.scene.add(this.points);
+    const points = new THREE.Points(geometry, material);
+    if (generation !== this.geometryGeneration) {
+      geometry.dispose();
+      material.dispose();
+      return false;
+    }
+
+    const oldGeometry = this.geometry;
+    const oldBaselineMaterial = this.baselineMaterial;
+    const oldAdvancedMaterial = this.advancedMaterial;
+    const oldPoints = this.points;
+    if (oldPoints) this.scene.remove(oldPoints);
+    this.geometry = geometry;
+    this.uniforms = uniforms;
+    this.baselineMaterial = material;
+    this.advancedMaterial = null;
+    this.material = material;
+    this.points = points;
+    this.originalPositions = originalPositions;
+    this.velocities = velocities;
+    this.scene.add(points);
+    oldGeometry?.dispose();
+    oldBaselineMaterial?.dispose();
+    oldAdvancedMaterial?.dispose();
+
+    this.disposeWireframe();
+    this.wireframeBuildPending = false;
+    onProgress?.(1, 'GPU buffers ready');
+    return true;
+  }
+
+  private createBaselineMaterial(uniforms: Record<string, THREE.IUniform>): THREE.ShaderMaterial {
+    return new THREE.ShaderMaterial({
+      vertexShader: baselineVertexShader,
+      fragmentShader: baselineFragmentShader,
+      uniforms,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.NormalBlending,
+    });
+  }
+
+  private createAdvancedMaterial(uniforms: Record<string, THREE.IUniform>): THREE.ShaderMaterial {
+    return new THREE.ShaderMaterial({
+      vertexShader,
+      fragmentShader,
+      uniforms,
+      transparent: true,
+      depthWrite: false,
+      blending: THREE.NormalBlending,
+    });
+  }
+
+  private selectMaterial(content: SplatContent): void {
+    if (!this.points || !this.uniforms || !this.baselineMaterial) return;
+
+    let nextMaterial = this.baselineMaterial;
+    if (requiresAdvancedSplatMaterial(content)) {
+      this.advancedMaterial ??= this.createAdvancedMaterial(this.uniforms);
+      nextMaterial = this.advancedMaterial;
+    }
+
+    if (this.material !== nextMaterial) {
+      this.material = nextMaterial;
+      this.points.material = nextMaterial;
+    }
   }
 
   // Create wireframe geometry connecting nearby points
-  private createWireframeGeometry(data: PLYData) {
-    // Dispose old wireframe
-    this.disposeWireframeGeometry();
+  private disposeWireframe(): void {
+    if (this.wireframeGeometry) {
+      this.wireframeGeometry.dispose();
+    }
+    if (this.wireframeMaterial) {
+      this.wireframeMaterial.dispose();
+    }
+    if (this.wireframe) {
+      this.scene.remove(this.wireframe);
+    }
+    this.wireframe = null;
+    this.wireframeGeometry = null;
+    this.wireframeMaterial = null;
+  }
 
-    const positionAttr = this.geometry?.getAttribute('position') as THREE.BufferAttribute | undefined;
-    const colorAttr = this.geometry?.getAttribute('color') as THREE.BufferAttribute | undefined;
-    if (!positionAttr || !colorAttr) return;
+  private async createWireframeGeometry(
+    data: PLYData,
+    sourcePositions: Float32Array,
+    sourceColors: Float32Array,
+    generation: number,
+  ): Promise<void> {
+    this.disposeWireframe();
 
-    const positions = positionAttr.array as ArrayLike<number>;
-    const colors = colorAttr.array as ArrayLike<number>;
-
-    const count = Math.min(data.vertices.length, positionAttr.count, colorAttr.count);
+    // Wireframe is an alternate visualization, not a reason to allocate
+    // millions of neighbor records during every import.
+    const count = Math.min(data.vertices.length, 75_000);
     if (count < 2) return;
-    const sampleStride = count > MAX_WIREFRAME_SOURCE_POINTS
-      ? Math.ceil(count / MAX_WIREFRAME_SOURCE_POINTS)
-      : 1;
+    const positions = count === data.vertices.length ? sourcePositions : new Float32Array(count * 3);
+    const colors = count === data.vertices.length ? sourceColors : new Float32Array(count * 3);
+    if (count !== data.vertices.length) {
+      for (let i = 0; i < count; i++) {
+        const sourceIndex = Math.min(data.vertices.length - 1, Math.floor((i * data.vertices.length) / count));
+        positions.set(sourcePositions.subarray(sourceIndex * 3, sourceIndex * 3 + 3), i * 3);
+        colors.set(sourceColors.subarray(sourceIndex * 3, sourceIndex * 3 + 3), i * 3);
+      }
+    }
 
-    // Calculate adaptive distance threshold based on the fitted point cloud size.
+    // Positions are normalized before this pass, so neighborhood distance must
+    // use the normalized working volume too. Using source units made large
+    // architectural scans connect every point and tiny captures connect none.
     const size = this.pointCloudBounds.size;
     // Connect points within ~2% of the total size, with a max of ~10 connections per point
     const distThreshold = size * 0.025;
@@ -1234,7 +1692,7 @@ export class SplatRenderer {
     const grid = new Map<string, number[]>();
 
     // Build grid
-    for (let i = 0; i < count; i += sampleStride) {
+    for (let i = 0; i < count; i++) {
       const x = positions[i * 3];
       const y = positions[i * 3 + 1];
       const z = positions[i * 3 + 2];
@@ -1244,10 +1702,14 @@ export class SplatRenderer {
       const key = `${gx},${gy},${gz}`;
       if (!grid.has(key)) grid.set(key, []);
       grid.get(key)!.push(i);
+      if ((i + 1) % 10_000 === 0) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        if (generation !== this.geometryGeneration || data !== this.plyData) return;
+      }
     }
 
     // Find nearby points and create lines
-    for (let i = 0; i < count; i += sampleStride) {
+    for (let i = 0; i < count; i++) {
       if (connectionCount[i] >= maxConnections) continue;
 
       const x1 = positions[i * 3];
@@ -1287,9 +1749,14 @@ export class SplatRenderer {
           }
         }
       }
+      if ((i + 1) % 5_000 === 0) {
+        await new Promise<void>((resolve) => setTimeout(resolve, 0));
+        if (generation !== this.geometryGeneration || data !== this.plyData) return;
+      }
     }
 
     if (lineIndices.length === 0) return;
+    if (generation !== this.geometryGeneration || data !== this.plyData) return;
 
     // Create line geometry
     this.wireframeGeometry = new THREE.BufferGeometry();
@@ -1325,48 +1792,60 @@ export class SplatRenderer {
     this.scene.add(this.wireframe);
   }
 
-  private ensureWireframeGeometry() {
-    if (this.wireframe || this.wireframeAttemptedForGeometry || !this.plyData) return;
-    this.wireframeAttemptedForGeometry = true;
-    this.createWireframeGeometry(this.plyData);
-  }
-
-  private disposeWireframeGeometry() {
-    if (this.wireframe) {
-      this.scene.remove(this.wireframe);
-      this.wireframe = null;
-    }
-    if (this.wireframeGeometry) {
-      this.wireframeGeometry.dispose();
-      this.wireframeGeometry = null;
-    }
-    if (this.wireframeMaterial) {
-      this.wireframeMaterial.dispose();
-      this.wireframeMaterial = null;
-    }
-  }
-
   private createUniforms(): Record<string, THREE.IUniform> {
     return {
       time: { value: 0 },
       pointSize: { value: 3 },
+      maxPointSize: { value: 48 },
       sizeAttenuation: { value: true },
       opacity: { value: 1 },
       renderMode: { value: 0 },
 
       // Animation
       animationProgress: { value: 0 },
+      animationPhase: { value: 0 },
       animationIntensity: { value: 1 },
       animationType: { value: 0 },
       explodeForce: { value: 1 },
+      explodeTurbulence: { value: 0.35 },
+      implodeForce: { value: 0.85 },
+      implodeSpin: { value: 1.5 },
       voxelGridSize: { value: 16 },
       peelAxis: { value: new THREE.Vector3(0, 1, 0) },
+      peelDirection: { value: 1 },
+      peelWidth: { value: 0.55 },
+      peelCurl: { value: 2.2 },
+      sliceWidth: { value: 3 },
+      sliceSoftness: { value: 0.2 },
+      sliceTravel: { value: 1 },
+      waveAxis: { value: new THREE.Vector3(0, 1, 0) },
+      animationWaveFrequency: { value: 5 },
+      animationWaveAmplitude: { value: 0.3 },
+      scatterDistance: { value: 2 },
+      scatterRandomness: { value: 8 },
+      spiralRadius: { value: 0.75 },
+      spiralTurns: { value: 2 },
+      spiralLift: { value: 1 },
+      swarmCohesion: { value: 0.3 },
+      swarmSeparation: { value: 0.4 },
+      swarmAlignment: { value: 0.6 },
+      gravityStrength: { value: 2 },
+      gravitySpread: { value: 0.25 },
+      gravityFloor: { value: -2 },
+      turntableTilt: { value: 0 },
+      tumbleSpread: { value: 1 },
+      breatheAmount: { value: 0.15 },
+      driftAmount: { value: 0.25 },
+      vortexTwist: { value: 2 },
+      morphRoundness: { value: 1 },
       gravity: { value: 9.8 },
       turbulence: { value: 0 },
 
       // Displacement
       displacementType: { value: 0 },
       displacementAmount: { value: 0.5 },
+      displacementScale: { value: 2 },
+      displacementSpeed: { value: 1 },
       noiseScale: { value: 2 },
       noiseSpeed: { value: 1 },
       waveFrequency: { value: 2 },
@@ -1383,6 +1862,25 @@ export class SplatRenderer {
       audioColor: { value: 0.5 },
       beatIntensity: { value: 0 },
       beatPhase: { value: 0 },
+
+      // Lighting and atmosphere
+      lightingEnabled: { value: true },
+      ambientIntensity: { value: 1 },
+      keyLightColor: { value: new THREE.Vector3(1, 1, 1) },
+      keyLightIntensity: { value: 1 },
+      keyLightDirection: { value: new THREE.Vector3(0.5, 0.5, 1).normalize() },
+      rimLightColor: { value: new THREE.Vector3(0.2, 0.67, 1) },
+      rimLightIntensity: { value: 0.35 },
+      rimLightDirection: { value: new THREE.Vector3(-0.5, 0.25, 1).normalize() },
+      shadowStrength: { value: 0.45 },
+      shadowSoftness: { value: 0.5 },
+      specularStrength: { value: 0.3 },
+      atmosphereEnabled: { value: false },
+      atmosphereDensity: { value: 0.2 },
+      atmosphereColor: { value: new THREE.Vector3(0.08, 0.12, 0.16) },
+      atmosphereScale: { value: 1.5 },
+      atmosphereTurbulence: { value: 0.7 },
+      atmosphereSpeed: { value: 0.15 },
 
       // Transform
       scaleUniform: { value: 1 },
@@ -1409,6 +1907,9 @@ export class SplatRenderer {
       colorA: { value: new THREE.Vector3(255, 255, 255) },
       colorB: { value: new THREE.Vector3(100, 200, 255) },
       colorMix: { value: 0 },
+      depthColorNear: { value: new THREE.Vector3(1, 0.36, 0.2) },
+      depthColorFar: { value: new THREE.Vector3(0.2, 0.47, 1) },
+      depthGradientBias: { value: 0.5 },
       hologramSpeed: { value: 2 },
       hologramDensity: { value: 20 },
 
@@ -1418,7 +1919,7 @@ export class SplatRenderer {
       dofFocalDistance: { value: 0.5 },
       dofBlurAmount: { value: 0.5 },
       fogDensity: { value: 0.3 },
-      fogColor: { value: new THREE.Vector3(50, 50, 80) },
+      fogColor: { value: new THREE.Vector3(0.2, 0.2, 0.31) },
       pulseSpeed: { value: 1 },
       dissolveProgress: { value: 0 },
 
@@ -1463,9 +1964,9 @@ export class SplatRenderer {
     }
 
     if (!dataUrl) {
-      if (this.material) {
-        this.material.uniforms.textureEnabled.value = false;
-        this.material.uniforms.textureMap.value = null;
+      if (this.uniforms) {
+        this.uniforms.textureEnabled.value = false;
+        this.uniforms.textureMap.value = null;
       }
       return;
     }
@@ -1487,11 +1988,11 @@ export class SplatRenderer {
         this.textureMap = videoTexture;
         this.videoElement = video;
 
-        if (this.material) {
-          this.material.uniforms.textureMap.value = videoTexture;
+        if (this.uniforms) {
+          this.uniforms.textureMap.value = videoTexture;
         }
 
-        video.play().catch(e => console.warn('Video autoplay blocked:', e));
+        video.play().catch((e) => console.warn('Video autoplay blocked:', e));
       });
 
       video.load();
@@ -1505,12 +2006,12 @@ export class SplatRenderer {
           texture.magFilter = THREE.LinearFilter;
           this.textureMap = texture;
 
-          if (this.material) {
-            this.material.uniforms.textureMap.value = texture;
+          if (this.uniforms) {
+            this.uniforms.textureMap.value = texture;
           }
         },
         undefined,
-        (err) => console.error('Failed to load texture:', err)
+        (err) => console.error('Failed to load texture:', err),
       );
     }
   }
@@ -1524,28 +2025,54 @@ export class SplatRenderer {
 
   // Update from SplatContent (audioState provides beat/phase data for enhanced reactivity)
   update(content: SplatContent, audioLevel: number = 0, audioState?: any) {
+    if (!this.uniforms) return;
+    this.selectMaterial(content);
     if (!this.material) return;
 
     const time = (performance.now() - this.startTime) / 1000;
-    const u = this.material.uniforms;
+    const u = this.uniforms;
 
     // Time
     u.time.value = time;
 
     // Point rendering
     u.pointSize.value = content.pointSize;
+    const geometryPointCount = this.geometry?.getAttribute('position')?.count ?? 0;
+    const activePointCount = Math.max(
+      1,
+      Math.floor(geometryPointCount * Math.max(0.01, Math.min(1, content.pointDensity ?? 1))),
+    );
+    u.maxPointSize.value =
+      activePointCount >= 1_000_000
+        ? 6
+        : activePointCount >= 500_000
+          ? 8
+          : activePointCount >= 250_000
+            ? 12
+            : activePointCount >= 100_000
+              ? 18
+              : 48;
     u.sizeAttenuation.value = content.pointSizeAttenuation;
     u.opacity.value = content.opacity;
     u.renderMode.value = this.getRenderModeIndex(content.renderMode);
 
     // Toggle between points and wireframe based on render mode
     const isWireframe = content.renderMode === 'wireframe';
-    const wasWireframe = this.currentRenderMode === 'wireframe';
-    if (isWireframe) {
-      this.ensureWireframeGeometry();
-    } else if (wasWireframe) {
-      this.disposeWireframeGeometry();
-      this.wireframeAttemptedForGeometry = false;
+    if (isWireframe && !this.wireframe && !this.wireframeBuildPending && this.geometry && this.plyData) {
+      const positions = this.geometry.getAttribute('position').array as Float32Array;
+      const colors = this.geometry.getAttribute('color').array as Float32Array;
+      const generation = this.geometryGeneration;
+      this.wireframeBuildPending = true;
+      void this.createWireframeGeometry(this.plyData, positions, colors, generation)
+        .then(() => {
+          if (this.wireframe) this.wireframe.visible = this.currentRenderMode === 'wireframe';
+        })
+        .catch((error) => {
+          console.error('[SplatRenderer] Failed to build wireframe:', error);
+        })
+        .finally(() => {
+          this.wireframeBuildPending = false;
+        });
     }
     if (this.points) {
       this.points.visible = !isWireframe;
@@ -1569,56 +2096,127 @@ export class SplatRenderer {
 
     // Animation
     u.animationType.value = this.getAnimationTypeIndex(content.animationType);
-    // For looping: use smooth continuous formula (sin-based oscillation 0->1->0)
-    // This avoids the jarring jump from 1 back to 0
-    u.animationProgress.value = content.animationLoop
-      ? (0.5 - 0.5 * Math.cos(time * content.animationSpeed * Math.PI * 2))
-      : content.animationProgress;
+    const animationClock = resolveSplatAnimationClock({
+      time,
+      speed: content.animationSpeed,
+      loop: content.animationLoop,
+      pingPong: content.animationPingPong ?? false,
+      manualProgress: content.animationProgress,
+    });
+    u.animationProgress.value = animationClock.progress;
+    u.animationPhase.value = animationClock.phase;
     u.animationIntensity.value = content.animationIntensity;
     u.explodeForce.value = content.explodeForce;
+    u.explodeTurbulence.value = content.explodeTurbulence ?? 0.35;
+    u.implodeForce.value = content.implodeForce ?? 0.85;
+    u.implodeSpin.value = content.implodeSpin ?? 1.5;
     u.voxelGridSize.value = content.voxelGridSize;
+    u.peelDirection.value = content.peelDirection ?? 1;
+    u.peelWidth.value = content.peelWidth ?? 0.55;
+    u.peelCurl.value = content.peelCurl ?? 2.2;
+    u.sliceWidth.value = content.sliceWidth ?? 3;
+    u.sliceSoftness.value = content.sliceSoftness ?? 0.2;
+    u.sliceTravel.value = content.sliceTravel ?? 1;
     u.peelAxis.value.set(
       content.peelAxis === 'x' ? 1 : 0,
       content.peelAxis === 'y' ? 1 : 0,
-      content.peelAxis === 'z' ? 1 : 0
+      content.peelAxis === 'z' ? 1 : 0,
     );
+    const waveAxis = content.waveAxis ?? 'y';
+    u.waveAxis.value.set(waveAxis === 'x' ? 1 : 0, waveAxis === 'y' ? 1 : 0, waveAxis === 'z' ? 1 : 0);
+    u.animationWaveFrequency.value = content.animationWaveFrequency ?? 5;
+    u.animationWaveAmplitude.value = content.animationWaveAmplitude ?? 0.3;
+    u.scatterDistance.value = content.scatterDistance ?? 2;
+    u.scatterRandomness.value = content.scatterRandomness ?? 8;
+    u.spiralRadius.value = content.spiralRadius ?? 0.75;
+    u.spiralTurns.value = content.spiralTurns ?? 2;
+    u.spiralLift.value = content.spiralLift ?? 1;
+    u.swarmCohesion.value = content.swarmCohesion ?? 0.3;
+    u.swarmSeparation.value = content.swarmSeparation ?? 0.4;
+    u.swarmAlignment.value = content.swarmAlignment ?? 0.6;
+    u.gravityStrength.value = content.gravityStrength ?? 2;
+    u.gravitySpread.value = content.gravitySpread ?? 0.25;
+    u.gravityFloor.value = content.gravityFloor ?? -2;
+    u.turntableTilt.value = ((content.turntableTilt ?? 0) * Math.PI) / 180;
+    u.tumbleSpread.value = content.tumbleSpread ?? 1;
+    u.breatheAmount.value = content.breatheAmount ?? 0.15;
+    u.driftAmount.value = content.driftAmount ?? 0.25;
+    u.vortexTwist.value = content.vortexTwist ?? 2;
+    u.morphRoundness.value = content.morphRoundness ?? 1;
     u.gravity.value = content.physics.gravity;
     u.turbulence.value = content.physics.turbulence;
 
     // Displacement
     u.displacementType.value = this.getDisplacementTypeIndex(content.displacementType);
-    u.displacementAmount.value = content.displacementAmount;
-    u.noiseScale.value = content.noiseScale;
-    u.noiseSpeed.value = content.noiseSpeed;
+    u.displacementAmount.value = content.displacementAmount ?? content.displacementIntensity ?? 0.5;
+    u.displacementScale.value = content.displacementScale ?? content.noiseScale ?? 2;
+    u.displacementSpeed.value = content.displacementSpeed ?? content.noiseSpeed ?? 1;
+    u.noiseScale.value = content.noiseScale ?? content.displacementScale ?? 2;
+    u.noiseSpeed.value = content.noiseSpeed ?? content.displacementSpeed ?? 1;
     u.waveFrequency.value = content.waveFrequency;
     u.waveAmplitude.value = content.waveAmplitude;
     u.glitchIntensity.value = content.glitchIntensity;
-    u.windDirection.value.set(
-      content.windDirection.x,
-      content.windDirection.y,
-      content.windDirection.z
-    );
+    u.windDirection.value.set(content.windDirection.x, content.windDirection.y, content.windDirection.z);
     u.windStrength.value = content.windStrength;
 
     // Audio
     u.audioEnabled.value = content.audioEnabled;
-    u.audioLevel.value = audioLevel;
+    this.smoothedAudioLevel = smoothSplatAudio(
+      this.smoothedAudioLevel,
+      content.audioEnabled ? audioLevel : 0,
+      content.audioSmoothing ?? 0.7,
+    );
+    u.audioLevel.value = this.smoothedAudioLevel;
     u.audioDisplacement.value = content.audioDisplacement;
     u.audioScale.value = content.audioScale;
     u.audioColor.value = content.audioColor;
     // Beat reactivity from full audio state
-    u.beatIntensity.value = typeof audioState?.beat === 'number'
-      ? audioState.beat
-      : (audioState?.beat?.beatIntensity || 0);
+    u.beatIntensity.value =
+      typeof audioState?.beat === 'number' ? audioState.beat : audioState?.beat?.beatIntensity || 0;
     u.beatPhase.value = audioState?.beatPhase || 0;
+
+    // Lighting and atmosphere
+    u.lightingEnabled.value = content.lightingEnabled ?? true;
+    u.ambientIntensity.value = content.ambientIntensity ?? 1;
+    const keyColor = hexToRgb01(content.keyLightColor, '#ffffff');
+    u.keyLightColor.value.set(keyColor[0], keyColor[1], keyColor[2]);
+    u.keyLightIntensity.value = content.keyLightIntensity ?? 1;
+    const keyAzimuth = ((content.keyLightAzimuth ?? 35) * Math.PI) / 180;
+    const keyElevation = ((content.keyLightElevation ?? 40) * Math.PI) / 180;
+    u.keyLightDirection.value
+      .set(
+        Math.cos(keyElevation) * Math.sin(keyAzimuth),
+        Math.sin(keyElevation),
+        Math.cos(keyElevation) * Math.cos(keyAzimuth),
+      )
+      .normalize();
+    const rimColor = hexToRgb01(content.rimLightColor, '#33aaff');
+    u.rimLightColor.value.set(rimColor[0], rimColor[1], rimColor[2]);
+    u.rimLightIntensity.value = content.rimLightIntensity ?? 0.35;
+    const rimAzimuth = ((content.rimLightAzimuth ?? -45) * Math.PI) / 180;
+    u.rimLightDirection.value.set(Math.sin(rimAzimuth), 0.35, Math.cos(rimAzimuth)).normalize();
+    u.shadowStrength.value = content.shadowStrength ?? 0.45;
+    u.shadowSoftness.value = content.shadowSoftness ?? 0.5;
+    u.specularStrength.value = content.specularStrength ?? 0.3;
+
+    u.atmosphereEnabled.value = content.atmosphereEnabled ?? false;
+    u.atmosphereDensity.value = content.atmosphereDensity ?? 0.2;
+    const atmosphereColor = hexToRgb01(content.atmosphereColor, '#14202b');
+    u.atmosphereColor.value.set(atmosphereColor[0], atmosphereColor[1], atmosphereColor[2]);
+    u.atmosphereScale.value = content.atmosphereScale ?? 1.5;
+    u.atmosphereTurbulence.value = content.atmosphereTurbulence ?? 0.7;
+    u.atmosphereSpeed.value = content.atmosphereSpeed ?? 0.15;
+    this.backgroundOpacity = content.backgroundOpacity ?? 0;
+    this.backgroundColor.set(content.backgroundColor ?? '#000000');
+    if (this.renderer) {
+      this.renderer.setClearColor(this.backgroundColor, this.backgroundOpacity);
+    }
 
     // Transform
     u.scaleUniform.value = content.scaleUniform;
-    u.rotation3D.value.set(
-      content.rotationX * Math.PI / 180,
-      content.rotationY * Math.PI / 180,
-      content.rotationZ * Math.PI / 180
-    );
+    const autoRotation = content.autoRotate ? (time * content.autoRotateSpeed * Math.PI) / 180 : 0;
+    const [rotationX, rotationY, rotationZ] = composeSplatRotationRadians(content, autoRotation);
+    u.rotation3D.value.set(rotationX, rotationY, rotationZ);
     u.position3D.value.set(content.positionX, content.positionY, content.positionZ);
 
     // Slice plane
@@ -1626,7 +2224,7 @@ export class SplatRenderer {
     u.sliceAxis.value.set(
       content.slicePlane.axis === 'x' ? 1 : 0,
       content.slicePlane.axis === 'y' ? 1 : 0,
-      content.slicePlane.axis === 'z' ? 1 : 0
+      content.slicePlane.axis === 'z' ? 1 : 0,
     );
     u.slicePosition.value = content.slicePlane.animated
       ? Math.sin(time * content.slicePlane.speed) * 2
@@ -1651,6 +2249,11 @@ export class SplatRenderer {
     u.colorA.value.set(content.colorA[0], content.colorA[1], content.colorA[2]);
     u.colorB.value.set(content.colorB[0], content.colorB[1], content.colorB[2]);
     u.colorMix.value = content.colorMix;
+    const depthNear = hexToRgb01(content.depthColorNear, '#ff5c33');
+    const depthFar = hexToRgb01(content.depthColorFar, '#3377ff');
+    u.depthColorNear.value.set(depthNear[0], depthNear[1], depthNear[2]);
+    u.depthColorFar.value.set(depthFar[0], depthFar[1], depthFar[2]);
+    u.depthGradientBias.value = content.depthGradientBias ?? 0.5;
     u.hologramSpeed.value = content.hologramSpeed;
     u.hologramDensity.value = content.hologramDensity;
 
@@ -1660,7 +2263,8 @@ export class SplatRenderer {
     u.dofFocalDistance.value = content.dofFocalDistance;
     u.dofBlurAmount.value = content.dofBlurAmount;
     u.fogDensity.value = content.fogDensity;
-    u.fogColor.value.set(content.fogColor[0], content.fogColor[1], content.fogColor[2]);
+    const fogColor = hexToRgb01(content.fogColor, '#323250');
+    u.fogColor.value.set(fogColor[0], fogColor[1], fogColor[2]);
     u.pulseSpeed.value = content.pulseSpeed;
     u.dissolveProgress.value = content.dissolveProgress;
 
@@ -1685,6 +2289,9 @@ export class SplatRenderer {
 
     // Update camera
     this.updateCamera(content);
+    if (this.material) {
+      this.material.depthTest = content.depthTest;
+    }
   }
 
   private getTextureProjectionIndex(projection: string | undefined): number {
@@ -1699,21 +2306,15 @@ export class SplatRenderer {
     this.camera.updateProjectionMatrix();
 
     // Apply orbit
-    const distance = content.cameraDistance;
-    const orbitX = content.cameraOrbitX * Math.PI / 180;
-    const orbitY = content.cameraOrbitY * Math.PI / 180;
-    const roll = (content.cameraRoll ?? 0) * Math.PI / 180;
-
-    // Auto-rotate
-    let yRotation = orbitY;
-    if (content.autoRotate) {
-      yRotation += (performance.now() - this.startTime) / 1000 * content.autoRotateSpeed * Math.PI / 180;
-    }
+    const distance = resolveSplatCameraDistance(content.cameraDistance);
+    const orbitX = (Math.max(-89, Math.min(89, content.cameraOrbitX)) * Math.PI) / 180;
+    const orbitY = (content.cameraOrbitY * Math.PI) / 180;
+    const roll = ((content.cameraRoll ?? 0) * Math.PI) / 180;
 
     // Calculate camera position from orbit angles (looking at origin)
-    const camX = Math.sin(yRotation) * Math.cos(orbitX) * distance;
+    const camX = Math.sin(orbitY) * Math.cos(orbitX) * distance;
     const camY = Math.sin(orbitX) * distance;
-    const camZ = Math.cos(yRotation) * Math.cos(orbitX) * distance;
+    const camZ = Math.cos(orbitY) * Math.cos(orbitX) * distance;
 
     // Set camera position and look at origin first
     this.camera.position.set(camX, camY, camZ);
@@ -1735,10 +2336,12 @@ export class SplatRenderer {
       // setViewOffset(fullWidth, fullHeight, offsetX, offsetY, width, height)
       // Using offsets as fractions of the view
       this.camera.setViewOffset(
-        width, height,
+        width,
+        height,
         -panX * width, // negative because we want right = positive X on screen
-        panY * height,  // positive because we want up = positive Y on screen
-        width, height
+        panY * height, // positive because we want up = positive Y on screen
+        width,
+        height,
       );
       this.camera.updateProjectionMatrix();
     } else {
@@ -1750,15 +2353,41 @@ export class SplatRenderer {
 
   private getAnimationTypeIndex(type: SplatAnimationType): number {
     const types: SplatAnimationType[] = [
-      'none', 'explode', 'implode', 'slice', 'voxelSnap', 'peel',
-      'gravity', 'swarm', 'morph', 'orbit', 'wave3d', 'scatter', 'spiral'
+      'none',
+      'explode',
+      'implode',
+      'slice',
+      'voxelSnap',
+      'peel',
+      'gravity',
+      'swarm',
+      'morph',
+      'orbit',
+      'wave3d',
+      'scatter',
+      'spiral',
+      'tumble',
+      'breathe',
+      'drift',
+      'vortex',
     ];
     return types.indexOf(type);
   }
 
   private getDisplacementTypeIndex(type: SplatDisplacementType): number {
     const types: SplatDisplacementType[] = [
-      'none', 'noise', 'audioReactive', 'wave', 'glitch', 'wind', 'magnetic', 'ripple'
+      'none',
+      'noise',
+      'audioReactive',
+      'wave',
+      'glitch',
+      'wind',
+      'magnetic',
+      'ripple',
+      'curlNoise',
+      'twist',
+      'radialPulse',
+      'scanline',
     ];
     return types.indexOf(type);
   }
@@ -1770,8 +2399,19 @@ export class SplatRenderer {
 
   private getColorEffectIndex(type: SplatColorEffectType): number {
     const types: SplatColorEffectType[] = [
-      'none', 'chromatic', 'heatmap', 'pointillist', 'hologram', 'rainbow', 'audioColor', 'depthGradient',
-      'neon', 'pastel', 'cyberpunk', 'fire', 'ice'
+      'none',
+      'chromatic',
+      'heatmap',
+      'pointillist',
+      'hologram',
+      'rainbow',
+      'audioColor',
+      'depthGradient',
+      'neon',
+      'pastel',
+      'cyberpunk',
+      'fire',
+      'ice',
     ];
     const idx = types.indexOf(type);
     return idx >= 0 ? idx : 0;
@@ -1779,14 +2419,27 @@ export class SplatRenderer {
 
   private getOpacityEffectIndex(type: SplatOpacityEffectType): number {
     const types: SplatOpacityEffectType[] = [
-      'none', 'dof', 'fog', 'pulse', 'proximity', 'dissolve', 'scanReveal', 'audioFade'
+      'none',
+      'dof',
+      'fog',
+      'pulse',
+      'proximity',
+      'dissolve',
+      'scanReveal',
+      'audioFade',
     ];
     return types.indexOf(type);
   }
 
   private getCreativeEffectIndex(type: SplatCreativeEffectType): number {
     const types: SplatCreativeEffectType[] = [
-      'none', 'feedback', 'kaleidoscope', 'constellation', 'datamosh', 'pixelSort', 'echo'
+      'none',
+      'feedback',
+      'kaleidoscope',
+      'constellation',
+      'datamosh',
+      'pixelSort',
+      'echo',
     ];
     return types.indexOf(type);
   }
@@ -1806,7 +2459,7 @@ export class SplatRenderer {
    *  This avoids cross-context issues by keeping everything in one WebGL context. */
   renderTo(externalRenderer: THREE.WebGLRenderer, target: THREE.WebGLRenderTarget) {
     externalRenderer.setRenderTarget(target);
-    externalRenderer.setClearColor(0x000000, 0); // transparent clear
+    externalRenderer.setClearColor(this.backgroundColor, this.backgroundOpacity);
     externalRenderer.clear();
     externalRenderer.render(this.scene, this.camera);
     externalRenderer.setRenderTarget(null);
@@ -1823,10 +2476,18 @@ export class SplatRenderer {
   }
 
   dispose() {
+    this.geometryGeneration++;
     if (this.geometry) this.geometry.dispose();
-    if (this.material) this.material.dispose();
+    this.baselineMaterial?.dispose();
+    this.advancedMaterial?.dispose();
+    this.material = null;
+    this.baselineMaterial = null;
+    this.advancedMaterial = null;
+    this.uniforms = null;
     if (this.points) this.scene.remove(this.points);
-    this.disposeWireframeGeometry();
+    if (this.wireframeGeometry) this.wireframeGeometry.dispose();
+    if (this.wireframeMaterial) this.wireframeMaterial.dispose();
+    if (this.wireframe) this.scene.remove(this.wireframe);
     if (this.textureMap) this.textureMap.dispose();
     if (this.videoElement) {
       this.videoElement.pause();

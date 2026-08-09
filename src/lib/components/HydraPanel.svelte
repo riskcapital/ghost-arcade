@@ -194,7 +194,7 @@
     border-radius: 3px;
     padding: 1px 5px;
     font-size: 10px;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     margin: 0 2px;
   }
 
@@ -218,7 +218,7 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
   .hy-fav-btn, .hy-fav-only {
     background: transparent;
@@ -262,7 +262,7 @@
     overflow-x: auto;
     white-space: pre-wrap;
     word-break: break-word;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
 
   .hy-filter { display: flex; gap: 4px; }
@@ -305,7 +305,7 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
   .hy-row-fav {
     background: transparent;

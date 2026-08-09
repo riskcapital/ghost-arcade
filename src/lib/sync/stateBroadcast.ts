@@ -57,6 +57,21 @@ let lastLayerOpacities: Record<string, number> = {};
 let lastLayerMeshGrids: Record<string, any> = {};
 let lastLayerSignatures: Record<string, string> = {};
 let lastLayerIds = '';
+// Stage Designer surfaces (slice geometry, Stage FX effect lists,
+// activeEffectId, automation). A stage-effect trigger changes ONLY
+// project.surfaces — without this signature the diff below reports
+// 'none' and receivers (Stage 3D window) never hear about it, so the
+// popout latches on whatever effect was active when it opened.
+let lastSurfacesSignature = '';
+
+function surfacesSyncSignature(projectState = get(project)): string {
+  const p = projectState as any;
+  try {
+    return JSON.stringify([p.surfaces ?? null, p.activeSurfaceId ?? null]);
+  } catch {
+    return '';
+  }
+}
 let pendingLayerPatches = new Map<string, { id: string; corners?: any; opacity?: number; meshGrid?: any }>();
 let patchThrottle: ReturnType<typeof setTimeout> | null = null;
 
@@ -111,6 +126,7 @@ function resetLayerPatchSnapshot(projectState = get(project)) {
   lastLayerOpacities = nextOpacities;
   lastLayerMeshGrids = nextMeshGrids;
   lastLayerSignatures = nextSignatures;
+  lastSurfacesSignature = surfacesSyncSignature(projectState);
 }
 
 function flushLayerPatches() {
@@ -140,6 +156,10 @@ function diffProjectForSync():
   const currentLayers = get(project).layers;
   const currentIds = currentLayers.map(layer => layer.id).join('|');
   if (!lastLayerIds || currentIds !== lastLayerIds) return { kind: 'full' };
+
+  // Stage FX triggers / slice edits live in project.surfaces, not in
+  // any layer — they need a full export or receivers never see them.
+  if (surfacesSyncSignature() !== lastSurfacesSignature) return { kind: 'full' };
 
   for (const layer of currentLayers) {
     if (lastLayerSignatures[layer.id] !== layerPatchSignature(layer)) return { kind: 'full' };

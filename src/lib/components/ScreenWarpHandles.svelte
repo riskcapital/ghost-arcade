@@ -277,11 +277,11 @@
       {/if}
       <!-- Label at the warp's top-left. -->
       {#if mode === 'rect'}
-        <text x={px(s.cropX) + 6} y={py(s.cropY) + 14} fill={stroke} font-size="13" font-family="IBM Plex Mono, ui-monospace, monospace" paint-order="stroke" stroke="rgba(0,0,0,0.7)" stroke-width="3">{s.name}</text>
+        <text x={px(s.cropX) + 6} y={py(s.cropY) + 14} fill={stroke} font-size="13" font-family="Geist Mono, ui-monospace, monospace" paint-order="stroke" stroke="rgba(0,0,0,0.7)" stroke-width="3">{s.name}</text>
       {:else if mode === 'corners' && s.corners}
-        <text x={px(s.corners.topLeft.x) + 6} y={py(s.corners.topLeft.y) + 14} fill={stroke} font-size="13" font-family="IBM Plex Mono, ui-monospace, monospace" paint-order="stroke" stroke="rgba(0,0,0,0.7)" stroke-width="3">{s.name}</text>
+        <text x={px(s.corners.topLeft.x) + 6} y={py(s.corners.topLeft.y) + 14} fill={stroke} font-size="13" font-family="Geist Mono, ui-monospace, monospace" paint-order="stroke" stroke="rgba(0,0,0,0.7)" stroke-width="3">{s.name}</text>
       {:else if mode === 'mesh' && s.meshGrid}
-        <text x={px(s.meshGrid.points[0][0].x) + 6} y={py(s.meshGrid.points[0][0].y) + 14} fill={stroke} font-size="13" font-family="IBM Plex Mono, ui-monospace, monospace" paint-order="stroke" stroke="rgba(0,0,0,0.7)" stroke-width="3">{s.name}</text>
+        <text x={px(s.meshGrid.points[0][0].x) + 6} y={py(s.meshGrid.points[0][0].y) + 14} fill={stroke} font-size="13" font-family="Geist Mono, ui-monospace, monospace" paint-order="stroke" stroke="rgba(0,0,0,0.7)" stroke-width="3">{s.name}</text>
       {/if}
     {/each}
   </svg>

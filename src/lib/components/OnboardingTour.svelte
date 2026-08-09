@@ -418,7 +418,7 @@
     letter-spacing: 0.16em;
   }
   .ot-keyhint kbd {
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: 12px;
     color: #FF8577;
     background: rgba(255, 133, 119, 0.1);
@@ -467,7 +467,7 @@
   .ot-skip:hover { color: var(--text-primary, #ccc); border-color: rgba(255, 255, 255, 0.2); }
 
   .ot-counter {
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: 11px;
     color: #666;
     text-align: center;

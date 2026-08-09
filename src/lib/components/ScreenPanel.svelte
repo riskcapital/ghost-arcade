@@ -563,7 +563,7 @@
   }
   .section-count {
     color: #555;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
   .preview-host {
     margin-bottom: 8px;
@@ -631,7 +631,7 @@
   .row-target {
     font-size: 11px;
     color: var(--text-muted, #888);
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     background: rgba(255, 255, 255, 0.04);
     padding: 1px 4px;
     border-radius: 2px;
@@ -691,10 +691,10 @@
     border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 3px;
     color: var(--text-primary, #ddd);
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: 12px;
   }
-  .dim-x { color: #666; font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace); }
+  .dim-x { color: #666; font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); }
   .mini-btn {
     flex: 1;
     padding: 3px 8px;
@@ -839,7 +839,7 @@
   }
   .dome-row em {
     color: #8f8998;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: 11px;
     font-style: normal;
     text-align: right;

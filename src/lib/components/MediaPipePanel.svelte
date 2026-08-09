@@ -357,9 +357,9 @@
     gap: 6px;
     font-size: 11px;
   }
-  .mp-sig-id   { color: var(--text-muted, #888); font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-  .mp-sig-val  { color: var(--text-secondary, #aaa); text-align: right; font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace); }
-  .mp-sig-gest { color: #555; font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace); grid-column: 2 / -1; }
+  .mp-sig-id   { color: var(--text-muted, #888); font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mp-sig-val  { color: var(--text-secondary, #aaa); text-align: right; font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); }
+  .mp-sig-gest { color: #555; font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); grid-column: 2 / -1; }
   .mp-sig-gest.active { color: var(--accent-primary, #FF6B6B); font-weight: 700; }
 
   .mp-meter {
@@ -407,9 +407,9 @@
     padding: 3px 0;
     border-bottom: 1px solid #110a1c;
   }
-  .mp-bind-sig  { color: var(--text-secondary, #aaa); font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mp-bind-sig  { color: var(--text-secondary, #aaa); font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .mp-bind-arr  { color: #444; text-align: center; }
-  .mp-bind-path { color: var(--text-primary, #ddd); font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .mp-bind-path { color: var(--text-primary, #ddd); font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .mp-bind-meter {
     height: 4px;
     background: #15102a;

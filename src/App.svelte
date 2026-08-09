@@ -13,6 +13,7 @@
   import MeshWarpHandles from './lib/components/MeshWarpHandles.svelte';
   import ScreenWarpHandles from './lib/components/ScreenWarpHandles.svelte';
   import MasterWarpHandles from './lib/components/MasterWarpHandles.svelte';
+  import Object3DTransformGizmo from './lib/components/Object3DTransformGizmo.svelte';
   import CustomShapeHandles from './lib/components/CustomShapeHandles.svelte';
   // LayerPanel now mounts via LeftSidebar (which swaps it for
   // ScreenPanel when the user is on the Screens tab).
@@ -65,6 +66,7 @@
   // EULAModal removed — no EULA in the open-source build.
   import UpdateModal from './lib/components/UpdateModal.svelte';
   import { updateModalOpen, leftSidebarTab } from './lib/stores/uiState';
+  import { showToast } from './lib/stores/errorToast';
   import { maskEditingLayerId } from './lib/stores/maskEditing';
   import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, setHistoryCallback } from './lib/stores/layers';
   import { keyframeTimeline } from './lib/stores/keyframeTimeline';
@@ -132,6 +134,7 @@
   // qrcode is lazy-loaded inside generateQRCode() so it stays out of the
   // main App chunk — it's only needed when the mobile-connect panel opens.
   import { midiManager } from './lib/midi/midiManager';
+  import { oscStore } from './lib/osc/oscStore';
   import { midiStore } from './lib/midi/midiStore';
   import { keyboardStore } from './lib/keyboard/keyboardStore';
   import { synthVisionStore, sessionClipCache, isfShaderCache } from './lib/stores/synthVision';
@@ -145,6 +148,7 @@
   // import DirectorPanel from './lib/components/DirectorPanel.svelte';
   // import { directorStore } from './lib/stores/director';
   import { fpsStore } from './lib/stores/fps';
+  import { editorCanvasGeometry } from './lib/stores/editorCanvasGeometry';
 
   // Drawing mode for lines layers (connected to LinesPanel)
   let linesDrawingMode: 'none' | 'freehand' | 'pointClick' = 'none';
@@ -378,7 +382,11 @@
   let lastReactiveBridge: WebGPUCanvas | null = null;
   let nativePrimaryRenderer = false;
   let nativePreviewGlassActive = false;
+  // VJ mode in full-native punches a transparent hole in its overlay for the
+  // Metal underlay; the editor DOM must not bleed through that hole.
+  let vjNativeUnderlayActive = false;
   $: nativePrimaryRenderer = isDesktopApp && NATIVE_ENGINE_ONLY;
+  $: vjNativeUnderlayActive = nativePrimaryRenderer && $vjClipLauncher.isOpen;
   $: nativePreviewGlassActive = !!(
     nativePrimaryRenderer
     && $nativeRendererRuntime.running
@@ -549,19 +557,18 @@
   let viewportWidth = 800;
   let viewportHeight = 600;
 
-  // Computed canvas dimensions (aspect-ratio constrained within viewport)
-  // When measured values from Canvas component are available, use those for pixel-perfect alignment
+  // Canvas.svelte owns editor geometry. These overlays use the layout-space
+  // half of the same revision that positions the native Metal presenter.
   $: canvasAspect = ($project.width || 1920) / ($project.height || 1080);
   $: viewportAspect = viewportWidth / viewportHeight;
-  $: canvasWidth = measuredCanvasWidth ?? (viewportAspect > canvasAspect
+  $: canvasWidth = $editorCanvasGeometry?.layoutWidth ?? (viewportAspect > canvasAspect
     ? viewportHeight * canvasAspect
     : viewportWidth);
-  $: canvasHeight = measuredCanvasHeight ?? (viewportAspect > canvasAspect
+  $: canvasHeight = $editorCanvasGeometry?.layoutHeight ?? (viewportAspect > canvasAspect
     ? viewportHeight
     : viewportWidth / canvasAspect);
-  // Offset for letterboxing (centering)
-  $: canvasOffsetX = measuredCanvasOffsetX ?? (viewportWidth - canvasWidth) / 2;
-  $: canvasOffsetY = measuredCanvasOffsetY ?? (viewportHeight - canvasHeight) / 2;
+  $: canvasOffsetX = $editorCanvasGeometry?.layoutX ?? (viewportWidth - canvasWidth) / 2;
+  $: canvasOffsetY = $editorCanvasGeometry?.layoutY ?? (viewportHeight - canvasHeight) / 2;
 
   // Recalculate viewport size when keyframe tray opens/closes.
   // Subscribe directly instead of using $: reactive block, because $keyframeTimeline
@@ -644,6 +651,15 @@
   // "Presets" pill. Bound to PresetTray so the existing toggle button
   // inside it stays in sync.
   let presetTrayOpen = false;
+  // VJ MAP sub-mode: surface the mapping-preset tray above the VJ overlay
+  // so presets can be dragged into the deck. Auto-open on entry; the
+  // user's pill toggle still works to tuck it away.
+  $: vjMapPresetDragActive = $vjClipLauncher.isOpen && $vjClipLauncher.mapMode;
+  let _prevVjMapPresetDrag = false;
+  $: {
+    if (vjMapPresetDragActive && !_prevVjMapPresetDrag) presetTrayOpen = true;
+    _prevVjMapPresetDrag = vjMapPresetDragActive;
+  }
 
   // Unsaved changes tracking - increments on every project change, resets on save
   let lastSavedState: string | null = null;
@@ -690,6 +706,7 @@
     }
     viewportEl?.removeEventListener('wheel', handleViewportWheel);
     destroyPhoneVisionSession(true);
+    oscStore.destroy();
   });
 
   // Recovery modal actions
@@ -875,7 +892,7 @@
   $: selectedPluginId = selectedMediaSource?.effectSource?.effectType ?? selectedMediaSource?.spoutSource?.pluginId ?? null;
   // Show the plugin-controls tab for any registered integrated effect type
   // (fluid, particles, milkdrop, …) plus the legacy Spout plugin ids.
-  $: hasPluginControls = selectedPluginId === 'fluid' || selectedPluginId === 'fluidgen' || selectedPluginId === 'particles' || selectedPluginId === 'particles3d' || selectedPluginId === 'milkdrop' || selectedPluginId === 'audiomotion' || selectedPluginId === 'wavejs' || selectedPluginId === 'hydra' || selectedPluginId === 'ghostfx' || selectedPluginId === 'analyzerlab' || selectedPluginId === 'handfx';
+  $: hasPluginControls = selectedPluginId === 'fluid' || selectedPluginId === 'fluidgen' || selectedPluginId === 'particles' || selectedPluginId === 'particles3d' || selectedPluginId === 'milkdrop' || selectedPluginId === 'audiomotion' || selectedPluginId === 'wavejs' || selectedPluginId === 'hydra' || selectedPluginId === 'ghostfx' || selectedPluginId === 'handfx';
   // Auto-switch to plugin tab when a plugin layer is first selected
   let prevPluginId: string | null = null;
   $: if (hasPluginControls && selectedPluginId !== prevPluginId) {
@@ -1161,6 +1178,9 @@
     midiManager.init().then(ok => {
       if (ok) console.log('[MIDI] Ready — devices detected');
     });
+    // Attach OSC bridge listeners + restore the saved enable/port state
+    // so the listener comes back on boot without a Settings visit.
+    void oscStore.initialize();
 
     // Rejoin the Ableton Link session if the user had it enabled last
     // run (no-op otherwise; lazy — doesn't load the native addon until
@@ -1255,6 +1275,23 @@
         return;
       }
 
+      // Classic Settings shortcut: Cmd+, on macOS, Ctrl+, elsewhere.
+      if ((e.metaKey || e.ctrlKey) && e.key === ',' && !e.shiftKey && !e.altKey) {
+        showSettings = true;
+        e.preventDefault();
+        return;
+      }
+
+      // Toggle MIDI Learn edit mode. Kept on Cmd/Ctrl+M so it is easy to
+      // reach during setup without stealing normal single-key performance
+      // shortcuts from VJ mode.
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'm' || e.key === 'M') && !e.shiftKey && !e.altKey) {
+        const currentMidi = get(midiStore);
+        midiStore.setEditMode(!currentMidi.editMode);
+        e.preventDefault();
+        return;
+      }
+
       // ESC exits keyboard edit mode
       if (e.key === 'Escape' && get(keyboardStore).editMode) {
         keyboardStore.setEditMode(false);
@@ -1302,7 +1339,7 @@
       if (!inInput && !e.ctrlKey && !e.metaKey && !e.altKey) {
         const vjState = get(vjClipLauncher);
         const svState = get(synthVisionStore);
-        if (vjState.isOpen && !svState.active) {
+        if (vjState.isOpen && !svState.keyboardActive) {
           // Number keys 1-9 trigger columns 0-8, 0 triggers column 9
           const num = parseInt(e.key, 10);
           if (!isNaN(num) && e.key.length === 1 && e.key >= '0' && e.key <= '9') {
@@ -1478,12 +1515,8 @@
     const viewportResizeObserver = new ResizeObserver(() => {
       updateViewportSize();
     });
-    let canvasContainerObserver: MutationObserver | null = null;
     if (viewportEl) {
       viewportResizeObserver.observe(viewportEl);
-      // Also observe the canvas container directly for size changes
-      const canvasContainer = viewportEl.querySelector('.canvas-container');
-      if (canvasContainer) viewportResizeObserver.observe(canvasContainer);
       // Force immediate viewport size calculation to prevent stale 800x600 defaults
       updateViewportSize();
       // Schedule deferred updates as Electron window chrome and layout settle
@@ -1493,12 +1526,6 @@
       setTimeout(() => updateViewportSize(), 500);
       setTimeout(() => updateViewportSize(), 1000);
       setTimeout(() => updateViewportSize(), 2000);
-      // Watch for canvas container appearing (if it mounts later)
-      canvasContainerObserver = new MutationObserver(() => {
-        const cc = viewportEl.querySelector('.canvas-container');
-        if (cc) { viewportResizeObserver.observe(cc); updateViewportSize(); canvasContainerObserver?.disconnect(); canvasContainerObserver = null; }
-      });
-      canvasContainerObserver.observe(viewportEl, { childList: true, subtree: true });
     }
 
     return () => {
@@ -1533,7 +1560,6 @@
       document.removeEventListener('click', handleClickOutside);
       viewportEl?.removeEventListener('wheel', handleViewportWheel);
       viewportResizeObserver.disconnect();
-      canvasContainerObserver?.disconnect();
       stopSpoutScanner();
       if (ws) {
         try { ws.close(); } catch {}
@@ -1545,43 +1571,14 @@
     };
   });
 
-  // Track viewport size and actual canvas position for warp handles.
-  // The canvas-container is the element that holds the WebGL canvas and is aspect-ratio
-  // constrained + centered by flexbox. We measure it directly from the DOM so the overlay
-  // handles match exactly where the shader renders — no computed guesswork.
+  // Track only the viewport fallback size. Canvas.svelte publishes the actual
+  // canvas rectangle; App.svelte must never independently remeasure it.
   function updateViewportSize() {
     if (viewportEl) {
       viewportWidth = viewportEl.offsetWidth;
       viewportHeight = viewportEl.offsetHeight;
     }
-
-    // Measure overlay alignment using offsetWidth/offsetHeight (layout pixels, NOT
-    // affected by CSS transforms). This matches exactly how Canvas.svelte sizes its
-    // container via sizeContainer() — both use offsetWidth, so they always agree.
-    // NEVER use getBoundingClientRect() here — it goes through the CSS transform
-    // compositing layer and produces unreliable results in Electron's Chromium.
-    const containerEl = viewportEl?.querySelector('.canvas-container') as HTMLElement | null;
-    const wrapperEl = viewportEl?.querySelector('.canvas-wrapper') as HTMLElement | null;
-    if (containerEl && wrapperEl) {
-      const cw = containerEl.offsetWidth;
-      const ch = containerEl.offsetHeight;
-      const ww = wrapperEl.offsetWidth;
-      const wh = wrapperEl.offsetHeight;
-      if (cw > 0 && ch > 0) {
-        measuredCanvasWidth = cw;
-        measuredCanvasHeight = ch;
-        // Container is centered by flexbox within wrapper
-        measuredCanvasOffsetX = (ww - cw) / 2;
-        measuredCanvasOffsetY = (wh - ch) / 2;
-      }
-    }
   }
-
-  // Measured canvas dimensions from Canvas component (updated by updateViewportSize)
-  let measuredCanvasOffsetX: number | undefined;
-  let measuredCanvasOffsetY: number | undefined;
-  let measuredCanvasWidth: number | undefined;
-  let measuredCanvasHeight: number | undefined;
 
   /**
    * Bilinear interpolation: map a normalized (0-1) UV point through the layer's corner warp.
@@ -1631,18 +1628,37 @@
     return { x: Math.max(0, Math.min(1, u)), y: Math.max(0, Math.min(1, v)) };
   }
 
+  const QUAD_WARP_SHAPE_TYPES = new Set(['circle', 'ellipse', 'star']);
+
   function isLayerShapeWarpable(layer: Layer | null | undefined): boolean {
     const t = layer?.layerShape?.type;
-    return !!t && (t === 'circle' || t === 'triangle');
+    return !!t && (QUAD_WARP_SHAPE_TYPES.has(t) || t === 'triangle');
   }
 
-  function getDefaultLayerShapeControlPoints(type: 'circle' | 'triangle'): Point2D[] {
-    if (type === 'circle') {
+  function getDefaultLayerShapeControlPoints(type: string, shapeParams?: import('./lib/types').LayerShapeParams): Point2D[] {
+    if (type === 'polygon') {
+      // Handles ARE the polygon vertices (regular n-gon to start).
+      const sides = Math.max(3, Math.min(12, Math.round(Number(shapeParams?.sides ?? 6))));
+      const rotationRad = (Number(shapeParams?.rotation ?? 0) * Math.PI) / 180;
+      const scale = Number(shapeParams?.scale ?? 1) || 1;
+      const circumradius = (0.4 / Math.cos(Math.PI / sides)) * scale;
+      const vertices: Point2D[] = [];
+      for (let index = 0; index < sides; index++) {
+        const angle = ((2 * index + 1) * Math.PI) / sides + rotationRad;
+        vertices.push({
+          x: 0.5 + circumradius * Math.cos(angle),
+          y: 0.5 + circumradius * Math.sin(angle),
+        });
+      }
+      return vertices;
+    }
+    if (QUAD_WARP_SHAPE_TYPES.has(type)) {
+      // Corners at the layer bounds = identity warp until dragged.
       return [
-        { x: 0.2, y: 0.8 },
-        { x: 0.8, y: 0.8 },
-        { x: 0.2, y: 0.2 },
-        { x: 0.8, y: 0.2 },
+        { x: 0, y: 1 },
+        { x: 1, y: 1 },
+        { x: 0, y: 0 },
+        { x: 1, y: 0 },
         { x: 0.5, y: 0.5 },
       ];
     }
@@ -1655,10 +1671,23 @@
 
   function ensureActiveLayerShapeControlPoints() {
     if (!$selectedLayer || !$selectedLayer.layerShape || !isLayerShapeWarpable($selectedLayer)) return;
-    const existing = $selectedLayer.layerShape.controlPoints;
-    if (existing && existing.length > 0) return;
-    const shapeType = $selectedLayer.layerShape.type as 'circle' | 'triangle';
-    project.initShapeControlPoints($selectedLayer.id, getDefaultLayerShapeControlPoints(shapeType));
+    const layerShape = $selectedLayer.layerShape;
+    const existing = layerShape.controlPoints;
+    const expected = getDefaultLayerShapeControlPoints(layerShape.type, layerShape.params);
+    // Re-seed when absent, or when a polygon's side count changed (topology
+    // change resets the warp, same rule as custom shapes).
+    if (existing && existing.length > 0 && existing.length === expected.length) return;
+    project.initShapeControlPoints($selectedLayer.id, expected);
+  }
+
+  $: if (
+    shapeWarpModeEnabled &&
+    $selectedLayer?.layerShape?.type === 'polygon' &&
+    ($selectedLayer.layerShape.controlPoints?.length ?? 0) > 0 &&
+    ($selectedLayer.layerShape.controlPoints?.length ?? 0) !==
+      Math.max(3, Math.min(12, Math.round(Number($selectedLayer.layerShape.params.sides ?? 6))))
+  ) {
+    ensureActiveLayerShapeControlPoints();
   }
 
   function startShapeControlPointDrag(index: number, e: MouseEvent) {
@@ -1827,6 +1856,8 @@
     '.mask-handle',
     '.mask-pen-toolbar',
     '.light-painting-overlay',
+    '.lp-draw-overlay',
+    '[data-editor-pointer-owner="light-painting"]',
     '.native-engine-pending',
     '.native-engine-pending__actions',
   ].join(', ');
@@ -1901,7 +1932,13 @@
       e.preventDefault();
       return true;
     }
+    // Never start a marquee drag-select while a modal canvas editing tool owns
+    // the pointer. Mask pen editing and light-painting draw/path-edit each have
+    // their own click-to-add-point / click-to-stroke handlers on full-viewport
+    // overlays; because the marquee begins on pointerdown (which those overlays
+    // don't stop), without this guard it hijacks those clicks.
     if ($selectedLayer?.mask?.enabled && $maskEditingLayerId === $selectedLayer.id) return false;
+    if ($selectedLightPaintingLayer && (lpDrawingEnabled || lpIsPathEditMode)) return false;
     const target = e.target instanceof Element ? e.target : null;
     if (
       target?.closest(VIEWPORT_SELECTION_INTERACTIVE_SELECTOR)
@@ -3688,7 +3725,7 @@
   // because the effect throws on every tick. Strip them here once and
   // the mobile companion still gets the data it actually needs (ids,
   // names, params, layouts).
-  const _SKIP_KEYS = new Set(['texture', 'videoElement', 'iframeElement', 'renderTarget', 'synthVisionCanvas', 'threejsCanvas']);
+  const _SKIP_KEYS = new Set(['texture', 'imageElement', 'videoElement', 'iframeElement', 'renderTarget', 'synthVisionCanvas', 'threejsCanvas']);
   function _sanitizeForSync(key: string, value: any): any {
     if (_SKIP_KEYS.has(key)) return undefined;
     if (typeof key === 'string' && key.startsWith('_')) return undefined;
@@ -4070,36 +4107,53 @@
       return;
     }
 
-    // If a projector window is already attached, toggle its fullscreen
-    // rather than re-opening (the latter reloads 'ga-output' → re-
-    // handshake storm). Check the presenter's real attached state, not
-    // just the local intent flag.
-    if ((outputIsOpen || isOutputAttached()) && outputWindow) {
-      outputIsOpen = true;
-      await matchOutputDisplayResolution('fullscreen output');
-      const isFs = await outputWindow.toggleFullscreen();
-      outputMode = isFs ? 'fullscreen' : 'window';
-      return;
-    }
-
-    // Open fullscreen output on external monitor (or primary if no external)
-    if (outputMode !== 'fullscreen') {
-      if (outputWindow) {
-        await matchOutputDisplayResolution('fullscreen output');
-        const opened = await outputWindow.openFullscreenExternal();
-        outputIsOpen = !!opened;
-        outputMode = opened ? 'fullscreen' : 'embedded';
-        settings.setOutputWindowOpen(!!opened);
-      }
-    } else {
-      // Close the fullscreen output
+    const status = outputWindow ? await outputWindow.getStatus() : null;
+    if (outputMode === 'fullscreen' || (status?.exists && status.isExternal)) {
+      // Close the dedicated projector/external fullscreen output.
       if (outputWindow) {
         outputWindow.close();
       }
       outputIsOpen = false;
       outputMode = 'embedded';
       settings.setOutputWindowOpen(false);
+      return;
     }
+
+    if (!outputWindow) return;
+
+    try {
+      const displays: any[] = await invoke('get_displays');
+      const external = displays.find((d: any) => !(d.isPrimary ?? d.primary));
+      if (!external) {
+        showToast('Connect an external display or projector to use fullscreen output.', 'info');
+        return;
+      }
+    } catch {
+      // If display probing fails, keep the old behavior rather than
+      // blocking a real projector setup.
+    }
+
+    // Fullscreen means "dedicated projector output". If a preview output
+    // window is already open, close it first so window.open does not reuse
+    // the named ga-output window and ignore the fullscreen placement.
+    if (outputIsOpen || isOutputAttached()) {
+      outputWindow.close();
+      outputIsOpen = false;
+      settings.setOutputWindowOpen(false);
+      await new Promise((resolve) => setTimeout(resolve, 120));
+    }
+
+    await matchOutputDisplayResolution('fullscreen output');
+    const opened = await outputWindow.openFullscreenExternal();
+    if (!opened) {
+      outputMode = 'embedded';
+      outputIsOpen = false;
+      settings.setOutputWindowOpen(false);
+      return;
+    }
+    outputIsOpen = true;
+    outputMode = 'fullscreen';
+    settings.setOutputWindowOpen(true);
   }
 
   // Show mobile connection info
@@ -5576,9 +5630,9 @@
     {/if}
 
     <!-- Header / Toolbar -->
-    <header class="toolbar">
+    <header class="toolbar" class:vj-native-hidden={vjNativeUnderlayActive}>
       <div class="toolbar-left">
-        <img src="{import.meta.env.BASE_URL}logo.png" alt="Ghost Arcade" class="header-logo" />
+        <img src="{import.meta.env.BASE_URL}logo-g.svg" alt="Ghost Arcade" class="header-logo" />
         {#if gpuInfo}
           <span
             class="gpu-indicator"
@@ -6032,6 +6086,7 @@
     <!-- Main Content -->
     <main
       class="main-content"
+      class:vj-native-hidden={vjNativeUnderlayActive}
       class:native-primary-presenter={nativePreviewGlassActive}
       class:preset-tray-open={presetTrayOpen}
       class:seq-tray-open={$layerSequencer.isOpen}
@@ -6125,10 +6180,13 @@
             <MasterWarpHandles containerWidth={canvasWidth} containerHeight={canvasHeight} zoom={viewportZoom} />
           </div>
         {/if}
-        {#if $selectedLayer && $leftSidebarTab !== 'screens'}
+        {#if $selectedLayer && $selectedLayer.type !== 'mask' && $leftSidebarTab !== 'screens'}
           <!-- Warp handles positioned to match the aspect-ratio-constrained canvas -->
           <div class="warp-handles-offset" style="left: {canvasOffsetX}px; top: {canvasOffsetY}px;">
             <WarpHandles containerWidth={canvasWidth} containerHeight={canvasHeight} zoom={viewportZoom} hideCorners={$selectedLayer.warpMode === 'mesh'} shapeWarpActive={shapeWarpModeEnabled} interactionOnly={nativePrimaryRenderer} />
+            {#if $selectedLayer.type !== 'splat' || $selectedLayer.splatContent?.showTransformGizmo !== false}
+              <Object3DTransformGizmo containerWidth={canvasWidth} containerHeight={canvasHeight} zoom={viewportZoom} />
+            {/if}
             {#if $selectedLayer.warpMode === 'mesh'}
               <MeshWarpHandles containerWidth={canvasWidth} containerHeight={canvasHeight} zoom={viewportZoom} interactionOnly={nativePrimaryRenderer} />
             {/if}
@@ -6145,7 +6203,7 @@
                 style="width: {canvasWidth}px; height: {canvasHeight}px;"
                 class:editing={shapeWarpModeEnabled}
               >
-                {#if $selectedLayer.layerShape?.type === 'circle' && layerShapeControlPoints.length >= 5 && warpCorners}
+                {#if QUAD_WARP_SHAPE_TYPES.has($selectedLayer.layerShape?.type ?? '') && layerShapeControlPoints.length >= 5 && warpCorners}
                   {@const w0 = warpPointThroughCorners(warpCorners, layerShapeControlPoints[0].x, layerShapeControlPoints[0].y)}
                   {@const w1 = warpPointThroughCorners(warpCorners, layerShapeControlPoints[1].x, layerShapeControlPoints[1].y)}
                   {@const w2 = warpPointThroughCorners(warpCorners, layerShapeControlPoints[2].x, layerShapeControlPoints[2].y)}
@@ -6157,9 +6215,9 @@
                   <line x1={wc.x * canvasWidth} y1={(1 - wc.y) * canvasHeight} x2={w1.x * canvasWidth} y2={(1 - w1.y) * canvasHeight} stroke="#67E8F9" stroke-width="1" opacity="0.55" />
                   <line x1={wc.x * canvasWidth} y1={(1 - wc.y) * canvasHeight} x2={w2.x * canvasWidth} y2={(1 - w2.y) * canvasHeight} stroke="#67E8F9" stroke-width="1" opacity="0.55" />
                   <line x1={wc.x * canvasWidth} y1={(1 - wc.y) * canvasHeight} x2={w3.x * canvasWidth} y2={(1 - w3.y) * canvasHeight} stroke="#67E8F9" stroke-width="1" opacity="0.55" />
-                {:else if $selectedLayer.layerShape?.type === 'triangle' && layerShapeControlPoints.length >= 3 && warpCorners}
+                {:else if ($selectedLayer.layerShape?.type === 'triangle' || $selectedLayer.layerShape?.type === 'polygon') && layerShapeControlPoints.length >= 3 && warpCorners}
                   <polygon
-                    points={layerShapeControlPoints.slice(0, 3).map((p) => { const w = warpPointThroughCorners(warpCorners, p.x, p.y); return `${w.x * canvasWidth},${(1 - w.y) * canvasHeight}`; }).join(' ')}
+                    points={layerShapeControlPoints.map((p) => { const w = warpPointThroughCorners(warpCorners, p.x, p.y); return `${w.x * canvasWidth},${(1 - w.y) * canvasHeight}`; }).join(' ')}
                     fill="none"
                     stroke="#67E8F9"
                     stroke-width="2"
@@ -6169,7 +6227,7 @@
 
                 {#if shapeWarpModeEnabled && warpCorners}
                   {#each layerShapeControlPoints as point, i}
-                    {@const isCircleCenter = $selectedLayer.layerShape?.type === 'circle' && i === 4}
+                    {@const isCircleCenter = QUAD_WARP_SHAPE_TYPES.has($selectedLayer.layerShape?.type ?? '') && i === 4}
                     {@const warped = warpPointThroughCorners(warpCorners, point.x, point.y)}
                     <circle
                       cx={warped.x * canvasWidth}
@@ -6846,9 +6904,11 @@
 
     </main>
 
-    <!-- Preset Tray at bottom (only in map mode) -->
+    <!-- Preset Tray at bottom. In VJ MAP sub-mode it floats above the
+         VJ overlay (auto-opened) so mapping presets drag into deck cells. -->
     <PresetTray
       bind:isOpen={presetTrayOpen}
+      vjDragMode={vjMapPresetDragActive}
       onBeforeLoad={(duration, type) => {
         const engine = canvasComponent?.getEngine();
         if (engine) engine.startTransition(duration, type);
@@ -6862,10 +6922,12 @@
     <KeyframeTimeline />
 
     <!-- Bottom dock pills (Presets / Sequencer / Keyframes) — coral-active. -->
-    <BottomDock
-      presetsOpen={presetTrayOpen}
-      onTogglePresets={() => presetTrayOpen = !presetTrayOpen}
-    />
+    {#if !vjNativeUnderlayActive}
+      <BottomDock
+        presetsOpen={presetTrayOpen}
+        onTogglePresets={() => presetTrayOpen = !presetTrayOpen}
+      />
+    {/if}
 
     <!-- VJ Mode Panel (full screen overlay) -->
     <VJModePanel
@@ -7580,7 +7642,7 @@
   .gpu-warning-body strong { color: #fef3c7; }
   .gpu-warning-detail { color: #fde68a; opacity: 0.9; }
   .gpu-warning-detail code {
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: 12px;
     background: rgba(0, 0, 0, 0.25);
     padding: 1px 5px;
@@ -8741,6 +8803,14 @@
   }
 
   /* Main Content */
+  .main-content.vj-native-hidden,
+  .toolbar.vj-native-hidden,
+  :global(.bottom-dock.vj-native-hidden) {
+    /* visibility (not display): layout must survive so the native sync and
+       geometry publishing keep running while VJ mode owns the screen. */
+    visibility: hidden;
+  }
+
   .main-content {
     flex: 1;
     display: flex;

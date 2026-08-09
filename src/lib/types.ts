@@ -83,16 +83,39 @@ export type BlendMode =
   | 'vivid-light'
   | 'pin-light';
 
-export type MediaType = 'image' | 'video' | 'shader' | 'color' | 'threejs' | 'p5js' | 'javascript' | 'spout' | 'effect' | 'synthvision';
+export type MediaType =
+  | 'image'
+  | 'video'
+  | 'shader'
+  | 'color'
+  | 'threejs'
+  | 'p5js'
+  | 'javascript'
+  | 'spout'
+  | 'effect'
+  | 'synthvision';
 
 // Integrated effect types (FluidGen, Particles3D, Point Cloud, 3D Models running natively in WebGL)
-export type IntegratedEffectType = 'fluid' | 'particles' | 'splat' | 'model3d' | 'milkdrop' | 'audiomotion' | 'wavejs' | 'hydra' | 'ghostfx' | 'analyzerlab' | 'handfx' | 'ghostpilot';
+export type IntegratedEffectType = 'fluid' | 'particles' | 'splat' | 'model3d' | 'milkdrop' | 'audiomotion' | 'wavejs' | 'hydra' | 'ghostfx' | 'analyzerlab' | 'handfx' | 'ghostpilot' | 'vj-crossfade' | 'performer-world';
 
 // Stem identifiers for the multi-stem routing matrix (Milkdrop plugin).
 // 'full' is the unsplit mix; the rest match standard Demucs output names plus a
 // few common DAW stem buses. Routing matrix cells are stored as
 // Record<MilkdropStem, Record<MilkdropTarget, number>>.
-export type MilkdropStem = 'full' | 'drums' | 'bass' | 'vocals' | 'other' | 'ch1' | 'ch2' | 'ch3' | 'ch4' | 'ch5' | 'ch6' | 'ch7' | 'ch8';
+export type MilkdropStem =
+  | 'full'
+  | 'drums'
+  | 'bass'
+  | 'vocals'
+  | 'other'
+  | 'ch1'
+  | 'ch2'
+  | 'ch3'
+  | 'ch4'
+  | 'ch5'
+  | 'ch6'
+  | 'ch7'
+  | 'ch8';
 export type MilkdropTarget = 'bass' | 'mid' | 'treb';
 
 // Integrated effect source configuration
@@ -100,6 +123,14 @@ export interface IntegratedEffectSource {
   effectType: IntegratedEffectType;
   // Shared params
   cameraEnabled?: boolean;     // Use webcam as input feed
+  // Native Performer world overlay
+  performerWorldIndex?: number;
+  performerWorldSpace?: number;
+  performerWorldX?: number;
+  performerWorldY?: number;
+  performerWorldPointerDown?: boolean;
+  performerWorldParams?: number[];
+  performerWorldPump?: number;
   // Fluid simulation params
   fluidMode?: number;      // 0=SMOKE, 1=FIRE, 2=INK, 3=NEON, 4=THERMAL
   fluidViscosity?: number;
@@ -187,7 +218,17 @@ export interface IntegratedEffectSource {
   audiomotionBgAlpha?: number;
   audiomotionSmoothing?: number;
   // Wave.js params (@foobar404/wave by Curtis Hutten / Austin Michaud, MIT)
-  wavejsAnimation?: 'Wave' | 'Arcs' | 'Circles' | 'Cubes' | 'Flower' | 'Glob' | 'Lines' | 'Shine' | 'Square' | 'Turntable';
+  wavejsAnimation?:
+    | 'Wave'
+    | 'Arcs'
+    | 'Circles'
+    | 'Cubes'
+    | 'Flower'
+    | 'Glob'
+    | 'Lines'
+    | 'Shine'
+    | 'Square'
+    | 'Turntable';
   wavejsSensitivity?: number;             // input gain (0.25..6) applied before FFT
   wavejsLineWidth?: number;
   wavejsColorA?: [number, number, number];
@@ -332,7 +373,22 @@ export interface JSAnimationSource {
 // 'stretch' = distort to fill (default), 'fill' = maintain aspect + crop overflow (CSS cover), 'crop' = maintain aspect + letterbox (CSS contain)
 export type ContentFitMode = 'stretch' | 'fill' | 'crop';
 
-export type LayerType = 'media' | 'lines' | 'svg' | 'color' | 'lightpainting' | 'adv-lightpaint' | 'text' | 'splat' | 'model3d' | 'screen' | 'group' | 'pixel-fx' | 'gpu' | 'arcade';
+export type LayerType =
+  | 'media'
+  | 'mask'
+  | 'lines'
+  | 'svg'
+  | 'color'
+  | 'lightpainting'
+  | 'adv-lightpaint'
+  | 'text'
+  | 'splat'
+  | 'model3d'
+  | 'screen'
+  | 'group'
+  | 'pixel-fx'
+  | 'gpu'
+  | 'arcade';
 
 /**
  * GPU layer — hosts a swappable WebGPU shader (similar to how a
@@ -463,7 +519,15 @@ export function createDefaultArcadeContent(): ArcadeLayerContent {
  *                   the camera model + topology are fundamentally
  *                   different. See `flythrough*` fields below for
  *                   tuning. */
-export type PixelFXMode = 'identity' | 'depth-shift' | 'sand-fall' | 'scatter' | 'halftone' | 'stipple-noise' | 'dissolve' | 'flythrough';
+export type PixelFXMode =
+  | 'identity'
+  | 'depth-shift'
+  | 'sand-fall'
+  | 'scatter'
+  | 'halftone'
+  | 'stipple-noise'
+  | 'dissolve'
+  | 'flythrough';
 
 /** Particle-rendering topology for the flythrough mode.
  *   points  — billboard sprites (cheap, classic point-cloud look)
@@ -701,6 +765,7 @@ export interface MediaSource {
   src: string; // URL or path
   name: string;
   texture?: THREE.Texture;
+  imageElement?: HTMLImageElement;
   videoElement?: HTMLVideoElement;
   iframeElement?: HTMLIFrameElement; // For three.js HTML sources
   threejsCanvas?: HTMLCanvasElement; // Offscreen canvas to capture iframe content
@@ -715,6 +780,7 @@ export interface MediaSource {
   mirrorX?: boolean; // Source-owned horizontal mirror, used for webcam/selfie feeds
   playbackMode?: VideoPlaybackMode; // Video playback mode (default: 'loop')
   playbackRate?: number; // Playback speed multiplier (default: 1.0)
+  playbackSyncBeats?: number | null; // If set, fit full clip/trim span to this many beats
   trimStart?: number; // 0-1 normalized start point (default 0)
   trimEnd?: number; // 0-1 normalized end point (default 1)
   durationSeconds?: number; // Native transport metadata; retained when no browser video is attached
@@ -758,7 +824,16 @@ export interface MediaSource {
 // (LinesContent replaces the old GenerativeContent)
 
 // SVG layer fill modes
-export type SVGFillMode = 'liquid' | 'solid' | 'gradient' | 'shimmer' | 'pulse' | 'noise' | 'particles' | 'fluid' | 'flow';
+export type SVGFillMode =
+  | 'liquid'
+  | 'solid'
+  | 'gradient'
+  | 'shimmer'
+  | 'pulse'
+  | 'noise'
+  | 'particles'
+  | 'fluid'
+  | 'flow';
 
 // SVG layer color modes
 export type SVGColorMode = 'perShape' | 'rainbow' | 'monochrome' | 'complementary' | 'analogous' | 'white';
@@ -766,7 +841,7 @@ export type SVGColorMode = 'perShape' | 'rainbow' | 'monochrome' | 'complementar
 // SVG 3D render mode — 'flat' is the classic orthographic look; 'extrude'
 // turns each shape into a beveled 3D solid under a perspective camera with
 // real lights + materials (drop a logo and spin it in 3D).
-export type SVGRenderMode = 'flat' | 'extrude';
+export type SVGRenderMode = 'source' | 'flat' | 'extrude';
 
 // PBR material look for extruded shapes. 'holographic' is the default —
 // iridescent thin-film that shifts colour by view angle.
@@ -1032,6 +1107,7 @@ export interface LayerShapeParams {
   // For custom (pen-tool drawn polygon with optional bezier curves)
   customPoints?: BezierPoint[];  // Vertices with optional bezier handles (normalized 0-1)
   customClosed?: boolean;        // Whether the polygon has been closed/finalized
+  customBasePoints?: BezierPoint[];  // Outline snapshot content was authored against (drives content-follow warp)
   customShapeFit?: 'warp' | 'fill' | 'mask';  // How texture maps to shape: warp=stretch to bbox, fill=aspect-preserving, mask=clip only (legacy)
 
   // Common params
@@ -1088,7 +1164,12 @@ export type LightPaintingBrushType =
   | 'ink'         // Bleeding-edge ink wash
   | 'crystal'     // Faceted crystalline shards
   | 'aurora'      // Curtains of borealis-style light
-  | 'bubbles';    // Floating soap-bubble field
+  | 'bubbles'     // Floating soap-bubble field
+  // ── Native particle brushes ──
+  // Emulate the retired WebGPU compute-particle looks inside the
+  // native fragment renderer: orbiting heads with motion trails.
+  | 'orbit'       // Particle clusters orbit around the stroke with comet trails
+  | 'helix';      // Candy-cane wrap of streaking particles around the stroke
 
 export type LightPaintingLoopMode = 'forward' | 'reverse' | 'pingpong' | 'once';
 
@@ -1580,6 +1661,14 @@ export function createDefaultTextContent(): TextContent {
 
 // Type of 3D point data
 export type SplatDataType = 'pointcloud' | 'gaussian';
+export type SplatImportOrientation =
+  | 'authored'
+  | 'yUp'
+  | 'zUp'
+  | 'zUpInverted'
+  | 'xUp'
+  | 'auto'
+  | 'custom';
 
 // Animation types for splat layers
 export type SplatAnimationType =
@@ -1595,7 +1684,11 @@ export type SplatAnimationType =
   | 'orbit'             // Points orbit around center
   | 'wave3d'            // 3D wave propagation
   | 'scatter'           // Random scatter and reassemble
-  | 'spiral';           // Spiral in/out animation
+  | 'spiral' // Spiral in/out animation
+  | 'tumble' // Continuous multi-axis rotation
+  | 'breathe' // Rhythmic expansion and contraction
+  | 'drift' // Coherent floating motion
+  | 'vortex'; // Position-dependent continuous twist
 
 // Displacement effect types
 export type SplatDisplacementType =
@@ -1606,7 +1699,11 @@ export type SplatDisplacementType =
   | 'glitch'            // Random offset glitching
   | 'wind'              // Turbulent wind simulation
   | 'magnetic'          // Attraction/repulsion to points
-  | 'ripple';           // Ripple from interaction point
+  | 'ripple' // Ripple from interaction point
+  | 'curlNoise' // Organic vector-field turbulence
+  | 'twist' // Axis-based torsion
+  | 'radialPulse' // Concentric expanding pressure waves
+  | 'scanline'; // Traveling planar displacement
 
 // Color effect types
 export type SplatColorEffectType =
@@ -1702,6 +1799,7 @@ export interface SplatContent {
   dataType: SplatDataType;        // Point cloud or gaussian splat
   filePath: string;               // Path to .ply/.splat file
   pointCount: number;             // Number of points (read-only, set on load)
+  sourcePointCount?: number; // Original file count before display LOD
   pointDensity: number;           // 0-1, percentage of points to render (1 = all)
   activePointCount: number;       // Current number of active points (read-only)
 
@@ -1756,6 +1854,18 @@ export interface SplatContent {
   positionX: number;              // Position offset
   positionY: number;
   positionZ: number;
+  showTransformGizmo: boolean;
+  // Source-coordinate correction. This is applied before the manual gizmo
+  // transform so animation, interaction, and camera controls all see Y-up data.
+  importOrientation: SplatImportOrientation;
+  importRotationX: number;
+  importRotationY: number;
+  importRotationZ: number;
+  // Best-effort recommendation computed once when source data loads.
+  autoLevelRotationX?: number;
+  autoLevelRotationY?: number;
+  autoLevelRotationZ?: number;
+  autoLevelConfidence?: number;
 
   // Animation
   animationType: SplatAnimationType;
@@ -1767,13 +1877,37 @@ export interface SplatContent {
 
   // Animation-specific params
   explodeForce: number;           // 0-5
+  explodeTurbulence: number; // 0-2
   implodeForce: number;           // 0-5
+  implodeSpin: number; // 0-4
   voxelGridSize: number;          // 2-64
   peelAxis: 'x' | 'y' | 'z';
   peelDirection: 1 | -1;
+  peelWidth: number; // 0.05-2
+  peelCurl: number; // 0-4
+  sliceWidth: number; // 0.05-2
+  sliceSoftness: number; // 0-1
+  sliceTravel: number; // 0.25-3
+  waveAxis: 'x' | 'y' | 'z';
+  animationWaveFrequency: number; // 0.25-12
+  animationWaveAmplitude: number; // 0-2
+  scatterDistance: number; // 0-5
+  scatterRandomness: number; // 0-2
+  spiralRadius: number; // 0-4
+  spiralTurns: number; // 0.25-8
+  spiralLift: number; // -3 to 3
   swarmCohesion: number;          // 0-1
   swarmSeparation: number;        // 0-1
   swarmAlignment: number;         // 0-1
+  gravityStrength: number; // 0-20
+  gravitySpread: number; // 0-2
+  gravityFloor: number; // -3 to 1
+  turntableTilt: number; // -90 to 90
+  tumbleSpread: number; // 0-2
+  breatheAmount: number; // 0-1
+  driftAmount: number; // 0-2
+  vortexTwist: number; // 0-6
+  morphRoundness: number; // 0-1
 
   // Slice plane
   slicePlane: SplatSlicePlane;
@@ -1808,6 +1942,7 @@ export interface SplatContent {
   audioDisplacement: number;      // 0-1
   audioScale: number;             // 0-1
   audioColor: number;             // 0-1
+  audioSmoothing: number; // 0-0.98
 
   // Color effects
   colorEffectType: SplatColorEffectType;
@@ -1818,6 +1953,9 @@ export interface SplatContent {
   tintStrength: number;           // 0-1
   heatmapMin: number;             // 0-1
   heatmapMax: number;             // 0-1
+  depthColorNear: string; // Near color for depth gradient
+  depthColorFar: string; // Far color for depth gradient
+  depthGradientBias: number; // 0-1 depth gradient midpoint
   hologramSpeed: number;          // 0-10
   hologramDensity: number;        // 1-50
 
@@ -1833,6 +1971,28 @@ export interface SplatContent {
   pulseSpeed: number;             // 0-5
   proximityRadius: number;        // 0-1
   dissolveProgress: number;       // 0-1
+
+  // Lighting and atmosphere
+  lightingEnabled: boolean;
+  ambientIntensity: number; // 0-2
+  keyLightIntensity: number; // 0-4
+  keyLightColor: string;
+  keyLightAzimuth: number; // -180 to 180
+  keyLightElevation: number; // -90 to 90
+  rimLightIntensity: number; // 0-4
+  rimLightColor: string;
+  rimLightAzimuth: number; // -180 to 180
+  shadowStrength: number; // 0-1
+  shadowSoftness: number; // 0-1
+  specularStrength: number; // 0-2
+  atmosphereEnabled: boolean;
+  atmosphereDensity: number; // 0-1
+  atmosphereColor: string;
+  atmosphereScale: number; // 0.1-8
+  atmosphereTurbulence: number; // 0-2
+  atmosphereSpeed: number; // 0-3
+  backgroundOpacity: number; // 0-1
+  backgroundColor: string;
 
   // Creative effects
   creativeEffectType: SplatCreativeEffectType;
@@ -1861,6 +2021,10 @@ export interface SplatContent {
   bloomThreshold: number;         // 0-1
   chromatic: number;              // 0-0.02
   vignette: number;               // 0-1
+
+  // Per-parameter Auto playheads. Audio/LFO routing lives in the
+  // modulation store; Auto persists with the splat layer itself.
+  paramAuto?: Record<string, AutoConfig>;
 }
 
 export function createDefaultSplatContent(): SplatContent {
@@ -1897,7 +2061,7 @@ export function createDefaultSplatContent(): SplatContent {
     cameraOrbitEnabled: true,
     autoRotate: false,
     autoRotateSpeed: 1,
-    cameraDistance: 50,  // Default to zoomed out
+    cameraDistance: 5,
     cameraFov: 60,
     cameraOrbitX: 0,
     cameraOrbitY: 0,
@@ -1913,6 +2077,11 @@ export function createDefaultSplatContent(): SplatContent {
     positionX: 0,
     positionY: 0,
     positionZ: 0,
+    showTransformGizmo: true,
+    importOrientation: 'authored',
+    importRotationX: 0,
+    importRotationY: 0,
+    importRotationZ: 0,
 
     animationType: 'none',
     animationSpeed: 1,
@@ -1922,13 +2091,37 @@ export function createDefaultSplatContent(): SplatContent {
     animationIntensity: 1,
 
     explodeForce: 1,
+    explodeTurbulence: 0.25,
     implodeForce: 1,
+    implodeSpin: 0.5,
     voxelGridSize: 16,
     peelAxis: 'y',
     peelDirection: 1,
+    peelWidth: 0.5,
+    peelCurl: 1.5,
+    sliceWidth: 0.35,
+    sliceSoftness: 0.25,
+    sliceTravel: 1,
+    waveAxis: 'y',
+    animationWaveFrequency: 3,
+    animationWaveAmplitude: 0.35,
+    scatterDistance: 1.5,
+    scatterRandomness: 0.75,
+    spiralRadius: 1,
+    spiralTurns: 2,
+    spiralLift: 0.75,
     swarmCohesion: 0.5,
     swarmSeparation: 0.5,
     swarmAlignment: 0.5,
+    gravityStrength: 5,
+    gravitySpread: 0.25,
+    gravityFloor: -2,
+    turntableTilt: 0,
+    tumbleSpread: 1,
+    breatheAmount: 0.25,
+    driftAmount: 0.5,
+    vortexTwist: 2,
+    morphRoundness: 0.85,
 
     slicePlane: {
       enabled: false,
@@ -1967,6 +2160,7 @@ export function createDefaultSplatContent(): SplatContent {
     audioDisplacement: 0.5,
     audioScale: 0.3,
     audioColor: 0.5,
+    audioSmoothing: 0.7,
 
     // Physics flattened
     physicsEnabled: false,
@@ -1988,6 +2182,9 @@ export function createDefaultSplatContent(): SplatContent {
     tintStrength: 0,
     heatmapMin: 0,
     heatmapMax: 1,
+    depthColorNear: '#ff5c33',
+    depthColorFar: '#3377ff',
+    depthGradientBias: 0.5,
     hologramSpeed: 2,
     hologramDensity: 20,
 
@@ -2003,6 +2200,28 @@ export function createDefaultSplatContent(): SplatContent {
     pulseSpeed: 1,
     proximityRadius: 0.3,
     dissolveProgress: 0,
+
+    // Lighting and atmosphere
+    lightingEnabled: true,
+    ambientIntensity: 1,
+    keyLightIntensity: 1.25,
+    keyLightColor: '#ffffff',
+    keyLightAzimuth: 35,
+    keyLightElevation: 45,
+    rimLightIntensity: 0.65,
+    rimLightColor: '#59d9ff',
+    rimLightAzimuth: -135,
+    shadowStrength: 0.35,
+    shadowSoftness: 0.5,
+    specularStrength: 0.35,
+    atmosphereEnabled: false,
+    atmosphereDensity: 0.25,
+    atmosphereColor: '#6a7da8',
+    atmosphereScale: 1.5,
+    atmosphereTurbulence: 0.7,
+    atmosphereSpeed: 0.25,
+    backgroundOpacity: 0,
+    backgroundColor: '#000000',
 
     // Creative effects
     creativeEffectType: 'none',
@@ -2042,6 +2261,7 @@ export type Model3DFormat = 'glb' | 'gltf' | 'obj' | 'fbx';
 
 // Material types for 3D models
 export type Model3DMaterialType =
+  | 'source'        // Preserve materials and textures embedded in the model
   | 'standard'      // PBR material
   | 'wireframe'     // Lines only
   | 'glass'         // Transparent refraction
@@ -2314,6 +2534,21 @@ export interface Model3DContent {
   ambientIntensity: number;
   directionalIntensity: number;
   lightColor: [number, number, number];
+  environmentEnabled: boolean;
+  environmentIntensity: number;
+  toneMappingExposure: number;
+  backgroundMode: 'transparent' | 'color' | 'environment';
+  backgroundColor: [number, number, number];
+  backgroundOpacity: number;
+  keyLightAzimuth: number;
+  keyLightElevation: number;
+  fillIntensity: number;
+  rimIntensity: number;
+  rimColor: [number, number, number];
+  shadowsEnabled: boolean;
+  shadowQuality: 'low' | 'medium' | 'high';
+  shadowSoftness: number;
+  shadowBias: number;
 
   // Audio reactivity
   audio: Model3DAudioMapping;
@@ -2345,7 +2580,7 @@ export function createDefaultModel3DContent(): Model3DContent {
     vertexCount: 0,
     faceCount: 0,
 
-    materialType: 'standard',
+    materialType: 'source',
     materialColor: [200, 200, 200],
     materialRoughness: 0.5,
     materialMetalness: 0.0,
@@ -2439,6 +2674,21 @@ export function createDefaultModel3DContent(): Model3DContent {
     ambientIntensity: 0.4,
     directionalIntensity: 1.0,
     lightColor: [255, 255, 255],
+    environmentEnabled: true,
+    environmentIntensity: 1,
+    toneMappingExposure: 1,
+    backgroundMode: 'transparent',
+    backgroundColor: [8, 8, 12],
+    backgroundOpacity: 1,
+    keyLightAzimuth: 45,
+    keyLightElevation: 50,
+    fillIntensity: 0.35,
+    rimIntensity: 0.4,
+    rimColor: [120, 180, 255],
+    shadowsEnabled: true,
+    shadowQuality: 'medium',
+    shadowSoftness: 1,
+    shadowBias: -0.0005,
 
     audio: {
       enabled: false,
@@ -2498,7 +2748,7 @@ export const VJ_MIX_SOURCE_INDEX = -1;
 export interface Layer {
   id: string;
   name: string;
-  type: LayerType;  // 'media', 'lines', 'svg', 'color', 'lightpainting', 'text', 'splat', or 'model3d'
+  type: LayerType;
   visible: boolean;
   locked: boolean;
   opacity: number;
@@ -2552,6 +2802,19 @@ export interface Layer {
 
   // Stage Mode: which VJ layer feeds this mapping layer (undefined = use own source, -1 = VJ Mix)
   vjLayerIndex?: number;
+
+  // Stage Designer surfaces use canvas Y-down coordinates while source
+  // textures use UV Y-up coordinates. Set on Stage-generated screen layers
+  // so source orientation remains stable after users rotate or warp them.
+  stageTextureFlipV?: boolean;
+
+  // ── Deck confidence monitors (native crossfade mode) ───────────────────
+  /** VJ bank tag for the native deck monitors: bank layers composite at
+   *  opacity 0 in the program mix, but the core re-renders tagged layers
+   *  into the Deck A / Deck B monitor targets at their true level. */
+  _deckMonitorBank?: 'a' | 'b';
+  /** True pre-crossfader opacity for the monitor pass. */
+  _deckMonitorOpacity?: number;
 
   // ── Group nesting ──────────────────────────────────────────────────────
   /** ID of parent group layer (undefined/null = top-level layer) */
@@ -3070,9 +3333,15 @@ export interface EffectParams {
   tempAutoCycle?: number;         // 0-1 auto temperature oscillation
 
   // Color Balance (hero) — three-zone RGB
-  cbShadowR?: number;  cbShadowG?: number;  cbShadowB?: number;   // -1..+1 each
-  cbMidR?: number;     cbMidG?: number;     cbMidB?: number;
-  cbHighR?: number;    cbHighG?: number;    cbHighB?: number;
+  cbShadowR?: number;
+  cbShadowG?: number;
+  cbShadowB?: number; // -1..+1 each
+  cbMidR?: number;
+  cbMidG?: number;
+  cbMidB?: number;
+  cbHighR?: number;
+  cbHighG?: number;
+  cbHighB?: number;
   cbPreserveLuma?: number;        // 0-1 keep brightness stable
   cbMix?: number;
 
@@ -3084,9 +3353,15 @@ export interface EffectParams {
   curvesMix?: number;
 
   // Lift / Gamma / Gain (hero) — three-zone color wheels
-  lggLiftR?: number;  lggLiftG?: number;  lggLiftB?: number;     // -0.5..+0.5
-  lggGammaR?: number; lggGammaG?: number; lggGammaB?: number;    // 0.5..1.5
-  lggGainR?: number;  lggGainG?: number;  lggGainB?: number;     // 0.5..2.0
+  lggLiftR?: number;
+  lggLiftG?: number;
+  lggLiftB?: number; // -0.5..+0.5
+  lggGammaR?: number;
+  lggGammaG?: number;
+  lggGammaB?: number; // 0.5..1.5
+  lggGainR?: number;
+  lggGainG?: number;
+  lggGainB?: number; // 0.5..2.0
   lggLumaOnly?: number;           // 0=color shifts, 1=luma-only
   lggMix?: number;
 
@@ -4424,6 +4699,13 @@ export interface StagePreset {
   createdAt: number;
   layers: Layer[];  // Deep clone of mapping layers with vjLayerIndex assignments
   scope?: 'project' | 'global';  // Two-tier: 'project' saved in .ghost-arcade, 'global' in localStorage
+  /** Surface whose slices and Stage FX own this preset. Added in 1.9.98;
+   *  older presets recover the relationship from slice-to-layer bindings. */
+  surfaceId?: string;
+  /** Complete Stage Designer surface at save time. Presets must restore
+   *  slice geometry, source bindings, and Stage FX together; otherwise
+   *  every preset silently shares whichever surface was edited last. */
+  surfaceSnapshot?: Surface;
   /** Stage Effects bundle — captured at save time so re-triggering
    *  the preset re-instates the entire animation setup (catalog of
    *  effects + which one is currently live + automation play state
@@ -4445,6 +4727,10 @@ export interface StagePreset {
 // SynthVision Keyboard Clip Assignment
 export interface SVClipAssignment {
   type: 'shader' | 'media';
+  /** Performer keyboard cells belong to the deck that was selected when
+   *  they were assigned. Older presets omit this and intentionally load
+   *  on Deck A. */
+  performerDeck?: 'A' | 'B';
   // Shader fields
   shaderId?: string;
   shaderName?: string;
@@ -4653,10 +4939,15 @@ export interface Project {
   // WLED LED-controller integration. Each entry describes one
   // controller on the local network that the engine pushes pixel
   // data to via UDP (DRGB protocol). Per-frame the renderer reads
-  // a tiny tap-texture (sized to ledCount × 1), packs it, and
+  // a tiny spatial tap texture sized to ledCount pixels, packs it, and
   // sends through the main process. Optional + defaults to empty
   // so legacy projects load unchanged.
   wledControllers?: WLEDController[];
+  /** Cross-controller fixture groups used by LED performance effects. */
+  wledGroups?: WLEDGroup[];
+  /** Project-scoped LED performance effects shown in VJ mode. */
+  wledEffects?: WLEDEffect[];
+  wledEffectAutomation?: WLEDEffectAutomation;
   /** Multi-output slices — saved with the project so a recalled
    *  show restores the operator's full projector / display layout
    *  (master canvas resolution, every slice's crop, blend, color
@@ -4717,6 +5008,176 @@ export interface OutputSliceShape {
  *  Project so the same lighting rig follows a saved show. The
  *  renderer subscribes to this list and runs one UDP sender per
  *  enabled controller. */
+export type WLEDMappingMode = 'auto-grid' | 'strip' | 'matrix' | 'custom';
+export type WLEDScanAxis = 'horizontal' | 'vertical';
+export type WLEDTestPattern = 'off' | 'solid' | 'rainbow' | 'chase';
+export type WLEDColorSamplingMode = 'exact' | 'average' | 'dominant' | 'highlight' | 'palette' | 'luma-hue';
+export type WLEDEffectBlendMode = 'replace' | 'add' | 'multiply' | 'gate' | 'colorize';
+export type WLEDColorSource = 'shader' | 'palette' | 'custom' | 'rainbow';
+export type WLEDSpeedMode = 'manual' | 'bpm';
+export type WLEDPatternCategory = 'color' | 'movement' | 'organic' | 'rhythmic' | 'spatial' | 'content' | 'glitch';
+export type WLEDPatternId =
+  | 'solid-color'
+  | 'chase'
+  | 'comet'
+  | 'scanner'
+  | 'dual-chase'
+  | 'bounce'
+  | 'orbit'
+  | 'marquee'
+  | 'theater-chase'
+  | 'firefly'
+  | 'twinkle'
+  | 'embers'
+  | 'fire'
+  | 'lightning'
+  | 'rain'
+  | 'ripple'
+  | 'aurora'
+  | 'breathing'
+  | 'plasma'
+  | 'beat-pulse'
+  | 'strobe'
+  | 'random-blink'
+  | 'bass-hits'
+  | 'hi-hat-sparkle'
+  | 'bar-sweep'
+  | 'euclidean-pulse'
+  | 'wave'
+  | 'sine-wave'
+  | 'radial-wave'
+  | 'center-out'
+  | 'edge-in'
+  | 'wipe'
+  | 'gradient-drift'
+  | 'pinwheel'
+  | 'snake'
+  | 'shader-color-chase'
+  | 'highlight-runner'
+  | 'palette-sparkle'
+  | 'luma-gate'
+  | 'saturation-pop'
+  | 'pixel-echo'
+  | 'content-freeze-chase'
+  | 'packet-drop'
+  | 'scan-tear'
+  | 'noise-blocks'
+  | 'random-blackout'
+  | 'rgb-split'
+  | 'signal-burst';
+
+export interface WLEDRange {
+  id: string;
+  name: string;
+  /** Zero-based physical LED index on the controller. */
+  start: number;
+  /** Number of consecutive physical LEDs in this fixture. */
+  count: number;
+}
+
+export interface WLEDGroupMember {
+  controllerId: string;
+  /** Omit to target the controller's entire LED span. */
+  rangeId?: string;
+}
+
+export interface WLEDGroup {
+  id: string;
+  name: string;
+  members: WLEDGroupMember[];
+}
+
+export interface WLEDEffectTarget {
+  mode: 'all' | 'controller' | 'range' | 'group';
+  controllerId?: string;
+  rangeId?: string;
+  groupId?: string;
+}
+
+export interface WLEDEffect {
+  id: string;
+  name: string;
+  pattern: WLEDPatternId;
+  /** Included in the automatic sequence. */
+  enabled: boolean;
+  /** Manually latched on. Multiple effects may stack. */
+  active: boolean;
+  amount: number;
+  speed: number;
+  speedMode: WLEDSpeedMode;
+  /** Pattern cycles per beat when BPM sync is active. */
+  beatDivision: number;
+  blendMode: WLEDEffectBlendMode;
+  colorSource: WLEDColorSource;
+  color: string;
+  secondaryColor: string;
+  tertiaryColor?: string;
+  quaternaryColor?: string;
+  target: WLEDEffectTarget;
+  /** Pattern-specific normalized controls such as width, density and tail. */
+  params: Record<string, number>;
+  seed: number;
+}
+
+export interface WLEDEffectAutomation {
+  playing: boolean;
+  mode: 'beat' | 'time';
+  beats: number;
+  seconds: number;
+  order: 'forward' | 'random' | 'pingpong';
+}
+
+export interface WLEDNormalizedPoint {
+  /** Horizontal coordinate inside the selected source region. */
+  x: number;
+  /** Vertical coordinate inside the selected source region. */
+  y: number;
+}
+
+export interface WLEDSourceRegion {
+  /** Normalized left edge in the final composite. */
+  x: number;
+  /** Normalized top edge in the final composite. */
+  y: number;
+  /** Normalized width in the final composite. */
+  width: number;
+  /** Normalized height in the final composite. */
+  height: number;
+}
+
+export interface WLEDMappingConfig {
+  mode: WLEDMappingMode;
+  /** Wiring traversal for strips and matrices. */
+  axis?: WLEDScanAxis;
+  /** Matrix width. Rows are derived from ledCount. */
+  columns?: number;
+  /** Reverse every other row/column to match serpentine wiring. */
+  serpentine?: boolean;
+  /** Reverse the final LED index order. */
+  reverse?: boolean;
+  flipX?: boolean;
+  flipY?: boolean;
+  /** Crop the final composite before LED coordinates are resolved. */
+  sourceRegion?: WLEDSourceRegion;
+  /** Ordered LED positions, relative to sourceRegion, in custom mode. */
+  points?: WLEDNormalizedPoint[];
+  /** Spatial averaging radius, normalized to the sampled frame. */
+  sampleRadius?: number;
+}
+
+export interface WLEDColorCalibration {
+  redGain?: number;
+  greenGain?: number;
+  blueGain?: number;
+  saturation?: number;
+  /** Values below this normalized luminance are treated as black. */
+  blackThreshold?: number;
+  /** Temporal smoothing amount. 0 is immediate; 0.95 is very smooth. */
+  smoothing?: number;
+  /** Row-major 3x3 linear-light color correction matrix. */
+  colorMatrix?: number[];
+}
+
 export interface WLEDController {
   id: string;
   /** Display name for the UI ("stage left strip", "back wall matrix"). */
@@ -4740,6 +5201,18 @@ export interface WLEDController {
    *  often need ~2.2 to look right because the eye perceives
    *  brightness non-linearly. */
   gamma?: number;
+  /** Spatial mapping from the final composite into physical LED order. */
+  mapping?: WLEDMappingConfig;
+  /** Per-controller color matching and temporal response. */
+  calibration?: WLEDColorCalibration;
+  /** How local source pixels are reduced to one LED color. */
+  samplingMode?: WLEDColorSamplingMode;
+  /** Named physical spans for controllers driving more than one strip. */
+  ranges?: WLEDRange[];
+  /** Setup-only pattern used to identify wiring and LED order. */
+  testPattern?: WLEDTestPattern;
+  /** Hex color used by the solid setup pattern. */
+  testColor?: string;
 }
 
 // ═══════════════════════════════════════════════════
@@ -5144,16 +5617,27 @@ export function createLayer(id: string, name: string, type: LayerType = 'media')
     visible: true,
     locked: false,
     opacity: 1,
-    blendMode: type === 'lines' || type === 'svg' || type === 'lightpainting' || type === 'adv-lightpaint' || type === 'splat' || type === 'model3d' ? 'add' : 'normal',
+    blendMode:
+      type === 'lines' ||
+      type === 'svg' ||
+      type === 'lightpainting' ||
+      type === 'adv-lightpaint' ||
+      type === 'splat' ||
+      type === 'model3d'
+        ? 'add'
+        : 'normal',
     source: null,
     linesContent: type === 'lines' ? createDefaultLinesContent() : null,
     svgContent: type === 'svg' ? createDefaultSVGContent() : null,
-    colorContent: type === 'color' ? {
+    colorContent:
+      type === 'color'
+        ? {
       hue: 0,
       saturation: 100,
       lightness: 50,
       alpha: 1,
-    } : null,
+          }
+        : null,
     lightPaintingContent: type === 'lightpainting' ? createDefaultLightPaintingContent() : null,
     advLightPaintingContent: type === 'adv-lightpaint' ? createDefaultAdvLightPaintingContent() : null,
     textContent: type === 'text' ? createDefaultTextContent() : null,
@@ -5170,7 +5654,7 @@ export function createLayer(id: string, name: string, type: LayerType = 'media')
     warpMode: 'corners',
     corners: createDefaultCorners(),
     meshGrid: null,
-    mask: null,
+    mask: type === 'mask' ? { enabled: true, shapes: [], inverted: false, feather: 0 } : null,
     cropRegion: null,
     layerShape: type === 'media' ? createDefaultLayerShape('rectangle') : null,
     effects: [],
@@ -5263,12 +5747,7 @@ export function createDefaultVJModeState(): VJModeState {
   return {
     enabled: false,
     compositions: [],
-    decks: [
-      createVJDeck('deck-a'),
-      createVJDeck('deck-b'),
-      createVJDeck('deck-c'),
-      createVJDeck('deck-d'),
-    ],
+    decks: [createVJDeck('deck-a'), createVJDeck('deck-b'), createVJDeck('deck-c'), createVJDeck('deck-d')],
     timeline: createDefaultTimeline(),
     activeCompositionId: null,
     masterOpacity: 1,
@@ -5304,6 +5783,15 @@ export function createProject(name: string): Project {
     stagePresets: [],
     svKeyboardPresets: [],
     wledControllers: [],
+    wledGroups: [],
+    wledEffects: [],
+    wledEffectAutomation: {
+      playing: false,
+      mode: 'beat',
+      beats: 8,
+      seconds: 4,
+      order: 'forward',
+    },
   };
 }
 
@@ -5328,12 +5816,14 @@ export function createDefaultLayerShape(type: LayerShapeType = 'rectangle'): Lay
         type,
         enabled: true,
         params: { ...baseParams, radiusX: 1.0, radiusY: 1.0 },
-        // X-style warp controls + center focus handle
+        // Warp quad + center focus handle. Corners start AT the layer bounds
+        // so the initial warp is an identity — content is untouched until a
+        // handle is actually dragged.
         controlPoints: [
-          { x: 0.2, y: 0.8 }, // top-left
-          { x: 0.8, y: 0.8 }, // top-right
-          { x: 0.2, y: 0.2 }, // bottom-left
-          { x: 0.8, y: 0.2 }, // bottom-right
+          { x: 0, y: 1 }, // top-left
+          { x: 1, y: 1 }, // top-right
+          { x: 0, y: 0 }, // bottom-left
+          { x: 1, y: 0 }, // bottom-right
           { x: 0.5, y: 0.5 }, // center focus
         ],
       };
@@ -5374,7 +5864,10 @@ export function createDefaultLayerShape(type: LayerShapeType = 'rectangle'): Lay
         params: {
           ...baseParams,
           lineWidth: 0.05,
-          linePoints: [{ x: 0.2, y: 0.5 }, { x: 0.8, y: 0.5 }],
+          linePoints: [
+            { x: 0.2, y: 0.5 },
+            { x: 0.8, y: 0.5 },
+          ],
           lineCap: 'round',
         },
       };
@@ -5440,7 +5933,7 @@ export function createDefaultEdgeEffect(): EdgeEffect {
  */
 export function convertShapeToCustom(shape: LayerShape): LayerShape {
   const points: Point2D[] = [];
-  const rotation = (shape.params.rotation ?? 0) * Math.PI / 180;
+  const rotation = ((shape.params.rotation ?? 0) * Math.PI) / 180;
   const scale = shape.params.scale ?? 1.0;
 
   const rotatePoint = (x: number, y: number): Point2D => {
@@ -5451,7 +5944,8 @@ export function convertShapeToCustom(shape: LayerShape): LayerShape {
 
   switch (shape.type) {
     case 'rectangle': {
-      const hw = 0.5 * scale, hh = 0.5 * scale;
+      const hw = 0.5 * scale,
+        hh = 0.5 * scale;
       points.push(rotatePoint(-hw, hh));   // top-left
       points.push(rotatePoint(hw, hh));    // top-right
       points.push(rotatePoint(hw, -hh));   // bottom-right
@@ -5531,6 +6025,9 @@ export function convertShapeToCustom(shape: LayerShape): LayerShape {
       feather: shape.params.feather,
       rotation: 0,
       customPoints: points,
+      // Snapshot the outline as authored: dragging vertices later warps the
+      // content smoothly against this base (MadMapper-style content follow).
+      customBasePoints: points.map((point) => ({ ...point })),
       customClosed: true,
     },
   };
@@ -5583,7 +6080,7 @@ export function getShapeVertices(shape: LayerShape): Point2D[] {
     const [tl, tr, bl, br, center] = shape.controlPoints;
     // Forward bilinear warp: map each UV-space vertex through the quad
     // defined by the 4 corner control points.
-    pts = pts.map(p => {
+    pts = pts.map((p) => {
       const topX = tl.x + (tr.x - tl.x) * p.x;
       const topY = tl.y + (tr.y - tl.y) * p.x;
       const botX = bl.x + (br.x - bl.x) * p.x;

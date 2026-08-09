@@ -842,7 +842,7 @@
     border: none;
     color: var(--ga-ink-2, #5e6571);
     padding: 9px 2px;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', monospace);
     font-size: 10px;
     letter-spacing: 0.04em;
     text-transform: uppercase;

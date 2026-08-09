@@ -106,6 +106,17 @@
     updateSelectedStroke({ ...selectedEl.stroke, [key]: value } as LineStroke);
   }
 
+  function updateSelectedMotionFx(updates: Partial<import('../lines/types').LineMotionFx>) {
+    if (!elements.length) return;
+    // Motion FX is a layer-wide look: apply to every line so picking a mode
+    // moves the whole drawing together.
+    const updated = elements.map((element) => {
+      const current = element.motionFx ?? { mode: 'none' as const, amount: 0.5, speed: 1 };
+      return { ...element, motionFx: { ...current, ...updates } };
+    });
+    updateElements(updated);
+  }
+
   function updateSelectedDrawAnimation(updates: Partial<LineDrawAnimation>) {
     if (!selectedEl) return;
     updateSelectedElement({ drawAnimation: { ...selectedEl.drawAnimation, ...updates } });
@@ -856,8 +867,41 @@
               </button>
             {/if}
           {/if}
+
         {:else}
           <div class="empty-msg">Select an element to edit its draw animation</div>
+        {/if}
+
+        {#if elements.length > 0}
+          {@const motionFx = elements[0].motionFx ?? { mode: 'none', amount: 0.5, speed: 1 }}
+          <div class="sec-label">Motion FX (all lines)</div>
+          <div class="control-row">
+            <span class="control-label">Motion</span>
+            <select value={motionFx.mode}
+              onchange={(e) => updateSelectedMotionFx({ mode: (e.target as HTMLSelectElement).value as import('../lines/types').LineMotionFxMode })}>
+              <option value="none">None</option>
+              <option value="wave">Wave</option>
+              <option value="breathe">Breathe</option>
+              <option value="shimmer">Shimmer</option>
+              <option value="spin">Spin</option>
+              <option value="orbit">Orbit</option>
+              <option value="audioPulse">Audio Pulse</option>
+            </select>
+          </div>
+          {#if motionFx.mode !== 'none'}
+            <div class="slider-col">
+              <div class="sc">
+                <label>Amount <b>{motionFx.amount.toFixed(2)}</b></label>
+                <input type="range" min="0" max="1" step="0.01" value={motionFx.amount}
+                  oninput={(e) => updateSelectedMotionFx({ amount: parseFloat((e.target as HTMLInputElement).value) })} />
+              </div>
+              <div class="sc">
+                <label>Speed <b>{motionFx.speed.toFixed(1)}</b></label>
+                <input type="range" min="0.1" max="4" step="0.1" value={motionFx.speed}
+                  oninput={(e) => updateSelectedMotionFx({ speed: parseFloat((e.target as HTMLInputElement).value) })} />
+              </div>
+            </div>
+          {/if}
         {/if}
 
         <!-- Layer-level animation -->
@@ -1111,7 +1155,7 @@
   .sc label {
     font-size: 12px; color: #bbb; margin-bottom: 4px; display: flex; align-items: baseline;
   }
-  .sc label b { color: #BB86FC; font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace); font-size: 12px; font-weight: 400; margin-left: auto; }
+  .sc label b { color: #BB86FC; font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace); font-size: 12px; font-weight: 400; margin-left: auto; }
   .sc select {
     background: #333; color: var(--text-primary, #eee); border: 1px solid #555;
     padding: 4px 8px; border-radius: 4px; font-size: 12px;

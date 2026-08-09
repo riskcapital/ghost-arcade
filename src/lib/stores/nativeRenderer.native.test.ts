@@ -378,11 +378,11 @@ describe('native renderer runtime state', () => {
     expect(state.sharedTextureOutputExportReady).toBe(true);
     expect(state.nativeEffectPassReady).toBe(true);
     expect(state.nativeEffectPassDetail).toContain('source-frame layer effects');
-    expect(state.nativeEffectCoverageNative).toBe(71);
+    expect(state.nativeEffectCoverageNative).toBe(182);
     expect(state.nativeEffectCoverageTotal).toBe(182);
-    expect(state.nativeEffectCoverageMissing).toBe(111);
-    expect(state.nativeEffectCoverageComplete).toBe(false);
-    expect(state.nativeEffectCoverageDetail).toContain('native source-frame effect-pass coverage 71/182');
+    expect(state.nativeEffectCoverageMissing).toBe(0);
+    expect(state.nativeEffectCoverageComplete).toBe(true);
+    expect(state.nativeEffectCoverageDetail).toContain('native source-frame effect-pass coverage 182/182');
     expect(state.nativeEffectCoverageDetail).toContain('stateful/multi-frame effects tracked outside the effect-pass route');
     expect(state.nativeTextureShareSenderReady).toBe(false);
     expect(state.nativeTextureShareSenderDetail).toContain('waiting for the first rendered frame');
@@ -400,7 +400,7 @@ describe('native renderer runtime state', () => {
       ['native-inventory', true],
       ['native-graph-routing', true],
       ['native-effect-pass-manifest', true],
-      ['native-effect-coverage', false],
+      ['native-effect-coverage', true],
       ['shared-texture-upload', false],
       ['shared-texture-output-export', true],
       ['native-texture-share-sender', false],
@@ -410,7 +410,7 @@ describe('native renderer runtime state', () => {
       ['native-recording', false],
       ['native-3d-scene-renderers', false],
     ]);
-    expect(gates.find((gate) => gate.id === 'native-effect-coverage')?.detail).toContain('111 pass-eligible public effects awaiting native implementation');
+    expect(gates.find((gate) => gate.id === 'native-effect-coverage')?.detail).toContain('0 pass-eligible public effects awaiting native implementation');
     expect(gates.find((gate) => gate.id === 'native-texture-share-sender')?.label).toBe('Native Syphon sender');
     expect(state.nativeOutputShareCapable).toBe(true);
     expect(state.nativeOutputShareActive).toBe(false);

@@ -88,6 +88,7 @@ export interface NativeEditorPreviewRect {
   contentY?: number;
   contentWidth?: number;
   contentHeight?: number;
+  generation?: number;
 }
 
 export interface NativeEditorPreviewPresenterStatus {
@@ -107,6 +108,7 @@ export interface NativeEditorPreviewPresenterStatus {
   height?: number;
   lastSurfaceID?: number;
   rect?: NativeEditorPreviewRect;
+  geometryMatches?: boolean;
   addonStatus?: Record<string, unknown> | null;
 }
 
@@ -266,6 +268,10 @@ export type RendererCommand =
       vj_layer_index?: number | null;
       blend_mode: string;
       opacity: number;
+      /** Deck confidence monitor tag — bank the core re-renders this layer
+       *  into ('a'/'b'), at deck_monitor_opacity (true pre-crossfader level). */
+      deck_monitor_bank?: 'a' | 'b' | null;
+      deck_monitor_opacity?: number;
       corners?: {
         topLeft: { x: number; y: number };
         topRight: { x: number; y: number };
@@ -275,6 +281,9 @@ export type RendererCommand =
       uv_transform?: [number, number, number, number];
       uv_flags?: [number, number, number, number];
       shape?: [number, number, number, number];
+      shape2?: [number, number, number, number];
+      shape_meta?: [number, number, number, number];
+      shape_points?: Array<[number, number, number, number]>;
       mesh_grid?: {
         rows: number;
         cols: number;
@@ -297,6 +306,12 @@ export type RendererCommand =
       input_source_id?: string | null;
       effect_graph: Record<string, unknown> | null;
       params: Record<string, unknown>;
+    }
+  | {
+      type: 'update_native_graph_buffer';
+      layer_id: string;
+      buffer_id: string;
+      initial_b64: string;
     }
   | { type: 'remove_native_graph_layer'; layer_id: string }
   | {
@@ -1292,6 +1307,7 @@ export type NativeMediaPrefetchOptions = {
   decodeHeight?: number;
   prefetchWindowFrames?: number;
   prefetchFps?: number;
+  seekGeneration?: number;
   playbackRate?: number;
   loopEnabled?: boolean;
   durationSeconds?: number;
@@ -1317,6 +1333,7 @@ export async function prefetchNativeRendererMedia(
     decode_height: options.decodeHeight,
     prefetch_window_frames: options.prefetchWindowFrames,
     prefetch_fps: options.prefetchFps,
+    seek_generation: options.seekGeneration,
     playback_rate: options.playbackRate,
     loop_enabled: options.loopEnabled,
     duration_seconds: options.durationSeconds,
@@ -1490,6 +1507,26 @@ export async function getNativeEditorPreviewStatus() {
 
 export async function getNativeRendererStatus() {
   return invoke<RendererStatus>('native_renderer_get_status');
+}
+
+export type NativeRendererLayerSnapshot = {
+  layer_id: string;
+  z_index: number;
+  visible: boolean;
+  opacity: number;
+  blend_code: number;
+  corners: [number, number][];
+  uv0: number[];
+  uv1: number[];
+  source_id: string | null;
+  mesh_rows: number;
+  mesh_cols: number;
+};
+
+// Ground truth of the core's compositor state, used by the sync's scene
+// reconciler to detect and repair lost/misapplied layer updates.
+export async function getNativeRendererLayersSnapshot() {
+  return invoke<{ layers: NativeRendererLayerSnapshot[] }>('native_renderer_get_layers_snapshot');
 }
 
 export async function getNativeRendererStats() {

@@ -67,6 +67,7 @@ export interface MidiStoreState {
   devices: MidiDevice[];       // All detected MIDI input devices
   outputDevices: MidiDevice[]; // All detected MIDI output devices (for clock send)
   selectedDeviceId: string | null;  // Currently selected input device
+  selectedClockInputId: string | null; // Optional separate input for MIDI clock; null = selectedDeviceId
   selectedOutputId: string | null;  // Currently selected output device for clock send
   mappings: MidiMapping[];     // All current mappings
   editMode: boolean;           // Is MIDI edit/overlay mode active

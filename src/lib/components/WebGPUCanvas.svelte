@@ -1631,7 +1631,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     color: var(--text-primary, #ddd);
     padding: 10px 14px;
     border-radius: 4px;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     font-size: 12px;
     line-height: 1.5;
     pointer-events: none;

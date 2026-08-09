@@ -30,7 +30,7 @@ use audio::{GhostAudioUniforms, ghost_audio_uniform_layout};
 use base64::Engine;
 use bytemuck::{Pod, Zeroable};
 use capabilities::{
-    CORE_COMMAND_TYPES, CORE_RPC_METHODS, native_compute_host_readiness,
+    CORE_COMMAND_TYPES, CORE_RPC_METHODS, native_compute_host_readiness, native_effect_pass_manifest,
     native_graph_readiness_checks, output_shared_texture_export_readiness,
     shared_texture_media_transport_note, shared_texture_media_transport_ready_detail,
     source_frame_shared_texture_import_readiness, texture_share_sender_label,
@@ -99,7 +99,7 @@ const LAYER_EDGE_EFFECT_VEC4S: usize = 7;
 const MAX_SOURCE_PREVIEWS: usize = 16;
 const SOURCE_PREVIEW_SIZE: usize = 256;
 const SOURCE_PREVIEW_PIXELS: usize = SOURCE_PREVIEW_SIZE * SOURCE_PREVIEW_SIZE;
-const MAX_SOURCE_FRAME_SLOTS: usize = 8;
+const MAX_SOURCE_FRAME_SLOTS: usize = 24;
 const SOURCE_FRAME_SIZE_PERFORMANCE: usize = 1024;
 const SOURCE_FRAME_SIZE_BALANCED: usize = 1536;
 const SOURCE_FRAME_SIZE_DEFAULT: usize = 2048;
@@ -524,7 +524,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
   let haze_floor = clamp(0.58 - haze_density * 0.22, 0.18, 0.80);
   let haze = clamp(1.0 - in.view_z * (0.012 + haze_density * 0.012), haze_floor, 1.0);
   let opacity = clamp(in.material.w, 0.0, 1.0);
-  var alpha = clamp(in.color.a * opacity, 0.0, 0.96);
+  var alpha = clamp(in.color.a * opacity, 0.0, 1.0);
   let room_visibility = clamp(1.0 - u.lighting.x, 0.0, 1.0);
   let screen_boost = max(0.0, u.lighting.y);
   let exposure = max(0.02, u.lighting.z);
@@ -536,7 +536,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let source_slot = i32(clamp(floor(in.material.x - 1.0 + 0.5), 0.0, 7.0));
     let tex = textureSampleLevel(source_frames, source_sampler, in.uv, source_slot, 0.0);
     rgb = mix(rgb, tex.rgb, clamp(opacity, 0.0, 1.0));
-    alpha = clamp(in.color.a * opacity * tex.a, 0.0, 0.96);
+    alpha = clamp(in.color.a * opacity * tex.a, 0.0, 1.0);
   }
   rgb *= max(0.0, in.material.y) * light_mul;
   return vec4<f32>(rgb * shade * haze * alpha, alpha);
@@ -925,6 +925,9 @@ struct LayerGpu {
     uv0: [f32; 4],
     uv1: [f32; 4],
     shape: [f32; 4],
+    shape2: [f32; 4],
+    shape_meta: [f32; 4],
+    shape_pts: [[f32; 4]; 32],
     effect0: [f32; 4],
     effect1: [f32; 4],
     effect2: [f32; 4],
@@ -1164,6 +1167,16 @@ impl Drop for NativeOutputExport {
     }
 }
 
+/// One deck confidence monitor: the bank composite renders into
+/// `render_view` (pipeline format) and blits into the shared-texture
+/// `export` the presenter imports zero-copy.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+struct DeckMonitorTarget {
+    _render_texture: wgpu::Texture,
+    render_view: wgpu::TextureView,
+    export: NativeOutputExport,
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct ComputeProbeUniforms {
@@ -1304,6 +1317,10 @@ struct SceneLayer {
     shader_rendered: bool,
     preview_slot: Option<usize>,
     frame_slot: Option<usize>,
+    /// Slot holding this layer's core-rendered FS/ISF shader frame — kept
+    /// separate from frame_slot so an effect chain can DISPLAY its output on
+    /// the layer while still SAMPLING the raw shader render as input.
+    shader_frame_slot: Option<usize>,
     color: [f32; 4],
     corners: [[f32; 2]; 4],
     native_params: [f32; 8],
@@ -1311,6 +1328,9 @@ struct SceneLayer {
     uv0: [f32; 4],
     uv1: [f32; 4],
     shape: [f32; 4],
+    shape2: [f32; 4],
+    shape_meta: [f32; 4],
+    shape_pts: Vec<[f32; 4]>,
     effects: [[f32; 4]; 4],
     effect_count: f32,
     edge_effects: [[[f32; 4]; LAYER_EDGE_EFFECT_VEC4S]; MAX_LAYER_EDGE_EFFECTS],
@@ -1320,6 +1340,11 @@ struct SceneLayer {
     mesh_cols: u32,
     mesh_points: Vec<[f32; 2]>,
     source_rect: [f32; 4],
+    /// VJ deck-monitor tag: Some(0)=bank A, Some(1)=bank B. Tagged layers
+    /// re-render into the deck confidence monitor targets at
+    /// `deck_monitor_opacity` (their true pre-crossfader level).
+    deck_monitor_bank: Option<u8>,
+    deck_monitor_opacity: f32,
 }
 
 #[derive(Clone, Debug)]
@@ -1545,6 +1570,12 @@ impl NativeParticleFieldGraphState {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum NativeGraphLayerKind {
+    Lines,
+    Svg,
+    LightPainting,
+    Text,
+    Splat,
+    Model3D,
     Planet,
     InkCloud,
     Smoke3D,
@@ -1554,12 +1585,22 @@ enum NativeGraphLayerKind {
     PointCloudFx,
     SmokeRiders,
     VolumetricSpheres,
+    GhostFx,
+    HandFx,
+    PerformerWorld,
+    VjCrossfade,
     Unsupported(String),
 }
 
 impl NativeGraphLayerKind {
     fn from_label(label: &str) -> Self {
         match label.trim().to_ascii_lowercase().replace('_', "-").as_str() {
+            "lines" => Self::Lines,
+            "svg" => Self::Svg,
+            "light-painting" | "lightpainting" => Self::LightPainting,
+            "text" => Self::Text,
+            "splat" => Self::Splat,
+            "model3d" => Self::Model3D,
             "planet" => Self::Planet,
             "ink-cloud" => Self::InkCloud,
             "smoke-3d" | "3d-smoke" => Self::Smoke3D,
@@ -1569,12 +1610,22 @@ impl NativeGraphLayerKind {
             "point-cloud-fx" => Self::PointCloudFx,
             "smoke-riders" => Self::SmokeRiders,
             "volumetric-spheres" | "volumetric-balls" => Self::VolumetricSpheres,
+            "ghostfx" => Self::GhostFx,
+            "handfx" => Self::HandFx,
+            "performer-world" => Self::PerformerWorld,
+            "vj-crossfade" => Self::VjCrossfade,
             other => Self::Unsupported(other.to_string()),
         }
     }
 
     fn signature(&self) -> &str {
         match self {
+            Self::Lines => "lines",
+            Self::Svg => "svg",
+            Self::LightPainting => "light-painting",
+            Self::Text => "text",
+            Self::Splat => "splat",
+            Self::Model3D => "model3d",
             Self::Planet => "planet",
             Self::InkCloud => "ink-cloud",
             Self::Smoke3D => "smoke-3d",
@@ -1584,6 +1635,10 @@ impl NativeGraphLayerKind {
             Self::PointCloudFx => "point-cloud-fx",
             Self::SmokeRiders => "smoke-riders",
             Self::VolumetricSpheres => "volumetric-spheres",
+            Self::GhostFx => "ghostfx",
+            Self::HandFx => "handfx",
+            Self::PerformerWorld => "performer-world",
+            Self::VjCrossfade => "vj-crossfade",
             Self::Unsupported(label) => label.as_str(),
         }
     }
@@ -1591,7 +1646,13 @@ impl NativeGraphLayerKind {
     fn is_supported(&self) -> bool {
         matches!(
             self,
-            Self::Planet
+            Self::Lines
+                | Self::Svg
+                | Self::LightPainting
+                | Self::Text
+                | Self::Splat
+                | Self::Model3D
+                | Self::Planet
                 | Self::InkCloud
                 | Self::Smoke3D
                 | Self::ParticleField
@@ -1600,7 +1661,93 @@ impl NativeGraphLayerKind {
                 | Self::PointCloudFx
                 | Self::SmokeRiders
                 | Self::VolumetricSpheres
+                | Self::GhostFx
+                | Self::HandFx
+                | Self::PerformerWorld
+                | Self::VjCrossfade
         )
+    }
+}
+
+/// Per-layer running state for the GhostFX Liquid injection engine — beat
+/// edge detection and the fractional bass-trickle accumulator survive across
+/// frames so bursts fire on rising edges only and droplet rates stay smooth.
+#[derive(Clone, Copy, Debug, Default)]
+struct NativePluginLiquidState {
+    prev_beat_pulse: f32,
+    ambient_accumulator: f32,
+}
+
+/// Milkdrop-style smoothed audio for plugin uniforms: fast attack so hits
+/// land, slow release so nothing strobes. Raw analyzer values are only used
+/// for edge detection (beat bursts); everything the eye tracks continuously
+/// (splat force, palette, emitter speed) reads these envelopes instead.
+#[derive(Clone, Copy, Debug, Default)]
+struct NativePluginAudioSmooth {
+    bass: f32,
+    mid: f32,
+    treble: f32,
+    energy: f32,
+    beat_env: f32,
+    last_frame: u64,
+}
+
+impl NativePluginAudioSmooth {
+    fn follow(current: f32, target: f32, dt: f32, attack_tau: f32, release_tau: f32) -> f32 {
+        let tau = if target > current {
+            attack_tau
+        } else {
+            release_tau
+        };
+        current + (target - current) * (1.0 - (-dt / tau.max(1e-3)).exp())
+    }
+
+    fn update(
+        &mut self,
+        frame_index: u64,
+        dt: f32,
+        audio0: [f32; 4],
+        audio1: [f32; 4],
+        reactivity: f32,
+    ) {
+        if self.last_frame == frame_index && frame_index != 0 {
+            return;
+        }
+        self.last_frame = frame_index;
+        let dt = dt.clamp(0.0, 0.1);
+        // Reactivity (0 = glacial, 1 = snappy) stretches the release taus and
+        // caps the beat envelope peak, so the default sits well away from the
+        // strobe zone while still letting VJs dial the punch back in.
+        let smoothness = (1.0 - reactivity).clamp(0.0, 1.0);
+        let rel = 1.0 + smoothness * 2.4;
+        let atk = 1.0 + smoothness * 1.2;
+        self.bass = Self::follow(self.bass, audio0[1], dt, 0.045 * atk, 0.30 * rel);
+        self.mid = Self::follow(self.mid, audio0[2], dt, 0.045 * atk, 0.24 * rel);
+        self.treble = Self::follow(self.treble, audio0[3], dt, 0.040 * atk, 0.18 * rel);
+        self.energy = Self::follow(self.energy, audio0[0], dt, 0.050 * atk, 0.35 * rel);
+        // Beat becomes an envelope: snaps up on the pulse, glides down.
+        if audio1[1] > 0.5 {
+            self.beat_env = self.beat_env.max(0.35 + 0.65 * reactivity.clamp(0.0, 1.0));
+        }
+        self.beat_env = Self::follow(self.beat_env, 0.0, dt, 0.02, 0.32 * rel);
+    }
+}
+
+/// Minimal HSV→RGB for splat dye colors (h/s/v in 0..1).
+fn hsv_to_rgb(h: f32, s: f32, v: f32) -> [f32; 3] {
+    let h6 = (h.rem_euclid(1.0)) * 6.0;
+    let sector = h6.floor() as i32 % 6;
+    let f = h6 - h6.floor();
+    let p = v * (1.0 - s);
+    let q = v * (1.0 - s * f);
+    let t = v * (1.0 - s * (1.0 - f));
+    match sector {
+        0 => [v, t, p],
+        1 => [q, v, p],
+        2 => [p, v, t],
+        3 => [p, q, v],
+        4 => [t, p, v],
+        _ => [v, p, q],
     }
 }
 
@@ -1659,12 +1806,16 @@ impl SceneLayer {
             shader_rendered: false,
             preview_slot: None,
             frame_slot: None,
+            shader_frame_slot: None,
             corners: [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]],
             native_params: default_native_params(),
             blend_code: 0.0,
             uv0: [0.0, 0.0, 1.0, 1.0],
             uv1: [0.0, 1.0, 0.0, 0.0],
             shape: [0.0, 0.0, 0.0, 1.0],
+            shape2: [1.0, 0.7, 6.0, 0.4],
+            shape_meta: [0.0, 0.0, 0.0, 0.0],
+            shape_pts: Vec::new(),
             effects: [[0.0; 4]; 4],
             effect_count: 0.0,
             edge_effects: [[[0.0; 4]; LAYER_EDGE_EFFECT_VEC4S]; MAX_LAYER_EDGE_EFFECTS],
@@ -1674,6 +1825,8 @@ impl SceneLayer {
             mesh_cols: 0,
             mesh_points: Vec::new(),
             source_rect: [0.0, 0.0, 1.0, 1.0],
+            deck_monitor_bank: None,
+            deck_monitor_opacity: 1.0,
         }
     }
 
@@ -1731,6 +1884,9 @@ impl SceneLayer {
             uv0: self.uv0,
             uv1: self.uv1,
             shape: self.shape,
+            shape2: self.shape2,
+            shape_meta: self.shape_meta,
+            shape_pts: self.shape_pts_gpu(),
             effect0: self.effects[0],
             effect1: self.effects[1],
             effect2: self.effects[2],
@@ -1741,6 +1897,14 @@ impl SceneLayer {
             mesh: self.mesh_gpu(),
             source_rect: self.source_rect,
         }
+    }
+
+    fn shape_pts_gpu(&self) -> [[f32; 4]; 32] {
+        let mut packed = [[0.0; 4]; 32];
+        for (index, point) in self.shape_pts.iter().take(32).enumerate() {
+            packed[index] = *point;
+        }
+        packed
     }
 
     fn mask_gpu(&self) -> [[f32; 4]; MAX_LAYER_MASK_POINTS] {
@@ -1963,6 +2127,11 @@ struct RenderState {
     surface_copy_dst_supported: bool,
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     output_export: Option<NativeOutputExport>,
+    /// Deck confidence monitors: two small shared-texture targets (bank A,
+    /// bank B) the VJ panel presents beside Program. Created lazily on the
+    /// first frame that carries deck-monitor-tagged layers.
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    deck_monitor_targets: Option<[DeckMonitorTarget; 2]>,
     snapshot_texture: wgpu::Texture,
     snapshot_view: wgpu::TextureView,
     last_frame_metrics: Option<SnapshotMetrics>,
@@ -2117,6 +2286,9 @@ struct App {
     scene_layers: HashMap<String, SceneLayer>,
     pending_media_bindings: HashMap<String, PendingMediaBinding>,
     native_graph_layers: HashMap<String, NativeGraphLayer>,
+    native_plugin_liquid_states: HashMap<String, NativePluginLiquidState>,
+    native_plugin_templates_initialized: HashSet<String>,
+    native_plugin_audio_smooth: NativePluginAudioSmooth,
     native_point_cloud_assets: HashMap<String, NativePointCloudAsset>,
     pending_native_graph_jobs: Vec<NativeGraphFrameJob>,
     source_previews: HashMap<String, SourcePreview>,
@@ -2372,6 +2544,9 @@ impl App {
             scene_layers: HashMap::new(),
             pending_media_bindings: HashMap::new(),
             native_graph_layers: HashMap::new(),
+            native_plugin_liquid_states: HashMap::new(),
+            native_plugin_templates_initialized: HashSet::new(),
+            native_plugin_audio_smooth: NativePluginAudioSmooth::default(),
             native_point_cloud_assets: HashMap::new(),
             pending_native_graph_jobs: Vec::new(),
             source_previews: HashMap::new(),
@@ -2580,8 +2755,15 @@ impl App {
             "compute_graph_line_render": true,
             "compute_graph_clear_color": true,
             "compute_graph_source_frame_target": true,
+            "native_effect_pass_manifest": true,
             "persistent_compute_buffers": true,
             "native_planet_graph": true,
+            "native_lines_graph": true,
+            "native_svg_graph": true,
+            "native_light_painting_graph": true,
+            "native_text_graph": true,
+            "native_splat_graph": true,
+            "native_model3d_graph": true,
             "native_3d_smoke_graph": true,
             "native_particle_field_graph": true,
             "native_volumetric_spheres_graph": true,
@@ -2590,6 +2772,10 @@ impl App {
             "native_flythrough_graph": true,
             "native_pixel_particles_graph": true,
             "native_point_cloud_fx_graph": true,
+            "native_ghostfx_graph": true,
+            "native_handfx_graph": true,
+            "native_performer_world_graph": true,
+            "native_vj_crossfade_graph": true,
             "command_drain_policy": true,
             "auto_present_policy": true,
             "multi_pass_instruments": true,
@@ -2646,6 +2832,7 @@ impl App {
             "implemented_command_types": CORE_COMMAND_TYPES,
             "native_compositor_blend_modes": native_compositor_blend_manifest(),
             "native_compositor_effect_descriptors": native_compositor_effect_manifest(),
+            "native_effect_pass_descriptors": native_effect_pass_manifest(),
             "native_graph_instruments": native_graph_instrument_ids(),
             "native_graph_instrument_manifest": native_graph_instrument_manifest(),
             "audio_uniform_layout": ghost_audio_uniform_layout(),
@@ -3262,6 +3449,36 @@ impl App {
                 Ok(json!(true))
             }
             "status" | "get_status" => Ok(json!(self.status())),
+            // Ground truth for the Electron-side scene reconciler: what
+            // geometry the core is ACTUALLY compositing with, so a lost or
+            // misapplied upsert_layer can be detected and repaired instead of
+            // wedging the picture until the next unrelated edit.
+            "layers_snapshot" | "get_layers_snapshot" => {
+                let layers = self
+                    .scene_layers
+                    .values()
+                    .map(|layer| {
+                        json!({
+                            "layer_id": layer.id,
+                            "z_index": layer.z_index,
+                            "visible": layer.visible,
+                            "opacity": layer.opacity,
+                            "blend_code": layer.blend_code,
+                            "corners": layer.corners,
+                            "uv0": layer.uv0,
+                            "uv1": layer.uv1,
+                            "source_id": layer.source_id,
+                            "frame_slot": layer.frame_slot,
+                            "shader_frame_slot": layer.shader_frame_slot,
+                            "source_kind": layer.source_kind,
+                            "shader_rendered": layer.shader_rendered,
+                            "mesh_rows": layer.mesh_rows,
+                            "mesh_cols": layer.mesh_cols,
+                        })
+                    })
+                    .collect::<Vec<_>>();
+                Ok(json!({ "layers": layers }))
+            }
             "stats" | "get_stats" => {
                 self.stats.avg_render_cpu_ms = self.render_cpu_ema_ms;
                 if let Some(renderer) = self.renderer.as_ref() {
@@ -3305,6 +3522,11 @@ impl App {
             "output_shared_texture_snapshot" | "get_output_shared_texture_snapshot" => {
                 self.output_shared_texture_snapshot(&req.params)
             }
+            "deck_monitor_state" | "get_deck_monitor_state" => Ok(self
+                .renderer
+                .as_ref()
+                .map(RenderState::deck_monitor_metadata)
+                .unwrap_or_else(|| json!({ "available": false }))),
             "set_stage3d_scene" => self.set_stage3d_scene(&req.params),
             "get_stage3d_scene_summary" => Ok(json!(self.stage3d_scene_summary.clone())),
             "set_projection_sim_scene" => self.set_projection_sim_scene(&req.params),
@@ -3922,6 +4144,13 @@ impl App {
                 "set_layer_native_params" => self.apply_layer_native_params(command),
                 "set_layer_edge_effects" => self.apply_layer_edge_effects(command),
                 "set_native_graph_layer" => self.apply_native_graph_layer(command),
+                "update_native_graph_buffer" => {
+                    if let Err(err) = self.apply_update_native_graph_buffer(command) {
+                        self.last_shader_error = Some(err);
+                        dropped = dropped.saturating_add(1);
+                        continue;
+                    }
+                }
                 "upload_native_point_cloud" => {
                     if self.apply_native_point_cloud(command).is_err() {
                         dropped = dropped.saturating_add(1);
@@ -4082,7 +4311,43 @@ impl App {
             if !layer_visible {
                 continue;
             }
+            if matches!(
+                graph_layer.kind,
+                NativeGraphLayerKind::GhostFx
+                    | NativeGraphLayerKind::HandFx
+                    | NativeGraphLayerKind::PerformerWorld
+                    | NativeGraphLayerKind::VjCrossfade
+            ) {
+                let Some(template) = graph_layer.effect_job_template.as_ref() else {
+                    let message = format!(
+                        "native plugin graph `{}` on layer `{}` has no installed template",
+                        graph_layer.kind.signature(),
+                        graph_layer.layer_id
+                    );
+                    // One stderr line per state change, not one per frame.
+                    if self.last_shader_error.as_deref() != Some(message.as_str()) {
+                        eprintln!("[GhostRenderCore] {message}");
+                    }
+                    self.last_shader_error = Some(message);
+                    continue;
+                };
+                let job = self.native_plugin_graph_frame_job(&graph_layer, template);
+                self.register_compute_graph_source_frame_targets(&job.render_plans);
+                jobs.push(job);
+                self.last_shader_error = None;
+                continue;
+            }
             let result = match graph_layer.kind.clone() {
+                // Lines, SVG, Light Painting, and Text frame jobs are fully described
+                // by the renderer sync layer and submitted through `queue_compute_graph`.
+                // The retained native graph entry keeps their source attached to
+                // the compositor without generating a second frame job here.
+                NativeGraphLayerKind::Lines
+                | NativeGraphLayerKind::Svg
+                | NativeGraphLayerKind::LightPainting
+                | NativeGraphLayerKind::Text
+                | NativeGraphLayerKind::Splat
+                | NativeGraphLayerKind::Model3D => continue,
                 NativeGraphLayerKind::Planet => self.build_native_planet_graph_job(&graph_layer),
                 NativeGraphLayerKind::InkCloud => {
                     self.build_native_ink_cloud_graph_job(&graph_layer)
@@ -4106,6 +4371,10 @@ impl App {
                 NativeGraphLayerKind::VolumetricSpheres => {
                     self.build_native_volumetric_spheres_graph_job(&graph_layer)
                 }
+                NativeGraphLayerKind::GhostFx
+                | NativeGraphLayerKind::HandFx
+                | NativeGraphLayerKind::PerformerWorld
+                | NativeGraphLayerKind::VjCrossfade => unreachable!(),
                 NativeGraphLayerKind::Unsupported(_) => continue,
             };
             match result {
@@ -4154,6 +4423,442 @@ impl App {
             }
         }
         jobs
+    }
+
+    fn native_plugin_graph_frame_job(
+        &mut self,
+        graph_layer: &NativeGraphLayer,
+        template: &NativeGraphFrameJob,
+    ) -> NativeGraphFrameJob {
+        let mut job = template.clone();
+        // `layer-frame:` bindings must track the CURRENT frame slot of their
+        // scene layer every replay — at install time a shader layer may not
+        // have rendered yet (its binding would pin to the empty placeholder
+        // forever), and video slots can move under pool pressure.
+        let debug_resolution = self.native_frame_index() % 240 == 0;
+        for plan in &mut job.render_plans {
+            for binding in &mut plan.bindings {
+                if let Some(layer_id) = binding.resource_id.strip_prefix("shader-frame:") {
+                    if let Some(slot) = self
+                        .scene_layers
+                        .get(layer_id)
+                        .and_then(|layer| layer.shader_frame_slot)
+                    {
+                        binding.source_slot = Some(slot);
+                    }
+                }
+                if let Some(layer_id) = binding.resource_id.strip_prefix("layer-frame:") {
+                    let resolved = self
+                        .scene_layers
+                        .get(layer_id)
+                        .and_then(|layer| layer.frame_slot);
+                    if let Some(slot) = resolved {
+                        binding.source_slot = Some(slot);
+                    }
+                    if debug_resolution {
+                        eprintln!(
+                            "[GhostRenderCore] layer-frame resolve `{layer_id}` -> {:?} (template slot {:?}, layer known: {})",
+                            resolved,
+                            binding.source_slot,
+                            self.scene_layers.contains_key(layer_id)
+                        );
+                    }
+                }
+            }
+        }
+        for plan in &mut job.pass_plans {
+            for binding in &mut plan.bindings {
+                if let Some(layer_id) = binding.resource_id.strip_prefix("layer-frame:") {
+                    if let Some(slot) = self
+                        .scene_layers
+                        .get(layer_id)
+                        .and_then(|layer| layer.frame_slot)
+                    {
+                        binding.source_slot = Some(slot);
+                    }
+                }
+            }
+        }
+        let time = self.native_graph_time_seconds();
+        let delta = self.native_frame_delta().clamp(0.0, 0.1);
+        let frame_index = self.native_frame_index();
+        let reactivity =
+            native_graph_param_f32(&graph_layer.params, "ghostfxReactivity", 0.0, 1.0, 0.4);
+        self.native_plugin_audio_smooth
+            .update(frame_index, delta, self.audio0, self.audio1, reactivity);
+        let smooth = self.native_plugin_audio_smooth;
+        // The template is replayed every frame, but its `clear` flags describe
+        // INSTALL-time intent only. Replaying clear=true wipes persistent
+        // state (fluid fields, particle trails) every frame — the sim can
+        // never accumulate. Honor clear on the first run after install, then
+        // force it off.
+        if self
+            .native_plugin_templates_initialized
+            .contains(&graph_layer.layer_id)
+        {
+            for buffer in &mut job.buffers {
+                buffer.clear = false;
+            }
+        } else {
+            self.native_plugin_templates_initialized
+                .insert(graph_layer.layer_id.clone());
+        }
+        let mut liquid_splat_count: Option<u32> = None;
+        // GhostFX Liquid: regenerate the injection (splats) every frame in
+        // the core. The installed template only carries frame-zero splats;
+        // replaying them verbatim was the "liquid barely shows anything"
+        // defect — a static, near-invisible drip. See the 128-byte uniform
+        // branch below for the matching layout.
+        if graph_layer.kind == NativeGraphLayerKind::GhostFx {
+            let is_liquid = job.buffers.iter().any(|buffer| {
+                matches!(buffer.kind, NativeComputeBufferBindingKind::Uniform)
+                    && buffer.initial_bytes.len() == 128
+            });
+            if is_liquid {
+                let state = self
+                    .native_plugin_liquid_states
+                    .entry(graph_layer.layer_id.clone())
+                    .or_insert(NativePluginLiquidState {
+                        prev_beat_pulse: 0.0,
+                        ambient_accumulator: 0.0,
+                    });
+                let params = &graph_layer.params;
+                let sensitivity =
+                    native_graph_param_f32(params, "ghostfxSensitivity", 0.25, 4.0, 1.4);
+                let hue_speed =
+                    native_graph_param_f32(params, "ghostfxHueDriftSpeed", 0.0, 2.0, 0.15);
+                let hue = (time * hue_speed).rem_euclid(1.0);
+                let splat_radius =
+                    native_graph_param_f32(params, "ghostfxLiquidSplatRadius", 0.01, 0.2, 0.08);
+                let bass_rate =
+                    native_graph_param_f32(params, "ghostfxLiquidBassRate", 0.0, 2.0, 1.0);
+                let bass = (smooth.bass * sensitivity).clamp(0.0, 2.0);
+                let mid = (smooth.mid * sensitivity).clamp(0.0, 2.0);
+                let energy = (smooth.energy * sensitivity).clamp(0.0, 2.0);
+                let beat_pulse = self.audio1[1];
+                let beat_edge = beat_pulse > 0.5 && state.prev_beat_pulse < 0.3;
+                state.prev_beat_pulse = beat_pulse;
+                state.ambient_accumulator += delta.max(0.0) * (2.0 + bass * 14.0) * bass_rate;
+                let mut splats: Vec<[f32; 8]> = Vec::with_capacity(16);
+                // Deterministic per-frame randomness (layer + frame seeded).
+                let mut seed = stable_hash64(&format!("{}:{frame_index}", graph_layer.layer_id));
+                let mut rand01 = move || {
+                    seed = seed
+                        .wrapping_mul(6364136223846793005)
+                        .wrapping_add(1442695040888963407);
+                    ((seed >> 33) as f64 / (u32::MAX as f64 + 1.0)) as f32
+                };
+                // 1) Three continuous Lissajous emitters with tangential
+                //    swirl — the pool stays alive even in silence.
+                for index in 0..3usize {
+                    let phase = index as f32 / 3.0 * std::f32::consts::TAU;
+                    let ax = 0.83 + index as f32 * 0.11;
+                    let ay = 0.67 + index as f32 * 0.13;
+                    let t = time * (0.35 + mid * 0.5);
+                    let x = 0.5 + 0.36 * (t * ax + phase).cos();
+                    let y = 0.5 + 0.33 * (t * ay + phase * 1.7).sin();
+                    let dxdt = -0.36 * ax * (t * ax + phase).sin();
+                    let dydt = 0.33 * ay * (t * ay + phase * 1.7).cos();
+                    let len = (dxdt * dxdt + dydt * dydt).sqrt().max(1e-4);
+                    let fx = dxdt / len;
+                    let fy = dydt / len;
+                    let speed = 0.55 + energy * 1.1;
+                    let swirl = if index % 2 == 0 { 1.0 } else { -1.0 };
+                    let color = hsv_to_rgb((hue + index as f32 * 0.31).rem_euclid(1.0), 0.88, 1.0);
+                    splats.push([
+                        x,
+                        y,
+                        (fx * 0.7 - fy * 0.7 * swirl) * speed,
+                        (fy * 0.7 + fx * 0.7 * swirl) * speed,
+                        color[0],
+                        color[1],
+                        color[2],
+                        splat_radius * (0.55 + energy * 0.35),
+                    ]);
+                }
+                // 2) Beat: vortex-ring burst — a ring of outward splats with
+                //    a shared tangential twist reads as a liquid impact.
+                if beat_edge {
+                    let cx = 0.28 + rand01() * 0.44;
+                    let cy = 0.28 + rand01() * 0.44;
+                    let ring = if energy > 0.5 { 8 } else { 6 };
+                    let ring_speed = 1.0 + energy * 1.6;
+                    let twist = if rand01() < 0.5 { 0.8 } else { -0.8 };
+                    let ring_hue = (hue + rand01() * 0.25).rem_euclid(1.0);
+                    for index in 0..ring {
+                        let angle = index as f32 / ring as f32 * std::f32::consts::TAU;
+                        let dx = angle.cos();
+                        let dy = angle.sin();
+                        let color = hsv_to_rgb(
+                            (ring_hue + index as f32 * 0.015).rem_euclid(1.0),
+                            0.92,
+                            1.0,
+                        );
+                        splats.push([
+                            cx + dx * splat_radius * 1.6,
+                            cy + dy * splat_radius * 1.6,
+                            (dx - dy * twist) * ring_speed,
+                            (dy + dx * twist) * ring_speed,
+                            color[0],
+                            color[1],
+                            color[2],
+                            splat_radius * 1.25,
+                        ]);
+                    }
+                }
+                // 3) Bass trickle: extra droplets while low end is present.
+                while state.ambient_accumulator > 1.0 && splats.len() < 32 {
+                    state.ambient_accumulator -= 1.0;
+                    let angle = rand01() * std::f32::consts::TAU;
+                    let speed = 0.25 + energy * 0.5;
+                    let color = hsv_to_rgb((hue + rand01() * 0.6).rem_euclid(1.0), 0.75, 0.95);
+                    splats.push([
+                        rand01(),
+                        rand01(),
+                        angle.cos() * speed,
+                        angle.sin() * speed,
+                        color[0],
+                        color[1],
+                        color[2],
+                        splat_radius * (0.5 + rand01() * 0.5),
+                    ]);
+                }
+                splats.truncate(32);
+                liquid_splat_count = Some(splats.len() as u32);
+                for buffer in &mut job.buffers {
+                    if !buffer.id.ends_with(":splats") || buffer.initial_bytes.len() < 1024 {
+                        continue;
+                    }
+                    for (splat_index, splat) in splats.iter().enumerate() {
+                        for (field_index, value) in splat.iter().enumerate() {
+                            write_f32_le(
+                                &mut buffer.initial_bytes,
+                                splat_index * 8 + field_index,
+                                *value,
+                            );
+                        }
+                    }
+                }
+            }
+        }
+        for buffer in &mut job.buffers {
+            if !matches!(buffer.kind, NativeComputeBufferBindingKind::Uniform) {
+                continue;
+            }
+            if graph_layer.kind == NativeGraphLayerKind::PerformerWorld
+                && buffer.initial_bytes.len() == 80
+            {
+                // Performer worlds are a persistent native overlay. The
+                // installed uniform owns world/space/XY parameters; only the
+                // render clock and live audio envelope advance here.
+                write_f32_le(&mut buffer.initial_bytes, 2, time);
+                write_f32_le(&mut buffer.initial_bytes, 3, delta);
+                write_f32_le(&mut buffer.initial_bytes, 10, smooth.energy);
+                continue;
+            }
+            if graph_layer.kind == NativeGraphLayerKind::VjCrossfade
+                && buffer.initial_bytes.len() == 48
+            {
+                // VJ crossfade uniform (vjCrossfadeNative.ts): time at slot 3
+                // animates glitch/liquid/strobe. Mix and transition are
+                // updated in place by the renderer sync.
+                write_f32_le(&mut buffer.initial_bytes, 3, time);
+                continue;
+            }
+            if graph_layer.kind == NativeGraphLayerKind::GhostFx {
+                if buffer.id.ends_with(":post-uniform") {
+                    continue;
+                }
+                if buffer.initial_bytes.len() == 112 {
+                    write_f32_le(&mut buffer.initial_bytes, 2, time);
+                    write_f32_le(&mut buffer.initial_bytes, 3, delta);
+                    let sensitivity = native_graph_param_f32(
+                        &graph_layer.params,
+                        "ghostfxSensitivity",
+                        0.0,
+                        4.0,
+                        1.0,
+                    );
+                    write_f32_le(&mut buffer.initial_bytes, 4, smooth.bass * sensitivity);
+                    write_f32_le(&mut buffer.initial_bytes, 5, smooth.mid * sensitivity);
+                    write_f32_le(&mut buffer.initial_bytes, 6, smooth.treble * sensitivity);
+                    write_f32_le(&mut buffer.initial_bytes, 7, smooth.bass);
+                    write_f32_le(&mut buffer.initial_bytes, 8, smooth.mid);
+                    write_f32_le(&mut buffer.initial_bytes, 9, smooth.treble);
+                    write_f32_le(&mut buffer.initial_bytes, 10, smooth.energy);
+                    write_f32_le(&mut buffer.initial_bytes, 11, self.audio1[2]);
+                    write_f32_le(&mut buffer.initial_bytes, 12, smooth.beat_env);
+                    write_f32_le(&mut buffer.initial_bytes, 13, smooth.energy);
+                    let hue_speed = native_graph_param_f32(
+                        &graph_layer.params,
+                        "ghostfxHueDriftSpeed",
+                        -8.0,
+                        8.0,
+                        0.08,
+                    );
+                    write_f32_le(
+                        &mut buffer.initial_bytes,
+                        14,
+                        (time * hue_speed).rem_euclid(1.0),
+                    );
+                } else if buffer.initial_bytes.len() == 96 {
+                    write_f32_le(&mut buffer.initial_bytes, 4, time);
+                    write_f32_le(&mut buffer.initial_bytes, 5, delta);
+                    write_f32_le(&mut buffer.initial_bytes, 6, self.audio0[1]);
+                    write_f32_le(&mut buffer.initial_bytes, 7, self.audio0[2]);
+                    write_f32_le(&mut buffer.initial_bytes, 8, self.audio0[3]);
+                    write_f32_le(&mut buffer.initial_bytes, 9, self.audio0[0]);
+                    write_f32_le(&mut buffer.initial_bytes, 10, self.audio1[2]);
+                    write_f32_le(&mut buffer.initial_bytes, 11, self.audio1[1]);
+                    let hue_speed = native_graph_param_f32(
+                        &graph_layer.params,
+                        "ghostfxHueDriftSpeed",
+                        -8.0,
+                        8.0,
+                        0.08,
+                    );
+                    write_f32_le(
+                        &mut buffer.initial_bytes,
+                        12,
+                        (time * hue_speed).rem_euclid(1.0),
+                    );
+                    write_u32_le(&mut buffer.initial_bytes, 18, 1);
+                } else if buffer.initial_bytes.len() == 128 {
+                    // GhostFX Liquid uniform (see liquid.wgsl.ts): live audio
+                    // + params refresh, matching the TS pack offsets exactly.
+                    let params = &graph_layer.params;
+                    let sensitivity =
+                        native_graph_param_f32(params, "ghostfxSensitivity", 0.25, 4.0, 1.4);
+                    let hue_speed =
+                        native_graph_param_f32(params, "ghostfxHueDriftSpeed", 0.0, 2.0, 0.15);
+                    write_f32_le(&mut buffer.initial_bytes, 4, time);
+                    write_f32_le(&mut buffer.initial_bytes, 5, delta.min(1.0 / 15.0));
+                    write_f32_le(&mut buffer.initial_bytes, 6, smooth.bass * sensitivity);
+                    write_f32_le(&mut buffer.initial_bytes, 7, smooth.mid * sensitivity);
+                    write_f32_le(&mut buffer.initial_bytes, 8, smooth.treble * sensitivity);
+                    write_f32_le(&mut buffer.initial_bytes, 9, smooth.energy * sensitivity);
+                    write_f32_le(&mut buffer.initial_bytes, 10, self.audio1[2]);
+                    write_f32_le(&mut buffer.initial_bytes, 11, smooth.beat_env);
+                    write_f32_le(
+                        &mut buffer.initial_bytes,
+                        12,
+                        (time * hue_speed).rem_euclid(1.0),
+                    );
+                    write_f32_le(
+                        &mut buffer.initial_bytes,
+                        13,
+                        native_graph_param_f32(params, "ghostfxExposure", -1.0, 1.0, 0.1),
+                    );
+                    write_f32_le(
+                        &mut buffer.initial_bytes,
+                        14,
+                        native_graph_param_f32(params, "ghostfxLiquidSplatForce", 0.2, 3.0, 1.0),
+                    );
+                    write_f32_le(
+                        &mut buffer.initial_bytes,
+                        15,
+                        native_graph_param_f32(params, "ghostfxLiquidSplatRadius", 0.01, 0.2, 0.08),
+                    );
+                    write_f32_le(
+                        &mut buffer.initial_bytes,
+                        16,
+                        native_graph_param_f32(params, "ghostfxLiquidDyeDecay", 0.985, 1.0, 0.995),
+                    );
+                    write_f32_le(
+                        &mut buffer.initial_bytes,
+                        17,
+                        native_graph_param_f32(params, "ghostfxLiquidVelDecay", 0.95, 1.0, 0.996),
+                    );
+                    if let Some(count) = liquid_splat_count {
+                        write_u32_le(&mut buffer.initial_bytes, 18, count);
+                    }
+                    write_f32_le(
+                        &mut buffer.initial_bytes,
+                        19,
+                        native_graph_param_f32(params, "ghostfxLiquidVorticity", 0.0, 3.0, 1.3),
+                    );
+                    write_f32_le(
+                        &mut buffer.initial_bytes,
+                        20,
+                        native_graph_param_f32(params, "ghostfxLiquidGloss", 0.0, 1.0, 0.7),
+                    );
+                    write_f32_le(
+                        &mut buffer.initial_bytes,
+                        21,
+                        native_graph_param_f32(params, "ghostfxAmbient", 0.0, 1.0, 0.3),
+                    );
+                    write_f32_le(
+                        &mut buffer.initial_bytes,
+                        22,
+                        native_graph_param_f32(params, "ghostfxLiquidDepth", 0.02, 1.0, 0.35),
+                    );
+                    write_f32_le(
+                        &mut buffer.initial_bytes,
+                        23,
+                        native_graph_param_f32(params, "ghostfxLiquidBubbles", 0.0, 2.0, 1.0),
+                    );
+                    let azimuth =
+                        native_graph_param_f32(params, "ghostfxLightAzimuth", 0.0, 360.0, 35.0)
+                            .to_radians();
+                    let elevation =
+                        native_graph_param_f32(params, "ghostfxLightElevation", -90.0, 90.0, 55.0)
+                            .to_radians();
+                    write_f32_le(
+                        &mut buffer.initial_bytes,
+                        24,
+                        elevation.cos() * azimuth.cos(),
+                    );
+                    write_f32_le(
+                        &mut buffer.initial_bytes,
+                        25,
+                        elevation.cos() * azimuth.sin(),
+                    );
+                    write_f32_le(&mut buffer.initial_bytes, 26, elevation.sin().max(0.08));
+                    write_f32_le(
+                        &mut buffer.initial_bytes,
+                        27,
+                        native_graph_param_f32(params, "ghostfxLightStrength", 0.0, 2.0, 0.9),
+                    );
+                }
+            } else if buffer.initial_bytes.len() >= 16 {
+                write_f32_le(&mut buffer.initial_bytes, 2, time);
+                write_f32_le(&mut buffer.initial_bytes, 3, delta);
+            }
+        }
+        if graph_layer.kind == NativeGraphLayerKind::GhostFx && liquid_splat_count.is_none() {
+            // Non-liquid GhostFX scenes keep the original single animated
+            // splat driver (drift/ribbons use it as an accent input).
+            for buffer in &mut job.buffers {
+                if !buffer.id.ends_with(":splats") || buffer.initial_bytes.len() < 32 {
+                    continue;
+                }
+                let energy = smooth.energy.clamp(0.0, 1.0);
+                let phase = time * (0.7 + smooth.bass * 1.5);
+                write_f32_le(&mut buffer.initial_bytes, 0, 0.5 + phase.sin() * 0.28);
+                write_f32_le(&mut buffer.initial_bytes, 1, 0.5 + phase.cos() * 0.24);
+                write_f32_le(
+                    &mut buffer.initial_bytes,
+                    2,
+                    phase.cos() * (0.15 + energy * 0.5),
+                );
+                write_f32_le(
+                    &mut buffer.initial_bytes,
+                    3,
+                    -phase.sin() * (0.15 + energy * 0.5),
+                );
+                write_f32_le(&mut buffer.initial_bytes, 4, 0.25 + smooth.treble * 0.75);
+                write_f32_le(&mut buffer.initial_bytes, 5, 0.35 + smooth.mid * 0.65);
+                write_f32_le(&mut buffer.initial_bytes, 6, 0.8 + smooth.bass * 0.2);
+                write_f32_le(&mut buffer.initial_bytes, 7, 0.025 + energy * 0.04);
+            }
+        }
+        for render_plan in &mut job.render_plans {
+            if let NativeComputeGraphRenderTarget::SourceFrame { seq, .. } = &mut render_plan.target
+            {
+                *seq = frame_index;
+            }
+        }
+        job
     }
 
     fn native_graph_effect_frame_job(&self, template: &NativeGraphFrameJob) -> NativeGraphFrameJob {
@@ -6689,6 +7394,10 @@ impl App {
         };
         let frame_index = self.native_frame_index();
         let gpu_layers = self.gpu_layer_data();
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        let deck_monitor_a = self.deck_monitor_layer_data(0);
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        let deck_monitor_b = self.deck_monitor_layer_data(1);
         let source_preview_pixels = if self.source_preview_dirty {
             Some(self.source_preview_pixel_data())
         } else {
@@ -6745,6 +7454,29 @@ impl App {
             self.audio2,
             present_surface,
         );
+        // Deck confidence monitors ride the same frame: two small composite
+        // passes over the bank-tagged layers, after the program render so
+        // every source frame they sample is already current.
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        if render_result.is_ok() && (!deck_monitor_a.is_empty() || !deck_monitor_b.is_empty()) {
+            let monitor_width: u32 = 480;
+            let monitor_height: u32 = ((u64::from(monitor_width)
+                * u64::from(renderer.config.height))
+                / u64::from(renderer.config.width.max(1)))
+            .clamp(16, 1024) as u32;
+            renderer.render_deck_monitors(
+                self.command_phase,
+                render_time,
+                frame_index,
+                &deck_monitor_a,
+                &deck_monitor_b,
+                self.audio0,
+                self.audio1,
+                self.audio2,
+                monitor_width,
+                monitor_height,
+            );
+        }
         if render_result.is_ok() && native_graph_job_count > 0 {
             self.stats.compute_graph_runs = self
                 .stats
@@ -7534,17 +8266,41 @@ impl App {
                 };
                 let source_slot = if is_array {
                     None
-                } else {
+                } else if let Some(layer_id) = resource_id.strip_prefix("shader-frame:") {
+                    // Binds the layer's core-rendered shader frame explicitly,
+                    // independent of what the layer currently DISPLAYS.
                     Some(
-                        self.source_frame_slots
-                            .get(&resource_id)
-                            .copied()
-                            .ok_or_else(|| {
-                                format!(
-                                    "compute_graph {context} `{shader_id}` binding {binding_number} source-frame `{resource_id}` has no uploaded/generated frame"
-                                )
-                            })?,
+                        self.scene_layers
+                            .get(layer_id)
+                            .and_then(|layer| layer.shader_frame_slot)
+                            .unwrap_or_else(|| self.ensure_empty_source_frame_slot()),
                     )
+                } else if let Some(layer_id) = resource_id.strip_prefix("layer-frame:") {
+                    // `layer-frame:<layer_id>` binds whatever frame that scene
+                    // layer currently displays (video slot, rendered shader
+                    // slot, …) without the sender knowing internal source ids.
+                    // Used by the VJ crossfade to sample bank composites.
+                    Some(
+                        self.scene_layers
+                            .get(layer_id)
+                            .and_then(|layer| layer.frame_slot)
+                            .unwrap_or_else(|| self.ensure_empty_source_frame_slot()),
+                    )
+                } else {
+                    Some(match self.source_frame_slots.get(&resource_id).copied() {
+                        Some(slot) => slot,
+                        // Assign instead of failing: a missing slot here is
+                        // either a frame produced later in this same job or a
+                        // source that has not uploaded yet. Failing kills the
+                        // whole template install (frozen layer, no retry);
+                        // assigning binds the slot the frame will land in.
+                        None => {
+                            eprintln!(
+                                "[GhostRenderCore] compute_graph {context} `{shader_id}` binding {binding_number} source-frame `{resource_id}` has no frame yet; assigning a slot"
+                            );
+                            self.assign_source_frame_slot(&resource_id)
+                        }
+                    })
                 };
                 Ok(NativeComputeGraphBindingSpec {
                     binding: binding_number,
@@ -8218,6 +8974,20 @@ impl App {
         entry.opacity = number_at(command, &["opacity"])
             .unwrap_or(entry.opacity as f64)
             .clamp(0.0, 1.0) as f32;
+        // Deck confidence monitors: VJ bank layers composite at opacity 0 in
+        // the program mix (the crossfade pass samples their frames), but the
+        // monitor passes re-render them at their true pre-crossfader level.
+        if command_has_key(command, "deck_monitor_bank") {
+            entry.deck_monitor_bank = string_at(command, &["deck_monitor_bank"])
+                .and_then(|bank| match bank.as_str() {
+                    "a" | "A" => Some(0u8),
+                    "b" | "B" => Some(1u8),
+                    _ => None,
+                });
+            entry.deck_monitor_opacity = number_at(command, &["deck_monitor_opacity"])
+                .unwrap_or(1.0)
+                .clamp(0.0, 1.0) as f32;
+        }
         if let Some(blend_mode) = string_at(command, &["blend_mode"]) {
             entry.blend_code = blend_mode_code(&blend_mode);
         }
@@ -8242,11 +9012,66 @@ impl App {
         }
         if let Some(shape) = vec4_path_at(command, &["shape"]) {
             entry.shape = [
-                shape[0].clamp(0.0, 2.0),
+                shape[0].clamp(0.0, 6.0),
                 shape[1].clamp(0.0, 1.0),
                 shape[2].clamp(-std::f32::consts::TAU, std::f32::consts::TAU),
                 shape[3].clamp(0.0001, 8.0),
             ];
+        }
+        if let Some(shape2) = vec4_path_at(command, &["shape2"]) {
+            // Primitive shapes: [radiusX, radiusY, sides, innerRadius].
+            // Custom polygons: bounding box [minX, minY, sizeX, sizeY].
+            let custom = entry.shape[0] >= 5.5;
+            entry.shape2 = if custom {
+                [
+                    shape2[0].clamp(0.0, 1.0),
+                    shape2[1].clamp(0.0, 1.0),
+                    shape2[2].clamp(0.0001, 1.0),
+                    shape2[3].clamp(0.0001, 1.0),
+                ]
+            } else {
+                [
+                    shape2[0].clamp(0.01, 4.0),
+                    shape2[1].clamp(0.01, 4.0),
+                    shape2[2].clamp(3.0, 12.0),
+                    shape2[3].clamp(0.05, 1.0),
+                ]
+            };
+        }
+        if let Some(shape_meta) = vec4_path_at(command, &["shape_meta"]) {
+            entry.shape_meta = [
+                shape_meta[0].clamp(0.0, 64.0),
+                shape_meta[1].clamp(0.0, 1.0),
+                shape_meta[2].clamp(0.0, 2.0),
+                shape_meta[3].clamp(0.0, 3.0),
+            ];
+        }
+        if command_has_key(command, "shape_points") {
+            entry.shape_pts.clear();
+            if let Some(points) = command.get("shape_points").and_then(Value::as_array) {
+                for point in points.iter().take(32) {
+                    let Some(values) = point.as_array() else {
+                        continue;
+                    };
+                    if values.len() < 4 {
+                        continue;
+                    }
+                    let (Some(x0), Some(y0), Some(x1), Some(y1)) = (
+                        values[0].as_f64(),
+                        values[1].as_f64(),
+                        values[2].as_f64(),
+                        values[3].as_f64(),
+                    ) else {
+                        continue;
+                    };
+                    entry.shape_pts.push([
+                        (x0 as f32).clamp(-1.0, 2.0),
+                        (y0 as f32).clamp(-1.0, 2.0),
+                        (x1 as f32).clamp(-1.0, 2.0),
+                        (y1 as f32).clamp(-1.0, 2.0),
+                    ]);
+                }
+            }
         }
         if let Some(mask_info) = vec4_path_at(command, &["mask_info"]) {
             entry.mask_info = [
@@ -8480,12 +9305,37 @@ impl App {
             .and_then(|config| match self.compute_graph_frame_job(config) {
                 Ok(job) => Some(job),
                 Err(err) => {
+                    // Loud on stderr: the broker forwards this to the app log,
+                    // otherwise a bad template silently freezes the layer.
+                    eprintln!(
+                        "[GhostRenderCore] native graph effect template on layer `{layer_id}` failed: {err}"
+                    );
                     self.last_shader_error = Some(format!(
                         "native graph effect template on layer `{layer_id}` failed: {err}"
                     ));
                     None
                 }
             });
+        // Re-arm the template's first-run clear when its IDENTITY changes
+        // (scene switch produces different buffer id prefixes). Param tweaks
+        // reuse the same ids and must NOT reset accumulated sim state.
+        if let Some(new_template) = effect_job_template.as_ref() {
+            let new_key = new_template
+                .buffers
+                .first()
+                .map(|buffer| buffer.id.clone())
+                .unwrap_or_default();
+            let old_key = self
+                .native_graph_layers
+                .get(&layer_id)
+                .and_then(|layer| layer.effect_job_template.as_ref())
+                .and_then(|template| template.buffers.first())
+                .map(|buffer| buffer.id.clone())
+                .unwrap_or_default();
+            if new_key != old_key {
+                self.native_plugin_templates_initialized.remove(&layer_id);
+            }
+        }
         let params = command.get("params").cloned().unwrap_or(Value::Null);
         if !kind.is_supported() {
             self.native_graph_layers.remove(&layer_id);
@@ -8639,6 +9489,44 @@ impl App {
         entry.frame_slot = self.source_frame_slots.get(&composite_source_id).copied();
     }
 
+    fn apply_update_native_graph_buffer(&mut self, command: &Value) -> Result<(), String> {
+        let layer_id = string_at(command, &["layer_id"])
+            .ok_or_else(|| "native graph buffer update requires layer_id".to_string())?;
+        let buffer_id = string_at(command, &["buffer_id"])
+            .ok_or_else(|| "native graph buffer update requires buffer_id".to_string())?;
+        let initial_b64 = string_at(command, &["initial_b64"])
+            .ok_or_else(|| "native graph buffer update requires initial_b64".to_string())?;
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(initial_b64.as_bytes())
+            .map_err(|err| {
+                format!("native graph buffer `{buffer_id}` base64 decode failed: {err}")
+            })?;
+        let layer = self
+            .native_graph_layers
+            .get_mut(&layer_id)
+            .ok_or_else(|| format!("native graph layer `{layer_id}` is not installed"))?;
+        let template = layer
+            .effect_job_template
+            .as_mut()
+            .ok_or_else(|| format!("native graph layer `{layer_id}` has no graph template"))?;
+        let buffer = template
+            .buffers
+            .iter_mut()
+            .find(|buffer| buffer.id == buffer_id)
+            .ok_or_else(|| {
+                format!("native graph layer `{layer_id}` has no buffer `{buffer_id}`")
+            })?;
+        if bytes.len() as u64 != buffer.byte_length {
+            return Err(format!(
+                "native graph buffer `{buffer_id}` expected {} bytes, received {}",
+                buffer.byte_length,
+                bytes.len()
+            ));
+        }
+        buffer.initial_bytes = bytes;
+        Ok(())
+    }
+
     fn apply_native_point_cloud(&mut self, command: &Value) -> Result<(), String> {
         let layer_id = string_at(command, &["layer_id"])
             .ok_or_else(|| "native point cloud upload requires layer_id".to_string())?;
@@ -8696,6 +9584,8 @@ impl App {
     fn apply_remove_native_graph_layer(&mut self, command: &Value) {
         if let Some(layer_id) = string_at(command, &["layer_id"]) {
             self.native_graph_layers.remove(&layer_id);
+            self.native_plugin_liquid_states.remove(&layer_id);
+            self.native_plugin_templates_initialized.remove(&layer_id);
         }
     }
 
@@ -8915,7 +9805,18 @@ impl App {
         } else {
             0.0
         };
-        entry.frame_slot = rendered_frame_slot;
+        entry.shader_frame_slot = rendered_frame_slot;
+        // Claim the display slot only when no other source owns it — a bound
+        // effect-pass output (or any generated/media source with frames)
+        // must keep displaying while the shader renders underneath as input.
+        let display_claimed = entry
+            .source_id
+            .as_deref()
+            .filter(|source_id| *source_id != EMPTY_SOURCE_FRAME_ID)
+            .is_some_and(|source_id| self.source_frame_slots.contains_key(source_id));
+        if !display_claimed {
+            entry.frame_slot = rendered_frame_slot;
+        }
         entry.preview_slot = None;
         entry.native_params.copy_from_slice(&params[..8]);
         if entry.color[3] <= 0.0 {
@@ -8998,7 +9899,14 @@ impl App {
         // starting, or seeking, but the compositor never exposes a synthetic
         // placeholder between real frames. Retain the requested binding until
         // the decoder uploads its first frame, then commit it atomically.
-        if effective_source_type == "video" && frame_slot.is_none() {
+        // A slot can exist before any pixel does (sessions allocate their slot
+        // at spawn). Displaying such a slot shows the zero-filled video
+        // texture — the "green first frame". Only commit when a REAL frame
+        // has been delivered for this source.
+        let has_delivered_frame = source_id
+            .as_deref()
+            .is_some_and(|id| self.source_frames.contains_key(id));
+        if effective_source_type == "video" && (frame_slot.is_none() || !has_delivered_frame) {
             if let Some(source_id) = source_id {
                 self.pending_media_bindings.insert(
                     layer_id,
@@ -9010,7 +9918,13 @@ impl App {
             }
             return;
         }
-        if effective_source_type != "shader" {
+        // An effect-pass output displays ON the layer while the layer's bound
+        // FS/ISF shader keeps rendering underneath as the chain's INPUT — the
+        // shader binding must survive this display bind.
+        let effect_pass_display = uri_for_decode
+            .as_deref()
+            .is_some_and(|uri| uri.starts_with("native-effect-pass://"));
+        if effective_source_type != "shader" && !effect_pass_display {
             self.isf_layer_bindings.remove(&layer_id);
         }
         let new_source_id = source_id.clone();
@@ -9024,8 +9938,10 @@ impl App {
         entry.preview_slot = preview_slot;
         entry.frame_slot = frame_slot;
         entry.source_rect = source_rect;
-        entry.shader_rendered = false;
-        if effective_source_type != "shader" {
+        if !effect_pass_display {
+            entry.shader_rendered = false;
+        }
+        if effective_source_type != "shader" && !effect_pass_display {
             entry.shader_id = None;
         }
         if effective_source_type != "none" && entry.color[3] <= 0.0 {
@@ -9356,8 +10272,21 @@ impl App {
     }
 
     fn set_stage3d_scene(&mut self, params: &Value) -> Result<Value, String> {
+        // A null scene is an explicit CLEAR — the stage environment must
+        // never linger in the composite after the 3D view closes.
+        let scene_value = params
+            .get("scene")
+            .or_else(|| params.get("stage3d"))
+            .unwrap_or(params);
+        if scene_value.is_null() {
+            eprintln!("[ghost-core] stage3d scene CLEARED");
+            self.stage3d_scene = None;
+            self.stage3d_scene_summary = NativeSceneBridgeSummary::empty("stage3d");
+            return Ok(json!(self.stage3d_scene_summary.clone()));
+        }
         let scene = scene_payload(params, "stage3d")?;
         let summary = summarize_stage3d_scene(scene);
+        eprintln!("[ghost-core] stage3d scene SET");
         self.stage3d_scene = Some(scene.clone());
         self.stage3d_scene_summary = summary.clone();
         Ok(json!(summary))
@@ -9468,8 +10397,19 @@ impl App {
     }
 
     fn set_projection_sim_scene(&mut self, params: &Value) -> Result<Value, String> {
+        let scene_value = params
+            .get("scene")
+            .or_else(|| params.get("projection_sim"))
+            .unwrap_or(params);
+        if scene_value.is_null() {
+            eprintln!("[ghost-core] projection-sim scene CLEARED");
+            self.projection_sim_scene = None;
+            self.projection_sim_scene_summary = NativeSceneBridgeSummary::empty("projection_sim");
+            return Ok(json!(self.projection_sim_scene_summary.clone()));
+        }
         let scene = scene_payload(params, "projection_sim")?;
         let summary = summarize_projection_sim_scene(scene);
+        eprintln!("[ghost-core] projection-sim scene SET");
         self.projection_sim_scene = Some(scene.clone());
         self.projection_sim_scene_summary = summary.clone();
         Ok(json!(summary))
@@ -10024,17 +10964,62 @@ impl App {
         }
         self.native_video_streams.remove(source_id);
 
+        // Arming under `library:<clip>:g<N>` supersedes every older
+        // generation of the same clip. Without this reap, each trigger's
+        // replenish stacked another live decoder (`g2`, `g3`, …) — observed
+        // as frame rates collapsing the longer a VJ set ran.
+        if let Some(base) = source_id
+            .strip_prefix("library:")
+            .and_then(|rest| rest.rsplit_once(":g").map(|(base, _)| base.to_string()))
+        {
+            let prefix = format!("library:{base}:g");
+            let stale = self
+                .native_video_streams
+                .keys()
+                .filter(|key| key.starts_with(&prefix) && key.as_str() != source_id)
+                .cloned()
+                .collect::<Vec<_>>();
+            for key in stale {
+                self.native_video_streams.remove(&key);
+                self.media_sources.remove(&key);
+                self.source_frame_slots.remove(&key);
+                self.source_frames.remove(&key);
+            }
+        }
+        // Hard cap on the armed pool: beyond it, paused decode sessions cost
+        // more in pump time than a cold start would. Evict the least recently
+        // touched armed session first.
+        const NATIVE_LIBRARY_SESSION_CAP: usize = 6;
+        if source_id.starts_with("library:") {
+            let mut armed = self
+                .native_video_streams
+                .iter()
+                .filter(|(key, session)| key.starts_with("library:") && !session.playing)
+                .map(|(key, session)| (key.clone(), session.last_used_frame))
+                .collect::<Vec<_>>();
+            if armed.len() >= NATIVE_LIBRARY_SESSION_CAP {
+                armed.sort_by_key(|(_, last_used)| *last_used);
+                for (key, _) in armed.iter().take(armed.len() + 1 - NATIVE_LIBRARY_SESSION_CAP) {
+                    self.native_video_streams.remove(key);
+                    self.media_sources.remove(key);
+                    self.source_frame_slots.remove(key);
+                    self.source_frames.remove(key);
+                }
+            }
+        }
+
         // Claim a compatible armed session (for example one warmed from the
         // media library) instead of spawning ffmpeg on the trigger path.
         if let Some(warm_source_id) = self
             .native_video_streams
             .iter()
-            .find(|(candidate_id, candidate)| {
+            .filter(|(candidate_id, candidate)| {
                 candidate_id.starts_with("library:")
                     && !candidate.playing
                     && candidate.signature == signature
-                    && candidate.seek_generation == state.seek_generation
+                    && candidate.stream.buffered_frames() > 0
             })
+            .max_by_key(|(_, candidate)| candidate.stream.buffered_frames())
             .map(|(candidate_id, _)| candidate_id.clone())
             && let Some(mut warm) = self.native_video_streams.remove(&warm_source_id)
         {
@@ -11021,21 +12006,11 @@ impl App {
             return slot;
         }
         if let Some(renderer) = self.renderer.as_ref() {
+            // The empty sentinel frame must be fully transparent: shader
+            // layers bind it as their input, and any visible fill (the old
+            // debug checkerboard) bleeds into the composite as ghost washes.
             let size = renderer.source_frame_size;
-            let mut pixels = vec![0u8; size.saturating_mul(size).saturating_mul(4)];
-            let cell = (size / 8).max(1);
-            for y in 0..size {
-                for x in 0..size {
-                    let offset = (y * size + x) * 4;
-                    let checker = ((x / cell) + (y / cell)).is_multiple_of(2);
-                    let color = if checker {
-                        [180, 100, 220, 255]
-                    } else {
-                        [60, 160, 200, 255]
-                    };
-                    pixels[offset..offset + 4].copy_from_slice(&color);
-                }
-            }
+            let pixels = vec![0u8; size.saturating_mul(size).saturating_mul(4)];
             renderer.write_source_frame(slot, &pixels);
         }
         self.source_frames
@@ -11130,6 +12105,28 @@ impl App {
             .into_iter()
             .take(MAX_SCENE_LAYERS)
             .map(SceneLayer::gpu)
+            .collect()
+    }
+
+    /// Layer list for one deck confidence monitor: only the layers tagged for
+    /// this bank, rendered at their true pre-crossfader opacity. Samples the
+    /// same source frames the program mix uses — no extra source render or
+    /// decode, just one more tiny composite pass.
+    fn deck_monitor_layer_data(&self, bank: u8) -> Vec<LayerGpu> {
+        let mut layers: Vec<&SceneLayer> = self
+            .scene_layers
+            .values()
+            .filter(|layer| layer.deck_monitor_bank == Some(bank))
+            .collect();
+        layers.sort_by(|a, b| b.z_index.cmp(&a.z_index).then_with(|| a.id.cmp(&b.id)));
+        layers
+            .into_iter()
+            .take(MAX_SCENE_LAYERS)
+            .map(|layer| {
+                let mut monitor_layer = layer.clone();
+                monitor_layer.opacity = layer.deck_monitor_opacity;
+                monitor_layer.gpu()
+            })
             .collect()
     }
 
@@ -11963,6 +12960,8 @@ impl RenderState {
             surface_copy_dst_supported,
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             output_export,
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            deck_monitor_targets: None,
             snapshot_texture,
             snapshot_view,
             last_frame_metrics: None,
@@ -12345,6 +13344,159 @@ impl RenderState {
         }
     }
 
+    /// Lazily (re)create the two deck-monitor targets. Returns false when the
+    /// platform cannot export shared textures (monitor presentation is then
+    /// simply unavailable — never an error path for the main render).
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    fn ensure_deck_monitor_targets(&mut self, width: u32, height: u32) -> bool {
+        let width = width.clamp(16, 1024);
+        let height = height.clamp(16, 1024);
+        if let Some(targets) = self.deck_monitor_targets.as_ref() {
+            if targets[0].export.width == width && targets[0].export.height == height {
+                return true;
+            }
+        }
+        let labels: [&'static str; 2] = [
+            "Ghost Deck Monitor A Render Target",
+            "Ghost Deck Monitor B Render Target",
+        ];
+        let mut created: Vec<DeckMonitorTarget> = Vec::with_capacity(2);
+        for label in labels {
+            let (render_texture, render_view) = Self::create_offscreen_target(
+                &self.device,
+                width,
+                height,
+                self.config.format,
+                label,
+            );
+            let export = match Self::create_output_export_target(
+                &self.device,
+                width,
+                height,
+                native_output_export_format(self.config.format),
+            ) {
+                Ok(export) => export,
+                Err(err) => {
+                    eprintln!("[ghost-core] deck monitor export target failed: {err}");
+                    self.deck_monitor_targets = None;
+                    return false;
+                }
+            };
+            created.push(DeckMonitorTarget {
+                _render_texture: render_texture,
+                render_view,
+                export,
+            });
+        }
+        let bank_b = created.pop().expect("deck monitor target B");
+        let bank_a = created.pop().expect("deck monitor target A");
+        self.deck_monitor_targets = Some([bank_a, bank_b]);
+        true
+    }
+
+    /// Render both deck confidence monitors. Each is one small fullscreen
+    /// composite pass over the bank's tagged layers — it samples the same
+    /// source frames the program mix uses (no extra source render, decode,
+    /// or CPU readback) and blits into the bank's shared-texture export.
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[allow(clippy::too_many_arguments)]
+    fn render_deck_monitors(
+        &mut self,
+        command_phase: f32,
+        time_seconds: Option<f32>,
+        frame_count: u64,
+        bank_a: &[LayerGpu],
+        bank_b: &[LayerGpu],
+        audio0: [f32; 4],
+        audio1: [f32; 4],
+        audio2: [f32; 4],
+        width: u32,
+        height: u32,
+    ) -> bool {
+        if !self.ensure_deck_monitor_targets(width, height) {
+            return false;
+        }
+        for (index, layers) in [bank_a, bank_b].into_iter().enumerate() {
+            self.write_frame_inputs(
+                command_phase,
+                layers.len() as u32,
+                time_seconds,
+                frame_count,
+                layers,
+                None,
+                audio0,
+                audio1,
+                audio2,
+            );
+            let mut encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Ghost Deck Monitor Encoder"),
+                });
+            {
+                let Some(targets) = self.deck_monitor_targets.as_ref() else {
+                    return false;
+                };
+                let target = &targets[index];
+                self.draw_fullscreen_to_view(
+                    &mut encoder,
+                    &target.render_view,
+                    "Ghost Deck Monitor Pass",
+                    None,
+                );
+                target.export.blitter.copy(
+                    &self.device,
+                    &mut encoder,
+                    &target.render_view,
+                    &target.export.view,
+                );
+            }
+            self.queue.submit(Some(encoder.finish()));
+        }
+        if let Some(targets) = self.deck_monitor_targets.as_mut() {
+            for target in targets.iter_mut() {
+                target.export.frame = target.export.frame.saturating_add(1);
+            }
+        }
+        true
+    }
+
+    /// Shared-texture metadata for both deck monitors — same shape the
+    /// output export uses so the electron presenter pump can reuse its
+    /// import path.
+    fn deck_monitor_metadata(&self) -> Value {
+        #[cfg(target_os = "macos")]
+        {
+            if let Some(targets) = self.deck_monitor_targets.as_ref() {
+                let bank = |target: &DeckMonitorTarget, name: &str| {
+                    json!({
+                        "bank": name,
+                        "handle": target.export.surface.id().to_string(),
+                        "handle_encoding": "integer",
+                        "width": target.export.width,
+                        "height": target.export.height,
+                        "frame": target.export.frame,
+                    })
+                };
+                return json!({
+                    "available": true,
+                    "platform": "iosurface",
+                    "banks": [bank(&targets[0], "a"), bank(&targets[1], "b")],
+                });
+            }
+        }
+        #[cfg(target_os = "windows")]
+        {
+            if self.deck_monitor_targets.is_some() {
+                return json!({
+                    "available": false,
+                    "reason": "deck monitor shared-texture presentation is not yet implemented on DXGI",
+                });
+            }
+        }
+        json!({ "available": false })
+    }
+
     fn poll_gpu_timing(&mut self) {
         let _ = self.device.poll(wgpu::PollType::Poll);
         if let Some(gpu_timing) = self.gpu_timing.as_mut() {
@@ -12696,7 +13848,9 @@ impl RenderState {
         let error_future = error_scope.pop();
         let _ = self.device.poll(wgpu::PollType::Poll);
         if let Some(err) = pollster::block_on(error_future) {
-            return Err(err.to_string());
+            // Name the pipeline: "validation error" without the cache key made
+            // binding-layout mismatches undebuggable from the app logs.
+            return Err(format!("native compute pipeline `{cache_key}`: {err}"));
         }
         self.native_compute_pipelines.insert(
             cache_key.to_string(),
@@ -19099,11 +20253,11 @@ fn source_type_color(source_type: &str, id: &str) -> [f32; 4] {
         };
     }
     match source_type {
-        "shader" => [0.45, 0.92, 1.0, 0.74],
-        "video" => [0.28, 1.0, 0.55, 0.70],
-        "image" => [1.0, 0.62, 0.26, 0.70],
+        "shader" => [0.45, 0.92, 1.0, 1.0],
+        "video" => [0.28, 1.0, 0.55, 1.0],
+        "image" => [1.0, 0.62, 0.26, 1.0],
         "none" => [0.3, 0.34, 0.42, 0.35],
-        _ => stable_layer_color(id, 0.66),
+        _ => stable_layer_color(id, 1.0),
     }
 }
 
@@ -20498,6 +21652,24 @@ fn present_mode_label(mode: wgpu::PresentMode) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn compositor_allows_fully_opaque_layers() {
+        assert!(
+            STAGE3D_MESH_WGSL.contains("clamp(in.color.a * opacity, 0.0, 1.0)"),
+            "solid native layers must be able to reach full opacity"
+        );
+        assert!(
+            STAGE3D_MESH_WGSL.contains("clamp(in.color.a * opacity * tex.a, 0.0, 1.0)"),
+            "textured native layers must be able to reach full opacity"
+        );
+        assert!(
+            !STAGE3D_MESH_WGSL.contains("clamp(in.color.a * opacity, 0.0, 0.96)")
+                && !STAGE3D_MESH_WGSL
+                    .contains("clamp(in.color.a * opacity * tex.a, 0.0, 0.96)"),
+            "the old 96% opacity ceiling must not return"
+        );
+    }
 
     #[test]
     fn ghost_audio_uniform_layout_documents_the_native_slots() {

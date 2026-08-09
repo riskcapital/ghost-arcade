@@ -22,8 +22,17 @@
 import { writable, get, derived } from 'svelte/store';
 import { midiRouter } from '../midi/midiRouter';
 import { generateUUID } from '../utils/uuid';
+import {
+  createVjOscTemplateBindings,
+  inferOscBindingMode,
+  resolveOscBindingValue,
+  type OscBindingSpec,
+} from './oscBindings';
+import { normalizeControlPath, validateControlPath } from '../control/controlPaths';
 
-export interface OscBinding {
+const OSC_RUNTIME_KEY = 'ghost-arcade:osc-runtime';
+
+export interface OscBinding extends OscBindingSpec {
   id: string;
   /** OSC address pattern that triggers this binding. Exact match for
    *  MVP (e.g. '/layer/1/opacity'); pattern matching (wildcards) is a
@@ -43,8 +52,6 @@ export interface OscBinding {
   /** When true, invert the rescaled value (1 - x). Useful for
    *  knobs that map "up = less" semantically. */
   invert: boolean;
-  /** Optional user label for the bindings table. */
-  label?: string;
 }
 
 export interface OscState {
@@ -74,10 +81,42 @@ function createOscStore() {
   const { subscribe, update, set } = writable<OscState>({ ...INITIAL_STATE });
 
   // The renderer-side IPC unsubscribers (closures returned by
-  // ghostOSC.onMessage / onStatus). We re-arm them on every enable
-  // toggle so the listener tree stays clean.
+  // ghostOSC.onMessage / onStatus). They remain attached for the app
+  // lifetime so restarting the UDP socket cannot lose status events.
   let messageUnsub: (() => void) | null = null;
   let statusUnsub: (() => void) | null = null;
+  let initialized = false;
+
+  function persistRuntime() {
+    if (typeof localStorage === 'undefined') return;
+    try {
+      const state = get({ subscribe });
+      localStorage.setItem(OSC_RUNTIME_KEY, JSON.stringify({
+        enabled: state.enabled,
+        port: state.port,
+      }));
+    } catch {
+      // Project persistence still carries the OSC configuration. A
+      // blocked localStorage implementation must not stop the socket.
+    }
+  }
+
+  function attachBridgeListeners(api: any) {
+    if (!messageUnsub) {
+      messageUnsub = api.onMessage((msgs: any[]) => {
+        const now = performance.now();
+        for (const m of msgs) {
+          update(s => ({ ...s, lastMessage: { address: m.address, args: m.args, from: m.from, receivedAt: now } }));
+          handleIncoming(m);
+        }
+      });
+    }
+    if (!statusUnsub) {
+      statusUnsub = api.onStatus((s: { listening: boolean; port: number; error: string | null }) => {
+        update(prev => ({ ...prev, listening: s.listening, port: s.port, lastError: s.error }));
+      });
+    }
+  }
 
   async function startListener(port: number) {
     const api = (window as any).ghostOSC;
@@ -86,34 +125,32 @@ function createOscStore() {
       update(s => ({ ...s, lastError: 'OSC requires the desktop app', listening: false }));
       return;
     }
-    // Wire incoming messages first so we don't miss anything between
-    // start and the listener registration.
-    if (messageUnsub) messageUnsub();
-    messageUnsub = api.onMessage((msgs: any[]) => {
-      const now = performance.now();
-      for (const m of msgs) {
-        // Stash the most recent message for the debug feed + learn.
-        update(s => ({ ...s, lastMessage: { address: m.address, args: m.args, from: m.from, receivedAt: now } }));
-        handleIncoming(m);
+    attachBridgeListeners(api);
+    try {
+      const result = await api.start({ port });
+      if (result?.ok) {
+        const status = await api.status();
+        update(s => ({
+          ...s,
+          listening: status?.listening === true,
+          port: status?.port ?? port,
+          lastError: status?.error ?? null,
+        }));
+      } else {
+        update(s => ({ ...s, listening: false, lastError: result?.error ?? 'unknown start error' }));
       }
-    });
-    if (statusUnsub) statusUnsub();
-    statusUnsub = api.onStatus((s: { listening: boolean; port: number; error: string | null }) => {
-      update(prev => ({ ...prev, listening: s.listening, port: s.port, lastError: s.error }));
-    });
-    const result = await api.start({ port });
-    if (result?.ok) {
-      update(s => ({ ...s, listening: true, port, lastError: null }));
-    } else {
-      update(s => ({ ...s, listening: false, lastError: result?.error ?? 'unknown start error' }));
+    } catch (error) {
+      update(s => ({
+        ...s,
+        listening: false,
+        lastError: error instanceof Error ? error.message : String(error),
+      }));
     }
   }
 
   async function stopListener() {
     const api = (window as any).ghostOSC;
     if (api) await api.stop();
-    if (messageUnsub) { messageUnsub(); messageUnsub = null; }
-    if (statusUnsub) { statusUnsub(); statusUnsub = null; }
     update(s => ({ ...s, listening: false }));
   }
 
@@ -139,11 +176,12 @@ function createOscStore() {
         id: generateUUID(),
         address: msg.address,
         argIndex: 0,
-        path: state.learnTarget.path,
+        path: normalizeControlPath(state.learnTarget.path),
         sourceMin: sMin,
         sourceMax: sMax,
         invert: false,
         label: state.learnTarget.label,
+        mode: inferOscBindingMode(state.learnTarget.path),
       };
       update(s => ({ ...s, bindings: [...s.bindings, binding], learnTarget: null }));
       console.log('[OSC] learned binding:', msg.address, '→', binding.path);
@@ -154,22 +192,52 @@ function createOscStore() {
     // could legitimately be bound to multiple params).
     for (const b of state.bindings) {
       if (b.address !== msg.address) continue;
-      const raw = msg.args[b.argIndex];
-      const num = typeof raw === 'number' ? raw : (raw === true ? 1 : raw === false ? 0 : NaN);
-      if (!isFinite(num)) continue;
-      const span = b.sourceMax - b.sourceMin || 1;
-      let v = (num - b.sourceMin) / span;
-      v = Math.max(0, Math.min(1, v));
-      if (b.invert) v = 1 - v;
-      midiRouter.dispatchPath(b.path, v);
+      const value = resolveOscBindingValue(b, msg.args);
+      if (value === null) continue;
+      midiRouter.dispatchPath(b.path, value);
     }
   }
 
   return {
     subscribe,
 
+    async initialize() {
+      if (initialized) return;
+      initialized = true;
+      const api = (window as any).ghostOSC;
+      if (!api) return;
+      attachBridgeListeners(api);
+
+      try {
+        const saved = JSON.parse(localStorage.getItem(OSC_RUNTIME_KEY) ?? 'null');
+        if (saved && typeof saved === 'object') {
+          update(s => ({
+            ...s,
+            enabled: typeof saved.enabled === 'boolean' ? saved.enabled : s.enabled,
+            port: Number.isInteger(saved.port) ? saved.port : s.port,
+          }));
+        }
+      } catch {
+        // Ignore malformed legacy runtime state.
+      }
+
+      const state = get({ subscribe });
+      const status = await api.status();
+      if (state.enabled && (!status?.listening || status.port !== state.port)) {
+        await startListener(state.port);
+      } else {
+        update(s => ({
+          ...s,
+          listening: status?.listening === true,
+          port: status?.port ?? s.port,
+          lastError: status?.error ?? null,
+        }));
+      }
+    },
+
     async setEnabled(enabled: boolean) {
       update(s => ({ ...s, enabled }));
+      persistRuntime();
       if (enabled) {
         const port = get({ subscribe }).port;
         await startListener(port);
@@ -179,12 +247,14 @@ function createOscStore() {
     },
 
     async setPort(port: number) {
-      update(s => ({ ...s, port }));
+      const validPort = Math.max(1, Math.min(65535, Math.round(port)));
+      update(s => ({ ...s, port: validPort }));
+      persistRuntime();
       const state = get({ subscribe });
       if (state.enabled) {
         // Restart on the new port.
         await stopListener();
-        await startListener(port);
+        await startListener(validPort);
       }
     },
 
@@ -192,16 +262,36 @@ function createOscStore() {
      *  binding for `targetPath`. Auto-exits on capture. Calling
      *  startLearn with a new target replaces any prior pending learn. */
     startLearn(targetPath: string, label?: string) {
-      update(s => ({ ...s, learnTarget: { path: targetPath, label } }));
+      const validation = validateControlPath(targetPath);
+      if (!validation.valid) {
+        update(s => ({ ...s, lastError: validation.reason }));
+        return false;
+      }
+      update(s => ({ ...s, learnTarget: { path: validation.normalized, label }, lastError: null }));
+      return true;
     },
     cancelLearn() {
       update(s => ({ ...s, learnTarget: null }));
     },
 
     addBinding(binding: Omit<OscBinding, 'id'>) {
-      update(s => ({ ...s, bindings: [...s.bindings, { id: generateUUID(), ...binding }] }));
+      const path = normalizeControlPath(binding.path);
+      update(s => ({ ...s, bindings: [...s.bindings, { id: generateUUID(), ...binding, path }] }));
+    },
+    installVjTemplate(layerCount = 4, columnCount = 8) {
+      const template = createVjOscTemplateBindings(layerCount, columnCount);
+      update(s => {
+        const existing = new Set(s.bindings.map(b => `${b.address}\n${b.path}`));
+        const additions = template
+          .filter(b => !existing.has(`${b.address}\n${b.path}`))
+          .map(b => ({ id: generateUUID(), ...b }));
+        return additions.length > 0
+          ? { ...s, bindings: [...s.bindings, ...additions] }
+          : s;
+      });
     },
     updateBinding(id: string, patch: Partial<OscBinding>) {
+      if (typeof patch.path === 'string') patch = { ...patch, path: normalizeControlPath(patch.path) };
       update(s => ({
         ...s,
         bindings: s.bindings.map(b => b.id === id ? { ...b, ...patch } : b),
@@ -217,6 +307,10 @@ function createOscStore() {
       update(s => ({
         ...INITIAL_STATE,
         ...state,
+        bindings: (state.bindings ?? []).map(binding => ({
+          ...binding,
+          path: normalizeControlPath(binding.path),
+        })),
         // Always reset transient runtime fields on hydrate.
         listening: false,
         lastError: null,
@@ -243,6 +337,13 @@ function createOscStore() {
     reset() {
       void stopListener();
       set({ ...INITIAL_STATE });
+      persistRuntime();
+    },
+
+    destroy() {
+      if (messageUnsub) { messageUnsub(); messageUnsub = null; }
+      if (statusUnsub) { statusUnsub(); statusUnsub = null; }
+      initialized = false;
     },
   };
 }

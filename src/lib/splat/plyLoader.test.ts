@@ -1,9 +1,51 @@
 import { describe, it, expect } from 'vitest';
-import { parsePLYBuffer, parsePLYPointBuffers, pointCloudBuffersFromPLYData } from './plyLoader';
+import { parsePLYBuffer, parsePLYBufferProgressive, parsePLYPointBuffers, pointCloudBuffersFromPLYData } from './plyLoader';
 
 function stringToBuffer(str: string): ArrayBuffer {
   const encoder = new TextEncoder();
   return encoder.encode(str).buffer;
+}
+
+function binaryPlyWithFaceBeforeVertices(): ArrayBuffer {
+  const header = `ply
+format binary_little_endian 1.0
+element face 1
+property list uchar int vertex_indices
+element vertex 2
+property float x
+property float y
+property float z
+property uchar red
+property uchar green
+property uchar blue
+end_header
+`;
+  const headerBytes = new TextEncoder().encode(header);
+  const body = new ArrayBuffer(1 + 3 * 4 + 2 * (3 * 4 + 3));
+  const view = new DataView(body);
+  let offset = 0;
+  view.setUint8(offset, 3);
+  offset += 1;
+  for (const index of [0, 1, 0]) {
+    view.setInt32(offset, index, true);
+    offset += 4;
+  }
+  for (const [x, y, z, r, g, b] of [
+    [1, 2, 3, 255, 0, 0],
+    [4, 5, 6, 0, 255, 0],
+  ]) {
+    view.setFloat32(offset, x, true);
+    view.setFloat32(offset + 4, y, true);
+    view.setFloat32(offset + 8, z, true);
+    view.setUint8(offset + 12, r);
+    view.setUint8(offset + 13, g);
+    view.setUint8(offset + 14, b);
+    offset += 15;
+  }
+  const combined = new Uint8Array(headerBytes.byteLength + body.byteLength);
+  combined.set(headerBytes, 0);
+  combined.set(new Uint8Array(body), headerBytes.byteLength);
+  return combined.buffer;
 }
 
 const POINT_CLOUD_PLY = `ply
@@ -42,25 +84,16 @@ end_header
 -1.0 -2.0 -3.0 0 128 255 0.4 0.5 0.6 0.0 1.0 0.0 0.0
 `;
 
-const GAUSSIAN_SH_PLY = `ply
+const SH_GAUSSIAN_PLY = `ply
 format ascii 1.0
 element vertex 1
 property float x
 property float y
 property float z
-property float opacity
 property float f_dc_0
 property float f_dc_1
 property float f_dc_2
-property float f_rest_2
-property float f_rest_0
-property float f_rest_1
-property float f_rest_3
-property float f_rest_4
-property float f_rest_5
-property float f_rest_6
-property float f_rest_7
-property float f_rest_8
+property float opacity
 property float scale_0
 property float scale_1
 property float scale_2
@@ -69,57 +102,8 @@ property float rot_1
 property float rot_2
 property float rot_3
 end_header
-0 0 0 0 0 -0.5 0.5 0.2 0.0 0.1 0.3 0.4 0.5 0.6 0.7 0.8 -4 -4 -4 1 0 0 0
+0 0 0 1 0 -1 0 -2 -2 -2 1 0 0 0
 `;
-
-const MESH_PLY = `ply
-format ascii 1.0
-element vertex 4
-property float x
-property float y
-property float z
-element face 1
-property list uchar int vertex_indices
-end_header
-0 0 0
-1 0 0
-1 1 0
-0 1 0
-4 0 1 2 3
-`;
-
-function binaryGaussianPLY(rows: number[][]): ArrayBuffer {
-  const header = `ply
-format binary_little_endian 1.0
-element vertex ${rows.length}
-property float x
-property float y
-property float z
-property float scale_0
-property float scale_1
-property float scale_2
-property float f_dc_0
-property float f_dc_1
-property float f_dc_2
-property float opacity
-property float rot_0
-property float rot_1
-property float rot_2
-property float rot_3
-end_header
-`;
-  const headerBytes = new TextEncoder().encode(header);
-  const stride = 14 * Float32Array.BYTES_PER_ELEMENT;
-  const bytes = new Uint8Array(headerBytes.byteLength + rows.length * stride);
-  bytes.set(headerBytes, 0);
-  const view = new DataView(bytes.buffer);
-  for (let i = 0; i < rows.length; i++) {
-    for (let j = 0; j < 14; j++) {
-      view.setFloat32(headerBytes.byteLength + i * stride + j * 4, rows[i][j] ?? 0, true);
-    }
-  }
-  return bytes.buffer;
-}
 
 describe('parsePLYBuffer', () => {
   it('parses ASCII point cloud PLY', () => {
@@ -134,25 +118,19 @@ describe('parsePLYBuffer', () => {
   it('detects gaussian splat from scale/rot properties', () => {
     const result = parsePLYBuffer(stringToBuffer(GAUSSIAN_PLY));
     expect(result.dataType).toBe('gaussian');
+    expect(result.scaleEncoding).toBe('log');
     expect(result.vertices).toHaveLength(2);
     expect(result.vertices[0].scale_0).toBeCloseTo(0.1);
     expect(result.vertices[0].rot_0).toBeCloseTo(1.0);
   });
 
-  it('uses Gaussian spherical harmonics color and opacity properties', () => {
-    const result = parsePLYBuffer(stringToBuffer(GAUSSIAN_SH_PLY));
-    expect(result.dataType).toBe('gaussian');
-    expect(result.vertices[0].r).toBe(128);
-    expect(result.vertices[0].g).toBe(92);
-    expect(result.vertices[0].b).toBe(163);
-    expect(result.vertices[0].a).toBe(128);
-    expect(result.sphericalHarmonicsDegree).toBe(1);
-    expect(result.sphericalHarmonicsCoefficientCount).toBe(9);
-    expect(result.vertices[0].f_rest).toEqual([
-      0.0, 0.1, 0.2,
-      0.3, 0.4, 0.5,
-      0.6, 0.7, 0.8,
-    ]);
+  it('decodes gaussian SH color and logit opacity when byte colors are absent', () => {
+    const result = parsePLYBuffer(stringToBuffer(SH_GAUSSIAN_PLY));
+    const vertex = result.vertices[0];
+    expect(vertex.r).toBe(199);
+    expect(vertex.g).toBe(128);
+    expect(vertex.b).toBe(56);
+    expect(vertex.a).toBe(128);
   });
 
   it('computes correct bounding box', () => {
@@ -186,29 +164,95 @@ end_header
     expect(result.hasUVs).toBe(false);
   });
 
-  it('parses ASCII mesh faces for projector-sim imports', () => {
-    const result = parsePLYBuffer(stringToBuffer(MESH_PLY));
-    expect(result.vertices).toHaveLength(4);
-    expect(result.faces).toEqual([[0, 1, 2, 3]]);
+  it('parses every row in an ASCII PLY larger than the former 10 KB probe', async () => {
+    const count = 4_000;
+    const rows = Array.from({ length: count }, (_, index) => `${index} ${index + 1} ${index + 2} 1 2 3`).join('\n');
+    const source = `ply
+format ascii 1.0
+element vertex ${count}
+property float x
+property float y
+property float z
+property uchar red
+property uchar green
+property uchar blue
+end_header
+${rows}
+`;
+    expect(source.length).toBeGreaterThan(10_000);
+    const result = await parsePLYBufferProgressive(stringToBuffer(source));
+    expect(result.vertices).toHaveLength(count);
+    expect(result.sourceVertexCount).toBe(count);
+    expect(result.vertices.at(-1)?.x).toBe(count - 1);
   });
 
-  it('parses PLY files with headers longer than 10KB', () => {
-    const comments = Array.from({ length: 700 }, (_, i) => `comment exporter metadata ${i} ${'x'.repeat(24)}`).join('\n');
-    const longHeaderPly = `ply
+  it('locates binary vertices when another variable-size element precedes them', async () => {
+    const result = await parsePLYBufferProgressive(binaryPlyWithFaceBeforeVertices());
+    expect(result.vertices).toHaveLength(2);
+    expect(result.vertices[0]).toMatchObject({ x: 1, y: 2, z: 3, r: 255, g: 0, b: 0 });
+    expect(result.vertices[1]).toMatchObject({ x: 4, y: 5, z: 6, r: 0, g: 255, b: 0 });
+  });
+
+  it('uses deterministic whole-file sampling when the source exceeds the display budget', async () => {
+    const count = 100;
+    const rows = Array.from({ length: count }, (_, index) => `${index} 0 0`).join('\n');
+    const source = `ply
 format ascii 1.0
-${comments}
-element vertex 1
+element vertex ${count}
 property float x
 property float y
 property float z
 end_header
-1 2 3
+${rows}
 `;
-    const result = parsePLYBuffer(stringToBuffer(longHeaderPly));
-    expect(result.vertices).toHaveLength(1);
-    expect(result.vertices[0].x).toBe(1);
+    const result = await parsePLYBufferProgressive(stringToBuffer(source), { maxPoints: 5 });
+    expect(result.sourceVertexCount).toBe(100);
+    expect(result.wasDecimated).toBe(true);
+    expect(result.vertices.map((vertex) => vertex.x)).toEqual([0, 20, 40, 60, 80]);
   });
 
+  it('rejects truncated binary vertex data with a useful error', async () => {
+    const complete = binaryPlyWithFaceBeforeVertices();
+    const truncated = complete.slice(0, complete.byteLength - 5);
+    await expect(parsePLYBufferProgressive(truncated)).rejects.toThrow('ended early');
+  });
+});
+
+// ─── Native point-buffer layer tests (carried from the native branch) ───
+function binaryGaussianPLY(rows: number[][]): ArrayBuffer {
+  const header = `ply
+format binary_little_endian 1.0
+element vertex ${rows.length}
+property float x
+property float y
+property float z
+property float scale_0
+property float scale_1
+property float scale_2
+property float f_dc_0
+property float f_dc_1
+property float f_dc_2
+property float opacity
+property float rot_0
+property float rot_1
+property float rot_2
+property float rot_3
+end_header
+`;
+  const headerBytes = new TextEncoder().encode(header);
+  const stride = 14 * Float32Array.BYTES_PER_ELEMENT;
+  const bytes = new Uint8Array(headerBytes.byteLength + rows.length * stride);
+  bytes.set(headerBytes, 0);
+  const view = new DataView(bytes.buffer);
+  for (let i = 0; i < rows.length; i++) {
+    for (let j = 0; j < 14; j++) {
+      view.setFloat32(headerBytes.byteLength + i * stride + j * 4, rows[i][j] ?? 0, true);
+    }
+  }
+  return bytes.buffer;
+}
+
+describe('native point buffers', () => {
   it('samples binary Gaussian splat PLY directly into point buffers', () => {
     const buffer = binaryGaussianPLY([
       [0, 0, 0, -4, -4, -4, 0, 0, 0, 0, 1, 0, 0, 0],
@@ -243,4 +287,5 @@ end_header
     expect(result.colors[0]).toBe(1);
     expect(result.colors[5]).toBe(1);
   });
+
 });

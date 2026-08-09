@@ -13,7 +13,7 @@
  * No pixels touch CPU memory in the send path.
  */
 
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, net as electronNet, protocol, screen, session, shell, utilityProcess } from 'electron';
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, net as electronNet, powerSaveBlocker, protocol, screen, session, shell, utilityProcess } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { spawn, fork, execSync } from 'child_process';
@@ -22,6 +22,11 @@ import fs from 'fs';
 import net from 'net';
 import dgram from 'dgram';
 import { createNativeRendererBroker, nativeRendererCommandNames } from './native-renderer-broker.js';
+import {
+  nativePreviewGeometryMatches,
+  nativePreviewRectSignature,
+  normalizeNativePreviewRect,
+} from './native-preview-geometry.js';
 // License system removed in OSS build — see src/lib/stores/license.ts.
 
 const __filename = fileURLToPath(import.meta.url);
@@ -155,6 +160,24 @@ console.warn = (...args) => {
   try { _origWarn(...args); } catch {}
 };
 console.log(`[Main] Projection safe mode=${PROJECTION_SAFE_MODE} experimentalGpuPresent=${EXPERIMENTAL_GPU_PRESENT} cpuTextureShareFallback=${ALLOW_CPU_TEXTURE_SHARE_FALLBACK} osrPaintFps=${OSR_PAINT_FPS}`);
+
+let powerSaveBlockerId = null;
+
+// Keep the display awake for the entire app lifetime — projection rigs
+// must never fall into display sleep / screensaver mid-show.
+function startPowerSaveBlocker() {
+  if (powerSaveBlockerId !== null && powerSaveBlocker.isStarted(powerSaveBlockerId)) return;
+  powerSaveBlockerId = powerSaveBlocker.start('prevent-display-sleep');
+  console.log(`[Main] Display sleep and screensaver prevention active (id=${powerSaveBlockerId})`);
+}
+
+function stopPowerSaveBlocker() {
+  if (powerSaveBlockerId === null) return;
+  if (powerSaveBlocker.isStarted(powerSaveBlockerId)) {
+    powerSaveBlocker.stop(powerSaveBlockerId);
+  }
+  powerSaveBlockerId = null;
+}
 
 // Prevent EPIPE crashes from killing the process
 process.stdout?.on?.('error', () => {});
@@ -1850,6 +1873,7 @@ let nativePreviewLastAddonFrameCount = 0;
 let nativePreviewLastLogTime = 0;
 let nativePreviewFailCount = 0;
 let nativePreviewLastRectSignature = '';
+let nativePreviewGeometryGeneration = 0;
 let nativePreviewCachedTexture = null;
 let nativePreviewNextTexturePollAt = 0;
 let nativePreviewLastTextureFrame = -1;
@@ -2184,24 +2208,6 @@ function loadLiveCaptureAddon() {
   }
 }
 
-function normalizeNativePreviewRect(rect = {}) {
-  const number = (value, fallback, min = 0) => {
-    const n = Number(value);
-    if (!Number.isFinite(n)) return fallback;
-    return Math.max(min, n);
-  };
-  return {
-    x: number(rect.x, 0),
-    y: number(rect.y, 0),
-    width: number(rect.width, 1, 1),
-    height: number(rect.height, 1, 1),
-    contentX: number(rect.contentX, 0),
-    contentY: number(rect.contentY, 0),
-    contentWidth: number(rect.contentWidth, number(rect.width, 1, 1), 1),
-    contentHeight: number(rect.contentHeight, number(rect.height, 1, 1), 1),
-  };
-}
-
 function getNativePreviewStatus(extra = {}) {
   const addon = nativePreviewAddon || loadNativePreviewAddon();
   let addonStatus = null;
@@ -2355,6 +2361,68 @@ function startNativeEditorPreviewPump() {
   return true;
 }
 
+// ── Deck confidence monitor pump ──
+// Polls the core's bank-monitor shared textures and (re)binds them to the
+// named addon monitor views. Each view repaints itself via its display-link;
+// polling here only tracks surface identity/size changes and frame liveness.
+const deckMonitorAttachedNames = new Set();
+let deckMonitorPump = null;
+let deckMonitorPumpInFlight = false;
+const deckMonitorLastBinding = new Map(); // name -> `${handle}:${w}x${h}`
+const deckMonitorLastFrame = new Map();   // name -> { frame, at }
+
+function startDeckMonitorPump() {
+  if (deckMonitorPump) return;
+  deckMonitorPump = setInterval(async () => {
+    if (deckMonitorPumpInFlight || deckMonitorAttachedNames.size === 0) return;
+    deckMonitorPumpInFlight = true;
+    try {
+      const addon = nativePreviewAddon;
+      if (!addon || typeof addon.monitorSetIOSurface !== 'function') return;
+      const state = await nativeRendererBroker.invoke('native_renderer_get_deck_monitor_state', {});
+      if (!state?.available || !Array.isArray(state.banks)) return;
+      for (const bank of state.banks) {
+        const name = bank?.bank === 'b' ? 'deck-b' : 'deck-a';
+        if (!deckMonitorAttachedNames.has(name)) continue;
+        const surfaceId = Number(bank?.handle ?? 0);
+        const width = Number(bank?.width ?? 0);
+        const height = Number(bank?.height ?? 0);
+        if (!Number.isFinite(surfaceId) || surfaceId <= 0 || width <= 0 || height <= 0) continue;
+        const frame = Number(bank?.frame ?? 0);
+        const now = Date.now();
+        const last = deckMonitorLastFrame.get(name);
+        if (last && last.frame === frame && now - last.at > 1500) {
+          // Core stopped producing monitor frames (crossfader off) — leave
+          // the last frame on screen; the UI hides the containers anyway.
+          continue;
+        }
+        if (!last || last.frame !== frame) deckMonitorLastFrame.set(name, { frame, at: now });
+        const binding = `${surfaceId}:${width}x${height}`;
+        if (deckMonitorLastBinding.get(name) === binding) continue;
+        if (addon.monitorSetIOSurface(name, surfaceId, width, height, false)) {
+          deckMonitorLastBinding.set(name, binding);
+          console.log(`[DeckMonitor] ${name} bound iosurface:${surfaceId} ${width}x${height}`);
+        }
+      }
+    } catch (err) {
+      // Broker restarts surface as transient failures; keep polling.
+    } finally {
+      deckMonitorPumpInFlight = false;
+    }
+  }, 250);
+  deckMonitorPump.unref?.();
+  console.log('[DeckMonitor] pump started');
+}
+
+function stopDeckMonitorPump() {
+  if (deckMonitorPump) {
+    clearInterval(deckMonitorPump);
+    deckMonitorPump = null;
+  }
+  deckMonitorLastBinding.clear();
+  deckMonitorLastFrame.clear();
+}
+
 function attachNativeEditorPreview(rectArgs = {}) {
   const addon = loadNativePreviewAddon();
   if (!addon || typeof addon.attach !== 'function') {
@@ -2364,10 +2432,9 @@ function attachNativeEditorPreview(rectArgs = {}) {
     return getNativePreviewStatus({ attached: false, error: 'main window is unavailable' });
   }
 
-  const rect = normalizeNativePreviewRect(rectArgs);
-  const signature = `${Math.round(rect.x)},${Math.round(rect.y)},${Math.round(rect.width)}x${Math.round(rect.height)}`;
+  const rect = normalizeNativePreviewRect(rectArgs, ++nativePreviewGeometryGeneration);
+  const signature = nativePreviewRectSignature(rect);
   try {
-    console.log('[NativePreview] attach rect', JSON.stringify(rect), 'contentBounds', JSON.stringify(mainWindow.getContentBounds()), 'scale', require('electron').screen.getPrimaryDisplay().scaleFactor);
     const handle = mainWindow.getNativeWindowHandle();
     if (!Buffer.isBuffer(handle) || handle.length === 0) {
       return getNativePreviewStatus({ attached: false, error: 'main window native handle is unavailable' });
@@ -2376,9 +2443,10 @@ function attachNativeEditorPreview(rectArgs = {}) {
       ? addon.update(rect)
       : addon.attach(handle, rect);
     nativePreviewAttached = !!status?.attached;
-    nativePreviewLastRectSignature = signature;
+    const geometryMatches = nativePreviewGeometryMatches(rect, status);
+    nativePreviewLastRectSignature = geometryMatches ? signature : '';
     startNativeEditorPreviewPump();
-    return getNativePreviewStatus({ rect });
+    return getNativePreviewStatus({ rect, geometryMatches });
   } catch (err) {
     nativePreviewAddonLoadError = err?.message || String(err);
     console.error('[NativePreview] attach/update failed:', nativePreviewAddonLoadError);
@@ -2404,17 +2472,26 @@ function stabilizeNativeEditorHost() {
 function updateNativeEditorPreview(rectArgs = {}) {
   const addon = nativePreviewAddon || loadNativePreviewAddon();
   if (!addon || typeof addon.update !== 'function') return getNativePreviewStatus();
-  const rect = normalizeNativePreviewRect(rectArgs);
-  const signature = `${Math.round(rect.x)},${Math.round(rect.y)},${Math.round(rect.width)}x${Math.round(rect.height)}`;
+  if (!nativePreviewAttached) return attachNativeEditorPreview(rectArgs);
+  const rect = normalizeNativePreviewRect(rectArgs, ++nativePreviewGeometryGeneration);
+  const signature = nativePreviewRectSignature(rect);
   try {
-    console.log('[NativePreview] update rect', JSON.stringify(rect));
-    const status = nativePreviewAttached
-      ? addon.update(rect)
-      : attachNativeEditorPreview(rect);
+    const handle = mainWindow && !mainWindow.isDestroyed()
+      ? mainWindow.getNativeWindowHandle()
+      : null;
+    if (!Buffer.isBuffer(handle) || handle.length === 0) {
+      return getNativePreviewStatus({
+        attached: false,
+        rect,
+        error: 'main window native handle is unavailable',
+      });
+    }
+    const status = addon.update(handle, rect);
     nativePreviewAttached = !!status?.attached;
-    nativePreviewLastRectSignature = signature;
+    const geometryMatches = nativePreviewGeometryMatches(rect, status);
+    nativePreviewLastRectSignature = geometryMatches ? signature : '';
     startNativeEditorPreviewPump();
-    return getNativePreviewStatus({ rect });
+    return getNativePreviewStatus({ rect, geometryMatches });
   } catch (err) {
     nativePreviewAddonLoadError = err?.message || String(err);
     return getNativePreviewStatus({ rect });
@@ -3904,10 +3981,21 @@ function stopOSC() {
 }
 function startOSC(port, win) {
   stopOSC();
+  port = Number(port);
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    return Promise.resolve({ ok: false, error: 'OSC port must be between 1 and 65535' });
+  }
   oscPort = port;
   oscLastError = null;
   return new Promise((resolve) => {
-    const sock = dgram.createSocket('udp4');
+    const sock = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+    oscSocket = sock;
+    let settled = false;
+    const finish = (result) => {
+      if (settled) return;
+      settled = true;
+      resolve(result);
+    };
     sock.on('error', (err) => {
       oscLastError = String(err.message || err);
       console.error('[OSC] socket error:', err);
@@ -3918,7 +4006,7 @@ function startOSC(port, win) {
       if (win && !win.isDestroyed()) {
         win.webContents.send('osc-status', { listening: false, port, error: oscLastError });
       }
-      resolve({ ok: false, error: oscLastError });
+      finish({ ok: false, error: oscLastError });
     });
     sock.on('message', (buf, rinfo) => {
       try {
@@ -3939,14 +4027,14 @@ function startOSC(port, win) {
         console.warn('[OSC] parse error:', e);
       }
     });
-    sock.bind(port, () => {
-      oscSocket = sock;
+    sock.once('listening', () => {
       console.log('[OSC] listening on UDP port', port);
       if (win && !win.isDestroyed()) {
         win.webContents.send('osc-status', { listening: true, port, error: null });
       }
-      resolve({ ok: true, port });
+      finish({ ok: true, port, address: '0.0.0.0' });
     });
+    sock.bind({ port, address: '0.0.0.0', exclusive: false });
   });
 }
 
@@ -6315,6 +6403,45 @@ function registerIpcHandlers() {
     return getNativePreviewStatus();
   });
 
+  // ── Deck confidence monitors ──
+  // Two small named presenter views (deck-a / deck-b) fed by the core's
+  // bank-monitor shared textures. The addon's per-view display-link pump
+  // repaints on its own; this pump only refreshes surface bindings.
+  ipcMain.handle('deck_monitor_attach', async (_event, args = {}) => {
+    if (process.platform !== 'darwin') return { attached: false, reason: 'macos-only' };
+    const addon = nativePreviewAddon || loadNativePreviewAddon();
+    if (!addon || typeof addon.monitorAttach !== 'function') {
+      return { attached: false, reason: 'presenter addon lacks monitor support' };
+    }
+    if (!mainWindow || mainWindow.isDestroyed()) return { attached: false };
+    const monitors = Array.isArray(args?.monitors) ? args.monitors : [];
+    try {
+      const handle = mainWindow.getNativeWindowHandle();
+      if (!Buffer.isBuffer(handle) || handle.length === 0) return { attached: false };
+      for (const monitor of monitors) {
+        const name = typeof monitor?.name === 'string' ? monitor.name : '';
+        if (!name || !monitor?.rect) continue;
+        addon.monitorAttach(name, handle, monitor.rect);
+        deckMonitorAttachedNames.add(name);
+      }
+      startDeckMonitorPump();
+      return { attached: deckMonitorAttachedNames.size > 0 };
+    } catch (err) {
+      console.warn('[DeckMonitor] attach failed:', err?.message || err);
+      return { attached: false, error: err?.message || String(err) };
+    }
+  });
+
+  ipcMain.handle('deck_monitor_detach', async () => {
+    stopDeckMonitorPump();
+    const addon = nativePreviewAddon;
+    if (addon && typeof addon.monitorDetach === 'function') {
+      try { addon.monitorDetach(); } catch { /* teardown best-effort */ }
+    }
+    deckMonitorAttachedNames.clear();
+    return { attached: false };
+  });
+
   // Pointer-rate viewport mutations must never wait behind scene rebuilds,
   // media uploads, readiness probes, or request/response timeouts. Keep only
   // the newest geometry for each layer and write it to the core on the next
@@ -6847,6 +6974,7 @@ function createMainWindow() {
       message.includes('[KF') ||
       message.includes('[GPU]') ||       // surface WebGL renderer info from Canvas.svelte
       message.includes('[NativeRendererSync]') || // native render-core bridge diagnostics
+      message.includes('[StageFX') ||    // stage-effects engine + native FX bridge diagnostics
       message.includes('[animate-') ||   // animate-tick / animate-dbg diagnostics
       message.includes('[syphon-') ||    // syphon-gate / syphon-path send-flow diagnostics
       message.includes('[Syphon')        // any Syphon-tagged renderer log
@@ -6938,6 +7066,14 @@ function createStage3DWindow() {
 
   stage3dWindow.on('closed', () => {
     stage3dWindow = null;
+    // The 3D stage window owns the native stage scene; when it closes the
+    // core must drop the scene or the venue keeps compositing into the 2D
+    // output as ghost washes.
+    try {
+      nativeRendererBroker
+        .invoke('native_renderer_set_stage3d_scene', { scene: null })
+        .catch(() => {});
+    } catch {}
   });
   stage3dWindow.on('enter-full-screen', () => publishStage3DFullscreenState(true));
   stage3dWindow.on('leave-full-screen', () => publishStage3DFullscreenState(false));
@@ -6985,6 +7121,13 @@ function createProjectionSimWindow() {
 
   projectionSimWindow.on('closed', () => {
     projectionSimWindow = null;
+    // Mirror the stage3d window: drop the native projection-sim scene so
+    // its overlay never lingers in the 2D output after the window closes.
+    try {
+      nativeRendererBroker
+        .invoke('native_renderer_set_projection_sim_scene', { scene: null })
+        .catch(() => {});
+    } catch {}
   });
   projectionSimWindow.on('enter-full-screen', () => publishProjectionSimFullscreenState(true));
   projectionSimWindow.on('leave-full-screen', () => publishProjectionSimFullscreenState(false));
@@ -7161,6 +7304,8 @@ app.on('second-instance', () => {
 });
 
 app.whenReady().then(async () => {
+  startPowerSaveBlocker();
+
   app.setAboutPanelOptions({
     applicationName: 'Ghost Arcade',
     applicationVersion: app.getVersion(),
@@ -7381,6 +7526,7 @@ function cleanupAndQuit() {
   runCleanupStep('stopNativeRenderer', () => nativeRendererBroker.shutdownSync());
   runCleanupStep('shutdownLink', shutdownLink);
   runCleanupStep('stopOSC', stopOSC);
+  runCleanupStep('stopPowerSaveBlocker', stopPowerSaveBlocker);
   runCleanupStep('stopServer', stopServer);
   runCleanupStep('closeAllWledSockets', closeAllWledSockets);
   runCleanupStep('killPluginProcesses', killPluginProcesses);

@@ -37,6 +37,8 @@ let nativeLayerEdgeEffectsState: typeof import('./nativeRendererSync').nativeLay
 let nativeGraphCompositeSourceId: typeof import('./nativeRendererSync').nativeGraphCompositeSourceId;
 let nativeGraphInstrumentSourceId: typeof import('./nativeRendererSync').nativeGraphInstrumentSourceId;
 let nativeLayerSourceFromMediaSource: typeof import('./nativeRendererSync').nativeLayerSourceFromMediaSource;
+let isNativeCoreOwnedGraphKind: typeof import('./nativeRendererSync').isNativeCoreOwnedGraphKind;
+let isNativeExternallyQueuedGraphKind: typeof import('./nativeRendererSync').isNativeExternallyQueuedGraphKind;
 
 beforeAll(async () => {
   const storage = new Map<string, string>();
@@ -89,6 +91,8 @@ beforeAll(async () => {
     nativeGraphCompositeSourceId,
     nativeGraphInstrumentSourceId,
     nativeLayerSourceFromMediaSource,
+    isNativeCoreOwnedGraphKind,
+    isNativeExternallyQueuedGraphKind,
   } = await import('./nativeRendererSync'));
 });
 
@@ -108,6 +112,16 @@ function graphCapabilities() {
 }
 
 describe('native renderer sync graph manifest contract', () => {
+  it('routes the VJ crossfade through the native core-owned graph path', () => {
+    expect(isNativeCoreOwnedGraphKind('vj-crossfade')).toBe(true);
+  });
+
+  it('retains externally queued SVG and Lines graph sources in the compositor', () => {
+    expect(isNativeExternallyQueuedGraphKind('svg')).toBe(true);
+    expect(isNativeExternallyQueuedGraphKind('lines')).toBe(true);
+    expect(isNativeExternallyQueuedGraphKind('planet')).toBe(false);
+  });
+
   it('requires complete shader IDs for each native graph route', () => {
     const complete = graphCapabilities();
     expect(
@@ -138,7 +152,11 @@ describe('native renderer sync graph manifest contract', () => {
     );
     expect(particleMissingRoutes.has('planet')).toBe(true);
     expect(particleMissingRoutes.has('particle-field')).toBe(false);
-    expect(nativeGraphRouteRequirements().some((entry) => entry.kind === 'point-cloud-fx')).toBe(true);
+    const requirements = nativeGraphRouteRequirements();
+    expect(requirements.some((entry) => entry.kind === 'point-cloud-fx')).toBe(true);
+    expect(requirements.find((entry) => entry.kind === 'ghostfx')?.shaderIds).toContain(
+      'ghostfx/liquid-render',
+    );
   });
 });
 
@@ -159,6 +177,21 @@ describe('native renderer sync render clock routing', () => {
     // A new native video with no decoded/browser time always starts at frame
     // zero. It must never inherit time elapsed since the renderer booted.
     expect(sync.nativeVideoPlaybackTimeSeconds({ videoElement: { currentTime: Number.NaN } }, 2500)).toBe(0);
+  });
+});
+
+describe('native renderer sync lifecycle ownership', () => {
+  it('can dispose a Canvas-scoped sync without clearing the app-level native core', async () => {
+    const sync = new NativeRendererSyncCtor() as any;
+    sync.running = true;
+    sync.startupReady = true;
+    sync.clearRuntimeCaches = vi.fn();
+
+    await sync.stop({ stopCore: false });
+
+    expect(sync.running).toBe(false);
+    expect(sync.startupReady).toBe(false);
+    expect(sync.clearRuntimeCaches).not.toHaveBeenCalled();
   });
 });
 
@@ -471,6 +504,70 @@ describe('native renderer sync graph effect routing', () => {
     expect(commands).toEqual([]);
   });
 
+  it('installs plugin graphs once instead of resubmitting them on render ticks', async () => {
+    const sync = new NativeRendererSyncCtor() as any;
+    sync.nativeComputeGraphSourceFrames = true;
+    sync.nativeWgslStdlibWarmed = true;
+    sync.nativeGraphReadyKinds = new Set(['ghostfx', 'handfx']);
+
+    const pluginLayer = (effectType: 'ghostfx' | 'handfx') => ({
+      id: `plugin-${effectType}`,
+      type: 'media',
+      visible: true,
+      opacity: 1,
+      blendMode: 'normal',
+      source: {
+        id: `plugin-${effectType}-source`,
+        type: 'effect',
+        src: `plugin://${effectType}`,
+        name: effectType,
+        effectSource: {
+          effectType,
+          ...(effectType === 'ghostfx'
+            ? { ghostfxScenePreset: 'drift' }
+            : { handfxMode: 'trails', handfxCameraOn: false }),
+        },
+      },
+    });
+    const clock = {
+      type: 'set_render_clock',
+      mode: 'live',
+      time: 1,
+      time_delta: 1 / 60,
+      frame_index: 60,
+    };
+    const visual = {
+      isActive: false,
+      bass: 0,
+      bassFast: 0,
+      mid: 0,
+      treble: 0,
+      energy: 0,
+      beatPhase: 0,
+      beat: 0,
+      level: 0,
+    };
+
+    const ghostCommands = await sync.renderNativeGraphSources(
+      [pluginLayer('ghostfx')],
+      160,
+      90,
+      clock,
+      visual,
+    );
+    expect(ghostCommands).toEqual([]);
+
+    const handCommands = await sync.renderNativeGraphSources(
+      [pluginLayer('handfx')],
+      160,
+      90,
+      clock,
+      visual,
+    );
+    expect(handCommands.every((command: any) => command.type === 'update_native_graph_buffer')).toBe(true);
+    expect(handCommands.some((command: any) => command.type === 'queue_compute_graph')).toBe(false);
+  });
+
   it('does not treat browser preview elements as native effect-pass input frames', () => {
     const sync = new NativeRendererSyncCtor() as any;
     sync.nativeFeatureFlags = {
@@ -580,6 +677,39 @@ describe('native renderer sync graph effect routing', () => {
 });
 
 describe('native renderer sync native video pump routing', () => {
+  it('arms library videos at their exact trim-in with the initial trigger generation', () => {
+    const sync = new NativeRendererSyncCtor() as any;
+    sync.desiredWidth = 1920;
+    sync.desiredHeight = 1080;
+    const options = sync.libraryVideoPrefetchOptions({
+      id: 'library-video',
+      src: '/tmp/library-video.mp4',
+      type: 'video',
+      videoElement: {
+        currentTime: 7.5,
+        duration: 12,
+        videoWidth: 1920,
+        videoHeight: 1080,
+        addEventListener: () => {},
+      },
+      playbackRate: 1.5,
+      playbackMode: 'loop',
+      trimStart: 0.25,
+      trimEnd: 0.9,
+    });
+
+    expect(options).toMatchObject({
+      timeSeconds: 3,
+      seekGeneration: 1,
+      seq: 3000,
+      playbackRate: 1.5,
+      loopEnabled: true,
+      durationSeconds: 12,
+      trimStart: 0.25,
+      trimEnd: 0.9,
+    });
+  });
+
   it('keeps CPU and synthetic decode fallbacks disabled even when requested', async () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     try {
@@ -707,9 +837,9 @@ describe('native renderer sync effect-pass descriptors', () => {
       effects: [
         { type: 'invert', enabled: true, params: {} },
         { type: 'phaseLab', enabled: true, params: {} },
-        { type: 'gpuFluidSim', enabled: false, params: {} },
+        { type: 'gpuFluidSim', enabled: true, params: {} },
       ],
-    })).toEqual(['phaseLab']);
+    })).toEqual(['gpuFluidSim']);
 
     expect(nativeUnsupportedEffectTypes({
       effects: [
@@ -752,6 +882,34 @@ describe('native renderer sync effect-pass descriptors', () => {
         params: {},
       },
     }, true)).toBeNull();
+
+    const nativePluginLayer = {
+      id: 'plugin-ghostfx',
+      type: 'media',
+      visible: true,
+      source: {
+        id: 'plugin-ghostfx-source',
+        type: 'effect',
+        src: 'plugin://ghostfx',
+        name: 'GhostFX',
+        effectSource: {
+          effectType: 'ghostfx',
+          ghostfxScenePreset: 'drift',
+        },
+      },
+    };
+    expect(nativeUnsupportedSourceReason(nativePluginLayer, true)).toBeNull();
+    expect(nativeUnsupportedSourceReason(nativePluginLayer, false)).toBe('effect:native-ingest-pending');
+    expect(nativeUnsupportedSourceReason({
+      ...nativePluginLayer,
+      source: {
+        ...nativePluginLayer.source,
+        effectSource: {
+          effectType: 'ghostfx',
+          ghostfxScenePreset: 'liquid',
+        },
+      },
+    }, false)).toBe('effect:native-ingest-pending');
 
     expect(nativeUnsupportedSourceReason({
       id: 'gpu-pixel-particles',
@@ -914,7 +1072,24 @@ describe('native renderer sync effect-pass descriptors', () => {
         src: '/tmp/image-a.png',
         name: 'Image A',
       },
-    })).toBe('layer-shape:star:not-native');
+    })).toBeNull();
+
+    expect(nativeUnsupportedSourceReason({
+      id: 'media-polyline',
+      type: 'media',
+      visible: true,
+      layerShape: {
+        enabled: true,
+        type: 'polyline',
+        params: {},
+      },
+      source: {
+        id: 'image-a',
+        type: 'image',
+        src: '/tmp/image-a.png',
+        name: 'Image A',
+      },
+    })).toBe('layer-shape:polyline:not-native');
 
     expect(nativeUnsupportedSourceReason({
       id: 'media-inverted-shape',
@@ -931,7 +1106,7 @@ describe('native renderer sync effect-pass descriptors', () => {
         src: '/tmp/image-a.png',
         name: 'Image A',
       },
-    })).toBe('layer-shape:invert:native-compositor-pending');
+    })).toBeNull();
 
     const localVideoLayer = {
       id: 'media-video',
@@ -986,6 +1161,9 @@ describe('native renderer sync effect-pass descriptors', () => {
       configurable: true,
       value: FakeCanvas,
     });
+    // Text layers are now native-ready via the text graph route; without a
+    // route (core feature missing) the generated preview canvas still may
+    // not stand in for a native source frame.
     expect(nativeUnsupportedSourceReason({
       id: 'text-layer',
       type: 'text',
@@ -994,7 +1172,7 @@ describe('native renderer sync effect-pass descriptors', () => {
       _textTexture: {
         canvas: new FakeCanvas(),
       },
-    })).toBe('layer-type:text:not-native');
+    })).toBe('generated-layer:text:not-native-source');
   });
 
   it('packs closed bezier mask shapes for the native compositor', () => {
@@ -2290,5 +2468,38 @@ describe('native renderer sync effect-pass descriptors', () => {
         strobeTintB: 1,
       },
     });
+  });
+});
+
+describe('generic passthru effect routing', () => {
+  it('routes manifest-covered effects without explicit descriptor branches', () => {
+    const cases = [
+      { type: 'dotMatrix', enabled: true, params: { dotMatrixCellSize: 8 } },
+      { type: 'explode3D', enabled: true, params: { amount: 0.5, amount2: 0.2 } },
+      { type: 'oilPaint', enabled: true, params: {} },
+      { type: 'phaseLab', enabled: true, params: { phaseLabMode: 1, phaseLabIntensity: 2 } },
+      { type: 'wormhole', enabled: true, params: { wormholePullStrength: 0.8 } },
+      { type: 'motionTrails', enabled: true, params: { motionTrailsLength: 0.6 } },
+    ];
+    for (const c of cases) {
+      const d = effectToNativeDescriptor(c);
+      expect(d, c.type).toBeTruthy();
+      expect(d, c.type).toContain('passthru:');
+      const rt = nativeEffectPassFromDescriptor(d);
+      expect(rt, c.type).toBeTruthy();
+    }
+    const rt = nativeEffectPassFromDescriptor(effectToNativeDescriptor(cases[3]));
+    expect(rt?.effect).toBe('phase-lab');
+    expect((rt?.params as any)?.phaseLabIntensity).toBe(2);
+    expect((rt?.params as any)?.phaseLabMode).toBe(1);
+  });
+
+  it('keeps explicit branches for legacy effects and rejects stateful ones', () => {
+    expect(effectToNativeDescriptor({ type: 'invert', enabled: true, params: {} })).toBe('invert');
+    expect(effectToNativeDescriptor({ type: 'gpuFluidSim', enabled: true, params: {} })).toBeNull();
+    expect(nativeUnsupportedEffectTypes({ effects: [
+      { type: 'dotMatrix', enabled: true, params: {} },
+      { type: 'gpuFluidSim', enabled: true, params: {} },
+    ] })).toEqual(['gpuFluidSim']);
   });
 });

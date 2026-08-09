@@ -4,6 +4,7 @@ import type { MidiStoreState, MidiMapping, MidiDevice, MidiMappingMode, MidiMess
 
 const STORAGE_KEY = 'ghost-arcade_midi_mappings';
 const DEVICE_KEY = 'ghost-arcade_midi_device';
+const CLOCK_DEVICE_KEY = 'ghost-arcade_midi_clock_device';
 const OUTPUT_KEY = 'ghost-arcade_midi_output';
 const CLOCK_IN_KEY = 'ghost-arcade_midi_clock_in';
 const CLOCK_OUT_KEY = 'ghost-arcade_midi_clock_out';
@@ -32,6 +33,19 @@ function saveSelectedDevice(id: string | null) {
   try {
     if (id) localStorage.setItem(DEVICE_KEY, id);
     else localStorage.removeItem(DEVICE_KEY);
+  } catch { /* ignore */ }
+}
+
+function loadSelectedClockDevice(): string | null {
+  try {
+    return localStorage.getItem(CLOCK_DEVICE_KEY);
+  } catch { return null; }
+}
+
+function saveSelectedClockDevice(id: string | null) {
+  try {
+    if (id) localStorage.setItem(CLOCK_DEVICE_KEY, id);
+    else localStorage.removeItem(CLOCK_DEVICE_KEY);
   } catch { /* ignore */ }
 }
 
@@ -87,6 +101,7 @@ function createDefaultState(): MidiStoreState {
     devices: [],
     outputDevices: [],
     selectedDeviceId: loadSelectedDevice(),
+    selectedClockInputId: loadSelectedClockDevice(),
     selectedOutputId: loadSelectedOutput(),
     mappings: loadMappings(),
     editMode: false,
@@ -114,6 +129,11 @@ function createMidiStore() {
     selectDevice: (deviceId: string | null) => {
       saveSelectedDevice(deviceId);
       update(s => ({ ...s, selectedDeviceId: deviceId }));
+    },
+
+    selectClockInput: (deviceId: string | null) => {
+      saveSelectedClockDevice(deviceId);
+      update(s => ({ ...s, selectedClockInputId: deviceId }));
     },
 
     selectOutput: (deviceId: string | null) => {

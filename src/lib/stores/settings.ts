@@ -40,22 +40,25 @@ export interface ColorScheme {
 }
 
 // Midnight Coral - Dark with red/coral accents (DEFAULT - based on reference images)
+// Ghost Chrome — the default accent. Ghostly white core with metallic
+// light blue-grey support (the coral era lives on only in the scheme id,
+// kept for saved-settings compatibility).
 export const SCHEME_MIDNIGHT_CORAL: ColorScheme = {
   id: 'midnight-coral',
-  name: 'Midnight Coral',
-  description: 'Dark theme with red/coral accents',
+  name: 'Ghost Chrome',
+  description: 'Ghostly white and metallic ice blue-grey accents',
   colors: {
     bgPrimary: '#0a0a0c',
     bgSecondary: 'rgba(18, 18, 22, 0.95)',
     bgTertiary: '#141418',
     bgOverlay: 'rgba(0, 0, 0, 0.85)',
-    accentPrimary: '#FF725F',      // Coral red
-    accentSecondary: '#FF9A84',    // Lighter coral
-    accentHover: '#FF5F4C',        // Brighter on hover
+    accentPrimary: '#dfe9f2',      // Ghostly white with an ice-blue tinge
+    accentSecondary: '#9fb6c9',    // Metallic light blue-grey
+    accentHover: '#f4f9fd',        // Near-white on hover
     textPrimary: '#e8e8e8',
     textSecondary: '#a0a0a0',
     textMuted: '#666666',
-    borderPrimary: 'rgba(255, 114, 95, 0.22)',
+    borderPrimary: 'rgba(207, 223, 236, 0.28)',
     borderSecondary: 'rgba(255, 255, 255, 0.06)',
     danger: '#FF4757',
     success: '#2ED573',

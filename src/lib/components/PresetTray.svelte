@@ -4,10 +4,31 @@
   import type { Composition } from '../types';
   import type { TransitionType } from '../renderer/engine';
   import { showLoading, hideLoading } from '../stores/loading';
+  import { invoke, isDesktopApp } from '$lib/bridge';
+  import { NATIVE_ENGINE_ONLY } from '../stores/settings';
   import { startRecording as startRec, formatRecordingDuration, type RecorderHandle } from '../recording/recorder';
   import { onDestroy, onMount } from 'svelte';
 
   export let isOpen = false;
+
+  // VJ MAP sub-mode: the tray floats above the VJ overlay so mapping
+  // presets can be dragged straight into the deck cells. Cards become
+  // draggable and publish the same payload the VJ media tray uses.
+  export let vjDragMode = false;
+
+  function handlePresetDragStart(e: DragEvent, comp: Composition) {
+    if (!vjDragMode || !e.dataTransfer) return;
+    const payload = { id: comp.id, type: 'preset', name: comp.name };
+    e.dataTransfer.setData('application/x-ghost-media-source', JSON.stringify(payload));
+    e.dataTransfer.effectAllowed = 'copy';
+    (window as any).__ghostVJMediaTrayDragPayload = payload;
+  }
+
+  function handlePresetDragEnd() {
+    if ((window as any).__ghostVJMediaTrayDragPayload?.type === 'preset') {
+      (window as any).__ghostVJMediaTrayDragPayload = undefined;
+    }
+  }
 
   // Callback before loading a preset (for triggering transitions)
   export let onBeforeLoad: ((durationSeconds: number, type: TransitionType) => void) | null = null;
@@ -204,6 +225,59 @@
     }
   }
 
+  // Native mode: the WebGL canvas is a cleared underlay (the core owns
+  // the pixels), so grab a one-shot frame snapshot from the render core
+  // and scale it down. Falls back to the canvas capture when the core
+  // has nothing to give.
+  async function captureNativeThumbnail(): Promise<string | undefined> {
+    if (!(isDesktopApp && NATIVE_ENGINE_ONLY)) return undefined;
+    try {
+      const snap = await invoke('native_renderer_get_frame_snapshot', { include_pixels: true }) as {
+        rgba_b64?: string;
+        width?: number;
+        height?: number;
+        format?: string;
+        bytes_per_row?: number;
+        padded_bytes_per_row?: number;
+        dark_frame?: boolean;
+      } | null;
+      if (!snap?.rgba_b64 || !snap.width || !snap.height) return undefined;
+      const raw = atob(snap.rgba_b64);
+      const bytes = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+      const w = snap.width;
+      const h = snap.height;
+      const rowBytes = snap.bytes_per_row || w * 4;
+      const stride = snap.padded_bytes_per_row || rowBytes;
+      const bgra = String(snap.format ?? '').toLowerCase().includes('bgra');
+      const img = new ImageData(w, h);
+      for (let y = 0; y < h; y++) {
+        const src = y * stride;
+        const dst = y * w * 4;
+        for (let x = 0; x < w; x++) {
+          const si = src + x * 4;
+          const di = dst + x * 4;
+          img.data[di]     = bytes[bgra ? si + 2 : si];
+          img.data[di + 1] = bytes[si + 1];
+          img.data[di + 2] = bytes[bgra ? si : si + 2];
+          img.data[di + 3] = 255;
+        }
+      }
+      const full = document.createElement('canvas');
+      full.width = w;
+      full.height = h;
+      full.getContext('2d')!.putImageData(img, 0, 0);
+      const thumb = document.createElement('canvas');
+      thumb.width = 120;
+      thumb.height = 68;
+      thumb.getContext('2d')!.drawImage(full, 0, 0, 120, 68);
+      return thumb.toDataURL('image/jpeg', 0.7);
+    } catch (e) {
+      console.warn('[PresetTray] native thumbnail failed:', e);
+      return undefined;
+    }
+  }
+
   // Capture a thumbnail of the current main canvas at preset size.
   // Shared by saveNewPreset and updateCurrentPreset so a re-saved
   // preset visually reflects whatever's on screen right now.
@@ -240,10 +314,10 @@
   // project state — layers, sub-store snapshots, fresh thumbnail.
   // Targets the right-clicked preset when targetId is supplied; falls
   // back to the active preset for the "Update current" header button.
-  function updateCurrentPreset(targetId?: string) {
+  async function updateCurrentPreset(targetId?: string) {
     const id = targetId ?? $activeCompositionId;
     if (!id) return;
-    const thumbnail = captureThumbnail();
+    const thumbnail = (await captureNativeThumbnail()) ?? captureThumbnail();
     const ok = project.updateComposition(id, { thumbnail });
     if (!ok) console.warn('[PresetTray] update failed for', id);
   }
@@ -252,25 +326,9 @@
   async function saveNewPreset() {
     const name = newPresetName.trim() || `Preset ${$compositions.length + 1}`;
 
-    // Capture thumbnail
-    let thumbnail: string | undefined;
-    try {
-      const canvas = document.querySelector('canvas.main-canvas') as HTMLCanvasElement ||
-                     document.querySelector('.canvas-container canvas') as HTMLCanvasElement ||
-                     document.querySelector('canvas') as HTMLCanvasElement;
-      if (canvas) {
-        const thumbCanvas = document.createElement('canvas');
-        thumbCanvas.width = 120;
-        thumbCanvas.height = 68;
-        const ctx = thumbCanvas.getContext('2d');
-        if (ctx) {
-          ctx.drawImage(canvas, 0, 0, thumbCanvas.width, thumbCanvas.height);
-          thumbnail = thumbCanvas.toDataURL('image/jpeg', 0.7);
-        }
-      }
-    } catch (e) {
-      console.warn('Failed to capture thumbnail:', e);
-    }
+    // Capture thumbnail — native core snapshot first, canvas fallback.
+    let thumbnail: string | undefined = await captureNativeThumbnail();
+    if (!thumbnail) thumbnail = captureThumbnail();
 
     project.saveComposition(name, thumbnail);
     newPresetName = '';
@@ -306,7 +364,7 @@
 </script>
 
 <!-- Preset Tray Toggle Button -->
-<button class="tray-toggle" class:open={isOpen} onclick={toggleTray}>
+<button class="tray-toggle" class:open={isOpen} class:vj-drag={vjDragMode} onclick={toggleTray}>
   <span class="toggle-icon">{isOpen ? '▼' : '▲'}</span>
   <span class="toggle-label">Presets</span>
   {#if $compositions.length > 0}
@@ -316,7 +374,7 @@
 
 <!-- Preset Tray Content -->
 {#if isOpen}
-  <div class="preset-tray">
+  <div class="preset-tray" class:vj-drag={vjDragMode}>
     <div class="tray-header">
       <div class="header-left">
         <span class="tray-title">MAPPING PRESETS</span>
@@ -421,6 +479,11 @@
       </div>
 
       <div class="header-right">
+        {#if vjDragMode}
+          <button class="tray-minimize-btn" onclick={() => isOpen = false} title="Minimize preset tray">
+            ▼ Minimize
+          </button>
+        {/if}
         <!-- Recording controls -->
         {#if isRecording}
           <div class="recording-indicator">
@@ -482,6 +545,9 @@
           <div
             class="preset-item"
             class:active={$activeCompositionId === comp.id}
+            draggable={vjDragMode}
+            ondragstart={(e) => handlePresetDragStart(e, comp)}
+            ondragend={handlePresetDragEnd}
             onclick={() => loadPreset(comp.id)}
             oncontextmenu={(e) => openCtxMenu(e, comp)}
             role="button"
@@ -598,6 +664,33 @@
     font-size: 11px;
     font-weight: 700;
   }
+
+  .tray-toggle.vj-drag {
+    z-index: 1205;
+    bottom: 10px;
+    left: 14px;
+    transform: none;
+  }
+  .preset-tray.vj-drag {
+    z-index: 1204;
+    bottom: 0;
+    height: 172px;
+    border-top: 1px solid var(--ga-coral-line, rgba(206,222,236,.45));
+    box-shadow: 0 -8px 30px rgba(0, 0, 0, 0.55);
+  }
+  .tray-minimize-btn {
+    background: var(--bg-tertiary, #14141a);
+    border: 1px solid #2a2a30;
+    color: var(--text-primary, #ddd);
+    padding: 5px 12px;
+    border-radius: 4px;
+    cursor: pointer;
+    font-size: 12px;
+    white-space: nowrap;
+  }
+  .tray-minimize-btn:hover { border-color: var(--ga-coral, #e7eef5); }
+  .preset-tray.vj-drag .preset-item { cursor: grab; }
+  .preset-tray.vj-drag .preset-item:active { cursor: grabbing; }
 
   .preset-tray {
     position: fixed;
@@ -737,7 +830,7 @@
   .ap-bpm {
     font-size: 11px;
     color: var(--text-muted, #888);
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
   .ap-progress {
     width: 60px;
@@ -930,7 +1023,7 @@
     font-size: 12px;
     font-weight: 600;
     color: #ff4444;
-    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
   }
 
   /* Preset list */
