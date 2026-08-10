@@ -8,7 +8,10 @@ import { settings, getMimeType, getFileExtension } from '../stores/settings';
 import { mediaLibrary } from '../stores/media';
 import { generateUUID } from '../types';
 import { audioStore } from '../stores/audio';
-import { createAssetRefFromGeneratedBlob } from '../storage/assetRegistry';
+import { createAssetRefFromGeneratedBlob, pathToFileUrl } from '../storage/assetRegistry';
+import { NATIVE_ENGINE_ONLY } from '../stores/settings';
+import { invoke, isElectron } from '../bridge';
+import { startNativeRendererLiveFrameRecording } from './nativeLiveFrameRecorder';
 
 // ============================================================================
 // TYPES
@@ -98,6 +101,156 @@ function resolveCanvas(source: RecorderOptions['canvas']): HTMLCanvasElement | n
 }
 
 // ============================================================================
+// NATIVE-CORE LIVE RECORDING (async start behind a sync handle)
+// ============================================================================
+
+function startNativeCoreLiveRecording(options: RecorderOptions): RecorderHandle {
+  let innerFallback: RecorderHandle | null = null;
+  let mainProcessActive = false;
+  let stopRequested = false;
+  let failed = false;
+  let recording = true;
+  let duration = 0;
+  const autoDownload = !!settings.get().recording.autoDownload;
+  const namePrefix = options.namePrefix || 'Recording';
+
+  const durationTimer = window.setInterval(() => {
+    if (!recording) return;
+    duration += 1;
+    options.onDurationUpdate?.(duration);
+  }, 1000);
+
+  const finishFail = (err: unknown) => {
+    failed = true;
+    recording = false;
+    window.clearInterval(durationTimer);
+    options.onError?.(err instanceof Error ? err : new Error(String(err)));
+  };
+
+  const stopMainProcessRecording = async () => {
+    recording = false;
+    window.clearInterval(durationTimer);
+    try {
+      const result = await invoke('native_output_recording_stop') as {
+        success?: boolean;
+        error?: string;
+        outputPath?: string;
+        durationSeconds?: number;
+        thumbnailDataUrl?: string | null;
+      } | null;
+      if (!result?.success || !result.outputPath) {
+        throw new Error(result?.error || 'Native recording failed.');
+      }
+      const url = pathToFileUrl(result.outputPath);
+      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+      const name = `${namePrefix} ${timestamp}`;
+      mediaLibrary.addItem({
+        id: generateUUID(),
+        name,
+        type: 'video',
+        src: url,
+        thumbnail: result.thumbnailDataUrl ?? undefined,
+        _assetRef: {
+          kind: 'local-file',
+          originalPath: result.outputPath,
+          name: `${name}.mp4`,
+          mime: 'video/mp4',
+          size: 0,
+          lastModified: Date.now(),
+        },
+      });
+      if (autoDownload) {
+        const dialog = await invoke('save_project_dialog', {
+          title: 'Save Recording',
+          defaultPath: `${name}.mp4`,
+          filters: [
+            { name: 'MP4 Video', extensions: ['mp4'] },
+            { name: 'All Files', extensions: ['*'] },
+          ],
+        }) as { canceled?: boolean; filePath?: string | null } | null;
+        if (!dialog?.canceled && dialog?.filePath) {
+          await invoke('copy_file_to_project', {
+            sourcePath: result.outputPath,
+            destPath: dialog.filePath,
+          });
+        }
+      }
+      options.onComplete?.();
+    } catch (err) {
+      finishFail(err);
+    }
+  };
+
+  void (async () => {
+    // Preferred: main-process IOSurface capture — zero per-frame work in
+    // the renderer or the render core, so live output stays smooth.
+    const started = await invoke('native_output_recording_start', {
+      // 60fps: main-process IOSurface capture costs a memcpy per frame,
+      // and hardware VideoToolbox encodes 1080p60 easily — matching the
+      // output rate removes the temporal aliasing 30fps sampling showed.
+      fps: 60,
+      quality: 'high',
+      namePrefix,
+    }).catch((err) => ({ success: false, error: String(err) })) as { success?: boolean; error?: string } | null;
+    if (started?.success) {
+      mainProcessActive = true;
+      if (stopRequested) void stopMainProcessRecording();
+      return;
+    }
+    console.warn('[Recorder] Main-process capture unavailable, falling back to snapshot recorder:', started?.error);
+    // Fallback: renderer-driven snapshot recorder (heavier).
+    const proj = get(project);
+    try {
+      const handle = await startNativeRendererLiveFrameRecording({
+        width: proj.width || 1920,
+        height: proj.height || 1080,
+        fps: 30,
+        quality: 'high',
+        namePrefix,
+        liveClock: true,
+        promptSave: autoDownload,
+        onDurationUpdate: (seconds) => {
+          duration = seconds;
+          options.onDurationUpdate?.(seconds);
+        },
+        onComplete: () => {
+          recording = false;
+          window.clearInterval(durationTimer);
+          options.onComplete?.();
+        },
+        onError: finishFail,
+      });
+      innerFallback = handle;
+      if (stopRequested) handle?.stop();
+    } catch (err) {
+      finishFail(err);
+    }
+  })();
+
+  return {
+    stop() {
+      if (stopRequested) return;
+      stopRequested = true;
+      if (mainProcessActive) {
+        void stopMainProcessRecording();
+      } else {
+        innerFallback?.stop();
+      }
+    },
+    get isRecording() {
+      if (failed || stopRequested) return false;
+      return recording;
+    },
+    get duration() {
+      return innerFallback?.duration ?? duration;
+    },
+    get hasAudio() {
+      return false;
+    },
+  };
+}
+
+// ============================================================================
 // RECORDING SERVICE
 // ============================================================================
 
@@ -106,6 +259,13 @@ function resolveCanvas(source: RecorderOptions['canvas']): HTMLCanvasElement | n
  * Optionally captures audio from the shared audio system.
  */
 export function startRecording(options: RecorderOptions = {}): RecorderHandle | null {
+  // Native mode: the WebGL canvas is a cleared underlay — captureStream
+  // would record black. Record the core's live output via frame
+  // snapshots into the native MP4 encoder instead. Video-only for now
+  // (audio muxing into the native encoder is a separate piece).
+  if (isElectron && NATIVE_ENGINE_ONLY) {
+    return startNativeCoreLiveRecording(options);
+  }
   const canvas = resolveCanvas(options.canvas);
   if (!canvas) {
     options.onError?.(new Error('No canvas found to record'));

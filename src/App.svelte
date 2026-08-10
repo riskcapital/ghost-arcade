@@ -4,7 +4,7 @@
   import Canvas from './lib/components/Canvas.svelte';
   import WebGPUCanvas from './lib/components/WebGPUCanvas.svelte';
   import AudioInputPicker from './lib/components/AudioInputPicker.svelte';
-  import BpmTapWidget from './lib/components/BpmTapWidget.svelte';
+  import AudioMeterPanel from './lib/components/AudioMeterPanel.svelte';
   // Feature tour removed at user request — was an interactive multi-step
   // overlay shown on first launch, but disrupted the experience for users
   // already familiar with VJ software. The OnboardingTour.svelte and
@@ -87,6 +87,7 @@
   // reactive blocks like syncVJClips.
   import { snapshots as snapshotsStore } from './lib/stores/snapshots';
   import { mediaLibrary } from './lib/stores/media';
+  import { createAssetRefFromGeneratedBlob, type AssetRef } from './lib/storage/assetRegistry';
   import {
     PHONE_CAMERA_MEDIA_ID,
     PHONE_CAMERA_SOURCE_PREFIX,
@@ -119,11 +120,8 @@
     type NativeEditorPreviewOverlayPoint,
   } from './lib/api/native-renderer';
   import {
-    nativeRendererModeLabel,
-    nativeRendererOutputShareSummary,
     nativeRendererRuntime,
     type NativeRendererRuntimeState,
-    type NativeRendererDriverMode,
   } from './lib/stores/nativeRenderer';
   import { startSpoutScanner, stopSpoutScanner } from './lib/stores/spout';
   import { preloadShaderLibrary, populateShaderListForSync } from './lib/preload';
@@ -420,42 +418,6 @@
       try { window.localStorage?.setItem(INTEGRATED_GPU_BANNER_DISMISSED_KEY, '1'); } catch { /* */ }
     }
   }
-  function nativeRendererToolbarLabel(state: NativeRendererRuntimeState) {
-    const mode: NativeRendererDriverMode = state.driverMode;
-    if (state.outputActive) return 'LIVE';
-    if (mode === 'full-v2') return 'NATIVE';
-    if (mode === 'native-enabled') return 'NATIVE';
-    return nativePrimaryRenderer ? 'INIT' : 'GPU';
-  }
-  function nativeRendererShareSummary(state: NativeRendererRuntimeState) {
-    return nativeRendererOutputShareSummary(state);
-  }
-  function nativeRendererSurfaceSummary(state: NativeRendererRuntimeState): string {
-    const preview = state.nativeEditorPreviewProductionReady
-      ? `native zero-copy (${state.nativeEditorPreviewPresentation || 'underlay'})`
-      : state.driverMode !== 'offline'
-        ? 'embedded presenter pending (native-only)'
-        : nativePrimaryRenderer
-          ? 'native unavailable'
-          : 'browser renderer';
-    const output = state.outputActive
-      ? 'native live'
-      : state.fullV2Ready
-        ? 'native ready'
-        : 'unavailable';
-    const recording = state.nativeRecordingReady ? 'native ready' : 'unavailable';
-    return `Preview: ${preview}. Output: ${output}. Recording: ${recording}.`;
-  }
-  function nativeRendererToolbarTitle(
-    state: NativeRendererRuntimeState,
-    info: { renderer: string; vendor: string; isIntegrated: boolean },
-  ) {
-    const share = nativeRendererShareSummary(state);
-    const shareDetail = state.nativeTextureShareSenderDetail
-      ? ` ${state.nativeTextureShareSenderDetail}`
-      : '';
-    return `${info.renderer} (${info.vendor}) • Native renderer: ${nativeRendererModeLabel(state.driverMode)}${state.outputActive ? ' live output active' : ''}. ${nativeRendererSurfaceSummary(state)} ${state.readinessDetail}${share ? ` • ${share}.${shareDetail}` : ''}${info.isIntegrated ? ' — WARNING: Integrated GPU. Set this app to High Performance in Windows Graphics Settings.' : ''}`;
-  }
   function fpsCounterLabel(state: NativeRendererRuntimeState, fps: number): string {
     return state.driverMode !== 'offline' || nativePrimaryRenderer ? `UI ${fps} FPS` : `${fps} FPS`;
   }
@@ -713,11 +675,22 @@
   function recoverAutosave() {
     const savedData = localStorage.getItem('ghostarcade-autosave');
     if (savedData) {
-      project.importProjectJSON(savedData);
+      // Recover against the same project directory the snapshot was taken
+      // in, so relative / sibling asset references resolve exactly as they
+      // do on a normal Open.
+      const savedPath = localStorage.getItem('ghostarcade-autosave-path') || '';
+      let projectDir: string | undefined;
+      if (savedPath) {
+        const sep = savedPath.includes('\\') ? '\\' : '/';
+        projectDir = savedPath.substring(0, savedPath.lastIndexOf(sep) + 1) || undefined;
+        currentProjectPath = savedPath;
+      }
+      project.importProjectJSON(savedData, projectDir);
       markAsSaved();
     }
     localStorage.removeItem('ghostarcade-autosave');
     localStorage.removeItem('ghostarcade-autosave-timestamp');
+    localStorage.removeItem('ghostarcade-autosave-path');
     showRecoveryModal = false;
   }
 
@@ -808,21 +781,70 @@
   // =========================================================================
   // SCREENSHOT — capture canvas as PNG, save to recordings folder + media lib
   // =========================================================================
+  // Native mode: the WebGL canvas is a cleared underlay — snapshot the
+  // core's presented frame instead. Returns null when unavailable so the
+  // canvas path stays as fallback.
+  async function captureNativeScreenshotBlob(): Promise<Blob | null> {
+    if (!nativePrimaryRenderer) return null;
+    try {
+      const snap = await invoke('native_renderer_get_frame_snapshot', { include_pixels: true }) as {
+        rgba_b64?: string;
+        width?: number;
+        height?: number;
+        format?: string;
+        bytes_per_row?: number;
+        padded_bytes_per_row?: number;
+      } | null;
+      if (!snap?.rgba_b64 || !snap.width || !snap.height) return null;
+      const raw = atob(snap.rgba_b64);
+      const bytes = new Uint8Array(raw.length);
+      for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+      const w = snap.width;
+      const h = snap.height;
+      const stride = snap.padded_bytes_per_row || snap.bytes_per_row || w * 4;
+      const bgra = /bgra/i.test(String(snap.format ?? ''));
+      const img = new ImageData(w, h);
+      for (let y = 0; y < h; y++) {
+        const src = y * stride;
+        const dst = y * w * 4;
+        for (let x = 0; x < w; x++) {
+          const si = src + x * 4;
+          const di = dst + x * 4;
+          img.data[di]     = bytes[bgra ? si + 2 : si];
+          img.data[di + 1] = bytes[si + 1];
+          img.data[di + 2] = bytes[bgra ? si : si + 2];
+          img.data[di + 3] = 255;
+        }
+      }
+      const full = document.createElement('canvas');
+      full.width = w;
+      full.height = h;
+      full.getContext('2d')!.putImageData(img, 0, 0);
+      return await new Promise<Blob | null>((resolve) => full.toBlob(resolve, 'image/png'));
+    } catch (err) {
+      console.warn('[App] Native screenshot failed, falling back to canvas:', err);
+      return null;
+    }
+  }
+
   async function takeScreenshot() {
     try {
-      const canvas = document.querySelector('canvas.main-canvas') as HTMLCanvasElement ||
-                     document.querySelector('.canvas-container canvas') as HTMLCanvasElement ||
-                     document.querySelector('canvas') as HTMLCanvasElement;
-
-      if (!canvas) {
-        console.warn('[App] No canvas found for screenshot');
-        return;
-      }
-
-      // Capture full-resolution PNG blob from canvas
-      const blob: Blob | null = await new Promise(resolve => canvas.toBlob(resolve, 'image/png'));
+      let blob: Blob | null = await captureNativeScreenshotBlob();
       if (!blob) {
-        console.warn('[App] Failed to capture canvas blob');
+        const canvas = document.querySelector('canvas.main-canvas') as HTMLCanvasElement ||
+                       document.querySelector('.canvas-container canvas') as HTMLCanvasElement ||
+                       document.querySelector('canvas') as HTMLCanvasElement;
+
+        if (!canvas) {
+          console.warn('[App] No canvas found for screenshot');
+          return;
+        }
+
+        // Capture full-resolution PNG blob from canvas
+        blob = await new Promise<Blob | null>(resolve => canvas.toBlob(resolve, 'image/png'));
+      }
+      if (!blob) {
+        console.warn('[App] Failed to capture screenshot');
         return;
       }
 
@@ -832,36 +854,36 @@
       // Create blob URL for media library
       const blobUrl = URL.createObjectURL(blob);
 
-      // Generate thumbnail (120x68)
+      // Generate thumbnail (120x68) from the captured blob — works for
+      // both the native-snapshot and canvas capture paths.
       let thumbnail: string | undefined;
-      const thumbCanvas = document.createElement('canvas');
-      thumbCanvas.width = 120;
-      thumbCanvas.height = 68;
-      const ctx = thumbCanvas.getContext('2d');
-      if (ctx) {
-        ctx.drawImage(canvas, 0, 0, thumbCanvas.width, thumbCanvas.height);
-        thumbnail = thumbCanvas.toDataURL('image/jpeg', 0.7);
-      }
-
-      // Add to media library as image
-      mediaLibrary.addItem({
-        id: generateUUID(),
-        name: filename,
-        type: 'image',
-        src: blobUrl,
-        thumbnail,
-      });
-      console.log('[App] Screenshot added to media library:', filename);
+      try {
+        const bitmap = await createImageBitmap(blob);
+        const thumbCanvas = document.createElement('canvas');
+        thumbCanvas.width = 120;
+        thumbCanvas.height = 68;
+        const ctx = thumbCanvas.getContext('2d');
+        if (ctx) {
+          ctx.drawImage(bitmap, 0, 0, thumbCanvas.width, thumbCanvas.height);
+          thumbnail = thumbCanvas.toDataURL('image/jpeg', 0.7);
+        }
+        bitmap.close();
+      } catch { /* thumbnail is optional */ }
 
       // Save to the same folder used for recordings (File System Access API)
       const currentSettings = settings.get();
       const dirHandle = currentSettings.recording.saveDirectoryHandle;
+      let savedPath: string | null = null;
       if (dirHandle) {
         try {
           const fileHandle = await dirHandle.getFileHandle(filename, { create: true });
           const writable = await fileHandle.createWritable();
           await writable.write(blob);
           await writable.close();
+          // The Electron shim handle carries the absolute directory path, so
+          // the file we just wrote is itself a core-readable asset.
+          const dirPath = (dirHandle as any)._path;
+          if (typeof dirPath === 'string' && dirPath) savedPath = `${dirPath}/${filename}`;
           console.log('[App] Screenshot saved to:', dirHandle.name + '/' + filename);
         } catch (err) {
           console.warn('[App] Failed to save screenshot to folder, falling back to download:', err);
@@ -871,6 +893,40 @@
         // Fallback: browser download
         downloadBlob(blob, filename);
       }
+
+      // The native core reads files, not the browser's blob: object URLs, so a
+      // library entry carrying only a blob URL is unassignable to a layer
+      // (`image:native-readable-uri-required`). Attach an AssetRef the same way
+      // file imports and recordings do — reusing the file we just wrote when we
+      // know its path, otherwise persisting a managed copy.
+      let assetRef: AssetRef | undefined;
+      if (savedPath) {
+        assetRef = {
+          kind: 'local-file',
+          originalPath: savedPath,
+          name: filename,
+          mime: 'image/png',
+          size: blob.size,
+          lastModified: Date.now(),
+        };
+      } else {
+        try {
+          ({ assetRef } = await createAssetRefFromGeneratedBlob(blob, filename, 'image/png', blobUrl));
+        } catch (err) {
+          console.warn('[App] Failed to persist screenshot asset:', err);
+        }
+      }
+
+      // Add to media library as image
+      mediaLibrary.addItem({
+        id: generateUUID(),
+        name: filename,
+        type: 'image',
+        src: blobUrl,
+        thumbnail,
+        _assetRef: assetRef,
+      });
+      console.log('[App] Screenshot added to media library:', filename, assetRef?.originalPath ?? '(no disk path)');
     } catch (err) {
       console.error('[App] Screenshot failed:', err);
     }
@@ -1245,8 +1301,21 @@
       if (proj.layers.length > 0) {
         try {
           const jsonStr = project.exportProjectJSON();
-          localStorage.setItem('ghostarcade-autosave', jsonStr);
+          try {
+            localStorage.setItem('ghostarcade-autosave', jsonStr);
+          } catch {
+            // Over quota — almost always a Stage 3D scene with an inline
+            // model. Retry without it so recovery still gets the layers
+            // instead of autosave silently dying for the whole session.
+            const trimmed = JSON.parse(jsonStr);
+            delete trimmed?.project?.stage3d;
+            localStorage.setItem('ghostarcade-autosave', JSON.stringify(trimmed));
+            console.warn('[AutoSave] Project too large for autosave — 3D scene excluded from recovery snapshot.');
+          }
           localStorage.setItem('ghostarcade-autosave-timestamp', Date.now().toString());
+          // Remember which file this snapshot belongs to so recovery can
+          // resolve sibling-relative asset paths the same way Open does.
+          localStorage.setItem('ghostarcade-autosave-path', currentProjectPath ?? '');
         } catch (e) {
           console.warn('[AutoSave] Failed to auto-save project:', e);
         }
@@ -5632,21 +5701,7 @@
     <!-- Header / Toolbar -->
     <header class="toolbar" class:vj-native-hidden={vjNativeUnderlayActive}>
       <div class="toolbar-left">
-        <img src="{import.meta.env.BASE_URL}logo-g.svg" alt="Ghost Arcade" class="header-logo" />
-        {#if gpuInfo}
-          <span
-            class="gpu-indicator"
-            class:integrated={gpuInfo.isIntegrated}
-            class:native={nativePrimaryRenderer || $nativeRendererRuntime.driverMode !== 'offline'}
-            class:native-ready={$nativeRendererRuntime.driverMode === 'full-v2'}
-            class:native-active={$nativeRendererRuntime.outputActive}
-            class:native-diagnostic={nativePrimaryRenderer && !$nativeRendererRuntime.nativeEditorPreviewProductionReady && !$nativeRendererRuntime.outputActive}
-            title={nativeRendererToolbarTitle($nativeRendererRuntime, gpuInfo)}
-          >
-            <span class="gpu-dot"></span>
-            {nativeRendererToolbarLabel($nativeRendererRuntime)}
-          </span>
-        {/if}
+        <img src="{import.meta.env.BASE_URL}icon-new.png" alt="Ghost Arcade" class="header-logo" />
         <!-- Windows-style File Menu -->
         <div class="file-menu-container">
           <button
@@ -5921,11 +5976,14 @@
              mic toggle, device-picker chevron + popover, and system-audio
              toggle. State is wired through the global audioStore so toggling
              in one mode is reflected in every other mode. -->
-        <AudioInputPicker />
+        <AudioInputPicker showWaveform={false} />
 
-        <!-- TAP tempo + BPM readout. Auto-hides when audio is off so the
-             top bar stays clean for users who never use audio reactivity. -->
-        <BpmTapWidget />
+        <!-- Live FFT meter + beat/kick/snare dots + TAP tempo + BPM, with the
+             audio-input tweaks popover (sensitivity, smoothing, per-band gain)
+             behind the meter. Same strip VJ mode uses, so tuning audio
+             reactivity doesn't require switching modes. Self-hides when no
+             audio is active. -->
+        <AudioMeterPanel />
 
         <!-- Screenshot Button -->
         <button class="screenshot-btn" onclick={takeScreenshot} title="Take Screenshot">
@@ -5946,8 +6004,8 @@
             Stop Rec
           </button>
         {:else}
-          <button class="rec-btn" onclick={startRecording} title="Record Output (with audio if active)">
-            ● REC
+          <button class="rec-btn" onclick={startRecording} aria-label="Record output" title="Record Output (with audio if active)">
+            ●
           </button>
         {/if}
 
@@ -7615,6 +7673,7 @@
     height: 28px;
     width: auto;
     margin-right: 12px;
+    border-radius: 6px;
   }
 
   .version {
@@ -8132,17 +8191,21 @@
   }
 
   /* Recording button in header */
+  /* Icon-only record button — the dot alone reads as "record" and keeps
+     the header tight next to VJ / STAGE. */
   .rec-btn {
     display: flex;
     align-items: center;
-    gap: 6px;
+    justify-content: center;
+    width: 32px;
     height: 32px;
     background: transparent;
     border: 1px solid rgba(255, 68, 56, 0.4);
     color: var(--ga-rec, #ff4438);
-    padding: 0 12px;
+    padding: 0;
     border-radius: var(--ga-r-hard, 2px);
-    font-size: 13px;
+    font-size: 15px;
+    line-height: 1;
     font-weight: 600;
     cursor: pointer;
     transition: all 0.15s;
@@ -9070,20 +9133,23 @@
   }
   .status-pill:hover {
     color: var(--ga-ink-0, #eef0f4);
-    background: var(--ga-coral-soft, rgba(255, 111, 94, 0.11));
-    border-color: var(--ga-coral-line, rgba(255, 111, 94, 0.4)) !important;
+    background: rgba(206, 222, 236, 0.10);
+    border-color: rgba(206, 222, 236, 0.42) !important;
   }
+  /* Active toggles wear the ghost-chrome accent: ice-white fill, cold dark
+     ink, and a cool halo — the same language as the VJ button and the other
+     filled accent controls. */
   .status-pill.on {
-    color: #23110c;
-    background: var(--ga-coral, #ff6f5e);
-    border-color: var(--ga-coral, #ff6f5e) !important;
-    box-shadow: 0 0 12px color-mix(in srgb, var(--ga-coral, #ff6f5e) 30%, transparent);
+    color: #16202b;
+    background: linear-gradient(180deg, #f4f9fd, #cfdde9);
+    border-color: rgba(214, 228, 240, 0.72) !important;
+    box-shadow: 0 0 12px rgba(176, 200, 222, 0.32);
   }
-  .status-pill.on:hover { filter: brightness(1.06); }
+  .status-pill.on:hover { filter: brightness(1.04); }
   .status-pill-icon {
     flex: none;
-    color: var(--ga-neon-green, #39ff14);
-    filter: drop-shadow(0 0 5px rgba(57, 255, 20, .62)) drop-shadow(0 0 12px rgba(57, 255, 20, .24));
+    color: var(--ga-ink-1, #9aa0ac);
+    filter: none;
   }
   .status-pill-icon .ga-neon-stroke {
     fill: none;
@@ -9100,21 +9166,14 @@
     fill: currentColor;
     opacity: 0.18;
   }
+  /* On an ice-white pill the icon reads as dark ink, not a glowing neon
+     stroke — the glow was fighting the fill and looked muddy. */
   .status-pill.on .status-pill-icon {
-    color: var(--ga-neon-green, #39ff14);
-    filter: drop-shadow(0 0 7px rgba(57, 255, 20, .75)) drop-shadow(0 0 14px rgba(57, 255, 20, .34));
+    color: #16202b;
+    filter: none;
   }
   .map-tool-pill {
     margin-right: 2px;
-  }
-  .map-tool-pill.on {
-    background: var(--ga-coral, #ff6f5e);
-  }
-  .snap-pill.on {
-    color: #061418;
-    background: var(--ga-neon-cyan, #5ce1e6);
-    border-color: var(--ga-neon-cyan, #5ce1e6) !important;
-    box-shadow: 0 0 12px rgba(92, 225, 230, 0.38);
   }
   .status-grid-select {
     height: 24px;

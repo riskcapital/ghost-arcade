@@ -401,6 +401,10 @@
 
                 {#if isExpanded}
                   <div class="macro-fx-params">
+                    <div class="macro-fx-params-title">
+                      <span>Effect</span>
+                      <strong>{EFFECT_LABEL_BY_TYPE[fx.type] ?? fx.type}</strong>
+                    </div>
                     {#if pendingNativeEffect}
                       <div class="native-effect-lockout">
                         Pending native port. Disable or remove this effect before using the macro in native v2.
@@ -747,6 +751,30 @@
     border-top: 1px solid rgba(187, 134, 252, 0.18);
     background: rgba(0, 0, 0, 0.18);
   }
+  .macro-fx-params-title {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 10px;
+    padding: 0 0 6px;
+    margin-bottom: 2px;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.07);
+    color: var(--text-muted, #888);
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+  }
+  .macro-fx-params-title strong {
+    min-width: 0;
+    color: var(--text-primary, #fff);
+    font-size: 13px;
+    letter-spacing: 0.02em;
+    text-transform: none;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
   .macro-fx-params-empty {
     font-size: 13px;
     color: #777;
@@ -820,7 +848,10 @@
   }
   .macro-fx-handle:active { cursor: grabbing; }
   .macro-fx-meta {
-    flex: 1;
+    /* Real flex-basis, not 0 — the skin's global range styling forces
+       width:100% !important on the opacity slider, and with a 0 basis here
+       the name column collapsed to nothing, hiding the effect name. */
+    flex: 1 1 150px;
     min-width: 0;
     display: flex;
     flex-direction: column;
@@ -870,7 +901,10 @@
     line-height: 1.35;
   }
   .macro-fx-opacity {
-    width: 80px;
+    /* flex-basis pins the used size even against the skin's
+       `width: 100% !important` on range inputs. */
+    flex: 0 0 110px;
+    width: 110px;
     height: 4px;
     -webkit-appearance: none;
     appearance: none;

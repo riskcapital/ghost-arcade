@@ -51,6 +51,10 @@ describe('performer native clip routing', () => {
       thumbnail: 'thumb.png',
       shaderCode: 'void main() {}',
       shaderValues: { speed: 1.5 },
+      // Performer-driven clips are edited from Performer's SHADER tab; VJ
+      // mode uses this flag to suppress its own clip params panel, which
+      // would otherwise write to a grid cell this transient clip never fills.
+      _performerOwned: true,
     });
   });
 });

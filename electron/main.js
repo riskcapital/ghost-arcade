@@ -1231,6 +1231,18 @@ const LOOP_CUSTOM_TRANSITION_EXPRESSIONS = new Map([
   ['ghost-chroma-stagger', 'if(gt(P+0.13*(PLANE-1),0.15+0.7*mod(floor(Y/20)+floor(X/80),5)/4),B,A)'],
   ['ghost-tape-tear', 'if(gt(P+0.25*sin(Y*0.12+P*12),0.48),B,A)'],
   ['ghost-signal-pulse', 'if(gt(P+0.18*sin((floor(Y/18)+floor(X/90))*2+P*18),0.58),B,A)'],
+  ['hlwind', 'if(gt(P+0.12*sin(Y*0.14),X/W),B,A)'],
+  ['hrwind', 'if(gt(P+0.12*sin(Y*0.14),(W-X)/W),B,A)'],
+  ['vuwind', 'if(gt(P+0.12*sin(X*0.14),(H-Y)/H),B,A)'],
+  ['vdwind', 'if(gt(P+0.12*sin(X*0.14),Y/H),B,A)'],
+  ['coverleft', 'if(gt(P,X/W),B,A)'],
+  ['coverright', 'if(gt(P,(W-X)/W),B,A)'],
+  ['coverup', 'if(gt(P,(H-Y)/H),B,A)'],
+  ['coverdown', 'if(gt(P,Y/H),B,A)'],
+  ['revealleft', 'A*(1-clip((P-X/W)*8+0.5,0,1))+B*clip((P-X/W)*8+0.5,0,1)'],
+  ['revealright', 'A*(1-clip((P-(W-X)/W)*8+0.5,0,1))+B*clip((P-(W-X)/W)*8+0.5,0,1)'],
+  ['revealup', 'A*(1-clip((P-(H-Y)/H)*8+0.5,0,1))+B*clip((P-(H-Y)/H)*8+0.5,0,1)'],
+  ['revealdown', 'A*(1-clip((P-Y/H)*8+0.5,0,1))+B*clip((P-Y/H)*8+0.5,0,1)'],
 ]);
 
 function safeLoopTransition(value) {
@@ -1294,6 +1306,9 @@ function videoLoopEncoderArgs(outputPath, meta = {}, preferHardware = true) {
     '-movflags', '+faststart',
     '-max_muxing_queue_size', '1024',
     '-an',
+    ...(meta.transition
+      ? ['-metadata', `ghost_arcade_transition=${safeLoopTransition(meta.transition)}`]
+      : []),
     outputPath,
   ];
 
@@ -2361,10 +2376,355 @@ function startNativeEditorPreviewPump() {
   return true;
 }
 
+// ── Native output live recorder ──
+// Captures the core's output-export IOSurface entirely in the MAIN process:
+// the addon copies packed BGRA pixels per frame and ffmpeg (hardware
+// VideoToolbox H.264 on macOS) encodes from stdin. The renderer and the
+// render core do ZERO per-frame work — no snapshot re-render, no RPC, no
+// readback stall — so live output framerate is untouched while recording.
+let nativeOutputRecording = null;
+
+function nativeOutputRecorderEncoderArgs(width, height, fps, quality, outputPath) {
+  const base = [
+    '-hide_banner', '-loglevel', 'warning', '-y',
+    '-f', 'rawvideo', '-pix_fmt', 'bgra',
+    '-s:v', `${width}x${height}`,
+    '-framerate', String(fps),
+    '-i', 'pipe:0',
+    '-an',
+  ];
+  if (process.platform === 'darwin') {
+    const bitrate = quality === 'maximum' ? '40M' : quality === 'high' ? '20M' : quality === 'medium' ? '10M' : '6M';
+    // -realtime favors encode latency over marginal quality — the whole
+    // point of this path is keeping pace with the live output.
+    return [...base, '-c:v', 'h264_videotoolbox', '-realtime', '1', '-b:v', bitrate, '-pix_fmt', 'yuv420p', '-movflags', '+faststart', outputPath];
+  }
+  return [...base, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', crfForVideoQuality(quality), '-preset', presetForVideoQuality(quality), '-movflags', '+faststart', outputPath];
+}
+
+function nativeRecorderWriteStdin(rec, buffer) {
+  return new Promise((resolve, reject) => {
+    if (!rec.child.stdin.writable) {
+      reject(new Error('Recorder encoder stdin closed.'));
+      return;
+    }
+    const ok = rec.child.stdin.write(buffer, (err) => { if (err) reject(err); });
+    if (ok) resolve();
+    else rec.child.stdin.once('drain', resolve);
+  });
+}
+
+/** Encode one packed-BGRA frame to a 120x68 JPEG data URL via a one-shot
+ *  ffmpeg run — used for the media-library thumbnail. */
+function nativeRecorderThumbnail(buffer, width, height) {
+  return new Promise((resolve) => {
+    try {
+      const child = spawn(resolveFfmpegPath(), [
+        '-hide_banner', '-loglevel', 'error',
+        '-f', 'rawvideo', '-pix_fmt', 'bgra', '-s:v', `${width}x${height}`,
+        '-i', 'pipe:0',
+        '-frames:v', '1', '-vf', 'scale=120:68',
+        '-f', 'image2pipe', '-c:v', 'mjpeg', '-q:v', '6', 'pipe:1',
+      ], { windowsHide: true, stdio: ['pipe', 'pipe', 'ignore'] });
+      const chunks = [];
+      child.stdout.on('data', (c) => chunks.push(c));
+      child.on('close', () => {
+        const jpeg = Buffer.concat(chunks);
+        resolve(jpeg.length > 0 ? `data:image/jpeg;base64,${jpeg.toString('base64')}` : null);
+      });
+      child.on('error', () => resolve(null));
+      child.stdin.end(buffer);
+    } catch {
+      resolve(null);
+    }
+  });
+}
+
+async function startNativeOutputRecording(args = {}) {
+  if (nativeOutputRecording) throw new Error('A native output recording is already running.');
+  const addon = nativePreviewAddon || loadNativePreviewAddon();
+  if (!addon || typeof addon.readIOSurfacePixels !== 'function') {
+    throw new Error('Presenter addon lacks IOSurface capture support.');
+  }
+  const texture = await getNativeOutputSharedTextureMetadata();
+  const surfaceId = Number(texture?.handle ?? 0);
+  const width = Number(texture?.width ?? 0);
+  const height = Number(texture?.height ?? 0);
+  if (!texture?.available || !Number.isFinite(surfaceId) || surfaceId <= 0 || width <= 0 || height <= 0) {
+    throw new Error('Native output shared texture is not available for capture.');
+  }
+  const fps = Math.round(clampNumber(args.fps, 1, 60, 30));
+  const quality = String(args.quality || 'high').trim().toLowerCase();
+  const outputPath = safeGeneratedVideoPath(`${String(args.namePrefix || 'Recording')}.mp4`);
+  const child = spawn(
+    resolveFfmpegPath(),
+    nativeOutputRecorderEncoderArgs(width, height, fps, quality, outputPath),
+    { windowsHide: true, stdio: ['pipe', 'ignore', 'pipe'] },
+  );
+  const rec = {
+    child,
+    surfaceId,
+    width,
+    height,
+    fps,
+    outputPath,
+    startedAt: Date.now(),
+    written: 0,
+    active: true,
+    lastFrame: null,
+    stderr: '',
+    exitPromise: null,
+    pumpPromise: null,
+  };
+  rec.exitPromise = new Promise((resolve) => {
+    child.stderr?.setEncoding?.('utf8');
+    child.stderr?.on('data', (chunk) => {
+      rec.stderr += String(chunk);
+      if (rec.stderr.length > 8000) rec.stderr = rec.stderr.slice(-8000);
+    });
+    child.on('error', (err) => { rec.stderr += `\n${err?.message || err}`; });
+    child.on('close', (code) => resolve(code));
+  });
+  nativeOutputRecording = rec;
+
+  const frameMs = 1000 / fps;
+  rec.pumpPromise = (async () => {
+    // ── Encoder warm-up ──
+    // VideoToolbox takes several hundred ms to initialize; if the pacing
+    // clock ran during that stall, the catch-up would duplicate one stale
+    // frame across every missed slot — a frozen, laggy first second in
+    // the file. Prime the pipe with real frames WITHOUT pacing debt, and
+    // only start the wall clock once a write completes promptly.
+    {
+      const warmupDeadline = Date.now() + 4000;
+      let warmed = false;
+      let warmupWrites = 0;
+      while (rec.active && !warmed && Date.now() < warmupDeadline) {
+        let frame = null;
+        try { frame = addon.readIOSurfacePixels(rec.surfaceId); } catch { frame = null; }
+        if (frame?.data && frame.width === rec.width && frame.height === rec.height) {
+          const writeStart = Date.now();
+          try {
+            await nativeRecorderWriteStdin(rec, frame.data);
+          } catch (err) {
+            rec.stderr += `\n${err?.message || err}`;
+            rec.active = false;
+            break;
+          }
+          rec.lastFrame = frame.data;
+          warmupWrites++;
+          // A prompt write after the first means the encoder is now
+          // consuming in real time.
+          if (warmupWrites > 1 && Date.now() - writeStart < frameMs) warmed = true;
+        }
+        if (!warmed) await new Promise((r) => setTimeout(r, 20));
+      }
+      // Restart the timeline so pacing owes nothing for the init stall:
+      // the warm-up frames occupy the first slots at the nominal rate.
+      rec.written = Math.max(1, warmupWrites);
+      rec.startedAt = Date.now() - (rec.written * 1000) / fps;
+    }
+    // ── Steady-cadence pump ──
+    // Absolute per-frame deadlines: capture as close to each slot's
+    // instant as the event loop allows, write exactly one frame per
+    // slot, and duplicate only when a genuine stall put us more than a
+    // full slot behind. The previous elapsed-time resampling quantized
+    // captures unevenly into slots, which read as judder even when
+    // nothing was actually stalling.
+    let nextAt = rec.startedAt + (rec.written * 1000) / fps;
+    while (rec.active) {
+      const now = Date.now();
+      if (now < nextAt - 1) {
+        await new Promise((r) => setTimeout(r, Math.max(1, nextAt - now - 1)));
+        continue;
+      }
+      let frame = null;
+      try { frame = addon.readIOSurfacePixels(rec.surfaceId); } catch { frame = null; }
+      if (frame?.data && frame.width === rec.width && frame.height === rec.height) {
+        rec.lastFrame = frame.data;
+      } else if (!rec.lastFrame) {
+        nextAt += frameMs;
+        continue;
+      }
+      // How far behind schedule this slot's write is starting. >1 slot
+      // means a stall — fill the missed slots with this fresh capture
+      // (capped at 2s) so the timeline stays real-time.
+      const behind = Math.max(0, Math.floor((Date.now() - nextAt) / frameMs));
+      const writes = 1 + Math.min(behind, fps * 2);
+      try {
+        for (let k = 0; k < writes && rec.active; k++) {
+          await nativeRecorderWriteStdin(rec, rec.lastFrame);
+          rec.written++;
+        }
+      } catch (err) {
+        rec.stderr += `\n${err?.message || err}`;
+        rec.active = false;
+        break;
+      }
+      nextAt += frameMs * writes;
+    }
+  })();
+
+  console.log(`[NativeRec] recording ${width}x${height}@${fps} iosurface:${surfaceId} -> ${outputPath}`);
+  return { success: true, width, height, fps, outputPath };
+}
+
+async function stopNativeOutputRecording() {
+  const rec = nativeOutputRecording;
+  nativeOutputRecording = null;
+  if (!rec) return { success: false, error: 'No native output recording is running.' };
+  rec.active = false;
+  try { await rec.pumpPromise; } catch { /* pump errors surface via stderr */ }
+  try { rec.child.stdin.end(); } catch { /* already closed */ }
+  const code = await rec.exitPromise;
+  if (rec.written <= 0) {
+    return { success: false, error: `Recording captured no frames.${rec.stderr ? ` ${rec.stderr.trim()}` : ''}` };
+  }
+  if (code !== 0) {
+    return { success: false, error: `Recording encoder exited with code ${code}.${rec.stderr ? ` ${rec.stderr.trim()}` : ''}` };
+  }
+  const thumbnailDataUrl = rec.lastFrame
+    ? await nativeRecorderThumbnail(rec.lastFrame, rec.width, rec.height)
+    : null;
+  const durationSeconds = rec.written / rec.fps;
+  console.log(`[NativeRec] finished ${rec.written} frames (${durationSeconds.toFixed(1)}s) -> ${rec.outputPath}`);
+  return {
+    success: true,
+    outputPath: rec.outputPath,
+    frames: rec.written,
+    fps: rec.fps,
+    durationSeconds,
+    thumbnailDataUrl,
+  };
+}
+
 // ── Deck confidence monitor pump ──
 // Polls the core's bank-monitor shared textures and (re)binds them to the
 // named addon monitor views. Each view repaints itself via its display-link;
 // polling here only tracks surface identity/size changes and frame liveness.
+// ── Native slice presentation ───────────────────────────────────────────
+// Each multi-output slice window gets a native layer parented into it,
+// fed by the core's per-slice shared texture. Same transport the deck
+// monitors and the editor preview use, so the projector shows the native
+// composite instead of a second WebGL renderer's crop of a master frame.
+const sliceNativeAttached = new Set();      // sliceId
+const sliceNativePending = new Set();       // sliceId — attach in progress
+let sliceNativePump = null;
+let sliceNativePumpInFlight = false;
+const sliceNativeLastBinding = new Map();   // sliceId -> `${handle}:${w}x${h}`
+
+function sliceMonitorName(sliceId) {
+  return `slice:${sliceId}`;
+}
+
+/** Can the core present a slice natively right now? Answered before the
+ *  window is created, because the answer decides whether the window is
+ *  transparent (native layer underneath) or opaque black (its own WebGL
+ *  render). Attaching against a stopped core would leave the projector
+ *  permanently black instead of falling back. */
+async function probeSliceNativeAvailable() {
+  if (process.platform !== 'darwin') return false;
+  const addon = nativePreviewAddon || loadNativePreviewAddon();
+  if (!addon || typeof addon.monitorAttach !== 'function') return false;
+  try {
+    const probe = await nativeRendererBroker.invoke('native_renderer_get_slice_output_state', {});
+    return !!probe?.available;
+  } catch {
+    return false;
+  }
+}
+
+/** Parent a native presentation layer into a slice window, filling it.
+ *  Returns false when the platform or addon can't do it, in which case the
+ *  slice window falls back to its own WebGL render. */
+function attachSliceNativeLayer(sliceId, win) {
+  if (process.platform !== 'darwin') return false;
+  const addon = nativePreviewAddon || loadNativePreviewAddon();
+  if (!addon || typeof addon.monitorAttach !== 'function') return false;
+  if (!win || win.isDestroyed()) return false;
+  try {
+    const handle = win.getNativeWindowHandle();
+    if (!Buffer.isBuffer(handle) || handle.length === 0) return false;
+    const [width, height] = win.getContentSize();
+    const rect = {
+      x: 0,
+      y: 0,
+      width: Math.max(1, width),
+      height: Math.max(1, height),
+      contentX: 0,
+      contentY: 0,
+      contentWidth: Math.max(1, width),
+      contentHeight: Math.max(1, height),
+      generation: Date.now() & 0x7fffffff,
+    };
+    if (!addon.monitorAttach(sliceMonitorName(sliceId), handle, rect)) return false;
+    sliceNativeAttached.add(sliceId);
+    startSliceNativePump();
+    console.log(`[SliceNative] attached ${sliceId} (${rect.width}x${rect.height})`);
+    return true;
+  } catch (err) {
+    console.warn(`[SliceNative] attach unavailable for ${sliceId}:`, err?.message || err);
+    return false;
+  } finally {
+    sliceNativePending.delete(sliceId);
+  }
+}
+
+function detachSliceNativeLayer(sliceId) {
+  sliceNativePending.delete(sliceId);
+  if (!sliceNativeAttached.has(sliceId)) return;
+  sliceNativeAttached.delete(sliceId);
+  sliceNativeLastBinding.delete(sliceId);
+  const addon = nativePreviewAddon;
+  if (addon && typeof addon.monitorDetach === 'function') {
+    try { addon.monitorDetach(sliceMonitorName(sliceId)); } catch { /* teardown best-effort */ }
+  }
+  if (sliceNativeAttached.size === 0) stopSliceNativePump();
+}
+
+function startSliceNativePump() {
+  if (sliceNativePump) return;
+  sliceNativePump = setInterval(async () => {
+    if (sliceNativePumpInFlight || sliceNativeAttached.size === 0) return;
+    sliceNativePumpInFlight = true;
+    try {
+      const addon = nativePreviewAddon;
+      if (!addon || typeof addon.monitorSetIOSurface !== 'function') return;
+      const state = await nativeRendererBroker.invoke('native_renderer_get_slice_output_state', {});
+      if (!state?.available || !Array.isArray(state.slices)) return;
+      for (const entry of state.slices) {
+        const sliceId = typeof entry?.id === 'string' ? entry.id : '';
+        if (!sliceId || !sliceNativeAttached.has(sliceId)) continue;
+        const surfaceId = Number(entry?.handle ?? 0);
+        const width = Number(entry?.width ?? 0);
+        const height = Number(entry?.height ?? 0);
+        if (!Number.isFinite(surfaceId) || surfaceId <= 0 || width <= 0 || height <= 0) continue;
+        // Rebinding is only needed when the surface itself changes; the
+        // core keeps writing into the same IOSurface every frame.
+        const binding = `${surfaceId}:${width}x${height}`;
+        if (sliceNativeLastBinding.get(sliceId) === binding) continue;
+        if (addon.monitorSetIOSurface(sliceMonitorName(sliceId), surfaceId, width, height, false)) {
+          sliceNativeLastBinding.set(sliceId, binding);
+          console.log(`[SliceNative] ${sliceId} bound iosurface:${surfaceId} ${width}x${height}`);
+        }
+      }
+    } catch {
+      // Broker restarts surface as transient failures; keep polling.
+    } finally {
+      sliceNativePumpInFlight = false;
+    }
+  }, 250);
+  sliceNativePump.unref?.();
+  console.log('[SliceNative] pump started');
+}
+
+function stopSliceNativePump() {
+  if (!sliceNativePump) return;
+  clearInterval(sliceNativePump);
+  sliceNativePump = null;
+  console.log('[SliceNative] pump stopped');
+}
+
 const deckMonitorAttachedNames = new Set();
 let deckMonitorPump = null;
 let deckMonitorPumpInFlight = false;
@@ -5092,11 +5452,17 @@ function registerIpcHandlers() {
   // Multiple slice windows can be open simultaneously — one per slice
   // assigned `targetType: 'display'`. The `sliceWindows` Map keeps the
   // references so we can close/move them later without re-opening.
-  ipcMain.handle('output_open_slice_window', (_e, args) => {
+  ipcMain.handle('output_open_slice_window', async (_e, args) => {
     const { sliceId, displayId } = args || {};
     if (!sliceId || typeof sliceId !== 'string') {
       return { ok: false, error: 'sliceId required' };
     }
+    // Decide the presentation path before creating the window: a native
+    // slice needs a transparent window (the layer sits under the page),
+    // while the WebGL fallback needs opaque black so the desktop never
+    // shows through before its first painted frame.
+    const useNative = await probeSliceNativeAvailable();
+    if (useNative) sliceNativePending.add(sliceId);
 
     // Resolve the target display. Falls back to the primary display if
     // the requested id is gone (operator unplugged a projector between
@@ -5127,7 +5493,11 @@ function registerIpcHandlers() {
       simpleFullscreen: process.platform === 'darwin',
       autoHideMenuBar: true,
       skipTaskbar: false,
-      backgroundColor: '#000000',
+      // Transparent only when the core will present this slice natively —
+      // the layer is parented under the page, the same underlay arrangement
+      // the editor preview uses.
+      backgroundColor: useNative ? '#00000000' : '#000000',
+      transparent: useNative,
       hasShadow: false,
       webPreferences: {
         preload: path.join(__dirname, 'preload.cjs'),
@@ -5138,6 +5508,11 @@ function registerIpcHandlers() {
       },
     });
     win.setMenuBarVisibility(false);
+    // Claim the window for native presentation before the page loads, so
+    // the slice renderer's first state query already has the answer.
+    if (useNative && !attachSliceNativeLayer(sliceId, win)) {
+      sliceNativePending.delete(sliceId);
+    }
 
     const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:1420';
     const isDev = !app.isPackaged;
@@ -5154,7 +5529,15 @@ function registerIpcHandlers() {
     }
 
     sliceWindows.set(sliceId, win);
+    // Attach the native presentation layer once the page exists, so the
+    // addon has a real content view to parent into.
+    // Re-attach after load as a safety net; monitorAttach reuses the view
+    // already registered under this name, so a second call is a no-op.
+    win.webContents.once('did-finish-load', () => {
+      if (useNative && !sliceNativeAttached.has(sliceId)) attachSliceNativeLayer(sliceId, win);
+    });
     win.on('closed', () => {
+      detachSliceNativeLayer(sliceId);
       if (sliceWindows.get(sliceId) === win) sliceWindows.delete(sliceId);
     });
 
@@ -5903,7 +6286,13 @@ function registerIpcHandlers() {
         0.5,
       );
       const xfadeOffset = Math.max(0, secondHalfDuration - fadeDuration);
-      const normalize = 'fps=30,scale=trunc(iw/2)*2:trunc(ih/2)*2,setsar=1,format=yuv420p';
+      // xfade is strict about matching dimensions, frame rate, format,
+      // sample aspect ratio, and timebase. Normalize every boundary so
+      // VFR camera/AI clips behave like the synthetic fixtures.
+      const targetW = evenDimension(meta.width, 1920);
+      const targetH = evenDimension(meta.height, 1080);
+      const normalize =
+        `fps=30,scale=${targetW}:${targetH}:flags=lanczos,setsar=1,format=yuv420p,settb=AVTB`;
       const xfadeFilter =
         `[0:v]trim=start=${midpoint.toFixed(3)},setpts=PTS-STARTPTS,${normalize}[v0];` +
         `[1:v]trim=end=${midpoint.toFixed(3)},setpts=PTS-STARTPTS,${normalize}[v1];` +
@@ -5918,7 +6307,11 @@ function registerIpcHandlers() {
         '-i', input.filePath,
         '-i', input.filePath,
         '-filter_complex', xfadeFilter,
-        ...videoLoopEncoderArgs(outputPath, meta, preferHardware),
+        ...videoLoopEncoderArgs(
+          outputPath,
+          { ...meta, transition: safeLoopTransition(args.transitionType) },
+          preferHardware,
+        ),
       ];
 
       try {
@@ -5949,35 +6342,22 @@ function registerIpcHandlers() {
           });
         }
       } catch (xfadeErr) {
-        console.warn('[VideoLoop] xfade pass failed, trying concat fallback:', xfadeErr?.message || xfadeErr);
         try { fs.rmSync(outputPath, { force: true }); } catch { /* ignore */ }
-        const concatFilter =
-          `[0:v]trim=start=${midpoint.toFixed(3)},setpts=PTS-STARTPTS,${normalize}[v0];` +
-          `[1:v]trim=end=${midpoint.toFixed(3)},setpts=PTS-STARTPTS,${normalize}[v1];` +
-          `[v0][v1]concat=n=2:v=1:a=0[outv]`;
-        await spawnFfmpegVideoLoop({
-          sender: event.sender,
-          jobId,
-          durationSec: duration,
-          outputPath,
-          startMessage: 'Crossfade failed; creating hard-cut loop...',
-          completeMessage: 'Loop video complete.',
-          args: [
-            '-hide_banner',
-            '-nostdin',
-            '-y',
-            '-progress', 'pipe:2',
-            '-nostats',
-            '-i', input.filePath,
-            '-i', input.filePath,
-            '-filter_complex', concatFilter,
-            ...videoLoopEncoderArgs(outputPath, meta, false),
-          ],
-        });
+        const transition = safeLoopTransition(args.transitionType);
+        throw new Error(
+          `The ${transition} loop transition could not be rendered. `
+          + `${xfadeErr?.message || xfadeErr}`,
+        );
       }
 
       const stat = fs.statSync(outputPath);
-      return { success: true, outputPath, size: stat.size, duration };
+      return {
+        success: true,
+        outputPath,
+        size: stat.size,
+        duration,
+        transitionApplied: safeLoopTransition(args.transitionType),
+      };
     } catch (err) {
       if (outputPath) {
         try { fs.rmSync(outputPath, { force: true }); } catch { /* ignore */ }
@@ -6403,10 +6783,39 @@ function registerIpcHandlers() {
     return getNativePreviewStatus();
   });
 
+  // ── Native output live recording (main-process IOSurface capture) ──
+  ipcMain.handle('native_output_recording_start', async (_event, args = {}) => {
+    try {
+      return await startNativeOutputRecording(args);
+    } catch (err) {
+      return { success: false, error: err?.message || String(err) };
+    }
+  });
+  ipcMain.handle('native_output_recording_stop', async () => {
+    try {
+      return await stopNativeOutputRecording();
+    } catch (err) {
+      return { success: false, error: err?.message || String(err) };
+    }
+  });
+
   // ── Deck confidence monitors ──
   // Two small named presenter views (deck-a / deck-b) fed by the core's
   // bank-monitor shared textures. The addon's per-view display-link pump
   // repaints on its own; this pump only refreshes surface bindings.
+  // Lets a slice window ask whether the core is presenting it natively. If
+  // so it skips its own WebGL render entirely and stays transparent.
+  ipcMain.handle('slice_native_presentation_state', async (_event, args = {}) => {
+    const sliceId = typeof args?.sliceId === 'string' ? args.sliceId : '';
+    return {
+      active: !!sliceId && sliceNativeAttached.has(sliceId),
+      // `pending` tells the slice window to wait rather than start its own
+      // renderer — the attach probe is still in flight.
+      pending: !!sliceId && sliceNativePending.has(sliceId),
+      platform: process.platform,
+    };
+  });
+
   ipcMain.handle('deck_monitor_attach', async (_event, args = {}) => {
     if (process.platform !== 'darwin') return { attached: false, reason: 'macos-only' };
     const addon = nativePreviewAddon || loadNativePreviewAddon();
@@ -7053,6 +7462,16 @@ function createStage3DWindow() {
     },
   });
   stage3dWindow.setMenuBarVisibility(false);
+
+
+  // Forward this window's console to the terminal. Only the main window was
+  // wired up, so anything that went wrong inside the 3D stage window — the
+  // render loop throwing, a WebGL failure — was invisible while debugging.
+  stage3dWindow.webContents.on('console-message', (_event, level, message) => {
+    if (level >= 2 || message.includes('[Canvas]') || message.includes('[GPU]') || message.includes('[animate-')) {
+      console.log(`[Stage3DWindow${level >= 2 ? ':err' : ''}] ${message}`);
+    }
+  });
 
   const devUrl = process.env.VITE_DEV_SERVER_URL || 'http://localhost:1420';
   const isDev = !app.isPackaged;

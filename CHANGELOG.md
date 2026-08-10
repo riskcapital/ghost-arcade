@@ -2,6 +2,41 @@
 
 ---
 
+## v1.9.99 - Live Performance and Control Polish (July 2026)
+
+- Layer blending, armed video triggering, master-warp keyboard nudging, and
+  long-session dropdown behavior are more predictable during live use.
+- LED FX gains a compact pattern picker plus multi-color performance patterns,
+  palettes, and direct color controls.
+- GPU Shader and Text Creator sources can now be launched from the VJ plugin
+  library, joined by eight new audio-reactive ISF visuals and Warp Loom.
+- OSC control now includes explicit clip, preset, transport, crossfader,
+  macro, and LED routes suitable for DAWs and Pro DJ Link bridge software.
+- Ghost Arcade now prevents display sleep and the screensaver while the
+  desktop app is running.
+- Removed two unfinished generated shader entries from the user manifest.
+
+---
+
+## v1.9.98 - Stage Presets, WLED Mapping, and Loop Transitions (July 2026)
+
+- Stage effects now resolve correctly for every recalled stage preset.
+- WLED output survives preset switches and adds Auto, Strip, Matrix, and
+  Custom spatial maps; source-region cropping; serpentine and reverse wiring;
+  linear-light color calibration, live-palette sampling, and smoothing; and
+  LED-order, chase, and solid test modes.
+- Added a complete LED performance suite in VJ Mode with 47 native patterns
+  across Movement, Organic, Rhythmic, Spatial, Content Aware, and Glitch
+  categories. Effects can latch, run momentarily while a button is held,
+  stack with five blend modes, follow BPM, run as automatic sequences, and
+  target a full rig, controller, named physical range, or multi-controller
+  group. Every latch and hold action is MIDI and keyboard mappable.
+- VJ videos now use the correct default texture orientation.
+- Restored the full grouped Video Loop Creator transition library, including
+  the custom Ghost glitch and loop effects.
+
+---
+
 ## v0.5.0 — Dual-Deck VJ, Macros, X-Fader Blend Modes, Mobile Companion (May 2026)
 
 The biggest VJ release since the launcher shipped. Adds a full Bank A/Bank B

@@ -759,9 +759,16 @@
     window.removeEventListener('touchend', handleTouchEnd);
   }
 
-  // Corner handle positions
+  // Corner handle positions.
+  //
+  // containerWidth/Height are named in each expression on purpose: toPixel()
+  // reads them from its closure, which Svelte's dependency tracking cannot
+  // see, so these blocks only recomputed when `corners` changed. Any pure
+  // resize of the editor canvas — opening/closing the keyframe panel, resizing
+  // the window — left the handles and outline at their previous pixel
+  // positions until a click on the layer happened to change `corners`.
   $: corners = $selectedLayer?.corners;
-  $: handlePositions = corners
+  $: handlePositions = corners && containerWidth > 0 && containerHeight > 0
     ? {
         topLeft: toPixel(corners.topLeft),
         topRight: toPixel(corners.topRight),
@@ -771,7 +778,7 @@
     : null;
 
   // Edge midpoint positions
-  $: edgePositions = corners && handlePositions
+  $: edgePositions = corners && handlePositions && containerWidth > 0 && containerHeight > 0
     ? {
         top: toPixel(getEdgeMidpoint(corners, 'top')),
         bottom: toPixel(getEdgeMidpoint(corners, 'bottom')),
@@ -781,7 +788,9 @@
     : null;
 
   // Center position for move handle
-  $: centerPosition = corners ? toPixel(getCenter(corners)) : null;
+  $: centerPosition = corners && containerWidth > 0 && containerHeight > 0
+    ? toPixel(getCenter(corners))
+    : null;
 
   // Rotation handle position (above top edge)
   $: rotatePosition = edgePositions

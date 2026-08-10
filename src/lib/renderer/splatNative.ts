@@ -5,20 +5,76 @@
 // SplatRenderer's vertex animations, displacement fields, render modes,
 // and color/opacity effects to WGSL.
 import type { SplatContent } from '$lib/types';
+import { resolveSplatAnimationClock } from '$lib/splat/splatMotion';
+import { composeSplatRotationRadians, hexToRgb01 } from '$lib/splat/splatTransform';
 
 export const SPLAT_NATIVE_SHADER_ID = 'splat/render-v1';
 // Matches the release renderer's point budget — larger scans are sampled
 // down to this during parsing (with the loader reporting decimation).
 export const SPLAT_MAX_POINTS = 1_500_000;
 export const SPLAT_POINT_VEC4S = 2;
-export const SPLAT_UNIFORM_VEC4S = 24;
+export const SPLAT_UNIFORM_VEC4S = 42;
 export const SPLAT_UNIFORM_BYTES = SPLAT_UNIFORM_VEC4S * 16;
 
 const ANIMATION_TYPES = [
   'none', 'explode', 'implode', 'slice', 'voxelSnap', 'peel',
   'gravity', 'swarm', 'morph', 'orbit', 'wave3d', 'scatter', 'spiral',
+  'tumble', 'breathe', 'drift', 'vortex',
 ];
-const DISPLACEMENT_TYPES = ['none', 'noise', 'audioReactive', 'wave', 'glitch', 'wind', 'magnetic', 'ripple'];
+const DISPLACEMENT_TYPES = [
+  'none', 'noise', 'audioReactive', 'wave', 'glitch', 'wind', 'magnetic', 'ripple',
+  'curlNoise', 'twist', 'radialPulse', 'scanline',
+];
+const CREATIVE_EFFECTS = ['none', 'feedback', 'kaleidoscope', 'constellation', 'datamosh', 'pixelSort', 'echo'];
+const MOUSE_MODES = ['attract', 'repel', 'swirl', 'reveal'];
+
+/** Invert a column-major 4x4 (general adjugate method). */
+function invertMat4(m: number[]): number[] | null {
+  const inv = new Array(16).fill(0);
+  inv[0] = m[5]*m[10]*m[15] - m[5]*m[11]*m[14] - m[9]*m[6]*m[15] + m[9]*m[7]*m[14] + m[13]*m[6]*m[11] - m[13]*m[7]*m[10];
+  inv[4] = -m[4]*m[10]*m[15] + m[4]*m[11]*m[14] + m[8]*m[6]*m[15] - m[8]*m[7]*m[14] - m[12]*m[6]*m[11] + m[12]*m[7]*m[10];
+  inv[8] = m[4]*m[9]*m[15] - m[4]*m[11]*m[13] - m[8]*m[5]*m[15] + m[8]*m[7]*m[13] + m[12]*m[5]*m[11] - m[12]*m[7]*m[9];
+  inv[12] = -m[4]*m[9]*m[14] + m[4]*m[10]*m[13] + m[8]*m[5]*m[14] - m[8]*m[6]*m[13] - m[12]*m[5]*m[10] + m[12]*m[6]*m[9];
+  inv[1] = -m[1]*m[10]*m[15] + m[1]*m[11]*m[14] + m[9]*m[2]*m[15] - m[9]*m[3]*m[14] - m[13]*m[2]*m[11] + m[13]*m[3]*m[10];
+  inv[5] = m[0]*m[10]*m[15] - m[0]*m[11]*m[14] - m[8]*m[2]*m[15] + m[8]*m[3]*m[14] + m[12]*m[2]*m[11] - m[12]*m[3]*m[10];
+  inv[9] = -m[0]*m[9]*m[15] + m[0]*m[11]*m[13] + m[8]*m[1]*m[15] - m[8]*m[3]*m[13] - m[12]*m[1]*m[11] + m[12]*m[3]*m[9];
+  inv[13] = m[0]*m[9]*m[14] - m[0]*m[10]*m[13] - m[8]*m[1]*m[14] + m[8]*m[2]*m[13] + m[12]*m[1]*m[10] - m[12]*m[2]*m[9];
+  inv[2] = m[1]*m[6]*m[15] - m[1]*m[7]*m[14] - m[5]*m[2]*m[15] + m[5]*m[3]*m[14] + m[13]*m[2]*m[7] - m[13]*m[3]*m[6];
+  inv[6] = -m[0]*m[6]*m[15] + m[0]*m[7]*m[14] + m[4]*m[2]*m[15] - m[4]*m[3]*m[14] - m[12]*m[2]*m[7] + m[12]*m[3]*m[6];
+  inv[10] = m[0]*m[5]*m[15] - m[0]*m[7]*m[13] - m[4]*m[1]*m[15] + m[4]*m[3]*m[13] + m[12]*m[1]*m[7] - m[12]*m[3]*m[5];
+  inv[14] = -m[0]*m[5]*m[14] + m[0]*m[6]*m[13] + m[4]*m[1]*m[14] - m[4]*m[2]*m[13] - m[12]*m[1]*m[6] + m[12]*m[2]*m[5];
+  inv[3] = -m[1]*m[6]*m[11] + m[1]*m[7]*m[10] + m[5]*m[2]*m[11] - m[5]*m[3]*m[10] - m[9]*m[2]*m[7] + m[9]*m[3]*m[6];
+  inv[7] = m[0]*m[6]*m[11] - m[0]*m[7]*m[10] - m[4]*m[2]*m[11] + m[4]*m[3]*m[10] + m[8]*m[2]*m[7] - m[8]*m[3]*m[6];
+  inv[11] = -m[0]*m[5]*m[11] + m[0]*m[7]*m[9] + m[4]*m[1]*m[11] - m[4]*m[3]*m[9] - m[8]*m[1]*m[7] + m[8]*m[3]*m[5];
+  inv[15] = m[0]*m[5]*m[10] - m[0]*m[6]*m[9] - m[4]*m[1]*m[10] + m[4]*m[2]*m[9] + m[8]*m[1]*m[6] - m[8]*m[2]*m[5];
+  const det = m[0]*inv[0] + m[1]*inv[4] + m[2]*inv[8] + m[3]*inv[12];
+  if (!Number.isFinite(det) || Math.abs(det) < 1e-12) return null;
+  for (let i = 0; i < 16; i++) inv[i] /= det;
+  return inv;
+}
+
+function transformPoint(m: number[], x: number, y: number, z: number): [number, number, number, number] {
+  return [
+    m[0]*x + m[4]*y + m[8]*z + m[12],
+    m[1]*x + m[5]*y + m[9]*z + m[13],
+    m[2]*x + m[6]*y + m[10]*z + m[14],
+    m[3]*x + m[7]*y + m[11]*z + m[15],
+  ];
+}
+
+/** Unproject a normalized screen point (0..1, y-down) onto the world
+ *  plane at the cloud's depth, matching the WebGL renderer's mouse feel. */
+function unprojectSplatPointer(vp: number[], px: number, py: number): [number, number, number] {
+  const inv = invertMat4(vp);
+  if (!inv) return [0, 0, 0];
+  const originClip = transformPoint(vp, 0, 0, 0);
+  const ndcZ = originClip[3] !== 0 ? originClip[2] / originClip[3] : 0.5;
+  const ndcX = px * 2 - 1;
+  const ndcY = (1 - py) * 2 - 1;
+  const world = transformPoint(inv, ndcX, ndcY, ndcZ);
+  if (world[3] === 0) return [0, 0, 0];
+  return [world[0] / world[3], world[1] / world[3], world[2] / world[3]];
+}
 const RENDER_MODES = ['points', 'gaussians', 'spheres', 'billboards', 'cubes'];
 const COLOR_EFFECTS = [
   'none', 'chromaticShift', 'heatmap', 'pointillist', 'hologram', 'rainbow',
@@ -173,6 +229,8 @@ export interface SplatNativeGraphOptions {
   frameIndex: number;
   audioLevel?: number;
   audioBeat?: number;
+  audioBeatPhase?: number;
+  pointer?: { x: number; y: number; active: boolean; down: boolean };
   includeSnapshot?: boolean;
 }
 
@@ -188,72 +246,143 @@ export function buildSplatNativeComputeGraph(options: SplatNativeGraphOptions) {
   const audioOn = !!c.audioEnabled;
   const level = audioOn ? clamp(finite(options.audioLevel, 0), 0, 1.5) : 0;
   const beat = audioOn ? clamp(finite(options.audioBeat, 0), 0, 1.5) : 0;
+  const beatPhase = clamp(finite(options.audioBeatPhase, 0), 0, 1);
   const density = clamp(finite(c.pointDensity, 1), 0.01, 1);
-  const anim = idx(ANIMATION_TYPES, c.animationType);
-  const peel = c.peelAxis === 'x' ? 0 : c.peelAxis === 'z' ? 2 : 1;
 
-  data[16] = width; data[17] = height; data[18] = time; data[19] = options.pointCount;
-  // ×3: the slider range (0.1–20) is calibrated for the WebGL renderer's
-  // DPR-scaled gl_PointSize; the native quad size is in raw pixels.
-  data[20] = Math.max(0.15, finite(c.pointSize, 3)) * 3 * (audioOn ? 1 + level * finite(c.audioScale, 0) * 0.5 + beat * finite(c.audioScale, 0) * 0.3 : 1);
-  data[21] = c.sizeAttenuation === false && c.pointSizeAttenuation === false ? 0 : 1;
-  data[22] = idx(RENDER_MODES, c.renderMode);
-  data[23] = clamp(finite(c.opacity, 1), 0, 1);
-  data[24] = anim;
-  data[25] = clamp(finite(c.animationProgress, 0), 0, 1) * clamp(finite(c.animationIntensity, 1), 0, 2);
-  data[26] = Math.max(0, finite(c.explodeForce, 1));
-  data[27] = clamp(finite(c.voxelGridSize, 8), 2, 64);
-  data[28] = peel;
-  data[29] = finite(c.peelDirection, 1);
-  data[30] = finite(c.gravity, 5);
-  data[31] = clamp(finite(c.swarmCohesion, 0.5) + finite(c.swarmAlignment, 0.5), 0, 2);
-  data[32] = idx(DISPLACEMENT_TYPES, c.displacementType);
-  data[33] = Math.max(0, finite(c.displacementAmount, finite(c.displacementIntensity, 0)));
-  data[34] = Math.max(0.05, finite(c.noiseScale, 1));
-  data[35] = Math.max(0, finite(c.noiseSpeed, 1));
-  data[36] = Math.max(0.1, finite(c.waveFrequency, 2));
-  data[37] = Math.max(0, finite(c.waveAmplitude, 0.3));
-  data[38] = clamp(finite(c.glitchIntensity, 0.5), 0, 1);
-  data[39] = Math.max(0, finite(c.windStrength, 1));
-  data[40] = finite(c.windDirection?.x, 1);
-  data[41] = finite(c.windDirection?.y, 0);
-  data[42] = finite(c.windDirection?.z, 0);
-  data[43] = Math.max(0.05, finite(c.scaleUniform, 1));
-  // The transform gizmo's axes are calibrated to the release renderer's
-  // euler convention; the native pipeline reads them swapped, so exchange
-  // X/Y here to keep ring-drag and step-button behavior intuitive.
-  data[44] = (finite(c.rotationY, 0) * Math.PI) / 180;
-  data[45] = (finite(c.rotationX, 0) * Math.PI) / 180;
-  data[46] = (finite(c.rotationZ, 0) * Math.PI) / 180;
-  data[47] = finite(c.positionX, 0);
-  data[48] = finite(c.positionY, 0);
-  data[49] = finite(c.positionZ, 0);
-  data[50] = level;
-  data[51] = beat;
-  data[52] = c.useOriginalColors === false ? 0 : 1;
-  data[53] = clamp(finite(c.colorA?.[0], 255) / 255, 0, 1);
-  data[54] = clamp(finite(c.colorA?.[1], 255) / 255, 0, 1);
-  data[55] = clamp(finite(c.colorA?.[2], 255) / 255, 0, 1);
-  data[56] = clamp(finite(c.colorB?.[0], 255) / 255, 0, 1);
-  data[57] = clamp(finite(c.colorB?.[1], 255) / 255, 0, 1);
-  data[58] = clamp(finite(c.colorB?.[2], 255) / 255, 0, 1);
-  data[59] = clamp(finite(c.colorMix, 0), 0, 1);
-  data[60] = finite(c.hueShift, 0);
-  data[61] = idx(COLOR_EFFECTS, c.colorEffectType ?? c.colorEffect);
-  data[62] = clamp(finite(c.colorEffectIntensity, 0.5), 0, 1);
-  data[63] = Math.max(0, finite(c.hologramSpeed, 2));
-  data[64] = clamp(finite(c.hologramDensity, 10), 1, 50);
-  data[65] = idx(OPACITY_EFFECTS, c.opacityEffectType ?? c.opacityEffect);
-  data[66] = clamp(finite(c.opacityEffectIntensity, 0.5), 0, 1);
-  data[67] = clamp(finite(c.dofFocalDistance, 0.5), 0, 1);
-  data[68] = Math.max(0.05, finite(c.fogDensity as number, 1));
-  data[69] = Math.max(0.05, finite(c.pulseSpeed as number, 1));
-  data[70] = clamp(finite(c.dissolveProgress as number, 0.5), 0, 1);
-  data[71] = density;
-  data[72] = clamp(finite(c.audioDisplacement, 0.5), 0, 1);
-  data[73] = clamp(finite(c.audioColor, 0.5), 0, 1);
-  data[74] = clamp(finite(c.audioSensitivity, 1), 0, 3);
-  data[75] = 0;
+  const clockSpeed = finite(c.animationSpeed, 1);
+  const clock = resolveSplatAnimationClock({
+    time,
+    speed: clockSpeed > 0 ? clockSpeed : 0,
+    loop: c.animationLoop !== false,
+    pingPong: c.animationPingPong === true,
+    manualProgress: clamp(finite(c.animationProgress, 0), 0, 1),
+  });
+
+  // Object rotation: import orientation + auto-level + manual, with the
+  // native gizmo's calibrated X/Y exchange. autoRotate stays on the camera
+  // (splatViewProjection) so it is not double-applied here.
+  const [rotXr, rotYr, rotZr] = composeSplatRotationRadians(c, 0);
+  const keyColor = hexToRgb01(c.keyLightColor as string | undefined, '#ffffff');
+  const rimColor = hexToRgb01(c.rimLightColor as string | undefined, '#33aaff');
+  const atmosColor = hexToRgb01(c.atmosphereColor as string | undefined, '#14202b');
+  const bgColor = hexToRgb01(c.backgroundColor as string | undefined, '#000000');
+  const fogColor = hexToRgb01(c.fogColor as string | undefined, '#323250');
+  const depthNear = hexToRgb01(c.depthColorNear as string | undefined, '#ff5c33');
+  const depthFar = hexToRgb01(c.depthColorFar as string | undefined, '#3377ff');
+  const keyAz = (finite(c.keyLightAzimuth, 35) * Math.PI) / 180;
+  const keyEl = (finite(c.keyLightElevation, 40) * Math.PI) / 180;
+  const keyDir = [
+    Math.cos(keyEl) * Math.sin(keyAz),
+    Math.sin(keyEl),
+    Math.cos(keyEl) * Math.cos(keyAz),
+  ];
+  const rimAz = (finite(c.rimLightAzimuth, -45) * Math.PI) / 180;
+  const rimLen = Math.hypot(Math.sin(rimAz), 0.35, Math.cos(rimAz)) || 1;
+  const rimDir = [Math.sin(rimAz) / rimLen, 0.35 / rimLen, Math.cos(rimAz) / rimLen];
+
+  // Mouse: normalized screen -> world plane at the cloud's depth. Radius
+  // scales with the normalized cloud size (extent 4) like the reference.
+  const pointer = options.pointer;
+  const mouseModeIdx = Math.max(0, idx(MOUSE_MODES, c.mouseMode ?? 'attract'));
+  const mouseStrength = clamp(finite(c.mouseStrength, 1), 0, 2);
+  const rawInfluence = clamp(finite(c.mouseInfluence, 0), 0, 2) * mouseStrength;
+  const mouseActive = !!pointer?.active && rawInfluence > 0;
+  const mouseWorld = mouseActive
+    ? unprojectSplatPointer(vp, clamp(finite(pointer!.x, 0.5), 0, 1), clamp(finite(pointer!.y, 0.5), 0, 1))
+    : [0, 0, 0];
+  const mouseRadius = clamp(finite(c.mouseRadius, 0.2), 0, 1)
+    * 4 * Math.max(0.05, finite(c.scaleUniform, 1)) * 0.5;
+
+  const slicePlane = (c as { slicePlane?: { enabled?: boolean; axis?: string; position?: number; thickness?: number; animated?: boolean; speed?: number } }).slicePlane;
+  const sliceAxisIdx = slicePlane?.axis === 'x' ? 0 : slicePlane?.axis === 'z' ? 2 : 1;
+  const slicePos = slicePlane?.animated
+    ? Math.sin(time * finite(slicePlane?.speed, 1)) * 2
+    : finite(slicePlane?.position, 0) * 2;
+
+  const anim = Math.max(0, idx(ANIMATION_TYPES, c.animationType));
+  const peel = c.peelAxis === 'x' ? 0 : c.peelAxis === 'z' ? 2 : 1;
+  const waveAxisIdx = c.waveAxis === 'x' ? 0 : c.waveAxis === 'z' ? 2 : 1;
+  const physics = (c as { physics?: { gravity?: number; turbulence?: number } }).physics;
+
+  const put4 = (v4: number, a: number, b: number, cc: number, d: number) => {
+    data[v4 * 4] = a; data[v4 * 4 + 1] = b; data[v4 * 4 + 2] = cc; data[v4 * 4 + 3] = d;
+  };
+  // vec4 4: screen
+  put4(4, width, height, time, options.pointCount);
+  // vec4 5: render — ×3 point size (slider calibrated for DPR-scaled WebGL)
+  const sizeBase = Math.max(0.15, finite(c.pointSize, 3)) * 3
+    * (audioOn ? 1 + level * finite(c.audioScale, 0) * 0.5 + beat * finite(c.audioScale, 0) * 0.3 : 1);
+  put4(5, sizeBase,
+    c.sizeAttenuation === false && c.pointSizeAttenuation === false ? 0 : 1,
+    Math.max(0, idx(RENDER_MODES, c.renderMode)),
+    clamp(finite(c.opacity, 1), 0, 1));
+  // vec4 6-14: animation clock + per-animation tunables
+  put4(6, anim, clock.progress, clock.phase, clamp(finite(c.animationIntensity, 1), 0, 3));
+  put4(7, Math.max(0, finite(c.explodeForce, 1)), finite((c as any).explodeTurbulence, 0.35),
+    finite((c as any).implodeForce, 0.85), finite((c as any).implodeSpin, 1.5));
+  put4(8, clamp(finite(c.voxelGridSize, 8), 2, 64), peel, finite(c.peelDirection, 1),
+    Math.max(0.01, finite((c as any).peelWidth, 0.55)));
+  put4(9, finite((c as any).peelCurl, 2.2), Math.max(0.05, finite((c as any).sliceWidth, 3)),
+    clamp(finite((c as any).sliceSoftness, 0.2), 0.001, 0.99), finite((c as any).sliceTravel, 1));
+  put4(10, waveAxisIdx, finite((c as any).animationWaveFrequency, 5),
+    finite((c as any).animationWaveAmplitude, 0.3), finite((c as any).scatterDistance, 2));
+  put4(11, finite((c as any).scatterRandomness, 8), finite((c as any).spiralRadius, 0.75),
+    finite((c as any).spiralTurns, 2), finite((c as any).spiralLift, 1));
+  put4(12, finite(c.swarmCohesion, 0.3), finite((c as any).swarmSeparation, 0.4),
+    finite(c.swarmAlignment, 0.6), finite((c as any).gravityStrength, 2));
+  put4(13, finite((c as any).gravitySpread, 0.25), finite((c as any).gravityFloor, -2),
+    (finite((c as any).turntableTilt, 0) * Math.PI) / 180, finite((c as any).tumbleSpread, 1));
+  put4(14, finite((c as any).breatheAmount, 0.15), finite((c as any).driftAmount, 0.25),
+    finite((c as any).vortexTwist, 2), finite((c as any).morphRoundness, 1));
+  // vec4 15-17: physics + displacement
+  put4(15, finite(physics?.gravity, finite(c.gravity, 5)), Math.max(0.1, finite(physics?.turbulence, 1)),
+    Math.max(0, idx(DISPLACEMENT_TYPES, c.displacementType)),
+    Math.max(0, finite(c.displacementAmount, finite(c.displacementIntensity, 0.5))));
+  put4(16, Math.max(0.05, finite(c.displacementScale, finite(c.noiseScale, 2))),
+    Math.max(0, finite(c.displacementSpeed, finite(c.noiseSpeed, 1))),
+    Math.max(0.1, finite(c.waveFrequency, 2)), Math.max(0, finite(c.waveAmplitude, 0.3)));
+  put4(17, clamp(finite(c.glitchIntensity, 0.5), 0, 1),
+    finite(c.windDirection?.x, 1), finite(c.windDirection?.y, 0), finite(c.windDirection?.z, 0));
+  // vec4 18-19: transform (gizmo-calibrated X/Y exchange preserved)
+  put4(18, Math.max(0, finite(c.windStrength, 1)), Math.max(0.05, finite(c.scaleUniform, 1)), rotYr, rotXr);
+  put4(19, rotZr, finite(c.positionX, 0), finite(c.positionY, 0), finite(c.positionZ, 0));
+  // vec4 20-21: audio
+  put4(20, audioOn ? 1 : 0, level, beat, clamp(finite(c.audioScale, 0.5), 0, 3));
+  put4(21, clamp(finite(c.audioDisplacement, 0.5), 0, 2), clamp(finite(c.audioColor, 0.5), 0, 2), beatPhase, density);
+  // vec4 22-27: color
+  put4(22, c.useOriginalColors === false ? 0 : 1, clamp(finite(c.colorMix, 0), 0, 1),
+    finite(c.hueShift, 0), Math.max(0, idx(COLOR_EFFECTS, c.colorEffectType ?? c.colorEffect)));
+  put4(23, clamp(finite(c.colorA?.[0], 255) / 255, 0, 1), clamp(finite(c.colorA?.[1], 255) / 255, 0, 1),
+    clamp(finite(c.colorA?.[2], 255) / 255, 0, 1), clamp(finite(c.colorEffectIntensity, 0.5), 0, 1));
+  put4(24, clamp(finite(c.colorB?.[0], 255) / 255, 0, 1), clamp(finite(c.colorB?.[1], 255) / 255, 0, 1),
+    clamp(finite(c.colorB?.[2], 255) / 255, 0, 1), Math.max(0, finite(c.hologramSpeed, 2)));
+  put4(25, clamp(finite(c.hologramDensity, 10), 1, 50), clamp(finite(c.depthGradientBias, 0.5), 0.001, 1),
+    Math.max(0, idx(OPACITY_EFFECTS, c.opacityEffectType ?? c.opacityEffect)),
+    clamp(finite(c.opacityEffectIntensity, 0.5), 0, 1));
+  put4(26, depthNear[0], depthNear[1], depthNear[2], clamp(finite(c.dofFocalDistance, finite((c as any).dofFocusDistance, 0.5)), 0, 1));
+  put4(27, depthFar[0], depthFar[1], depthFar[2], Math.max(0.01, finite(c.dofBlurAmount, 1)));
+  // vec4 28-29: opacity fx tail + creative
+  put4(28, Math.max(0.05, finite(c.fogDensity as number, 1)), Math.max(0.05, finite(c.pulseSpeed as number, 1)),
+    clamp(finite(c.dissolveProgress as number, 0.5), 0, 1),
+    Math.max(0, idx(CREATIVE_EFFECTS, (c as any).creativeEffectType ?? (c as any).creativeEffect)));
+  put4(29, fogColor[0], fogColor[1], fogColor[2], clamp(finite((c as any).creativeEffectIntensity, 0.5), 0, 1));
+  // vec4 30-34: lighting
+  put4(30, c.lightingEnabled === false ? 0 : 1, Math.max(0, finite(c.ambientIntensity, 1)),
+    Math.max(0, finite(c.keyLightIntensity, 1)), clamp(finite(c.specularStrength, 0.3), 0, 2));
+  put4(31, keyColor[0], keyColor[1], keyColor[2], clamp(finite(c.shadowStrength, 0.45), 0, 1));
+  put4(32, keyDir[0], keyDir[1], keyDir[2], clamp(finite(c.shadowSoftness, 0.5), 0, 1));
+  put4(33, rimColor[0], rimColor[1], rimColor[2], Math.max(0, finite(c.rimLightIntensity, 0.35)));
+  put4(34, rimDir[0], rimDir[1], rimDir[2], c.atmosphereEnabled === true ? 1 : 0);
+  // vec4 35-37: atmosphere + background
+  put4(35, clamp(finite(c.atmosphereDensity, 0.2), 0, 1), Math.max(0.01, finite(c.atmosphereScale, 1.5)),
+    Math.max(0, finite(c.atmosphereTurbulence, 0.7)), finite(c.atmosphereSpeed, 0.15));
+  put4(36, atmosColor[0], atmosColor[1], atmosColor[2], clamp(finite(c.backgroundOpacity, 0), 0, 1));
+  put4(37, bgColor[0], bgColor[1], bgColor[2], mouseModeIdx);
+  // vec4 38-39: mouse + slice plane
+  put4(38, mouseWorld[0], mouseWorld[1], mouseWorld[2], Math.max(0.001, mouseRadius));
+  put4(39, mouseActive ? clamp(rawInfluence, 0, 2) : 0, slicePlane?.enabled ? 1 : 0, sliceAxisIdx, slicePos);
+  // vec4 40: slice thickness + reserved
+  put4(40, Math.max(0.001, finite(slicePlane?.thickness, 0.1) * 4), 0, 0, 0);
 
   const sourceId = String(options.sourceId || 'splat-native-source');
   const safe = sourceId.replace(/[^a-zA-Z0-9:_-]+/g, '_');
@@ -279,6 +408,26 @@ export function buildSplatNativeComputeGraph(options: SplatNativeGraphOptions) {
       passes: [],
       readbacks: [],
       render_passes: [{
+        // Backdrop first: background color + scene atmosphere haze so fog
+        // fills the layer, not just the points.
+        name: 'splat-bg',
+        shader_id: SPLAT_NATIVE_SHADER_ID,
+        vertex_entry: 'vs_bg',
+        fragment_entry: 'fs_bg',
+        target: 'source_frame',
+        source_id: sourceId,
+        seq: Math.max(0, Math.round(options.frameIndex ?? 0)),
+        clear: true,
+        clear_color: [0, 0, 0, 0],
+        blend: 'alpha',
+        primitive: 'triangle-list',
+        vertex_count: 3,
+        instance_count: 1,
+        bindings: [
+          { binding: 0, resource: uniformId, kind: 'uniform' },
+          { binding: 1, resource: options.pointsBufferId, kind: 'read-only-storage' },
+        ],
+      }, {
         name: 'splat-render',
         shader_id: SPLAT_NATIVE_SHADER_ID,
         vertex_entry: 'vs_point',
@@ -286,8 +435,7 @@ export function buildSplatNativeComputeGraph(options: SplatNativeGraphOptions) {
         target: 'source_frame',
         source_id: sourceId,
         seq: Math.max(0, Math.round(options.frameIndex ?? 0)),
-        clear: true,
-        clear_color: [0, 0, 0, 0],
+        clear: false,
         include_snapshot: !!options.includeSnapshot,
         blend: 'alpha',
         primitive: 'triangle-list',
@@ -300,7 +448,7 @@ export function buildSplatNativeComputeGraph(options: SplatNativeGraphOptions) {
       }],
     },
     sourceId,
-    passCount: 1,
+    passCount: 2,
   };
 }
 
@@ -317,28 +465,59 @@ export function buildSplatNativePrecompileCommands() {
 export const SPLAT_NATIVE_WGSL = /* wgsl */`
 struct SplatParams {
   vp0: vec4<f32>, vp1: vec4<f32>, vp2: vec4<f32>, vp3: vec4<f32>,
-  screen: vec4<f32>,   // width, height, time, pointCount
-  render0: vec4<f32>,  // pointSize, sizeAttenuation, renderMode, opacity
-  anim0: vec4<f32>,    // animType, progress*intensity, explodeForce, voxelGrid
-  anim1: vec4<f32>,    // peelAxis, peelDir, gravity, turbulence
-  disp0: vec4<f32>,    // dispType, amount, noiseScale, noiseSpeed
-  disp1: vec4<f32>,    // waveFreq, waveAmp, glitch, windStrength
-  wind: vec4<f32>,     // windDir.xyz, scaleUniform
-  rot: vec4<f32>,      // rotXYZ, posX
-  pos: vec4<f32>,      // posY, posZ, audioLevel, beat
-  colA: vec4<f32>,     // useOriginal, colorA.rgb
-  colB: vec4<f32>,     // colorB.rgb, colorMix
-  colFx: vec4<f32>,    // hueShift, colorEffect, colorIntensity, holoSpeed
-  opFx: vec4<f32>,     // holoDensity, opacityEffect, opacityIntensity, dofFocal
-  opFx2: vec4<f32>,    // fogDensity, pulseSpeed, dissolve, density
-  audio: vec4<f32>,    // audioDisp, audioColor, audioSens, pad
-  pad0: vec4<f32>, pad1: vec4<f32>, pad2: vec4<f32>, pad3: vec4<f32>, pad4: vec4<f32>,
+  screen: vec4<f32>,   // 4:  width, height, time, pointCount
+  render0: vec4<f32>,  // 5:  pointSize, sizeAttenuation, renderMode, opacity
+  anim0: vec4<f32>,    // 6:  animType, progress, phase, intensity
+  anim1: vec4<f32>,    // 7:  explodeForce, explodeTurb, implodeForce, implodeSpin
+  anim2: vec4<f32>,    // 8:  voxelGrid, peelAxis, peelDir, peelWidth
+  anim3: vec4<f32>,    // 9:  peelCurl, sliceWidth, sliceSoftness, sliceTravel
+  anim4: vec4<f32>,    // 10: waveAxis, waveFreqA, waveAmpA, scatterDist
+  anim5: vec4<f32>,    // 11: scatterRand, spiralRadius, spiralTurns, spiralLift
+  anim6: vec4<f32>,    // 12: swarmCoh, swarmSep, swarmAlign, gravStrength
+  anim7: vec4<f32>,    // 13: gravSpread, gravFloor, turnTilt, tumbleSpread
+  anim8: vec4<f32>,    // 14: breatheAmt, driftAmt, vortexTwist, morphRound
+  phys: vec4<f32>,     // 15: gravity, turbulence, dispType, dispAmount
+  disp0: vec4<f32>,    // 16: dispScale, dispSpeed, waveFreq, waveAmp
+  disp1: vec4<f32>,    // 17: glitch, windX, windY, windZ
+  xf0: vec4<f32>,      // 18: windStrength, scaleUniform, rotX, rotY
+  xf1: vec4<f32>,      // 19: rotZ, posX, posY, posZ
+  aud0: vec4<f32>,     // 20: audioOn, level, beat, audioScale
+  aud1: vec4<f32>,     // 21: audioDisp, audioColor, beatPhase, density
+  col0: vec4<f32>,     // 22: useOrig, colorMix, hueShift, colorFx
+  col1: vec4<f32>,     // 23: colorA.rgb, colorFxIntensity
+  col2: vec4<f32>,     // 24: colorB.rgb, holoSpeed
+  col3: vec4<f32>,     // 25: holoDensity, depthBias, opacityFx, opacityFxIntensity
+  col4: vec4<f32>,     // 26: depthNear.rgb, dofFocal
+  col5: vec4<f32>,     // 27: depthFar.rgb, dofBlur
+  op0: vec4<f32>,      // 28: fogDensity, pulseSpeed, dissolve, creativeFx
+  op1: vec4<f32>,      // 29: fogColor.rgb, creativeIntensity
+  li0: vec4<f32>,      // 30: lightOn, ambient, keyIntensity, specular
+  li1: vec4<f32>,      // 31: keyColor.rgb, shadowStrength
+  li2: vec4<f32>,      // 32: keyDir.xyz, shadowSoftness
+  li3: vec4<f32>,      // 33: rimColor.rgb, rimIntensity
+  li4: vec4<f32>,      // 34: rimDir.xyz, atmosOn
+  at0: vec4<f32>,      // 35: atmosDensity, atmosScale, atmosTurb, atmosSpeed
+  at1: vec4<f32>,      // 36: atmosColor.rgb, bgOpacity
+  bg0: vec4<f32>,      // 37: bgColor.rgb, mouseMode
+  mo0: vec4<f32>,      // 38: mouseX, mouseY, mouseZ, mouseRadius
+  mo1: vec4<f32>,      // 39: mouseInfluence, sliceOn, sliceAxis, slicePos
+  mi0: vec4<f32>,      // 40: sliceThickness, pad, pad, pad
+  pad: vec4<f32>,      // 41
 }
 @group(0) @binding(0) var<uniform> sp: SplatParams;
 @group(0) @binding(1) var<storage, read> points: array<vec4<f32>>;
 
 fn sp_hash(n: f32) -> f32 { return fract(sin(n * 12.9898 + 78.233) * 43758.5453); }
 fn sp_hash2(p: vec2<f32>) -> f32 { return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453); }
+fn sp_noise2(p: vec2<f32>) -> f32 {
+  let i = floor(p); let f = fract(p);
+  let u = f * f * (3.0 - 2.0 * f);
+  let a = sp_hash2(i);
+  let b = sp_hash2(i + vec2<f32>(1.0, 0.0));
+  let c = sp_hash2(i + vec2<f32>(0.0, 1.0));
+  let d = sp_hash2(i + vec2<f32>(1.0, 1.0));
+  return mix(mix(a, b, u.x), mix(c, d, u.x), u.y);
+}
 fn sp_noise3(p: vec3<f32>) -> f32 {
   let i = floor(p); let f = fract(p);
   let u = f * f * (3.0 - 2.0 * f);
@@ -367,13 +546,282 @@ fn sp_rgb2hsv(c: vec3<f32>) -> vec3<f32> {
   let e = 1.0e-10;
   return vec3<f32>(abs(q.z + (q.w - q.y) / (6.0 * d + e)), d / (q.x + e), q.x);
 }
+fn sp_axis(sel: f32) -> vec3<f32> {
+  if (sel < 0.5) { return vec3<f32>(1.0, 0.0, 0.0); }
+  if (sel > 1.5) { return vec3<f32>(0.0, 0.0, 1.0); }
+  return vec3<f32>(0.0, 1.0, 0.0);
+}
 
 struct VsOut {
   @builtin(position) position: vec4<f32>,
   @location(0) corner: vec2<f32>,
   @location(1) color: vec4<f32>,
   @location(2) world: vec3<f32>,
-  @location(3) misc: vec4<f32>, // vertexIndex, discard, viewZ, unused
+  @location(3) misc: vec4<f32>, // vertexIndex, discard, viewW, mouseDistance
+}
+
+fn apply_animation(pos_in: vec3<f32>, orig: vec3<f32>, vidx: f32, t: f32, kill: ptr<function, f32>) -> vec3<f32> {
+  var pos = pos_in;
+  let anim = i32(sp.anim0.x + 0.5);
+  let progress = clamp(sp.anim0.y, 0.0, 1.0);
+  let phase = sp.anim0.z;
+  let inten = sp.anim0.w;
+  let at = progress * inten;
+  let radial = normalize(orig + vec3<f32>(1e-4));
+
+  if (anim == 1) { // explode
+    let breakup = vec3<f32>(
+      sp_noise3(orig * 2.7 + vec3<f32>(19.0, 0.0, phase * 0.12)),
+      sp_noise3(orig * 2.7 + vec3<f32>(0.0, 43.0, phase * 0.15)),
+      sp_noise3(orig * 2.7 + vec3<f32>(phase * 0.1, 0.0, 71.0)));
+    return pos + (radial + breakup * sp.anim1.y) * at * sp.anim1.x;
+  }
+  if (anim == 2) { // implode
+    let collapse = clamp(at * sp.anim1.z, 0.0, 0.995);
+    let collapsed = pos * (1.0 - collapse);
+    let angle = at * sp.anim1.w * (1.0 + length(orig.xz));
+    let c = cos(angle); let s = sin(angle);
+    return vec3<f32>(c * collapsed.x + s * collapsed.z, collapsed.y, -s * collapsed.x + c * collapsed.z);
+  }
+  if (anim == 3) { // slice bands
+    let axis = sp_axis(sp.anim2.y);
+    let axisPos = dot(orig, axis);
+    let travel = phase * sp.anim3.w;
+    let bandCoord = axisPos * max(sp.anim3.y, 0.05) - travel;
+    let slab = floor(bandCoord);
+    let edge = abs(fract(bandCoord) - 0.5) * 2.0;
+    let bandMask = 1.0 - smoothstep(sp.anim3.z, 1.0, edge);
+    var direction = 1.0;
+    if ((abs(slab) % 2.0) < 1.0) { direction = -1.0; }
+    var up = vec3<f32>(0.0, 1.0, 0.0);
+    if (abs(axis.y) > 0.9) { up = vec3<f32>(1.0, 0.0, 0.0); }
+    let tangent = normalize(cross(axis, up));
+    return pos + tangent * direction * bandMask * at * 0.65;
+  }
+  if (anim == 4) { // voxel snap
+    let grid = max(sp.anim2.x, 2.0);
+    return mix(orig, floor(orig * grid + 0.5) / grid, at);
+  }
+  if (anim == 5) { // peel curl
+    let axis = sp_axis(sp.anim2.y);
+    let axisPos = dot(orig, axis) * sp.anim2.z;
+    let front = mix(-2.5, 2.5, progress);
+    let behind = front - axisPos;
+    let w = max(sp.anim2.w, 0.01);
+    let peelMask = smoothstep(0.0, w, behind) * (1.0 - smoothstep(w, w * 2.0, behind));
+    var up = vec3<f32>(0.0, 0.0, 1.0);
+    if (abs(axis.z) > 0.9) { up = vec3<f32>(0.0, 1.0, 0.0); }
+    let tangent = normalize(cross(axis, up));
+    let curl = peelMask * sp.anim3.x * inten;
+    return pos + tangent * sin(curl) * w + axis * (1.0 - cos(curl)) * w;
+  }
+  if (anim == 6) { // gravity fall
+    let delay = sp_hash(vidx * 12.9898) * 0.35;
+    let fall = max(0.0, progress - delay) * inten;
+    let spread = vec2<f32>(
+      sp_noise3(orig * 2.0 + vec3<f32>(13.0, phase * 0.08, 0.0)),
+      sp_noise3(orig * 2.0 + vec3<f32>(0.0, phase * 0.08, 37.0))) * sp.anim7.x;
+    var fallen = pos + vec3<f32>(spread.x, -sp.anim6.w * fall * fall, spread.y) * at;
+    fallen.y = max(fallen.y, sp.anim7.y);
+    return fallen;
+  }
+  if (anim == 7) { // swarm
+    let gp = floor(sp_noise3(orig * 0.5) * 4.0) * 1.57;
+    let center = vec3<f32>(sin(t * 0.7 + gp) * 0.8, cos(t * 0.5 + gp * 0.7) * 0.5, sin(t * 0.6 + gp * 1.3) * 0.8);
+    let sep = vec3<f32>(
+      sp_noise3(orig * 3.0 + t * 1.5),
+      sp_noise3(orig * 3.0 + t * 1.5 + 50.0),
+      sp_noise3(orig * 3.0 + t * 1.5 + 100.0)) * 0.4;
+    let flow = vec3<f32>(
+      sp_noise3(orig * 0.8 + t * 0.8 + 200.0),
+      sp_noise3(orig * 0.8 + t * 0.6 + 300.0) * 0.5,
+      sp_noise3(orig * 0.8 + t * 0.8 + 400.0)) * 0.6;
+    let offset = ((center - orig) * sp.anim6.x + sep * sp.anim6.y + flow * sp.anim6.z) * at * max(sp.phys.y, 0.1);
+    return pos + offset;
+  }
+  if (anim == 8) { // morph to sphere
+    let radius = mix(length(orig), max(length(orig), 0.75), sp.anim8.w);
+    let sph = normalize(orig + vec3<f32>(1e-4)) * radius;
+    let angle = (at * 1.5 + vidx * 0.0001) * 0.3;
+    let ca = cos(angle); let sa = sin(angle);
+    let rotated = vec3<f32>(
+      sph.x * ca - sph.z * sa,
+      sph.y + sin(t * 0.5 + length(orig.xz) * 3.0) * 0.1 * at,
+      sph.x * sa + sph.z * ca);
+    return mix(pos, rotated, at);
+  }
+  if (anim == 9) { // turntable
+    let tilt = sp.anim7.z;
+    let tilted = vec3<f32>(pos.x, cos(tilt) * pos.y - sin(tilt) * pos.z, sin(tilt) * pos.y + cos(tilt) * pos.z);
+    let angle = phase * inten;
+    let c = cos(angle); let s = sin(angle);
+    return vec3<f32>(c * tilted.x + s * tilted.z, tilted.y, -s * tilted.x + c * tilted.z);
+  }
+  if (anim == 10) { // wave field
+    let axis = sp_axis(sp.anim4.x);
+    var up = vec3<f32>(0.0, 1.0, 0.0);
+    if (abs(axis.y) > 0.9) { up = vec3<f32>(1.0, 0.0, 0.0); }
+    let travelAxis = normalize(cross(axis, up));
+    let ph = dot(orig, travelAxis) * sp.anim4.y - phase * 2.0;
+    return pos + axis * sin(ph) * sp.anim4.z * inten;
+  }
+  if (anim == 11) { // scatter
+    let sr = sp.anim5.x;
+    let scatter = vec3<f32>(
+      sp_noise3(orig * sr + vec3<f32>(11.0, 0.0, 0.0)),
+      sp_noise3(orig * sr + vec3<f32>(0.0, 29.0, 0.0)),
+      sp_noise3(orig * sr + vec3<f32>(0.0, 0.0, 47.0)));
+    return pos + normalize(scatter + vec3<f32>(1e-4)) * at * sp.anim4.w;
+  }
+  if (anim == 12) { // spiral
+    let baseAngle = atan2(pos.z, pos.x);
+    let radius = length(pos.xz) + at * sp.anim5.y;
+    let angle = baseAngle + phase * sp.anim5.z + pos.y * sp.anim5.z * 0.35;
+    return vec3<f32>(cos(angle) * radius, pos.y + at * sp.anim5.w, sin(angle) * radius);
+  }
+  if (anim == 13) { // tumble
+    let spread = sp.anim7.w;
+    let ax = phase * 0.37 * inten * spread;
+    let ay = phase * 0.61 * inten * spread;
+    let az = phase * 0.23 * inten * spread;
+    let cx = cos(ax); let sx = sin(ax);
+    let cy = cos(ay); let sy = sin(ay);
+    let cz = cos(az); let sz = sin(az);
+    let rx = vec3<f32>(pos.x, cx * pos.y - sx * pos.z, sx * pos.y + cx * pos.z);
+    let ry = vec3<f32>(cy * rx.x + sy * rx.z, rx.y, -sy * rx.x + cy * rx.z);
+    return vec3<f32>(cz * ry.x - sz * ry.y, sz * ry.x + cz * ry.y, ry.z);
+  }
+  if (anim == 14) { // breathe
+    let pulse = sin(phase) * sp.anim8.x * inten;
+    return pos * (1.0 + pulse);
+  }
+  if (anim == 15) { // drift
+    let sPos = orig * 0.7;
+    let drift = vec3<f32>(
+      sp_noise3(sPos + vec3<f32>(phase * 0.10, 17.0, 0.0)),
+      sp_noise3(sPos + vec3<f32>(0.0, phase * 0.08, 41.0)),
+      sp_noise3(sPos + vec3<f32>(73.0, 0.0, phase * 0.09)));
+    return pos + drift * sp.anim8.y * inten;
+  }
+  if (anim == 16) { // vortex
+    let angle = phase * 0.3 + orig.y * sp.anim8.z * inten;
+    let c = cos(angle); let s = sin(angle);
+    return vec3<f32>(c * pos.x + s * pos.z, pos.y, -s * pos.x + c * pos.z);
+  }
+  let _unused = kill;
+  return pos;
+}
+
+fn apply_displacement(pos_in: vec3<f32>, vidx: f32, t: f32) -> vec3<f32> {
+  var pos = pos_in;
+  let dtp = i32(sp.phys.z + 0.5);
+  if (dtp == 0) { return pos; }
+  let amount = sp.phys.w;
+  let dScale = sp.disp0.x;
+  let dSpeed = sp.disp0.y;
+  let mousePos = sp.mo0.xyz;
+  if (dtp == 1) { // noise
+    let nt = t * dSpeed;
+    return pos + vec3<f32>(
+      sp_noise3(pos * dScale + vec3<f32>(100.0, 0.0, 0.0) + nt),
+      sp_noise3(pos * dScale + vec3<f32>(0.0, 100.0, 0.0) + nt),
+      sp_noise3(pos * dScale + vec3<f32>(0.0, 0.0, 100.0) + nt)) * amount;
+  }
+  if (dtp == 2) { // audio reactive
+    if (sp.aud0.x < 0.5) { return pos; }
+    let dir = normalize(pos + vec3<f32>(1e-4));
+    let envelope = sp.aud0.y + sp.aud0.z * 0.65;
+    let spatial = 0.65 + 0.35 * sin(length(pos) * max(dScale, 0.1) * 3.0 - t * dSpeed * 4.0);
+    return pos + dir * envelope * sp.aud1.x * amount * spatial;
+  }
+  if (dtp == 3) { // wave
+    var w = sin(pos.x * dScale + t * dSpeed * 2.0);
+    w = w + sin(pos.z * dScale + t * dSpeed * 1.5);
+    return pos + vec3<f32>(0.0, w * amount, 0.0);
+  }
+  if (dtp == 4) { // glitch
+    let g = step(0.99 - sp.disp1.x * 0.1, fract(sin(t * 100.0 + vidx) * 43758.5453));
+    let offset = vec3<f32>(
+      fract(sin(vidx * 12.9898 + t) * 43758.5453) - 0.5,
+      fract(sin(vidx * 78.233 + t) * 43758.5453) - 0.5,
+      fract(sin(vidx * 45.164 + t) * 43758.5453) - 0.5);
+    return pos + offset * g * amount;
+  }
+  if (dtp == 5) { // wind
+    let wind = sp.disp1.yzw;
+    let w = sp_noise3(pos * dScale + wind * t * dSpeed);
+    return pos + wind * w * amount * max(sp.xf0.x, 0.0);
+  }
+  if (dtp == 6) { // magnetic — attract toward mouse (or origin)
+    var attract_to = vec3<f32>(0.0);
+    if (sp.mo1.x > 0.0) { attract_to = mousePos; }
+    let delta = attract_to - pos;
+    let dist = max(length(delta), 0.05);
+    let field = 1.0 / (1.0 + dist * dist * max(dScale, 0.1));
+    return pos + normalize(delta) * field * amount;
+  }
+  if (dtp == 7) { // ripple around mouse
+    let dist = length(pos - mousePos);
+    var ripple = sin(dist * dScale * 5.0 - t * dSpeed * 5.0);
+    ripple = ripple * exp(-dist * max(dScale, 0.1) * 0.5);
+    return pos + normalize(pos - mousePos + vec3<f32>(1e-4)) * ripple * amount;
+  }
+  if (dtp == 8) { // curl flow
+    let p = pos * dScale;
+    let ph = t * dSpeed;
+    var flow = vec3<f32>(
+      sp_noise3(p + vec3<f32>(ph, 31.7, 12.1)),
+      sp_noise3(p + vec3<f32>(47.3, ph * 0.83, 5.9)),
+      sp_noise3(p + vec3<f32>(8.2, 19.4, ph * 1.13)));
+    flow = normalize(flow + vec3<f32>(1e-4));
+    return pos + flow * amount;
+  }
+  if (dtp == 9) { // twist
+    let angle = (pos.y * dScale + t * dSpeed) * amount;
+    let c = cos(angle); let s = sin(angle);
+    return vec3<f32>(c * pos.x + s * pos.z, pos.y, -s * pos.x + c * pos.z);
+  }
+  if (dtp == 10) { // radial pulse
+    let radius = length(pos);
+    let pulse = sin(radius * dScale * 4.0 - t * dSpeed * 5.0);
+    return pos + normalize(pos + vec3<f32>(1e-4)) * pulse * amount;
+  }
+  if (dtp == 11) { // scanline
+    let plane = sin((pos.y + t * dSpeed) * dScale * 4.0);
+    let gate = smoothstep(0.65, 1.0, plane);
+    let offset = vec3<f32>(
+      sp_noise3(pos * dScale + t * dSpeed),
+      0.0,
+      sp_noise3(pos * dScale + t * dSpeed + 50.0));
+    return pos + offset * gate * amount;
+  }
+  return pos;
+}
+
+fn apply_mouse(pos_in: vec3<f32>) -> vec3<f32> {
+  var pos = pos_in;
+  let influence0 = sp.mo1.x;
+  if (influence0 <= 0.0) { return pos; }
+  let mousePos = sp.mo0.xyz;
+  let radius = sp.mo0.w;
+  let mode = i32(sp.bg0.w + 0.5);
+  let dist = length(pos - mousePos);
+  let influence = smoothstep(radius, 0.0, dist) * influence0;
+  var dir = vec3<f32>(0.0, 1.0, 0.0);
+  if (dist > 0.001) { dir = normalize(pos - mousePos); }
+  let strength = radius * 0.5;
+  if (mode == 0) { return pos - dir * influence * strength; }
+  if (mode == 1) { return pos + dir * influence * strength; }
+  if (mode == 2) {
+    let angle = influence * 6.28318;
+    let offset = pos - mousePos;
+    let swirl = vec3<f32>(
+      offset.x * cos(angle) - offset.z * sin(angle),
+      offset.y,
+      offset.x * sin(angle) + offset.z * cos(angle));
+    return mousePos + mix(offset, swirl, influence);
+  }
+  return pos; // reveal handled in fragment
 }
 
 @vertex fn vs_point(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VsOut {
@@ -387,101 +835,44 @@ struct VsOut {
   // No points yet (file still parsing) or index beyond the uploaded cloud.
   if (vidx >= sp.screen.w) { kill = 1.0; }
   // Point density: deterministically drop the tail of the shuffle.
-  if (sp_hash(vidx * 0.61803) > sp.opFx2.w) { kill = 1.0; }
+  if (sp_hash(vidx * 0.61803) > sp.aud1.w) { kill = 1.0; }
 
-  var pos = p0.xyz * sp.wind.w;
+  var pos = p0.xyz * sp.xf0.y;
   // Euler rotation Z*Y*X (matches the release shader)
-  let cx = cos(sp.rot.x); let sx = sin(sp.rot.x);
-  let cy = cos(sp.rot.y); let sy = sin(sp.rot.y);
-  let cz = cos(sp.rot.z); let sz = sin(sp.rot.z);
-  let rx = vec3<f32>(pos.x, pos.y * cx - pos.z * sx, pos.y * sx + pos.z * cx);
-  let ry = vec3<f32>(rx.x * cy + rx.z * sy, rx.y, -rx.x * sy + rx.z * cy);
-  pos = vec3<f32>(ry.x * cz - ry.y * sz, ry.x * sz + ry.y * cz, ry.z);
-  pos = pos + vec3<f32>(sp.rot.w, sp.pos.x, sp.pos.y);
+  let cx = cos(sp.xf0.z); let sx = sin(sp.xf0.z);
+  let cy = cos(sp.xf0.w); let sy = sin(sp.xf0.w);
+  let cz = cos(sp.xf1.x); let sz = sin(sp.xf1.x);
+  let rxv = vec3<f32>(pos.x, pos.y * cx - pos.z * sx, pos.y * sx + pos.z * cx);
+  let ryv = vec3<f32>(rxv.x * cy + rxv.z * sy, rxv.y, -rxv.x * sy + rxv.z * cy);
+  pos = vec3<f32>(ryv.x * cz - ryv.y * sz, ryv.x * sz + ryv.y * cz, ryv.z);
+  pos = pos + sp.xf1.yzw;
 
-  let orig = p0.xyz;
-  let anim = i32(sp.anim0.x + 0.5);
-  let at = sp.anim0.y;
-  if (anim == 1) { pos = pos + normalize(orig + vec3<f32>(1e-5)) * at * sp.anim0.z; }
-  else if (anim == 2) { pos = pos - normalize(orig + vec3<f32>(1e-5)) * at * sp.anim0.z; }
-  else if (anim == 3) {
-    var axis = vec3<f32>(0.0, 1.0, 0.0);
-    if (sp.anim1.x < 0.5) { axis = vec3<f32>(1.0, 0.0, 0.0); }
-    else if (sp.anim1.x > 1.5) { axis = vec3<f32>(0.0, 0.0, 1.0); }
-    if (dot(pos, axis * sp.anim1.y) > (at * 2.0 - 1.0) * 2.0) { kill = 1.0; }
-  }
-  else if (anim == 4) { pos = mix(orig, floor(orig * sp.anim0.w + 0.5) / sp.anim0.w, at); }
-  else if (anim == 5) {
-    var axis = vec3<f32>(0.0, 1.0, 0.0);
-    if (sp.anim1.x < 0.5) { axis = vec3<f32>(1.0, 0.0, 0.0); }
-    else if (sp.anim1.x > 1.5) { axis = vec3<f32>(0.0, 0.0, 1.0); }
-    if (dot(orig, axis * sp.anim1.y) > mix(-2.0, 2.0, at)) { kill = 1.0; }
-  }
-  else if (anim == 6) {
-    let fall = max(0.0, at - vidx * 0.0001);
-    pos = pos + vec3<f32>(0.0, -sp.anim1.z * fall * fall, 0.0);
-  }
-  else if (anim == 7) {
-    let gp = floor(sp_noise3(orig * 0.5) * 4.0) * 1.57;
-    let center = vec3<f32>(sin(t * 0.7 + gp) * 0.8, cos(t * 0.5 + gp * 0.7) * 0.5, sin(t * 0.6 + gp * 1.3) * 0.8);
-    let sep = vec3<f32>(sp_noise3(orig * 3.0 + t * 1.5), sp_noise3(orig * 3.0 + t * 1.5 + 50.0), sp_noise3(orig * 3.0 + t * 1.5 + 100.0)) * 0.4;
-    let flow = vec3<f32>(sp_noise3(orig * 0.8 + t * 0.8 + 200.0), sp_noise3(orig * 0.8 + t * 0.6 + 300.0) * 0.5, sp_noise3(orig * 0.8 + t * 0.8 + 400.0)) * 0.6;
-    pos = pos + ((center - orig) * 0.3 + sep + flow) * at * sp.anim1.w;
-  }
-  else if (anim == 8) {
-    let r = max(length(orig), 0.001);
-    let angle = (at * 1.5 + vidx * 0.0001) * 0.3;
-    let ca = cos(angle); let sa = sin(angle);
-    let sph = normalize(orig + vec3<f32>(1e-5)) * r;
-    let rotated = vec3<f32>(sph.x * ca - sph.z * sa, sph.y + sin(t * 0.5 + length(orig.xz) * 3.0) * 0.1 * at, sph.x * sa + sph.z * ca);
-    pos = mix(pos, rotated, at);
-  }
-  else if (anim == 9) {
-    let angle = at * 6.28318 + vidx * 0.01;
-    let r = length(pos.xz);
-    pos = vec3<f32>(cos(angle) * r, pos.y, sin(angle) * r);
-  }
-  else if (anim == 10) { pos = pos + vec3<f32>(0.0, sin(length(orig.xz) * 5.0 - t * 3.0) * 0.3 * at, 0.0); }
-  else if (anim == 11) {
-    pos = pos + vec3<f32>(sp_noise3(orig * 10.0 + t), sp_noise3(orig * 10.0 + t + 100.0), sp_noise3(orig * 10.0 + t + 200.0)) * at * 2.0;
-  }
-  else if (anim == 12) {
-    let angle = at * 12.5664 + vidx * 0.001;
-    pos = pos + vec3<f32>(cos(angle) * at * 2.0, at * 2.0, sin(angle) * at * 2.0) * 0.5;
-  }
+  // Rotated original (reference passes objectRotation * originalPosition)
+  var orig = p0.xyz;
+  let orx = vec3<f32>(orig.x, orig.y * cx - orig.z * sx, orig.y * sx + orig.z * cx);
+  let ory = vec3<f32>(orx.x * cy + orx.z * sy, orx.y, -orx.x * sy + orx.z * cy);
+  orig = vec3<f32>(ory.x * cz - ory.y * sz, ory.x * sz + ory.y * cz, ory.z);
 
-  // Displacement
-  let dtp = i32(sp.disp0.x + 0.5);
-  if (dtp == 1) {
-    let ns = sp.disp0.z; let nt = t * sp.disp0.w;
-    pos = pos + vec3<f32>(
-      sp_noise3(pos * ns + vec3<f32>(100.0, 0.0, 0.0) + nt),
-      sp_noise3(pos * ns + vec3<f32>(0.0, 100.0, 0.0) + nt),
-      sp_noise3(pos * ns + vec3<f32>(0.0, 0.0, 100.0) + nt)) * sp.disp0.y;
-  } else if (dtp == 2) {
-    let ad = sp.pos.z * sp.audio.x + sp.pos.w * sp.audio.x * 0.5;
-    pos = pos + normalize(pos + vec3<f32>(1e-5)) * ad;
-  } else if (dtp == 3) {
-    var w = sin(pos.x * sp.disp1.x + t * 2.0) * sp.disp1.y;
-    w = w + sin(pos.z * sp.disp1.x + t * 1.5) * sp.disp1.y;
-    pos = pos + vec3<f32>(0.0, w * sp.disp0.y, 0.0);
-  } else if (dtp == 4) {
-    let g = step(0.99 - sp.disp1.z * 0.1, fract(sin(t * 100.0 + vidx) * 43758.5453));
-    pos = pos + (vec3<f32>(sp_hash(vidx * 12.9898 + t), sp_hash(vidx * 78.233 + t), sp_hash(vidx * 45.164 + t)) - 0.5) * g * sp.disp0.y;
-  } else if (dtp == 5) {
-    let w = sp_noise3(pos * 2.0 + sp.wind.xyz * t * sp.disp1.w);
-    pos = pos + sp.wind.xyz * w * sp.disp0.y;
-  } else if (dtp == 7) {
-    let d = length(pos);
-    let ripple = sin(d * 10.0 - t * 5.0) * exp(-d * 2.0);
-    pos = pos + normalize(pos + vec3<f32>(1e-5)) * ripple * sp.disp0.y;
-  }
+  pos = apply_animation(pos, orig, vidx, t, &kill);
+  pos = apply_displacement(pos, vidx, t);
+  let mouseDistance = length(pos - sp.mo0.xyz) / max(sp.mo0.w, 0.001);
+  pos = apply_mouse(pos);
 
   // Audio scale
-  pos = pos * (1.0 + sp.pos.z * sp.audio.z * 0.2);
+  if (sp.aud0.x > 0.5) { pos = pos * (1.0 + sp.aud0.y * sp.aud0.w); }
+
+  // Slice plane cull
+  if (sp.mo1.y > 0.5) {
+    let axis = sp_axis(sp.mo1.z);
+    let d = dot(pos, axis);
+    if (abs(d - sp.mo1.w) > sp.mi0.x * 0.5) { kill = 1.0; }
+  }
 
   let view = sp.vp0 * pos.x + sp.vp1 * pos.y + sp.vp2 * pos.z + sp.vp3;
   var size_px = sp.render0.x * p1.x;
+  if (sp.aud0.x > 0.5) {
+    size_px = size_px * (1.0 + sp.aud0.y * sp.aud0.w * 0.5) * (1.0 + sp.aud0.z * sp.aud0.w * 0.3);
+  }
   if (sp.render0.y > 0.5) { size_px = size_px * clamp(6.0 / max(0.1, view.w), 0.1, 20.0); }
   size_px = clamp(size_px, 0.5, 900.0);
 
@@ -508,8 +899,88 @@ struct VsOut {
     f32((packed >> 16u) & 0xffu) / 255.0,
     f32((packed >> 24u) & 0xffu) / 255.0);
   out.world = pos;
-  out.misc = vec4<f32>(vidx, kill, view.w, 0.0);
+  out.misc = vec4<f32>(vidx, kill, view.w, mouseDistance);
   return out;
+}
+
+fn apply_color_effect(color_in: vec3<f32>, wp: vec3<f32>, t: f32) -> vec3<f32> {
+  var color = color_in;
+  if (abs(sp.col0.z) > 0.01) {
+    var hsv = sp_rgb2hsv(color);
+    hsv.x = fract(hsv.x + sp.col0.z / 360.0);
+    color = sp_hsv2rgb(hsv);
+  }
+  let fx = i32(sp.col0.w + 0.5);
+  let fi = sp.col1.w;
+  if (fx == 1) { // chromatic
+    var hsv = sp_rgb2hsv(color);
+    hsv.x = fract(hsv.x + (wp.x + wp.y + wp.z) * 0.05 * fi + t * 0.05);
+    hsv.y = min(1.0, hsv.y + 0.3 * fi);
+    return mix(color, sp_hsv2rgb(hsv), fi);
+  }
+  if (fx == 2) { // heatmap
+    let heat = clamp((wp.y + 5.0) / 10.0, 0.0, 1.0);
+    var hc = mix(vec3<f32>(0.0, 0.0, 0.5), vec3<f32>(0.0, 0.5, 1.0), heat * 3.0);
+    if (heat >= 0.33) { hc = mix(vec3<f32>(0.0, 0.5, 1.0), vec3<f32>(1.0, 1.0, 0.0), (heat - 0.33) * 3.0); }
+    if (heat >= 0.66) { hc = mix(vec3<f32>(1.0, 1.0, 0.0), vec3<f32>(1.0, 0.0, 0.0), (heat - 0.66) * 3.0); }
+    return mix(color, hc, fi);
+  }
+  if (fx == 3) { // pointillist
+    var hsv = sp_rgb2hsv(color);
+    hsv.x = fract(hsv.x + sin(t * 2.0 + sp_hash2(wp.xy) * 6.28) * 0.5 * fi);
+    hsv.y = min(1.0, hsv.y + 0.2 * fi);
+    hsv.z = min(1.0, hsv.z + 0.1 * fi);
+    return sp_hsv2rgb(hsv);
+  }
+  if (fx == 4) { // hologram
+    let scan = fract(wp.y * sp.col3.x * 0.1 + t * sp.col2.w);
+    let flick = 0.9 + 0.1 * sin(t * 30.0 + wp.x * 10.0);
+    return mix(color, vec3<f32>(0.2, 0.8, 1.0) * flick, scan * fi);
+  }
+  if (fx == 5) { // rainbow
+    return mix(color, sp_hsv2rgb(vec3<f32>(fract((wp.y + wp.x * 0.3) * 0.1 + t * 0.1), 1.0, 1.0)), fi);
+  }
+  if (fx == 6) { // audio color + beat flash
+    if (sp.aud0.x < 0.5) { return color; }
+    var hsv = sp_rgb2hsv(color);
+    hsv.x = fract(hsv.x + sp.aud0.y * sp.aud1.y);
+    hsv.y = min(1.0, hsv.y + sp.aud0.y * 0.5);
+    hsv.z = min(1.0, hsv.z + sp.aud0.y * 0.3 + sp.aud0.z * 0.4);
+    hsv.y = max(0.0, hsv.y - sp.aud0.z * 0.3);
+    return sp_hsv2rgb(hsv);
+  }
+  if (fx == 7) { // depth gradient (normalized cloud spans roughly z in [-2, 2])
+    let depth = clamp((wp.z + 2.0) / 4.0, 0.0, 1.0);
+    let bias = max(sp.col3.y, 0.001);
+    let shaped = smoothstep(0.0, bias, depth) * 0.5 + smoothstep(bias, 1.0, depth) * 0.5;
+    return mix(color, mix(sp.col4.xyz, sp.col5.xyz, shaped), fi);
+  }
+  if (fx == 8) { // neon
+    var hsv = sp_rgb2hsv(color);
+    let neon = sp_hsv2rgb(vec3<f32>(hsv.x, 1.0, 1.0));
+    return mix(color, neon * (1.0 + 0.5 * sin(t * 3.0 + wp.x * 5.0)), fi);
+  }
+  if (fx == 9) { // pastel
+    var hsv = sp_rgb2hsv(color);
+    hsv.y = hsv.y * 0.4;
+    hsv.z = 0.9 + 0.1 * hsv.z;
+    return mix(color, sp_hsv2rgb(hsv), fi);
+  }
+  if (fx == 10) { // cyberpunk
+    let m = sin(wp.x * 2.0 + t) * 0.5 + 0.5;
+    return mix(color, mix(vec3<f32>(1.0, 0.0, 0.8), vec3<f32>(0.0, 1.0, 1.0), m), fi);
+  }
+  if (fx == 11) { // fire
+    let f = sp_noise2(wp.xy * 3.0 + vec2<f32>(0.0, -t * 2.0));
+    var fc = mix(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(1.0, 1.0, 0.0), f);
+    fc = mix(fc, vec3<f32>(1.0, 0.5, 0.0), sin(f * 3.14));
+    return mix(color, fc, fi);
+  }
+  if (fx == 12) { // ice
+    let f = sp_noise2(wp.xy * 2.0 + t * 0.2);
+    return mix(color, mix(vec3<f32>(0.7, 0.9, 1.0), vec3<f32>(0.3, 0.6, 0.9), f), fi);
+  }
+  return color;
 }
 
 @fragment fn fs_point(in: VsOut) -> @location(0) vec4<f32> {
@@ -518,6 +989,8 @@ struct VsOut {
   let coord = in.corner * 0.5;
   let dist = length(coord);
   var edge = 1.0;
+  let normalZ = sqrt(max(0.0, 1.0 - min(dot(coord * 2.0, coord * 2.0), 1.0)));
+  let pointNormal = normalize(vec3<f32>(coord * 2.0, normalZ));
   let mode = i32(sp.render0.z + 0.5);
   if (mode == 0) {
     if (dist > 0.5) { discard; }
@@ -528,9 +1001,7 @@ struct VsOut {
     edge = g;
   } else if (mode == 2) {
     if (dist > 0.5) { discard; }
-    let z = sqrt(max(0.0, 0.25 - dist * dist));
-    let n = normalize(vec3<f32>(coord, z));
-    edge = 0.3 + 0.7 * max(0.0, dot(n, normalize(vec3<f32>(0.5, 0.5, 1.0))));
+    edge = 0.3 + 0.7 * max(0.0, dot(pointNormal, normalize(vec3<f32>(0.5, 0.5, 1.0))));
   } else if (mode == 3) {
     if (abs(coord.x) > 0.45 || abs(coord.y) > 0.45) { discard; }
   } else {
@@ -539,92 +1010,155 @@ struct VsOut {
   }
 
   var color = in.color.rgb;
-  if (sp.colA.x < 0.5) { color = mix(sp.colA.yzw, sp.colB.xyz, sp.colB.w); }
-
-  // Hue shift
-  if (abs(sp.colFx.x) > 0.01) {
-    var hsv = sp_rgb2hsv(color);
-    hsv.x = fract(hsv.x + sp.colFx.x / 360.0);
-    color = sp_hsv2rgb(hsv);
-  }
-  let fx = i32(sp.colFx.y + 0.5);
-  let fi = sp.colFx.z;
+  if (sp.col0.x < 0.5) { color = mix(sp.col1.xyz, sp.col2.xyz, sp.col0.y); }
   let wp = in.world;
-  if (fx == 1) {
-    var hsv = sp_rgb2hsv(color);
-    hsv.x = fract(hsv.x + (wp.x + wp.y + wp.z) * 0.05 * fi + t * 0.05);
-    hsv.y = min(1.0, hsv.y + 0.3 * fi);
-    color = mix(color, sp_hsv2rgb(hsv), fi);
-  } else if (fx == 2) {
-    let heat = clamp((wp.y + 5.0) / 10.0, 0.0, 1.0);
-    var hc = mix(vec3<f32>(0.0, 0.0, 0.5), vec3<f32>(0.0, 0.5, 1.0), heat * 3.0);
-    if (heat >= 0.33) { hc = mix(vec3<f32>(0.0, 0.5, 1.0), vec3<f32>(1.0, 1.0, 0.0), (heat - 0.33) * 3.0); }
-    if (heat >= 0.66) { hc = mix(vec3<f32>(1.0, 1.0, 0.0), vec3<f32>(1.0, 0.0, 0.0), (heat - 0.66) * 3.0); }
-    color = mix(color, hc, fi);
-  } else if (fx == 3) {
-    var hsv = sp_rgb2hsv(color);
-    hsv.x = fract(hsv.x + sin(t * 2.0 + sp_hash2(wp.xy) * 6.28) * 0.5 * fi);
-    color = sp_hsv2rgb(hsv);
-  } else if (fx == 4) {
-    let scan = fract(wp.y * sp.opFx.x * 0.1 + t * sp.colFx.w);
-    let flick = 0.9 + 0.1 * sin(t * 30.0 + wp.x * 10.0);
-    color = mix(color, vec3<f32>(0.2, 0.8, 1.0) * flick, scan * fi);
-  } else if (fx == 5) {
-    color = mix(color, sp_hsv2rgb(vec3<f32>(fract((wp.y + wp.x * 0.3) * 0.1 + t * 0.1), 1.0, 1.0)), fi);
-  } else if (fx == 6) {
-    var hsv = sp_rgb2hsv(color);
-    hsv.x = fract(hsv.x + sp.pos.z * sp.audio.y);
-    hsv.z = min(1.0, hsv.z + sp.pos.z * 0.3 + sp.pos.w * 0.4);
-    color = sp_hsv2rgb(hsv);
-  } else if (fx == 7) {
-    let depth = clamp((wp.z + 10.0) / 20.0, 0.0, 1.0);
-    color = mix(color, mix(vec3<f32>(1.0, 0.3, 0.1), vec3<f32>(0.1, 0.3, 1.0), depth), fi);
-  } else if (fx == 8) {
-    var hsv = sp_rgb2hsv(color);
-    let neon = sp_hsv2rgb(vec3<f32>(hsv.x, 1.0, 1.0));
-    color = mix(color, neon * (1.0 + 0.5 * sin(t * 3.0 + wp.x * 5.0)), fi);
-  } else if (fx == 9) {
-    var hsv = sp_rgb2hsv(color);
-    hsv.y = hsv.y * 0.4;
-    hsv.z = 0.9 + 0.1 * hsv.z;
-    color = mix(color, sp_hsv2rgb(hsv), fi);
-  } else if (fx == 10) {
-    let m = sin(wp.x * 2.0 + t) * 0.5 + 0.5;
-    color = mix(color, mix(vec3<f32>(1.0, 0.0, 0.8), vec3<f32>(0.0, 1.0, 1.0), m), fi);
-  } else if (fx == 11) {
-    let f = sp_hash2(wp.xy * 3.0 + vec2<f32>(0.0, -t * 2.0));
-    var fc = mix(vec3<f32>(1.0, 0.0, 0.0), vec3<f32>(1.0, 1.0, 0.0), f);
-    fc = mix(fc, vec3<f32>(1.0, 0.5, 0.0), sin(f * 3.14));
-    color = mix(color, fc, fi);
-  } else if (fx == 12) {
-    let f = sp_hash2(wp.xy * 2.0 + t * 0.2);
-    color = mix(color, mix(vec3<f32>(0.7, 0.9, 1.0), vec3<f32>(0.3, 0.6, 0.9), f), fi);
+  color = apply_color_effect(color, wp, t);
+
+  // Lighting
+  if (sp.li0.x > 0.5) {
+    let keyDir = normalize(sp.li2.xyz);
+    let keyDiffuse = max(0.0, dot(pointNormal, keyDir));
+    let softness = sp.li2.w;
+    var rim = pow(1.0 - max(pointNormal.z, 0.0), mix(5.0, 1.25, softness));
+    rim = rim * max(0.0, dot(pointNormal, normalize(sp.li4.xyz)) * 0.5 + 0.5);
+    let halfVec = normalize(keyDir + vec3<f32>(0.0, 0.0, 1.0));
+    let specular = pow(max(0.0, dot(pointNormal, halfVec)), mix(48.0, 6.0, softness));
+    let heightShadow = smoothstep(-1.5, 1.5, wp.y);
+    let shadow = mix(1.0 - sp.li1.w, 1.0, mix(heightShadow, 1.0, softness));
+    var lit = color * max(sp.li0.y, 0.0);
+    lit = lit + color * sp.li1.xyz * keyDiffuse * sp.li0.z * shadow;
+    lit = lit + sp.li3.xyz * rim * sp.li3.w;
+    lit = lit + sp.li1.xyz * specular * sp.li0.w;
+    color = lit;
+  }
+
+  // Atmosphere on points
+  var atmosphereMix = 0.0;
+  if (sp.li4.w > 0.5 && sp.at0.x > 0.0) {
+    let fogUV = wp.xz * max(sp.at0.y, 0.01);
+    let fogNoise = sp_noise2(
+      fogUV
+      + vec2<f32>(t * sp.at0.w, -t * sp.at0.w * 0.63)
+      + sp_noise2(fogUV * 0.47) * sp.at0.z);
+    let depthFog = smoothstep(-3.0, 5.0, -wp.z);
+    atmosphereMix = clamp(sp.at0.x * (0.25 + fogNoise * 0.75) * (0.55 + depthFog * 0.45), 0.0, 0.95);
+    color = mix(color, sp.at1.xyz, atmosphereMix);
   }
 
   var alpha = in.color.a * sp.render0.w * edge;
-  let ofx = i32(sp.opFx.y + 0.5);
-  let oi = sp.opFx.z;
-  if (ofx == 1) {
-    let d = abs(wp.z - sp.opFx.w * 4.0 - 2.0);
-    alpha = alpha * (1.0 - smoothstep(0.0, 3.0, d) * oi);
-  } else if (ofx == 2) {
-    let fog = 1.0 - exp(-length(wp) * sp.opFx2.x * 0.1);
+  alpha = alpha * (1.0 - atmosphereMix * 0.12);
+
+  // Opacity effects
+  let ofx = i32(sp.col3.z + 0.5);
+  let oi = sp.col3.w;
+  if (ofx == 1) { // dof
+    let d = abs(wp.z - sp.col4.w * 4.0 - 2.0);
+    alpha = alpha * (1.0 - smoothstep(0.0, sp.col5.w * 3.0, d) * oi);
+  } else if (ofx == 2) { // fog fade
+    let fog = 1.0 - exp(-length(wp) * sp.op0.x * 0.1);
     alpha = alpha * (1.0 - fog * oi);
-  } else if (ofx == 3) {
-    let pulse = (sin(t * sp.opFx2.y * 3.14159) + 1.0) * 0.5;
+  } else if (ofx == 3) { // pulse
+    let pulse = (sin(t * sp.op0.y * 3.14159) + 1.0) * 0.5;
     alpha = alpha * (1.0 - (1.0 - pulse) * oi);
-  } else if (ofx == 4) {
+  } else if (ofx == 4) { // proximity
     alpha = alpha * mix(1.0, 1.0 - smoothstep(0.0, 5.0, length(wp)), oi);
-  } else if (ofx == 5) {
-    if (sp_hash2(wp.xy + wp.z) < sp.opFx2.z * oi) { discard; }
-  } else if (ofx == 6) {
+  } else if (ofx == 5) { // dissolve
+    if (sp_hash2(wp.xy + wp.z) < sp.op0.z * oi) { discard; }
+  } else if (ofx == 6) { // scan reveal
     let scan = fract(t * 0.3);
     alpha = alpha * mix(1.0, smoothstep(scan - 0.2, scan, (wp.y + 5.0) / 10.0), oi);
-  } else if (ofx == 7) {
-    alpha = alpha * (0.5 + sp.pos.z * 0.5);
+  } else if (ofx == 7) { // audio fade
+    if (sp.aud0.x > 0.5) { alpha = alpha * (0.5 + sp.aud0.y * 0.5); }
   }
 
-  if (alpha < 0.004) { discard; }
+  // Hologram scanline enhancement
+  if (i32(sp.col0.w + 0.5) == 4) {
+    let scanline = abs(sin(in.position.y * 0.5));
+    alpha = alpha * (0.7 + scanline * 0.3);
+    color = color + vec3<f32>(0.0, 0.1, 0.2) * scanline;
+  }
+
+  var frag = vec4<f32>(color, alpha);
+
+  // Creative effects
+  let cfx = i32(sp.op0.w + 0.5);
+  let ci = sp.op1.w;
+  if (cfx == 1) { // feedback
+    let echo = sin(t * 5.0 + wp.x * 3.0) * 0.5 + 0.5;
+    frag = vec4<f32>(mix(frag.rgb, frag.rgb * 1.5, echo * ci), frag.a * (0.8 + 0.2 * echo));
+  } else if (cfx == 2) { // kaleidoscope
+    let angle = atan2(wp.y, wp.x);
+    let seg = 3.14159 / 6.0;
+    let kaleid = abs((angle % seg) - seg * 0.5);
+    var hsv = sp_rgb2hsv(frag.rgb);
+    hsv.x = fract(hsv.x + kaleid * ci);
+    frag = vec4<f32>(sp_hsv2rgb(hsv), frag.a);
+  } else if (cfx == 3) { // constellation
+    let sparkle = sin(t * 10.0 + in.misc.x * 0.1) * 0.5 + 0.5;
+    let twinkle = pow(sparkle, 3.0);
+    frag = vec4<f32>(frag.rgb + vec3<f32>(twinkle * ci), mix(frag.a, frag.a * (0.5 + twinkle), ci));
+  } else if (cfx == 4) { // datamosh
+    let glitch = step(0.95, sp_hash2(vec2<f32>(floor(t * 10.0), wp.y)));
+    if (glitch > 0.5) { frag = vec4<f32>(frag.bgr, frag.a); }
+    let shift = sp_hash2(vec2<f32>(t, wp.x)) * ci * 0.1;
+    frag.r = frag.r + shift;
+    frag.b = frag.b - shift;
+  } else if (cfx == 5) { // pixel sort
+    let brightness = dot(frag.rgb, vec3<f32>(0.299, 0.587, 0.114));
+    let threshold = 0.5 + sin(t + wp.x) * 0.3;
+    if (brightness > threshold) { frag = vec4<f32>(frag.rgb * (1.0 + ci * 0.5), frag.a); }
+  } else if (cfx == 6) { // echo layers
+    var echoAlpha = 0.0;
+    for (var i = 1.0; i <= 3.0; i = i + 1.0) {
+      echoAlpha = echoAlpha + (sin((t - i * 0.1) * 3.0 + wp.x) * 0.5 + 0.5) / 3.0;
+    }
+    frag = vec4<f32>(frag.rgb, frag.a * (0.7 + 0.3 * echoAlpha * ci));
+  }
+
+  // Reveal mouse mode: fade in points near the pointer
+  if (i32(sp.bg0.w + 0.5) == 3 && sp.mo1.x > 0.0) {
+    let reveal = 1.0 - smoothstep(0.0, 1.0, in.misc.w);
+    let inf = min(sp.mo1.x, 1.0);
+    frag.a = frag.a * (reveal * inf + (1.0 - inf));
+  }
+
+  if (frag.a < 0.004) { discard; }
+  return vec4<f32>(clamp(frag.rgb, vec3<f32>(0.0), vec3<f32>(2.0)) * frag.a, frag.a);
+}
+
+// ── Background / scene atmosphere pass ──
+// Drawn before the points: the layer's backdrop color plus volumetric-
+// looking animated haze so fog fills the SCENE, not just the points.
+struct BgOut {
+  @builtin(position) position: vec4<f32>,
+  @location(0) uv: vec2<f32>,
+}
+
+@vertex fn vs_bg(@builtin(vertex_index) vi: u32) -> BgOut {
+  var out: BgOut;
+  let x = f32(i32(vi & 1u) * 4 - 1);
+  let y = f32(i32(vi >> 1u) * 4 - 1);
+  out.position = vec4<f32>(x, y, 0.999, 1.0);
+  out.uv = vec2<f32>(x, y) * 0.5 + 0.5;
+  return out;
+}
+
+@fragment fn fs_bg(in: BgOut) -> @location(0) vec4<f32> {
+  let t = sp.screen.z;
+  var color = sp.bg0.xyz;
+  var alpha = sp.at1.w;
+  if (sp.li4.w > 0.5 && sp.at0.x > 0.0) {
+    let aspect = sp.screen.x / max(sp.screen.y, 1.0);
+    let uv = vec2<f32>((in.uv.x - 0.5) * aspect, in.uv.y - 0.5) * 6.0 * max(sp.at0.y, 0.01);
+    var haze = sp_noise2(uv + vec2<f32>(t * sp.at0.w, -t * sp.at0.w * 0.63) + sp_noise2(uv * 0.47) * sp.at0.z);
+    haze = haze * 0.65 + sp_noise2(uv * 2.3 - vec2<f32>(t * sp.at0.w * 0.41, t * sp.at0.w * 0.29)) * 0.35;
+    // Denser toward the lower half like ground fog, thinning upward.
+    let vertical = mix(1.0, 0.45, in.uv.y);
+    let fogAmount = clamp(sp.at0.x * (0.3 + haze * 0.7) * vertical, 0.0, 0.85);
+    color = mix(color, sp.at1.xyz, clamp(fogAmount * 2.0, 0.0, 1.0));
+    alpha = max(alpha, fogAmount);
+  }
+  if (alpha < 0.003) { discard; }
   return vec4<f32>(color * alpha, alpha);
 }
 `;

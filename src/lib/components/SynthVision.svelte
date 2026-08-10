@@ -21,7 +21,9 @@
   } from '../stores/geoDeck';
   import { evaluateGeoDeck, type GeoEngineRuntime } from '../geo/engine';
   import { vjClipLauncher, type VJClip, type VJDeck } from '../stores/vjClipLauncher';
+  import { get } from 'svelte/store';
   import { mediaLibrary, type MediaItem } from '../stores/media';
+  import { resolveAssetTreeInPlace, resolveAssetRefForRuntime } from '../storage/assetRegistry';
   import { project, svKeyboardPresets } from '../stores/layers';
   import { globalSVKeyboardPresets } from '../stores/globalPresets';
   import { parseISF, getInputDefault, type ISFInput } from '../isf/parser';
@@ -57,6 +59,10 @@
 
   export let onClose: () => void = () => {};
   export let visible: boolean = true;
+  /** Deck layer index whose cell hosts the Performer clip. Performer is
+   *  dragged into the grid like any other plugin, so the layer is decided by
+   *  where it was dropped rather than picked inside this panel. */
+  export let hostLayer: number = 0;
 
   // Save clips to session cache and close — clips persist across VJ mode toggles
   function handleClose() {
@@ -133,8 +139,49 @@
   let isfShaderCode_internal: string = ''; // track to avoid re-creating ISF instance
   let isfAssignment: ClipAssignment | null = null;
 
+  // The active clip, read through the store *textually* so Svelte tracks it.
+  // Previously the reactive block below only called activePerformerLayerState(),
+  // whose store access is hidden inside the function body — so it never re-ran
+  // when Performer launched a new clip, and the SHADER tab kept showing the
+  // built-in shader's dials instead of the clip's own params.
+  $: performerActiveClip = performerTargetDeck($vjClipLauncher) === 'B'
+    ? $vjClipLauncher.bankBLayerStates[assignedVJLayer]?.activeClip
+    : $vjClipLauncher.layerStates[assignedVJLayer]?.activeClip;
+
+  /** True while the layer's active clip is Performer's own cell or a clip
+   *  Performer launched. Firing any other clip on that row hands the layer
+   *  back to the deck. */
+  $: performerOwnsLayer = performerActiveClip?.type === 'synthvision'
+    || !!(performerActiveClip as any)?._performerOwned;
+
+  /** Last clip Performer put on air, replayed when its cell is fired again so
+   *  reopening the panel resumes instead of coming back empty. */
+  let lastLaunchedClip: VJClip | null = null;
+  let wasVisible = false;
+  $: if (visible !== wasVisible) {
+    wasVisible = visible;
+    if (visible) resumePerformerOutput();
+  }
+
+  /** Put Performer back on air with the clip it was last running. Firing the
+   *  Performer cell replaces the layer's active clip with the (contentless)
+   *  Performer clip, which is why reopening used to come back blank. */
+  function resumePerformerOutput() {
+    if (lastLaunchedClip) {
+      // Fresh id so the core treats it as a new launch and restarts cleanly.
+      vjClipLauncher.launchTransientClip(
+        assignedVJLayer,
+        { ...lastLaunchedClip, id: `performer-resume-${generateUUID()}` },
+        activePerformerDeck(),
+      );
+    }
+    publishNativeWorldOverlay();
+  }
+
   // Reactive: parse ISF inputs from active ISF shader (inside SV or VJ clip)
   $: {
+    // Referenced so this block re-runs whenever Performer swaps clips.
+    performerActiveClip;
     if (isfActive && isfShaderInstance) {
       // ISF is rendering inside SynthVision pipeline
       const inputs = isfShaderInstance.metadata?.INPUTS || [];
@@ -146,7 +193,7 @@
       activeISFShaderCode = isfShaderCode_internal;
     } else {
       // Fallback: check VJ clip launcher for ISF clips
-      const clip = activePerformerLayerState()?.activeClip;
+      const clip = performerActiveClip;
       if (clip?.type === 'shader' && clip.shaderCode && clip.shaderCode !== activeISFShaderCode) {
         try {
           const parsed = parseISF(clip.shaderCode);
@@ -168,17 +215,24 @@
     }
   }
 
-  // Get current value for an ISF input
-  function getISFValue(input: ISFInput): number | boolean | number[] {
+  /** Live shader values of the clip Performer is driving. Referenced directly
+   *  in the template so Svelte re-renders the controls when they change. */
+  $: performerShaderValues = (performerActiveClip?.shaderValues ?? {}) as Record<string, any>;
+
+  // Get current value for an ISF input. `values` is passed in rather than read
+  // from the store here: a store read inside a function body is invisible to
+  // Svelte's dependency tracking, so the readouts never updated when a slider
+  // (or a Tab scramble) wrote a new value.
+  function getISFValue(
+    input: ISFInput,
+    values: Record<string, any> = performerShaderValues,
+  ): number | boolean | number[] {
     if (isfActive && isfShaderInstance) {
       // Read directly from ISF shader instance uniforms
       const u = isfShaderInstance.uniforms[input.NAME];
       if (u !== undefined && u.value !== undefined) return u.value as number | boolean | number[];
-    } else {
-      const clip = activePerformerLayerState()?.activeClip;
-      if (clip?.shaderValues && input.NAME in clip.shaderValues) {
-        return clip.shaderValues[input.NAME];
-      }
+    } else if (values && input.NAME in values) {
+      return values[input.NAME];
     }
     return getInputDefault(input);
   }
@@ -197,9 +251,24 @@
     }
   }
 
-  // ─── Layer Effects Management ─────────────────────────
-  // Reactive: current layer effects on the SynthVision VJ layer
-  $: svLayerEffects = activePerformerLayerState()?.effects ?? [];
+  // ─── Performer Effects Management ─────────────────────────
+  // Performer owns this chain (synthVisionStore.performerEffects). It cannot
+  // live on the VJ layer — that row is shared with grid clips — nor on the
+  // active clip, because Performer swaps its transient clip every time a new
+  // shader/world/media is launched, which orphaned the chain. Instead the
+  // list is stamped onto whichever clip Performer currently drives, so it
+  // renders through the normal clip.effects path.
+  $: svLayerEffects = $synthVisionStore.performerEffects;
+
+  /** Push the Performer chain onto the clip it is currently driving. */
+  function syncPerformerEffectsToClip() {
+    const effects = get(synthVisionStore).performerEffects;
+    vjClipLauncher.setActiveClipEffects(assignedVJLayer, effects, activePerformerDeck());
+  }
+  // Re-stamp whenever the chain changes or Performer moves to another clip.
+  $: if ($synthVisionStore.performerEffects || activePerformerLayerState()?.activeClip?.id) {
+    syncPerformerEffectsToClip();
+  }
 
   function handleEffectPickerAdd(types: EffectType[]) {
     for (const type of types) {
@@ -209,27 +278,26 @@
         enabled: true,
         params: getRendererDefaultEffectParams(type),
       };
-      vjClipLauncher.addLayerEffect(assignedVJLayer, newEffect, activePerformerDeck());
+      synthVisionStore.addPerformerEffect(newEffect);
     }
     showEffectPicker = false;
+    syncPerformerEffectsToClip();
   }
 
   function toggleSvEffect(effectId: string) {
-    vjClipLauncher.toggleLayerEffect(assignedVJLayer, effectId, activePerformerDeck());
+    synthVisionStore.togglePerformerEffect(effectId);
+    syncPerformerEffectsToClip();
   }
 
   function deleteSvEffect(effectId: string) {
-    vjClipLauncher.removeLayerEffect(assignedVJLayer, effectId, activePerformerDeck());
+    synthVisionStore.removePerformerEffect(effectId);
     expandedEffectId = null;
+    syncPerformerEffectsToClip();
   }
 
   function updateSvEffectParam(effectId: string, paramName: string, value: number | boolean) {
-    vjClipLauncher.updateLayerEffectParams(
-      assignedVJLayer,
-      effectId,
-      { [paramName]: value },
-      activePerformerDeck(),
-    );
+    synthVisionStore.updatePerformerEffectParams(effectId, { [paramName]: value });
+    syncPerformerEffectsToClip();
   }
 
   // Shader param modulation — thin wrapper for getter, shared setters from modulation.ts
@@ -259,8 +327,9 @@
   let shaderCanvas: HTMLCanvasElement;
   let threeCanvas: HTMLCanvasElement;
 
-  // VJ Layer assignment
+  // VJ layer assignment — follows the clip's host layer.
   let assignedVJLayer: number = 0; // 0-3 for layers 1-4
+  $: assignedVJLayer = hostLayer;
 
   // WebGL2 context for 2D shaders
   let gl: WebGL2RenderingContext | null = null;
@@ -3780,7 +3849,10 @@ void main() {
   }
 
   function publishNativeWorldOverlay(deck: VJDeck = activePerformerDeck()) {
-    if (!NATIVE_ENGINE_ONLY || !worldsEnabled || !state) {
+    // Performer only paints its layer while it owns the active clip there.
+    // Without this the world overlay kept rendering after the operator fired
+    // an ordinary clip on the same row, so Performer stayed on screen.
+    if (!NATIVE_ENGINE_ONLY || !worldsEnabled || !state || !performerOwnsLayer) {
       nativePerformerWorldOverlays.clearAll();
       lastNativeWorldDeck = null;
       return;
@@ -3832,8 +3904,14 @@ void main() {
     lastNativeWorldDeck = null;
   }
 
-  $: if (NATIVE_ENGINE_ONLY && worldsEnabled && state?.worldParams) {
-    publishNativeWorldOverlay();
+  $: {
+    // Referenced so this re-runs the moment another clip takes the layer —
+    // that is what withdraws the overlay. publishNativeWorldOverlay() decides
+    // whether to paint or clear based on the same flag.
+    performerOwnsLayer;
+    if (NATIVE_ENGINE_ONLY && worldsEnabled && state?.worldParams) {
+      publishNativeWorldOverlay();
+    }
   }
 
   function bridgeSVParamsToISF(mixP: Record<string, number>) {
@@ -3905,54 +3983,85 @@ void main() {
     // active source instead of being treated as a grid-cell re-click.
     deactivateISF();
     const deck = performerAssignmentDeck(liveAssignment);
+    lastLaunchedClip = clip;
     vjClipLauncher.launchTransientClip(assignedVJLayer, clip, deck);
     publishNativeWorldOverlay(deck);
   }
 
-  // ─── Random All: ISF Params + Layer Effects ─────────────────────────
-  function randomizeAll() {
-    // 1. Randomize ISF shader params (if ISF active)
-    if (isfActive && isfShaderInstance) {
-      const inputs = isfShaderInstance.metadata?.INPUTS || [];
-      for (const input of inputs) {
-        if (input.NAME.startsWith('sv')) continue; // skip bridge params
-        if (input.TYPE === 'float') {
-          const min = (input.MIN as number) ?? 0;
-          const max = (input.MAX as number) ?? 1;
-          setISFInputValue(isfShaderInstance, input.NAME, min + Math.random() * (max - min));
-        } else if (input.TYPE === 'long' && input.VALUES) {
-          const idx = Math.floor(Math.random() * input.VALUES.length);
-          setISFInputValue(isfShaderInstance, input.NAME, input.VALUES[idx]);
-        }
+  // ─── Random All (Tab) ───────────────────────────────────────────────
+  // Scrambles everything that is audibly/visually "live": the active shader's
+  // params, every effect param on the Performer clip AND on its layer, and
+  // the built-in world/style/space system.
+  function randomEffectPatch(type: EffectType): Record<string, number> {
+    const defs = EFFECT_PARAM_DEFS[type] || [];
+    const patch: Record<string, number> = {};
+    for (const pd of defs) {
+      if (pd.type === 'color' && pd.colorParams) {
+        patch[pd.colorParams.r] = Math.random();
+        patch[pd.colorParams.g] = Math.random();
+        patch[pd.colorParams.b] = Math.random();
+      } else if (pd.type === 'select' && pd.options) {
+        patch[pd.param] = pd.options[Math.floor(Math.random() * pd.options.length)].value;
+      } else {
+        patch[pd.param] = pd.min + Math.random() * (pd.max - pd.min);
       }
     }
+    return patch;
+  }
 
-    // 2. Randomize layer effects params
-    const effects = activePerformerLayerState()?.effects ?? [];
-    const deck = activePerformerDeck();
-    for (const effect of effects) {
-      const defs = EFFECT_PARAM_DEFS[effect.type] || [];
-      const patch: Record<string, number> = {};
-      for (const pd of defs) {
-        if (pd.type === 'color' && pd.colorParams) {
-          // Randomize RGB color components
-          patch[pd.colorParams.r] = Math.random();
-          patch[pd.colorParams.g] = Math.random();
-          patch[pd.colorParams.b] = Math.random();
-        } else if (pd.type === 'select' && pd.options) {
-          // Pick a random option value
-          const opt = pd.options[Math.floor(Math.random() * pd.options.length)];
-          patch[pd.param] = opt.value;
-        } else {
-          patch[pd.param] = pd.min + Math.random() * (pd.max - pd.min);
-        }
+  function randomISFValue(input: ISFInput): number | boolean | number[] | null {
+    switch (input.TYPE) {
+      case 'float': {
+        const min = (input.MIN as number) ?? 0;
+        const max = (input.MAX as number) ?? 1;
+        return min + Math.random() * (max - min);
       }
+      case 'long':
+        return input.VALUES?.length
+          ? input.VALUES[Math.floor(Math.random() * input.VALUES.length)]
+          : null;
+      case 'bool':
+        return Math.random() < 0.5;
+      case 'color':
+        return [Math.random(), Math.random(), Math.random(), 1];
+      case 'point2D':
+        return [Math.random(), Math.random()];
+      default:
+        return null;
+    }
+  }
+
+  function randomizeAll() {
+    const deck = activePerformerDeck();
+
+    // 1. Active shader params. setISFValue routes to the live ISF instance
+    //    when one is running and to the active clip's shaderValues otherwise,
+    //    so this covers the clip actually on screen — the old code only
+    //    touched the standalone ISF instance, which the clip path never uses.
+    for (const input of activeISFInputs) {
+      if (input.NAME.startsWith('sv')) continue; // bridge params stay put
+      const value = randomISFValue(input);
+      if (value !== null) setISFValue(input.NAME, value);
+    }
+
+    // 2. Every effect in play: Performer's own chain plus any layer-level
+    //    effects on the row it is hosted by.
+    for (const effect of get(synthVisionStore).performerEffects) {
+      const patch = randomEffectPatch(effect.type);
+      if (Object.keys(patch).length > 0) {
+        synthVisionStore.updatePerformerEffectParams(effect.id, patch);
+      }
+    }
+    syncPerformerEffectsToClip();
+    const layerEffects = activePerformerLayerState()?.effects ?? [];
+    for (const effect of layerEffects) {
+      const patch = randomEffectPatch(effect.type);
       if (Object.keys(patch).length > 0) {
         vjClipLauncher.updateLayerEffectParams(assignedVJLayer, effect.id, patch, deck);
       }
     }
 
-    // 3. Still do world/shader cycling via the store
+    // 3. Worlds / style / space / global params.
     synthVisionStore.doFullRandom();
   }
 
@@ -3998,7 +4107,13 @@ void main() {
   }
 
   function applyMediaClip(assignment: ClipAssignment) {
-    if (!assignment.mediaSrc) return;
+    // Assignments restored from an older session can arrive with a dead or
+    // blanked mediaSrc; the AssetRef is the durable identity, so rebuild
+    // from it before giving up on the key.
+    const mediaSrc = assignment.mediaSrc
+      || resolveAssetRefForRuntime((assignment as any)._assetRef, undefined, '')
+      || '';
+    if (!mediaSrc) return;
     const layerIdx = assignedVJLayer;
     const clipId = `perf-media-${assignment.mediaId || Date.now()}`;
     const deck = performerAssignmentDeck(assignment);
@@ -4012,7 +4127,7 @@ void main() {
       let video = libraryItem?.videoElement as HTMLVideoElement | undefined;
       if (!video) {
         video = document.createElement('video');
-        video.src = assignment.mediaSrc;
+        video.src = mediaSrc;
       }
       video.loop = true;
       video.muted = true;
@@ -4025,19 +4140,25 @@ void main() {
         id: clipId,
         type: 'video',
         name: assignment.mediaName || 'Media Clip',
-        src: assignment.mediaSrc,
+        src: mediaSrc,
         thumbnail: assignment.mediaThumbnail || libraryItem?.thumbnail,
         videoElement: video,
+        _assetRef: (assignment as any)._assetRef,
+        _performerOwned: true,
       };
+      lastLaunchedClip = clip;
       vjClipLauncher.launchTransientClip(layerIdx, clip, deck);
     } else if (assignment.mediaType === 'image') {
       const clip: VJClip = {
         id: clipId,
         type: 'image',
         name: assignment.mediaName || 'Image Clip',
-        src: assignment.mediaSrc,
-        thumbnail: assignment.mediaThumbnail || assignment.mediaSrc,
+        src: mediaSrc,
+        thumbnail: assignment.mediaThumbnail || mediaSrc,
+        _assetRef: (assignment as any)._assetRef,
+        _performerOwned: true,
       };
+      lastLaunchedClip = clip;
       vjClipLauncher.launchTransientClip(layerIdx, clip, deck);
     }
     publishNativeWorldOverlay(deck);
@@ -4065,6 +4186,9 @@ void main() {
         mediaSrc: item.src,
         mediaType: item.type,
         mediaThumbnail,
+        // Carry the library item's durable file identity onto the key, or
+        // the assignment is a blob: URL that dies with the session.
+        _assetRef: (item as any)._assetRef,
       }));
     }
     e.dataTransfer.effectAllowed = 'copy';
@@ -4108,6 +4232,7 @@ void main() {
           mediaSrc: data.mediaSrc,
           mediaType: data.mediaType,
           mediaThumbnail: data.mediaThumbnail || (data.mediaType === 'image' ? data.mediaSrc : undefined),
+          _assetRef: data._assetRef,
         };
         clipAssignments = { ...clipAssignments };
         clipsDirty = true;
@@ -4210,7 +4335,12 @@ void main() {
     showLoading('Loading Preset...');
     // Dismiss splash if still showing
     if (state.showSplash) dismissSplash();
-    clipAssignments = JSON.parse(JSON.stringify(preset.assignments));
+    const loadedAssignments = JSON.parse(JSON.stringify(preset.assignments));
+    // A preset can outlive the session that made it, so its mediaSrc values
+    // may be dead blob: URLs (or blanked by save-time stripping). Rebuild
+    // them from each assignment's AssetRef before the keys go live.
+    resolveAssetTreeInPlace(loadedAssignments);
+    clipAssignments = loadedAssignments;
     activePresetId = preset.id;
     clipsDirty = false;
     // Hide loading after next frame renders
@@ -4432,11 +4562,6 @@ void main() {
   // ================================================================
   //  VJ Layer Assignment
   // ================================================================
-  function assignToVJLayer(layerIdx: number) {
-    assignedVJLayer = layerIdx;
-    synthVisionStore.setAssignedLayer(layerIdx);
-  }
-
   function unassignFromVJLayer() {
     if (assignedVJLayer !== null) {
       synthVisionStore.setAssignedLayer(null);
@@ -4536,9 +4661,10 @@ void main() {
 
     compCtx = outputCanvas.getContext('2d', { alpha: false });
 
-    // Assign to restored VJ layer (or default layer 0) — defer to ensure canvas is bound
-    const targetVJLayer = restoredVJLayer;
-    setTimeout(() => assignToVJLayer(targetVJLayer), 100);
+    // Layer now comes from the clip's host cell (hostLayer prop), so there
+    // is nothing to restore here — publishing it keeps the store in step for
+    // anything still reading synthVisionStore.assignedLayer.
+    setTimeout(() => synthVisionStore.setAssignedLayer(assignedVJLayer), 100);
 
     // Load ISF shader library — use module-level cache if available
     // Keep loading indicator visible until shader library is ready
@@ -4851,13 +4977,6 @@ void main() {
       <button class="sv-deck-tab active" title="Shader clip instrument">SHADER MODE</button>
     </div>
 
-    <!-- VJ Layer Assignment -->
-    <div class="sv-vj-assign">
-      <span class="sv-vj-lbl">VJ LAYER</span>
-      {#each Array($vjClipLauncher.numLayers) as _, i}
-        <button class="sv-vj-btn" class:on={assignedVJLayer === i} on:click={() => assignToVJLayer(i)}>{i + 1}</button>
-      {/each}
-    </div>
 
     <!-- BPM Section -->
     <div class="sv-bpm-section"
@@ -5225,7 +5344,7 @@ void main() {
           </div>
           <div class="sv-isf-controls">
             {#each activeISFInputs as input}
-              {@const val = getISFValue(input)}
+              {@const val = getISFValue(input, performerShaderValues)}
               {@const canModulate = input.TYPE === 'float' || (input.TYPE === 'long' && !input.VALUES)}
               {@const mod = canModulate ? getSvShaderMod(input.NAME) : undefined}
               {@const isModulated = mod && mod.source !== 'manual'}
@@ -5598,39 +5717,6 @@ void main() {
   .sv-deck-tab.geo.active {
     border-color: var(--sv-g);
     color: var(--sv-g);
-  }
-
-  /* VJ Layer Assignment */
-  .sv-vj-assign {
-    display: flex;
-    align-items: center;
-    gap: 6px;
-    margin-left: 8px;
-  }
-  .sv-vj-lbl {
-    font-size: 10px;
-    opacity: .4;
-    letter-spacing: 1px;
-    text-transform: uppercase;
-  }
-  .sv-vj-btn {
-    width: 28px;
-    height: 24px;
-    background: rgba(255,255,255,.04);
-    border: 1px solid var(--sv-brd);
-    color: rgba(255,255,255,.4);
-    font-family: 'Orbitron', sans-serif;
-    font-size: 12px;
-    font-weight: 700;
-    cursor: pointer;
-    transition: all .1s;
-  }
-  .sv-vj-btn:hover { border-color: rgba(255,255,255,.2); color: #fff; }
-  .sv-vj-btn.on {
-    background: rgba(187,134,252,.15);
-    border-color: var(--sv-c);
-    color: var(--sv-c);
-    box-shadow: 0 0 8px rgba(187,134,252,.2);
   }
 
   /* BPM Section */

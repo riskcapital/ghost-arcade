@@ -738,6 +738,7 @@ export class Stage3DRenderer {
   /** Demo Reel camera drive — when set, render() applies this state and
    *  bypasses OrbitControls so shot interpolation lands exactly. */
   private drivenCamera: { position: [number, number, number]; target: [number, number, number]; fov: number } | null = null;
+
   /** One-shot frame-capture request (Demo Reel offline render +
    *  shot thumbnails). Fulfilled at the end of renderScene with a
    *  synchronous copy from the just-rendered WebGL canvas. */
@@ -1595,11 +1596,29 @@ export class Stage3DRenderer {
     renderer.render(this.scene, this.camera);
   }
 
+  /** Force the default framebuffer's ALPHA channel to fully opaque.
+   *
+   *  The stage draws into the shared editor canvas, which is created with
+   *  `alpha: true, premultipliedAlpha: false` (the 2D compositor needs
+   *  that). UnrealBloomPass's additive composite writes the bloom
+   *  texture's alpha — ~0 across most of the frame — so on bloom venues
+   *  the browser composited the whole canvas as TRANSPARENT: the venue
+   *  was rendered correctly in the buffer while the window showed the
+   *  black page behind it. A color-masked clear rewrites only alpha. */
+  private forceOpaqueAlpha(renderer: THREE.WebGLRenderer): void {
+    const gl = renderer.getContext();
+    gl.colorMask(false, false, false, true);
+    gl.clearColor(0, 0, 0, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+    gl.colorMask(true, true, true, true);
+  }
+
   private renderScene(renderer: THREE.WebGLRenderer, width: number, height: number): void {
     const bloomActive = (this.bloomPass?.strength ?? 0) > 0.001;
     const useComposer = !!this.composer && bloomActive && !this.composerFailed;
     if (!useComposer) {
       this.renderSceneDirect(renderer, width, height);
+      this.forceOpaqueAlpha(renderer);
       this.fulfillCapture(renderer, width, height);
       return;
     }
@@ -1613,6 +1632,7 @@ export class Stage3DRenderer {
       console.warn('[Stage3D] Postprocessing disabled after GPU error:', err);
       this.renderSceneDirect(renderer, width, height);
     }
+    this.forceOpaqueAlpha(renderer);
     this.fulfillCapture(renderer, width, height);
   }
 

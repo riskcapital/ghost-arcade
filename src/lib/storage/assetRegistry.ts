@@ -151,6 +151,57 @@ export async function createAssetRefFromGeneratedBlob(
 }
 
 /**
+ * Rebuild runtime URLs from AssetRefs anywhere in an arbitrary object tree.
+ *
+ * The project import path resolves each known field explicitly, but several
+ * subtrees are copied through wholesale — stage presets, SV keyboard presets,
+ * global presets in localStorage. Those hold the same layer/media shapes, and
+ * because save-time blob-stripping blanks a runtime URL whenever an AssetRef
+ * exists, a tree that never gets resolved comes back with empty `src` fields
+ * and renders nothing. This walker is the catch-all for those trees.
+ *
+ * `resolve` lets the caller supply a project-dir-aware resolver (the import
+ * path has one, and it also handles legacy relative paths); the default is
+ * plain AssetRef resolution with no project directory.
+ */
+export type AssetFieldResolver = (ref: unknown, currentValue: string) => string;
+
+const ASSET_TREE_FIELDS: Array<[field: string, refKey: string]> = [
+  ['src', '_assetRef'],
+  ['mediaSrc', '_assetRef'],
+  ['modelData', '_assetRef'],
+  ['filePath', '_assetRef'],
+  ['texturePath', '_textureAssetRef'],
+  ['sourceUrl', '_sourceAssetRef'],
+  ['url', 'assetRef'],
+];
+
+export function resolveAssetTreeInPlace(root: unknown, resolve?: AssetFieldResolver): void {
+  const resolveField: AssetFieldResolver =
+    resolve ?? ((ref, current) => resolveAssetRefForRuntime(ref as AssetRef, undefined, current) ?? current);
+  const seen = new WeakSet<object>();
+  const walk = (node: any) => {
+    if (!node || typeof node !== 'object') return;
+    if (seen.has(node)) return;
+    seen.add(node);
+    if (Array.isArray(node)) {
+      for (const child of node) walk(child);
+      return;
+    }
+    for (const [field, refKey] of ASSET_TREE_FIELDS) {
+      if (!(field in node)) continue;
+      const ref = node[refKey] ?? (refKey === 'assetRef' ? node._assetRef : undefined);
+      if (!ref || typeof ref !== 'object') continue;
+      const current = typeof node[field] === 'string' ? node[field] : '';
+      const resolved = resolveField(ref, current);
+      if (resolved) node[field] = resolved;
+    }
+    for (const value of Object.values(node)) walk(value);
+  };
+  walk(root);
+}
+
+/**
  * Convert a Windows or Unix absolute path to a renderer-loadable URL.
  *
  * Why not file://: Chromium blocks file:// in the renderer ("Not allowed

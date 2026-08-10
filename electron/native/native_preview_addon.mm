@@ -1139,6 +1139,49 @@ static Napi::Value MonitorDetach(const Napi::CallbackInfo& info) {
   return Napi::Boolean::New(env, true);
 }
 
+// Read an IOSurface's pixels as a tightly-packed BGRA buffer (row padding
+// stripped). Used by the main-process live recorder to capture the core's
+// output export surface with ZERO renderer/core involvement per frame.
+static Napi::Value ReadIOSurfacePixels(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 1 || !info[0].IsNumber()) return env.Null();
+  IOSurfaceID surfaceID = (IOSurfaceID)info[0].As<Napi::Number>().Uint32Value();
+  IOSurfaceRef surface = IOSurfaceLookup(surfaceID);
+  if (!surface) return env.Null();
+
+  if (IOSurfaceLock(surface, kIOSurfaceLockReadOnly, NULL) != kIOReturnSuccess) {
+    CFRelease(surface);
+    return env.Null();
+  }
+  const size_t width = IOSurfaceGetWidth(surface);
+  const size_t height = IOSurfaceGetHeight(surface);
+  const size_t bytesPerRow = IOSurfaceGetBytesPerRow(surface);
+  const uint8_t* base = (const uint8_t*)IOSurfaceGetBaseAddress(surface);
+  if (!base || width == 0 || height == 0) {
+    IOSurfaceUnlock(surface, kIOSurfaceLockReadOnly, NULL);
+    CFRelease(surface);
+    return env.Null();
+  }
+  const size_t packedRow = width * 4;
+  Napi::Buffer<uint8_t> buffer = Napi::Buffer<uint8_t>::New(env, packedRow * height);
+  uint8_t* dst = buffer.Data();
+  if (bytesPerRow == packedRow) {
+    memcpy(dst, base, packedRow * height);
+  } else {
+    for (size_t y = 0; y < height; y++) {
+      memcpy(dst + y * packedRow, base + y * bytesPerRow, packedRow);
+    }
+  }
+  IOSurfaceUnlock(surface, kIOSurfaceLockReadOnly, NULL);
+  CFRelease(surface);
+
+  Napi::Object result = Napi::Object::New(env);
+  result.Set("width", Napi::Number::New(env, (double)width));
+  result.Set("height", Napi::Number::New(env, (double)height));
+  result.Set("data", buffer);
+  return result;
+}
+
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("attach", Napi::Function::New(env, Attach));
   exports.Set("update", Napi::Function::New(env, Update));
@@ -1149,6 +1192,7 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("stopPump", Napi::Function::New(env, StopPump));
   exports.Set("detach", Napi::Function::New(env, Detach));
   exports.Set("status", Napi::Function::New(env, Status));
+  exports.Set("readIOSurfacePixels", Napi::Function::New(env, ReadIOSurfacePixels));
   exports.Set("monitorAttach", Napi::Function::New(env, MonitorAttach));
   exports.Set("monitorSetIOSurface", Napi::Function::New(env, MonitorSetIOSurface));
   exports.Set("monitorDetach", Napi::Function::New(env, MonitorDetach));

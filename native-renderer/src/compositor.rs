@@ -27,6 +27,9 @@ pub fn blend_mode_code(mode: &str) -> f32 {
         "hard-mix" | "hard_mix" | "hardmix" => 23.0,
         "vivid-light" | "vivid_light" | "vividlight" => 24.0,
         "pin-light" | "pin_light" | "pinlight" => 25.0,
+        // Not a color blend: a hierarchy MASK layer — its polygon mask
+        // clips everything composited below it (heartbeat.wgsl branch).
+        "hierarchy-mask" | "hierarchy_mask" => 26.0,
         _ => 0.0,
     }
 }

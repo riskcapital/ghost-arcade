@@ -338,14 +338,21 @@
     return lines;
   }
 
-  $: gridLines = meshGrid && corners ? getGridLines(meshGrid, corners) : [];
+  // containerWidth/Height are named here so Svelte tracks them: they are read
+  // inside meshPointToPixel's closure, invisible to dependency tracking, so
+  // the mesh stayed at stale pixel positions after any canvas resize.
+  $: gridLines = meshGrid && corners && containerWidth > 0 && containerHeight > 0
+    ? getGridLines(meshGrid, corners)
+    : [];
 
   // Get screen positions for all mesh handles (transformed through corner warp)
   function getHandlePositions(grid: MeshWarpGrid, corners: WarpCorners): Array<Array<{ x: number; y: number }>> {
     return grid.points.map(row => row.map(point => meshPointToPixel(point, corners)));
   }
 
-  $: handlePositions = meshGrid && corners ? getHandlePositions(meshGrid, corners) : null;
+  $: handlePositions = meshGrid && corners && containerWidth > 0 && containerHeight > 0
+    ? getHandlePositions(meshGrid, corners)
+    : null;
 </script>
 
 <div

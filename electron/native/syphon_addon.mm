@@ -876,6 +876,14 @@ private:
       (__bridge NSString*)kIOSurfaceHeight: @(h),
       (__bridge NSString*)kIOSurfaceBytesPerElement: @4,
       (__bridge NSString*)kIOSurfacePixelFormat: @(bgra),
+      // The native render core is a SEPARATE PROCESS and resolves this
+      // surface with IOSurfaceLookup(id). Without kIOSurfaceIsGlobal the
+      // lookup returns null across the process boundary and every incoming
+      // Syphon frame is rejected as "shared-texture-unsupported" — which is
+      // exactly why Syphon OUT worked (the core's own export surfaces set
+      // this flag) while Syphon IN showed a blank layer. The capture and
+      // output export surfaces both set it; this one was the odd one out.
+      (__bridge NSString*)kIOSurfaceIsGlobal: @YES,
     };
     sharedSurface_ = IOSurfaceCreate((__bridge CFDictionaryRef)props);
     if (!sharedSurface_) return false;

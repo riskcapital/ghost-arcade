@@ -24,6 +24,7 @@ import { WebGPUInkCloudShader, inkCloudParamSchema, inkCloudParamDefaults } from
 // later if we're sure we won't bring it back.
 import { WebGPU3DSmokeShader, smoke3DParamSchema, smoke3DParamDefaults } from './shaders/webgpu3DSmokeShader';
 import { WebGPUSmokeRidersShader, smokeRidersParamSchema, smokeRidersParamDefaults } from './shaders/webgpuSmokeRidersShader';
+import { WebGPUWarpLoom, warpLoomParamSchema, warpLoomParamDefaults } from './shaders/webgpuWarpLoom';
 
 const PLANET_DEF: GpuShaderDef = {
   id: 'planet',
@@ -254,8 +255,28 @@ const SMOKE_3D_DEF: GpuShaderDef = {
   },
 };
 
+// Warp Loom — original horizontal conduit/web instrument from the web
+// release line (v1.9.9x). Runs on the in-browser WebGPU runner. Not yet
+// ported to the native core's WGSL graph pipeline, so it is intentionally
+// NOT listed in NATIVE_READY_GPU_SHADER_IDS below: with the native output
+// core enabled the picker hides it, and the sync layer reports
+// `gpu-shader:warp-loom:not-native` instead of rendering a broken layer.
+// Native support needs a `warp-loom` NativeGraphInstrumentSpec (WGSL graph)
+// in native-renderer/src/native_graph_manifest.rs.
+const WARP_LOOM_DEF: GpuShaderDef = {
+  id: 'warp-loom',
+  label: 'Warp Loom',
+  description: 'Original horizontal conduit and web instrument. Braided tubes stream through turbulent spatial warps while crosslinks form a luminous elastic membrane between them.',
+  category: 'Generative',
+  paramSchema: warpLoomParamSchema,
+  defaultParams: warpLoomParamDefaults,
+  needsSource: false,
+  create: (device, presentFormat) => new WebGPUWarpLoom(device, presentFormat),
+};
+
 export const GPU_SHADER_CATALOG: GpuShaderDef[] = [
   PLANET_DEF,
+  WARP_LOOM_DEF,
   PIXEL_PARTICLES_DEF,
   FLYTHROUGH_DEF,
   POINTCLOUD_FX_DEF,

@@ -86,6 +86,11 @@ export interface VJClip {
   playbackMode?: 'loop' | 'once';
   /** 0.25 / 0.5 / 1 / 1.5 / 2 / 4. Maps to `videoElement.playbackRate`. */
   playbackRate?: number;
+  /** Beat/bar playback sync — if set, the trim span is rate-locked to this
+   *  many beats of the master BPM (1 / 2 / 4 / 8 / 16). Null/undefined =
+   *  free-running at playbackRate. The store-side sync engine below
+   *  recomputes playbackRate whenever BPM or the clip changes. */
+  playbackSyncBeats?: number | null;
   durationSeconds?: number;
   _nativePlaybackTimeSeconds?: number;
   _nativePlaybackUpdatedAtMs?: number;
@@ -155,6 +160,11 @@ export interface VJClip {
   textContent?: TextContent;
   // Per-clip effects
   effects?: Effect[];
+  /** Set on clips Performer launches onto its layer. Their shader params are
+   *  edited inside Performer's SHADER tab, so VJ mode hides its own clip
+   *  params panel for them instead of showing a second, competing copy that
+   *  writes to a grid cell the transient clip does not occupy. */
+  _performerOwned?: boolean;
 }
 
 // A block contains a named collection of clips (8 columns x 4 layers).
@@ -1455,6 +1465,86 @@ function createVJClipLauncherStore() {
       });
     },
 
+    // ── Active-clip effects (per deck) ────────────────────────────────
+    // Layer effects (addLayerEffect etc.) live on the layer ROW, so whatever
+    // clip is playing there inherits them. Performer needs the opposite: its
+    // effects belong to the Performer clip alone, or they bleed onto every
+    // other clip fired on that row. These mutate the active clip's own
+    // `effects` array, mirroring the change into the grid cell the clip came
+    // from so it survives re-triggering.
+    updateActiveClipInPlace(
+      layerIndex: number,
+      deck: VJDeck,
+      mutate: (clip: VJClip) => VJClip,
+    ) {
+      update(state => {
+        const targetLayerStates = pickLayerStates(state, deck);
+        const targetGrid = pickGrid(state, deck);
+        const activeClip = targetLayerStates[layerIndex]?.activeClip;
+        if (!activeClip) return state;
+
+        const newClip = mutate(activeClip);
+        const newLayerStates = [...targetLayerStates];
+        newLayerStates[layerIndex] = { ...newLayerStates[layerIndex], activeClip: newClip };
+
+        const newGrid = targetGrid.map(row => [...row]);
+        for (let col = 0; col < state.numColumns; col++) {
+          const gridClip = newGrid[layerIndex]?.[col];
+          if (gridClip && gridClip.id === activeClip.id) {
+            newGrid[layerIndex][col] = newClip;
+          }
+        }
+        return withDeck(state, deck, newLayerStates, newGrid);
+      });
+    },
+
+    /** Replace the active clip's effect chain wholesale. Performer uses this
+     *  to stamp its own chain onto whichever transient clip it is driving. */
+    setActiveClipEffects(layerIndex: number, effects: Effect[], deck: VJDeck = 'A') {
+      this.updateActiveClipInPlace(layerIndex, deck, (clip) => ({
+        ...clip,
+        effects: [...effects],
+      }));
+    },
+
+    addActiveClipEffect(layerIndex: number, effect: Effect, deck: VJDeck = 'A') {
+      if (!allowNativeOnlyEffect(effect, 'clip')) return;
+      this.updateActiveClipInPlace(layerIndex, deck, (clip) => ({
+        ...clip,
+        effects: [...(clip.effects || []), effect],
+      }));
+    },
+
+    removeActiveClipEffect(layerIndex: number, effectId: string, deck: VJDeck = 'A') {
+      this.updateActiveClipInPlace(layerIndex, deck, (clip) => ({
+        ...clip,
+        effects: (clip.effects || []).filter(e => e.id !== effectId),
+      }));
+    },
+
+    toggleActiveClipEffect(layerIndex: number, effectId: string, deck: VJDeck = 'A') {
+      this.updateActiveClipInPlace(layerIndex, deck, (clip) => ({
+        ...clip,
+        effects: (clip.effects || []).map(e =>
+          e.id === effectId ? { ...e, enabled: !e.enabled } : e
+        ),
+      }));
+    },
+
+    updateActiveClipEffectParams(
+      layerIndex: number,
+      effectId: string,
+      params: Record<string, any>,
+      deck: VJDeck = 'A',
+    ) {
+      this.updateActiveClipInPlace(layerIndex, deck, (clip) => ({
+        ...clip,
+        effects: (clip.effects || []).map(e =>
+          e.id === effectId ? { ...e, params: { ...e.params, ...params } } : e
+        ),
+      }));
+    },
+
     // Update a single shader uniform value on the active clip of a layer (per deck)
     updateActiveClipShaderValue(layerIndex: number, paramName: string, value: any, deck: VJDeck = 'A') {
       update(state => {
@@ -1733,7 +1823,7 @@ function createVJClipLauncherStore() {
     // splat/model3d shape so the VJ video controls panel can write through to
     // the store without touching the live videoElement (the panel does that
     // separately on the DOM node).
-    updateActiveClipVideoProps(layerIndex: number, updates: Partial<Pick<VJClip, 'playbackMode' | 'playbackRate' | 'durationSeconds' | '_nativePlaybackTimeSeconds' | '_nativePlaybackUpdatedAtMs' | '_nativePlaybackSeekSeq' | 'trimStart' | 'trimEnd' | 'isPlaying' | 'zoom' | 'fit' | 'anchorX' | 'anchorY' | 'rotation' | 'opacity' | 'mirrorX'>>, deck: VJDeck = 'A') {
+    updateActiveClipVideoProps(layerIndex: number, updates: Partial<Pick<VJClip, 'playbackMode' | 'playbackRate' | 'playbackSyncBeats' | 'durationSeconds' | '_nativePlaybackTimeSeconds' | '_nativePlaybackUpdatedAtMs' | '_nativePlaybackSeekSeq' | 'trimStart' | 'trimEnd' | 'isPlaying' | 'zoom' | 'fit' | 'anchorX' | 'anchorY' | 'rotation' | 'opacity' | 'mirrorX'>>, deck: VJDeck = 'A') {
       update(state => {
         const targetLayerStates = pickLayerStates(state, deck);
         const targetGrid = pickGrid(state, deck);
@@ -2197,6 +2287,20 @@ function createVJClipLauncherStore() {
       });
     },
 
+    // Reorder blocks without changing their saved grids. Used by the VJ
+    // block tab strip so performers can arrange scenes in show order.
+    reorderBlocks(fromIndex: number, toIndex: number) {
+      update(state => {
+        if (fromIndex < 0 || fromIndex >= state.blocks.length) return state;
+        if (toIndex < 0 || toIndex >= state.blocks.length) return state;
+        if (fromIndex === toIndex) return state;
+        const nextBlocks = [...state.blocks];
+        const [moved] = nextBlocks.splice(fromIndex, 1);
+        nextBlocks.splice(toIndex, 0, moved);
+        return { ...state, blocks: nextBlocks };
+      });
+    },
+
     // Delete a block (cannot delete the last one)
     deleteBlock(blockId: string) {
       update(state => {
@@ -2574,6 +2678,61 @@ if (typeof window !== 'undefined') {
   });
 }
 
+// ─── Beat/bar video playback sync (store-side clock application) ─────────
+// Release v1.9.96 applied `playbackSyncBeats` inside Canvas.svelte's
+// per-frame browser <video> loop. In the native tree video plays in the
+// core decoder, so the clock is applied here instead: whenever the master
+// BPM or an active clip changes, recompute the beat-locked rate — trim
+// span divided by (beats × 60/bpm), clamped 0.05..8, same math as release
+// — and write it onto the active clip's playbackRate. The existing native
+// video-playback sync path (resident arm signatures above + renderer
+// sync) then delivers the new rate to the core decoder. Writes are
+// rate-limited: only when the effective rate moves by more than 0.001,
+// which also terminates the store-update → recompute feedback loop.
+if (typeof window !== 'undefined') {
+  let playbackBeatSyncScheduled = false;
+
+  const applyPlaybackBeatSync = () => {
+    playbackBeatSyncScheduled = false;
+    const state = getStore(vjClipLauncher);
+    const audio = getStore(audioStore);
+    const bpm = audio.manualBPM || audio.bpm || 120;
+    if (!bpm || bpm <= 0) return;
+    const decks: Array<{ deck: VJDeck; layers: VJLayerState[] }> = [
+      { deck: 'A', layers: state.layerStates },
+      { deck: 'B', layers: state.bankBLayerStates },
+    ];
+    for (const { deck, layers } of decks) {
+      for (let layerIndex = 0; layerIndex < layers.length; layerIndex++) {
+        const clip = layers[layerIndex]?.activeClip;
+        if (!clip || clip.type !== 'video') continue;
+        const syncBeats = clip.playbackSyncBeats ?? null;
+        if (!syncBeats || syncBeats <= 0) continue;
+        const duration = clip.durationSeconds || clip.videoElement?.duration || 0;
+        if (!Number.isFinite(duration) || duration <= 0) continue;
+        const trimS = clip.trimStart ?? 0;
+        const trimE = clip.trimEnd ?? 1;
+        const trimDuration = Math.max(0.01, (trimE - trimS) * duration);
+        const targetDuration = Math.max(0.01, (60 / bpm) * syncBeats);
+        const rate = Math.max(0.05, Math.min(8, trimDuration / targetDuration));
+        if (Math.abs((clip.playbackRate ?? 1) - rate) <= 0.001) continue;
+        vjClipLauncher.updateActiveClipVideoProps(layerIndex, { playbackRate: rate }, deck);
+      }
+    }
+  };
+
+  // Defer off the subscribe callback (no reentrant store writes) and
+  // coalesce bursts — audioStore ticks per animation frame.
+  const schedulePlaybackBeatSync = () => {
+    if (playbackBeatSyncScheduled) return;
+    playbackBeatSyncScheduled = true;
+    queueMicrotask(applyPlaybackBeatSync);
+  };
+
+  vjClipLauncher.subscribe(schedulePlaybackBeatSync);
+  audioStore.subscribe(schedulePlaybackBeatSync);
+}
+
 // Derived store: Get the active clip for each layer.
 //
 // When the crossfader is OFF: Bank A is the only deck. Each layer with an
@@ -2704,6 +2863,7 @@ export const vjOutputLayers = derived(
           // and just plays the whole file end-to-end on loop.
           playbackMode: clip.playbackMode || 'loop',
           playbackRate: clip.playbackRate ?? 1,
+          playbackSyncBeats: clip.playbackSyncBeats ?? null,
           trimStart: clip.trimStart ?? 0,
           trimEnd: clip.trimEnd ?? 1,
           isPlaying: clip.isPlaying !== false,
@@ -2776,6 +2936,7 @@ export const vjOutputLayers = derived(
         if (clip.type === 'video') {
           source.playbackMode = clip.playbackMode || 'loop';
           source.playbackRate = clip.playbackRate ?? 1;
+          source.playbackSyncBeats = clip.playbackSyncBeats ?? null;
           source.trimStart = clip.trimStart ?? 0;
           source.trimEnd = clip.trimEnd ?? 1;
           source.isPlaying = clip.isPlaying !== false;

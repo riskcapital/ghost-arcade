@@ -15,9 +15,12 @@
    * the screen-warp convention so pixel mapping is `n * containerSize`.
    * Identity (TL 0,0 / TR 1,0 / BL 0,1 / BR 1,1) is a visual no-op.
    */
-  import { onDestroy } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
+  import { get } from 'svelte/store';
+  import { project } from '../stores/layers';
   import { settings } from '../stores/settings';
   import type { WarpCorners, MeshWarpGrid } from '../types';
+  import { normalizedWarpNudge } from '../utils/warpNudge';
 
   interface Props {
     containerWidth: number;
@@ -51,10 +54,23 @@
     startCorners: WarpCorners;
     startMesh: MeshWarpGrid | null;
   } | null = $state(null);
+  let selectedCorner: keyof WarpCorners | null = $state(null);
+  let selectedMeshPoint: { row: number; col: number } | null = $state(null);
 
   function startDrag(e: MouseEvent, kind: DragKind) {
     e.preventDefault();
     e.stopPropagation();
+    cancelDrag();
+    if (kind.kind === 'corner') {
+      selectedCorner = kind.corner;
+      selectedMeshPoint = null;
+    } else if (kind.kind === 'mesh') {
+      selectedCorner = null;
+      selectedMeshPoint = { row: kind.row, col: kind.col };
+    } else {
+      selectedCorner = null;
+      selectedMeshPoint = null;
+    }
     drag = {
       kind,
       startClientX: e.clientX,
@@ -71,15 +87,125 @@
     window.addEventListener('mouseup', onMouseUp);
   }
 
-  function onMouseUp() {
-    drag = null;
+  function removeDragListeners() {
     window.removeEventListener('mousemove', onMouseMove);
     window.removeEventListener('mouseup', onMouseUp);
   }
 
+  function cancelDrag() {
+    drag = null;
+    removeDragListeners();
+  }
+
+  function onMouseUp() {
+    cancelDrag();
+  }
+
+  function onVisibilityChange() {
+    if (document.hidden) cancelDrag();
+  }
+
+  function isTextEditingTarget(target: EventTarget | null) {
+    const el = target instanceof HTMLElement ? target : null;
+    const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    const tag = el?.tagName;
+    const activeTag = active?.tagName;
+    return (
+      tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' ||
+      activeTag === 'INPUT' || activeTag === 'TEXTAREA' || activeTag === 'SELECT' ||
+      Boolean(el?.isContentEditable || active?.isContentEditable)
+    );
+  }
+
+  function nudgeCorners(dx: number, dy: number) {
+    const c = corners;
+    const next: WarpCorners = {
+      topLeft:     { x: clamp01(c.topLeft.x     + dx), y: clamp01(c.topLeft.y     + dy) },
+      topRight:    { x: clamp01(c.topRight.x    + dx), y: clamp01(c.topRight.y    + dy) },
+      bottomLeft:  { x: clamp01(c.bottomLeft.x  + dx), y: clamp01(c.bottomLeft.y  + dy) },
+      bottomRight: { x: clamp01(c.bottomRight.x + dx), y: clamp01(c.bottomRight.y + dy) },
+    };
+    settings.setMasterWarp({ corners: next });
+  }
+
+  function handleKeyDown(e: KeyboardEvent) {
+    if (!warp.enabled || isTextEditingTarget(e.target)) return;
+
+    if (e.key === 'Escape') {
+      selectedCorner = null;
+      selectedMeshPoint = null;
+      cancelDrag();
+      return;
+    }
+
+    const proj = get(project);
+    const step = normalizedWarpNudge(
+      proj.width,
+      proj.height,
+      get(settings).ui.warpDragGranularity,
+      e.shiftKey ? 10 : 1,
+    );
+
+    let dx = 0;
+    let dy = 0;
+    switch (e.key) {
+      case 'ArrowUp':
+        dy = -step.y;
+        break;
+      case 'ArrowDown':
+        dy = step.y;
+        break;
+      case 'ArrowLeft':
+        dx = -step.x;
+        break;
+      case 'ArrowRight':
+        dx = step.x;
+        break;
+      default:
+        return;
+    }
+
+    e.preventDefault();
+    e.stopPropagation();
+
+    if (mode === 'corners' && selectedCorner) {
+      const current = corners[selectedCorner];
+      settings.setMasterWarp({
+        corners: {
+          ...corners,
+          [selectedCorner]: { x: clamp01(current.x + dx), y: clamp01(current.y + dy) },
+        },
+      });
+      return;
+    }
+
+    if (mode === 'mesh' && meshGrid && selectedMeshPoint) {
+      const { row, col } = selectedMeshPoint;
+      const p = meshGrid.points[row]?.[col];
+      if (!p) return;
+      const curNorm = meshLocalToNorm(p.x, p.y);
+      const next = normToMeshLocal(clamp01(curNorm.x + dx), clamp01(curNorm.y + dy));
+      const points = meshGrid.points.map((meshRow, ri) =>
+        meshRow.map((pt, ci) => (ri === row && ci === col ? { x: next.u, y: next.v } : pt))
+      );
+      settings.setMasterWarp({ meshGrid: { rows: meshGrid.rows, cols: meshGrid.cols, points } });
+      return;
+    }
+
+    nudgeCorners(dx, dy);
+  }
+
+  onMount(() => {
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('blur', cancelDrag);
+    document.addEventListener('visibilitychange', onVisibilityChange);
+  });
+
   onDestroy(() => {
-    window.removeEventListener('mousemove', onMouseMove);
-    window.removeEventListener('mouseup', onMouseUp);
+    cancelDrag();
+    window.removeEventListener('keydown', handleKeyDown);
+    window.removeEventListener('blur', cancelDrag);
+    document.removeEventListener('visibilitychange', onVisibilityChange);
   });
 
   const clamp01 = (v: number) => Math.min(Math.max(0, v), 1);
@@ -241,6 +367,7 @@
       {#each CORNER_KEYS as cn}
         {@const cp = corners[cn]}
         <div class="handle corner-handle" class:dragging={drag?.kind.kind === 'corner' && drag?.kind.corner === cn}
+          class:selected={selectedCorner === cn}
           style="left:{px(cp.x)}px; top:{py(cp.y)}px;"
           onmousedown={(e) => startDrag(e, { kind: 'corner', corner: cn })}>
           <span class="handle-label">{CORNER_LABEL[cn]}</span>
@@ -263,6 +390,7 @@
             class:edge={isEdge && !isCorner}
             class:inner={!isEdge}
             class:dragging={drag?.kind.kind === 'mesh' && drag?.kind.row === ri && drag?.kind.col === ci}
+            class:selected={selectedMeshPoint?.row === ri && selectedMeshPoint?.col === ci}
             style="left:{meshPx(p.x, p.y)}px; top:{meshPy(p.x, p.y)}px;"
             onmousedown={(e) => startDrag(e, { kind: 'mesh', row: ri, col: ci })}
           ></div>
@@ -306,6 +434,9 @@
   }
   .corner-handle:hover { transform: scale(1.2); background: #ffb066; }
   .corner-handle.dragging { cursor: grabbing; transform: scale(1.3); background: #ffff00; }
+  .corner-handle.selected {
+    box-shadow: 0 0 0 3px rgba(240, 163, 94, 0.35), 0 0 18px rgba(240, 163, 94, 0.7);
+  }
 
   .move-handle {
     width: 36px; height: 36px;
@@ -336,6 +467,9 @@
   }
   .mesh-handle:hover { transform: scale(1.3); }
   .mesh-handle.dragging { cursor: grabbing; transform: scale(1.5); background: #ffff00; }
+  .mesh-handle.selected {
+    box-shadow: 0 0 0 3px rgba(240, 163, 94, 0.35), 0 0 14px rgba(240, 163, 94, 0.7);
+  }
 
   .handle-label {
     position: absolute;

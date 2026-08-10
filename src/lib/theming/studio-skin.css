@@ -61,6 +61,15 @@ html[data-theme="arcade"] body {
   height: 28px !important;
   width: auto !important;
   margin-right: 8px !important;
+  border-radius: 6px !important;
+}
+
+/* The toolbar is primary chrome, not a panel — its chips read at full
+   brightness rather than the muted ink-1 used for secondary text inside
+   panels. Buttons that own their colour (record, VJ, active states) are
+   excluded so they keep their meaning. */
+.toolbar :is(button, .file-menu-btn, .output-btn, .stage3d-btn, .stage-btn, .connection-btn):not(.vj-btn):not(.rec-btn):not(.stop-rec-btn):not(.active) {
+  color: var(--ga-ink-0, #eef0f4) !important;
 }
 
 .toolbar .app-name,
@@ -1307,7 +1316,7 @@ html[data-theme="arcade"] body {
 html[data-theme="arcade"] .app,
 html[data-theme="arcade"] .mobile-app,
 html[data-theme="arcade"] .stage-overlay,
-html[data-theme="arcade"] .stage3d-root {
+html[data-theme="arcade"] .stage3d-root:not(.external) {
   background:
     radial-gradient(rgba(245, 236, 222, 0.018) 1px, transparent 1px) 0 0 / 24px 24px,
     var(--ga-void, #0a0908) !important;
@@ -1542,10 +1551,10 @@ html[data-theme="arcade"] :is(
   .ai-video-btn,
   .lib-add-btn
 ) {
-  background: linear-gradient(180deg, #ff8473, var(--ga-coral, #ff6f5e)) !important;
+  background: linear-gradient(180deg, #f4f9fd, #a9c3d8) !important;
   border: 1px solid var(--ga-coral, #ff6f5e) !important;
   border-radius: var(--ga-r-hard, 3px) !important;
-  color: #231009 !important;
+  color: #16202b !important;
   font-family: var(--ga-font-display, 'Geist', system-ui, sans-serif) !important;
   font-weight: 700 !important;
   box-shadow:
@@ -1690,7 +1699,7 @@ html[data-theme="arcade"] input[type="checkbox"]:checked {
 }
 
 html[data-theme="arcade"] input[type="checkbox"]:checked::after {
-  border-color: #231009 !important;
+  border-color: #16202b !important;
 }
 
 html[data-theme="arcade"] :is(
@@ -1935,9 +1944,9 @@ html[data-theme="arcade"] .bottom-dock .pill {
 }
 
 html[data-theme="arcade"] .bottom-dock .pill.on {
-  background: linear-gradient(180deg, #ff8473, var(--ga-coral, #ff6f5e)) !important;
+  background: linear-gradient(180deg, #f4f9fd, #a9c3d8) !important;
   border-color: var(--ga-coral, #ff6f5e) !important;
-  color: #231009 !important;
+  color: #16202b !important;
   box-shadow:
     inset 0 1px 0 rgba(255, 255, 255, 0.38),
     0 0 14px var(--ga-coral-glow, rgba(255, 111, 94, 0.50)) !important;
@@ -2002,7 +2011,7 @@ html[data-theme="arcade"] :is(
     0 0 0 2px color-mix(in srgb, var(--ga-coral, #ff6f5e) 22%, transparent) !important;
 }
 
-html[data-theme="arcade"] .stage3d-root {
+html[data-theme="arcade"] .stage3d-root:not(.external) {
   background:
     radial-gradient(rgba(245, 236, 222, 0.018) 1px, transparent 1px) 0 0 / 24px 24px,
     var(--ga-void, #0a0908) !important;
@@ -2279,4 +2288,15 @@ html.native-primary-presenter .viewport-content {
 
 :is(.hint, .label-hint, .empty, .no-effects, .composition-empty) {
   font-weight: 400 !important;
+}
+
+
+/* Stage 3D pop-out: .stage3d-root.external is a UI overlay ABOVE the live
+   WebGL stage canvas. The themed dotted faceplate above must never paint
+   here — an opaque background turns the whole stage view into a black
+   dotted panel while clicks (pointer-events: none) still reach the canvas,
+   which made this brutal to diagnose. Keep it glass. */
+html[data-theme="arcade"] .stage3d-root.external {
+  background: transparent !important;
+  background-image: none !important;
 }

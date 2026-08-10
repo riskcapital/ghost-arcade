@@ -16,18 +16,58 @@
   // draggable and publish the same payload the VJ media tray uses.
   export let vjDragMode = false;
 
-  function handlePresetDragStart(e: DragEvent, comp: Composition) {
-    if (!vjDragMode || !e.dataTransfer) return;
-    const payload = { id: comp.id, type: 'preset', name: comp.name };
-    e.dataTransfer.setData('application/x-ghost-media-source', JSON.stringify(payload));
-    e.dataTransfer.effectAllowed = 'copy';
-    (window as any).__ghostVJMediaTrayDragPayload = payload;
+  // Reorder-drag state (non-VJ mode): drag a card over another to
+  // reorder the compositions list in place.
+  let draggedPresetIndex: number | null = null;
+  let dragOverPresetIndex: number | null = null;
+
+  function handlePresetDragStart(e: DragEvent, comp: Composition, compIdx: number) {
+    if (vjDragMode) {
+      // VJ MAP sub-mode: drags feed the VJ deck, not reordering.
+      if (!e.dataTransfer) return;
+      const payload = { id: comp.id, type: 'preset', name: comp.name };
+      e.dataTransfer.setData('application/x-ghost-media-source', JSON.stringify(payload));
+      e.dataTransfer.effectAllowed = 'copy';
+      (window as any).__ghostVJMediaTrayDragPayload = payload;
+      return;
+    }
+    if (editingId) {
+      e.preventDefault();
+      return;
+    }
+    draggedPresetIndex = compIdx;
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('application/x-ghost-mapping-preset', String(compIdx));
+    }
+  }
+
+  function handlePresetDragOver(e: DragEvent, compIdx: number) {
+    if (vjDragMode) return;
+    if (draggedPresetIndex === null) return;
+    e.preventDefault();
+    dragOverPresetIndex = compIdx;
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+  }
+
+  function handlePresetDrop(e: DragEvent, compIdx: number) {
+    if (vjDragMode) return;
+    e.preventDefault();
+    const rawIndex = e.dataTransfer?.getData('application/x-ghost-mapping-preset');
+    const fromIndex = draggedPresetIndex ?? (rawIndex ? Number(rawIndex) : NaN);
+    if (Number.isFinite(fromIndex)) {
+      project.reorderComposition(fromIndex, compIdx);
+    }
+    draggedPresetIndex = null;
+    dragOverPresetIndex = null;
   }
 
   function handlePresetDragEnd() {
     if ((window as any).__ghostVJMediaTrayDragPayload?.type === 'preset') {
       (window as any).__ghostVJMediaTrayDragPayload = undefined;
     }
+    draggedPresetIndex = null;
+    dragOverPresetIndex = null;
   }
 
   // Callback before loading a preset (for triggering transitions)
@@ -545,8 +585,11 @@
           <div
             class="preset-item"
             class:active={$activeCompositionId === comp.id}
-            draggable={vjDragMode}
-            ondragstart={(e) => handlePresetDragStart(e, comp)}
+            class:dragover={!vjDragMode && dragOverPresetIndex === compIdx}
+            draggable={vjDragMode || editingId !== comp.id}
+            ondragstart={(e) => handlePresetDragStart(e, comp, compIdx)}
+            ondragover={(e) => handlePresetDragOver(e, compIdx)}
+            ondrop={(e) => handlePresetDrop(e, compIdx)}
             ondragend={handlePresetDragEnd}
             onclick={() => loadPreset(comp.id)}
             oncontextmenu={(e) => openCtxMenu(e, comp)}
@@ -1078,6 +1121,12 @@
   .preset-item.active {
     border-color: #BB86FC;
     box-shadow: 0 0 12px rgba(0, 170, 255, 0.3);
+  }
+
+  .preset-item.dragover {
+    border-color: #7EC8E3;
+    box-shadow: 0 0 0 1px rgba(126, 200, 227, 0.7), 0 0 14px rgba(126, 200, 227, 0.26);
+    transform: translateY(-2px);
   }
 
   .preset-thumb {
