@@ -8,6 +8,118 @@ export interface AppReleaseNotes {
 }
 
 const RELEASE_NOTES: Record<string, AppReleaseNotes> = {
+  '1.9.992': {
+    title: 'Reliable OSC, trimmed playback, and portable media',
+    summary: [
+      'OSC listening and Learn Binding now work reliably in the desktop app.',
+      'Trimmed videos loop and restart from their selected in point.',
+      'Saved VJ clips recover durable media paths more consistently.',
+    ],
+    highlights: [
+      'The OSC listener starts with the app, opens the configured UDP port reliably, and reports its live socket status.',
+      'OSC Learn now uses an in-app binding editor instead of the unsupported Electron prompt dialog, with path validation and documented examples.',
+      'OSC and MIDI controls can trigger VJ clips, Mapping presets, and Mapping or VJ video transport controls through normalized parameter paths.',
+      'Trimmed videos stay inside their selected range, loop back to trim-in, and keep the timeline playhead aligned with the active trim.',
+      'VJ project saves recover durable local-file references from the media library, reducing unexpected relink prompts after reopening a project.',
+      'Imported GLB models preserve embedded materials and textures by default instead of replacing them with a flat gray material.',
+      'VJ block removal is available from the context menu while individual clip cells retain their quick remove control.',
+    ],
+  },
+  '1.9.991': {
+    title: 'Stage editing and VJ playback reliability',
+    summary: [
+      'VJ videos launch from a decoded trim-start frame without a black transition frame.',
+      'Unified stage slices preserve their intended visual order.',
+      'Stage geometry editing gains reliable undo and multi-slice stretching.',
+    ],
+    highlights: [
+      'VJ video triggers and column launches use a pre-armed decoded frame at the clip trim start, avoiding the one-frame delay seen when switching from shaders.',
+      'Unified Stage Designer groups preserve the Stage texture orientation used by their generated slices, including layouts with vertical rows.',
+      'Stage Designer geometry edits support Cmd/Ctrl+Z, redo, grouped drag history, and canceling an active drag with Escape.',
+      'Multi-selected mapping slices can be stretched from any side as a group while retaining the existing uniform scale control.',
+      'Layer blend modes are restored to full-strength compositing, with opacity acting as the straightforward layer mix amount.',
+      'Imported Mapping Mode projects recreate saved video sources after resolving their portable asset references.',
+    ],
+  },
+  '1.9.99': {
+    title: 'Live performance and control polish',
+    summary: [
+      'Video triggering, layer blending, warp editing, and control surfaces are more reliable.',
+      'LED FX adds multi-color patterns and compact live controls.',
+      'GPU Shader and Text Creator sources are now available in the VJ plugin library.',
+    ],
+    highlights: [
+      'Armed VJ videos reuse their warmed texture on launch, removing the black-frame flash that could briefly expose layers beneath a new clip.',
+      'Layer blend modes follow opacity, preserving normal opaque coverage at 100% while building to their strongest interaction around the midpoint.',
+      'Master corner and mesh warp points use the same configurable keyboard nudge sensitivity as Mapping Mode.',
+      'LED FX adds a compact pattern selector, one-to-four-color layouts, custom colors, and performance-ready palettes.',
+      'GPU Shader and Text Creator sources can be launched directly from the VJ plugin library, alongside eight new audio-reactive ISF visuals and Warp Loom.',
+      'OSC bindings now expose stable clip, preset, transport, crossfader, macro, and LED routes for DAWs and Pro DJ Link bridge software.',
+      'Ghost Arcade prevents display sleep and the screensaver while the desktop app is running.',
+    ],
+  },
+  '1.9.98': {
+    title: 'Reliable stage presets, live LED performance, and restored loop transitions',
+    summary: [
+      'Stage effects and WLED output now follow every stage preset.',
+      'VJ videos display upright and unmirrored by default.',
+      'The full grouped video-loop transition library is restored.',
+    ],
+    highlights: [
+      'Stage effects now resolve against each recalled stage preset instead of remaining attached only to the newest preset.',
+      'WLED output stays active while switching presets and now includes Auto, Strip, Matrix, and Custom spatial maps; source-region cropping; serpentine and reverse wiring; linear-light per-controller color matching; live shader palette sampling; and LED-order, chase, and solid-color test patterns.',
+      'The new LED FX performance tab contains 47 patterns across Movement, Organic, Rhythmic, Spatial, Content Aware, and Glitch collections, with latch and push-hold triggering, BPM sync, automatic sequencing, blend controls, and MIDI or keyboard assignment.',
+      'Named controller ranges and multi-controller LED groups let one WLED controller drive multiple strips while effects target the whole rig, one controller, one strip, or a combined fixture group.',
+      'VJ video clips now use the correct vertical texture orientation without introducing a horizontal mirror.',
+      'Video Loop Creator restores the expanded Essentials, Motion, Glitch, Loop FX, and Reveals transition groups, including the custom scanline, block, chroma, tape-tear, and signal-pulse treatments.',
+    ],
+  },
+  '1.9.97': {
+    title: 'Mapping precision, persistent masks, and hierarchy mattes',
+    summary: [
+      'Mesh warp nudges now follow the global mapping movement granularity.',
+      'Finished masks stay enabled while you return to corner or mesh editing.',
+      'New mask-only layers matte every layer beneath them in the hierarchy.',
+    ],
+    highlights: [
+      'The mapping movement granularity setting now applies consistently to corner, whole-layer, fine-tune, and individual mesh-point arrow nudges, with Shift retaining the 10x movement multiplier.',
+      'Done Editing Mask now exits mask-point editing without disabling or removing the visible mask.',
+      'The mask pencil control reopens an existing mask for editing, while active masks no longer block corner or mesh warp work.',
+      'The new Mask Layer type accepts no media and masks all layers beneath its stack position, including layers organized inside groups.',
+    ],
+  },
+  '1.9.96': {
+    title: 'VJ media polish, preset reliability, and MIDI clock routing',
+    summary: [
+      'VJ media cells stay stable when images are dropped into the grid.',
+      'Mapping presets with video sources restore playback more reliably.',
+      'MIDI clock can use its own input while controller mappings use another.',
+    ],
+    highlights: [
+      'Expanded VJ Effect Bundle parameters now show the effect name at the top of the parameter list so it is clear which effect is being edited.',
+      'VJ clip cells keep fixed sizing during drag/drop, fixing image drops that could make rows and columns grow unexpectedly.',
+      'Still-image clips now expose the same fit, mirror, zoom, anchor, rotation, opacity, and reset transform controls as video clips.',
+      'Animated GIF image sources are refreshed in the renderer so output playback advances instead of freezing on the first uploaded frame.',
+      'Mapping media layers auto-rename to the dropped image or video name when the layer still has a generic media-layer name.',
+      'Mapping presets and VJ blocks can be drag-reordered, with MIDI preset indexes following the visual order.',
+      'Mapping presets that contain video sources now rehydrate video elements when recalled, avoiding the Replace workaround.',
+      'Settings now supports Cmd/Ctrl+, and MIDI Learn can be toggled with Cmd/Ctrl+M.',
+      'MIDI clock can be received from a separate input device while controller mappings stay on the main MIDI device.',
+      'VJ video speed can be free-running or synced so the clip/trim span fits 1 beat, 2 beats, 1 bar, 2 bars, or 4 bars at the master BPM.',
+    ],
+  },
+  '1.9.95': {
+    title: 'Marquee select no longer blocks mask and light-painting clicks',
+    summary: [
+      'Editing a layer mask and drawing light-painting strokes work again.',
+      'The marquee multi-select tool no longer hijacks those canvas clicks.',
+    ],
+    highlights: [
+      'Fixed the 1.9.9 marquee multi-select tool intercepting clicks meant for the mapping-mode layer mask pen, so click-to-add mask points works again.',
+      'Fixed marquee multi-select intercepting light-painting clicks, so click-and-drag to create strokes works again while the layer is being painted.',
+      'Marquee drag-select now stands down automatically while mask editing or light-painting draw / path-edit is active, and still works everywhere else.',
+    ],
+  },
   '1.9.9': {
     title: 'Stage 3D venues, recording reliability, mapping polish, and cleanup',
     summary: [

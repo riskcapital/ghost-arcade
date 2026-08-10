@@ -12,8 +12,10 @@
    * separate component) so users can turn audio on without this widget
    * cluttering the header beforehand.
    */
+  import { tick } from 'svelte';
   import { audioStore } from '../stores/audio';
   import BpmTapWidget from './BpmTapWidget.svelte';
+  import AudioWaveformIndicator from './AudioWaveformIndicator.svelte';
 
   let showEq = false;
   let popoverEl: HTMLDivElement | null = null;
@@ -27,10 +29,25 @@
   let popLeft = 0;
   const POP_WIDTH = 280;
 
+  /** Open the popover above the meter instead of below. Set by hosts that
+   *  sit at the bottom of the window (the VJ deck dock), where there is no
+   *  room underneath. */
+  export let openUp: boolean = false;
+
   function positionPopover() {
-    if (!anchorEl) return;
+    if (!anchorEl || !popoverEl) return;
     const r = anchorEl.getBoundingClientRect();
-    popTop = r.bottom + 6;
+    // Measure first — the popover's height varies with the band count.
+    const popH = popoverEl.getBoundingClientRect().height || 320;
+    const above = r.top - 6 - popH;
+    const below = r.bottom + 6;
+    const viewH = window.innerHeight || document.documentElement.clientHeight || 0;
+    // Honour the caller's preference, but fall back to whichever side
+    // actually has room so the panel is never half off-screen.
+    const wantUp = openUp
+      ? above >= 8
+      : viewH > 0 && below + popH > viewH - 8 && above >= 8;
+    popTop = wantUp ? above : below;
     popLeft = Math.max(8, Math.min(
       r.left + r.width / 2 - POP_WIDTH / 2,
       window.innerWidth - POP_WIDTH - 8,
@@ -39,7 +56,9 @@
 
   function toggleEq() {
     showEq = !showEq;
-    if (showEq) positionPopover();
+    // Render first, then measure + place: the flip decision needs the
+    // popover's real height.
+    if (showEq) tick().then(positionPopover);
   }
 
   function handleWindowClick(e: MouseEvent) {
@@ -62,16 +81,24 @@
     <button class="amp-fft-btn" onclick={toggleEq}
       class:open={showEq}
       title="Audio input tweaks — click to open EQ / sensitivity / smoothing">
-      <div class="amp-bars">
-        <div class="amp-bar" style="height: {Math.min(100, $audioStore.bands.sub * 100)}%"></div>
-        <div class="amp-bar" style="height: {Math.min(100, $audioStore.bands.bass * 100)}%"></div>
-        <div class="amp-bar" style="height: {Math.min(100, $audioStore.bands.lowMid * 100)}%"></div>
-        <div class="amp-bar" style="height: {Math.min(100, $audioStore.bands.mid * 100)}%"></div>
-        <div class="amp-bar" style="height: {Math.min(100, $audioStore.bands.highMid * 100)}%"></div>
-        <div class="amp-bar" style="height: {Math.min(100, $audioStore.bands.treble * 100)}%"></div>
-        <div class="amp-bar" style="height: {Math.min(100, $audioStore.bands.air * 100)}%"></div>
-        <div class="amp-bar" style="height: {Math.min(100, $audioStore.bands.presence * 100)}%"></div>
-      </div>
+      <!-- One audio visualization for the whole header: the oscilloscope
+           doubles as the tweaks trigger, with the 8 band levels drawn as a
+           thin bar strip beneath it. Previously the scope lived in the input
+           picker and a separate 8-bar meter lived here, which cost ~90px of
+           header width for two views of the same signal. -->
+      <span class="amp-scope">
+        <AudioWaveformIndicator width={78} height={22} />
+        <span class="amp-bandstrip" aria-hidden="true">
+          <i style="height: {Math.min(100, $audioStore.bands.sub * 100)}%"></i>
+          <i style="height: {Math.min(100, $audioStore.bands.bass * 100)}%"></i>
+          <i style="height: {Math.min(100, $audioStore.bands.lowMid * 100)}%"></i>
+          <i style="height: {Math.min(100, $audioStore.bands.mid * 100)}%"></i>
+          <i style="height: {Math.min(100, $audioStore.bands.highMid * 100)}%"></i>
+          <i style="height: {Math.min(100, $audioStore.bands.treble * 100)}%"></i>
+          <i style="height: {Math.min(100, $audioStore.bands.air * 100)}%"></i>
+          <i style="height: {Math.min(100, $audioStore.bands.presence * 100)}%"></i>
+        </span>
+      </span>
       <span class="amp-eq-glyph" class:active={showEq}>
         <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round">
           <polyline points="6 9 12 15 18 9"/>
@@ -197,27 +224,39 @@
     border-color: rgba(187, 134, 252, 0.45);
   }
 
-  .amp-bars {
+  /* Scope + band strip stacked in the width one of them used to take. */
+  .amp-scope {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 2px;
+  }
+  .amp-bandstrip {
     display: flex;
     align-items: flex-end;
-    gap: 3px;
-    height: 24px;
+    gap: 2px;
+    height: 5px;
+    width: 100%;
   }
-  .amp-bar {
-    width: 5px;
+  /* Bands divide the scope's width rather than carrying fixed pixel sizes,
+     so the strip stays exactly as wide as the waveform above it at every
+     responsive tier. */
+  .amp-bandstrip i {
+    flex: 1 1 0;
+    min-width: 1px;
     min-height: 1px;
-    border-radius: 2px;
+    border-radius: 1px;
     transition: height 0.05s ease-out;
   }
   /* 8-band rainbow — matches the per-band readout in the popover */
-  .amp-bar:nth-child(1) { background: #f43f5e; } /* sub */
-  .amp-bar:nth-child(2) { background: #f97316; } /* bass */
-  .amp-bar:nth-child(3) { background: #eab308; } /* lowMid */
-  .amp-bar:nth-child(4) { background: #22c55e; } /* mid */
-  .amp-bar:nth-child(5) { background: #14b8a6; } /* highMid */
-  .amp-bar:nth-child(6) { background: #3b82f6; } /* treble */
-  .amp-bar:nth-child(7) { background: #8b5cf6; } /* air */
-  .amp-bar:nth-child(8) { background: #ec4899; } /* presence */
+  .amp-bandstrip i:nth-child(1) { background: #f43f5e; } /* sub */
+  .amp-bandstrip i:nth-child(2) { background: #f97316; } /* bass */
+  .amp-bandstrip i:nth-child(3) { background: #eab308; } /* lowMid */
+  .amp-bandstrip i:nth-child(4) { background: #22c55e; } /* mid */
+  .amp-bandstrip i:nth-child(5) { background: #14b8a6; } /* highMid */
+  .amp-bandstrip i:nth-child(6) { background: #3b82f6; } /* treble */
+  .amp-bandstrip i:nth-child(7) { background: #8b5cf6; } /* air */
+  .amp-bandstrip i:nth-child(8) { background: #ec4899; } /* presence */
 
   .amp-eq-glyph {
     color: var(--text-muted, #888);

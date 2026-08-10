@@ -4749,6 +4749,10 @@ export interface SVClipAssignment {
    *  the first decoded frame to a data URL at drop time and store it
    *  here so the key shows a still preview instead of an empty tile. */
   mediaThumbnail?: string;
+  /** Durable file identity for the assigned media. `mediaSrc` is a runtime
+   *  URL (usually a blob:) that dies with the session, so without this a
+   *  performer key came back silent after a restart. */
+  _assetRef?: import('./storage/assetRegistry').AssetRef;
 }
 
 // SynthVision Keyboard Preset - Saved keyboard layout with clip assignments

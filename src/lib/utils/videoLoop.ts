@@ -68,6 +68,7 @@ export interface LoopCreateResult {
   outputPath?: string;
   size?: number;
   duration?: number;
+  transitionApplied?: LoopTransitionType;
 }
 
 export interface NativeLoopOptions {
@@ -229,6 +230,18 @@ const CUSTOM_LOOP_TRANSITION_EXPRESSIONS: Partial<Record<LoopTransitionType, str
   'ghost-chroma-stagger': 'if(gt(P+0.13*(PLANE-1),0.15+0.7*mod(floor(Y/20)+floor(X/80),5)/4),B,A)',
   'ghost-tape-tear': 'if(gt(P+0.25*sin(Y*0.12+P*12),0.48),B,A)',
   'ghost-signal-pulse': 'if(gt(P+0.18*sin((floor(Y/18)+floor(X/90))*2+P*18),0.58),B,A)',
+  hlwind: 'if(gt(P+0.12*sin(Y*0.14),X/W),B,A)',
+  hrwind: 'if(gt(P+0.12*sin(Y*0.14),(W-X)/W),B,A)',
+  vuwind: 'if(gt(P+0.12*sin(X*0.14),(H-Y)/H),B,A)',
+  vdwind: 'if(gt(P+0.12*sin(X*0.14),Y/H),B,A)',
+  coverleft: 'if(gt(P,X/W),B,A)',
+  coverright: 'if(gt(P,(W-X)/W),B,A)',
+  coverup: 'if(gt(P,(H-Y)/H),B,A)',
+  coverdown: 'if(gt(P,Y/H),B,A)',
+  revealleft: 'A*(1-clip((P-X/W)*8+0.5,0,1))+B*clip((P-X/W)*8+0.5,0,1)',
+  revealright: 'A*(1-clip((P-(W-X)/W)*8+0.5,0,1))+B*clip((P-(W-X)/W)*8+0.5,0,1)',
+  revealup: 'A*(1-clip((P-(H-Y)/H)*8+0.5,0,1))+B*clip((P-(H-Y)/H)*8+0.5,0,1)',
+  revealdown: 'A*(1-clip((P-Y/H)*8+0.5,0,1))+B*clip((P-Y/H)*8+0.5,0,1)',
 };
 
 function loopXfadeOptions(
@@ -339,6 +352,7 @@ export async function createNativeLoopedVideo(
       outputPath?: string;
       size?: number;
       duration?: number;
+      transitionApplied?: LoopTransitionType;
     }>('video_loop_create', {
       jobId,
       ...input,
@@ -351,12 +365,25 @@ export async function createNativeLoopedVideo(
     if (!result?.success || !result.outputPath) {
       throw new Error(result?.error || 'Native loop creation failed.');
     }
-    onProgress?.({ stage: 'complete', progress: 1, message: 'Loop created!' });
+    if (result.transitionApplied !== transitionType) {
+      throw new Error(
+        `Loop encoder returned ${result.transitionApplied || 'no transition'} `
+        + `instead of the requested ${transitionType}.`,
+      );
+    }
+    const transitionLabel = LOOP_TRANSITIONS.find(option => option.value === transitionType)?.label
+      ?? transitionType;
+    onProgress?.({
+      stage: 'complete',
+      progress: 1,
+      message: `Loop created with ${transitionLabel}.`,
+    });
     return {
       url: pathToFileUrl(result.outputPath),
       outputPath: result.outputPath,
       size: result.size,
       duration: result.duration,
+      transitionApplied: result.transitionApplied,
     };
   } finally {
     unsubscribe?.();
@@ -724,14 +751,14 @@ export async function createLoopedVideo(
     //   [1:v]trim=end=midpoint,   reset PTS  → [v1] (becomes loop end)
     //   xfade [v0]→[v1] at offset = secondHalfDuration - fadeDuration
     //
-    // fps=30 + format=yuv420p normalize both inputs so xfade doesn't
-    // bail on aspect/format mismatches between trim outputs.
+    // xfade requires matching frame rate, sample aspect ratio, pixel
+    // format, and timebase. Normalize every boundary before mixing.
     await ff.exec([
       '-i', 'input.mp4',
       '-i', 'input.mp4',
       '-filter_complex',
-      `[0:v]trim=start=${midpoint.toFixed(3)},setpts=PTS-STARTPTS,fps=30,format=yuv420p[v0];` +
-      `[1:v]trim=end=${midpoint.toFixed(3)},setpts=PTS-STARTPTS,fps=30,format=yuv420p[v1];` +
+      `[0:v]trim=start=${midpoint.toFixed(3)},setpts=PTS-STARTPTS,fps=30,setsar=1,format=yuv420p,settb=AVTB[v0];` +
+      `[1:v]trim=end=${midpoint.toFixed(3)},setpts=PTS-STARTPTS,fps=30,setsar=1,format=yuv420p,settb=AVTB[v1];` +
       `[v0][v1]xfade=${loopXfadeOptions(transitionType, fadeDuration, xfadeOffset)}[outv]`,
       '-map', '[outv]',
       '-c:v', 'libx264',
@@ -755,31 +782,12 @@ export async function createLoopedVideo(
   }
 
   if (renderError) {
-    console.warn('[VideoLoop] xfade pass failed, attempting plain-concat fallback:', renderError);
-    // Fallback: drop the xfade — just concat the two halves. The
-    // junction will show a hard cut but at least the user gets
-    // *something*. Same trim layout, no xfade filter.
-    try {
-      await ff.exec([
-        '-i', 'input.mp4',
-        '-i', 'input.mp4',
-        '-filter_complex',
-        `[0:v]trim=start=${midpoint.toFixed(3)},setpts=PTS-STARTPTS,fps=30,format=yuv420p[v0];` +
-        `[1:v]trim=end=${midpoint.toFixed(3)},setpts=PTS-STARTPTS,fps=30,format=yuv420p[v1];` +
-        `[v0][v1]concat=n=2:v=1:a=0[outv]`,
-        '-map', '[outv]',
-        '-c:v', 'libx264',
-        '-preset', 'fast',
-        '-crf', '23',
-        '-movflags', '+faststart',
-        '-an',
-        'output.mp4',
-      ]);
-    } catch (err2) {
-      console.error('[VideoLoop] Concat fallback also failed:', err2);
-      try { await ff.deleteFile('input.mp4'); } catch { /* ignore */ }
-      throw new Error('Failed to create video loop — both xfade and plain-concat paths failed. The video may be unsupported.');
-    }
+    // Fail loudly rather than silently substituting a hard-cut
+    // concat — a wrong transition masquerading as success is worse
+    // than an actionable error.
+    try { await ff.deleteFile('input.mp4'); } catch { /* ignore */ }
+    const detail = renderError instanceof Error ? renderError.message : String(renderError);
+    throw new Error(`The ${transitionType} loop transition could not be rendered. ${detail}`);
   }
 
   readProgress({ stage: 'rendering', progress: 0, message: 'Finalizing…' });
@@ -819,13 +827,17 @@ export async function createLoopWithResult(
     try {
       return await createNativeLoopedVideo(videoFile, crossfadeDuration, onProgress, transitionType, options);
     } catch (err) {
-      console.warn('[VideoLoop] Native loop path failed; falling back to FFmpeg.wasm:', err);
+      const reason = err instanceof Error ? err.message : String(err);
+      console.warn(
+        `[VideoLoop] Native FFmpeg loop encoder failed (${reason}); falling back to FFmpeg.wasm.`,
+        err,
+      );
       onProgress?.({ stage: 'processing', progress: 0, message: 'Native loop failed, trying browser encoder...' });
     }
   }
 
   const url = await createLoopedVideo(videoFile, crossfadeDuration, onProgress, transitionType);
-  return { url };
+  return { url, transitionApplied: transitionType };
 }
 
 export async function createLoop(

@@ -60,6 +60,9 @@ const ALLOWED_IPC_COMMANDS = new Set([
   // File system
   'pick_directory', 'save_file_binary', 'save_file_bytes', 'save_file_text', 'save_project_dialog',
   'jpeg_sequence_start', 'jpeg_sequence_write_frame', 'jpeg_sequence_write_frame_file', 'jpeg_sequence_finish', 'jpeg_sequence_cancel',
+  // Native frame encoders — offline render + native live REC
+  'mp4_frame_encoder_start', 'mp4_frame_encoder_write_frame', 'mp4_frame_encoder_write_frame_file', 'mp4_frame_encoder_finish', 'mp4_frame_encoder_cancel',
+  'jpeg_frame_encoder_start', 'jpeg_frame_encoder_encode_file', 'jpeg_frame_encoder_finish', 'jpeg_frame_encoder_cancel',
   'save_generated_asset',
   'video_loop_create', 'video_append_segment',
   // Native FFmpeg converter
@@ -83,6 +86,7 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'output_open_slice_window',
   'output_close_slice_window',
   'output_list_slice_windows',
+  'slice_native_presentation_state',
   // Ping
   'ping',
   // Restart the app — used when renderer / GPU settings need a fresh
@@ -117,6 +121,7 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'native_renderer_get_layers_snapshot',
   'native_renderer_get_stats', 'native_renderer_get_snapshot',
 	  'native_renderer_get_frame_snapshot',
+	  'native_renderer_export_frame_snapshot',
 	  'native_renderer_get_output_shared_texture',
 	  'native_renderer_get_output_shared_texture_snapshot',
 	  'native_renderer_set_stage3d_scene',
@@ -132,6 +137,8 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'native_preview_get_status',
   // Deck A/B confidence monitors — named presenter views beside Program
   'deck_monitor_attach', 'deck_monitor_detach',
+  // Native output live recording — main-process IOSurface capture
+  'native_output_recording_start', 'native_output_recording_stop',
   'native_viewport_set_layer_interaction',
   // WLED — UDP DRGB packets to LED controllers on the LAN
   'wled_send_frame', 'wled_close_socket',

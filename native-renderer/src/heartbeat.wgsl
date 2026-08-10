@@ -4,10 +4,56 @@ struct Uniforms {
   command_phase: f32,
   layer_count: f32,
   frame_count: f32,
-  _pad0: vec2<f32>,
+  // Master output gate: 1.0 normal, 0.0 blackout. Applied to the final
+  // composite so blackout kills the real output, not just the editor's
+  // DOM preview overlay.
+  output_gate: f32,
+  // Number of composite-stage effects in `post` (0..8).
+  post_count: f32,
   audio0: vec4<f32>, // level, bass, mid, treble
   audio1: vec4<f32>, // high, beat, beat phase, bpm
   audio2: vec4<f32>, // centroid, kick, snare, active
+  // Composite-stage effects, applied to the blended frame: composition
+  // effects first, then macro effect bundles. Each entry is the same
+  // [op, amount, _, mix] descriptor apply_native_effect() takes for layer
+  // effects; `mix` carries the macro's wet/dry knob (1.0 for composition
+  // effects, which are always fully wet).
+  post: array<vec4<f32>, 8>,
+  // Output stage, mirroring the WebGL output quad + overlay:
+  //   out0 = crop (x, y, width, height) in source UV
+  //   out1 = (rotation quarter-turns, brightness, contrast, gamma)
+  //   edge = edge-blend widths (left, right, top, bottom) as UV fractions
+  //   dome0 = (enabled, mode, fov radians, rotation radians)
+  //   dome1 = (tilt radians, offset x, offset y, curvature)
+  //   dome2 = (truncation, edge-blend gamma, slice mode, _)
+  //   edge_gamma = per-edge blend gamma (left, right, top, bottom)
+  //   black_level = projector black-level lift (r, g, b, feather)
+  // Slice mode selects the multi-projector grade used by blendRenderer —
+  // linear-light working space, inverse gamma, Bourke blend curve and
+  // black-level lift — instead of the single-output grade.
+  out0: vec4<f32>,
+  out1: vec4<f32>,
+  edge: vec4<f32>,
+  dome0: vec4<f32>,
+  dome1: vec4<f32>,
+  dome2: vec4<f32>,
+  edge_gamma: vec4<f32>,
+  black_level: vec4<f32>,
+  // Output-side geometry warp, run in two stages so a keystoned projector
+  // can sit under a master warp exactly as the WebGL two-pass path does:
+  //   swarp  = per-slice screen warp   (mode 0 rect, 1 corners, 2 mesh)
+  //   mwarp  = master warp             (mode 0 off,  3 corners+mesh)
+  // Each block is (mode, rows, cols, _) with its corner quad in c0/c1 as
+  // (TL.xy, TR.xy) and (BR.xy, BL.xy), and its control points packed two
+  // per vec4 in the matching mesh array (row-major, up to 16x16).
+  swarp: vec4<f32>,
+  swarp_c0: vec4<f32>,
+  swarp_c1: vec4<f32>,
+  mwarp: vec4<f32>,
+  mwarp_c0: vec4<f32>,
+  mwarp_c1: vec4<f32>,
+  swarp_mesh: array<vec4<f32>, 128>,
+  mwarp_mesh: array<vec4<f32>, 128>,
 }
 
 @group(0) @binding(0)
@@ -892,6 +938,274 @@ fn apply_native_effects(color: vec3<f32>, layer_index: u32, uv: vec2<f32>, t: f3
   return out;
 }
 
+/// Composite-stage chain: runs after every layer has blended, mirroring the
+/// WebGL engine's order (composition effects, then macro bundles). Each entry
+/// mixes its result back by `mix` so a macro knob at 0.5 reads as half-wet,
+/// exactly like the engine's bundle mix.
+fn apply_composite_effects(color_in: vec3<f32>, uv: vec2<f32>, t: f32) -> vec3<f32> {
+  let count = i32(floor(u.post_count + 0.5));
+  var out = color_in;
+  for (var i = 0; i < count; i = i + 1) {
+    let descriptor = u.post[i];
+    let wet = apply_native_effect(out, descriptor, uv, t);
+    out = mix(out, wet, clamp(descriptor.w, 0.0, 1.0));
+  }
+  return out;
+}
+
+const WARP_MESH_MAX_DIM: u32 = 16u;
+
+fn swarp_mesh_point(index: u32) -> vec2<f32> {
+  let slot = min(index / 2u, 127u);
+  let packed = u.swarp_mesh[slot];
+  return select(packed.zw, packed.xy, (index & 1u) == 0u);
+}
+
+fn mwarp_mesh_point(index: u32) -> vec2<f32> {
+  let slot = min(index / 2u, 127u);
+  let packed = u.mwarp_mesh[slot];
+  return select(packed.zw, packed.xy, (index & 1u) == 0u);
+}
+
+/// Solve for the (u, v) inside a quad that maps to `p`. Returns values
+/// outside 0..1 when `p` lies outside the quad, which callers use as the
+/// containment test. Same solver the layer mesh warp uses.
+fn warp_inverse_bilinear(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>, c: vec2<f32>, d: vec2<f32>) -> vec2<f32> {
+  return inverse_bilinear(p, a, b, c, d);
+}
+
+/// Per-slice screen warp: projector UV -> master-canvas sample position.
+/// Corners and mesh control points are already sample positions, so this is
+/// a direct forward interpolation with no solve.
+fn slice_warp_uv(uv: vec2<f32>) -> vec2<f32> {
+  let mode = i32(floor(u.swarp.x + 0.5));
+  if (mode == 1) {
+    let top = mix(u.swarp_c0.xy, u.swarp_c0.zw, uv.x);
+    let bottom = mix(u.swarp_c1.zw, u.swarp_c1.xy, uv.x);
+    return mix(top, bottom, uv.y);
+  }
+  if (mode == 2) {
+    let rows = u32(clamp(u.swarp.y, 2.0, f32(WARP_MESH_MAX_DIM)));
+    let cols = u32(clamp(u.swarp.z, 2.0, f32(WARP_MESH_MAX_DIM)));
+    let fx = uv.x * f32(cols - 1u);
+    let fy = uv.y * f32(rows - 1u);
+    let ci = u32(clamp(floor(fx), 0.0, f32(cols - 2u)));
+    let ri = u32(clamp(floor(fy), 0.0, f32(rows - 2u)));
+    let su = clamp(fx - f32(ci), 0.0, 1.0);
+    let sv = clamp(fy - f32(ri), 0.0, 1.0);
+    let p00 = swarp_mesh_point(ri * cols + ci);
+    let p10 = swarp_mesh_point(ri * cols + ci + 1u);
+    let p01 = swarp_mesh_point((ri + 1u) * cols + ci);
+    let p11 = swarp_mesh_point((ri + 1u) * cols + ci + 1u);
+    return mix(mix(p00, p10, su), mix(p01, p11, su), sv);
+  }
+  // Rect: the plain axis-aligned crop.
+  return u.out0.xy + uv * u.out0.zw;
+}
+
+/// Master warp: FORWARD / destination semantics — the corners say where the
+/// content lands on the output, so sampling has to invert them. Returns the
+/// source UV in xy and 0 in z for pixels outside the warped quad, which the
+/// caller paints black (pulling a corner in crops, like layer map mode).
+fn master_warp_uv(uv: vec2<f32>) -> vec3<f32> {
+  if (u.mwarp.x < 0.5) {
+    return vec3<f32>(uv, 1.0);
+  }
+  let q = warp_inverse_bilinear(uv, u.mwarp_c0.xy, u.mwarp_c0.zw, u.mwarp_c1.xy, u.mwarp_c1.zw);
+  if (q.x < 0.0 || q.x > 1.0 || q.y < 0.0 || q.y > 1.0) {
+    return vec3<f32>(uv, 0.0);
+  }
+  let rows = u32(clamp(u.mwarp.y, 0.0, f32(WARP_MESH_MAX_DIM)));
+  let cols = u32(clamp(u.mwarp.z, 0.0, f32(WARP_MESH_MAX_DIM)));
+  if (rows < 2u || cols < 2u) {
+    return vec3<f32>(q, 1.0);
+  }
+  // The mesh deforms within the corner-pinned quad, so its cells have to be
+  // searched: unlike the slice mesh, the control points are destinations.
+  // The regular grid cell is a good first guess; neighbours cover the rest.
+  let est_row = min(rows - 2u, u32(clamp(floor(q.y * f32(rows - 1u)), 0.0, f32(rows - 2u))));
+  let est_col = min(cols - 2u, u32(clamp(floor(q.x * f32(cols - 1u)), 0.0, f32(cols - 2u))));
+  for (var row = 0u; row < WARP_MESH_MAX_DIM - 1u; row = row + 1u) {
+    if (row >= rows - 1u) { break; }
+    if (row + 1u < est_row || row > est_row + 1u) { continue; }
+    for (var col = 0u; col < WARP_MESH_MAX_DIM - 1u; col = col + 1u) {
+      if (col >= cols - 1u) { break; }
+      if (col + 1u < est_col || col > est_col + 1u) { continue; }
+      let a = mwarp_mesh_point(row * cols + col);
+      let b = mwarp_mesh_point(row * cols + col + 1u);
+      let c = mwarp_mesh_point((row + 1u) * cols + col + 1u);
+      let d = mwarp_mesh_point((row + 1u) * cols + col);
+      let t = warp_inverse_bilinear(q, a, b, c, d);
+      if (t.x >= 0.0 && t.x <= 1.0 && t.y >= 0.0 && t.y <= 1.0) {
+        return vec3<f32>(
+          (f32(col) + t.x) / f32(cols - 1u),
+          (f32(row) + t.y) / f32(rows - 1u),
+          1.0,
+        );
+      }
+    }
+  }
+  return vec3<f32>(q, 0.0);
+}
+
+/// Output rotation, in quarter turns, matching opaqueOutputFragmentShader.
+fn output_rotate_uv(uv: vec2<f32>) -> vec2<f32> {
+  let index = i32(floor(u.out1.x + 0.5));
+  if (index == 1) { return vec2<f32>(uv.y, 1.0 - uv.x); }
+  if (index == 2) { return vec2<f32>(1.0 - uv.x, 1.0 - uv.y); }
+  if (index == 3) { return vec2<f32>(1.0 - uv.y, uv.x); }
+  return uv;
+}
+
+/// Screen UV -> composition UV: rotation then crop. The compositor has no
+/// intermediate texture to resample, so the output transform runs as an
+/// inverse map on the sampling coordinate instead of a blit — which also
+/// means cropping costs no resolution.
+fn output_source_uv(uv: vec2<f32>) -> vec3<f32> {
+  // Rotation first, so "left"/"top" always mean the projector's physical
+  // edges regardless of how the screen is mounted, then the screen warp
+  // (or plain crop), then the master warp underneath it.
+  let rotated = output_rotate_uv(uv);
+  let warped = slice_warp_uv(rotated);
+  return master_warp_uv(warped);
+}
+
+fn output_color_grade(color_in: vec3<f32>) -> vec3<f32> {
+  var out = color_in * max(u.out1.y, 0.0);
+  out = (out - vec3<f32>(0.5)) * max(u.out1.z, 0.0) + vec3<f32>(0.5);
+  return pow(max(out, vec3<f32>(0.0)), vec3<f32>(max(u.out1.w, 0.001)));
+}
+
+/// Projector soft-edge ramp. The 2D overlay painted a black gradient with
+/// alpha `1 - t^(1/gamma)` over each blend band, so the surviving image
+/// multiplier is `t^(1/gamma)` where t runs 0 at the panel edge to 1 at the
+/// inner boundary. UV here is y-up, so the top band is measured from 1.
+fn edge_blend_alpha(uv: vec2<f32>) -> f32 {
+  let inv_gamma = 1.0 / max(u.dome2.y, 0.05);
+  var alpha = 1.0;
+  if (u.edge.x > 0.0001) {
+    alpha = alpha * pow(clamp(uv.x / u.edge.x, 0.0, 1.0), inv_gamma);
+  }
+  if (u.edge.y > 0.0001) {
+    alpha = alpha * pow(clamp((1.0 - uv.x) / u.edge.y, 0.0, 1.0), inv_gamma);
+  }
+  if (u.edge.z > 0.0001) {
+    alpha = alpha * pow(clamp((1.0 - uv.y) / u.edge.z, 0.0, 1.0), inv_gamma);
+  }
+  if (u.edge.w > 0.0001) {
+    alpha = alpha * pow(clamp(uv.y / u.edge.w, 0.0, 1.0), inv_gamma);
+  }
+  return alpha;
+}
+
+fn srgb_to_linear(c: vec3<f32>) -> vec3<f32> {
+  let lo = c / 12.92;
+  let hi = pow(max(c + vec3<f32>(0.055), vec3<f32>(0.0)) / 1.055, vec3<f32>(2.4));
+  return select(lo, hi, c >= vec3<f32>(0.04045));
+}
+
+fn linear_to_srgb(c: vec3<f32>) -> vec3<f32> {
+  let lo = c * 12.92;
+  let hi = 1.055 * pow(max(c, vec3<f32>(0.0)), vec3<f32>(1.0 / 2.4)) - vec3<f32>(0.055);
+  return select(lo, hi, c >= vec3<f32>(0.0031308));
+}
+
+/// Paul Bourke's piecewise soft-edge curve — the one blendRenderer uses for
+/// projector overlaps. A plain power ramp leaves a visible seam at the
+/// midpoint; this is symmetric about 0.5 so two overlapping projectors sum
+/// to unity.
+fn blend_curve(x: f32, p: f32) -> f32 {
+  if (x < 0.5) {
+    return 0.5 * pow(2.0 * x, p);
+  }
+  return 1.0 - 0.5 * pow(2.0 * (1.0 - x), p);
+}
+
+/// Per-slice edge-blend alpha, with an independent gamma per edge.
+fn slice_blend_alpha(uv: vec2<f32>) -> f32 {
+  var alpha = 1.0;
+  if (u.edge.x > 0.0) {
+    alpha = alpha * blend_curve(clamp(uv.x / u.edge.x, 0.0, 1.0), u.edge_gamma.x);
+  }
+  if (u.edge.y > 0.0) {
+    alpha = alpha * blend_curve(clamp((1.0 - uv.x) / u.edge.y, 0.0, 1.0), u.edge_gamma.y);
+  }
+  if (u.edge.z > 0.0) {
+    alpha = alpha * blend_curve(clamp((1.0 - uv.y) / u.edge.z, 0.0, 1.0), u.edge_gamma.z);
+  }
+  if (u.edge.w > 0.0) {
+    alpha = alpha * blend_curve(clamp(uv.y / u.edge.w, 0.0, 1.0), u.edge_gamma.w);
+  }
+  return alpha;
+}
+
+/// Multi-projector grade for a slice display. Mirrors blendRenderer's
+/// fragment shader so a native slice and a sender slice of the same screen
+/// match: linear-light grade, inverse gamma, blend curve, then a black-level
+/// lift that feathers across the overlap so non-overlap regions match the
+/// projector's real black floor.
+fn slice_output_grade(color_in: vec3<f32>, uv: vec2<f32>) -> vec3<f32> {
+  var col = srgb_to_linear(clamp(color_in, vec3<f32>(0.0), vec3<f32>(1.0)));
+  col = col * max(u.out1.y, 0.0);
+  col = (col - vec3<f32>(0.5)) * max(u.out1.z, 0.0) + vec3<f32>(0.5);
+  col = pow(max(col, vec3<f32>(0.0)), vec3<f32>(1.0 / max(u.out1.w, 0.001)));
+
+  let alpha = slice_blend_alpha(uv);
+  let lift_mix = mix(alpha, smoothstep(0.0, 1.0, alpha), clamp(u.black_level.w, 0.0, 1.0));
+  col = col + u.black_level.rgb * lift_mix;
+  col = col * alpha;
+  return linear_to_srgb(clamp(col, vec3<f32>(0.0), vec3<f32>(1.0)));
+}
+
+/// Dome / fisheye reprojection, ported from shaders/dome.ts. Returns the
+/// composition UV to sample in `xy` and the dome mask (edge falloff and the
+/// circle cutoff) in `z`.
+fn dome_source_uv(uv_in: vec2<f32>, aspect: f32) -> vec3<f32> {
+  let mode = i32(floor(u.dome0.y + 0.5));
+  let half_fov = u.dome0.z * 0.5;
+  let truncation = u.dome2.x;
+
+  var uv = (uv_in - vec2<f32>(0.5)) * 2.0;
+  // Dome content is circular in a square frame, so undo the aspect.
+  if (aspect > 1.0) { uv.x = uv.x * aspect; } else { uv.y = uv.y / aspect; }
+  uv = uv - u.dome1.yz;
+  let rot_c = cos(u.dome0.w);
+  let rot_s = sin(u.dome0.w);
+  uv = vec2<f32>(uv.x * rot_c - uv.y * rot_s, uv.x * rot_s + uv.y * rot_c);
+
+  let r = length(uv);
+  if (r > truncation) {
+    return vec3<f32>(uv_in, 0.0);
+  }
+
+  if (mode == 3) {
+    // Equirectangular: longitude/latitude straight onto the frame.
+    let tex_uv = clamp(uv * vec2<f32>(0.5) + vec2<f32>(0.5), vec2<f32>(0.0), vec2<f32>(1.0));
+    return vec3<f32>(tex_uv, 1.0);
+  }
+
+  var theta = r * half_fov;
+  if (mode == 1) {
+    theta = 2.0 * atan(r * tan(half_fov * 0.5));
+  } else if (mode == 2) {
+    theta = asin(min(r, 1.0)) * half_fov / (3.14159265359 * 0.5);
+  }
+  let phi = atan2(uv.y, uv.x);
+
+  var dir = vec3<f32>(sin(theta) * cos(phi), sin(theta) * sin(phi), cos(theta));
+  let tilt_c = cos(u.dome1.x);
+  let tilt_s = sin(u.dome1.x);
+  dir = vec3<f32>(dir.x, dir.y * tilt_c - dir.z * tilt_s, dir.y * tilt_s + dir.z * tilt_c);
+
+  let z = max(dir.z, 0.001);
+  var tex_uv = vec2<f32>(dir.x / z * 0.5 + 0.5, dir.y / z * 0.5 + 0.5);
+  tex_uv = mix(uv_in, tex_uv, u.dome1.w);
+  tex_uv = clamp(tex_uv, vec2<f32>(0.0), vec2<f32>(1.0));
+
+  let edge_fade = smoothstep(truncation, truncation - 0.05, r);
+  return vec3<f32>(tex_uv, edge_fade);
+}
+
 fn rgb_to_hsv(c: vec3<f32>) -> vec3<f32> {
   let k = vec4<f32>(0.0, -1.0 / 3.0, 2.0 / 3.0, -1.0);
   let p = select(vec4<f32>(c.bg, k.wz), vec4<f32>(c.gb, k.xy), c.g >= c.b);
@@ -1344,7 +1658,17 @@ fn native_polygon_mask(local_uv: vec2<f32>, layer_index: u32) -> f32 {
 @fragment
 fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
   let aspect = max(0.01, u.resolution.x / max(1.0, u.resolution.y));
-  var p = (in.uv * 2.0 - vec2<f32>(1.0)) * vec2<f32>(aspect, 1.0);
+  let source = output_source_uv(in.uv);
+  var canvas_uv = source.xy;
+  var dome_mask = source.z;
+  if (u.dome0.x > 0.5) {
+    let domed = dome_source_uv(canvas_uv, aspect);
+    canvas_uv = domed.xy;
+    // Multiply, don't replace: a pixel outside the master warp's quad stays
+    // black even when the dome mask says it is inside the dome circle.
+    dome_mask = dome_mask * domed.z;
+  }
+  var p = (canvas_uv * 2.0 - vec2<f32>(1.0)) * vec2<f32>(aspect, 1.0);
   let t = u.time;
   let audio = ghost_audio_scene();
   let audio_level = ghost_audio_level(audio);
@@ -1380,7 +1704,6 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     color += vec3<f32>(0.0, 0.7 + audio_treble * 0.2, 1.0) * grid_glow * vignette;
   }
 
-  let canvas_uv = in.uv;
   for (var i: i32 = 0; i < 64; i = i + 1) {
     if (f32(i) >= u.layer_count) {
       break;
@@ -1395,6 +1718,24 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let bl = layers[layer_index].p1.zw;
     let local = quad_local_uv(canvas_uv, tl, tr, br, bl);
     let inside = local.x > 0.5;
+    // Hierarchy mask layer (blend code 26): instead of drawing content,
+    // its polygon mask clips EVERYTHING composited below it. Pixels
+    // outside the layer's quad count as outside every shape (masked
+    // away; visible when inverted). Layer opacity scales mask strength.
+    if (layers[layer_index].style.x >= 25.5 && layers[layer_index].style.x < 26.5) {
+      let mask_enabled = layers[layer_index].mask_info.x > 0.5 && layers[layer_index].mask_info.w >= 2.5;
+      var coverage = 1.0;
+      if (mask_enabled) {
+        if (inside) {
+          coverage = native_polygon_mask(local.yz, layer_index);
+        } else {
+          coverage = select(0.0, 1.0, layers[layer_index].mask_info.y > 0.5);
+        }
+      }
+      let strength = clamp(layers[layer_index].color.a, 0.0, 1.0);
+      color = color * mix(1.0, coverage, strength);
+      continue;
+    }
     let mesh_sample = layer_mesh_uv(local.yz, layer_index);
     let inside_mesh = inside && mesh_sample.x > 0.5;
     let uv_sample = layer_sample_uv(mesh_sample.yz, layer_index);
@@ -1425,5 +1766,12 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     }
   }
 
-  return vec4<f32>(clamp(color, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
+  color = apply_composite_effects(color, canvas_uv, t);
+  if (u.dome2.z > 0.5) {
+    color = slice_output_grade(color, in.uv) * dome_mask;
+  } else {
+    color = output_color_grade(color);
+    color = color * dome_mask * edge_blend_alpha(in.uv);
+  }
+  return vec4<f32>(clamp(color * u.output_gate, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
 }

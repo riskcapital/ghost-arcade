@@ -48,6 +48,7 @@ import ffmpegCoreUrl from '@ffmpeg/core?url';
 import ffmpegWasmUrl from '@ffmpeg/core/wasm?url';
 import { setISFManualTime } from '../isf/renderer';
 import { setStageEffectsManualTime } from '../stores/stageEffects';
+import { getActiveNativeRendererSync } from '../sync/nativeRendererSync';
 import { keyframeTimeline } from '../stores/keyframeTimeline';
 import { layerSequencer } from '../stores/layerSequencer';
 import { vjLayerSequencer } from '../stores/vjLayerSequencer';
@@ -600,6 +601,28 @@ export async function writeNativeRendererMp4Frame(
   return snapshot;
 }
 
+/** Live-clock variant: snapshot whatever the core is presenting right
+ *  now (no manual time override) and write it as frames fromIndex..
+ *  toIndex inclusive. Duplicating one capture across the span is how
+ *  live REC keeps wall-clock pacing when a capture takes longer than a
+ *  frame interval — the encoded timeline stays real-time instead of
+ *  compressing (which played back sped-up). Returns the snapshot. */
+export async function writeNativeRendererMp4FrameLiveSpan(
+  session: NativeMp4FrameEncoderSession,
+  fromIndex: number,
+  toIndex: number,
+): Promise<NativeRendererFrameSnapshotExportResult> {
+  const rawName = `native_mp4_${session.jobId}_${String(fromIndex).padStart(6, '0')}.${session.pixelFormat}`;
+  const rawPath = joinNativeTempPath(session.tempDir, rawName);
+  const snapshot = await exportNativeRendererFrameSnapshot(rawPath, { source: 'output' });
+  assertNativeRendererFrameExport(snapshot, fromIndex, session);
+  const last = Math.max(fromIndex, toIndex);
+  for (let i = fromIndex; i <= last; i++) {
+    await writeNativeMp4FrameFile(session, i, rawPath, i === last);
+  }
+  return snapshot;
+}
+
 export async function finishNativeMp4FrameEncoder(
   session: NativeMp4FrameEncoderSession,
 ): Promise<{ outputPath: string; size: number; frames: number }> {
@@ -978,6 +1001,15 @@ function createOfflineRenderStore() {
           keyframeTimeline.seek(virtualTime);
           layerSequencer.seek(virtualTime);
           vjLayerSequencer.seek(virtualTime);
+          // Native graphs (splat, model3d, text, GPU instruments…)
+          // animate from the render clock the sync sends — pin it to
+          // the virtual time and flush so this frame's compute lands
+          // in the core before the snapshot is taken. Without this,
+          // graph content keeps animating on the wall clock and
+          // exports play faster than intended.
+          if (nativeFrameCaptureActive) {
+            await getActiveNativeRendererSync()?.renderManualFrame(virtualTime);
+          }
 
         // Wait one RAF so the live render loop picks up the new
         // state. (True offline-rate rendering — where we'd call
@@ -1211,6 +1243,7 @@ function createOfflineRenderStore() {
         ]).catch(() => {});
       }
       engine.manualTime = restoreManual;
+      getActiveNativeRendererSync()?.setRenderClock(null);
       canvas.style.visibility = restoreCanvasVisibility;
       setISFManualTime(null);
       setStageEffectsManualTime(null);

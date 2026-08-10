@@ -7,6 +7,11 @@ import {
 import type { Layer, Model3DContent, SplatContent } from '$lib/types';
 import { project } from '$lib/stores/layers';
 import { mediaLibrary, type MediaItem } from '$lib/stores/media';
+import { keyframeTimeline } from '$lib/stores/keyframeTimeline';
+import { settings, outputFrozen, masterWarpIsActive } from '$lib/stores/settings';
+import { vjClipLauncher } from '$lib/stores/vjClipLauncher';
+import { macros } from '$lib/stores/macros';
+import { layerSequencer } from '$lib/stores/layerSequencer';
 import {
   resetNativeRendererRuntime,
   updateNativeRendererRuntimeFromStartup,
@@ -59,6 +64,7 @@ import {
   packSplatNativePoints,
   SPLAT_MAX_POINTS as SPLAT_NATIVE_MAX_POINTS,
 } from '$lib/renderer/splatNative';
+import { splatPointer } from '$lib/stores/splatPointer';
 import {
   buildModel3DNativeComputeGraph,
   buildModel3DNativePrecompileCommands,
@@ -3119,7 +3125,7 @@ interface NativeUnsupportedSourceOptions {
   nativeVideoDecodePumpReady?: boolean;
 }
 
-const NATIVE_READY_LAYER_TYPES = new Set(['media', 'gpu', 'color', 'lines', 'svg', 'lightpainting', 'text', 'splat', 'model3d', 'screen', 'group']);
+const NATIVE_READY_LAYER_TYPES = new Set(['media', 'gpu', 'color', 'lines', 'svg', 'lightpainting', 'text', 'splat', 'model3d', 'screen', 'group', 'mask']);
 
 function nativeUnsupportedGeometryReason(layer: Layer): string | null {
   const warpMode = String(layer.warpMode || 'corners').trim().toLowerCase();
@@ -3227,6 +3233,11 @@ export function nativeUnsupportedSourceReason(
     return nativeMediaSourceUnsupportedReason(layer.source, options);
   }
 
+  if (layer.type === 'mask') {
+    // Hierarchy mask layers carry no source by design — the core clips
+    // the composite below them from mask_info/mask_points alone.
+    return null;
+  }
   if (!layer.source && generatedLayerPreview(layer)) {
     return `generated-layer:${layer.type}:not-native-source`;
   }
@@ -3909,6 +3920,15 @@ function nativeLiveSourceIdentity(src: NonNullable<Layer['source']>): string {
   return '';
 }
 
+/** Animated GIFs ride the native VIDEO pipeline: FFmpeg decodes them like
+ *  any other looping clip, which gives full animation everywhere (preview,
+ *  output, recording) instead of the static first frame the image path
+ *  uploads. Unset playback state defaults to playing + looping, which is
+ *  exactly GIF semantics; a single-frame GIF just loops its one frame. */
+function isAnimatedGifUri(uri: string | null | undefined): boolean {
+  return typeof uri === 'string' && /\.gif(\?|#|$)/i.test(uri);
+}
+
 function nativeMediaSourceUnsupportedReason(
   src: NonNullable<Layer['source']>,
   options: NativeUnsupportedSourceOptions = {},
@@ -3934,7 +3954,8 @@ function nativeMediaSourceUnsupportedReason(
   if (sourceType === 'image' || sourceType === 'video') {
     const uri = nativeReadableMediaUri(src);
     if (!isNativeLocalMediaUri(uri)) return `${sourceType}:native-readable-uri-required`;
-    if (sourceType === 'video' && !options.nativeVideoDecodePumpReady) {
+    const decodesAsVideo = sourceType === 'video' || (sourceType === 'image' && isAnimatedGifUri(uri));
+    if (decodesAsVideo && !options.nativeVideoDecodePumpReady) {
       return 'video:native-decode-pump-required';
     }
     return null;
@@ -3976,7 +3997,12 @@ export function nativeLayerSourceFromMediaSource(
     : src;
   const uri = nativeReadableMediaUri(javascriptSource);
   const normalizedSrc = uri !== javascriptSource.src ? { ...javascriptSource, src: uri } : javascriptSource;
-  const sourceType = isSharedTextureUri(uri) ? 'video' : (javascriptSource.type || 'none');
+  const rawType = javascriptSource.type || 'none';
+  const sourceType = isSharedTextureUri(uri)
+    ? 'video'
+    : rawType === 'image' && isAnimatedGifUri(uri)
+      ? 'video'
+      : rawType;
   const shouldPrefetch = sourceType === 'image' || sourceType === 'video';
   const shouldPreview = shouldPrefetch || !!previewElement;
   return {
@@ -4447,6 +4473,12 @@ function isNativeStaticImageDecodeUri(uri: string | undefined | null): boolean {
 // the instance through props.
 let activeNativeRendererSync: NativeRendererSync | null = null;
 
+/** The running sync instance (Canvas owns its lifecycle). Offline render
+ *  uses this to drive native graph content from the virtual clock. */
+export function getActiveNativeRendererSync(): NativeRendererSync | null {
+  return activeNativeRendererSync;
+}
+
 type NativeLibraryVideoArmRequest = {
   id: string;
   src: string;
@@ -4604,6 +4636,16 @@ export class NativeRendererSync {
   // auto-pauses on tab visibility and lines up with the compositor so uniform
   // uploads aren't done just to be thrown away.
   private shaderAnimationRaf: number | null = null;
+  private lastCompositeEffectsSig: string | null = null;
+  private lastOutputStageSig: string | null = null;
+  private lastSliceOutputsSig: string | null = null;
+  private openSliceWindowIds: string[] = [];
+  private displayBounds = new Map<number, { width: number; height: number; scaleFactor: number }>();
+  private sliceWindowPoll: ReturnType<typeof setInterval> | null = null;
+  private compositeEffectsFrame: number | null = null;
+  private lastOutputBlackout: boolean | null = null;
+  private lastOutputFrozen: boolean | null = null;
+  private outputStateUnsubs: Array<() => void> = [];
   private audioSyncRaf: number | null = null;
   private audioUnsub: (() => void) | null = null;
   private lastAudioSig = '';
@@ -4946,11 +4988,15 @@ export class NativeRendererSync {
         this.sourcePreviewNextAt.delete(sourceKey);
       }
       if (pending.length && this.sharedTextureRejectWarnings < 5) {
-        console.warn('[NativeRendererSync] native shared texture import rejected; retrying metadata/upload', {
-          rejectedDelta: rejected - this.sharedTextureLastRejectedUploads,
-          pendingSources: pending.map(([, upload]) => upload.sourceId),
-          reason: status.source_frame_last_reject_reason,
-        });
+        // Interpolated, not passed as an object: the Electron console
+        // bridge stringifies extra args to "[object Object]", which hid the
+        // core's actual rejection reason — the only useful part.
+        console.warn(
+          '[NativeRendererSync] native shared texture import rejected; retrying metadata/upload'
+          + ` delta=${rejected - this.sharedTextureLastRejectedUploads}`
+          + ` sources=${pending.map(([, upload]) => upload.sourceId).join(',')}`
+          + ` reason=${status.source_frame_last_reject_reason || '(none reported)'}`,
+        );
         this.sharedTextureRejectWarnings += 1;
       }
       this.sharedTextureUploadPending.clear();
@@ -5971,6 +6017,8 @@ export class NativeRendererSync {
               frameIndex: graphFrameIndex,
               audioLevel: audio.level ?? Math.max(audio.bass, audio.treble),
               audioBeat: audio.beat,
+              audioBeatPhase: audio.beatPhase,
+              pointer: get(splatPointer),
             });
             if (state.packed) state.uploadedSig = fileSig;
             return graph;
@@ -6437,6 +6485,223 @@ export class NativeRendererSync {
     return this.running && this.startupReady;
   }
 
+  /** Mirror blackout / freeze into the core. Both are output-stage controls
+   *  that used to live only in the WebGL render body — blackout as a DOM
+   *  overlay over the editor preview, freeze as a skipped render — so under
+   *  the native driver neither reached the projector. */
+  private pushOutputState() {
+    const s = get(settings);
+    const blackout = !!s?.output?.blackout;
+    const frozen = !!get(outputFrozen);
+    if (blackout === this.lastOutputBlackout && frozen === this.lastOutputFrozen) return;
+    this.lastOutputBlackout = blackout;
+    this.lastOutputFrozen = frozen;
+    void submitNativeRendererCommands([
+      { type: 'set_output_state', blackout, frozen },
+    ]).catch(() => { /* core without output-state support */ });
+  }
+
+  /** Mirror the composite-stage effect chain into the core: composition
+   *  effects first, then each open macro's effect bundle scaled by its knob.
+   *  The WebGL engine ran both after layer blending (`applyEffects` on the
+   *  composite, then a wet/dry mix per bundle); the native compositor now
+   *  does the same inside the heartbeat shader. Effects outside the
+   *  compositor's in-shader op set are reported back as skipped. */
+  private scheduleCompositeEffects() {
+    // Auto-pulse rewrites macro values on every animation frame, so both
+    // subscriptions can fire many times per frame. Coalesce to one rebuild
+    // per frame; the signature check below drops the no-op pushes.
+    if (this.compositeEffectsFrame !== null) return;
+    if (typeof requestAnimationFrame !== 'function') {
+      this.pushCompositeEffects();
+      return;
+    }
+    this.compositeEffectsFrame = requestAnimationFrame(() => {
+      this.compositeEffectsFrame = null;
+      this.pushCompositeEffects();
+    });
+  }
+
+  private pushCompositeEffects() {
+    const entries: Array<{ descriptor: string; mix: number }> = [];
+    const unsupported: string[] = [];
+    const push = (effect: any, mix: number) => {
+      const descriptor = effectToNativeDescriptor(effect);
+      if (!descriptor) return;
+      // The composite stage runs inside the heartbeat shader, which only
+      // implements the compositor's colour ops. Anything needing its own
+      // pass (blur, colorama, displacement, …) is dropped by the core, so
+      // name it here rather than letting it silently do nothing.
+      if (!HEARTBEAT_NATIVE_EFFECT_IDS.has(descriptor.split(':', 1)[0])) {
+        unsupported.push(descriptor.split(':', 1)[0]);
+        return;
+      }
+      entries.push({ descriptor, mix });
+    };
+    for (const effect of get(vjClipLauncher)?.compositionEffects ?? []) {
+      if (effect?.enabled === false) continue;
+      push(effect, 1);
+    }
+    for (const macro of get(macros)?.macros ?? []) {
+      if (macro.value <= 0.001 || !macro.effects?.length) continue;
+      for (const effect of macro.effects) {
+        if (effect.enabled === false) continue;
+        push(effect, macro.value);
+      }
+    }
+    const sig = entries.map((e) => `${e.descriptor}@${e.mix.toFixed(4)}`).join('|');
+    if (sig === this.lastCompositeEffectsSig) return;
+    this.lastCompositeEffectsSig = sig;
+    if (unsupported.length) {
+      console.warn(
+        `[NativeRendererSync] composite-stage effects without a native op: ${[...new Set(unsupported)].join(', ')}`,
+      );
+    }
+    void submitNativeRendererCommands([
+      { type: 'set_composite_effects', effects: entries },
+    ]).catch(() => { /* core without composite-effect support */ });
+  }
+
+  /** Mirror the output stage — crop, rotation, colour grade, projector edge
+   *  blend and dome reprojection — into the core. In the WebGL build these
+   *  lived on the output quad and a 2D overlay canvas, neither of which the
+   *  native compositor's surface passes through. */
+  private pushOutputStage() {
+    const out = get(settings)?.output;
+    if (!out) return;
+    const domeModes = ['angular', 'stereographic', 'orthographic', 'equirectangular'];
+    const payload = {
+      type: 'set_output_stage' as const,
+      rotation: out.outputRotation ?? 0,
+      cropX: out.outputCropX ?? 0,
+      cropY: out.outputCropY ?? 0,
+      cropWidth: out.outputCropWidth ?? 1,
+      cropHeight: out.outputCropHeight ?? 1,
+      brightness: out.brightness ?? 1,
+      contrast: out.contrast ?? 1,
+      gamma: out.gamma ?? 1,
+      edgeBlendLeft: out.edgeBlendLeft ?? 0,
+      edgeBlendRight: out.edgeBlendRight ?? 0,
+      edgeBlendTop: out.edgeBlendTop ?? 0,
+      edgeBlendBottom: out.edgeBlendBottom ?? 0,
+      edgeBlendGamma: out.edgeBlendGamma ?? 2.2,
+      domeEnabled: !!out.domeEnabled,
+      domeMode: Math.max(0, domeModes.indexOf(out.domeMode ?? 'angular')),
+      domeFOV: out.domeFOV ?? 180,
+      domeRotation: out.domeRotation ?? 0,
+      domeTilt: out.domeTilt ?? 0,
+      domeOffsetX: out.domeOffsetX ?? 0,
+      domeOffsetY: out.domeOffsetY ?? 0,
+      domeCurvature: out.domeCurvature ?? 1,
+      domeTruncation: out.domeTruncation ?? 1,
+      // Master warp travels as-is; the core reads only the mesh belonging to
+      // the declared mode, so a stale grid from the other mode is ignored.
+      masterWarp: out.masterWarp && masterWarpIsActive(out.masterWarp)
+        ? {
+            enabled: true,
+            mode: out.masterWarp.mode ?? 'corners',
+            corners: out.masterWarp.corners ?? null,
+            meshGrid: out.masterWarp.meshGrid ?? null,
+          }
+        : { enabled: false },
+    };
+    const sig = JSON.stringify(payload);
+    if (sig === this.lastOutputStageSig) return;
+    this.lastOutputStageSig = sig;
+    void submitNativeRendererCommands([payload])
+      .catch(() => { /* core without output-stage support */ });
+  }
+
+  /** Mirror the open multi-output slice displays into the core, which then
+   *  composites one full-resolution frame per projector. Only slices with a
+   *  window actually open are sent — each costs a composite pass per frame,
+   *  so a configured-but-closed screen must not be paying for one. */
+  private pushSliceOutputs() {
+    const out = get(settings)?.output;
+    const open = new Set(this.openSliceWindowIds);
+    const slices = (out?.slices ?? [])
+      .filter((s: any) => s?.enabled !== false && open.has(s?.id))
+      .map((s: any) => {
+        // The window is borderless-fullscreen on its display, so render at
+        // the display's own pixel resolution — that is the whole point of a
+        // native slice, versus cropping a downscaled master.
+        const display = this.displayBounds.get(Number(s.displayId));
+        const scale = display?.scaleFactor && display.scaleFactor > 0 ? display.scaleFactor : 1;
+        return {
+        id: String(s.id),
+        width: Math.round((display?.width ?? out?.masterCanvasWidth ?? 1920) * scale),
+        height: Math.round((display?.height ?? out?.masterCanvasHeight ?? 1080) * scale),
+        cropX: s.cropX ?? 0,
+        cropY: s.cropY ?? 0,
+        cropW: s.cropW ?? 1,
+        cropH: s.cropH ?? 1,
+        rotation: s.rotation ?? 0,
+        brightness: s.brightness ?? 1,
+        contrast: s.contrast ?? 1,
+        gamma: s.gamma ?? 1,
+        edgeBlendLeft: s.edgeBlendLeft ?? 0,
+        edgeBlendRight: s.edgeBlendRight ?? 0,
+        edgeBlendTop: s.edgeBlendTop ?? 0,
+        edgeBlendBottom: s.edgeBlendBottom ?? 0,
+        edgeBlendGamma: s.edgeBlendGamma ?? 2.2,
+        edgeBlendLeftGamma: s.edgeBlendLeftGamma ?? s.edgeBlendGamma ?? 2.2,
+        edgeBlendRightGamma: s.edgeBlendRightGamma ?? s.edgeBlendGamma ?? 2.2,
+        edgeBlendTopGamma: s.edgeBlendTopGamma ?? s.edgeBlendGamma ?? 2.2,
+        edgeBlendBottomGamma: s.edgeBlendBottomGamma ?? s.edgeBlendGamma ?? 2.2,
+        blackLevelR: s.blackLevelR ?? 0,
+        blackLevelG: s.blackLevelG ?? 0,
+        blackLevelB: s.blackLevelB ?? 0,
+        blackLevelFeather: s.blackLevelFeather ?? 0.5,
+        warpMode: s.warpMode ?? 'rect',
+        corners: s.corners ?? null,
+        meshGrid: s.meshGrid ?? null,
+        };
+      });
+    const sig = JSON.stringify(slices);
+    if (sig === this.lastSliceOutputsSig) return;
+    this.lastSliceOutputsSig = sig;
+    // A mesh grid larger than the compositor's 16x16 cap is dropped by the
+    // core rather than scrambled, so say which screen lost its warp.
+    const oversized = (out?.slices ?? []).filter((s: any) => {
+      if (!open.has(s?.id) || s?.warpMode !== 'mesh') return false;
+      const grid = s.meshGrid;
+      return !!grid && (grid.rows > 16 || grid.cols > 16);
+    });
+    if (oversized.length) {
+      console.warn(
+        '[NativeRendererSync] slice mesh warp exceeds the native 16x16 control-grid cap;'
+        + ` falling back to the rect crop for: ${oversized.map((s: any) => s.name || s.id).join(', ')}`,
+      );
+    }
+    void submitNativeRendererCommands([{ type: 'set_slice_outputs', slices }])
+      .catch(() => { /* core without slice-output support */ });
+  }
+
+  /** Which slice windows are open is main-process state, so poll it. It
+   *  changes only when the operator opens or closes a screen. */
+  private async refreshOpenSliceWindows() {
+    try {
+      if (this.displayBounds.size === 0) {
+        const displays = await invoke<Array<{ id: number; width: number; height: number; scaleFactor: number }>>('get_displays');
+        for (const display of displays ?? []) {
+          this.displayBounds.set(Number(display.id), {
+            width: Number(display.width) || 1920,
+            height: Number(display.height) || 1080,
+            scaleFactor: Number(display.scaleFactor) || 1,
+          });
+        }
+      }
+      const ids = await invoke<string[]>('output_list_slice_windows');
+      const next = Array.isArray(ids) ? ids.map(String) : [];
+      if (next.join('|') !== this.openSliceWindowIds.join('|')) {
+        this.openSliceWindowIds = next;
+      }
+      this.pushSliceOutputs();
+    } catch {
+      /* not in the desktop shell */
+    }
+  }
+
   async start(width: number, height: number) {
     if (this.running) return;
     const lifecycleGeneration = ++this.lifecycleGeneration;
@@ -6552,6 +6817,17 @@ export class NativeRendererSync {
     this.resetNativeVideoDecodeTracking();
     this.resetNativeGraphRouteTelemetry();
     this.startupReady = true;
+    // Subscribe after startup so the first push lands on a live core.
+    this.outputStateUnsubs.push(settings.subscribe(() => this.pushOutputState()));
+    this.outputStateUnsubs.push(settings.subscribe(() => this.pushOutputStage()));
+    this.outputStateUnsubs.push(settings.subscribe(() => this.pushSliceOutputs()));
+    if (!this.sliceWindowPoll) {
+      void this.refreshOpenSliceWindows();
+      this.sliceWindowPoll = setInterval(() => { void this.refreshOpenSliceWindows(); }, 1000);
+    }
+    this.outputStateUnsubs.push(outputFrozen.subscribe(() => this.pushOutputState()));
+    this.outputStateUnsubs.push(vjClipLauncher.subscribe(() => this.scheduleCompositeEffects()));
+    this.outputStateUnsubs.push(macros.subscribe(() => this.scheduleCompositeEffects()));
     flushPendingLibraryVideoArms(this);
     if (this.latestLayers.length) {
       this.scheduleSync(this.desiredWidth || width, this.desiredHeight || height, this.latestLayers);
@@ -6815,7 +7091,7 @@ export class NativeRendererSync {
           layer_id: layer.id,
           z_index: index,
           vj_layer_index: vjLayerIndex,
-          blend_mode: canonicalBlendMode(layer.blendMode),
+          blend_mode: layer.type === 'mask' ? 'hierarchy-mask' : canonicalBlendMode(layer.blendMode),
           opacity: layer.opacity,
           deck_monitor_bank: layer._deckMonitorBank ?? null,
           deck_monitor_opacity: layer._deckMonitorOpacity ?? 1,
@@ -6889,11 +7165,40 @@ export class NativeRendererSync {
         : null;
   }
 
+  /**
+   * Offline render: advance every native graph (splat, model3d, text,
+   * light painting, GPU instruments…) to an exact virtual time and push
+   * the resulting compute/render submissions to the core BEFORE the
+   * frame snapshot is taken. Without this the graphs keep animating on
+   * the live wall clock while frames are captured, so exported motion
+   * runs at wall speed instead of the master render clock.
+   */
+  async renderManualFrame(seconds: number): Promise<void> {
+    this.setRenderClock(seconds);
+    if (!this.running || !this.startupReady) return;
+    await this.flush(this.desiredWidth, this.desiredHeight, this.latestLayers);
+  }
+
   private stopShaderAnimation() {
     if (this.shaderAnimationRaf !== null) {
       cancelAnimationFrame(this.shaderAnimationRaf);
       this.shaderAnimationRaf = null;
     }
+    for (const unsub of this.outputStateUnsubs) unsub();
+    this.outputStateUnsubs = [];
+    this.lastOutputBlackout = null;
+    this.lastCompositeEffectsSig = null;
+    this.lastOutputStageSig = null;
+    this.lastSliceOutputsSig = null;
+    if (this.sliceWindowPoll) {
+      clearInterval(this.sliceWindowPoll);
+      this.sliceWindowPoll = null;
+    }
+    if (this.compositeEffectsFrame !== null) {
+      cancelAnimationFrame(this.compositeEffectsFrame);
+      this.compositeEffectsFrame = null;
+    }
+    this.lastOutputFrozen = null;
   }
 
   private scheduleNativeStatusPoll(now: number) {
@@ -6962,6 +7267,70 @@ export class NativeRendererSync {
     })();
   }
 
+  /** Keyframe-timeline and layer-sequencer values, applied to the layer list
+   *  the same way Canvas's WebGL body applies them (stash-mutate-restore).
+   *  That body never runs when the native core owns the frame, so without
+   *  this the timeline ticked and the sequencer stepped while the native
+   *  output ignored both. Layers are shallow-cloned — the store's objects
+   *  are never mutated — and identity-sensitive fields (source.id, media
+   *  elements) are carried by reference so decode sessions and prefetch
+   *  keys stay stable across frames.
+   *
+   *  Continuous-mode sequencer rows use the same opacity gate as normal
+   *  rows here: the native core re-renders content every frame regardless
+   *  of opacity, so the WebGL-side `_seqGate` distinction (kept to avoid
+   *  shader-state resets) has no native equivalent to preserve. */
+  private applyTimelineOverrides(layers: Layer[]): Layer[] {
+    const kfState = get(keyframeTimeline);
+    const kfOverrides = kfState.config.isPlaying ? kfState.activeOverrides : null;
+    const seqState = get(layerSequencer);
+    const seqOverrides = (seqState.isPlaying || Object.keys(seqState.opacityOverrides ?? {}).length > 0)
+      ? seqState.opacityOverrides
+      : null;
+    if (!kfOverrides && !seqOverrides) return layers;
+
+    let changed = false;
+    const mapped = layers.map((layer) => {
+      const kf = kfOverrides?.[layer.id];
+      const seqMult = seqOverrides?.[layer.id];
+      if (!kf && seqMult === undefined) return layer;
+
+      changed = true;
+      const next: any = { ...layer };
+      if (seqMult !== undefined && seqMult < 1) {
+        next.opacity = (next.opacity ?? 1) * seqMult;
+      }
+      if (kf) {
+        let shaderValues: Record<string, any> | null = null;
+        let effects: any[] | null = null;
+        for (const [key, value] of Object.entries(kf)) {
+          if (key === 'layer:opacity') {
+            next.opacity = value as number;
+          } else if (key.startsWith('shader:') && next.source?.shaderValues) {
+            if (shaderValues === null) {
+              shaderValues = { ...next.source.shaderValues };
+              next.source = { ...next.source, shaderValues };
+            }
+            shaderValues![key.slice(7)] = value;
+          } else if (key.startsWith('fx:') && next.effects?.length) {
+            const [, fxId, prop] = key.split(':');
+            if (effects === null) {
+              effects = next.effects.map((e: any) => ({ ...e, params: { ...e.params } }));
+              next.effects = effects;
+            }
+            const effect = effects!.find((e: any) => e.id === fxId);
+            if (effect) {
+              if (prop === 'enabled') effect.enabled = !!value;
+              else effect.params[prop] = value;
+            }
+          }
+        }
+      }
+      return next as Layer;
+    });
+    return changed ? mapped : layers;
+  }
+
   async flush(width: number, height: number, layers: Layer[]) {
     this.desiredWidth = width;
     this.desiredHeight = height;
@@ -6975,7 +7344,11 @@ export class NativeRendererSync {
     try {
       do {
         this.flushAgain = false;
-        await this.flushOnce(this.desiredWidth, this.desiredHeight, this.latestLayers);
+        await this.flushOnce(
+          this.desiredWidth,
+          this.desiredHeight,
+          this.applyTimelineOverrides(this.latestLayers),
+        );
       } while (this.running && this.startupReady && this.flushAgain);
     } finally {
       this.flushInFlight = false;
@@ -7161,7 +7534,7 @@ export class NativeRendererSync {
         z: index,
         vjIndex: vjLayerIndex,
         visible: effectiveVisible,
-        blend: canonicalBlendMode(layer.blendMode),
+        blend: layer.type === 'mask' ? 'hierarchy-mask' : canonicalBlendMode(layer.blendMode),
         opacity: layer.opacity,
         geometrySig: geometrySignature(layer),
         deckMonitorSig: layer._deckMonitorBank
@@ -7238,7 +7611,7 @@ export class NativeRendererSync {
           layer_id: layer.id,
           z_index: index,
           vj_layer_index: vjLayerIndex,
-          blend_mode: canonicalBlendMode(layer.blendMode),
+          blend_mode: layer.type === 'mask' ? 'hierarchy-mask' : canonicalBlendMode(layer.blendMode),
           opacity: layer.opacity,
           deck_monitor_bank: layer._deckMonitorBank ?? null,
           deck_monitor_opacity: layer._deckMonitorOpacity ?? 1,

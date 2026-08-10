@@ -54,6 +54,12 @@ pub const CORE_RPC_METHODS: &[&str] = &[
     "submit_batch",
     "submit_commands",
     "set_output",
+    "set_output_state",
+    "set_composite_effects",
+    "set_output_stage",
+    "set_slice_outputs",
+    "slice_output_state",
+    "get_slice_output_state",
     "set_output_window",
     "set_present_policy",
     "set_command_drain_policy",
@@ -89,6 +95,10 @@ pub const CORE_RPC_METHODS: &[&str] = &[
 
 pub const CORE_COMMAND_TYPES: &[&str] = &[
     "set_output",
+    "set_output_state",
+    "set_composite_effects",
+    "set_output_stage",
+    "set_slice_outputs",
     "set_present_policy",
     "set_command_drain_policy",
     "set_command_drain_limit",

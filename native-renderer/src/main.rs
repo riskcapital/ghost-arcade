@@ -898,6 +898,63 @@ struct CoreStats {
     frames_without_swapchain_present: u64,
 }
 
+/// Output-stage settings shared by every render entry point. Identity here
+/// means "no output transform", which is what deck monitors always want: they
+/// are cue displays, not the projector.
+#[derive(Clone, Copy)]
+struct OutputStage {
+    /// Crop rect (x, y, width, height) in source UV.
+    out0: [f32; 4],
+    /// (rotation quarter-turns, brightness, contrast, gamma).
+    out1: [f32; 4],
+    /// Edge-blend widths (left, right, top, bottom) as UV fractions.
+    edge: [f32; 4],
+    /// (dome enabled, mode, fov radians, rotation radians).
+    dome0: [f32; 4],
+    /// (tilt radians, offset x, offset y, curvature).
+    dome1: [f32; 4],
+    /// (truncation, edge-blend gamma, slice mode, _).
+    dome2: [f32; 4],
+    /// Per-edge blend gamma (left, right, top, bottom); slice mode only.
+    edge_gamma: [f32; 4],
+    /// Projector black-level lift (r, g, b, feather); slice mode only.
+    black_level: [f32; 4],
+    /// Per-slice screen warp: (mode, rows, cols, _) + corner quad.
+    swarp: [f32; 4],
+    swarp_c0: [f32; 4],
+    swarp_c1: [f32; 4],
+    /// Master warp: (enabled, rows, cols, _) + corner quad.
+    mwarp: [f32; 4],
+    mwarp_c0: [f32; 4],
+    mwarp_c1: [f32; 4],
+    /// Control points, two per vec4, row-major, up to 16x16.
+    swarp_mesh: [[f32; 4]; 128],
+    mwarp_mesh: [[f32; 4]; 128],
+}
+
+impl Default for OutputStage {
+    fn default() -> Self {
+        Self {
+            out0: [0.0, 0.0, 1.0, 1.0],
+            out1: [0.0, 1.0, 1.0, 1.0],
+            edge: [0.0; 4],
+            dome0: [0.0; 4],
+            dome1: [0.0; 4],
+            dome2: [1.0, 2.2, 0.0, 0.0],
+            edge_gamma: [2.2; 4],
+            black_level: [0.0; 4],
+            swarp: [0.0; 4],
+            swarp_c0: [0.0, 0.0, 1.0, 0.0],
+            swarp_c1: [1.0, 1.0, 0.0, 1.0],
+            mwarp: [0.0; 4],
+            mwarp_c0: [0.0, 0.0, 1.0, 0.0],
+            mwarp_c1: [1.0, 1.0, 0.0, 1.0],
+            swarp_mesh: [[0.0; 4]; 128],
+            mwarp_mesh: [[0.0; 4]; 128],
+        }
+    }
+}
+
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 struct Uniforms {
@@ -906,10 +963,32 @@ struct Uniforms {
     command_phase: f32,
     layer_count: f32,
     frame_count: f32,
-    _pad0: [f32; 2],
+    /// Master output gate: 1.0 normal, 0.0 blackout.
+    output_gate: f32,
+    /// Number of composite-stage effects in `post` (0..8).
+    post_count: f32,
     audio0: [f32; 4],
     audio1: [f32; 4],
     audio2: [f32; 4],
+    /// Composition effects then macro bundles, applied after layer blending.
+    post: [[f32; 4]; 8],
+    /// Output stage: crop, rotation + color grade, edge blend, dome.
+    out0: [f32; 4],
+    out1: [f32; 4],
+    edge: [f32; 4],
+    dome0: [f32; 4],
+    dome1: [f32; 4],
+    dome2: [f32; 4],
+    edge_gamma: [f32; 4],
+    black_level: [f32; 4],
+    swarp: [f32; 4],
+    swarp_c0: [f32; 4],
+    swarp_c1: [f32; 4],
+    mwarp: [f32; 4],
+    mwarp_c0: [f32; 4],
+    mwarp_c1: [f32; 4],
+    swarp_mesh: [[f32; 4]; 128],
+    mwarp_mesh: [[f32; 4]; 128],
 }
 
 #[repr(C)]
@@ -1175,6 +1254,99 @@ struct DeckMonitorTarget {
     _render_texture: wgpu::Texture,
     render_view: wgpu::TextureView,
     export: NativeOutputExport,
+}
+
+/// One multi-output slice presented on its own physical display. Same shape
+/// as a deck monitor — an offscreen composite plus a shared-texture export —
+/// but sized to the display and carrying the slice's own output transform, so
+/// each projector gets a full-resolution native composite of its own region
+/// instead of a second WebGL renderer cropping a downscaled master.
+struct SliceOutputTarget {
+    _render_texture: wgpu::Texture,
+    render_view: wgpu::TextureView,
+    export: NativeOutputExport,
+}
+
+/// Largest output-warp control grid the compositor stores, matching the
+/// per-layer mesh cap. Larger grids from the editor are rejected rather than
+/// silently truncated into a scrambled warp.
+const WARP_MESH_MAX_DIM: usize = 16;
+
+/// Read a `{x, y}` point, defaulting to the identity position given.
+fn warp_point_at(value: Option<&Value>, fallback: [f32; 2]) -> [f32; 2] {
+    let Some(point) = value else { return fallback };
+    [
+        number_at(point, &["x"]).unwrap_or(fallback[0] as f64) as f32,
+        number_at(point, &["y"]).unwrap_or(fallback[1] as f64) as f32,
+    ]
+}
+
+/// Corner quad packed for the shader as (TL.xy, TR.xy) and (BR.xy, BL.xy).
+fn warp_corners_at(params: Option<&Value>) -> ([f32; 4], [f32; 4]) {
+    let tl = warp_point_at(params.and_then(|v| v.get("topLeft")), [0.0, 0.0]);
+    let tr = warp_point_at(params.and_then(|v| v.get("topRight")), [1.0, 0.0]);
+    let br = warp_point_at(params.and_then(|v| v.get("bottomRight")), [1.0, 1.0]);
+    let bl = warp_point_at(params.and_then(|v| v.get("bottomLeft")), [0.0, 1.0]);
+    ([tl[0], tl[1], tr[0], tr[1]], [br[0], br[1], bl[0], bl[1]])
+}
+
+/// Flatten a `{rows, cols, points: [[{x,y}]]}` grid into the packed control
+/// point array (two points per vec4, row-major). Returns (rows, cols, mesh)
+/// with rows/cols zeroed when the grid is absent or unusable, which the
+/// shader reads as "no mesh".
+fn warp_mesh_at(params: Option<&Value>) -> (f32, f32, [[f32; 4]; 128]) {
+    let mut mesh = [[0.0f32; 4]; 128];
+    let Some(grid) = params else { return (0.0, 0.0, mesh) };
+    let rows = number_at(grid, &["rows"]).unwrap_or(0.0) as usize;
+    let cols = number_at(grid, &["cols"]).unwrap_or(0.0) as usize;
+    if !(2..=WARP_MESH_MAX_DIM).contains(&rows) || !(2..=WARP_MESH_MAX_DIM).contains(&cols) {
+        return (0.0, 0.0, mesh);
+    }
+    let Some(points) = grid.get("points").and_then(Value::as_array) else {
+        return (0.0, 0.0, mesh);
+    };
+    for row in 0..rows {
+        let Some(row_points) = points.get(row).and_then(Value::as_array) else {
+            return (0.0, 0.0, mesh);
+        };
+        for col in 0..cols {
+            // Identity fallback keeps a short row from folding the warp onto
+            // itself; a malformed grid degrades to a flat pass-through cell.
+            let fallback = [
+                col as f32 / (cols - 1) as f32,
+                row as f32 / (rows - 1) as f32,
+            ];
+            let point = warp_point_at(row_points.get(col), fallback);
+            let index = row * cols + col;
+            let slot = index / 2;
+            if slot >= mesh.len() {
+                break;
+            }
+            if index % 2 == 0 {
+                mesh[slot][0] = point[0];
+                mesh[slot][1] = point[1];
+            } else {
+                mesh[slot][2] = point[0];
+                mesh[slot][3] = point[1];
+            }
+        }
+    }
+    (rows as f32, cols as f32, mesh)
+}
+
+/// Upper bound on simultaneously-presented slice displays. Each one costs a
+/// full composite pass per frame, so this is a guardrail against a project
+/// with dozens of configured screens stalling the render loop.
+const MAX_SLICE_OUTPUTS: usize = 8;
+
+/// Editor-side description of a slice output: where it presents and how the
+/// master composition maps onto it.
+#[derive(Clone)]
+struct SliceOutputSpec {
+    id: String,
+    width: u32,
+    height: u32,
+    stage: OutputStage,
 }
 
 #[repr(C)]
@@ -2132,6 +2304,9 @@ struct RenderState {
     /// first frame that carries deck-monitor-tagged layers.
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     deck_monitor_targets: Option<[DeckMonitorTarget; 2]>,
+    /// Per-slice display targets, keyed by the editor's slice id.
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    slice_targets: HashMap<String, SliceOutputTarget>,
     snapshot_texture: wgpu::Texture,
     snapshot_view: wgpu::TextureView,
     last_frame_metrics: Option<SnapshotMetrics>,
@@ -2310,6 +2485,19 @@ struct App {
     stage3d_scene_summary: NativeSceneBridgeSummary,
     projection_sim_scene: Option<Value>,
     projection_sim_scene_summary: NativeSceneBridgeSummary,
+    /// Live output kill switch — blanks the composite the projector sees.
+    output_blackout: bool,
+    /// Holds the last presented frame instead of compositing new ones.
+    output_frozen: bool,
+    /// Composite-stage effect chain: composition effects, then macro effect
+    /// bundles. Each slot is [op, amount, 0, mix] for the heartbeat
+    /// compositor's shared effect evaluator.
+    composite_effects: Vec<[f32; 4]>,
+    /// Projector-only output transform: crop, rotation, colour grade, edge
+    /// blend and dome reprojection.
+    output_stage: OutputStage,
+    /// Multi-output slices currently presenting on their own displays.
+    slice_outputs: Vec<SliceOutputSpec>,
     render_clock_mode: String,
     render_clock_time: Option<f32>,
     render_clock_delta: f32,
@@ -2568,6 +2756,11 @@ impl App {
             stage3d_scene_summary: NativeSceneBridgeSummary::empty("stage3d"),
             projection_sim_scene: None,
             projection_sim_scene_summary: NativeSceneBridgeSummary::empty("projection-sim"),
+            output_blackout: false,
+            output_frozen: false,
+            composite_effects: Vec::new(),
+            output_stage: OutputStage::default(),
+            slice_outputs: Vec::new(),
             render_clock_mode: "live".to_string(),
             render_clock_time: None,
             render_clock_delta: 1.0 / 60.0,
@@ -3705,6 +3898,15 @@ impl App {
                 self.apply_output_config(&req.params);
                 Ok(json!(true))
             }
+            "set_output_state" => self.apply_output_state(&req.params),
+            "set_composite_effects" => self.apply_composite_effects(&req.params),
+            "set_output_stage" => self.apply_output_stage(&req.params),
+            "set_slice_outputs" => self.apply_slice_outputs(&req.params),
+            "slice_output_state" | "get_slice_output_state" => Ok(self
+                .renderer
+                .as_ref()
+                .map(RenderState::slice_output_metadata)
+                .unwrap_or_else(|| json!({ "available": false }))),
             "set_output_window" => {
                 self.apply_output_window_config(&req.params);
                 Ok(json!(self.status()))
@@ -3856,6 +4058,259 @@ impl App {
         if let Some(renderer) = self.renderer.as_mut() {
             renderer.resize(PhysicalSize::new(self.pending_width, self.pending_height));
         }
+    }
+
+    /// Master output gate. Blackout is a live-performance kill switch, so it
+    /// must act on the composite the projector sees — the editor's DOM
+    /// overlay only ever covered the preview.
+    fn output_gate(&self) -> f32 {
+        if self.output_blackout { 0.0 } else { 1.0 }
+    }
+
+    /// Blackout / freeze state from the editor's output settings.
+    fn apply_output_state(&mut self, params: &Value) -> Result<Value, String> {
+        if let Some(blackout) = bool_at(params, &["blackout"]) {
+            self.output_blackout = blackout;
+        }
+        if let Some(frozen) = bool_at(params, &["frozen"]) {
+            self.output_frozen = frozen;
+        }
+        Ok(json!({
+            "blackout": self.output_blackout,
+            "frozen": self.output_frozen,
+        }))
+    }
+
+    /// Stage for the editor preview / capture path. The WebGL build gated
+    /// crop, rotation and colour grade behind output mode, so the editor
+    /// canvas (and anything recorded from it) showed the untransformed
+    /// composite; dome and edge blend were drawn in both. Mirror that.
+    fn preview_output_stage(&self) -> OutputStage {
+        OutputStage {
+            out0: [0.0, 0.0, 1.0, 1.0],
+            out1: [0.0, 1.0, 1.0, 1.0],
+            ..self.output_stage
+        }
+    }
+
+    /// Effects applied to the blended frame, capped at the uniform's 8 slots.
+    fn composite_effect_slots(&self) -> Vec<[f32; 4]> {
+        self.composite_effects.iter().copied().take(8).collect()
+    }
+
+    /// Composition effects + macro effect bundles. Each entry carries a
+    /// compositor descriptor ("hue:0.25") and a `mix` wet/dry weight — the
+    /// macro knob value for bundle effects, 1.0 for composition effects.
+    fn apply_composite_effects(&mut self, params: &Value) -> Result<Value, String> {
+        let mut slots: Vec<[f32; 4]> = Vec::new();
+        let mut skipped: Vec<String> = Vec::new();
+        if let Some(entries) = params.get("effects").and_then(Value::as_array) {
+            for entry in entries {
+                if slots.len() >= 8 {
+                    break;
+                }
+                let Some(descriptor) = entry
+                    .get("descriptor")
+                    .and_then(Value::as_str)
+                    .or_else(|| entry.as_str())
+                else {
+                    continue;
+                };
+                let Some(mut slot) = effect_descriptor_code(descriptor) else {
+                    // Descriptors outside the compositor's in-shader op set
+                    // (blur, colorama, …) need a real post pass; report them
+                    // instead of silently dropping the operator's effect.
+                    skipped.push(descriptor.to_string());
+                    continue;
+                };
+                let mix = entry
+                    .get("mix")
+                    .and_then(Value::as_f64)
+                    .unwrap_or(1.0)
+                    .clamp(0.0, 1.0) as f32;
+                if mix <= 0.0005 {
+                    continue;
+                }
+                slot[3] = mix;
+                slots.push(slot);
+            }
+        }
+        self.composite_effects = slots;
+        Ok(json!({
+            "applied": self.composite_effects.len(),
+            "skipped": skipped,
+        }))
+    }
+
+    /// Projector output transform from the editor's output settings.
+    fn apply_output_stage(&mut self, params: &Value) -> Result<Value, String> {
+        let read = |keys: &[&str], fallback: f64| number_at(params, keys).unwrap_or(fallback);
+        let crop_x = read(&["cropX"], 0.0).clamp(0.0, 0.99) as f32;
+        let crop_y = read(&["cropY"], 0.0).clamp(0.0, 0.99) as f32;
+        let crop_w = read(&["cropWidth"], 1.0).clamp(0.01, 1.0 - crop_x as f64) as f32;
+        let crop_h = read(&["cropHeight"], 1.0).clamp(0.01, 1.0 - crop_y as f64) as f32;
+        let rotation = (((read(&["rotation"], 0.0) % 360.0) + 360.0) % 360.0 / 90.0).round();
+        let dome_enabled = bool_at(params, &["domeEnabled"]).unwrap_or(false);
+        // Master warp: destination-semantics quad plus an optional mesh that
+        // deforms inside it. Only the mesh belonging to the declared mode is
+        // read, so switching modes in the editor can't leave a stale grid on.
+        let warp = params.get("masterWarp");
+        let warp_enabled = warp
+            .map(|value| bool_at(value, &["enabled"]).unwrap_or(false))
+            .unwrap_or(false);
+        let warp_mode = warp
+            .and_then(|value| string_at(value, &["mode"]))
+            .unwrap_or_else(|| "corners".to_string());
+        let (master_c0, master_c1) = warp_corners_at(warp.and_then(|v| v.get("corners")));
+        let (mesh_rows, mesh_cols, master_mesh) = if warp_enabled && warp_mode == "mesh" {
+            warp_mesh_at(warp.and_then(|v| v.get("meshGrid")))
+        } else {
+            (0.0, 0.0, [[0.0f32; 4]; 128])
+        };
+        let master_warp = [
+            if warp_enabled { 1.0 } else { 0.0 },
+            mesh_rows,
+            mesh_cols,
+            0.0,
+        ];
+        self.output_stage = OutputStage {
+            out0: [crop_x, crop_y, crop_w, crop_h],
+            out1: [
+                rotation.clamp(0.0, 3.0) as f32,
+                read(&["brightness"], 1.0).max(0.0) as f32,
+                read(&["contrast"], 1.0).max(0.0) as f32,
+                read(&["gamma"], 1.0).max(0.001) as f32,
+            ],
+            edge: [
+                read(&["edgeBlendLeft"], 0.0).clamp(0.0, 0.5) as f32,
+                read(&["edgeBlendRight"], 0.0).clamp(0.0, 0.5) as f32,
+                read(&["edgeBlendTop"], 0.0).clamp(0.0, 0.5) as f32,
+                read(&["edgeBlendBottom"], 0.0).clamp(0.0, 0.5) as f32,
+            ],
+            dome0: [
+                if dome_enabled { 1.0 } else { 0.0 },
+                read(&["domeMode"], 0.0).clamp(0.0, 3.0) as f32,
+                read(&["domeFOV"], 180.0).to_radians() as f32,
+                read(&["domeRotation"], 0.0).to_radians() as f32,
+            ],
+            dome1: [
+                read(&["domeTilt"], 0.0).to_radians() as f32,
+                read(&["domeOffsetX"], 0.0) as f32,
+                read(&["domeOffsetY"], 0.0) as f32,
+                read(&["domeCurvature"], 1.0).clamp(0.0, 1.0) as f32,
+            ],
+            dome2: [
+                read(&["domeTruncation"], 1.0).clamp(0.01, 2.0) as f32,
+                read(&["edgeBlendGamma"], 2.2).clamp(0.05, 8.0) as f32,
+                // Slice mode off: the main output uses the single-projector
+                // grade, not blendRenderer's multi-projector one.
+                0.0,
+                0.0,
+            ],
+            edge_gamma: [2.2; 4],
+            black_level: [0.0; 4],
+            // The main output never carries a per-slice screen warp; that is
+            // a projector-alignment transform and belongs to the slice.
+            swarp: [0.0; 4],
+            swarp_c0: [0.0, 0.0, 1.0, 0.0],
+            swarp_c1: [1.0, 1.0, 0.0, 1.0],
+            mwarp: master_warp,
+            mwarp_c0: master_c0,
+            mwarp_c1: master_c1,
+            swarp_mesh: [[0.0; 4]; 128],
+            mwarp_mesh: master_mesh,
+        };
+        Ok(json!({ "domeEnabled": dome_enabled, "masterWarp": master_warp[0] > 0.5 }))
+    }
+
+    /// Multi-output slice displays. Each entry carries the slice's crop on
+    /// the master composition plus its own projector grade, so the core can
+    /// composite a full-resolution frame per display rather than having each
+    /// slice window re-render the whole scene in WebGL and crop it.
+    fn apply_slice_outputs(&mut self, params: &Value) -> Result<Value, String> {
+        let mut specs: Vec<SliceOutputSpec> = Vec::new();
+        if let Some(entries) = params.get("slices").and_then(Value::as_array) {
+            for entry in entries {
+                let Some(id) = string_at(entry, &["id"]).filter(|id| !id.trim().is_empty()) else {
+                    continue;
+                };
+                let read = |keys: &[&str], fallback: f64| number_at(entry, keys).unwrap_or(fallback);
+                let width = read(&["width"], 1920.0).clamp(16.0, 16384.0) as u32;
+                let height = read(&["height"], 1080.0).clamp(16.0, 16384.0) as u32;
+                let crop_x = read(&["cropX"], 0.0).clamp(0.0, 0.99) as f32;
+                let crop_y = read(&["cropY"], 0.0).clamp(0.0, 0.99) as f32;
+                let crop_w = read(&["cropW"], 1.0).clamp(0.01, 1.0 - crop_x as f64) as f32;
+                let crop_h = read(&["cropH"], 1.0).clamp(0.01, 1.0 - crop_y as f64) as f32;
+                let rotation = (((read(&["rotation"], 0.0) % 360.0) + 360.0) % 360.0 / 90.0).round();
+                let blend_gamma = read(&["edgeBlendGamma"], 2.2);
+                // Screen warp: 'corners' and 'mesh' control points are sample
+                // positions on the master, so they replace the rect crop
+                // rather than composing with it — same as blendRenderer.
+                let warp_mode = string_at(entry, &["warpMode"])
+                    .unwrap_or_else(|| "rect".to_string());
+                let (slice_c0, slice_c1) = warp_corners_at(entry.get("corners"));
+                let (slice_rows, slice_cols, slice_mesh) = if warp_mode == "mesh" {
+                    warp_mesh_at(entry.get("meshGrid"))
+                } else {
+                    (0.0, 0.0, [[0.0f32; 4]; 128])
+                };
+                let warp_code = match warp_mode.as_str() {
+                    "corners" => 1.0,
+                    // A mesh that failed validation falls back to the rect
+                    // crop instead of collapsing the screen to a point.
+                    "mesh" if slice_rows >= 2.0 && slice_cols >= 2.0 => 2.0,
+                    _ => 0.0,
+                };
+                // A slice inherits the master dome so a domed rig can still be
+                // split across projectors, but overrides every flat transform.
+                let stage = OutputStage {
+                    out0: [crop_x, crop_y, crop_w, crop_h],
+                    out1: [
+                        rotation.clamp(0.0, 3.0) as f32,
+                        read(&["brightness"], 1.0).max(0.0) as f32,
+                        read(&["contrast"], 1.0).max(0.0) as f32,
+                        read(&["gamma"], 1.0).max(0.001) as f32,
+                    ],
+                    edge: [
+                        read(&["edgeBlendLeft"], 0.0).clamp(0.0, 0.5) as f32,
+                        read(&["edgeBlendRight"], 0.0).clamp(0.0, 0.5) as f32,
+                        read(&["edgeBlendTop"], 0.0).clamp(0.0, 0.5) as f32,
+                        read(&["edgeBlendBottom"], 0.0).clamp(0.0, 0.5) as f32,
+                    ],
+                    dome0: self.output_stage.dome0,
+                    dome1: self.output_stage.dome1,
+                    dome2: [self.output_stage.dome2[0], blend_gamma as f32, 1.0, 0.0],
+                    edge_gamma: [
+                        read(&["edgeBlendLeftGamma"], blend_gamma).clamp(0.05, 8.0) as f32,
+                        read(&["edgeBlendRightGamma"], blend_gamma).clamp(0.05, 8.0) as f32,
+                        read(&["edgeBlendTopGamma"], blend_gamma).clamp(0.05, 8.0) as f32,
+                        read(&["edgeBlendBottomGamma"], blend_gamma).clamp(0.05, 8.0) as f32,
+                    ],
+                    black_level: [
+                        read(&["blackLevelR"], 0.0).clamp(0.0, 1.0) as f32,
+                        read(&["blackLevelG"], 0.0).clamp(0.0, 1.0) as f32,
+                        read(&["blackLevelB"], 0.0).clamp(0.0, 1.0) as f32,
+                        read(&["blackLevelFeather"], 0.5).clamp(0.0, 1.0) as f32,
+                    ],
+                    swarp: [warp_code, slice_rows, slice_cols, 0.0],
+                    swarp_c0: slice_c0,
+                    swarp_c1: slice_c1,
+                    // Slices sample the master-warped composite, so they
+                    // inherit the master warp exactly as the WebGL two-pass
+                    // path does (warp the master, then crop from it).
+                    mwarp: self.output_stage.mwarp,
+                    mwarp_c0: self.output_stage.mwarp_c0,
+                    mwarp_c1: self.output_stage.mwarp_c1,
+                    swarp_mesh: slice_mesh,
+                    mwarp_mesh: self.output_stage.mwarp_mesh,
+                };
+                specs.push(SliceOutputSpec { id, width, height, stage });
+            }
+        }
+        specs.truncate(MAX_SLICE_OUTPUTS);
+        let ids: Vec<String> = specs.iter().map(|spec| spec.id.clone()).collect();
+        self.slice_outputs = specs;
+        Ok(json!({ "slices": ids }))
     }
 
     fn apply_output_config(&mut self, params: &Value) {
@@ -4138,6 +4593,18 @@ impl App {
                 .unwrap_or_default();
             match command_type {
                 "set_output" => self.apply_output_config(command),
+                "set_output_state" => {
+                    let _ = self.apply_output_state(command);
+                }
+                "set_composite_effects" => {
+                    let _ = self.apply_composite_effects(command);
+                }
+                "set_output_stage" => {
+                    let _ = self.apply_output_stage(command);
+                }
+                "set_slice_outputs" => {
+                    let _ = self.apply_slice_outputs(command);
+                }
                 "upsert_layer" => self.apply_upsert_layer(command),
                 "set_layer_visibility" => self.apply_layer_visibility(command),
                 "set_layer_color" => self.apply_layer_color(command),
@@ -7384,6 +7851,13 @@ impl App {
             self.stats.gpu_backpressure_skips = self.stats.gpu_backpressure_skips.saturating_add(1);
             return;
         }
+        // Output freeze holds the last presented frame. Returning before any
+        // compositing leaves the swapchain and the shared-texture export
+        // untouched, so the projector keeps showing exactly what was on
+        // screen when the operator hit freeze.
+        if self.output_frozen {
+            return;
+        }
         self.render_bound_isf_layers();
         let mut native_graph_jobs = self.run_native_graph_layers();
         native_graph_jobs.append(&mut self.pending_native_graph_jobs);
@@ -7430,6 +7904,11 @@ impl App {
             .saturating_add(native_graph_job_count.min(usize::MAX as u64) as usize)
             .saturating_add(native_graph_compute_pass_count.min(usize::MAX as u64) as usize)
             .saturating_add(native_graph_render_pass_count.min(usize::MAX as u64) as usize);
+        // Read before borrowing the renderer mutably.
+        let output_gate = self.output_gate();
+        let post_effects = self.composite_effect_slots();
+        let output_stage = self.output_stage;
+        let slice_specs = self.slice_outputs.clone();
         let Some(renderer) = self.renderer.as_mut() else {
             return;
         };
@@ -7453,6 +7932,9 @@ impl App {
             self.audio1,
             self.audio2,
             present_surface,
+            output_gate,
+            &post_effects,
+            output_stage,
         );
         // Deck confidence monitors ride the same frame: two small composite
         // passes over the bank-tagged layers, after the program render so
@@ -7475,6 +7957,24 @@ impl App {
                 self.audio2,
                 monitor_width,
                 monitor_height,
+            );
+        }
+        // Slice displays ride the same frame for the same reason: every
+        // source frame they sample is already current after the program
+        // render, so a slice costs one composite pass and no extra decode.
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        if render_result.is_ok() && !slice_specs.is_empty() {
+            renderer.render_slice_outputs(
+                self.command_phase,
+                render_time,
+                frame_index,
+                &gpu_layers,
+                self.audio0,
+                self.audio1,
+                self.audio2,
+                output_gate,
+                &post_effects,
+                &slice_specs,
             );
         }
         if render_result.is_ok() && native_graph_job_count > 0 {
@@ -7695,6 +8195,9 @@ impl App {
         };
         let stage3d_mesh_frame = self.stage3d_mesh_frame();
         let scene_overlay_items = self.scene_overlay_items();
+        let output_gate = self.output_gate();
+        let post_effects = self.composite_effect_slots();
+        let output_stage = self.preview_output_stage();
         let Some(renderer) = self.renderer.as_mut() else {
             return Err("native renderer has not created a wgpu device".to_string());
         };
@@ -7711,6 +8214,9 @@ impl App {
             self.audio0,
             self.audio1,
             self.audio2,
+            output_gate,
+            &post_effects,
+            output_stage,
         ) {
             renderer.last_frame_error = Some(err.clone());
             return Err(err);
@@ -7786,12 +8292,27 @@ impl App {
                 "unsupported frame snapshot export format '{storage_format}'; expected raw-texture"
             ));
         }
-        let (snapshot_time, snapshot_frame_index) = self.render_frame_snapshot_texture(params)?;
+        // source: "output" reads the ALREADY-RENDERED output export texture
+        // instead of re-rendering the scene into the snapshot target — live
+        // REC uses this so each captured frame costs one readback, not a
+        // second full composite pass (which visibly dropped the live fps).
+        let use_output_export = string_at(params, &["source"])
+            .map(|value| value.eq_ignore_ascii_case("output"))
+            .unwrap_or(false);
+        let (snapshot_time, snapshot_frame_index) = if use_output_export {
+            (self.render_clock_time, self.native_frame_index())
+        } else {
+            self.render_frame_snapshot_texture(params)?
+        };
         let (mut snapshot, pixels) = {
             let Some(renderer) = self.renderer.as_mut() else {
                 return Err("native renderer has not created a wgpu device".to_string());
             };
-            let readback = renderer.read_frame_snapshot()?;
+            let readback = if use_output_export {
+                renderer.read_output_export_frame()?
+            } else {
+                renderer.read_frame_snapshot()?
+            };
             let snapshot = readback.to_json(false);
             renderer.poll_gpu_timing();
             (snapshot, readback.pixels)
@@ -8042,6 +8563,34 @@ impl App {
     fn apply_queue_compute_graph(&mut self, command: &Value) -> Result<(), String> {
         let job = self.compute_graph_frame_job(command)?;
         self.register_compute_graph_source_frame_targets(&job.render_plans);
+        // Coalesce: a newer job rendering into the same source frame(s)
+        // REPLACES any still-pending job for those targets. The render
+        // loop executes every pending job per frame, so a submission
+        // rate above the core's render rate would otherwise accumulate
+        // stale jobs quadratically — renders slow, more jobs pile on,
+        // presentation starves (observed as ~1fps splat playback with a
+        // 60fps submitter), and the queue eventually kills the process.
+        // Only the freshest time step per target matters.
+        let new_targets: Vec<String> = job
+            .render_plans
+            .iter()
+            .filter_map(|plan| match &plan.target {
+                NativeComputeGraphRenderTarget::SourceFrame { source_id, .. } => {
+                    Some(source_id.clone())
+                }
+                _ => None,
+            })
+            .collect();
+        if !new_targets.is_empty() {
+            self.pending_native_graph_jobs.retain(|pending| {
+                !pending.render_plans.iter().any(|plan| match &plan.target {
+                    NativeComputeGraphRenderTarget::SourceFrame { source_id, .. } => {
+                        new_targets.iter().any(|target| target == source_id)
+                    }
+                    _ => false,
+                })
+            });
+        }
         self.pending_native_graph_jobs.push(job);
         Ok(())
     }
@@ -12377,7 +12926,25 @@ impl RenderState {
                 command_phase: 0.0,
                 layer_count: 0.0,
                 frame_count: 0.0,
-                _pad0: [0.0, 0.0],
+                output_gate: 1.0,
+                post_count: 0.0,
+                post: [[0.0; 4]; 8],
+                out0: [0.0, 0.0, 1.0, 1.0],
+                out1: [0.0, 1.0, 1.0, 1.0],
+                edge: [0.0; 4],
+                dome0: [0.0; 4],
+                dome1: [0.0; 4],
+                dome2: [1.0, 2.2, 0.0, 0.0],
+                edge_gamma: [2.2; 4],
+                black_level: [0.0; 4],
+                swarp: [0.0; 4],
+                swarp_c0: [0.0, 0.0, 1.0, 0.0],
+                swarp_c1: [1.0, 1.0, 0.0, 1.0],
+                mwarp: [0.0; 4],
+                mwarp_c0: [0.0, 0.0, 1.0, 0.0],
+                mwarp_c1: [1.0, 1.0, 0.0, 1.0],
+                swarp_mesh: [[0.0; 4]; 128],
+                mwarp_mesh: [[0.0; 4]; 128],
                 audio0: [0.0; 4],
                 audio1: [0.0; 4],
                 audio2: [0.0; 4],
@@ -12962,6 +13529,8 @@ impl RenderState {
             output_export,
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             deck_monitor_targets: None,
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            slice_targets: HashMap::new(),
             snapshot_texture,
             snapshot_view,
             last_frame_metrics: None,
@@ -13427,6 +13996,11 @@ impl RenderState {
                 audio0,
                 audio1,
                 audio2,
+                // Deck monitors are cue displays, never the live output:
+                // blackout must not blank them.
+                1.0,
+                &[],
+                OutputStage::default(),
             );
             let mut encoder = self
                 .device
@@ -13459,6 +14033,156 @@ impl RenderState {
             }
         }
         true
+    }
+
+    /// Create (or resize) one slice display's offscreen target and its
+    /// shared-texture export.
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    fn ensure_slice_target(&mut self, id: &str, width: u32, height: u32) -> bool {
+        if let Some(existing) = self.slice_targets.get(id) {
+            if existing.export.width == width && existing.export.height == height {
+                return true;
+            }
+        }
+        let (render_texture, render_view) = Self::create_offscreen_target(
+            &self.device,
+            width,
+            height,
+            self.config.format,
+            "Ghost Slice Output Render Target",
+        );
+        let export = match Self::create_output_export_target(
+            &self.device,
+            width,
+            height,
+            native_output_export_format(self.config.format),
+        ) {
+            Ok(export) => export,
+            Err(err) => {
+                eprintln!("[ghost-core] slice output export target failed: {err}");
+                self.slice_targets.remove(id);
+                return false;
+            }
+        };
+        self.slice_targets.insert(
+            id.to_string(),
+            SliceOutputTarget {
+                _render_texture: render_texture,
+                render_view,
+                export,
+            },
+        );
+        true
+    }
+
+    /// Composite one full frame per slice display. Each pass re-runs the
+    /// compositor with that slice's output stage, so the projector gets its
+    /// region rendered at the display's own resolution rather than a crop of
+    /// a downscaled master — the reason this is a second composite rather
+    /// than a blit.
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[allow(clippy::too_many_arguments)]
+    fn render_slice_outputs(
+        &mut self,
+        command_phase: f32,
+        time_seconds: Option<f32>,
+        frame_count: u64,
+        layers: &[LayerGpu],
+        audio0: [f32; 4],
+        audio1: [f32; 4],
+        audio2: [f32; 4],
+        output_gate: f32,
+        post_effects: &[[f32; 4]],
+        specs: &[SliceOutputSpec],
+    ) {
+        // Drop targets for slices the editor has closed so their shared
+        // textures (and the VRAM behind them) don't leak across a session.
+        let live: std::collections::HashSet<&str> =
+            specs.iter().map(|spec| spec.id.as_str()).collect();
+        self.slice_targets.retain(|id, _| live.contains(id.as_str()));
+
+        for spec in specs {
+            if !self.ensure_slice_target(&spec.id, spec.width, spec.height) {
+                continue;
+            }
+            self.write_frame_inputs(
+                command_phase,
+                layers.len() as u32,
+                time_seconds,
+                frame_count,
+                layers,
+                None,
+                audio0,
+                audio1,
+                audio2,
+                output_gate,
+                post_effects,
+                spec.stage,
+            );
+            let mut encoder = self
+                .device
+                .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                    label: Some("Ghost Slice Output Encoder"),
+                });
+            {
+                let Some(target) = self.slice_targets.get(&spec.id) else {
+                    continue;
+                };
+                self.draw_fullscreen_to_view(
+                    &mut encoder,
+                    &target.render_view,
+                    "Ghost Slice Output Pass",
+                    None,
+                );
+                target.export.blitter.copy(
+                    &self.device,
+                    &mut encoder,
+                    &target.render_view,
+                    &target.export.view,
+                );
+            }
+            self.queue.submit(Some(encoder.finish()));
+            if let Some(target) = self.slice_targets.get_mut(&spec.id) {
+                target.export.frame = target.export.frame.saturating_add(1);
+            }
+        }
+    }
+
+    /// Shared-texture metadata for every live slice display — same shape as
+    /// the deck-monitor payload so the electron presenter reuses its import.
+    fn slice_output_metadata(&self) -> Value {
+        #[cfg(target_os = "macos")]
+        {
+            if !self.slice_targets.is_empty() {
+                let slices: Vec<Value> = self
+                    .slice_targets
+                    .iter()
+                    .map(|(id, target)| {
+                        json!({
+                            "id": id,
+                            "handle": target.export.surface.id().to_string(),
+                            "handle_encoding": "integer",
+                            "width": target.export.width,
+                            "height": target.export.height,
+                            "frame": target.export.frame,
+                        })
+                    })
+                    .collect();
+                return json!({
+                    "available": true,
+                    "platform": "iosurface",
+                    "slices": slices,
+                });
+            }
+            return json!({ "available": true, "platform": "iosurface", "slices": [] });
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            json!({
+                "available": false,
+                "reason": "native slice presentation is implemented on macOS IOSurface only",
+            })
+        }
     }
 
     /// Shared-texture metadata for both deck monitors — same shape the
@@ -15483,6 +16207,35 @@ impl RenderState {
         Ok(readback)
     }
 
+    /// Read the ALREADY-RENDERED output export texture (the frame the
+    /// presenter/Syphon are showing) without re-compositing the scene —
+    /// the cheap capture path for live recording.
+    fn read_output_export_frame(&mut self) -> Result<FrameSnapshotReadback, String> {
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        {
+            let Some(export) = self.output_export.as_ref() else {
+                return Err(
+                    "native output shared-texture export target is unavailable".to_string(),
+                );
+            };
+            let readback = read_texture_to_frame(
+                &self.device,
+                &self.queue,
+                &export.texture,
+                export.format,
+                export.width.max(1),
+                export.height.max(1),
+                "Ghost Render Core Output Export Frame",
+            )?;
+            self.last_frame_metrics = Some(readback.metrics.clone());
+            return Ok(readback);
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        {
+            Err("output export capture is not available on this platform".to_string())
+        }
+    }
+
     fn frame_snapshot(&mut self, include_pixels: bool) -> Result<Value, String> {
         let readback = self.read_frame_snapshot()?;
         Ok(readback.to_json(include_pixels))
@@ -15541,6 +16294,9 @@ impl RenderState {
         audio0: [f32; 4],
         audio1: [f32; 4],
         audio2: [f32; 4],
+        output_gate: f32,
+        post_effects: &[[f32; 4]],
+        stage: OutputStage,
     ) {
         let uniforms = Uniforms {
             resolution: [self.config.width as f32, self.config.height as f32],
@@ -15548,10 +16304,34 @@ impl RenderState {
             command_phase,
             layer_count: layers_seen as f32,
             frame_count: frame_count as f32,
-            _pad0: [0.0, 0.0],
+            output_gate,
+            post_count: post_effects.len().min(8) as f32,
             audio0,
             audio1,
             audio2,
+            out0: stage.out0,
+            out1: stage.out1,
+            edge: stage.edge,
+            dome0: stage.dome0,
+            dome1: stage.dome1,
+            dome2: stage.dome2,
+            edge_gamma: stage.edge_gamma,
+            black_level: stage.black_level,
+            swarp: stage.swarp,
+            swarp_c0: stage.swarp_c0,
+            swarp_c1: stage.swarp_c1,
+            mwarp: stage.mwarp,
+            mwarp_c0: stage.mwarp_c0,
+            mwarp_c1: stage.mwarp_c1,
+            swarp_mesh: stage.swarp_mesh,
+            mwarp_mesh: stage.mwarp_mesh,
+            post: {
+                let mut slots = [[0.0f32; 4]; 8];
+                for (slot, value) in slots.iter_mut().zip(post_effects.iter().take(8)) {
+                    *slot = *value;
+                }
+                slots
+            },
         };
         self.queue
             .write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
@@ -15749,6 +16529,9 @@ impl RenderState {
         audio0: [f32; 4],
         audio1: [f32; 4],
         audio2: [f32; 4],
+        output_gate: f32,
+        post_effects: &[[f32; 4]],
+        stage: OutputStage,
     ) -> Result<(), String> {
         self.write_frame_inputs(
             command_phase,
@@ -15760,6 +16543,9 @@ impl RenderState {
             audio0,
             audio1,
             audio2,
+            output_gate,
+            post_effects,
+            stage,
         );
         let mut encoder = self
             .device
@@ -15827,6 +16613,9 @@ impl RenderState {
         audio1: [f32; 4],
         audio2: [f32; 4],
         present_surface: bool,
+        output_gate: f32,
+        post_effects: &[[f32; 4]],
+        stage: OutputStage,
     ) -> Result<SurfacePresentOutcome, String> {
         let mut present_outcome = SurfacePresentOutcome::Offscreen;
         let surface_frame = if present_surface {
@@ -15874,6 +16663,9 @@ impl RenderState {
             audio0,
             audio1,
             audio2,
+            output_gate,
+            post_effects,
+            stage,
         );
         let mut mirror_encoder =
             self.device

@@ -4,6 +4,7 @@
   import { RenderEngine, loadImageTexture, createVideoTexture, getThreeJSIframeContext, createThreeJSIframeContext, getJSAnimationContext, createJSAnimationContext } from '../renderer/engine';
   import { project, layers, compositions } from '../stores/layers';
   import { nativePreviewHostEl } from '../stores/nativePreviewHost';
+  import { splatPointer } from '../stores/splatPointer';
   import { stage3dScene } from '../stage3d/store';
   import { buildNativeStage3DScene } from '../stage3d/nativeSceneBridge';
   import { setNativeRendererStage3DScene } from '$lib/api/native-renderer';
@@ -1549,6 +1550,11 @@
 
   onMount(() => {
     if (!isOutputMode && !isOsrMode && typeof window !== 'undefined') {
+      // Splat mouse interaction: window-level so the pointer works over
+      // the native presenter hole (which has no DOM surface of its own).
+      window.addEventListener('pointermove', handleSplatPointerMove, { passive: true });
+      window.addEventListener('pointerdown', handleSplatPointerDown, { passive: true });
+      window.addEventListener('pointerup', handleSplatPointerUp, { passive: true });
       (window as any).__ghostPrewarmGpuShader = (layerId: string, shaderId: string) => {
         void prewarmGpuShaderForLayer(layerId, shaderId);
       };
@@ -1952,6 +1958,14 @@
       stageFxNativeRaf = requestAnimationFrame(stageFxNativeTick);
       const nativeVjLayersUnsub = vjOutputLayers.subscribe(() => scheduleNativeLayersSync());
       const nativeVjStateUnsub = vjClipLauncher.subscribe(() => scheduleNativeLayersSync());
+      // The timeline and the sequencer drive layer state without touching the
+      // project store, so nothing here re-synced on their ticks. The sync's
+      // own RAF loop covers layers that animate continuously (shaders), but a
+      // media/image layer has no such loop — its sequencer step reached the
+      // core only if some unrelated sync happened to fire, which is why a
+      // sequenced layer would go dark and never come back.
+      const nativeSequencerUnsub = layerSequencer.subscribe(() => scheduleNativeLayersSync());
+      const nativeKeyframeUnsub = keyframeTimeline.subscribe(() => scheduleNativeLayersSync());
       const nativePerformerWorldUnsub = nativePerformerWorldOverlays.subscribe(() =>
         scheduleNativeLayersSync(),
       );
@@ -1970,6 +1984,8 @@
         previousNativeProjectUnsub();
         nativeVjLayersUnsub();
         nativeVjStateUnsub();
+        nativeSequencerUnsub();
+        nativeKeyframeUnsub();
         nativePerformerWorldUnsub();
         if (stageFxNativeRaf !== null) {
           cancelAnimationFrame(stageFxNativeRaf);
@@ -3413,6 +3429,28 @@
   // stalling weak GPUs. Cache last-applied dims and bail unchanged.
   let _lastResizeW: number | null = null;
   let _lastResizeH: number | null = null;
+  let _lastNativeFitW: number | null = null;
+  let _lastNativeFitH: number | null = null;
+  // Native mode has no `engine`, so the block below never ran and an output
+  // resize left the editor container at its previous aspect — the presenter
+  // filled the new size while every DOM overlay (warp handles, mapping grid)
+  // stayed on stale geometry until some unrelated interaction re-fit it.
+  // The wrapper's ResizeObserver only fires when the WINDOW changes, not when
+  // the project resolution does, so refit here on project dimensions.
+  $: if (!engine && nativePrimary && $project.width && $project.height && wrapperEl) {
+    const pW = $project.width || 1920;
+    const pH = $project.height || 1080;
+    if ((pW !== _lastNativeFitW || pH !== _lastNativeFitH)
+      && wrapperEl.offsetWidth > 0 && wrapperEl.offsetHeight > 0) {
+      _lastNativeFitW = pW;
+      _lastNativeFitH = pH;
+      sizeContainer(wrapperEl.offsetWidth, wrapperEl.offsetHeight);
+      if (canvas) {
+        canvas.width = pW;
+        canvas.height = pH;
+      }
+    }
+  }
   $: if (engine && $project.width && $project.height) {
     const pW = $project.width || 1920;
     const pH = $project.height || 1080;
@@ -3639,6 +3677,11 @@
   }
 
   onDestroy(() => {
+    if (!isOutputMode && !isOsrMode && typeof window !== 'undefined') {
+      window.removeEventListener('pointermove', handleSplatPointerMove);
+      window.removeEventListener('pointerdown', handleSplatPointerDown);
+      window.removeEventListener('pointerup', handleSplatPointerUp);
+    }
     if (!isOutputMode && !isOsrMode && typeof window !== 'undefined' && (window as any).__ghostPrewarmGpuShader) {
       delete (window as any).__ghostPrewarmGpuShader;
     }
@@ -7012,6 +7055,30 @@
       height,
     };
   }
+
+  // ── Splat mouse interaction feed ──
+  // Publishes the pointer's normalized position over the native preview's
+  // CONTENT rect (letterbox-aware). The sync packs it into the splat
+  // uniforms so point clouds react to the mouse in native mode.
+  function updateSplatPointerFromEvent(e: PointerEvent, down?: boolean) {
+    const rect = nativePreviewEmbeddedRect();
+    if (!rect || rect.contentWidth <= 2 || rect.contentHeight <= 2) {
+      splatPointer.update((prev) => (prev.active ? { ...prev, active: false } : prev));
+      return;
+    }
+    const nx = (e.clientX - rect.x - rect.contentX) / rect.contentWidth;
+    const ny = (e.clientY - rect.y - rect.contentY) / rect.contentHeight;
+    const inside = nx >= 0 && nx <= 1 && ny >= 0 && ny <= 1;
+    splatPointer.update((prev) => ({
+      x: inside ? nx : prev.x,
+      y: inside ? ny : prev.y,
+      active: inside,
+      down: down ?? prev.down,
+    }));
+  }
+  function handleSplatPointerMove(e: PointerEvent) { updateSplatPointerFromEvent(e); }
+  function handleSplatPointerDown(e: PointerEvent) { updateSplatPointerFromEvent(e, true); }
+  function handleSplatPointerUp(e: PointerEvent) { updateSplatPointerFromEvent(e, false); }
 
   function nativePreviewEmbeddedRect(): {
     x: number;

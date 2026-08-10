@@ -29,9 +29,13 @@
    * `containerHeight` runs top→bottom, so `pixelY = nY * height` with
    * no flip. Output-warp geometry uses projector-unit-quad 0..1.
    */
-  import { onDestroy } from 'svelte';
+  import { onDestroy, onMount } from 'svelte';
+  import { get } from 'svelte/store';
   import type { OutputSlice } from '../stores/settings';
+  import { project } from '../stores/layers';
+  import { settings } from '../stores/settings';
   import type { WarpCorners, MeshWarpGrid } from '../types';
+  import { normalizedWarpNudge } from '../utils/warpNudge';
   import { screens, selectedScreenId, screenActions } from '../stores/screens';
 
   interface Props {
@@ -87,6 +91,7 @@
     e.stopPropagation();
     const slice = $screens.find(s => s.id === sliceId);
     if (!slice) return;
+    cancelDrag();
     drag = {
       sliceId,
       kind,
@@ -109,16 +114,127 @@
     window.addEventListener('mouseup', onMouseUp);
   }
 
-  function onMouseUp(_e: MouseEvent) {
-    drag = null;
+  function removeDragListeners() {
     window.removeEventListener('mousemove', onMouseMove);
     window.removeEventListener('mouseup', onMouseUp);
   }
 
-  onDestroy(() => {
-    window.removeEventListener('mousemove', onMouseMove);
-    window.removeEventListener('mouseup', onMouseUp);
+  function cancelDrag() {
+    drag = null;
+    removeDragListeners();
+  }
+
+  function onMouseUp(_e: MouseEvent) {
+    cancelDrag();
+  }
+
+  function onVisibilityChange() {
+    if (document.hidden) cancelDrag();
+  }
+
+  function isTextEditingTarget(target: EventTarget | null): boolean {
+    const el = target instanceof HTMLElement ? target : null;
+    const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+    return Boolean(
+      el?.closest('input, textarea, select, [contenteditable="true"]') ||
+      active?.closest('input, textarea, select, [contenteditable="true"]')
+    );
+  }
+
+  function nudgeSelectedSlice(dx: number, dy: number) {
+    const id = $selectedScreenId;
+    const slice = $screens.find(s => s.id === id);
+    if (!slice) return;
+    const mode = slice.warpMode ?? 'rect';
+
+    if (mode === 'rect') {
+      screenActions.update(slice.id, {
+        cropX: Math.min(Math.max(0, slice.cropX + dx), 1 - slice.cropW),
+        cropY: Math.min(Math.max(0, slice.cropY + dy), 1 - slice.cropH),
+      });
+      return;
+    }
+
+    if (mode === 'corners' && slice.corners) {
+      const c = slice.corners;
+      screenActions.update(slice.id, {
+        corners: {
+          topLeft: { x: c.topLeft.x + dx, y: c.topLeft.y + dy },
+          topRight: { x: c.topRight.x + dx, y: c.topRight.y + dy },
+          bottomLeft: { x: c.bottomLeft.x + dx, y: c.bottomLeft.y + dy },
+          bottomRight: { x: c.bottomRight.x + dx, y: c.bottomRight.y + dy },
+        },
+      });
+      return;
+    }
+
+    if (mode === 'mesh' && slice.meshGrid) {
+      screenActions.update(slice.id, {
+        meshGrid: {
+          rows: slice.meshGrid.rows,
+          cols: slice.meshGrid.cols,
+          points: slice.meshGrid.points.map(row =>
+            row.map(pt => ({ x: pt.x + dx, y: pt.y + dy }))
+          ),
+        },
+      });
+    }
+  }
+
+  function handleKeyDown(e: KeyboardEvent) {
+    if (!$selectedScreenId || isTextEditingTarget(e.target)) return;
+    let dx = 0;
+    let dy = 0;
+    const proj = get(project);
+    const step = normalizedWarpNudge(
+      proj.width,
+      proj.height,
+      get(settings).ui.warpDragGranularity,
+      e.shiftKey ? 10 : 1,
+    );
+
+    switch (e.key) {
+      case 'ArrowUp':
+        dy = -step.y;
+        break;
+      case 'ArrowDown':
+        dy = step.y;
+        break;
+      case 'ArrowLeft':
+        dx = -step.x;
+        break;
+      case 'ArrowRight':
+        dx = step.x;
+        break;
+      case 'Escape':
+        cancelDrag();
+        return;
+      default:
+        return;
+    }
+
+    e.preventDefault();
+    e.stopPropagation();
+    nudgeSelectedSlice(dx, dy);
+  }
+
+  onMount(() => {
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('blur', handleWindowBlur);
+    document.addEventListener('visibilitychange', onVisibilityChange);
   });
+
+  onDestroy(() => {
+    cancelDrag();
+    window.removeEventListener('keydown', handleKeyDown);
+    window.removeEventListener('blur', handleWindowBlur);
+    document.removeEventListener('visibilitychange', onVisibilityChange);
+  });
+
+  function handleWindowBlur() {
+    cancelDrag();
+  }
+
 
   // ─── Mouse-move dispatcher ────────────────────────────────────────
   function onMouseMove(e: MouseEvent) {

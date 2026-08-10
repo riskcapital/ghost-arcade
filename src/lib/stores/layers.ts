@@ -218,7 +218,7 @@ function placeNewLayer(layers: Layer[], newLayer: Layer, selectedLayerId: string
   }
 }
 
-const NATIVE_READY_LAYER_TYPES = new Set<LayerType>(['media', 'gpu', 'color', 'lines', 'svg', 'lightpainting', 'text', 'splat', 'model3d', 'group', 'screen']);
+const NATIVE_READY_LAYER_TYPES = new Set<LayerType>(['media', 'gpu', 'color', 'lines', 'svg', 'lightpainting', 'text', 'splat', 'model3d', 'group', 'screen', 'mask']);
 
 function nativeLayerTypePending(type: LayerType): boolean {
   return NATIVE_ENGINE_ONLY && Boolean(get(settings).experimental?.outputNativeCore) && !NATIVE_READY_LAYER_TYPES.has(type);
@@ -4731,6 +4731,7 @@ void main() {
           rotation: clip.rotation,
           opacity: clip.opacity,
           spoutSource: clip.spoutSource,
+          ndiSource: (clip as any).ndiSource,
           effectSource: clip.effectSource,
           jsAnimation: clip.jsAnimation,
           effects: clip.effects || [],
@@ -4739,6 +4740,17 @@ void main() {
           // contents survives save/reload.
           splatContent: (clip as any).splatContent,
           model3dContent: (clip as any).model3dContent || (clip as any).model3DContent,
+          // GPU shader and live-text clips keep ALL of their state in these
+          // content objects — a `gpu` clip that loses gpuLayerContent reopens
+          // as an empty cell, not merely an unresolved asset.
+          gpuLayerContent: (clip as any).gpuLayerContent,
+          textContent: (clip as any).textContent,
+          // Preset clips fire a saved composition by id.
+          presetId: (clip as any).presetId,
+          shaderValueAuto: (clip as any).shaderValueAuto,
+          mirrorX: (clip as any).mirrorX,
+          playbackSyncBeats: (clip as any).playbackSyncBeats,
+          durationSeconds: (clip as any).durationSeconds,
           _assetRef: recoveredAssetRef,
           // Exclude runtime objects: videoElement / iframeElement / synthVisionCanvas
         };
@@ -4904,12 +4916,18 @@ void main() {
         geoDeck: geoDeckStore.serialize(),
       };
 
+      // NOTE: deliberately no `project.stage3d` here. This export feeds the
+      // live state-sync relay, and importProject treats a present stage3d as
+      // "restore this scene" — so including it made every sync tick reload a
+      // stale snapshot over the Stage Sim, wiping the venue and any preset
+      // the operator had just applied. Save and autosave add it themselves.
       return exportData;
     },
 
     /**
-     * Export the project as a JSON string for download.
-     * Used for auto-save and real-time sync (no binary embedding).
+     * Export the project as a JSON string for autosave / download.
+     * Unlike exportProject(), this DOES carry the Stage 3D scene — the live
+     * sync relay uses exportProject() directly and must not.
      */
     exportProjectJSON(): string {
       const exportData = this.exportProject();
@@ -5365,6 +5383,9 @@ void main() {
                 );
               }
             }
+            if (clip.gpuLayerContent) {
+              resolveGpuLayerAssetParams(clip.gpuLayerContent);
+            }
             return {
               id: clip.id || generateUUID(),
               type: clipType,
@@ -5385,11 +5406,19 @@ void main() {
               rotation: clip.rotation ?? 0,
               opacity: clip.opacity ?? 1,
               spoutSource: clip.spoutSource,
+              ndiSource: clip.ndiSource,
               effectSource: clip.effectSource,
               jsAnimation: clip.jsAnimation,
               effects: clip.effects || [],
               splatContent: clip.splatContent,
               model3dContent: clipModel3dContent,
+              gpuLayerContent: clip.gpuLayerContent,
+              textContent: clip.textContent,
+              presetId: clip.presetId,
+              shaderValueAuto: clip.shaderValueAuto,
+              mirrorX: clip.mirrorX,
+              playbackSyncBeats: clip.playbackSyncBeats ?? null,
+              durationSeconds: clip.durationSeconds,
               _assetRef: clip._assetRef,
               // videoElement will be recreated at runtime
             } as any;

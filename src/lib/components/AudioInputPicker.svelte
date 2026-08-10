@@ -18,6 +18,16 @@
   import { isMac } from '../bridge';
   import AudioWaveformIndicator from './AudioWaveformIndicator.svelte';
 
+  /** Show the inline oscilloscope. Off where an AudioMeterPanel is mounted
+   *  alongside — that panel hosts the scope as its tweaks trigger, so
+   *  drawing a second one just costs header width. */
+  export let showWaveform: boolean = true;
+
+  /** Open the device list above the button rather than below — for hosts
+   *  pinned to the bottom of the window (the VJ deck dock). Falls back to
+   *  whichever side has room. */
+  export let openUp: boolean = false;
+
   // Internal popover state. Closes on outside click via window listener.
   let showMicPicker = false;
   let pickerEl: HTMLDivElement | null = null;
@@ -34,8 +44,23 @@
       // Reset before measuring so we always start from a known baseline.
       node.style.left = '';
       node.style.right = '0';
-      const rect = node.getBoundingClientRect();
+      node.style.top = '';
+      node.style.bottom = '';
       const margin = 8;
+
+      // Vertical side first: a list opened from the bottom dock has to rise.
+      const anchor = node.parentElement?.getBoundingClientRect();
+      const h = node.getBoundingClientRect().height;
+      const viewH = window.innerHeight || document.documentElement.clientHeight || 0;
+      const roomAbove = anchor ? anchor.top - margin : 0;
+      const roomBelow = anchor && viewH ? viewH - anchor.bottom - margin : Infinity;
+      const flipUp = openUp ? roomAbove >= h : roomBelow < h && roomAbove >= h;
+      if (flipUp) {
+        node.style.top = 'auto';
+        node.style.bottom = 'calc(100% + 4px)';
+      }
+
+      const rect = node.getBoundingClientRect();
       if (rect.left < margin) {
         // Right-anchor would overflow left edge → flip to left-anchor.
         node.style.right = '';
@@ -48,6 +73,7 @@
         }
       }
     };
+    adjust();
     requestAnimationFrame(adjust);
     window.addEventListener('resize', adjust);
     return {
@@ -170,7 +196,9 @@
                     Share. Picking a Window returns silent video and
                     we surface a "No audio track" error. There is no
                     per-app capture on macOS via this API. -->
-  <AudioWaveformIndicator />
+  {#if showWaveform}
+    <AudioWaveformIndicator />
+  {/if}
 
   <button
     class="aip-btn"

@@ -14,8 +14,12 @@
   import { audioStore } from '../stores/audio';
 
   // Logical pixel size; canvas backing-store gets devicePixelRatio'd.
-  const W = 92;
-  const H = 28;
+  // Sizable so the header can run a compact scope inside the meter button
+  // while the standalone strip keeps its original footprint.
+  export let width: number = 92;
+  export let height: number = 28;
+  $: W = width;
+  $: H = height;
 
   let canvas: HTMLCanvasElement | null = null;
   let raf = 0;
@@ -74,6 +78,8 @@
     canvas.style.height = `${H}px`;
   }
 
+  $: if (mounted && canvas && (W || H)) resize();
+
   onMount(() => {
     mounted = true;
     resize();
@@ -94,7 +100,7 @@
 
 <style>
   .awi {
-    display: inline-block;
+    display: block;
     vertical-align: middle;
     background: var(--ga-slot, #050607);
     /* Visually framed but quiet — sits between the icons without

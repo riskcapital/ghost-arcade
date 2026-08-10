@@ -6,7 +6,7 @@
   import { isMac, isDesktopApp, getTextureShareLabel, invoke } from '$lib/bridge';
   import { nativePreviewHostEl } from '../stores/nativePreviewHost';
   import { get } from 'svelte/store';
-  import { mediaLibrary } from '../stores/media';
+  import { mediaLibrary, type MediaItem } from '../stores/media';
   import { vjClipLauncher, type VJClip, type VJBlock, type VJDeck } from '../stores/vjClipLauncher';
   import { vjLayerSequencer } from '../stores/vjLayerSequencer';
   import { keyframeTimeline } from '../stores/keyframeTimeline';
@@ -14,6 +14,7 @@
   import { project, stagePresets, compositions, activeCompositionId } from '../stores/layers';
   import { STAGE_EFFECT_CATALOG, getEffectDef } from '../stores/stageEffects';
   import { surfaceStore, activeSurface } from '../stores/surface';
+  import { synthVisionStore } from '../stores/synthVision';
   import type { StageEffectType, IntegratedEffectType, IntegratedEffectSource, MediaSource } from '../types';
 
   // Stage Effects tab UX state — which effect type the user has
@@ -95,9 +96,9 @@
     name: string;
     description: string;
     tier: string;
-    clipType: 'effect' | 'splat' | 'model3d' | 'gpu' | 'text';
+    clipType: 'effect' | 'splat' | 'model3d' | 'gpu' | 'text' | 'synthvision';
     effectType?: IntegratedEffectType;
-    inlineIcon?: 'splat' | 'model3d' | 'gpu' | 'text';
+    inlineIcon?: 'splat' | 'model3d' | 'gpu' | 'text' | 'synthvision';
   };
 
   const vjPluginCards: VJPluginCard[] = [
@@ -111,6 +112,7 @@
       clipType: 'effect',
       effectType: p.effectType,
     })),
+    { id: 'performer', name: 'Performer', description: 'Keyboard-launched worlds, shaders and clips', tier: 'free', clipType: 'synthvision', inlineIcon: 'synthvision' },
     { id: 'pointcloud', name: 'Point Cloud', description: 'PLY point cloud / splat', tier: 'free', clipType: 'splat', inlineIcon: 'splat' },
     { id: 'model3d', name: '3D Model', description: 'GLTF/OBJ/FBX models', tier: 'free', clipType: 'model3d', inlineIcon: 'model3d' },
   ];
@@ -148,6 +150,14 @@
     ...$globalStagePresets.map(p => ({ ...p, _scope: 'global' as const })),
   ];
 
+  function loadStagePresetFromUI(preset: (typeof allStagePresets)[number]) {
+    if (preset._scope === 'global') {
+      project.loadStagePresetSnapshot(preset);
+    } else {
+      project.loadStagePreset(preset.id);
+    }
+  }
+
   // MIDI: bridge vj:stage:<index> triggers into loadStagePreset(). The
   // router fires `midi-stage-preset` events but nothing listened until
   // now. Index targets the combined project+global list (allStagePresets)
@@ -157,7 +167,7 @@
     const idx = (e as CustomEvent<{ index: number }>).detail?.index;
     if (typeof idx !== 'number') return;
     const preset = allStagePresets[idx];
-    if (preset) project.loadStagePreset(preset.id);
+    if (preset) loadStagePresetFromUI(preset);
   };
 
   let heldStageEffects: Record<string, boolean> = {};
@@ -169,6 +179,15 @@
     const surfaceId = $activeSurface?.id;
     if (!surfaceId) return;
     surfaceStore.setActiveEffect(surfaceId, effectId);
+  }
+
+  function toggleStageActiveEffect(effectId: string) {
+    const surface = $activeSurface;
+    if (!surface) return;
+    if (surface.effectAutomation?.playing) {
+      surfaceStore.updateEffectAutomation({ playing: false });
+    }
+    setStageActiveEffect(surface.activeEffectId === effectId ? null : effectId);
   }
 
   function setStageEffectHeld(effectId: string, held: boolean) {
@@ -297,19 +316,7 @@
   function saveStagePresetWithScope() {
     const name = `Preset ${allStagePresets.length + 1}`;
     if (stageSaveScope === 'global') {
-      const currentProject = get(project);
-      const layersSnapshot = JSON.parse(JSON.stringify(currentProject.layers, (key, value) => {
-        if (key === 'texture' || key === 'videoElement') return undefined;
-        if (typeof value === 'object' && value !== null && value.constructor && value.constructor.name.startsWith('_')) return undefined;
-        return value;
-      }));
-      globalStagePresets.add({
-        id: generateUUID(),
-        name,
-        createdAt: Date.now(),
-        layers: layersSnapshot,
-        scope: 'global',
-      });
+      globalStagePresets.add(project.createStagePresetSnapshot(name, undefined, 'global'));
     } else {
       project.saveStagePreset(name);
     }
@@ -328,14 +335,14 @@
   // re-saving when iterating on a layout under the same name.
   function updateStagePresetInPlace(preset: any) {
     if (preset._scope === 'global') {
-      // Global presets: re-snapshot the project layers and overwrite.
-      const currentProject = get(project);
-      const layersSnapshot = JSON.parse(JSON.stringify(currentProject.layers, (key, value) => {
-        if (key === 'texture' || key === 'videoElement') return undefined;
-        if (typeof value === 'object' && value !== null && value.constructor && value.constructor.name.startsWith('_')) return undefined;
-        return value;
-      }));
-      globalStagePresets.updateContents(preset.id, layersSnapshot);
+      // Global presets: re-snapshot the full stage state and overwrite.
+      const snapshot = project.createStagePresetSnapshot(
+        preset.name,
+        preset.thumbnail,
+        'global',
+        preset.id,
+      );
+      globalStagePresets.updateContents(preset.id, snapshot);
     } else {
       project.updateStagePreset(preset.id);
     }
@@ -415,6 +422,10 @@
   let editingBlockId: string | null = null;
   let editingBlockName: string = '';
   let blockInputEl: HTMLInputElement | null = null;
+
+  // Block drag-reorder state (VJ block tab strip)
+  let draggedBlockIndex: number | null = null;
+  let dragOverBlockIndex: number | null = null;
 
   // Preview canvas
   let previewCanvas: HTMLCanvasElement;
@@ -690,12 +701,18 @@
     if (!clip) return;
     const time = vjClipPlaybackTime(clip);
     if (v) v.playbackRate = rate;
+    // Picking a manual speed releases beat/bar sync (release parity).
     vjClipLauncher.updateActiveClipVideoProps(layerIdx, {
       playbackRate: rate,
+      playbackSyncBeats: null,
       durationSeconds: vjClipDuration(clip) || clip.durationSeconds,
       _nativePlaybackTimeSeconds: time,
       _nativePlaybackUpdatedAtMs: performance.now(),
     }, paramDeck);
+  }
+
+  function vjSetPlaybackSync(layerIdx: number, beats: number | null) {
+    vjClipLauncher.updateActiveClipVideoProps(layerIdx, { playbackSyncBeats: beats }, paramDeck);
   }
 
   function vjSetPlaybackMode(layerIdx: number, mode: 'loop' | 'once') {
@@ -916,7 +933,7 @@
   }
 
   type VJDragPayload = {
-    type: 'shader' | 'video' | 'image' | 'threejs' | 'spout' | 'effect' | 'splat' | 'model3d' | 'gpu' | 'text' | 'preset' | 'live-source';
+    type: 'shader' | 'video' | 'image' | 'threejs' | 'spout' | 'effect' | 'splat' | 'model3d' | 'gpu' | 'text' | 'preset' | 'live-source' | 'synthvision';
     id: string;
     spoutName?: string;
     pluginName?: string;
@@ -959,10 +976,10 @@
   };
 
   type MediaTrayCreatorPayload = {
-    id: 'gpu-shader' | 'text-creator';
-    type: 'gpu' | 'text';
+    id: 'gpu-shader' | 'text-creator' | 'performer';
+    type: 'gpu' | 'text' | 'synthvision';
     name: string;
-    src: 'gpu-layer' | 'text-layer';
+    src: 'gpu-layer' | 'text-layer' | 'performer';
   };
 
   type MediaTrayPresetPayload = {
@@ -979,6 +996,19 @@
   // the crossfader is on (drag from Bank A cell → Bank B cell, etc.)
   let dragOverCell: { layer: number; column: number; bank: VJDeck } | null = null;
   let dragSourceCell: { layer: number; column: number; bank: VJDeck } | null = null;
+  type VJCellPress = {
+    pointerId: number;
+    layer: number;
+    column: number;
+    bank: VJDeck;
+    startX: number;
+    startY: number;
+    moved: boolean;
+  };
+  let cellPress: VJCellPress | null = null;
+  let cellDragInProgress = false;
+  let lastPointerTriggerAt = -Infinity;
+  const CELL_PRESS_SLOP_PX = 12;
 
   // Copy/paste state
   let clipboardClip: VJClip | null = null;
@@ -2365,6 +2395,8 @@
 
   // Drag handlers
   function handleDragStart(e: DragEvent, clip: VJDragPayload) {
+    cellDragInProgress = true;
+    cellPress = null;
     draggedClip = clip;
     // Electron/Chromium requires dataTransfer.setData() for drag to work
     if (e.dataTransfer) {
@@ -2379,6 +2411,10 @@
     draggedClip = null;
     dragOverCell = null;
     dragSourceCell = null;
+    cellPress = null;
+    // Native dragend can arrive just before pointerup on macOS. Keep the
+    // guard through this task so releasing a trackpad drag cannot fire a clip.
+    setTimeout(() => { cellDragInProgress = false; }, 0);
   }
 
   // ─── VJ Media Library File Import (drag/drop + file picker) ────────
@@ -2407,9 +2443,9 @@
     });
   }
 
-  async function vjAddMediaFile(file: File) {
+  async function vjAddMediaFile(file: File): Promise<MediaItem | null> {
     const kind = vjMediaGetType(file);
-    if (!kind) { console.warn('[VJ Media] Unsupported file type:', file.name); return; }
+    if (!kind) { console.warn('[VJ Media] Unsupported file type:', file.name); return null; }
     // Capture both runtime URL and durable AssetRef so VJ media library entries
     // survive save/reload (the blob URL alone won't).
     const { assetRef, runtimeUrl: url } = createAssetRefFromFile(file);
@@ -2425,7 +2461,7 @@
         video.addEventListener('error', done, { once: true });
         if (video.readyState >= 2) done();
       });
-      mediaLibrary.addItem({
+      const item: MediaItem = {
         id: generateUUID(),
         name: file.name,
         src: url,
@@ -2433,17 +2469,22 @@
         videoElement: video,
         thumbnail: await vjCaptureVideoThumb(video),
         _assetRef: assetRef,
-      } as any);
+      };
+      mediaLibrary.addItem(item);
+      return item;
     } else if (kind === 'image') {
-      mediaLibrary.addItem({
+      const item: MediaItem = {
         id: generateUUID(),
         name: file.name,
         src: url,
         type: 'image',
         thumbnail: url,
         _assetRef: assetRef,
-      } as any);
+      };
+      mediaLibrary.addItem(item);
+      return item;
     }
+    return null;
   }
 
   async function vjHandleMediaDrop(e: DragEvent) {
@@ -2478,6 +2519,8 @@
   function handleClipCellDragStart(e: DragEvent, layerIndex: number, columnIndex: number, bank: VJDeck = 'A') {
     const clip = deckGrid(bank)[layerIndex]?.[columnIndex];
     if (!clip || !e.dataTransfer) return;
+    cellDragInProgress = true;
+    cellPress = null;
     dragSourceCell = { layer: layerIndex, column: columnIndex, bank };
     draggedClip = { type: clip.type as any, id: clip.id };
     e.dataTransfer.effectAllowed = 'move';
@@ -2486,6 +2529,9 @@
 
   function handleCellDragOver(e: DragEvent, layerIndex: number, columnIndex: number, bank: VJDeck = 'A') {
     e.preventDefault();
+    if (e.dataTransfer) {
+      e.dataTransfer.dropEffect = e.dataTransfer.files.length > 0 ? 'copy' : (dragSourceCell ? 'move' : 'copy');
+    }
     dragOverCell = { layer: layerIndex, column: columnIndex, bank };
   }
 
@@ -2613,6 +2659,18 @@
       };
     }
 
+    if (payload.type === 'synthvision') {
+      // Performer clip — firing the cell opens the keyboard overlay bound to
+      // that layer. Effects live on the clip, not the layer row.
+      return {
+        id: generateUUID(),
+        type: 'synthvision',
+        name: payload.name || 'Performer',
+        src: payload.src || 'performer',
+        effects: [],
+      };
+    }
+
     if (payload.type === 'live-source') {
       const registeredSource = findMediaTrayLiveSource(payload.id);
       const source = (payload.videoEl || payload.stream) ? payload : (registeredSource ?? payload);
@@ -2683,10 +2741,107 @@
     return null;
   }
 
+  function createVJClipFromMediaItem(item: MediaItem): VJClip {
+    return {
+      id: generateUUID(),
+      type: item.type,
+      name: item.name,
+      src: item.src,
+      thumbnail: item.thumbnail,
+      _assetRef: item._assetRef,
+    };
+  }
+
+  // Finder / Explorer files can go straight to the performance deck. The
+  // target cell receives the first supported file; additional files fill
+  // empty cells in deck order. Every file also enters the Media Library.
+  // (Async because the native import path awaits video loadeddata before
+  // the clip element is deck-ready.)
+  async function importDroppedFilesToDeck(files: File[], layerIndex: number, columnIndex: number, bank: VJDeck) {
+    const grid = deckGrid(bank);
+    const targets = [
+      { layer: layerIndex, column: columnIndex },
+      ...layerIndices.flatMap((layer) => columnIndices.map((column) => ({ layer, column })))
+        .filter(({ layer, column }) =>
+          !(layer === layerIndex && column === columnIndex) && !grid[layer]?.[column]
+        ),
+    ];
+    let placed = 0;
+    for (const file of files) {
+      const item = await vjAddMediaFile(file);
+      if (!item) continue;
+      const target = targets[placed];
+      if (!target) {
+        showToast('Media imported, but there are no more empty VJ deck slots.', 'warning');
+        break;
+      }
+      vjClipLauncher.setClip(target.layer, target.column, createVJClipFromMediaItem(item), bank);
+      placed += 1;
+    }
+    if (placed > 0) {
+      selectedLayerIndex = layerIndex;
+      showShaderParams = true;
+      if ($vjClipLauncher.crossfaderEnabled) vjClipLauncher.setSelectedDeck(bank);
+    }
+  }
+
+  /** Materialize a saved (IndexedDB) video into a deck cell. Loads the blob,
+   *  captures a durable AssetRef so the clip survives save/reload, and binds
+   *  a ready <video> element to the cell. */
+  async function bindSavedVideoToCell(
+    saved: { id: string; name: string; thumbnail?: string; blobKey: string },
+    layerIndex: number,
+    columnIndex: number,
+    bank: VJDeck,
+  ) {
+    try {
+      const blob = await videoLibrary.loadVideoBlob(saved.blobKey);
+      if (!blob) {
+        console.warn('[VJ] saved video blob missing:', saved.name);
+        return;
+      }
+      const blobUrl = URL.createObjectURL(blob);
+      const { assetRef } = await createAssetRefFromGeneratedBlob(
+        blob,
+        `${(saved.name || 'Saved Video').replace(/\.[^.]+$/, '')}.mp4`,
+        blob.type || 'video/mp4',
+        blobUrl,
+      );
+      const video = document.createElement('video');
+      video.loop = true;
+      video.muted = true;
+      video.playsInline = true;
+      video.preload = 'auto';
+      video.src = blobUrl;
+      vjClipLauncher.setClip(layerIndex, columnIndex, {
+        id: generateUUID(),
+        type: 'video',
+        name: saved.name || 'Saved Video',
+        src: blobUrl,
+        thumbnail: saved.thumbnail,
+        videoElement: video,
+        _assetRef: assetRef,
+      } as VJClip, bank);
+    } catch (err) {
+      console.warn('[VJ] failed to load saved video into cell:', err);
+    }
+  }
+
   function handleCellDrop(e: DragEvent, layerIndex: number, columnIndex: number, bank: VJDeck = 'A') {
     e.preventDefault();
     e.stopPropagation();
     dragOverCell = null;
+
+    // Direct OS-file → deck cell drop (release v1.9.99x behavior).
+    const externalFiles = Array.from(e.dataTransfer?.files ?? []);
+    if (externalFiles.length > 0) {
+      void importDroppedFilesToDeck(externalFiles, layerIndex, columnIndex, bank);
+      draggedClip = null;
+      dragSourceCell = null;
+      cellPress = null;
+      cellDragInProgress = false;
+      return;
+    }
 
     // Cell-to-cell move OR swap. Resolume-style behavior: if the
     // destination cell is empty, move the source clip into it (clearing
@@ -2765,7 +2920,21 @@
         vjClipLauncher.setClip(layerIndex, columnIndex, vjClip, bank);
       }
     } else if (draggedClip.type === 'shader') {
-      const shader = shaders.find(s => s.id === draggedClip!.id);
+      // Library-tab items live in the saved-shader store, not the built-in
+      // catalog — without this fallback, dragging one onto a cell silently
+      // did nothing because the id was never found.
+      const catalogShader = shaders.find(s => s.id === draggedClip!.id);
+      const savedShader = catalogShader ? null : savedShaders.find(s => s.id === draggedClip!.id);
+      const shader = catalogShader ?? (savedShader
+        ? {
+            id: savedShader.id,
+            name: savedShader.name,
+            src: '',
+            thumbnail: savedShader.thumbnail,
+            shaderCode: savedShader.code,
+            values: {} as Record<string, any>,
+          }
+        : null);
       if (shader) {
         const vjClip: VJClip = {
           id: generateUUID(),
@@ -2860,6 +3029,19 @@
         textContent: createDefaultTextContent(),
       };
       vjClipLauncher.setClip(layerIndex, columnIndex, vjClip, bank);
+    } else if (draggedClip.type === 'synthvision') {
+      // Performer is a deck clip like any other plugin: dropping it claims a
+      // cell, and firing that cell opens the keyboard overlay bound to this
+      // layer. Its effects live on the clip (see clip-scoped effect calls in
+      // SynthVision) rather than on the shared layer row.
+      const vjClip: VJClip = {
+        id: generateUUID(),
+        type: 'synthvision',
+        name: 'Performer',
+        src: 'performer',
+        effects: [],
+      };
+      vjClipLauncher.setClip(layerIndex, columnIndex, vjClip, bank);
     } else if (draggedClip.type === 'splat') {
       // Handle point cloud / splat clip
       const vjClip: VJClip = {
@@ -2911,6 +3093,14 @@
           _assetRef: (media as any)._assetRef,
         };
         vjClipLauncher.setClip(layerIndex, columnIndex, vjClip, bank);
+      } else {
+        // Saved videos live in IndexedDB, not the session media library —
+        // materialize the blob (and a durable AssetRef) before binding the
+        // cell, the same way the media tray's Load button does.
+        const savedVideo = savedVideos.find(v => v.id === draggedClip!.id);
+        if (savedVideo) {
+          void bindSavedVideoToCell(savedVideo, layerIndex, columnIndex, bank);
+        }
       }
     }
 
@@ -2926,6 +3116,72 @@
     selectedLayerIndex = layerIndex;
     showShaderParams = true;
     if ($vjClipLauncher.crossfaderEnabled) vjClipLauncher.setSelectedDeck(bank);
+
+    // Firing a Performer clip opens the keyboard overlay bound to the layer
+    // the clip sits on — that binding is what keeps its worlds, clips and
+    // effects on this row instead of a separately-chosen one.
+    const firedClip = deckGrid(bank)[layerIndex]?.[columnIndex];
+    if (firedClip?.type === 'synthvision') {
+      synthVisionStore.setAssignedLayer(layerIndex);
+      performerStarted = true;
+      showPerformer = true;
+    }
+  }
+
+  function isCellControlTarget(target: EventTarget | null): boolean {
+    return target instanceof Element && Boolean(target.closest('button, input, select, textarea, a'));
+  }
+
+  function handleCellPointerDown(e: PointerEvent, layerIndex: number, columnIndex: number, bank: VJDeck) {
+    if (!e.isPrimary || e.button !== 0 || isCellControlTarget(e.target)) return;
+    cellPress = {
+      pointerId: e.pointerId,
+      layer: layerIndex,
+      column: columnIndex,
+      bank,
+      startX: e.clientX,
+      startY: e.clientY,
+      moved: false,
+    };
+  }
+
+  function handleCellPointerMove(e: PointerEvent) {
+    if (!cellPress || cellPress.pointerId !== e.pointerId || cellPress.moved) return;
+    cellPress.moved = Math.hypot(e.clientX - cellPress.startX, e.clientY - cellPress.startY) > CELL_PRESS_SLOP_PX;
+  }
+
+  function handleCellPointerUp(e: PointerEvent, layerIndex: number, columnIndex: number, bank: VJDeck) {
+    const press = cellPress;
+    cellPress = null;
+    if (
+      !press ||
+      press.pointerId !== e.pointerId ||
+      press.layer !== layerIndex ||
+      press.column !== columnIndex ||
+      press.bank !== bank ||
+      press.moved ||
+      cellDragInProgress ||
+      isCellControlTarget(e.target)
+    ) return;
+    lastPointerTriggerAt = performance.now();
+    handleCellClick(layerIndex, columnIndex, bank);
+  }
+
+  function handleCellPointerCancel() {
+    cellPress = null;
+  }
+
+  function handleCellClickEvent(e: MouseEvent, layerIndex: number, columnIndex: number, bank: VJDeck) {
+    // Pointerup already handled physical clicks. Keep zero-detail synthetic
+    // clicks available for accessibility and external control integrations.
+    if (e.detail > 0 && performance.now() - lastPointerTriggerAt < 350) return;
+    handleCellClick(layerIndex, columnIndex, bank);
+  }
+
+  function handleCellKeyDown(e: KeyboardEvent, layerIndex: number, columnIndex: number, bank: VJDeck) {
+    if (e.key !== 'Enter' && e.key !== ' ') return;
+    e.preventDefault();
+    handleCellClick(layerIndex, columnIndex, bank);
   }
 
   // Clear a clip from cell
@@ -3060,6 +3316,41 @@
   function handleDeleteBlock(blockId: string, e: MouseEvent) {
     e.stopPropagation();
     vjClipLauncher.deleteBlock(blockId);
+  }
+
+  function handleBlockDragStart(e: DragEvent, blockIdx: number) {
+    if (editingBlockId) {
+      e.preventDefault();
+      return;
+    }
+    draggedBlockIndex = blockIdx;
+    if (e.dataTransfer) {
+      e.dataTransfer.effectAllowed = 'move';
+      e.dataTransfer.setData('application/x-ghost-vj-block', String(blockIdx));
+    }
+  }
+
+  function handleBlockDragOver(e: DragEvent, blockIdx: number) {
+    if (draggedBlockIndex === null) return;
+    e.preventDefault();
+    dragOverBlockIndex = blockIdx;
+    if (e.dataTransfer) e.dataTransfer.dropEffect = 'move';
+  }
+
+  function handleBlockDrop(e: DragEvent, blockIdx: number) {
+    e.preventDefault();
+    const rawIndex = e.dataTransfer?.getData('application/x-ghost-vj-block');
+    const fromIndex = draggedBlockIndex ?? (rawIndex ? Number(rawIndex) : NaN);
+    if (Number.isFinite(fromIndex)) {
+      vjClipLauncher.reorderBlocks(fromIndex, blockIdx);
+    }
+    draggedBlockIndex = null;
+    dragOverBlockIndex = null;
+  }
+
+  function handleBlockDragEnd() {
+    draggedBlockIndex = null;
+    dragOverBlockIndex = null;
   }
 
   // Layer drag handlers for reordering
@@ -3421,9 +3712,12 @@
     class:mac-titlebar-offset={isMac}
   >
     <!-- Header -->
-    <div class="vj-header">
+    <div class="vj-header" class:audio-on={$audioStore.isActive}>
+      <!-- Lead column: fixed-size left controls, then the MIX/STAGE/MAP
+           toggle centred in whatever space is left before the macro bank. -->
+      <div class="header-lead">
       <div class="header-left">
-        <img src="{import.meta.env.BASE_URL}logo.png" alt="Ghost Arcade" class="vj-logo" />
+        <img src="{import.meta.env.BASE_URL}icon-new.png" alt="Ghost Arcade" class="vj-logo" />
         <!-- File Menu -->
         <div class="vj-file-menu-container">
           <button class="vj-file-menu-btn" class:active={vjFileMenuOpen} onclick={() => vjFileMenuOpen = !vjFileMenuOpen}>
@@ -3483,6 +3777,7 @@
         </button>
       </div>
 
+      <div class="header-stage-slot">
       {#if $vjClipLauncher.isLive}
         <div class="header-stage">
           <button class="stage-mix-btn" class:active={!$vjClipLauncher.stageMode && !$vjClipLauncher.mapMode} onclick={() => vjClipLauncher.setSubMode('mix')} title="Raw VJ clip output">MIX</button>
@@ -3490,6 +3785,8 @@
           <button class="stage-mix-btn" class:active={$vjClipLauncher.mapMode} onclick={() => vjClipLauncher.setSubMode('map')} title="Preset-only mixer — VJ layer slots hold mapping presets that stack with opacity + blend modes">MAP</button>
         </div>
       {/if}
+      </div>
+      </div>
 
       <!-- Macros — 8 user-assignable knobs that each drive any number of
            parameters with per-destination curves and ranges. Beginners
@@ -3498,49 +3795,6 @@
            once). Right-click a knob → destination editor + learn flow. -->
       <div class="header-macros">
         <MacroKnobBar />
-      </div>
-
-      <!-- Tap tempo + FFT meter + expandable EQ tweaks. Self-hides when
-           audio is off so the header stays clean for users who haven't
-           enabled audio yet. Replaces the standalone audio strip below.
-           Mic (AudioInputPicker) sits immediately after the meter so the
-           audio cluster reads as one logical group. -->
-      <div class="header-meter">
-        <AudioMeterPanel />
-
-        <!-- Audio input picker — same component + same location as mapping
-             mode. State flows through audioStore so toggling here also flips
-             mapping/Performer. Moved out of the right-cluster so the mic
-             lives next to the analyzer (input → output). -->
-        <AudioInputPicker />
-
-        <!-- Launch quantization selector. OFF = instant trigger (default).
-             1/4..4bar = beat-aligned launches anchored to detected beats
-             (or virtual clock at current BPM if audio is off). Beginners
-             leave this OFF; pros snap to bar boundaries for tight drops. -->
-        <div class="header-quant" title="Launch quantize — clips fire on the next beat boundary instead of instantly">
-          <span class="header-quant-label">QUANT</span>
-          <select
-            class="header-quant-select"
-            value={$vjClipLauncher.quantization}
-            onchange={(e) => vjClipLauncher.setQuantization((e.target as HTMLSelectElement).value as any)}
-            data-midi-path="vj:quantize"
-            data-midi-label="Launch Quantize"
-            data-midi-discrete="true"
-          >
-            <option value="off">OFF</option>
-            <option value="1/4">1/4</option>
-            <option value="1/2">1/2</option>
-            <option value="1bar">1 BAR</option>
-            <option value="2bar">2 BAR</option>
-            <option value="4bar">4 BAR</option>
-          </select>
-          {#if $vjClipLauncher.pendingTriggers.length > 0}
-            <span class="header-quant-pending" title="{$vjClipLauncher.pendingTriggers.length} clip{$vjClipLauncher.pendingTriggers.length === 1 ? '' : 's'} queued">
-              {$vjClipLauncher.pendingTriggers.length} ·
-            </span>
-          {/if}
-        </div>
       </div>
 
       <!-- Right cluster — tight icon grid that mirrors the mapping-mode
@@ -3563,78 +3817,23 @@
           </button>
         {/if}
 
-        <button
-          class="vj-seq-toggle-btn"
-          class:active={$vjLayerSequencer.isOpen}
-          onclick={() => vjLayerSequencer.toggleOpen()}
-          title="Layer Sequencer"
-          aria-label="Layer Sequencer"
-        >
-          <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <rect x="3" y="5" width="4" height="14" rx="1.2" fill="#ff7a66"/>
-            <rect x="10" y="8" width="4" height="11" rx="1.2" fill="#ffd166"/>
-            <rect x="17" y="3" width="4" height="16" rx="1.2" fill="#46d18a"/>
-            <path d="M4 20h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+        <!-- Same glyph mapping mode's Stage Sim button uses, so the two
+             modes read as the same destination. -->
+        <button class="minimize-btn stage-sim-btn" onclick={() => window.dispatchEvent(new CustomEvent('open-stage3d'))} title="Open Stage Simulator" aria-label="Open Stage Simulator">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+            <path d="M4 16.4 12 12l8 4.4-8 4.5-8-4.5Z" />
+            <path d="M7.2 14.7V8.6L12 5.5l4.8 3.1v6.1" />
+            <path d="M7.2 8.6 12 11.5l4.8-2.9" />
+            <path d="M12 5.5v6" />
           </svg>
-        </button>
-
-        {#if $vjClipLauncher.isLive}
-          <!-- A/B crossfader toggle moved into the right cluster so it
-               groups with the other compact icon buttons. -->
-          <button
-            class="ab-toggle-btn"
-            class:active={$vjClipLauncher.crossfaderEnabled}
-            onclick={() => vjClipLauncher.setCrossfaderEnabled(!$vjClipLauncher.crossfaderEnabled)}
-            title="A/B Crossfader: split the deck into two independent banks with a transition fader between them"
-            data-midi-path="vj:crossfader:enabled"
-            data-midi-label="Crossfader Enabled"
-            data-midi-mode="toggle"
-          >
-            <span class="ab-toggle-glyph">A/B</span>
-          </button>
-        {/if}
-
-        <!-- Performer atom — opens the SynthVision keyboard launcher overlay.
-             Compact icon takes the place of the old "PERFORMER" pill that
-             previously lived in header-center. Atom glyph reads as
-             "performance / nucleus" without needing a text label. Three
-             colored states:
-               • idle      → translucent purple outline
-               • active    → solid purple glow (overlay open)
-               • running   → green pulse (started but minimized) -->
-        <button class="performer-atom-btn"
-          class:active={showPerformer}
-          class:running={performerStarted && !showPerformer}
-          onclick={() => { showPerformer = !showPerformer; if (showPerformer && !performerStarted) { performerStarted = true; } }}
-          title={showPerformer ? 'Close Performer' : (performerStarted ? 'Show Performer (running)' : 'Open Performer (keyboard launcher)')}
-          aria-label="Toggle Performer"
-        >
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
-            <!-- nucleus -->
-            <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>
-            <!-- three orbital ellipses at 60° offsets -->
-            <ellipse cx="12" cy="12" rx="10" ry="4"/>
-            <ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(60 12 12)"/>
-            <ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(120 12 12)"/>
-          </svg>
-        </button>
-
-        <button class="minimize-btn" onclick={() => window.dispatchEvent(new CustomEvent('open-stage3d'))} title="Open 3D Stage (no need to minimize VJ)">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 2L4 7l8 5 8-5z"/><path d="M4 12l8 5 8-5"/><path d="M4 17l8 5 8-5"/>
-          </svg>
+          Stage Sim
         </button>
         <button class="minimize-btn" onclick={() => window.dispatchEvent(new CustomEvent('open-settings'))} title="Settings">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
           </svg>
         </button>
-        <button class="minimize-btn" onclick={handleExitVJClick} title="Exit VJ and stop live output" aria-label="Exit VJ">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M15 18l-6-6 6-6"/>
-          </svg>
-        </button>
-        <button class="exit-btn" onclick={handleExitVJClick}>Exit VJ</button>
+        <button class="exit-btn" onclick={handleExitVJClick} title="Exit VJ and stop live output">Exit VJ</button>
       </div>
     </div>
 
@@ -3647,7 +3846,7 @@
             <button
               class="stage-preset-btn"
               class:active={$vjClipLauncher.stagePresetId === preset.id}
-              onclick={() => stageRenamingPresetId !== preset.id && project.loadStagePreset(preset.id)}
+              onclick={() => stageRenamingPresetId !== preset.id && loadStagePresetFromUI(preset)}
               oncontextmenu={(e) => openStageContextMenu(e, preset)}
               title="{preset.name} — double-click name to rename · right-click for Update / Delete"
               data-midi-path={`vj:stage:${presetIdx}`}
@@ -3844,7 +4043,7 @@
                           <button
                             class="effect-live-radio"
                             class:active={isLive}
-                            onclick={(e) => { e.stopPropagation(); surfaceStore.setActiveEffect(eff.id); }}
+                            onclick={(e) => { e.stopPropagation(); toggleStageActiveEffect(eff.id); }}
                             title="Activate this effect (only one runs at a time)"
                           >{isLive ? '◉' : '○'}</button>
                           <span class="effect-name">
@@ -4186,7 +4385,11 @@
           <div class="vj-right-tray-content">
             <div class="vj-clip-controls-stack">
           <!-- Shader Parameters (above media tabs) -->
-          {#if selectedLayerIndex !== null && selectedLayerState?.activeClip?.type === 'shader' && selectedLayerState?.activeClip?.shaderCode && showShaderParams}
+          <!-- Performer-driven clips edit their params inside Performer's own
+               SHADER tab; showing this panel too would give the user two
+               copies, and this one writes to a grid cell the transient clip
+               does not occupy, so its edits went nowhere. -->
+          {#if selectedLayerIndex !== null && selectedLayerState?.activeClip?.type === 'shader' && selectedLayerState?.activeClip?.shaderCode && showShaderParams && !(selectedLayerState.activeClip as any)._performerOwned}
             {#if selectedClipShaderInputs.length > 0}
               <div class="shader-params-panel">
                 <div class="shader-params-panel-header">
@@ -4570,6 +4773,7 @@
             {@const vEl = vClip.videoElement!}
             {@const vMode = vClip.playbackMode || 'loop'}
             {@const vRate = vClip.playbackRate ?? 1.0}
+            {@const vSyncBeats = vClip.playbackSyncBeats ?? null}
             {@const vTrimS = vClip.trimStart ?? 0}
             {@const vTrimE = vClip.trimEnd ?? 1}
             {@const vIsPlaying = vClip.isPlaying !== false}
@@ -4622,6 +4826,8 @@
                       class="vt-speed"
                       value={String(vRate)}
                       onchange={(e) => vjSetPlaybackRate(selectedLayerIndex!, parseFloat((e.target as HTMLSelectElement).value))}
+                      disabled={!!vSyncBeats}
+                      title={vSyncBeats ? 'Speed is locked to beat/bar sync' : 'Playback speed'}
                     >
                       <option value="0.25">0.25x</option>
                       <option value="0.5">0.5x</option>
@@ -4629,6 +4835,22 @@
                       <option value="1.5">1.5x</option>
                       <option value="2">2x</option>
                       <option value="4">4x</option>
+                    </select>
+                    <select
+                      class="vt-speed"
+                      value={vSyncBeats ? String(vSyncBeats) : ''}
+                      onchange={(e) => {
+                        const raw = (e.target as HTMLSelectElement).value;
+                        vjSetPlaybackSync(selectedLayerIndex!, raw ? parseFloat(raw) : null);
+                      }}
+                      title="Fit this video to the master BPM"
+                    >
+                      <option value="">Free</option>
+                      <option value="1">1 beat</option>
+                      <option value="2">2 beats</option>
+                      <option value="4">1 bar</option>
+                      <option value="8">2 bars</option>
+                      <option value="16">4 bars</option>
                     </select>
                   </div>
 
@@ -4829,9 +5051,15 @@
               <div
                 class="block-tab"
                 class:active={$vjClipLauncher.activeBlockId === block.id}
+                class:dragover={dragOverBlockIndex === blockIdx}
+                draggable={editingBlockId !== block.id}
                 onclick={() => handleSelectBlock(block.id)}
                 ondblclick={(e) => startEditingBlock(block, e)}
                 oncontextmenu={(e) => openBlockContextMenu(e, block.id)}
+                ondragstart={(e) => handleBlockDragStart(e, blockIdx)}
+                ondragover={(e) => handleBlockDragOver(e, blockIdx)}
+                ondrop={(e) => handleBlockDrop(e, blockIdx)}
+                ondragend={handleBlockDragEnd}
                 role="tab"
                 tabindex="0"
                 data-midi-path="vj:block:{blockIdx}"
@@ -4943,7 +5171,7 @@
                     <img src={activeClip.thumbnail} alt={activeClip.name} class="live-preview-thumb" />
                   {:else}
                     <div class="live-preview-placeholder {activeClip.type}">
-                      {activeClip.type === 'shader' ? 'ISF' : activeClip.type === 'video' ? 'VID' : activeClip.type === 'spout' ? 'SPT' : activeClip.type === 'threejs' ? '3JS' : 'IMG'}
+                      {activeClip.type === 'shader' ? 'ISF' : activeClip.type === 'video' ? 'VID' : activeClip.type === 'spout' ? 'SPT' : activeClip.type === 'threejs' ? '3JS' : activeClip.type === 'synthvision' ? 'PERF' : 'IMG'}
                     </div>
                   {/if}
                   <div class="live-indicator-dot"></div>
@@ -5037,9 +5265,15 @@
                   class:dragover={dragOverCell?.layer === layerIdx && dragOverCell?.column === colIdx && dragOverCell?.bank === bank}
                   class:wrong-mode={clip != null && !isClipFirable}
                   draggable={clip != null ? 'true' : 'false'}
-                  onclick={() => clip && isClipFirable && handleCellClick(layerIdx, colIdx, bank)}
+                  onclick={(e) => clip && isClipFirable && handleCellClickEvent(e, layerIdx, colIdx, bank)}
+                  onpointerdown={(e) => clip && isClipFirable && handleCellPointerDown(e, layerIdx, colIdx, bank)}
+                  onpointermove={handleCellPointerMove}
+                  onpointerup={(e) => clip && isClipFirable && handleCellPointerUp(e, layerIdx, colIdx, bank)}
+                  onpointercancel={handleCellPointerCancel}
+                  onkeydown={(e) => clip && isClipFirable && handleCellKeyDown(e, layerIdx, colIdx, bank)}
                   ondragstart={(e) => clip && handleClipCellDragStart(e, layerIdx, colIdx, bank)}
                   ondragend={handleDragEnd}
+                  ondragenter={(e) => handleCellDragOver(e, layerIdx, colIdx, bank)}
                   ondragover={(e) => handleCellDragOver(e, layerIdx, colIdx, bank)}
                   ondragleave={handleCellDragLeave}
                   ondrop={(e) => handleCellDrop(e, layerIdx, colIdx, bank)}
@@ -5056,7 +5290,7 @@
                         <img src={clip.thumbnail} alt={clip.name} class="clip-thumb" />
                       {:else}
                         <div class="clip-placeholder {clip.type}">
-                          {clip.type === 'shader' ? 'ISF' : clip.type === 'video' ? 'VID' : clip.type === 'spout' ? 'SPT' : clip.type === 'threejs' ? '3JS' : clip.type === 'splat' ? 'PLY' : clip.type === 'model3d' ? '3DM' : clip.type === 'gpu' ? 'GPU' : clip.type === 'text' ? 'TXT' : clip.type === 'effect' ? 'FX' : clip.type === 'preset' ? 'MAP' : 'IMG'}
+                          {clip.type === 'shader' ? 'ISF' : clip.type === 'video' ? 'VID' : clip.type === 'spout' ? 'SPT' : clip.type === 'threejs' ? '3JS' : clip.type === 'splat' ? 'PLY' : clip.type === 'model3d' ? '3DM' : clip.type === 'gpu' ? 'GPU' : clip.type === 'text' ? 'TXT' : clip.type === 'effect' ? 'FX' : clip.type === 'preset' ? 'MAP' : clip.type === 'synthvision' ? 'PERF' : 'IMG'}
                         </div>
                       {/if}
                       <span class="clip-name">{clip.name}</span>
@@ -5595,6 +5829,14 @@
                         <path d="M2 17l10 5 10-5"/>
                         <path d="M2 12l10 5 10-5"/>
                       </svg>
+                    {:else if plugin.inlineIcon === 'synthvision'}
+                      <!-- Atom glyph the Performer button used to carry. -->
+                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4">
+                        <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>
+                        <ellipse cx="12" cy="12" rx="10" ry="4"/>
+                        <ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(60 12 12)"/>
+                        <ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(120 12 12)"/>
+                      </svg>
                     {:else}
                       <PluginIcon pluginId={plugin.id} effectType={plugin.effectType ?? null} size={24} />
                     {/if}
@@ -5728,6 +5970,81 @@
         {/if}
       </div>
       </div> <!-- End vj-bottom -->
+
+      <!-- Deck dock — the performance strip that belongs with the grid rather
+           than the app chrome. Audio (analyzer, input, launch quantize) on the
+           left; deck tools (sequencer, A/B, Performer) on the right. These
+           lived in the header until the audio cluster's width started pushing
+           the header's right-hand controls off the edge. Popovers raised from
+           here open UPWARD — there is no room below the bar. -->
+      <div class="vj-dock">
+        <div class="vj-dock-group">
+          <AudioMeterPanel openUp={true} />
+
+          <!-- Same picker component mapping and Performer use; state flows
+               through audioStore, so toggling here flips every mode. -->
+          <AudioInputPicker showWaveform={false} openUp={true} />
+
+          <!-- Launch quantization. OFF = instant trigger (default); 1/4..4bar
+               align launches to detected beats (or the virtual clock at the
+               current BPM when audio is off). -->
+          <div class="dock-quant" title="Launch quantize — clips fire on the next beat boundary instead of instantly">
+            <span class="dock-quant-label">QUANT</span>
+            <select
+              class="dock-quant-select"
+              value={$vjClipLauncher.quantization}
+              onchange={(e) => vjClipLauncher.setQuantization((e.target as HTMLSelectElement).value as any)}
+              data-midi-path="vj:quantize"
+              data-midi-label="Launch Quantize"
+              data-midi-discrete="true"
+            >
+              <option value="off">OFF</option>
+              <option value="1/4">1/4</option>
+              <option value="1/2">1/2</option>
+              <option value="1bar">1 BAR</option>
+              <option value="2bar">2 BAR</option>
+              <option value="4bar">4 BAR</option>
+            </select>
+            {#if $vjClipLauncher.pendingTriggers.length > 0}
+              <span class="dock-quant-pending" title="{$vjClipLauncher.pendingTriggers.length} clip{$vjClipLauncher.pendingTriggers.length === 1 ? '' : 's'} queued">
+                {$vjClipLauncher.pendingTriggers.length} ·
+              </span>
+            {/if}
+          </div>
+        </div>
+
+        <div class="vj-dock-group vj-dock-tools">
+          <button
+            class="vj-seq-toggle-btn dock-labelled-btn"
+            class:active={$vjLayerSequencer.isOpen}
+            onclick={() => vjLayerSequencer.toggleOpen()}
+            title="Layer Sequencer"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <rect x="3" y="5" width="4" height="14" rx="1.2" fill="#ff7a66"/>
+              <rect x="10" y="8" width="4" height="11" rx="1.2" fill="#ffd166"/>
+              <rect x="17" y="3" width="4" height="16" rx="1.2" fill="#46d18a"/>
+              <path d="M4 20h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+            </svg>
+            Sequencer
+          </button>
+
+          {#if $vjClipLauncher.isLive}
+            <button
+              class="ab-toggle-btn dock-labelled-btn"
+              class:active={$vjClipLauncher.crossfaderEnabled}
+              onclick={() => vjClipLauncher.setCrossfaderEnabled(!$vjClipLauncher.crossfaderEnabled)}
+              title="Split the deck into two independent banks with a transition fader between them"
+              data-midi-path="vj:crossfader:enabled"
+              data-midi-label="Crossfader Enabled"
+              data-midi-mode="toggle"
+            >
+              Split Deck A/B
+            </button>
+          {/if}
+
+        </div>
+      </div>
     </div>
 
     <VJLayerSequencer />
@@ -5816,6 +6133,7 @@
     <SynthVision
       onClose={() => showPerformer = false}
       visible={showPerformer && $vjClipLauncher.isOpen}
+      hostLayer={$synthVisionStore.assignedLayer ?? 0}
     />
   </div>
 {/if}
@@ -5867,6 +6185,14 @@
   }
 
   /* Header Stage/Mix toggle */
+  /* Centred in the gap between the left controls and the macro bank: the
+     wrapper takes the leftover lead-column width, the pill centres in it. */
+  .header-stage-slot {
+    display: flex;
+    flex: 1 1 auto;
+    justify-content: center;
+    min-width: 0;
+  }
   .header-stage {
     display: flex;
     flex: 0 0 auto;
@@ -6317,10 +6643,13 @@
   }
 
   /* Header */
+  /* Three columns: lead controls | macro bank | right cluster. The two side
+     columns are equal fractions, so the macro bank lands dead centre no
+     matter how wide either side's contents are. */
   .vj-header {
-    display: flex;
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
     align-items: center;
-    justify-content: space-between;
     position: relative;
     gap: var(--vj-header-gap);
     min-height: var(--vj-header-h);
@@ -6334,6 +6663,12 @@
     z-index: 20;
   }
 
+  .header-lead {
+    display: flex;
+    align-items: center;
+    gap: var(--vj-header-gap);
+    min-width: 0;
+  }
   .header-left {
     display: flex;
     align-items: center;
@@ -6350,7 +6685,10 @@
     gap: var(--vj-right-gap);
     margin-left: 0;
     z-index: 3;
-    flex: 0 0 auto;
+    /* Right column, pinned to the end. Never wraps — Exit VJ has to stay
+       reachable. */
+    justify-self: end;
+    flex-wrap: nowrap;
     background: transparent;
     padding-left: 0;
   }
@@ -6362,7 +6700,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    flex: 0 0 var(--vj-macro-bank-w);
+    justify-self: center;
     width: var(--vj-macro-bank-w);
     min-width: 0;
     max-width: var(--vj-macro-bank-w);
@@ -6391,12 +6729,10 @@
     padding: 0 calc(var(--vj-file-pad-x) - 2px);
     gap: var(--vj-meter-gap);
   }
-  .header-meter :global(.amp-bars) {
-    height: calc(var(--vj-control-h) - 10px);
+  /* Band strip under the scope — the responsive tiers below narrow it on
+     smaller windows the same way the old 8-bar meter was tuned. */
+  .header-meter :global(.amp-bandstrip) {
     gap: var(--vj-amp-bar-gap);
-  }
-  .header-meter :global(.amp-bar) {
-    width: var(--vj-amp-bar-w);
   }
   .header-meter :global(.aip-btn) {
     width: calc(var(--vj-icon-btn) + 2px);
@@ -6458,6 +6794,7 @@
     height: var(--vj-logo-h);
     width: auto;
     margin-right: var(--vj-half-gap);
+    border-radius: 6px;
   }
 
   .vj-file-menu-container { position: relative; margin-right: var(--vj-half-gap); }
@@ -6633,6 +6970,15 @@
   /* Compact square icon button — same footprint as mapping-mode's
      settings/3D buttons (32×32). No padding around the SVG so the
      icons crowd into a tidy grid. */
+  /* Labelled variant — matches mapping mode's "Stage Sim" chip. */
+  .minimize-btn.stage-sim-btn {
+    width: auto;
+    padding: 0 10px;
+    gap: 7px;
+    font-size: var(--vj-header-font);
+    font-weight: 600;
+    white-space: nowrap;
+  }
   .minimize-btn {
     width: var(--vj-icon-btn);
     height: var(--vj-control-h);
@@ -6753,9 +7099,6 @@
       display: none;
     }
 
-    .exit-btn {
-      display: none;
-    }
   }
 
   @media (max-width: 1280px) {
@@ -6774,19 +7117,42 @@
     }
   }
 
+  /* Narrow: the macro bank drops to a second row spanning both columns. */
   @media (max-width: 1180px) {
     .vj-header {
-      flex-wrap: wrap;
-      align-content: center;
+      grid-template-columns: 1fr auto;
       row-gap: 3px;
       min-height: calc(var(--vj-header-h) + 38px);
     }
 
     .header-macros {
-      order: 10;
-      flex: 1 0 100%;
+      grid-column: 1 / -1;
+      grid-row: 2;
+      width: 100%;
       max-width: none;
-      justify-content: center;
+      justify-self: center;
+    }
+  }
+
+  /* With audio live the header carries an extra ~200px cluster (scope,
+     beat dots, TAP/BPM, mic, system audio, QUANT). Below this width that
+     no longer fits on one line, and because the right cluster is last in
+     the row it was Exit VJ that got pushed off the edge. Drop the macro
+     bank onto its own line early instead — same reflow the narrow
+     breakpoint already uses, just triggered while audio is on. */
+  @media (max-width: 1560px) {
+    .vj-header.audio-on {
+      grid-template-columns: 1fr auto;
+      row-gap: 3px;
+      min-height: calc(var(--vj-header-h) + 38px);
+    }
+
+    .vj-header.audio-on .header-macros {
+      grid-column: 1 / -1;
+      grid-row: 2;
+      width: 100%;
+      max-width: none;
+      justify-self: center;
     }
   }
 
@@ -7771,6 +8137,84 @@
     overflow: hidden;
     min-height: 200px;
   }
+
+  /* Deck dock — fixed strip under the grid + media tray. */
+  .vj-dock {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--vj-header-gap);
+    flex: 0 0 auto;
+    box-sizing: border-box;
+    padding: 5px var(--vj-header-pad-x);
+    background: #141414;
+    border-top: 1px solid #333;
+    /* Popovers open upward out of this bar, so it can't clip them. */
+    overflow: visible;
+    position: relative;
+    z-index: 15;
+  }
+  .vj-dock-group {
+    display: flex;
+    align-items: center;
+    gap: var(--vj-meter-gap);
+    min-width: 0;
+  }
+  .vj-dock-tools {
+    gap: var(--vj-right-gap);
+    flex: 0 0 auto;
+  }
+  .dock-quant {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 calc(var(--vj-file-pad-x) - 4px);
+    background: rgba(255, 255, 255, 0.04);
+    border: 1px solid rgba(255, 255, 255, 0.08);
+    border-radius: 4px;
+    height: var(--vj-control-h);
+  }
+  .dock-quant-label {
+    font-size: var(--vj-label-font);
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    color: var(--ga-ink-1, #9aa0ac);
+  }
+  .dock-quant-select {
+    background: #000;
+    color: var(--ga-ink-0, #eef0f4);
+    border: 1px solid rgba(255, 255, 255, 0.12);
+    border-radius: 3px;
+    font-size: var(--vj-header-font);
+    font-weight: 700;
+    padding: 2px 4px;
+    cursor: pointer;
+  }
+  /* Labelled dock buttons — icon + word, sized like the other dock chips. */
+  .dock-labelled-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    width: auto;
+    height: var(--vj-control-h);
+    padding: 0 10px;
+    font-size: var(--vj-header-font);
+    font-weight: 600;
+    letter-spacing: 0.01em;
+    white-space: nowrap;
+  }
+  .dock-quant-pending {
+    font-size: var(--vj-label-font);
+    font-weight: 700;
+    color: #ffd166;
+  }
+  .vj-dock :global(.amp-strip),
+  .vj-dock :global(.audio-input-picker) {
+    gap: var(--vj-meter-gap);
+  }
+  .vj-dock :global(.amp-bandstrip) {
+    gap: var(--vj-amp-bar-gap);
+  }
   /* Media tray stays right; only the grid internals flip */
 
   /* Layer select icon */
@@ -8658,6 +9102,12 @@
 
   .block-tab.active .block-name {
     color: #000;
+  }
+
+  .block-tab.dragover {
+    border-color: var(--accent-primary, #BB86FC);
+    box-shadow: 0 0 0 1px rgba(187, 134, 252, 0.55), 0 0 12px rgba(187, 134, 252, 0.22);
+    transform: translateY(-1px);
   }
 
   .block-name {

@@ -204,6 +204,41 @@ export interface MetadataCacheCapsConfig {
 
 export type RendererCommand =
   | { type: 'set_output'; width: number; height: number; refresh_hz: number }
+  | { type: 'set_output_state'; blackout?: boolean; frozen?: boolean }
+  | {
+      type: 'set_composite_effects';
+      effects: Array<{ descriptor: string; mix?: number }>;
+    }
+  | {
+      type: 'set_output_stage';
+      rotation?: number;
+      cropX?: number;
+      cropY?: number;
+      cropWidth?: number;
+      cropHeight?: number;
+      brightness?: number;
+      contrast?: number;
+      gamma?: number;
+      edgeBlendLeft?: number;
+      edgeBlendRight?: number;
+      edgeBlendTop?: number;
+      edgeBlendBottom?: number;
+      edgeBlendGamma?: number;
+      domeEnabled?: boolean;
+      domeMode?: number;
+      domeFOV?: number;
+      domeRotation?: number;
+      domeTilt?: number;
+      domeOffsetX?: number;
+      domeOffsetY?: number;
+      domeCurvature?: number;
+      domeTruncation?: number;
+      masterWarp?: Record<string, unknown>;
+    }
+  | {
+      type: 'set_slice_outputs';
+      slices: Array<Record<string, unknown>>;
+    }
   | { type: 'set_target_fps'; target_fps: number }
   | { type: 'set_render_clock'; mode: 'live' | 'manual' | 'reset'; time?: number; time_delta?: number; frame_index?: number }
   | {
@@ -1549,7 +1584,7 @@ export async function getNativeRendererFrameSnapshot(
 
 export async function exportNativeRendererFrameSnapshot(
   path: string,
-  options: { time?: number; frame_index?: number; format?: string } = {},
+  options: { time?: number; frame_index?: number; format?: string; source?: 'render' | 'output' } = {},
 ) {
   return invoke<NativeRendererFrameSnapshotExportResult>('native_renderer_export_frame_snapshot', {
     path,

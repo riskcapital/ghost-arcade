@@ -1,5 +1,6 @@
 // Performer Store - Visual Synthesizer State Management
 import { writable, get } from 'svelte/store';
+import type { Effect } from '../types';
 import {
   PERFORMER_CLIP_KEYS,
   PERFORMER_CLIP_ROW1,
@@ -196,6 +197,13 @@ export interface SVState {
   active: boolean;         // is synth vision open/running
   keyboardActive: boolean; // visible performer owns its displayed keyboard controls
   assignedLayer: number | null;  // VJ layer index it's assigned to
+  /** Performer's own effect chain. Kept here rather than on a VJ layer or a
+   *  transient clip: layer effects are shared with every grid clip fired on
+   *  the same row, and Performer replaces its active clip whenever a new
+   *  shader/world/media is launched — either home loses the chain. Performer
+   *  stamps this list onto each clip it launches, so it renders through the
+   *  normal clip.effects path while staying internal to Performer. */
+  performerEffects: Effect[];
   layers: { a: SVLayer; b: SVLayer };
   focus: 'a' | 'b';
   xfade: number;           // 0=full A, 1=full B
@@ -288,6 +296,7 @@ function createDefaultState(): SVState {
     active: false,
     keyboardActive: false,
     assignedLayer: null,
+    performerEffects: [],
     layers: { a: defaultLayer(0, 0), b: defaultLayer(1, 1) },
     focus: 'a',
     xfade: 0,
@@ -371,6 +380,26 @@ function createSynthVisionStore() {
     )),
 
     setAssignedLayer: (layerIdx: number | null) => update(s => ({ ...s, assignedLayer: layerIdx })),
+
+    // ── Performer-owned effect chain ────────────────────────────────
+    addPerformerEffect: (effect: Effect) =>
+      update(s => ({ ...s, performerEffects: [...s.performerEffects, effect] })),
+    removePerformerEffect: (effectId: string) =>
+      update(s => ({ ...s, performerEffects: s.performerEffects.filter(e => e.id !== effectId) })),
+    togglePerformerEffect: (effectId: string) =>
+      update(s => ({
+        ...s,
+        performerEffects: s.performerEffects.map(e =>
+          e.id === effectId ? { ...e, enabled: !e.enabled } : e
+        ),
+      })),
+    updatePerformerEffectParams: (effectId: string, params: Record<string, any>) =>
+      update(s => ({
+        ...s,
+        performerEffects: s.performerEffects.map(e =>
+          e.id === effectId ? { ...e, params: { ...e.params, ...params } } : e
+        ),
+      })),
 
     // Focus
     setFocus: (f: 'a' | 'b') => update(s => ({ ...s, focus: f })),
@@ -652,7 +681,17 @@ function createSynthVisionStore() {
         newWorldParams[l.world] = wp;
       }
 
-      return { ...s, layers: newLayers, worldParams: newWorldParams };
+      // ...and the newly chosen shader's own params, so the SHADER tab's
+      // dials actually move on a scramble instead of keeping their defaults.
+      const newShaderParams = [...s.shaderParams];
+      const shaderDef = SV_SHADER_DEFS[l.sh];
+      if (shaderDef?.params) {
+        const sp: ShaderParams = {};
+        shaderDef.params.forEach(p => { sp[p.k] = Math.random(); });
+        newShaderParams[l.sh] = sp;
+      }
+
+      return { ...s, layers: newLayers, worldParams: newWorldParams, shaderParams: newShaderParams };
     }),
 
     // Reset

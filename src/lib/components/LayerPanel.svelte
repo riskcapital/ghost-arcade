@@ -689,6 +689,15 @@
     return !!effectId && mappingComposition.stageEffects.some(effect => effect.id === effectId);
   }
 
+  function toggleMappingStageActiveEffect(effectId: string) {
+    if (mappingComposition.stageEffectAutomation?.playing) {
+      project.updateMappingStageEffectAutomation({ playing: false });
+    }
+    project.setMappingStageEffectActive(
+      mappingComposition.activeStageEffectId === effectId ? null : effectId
+    );
+  }
+
   function setMappingStageEffectHeld(effectId: string, held: boolean) {
     const next = { ...heldMappingStageEffects };
     if (held) next[effectId] = true;
@@ -927,6 +936,21 @@
                 <circle cx="16" cy="20" r="1.5" fill="currentColor"/>
               </svg>
               Custom Shape
+            </button>
+            <button
+              title="Add mask layer — masks every layer below it"
+              onclick={() => {
+                const id = project.addLayer(undefined, 'mask');
+                if (id) maskEditingLayerId.set(id);
+                showAddLayerMenu = false;
+              }}
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M12 3a9 9 0 1 0 0 18a9 9 0 0 0 0-18Z"/>
+                <path d="M12 3v18"/>
+                <path d="M12 3a9 9 0 0 1 0 18" fill="currentColor" opacity="0.35"/>
+              </svg>
+              Mask Layer
             </button>
             <button
               title="Add lines layer"
@@ -1327,8 +1351,11 @@
                     <button
                       class="effect-live-radio"
                       class:active={isLive}
-                      onclick={(e) => { e.stopPropagation(); project.setMappingStageEffectActive(eff.id); }}
-                      title="Activate this effect"
+                      aria-pressed={isLive}
+                      onclick={(e) => { e.stopPropagation(); toggleMappingStageActiveEffect(eff.id); }}
+                      title={isLive
+                        ? 'Turn off this effect and stop auto play'
+                        : 'Activate this effect manually and stop auto play'}
                     >{isLive ? '◉' : '○'}</button>
                     <span class="effect-name"
                     >
@@ -1473,6 +1500,14 @@
                 <rect x="3" y="3" width="7" height="7" rx="1"/>
                 <rect x="14" y="3" width="7" height="7" rx="1"/>
                 <rect x="3" y="14" width="7" height="7" rx="1"/>
+              </svg>
+            </div>
+          {:else if layer.type === 'mask'}
+            <div class="mask-layer-thumb">
+              <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+                <circle cx="12" cy="12" r="9"/>
+                <path d="M12 3v18"/>
+                <path d="M12 3a9 9 0 0 1 0 18" fill="currentColor" opacity="0.35"/>
               </svg>
             </div>
           {:else if layer.type === 'lines'}
@@ -2104,6 +2139,11 @@
             <div class="vt-transport">
               <button
                 class="vt-btn vt-play"
+                data-midi-path="map:media:play"
+                data-midi-label="Media Play / Pause"
+                data-midi-min="0"
+                data-midi-max="1"
+                data-midi-mode="toggle"
                 onclick={() => {
                   const playing = vSrc.isPlaying !== false;
                   vSrc._nativePlaybackTimeSeconds = sourcePlaybackTime(vSrc);
@@ -2128,6 +2168,11 @@
               </button>
               <button
                 class="vt-btn"
+                data-midi-path="map:media:restart"
+                data-midi-label="Media Restart"
+                data-midi-min="0"
+                data-midi-max="1"
+                data-midi-mode="toggle"
                 onclick={() => {
                   setNativePlaybackTime(layer.id, vSrc, (vSrc.trimStart ?? 0) * sourceDuration(vSrc));
 	                  vSrc.isPlaying = true;
@@ -2160,6 +2205,11 @@
             <div
               class="vt-timeline"
               bind:this={timelineEl}
+              data-midi-path="map:media:position"
+              data-midi-label="Media Position"
+              data-midi-min="0"
+              data-midi-max="1"
+              data-midi-step="0.001"
               onmousedown={(e) => handleTimelineMouseDown(e, layer.id, vSrc)}
               role="slider"
               tabindex="0"
