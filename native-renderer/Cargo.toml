@@ -12,6 +12,10 @@ naga = { version = "30.0.0", features = ["wgsl-in", "glsl-in"] }
 pollster = "0.4.0"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
+# NOTE: the `static-dxc` feature would bundle DXC into the binary, but it needs
+# ATL (`atls.lib`), which the VS Build Tools install here does not ship. We use
+# Dx12Compiler::DynamicDxc instead and load dxcompiler.dll/dxil.dll from beside
+# the executable — see the shader_compiler setting in main.rs.
 wgpu = { version = "30.0.0", features = ["glsl"] }
 winit = "0.30.12"
 

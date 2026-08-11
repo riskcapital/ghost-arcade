@@ -557,7 +557,11 @@ class NativeRendererBroker {
       return this.lastStatus;
     }
     this.ensureProcess(executable);
-    const result = await this.send('start', args, { timeoutMs: 8000 });
+    // D3D12 compiles the shader warm-up set through FXC on first start, which
+    // takes tens of seconds on a cold cache — far past the 8s that Metal needs.
+    // Timing out here leaves the core alive but the app stuck on NATIVE OFFLINE.
+    const startTimeoutMs = this.platform === 'win32' ? 180000 : 8000;
+    const result = await this.send('start', args, { timeoutMs: startTimeoutMs });
     this.lastStatus = normalizeStatus(result, this.lastStatus);
     try {
       await this.refreshCapabilities({ requireCore: true });

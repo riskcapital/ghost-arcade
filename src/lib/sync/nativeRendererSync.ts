@@ -3682,8 +3682,12 @@ function tessellateNativeMaskShape(points: NonNullable<Layer['mask']>['shapes'][
 
 export function nativeLayerMaskState(layer: Layer): NativeLayerMaskState {
   const mask = layer.mask;
+  // A polygon of >= 3 points has an implicit last-to-first edge on the native
+  // path, so `closed` is treated as the default rather than a hard requirement.
+  // The mask editor UI omits the flag entirely, so requiring it here silently
+  // stripped every mask shape and made the mask layer a translucent no-op.
   const shapes = mask?.enabled
-    ? (mask.shapes ?? []).filter((shape) => shape.closed && shape.points.length >= 3).slice(0, 8)
+    ? (mask.shapes ?? []).filter((shape) => shape.closed !== false && shape.points.length >= 3).slice(0, 8)
     : [];
   if (!mask?.enabled || shapes.length === 0) {
     return { info: [0, 0, 0, 0], points: [], signature: 'none' };
@@ -3906,7 +3910,16 @@ function nativeLiveSourceType(
 function nativeLiveSourceIdentity(src: NonNullable<Layer['source']>): string {
   const kind = nativeLiveSourceType(src);
   if (kind === 'webcam' || kind === 'capture') {
-    return String((src as any).liveSourceSessionId ?? src.id ?? '').trim();
+    // The addon session id is carried in the URI (`live://webcam/<session>`).
+    // Prefer it over `src.id`: a VJ clip's `id` is the CLIP uuid, not the
+    // capture session, so reading src.id there polls a session that does not
+    // exist and the layer renders empty.
+    const uri = String(src.src ?? '').trim();
+    const match = /^live:\/\/(?:webcam|capture)\/(.+)$/i.exec(uri);
+    const fromUri = match ? decodeURIComponent(match[1]).trim() : '';
+    return String((src as any).liveSourceSessionId ?? fromUri ?? src.id ?? '').trim()
+      || fromUri
+      || String(src.id ?? '').trim();
   }
   if (kind === 'ndi') {
     const ndiSource = (src as any).ndiSource;

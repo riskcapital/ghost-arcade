@@ -71,6 +71,83 @@ if(WIN32)
         CXX_STANDARD 17
     )
 
+    # --- WINDOWS: embedded native preview presenter (DXGI twin of
+    # native_preview_addon.mm). Presents the render core's named D3D12 shared
+    # texture into a child HWND parented to the Electron window.
+    add_library(dxgi_preview_addon SHARED
+        dxgi_preview_addon.cpp
+        ${CMAKE_JS_SRC}
+    )
+
+    target_include_directories(dxgi_preview_addon PRIVATE
+        ${CMAKE_JS_INC}
+        ${NODE_ADDON_API_DIR}
+    )
+
+    target_link_libraries(dxgi_preview_addon PRIVATE
+        ${CMAKE_JS_LIB}
+        d3d11
+        dxgi
+        dxguid
+    )
+
+    if(MSVC)
+        target_compile_options(dxgi_preview_addon PRIVATE /W0)
+    endif()
+
+    target_compile_definitions(dxgi_preview_addon PRIVATE
+        UNICODE
+        _UNICODE
+        NAPI_VERSION=9
+        NODE_ADDON_API_DISABLE_DEPRECATED
+    )
+
+    set_target_properties(dxgi_preview_addon PROPERTIES
+        PREFIX ""
+        SUFFIX ".node"
+        CXX_STANDARD 17
+    )
+
+    # --- WINDOWS: native live capture (webcam via Media Foundation, screen
+    # via DXGI Desktop Duplication). DXGI twin of live_capture_addon.mm —
+    # returns a shared D3D11 texture HANDLE that the broker duplicates into
+    # the render-core process.
+    add_library(win_capture_addon SHARED
+        win_capture_addon.cpp
+        ${CMAKE_JS_SRC}
+    )
+    target_include_directories(win_capture_addon PRIVATE
+        ${CMAKE_JS_INC}
+        ${NODE_ADDON_API_DIR}
+    )
+    target_link_libraries(win_capture_addon PRIVATE
+        ${CMAKE_JS_LIB}
+        d3d11
+        dxgi
+        dxguid
+        mf
+        mfplat
+        mfreadwrite
+        mfuuid
+        ole32
+        # Windows.Graphics.Capture (C++/WinRT) — screen + per-window capture.
+        WindowsApp
+    )
+    if(MSVC)
+        target_compile_options(win_capture_addon PRIVATE /W0)
+    endif()
+    target_compile_definitions(win_capture_addon PRIVATE
+        UNICODE
+        _UNICODE
+        NAPI_VERSION=9
+        NODE_ADDON_API_DISABLE_DEPRECATED
+    )
+    set_target_properties(win_capture_addon PROPERTIES
+        PREFIX ""
+        SUFFIX ".node"
+        CXX_STANDARD 17
+    )
+
 elseif(APPLE)
     # --- macOS: Syphon ---
     set(ADDON_NAME "syphon_addon")

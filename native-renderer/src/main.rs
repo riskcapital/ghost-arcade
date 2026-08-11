@@ -3667,6 +3667,8 @@ impl App {
                             "shader_rendered": layer.shader_rendered,
                             "mesh_rows": layer.mesh_rows,
                             "mesh_cols": layer.mesh_cols,
+                            "mask_info": layer.mask_info,
+                            "mask_points_count": layer.mask_points.len(),
                         })
                     })
                     .collect::<Vec<_>>();
@@ -12827,7 +12829,30 @@ impl RenderState {
         source_frame_quality_policy: &str,
         event_proxy: EventLoopProxy<UserEvent>,
     ) -> Result<Self, String> {
-        let instance = wgpu::Instance::default();
+        // Pin the backend to the one `native_backend_name()` reports and the
+        // shared-texture transports are written against. `Instance::default()`
+        // enables Backends::all(), and on Windows wgpu will happily pick Vulkan
+        // for an NVIDIA adapter — which makes every `as_hal::<Dx12>()` call
+        // (output export, DXGI source import, slice export) return None while
+        // the status line still claims `backend=d3d12`.
+        let mut instance_descriptor = wgpu::InstanceDescriptor::new_without_display_handle();
+        #[cfg(target_os = "windows")]
+        {
+            instance_descriptor.backends = wgpu::Backends::DX12;
+            // Use DXC rather than FXC. wgpu's default `Auto` only reaches DXC if
+            // it is statically linked or already discoverable; otherwise it
+            // silently falls back to FXC, which spends ~50s compiling the shader
+            // warm-up set on every cold start. dxcompiler.dll (and dxil.dll, for
+            // shader signing) are copied next to the executable at build time, so
+            // the plain filename resolves via the standard DLL search order.
+            instance_descriptor.backend_options.dx12.shader_compiler =
+                wgpu::Dx12Compiler::default_dynamic_dxc();
+        }
+        #[cfg(target_os = "macos")]
+        {
+            instance_descriptor.backends = wgpu::Backends::METAL;
+        }
+        let instance = wgpu::Instance::new(instance_descriptor);
         let surface = instance
             .create_surface(window)
             .map_err(|err| err.to_string())?;
@@ -12841,6 +12866,13 @@ impl RenderState {
             .await
             .map_err(|err| err.to_string())?;
         let adapter_info = adapter.get_info();
+        eprintln!(
+            "[ghost-core] adapter selected: name={} backend={:?} driver={} reported_backend_name={}",
+            adapter_info.name,
+            adapter_info.backend,
+            adapter_info.driver,
+            native_backend_name()
+        );
         let adapter_limits = adapter.limits();
         let adapter_features = adapter.features();
         let source_frame_format = choose_source_frame_format(&adapter);
@@ -13036,6 +13068,10 @@ impl RenderState {
             config.height,
             native_output_export_format(format),
         )
+        .map_err(|err| {
+            eprintln!("[ghost-core] output export target failed at init: {err}");
+            err
+        })
         .ok();
         let (snapshot_texture, snapshot_view) = Self::create_offscreen_target(
             &device,
@@ -14423,6 +14459,10 @@ impl RenderState {
                 self.config.height,
                 native_output_export_format(self.config.format),
             )
+            .map_err(|err| {
+                eprintln!("[ghost-core] output export target failed on resize: {err}");
+                err
+            })
             .ok();
         }
         let (snapshot_texture, snapshot_view) = Self::create_offscreen_target(
