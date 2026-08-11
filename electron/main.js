@@ -2156,8 +2156,9 @@ function loadSpoutAddon() {
 }
 
 function getNativePreviewAddonCandidates() {
-  if (!isMac) return [];
-  return getTextureShareAddonCandidates('native_preview_addon.node');
+  if (isMac) return getTextureShareAddonCandidates('native_preview_addon.node');
+  if (process.platform === 'win32') return getTextureShareAddonCandidates('dxgi_preview_addon.node');
+  return [];
 }
 
 function loadNativePreviewAddon() {
@@ -2168,15 +2169,17 @@ function loadNativePreviewAddon() {
   nativePreviewAddonLoadCandidates = getNativePreviewAddonCandidates();
   nativePreviewAddonLoadPath = null;
 
-  if (!isMac) {
-    nativePreviewAddonLoadError = 'embedded native editor preview presenter is currently implemented on macOS only';
+  if (!isMac && process.platform !== 'win32') {
+    nativePreviewAddonLoadError = 'embedded native editor preview presenter is implemented on macOS and Windows only';
     return null;
   }
 
   try {
     const addonPath = nativePreviewAddonLoadCandidates.find(candidate => fs.existsSync(candidate));
     if (!addonPath) {
-      nativePreviewAddonLoadError = 'native_preview_addon.node not built';
+      nativePreviewAddonLoadError = isMac
+        ? 'native_preview_addon.node not built'
+        : 'dxgi_preview_addon.node not built';
       console.warn(`[NativePreview] ${nativePreviewAddonLoadError}. Checked: ${nativePreviewAddonLoadCandidates.join(', ')}`);
       return null;
     }
@@ -2200,11 +2203,15 @@ function loadLiveCaptureAddon() {
   if (liveCaptureAddon) return liveCaptureAddon;
   if (liveCaptureAddonLoadAttempted) return null;
   liveCaptureAddonLoadAttempted = true;
-  if (!isMac) {
-    liveCaptureAddonLoadError = 'native live capture is currently implemented on macOS only';
+  if (!isMac && process.platform !== 'win32') {
+    liveCaptureAddonLoadError = 'native live capture is implemented on macOS and Windows only';
     return null;
   }
-  const candidates = getTextureShareAddonCandidates('live_capture_addon.node');
+  // Windows uses win_capture_addon (Media Foundation + DXGI Duplication),
+  // macOS uses live_capture_addon (AVFoundation + ScreenCaptureKit). The
+  // two expose the same Napi surface so the IPC handlers stay identical.
+  const addonBasename = isMac ? 'live_capture_addon.node' : 'win_capture_addon.node';
+  const candidates = getTextureShareAddonCandidates(addonBasename);
   try {
     const addonPath = candidates.find(candidate => fs.existsSync(candidate));
     if (!addonPath) {
@@ -2302,7 +2309,10 @@ async function nativePreviewTextureMetadataForPump() {
 function startNativeEditorPreviewPump() {
   if (nativePreviewPump) return true;
   const addon = nativePreviewAddon || loadNativePreviewAddon();
-  if (!addon || typeof addon.presentIOSurface !== 'function') return false;
+  // macOS presents an IOSurface by global ID; Windows presents a named DXGI
+  // shared texture. Either presenter is enough to run the pump.
+  const dxgiPresenter = typeof addon?.presentSharedTexture === 'function';
+  if (!addon || (typeof addon.presentIOSurface !== 'function' && !dxgiPresenter)) return false;
   const nativeDisplayLinkPump = typeof addon.setIOSurface === 'function';
   const intervalMs = nativeDisplayLinkPump ? 250 : Math.max(4, Math.round(1000 / OSR_PAINT_FPS));
   nativePreviewLastLogTime = Date.now();
@@ -2316,7 +2326,11 @@ function startNativeEditorPreviewPump() {
       const frame = Number(texture.frame ?? 0);
       const width = Number(texture.width ?? 0);
       const height = Number(texture.height ?? 0);
-      const surfaceId = Number(texture.handle ?? 0);
+      // The core reports the Windows HANDLE as process-local, so it is
+      // meaningless here; the named resource is the portable transport.
+      const sharedName = typeof texture.shared_name === 'string' ? texture.shared_name : '';
+      const surfaceId = dxgiPresenter ? 1 : Number(texture.handle ?? 0);
+      if (dxgiPresenter && !sharedName) return;
       if (!Number.isFinite(surfaceId) || surfaceId <= 0 || width <= 0 || height <= 0) return;
       const now = Date.now();
       const textureFrame = Number.isFinite(frame) ? frame : 0;
@@ -2337,9 +2351,11 @@ function startNativeEditorPreviewPump() {
         }
         return;
       }
-      const ok = nativeDisplayLinkPump
-        ? addon.setIOSurface(surfaceId, width, height, false)
-        : addon.presentIOSurface(surfaceId, width, height, false);
+      const ok = dxgiPresenter
+        ? addon.presentSharedTexture(sharedName, width, height, false)
+        : nativeDisplayLinkPump
+          ? addon.setIOSurface(surfaceId, width, height, false)
+          : addon.presentIOSurface(surfaceId, width, height, false);
       if (!ok) {
         nativePreviewFailCount++;
         if (nativePreviewFailCount <= 5) {
@@ -2793,6 +2809,9 @@ function attachNativeEditorPreview(rectArgs = {}) {
   }
 
   const rect = normalizeNativePreviewRect(rectArgs, ++nativePreviewGeometryGeneration);
+  if (process.env.GA_DEBUG_PREVIEW_RECT === '1') {
+    console.log(`[NativePreview] attach rect in=${JSON.stringify(rectArgs)} normalized=${rect.x},${rect.y} ${rect.width}x${rect.height}`);
+  }
   const signature = nativePreviewRectSignature(rect);
   try {
     const handle = mainWindow.getNativeWindowHandle();
@@ -5358,11 +5377,30 @@ function registerIpcHandlers() {
     const addon = loadLiveCaptureAddon();
     if (!addon) return { ok: false, error: liveCaptureAddonLoadError || 'native capture unavailable' };
     try {
+      // Chromium's `display_id` (from desktopCapturer.getSources) is Chromium's
+      // internal Display ID — NOT a DXGI IDXGIOutput index. Resolve it to
+      // physical bounds so the addon can match by DesktopCoordinates. On macOS
+      // the addon ignores these extra fields and continues to use `sourceId`.
+      const displayId = String(args.displayId || '');
+      let bounds = null;
+      if (displayId) {
+        const displays = screen.getAllDisplays();
+        const match = displays.find(d => String(d.id) === displayId);
+        if (match) {
+          const b = match.bounds;
+          bounds = { left: b.x, top: b.y, right: b.x + b.width, bottom: b.y + b.height };
+        }
+      }
       const ok = !!addon.startScreen({
         sessionId: String(args.sessionId || ''),
         sourceId: String(args.sourceId || ''),
-        displayId: String(args.displayId || ''),
+        displayId,
         kind: args.kind === 'screen' ? 'screen' : 'window',
+        boundsLeft: bounds?.left ?? 0,
+        boundsTop: bounds?.top ?? 0,
+        boundsRight: bounds?.right ?? 0,
+        boundsBottom: bounds?.bottom ?? 0,
+        hasBounds: !!bounds,
       });
       return { ok, error: ok ? null : 'screen capture did not start' };
     } catch (err) {
@@ -5386,9 +5424,14 @@ function registerIpcHandlers() {
       const handle = normalizeSharedTextureHandle(info.handle);
       const handlePayload = sharedTextureHandlePayload(handle);
       if (!handlePayload) return null;
+      // Windows returns a DXGI shared-texture HANDLE; the core's
+      // `import_dxgi_source_frame` rejects anything not tagged `dxgi`.
+      // The addon reports its own platform via `available()`; fall back
+      // to the OS if the addon omits it (older mac builds).
+      const platform = info.platform || (isMac ? 'iosurface' : 'dxgi');
       return {
         available: true,
-        platform: 'iosurface',
+        platform,
         label: info.kind === 'webcam' ? 'Webcam' : 'Capture',
         width: Number(info.width || 0),
         height: Number(info.height || 0),
@@ -6753,6 +6796,64 @@ function registerIpcHandlers() {
     return { content, dir: path.dirname(filePath) };
   });
 
+  // Window controls for the frameless editor. On Windows/Linux the native
+  // preview underlay requires a transparent BrowserWindow, which drops the OS
+  // title bar — so the DOM toolbar carries min/maximize/close, wired here.
+  ipcMain.handle('win_minimize', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win && !win.isDestroyed()) win.minimize();
+  });
+  ipcMain.handle('win_maximize_toggle', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) return false;
+    if (win.isMaximized()) win.unmaximize();
+    else win.maximize();
+    return win.isMaximized();
+  });
+  ipcMain.handle('win_is_maximized', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    return !!(win && !win.isDestroyed() && win.isMaximized());
+  });
+  ipcMain.handle('win_close', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (win && !win.isDestroyed()) win.close();
+  });
+
+  // Toolbar-as-title-bar drag. `-webkit-app-region: drag` can move the window
+  // but Chromium then swallows all mouse input over that region in the browser
+  // process, so the renderer never sees the double-click that should maximize.
+  // Driving the move from here instead keeps both gestures working: the
+  // renderer reports press/release, and we follow the OS cursor directly so no
+  // renderer-side coordinate or DPI conversion is involved.
+  let winDragTimer = null;
+  let winDragOrigin = null;
+  const stopWindowDrag = () => {
+    if (winDragTimer) clearInterval(winDragTimer);
+    winDragTimer = null;
+    winDragOrigin = null;
+  };
+  ipcMain.handle('win_drag_start', (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed() || win.isMaximized()) return false;
+    stopWindowDrag();
+    const cursor = screen.getCursorScreenPoint();
+    const [wx, wy] = win.getPosition();
+    winDragOrigin = { cx: cursor.x, cy: cursor.y, wx, wy };
+    winDragTimer = setInterval(() => {
+      if (!win || win.isDestroyed() || !winDragOrigin) return stopWindowDrag();
+      const p = screen.getCursorScreenPoint();
+      win.setPosition(
+        winDragOrigin.wx + (p.x - winDragOrigin.cx),
+        winDragOrigin.wy + (p.y - winDragOrigin.cy),
+      );
+    }, 8);
+    return true;
+  });
+  ipcMain.handle('win_drag_end', () => {
+    stopWindowDrag();
+    return true;
+  });
+
   // Native renderer bridge. Electron is the long-term UI shell for 2.0;
   // the render core runs as a separate Rust/wgpu process so a renderer
   // crash does not take the control surface down.
@@ -7076,13 +7177,21 @@ function createMainWindow() {
     // transparent on macOS for the embedded Metal preview underlay. Relying
     // on Electron's implicit transparent-window style can drop the title bar
     // and traffic lights, leaving the editor looking like a floating panel.
-    frame: true,
+    // Windows/Linux run frameless: the transparent window the native preview
+    // underlay needs has no usable OS title bar anyway, and Chromium only
+    // honours `-webkit-app-region: drag` (which makes the toolbar act as the
+    // caption — drag to move, double-click to maximize) on a frameless window.
+    frame: process.platform === 'darwin',
     ...(process.platform === 'darwin' ? {
       titleBarStyle: 'hiddenInset',
       trafficLightPosition: { x: 12, y: 9 },
     } : {}),
-    backgroundColor: process.platform === 'darwin' ? '#00000000' : '#05070b',
-    transparent: process.platform === 'darwin',
+    // Windows joins macOS in transparent-Chromium mode so the editor canvas is a
+    // real hole the native preview underlay shows through (the whole DOM stack —
+    // body/#app/canvas-container — already computes to rgba(0,0,0,0)). App panels
+    // paint opaque, so nothing but the canvas hole is see-through.
+    backgroundColor: process.platform === 'darwin' || process.platform === 'win32' ? '#00000000' : '#05070b',
+    transparent: process.platform === 'darwin' || process.platform === 'win32',
     hasShadow: true,
     autoHideMenuBar: true,
     // Window icon — single source-of-truth lives in build-resources/icons.
@@ -7116,6 +7225,30 @@ function createMainWindow() {
 
   if (process.platform === 'darwin') {
     mainWindow.setWindowButtonVisibility(true);
+  }
+
+  if (process.platform === 'win32' && typeof mainWindow.hookWindowMessage === 'function') {
+    // Double-click the toolbar to maximize/restore, like a real title bar.
+    // Chromium handles mouse input over `-webkit-app-region: drag` inside the
+    // browser process, so the renderer never receives a dblclick there — the
+    // gesture arrives as a non-client caption double-click instead.
+    const WM_NCLBUTTONDBLCLK = 0x00a3;
+    if (process.env.GA_DEBUG_CAPTION === '1') {
+      for (const msg of [0x00a1, 0x00a3, 0x0201, 0x0203, 0x00a0, 0x0084]) {
+        try {
+          mainWindow.hookWindowMessage(msg, () => console.log(`[Caption] msg 0x${msg.toString(16)}`));
+        } catch {}
+      }
+    }
+    try {
+      mainWindow.hookWindowMessage(WM_NCLBUTTONDBLCLK, () => {
+        if (!mainWindow || mainWindow.isDestroyed() || !mainWindow.isMaximizable()) return;
+        if (mainWindow.isMaximized()) mainWindow.unmaximize();
+        else mainWindow.maximize();
+      });
+    } catch (err) {
+      console.warn('[Main] Could not hook caption double-click:', err?.message || err);
+    }
   }
 
   // Force zoom factor to 1.0 to prevent DPI scaling from misaligning overlays

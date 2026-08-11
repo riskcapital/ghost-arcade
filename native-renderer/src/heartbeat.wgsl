@@ -1722,18 +1722,13 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     // its polygon mask clips EVERYTHING composited below it. Pixels
     // outside the layer's quad count as outside every shape (masked
     // away; visible when inverted). Layer opacity scales mask strength.
+    // Hierarchy mask layers are applied AFTER the color loop finishes — see
+    // the pass just below `color = apply_composite_effects(...)`. Applying
+    // them here would multiply the still-empty color by the mask's coverage,
+    // producing black; the content painted afterwards would then show through
+    // unclipped. Skipping them here defers the multiply until the composite
+    // beneath the mask is already fully accumulated.
     if (layers[layer_index].style.x >= 25.5 && layers[layer_index].style.x < 26.5) {
-      let mask_enabled = layers[layer_index].mask_info.x > 0.5 && layers[layer_index].mask_info.w >= 2.5;
-      var coverage = 1.0;
-      if (mask_enabled) {
-        if (inside) {
-          coverage = native_polygon_mask(local.yz, layer_index);
-        } else {
-          coverage = select(0.0, 1.0, layers[layer_index].mask_info.y > 0.5);
-        }
-      }
-      let strength = clamp(layers[layer_index].color.a, 0.0, 1.0);
-      color = color * mix(1.0, coverage, strength);
       continue;
     }
     let mesh_sample = layer_mesh_uv(local.yz, layer_index);
@@ -1764,6 +1759,44 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     if (inside_mesh && shape_mask > 0.001) {
       color = native_blend(color, layer_rgb, fill_alpha, layers[layer_index].style.x);
     }
+  }
+
+  // Hierarchy-mask pass. Runs after the color loop so the mask's polygon
+  // coverage clips the composite that was actually painted beneath it.
+  // Pixels outside a mask layer's quad count as outside every shape (masked
+  // away, or preserved when the mask is inverted). Layer opacity scales the
+  // clip strength so a mask can fade in.
+  for (var i: i32 = 0; i < 64; i = i + 1) {
+    if (f32(i) >= u.layer_count) {
+      break;
+    }
+    let mask_index = u32(i);
+    // Mask layers legitimately carry color=(0,0,0,0), so the color.a>0 gate
+    // used in the color loop cannot apply here — only visibility matters.
+    if (layers[mask_index].info.x < 0.5) {
+      continue;
+    }
+    if (layers[mask_index].style.x < 25.5 || layers[mask_index].style.x >= 26.5) {
+      continue;
+    }
+    let mtl = layers[mask_index].p0.xy;
+    let mtr = layers[mask_index].p0.zw;
+    let mbr = layers[mask_index].p1.xy;
+    let mbl = layers[mask_index].p1.zw;
+    let mlocal = quad_local_uv(canvas_uv, mtl, mtr, mbr, mbl);
+    let minside = mlocal.x > 0.5;
+    let mask_enabled = layers[mask_index].mask_info.x > 0.5 && layers[mask_index].mask_info.w >= 2.5;
+    var coverage = 1.0;
+    if (mask_enabled) {
+      if (minside) {
+        coverage = native_polygon_mask(mlocal.yz, mask_index);
+      } else {
+        coverage = select(0.0, 1.0, layers[mask_index].mask_info.y > 0.5);
+      }
+    }
+    // Mask layers use color=(0,0,0,0) — they carry no fill — so `color.a` is
+    // not a usable strength for the mix. The mask always clips at full strength.
+    color = color * coverage;
   }
 
   color = apply_composite_effects(color, canvas_uv, t);

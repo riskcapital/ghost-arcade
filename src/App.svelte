@@ -154,6 +154,15 @@
   let isLinesDrawing = false;
   let nativePreviewOverlayRaf: number | null = null;
   let nativePreviewOverlaySignature = '';
+  // Frameless window-control state (Windows/Linux, where the transparent
+  // underlay window has no OS title bar).
+  let winMaximized = false;
+  // Anything interactive in the toolbar must not start a window drag.
+  function isToolbarControl(target: HTMLElement | null): boolean {
+    return !!target?.closest(
+      'button, a, input, select, textarea, label, [role="button"], .dropdown, .mobile-btn-wrapper, .mobile-info-popup, .win-controls',
+    );
+  }
 
   function presenterPoint(point: Point2D): NativeEditorPreviewOverlayPoint {
     return { x: point.x, y: 1 - point.y };
@@ -270,9 +279,11 @@
     if (nativePreviewOverlayRaf !== null || typeof requestAnimationFrame === 'undefined') return;
     nativePreviewOverlayRaf = requestAnimationFrame(() => {
       nativePreviewOverlayRaf = null;
-      // Metal now renders below Chromium. Editor chrome belongs exclusively to
-      // the DOM so controls, menus, and modals share one z-order and hit-test
-      // system; the native presenter supplies composite pixels only.
+      // The native preview is an underlay on both platforms now (macOS Metal
+      // subview below the web content; Windows a top-level window behind the
+      // transparent Electron window). Editor chrome therefore belongs entirely
+      // to the DOM — controls, menus and modals share one z-order and hit-test
+      // system — and the presenter supplies composite pixels only.
       const overlay = { lines: [], points: [], handles: [] };
       const signature = JSON.stringify(overlay);
       if (signature === nativePreviewOverlaySignature) return;
@@ -5699,7 +5710,32 @@
     {/if}
 
     <!-- Header / Toolbar -->
-    <header class="toolbar" class:vj-native-hidden={vjNativeUnderlayActive}>
+    <header
+      class="toolbar"
+      class:vj-native-hidden={vjNativeUnderlayActive}
+      class:frameless-drag={isDesktopApp && !isMac}
+      onmousedown={(event) => {
+        // Caption drag: empty toolbar space moves the window. The main process
+        // follows the OS cursor while the button is held.
+        if (!isDesktopApp || isMac || event.button !== 0) return;
+        if (isToolbarControl(event.target as HTMLElement | null)) return;
+        void invoke('win_drag_start');
+        const end = () => {
+          void invoke('win_drag_end');
+          window.removeEventListener('mouseup', end, true);
+          window.removeEventListener('blur', end, true);
+        };
+        window.addEventListener('mouseup', end, true);
+        window.addEventListener('blur', end, true);
+      }}
+      ondblclick={(event) => {
+        // Caption double-click: maximize/restore, like a real title bar.
+        if (!isDesktopApp || isMac) return;
+        if (isToolbarControl(event.target as HTMLElement | null)) return;
+        void invoke('win_drag_end');
+        void invoke('win_maximize_toggle').then((v) => { winMaximized = !!v; });
+      }}
+    >
       <div class="toolbar-left">
         <img src="{import.meta.env.BASE_URL}icon-new.png" alt="Ghost Arcade" class="header-logo" />
         <!-- Windows-style File Menu -->
@@ -6137,6 +6173,27 @@
           </div>
           {/if}
         </div>
+
+        {#if isDesktopApp && !isMac}
+          <!-- Frameless window controls: the transparent BrowserWindow needed
+               for the native preview underlay has no OS title bar on Windows.
+               The inert strip beside them is the window drag handle. -->
+          <div class="win-controls">
+            <button class="win-ctl" title="Minimize" onclick={() => invoke('win_minimize')} aria-label="Minimize">
+              <svg width="10" height="10" viewBox="0 0 10 10"><rect x="0" y="4.5" width="10" height="1" fill="currentColor"/></svg>
+            </button>
+            <button class="win-ctl" title="Maximize" onclick={async () => { winMaximized = await invoke('win_maximize_toggle'); }} aria-label="Maximize">
+              {#if winMaximized}
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1"><rect x="0.5" y="2.5" width="6" height="6"/><path d="M2.5 2.5V0.5H9.5V7.5H7.5"/></svg>
+              {:else}
+                <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1"><rect x="0.5" y="0.5" width="9" height="9"/></svg>
+              {/if}
+            </button>
+            <button class="win-ctl win-close" title="Close" onclick={() => invoke('win_close')} aria-label="Close">
+              <svg width="10" height="10" viewBox="0 0 10 10" stroke="currentColor" stroke-width="1.2"><path d="M0.5 0.5L9.5 9.5M9.5 0.5L0.5 9.5"/></svg>
+            </button>
+          </div>
+        {/if}
 
       </div>
     </header>
@@ -7649,6 +7706,43 @@
   /* Toolbar — uses theme tokens with the legacy accent vars as
      fallback so existing component CSS keeps working before each
      panel is migrated to the new system. */
+  /* Frameless (transparent underlay) window: the toolbar acts as the title bar.
+     Deliberately NOT `-webkit-app-region: drag` — Chromium handles input over
+     drag regions in the browser process, which makes the window un-double-
+     clickable (the renderer never sees the event). The move is driven from the
+     main process instead, so drag AND double-click-to-maximize both work. */
+  .toolbar.frameless-drag {
+    cursor: default;
+    user-select: none;
+  }
+
+  .win-controls {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin-left: 6px;
+  }
+  .win-ctl {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 30px;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary, #b8bcc4);
+    cursor: pointer;
+    border-radius: 4px;
+  }
+  .win-ctl:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: #fff;
+  }
+  .win-ctl.win-close:hover {
+    background: #e81123;
+    color: #fff;
+  }
+
   .toolbar {
     display: flex;
     align-items: center;

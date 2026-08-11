@@ -1201,6 +1201,15 @@
       try { source.videoEl.removeAttribute('src'); } catch {}
       try { source.videoEl.load(); } catch {}
     }
+    // Native live-capture sessions must be released on the addon side too —
+    // both webcam and screen sessions on Windows/macOS. Otherwise MF /
+    // DesktopDuplication holds the device or the duplication open, which on
+    // Windows blocks the next start of the same capture with an "already in
+    // use" error.
+    const nativeSessionId = (source as any).nativeSessionId;
+    if (nativeSessionId && isDesktopApp) {
+      void invoke('native_live_capture_stop', { sessionId: String(nativeSessionId) }).catch(() => {});
+    }
   }
 
   function stopAllVjLiveSources() {
@@ -1228,7 +1237,13 @@
 
   function createVJClipFromLiveSource(source: VJLiveSource): VJClip | null {
     const id = generateUUID();
-    if ((source.type === 'webcam' || source.type === 'capture') && source.videoEl) {
+    if (source.type === 'webcam' || source.type === 'capture') {
+      // Under NATIVE_ENGINE_ONLY there is no browser videoEl — the capture
+      // frames arrive as shared textures polled from win_capture_addon /
+      // live_capture_addon. The sync recognises `live://webcam|capture/<id>`
+      // and drives the addon via `native_live_capture_texture_info`, so a
+      // missing videoEl is expected and must NOT block the clip.
+      if (!source.videoEl && !isDesktopApp) return null;
       return {
         id,
         type: 'video',
@@ -1523,6 +1538,31 @@
   }
 
   async function vjStartWebcam() {
+    // Under NATIVE_ENGINE_ONLY the browser videoEl produced by getUserMedia
+    // never reaches the compositor (WebGL renderer is disabled). Route
+    // through the native live-capture addon instead — it publishes frames as
+    // shared textures the render core imports directly.
+    if (isDesktopApp) {
+      try {
+        const sessionId = (crypto.randomUUID?.() || Date.now().toString());
+        const result = await invoke<{ ok?: boolean; error?: string }>(
+          'native_live_capture_start_camera',
+          { sessionId, deviceId: '' },
+        );
+        if (!result?.ok) throw new Error(result?.error || 'native camera did not start');
+        vjLiveSources = [...vjLiveSources, {
+          id: sessionId,
+          name: 'Webcam',
+          type: 'webcam',
+          status: 'live',
+          nativeSessionId: sessionId,
+        } as any];
+      } catch (err) {
+        console.error('VJ native webcam start failed:', err);
+        showToast((err as Error)?.message || 'Could not start camera.', 'error');
+      }
+      return;
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
       const videoTrack = stream.getVideoTracks()[0];
@@ -1567,6 +1607,34 @@
 
   async function vjPickScreenSource(picked: VJScreenSource) {
     closeVjScreenPicker();
+    // Same reasoning as vjStartWebcam: the browser videoEl won't reach the
+    // native compositor, so hand off to the native live-capture addon.
+    if (isDesktopApp) {
+      try {
+        const sessionId = (crypto.randomUUID?.() || Date.now().toString());
+        const result = await invoke<{ ok?: boolean; error?: string }>(
+          'native_live_capture_start_screen',
+          {
+            sessionId,
+            sourceId: picked.id,
+            displayId: (picked as any).display_id || '',
+            kind: (picked as any).kind || 'screen',
+          },
+        );
+        if (!result?.ok) throw new Error(result?.error || 'native screen capture did not start');
+        vjLiveSources = [...vjLiveSources, {
+          id: sessionId,
+          name: picked.name || 'Capture',
+          type: 'capture',
+          status: 'live',
+          nativeSessionId: sessionId,
+        } as any];
+      } catch (err) {
+        console.error('VJ native capture start failed:', err);
+        showToast((err as Error)?.message || `Could not capture "${picked.name}".`, 'error');
+      }
+      return;
+    }
     try {
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
@@ -3712,7 +3780,31 @@
     class:mac-titlebar-offset={isMac}
   >
     <!-- Header -->
-    <div class="vj-header" class:audio-on={$audioStore.isActive}>
+    <div
+      class="vj-header"
+      class:audio-on={$audioStore.isActive}
+      class:frameless-caption={isDesktopApp && !isMac}
+      onmousedown={(event) => {
+        if (!isDesktopApp || isMac || event.button !== 0) return;
+        const t = event.target as HTMLElement | null;
+        if (t?.closest('button, a, input, select, textarea, label, [role="button"], .dropdown, .vj-file-menu-container, .vj-win-controls, .vj-audio-strip, .macro-bank, .audio-meter, .stage-mix-btn')) return;
+        void invoke('win_drag_start');
+        const end = () => {
+          void invoke('win_drag_end');
+          window.removeEventListener('mouseup', end, true);
+          window.removeEventListener('blur', end, true);
+        };
+        window.addEventListener('mouseup', end, true);
+        window.addEventListener('blur', end, true);
+      }}
+      ondblclick={(event) => {
+        if (!isDesktopApp || isMac) return;
+        const t = event.target as HTMLElement | null;
+        if (t?.closest('button, a, input, select, textarea, label, [role="button"], .dropdown, .vj-file-menu-container, .vj-win-controls, .vj-audio-strip, .macro-bank')) return;
+        void invoke('win_drag_end');
+        void invoke('win_maximize_toggle');
+      }}
+    >
       <!-- Lead column: fixed-size left controls, then the MIX/STAGE/MAP
            toggle centred in whatever space is left before the macro bank. -->
       <div class="header-lead">
@@ -3834,6 +3926,26 @@
           </svg>
         </button>
         <button class="exit-btn" onclick={handleExitVJClick} title="Exit VJ and stop live output">Exit VJ</button>
+        {#if isDesktopApp && !isMac}
+          <!-- Frameless window controls, mirroring the mapping-mode toolbar's
+               top-right cluster (App.svelte). VJ mode hides the mapping
+               toolbar entirely, so without these there is no min/maximize/close
+               reachable in VJ. -->
+          <div class="vj-win-controls">
+            <button class="vj-win-ctl" title="Minimize" aria-label="Minimize"
+                    onclick={() => invoke('win_minimize')}>
+              <svg width="10" height="10" viewBox="0 0 10 10"><rect x="0" y="4.5" width="10" height="1" fill="currentColor"/></svg>
+            </button>
+            <button class="vj-win-ctl" title="Maximize" aria-label="Maximize"
+                    onclick={() => { void invoke('win_maximize_toggle'); }}>
+              <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1"><rect x="0.5" y="0.5" width="9" height="9"/></svg>
+            </button>
+            <button class="vj-win-ctl vj-win-close" title="Close" aria-label="Close"
+                    onclick={() => invoke('win_close')}>
+              <svg width="10" height="10" viewBox="0 0 10 10" stroke="currentColor" stroke-width="1.2"><path d="M0.5 0.5L9.5 9.5M9.5 0.5L0.5 9.5"/></svg>
+            </button>
+          </div>
+        {/if}
       </div>
     </div>
 
@@ -6643,6 +6755,40 @@
   }
 
   /* Header */
+  /* Frameless caption: the VJ header acts as the OS title bar on Windows —
+     drag-to-move and dblclick-to-maximize are wired in JS above. */
+  .vj-header.frameless-caption {
+    cursor: default;
+    user-select: none;
+  }
+
+  .vj-win-controls {
+    display: flex;
+    align-items: center;
+    gap: 2px;
+    margin-left: 6px;
+  }
+  .vj-win-ctl {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 34px;
+    height: 30px;
+    border: none;
+    background: transparent;
+    color: var(--text-secondary, #b8bcc4);
+    cursor: pointer;
+    border-radius: 4px;
+  }
+  .vj-win-ctl:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: #fff;
+  }
+  .vj-win-ctl.vj-win-close:hover {
+    background: #e81123;
+    color: #fff;
+  }
+
   /* Three columns: lead controls | macro bank | right cluster. The two side
      columns are equal fractions, so the macro bank lands dead centre no
      matter how wide either side's contents are. */

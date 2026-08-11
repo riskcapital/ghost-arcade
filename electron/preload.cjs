@@ -145,6 +145,11 @@ const ALLOWED_IPC_COMMANDS = new Set([
   // Ableton Link — LAN tempo/beat sync (session lives in main; the
   // renderer polls state and bridges tempo into the master BPM).
   'link_enable', 'link_disable', 'link_set_tempo', 'link_get_state',
+  // Window controls for the frameless editor. The transparent BrowserWindow
+  // that the native preview underlay requires has no OS title bar on
+  // Windows/Linux, so the toolbar drives min/maximize/close over IPC.
+  'win_minimize', 'win_maximize_toggle', 'win_is_maximized', 'win_close',
+  'win_drag_start', 'win_drag_end',
 ]);
 
 // Expose a bridge that mirrors Tauri's invoke() API
