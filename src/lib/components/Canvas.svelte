@@ -1818,10 +1818,19 @@
             else slot.b = layer;
             byIndex.set(parsed.idx, slot);
           }
-          const shapedMix = applyFaderCurve(
-            Math.max(0, Math.min(1, vjState.crossfaderValue ?? 0)),
-            vjState.crossfaderCurve || 'constant-power',
-          );
+          // Mix value handed to the native transition shader. Every WGSL
+          // transition applies its own constant-power (or equivalent) response
+          // to the incoming mix, so 'constant-power' must pass the RAW fader
+          // value — pre-shaping it here double-applied sin(v·π/2), which
+          // skewed the perceptual midpoint to ~35% travel and kept the
+          // incoming deck invisible until well past a third of the throw.
+          // 'linear' is identity and 'sharp-cut' genuinely wants its S-curve
+          // pre-shape, so those still go through applyFaderCurve.
+          const xfadeCurve = vjState.crossfaderCurve || 'constant-power';
+          const rawFader = Math.max(0, Math.min(1, vjState.crossfaderValue ?? 0));
+          const shapedMix = xfadeCurve === 'constant-power'
+            ? rawFader
+            : applyFaderCurve(rawFader, xfadeCurve);
           const stateA = vjState.layerStates ?? [];
           const stateB = vjState.bankBLayerStates ?? [];
           for (const [idx, slot] of byIndex.entries()) {
