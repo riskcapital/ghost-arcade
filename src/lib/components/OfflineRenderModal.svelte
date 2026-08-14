@@ -21,6 +21,9 @@
   let settings: OfflineRenderSettings = { ...DEFAULT_OFFLINE_SETTINGS };
   let seededForOpen = false;
   let captureBackendTouched = false;
+  // The native shell has no WebGL engine — that backend reads the live
+  // compositor canvas, which does not exist there.
+  $: webglCaptureAvailable = !!offlineRender.getEngine();
   let nativeProbeStartedForOpen = false;
   let nativeFrameCaptureAvailable = false;
   let nativeFrameCaptureMessage = 'Desktop only';
@@ -88,7 +91,7 @@
   function start() {
     offlineRender.start({
       ...settings,
-      captureBackend: settings.captureBackend === 'native' && nativeFrameCaptureAvailable
+      captureBackend: (settings.captureBackend === 'native' && nativeFrameCaptureAvailable) || !webglCaptureAvailable
         ? 'native'
         : 'webgl',
     });
@@ -113,12 +116,13 @@
     captureBackendTouched = false;
     settings = {
       ...settings,
-      captureBackend: nativeFrameCaptureAvailable ? 'native' : 'webgl',
+      captureBackend: nativeFrameCaptureAvailable || !webglCaptureAvailable ? 'native' : 'webgl',
     };
   }
 
   function selectCaptureBackend(captureBackend: 'webgl' | 'native') {
     if (captureBackend === 'native' && !nativeFrameCaptureAvailable) return;
+    if (captureBackend === 'webgl' && !webglCaptureAvailable) return;
     captureBackendTouched = true;
     settings = { ...settings, captureBackend };
   }
@@ -141,15 +145,15 @@
       nativeFrameCaptureAvailable = available;
       nativeFrameCaptureMessage = available ? 'Ready' : 'Not available';
       if (!captureBackendTouched) {
-        settings = { ...settings, captureBackend: available ? 'native' : 'webgl' };
-      } else if (!available && settings.captureBackend === 'native') {
+        settings = { ...settings, captureBackend: available || !webglCaptureAvailable ? 'native' : 'webgl' };
+      } else if (!available && settings.captureBackend === 'native' && webglCaptureAvailable) {
         settings = { ...settings, captureBackend: 'webgl' };
       }
     } catch (err) {
       if (generation !== nativeProbeGeneration) return;
       nativeFrameCaptureAvailable = false;
       nativeFrameCaptureMessage = err instanceof Error && err.message ? err.message : 'Not available';
-      if (settings.captureBackend === 'native') {
+      if (settings.captureBackend === 'native' && webglCaptureAvailable) {
         settings = { ...settings, captureBackend: 'webgl' };
       }
     }
@@ -327,10 +331,12 @@
             type="button"
             class="engine-btn"
             class:active={settings.captureBackend !== 'native'}
+            disabled={!webglCaptureAvailable}
             onclick={() => selectCaptureBackend('webgl')}
+            title={webglCaptureAvailable ? 'Live WebGL compositor' : 'Not available — this build renders natively'}
           >
             <span class="engine-title">WebGL</span>
-            <span class="engine-meta">Current compositor</span>
+            <span class="engine-meta">{webglCaptureAvailable ? 'Current compositor' : 'Not in this build'}</span>
           </button>
           <button
             type="button"

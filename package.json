@@ -21,6 +21,8 @@
     "dev": "vite",
     "dev:native-mobile": "vite --config vite.config.native-mobile.ts",
     "desktop": "concurrently \"npm run dev\" \"electron .\"",
+    "desktop:app": "node scripts/dev-desktop-app.mjs",
+    "sign:dev-electron": "node scripts/sign-dev-electron.mjs",
     "build": "vite build",
     "build:native-mobile": "vite build --config vite.config.native-mobile.ts",
     "build:desktop": "vite build && electron-builder --win",
@@ -33,7 +35,8 @@
     "check": "npm run check:desktop",
     "check:desktop": "svelte-check --tsconfig ./tsconfig.desktop.json",
     "check:native-mobile": "svelte-check --tsconfig ./tsconfig.native-mobile.json",
-    "native:build": "cargo build --manifest-path native-renderer/Cargo.toml --release",
+    "native:build": "node scripts/build-native-core.mjs --arch=host",
+    "native:build:universal": "node scripts/build-native-core.mjs",
     "native:test": "cargo test --manifest-path native-renderer/Cargo.toml",
     "native:check:windows": "cargo check --manifest-path native-renderer/Cargo.toml --target x86_64-pc-windows-msvc",
     "native:doctor": "node scripts/native-renderer-doctor.mjs",
@@ -49,7 +52,7 @@
     "native:wgsl-check": "npm run native:build && node scripts/native-wgsl-check.mjs",
     "native:perf": "npm run native:build && node scripts/native-performance-benchmark.mjs",
     "native:isf-corpus": "npm run native:build && node scripts/native-isf-corpus-check.mjs",
-    "native:unit": "npm run native:build && vitest run src/lib/renderer/nativePreviewGeometry.native.test.ts src/lib/renderer/nativeRendererCore.native.test.ts src/lib/renderer/nativeRendererBroker.native.test.ts src/lib/renderer/nativeGraphInstruments.native.test.ts src/lib/renderer/vjCrossfadeNative.native.test.ts src/lib/renderer/nativeEffectPass.native.test.ts src/lib/sync/nativeRendererSync.native.test.ts src/lib/stores/nativeRenderer.native.test.ts src/lib/renderer/webgpu3DSmoke.native.test.ts src/lib/renderer/webgpuFlythrough.native.test.ts src/lib/renderer/webgpuInkCloud.native.test.ts src/lib/renderer/webgpuParticleField.native.test.ts src/lib/renderer/webgpuPixelParticles.native.test.ts src/lib/renderer/webgpuPointCloudFX.native.test.ts src/lib/renderer/shaders/webgpuPlanet.native.test.ts src/lib/renderer/shaders/webgpuVolumetricSpheresShader.native.test.ts src/lib/renderer/shaders/webgpuSmokeRidersShader.native.test.ts",
+    "native:unit": "npm run native:build && vitest run src/lib/renderer/nativePreviewGeometry.native.test.ts src/lib/renderer/nativeRendererCore.native.test.ts src/lib/renderer/nativeRendererBroker.native.test.ts src/lib/renderer/nativeGraphInstruments.native.test.ts src/lib/renderer/vjCrossfadeNative.native.test.ts src/lib/renderer/vjMixNative.native.test.ts src/lib/renderer/nativeEffectPass.native.test.ts src/lib/sync/nativeRendererSync.native.test.ts src/lib/stores/nativeRenderer.native.test.ts src/lib/renderer/webgpu3DSmoke.native.test.ts src/lib/renderer/webgpuFlythrough.native.test.ts src/lib/renderer/webgpuInkCloud.native.test.ts src/lib/renderer/webgpuParticleField.native.test.ts src/lib/renderer/webgpuPixelParticles.native.test.ts src/lib/renderer/webgpuPointCloudFX.native.test.ts src/lib/renderer/shaders/webgpuPlanet.native.test.ts src/lib/renderer/shaders/webgpuVolumetricSpheresShader.native.test.ts src/lib/renderer/shaders/webgpuSmokeRidersShader.native.test.ts",
     "native:full-check": "npm run check:desktop && npm run native:test && npm run native:check:windows && npm run native:unit && npm run native:doctor && npm run native:broker-contract && npm run native:preview-output-golden && npm run native:graph-parity && npm run native:smoke3d && npm run native:frame-sequence && npm run native:compositor-parity && npm run native:effect-golden && npm run native:wgsl-check && npm run native:isf-corpus && npm run native:smoke",
     "desktop:native": "npm run native:build && npm run desktop",
     "native-mobile:sync": "npm run build:native-mobile && cd native-mobile && npm run cap:sync",
@@ -63,7 +66,8 @@
     "legacy:electron:dev": "concurrently -k \"npm run dev\" \"node -e \\\"setTimeout(() => require('child_process').execSync('electron .', {stdio:'inherit'}), 2000)\\\"\"",
     "test": "vitest run",
     "lint": "eslint src",
-    "format": "prettier --write src"
+    "format": "prettier --write src",
+    "postinstall": "node scripts/sign-dev-electron.mjs"
   },
   "dependencies": {
     "@ffmpeg/core": "^0.12.6",

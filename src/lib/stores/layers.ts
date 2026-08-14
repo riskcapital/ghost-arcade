@@ -19,6 +19,7 @@ import {
   resolveStagePresetSurfaceId,
 } from './stagePresetSurfaces';
 import { stage3dScene } from '../stage3d/store';
+import { projectionSimScene } from '../projectionSim/store';
 // Catalog of per-effect default params. Used by resetEffectParams to
 // snap an effect back to its baseline values when the user hits the
 // per-effect reset button in LayerPanel.
@@ -4930,7 +4931,13 @@ void main() {
      * sync relay uses exportProject() directly and must not.
      */
     exportProjectJSON(): string {
-      const exportData = this.exportProject();
+      const exportData = this.exportProject() as any;
+      try {
+        exportData.project.stage3d = JSON.parse(JSON.stringify(get(stage3dScene)));
+      } catch { /* snapshot failed — autosave still carries the layers */ }
+      try {
+        exportData.project.projectionSim = projectionSimScene.exportForProject();
+      } catch { /* ditto */ }
       return JSON.stringify(exportData, null, 2);
     },
 
@@ -4963,15 +4970,24 @@ void main() {
       }
 
       // Keep in lockstep with exportProject() above.
+      // 1.9.4 bump: project.projectionSim (Map Sim scene; imported models
+      // ride AssetRefs, runtime URLs are blanked at save).
       // 1.9.3 bump: layerSequencer + geoDeck now serialize at project root.
       // 1.9.2 bump: AssetRef capture on every File-import site, plus
       // pixelFXContent / gpuLayerContent now actually export. Older saves
       // (1.9.x and earlier) still load via the legacy resolveSrc fallback.
-      syncExport.version = '1.9.3';
+      syncExport.version = '1.9.4';
       try {
         syncExport.project.stage3d = JSON.parse(JSON.stringify(get(stage3dScene)));
       } catch (err) {
         console.warn('[Store] exportProjectForSave: 3D scene snapshot failed', err);
+      }
+      try {
+        // Save-only, like stage3d: the live state-sync relay must not carry
+        // scene payloads or every sync tick would clobber the open editor.
+        syncExport.project.projectionSim = projectionSimScene.exportForProject();
+      } catch (err) {
+        console.warn('[Store] exportProjectForSave: projection sim snapshot failed', err);
       }
       return syncExport;
     },
@@ -5097,6 +5113,7 @@ void main() {
             vjMode?: any;
             mediaFolders?: MediaTrayFolder[];
             stage3d?: unknown;
+            projectionSim?: unknown;
           };
           mediaLibrary?: any[];
           vjClipLauncher?: any;
@@ -5792,6 +5809,18 @@ void main() {
             }
           } catch (err) {
             console.warn('[Store] importProject: 3D scene restore failed', err);
+          }
+          try {
+            const importedSim = (proj as any).projectionSim;
+            if (importedSim?.schemaVersion === 1
+              && Array.isArray(importedSim.objects)
+              && Array.isArray(importedSim.projectors)) {
+              projectionSimScene.loadSceneFromProject(importedSim, projectDir);
+            }
+            // No else: a project without the section keeps the store's
+            // session scene (fresh launches land on the cube-pyramid preset).
+          } catch (err) {
+            console.warn('[Store] importProject: projection sim restore failed', err);
           }
         });
         // Hydrate $settings.output from the project's multi-output

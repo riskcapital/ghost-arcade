@@ -1048,6 +1048,57 @@ fn master_warp_uv(uv: vec2<f32>) -> vec3<f32> {
   return vec3<f32>(q, 0.0);
 }
 
+/// Alignment test patterns, drawn OVER the composited frame on the output.
+/// Codes mirror TestPatternType: 1 grid, 2 crosshair, 3 colour bars,
+/// 4 white, 5 gradient, 6 checkerboard. Patterns draw in screen space
+/// (pre-warp UV) so a keystoned rig shows the pattern through its warp —
+/// which is the whole point of an alignment pattern.
+fn apply_test_pattern(color_in: vec3<f32>, uv: vec2<f32>, aspect: f32) -> vec3<f32> {
+  let code = i32(floor(u.dome2.w + 0.5));
+  if (code <= 0) { return color_in; }
+  if (code == 4) { return vec3<f32>(1.0); }
+  if (code == 5) {
+    return vec3<f32>(uv.x, uv.y, 1.0 - uv.x);
+  }
+  if (code == 6) {
+    let cells = 8.0;
+    let cx = floor(uv.x * cells * aspect);
+    let cy = floor(uv.y * cells);
+    let odd = (cx + cy) - 2.0 * floor((cx + cy) / 2.0);
+    return vec3<f32>(select(0.08, 0.92, odd > 0.5));
+  }
+  if (code == 3) {
+    let bars = array<vec3<f32>, 7>(
+      vec3<f32>(1.0, 1.0, 1.0), vec3<f32>(1.0, 1.0, 0.0), vec3<f32>(0.0, 1.0, 1.0),
+      vec3<f32>(0.0, 1.0, 0.0), vec3<f32>(1.0, 0.0, 1.0), vec3<f32>(1.0, 0.0, 0.0),
+      vec3<f32>(0.0, 0.0, 1.0));
+    let index = i32(clamp(floor(uv.x * 7.0), 0.0, 6.0));
+    return bars[index];
+  }
+  // Grid and crosshair overlay the content rather than replacing it, so
+  // alignment can happen against live footage.
+  var out = color_in * 0.35;
+  let px = 1.0 / max(u.resolution.x, 1.0);
+  let py = 1.0 / max(u.resolution.y, 1.0);
+  if (code == 1) {
+    let cols = 12.0;
+    let rows = 12.0 / aspect;
+    let gx = abs(fract(uv.x * cols) - 0.5);
+    let gy = abs(fract(uv.y * rows) - 0.5);
+    let line = max(step(gx, px * cols * 1.2), step(gy, py * rows * 1.2));
+    out = mix(out, vec3<f32>(0.0, 1.0, 0.55), line);
+  }
+  let cx = abs(uv.x - 0.5);
+  let cy = abs(uv.y - 0.5);
+  let cross = max(step(cx, px * 1.5), step(cy, py * 1.5));
+  let ring = abs(length(vec2<f32>((uv.x - 0.5) * aspect, uv.y - 0.5)) - 0.25);
+  let circle = step(ring, px * 2.0);
+  if (code == 2 || code == 1) {
+    out = mix(out, vec3<f32>(1.0, 0.3, 0.9), max(cross, circle));
+  }
+  return out;
+}
+
 /// Output rotation, in quarter turns, matching opaqueOutputFragmentShader.
 fn output_rotate_uv(uv: vec2<f32>) -> vec2<f32> {
   let index = i32(floor(u.out1.x + 0.5));
@@ -1800,6 +1851,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
   }
 
   color = apply_composite_effects(color, canvas_uv, t);
+  color = apply_test_pattern(color, in.uv, aspect);
   if (u.dome2.z > 0.5) {
     color = slice_output_grade(color, in.uv) * dome_mask;
   } else {

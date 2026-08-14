@@ -157,14 +157,6 @@
   // Signature of the active slice id set — used to prune async-readback
   // PBO state in blendRenderer when slices are added/removed.
   let lastSliceIdsKey = '';
-  // Tracks which NDI sender names have been created via the native
-  // addon. We lazy-create on first send (see the per-slice send loop)
-  // and never destroy in the renderer — the main process tears them
-  // down on app quit. Renaming or disabling a slice mid-session
-  // doesn't currently free its sender; acceptable for v1, can revisit
-  // when we add slice CRUD lifecycle hooks.
-  const sliceNdiActive = new Set<string>();
-  const isMac = typeof navigator !== 'undefined' && /Mac/.test(navigator.platform);
   let sliceCanvas: HTMLCanvasElement | null = null; // Reusable 2D canvas for crop extraction
   let sliceCtx: CanvasRenderingContext2D | null = null;
   let sliceBlendCanvas: HTMLCanvasElement | null = null; // For per-slice edge blending
@@ -720,8 +712,11 @@
     ctx.setTransform(ratio, 0, 0, ratio, 0, 0);
     ctx.clearRect(0, 0, w, h);
 
-    // Draw test pattern if active
-    if (testPattern && testPattern !== 'none') {
+    // Draw test pattern if active. Under the native driver the core's
+    // output stage draws the pattern into the composite itself (so it
+    // reaches the projector); painting it here too would double it in
+    // the editor preview.
+    if (testPattern && testPattern !== 'none' && !nativePrimaryActive()) {
       drawTestPattern(ctx, w, h, testPattern);
     }
 
@@ -1672,6 +1667,70 @@
           .filter((overlay): overlay is Layer => !!overlay);
         return overlays.length ? [...overlays, ...baseLayers] : baseLayers;
       };
+      // True post-crossfade VJ Mix carrier: a synthetic feed-only layer that
+      // makes the core render the full VJ row stack (bottom→top, per-row
+      // opacity + blend, post-crossfade per row) into one source frame.
+      // Mapping layers bound to "VJ Mix" (vjLayerIndex === -1) get this
+      // carrier's source via resolveNativeGroupLayers, replacing the old
+      // lowest-active-row approximation. Opacity 0 — it never composites
+      // itself, it only keeps the mix frame rendering.
+      const appendNativeVjMixCarrier = (list: Layer[]): Layer[] => {
+        type MixRowEntry = { layerId: string; opacity: number; blendMode: string };
+        const rowsByIdx = new Map<number, MixRowEntry>();
+        for (const layer of list) {
+          const id = String(layer.id);
+          const xfade = /^vj-xfade-(\d+)$/.exec(id);
+          if (xfade) {
+            // Crossfade carrier: bank opacities are baked into the native
+            // transition pass output, so the row rides at full opacity.
+            rowsByIdx.set(Number(xfade[1]), {
+              layerId: id,
+              opacity: 1,
+              blendMode: String(layer.blendMode || 'normal'),
+            });
+            continue;
+          }
+          const parsed = parseVjLayerId(id);
+          if (!parsed) continue;
+          const existing = rowsByIdx.get(parsed.idx);
+          // A crossfade carrier always wins; among plain/bank rows keep the
+          // most visible entry (dual-bank residents ride at opacity 0).
+          if (existing?.layerId.startsWith('vj-xfade-')) continue;
+          const entry: MixRowEntry = {
+            layerId: id,
+            opacity: Math.max(0, Math.min(1, layer.opacity ?? 1)),
+            blendMode: String(layer.blendMode || 'normal'),
+          };
+          if (!existing || entry.opacity >= existing.opacity) rowsByIdx.set(parsed.idx, entry);
+        }
+        if (!rowsByIdx.size) return list;
+        // Bottom→top: VJ row 0 is topmost (the engine reverses the render
+        // plan), so the composite stacks from the highest index upward.
+        const rows = Array.from(rowsByIdx.entries())
+          .sort((a, b) => b[0] - a[0])
+          .map(([, entry]) => entry);
+        return [
+          ...list,
+          {
+            ...createLayer('__vj-mix__', 'VJ Mix', 'media'),
+            visible: true,
+            opacity: 0,
+            blendMode: 'normal',
+            source: {
+              id: '__vj-mix-src__',
+              type: 'effect',
+              src: 'plugin://vj-mix',
+              name: 'VJ Mix',
+              effectSource: {
+                effectType: 'vj-mix',
+                vjmixRows: rows,
+              },
+            } as NonNullable<Layer['source']>,
+            effects: [],
+            edgeEffects: null,
+          } as Layer,
+        ];
+      };
       const nativeEffectiveLayers = (): Layer[] | null => {
         const vjState = get(vjClipLauncher);
         // STAGE mode: the VJ feed layers render their frames invisibly while
@@ -1737,7 +1796,9 @@
           if (!vjLayers?.length) return stageWrap([]);
           const weights = nativeCrossfadeWeights(vjState);
           if (!weights) {
-            return stageWrap(appendNativePerformerWorldLayers(vjLayers, vjLayers, weights));
+            return stageWrap(appendNativeVjMixCarrier(
+              appendNativePerformerWorldLayers(vjLayers, vjLayers, weights),
+            ));
           }
           // A/B crossfade with a paired transition shader: both banks stay
           // composited at opacity 0 (their frames keep rendering — the mix
@@ -1815,7 +1876,9 @@
               _deckMonitorOpacity: single.opacity,
             });
           }
-          return stageWrap(appendNativePerformerWorldLayers(output, vjLayers, weights));
+          return stageWrap(appendNativeVjMixCarrier(
+            appendNativePerformerWorldLayers(output, vjLayers, weights),
+          ));
         }
         // Shallow-copy so per-frame opacity rides (stage FX) captured at
         // call time survive the end-of-frame restore before the sync flush.
@@ -2040,6 +2103,39 @@
       }
       startNativeRendererSyncLifecycle();
 
+      // Teardown registry for native-branch subscriptions added below.
+      const nativeTeardownCallbacks: Array<() => void> = [];
+
+      // WLED under the native driver: the senders used to register the
+      // WebGL canvas, which is a cleared underlay here — content-aware
+      // sampling read solid black (pattern modes were unaffected). Feed
+      // them the composite mirror instead. The mirror snapshot pump only
+      // runs while an enabled controller exists, so projects without WLED
+      // pay nothing.
+      let wledMirror: import('$lib/sync/nativeCompositeMirror').CompositeMirrorHandle | null = null;
+      const wledUnsub = project.subscribe((p) => {
+        const wantsWled = (p.wledControllers ?? []).some((c: { enabled?: boolean }) => c.enabled);
+        if (wantsWled && !wledMirror) {
+          void import('$lib/sync/nativeCompositeMirror').then(({ acquireNativeCompositeMirror }) => {
+            if (wledMirror) return;
+            wledMirror = acquireNativeCompositeMirror({ maxDim: 384, fps: 20 });
+            startWLEDSenders(wledMirror.canvas, 'editor');
+          });
+        } else if (!wantsWled && wledMirror) {
+          stopWLEDSenders(wledMirror.canvas);
+          wledMirror.release();
+          wledMirror = null;
+        }
+      });
+      nativeTeardownCallbacks.push(() => {
+        wledUnsub();
+        if (wledMirror) {
+          stopWLEDSenders(wledMirror.canvas);
+          wledMirror.release();
+          wledMirror = null;
+        }
+      });
+
       canvas.addEventListener('mousemove', handleCanvasMouseMove);
       canvas.addEventListener('mouseleave', handleCanvasMouseLeave);
       canvas.addEventListener('mouseenter', handleCanvasMouseEnter);
@@ -2089,6 +2185,9 @@
       nativeResizeObserver.observe(wrapperEl);
 
       return () => {
+        for (const teardown of nativeTeardownCallbacks) {
+          try { teardown(); } catch { /* teardown best-effort */ }
+        }
         nativeResizeObserver.disconnect();
         editorCanvasGeometrySnapshot = null;
         editorCanvasGeometrySignature = '';
@@ -3220,31 +3319,21 @@
                   sliceSendInFlight.delete(slice.id);
                   continue;
                 }
-                // Route by transport. 'ndi' goes to the new ndi_send_image
-                // IPC handler; the existing 'spout' / 'syphon' paths keep
-                // their behavior unchanged. Slice managers ensure
-                // ndi_create_sender was called for senderName before any
-                // sends (sliceNdiActive tracks this).
-                const outputType = (slice as any).outputType ?? (isElectron ? (isMac ? 'syphon' : 'spout') : 'spout');
-                // Re-wrap as Uint8Array for IPC (NDI/Spout expect Uint8Array).
+                // NDI transport is handled entirely by the main-process
+                // composite pump (electron/main.js startNdiOutputPump,
+                // engaged from stores/screens.ts when any slice selects
+                // outputType 'ndi') — the old per-slice WebGL readback →
+                // ndi_send_image path was dead under NATIVE_ENGINE_ONLY
+                // and has been retired. This loop only routes the local
+                // Spout / Syphon transports.
+                // Re-wrap as Uint8Array for IPC (Spout expects Uint8Array).
                 // GPU path already returns Uint8Array; 2D fallback returns
                 // Uint8ClampedArray.
                 const sendBytes: Uint8Array = slicePixels instanceof Uint8Array
                   ? slicePixels
                   : new Uint8Array(slicePixels.buffer, slicePixels.byteOffset, slicePixels.byteLength);
 
-                if (outputType === 'ndi' && isElectron) {
-                  if (!sliceNdiActive.has(senderName)) {
-                    // Lazy-create the NDI sender on first send. The
-                    // store/UI tracks intent (outputType=ndi), but the
-                    // actual sender lifecycle lives here so it survives
-                    // slice rename / re-config without UI complexity.
-                    sliceNdiActive.add(senderName);
-                    (window as any).ghostNDI?.createSender(senderName).catch(() => { sliceNdiActive.delete(senderName); });
-                  }
-                  (window as any).ghostNDI?.sendImage(senderName, sendBytes, sw, sh)
-                    .catch(() => {}).finally(() => { sliceSendInFlight.delete(slice.id); });
-                } else if (isElectron) {
+                if (isElectron) {
                   invoke('spout_send_image', { data: sendBytes, width: sw, height: sh, senderName })
                     .catch(() => {}).finally(() => { sliceSendInFlight.delete(slice.id); });
                 } else {

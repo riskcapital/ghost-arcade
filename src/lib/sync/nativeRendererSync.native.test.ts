@@ -1845,7 +1845,7 @@ describe('native renderer sync effect-pass descriptors', () => {
         outlineCrawl: 0.5,
         outlineAlphaAware: 1,
       },
-    })).toBe('outline:4.0000:0.1000:0.8000:1.0000:1:0.7000:2:0.5000:1');
+    })).toBe('outline:4.0000:0.1000:0.8000:1.0000:1:0.7000:2:0.5000:1:1.0000');
 
     expect(effectToNativeDescriptor({
       type: 'nightVision',
@@ -2029,7 +2029,7 @@ describe('native renderer sync effect-pass descriptors', () => {
         plasmaPalette: 8,
         plasmaSourceMix: 0.35,
       },
-    })).toBe('plasma:0.9000:4.5000:0.8000:8:0.3500');
+    })).toBe('plasma:0.9000:4.5000:0.8000:8:0.3500:3:0:0:0.4000:0.0000');
 
     expect(effectToNativeDescriptor({
       type: 'halftone',
@@ -2040,7 +2040,7 @@ describe('native renderer sync effect-pass descriptors', () => {
         halftoneDotGain: 1.1,
         halftoneColorMode: 0,
       },
-    })).toBe('halftone:1.0000:9.0000:24.0000:1.1000:0.0000');
+    })).toBe('halftone:1.0000:9.0000:24.0000:1.1000:0.0000:0:0:15.0000:75.0000:0.0000:45.0000:0.0000');
 
     expect(effectToNativeDescriptor({
       type: 'toon',
@@ -2051,7 +2051,7 @@ describe('native renderer sync effect-pass descriptors', () => {
         toonSaturation: 1.2,
         toonEdgeThreshold: 0.02,
       },
-    })).toBe('toon:0.9500:3:1.2000:1.2000:0.0200');
+    })).toBe('toon:0.9500:3:1.2000:1.2000:0.0200:0.0000:0.0000');
 
     expect(effectToNativeDescriptor({
       type: 'kuwahara',
@@ -2495,7 +2495,8 @@ describe('generic passthru effect routing', () => {
   });
 
   it('keeps explicit branches for legacy effects and rejects stateful ones', () => {
-    expect(effectToNativeDescriptor({ type: 'invert', enabled: true, params: {} })).toBe('invert');
+    expect(effectToNativeDescriptor({ type: 'invert', enabled: true, params: {} }))
+      .toBe('invert:1.0000:0:0.5000:4.0000');
     expect(effectToNativeDescriptor({ type: 'gpuFluidSim', enabled: true, params: {} })).toBeNull();
     expect(nativeUnsupportedEffectTypes({ effects: [
       { type: 'dotMatrix', enabled: true, params: {} },

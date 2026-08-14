@@ -15,13 +15,25 @@
   import { audioStore } from './lib/stores/audio';
   import { startModulationBroadcastReceiver } from './lib/sync/modulationBroadcast';
   import { initLicense } from './lib/stores/license';
-  import { invoke } from '$lib/bridge';
+  import { invoke, isDesktopApp } from '$lib/bridge';
+  import { NATIVE_ENGINE_ONLY } from '$lib/stores/settings';
+  import { acquireNativeCompositeMirror, type CompositeMirrorHandle } from '$lib/sync/nativeCompositeMirror';
 
   let canvasComponent: Canvas | null = null;
   let sourceCanvas: HTMLCanvasElement | null = null;
   let sourceCanvasPoll: ReturnType<typeof setInterval> | null = null;
+  // Native desktop: project the composite mirror — the core's real output,
+  // including live capture sources and native-only rendering that this
+  // window's local WebGL Canvas cannot reproduce. The local Canvas stays
+  // mounted as the fallback while the mirror has no frame yet.
+  const useNativeMirror = isDesktopApp && NATIVE_ENGINE_ONLY;
+  let mirror: CompositeMirrorHandle | null = null;
 
   function refreshSourceCanvas() {
+    if (mirror && mirror.canvas.width > 16) {
+      if (sourceCanvas !== mirror.canvas) sourceCanvas = mirror.canvas;
+      return;
+    }
     const next = canvasComponent?.getCanvas?.() ?? null;
     if (next !== sourceCanvas) sourceCanvas = next;
   }
@@ -38,6 +50,9 @@
     startModulationBroadcastReceiver();
     initLicense().catch((e) => console.warn('[ProjectionSimWindow] License init:', e));
 
+    if (useNativeMirror) {
+      mirror = acquireNativeCompositeMirror({ maxDim: 960, fps: 24 });
+    }
     refreshSourceCanvas();
     requestAnimationFrame(refreshSourceCanvas);
     sourceCanvasPoll = setInterval(refreshSourceCanvas, 250);
@@ -45,6 +60,8 @@
   });
 
   onDestroy(() => {
+    mirror?.release();
+    mirror = null;
     window.removeEventListener('beforeunload', notifyClosing);
     if (sourceCanvasPoll) {
       clearInterval(sourceCanvasPoll);

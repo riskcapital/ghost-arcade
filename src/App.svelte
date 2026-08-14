@@ -2,6 +2,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
   import Canvas from './lib/components/Canvas.svelte';
+  import { projectionSimHistoryVersion } from './lib/projectionSim/store';
   import WebGPUCanvas from './lib/components/WebGPUCanvas.svelte';
   import AudioInputPicker from './lib/components/AudioInputPicker.svelte';
   import AudioMeterPanel from './lib/components/AudioMeterPanel.svelte';
@@ -382,6 +383,21 @@
     projectionSimWindowPoll = null;
   }
   let canvasComponent: Canvas | null = null;
+
+  // Composite mirror handle for the in-editor projection simulator. Held
+  // only while the sim workspace is open so the snapshot pump is free the
+  // rest of the time.
+  let projectionSimMirror: import('$lib/sync/nativeCompositeMirror').CompositeMirrorHandle | null = null;
+  $: if (nativePrimaryRenderer && $workspace === 'projection-sim' && !projectionSimMirror) {
+    void import('$lib/sync/nativeCompositeMirror').then(({ acquireNativeCompositeMirror }) => {
+      if ($workspace === 'projection-sim' && !projectionSimMirror) {
+        projectionSimMirror = acquireNativeCompositeMirror({ maxDim: 640, fps: 20 });
+      }
+    });
+  } else if ($workspace !== 'projection-sim' && projectionSimMirror) {
+    projectionSimMirror.release();
+    projectionSimMirror = null;
+  }
   // Phase 3.0 bridge: bound when experimental.editorWebGPU is on so
   // we can push the WebGL canvas reference into it after both
   // components mount. See the WebGPUCanvas mount block for the
@@ -654,6 +670,9 @@
     const currentState = JSON.stringify({
       layers: $project.layers.map(l => ({ id: l.id, name: l.name, type: l.type, opacity: l.opacity, visible: l.visible, corners: l.corners, contentFit: l.contentFit })),
       name: $project.name,
+      // Map Sim edits persist in the project file now, so they must be able
+      // to dirty the project; the history counter bumps on every sim edit.
+      simEdits: $projectionSimHistoryVersion,
     });
     hasUnsavedChanges = lastSavedState !== null && currentState !== lastSavedState;
   }
@@ -662,6 +681,7 @@
     const currentState = JSON.stringify({
       layers: get(project).layers.map(l => ({ id: l.id, name: l.name, type: l.type, opacity: l.opacity, visible: l.visible, corners: l.corners, contentFit: l.contentFit })),
       name: get(project).name,
+      simEdits: get(projectionSimHistoryVersion),
     });
     lastSavedState = currentState;
     hasUnsavedChanges = false;
@@ -1320,6 +1340,7 @@
             // instead of autosave silently dying for the whole session.
             const trimmed = JSON.parse(jsonStr);
             delete trimmed?.project?.stage3d;
+            delete trimmed?.project?.projectionSim;
             localStorage.setItem('ghostarcade-autosave', JSON.stringify(trimmed));
             console.warn('[AutoSave] Project too large for autosave — 3D scene excluded from recovery snapshot.');
           }
@@ -4405,7 +4426,7 @@
     // Walk the project tree and clean up any runtime URLs we can't resolve
     // on reload. We do NOT copy any files. The user's folders are theirs;
     // the .gha just remembers paths.
-    const BLOB_FIELDS = ['src', 'modelData', 'filePath', 'texturePath', 'sourceUrl', 'url', 'thumbnail'] as const;
+    const BLOB_FIELDS = ['src', 'modelData', 'filePath', 'texturePath', 'sourceUrl', 'url', 'thumbnail', 'assetUrl'] as const;
     let kept = 0;        // assetRef-backed (originalPath, dataUrl, or url)
     let cleared = 0;     // blob: with no assetRef — runtime-only, can't recover
 
@@ -4435,7 +4456,8 @@
           (field === 'texturePath' && (node._textureAssetRef?.projectPath || node._textureAssetRef?.originalPath || node._textureAssetRef?.dataUrl)) ||
           (field === 'sourceUrl' && (node._sourceAssetRef?.projectPath || node._sourceAssetRef?.originalPath || node._sourceAssetRef?.dataUrl)) ||
           (field === 'url' && (node.assetRef?.projectPath || node.assetRef?.originalPath || node.assetRef?.dataUrl || node.assetRef?.url || node._assetRef?.projectPath || node._assetRef?.originalPath || node._assetRef?.dataUrl || node._assetRef?.url)) ||
-          (field === 'thumbnail' && (node._assetRef?.projectPath || node._assetRef?.originalPath || node._assetRef?.dataUrl || node._assetRef?.url));
+          (field === 'thumbnail' && (node._assetRef?.projectPath || node._assetRef?.originalPath || node._assetRef?.dataUrl || node._assetRef?.url)) ||
+          (field === 'assetUrl' && (node.assetRef?.projectPath || node.assetRef?.originalPath || node.assetRef?.dataUrl || node.assetRef?.url));
         if (hasRef) {
           // The reload resolver will rebuild the URL from assetRef, so the
           // dead blob in the runtime field is harmless — but blank it out
@@ -7073,7 +7095,14 @@
     {/if}
 
     {#if $workspace === 'projection-sim'}
-      <ProjectionSimulatorPanel sourceCanvas={canvasComponent?.getCanvas?.() ?? null} />
+      <!-- Native mode: the browser canvas is a cleared underlay, so the sim
+           projects the composite mirror instead — the true native output,
+           including live capture sources the WebGL path could never show. -->
+      <ProjectionSimulatorPanel
+        sourceCanvas={nativePrimaryRenderer
+          ? (projectionSimMirror?.canvas ?? null)
+          : (canvasComponent?.getCanvas?.() ?? null)}
+      />
     {/if}
 
 

@@ -93,21 +93,13 @@
     canUndoScene = historyCounts.past > 0;
     canRedoScene = historyCounts.future > 0;
   }
-  $: queueNativeProjectionSimScene($projectionSimScene);
-
-  function queueNativeProjectionSimScene(scene: ProjectionSimScene) {
-    if (!isDesktopApp) return;
-    if (nativeScenePublishTimer) clearTimeout(nativeScenePublishTimer);
-    nativeScenePublishTimer = setTimeout(() => {
-      nativeScenePublishTimer = null;
-      void setNativeRendererProjectionSimScene(scene).catch((err) => {
-        if (nativeScenePublishWarnings < 3) {
-          console.warn('[ProjectionSim] native scene bridge unavailable:', err);
-          nativeScenePublishWarnings++;
-        }
-      });
-    }, 220);
-  }
+  // Deliberately NOT pushed to the core while the panel is merely open.
+  // `scene_overlay_items()` in the core composites any set projection-sim
+  // scene into the MAIN output, so a live push painted a translucent ghost
+  // of the sim geometry over the editor preview (and, via the composite
+  // mirror, back into the sim itself). The core only needs the scene while
+  // native recording is capturing frames — `prepareFrame` pushes it fresh
+  // each frame during recording, and `restore`/destroy clear it.
 
   function cloneSceneValue<T>(value: T): T {
     return JSON.parse(JSON.stringify(value)) as T;
@@ -570,7 +562,9 @@
               });
             },
             restore: async () => {
-              await setNativeRendererProjectionSimScene(cloneSceneValue(get(projectionSimScene)));
+              // Clear rather than re-push: a scene left set keeps ghosting
+              // the sim geometry into the live composite after recording.
+              await setNativeRendererProjectionSimScene(null);
             },
             onDurationUpdate: (seconds) => { recordingDuration = seconds; },
             onComplete: () => {

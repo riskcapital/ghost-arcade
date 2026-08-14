@@ -96,7 +96,7 @@ export type MediaType =
   | 'synthvision';
 
 // Integrated effect types (FluidGen, Particles3D, Point Cloud, 3D Models running natively in WebGL)
-export type IntegratedEffectType = 'fluid' | 'particles' | 'splat' | 'model3d' | 'milkdrop' | 'audiomotion' | 'wavejs' | 'hydra' | 'ghostfx' | 'analyzerlab' | 'handfx' | 'ghostpilot' | 'vj-crossfade' | 'performer-world';
+export type IntegratedEffectType = 'fluid' | 'particles' | 'splat' | 'model3d' | 'milkdrop' | 'audiomotion' | 'wavejs' | 'hydra' | 'ghostfx' | 'analyzerlab' | 'handfx' | 'ghostpilot' | 'vj-crossfade' | 'vj-mix' | 'performer-world';
 
 // Stem identifiers for the multi-stem routing matrix (Milkdrop plugin).
 // 'full' is the unsplit mix; the rest match standard Demucs output names plus a
@@ -328,6 +328,17 @@ export interface IntegratedEffectSource {
   ghostfxLiquidDyeDecay?: number;       // 0.985..1.0 — dye fade per frame
   ghostfxLiquidVelDecay?: number;       // 0.95..1.0 — velocity damping
   ghostfxLiquidBassRate?: number;       // 0..2 — bass-driven splat rate multiplier
+  // VJ crossfade carrier params (vj-xfade-N synthetic layers)
+  vjxfadeLayerA?: string;               // Bank A composited layer id
+  vjxfadeLayerB?: string;               // Bank B composited layer id
+  vjxfadeOpacityA?: number;             // 0..1 — Bank A opacity
+  vjxfadeOpacityB?: number;             // 0..1 — Bank B opacity
+  vjxfadeMix?: number;                  // 0..1 — post-curve fader value
+  vjxfadeTransition?: string;           // transition id (vjCrossfadeNative.ts)
+  vjxfadeBlend?: string;                // overlap blend mode
+  // VJ Mix carrier params (__vj-mix__ synthetic layer): all VJ rows,
+  // ordered bottom→top, post-crossfade, with per-row opacity + blend.
+  vjmixRows?: Array<{ layerId: string; opacity: number; blendMode: string }>;
 }
 
 // Spout source configuration (for plugin integrations)

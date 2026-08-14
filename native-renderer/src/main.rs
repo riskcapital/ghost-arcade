@@ -601,6 +601,7 @@ struct CoreStatus {
     backend: String,
     backend_ready: bool,
     adapter_name: Option<String>,
+    adapter_is_software: bool,
     native_caps: NativeGpuCaps,
     native_quality: NativeQualityState,
     width: u32,
@@ -1382,6 +1383,9 @@ struct IsfUniformState {
     color_hash: u64,
     input_count: u32,
     input_params: [f32; MAX_NATIVE_ISF_PARAM_FLOATS],
+    /// (param offset, source id) for bound image inputs; resolved to live
+    /// source-frame slots at render time, never at apply time.
+    image_sources: Vec<(usize, String)>,
     seq: u64,
 }
 
@@ -1761,6 +1765,7 @@ enum NativeGraphLayerKind {
     HandFx,
     PerformerWorld,
     VjCrossfade,
+    VjMix,
     Unsupported(String),
 }
 
@@ -1786,6 +1791,7 @@ impl NativeGraphLayerKind {
             "handfx" => Self::HandFx,
             "performer-world" => Self::PerformerWorld,
             "vj-crossfade" => Self::VjCrossfade,
+            "vj-mix" => Self::VjMix,
             other => Self::Unsupported(other.to_string()),
         }
     }
@@ -1811,6 +1817,7 @@ impl NativeGraphLayerKind {
             Self::HandFx => "handfx",
             Self::PerformerWorld => "performer-world",
             Self::VjCrossfade => "vj-crossfade",
+            Self::VjMix => "vj-mix",
             Self::Unsupported(label) => label.as_str(),
         }
     }
@@ -1837,6 +1844,7 @@ impl NativeGraphLayerKind {
                 | Self::HandFx
                 | Self::PerformerWorld
                 | Self::VjCrossfade
+                | Self::VjMix
         )
     }
 }
@@ -2256,6 +2264,12 @@ impl GpuTimingState {
 struct RenderState {
     window: &'static Window,
     adapter_name: String,
+    /// True when wgpu selected a software rasterizer (WARP) rather than a
+    /// real GPU — the compatibility fallback added for machines with no
+    /// usable graphics adapter. Surfaced in status so the app can tell the
+    /// operator they are in a degraded mode instead of leaving them to
+    /// wonder why everything is slow.
+    adapter_is_software: bool,
     native_caps: NativeGpuCaps,
     surface: wgpu::Surface<'static>,
     device: wgpu::Device,
@@ -2309,6 +2323,10 @@ struct RenderState {
     slice_targets: HashMap<String, SliceOutputTarget>,
     snapshot_texture: wgpu::Texture,
     snapshot_view: wgpu::TextureView,
+    /// Cached downscale target for preview-sized snapshot readbacks
+    /// (composite mirror: projection sim, WLED sampling). Recreated only
+    /// when the requested size changes.
+    snapshot_preview: Option<(wgpu::Texture, TextureBlitter, u32, u32)>,
     last_frame_metrics: Option<SnapshotMetrics>,
     bind_group: wgpu::BindGroup,
     start_time: Instant,
@@ -2417,6 +2435,7 @@ struct App {
     event_proxy: EventLoopProxy<UserEvent>,
     renderer: Option<RenderState>,
     adapter_name: Option<String>,
+    adapter_is_software: bool,
     target_fps: u32,
     last_redraw: Instant,
     running: bool,
@@ -2688,6 +2707,7 @@ impl App {
             event_proxy,
             renderer: None,
             adapter_name: None,
+            adapter_is_software: false,
             target_fps: 60,
             last_redraw: Instant::now(),
             running: false,
@@ -2837,6 +2857,7 @@ impl App {
         self.native_quality
             .rebase_to_caps(&renderer.native_caps.recommended_quality_tier);
         self.adapter_name = renderer.adapter_name();
+        self.adapter_is_software = renderer.adapter_is_software;
         self.renderer = Some(renderer);
         Ok(())
     }
@@ -2969,6 +2990,7 @@ impl App {
             "native_handfx_graph": true,
             "native_performer_world_graph": true,
             "native_vj_crossfade_graph": true,
+            "native_vj_mix_graph": true,
             "command_drain_policy": true,
             "auto_present_policy": true,
             "multi_pass_instruments": true,
@@ -3278,6 +3300,7 @@ impl App {
             backend: native_backend_name().to_string(),
             backend_ready: renderer_ready && last_frame_ok,
             adapter_name: self.adapter_name.clone(),
+            adapter_is_software: self.adapter_is_software,
             native_caps: self
                 .renderer
                 .as_ref()
@@ -4207,7 +4230,8 @@ impl App {
                 // Slice mode off: the main output uses the single-projector
                 // grade, not blendRenderer's multi-projector one.
                 0.0,
-                0.0,
+                // Alignment test pattern code (TestPatternType index).
+                read(&["testPattern"], 0.0).clamp(0.0, 6.0) as f32,
             ],
             edge_gamma: [2.2; 4],
             black_level: [0.0; 4],
@@ -4786,6 +4810,7 @@ impl App {
                     | NativeGraphLayerKind::HandFx
                     | NativeGraphLayerKind::PerformerWorld
                     | NativeGraphLayerKind::VjCrossfade
+                    | NativeGraphLayerKind::VjMix
             ) {
                 let Some(template) = graph_layer.effect_job_template.as_ref() else {
                     let message = format!(
@@ -4843,7 +4868,8 @@ impl App {
                 NativeGraphLayerKind::GhostFx
                 | NativeGraphLayerKind::HandFx
                 | NativeGraphLayerKind::PerformerWorld
-                | NativeGraphLayerKind::VjCrossfade => unreachable!(),
+                | NativeGraphLayerKind::VjCrossfade
+                | NativeGraphLayerKind::VjMix => unreachable!(),
                 NativeGraphLayerKind::Unsupported(_) => continue,
             };
             match result {
@@ -5125,8 +5151,10 @@ impl App {
                 write_f32_le(&mut buffer.initial_bytes, 10, smooth.energy);
                 continue;
             }
-            if graph_layer.kind == NativeGraphLayerKind::VjCrossfade
-                && buffer.initial_bytes.len() == 48
+            if matches!(
+                graph_layer.kind,
+                NativeGraphLayerKind::VjCrossfade | NativeGraphLayerKind::VjMix
+            ) && buffer.initial_bytes.len() == 48
             {
                 // VJ crossfade uniform (vjCrossfadeNative.ts): time at slot 3
                 // animates glitch/liquid/strobe. Mix and transition are
@@ -8263,12 +8291,15 @@ impl App {
 
     fn frame_snapshot(&mut self, params: &Value) -> Result<Value, String> {
         let include_pixels = bool_at(params, &["include_pixels"]).unwrap_or(false);
+        let max_dim = number_at(params, &["max_dim"])
+            .map(|value| value.round().clamp(0.0, 4096.0) as u32)
+            .unwrap_or(0);
         self.render_frame_snapshot_texture(params)?;
         let snapshot = {
             let Some(renderer) = self.renderer.as_mut() else {
                 return Err("native renderer has not created a wgpu device".to_string());
             };
-            let snapshot = renderer.frame_snapshot(include_pixels)?;
+            let snapshot = renderer.frame_snapshot_scaled(include_pixels, max_dim)?;
             renderer.poll_gpu_timing();
             snapshot
         };
@@ -10166,8 +10197,42 @@ impl App {
             .or_insert_with(|| SceneLayer::new(layer_id, 0));
         entry.shader_id = Some(shader_id);
         entry.shader_rendered = false;
-        entry.source_id = Some(input_source_id);
-        entry.frame_slot = Some(input_slot);
+        // `bind_isf_shader` describes the shader's INPUT, so it must not steal
+        // the display binding when that display is a core-generated effect
+        // chain output. Under an effect-pass route the layer displays
+        // `effect-pass:<layer>` while the shader renders underneath as the
+        // chain's input; resetting source_id to the empty frame here sent the
+        // layer back to its raw shader frame, so every layer effect rendered
+        // but was never shown. Narrow on purpose: a shader layer with no
+        // effect route still rebinds exactly as before.
+        let effect_output_displayed = entry
+            .source_id
+            .as_deref()
+            .is_some_and(|source_id| source_id.starts_with("effect-pass:"));
+        if input_source_id != EMPTY_SOURCE_FRAME_ID || !effect_output_displayed {
+            entry.source_id = Some(input_source_id);
+            entry.frame_slot = Some(input_slot);
+        }
+    }
+
+    fn resolve_isf_image_source_slot(&self, source_id: &str) -> Option<usize> {
+        let trimmed = source_id.trim();
+        if trimmed.is_empty() {
+            return None;
+        }
+        if let Some(layer_id) = trimmed.strip_prefix("layer-frame:") {
+            return self
+                .scene_layers
+                .get(layer_id)
+                .and_then(|layer| layer.frame_slot.or(layer.shader_frame_slot));
+        }
+        if let Some(layer_id) = trimmed.strip_prefix("shader-frame:") {
+            return self
+                .scene_layers
+                .get(layer_id)
+                .and_then(|layer| layer.shader_frame_slot.or(layer.frame_slot));
+        }
+        self.source_frame_slots.get(trimmed).copied()
     }
 
     fn apply_isf_uniforms(&mut self, command: &Value) {
@@ -10188,6 +10253,28 @@ impl App {
             .cloned()
             .unwrap_or_default();
         let input_params = native_isf_input_params(command, &input_bindings);
+        // Image inputs arrive as source-id strings. Store (offset, id) pairs;
+        // the render path resolves them to live source-frame slots so LRU
+        // churn between the uniforms push and the render can't go stale.
+        let image_inputs = command.get("image_inputs");
+        let mut image_sources = Vec::new();
+        for binding in &input_bindings {
+            if !matches!(binding.kind, NativeIsfInputKind::Image) {
+                continue;
+            }
+            let Some(offset) = binding.offset else {
+                continue;
+            };
+            let Some(source_id) = image_inputs
+                .and_then(|images| images.get(&binding.name))
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+            else {
+                continue;
+            };
+            image_sources.push((offset, source_id.to_string()));
+        }
         let state = IsfUniformState {
             time: number_at(command, &["time"])
                 .unwrap_or(0.0)
@@ -10214,6 +10301,7 @@ impl App {
             color_hash: stable_hash64(&colors.to_string()),
             input_count: input_count.max(input_bindings.len().min(u32::MAX as usize) as u32),
             input_params,
+            image_sources,
             seq: self.stats.commands_applied,
         };
         self.isf_uniforms.insert(shader_id, state);
@@ -10266,7 +10354,7 @@ impl App {
             .get(&shader_id)
             .map(|bindings| bindings.iter().any(|binding| binding.offset.is_some()))
             .unwrap_or(false);
-        let params = uniform_state
+        let mut params = uniform_state
             .as_ref()
             .map(|uniforms| {
                 if has_declared_isf_inputs {
@@ -10276,6 +10364,21 @@ impl App {
                 }
             })
             .unwrap_or_else(default_native_isf_params);
+        let mut image_input_slots: Vec<usize> = Vec::new();
+        if let Some(uniforms) = uniform_state.as_ref() {
+            for (offset, source_id) in &uniforms.image_sources {
+                let resolved = self.resolve_isf_image_source_slot(source_id);
+                if let Some(slot) = resolved
+                    && !image_input_slots.contains(&slot)
+                {
+                    image_input_slots.push(slot);
+                }
+                let slot_value = resolved.map(|slot| (slot + 1) as f32).unwrap_or(0.0);
+                if let Some(slot) = params.get_mut(*offset) {
+                    *slot = slot_value;
+                }
+            }
+        }
         let input_source_slot = self
             .scene_layers
             .get(&layer_id)
@@ -10327,6 +10430,7 @@ impl App {
                         &source,
                         &fragment_entry,
                         &shader_uniforms,
+                        &image_input_slots,
                     ) {
                         Ok(()) => {
                             self.source_frames.insert(source_id, SourceFrame::full(seq));
@@ -12856,7 +12960,16 @@ impl RenderState {
         let surface = instance
             .create_surface(window)
             .map_err(|err| err.to_string())?;
-        let adapter = instance
+        // Prefer a real GPU, but never let adapter selection be the difference
+        // between "runs slowly" and "does not run at all": the desktop app is
+        // native-only, so a failure here leaves it with no renderer whatsoever.
+        // The retry asks for the platform's software adapter (WARP on D3D12),
+        // which is slow but crucially still the SAME backend — so the
+        // shared-texture transports (Spout/Syphon out, source import, slice and
+        // deck exports) keep working. Falling back to a different backend would
+        // render faster and silently lose every texture-sharing feature, which
+        // is the worse outcome for a tool whose job is getting pixels out.
+        let adapter = match instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
                 force_fallback_adapter: false,
@@ -12864,8 +12977,38 @@ impl RenderState {
                 apply_limit_buckets: false,
             })
             .await
-            .map_err(|err| err.to_string())?;
+        {
+            Ok(adapter) => adapter,
+            Err(primary_err) => {
+                eprintln!(
+                    "[ghost-core] no hardware adapter for backend {} ({primary_err}); retrying with the software fallback adapter",
+                    native_backend_name()
+                );
+                instance
+                    .request_adapter(&wgpu::RequestAdapterOptions {
+                        power_preference: wgpu::PowerPreference::LowPower,
+                        force_fallback_adapter: true,
+                        compatible_surface: Some(&surface),
+                        apply_limit_buckets: false,
+                    })
+                    .await
+                    .map_err(|fallback_err| {
+                        format!(
+                            "No compatible GPU found. Ghost Arcade needs a {} capable graphics adapter. \
+                             Hardware adapter error: {primary_err}. Software fallback error: {fallback_err}.",
+                            native_backend_name().to_uppercase()
+                        )
+                    })?
+            }
+        };
         let adapter_info = adapter.get_info();
+        let adapter_is_software = adapter_info.device_type == wgpu::DeviceType::Cpu;
+        if adapter_is_software {
+            eprintln!(
+                "[ghost-core] WARNING: running on a SOFTWARE adapter ({}). Expect very low frame rates; this is a compatibility fallback, not a supported configuration.",
+                adapter_info.name
+            );
+        }
         eprintln!(
             "[ghost-core] adapter selected: name={} backend={:?} driver={} reported_backend_name={}",
             adapter_info.name,
@@ -13520,6 +13663,7 @@ impl RenderState {
         Ok(Self {
             window,
             adapter_name: adapter_info.name,
+            adapter_is_software,
             native_caps,
             surface,
             device,
@@ -13569,6 +13713,7 @@ impl RenderState {
             slice_targets: HashMap::new(),
             snapshot_texture,
             snapshot_view,
+            snapshot_preview: None,
             last_frame_metrics: None,
             bind_group,
             start_time: Instant::now(),
@@ -13708,7 +13853,9 @@ impl RenderState {
             )
         };
         texture_descriptor.setTextureType(MTLTextureType::Type2D);
-        texture_descriptor.setStorageMode(MTLStorageMode::Shared);
+        texture_descriptor.setStorageMode(iosurface_texture_storage_mode(
+            raw_device.raw_device().hasUnifiedMemory(),
+        ));
         texture_descriptor.setUsage(MTLTextureUsage::ShaderRead | MTLTextureUsage::RenderTarget);
         let raw_texture = raw_device
             .raw_device()
@@ -15729,6 +15876,7 @@ impl RenderState {
         source: &str,
         fragment_entry: &str,
         uniforms: &NativeShaderUniforms,
+        image_input_slots: &[usize],
     ) -> Result<(), String> {
         self.ensure_native_shader_pipeline(cache_key, source_kind, source, fragment_entry)?;
         self.queue.write_buffer(
@@ -15757,33 +15905,46 @@ impl RenderState {
         let input_slot = uniforms.frame_seed_inputs[3]
             .round()
             .clamp(0.0, (MAX_SOURCE_FRAME_SLOTS - 1) as f32) as u32;
-        encoder.copy_texture_to_texture(
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.source_frame_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d {
-                    x: 0,
-                    y: 0,
-                    z: input_slot,
+        // The shader samples the SHADOW input array (it renders into the real
+        // one, so it cannot read it). Refresh the layer's own input slot plus
+        // every bound ISF image-input slot — anything not copied here samples
+        // stale/black shadow content.
+        let mut copy_slots = vec![input_slot];
+        for slot in image_input_slots {
+            let slot = (*slot).min(MAX_SOURCE_FRAME_SLOTS - 1) as u32;
+            if !copy_slots.contains(&slot) {
+                copy_slots.push(slot);
+            }
+        }
+        for copy_slot in copy_slots {
+            encoder.copy_texture_to_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.source_frame_texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d {
+                        x: 0,
+                        y: 0,
+                        z: copy_slot,
+                    },
+                    aspect: wgpu::TextureAspect::All,
                 },
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::TexelCopyTextureInfo {
-                texture: &self.native_shader_input_texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d {
-                    x: 0,
-                    y: 0,
-                    z: input_slot,
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.native_shader_input_texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d {
+                        x: 0,
+                        y: 0,
+                        z: copy_slot,
+                    },
+                    aspect: wgpu::TextureAspect::All,
                 },
-                aspect: wgpu::TextureAspect::All,
-            },
-            wgpu::Extent3d {
-                width: self.source_frame_size as u32,
-                height: self.source_frame_size as u32,
-                depth_or_array_layers: 1,
-            },
-        );
+                wgpu::Extent3d {
+                    width: self.source_frame_size as u32,
+                    height: self.source_frame_size as u32,
+                    depth_or_array_layers: 1,
+                },
+            );
+        }
         {
             let Some(pipeline) = self.native_shader_pipelines.get(cache_key) else {
                 return Err("native shader pipeline was not cached".to_string());
@@ -15986,7 +16147,9 @@ impl RenderState {
             )
         };
         texture_descriptor.setTextureType(MTLTextureType::Type2D);
-        texture_descriptor.setStorageMode(MTLStorageMode::Shared);
+        texture_descriptor.setStorageMode(iosurface_texture_storage_mode(
+            raw_device.raw_device().hasUnifiedMemory(),
+        ));
         texture_descriptor.setUsage(MTLTextureUsage::ShaderRead);
         let raw_texture = raw_device
             .raw_device()
@@ -16233,6 +16396,56 @@ impl RenderState {
         }
     }
 
+    /// Snapshot readback downscaled so the longest edge is `max_dim`.
+    /// GPU-side blit before readback: a 1080p frame at max_dim=512 reads
+    /// back ~590KB instead of ~8MB, which is what makes a continuous
+    /// composite mirror affordable over the JSON transport.
+    fn read_frame_snapshot_scaled(&mut self, max_dim: u32) -> Result<FrameSnapshotReadback, String> {
+        let out_w = self.config.width.max(1);
+        let out_h = self.config.height.max(1);
+        if max_dim == 0 || (out_w <= max_dim && out_h <= max_dim) {
+            return self.read_frame_snapshot();
+        }
+        let scale = max_dim as f32 / out_w.max(out_h) as f32;
+        let w = ((out_w as f32 * scale).round() as u32).clamp(16, out_w);
+        let h = ((out_h as f32 * scale).round() as u32).clamp(16, out_h);
+        let needs_new = !matches!(&self.snapshot_preview, Some((_, _, pw, ph)) if *pw == w && *ph == h);
+        if needs_new {
+            let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("Ghost Snapshot Preview Target"),
+                size: wgpu::Extent3d { width: w, height: h, depth_or_array_layers: 1 },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: self.config.format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC,
+                view_formats: &[],
+            });
+            let blitter = TextureBlitterBuilder::new(&self.device, self.config.format).build();
+            self.snapshot_preview = Some((texture, blitter, w, h));
+        }
+        {
+            let (texture, blitter, _, _) = self.snapshot_preview.as_ref().expect("snapshot preview just ensured");
+            let src_view = self.snapshot_texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let dst_view = texture.create_view(&wgpu::TextureViewDescriptor::default());
+            let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Ghost Snapshot Preview Blit"),
+            });
+            blitter.copy(&self.device, &mut encoder, &src_view, &dst_view);
+            self.queue.submit(Some(encoder.finish()));
+        }
+        let (texture, _, w, h) = self.snapshot_preview.as_ref().expect("snapshot preview present");
+        read_texture_to_frame(
+            &self.device,
+            &self.queue,
+            texture,
+            self.config.format,
+            *w,
+            *h,
+            "Ghost Snapshot Preview",
+        )
+    }
+
     fn read_frame_snapshot(&mut self) -> Result<FrameSnapshotReadback, String> {
         let readback = read_texture_to_frame(
             &self.device,
@@ -16277,7 +16490,11 @@ impl RenderState {
     }
 
     fn frame_snapshot(&mut self, include_pixels: bool) -> Result<Value, String> {
-        let readback = self.read_frame_snapshot()?;
+        self.frame_snapshot_scaled(include_pixels, 0)
+    }
+
+    fn frame_snapshot_scaled(&mut self, include_pixels: bool, max_dim: u32) -> Result<Value, String> {
+        let readback = self.read_frame_snapshot_scaled(max_dim)?;
         Ok(readback.to_json(include_pixels))
     }
 
@@ -20964,6 +21181,26 @@ fn dxgi_format_for_wgpu_output(
 }
 
 #[cfg(target_os = "macos")]
+/// Storage mode for an IOSurface-backed Metal texture.
+///
+/// Apple Silicon shares one memory pool between CPU and GPU, so `Shared` is
+/// correct and cheapest there. Intel Macs with a discrete GPU have their own
+/// VRAM and reject `Shared` for textures — the surface has to be `Managed`.
+/// Hardcoding `Shared` therefore works on every Apple Silicon machine and
+/// fails on exactly the hardware nobody tests on, with the same silent
+/// no-frames symptom as a permission denial.
+///
+/// Intel Mac support is experimental and unverified on real hardware.
+#[cfg(target_os = "macos")]
+fn iosurface_texture_storage_mode(has_unified_memory: bool) -> objc2_metal::MTLStorageMode {
+    if has_unified_memory {
+        objc2_metal::MTLStorageMode::Shared
+    } else {
+        objc2_metal::MTLStorageMode::Managed
+    }
+}
+
+#[cfg(target_os = "macos")]
 fn metal_texture_format_for_shared_texture(
     descriptor: &SharedTextureSourceFrameDescriptor,
 ) -> objc2_metal::MTLPixelFormat {
@@ -21442,7 +21679,11 @@ fn native_isf_input_components(kind: NativeIsfInputKind) -> usize {
     match kind {
         NativeIsfInputKind::Point2D => 2,
         NativeIsfInputKind::Color => 4,
-        NativeIsfInputKind::Image | NativeIsfInputKind::Unsupported => 0,
+        // Image inputs carry one float: the source-frame array layer to
+        // sample. -1 means unbound -> the shader falls back to its own
+        // input frame, which is also the pre-image-input behavior.
+        NativeIsfInputKind::Image => 1,
+        NativeIsfInputKind::Unsupported => 0,
         NativeIsfInputKind::Float
         | NativeIsfInputKind::Bool
         | NativeIsfInputKind::Long
@@ -21453,6 +21694,9 @@ fn native_isf_input_components(kind: NativeIsfInputKind) -> usize {
 fn default_values_for_isf_input(input: &Value, kind: NativeIsfInputKind) -> [f32; 4] {
     let default = input.get("DEFAULT");
     match kind {
+        // 0 = unbound (biased slot+1 encoding): survives the zero-filled
+        // default params a shader gets before its first uniforms push.
+        NativeIsfInputKind::Image => [0.0, 0.0, 0.0, 0.0],
         NativeIsfInputKind::Bool => {
             let value = default
                 .and_then(Value::as_bool)
@@ -21497,7 +21741,7 @@ fn default_values_for_isf_input(input: &Value, kind: NativeIsfInputKind) -> [f32
                 as f32;
             [value, 0.0, 0.0, 0.0]
         }
-        NativeIsfInputKind::Image | NativeIsfInputKind::Unsupported => [0.0; 4],
+        NativeIsfInputKind::Unsupported => [0.0; 4],
     }
 }
 
@@ -21607,7 +21851,11 @@ fn native_isf_input_expr(binding: &NativeIsfInputBinding) -> Option<String> {
             scalar_at(2),
             scalar_at(3)
         )),
-        NativeIsfInputKind::Image | NativeIsfInputKind::Unsupported => None,
+        NativeIsfInputKind::Image => Some(format!(
+            "(({0}) >= 0.5 ? ({0}) - 1.0 : frame_seed_inputs.w)",
+            scalar_at(0)
+        )),
+        NativeIsfInputKind::Unsupported => None,
     }
 }
 
@@ -21765,7 +22013,8 @@ fn native_isf_input_glsl_type(kind: NativeIsfInputKind) -> Option<&'static str> 
         NativeIsfInputKind::Long => Some("int"),
         NativeIsfInputKind::Point2D => Some("vec2"),
         NativeIsfInputKind::Color => Some("vec4"),
-        NativeIsfInputKind::Image | NativeIsfInputKind::Unsupported => None,
+        NativeIsfInputKind::Image => Some("float"),
+        NativeIsfInputKind::Unsupported => None,
     }
 }
 
@@ -21803,6 +22052,26 @@ fn inject_native_isf_input_state(source: &str, input_bindings: &[NativeIsfInputB
     output.push_str(&assignments);
     output.push_str(&source[brace + 1..]);
     output
+}
+
+fn collect_isf_image_arg_names(body: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    for marker in ["IMG_NORM_PIXEL(", "IMG_PIXEL(", "IMG_SIZE(", "texture2D("] {
+        let mut search = 0usize;
+        while let Some(found) = body[search..].find(marker) {
+            let arg_start = search + found + marker.len();
+            search = arg_start;
+            let rest = &body[arg_start..];
+            let end = rest
+                .find(|c: char| c == ',' || c == ')')
+                .unwrap_or(rest.len());
+            let candidate = rest[..end].trim();
+            if is_valid_glsl_identifier(candidate) && !names.iter().any(|n| n == candidate) {
+                names.push(candidate.to_string());
+            }
+        }
+    }
+    names
 }
 
 fn preprocess_native_isf_glsl_body(body: &str, input_bindings: &[NativeIsfInputBinding]) -> String {
@@ -21873,7 +22142,24 @@ fn preprocess_native_isf_glsl_body(body: &str, input_bindings: &[NativeIsfInputB
     }
     let output = replace_glsl_identifier(&output, "centroid", "ghost_centroid");
     let output = replace_glsl_identifier(&output, "gl_FragCoord", "ghost_FragCoord");
-    inject_native_isf_input_state(&output, input_bindings)
+    let mut all_bindings = input_bindings.to_vec();
+    for name in collect_isf_image_arg_names(body) {
+        let already_bound = all_bindings.iter().any(|binding| binding.name == name);
+        if already_bound || has_glsl_define(body, &name) {
+            continue;
+        }
+        // Unbound synthetic image binding: offset None packs nothing, and the
+        // -1 default makes the GLSL expression fall back to the layer's own
+        // input frame.
+        all_bindings.push(NativeIsfInputBinding {
+            name,
+            kind: NativeIsfInputKind::Image,
+            offset: None,
+            components: 0,
+            default_values: [0.0, 0.0, 0.0, 0.0],
+        });
+    }
+    inject_native_isf_input_state(&output, &all_bindings)
 }
 
 fn value_as_native_f32(value: Option<&Value>, fallback: f32) -> f32 {
@@ -22040,8 +22326,8 @@ layout(set = 0, binding = 2) uniform sampler ghost_source_sampler;
 #define vUv isf_FragNormCoord
 #define texCoord isf_FragNormCoord
 #define ghost_FragCoord vec4(isf_FragNormCoord * RENDERSIZE, 0.0, 1.0)
-#define texture2D(img, coord) texture(sampler2DArray(ghost_source_frames, ghost_source_sampler), vec3((coord), frame_seed_inputs.w))
-#define IMG_NORM_PIXEL(img, coord) texture(sampler2DArray(ghost_source_frames, ghost_source_sampler), vec3((coord), frame_seed_inputs.w))
+#define texture2D(img, coord) texture(sampler2DArray(ghost_source_frames, ghost_source_sampler), vec3((coord), (img)))
+#define IMG_NORM_PIXEL(img, coord) texture(sampler2DArray(ghost_source_frames, ghost_source_sampler), vec3((coord), (img)))
 #define IMG_PIXEL(img, coord) IMG_NORM_PIXEL(img, (coord) / RENDERSIZE)
 #define IMG_SIZE(img) RENDERSIZE
 float sampleFFT(float u) {
@@ -22613,6 +22899,7 @@ mod tests {
             color_hash: 0,
             input_count: 0,
             input_params: [0.0; MAX_NATIVE_ISF_PARAM_FLOATS],
+            image_sources: Vec::new(),
             seq: 1,
         };
         let uniforms = NativeShaderUniforms::from_isf(

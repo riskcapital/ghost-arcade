@@ -11,7 +11,7 @@ export const MODEL3D_NATIVE_SHADER_ID = 'model3d/render-v1';
 export const MODEL3D_MAX_VERTICES = 3_500_000; // unique vertices
 export const MODEL3D_MAX_INDICES = 9_000_000; // 3M triangles
 export const MODEL3D_VERTEX_VEC4S = 2;
-export const MODEL3D_UNIFORM_VEC4S = 20;
+export const MODEL3D_UNIFORM_VEC4S = 26;
 export const MODEL3D_UNIFORM_BYTES = MODEL3D_UNIFORM_VEC4S * 16;
 
 const MATERIALS = [
@@ -286,7 +286,10 @@ export function model3dViewProjection(content: Model3DContent, aspect: number, t
   const distance = Math.max(0.2, finite(cam.distance, 5));
   const orbitX = (finite(cam.orbitX, 0) * Math.PI) / 180;
   let orbitY = (finite(cam.orbitY, 0) * Math.PI) / 180;
-  if (cam.autoRotate) orbitY += time * (finite(cam.rotateSpeed, 30) * Math.PI) / 180;
+  // Match the release: Model3DRenderer adds time * rotateSpeed * 0.3 RADIANS
+  // to the model's +Y rotation. Orbiting the camera the opposite way is the
+  // equivalent view; the old deg/s rate was ~17x slower than release.
+  if (cam.autoRotate) orbitY -= time * finite(cam.rotateSpeed, 30) * 0.3;
   const roll = (finite(cam.roll, 0) * Math.PI) / 180;
   const eyeX = Math.sin(orbitY) * Math.cos(orbitX) * distance;
   const eyeY = Math.sin(orbitX) * distance;
@@ -325,8 +328,15 @@ export function model3dViewProjection(content: Model3DContent, aspect: number, t
 
 // Rigid model animations run on the CPU as transform adjustments.
 function animatedTransform(content: Model3DContent, time: number) {
-  const t = time * Math.max(0.05, finite(content.animationSpeed, 1));
+  const speed = Math.max(0.05, finite(content.animationSpeed, 1));
+  const t = time * speed;
   const amp = clamp(finite(content.animationIntensity, 1), 0, 3);
+  // One-shot progress, matching Model3DRenderer: looping animations ride a
+  // 0..1 sawtooth off the clock, one-shots ride the panel's progress slider.
+  const loopT = ((t * 0.25) % 1 + 1) % 1;
+  const oneShotT = content.animationLoop
+    ? loopT
+    : clamp(finite(content.animationProgress, 0), 0, 1);
   // Swapped to match the gizmo's release-calibrated axes (see splatNative).
   let rx = (finite(content.rotationY, 0) * Math.PI) / 180;
   let ry = (finite(content.rotationX, 0) * Math.PI) / 180;
@@ -334,8 +344,13 @@ function animatedTransform(content: Model3DContent, time: number) {
   let px = finite(content.positionX, 0);
   let py = finite(content.positionY, 0);
   let pz = finite(content.positionZ, 0);
-  let scale = Math.max(0.01, finite(content.scaleUniform, 1));
+  const baseScale = Math.max(0.01, finite(content.scaleUniform, 1));
+  let scaleX = baseScale;
+  let scaleY = baseScale;
+  let scaleZ = baseScale;
   let opacityMul = 1;
+  let uvPanX = 0;
+  let uvPanY = 0;
   switch (content.animationType) {
     case 'rotate': ry += t; break;
     case 'orbit': px += Math.cos(t) * amp; pz += Math.sin(t) * amp; ry += t; break;
@@ -345,11 +360,46 @@ function animatedTransform(content: Model3DContent, time: number) {
     case 'shake': px += Math.sin(t * 23) * 0.05 * amp; py += Math.cos(t * 31) * 0.05 * amp; break;
     case 'spiral': px += Math.cos(t) * amp * 0.8; pz += Math.sin(t) * amp * 0.8; py += Math.sin(t * 0.7) * 0.5 * amp; ry += t; break;
     case 'fadeIn': opacityMul = clamp((t % 4) / 1.5, 0, 1); break;
-    case 'scaleIn': scale *= clamp((t % 4) / 1.2, 0.001, 1); break;
+    case 'scaleIn': {
+      const k = clamp((t % 4) / 1.2, 0.001, 1);
+      scaleX *= k; scaleY *= k; scaleZ *= k;
+      break;
+    }
+    case 'unfold': {
+      // Rotate from 90 degrees toward 0 on X as the one-shot completes.
+      rx += (1 - oneShotT) * (Math.PI * 0.5) * amp;
+      break;
+    }
+    case 'assemble': {
+      // Parts converge out of an explosion: the balloon and spin shrink to 0.
+      const f = 1 - oneShotT;
+      const k = 1 + f * amp * 1.5;
+      scaleX *= k; scaleY *= k; scaleZ *= k;
+      ry += f * Math.PI * 2;
+      break;
+    }
+    case 'grow': {
+      const eased = Math.max(0.001, 1 - Math.pow(1 - oneShotT, 3));
+      scaleX *= eased; scaleY *= eased; scaleZ *= eased;
+      break;
+    }
+    case 'morphLoop': {
+      // Squash-and-stretch stand-in; true vertex morphing needs keyframes.
+      const m = Math.sin(t) * amp * 0.15;
+      scaleX *= 1 + m;
+      scaleY *= 1 - m * 0.5;
+      scaleZ *= 1 + m * 0.5;
+      break;
+    }
+    case 'texturePan': {
+      uvPanX = ((t * 0.1) % 1 + 1) % 1;
+      uvPanY = ((t * 0.07) % 1 + 1) % 1;
+      break;
+    }
     case 'colorCycle': break; // handled in shader via time
     default: break;
   }
-  return { rx, ry, rz, px, py, pz, scale, opacityMul };
+  return { rx, ry, rz, px, py, pz, scaleX, scaleY, scaleZ, opacityMul, uvPanX, uvPanY };
 }
 
 export interface Model3DNativeGraphOptions {
@@ -371,6 +421,14 @@ export interface Model3DNativeGraphOptions {
   frameDelta: number;
   frameIndex: number;
   audioLevel?: number;
+  audioSub?: number;
+  audioBass?: number;
+  audioLowMid?: number;
+  audioMid?: number;
+  audioHighMid?: number;
+  audioHigh?: number;
+  audioBeat?: number;
+  audioBeatPhase?: number;
   includeSnapshot?: boolean;
 }
 
@@ -383,6 +441,36 @@ export function buildModel3DNativeComputeGraph(options: Model3DNativeGraphOption
   data.set(model3dViewProjection(c, width / height, time), 0);
 
   const xf = animatedTransform(c, time);
+
+  // Audio reactivity + beat sync, ported from Model3DRenderer.updateModel.
+  // The release resets the transform from content every frame and then adds
+  // the audio nudges, so these are genuinely stateless and port exactly.
+  const au = c.audio ?? ({ enabled: false } as Model3DContent['audio']);
+  const bandMap: Record<string, number> = {
+    sub: finite(options.audioSub, 0),
+    bass: finite(options.audioBass, 0),
+    lowMid: finite(options.audioLowMid, 0),
+    mid: finite(options.audioMid, 0),
+    highMid: finite(options.audioHighMid, 0),
+    high: finite(options.audioHigh, 0),
+    all: finite(options.audioLevel, 0),
+  };
+  const audioLevel = au.enabled
+    ? clamp(bandMap[String(au.audioBand ?? 'all')] ?? bandMap.all, 0, 1.5)
+    : 0;
+  const beat = au.enabled ? clamp(finite(options.audioBeat, 0), 0, 2) : 0;
+  if (audioLevel > 0) {
+    // scaleResponse: model.scale *= 1 + level * response * 0.5
+    const boost = 1 + audioLevel * clamp(finite(au.scaleResponse, 0), 0, 4) * 0.5;
+    xf.scaleX *= boost; xf.scaleY *= boost; xf.scaleZ *= boost;
+    // rotationResponse: rotation.y += level * response * 0.05 (per-frame nudge)
+    xf.ry += audioLevel * clamp(finite(au.rotationResponse, 0), 0, 4) * 0.05;
+  }
+  if (beat > 0) {
+    const punch = 1 + clamp(finite(c.beatScale, 0), 0, 4) * beat * 0.3;
+    xf.scaleX *= punch; xf.scaleY *= punch; xf.scaleZ *= punch;
+    xf.ry += clamp(finite(c.beatRotate, 0), 0, 4) * beat * Math.PI * 0.1;
+  }
   const matColor = col255(c.materialColor, [255, 255, 255]);
   const emissive = col255(c.materialEmissive, [0, 0, 0]);
   const panelLight = col255(c.lightColor, [255, 255, 255]);
@@ -428,13 +516,19 @@ export function buildModel3DNativeComputeGraph(options: Model3DNativeGraphOption
   const el = ((finite(c.keyLightElevation, 45) + profile.elevationOffset) * Math.PI) / 180;
 
   data[16] = width; data[17] = height; data[18] = time; data[19] = options.vertexCount;
-  data[20] = xf.scale; data[21] = xf.rx; data[22] = xf.ry; data[23] = xf.rz;
+  data[20] = xf.scaleX; data[21] = xf.rx; data[22] = xf.ry; data[23] = xf.rz;
   data[24] = xf.px; data[25] = xf.py; data[26] = xf.pz;
   data[27] = idx(MATERIALS, c.materialType);
   data[28] = matColor[0]; data[29] = matColor[1]; data[30] = matColor[2];
   data[31] = clamp(finite(c.materialOpacity, 1), 0, 1) * xf.opacityMul;
   data[32] = emissive[0]; data[33] = emissive[1]; data[34] = emissive[2];
-  data[35] = clamp(finite(c.materialEmissiveIntensity, 0), 0, 5);
+  // Base emissive + beatColorFlash (release: += flash * beat * 3) + an
+  // emissiveResponse pump (not present in the WebGL path; additive approx).
+  data[35] = clamp(
+    finite(c.materialEmissiveIntensity, 0)
+      + clamp(finite(c.beatColorFlash, 0), 0, 4) * beat * 3
+      + audioLevel * clamp(finite(au.emissiveResponse, 0), 0, 4) * 2,
+    0, 8);
   data[36] = Math.cos(el) * Math.cos(az); data[37] = Math.sin(el); data[38] = Math.cos(el) * Math.sin(az);
   data[39] = clamp(finite(c.directionalIntensity, 1) * profile.keyScale, 0, 5);
   data[40] = lightColor[0]; data[41] = lightColor[1]; data[42] = lightColor[2];
@@ -442,7 +536,13 @@ export function buildModel3DNativeComputeGraph(options: Model3DNativeGraphOption
   data[44] = rimColor[0]; data[45] = rimColor[1]; data[46] = rimColor[2];
   data[47] = clamp(finite(c.rimIntensity, 0) * profile.rimScale, 0, 5);
   data[48] = idx(DEFORMS, c.deformationType);
-  data[49] = clamp(finite(c.deformationIntensity, 0.5), 0, 3) * clamp(finite(c.deformationSpread, 1), 0.2, 6);
+  // Release morph shader: intensity = morphIntensity + level*deformResponse
+  // (+ beatExplode * beat * 0.5 boost in updateShaderUniforms).
+  data[49] = clamp(
+    finite(c.deformationIntensity, 0.5)
+      + audioLevel * clamp(finite(au.deformResponse, 0), 0, 4)
+      + clamp(finite(c.beatExplode, 0), 0, 4) * beat * 0.5,
+    0, 4) * clamp(finite(c.deformationSpread, 1), 0.2, 6);
   data[50] = Math.max(0.05, finite(c.deformationSpeed, 1));
   data[51] = Math.max(0.1, finite(c.deformationScale, 1));
   data[52] = options.hasTexture && c.materialType === 'source' ? 1 : 0;
@@ -451,7 +551,7 @@ export function buildModel3DNativeComputeGraph(options: Model3DNativeGraphOption
   data[55] = clamp(finite(c.fresnelPower, 2), 0.3, 8);
   data[56] = Math.max(0.05, finite(c.hologramScanSpeed, 2));
   data[57] = clamp(finite(c.hologramScanCount, 30), 4, 120);
-  data[58] = clamp(finite(options.audioLevel, 0), 0, 1.5) * (c.audio?.enabled ? 1 : 0);
+  data[58] = audioLevel; // band-selected, already gated on audio.enabled
   data[59] = c.animationType === 'colorCycle' ? 1 : 0;
   data[60] = clamp(finite(c.fillIntensity, 0.4) * profile.fillScale, 0, 3);
   data[61] = clamp(finite(c.toneMappingExposure, 1), 0.1, 3);
@@ -469,6 +569,52 @@ export function buildModel3DNativeComputeGraph(options: Model3DNativeGraphOption
   data[69] = clamp(finite(echo.rotationVariation, 0), 0, 2);
   data[70] = clamp(finite(echo.colorVariation, 0), 0, 1);
   data[71] = time * Math.max(0.05, finite(echo.speed, 1)) + finite(echo.phaseOffset, 0);
+  // anim0: per-axis scale (morphLoop squash/stretch) + texturePan UV offset.
+  data[72] = xf.scaleY;
+  data[73] = xf.scaleZ;
+  data[74] = xf.uvPanX;
+  data[75] = xf.uvPanY;
+  // mat2: standard PBR + hologram glitch + chrome reflectivity
+  data[76] = clamp(finite(c.materialRoughness, 0.5), 0, 1);
+  data[77] = clamp(finite(c.materialMetalness, 0.5), 0, 1);
+  data[78] = clamp(finite(c.hologramGlitchIntensity, 0), 0, 2);
+  data[79] = clamp(finite(c.chromeReflectivity, 0.9), 0, 1);
+  // mat3: lava + glass knobs
+  data[80] = Math.max(0, finite(c.lavaFlowSpeed, 1));
+  data[81] = clamp(finite(c.lavaCrackIntensity, 1), 0, 3);
+  data[82] = clamp(finite(c.glassIOR, 1.5), 1, 2.5);
+  data[83] = clamp(finite(c.glassThickness, 0.5), 0, 3);
+  // wire0/wire1: wireframe overlay (indices match getModel3DWireframeModeIndex)
+  const WIREFRAME_MODES = ['none', 'classic', 'animated', 'glow', 'neon', 'pulse', 'rainbow', 'dotted', 'thick'];
+  data[84] = idx(WIREFRAME_MODES, c.wireframeMode);
+  data[85] = clamp(finite(c.wireframeOpacity, 1), 0, 1);
+  data[86] = clamp(finite(c.wireframeThickness, 1), 0.1, 10);
+  data[87] = Math.max(0, finite(c.wireframeAnimSpeed, 1));
+  const wireCol = col255(c.wireframeColor, [100, 200, 255]);
+  data[88] = wireCol[0]; data[89] = wireCol[1]; data[90] = wireCol[2];
+  data[91] = clamp(finite(c.dissolveEdgeWidth, 0.06), 0, 0.4);
+  // fx3: audio color pump, environment boost, deform axis, shadow strength
+  data[92] = audioLevel * clamp(finite(au.colorResponse, 0), 0, 4);
+  const envOn = c.environmentEnabled ?? true;
+  data[93] = envOn
+    ? Math.max(0, finite(c.environmentIntensity, 1))
+      * finite((profile as { environmentScale?: number }).environmentScale, 0.25)
+    : 0;
+  data[94] = idx(['all', 'x', 'y', 'z'], c.deformationAxis);
+  data[95] = (c.shadowsEnabled ?? true)
+    ? clamp(finite((profile as { selfShadowStrength?: number }).selfShadowStrength, 0.6), 0, 1)
+    : 0;
+  // fx4: shadow softness/bias + vertex decorations
+  data[96] = clamp(finite(c.shadowSoftness, 1), 0, 4);
+  data[97] = clamp(finite(c.shadowBias, -0.0005), -0.01, 0.01);
+  const DECOR_MODES = ['none', 'spheres', 'cubes', 'pyramids', 'points'];
+  const decorMode = idx(DECOR_MODES, c.vertexDecoration);
+  data[98] = decorMode;
+  data[99] = Math.max(0, finite(c.vertexDecorationSize, 0.02));
+  const decorCol = col255(c.vertexDecorationColor, [255, 255, 255]);
+  data[100] = decorCol[0]; data[101] = decorCol[1]; data[102] = decorCol[2];
+  const decorStride = Math.max(1, Math.ceil(Math.max(1, options.vertexCount) / 60000));
+  data[103] = decorStride;
 
   const bg = c.backgroundMode === 'color' ? col255(c.backgroundColor, [0, 0, 0]) : [0, 0, 0];
   const bgA = c.backgroundMode === 'color' ? clamp(finite(c.backgroundOpacity, 1), 0, 1) : 0;
@@ -531,7 +677,34 @@ export function buildModel3DNativeComputeGraph(options: Model3DNativeGraphOption
           { binding: 3, kind: 'source-frame-sampler' },
           { binding: 4, resource: options.indexBufferId, kind: 'read-only-storage' },
         ],
-      }],
+      },
+      // Vertex decorations: second pass over the same target (clear:false)
+      // drawing one small screen-facing triangle per strided vertex.
+      ...(decorMode > 0 && options.vertexCount > 0 ? [{
+        name: 'model3d-decor',
+        shader_id: MODEL3D_NATIVE_SHADER_ID,
+        vertex_entry: 'vs_decor',
+        fragment_entry: 'fs_decor',
+        target: 'source_frame',
+        source_id: sourceId,
+        seq: Math.max(0, Math.round(options.frameIndex ?? 0)),
+        clear: false,
+        include_snapshot: false,
+        blend: 'alpha',
+        primitive: 'triangle-list',
+        vertex_count: Math.max(3, Math.ceil(options.vertexCount / decorStride) * 3),
+        instance_count: 1,
+        depth: true,
+        depth_write: true,
+        depth_compare: 'less',
+        bindings: [
+          { binding: 0, resource: uniformId, kind: 'uniform' },
+          { binding: 1, resource: options.meshBufferId, kind: 'read-only-storage' },
+          { binding: 2, kind: 'source-frame-texture', source_id: options.textureSourceId, allow_missing: true },
+          { binding: 3, kind: 'source-frame-sampler' },
+          { binding: 4, resource: options.indexBufferId, kind: 'read-only-storage' },
+        ],
+      }] : [])],
     },
     sourceId,
     passCount: 1,
@@ -563,7 +736,15 @@ struct ModelParams {
   fx0: vec4<f32>,      // hasTexture, toonLevels, dissolve, fresnelPower
   fx1: vec4<f32>,      // holoSpeed, holoCount, audioLevel, colorCycle
   fx2: vec4<f32>,      // fillIntensity, exposure, discoSweep, 0
-  pad0: vec4<f32>, pad1: vec4<f32>, pad2: vec4<f32>,
+  pad0: vec4<f32>, pad1: vec4<f32>,
+  anim0: vec4<f32>,    // scaleY, scaleZ, uvPanX, uvPanY
+  mat2: vec4<f32>,     // roughness, metalness, hologramGlitch, chromeReflectivity
+  mat3: vec4<f32>,     // lavaFlowSpeed, lavaCrackIntensity, glassIOR, glassThickness
+  wire0: vec4<f32>,    // wireMode, wireOpacity, wireThickness, wireAnimSpeed
+  wire1: vec4<f32>,    // wireColor.rgb, dissolveEdgeWidth
+  fx3: vec4<f32>,      // audioColorPump, envIntensity, deformAxis, shadowStrength
+  fx4: vec4<f32>,      // shadowSoftness, shadowBias, decorMode, decorSize
+  decor0: vec4<f32>,   // decorColor.rgb, decorStride
 }
 @group(0) @binding(0) var<uniform> mp: ModelParams;
 @group(0) @binding(1) var<storage, read> verts: array<vec4<f32>>;
@@ -594,6 +775,7 @@ struct VsOut {
   @location(2) world: vec3<f32>,
   @location(3) color: vec4<f32>,
   @location(4) misc: vec4<f32>, // hasVertexTex, viewZ, triId, 0
+  @location(5) bary: vec3<f32>,
 }
 
 @vertex fn vs_mesh(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VsOut {
@@ -605,6 +787,10 @@ struct VsOut {
   var pos = p0.xyz;
   var nrm = p1.xyz;
   let tri = f32(vi / 3u);
+
+  let opos = pos;
+  var bary = vec3<f32>(0.0);
+  bary[vi % 3u] = 1.0;
 
   // Deformation (object space, before transform)
   let dt = i32(mp.deform.x + 0.5);
@@ -661,8 +847,18 @@ struct VsOut {
     pos = vec3<f32>(pos.x * ca - pos.z * sa, pos.y, pos.x * sa + pos.z * ca);
   }
 
-  // Model transform: scale, euler ZYX, translate
-  pos = pos * mp.xform0.x;
+  // Deformation axis mask: restrict displacement to one axis (0 = all).
+  let dax = i32(mp.fx3.z + 0.5);
+  if (dax == 1) { pos = vec3<f32>(pos.x, opos.y, opos.z); }
+  else if (dax == 2) { pos = vec3<f32>(opos.x, pos.y, opos.z); }
+  else if (dax == 3) { pos = vec3<f32>(opos.x, opos.y, pos.z); }
+
+  // Model transform: per-axis scale, euler ZYX, translate. anim0.xy carry the
+  // Y/Z scale so morphLoop can squash and stretch; a zero (uniform never
+  // packed) falls back to the uniform scale.
+  let scale_y = select(mp.anim0.x, mp.xform0.x, mp.anim0.x <= 0.0);
+  let scale_z = select(mp.anim0.y, mp.xform0.x, mp.anim0.y <= 0.0);
+  pos = pos * vec3<f32>(mp.xform0.x, scale_y, scale_z);
   let cx = cos(mp.xform0.y); let sx = sin(mp.xform0.y);
   let cy = cos(mp.xform0.z); let sy = sin(mp.xform0.z);
   let cz = cos(mp.xform0.w); let sz = sin(mp.xform0.w);
@@ -687,8 +883,19 @@ struct VsOut {
     let h3 = fract(sin(k * 45.164) * 43758.5453);
     var off = vec3<f32>(0.0);
     if (etype <= 5) { // trails / blur / afterimage / strobe / stream
-      let dir = normalize(vec3<f32>(sin(et * 0.9), 0.25 * sin(et * 0.6), cos(et * 0.9)));
-      off = -dir * spacing * k;
+      // These five types previously shared one identical branch, and the
+      // shared trail direction started aligned with the view axis (copies
+      // hidden behind the model), so switching type/count showed nothing.
+      // Bias the direction sideways and differentiate each type.
+      var dir = normalize(vec3<f32>(sin(et * 0.9) + 0.35, 0.25 * sin(et * 0.6) + 0.15, cos(et * 0.9)));
+      var sp = spacing;
+      if (etype == 2) { sp = spacing * 0.35; } // motionBlur: tight smear
+      if (etype == 3) { // afterimage: frozen past poses along older directions
+        dir = normalize(vec3<f32>(sin(et * 0.9 - k * 0.5) + 0.35, 0.25 * sin(et * 0.6 - k * 0.5) + 0.15, cos(et * 0.9 - k * 0.5)));
+      }
+      if (etype == 4) { echo_alpha = echo_alpha * step(0.5, fract(et * 2.0 + k * 0.37)); } // strobe flicker
+      if (etype == 5) { dir = vec3<f32>(1.0, 0.0, 0.0); } // stream: straight line
+      off = -dir * sp * k;
       q = q * (1.0 - mp.pad1.x * 0.04 * k);
     } else if (etype == 7) { // grid
       let side = max(1.0, round(pow(mp.pad0.y + 1.0, 1.0 / 3.0)));
@@ -746,12 +953,20 @@ struct VsOut {
     f32((packed >> 16u) & 0xffu) / 255.0,
     echo_alpha);
   out.misc = vec4<f32>(select(0.0, 1.0, ((packed >> 24u) & 0xffu) > 127u), clip.w, tri, echo_hue);
+  out.bary = bary;
   return out;
 }
 
 @fragment fn fs_mesh(in: VsOut) -> @location(0) vec4<f32> {
   let t = mp.screen.z;
   let mat = i32(mp.xform1.w + 0.5);
+  // Wireframe edge factor from per-corner barycentrics. Derivatives are taken
+  // up front, before any material discard, to keep uniform control flow.
+  let pw = fwidth(in.bary);
+  var wthick = max(mp.wire0.z, 0.25);
+  if (i32(mp.wire0.x + 0.5) == 8) { wthick = max(wthick * 2.4, 3.5); }
+  let edge_d = smoothstep(vec3<f32>(0.0), pw * wthick, in.bary);
+  let wire_edge = 1.0 - min(min(edge_d.x, edge_d.y), edge_d.z);
   var n = normalize(in.normal);
   let view_dir = vec3<f32>(0.0, 0.0, 1.0);
   let fres = pow(1.0 - clamp(abs(n.z), 0.0, 1.0), mp.fx0.w);
@@ -760,7 +975,8 @@ struct VsOut {
   if (mat == 0) {
     albedo = in.color.rgb;
     if (mp.fx0.x > 0.5 && in.misc.x > 0.5) {
-      let uv = vec2<f32>(in.uv.x, 1.0 - in.uv.y);
+      // texturePan slides the diffuse lookup; anim0.zw are 0 otherwise.
+      let uv = fract(vec2<f32>(in.uv.x, 1.0 - in.uv.y) + vec2<f32>(mp.anim0.z, mp.anim0.w));
       albedo = albedo * textureSampleLevel(diffuse_tex, diffuse_smp, clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0).rgb;
     }
   }
@@ -776,7 +992,16 @@ struct VsOut {
   var lit = albedo * mp.light1.rgb * (key + fill) + albedo * mp.light1.w;
   var alpha = mp.mat0.w;
 
-  if (mat == 10) { // toon
+  if (mat == 1) { // standard — roughness/metalness approximation
+    let rough = clamp(mp.mat2.x, 0.0, 1.0);
+    let metal = clamp(mp.mat2.y, 0.0, 1.0);
+    let ndl = key / max(mp.light0.w, 0.001);
+    let spec = pow(ndl, mix(64.0, 4.0, rough)) * mp.light0.w * mix(0.5, 0.06, rough);
+    let spec_col = mix(vec3<f32>(1.0), albedo, metal);
+    lit = albedo * mp.light1.rgb * (key + fill) * (1.0 - metal * 0.6)
+      + albedo * mp.light1.w
+      + spec_col * mp.light1.rgb * spec * (0.5 + metal * 1.5);
+  } else if (mat == 10) { // toon
     let levels = mp.fx0.y;
     let q = floor(clamp(key + fill, 0.0, 1.0) * levels + 0.5) / levels;
     lit = albedo * mp.light1.rgb * q + albedo * mp.light1.w * 0.6;
@@ -784,21 +1009,30 @@ struct VsOut {
     let scan = 0.6 + 0.4 * sin(in.world.y * mp.fx1.y + t * mp.fx1.x * 3.0);
     lit = mix(vec3<f32>(0.1, 0.6, 1.0), albedo, 0.3) * scan + mp.light2.rgb * fres * 1.5;
     alpha = alpha * (0.35 + fres * 0.5) * scan;
+    // Glitch: random horizontal bands flicker with channel-swapped color.
+    let gband = step(1.0 - clamp(mp.mat2.z, 0.0, 2.0) * 0.12, m_hash3(vec3<f32>(floor(in.world.y * 26.0), floor(t * 18.0), 7.0)));
+    lit = mix(lit, vec3<f32>(lit.b, lit.g, lit.r) * 1.6, gband * 0.8);
+    alpha = alpha * (1.0 - gband * 0.5);
   } else if (mat == 9) { // xray
     lit = albedo * 0.2 + vec3<f32>(0.4, 0.7, 1.0) * fres * 1.6;
     alpha = alpha * (0.08 + fres * 0.7);
   } else if (mat == 8) { // neon
     lit = albedo * (1.5 + sin(t * 3.0) * 0.3) + mp.mat1.rgb * mp.mat1.w;
-  } else if (mat == 4) { // chrome — fake env gradient
+  } else if (mat == 4) { // chrome — fake env gradient, blended by reflectivity
     let env = mix(vec3<f32>(0.15, 0.16, 0.2), vec3<f32>(0.9, 0.95, 1.0), clamp(n.y * 0.5 + 0.5, 0.0, 1.0));
-    lit = env * (0.4 + key * 0.8) + vec3<f32>(1.0) * pow(key, 24.0);
-  } else if (mat == 3) { // glass
-    lit = albedo * 0.15 + vec3<f32>(0.8, 0.9, 1.0) * fres * 1.2 + vec3<f32>(1.0) * pow(key, 32.0);
-    alpha = alpha * (0.18 + fres * 0.6);
+    let mirror = env * (0.4 + key * 0.8) + vec3<f32>(1.0) * pow(key, 24.0);
+    lit = mix(albedo * mp.light1.rgb * (key * 0.6 + 0.25), mirror, clamp(mp.mat2.w, 0.0, 1.0));
+  } else if (mat == 3) { // glass — IOR steers the fresnel curve, thickness the body
+    let ior_f = pow(1.0 - clamp(abs(n.z), 0.0, 1.0), max(0.5, 5.0 - (clamp(mp.mat3.z, 1.0, 2.5) - 1.0) * 2.5));
+    let thick = clamp(mp.mat3.w, 0.0, 3.0);
+    lit = albedo * (0.1 + thick * 0.15) + vec3<f32>(0.8, 0.9, 1.0) * ior_f * 1.2 + vec3<f32>(1.0) * pow(key, 32.0);
+    alpha = alpha * clamp(0.12 + thick * 0.08 + ior_f * 0.6, 0.0, 1.0);
   } else if (mat == 6) { // lava
-    let flow = m_noise3(in.world * 2.5 + vec3<f32>(0.0, -t * mp.deform.z * 0.5, 0.0));
+    let flow = m_noise3(in.world * 2.5 + vec3<f32>(0.0, -t * mp.mat3.x * 0.5, 0.0));
     let heat = clamp(flow * 0.5 + 0.5, 0.0, 1.0);
-    lit = mix(vec3<f32>(0.15, 0.02, 0.0), vec3<f32>(1.0, 0.5, 0.05), pow(heat, 1.6)) + vec3<f32>(1.0, 0.8, 0.2) * pow(heat, 5.0);
+    let crack = clamp(mp.mat3.y, 0.0, 3.0);
+    lit = mix(vec3<f32>(0.15, 0.02, 0.0), vec3<f32>(1.0, 0.5, 0.05), pow(heat, 1.6)) + vec3<f32>(1.0, 0.8, 0.2) * pow(heat, 5.0) * (0.4 + crack * 0.6);
+    lit = mix(lit, vec3<f32>(0.05, 0.01, 0.0), crack * 0.35 * (1.0 - heat));
   } else if (mat == 7) { // ice
     lit = mix(lit, vec3<f32>(0.75, 0.9, 1.0), 0.6) + vec3<f32>(1.0) * fres * 0.8;
     alpha = alpha * (0.5 + fres * 0.4);
@@ -807,10 +1041,13 @@ struct VsOut {
   } else if (mat == 13) { // dissolve
     let h = m_hash3(floor(in.world * 14.0));
     if (h < mp.fx0.z) { discard; }
-    if (h < mp.fx0.z + 0.06) { lit = mp.light2.rgb * 2.0; }
+    if (h < mp.fx0.z + max(mp.wire1.w, 0.005)) { lit = mp.light2.rgb * 2.0; }
   } else if (mat == 14) { // glitch
     let band = step(0.92, m_hash3(vec3<f32>(floor(in.world.y * 20.0), floor(t * 12.0), 1.0)));
     lit = mix(lit, vec3<f32>(lit.b, lit.r, lit.g), band);
+  } else if (mat == 2) { // wireframe material — edges only
+    lit = mp.wire1.rgb * (0.5 + 0.5 * key) + mp.mat1.rgb * mp.mat1.w;
+    alpha = alpha * wire_edge;
   } else if (mat == 15) { // normal viz
     lit = n * 0.5 + vec3<f32>(0.5);
   } else if (mat == 16) { // depth viz
@@ -833,13 +1070,104 @@ struct VsOut {
   }
   alpha = alpha * in.color.a;
 
-  // Rim + emissive + audio pump + exposure
+  // Environment lighting boost (stateless stand-in for the release's IBL map).
+  if (mp.fx3.y > 0.001) {
+    let envg = mix(vec3<f32>(0.16, 0.17, 0.22), vec3<f32>(0.65, 0.72, 0.8), clamp(n.y * 0.5 + 0.5, 0.0, 1.0));
+    lit = lit + albedo * envg * mp.fx3.y * 0.5;
+  }
+  // Shadows: the release uses real shadow maps. Statelessly approximated as
+  // key-facing self-shadow darkening; softness widens the terminator and
+  // bias nudges its threshold.
+  if (mp.fx3.w > 0.001) {
+    let ssoft = clamp(mp.fx4.x, 0.0, 4.0) * 0.25;
+    let sh = smoothstep(-0.15 - ssoft * 0.35 + mp.fx4.y * 20.0, 0.35 + ssoft * 0.35, dot(n, normalize(mp.light0.xyz)));
+    lit = lit * mix(1.0 - mp.fx3.w * 0.45, 1.0, sh);
+  }
+  // Wireframe overlay on any material (port of the barycentric fwidth look).
+  let wmode = i32(mp.wire0.x + 0.5);
+  if (wmode > 0 && mat != 2) {
+    var wcol = mp.wire1.rgb;
+    var walpha = wire_edge * mp.wire0.y;
+    if (wmode == 2) { // animated packets
+      let flowv = fract(dot(in.world, vec3<f32>(1.7, 2.3, 1.1)) - t * max(mp.wire0.w, 0.01) * 1.8);
+      let packet = smoothstep(0.05, 0.28, flowv) * (1.0 - smoothstep(0.45, 0.72, flowv));
+      walpha = walpha * (0.18 + packet * 1.25);
+      wcol = mix(wcol * 0.45, min(vec3<f32>(1.0), wcol * 1.8), packet);
+    } else if (wmode == 3 || wmode == 4) { // glow / neon halo
+      let halo_d = smoothstep(vec3<f32>(0.0), pw * wthick * select(2.4, 3.8, wmode == 3), in.bary);
+      let halo = 1.0 - min(min(halo_d.x, halo_d.y), halo_d.z);
+      let core = pow(wire_edge, select(0.3, 0.75, wmode == 3));
+      walpha = (halo * 0.38 + core) * mp.wire0.y;
+      if (wmode == 4) { wcol = mix(wcol, vec3<f32>(1.0), core * 0.65); }
+    } else if (wmode == 5) { // pulse
+      let pulse = 0.5 + 0.5 * sin(t * max(mp.wire0.w, 0.01) * 4.0);
+      walpha = walpha * (0.3 + pulse * 0.9);
+      wcol = mix(wcol * 0.55, min(vec3<f32>(1.0), wcol * 1.75), pulse);
+    } else if (wmode == 6) { // rainbow
+      wcol = m_hsv2rgb(vec3<f32>(fract(dot(in.world, vec3<f32>(0.13, 0.17, 0.11)) + t * max(mp.wire0.w, 0.01) * 0.15), 1.0, 1.0));
+    } else if (wmode == 7) { // dotted
+      walpha = walpha * step(0.5, fract(dot(in.world, vec3<f32>(6.0, 6.0, 6.0)) + t * max(mp.wire0.w, 0.01) * 0.5));
+    }
+    lit = mix(lit, wcol, clamp(walpha, 0.0, 1.0));
+  }
+  // Rim + emissive + audio pump (+ colorResponse pump) + exposure
   lit = lit + mp.light2.rgb * fres * mp.light2.w;
   lit = lit + mp.mat1.rgb * mp.mat1.w * 0.5;
-  lit = lit * (1.0 + mp.fx1.z * 0.4);
+  lit = lit * (1.0 + mp.fx1.z * 0.4 + mp.fx3.x * 0.8);
   lit = vec3<f32>(1.0) - exp(-lit * mp.fx2.y);
 
   if (alpha < 0.004) { discard; }
   return vec4<f32>(lit * alpha, alpha);
+}
+
+// Vertex decorations: one small screen-facing triangle per strided vertex.
+// Approximates the release's instanced sphere/cube/pyramid markers ('points'
+// draws extra small). Markers follow the model transform but not the vertex
+// deformations.
+struct DecorOut {
+  @builtin(position) position: vec4<f32>,
+  @location(0) shade: f32,
+}
+
+@vertex fn vs_decor(@builtin(vertex_index) vi: u32) -> DecorOut {
+  var out: DecorOut;
+  let stride = max(1u, u32(mp.decor0.w + 0.5));
+  let m = (vi / 3u) * stride;
+  let corner = vi % 3u;
+  if (m >= u32(mp.screen.w + 0.5)) {
+    out.position = vec4<f32>(0.0, 0.0, 2.0, 1.0);
+    out.shade = 0.0;
+    return out;
+  }
+  var pos = verts[m * 2u].xyz;
+  let scale_y = select(mp.anim0.x, mp.xform0.x, mp.anim0.x <= 0.0);
+  let scale_z = select(mp.anim0.y, mp.xform0.x, mp.anim0.y <= 0.0);
+  pos = pos * vec3<f32>(mp.xform0.x, scale_y, scale_z);
+  let cx = cos(mp.xform0.y); let sx = sin(mp.xform0.y);
+  let cy = cos(mp.xform0.z); let sy = sin(mp.xform0.z);
+  let cz = cos(mp.xform0.w); let sz = sin(mp.xform0.w);
+  var q = vec3<f32>(pos.x, pos.y * cx - pos.z * sx, pos.y * sx + pos.z * cx);
+  q = vec3<f32>(q.x * cy + q.z * sy, q.y, -q.x * sy + q.z * cy);
+  q = vec3<f32>(q.x * cz - q.y * sz, q.x * sz + q.y * cz, q.z);
+  q = q + vec3<f32>(mp.xform1.x, mp.xform1.y, mp.xform1.z);
+  var clip = mp.vp0 * q.x + mp.vp1 * q.y + mp.vp2 * q.z + mp.vp3;
+  var size = mp.fx4.w * 2.0;
+  if (i32(mp.fx4.z + 0.5) == 4) { size = size * 0.3; } // points
+  var ox = 0.0; var oy = 1.0;
+  if (corner == 1u) { ox = -0.866; oy = -0.5; }
+  if (corner == 2u) { ox = 0.866; oy = -0.5; }
+  // Fixed clip-space offset: after the perspective divide the marker shrinks
+  // with distance, giving an approximately world-sized billboard.
+  clip.x = clip.x + ox * size * (mp.screen.y / mp.screen.x) * 2.2;
+  clip.y = clip.y + oy * size * 2.2;
+  out.position = clip;
+  out.shade = 0.7 + 0.3 * oy;
+  return out;
+}
+
+@fragment fn fs_decor(in: DecorOut) -> @location(0) vec4<f32> {
+  if (i32(mp.fx4.z + 0.5) == 0) { discard; }
+  let a = mp.mat0.w;
+  return vec4<f32>(mp.decor0.rgb * in.shade * a, a);
 }
 `;

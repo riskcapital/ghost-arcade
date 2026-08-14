@@ -270,3 +270,36 @@ export function hydrateScreensFromProject(
     },
   }));
 }
+
+// ── Composite NDI output engagement ──────────────────────────────────
+// The main process owns the NDI composite pump (electron/main.js
+// startNdiOutputPump): it taps the native renderer's IOSurface output
+// at full rate and streams it as ONE NDI sender. This module-level
+// subscription is the single engagement point: whenever ANY sender-
+// targeted screen selects the 'ndi' transport, start the pump under
+// that screen's sender name; when none do, stop it. Renamed screens
+// restart the pump under the new name (outputStart is idempotent for
+// an unchanged name). No-ops outside Electron (bridge absent).
+let lastNdiOutputName: string | null = null;
+if (typeof window !== 'undefined') {
+  screens.subscribe((slices) => {
+    const bridge = (window as unknown as {
+      ghostNDI?: {
+        outputStart?: (o: { name: string }) => Promise<unknown>;
+        outputStop?: () => Promise<unknown>;
+      };
+    }).ghostNDI;
+    if (!bridge?.outputStart) return;
+    const ndiSlice = (slices ?? []).find(
+      (s) => (s.targetType ?? 'sender') === 'sender' && s.outputType === 'ndi'
+    );
+    const wanted = ndiSlice ? (ndiSlice.spoutName || 'Ghost Arcade') : null;
+    if (wanted === lastNdiOutputName) return;
+    lastNdiOutputName = wanted;
+    if (wanted) {
+      void bridge.outputStart({ name: wanted }).catch(() => {});
+    } else {
+      void bridge.outputStop?.().catch(() => {});
+    }
+  });
+}

@@ -9,8 +9,8 @@ export const STUDIO_THEME: Theme = {
   name: 'Studio Coral',
   description: 'Cool near-black, soft restrained accents — the default Ghost Arcade look.',
   tokens: {
-    fontUi:      "'Geist', system-ui, sans-serif",
-    fontDisplay: "'Geist', system-ui, sans-serif",
+    fontUi:      "'Satoshi', system-ui, sans-serif",
+    fontDisplay: "'Satoshi', system-ui, sans-serif",
     fontMono:    "'Geist Mono', ui-monospace, monospace",
 
     void:  '#070809',
@@ -48,6 +48,9 @@ export const STUDIO_THEME: Theme = {
     cyan:       '#2dd4d4',
     pink:       '#f472b6',
     rec:        '#ff4438',
+    // Icon tint — see arcade.ts. Kept identical so the accent reads the
+    // same across themes; split them if the palettes ever diverge.
+    icon:       '#5278ff',
 
     metalHi:   'rgba(255,255,255,.06)',
     coralGlow: 'rgba(255,114,95,.42)',

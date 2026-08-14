@@ -22,7 +22,7 @@
   import { webgpuSupportedStore } from '../renderer/webgpuCapability';
   import { createAssetRefFromFile } from '../storage/assetRegistry';
   import { NATIVE_ENGINE_ONLY, settings } from '../stores/settings';
-  import { nativeRendererRuntime } from '../stores/nativeRenderer';
+  import { nativeRendererRuntime, nativeFailedRouteLayers } from '../stores/nativeRenderer';
   import { submitNativeRendererCommands } from '../api/native-renderer';
   import { maskEditingLayerId } from '../stores/maskEditing';
   import { nativeUnsupportedEffectTypes, nativeUnsupportedSourceReason } from '../sync/nativeRendererSync';
@@ -54,6 +54,9 @@
 
   function nativeLayerPendingReason(layer: any): string | null {
     if (!nativeInventoryLocked) return null;
+    if ($nativeFailedRouteLayers.includes(layer?.id)) {
+      return `gpu-shader:${layer?.gpuLayerContent?.shaderId ?? 'layer'}:route-failed`;
+    }
     const effects = nativeUnsupportedEffectTypes(layer);
     if (effects.length > 0) return `effect:${effects.join(',')}:not-native`;
     const sourceReason = nativeUnsupportedSourceReason(layer, false, {
@@ -65,6 +68,11 @@
       sourceReason.endsWith(':route-unavailable') &&
       isNativeReadyGpuShaderId(layer.gpuLayerContent?.shaderId)
     ) {
+      // Transient: routes report unavailable for a moment during startup
+      // shader warm-up; a badge here would flash on every boot. The
+      // PERMANENT variant (`:route-failed`, the 3-failure kill switch) is
+      // deliberately NOT suppressed — that layer will stay blank and the
+      // operator needs to see it.
       return null;
     }
     return sourceReason;

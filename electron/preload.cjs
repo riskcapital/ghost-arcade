@@ -138,7 +138,7 @@ const ALLOWED_IPC_COMMANDS = new Set([
   // Deck A/B confidence monitors — named presenter views beside Program
   'deck_monitor_attach', 'deck_monitor_detach',
   // Native output live recording — main-process IOSurface capture
-  'native_output_recording_start', 'native_output_recording_stop',
+  'native_output_recording_start', 'native_recording_mux_audio', 'native_output_recording_stop',
   'native_viewport_set_layer_interaction',
   // WLED — UDP DRGB packets to LED controllers on the LAN
   'wled_send_frame', 'wled_close_socket',
@@ -234,6 +234,14 @@ contextBridge.exposeInMainWorld('ghostNDI', {
   destroyReceiver: (sourceName) => ipcRenderer.invoke('ndi_destroy_receiver', { sourceName }),
   receiveFrame: (sourceName) => ipcRenderer.invoke('ndi_receive_frame', { sourceName }),
   receiveTextureInfo: (sourceName) => ipcRenderer.invoke('ndi_receive_texture_info', { sourceName }),
+  // Composite output pump — main process streams the native renderer's
+  // full-frame composite over NDI (no per-frame IPC from the renderer).
+  //   outputStart({ name, fps? }) → { ok, active, name?, fps?, reason? }
+  //   outputStop() → { ok }
+  //   outputStatus() → { available, active, name, fps, reason? }
+  outputStart: (opts) => ipcRenderer.invoke('ndi_output_start', opts || {}),
+  outputStop: () => ipcRenderer.invoke('ndi_output_stop'),
+  outputStatus: () => ipcRenderer.invoke('ndi_output_status'),
 });
 
 // OSC (Open Sound Control) UDP listener bridge.

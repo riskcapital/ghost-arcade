@@ -173,6 +173,8 @@ const ASSET_TREE_FIELDS: Array<[field: string, refKey: string]> = [
   ['filePath', '_assetRef'],
   ['texturePath', '_textureAssetRef'],
   ['sourceUrl', '_sourceAssetRef'],
+  // Projection-sim imported models (ProjectionSimObject).
+  ['assetUrl', 'assetRef'],
   ['url', 'assetRef'],
 ];
 

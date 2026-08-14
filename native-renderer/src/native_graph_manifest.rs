@@ -38,7 +38,7 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
     NativeGraphInstrumentSpec {
         id: "light-painting",
         label: "Light Painting",
-        shader_ids: &["light-painting/render-v7"],
+        shader_ids: &["light-painting/render-v8"],
         features: &[
             "compute_graph_host",
             "compute_graph_render",
@@ -326,6 +326,23 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
             "native_vj_crossfade_graph",
         ],
         parity: "native-two-bank-transition-mix-shared-wgsl",
+    },
+    NativeGraphInstrumentSpec {
+        id: "vj-mix",
+        label: "VJ Mix",
+        shader_ids: &["vj-mix/render"],
+        features: &[
+            "compute_graph_host",
+            "compute_graph_render",
+            "compute_graph_multi_render",
+            "compute_graph_instanced_render",
+            "compute_graph_texture_sampling",
+            "compute_graph_clear_color",
+            "compute_graph_source_frame_target",
+            "persistent_compute_buffers",
+            "native_vj_mix_graph",
+        ],
+        parity: "native-post-crossfade-row-stack-composite",
     },
     NativeGraphInstrumentSpec {
         id: "handfx",

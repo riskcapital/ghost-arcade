@@ -56,6 +56,12 @@ export interface ThemeTokens {
   pink:   string;
   rec:    string;
 
+  /** Icon tint. Icons across the chrome are inline SVG drawn with
+   *  `currentColor`, so this is applied as `color` on the glyph rather
+   *  than as a fill — one token recolours every icon in the app.
+   *  Semantic icons (record, status dots) deliberately opt out. */
+  icon?:  string;
+
   /** Optional shadow / glow strings — themes can leave these blank and
    *  consumers fall back to the default. Retro themes use them for the
    *  CRT scanline glow. */

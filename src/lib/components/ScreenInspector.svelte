@@ -19,9 +19,21 @@
    * same store, so warp-handle drags and slider edits both reflect
    * live on the editor canvas.
    */
+  import { onMount } from 'svelte';
   import type { OutputSlice } from '../stores/settings';
   import { screenActions } from '../stores/screens';
   import { isDesktopApp, getTextureShareLabel } from '$lib/bridge';
+
+  // Is the NDI native addon built + the NDI runtime initialized? Gates
+  // the NDI transport option below. Probed once on mount (same probe
+  // SettingsPanel uses); false outside Electron / without the addon.
+  let ndiAvailable = $state(false);
+  onMount(async () => {
+    try {
+      const r = await (window as any).ghostNDI?.available?.();
+      ndiAvailable = !!r?.available;
+    } catch { ndiAvailable = false; }
+  });
 
   type DisplayInfo = {
     id: number; label: string; width: number; height: number;
@@ -127,6 +139,26 @@
         <option value="display" disabled={!isDesktopApp}>Physical display</option>
       </select>
     </label>
+
+    {#if (screen.targetType ?? 'sender') === 'sender'}
+      <!-- Transport sub-select. undefined outputType = platform-local
+           texture share (Syphon on macOS / Spout on Windows). 'ndi'
+           engages the main-process composite NDI pump (see
+           stores/screens.ts engagement subscription). -->
+      <label class="field">
+        <span class="lbl">Transport</span>
+        <select
+          value={screen.outputType === 'ndi' ? 'ndi' : 'local'}
+          onchange={(e) => {
+            const v = (e.target as HTMLSelectElement).value;
+            update({ outputType: v === 'ndi' ? 'ndi' : undefined });
+          }}
+        >
+          <option value="local">{tsLabel} (local)</option>
+          <option value="ndi" disabled={!ndiAvailable}>NDI® (network)</option>
+        </select>
+      </label>
+    {/if}
 
     <p class="ndi-attribution">
       <a href="https://ndi.video/" target="_blank" rel="noreferrer">NDI®</a>
