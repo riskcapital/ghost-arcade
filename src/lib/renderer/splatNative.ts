@@ -13,7 +13,7 @@ export const SPLAT_NATIVE_SHADER_ID = 'splat/render-v1';
 // down to this during parsing (with the loader reporting decimation).
 export const SPLAT_MAX_POINTS = 1_500_000;
 export const SPLAT_POINT_VEC4S = 2;
-export const SPLAT_UNIFORM_VEC4S = 42;
+export const SPLAT_UNIFORM_VEC4S = 43;
 export const SPLAT_UNIFORM_BYTES = SPLAT_UNIFORM_VEC4S * 16;
 
 const ANIMATION_TYPES = [
@@ -27,6 +27,11 @@ const DISPLACEMENT_TYPES = [
 ];
 const CREATIVE_EFFECTS = ['none', 'feedback', 'kaleidoscope', 'constellation', 'datamosh', 'pixelSort', 'echo'];
 const MOUSE_MODES = ['attract', 'repel', 'swirl', 'reveal'];
+
+// Pack-side audio smoothing. The WebGL renderer smooths statefully per
+// rendered frame (smoothSplatAudio EMA); packing is stateless, so the EMA
+// state lives here keyed by sourceId — same recurrence, same per-frame cadence.
+const splatAudioSmoothState = new Map<string, number>();
 
 /** Invert a column-major 4x4 (general adjugate method). */
 function invertMat4(m: number[]): number[] | null {
@@ -76,9 +81,11 @@ function unprojectSplatPointer(vp: number[], px: number, py: number): [number, n
   return [world[0] / world[3], world[1] / world[3], world[2] / world[3]];
 }
 const RENDER_MODES = ['points', 'gaussians', 'spheres', 'billboards', 'cubes'];
+// Names must match the panel/WebGL canon (SplatRenderer.getColorEffectIndex):
+// 'chromatic' and 'neon', not 'chromaticShift'/'neonGlow'.
 const COLOR_EFFECTS = [
-  'none', 'chromaticShift', 'heatmap', 'pointillist', 'hologram', 'rainbow',
-  'audioColor', 'depthGradient', 'neonGlow', 'pastel', 'cyberpunk', 'fire', 'ice',
+  'none', 'chromatic', 'heatmap', 'pointillist', 'hologram', 'rainbow',
+  'audioColor', 'depthGradient', 'neon', 'pastel', 'cyberpunk', 'fire', 'ice',
 ];
 const OPACITY_EFFECTS = ['none', 'dof', 'fog', 'pulse', 'proximity', 'dissolve', 'scanReveal', 'audioFade'];
 
@@ -228,10 +235,17 @@ export interface SplatNativeGraphOptions {
   frameDelta: number;
   frameIndex: number;
   audioLevel?: number;
+  /** Flattened visual-audio band levels for the audioBand selector. */
+  audioBands?: { sub?: number; bass?: number; lowMid?: number; mid?: number; highMid?: number; high?: number };
   audioBeat?: number;
   audioBeatPhase?: number;
   pointer?: { x: number; y: number; active: boolean; down: boolean };
   includeSnapshot?: boolean;
+  /** Source-frame id holding the projection texture pixels (bound even when
+   *  absent — the fragment shader statically samples it). */
+  textureSourceId?: string;
+  /** True once the texture pixels have been uploaded. */
+  hasTexture?: boolean;
 }
 
 export function buildSplatNativeComputeGraph(options: SplatNativeGraphOptions) {
@@ -244,7 +258,22 @@ export function buildSplatNativeComputeGraph(options: SplatNativeGraphOptions) {
   data.set(vp, 0); // 4 vec4s (0..15)
 
   const audioOn = !!c.audioEnabled;
-  const level = audioOn ? clamp(finite(options.audioLevel, 0), 0, 1.5) : 0;
+  // audioBand picks the driving band ('all' = full-mix level), audioSensitivity
+  // scales it, audioSmoothing is the WebGL EMA reproduced pack-side (keyed by
+  // sourceId; see splatAudioSmoothState).
+  const band = String(c.audioBand ?? 'all');
+  const bands = options.audioBands;
+  const bandLevel = band === 'all' || !bands
+    ? finite(options.audioLevel, 0)
+    : finite(bands[band as keyof typeof bands], 0);
+  const sensitivity = clamp(finite(c.audioSensitivity, 1), 0, 4);
+  const smoothing = clamp(finite(c.audioSmoothing, 0.7), 0, 0.98);
+  const smoothKey = String(options.sourceId || 'splat-native-source');
+  const rawLevel = audioOn ? clamp(bandLevel * sensitivity, 0, 1.5) : 0;
+  const smoothedLevel = (splatAudioSmoothState.get(smoothKey) ?? 0) * smoothing
+    + rawLevel * (1 - smoothing);
+  splatAudioSmoothState.set(smoothKey, smoothedLevel);
+  const level = audioOn ? smoothedLevel : 0;
   const beat = audioOn ? clamp(finite(options.audioBeat, 0), 0, 1.5) : 0;
   const beatPhase = clamp(finite(options.audioBeatPhase, 0), 0, 1);
   const density = clamp(finite(c.pointDensity, 1), 0.01, 1);
@@ -283,9 +312,22 @@ export function buildSplatNativeComputeGraph(options: SplatNativeGraphOptions) {
   // Mouse: normalized screen -> world plane at the cloud's depth. Radius
   // scales with the normalized cloud size (extent 4) like the reference.
   const pointer = options.pointer;
-  const mouseModeIdx = Math.max(0, idx(MOUSE_MODES, c.mouseMode ?? 'attract'));
+  // The panel select writes `mouseInteraction`; its doUpdate mirrors that into
+  // `mouseMode`, but MIDI/preset paths write `mouseInteraction` alone, so the
+  // packer must prefer the panel field ('none' disables the interaction).
+  const interaction = c.mouseInteraction as string | undefined;
+  const mouseModeName = interaction && interaction !== 'none' ? interaction : (c.mouseMode ?? 'attract');
+  const mouseModeIdx = Math.max(0, idx(MOUSE_MODES, mouseModeName));
   const mouseStrength = clamp(finite(c.mouseStrength, 1), 0, 2);
-  const rawInfluence = clamp(finite(c.mouseInfluence, 0), 0, 2) * mouseStrength;
+  // The panel floors mouseInfluence to 1 whenever an interaction is chosen,
+  // but MIDI/preset writes to mouseInteraction skip that mirror — apply the
+  // same floor here so Strength is live whenever the interaction is on.
+  const rawInfluence = interaction === 'none'
+    ? 0
+    : clamp(
+        interaction ? Math.max(finite(c.mouseInfluence, 0), 1) : finite(c.mouseInfluence, 0),
+        0, 2,
+      ) * mouseStrength;
   const mouseActive = !!pointer?.active && rawInfluence > 0;
   const mouseWorld = mouseActive
     ? unprojectSplatPointer(vp, clamp(finite(pointer!.x, 0.5), 0, 1), clamp(finite(pointer!.y, 0.5), 0, 1))
@@ -312,8 +354,11 @@ export function buildSplatNativeComputeGraph(options: SplatNativeGraphOptions) {
   // vec4 5: render — ×3 point size (slider calibrated for DPR-scaled WebGL)
   const sizeBase = Math.max(0.15, finite(c.pointSize, 3)) * 3
     * (audioOn ? 1 + level * finite(c.audioScale, 0) * 0.5 + beat * finite(c.audioScale, 0) * 0.3 : 1);
+  // The panel toggle writes `sizeAttenuation` (doUpdate mirrors it into
+  // pointSizeAttenuation, but MIDI paths write sizeAttenuation alone). The old
+  // && required BOTH fields false, so the toggle alone never reached 0.
   put4(5, sizeBase,
-    c.sizeAttenuation === false && c.pointSizeAttenuation === false ? 0 : 1,
+    (c.sizeAttenuation ?? c.pointSizeAttenuation) === false ? 0 : 1,
     Math.max(0, idx(RENDER_MODES, c.renderMode)),
     clamp(finite(c.opacity, 1), 0, 1));
   // vec4 6-14: animation clock + per-animation tunables
@@ -335,7 +380,9 @@ export function buildSplatNativeComputeGraph(options: SplatNativeGraphOptions) {
   put4(14, finite((c as any).breatheAmount, 0.15), finite((c as any).driftAmount, 0.25),
     finite((c as any).vortexTwist, 2), finite((c as any).morphRoundness, 1));
   // vec4 15-17: physics + displacement
-  put4(15, finite(physics?.gravity, finite(c.gravity, 5)), Math.max(0.1, finite(physics?.turbulence, 1)),
+  // Panel's Physics section writes top-level `gravity` (-20..20); the nested
+  // physics.gravity default (9.8) was shadowing it.
+  put4(15, finite(c.gravity, finite(physics?.gravity, 5)), Math.max(0.1, finite(physics?.turbulence, 1)),
     Math.max(0, idx(DISPLACEMENT_TYPES, c.displacementType)),
     Math.max(0, finite(c.displacementAmount, finite(c.displacementIntensity, 0.5))));
   put4(16, Math.max(0.05, finite(c.displacementScale, finite(c.noiseScale, 2))),
@@ -351,20 +398,27 @@ export function buildSplatNativeComputeGraph(options: SplatNativeGraphOptions) {
   put4(21, clamp(finite(c.audioDisplacement, 0.5), 0, 2), clamp(finite(c.audioColor, 0.5), 0, 2), beatPhase, density);
   // vec4 22-27: color
   put4(22, c.useOriginalColors === false ? 0 : 1, clamp(finite(c.colorMix, 0), 0, 1),
-    finite(c.hueShift, 0), Math.max(0, idx(COLOR_EFFECTS, c.colorEffectType ?? c.colorEffect)));
+    finite(c.hueShift, 0), Math.max(0, idx(COLOR_EFFECTS, c.colorEffect ?? c.colorEffectType)));
   put4(23, clamp(finite(c.colorA?.[0], 255) / 255, 0, 1), clamp(finite(c.colorA?.[1], 255) / 255, 0, 1),
     clamp(finite(c.colorA?.[2], 255) / 255, 0, 1), clamp(finite(c.colorEffectIntensity, 0.5), 0, 1));
   put4(24, clamp(finite(c.colorB?.[0], 255) / 255, 0, 1), clamp(finite(c.colorB?.[1], 255) / 255, 0, 1),
     clamp(finite(c.colorB?.[2], 255) / 255, 0, 1), Math.max(0, finite(c.hologramSpeed, 2)));
   put4(25, clamp(finite(c.hologramDensity, 10), 1, 50), clamp(finite(c.depthGradientBias, 0.5), 0.001, 1),
-    Math.max(0, idx(OPACITY_EFFECTS, c.opacityEffectType ?? c.opacityEffect)),
+    Math.max(0, idx(OPACITY_EFFECTS, c.opacityEffect ?? c.opacityEffectType)),
     clamp(finite(c.opacityEffectIntensity, 0.5), 0, 1));
-  put4(26, depthNear[0], depthNear[1], depthNear[2], clamp(finite(c.dofFocalDistance, finite((c as any).dofFocusDistance, 0.5)), 0, 1));
+  // The panel's DOF slider writes `dofFocusDistance` on a 0..100 UI scale and
+  // nothing syncs it into 0..1 `dofFocalDistance` (which stays at its 0.5
+  // default and was shadowing the live control). Prefer the panel field.
+  const dofFocusRaw = c.dofFocusDistance;
+  const dofFocus = Number.isFinite(Number(dofFocusRaw))
+    ? clamp(finite(dofFocusRaw, 50) / 100, 0, 1)
+    : clamp(finite(c.dofFocalDistance, 0.5), 0, 1);
+  put4(26, depthNear[0], depthNear[1], depthNear[2], dofFocus);
   put4(27, depthFar[0], depthFar[1], depthFar[2], Math.max(0.01, finite(c.dofBlurAmount, 1)));
   // vec4 28-29: opacity fx tail + creative
   put4(28, Math.max(0.05, finite(c.fogDensity as number, 1)), Math.max(0.05, finite(c.pulseSpeed as number, 1)),
     clamp(finite(c.dissolveProgress as number, 0.5), 0, 1),
-    Math.max(0, idx(CREATIVE_EFFECTS, (c as any).creativeEffectType ?? (c as any).creativeEffect)));
+    Math.max(0, idx(CREATIVE_EFFECTS, (c as any).creativeEffect ?? (c as any).creativeEffectType)));
   put4(29, fogColor[0], fogColor[1], fogColor[2], clamp(finite((c as any).creativeEffectIntensity, 0.5), 0, 1));
   // vec4 30-34: lighting
   put4(30, c.lightingEnabled === false ? 0 : 1, Math.max(0, finite(c.ambientIntensity, 1)),
@@ -381,8 +435,33 @@ export function buildSplatNativeComputeGraph(options: SplatNativeGraphOptions) {
   // vec4 38-39: mouse + slice plane
   put4(38, mouseWorld[0], mouseWorld[1], mouseWorld[2], Math.max(0.001, mouseRadius));
   put4(39, mouseActive ? clamp(rawInfluence, 0, 2) : 0, slicePlane?.enabled ? 1 : 0, sliceAxisIdx, slicePos);
-  // vec4 40: slice thickness + reserved
-  put4(40, Math.max(0.001, finite(slicePlane?.thickness, 0.1) * 4), 0, 0, 0);
+  // vec4 40: slice thickness + texture mapping (enabled, projection, blend)
+  const TEX_PROJECTIONS = ['spherical', 'cylindrical', 'planarXY', 'planarXZ', 'planarYZ', 'box', 'native'];
+  const texProjection = Math.max(0, TEX_PROJECTIONS.indexOf(String(c.textureProjection ?? 'spherical')));
+  const texEnabled = options.hasTexture && (c.textureEnabled ?? false) ? 1 : 0;
+  put4(
+    40,
+    Math.max(0.001, finite(slicePlane?.thickness, 0.1) * 4),
+    texEnabled,
+    texProjection,
+    clamp(finite(c.textureBlend, 0.5), 0, 1),
+  );
+  // vec4 41: texture scale + offset
+  put4(
+    41,
+    clamp(finite(c.textureScale, 1), 0.05, 8),
+    clamp(finite(c.textureOffsetX, 0), -4, 4),
+    clamp(finite(c.textureOffsetY, 0), -4, 4),
+    Math.max(0, finite(c.colorEffectSpeed, 1)),
+  );
+  // vec4 42: stateless physics — enabled, friction, bounciness
+  put4(
+    42,
+    c.physicsEnabled === true ? 1 : 0,
+    clamp(finite(c.friction, 0.1), 0, 1),
+    clamp(finite(c.bounciness, 0.5), 0, 1),
+    0,
+  );
 
   const sourceId = String(options.sourceId || 'splat-native-source');
   const safe = sourceId.replace(/[^a-zA-Z0-9:_-]+/g, '_');
@@ -437,6 +516,11 @@ export function buildSplatNativeComputeGraph(options: SplatNativeGraphOptions) {
         seq: Math.max(0, Math.round(options.frameIndex ?? 0)),
         clear: false,
         include_snapshot: !!options.includeSnapshot,
+        // Mirrors the WebGL material: content.depthTest toggles the test,
+        // depth writes stay off (transparent points, depthWrite: false).
+        depth: c.depthTest === true,
+        depth_write: false,
+        depth_compare: 'less-equal',
         blend: 'alpha',
         primitive: 'triangle-list',
         vertex_count: 6,
@@ -444,6 +528,11 @@ export function buildSplatNativeComputeGraph(options: SplatNativeGraphOptions) {
         bindings: [
           { binding: 0, resource: uniformId, kind: 'uniform' },
           { binding: 1, resource: options.pointsBufferId, kind: 'read-only-storage' },
+          // fs_point statically samples the projection texture, so the
+          // binding must exist even with no texture loaded (the core assigns
+          // an empty slot; texEnabled=0 keeps it a no-op).
+          { binding: 2, kind: 'source-frame-texture', source_id: options.textureSourceId || `${sourceId}:splat-texture` },
+          { binding: 3, kind: 'source-frame-sampler' },
         ],
       }],
     },
@@ -501,11 +590,14 @@ struct SplatParams {
   bg0: vec4<f32>,      // 37: bgColor.rgb, mouseMode
   mo0: vec4<f32>,      // 38: mouseX, mouseY, mouseZ, mouseRadius
   mo1: vec4<f32>,      // 39: mouseInfluence, sliceOn, sliceAxis, slicePos
-  mi0: vec4<f32>,      // 40: sliceThickness, pad, pad, pad
-  pad: vec4<f32>,      // 41
+  mi0: vec4<f32>,      // 40: sliceThickness, texEnabled, texProjection, texBlend
+  pad: vec4<f32>,      // 41: texScale, texOffsetX, texOffsetY, colorFxSpeed
+  phys2: vec4<f32>,    // 42: physicsOn, friction, bounciness, 0
 }
 @group(0) @binding(0) var<uniform> sp: SplatParams;
 @group(0) @binding(1) var<storage, read> points: array<vec4<f32>>;
+@group(0) @binding(2) var splat_tex: texture_2d<f32>;
+@group(0) @binding(3) var splat_smp: sampler;
 
 fn sp_hash(n: f32) -> f32 { return fract(sin(n * 12.9898 + 78.233) * 43758.5453); }
 fn sp_hash2(p: vec2<f32>) -> f32 { return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453); }
@@ -861,6 +953,26 @@ fn apply_mouse(pos_in: vec3<f32>) -> vec3<f32> {
   // Audio scale
   if (sp.aud0.x > 0.5) { pos = pos * (1.0 + sp.aud0.y * sp.aud0.w); }
 
+  // Stateless physics approximation. The WebGL design integrates velocities
+  // on the CPU; here a closed-form decaying bounce runs on time: gravity sets
+  // the bounce clock, bounciness is the per-bounce energy retention (pow of
+  // the bounce count), friction slows the clock. Negative gravity mirrors
+  // the motion toward a ceiling instead of a floor.
+  if (sp.phys2.x > 0.5) {
+    let g = sp.phys.x;
+    let fric = clamp(sp.phys2.y, 0.0, 1.0);
+    let bounce = clamp(sp.phys2.z, 0.0, 1.0);
+    let ga = max(abs(g), 0.001);
+    let gsign = select(1.0, -1.0, g < 0.0);
+    let bound = -2.0 * gsign * max(sp.xf0.y, 0.05);
+    let h0 = max((pos.y - bound) * gsign, 0.0);
+    let ph = t * sqrt(ga) * 0.45 * (1.0 - fric * 0.7) + sp_hash(vidx * 0.173) * 0.3;
+    let damp = pow(max(bounce, 0.02), min(floor(ph), 9.0));
+    let settle = clamp(ph, 0.0, 1.0);
+    let y01 = mix(1.0, abs(cos(ph * 3.14159265)) * damp, settle);
+    pos.y = bound + h0 * y01 * gsign;
+  }
+
   // Slice plane cull
   if (sp.mo1.y > 0.5) {
     let axis = sp_axis(sp.mo1.z);
@@ -1012,7 +1124,39 @@ fn apply_color_effect(color_in: vec3<f32>, wp: vec3<f32>, t: f32) -> vec3<f32> {
   var color = in.color.rgb;
   if (sp.col0.x < 0.5) { color = mix(sp.col1.xyz, sp.col2.xyz, sp.col0.y); }
   let wp = in.world;
-  color = apply_color_effect(color, wp, t);
+  // Texture projection: model-space position drives the UV per mode; the
+  // native cloud is normalized to roughly [-2, 2] (same convention as the
+  // depth-gradient effect). 'native' falls back to planarXY — splat points
+  // carry no file UVs in the packed buffer.
+  if (sp.mi0.y > 0.5) {
+    let npos = clamp((wp + vec3<f32>(2.0)) / 4.0, vec3<f32>(0.0), vec3<f32>(1.0));
+    let proj = i32(sp.mi0.z + 0.5);
+    var uv = npos.xy;
+    if (proj == 0) {
+      let dir = normalize(wp + vec3<f32>(1e-5));
+      uv = vec2<f32>(
+        0.5 + atan2(dir.z, dir.x) / 6.2831853,
+        0.5 - asin(clamp(dir.y, -1.0, 1.0)) / 3.14159265,
+      );
+    } else if (proj == 1) {
+      let dir = normalize(vec3<f32>(wp.x, 0.0, wp.z) + vec3<f32>(1e-5, 0.0, 0.0));
+      uv = vec2<f32>(0.5 + atan2(dir.z, dir.x) / 6.2831853, npos.y);
+    } else if (proj == 3) {
+      uv = npos.xz;
+    } else if (proj == 4) {
+      uv = npos.yz;
+    } else if (proj == 5) {
+      let ad = abs(normalize(wp + vec3<f32>(1e-5)));
+      if (ad.x >= ad.y && ad.x >= ad.z) { uv = npos.zy; }
+      else if (ad.y >= ad.x && ad.y >= ad.z) { uv = npos.xz; }
+      else { uv = npos.xy; }
+    }
+    uv = (uv - vec2<f32>(0.5)) * sp.pad.x + vec2<f32>(0.5) + vec2<f32>(sp.pad.y, sp.pad.z);
+    let sample_uv = clamp(vec2<f32>(uv.x, 1.0 - uv.y), vec2<f32>(0.0), vec2<f32>(1.0));
+    let texc = textureSampleLevel(splat_tex, splat_smp, sample_uv, 0.0);
+    color = mix(color, texc.rgb, sp.mi0.w * texc.a);
+  }
+  color = apply_color_effect(color, wp, t * max(sp.pad.w, 0.0));
 
   // Lighting
   if (sp.li0.x > 0.5) {

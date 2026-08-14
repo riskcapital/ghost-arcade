@@ -13,7 +13,7 @@
  * No pixels touch CPU memory in the send path.
  */
 
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, net as electronNet, powerSaveBlocker, protocol, screen, session, shell, utilityProcess } from 'electron';
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, net as electronNet, powerSaveBlocker, protocol, screen, session, shell, systemPreferences, utilityProcess } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { spawn, fork, execSync } from 'child_process';
@@ -2585,6 +2585,61 @@ async function startNativeOutputRecording(args = {}) {
   return { success: true, width, height, fps, outputPath };
 }
 
+/** Mux a renderer-captured audio track into a finished native recording.
+ *
+ *  The native REC paths encode video in the main process (IOSurface pump)
+ *  or via the broker's frame encoder — neither can hear the app's audio
+ *  graph, which lives in the renderer's WebAudio context. So the renderer
+ *  records an opus/webm sidecar with MediaRecorder while video records,
+ *  ships the bytes here at stop, and ffmpeg remuxes: video stream copied
+ *  bit-for-bit (no re-encode), audio transcoded to AAC for MP4 players.
+ *  `-shortest` trims whichever stream ran long, keeping A/V within one
+ *  MediaRecorder chunk (~1s worst case, typically <100ms). */
+ipcMain.handle('native_recording_mux_audio', async (_event, args = {}) => {
+  const videoPath = typeof args.videoPath === 'string' ? args.videoPath : '';
+  const audio = args.audio;
+  if (!videoPath || !fs.existsSync(videoPath)) {
+    return { success: false, error: 'Video file not found for audio mux.' };
+  }
+  if (!audio || !(audio instanceof Uint8Array) || audio.length === 0) {
+    return { success: false, error: 'No audio data supplied.' };
+  }
+  const audioPath = `${videoPath}.audio.webm`;
+  const muxedPath = `${videoPath}.muxed.mp4`;
+  try {
+    fs.writeFileSync(audioPath, Buffer.from(audio.buffer, audio.byteOffset, audio.byteLength));
+    const code = await new Promise((resolve, reject) => {
+      const child = spawn(resolveFfmpegPath(), [
+        '-hide_banner', '-loglevel', 'warning', '-y',
+        '-i', videoPath,
+        '-i', audioPath,
+        '-map', '0:v:0', '-map', '1:a:0',
+        '-c:v', 'copy',
+        '-c:a', 'aac', '-b:a', '192k',
+        '-movflags', '+faststart',
+        '-shortest',
+        muxedPath,
+      ], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+      let stderr = '';
+      child.stderr.on('data', (c) => { stderr += c; });
+      child.on('close', (c) => (c === 0 ? resolve(c) : reject(new Error(stderr.trim() || `ffmpeg exited ${c}`))));
+      child.on('error', reject);
+    });
+    void code;
+    fs.renameSync(muxedPath, videoPath);
+    console.log(`[NativeRec] audio muxed into ${videoPath}`);
+    return { success: true, outputPath: videoPath };
+  } catch (err) {
+    // The video is intact either way — a failed mux degrades to the old
+    // silent recording rather than losing the capture.
+    try { fs.rmSync(muxedPath, { force: true }); } catch { /* best-effort */ }
+    console.warn('[NativeRec] audio mux failed:', err?.message || err);
+    return { success: false, error: err?.message || String(err) };
+  } finally {
+    try { fs.rmSync(audioPath, { force: true }); } catch { /* best-effort */ }
+  }
+});
+
 async function stopNativeOutputRecording() {
   const rec = nativeOutputRecording;
   nativeOutputRecording = null;
@@ -2947,6 +3002,148 @@ function loadNdiAddon() {
 }
 const ndiSenders = new Set();    // tracks live sender names so we can destroy on quit
 const ndiReceivers = new Set();  // tracks live receiver source names
+
+// ── NDI output pump (macOS, native composite) ────────────────────────
+// Streams the native renderer's composite output over NDI. Modeled on
+// nativeOutputTextureSharePump: polls the core's shared-texture
+// metadata, dedupes on frame counter, and on macOS reads the IOSurface
+// pixels via the presenter addon (same full-rate CPU tap the native
+// recorder uses), then hands the BGRA buffer to the NDI addon's async
+// sender. Windows support lands with the DXGI groundwork — until then
+// status reports unavailable there.
+let ndiOutputPumpTimer = null;
+let ndiOutputPumpName = null;
+let ndiOutputPumpFps = 0;
+let ndiOutputPumpInFlight = false;
+let ndiOutputPumpLastFrame = 0;
+let ndiOutputPumpFailCount = 0;
+let ndiOutputPumpFrameCount = 0;
+let ndiOutputPumpLastLogTime = 0;
+let ndiOutputPumpLastError = null;
+
+function ndiOutputUnavailableReason() {
+  if (!isMac) return 'NDI composite output is macOS-only for now (Windows DXGI path pending)';
+  if (!loadNdiAddon()) return getNdiLoadStatus()?.error || 'NDI addon not available';
+  const preview = nativePreviewAddon || loadNativePreviewAddon();
+  if (!preview || typeof preview.readIOSurfacePixels !== 'function') {
+    return 'Presenter addon lacks IOSurface capture support';
+  }
+  return null;
+}
+
+function stopNdiOutputPump() {
+  if (ndiOutputPumpTimer) {
+    clearInterval(ndiOutputPumpTimer);
+    ndiOutputPumpTimer = null;
+  }
+  ndiOutputPumpInFlight = false;
+  ndiOutputPumpLastFrame = 0;
+  ndiOutputPumpFailCount = 0;
+  const name = ndiOutputPumpName;
+  ndiOutputPumpName = null;
+  if (name && ndiAddon) {
+    try { ndiAddon.destroySender({ name }); } catch { /* already gone */ }
+    ndiSenders.delete(name);
+  }
+  if (name) console.log(`[NDI Out] pump stopped (${name})`);
+}
+
+function startNdiOutputPump({ name, fps } = {}) {
+  const senderName = String(name || 'Ghost Arcade').trim() || 'Ghost Arcade';
+  const rate = Math.max(1, Math.min(60, Number(fps) || OSR_PAINT_FPS || 60));
+  const reason = ndiOutputUnavailableReason();
+  if (reason) return { ok: false, active: false, reason };
+
+  // Restarting with the same name is a no-op; a new name swaps senders.
+  if (ndiOutputPumpTimer && ndiOutputPumpName === senderName && ndiOutputPumpFps === rate) {
+    return { ok: true, active: true, name: senderName, fps: rate };
+  }
+  stopNdiOutputPump();
+
+  const a = loadNdiAddon();
+  try {
+    a.createSender({ name: senderName });
+    ndiSenders.add(senderName);
+  } catch (err) {
+    // "already exists" from a previous run is fine — reuse it.
+    if (!/already exists/i.test(String(err?.message || err))) {
+      return { ok: false, active: false, reason: String(err?.message || err) };
+    }
+  }
+  ndiOutputPumpName = senderName;
+  ndiOutputPumpFps = rate;
+  ndiOutputPumpLastFrame = 0;
+  ndiOutputPumpFailCount = 0;
+  ndiOutputPumpFrameCount = 0;
+  ndiOutputPumpLastLogTime = Date.now();
+  ndiOutputPumpLastError = null;
+
+  const preview = nativePreviewAddon || loadNativePreviewAddon();
+  const tick = async () => {
+    if (!ndiOutputPumpTimer || ndiOutputPumpInFlight) return;
+    ndiOutputPumpInFlight = true;
+    try {
+      const texture = await getNativeOutputSharedTextureMetadata();
+      if (!ndiOutputPumpTimer) return;
+      const surfaceId = Number(texture?.handle ?? 0);
+      const width = Number(texture?.width ?? 0);
+      const height = Number(texture?.height ?? 0);
+      const frameId = Math.max(0, Math.floor(Number(texture?.frame ?? 0)));
+      if (!texture?.available || !Number.isFinite(surfaceId) || surfaceId <= 0 ||
+          width <= 0 || height <= 0 || frameId <= 0) {
+        ndiOutputPumpFailCount++;
+        if (ndiOutputPumpFailCount === 5) {
+          console.warn('[NDI Out] native output shared texture unavailable:', JSON.stringify(texture ?? null));
+        }
+        return;
+      }
+      // Frame dedupe — don't resend an unchanged composite.
+      if (frameId === ndiOutputPumpLastFrame) return;
+      let frame = null;
+      try { frame = preview.readIOSurfacePixels(surfaceId); } catch { frame = null; }
+      if (!frame?.data || frame.width !== width || frame.height !== height) {
+        ndiOutputPumpFailCount++;
+        return;
+      }
+      const a2 = loadNdiAddon();
+      if (!a2) return;
+      a2.sendImage({ name: ndiOutputPumpName, data: frame.data, width, height });
+      ndiOutputPumpLastFrame = frameId;
+      ndiOutputPumpFailCount = 0;
+      ndiOutputPumpFrameCount++;
+      const now = Date.now();
+      if (now - ndiOutputPumpLastLogTime > 5000) {
+        const fpsActual = ndiOutputPumpFrameCount / ((now - ndiOutputPumpLastLogTime) / 1000);
+        console.log(`[NDI Out] ${ndiOutputPumpName} ${width}x${height} @ ${fpsActual.toFixed(1)} fps`);
+        ndiOutputPumpFrameCount = 0;
+        ndiOutputPumpLastLogTime = now;
+      }
+    } catch (err) {
+      ndiOutputPumpFailCount++;
+      ndiOutputPumpLastError = String(err?.message || err);
+      if (ndiOutputPumpFailCount <= 5) {
+        console.error('[NDI Out] pump error:', ndiOutputPumpLastError);
+      }
+    } finally {
+      ndiOutputPumpInFlight = false;
+    }
+  };
+  ndiOutputPumpTimer = setInterval(tick, Math.max(4, Math.floor(1000 / rate)));
+  console.log(`[NDI Out] pump started: "${senderName}" @ ${rate} fps`);
+  return { ok: true, active: true, name: senderName, fps: rate };
+}
+
+function ndiOutputPumpStatus() {
+  const reason = ndiOutputUnavailableReason();
+  return {
+    available: !reason,
+    active: !!ndiOutputPumpTimer,
+    name: ndiOutputPumpName,
+    fps: ndiOutputPumpFps || null,
+    reason: reason || undefined,
+    lastError: ndiOutputPumpLastError || undefined,
+  };
+}
 
 // Ableton Link — main-process singleton (Link spawns its own network
 // threads; one session per app). Lazily created on first link_enable.
@@ -4657,6 +4854,20 @@ function registerIpcHandlers() {
       return null;
     }
   });
+  // Composite NDI output — pump the native renderer's full-frame
+  // composite over NDI (macOS IOSurface CPU tap; see startNdiOutputPump).
+  ipcMain.handle('ndi_output_start', (_, args) => {
+    try { return startNdiOutputPump(args || {}); }
+    catch (err) { return { ok: false, active: false, reason: String(err?.message || err) }; }
+  });
+  ipcMain.handle('ndi_output_stop', () => {
+    try { stopNdiOutputPump(); return { ok: true, active: false }; }
+    catch (err) { return { ok: false, error: String(err?.message || err) }; }
+  });
+  ipcMain.handle('ndi_output_status', () => {
+    try { return ndiOutputPumpStatus(); }
+    catch (err) { return { available: false, active: false, reason: String(err?.message || err) }; }
+  });
 
   // Restart the app. Used when toggling experimental flags
   // (editorWebGPU, etc.) that change which renderer path the
@@ -5359,9 +5570,31 @@ function registerIpcHandlers() {
     }
   });
 
-  ipcMain.handle('native_live_capture_start_camera', (_event, args = {}) => {
+  ipcMain.handle('native_live_capture_start_camera', async (_event, args = {}) => {
     const addon = loadLiveCaptureAddon();
     if (!addon) return { ok: false, error: liveCaptureAddonLoadError || 'native capture unavailable' };
+    // Ask through Electron before handing off to the addon. Capture moved
+    // into the main process (AVFoundation) where a raw
+    // requestAccessForMediaType can stall without ever drawing the TCC
+    // prompt; Electron's request goes through Chromium's permission
+    // plumbing, which reliably shows it. Without this the addon returns
+    // success and then silently never produces a frame.
+    if (process.platform === 'darwin') {
+      const status = systemPreferences.getMediaAccessStatus('camera');
+      console.log(`[LiveCapture] camera permission status: ${status}`);
+      if (status !== 'granted') {
+        let granted = false;
+        try { granted = await systemPreferences.askForMediaAccess('camera'); }
+        catch (err) { console.warn('[LiveCapture] askForMediaAccess threw:', err?.message || err); }
+        console.log(`[LiveCapture] camera permission after request: ${granted ? 'granted' : 'denied'}`);
+        if (!granted) {
+          return {
+            ok: false,
+            error: 'Camera access was not granted. Enable it in System Settings › Privacy & Security › Camera.',
+          };
+        }
+      }
+    }
     try {
       const ok = !!addon.startCamera({
         sessionId: String(args.sessionId || ''),
@@ -8030,6 +8263,9 @@ function scheduleHardExit(delayMs) {
 }
 
 function destroyNdiSenders() {
+  // Stop the composite output pump first — it owns one of the senders
+  // and would otherwise keep sending into a destroyed instance.
+  try { stopNdiOutputPump(); } catch { /* best effort on quit */ }
   if (!ndiAddon || ndiSenders.size === 0) return;
   for (const name of Array.from(ndiSenders)) {
     runCleanupStep(`NDI sender ${name}`, () => ndiAddon.destroySender({ name }));

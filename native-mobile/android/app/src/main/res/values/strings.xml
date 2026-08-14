@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">Ghost Arcade</string>
+    <string name="title_activity_main">Ghost Arcade</string>
+    <string name="package_name">com.ghostarcade.mobile</string>
+    <string name="custom_url_scheme">com.ghostarcade.mobile</string>
+</resources>

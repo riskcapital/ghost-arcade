@@ -1104,6 +1104,7 @@ async function renderRegisteredWgslProbe(rpc, frameIndex, baseline) {
         audio_snare: 0.24,
         float_inputs: { intensity: 1.2, scale: 0.8 },
       },
+      { type: 'set_render_clock', mode: 'manual', time: 1.25, frame_index: frameIndex },
       { type: 'render_isf_to_layer', layer_id: layerId },
     ],
   });
@@ -1140,6 +1141,7 @@ async function renderRegisteredWgslProbe(rpc, frameIndex, baseline) {
         audio_snare: 0.66,
         float_inputs: { intensity: 1.2, scale: 0.8 },
       },
+      { type: 'set_render_clock', mode: 'manual', time: 2.5, frame_index: frameIndex + 1 },
       { type: 'render_isf_to_layer', layer_id: layerId },
     ],
   });
@@ -1196,6 +1198,7 @@ async function renderRegisteredIsfGlslProbe(rpc, frameIndex, baseline) {
         audio_snare: 0.25,
         float_inputs: { intensity: 1.1, scale: 0.85 },
       },
+      { type: 'set_render_clock', mode: 'manual', time: 0.9, frame_index: frameIndex },
       { type: 'render_isf_to_layer', layer_id: layerId },
     ],
   }, 8000);
@@ -1235,6 +1238,7 @@ async function renderRegisteredIsfGlslProbe(rpc, frameIndex, baseline) {
         audio_snare: 0.61,
         float_inputs: { intensity: 1.1, scale: 0.85 },
       },
+      { type: 'set_render_clock', mode: 'manual', time: 2.1, frame_index: frameIndex + 1 },
       { type: 'render_isf_to_layer', layer_id: layerId },
     ],
   }, 8000);

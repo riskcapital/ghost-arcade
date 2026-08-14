@@ -1,0 +1,34 @@
+PODS:
+  - Capacitor (8.4.1):
+    - CapacitorCordova
+  - CapacitorCordova (8.4.1)
+  - GhostArcadeCapacitorOsc (0.1.0):
+    - Capacitor
+  - GhostArcadeCapacitorVision (0.1.0):
+    - Capacitor
+
+DEPENDENCIES:
+  - "Capacitor (from `../../node_modules/@capacitor/ios`)"
+  - "CapacitorCordova (from `../../node_modules/@capacitor/ios`)"
+  - GhostArcadeCapacitorOsc (from `../../plugins/ghost-osc`)
+  - GhostArcadeCapacitorVision (from `../../plugins/ghost-vision`)
+
+EXTERNAL SOURCES:
+  Capacitor:
+    :path: "../../node_modules/@capacitor/ios"
+  CapacitorCordova:
+    :path: "../../node_modules/@capacitor/ios"
+  GhostArcadeCapacitorOsc:
+    :path: "../../plugins/ghost-osc"
+  GhostArcadeCapacitorVision:
+    :path: "../../plugins/ghost-vision"
+
+SPEC CHECKSUMS:
+  Capacitor: 35242afe195b1e53c58ca1b827d1b444c5e6602b
+  CapacitorCordova: eebe6bcf807b1b06f3f48237650f96bbcd0eef09
+  GhostArcadeCapacitorOsc: e3c237ce6919f750ce85f2756580f0b22dd8aede
+  GhostArcadeCapacitorVision: 8db124dc4034b4c561241434822bec781dfeec2d
+
+PODFILE CHECKSUM: 263f330fb420c09ec0635f3afd9541a50ca325ab
+
+COCOAPODS: 1.16.2

@@ -1,0 +1,16 @@
+NATIVE EFFECT PARAM AUDIT — 2026-08-14
+
+LIVE params: 1309   DEAD params: 0
+no native descriptor at all (1): eulerianMagnify   (stateful; deliberately excluded)
+DEAD PARAMS BY EFFECT (0 effects)
+
+Regenerate with:
+  npx vitest run src/lib/renderer/effectParamAudit.test.ts
+(the test writes /tmp/param-audit-report.txt)
+
+The audit shifts every UI param off its default and asserts the packed GPU
+uniform changes. It tries the range midpoint first (cyclic params such as
+angles wrap at their max and read as false dead there), then min and max
+(a binary toggle's midpoint rounds back to its own default). It injects a
+live audioLevel so audio-reactive knobs fold against a real signal, matching
+what the per-frame graph rebuild does.

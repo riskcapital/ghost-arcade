@@ -348,6 +348,10 @@
         nativeCaptureAvailable = !!availability?.available;
         nativeCaptureHint = availability?.error || 'Native camera and screen capture unavailable';
         if (!availability?.available) {
+          // Surfaced on the disabled Webcam/Capture buttons as a tooltip —
+          // log it too, because a disabled button with no explanation is
+          // indistinguishable from a missing feature.
+          console.warn(`[MediaTray] native capture unavailable: ${nativeCaptureHint}`);
           availableWebcams = [];
           return;
         }
@@ -355,6 +359,10 @@
         availableWebcams = (Array.isArray(devices) ? devices : [])
           .map((device) => ({ id: String(device?.id || ''), name: String(device?.name || 'Camera') }))
           .filter((device) => !!device.id);
+        console.log(
+          `[MediaTray] native capture available=${nativeCaptureAvailable} cameras=${availableWebcams.length}`
+          + `${availableWebcams.length ? ` (${availableWebcams.map((c) => c.name).join(', ')})` : ''}`,
+        );
       } catch (err) {
         console.warn('Could not enumerate native cameras:', err);
         nativeCaptureChecked = true;
@@ -1427,6 +1435,12 @@
 
   onMount(async () => {
     mediaTrayDestroyed = false;
+    // Probe native capture up front rather than waiting for the SRC tab to
+    // be clicked. The Webcam and Capture buttons start disabled and only
+    // enable once this has run, so gating it on a click meant they stayed
+    // dead for anyone who never switched tabs — and left no log line
+    // explaining why. Two cheap IPC calls; safe to repeat on tab open.
+    void enumerateWebcams();
     // Seed built-in Three.js / p5 animations in the background so the JS
     // tab is never empty out of the box. Doesn't block shader loading.
     seedBuiltInThreeJSItems();
@@ -2026,6 +2040,19 @@
     showTimelapsePopover = itemId;
   }
 
+  /** Mirror a timelapse position into the native decoder. The core decodes
+   *  video itself and never reads videoElement.currentTime, which is why
+   *  timelapse "played as a normal loop" natively: the mode UI ran, but no
+   *  seek ever reached the decoder. Explicit time + a bumped seek
+   *  generation + paused playback is exactly the scrub contract the sync
+   *  layer already implements. */
+  function writeNativeTimelapseSeek(source: MediaSource, timeSeconds: number, paused: boolean) {
+    (source as any)._nativePlaybackTimeSeconds = Math.max(0, timeSeconds);
+    (source as any)._nativePlaybackSeekSeq = Math.round(Number((source as any)._nativePlaybackSeekSeq ?? 0)) + 1;
+    (source as any)._nativePlaybackUpdatedAtMs = performance.now();
+    source.isPlaying = !paused;
+  }
+
   function startTimelapse() {
     if (!$selectedLayerId || !$selectedLayer?.source) return;
     const source = $selectedLayer.source;
@@ -2038,6 +2065,7 @@
     source.playbackMode = 'timelapse';
     source.timelapseInterval = timelapseInterval;
     source.timelapseRunning = true;
+    writeNativeTimelapseSeek(source, timelapseState !== 'paused' ? 0 : vid.currentTime, true);
 
     const dur = vid.duration || 0;
     timelapseTotalFrames = Math.max(1, Math.floor(dur * ASSUMED_FPS));
@@ -2083,6 +2111,9 @@
     if (source.texture) {
       (source.texture as THREE.VideoTexture).needsUpdate = true;
     }
+    // Native decoder: hold paused on the stepped frame.
+    writeNativeTimelapseSeek(source, newTime, true);
+    project.setLayerSource($selectedLayerId, { ...source });
   }
 
   function pauseTimelapse() {
@@ -2109,6 +2140,9 @@
       const source = $selectedLayer.source;
       source.timelapseRunning = false;
       source._timelapseFrame = 0;
+      // Resume normal native playback from the start.
+      source.playbackMode = 'loop';
+      writeNativeTimelapseSeek(source, 0, false);
       project.setLayerSource($selectedLayerId, { ...source });
     }
   }
@@ -3715,7 +3749,7 @@
         <span>Img</span>
         {#if images.length}<span class="tab-count">{images.length}</span>{/if}
       </button>
-      <button class="tab" class:active={activeTab === 'sources'} onclick={() => { activeTab = 'sources'; if (!sourcesInitialized) { sourcesInitialized = true; enumerateWebcams(); } }}>
+      <button class="tab" class:active={activeTab === 'sources'} onclick={() => { activeTab = 'sources'; sourcesInitialized = true; enumerateWebcams(); }}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
         <span>Src</span>
         {#if liveSources.filter(s => s.status === 'live').length > 0}

@@ -233,6 +233,7 @@ export type RendererCommand =
       domeOffsetY?: number;
       domeCurvature?: number;
       domeTruncation?: number;
+      testPattern?: number;
       masterWarp?: Record<string, unknown>;
     }
   | {
@@ -467,6 +468,9 @@ export type RendererCommand =
       float_inputs: Record<string, number>;
       point_inputs: Record<string, [number, number]>;
       color_inputs: Record<string, [number, number, number, number]>;
+      /** ISF image inputs: input name -> native source id (media source id,
+       *  or `layer-frame:<layerId>` for another layer's displayed frame). */
+      image_inputs?: Record<string, string>;
     }
   | { type: 'render_isf_to_layer'; layer_id: string }
   | ({ type: 'queue_compute_graph' } & Record<string, unknown>)
@@ -602,6 +606,9 @@ export interface RendererStatus {
   backend: BackendKind | null;
   backend_ready: boolean;
   adapter_name: string | null;
+  /** True when the core is running on a software rasterizer (WARP) — the
+   *  no-usable-GPU compatibility fallback. */
+  adapter_is_software?: boolean;
   native_caps: NativeGpuCaps;
   native_quality: NativeQualityState;
   source_preview_size: number;

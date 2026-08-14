@@ -104,6 +104,101 @@ function resolveCanvas(source: RecorderOptions['canvas']): HTMLCanvasElement | n
 // NATIVE-CORE LIVE RECORDING (async start behind a sync handle)
 // ============================================================================
 
+/** Renderer-side audio sidecar for native recordings.
+ *
+ *  Native video is encoded outside the renderer (main-process IOSurface
+ *  pump, or the broker's frame encoder), so neither can hear the app's
+ *  WebAudio graph. Record the shared audio stream to opus/webm here in
+ *  parallel and hand the bytes to `native_recording_mux_audio` at stop,
+ *  which remuxes them into the finished MP4 (video stream copied, audio
+ *  transcoded to AAC). Returns null when audio is disabled in settings or
+ *  no audio source is active — recording then stays video-only exactly as
+ *  before. */
+type AudioSidecar = { stop(): Promise<Uint8Array | null>; discard(): void };
+
+function startRecordingAudioSidecar(): AudioSidecar | null {
+  const recSettings = settings.get().recording;
+  if (recSettings.includeAudio === false) return null;
+  let audioResult: { stream: MediaStream; cleanup?: () => void } | null = null;
+  try {
+    audioResult = audioStore.getAudioStream();
+  } catch {
+    return null;
+  }
+  if (!audioResult) return null;
+  const tracks = audioResult.stream.getAudioTracks();
+  if (!tracks.length) {
+    audioResult.cleanup?.();
+    return null;
+  }
+  let recorder: MediaRecorder;
+  try {
+    recorder = new MediaRecorder(new MediaStream(tracks), {
+      mimeType: 'audio/webm;codecs=opus',
+      audioBitsPerSecond: recSettings.audioBitrate || 192_000,
+    });
+  } catch (err) {
+    console.warn('[Recorder] audio sidecar unavailable:', err);
+    audioResult.cleanup?.();
+    return null;
+  }
+  const chunks: Blob[] = [];
+  recorder.ondataavailable = (e) => {
+    if (e.data && e.data.size > 0) chunks.push(e.data);
+  };
+  // 1s timeslices bound the data lost if the app dies mid-recording.
+  recorder.start(1000);
+  console.log('[Recorder] audio sidecar started');
+  let finished = false;
+  const finish = async (): Promise<Uint8Array | null> => {
+    if (finished) return null;
+    finished = true;
+    await new Promise<void>((resolve) => {
+      recorder.onstop = () => resolve();
+      try { recorder.stop(); } catch { resolve(); }
+    });
+    audioResult?.cleanup?.();
+    if (!chunks.length) return null;
+    const buf = await new Blob(chunks, { type: 'audio/webm' }).arrayBuffer();
+    return new Uint8Array(buf);
+  };
+  return {
+    stop: finish,
+    discard() {
+      void finish();
+    },
+  };
+}
+
+/** Mux the sidecar's audio into a finished MP4. Returns true only when the
+ *  file on disk now carries the audio track; a failed mux leaves the
+ *  video-only file untouched. */
+async function muxSidecarAudio(outputPath: string, sidecar: AudioSidecar | null): Promise<boolean> {
+  if (!sidecar) return false;
+  let audio: Uint8Array | null = null;
+  try {
+    audio = await sidecar.stop();
+  } catch (err) {
+    console.warn('[Recorder] audio sidecar stop failed:', err);
+    return false;
+  }
+  if (!audio || audio.length === 0) return false;
+  try {
+    const result = await invoke('native_recording_mux_audio', {
+      videoPath: outputPath,
+      audio,
+    }) as { success?: boolean; error?: string } | null;
+    if (!result?.success) {
+      console.warn('[Recorder] audio mux failed:', result?.error);
+      return false;
+    }
+    return true;
+  } catch (err) {
+    console.warn('[Recorder] audio mux invoke failed:', err);
+    return false;
+  }
+}
+
 function startNativeCoreLiveRecording(options: RecorderOptions): RecorderHandle {
   let innerFallback: RecorderHandle | null = null;
   let mainProcessActive = false;
@@ -111,6 +206,10 @@ function startNativeCoreLiveRecording(options: RecorderOptions): RecorderHandle 
   let failed = false;
   let recording = true;
   let duration = 0;
+  let muxedAudio = false;
+  // Started immediately so audio covers the whole capture regardless of
+  // which video path (main-process pump or snapshot fallback) wins.
+  const audioSidecar = startRecordingAudioSidecar();
   const autoDownload = !!settings.get().recording.autoDownload;
   const namePrefix = options.namePrefix || 'Recording';
 
@@ -124,6 +223,7 @@ function startNativeCoreLiveRecording(options: RecorderOptions): RecorderHandle 
     failed = true;
     recording = false;
     window.clearInterval(durationTimer);
+    audioSidecar?.discard();
     options.onError?.(err instanceof Error ? err : new Error(String(err)));
   };
 
@@ -141,6 +241,7 @@ function startNativeCoreLiveRecording(options: RecorderOptions): RecorderHandle 
       if (!result?.success || !result.outputPath) {
         throw new Error(result?.error || 'Native recording failed.');
       }
+      muxedAudio = await muxSidecarAudio(result.outputPath, audioSidecar);
       const url = pathToFileUrl(result.outputPath);
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
       const name = `${namePrefix} ${timestamp}`;
@@ -209,6 +310,9 @@ function startNativeCoreLiveRecording(options: RecorderOptions): RecorderHandle 
         namePrefix,
         liveClock: true,
         promptSave: autoDownload,
+        finalizeOutput: async (outputPath) => {
+          muxedAudio = await muxSidecarAudio(outputPath, audioSidecar);
+        },
         onDurationUpdate: (seconds) => {
           duration = seconds;
           options.onDurationUpdate?.(seconds);
@@ -245,7 +349,7 @@ function startNativeCoreLiveRecording(options: RecorderOptions): RecorderHandle 
       return innerFallback?.duration ?? duration;
     },
     get hasAudio() {
-      return false;
+      return muxedAudio;
     },
   };
 }

@@ -89,7 +89,7 @@ describe('native Light Painting graph', () => {
   });
 
   it('pins the dedicated render contract', () => {
-    expect(LIGHT_PAINTING_NATIVE_SHADER_ID).toBe('light-painting/render-v7');
+    expect(LIGHT_PAINTING_NATIVE_SHADER_ID).toBe('light-painting/render-v8');
     expect(LIGHT_PAINTING_NATIVE_WGSL).toContain('fn fs_paint');
     expect(LIGHT_PAINTING_NATIVE_WGSL).toContain('fn vs_full');
     expect(LIGHT_PAINTING_NATIVE_WGSL).toContain(
@@ -270,7 +270,8 @@ describe('native Light Painting graph', () => {
     expect(data[17]).toBeCloseTo(0.8);
     expect(data[19]).toBeCloseTo(0.5);
     expect(strokeField(data, 0, 25)).toBeCloseTo(0.4); // snake trail = 1 - head size
-    expect(strokeField(data, 0, 21)).toBeCloseTo(2); // drawSpeed × snakeSpeed
+    // drawSpeed × (4.5 / per-stroke duration, floored at 0.15s): 2 * (4.5 / 0.15)
+    expect(strokeField(data, 0, 21)).toBeCloseTo(60);
   });
 
   it('sways packed points with wind only during playback', () => {

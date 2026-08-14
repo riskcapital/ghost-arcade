@@ -1,0 +1,12 @@
+import { spawn } from 'child_process';
+const child = spawn('native-renderer/target/release/ghost-render-core', [], { stdio:['pipe','pipe','ignore'] });
+let buf=''; const pending=new Map(); let id=1;
+child.stdout.on('data', c => { buf+=c; let i;
+  while((i=buf.indexOf('\n'))>=0){ const l=buf.slice(0,i); buf=buf.slice(i+1); if(!l.trim())continue;
+    try{const m=JSON.parse(l); if(m.id&&pending.has(m.id)){pending.get(m.id)(m);pending.delete(m.id);}}catch{} }});
+const send=(m,p={})=>new Promise((res,rej)=>{const my=id++;pending.set(my,res);
+  child.stdin.write(JSON.stringify({id:my,method:m,params:p})+'\n');setTimeout(()=>rej(new Error('timeout')),8000);});
+const caps = await send('capabilities');
+const descs = caps?.result?.native_effect_pass_descriptors ?? [];
+console.log(JSON.stringify(descs.map(d => d.id ?? d), null, 0));
+child.kill();

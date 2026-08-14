@@ -9,8 +9,8 @@ export const ARCADE_THEME: Theme = {
   name: 'Arcade',
   description: 'Retro arcade faceplate — warm depths, LED segment numerals, ghost-chrome marquee.',
   tokens: {
-    fontUi:      "'Geist', system-ui, sans-serif",
-    fontDisplay: "'Geist', system-ui, sans-serif",
+    fontUi:      "'Satoshi', system-ui, sans-serif",
+    fontDisplay: "'Satoshi', system-ui, sans-serif",
     fontMono:    "'Geist Mono', ui-monospace, monospace",
     fontLed:     "'Geist Mono', ui-monospace, monospace",
 
@@ -52,6 +52,10 @@ export const ARCADE_THEME: Theme = {
     cyan:       '#9fb6c9',
     pink:       '#e7eef5',
     rec:        '#ff3b30',
+    // Icon tint — the cyan already used for the empty-state call to
+    // action; promoting it to every icon gives the chrome one cold
+    // accent instead of a wall of grey glyphs.
+    icon:       '#5278ff',
 
     metalHi:   'rgba(255,255,255,.16)',
     coralGlow: 'rgba(176,200,222,.45)',

@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import { buildNativePluginPrecompileCommands } from './nativePluginGraphs';
 import { buildVJCrossfadePrecompileCommands } from './vjCrossfadeNative';
+import { buildVJMixPrecompileCommands } from './vjMixNative';
 import {
   buildSmoke3DNativeComputeGraph,
   buildSmoke3DNativePrecompileCommands,
@@ -185,6 +186,11 @@ const EXPECTED_NATIVE_GRAPH_MANIFEST: NativeGraphManifestExpectation[] = [
     id: 'vj-crossfade',
     feature: 'native_vj_crossfade_graph',
     shaderIds: shaderIdsFromPrecompileCommands(buildVJCrossfadePrecompileCommands()),
+  },
+  {
+    id: 'vj-mix',
+    feature: 'native_vj_mix_graph',
+    shaderIds: shaderIdsFromPrecompileCommands(buildVJMixPrecompileCommands()),
   },
   {
     id: 'performer-world',

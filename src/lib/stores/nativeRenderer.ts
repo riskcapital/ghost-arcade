@@ -266,6 +266,15 @@ function localMainDriverBlockers(options: {
   } = options;
   const features = capabilities?.features ?? readiness?.capabilities?.features ?? {};
   const blockers: string[] = [];
+  if (status?.adapter_is_software) {
+    // WARP / software rasterizer: the compatibility fallback for machines
+    // with no usable GPU. Everything renders, slowly — the operator needs
+    // to know this is a degraded mode, not a broken install.
+    blockers.push(
+      `SOFTWARE RENDERING — no usable GPU was found (adapter: ${status?.adapter_name ?? 'software'}). ` +
+      'Expect very low frame rates. Ghost Arcade is designed for a Metal (macOS) or Direct3D 12 (Windows) capable GPU.',
+    );
+  }
   if (!nativeGraphSourceFrames) blockers.push('native graph source-frame rendering is unavailable');
   if (!graphCatalogComplete) blockers.push('native graph instrument catalog is incomplete');
   if (nativeGraphRouteFailures > 0) {
@@ -549,6 +558,12 @@ export function deriveNativeRendererRuntimeState(
     updatedAtMs: options.updatedAtMs ?? Date.now(),
   };
 }
+
+/** Layer ids whose native graph route was permanently disabled by the
+ *  3-failure kill switch. Feeds the Layer Panel badge so a blanked layer is
+ *  visibly failed rather than silently empty. Cleared per-layer when the
+ *  route recovers (edit, or restart). */
+export const nativeFailedRouteLayers = writable<string[]>([]);
 
 export const nativeRendererRuntime = writable<NativeRendererRuntimeState>({
   ...initialNativeRendererRuntimeState,

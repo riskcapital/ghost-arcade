@@ -4,6 +4,12 @@ import {
   buildVJCrossfadePrecompileCommands,
   buildVJCrossfadeUniformUpdate,
 } from '$lib/renderer/vjCrossfadeNative';
+import {
+  buildVJMixGraph,
+  buildVJMixPrecompileCommands,
+  buildVJMixUniformUpdate,
+  type VJMixRow,
+} from '$lib/renderer/vjMixNative';
 import type { Layer, Model3DContent, SplatContent } from '$lib/types';
 import { project } from '$lib/stores/layers';
 import { mediaLibrary, type MediaItem } from '$lib/stores/media';
@@ -16,6 +22,7 @@ import {
   resetNativeRendererRuntime,
   updateNativeRendererRuntimeFromStartup,
   updateNativeRendererRuntimeFromStatus,
+  nativeFailedRouteLayers,
 } from '$lib/stores/nativeRenderer';
 import { invoke, isElectron, isMac, isWindows } from '$lib/bridge';
 import { getVisualAudioSnapshot, visualAudio, type VisualAudioState } from '$lib/audio/visualAudio';
@@ -280,7 +287,7 @@ type NativeRenderClockCommand = {
 
 export type PresentPolicyProfile = 'vsync-live' | 'low-latency-safe' | 'low-latency-aggressive';
 
-type NativeGraphRouteKind = 'planet' | 'smoke-3d' | 'particle-field' | 'volumetric-spheres' | 'smoke-riders' | 'ink-cloud' | 'flythrough' | 'pixel-particles' | 'point-cloud-fx' | 'ghostfx' | 'handfx' | 'performer-world' | 'vj-crossfade' | 'effect-pass' | 'lines' | 'svg' | 'light-painting' | 'text' | 'splat' | 'model3d';
+type NativeGraphRouteKind = 'planet' | 'smoke-3d' | 'particle-field' | 'volumetric-spheres' | 'smoke-riders' | 'ink-cloud' | 'flythrough' | 'pixel-particles' | 'point-cloud-fx' | 'ghostfx' | 'handfx' | 'performer-world' | 'vj-crossfade' | 'vj-mix' | 'effect-pass' | 'lines' | 'svg' | 'light-painting' | 'text' | 'splat' | 'model3d';
 
 export type NativeEffectPassRuntime = {
   effect: NativeEffectPassId;
@@ -309,6 +316,7 @@ const NATIVE_CORE_OWNED_GRAPH_KINDS = new Set<NativeGraphRouteKind>([
   'handfx',
   'performer-world',
   'vj-crossfade',
+  'vj-mix',
 ]);
 
 const NATIVE_EXTERNALLY_QUEUED_GRAPH_KINDS = new Set<NativeGraphRouteKind>([
@@ -332,7 +340,7 @@ const NATIVE_GRAPH_ROUTE_REQUIREMENTS: ReadonlyArray<NativeGraphRouteRequirement
   { kind: 'planet', feature: 'native_planet_graph', instrument: 'planet', shaderIds: ['planet/render'] },
   { kind: 'lines', feature: 'native_lines_graph', instrument: 'lines', shaderIds: ['lines/render'] },
   { kind: 'svg', feature: 'native_svg_graph', instrument: 'svg', shaderIds: ['svg/render-v5'] },
-  { kind: 'light-painting', feature: 'native_light_painting_graph', instrument: 'light-painting', shaderIds: ['light-painting/render-v7'] },
+  { kind: 'light-painting', feature: 'native_light_painting_graph', instrument: 'light-painting', shaderIds: ['light-painting/render-v8'] },
   { kind: 'text', feature: 'native_text_graph', instrument: 'text', shaderIds: ['text/render-v1'] },
   { kind: 'splat', feature: 'native_splat_graph', instrument: 'splat', shaderIds: ['splat/render-v1'] },
   { kind: 'model3d', feature: 'native_model3d_graph', instrument: 'model3d', shaderIds: ['model3d/render-v1'] },
@@ -454,6 +462,12 @@ const NATIVE_GRAPH_ROUTE_REQUIREMENTS: ReadonlyArray<NativeGraphRouteRequirement
     instrument: 'vj-crossfade',
     shaderIds: ['vj-crossfade/render'],
   },
+  {
+    kind: 'vj-mix',
+    feature: 'native_vj_mix_graph',
+    instrument: 'vj-mix',
+    shaderIds: ['vj-mix/render'],
+  },
 ] as const;
 
 export function nativeGraphRouteRequirements(): ReadonlyArray<NativeGraphRouteRequirement> {
@@ -510,6 +524,8 @@ type NativeGraphRouteState = {
   lastHandFrameTimestamp?: number;
   lastVJCrossfadeTopologySig?: string;
   lastVJCrossfadeUniformSig?: string;
+  lastVJMixTopologySig?: string;
+  lastVJMixUniformSig?: string;
   lastQueuedClockFrame?: number;
   queuedThisClockFrame?: number;
   lastQueuedAtMs?: number;
@@ -759,7 +775,10 @@ function sourceSignature(layer: Layer): string {
   const shaderValuesSignature = s.shaderValues
     ? hashString(stableNativeGraphKey(s.shaderValues))
     : 'no-shader-values';
-  return `${s.type}:${s.id}:${s.src}:${s.name}:${s.shaderCode ? hashString(s.shaderCode) : 'no-shader'}:${shaderValuesSignature}:${javascriptSignature}`;
+  const imageInputsSignature = s.shaderImageInputs && Object.keys(s.shaderImageInputs).length
+    ? hashString(JSON.stringify(s.shaderImageInputs))
+    : 'no-image-inputs';
+  return `${s.type}:${s.id}:${s.src}:${s.name}:${s.shaderCode ? hashString(s.shaderCode) : 'no-shader'}:${shaderValuesSignature}:${javascriptSignature}:${imageInputsSignature}`;
 }
 
 function nativeEffectDescriptors(layer: Layer): string[] {
@@ -851,6 +870,12 @@ function blobEffectDescriptor(
   const flags = blobFlagsFromParams(params, defaults);
   const trailLength = clampNumber(firstFiniteParam(params, ['blobTrailLength', 'trailLength'], defaults.trailLength), 0, 1);
   const minSize = clampNumber(firstFiniteParam(params, ['blobMinSize', 'minSize'], defaults.minSize), 0, 1);
+  const colorMode = clampNumber(Math.round(firstFiniteParam(params, ['blobColorMode'], 0)), 0, 2);
+  const fixedR = clampNumber(firstFiniteParam(params, ['blobFixedColorR'], 0), 0, 1);
+  const fixedG = clampNumber(firstFiniteParam(params, ['blobFixedColorG'], 1), 0, 1);
+  const fixedB = clampNumber(firstFiniteParam(params, ['blobFixedColorB'], 0.5), 0, 1);
+  const markerSize = clampNumber(firstFiniteParam(params, ['blobMarkerSize'], 1), 0.2, 3);
+  const blendMode = clampNumber(Math.round(firstFiniteParam(params, ['blobBlendMode'], 0)), 0, 4);
   return [
     id,
     mix.toFixed(4),
@@ -862,6 +887,12 @@ function blobEffectDescriptor(
     flags.toFixed(0),
     trailLength.toFixed(4),
     minSize.toFixed(4),
+    colorMode.toFixed(0),
+    fixedR.toFixed(4),
+    fixedG.toFixed(4),
+    fixedB.toFixed(4),
+    markerSize.toFixed(4),
+    blendMode.toFixed(0),
   ].join(':');
 }
 
@@ -871,7 +902,13 @@ export function effectToNativeDescriptor(effect: any): string | null {
   const params = effect.params || {};
   if (!type) return null;
 
-  if (type === 'invert') return 'invert';
+  if (type === 'invert') {
+    const invAmount = clampNumber(firstFiniteParam(params, ['invertAmount', 'amount'], 1), 0, 1);
+    const invMode = clampNumber(Math.round(firstFiniteParam(params, ['invertMode', 'mode'], 0)), 0, 4);
+    const invThreshold = clampNumber(firstFiniteParam(params, ['invertThreshold', 'threshold'], 0.5), 0, 1);
+    const strobeRate = clampNumber(firstFiniteParam(params, ['invertStrobeRate'], 4), 0, 10);
+    return `invert:${invAmount.toFixed(4)}:${invMode.toFixed(0)}:${invThreshold.toFixed(4)}:${strobeRate.toFixed(4)}`;
+  }
   if (type === 'grayscale' || type === 'greyscale') return 'grayscale';
   if (type === 'brightness') {
     const p = normalizeSignedUnitToMultiplier(params.brightnessAmount)
@@ -887,7 +924,11 @@ export function effectToNativeDescriptor(effect: any): string | null {
   }
   if (type === 'gamma') {
     const p = normalizeNonNegative(params.gamma ?? params.amount, 1);
-    return `gamma:${p.toFixed(4)}`;
+    const shadows = clampNumber(firstFiniteParam(params, ['gammaShadows'], 1), 0.2, 3);
+    const mids = clampNumber(firstFiniteParam(params, ['gammaMids'], 1), 0.2, 3);
+    const highlights = clampNumber(firstFiniteParam(params, ['gammaHighlights'], 1), 0.2, 3);
+    const gmix = clampNumber(firstFiniteParam(params, ['gammaMix'], 1), 0, 1);
+    return `gamma:${p.toFixed(4)}:${shadows.toFixed(4)}:${mids.toFixed(4)}:${highlights.toFixed(4)}:${gmix.toFixed(4)}`;
   }
   if (type === 'saturation') {
     const p = normalizeSignedUnitToMultiplier(params.saturationAmount)
@@ -936,7 +977,7 @@ export function effectToNativeDescriptor(effect: any): string | null {
   }
   if (type === 'exposure') {
     const exposure = clampNumber(
-      firstFiniteParam(params, ['exposure', 'exposureAmount', 'amount'], 0),
+      firstFiniteParam(params, ['exposureStops', 'exposure', 'exposureAmount', 'amount'], 0),
       -4,
       4,
     );
@@ -983,32 +1024,32 @@ export function effectToNativeDescriptor(effect: any): string | null {
   }
   if (type === 'temperaturetint' || type === 'temperature-tint') {
     const temperature = clampNumber(
-      firstFiniteParam(params, ['temperature', 'temperatureAmount', 'amount'], 0),
+      firstFiniteParam(params, ['tempTemperature', 'temperature', 'temperatureAmount', 'amount'], 0),
       -1,
       1,
     );
     const tint = clampNumber(
-      firstFiniteParam(params, ['tint', 'tintAmount'], 0),
+      firstFiniteParam(params, ['tempTint', 'tint', 'tintAmount'], 0),
       -1,
       1,
     );
     const shadowTemp = clampNumber(
-      firstFiniteParam(params, ['shadowTemp', 'temperatureShadow', 'shadowTemperature'], 0),
+      firstFiniteParam(params, ['tempShadow', 'shadowTemp', 'temperatureShadow', 'shadowTemperature'], 0),
       -1,
       1,
     );
     const highlightTemp = clampNumber(
-      firstFiniteParam(params, ['highlightTemp', 'temperatureHighlight', 'highlightTemperature'], 0),
+      firstFiniteParam(params, ['tempHighlight', 'highlightTemp', 'temperatureHighlight', 'highlightTemperature'], 0),
       -1,
       1,
     );
     const splitTone = clampNumber(
-      firstFiniteParam(params, ['splitTone', 'temperatureSplitTone'], 0),
+      firstFiniteParam(params, ['tempSplitTone', 'splitTone', 'temperatureSplitTone'], 0),
       0,
       1,
     );
     const autoCycle = clampNumber(
-      firstFiniteParam(params, ['autoCycle', 'temperatureAutoCycle'], 0),
+      firstFiniteParam(params, ['tempAutoCycle', 'autoCycle', 'temperatureAutoCycle'], 0),
       0,
       1,
     );
@@ -1028,7 +1069,10 @@ export function effectToNativeDescriptor(effect: any): string | null {
       ?? (typeof params.amount === 'number' && Number.isFinite(params.amount) ? params.amount : null)
       ?? 8;
     const levels = Math.max(2, Math.min(64, Math.round(levelsRaw)));
-    return `posterize:${levels.toFixed(0)}`;
+    const dither = clampNumber(firstFiniteParam(params, ['posterizeDither'], 0), 0, 1);
+    const animSpeed = clampNumber(firstFiniteParam(params, ['posterizeAnimSpeed'], 0), 0, 2);
+    const palette = clampNumber(Math.round(firstFiniteParam(params, ['posterizePalette'], 0)), 0, 3);
+    return `posterize:${levels.toFixed(0)}:${dither.toFixed(4)}:${animSpeed.toFixed(4)}:${palette.toFixed(0)}`;
   }
   if (type === 'noise') {
     const amountRaw =
@@ -1036,7 +1080,26 @@ export function effectToNativeDescriptor(effect: any): string | null {
       ?? (typeof params.amount === 'number' && Number.isFinite(params.amount) ? params.amount : null)
       ?? 0.25;
     const amount = Math.max(0, Math.min(1, amountRaw));
-    return `noise:${amount.toFixed(4)}`;
+    const noiseType = clampNumber(Math.round(firstFiniteParam(params, ['noiseType'], 0)), 0, 4);
+    const noiseMode = clampNumber(Math.round(firstFiniteParam(params, ['noiseMode'], 0)), 0, 4);
+    const noiseScale = clampNumber(firstFiniteParam(params, ['noiseScale', 'scale'], 1), 0.5, 32);
+    const noiseMono = clampNumber(firstFiniteParam(params, ['noiseMono'], 0), 0, 1);
+    const noiseShadow = clampNumber(firstFiniteParam(params, ['noiseShadow'], 1), 0, 1);
+    const noiseMid = clampNumber(firstFiniteParam(params, ['noiseMid'], 1), 0, 1);
+    const noiseHigh = clampNumber(firstFiniteParam(params, ['noiseHigh'], 1), 0, 1);
+    const noiseAnim = clampNumber(firstFiniteParam(params, ['noiseAnimSpeed'], 1), 0, 2);
+    return [
+      'noise',
+      amount.toFixed(4),
+      noiseType.toFixed(0),
+      noiseMode.toFixed(0),
+      noiseScale.toFixed(4),
+      noiseMono.toFixed(4),
+      noiseShadow.toFixed(4),
+      noiseMid.toFixed(4),
+      noiseHigh.toFixed(4),
+      noiseAnim.toFixed(4),
+    ].join(':');
   }
   if (type === 'rgbshift') {
     const amountRaw =
@@ -1169,6 +1232,11 @@ export function effectToNativeDescriptor(effect: any): string | null {
     const speedRaw = firstFiniteParam(params, ['plasmaSpeed', 'speed'], 0.7);
     const paletteRaw = firstFiniteParam(params, ['plasmaPalette', 'palette'], 0);
     const sourceMixRaw = firstFiniteParam(params, ['plasmaSourceMix', 'sourceMix'], 0.35);
+    const complexityRaw = firstFiniteParam(params, ['plasmaComplexity'], 3);
+    const plasmaModeRaw = firstFiniteParam(params, ['plasmaMode'], 0);
+    const blendModeRaw = firstFiniteParam(params, ['plasmaBlendMode'], 0);
+    const warpRaw = firstFiniteParam(params, ['plasmaWarpAmount'], 0.4);
+    const audioReactRaw = firstFiniteParam(params, ['plasmaAudioReact'], 0);
     return [
       'plasma',
       Math.max(0, Math.min(1, amountRaw)).toFixed(4),
@@ -1176,14 +1244,26 @@ export function effectToNativeDescriptor(effect: any): string | null {
       Math.max(0, Math.min(3, speedRaw)).toFixed(4),
       Math.max(0, Math.min(11, Math.round(paletteRaw))).toFixed(0),
       Math.max(0, Math.min(1, sourceMixRaw)).toFixed(4),
+      Math.max(1, Math.min(5, Math.round(complexityRaw))).toFixed(0),
+      Math.max(0, Math.min(2, Math.round(plasmaModeRaw))).toFixed(0),
+      Math.max(0, Math.min(4, Math.round(blendModeRaw))).toFixed(0),
+      Math.max(0, Math.min(1, warpRaw)).toFixed(4),
+      Math.max(0, Math.min(1, audioReactRaw)).toFixed(4),
     ].join(':');
   }
   if (type === 'halftone') {
     const amountRaw = firstFiniteParam(params, ['halftoneMix', 'outputMix', 'amount'], 0.9);
-    const scaleRaw = firstFiniteParam(params, ['halftoneScale', 'scale', 'cellSize'], 14);
-    const angleRaw = firstFiniteParam(params, ['halftoneAngle', 'angle'], 35);
+    const scaleRaw = firstFiniteParam(params, ['halftoneDotSize', 'halftoneScale', 'scale', 'cellSize'], 6);
+    const angleRaw = firstFiniteParam(params, ['halftoneAngle', 'angle'], 45);
     const dotGainRaw = firstFiniteParam(params, ['halftoneDotGain', 'dotGain'], 1);
     const colorModeRaw = firstFiniteParam(params, ['halftoneColorMode', 'colorMode'], 0);
+    const modeRaw = firstFiniteParam(params, ['halftoneMode'], 0);
+    const dotShapeRaw = firstFiniteParam(params, ['halftoneDotShape'], 0);
+    const angleCRaw = firstFiniteParam(params, ['halftoneAngleC'], 15);
+    const angleMRaw = firstFiniteParam(params, ['halftoneAngleM'], 75);
+    const angleYRaw = firstFiniteParam(params, ['halftoneAngleY'], 0);
+    const angleKRaw = firstFiniteParam(params, ['halftoneAngleK'], 45);
+    const driftRaw = firstFiniteParam(params, ['halftoneDrift'], 0);
     return [
       'halftone',
       Math.max(0, Math.min(1, amountRaw)).toFixed(4),
@@ -1191,14 +1271,23 @@ export function effectToNativeDescriptor(effect: any): string | null {
       (((angleRaw % 360) + 360) % 360).toFixed(4),
       Math.max(0.25, Math.min(2, dotGainRaw)).toFixed(4),
       Math.max(0, Math.min(1, colorModeRaw)).toFixed(4),
+      Math.max(0, Math.min(2, Math.round(modeRaw))).toFixed(0),
+      Math.max(0, Math.min(3, Math.round(dotShapeRaw))).toFixed(0),
+      Math.max(0, Math.min(180, angleCRaw)).toFixed(4),
+      Math.max(0, Math.min(180, angleMRaw)).toFixed(4),
+      Math.max(0, Math.min(180, angleYRaw)).toFixed(4),
+      Math.max(0, Math.min(180, angleKRaw)).toFixed(4),
+      Math.max(0, Math.min(2, driftRaw)).toFixed(4),
     ].join(':');
   }
   if (type === 'toon') {
     const amountRaw = firstFiniteParam(params, ['toonMix', 'outputMix', 'amount'], 0.85);
-    const levelsRaw = firstFiniteParam(params, ['toonLevels', 'levels'], 4);
-    const edgeRaw = firstFiniteParam(params, ['toonEdgeStrength', 'edgeStrength'], 0.8);
-    const saturationRaw = firstFiniteParam(params, ['toonSaturation', 'saturation'], 1.15);
+    const levelsRaw = firstFiniteParam(params, ['toonSteps', 'toonLevels', 'levels'], 4);
+    const edgeRaw = firstFiniteParam(params, ['toonOutline', 'toonEdgeStrength', 'edgeStrength'], 0.8);
+    const saturationRaw = firstFiniteParam(params, ['toonColorPop', 'toonSaturation', 'saturation'], 1.15);
     const thresholdRaw = firstFiniteParam(params, ['toonEdgeThreshold', 'threshold'], 0.05);
+    const rampSoftRaw = firstFiniteParam(params, ['toonRampSoftness'], 0);
+    const shadowBandRaw = firstFiniteParam(params, ['toonShadowBand'], 0);
     return [
       'toon',
       Math.max(0, Math.min(1, amountRaw)).toFixed(4),
@@ -1206,6 +1295,8 @@ export function effectToNativeDescriptor(effect: any): string | null {
       Math.max(0, Math.min(2, edgeRaw)).toFixed(4),
       Math.max(0, Math.min(2, saturationRaw)).toFixed(4),
       Math.max(0, Math.min(1, thresholdRaw)).toFixed(4),
+      Math.max(0, Math.min(1, rampSoftRaw)).toFixed(4),
+      Math.max(0, Math.min(1, shadowBandRaw)).toFixed(4),
     ].join(':');
   }
   if (type === 'kuwahara') {
@@ -1728,6 +1819,7 @@ export function effectToNativeDescriptor(effect: any): string | null {
       Math.max(0, Math.min(1, holdRaw)).toFixed(4),
       Math.max(0, Math.min(1, tearRaw)).toFixed(4),
       Math.max(0, Math.min(3, Math.round(triggerRaw))).toFixed(0),
+      Math.max(0, Math.min(1, firstFiniteParam(params, ['glitchFreezeBurst', 'freezeBurst'], 0))).toFixed(4),
     ].join(':');
   }
   if (type === 'pixelate') {
@@ -1805,6 +1897,10 @@ export function effectToNativeDescriptor(effect: any): string | null {
     const centerY = Math.max(-2, Math.min(3, centerYRaw));
     const tintAmount = Math.max(0, Math.min(1, tintRaw));
     const breathing = Math.max(0, Math.min(1, breathingRaw));
+    const tintR = clampNumber(firstFiniteParam(params, ['vignetteColorR'], 0), 0, 1);
+    const tintG = clampNumber(firstFiniteParam(params, ['vignetteColorG'], 0), 0, 1);
+    const tintB = clampNumber(firstFiniteParam(params, ['vignetteColorB'], 0), 0, 1);
+    const breathSpeed = clampNumber(firstFiniteParam(params, ['vignetteBreathSpeed'], 0.5), 0, 2);
     return [
       'vignette',
       size.toFixed(4),
@@ -1816,6 +1912,10 @@ export function effectToNativeDescriptor(effect: any): string | null {
       centerY.toFixed(4),
       tintAmount.toFixed(4),
       breathing.toFixed(4),
+      tintR.toFixed(4),
+      tintG.toFixed(4),
+      tintB.toFixed(4),
+      breathSpeed.toFixed(4),
     ].join(':');
   }
   if (type === 'chromakey') {
@@ -2084,6 +2184,7 @@ export function effectToNativeDescriptor(effect: any): string | null {
     const positionRaw = firstFiniteParam(params, ['outlinePosition', 'position'], 1);
     const crawlRaw = firstFiniteParam(params, ['outlineCrawl', 'crawl', 'speed'], 0);
     const alphaRaw = firstFiniteParam(params, ['outlineAlphaAware', 'alphaAware'], 0);
+    const glowFalloffRaw = firstFiniteParam(params, ['outlineGlowFalloff'], 1);
     return [
       'outline',
       Math.max(0, Math.min(12, thicknessRaw)).toFixed(4),
@@ -2095,6 +2196,7 @@ export function effectToNativeDescriptor(effect: any): string | null {
       Math.max(0, Math.min(2, Math.round(positionRaw))).toFixed(0),
       Math.max(0, Math.min(1, crawlRaw)).toFixed(4),
       Math.max(0, Math.min(1, Math.round(alphaRaw))).toFixed(0),
+      Math.max(0.1, Math.min(4, glowFalloffRaw)).toFixed(4),
     ].join(':');
   }
   if (type === 'emboss') {
@@ -2107,17 +2209,21 @@ export function effectToNativeDescriptor(effect: any): string | null {
     const shadowRRaw = firstFiniteParam(params, ['embossShadowR'], 0);
     const shadowGRaw = firstFiniteParam(params, ['embossShadowG'], 0);
     const shadowBRaw = firstFiniteParam(params, ['embossShadowB'], 0);
+    const normalModeRaw = firstFiniteParam(params, ['embossNormalMode'], 0);
+    const metallicRaw = firstFiniteParam(params, ['embossMetallicness'], 0);
     return [
       'emboss',
       Math.max(0, Math.min(2, strengthRaw)).toFixed(4),
       (((angleRaw % 360) + 360) % 360).toFixed(4),
-      Math.max(0, Math.min(1, heightRaw)).toFixed(4),
+      Math.max(0, Math.min(4, heightRaw)).toFixed(4),
       Math.max(0, Math.min(1.5, highlightRRaw)).toFixed(4),
       Math.max(0, Math.min(1.5, highlightGRaw)).toFixed(4),
       Math.max(0, Math.min(1.5, highlightBRaw)).toFixed(4),
       Math.max(0, Math.min(1.5, shadowRRaw)).toFixed(4),
       Math.max(0, Math.min(1.5, shadowGRaw)).toFixed(4),
       Math.max(0, Math.min(1.5, shadowBRaw)).toFixed(4),
+      Math.max(0, Math.min(1, Math.round(normalModeRaw))).toFixed(0),
+      Math.max(0, Math.min(1, metallicRaw)).toFixed(4),
     ].join(':');
   }
   if (type === 'crt') {
@@ -2525,6 +2631,10 @@ export function nativeEffectPassFromDescriptor(descriptor: string | null): Nativ
     rawParam9,
     rawParam10,
     rawParam11,
+    rawParam12,
+    rawParam13,
+    rawParam14,
+    rawParam15,
   ] = descriptor.split(':');
   const effect = rawId.trim().toLowerCase() as NativeEffectPassId;
   if (!NATIVE_EFFECT_PASS_IDS.has(effect)) return null;
@@ -2550,6 +2660,10 @@ export function nativeEffectPassFromDescriptor(descriptor: string | null): Nativ
       centerY: Number(rawParam5 ?? 0.5),
       tintAmount: Number(rawParam6 ?? 0),
       breathing: Number(rawParam7 ?? 0),
+      vignetteColorR: Number(rawParam8 ?? 0),
+      vignetteColorG: Number(rawParam9 ?? 0),
+      vignetteColorB: Number(rawParam10 ?? 0),
+      vignetteBreathSpeed: Number(rawParam11 ?? 0.5),
     };
   } else if (effect === 'rgb-shift') {
     params = {
@@ -2600,6 +2714,11 @@ export function nativeEffectPassFromDescriptor(descriptor: string | null): Nativ
       plasmaSpeed: Number(rawParam1 ?? 0.7),
       plasmaPalette: Number(rawParam2 ?? 0),
       plasmaSourceMix: Number(rawParam3 ?? 0.35),
+      plasmaComplexity: Number(rawParam4 ?? 3),
+      plasmaMode: Number(rawParam5 ?? 0),
+      plasmaBlendMode: Number(rawParam6 ?? 0),
+      plasmaWarpAmount: Number(rawParam7 ?? 0.4),
+      plasmaAudioReact: Number(rawParam8 ?? 0),
     };
   } else if (effect === 'halftone') {
     params = {
@@ -2607,6 +2726,13 @@ export function nativeEffectPassFromDescriptor(descriptor: string | null): Nativ
       halftoneAngle: Number(rawParam1 ?? 35),
       halftoneDotGain: Number(rawParam2 ?? 1),
       halftoneColorMode: Number(rawParam3 ?? 0),
+      halftoneMode: Number(rawParam4 ?? 0),
+      halftoneDotShape: Number(rawParam5 ?? 0),
+      halftoneAngleC: Number(rawParam6 ?? 15),
+      halftoneAngleM: Number(rawParam7 ?? 75),
+      halftoneAngleY: Number(rawParam8 ?? 0),
+      halftoneAngleK: Number(rawParam9 ?? 45),
+      halftoneDrift: Number(rawParam10 ?? 0),
     };
   } else if (effect === 'toon') {
     params = {
@@ -2614,6 +2740,8 @@ export function nativeEffectPassFromDescriptor(descriptor: string | null): Nativ
       toonEdgeStrength: Number(rawParam1 ?? 0.8),
       toonSaturation: Number(rawParam2 ?? 1.15),
       toonEdgeThreshold: Number(rawParam3 ?? 0.05),
+      toonRampSoftness: Number(rawParam4 ?? 0),
+      toonShadowBand: Number(rawParam5 ?? 0),
     };
   } else if (effect === 'kuwahara') {
     params = {
@@ -2688,6 +2816,7 @@ export function nativeEffectPassFromDescriptor(descriptor: string | null): Nativ
       blockHold: Number(rawParam5 ?? 0.3),
       tearChance: Number(rawParam6 ?? 0),
       triggerMode: Number(rawParam7 ?? 0),
+      freezeBurst: Number(rawParam8 ?? 0),
     };
   } else if (effect === 'exposure') {
     params = {
@@ -2921,6 +3050,7 @@ export function nativeEffectPassFromDescriptor(descriptor: string | null): Nativ
       outlinePosition: Number(rawParam5 ?? 1),
       outlineCrawl: Number(rawParam6 ?? 0),
       outlineAlphaAware: Number(rawParam7 ?? 0),
+      outlineGlowFalloff: Number(rawParam8 ?? 1),
     };
   } else if (effect === 'emboss') {
     params = {
@@ -2932,6 +3062,8 @@ export function nativeEffectPassFromDescriptor(descriptor: string | null): Nativ
       embossShadowR: Number(rawParam5 ?? 0),
       embossShadowG: Number(rawParam6 ?? 0),
       embossShadowB: Number(rawParam7 ?? 0),
+      embossNormalMode: Number(rawParam8 ?? 0),
+      embossMetallicness: Number(rawParam9 ?? 0),
     };
   } else if (effect === 'crt') {
     params = {
@@ -3090,6 +3222,46 @@ export function nativeEffectPassFromDescriptor(descriptor: string | null): Nativ
       blobShowCenter: (Math.round(flags) & 4) ? 1 : 0,
       blobTrailLength: Number(rawParam6 ?? (effect === 'blob-heatmap' ? 0 : effect === 'blob-contour' ? 0.4 : 0.3)),
       blobMinSize: Number(rawParam7 ?? (effect === 'blob-track' ? 0.02 : effect === 'blob-contour' ? 0.5 : 0)),
+      blobColorMode: Number(rawParam8 ?? 0),
+      blobFixedColorR: Number(rawParam9 ?? 0),
+      blobFixedColorG: Number(rawParam10 ?? 1),
+      blobFixedColorB: Number(rawParam11 ?? 0.5),
+      blobMarkerSize: Number(rawParam12 ?? 1),
+      blobBlendMode: Number(rawParam13 ?? 0),
+    };
+  }
+  if (effect === 'noise') {
+    params = {
+      noiseType: Number(rawParam0 ?? 0),
+      noiseMode: Number(rawParam1 ?? 0),
+      noiseScale: Number(rawParam2 ?? 1),
+      noiseMono: Number(rawParam3 ?? 0),
+      noiseShadow: Number(rawParam4 ?? 1),
+      noiseMid: Number(rawParam5 ?? 1),
+      noiseHigh: Number(rawParam6 ?? 1),
+      noiseAnimSpeed: Number(rawParam7 ?? 1),
+    };
+  }
+  if (effect === 'gamma') {
+    params = {
+      gammaShadows: Number(rawParam0 ?? 1),
+      gammaMids: Number(rawParam1 ?? 1),
+      gammaHighlights: Number(rawParam2 ?? 1),
+      gammaMix: Number(rawParam3 ?? 1),
+    };
+  }
+  if (effect === 'invert') {
+    params = {
+      invertMode: Number(rawParam0 ?? 0),
+      invertThreshold: Number(rawParam1 ?? 0.5),
+      invertStrobeRate: Number(rawParam2 ?? 4),
+    };
+  }
+  if (effect === 'posterize') {
+    params = {
+      posterizeDither: Number(rawParam0 ?? 0),
+      posterizeAnimSpeed: Number(rawParam1 ?? 0),
+      posterizePalette: Number(rawParam2 ?? 0),
     };
   }
   if (params && Object.values(params).some((value) => !Number.isFinite(value))) return null;
@@ -3123,6 +3295,11 @@ export function nativeUnsupportedEffectTypes(layer: Pick<Layer, 'effects'>): str
 
 interface NativeUnsupportedSourceOptions {
   nativeVideoDecodePumpReady?: boolean;
+  /** True when this layer's graph route was permanently disabled by the
+   *  3-failure kill switch — a different situation from the transient
+   *  route-unavailable window during startup warm-up, and one the operator
+   *  must be able to see. */
+  routeDisabledByFailures?: boolean;
 }
 
 const NATIVE_READY_LAYER_TYPES = new Set(['media', 'gpu', 'color', 'lines', 'svg', 'lightpainting', 'text', 'splat', 'model3d', 'screen', 'group', 'mask']);
@@ -3218,6 +3395,9 @@ export function nativeUnsupportedSourceReason(
     if (!isNativeReadyGpuShaderId(shaderId)) return `gpu-shader:${shaderId || 'unknown'}:not-native`;
     const sourceReason = nativeGpuSourceParamUnsupportedReason(layer, options);
     if (sourceReason) return sourceReason;
+    if (options.routeDisabledByFailures) {
+      return `gpu-shader:${shaderId || 'unknown'}:route-failed`;
+    }
     return `gpu-shader:${shaderId || 'unknown'}:route-unavailable`;
   }
 
@@ -4033,7 +4213,8 @@ function nativeGraphOutputSource(layer: Layer, kind: NativeGraphRouteKind): Nati
   const pluginKind = kind === 'ghostfx'
     || kind === 'handfx'
     || kind === 'performer-world'
-    || kind === 'vj-crossfade';
+    || kind === 'vj-crossfade'
+    || kind === 'vj-mix';
   const effectType = String(layer.source?.effectSource?.effectType ?? kind).trim().toLowerCase();
   const shaderId = layer.gpuLayerContent?.shaderId || 'gpu';
   // Lines and SVG layers have no gpuLayerContent shader id. A generic `gpu`
@@ -4156,6 +4337,9 @@ function nativeGraphBufferPrefixesForRoute(route: NativeGraphLayerRoute): string
     case 'vj-crossfade':
       prefixes = [`vjxfade:${safeSourceId}`];
       break;
+    case 'vj-mix':
+      prefixes = [`vjmix:${safeSourceId}`];
+      break;
     case 'effect-pass':
       prefixes = [`effect-pass:${safeSourceId}`];
       break;
@@ -4252,6 +4436,7 @@ function nativeGraphParamsForLayer(layer: Layer, kind: NativeGraphRouteKind, wor
     || kind === 'handfx'
     || kind === 'performer-world'
     || kind === 'vj-crossfade'
+    || kind === 'vj-mix'
     ? layer.source?.effectSource ?? {}
     : layer.gpuLayerContent?.params ?? {};
   const shaderId = String(layer.gpuLayerContent?.shaderId || '').trim().toLowerCase();
@@ -4696,15 +4881,125 @@ export class NativeRendererSync {
     uploadedSig: string;
     loading: boolean;
     packed: { buffer: Float32Array; pointCount: number } | null;
+    textureSig: string;
+    textureUploadedSig: string;
+    texture: { rgba: Uint8ClampedArray; width: number; height: number } | null;
+    textureSeq: number;
+    textureVideo: HTMLVideoElement | null;
+    textureCanvas: { canvas: HTMLCanvasElement; ctx: CanvasRenderingContext2D; width: number; height: number } | null;
+    textureVideoUploadedAt: number;
+    /** Set by requestVideoFrameCallback whenever the element presented a
+     *  new frame, so uploads pace to the video, not a timer. */
+    textureVideoFrameReady: boolean;
   }>();
 
   private nativeSplatStateFor(layerId: string) {
     let state = this.nativeSplatState.get(layerId);
     if (!state) {
-      state = { fileSig: '', uploadedSig: '', loading: false, packed: null };
+      state = {
+        fileSig: '', uploadedSig: '', loading: false, packed: null,
+        textureSig: '', textureUploadedSig: '', texture: null, textureSeq: 0,
+        textureVideo: null, textureCanvas: null, textureVideoUploadedAt: 0,
+        textureVideoFrameReady: false,
+      };
       this.nativeSplatState.set(layerId, state);
     }
     return state;
+  }
+
+  private releaseNativeSplatTextureVideo(state: {
+    textureVideo: HTMLVideoElement | null;
+    textureCanvas: unknown | null;
+  }) {
+    if (state.textureVideo) {
+      try {
+        state.textureVideo.pause();
+        state.textureVideo.removeAttribute('src');
+        state.textureVideo.load();
+      } catch { /* already detached */ }
+      state.textureVideo = null;
+    }
+    state.textureCanvas = null;
+  }
+
+  /** Load the splat projection texture. Images decode once; videos become a
+   *  looping muted element that the splat route pumps into the texture
+   *  source frame every frame (same canvas transport the composite mirror
+   *  uses — the panel stores texturePath as a data URL, so the core's own
+   *  video decoder can't take it directly). */
+  private async loadNativeSplatTexture(layerId: string, content: SplatContent, textureSig: string) {
+    const state = this.nativeSplatStateFor(layerId);
+    const path = String(content.texturePath ?? '');
+    try {
+      const MAX_DIM = 512;
+      const makeCanvas = (srcW: number, srcH: number) => {
+        const scale = Math.min(1, MAX_DIM / Math.max(srcW, srcH));
+        const w = Math.max(2, Math.round(srcW * scale));
+        const h = Math.max(2, Math.round(srcH * scale));
+        const canvas = document.createElement('canvas');
+        canvas.width = w;
+        canvas.height = h;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        return ctx ? { canvas, ctx, width: w, height: h } : null;
+      };
+      if (content.textureType === 'video') {
+        // Looping element pumped through a canvas, paced by
+        // requestVideoFrameCallback so uploads track presented frames
+        // instead of beating against a wall-clock throttle.
+        const video = document.createElement('video');
+        video.muted = true;
+        video.playsInline = true;
+        video.loop = true;
+        video.src = path;
+        await new Promise<void>((resolve, reject) => {
+          video.onloadeddata = () => resolve();
+          video.onerror = () => reject(new Error('video load failed'));
+        });
+        if (state.textureSig !== textureSig) return; // superseded
+        const target = makeCanvas(video.videoWidth || 2, video.videoHeight || 2);
+        if (!target) return;
+        this.releaseNativeSplatTextureVideo(state);
+        state.textureVideo = video;
+        state.textureCanvas = target;
+        state.textureVideoUploadedAt = 0;
+        // First frame immediately so the texture shows before playback ticks.
+        target.ctx.drawImage(video, 0, 0, target.width, target.height);
+        state.texture = {
+          rgba: target.ctx.getImageData(0, 0, target.width, target.height).data,
+          width: target.width,
+          height: target.height,
+        };
+        state.textureUploadedSig = '';
+        const onVideoFrame = () => {
+          if (state.textureVideo !== video) return; // released
+          state.textureVideoFrameReady = true;
+          video.requestVideoFrameCallback(onVideoFrame);
+        };
+        if (typeof video.requestVideoFrameCallback === 'function') {
+          video.requestVideoFrameCallback(onVideoFrame);
+        } else {
+          state.textureVideoFrameReady = true; // legacy: fall back to throttle
+        }
+        void video.play().catch(() => { /* still shows the first frame */ });
+      } else {
+        const image = new Image();
+        image.src = path;
+        await image.decode();
+        if (state.textureSig !== textureSig) return; // superseded
+        const target = makeCanvas(image.naturalWidth || 2, image.naturalHeight || 2);
+        if (!target) return;
+        this.releaseNativeSplatTextureVideo(state);
+        target.ctx.drawImage(image, 0, 0, target.width, target.height);
+        state.texture = {
+          rgba: target.ctx.getImageData(0, 0, target.width, target.height).data,
+          width: target.width,
+          height: target.height,
+        };
+        state.textureUploadedSig = '';
+      }
+    } catch (err) {
+      console.warn('[NativeRendererSync] splat texture load failed', layerId, err);
+    }
   }
 
   private async loadNativeSplatPoints(layerId: string, content: SplatContent, fileSig: string) {
@@ -4954,6 +5249,16 @@ export class NativeRendererSync {
     this.nativeGraphRouteLastFailure = null;
   }
 
+  /** True when any of this layer's graph route keys has hit the 3-failure
+   *  disable. Used to surface a distinct `route-failed` block reason. */
+  private layerRouteDisabledByFailures(layer: Layer): boolean {
+    if (layer.type !== 'gpu' || !layer.gpuLayerContent) return false;
+    for (const [key, state] of this.nativeGraphRoutes) {
+      if ((state.warnings ?? 0) >= 3 && key.includes(layer.id)) return true;
+    }
+    return false;
+  }
+
   private recordNativeGraphRouteFailure(
     route: Pick<NativeGraphLayerRoute, 'kind' | 'key'>,
     layerId: string,
@@ -4968,6 +5273,17 @@ export class NativeRendererSync {
       this.nativeGraphRouteSuppressedFailures += 1;
     }
     routeState.warnings += 1;
+    if (routeState.warnings === 3) {
+      nativeFailedRouteLayers.update((ids) => (ids.includes(layerId) ? ids : [...ids, layerId]));
+      // The kill switch used to trip silently AND suppress its own warnings,
+      // so a failing layer just looked blank with a normal panel row. Say it
+      // once, loudly, with the actual error — this is the line to search for
+      // when a layer "mysteriously" stops rendering.
+      console.error(
+        `[NativeRendererSync] ${route.kind} route for layer ${layerId} DISABLED after 3 failures — `
+        + `the layer will stay blank until it is edited or the app restarts. Last error: ${message}`,
+      );
+    }
     this.nativeGraphRouteFailures += 1;
     this.nativeGraphRouteLastFailure = summary;
   }
@@ -5593,6 +5909,9 @@ export class NativeRendererSync {
     // VJ feed lookup: crossfade output preferred over single-bank rows.
     const vjFeed = new Map<number, Layer>();
     for (const layer of layers) {
+      // VJ Mix carrier: the true post-crossfade composite of every row,
+      // registered under the VJ Mix index (-1).
+      if (String(layer.id) === '__vj-mix__') { vjFeed.set(-1, layer); continue; }
       const xfade = /^vj-xfade-(\d+)$/.exec(String(layer.id));
       if (xfade) { vjFeed.set(Number(xfade[1]), layer); continue; }
       const row = /^vj-layer-(\d+)/.exec(String(layer.id));
@@ -5603,9 +5922,11 @@ export class NativeRendererSync {
       const raw = Number((target as { vjLayerIndex?: number | null }).vjLayerIndex);
       if (!Number.isFinite(raw) || vjFeed.size === 0) return;
       const index = Math.round(raw);
-      // VJ Mix (-1) approximates with the lowest active row's feed.
+      // VJ Mix (-1): the native composite carrier when present, else fall
+      // back to the lowest active row's feed (legacy approximation).
       const feed = index < 0
-        ? vjFeed.get(Math.min(...Array.from(vjFeed.keys())))
+        ? vjFeed.get(-1)
+          ?? vjFeed.get(Math.min(...Array.from(vjFeed.keys()).filter((key) => key >= 0)))
         : vjFeed.get(index);
       if (feed?.source) {
         (target as { source: Layer['source'] }).source = feed.source;
@@ -5896,7 +6217,7 @@ export class NativeRendererSync {
               effect: effectPass.effect,
               amount: effectPass.amount,
               mix: 1,
-              params: effectPass.params,
+              params: { ...effectPass.params, audioLevel: getVisualAudioSnapshot().level },
             })),
             width,
             height,
@@ -5913,6 +6234,7 @@ export class NativeRendererSync {
           routeState.lastGraphFrameIndex = graphFrameIndex;
           routeState.lastManualClockKey = manualClockKey || undefined;
           routeState.warnings = 0;
+          nativeFailedRouteLayers.update((ids) => (ids.includes(layer.id) ? ids.filter((id) => id !== layer.id) : ids));
           continue;
         }
         const graph = await (async () => {
@@ -6015,6 +6337,75 @@ export class NativeRendererSync {
             // While the file parses, render an empty frame — throwing here
             // would warning-disable the route before the load resolves.
             const audio = getVisualAudioSnapshot();
+            const textureSourceId = `${graphSource.id}:splat-texture`;
+            const textureSig = content.textureEnabled && content.texturePath
+              ? `${content.texturePath}|${content.textureType ?? 'image'}`
+              : '';
+            if (state.textureSig !== textureSig) {
+              state.textureSig = textureSig;
+              state.texture = null;
+              this.releaseNativeSplatTextureVideo(state);
+              if (textureSig) void this.loadNativeSplatTexture(layer.id, content, textureSig);
+            }
+            // Upload when the element presented a new frame (rVFC-paced).
+            // Under the offline render's manual clock the element must NOT
+            // free-run on the wall clock — capture is slower than real time,
+            // so free playback exports too fast. Seek it to the virtual time
+            // instead (one frame of seek latency; constant, so the rate is
+            // exact) and upload every manual frame.
+            const video = state.textureVideo;
+            const target = state.textureCanvas;
+            const texNowMs = Date.now();
+            const manualClockTime = clock.mode === 'manual' && typeof clock.time === 'number'
+              ? clock.time
+              : null;
+            if (video && target && video.readyState >= 2 && manualClockTime !== null) {
+              if (!video.paused) video.pause();
+              const duration = Number.isFinite(video.duration) && video.duration > 0
+                ? video.duration
+                : 0;
+              const seekTo = duration > 0 ? manualClockTime % duration : 0;
+              if (Math.abs(video.currentTime - seekTo) > 0.001) {
+                try { video.currentTime = seekTo; } catch { /* not seekable yet */ }
+              }
+              target.ctx.drawImage(video, 0, 0, target.width, target.height);
+              state.texture = {
+                rgba: target.ctx.getImageData(0, 0, target.width, target.height).data,
+                width: target.width,
+                height: target.height,
+              };
+              state.textureUploadedSig = '';
+            } else if (video && target && video.readyState >= 2 && video.paused && manualClockTime === null) {
+              // Leaving manual mode: resume live playback.
+              state.textureVideoFrameReady = true;
+              void video.play().catch(() => {});
+            } else if (
+              video && target && !video.paused && video.readyState >= 2 &&
+              state.textureVideoFrameReady &&
+              texNowMs - state.textureVideoUploadedAt >= 1000 / 45
+            ) {
+              state.textureVideoFrameReady = false;
+              state.textureVideoUploadedAt = texNowMs;
+              target.ctx.drawImage(video, 0, 0, target.width, target.height);
+              state.texture = {
+                rgba: target.ctx.getImageData(0, 0, target.width, target.height).data,
+                width: target.width,
+                height: target.height,
+              };
+              state.textureUploadedSig = '';
+            }
+            if (state.texture && state.textureUploadedSig !== state.textureSig) {
+              state.textureSeq += 1;
+              queuedCommands.push({
+                type: 'upload_source_frame',
+                source_id: textureSourceId,
+                width: state.texture.width,
+                height: state.texture.height,
+                seq: state.textureSeq,
+                rgba_b64: encodeAtlasBase64(state.texture.rgba),
+              } as unknown as RendererCommand);
+              state.textureUploadedSig = state.textureSig;
+            }
             const graph = buildSplatNativeComputeGraph({
               sourceId: graphSource.id,
               content,
@@ -6023,12 +6414,22 @@ export class NativeRendererSync {
               pointsB64: state.packed && state.uploadedSig !== fileSig
                 ? encodeSplatBufferBase64(state.packed.buffer)
                 : null,
+              textureSourceId,
+              hasTexture: !!state.texture && state.textureUploadedSig === state.textureSig,
               width,
               height,
               time: graphTime,
               frameDelta: graphDelta,
               frameIndex: graphFrameIndex,
               audioLevel: audio.level ?? Math.max(audio.bass, audio.treble),
+              audioBands: {
+                sub: audio.sub,
+                bass: audio.bass,
+                lowMid: audio.lowMid,
+                mid: audio.mid,
+                highMid: audio.highMid,
+                high: audio.high,
+              },
               audioBeat: audio.beat,
               audioBeatPhase: audio.beatPhase,
               pointer: get(splatPointer),
@@ -6081,7 +6482,15 @@ export class NativeRendererSync {
               time: graphTime,
               frameDelta: graphDelta,
               frameIndex: graphFrameIndex,
-              audioLevel: Math.max(audio.bass, audio.treble),
+              audioLevel: audio.level ?? Math.max(audio.bass, audio.treble),
+              audioSub: audio.sub,
+              audioBass: audio.bass,
+              audioLowMid: audio.lowMid,
+              audioMid: audio.mid,
+              audioHighMid: audio.highMid,
+              audioHigh: audio.high,
+              audioBeat: audio.beat,
+              audioBeatPhase: audio.beatPhase,
             });
             if (state.mesh) state.meshUploadedSig = fileSig;
             return graph;
@@ -6238,7 +6647,7 @@ export class NativeRendererSync {
               effect: effectPass.effect,
               amount: effectPass.amount,
               mix: 1,
-              params: effectPass.params,
+              params: { ...effectPass.params, audioLevel: getVisualAudioSnapshot().level },
             })),
             width,
             height,
@@ -6256,6 +6665,7 @@ export class NativeRendererSync {
         routeState.lastGraphFrameIndex = graphFrameIndex;
         routeState.lastManualClockKey = manualClockKey || undefined;
         routeState.warnings = 0;
+          nativeFailedRouteLayers.update((ids) => (ids.includes(layer.id) ? ids.filter((id) => id !== layer.id) : ids));
       } catch (err) {
         this.recordNativeGraphRouteFailure(route, layer.id, err, routeState);
       } finally {
@@ -6555,6 +6965,19 @@ export class NativeRendererSync {
       if (effect?.enabled === false) continue;
       push(effect, 1);
     }
+    // Mapping-mode composition effects. The WebGL engine passed
+    // `mappingComposition.effects` as its composite chain in mapping mode
+    // (Canvas chose per-mode); this push previously read only the VJ store,
+    // so mapping-mode composition FX were a silent no-op natively. The two
+    // sets never coexist — mapping composition is disabled in VJ mode — so
+    // including both here preserves each mode's behaviour.
+    const mappingComposition = get(project)?.mappingComposition;
+    if (mappingComposition?.enabled) {
+      for (const effect of mappingComposition.effects ?? []) {
+        if (effect?.enabled === false) continue;
+        push(effect, 1);
+      }
+    }
     for (const macro of get(macros)?.macros ?? []) {
       if (macro.value <= 0.001 || !macro.effects?.length) continue;
       for (const effect of macro.effects) {
@@ -6607,6 +7030,12 @@ export class NativeRendererSync {
       domeOffsetY: out.domeOffsetY ?? 0,
       domeCurvature: out.domeCurvature ?? 1,
       domeTruncation: out.domeTruncation ?? 1,
+      // Alignment pattern drawn by the compositor's output stage, so it
+      // reaches the projector (the DOM overlay only ever covered the
+      // editor preview).
+      testPattern: Math.max(0,
+        ['none', 'grid', 'crosshair', 'color-bars', 'white', 'gradient', 'checkerboard']
+          .indexOf(String(out.testPattern ?? 'none'))),
       // Master warp travels as-is; the core reads only the mesh belonging to
       // the declared mode, so a stale grid from the other mode is ignored.
       masterWarp: out.masterWarp && masterWarpIsActive(out.masterWarp)
@@ -6831,6 +7260,14 @@ export class NativeRendererSync {
     this.resetNativeGraphRouteTelemetry();
     this.startupReady = true;
     // Subscribe after startup so the first push lands on a live core.
+    // Drop anything still registered from a previous start first: a
+    // restart that did not run full teardown (a failed start, a lifecycle
+    // race) would otherwise stack a second set of store subscriptions that
+    // live for the process, and each one re-pushes on every settings change.
+    for (const unsub of this.outputStateUnsubs) {
+      try { unsub(); } catch { /* already torn down */ }
+    }
+    this.outputStateUnsubs = [];
     this.outputStateUnsubs.push(settings.subscribe(() => this.pushOutputState()));
     this.outputStateUnsubs.push(settings.subscribe(() => this.pushOutputStage()));
     this.outputStateUnsubs.push(settings.subscribe(() => this.pushSliceOutputs()));
@@ -6841,6 +7278,7 @@ export class NativeRendererSync {
     this.outputStateUnsubs.push(outputFrozen.subscribe(() => this.pushOutputState()));
     this.outputStateUnsubs.push(vjClipLauncher.subscribe(() => this.scheduleCompositeEffects()));
     this.outputStateUnsubs.push(macros.subscribe(() => this.scheduleCompositeEffects()));
+    this.outputStateUnsubs.push(project.subscribe(() => this.scheduleCompositeEffects()));
     flushPendingLibraryVideoArms(this);
     if (this.latestLayers.length) {
       this.scheduleSync(this.desiredWidth || width, this.desiredHeight || height, this.latestLayers);
@@ -6930,6 +7368,7 @@ export class NativeRendererSync {
       activeNativeRendererSync = null;
     }
     this.stopShaderAnimation();
+    this.teardownOutputStateBindings();
     if (this.audioSyncRaf !== null) {
       cancelAnimationFrame(this.audioSyncRaf);
       this.audioSyncRaf = null;
@@ -7192,13 +7631,25 @@ export class NativeRendererSync {
     await this.flush(this.desiredWidth, this.desiredHeight, this.latestLayers);
   }
 
+  /** Stop the per-frame sync RAF only. This runs whenever the layer list
+   *  stops needing continuous sync (e.g. all layers cleared), so it must
+   *  NOT tear down session-lifetime state — that previously lived here and
+   *  meant one clear-all silently killed blackout/freeze, composite
+   *  effects, output stage and slice bindings for the rest of the session
+   *  (they only re-register in start()). */
   private stopShaderAnimation() {
     if (this.shaderAnimationRaf !== null) {
       cancelAnimationFrame(this.shaderAnimationRaf);
       this.shaderAnimationRaf = null;
     }
+  }
+
+  /** Full teardown of the output-state store bindings; lifecycle stop only. */
+  private teardownOutputStateBindings() {
     for (const unsub of this.outputStateUnsubs) unsub();
     this.outputStateUnsubs = [];
+    // Stop any splat texture videos still pumping.
+    this.nativeSplatState.forEach((state) => this.releaseNativeSplatTextureVideo(state));
     this.lastOutputBlackout = null;
     this.lastCompositeEffectsSig = null;
     this.lastOutputStageSig = null;
@@ -7501,7 +7952,10 @@ export class NativeRendererSync {
         : this.nativeGraphRouteForLayer(layer);
       const unsupportedNativeSource = unsupportedNativeEffects.length > 0
         ? null
-        : nativeUnsupportedSourceReason(layer, !!nativeGraphRouteCandidate, unsupportedSourceOptions);
+        : nativeUnsupportedSourceReason(layer, !!nativeGraphRouteCandidate, {
+            ...unsupportedSourceOptions,
+            routeDisabledByFailures: this.layerRouteDisabledByFailures(layer),
+          });
       const nativeLayerBlocked = unsupportedNativeEffects.length > 0 || !!unsupportedNativeSource;
       const nativeBlockSig = unsupportedNativeEffects.length > 0
         ? `native-unsupported-effects:${unsupportedNativeEffects.join(',')}`
@@ -7535,7 +7989,13 @@ export class NativeRendererSync {
             layerA: nativeGraphScaledParams?.vjxfadeLayerA ?? '',
             layerB: nativeGraphScaledParams?.vjxfadeLayerB ?? '',
           })
-        : nativeGraphParamsSig;
+        : nativeGraphRoute?.kind === 'vj-mix'
+          ? stableNativeGraphKey({
+              rows: (Array.isArray(nativeGraphScaledParams?.vjmixRows)
+                ? nativeGraphScaledParams.vjmixRows
+                : []).map((row: { layerId?: string }) => String(row?.layerId ?? '')).join(','),
+            })
+          : nativeGraphParamsSig;
       const nativeGraphEffectSig = nativeGraphRoute?.effectPasses?.map((effectPass) => effectPass.descriptor).join('>') ?? 'none';
       const effectIds = nativeLayerBlocked || nativeGraphRoute?.kind === 'effect-pass' || nativeGraphRoute?.effectPasses?.length
         ? []
@@ -7671,7 +8131,12 @@ export class NativeRendererSync {
           uri: nativeSource.uri,
           source_type: sourceType,
         });
-        const src = nativeSource.source;
+        // Real content source, not the effect route's synthetic output
+        // (source: null). This block owns precompile + bind_isf_shader —
+        // with the old resolution, switching shaders under an active
+        // effect never re-bound, so the core kept rendering the previous
+        // shader into the chain's input until the effect was toggled.
+        const src = nativeGraphRoute?.inputSource?.source ?? nativeSource.source;
         if (src) {
           const sourceKey = this.sourceCacheKey(src.id, src.src);
           const sharedTextureSource = isNativeSharedTextureSource(src, sourceType);
@@ -7763,6 +8228,7 @@ export class NativeRendererSync {
         NATIVE_CORE_OWNED_GRAPH_KINDS.has(nativeGraphRoute.kind) &&
         (
           nativeGraphRoute.kind === 'vj-crossfade' ||
+          nativeGraphRoute.kind === 'vj-mix' ||
           !prev ||
           prev.sourceSig !== snap.sourceSig ||
           prev.nativeParamsSig !== snap.nativeParamsSig
@@ -7775,7 +8241,8 @@ export class NativeRendererSync {
         const pluginRoute = nativeGraphRoute.kind === 'ghostfx'
           || nativeGraphRoute.kind === 'handfx'
           || nativeGraphRoute.kind === 'performer-world'
-          || nativeGraphRoute.kind === 'vj-crossfade';
+          || nativeGraphRoute.kind === 'vj-crossfade'
+          || nativeGraphRoute.kind === 'vj-mix';
         const routeState = this.nativeGraphRoutes.get(nativeGraphRoute.key) ?? {
           inFlight: false,
           seq: 0,
@@ -7821,6 +8288,51 @@ export class NativeRendererSync {
           routeState.lastVJCrossfadeTopologySig = topologySig;
           routeState.lastVJCrossfadeUniformSig = uniform.signature;
         }
+        let vjMixGraphOptions: Parameters<typeof buildVJMixGraph>[0] | null = null;
+        if (nativeGraphRoute.kind === 'vj-mix') {
+          const rawRows = Array.isArray(nativeGraphScaledParams?.vjmixRows)
+            ? nativeGraphScaledParams.vjmixRows as Array<{ layerId?: string; opacity?: number; blendMode?: string }>
+            : [];
+          const rows: VJMixRow[] = rawRows
+            .filter((row) => String(row?.layerId ?? '').length > 0)
+            .map((row) => ({
+              frameId: `layer-frame:${String(row.layerId)}`,
+              opacity: Number(row.opacity ?? 1),
+              blendMode: String(row.blendMode ?? 'normal'),
+            }));
+          if (!rows.length) {
+            installPluginGraph = false;
+          } else {
+            vjMixGraphOptions = {
+              outputSourceId: graphSource.id,
+              rows,
+              width,
+              height,
+              time: graphTime,
+              frameIndex: graphFrameIndex,
+            };
+            const topologySig = [
+              vjMixGraphOptions.outputSourceId,
+              ...rows.map((row) => row.frameId),
+              width,
+              height,
+            ].join(':');
+            const uniform = buildVJMixUniformUpdate(vjMixGraphOptions);
+            installPluginGraph = routeState.lastVJMixTopologySig !== topologySig;
+            if (!installPluginGraph && routeState.lastVJMixUniformSig !== uniform.signature) {
+              for (const entry of uniform.buffers) {
+                commands.push({
+                  type: 'update_native_graph_buffer',
+                  layer_id: layer.id,
+                  buffer_id: entry.bufferId,
+                  initial_b64: entry.initialB64,
+                });
+              }
+            }
+            routeState.lastVJMixTopologySig = topologySig;
+            routeState.lastVJMixUniformSig = uniform.signature;
+          }
+        }
         if (
           nativeGraphRoute.kind === 'handfx' &&
           nativeGraphScaledParams?.handfxCameraOn !== false &&
@@ -7833,6 +8345,10 @@ export class NativeRendererSync {
         const pluginGraph = nativeGraphRoute.kind === 'vj-crossfade'
           ? installPluginGraph && crossfadeGraphOptions
             ? buildVJCrossfadeGraph(crossfadeGraphOptions)
+            : null
+          : nativeGraphRoute.kind === 'vj-mix'
+          ? installPluginGraph && vjMixGraphOptions
+            ? buildVJMixGraph(vjMixGraphOptions)
             : null
           : pluginRoute
           ? buildNativePluginGraph({
@@ -7869,7 +8385,7 @@ export class NativeRendererSync {
                 effect: effectPass.effect,
                 amount: effectPass.amount,
                 mix: 1,
-                params: effectPass.params,
+                params: { ...effectPass.params, audioLevel: getVisualAudioSnapshot().level },
               })),
               width,
               height,
@@ -7879,7 +8395,7 @@ export class NativeRendererSync {
               seq: graphFrameIndex * 16 + 8,
             })
           : null;
-        if (nativeGraphRoute.kind !== 'vj-crossfade' || installPluginGraph) {
+        if ((nativeGraphRoute.kind !== 'vj-crossfade' && nativeGraphRoute.kind !== 'vj-mix') || installPluginGraph) {
           commands.push({
             type: 'set_native_graph_layer',
             layer_id: layer.id,
@@ -7971,7 +8487,13 @@ export class NativeRendererSync {
 
       // The core owns live cadence and renders every bound shader itself.
       // Electron only sends user-controlled uniforms when their source state changes.
-      const src2 = nativeSource.source;
+      // Resolve the layer's REAL content source, not the effect route's
+      // synthetic output (whose `source` is null). With an effect active,
+      // reading nativeSource.source here meant shader rebinds and ISF
+      // uniform updates never fired — switching shaders showed stale
+      // content until the effect was toggled off/on, and shader params
+      // froze the moment an effect was added.
+      const src2 = nativeGraphRoute?.inputSource?.source ?? nativeSource.source;
       if (src2?.shaderCode && layer.visible && (!prev || prev.sourceSig !== snap.sourceSig)) {
         const shaderId = `${src2.id}:${hashString(src2.shaderCode)}`;
         const shaderTime =
@@ -8010,6 +8532,41 @@ export class NativeRendererSync {
           }
         }
 
+        // ISF image inputs: resolve each picker ref to a native source id the
+        // core can map to a source-frame slot. Layer refs bind that layer's
+        // displayed frame; media refs bind the media source (decoded on
+        // demand for static images). Unresolvable refs are omitted -> the
+        // shader falls back to its own input frame.
+        const imageInputs: Record<string, string> = {};
+        if (src2.shaderImageInputs) {
+          for (const [inputName, ref] of Object.entries(src2.shaderImageInputs)) {
+            if (!ref || typeof ref !== 'object' || !ref.id) continue;
+            if (ref.type === 'layer') {
+              imageInputs[inputName] = `layer-frame:${ref.id}`;
+            } else if (ref.type === 'media') {
+              const item = get(mediaLibrary).find((media: MediaItem) => media.id === ref.id);
+              const mediaSource = item ? mediaItemToNativeLayerSource(item) : null;
+              if (mediaSource?.source) {
+                imageInputs[inputName] = mediaSource.source.id;
+                const decodeKey = `isf-image:${mediaSource.source.id}`;
+                if (
+                  !this.prefetchedSources.has(decodeKey) &&
+                  this.canUseNativeStaticImageDecode(mediaSource.source, mediaSource.sourceType)
+                ) {
+                  this.prefetchedSources.add(decodeKey);
+                  this.markNativeStaticImageFrameReady(mediaSource.source);
+                  commands.push({
+                    type: 'decode_media_source',
+                    source_id: mediaSource.source.id,
+                    uri: mediaSource.uri,
+                    source_type: mediaSource.sourceType,
+                  });
+                }
+              }
+            }
+          }
+        }
+
         const audioFields = ghostAudioCommandFieldsFromVisualAudio(visual);
         commands.push({
           type: 'update_isf_uniforms',
@@ -8035,6 +8592,7 @@ export class NativeRendererSync {
           float_inputs: floatInputs,
           point_inputs: pointInputs,
           color_inputs: colorInputs,
+          image_inputs: imageInputs,
         });
 
       }
@@ -8048,6 +8606,12 @@ export class NativeRendererSync {
     this.lastLayers.forEach((_snap, id) => {
       if (!current.has(id)) {
         this.nativePointCloudUploadSignatures.delete(id);
+        const splatState = this.nativeSplatState.get(id);
+        if (splatState) {
+          // A removed splat layer must not leave its texture video playing.
+          this.releaseNativeSplatTextureVideo(splatState);
+          this.nativeSplatState.delete(id);
+        }
         commands.push({
           type: 'remove_layer',
           layer_id: id,
@@ -8504,10 +9068,24 @@ export class NativeRendererSync {
       layer.layerShape.type !== 'rectangle' &&
       layer.layerShape.type !== 'line' &&
       layer.layerShape.type !== 'polyline';
+    // A webcam reads as a mirror unless the operator says otherwise — that is
+    // what everyone expects from a selfie feed, and what the WebGL build did.
+    // Default it here rather than trusting `mirrorX` to have been set: the
+    // tray and VJ paths do set it, but projects saved before that flag existed
+    // (and any other producer of a live source) would come through reversed.
+    // Still XORed with the layer's own Flip control, so ← → keeps working.
+    //
+    // Read this off the LAYER's source, not `nativeSource`: once an effect
+    // chain or graph route is active, `nativeSource` is the route's synthetic
+    // OUTPUT source, which carries neither `mirrorX` nor a live:// URI. Using
+    // it made a mirrored webcam flip the moment an effect was added.
+    const mirrorOwner = layer.source ?? nativeSource.source;
+    const mirrorSource = mirrorOwner?.mirrorX
+      ?? (!!mirrorOwner && nativeLiveSourceType(mirrorOwner) === 'webcam');
     const uvFlags: NativeVec4 = [
       shapeActive && layer.contentFit === 'fill' ? 0 : contentFitCode(layer.contentFit),
       quantizeNative(ratio),
-      !!layer.flipH !== !!nativeSource.source?.mirrorX ? 1 : 0,
+      !!layer.flipH !== !!mirrorSource ? 1 : 0,
       layer.flipV ? 1 : 0,
     ];
 
@@ -8627,17 +9205,73 @@ fn fs_main() -> @location(0) vec4<f32> {
     commands.push(...buildPointCloudFXNativePrecompileCommands());
     commands.push(...buildNativePluginPrecompileCommands());
     commands.push(...buildVJCrossfadePrecompileCommands());
+    commands.push(...buildVJMixPrecompileCommands());
     commands.push(...buildNativeEffectPassPrecompileCommands());
     await submitNativeRendererBatch({
       frame_id: ++this.frameId,
       commands,
     });
     this.nativeWgslStdlibWarmed = true;
+    void this.warmNativeEffectPassPipeline();
     const status = await getNativeRendererStatus().catch(() => null);
     if (status) {
       console.log(
         `[NativeRendererSync] native WGSL warm-up cache=${status.shader_cache_entries} compiled=${status.shader_precompile_compiled} failed=${status.shader_precompile_failed} dropped=${status.shader_precompile_dropped}`,
       );
+    }
+  }
+
+  /** Build one real effect-pass pipeline at startup.
+   *
+   *  `precompile_shader` only PARSES the effect-pass module (naga front
+   *  end) — Metal's expensive MSL translation + pipeline compile happens at
+   *  first `queue_compute_graph`, which is why the first effect a user
+   *  added stalled the output for seconds and then "snapped in". All 184
+   *  effects share one module and one entry (per-effect behaviour is a
+   *  uniform code), so warming a single 16px brightness chain compiles the
+   *  pipeline every standard effect chain reuses. History-buffer effects
+   *  (motion-trails etc.) have a different binding layout and still pay a
+   *  smaller first-use cost. */
+  private async warmNativeEffectPassPipeline() {
+    if (!this.running) return;
+    if (
+      !this.supportsNativeFeature('native_effect_pass_manifest') ||
+      !this.supportsNativeFeature('compute_graph_texture_sampling') ||
+      !this.supportsNativeFeature('compute_graph_source_frame_target')
+    ) {
+      return;
+    }
+    try {
+      const size = 16;
+      const rgba = new Uint8ClampedArray(size * size * 4);
+      for (let i = 3; i < rgba.length; i += 4) rgba[i] = 255;
+      const commands: RendererCommand[] = [{
+        type: 'upload_source_frame',
+        source_id: 'warmup:effect-pass:src',
+        seq: 1,
+        width: size,
+        height: size,
+        rgba_b64: encodeAtlasBase64(rgba),
+      } as unknown as RendererCommand];
+      const graph = buildNativeEffectPassChainGraph({
+        sourceId: 'warmup:effect-pass:src',
+        targetSourceId: 'warmup:effect-pass:out',
+        effects: [{ effect: 'brightness' as NativeEffectPassId, amount: 1, mix: 1, params: {} }],
+        width: size,
+        height: size,
+        time: 0,
+        frameDelta: 1 / 60,
+        frameIndex: 0,
+        seq: 1,
+      });
+      commands.push({
+        type: 'queue_compute_graph',
+        ...(graph.config as unknown as Record<string, unknown>),
+      } as unknown as RendererCommand);
+      await submitNativeRendererBatch({ frame_id: ++this.frameId, commands });
+      console.log('[NativeRendererSync] effect-pass pipeline warmed at startup');
+    } catch (err) {
+      console.warn('[NativeRendererSync] effect-pass warm-up failed (first effect will compile lazily):', err);
     }
   }
 

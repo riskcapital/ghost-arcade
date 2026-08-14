@@ -10,14 +10,15 @@ import type {
   LightPaintingStroke,
 } from '$lib/types';
 
-export const LIGHT_PAINTING_NATIVE_SHADER_ID = 'light-painting/render-v7';
+export const LIGHT_PAINTING_NATIVE_SHADER_ID = 'light-painting/render-v8';
 
 export const LIGHT_PAINTING_MAX_STROKES = 16;
-export const LIGHT_PAINTING_STROKE_VEC4S = 9;
+export const LIGHT_PAINTING_STROKE_VEC4S = 10;
 export const LIGHT_PAINTING_MAX_POINTS = 640;
-// header0-2 + bg + fx0-fx4 (layer FX: pulse/strobe, breathe, wave,
-// sparkle, hue shift, flow pulse, afterglow, echo, motion blur).
-export const LIGHT_PAINTING_HEADER_VEC4S = 9;
+// header0-2 + bg + fx0-fx5 (layer FX: pulse/strobe, breathe, wave,
+// sparkle, hue shift, flow pulse, afterglow, echo, motion blur,
+// ping-pong hold).
+export const LIGHT_PAINTING_HEADER_VEC4S = 10;
 // Hierarchical culling: every 8 points share a chunk bbox so the
 // per-pixel segment scan can skip whole groups it can't be near.
 export const LIGHT_PAINTING_CHUNK_POINTS = 8;
@@ -35,6 +36,13 @@ export const NATIVE_LIGHT_PAINTING_BRUSHES = [
   'vortex', 'nebula', 'kaleido', 'ink', 'crystal', 'aurora', 'bubbles',
   'orbit', 'helix',
 ] as const satisfies readonly LightPaintingBrushType[];
+
+// Canonical playback-mode enums (also consumed by the layer-param audit's
+// probe pool — the packer compares these as bare strings below).
+export const LIGHT_PAINTING_LOOP_MODE_LIST = ['forward', 'reverse', 'pingpong', 'once'];
+export const LIGHT_PAINTING_SEQUENCE_MODE_LIST = [
+  'recorded', 'random', 'alternating', 'bottomUp', 'topDown', 'centerOut', 'outsideIn',
+];
 
 const BRUSH_CODES: Record<string, number> = Object.fromEntries(
   NATIVE_LIGHT_PAINTING_BRUSHES.map((brush, index) => [brush, index]),
@@ -140,7 +148,7 @@ export interface LightPaintingNativeGraphOptions {
   includeSnapshot?: boolean;
 }
 
-type PackableStroke = Pick<LightPaintingStroke, 'points' | 'brush'> & { visible?: boolean };
+type PackableStroke = Pick<LightPaintingStroke, 'points' | 'brush'> & { visible?: boolean; duration?: number };
 
 export function buildLightPaintingNativeComputeGraph(options: LightPaintingNativeGraphOptions) {
   const width = Math.max(2, Math.round(options.width || 1920));
@@ -163,7 +171,7 @@ export function buildLightPaintingNativeComputeGraph(options: LightPaintingNativ
 
   let pointCursor = 0;
   let packedCount = 0;
-  const packedStrokes: Array<{ base: number; center: { x: number; y: number }; isLive: boolean }> = [];
+  const packedStrokes: Array<{ base: number; center: { x: number; y: number }; isLive: boolean; durSec: number }> = [];
   const chunkMinX = new Float32Array(LIGHT_PAINTING_MAX_CHUNKS).fill(Infinity);
   const chunkMinY = new Float32Array(LIGHT_PAINTING_MAX_CHUNKS).fill(Infinity);
   const chunkMaxX = new Float32Array(LIGHT_PAINTING_MAX_CHUNKS).fill(-Infinity);
@@ -264,16 +272,22 @@ export function buildLightPaintingNativeComputeGraph(options: LightPaintingNativ
     data[e + 14] = jitter;
     data[e + 15] = speed;
     data[e + 16] = clamp(finite(brush.opacity, 1), 0, 1);
-    data[e + 17] = 0.85; // pressure response
+    data[e + 17] = brush.pressureSensitive ? 0.85 : 0; // pressure response (legacy: width follows pressure only when enabled)
     data[e + 18] = (packedCount * 37.73) % 17; // deterministic seed
-    data[e + 19] = 0.65; // end taper
+    data[e + 19] = brush.taper !== false ? 0.65 : 0; // end taper — gated on brush.taper like the legacy stamp fade
     // Snake mode turns the draw animation into a travelling segment of
     // light: the head-size slider sets the visible fraction and Snake
     // Speed scales the travel rate.
     const snakeAmount = clamp(finite(content.snake, 0), 0, 0.98);
     const snakeOn = !isLive && content.isPlaying && snakeAmount > 0.005;
     data[e + 20] = !isLive && content.isPlaying ? 1 : 0;
-    data[e + 21] = Math.max(0.05, finite(content.drawSpeed, 1)) *
+    // Per-stroke draw timing: legacy plays each stroke over
+    // stroke.duration / drawSpeed. The shader's base cycle is 4.5s, so
+    // fold (4.5 / durationSec) into the rate. Missing/zero durations
+    // keep the historical 4.5s cycle.
+    const durMs = finite(stroke.duration, 0);
+    const durationSec = durMs > 1 ? clamp(durMs / 1000, 0.15, 60) : 4.5;
+    data[e + 21] = Math.max(0.05, finite(content.drawSpeed, 1)) * (4.5 / durationSec) *
       (snakeOn ? Math.max(0.1, finite(content.snakeSpeed, 1)) : 1);
     data[e + 22] = content.loopMode === 'once' ? (snakeOn ? 1 : 0) : content.loopMode === 'pingpong' ? 2 : 1;
     data[e + 23] = 0;
@@ -282,15 +296,24 @@ export function buildLightPaintingNativeComputeGraph(options: LightPaintingNativ
     data[e + 24] = isLive ? 1 : content.isPlaying ? playbackPosition : pausedProgress;
     data[e + 25] = snakeOn ? 1 - snakeAmount : clamp(finite(content.trailLength, 0.3), 0, 1);
     data[e + 26] = content.loopMode === 'reverse' ? 1 : 0;
-    data[e + 27] = 0;
+    data[e + 27] = clamp(finite(brush.taperCurve, 1), 0.25, 4); // taper curve exponent
     // Render reach: how far a pixel can be from the path and still get
     // visible energy. Falling/rising particle brushes travel further.
     let reach = widthPx * (4 + glow * 3) + 90;
     if (brushCode === 16 || brushCode === 27) reach += 240;
     data[e + 28] = Math.max(1, cum);
     data[e + 29] = reach;
-    data[e + 30] = 0;
-    data[e + 31] = 0;
+    data[e + 30] = clamp(finite(brush.taperStart, 1), 0, 2); // width mult at stroke start
+    data[e + 31] = clamp(finite(brush.taperEnd, 1), 0, 2);   // width mult at stroke end
+    // e8 — GPU-brush family knobs mapped onto the procedural brushes.
+    data[e + 36] = finite(brush.gpuSpiralSpeed, 1.2);
+    data[e + 37] = finite(brush.gpuSpiralPitch, 8);
+    data[e + 38] = clamp(finite(brush.gpuSpiralRadius, 0.025), 0.005, 0.2);
+    data[e + 39] = brush.type === 'water' ? clamp(finite(brush.gpuWaterGravity, 1), 0, 2)
+      : brush.type === 'smoke' ? clamp(finite(brush.gpuSmokeRise, 0.5), 0.05, 1.5)
+      : (brush.type === 'firefly' || brush.type === 'sap-flow')
+        ? clamp(finite(brush.gpuParticleDrift, 0.05), 0.005, 0.3)
+        : 0;
     const b = (HEADER_VEC4S + packedCount * LIGHT_PAINTING_STROKE_VEC4S + 8) * 4;
     data[b] = minX - reach;
     data[b + 1] = minY - reach;
@@ -306,6 +329,7 @@ export function buildLightPaintingNativeComputeGraph(options: LightPaintingNativ
       base: e,
       center: { x: cxSum / pts.length, y: cySum / pts.length },
       isLive,
+      durSec: durationSec,
     });
     packedCount += 1;
   }
@@ -315,7 +339,10 @@ export function buildLightPaintingNativeComputeGraph(options: LightPaintingNativ
   const animatedStrokes = packedStrokes.filter((stroke) => !stroke.isLive);
   if (animatedStrokes.length > 1) {
     const drawSpeed = Math.max(0.05, finite(content.drawSpeed, 1));
-    const drawDur = 4.5 / (drawSpeed * globalSpeed);
+    // Mirror the per-stroke duration packing (mean across animated
+    // strokes — the shader assumes uniform slot lengths).
+    const meanDurSec = animatedStrokes.reduce((sum, s) => sum + s.durSec, 0) / animatedStrokes.length;
+    const drawDur = meanDurSec / (drawSpeed * globalSpeed);
     const cycleLen = Math.max(0.001, (drawDur + staggerDelaySec) * packedCount);
     const cycleIndex = content.loopMode === 'once' ? 0 : Math.floor(time / cycleLen);
     const slots = lightPaintingSequenceSlots(
@@ -380,6 +407,8 @@ export function buildLightPaintingNativeComputeGraph(options: LightPaintingNativ
   data[33] = clamp(finite(content.echoOffset, 0.05), 0, 0.2);
   data[34] = clamp(finite(content.echoDecay, 0.3), 0, 1);
   data[35] = gate(clamp(finite(content.motionBlur, 0), 0, 1));
+  // fx5 — ping-pong hold (seconds at each end of the bounce).
+  data[36] = Math.max(0, finite(content.pingPongHold, 0)) / 1000;
 
   const sourceId = String(options.sourceId || 'light-painting-native-source');
   const uniformId = `light-painting:${sourceId.replace(/[^a-zA-Z0-9:_-]+/g, '_')}:uniform`;
@@ -440,6 +469,7 @@ struct PaintData {
   fx2: vec4<f32>, // waveFreq, waveSpeed, sparkle, multiColorGlow
   fx3: vec4<f32>, // flowPulse, flowSpeed, flowWidth, afterglow
   fx4: vec4<f32>, // echo, echoOffset, echoDecay, motionBlur
+  fx5: vec4<f32>, // pingPongHoldSec, spare, spare, spare
   strokes: array<vec4<f32>, ${LIGHT_PAINTING_MAX_STROKES * LIGHT_PAINTING_STROKE_VEC4S}>,
   points: array<vec4<f32>, ${LIGHT_PAINTING_MAX_POINTS}>,
   chunks: array<vec4<f32>, ${LIGHT_PAINTING_MAX_CHUNKS}>,
@@ -529,7 +559,8 @@ struct VsOut { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32
     let e4 = paint.strokes[base + 4]; // opacity, pressureAmt, seed, taper
     let e5 = paint.strokes[base + 5]; // animEnabled, drawSpeed, loopMode, seqSlot
     let e6 = paint.strokes[base + 6]; // drawProgress, trailLength, reverse, phase
-    let e7 = paint.strokes[base + 7]; // totalLen
+    let e7 = paint.strokes[base + 7]; // totalLen, reach, taperStart, taperEnd
+    let e8 = paint.strokes[base + 9]; // gpuSpiralSpeed, gpuSpiralPitch, gpuSpiralRadius, gpuAux
     let brush = i32(e0.x + 0.5);
     let bw = max(0.75, e0.y);
     let point_start = i32(e0.z + 0.5);
@@ -622,12 +653,13 @@ struct VsOut { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32
     let s = best_s;
     let sd = d * best_side;
     var s_norm = clamp(s / total_len, 0.0, 1.0);
+    let s_prog = s_norm; // un-reversed progress for the width profile
     if (e6.z > 0.5) { s_norm = 1.0 - s_norm; }
 
     // ── Draw animation window (playback on the core clock) ──
     var vis = 1.0;
     if (e5.x > 0.5) {
-      let raw = t * e5.y * global_speed * 0.22 + e6.x + e6.w;
+      let raw = t * e5.y * global_speed * 0.22 + e6.x;
       if (paint.header2.z > 0.5) {
         // Sequential stagger: strokes reveal one after another in the
         // slot order packed by the CPU (Sequence Order modes).
@@ -647,7 +679,18 @@ struct VsOut { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32
         var prog = fract(raw);
         let loop_mode = i32(e5.z + 0.5);
         if (loop_mode == 0) { prog = clamp(raw, 0.0, 1.0); }
-        else if (loop_mode == 2) { prog = 1.0 - abs(1.0 - 2.0 * fract(raw * 0.5)); }
+        else if (loop_mode == 2) {
+          // Ping-pong with hold: pause at the fully-drawn and empty ends
+          // (legacy pingPongHold). Hold is converted from seconds into
+          // progress units via the stroke's own draw rate.
+          let hold = max(paint.fx5.x, 0.0) * e5.y * global_speed * 0.22;
+          let period = 2.0 + 2.0 * hold;
+          let local = raw - floor(raw / period) * period;
+          if (local < 1.0) { prog = local; }
+          else if (local < 1.0 + hold) { prog = 1.0; }
+          else if (local < 2.0 + hold) { prog = (2.0 + hold) - local; }
+          else { prog = 0.0; }
+        }
         if (s_norm > prog) { vis = 0.0; }
         else if (e6.y > 0.001 || paint.fx3.w > 0.001) {
           let window = max(0.03, 1.0 - e6.y);
@@ -664,9 +707,16 @@ struct VsOut { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32
     }
     if (vis <= 0.001) { continue; }
 
-    // Pressure + end taper drive the working width.
-    let taper = min(smoothstep(0.0, e4.w * 60.0, s), smoothstep(0.0, e4.w * 60.0, total_len - s));
+    // Pressure + end taper drive the working width. e4.w == 0 means the
+    // brush's taper toggle is off (guard avoids smoothstep(0, 0, x)).
+    var taper = 1.0;
+    if (e4.w > 0.001) {
+      taper = min(smoothstep(0.0, e4.w * 60.0, s), smoothstep(0.0, e4.w * 60.0, total_len - s));
+    }
     var w = bw * mix(1.0, best_pressure, e4.y) * mix(0.55, 1.0, taper);
+    // taperStart/taperEnd width profile with taperCurve power (ported
+    // from the retired compute-particle pipeline's taper_curve vec4).
+    w = w * max(0.05, mix(e7.z, e7.w, pow(s_prog, max(0.25, e6.w))));
     // Flow pulse — a luminous swell travelling along the stroke.
     if (paint.fx3.x > 0.001) {
       let head = fract(t * paint.fx3.y * 0.25 + seed * 0.0588);
@@ -741,7 +791,7 @@ struct VsOut { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32
       out_a = energy;
       additive = brush == 5;
     } else if (brush == 6) { // smoke — curling wisps
-      let drift = t * speed * 0.7;
+      let drift = t * speed * 1.4 * clamp(e8.w, 0.05, 1.5); // gpuSmokeRise (0.5 default => legacy 0.7 rate)
       let n = lp_fbm(vec2<f32>(s * 0.012 + drift * 0.3, sd * 0.02 - drift));
       let n2 = lp_fbm(vec2<f32>(s * 0.03 - drift * 0.2, sd * 0.05 - drift * 1.7) + vec2<f32>(seed));
       let env = w * (2.5 + softness * 3.5);
@@ -791,7 +841,8 @@ struct VsOut { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32
       out_a = body * (0.4 + glow * 0.15);
       additive = false;
     } else if (brush == 13) { // spiral — candy wrap bands
-      let phase = s * (0.06 + speed * 0.04) - t * speed * 4.0 + sd * (3.14159 / max(w, 1.0));
+      let sp_pitch = max(0.25, e8.y * 0.125); // gpuSpiralPitch, 8 = 1x
+      let phase = s * (0.06 + speed * 0.04) * sp_pitch - t * speed * 3.33333 * e8.x + sd * (3.14159 / max(w, 1.0));
       let band = pow(0.5 + 0.5 * sin(phase), 6.0);
       let body = 1.0 - smoothstep(w * 0.9, w * 1.15, d);
       out_rgb = mix(color2.rgb, color.rgb, band) + vec3<f32>(band * 0.3);
@@ -804,7 +855,7 @@ struct VsOut { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32
         let cell = floor(s / spacing) + f32(k);
         let h1 = lp_hash(cell + seed); let h2 = lp_hash(cell * 3.1 + seed);
         let cycle = fract(t * speed * 0.22 + h1);
-        let drift = cycle * w * (2.0 + h2 * 3.0);
+        let drift = cycle * w * (2.0 + h2 * 3.0) * clamp(e8.w * 20.0, 0.1, 6.0); // gpuParticleDrift, 0.05 = 1x
         let ang = h2 * 6.28318 + cycle * 1.5;
         let center = vec2<f32>((cell + 0.5) * spacing, 0.0) + vec2<f32>(cos(ang), sin(ang)) * drift;
         let pd = length(vec2<f32>(s, sd) - center);
@@ -821,7 +872,8 @@ struct VsOut { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32
         let head = fract(t * speed * 0.14 + f32(k) * 0.2 + seed * 0.05) * total_len;
         let rel = s - head;
         let drop = lp_gauss(length(vec2<f32>(max(rel, rel * 0.35), sd)), w * 0.6);
-        let trail_g = select(0.0, exp(rel * 0.02) * 0.4, rel < 0.0 && rel > -80.0);
+        let drift_scale = clamp(e8.w * 20.0, 0.1, 6.0); // gpuParticleDrift, 0.05 = 1x
+        let trail_g = select(0.0, exp(rel * 0.02 / drift_scale) * 0.4, rel < 0.0 && rel > -80.0 * drift_scale);
         energy = max(energy, drop + trail_g * lp_gauss(sd, w * 0.4));
       }
       let vein = lp_gauss(d, w * 0.28) * 0.35;
@@ -836,7 +888,7 @@ struct VsOut { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32
         let cell = floor((s + dx) / spacing) + f32(k);
         let h1 = lp_hash(cell + seed);
         let cycle = fract(t * speed * 0.5 + h1);
-        let fall = cycle * cycle * (60.0 + h1 * 120.0);
+        let fall = cycle * cycle * (60.0 + h1 * 120.0) * clamp(e8.w, 0.0, 2.0); // gpuWaterGravity
         let pd = length(vec2<f32>(s + dx - (cell + 0.5) * spacing, dy - fall));
         let stretch = lp_gauss(pd, 1.4 + cycle * 1.2);
         energy = max(energy, stretch * (1.0 - cycle * 0.5));
@@ -994,10 +1046,10 @@ struct VsOut { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32
         let cell = floor(s / spacing) + f32(k);
         let h1 = lp_hash(cell + seed);
         let cx = (cell + 0.5) * spacing;
-        let radius = w * (1.35 + h1 * 0.3);
+        let radius = w * (1.35 + h1 * 0.3) * clamp(e8.z * 40.0, 0.2, 8.0); // gpuSpiralRadius, 0.025 = 1x
         // Progressive phase along the stroke winds the wrap like a helix;
         // trail samples smear each particle into a perpendicular streak.
-        let theta = t * speed * 4.2 + cell * 0.85 + h1 * 0.6;
+        let theta = t * speed * 3.5 * e8.x + cell * 0.85 + h1 * 0.6; // gpuSpiralSpeed, 1.2 = legacy 4.2 rate
         let pr = max(1.3, w * 0.17);
         for (var j = 0; j < 7; j = j + 1) {
           let phi = theta - f32(j) * 0.16;

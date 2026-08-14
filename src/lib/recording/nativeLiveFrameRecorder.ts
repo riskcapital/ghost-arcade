@@ -35,6 +35,10 @@ export interface NativeLiveFrameRecorderOptions {
   onDurationUpdate?: (seconds: number) => void;
   onComplete?: () => void;
   onError?: (error: Error) => void;
+  /** Runs after the MP4 is finalized on disk but before it is registered
+   *  in the media library — the hook the audio-sidecar mux uses so the
+   *  library entry already carries its audio track. */
+  finalizeOutput?: (outputPath: string) => Promise<void> | void;
 }
 
 export interface NativeRendererLiveFrameRecorderOptions {
@@ -59,6 +63,10 @@ export interface NativeRendererLiveFrameRecorderOptions {
   onDurationUpdate?: (seconds: number) => void;
   onComplete?: () => void;
   onError?: (error: Error) => void;
+  /** Runs after the MP4 is finalized on disk but before it is registered
+   *  in the media library — the hook the audio-sidecar mux uses so the
+   *  library entry already carries its audio track. */
+  finalizeOutput?: (outputPath: string) => Promise<void> | void;
 }
 
 function delay(ms: number): Promise<void> {
@@ -98,8 +106,18 @@ async function saveMp4ToLibrary(
   session: NativeMp4FrameEncoderSession,
   frames: number,
   namePrefix: string,
+  finalizeOutput?: (outputPath: string) => Promise<void> | void,
 ): Promise<{ outputPath: string; name: string }> {
   const encoded = await finishNativeMp4FrameEncoder(session);
+  if (finalizeOutput) {
+    try {
+      await finalizeOutput(encoded.outputPath);
+    } catch (err) {
+      // The video is already safe on disk; a failed finalize (audio mux)
+      // degrades to a silent recording rather than losing the capture.
+      console.warn('[NativeLiveRec] finalizeOutput failed:', err);
+    }
+  }
   const url = pathToFileUrl(encoded.outputPath);
   const durationSeconds = frames / Math.max(1, session.fps);
   const thumbnail = await thumbnailFromVideoUrl(url, Math.min(2, durationSeconds * 0.4));
@@ -249,7 +267,7 @@ export async function startNativeLiveFrameRecording(
         await cancelNativeMp4FrameEncoder(session);
         throw new Error('Recording stopped before any frames were captured.');
       }
-      await saveMp4ToLibrary(session, frameIndex, namePrefix);
+      await saveMp4ToLibrary(session, frameIndex, namePrefix, options.finalizeOutput);
       options.onComplete?.();
     } catch (err) {
       await cancelNativeMp4FrameEncoder(session);
@@ -447,7 +465,7 @@ export async function startNativeRendererLiveFrameRecording(
         await cancelNativeMp4FrameEncoder(session);
         throw new Error('Recording stopped before any native renderer frames were captured.');
       }
-      const saved = await saveMp4ToLibrary(session, frameIndex, namePrefix);
+      const saved = await saveMp4ToLibrary(session, frameIndex, namePrefix, options.finalizeOutput);
       await restoreOnce();
       if (options.promptSave) await promptSaveMp4(saved.outputPath, saved.name);
       options.onComplete?.();

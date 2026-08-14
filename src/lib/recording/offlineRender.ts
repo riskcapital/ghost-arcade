@@ -869,8 +869,10 @@ function createOfflineRenderStore() {
   }
 
   async function start(settings: OfflineRenderSettings): Promise<boolean> {
-    if (!engineRef || !canvasRef) {
-      setStatus('error', 'Render engine not ready');
+    // The WebGL engine only exists in non-native builds. Native capture
+    // renders + reads frames entirely in the core, so it must not require it.
+    if ((!engineRef || !canvasRef) && settings.captureBackend !== 'native') {
+      setStatus('error', 'Render engine not ready — this build renders natively; use the native capture backend.');
       return false;
     }
     const engine = engineRef;
@@ -889,10 +891,12 @@ function createOfflineRenderStore() {
 
     // Save state to restore after render so the live editor returns
     // to exactly how it was. Both engine size + the time overrides.
-    const restoreWidth  = (engine as any).width  ?? canvas.width;
-    const restoreHeight = (engine as any).height ?? canvas.height;
-    const restoreManual = engine.manualTime;
-    const restoreCanvasVisibility = canvas.style.visibility;
+    // Without an engine (native shell) the output size to restore comes
+    // from the core's own status just before we resize it.
+    let restoreWidth  = (engine as any)?.width  ?? canvas?.width ?? settings.width;
+    let restoreHeight = (engine as any)?.height ?? canvas?.height ?? settings.height;
+    const restoreManual = engine ? engine.manualTime : null;
+    const restoreCanvasVisibility = canvas?.style.visibility ?? '';
 
     let ffmpeg: FFmpeg | null = null;
     let frameTarget: FrameSequenceTarget | null = null;
@@ -925,7 +929,7 @@ function createOfflineRenderStore() {
     if (cancelRequested) { _finish('cancelled'); return false; }
 
     setStatus('rendering');
-    canvas.style.visibility = 'hidden';
+    if (canvas) canvas.style.visibility = 'hidden';
     const segmentFrameCount = outputMode === 'frames' || useNativeMp4Encoder
       ? totalFrames
       : getOfflineSegmentFrameCount(settings);
@@ -937,9 +941,11 @@ function createOfflineRenderStore() {
       // Resize the engine to the offline resolution. Live editor will
       // briefly show this size; restored at the end. The engine.resize
       // path rebuilds all render targets cleanly.
-      engine.resize(settings.width, settings.height);
-      canvas.width = settings.width;
-      canvas.height = settings.height;
+      engine?.resize(settings.width, settings.height);
+      if (canvas) {
+        canvas.width = settings.width;
+        canvas.height = settings.height;
+      }
       if (settings.captureBackend === 'native') {
         const caps = await getNativeRendererCapabilities();
         if (
@@ -948,6 +954,13 @@ function createOfflineRenderStore() {
           !caps.implemented_methods?.includes('export_frame_snapshot')
         ) {
           throw new Error('Native frame capture is not available in this renderer build.');
+        }
+        if (!engine) {
+          // No WebGL engine to read the pre-render size from; the core's
+          // status is the ground truth for what to restore.
+          const preStatus = await getNativeRendererStatus();
+          if (preStatus.output_width > 0) restoreWidth = preStatus.output_width;
+          if (preStatus.output_height > 0) restoreHeight = preStatus.output_height;
         }
         await submitNativeRendererCommands([
           { type: 'set_output', width: settings.width, height: settings.height, refresh_hz: settings.fps },
@@ -995,7 +1008,7 @@ function createOfflineRenderStore() {
         // clock. Engine = shader iTime; ISF = ISF shaders' TIME;
         // stage effects = per-slice brightness; keyframes + sequencer
         // = parameter / opacity overrides.
-        engine.manualTime = virtualTime;
+        if (engine) engine.manualTime = virtualTime;
         setISFManualTime(virtualTime);
           setStageEffectsManualTime(virtualTime);
           keyframeTimeline.seek(virtualTime);
@@ -1024,10 +1037,12 @@ function createOfflineRenderStore() {
             if (nativeFrameCaptureActive) {
               await writeNativeRendererJpegSequenceFrame(nativeJpegSequence, globalFrame, virtualTime);
             } else {
+              if (!engine) throw new Error('WebGL frame capture needs the render engine');
               const pixels = (engine as any).readCompositePixels() as { width: number; height: number; data: Uint8Array };
               await writeNativeJpegSequenceFrame(nativeJpegSequence, globalFrame, pixels);
             }
           } else {
+            if (!engine) throw new Error('WebGL frame capture needs the render engine');
             const jpegBytes = await captureFrameJPEG(engine, 0.92);
             const frameName = `${frameBaseName}_${String(globalFrame).padStart(6, '0')}.jpg`;
             await writeFrameTargetBytes(frameTarget, frameName, jpegBytes);
@@ -1037,6 +1052,7 @@ function createOfflineRenderStore() {
             if (nativeFrameCaptureActive) {
               await writeNativeRendererMp4Frame(nativeMp4FrameEncoder, globalFrame, virtualTime);
             } else {
+              if (!engine) throw new Error('WebGL frame capture needs the render engine');
               const pixels = (engine as any).readCompositePixels() as { width: number; height: number; data: Uint8Array };
               await writeNativeMp4Frame(nativeMp4FrameEncoder, globalFrame, pixels);
             }
@@ -1044,9 +1060,12 @@ function createOfflineRenderStore() {
             if (!ffmpeg) throw new Error('FFmpeg encoder not ready');
             // Browser fallback: compressed JPEG intermediates keep
             // ffmpeg.wasm below its ~2GB heap limit.
+            if (!engine && !(nativeJpegFrameEncoder && nativeFrameCaptureActive)) {
+              throw new Error('WebGL frame capture needs the render engine');
+            }
             const jpegBytes = nativeJpegFrameEncoder && nativeFrameCaptureActive
               ? await encodeNativeRendererJpegFrame(nativeJpegFrameEncoder, globalFrame, virtualTime)
-              : await captureFrameJPEG(engine, 0.92);
+              : await captureFrameJPEG(engine!, 0.92);
             const frameName = `frame_${String(localFrame).padStart(6, '0')}.jpg`;
             await ffmpeg.writeFile(frameName, jpegBytes);
           }
@@ -1242,12 +1261,12 @@ function createOfflineRenderStore() {
           { type: 'set_output', width: restoreWidth, height: restoreHeight, refresh_hz: settings.fps },
         ]).catch(() => {});
       }
-      engine.manualTime = restoreManual;
+      if (engine && restoreManual !== null) engine.manualTime = restoreManual;
       getActiveNativeRendererSync()?.setRenderClock(null);
-      canvas.style.visibility = restoreCanvasVisibility;
+      if (canvas) canvas.style.visibility = restoreCanvasVisibility;
       setISFManualTime(null);
       setStageEffectsManualTime(null);
-      try { engine.resize(restoreWidth, restoreHeight); } catch (e) { /* nothing we can do */ }
+      try { engine?.resize(restoreWidth, restoreHeight); } catch (e) { /* nothing we can do */ }
     }
   }
 

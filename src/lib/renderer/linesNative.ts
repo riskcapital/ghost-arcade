@@ -11,7 +11,7 @@ export const LINES_NATIVE_SHADER_ID = 'lines/render';
 export const LINES_MAX_ELEMENTS = 8;
 export const LINES_ELEMENT_VEC4S = 9;
 export const LINES_MAX_POINTS = 384;
-const HEADER_VEC4S = 4;
+const HEADER_VEC4S = 5;
 const POINTS_OFFSET_VEC4 = HEADER_VEC4S + LINES_MAX_ELEMENTS * LINES_ELEMENT_VEC4S;
 const TOTAL_VEC4S = POINTS_OFFSET_VEC4 + LINES_MAX_POINTS;
 export const LINES_UNIFORM_BYTES = TOTAL_VEC4S * 16;
@@ -21,10 +21,19 @@ const STROKE_CODES: Record<LineStroke['type'], number> = {
   snake: 7, multiTail: 8, pulse: 9, scanner: 10, rainbow: 11, laser: 12, pipe: 13,
 };
 
-const LOOP_CODES: Record<string, number> = { once: 0, loop: 1, pingpong: 2, continuous: 3 };
-const EASE_CODES: Record<string, number> = { linear: 0, easeIn: 1, easeOut: 2, easeInOut: 3 };
-const BLEND_CODES: Record<string, number> = { normal: 0, add: 1, multiply: 2, screen: 3 };
-const MOTION_CODES: Record<LineMotionFxMode, number> = { none: 0, wave: 1, breathe: 2, shimmer: 3, spin: 4, orbit: 5, audioPulse: 6 };
+// Canonical control enums (index = packed code; the arrays also feed the
+// layer-param audit's enum probe pool).
+export const LINES_LOOP_MODE_LIST = ['once', 'loop', 'pingpong', 'continuous'];
+export const LINES_EASING_LIST = ['linear', 'easeIn', 'easeOut', 'easeInOut'];
+export const LINES_BLEND_MODE_LIST = ['normal', 'add', 'multiply', 'screen'];
+export const LINES_MOTION_FX_LIST = ['none', 'wave', 'breathe', 'shimmer', 'spin', 'orbit', 'audioPulse'];
+export const LINES_STAGGER_MODE_LIST = ['simultaneous', 'sequential', 'cascade', 'solo', 'random', 'wave'];
+const codeMap = (list: string[]): Record<string, number> =>
+  Object.fromEntries(list.map((key, i) => [key, i]));
+const LOOP_CODES = codeMap(LINES_LOOP_MODE_LIST);
+const EASE_CODES = codeMap(LINES_EASING_LIST);
+const BLEND_CODES = codeMap(LINES_BLEND_MODE_LIST);
+const MOTION_CODES = codeMap(LINES_MOTION_FX_LIST) as Record<LineMotionFxMode, number>;
 
 function finite(value: unknown, fallback: number): number {
   const n = Number(value);
@@ -338,10 +347,14 @@ export function buildLinesNativeComputeGraph(options: LinesNativeGraphOptions) {
   data[9] = Math.max(0.05, finite(content.globalDrawSpeed, 1));
   data[10] = String(content.staggerMode ?? 'simultaneous') === 'sequential' ? 1 : 0;
   data[11] = Math.max(0, finite(content.staggerDelay, 200)) / 1000;
-  data[12] = finite(bg[0], 0);
-  data[13] = finite(bg[1], 0);
-  data[14] = finite(bg[2], 0);
-  data[15] = finite(bg[3], 0);
+  data[12] = Math.max(0, Math.min(1, finite(content.afterglow, 0)));
+  data[13] = Math.max(1, Math.round(finite(content.waveWindowSize, 3)));
+  data[14] = Math.max(0, LINES_STAGGER_MODE_LIST.indexOf(String(content.staggerMode ?? 'simultaneous')));
+  data[15] = 0;
+  data[16] = finite(bg[0], 0);
+  data[17] = finite(bg[1], 0);
+  data[18] = finite(bg[2], 0);
+  data[19] = finite(bg[3], 0);
 
   const sourceId = String(options.sourceId || 'lines-native-source');
   const uniformPrefix = String(options.uniformPrefix || 'lines');
@@ -406,7 +419,8 @@ export const LINES_NATIVE_WGSL = /* wgsl */`
 struct LinesData {
   header0: vec4<f32>, // width, height, time, delta
   header1: vec4<f32>, // elementCount, bloom, bass, treble
-  header2: vec4<f32>, // beat, globalSpeed, 0, 0
+  header2: vec4<f32>, // beat, globalSpeed, sequentialFlag, staggerDelay
+  header3: vec4<f32>, // afterglow, waveWindow, staggerMode, 0
   bg: vec4<f32>,
   elements: array<vec4<f32>, ${LINES_MAX_ELEMENTS * LINES_ELEMENT_VEC4S}>,
   points: array<vec4<f32>, ${LINES_MAX_POINTS}>,
@@ -474,6 +488,7 @@ fn fs_lines(in: VsOut) -> @location(0) vec4<f32> {
   let treble = lines.header1.w;
   let beat = lines.header2.x;
   let global_speed = lines.header2.y;
+  let afterglow = lines.header3.x;
   let p = in.uv * res;
 
   var col = lines.bg.rgb * lines.bg.a;
@@ -578,7 +593,7 @@ fn fs_lines(in: VsOut) -> @location(0) vec4<f32> {
         } else {
           let trail = e5.y;
           if (trail > 0.001) {
-            let window = max(0.03, 1.0 - trail);
+            let window = max(0.03, 1.0 - trail) * (1.0 + afterglow * 3.0);
             vis = 1.0 - clamp((prog - s_norm) / window, 0.0, 1.0);
           }
         }
@@ -600,7 +615,7 @@ fn fs_lines(in: VsOut) -> @location(0) vec4<f32> {
         var trail = e5.y;
         if (loop_mode == 3 && trail < 0.05) { trail = 0.6; }
         if (trail > 0.001) {
-          let window = max(0.03, 1.0 - trail);
+          let window = max(0.03, 1.0 - trail) * (1.0 + afterglow * 3.0);
           vis = 1.0 - clamp((prog - s_norm) / window, 0.0, 1.0);
         }
       }
@@ -765,6 +780,11 @@ fn fs_lines(in: VsOut) -> @location(0) vec4<f32> {
       out_a = e1.a * cov;
     }
 
+    // Afterglow approximation: travelling strokes leave a faint whole-path
+    // ghost (no frame-history texture exists in this single pass).
+    if (afterglow > 0.001 && (stroke_type == 7 || stroke_type == 8 || stroke_type == 9 || stroke_type == 10)) {
+      out_a = max(out_a, e1.a * cov * afterglow * 0.3);
+    }
     if (motion_mode == 3) {
       let sparkle = 0.55 + 0.45 * ln_noise(vec2<f32>(best_s * 0.05, t * motion_speed * 6.0));
       out_a = out_a * mix(1.0, sparkle, motion_amt);

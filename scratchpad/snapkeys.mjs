@@ -1,0 +1,14 @@
+import { spawn } from 'child_process';
+const c = spawn('native-renderer/target/release/ghost-render-core', [], { stdio:['pipe','pipe','ignore'] });
+let b=''; const p=new Map(); let i=1;
+c.stdout.on('data',d=>{b+=d;let j;while((j=b.indexOf('\n'))>=0){const l=b.slice(0,j);b=b.slice(j+1);if(!l.trim())continue;
+ try{const m=JSON.parse(l);if(m.id&&p.has(m.id)){p.get(m.id)(m);p.delete(m.id);}}catch{}}});
+const s=(m,q={})=>new Promise(r=>{const k=i++;p.set(k,r);c.stdin.write(JSON.stringify({id:k,method:m,params:q})+'\n');});
+await s('submit_commands',{commands:[{type:'precompile_shader',shader_id:'bad',stage:'module',entry:'main',source:'fn x( { }'}]});
+const snap = await s('snapshot');
+const res = snap.result ?? {};
+console.log('top keys:', Object.keys(res).join(','));
+const st = res.status ?? {};
+console.log('shader keys in status:', Object.keys(st).filter(k=>k.includes('shader')).join(','));
+console.log('last_shader_error =>', JSON.stringify(st.last_shader_error ?? res.last_shader_error ?? null));
+c.kill();

@@ -15,10 +15,60 @@
 /* ============================================================
    GLOBAL TYPOGRAPHY
    ============================================================ */
+
+/* Genos — self-hosted, not linked from the Google Fonts CDN: this is a
+   desktop app that has to render identically with no network, and a
+   remote font would also leak a request on every launch. Variable
+   weight 100..900 in one 26KB file per style. SIL Open Font License. */
+@font-face {
+  font-family: 'Genos';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/fonts/genos-latin-var.woff2') format('woff2');
+}
+@font-face {
+  font-family: 'Genos';
+  font-style: italic;
+  font-weight: 100 900;
+  font-display: swap;
+  src: url('/fonts/genos-latin-var-italic.woff2') format('woff2');
+}
+
+/* --- Font audition candidates (temporary; trim to the winner) --- */
+@font-face { font-family: 'Space Grotesk'; font-style: normal; font-weight: 300 700; font-display: swap; src: url('/fonts/space-grotesk.woff2') format('woff2'); }
+@font-face { font-family: 'Chakra Petch'; font-style: normal; font-weight: 400; font-display: swap; src: url('/fonts/chakra-petch.woff2') format('woff2'); }
+@font-face { font-family: 'Sora'; font-style: normal; font-weight: 100 800; font-display: swap; src: url('/fonts/sora.woff2') format('woff2'); }
+@font-face { font-family: 'Saira'; font-style: normal; font-weight: 100 900; font-display: swap; src: url('/fonts/saira.woff2') format('woff2'); }
+@font-face { font-family: 'Outfit'; font-style: normal; font-weight: 100 900; font-display: swap; src: url('/fonts/outfit.woff2') format('woff2'); }
+
+@font-face { font-family: 'Satoshi'; font-style: normal; font-weight: 300 900; font-display: swap; src: url('/fonts/satoshi.woff2') format('woff2'); }
+@font-face { font-family: 'Switzer'; font-style: normal; font-weight: 400 700; font-display: swap; src: url('/fonts/switzer.woff2') format('woff2'); }
+@font-face { font-family: 'General Sans'; font-style: normal; font-weight: 400 700; font-display: swap; src: url('/fonts/general-sans.woff2') format('woff2'); }
+@font-face { font-family: 'Cabinet Grotesk'; font-style: normal; font-weight: 400 700; font-display: swap; src: url('/fonts/cabinet-grotesk.woff2') format('woff2'); }
+@font-face { font-family: 'Manrope'; font-style: normal; font-weight: 200 800; font-display: swap; src: url('/fonts/manrope.woff2') format('woff2'); }
+
+:root {
+  /* The font FAMILY is owned by the theme tokens (theming/themes/*.ts),
+     which the theme store writes as inline styles on <html> — those beat
+     any stylesheet rule, so setting --ga-font-ui here would do nothing.
+     Size and weight compensation live here instead.
+
+     Genos has a small x-height, narrow letterforms and a light default
+     stroke, so at Geist's 15px/400 it reads both smaller and fainter —
+     which matters in a dark room mid-show. Scale the base up and carry a
+     heavier default weight; it is a variable font (100..900), so this
+     costs nothing in file size or extra requests. */
+  --ga-font-ui-scale: 1.06;
+  --ga-font-ui-weight: 500;
+  --ga-font-ui-weight-strong: 700;
+}
+
 body {
   font-family: var(--ga-font-ui, 'Geist', system-ui, sans-serif);
   -webkit-font-smoothing: antialiased;
-  font-size: 15px;
+  font-weight: var(--ga-font-ui-weight, 400);
+  font-size: calc(15px * var(--ga-font-ui-scale, 1));
   /* Studio: neon green glow trail under the knob. Solid (not
      color-mixed with transparent) so the fill reads bright against the
      dark slot. The glow comes from the box-shadow on the fill via the
@@ -1986,7 +2036,6 @@ html[data-theme="arcade"] :is(
 }
 
 html[data-theme="arcade"] :is(
-  .add-layer-menu button svg,
   button.btn-small,
   button.btn-small:hover,
   .connecting-status code
@@ -2299,4 +2348,83 @@ html.native-primary-presenter .viewport-content {
 html[data-theme="arcade"] .stage3d-root.external {
   background: transparent !important;
   background-image: none !important;
+}
+
+
+/* ============================================================
+   GENOS WEIGHT COMPENSATION
+   Buttons and small labels are the text that suffers most from Genos's
+   light default stroke — they are short, dim, and read at a glance.
+   Headings take the strong weight so hierarchy survives the change.
+   ============================================================ */
+:is(.app, .vj-overlay, .stage-overlay, .stage3d-root, .settings-panel,
+    .mobile-app, .standalone-app, .output-app)
+  :is(button, label, select, .tab, .pill, .status-pill, .menu-item) {
+  font-weight: var(--ga-font-ui-weight, 500);
+}
+
+:is(.app, .vj-overlay, .stage-overlay, .settings-panel, .mobile-app)
+  :is(h1, h2, h3, h4, .panel-title, .section-title) {
+  font-weight: var(--ga-font-ui-weight-strong, 650);
+}
+
+/* ============================================================
+   ICON TINT
+   Icons are inline SVG drawn with `currentColor`, so setting `color` on
+   the glyph recolours the icon while the label beside it keeps its ink.
+
+   Deliberately NOT applied to every icon in the app — a wall of colour
+   reads as noise. The accent marks a few specific places:
+     · the Stage button in the toolbar (green)
+     · media-tray tabs that are NOT active (blue)
+     · the add-layer menu glyphs (blue)
+   Everything else in the top toolbar stays white.
+   ============================================================ */
+
+/* These carry !important and a theme scope for the same reason the rest
+   of this file does: they have to beat both the arcade bridge rules and
+   Svelte's per-component scoped styles, which are more specific. */
+
+/* Toolbar: white by default, so the accent stays meaningful. */
+html .toolbar :is(button, .file-menu-btn) svg {
+  color: var(--ga-ink-0, #f2ede4) !important;
+}
+
+/* …except Stage, which is the one green accent up there. */
+html .toolbar :is(.stage-btn, .stage-edit-btn) svg,
+html .toolbar .stage-edit-icon {
+  color: var(--ga-icon, #5278ff) !important;
+}
+
+/* Bottom dock (Grid / Presets / Sequencer / Keyframes) keeps the green.
+   These are the always-visible workspace toggles, so the accent here is
+   doing real work — it separates them from the toolbar's white chrome. */
+html :is(.statusbar, .status-bar, .bottom-dock) :is(button, .status-pill) svg {
+  color: var(--ga-icon, #5278ff) !important;
+}
+
+/* Media tray: idle tabs take the blue used for the shader-bar fill, so
+   the tray's resting state reads cool and the ACTIVE tab stands out by
+   reverting to ink. */
+html :is(.media-library, .media-tray, .media-panel) .tab:not(.active) svg {
+  color: var(--ga-icon, #5278ff) !important;
+}
+
+/* Add-layer menu — same blue, so "things you can create" share one
+   colour wherever they appear. */
+html .add-layer-menu button:not(:disabled):not(.native-pending) svg {
+  color: var(--ga-icon, #5278ff) !important;
+}
+
+/* Opt-outs — colour that carries meaning is never overwritten: the
+   record dot is red because it is recording, status dots are green
+   because something is connected, and an active control has already
+   inverted its foreground against a light fill. `.on` is the status
+   bar's own active flag. */
+html :is(.rec-btn, .stop-rec-btn, .recording, [data-recording="true"]) svg,
+html :is(.status-dot, .conn-dot, .led) svg,
+html :is(button, .tab, .menu-item, .pill, .status-pill):is(.active, .on) svg,
+html :is(button, .tab, .menu-item, .pill, .status-pill)[aria-pressed="true"] svg,
+html :is(button, .tab, .menu-item, .pill, .status-pill)[aria-selected="true"] svg {
+  color: inherit !important;
 }

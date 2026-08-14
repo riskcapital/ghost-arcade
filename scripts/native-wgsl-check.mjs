@@ -17,7 +17,19 @@ const bin = join(
 const WGSL_TEMPLATE_RE = /\b(?:const|let)\s+([A-Za-z0-9_]+)\s*=\s*\/\*\s*wgsl\s*\*\/\s*`([\s\S]*?)`/g;
 const WGSL_MODULE_CALL_RE = /\bcreate(?:AndWarm)?WgslShaderModule\s*\(([\s\S]*?)\)/g;
 const NUMERIC_CONST_RE = /\bconst\s+([A-Z][A-Z0-9_]*)\s*=\s*(-?\d+(?:\.\d+)?)\s*;/g;
-const INTERPOLATION_RE = /\$\{\s*([A-Za-z0-9_]+)\s*\}/g;
+// Constants are frequently DERIVED from other constants
+// (`const MAX_CHUNKS = MAX_POINTS / CHUNK_POINTS;`). Capturing only literals
+// made any shader interpolating a derived constant unverifiable, which is why
+// this check had been failing on lightPaintingNative.ts. Resolve simple
+// arithmetic over already-known constants instead.
+const DERIVED_CONST_RE =
+  /\bconst\s+([A-Z][A-Z0-9_]*)\s*=\s*([A-Z][A-Z0-9_]*|-?\d+(?:\.\d+)?)\s*([*/+-])\s*([A-Z][A-Z0-9_]*|-?\d+(?:\.\d+)?)\s*;/g;
+// Bare identifiers plus simple binary expressions over known constants
+// (`${MAX_STROKES * STROKE_VEC4S}`) — the instrument shaders size their
+// storage arrays with inline products, and leaving those unresolved put a
+// literal `${…}` into the assembled WGSL, which is why the three
+// instrument modules failed this gate since it was introduced.
+const INTERPOLATION_RE = /\$\{\s*([A-Za-z0-9_]+(?:\s*[*/+-]\s*[A-Za-z0-9_]+)?)\s*\}/g;
 const INCLUDE_RE = /^[ \t]*#include\s+(?:<([^>\r\n]+)>|"([^"\r\n]+)")\s*$/gm;
 const RUST_WGSL_RAW_CONST_RE = /\bconst\s+([A-Z0-9_]+_WGSL)\s*:\s*&str\s*=\s*r#"([\s\S]*?)"#;/g;
 const RUST_WGSL_CONCAT_CONST_RE = /\bconst\s+([A-Z0-9_]+_WGSL)\s*:\s*&str\s*=\s*concat!\(\s*include_str!\("([^"]+)"\)\s*,\s*r#"([\s\S]*?)"#\s*\);/g;
@@ -116,6 +128,26 @@ function extractFileRecords(path) {
   for (const match of source.matchAll(NUMERIC_CONST_RE)) {
     numerics.set(match[1], match[2]);
   }
+  // Repeat to a fixpoint so a derived constant can itself feed another one.
+  // Bounded by pass count: a cycle stops making progress and simply exits.
+  for (let pass = 0; pass < 8; pass += 1) {
+    let progressed = false;
+    for (const match of source.matchAll(DERIVED_CONST_RE)) {
+      const [, name, lhs, op, rhs] = match;
+      if (numerics.has(name)) continue;
+      const left = numerics.has(lhs) ? Number(numerics.get(lhs)) : Number(lhs);
+      const right = numerics.has(rhs) ? Number(numerics.get(rhs)) : Number(rhs);
+      if (!Number.isFinite(left) || !Number.isFinite(right)) continue;
+      const value =
+        op === '*' ? left * right :
+        op === '/' ? left / right :
+        op === '+' ? left + right : left - right;
+      if (!Number.isFinite(value)) continue;
+      numerics.set(name, String(value));
+      progressed = true;
+    }
+    if (!progressed) break;
+  }
   const moduleSourceNames = extractModuleSourceNames(source);
 
   const resolving = new Set();
@@ -125,10 +157,27 @@ function extractFileRecords(path) {
     if (resolving.has(name)) throw new Error(`Circular WGSL template interpolation in ${relativeFile}: ${name}`);
     resolving.add(name);
     try {
-      return body.replace(INTERPOLATION_RE, (_match, symbol) => {
-        if (wgsl.has(symbol)) return resolveTemplate(symbol);
-        if (numerics.has(symbol)) return numerics.get(symbol);
-        throw new Error(`${relativeFile}:${name} references unsupported WGSL interpolation \${${symbol}}`);
+      return body.replace(INTERPOLATION_RE, (_match, expr) => {
+        const resolveTerm = (term) => {
+          const symbol = term.trim();
+          if (wgsl.has(symbol)) return resolveTemplate(symbol);
+          if (numerics.has(symbol)) return numerics.get(symbol);
+          if (/^-?\d+(?:\.\d+)?$/.test(symbol)) return symbol;
+          throw new Error(`${relativeFile}:${name} references unsupported WGSL interpolation \${${expr}}`);
+        };
+        const binary = expr.match(/^(.+?)\s*([*/+-])\s*(.+)$/);
+        if (binary) {
+          const left = Number(resolveTerm(binary[1]));
+          const right = Number(resolveTerm(binary[3]));
+          if (Number.isFinite(left) && Number.isFinite(right)) {
+            const value = binary[2] === '*' ? left * right
+              : binary[2] === '/' ? left / right
+              : binary[2] === '+' ? left + right
+              : left - right;
+            return String(value);
+          }
+        }
+        return resolveTerm(expr);
       });
     } finally {
       resolving.delete(name);
@@ -396,6 +445,10 @@ async function main() {
         `dropped=${status.shader_precompile_dropped ?? 0}`,
         status.last_shader_error ? `last_error=${status.last_shader_error}` : '',
         missing.length ? `missing:\n${missing.map((record) => `  - ${record.id}`).join('\n')}` : '',
+        // Without the core's own message a failure here is undiagnosable —
+        // you get a count and no reason, which is what made this gate easy
+        // to ignore.
+        status.last_shader_error ? `last core shader error:\n  ${status.last_shader_error}` : '',
       ].filter(Boolean).join('\n');
       throw new Error(`Native WGSL compatibility check failed:\n${details}`);
     }

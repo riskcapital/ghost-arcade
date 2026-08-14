@@ -882,10 +882,177 @@ export interface NativeEffectPassOptions {
     clothThreadDepth: number;
     clothShimmer: number;
     clothMode: number;
+    hatchDensity: number;
+    hatchAngle: number;
+    hatchLineWidth: number;
+    hatchContrast: number;
+    hatchPaperR: number;
+    hatchPaperG: number;
+    hatchPaperB: number;
+    hatchInkR: number;
+    hatchInkG: number;
+    hatchInkB: number;
+    asciiCellSize: number;
+    asciiContrast: number;
+    asciiColorMix: number;
+    asciiInvert: number;
+    asciiMode: number;
+    asciiTintR: number;
+    asciiTintG: number;
+    asciiTintB: number;
     caCellSize: number;
-    caBirthThreshold: number;
     caSurvivalLow: number;
     caSurvivalHigh: number;
+    dcHorizonFade: number;
+    lkHorizonFade: number;
+    swHorizonFade: number;
+    swTileScale: number;
+    soHorizonFade: number;
+    soTileScale: number;
+    soGlowR: number;
+    soGlowG: number;
+    soGlowB: number;
+    wtTileScale: number;
+    wtSourceMix: number;
+    psPersistence: number;
+    recEchoMode: number;
+    feedbackZoom: number;
+    feedbackRotation: number;
+    feedbackDecay: number;
+    feedbackHueShift: number;
+    feedbackMaskCenter: number;
+    rdDiffusionA: number;
+    rdDiffusionB: number;
+    rdReseed: number;
+    phaseLabMirrorRadius: number;
+    phaseLabConeLift: number;
+    phaseLabAudioReactive: number;
+    phaseLabAudioDrive: number;
+    audioLevel: number;
+    vignetteColorR: number;
+    vignetteColorG: number;
+    vignetteColorB: number;
+    vignetteBreathSpeed: number;
+    halftoneMode: number;
+    halftoneDotShape: number;
+    halftoneDotSize: number;
+    halftoneAngleC: number;
+    halftoneAngleM: number;
+    halftoneAngleY: number;
+    halftoneAngleK: number;
+    halftoneDrift: number;
+    toonSteps: number;
+    toonOutline: number;
+    toonColorPop: number;
+    toonRampSoftness: number;
+    toonShadowBand: number;
+    plasmaComplexity: number;
+    plasmaMode: number;
+    plasmaBlendMode: number;
+    plasmaWarpAmount: number;
+    plasmaAudioReact: number;
+    embossNormalMode: number;
+    embossMetallicness: number;
+    outlineGlowFalloff: number;
+    freezeBurst: number;
+    glitchFreezeBurst: number;
+    gammaShadows: number;
+    gammaMids: number;
+    gammaHighlights: number;
+    gammaMix: number;
+    invertMode: number;
+    invertThreshold: number;
+    invertStrobeRate: number;
+    invertAmount: number;
+    posterizeDither: number;
+    posterizeAnimSpeed: number;
+    posterizePalette: number;
+    blobColorMode: number;
+    blobFixedColorR: number;
+    blobFixedColorG: number;
+    blobFixedColorB: number;
+    blobMarkerSize: number;
+    blobBlendMode: number;
+    binDensity: number;
+    binSpeed: number;
+    binCellSize: number;
+    binContrast: number;
+    binBgMix: number;
+    binColorR: number;
+    binColorG: number;
+    binColorB: number;
+    matrixDensity: number;
+    matrixSpeed: number;
+    matrixCellSize: number;
+    matrixTrailLength: number;
+    matrixBgMix: number;
+    matrixColorR: number;
+    matrixColorG: number;
+    matrixColorB: number;
+    dmDotShape: number;
+    dmDotSize: number;
+    dmGap: number;
+    dmPosterize: number;
+    dmGlow: number;
+    dmBgR: number;
+    dmBgG: number;
+    dmBgB: number;
+    mosaicMode: number;
+    mosaicTileSize: number;
+    mosaicGrout: number;
+    mosaicColorJitter: number;
+    mosaicGroutR: number;
+    mosaicGroutG: number;
+    mosaicGroutB: number;
+    geomMode: number;
+    geomTiles: number;
+    geomRotation: number;
+    geomOffsetX: number;
+    geomMix: number;
+    comicInkStrength: number;
+    comicInkThreshold: number;
+    comicInkPosterize: number;
+    comicInkHalftone: number;
+    comicInkHalftoneSize: number;
+    comicInkColorMix: number;
+    comicInkR: number;
+    comicInkG: number;
+    comicInkB: number;
+    watercolorBleed: number;
+    watercolorEdgeDarken: number;
+    watercolorWetness: number;
+    watercolorGranulation: number;
+    watercolorPaperTexture: number;
+    watercolorPaperScale: number;
+    watercolorPaperHue: number;
+    oilPaintMode: number;
+    oilPaintRadius: number;
+    oilPaintIntensity: number;
+    oilPaintBrushLength: number;
+    oilPaintBristle: number;
+    oilPaintColorPunch: number;
+    oilPaintHighlight: number;
+    noiseType: number;
+    noiseMode: number;
+    noiseAmount: number;
+    noiseScale: number;
+    noiseMono: number;
+    noiseShadow: number;
+    noiseMid: number;
+    noiseHigh: number;
+    noiseAnimSpeed: number;
+    tcPalette: number;
+    tcContourCount: number;
+    tcContourWidth: number;
+    tcContourGlow: number;
+    tcTrackBlobs: number;
+    tcIntensity: number;
+    tcMix: number;
+    param12: number;
+    param13: number;
+    param14: number;
+    param15: number;
+    caBirthThreshold: number;
     caColorR: number;
     caColorG: number;
     caColorB: number;
@@ -974,7 +1141,6 @@ export interface NativeEffectPassOptions {
     psGravity: number;
     psTurbulence: number;
     psThreshold: number;
-    psPersistence: number;
     psMode: number;
     psReplenish: number;
     psChromaSplit: number;
@@ -1016,8 +1182,6 @@ export interface NativeEffectPassOptions {
     wtFogG: number;
     wtFogB: number;
     wtHorizonFade: number;
-    wtSourceMix: number;
-    wtTileScale: number;
     soRadius: number;
     soHeight: number;
     soLatCount: number;
@@ -1030,11 +1194,6 @@ export interface NativeEffectPassOptions {
     soFlow: number;
     soIntensity: number;
     soGlow: number;
-    soGlowR: number;
-    soGlowG: number;
-    soGlowB: number;
-    soHorizonFade: number;
-    soTileScale: number;
     swRadius: number;
     swHeight: number;
     swMeridians: number;
@@ -1047,9 +1206,7 @@ export interface NativeEffectPassOptions {
     swColorR: number;
     swColorG: number;
     swColorB: number;
-    swHorizonFade: number;
     swFillSource: number;
-    swTileScale: number;
     vccGridSize: number;
     vccCubeSize: number;
     vccSpacing: number;
@@ -1122,7 +1279,6 @@ export interface NativeEffectPassOptions {
     lkTubeR: number;
     lkTubeG: number;
     lkTubeB: number;
-    lkHorizonFade: number;
     hpsHelices: number;
     hpsHelixRadius: number;
     hpsTurns: number;
@@ -1149,7 +1305,6 @@ export interface NativeEffectPassOptions {
     dcStarR: number;
     dcStarG: number;
     dcStarB: number;
-    dcHorizonFade: number;
     geomProTileCount: number;
     geomProFlipRange: number;
     geomProSpeed: number;
@@ -1182,7 +1337,6 @@ export interface NativeEffectPassOptions {
     recEchoHueShift: number;
     recEchoOffsetX: number;
     recEchoOffsetY: number;
-    recEchoMode: number;
     ofdmIntensity: number;
     ofdmMotionScale: number;
     ofdmPersistence: number;
@@ -1200,8 +1354,6 @@ export interface NativeEffectPassOptions {
     fftColorCycle: number;
     rdFeedRate: number;
     rdKillRate: number;
-    rdDiffusionA: number;
-    rdDiffusionB: number;
     rdPatternScale: number;
     rdLumaMask: number;
     rdMode: number;
@@ -1209,7 +1361,6 @@ export interface NativeEffectPassOptions {
     rdColorG: number;
     rdColorB: number;
     rdMix: number;
-    rdReseed: number;
   }>;
   clear?: boolean;
   seq?: number;
@@ -1445,6 +1596,7 @@ struct EffectPassUniforms {
   params0: vec4<f32>,
   params1: vec4<f32>,
   params2: vec4<f32>,
+  params3: vec4<f32>,
 }
 
 struct VsOut {
@@ -1988,6 +2140,10 @@ fn blob_is_peak(cell_idx: vec2<f32>, grid_res: f32, threshold: f32) -> bool {
   return b >= n1 && b >= n2 && b >= n3 && b >= n4;
 }
 
+fn p_or(value: f32, fallback: f32) -> f32 {
+  return select(value, fallback, value <= 0.0);
+}
+
 fn effect_texel() -> vec2<f32> {
   return vec2<f32>(1.0) / max(u.resolution_time.xy, vec2<f32>(1.0));
 }
@@ -2076,7 +2232,23 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
   let code = u32(round(u.effect.x));
   let amount = u.effect.y;
   if (code == 1u) {
-    return vec4<f32>(mix(color, vec3<f32>(1.0) - color, clamp(amount, 0.0, 1.0)), src.a);
+    let inv_mode = u32(round(clamp(u.params0.x, 0.0, 4.0)));
+    let inv_threshold = clamp(u.params0.y, 0.0, 1.0);
+    let strobe_rate = clamp(u.params0.z, 0.0, 10.0);
+    let l = luma(clamp(color, vec3<f32>(0.0), vec3<f32>(1.0)));
+    var inverted = vec3<f32>(1.0) - color;
+    var gate = 1.0;
+    if (inv_mode == 1u) {
+      // luma-only invert: keep chroma direction, flip brightness
+      inverted = clamp(color + vec3<f32>(1.0 - 2.0 * l), vec3<f32>(0.0), vec3<f32>(1.0));
+    } else if (inv_mode == 2u) {
+      inverted = hue_rotate(color, 3.14159265);
+    } else if (inv_mode == 3u) {
+      gate = step(0.5, fract(u.resolution_time.z * max(strobe_rate, 0.01)));
+    } else if (inv_mode == 4u) {
+      gate = smoothstep(inv_threshold, inv_threshold + 0.05, l);
+    }
+    return vec4<f32>(mix(color, inverted, clamp(amount, 0.0, 1.0) * gate), src.a);
   }
   if (code == 2u) {
     let gray = vec3<f32>(luma(color));
@@ -2089,7 +2261,17 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     return vec4<f32>((color - vec3<f32>(0.5)) * amount + vec3<f32>(0.5), src.a);
   }
   if (code == 5u) {
-    return vec4<f32>(pow(max(color, vec3<f32>(0.0)), vec3<f32>(1.0 / max(0.001, amount))), src.a);
+    let g_sh = clamp(p_or(u.params0.x, 1.0), 0.2, 3.0);
+    let g_mid = clamp(p_or(u.params0.y, 1.0), 0.2, 3.0);
+    let g_hi = clamp(p_or(u.params0.z, 1.0), 0.2, 3.0);
+    let g_mix = clamp(p_or(u.params0.w, 1.0), 0.0, 1.0);
+    let l = luma(clamp(color, vec3<f32>(0.0), vec3<f32>(1.0)));
+    let w_sh = 1.0 - smoothstep(0.0, 0.45, l);
+    let w_hi = smoothstep(0.55, 1.0, l);
+    let w_mid = max(0.0, 1.0 - w_sh - w_hi);
+    let band_gamma = max(0.05, g_sh * w_sh + g_mid * w_mid + g_hi * w_hi);
+    let graded = pow(max(color, vec3<f32>(0.0)), vec3<f32>(1.0 / max(0.001, amount * band_gamma)));
+    return vec4<f32>(mix(color, graded, g_mix), src.a);
   }
   if (code == 6u) {
     let gray = vec3<f32>(luma(color));
@@ -2099,14 +2281,152 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     return vec4<f32>(hue_rotate(color, amount), src.a);
   }
   if (code == 8u) {
-    let levels = max(2.0, floor(amount + 0.5));
-    return vec4<f32>(floor(clamp(color, vec3<f32>(0.0), vec3<f32>(1.0)) * levels + vec3<f32>(0.5)) / levels, src.a);
+    let dither = clamp(u.params0.x, 0.0, 1.0);
+    let anim_speed = clamp(u.params0.y, 0.0, 2.0);
+    let palette = u32(round(clamp(u.params0.z, 0.0, 3.0)));
+    var levels = max(2.0, floor(amount + 0.5));
+    if (anim_speed > 0.001) {
+      levels = max(2.0, levels + floor(sin(u.resolution_time.z * anim_speed * 2.0) * 2.0 + 0.5));
+    }
+    var c = clamp(color, vec3<f32>(0.0), vec3<f32>(1.0));
+    if (dither > 0.001) {
+      c = clamp(c + vec3<f32>(hash21(uv * u.resolution_time.xy) - 0.5) * (dither / levels), vec3<f32>(0.0), vec3<f32>(1.0));
+    }
+    var post = floor(c * levels + vec3<f32>(0.5)) / levels;
+    if (palette == 1u) {
+      // comic: snap to a bold 6-colour set
+      var best = vec3<f32>(0.0);
+      var best_d = 1e9;
+      for (var i = 0u; i < 6u; i = i + 1u) {
+        var pc = vec3<f32>(0.0);
+        if (i == 1u) { pc = vec3<f32>(1.0); }
+        else if (i == 2u) { pc = vec3<f32>(0.9, 0.12, 0.14); }
+        else if (i == 3u) { pc = vec3<f32>(1.0, 0.85, 0.1); }
+        else if (i == 4u) { pc = vec3<f32>(0.12, 0.3, 0.9); }
+        else if (i == 5u) { pc = vec3<f32>(0.95, 0.75, 0.6); }
+        let d = dot(post - pc, post - pc);
+        if (d < best_d) { best_d = d; best = pc; }
+      }
+      post = best;
+    } else if (palette == 2u) {
+      // thermal: luma through a heatmap ramp
+      let hl = luma(post);
+      var tc = mix(vec3<f32>(0.0, 0.0, 0.35), vec3<f32>(0.0, 0.75, 0.85), smoothstep(0.0, 0.35, hl));
+      tc = mix(tc, vec3<f32>(0.2, 0.85, 0.2), smoothstep(0.3, 0.5, hl));
+      tc = mix(tc, vec3<f32>(1.0, 0.85, 0.1), smoothstep(0.5, 0.72, hl));
+      tc = mix(tc, vec3<f32>(1.0, 0.2, 0.1), smoothstep(0.7, 0.9, hl));
+      tc = mix(tc, vec3<f32>(1.0), smoothstep(0.9, 1.0, hl));
+      post = floor(tc * levels + vec3<f32>(0.5)) / levels;
+    } else if (palette == 3u) {
+      // retro 4-colour (Game Boy greens)
+      let gl = floor(luma(post) * 3.999);
+      var gb = vec3<f32>(0.06, 0.22, 0.06);
+      if (gl >= 3.0) { gb = vec3<f32>(0.61, 0.74, 0.06); }
+      else if (gl >= 2.0) { gb = vec3<f32>(0.55, 0.67, 0.06); }
+      else if (gl >= 1.0) { gb = vec3<f32>(0.19, 0.38, 0.19); }
+      post = gb;
+    }
+    return vec4<f32>(post, src.a);
   }
   if (code == 9u) {
-    let scale = max(0.001, u.params0.x);
-    let seed = u.params0.y;
-    let n = value_noise2d(uv * u.resolution_time.xy * scale + vec2<f32>(u.resolution_time.z * 19.0 + seed, u.effect.w * 0.37)) - 0.5;
-    return vec4<f32>(color + n * clamp(amount, 0.0, 1.0) * 0.72, src.a);
+    // NOISE - procedural noise overlay.
+    // params0 = (type, blend mode, scale, mono); params1 = (shadow, mid,
+    // high, anim speed); params2.x = seed; amount = noiseAmount.
+    let noise_amount = clamp(amount, 0.0, 1.0);
+    if (noise_amount < 0.001) {
+      return src;
+    }
+    let noise_type = u32(round(clamp(u.params0.x, 0.0, 4.0)));
+    let blend_mode = u32(round(clamp(u.params0.y, 0.0, 4.0)));
+    let pattern_scale = clamp(u.params0.z, 0.5, 32.0);
+    let mono = u.params0.w >= 0.5;
+    let shadow_weight = clamp(u.params1.x, 0.0, 1.0);
+    let mid_weight = clamp(u.params1.y, 0.0, 1.0);
+    let high_weight = clamp(u.params1.z, 0.0, 1.0);
+    let anim_speed = max(0.0, u.params1.w);
+    let seed = u.params2.x;
+    // Quantize animation to 24fps for a filmic flicker.
+    var t = 0.0;
+    if (anim_speed > 0.001) {
+      t = floor(u.resolution_time.z * anim_speed * 24.0) / 24.0;
+    }
+    let ts = t * 61.7 + seed * 19.0;
+    let p = uv * u.resolution_time.xy / max(0.5, 64.0 / pattern_scale)
+      + vec2<f32>(seed * 13.7, seed * 7.19);
+    let pd = p + vec2<f32>(u.resolution_time.z * anim_speed * 0.6, -u.resolution_time.z * anim_speed * 0.37);
+    var n = vec3<f32>(0.0);
+    if (noise_type == 0u) {
+      if (mono) {
+        n = vec3<f32>(hash21(p + vec2<f32>(ts * 1.13, ts * 2.71)) - 0.5);
+      } else {
+        n = vec3<f32>(
+          hash21(p + vec2<f32>(ts * 1.13, ts * 2.71)),
+          hash21(p + vec2<f32>(7.0 + ts * 3.31, ts * 1.97)),
+          hash21(p + vec2<f32>(ts * 2.17, 17.0 + ts * 4.41))
+        ) - vec3<f32>(0.5);
+      }
+    } else if (noise_type == 1u) {
+      // Blue-style: triangular distribution from two whites.
+      if (mono) {
+        let a = hash21(p + vec2<f32>(ts, ts * 1.7));
+        let b = hash21(p + vec2<f32>(1.0 + ts * 0.5, 1.0 + ts * 0.9));
+        n = vec3<f32>((a + b) * 0.5 - 0.5);
+      } else {
+        n = vec3<f32>(
+          (hash21(p + vec2<f32>(ts, ts * 1.7)) + hash21(p + vec2<f32>(1.0 + ts * 0.5, 1.0 + ts * 0.9))) * 0.5,
+          (hash21(p + vec2<f32>(7.0 + ts * 0.31, 7.0)) + hash21(p + vec2<f32>(8.0, 8.0 + ts * 0.81))) * 0.5,
+          (hash21(p + vec2<f32>(17.0 + ts * 0.71, 17.0)) + hash21(p + vec2<f32>(18.0, 18.0 + ts * 0.91))) * 0.5
+        ) - vec3<f32>(0.5);
+      }
+    } else if (noise_type == 2u) {
+      if (mono) {
+        n = vec3<f32>(value_noise2d(pd) - 0.5);
+      } else {
+        n = vec3<f32>(
+          value_noise2d(pd),
+          value_noise2d(pd + vec2<f32>(13.7, 13.7)),
+          value_noise2d(pd + vec2<f32>(71.3, 71.3))
+        ) - vec3<f32>(0.5);
+      }
+    } else if (noise_type == 3u) {
+      if (mono) {
+        n = vec3<f32>(fbm2d(pd) - 0.5);
+      } else {
+        n = vec3<f32>(
+          fbm2d(pd),
+          fbm2d(pd + vec2<f32>(13.7, 13.7)),
+          fbm2d(pd + vec2<f32>(71.3, 71.3))
+        ) - vec3<f32>(0.5);
+      }
+    } else {
+      if (mono) {
+        n = vec3<f32>(cellular2d(pd) - 0.5);
+      } else {
+        n = vec3<f32>(
+          cellular2d(pd),
+          cellular2d(pd + vec2<f32>(13.7, 13.7)),
+          cellular2d(pd + vec2<f32>(71.3, 71.3))
+        ) - vec3<f32>(0.5);
+      }
+    }
+    let l = luma(color);
+    let shadow_mask = 1.0 - smoothstep(0.0, 0.4, l);
+    let mid_mask = 1.0 - abs(l - 0.5) * 2.0;
+    let high_mask = smoothstep(0.6, 1.0, l);
+    let zone_amp = max(0.0, shadow_mask * shadow_weight + mid_mask * mid_weight + high_mask * high_weight);
+    let nn = n * noise_amount * zone_amp;
+    // Blend modes 0 (overlay) and 1 (add) are intentionally identical,
+    // mirroring the WebGL hero shader.
+    var result = color + nn;
+    if (blend_mode == 2u) {
+      result = color * (vec3<f32>(1.0) + nn);
+    } else if (blend_mode == 3u) {
+      let n01 = nn + vec3<f32>(0.5);
+      result = vec3<f32>(1.0) - (vec3<f32>(1.0) - color) * (vec3<f32>(1.0) - n01 * noise_amount);
+    } else if (blend_mode == 4u) {
+      result = nn + vec3<f32>(0.5);
+    }
+    return vec4<f32>(clamp(result, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
   }
   if (code == 10u) {
     let mode = u32(round(u.params0.x));
@@ -2151,7 +2471,8 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let center = clamp(u.params1.xy, vec2<f32>(-2.0), vec2<f32>(3.0));
     let tint_amount = clamp(u.params1.z, 0.0, 1.0);
     let breathing = clamp(u.params1.w, 0.0, 1.0);
-    let breath = sin(u.resolution_time.z * 0.5 * 6.28318) * 0.5 + 0.5;
+    let breath_speed = clamp(p_or(u.params2.w, 0.5), 0.0, 2.0);
+    let breath = sin(u.resolution_time.z * breath_speed * 6.28318) * 0.5 + 0.5;
     let effective_size = amount - breathing * 0.15 * (breath - 0.5);
     let pos = uv - center;
     var dist = 1.0;
@@ -2168,7 +2489,7 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
       dist = pow(pow(abs(q.x), 4.0) + pow(abs(q.y), 4.0), 0.25);
     }
     let vignette = 1.0 - smoothstep(effective_size - softness * 0.5, effective_size + softness * 0.5, dist);
-    let tint = vec3<f32>(0.0);
+    let tint = clamp(vec3<f32>(u.params2.x, u.params2.y, u.params2.z), vec3<f32>(0.0), vec3<f32>(1.0));
     let final_rgb = mix(src.rgb, tint, (1.0 - vignette) * tint_amount);
     let final_alpha = src.a * mix(vignette, 1.0, tint_amount);
     return vec4<f32>(final_rgb, final_alpha);
@@ -2322,32 +2643,128 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let speed = clamp(u.params0.y, 0.0, 3.0);
     let palette = u32(round(clamp(u.params0.z, 0.0, 11.0)));
     let source_mix = clamp(u.params0.w, 0.0, 1.0);
+    let complexity = clamp(p_or(u.params1.x, 3.0), 1.0, 5.0);
+    let p_mode = u32(round(clamp(u.params1.y, 0.0, 2.0)));
+    let blend_mode = u32(round(clamp(u.params1.z, 0.0, 4.0)));
+    let warp_amt = clamp(u.params1.w, 0.0, 1.0);
+    let audio_boost = clamp(u.params2.x, 0.0, 1.5);
     let aspect = u.resolution_time.x / max(u.resolution_time.y, 1.0);
     let p = (uv - vec2<f32>(0.5)) * vec2<f32>(aspect, 1.0) * scale;
-    let t = u.resolution_time.z * speed;
-    let field =
+    let t = u.resolution_time.z * speed * (1.0 + audio_boost * 1.2);
+    // complexity 3 reproduces the legacy four-term field
+    var field =
       sin(p.x * 3.10 + t) +
-      sin(p.y * 2.70 - t * 1.13) +
-      sin((p.x + p.y) * 2.10 + t * 0.71) +
-      sin(length(p) * 4.20 - t * 1.37);
-    let plasma = clamp(field * 0.125 + 0.5, 0.0, 1.0);
+      sin(p.y * 2.70 - t * 1.13);
+    var weight = 2.0;
+    if (complexity >= 2.0) {
+      field = field + sin((p.x + p.y) * 2.10 + t * 0.71);
+      weight = weight + 1.0;
+    }
+    if (complexity >= 3.0) {
+      field = field + sin(length(p) * 4.20 - t * 1.37);
+      weight = weight + 1.0;
+    }
+    if (complexity >= 4.0) {
+      field = field + sin(length(p - vec2<f32>(1.3, 0.7)) * 5.10 + t * 0.93);
+      weight = weight + 1.0;
+    }
+    if (complexity >= 5.0) {
+      field = field + sin(p.y * 7.90 + sin(p.x * 2.20 + t) * 2.0);
+      weight = weight + 1.0;
+    }
+    let plasma = clamp(field * (0.5 / weight) * (1.0 + audio_boost * 0.4) + 0.5, 0.0, 1.0);
     let plasma_rgb = colorama_palette(plasma, palette, t * 0.04);
-    let lit = clamp(plasma_rgb * mix(vec3<f32>(1.0), color * 1.65, source_mix), vec3<f32>(0.0), vec3<f32>(1.5));
+    // turbulence warp displaces the source lookup by the field
+    var src_col = color;
+    if (p_mode >= 1u && warp_amt > 0.001) {
+      let warp_off = vec2<f32>(sin(field * 2.3 + t * 0.4), cos(field * 1.7 - t * 0.3)) * warp_amt * 0.06;
+      src_col = sample_rgb(clamp(uv + warp_off, vec2<f32>(0.0), vec2<f32>(1.0)));
+    }
+    var lit = vec3<f32>(0.0);
+    if (p_mode == 1u) {
+      // warp only: plasma drives displacement, not colour
+      lit = src_col;
+    } else if (blend_mode == 1u) {
+      lit = vec3<f32>(1.0) - (vec3<f32>(1.0) - plasma_rgb) * (vec3<f32>(1.0) - src_col);
+    } else if (blend_mode == 2u) {
+      lit = plasma_rgb + src_col * source_mix;
+    } else if (blend_mode == 3u) {
+      let base = src_col;
+      lit = mix(
+        2.0 * plasma_rgb * base,
+        vec3<f32>(1.0) - 2.0 * (vec3<f32>(1.0) - plasma_rgb) * (vec3<f32>(1.0) - base),
+        step(vec3<f32>(0.5), base),
+      );
+    } else if (blend_mode == 4u) {
+      lit = plasma_rgb;
+    } else {
+      lit = plasma_rgb * mix(vec3<f32>(1.0), src_col * 1.65, source_mix);
+    }
+    lit = clamp(lit, vec3<f32>(0.0), vec3<f32>(1.5));
     return vec4<f32>(mix(color, lit, clamp(amount, 0.0, 1.0)), src.a);
   }
   if (code == 66u) {
+    // params0 = (cell px, legacy angle, dot gain, legacy color mode)
+    // params1 = (mode 0 grey/1 CMYK/2 spot, dot shape, angle C, angle M)
+    // params2 = (angle Y, angle K, drift, -)
     let cell_px = max(2.0, u.params0.x);
-    let angle = u.params0.y * 0.01745329252;
     let dot_gain = clamp(u.params0.z, 0.25, 2.0);
     let color_mode = clamp(u.params0.w, 0.0, 1.0);
-    let pixel_pos = rotate2d(uv * u.resolution_time.xy, angle) / cell_px;
-    let cell = fract(pixel_pos) - vec2<f32>(0.5);
-    let lum = clamp(luma(color), 0.0, 1.0);
-    let radius = clamp((1.0 - lum) * 0.58 * dot_gain, 0.0, 0.7);
+    let ht_mode = u32(round(clamp(u.params1.x, 0.0, 2.0)));
+    let dot_shape = u32(round(clamp(u.params1.y, 0.0, 3.0)));
+    let drift = clamp(u.params2.z, 0.0, 2.0) * u.resolution_time.z * 0.12;
     let aa = 1.5 / cell_px;
-    let dot_mask = 1.0 - smoothstep(radius, radius + aa, length(cell));
-    let paper = mix(vec3<f32>(1.0), color, color_mode);
-    let ink = mix(vec3<f32>(0.0), color * 0.35, color_mode);
+    let lum = clamp(luma(color), 0.0, 1.0);
+    if (ht_mode == 1u) {
+      // CMYK: four screens at their own angles, subtractive composite
+      let c_rgb = clamp(color, vec3<f32>(0.0), vec3<f32>(1.0));
+      let k_val = 1.0 - max(c_rgb.r, max(c_rgb.g, c_rgb.b));
+      let denom = max(1.0 - k_val, 0.001);
+      let cov = vec4<f32>(
+        (1.0 - c_rgb.r - k_val) / denom,
+        (1.0 - c_rgb.g - k_val) / denom,
+        (1.0 - c_rgb.b - k_val) / denom,
+        k_val,
+      );
+      var angs = array<f32, 4>(u.params1.z, u.params1.w, u.params2.x, u.params2.y);
+      var result = vec3<f32>(1.0);
+      for (var i = 0u; i < 4u; i = i + 1u) {
+        let ang = angs[i] * 0.01745329252 + drift;
+        let pp = rotate2d(uv * u.resolution_time.xy, ang) / cell_px;
+        let cc = fract(pp) - vec2<f32>(0.5);
+        let coverage = clamp(cov[i], 0.0, 1.0);
+        let rad = clamp(sqrt(coverage) * 0.58 * dot_gain, 0.0, 0.75);
+        var d = length(cc);
+        if (dot_shape == 1u) { d = max(abs(cc.x), abs(cc.y)); }
+        else if (dot_shape == 2u) { d = abs(cc.y); }
+        else if (dot_shape == 3u) { d = min(abs(cc.x), abs(cc.y)); }
+        let mask = 1.0 - smoothstep(rad, rad + aa, d);
+        var absorb = vec3<f32>(1.0, 0.0, 0.0);
+        if (i == 1u) { absorb = vec3<f32>(0.0, 1.0, 0.0); }
+        else if (i == 2u) { absorb = vec3<f32>(0.0, 0.0, 1.0); }
+        else if (i == 3u) { absorb = vec3<f32>(1.0); }
+        result = result * (vec3<f32>(1.0) - absorb * mask * 0.92);
+      }
+      return vec4<f32>(mix(color, result, clamp(amount, 0.0, 1.0)), src.a);
+    }
+    // greyscale / spot: single screen at the K angle (falls back to legacy angle)
+    let base_ang = select(u.params0.y, u.params2.y, u.params2.y > 0.001) * 0.01745329252 + drift;
+    let pixel_pos = rotate2d(uv * u.resolution_time.xy, base_ang) / cell_px;
+    let cell = fract(pixel_pos) - vec2<f32>(0.5);
+    let radius = clamp((1.0 - lum) * 0.58 * dot_gain, 0.0, 0.7);
+    var d0 = length(cell);
+    if (dot_shape == 1u) { d0 = max(abs(cell.x), abs(cell.y)); }
+    else if (dot_shape == 2u) { d0 = abs(cell.y); }
+    else if (dot_shape == 3u) { d0 = min(abs(cell.x), abs(cell.y)); }
+    let dot_mask = 1.0 - smoothstep(radius, radius + aa, d0);
+    var paper = mix(vec3<f32>(1.0), color, color_mode);
+    var ink = mix(vec3<f32>(0.0), color * 0.35, color_mode);
+    if (ht_mode == 2u) {
+      // spot colour: ink takes the source hue at full saturation
+      let mx = max(color.r, max(color.g, color.b));
+      ink = clamp(color / max(mx, 0.001), vec3<f32>(0.0), vec3<f32>(1.0)) * 0.85;
+      paper = vec3<f32>(0.98);
+    }
     let halftone = mix(paper, ink, dot_mask);
     return vec4<f32>(mix(color, halftone, clamp(amount, 0.0, 1.0)), src.a);
   }
@@ -2356,6 +2773,8 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let edge_strength = clamp(u.params0.y, 0.0, 2.0);
     let saturation_boost = clamp(u.params0.z, 0.0, 2.0);
     let edge_threshold = clamp(u.params0.w, 0.0, 1.0);
+    let ramp_soft = clamp(u.params1.x, 0.0, 1.0);
+    let shadow_band = clamp(u.params1.y, 0.0, 1.0);
     let tx = effect_texel();
     let l = luma(sample_rgb(uv - vec2<f32>(tx.x, 0.0)));
     let r = luma(sample_rgb(uv + vec2<f32>(tx.x, 0.0)));
@@ -2364,7 +2783,15 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let edge = smoothstep(edge_threshold, edge_threshold + 0.25, length(vec2<f32>(r - l, top - b)) * 2.0);
     let gray = vec3<f32>(luma(color));
     let saturated = mix(gray, color, saturation_boost);
-    let poster = floor(clamp(saturated, vec3<f32>(0.0), vec3<f32>(1.0)) * levels + vec3<f32>(0.5)) / levels;
+    let q = clamp(saturated, vec3<f32>(0.0), vec3<f32>(1.0)) * levels;
+    // ramp softness widens the band transitions (0 = hard steps)
+    let half_soft = vec3<f32>(max(ramp_soft * 0.5, 0.0001));
+    var poster = (floor(q) + smoothstep(vec3<f32>(0.5) - half_soft, vec3<f32>(0.5) + half_soft, fract(q))) / levels;
+    if (shadow_band > 0.001) {
+      // crush the darkest band toward ink
+      let shadow_mask = 1.0 - smoothstep(shadow_band * 0.35, shadow_band, luma(poster));
+      poster = poster * (1.0 - shadow_mask * 0.65);
+    }
     let toon_rgb = poster * (1.0 - edge * edge_strength * 0.8);
     return vec4<f32>(mix(color, toon_rgb, clamp(amount, 0.0, 1.0)), src.a);
   }
@@ -2486,7 +2913,13 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let vertical_slice = clamp(u.params1.x, 0.0, 1.0);
     let block_hold = clamp(u.params1.y, 0.0, 1.0);
     let tear_chance = clamp(u.params1.z, 0.0, 1.0);
-    let t = floor(u.resolution_time.z * mix(8.0, 28.0, speed) / max(0.08, block_hold + 0.08));
+    let freeze_burst = clamp(u.params2.x, 0.0, 1.0);
+    var t = floor(u.resolution_time.z * mix(8.0, 28.0, speed) / max(0.08, block_hold + 0.08));
+    if (freeze_burst > 0.001) {
+      // Burst gate: whole stretches reuse one glitch pattern, then release.
+      let gate = step(1.0 - freeze_burst * 0.65, hash21(vec2<f32>(floor(u.resolution_time.z * 0.9), 3.7)));
+      t = mix(t, floor(t / 7.0) * 7.0, gate);
+    }
     let row_count = mix(12.0, 96.0, 1.0 - block_size);
     let row = floor(uv.y * row_count);
     let block = vec2<f32>(row, t);
@@ -3161,6 +3594,7 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let position = u32(round(clamp(u.params1.y, 0.0, 2.0)));
     let crawl = clamp(u.params1.z, 0.0, 1.0);
     let alpha_aware = clamp(u.params1.w, 0.0, 1.0);
+    let glow_falloff = clamp(p_or(u.params2.x, 1.0), 0.1, 4.0);
     let tx = effect_texel() * thickness;
     let center_value = mix(luma(color), src.a, alpha_aware);
     var edge = 0.0;
@@ -3204,7 +3638,7 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
           glow_edge += abs(nb - center_value);
         }
       }
-      glow_edge = smoothstep(0.02, 0.1, glow_edge / 24.0) * glow * 0.7;
+      glow_edge = pow(smoothstep(0.02, 0.1, glow_edge / 24.0), glow_falloff) * glow * 0.7;
     }
     let outline_mask = max(edge, glow_edge);
     let outlined = outline_color * outline_mask;
@@ -3215,7 +3649,9 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
   }
   if (code == 44u) {
     let angle = u.params0.x * 0.01745329252;
-    let height = clamp(u.params0.y, 0.0, 1.0);
+    let height = clamp(u.params0.y, 0.0, 4.0);
+    let normal_preview = u.params2.x >= 0.5;
+    let metallic = clamp(u.params2.y, 0.0, 1.0);
     let highlight = clamp(vec3<f32>(u.params0.z, u.params0.w, u.params1.x), vec3<f32>(0.0), vec3<f32>(1.5));
     let shadow = clamp(u.params1.yzw, vec3<f32>(0.0), vec3<f32>(1.5));
     let tx = effect_texel();
@@ -3227,11 +3663,15 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let dx = (l_r - l_l) * (1.0 + height * 4.0);
     let dy = (l_u - l_d) * (1.0 + height * 4.0);
     let normal = normalize(vec3<f32>(-dx, -dy, 1.0));
+    if (normal_preview) {
+      return vec4<f32>(normal * 0.5 + vec3<f32>(0.5), src.a);
+    }
     let light = normalize(vec3<f32>(dir.x, dir.y, 0.5));
     let diff = max(dot(normal, light), 0.0);
     let along = (l_r - l_l) * dir.x + (l_u - l_d) * dir.y;
     let embossed = clamp(along * amount + 0.5, 0.0, 1.0);
-    let relit = color * 0.48 + mix(shadow, highlight, embossed) + vec3<f32>(pow(diff, 18.0) * 0.18);
+    let spec = pow(diff, mix(18.0, 5.0, metallic)) * mix(0.18, 0.55, metallic);
+    let relit = color * mix(0.48, 0.3, metallic) + mix(shadow, highlight, embossed) + vec3<f32>(spec);
     return vec4<f32>(clamp(relit, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
   }
   if (code == 45u) {
@@ -3372,6 +3812,10 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let flags = u32(round(clamp(u.params1.y, 0.0, 7.0)));
     let trail = clamp(u.params1.z, 0.0, 1.0);
     let min_size = clamp(u.params1.w, 0.0, 1.0);
+    let bt_color_mode = u32(round(clamp(u.params2.x, 0.0, 2.0)));
+    let bt_fixed_color = clamp(vec3<f32>(u.params2.y, u.params2.z, u.params2.w), vec3<f32>(0.0), vec3<f32>(1.0));
+    let marker_scale = clamp(p_or(u.params3.x, 1.0), 0.2, 3.0);
+    let bt_blend_mode = u32(round(clamp(u.params3.y, 0.0, 4.0)));
     let aspect = u.resolution_time.x / max(1.0, u.resolution_time.y);
     let pix_w = thickness / max(1.0, u.resolution_time.x);
     let cell_size = 1.0 / grid_res;
@@ -3396,9 +3840,14 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
           continue;
         }
         let pulse = 1.0 + 0.1 * sin(u.resolution_time.z * 3.0 + c_idx.x * 3.7 + c_idx.y * 5.3);
-        let r = blob_r * pulse;
+        let r = blob_r * pulse * marker_scale;
         let source_color = sample_rgb(center);
         var track_color = blob_track_color(color_idx, source_color);
+        if (bt_color_mode == 1u) {
+          track_color = bt_fixed_color;
+        } else if (bt_color_mode == 2u) {
+          track_color = hue_rotate(vec3<f32>(1.0, 0.25, 0.25), hash21(c_idx) * 6.28318);
+        }
         track_color *= mix(1.8, 0.9, brightness);
 
         var diff = uv - center;
@@ -3479,7 +3928,23 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
         }
       }
     }
-    let blended = color + overlay;
+    let o_clamped = clamp(overlay, vec3<f32>(0.0), vec3<f32>(1.0));
+    let o_mask = clamp(length(overlay) * 2.0, 0.0, 1.0);
+    var blended = color + overlay;
+    if (bt_blend_mode == 1u) {
+      blended = vec3<f32>(1.0) - (vec3<f32>(1.0) - color) * (vec3<f32>(1.0) - o_clamped);
+    } else if (bt_blend_mode == 2u) {
+      blended = mix(color, color * o_clamped, o_mask);
+    } else if (bt_blend_mode == 3u) {
+      let over = mix(
+        2.0 * color * o_clamped,
+        vec3<f32>(1.0) - 2.0 * (vec3<f32>(1.0) - color) * (vec3<f32>(1.0) - o_clamped),
+        step(vec3<f32>(0.5), color),
+      );
+      blended = mix(color, over, o_mask);
+    } else if (bt_blend_mode == 4u) {
+      blended = mix(color, o_clamped, o_mask);
+    }
     let final_rgb = mix(color, blended, clamp(amount, 0.0, 1.0));
     let overlay_presence = step(0.001, length(overlay));
     return vec4<f32>(final_rgb, max(src.a, overlay_presence * clamp(amount, 0.0, 1.0)));
@@ -3997,176 +4462,438 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
   }
   // ── Wave 1: stylize / pattern passes (codes 73-96) ────────────────────
   if (code == 73u) {
-    // OIL PAINT — 4-quadrant Kuwahara pick + palette quantization + brush grain.
-    let radius = clamp(amount, 1.0, 8.0) / u.resolution_time.xy;
-    var best = color;
-    var best_var = 1e9;
-    for (var q = 0u; q < 4u; q = q + 1u) {
-      let dir = vec2<f32>(select(-1.0, 1.0, (q & 1u) == 1u), select(-1.0, 1.0, (q & 2u) == 2u));
-      var mean = vec3<f32>(0.0);
-      var m2 = 0.0;
-      for (var j = 0u; j < 3u; j = j + 1u) {
-        for (var i = 0u; i < 3u; i = i + 1u) {
-          let o = dir * vec2<f32>(f32(i), f32(j)) * radius * 0.5;
-          let s = sample_rgb(uv + o);
-          mean += s;
-          m2 += luma(s) * luma(s);
+    // OIL PAINT - dual-algorithm painterly pass.
+    // amount = brush radius px; params0 = (quantize bins, brush length,
+    // bristle, color punch); params1 = (wet highlight, mode, -, -)
+    let px = 1.0 / u.resolution_time.xy;
+    let radius = clamp(amount, 1.0, 8.0);
+    let bins = clamp(u.params0.x, 4.0, 24.0);
+    let brush_len = clamp(u.params0.y, 0.0, 2.0);
+    let bristle = clamp(u.params0.z, 0.0, 1.0);
+    let punch = clamp(u.params0.w, 0.0, 1.0);
+    let highlight = clamp(u.params1.x, 0.0, 1.0);
+    let mode = u32(round(clamp(u.params1.y, 0.0, 1.0)));
+    var result = color;
+    if (mode == 1u) {
+      // Variance pick: 4-quadrant Kuwahara.
+      var best = color;
+      var best_var = 1e9;
+      for (var q = 0u; q < 4u; q = q + 1u) {
+        let dir = vec2<f32>(select(-1.0, 1.0, (q & 1u) == 1u), select(-1.0, 1.0, (q & 2u) == 2u));
+        var mean = vec3<f32>(0.0);
+        var m2 = 0.0;
+        for (var j = 0u; j < 3u; j = j + 1u) {
+          for (var i = 0u; i < 3u; i = i + 1u) {
+            let o = dir * vec2<f32>(f32(i), f32(j)) * radius * px * 0.5;
+            let sm = sample_rgb(uv + o);
+            mean += sm;
+            m2 += luma(sm) * luma(sm);
+          }
+        }
+        mean /= 9.0;
+        let variance = m2 / 9.0 - luma(mean) * luma(mean);
+        if (variance < best_var) { best_var = variance; best = mean; }
+      }
+      result = floor(best * bins + vec3<f32>(0.5)) / bins;
+    } else {
+      // Bin pick: dominant-luma-bin averaging with directional brush stretch.
+      let l00 = luma(sample_rgb(uv + px * vec2<f32>(-1.0, -1.0)));
+      let l10 = luma(sample_rgb(uv + px * vec2<f32>(0.0, -1.0)));
+      let l20 = luma(sample_rgb(uv + px * vec2<f32>(1.0, -1.0)));
+      let l01 = luma(sample_rgb(uv + px * vec2<f32>(-1.0, 0.0)));
+      let l21 = luma(sample_rgb(uv + px * vec2<f32>(1.0, 0.0)));
+      let l02 = luma(sample_rgb(uv + px * vec2<f32>(-1.0, 1.0)));
+      let l12 = luma(sample_rgb(uv + px * vec2<f32>(0.0, 1.0)));
+      let l22 = luma(sample_rgb(uv + px * vec2<f32>(1.0, 1.0)));
+      let gx = (l20 + 2.0 * l21 + l22) - (l00 + 2.0 * l01 + l02);
+      let gy = (l02 + 2.0 * l12 + l22) - (l00 + 2.0 * l10 + l20);
+      let grad_mag = length(vec2<f32>(gx, gy));
+      var brush_dir = vec2<f32>(1.0, 0.0);
+      if (grad_mag > 0.001) {
+        brush_dir = vec2<f32>(-gy, gx) / grad_mag;
+      }
+      var bin_count: array<f32, 24>;
+      var bin_color: array<vec3<f32>, 24>;
+      let stride = radius * 0.5;
+      for (var j = -2; j <= 2; j = j + 1) {
+        for (var i = -2; i <= 2; i = i + 1) {
+          let cell = vec2<f32>(f32(i), f32(j));
+          var stretch = 1.0;
+          var w = 1.0;
+          if (i != 0 || j != 0) {
+            let along = dot(normalize(cell), brush_dir);
+            stretch = 1.0 + brush_len * abs(along);
+            w = mix(1.0, 0.5 + 0.5 * sin(dot(cell, brush_dir) * 6.28318), bristle);
+          }
+          let sm = sample_rgb(uv + cell * px * stride * stretch);
+          var bin = i32(luma(sm) * (bins - 1.0));
+          bin = clamp(bin, 0, 23);
+          bin_count[bin] += w;
+          bin_color[bin] += sm * w;
         }
       }
-      mean /= 9.0;
-      let variance = m2 / 9.0 - luma(mean) * luma(mean);
-      if (variance < best_var) { best_var = variance; best = mean; }
+      var max_idx = 0;
+      var max_count = 0.0;
+      for (var b = 0; b < 24; b = b + 1) {
+        if (bin_count[b] > max_count) { max_count = bin_count[b]; max_idx = b; }
+      }
+      result = bin_color[max_idx] / max(max_count, 0.0001);
     }
-    let bins = clamp(u.params0.x * 32.0 + 8.0, 6.0, 40.0);
-    var painted = floor(best * bins + 0.5) / bins;
+    let lum = luma(result);
+    result = mix(vec3<f32>(lum), result, 1.0 + punch * 0.6);
+    result += vec3<f32>(smoothstep(0.7, 0.95, luma(result)) * highlight);
     let grain = value_noise2d(uv * u.resolution_time.xy * 0.5) * 0.06 - 0.03;
-    painted = painted * (1.0 + grain);
-    return vec4<f32>(painted, src.a);
+    result *= 1.0 + grain;
+    return vec4<f32>(clamp(result, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
   }
   if (code == 74u) {
-    // WATERCOLOR — noise-bled sampling, granulation, darkened wet edges.
+    // WATERCOLOR - fbm-bled pigment, wet-edge darkening, granulation, paper.
+    // amount = pigment bleed; params0 = (edge darken, wetness, granulation,
+    // paper texture); params1 = (paper scale, paper hue, -, -)
     let px = 1.0 / u.resolution_time.xy;
-    let bleed = amount * 8.0;
+    let edge_darken = clamp(u.params0.x, 0.0, 1.0);
+    let wetness = clamp(u.params0.y, 0.0, 1.0);
+    let granulation_amt = clamp(u.params0.z, 0.0, 1.0);
+    let paper_amt = clamp(u.params0.w, 0.0, 1.0);
+    let paper_scale = clamp(u.params1.x, 1.0, 32.0);
+    let paper_hue = clamp(u.params1.y, 0.0, 2.0);
+    let bleed = clamp(amount, 0.0, 1.5) * 8.0;
     let warp = vec2<f32>(
       fbm2d(uv * 9.0 + vec2<f32>(0.0, u.resolution_time.z * 0.05)) - 0.5,
       fbm2d(uv * 9.0 + vec2<f32>(7.3, 2.1)) - 0.5,
     ) * bleed * px * 14.0;
-    var wc = sample_rgb(uv + warp);
+    let blur_r = 1.0 + bleed * 0.35;
+    var wc = vec3<f32>(0.0);
+    var wsum = 0.0;
+    for (var yy = -1; yy <= 1; yy = yy + 1) {
+      for (var xx = -1; xx <= 1; xx = xx + 1) {
+        let o = vec2<f32>(f32(xx), f32(yy));
+        let w = exp(-dot(o, o) * 0.55);
+        wc += sample_rgb(uv + warp + o * px * blur_r) * w;
+        wsum += w;
+      }
+    }
+    wc /= wsum;
     let bins = 9.0;
-    wc = floor(wc * bins + 0.5) / bins;
-    let granulation = value_noise2d(uv * u.resolution_time.xy * 0.8);
-    wc *= 0.92 + granulation * 0.16;
+    wc = floor(wc * bins + vec3<f32>(0.5)) / bins;
     let edge_l = abs(luma(sample_rgb(uv + vec2<f32>(px.x * 2.0, 0.0))) - luma(sample_rgb(uv - vec2<f32>(px.x * 2.0, 0.0))))
                + abs(luma(sample_rgb(uv + vec2<f32>(0.0, px.y * 2.0))) - luma(sample_rgb(uv - vec2<f32>(0.0, px.y * 2.0))));
-    wc *= 1.0 - clamp(edge_l * 2.2, 0.0, 0.45);
-    let paper = vec3<f32>(0.96, 0.95, 0.90);
-    return vec4<f32>(mix(paper, wc, 0.9 - granulation * 0.08), src.a);
+    wc *= 1.0 - clamp(edge_l * 2.4, 0.0, 0.9) * edge_darken;
+    let lum = luma(wc);
+    wc = mix(vec3<f32>(lum), wc, 1.0 + wetness * 0.5);
+    let gran = value_noise2d(uv * u.resolution_time.xy * 0.8 + vec2<f32>(u.resolution_time.z * 0.05));
+    wc += vec3<f32>(gran - 0.5) * granulation_amt * 0.3;
+    var tone = vec3<f32>(0.96, 0.93, 0.86);
+    if (paper_hue >= 1.5) {
+      tone = vec3<f32>(0.82, 0.72, 0.55);
+    } else if (paper_hue >= 0.5) {
+      tone = vec3<f32>(0.88, 0.90, 0.93);
+    }
+    let paper_n = value_noise2d(uv * paper_scale * 16.0) * 0.5 + value_noise2d(uv * paper_scale * 32.0) * 0.5;
+    let paper = tone * (0.85 + paper_n * 0.3);
+    let result = wc * mix(vec3<f32>(1.0), paper, paper_amt);
+    return vec4<f32>(clamp(result, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
   }
   if (code == 75u) {
-    // COMIC INK — flat cel colors, sobel ink lines, shadow halftone dots.
+    // COMIC INK - flat cel colors, sobel ink lines, shadow halftone dots.
+    // amount = ink strength; params0 = (edge threshold, posterize levels,
+    // halftone shadow, halftone size); params1 = (color mix, ink rgb)
     let px = 1.0 / u.resolution_time.xy;
-    let bins = 5.0;
-    var cel = floor(color * bins + 0.5) / bins;
-    cel = cel * 1.1 + 0.02;
-    var gx = 0.0; var gy = 0.0;
-    gx += luma(sample_rgb(uv + px * vec2<f32>(1.0, 0.0))) - luma(sample_rgb(uv - px * vec2<f32>(1.0, 0.0)));
-    gy += luma(sample_rgb(uv + px * vec2<f32>(0.0, 1.0))) - luma(sample_rgb(uv - px * vec2<f32>(0.0, 1.0)));
-    let ink = smoothstep(0.12 / max(amount, 0.2), 0.4 / max(amount, 0.2), length(vec2<f32>(gx, gy)));
-    let shade = luma(color);
-    let dotgrid = fract(vec2<f32>(uv.x + uv.y * 0.5, uv.y) * u.resolution_time.xy / 7.0) - 0.5;
-    let dots = step(length(dotgrid), 0.34 * (1.0 - smoothstep(0.15, 0.5, shade)));
-    cel = mix(cel, cel * 0.45, dots);
-    return vec4<f32>(mix(cel, vec3<f32>(0.02), ink), src.a);
+    let threshold = clamp(u.params0.x, 0.0, 1.0);
+    let bins = clamp(u.params0.y, 2.0, 12.0);
+    let halftone = clamp(u.params0.z, 0.0, 1.0);
+    let halftone_size = clamp(u.params0.w, 2.0, 16.0);
+    let color_mix = clamp(u.params1.x, 0.0, 1.0);
+    let ink_rgb = clamp(vec3<f32>(u.params1.y, u.params1.z, u.params1.w), vec3<f32>(0.0), vec3<f32>(1.0));
+    let l00 = luma(sample_rgb(uv + px * vec2<f32>(-1.0, -1.0)));
+    let l10 = luma(sample_rgb(uv + px * vec2<f32>(0.0, -1.0)));
+    let l20 = luma(sample_rgb(uv + px * vec2<f32>(1.0, -1.0)));
+    let l01 = luma(sample_rgb(uv + px * vec2<f32>(-1.0, 0.0)));
+    let l21 = luma(sample_rgb(uv + px * vec2<f32>(1.0, 0.0)));
+    let l02 = luma(sample_rgb(uv + px * vec2<f32>(-1.0, 1.0)));
+    let l12 = luma(sample_rgb(uv + px * vec2<f32>(0.0, 1.0)));
+    let l22 = luma(sample_rgb(uv + px * vec2<f32>(1.0, 1.0)));
+    let gx = (l20 + 2.0 * l21 + l22) - (l00 + 2.0 * l01 + l02);
+    let gy = (l02 + 2.0 * l12 + l22) - (l00 + 2.0 * l10 + l20);
+    let edge = clamp(length(vec2<f32>(gx, gy)) * amount, 0.0, 1.0);
+    let ink = smoothstep(threshold, threshold + 0.05, edge);
+    let quant = floor(color * bins + vec3<f32>(0.5)) / bins;
+    let cel = quant * 1.1 + vec3<f32>(0.02);
+    var colored = mix(cel, color, color_mix);
+    let shade = luma(quant);
+    let grid_uv = fract(vec2<f32>(uv.x + uv.y * 0.5, uv.y) * u.resolution_time.xy / halftone_size) - vec2<f32>(0.5);
+    let dot_r = 0.4 * (1.0 - smoothstep(0.1, 0.75, shade));
+    let dots = 1.0 - smoothstep(dot_r - 0.08, dot_r, length(grid_uv));
+    colored = mix(colored, colored * 0.45, dots * halftone);
+    let result = mix(colored, ink_rgb, ink);
+    return vec4<f32>(clamp(result, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
   }
   if (code == 76u) {
     // CROSSHATCH — layered pencil strokes by tone.
-    let l = luma(color);
-    let sp = uv * u.resolution_time.xy / max(2.0, 8.0 - amount * 5.0);
+    // params0 = (density, angle deg, line width, contrast)
+    // params1 = (paper r, paper g, paper b, ink r); params2 = (ink g, ink b, -, -)
+    let density = max(0.1, u.params0.x);
+    let hatch_ang = u.params0.y * 0.0174533;
+    let line_w = max(0.5, u.params0.z);
+    let contrast = u.params0.w;
+    let paper = vec3<f32>(u.params1.x, u.params1.y, u.params1.z);
+    let inkcol = vec3<f32>(u.params1.w, u.params2.x, u.params2.y);
+
+    var l = clamp((luma(color) - 0.5) * max(contrast, 0.0) + 0.5, 0.0, 1.0);
+    // Rotate the stroke basis so Angle turns the whole hatch pattern.
+    let ca = cos(hatch_ang);
+    let sa = sin(hatch_ang);
+    let px = uv * u.resolution_time.xy;
+    let rp = vec2<f32>(px.x * ca - px.y * sa, px.x * sa + px.y * ca);
+    let sp = rp / max(1.2, (8.0 - amount * 5.0) / density);
     let jitter = value_noise2d(sp * 0.35) * 2.0;
+    // Line width widens each stroke's dark band.
+    let wscale = 1.0 / line_w;
     var tone = 1.0;
-    if (l < 0.85) { tone = min(tone, 0.72 + 0.28 * abs(sin(sp.x + sp.y + jitter))); }
-    if (l < 0.62) { tone = min(tone, 0.55 + 0.45 * abs(sin(sp.x - sp.y + jitter))); }
-    if (l < 0.40) { tone = min(tone, 0.42 + 0.58 * abs(sin(sp.x * 0.5 + sp.y + jitter))); }
-    if (l < 0.22) { tone = min(tone, 0.30 + 0.70 * abs(sin(sp.x + sp.y * 0.5 - jitter))); }
-    let paper = vec3<f32>(0.94, 0.93, 0.88);
-    let tinted = mix(vec3<f32>(0.1, 0.09, 0.12), paper, clamp(tone * (0.5 + l * 0.7), 0.0, 1.0));
+    if (l < 0.85) { tone = min(tone, 1.0 - (1.0 - clamp(0.72 + 0.28 * abs(sin(sp.x + sp.y + jitter)) * wscale, 0.0, 1.0))); }
+    if (l < 0.62) { tone = min(tone, clamp(0.55 + 0.45 * abs(sin(sp.x - sp.y + jitter)) * wscale, 0.0, 1.0)); }
+    if (l < 0.40) { tone = min(tone, clamp(0.42 + 0.58 * abs(sin(sp.x * 0.5 + sp.y + jitter)) * wscale, 0.0, 1.0)); }
+    if (l < 0.22) { tone = min(tone, clamp(0.30 + 0.70 * abs(sin(sp.x + sp.y * 0.5 - jitter)) * wscale, 0.0, 1.0)); }
+    let tinted = mix(inkcol, paper, clamp(tone * (0.5 + l * 0.7), 0.0, 1.0));
     return vec4<f32>(mix(tinted, tinted * (color / max(l, 0.05)), 0.25), src.a);
   }
   if (code == 77u) {
     // LINOCUT — two-tone carve with directional gouge streaks.
+    // Generic family slots: params0 = (streak scale, softness, threshold, angle deg)
+    // params1.zw + params2.x = ink rgb (slots 6..8 -> params1.z, params1.w, params2.x)
+    let streak_scale = mix(0.4, 2.4, clamp(u.params0.x, 0.0, 1.0));
+    let softness = mix(0.015, 0.18, clamp(u.params0.y, 0.0, 1.0));
+    let base_threshold = clamp(u.params0.z, 0.05, 0.95);
+    let streak_ang = 0.6 + u.params0.w * 0.0174533;
+    let inkcol = vec3<f32>(u.params1.z, u.params1.w, u.params2.x);
+
     let l = luma(color);
-    let streak_ang = 0.6;
     let sd = vec2<f32>(cos(streak_ang), sin(streak_ang));
-    let carve = value_noise2d(vec2<f32>(dot(uv * u.resolution_time.xy, sd) * 0.12, dot(uv * u.resolution_time.xy, vec2<f32>(-sd.y, sd.x)) * 0.9));
-    let threshold = clamp(0.5 + (carve - 0.5) * 0.35, 0.1, 0.9) * clamp(amount, 0.2, 1.6);
-    let cut = smoothstep(threshold - 0.06, threshold + 0.06, l);
+    let carve = value_noise2d(vec2<f32>(
+      dot(uv * u.resolution_time.xy, sd) * 0.12 * streak_scale,
+      dot(uv * u.resolution_time.xy, vec2<f32>(-sd.y, sd.x)) * 0.9 * streak_scale));
+    let threshold = clamp(base_threshold + (carve - 0.5) * 0.35, 0.05, 0.95) * clamp(amount, 0.2, 1.6);
+    let cut = smoothstep(threshold - softness, threshold + softness, l);
     let paper = vec3<f32>(0.93, 0.9, 0.84);
-    let inkcol = vec3<f32>(0.08, 0.05, 0.07);
     return vec4<f32>(mix(inkcol, paper, cut), src.a);
   }
   if (code == 78u) {
-    // DOT MATRIX — RGB dot triads on a coarse grid.
-    let cell = max(4.0, 24.0 - amount * 1.2);
+    // DOT MATRIX - shaped sample dots on a coarse grid over a flat background.
+    // params0 = (dotShape, dotSize, gap, posterize)
+    // params1 = (glow, bgR, bgG, bgB)
+    let shape = u32(clamp(u.params0.x, 0.0, 2.0) + 0.5);
+    let cell = max(2.0, u.params0.y);
+    let gap = clamp(u.params0.z, 0.0, 1.0);
+    let posterize = clamp(u.params0.w, 1.0, 8.0);
+    let glow = clamp(u.params1.x, 0.0, 1.0);
+    let bg = vec3<f32>(u.params1.y, u.params1.z, u.params1.w);
     let gridp = uv * u.resolution_time.xy / cell;
-    let base = sample_rgb((floor(gridp) + 0.5) * cell / u.resolution_time.xy);
-    let f = fract(gridp) - 0.5;
-    let sub = u32(floor(fract(gridp.x) * 3.0));
-    var channel = vec3<f32>(0.0);
-    if (sub == 0u) { channel = vec3<f32>(1.0, 0.0, 0.0); }
-    else if (sub == 1u) { channel = vec3<f32>(0.0, 1.0, 0.0); }
-    else { channel = vec3<f32>(0.0, 0.0, 1.0); }
-    let dotmask = smoothstep(0.44, 0.30, length(vec2<f32>(fract(gridp.x * 3.0) - 0.5, f.y)));
-    let lit = dot(base, channel);
-    return vec4<f32>(channel * lit * dotmask * 1.9 + base * 0.05, src.a);
+    let cuv = fract(gridp) - vec2<f32>(0.5);
+    var base = sample_rgb((floor(gridp) + vec2<f32>(0.5)) * cell / u.resolution_time.xy);
+    if (posterize > 1.001) {
+      base = floor(base * posterize + vec3<f32>(0.5)) / posterize;
+    }
+    let dot_r = (0.475 - gap * 0.25) * clamp(amount / 8.0, 0.2, 1.4);
+    var dotmask = 0.0;
+    if (shape == 0u) {
+      dotmask = smoothstep(dot_r + 0.05, dot_r - 0.05, length(cuv));
+    } else if (shape == 1u) {
+      let ad = abs(cuv);
+      dotmask = smoothstep(dot_r + 0.02, dot_r - 0.02, max(ad.x, ad.y));
+    } else {
+      let ad = abs(cuv);
+      dotmask = smoothstep(dot_r + 0.02, dot_r - 0.02, max(ad.x * 0.866 + ad.y * 0.5, ad.y));
+    }
+    var result = mix(bg, base, dotmask);
+    if (glow > 0.001) {
+      result += base * smoothstep(0.7, 0.45, length(cuv)) * glow * 0.4;
+    }
+    return vec4<f32>(result, src.a);
   }
   if (code == 79u) {
     // ASCII — luma-ranked procedural glyph masks per character cell.
-    let cell = max(6.0, 22.0 - amount * 1.0);
+    // params0 = (cell size, contrast, colour mix, invert)
+    // params1 = (style, tint r, tint g, tint b)
+    let cell = max(4.0, u.params0.x);
+    let contrast = u.params0.y;
+    let color_mix = clamp(u.params0.z, 0.0, 1.0);
+    let invert = clamp(u.params0.w, 0.0, 1.0);
+    let style = i32(floor(clamp(u.params1.x, 0.0, 3.0) + 0.5));
+    let tint = vec3<f32>(u.params1.y, u.params1.z, u.params1.w);
+
     let gridp = uv * u.resolution_time.xy / cell;
     let base = sample_rgb((floor(gridp) + 0.5) * cell / u.resolution_time.xy);
-    let l = luma(base);
+    // Contrast is applied around mid grey BEFORE ranking, so it changes which
+    // glyph a cell picks rather than just tinting the result.
+    var l = clamp((luma(base) - 0.5) * max(contrast, 0.0) + 0.5, 0.0, 1.0);
+    l = mix(l, 1.0 - l, invert);
     let g = fract(gridp) * 2.0 - 1.0;
+
     var glyph = 0.0;
-    if (l > 0.85)      { glyph = step(abs(g.x), 0.75) * step(abs(g.y), 0.75); }                       // block
-    else if (l > 0.65) { glyph = max(step(abs(g.x), 0.16), step(abs(g.y), 0.16)); }                    // plus
-    else if (l > 0.45) { glyph = step(abs(abs(g.x) - abs(g.y)), 0.22); }                               // x
-    else if (l > 0.28) { glyph = step(abs(g.y), 0.16); }                                               // dash
-    else if (l > 0.14) { glyph = step(length(g), 0.28); }                                              // dot
-    let green = vec3<f32>(0.55, 1.0, 0.6);
-    return vec4<f32>(mix(base * 0.12, green * (0.3 + l), glyph), src.a);
+    if (style == 1) {
+      // Stipple — dot radius tracks luma.
+      glyph = step(length(g), clamp(l, 0.0, 1.0) * 0.9);
+    } else if (style == 2) {
+      // Solid block — filled cell above a luma floor.
+      glyph = step(0.12, l) * step(abs(g.x), 0.82) * step(abs(g.y), 0.82);
+    } else if (style == 3) {
+      // Line hatching — denser lines as luma rises.
+      let freq = 1.0 + floor(l * 4.0);
+      glyph = step(abs(fract((g.x + g.y) * freq) - 0.5), 0.22);
+    } else {
+      // Density ramp — the original luma-ranked glyph ladder.
+      if (l > 0.85)      { glyph = step(abs(g.x), 0.75) * step(abs(g.y), 0.75); }
+      else if (l > 0.65) { glyph = max(step(abs(g.x), 0.16), step(abs(g.y), 0.16)); }
+      else if (l > 0.45) { glyph = step(abs(abs(g.x) - abs(g.y)), 0.22); }
+      else if (l > 0.28) { glyph = step(abs(g.y), 0.16); }
+      else if (l > 0.14) { glyph = step(length(g), 0.28); }
+    }
+
+    // Colour mix blends the glyph between the flat tint and the cell's own
+    // colour, so 0 is a classic monochrome terminal and 1 keeps the source.
+    let glyph_rgb = mix(tint * (0.3 + l), base * (0.35 + l * 0.9), color_mix);
+    return vec4<f32>(mix(base * 0.12, glyph_rgb, glyph), src.a);
   }
   if (code == 80u) {
-    // MATRIX RAIN — glyph columns raining over the source.
-    let colw = 12.0;
-    let colx = floor(uv.x * u.resolution_time.xy.x / colw);
-    let speed = 2.0 + hash21(vec2<f32>(colx, 7.0)) * 6.0;
-    let head = fract(hash21(vec2<f32>(colx, 3.0)) + u.resolution_time.z * speed * 0.08);
-    let ypos = fract(uv.y + 0.0);
-    let dist = fract(ypos - head);
-    let tail = exp(-dist * 7.0 * (0.4 + amount));
-    let cellg = vec2<f32>(fract(uv.x * u.resolution_time.xy.x / colw) * 2.0 - 1.0,
-                          fract(uv.y * u.resolution_time.xy.y / colw) * 2.0 - 1.0);
-    let flick = hash21(vec2<f32>(colx, floor(uv.y * u.resolution_time.xy.y / colw) + floor(u.resolution_time.z * 9.0)));
-    let glyph = max(step(abs(cellg.x), 0.55) * step(abs(cellg.y), 0.65) * step(0.35, flick), 0.0)
-              * max(step(abs(abs(cellg.x) - abs(cellg.y * 0.6)), 0.3), step(abs(cellg.y), 0.18));
-    let matrix_green = vec3<f32>(0.35, 1.0, 0.45);
-    let rain = matrix_green * glyph * tail * 1.6 + matrix_green * glyph * step(dist, 0.02) * 1.4;
-    return vec4<f32>(color * (0.28 + luma(color) * 0.2) + rain * (0.4 + luma(color)), src.a);
+    // MATRIX RAIN - glyph columns raining over the source.
+    // params0 = (density, speed, cellSize, trailLength)
+    // params1 = (bgMix, colorR, colorG, colorB)
+    let density = clamp(u.params0.x, 0.0, 1.0);
+    let fall_rate = clamp(u.params0.y, 0.0, 3.0);
+    let cell = max(4.0, u.params0.z);
+    let trail_length = clamp(u.params0.w, 0.0, 1.0);
+    let bg_mix = clamp(u.params1.x, 0.0, 1.0);
+    let rain_tint = vec3<f32>(u.params1.y, u.params1.z, u.params1.w);
+    let t = u.resolution_time.z;
+    let gridp = uv * u.resolution_time.xy / cell;
+    let cellid = floor(gridp);
+    let cuv = fract(gridp);
+    let col_seed = hash21(vec2<f32>(cellid.x, 0.0));
+    let fall_speed = (0.5 + col_seed * 1.5) * fall_rate;
+    let period = u.resolution_time.y / cell + 30.0;
+    let phase = t * fall_speed - col_seed * 50.0;
+    let trail_head = phase - floor(phase / period) * period;
+    let dist = trail_head - cellid.y;
+    let trail_len = max(2.0, trail_length * 30.0);
+    var intensity = 0.0;
+    if (dist > 0.0 && dist < trail_len) {
+      intensity = (1.0 - dist / trail_len)
+        * step(1.0 - density, hash21(cellid + vec2<f32>(floor(t * fall_speed * 0.05))));
+    }
+    if (dist >= 0.0 && dist < 1.0) { intensity = 1.5; }
+    let glyph_seed = hash21(cellid + vec2<f32>(floor(t * fall_speed * 0.5 + cellid.y * 0.1)));
+    let g_mask = step(0.55, hash21(floor(cuv * 5.0) + vec2<f32>(glyph_seed * 13.0)));
+    let rain = rain_tint * intensity * g_mask * clamp(amount / 0.6, 0.0, 2.5);
+    return vec4<f32>(mix(rain, color + rain, bg_mix), src.a);
   }
   if (code == 81u) {
-    // BINARY CODE — 0/1 glyph cells brightness-driven by the source.
-    let cell = max(8.0, 26.0 - amount * 1.2);
+    // BINARY CODE - scrolling 0/1 glyph columns brightness-tied to the source.
+    // params0 = (density, speed, cellSize, contrast)
+    // params1 = (bgMix, colorR, colorG, colorB)
+    let density = clamp(u.params0.x, 0.0, 1.0);
+    let scroll_speed = clamp(u.params0.y, 0.0, 3.0);
+    let cell = max(4.0, u.params0.z);
+    let contrast = clamp(u.params0.w, 0.0, 2.0);
+    let bg_mix = clamp(u.params1.x, 0.0, 1.0);
+    let bin_color = vec3<f32>(u.params1.y, u.params1.z, u.params1.w);
     let gridp = uv * u.resolution_time.xy / cell;
-    let base = sample_rgb((floor(gridp) + 0.5) * cell / u.resolution_time.xy);
-    let l = luma(base);
-    let bit = step(0.5, hash21(floor(gridp) + floor(u.resolution_time.z * 2.0) * 0.13));
-    let g = fract(gridp) * 2.0 - 1.0;
-    let ring = step(abs(length(g * vec2<f32>(1.0, 0.75)) - 0.52), 0.16);
-    let bar = step(abs(g.x), 0.14) * step(abs(g.y), 0.6);
-    let glyph = select(ring, bar, bit > 0.5);
-    return vec4<f32>(base * 0.15 + vec3<f32>(0.5, 0.85, 1.0) * glyph * (0.15 + l * 1.2), src.a);
+    let cellid = floor(gridp);
+    let cuv = fract(gridp) - vec2<f32>(0.5);
+    let col_seed = hash21(vec2<f32>(cellid.x, 0.0));
+    let y_off = floor(u.resolution_time.z * scroll_speed + col_seed * 50.0);
+    let bit = step(0.5, hash21(vec2<f32>(cellid.x, cellid.y + y_off)));
+    // '0' is an elliptical ring; '1' is a bar with a serif foot.
+    let ring_r = length(cuv * vec2<f32>(1.0, 0.7));
+    let zero_glyph = smoothstep(0.42, 0.38, ring_r) - smoothstep(0.30, 0.26, ring_r);
+    let one_glyph = max(step(abs(cuv.x + 0.05), 0.05) * step(abs(cuv.y), 0.4),
+                        step(abs(cuv.y + 0.4), 0.05) * step(abs(cuv.x), 0.2));
+    var char_mask = select(zero_glyph, one_glyph, bit > 0.5);
+    char_mask *= step(1.0 - density, hash21(cellid + vec2<f32>(y_off * 0.137)));
+    let src_l = luma(sample_rgb((cellid + vec2<f32>(0.5)) * cell / u.resolution_time.xy));
+    char_mask *= mix(1.0, src_l, contrast * 0.5);
+    let char_rgb = bin_color * char_mask * clamp(amount / 8.0, 0.0, 2.0);
+    return vec4<f32>(mix(char_rgb, color + char_rgb, bg_mix), src.a);
   }
   if (code == 82u) {
-    // BLOCK MOSAIC — beveled color blocks.
-    let cell = max(6.0, 40.0 - amount * 2.0);
-    let gridp = uv * u.resolution_time.xy / cell;
-    let base = sample_rgb((floor(gridp) + 0.5) * cell / u.resolution_time.xy);
-    let f = fract(gridp);
-    let bevel = clamp(1.0 + (f.x - f.y) * 0.35 - smoothstep(0.86, 1.0, max(f.x, f.y)) * 0.4
-                      + smoothstep(0.14, 0.0, min(f.x, f.y)) * 0.22, 0.4, 1.4);
-    return vec4<f32>(base * bevel, src.a);
+    // BLOCK MOSAIC - beveled color blocks in square/voronoi/hex/brick layouts.
+    // params0 = (mode 0..3, tile size px, grout width 0..1, color jitter 0..1)
+    // params1 = (grout r, grout g, grout b, -)
+    let mode = u32(round(clamp(u.params0.x, 0.0, 3.0)));
+    let tile_size = clamp(u.params0.y, 4.0, 128.0);
+    let grout_w = clamp(u.params0.z, 0.0, 1.0);
+    let jitter_amt = clamp(u.params0.w, 0.0, 1.0);
+    let grout_col = vec3<f32>(u.params1.x, u.params1.y, u.params1.z);
+    // Amount keeps its legacy block-density role as a scale on the explicit
+    // tile size (amount 10 = manifest default = 1.0x).
+    let cell = max(4.0, tile_size * clamp((40.0 - amount * 2.0) / 20.0, 0.25, 2.0));
+    let px = uv * u.resolution_time.xy / cell;
+    var cid = vec2<f32>(0.0);
+    var cuv = vec2<f32>(0.0);
+    if (mode == 1u) {
+      let i = floor(px);
+      let f = fract(px);
+      var md = 9.0;
+      for (var yy = -1; yy <= 1; yy = yy + 1) {
+        for (var xx = -1; xx <= 1; xx = xx + 1) {
+          let g = vec2<f32>(f32(xx), f32(yy));
+          let o = vec2<f32>(hash21(i + g), hash21(i + g + vec2<f32>(13.7)));
+          let r = g + o - f;
+          let d = dot(r, r);
+          if (d < md) { md = d; cid = i + g; cuv = r; }
+        }
+      }
+    } else if (mode == 2u) {
+      var q = vec2<f32>(px.x * 1.1547, px.y);
+      q.x = q.x + 0.5 * floor(q.y);
+      let i = floor(q);
+      cid = vec2<f32>(i.x - floor(i.y / 2.0), i.y);
+      cuv = fract(q) - vec2<f32>(0.5);
+    } else if (mode == 3u) {
+      var q = px;
+      let row = floor(q.y);
+      let odd = row - 2.0 * floor(row * 0.5);
+      q.x = q.x + odd * 0.5;
+      cid = vec2<f32>(floor(q.x), row);
+      cuv = fract(q) - vec2<f32>(0.5);
+    } else {
+      cid = floor(px);
+      cuv = fract(px) - vec2<f32>(0.5);
+    }
+    let center = clamp((cid + vec2<f32>(0.5)) * cell / u.resolution_time.xy, vec2<f32>(0.0), vec2<f32>(1.0));
+    var tile = sample_rgb(center);
+    if (jitter_amt > 0.001) {
+      let j = vec3<f32>(hash21(cid), hash21(cid + vec2<f32>(7.3)), hash21(cid + vec2<f32>(13.7))) - vec3<f32>(0.5);
+      tile = tile + j * jitter_amt * 0.4;
+    }
+    var bevel = 1.0;
+    if (mode != 1u) {
+      let f = cuv + vec2<f32>(0.5);
+      bevel = clamp(1.0 + (f.x - f.y) * 0.35 - smoothstep(0.86, 1.0, max(f.x, f.y)) * 0.4
+                    + smoothstep(0.14, 0.0, min(f.x, f.y)) * 0.22, 0.4, 1.4);
+    }
+    var dist = max(abs(cuv.x), abs(cuv.y));
+    if (mode == 1u) { dist = sqrt(length(cuv)); }
+    let grout = step(0.5 - grout_w * 0.5, dist);
+    let result = mix(tile * bevel, grout_col, grout);
+    return vec4<f32>(clamp(result, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
   }
   if (code == 83u) {
-    // NUMBER GRID — seven-segment digits ranked by cell luma.
+    // NUMBER GRID - seven-segment digits ranked by cell luma.
+    // Generic family slots: amount = cell size; params0.x = amount2
+    // (contrast), params0.y = amount3 (color mix).
+    let contrast = 0.5 + clamp(u.params0.x, 0.0, 1.0) * 1.5;
+    let color_mix = clamp(u.params0.y, 0.0, 1.0);
     let cell = max(10.0, 30.0 - amount * 1.4);
     let gridp = uv * u.resolution_time.xy / cell;
-    let base = sample_rgb((floor(gridp) + 0.5) * cell / u.resolution_time.xy);
-    let digit = u32(clamp(floor(luma(base) * 9.99), 0.0, 9.0));
-    let masks = array<u32, 10>(119u, 36u, 93u, 109u, 46u, 107u, 123u, 37u, 127u, 111u);
+    let base = sample_rgb((floor(gridp) + vec2<f32>(0.5)) * cell / u.resolution_time.xy);
+    // Contrast reshapes luma BEFORE digit ranking so it changes which digit
+    // a cell picks, not just its brightness.
+    let l = clamp((luma(base) - 0.5) * contrast + 0.5, 0.0, 1.0);
+    let digit = u32(clamp(floor(l * 9.99), 0.0, 9.0));
+    var masks = array<u32, 10>(119u, 36u, 93u, 109u, 46u, 107u, 123u, 37u, 127u, 111u);
     let segs = masks[digit];
-    let g = fract(gridp) * vec2<f32>(2.0, 2.0) - 1.0;
+    let g = fract(gridp) * vec2<f32>(2.0, 2.0) - vec2<f32>(1.0);
     var seg = 0.0;
-    // top, top-right, bottom-right, bottom, bottom-left, top-left, middle
     if ((segs & 1u) != 0u)  { seg = max(seg, step(abs(g.y - 0.8), 0.12) * step(abs(g.x), 0.5)); }
     if ((segs & 2u) != 0u)  { seg = max(seg, step(abs(g.x - 0.55), 0.12) * step(abs(g.y - 0.4), 0.4)); }
     if ((segs & 4u) != 0u)  { seg = max(seg, step(abs(g.x - 0.55), 0.12) * step(abs(g.y + 0.4), 0.4)); }
@@ -4174,7 +4901,8 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     if ((segs & 16u) != 0u) { seg = max(seg, step(abs(g.x + 0.55), 0.12) * step(abs(g.y + 0.4), 0.4)); }
     if ((segs & 32u) != 0u) { seg = max(seg, step(abs(g.x + 0.55), 0.12) * step(abs(g.y - 0.4), 0.4)); }
     if ((segs & 64u) != 0u) { seg = max(seg, step(abs(g.y), 0.12) * step(abs(g.x), 0.5)); }
-    return vec4<f32>(base * 0.12 + vec3<f32>(1.0, 0.55, 0.2) * seg * (0.25 + luma(base) * 1.1), src.a);
+    let digit_col = mix(vec3<f32>(1.0, 0.55, 0.2), base * 1.4, color_mix);
+    return vec4<f32>(base * 0.12 + digit_col * seg * (0.25 + l * 1.1), src.a);
   }
   if (code == 84u) {
     // BRAILLE — 2x3 dot cells, dots raised by local luma bits.
@@ -4211,13 +4939,18 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     return vec4<f32>(board + copper * max(trace, pad) + glow * trace, src.a);
   }
   if (code == 86u) {
-    // STAINED GLASS — voronoi panes, lead came, angled light.
-    let sp = uv * (3.0 + amount * 5.0) * vec2<f32>(u.resolution_time.x / u.resolution_time.y, 1.0);
+    // STAINED GLASS - voronoi panes, lead came, angled light.
+    // Generic family slots: params0.x = amount2 (lead width), params0.y =
+    // amount3 (saturation). amount = cell count.
+    let lead_thick = mix(0.02, 0.22, clamp(u.params0.x, 0.0, 1.0));
+    let sat_boost = clamp(u.params0.y, 0.0, 1.0) * 1.5;
+    let cell_scale = (3.0 + amount * 5.0) * vec2<f32>(u.resolution_time.x / u.resolution_time.y, 1.0);
+    let sp = uv * cell_scale;
     let i = floor(sp);
     let f = fract(sp);
     var md = 8.0; var md2 = 8.0; var mc = vec2<f32>(0.0);
-    for (var yy = -1i; yy <= 1i; yy = yy + 1i) {
-      for (var xx = -1i; xx <= 1i; xx = xx + 1i) {
+    for (var yy = -1; yy <= 1; yy = yy + 1) {
+      for (var xx = -1; xx <= 1; xx = xx + 1) {
         let g = vec2<f32>(f32(xx), f32(yy));
         let o = vec2<f32>(hash21(i + g), hash21(i + g + vec2<f32>(19.7)));
         let r = g + o - f;
@@ -4227,12 +4960,13 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
       }
     }
     let edge = sqrt(md2) - sqrt(md);
-    let pane = sample_rgb(clamp(mc / ((3.0 + amount * 5.0) * vec2<f32>(u.resolution_time.x / u.resolution_time.y, 1.0)), vec2<f32>(0.0), vec2<f32>(1.0)));
-    var glass = pow(pane, vec3<f32>(0.75)) * 1.25;
+    let pane = sample_rgb(clamp(mc / cell_scale, vec2<f32>(0.0), vec2<f32>(1.0)));
+    var glass = pow(pane, vec3<f32>(0.75)) * 1.15;
+    glass = max(mix(vec3<f32>(luma(glass)), glass, 1.0 + sat_boost), vec3<f32>(0.0));
     glass *= 0.85 + 0.3 * hash21(mc);
-    let lead = smoothstep(0.09, 0.02, edge);
-    let lightAngle = 0.65 + 0.35 * sin(dot(mc, vec2<f32>(0.7, 1.3)) + u.resolution_time.z * 0.1);
-    return vec4<f32>(mix(glass * lightAngle, vec3<f32>(0.05, 0.05, 0.06), lead), src.a);
+    let lead = smoothstep(lead_thick, lead_thick * 0.25, edge);
+    let light_angle = 0.65 + 0.35 * sin(dot(mc, vec2<f32>(0.7, 1.3)) + u.resolution_time.z * 0.1);
+    return vec4<f32>(mix(glass * light_angle, vec3<f32>(0.05, 0.05, 0.06), lead), src.a);
   }
   if (code == 87u) {
     // WOVEN FABRIC — over/under warp and weft strips carrying the image.
@@ -4284,107 +5018,245 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     return vec4<f32>(color * 0.06 + neon * (core * 1.5 + halo * 0.6), src.a);
   }
   if (code == 90u) {
-    // TOPO MAP — hypsometric tint + contour lines from luma elevation.
+    // TOPO MAP - hypsometric tint + contour lines from luma elevation.
+    // Generic family slots: amount = contour density; params0.x = amount2
+    // (line thickness), params0.y = amount3 (color fill), params1.zw +
+    // params2.x = red/green/blue contour ink.
+    let line_thick = clamp(u.params0.x, 0.0, 1.0);
+    let color_fill = clamp(u.params0.y, 0.0, 1.0);
+    let user_ink = vec3<f32>(u.params1.z, u.params1.w, u.params2.x);
     let elev = luma(sample_rgb(uv)) + fbm2d(uv * 5.0) * 0.06;
     let bands = 8.0 + amount * 10.0;
+    let w_hi = mix(0.04, 0.16, line_thick);
+    let w_lo = w_hi * 0.2;
     let contour = abs(fract(elev * bands) - 0.5);
-    let line = smoothstep(0.10, 0.02, contour);
-    let major = smoothstep(0.10, 0.02, abs(fract(elev * bands / 5.0) - 0.5)) * 0.6;
+    let line = smoothstep(w_hi, w_lo, contour);
+    let major = smoothstep(w_hi * 1.4, w_lo, abs(fract(elev * bands / 5.0) - 0.5)) * 0.6;
     var terrain = mix(vec3<f32>(0.15, 0.32, 0.22), vec3<f32>(0.75, 0.68, 0.5), elev);
     terrain = mix(terrain, vec3<f32>(0.9, 0.9, 0.92), smoothstep(0.8, 0.98, elev));
-    let inkline = vec3<f32>(0.25, 0.16, 0.1);
-    return vec4<f32>(mix(terrain, inkline, max(line * 0.75, major)), src.a);
+    terrain = mix(terrain, color * 0.8 + terrain * 0.2, color_fill);
+    // The pack's unset colour default is 0.5-grey; treat that as "no user
+    // colour" and keep the classic dark-brown ink.
+    let ink_dev = abs(user_ink - vec3<f32>(0.5));
+    let has_ink = step(0.004, max(max(ink_dev.x, ink_dev.y), ink_dev.z));
+    let inkline = mix(vec3<f32>(0.25, 0.16, 0.1), user_ink, has_ink);
+    return vec4<f32>(mix(terrain, inkline, clamp(max(line * 0.75, major), 0.0, 1.0)), src.a);
   }
   if (code == 91u) {
-    // LED WALL — RGB triads, panel seams, hot pixel bloom.
+    // LED WALL - RGB triads, panel seams, hot pixel bloom.
+    // Generic family slots: amount = LED pitch; params0.x = amount2
+    // (roundness), params0.y = amount3 (bloom).
+    let roundness = clamp(u.params0.x, 0.0, 1.0);
+    let bloom_amt = clamp(u.params0.y, 0.0, 1.0);
     let pitch = max(3.0, 14.0 - amount * 0.5);
     let gridp = uv * u.resolution_time.xy / pitch;
-    let base = sample_rgb((floor(gridp) + 0.5) * pitch / u.resolution_time.xy);
+    let base = sample_rgb((floor(gridp) + vec2<f32>(0.5)) * pitch / u.resolution_time.xy);
     let f = fract(gridp);
+    let led_gap = 0.08;
+    let corner = mix(0.001, 0.42, roundness);
+    let hp = abs(f - vec2<f32>(0.5)) - (vec2<f32>(0.5 - led_gap) - vec2<f32>(corner));
+    let rr = length(max(hp, vec2<f32>(0.0))) + min(max(hp.x, hp.y), 0.0) - corner;
+    let led_mask = 1.0 - smoothstep(-0.02, 0.02, rr);
     let sub = u32(floor(f.x * 3.0));
     var channel = vec3<f32>(0.0);
     if (sub == 0u) { channel = vec3<f32>(1.0, 0.0, 0.0); }
     else if (sub == 1u) { channel = vec3<f32>(0.0, 1.0, 0.0); }
     else { channel = vec3<f32>(0.0, 0.0, 1.0); }
-    let px_mask = smoothstep(0.5, 0.32, abs(fract(f.x * 3.0) - 0.5)) * smoothstep(0.5, 0.3, abs(f.y - 0.5));
+    let px_mask = smoothstep(0.5, 0.32, abs(fract(f.x * 3.0) - 0.5))
+                * smoothstep(0.5, 0.3, abs(f.y - 0.5)) * led_mask;
     let panel = step(0.02, fract(gridp.x / 16.0)) * step(0.02, fract(gridp.y / 16.0));
     let lit = dot(base, channel);
-    let bloom = base * 0.22;
+    let gd = length(f - vec2<f32>(0.5));
+    let bloom = base * (0.44 * bloom_amt)
+              + base * exp(-gd * gd * 8.0) * luma(base) * bloom_amt * 0.5;
     return vec4<f32>((channel * lit * px_mask * 2.1 + bloom) * panel, src.a);
   }
   if (code == 92u) {
-    // HEX GRID — hexagonal mosaic with edge glow.
-    let scale = 6.0 + amount * 14.0;
+    // HEX GRID - hexagonal mosaic with edge glow.
+    // Generic family slots: amount = blend; params0.x = amount2 (hex size),
+    // params0.y = amount3 (pop speed), params0.z = threshold (gap).
+    let hex_size = clamp(u.params0.x, 0.0, 1.0);
+    let pop_slider = clamp(u.params0.y, 0.0, 1.0);
+    let gap_amt = clamp(u.params0.z, 0.0, 1.0);
+    let blend = clamp(amount, 0.0, 1.0);
+    let scale = 6.0 + hex_size * 14.0;
     let aspect2 = u.resolution_time.x / u.resolution_time.y;
     let p = uv * vec2<f32>(aspect2, 1.0) * scale;
     let hx = vec2<f32>(p.x * 1.1547, p.y + p.x * 0.5774);
-    let a2 = fract(hx) - 0.5;
-    let idA = floor(hx);
+    let a2 = fract(hx) - vec2<f32>(0.5);
+    let id_a = floor(hx);
     let hb = vec2<f32>(hx.x - 0.5, hx.y - 0.5);
-    let b2 = fract(hb) - 0.5;
-    let idB = floor(hb);
-    var hid = idA; var hf = a2;
-    if (dot(b2, b2) < dot(a2, a2)) { hid = idB + 0.5; hf = b2; }
-    let center = (hid + 0.5) / scale;
+    let b2 = fract(hb) - vec2<f32>(0.5);
+    let id_b = floor(hb);
+    var hid = id_a; var hf = a2;
+    if (dot(b2, b2) < dot(a2, a2)) { hid = id_b + vec2<f32>(0.5); hf = b2; }
+    let center = (hid + vec2<f32>(0.5)) / scale;
     let hexuv = clamp(vec2<f32>(center.x / 1.1547, center.y - center.x / 1.1547 * 0.5774) / vec2<f32>(aspect2, 1.0), vec2<f32>(0.0), vec2<f32>(1.0));
     let hex_col = sample_rgb(hexuv);
     let hd = max(abs(hf.x) * 1.1547, abs(hf.x) * 0.5774 + abs(hf.y));
-    let edge = smoothstep(0.44, 0.5, hd);
-    return vec4<f32>(mix(hex_col, hex_col * 0.3 + vec3<f32>(0.05, 0.1, 0.14), edge), src.a);
+    let hex_edge = 0.5 - 0.02 - gap_amt * 0.16;
+    let in_hex = smoothstep(hex_edge + 0.015, hex_edge - 0.015, hd);
+    let rim = smoothstep(hex_edge - 0.06, hex_edge, hd);
+    let rnd = hash21(hid);
+    let pop = sin(u.resolution_time.z * pop_slider * 3.0 + rnd * 6.2831853) * 0.5 + 0.5;
+    let pop_str = clamp(pop_slider * 3.0, 0.0, 1.0);
+    let lighting = mix(1.0, 0.66 + pop * 0.5, pop_str);
+    var hcol = hex_col * lighting;
+    hcol = mix(hcol, hcol * 0.3 + vec3<f32>(0.05, 0.1, 0.14), rim);
+    hcol += vec3<f32>(0.4, 0.5, 0.7) * rim * 0.3 * pop * pop_str;
+    hcol = mix(vec3<f32>(0.012), hcol, in_hex);
+    return vec4<f32>(mix(color, hcol, blend), src.a);
   }
   if (code == 93u) {
-    // GEOMETRIC TILE — mirrored kaleidoscopic square tiling.
-    let reps = 1.0 + floor(amount * 5.0);
-    var tuv = fract(uv * reps);
-    tuv = abs(tuv * 2.0 - 1.0);
+    // GEOMETRIC TILE - mirror/rotate/tile/quilt square tiling.
+    // params0 = (mode 0..3, tile count 1..16, rotation deg, row offset 0..1)
+    // params1 = (mix 0..1, -, -, -)
+    let mode = u32(round(clamp(u.params0.x, 0.0, 3.0)));
+    let tiles_in = clamp(u.params0.y, 1.0, 16.0);
+    let rot_amt = u.params0.z * 0.0174533;
+    let row_off = clamp(u.params0.w, 0.0, 1.0);
+    let tile_mix = clamp(u.params1.x, 0.0, 1.0);
+    // Amount keeps its legacy density role on top of the explicit tile count.
+    let reps = max(1.0, floor(tiles_in * (0.5 + amount) + 0.5));
+    let t = uv * reps;
+    let cellid = floor(t);
+    var cuv = fract(t);
+    let odd_x = fract(cellid.x * 0.5) * 2.0;
+    let odd_y = fract(cellid.y * 0.5) * 2.0;
+    if (mode == 0u) {
+      if (odd_x > 0.5) { cuv.x = 1.0 - cuv.x; }
+      if (odd_y > 0.5) { cuv.y = 1.0 - cuv.y; }
+    } else if (mode == 1u) {
+      let rot = fract((cellid.x + cellid.y) * 0.5) * 2.0 * rot_amt;
+      let d = cuv - vec2<f32>(0.5);
+      let c = cos(rot); let sn = sin(rot);
+      cuv = vec2<f32>(d.x * c - d.y * sn, d.x * sn + d.y * c) + vec2<f32>(0.5);
+    } else if (mode == 2u) {
+      cuv.x = fract(cuv.x + odd_y * row_off);
+    } else {
+      if (odd_x > 0.5) { cuv.x = 1.0 - cuv.x; }
+      let rot = odd_y * rot_amt;
+      let d = cuv - vec2<f32>(0.5);
+      let c = cos(rot); let sn = sin(rot);
+      cuv = vec2<f32>(d.x * c - d.y * sn, d.x * sn + d.y * c) + vec2<f32>(0.5);
+    }
+    // Legacy slow drift keeps the native pass's kaleidoscopic motion.
     let rot_t = u.resolution_time.z * 0.05;
-    let cs = cos(rot_t); let sn = sin(rot_t);
-    let c2 = (tuv - 0.5) * mat2x2<f32>(vec2<f32>(cs, -sn), vec2<f32>(sn, cs)) + 0.5;
-    return vec4<f32>(sample_rgb(clamp(c2, vec2<f32>(0.0), vec2<f32>(1.0))), src.a);
+    let cs = cos(rot_t); let sn2 = sin(rot_t);
+    let dd = cuv - vec2<f32>(0.5);
+    let c2 = vec2<f32>(dd.x * cs - dd.y * sn2, dd.x * sn2 + dd.y * cs) + vec2<f32>(0.5);
+    let tiled = sample_rgb(clamp(c2, vec2<f32>(0.0), vec2<f32>(1.0)));
+    return vec4<f32>(mix(color, tiled, tile_mix), src.a);
   }
   if (code == 94u) {
-    // SPIRAL TILE — log-spiral remap of the frame.
-    let centered = (uv - 0.5) * vec2<f32>(u.resolution_time.x / u.resolution_time.y, 1.0);
+    // SPIRAL TILE - log-spiral remap of the frame.
+    // Generic family slots: amount = blend; params0.x = amount2 (arms/rings),
+    // params0.y = amount3 (spin speed), params0.z = threshold (gap).
+    let arms_t = clamp(u.params0.x, 0.0, 1.0);
+    let spin_rate = clamp(u.params0.y, 0.0, 1.0) * 0.35;
+    let gap = clamp(u.params0.z, 0.0, 1.0) * 0.08 + 1e-4;
+    let blend = clamp(amount, 0.0, 1.0);
+    let centered = (uv - vec2<f32>(0.5)) * vec2<f32>(u.resolution_time.x / u.resolution_time.y, 1.0);
     let r = max(length(centered), 1e-4);
     let theta = atan2(centered.y, centered.x);
-    let spiral = log(r) * (1.0 + amount * 2.0) + theta / 6.2831853 * (2.0 + floor(amount * 3.0));
-    let s_uv = vec2<f32>(fract(spiral - u.resolution_time.z * 0.07), fract(theta / 6.2831853 + 0.5 + r * 0.3));
-    let col2 = sample_rgb(s_uv);
-    return vec4<f32>(col2 * (0.65 + 0.35 * smoothstep(1.3, 0.2, r)), src.a);
+    let twist = 1.0 + arms_t * 2.0;
+    let arms = 2.0 + floor(arms_t * 3.0);
+    let spiral = log(r) * twist + theta / 6.2831853 * arms;
+    let sx = fract(spiral - u.resolution_time.z * spin_rate);
+    let sy = fract(theta / 6.2831853 + 0.5 + r * 0.3);
+    var col2 = sample_rgb(vec2<f32>(sx, sy));
+    let seam = (smoothstep(0.0, gap, sx) * smoothstep(1.0, 1.0 - gap, sx))
+             * (smoothstep(0.0, gap * 2.0, sy) * smoothstep(1.0, 1.0 - gap * 2.0, sy));
+    col2 = mix(vec3<f32>(0.015), col2, seam);
+    return vec4<f32>(mix(color, col2 * (0.65 + 0.35 * smoothstep(1.3, 0.2, r)), blend), src.a);
   }
   if (code == 95u) {
-    // VORONOI SHATTER — glass shards, per-shard shift and crack lines.
-    let scale = 3.0 + amount * 8.0;
-    let sp = uv * scale * vec2<f32>(u.resolution_time.x / u.resolution_time.y, 1.0);
+    // VORONOI SHATTER - drifting glass shards, dark gaps, crack glints.
+    // Generic family slots: params0.x = amount2 (cell count), params0.y =
+    // amount3 (drift speed), params0.z = threshold (gap). amount = blend.
+    let blend = clamp(amount, 0.0, 1.0);
+    let scale = mix(4.0, 24.0, clamp(u.params0.x, 0.0, 1.0));
+    let drift = clamp(u.params0.y, 0.0, 1.0) * 1.5;
+    let gap = clamp(u.params0.z, 0.0, 1.0) * 0.06;
+    let aspect = vec2<f32>(u.resolution_time.x / u.resolution_time.y, 1.0);
+    let sp = uv * scale * aspect;
     let i = floor(sp);
-    let f = fract(sp);
-    var md = 8.0; var md2 = 8.0; var mc = vec2<f32>(0.0);
-    for (var yy = -1i; yy <= 1i; yy = yy + 1i) {
-      for (var xx = -1i; xx <= 1i; xx = xx + 1i) {
+    var md = 8.0; var md2 = 8.0; var mc = vec2<f32>(0.0); var mp = vec2<f32>(0.0);
+    for (var yy = -1; yy <= 1; yy = yy + 1) {
+      for (var xx = -1; xx <= 1; xx = xx + 1) {
         let g = vec2<f32>(f32(xx), f32(yy));
-        let o = vec2<f32>(hash21(i + g), hash21(i + g + vec2<f32>(11.3)));
-        let r = g + o - f;
+        let cell_id = i + g;
+        let rnd = vec2<f32>(hash21(cell_id), hash21(cell_id + vec2<f32>(11.3)));
+        let p = cell_id + vec2<f32>(0.5) + 0.35 * sin(vec2<f32>(u.resolution_time.z * drift) + rnd * 6.2831853);
+        let r = p - sp;
         let d = dot(r, r);
-        if (d < md) { md2 = md; md = d; mc = i + g; }
+        if (d < md) { md2 = md; md = d; mc = cell_id; mp = p; }
         else if (d < md2) { md2 = d; }
       }
     }
-    let shard_shift = (vec2<f32>(hash21(mc + 5.1), hash21(mc + 9.7)) - 0.5) * 0.03 * amount;
-    let shard = sample_rgb(clamp(uv + shard_shift, vec2<f32>(0.0), vec2<f32>(1.0)));
-    let crack = smoothstep(0.06, 0.0, sqrt(md2) - sqrt(md));
+    let edge_d = sqrt(md2) - sqrt(md);
+    let edge = smoothstep(gap, gap + 0.04, edge_d);
+    let cell_rnd = vec2<f32>(hash21(mc + vec2<f32>(5.1)), hash21(mc + vec2<f32>(9.7)));
+    let shard_ang = sin(u.resolution_time.z * drift * 0.7 + cell_rnd.x * 6.2831853) * 0.2;
+    let ca = cos(shard_ang); let sa = sin(shard_ang);
+    let local = (sp - mp) / scale / aspect;
+    let rl = vec2<f32>(local.x * ca - local.y * sa, local.x * sa + local.y * ca);
+    let cell_uv = mp / scale / aspect;
+    let shard = sample_rgb(clamp(cell_uv + rl, vec2<f32>(0.0), vec2<f32>(1.0)));
+    let lighting = 0.6 + cell_rnd.y * 0.4 + (mp.x - sp.x) * 0.2;
     let glint = pow(1.0 - clamp(sqrt(md), 0.0, 1.0), 6.0) * 0.15;
-    return vec4<f32>(shard * (1.0 - crack * 0.7) + vec3<f32>(0.9, 0.95, 1.0) * (crack * 0.35 + glint), src.a);
+    let highlight = smoothstep(gap + 0.06, gap + 0.01, edge_d) * edge;
+    var col = shard * lighting * edge + vec3<f32>(0.3, 0.35, 0.5) * highlight * 0.4 + vec3<f32>(0.9, 0.95, 1.0) * glint;
+    col = mix(vec3<f32>(0.01), col, edge);
+    return vec4<f32>(mix(color, clamp(col, vec3<f32>(0.0), vec3<f32>(1.0)), blend), src.a);
   }
   if (code == 96u) {
-    // THERMAL CONTOUR — FLIR palette with isotherm rings.
+    // THERMAL CONTOUR - palette-mapped heat with isotherm rings.
+    // params0 = (palette, contour count, contour width, contour glow);
+    // params1.x = track blobs; amount = intensity; pass mix carries tcMix.
+    let palette = u32(round(clamp(u.params0.x, 0.0, 3.0)));
+    let contour_count = clamp(u.params0.y, 1.0, 12.0);
+    let contour_width = max(0.001, u.params0.z);
+    let contour_glow = clamp(u.params0.w, 0.0, 1.0);
+    let track_blobs = clamp(u.params1.x, 0.0, 1.0);
+    let intensity = clamp(amount, 0.0, 2.0);
     let heat = luma(color);
     var thermal = vec3<f32>(0.0);
-    if (heat < 0.25)      { thermal = mix(vec3<f32>(0.02, 0.0, 0.15), vec3<f32>(0.4, 0.0, 0.6), heat * 4.0); }
-    else if (heat < 0.5)  { thermal = mix(vec3<f32>(0.4, 0.0, 0.6), vec3<f32>(0.9, 0.25, 0.1), (heat - 0.25) * 4.0); }
-    else if (heat < 0.75) { thermal = mix(vec3<f32>(0.9, 0.25, 0.1), vec3<f32>(1.0, 0.8, 0.1), (heat - 0.5) * 4.0); }
-    else                  { thermal = mix(vec3<f32>(1.0, 0.8, 0.1), vec3<f32>(1.0, 1.0, 0.9), (heat - 0.75) * 4.0); }
-    let iso = smoothstep(0.1, 0.02, abs(fract(heat * (6.0 + amount * 8.0)) - 0.5));
-    return vec4<f32>(mix(thermal, vec3<f32>(0.0), iso * 0.5), src.a);
+    if (palette == 1u) {
+      thermal = vec3<f32>(
+        smoothstep(0.35, 0.65, heat) - smoothstep(0.85, 1.0, heat),
+        smoothstep(0.0, 0.35, heat) - smoothstep(0.65, 1.0, heat),
+        smoothstep(0.0, 0.15, heat) - smoothstep(0.5, 0.7, heat)
+      );
+    } else if (palette == 2u) {
+      thermal = vec3<f32>(0.27 + 0.5 * heat, 0.005 + 0.9 * heat, 0.33 + 0.5 * (1.0 - heat));
+    } else if (palette == 3u) {
+      var c = mix(vec3<f32>(0.0), vec3<f32>(0.4, 0.0, 0.4), smoothstep(0.0, 0.3, heat));
+      c = mix(c, vec3<f32>(0.95, 0.4, 0.1), smoothstep(0.3, 0.65, heat));
+      c = mix(c, vec3<f32>(1.0, 1.0, 0.6), smoothstep(0.65, 1.0, heat));
+      thermal = c;
+    } else {
+      var c = mix(vec3<f32>(0.0, 0.0, 0.3), vec3<f32>(0.5, 0.0, 0.5), smoothstep(0.0, 0.25, heat));
+      c = mix(c, vec3<f32>(1.0, 0.3, 0.0), smoothstep(0.25, 0.55, heat));
+      c = mix(c, vec3<f32>(1.0, 1.0, 0.2), smoothstep(0.55, 0.85, heat));
+      c = mix(c, vec3<f32>(1.0), smoothstep(0.85, 1.0, heat));
+      thermal = c;
+    }
+    thermal = thermal * intensity;
+    let band_pos = fract(heat * contour_count);
+    let contour = smoothstep(contour_width, 0.0, abs(band_pos - 0.5)) * contour_glow;
+    thermal = thermal + vec3<f32>(contour);
+    if (track_blobs > 0.001) {
+      // Stateless luma-cluster highlight: bright low-gradient regions lift.
+      let texel = vec2<f32>(1.0) / max(u.resolution_time.xy, vec2<f32>(2.0));
+      let l_n = luma(sample_rgb(uv + texel * vec2<f32>(0.0, 4.0)));
+      let l_s = luma(sample_rgb(uv - texel * vec2<f32>(0.0, 4.0)));
+      let l_e = luma(sample_rgb(uv + texel * vec2<f32>(4.0, 0.0)));
+      let l_w = luma(sample_rgb(uv - texel * vec2<f32>(4.0, 0.0)));
+      let grad_mag = abs(heat - l_n) + abs(heat - l_s) + abs(heat - l_e) + abs(heat - l_w);
+      thermal = thermal + vec3<f32>(0.2, 1.0, 0.8) * smoothstep(0.6, 1.0, heat) * track_blobs * max(0.0, 1.0 - grad_mag);
+    }
+    return vec4<f32>(clamp(thermal, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
   }
   if (code == 97u) {
     // phase-lab: scientific-imaging false-color modes (BOS/photoelastic/Lippmann/InSAR/catoptric/DTI)
@@ -4402,7 +5274,7 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let polarizer_deg = u.params2.y;
     let spectral_shift = u.params2.z;
     let pl_focus = max(0.08, u.params2.w);
-    let intensity = amount;
+    let intensity = amount * (1.0 + clamp(u.params3.z, 0.0, 4.5));
     let tau = 6.283185307179586;
     let texel = 1.0 / max(res, vec2<f32>(2.0));
 
@@ -4481,11 +5353,11 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
       let p = uv - vec2<f32>(0.5);
       let r = length(p);
       let a = atan2(p.y, p.x);
-      let radius = 0.22;
+      let radius = clamp(p_or(u.params3.x, 0.16), 0.03, 0.45);
       let ring_start = radius * 1.05;
       let ring_end = 0.72;
       let ring_t = clamp((r - ring_start) / max(0.001, ring_end - ring_start), 0.0, 1.0);
-      let exponent = select(pl_focus, max(0.08, 1.0), mode == 5u);
+      let exponent = select(pl_focus, max(0.08, p_or(u.params3.y, 1.2)), mode == 5u);
       let y = pow(ring_t, exponent);
       let x = fract(a / tau + 0.5 + 0.03 * sin(time * pl_speed + y * tau));
       let warped = sample_rgb(vec2<f32>(x, 1.0 - y));
@@ -5119,6 +5991,7 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let rotation_deg = u.params0.y;
     let chromatic = u.params0.z;
     let m_mode = u32(round(u.params0.w));
+    let ms_delay = clamp(u.params1.x, 0.0, 1.0);
     var cell_id = vec2<f32>(0.0);
     var cell_center = vec2<f32>(0.5);
     var cell_uv = vec2<f32>(0.0);
@@ -5162,6 +6035,14 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     } else {
       col = sample_rgb(s_uv);
     }
+    if (ms_delay > 0.001) {
+      // echo of the shard field from a moment ago
+      var ang_d = (hash21(cell_id) - 0.5) * rotation_deg * 0.017453292;
+      ang_d = ang_d + (time - 0.45) * 0.1 * (hash21(cell_id + vec2<f32>(7.3)) - 0.5);
+      let ca2 = cos(ang_d); let sa2 = sin(ang_d);
+      let s_uv2 = clamp(cell_center + vec2<f32>(cell_uv.x * ca2 - cell_uv.y * sa2, cell_uv.x * sa2 + cell_uv.y * ca2) * amount, vec2<f32>(0.0), vec2<f32>(1.0));
+      col = mix(col, max(col, sample_rgb(s_uv2)), ms_delay * 0.6);
+    }
     return vec4<f32>(col, src.a);
   }
   if (code == 115u) {
@@ -5197,6 +6078,8 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let rotate_amount = u.params0.y;
     let chroma_split = u.params0.z;
     let trigger_rate = u.params0.w;
+    let gq_mode = u32(round(u.params1.x));
+    let gq_delay = clamp(u.params1.y, 0.0, 1.0);
     let cell = floor(uv * res / tile_size);
     let cell_origin = cell * tile_size / res;
     let cell_size = vec2<f32>(tile_size) / res;
@@ -5205,7 +6088,19 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let h = hash21(cell + vec2<f32>(t));
     let h2 = hash21(cell + vec2<f32>(t + 13.7));
     var src_cell = cell;
-    if (h < amount) {
+    if (gq_mode == 1u) {
+      // swap: adjacent tile pairs exchange places
+      let pair_base = vec2<f32>(floor(cell.x / 2.0), cell.y);
+      if (hash21(pair_base + vec2<f32>(t + 3.1)) < amount) {
+        src_cell.x = cell.x + select(-1.0, 1.0, (cell.x - 2.0 * floor(cell.x / 2.0)) < 0.5);
+      }
+    } else if (gq_mode == 2u) {
+      // mosh: tiles drift by a small random offset instead of teleporting
+      if (h < amount) {
+        let drift = (vec2<f32>(hash21(cell + vec2<f32>(t + 7.3)), hash21(cell + vec2<f32>(t + 17.5))) - vec2<f32>(0.5)) * 5.0;
+        src_cell = cell + floor(drift);
+      }
+    } else if (h < amount) {
       src_cell.x = floor(hash21(cell + vec2<f32>(t + 7.3)) * res.x / tile_size);
       src_cell.y = floor(hash21(cell + vec2<f32>(t + 17.5)) * res.y / tile_size);
     }
@@ -5225,6 +6120,17 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
       col.b = sample_rgb(final_uv - cd).b;
     } else {
       col = sample_rgb(final_uv);
+    }
+    if (gq_delay > 0.001) {
+      // ghost of the previous shuffle step
+      let tp = t - 1.0;
+      var prev_cell = cell;
+      if (hash21(cell + vec2<f32>(tp)) < amount) {
+        prev_cell.x = floor(hash21(cell + vec2<f32>(tp + 7.3)) * res.x / tile_size);
+        prev_cell.y = floor(hash21(cell + vec2<f32>(tp + 17.5)) * res.y / tile_size);
+      }
+      let prev_uv = clamp((prev_cell * tile_size + cell_uv * tile_size) / res, vec2<f32>(0.0), vec2<f32>(1.0));
+      col = mix(col, sample_rgb(prev_uv), gq_delay * 0.5);
     }
     return vec4<f32>(col, src.a);
   }
@@ -5793,20 +6699,21 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let erase_amount = u.params1.x;
     let tint = vec3<f32>(u.params1.y, u.params1.z, u.params1.w);
     let reveal = u.params2.x;
+    let persistence = clamp(u.params2.y, 0.0, 1.0);
     let pos = (time * speed * 0.3) - floor(time * speed * 0.3 / 1.4) * 1.4 - 0.2;
-    var d = abs(uv.y - pos);
-    var side = step(uv.y, pos);
+    var coord = uv.y;
+    var sweep_at = pos;
     if (l_mode == 1u) {
-      d = abs(uv.x - pos);
-      side = step(uv.x, pos);
+      coord = uv.x;
     } else if (l_mode == 2u) {
-      d = abs((uv.x + uv.y) * 0.5 - pos);
-      side = step((uv.x + uv.y) * 0.5, pos);
+      coord = (uv.x + uv.y) * 0.5;
     } else if (l_mode >= 3u) {
-      let rd = uv - vec2<f32>(0.5);
-      d = abs(length(rd) - pos * 0.7);
-      side = step(length(rd), pos * 0.7);
+      coord = length(uv - vec2<f32>(0.5));
+      sweep_at = pos * 0.7;
     }
+    let d_signed = sweep_at - coord;
+    let d = abs(d_signed);
+    let side = step(coord, sweep_at);
     let beam = smoothstep(beam_width * 1.5, 0.0, d);
     let halo = exp(-d * d / (beam_width * beam_width * 8.0)) * amount;
     var mask = 1.0 - side;
@@ -5814,6 +6721,11 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     var base = mix(vec3<f32>(0.0), src.rgb, mask);
     base = mix(src.rgb, base, erase_amount);
     var result = base + tint * (beam + halo);
+    if (persistence > 0.001) {
+      // trailing afterglow behind the sweep; higher persistence = longer tail
+      let trail = exp(-max(d_signed, 0.0) * mix(80.0, 5.0, persistence)) * side;
+      result = result + tint * trail * amount * 0.35;
+    }
     if (sparks > 0.001 && beam > 0.001) {
       let sp = step(0.97, hash21(floor(uv * 300.0) + vec2<f32>(floor(time * 30.0))));
       result = result + sp * tint * 2.0 * sparks;
@@ -5928,6 +6840,8 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let cell_size = max(1.0, u.params0.x);
     let birth_threshold = u.params0.y;
     let cell_color = vec3<f32>(u.params0.z, u.params0.w, u.params1.x);
+    let survival_low = clamp(p_or(u.params1.z, 1.5), 0.0, 8.0);
+    let survival_high = clamp(max(p_or(u.params1.w, 3.5), survival_low), 0.0, 8.0);
     let texel = vec2<f32>(cell_size) / max(res, vec2<f32>(2.0));
     let alive = step(birth_threshold, luma(src.rgb));
     var n = 0.0;
@@ -5938,7 +6852,8 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
       }
     }
     // burn frontier: cells at the alive/dead boundary, flickered by noise
-    let frontier = alive * (1.0 - step(7.5, n)) + (1.0 - alive) * step(2.5, n);
+    let survives = step(survival_low, n) * (1.0 - step(survival_high + 0.001, n));
+    let frontier = alive * (1.0 - survives) + (1.0 - alive) * step(survival_low + 1.0, n);
     let flicker = 0.7 + 0.3 * value_noise2d(uv * res / cell_size * 0.5 + vec2<f32>(time * 3.0));
     let burn = cell_color * frontier * flicker + cell_color * alive * 0.25;
     let result = mix(src.rgb, src.rgb + burn, clamp(amount, 0.0, 1.0));
@@ -6311,6 +7226,7 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let replenish = u.params0.w;
     let chroma_split = u.params1.x;
     let grain_size = max(1.0, u.params1.y);
+    let persistence = clamp(p_or(u.params1.z, 0.92), 0.0, 1.0);
     let grain = floor(uv * res / grain_size);
     let grain_center = (grain * grain_size + vec2<f32>(grain_size * 0.5)) / res;
     let grain_seed = hash21(grain);
@@ -6322,7 +7238,9 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
       dir = dir + jit * turbulence;
     }
     // fall distance grows with time per grain (looping)
-    let fall = fract(time * 0.15 + grain_seed) * amount * 0.25;
+    let fall_progress = fract(time * 0.15 + grain_seed);
+    let fall = fall_progress * amount * 0.25;
+    let grain_fade = pow(1.0 - fall_progress * 0.999, (1.0 - persistence) * 6.0);
     let fb_uv = clamp(grain_center - dir * fall, vec2<f32>(0.0), vec2<f32>(1.0));
     var fallen = vec3<f32>(0.0);
     if (chroma_split > 0.001) {
@@ -6334,8 +7252,8 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     }
     let fallen_gate = smoothstep(threshold, threshold + 0.05, luma(fallen));
     let sparkle = step(1.0 - replenish, grain_seed);
-    let sand = fallen * fallen_gate * sparkle;
-    let sand_alpha = fallen_gate * sparkle;
+    let sand = fallen * fallen_gate * sparkle * grain_fade;
+    let sand_alpha = fallen_gate * sparkle * grain_fade;
     let src_dimmed = src.rgb * (1.0 - sand_alpha * 0.4);
     let disp = mix(src_dimmed, sand, sand_alpha);
     return vec4<f32>(clamp(disp, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
@@ -6542,6 +7460,8 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let fog_distance = u.params1.w;
     let fog_color = vec3<f32>(u.params2.x, u.params2.y, u.params2.z);
     let horizon_fade = u.params2.w;
+    let tile_scale = max(0.5, p_or(u.params3.x, 1.0));
+    let source_mix = clamp(u.params3.y, 0.0, 1.0);
     var screen_pos = uv * 2.0 - vec2<f32>(1.0);
     screen_pos.x = screen_pos.x * (res.x / max(1.0, res.y));
     let ang_y = rot_y_amt * 6.28318530718 + time * auto_rotate * 0.4;
@@ -6563,7 +7483,7 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
         else { suv = vec2<f32>(hp.x * sign(hp.z), hp.y) * 0.5 + vec2<f32>(0.5); }
         suv = clamp(suv, vec2<f32>(0.0), vec2<f32>(1.0));
       }
-      let h = dot(sample_rgb(fract(suv)), vec3<f32>(0.2126, 0.7152, 0.0722)) * amount * 0.5;
+      let h = dot(sample_rgb(fract(suv * tile_scale)), vec3<f32>(0.2126, 0.7152, 0.0722)) * amount * 0.5;
       var base_sdf = length(hp) - base_r;
       if (shape >= 1u) {
         let bd = abs(hp) - vec3<f32>(base_r);
@@ -6586,13 +7506,14 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
       else { suv = vec2<f32>(hp.x * sign(hp.z), hp.y) * 0.5 + vec2<f32>(0.5); }
       suv = clamp(suv, vec2<f32>(0.0), vec2<f32>(1.0));
     }
-    let tex_col = sample_rgb(fract(suv));
+    let tex_col = sample_rgb(fract(suv * tile_scale));
     let light_dir = normalize(rot_mat * vec3<f32>(0.5, 0.7, 0.5));
     let diff = max(dot(n_approx, light_dir), 0.0);
     let spec = pow(max(dot(reflect(-light_dir, n_approx), -rd), 0.0), 32.0) * specular;
     var lit = tex_col * (ambient + diff * 0.85) + vec3<f32>(spec);
     let fog_factor = 1.0 - exp(-t * fog_distance * 0.3);
     lit = mix(lit, fog_color, fog_factor);
+    lit = mix(lit, tex_col, source_mix);
     let fres = 1.0 - max(dot(n_approx, -rd), 0.0);
     let sil_alpha = 1.0 - smoothstep(0.7, 1.0, fres) * horizon_fade;
     return vec4<f32>(clamp(lit, vec3<f32>(0.0), vec3<f32>(1.0)), sil_alpha * src.a);
@@ -6612,8 +7533,9 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let tilt = u.params2.x;
     let flow = u.params2.y;
     let glow = u.params2.z;
-    let glow_color = vec3<f32>(0.4, 0.85, 1.0);
-    let horizon_fade = 0.7;
+    let glow_color = vec3<f32>(max(0.0, u.params3.y), max(0.0, u.params3.z), max(0.0, u.params3.w));
+    let horizon_fade = clamp(p_or(u.params3.x, 0.7), 0.0, 1.0);
+    let tile_scale = max(0.5, p_or(u.params2.w, 1.0));
     var p = (uv * 2.0 - vec2<f32>(1.0));
     p.x = p.x * (res.x / max(1.0, res.y));
     p.y = -p.y;
@@ -6627,7 +7549,7 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
       hp = ro + rd * t;
       let dir0 = normalize(hp + vec3<f32>(1e-6));
       let suv0 = w4_sphere_uv(dir0);
-      let h = dot(sample_rgb(fract(suv0)), vec3<f32>(0.2126, 0.7152, 0.0722)) * height * 0.4;
+      let h = dot(sample_rgb(fract(suv0 * tile_scale)), vec3<f32>(0.2126, 0.7152, 0.0722)) * height * 0.4;
       let d = length(hp) - (radius + h);
       if (d < 0.002) { hit = true; break; }
       t = t + max(d * 0.7, 0.005);
@@ -6645,7 +7567,7 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
       diag = 1.0 - smoothstep(width, width * 2.0, abs(fract((suv.x + suv.y * slope + time * flow) * diag_count) - 0.5));
     }
     let strings = max(max(lat, lon), diag);
-    let tex = sample_rgb(fract(suv));
+    let tex = sample_rgb(fract(suv * tile_scale));
     let rim = w4_fresnel(n, rd, 2.2);
     let col = tex * strings * amount + glow_color * (rim + strings * strings) * glow;
     let alpha = clamp(max(strings * 0.95, rim * horizon_fade) + horizon_fade * 0.05, 0.0, 1.0);
@@ -6665,7 +7587,8 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let halo_glow = u.params1.w;
     let wire_color = vec3<f32>(u.params2.x, u.params2.y, u.params2.z);
     let fill_source = u.params2.w;
-    let horizon_fade = 0.7;
+    let horizon_fade = clamp(p_or(u.params3.x, 0.7), 0.0, 1.0);
+    let tile_scale = max(0.5, p_or(u.params3.y, 1.0));
     var p = (uv * 2.0 - vec2<f32>(1.0));
     p.x = p.x * (res.x / max(1.0, res.y));
     p.y = -p.y;
@@ -6679,7 +7602,7 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
       hp = ro + rd * t;
       let dir0 = normalize(hp + vec3<f32>(1e-6));
       let suv0 = w4_sphere_uv(dir0);
-      let h = dot(sample_rgb(fract(suv0)), vec3<f32>(0.2126, 0.7152, 0.0722)) * height * 0.4;
+      let h = dot(sample_rgb(fract(suv0 * tile_scale)), vec3<f32>(0.2126, 0.7152, 0.0722)) * height * 0.4;
       let d = length(hp) - (radius + h);
       if (d < 0.002) { hit = true; break; }
       t = t + max(d * 0.7, 0.005);
@@ -6693,7 +7616,7 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let merid = 1.0 - smoothstep(width, width * 1.8, abs(fract(suv.x * meridians) - 0.5));
     let parll = 1.0 - smoothstep(width, width * 1.8, abs(fract(suv.y * parallels) - 0.5));
     let wire = max(merid, parll);
-    let tex = sample_rgb(fract(suv));
+    let tex = sample_rgb(fract(suv * tile_scale));
     var fill = mix(wire_color * 0.15, tex * 0.5, fill_source);
     let light_dir = normalize(rot * vec3<f32>(0.5, 0.7, 0.5));
     let diff = max(dot(n, light_dir), 0.0);
@@ -6984,7 +7907,7 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let spin = u.params1.w;
     let tilt = u.params2.x;
     let tube_color = vec3<f32>(u.params2.y, u.params2.z, u.params2.w);
-    let horizon_fade = 0.6;
+    let horizon_fade = clamp(p_or(u.params3.x, 0.6), 0.0, 1.0);
     let tau = 6.28318530718;
     var p = (uv * 2.0 - vec2<f32>(1.0));
     p.x = p.x * (res.x / max(1.0, res.y));
@@ -7090,7 +8013,7 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let tilt = u.params1.y;
     let torus_color = vec3<f32>(u.params1.z, u.params1.w, u.params2.x);
     let star_color = vec3<f32>(u.params2.y, u.params2.z, u.params2.w);
-    let horizon_fade = 0.6;
+    let horizon_fade = clamp(p_or(u.params3.x, 0.6), 0.0, 1.0);
     let tau = 6.28318530718;
     var p = (uv * 2.0 - vec2<f32>(1.0));
     p.x = p.x * (res.x / max(1.0, res.y));
@@ -7881,9 +8804,12 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let rd_color = vec3<f32>(u.params0.w, u.params1.x, u.params1.y);
     let feed = u.params1.z;
     let kill = u.params1.w;
+    let diff_a = clamp(p_or(u.params2.x, 1.0), 0.5, 1.5);
+    let diff_b = clamp(p_or(u.params2.y, 0.5), 0.2, 1.0);
+    let reseed = clamp(u.params2.z, 0.0, 1.0);
     let scale = pattern_scale * 9.0;
-    let a = fbm2d(uv * scale + vec2<f32>(time * 0.03));
-    let b = cellular2d(uv * scale * 0.8 + vec2<f32>(7.3, 2.1));
+    let a = fbm2d(uv * scale / diff_a + vec2<f32>(time * 0.03));
+    let b = cellular2d(uv * scale * 0.8 / max(0.2, diff_b) + vec2<f32>(7.3, 2.1));
     let field = a - b * 0.9;
     // feed/kill shift the pattern threshold + width (coral vs spots vs stripes)
     let center = (kill - feed) * 8.0;
@@ -7892,33 +8818,47 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let stripes = smoothstep(0.0, 0.08, abs(fract(field * 6.0 + time * 0.05) - 0.5) - 0.2);
     spots = max(spots, (1.0 - stripes) * 0.6);
     let l = luma(src.rgb);
+    if (reseed > 0.001) {
+      // bright content re-seeds the pattern
+      spots = max(spots, smoothstep(1.0 - reseed * 0.55, 1.02, l));
+    }
     let mask = mix(1.0, smoothstep(luma_mask - 0.25, luma_mask + 0.25, l), 0.85);
     let pattern = spots * mask;
     let result = mix(src.rgb, mix(src.rgb * 0.35, rd_color, pattern), amount * clamp(pattern + 0.25, 0.0, 1.0));
     return vec4<f32>(clamp(result, vec3<f32>(0.0), vec3<f32>(1.0)), src.a);
   }
   if (code == 179u) {
-    // feedback-zoom: unrolled recursive zoom feedback with hue cycling
-    let zoom_rate = 0.9 + amount * 0.15;
-    let fb_mix = clamp(u.params0.x, 0.0, 0.98);
-    let rot_per_iter = (u.params0.y - 0.5) * 0.3;
-    let hue_cycle = u.params0.z * 0.15;
+    // feedback-zoom: unrolled recursive zoom feedback with hue cycling.
+    // amount = feedback mix, params0 = (zoom/frame, rot/frame, decay, centerX),
+    // params1 = (centerY, hue shift, center mask)
+    let fb_zoom = clamp(p_or(u.params0.x, 1.02), 0.85, 1.15);
+    let rot_per_iter = clamp(u.params0.y, -0.2, 0.2);
+    let decay = clamp(u.params0.z, 0.0, 1.0);
     let center = vec2<f32>(u.params0.w, u.params1.x);
+    let hue_cycle = u.params1.y * 0.15;
+    let center_mask = clamp(u.params1.z, 0.0, 1.0);
+    let fb_mix = clamp(amount, 0.0, 1.0);
+    let persist = clamp((1.0 - decay) * 0.98, 0.02, 0.98);
+    let inv_zoom = 1.0 / fb_zoom;
     var p = uv;
     var acc = vec3<f32>(0.0);
     var wsum = 0.0;
     let cr = cos(rot_per_iter); let sr = sin(rot_per_iter);
     for (var i = 0u; i < 16u; i = i + 1u) {
       let fi = f32(i);
-      let w = pow(fb_mix, fi);
-      if (w < 0.01) { break; }
+      var w = pow(persist, fi) * fb_mix;
+      if (i == 0u) { w = 1.0; }
+      if (center_mask > 0.001 && i > 0u) {
+        w = w * mix(1.0, smoothstep(0.0, 0.35, length(p - center)), center_mask);
+      }
+      if (w < 0.01 && i > 0u) { break; }
       var s = sample_rgb(clamp(p, vec2<f32>(0.0), vec2<f32>(1.0)));
       if (hue_cycle > 0.0001) {
         s = hue_rotate(s, fi * hue_cycle);
       }
       acc = acc + s * w;
       wsum = wsum + w;
-      p = (p - center) * zoom_rate + center;
+      p = (p - center) * inv_zoom + center;
       let d = p - center;
       p = center + vec2<f32>(d.x * cr - d.y * sr, d.x * sr + d.y * cr);
     }
@@ -8029,6 +8969,7 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let rotation_deg = u.params0.z;
     let hue_shift = u.params0.w;
     let offset_xy = vec2<f32>(u.params1.x, u.params1.y);
+    let echo_mode = u32(round(u.params1.z));
     let fade_rate = clamp(amount, 0.05, 0.95);
     let rot = rotation_deg * 0.017453292;
     let cr = cos(rot); let sr = sin(rot);
@@ -8047,7 +8988,19 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
       acc = acc + s * fade;
       total_weight = total_weight + fade;
       var d = (p - vec2<f32>(0.5)) * zoom;
-      d = vec2<f32>(d.x * cr - d.y * sr, d.x * sr + d.y * cr);
+      if (echo_mode == 1u && (i % 2) == 0) {
+        // mirror echo: alternate iterations reflect through center
+        d = -d;
+      }
+      var rot_i_c = cr;
+      var rot_i_s = sr;
+      if (echo_mode == 2u) {
+        // spiral: rotation accumulates with depth
+        let rot_i = rot * (1.0 + fi * 0.35);
+        rot_i_c = cos(rot_i);
+        rot_i_s = sin(rot_i);
+      }
+      d = vec2<f32>(d.x * rot_i_c - d.y * rot_i_s, d.x * rot_i_s + d.y * rot_i_c);
       p = vec2<f32>(0.5) + d + offset_xy;
     }
     return vec4<f32>(acc / max(total_weight, 0.001), src.a);
@@ -8156,8 +9109,69 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
   let param9 = clampNumber(params.param9 ?? 0, -100000, 100000, 0);
   let param10 = clampNumber(params.param10 ?? 0, -100000, 100000, 0);
   let param11 = clampNumber(params.param11 ?? 0, -100000, 100000, 0);
+  let param12 = clampNumber(params.param12 ?? 0, -100000, 100000, 0);
+  let param13 = clampNumber(params.param13 ?? 0, -100000, 100000, 0);
+  let param14 = clampNumber(params.param14 ?? 0, -100000, 100000, 0);
+  let param15 = clampNumber(params.param15 ?? 0, -100000, 100000, 0);
 
-  if (options.effect === 'vignette') {
+  if (options.effect === 'crosshatch') {
+    // effectUX vocabulary (hatch*). Params previously died in the generic
+    // slot guesses below while the shader ignored slots entirely.
+    param0 = clampNumber(params.hatchDensity ?? params.param0, 0.1, 2, 1);
+    param1 = clampNumber(params.hatchAngle ?? params.param1, 0, 180, 30);
+    param2 = clampNumber(params.hatchLineWidth ?? params.param2, 0.5, 4, 1);
+    param3 = clampNumber(params.hatchContrast ?? params.param3, 0, 2, 1);
+    param4 = clampNumber(params.hatchPaperR ?? params.param4, 0, 1, 0.95);
+    param5 = clampNumber(params.hatchPaperG ?? params.param5, 0, 1, 0.93);
+    param6 = clampNumber(params.hatchPaperB ?? params.param6, 0, 1, 0.88);
+    param7 = clampNumber(params.hatchInkR ?? params.param7, 0, 1, 0.1);
+    param8 = clampNumber(params.hatchInkG ?? params.param8, 0, 1, 0.1);
+    param9 = clampNumber(params.hatchInkB ?? params.param9, 0, 1, 0.1);
+  } else if (
+    options.effect === 'linocut' ||
+    options.effect === 'topo-map' ||
+    options.effect === 'led-wall' ||
+    options.effect === 'hex-grid' ||
+    options.effect === 'number-grid' ||
+    options.effect === 'spiral-tile' ||
+    options.effect === 'voronoi-shatter' ||
+    options.effect === 'stained-glass'
+  ) {
+    // Generic-family stylize effects share one UI vocabulary
+    // (amount2/amount3/threshold/angle/center/color — same slots the WebGL
+    // uniforms used). One mapping here means each shader upgrade
+    // immediately sees its params. The family's main `amount` slider rides
+    // the passthru params rather than the descriptor amount, so fold it
+    // into the amount slot here.
+    amount = clampNumber(
+      params.amount ?? amount,
+      manifest.amountMin,
+      manifest.amountMax,
+      manifest.defaultAmount,
+    );
+    param0 = clampNumber(params.amount2 ?? params.param0, 0, 1, 0.5);
+    param1 = clampNumber(params.amount3 ?? params.param1, 0, 1, 0.5);
+    param2 = clampNumber(params.threshold ?? params.param2, 0, 1, 0.5);
+    param3 = clampNumber(params.angle ?? params.param3, -360, 360, 0);
+    param4 = clampNumber(params.centerX ?? params.param4, 0, 1, 0.5);
+    param5 = clampNumber(params.centerY ?? params.param5, 0, 1, 0.5);
+    param6 = clampNumber(params.red ?? params.param6, 0, 1, 0.5);
+    param7 = clampNumber(params.green ?? params.param7, 0, 1, 0.5);
+    param8 = clampNumber(params.blue ?? params.param8, 0, 1, 0.5);
+  } else if (options.effect === 'ascii') {
+    // The native pass was written amount-only: cell size came from `amount`
+    // and the glyph ramp, tint and contrast were hardcoded, so none of the
+    // eight exposed controls did anything. Map them onto the param slots the
+    // shader now reads. Ranges mirror effectUX so the UI sliders line up.
+    param0 = clampNumber(params.asciiCellSize ?? params.cellSize ?? params.param0, 4, 32, 12);
+    param1 = clampNumber(params.asciiContrast ?? params.contrast ?? params.param1, 0, 2, 1.2);
+    param2 = clampNumber(params.asciiColorMix ?? params.colorMix ?? params.param2, 0, 1, 0.3);
+    param3 = clampNumber(params.asciiInvert ?? params.invert ?? params.param3, 0, 1, 0);
+    param4 = clampNumber(params.asciiMode ?? params.mode ?? params.param4, 0, 3, 0);
+    param5 = clampNumber(params.asciiTintR ?? params.param5, 0, 1, 0);
+    param6 = clampNumber(params.asciiTintG ?? params.param6, 0, 1, 1);
+    param7 = clampNumber(params.asciiTintB ?? params.param7, 0, 1, 0.4);
+  } else if (options.effect === 'vignette') {
     param0 = clampNumber(params.softness ?? params.param0, 0, 2, 0.4);
     param1 = clampNumber(params.roundness ?? params.param1, 0, 1, 0.5);
     param2 = clampNumber(params.shape ?? params.param2, 0, 3, 0);
@@ -8166,6 +9180,10 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param5 = clampNumber(params.centerY ?? params.param5, -2, 3, 0.5);
     param6 = clampNumber(params.tintAmount ?? params.param6, 0, 1, 0);
     param7 = clampNumber(params.breathing ?? params.param7, 0, 1, 0);
+    param8 = clampNumber(params.vignetteColorR ?? params.param8, 0, 1, 0);
+    param9 = clampNumber(params.vignetteColorG ?? params.param9, 0, 1, 0);
+    param10 = clampNumber(params.vignetteColorB ?? params.param10, 0, 1, 0);
+    param11 = clampNumber(params.vignetteBreathSpeed ?? params.param11, 0, 2, 0.5);
   } else if (options.effect === 'rgb-shift') {
     param0 = clampNumber(params.angle ?? params.param0, 0, 360, 0);
     param1 = clampNumber(params.mode ?? params.param1, 0, 4, 0);
@@ -8213,28 +9231,34 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param1 = clampNumber(params.plasmaSpeed ?? params.speed ?? params.param1, 0, 3, 0.7);
     param2 = clampNumber(params.plasmaPalette ?? params.palette ?? params.param2, 0, 11, 0);
     param3 = clampNumber(params.plasmaSourceMix ?? params.sourceMix ?? params.param3, 0, 1, 0.35);
-    param4 = 0;
-    param5 = 0;
-    param6 = 0;
-    param7 = 0;
+    param4 = clampNumber(params.plasmaComplexity ?? params.param4, 1, 5, 3);
+    param5 = clampNumber(params.plasmaMode ?? params.param5, 0, 2, 0);
+    param6 = clampNumber(params.plasmaBlendMode ?? params.param6, 0, 4, 0);
+    param7 = clampNumber(params.plasmaWarpAmount ?? params.param7, 0, 1, 0.4);
+    // Live audio (params.audioLevel is injected by the per-frame rebuild).
+    param8 = clampNumber(params.plasmaAudioReact ?? params.param8, 0, 1, 0) *
+      clampNumber(params.audioLevel, 0, 1.5, 0);
   } else if (options.effect === 'halftone') {
     amount = clampNumber(options.amount ?? params.halftoneMix ?? params.outputMix ?? params.amount, 0, 1, 0.9);
-    param0 = clampNumber(params.halftoneScale ?? params.scale ?? params.cellSize ?? params.param0, 2, 96, 14);
-    param1 = clampNumber(params.halftoneAngle ?? params.angle ?? params.param1, 0, 360, 35);
+    param0 = clampNumber(params.halftoneDotSize ?? params.halftoneScale ?? params.scale ?? params.cellSize ?? params.param0, 2, 96, 6);
+    param1 = clampNumber(params.halftoneAngle ?? params.angle ?? params.param1, 0, 360, 45);
     param2 = clampNumber(params.halftoneDotGain ?? params.dotGain ?? params.param2, 0.25, 2, 1);
     param3 = clampNumber(params.halftoneColorMode ?? params.colorMode ?? params.param3, 0, 1, 0);
-    param4 = 0;
-    param5 = 0;
-    param6 = 0;
-    param7 = 0;
+    param4 = clampNumber(params.halftoneMode ?? params.param4, 0, 2, 0);
+    param5 = clampNumber(params.halftoneDotShape ?? params.param5, 0, 3, 0);
+    param6 = clampNumber(params.halftoneAngleC ?? params.param6, 0, 180, 15);
+    param7 = clampNumber(params.halftoneAngleM ?? params.param7, 0, 180, 75);
+    param8 = clampNumber(params.halftoneAngleY ?? params.param8, 0, 180, 0);
+    param9 = clampNumber(params.halftoneAngleK ?? params.param9, 0, 180, 45);
+    param10 = clampNumber(params.halftoneDrift ?? params.param10, 0, 2, 0);
   } else if (options.effect === 'toon') {
     amount = clampNumber(options.amount ?? params.toonMix ?? params.outputMix ?? params.amount, 0, 1, 0.85);
-    param0 = clampNumber(params.toonLevels ?? params.levels ?? params.param0, 2, 12, 4);
-    param1 = clampNumber(params.toonEdgeStrength ?? params.edgeStrength ?? params.param1, 0, 2, 0.8);
-    param2 = clampNumber(params.toonSaturation ?? params.saturation ?? params.param2, 0, 2, 1.15);
+    param0 = clampNumber(params.toonSteps ?? params.toonLevels ?? params.levels ?? params.param0, 2, 12, 4);
+    param1 = clampNumber(params.toonOutline ?? params.toonEdgeStrength ?? params.edgeStrength ?? params.param1, 0, 2, 0.8);
+    param2 = clampNumber(params.toonColorPop ?? params.toonSaturation ?? params.saturation ?? params.param2, 0, 2, 1.15);
     param3 = clampNumber(params.toonEdgeThreshold ?? params.threshold ?? params.param3, 0, 1, 0.05);
-    param4 = 0;
-    param5 = 0;
+    param4 = clampNumber(params.toonRampSoftness ?? params.param4, 0, 1, 0);
+    param5 = clampNumber(params.toonShadowBand ?? params.param5, 0, 1, 0);
     param6 = 0;
     param7 = 0;
   } else if (options.effect === 'kuwahara') {
@@ -8318,6 +9342,7 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param5 = clampNumber(params.blockHold ?? params.param5, 0, 1, 0.3);
     param6 = clampNumber(params.tearChance ?? params.param6, 0, 1, 0);
     param7 = clampNumber(params.triggerMode ?? params.param7, 0, 3, 0);
+    param8 = clampNumber(params.freezeBurst ?? params.glitchFreezeBurst ?? params.param8, 0, 1, 0);
   } else if (options.effect === 'exposure') {
     param0 = clampNumber(params.rollOff ?? params.param0, 0, 1, 0);
     param1 = clampNumber(params.highlightProtect ?? params.param1, 0, 1, 0);
@@ -8560,16 +9585,19 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param5 = clampNumber(params.outlinePosition ?? params.position ?? params.param5, 0, 2, 1);
     param6 = clampNumber(params.outlineCrawl ?? params.speed ?? params.param6, 0, 1, 0);
     param7 = clampNumber(params.outlineAlphaAware ?? params.param7, 0, 1, 0);
+    param8 = clampNumber(params.outlineGlowFalloff ?? params.param8, 0.1, 4, 1);
   } else if (options.effect === 'emboss') {
     amount = clampNumber(options.amount ?? params.embossStrength ?? params.strength ?? params.amount, 0, 2, 1);
     param0 = clampNumber(params.embossAngle ?? params.angle ?? params.param0, 0, 360, 135);
-    param1 = clampNumber(params.embossHeight ?? params.height ?? params.param1, 0, 1, 1);
+    param1 = clampNumber(params.embossHeight ?? params.height ?? params.param1, 0, 4, 1);
     param2 = clampNumber(params.embossHighlightR ?? params.red ?? params.param2, 0, 1.5, 1);
     param3 = clampNumber(params.embossHighlightG ?? params.green ?? params.param3, 0, 1.5, 1);
     param4 = clampNumber(params.embossHighlightB ?? params.blue ?? params.param4, 0, 1.5, 1);
     param5 = clampNumber(params.embossShadowR ?? params.param5, 0, 1.5, 0);
     param6 = clampNumber(params.embossShadowG ?? params.param6, 0, 1.5, 0);
     param7 = clampNumber(params.embossShadowB ?? params.param7, 0, 1.5, 0);
+    param8 = clampNumber(params.embossNormalMode ?? params.param8, 0, 1, 0);
+    param9 = clampNumber(params.embossMetallicness ?? params.param9, 0, 1, 0);
   } else if (options.effect === 'crt') {
     amount = clampNumber(options.amount ?? params.crtScanlines ?? params.intensity ?? params.amount, 0, 1, 0.5);
     param0 = clampNumber(params.crtScanCount ?? params.count ?? params.param0, 32, 1200, 480);
@@ -8610,6 +9638,12 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param5 = blobFlagBits(params, { showCoords: 1, showBBox: 1, showCenter: 1 });
     param6 = clampNumber(params.blobTrailLength ?? params.trailLength ?? params.param6, 0, 1, 0.3);
     param7 = clampNumber(params.blobMinSize ?? params.param7, 0, 1, 0.02);
+    param8 = clampNumber(params.blobColorMode ?? params.param8, 0, 2, 0);
+    param9 = clampNumber(params.blobFixedColorR ?? params.param9, 0, 1, 0);
+    param10 = clampNumber(params.blobFixedColorG ?? params.param10, 0, 1, 1);
+    param11 = clampNumber(params.blobFixedColorB ?? params.param11, 0, 1, 0.5);
+    param12 = clampNumber(params.blobMarkerSize ?? params.param12, 0.2, 3, 1);
+    param13 = clampNumber(params.blobBlendMode ?? params.param13, 0, 4, 0);
   } else if (options.effect === 'blob-contour') {
     amount = clampNumber(options.amount ?? params.blobMix ?? params.outputMix ?? params.amount, 0, 1, 0.7);
     param0 = clampNumber(params.blobThreshold ?? params.threshold ?? params.param0, 0, 1, 0.4);
@@ -8777,6 +9811,14 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param9 = clampNumber(params.phaseLabPolarizerAngle ?? params.param9, -360, 360, 35);
     param10 = clampNumber(params.phaseLabSpectralShift ?? params.param10, -4, 4, 0.35);
     param11 = clampNumber(params.phaseLabFocus ?? params.param11, 0.08, 4, 1.45);
+    param12 = clampNumber(params.phaseLabMirrorRadius ?? params.param12, 0.03, 0.45, 0.16);
+    param13 = clampNumber(params.phaseLabConeLift ?? params.param13, 0.2, 3, 1.2);
+    // Audio fold: the per-frame graph rebuild injects the live audio level as
+    // params.audioLevel; reactive off (or silence) packs 0.
+    param14 = clampNumber(params.phaseLabAudioReactive ?? 1, 0, 1, 1) >= 0.5
+      ? clampNumber(params.phaseLabAudioDrive ?? params.param14, 0, 3, 0.65) *
+        clampNumber(params.audioLevel, 0, 1.5, 0)
+      : 0;
   } else if (options.effect === 'lens-dirt') {
     amount = clampNumber(options.amount ?? params.dirtAmount ?? params.amount, 0, 1, 0.5);
     param0 = clampNumber(params.dirtScale ?? params.scale ?? params.param0, 0.5, 32, 8);
@@ -9011,7 +10053,7 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param1 = clampNumber(params.msRotation ?? params.param1, 0, 360, 60);
     param2 = clampNumber(params.msChromatic ?? params.param2, 0, 1, 0.3);
     param3 = clampNumber(params.msMode ?? params.param3, 0, 2, 0);
-    param4 = 0;
+    param4 = clampNumber(params.msDelayAmount ?? params.param4, 0, 1, 0.3);
     param5 = 0;
     param6 = 0;
     param7 = 0;
@@ -9039,8 +10081,8 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param1 = clampNumber(params.gqRotateAmount ?? params.param1, 0, 1, 0.3);
     param2 = clampNumber(params.gqChromaSplit ?? params.param2, 0, 1, 0.3);
     param3 = clampNumber(params.gqTriggerRate ?? params.param3, 0, 3, 1);
-    param4 = 0;
-    param5 = 0;
+    param4 = clampNumber(params.gqMode ?? params.param4, 0, 2, 0);
+    param5 = clampNumber(params.gqDelayAmount ?? params.param5, 0, 1, 0.3);
     param6 = 0;
     param7 = 0;
     param8 = 0;
@@ -9227,7 +10269,8 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param6 = clampNumber(params.lsTintG ?? params.param6, 0, 1, 0.1);
     param7 = clampNumber(params.lsTintB ?? params.param7, 0, 1, 0.1);
     param8 = clampNumber(params.lsReveal ?? params.param8, 0, 1, 1);
-    param9 = 0; param10 = 0; param11 = 0;
+    param9 = clampNumber(params.lsPersistence ?? params.param9, 0, 1, 0.92);
+    param10 = 0; param11 = 0;
   } else if (options.effect === 'aura-field') {
     amount = clampNumber(options.amount ?? params.afIntensity ?? params.amount, 0, 2, 1);
     param0 = clampNumber(params.afRadius ?? params.param0, 4, 32, 12);
@@ -9268,7 +10311,9 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param3 = clampNumber(params.caColorG ?? params.param3, 0, 1, 0.5);
     param4 = clampNumber(params.caColorB ?? params.param4, 0, 1, 0.1);
     param5 = clampNumber(params.caMode ?? params.param5, 0, 2, 0);
-    param6 = 0; param7 = 0; param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+    param6 = clampNumber(params.caSurvivalLow ?? params.param6, 0, 8, 1.5);
+    param7 = clampNumber(params.caSurvivalHigh ?? params.param7, 0, 8, 3.5);
+    param8 = 0; param9 = 0; param10 = 0; param11 = 0;
   } else if (options.effect === 'spectral-prism-tunnel') {
     amount = clampNumber(options.amount ?? params.sptPrismSpread ?? params.amount, 0, 2, 1);
     param0 = clampNumber(params.sptTunnelDepth ?? params.param0, 0.5, 3, 1.5);
@@ -9375,7 +10420,8 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param3 = clampNumber(params.psReplenish ?? params.param3, 0, 1, 0.6);
     param4 = clampNumber(params.psChromaSplit ?? params.param4, 0, 1, 0);
     param5 = clampNumber(params.psGrainSize ?? params.param5, 1, 6, 3);
-    param6 = 0; param7 = 0; param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+    param6 = clampNumber(params.psPersistence ?? params.param6, 0, 1, 0.92);
+    param7 = 0; param8 = 0; param9 = 0; param10 = 0; param11 = 0;
   } else if (options.effect === 'point-cloud-dissolve') {
     amount = clampNumber(options.amount ?? params.pcdDissolve ?? params.amount, 0, 1, 0);
     param0 = clampNumber(params.pcdDotSize ?? params.param0, 1, 12, 4);
@@ -9426,6 +10472,8 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param9 = clampNumber(params.wtFogG ?? params.param9, 0, 1, 0.07);
     param10 = clampNumber(params.wtFogB ?? params.param10, 0, 1, 0.12);
     param11 = clampNumber(params.wtHorizonFade ?? params.param11, 0, 1, 0.6);
+    param12 = clampNumber(params.wtTileScale ?? params.param12, 0.5, 4, 1);
+    param13 = clampNumber(params.wtSourceMix ?? params.param13, 0, 1, 0);
   } else if (options.effect === 'string-orb') {
     amount = clampNumber(options.amount ?? params.soIntensity ?? params.amount, 0, 2, 1);
     param0 = clampNumber(params.soRadius ?? params.param0, 0.6, 1.4, 0.85);
@@ -9439,7 +10487,11 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param8 = clampNumber(params.soTilt ?? params.param8, 0, 1, 0.15);
     param9 = clampNumber(params.soFlow ?? params.param9, 0, 3, 0.5);
     param10 = clampNumber(params.soGlow ?? params.param10, 0, 2, 0.7);
-    param11 = 0;
+    param11 = clampNumber(params.soTileScale ?? params.param11, 0.5, 4, 1);
+    param12 = clampNumber(params.soHorizonFade ?? params.param12, 0, 1, 0.7);
+    param13 = clampNumber(params.soGlowR ?? params.param13, 0, 1, 0.4);
+    param14 = clampNumber(params.soGlowG ?? params.param14, 0, 1, 0.85);
+    param15 = clampNumber(params.soGlowB ?? params.param15, 0, 1, 1);
   } else if (options.effect === 'sphere-wireframe') {
     amount = clampNumber(options.amount ?? params.swIntensity ?? params.amount, 0, 2, 1.2);
     param0 = clampNumber(params.swRadius ?? params.param0, 0.6, 1.4, 0.85);
@@ -9454,6 +10506,8 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param9 = clampNumber(params.swColorG ?? params.param9, 0, 1, 0.9);
     param10 = clampNumber(params.swColorB ?? params.param10, 0, 1, 1);
     param11 = clampNumber(params.swFillSource ?? params.param11, 0, 1, 0.4);
+    param12 = clampNumber(params.swHorizonFade ?? params.param12, 0, 1, 0.7);
+    param13 = clampNumber(params.swTileScale ?? params.param13, 0.5, 4, 1);
   } else if (options.effect === 'voxel-cube-cluster') {
     amount = clampNumber(options.amount ?? params.vccHeight ?? params.amount, 0, 1, 0.5);
     param0 = clampNumber(params.vccGridSize ?? params.param0, 2, 6, 4);
@@ -9536,6 +10590,7 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param9 = clampNumber(params.lkTubeR ?? params.param9, 0, 1, 1);
     param10 = clampNumber(params.lkTubeG ?? params.param10, 0, 1, 0.5);
     param11 = clampNumber(params.lkTubeB ?? params.param11, 0, 1, 0.85);
+    param12 = clampNumber(params.lkHorizonFade ?? params.param12, 0, 1, 0.6);
   } else if (options.effect === 'helix-particle-stream') {
     amount = clampNumber(options.amount ?? params.hpsIntensity ?? params.amount, 0, 2, 1);
     param0 = clampNumber(params.hpsHelices ?? params.param0, 1, 6, 2);
@@ -9564,6 +10619,7 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param9 = clampNumber(params.dcStarR ?? params.param9, 0, 1, 1);
     param10 = clampNumber(params.dcStarG ?? params.param10, 0, 1, 1);
     param11 = clampNumber(params.dcStarB ?? params.param11, 0, 1, 0.85);
+    param12 = clampNumber(params.dcHorizonFade ?? params.param12, 0, 1, 0.6);
   } else if (options.effect === 'sphere-project') {
     amount = clampNumber(options.amount ?? params.amount, 0, 1, 0.8);
     param0 = clampNumber(params.amount2 ?? params.param0, 0, 1, 0.4);
@@ -9655,16 +10711,20 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param5 = clampNumber(params.rdColorB ?? params.param5, 0, 1, 1);
     param6 = clampNumber(params.rdFeedRate ?? params.param6, 0, 0.2, 0.055);
     param7 = clampNumber(params.rdKillRate ?? params.param7, 0, 0.2, 0.062);
-    param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+    param8 = clampNumber(params.rdDiffusionA ?? params.param8, 0.5, 1.5, 1);
+    param9 = clampNumber(params.rdDiffusionB ?? params.param9, 0.2, 1, 0.5);
+    param10 = clampNumber(params.rdReseed ?? params.param10, 0, 1, 0.3);
+    param11 = 0;
   } else if (options.effect === 'feedback-zoom') {
-    amount = clampNumber(options.amount ?? params.amount, 0, 1, 0.5);
-    param0 = clampNumber(params.amount2 ?? params.param0, 0, 0.98, 0.85);
-    param1 = clampNumber(params.amount3 ?? params.param1, 0, 1, 0.5);
-    param2 = clampNumber(params.threshold ?? params.param2, 0, 1, 0.3);
+    amount = clampNumber(options.amount ?? params.amount, 0, 1, 0.7);
+    param0 = clampNumber(params.feedbackZoom ?? params.param0, 0.85, 1.15, 1.02);
+    param1 = clampNumber(params.feedbackRotation ?? params.param1, -0.2, 0.2, 0.005);
+    param2 = clampNumber(params.feedbackDecay ?? params.param2, 0, 1, 0.05);
     param3 = clampNumber(params.centerX ?? params.param3, 0, 1, 0.5);
     param4 = clampNumber(params.centerY ?? params.param4, 0, 1, 0.5);
-    param5 = 0;
-    param6 = 0; param7 = 0; param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+    param5 = clampNumber(params.feedbackHueShift ?? params.param5, 0, 1, 0);
+    param6 = clampNumber(params.feedbackMaskCenter ?? params.param6, 0, 1, 0);
+    param7 = 0; param8 = 0; param9 = 0; param10 = 0; param11 = 0;
   } else if (options.effect === 'motion-trails') {
     amount = clampNumber(options.amount ?? params.motionTrailsLength ?? params.amount, 0, 1, 0.4);
     param0 = clampNumber(params.motionTrailsAngle ?? params.param0, 0, 360, 0);
@@ -9694,6 +10754,121 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param6 = clampNumber(params.lightPaintTintG ?? params.param6, 0, 1, 0.8);
     param7 = clampNumber(params.lightPaintTintB ?? params.param7, 0, 1, 0.3);
     param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+  } else if (options.effect === 'binary-code') {
+    // effectUX vocabulary (bin*): density/speed/cell/contrast/bgMix/colorRGB.
+    param0 = clampNumber(params.binDensity ?? params.param0, 0, 1, 0.7);
+    param1 = clampNumber(params.binSpeed ?? params.param1, 0, 3, 0.5);
+    param2 = clampNumber(params.binCellSize ?? params.param2, 6, 32, 12);
+    param3 = clampNumber(params.binContrast ?? params.param3, 0, 2, 1);
+    param4 = clampNumber(params.binBgMix ?? params.param4, 0, 1, 0.5);
+    param5 = clampNumber(params.binColorR ?? params.param5, 0, 1, 0);
+    param6 = clampNumber(params.binColorG ?? params.param6, 0, 1, 1);
+    param7 = clampNumber(params.binColorB ?? params.param7, 0, 1, 0.3);
+  } else if (options.effect === 'matrix-rain') {
+    // effectUX vocabulary (matrix*).
+    param0 = clampNumber(params.matrixDensity ?? params.param0, 0, 1, 0.6);
+    param1 = clampNumber(params.matrixSpeed ?? params.param1, 0, 3, 1);
+    param2 = clampNumber(params.matrixCellSize ?? params.param2, 6, 32, 14);
+    param3 = clampNumber(params.matrixTrailLength ?? params.param3, 0, 1, 0.5);
+    param4 = clampNumber(params.matrixBgMix ?? params.param4, 0, 1, 0.5);
+    param5 = clampNumber(params.matrixColorR ?? params.param5, 0, 1, 0);
+    param6 = clampNumber(params.matrixColorG ?? params.param6, 0, 1, 1);
+    param7 = clampNumber(params.matrixColorB ?? params.param7, 0, 1, 0.4);
+  } else if (options.effect === 'dot-matrix') {
+    // effectUX vocabulary (dm*).
+    param0 = clampNumber(params.dmDotShape ?? params.param0, 0, 2, 0);
+    param1 = clampNumber(params.dmDotSize ?? params.param1, 4, 32, 12);
+    param2 = clampNumber(params.dmGap ?? params.param2, 0, 1, 0.2);
+    param3 = clampNumber(params.dmPosterize ?? params.param3, 1, 8, 4);
+    param4 = clampNumber(params.dmGlow ?? params.param4, 0, 1, 0.4);
+    param5 = clampNumber(params.dmBgR ?? params.param5, 0, 1, 0);
+    param6 = clampNumber(params.dmBgG ?? params.param6, 0, 1, 0);
+    param7 = clampNumber(params.dmBgB ?? params.param7, 0, 1, 0);
+  } else if (options.effect === 'block-mosaic') {
+    // effectUX vocabulary (mosaic*).
+    param0 = clampNumber(params.mosaicMode ?? params.param0, 0, 3, 0);
+    param1 = clampNumber(params.mosaicTileSize ?? params.param1, 8, 64, 24);
+    param2 = clampNumber(params.mosaicGrout ?? params.param2, 0, 1, 0.15);
+    param3 = clampNumber(params.mosaicColorJitter ?? params.param3, 0, 1, 0.1);
+    param4 = clampNumber(params.mosaicGroutR ?? params.param4, 0, 1, 0.1);
+    param5 = clampNumber(params.mosaicGroutG ?? params.param5, 0, 1, 0.1);
+    param6 = clampNumber(params.mosaicGroutB ?? params.param6, 0, 1, 0.1);
+  } else if (options.effect === 'geometric-tile') {
+    // effectUX vocabulary (geom*).
+    param0 = clampNumber(params.geomMode ?? params.param0, 0, 3, 0);
+    param1 = clampNumber(params.geomTiles ?? params.param1, 1, 16, 4);
+    param2 = clampNumber(params.geomRotation ?? params.param2, 0, 360, 90);
+    param3 = clampNumber(params.geomOffsetX ?? params.param3, 0, 1, 0);
+    param4 = clampNumber(params.geomMix ?? params.param4, 0, 1, 1);
+  } else if (options.effect === 'comic-ink') {
+    // effectUX vocabulary (comicInk*); ink strength folds into amount.
+    amount = clampNumber(options.amount ?? params.comicInkStrength ?? params.amount, 0, 3, 1.2);
+    param0 = clampNumber(params.comicInkThreshold ?? params.threshold ?? params.param0, 0, 1, 0.3);
+    param1 = clampNumber(params.comicInkPosterize ?? params.param1, 2, 12, 5);
+    param2 = clampNumber(params.comicInkHalftone ?? params.param2, 0, 1, 0.4);
+    param3 = clampNumber(params.comicInkHalftoneSize ?? params.param3, 2, 16, 6);
+    param4 = clampNumber(params.comicInkColorMix ?? params.colorMix ?? params.param4, 0, 1, 0.3);
+    param5 = clampNumber(params.comicInkR ?? params.param5, 0, 1, 0);
+    param6 = clampNumber(params.comicInkG ?? params.param6, 0, 1, 0);
+    param7 = clampNumber(params.comicInkB ?? params.param7, 0, 1, 0);
+  } else if (options.effect === 'watercolor') {
+    // effectUX vocabulary (watercolor*); pigment bleed folds into amount.
+    amount = clampNumber(options.amount ?? params.watercolorBleed ?? params.amount, 0, 1.5, 0.5);
+    param0 = clampNumber(params.watercolorEdgeDarken ?? params.param0, 0, 1, 0.5);
+    param1 = clampNumber(params.watercolorWetness ?? params.param1, 0, 1, 0.3);
+    param2 = clampNumber(params.watercolorGranulation ?? params.param2, 0, 1, 0.2);
+    param3 = clampNumber(params.watercolorPaperTexture ?? params.param3, 0, 1, 0.4);
+    param4 = clampNumber(params.watercolorPaperScale ?? params.param4, 1, 32, 8);
+    param5 = clampNumber(params.watercolorPaperHue ?? params.param5, 0, 2, 0);
+  } else if (options.effect === 'oil-paint') {
+    // effectUX vocabulary (oilPaint*); brush radius folds into amount.
+    amount = clampNumber(options.amount ?? params.oilPaintRadius ?? params.radius ?? params.amount, 1, 8, 4);
+    param0 = clampNumber(params.oilPaintIntensity ?? params.param0, 4, 24, 12);
+    param1 = clampNumber(params.oilPaintBrushLength ?? params.param1, 0, 2, 0.6);
+    param2 = clampNumber(params.oilPaintBristle ?? params.param2, 0, 1, 0.4);
+    param3 = clampNumber(params.oilPaintColorPunch ?? params.param3, 0, 1, 0.3);
+    param4 = clampNumber(params.oilPaintHighlight ?? params.param4, 0, 1, 0.2);
+    param5 = clampNumber(params.oilPaintMode ?? params.mode ?? params.param5, 0, 1, 0);
+  } else if (options.effect === 'noise') {
+    // effectUX vocabulary (noise*).
+    amount = clampNumber(options.amount ?? params.noiseAmount ?? params.amount, 0, 1, 0.2);
+    param0 = clampNumber(params.noiseType ?? params.param0, 0, 4, 0);
+    param1 = clampNumber(params.noiseMode ?? params.param1, 0, 4, 0);
+    param2 = clampNumber(params.noiseScale ?? params.scale ?? params.param2, 0.5, 32, 1);
+    param3 = clampNumber(params.noiseMono ?? params.param3, 0, 1, 0);
+    param4 = clampNumber(params.noiseShadow ?? params.param4, 0, 1, 1);
+    param5 = clampNumber(params.noiseMid ?? params.param5, 0, 1, 1);
+    param6 = clampNumber(params.noiseHigh ?? params.param6, 0, 1, 1);
+    param7 = clampNumber(params.noiseAnimSpeed ?? params.param7, 0, 2, 1);
+    param8 = clampNumber(params.seed ?? params.param8, -100000, 100000, 0);
+  } else if (options.effect === 'thermal-contour') {
+    // effectUX vocabulary (tc*); tcIntensity folds into amount, tcMix into mix.
+    amount = clampNumber(options.amount ?? params.tcIntensity ?? params.amount, 0, 2, 1);
+    mix = clampNumber(params.tcMix ?? options.mix, 0, 1, 0.85);
+    param0 = clampNumber(params.tcPalette ?? params.param0, 0, 3, 0);
+    param1 = clampNumber(params.tcContourCount ?? params.param1, 1, 12, 8);
+    param2 = clampNumber(params.tcContourWidth ?? params.param2, 0.001, 0.02, 0.005);
+    param3 = clampNumber(params.tcContourGlow ?? params.param3, 0, 1, 0.5);
+    param4 = clampNumber(params.tcTrackBlobs ?? params.param4, 0, 1, 0.4);
+    param5 = 0;
+    param6 = 0;
+    param7 = 0;
+  } else if (options.effect === 'gamma') {
+    param0 = clampNumber(params.gammaShadows ?? params.param0, 0.2, 3, 1);
+    param1 = clampNumber(params.gammaMids ?? params.param1, 0.2, 3, 1);
+    param2 = clampNumber(params.gammaHighlights ?? params.param2, 0.2, 3, 1);
+    param3 = clampNumber(params.gammaMix ?? params.param3, 0, 1, 1);
+    param4 = 0; param5 = 0; param6 = 0; param7 = 0;
+  } else if (options.effect === 'invert') {
+    param0 = clampNumber(params.invertMode ?? params.param0, 0, 4, 0);
+    param1 = clampNumber(params.invertThreshold ?? params.param1, 0, 1, 0.5);
+    param2 = clampNumber(params.invertStrobeRate ?? params.param2, 0, 10, 4);
+    param3 = 0; param4 = 0; param5 = 0; param6 = 0; param7 = 0;
+  } else if (options.effect === 'posterize') {
+    param0 = clampNumber(params.posterizeDither ?? params.param0, 0, 1, 0);
+    param1 = clampNumber(params.posterizeAnimSpeed ?? params.param1, 0, 2, 0);
+    param2 = clampNumber(params.posterizePalette ?? params.param2, 0, 3, 0);
+    param3 = 0; param4 = 0; param5 = 0; param6 = 0; param7 = 0;
   } else if (options.effect === 'recursive-echo') {
     amount = clampNumber(options.amount ?? params.recEchoOpacity ?? params.amount, 0.05, 0.95, 0.6);
     param0 = clampNumber(params.recEchoDepth ?? params.param0, 2, 16, 5);
@@ -9702,7 +10877,8 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param3 = clampNumber(params.recEchoHueShift ?? params.param3, 0, 1, 0.05);
     param4 = clampNumber(params.recEchoOffsetX ?? params.param4, -0.3, 0.3, 0.02);
     param5 = clampNumber(params.recEchoOffsetY ?? params.param5, -0.3, 0.3, 0.02);
-    param6 = 0; param7 = 0; param8 = 0; param9 = 0; param10 = 0; param11 = 0;
+    param6 = clampNumber(params.recEchoMode ?? params.param6, 0, 2, 0);
+    param7 = 0; param8 = 0; param9 = 0; param10 = 0; param11 = 0;
   }
   return [
     width,
@@ -9725,6 +10901,10 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param9,
     param10,
     param11,
+    param12,
+    param13,
+    param14,
+    param15,
   ];
 }
 
@@ -9767,7 +10947,7 @@ export function buildNativeEffectPassGraph(options: NativeEffectPassOptions): Na
       buffers: [{
         id: uniformId,
         kind: 'uniform',
-        byte_length: 80,
+        byte_length: 96,
         initial_f32: packNativeEffectPassUniforms(options),
       }],
       passes: [],
@@ -9818,7 +10998,7 @@ export function buildNativeEffectPassChainGraph(options: NativeEffectPassChainOp
     buffers.push({
       id: uniformId,
       kind: 'uniform',
-      byte_length: 80,
+      byte_length: 96,
       initial_f32: packNativeEffectPassUniforms(passOptions),
     });
     renderPasses.push(buildNativeEffectPassRenderPass(passOptions, manifest, uniformId, `-${index + 1}`));
