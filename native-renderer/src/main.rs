@@ -7701,7 +7701,8 @@ impl App {
         } else {
             time - state.prev_frame_time
         };
-        dt = dt.clamp(0.0, 1.0 / 15.0);
+        // Master time scale — mirrors the TS builder so both paths agree.
+        dt = dt.clamp(0.0, 1.0 / 15.0) * params.flow_speed;
         state.prev_frame_time = time;
         state.auto_rot_x_phase += params.auto_rotate_x * dt;
         state.auto_rot_y_phase += params.auto_rotate_y * dt;
@@ -20796,6 +20797,7 @@ struct NativeSmokeRidersParams {
     background_opacity: f32,
     vignette: f32,
     exposure: f32,
+    flow_speed: f32,
     /// 0 = AgX, 1 = ACES, 2 = Linear.
     tonemap: f32,
     // camera
@@ -20909,10 +20911,10 @@ fn normalize_smoke_riders_native_params(
         velocity_decay: 0.984,
         density_decay: tuning.density_decay,
         wind: tuning.wind,
-        turb_strength: native_graph_param_f32(params, "smokeTurbulence", 0.0, 4.0, 1.3)
+        turb_strength: native_graph_param_f32(params, "smokeTurbulence", 0.0, 4.0, 0.5)
             + bass * 0.45,
         turb_scale: tuning.turb_scale,
-        vorticity: native_graph_param_f32(params, "vorticity", 0.0, 12.0, 6.5)
+        vorticity: native_graph_param_f32(params, "vorticity", 0.0, 12.0, 3.8)
             * (1.0 + bass * 0.35),
         surface_tension: native_graph_param_f32(params, "surfaceTension", 0.0, 3.0, 0.6),
         paint_thickness: native_graph_param_f32(params, "paintThickness", 0.0, 2.0, 0.5),
@@ -20977,6 +20979,7 @@ fn normalize_smoke_riders_native_params(
         background_opacity: native_graph_param_f32(params, "backgroundOpacity", 0.0, 1.0, 1.0),
         vignette: native_graph_param_f32(params, "vignette", 0.0, 1.0, 0.45),
         exposure: native_graph_param_f32(params, "exposure", 0.1, 4.0, 1.5),
+        flow_speed: native_graph_param_f32(params, "flowSpeed", 0.05, 2.0, 0.32),
         tonemap: match native_particle_field_enum(params, "tonemap", "agx").as_str() {
             "aces" => 1.0,
             "linear" => 2.0,
@@ -20993,7 +20996,7 @@ fn normalize_smoke_riders_native_params(
             native_graph_param_f32(params, "rotateZ", -3600.0, 3600.0, 0.0),
         ],
         auto_rotate_x: tuning.spin_x,
-        auto_rotate_y: native_graph_param_f32(params, "autoSpin", -24.0, 24.0, 4.5),
+        auto_rotate_y: native_graph_param_f32(params, "autoSpin", -24.0, 24.0, 1.4),
         auto_rotate_z: tuning.spin_z,
 
         bass,

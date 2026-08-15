@@ -385,7 +385,9 @@ fn cs_advect_mc_vel(@builtin(global_invocation_id) gid: vec3<u32>) {
     let q = uv * sim.turbScale + vec3<f32>(0.0, 0.0, sim.time * 0.2);
     advected = advected + ghost_curl_noise3(q) * (sim.turbStrength * sim.dt);
   }
-  outBuf[i] = vec4<f32>(advected * sim.velocityDecay, 0.0);
+  // Decay is authored per-60fps-frame but applied per dt, so slowing the
+  // sim slows dissipation with it instead of fading at the old wall clock.
+  outBuf[i] = vec4<f32>(advected * pow(sim.velocityDecay, sim.dt * 60.0), 0.0);
 }
 
 @compute @workgroup_size(4, 4, 4)
@@ -393,7 +395,7 @@ fn cs_advect_mc_den(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (gid.x >= sim.gridX || gid.y >= sim.gridY || gid.z >= sim.gridZ) { return; }
   let i = mcIdx(vec3<i32>(gid));
   let d = mcCorrect(gid, i).value;
-  outBuf[i] = vec4<f32>(d.xyz, max(d.w, 0.0) * sim.densityDecay);
+  outBuf[i] = vec4<f32>(d.xyz, max(d.w, 0.0) * pow(sim.densityDecay, sim.dt * 60.0));
 }
 `;
 
@@ -1442,16 +1444,20 @@ export const smokeRidersParamSchema: ParamControl[] = [
     min: 0, max: 2, step: 0.01, default: 1 },
   { kind: 'slider', key: 'exposure', label: 'Exposure', group: 'Core',
     min: 0.1, max: 4, step: 0.01, default: 1.5 },
+  // Master time scale for the whole solve (fluid + riders). The look is
+  // built around slow, heavy motion — 1.0 is the old frenetic rate.
+  { kind: 'slider', key: 'flowSpeed', label: 'Flow Speed', group: 'Core',
+    min: 0.05, max: 2, step: 0.01, default: 0.32 },
 
   // ── Fluid ────────────────────────────────────────────────────
   { kind: 'slider', key: 'vorticity', label: 'Vorticity', group: 'Fluid',
-    min: 0, max: 12, step: 0.05, default: 6.5 },
+    min: 0, max: 12, step: 0.05, default: 3.8 },
   { kind: 'slider', key: 'smokeDensity', label: 'Density', group: 'Fluid',
     min: 0, max: 8, step: 0.05, default: 3.0 },
   { kind: 'slider', key: 'smokeGlow', label: 'Volume Gain', group: 'Fluid',
     min: 0, max: 6, step: 0.05, default: 1.35 },
   { kind: 'slider', key: 'smokeTurbulence', label: 'Turbulence', group: 'Fluid',
-    min: 0, max: 4, step: 0.01, default: 1.3 },
+    min: 0, max: 4, step: 0.01, default: 0.5 },
   { kind: 'slider', key: 'smokeSpread', label: 'Emitter Spread', group: 'Fluid',
     min: 0, max: 0.9, step: 0.01, default: 0.38 },
   { kind: 'slider', key: 'emitterCount', label: 'Emitters', group: 'Fluid',
@@ -1589,7 +1595,7 @@ export const smokeRidersParamSchema: ParamControl[] = [
   { kind: 'angle', key: 'rotateY', label: 'Rotate Y', group: 'Camera', default: 0 },
   { kind: 'angle', key: 'rotateZ', label: 'Rotate Z', group: 'Camera', default: 0 },
   { kind: 'slider', key: 'autoSpin', label: 'Auto Spin', group: 'Camera',
-    min: -24, max: 24, step: 0.1, default: 4.5 },
+    min: -24, max: 24, step: 0.1, default: 1.4 },
 ];
 
 export const smokeRidersParamDefaults = deriveDefaults(smokeRidersParamSchema);
@@ -1759,6 +1765,7 @@ export interface SmokeRidersResolvedParams {
   backgroundOpacity: number;
   vignette: number;
   exposure: number;
+  flowSpeed: number;
   /** 0 = AgX, 1 = ACES, 2 = Linear. */
   tonemap: number;
   // camera
@@ -1915,6 +1922,7 @@ export function resolveSmokeRidersParams(
     backgroundOpacity: num(p.backgroundOpacity, 1, 0, 1),
     vignette: num(p.vignette, 0.45, 0, 1),
     exposure: num(p.exposure, 1.5, 0.1, 4),
+    flowSpeed: num(p.flowSpeed, 0.32, 0.05, 2),
     tonemap: TONEMAP_ID[String(p.tonemap ?? 'agx')] ?? 0,
 
     volumeScaleX: 1.72,
@@ -2500,7 +2508,7 @@ export function buildSmokeRidersNativeComputeGraph(
   let dt = typeof options.frameDelta === 'number' && Number.isFinite(options.frameDelta)
     ? options.frameDelta
     : (state.prevFrameTime === 0 ? 1 / 60 : time - state.prevFrameTime);
-  dt = clamp(dt, 0, 1 / 15);
+  dt = clamp(dt, 0, 1 / 15) * params.flowSpeed;
   state.prevFrameTime = time;
   state.autoRotXPhase += params.autoRotateX * dt;
   state.autoRotYPhase += params.autoRotateY * dt;
