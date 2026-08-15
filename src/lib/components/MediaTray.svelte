@@ -6986,9 +6986,9 @@
     gap: 8px;
   }
 
-  /* App-native plugin card — minimal dark surface with coral accent.
-     Palette comes from App.svelte CSS vars (--accent-primary #FF6B6B,
-     --border-primary rgba(255,107,107,0.15)). No per-plugin gradient
+  /* App-native plugin card — minimal dark surface with the accent tint. 
+     Palette follows the active accent scheme (--accent-primary), with
+     every tint derived from it via color-mix. No per-plugin gradient
      backgrounds — uniform look across every visualizer engine. */
   .plugin-card {
     display: flex;
@@ -6996,7 +6996,7 @@
     gap: 10px;
     padding: 9px 10px;
     background: #0a0a0d;
-    border: 1px solid rgba(255, 107, 107, 0.10);
+    border: 1px solid color-mix(in srgb, var(--accent-primary, #FF725F) 10%, transparent);
     border-radius: 6px;
     transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
     cursor: pointer;
@@ -7005,14 +7005,14 @@
   }
 
   .plugin-card:hover:not(:disabled) {
-    border-color: rgba(255, 107, 107, 0.55);
+    border-color: color-mix(in srgb, var(--accent-primary, #FF725F) 55%, transparent);
     background: #100a0c;
-    box-shadow: 0 0 0 1px rgba(255, 107, 107, 0.06), 0 0 10px rgba(255, 107, 107, 0.10);
+    box-shadow: 0 0 0 1px color-mix(in srgb, var(--accent-primary, #FF725F) 6%, transparent), 0 0 10px color-mix(in srgb, var(--accent-primary, #FF725F) 10%, transparent);
   }
 
   .plugin-card:hover:not(:disabled) .plugin-icon-svg {
-    color: var(--accent-primary, #FF6B6B);
-    filter: drop-shadow(0 0 4px rgba(255, 107, 107, 0.4));
+    color: var(--accent-primary, #FF725F);
+    filter: drop-shadow(0 0 4px color-mix(in srgb, var(--accent-primary, #FF725F) 40%, transparent));
   }
 
   .plugin-card:disabled {
@@ -7021,8 +7021,8 @@
   }
 
   .plugin-card.running {
-    border-color: var(--accent-primary, #FF6B6B);
-    background: rgba(255, 107, 107, 0.05);
+    border-color: var(--accent-primary, #FF725F);
+    background: color-mix(in srgb, var(--accent-primary, #FF725F) 5%, transparent);
     position: relative;
   }
 
@@ -7032,9 +7032,9 @@
     right: 8px;
     width: 6px;
     height: 6px;
-    background: var(--accent-primary, #FF6B6B);
+    background: var(--accent-primary, #FF725F);
     border-radius: 50%;
-    box-shadow: 0 0 6px rgba(255, 107, 107, 0.6);
+    box-shadow: 0 0 6px color-mix(in srgb, var(--accent-primary, #FF725F) 60%, transparent);
     animation: pulse-dot 2s infinite;
   }
 
@@ -7051,7 +7051,7 @@
     height: 40px;
     border-radius: 5px;
     background: var(--bg-primary, #050507);
-    border: 1px solid rgba(255, 107, 107, 0.08);
+    border: 1px solid color-mix(in srgb, var(--accent-primary, #FF725F) 8%, transparent);
     flex-shrink: 0;
   }
 
@@ -7089,7 +7089,7 @@
 
   .plugin-tier {
     font-size: 9px;
-    color: var(--accent-primary, #FF6B6B);
+    color: var(--accent-primary, #FF725F);
     letter-spacing: 0.6px;
     margin-top: 1px;
     opacity: 0.55;

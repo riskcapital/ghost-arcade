@@ -151,8 +151,8 @@
     justify-content: center;
     flex-shrink: 0;
   }
-  .kf-diamond:hover { color: #FF6B6B; }
-  .kf-diamond.active { color: #FF6B6B; }
+  .kf-diamond:hover { color: var(--ga-coral, #ff6f5e); }
+  .kf-diamond.active { color: var(--ga-coral, #ff6f5e); }
   .kf-diamond.armed { color: #FF2020; text-shadow: 0 0 6px rgba(255,32,32,0.6); }
   .track-label {
     overflow: hidden;
@@ -165,7 +165,7 @@
     position: fixed;
     z-index: 10000;
     background: var(--bg-tertiary, #14141a);
-    border: 1px solid rgba(255, 107, 107, 0.3);
+    border: 1px solid color-mix(in srgb, var(--ga-coral, #ff6f5e) 30%, transparent);
     border-radius: 4px;
     padding: 4px 0;
     box-shadow: 0 4px 20px rgba(0, 0, 0, 0.7);
@@ -183,7 +183,7 @@
     cursor: pointer;
     font-family: inherit;
   }
-  .ctx-item:hover { background: rgba(255, 107, 107, 0.15); color: #fff; }
+  .ctx-item:hover { background: color-mix(in srgb, var(--ga-coral, #ff6f5e) 15%, transparent); color: #fff; }
   .ctx-delete { color: #FF4757; }
   .ctx-sep { height: 1px; background: rgba(255,255,255,0.08); margin: 4px 0; }
 </style>

@@ -731,7 +731,7 @@
     font-size: 12px;
     white-space: nowrap;
   }
-  .tray-minimize-btn:hover { border-color: var(--ga-coral, #e7eef5); }
+  .tray-minimize-btn:hover { border-color: var(--ga-coral, #ff6f5e); }
   .preset-tray.vj-drag .preset-item { cursor: grab; }
   .preset-tray.vj-drag .preset-item:active { cursor: grabbing; }
 

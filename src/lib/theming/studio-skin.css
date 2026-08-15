@@ -2390,9 +2390,11 @@ html .toolbar :is(button, .file-menu-btn) svg {
   color: var(--ga-ink-0, #f2ede4) !important;
 }
 
-/* …except Stage, which is the one green accent up there. */
-html .toolbar :is(.stage-btn, .stage-edit-btn) svg,
-html .toolbar .stage-edit-icon {
+/* …except Stage and the two simulator launchers, which carry the accent.
+   These three are "open a 3D workspace" actions, so they read as one
+   family against the toolbar's white chrome. */
+html .toolbar :is(.stage-btn, .stage-edit-btn, .sim-launch-btn) svg,
+html .toolbar :is(.stage-edit-icon, .sim-launch-icon) {
   color: var(--ga-icon, #5278ff) !important;
 }
 
@@ -2413,6 +2415,14 @@ html :is(.media-library, .media-tray, .media-panel) .tab:not(.active) svg {
 /* Add-layer menu — same blue, so "things you can create" share one
    colour wherever they appear. */
 html .add-layer-menu button:not(:disabled):not(.native-pending) svg {
+  color: var(--ga-icon, #5278ff) !important;
+}
+
+/* Sequencer / keyframe-timeline floating toggles — these are the same
+   "open a workspace" affordance as the bottom-dock buttons, so they take
+   the dock's blue rather than inventing a third glyph colour. The open
+   state is carried by the pill's border, not the glyph. */
+html :is(.seq-toggle, .kf-toggle) svg {
   color: var(--ga-icon, #5278ff) !important;
 }
 

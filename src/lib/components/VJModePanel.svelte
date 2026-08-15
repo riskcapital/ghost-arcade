@@ -7068,7 +7068,7 @@
   .vj-rec-btn:hover {
     background: rgba(255, 68, 56, 0.12);
     border-color: rgba(255, 68, 56, 0.6);
-    color: #ff6f5e;
+    color: var(--ga-rec, #ff3b30);
   }
 
   .vj-stop-rec-btn {

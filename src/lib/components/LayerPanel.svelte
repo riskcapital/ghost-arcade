@@ -917,7 +917,7 @@
             addMenuPos = { top: rect.bottom + 4, left: Math.max(8, rect.right - 170) };
           }
         }}>
-          + Add Layer
+          <span class="btn-add__plus" aria-hidden="true">+</span> Add Layer
         </button>
         {#if showAddLayerMenu}
           <div class="add-layer-backdrop" onclick={() => showAddLayerMenu = false}></div>
@@ -3720,6 +3720,14 @@
     display: inline-flex;
     align-items: center;
     gap: 5px;
+  }
+
+  /* The "+" carries the same accent every other create-affordance uses
+     (add-layer menu glyphs, tray tabs), so the label stays ink and the
+     action mark is what reads as blue. */
+  .btn-add__plus {
+    color: var(--ga-icon, #5278ff);
+    font-weight: 700;
   }
 
   .btn-add:hover {

@@ -949,8 +949,8 @@
           y={selectionBoundsPx.top}
           width={selectionBoundsPx.right - selectionBoundsPx.left}
           height={selectionBoundsPx.bottom - selectionBoundsPx.top}
-          fill="rgba(255, 111, 94, 0.04)"
-          stroke="#ff6f5e"
+          fill="color-mix(in srgb, var(--ga-coral, #ff6f5e) 4%, transparent)"
+          stroke="var(--ga-coral, #ff6f5e)"
           stroke-width="2"
           stroke-dasharray="7,4"
         />

@@ -114,6 +114,7 @@ import {
 } from '$lib/renderer/webgpuFlythrough';
 import {
   buildSmokeRidersNativeComputeGraph,
+  buildSmokeRidersNativePrecompileCommands,
   type SmokeRidersNativeGraphState,
 } from '$lib/renderer/shaders/webgpuSmokeRidersShader';
 import {
@@ -380,6 +381,8 @@ const NATIVE_GRAPH_ROUTE_REQUIREMENTS: ReadonlyArray<NativeGraphRouteRequirement
     kind: 'smoke-riders',
     feature: 'native_smoke_riders_graph',
     instrument: 'smoke-riders',
+    // Reuses the 3D fluid chain (minus its raymarch — Smoke Riders owns
+    // the single unified render pass) and adds the coupled rider passes.
     shaderIds: [
       '3d-smoke/splat',
       '3d-smoke/advect-velocity',
@@ -387,9 +390,13 @@ const NATIVE_GRAPH_ROUTE_REQUIREMENTS: ReadonlyArray<NativeGraphRouteRequirement
       '3d-smoke/jacobi',
       '3d-smoke/subtract-gradient',
       '3d-smoke/advect-density',
-      '3d-smoke/render',
-      'volumetric-spheres/sim',
-      'volumetric-spheres/render',
+      'smoke-riders/vorticity',
+      'smoke-riders/pressure',
+      'smoke-riders/advect',
+      'smoke-riders/surface',
+      'smoke-riders/riders',
+      'smoke-riders/tiles',
+      'smoke-riders/render',
     ],
   },
   {
@@ -9200,6 +9207,7 @@ fn fs_main() -> @location(0) vec4<f32> {
     commands.push(...buildInkCloudNativePrecompileCommands());
     commands.push(...buildParticleFieldNativePrecompileCommands());
     commands.push(...buildVolumetricSpheresNativePrecompileCommands());
+    commands.push(...buildSmokeRidersNativePrecompileCommands());
     commands.push(...buildFlythroughNativePrecompileCommands());
     commands.push(...buildPixelParticlesNativePrecompileCommands());
     commands.push(...buildPointCloudFXNativePrecompileCommands());

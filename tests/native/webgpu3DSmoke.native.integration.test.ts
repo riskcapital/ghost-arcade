@@ -40,6 +40,7 @@ import {
 } from '../../src/lib/renderer/shaders/webgpuPlanet';
 import {
   buildSmokeRidersNativeComputeGraph,
+  buildSmokeRidersNativePrecompileCommands,
   type SmokeRidersNativeGraphState,
 } from '../../src/lib/renderer/shaders/webgpuSmokeRidersShader';
 import {
@@ -339,6 +340,7 @@ describe('Native graph parity and health integration', () => {
         ...buildFlythroughNativePrecompileCommands(),
         ...buildPixelParticlesNativePrecompileCommands(),
         ...buildPointCloudFXNativePrecompileCommands(),
+        ...buildSmokeRidersNativePrecompileCommands(),
       ],
     }, 10000);
 
@@ -548,11 +550,14 @@ describe('Native graph parity and health integration', () => {
         sourceId: ridersSourceId,
         params: {
           quality: 'performance',
-          style: 'orbital',
-          sphereCount: 96,
-          smokeDensity: 2.4,
+          style: 'paint',
+          riderCount: 160,
+          vorticity: 5,
+          smokeDensity: 3,
           bassDrive: 1.5,
           audioReactive: true,
+          backgroundMode: 'studio',
+          backgroundOpacity: 1,
         },
         width: 320,
         height: 180,
@@ -566,17 +571,14 @@ describe('Native graph parity and health integration', () => {
       });
       ridersState = graph.state;
       const ridersResult: any = await rpc.send('compute_graph', nativeGraphConfigForDirectRpc(graph.config), 30000);
-      expect(ridersResult.pass_count).toBeGreaterThanOrEqual(26);
-      expect(ridersResult.renders).toHaveLength(2);
+      // Fluid chain + vorticity + riders + the two tile passes, then ONE
+      // unified raymarch — the old build needed two render passes because
+      // it was two instruments stacked.
+      expect(ridersResult.pass_count).toBeGreaterThanOrEqual(18);
+      expect(ridersResult.renders).toHaveLength(1);
       expect(ridersResult.renders[0]).toMatchObject({
         target: 'source_frame',
         source_id: ridersSourceId,
-        blend: 'replace',
-      });
-      expect(ridersResult.renders[1]).toMatchObject({
-        target: 'source_frame',
-        source_id: ridersSourceId,
-        depth: true,
         blend: 'alpha',
       });
       const snapshot = await rpc.send('frame_snapshot', {
