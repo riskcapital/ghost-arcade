@@ -1465,11 +1465,13 @@ async function main() {
       !smokeRidersManifest ||
       smokeRidersManifest.source_uri_prefix !== 'native-graph://smoke-riders/' ||
       smokeRidersManifest.render_target !== 'source_frame' ||
-      !smokeRidersManifest.shader_ids?.includes('3d-smoke/render') ||
-      !smokeRidersManifest.shader_ids?.includes('volumetric-spheres/render') ||
-      !smokeRidersManifest.features?.includes('compute_graph_multi_render') ||
+      !smokeRidersManifest.shader_ids?.includes('3d-smoke/advect-velocity') ||
+      !smokeRidersManifest.shader_ids?.includes('smoke-riders/vorticity') ||
+      !smokeRidersManifest.shader_ids?.includes('smoke-riders/riders') ||
+      !smokeRidersManifest.shader_ids?.includes('smoke-riders/tiles') ||
+      !smokeRidersManifest.shader_ids?.includes('smoke-riders/render') ||
+      !smokeRidersManifest.features?.includes('compute_graph_source_frame_target') ||
       !smokeRidersManifest.features?.includes('native_3d_smoke_graph') ||
-      !smokeRidersManifest.features?.includes('native_volumetric_spheres_graph') ||
       !smokeRidersManifest.features?.includes('native_smoke_riders_graph')
     ) {
       throw new Error(`native smoke-riders manifest entry is incomplete: ${JSON.stringify(capabilities.native_graph_instrument_manifest)}`);

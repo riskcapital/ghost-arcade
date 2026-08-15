@@ -361,11 +361,11 @@
     font-family: inherit;
   }
   .kf-toggle:hover {
-    border-color: #FF6B6B;
-    box-shadow: 0 4px 30px rgba(255,107,107,0.2);
+    border-color: var(--ga-coral, #ff6f5e);
+    box-shadow: 0 4px 30px color-mix(in srgb, var(--ga-coral, #ff6f5e) 20%, transparent);
   }
   .kf-toggle.active {
-    border-color: #FF6B6B;
+    border-color: var(--ga-coral, #ff6f5e);
     background: linear-gradient(135deg, #1a2020, #201515);
   }
 
@@ -377,7 +377,7 @@
     height: 300px;
     z-index: 90;
     background: rgba(10, 10, 14, 0.98);
-    border-top: 1px solid rgba(255, 107, 107, 0.15);
+    border-top: 1px solid color-mix(in srgb, var(--ga-coral, #ff6f5e) 15%, transparent);
     display: flex;
     flex-direction: column;
     animation: slideUp 0.2s ease-out;
@@ -394,9 +394,9 @@
     align-items: center;
   }
   .kf-clear {
-    background: rgba(255, 107, 107, 0.15);
-    border: 1px solid rgba(255, 107, 107, 0.35);
-    color: #FF8585;
+    background: color-mix(in srgb, var(--ga-coral, #ff6f5e) 15%, transparent);
+    border: 1px solid color-mix(in srgb, var(--ga-coral, #ff6f5e) 35%, transparent);
+    color: color-mix(in srgb, var(--ga-coral, #ff6f5e) 78%, #ffffff);
     font-size: 11px;
     font-weight: 600;
     padding: 5px 10px;
@@ -408,7 +408,7 @@
     font-family: inherit;
   }
   .kf-clear:hover {
-    background: rgba(255, 107, 107, 0.25);
+    background: color-mix(in srgb, var(--ga-coral, #ff6f5e) 25%, transparent);
     color: #fff;
   }
   .kf-close {
@@ -417,17 +417,17 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: linear-gradient(135deg, #FF6B6B, #FF4757);
+    background: linear-gradient(135deg, var(--ga-coral, #ff6f5e), color-mix(in srgb, var(--ga-coral, #ff6f5e) 70%, #000000));
     border: 1px solid rgba(255, 255, 255, 0.2);
     color: #fff;
     border-radius: 4px;
     cursor: pointer;
-    box-shadow: 0 2px 8px rgba(255, 107, 107, 0.4);
+    box-shadow: 0 2px 8px color-mix(in srgb, var(--ga-coral, #ff6f5e) 40%, transparent);
     transition: all 0.15s;
   }
   .kf-close:hover {
-    background: linear-gradient(135deg, #FF8585, #FF6B6B);
-    box-shadow: 0 2px 12px rgba(255, 107, 107, 0.6);
+    background: linear-gradient(135deg, color-mix(in srgb, var(--ga-coral, #ff6f5e) 78%, #ffffff), var(--ga-coral, #ff6f5e));
+    box-shadow: 0 2px 12px color-mix(in srgb, var(--ga-coral, #ff6f5e) 60%, transparent);
     transform: scale(1.05);
   }
 
@@ -526,7 +526,7 @@
   }
   .kf-modal {
     background: var(--bg-tertiary, #14141a);
-    border: 1px solid rgba(255, 107, 107, 0.4);
+    border: 1px solid color-mix(in srgb, var(--ga-coral, #ff6f5e) 40%, transparent);
     border-radius: 8px;
     padding: 20px 24px;
     max-width: 380px;
@@ -534,7 +534,7 @@
   }
   .kf-modal h3 {
     margin: 0 0 10px 0;
-    color: #FF6B6B;
+    color: var(--ga-coral, #ff6f5e);
     font-size: 15px;
     font-weight: 700;
     text-transform: uppercase;
@@ -564,6 +564,7 @@
   }
   .kf-modal-cancel:hover { background: rgba(255, 255, 255, 0.1); }
   .kf-modal-confirm {
+    /* Destructive "Clear All" — stays danger red on purpose. */
     background: linear-gradient(135deg, #FF6B6B, #FF4757);
     border: 1px solid rgba(255, 107, 107, 0.6);
     color: #fff;

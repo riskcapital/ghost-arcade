@@ -7592,17 +7592,17 @@
   .native-engine-pending__actions button {
     height: 32px;
     padding: 0 12px;
-    border: 1px solid rgba(74, 242, 255, 0.42);
+    border: 1px solid var(--ga-icon, #5278ff);
     border-radius: 2px;
-    background: rgba(8, 18, 22, 0.88);
-    color: #e8fdff;
+    background: var(--ga-card, rgba(8, 18, 22, 0.88));
+    color: var(--ga-ink-0, #eef0f4);
     font: 700 12px/1 var(--ga-font-ui, system-ui, sans-serif);
     cursor: pointer;
   }
 
   .native-engine-pending__actions button:hover {
-    border-color: rgba(74, 242, 255, 0.78);
-    background: rgba(20, 255, 240, 0.14);
+    border-color: var(--ga-icon, #5278ff);
+    background: var(--ga-blue-soft, rgba(82, 120, 255, 0.18));
   }
 
   .blackout-overlay {

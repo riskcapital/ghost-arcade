@@ -1,30 +1,1427 @@
 /**
- * WebGPUSmokeRidersShader — curated combo instrument.
+ * WebGPUSmokeRidersShader — ONE instrument: glossy riders embedded in a
+ * real 3D fluid.
  *
- * Pass order:
- *   1. clear transparent
- *   2. 3D Smoke volume owns the atmosphere/background
- *   3. Volumetric Spheres renders analytic spheres into the volume
+ * The previous build stacked two independent instruments (a 3D smoke
+ * volume, then a sphere field animated by pure procedural noise). The
+ * spheres never touched the fluid, so nothing was connected: they were
+ * painted on top of the smoke with their own lighting and their own
+ * depth pass.
  *
- * Future work can replace the loose choreography with real smoke-
- * velocity sampling once WebGPU3DSmoke exposes its velocity grid as a
- * shared frame-graph resource.
+ * This build is a single coupled simulation + a single raymarch.
+ *
+ * ── Compute chain (per frame) ────────────────────────────────────
+ *   1. splat              (3d-smoke/splat)              inject density + velocity
+ *   2. advect-velocity    (smoke-riders/advect ×2)      MacCormack self-advection
+ *                                                        with a reversion limiter;
+ *                                                        falls back to the plain
+ *                                                        3d-smoke semi-Lagrangian
+ *                                                        pass on `performance`
+ *   3. vorticity          (smoke-riders/vorticity)      Fedkiw confinement
+ *   4. SURFACE TENSION    (smoke-riders/surface)        CSF curvature force +
+ *                                                        density-weighted viscosity
+ *   5. divergence         (3d-smoke/divergence)
+ *   6. PRESSURE WARM      (smoke-riders/pressure)       p *= 0.8 before the sweep
+ *   7. jacobi × N         (3d-smoke/jacobi)
+ *   8. subtract-gradient  (3d-smoke/subtract-gradient)
+ *   9. advect-density     (smoke-riders/advect ×2)      MacCormack, same fallback
+ *  10. RIDERS             (smoke-riders/riders)         riders read the
+ *                                                        divergence-free velocity
+ *                                                        (trilinear), the density
+ *                                                        field and the pressure
+ *                                                        field
+ *  11. CLEAR TILES        (smoke-riders/clear-tiles)    zero the bin counts
+ *  12. BIN RIDERS         (smoke-riders/bin-riders)     screen-tile binning
+ *
+ * ── Render (one fullscreen pass) ─────────────────────────────────
+ *  13. smoke-riders/render — per pixel: analytic ray/sphere against the
+ *      riders in THIS pixel's tile, then a volume march clipped to the
+ *      nearest sphere hit. Smoke in FRONT of a rider occludes it; smoke
+ *      behind it is never marched. Henyey-Greenstein phase + a cheap
+ *      second wide scattering lobe for the dense cores, Beer-Lambert
+ *      light-march self-shadowing, Filament GGX + a clear-coat lobe on
+ *      the riders under a three-point studio rig, a procedural
+ *      environment for the reflections, a volume shadow marched from the
+ *      rider toward the key light, fluid-derived AO, then AgX (ACES and
+ *      Linear selectable) + vignette.
+ *
+ * ── Why riders READ as riding ────────────────────────────────────
+ * The coupling is Stokes drag solved analytically over the step:
+ *     τ = 2ρ_p r²/(9ρ_f ν) ;  v₁ = v∞ + (v₀ - v∞)·exp(-dt/τ)
+ * τ is derived from each rider's OWN radius, so it scales with r²: the
+ * big spheres lag by a quarter-second and get carried by whatever wave
+ * catches them while the droplets track the flow almost exactly. That
+ * LAG is the whole effect, and because exp(-dt/τ) ∈ (0,1) for every dt
+ * and every τ the integrator is unconditionally stable — no clamping, no
+ * substepping, and no need to make the population sluggish to keep it
+ * from exploding.
+ *
+ * Clustering is NOT a force. Inertial particles are centrifuged out of
+ * vortex cores and pile up in the strain-dominated filaments between
+ * them; that happens by itself once τ is real, and it peaks when τ is
+ * near the eddy turnover time. Spreading τ across decades ("Weight
+ * Spread") therefore has different riders decorating different
+ * structures at once. The one artistic override on top is a signed
+ * -c·∇p, which is conservative and, because a vortex core is a pressure
+ * minimum, pools riders in the cores or flings them onto the filaments
+ * from a single knob.
+ *
+ * ── Screen-tile binning ──────────────────────────────────────────
+ * Per-pixel analytic spheres over the whole population would be
+ * O(pixels × riders). The bin pass projects each rider once, derives its
+ * NDC-space footprint, and appends its index to every tile it covers
+ * (atomic counter, capped). The fragment shader then only tests the
+ * handful of riders in its own tile. Binning is done in NDC rather than
+ * pixels on purpose: the core renders instruments into a SQUARE source
+ * frame whose size is a runtime quality setting, so a pixel-space tile
+ * grid would not line up with the fragment coordinates. The tile counts
+ * are still derived from a 16px tile at the layer's nominal resolution.
  */
 
 import {
   WebGPU3DSmoke,
-  buildSmoke3DNativeComputeGraph,
-  type Smoke3DNativeGraphState,
+  SMOKE_3D_NATIVE_SHADER_IDS,
   type Smoke3DParams,
 } from '../webgpu3DSmoke';
 import {
   WebGPUVolumetricSpheresShader,
-  buildVolumetricSpheresNativeComputeGraph,
-  type VolumetricSpheresNativeGraphState,
   type VolumetricSpheresParams,
 } from './webgpuVolumetricSpheresShader';
 import type { GpuShaderImpl, ParamControl } from '../gpuShaderTypes';
 import { deriveDefaults } from '../gpuShaderTypes';
+import { resolveGhostWgsl } from '../wgsl';
+
+/* ============================================================== */
+/* CONSTANTS                                                       */
+/* ============================================================== */
+
+const SMOKE_RIDERS_MAX_EMITTERS = 8;
+const SMOKE_RIDERS_TILE_SIZE = 16;
+const SMOKE_RIDERS_TILE_CAP = 64;
+const SMOKE_RIDERS_MAX_COUNT = 2048;
+const SMOKE_RIDERS_MIN_COUNT = 16;
+/** pos(3)+radius, vel(3)+tau, seed+tint+life+fade = 12 floats = 48 bytes.
+ *  Slot 7 used to be an arbitrary `mass`; it now carries the Stokes
+ *  relaxation time τ (seconds) the integrator derived for this rider. */
+const SMOKE_RIDERS_STRIDE_FLOATS = 12;
+/** Reference rider radius (world units) that "Weight" is quoted at. τ ∝ r²,
+ *  so a rider twice this size lags four times as long. */
+const SMOKE_RIDERS_TAU_REF_RADIUS = 0.05;
+/** Warm-start scale for the pressure field: p *= 0.8 before the Jacobi
+ *  sweep makes the solve temporally coherent (≈3× the effective
+ *  iterations) while still bleeding off last frame's stale residual. */
+const SMOKE_RIDERS_PRESSURE_WARM = 0.8;
+
+/* ============================================================== */
+/* WGSL — vorticity confinement                                    */
+/* ============================================================== */
+// Curl is recomputed at the cell and its six neighbours rather than
+// read back from a curl buffer. That is 7 curl evaluations instead of a
+// second full-grid pass plus a barrier, and at 48³ the extra ALU is far
+// cheaper than the extra dispatch.
+//
+// |curl| is NOT persisted any more. The riders used to climb its
+// gradient; that force is gone (see the rider pass), and nothing else
+// read the field, so the buffer and its store were pure cost.
+const SMOKE_RIDERS_VORTICITY_WGSL = /* wgsl */ `
+struct VortU {
+  gridX: u32, gridY: u32, gridZ: u32, _pad0: u32,
+  dt: f32, strength: f32, cellSize: f32, pressureWarm: f32,
+};
+
+@group(0) @binding(0) var<uniform>             vu:      VortU;
+@group(0) @binding(1) var<storage, read>       velIn:   array<vec4<f32>>;
+@group(0) @binding(2) var<storage, read_write> velOut:  array<vec4<f32>>;
+
+fn vortIdx(p: vec3<i32>) -> u32 {
+  return u32(p.x) + u32(p.y) * vu.gridX + u32(p.z) * vu.gridX * vu.gridY;
+}
+
+fn vortClamp(p: vec3<i32>) -> vec3<i32> {
+  let mx = vec3<i32>(i32(vu.gridX) - 1, i32(vu.gridY) - 1, i32(vu.gridZ) - 1);
+  return clamp(p, vec3<i32>(0), mx);
+}
+
+fn vortVel(p: vec3<i32>) -> vec3<f32> {
+  return velIn[vortIdx(vortClamp(p))].xyz;
+}
+
+// w = curl(u), central differences on the collocated grid.
+//
+// The 0.5/cellSize factor matters: the differences above are per GRID
+// INDEX, so without dividing by the cell size this returns h*(curl u),
+// and the confinement force (which multiplies by h again) comes out
+// grid-squared too small — i.e. a no-op you can dial to maximum and
+// never see.
+fn vortCurl(p: vec3<i32>) -> vec3<f32> {
+  let vR = vortVel(p + vec3<i32>( 1,  0,  0));
+  let vL = vortVel(p + vec3<i32>(-1,  0,  0));
+  let vU = vortVel(p + vec3<i32>( 0,  1,  0));
+  let vD = vortVel(p + vec3<i32>( 0, -1,  0));
+  let vF = vortVel(p + vec3<i32>( 0,  0,  1));
+  let vB = vortVel(p + vec3<i32>( 0,  0, -1));
+  let d = vec3<f32>(
+    (vU.z - vD.z) - (vF.y - vB.y),
+    (vF.x - vB.x) - (vR.z - vL.z),
+    (vR.y - vL.y) - (vU.x - vD.x),
+  );
+  return d * (0.5 / max(vu.cellSize, 1e-5));
+}
+
+@compute @workgroup_size(4, 4, 4)
+fn cs_vorticity(@builtin(global_invocation_id) gid: vec3<u32>) {
+  if (gid.x >= vu.gridX || gid.y >= vu.gridY || gid.z >= vu.gridZ) { return; }
+  let p = vec3<i32>(gid);
+  let i = vortIdx(p);
+  let w = vortCurl(p);
+
+  let base = velIn[i].xyz;
+  var force = vec3<f32>(0.0);
+  if (vu.strength > 0.00001) {
+    // eta = grad|w|; N = normalized eta; f = eps * cellSize * (N x w)
+    let mR = length(vortCurl(p + vec3<i32>( 1,  0,  0)));
+    let mL = length(vortCurl(p + vec3<i32>(-1,  0,  0)));
+    let mU = length(vortCurl(p + vec3<i32>( 0,  1,  0)));
+    let mD = length(vortCurl(p + vec3<i32>( 0, -1,  0)));
+    let mF = length(vortCurl(p + vec3<i32>( 0,  0,  1)));
+    let mB = length(vortCurl(p + vec3<i32>( 0,  0, -1)));
+    let eta = vec3<f32>(mR - mL, mU - mD, mF - mB) * 0.5;
+    let n = eta / (length(eta) + 1e-5);
+    force = cross(n, w) * (vu.strength * vu.cellSize);
+  }
+  velOut[i] = vec4<f32>(base + force * vu.dt, 0.0);
+}
+`;
+
+/* ============================================================== */
+/* WGSL — pressure warm start                                      */
+/* ============================================================== */
+// The pressure field is persistent, so the Jacobi sweep already begins
+// from LAST frame's solution — but an unscaled restart carries the whole
+// stale residual with it and the solve drifts. Scaling by 0.8 first
+// keeps the low-frequency part (which is what costs iterations to
+// rebuild) while bleeding off the part that is no longer valid.
+// Empirically ~20 warm-started iterations resolve as well as ~60 cold
+// ones, which is what pays for the extra sweeps this instrument now
+// runs at every tier. One trivially bandwidth-bound pass.
+const SMOKE_RIDERS_PRESSURE_WGSL = /* wgsl */ `
+struct VortU {
+  gridX: u32, gridY: u32, gridZ: u32, _pad0: u32,
+  dt: f32, strength: f32, cellSize: f32, pressureWarm: f32,
+};
+
+@group(0) @binding(0) var<uniform>             vu:       VortU;
+@group(0) @binding(1) var<storage, read_write> pressure: array<f32>;
+
+@compute @workgroup_size(64)
+fn cs_pressure_warm(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let i = gid.x;
+  if (i >= vu.gridX * vu.gridY * vu.gridZ) { return; }
+  pressure[i] = pressure[i] * vu.pressureWarm;
+}
+`;
+
+/* ============================================================== */
+/* WGSL — MacCormack advection with the reversion limiter          */
+/* ============================================================== */
+// Semi-Lagrangian advection is unconditionally stable and hopelessly
+// diffusive: every step trilinearly blends 8 neighbours, so a filament
+// one cell wide is gone in a handful of frames. That diffusion is what
+// erases the stringy paint.
+//
+// MacCormack advects forward, advects the result BACK, and uses the
+// round-trip error to cancel the leading diffusion term:
+//     φ̂ⁿ⁺¹ = A(φⁿ) ; φ̂ⁿ = A_R(φ̂ⁿ⁺¹) ; φⁿ⁺¹ = φ̂ⁿ⁺¹ + (φⁿ - φ̂ⁿ)/2
+// It costs two advections (hence the forward pass writing a scratch
+// buffer and this pass reading it), and buys more visible detail than
+// doubling the grid resolution would — math is cheap next to bandwidth.
+//
+// The correction is UNCONDITIONALLY UNSTABLE without a limiter: it can
+// manufacture new extrema and they compound. Two guards, both required:
+//   * REVERSION, not clamping. If the corrected value leaves the range
+//     of the eight grid corners the FIRST advection actually read, fall
+//     back to the plain semi-Lagrangian value. Clamping to the range
+//     smears; reverting keeps free-surface fronts (i.e. the paint) sharp.
+//   * The corner range must be POINT-sampled. Reading it with the same
+//     trilinear filter used for advection returns a value that is by
+//     construction inside the range, which silently makes the limiter a
+//     no-op — the classic way this ships broken.
+// Cells on the domain boundary also revert: the backward trace leaves
+// the grid there and the clamped fetch is not a valid round trip.
+const SMOKE_RIDERS_ADVECT_WGSL = /* wgsl */ `
+#include <noise>
+
+struct SimU {
+  gridX: u32, gridY: u32, gridZ: u32, emitterCount: u32,
+  dt: f32, time: f32, burstMul: f32, _pad0: f32,
+  densityDecay: f32, velocityDecay: f32, splatRadius: f32, _pad1: f32,
+  windX: f32, windY: f32, windZ: f32, turbStrength: f32,
+  turbScale: f32, _pad2: f32, _pad3: f32, _pad4: f32,
+};
+
+@group(0) @binding(0) var<uniform>             sim:    SimU;
+@group(0) @binding(1) var<storage, read>       velIn:  array<vec4<f32>>;
+@group(0) @binding(2) var<storage, read>       srcIn:  array<vec4<f32>>;
+@group(0) @binding(3) var<storage, read_write> tmpBuf: array<vec4<f32>>;
+@group(0) @binding(4) var<storage, read_write> outBuf: array<vec4<f32>>;
+
+fn mcIdx(p: vec3<i32>) -> u32 {
+  return u32(p.x) + u32(p.y) * sim.gridX + u32(p.z) * sim.gridX * sim.gridY;
+}
+
+fn mcClamp(p: vec3<i32>) -> vec3<i32> {
+  let mx = vec3<i32>(i32(sim.gridX) - 1, i32(sim.gridY) - 1, i32(sim.gridZ) - 1);
+  return clamp(p, vec3<i32>(0), mx);
+}
+
+fn mcDim() -> vec3<f32> {
+  return vec3<f32>(f32(sim.gridX), f32(sim.gridY), f32(sim.gridZ));
+}
+
+fn mcSampleSrc(uv: vec3<f32>) -> vec4<f32> {
+  let p = uv * mcDim() - vec3<f32>(0.5);
+  let p0 = vec3<i32>(floor(p));
+  let f = p - vec3<f32>(p0);
+  let v000 = srcIn[mcIdx(mcClamp(p0 + vec3<i32>(0, 0, 0)))];
+  let v100 = srcIn[mcIdx(mcClamp(p0 + vec3<i32>(1, 0, 0)))];
+  let v010 = srcIn[mcIdx(mcClamp(p0 + vec3<i32>(0, 1, 0)))];
+  let v110 = srcIn[mcIdx(mcClamp(p0 + vec3<i32>(1, 1, 0)))];
+  let v001 = srcIn[mcIdx(mcClamp(p0 + vec3<i32>(0, 0, 1)))];
+  let v101 = srcIn[mcIdx(mcClamp(p0 + vec3<i32>(1, 0, 1)))];
+  let v011 = srcIn[mcIdx(mcClamp(p0 + vec3<i32>(0, 1, 1)))];
+  let v111 = srcIn[mcIdx(mcClamp(p0 + vec3<i32>(1, 1, 1)))];
+  let x00 = mix(v000, v100, f.x);
+  let x10 = mix(v010, v110, f.x);
+  let x01 = mix(v001, v101, f.x);
+  let x11 = mix(v011, v111, f.x);
+  return mix(mix(x00, x10, f.y), mix(x01, x11, f.y), f.z);
+}
+
+fn mcSampleTmp(uv: vec3<f32>) -> vec4<f32> {
+  let p = uv * mcDim() - vec3<f32>(0.5);
+  let p0 = vec3<i32>(floor(p));
+  let f = p - vec3<f32>(p0);
+  let v000 = tmpBuf[mcIdx(mcClamp(p0 + vec3<i32>(0, 0, 0)))];
+  let v100 = tmpBuf[mcIdx(mcClamp(p0 + vec3<i32>(1, 0, 0)))];
+  let v010 = tmpBuf[mcIdx(mcClamp(p0 + vec3<i32>(0, 1, 0)))];
+  let v110 = tmpBuf[mcIdx(mcClamp(p0 + vec3<i32>(1, 1, 0)))];
+  let v001 = tmpBuf[mcIdx(mcClamp(p0 + vec3<i32>(0, 0, 1)))];
+  let v101 = tmpBuf[mcIdx(mcClamp(p0 + vec3<i32>(1, 0, 1)))];
+  let v011 = tmpBuf[mcIdx(mcClamp(p0 + vec3<i32>(0, 1, 1)))];
+  let v111 = tmpBuf[mcIdx(mcClamp(p0 + vec3<i32>(1, 1, 1)))];
+  let x00 = mix(v000, v100, f.x);
+  let x10 = mix(v010, v110, f.x);
+  let x01 = mix(v001, v101, f.x);
+  let x11 = mix(v011, v111, f.x);
+  return mix(mix(x00, x10, f.y), mix(x01, x11, f.y), f.z);
+}
+
+// Forward advection: the plain semi-Lagrangian backtrace, written to the
+// scratch buffer so the correction pass can advect it back.
+@compute @workgroup_size(4, 4, 4)
+fn cs_advect_fwd(@builtin(global_invocation_id) gid: vec3<u32>) {
+  if (gid.x >= sim.gridX || gid.y >= sim.gridY || gid.z >= sim.gridZ) { return; }
+  let i = mcIdx(vec3<i32>(gid));
+  let uv = (vec3<f32>(gid) + vec3<f32>(0.5)) / mcDim();
+  let v = velIn[i].xyz;
+  tmpBuf[i] = mcSampleSrc(uv - v * sim.dt);
+}
+
+struct McResult {
+  value: vec4<f32>,
+  reverted: bool,
+};
+
+fn mcCorrect(gid: vec3<u32>, i: u32) -> McResult {
+  let dim = mcDim();
+  let uv = (vec3<f32>(gid) + vec3<f32>(0.5)) / dim;
+  let v = velIn[i].xyz;
+  let backUv = uv - v * sim.dt;
+  let fwd = tmpBuf[i];
+
+  var out: McResult;
+  out.value = fwd;
+  out.reverted = true;
+
+  // Boundary cells revert: the round trip leaves the grid and the
+  // clamped fetch is not the value the forward trace actually read.
+  let border = 1.5 / min(dim.x, min(dim.y, dim.z));
+  if (any(backUv < vec3<f32>(border)) || any(backUv > vec3<f32>(1.0 - border))) {
+    return out;
+  }
+
+  // Backward advection of the forward result, then the correction.
+  let back = mcSampleTmp(uv + v * sim.dt);
+  let src = srcIn[i];
+  let corrected = fwd + (src - back) * 0.5;
+
+  // POINT-sampled range of the eight corners the forward trace read.
+  let p = backUv * dim - vec3<f32>(0.5);
+  let p0 = vec3<i32>(floor(p));
+  var lo = srcIn[mcIdx(mcClamp(p0))];
+  var hi = lo;
+  for (var c: i32 = 1; c < 8; c = c + 1) {
+    let o = vec3<i32>(c & 1, (c >> 1) & 1, (c >> 2) & 1);
+    let s = srcIn[mcIdx(mcClamp(p0 + o))];
+    lo = min(lo, s);
+    hi = max(hi, s);
+  }
+  if (any(corrected < lo) || any(corrected > hi)) { return out; }
+
+  out.value = corrected;
+  out.reverted = false;
+  return out;
+}
+
+@compute @workgroup_size(4, 4, 4)
+fn cs_advect_mc_vel(@builtin(global_invocation_id) gid: vec3<u32>) {
+  if (gid.x >= sim.gridX || gid.y >= sim.gridY || gid.z >= sim.gridZ) { return; }
+  let i = mcIdx(vec3<i32>(gid));
+  let uv = (vec3<f32>(gid) + vec3<f32>(0.5)) / mcDim();
+  var advected = mcCorrect(gid, i).value.xyz;
+
+  advected = advected + vec3<f32>(sim.windX, sim.windY, sim.windZ) * sim.dt;
+  if (sim.turbStrength > 0.0001) {
+    let q = uv * sim.turbScale + vec3<f32>(0.0, 0.0, sim.time * 0.2);
+    advected = advected + ghost_curl_noise3(q) * (sim.turbStrength * sim.dt);
+  }
+  outBuf[i] = vec4<f32>(advected * sim.velocityDecay, 0.0);
+}
+
+@compute @workgroup_size(4, 4, 4)
+fn cs_advect_mc_den(@builtin(global_invocation_id) gid: vec3<u32>) {
+  if (gid.x >= sim.gridX || gid.y >= sim.gridY || gid.z >= sim.gridZ) { return; }
+  let i = mcIdx(vec3<i32>(gid));
+  let d = mcCorrect(gid, i).value;
+  outBuf[i] = vec4<f32>(d.xyz, max(d.w, 0.0) * sim.densityDecay);
+}
+`;
+
+/* ============================================================== */
+/* WGSL — surface tension (CSF) + shear-thinning viscosity         */
+/* ============================================================== */
+// Turbulence alone never produces a droplet. Necking, pinch-off and
+// stringy filaments are surface tension: the Continuum Surface Force
+// model treats the density gradient as a diffuse interface and pushes
+// it toward lower curvature.
+//     n = ∇ρ ;  κ = -∇·(n/|n|) ;  f_st = σ·κ·∇ρ
+// A thin bridge has high curvature at its waist, so σ pulls the waist
+// in until it snaps — which is exactly the reference look. The force is
+// injected BEFORE the projection so it comes out divergence-free.
+//
+// Paired with a density-weighted viscous diffusion ("Paint Thickness"):
+// real paint is shear-thinning, so the dense body drags on itself while
+// the thin spray stays free. A Laplacian smoothing whose coefficient is
+// held under 0.5 is explicit-stable by inspection.
+const SMOKE_RIDERS_SURFACE_WGSL = /* wgsl */ `
+struct SurfU {
+  gridX: u32, gridY: u32, gridZ: u32, _pad0: u32,
+  dt: f32, tension: f32, thickness: f32, maxStep: f32,
+};
+
+@group(0) @binding(0) var<uniform>             su:      SurfU;
+@group(0) @binding(1) var<storage, read>       denIn:   array<vec4<f32>>;
+@group(0) @binding(2) var<storage, read>       velIn:   array<vec4<f32>>;
+@group(0) @binding(3) var<storage, read_write> velOut:  array<vec4<f32>>;
+
+fn stIdx(p: vec3<i32>) -> u32 {
+  return u32(p.x) + u32(p.y) * su.gridX + u32(p.z) * su.gridX * su.gridY;
+}
+
+fn stClamp(p: vec3<i32>) -> vec3<i32> {
+  let mx = vec3<i32>(i32(su.gridX) - 1, i32(su.gridY) - 1, i32(su.gridZ) - 1);
+  return clamp(p, vec3<i32>(0), mx);
+}
+
+fn stDen(p: vec3<i32>) -> f32 {
+  return denIn[stIdx(stClamp(p))].w;
+}
+
+fn stGrad(p: vec3<i32>) -> vec3<f32> {
+  return vec3<f32>(
+    stDen(p + vec3<i32>(1, 0, 0)) - stDen(p - vec3<i32>(1, 0, 0)),
+    stDen(p + vec3<i32>(0, 1, 0)) - stDen(p - vec3<i32>(0, 1, 0)),
+    stDen(p + vec3<i32>(0, 0, 1)) - stDen(p - vec3<i32>(0, 0, 1)),
+  ) * 0.5;
+}
+
+// Unit interface normal. The epsilon matters: away from an interface
+// |∇ρ| is ~0 and the direction is pure noise, so the guard is what keeps
+// curvature from exploding in the empty parts of the box.
+fn stNormal(p: vec3<i32>) -> vec3<f32> {
+  let g = stGrad(p);
+  return g / (length(g) + 1e-4);
+}
+
+@compute @workgroup_size(4, 4, 4)
+fn cs_surface_tension(@builtin(global_invocation_id) gid: vec3<u32>) {
+  if (gid.x >= su.gridX || gid.y >= su.gridY || gid.z >= su.gridZ) { return; }
+  let p = vec3<i32>(gid);
+  let i = stIdx(p);
+  var v = velIn[i].xyz;
+
+  if (su.tension > 0.00001) {
+    let grad = stGrad(p);
+    // κ = -∇·n̂, central differences on the unit normal field.
+    let divN =
+      (stNormal(p + vec3<i32>(1, 0, 0)).x - stNormal(p - vec3<i32>(1, 0, 0)).x) +
+      (stNormal(p + vec3<i32>(0, 1, 0)).y - stNormal(p - vec3<i32>(0, 1, 0)).y) +
+      (stNormal(p + vec3<i32>(0, 0, 1)).z - stNormal(p - vec3<i32>(0, 0, 1)).z);
+    let kappa = -0.5 * divN;
+    var force = grad * (su.tension * kappa);
+    // CFL guard: surface tension is the stiffest term in the sim, and a
+    // single cell of high curvature must not move fluid more than a
+    // fraction of a cell in one step.
+    let step = length(force) * su.dt;
+    if (step > su.maxStep) { force = force * (su.maxStep / max(step, 1e-6)); }
+    v = v + force * su.dt;
+  }
+
+  if (su.thickness > 0.00001) {
+    let density = denIn[i].w;
+    let lap = (
+      velIn[stIdx(stClamp(p + vec3<i32>(1, 0, 0)))].xyz +
+      velIn[stIdx(stClamp(p - vec3<i32>(1, 0, 0)))].xyz +
+      velIn[stIdx(stClamp(p + vec3<i32>(0, 1, 0)))].xyz +
+      velIn[stIdx(stClamp(p - vec3<i32>(0, 1, 0)))].xyz +
+      velIn[stIdx(stClamp(p + vec3<i32>(0, 0, 1)))].xyz +
+      velIn[stIdx(stClamp(p - vec3<i32>(0, 0, 1)))].xyz
+    ) * (1.0 / 6.0) - velIn[i].xyz;
+    // Coefficient capped at 0.5 — the explicit-diffusion stability limit.
+    let amount = clamp(su.thickness * density * su.dt * 6.0, 0.0, 0.5);
+    v = v + lap * amount;
+  }
+
+  velOut[i] = vec4<f32>(v, 0.0);
+}
+`;
+
+/* ============================================================== */
+/* WGSL — rider simulation (the coupling)                          */
+/* ============================================================== */
+const SMOKE_RIDERS_SIM_WGSL = /* wgsl */ `
+struct Rider {
+  pos:    vec3<f32>, radius: f32,
+  vel:    vec3<f32>, tau:    f32,
+  seed:   f32, tint: f32, life: f32, fade: f32,
+};
+
+struct RiderU {
+  gridX: u32, gridY: u32, gridZ: u32, riderCount: u32,
+  dt: f32, time: f32, flowScale: f32, tauScale: f32,
+  buoyancy: f32, gravity: f32, vortexPull: f32, damping: f32,
+  tauSpread: f32, gravityFactor: f32, radiusMin: f32, radiusVar: f32,
+  bounds: vec3<f32>, containStrength: f32,
+  spawnCenter: vec3<f32>, spawnRadius: f32,
+  lifeSpan: f32, pressureGain: f32, bass: f32, treble: f32,
+  radiusScale: f32, tauRefRadius: f32, _pad0: f32, _pad1: f32,
+};
+
+@group(0) @binding(0) var<uniform>             ru:      RiderU;
+@group(0) @binding(1) var<storage, read_write> riders:  array<Rider>;
+@group(0) @binding(2) var<storage, read>       velField: array<vec4<f32>>;
+@group(0) @binding(3) var<storage, read>       denField: array<vec4<f32>>;
+@group(0) @binding(4) var<storage, read>       prsField: array<f32>;
+
+fn riderHash(n: f32) -> f32 {
+  return fract(sin(n * 127.1 + 311.7) * 43758.5453);
+}
+
+fn gridIdx(p: vec3<i32>) -> u32 {
+  return u32(p.x) + u32(p.y) * ru.gridX + u32(p.z) * ru.gridX * ru.gridY;
+}
+
+fn gridClamp(p: vec3<i32>) -> vec3<i32> {
+  let mx = vec3<i32>(i32(ru.gridX) - 1, i32(ru.gridY) - 1, i32(ru.gridZ) - 1);
+  return clamp(p, vec3<i32>(0), mx);
+}
+
+// Full trilinear fetch of the velocity field. The grid is a storage
+// buffer (no hardware filtering), so the eight corners are mixed by
+// hand — exactly what the fluid's own advection does, which keeps the
+// riders on the same field the dye is on.
+fn sampleVelocityTrilinear(uvw: vec3<f32>) -> vec3<f32> {
+  let dim = vec3<f32>(f32(ru.gridX), f32(ru.gridY), f32(ru.gridZ));
+  let p = clamp(uvw, vec3<f32>(0.0), vec3<f32>(1.0)) * dim - vec3<f32>(0.5);
+  let p0 = vec3<i32>(floor(p));
+  let f = p - vec3<f32>(p0);
+  let v000 = velField[gridIdx(gridClamp(p0 + vec3<i32>(0, 0, 0)))].xyz;
+  let v100 = velField[gridIdx(gridClamp(p0 + vec3<i32>(1, 0, 0)))].xyz;
+  let v010 = velField[gridIdx(gridClamp(p0 + vec3<i32>(0, 1, 0)))].xyz;
+  let v110 = velField[gridIdx(gridClamp(p0 + vec3<i32>(1, 1, 0)))].xyz;
+  let v001 = velField[gridIdx(gridClamp(p0 + vec3<i32>(0, 0, 1)))].xyz;
+  let v101 = velField[gridIdx(gridClamp(p0 + vec3<i32>(1, 0, 1)))].xyz;
+  let v011 = velField[gridIdx(gridClamp(p0 + vec3<i32>(0, 1, 1)))].xyz;
+  let v111 = velField[gridIdx(gridClamp(p0 + vec3<i32>(1, 1, 1)))].xyz;
+  let x00 = mix(v000, v100, f.x);
+  let x10 = mix(v010, v110, f.x);
+  let x01 = mix(v001, v101, f.x);
+  let x11 = mix(v011, v111, f.x);
+  let y0 = mix(x00, x10, f.y);
+  let y1 = mix(x01, x11, f.y);
+  return mix(y0, y1, f.z);
+}
+
+fn sampleDensityAt(uvw: vec3<f32>) -> f32 {
+  let dim = vec3<f32>(f32(ru.gridX), f32(ru.gridY), f32(ru.gridZ));
+  let p = clamp(uvw, vec3<f32>(0.0), vec3<f32>(1.0)) * dim - vec3<f32>(0.5);
+  let p0 = vec3<i32>(floor(p));
+  let f = p - vec3<f32>(p0);
+  let d000 = denField[gridIdx(gridClamp(p0 + vec3<i32>(0, 0, 0)))].w;
+  let d100 = denField[gridIdx(gridClamp(p0 + vec3<i32>(1, 0, 0)))].w;
+  let d010 = denField[gridIdx(gridClamp(p0 + vec3<i32>(0, 1, 0)))].w;
+  let d110 = denField[gridIdx(gridClamp(p0 + vec3<i32>(1, 1, 0)))].w;
+  let d001 = denField[gridIdx(gridClamp(p0 + vec3<i32>(0, 0, 1)))].w;
+  let d101 = denField[gridIdx(gridClamp(p0 + vec3<i32>(1, 0, 1)))].w;
+  let d011 = denField[gridIdx(gridClamp(p0 + vec3<i32>(0, 1, 1)))].w;
+  let d111 = denField[gridIdx(gridClamp(p0 + vec3<i32>(1, 1, 1)))].w;
+  let x00 = mix(d000, d100, f.x);
+  let x10 = mix(d010, d110, f.x);
+  let x01 = mix(d001, d101, f.x);
+  let x11 = mix(d011, d111, f.x);
+  return mix(mix(x00, x10, f.y), mix(x01, x11, f.y), f.z);
+}
+
+// Pressure at a cell offset from the rider. In an incompressible flow a
+// vortex core is a PRESSURE MINIMUM, so -∇p points into the core: one
+// signed knob gives both "riders pool in the vortices" (positive) and
+// "riders are flung out onto the strain filaments" (negative).
+fn pressureAtCell(uvw: vec3<f32>, offset: vec3<i32>) -> f32 {
+  let dim = vec3<f32>(f32(ru.gridX), f32(ru.gridY), f32(ru.gridZ));
+  let p = vec3<i32>(floor(clamp(uvw, vec3<f32>(0.0), vec3<f32>(1.0)) * dim));
+  return prsField[gridIdx(gridClamp(p + offset))];
+}
+
+fn pressureGradient(uvw: vec3<f32>) -> vec3<f32> {
+  return vec3<f32>(
+    pressureAtCell(uvw, vec3<i32>( 1,  0,  0)) - pressureAtCell(uvw, vec3<i32>(-1,  0,  0)),
+    pressureAtCell(uvw, vec3<i32>( 0,  1,  0)) - pressureAtCell(uvw, vec3<i32>( 0, -1,  0)),
+    pressureAtCell(uvw, vec3<i32>( 0,  0,  1)) - pressureAtCell(uvw, vec3<i32>( 0,  0, -1)),
+  ) * 0.5;
+}
+
+// Riders are born in the emitter DISC, flattened in Y, so a recycled
+// rider re-enters where the paint is actually being injected instead of
+// popping into empty air somewhere in the box.
+fn riderSpawn(seed: f32) -> vec3<f32> {
+  let a = riderHash(seed * 3.17 + 1.7) * 6.2831853;
+  let z = riderHash(seed * 7.31 + 4.1) * 2.0 - 1.0;
+  let r = pow(riderHash(seed * 11.93 + 8.3), 0.4);
+  let planar = sqrt(max(0.0, 1.0 - z * z));
+  let dir = vec3<f32>(cos(a) * planar, z * 0.32, sin(a) * planar);
+  return ru.spawnCenter + dir * (r * ru.spawnRadius);
+}
+
+// Analytic solution of dv/dt = (u - v)/tau + a over one step with u and
+// a frozen. exp(-dt/tau) lies in (0,1) for ANY dt and ANY tau, so v1 is
+// always a convex combination of v0 and vInf — unconditionally stable,
+// no clamping and no substepping, at any weight the operator dials in.
+//
+// The explicit-Euler form this replaces (v += (u-v)*(dt/tau)) is only
+// stable for dt < 2*tau, and a small tau — a light, responsive rider —
+// is exactly the unstable case. It could only ever be tuned by making
+// the whole population sluggish.
+//
+// The position update must use the integral of v over the step, not
+// x + v1*dt: the latter is first order and gets the tau -> 0 tracer
+// limit wrong, which is the limit the droplets live in.
+struct RiderStep {
+  vel: vec3<f32>,
+  pos: vec3<f32>,
+};
+
+fn riderIntegrate(
+  x0: vec3<f32>,
+  v0: vec3<f32>,
+  vInf: vec3<f32>,
+  tau: f32,
+  dt: f32,
+) -> RiderStep {
+  let z = dt / tau;
+  let a = exp(-z);
+  // 1-exp(-z) cancels catastrophically for tiny z; the series does not.
+  var oneMinusA = 1.0 - a;
+  if (z < 1e-3) { oneMinusA = z * (1.0 - z * 0.5 * (1.0 - z / 3.0)); }
+  var out: RiderStep;
+  out.vel = vInf + (v0 - vInf) * a;
+  out.pos = x0 + vInf * dt + (v0 - vInf) * (tau * oneMinusA);
+  return out;
+}
+
+@compute @workgroup_size(64)
+fn cs_riders(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let i = gid.x;
+  if (i >= ru.riderCount) { return; }
+  var r = riders[i];
+  let dt = min(ru.dt, 1.0 / 30.0);
+
+  // ── Stokes relaxation time, derived from the rider's own radius. ─
+  // τ = 2ρ_p r² / (9 ρ_f ν), i.e. τ ∝ r². Doubling a rider's radius
+  // quadruples its lag, which is both the physics and the art
+  // direction: the big spheres read as heavy while the droplets whip
+  // around. Terminal velocity g_eff·τ ∝ r² falls out for free.
+  let worldRadius = max(r.radius * ru.radiusScale, 1e-5);
+  let radiusRatio = worldRadius / max(ru.tauRefRadius, 1e-5);
+  // Spread the population across decades of τ. Preferential
+  // concentration peaks at Stokes number ~1, so a population spanning
+  // [0.1, 10]× the eddy turnover time has riders clustering on several
+  // different structures at once instead of all picking the same one.
+  let spreadT = riderHash(r.seed * 31.77 + 5.31) * 2.0 - 1.0;
+  let spread = pow(10.0, ru.tauSpread * spreadT);
+  // ±20% per-rider jitter — a uniform τ makes the whole population move
+  // as one rigid mass.
+  let jitter = 0.8 + 0.4 * riderHash(r.seed * 19.19 + 2.4);
+  let tau = max(ru.tauScale * radiusRatio * radiusRatio * spread * jitter, 1e-4);
+
+  let extent = max(ru.bounds * 2.0, vec3<f32>(1e-4));
+  let uvw = (r.pos + ru.bounds) / extent;
+  let density = sampleDensityAt(uvw);
+
+  // ── External accelerations (everything that is not drag). ───────
+  // Buoyancy is baked into gravity through the density ratio:
+  // g_eff = g(1 - ρ_f/ρ_p), so a rider lighter than the fluid RISES
+  // without a second knob fighting the first.
+  var aExt = vec3<f32>(0.0, -1.0, 0.0) * (ru.gravity * ru.gravityFactor);
+  aExt = aExt + vec3<f32>(0.0, 1.0, 0.0) * (ru.buoyancy * density);
+  // Signed pressure-gradient force. Clustering itself comes free from
+  // inertia (preferential concentration); this is the artistic override
+  // on top of it, and it is conservative, unlike climbing |∇ω|.
+  if (abs(ru.vortexPull) > 0.00001) {
+    aExt = aExt - pressureGradient(uvw) * (ru.vortexPull * ru.pressureGain);
+  }
+
+  // ── Soft containment, expressed as a velocity the rider relaxes
+  //    toward rather than a force. Folding it into the target keeps a
+  //    heavy (large τ) rider from being launched by the spring. ──────
+  let over = abs(r.pos) - ru.bounds;
+  let outward = max(over, vec3<f32>(0.0)) * sign(r.pos);
+
+  // Extra viscous damping toward rest composes exactly with the drag:
+  // dv/dt = (u-v)/τ - λv + a  ⇒  1/τ_eff = 1/τ + λ.
+  let tauEff = 1.0 / (1.0 / tau + max(ru.damping, 0.0));
+  let velRatio = tauEff / tau;
+
+  // ── RK2 midpoint. Forward Euler behaves miserably for rotational
+  //    motion — it spirals riders outward and hollows every vortex into
+  //    a ring over time. Sampling the fluid at the midpoint of the step
+  //    costs one extra trilinear fetch and fixes it. ─────────────────
+  let u0 = sampleVelocityTrilinear(uvw) * extent * ru.flowScale - outward * ru.containStrength;
+  let half = riderIntegrate(r.pos, r.vel, u0 * velRatio + aExt * tauEff, tauEff, dt * 0.5);
+  let uMidRaw = sampleVelocityTrilinear((half.pos + ru.bounds) / extent);
+  let uMid = uMidRaw * extent * ru.flowScale - outward * ru.containStrength;
+  let step = riderIntegrate(r.pos, r.vel, uMid * velRatio + aExt * tauEff, tauEff, dt);
+
+  var vel = step.vel;
+  var pos = step.pos;
+
+  var life = r.life - dt;
+
+  // A rider that has ridden the plume all the way to the ceiling is DONE.
+  // Without this it parks against the containment spring and the whole
+  // population piles up at the top of the box instead of cycling through
+  // the flow — which reads as a bug, not as riding.
+  let ceiling = ru.bounds.y * 0.82;
+  if (pos.y > ceiling) { life = min(life, 0.35); }
+  // A rider that has fallen out of the paint is no longer riding
+  // anything — retire it so the population tracks the fluid instead of
+  // accumulating as debris drifting through empty space.
+  if (density < 0.015) { life = min(life, 0.9); }
+
+  // Retiring riders shrink out and respawning ones grow in, so recycling
+  // never shows as a pop. fade is a plain radius multiplier that the bin
+  // and render passes both honour.
+  let retiring = life <= 0.0 || any(abs(pos) > ru.bounds * 1.04);
+  let targetFade = select(1.0, 0.0, retiring);
+  var fade = r.fade + (targetFade - r.fade) * (1.0 - exp(-9.0 * dt));
+  if (retiring && fade < 0.04) {
+    // Recycle through a seed-hashed emitter position so the population
+    // stays inside the active flow instead of draining to the edges.
+    let respawnSeed = r.seed + ru.time * 0.37 + f32(i) * 0.017;
+    pos = riderSpawn(respawnSeed);
+    vel = vec3<f32>(0.0);
+    life = ru.lifeSpan * (0.45 + riderHash(respawnSeed * 5.7) * 0.9);
+    fade = 0.0;
+    r.tint = riderHash(respawnSeed * 13.3 + 0.9);
+    r.radius = ru.radiusMin + pow(riderHash(respawnSeed * 23.1 + 3.3), 1.7) * ru.radiusVar;
+  }
+
+  r.pos = pos;
+  r.vel = vel;
+  r.tau = tau;
+  r.life = life;
+  r.fade = fade;
+  riders[i] = r;
+}
+`;
+
+/* ============================================================== */
+/* WGSL — screen-tile binning                                      */
+/* ============================================================== */
+const SMOKE_RIDERS_BIN_WGSL = /* wgsl */ `
+struct Rider {
+  pos:    vec3<f32>, radius: f32,
+  vel:    vec3<f32>, tau:    f32,
+  seed:   f32, tint: f32, life: f32, fade: f32,
+};
+
+struct BinU {
+  viewProj: mat4x4<f32>,
+  tileCountX: u32, tileCountY: u32, tileCap: u32, riderCount: u32,
+  projY: f32, aspect: f32, radiusScale: f32, _pad0: f32,
+};
+
+@group(0) @binding(0) var<uniform>             bu:      BinU;
+@group(0) @binding(1) var<storage, read>       riders:  array<Rider>;
+@group(0) @binding(2) var<storage, read_write> counts:  array<atomic<u32>>;
+@group(0) @binding(3) var<storage, read_write> indices: array<u32>;
+
+@compute @workgroup_size(64)
+fn cs_clear_tiles(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let i = gid.x;
+  if (i >= bu.tileCountX * bu.tileCountY) { return; }
+  atomicStore(&counts[i], 0u);
+}
+
+@compute @workgroup_size(64)
+fn cs_bin_riders(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let i = gid.x;
+  if (i >= bu.riderCount) { return; }
+  let r = riders[i];
+  let clip = bu.viewProj * vec4<f32>(r.pos, 1.0);
+  // clip.w == view-space distance for this projection; reject behind-camera.
+  if (clip.w <= 0.001) { return; }
+  let ndc = clip.xyz / clip.w;
+
+  let radius = max(r.radius * bu.radiusScale * r.fade, 1e-5);
+  // Screen-space radius. projY = 1/tan(fov/2), so radius * projY / viewZ is
+  // the half-height footprint in NDC; X divides by the aspect ratio.
+  let rY = radius * bu.projY / max(clip.w, 1e-3);
+  let rX = rY / max(bu.aspect, 1e-3);
+
+  let uMin = (ndc.x - rX) * 0.5 + 0.5;
+  let uMax = (ndc.x + rX) * 0.5 + 0.5;
+  // NDC +Y is up, tile rows run top-down, so the V range flips.
+  let vMin = 0.5 - (ndc.y + rY) * 0.5;
+  let vMax = 0.5 - (ndc.y - rY) * 0.5;
+
+  let tcx = i32(bu.tileCountX);
+  let tcy = i32(bu.tileCountY);
+  var x0 = i32(floor(uMin * f32(bu.tileCountX)));
+  var x1 = i32(floor(uMax * f32(bu.tileCountX)));
+  var y0 = i32(floor(vMin * f32(bu.tileCountY)));
+  var y1 = i32(floor(vMax * f32(bu.tileCountY)));
+  if (x1 < 0 || y1 < 0 || x0 >= tcx || y0 >= tcy) { return; }
+  x0 = clamp(x0, 0, tcx - 1);
+  x1 = clamp(x1, 0, tcx - 1);
+  y0 = clamp(y0, 0, tcy - 1);
+  y1 = clamp(y1, 0, tcy - 1);
+  // A rider parked on the near plane can otherwise cover the whole grid;
+  // cap the span so one degenerate rider cannot stall the dispatch.
+  x1 = min(x1, x0 + 63);
+  y1 = min(y1, y0 + 63);
+
+  for (var ty = y0; ty <= y1; ty = ty + 1) {
+    for (var tx = x0; tx <= x1; tx = tx + 1) {
+      let tile = u32(ty) * bu.tileCountX + u32(tx);
+      let slot = atomicAdd(&counts[tile], 1u);
+      if (slot < bu.tileCap) {
+        indices[tile * bu.tileCap + slot] = i;
+      }
+    }
+  }
+}
+`;
+
+/* ============================================================== */
+/* WGSL — unified render                                           */
+/* ============================================================== */
+const SMOKE_RIDERS_RENDER_WGSL = /* wgsl */ `
+struct Rider {
+  pos:    vec3<f32>, radius: f32,
+  vel:    vec3<f32>, tau:    f32,
+  seed:   f32, tint: f32, life: f32, fade: f32,
+};
+
+struct RenderU {
+  invViewProj:  mat4x4<f32>,
+  smokeTint:    vec3<f32>, exposure: f32,
+  volumeScale:  vec3<f32>, density:  f32,
+  bgColor:      vec3<f32>, bgOpacity: f32,
+  gridX: u32, gridY: u32, gridZ: u32, riderCount: u32,
+  keyDir:       vec3<f32>, keyStrength: f32,
+  keyColor:     vec3<f32>, anisotropy:  f32,
+  fillDir:      vec3<f32>, fillStrength: f32,
+  fillColor:    vec3<f32>, roughness:    f32,
+  rimDir:       vec3<f32>, rimStrength:  f32,
+  rimColor:     vec3<f32>, metalness:    f32,
+  paletteA:     vec3<f32>, emission:     f32,
+  paletteB:     vec3<f32>, msStrength:   f32,
+  paletteC:     vec3<f32>, shadowStepLen: f32,
+  paletteD:     vec3<f32>, aoStrength:   f32,
+  shadowSteps: u32, marchSteps: u32, tileCountX: u32, tileCountY: u32,
+  radiusScale: f32, ambient: f32, vignette: f32, bgMode: f32,
+  frameIndex: u32, tonemap: f32, clearCoat: f32, coatRoughness: f32,
+  _pad0: f32, _pad1: f32, _pad2: f32, _pad3: f32,
+};
+
+@group(0) @binding(0) var<uniform>       u:        RenderU;
+@group(0) @binding(1) var<storage, read> densBuf:  array<vec4<f32>>;
+@group(0) @binding(2) var<storage, read> riders:   array<Rider>;
+@group(0) @binding(3) var<storage, read> tileCounts:  array<u32>;
+@group(0) @binding(4) var<storage, read> tileIndices: array<u32>;
+
+const SR_PI: f32 = 3.14159265359;
+
+fn srFlat(p: vec3<i32>) -> u32 {
+  return u32(p.x) + u32(p.y) * u.gridX + u32(p.z) * u.gridX * u.gridY;
+}
+
+fn srSampleDensity(uvw: vec3<f32>) -> vec4<f32> {
+  let dim = vec3<f32>(f32(u.gridX), f32(u.gridY), f32(u.gridZ));
+  let p = clamp(uvw, vec3<f32>(0.001), vec3<f32>(0.999)) * dim - vec3<f32>(0.5);
+  let p0 = vec3<i32>(floor(p));
+  let f = p - vec3<f32>(p0);
+  let mx = vec3<i32>(i32(u.gridX) - 1, i32(u.gridY) - 1, i32(u.gridZ) - 1);
+  let v000 = densBuf[srFlat(clamp(p0 + vec3<i32>(0, 0, 0), vec3<i32>(0), mx))];
+  let v100 = densBuf[srFlat(clamp(p0 + vec3<i32>(1, 0, 0), vec3<i32>(0), mx))];
+  let v010 = densBuf[srFlat(clamp(p0 + vec3<i32>(0, 1, 0), vec3<i32>(0), mx))];
+  let v110 = densBuf[srFlat(clamp(p0 + vec3<i32>(1, 1, 0), vec3<i32>(0), mx))];
+  let v001 = densBuf[srFlat(clamp(p0 + vec3<i32>(0, 0, 1), vec3<i32>(0), mx))];
+  let v101 = densBuf[srFlat(clamp(p0 + vec3<i32>(1, 0, 1), vec3<i32>(0), mx))];
+  let v011 = densBuf[srFlat(clamp(p0 + vec3<i32>(0, 1, 1), vec3<i32>(0), mx))];
+  let v111 = densBuf[srFlat(clamp(p0 + vec3<i32>(1, 1, 1), vec3<i32>(0), mx))];
+  let x00 = mix(v000, v100, f.x);
+  let x10 = mix(v010, v110, f.x);
+  let x01 = mix(v001, v101, f.x);
+  let x11 = mix(v011, v111, f.x);
+  return mix(mix(x00, x10, f.y), mix(x01, x11, f.y), f.z);
+}
+
+fn srHash12(p: vec2<f32>) -> f32 {
+  var p3 = fract(vec3<f32>(p.x, p.y, p.x) * 0.1031);
+  p3 = p3 + vec3<f32>(dot(p3, p3.yzx + vec3<f32>(33.33)));
+  return fract((p3.x + p3.y) * p3.z);
+}
+
+fn srIntersectBox(ro: vec3<f32>, rd: vec3<f32>, bmin: vec3<f32>, bmax: vec3<f32>) -> vec2<f32> {
+  let invD = vec3<f32>(1.0) / rd;
+  let t0 = (bmin - ro) * invD;
+  let t1 = (bmax - ro) * invD;
+  let tmin = min(t0, t1);
+  let tmax = max(t0, t1);
+  return vec2<f32>(
+    max(max(tmin.x, tmin.y), tmin.z),
+    min(min(tmax.x, tmax.y), tmax.z),
+  );
+}
+
+// Henyey-Greenstein phase — the forward-scatter lobe that produces the
+// bright halo where the key light shines through the thin edges.
+fn srHg(cosTheta: f32, g: f32) -> f32 {
+  let g2 = g * g;
+  let denom = 1.0 + g2 - 2.0 * g * cosTheta;
+  return (1.0 - g2) / (4.0 * SR_PI * pow(max(denom, 1e-4), 1.5));
+}
+
+// Filament's numerically-hardened GGX. The textbook form squares
+// (NoH²(a²-1)+1), which loses all its bits in fp32 on a smooth material
+// at grazing angles and shows up as blocky highlights on exactly the
+// glossy spheres this instrument is built around.
+fn srDGgx(nDotH: f32, a: f32) -> f32 {
+  let a2 = nDotH * a;
+  let k = a / max(1.0 - nDotH * nDotH + a2 * a2, 1e-8);
+  return k * k * (1.0 / SR_PI);
+}
+
+// Height-correlated Smith visibility. This already carries the
+// 1/(4·NoL·NoV) denominator, so the specular term is D*V*F with no
+// further division.
+fn srVSmith(nDotV: f32, nDotL: f32, a: f32) -> f32 {
+  let a2 = a * a;
+  let gv = nDotL * sqrt(nDotV * nDotV * (1.0 - a2) + a2);
+  let gl = nDotV * sqrt(nDotL * nDotL * (1.0 - a2) + a2);
+  return 0.5 / max(gv + gl, 1e-5);
+}
+
+// Kelemen visibility for the clear coat: the coat is a thin smooth
+// dielectric, so the full Smith term is wasted on it.
+fn srVKelemen(lDotH: f32) -> f32 {
+  return 0.25 / max(lDotH * lDotH, 1e-4);
+}
+
+fn srFSchlick(f0: f32, cosT: f32) -> f32 {
+  return f0 + (1.0 - f0) * pow(clamp(1.0 - cosT, 0.0, 1.0), 5.0);
+}
+
+fn srFresnel(f0: vec3<f32>, cosT: f32) -> vec3<f32> {
+  let f = pow(clamp(1.0 - cosT, 0.0, 1.0), 5.0);
+  return f0 + (vec3<f32>(1.0) - f0) * f;
+}
+
+// Cheap procedural studio environment: ground, horizon, sky, plus a
+// bright key blob. Sampled along the reflection vector this is what
+// makes the riders read as raytraced instead of shaded.
+fn srEnv(dir: vec3<f32>) -> vec3<f32> {
+  let t = clamp(dir.y * 0.5 + 0.5, 0.0, 1.0);
+  let ground  = vec3<f32>(0.030, 0.028, 0.026);
+  let horizon = vec3<f32>(0.240, 0.235, 0.230);
+  let sky     = vec3<f32>(0.380, 0.430, 0.520);
+  var col = mix(ground, horizon, smoothstep(0.0, 0.5, t));
+  col = mix(col, sky, smoothstep(0.5, 1.0, t));
+  let blob = pow(max(dot(dir, u.keyDir), 0.0), 48.0) * 2.4;
+  let bounce = pow(max(dot(dir, -u.keyDir), 0.0), 8.0) * 0.25;
+  return col + u.keyColor * blob + u.fillColor * bounce;
+}
+
+fn srPalette(t: f32) -> vec3<f32> {
+  let x = fract(t) * 4.0;
+  let idx = u32(floor(x));
+  let f = fract(x);
+  var c0 = u.paletteA;
+  var c1 = u.paletteB;
+  if (idx == 1u) { c0 = u.paletteB; c1 = u.paletteC; }
+  else if (idx == 2u) { c0 = u.paletteC; c1 = u.paletteD; }
+  else if (idx >= 3u) { c0 = u.paletteD; c1 = u.paletteA; }
+  return mix(c0, c1, f);
+}
+
+// Beer-Lambert transmittance along a direction through the volume.
+// Shared by the in-scatter term and by the riders' volume shadow, so
+// smoke shadows land on the spheres exactly as they land on itself.
+fn srShadowMarch(start: vec3<f32>, dir: vec3<f32>, bmin: vec3<f32>, bmax: vec3<f32>, stepScale: f32) -> f32 {
+  if (u.shadowSteps == 0u) { return 1.0; }
+  let stepLen = max(u.shadowStepLen, 0.001) * stepScale;
+  let extent = bmax - bmin;
+  var depth = 0.0;
+  var lp = start;
+  var s: u32 = 0u;
+  loop {
+    if (s >= u.shadowSteps) { break; }
+    lp = lp + dir * stepLen;
+    if (lp.x < bmin.x || lp.y < bmin.y || lp.z < bmin.z ||
+        lp.x > bmax.x || lp.y > bmax.y || lp.z > bmax.z) { break; }
+    let ls = srSampleDensity((lp - bmin) / extent);
+    depth = depth + ls.w * stepLen * u.density;
+    s = s + 1u;
+  }
+  return exp(-depth);
+}
+
+fn srAces(x: vec3<f32>) -> vec3<f32> {
+  let a = 2.51;
+  let b = 0.03;
+  let c = 2.43;
+  let d = 0.59;
+  let e = 0.14;
+  return clamp((x * (a * x + vec3<f32>(b))) / (x * (c * x + vec3<f32>(d)) + vec3<f32>(e)),
+               vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
+// ── AgX ────────────────────────────────────────────────────────────
+// ACES' RRT skews saturated warm tones toward yellow as they brighten
+// (the "notorious six"), so a bright orange highlight leaves the hue it
+// started on and the paint reads as plastic. Measured on this palette:
+// pure orange run from 1/4 to 16 stops drifts 20°→59° through ACES and
+// only 18°→40° through AgX, and AgX gets there by desaturating toward
+// white the way film does rather than by rotating the hue.
+//
+// The inset matrix mixes the channels together before the curve (which
+// is what stops one channel clipping alone and dragging the hue) and
+// the outset undoes most of it afterwards. Both preserve neutral grey,
+// which is the round-trip worth checking: 0.18 in must come back 0.18.
+//
+// WGSL mat3x3 takes COLUMNS, same as GLSL, so these are transcribed in
+// source order from Godot's tonemap.glsl.
+const SR_AGX_MID: f32 = 0.18;
+const SR_AGX_TOE: f32 = 1.35;
+
+fn srAgxCurve(x: vec3<f32>) -> vec3<f32> {
+  // Below middle grey a power toe, above it a Reinhard shoulder. The
+  // shoulder constant is chosen so the two halves share a slope at 0.18
+  // — a kink there is instantly visible as a banded ramp in the smoke.
+  let shoulder = (1.0 - SR_AGX_MID) / SR_AGX_TOE;
+  let c = max(x, vec3<f32>(0.0));
+  let toe = vec3<f32>(SR_AGX_MID) * pow(c / SR_AGX_MID, vec3<f32>(SR_AGX_TOE));
+  let d = max(c - vec3<f32>(SR_AGX_MID), vec3<f32>(0.0));
+  let knee = vec3<f32>(SR_AGX_MID) + (1.0 - SR_AGX_MID) * (d / (d + vec3<f32>(shoulder)));
+  return select(knee, toe, c < vec3<f32>(SR_AGX_MID));
+}
+
+fn srAgx(x: vec3<f32>) -> vec3<f32> {
+  let inset = mat3x3<f32>(
+    vec3<f32>(0.544814746488245, 0.140416948464053, 0.0888104196149096),
+    vec3<f32>(0.373787398372697, 0.754137554567394, 0.178871756420858),
+    vec3<f32>(0.0813978551390581, 0.105445496968552, 0.732317823964232),
+  );
+  let outset = mat3x3<f32>(
+    vec3<f32>(1.96488741169489, -0.299313364904742, -0.164352742528393),
+    vec3<f32>(-0.855988495690215, 1.32639796461980, -0.238183969428088),
+    vec3<f32>(-0.108898916004672, -0.0270845997150571, 1.40253671195648),
+  );
+  var c = inset * max(x, vec3<f32>(0.0));
+  c = srAgxCurve(c);
+  c = min(vec3<f32>(1.0), c);
+  return clamp(outset * c, vec3<f32>(0.0), vec3<f32>(1.0));
+}
+
+fn srTonemap(x: vec3<f32>) -> vec3<f32> {
+  if (u.tonemap > 1.5) { return clamp(x, vec3<f32>(0.0), vec3<f32>(1.0)); }
+  if (u.tonemap > 0.5) { return srAces(x); }
+  return srAgx(x);
+}
+
+struct VSOut {
+  @builtin(position) pos: vec4<f32>,
+  @location(0) ndc: vec2<f32>,
+};
+
+@vertex
+fn vs_main(@builtin(vertex_index) vid: u32) -> VSOut {
+  var positions = array<vec2<f32>, 3>(
+    vec2<f32>(-1.0, -3.0),
+    vec2<f32>(-1.0,  1.0),
+    vec2<f32>( 3.0,  1.0),
+  );
+  let p = positions[vid];
+  var out: VSOut;
+  out.pos = vec4<f32>(p, 0.0, 1.0);
+  out.ndc = p;
+  return out;
+}
+
+@fragment
+fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
+  // ── 1. World ray for this pixel. ───────────────────────────────
+  let ndc = in.ndc;
+  let nearW = u.invViewProj * vec4<f32>(ndc, 0.0, 1.0);
+  let farW  = u.invViewProj * vec4<f32>(ndc, 1.0, 1.0);
+  let ro = nearW.xyz / nearW.w;
+  let rd = normalize(farW.xyz / farW.w - ro);
+  let viewDir = -rd;
+
+  let bmin = -u.volumeScale;
+  let bmax =  u.volumeScale;
+  let extent = bmax - bmin;
+
+  // ── 2. Analytic sphere pass over this pixel's tile bucket. ─────
+  var tHit = 1.0e30;
+  var hitNormal = vec3<f32>(0.0, 1.0, 0.0);
+  var hitTint = 0.0;
+  var hitSeed = 0.0;
+  var hasHit = false;
+  let tu = clamp(u32((ndc.x * 0.5 + 0.5) * f32(u.tileCountX)), 0u, max(u.tileCountX, 1u) - 1u);
+  let tv = clamp(u32((0.5 - ndc.y * 0.5) * f32(u.tileCountY)), 0u, max(u.tileCountY, 1u) - 1u);
+  let tile = tv * u.tileCountX + tu;
+  let bucket = min(tileCounts[tile], ${SMOKE_RIDERS_TILE_CAP}u);
+  var b: u32 = 0u;
+  loop {
+    if (b >= bucket) { break; }
+    let ri = tileIndices[tile * ${SMOKE_RIDERS_TILE_CAP}u + b];
+    b = b + 1u;
+    if (ri >= u.riderCount) { continue; }
+    let rider = riders[ri];
+    let radius = rider.radius * u.radiusScale * rider.fade;
+    if (radius < 1e-4) { continue; }
+    let oc = ro - rider.pos;
+    let bq = dot(oc, rd);
+    let cq = dot(oc, oc) - radius * radius;
+    let disc = bq * bq - cq;
+    if (disc < 0.0) { continue; }
+    let sq = sqrt(disc);
+    var t = -bq - sq;
+    if (t < 0.001) { t = -bq + sq; }
+    if (t < 0.001 || t >= tHit) { continue; }
+    tHit = t;
+    hitNormal = normalize(ro + rd * t - rider.pos);
+    hitTint = rider.tint;
+    hitSeed = rider.seed;
+    hasHit = true;
+  }
+
+  // ── 3. Volume march, CLIPPED to the nearest sphere hit. ────────
+  //     Smoke in front of a rider occludes it; smoke behind it is
+  //     never marched, so the rider is genuinely inside the volume.
+  var accum = vec4<f32>(0.0);
+  let slab = srIntersectBox(ro, rd, bmin, bmax);
+  let g = clamp(u.anisotropy, -0.95, 0.95);
+  if (slab.y >= slab.x && slab.y > 0.0) {
+    let tStart = max(slab.x, 0.0);
+    let tEnd = min(slab.y, select(slab.y, tHit, hasHit));
+    if (tEnd > tStart) {
+      let steps = clamp(u.marchSteps, 8u, 192u);
+      let stepLen = (tEnd - tStart) / f32(steps);
+      // Golden-ratio-animated low-discrepancy offset. A fixed per-pixel
+      // hash is a spatial mask: it hides banding but every frame keeps
+      // the same error, so the residual reads as fixed-pattern grain.
+      // Advancing each pixel's offset by φ⁻¹ each frame turns the mask
+      // into a progressive sequence — successive frames sample the
+      // volume at complementary depths, the eye integrates them, and the
+      // march can afford noticeably fewer steps at equal quality.
+      let dither = fract(srHash12(in.pos.xy) + 0.61803398875 * f32(u.frameIndex));
+      let cosTheta = dot(rd, u.keyDir);
+      let phase = srHg(cosTheta, g);
+      let phaseWide = srHg(cosTheta, g * 0.3);
+      var t0 = tStart + stepLen * dither;
+      var i: u32 = 0u;
+      loop {
+        if (i >= steps) { break; }
+        i = i + 1u;
+        if (t0 > tEnd || accum.a > 0.995) { break; }
+        let pos = ro + rd * t0;
+        let s = srSampleDensity((pos - bmin) / extent);
+        t0 = t0 + stepLen;
+        if (s.w <= 0.0005) { continue; }
+
+        let shadow = srShadowMarch(pos, u.keyDir, bmin, bmax, 1.0);
+        // Single scattering through the HG lobe...
+        let single = u.keyColor * (u.keyStrength * shadow * phase * 4.0 * SR_PI);
+        // ...plus a wider, dimmer lobe standing in for multiple
+        // scattering, so dense cores glow instead of crushing to black.
+        let multi = u.keyColor * (u.keyStrength * u.msStrength
+          * mix(shadow, 1.0, 0.65) * phaseWide * 4.0 * SR_PI);
+        let fill = u.fillColor * (u.fillStrength * (0.5 + 0.5 * dot(rd, -u.fillDir)));
+        let lit = single + multi + fill + vec3<f32>(u.ambient);
+        let col = s.xyz * u.smokeTint * lit * u.emission;
+        let alpha = clamp(s.w * stepLen * u.density, 0.0, 1.0);
+        let oneMinusA = 1.0 - accum.a;
+        accum = vec4<f32>(accum.rgb + col * alpha * oneMinusA, accum.a + alpha * oneMinusA);
+      }
+    }
+  }
+
+  // ── 4. Rider shading — GGX + three-point studio rig + env. ─────
+  var baseColor = vec3<f32>(0.0);
+  var baseAlpha = 0.0;
+  if (hasHit) {
+    let hitPos = ro + rd * tHit;
+    let n = hitNormal;
+    let v = viewDir;
+    let nDotV = max(dot(n, v), 1e-4);
+    let rough = clamp(u.roughness, 0.03, 1.0);
+    let a = rough * rough;
+    let albedo = srPalette(hitTint + hitSeed * 0.13);
+    let f0 = mix(vec3<f32>(0.04), albedo, clamp(u.metalness, 0.0, 1.0));
+    let diffuseAlbedo = albedo * (1.0 - clamp(u.metalness, 0.0, 1.0));
+
+    // Volume shadow: march the density grid from the surface toward the
+    // key light. Without this the riders float ON the smoke; with it
+    // they sit IN it.
+    let volShadow = srShadowMarch(hitPos + n * 0.01, u.keyDir, bmin, bmax, 3.0);
+
+    // Fluid AO: how much smoke is packed around the contact point.
+    let aoUvw = (hitPos - bmin) / extent;
+    let aoDen = (srSampleDensity(aoUvw).w
+      + srSampleDensity(aoUvw + n * 0.035).w
+      + srSampleDensity(aoUvw - n * 0.035).w) * 0.3333;
+    let ao = clamp(1.0 / (1.0 + max(u.aoStrength, 0.0) * aoDen * 0.35), 0.25, 1.0);
+
+    // Glossy paint is not one lobe. It is a pigmented base plus a thin
+    // clear dielectric coat over the top, and the coat is what produces
+    // the tight white highlight that reads as "wet" — a single GGX lobe
+    // widened to match only ever reads as "shiny plastic".
+    let coat = clamp(u.clearCoat, 0.0, 1.0);
+    let coatRough = clamp(u.coatRoughness, 0.03, 1.0);
+    let coatA = coatRough * coatRough;
+
+    var lit = vec3<f32>(0.0);
+    // Key (warm, shadowed by the volume).
+    {
+      let l = u.keyDir;
+      let h = normalize(l + v);
+      let nDotL = max(dot(n, l), 1e-4);
+      let nDotH = max(dot(n, h), 0.0);
+      let lDotH = max(dot(l, h), 0.0);
+      let spec = srDGgx(nDotH, a) * srVSmith(nDotV, nDotL, a);
+      let fr = srFresnel(f0, lDotH);
+      // Coat f0 = 0.04 (IOR 1.5). Whatever the coat reflects never
+      // reaches the base, so the base lobe is attenuated by (1 - Fc).
+      let fc = srFSchlick(0.04, lDotH) * coat;
+      let specCoat = srDGgx(nDotH, coatA) * srVKelemen(lDotH) * fc;
+      let radiance = u.keyColor * (u.keyStrength * nDotL * volShadow);
+      lit = lit + radiance * ((diffuseAlbedo / SR_PI + fr * spec) * (1.0 - fc) + specCoat);
+    }
+    // Fill (cool, unshadowed — bounce light does not cast).
+    {
+      let l = u.fillDir;
+      let h = normalize(l + v);
+      let nDotL = max(dot(n, l), 1e-4);
+      let nDotH = max(dot(n, h), 0.0);
+      let lDotH = max(dot(l, h), 0.0);
+      let spec = srDGgx(nDotH, a) * srVSmith(nDotV, nDotL, a);
+      let fr = srFresnel(f0, lDotH);
+      let fc = srFSchlick(0.04, lDotH) * coat;
+      let specCoat = srDGgx(nDotH, coatA) * srVKelemen(lDotH) * fc;
+      let radiance = u.fillColor * (u.fillStrength * nDotL);
+      lit = lit + radiance * ((diffuseAlbedo / SR_PI + fr * spec) * (1.0 - fc) + specCoat);
+    }
+    // Back rim — the separation edge that pops them off the smoke.
+    {
+      let l = u.rimDir;
+      let nDotL = max(dot(n, l), 0.0);
+      let edge = pow(1.0 - nDotV, 2.5);
+      lit = lit + u.rimColor * (u.rimStrength * nDotL * edge);
+    }
+    // Environment reflection — base lobe plus the coat's own mirror
+    // term, which is what puts the studio in the highlight.
+    {
+      let refl = reflect(rd, n);
+      let env = srEnv(refl);
+      let fr = srFresnel(f0, nDotV);
+      let fc = srFSchlick(0.04, nDotV) * coat;
+      lit = lit + env * fr * (0.55 * (1.0 - rough * 0.65)) * (1.0 - fc);
+      lit = lit + env * (fc * (1.0 - coatRough * 0.6));
+    }
+    lit = lit + diffuseAlbedo * u.ambient;
+    baseColor = lit * ao;
+    baseAlpha = 1.0;
+  } else {
+    // Background: transparent, flat tint, or a vertical studio backdrop.
+    let mode = u.bgMode;
+    var bg = u.bgColor;
+    if (mode > 1.5) {
+      let vgrad = clamp(ndc.y * 0.5 + 0.5, 0.0, 1.0);
+      bg = mix(u.bgColor * 0.35, u.bgColor * 1.35 + vec3<f32>(0.02), vgrad);
+    }
+    baseColor = bg;
+    baseAlpha = select(0.0, clamp(u.bgOpacity, 0.0, 1.0), mode > 0.5);
+  }
+
+  // ── 5. Composite volume OVER rider/background (premultiplied). ─
+  let oneMinusVol = 1.0 - accum.a;
+  let outRGB = accum.rgb + baseColor * baseAlpha * oneMinusVol;
+  let outA = accum.a + baseAlpha * oneMinusVol;
+
+  // ── 6. Tonemap + vignette. Tonemap the UNPREMULTIPLIED colour so a
+  //      partially covered pixel keeps a sane hue, then restore the
+  //      premultiplied form the compositor expects.
+  let unpremul = outRGB / max(outA, 1e-4);
+  var toned = srTonemap(unpremul * max(u.exposure, 0.0));
+  let r2 = dot(ndc, ndc);
+  let vig = mix(1.0, clamp(1.0 - 0.34 * r2, 0.0, 1.0), clamp(u.vignette, 0.0, 1.0));
+  toned = toned * vig;
+  return vec4<f32>(toned * outA, clamp(outA, 0.0, 1.0));
+}
+`;
+
+/* ============================================================== */
+/* SHADER REGISTRY                                                 */
+/* ============================================================== */
+
+export const SMOKE_RIDERS_NATIVE_SHADER_IDS = Object.freeze({
+  vorticity: 'smoke-riders/vorticity',
+  pressure: 'smoke-riders/pressure',
+  advect: 'smoke-riders/advect',
+  surface: 'smoke-riders/surface',
+  riders: 'smoke-riders/riders',
+  tiles: 'smoke-riders/tiles',
+  render: 'smoke-riders/render',
+});
+
+/** The full shader-id set this instrument's native graph installs —
+ *  the reused fluid chain plus the new coupled passes. Kept here so the
+ *  sync route table and the Rust manifest can be checked against one
+ *  source of truth. */
+export const SMOKE_RIDERS_NATIVE_GRAPH_SHADER_IDS: readonly string[] = Object.freeze([
+  SMOKE_3D_NATIVE_SHADER_IDS.splat,
+  SMOKE_3D_NATIVE_SHADER_IDS.advectVelocity,
+  SMOKE_3D_NATIVE_SHADER_IDS.divergence,
+  SMOKE_3D_NATIVE_SHADER_IDS.jacobi,
+  SMOKE_3D_NATIVE_SHADER_IDS.subtractGradient,
+  SMOKE_3D_NATIVE_SHADER_IDS.advectDensity,
+  SMOKE_RIDERS_NATIVE_SHADER_IDS.vorticity,
+  SMOKE_RIDERS_NATIVE_SHADER_IDS.pressure,
+  SMOKE_RIDERS_NATIVE_SHADER_IDS.advect,
+  SMOKE_RIDERS_NATIVE_SHADER_IDS.surface,
+  SMOKE_RIDERS_NATIVE_SHADER_IDS.riders,
+  SMOKE_RIDERS_NATIVE_SHADER_IDS.tiles,
+  SMOKE_RIDERS_NATIVE_SHADER_IDS.render,
+]);
+
+export type SmokeRidersNativeShaderStage = 'compute' | 'render';
+
+export interface SmokeRidersNativeShaderSource {
+  shaderId: string;
+  label: string;
+  stage: SmokeRidersNativeShaderStage;
+  entry: string;
+  source: string;
+}
+
+export interface SmokeRidersNativePrecompileCommand {
+  type: 'precompile_shader';
+  shader_id: string;
+  stage: SmokeRidersNativeShaderStage;
+  entry: string;
+  source: string;
+}
+
+export function getSmokeRidersNativeShaderSources(): SmokeRidersNativeShaderSource[] {
+  return [
+    {
+      shaderId: SMOKE_RIDERS_NATIVE_SHADER_IDS.vorticity,
+      label: 'smoke-riders/vorticity',
+      stage: 'compute',
+      entry: 'cs_vorticity',
+      source: resolveGhostWgsl(SMOKE_RIDERS_VORTICITY_WGSL, 'smoke-riders/vorticity'),
+    },
+    {
+      shaderId: SMOKE_RIDERS_NATIVE_SHADER_IDS.pressure,
+      label: 'smoke-riders/pressure',
+      stage: 'compute',
+      entry: 'cs_pressure_warm',
+      source: resolveGhostWgsl(SMOKE_RIDERS_PRESSURE_WGSL, 'smoke-riders/pressure'),
+    },
+    {
+      shaderId: SMOKE_RIDERS_NATIVE_SHADER_IDS.advect,
+      label: 'smoke-riders/advect',
+      stage: 'compute',
+      entry: 'cs_advect_fwd',
+      source: resolveGhostWgsl(SMOKE_RIDERS_ADVECT_WGSL, 'smoke-riders/advect'),
+    },
+    {
+      shaderId: SMOKE_RIDERS_NATIVE_SHADER_IDS.surface,
+      label: 'smoke-riders/surface',
+      stage: 'compute',
+      entry: 'cs_surface_tension',
+      source: resolveGhostWgsl(SMOKE_RIDERS_SURFACE_WGSL, 'smoke-riders/surface'),
+    },
+    {
+      shaderId: SMOKE_RIDERS_NATIVE_SHADER_IDS.riders,
+      label: 'smoke-riders/riders',
+      stage: 'compute',
+      entry: 'cs_riders',
+      source: resolveGhostWgsl(SMOKE_RIDERS_SIM_WGSL, 'smoke-riders/riders'),
+    },
+    {
+      shaderId: SMOKE_RIDERS_NATIVE_SHADER_IDS.tiles,
+      label: 'smoke-riders/tiles',
+      stage: 'compute',
+      entry: 'cs_bin_riders',
+      source: resolveGhostWgsl(SMOKE_RIDERS_BIN_WGSL, 'smoke-riders/tiles'),
+    },
+    {
+      shaderId: SMOKE_RIDERS_NATIVE_SHADER_IDS.render,
+      label: 'smoke-riders/render',
+      stage: 'render',
+      entry: 'fs_main',
+      source: resolveGhostWgsl(SMOKE_RIDERS_RENDER_WGSL, 'smoke-riders/render'),
+    },
+  ];
+}
+
+export function buildSmokeRidersNativePrecompileCommands(): SmokeRidersNativePrecompileCommand[] {
+  return getSmokeRidersNativeShaderSources().map((shader) => ({
+    type: 'precompile_shader',
+    shader_id: shader.shaderId,
+    stage: shader.stage,
+    entry: shader.entry,
+    source: shader.source,
+  }));
+}
+
+/* ============================================================== */
+/* PARAM SCHEMA                                                    */
+/* ============================================================== */
 
 export const smokeRidersParamSchema: ParamControl[] = [
   { kind: 'select', key: 'quality', label: 'Quality', group: 'Core',
@@ -36,47 +1433,144 @@ export const smokeRidersParamSchema: ParamControl[] = [
     default: 'balanced' },
   { kind: 'select', key: 'style', label: 'Style', group: 'Core',
     options: [
-      { value: 'orbital', label: 'Orbital Spheres' },
-      { value: 'ember', label: 'Ember Cloud' },
-      { value: 'pearlescent', label: 'Pearlescent Mass' },
+      { value: 'paint', label: 'Paint Splash' },
+      { value: 'ember', label: 'Ember Column' },
+      { value: 'pearl', label: 'Pearl Drift' },
     ],
-    default: 'orbital' },
+    default: 'paint' },
   { kind: 'slider', key: 'intensity', label: 'Intensity', group: 'Core',
     min: 0, max: 2, step: 0.01, default: 1 },
+  { kind: 'slider', key: 'exposure', label: 'Exposure', group: 'Core',
+    min: 0.1, max: 4, step: 0.01, default: 1.5 },
 
-  { kind: 'slider', key: 'smokeDensity', label: 'Smoke Density', group: 'Smoke',
-    min: 0, max: 8, step: 0.05, default: 2.75 },
-  { kind: 'slider', key: 'smokeGlow', label: 'Smoke Glow', group: 'Smoke',
-    min: 0, max: 6, step: 0.05, default: 2.1 },
-  { kind: 'slider', key: 'smokeTurbulence', label: 'Turbulence', group: 'Smoke',
+  // ── Fluid ────────────────────────────────────────────────────
+  { kind: 'slider', key: 'vorticity', label: 'Vorticity', group: 'Fluid',
+    min: 0, max: 12, step: 0.05, default: 6.5 },
+  { kind: 'slider', key: 'smokeDensity', label: 'Density', group: 'Fluid',
+    min: 0, max: 8, step: 0.05, default: 3.0 },
+  { kind: 'slider', key: 'smokeGlow', label: 'Volume Gain', group: 'Fluid',
+    min: 0, max: 6, step: 0.05, default: 1.35 },
+  { kind: 'slider', key: 'smokeTurbulence', label: 'Turbulence', group: 'Fluid',
+    min: 0, max: 4, step: 0.01, default: 1.3 },
+  { kind: 'slider', key: 'smokeSpread', label: 'Emitter Spread', group: 'Fluid',
+    min: 0, max: 0.9, step: 0.01, default: 0.38 },
+  { kind: 'slider', key: 'emitterCount', label: 'Emitters', group: 'Fluid',
+    min: 1, max: 8, step: 1, default: 5 },
+  { kind: 'slider', key: 'surfaceTension', label: 'Surface Tension', group: 'Fluid',
+    min: 0, max: 3, step: 0.01, default: 0.6 },
+  { kind: 'slider', key: 'paintThickness', label: 'Paint Thickness', group: 'Fluid',
+    min: 0, max: 2, step: 0.01, default: 0.5 },
+  { kind: 'select', key: 'advection', label: 'Advection', group: 'Fluid',
+    options: [
+      { value: 'maccormack', label: 'MacCormack (sharp)' },
+      { value: 'semi-lagrangian', label: 'Semi-Lagrangian (cheap)' },
+    ],
+    default: 'maccormack' },
+  { kind: 'slider', key: 'shadowSteps', label: 'Shadow Steps', group: 'Fluid',
+    min: 0, max: 12, step: 1, default: 5 },
+  { kind: 'slider', key: 'marchSteps', label: 'March Steps', group: 'Fluid',
+    min: 16, max: 160, step: 4, default: 72 },
+
+  // ── Riders ───────────────────────────────────────────────────
+  { kind: 'slider', key: 'riderCount', label: 'Rider Count', group: 'Riders',
+    min: 16, max: 2048, step: 8, default: 220 },
+  { kind: 'slider', key: 'riderSize', label: 'Rider Size', group: 'Riders',
+    min: 0.01, max: 0.3, step: 0.001, default: 0.042 },
+  { kind: 'slider', key: 'riderSizeVariance', label: 'Size Variance', group: 'Riders',
+    min: 0, max: 1, step: 0.01, default: 0.62 },
+  // Weight IS the Stokes relaxation time τ at the reference radius. Each
+  // rider scales it by its own r², so this slider sets the whole
+  // population's lag while the size variance decides who lags most.
+  { kind: 'slider', key: 'riderWeight', label: 'Weight', group: 'Riders',
+    min: 0.01, max: 1.2, step: 0.005, default: 0.08 },
+  // Spread in DECADES around Weight: 1.0 spans [0.1×, 10×], which is the
+  // band where inertial clustering happens, so different riders settle
+  // onto different filaments at the same time.
+  { kind: 'slider', key: 'weightSpread', label: 'Weight Spread', group: 'Riders',
+    min: 0, max: 1, step: 0.01, default: 0.38 },
+  // ρ_p/ρ_f. Below 1 the rider is lighter than the paint and floats up.
+  { kind: 'slider', key: 'riderDensity', label: 'Rider Density', group: 'Riders',
+    min: 0.2, max: 4, step: 0.01, default: 1.9 },
+  { kind: 'slider', key: 'flowCoupling', label: 'Flow Coupling', group: 'Riders',
+    min: 0, max: 3, step: 0.01, default: 1.05 },
+  { kind: 'slider', key: 'buoyancy', label: 'Buoyancy', group: 'Riders',
+    min: 0, max: 4, step: 0.01, default: 0.2 },
+  { kind: 'slider', key: 'gravity', label: 'Gravity', group: 'Riders',
+    min: 0, max: 4, step: 0.01, default: 1 },
+  // Signed: +1 pools riders in the vortex cores (pressure minima),
+  // -1 flings them out onto the strain filaments between the cores.
+  { kind: 'slider', key: 'vortexPull', label: 'Vortex Pull', group: 'Riders',
+    min: -1, max: 1, step: 0.01, default: 0 },
+  { kind: 'slider', key: 'riderDamping', label: 'Damping', group: 'Riders',
+    min: 0, max: 4, step: 0.01, default: 0.45 },
+  { kind: 'slider', key: 'riderLife', label: 'Recycle Time', group: 'Riders',
+    min: 1, max: 60, step: 0.5, default: 6 },
+
+  // ── Material ─────────────────────────────────────────────────
+  { kind: 'slider', key: 'roughness', label: 'Roughness', group: 'Material',
+    min: 0.03, max: 1, step: 0.01, default: 0.17 },
+  { kind: 'slider', key: 'metalness', label: 'Metalness', group: 'Material',
+    min: 0, max: 1, step: 0.01, default: 0.08 },
+  { kind: 'slider', key: 'clearCoat', label: 'Clear Coat', group: 'Material',
+    min: 0, max: 1, step: 0.01, default: 0.75 },
+  { kind: 'slider', key: 'coatRoughness', label: 'Coat Roughness', group: 'Material',
+    min: 0.01, max: 1, step: 0.01, default: 0.08 },
+  { kind: 'slider', key: 'contactAO', label: 'Fluid AO', group: 'Material',
+    min: 0, max: 4, step: 0.01, default: 1.1 },
+
+  // ── Lighting ─────────────────────────────────────────────────
+  { kind: 'slider', key: 'anisotropy', label: 'Anisotropy', group: 'Lighting',
+    min: -0.9, max: 0.9, step: 0.01, default: 0.4 },
+  { kind: 'slider', key: 'multiScatter', label: 'Multi Scatter', group: 'Lighting',
+    min: 0, max: 2, step: 0.01, default: 0.35 },
+  { kind: 'slider', key: 'keyStrength', label: 'Key Light', group: 'Lighting',
+    min: 0, max: 8, step: 0.01, default: 3.1 },
+  { kind: 'color', key: 'keyColor', label: 'Key Color', group: 'Lighting',
+    default: [255, 238, 214] },
+  { kind: 'slider', key: 'fillStrength', label: 'Fill Light', group: 'Lighting',
     min: 0, max: 4, step: 0.01, default: 0.85 },
-  { kind: 'slider', key: 'smokeSpread', label: 'Spread', group: 'Smoke',
-    min: 0, max: 0.9, step: 0.01, default: 0.42 },
-  { kind: 'slider', key: 'shadowSteps', label: 'Shadow Steps', group: 'Smoke',
-    min: 0, max: 12, step: 1, default: 4 },
+  { kind: 'color', key: 'fillColor', label: 'Fill Color', group: 'Lighting',
+    default: [158, 184, 232] },
+  { kind: 'slider', key: 'rimStrength', label: 'Rim Light', group: 'Lighting',
+    min: 0, max: 6, step: 0.01, default: 1.15 },
+  { kind: 'color', key: 'rimColor', label: 'Rim Color', group: 'Lighting',
+    default: [255, 206, 168] },
+  { kind: 'slider', key: 'ambient', label: 'Ambient', group: 'Lighting',
+    min: 0, max: 2, step: 0.01, default: 0.14 },
 
-  { kind: 'slider', key: 'sphereCount', label: 'Sphere Count', group: 'Spheres',
-    min: 24, max: 1200, step: 12, default: 192 },
-  { kind: 'slider', key: 'sphereSize', label: 'Sphere Size', group: 'Spheres',
-    min: 0.025, max: 0.22, step: 0.001, default: 0.08 },
-  { kind: 'slider', key: 'sphereOpacity', label: 'Sphere Opacity', group: 'Spheres',
-    min: 0, max: 1, step: 0.01, default: 0.92 },
-  { kind: 'slider', key: 'sphereMotion', label: 'Sphere Motion', group: 'Spheres',
-    min: 0, max: 2, step: 0.01, default: 0.72 },
-  { kind: 'slider', key: 'sphereGloss', label: 'Sphere Gloss', group: 'Spheres',
-    min: 0, max: 1, step: 0.01, default: 0.7 },
-
+  // ── Palette / background ─────────────────────────────────────
   { kind: 'color', key: 'colorA', label: 'Color A', group: 'Palette',
-    default: [70, 170, 255] },
+    default: [255, 104, 10] },
   { kind: 'color', key: 'colorB', label: 'Color B', group: 'Palette',
-    default: [255, 72, 156] },
+    default: [232, 44, 6] },
   { kind: 'color', key: 'colorC', label: 'Color C', group: 'Palette',
-    default: [255, 205, 92] },
+    default: [255, 148, 38] },
   { kind: 'color', key: 'colorD', label: 'Color D', group: 'Palette',
-    default: [120, 255, 222] },
+    default: [168, 28, 4] },
   { kind: 'color', key: 'smokeColor', label: 'Smoke Tint', group: 'Palette',
-    default: [18, 24, 46] },
+    default: [255, 120, 30] },
+  { kind: 'select', key: 'backgroundMode', label: 'Background', group: 'Palette',
+    options: [
+      { value: 'transparent', label: 'Transparent' },
+      { value: 'flat', label: 'Flat' },
+      { value: 'studio', label: 'Studio Gradient' },
+    ],
+    default: 'studio' },
+  { kind: 'color', key: 'backgroundColor', label: 'Backdrop', group: 'Palette',
+    default: [16, 15, 18] },
+  { kind: 'slider', key: 'backgroundOpacity', label: 'Backdrop Opacity', group: 'Palette',
+    min: 0, max: 1, step: 0.01, default: 1 },
+  { kind: 'slider', key: 'vignette', label: 'Vignette', group: 'Palette',
+    min: 0, max: 1, step: 0.01, default: 0.45 },
+  { kind: 'select', key: 'tonemap', label: 'Tonemap', group: 'Palette',
+    options: [
+      { value: 'agx', label: 'AgX' },
+      { value: 'aces', label: 'ACES' },
+      { value: 'linear', label: 'Linear' },
+    ],
+    default: 'agx' },
 
+  // ── Audio ────────────────────────────────────────────────────
   { kind: 'toggle', key: 'audioReactive', label: 'Audio Reactive', group: 'Audio',
     default: true },
   { kind: 'slider', key: 'bassDrive', label: 'Bass Drive', group: 'Audio',
@@ -86,6 +1580,7 @@ export const smokeRidersParamSchema: ParamControl[] = [
     min: 0, max: 0.2, step: 0.001, default: 0.025,
     showWhen: { audioReactive: true } },
 
+  // ── Camera ───────────────────────────────────────────────────
   { kind: 'slider', key: 'fovDeg', label: 'FOV', group: 'Camera',
     min: 25, max: 95, step: 1, default: 48 },
   { kind: 'slider', key: 'cameraZ', label: 'Distance', group: 'Camera',
@@ -99,42 +1594,512 @@ export const smokeRidersParamSchema: ParamControl[] = [
 
 export const smokeRidersParamDefaults = deriveDefaults(smokeRidersParamSchema);
 
+/* ============================================================== */
+/* PARAM NORMALIZATION                                             */
+/* ============================================================== */
+
 type Bands = { bass: number; mid: number; treble: number };
 
-type SmokeRidersStyleTuning = {
+export interface SmokeRidersStyleTuning {
   emitters: number;
   spawnY: number;
   splatRadius: number;
   splatVelocity: number;
   densityDecay: number;
-  windX: number;
-  windY: number;
-  windZ: number;
+  wind: [number, number, number];
   turbScale: number;
   spinX: number;
   spinZ: number;
   sizeScale: number;
-  colorCycle: number;
-  saturation: number;
-  sphereLayout: VolumetricSpheresParams['layout'];
-  radiusVariance: number;
-  sphereSpread: number;
-  sphereDepth: number;
-  sphereSwirl: number;
-  spherePull: number;
-  sphereChaos: number;
-  sphereDamping: number;
-  rim: number;
+  buoyancyScale: number;
+  gravityScale: number;
+}
+
+function clamp(value: number, min: number, max: number): number {
+  return Math.min(max, Math.max(min, value));
+}
+
+function num(value: unknown, fallback: number, min: number, max: number): number {
+  const parsed = typeof value === 'number' || typeof value === 'string' ? Number(value) : NaN;
+  return clamp(Number.isFinite(parsed) ? parsed : fallback, min, max);
+}
+
+function rgb01(c: unknown, fallback: [number, number, number]): [number, number, number] {
+  if (!Array.isArray(c) || c.length < 3) return [...fallback];
+  const r = Number(c[0]);
+  const g = Number(c[1]);
+  const b = Number(c[2]);
+  if (!Number.isFinite(r) || !Number.isFinite(g) || !Number.isFinite(b)) return [...fallback];
+  const divisor = Math.max(r, g, b) > 1.01 ? 255 : 1;
+  return [clamp(r / divisor, 0, 1), clamp(g / divisor, 0, 1), clamp(b / divisor, 0, 1)];
+}
+
+export function smokeRidersStyleTuning(style: string): SmokeRidersStyleTuning {
+  if (style === 'ember') {
+    return {
+      emitters: 6,
+      spawnY: -0.68,
+      splatRadius: 0.072,
+      splatVelocity: 0.95,
+      densityDecay: 0.987,
+      wind: [0.04, 0.5, -0.02],
+      turbScale: 3.4,
+      spinX: -0.25,
+      spinZ: 0.2,
+      sizeScale: 0.72,
+      buoyancyScale: 1.6,
+      gravityScale: 0.4,
+    };
+  }
+  if (style === 'pearl') {
+    return {
+      emitters: 4,
+      spawnY: -0.16,
+      splatRadius: 0.13,
+      splatVelocity: 0.42,
+      densityDecay: 0.995,
+      wind: [-0.03, 0.08, 0.04],
+      turbScale: 1.8,
+      spinX: 0.1,
+      spinZ: -0.12,
+      sizeScale: 1.3,
+      buoyancyScale: 0.55,
+      gravityScale: 0.25,
+    };
+  }
+  // 'paint' — thick, slow, heavy, wide splats with long stringy filaments.
+  return {
+    emitters: 5,
+    spawnY: -0.52,
+    splatRadius: 0.052,
+    splatVelocity: 1.05,
+    densityDecay: 0.9865,
+    wind: [0, 0.18, 0],
+    turbScale: 5.2,
+    spinX: -0.16,
+    spinZ: 0.06,
+    sizeScale: 1,
+    buoyancyScale: 1,
+    gravityScale: 1,
+  };
+}
+
+export interface SmokeRidersResolvedParams {
+  quality: string;
+  style: string;
+  gridSize: 32 | 48 | 64;
+  pressureIterations: number;
+  pressureWarm: number;
+  macCormack: boolean;
+  marchSteps: number;
+  shadowSteps: number;
+  shadowStepLen: number;
+  riderCount: number;
+  intensity: number;
+  // fluid
+  emitterCount: number;
+  spread: number;
+  spawnY: number;
+  splatRadius: number;
+  splatStrength: number;
+  splatVelocityMag: number;
+  splatRate: number;
+  velocityDecay: number;
+  densityDecay: number;
+  wind: [number, number, number];
+  turbStrength: number;
+  turbScale: number;
+  vorticity: number;
+  surfaceTension: number;
+  paintThickness: number;
+  density: number;
+  emission: number;
+  // riders
+  riderSize: number;
+  riderSizeVariance: number;
+  /** τ in seconds for a rider at the reference radius. */
+  riderWeight: number;
+  /** τ spread in decades: 1 => [0.1×, 10×]. */
+  weightSpread: number;
+  /** ρ_p/ρ_f. Drives g_eff = g(1 - ρ_f/ρ_p). */
+  riderDensity: number;
+  /** Precomputed (1 - ρ_f/ρ_p) so the shader does no division. */
+  gravityFactor: number;
+  flowCoupling: number;
+  buoyancy: number;
+  gravity: number;
+  vortexPull: number;
+  riderDamping: number;
+  riderLife: number;
+  containStrength: number;
+  // material
+  roughness: number;
+  metalness: number;
+  clearCoat: number;
+  coatRoughness: number;
+  contactAO: number;
+  // lighting
+  anisotropy: number;
+  multiScatter: number;
+  keyStrength: number;
+  keyColor: [number, number, number];
+  fillStrength: number;
+  fillColor: [number, number, number];
+  rimStrength: number;
+  rimColor: [number, number, number];
+  ambient: number;
+  // palette
+  colorA: [number, number, number];
+  colorB: [number, number, number];
+  colorC: [number, number, number];
+  colorD: [number, number, number];
+  smokeColor: [number, number, number];
+  backgroundMode: number;
+  backgroundColor: [number, number, number];
+  backgroundOpacity: number;
+  vignette: number;
+  exposure: number;
+  /** 0 = AgX, 1 = ACES, 2 = Linear. */
+  tonemap: number;
+  // camera
+  volumeScaleX: number;
+  volumeScaleZ: number;
+  fovDeg: number;
+  cameraZ: number;
+  rotateX: number;
+  rotateY: number;
+  rotateZ: number;
+  autoRotateX: number;
+  autoRotateY: number;
+  autoRotateZ: number;
+  // audio
+  audioReactive: boolean;
+  bass: number;
+  treble: number;
+  audioBurst: number;
+}
+
+const BACKGROUND_MODE_ID: Record<string, number> = {
+  transparent: 0,
+  flat: 1,
+  studio: 2,
 };
 
-export interface SmokeRidersInnerParams {
-  smoke: Partial<Smoke3DParams>;
-  spheres: Partial<VolumetricSpheresParams>;
+const TONEMAP_ID: Record<string, number> = {
+  agx: 0,
+  aces: 1,
+  linear: 2,
+};
+
+/**
+ * Resolve the operator-facing param object into the single flat model the
+ * native graph consumes. This is the ONE place quality tiers, style
+ * presets and audio drive are folded in — the WGSL only ever sees numbers.
+ */
+export function resolveSmokeRidersParams(
+  params?: Record<string, any> | null,
+  bands?: { bass?: number; treble?: number } | null,
+): SmokeRidersResolvedParams {
+  const p = { ...smokeRidersParamDefaults, ...(params ?? {}) } as Record<string, any>;
+  const quality = String(p.quality ?? 'balanced');
+  const style = String(p.style ?? 'paint');
+  const tuning = smokeRidersStyleTuning(style);
+  const intensity = num(p.intensity, 1, 0, 2);
+  const reactive = p.audioReactive !== false;
+  const bassDrive = num(p.bassDrive, 1.2, 0, 3);
+  const bass = reactive ? clamp(num(bands?.bass, 0, 0, 4) * bassDrive, 0, 1.8) : 0;
+  const treble = reactive ? clamp(num(bands?.treble, 0, 0, 4), 0, 1) : 0;
+
+  const gridSize: 32 | 48 | 64 = quality === 'ultra' ? 64 : quality === 'performance' ? 32 : 48;
+  // Warm-starting the pressure field is what makes these counts
+  // affordable — the floor is 20, below which the projection visibly
+  // fails to close and the plume smears sideways.
+  const pressureIterations = quality === 'ultra' ? 24 : 20;
+  const qualityCountScale = quality === 'ultra' ? 1.35 : quality === 'performance' ? 0.5 : 1;
+  // The animated low-discrepancy march offset buys back roughly the
+  // quality a tenth of the steps used to cost, so the base step count
+  // dropped from 80 to 72 without a visible change.
+  const qualityMarchScale = quality === 'ultra' ? 1.4 : quality === 'performance' ? 0.5 : 1;
+  // MacCormack doubles the advection cost. Performance keeps the plain
+  // semi-Lagrangian chain; the other tiers honour the operator's choice.
+  const macCormack = quality === 'performance'
+    ? false
+    : String(p.advection ?? 'maccormack') !== 'semi-lagrangian';
+
+  const riderCount = clamp(
+    Math.round(num(p.riderCount, 220, SMOKE_RIDERS_MIN_COUNT, SMOKE_RIDERS_MAX_COUNT) * qualityCountScale),
+    SMOKE_RIDERS_MIN_COUNT,
+    SMOKE_RIDERS_MAX_COUNT,
+  );
+  const marchSteps = clamp(
+    Math.round(num(p.marchSteps, 72, 16, 160) * qualityMarchScale),
+    16,
+    192,
+  );
+  const shadowSteps = Math.round(num(p.shadowSteps, 5, 0, 12) * (quality === 'performance' ? 0.6 : 1));
+
+  const riderDensity = num(p.riderDensity, 1.9, 0.2, 4);
+  const smokeTint = rgb01(p.smokeColor, [1.0, 0.470, 0.118]);
+
+  return {
+    quality,
+    style,
+    gridSize,
+    pressureIterations,
+    pressureWarm: SMOKE_RIDERS_PRESSURE_WARM,
+    macCormack,
+    marchSteps,
+    shadowSteps,
+    shadowStepLen: 0.075,
+    riderCount,
+    intensity,
+
+    emitterCount: Math.round(num(p.emitterCount, tuning.emitters, 1, SMOKE_RIDERS_MAX_EMITTERS)),
+    spread: num(p.smokeSpread, 0.38, 0, 0.9),
+    spawnY: tuning.spawnY,
+    splatRadius: tuning.splatRadius,
+    splatStrength: (0.34 + bass * 0.26) * Math.max(0.1, intensity),
+    splatVelocityMag: tuning.splatVelocity + bass * 0.4,
+    splatRate: 44 + bass * 20,
+    velocityDecay: 0.984,
+    densityDecay: tuning.densityDecay,
+    wind: tuning.wind,
+    turbStrength: num(p.smokeTurbulence, 1.3, 0, 4) + bass * 0.45,
+    turbScale: tuning.turbScale,
+    vorticity: num(p.vorticity, 6.5, 0, 12) * (1 + bass * 0.35),
+    surfaceTension: num(p.surfaceTension, 0.6, 0, 3),
+    paintThickness: num(p.paintThickness, 0.5, 0, 2),
+    density: num(p.smokeDensity, 3.0, 0, 8),
+    emission: num(p.smokeGlow, 1.35, 0, 6) * (0.85 + intensity * 0.35),
+
+    riderSize: num(p.riderSize, 0.042, 0.01, 0.3) * tuning.sizeScale,
+    riderSizeVariance: num(p.riderSizeVariance, 0.62, 0, 1),
+    riderWeight: num(p.riderWeight, 0.08, 0.01, 1.2),
+    weightSpread: num(p.weightSpread, 0.38, 0, 1),
+    riderDensity,
+    gravityFactor: 1 - 1 / riderDensity,
+    flowCoupling: num(p.flowCoupling, 1.05, 0, 3),
+    buoyancy: num(p.buoyancy, 0.2, 0, 4) * tuning.buoyancyScale * (1 + bass * 0.4),
+    gravity: num(p.gravity, 1, 0, 4) * tuning.gravityScale,
+    vortexPull: num(p.vortexPull, 0, -1, 1),
+    riderDamping: num(p.riderDamping, 0.45, 0, 4),
+    riderLife: num(p.riderLife, 6, 1, 60),
+    // Velocity gain, not a spring constant: the containment is folded
+    // into the velocity the rider relaxes toward, so a heavy rider is
+    // eased back into the box instead of being catapulted.
+    containStrength: 6,
+
+    roughness: num(p.roughness, 0.17, 0.03, 1),
+    metalness: num(p.metalness, 0.08, 0, 1),
+    clearCoat: num(p.clearCoat, 0.75, 0, 1),
+    coatRoughness: num(p.coatRoughness, 0.08, 0.01, 1),
+    contactAO: num(p.contactAO, 1.1, 0, 4),
+
+    anisotropy: num(p.anisotropy, 0.4, -0.9, 0.9),
+    multiScatter: num(p.multiScatter, 0.35, 0, 2),
+    keyStrength: num(p.keyStrength, 3.1, 0, 8) * (0.8 + intensity * 0.25),
+    keyColor: rgb01(p.keyColor, [1.0, 0.933, 0.839]),
+    fillStrength: num(p.fillStrength, 0.6, 0, 4),
+    fillColor: rgb01(p.fillColor, [0.620, 0.722, 0.910]),
+    rimStrength: num(p.rimStrength, 1.15, 0, 6) * (1 + treble * num(p.trebleShimmer, 0.025, 0, 0.2) * 12),
+    rimColor: rgb01(p.rimColor, [1.0, 0.808, 0.659]),
+    ambient: num(p.ambient, 0.14, 0, 2),
+
+    colorA: rgb01(p.colorA, [1.0, 0.408, 0.039]),
+    colorB: rgb01(p.colorB, [0.910, 0.173, 0.024]),
+    colorC: rgb01(p.colorC, [1.0, 0.580, 0.149]),
+    colorD: rgb01(p.colorD, [0.659, 0.110, 0.016]),
+    smokeColor: smokeTint,
+    backgroundMode: BACKGROUND_MODE_ID[String(p.backgroundMode ?? 'studio')] ?? 2,
+    backgroundColor: rgb01(p.backgroundColor, [0.063, 0.059, 0.071]),
+    backgroundOpacity: num(p.backgroundOpacity, 1, 0, 1),
+    vignette: num(p.vignette, 0.45, 0, 1),
+    exposure: num(p.exposure, 1.5, 0.1, 4),
+    tonemap: TONEMAP_ID[String(p.tonemap ?? 'agx')] ?? 0,
+
+    volumeScaleX: 1.72,
+    volumeScaleZ: 1.25,
+    fovDeg: num(p.fovDeg, 48, 25, 95),
+    cameraZ: num(p.cameraZ, 2.85, 1.4, 7),
+    rotateX: num(p.rotateX, 0, -3600, 3600),
+    rotateY: num(p.rotateY, 0, -3600, 3600),
+    rotateZ: num(p.rotateZ, 0, -3600, 3600),
+    autoRotateX: tuning.spinX,
+    autoRotateY: num(p.autoSpin, 4.5, -24, 24),
+    autoRotateZ: tuning.spinZ,
+
+    audioReactive: reactive,
+    bass,
+    treble,
+    audioBurst: bassDrive,
+  };
+}
+
+/* ============================================================== */
+/* MATH                                                            */
+/* ============================================================== */
+
+function mat4Mul(a: Float32Array, b: Float32Array): Float32Array {
+  const out = new Float32Array(16);
+  for (let c = 0; c < 4; c++) {
+    for (let r = 0; r < 4; r++) {
+      let s = 0;
+      for (let k = 0; k < 4; k++) s += a[k * 4 + r] * b[c * 4 + k];
+      out[c * 4 + r] = s;
+    }
+  }
+  return out;
+}
+
+function identityMat4(): Float32Array {
+  const m = new Float32Array(16);
+  m[0] = m[5] = m[10] = m[15] = 1;
+  return m;
+}
+
+function invertMat4(m: Float32Array): Float32Array {
+  const inv = new Float32Array(16);
+  const a00 = m[0], a01 = m[1], a02 = m[2], a03 = m[3];
+  const a10 = m[4], a11 = m[5], a12 = m[6], a13 = m[7];
+  const a20 = m[8], a21 = m[9], a22 = m[10], a23 = m[11];
+  const a30 = m[12], a31 = m[13], a32 = m[14], a33 = m[15];
+  const b00 = a00 * a11 - a01 * a10;
+  const b01 = a00 * a12 - a02 * a10;
+  const b02 = a00 * a13 - a03 * a10;
+  const b03 = a01 * a12 - a02 * a11;
+  const b04 = a01 * a13 - a03 * a11;
+  const b05 = a02 * a13 - a03 * a12;
+  const b06 = a20 * a31 - a21 * a30;
+  const b07 = a20 * a32 - a22 * a30;
+  const b08 = a20 * a33 - a23 * a30;
+  const b09 = a21 * a32 - a22 * a31;
+  const b10 = a21 * a33 - a23 * a31;
+  const b11 = a22 * a33 - a23 * a32;
+  let det = b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06;
+  if (Math.abs(det) < 1e-12) return identityMat4();
+  det = 1 / det;
+  inv[0] = (a11 * b11 - a12 * b10 + a13 * b09) * det;
+  inv[1] = (a02 * b10 - a01 * b11 - a03 * b09) * det;
+  inv[2] = (a31 * b05 - a32 * b04 + a33 * b03) * det;
+  inv[3] = (a22 * b04 - a21 * b05 - a23 * b03) * det;
+  inv[4] = (a12 * b08 - a10 * b11 - a13 * b07) * det;
+  inv[5] = (a00 * b11 - a02 * b08 + a03 * b07) * det;
+  inv[6] = (a32 * b02 - a30 * b05 - a33 * b01) * det;
+  inv[7] = (a20 * b05 - a22 * b02 + a23 * b01) * det;
+  inv[8] = (a10 * b10 - a11 * b08 + a13 * b06) * det;
+  inv[9] = (a01 * b08 - a00 * b10 - a03 * b06) * det;
+  inv[10] = (a30 * b04 - a31 * b02 + a33 * b00) * det;
+  inv[11] = (a21 * b02 - a20 * b04 - a23 * b00) * det;
+  inv[12] = (a11 * b07 - a10 * b09 - a12 * b06) * det;
+  inv[13] = (a00 * b09 - a01 * b07 + a02 * b06) * det;
+  inv[14] = (a31 * b01 - a30 * b03 - a32 * b00) * det;
+  inv[15] = (a20 * b03 - a21 * b01 + a22 * b00) * det;
+  return inv;
+}
+
+function perspective(fovDeg: number, aspect: number, near: number, far: number): Float32Array {
+  const f = 1 / Math.tan((fovDeg * Math.PI / 180) / 2);
+  const m = new Float32Array(16);
+  m[0] = f / aspect;
+  m[5] = f;
+  m[10] = far / (near - far);
+  m[11] = -1;
+  m[14] = (near * far) / (near - far);
+  return m;
+}
+
+function translate(x: number, y: number, z: number): Float32Array {
+  const m = identityMat4();
+  m[12] = x; m[13] = y; m[14] = z;
+  return m;
+}
+
+function rotationMatrices(rx: number, ry: number, rz: number): Float32Array {
+  const cx = Math.cos(rx), sx = Math.sin(rx);
+  const cy = Math.cos(ry), sy = Math.sin(ry);
+  const cz = Math.cos(rz), sz = Math.sin(rz);
+  const rxM = new Float32Array([1, 0, 0, 0, 0, cx, sx, 0, 0, -sx, cx, 0, 0, 0, 0, 1]);
+  const ryM = new Float32Array([cy, 0, -sy, 0, 0, 1, 0, 0, sy, 0, cy, 0, 0, 0, 0, 1]);
+  const rzM = new Float32Array([cz, sz, 0, 0, -sz, cz, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+  return mat4Mul(rzM, mat4Mul(ryM, rxM));
+}
+
+/** Rotate a camera-space direction into the volume's object space so the
+ *  studio rig stays FIXED while the volume spins. Without this the key
+ *  light orbits with the smoke and the whole thing reads as a spinning
+ *  prop instead of a lit subject. */
+function lightToObjectSpace(model: Float32Array, dir: [number, number, number]): [number, number, number] {
+  // Rotation-only model: inverse == transpose.
+  const x = model[0] * dir[0] + model[1] * dir[1] + model[2] * dir[2];
+  const y = model[4] * dir[0] + model[5] * dir[1] + model[6] * dir[2];
+  const z = model[8] * dir[0] + model[9] * dir[1] + model[10] * dir[2];
+  const len = Math.hypot(x, y, z) || 1;
+  return [x / len, y / len, z / len];
+}
+
+/* ============================================================== */
+/* NATIVE GRAPH                                                    */
+/* ============================================================== */
+
+type SmokeRidersBufferKind = 'uniform' | 'storage';
+type SmokeRidersBindingKind = 'uniform' | 'storage' | 'read-only-storage';
+
+export interface SmokeRidersNativeGraphBuffer {
+  id: string;
+  kind: SmokeRidersBufferKind;
+  byte_length: number;
+  persistent?: boolean;
+  clear?: boolean;
+  initial_b64?: string;
+}
+
+export interface SmokeRidersNativeGraphBinding {
+  binding: number;
+  resource: string;
+  kind: SmokeRidersBindingKind;
+}
+
+export interface SmokeRidersNativeGraphPass {
+  name: string;
+  shader_id: string;
+  entry: string;
+  dispatch: [number, number, number];
+  bindings: SmokeRidersNativeGraphBinding[];
+}
+
+export interface SmokeRidersNativeGraphRenderPass {
+  name: string;
+  shader_id: string;
+  vertex_entry: string;
+  fragment_entry: string;
+  target: 'source_frame';
+  source_id: string;
+  seq: number;
+  clear: boolean;
+  clear_color?: [number, number, number, number];
+  include_snapshot?: boolean;
+  blend: 'replace' | 'alpha' | 'add';
+  primitive?: 'triangle-list';
+  vertex_count: number;
+  instance_count: number;
+  bindings: SmokeRidersNativeGraphBinding[];
 }
 
 export interface SmokeRidersNativeGraphState {
-  smoke: Smoke3DNativeGraphState | null;
-  spheres: VolumetricSpheresNativeGraphState | null;
+  grid: number;
+  riderCount: number;
+  tileCountX: number;
+  tileCountY: number;
+  velFlip: boolean;
+  denFlip: boolean;
+  prsFlip: boolean;
+  splatTimer: number;
+  prevBass: number;
+  burstHoldTimer: number;
+  autoRotXPhase: number;
+  autoRotYPhase: number;
+  autoRotZPhase: number;
+  prevFrameTime: number;
 }
 
 export interface SmokeRidersNativeGraphOptions {
@@ -154,299 +2119,778 @@ export interface SmokeRidersNativeGraphOptions {
 
 export interface SmokeRidersNativeGraphBuildResult {
   config: {
-    buffers: any[];
-    passes: any[];
-    render_passes: any[];
+    buffers: SmokeRidersNativeGraphBuffer[];
+    passes: SmokeRidersNativeGraphPass[];
+    render_passes: SmokeRidersNativeGraphRenderPass[];
     readbacks: string[];
   };
   sourceId: string;
   state: SmokeRidersNativeGraphState;
+  riderCount: number;
   passCount: number;
 }
 
-function rgb01(c: any, fallback: [number, number, number]): [number, number, number] {
-  if (!Array.isArray(c) || c.length < 3) return fallback;
-  return [
-    Math.max(0, Math.min(1, (c[0] ?? 0) / 255)),
-    Math.max(0, Math.min(1, (c[1] ?? 0) / 255)),
-    Math.max(0, Math.min(1, (c[2] ?? 0) / 255)),
-  ];
+function bytesToBase64(bytes: Uint8Array): string {
+  let binary = '';
+  const chunkSize = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunkSize) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunkSize));
+  }
+  return btoa(binary);
 }
 
-function smokeRidersStyleTuning(style: string): SmokeRidersStyleTuning {
-  if (style === 'ember') {
-    return {
-      emitters: 6,
-      spawnY: -0.62,
-      splatRadius: 0.075,
-      splatVelocity: 0.9,
-      densityDecay: 0.988,
-      windX: 0.05,
-      windY: 0.42,
-      windZ: -0.03,
-      turbScale: 3.4,
-      spinX: -0.25,
-      spinZ: 0.2,
-      sizeScale: 0.72,
-      colorCycle: 0.05,
-      saturation: 1.25,
-      sphereLayout: 'column',
-      radiusVariance: 0.85,
-      sphereSpread: 0.86,
-      sphereDepth: 1.18,
-      sphereSwirl: 0.82,
-      spherePull: 0.1,
-      sphereChaos: 0.52,
-      sphereDamping: 1.9,
-      rim: 0.62,
-    };
+function bufferToBase64(buffer: ArrayBuffer): string {
+  return bytesToBase64(new Uint8Array(buffer));
+}
+
+function writeF32(view: DataView, index: number, value: number): void {
+  view.setFloat32(index * 4, Number.isFinite(value) ? value : 0, true);
+}
+
+function writeU32(view: DataView, index: number, value: number): void {
+  view.setUint32(index * 4, Math.max(0, Math.round(value)) >>> 0, true);
+}
+
+/** Deterministic seed hash — mirrored bit-for-shape in the Rust core so
+ *  both graph builders spawn the same population. */
+export function smokeRidersHash(n: number): number {
+  const s = Math.sin(n * 127.1 + 311.7) * 43758.5453;
+  return s - Math.floor(s);
+}
+
+export function buildSmokeRidersInitialRiderBuffer(
+  params: SmokeRidersResolvedParams,
+  count: number,
+): ArrayBuffer {
+  const riderCount = clamp(Math.round(count), SMOKE_RIDERS_MIN_COUNT, SMOKE_RIDERS_MAX_COUNT);
+  const floats = new Float32Array(riderCount * SMOKE_RIDERS_STRIDE_FLOATS);
+  const bx = params.volumeScaleX;
+  const bz = params.volumeScaleZ;
+  const spawnY = params.spawnY;
+  const radiusVar = params.riderSizeVariance;
+  for (let i = 0; i < riderCount; i++) {
+    const seed = i * 0.6180339887 + 0.137;
+    const s1 = smokeRidersHash(seed * 3.17 + 1.7);
+    const s2 = smokeRidersHash(seed * 7.31 + 4.1);
+    const s3 = smokeRidersHash(seed * 11.93 + 8.3);
+    const s4 = smokeRidersHash(seed * 23.1 + 3.3);
+    const s5 = smokeRidersHash(seed * 13.3 + 0.9);
+    const a = s1 * Math.PI * 2;
+    const z = s2 * 2 - 1;
+    const planar = Math.sqrt(Math.max(0, 1 - z * z));
+    const r = Math.pow(s3, 0.4);
+    const off = i * SMOKE_RIDERS_STRIDE_FLOATS;
+    floats[off + 0] = Math.cos(a) * planar * r * bx * 0.34;
+    floats[off + 1] = spawnY + z * r * 0.3;
+    floats[off + 2] = Math.sin(a) * planar * r * bz * 0.34;
+    floats[off + 3] = 0.45 + Math.pow(s4, 1.7) * (0.35 + radiusVar * 1.9);
+    floats[off + 4] = 0;
+    floats[off + 5] = 0;
+    floats[off + 6] = 0;
+    // τ is derived from radius + seed by cs_riders on every step, so the
+    // seeded value is only a placeholder. Leaving it zero keeps this
+    // buffer byte-identical to the Rust builder's with no shared formula
+    // to drift.
+    floats[off + 7] = 0;
+    floats[off + 8] = seed;
+    floats[off + 9] = s5;
+    floats[off + 10] = params.riderLife * (0.2 + s2 * 1.1);
+    // Seeded riders start fully faded IN so the very first frame already
+    // shows the population; only recycled riders ramp.
+    floats[off + 11] = 1;
   }
-  if (style === 'pearlescent') {
-    return {
-      emitters: 4,
-      spawnY: -0.18,
-      splatRadius: 0.12,
-      splatVelocity: 0.45,
-      densityDecay: 0.994,
-      windX: -0.03,
-      windY: 0.1,
-      windZ: 0.04,
-      turbScale: 1.9,
-      spinX: 0.1,
-      spinZ: -0.12,
-      sizeScale: 1.25,
-      colorCycle: 0.012,
-      saturation: 0.88,
-      sphereLayout: 'cluster',
-      radiusVariance: 0.58,
-      sphereSpread: 1.0,
-      sphereDepth: 1.0,
-      sphereSwirl: 0.22,
-      spherePull: 0.42,
-      sphereChaos: 0.12,
-      sphereDamping: 2.2,
-      rim: 0.36,
-    };
+  return floats.buffer;
+}
+
+function buildSimUniform(
+  params: SmokeRidersResolvedParams,
+  dt: number,
+  time: number,
+  fire: boolean,
+  burstMul: number,
+): string {
+  const buffer = new ArrayBuffer(96);
+  const view = new DataView(buffer);
+  writeU32(view, 0, params.gridSize);
+  writeU32(view, 1, params.gridSize);
+  writeU32(view, 2, params.gridSize);
+  writeU32(view, 3, params.emitterCount);
+  writeF32(view, 4, dt);
+  writeF32(view, 5, time);
+  writeF32(view, 6, fire ? burstMul : 0);
+  writeF32(view, 8, params.densityDecay);
+  writeF32(view, 9, params.velocityDecay);
+  writeF32(view, 10, params.splatRadius);
+  writeF32(view, 12, params.wind[0]);
+  writeF32(view, 13, params.wind[1]);
+  writeF32(view, 14, params.wind[2]);
+  writeF32(view, 15, params.turbStrength);
+  writeF32(view, 16, params.turbScale);
+  return bufferToBase64(buffer);
+}
+
+function buildEmittersBuffer(params: SmokeRidersResolvedParams): string {
+  const buffer = new ArrayBuffer(SMOKE_RIDERS_MAX_EMITTERS * 48);
+  const values = new Float32Array(buffer);
+  const emCount = clamp(params.emitterCount | 0, 1, SMOKE_RIDERS_MAX_EMITTERS);
+  const palette = [params.colorA, params.colorB, params.colorC, params.colorD];
+  for (let i = 0; i < emCount; i++) {
+    const off = i * 12;
+    const angle = emCount > 1 ? (i / emCount) * Math.PI * 2 : 0;
+    const cx = Math.cos(angle) * params.spread;
+    const cz = Math.sin(angle) * params.spread;
+    const color = palette[i % palette.length];
+    values[off + 0] = cx * 0.5 + 0.5;
+    values[off + 1] = params.spawnY * 0.5 + 0.5;
+    values[off + 2] = cz * 0.5 + 0.5;
+    values[off + 3] = params.splatRadius;
+    values[off + 4] = color[0];
+    values[off + 5] = color[1];
+    values[off + 6] = color[2];
+    values[off + 7] = params.splatStrength;
+    values[off + 8] = Math.cos(angle) * params.splatVelocityMag * 0.18;
+    values[off + 9] = params.splatVelocityMag;
+    values[off + 10] = Math.sin(angle) * params.splatVelocityMag * 0.18;
   }
+  return bufferToBase64(buffer);
+}
+
+function buildVorticityUniform(params: SmokeRidersResolvedParams, dt: number): string {
+  const buffer = new ArrayBuffer(32);
+  const view = new DataView(buffer);
+  writeU32(view, 0, params.gridSize);
+  writeU32(view, 1, params.gridSize);
+  writeU32(view, 2, params.gridSize);
+  writeF32(view, 4, dt);
+  writeF32(view, 5, params.vorticity);
+  writeF32(view, 6, 1 / Math.max(1, params.gridSize));
+  writeF32(view, 7, params.pressureWarm);
+  return bufferToBase64(buffer);
+}
+
+function buildSurfaceUniform(params: SmokeRidersResolvedParams, dt: number): string {
+  const buffer = new ArrayBuffer(32);
+  const view = new DataView(buffer);
+  writeU32(view, 0, params.gridSize);
+  writeU32(view, 1, params.gridSize);
+  writeU32(view, 2, params.gridSize);
+  writeF32(view, 4, dt);
+  writeF32(view, 5, params.surfaceTension);
+  writeF32(view, 6, params.paintThickness);
+  // CFL cap: no cell may be pushed more than a quarter of a cell width
+  // (velocity is in uv/s, so a cell is 1/grid) by surface tension alone.
+  writeF32(view, 7, 0.25 / Math.max(1, params.gridSize));
+  return bufferToBase64(buffer);
+}
+
+function buildRiderUniform(
+  params: SmokeRidersResolvedParams,
+  dt: number,
+  time: number,
+  riderCount: number,
+): string {
+  const buffer = new ArrayBuffer(128);
+  const view = new DataView(buffer);
+  writeU32(view, 0, params.gridSize);
+  writeU32(view, 1, params.gridSize);
+  writeU32(view, 2, params.gridSize);
+  writeU32(view, 3, riderCount);
+  writeF32(view, 4, dt);
+  writeF32(view, 5, time);
+  writeF32(view, 6, params.flowCoupling);
+  writeF32(view, 7, params.riderWeight);
+  writeF32(view, 8, params.buoyancy);
+  writeF32(view, 9, params.gravity);
+  writeF32(view, 10, params.vortexPull);
+  writeF32(view, 11, params.riderDamping);
+  writeF32(view, 12, params.weightSpread);
+  writeF32(view, 13, params.gravityFactor);
+  writeF32(view, 14, 0.45);
+  writeF32(view, 15, 0.35 + params.riderSizeVariance * 1.9);
+  writeF32(view, 16, params.volumeScaleX);
+  writeF32(view, 17, 1);
+  writeF32(view, 18, params.volumeScaleZ);
+  writeF32(view, 19, params.containStrength);
+  writeF32(view, 20, 0);
+  writeF32(view, 21, params.spawnY);
+  writeF32(view, 22, 0);
+  writeF32(view, 23, Math.max(0.15, params.spread * params.volumeScaleX + 0.2));
+  writeF32(view, 24, params.riderLife);
+  // Pressure-gradient gain: the solver's p lives on grid indices, so the
+  // per-index difference becomes a world-space gradient by dividing by
+  // the world cell size (extent/grid) — folded here as grid/extentY,
+  // with extentY = 2 (the volume is 1 unit tall each way).
+  writeF32(view, 25, params.gridSize * 0.5);
+  writeF32(view, 26, params.bass);
+  writeF32(view, 27, params.treble);
+  writeF32(view, 28, params.riderSize);
+  writeF32(view, 29, SMOKE_RIDERS_TAU_REF_RADIUS);
+  return bufferToBase64(buffer);
+}
+
+function buildBinUniform(
+  params: SmokeRidersResolvedParams,
+  viewProj: Float32Array,
+  tileCountX: number,
+  tileCountY: number,
+  riderCount: number,
+  aspect: number,
+): string {
+  const buffer = new ArrayBuffer(96);
+  const view = new DataView(buffer);
+  const floats = new Float32Array(buffer);
+  floats.set(viewProj, 0);
+  writeU32(view, 16, tileCountX);
+  writeU32(view, 17, tileCountY);
+  writeU32(view, 18, SMOKE_RIDERS_TILE_CAP);
+  writeU32(view, 19, riderCount);
+  writeF32(view, 20, 1 / Math.tan((params.fovDeg * Math.PI / 180) / 2));
+  writeF32(view, 21, aspect);
+  writeF32(view, 22, params.riderSize);
+  return bufferToBase64(buffer);
+}
+
+function buildRenderUniform(
+  params: SmokeRidersResolvedParams,
+  state: SmokeRidersNativeGraphState,
+  invViewProj: Float32Array,
+  model: Float32Array,
+  tileCountX: number,
+  tileCountY: number,
+  riderCount: number,
+  frameIndex: number,
+): string {
+  const buffer = new ArrayBuffer(352);
+  const view = new DataView(buffer);
+  const floats = new Float32Array(buffer);
+  floats.set(invViewProj, 0);
+  // Studio rig, specified in CAMERA space and rotated into the volume's
+  // object space so the lights stay put while the volume spins.
+  const key = lightToObjectSpace(model, [-0.42, 0.68, 0.62]);
+  const fill = lightToObjectSpace(model, [0.66, 0.12, 0.74]);
+  const rim = lightToObjectSpace(model, [0.18, 0.28, -0.94]);
+  writeF32(view, 16, params.smokeColor[0]);
+  writeF32(view, 17, params.smokeColor[1]);
+  writeF32(view, 18, params.smokeColor[2]);
+  writeF32(view, 19, params.exposure);
+  writeF32(view, 20, params.volumeScaleX);
+  writeF32(view, 21, 1);
+  writeF32(view, 22, params.volumeScaleZ);
+  writeF32(view, 23, params.density);
+  writeF32(view, 24, params.backgroundColor[0]);
+  writeF32(view, 25, params.backgroundColor[1]);
+  writeF32(view, 26, params.backgroundColor[2]);
+  writeF32(view, 27, params.backgroundOpacity);
+  writeU32(view, 28, params.gridSize);
+  writeU32(view, 29, params.gridSize);
+  writeU32(view, 30, params.gridSize);
+  writeU32(view, 31, riderCount);
+  writeF32(view, 32, key[0]);
+  writeF32(view, 33, key[1]);
+  writeF32(view, 34, key[2]);
+  writeF32(view, 35, params.keyStrength);
+  writeF32(view, 36, params.keyColor[0]);
+  writeF32(view, 37, params.keyColor[1]);
+  writeF32(view, 38, params.keyColor[2]);
+  writeF32(view, 39, params.anisotropy);
+  writeF32(view, 40, fill[0]);
+  writeF32(view, 41, fill[1]);
+  writeF32(view, 42, fill[2]);
+  writeF32(view, 43, params.fillStrength);
+  writeF32(view, 44, params.fillColor[0]);
+  writeF32(view, 45, params.fillColor[1]);
+  writeF32(view, 46, params.fillColor[2]);
+  writeF32(view, 47, params.roughness);
+  writeF32(view, 48, rim[0]);
+  writeF32(view, 49, rim[1]);
+  writeF32(view, 50, rim[2]);
+  writeF32(view, 51, params.rimStrength);
+  writeF32(view, 52, params.rimColor[0]);
+  writeF32(view, 53, params.rimColor[1]);
+  writeF32(view, 54, params.rimColor[2]);
+  writeF32(view, 55, params.metalness);
+  writeF32(view, 56, params.colorA[0]);
+  writeF32(view, 57, params.colorA[1]);
+  writeF32(view, 58, params.colorA[2]);
+  writeF32(view, 59, params.emission);
+  writeF32(view, 60, params.colorB[0]);
+  writeF32(view, 61, params.colorB[1]);
+  writeF32(view, 62, params.colorB[2]);
+  writeF32(view, 63, params.multiScatter);
+  writeF32(view, 64, params.colorC[0]);
+  writeF32(view, 65, params.colorC[1]);
+  writeF32(view, 66, params.colorC[2]);
+  writeF32(view, 67, params.shadowStepLen);
+  writeF32(view, 68, params.colorD[0]);
+  writeF32(view, 69, params.colorD[1]);
+  writeF32(view, 70, params.colorD[2]);
+  writeF32(view, 71, params.contactAO);
+  writeU32(view, 72, params.shadowSteps);
+  writeU32(view, 73, params.marchSteps);
+  writeU32(view, 74, tileCountX);
+  writeU32(view, 75, tileCountY);
+  writeF32(view, 76, params.riderSize);
+  writeF32(view, 77, params.ambient);
+  writeF32(view, 78, params.vignette);
+  writeF32(view, 79, params.backgroundMode);
+  // Wrapped: the march offset only needs the frame's phase, and a u32
+  // that has been counting for hours loses fp32 precision inside the
+  // shader's f32(frameIndex).
+  writeU32(view, 80, frameIndex % 4096);
+  writeF32(view, 81, params.tonemap);
+  writeF32(view, 82, params.clearCoat);
+  writeF32(view, 83, params.coatRoughness);
+  // `state` participates only through the rotation baked into invViewProj.
+  void state;
+  return bufferToBase64(buffer);
+}
+
+function sanitizeGraphId(value: string): string {
+  return String(value || 'source').replace(/[^a-zA-Z0-9:_-]+/g, '_').slice(0, 160);
+}
+
+function initialState(grid: number, riderCount: number, tileCountX: number, tileCountY: number, time: number): SmokeRidersNativeGraphState {
   return {
-    emitters: 5,
-    spawnY: -0.38,
-    splatRadius: 0.095,
-    splatVelocity: 0.64,
-    densityDecay: 0.991,
-    windX: 0,
-    windY: 0.18,
-    windZ: 0,
-    turbScale: 2.6,
-    spinX: -0.2,
-    spinZ: 0.08,
-    sizeScale: 1,
-    colorCycle: 0.028,
-    saturation: 1.08,
-    sphereLayout: 'orbital',
-    radiusVariance: 0.72,
-    sphereSpread: 1.08,
-    sphereDepth: 1.32,
-    sphereSwirl: 0.55,
-    spherePull: 0.28,
-    sphereChaos: 0.32,
-    sphereDamping: 1.7,
-    rim: 0.46,
+    grid,
+    riderCount,
+    tileCountX,
+    tileCountY,
+    velFlip: false,
+    denFlip: false,
+    prsFlip: false,
+    splatTimer: 0,
+    prevBass: 0,
+    burstHoldTimer: 0,
+    autoRotXPhase: 0,
+    autoRotYPhase: 0,
+    autoRotZPhase: 0,
+    prevFrameTime: time,
   };
+}
+
+export function buildSmokeRidersNativeComputeGraph(
+  options: SmokeRidersNativeGraphOptions,
+): SmokeRidersNativeGraphBuildResult {
+  const sourceId = String(options.sourceId || 'smoke-riders-native-source');
+  const width = Math.max(1, Math.round(options.width || 1920));
+  const height = Math.max(1, Math.round(options.height || 1080));
+  const time = Math.max(0, Number.isFinite(options.time) ? Number(options.time) : 0);
+  const frameIndex = Math.max(0, Math.round(options.frameIndex ?? 0));
+  const params = resolveSmokeRidersParams(options.params ?? {}, {
+    bass: options.audioBass ?? 0,
+    treble: options.audioTreble ?? 0,
+  });
+
+  const riderCount = params.riderCount;
+  const tileCountX = Math.max(1, Math.ceil(width / SMOKE_RIDERS_TILE_SIZE));
+  const tileCountY = Math.max(1, Math.ceil(height / SMOKE_RIDERS_TILE_SIZE));
+  const tileCount = tileCountX * tileCountY;
+
+  const prev = options.state ?? null;
+  const mustReset = !!options.reset
+    || !prev
+    || prev.grid !== params.gridSize
+    || prev.riderCount !== riderCount
+    || prev.tileCountX !== tileCountX
+    || prev.tileCountY !== tileCountY;
+  let state = mustReset
+    ? initialState(params.gridSize, riderCount, tileCountX, tileCountY, time)
+    : { ...prev! };
+
+  let dt = typeof options.frameDelta === 'number' && Number.isFinite(options.frameDelta)
+    ? options.frameDelta
+    : (state.prevFrameTime === 0 ? 1 / 60 : time - state.prevFrameTime);
+  dt = clamp(dt, 0, 1 / 15);
+  state.prevFrameTime = time;
+  state.autoRotXPhase += params.autoRotateX * dt;
+  state.autoRotYPhase += params.autoRotateY * dt;
+  state.autoRotZPhase += params.autoRotateZ * dt;
+
+  const bassDelta = Math.max(0, params.bass - state.prevBass);
+  if (bassDelta > 0.05) state.burstHoldTimer = Math.max(state.burstHoldTimer, 0.15);
+  state.burstHoldTimer = Math.max(0, state.burstHoldTimer - dt);
+  state.prevBass = params.bass;
+  const burstActive = state.burstHoldTimer > 0;
+  state.splatTimer += dt;
+  const splatPeriod = 1 / Math.max(0.1, params.splatRate);
+  const scheduledFire = state.splatTimer >= splatPeriod;
+  if (scheduledFire) state.splatTimer = 0;
+  const fire = scheduledFire || burstActive || mustReset;
+  const burstMul = burstActive ? 2.5 + params.audioBurst : 1;
+
+  // Camera / projection.
+  const aspect = Math.max(0.05, width / height);
+  const d2r = Math.PI / 180;
+  const proj = perspective(params.fovDeg, aspect, 0.01, 100);
+  const view = translate(0, 0, -params.cameraZ);
+  const model = rotationMatrices(
+    (params.rotateX + state.autoRotXPhase) * d2r,
+    (params.rotateY + state.autoRotYPhase) * d2r,
+    (params.rotateZ + state.autoRotZPhase) * d2r,
+  );
+  const viewProj = mat4Mul(proj, mat4Mul(view, model));
+  const invViewProj = invertMat4(viewProj);
+
+  const prefix = `smoke-riders:${sanitizeGraphId(sourceId)}`;
+  const gid = (name: string) => `${prefix}:g${params.gridSize}:${name}`;
+  const rid = (name: string) => `${prefix}:r${riderCount}:${name}`;
+  const tid = (name: string) => `${prefix}:t${tileCountX}x${tileCountY}:${name}`;
+  const uid = (name: string) => `${prefix}:${name}`;
+
+  const cellCount = params.gridSize * params.gridSize * params.gridSize;
+  const vec4Bytes = cellCount * 16;
+  const f32Bytes = cellCount * 4;
+
+  const buffers: SmokeRidersNativeGraphBuffer[] = [
+    { id: uid('sim-uniform'), kind: 'uniform', byte_length: 96, initial_b64: buildSimUniform(params, dt, time, fire, burstMul) },
+    { id: uid('vort-uniform'), kind: 'uniform', byte_length: 32, initial_b64: buildVorticityUniform(params, dt) },
+    { id: uid('surface-uniform'), kind: 'uniform', byte_length: 32, initial_b64: buildSurfaceUniform(params, dt) },
+    { id: uid('rider-uniform'), kind: 'uniform', byte_length: 128, initial_b64: buildRiderUniform(params, dt, time, riderCount) },
+    { id: uid('bin-uniform'), kind: 'uniform', byte_length: 96, initial_b64: buildBinUniform(params, viewProj, tileCountX, tileCountY, riderCount, aspect) },
+    { id: uid('render-uniform'), kind: 'uniform', byte_length: 352, initial_b64: buildRenderUniform(params, state, invViewProj, model, tileCountX, tileCountY, riderCount, frameIndex) },
+    { id: uid('emitters'), kind: 'storage', byte_length: SMOKE_RIDERS_MAX_EMITTERS * 48, initial_b64: buildEmittersBuffer(params) },
+    { id: gid('velocity-a'), kind: 'storage', byte_length: vec4Bytes, persistent: true, clear: mustReset },
+    { id: gid('velocity-b'), kind: 'storage', byte_length: vec4Bytes, persistent: true, clear: mustReset },
+    { id: gid('density-a'), kind: 'storage', byte_length: vec4Bytes, persistent: true, clear: mustReset },
+    { id: gid('density-b'), kind: 'storage', byte_length: vec4Bytes, persistent: true, clear: mustReset },
+    { id: gid('divergence'), kind: 'storage', byte_length: f32Bytes, persistent: true, clear: mustReset },
+    { id: gid('pressure-a'), kind: 'storage', byte_length: f32Bytes, persistent: true, clear: mustReset },
+    { id: gid('pressure-b'), kind: 'storage', byte_length: f32Bytes, persistent: true, clear: mustReset },
+    // One scratch field shared by both MacCormack advections: velocity
+    // is corrected at the top of the frame and density at the bottom, so
+    // the forward result never has to survive across the two.
+    { id: gid('advect-tmp'), kind: 'storage', byte_length: vec4Bytes, persistent: true, clear: mustReset },
+    {
+      id: rid('riders'),
+      kind: 'storage',
+      byte_length: riderCount * SMOKE_RIDERS_STRIDE_FLOATS * 4,
+      persistent: true,
+      clear: mustReset,
+      ...(mustReset
+        ? { initial_b64: bufferToBase64(buildSmokeRidersInitialRiderBuffer(params, riderCount)) }
+        : {}),
+    },
+    { id: tid('tile-counts'), kind: 'storage', byte_length: tileCount * 4, persistent: true, clear: mustReset },
+    { id: tid('tile-indices'), kind: 'storage', byte_length: tileCount * SMOKE_RIDERS_TILE_CAP * 4, persistent: true, clear: mustReset },
+  ];
+
+  const wg = Math.ceil(params.gridSize / 4);
+  const gridDispatch: [number, number, number] = [wg, wg, wg];
+  const passes: SmokeRidersNativeGraphPass[] = [];
+  const addPass = (
+    name: string,
+    shaderId: string,
+    entry: string,
+    dispatch: [number, number, number],
+    bindings: SmokeRidersNativeGraphBinding[],
+  ) => {
+    passes.push({ name, shader_id: shaderId, entry, dispatch, bindings });
+  };
+
+  let velFlip = state.velFlip;
+  let denFlip = state.denFlip;
+  let prsFlip = state.prsFlip;
+  const velCur = () => gid(velFlip ? 'velocity-b' : 'velocity-a');
+  const velNext = () => gid(velFlip ? 'velocity-a' : 'velocity-b');
+  const denCur = () => gid(denFlip ? 'density-b' : 'density-a');
+  const denNext = () => gid(denFlip ? 'density-a' : 'density-b');
+  const prsCur = () => gid(prsFlip ? 'pressure-b' : 'pressure-a');
+  const prsNext = () => gid(prsFlip ? 'pressure-a' : 'pressure-b');
+
+  if (fire) {
+    addPass('smoke-riders-splat', SMOKE_3D_NATIVE_SHADER_IDS.splat, 'cs_splat', gridDispatch, [
+      { binding: 0, resource: uid('sim-uniform'), kind: 'uniform' },
+      { binding: 1, resource: velCur(), kind: 'storage' },
+      { binding: 2, resource: denCur(), kind: 'storage' },
+      { binding: 3, resource: uid('emitters'), kind: 'read-only-storage' },
+    ]);
+  }
+  if (params.macCormack) {
+    addPass('smoke-riders-advect-velocity-fwd', SMOKE_RIDERS_NATIVE_SHADER_IDS.advect, 'cs_advect_fwd', gridDispatch, [
+      { binding: 0, resource: uid('sim-uniform'), kind: 'uniform' },
+      { binding: 1, resource: velCur(), kind: 'read-only-storage' },
+      { binding: 2, resource: velCur(), kind: 'read-only-storage' },
+      { binding: 3, resource: gid('advect-tmp'), kind: 'storage' },
+      { binding: 4, resource: velNext(), kind: 'storage' },
+    ]);
+    addPass('smoke-riders-advect-velocity', SMOKE_RIDERS_NATIVE_SHADER_IDS.advect, 'cs_advect_mc_vel', gridDispatch, [
+      { binding: 0, resource: uid('sim-uniform'), kind: 'uniform' },
+      { binding: 1, resource: velCur(), kind: 'read-only-storage' },
+      { binding: 2, resource: velCur(), kind: 'read-only-storage' },
+      { binding: 3, resource: gid('advect-tmp'), kind: 'storage' },
+      { binding: 4, resource: velNext(), kind: 'storage' },
+    ]);
+  } else {
+    addPass('smoke-riders-advect-velocity', SMOKE_3D_NATIVE_SHADER_IDS.advectVelocity, 'cs_advect_vel', gridDispatch, [
+      { binding: 0, resource: uid('sim-uniform'), kind: 'uniform' },
+      { binding: 1, resource: velCur(), kind: 'read-only-storage' },
+      { binding: 2, resource: denCur(), kind: 'storage' },
+      { binding: 3, resource: velNext(), kind: 'storage' },
+    ]);
+  }
+  velFlip = !velFlip;
+
+  // Vorticity confinement — after advection, before the projection solve
+  // so the added swirl is made divergence-free along with everything else.
+  addPass('smoke-riders-vorticity', SMOKE_RIDERS_NATIVE_SHADER_IDS.vorticity, 'cs_vorticity', gridDispatch, [
+    { binding: 0, resource: uid('vort-uniform'), kind: 'uniform' },
+    { binding: 1, resource: velCur(), kind: 'read-only-storage' },
+    { binding: 2, resource: velNext(), kind: 'storage' },
+  ]);
+  velFlip = !velFlip;
+
+  // Surface tension + shear-thinning viscosity, also upstream of the
+  // projection so the interface force comes out divergence-free.
+  addPass('smoke-riders-surface-tension', SMOKE_RIDERS_NATIVE_SHADER_IDS.surface, 'cs_surface_tension', gridDispatch, [
+    { binding: 0, resource: uid('surface-uniform'), kind: 'uniform' },
+    { binding: 1, resource: denCur(), kind: 'read-only-storage' },
+    { binding: 2, resource: velCur(), kind: 'read-only-storage' },
+    { binding: 3, resource: velNext(), kind: 'storage' },
+  ]);
+  velFlip = !velFlip;
+
+  addPass('smoke-riders-divergence', SMOKE_3D_NATIVE_SHADER_IDS.divergence, 'cs_divergence', gridDispatch, [
+    { binding: 0, resource: uid('sim-uniform'), kind: 'uniform' },
+    { binding: 1, resource: velCur(), kind: 'read-only-storage' },
+    { binding: 2, resource: denCur(), kind: 'storage' },
+    { binding: 3, resource: gid('divergence'), kind: 'storage' },
+  ]);
+  // Warm start: scale last frame's pressure down instead of restarting
+  // from it verbatim (or from zero). One bandwidth-bound pass that is
+  // worth roughly triple the Jacobi sweeps it precedes.
+  addPass('smoke-riders-pressure-warm', SMOKE_RIDERS_NATIVE_SHADER_IDS.pressure, 'cs_pressure_warm',
+    [Math.max(1, Math.ceil(cellCount / 64)), 1, 1], [
+      { binding: 0, resource: uid('vort-uniform'), kind: 'uniform' },
+      { binding: 1, resource: prsCur(), kind: 'storage' },
+    ]);
+  for (let it = 0; it < params.pressureIterations; it++) {
+    addPass(`smoke-riders-jacobi-${it + 1}`, SMOKE_3D_NATIVE_SHADER_IDS.jacobi, 'cs_jacobi', gridDispatch, [
+      { binding: 0, resource: uid('sim-uniform'), kind: 'uniform' },
+      { binding: 1, resource: velCur(), kind: 'read-only-storage' },
+      { binding: 2, resource: denCur(), kind: 'storage' },
+      { binding: 3, resource: gid('divergence'), kind: 'read-only-storage' },
+      { binding: 4, resource: prsCur(), kind: 'read-only-storage' },
+      { binding: 5, resource: prsNext(), kind: 'storage' },
+    ]);
+    prsFlip = !prsFlip;
+  }
+  addPass('smoke-riders-subtract-gradient', SMOKE_3D_NATIVE_SHADER_IDS.subtractGradient, 'cs_subtract_grad', gridDispatch, [
+    { binding: 0, resource: uid('sim-uniform'), kind: 'uniform' },
+    { binding: 1, resource: velCur(), kind: 'read-only-storage' },
+    { binding: 2, resource: denCur(), kind: 'storage' },
+    { binding: 3, resource: prsCur(), kind: 'read-only-storage' },
+    { binding: 4, resource: velNext(), kind: 'storage' },
+  ]);
+  velFlip = !velFlip;
+  if (params.macCormack) {
+    addPass('smoke-riders-advect-density-fwd', SMOKE_RIDERS_NATIVE_SHADER_IDS.advect, 'cs_advect_fwd', gridDispatch, [
+      { binding: 0, resource: uid('sim-uniform'), kind: 'uniform' },
+      { binding: 1, resource: velCur(), kind: 'read-only-storage' },
+      { binding: 2, resource: denCur(), kind: 'read-only-storage' },
+      { binding: 3, resource: gid('advect-tmp'), kind: 'storage' },
+      { binding: 4, resource: denNext(), kind: 'storage' },
+    ]);
+    addPass('smoke-riders-advect-density', SMOKE_RIDERS_NATIVE_SHADER_IDS.advect, 'cs_advect_mc_den', gridDispatch, [
+      { binding: 0, resource: uid('sim-uniform'), kind: 'uniform' },
+      { binding: 1, resource: velCur(), kind: 'read-only-storage' },
+      { binding: 2, resource: denCur(), kind: 'read-only-storage' },
+      { binding: 3, resource: gid('advect-tmp'), kind: 'storage' },
+      { binding: 4, resource: denNext(), kind: 'storage' },
+    ]);
+  } else {
+    addPass('smoke-riders-advect-density', SMOKE_3D_NATIVE_SHADER_IDS.advectDensity, 'cs_advect_den', gridDispatch, [
+      { binding: 0, resource: uid('sim-uniform'), kind: 'uniform' },
+      { binding: 1, resource: velCur(), kind: 'read-only-storage' },
+      { binding: 2, resource: denCur(), kind: 'read-only-storage' },
+      { binding: 3, resource: denNext(), kind: 'storage' },
+    ]);
+  }
+  denFlip = !denFlip;
+
+  // Riders read the FINAL divergence-free velocity, the FINAL density
+  // and the pressure field the projection just solved.
+  const riderDispatch: [number, number, number] = [Math.max(1, Math.ceil(riderCount / 64)), 1, 1];
+  addPass('smoke-riders-riders', SMOKE_RIDERS_NATIVE_SHADER_IDS.riders, 'cs_riders', riderDispatch, [
+    { binding: 0, resource: uid('rider-uniform'), kind: 'uniform' },
+    { binding: 1, resource: rid('riders'), kind: 'storage' },
+    { binding: 2, resource: velCur(), kind: 'read-only-storage' },
+    { binding: 3, resource: denCur(), kind: 'read-only-storage' },
+    { binding: 4, resource: prsCur(), kind: 'read-only-storage' },
+  ]);
+
+  const tileDispatch: [number, number, number] = [Math.max(1, Math.ceil(tileCount / 64)), 1, 1];
+  addPass('smoke-riders-clear-tiles', SMOKE_RIDERS_NATIVE_SHADER_IDS.tiles, 'cs_clear_tiles', tileDispatch, [
+    { binding: 0, resource: uid('bin-uniform'), kind: 'uniform' },
+    { binding: 1, resource: rid('riders'), kind: 'read-only-storage' },
+    { binding: 2, resource: tid('tile-counts'), kind: 'storage' },
+    { binding: 3, resource: tid('tile-indices'), kind: 'storage' },
+  ]);
+  addPass('smoke-riders-bin-riders', SMOKE_RIDERS_NATIVE_SHADER_IDS.tiles, 'cs_bin_riders', riderDispatch, [
+    { binding: 0, resource: uid('bin-uniform'), kind: 'uniform' },
+    { binding: 1, resource: rid('riders'), kind: 'read-only-storage' },
+    { binding: 2, resource: tid('tile-counts'), kind: 'storage' },
+    { binding: 3, resource: tid('tile-indices'), kind: 'storage' },
+  ]);
+
+  const renderPass: SmokeRidersNativeGraphRenderPass = {
+    name: 'smoke-riders-unified',
+    shader_id: SMOKE_RIDERS_NATIVE_SHADER_IDS.render,
+    vertex_entry: 'vs_main',
+    fragment_entry: 'fs_main',
+    target: 'source_frame',
+    source_id: sourceId,
+    seq: frameIndex,
+    clear: true,
+    clear_color: [0, 0, 0, 0],
+    include_snapshot: !!options.includeSnapshot,
+    blend: 'alpha',
+    primitive: 'triangle-list',
+    vertex_count: 3,
+    instance_count: 1,
+    bindings: [
+      { binding: 0, resource: uid('render-uniform'), kind: 'uniform' },
+      { binding: 1, resource: denCur(), kind: 'read-only-storage' },
+      { binding: 2, resource: rid('riders'), kind: 'read-only-storage' },
+      { binding: 3, resource: tid('tile-counts'), kind: 'read-only-storage' },
+      { binding: 4, resource: tid('tile-indices'), kind: 'read-only-storage' },
+    ],
+  };
+
+  state = {
+    ...state,
+    grid: params.gridSize,
+    riderCount,
+    tileCountX,
+    tileCountY,
+    velFlip,
+    denFlip,
+    prsFlip,
+  };
+
+  return {
+    config: {
+      buffers,
+      passes,
+      render_passes: [renderPass],
+      readbacks: [],
+    },
+    sourceId,
+    state,
+    riderCount,
+    passCount: passes.length + 1,
+  };
+}
+
+/* ============================================================== */
+/* BROWSER FALLBACK                                                */
+/* ============================================================== */
+// The native compute graph above is the real instrument. The in-browser
+// WebGPU path keeps working by driving the two existing renderers with
+// params derived from the new model — approximate, but it never
+// regresses to a black layer on the non-native build.
+
+export interface SmokeRidersInnerParams {
+  smoke: Partial<Smoke3DParams>;
+  spheres: Partial<VolumetricSpheresParams>;
 }
 
 export function buildSmokeRidersInnerParams(
   params?: Record<string, any> | null,
   bands?: { bass?: number; treble?: number } | null,
 ): SmokeRidersInnerParams {
-  const p = { ...smokeRidersParamDefaults, ...(params ?? {}) };
-  const style = String(p.style ?? 'orbital');
-  const quality = String(p.quality ?? 'balanced');
-  const intensity = Number(p.intensity ?? 1);
-  const reactive = !!p.audioReactive;
-  const bass = reactive ? Math.min(1.8, Number(bands?.bass ?? 0) * Number(p.bassDrive ?? 1.2)) : 0;
-  const treble = reactive ? Number(bands?.treble ?? 0) : 0;
-  const colorA = rgb01(p.colorA, [0.28, 0.66, 1.0]);
-  const colorB = rgb01(p.colorB, [1.0, 0.28, 0.62]);
-  const colorC = rgb01(p.colorC, [1.0, 0.8, 0.36]);
-  const colorD = rgb01(p.colorD, [0.47, 1.0, 0.87]);
-  const smokeTint = rgb01(p.smokeColor, [0.07, 0.09, 0.18]);
-  const gridSize = quality === 'ultra' ? 64 : quality === 'performance' ? 32 : 48;
-  const countScale = quality === 'ultra' ? 1.25 : quality === 'performance' ? 0.55 : 1;
-  const styleTuning = smokeRidersStyleTuning(style);
-  const sphereCount = Math.max(24, Math.round(Number(p.sphereCount ?? 192) * countScale));
-  const sphereSize = Number(p.sphereSize ?? 0.08) * styleTuning.sizeScale;
-
+  const p = resolveSmokeRidersParams(params, bands);
+  const to255 = (c: [number, number, number]): [number, number, number] =>
+    [c[0] * 255, c[1] * 255, c[2] * 255];
   return {
     smoke: {
-      gridSize: gridSize as Smoke3DParams['gridSize'],
-      emitterCount: styleTuning.emitters,
-      spread: Number(p.smokeSpread ?? 0.42),
-      spawnY: styleTuning.spawnY,
-      splatRadius: styleTuning.splatRadius,
-      splatStrength: (2.4 + bass * 1.8) * Math.max(0.1, intensity),
-      splatVelocityMag: styleTuning.splatVelocity + bass * 0.35,
-      splatRate: 42 + bass * 18,
-      velocityDecay: 0.982,
-      densityDecay: styleTuning.densityDecay,
-      windX: styleTuning.windX,
-      windY: styleTuning.windY,
-      windZ: styleTuning.windZ,
-      turbStrength: Number(p.smokeTurbulence ?? 0.85) + bass * 0.5,
-      turbScale: styleTuning.turbScale,
-      emission: Number(p.smokeGlow ?? 2.1) * (0.85 + intensity * 0.35),
-      density: Number(p.smokeDensity ?? 2.75),
-      fogColor: smokeTint,
-      fogOpacity: 1,
-      lightDirX: -0.35,
-      lightDirY: 0.62,
-      lightDirZ: 0.74,
-      lightStrength: 0.75 + intensity * 0.16,
-      lightColor: colorC,
-      ambient: 0.18,
-      shadowSteps: Math.round(Number(p.shadowSteps ?? 4)),
-      shadowStepLen: 0.06,
-      volumeScaleX: 1.72,
-      volumeScaleZ: 1.25,
-      fovDeg: Number(p.fovDeg ?? 48),
-      cameraZ: Number(p.cameraZ ?? 2.85),
-      rotateX: Number(p.rotateX ?? 0),
-      rotateY: Number(p.rotateY ?? 0),
-      rotateZ: Number(p.rotateZ ?? 0),
-      autoRotateX: styleTuning.spinX,
-      autoRotateY: Number(p.autoSpin ?? 4.5),
-      autoRotateZ: styleTuning.spinZ,
-      bass,
-      treble,
-      audioBurst: Number(p.bassDrive ?? 1.2),
-      emitterColors: [colorA, colorB, colorC, colorD, colorA, colorB, colorC, colorD],
+      gridSize: p.gridSize,
+      emitterCount: p.emitterCount,
+      spread: p.spread,
+      spawnY: p.spawnY,
+      splatRadius: p.splatRadius,
+      splatStrength: p.splatStrength,
+      splatVelocityMag: p.splatVelocityMag,
+      splatRate: p.splatRate,
+      velocityDecay: p.velocityDecay,
+      densityDecay: p.densityDecay,
+      windX: p.wind[0],
+      windY: p.wind[1],
+      windZ: p.wind[2],
+      turbStrength: p.turbStrength + p.vorticity * 0.06,
+      turbScale: p.turbScale,
+      emission: p.emission * 1.6,
+      density: p.density,
+      fogColor: p.backgroundColor,
+      fogOpacity: p.backgroundMode === 0 ? 0 : p.backgroundOpacity,
+      lightDirX: -0.42,
+      lightDirY: 0.68,
+      lightDirZ: 0.62,
+      lightStrength: p.keyStrength * 0.28,
+      lightColor: p.keyColor,
+      ambient: p.ambient,
+      shadowSteps: p.shadowSteps,
+      shadowStepLen: p.shadowStepLen,
+      volumeScaleX: p.volumeScaleX,
+      volumeScaleZ: p.volumeScaleZ,
+      fovDeg: p.fovDeg,
+      cameraZ: p.cameraZ,
+      rotateX: p.rotateX,
+      rotateY: p.rotateY,
+      rotateZ: p.rotateZ,
+      autoRotateX: p.autoRotateX,
+      autoRotateY: p.autoRotateY,
+      autoRotateZ: p.autoRotateZ,
+      bass: p.bass,
+      treble: p.treble,
+      audioBurst: p.audioBurst,
+      emitterColors: [p.colorA, p.colorB, p.colorC, p.colorD, p.colorA, p.colorB, p.colorC, p.colorD],
     },
     spheres: {
-      layout: styleTuning.sphereLayout,
-      sphereCount,
-      radiusScale: sphereSize,
-      radiusVariance: styleTuning.radiusVariance,
-      spread: styleTuning.sphereSpread,
-      depth: styleTuning.sphereDepth,
-      opacity: Number(p.sphereOpacity ?? 0.92),
-      fogDensity: 0.34 + Number(p.smokeDensity ?? 2.75) * 0.04,
+      layout: 'cluster',
+      sphereCount: p.riderCount,
+      radiusScale: p.riderSize,
+      radiusVariance: p.riderSizeVariance,
+      spread: p.volumeScaleX * 0.8,
+      depth: p.volumeScaleZ * 0.9,
+      opacity: 1,
+      fogDensity: 0.3 + p.density * 0.04,
       backgroundOpacity: 0,
-      fogColor: smokeTint,
+      fogColor: p.backgroundColor,
       clearBackground: false,
-      lightX: -0.46,
-      lightY: 0.72,
-      lightZ: 1.08,
-      lightStrength: 0.68 + intensity * 0.18,
-      ambient: 0.24,
-      diffuse: 1.05,
-      specular: 0.45 + Number(p.sphereGloss ?? 0.7) * 0.9,
-      shininess: 30 + Number(p.sphereGloss ?? 0.7) * 120,
-      reflection: 0.12 + Number(p.sphereGloss ?? 0.7) * 0.25,
-      rim: styleTuning.rim,
-      colorCycle: styleTuning.colorCycle + bass * 0.02,
-      saturation: styleTuning.saturation,
-      brightness: 1.0 + intensity * 0.14,
-      colorA: p.colorA,
-      colorB: p.colorB,
-      colorC: p.colorC,
-      colorD: p.colorD,
-      motion: Number(p.sphereMotion ?? 0.72),
-      swirl: styleTuning.sphereSwirl,
-      pull: styleTuning.spherePull,
-      chaos: styleTuning.sphereChaos,
-      damping: styleTuning.sphereDamping,
-      audioReactive: !!p.audioReactive,
-      bassPulse: Number(p.bassDrive ?? 1.2),
-      trebleSparkle: Number(p.trebleShimmer ?? 0.025) * 10,
-      fovDeg: Number(p.fovDeg ?? 48),
-      cameraZ: Number(p.cameraZ ?? 2.85),
-      rotateX: Number(p.rotateX ?? 0),
-      rotateY: Number(p.rotateY ?? 0),
-      rotateZ: Number(p.rotateZ ?? 0),
-      autoRotateX: styleTuning.spinX * 0.45,
-      autoRotateY: Number(p.autoSpin ?? 4.5) * 0.72,
-      autoRotateZ: styleTuning.spinZ * 0.45,
+      lightX: -0.42,
+      lightY: 0.68,
+      lightZ: 0.62,
+      lightStrength: p.keyStrength * 0.3,
+      ambient: p.ambient + 0.1,
+      diffuse: 1.0,
+      specular: 0.4 + (1 - p.roughness) * 0.9,
+      shininess: 24 + (1 - p.roughness) * 160,
+      reflection: 0.1 + (1 - p.roughness) * 0.35,
+      rim: p.rimStrength * 0.2,
+      colorCycle: 0.02,
+      saturation: 1.05,
+      brightness: p.exposure,
+      colorA: to255(p.colorA),
+      colorB: to255(p.colorB),
+      colorC: to255(p.colorC),
+      colorD: to255(p.colorD),
+      motion: p.flowCoupling,
+      swirl: Math.abs(p.vortexPull) * 2,
+      pull: 0.2,
+      chaos: p.turbStrength * 0.4,
+      damping: 1 + p.riderDamping,
+      audioReactive: p.audioReactive,
+      bassPulse: p.audioBurst,
+      trebleSparkle: 0.25,
+      fovDeg: p.fovDeg,
+      cameraZ: p.cameraZ,
+      rotateX: p.rotateX,
+      rotateY: p.rotateY,
+      rotateZ: p.rotateZ,
+      autoRotateX: p.autoRotateX,
+      autoRotateY: p.autoRotateY,
+      autoRotateZ: p.autoRotateZ,
     },
-  };
-}
-
-function smokeRidersInitialState(): SmokeRidersNativeGraphState {
-  return { smoke: null, spheres: null };
-}
-
-export function buildSmokeRidersNativeComputeGraph(options: SmokeRidersNativeGraphOptions): SmokeRidersNativeGraphBuildResult {
-  const sourceId = String(options.sourceId || 'smoke-riders-native-source');
-  const width = Math.round(options.width || 1920);
-  const height = Math.round(options.height || 1080);
-  const time = Math.max(0, Number.isFinite(options.time) ? Number(options.time) : 0);
-  const frameDelta = typeof options.frameDelta === 'number' && Number.isFinite(options.frameDelta)
-    ? options.frameDelta
-    : 1 / 60;
-  const frameIndex = Math.max(0, Math.round(options.frameIndex ?? 0));
-  const prevState = options.state ?? smokeRidersInitialState();
-  const mapped = buildSmokeRidersInnerParams(options.params ?? {}, {
-    bass: options.audioBass ?? 0,
-    treble: options.audioTreble ?? 0,
-  });
-
-  const smokeGraph = buildSmoke3DNativeComputeGraph({
-    sourceId,
-    params: mapped.smoke,
-    width,
-    height,
-    time,
-    frameDelta,
-    frameIndex,
-    state: prevState.smoke,
-    reset: !!options.reset || !prevState.smoke,
-    includeSnapshot: false,
-  });
-  const sphereGraph = buildVolumetricSpheresNativeComputeGraph({
-    sourceId,
-    params: mapped.spheres,
-    width,
-    height,
-    time,
-    frameDelta,
-    frameIndex,
-    state: prevState.spheres,
-    reset: !!options.reset || !prevState.spheres,
-    includeSnapshot: !!options.includeSnapshot,
-  });
-
-  const smokeRender = {
-    ...(smokeGraph.config.render as Record<string, any>),
-    source_id: sourceId,
-    seq: frameIndex,
-    clear: true,
-    include_snapshot: false,
-    blend: 'replace',
-  };
-  const sphereRenderPasses = sphereGraph.config.render_passes.map((pass, index, passes) => {
-    const rest = { ...(pass as Record<string, any>) };
-    delete rest.clear_color;
-    return {
-      ...rest,
-      source_id: sourceId,
-      seq: frameIndex,
-      clear: false,
-      include_snapshot: !!options.includeSnapshot && index === passes.length - 1,
-    };
-  });
-
-  return {
-    config: {
-      buffers: [...smokeGraph.config.buffers, ...sphereGraph.config.buffers],
-      passes: [...smokeGraph.config.passes, ...sphereGraph.config.passes],
-      render_passes: [smokeRender, ...sphereRenderPasses],
-      readbacks: [],
-    },
-    sourceId,
-    state: {
-      smoke: smokeGraph.state,
-      spheres: sphereGraph.state,
-    },
-    passCount: smokeGraph.passCount + sphereGraph.passCount + 1,
   };
 }
 
@@ -474,9 +2918,9 @@ export class WebGPUSmokeRidersShader implements GpuShaderImpl {
     const smoothing = 0.86;
     const attack = 1 - Math.pow(smoothing, dt * 90);
     const release = 1 - Math.pow(smoothing, dt * 26);
-    const follow = (prev: number, target: number) => {
-      const amount = target > prev ? attack : release;
-      return prev + (target - prev) * amount;
+    const follow = (prev: number, targetValue: number) => {
+      const amount = targetValue > prev ? attack : release;
+      return prev + (targetValue - prev) * amount;
     };
 
     this.smoothedBands = {
@@ -518,6 +2962,7 @@ export class WebGPUSmokeRidersShader implements GpuShaderImpl {
   getDebugStats(): Record<string, any> {
     return {
       instrument: 'smoke-riders',
+      mode: 'webgpu-fallback',
       smoke: this.smoke.getDebugStats(),
       particles: typeof (this.particles as any).getDebugStats === 'function'
         ? (this.particles as any).getDebugStats()

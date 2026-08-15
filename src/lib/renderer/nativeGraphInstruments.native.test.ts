@@ -41,7 +41,9 @@ import {
   buildPlanetNativePrecompileCommands,
 } from './shaders/webgpuPlanet';
 import {
+  SMOKE_RIDERS_NATIVE_GRAPH_SHADER_IDS,
   buildSmokeRidersNativeComputeGraph,
+  buildSmokeRidersNativePrecompileCommands,
 } from './shaders/webgpuSmokeRidersShader';
 import {
   buildVolumetricSpheresNativeComputeGraph,
@@ -141,10 +143,9 @@ const EXPECTED_NATIVE_GRAPH_MANIFEST: NativeGraphManifestExpectation[] = [
   {
     id: 'smoke-riders',
     feature: 'native_smoke_riders_graph',
-    shaderIds: shaderIdsFromPrecompileCommands([
-      ...buildSmoke3DNativePrecompileCommands(),
-      ...buildVolumetricSpheresNativePrecompileCommands(),
-    ]),
+    // Reused fluid chain (no 3d-smoke/render — Smoke Riders owns the one
+    // unified raymarch) plus the new coupled passes.
+    shaderIds: [...SMOKE_RIDERS_NATIVE_GRAPH_SHADER_IDS],
   },
   {
     id: 'ink-cloud',
@@ -766,6 +767,7 @@ describe('Native graph instrument runtime fixtures', () => {
           ...buildFlythroughNativePrecompileCommands(),
           ...buildSmoke3DNativePrecompileCommands(),
           ...buildVolumetricSpheresNativePrecompileCommands(),
+          ...buildSmokeRidersNativePrecompileCommands(),
         ],
       }, 8000);
       expect(Number(compiled?.dropped ?? 0)).toBe(0);
@@ -898,7 +900,15 @@ describe('Native graph instrument runtime fixtures', () => {
             composite_source_id: ridersSourceId,
             input_source_id: null,
             effect_graph: null,
-            params: { quality: 'performance', sphereCount: 72, autoSpin: 18 },
+            params: {
+              quality: 'performance',
+              style: 'paint',
+              riderCount: 160,
+              vorticity: 5,
+              autoSpin: 18,
+              backgroundMode: 'studio',
+              backgroundOpacity: 1,
+            },
           },
         ],
       }, 8000);
@@ -1496,6 +1506,7 @@ describe('Native graph instrument runtime fixtures', () => {
           ...buildFlythroughNativePrecompileCommands(),
           ...buildInkCloudNativePrecompileCommands(),
           ...buildPointCloudFXNativePrecompileCommands(),
+          ...buildSmokeRidersNativePrecompileCommands(),
         ],
       }, 12000);
       expect(Number(precompileSummary?.dropped ?? 0)).toBe(0);
@@ -1712,9 +1723,12 @@ describe('Native graph instrument runtime fixtures', () => {
             sourceId: 'native-graph-fixture-smoke-riders',
             params: {
               quality: 'performance',
-              style: 'orbital',
-              sphereCount: 72,
-              smokeDensity: 1.7,
+              style: 'paint',
+              riderCount: 160,
+              smokeDensity: 3.4,
+              vorticity: 5,
+              backgroundMode: 'studio',
+              backgroundOpacity: 1,
             },
             width: 160,
             height: 90,

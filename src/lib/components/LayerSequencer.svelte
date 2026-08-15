@@ -206,7 +206,7 @@
             {@const isContinuous = !!pattern.continuousLayers?.[layer.id]}
             <!-- Layer name (sticky left) + continuous-mode toggle -->
             <div class="seq-layer-label" title={layer.name}>
-              <span class="seq-layer-dot" style="background: {layer.visible ? '#FF6B6B' : '#333'}"></span>
+              <span class="seq-layer-dot" style="background: {layer.visible ? 'var(--ga-coral, #ff6f5e)' : '#333'}"></span>
               <button
                 class="seq-cont-btn"
                 class:active={isContinuous}
@@ -265,8 +265,8 @@
     font-weight: 600;
     font-family: inherit;
   }
-  .seq-toggle:hover { border-color: #FF6B6B; box-shadow: 0 4px 30px rgba(255,107,107,0.2); }
-  .seq-toggle.open { border-color: #FF6B6B; background: linear-gradient(135deg, #1a2020, #201515); }
+  .seq-toggle:hover { border-color: var(--ga-coral, #ff6f5e); box-shadow: 0 4px 30px color-mix(in srgb, var(--ga-coral, #ff6f5e) 20%, transparent); }
+  .seq-toggle.open { border-color: var(--ga-coral, #ff6f5e); background: linear-gradient(135deg, #1a2020, #201515); }
   .toggle-icon { font-size: 11px; color: var(--text-muted, #888); }
   .toggle-label { font-size: 13px; font-weight: 600; }
 
@@ -304,7 +304,7 @@
   .seq-header-left { flex: 1; }
   .seq-header-center { flex: 0 0 auto; }
   .seq-header-right { flex: 1; justify-content: flex-end; }
-  .seq-title { font-size: 12px; font-weight: 700; color: #FF6B6B; letter-spacing: 1px; margin-right: 4px; }
+  .seq-title { font-size: 12px; font-weight: 700; color: var(--ga-coral, #ff6f5e); letter-spacing: 1px; margin-right: 4px; }
   .seq-steps-label { font-size: 11px; color: #666; }
 
   /* ═══════════════════════════════════
@@ -314,31 +314,31 @@
     background: var(--bg-tertiary, #1a1a1e); border: 1px solid #333; color: var(--text-primary, #ccc);
     padding: 3px 6px; border-radius: 4px; font-size: 12px; cursor: pointer; font-family: inherit;
   }
-  .seq-select:hover { border-color: #FF6B6B; }
+  .seq-select:hover { border-color: var(--ga-coral, #ff6f5e); }
   .seq-input {
     background: var(--bg-tertiary, #1a1a1e); border: 1px solid #333; color: var(--text-primary, #ccc);
     padding: 3px 6px; border-radius: 4px; font-size: 12px; font-family: inherit;
   }
-  .seq-input:focus { border-color: #FF6B6B; outline: none; }
+  .seq-input:focus { border-color: var(--ga-coral, #ff6f5e); outline: none; }
   .seq-bpm { width: 50px; text-align: center; }
-  .seq-density { width: 60px; padding: 0; height: 16px; accent-color: #FF6B6B; }
+  .seq-density { width: 60px; padding: 0; height: 16px; accent-color: var(--ga-coral, #ff6f5e); }
   .seq-btn {
     display: flex; align-items: center; justify-content: center;
     width: 28px; height: 24px; background: var(--bg-tertiary, #1a1a1e); border: 1px solid #444;
     border-radius: 4px; color: var(--text-primary, #ccc); cursor: pointer; transition: all 0.15s;
     font-family: inherit; padding: 0;
   }
-  .seq-btn:hover { background: rgba(255,107,107,0.2); border-color: #FF6B6B; color: #FF6B6B; }
-  .seq-play { background: rgba(255,107,107,0.15); border-color: #FF6B6B; color: #FF6B6B; }
-  .seq-play:hover { background: rgba(255,107,107,0.35); }
+  .seq-btn:hover { background: color-mix(in srgb, var(--ga-coral, #ff6f5e) 20%, transparent); border-color: var(--ga-coral, #ff6f5e); color: var(--ga-coral, #ff6f5e); }
+  .seq-play { background: color-mix(in srgb, var(--ga-coral, #ff6f5e) 15%, transparent); border-color: var(--ga-coral, #ff6f5e); color: var(--ga-coral, #ff6f5e); }
+  .seq-play:hover { background: color-mix(in srgb, var(--ga-coral, #ff6f5e) 35%, transparent); }
   .seq-tap { font-size: 10px; font-weight: 700; width: auto; padding: 0 8px; letter-spacing: 0.5px; }
   .seq-clear { opacity: 0.6; }
   .seq-clear:hover { opacity: 1; }
   .seq-loop-label { display: flex; align-items: center; gap: 3px; cursor: pointer; color: var(--text-muted, #888); font-size: 12px; }
   .seq-loop-label input { display: none; }
-  .seq-loop-label input:checked ~ svg { color: #FF6B6B; }
+  .seq-loop-label input:checked ~ svg { color: var(--ga-coral, #ff6f5e); }
   .seq-step-display {
-    font-size: 13px; color: #FF6B6B; font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
+    font-size: 13px; color: var(--ga-coral, #ff6f5e); font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
     min-width: 40px; text-align: center; font-weight: 700;
   }
   .seq-step-sep { color: #555; }
@@ -348,12 +348,12 @@
     color: var(--text-muted, #888); cursor: pointer; transition: all 0.15s; font-family: inherit; font-weight: 600;
   }
   .seq-timing-btn:first-child { border-right: 1px solid #333; }
-  .seq-timing-btn.active { background: rgba(255,107,107,0.2); color: #FF6B6B; }
+  .seq-timing-btn.active { background: color-mix(in srgb, var(--ga-coral, #ff6f5e) 20%, transparent); color: var(--ga-coral, #ff6f5e); }
   .seq-timing-btn:hover:not(.active) { background: #222; color: var(--text-secondary, #aaa); }
   .seq-xfade-label {
     display: flex; align-items: center; gap: 4px; font-size: 11px; color: var(--text-muted, #888); cursor: pointer;
   }
-  .seq-xfade-label input[type="checkbox"] { accent-color: #FF6B6B; width: 12px; height: 12px; }
+  .seq-xfade-label input[type="checkbox"] { accent-color: var(--ga-coral, #ff6f5e); width: 12px; height: 12px; }
   .seq-xfade-dur { width: 52px; }
   .seq-sub { width: 48px; }
 
@@ -472,16 +472,16 @@
     padding: 0;
   }
   .seq-cell:hover {
-    border-color: rgba(255,107,107,0.3);
+    border-color: color-mix(in srgb, var(--ga-coral, #ff6f5e) 30%, transparent);
     background: #1e1e22;
   }
   .seq-cell.active {
-    background: #FF6B6B;
-    border-color: rgba(255,107,107,0.5);
-    box-shadow: 0 0 4px rgba(255,107,107,0.2);
+    background: var(--ga-coral, #ff6f5e);
+    border-color: color-mix(in srgb, var(--ga-coral, #ff6f5e) 50%, transparent);
+    box-shadow: 0 0 4px color-mix(in srgb, var(--ga-coral, #ff6f5e) 20%, transparent);
   }
   .seq-cell.active:hover {
-    background: #FF8585;
+    background: color-mix(in srgb, var(--ga-coral, #ff6f5e) 78%, #ffffff);
   }
   .seq-cell.current {
     border-color: rgba(76,175,80,0.35);

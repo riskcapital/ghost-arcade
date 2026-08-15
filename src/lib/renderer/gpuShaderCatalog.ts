@@ -123,17 +123,35 @@ const VOLUMETRIC_BALLS_DEF: GpuShaderDef = {
 const SMOKE_RIDERS_DEF: GpuShaderDef = {
   id: 'smoke-riders',
   label: 'Smoke Riders',
-  description: '3D volumetric smoke with real analytic spheres moving through the atmosphere. This is the first combined smoke + sphere instrument on the native-renderer path.',
+  description: 'Glossy riders genuinely embedded in a 3D fluid. MacCormack advection and surface tension keep the paint stringy enough to neck and pinch into droplets, the riders are carried by the real velocity field through an analytic Stokes-drag solve (τ scales with r², so droplets whip and big spheres lag), and ONE raymarch resolves smoke, spheres, mutual occlusion, volume shadows, clear-coat studio lighting and AgX together.',
   category: 'Generative',
   paramSchema: smokeRidersParamSchema,
   defaultParams: smokeRidersParamDefaults,
   needsSource: false,
   create: (device, presentFormat) => new WebGPUSmokeRidersShader(device, presentFormat),
+  // MacCormack doubles the advection cost and surface tension adds a
+  // ~48-read pass, so the two cheapest tiers force the single-pass
+  // advection chain and trim the march instead of the pressure solve
+  // (which is warm-started and must stay at 20+ sweeps everywhere).
   qualityBudgets: {
-    low: { maxParams: { gridSize: 32, shadowSteps: 2, emitterCount: 4, particleCount: 70000 }, scaleMaxParams: ['shadowSteps', 'emitterCount', 'particleCount'] },
-    balanced: { maxParams: { gridSize: 48, shadowSteps: 4, emitterCount: 6, particleCount: 140000 }, scaleMaxParams: ['shadowSteps', 'emitterCount', 'particleCount'] },
-    high: { maxParams: { gridSize: 64, shadowSteps: 6, emitterCount: 8, particleCount: 220000 }, scaleMaxParams: ['shadowSteps', 'particleCount'] },
-    ultra: { maxParams: { gridSize: 64, shadowSteps: 8, emitterCount: 8, particleCount: 300000 }, scaleMaxParams: ['shadowSteps', 'particleCount'] },
+    low: {
+      maxParams: { gridSize: 32, shadowSteps: 2, marchSteps: 36, riderCount: 160, emitterCount: 4 },
+      scaleMaxParams: ['shadowSteps', 'marchSteps', 'riderCount', 'emitterCount'],
+      forceParams: { advection: 'semi-lagrangian' },
+    },
+    balanced: {
+      maxParams: { gridSize: 48, shadowSteps: 5, marchSteps: 72, riderCount: 480, emitterCount: 6 },
+      scaleMaxParams: ['shadowSteps', 'marchSteps', 'riderCount', 'emitterCount'],
+      forceParams: { advection: 'semi-lagrangian' },
+    },
+    high: {
+      maxParams: { gridSize: 64, shadowSteps: 8, marchSteps: 108, riderCount: 1024, emitterCount: 8 },
+      scaleMaxParams: ['shadowSteps', 'marchSteps', 'riderCount'],
+    },
+    ultra: {
+      maxParams: { gridSize: 64, shadowSteps: 12, marchSteps: 160, riderCount: 2048, emitterCount: 8 },
+      scaleMaxParams: ['shadowSteps', 'marchSteps', 'riderCount'],
+    },
   },
 };
 

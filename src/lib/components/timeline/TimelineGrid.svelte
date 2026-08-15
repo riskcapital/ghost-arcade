@@ -499,7 +499,7 @@
     position: absolute;
     top: 50%;
     transform: translate(-50%, -50%);
-    color: #FF6B6B;
+    color: var(--ga-coral, #ff6f5e);
     font-size: 17px;
     cursor: grab;
     padding: 2px 4px;
@@ -508,8 +508,8 @@
     user-select: none;
     pointer-events: auto;
   }
-  .kf-mark:hover { color: #FF8585; font-size: 19px; }
-  .kf-mark:active { cursor: grabbing; color: #FFAAAA; }
+  .kf-mark:hover { color: color-mix(in srgb, var(--ga-coral, #ff6f5e) 78%, #ffffff); font-size: 19px; }
+  .kf-mark:active { cursor: grabbing; color: color-mix(in srgb, var(--ga-coral, #ff6f5e) 55%, #ffffff); }
   .kf-mark.bool { color: #7EC8E3; }
   .kf-mark.selected {
     color: #FFD96B;
@@ -532,7 +532,7 @@
     left: -5px;
     width: 11px;
     height: 10px;
-    background: #FF6B6B;
+    background: var(--ga-coral, #ff6f5e);
     clip-path: polygon(0 0, 100% 0, 50% 100%);
   }
   .playhead-line {
@@ -541,7 +541,7 @@
     bottom: 0;
     left: 0;
     width: 1px;
-    background: #FF6B6B;
+    background: var(--ga-coral, #ff6f5e);
     opacity: 0.8;
   }
   .context-menu {
@@ -565,7 +565,7 @@
     text-align: left;
     cursor: pointer;
   }
-  .ctx-item:hover:not(:disabled) { background: rgba(255,107,107,0.15); color: #fff; }
+  .ctx-item:hover:not(:disabled) { background: color-mix(in srgb, var(--ga-coral, #ff6f5e) 15%, transparent); color: #fff; }
   .ctx-item:disabled { opacity: 0.4; cursor: default; }
   .ctx-delete { color: #FF4757; }
   .ctx-sep { height: 1px; background: rgba(255,255,255,0.06); margin: 2px 0; }
