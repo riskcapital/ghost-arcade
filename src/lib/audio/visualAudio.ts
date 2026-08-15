@@ -5,7 +5,7 @@
 // the next frame. This module turns the app's audioStore into Milkdrop-style
 // control signals that are safe to feed into visual params everywhere.
 
-import { writable } from 'svelte/store';
+import { get, writable } from 'svelte/store';
 import { audioStore, type AudioState } from '../stores/audio';
 import type { AudioBands, BandKickSnare } from './analyzer';
 import { MilkdropFollower } from './milkdropFollower';
@@ -135,6 +135,12 @@ function decayVisualAudio(prev: VisualAudioState, dt: number): VisualAudioState 
   };
 }
 
+/** dt clamp shared by the live and manual-clock paths. A debugger pause
+ *  (or a slow export frame) must never hand the integrators a huge step. */
+function clampDt(dt: number): number {
+  return Math.max(0.001, Math.min(0.1, Number.isFinite(dt) ? dt : 1 / 60));
+}
+
 function createVisualAudioStore() {
   const follower = new MilkdropFollower();
   const { subscribe, set } = writable<VisualAudioState>(DEFAULT_VISUAL_AUDIO);
@@ -144,11 +150,24 @@ function createVisualAudioStore() {
   let energy = 0;
   let peak = 0;
 
-  audioStore.subscribe((audio) => {
-    const t = nowSec();
-    const dt = lastAt > 0 ? Math.max(0.001, Math.min(0.1, t - lastAt)) : 1 / 60;
-    lastAt = t;
+  // ─── Manual-clock (offline render) state ──────────────────────────
+  // Mirrors setISFManualTime / setStageEffectsManualTime: while a virtual
+  // time is set, every integrator in here advances on the DELTA BETWEEN
+  // SUCCESSIVE MANUAL TIMES instead of the wall clock. An export that
+  // takes 15 s of wall time to write 10 s of video must fold exactly 10 s
+  // of envelope / LFO / beat-phase motion into the file.
+  let manualTime: number | null = null;
+  let lastManualTime: number | null = null;
+  /** Published state as of the moment the export took over, restored on
+   *  release so the live show doesn't inherit the export's envelopes. */
+  let liveSnapshot: VisualAudioState | null = null;
+  /** Newest analyser emission. In manual mode the store is pumped once per
+   *  exported frame rather than once per analyser callback (an export may
+   *  capture several frames between two callbacks, or none), so the pump
+   *  needs the latest input parked somewhere it can read it. */
+  let latestAudio: AudioState | null = null;
 
+  function advance(audio: AudioState, dt: number) {
     if (audio.inputType !== lastInputType) {
       follower.reset();
       energy = 0;
@@ -217,16 +236,110 @@ function createVisualAudioStore() {
       bpm: audio.bpm || 0,
     };
     set(latest);
+  }
+
+  audioStore.subscribe((audio) => {
+    latestAudio = audio;
+    // Under an offline render's manual clock the analyser keeps firing at
+    // wall speed; letting it advance the follower is exactly the bug this
+    // mode exists to kill. Park the input and let pump() spend it.
+    if (manualTime !== null) return;
+    const t = nowSec();
+    const dt = lastAt > 0 ? clampDt(t - lastAt) : 1 / 60;
+    lastAt = t;
+    advance(audio, dt);
   });
+
+  /** Take over (number) or release (null) the follower's clock. Entering
+   *  manual mode snapshots the live published state and resets the
+   *  follower so the export starts from a clean baseline; releasing
+   *  resets it again and restores that snapshot, so a render never leaves
+   *  the live visuals mid-envelope. */
+  function setManualTime(seconds: number | null): void {
+    if (seconds === null || !Number.isFinite(seconds)) {
+      if (manualTime === null) return;
+      manualTime = null;
+      lastManualTime = null;
+      follower.reset();
+      energy = 0;
+      peak = 0;
+      // Force the next live emission onto the 1/60 bootstrap step instead
+      // of a dt the size of the whole export.
+      lastAt = 0;
+      if (liveSnapshot) {
+        latest = liveSnapshot;
+        liveSnapshot = null;
+        set(latest);
+      }
+      return;
+    }
+    if (manualTime === null) {
+      liveSnapshot = latest;
+      follower.reset();
+      energy = 0;
+      peak = 0;
+      lastManualTime = null;
+    }
+    manualTime = seconds;
+  }
+
+  /** Advance the follower to `seconds` on the virtual timeline. Called
+   *  once per exported frame. Engages manual mode on first call. */
+  function pump(seconds: number): void {
+    if (!Number.isFinite(seconds)) return;
+    const previous = lastManualTime;
+    setManualTime(seconds);
+    const dt = previous === null ? 1 / 60 : clampDt(seconds - previous);
+    lastManualTime = seconds;
+    advance(latestAudio ?? audioStoreSnapshot(), dt);
+  }
 
   return {
     subscribe,
     getSnapshot: () => latest,
+    setManualTime,
+    pump,
+    isManual: () => manualTime !== null,
   };
+}
+
+/** Last audioStore value, for the (impossible in practice) case where the
+ *  pump runs before any store emission has landed. */
+function audioStoreSnapshot(): AudioState {
+  return get(audioStore);
 }
 
 export const visualAudio = createVisualAudioStore();
 
 export function getVisualAudioSnapshot(): VisualAudioState {
   return visualAudio.getSnapshot();
+}
+
+/**
+ * Pin the visual-audio follower to an explicit virtual time, or release
+ * it back to the wall clock with `null`.
+ *
+ * Same contract as `setISFManualTime` / `setStageEffectsManualTime`: the
+ * offline render owns the clock for the duration of the export and hands
+ * it back in a `finally`. Live playback never calls this.
+ */
+export function setVisualAudioManualTime(seconds: number | null): void {
+  visualAudio.setManualTime(seconds);
+}
+
+/**
+ * Advance the follower by exactly one exported frame.
+ *
+ * The store is normally driven by analyser callbacks, which arrive on the
+ * wall clock — during an export several frames may be captured between two
+ * callbacks (or none at all), so the offline loop pumps it explicitly at
+ * `virtualTime` instead.
+ */
+export function pumpVisualAudio(virtualTime: number): void {
+  visualAudio.pump(virtualTime);
+}
+
+/** True while an offline render owns the follower's clock. */
+export function isVisualAudioManualClock(): boolean {
+  return visualAudio.isManual();
 }

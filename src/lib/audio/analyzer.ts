@@ -135,6 +135,10 @@ export class AudioAnalyzer {
   private animFrameId: number | null = null;
   private isRunning = false;
 
+  /** > 0 while an offline render is substituting its own frames. Reference
+   *  counted; see beginAnalysisHold(). */
+  private analysisHoldDepth = 0;
+
   // Callback for each analysis frame
   private onAnalysis: ((analysis: AudioAnalysis) => void) | null = null;
 
@@ -416,9 +420,40 @@ export class AudioAnalyzer {
     this.smoothing = Math.max(0, Math.min(1, value));
   }
 
+  /** Current smoothing factor — offline renders mirror it onto their own
+   *  analyzer instance so exported bands match what the user hears. */
+  getSmoothing(): number {
+    return this.smoothing;
+  }
+
   /** Check if analyzer is currently running */
   get running(): boolean {
     return this.isRunning;
+  }
+
+  /** The media element currently being analysed, if the source is a file.
+   *  The offline render needs it to find (and decode) the underlying
+   *  audio so it can analyse at virtual time instead of wall time. */
+  getMediaElement(): HTMLAudioElement | HTMLVideoElement | null {
+    return this.lastSourceType === 'mediaElement' ? this.lastMediaElement : null;
+  }
+
+  /**
+   * Suspend live analysis without tearing down the audio graph.
+   *
+   * An offline render that can virtualize its audio source (file input)
+   * computes each frame's spectrum from the decoded file at the export's
+   * virtual time. While that runs, the live RAF must not keep overwriting
+   * the store with wall-clock frames — and its beat/BPM/onset state must
+   * come out of the export exactly as it went in. Reference counted;
+   * always paired with endAnalysisHold() in a finally.
+   */
+  beginAnalysisHold(): void {
+    this.analysisHoldDepth += 1;
+  }
+
+  endAnalysisHold(): void {
+    this.analysisHoldDepth = Math.max(0, this.analysisHoldDepth - 1);
   }
 
   /**
@@ -491,11 +526,26 @@ export class AudioAnalyzer {
   private tick = (): void => {
     if (!this.isRunning || !this.analyserNode) return;
 
+    // An offline render substitutes its own frames (decoded from the
+    // source file at the export's virtual time) for the duration of the
+    // capture. Keep the RAF alive so live analysis resumes instantly, but
+    // don't advance any of the stateful detectors from wall-clock audio —
+    // that state has to survive the export untouched.
+    if (this.analysisHoldDepth > 0) {
+      this.animFrameId = requestAnimationFrame(this.tick);
+      return;
+    }
+
     // Get frequency and time-domain data
     this.analyserNode.getFloatFrequencyData(this.fftData);
     this.analyserNode.getFloatTimeDomainData(this.waveformData);
 
-    const analysis = this.analyze();
+    const analysis = this.analyzeBuffers(
+      this.fftData,
+      this.waveformData,
+      this.audioContext!.sampleRate,
+      performance.now(),
+    );
 
     if (this.onAnalysis) {
       this.onAnalysis(analysis);
@@ -504,14 +554,31 @@ export class AudioAnalyzer {
     this.animFrameId = requestAnimationFrame(this.tick);
   };
 
-  private analyze(): AudioAnalysis {
-    const now = performance.now();
-    const nyquist = this.audioContext!.sampleRate / 2;
-    const binCount = this.fftData.length;
+  /**
+   * Run the full analysis pipeline over an explicit pair of buffers at an
+   * explicit clock reading.
+   *
+   * The live `tick()` feeds this the AnalyserNode's output at
+   * `performance.now()`. The offline render path feeds a *second*
+   * AudioAnalyzer instance FFT frames it computed from the decoded source
+   * file at the export's virtual time — same band extraction, beat
+   * detection, BPM estimation, onset thresholds and refractory windows,
+   * just driven by a virtual clock. Every detector in here is stateful, so
+   * each timeline needs its own instance.
+   */
+  analyzeBuffers(
+    fftData: Float32Array,
+    waveformData: Float32Array,
+    sampleRate: number,
+    nowMs: number,
+  ): AudioAnalysis {
+    const now = nowMs;
+    const nyquist = sampleRate / 2;
+    const binCount = fftData.length;
     const binWidth = nyquist / binCount;
 
     // Extract frequency bands
-    const rawBands = this.extractBands(binWidth, binCount);
+    const rawBands = this.extractBands(fftData, binWidth, binCount);
 
     // Smooth bands. `high` is preserved as a synthetic mix of treble + air
     // for backward-compat with shaders / modulation maps that target the
@@ -531,10 +598,10 @@ export class AudioAnalyzer {
 
     // Calculate amplitude (RMS of waveform)
     let sumSq = 0;
-    for (let i = 0; i < this.waveformData.length; i++) {
-      sumSq += this.waveformData[i] * this.waveformData[i];
+    for (let i = 0; i < waveformData.length; i++) {
+      sumSq += waveformData[i] * waveformData[i];
     }
-    const rms = Math.sqrt(sumSq / this.waveformData.length);
+    const rms = Math.sqrt(sumSq / Math.max(1, waveformData.length));
 
     // Normalize amplitude (waveform is -1 to 1, rms of 0.5 is quite loud)
     const rawAmplitude = Math.min(1, rms * 2);
@@ -590,13 +657,13 @@ export class AudioAnalyzer {
     // Spectral centroid: weighted average of frequency bins normalized to 0-1
     let weightedSum = 0;
     let magnitudeSum = 0;
-    for (let i = 0; i < this.fftData.length; i++) {
-      const magnitude = Math.max(0, (this.fftData[i] + 90) / 80);
+    for (let i = 0; i < fftData.length; i++) {
+      const magnitude = Math.max(0, (fftData[i] + 90) / 80);
       weightedSum += i * magnitude;
       magnitudeSum += magnitude;
     }
     const spectralCentroid = magnitudeSum > 0
-      ? (weightedSum / magnitudeSum) / this.fftData.length
+      ? (weightedSum / magnitudeSum) / Math.max(1, fftData.length)
       : 0;
 
     // ===== Kick / snare onset detection =====
@@ -638,8 +705,8 @@ export class AudioAnalyzer {
     }
 
     return {
-      fftData: this.fftData,
-      waveformData: this.waveformData,
+      fftData: fftData as Float32Array<ArrayBuffer>,
+      waveformData: waveformData as Float32Array<ArrayBuffer>,
       bands: { ...this.smoothedBands },
       amplitude: this.smoothedAmplitude,
       peak: this.peakLevel,
@@ -665,7 +732,7 @@ export class AudioAnalyzer {
     };
   }
 
-  private extractBands(binWidth: number, binCount: number): AudioBands {
+  private extractBands(fftData: Float32Array, binWidth: number, binCount: number): AudioBands {
     // Map frequency ranges to bin indices
     const getBinRange = (lowHz: number, highHz: number): [number, number] => {
       const lowBin = Math.max(0, Math.floor(lowHz / binWidth));
@@ -682,7 +749,7 @@ export class AudioAnalyzer {
       for (let i = lo; i <= hi; i++) {
         // fftData is in dB, typically -90 to -10
         // Normalize: -90 -> 0, -10 -> 1
-        const normalized = (this.fftData[i] + 90) / 80;
+        const normalized = (fftData[i] + 90) / 80;
         sum += Math.max(0, Math.min(1, normalized));
       }
       return sum / (hi - lo + 1);

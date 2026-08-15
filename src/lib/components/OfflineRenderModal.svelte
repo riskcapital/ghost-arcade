@@ -12,6 +12,8 @@
   import { isDesktopApp } from '../bridge';
   import { getNativeRendererCapabilities } from '../api/native-renderer';
   import { project } from '../stores/layers';
+  import { audioStore } from '../stores/audio';
+  import { isAudioDrivenMod, modulationStore } from '../audio/modulation';
 
   export let isOpen = false;
   export let onClose: () => void = () => {};
@@ -185,6 +187,39 @@
   let _tickPulse = 0;
   // Reference _tickPulse so Svelte re-runs the elapsed derivations.
   $: void _tickPulse;
+
+  // ─── Live audio input warning ──────────────────────────────────────
+  //
+  // The render loop pins every clock it owns to the export's virtual
+  // timeline — including the visual-audio follower, so envelopes and LFOs
+  // always advance by exactly 1/fps per frame. What it CANNOT pin is the
+  // content of a live stream: a microphone or a system-audio capture only
+  // exists in the present, so frame N of the export sees whatever was
+  // playing when frame N happened to be captured, not what was playing
+  // N/fps seconds in. A file source is decoded and analysed at virtual
+  // time, so it comes out frame-accurate.
+  //
+  // Non-blocking on purpose — plenty of renders with a mic open aren't
+  // actually driving anything off it, and a user who wants the take
+  // should get the take.
+  $: liveAudioInput = $audioStore.isActive
+    && ($audioStore.inputType === 'microphone' || $audioStore.inputType === 'system');
+  $: liveAudioInputLabel = $audioStore.inputType === 'system' ? 'System audio' : 'Microphone';
+  // Audio-reactive content is either an explicit modulation assignment
+  // fed by the analyser, or a visible layer whose renderer samples the
+  // audio snapshot every frame (lines / light painting / splat / 3D model
+  // / GPU instruments / pixel FX all do, unconditionally).
+  $: hasAudioModulation = [...$modulationStore.values()].some(isAudioDrivenMod);
+  $: hasAudioReactiveLayer = ($project.layers ?? []).some(layer => layer.visible && (
+    !!layer.linesContent
+    || !!layer.lightPaintingContent
+    || !!layer.advLightPaintingContent
+    || !!layer.splatContent
+    || !!layer.model3dContent
+    || !!layer.gpuLayerContent
+    || !!layer.pixelFXContent
+  ));
+  $: showLiveAudioWarning = liveAudioInput && (hasAudioModulation || hasAudioReactiveLayer);
 </script>
 
 <!-- svelte:window must live at component root, not inside {#if}.
@@ -397,6 +432,18 @@
         {/if}
       </div>
 
+      {#if showLiveAudioWarning}
+        <div class="warn-note" role="status">
+          <span class="warn-icon">!</span>
+          <span>
+            <strong>{liveAudioInputLabel} input can't be time-locked to an offline render.</strong>
+            Reactive timing will follow real elapsed time, so the audio in the exported clip
+            won't line up with the visuals if the render runs slower than real time.
+            Use a file audio source for frame-accurate audio reactivity.
+          </span>
+        </div>
+      {/if}
+
       <div class="actions">
         <button class="btn-secondary" onclick={closeAndReset}>Cancel</button>
         <button class="btn-primary" onclick={start} disabled={!settings.durationSeconds || !settings.fps}>
@@ -588,6 +635,37 @@
     margin-bottom: 14px;
   }
   .summary strong { color: #4cd1ff; }
+
+  .warn-note {
+    display: flex;
+    align-items: flex-start;
+    gap: 8px;
+    background: rgba(255, 176, 32, 0.06);
+    border-left: 2px solid rgba(255, 176, 32, 0.55);
+    padding: 8px 12px;
+    border-radius: 0 4px 4px 0;
+    font-size: 12px;
+    color: var(--text-secondary, #aaa);
+    line-height: 1.5;
+    margin-bottom: 14px;
+  }
+  .warn-note strong {
+    color: #ffb020;
+    font-weight: 600;
+  }
+  .warn-icon {
+    flex: 0 0 auto;
+    width: 16px;
+    height: 16px;
+    margin-top: 1px;
+    border-radius: 50%;
+    background: rgba(255, 176, 32, 0.18);
+    color: #ffb020;
+    font-size: 11px;
+    font-weight: 700;
+    line-height: 16px;
+    text-align: center;
+  }
 
   .actions {
     display: flex;
