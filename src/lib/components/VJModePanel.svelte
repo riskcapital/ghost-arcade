@@ -8,6 +8,7 @@
   import { get } from 'svelte/store';
   import { mediaLibrary, type MediaItem } from '../stores/media';
   import { vjClipLauncher, type VJClip, type VJBlock, type VJDeck } from '../stores/vjClipLauncher';
+  import { probeHasAudioTrack } from '../audio/clipAudioBus';
   import { vjLayerSequencer } from '../stores/vjLayerSequencer';
   import { keyframeTimeline } from '../stores/keyframeTimeline';
   import { workspace } from '../stores/workspace';
@@ -713,6 +714,28 @@
 
   function vjSetPlaybackSync(layerIdx: number, beats: number | null) {
     vjClipLauncher.updateActiveClipVideoProps(layerIdx, { playbackSyncBeats: beats }, paramDeck);
+  }
+
+  /** Toggle opt-in audio for the selected clip.
+   *
+   *  The store does the real work (swapping the clip onto a dedicated,
+   *  never-pooled element and attaching/detaching the clip audio bus). All
+   *  that's needed here is to re-anchor the native transport so the audio
+   *  element, which is about to appear or disappear, starts life on the same
+   *  playhead the core is rendering — otherwise the first drift correction
+   *  would be a hard seek from wherever the fresh element happened to load. */
+  function vjSetClipAudioPlayback(layerIdx: number, enabled: boolean) {
+    const clip = paramLayerStates[layerIdx]?.activeClip;
+    if (!clip) return;
+    vjClipLauncher.updateActiveClipVideoProps(layerIdx, {
+      audioPlayback: enabled,
+      audioVolume: clip.audioVolume ?? 1,
+      audioMuted: clip.audioMuted === true,
+      durationSeconds: vjClipDuration(clip) || clip.durationSeconds,
+      _nativePlaybackTimeSeconds: vjClipPlaybackTime(clip),
+      _nativePlaybackUpdatedAtMs: performance.now(),
+      _nativePlaybackSeekSeq: Math.max(0, clip._nativePlaybackSeekSeq ?? 0) + 1,
+    }, paramDeck);
   }
 
   function vjSetPlaybackMode(layerIdx: number, mode: 'loop' | 'once') {
@@ -4896,6 +4919,10 @@
             {@const vRotation = vClip.rotation ?? 0}
             {@const vOpacity = vClip.opacity ?? 1}
             {@const vMirrorX = !!vClip.mirrorX}
+            {@const vAudioOn = vClip.audioPlayback === true}
+            {@const vAudioVolume = vClip.audioVolume ?? 1}
+            {@const vAudioMuted = vClip.audioMuted === true}
+            {@const vHasAudioTrack = probeHasAudioTrack(vEl)}
             <div class="shader-params-panel video-params-panel">
               <div class="shader-params-panel-header">
                 <span class="shader-params-overlay-title">
@@ -5019,6 +5046,68 @@
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
                       Once
                     </button>
+                  </div>
+
+                  <!-- Audio: OPT-IN, default off. Turning this on is the only
+                       thing in the app that un-mutes a media element. It gives
+                       the clip a dedicated (non-pooled) <video> wired into
+                       clipAudioBus, which chases the native core's render
+                       clock. Off = exactly today's behaviour: silent, no
+                       AudioContext work, no second decoder. -->
+                  <div class="vt-transform vt-audio">
+                    <div class="vt-section-title">Audio</div>
+
+                    <label class="vt-tf-row vt-tf-toggle-row">
+                      <span class="vt-tf-label">Play audio</span>
+                      <button
+                        class="vt-toggle-btn"
+                        class:active={vAudioOn}
+                        onclick={() => vjSetClipAudioPlayback(selectedLayerIndex!, !vAudioOn)}
+                        title={vHasAudioTrack === false
+                          ? 'This file has no audio track'
+                          : 'Play this clip’s audio track through the master output'}
+                        data-midi-path="vj:{selectedLayerIndex}:video:audio"
+                        data-midi-label="{vClip.name} Audio"
+                        data-midi-discrete="true"
+                      >
+                        {vAudioOn ? 'On' : 'Off'}
+                      </button>
+                    </label>
+
+                    {#if vHasAudioTrack === false}
+                      <div class="vt-audio-note">No audio track detected in this file.</div>
+                    {/if}
+
+                    {#if vAudioOn}
+                      <label class="vt-tf-row">
+                        <span class="vt-tf-label">Volume</span>
+                        <input
+                          type="range"
+                          min="0" max="1" step="0.01"
+                          value={vAudioVolume}
+                          disabled={vAudioMuted}
+                          oninput={(e) => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { audioVolume: +(e.target as HTMLInputElement).value }, paramDeck)}
+                          data-midi-path="vj:{selectedLayerIndex}:video:audioVolume"
+                          data-midi-label="{vClip.name} Audio Volume"
+                        />
+                        <span class="vt-tf-num">{Math.round(vAudioVolume * 100)}%</span>
+                      </label>
+
+                      <label class="vt-tf-row vt-tf-toggle-row">
+                        <span class="vt-tf-label">Mute</span>
+                        <button
+                          class="vt-toggle-btn"
+                          class:active={vAudioMuted}
+                          onclick={() => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { audioMuted: !vAudioMuted }, paramDeck)}
+                          title="Duck this clip without losing its volume setting"
+                          data-midi-path="vj:{selectedLayerIndex}:video:audioMute"
+                          data-midi-label="{vClip.name} Audio Mute"
+                          data-midi-discrete="true"
+                        >
+                          {vAudioMuted ? 'Muted' : 'Live'}
+                        </button>
+                      </label>
+                    {/if}
                   </div>
 
                   <!-- Per-clip transform: zoom, fit, anchor, rotation, opacity.
@@ -11074,6 +11163,24 @@
     border-color: rgba(109, 240, 255, 0.45);
     background: rgba(109, 240, 255, 0.16);
     color: #6df;
+  }
+  /* Audio opt-in block. Amber accent rather than the panel's cyan so the
+     one control that makes noise reads as distinct from the visual params. */
+  .vt-audio .vt-toggle-btn.active {
+    border-color: rgba(251, 191, 36, 0.45);
+    background: rgba(251, 191, 36, 0.16);
+    color: #fbbf24;
+  }
+  .vt-audio input[type="range"] {
+    accent-color: #fbbf24;
+  }
+  .vt-audio .vt-tf-num {
+    color: #fbbf24;
+  }
+  .vt-audio-note {
+    font-size: 10px;
+    color: var(--text-muted, #888);
+    font-style: italic;
   }
   .vt-tf-reset {
     margin-top: 4px;

@@ -3,6 +3,7 @@
   import { confirmDeleteIfSafeMode } from '../utils/safeMode';
   // import AutoMapPanel from './AutoMapPanel.svelte';
   import { vjClipLauncher } from '../stores/vjClipLauncher';
+  import { probeHasAudioTrack } from '../audio/clipAudioBus';
   import type { BlendMode, MediaSource, Effect, EffectType, ContentFitMode, VideoPlaybackMode, StageEffectType } from '../types';
   import { createDefaultMappingCompositionState, generateUUID, VJ_MIX_SOURCE_INDEX } from '../types';
   import { onDestroy, onMount } from 'svelte';
@@ -398,6 +399,36 @@
     source._nativePlaybackTimeSeconds = sourcePlaybackTime(source);
     source._nativePlaybackUpdatedAtMs = performance.now();
     source.playbackRate = rate;
+    project.updateLayer(layerId, { source: { ...source } });
+  }
+
+  /** Opt this media layer in/out of audio playback.
+   *
+   *  layers.ts owns the actual attach/detach — it reconciles the clip audio
+   *  bus against the project on every change, so all this has to do is flip
+   *  the flag and re-anchor the native transport. Re-anchoring matters
+   *  because the audio element is about to start (or stop) chasing the render
+   *  clock, and without a fresh anchor its first correction would be an
+   *  audible hard seek from wherever the element happened to be. */
+  function setSourceAudioPlayback(layerId: string, source: MediaSource, enabled: boolean) {
+    source._nativePlaybackTimeSeconds = sourcePlaybackTime(source);
+    source._nativePlaybackUpdatedAtMs = performance.now();
+    source._nativePlaybackSeekSeq = Math.max(0, source._nativePlaybackSeekSeq ?? 0) + 1;
+    source.audioPlayback = enabled;
+    source.audioVolume = source.audioVolume ?? 1;
+    source.audioMuted = source.audioMuted === true;
+    project.updateLayer(layerId, { source: { ...source } });
+  }
+
+  /** Volume / mute only — no transport re-anchor needed, these are pure
+   *  gain writes on an already-attached clip. */
+  function setSourceAudioLevels(
+    layerId: string,
+    source: MediaSource,
+    updates: { audioVolume?: number; audioMuted?: boolean },
+  ) {
+    if (updates.audioVolume !== undefined) source.audioVolume = updates.audioVolume;
+    if (updates.audioMuted !== undefined) source.audioMuted = updates.audioMuted;
     project.updateLayer(layerId, { source: { ...source } });
   }
 
@@ -2141,6 +2172,10 @@
           {@const vRate = vSrc.playbackRate ?? 1.0}
           {@const vTrimS = vSrc.trimStart ?? 0}
           {@const vTrimE = vSrc.trimEnd ?? 1}
+          {@const vAudioOn = vSrc.audioPlayback === true}
+          {@const vAudioVolume = vSrc.audioVolume ?? 1}
+          {@const vAudioMuted = vSrc.audioMuted === true}
+          {@const vHasAudioTrack = probeHasAudioTrack(vSrc.videoElement)}
 
           <div class="video-controls-panel">
             <!-- Transport row -->
@@ -2267,6 +2302,73 @@
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
                 Once
               </button>
+            </div>
+
+            <!-- Audio: OPT-IN, default off. Same contract as the VJ clip
+                 panel — enabling it un-mutes this layer's video element and
+                 wires it into clipAudioBus, which chases the native core's
+                 render clock. Off = silent, exactly as before. -->
+            <div class="vt-audio-block">
+              <div class="vt-audio-head">
+                <span class="vt-audio-title">Audio</span>
+                <button
+                  class="vt-audio-toggle"
+                  class:active={vAudioOn}
+                  data-midi-path="map:media:audio"
+                  data-midi-label="Media Play Audio"
+                  data-midi-min="0"
+                  data-midi-max="1"
+                  data-midi-mode="toggle"
+                  onclick={() => setSourceAudioPlayback(layer.id, vSrc, !vAudioOn)}
+                  title={vHasAudioTrack === false
+                    ? 'This file has no audio track'
+                    : 'Play this layer’s audio track through the master output'}
+                >
+                  {vAudioOn ? 'On' : 'Off'}
+                </button>
+              </div>
+
+              {#if vHasAudioTrack === false}
+                <div class="vt-audio-note">No audio track detected in this file.</div>
+              {/if}
+
+              {#if vAudioOn}
+                <div class="vt-audio-row">
+                  <label for="layer-audio-vol-{layer.id}">Volume</label>
+                  <input
+                    id="layer-audio-vol-{layer.id}"
+                    type="range"
+                    min="0" max="1" step="0.01"
+                    value={vAudioVolume}
+                    disabled={vAudioMuted}
+                    data-midi-path="map:media:audioVolume"
+                    data-midi-label="Media Audio Volume"
+                    data-midi-min="0"
+                    data-midi-max="1"
+                    data-midi-step="0.01"
+                    oninput={(e) => setSourceAudioLevels(layer.id, vSrc, { audioVolume: +(e.target as HTMLInputElement).value })}
+                  />
+                  <span class="vt-audio-num">{Math.round(vAudioVolume * 100)}%</span>
+                </div>
+                <div class="vt-audio-row">
+                  <label for="layer-audio-mute-{layer.id}">Mute</label>
+                  <button
+                    id="layer-audio-mute-{layer.id}"
+                    class="vt-audio-toggle"
+                    class:active={vAudioMuted}
+                    data-midi-path="map:media:audioMute"
+                    data-midi-label="Media Audio Mute"
+                    data-midi-min="0"
+                    data-midi-max="1"
+                    data-midi-mode="toggle"
+                    onclick={() => setSourceAudioLevels(layer.id, vSrc, { audioMuted: !vAudioMuted })}
+                    title="Duck this layer without losing its volume setting"
+                  >
+                    {vAudioMuted ? 'Muted' : 'Live'}
+                  </button>
+                  <span class="vt-audio-num"></span>
+                </div>
+              {/if}
             </div>
           </div>
         {/if}
@@ -4355,6 +4457,69 @@
 
   .file-label {
     cursor: pointer;
+  }
+
+  /* Opt-in audio block inside the video controls panel. Amber accent so the
+     one control that makes noise reads as distinct from the visual params. */
+  .vt-audio-block {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px solid rgba(255, 255, 255, 0.06);
+  }
+  .vt-audio-head {
+    display: grid;
+    grid-template-columns: 1fr 64px;
+    align-items: center;
+    gap: 8px;
+  }
+  .vt-audio-title {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.6px;
+    color: #777;
+  }
+  .vt-audio-row {
+    display: grid;
+    grid-template-columns: 56px minmax(0, 1fr) 40px;
+    align-items: center;
+    gap: 8px;
+  }
+  .vt-audio-row label {
+    font-size: 11px;
+    color: var(--text-secondary, #aaa);
+  }
+  .vt-audio-row input[type='range'] {
+    width: 100%;
+    accent-color: #fbbf24;
+  }
+  .vt-audio-num {
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
+    font-size: 11px;
+    color: #fbbf24;
+    text-align: right;
+  }
+  .vt-audio-toggle {
+    height: 22px;
+    border-radius: 3px;
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    background: rgba(255, 255, 255, 0.05);
+    color: var(--text-secondary, #aaa);
+    font-size: 11px;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  .vt-audio-toggle.active {
+    border-color: rgba(251, 191, 36, 0.45);
+    background: rgba(251, 191, 36, 0.16);
+    color: #fbbf24;
+  }
+  .vt-audio-note {
+    font-size: 10px;
+    color: var(--text-muted, #888);
+    font-style: italic;
   }
 
   .link {

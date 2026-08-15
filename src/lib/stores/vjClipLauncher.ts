@@ -12,6 +12,7 @@ import { vjLayerSequencer } from './vjLayerSequencer';
 import { isNativeSelectableEffect } from '../renderer/nativeEffectCoverage';
 import { NATIVE_ENGINE_ONLY } from './settings';
 import { armNativeLibraryVideo } from '../sync/nativeRendererSync';
+import { clipAudioBus, type ClipAudioTransport } from '../audio/clipAudioBus';
 
 // Cache parsed ISF shader inputs per shader code to avoid re-parsing every
 // frame. Bounded: keys are entire shader source strings, so an unbounded
@@ -103,6 +104,25 @@ export interface VJClip {
   /** Live play/pause flag. Toggle from the VJ video-controls panel.
    *  Default true (clip auto-plays on first trigger, same as today). */
   isPlaying?: boolean;
+
+  // ── Audio playback (opt-in, default OFF) ──
+  // Video clips are silent unless the user explicitly turns audio on for
+  // that clip. `audioPlayback` is the switch; it makes the clip take a
+  // dedicated (never-pooled) <video> element and wires it into
+  // `clipAudioBus`. Deliberately NOT named `audioEnabled` — that name is
+  // already taken by splat audio *reactivity* (types.ts) and means something
+  // completely different.
+
+  /** Opt in to hearing this clip's audio track. Default false — a project
+   *  that never sets this behaves exactly as before: no AudioContext work,
+   *  no createMediaElementSource(), element stays muted. */
+  audioPlayback?: boolean;
+  /** Per-clip output level, 0..1. Default 1. Only meaningful when
+   *  `audioPlayback` is true. */
+  audioVolume?: number;
+  /** Per-clip mute that survives independently of `audioPlayback`, so a user
+   *  can duck a clip without losing its volume setting. Default false. */
+  audioMuted?: boolean;
 
   // ── Per-clip transform (applied at composite time) ──
   // These let the user fit a video into a layer's quad with full
@@ -576,6 +596,125 @@ let immediateTriggerClip: (layerIndex: number, columnIndex: number, deck: VJDeck
 // Cache for video elements to persist playback
 const videoElementCache = new Map<string, HTMLVideoElement>();
 
+/**
+ * Dedicated element cache for clips that opted into audio playback.
+ *
+ * ELEMENT POLICY — audio-enabled clips NEVER use `videoElementCache`.
+ *
+ * `AudioContext.createMediaElementSource(el)` is permanent and one-shot: it
+ * removes `el` from the default audio output for the rest of its life, and a
+ * second call on the same element throws InvalidStateError. Meanwhile
+ * `videoElementCache` is a *pool* — `ensureClipVideoElement()` re-`src`s a
+ * cached element in place whenever a clip's source changes. Handing a
+ * WebAudio-wired element back to that pool would silently route a different
+ * file through a gain node the user thinks belongs to the old clip, and any
+ * code path that tried to re-wire it would throw.
+ *
+ * So: audible clips get their own map, their own elements, and an explicit
+ * teardown (`releaseAudibleClipElement`) that detaches the bus first. The
+ * price is one extra decoder per audible clip, which is exactly the cost of
+ * the feature — the native core decodes with `-an` and cannot supply audio.
+ */
+const audibleVideoElementCache = new Map<string, HTMLVideoElement>();
+
+/** True when this clip has explicitly opted into audio playback. */
+function clipWantsAudio(clip: VJClip | null | undefined): boolean {
+  return !!clip && clip.type === 'video' && clip.audioPlayback === true;
+}
+
+/** Transport snapshot the clip audio bus chases. Mirrors the wrapped
+ *  playhead time the VJ panel shows, computed from the same native anchors
+ *  the render authority uses. */
+function clipAudioTransport(clip: VJClip): ClipAudioTransport | null {
+  const duration = Number(clip.durationSeconds ?? clip.videoElement?.duration);
+  const hasDuration = Number.isFinite(duration) && duration > 0;
+  const nativeTime = Number(clip._nativePlaybackTimeSeconds);
+  const elementTime = Number(clip.videoElement?.currentTime);
+  let time = Number.isFinite(nativeTime) && nativeTime >= 0
+    ? nativeTime
+    : Number.isFinite(elementTime) && elementTime >= 0
+      ? elementTime
+      : 0;
+  const anchorMs = Number(clip._nativePlaybackUpdatedAtMs);
+  const rate = Number(clip.playbackRate) || 1;
+  const paused = clip.isPlaying === false;
+  if (!paused && Number.isFinite(anchorMs)) {
+    time += Math.max(0, performance.now() - anchorMs) / 1000 * rate;
+  }
+  const trimStart = hasDuration ? duration * Math.max(0, Math.min(1, clip.trimStart ?? 0)) : 0;
+  const trimEnd = hasDuration ? duration * Math.max(0, Math.min(1, clip.trimEnd ?? 1)) : 0;
+  const loop = (clip.playbackMode ?? 'loop') !== 'once';
+  if (hasDuration) {
+    const range = Math.max(0.001, trimEnd - trimStart);
+    time = loop
+      ? trimStart + (((time - trimStart) % range) + range) % range
+      : Math.max(trimStart, Math.min(trimEnd, time));
+  }
+  return {
+    timeSeconds: Math.max(0, time),
+    playbackRate: rate,
+    paused,
+    loop,
+    trimStartSeconds: trimStart,
+    trimEndSeconds: trimEnd,
+    seekGeneration: Math.max(0, Math.round(Number(clip._nativePlaybackSeekSeq ?? 0))),
+    durationSeconds: hasDuration ? duration : undefined,
+  };
+}
+
+/** Build (once) and wire the dedicated audible element for a clip. */
+function ensureAudibleClipElement(clip: VJClip): HTMLVideoElement | undefined {
+  if (!clipWantsAudio(clip) || !clip.src || clip.src.startsWith('live://')) return undefined;
+
+  let el = audibleVideoElementCache.get(clip.id);
+  if (el && el.src !== clip.src) {
+    // Source swap: the old element is permanently bound to WebAudio, so it
+    // can never be reused for a different file. Retire it outright.
+    releaseAudibleClipElement(clip.id);
+    el = undefined;
+  }
+
+  if (!el) {
+    el = document.createElement('video');
+    if (!shouldSkipVideoCors(clip.src)) el.crossOrigin = 'anonymous';
+    // The bus owns wrapping (element `loop` would wrap to 0, not to trimStart)
+    // and owns un-muting. It starts muted like every other element in the app.
+    el.loop = false;
+    el.muted = true;
+    el.playsInline = true;
+    el.preload = 'auto';
+    el.src = clip.src;
+    audibleVideoElementCache.set(clip.id, el);
+  }
+
+  const id = clip.id;
+  clipAudioBus.attachClip(id, el, {
+    volume: clip.audioVolume ?? 1,
+    muted: clip.audioMuted === true,
+    provider: () => {
+      const current = latestClipById(id);
+      return current ? clipAudioTransport(current) : null;
+    },
+  });
+  return el;
+}
+
+/** Tear down a clip's audible element (bus first, then the element). */
+function releaseAudibleClipElement(clipId: string): void {
+  clipAudioBus.detachClip(clipId);
+  const el = audibleVideoElementCache.get(clipId);
+  if (!el) return;
+  try { el.pause(); } catch { /* ignore */ }
+  el.removeAttribute('src');
+  try { el.load(); } catch { /* ignore */ }
+  audibleVideoElementCache.delete(clipId);
+}
+
+/** Latest store copy of a clip by id — the transport provider must read
+ *  through to current state, not the snapshot captured at attach time
+ *  (the store replaces clip objects on every prop update). */
+let latestClipById: (id: string) => VJClip | null = () => null;
+
 // Cache for VJ source objects (keeps textures persistent)
 const vjSourceCache = new Map<string, MediaSource>();
 
@@ -616,6 +755,32 @@ function mediaTypeForClip(clip: VJClip): 'shader' | 'video' | 'image' | 'threejs
 
 function ensureClipVideoElement(clip: VJClip): HTMLVideoElement | undefined {
   if (!clip || clip.type !== 'video') return clip.videoElement;
+
+  // Audio-enabled clips live in their own cache and are the ONLY elements in
+  // the app that ever get un-muted. See `audibleVideoElementCache` above for
+  // why they must not share the pooled cache.
+  if (clipWantsAudio(clip)) {
+    const audible = ensureAudibleClipElement(clip);
+    if (audible) {
+      // Retire any pooled element this clip previously used so we never keep
+      // two decoders of the same file alive.
+      const pooled = videoElementCache.get(clip.id);
+      if (pooled && pooled !== audible) {
+        try { pooled.pause(); } catch { /* ignore */ }
+        pooled.removeAttribute('src');
+        try { pooled.load(); } catch { /* ignore */ }
+        videoElementCache.delete(clip.id);
+      }
+      clip.isPlaying = clip.isPlaying ?? true;
+      clip.videoElement = audible;
+      return audible;
+    }
+  } else if (audibleVideoElementCache.has(clip.id)) {
+    // Audio was turned off — drop the audible element entirely and fall back
+    // to the normal pooled path below.
+    releaseAudibleClipElement(clip.id);
+    clip.videoElement = undefined;
+  }
 
   if (clip.videoElement && (clip.src?.startsWith('live://') || clip.videoElement.srcObject)) {
     videoElementCache.set(clip.id, clip.videoElement);
@@ -794,7 +959,8 @@ function pauseClipRuntime(clip: VJClip | null | undefined): void {
  *  the rest of the session. Checked against the NEXT state so the cell
  *  being cleared doesn't count as a reference. */
 function releaseClipRuntimeIfOrphaned(nextState: any, clipId: string): void {
-  if (!clipId || !videoElementCache.has(clipId)) return;
+  if (!clipId) return;
+  if (!videoElementCache.has(clipId) && !audibleVideoElementCache.has(clipId)) return;
   const gridHasClip = (grid: any) =>
     Array.isArray(grid) && grid.some((row: any) => Array.isArray(row) && row.some((c: any) => c?.id === clipId));
   const statesHaveClip = (ls: any) =>
@@ -804,7 +970,11 @@ function releaseClipRuntimeIfOrphaned(nextState: any, clipId: string): void {
   for (const block of nextState.blocks ?? []) {
     if (gridHasClip(block.clipGrid) || gridHasClip(block.bankBClipGrid)) return;
   }
-  const video = videoElementCache.get(clipId)!;
+  // Audible clips: detach from the bus BEFORE dropping the element, so the
+  // gain node and MediaElementAudioSourceNode go with it.
+  releaseAudibleClipElement(clipId);
+  const video = videoElementCache.get(clipId);
+  if (!video) return;
   try { video.pause(); } catch { /* ignore */ }
   video.removeAttribute('src');
   try { video.load(); } catch { /* ignore */ }
@@ -814,6 +984,24 @@ function releaseClipRuntimeIfOrphaned(nextState: any, clipId: string): void {
 // Create the store
 function createVJClipLauncherStore() {
   const { subscribe, set, update } = writable<VJClipLauncherState>(createDefaultState());
+
+  // Wire the module-level clip lookup used by the clip-audio transport
+  // provider. The store replaces clip OBJECTS on every prop update, so the
+  // provider must resolve by id on each tick rather than close over the
+  // snapshot it was attached with — otherwise trim/rate/seek edits would
+  // never reach the audio element.
+  latestClipById = (id: string): VJClip | null => {
+    if (!id) return null;
+    const state = get({ subscribe });
+    for (const states of [state.layerStates, state.bankBLayerStates]) {
+      if (!Array.isArray(states)) continue;
+      for (const layerState of states) {
+        const clip = layerState?.activeClip;
+        if (clip && clip.id === id) return clip;
+      }
+    }
+    return null;
+  };
 
   // Wire the module-level immediateTriggerClip closure so triggerClip() can
   // delegate to it AND so the rAF tick can fire queued triggers without
@@ -933,6 +1121,9 @@ function createVJClipLauncherStore() {
         video.src = '';
       }
       videoElementCache.clear();
+      for (const clipId of Array.from(audibleVideoElementCache.keys())) {
+        releaseAudibleClipElement(clipId);
+      }
       clearVJSourceCache();
       set(createDefaultState());
     },
@@ -1823,7 +2014,7 @@ function createVJClipLauncherStore() {
     // splat/model3d shape so the VJ video controls panel can write through to
     // the store without touching the live videoElement (the panel does that
     // separately on the DOM node).
-    updateActiveClipVideoProps(layerIndex: number, updates: Partial<Pick<VJClip, 'playbackMode' | 'playbackRate' | 'playbackSyncBeats' | 'durationSeconds' | '_nativePlaybackTimeSeconds' | '_nativePlaybackUpdatedAtMs' | '_nativePlaybackSeekSeq' | 'trimStart' | 'trimEnd' | 'isPlaying' | 'zoom' | 'fit' | 'anchorX' | 'anchorY' | 'rotation' | 'opacity' | 'mirrorX'>>, deck: VJDeck = 'A') {
+    updateActiveClipVideoProps(layerIndex: number, updates: Partial<Pick<VJClip, 'playbackMode' | 'playbackRate' | 'playbackSyncBeats' | 'durationSeconds' | '_nativePlaybackTimeSeconds' | '_nativePlaybackUpdatedAtMs' | '_nativePlaybackSeekSeq' | 'trimStart' | 'trimEnd' | 'isPlaying' | 'zoom' | 'fit' | 'anchorX' | 'anchorY' | 'rotation' | 'opacity' | 'mirrorX' | 'audioPlayback' | 'audioVolume' | 'audioMuted'>>, deck: VJDeck = 'A') {
       update(state => {
         const targetLayerStates = pickLayerStates(state, deck);
         const targetGrid = pickGrid(state, deck);
@@ -1834,6 +2025,21 @@ function createVJClipLauncherStore() {
 
         const newClip = { ...activeClip, ...updates };
         newLayerStates[layerIndex] = { ...newLayerStates[layerIndex], activeClip: newClip };
+
+        // Audio side-effects. `audioPlayback` flipping is the only thing that
+        // builds or tears down WebAudio state; volume/mute are cheap gain
+        // writes that no-op when the clip was never attached.
+        if ('audioPlayback' in updates && updates.audioPlayback !== activeClip.audioPlayback) {
+          if (updates.audioPlayback) {
+            ensureClipVideoElement(newClip);
+          } else {
+            releaseAudibleClipElement(newClip.id);
+            newClip.videoElement = undefined;
+            ensureClipVideoElement(newClip);
+          }
+        }
+        if ('audioVolume' in updates) clipAudioBus.setClipVolume(newClip.id, newClip.audioVolume ?? 1);
+        if ('audioMuted' in updates) clipAudioBus.setClipMuted(newClip.id, newClip.audioMuted === true);
 
         // Mirror the change into the grid for any cells whose clip.id matches
         // (handles the case where the same source has been triggered into

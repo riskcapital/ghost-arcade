@@ -1,13 +1,14 @@
 // Shared Recording Service
 // Centralizes canvas recording logic used by App, PresetTray, and VJModePanel
-// Supports optional audio capture from the shared audioStore
+// Supports optional audio capture: a mixdown of the opt-in clip audio bus
+// and the shared audio analyzer's live input (clipAudioBus.getRecordingAudioStream)
 
 import { get } from 'svelte/store';
 import { project } from '../stores/layers';
 import { settings, getMimeType, getFileExtension } from '../stores/settings';
 import { mediaLibrary } from '../stores/media';
 import { generateUUID } from '../types';
-import { audioStore } from '../stores/audio';
+import { getRecordingAudioStream } from '../audio/clipAudioBus';
 import { createAssetRefFromGeneratedBlob, pathToFileUrl } from '../storage/assetRegistry';
 import { NATIVE_ENGINE_ONLY } from '../stores/settings';
 import { invoke, isElectron } from '../bridge';
@@ -121,7 +122,12 @@ function startRecordingAudioSidecar(): AudioSidecar | null {
   if (recSettings.includeAudio === false) return null;
   let audioResult: { stream: MediaStream; cleanup?: () => void } | null = null;
   try {
-    audioResult = audioStore.getAudioStream();
+    // Mixdown of clip-audio bus + live analyzer input. Falls back to the
+    // analyzer-only stream when no clip has opted into audio, so shows that
+    // don't use the feature record exactly as before. Without this, a show
+    // whose only sound is clip playback recorded silent: analyzer
+    // getAudioStream() returns null unless an analyzer INPUT is running.
+    audioResult = getRecordingAudioStream();
   } catch {
     return null;
   }
@@ -413,7 +419,8 @@ export function startRecording(options: RecorderOptions = {}): RecorderHandle | 
   let audioCleanup: (() => void) | null = null;
 
   if (includeAudio) {
-    const audioResult = audioStore.getAudioStream();
+    // Same mixdown-or-fallback rule as the native sidecar above.
+    const audioResult = getRecordingAudioStream();
     if (audioResult) {
       const audioTracks = audioResult.stream.getAudioTracks();
       if (audioTracks.length > 0) {

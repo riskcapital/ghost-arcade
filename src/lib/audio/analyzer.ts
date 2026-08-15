@@ -191,6 +191,7 @@ export class AudioAnalyzer {
       this.lastSourceType = 'microphone';
       this.lastMicDeviceId = deviceId ?? null;
       this._installHotplugHandlers();
+      this._notifyGraphChange();
       this.tick();
     } catch (err) {
       console.error('Failed to start microphone:', err);
@@ -224,6 +225,7 @@ export class AudioAnalyzer {
       this.lastSourceType = 'mediaElement';
       this.lastMediaElement = element;
       this._installHotplugHandlers();
+      this._notifyGraphChange();
       this.tick();
     } catch (err) {
       console.error('Failed to start media element analysis:', err);
@@ -285,6 +287,7 @@ export class AudioAnalyzer {
       this.isRunning = true;
       this.lastSourceType = 'system';
       this._installHotplugHandlers();
+      this._notifyGraphChange();
       this.tick();
     } catch (err) {
       console.error('Failed to start system audio:', err);
@@ -381,6 +384,53 @@ export class AudioAnalyzer {
     // once at boot and need it to outlive any single source. The context
     // is only closed on full app teardown via closeAudioContext().
     this.analyserNode = null;
+    this._notifyGraphChange();
+  }
+
+  // ── Graph-change notification ────────────────────────────────────────────
+  // The analyser node is torn down and rebuilt on every start/stop AND on
+  // `_recoverAudioPipeline()` (devicechange / context statechange — e.g.
+  // plugging in headphones does a full stop + 300 ms + restart). Downstream
+  // graphs built on the shared context (the clip audio bus) hold a reference
+  // to whatever analyser was current and would go dead after a rebuild, so
+  // they subscribe here and re-tap. Deliberately a plain callback registry
+  // rather than an import of the consumer: the dependency stays one-way
+  // (clipAudioBus → analyzer), with no module cycle.
+
+  private graphChangeListeners = new Set<() => void>();
+
+  /** Subscribe to analyser-graph rebuilds. Returns an unsubscribe fn. */
+  onGraphChange(listener: () => void): () => void {
+    this.graphChangeListeners.add(listener);
+    return () => { this.graphChangeListeners.delete(listener); };
+  }
+
+  private _notifyGraphChange(): void {
+    for (const listener of this.graphChangeListeners) {
+      try { listener(); } catch (err) {
+        console.warn('[AudioAnalyzer] Graph-change listener failed:', err);
+      }
+    }
+  }
+
+  /** The live analyser node, or null when no source is running. Consumers
+   *  may `connect()` INTO it to have their signal drive audio reactivity. */
+  getAnalyserNode(): AnalyserNode | null {
+    return this.analyserNode;
+  }
+
+  /**
+   * True when the analyser node is itself wired to `ctx.destination`.
+   *
+   * AnalyserNode is a pass-through, so anything connected into it is also
+   * heard. Only the media-element branch connects it to the destination (the
+   * mic/system branches deliberately do not, to avoid a feedback loop).
+   * Consumers that tap the analyser AND hold their own edge to the speakers
+   * must drop one of the two paths when this is true, or they play twice at
+   * double amplitude.
+   */
+  analyserFeedsDestination(): boolean {
+    return this.isRunning && this.lastSourceType === 'mediaElement' && this.analyserNode !== null;
   }
 
   /**

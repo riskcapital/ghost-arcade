@@ -5,6 +5,7 @@
   import { projectionSimHistoryVersion } from './lib/projectionSim/store';
   import WebGPUCanvas from './lib/components/WebGPUCanvas.svelte';
   import AudioInputPicker from './lib/components/AudioInputPicker.svelte';
+  import ClipAudioMasterControl from './lib/components/ClipAudioMasterControl.svelte';
   import AudioMeterPanel from './lib/components/AudioMeterPanel.svelte';
   // Feature tour removed at user request — was an interactive multi-step
   // overlay shown on first launch, but disrupted the experience for users
@@ -6035,6 +6036,11 @@
              toggle. State is wired through the global audioStore so toggling
              in one mode is reflected in every other mode. -->
         <AudioInputPicker showWaveform={false} />
+
+        <!-- Master output level for opt-in clip audio. Self-hides until at
+             least one clip has audio playback turned on, so a project that
+             never uses the feature sees no change here. -->
+        <ClipAudioMasterControl />
 
         <!-- Live FFT meter + beat/kick/snare dots + TAP tempo + BPM, with the
              audio-input tweaks popover (sensitivity, smoothing, per-band gain)
