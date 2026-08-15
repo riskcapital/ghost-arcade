@@ -2526,6 +2526,23 @@ struct App {
     decode_predecode_estimate_cache_cap_entries: u32,
     vram_budget_mb: u32,
     auto_present_requested: bool,
+    /// A render was asked for but could not be drawn yet (a GPU frame was
+    /// still in flight). The request is NOT dropped: `about_to_wait` keeps
+    /// pumping until one frame actually lands.
+    ///
+    /// This exists because the last render of a scene teardown has no
+    /// follow-up. The editor stops its RAF as soon as no layer needs
+    /// continuous sync, and `about_to_wait`'s idle gate goes quiet once the
+    /// scene is empty — so a clearing present lost to GPU backpressure left
+    /// the previous frame resident in the output export texture (Syphon /
+    /// NDI / Spout, the embedded editor presenter, the projection-sim
+    /// mirror) and on every slice window, forever. That is the "ghost of the
+    /// last layer" the operator sees after clearing the scene.
+    pending_render_retry: bool,
+    /// The last frame drew at least one deck-tagged layer into a confidence
+    /// monitor. Buys exactly one clearing monitor pass when both banks empty.
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    deck_monitors_lit: bool,
     output_window_attached: bool,
     editor_parent_window_handle_hex: Option<String>,
     editor_parent_window_handle_platform: Option<String>,
@@ -2814,6 +2831,9 @@ impl App {
             decode_predecode_estimate_cache_cap_entries: 8192,
             vram_budget_mb: 4096,
             auto_present_requested: false,
+            pending_render_retry: false,
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            deck_monitors_lit: false,
             output_window_attached: false,
             editor_parent_window_handle_hex: None,
             editor_parent_window_handle_platform: None,
@@ -8798,6 +8818,14 @@ impl App {
             .is_some_and(RenderState::frame_in_flight)
         {
             self.stats.gpu_backpressure_skips = self.stats.gpu_backpressure_skips.saturating_add(1);
+            // Do NOT drop the request. Skipping a mid-stream frame is
+            // harmless because another one follows 16ms later, but the
+            // final frame of a scene teardown has no successor: the editor
+            // has already torn down its RAF and an empty scene puts
+            // `about_to_wait` to sleep. Losing that one frame is what left
+            // a removed layer's picture stuck in the output export texture,
+            // the slice windows and the swapchain.
+            self.pending_render_retry = true;
             return;
         }
         // Output freeze holds the last presented frame. Returning before any
@@ -8805,6 +8833,9 @@ impl App {
         // untouched, so the projector keeps showing exactly what was on
         // screen when the operator hit freeze.
         if self.output_frozen {
+            // Freeze is a deliberate hold, not a dropped frame — disarm the
+            // retry so the idle loop does not spin while output is frozen.
+            self.pending_render_retry = false;
             return;
         }
         // Everything below advances time. Claim this render's step first so
@@ -8863,6 +8894,20 @@ impl App {
         let post_effects = self.composite_effect_slots();
         let output_stage = self.output_stage;
         let slice_specs = self.slice_outputs.clone();
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        let deck_monitors_have_content = !deck_monitor_a.is_empty() || !deck_monitor_b.is_empty();
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        let deck_monitors_were_lit = self.deck_monitors_lit;
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        let mut deck_monitors_rendered = false;
+        if self.renderer.is_none() {
+            // Renderer not created yet; keep the retry armed so the frame
+            // lands as soon as `ensure_renderer` succeeds.
+            return;
+        }
+        // Past every early-out: this frame is being drawn, so whatever was
+        // waiting on a retry is served by it.
+        self.pending_render_retry = false;
         let Some(renderer) = self.renderer.as_mut() else {
             return;
         };
@@ -8893,8 +8938,13 @@ impl App {
         // Deck confidence monitors ride the same frame: two small composite
         // passes over the bank-tagged layers, after the program render so
         // every source frame they sample is already current.
+        //
+        // Both banks going empty is exactly when the monitors MUST still be
+        // drawn once: skipping the pass leaves the deleted clip's last frame
+        // resident in the monitors' own shared textures. `deck_monitors_lit`
+        // buys that one clearing pass and then lets the monitors idle again.
         #[cfg(any(target_os = "macos", target_os = "windows"))]
-        if render_result.is_ok() && (!deck_monitor_a.is_empty() || !deck_monitor_b.is_empty()) {
+        if render_result.is_ok() && (deck_monitors_have_content || deck_monitors_were_lit) {
             let monitor_width: u32 = 480;
             let monitor_height: u32 = ((u64::from(monitor_width)
                 * u64::from(renderer.config.height))
@@ -8912,6 +8962,7 @@ impl App {
                 monitor_width,
                 monitor_height,
             );
+            deck_monitors_rendered = true;
         }
         // Slice displays ride the same frame for the same reason: every
         // source frame they sample is already current after the program
@@ -9120,6 +9171,10 @@ impl App {
                     .saturating_add(1);
                 renderer.last_frame_error = Some(err);
             }
+        }
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        if deck_monitors_rendered {
+            self.deck_monitors_lit = deck_monitors_have_content;
         }
     }
 
@@ -11117,10 +11172,55 @@ impl App {
 
     fn apply_remove_native_graph_layer(&mut self, command: &Value) {
         if let Some(layer_id) = string_at(command, &["layer_id"]) {
-            self.native_graph_layers.remove(&layer_id);
-            self.native_plugin_liquid_states.remove(&layer_id);
-            self.native_plugin_templates_initialized.remove(&layer_id);
+            self.release_native_graph_layer_state(&layer_id);
         }
+    }
+
+    /// Tear down every trace of one native graph layer.
+    ///
+    /// Returns the source ids the graph owned so the caller can release
+    /// their source frames once nothing references them anymore.
+    ///
+    /// Dropping the retained entry alone is not enough: the instrument's
+    /// persistent GPU buffers are keyed off its source id, so a layer
+    /// re-added under the same id would resume a fluid/particle sim from the
+    /// state it had when it was deleted, and any still-queued frame job
+    /// would keep painting the dead layer's `layer-frame:<id>` slot for
+    /// whatever else binds it.
+    fn release_native_graph_layer_state(&mut self, layer_id: &str) -> Vec<String> {
+        let removed = self.native_graph_layers.remove(layer_id);
+        self.native_plugin_liquid_states.remove(layer_id);
+        self.native_plugin_templates_initialized.remove(layer_id);
+        let Some(graph_layer) = removed else {
+            return Vec::new();
+        };
+        let mut owned_sources = vec![graph_layer.source_id.clone()];
+        // Drop frame jobs already queued for this layer's targets so a
+        // removed instrument cannot render one more frame into a slot.
+        self.pending_native_graph_jobs.retain(|job| {
+            !job.render_plans.iter().any(|plan| match &plan.target {
+                NativeComputeGraphRenderTarget::SourceFrame { source_id, .. } => {
+                    owned_sources.iter().any(|owned| owned == source_id)
+                }
+                _ => false,
+            })
+        });
+        // Persistent compute-graph buffers are named
+        // `<kind>:<safe-source-id>:<...>`; the trailing colon keeps
+        // `layer-frame:a` from matching `layer-frame:ab`.
+        let token = format!(":{}:", native_graph_buffer_safe_id(&graph_layer.source_id));
+        if let Some(renderer) = self.renderer.as_mut() {
+            let dropped = renderer.drop_native_compute_graph_buffers_containing(&token);
+            if dropped > 0 {
+                self.stats.vram_evictions = self.stats.vram_evictions.saturating_add(dropped as u64);
+            }
+            self.stats.compute_graph_persistent_buffers =
+                renderer.native_compute_graph_buffer_count() as u64;
+        }
+        if !graph_layer.input_source_id.is_empty() {
+            owned_sources.push(graph_layer.input_source_id.clone());
+        }
+        owned_sources
     }
 
     fn apply_bind_isf_shader(&mut self, command: &Value) {
@@ -13692,7 +13792,7 @@ impl App {
                 .remove(&layer_id)
                 .map(|binding| binding.source_id);
             self.isf_layer_bindings.remove(&layer_id);
-            self.native_graph_layers.remove(&layer_id);
+            let graph_sources = self.release_native_graph_layer_state(&layer_id);
             self.native_point_cloud_assets.remove(&layer_id);
             if let Some(source_id) = removed_source {
                 self.release_media_source_if_orphaned(&source_id);
@@ -13700,6 +13800,19 @@ impl App {
             if let Some(source_id) = pending_source {
                 self.release_media_source_if_orphaned(&source_id);
             }
+            // A GPU instrument's own instrument/input source frames are not
+            // the layer's composite binding, so they survive the two calls
+            // above. Left resident they are still sampleable by anything
+            // that binds `layer-frame:<id>` (VJ crossfade/mix rows, ISF
+            // image inputs) after the layer is gone.
+            for source_id in graph_sources {
+                self.release_media_source_if_orphaned(&source_id);
+            }
+            // Removing a layer changes what the output should show, and this
+            // may have been the last one. Arm a frame so the composite,
+            // export texture, slices and swapchain are all repainted even if
+            // the host never sends another present.
+            self.pending_render_retry = true;
         }
     }
 
@@ -13846,12 +13959,19 @@ impl ApplicationHandler<UserEvent> for App {
         let frame_duration = self.frame_duration();
         self.pump_native_video_decodes();
         let has_offscreen_work = self.renderer.is_some()
-            && (!self.scene_layers.is_empty()
-                || !self.native_graph_layers.is_empty()
-                || !self.pending_native_graph_jobs.is_empty()
-                || self.source_preview_dirty
-                || self.stage3d_scene.is_some()
-                || self.projection_sim_scene.is_some());
+            && (
+                // A requested frame that has not been drawn yet outranks the
+                // idle gate. Without this an empty scene goes to sleep still
+                // owing one clear-and-present, and the last picture stays
+                // resident in every output surface.
+                self.pending_render_retry
+                    || !self.scene_layers.is_empty()
+                    || !self.native_graph_layers.is_empty()
+                    || !self.pending_native_graph_jobs.is_empty()
+                    || self.source_preview_dirty
+                    || self.stage3d_scene.is_some()
+                    || self.projection_sim_scene.is_some()
+            );
         if !self.output_window_attached && !has_offscreen_work {
             event_loop.set_control_flow(ControlFlow::Wait);
             return;
@@ -16764,6 +16884,24 @@ impl RenderState {
         let before = self.native_compute_graph_buffers.len();
         self.native_compute_graph_buffers
             .retain(|id, _| !prefixes.iter().any(|prefix| id.starts_with(prefix)));
+        before.saturating_sub(self.native_compute_graph_buffers.len())
+    }
+
+    /// Free every persistent graph buffer whose id contains `token`.
+    ///
+    /// Buffer ids are `<kind>:<safe-source-id>:<...>`, so the source id sits
+    /// in the middle and prefix matching cannot reach it. Used when a graph
+    /// layer is removed: the builders already re-seed any buffer they find
+    /// missing (that is how budget eviction works), so dropping these is how
+    /// a re-added layer id gets a fresh simulation instead of resuming the
+    /// deleted layer's state.
+    fn drop_native_compute_graph_buffers_containing(&mut self, token: &str) -> usize {
+        if token.is_empty() {
+            return 0;
+        }
+        let before = self.native_compute_graph_buffers.len();
+        self.native_compute_graph_buffers
+            .retain(|id, _| !id.contains(token));
         before.saturating_sub(self.native_compute_graph_buffers.len())
     }
 

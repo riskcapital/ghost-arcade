@@ -7531,7 +7531,23 @@ export class NativeRendererSync {
       };
       this.shaderAnimationRaf = requestAnimationFrame(loop);
     } else if (!hasContinuousNativeLayers && this.shaderAnimationRaf !== null) {
+      // The per-frame loop is the only thing still repainting the output.
+      // Tearing it down in the same tick the scene goes empty must not
+      // leave the core's last frame resident anywhere it can be seen —
+      // the output export texture (Syphon / NDI / Spout, the embedded
+      // editor presenter, the projection-sim mirror) and the slice
+      // windows only change when a frame is actually drawn. Push the
+      // clearing flush out NOW rather than leaving it to the 16ms
+      // coalescing timer, so the removals reach the core with the RAF's
+      // final present rather than after it.
       this.stopShaderAnimation();
+      if (this.pendingSyncTimer !== null) {
+        clearTimeout(this.pendingSyncTimer);
+        this.pendingSyncTimer = null;
+      }
+      this.pendingSync = false;
+      void this.flush(this.desiredWidth, this.desiredHeight, this.latestLayers);
+      return;
     }
 
     if (this.pendingSync) return;
