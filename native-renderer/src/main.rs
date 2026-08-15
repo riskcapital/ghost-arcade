@@ -7639,6 +7639,7 @@ impl App {
             &graph_layer.params,
             self.audio0[1].clamp(0.0, 4.0),
             self.audio0[3].clamp(0.0, 4.0),
+            shader_prefix == "fluid-riders",
         );
         let time = self.native_graph_time_seconds();
         let width = self.pending_width.max(1);
@@ -7825,7 +7826,7 @@ impl App {
             },
             NativeComputeGraphBufferSpec {
                 id: render_uniform_id.clone(),
-                byte_length: 352,
+                byte_length: 384,
                 kind: NativeComputeBufferBindingKind::Uniform,
                 initial_bytes: build_smoke_riders_render_uniform_bytes(
                     &params,
@@ -7834,6 +7835,7 @@ impl App {
                     tile_count_x,
                     tile_count_y,
                     self.native_frame_index(),
+                    time,
                 ),
                 persistent: true,
                 clear: false,
@@ -10895,7 +10897,12 @@ impl App {
                     time,
                 )
             });
-        let riders_params = normalize_smoke_riders_native_params(&params, 0.0, 0.0);
+        let riders_params = normalize_smoke_riders_native_params(
+            &params,
+            0.0,
+            0.0,
+            matches!(kind, NativeGraphLayerKind::FluidRiders),
+        );
         let riders_tiles = smoke_riders_tile_counts(self.pending_width, self.pending_height);
         let previous_smoke_riders_state = self
             .native_graph_layers
@@ -20778,6 +20785,9 @@ struct NativeSmokeRidersParams {
     buoyancy: f32,
     gravity: f32,
     vortex_pull: f32,
+    /// Surface-seeking spring toward the iso shell (fluid-riders
+    /// defaults 1.6; smoke-riders defaults 0).
+    surface_stick: f32,
     rider_damping: f32,
     rider_life: f32,
     contain_strength: f32,
@@ -20786,6 +20796,11 @@ struct NativeSmokeRidersParams {
     metalness: f32,
     clear_coat: f32,
     coat_roughness: f32,
+    rider_opacity: f32,
+    reflect_strength: f32,
+    liquid_glass: f32,
+    surface_detail: f32,
+    detail_scale: f32,
     contact_ao: f32,
     // lighting
     anisotropy: f32,
@@ -20810,6 +20825,8 @@ struct NativeSmokeRidersParams {
     exposure: f32,
     flow_speed: f32,
     iso_level: f32,
+    /// Grazing-angle silhouette fade width (fluid-riders render).
+    edge_softness: f32,
     viscosity: f32,
     color_follow: f32,
     /// 0 = AgX, 1 = ACES, 2 = Linear.
@@ -20829,10 +20846,14 @@ struct NativeSmokeRidersParams {
     audio_burst: f32,
 }
 
+/// `fluid` selects the fluid-riders defaults for the handful of knobs
+/// whose out-of-the-box value differs between the two kinds (march
+/// steps, flow coupling, surface stick). Everything else is shared.
 fn normalize_smoke_riders_native_params(
     params: &Value,
     audio_bass: f32,
     audio_treble: f32,
+    fluid: bool,
 ) -> NativeSmokeRidersParams {
     let quality = native_particle_field_enum(params, "quality", "balanced");
     let style = native_particle_field_enum(params, "style", "paint");
@@ -20888,8 +20909,11 @@ fn normalize_smoke_riders_native_params(
         .clamp(SMOKE_RIDERS_MIN_COUNT as i64, SMOKE_RIDERS_MAX_COUNT as i64) as u32;
     // The animated low-discrepancy march offset buys back roughly the
     // quality a tenth of the steps used to cost, so the base step count
-    // dropped from 80 to 72 without a visible change.
-    let march_steps = ((native_graph_param_f32(params, "marchSteps", 16.0, 160.0, 72.0)
+    // dropped from 80 to 72 without a visible change. The liquid's
+    // iso-surface hunt needs finer steps than a scatter integral, so
+    // fluid-riders defaults higher.
+    let march_default = if fluid { 96.0 } else { 72.0 };
+    let march_steps = ((native_graph_param_f32(params, "marchSteps", 16.0, 160.0, march_default)
         * march_scale)
         .round() as i64)
         .clamp(16, 192) as u32;
@@ -20942,12 +20966,25 @@ fn normalize_smoke_riders_native_params(
         rider_weight: native_graph_param_f32(params, "riderWeight", 0.01, 1.2, 0.08),
         weight_spread: native_graph_param_f32(params, "weightSpread", 0.0, 1.0, 0.38),
         gravity_factor: 1.0 - 1.0 / rider_density,
-        flow_coupling: native_graph_param_f32(params, "flowCoupling", 0.0, 3.0, 1.05),
+        flow_coupling: native_graph_param_f32(
+            params,
+            "flowCoupling",
+            0.0,
+            3.0,
+            if fluid { 1.35 } else { 1.05 },
+        ),
         buoyancy: native_graph_param_f32(params, "buoyancy", 0.0, 4.0, 0.2)
             * tuning.buoyancy_scale
             * (1.0 + bass * 0.4),
         gravity: native_graph_param_f32(params, "gravity", 0.0, 4.0, 1.0) * tuning.gravity_scale,
         vortex_pull: native_graph_param_f32(params, "vortexPull", -1.0, 1.0, 0.0),
+        surface_stick: native_graph_param_f32(
+            params,
+            "surfaceStick",
+            0.0,
+            4.0,
+            if fluid { 1.6 } else { 0.0 },
+        ),
         rider_damping: native_graph_param_f32(params, "riderDamping", 0.0, 4.0, 0.45),
         rider_life: native_graph_param_f32(params, "riderLife", 1.0, 60.0, 6.0),
         // Velocity gain, not a spring constant: the containment is folded
@@ -20959,6 +20996,11 @@ fn normalize_smoke_riders_native_params(
         metalness: native_graph_param_f32(params, "metalness", 0.0, 1.0, 0.08),
         clear_coat: native_graph_param_f32(params, "clearCoat", 0.0, 1.0, 0.75),
         coat_roughness: native_graph_param_f32(params, "coatRoughness", 0.01, 1.0, 0.08),
+        rider_opacity: native_graph_param_f32(params, "riderOpacity", 0.15, 1.0, 1.0),
+        reflect_strength: native_graph_param_f32(params, "reflectStrength", 0.0, 3.0, 1.0),
+        liquid_glass: native_graph_param_f32(params, "liquidGlass", 0.0, 1.0, 0.0),
+        surface_detail: native_graph_param_f32(params, "surfaceDetail", 0.0, 1.0, 0.12),
+        detail_scale: native_graph_param_f32(params, "detailScale", 1.0, 24.0, 8.0),
         contact_ao: native_graph_param_f32(params, "contactAO", 0.0, 4.0, 1.1),
 
         anisotropy: native_graph_param_f32(params, "anisotropy", -0.9, 0.9, 0.4),
@@ -20995,6 +21037,7 @@ fn normalize_smoke_riders_native_params(
         exposure: native_graph_param_f32(params, "exposure", 0.1, 4.0, 1.5),
         flow_speed: native_graph_param_f32(params, "flowSpeed", 0.05, 2.0, 0.32),
         iso_level: native_graph_param_f32(params, "isoLevel", 0.02, 2.5, 0.42),
+        edge_softness: native_graph_param_f32(params, "edgeSoftness", 0.0, 0.5, 0.18),
         viscosity: native_graph_param_f32(params, "viscosity", 0.0, 1.0, 0.72),
         color_follow: native_graph_param_f32(params, "colorFollow", 0.0, 10.0, 3.2),
         tonemap: match native_particle_field_enum(params, "tonemap", "agx").as_str() {
@@ -21182,6 +21225,8 @@ fn build_smoke_riders_rider_uniform_bytes(
     write_f32_le(&mut bytes, 27, params.treble);
     write_f32_le(&mut bytes, 28, params.rider_size);
     write_f32_le(&mut bytes, 29, SMOKE_RIDERS_TAU_REF_RADIUS);
+    write_f32_le(&mut bytes, 30, params.surface_stick);
+    write_f32_le(&mut bytes, 31, params.iso_level);
     bytes
 }
 
@@ -21217,8 +21262,9 @@ fn build_smoke_riders_render_uniform_bytes(
     tile_count_x: u32,
     tile_count_y: u32,
     frame_index: u64,
+    time: f32,
 ) -> Vec<u8> {
-    let mut bytes = vec![0_u8; 352];
+    let mut bytes = vec![0_u8; 384];
     for (index, value) in inv_view_proj.iter().enumerate() {
         write_f32_le(&mut bytes, index, *value);
     }
@@ -21299,6 +21345,13 @@ fn build_smoke_riders_render_uniform_bytes(
     write_f32_le(&mut bytes, 84, params.iso_level);
     write_f32_le(&mut bytes, 85, params.paint_thickness);
     write_f32_le(&mut bytes, 86, params.color_follow);
+    write_f32_le(&mut bytes, 87, params.edge_softness);
+    write_f32_le(&mut bytes, 88, params.rider_opacity);
+    write_f32_le(&mut bytes, 89, params.reflect_strength);
+    write_f32_le(&mut bytes, 90, params.liquid_glass);
+    write_f32_le(&mut bytes, 91, params.surface_detail);
+    write_f32_le(&mut bytes, 92, params.detail_scale);
+    write_f32_le(&mut bytes, 93, time);
     bytes
 }
 

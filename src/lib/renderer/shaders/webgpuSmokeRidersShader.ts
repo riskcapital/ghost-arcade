@@ -516,7 +516,7 @@ struct RiderU {
   bounds: vec3<f32>, containStrength: f32,
   spawnCenter: vec3<f32>, spawnRadius: f32,
   lifeSpan: f32, pressureGain: f32, bass: f32, treble: f32,
-  radiusScale: f32, tauRefRadius: f32, _pad0: f32, _pad1: f32,
+  radiusScale: f32, tauRefRadius: f32, surfaceStick: f32, isoLevel: f32,
 };
 
 @group(0) @binding(0) var<uniform>             ru:      RiderU;
@@ -691,6 +691,27 @@ fn cs_riders(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (abs(ru.vortexPull) > 0.00001) {
     aExt = aExt - pressureGradient(uvw) * (ru.vortexPull * ru.pressureGain);
   }
+  // ── Surface-seeking spring ("Ride Surface"). ∇ρ points toward
+  //    increasing density, so (iso − ρ)·ĝ pulls a rider hovering outside
+  //    the paint onto the iso shell and pushes a buried one back out:
+  //    the population collects ON the surface and bobs with it instead
+  //    of drifting through the body as unrelated debris. ──────────────
+  if (ru.surfaceStick > 0.0001) {
+    let hs = 1.5 / f32(ru.gridX);
+    let gx = sampleDensityAt(uvw + vec3<f32>(hs, 0.0, 0.0)) - sampleDensityAt(uvw - vec3<f32>(hs, 0.0, 0.0));
+    let gy = sampleDensityAt(uvw + vec3<f32>(0.0, hs, 0.0)) - sampleDensityAt(uvw - vec3<f32>(0.0, hs, 0.0));
+    let gz = sampleDensityAt(uvw + vec3<f32>(0.0, 0.0, hs)) - sampleDensityAt(uvw - vec3<f32>(0.0, 0.0, hs));
+    let g = vec3<f32>(gx, gy, gz);
+    let gm = length(g);
+    if (gm > 1e-4) {
+      var seek = (g / gm) * ((ru.isoLevel - density) * ru.surfaceStick * 3.0);
+      let sm = length(seek);
+      // Clamp: a rider deep inside a dense pour would otherwise be
+      // fired out of the volume like a watermelon seed.
+      if (sm > 7.0) { seek = seek * (7.0 / sm); }
+      aExt = aExt + seek;
+    }
+  }
 
   // ── Soft containment, expressed as a velocity the rider relaxes
   //    toward rather than a force. Folding it into the target keeps a
@@ -863,7 +884,12 @@ struct RenderU {
   shadowSteps: u32, marchSteps: u32, tileCountX: u32, tileCountY: u32,
   radiusScale: f32, ambient: f32, vignette: f32, bgMode: f32,
   frameIndex: u32, tonemap: f32, clearCoat: f32, coatRoughness: f32,
-  _pad0: f32, _pad1: f32, _pad2: f32, _pad3: f32,
+  // Shared tail with fluid-riders (one Rust packer serves both kinds).
+  // The smoke instrument only reads riderOpacity + reflectStrength; the
+  // liquid-only fields ride along so the layouts stay byte-identical.
+  isoLevel: f32, paintThickness: f32, colorFollow: f32, edgeSoftness: f32,
+  riderOpacity: f32, reflectStrength: f32, liquidGlass: f32, surfaceDetail: f32,
+  detailScale: f32, timeSec: f32, _pad4: f32, _pad5: f32,
 };
 
 @group(0) @binding(0) var<uniform>       u:        RenderU;
@@ -970,6 +996,11 @@ fn srEnv(dir: vec3<f32>) -> vec3<f32> {
   let sky     = vec3<f32>(0.380, 0.430, 0.520);
   var col = mix(ground, horizon, smoothstep(0.0, 0.5, t));
   col = mix(col, sky, smoothstep(0.5, 1.0, t));
+  // Thin bright horizon strip: a mirror needs STRUCTURE, and a smooth
+  // three-band gradient has none — this is the streak that sweeps
+  // across the glossy surfaces as they turn.
+  let band = exp(-abs(dir.y - 0.06) * 24.0) * 0.4;
+  col = col + vec3<f32>(0.55, 0.57, 0.60) * band;
   let blob = pow(max(dot(dir, u.keyDir), 0.0), 48.0) * 2.4;
   let bounce = pow(max(dot(dir, -u.keyDir), 0.0), 8.0) * 0.25;
   return col + u.keyColor * blob + u.fillColor * bounce;
@@ -1140,15 +1171,20 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     hasHit = true;
   }
 
-  // ── 3. Volume march, CLIPPED to the nearest sphere hit. ────────
-  //     Smoke in front of a rider occludes it; smoke behind it is
-  //     never marched, so the rider is genuinely inside the volume.
-  var accum = vec4<f32>(0.0);
+  // ── 3. Volume march. Opaque riders clip it at the nearest sphere
+  //     (smoke behind an opaque rider is never marched); a transparent
+  //     rider must NOT stop it, so the march then splits into a FRONT
+  //     accumulator (tStart..tHit) and a BACK one (tHit..tEnd) and the
+  //     composite becomes front OVER rider OVER back.
+  var accumF = vec4<f32>(0.0);
+  var accumB = vec4<f32>(0.0);
+  let riderA = select(0.0, clamp(u.riderOpacity, 0.0, 1.0), hasHit);
+  let riderOpaque = riderA >= 0.999;
   let slab = srIntersectBox(ro, rd, bmin, bmax);
   let g = clamp(u.anisotropy, -0.95, 0.95);
   if (slab.y >= slab.x && slab.y > 0.0) {
     let tStart = max(slab.x, 0.0);
-    let tEnd = min(slab.y, select(slab.y, tHit, hasHit));
+    let tEnd = select(slab.y, min(slab.y, tHit), hasHit && riderOpaque);
     if (tEnd > tStart) {
       let steps = clamp(u.marchSteps, 8u, 192u);
       let stepLen = (tEnd - tStart) / f32(steps);
@@ -1168,7 +1204,8 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
       loop {
         if (i >= steps) { break; }
         i = i + 1u;
-        if (t0 > tEnd || accum.a > 0.995) { break; }
+        if (t0 > tEnd || accumF.a > 0.995) { break; }
+        let tSample = t0;
         let pos = ro + rd * t0;
         let s = srSampleDensity((pos - bmin) / extent);
         t0 = t0 + stepLen;
@@ -1185,15 +1222,19 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
         let lit = single + multi + fill + vec3<f32>(u.ambient);
         let col = s.xyz * u.smokeTint * lit * u.emission;
         let alpha = clamp(s.w * stepLen * u.density, 0.0, 1.0);
-        let oneMinusA = 1.0 - accum.a;
-        accum = vec4<f32>(accum.rgb + col * alpha * oneMinusA, accum.a + alpha * oneMinusA);
+        if (!hasHit || tSample < tHit) {
+          let oneMinusA = 1.0 - accumF.a;
+          accumF = vec4<f32>(accumF.rgb + col * alpha * oneMinusA, accumF.a + alpha * oneMinusA);
+        } else {
+          let oneMinusA = 1.0 - accumB.a;
+          accumB = vec4<f32>(accumB.rgb + col * alpha * oneMinusA, accumB.a + alpha * oneMinusA);
+        }
       }
     }
   }
 
   // ── 4. Rider shading — GGX + three-point studio rig + env. ─────
   var baseColor = vec3<f32>(0.0);
-  var baseAlpha = 0.0;
   if (hasHit) {
     let hitPos = ro + rd * tHit;
     let n = hitNormal;
@@ -1264,34 +1305,42 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
       lit = lit + u.rimColor * (u.rimStrength * nDotL * edge);
     }
     // Environment reflection — base lobe plus the coat's own mirror
-    // term, which is what puts the studio in the highlight.
+    // term, which is what puts the studio in the highlight. Scaled by
+    // the Reflections knob, and topped up with a Fresnel-only mirror as
+    // opacity drops so a see-through orb reads as GLASS, not as a ghost.
     {
       let refl = reflect(rd, n);
       let env = srEnv(refl);
       let fr = srFresnel(f0, nDotV);
       let fc = srFSchlick(0.04, nDotV) * coat;
-      lit = lit + env * fr * (0.55 * (1.0 - rough * 0.65)) * (1.0 - fc);
-      lit = lit + env * (fc * (1.0 - coatRough * 0.6));
+      let reflGain = max(u.reflectStrength, 0.0);
+      lit = lit + env * fr * (0.55 * (1.0 - rough * 0.65)) * (1.0 - fc) * reflGain;
+      lit = lit + env * (fc * (1.0 - coatRough * 0.6)) * reflGain;
+      lit = lit + env * fr * ((1.0 - riderA) * 0.9 * reflGain);
     }
     lit = lit + diffuseAlbedo * u.ambient;
     baseColor = lit * ao;
-    baseAlpha = 1.0;
-  } else {
-    // Background: transparent, flat tint, or a vertical studio backdrop.
-    let mode = u.bgMode;
-    var bg = u.bgColor;
-    if (mode > 1.5) {
-      let vgrad = clamp(ndc.y * 0.5 + 0.5, 0.0, 1.0);
-      bg = mix(u.bgColor * 0.35, u.bgColor * 1.35 + vec3<f32>(0.02), vgrad);
-    }
-    baseColor = bg;
-    baseAlpha = select(0.0, clamp(u.bgOpacity, 0.0, 1.0), mode > 0.5);
   }
 
-  // ── 5. Composite volume OVER rider/background (premultiplied). ─
-  let oneMinusVol = 1.0 - accum.a;
-  let outRGB = accum.rgb + baseColor * baseAlpha * oneMinusVol;
-  let outA = accum.a + baseAlpha * oneMinusVol;
+  // Background: transparent, flat tint, or a vertical studio backdrop.
+  // Computed on every path now — it shows through transparent riders.
+  var bgRGB = u.bgColor;
+  if (u.bgMode > 1.5) {
+    let vgrad = clamp(ndc.y * 0.5 + 0.5, 0.0, 1.0);
+    bgRGB = mix(u.bgColor * 0.35, u.bgColor * 1.35 + vec3<f32>(0.02), vgrad);
+  }
+  let bgA = select(0.0, clamp(u.bgOpacity, 0.0, 1.0), u.bgMode > 0.5);
+
+  // ── 5. Composite front smoke OVER rider OVER back smoke OVER
+  //      background (premultiplied throughout). With an opaque rider
+  //      the back accumulator is empty and this reduces exactly to the
+  //      old volume-over-rider composite.
+  var stackRGB = accumB.rgb + bgRGB * bgA * (1.0 - accumB.a);
+  var stackA = accumB.a + bgA * (1.0 - accumB.a);
+  stackRGB = baseColor * riderA + stackRGB * (1.0 - riderA);
+  stackA = riderA + stackA * (1.0 - riderA);
+  let outRGB = accumF.rgb + stackRGB * (1.0 - accumF.a);
+  let outA = accumF.a + stackA * (1.0 - accumF.a);
 
   // ── 6. Tonemap + vignette. Tonemap the UNPREMULTIPLIED colour so a
   //      partially covered pixel keeps a sane hue, then restore the
@@ -1422,6 +1471,113 @@ export function buildSmokeRidersNativePrecompileCommands(): SmokeRidersNativePre
 }
 
 /* ============================================================== */
+/* COLOUR PRESETS (shared by smoke-riders AND fluid-riders)        */
+/* ============================================================== */
+// One curated, art-directed set per preset: the four palette colours,
+// the volume tint, the whole light rig and the backdrop move together
+// so a preset looks coherent the moment it is picked. Expanded ONCE in
+// TS — `nativeGraphParamsForLayer` runs params through
+// `applyRidersColorPreset` before they reach the core, and both
+// `resolve*Params` call it too so the WebGPU fallback and tests agree.
+// The Rust core only ever sees final colours.
+
+interface RidersColorPresetColors {
+  colorA: [number, number, number];
+  colorB: [number, number, number];
+  colorC: [number, number, number];
+  colorD: [number, number, number];
+  smokeColor: [number, number, number];
+  keyColor: [number, number, number];
+  fillColor: [number, number, number];
+  rimColor: [number, number, number];
+  backgroundColor: [number, number, number];
+}
+
+export const RIDERS_COLOR_PRESETS: Record<string, RidersColorPresetColors> = {
+  molten: {
+    colorA: [255, 122, 22], colorB: [255, 64, 12], colorC: [255, 186, 64], colorD: [150, 34, 8],
+    smokeColor: [255, 112, 30],
+    keyColor: [255, 228, 192], fillColor: [200, 96, 56], rimColor: [255, 172, 92],
+    backgroundColor: [26, 13, 9],
+  },
+  'deep-ocean': {
+    colorA: [24, 128, 196], colorB: [12, 64, 148], colorC: [72, 208, 224], colorD: [8, 40, 84],
+    smokeColor: [36, 124, 196],
+    keyColor: [205, 236, 255], fillColor: [64, 112, 190], rimColor: [148, 224, 255],
+    backgroundColor: [6, 11, 22],
+  },
+  acid: {
+    colorA: [138, 255, 44], colorB: [232, 255, 48], colorC: [255, 48, 204], colorD: [44, 220, 120],
+    smokeColor: [132, 255, 64],
+    keyColor: [236, 255, 214], fillColor: [216, 64, 255], rimColor: [230, 255, 96],
+    backgroundColor: [9, 13, 7],
+  },
+  ultraviolet: {
+    colorA: [146, 64, 255], colorB: [74, 32, 205], colorC: [232, 84, 255], colorD: [42, 12, 124],
+    smokeColor: [124, 64, 240],
+    keyColor: [222, 194, 255], fillColor: [84, 64, 224], rimColor: [255, 124, 240],
+    backgroundColor: [11, 7, 22],
+  },
+  pearl: {
+    colorA: [246, 241, 236], colorB: [221, 226, 236], colorC: [255, 236, 226], colorD: [202, 212, 226],
+    smokeColor: [236, 236, 241],
+    keyColor: [255, 250, 240], fillColor: [201, 216, 240], rimColor: [255, 241, 231],
+    backgroundColor: [31, 33, 39],
+  },
+  lava: {
+    colorA: [32, 26, 24], colorB: [255, 92, 12], colorC: [92, 32, 18], colorD: [255, 164, 44],
+    smokeColor: [84, 38, 22],
+    keyColor: [255, 142, 62], fillColor: [122, 32, 12], rimColor: [255, 94, 22],
+    backgroundColor: [9, 6, 6],
+  },
+  chrome: {
+    colorA: [152, 162, 177], colorB: [92, 102, 117], colorC: [202, 212, 222], colorD: [62, 72, 87],
+    smokeColor: [142, 152, 167],
+    keyColor: [255, 255, 255], fillColor: [122, 142, 172], rimColor: [202, 222, 247],
+    backgroundColor: [14, 16, 20],
+  },
+  candy: {
+    colorA: [255, 92, 182], colorB: [82, 222, 255], colorC: [255, 232, 92], colorD: [182, 122, 255],
+    smokeColor: [255, 142, 202],
+    keyColor: [255, 246, 236], fillColor: [132, 202, 255], rimColor: [255, 192, 232],
+    backgroundColor: [23, 15, 25],
+  },
+};
+
+export const RIDERS_COLOR_PRESET_OPTIONS = [
+  { value: 'custom', label: 'Custom' },
+  { value: 'molten', label: 'Molten' },
+  { value: 'deep-ocean', label: 'Deep Ocean' },
+  { value: 'acid', label: 'Acid' },
+  { value: 'ultraviolet', label: 'Ultraviolet' },
+  { value: 'pearl', label: 'Pearl' },
+  { value: 'lava', label: 'Lava' },
+  { value: 'chrome', label: 'Chrome' },
+  { value: 'candy', label: 'Candy' },
+];
+
+/** Expand `colorPreset` into concrete colour params. `custom` (or any
+ *  unknown value) passes the params through untouched so the individual
+ *  colour pickers keep working exactly as before. */
+export function applyRidersColorPreset(params: Record<string, any>): Record<string, any> {
+  const source = params ?? {};
+  const preset = RIDERS_COLOR_PRESETS[String(source.colorPreset ?? 'custom')];
+  if (!preset) return source;
+  return {
+    ...source,
+    colorA: [...preset.colorA],
+    colorB: [...preset.colorB],
+    colorC: [...preset.colorC],
+    colorD: [...preset.colorD],
+    smokeColor: [...preset.smokeColor],
+    keyColor: [...preset.keyColor],
+    fillColor: [...preset.fillColor],
+    rimColor: [...preset.rimColor],
+    backgroundColor: [...preset.backgroundColor],
+  };
+}
+
+/* ============================================================== */
 /* PARAM SCHEMA                                                    */
 /* ============================================================== */
 
@@ -1507,6 +1663,11 @@ export const smokeRidersParamSchema: ParamControl[] = [
   // -1 flings them out onto the strain filaments between the cores.
   { kind: 'slider', key: 'vortexPull', label: 'Vortex Pull', group: 'Riders',
     min: -1, max: 1, step: 0.01, default: 0 },
+  // Surface-seeking spring toward the smoke's iso shell. Off by default
+  // here — the smoke instrument's riders live IN the plume; the fluid
+  // instrument defaults it on so orbs collect on the liquid's surface.
+  { kind: 'slider', key: 'surfaceStick', label: 'Ride Surface', group: 'Riders',
+    min: 0, max: 4, step: 0.01, default: 0 },
   { kind: 'slider', key: 'riderDamping', label: 'Damping', group: 'Riders',
     min: 0, max: 4, step: 0.01, default: 0.45 },
   { kind: 'slider', key: 'riderLife', label: 'Recycle Time', group: 'Riders',
@@ -1521,6 +1682,10 @@ export const smokeRidersParamSchema: ParamControl[] = [
     min: 0, max: 1, step: 0.01, default: 0.75 },
   { kind: 'slider', key: 'coatRoughness', label: 'Coat Roughness', group: 'Material',
     min: 0.01, max: 1, step: 0.01, default: 0.08 },
+  { kind: 'slider', key: 'riderOpacity', label: 'Orb Opacity', group: 'Material',
+    min: 0.15, max: 1, step: 0.01, default: 1 },
+  { kind: 'slider', key: 'reflectStrength', label: 'Reflections', group: 'Material',
+    min: 0, max: 3, step: 0.01, default: 1 },
   { kind: 'slider', key: 'contactAO', label: 'Fluid AO', group: 'Material',
     min: 0, max: 4, step: 0.01, default: 1.1 },
 
@@ -1545,6 +1710,9 @@ export const smokeRidersParamSchema: ParamControl[] = [
     min: 0, max: 2, step: 0.01, default: 0.14 },
 
   // ── Palette / background ─────────────────────────────────────
+  { kind: 'select', key: 'colorPreset', label: 'Colour Preset', group: 'Palette',
+    options: RIDERS_COLOR_PRESET_OPTIONS,
+    default: 'custom' },
   { kind: 'color', key: 'colorA', label: 'Color A', group: 'Palette',
     default: [255, 104, 10] },
   { kind: 'color', key: 'colorB', label: 'Color B', group: 'Palette',
@@ -1735,6 +1903,8 @@ export interface SmokeRidersResolvedParams {
   buoyancy: number;
   gravity: number;
   vortexPull: number;
+  /** Surface-seeking spring toward the iso shell. 0 here by default. */
+  surfaceStick: number;
   riderDamping: number;
   riderLife: number;
   containStrength: number;
@@ -1743,6 +1913,8 @@ export interface SmokeRidersResolvedParams {
   metalness: number;
   clearCoat: number;
   coatRoughness: number;
+  riderOpacity: number;
+  reflectStrength: number;
   contactAO: number;
   // lighting
   anisotropy: number;
@@ -1768,6 +1940,15 @@ export interface SmokeRidersResolvedParams {
   flowSpeed: number;
   /** 0 = AgX, 1 = ACES, 2 = Linear. */
   tonemap: number;
+  // Shared-uniform mirrors: the Rust packer serves BOTH rider kinds, so
+  // the smoke packer writes these fluid-centric fields too (the smoke
+  // WGSL ignores them) to stay byte-identical with the core.
+  isoLevel: number;
+  colorFollow: number;
+  edgeSoftness: number;
+  liquidGlass: number;
+  surfaceDetail: number;
+  detailScale: number;
   // camera
   volumeScaleX: number;
   volumeScaleZ: number;
@@ -1807,7 +1988,9 @@ export function resolveSmokeRidersParams(
   params?: Record<string, any> | null,
   bands?: { bass?: number; treble?: number } | null,
 ): SmokeRidersResolvedParams {
-  const p = { ...smokeRidersParamDefaults, ...(params ?? {}) } as Record<string, any>;
+  const p = applyRidersColorPreset(
+    { ...smokeRidersParamDefaults, ...(params ?? {}) },
+  ) as Record<string, any>;
   const quality = String(p.quality ?? 'balanced');
   const style = String(p.style ?? 'paint');
   const tuning = smokeRidersStyleTuning(style);
@@ -1889,6 +2072,7 @@ export function resolveSmokeRidersParams(
     buoyancy: num(p.buoyancy, 0.2, 0, 4) * tuning.buoyancyScale * (1 + bass * 0.4),
     gravity: num(p.gravity, 1, 0, 4) * tuning.gravityScale,
     vortexPull: num(p.vortexPull, 0, -1, 1),
+    surfaceStick: num(p.surfaceStick, 0, 0, 4),
     riderDamping: num(p.riderDamping, 0.45, 0, 4),
     riderLife: num(p.riderLife, 6, 1, 60),
     // Velocity gain, not a spring constant: the containment is folded
@@ -1900,6 +2084,8 @@ export function resolveSmokeRidersParams(
     metalness: num(p.metalness, 0.08, 0, 1),
     clearCoat: num(p.clearCoat, 0.75, 0, 1),
     coatRoughness: num(p.coatRoughness, 0.08, 0.01, 1),
+    riderOpacity: num(p.riderOpacity, 1, 0.15, 1),
+    reflectStrength: num(p.reflectStrength, 1, 0, 3),
     contactAO: num(p.contactAO, 1.1, 0, 4),
 
     anisotropy: num(p.anisotropy, 0.4, -0.9, 0.9),
@@ -1924,6 +2110,14 @@ export function resolveSmokeRidersParams(
     exposure: num(p.exposure, 1.5, 0.1, 4),
     flowSpeed: num(p.flowSpeed, 0.32, 0.05, 2),
     tonemap: TONEMAP_ID[String(p.tonemap ?? 'agx')] ?? 0,
+    // Shared-uniform mirrors — same keys, clamps and defaults as the
+    // Rust normalizer so the packed bytes stay identical for any params.
+    isoLevel: num(p.isoLevel, 0.42, 0.02, 2.5),
+    colorFollow: num(p.colorFollow, 3.2, 0, 10),
+    edgeSoftness: num(p.edgeSoftness, 0.18, 0, 0.5),
+    liquidGlass: num(p.liquidGlass, 0, 0, 1),
+    surfaceDetail: num(p.surfaceDetail, 0.12, 0, 1),
+    detailScale: num(p.detailScale, 8, 1, 24),
 
     volumeScaleX: 1.72,
     volumeScaleZ: 1.25,
@@ -2333,6 +2527,8 @@ function buildRiderUniform(
   writeF32(view, 27, params.treble);
   writeF32(view, 28, params.riderSize);
   writeF32(view, 29, SMOKE_RIDERS_TAU_REF_RADIUS);
+  writeF32(view, 30, params.surfaceStick);
+  writeF32(view, 31, params.isoLevel);
   return bufferToBase64(buffer);
 }
 
@@ -2367,8 +2563,9 @@ function buildRenderUniform(
   tileCountY: number,
   riderCount: number,
   frameIndex: number,
+  time: number,
 ): string {
-  const buffer = new ArrayBuffer(352);
+  const buffer = new ArrayBuffer(384);
   const view = new DataView(buffer);
   const floats = new Float32Array(buffer);
   floats.set(invViewProj, 0);
@@ -2448,6 +2645,18 @@ function buildRenderUniform(
   writeF32(view, 81, params.tonemap);
   writeF32(view, 82, params.clearCoat);
   writeF32(view, 83, params.coatRoughness);
+  // Shared tail with fluid-riders — the smoke WGSL ignores the
+  // liquid-only fields but the byte layout must match the Rust packer.
+  writeF32(view, 84, params.isoLevel);
+  writeF32(view, 85, params.paintThickness);
+  writeF32(view, 86, params.colorFollow);
+  writeF32(view, 87, params.edgeSoftness);
+  writeF32(view, 88, params.riderOpacity);
+  writeF32(view, 89, params.reflectStrength);
+  writeF32(view, 90, params.liquidGlass);
+  writeF32(view, 91, params.surfaceDetail);
+  writeF32(view, 92, params.detailScale);
+  writeF32(view, 93, time);
   // `state` participates only through the rotation baked into invViewProj.
   void state;
   return bufferToBase64(buffer);
@@ -2555,7 +2764,7 @@ export function buildSmokeRidersNativeComputeGraph(
     { id: uid('surface-uniform'), kind: 'uniform', byte_length: 32, initial_b64: buildSurfaceUniform(params, dt) },
     { id: uid('rider-uniform'), kind: 'uniform', byte_length: 128, initial_b64: buildRiderUniform(params, dt, time, riderCount) },
     { id: uid('bin-uniform'), kind: 'uniform', byte_length: 96, initial_b64: buildBinUniform(params, viewProj, tileCountX, tileCountY, riderCount, aspect) },
-    { id: uid('render-uniform'), kind: 'uniform', byte_length: 352, initial_b64: buildRenderUniform(params, state, invViewProj, model, tileCountX, tileCountY, riderCount, frameIndex) },
+    { id: uid('render-uniform'), kind: 'uniform', byte_length: 384, initial_b64: buildRenderUniform(params, state, invViewProj, model, tileCountX, tileCountY, riderCount, frameIndex, time) },
     { id: uid('emitters'), kind: 'storage', byte_length: SMOKE_RIDERS_MAX_EMITTERS * 48, initial_b64: buildEmittersBuffer(params) },
     { id: gid('velocity-a'), kind: 'storage', byte_length: vec4Bytes, persistent: true, clear: mustReset },
     { id: gid('velocity-b'), kind: 'storage', byte_length: vec4Bytes, persistent: true, clear: mustReset },
