@@ -155,6 +155,9 @@ const SMOKE_RIDERS_DEF: GpuShaderDef = {
     },
   },
 };
+// The liquid's iso-surface hunt needs a finer march than the smoke
+// instrument's scatter integral (default 96 vs 72), so its budgets carry
+// proportionally higher marchSteps ceilings.
 const FLUID_RIDERS_DEF: GpuShaderDef = {
   id: 'fluid-riders',
   label: 'Fluid Riders',
@@ -170,17 +173,17 @@ const FLUID_RIDERS_DEF: GpuShaderDef = {
   // (which is warm-started and must stay at 20+ sweeps everywhere).
   qualityBudgets: {
     low: {
-      maxParams: { gridSize: 32, shadowSteps: 2, marchSteps: 36, riderCount: 160, emitterCount: 4 },
+      maxParams: { gridSize: 32, shadowSteps: 2, marchSteps: 48, riderCount: 160, emitterCount: 4 },
       scaleMaxParams: ['shadowSteps', 'marchSteps', 'riderCount', 'emitterCount'],
       forceParams: { advection: 'semi-lagrangian' },
     },
     balanced: {
-      maxParams: { gridSize: 48, shadowSteps: 5, marchSteps: 72, riderCount: 480, emitterCount: 6 },
+      maxParams: { gridSize: 48, shadowSteps: 5, marchSteps: 96, riderCount: 480, emitterCount: 6 },
       scaleMaxParams: ['shadowSteps', 'marchSteps', 'riderCount', 'emitterCount'],
       forceParams: { advection: 'semi-lagrangian' },
     },
     high: {
-      maxParams: { gridSize: 64, shadowSteps: 8, marchSteps: 108, riderCount: 1024, emitterCount: 8 },
+      maxParams: { gridSize: 64, shadowSteps: 8, marchSteps: 144, riderCount: 1024, emitterCount: 8 },
       scaleMaxParams: ['shadowSteps', 'marchSteps', 'riderCount'],
     },
     ultra: {

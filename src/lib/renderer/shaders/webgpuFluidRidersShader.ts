@@ -90,6 +90,10 @@ import {
 import type { GpuShaderImpl, ParamControl } from '../gpuShaderTypes';
 import { deriveDefaults } from '../gpuShaderTypes';
 import { resolveGhostWgsl } from '../wgsl';
+import {
+  RIDERS_COLOR_PRESET_OPTIONS,
+  applyRidersColorPreset,
+} from './webgpuSmokeRidersShader';
 
 /* ============================================================== */
 /* CONSTANTS                                                       */
@@ -516,7 +520,7 @@ struct RiderU {
   bounds: vec3<f32>, containStrength: f32,
   spawnCenter: vec3<f32>, spawnRadius: f32,
   lifeSpan: f32, pressureGain: f32, bass: f32, treble: f32,
-  radiusScale: f32, tauRefRadius: f32, _pad0: f32, _pad1: f32,
+  radiusScale: f32, tauRefRadius: f32, surfaceStick: f32, isoLevel: f32,
 };
 
 @group(0) @binding(0) var<uniform>             ru:      RiderU;
@@ -691,6 +695,27 @@ fn cs_riders(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (abs(ru.vortexPull) > 0.00001) {
     aExt = aExt - pressureGradient(uvw) * (ru.vortexPull * ru.pressureGain);
   }
+  // ── Surface-seeking spring ("Ride Surface"). ∇ρ points toward
+  //    increasing density, so (iso − ρ)·ĝ pulls a rider hovering outside
+  //    the paint onto the iso shell and pushes a buried one back out:
+  //    the population collects ON the surface and bobs with it instead
+  //    of drifting through the body as unrelated debris. ──────────────
+  if (ru.surfaceStick > 0.0001) {
+    let hs = 1.5 / f32(ru.gridX);
+    let gx = sampleDensityAt(uvw + vec3<f32>(hs, 0.0, 0.0)) - sampleDensityAt(uvw - vec3<f32>(hs, 0.0, 0.0));
+    let gy = sampleDensityAt(uvw + vec3<f32>(0.0, hs, 0.0)) - sampleDensityAt(uvw - vec3<f32>(0.0, hs, 0.0));
+    let gz = sampleDensityAt(uvw + vec3<f32>(0.0, 0.0, hs)) - sampleDensityAt(uvw - vec3<f32>(0.0, 0.0, hs));
+    let g = vec3<f32>(gx, gy, gz);
+    let gm = length(g);
+    if (gm > 1e-4) {
+      var seek = (g / gm) * ((ru.isoLevel - density) * ru.surfaceStick * 3.0);
+      let sm = length(seek);
+      // Clamp: a rider deep inside a dense pour would otherwise be
+      // fired out of the volume like a watermelon seed.
+      if (sm > 7.0) { seek = seek * (7.0 / sm); }
+      aExt = aExt + seek;
+    }
+  }
 
   // ── Soft containment, expressed as a velocity the rider relaxes
   //    toward rather than a force. Folding it into the target keeps a
@@ -838,6 +863,8 @@ fn cs_bin_riders(@builtin(global_invocation_id) gid: vec3<u32>) {
 /* WGSL — unified render                                           */
 /* ============================================================== */
 const FLUID_RIDERS_RENDER_WGSL = /* wgsl */ `
+#include <noise>
+
 struct Rider {
   pos:    vec3<f32>, radius: f32,
   vel:    vec3<f32>, tau:    f32,
@@ -863,7 +890,9 @@ struct RenderU {
   shadowSteps: u32, marchSteps: u32, tileCountX: u32, tileCountY: u32,
   radiusScale: f32, ambient: f32, vignette: f32, bgMode: f32,
   frameIndex: u32, tonemap: f32, clearCoat: f32, coatRoughness: f32,
-  isoLevel: f32, paintThickness: f32, colorFollow: f32, _pad3: f32,
+  isoLevel: f32, paintThickness: f32, colorFollow: f32, edgeSoftness: f32,
+  riderOpacity: f32, reflectStrength: f32, liquidGlass: f32, surfaceDetail: f32,
+  detailScale: f32, timeSec: f32, _pad4: f32, _pad5: f32,
 };
 
 @group(0) @binding(0) var<uniform>       u:        RenderU;
@@ -970,6 +999,11 @@ fn srEnv(dir: vec3<f32>) -> vec3<f32> {
   let sky     = vec3<f32>(0.380, 0.430, 0.520);
   var col = mix(ground, horizon, smoothstep(0.0, 0.5, t));
   col = mix(col, sky, smoothstep(0.5, 1.0, t));
+  // Thin bright horizon strip: a mirror needs STRUCTURE, and a smooth
+  // three-band gradient has none — this is the streak that sweeps
+  // across the glossy surfaces as they turn.
+  let band = exp(-abs(dir.y - 0.06) * 24.0) * 0.4;
+  col = col + vec3<f32>(0.55, 0.57, 0.60) * band;
   let blob = pow(max(dot(dir, u.keyDir), 0.0), 48.0) * 2.4;
   let bounce = pow(max(dot(dir, -u.keyDir), 0.0), 8.0) * 0.25;
   return col + u.keyColor * blob + u.fillColor * bounce;
@@ -1154,33 +1188,38 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     hasHit = true;
   }
 
-  // ── 3. Volume march, CLIPPED to the nearest sphere hit. ────────
-  //     Smoke in front of a rider occludes it; smoke behind it is
-  //     never marched, so the rider is genuinely inside the volume.
-  var accum = vec4<f32>(0.0);
+  // ── 3. Iso-surface hunt. An OPAQUE rider clips the march (liquid
+  //     behind it is never marched); a transparent rider must NOT stop
+  //     it — the surface behind the orb has to be found so it can show
+  //     through the glass. The composite in section 5 orders the two
+  //     hits by actual depth.
+  var surfHit = false;
+  var surfT = 1.0e30;
+  var surfRGB = vec3<f32>(0.0);
+  var surfA = 0.0;
+  var surfTint = vec3<f32>(1.0);
+  let riderA = select(0.0, clamp(u.riderOpacity, 0.0, 1.0), hasHit);
+  let riderOpaque = riderA >= 0.999;
   let slab = srIntersectBox(ro, rd, bmin, bmax);
-  let g = clamp(u.anisotropy, -0.95, 0.95);
   if (slab.y >= slab.x && slab.y > 0.0) {
     let tStart = max(slab.x, 0.0);
-    let tEnd = min(slab.y, select(slab.y, tHit, hasHit));
+    let tEnd = select(slab.y, min(slab.y, tHit), hasHit && riderOpaque);
     if (tEnd > tStart) {
       let steps = clamp(u.marchSteps, 8u, 192u);
       let stepLen = (tEnd - tStart) / f32(steps);
-      // Golden-ratio-animated low-discrepancy offset. A fixed per-pixel
-      // hash is a spatial mask: it hides banding but every frame keeps
-      // the same error, so the residual reads as fixed-pattern grain.
-      // Advancing each pixel's offset by φ⁻¹ each frame turns the mask
-      // into a progressive sequence — successive frames sample the
-      // volume at complementary depths, the eye integrates them, and the
-      // march can afford noticeably fewer steps at equal quality.
-      let dither = fract(srHash12(in.pos.xy) + 0.61803398875 * f32(u.frameIndex));
+      // QUARTER-strength temporal dither. The full golden-ratio offset
+      // (which the smoke instrument and the shadow march keep) moves the
+      // surface-crossing sample a whole step every frame, and on a 48³
+      // grid that reads as a crawling, jagged silhouette. A quarter of
+      // the sequence still breaks banding without the crawl.
+      let dither = fract(srHash12(in.pos.xy) + 0.61803398875 * f32(u.frameIndex)) * 0.25;
       var t0 = tStart + stepLen * dither;
       var prevT = t0;
-      var prevD = srSampleDensity((ro + rd * t0 - bmin) / extent).w;
       var i: u32 = 0u;
-      // Viscous liquid is OPAQUE: instead of integrating transmittance we
-      // hunt the isosurface where density crosses the threshold, refine the
-      // crossing, and shade it as a glossy dielectric surface.
+      // Viscous liquid is (near-)OPAQUE: instead of integrating
+      // transmittance we hunt the isosurface where density crosses the
+      // threshold, refine the crossing, and shade it as a glossy
+      // dielectric surface.
       loop {
         if (i >= steps) { break; }
         i = i + 1u;
@@ -1201,7 +1240,21 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
           let hpos = ro + rd * ht;
           let huvw = (hpos - bmin) / extent;
           let sc = srSampleDensity(huvw);
-          let hn = srSurfaceNormal(huvw, 1.5 / f32(max(u.gridX, 1u)));
+          // Narrow + wide gradient taps averaged: the narrow tap keeps
+          // the sheet's shape, the wide tap kills the grid-frequency
+          // grit that made the surface look pebble-dashed.
+          let gridF = f32(max(u.gridX, 1u));
+          let hnNarrow = srSurfaceNormal(huvw, 1.5 / gridF);
+          let hnWide = srSurfaceNormal(huvw, 3.0 / gridF);
+          let hnGeo = normalize(hnNarrow + hnWide);
+          var hn = hnGeo;
+          // Sculpted micro-texture: two octaves of curl noise perturb
+          // the normal. 0 = poured glass, high = rough cast concrete.
+          if (u.surfaceDetail > 0.001) {
+            let dq = hpos * u.detailScale + vec3<f32>(0.0, u.timeSec * 0.12, 0.0);
+            let dn = ghost_curl_noise3(dq) + ghost_curl_noise3(dq * 2.63 + vec3<f32>(17.7)) * 0.5;
+            hn = normalize(hn + dn * (u.surfaceDetail * 0.55));
+          }
           let hv = -rd;
 
           // Beer-Lambert body tint: march a little past the surface so thick
@@ -1219,8 +1272,10 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
           let absorb = exp(-max(thick, 0.0) * u.density * u.paintThickness * 3.0 * (vec3<f32>(1.0) - tint));
 
           let shadow = srShadowMarch(hpos + hn * 0.01, u.keyDir, bmin, bmax, 1.0);
-          let a = max(u.roughness * u.roughness, 0.002);
+          let rough = clamp(u.roughness, 0.03, 1.0);
+          let a = max(rough * rough, 0.002);
           let nv = max(dot(hn, hv), 1e-4);
+          let nvGeo = max(dot(hnGeo, hv), 0.0);
 
           // Key: GGX + clear coat.
           let hl = normalize(u.keyDir + hv);
@@ -1237,13 +1292,37 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
 
           let fillLit = tint * absorb * u.fillColor * (u.fillStrength * max(dot(hn, -u.fillDir) * 0.5 + 0.5, 0.0));
           let rimLit = u.rimColor * (u.rimStrength * pow(1.0 - nv, 4.0));
-          let envLit = srEnv(reflect(-hv, hn)) * srFresnel(vec3<f32>(0.04), nv) * (0.6 + u.clearCoat);
+          // Env mirror obeys roughness (a rough pour should not mirror
+          // the studio) and the Reflections knob.
+          let envLit = srEnv(reflect(-hv, hn)) * srFresnel(vec3<f32>(0.04), nv)
+            * (0.6 + u.clearCoat) * (1.0 - rough * 0.7) * max(u.reflectStrength, 0.0);
           let col = keyLit + fillLit + rimLit + envLit + tint * absorb * u.ambient;
-          accum = vec4<f32>(col * u.emission, 1.0);
+
+          // Silhouette coverage: grazing rays (GEOMETRIC normal nearly
+          // perpendicular to the view) get partial alpha, so the edge
+          // resolves as a soft anti-aliased arc instead of a voxel
+          // staircase.
+          var alpha = smoothstep(0.0, max(u.edgeSoftness, 1e-4), nvGeo);
+          // Sub-voxel wisps: a sheet thinner than a march step resolves
+          // as per-pixel hit-or-miss stipple. Fading coverage with the
+          // optical thickness dissolves those wisps smoothly instead of
+          // leaving a static dot pattern; solid bodies (thick >> 0.05)
+          // are untouched.
+          alpha = alpha * smoothstep(0.0, 0.045, thick);
+          // Glass: facing regions keep the Fresnel reflection but
+          // transmit the rest; the Beer-Lambert absorb tints whatever
+          // shows through (section 5).
+          let glass = clamp(u.liquidGlass, 0.0, 1.0);
+          let fGlass = srFSchlick(0.04, nv);
+          alpha = alpha * mix(1.0, fGlass + (1.0 - fGlass) * 0.25, glass);
+          surfTint = mix(vec3<f32>(1.0), absorb, glass);
+          surfRGB = col * u.emission;
+          surfA = clamp(alpha, 0.0, 1.0);
+          surfT = ht;
+          surfHit = true;
           break;
         }
         prevT = t0;
-        prevD = d;
         t0 = t0 + stepLen;
       }
     }
@@ -1251,7 +1330,6 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
 
   // ── 4. Rider shading — GGX + three-point studio rig + env. ─────
   var baseColor = vec3<f32>(0.0);
-  var baseAlpha = 0.0;
   if (hasHit) {
     let hitPos = ro + rd * tHit;
     let n = hitNormal;
@@ -1327,34 +1405,55 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
       lit = lit + u.rimColor * (u.rimStrength * nDotL * edge);
     }
     // Environment reflection — base lobe plus the coat's own mirror
-    // term, which is what puts the studio in the highlight.
+    // term, which is what puts the studio in the highlight. Scaled by
+    // the Reflections knob, and topped up with a Fresnel-only mirror as
+    // opacity drops so a see-through orb reads as GLASS, not as a ghost.
     {
       let refl = reflect(rd, n);
       let env = srEnv(refl);
       let fr = srFresnel(f0, nDotV);
       let fc = srFSchlick(0.04, nDotV) * coat;
-      lit = lit + env * fr * (0.55 * (1.0 - rough * 0.65)) * (1.0 - fc);
-      lit = lit + env * (fc * (1.0 - coatRough * 0.6));
+      let reflGain = max(u.reflectStrength, 0.0);
+      lit = lit + env * fr * (0.55 * (1.0 - rough * 0.65)) * (1.0 - fc) * reflGain;
+      lit = lit + env * (fc * (1.0 - coatRough * 0.6)) * reflGain;
+      lit = lit + env * fr * ((1.0 - riderA) * 0.9 * reflGain);
     }
     lit = lit + diffuseAlbedo * u.ambient;
     baseColor = lit * ao;
-    baseAlpha = 1.0;
-  } else {
-    // Background: transparent, flat tint, or a vertical studio backdrop.
-    let mode = u.bgMode;
-    var bg = u.bgColor;
-    if (mode > 1.5) {
-      let vgrad = clamp(ndc.y * 0.5 + 0.5, 0.0, 1.0);
-      bg = mix(u.bgColor * 0.35, u.bgColor * 1.35 + vec3<f32>(0.02), vgrad);
-    }
-    baseColor = bg;
-    baseAlpha = select(0.0, clamp(u.bgOpacity, 0.0, 1.0), mode > 0.5);
   }
 
-  // ── 5. Composite volume OVER rider/background (premultiplied). ─
-  let oneMinusVol = 1.0 - accum.a;
-  let outRGB = accum.rgb + baseColor * baseAlpha * oneMinusVol;
-  let outA = accum.a + baseAlpha * oneMinusVol;
+  // Background: transparent, flat tint, or a vertical studio backdrop.
+  // Computed on every path now — it shows through glassy liquid and
+  // transparent orbs.
+  var bgRGB = u.bgColor;
+  if (u.bgMode > 1.5) {
+    let vgrad = clamp(ndc.y * 0.5 + 0.5, 0.0, 1.0);
+    bgRGB = mix(u.bgColor * 0.35, u.bgColor * 1.35 + vec3<f32>(0.02), vgrad);
+  }
+  let bgA = select(0.0, clamp(u.bgOpacity, 0.0, 1.0), u.bgMode > 0.5);
+
+  // ── 5. Depth-ordered composite (premultiplied): whichever of the
+  //      liquid surface / rider is nearer goes on top, the other shows
+  //      through partial coverage, and everything transmitted through
+  //      the surface is tinted by its Beer-Lambert absorb.
+  let riderPre = baseColor * riderA;
+  let surfPre = surfRGB * surfA;
+  let bgPre = bgRGB * bgA;
+  var outRGB = vec3<f32>(0.0);
+  var outA = 0.0;
+  if (surfHit && (!hasHit || surfT <= tHit)) {
+    // Liquid in front of the orb.
+    let midRGB = riderPre + bgPre * (1.0 - riderA);
+    let midA = riderA + bgA * (1.0 - riderA);
+    outRGB = surfPre + midRGB * (1.0 - surfA) * surfTint;
+    outA = surfA + midA * (1.0 - surfA);
+  } else {
+    // Orb in front (or no liquid surface on this ray).
+    let midRGB = surfPre + bgPre * (1.0 - surfA) * surfTint;
+    let midA = surfA + bgA * (1.0 - surfA);
+    outRGB = riderPre + midRGB * (1.0 - riderA);
+    outA = riderA + midA * (1.0 - riderA);
+  }
 
   // ── 6. Tonemap + vignette. Tonemap the UNPREMULTIPLIED colour so a
   //      partially covered pixel keeps a sane hue, then restore the
@@ -1527,6 +1626,10 @@ export const fluidRidersParamSchema: ParamControl[] = [
     min: 1, max: 8, step: 1, default: 5 },
   { kind: 'slider', key: 'isoLevel', label: 'Surface Level', group: 'Fluid',
     min: 0.02, max: 2.5, step: 0.01, default: 0.42 },
+  // Grazing-angle silhouette fade: 0 is a hard (stair-stepped) edge,
+  // higher values feather the rim of the liquid.
+  { kind: 'slider', key: 'edgeSoftness', label: 'Edge Softness', group: 'Fluid',
+    min: 0, max: 0.5, step: 0.01, default: 0.18 },
   { kind: 'slider', key: 'viscosity', label: 'Viscosity', group: 'Fluid',
     min: 0, max: 1, step: 0.01, default: 0.72 },
   { kind: 'slider', key: 'surfaceTension', label: 'Surface Tension', group: 'Fluid',
@@ -1541,12 +1644,17 @@ export const fluidRidersParamSchema: ParamControl[] = [
     default: 'maccormack' },
   { kind: 'slider', key: 'shadowSteps', label: 'Shadow Steps', group: 'Fluid',
     min: 0, max: 12, step: 1, default: 5 },
+  // 96 for the liquid (vs the smoke instrument's 72): the surface hunt
+  // needs finer steps than a scatter integral or the silhouette pops.
   { kind: 'slider', key: 'marchSteps', label: 'March Steps', group: 'Fluid',
-    min: 16, max: 160, step: 4, default: 72 },
+    min: 16, max: 160, step: 4, default: 96 },
 
   // ── Riders ───────────────────────────────────────────────────
   { kind: 'slider', key: 'colorFollow', label: 'Colour Follow', group: 'Riders',
     min: 0, max: 10, step: 0.05, default: 3.2 },
+  { kind: 'select', key: 'colorPreset', label: 'Colour Preset', group: 'Palette',
+    options: RIDERS_COLOR_PRESET_OPTIONS,
+    default: 'custom' },
   { kind: 'slider', key: 'textureInfluence', label: 'Texture Influence', group: 'Palette',
     min: 0, max: 1, step: 0.01, default: 1 },
   { kind: 'slider', key: 'riderCount', label: 'Rider Count', group: 'Riders',
@@ -1568,8 +1676,10 @@ export const fluidRidersParamSchema: ParamControl[] = [
   // ρ_p/ρ_f. Below 1 the rider is lighter than the paint and floats up.
   { kind: 'slider', key: 'riderDensity', label: 'Rider Density', group: 'Riders',
     min: 0.2, max: 4, step: 0.01, default: 1.9 },
+  // Slightly hotter default coupling than the smoke instrument so the
+  // orbs visibly translate with the sheet instead of hovering near it.
   { kind: 'slider', key: 'flowCoupling', label: 'Flow Coupling', group: 'Riders',
-    min: 0, max: 3, step: 0.01, default: 1.05 },
+    min: 0, max: 3, step: 0.01, default: 1.35 },
   { kind: 'slider', key: 'buoyancy', label: 'Buoyancy', group: 'Riders',
     min: 0, max: 4, step: 0.01, default: 0.2 },
   { kind: 'slider', key: 'gravity', label: 'Gravity', group: 'Riders',
@@ -1578,6 +1688,11 @@ export const fluidRidersParamSchema: ParamControl[] = [
   // -1 flings them out onto the strain filaments between the cores.
   { kind: 'slider', key: 'vortexPull', label: 'Vortex Pull', group: 'Riders',
     min: -1, max: 1, step: 0.01, default: 0 },
+  // Surface-seeking spring toward the liquid's iso shell: the orbs
+  // collect ON the surface and bob with it, which is what finally makes
+  // them read as riding the content instead of floating near it.
+  { kind: 'slider', key: 'surfaceStick', label: 'Ride Surface', group: 'Riders',
+    min: 0, max: 4, step: 0.01, default: 1.6 },
   { kind: 'slider', key: 'riderDamping', label: 'Damping', group: 'Riders',
     min: 0, max: 4, step: 0.01, default: 0.45 },
   { kind: 'slider', key: 'riderLife', label: 'Recycle Time', group: 'Riders',
@@ -1592,6 +1707,19 @@ export const fluidRidersParamSchema: ParamControl[] = [
     min: 0, max: 1, step: 0.01, default: 0.75 },
   { kind: 'slider', key: 'coatRoughness', label: 'Coat Roughness', group: 'Material',
     min: 0.01, max: 1, step: 0.01, default: 0.08 },
+  { kind: 'slider', key: 'riderOpacity', label: 'Orb Opacity', group: 'Material',
+    min: 0.15, max: 1, step: 0.01, default: 1 },
+  { kind: 'slider', key: 'reflectStrength', label: 'Reflections', group: 'Material',
+    min: 0, max: 3, step: 0.01, default: 1 },
+  // Blends the liquid surface from opaque paint toward a transmissive
+  // glass: facing regions let the backdrop through, tinted by the body.
+  { kind: 'slider', key: 'liquidGlass', label: 'Glass', group: 'Material',
+    min: 0, max: 1, step: 0.01, default: 0 },
+  // Micro normal perturbation: 0 = poured glass, 1 = rough cast concrete.
+  { kind: 'slider', key: 'surfaceDetail', label: 'Surface Texture', group: 'Material',
+    min: 0, max: 1, step: 0.01, default: 0.12 },
+  { kind: 'slider', key: 'detailScale', label: 'Texture Scale', group: 'Material',
+    min: 1, max: 24, step: 0.5, default: 8 },
   { kind: 'slider', key: 'contactAO', label: 'Fluid AO', group: 'Material',
     min: 0, max: 4, step: 0.01, default: 1.1 },
 
@@ -1806,6 +1934,8 @@ export interface FluidRidersResolvedParams {
   buoyancy: number;
   gravity: number;
   vortexPull: number;
+  /** Surface-seeking spring toward the iso shell. */
+  surfaceStick: number;
   riderDamping: number;
   riderLife: number;
   containStrength: number;
@@ -1814,6 +1944,11 @@ export interface FluidRidersResolvedParams {
   metalness: number;
   clearCoat: number;
   coatRoughness: number;
+  riderOpacity: number;
+  reflectStrength: number;
+  liquidGlass: number;
+  surfaceDetail: number;
+  detailScale: number;
   contactAO: number;
   // lighting
   anisotropy: number;
@@ -1838,6 +1973,8 @@ export interface FluidRidersResolvedParams {
   exposure: number;
   flowSpeed: number;
   isoLevel: number;
+  /** Grazing-angle silhouette fade width. */
+  edgeSoftness: number;
   viscosity: number;
   colorFollow: number;
   textureInfluence: number;
@@ -1882,7 +2019,9 @@ export function resolveFluidRidersParams(
   params?: Record<string, any> | null,
   bands?: { bass?: number; treble?: number } | null,
 ): FluidRidersResolvedParams {
-  const p = { ...fluidRidersParamDefaults, ...(params ?? {}) } as Record<string, any>;
+  const p = applyRidersColorPreset(
+    { ...fluidRidersParamDefaults, ...(params ?? {}) },
+  ) as Record<string, any>;
   const quality = String(p.quality ?? 'balanced');
   const style = String(p.style ?? 'paint');
   const tuning = fluidRidersStyleTuning(style);
@@ -1914,7 +2053,7 @@ export function resolveFluidRidersParams(
     FLUID_RIDERS_MAX_COUNT,
   );
   const marchSteps = clamp(
-    Math.round(num(p.marchSteps, 72, 16, 160) * qualityMarchScale),
+    Math.round(num(p.marchSteps, 96, 16, 160) * qualityMarchScale),
     16,
     192,
   );
@@ -1960,10 +2099,11 @@ export function resolveFluidRidersParams(
     weightSpread: num(p.weightSpread, 0.38, 0, 1),
     riderDensity,
     gravityFactor: 1 - 1 / riderDensity,
-    flowCoupling: num(p.flowCoupling, 1.05, 0, 3),
+    flowCoupling: num(p.flowCoupling, 1.35, 0, 3),
     buoyancy: num(p.buoyancy, 0.2, 0, 4) * tuning.buoyancyScale * (1 + bass * 0.4),
     gravity: num(p.gravity, 1, 0, 4) * tuning.gravityScale,
     vortexPull: num(p.vortexPull, 0, -1, 1),
+    surfaceStick: num(p.surfaceStick, 1.6, 0, 4),
     riderDamping: num(p.riderDamping, 0.45, 0, 4),
     riderLife: num(p.riderLife, 6, 1, 60),
     // Velocity gain, not a spring constant: the containment is folded
@@ -1975,6 +2115,11 @@ export function resolveFluidRidersParams(
     metalness: num(p.metalness, 0.08, 0, 1),
     clearCoat: num(p.clearCoat, 0.75, 0, 1),
     coatRoughness: num(p.coatRoughness, 0.08, 0.01, 1),
+    riderOpacity: num(p.riderOpacity, 1, 0.15, 1),
+    reflectStrength: num(p.reflectStrength, 1, 0, 3),
+    liquidGlass: num(p.liquidGlass, 0, 0, 1),
+    surfaceDetail: num(p.surfaceDetail, 0.12, 0, 1),
+    detailScale: num(p.detailScale, 8, 1, 24),
     contactAO: num(p.contactAO, 1.1, 0, 4),
 
     anisotropy: num(p.anisotropy, 0.4, -0.9, 0.9),
@@ -1999,6 +2144,7 @@ export function resolveFluidRidersParams(
     exposure: num(p.exposure, 1.5, 0.1, 4),
     flowSpeed: num(p.flowSpeed, 0.32, 0.05, 2),
     isoLevel: num(p.isoLevel, 0.42, 0.02, 2.5),
+    edgeSoftness: num(p.edgeSoftness, 0.18, 0, 0.5),
     viscosity: num(p.viscosity, 0.72, 0, 1),
     colorFollow: num(p.colorFollow, 3.2, 0, 10),
     textureInfluence: num(p.textureInfluence, 1, 0, 1),
@@ -2412,6 +2558,8 @@ function buildRiderUniform(
   writeF32(view, 27, params.treble);
   writeF32(view, 28, params.riderSize);
   writeF32(view, 29, FLUID_RIDERS_TAU_REF_RADIUS);
+  writeF32(view, 30, params.surfaceStick);
+  writeF32(view, 31, params.isoLevel);
   return bufferToBase64(buffer);
 }
 
@@ -2446,8 +2594,9 @@ function buildRenderUniform(
   tileCountY: number,
   riderCount: number,
   frameIndex: number,
+  time: number,
 ): string {
-  const buffer = new ArrayBuffer(352);
+  const buffer = new ArrayBuffer(384);
   const view = new DataView(buffer);
   const floats = new Float32Array(buffer);
   floats.set(invViewProj, 0);
@@ -2530,6 +2679,13 @@ function buildRenderUniform(
   writeF32(view, 84, params.isoLevel);
   writeF32(view, 85, params.paintThickness);
   writeF32(view, 86, params.colorFollow);
+  writeF32(view, 87, params.edgeSoftness);
+  writeF32(view, 88, params.riderOpacity);
+  writeF32(view, 89, params.reflectStrength);
+  writeF32(view, 90, params.liquidGlass);
+  writeF32(view, 91, params.surfaceDetail);
+  writeF32(view, 92, params.detailScale);
+  writeF32(view, 93, time);
   // `state` participates only through the rotation baked into invViewProj.
   void state;
   return bufferToBase64(buffer);
@@ -2637,7 +2793,7 @@ export function buildFluidRidersNativeComputeGraph(
     { id: uid('surface-uniform'), kind: 'uniform', byte_length: 32, initial_b64: buildSurfaceUniform(params, dt) },
     { id: uid('rider-uniform'), kind: 'uniform', byte_length: 128, initial_b64: buildRiderUniform(params, dt, time, riderCount) },
     { id: uid('bin-uniform'), kind: 'uniform', byte_length: 96, initial_b64: buildBinUniform(params, viewProj, tileCountX, tileCountY, riderCount, aspect) },
-    { id: uid('render-uniform'), kind: 'uniform', byte_length: 352, initial_b64: buildRenderUniform(params, state, invViewProj, model, tileCountX, tileCountY, riderCount, frameIndex) },
+    { id: uid('render-uniform'), kind: 'uniform', byte_length: 384, initial_b64: buildRenderUniform(params, state, invViewProj, model, tileCountX, tileCountY, riderCount, frameIndex, time) },
     { id: uid('emitters'), kind: 'storage', byte_length: FLUID_RIDERS_MAX_EMITTERS * 48, initial_b64: buildEmittersBuffer(params) },
     { id: gid('velocity-a'), kind: 'storage', byte_length: vec4Bytes, persistent: true, clear: mustReset },
     { id: gid('velocity-b'), kind: 'storage', byte_length: vec4Bytes, persistent: true, clear: mustReset },

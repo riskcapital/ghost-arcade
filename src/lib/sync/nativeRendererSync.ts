@@ -113,6 +113,7 @@ import {
   type FlythroughNativeGraphState,
 } from '$lib/renderer/webgpuFlythrough';
 import {
+  applyRidersColorPreset,
   buildSmokeRidersNativeComputeGraph,
   buildSmokeRidersNativePrecompileCommands,
   type SmokeRidersNativeGraphState,
@@ -4477,6 +4478,12 @@ function nativeGraphParamsForLayer(layer: Layer, kind: NativeGraphRouteKind, wor
       ...params,
       mode: params.mode ?? gravityWellsDefaultParams.mode ?? 'gravity',
     }, kind, workloadScale);
+  }
+  if (kind === 'smoke-riders' || kind === 'fluid-riders') {
+    // Colour presets are expanded HERE — the single funnel into the
+    // core — so the Rust side only ever sees concrete colours and the
+    // preset logic lives once, in TS.
+    return applyNativeGraphWorkloadScale(applyRidersColorPreset(params), kind, workloadScale);
   }
   return applyNativeGraphWorkloadScale(params, kind, workloadScale);
 }
