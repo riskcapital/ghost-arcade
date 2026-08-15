@@ -37,6 +37,7 @@ import { createLineElement, createDefaultLinesContent, createDefaultDrawAnimatio
 import { syncTrimmedVideoPlayback } from '../utils/videoTrimPlayback';
 import { recoverVJClipAssetRef } from '../storage/vjAssetPersistence';
 import { restoreVideoSourceElement } from '../media/videoSourceRestore';
+import { clipAudioBus, type ClipAudioTransport } from '../audio/clipAudioBus';
 
 // History recording callback — set from App.svelte to avoid circular imports.
 // We record SYNCHRONOUSLY (no setTimeout) so each discrete action lands in its
@@ -4505,6 +4506,11 @@ void main() {
           playbackRate: layer.source.playbackRate,
           trimStart: (layer.source as any).trimStart,
           trimEnd: (layer.source as any).trimEnd,
+          // Opt-in audio playback for mapping-mode media layers. Absent on
+          // every project saved before this feature; imports back as false.
+          audioPlayback: (layer.source as any).audioPlayback,
+          audioVolume: (layer.source as any).audioVolume,
+          audioMuted: (layer.source as any).audioMuted,
           timelapseInterval: layer.source.timelapseInterval,
           timelapseRunning: layer.source.timelapseRunning,
           _assetRef: (layer.source as any)._assetRef,
@@ -4725,6 +4731,12 @@ void main() {
           trimStart: clip.trimStart,
           trimEnd: clip.trimEnd,
           isPlaying: clip.isPlaying,
+          // Opt-in clip audio. Carried so a saved show keeps whichever clips
+          // the user chose to make audible; absent on every pre-existing
+          // project file, which imports back as silent (default false).
+          audioPlayback: clip.audioPlayback,
+          audioVolume: clip.audioVolume,
+          audioMuted: clip.audioMuted,
           zoom: clip.zoom,
           fit: clip.fit,
           anchorX: clip.anchorX,
@@ -5416,6 +5428,12 @@ void main() {
               trimStart: clip.trimStart ?? 0,
               trimEnd: clip.trimEnd ?? 1,
               isPlaying: clip.isPlaying ?? true,
+              // Audio stays OFF unless the saved project explicitly says
+              // otherwise — `=== true` so a stray truthy value from a
+              // hand-edited file can't silently un-mute a show.
+              audioPlayback: clip.audioPlayback === true,
+              audioVolume: clip.audioVolume ?? 1,
+              audioMuted: clip.audioMuted === true,
               zoom: clip.zoom ?? 1,
               fit: clip.fit || 'cover',
               anchorX: clip.anchorX ?? 0.5,
@@ -5893,6 +5911,101 @@ void main() {
 }
 
 export const project = createProjectStore();
+
+// ─── Mapping-mode clip audio reconciliation ──────────────────────────────
+// One central place decides which mapping-mode media layers are audible,
+// instead of scattering attach/detach through every edit path (create,
+// import, rehydrate, toggle, delete). Runs on every project change, but
+// short-circuits to a single `Set.size === 0` check when nothing has opted
+// in — which is every project that never touches the feature.
+//
+// Layer media video elements are safe to wire directly: unlike the VJ clip
+// pool they are created once per MediaSource object and never re-`src`ed
+// (see media/videoSourceRestore.ts and LayerPanel.createMediaSource), so
+// each element gets exactly one createMediaElementSource() for its lifetime.
+const audibleLayerSourceIds = new Set<string>();
+
+function reconcileLayerMediaAudio($project: Project): void {
+  const seen = new Set<string>();
+  for (const layer of $project.layers) {
+    const source = layer.source;
+    if (!source || source.type !== 'video' || source.audioPlayback !== true) continue;
+    const element = source.videoElement;
+    if (!element) continue;
+    seen.add(source.id);
+    const layerId = layer.id;
+    const sourceId = source.id;
+    if (!audibleLayerSourceIds.has(sourceId)) {
+      const ok = clipAudioBus.attachClip(sourceId, element, {
+        volume: source.audioVolume ?? 1,
+        muted: source.audioMuted === true,
+        provider: () => {
+          const current = get(project).layers.find((l) => l.id === layerId)?.source;
+          if (!current || current.id !== sourceId || current.audioPlayback !== true) return null;
+          return mediaSourceAudioTransport(current);
+        },
+      });
+      if (ok) audibleLayerSourceIds.add(sourceId);
+    } else {
+      clipAudioBus.setClipVolume(sourceId, source.audioVolume ?? 1);
+      clipAudioBus.setClipMuted(sourceId, source.audioMuted === true);
+    }
+  }
+  if (audibleLayerSourceIds.size === 0) return;
+  for (const id of Array.from(audibleLayerSourceIds)) {
+    if (seen.has(id)) continue;
+    clipAudioBus.detachClip(id);
+    audibleLayerSourceIds.delete(id);
+  }
+}
+
+/** Wrapped playhead time + transport for a mapping-mode media source.
+ *  Mirrors LayerPanel's `sourcePlaybackTime` so the audio element chases
+ *  exactly the value the render authority is presenting. */
+function mediaSourceAudioTransport(source: MediaSource): ClipAudioTransport {
+  const duration = Number(source.durationSeconds ?? source.videoElement?.duration);
+  const hasDuration = Number.isFinite(duration) && duration > 0;
+  const nativeTime = Number(source._nativePlaybackTimeSeconds);
+  const elementTime = Number(source.videoElement?.currentTime);
+  let time = Number.isFinite(nativeTime) && nativeTime >= 0
+    ? nativeTime
+    : Number.isFinite(elementTime) && elementTime >= 0
+      ? elementTime
+      : 0;
+  const anchorMs = Number(source._nativePlaybackUpdatedAtMs);
+  const rate = Number(source.playbackRate) || 1;
+  const paused = source.isPlaying === false;
+  if (!paused && Number.isFinite(anchorMs)) {
+    time += Math.max(0, performance.now() - anchorMs) / 1000 * rate;
+  }
+  const trimStart = hasDuration ? duration * Math.max(0, Math.min(1, source.trimStart ?? 0)) : 0;
+  const trimEnd = hasDuration ? duration * Math.max(0, Math.min(1, source.trimEnd ?? 1)) : 0;
+  const loop = (source.playbackMode ?? 'loop') !== 'once';
+  if (hasDuration) {
+    const range = Math.max(0.001, trimEnd - trimStart);
+    time = loop
+      ? trimStart + (((time - trimStart) % range) + range) % range
+      : Math.max(trimStart, Math.min(trimEnd, time));
+  }
+  return {
+    timeSeconds: Math.max(0, time),
+    playbackRate: rate,
+    paused,
+    loop,
+    trimStartSeconds: trimStart,
+    trimEndSeconds: trimEnd,
+    seekGeneration: Math.max(0, Math.round(Number(source._nativePlaybackSeekSeq ?? 0))),
+    durationSeconds: hasDuration ? duration : undefined,
+  };
+}
+
+project.subscribe(($project) => {
+  try {
+    reconcileLayerMediaAudio($project);
+  } catch (err) {
+    console.warn('[layers] Clip audio reconcile failed:', err);
+  }
+});
 
 // Derived stores for convenience
 export const layers = derived(project, ($project) => $project.layers);

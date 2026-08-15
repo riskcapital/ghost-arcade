@@ -794,6 +794,15 @@ export interface MediaSource {
   playbackSyncBeats?: number | null; // If set, fit full clip/trim span to this many beats
   trimStart?: number; // 0-1 normalized start point (default 0)
   trimEnd?: number; // 0-1 normalized end point (default 1)
+  // ── Audio playback (opt-in, default OFF) ──
+  // Mirrors VJClip.audioPlayback / audioVolume / audioMuted. NOT the same
+  // thing as `audioEnabled` further down this file, which is splat audio
+  // *reactivity*. When true, this source gets a dedicated (never-pooled)
+  // <video> element wired into `clipAudioBus`; when false or absent the
+  // element stays muted and no WebAudio node is ever constructed.
+  audioPlayback?: boolean; // Play this source's audio track (default false)
+  audioVolume?: number; // 0-1 per-source level (default 1)
+  audioMuted?: boolean; // Per-source mute, independent of audioPlayback (default false)
   durationSeconds?: number; // Native transport metadata; retained when no browser video is attached
   _nativePlaybackTimeSeconds?: number; // Runtime anchor for the native decoder clock
   _nativePlaybackUpdatedAtMs?: number; // performance.now() corresponding to the native time anchor
