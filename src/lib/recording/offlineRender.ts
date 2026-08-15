@@ -139,7 +139,14 @@ export interface OfflineRenderState {
   lastOutputUrl: string | null;
   lastOutputName: string | null;
   lastOutputKind: 'video' | 'frames' | null;
+  /** Where the file actually lives — the app-managed generated-video
+   *  folder for MP4, or the chosen folder for a frame sequence. Always
+   *  set for desktop renders so a user who dismissed the save dialog can
+   *  still find (and reveal) the output. */
   lastOutputPath: string | null;
+  /** The copy the user chose in the save dialog, if they picked one.
+   *  Null means "kept where it was rendered" — never an error. */
+  lastOutputSavedPath: string | null;
 }
 
 const INITIAL_STATE: OfflineRenderState = {
@@ -153,6 +160,7 @@ const INITIAL_STATE: OfflineRenderState = {
   lastOutputName: null,
   lastOutputKind: null,
   lastOutputPath: null,
+  lastOutputSavedPath: null,
 };
 
 export interface FrameSequenceTarget {
@@ -649,6 +657,58 @@ export async function cancelNativeMp4FrameEncoder(session: NativeMp4FrameEncoder
   await invoke('mp4_frame_encoder_cancel', { jobId: session.jobId }).catch(() => {});
 }
 
+/**
+ * Prompt for a save location and copy an already-encoded MP4 there.
+ *
+ * The encoder always writes into the app-managed generated-video folder,
+ * which is the right home for the media-library entry but not a place a
+ * user can find. This is a fast on-disk copy (no IPC bytes), so both the
+ * library entry and the user's own copy survive.
+ *
+ * Cancelling is a normal outcome, not a failure: the render is already
+ * complete and the file is still at `outputPath`. Returns the chosen
+ * destination, or null when the user dismissed the dialog or the copy
+ * could not be made.
+ */
+export async function promptSaveMp4(
+  outputPath: string,
+  name: string,
+  title = 'Save Video',
+): Promise<string | null> {
+  try {
+    const result = await invoke('save_project_dialog', {
+      title,
+      defaultPath: `${name}.mp4`,
+      filters: [
+        { name: 'MP4 Video', extensions: ['mp4'] },
+        { name: 'All Files', extensions: ['*'] },
+      ],
+    }) as { canceled?: boolean; filePath?: string | null } | null;
+    if (result?.canceled || !result?.filePath) return null;
+    const copy = await invoke('copy_file_to_project', {
+      sourcePath: outputPath,
+      destPath: result.filePath,
+    }) as { success?: boolean; error?: string } | null;
+    if (!copy?.success) {
+      console.warn('[OfflineRender] Failed to copy render to chosen path:', copy?.error);
+      return null;
+    }
+    return result.filePath;
+  } catch (err) {
+    console.warn('[OfflineRender] Save prompt failed:', err);
+    return null;
+  }
+}
+
+/** Show a finished render in Finder/Explorer. Best-effort — a render that
+ *  cannot be revealed still shows its path in the completion panel. */
+export async function revealOutputPath(path: string): Promise<void> {
+  if (!isElectron || !path) return;
+  await invoke('video_converter_reveal_path', { path }).catch((err) => {
+    console.warn('[OfflineRender] Reveal failed:', err);
+  });
+}
+
 export async function finishNativeJpegSequence(session: NativeJpegSequenceSession): Promise<void> {
   const result = await invoke<{ success?: boolean; error?: string }>('jpeg_sequence_finish', {
     jobId: session.jobId,
@@ -908,6 +968,8 @@ function createOfflineRenderStore() {
     let nativeMp4FrameEncoderFinished = false;
     let nativeFrameCaptureActive = false;
     let nativeOutputNeedsRestore = false;
+    /** True once the live sync RAF has been suspended for this render. */
+    let manualClockExportHeld = false;
     let nativeCapturePixelFormat: 'rgba' | 'bgra' = 'rgba';
     const frameBaseName = frameSequenceBaseName(settings.filename, 'render');
     if (outputMode === 'frames') {
@@ -969,6 +1031,13 @@ function createOfflineRenderStore() {
         const nativeStatus = await getNativeRendererStatus();
         nativeCapturePixelFormat = rawPixelFormatForNativeTextureFormat(nativeStatus.output_format);
         nativeFrameCaptureActive = true;
+        // Lock the world clock to the render clock: from here until the
+        // finally block, the ONLY thing advancing the core is this loop's
+        // renderManualFrame() call. The live sync RAF would otherwise keep
+        // flushing presents at the export's virtual time, which used to
+        // stack extra simulation steps on top of each captured frame.
+        getActiveNativeRendererSync()?.beginManualClockExport();
+        manualClockExportHeld = true;
       }
       if (outputMode === 'frames' && frameTarget) {
         nativeJpegSequence = await startNativeJpegSequence(
@@ -1166,6 +1235,10 @@ function createOfflineRenderStore() {
           thumbnail,
           _assetRef: assetRef,
         });
+        // Ask where the user wants their copy. The library entry above is
+        // already committed, so cancelling just means "leave it in the
+        // app folder" — the completion panel surfaces that path either way.
+        const savedPath = await promptSaveMp4(encoded.outputPath, niceName);
         update(s => ({
           ...s,
           status: 'complete',
@@ -1173,6 +1246,7 @@ function createOfflineRenderStore() {
           lastOutputName: niceName,
           lastOutputKind: 'video',
           lastOutputPath: encoded.outputPath,
+          lastOutputSavedPath: savedPath,
         }));
         return true;
       }
@@ -1263,6 +1337,10 @@ function createOfflineRenderStore() {
       }
       if (engine && restoreManual !== null) engine.manualTime = restoreManual;
       getActiveNativeRendererSync()?.setRenderClock(null);
+      if (manualClockExportHeld) {
+        manualClockExportHeld = false;
+        getActiveNativeRendererSync()?.endManualClockExport();
+      }
       if (canvas) canvas.style.visibility = restoreCanvasVisibility;
       setISFManualTime(null);
       setStageEffectsManualTime(null);

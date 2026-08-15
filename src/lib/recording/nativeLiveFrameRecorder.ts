@@ -1,7 +1,7 @@
 import { mediaLibrary } from '../stores/media';
 import { pathToFileUrl, type AssetRef } from '../storage/assetRegistry';
 import { generateUUID } from '../utils/uuid';
-import { invoke, isElectron } from '../bridge';
+import { isElectron } from '../bridge';
 import {
   getNativeRendererCapabilities,
   getNativeRendererFrameSnapshot,
@@ -14,6 +14,7 @@ import {
   cancelNativeMp4FrameEncoder,
   finishNativeMp4FrameEncoder,
   formatErr,
+  promptSaveMp4,
   startNativeMp4FrameEncoder,
   thumbnailFromVideoUrl,
   writeNativeMp4Frame,
@@ -140,31 +141,6 @@ async function saveMp4ToLibrary(
     _assetRef: assetRef,
   });
   return { outputPath: encoded.outputPath, name };
-}
-
-/** Live REC parity with the old recorder: prompt for a save location and
- *  copy the already-encoded MP4 there (fast on-disk copy, no IPC bytes). */
-async function promptSaveMp4(outputPath: string, name: string): Promise<void> {
-  try {
-    const result = await invoke('save_project_dialog', {
-      title: 'Save Recording',
-      defaultPath: `${name}.mp4`,
-      filters: [
-        { name: 'MP4 Video', extensions: ['mp4'] },
-        { name: 'All Files', extensions: ['*'] },
-      ],
-    }) as { canceled?: boolean; filePath?: string | null } | null;
-    if (result?.canceled || !result?.filePath) return;
-    const copy = await invoke('copy_file_to_project', {
-      sourcePath: outputPath,
-      destPath: result.filePath,
-    }) as { success?: boolean; error?: string } | null;
-    if (!copy?.success) {
-      console.warn('[NativeRec] Failed to copy recording to chosen path:', copy?.error);
-    }
-  } catch (err) {
-    console.warn('[NativeRec] Save prompt failed:', err);
-  }
 }
 
 /**
@@ -467,7 +443,7 @@ export async function startNativeRendererLiveFrameRecording(
       }
       const saved = await saveMp4ToLibrary(session, frameIndex, namePrefix, options.finalizeOutput);
       await restoreOnce();
-      if (options.promptSave) await promptSaveMp4(saved.outputPath, saved.name);
+      if (options.promptSave) await promptSaveMp4(saved.outputPath, saved.name, 'Save Recording');
       options.onComplete?.();
     } catch (err) {
       await cancelNativeMp4FrameEncoder(session);

@@ -8,7 +8,7 @@
    * Done button.
    */
 
-  import { offlineRender, DEFAULT_OFFLINE_SETTINGS, type OfflineRenderSettings } from '../recording/offlineRender';
+  import { offlineRender, revealOutputPath, DEFAULT_OFFLINE_SETTINGS, type OfflineRenderSettings } from '../recording/offlineRender';
   import { isDesktopApp } from '../bridge';
   import { getNativeRendererCapabilities } from '../api/native-renderer';
   import { project } from '../stores/layers';
@@ -112,6 +112,15 @@
     onClose();
   }
 
+  // Where the finished file actually is. The save dialog's destination
+  // wins when the user picked one; otherwise it is still sitting in the
+  // app's generated-video folder and the user needs to see that path.
+  $: outputLocation = state.lastOutputSavedPath ?? state.lastOutputPath ?? null;
+  $: canReveal = isDesktopApp && !!outputLocation;
+  function reveal() {
+    if (outputLocation) void revealOutputPath(outputLocation);
+  }
+
   function onOutputModeChange() {
     captureBackendTouched = false;
     settings = {
@@ -197,10 +206,14 @@
       <h3>Frames exported</h3>
       <p class="success-meta">{state.lastOutputName ?? 'render'}_%06d.jpg · {state.totalFrames} frames · {fmtTime(elapsedSec)}</p>
       {#if state.lastOutputPath}
-        <p class="success-hint">Saved to {state.lastOutputPath}</p>
+        <p class="success-hint">Saved to</p>
+        <p class="output-path" title={state.lastOutputPath}>{state.lastOutputPath}</p>
       {/if}
       <p class="success-hint">A manifest with an FFmpeg compile command was written beside the frames.</p>
       <div class="actions">
+        {#if canReveal}
+          <button class="btn-secondary" onclick={reveal}>Show in Finder</button>
+        {/if}
         <button class="btn-primary" onclick={closeAndReset}>Done</button>
       </div>
     </div>
@@ -212,8 +225,19 @@
       <h3>Render complete</h3>
       <p class="success-meta">{state.lastOutputName ?? 'render'}.mp4 · {state.totalFrames} frames · {fmtTime(elapsedSec)}</p>
       <video class="preview" src={state.lastOutputUrl} controls muted loop></video>
-      <p class="success-hint">Added to media library + downloaded.</p>
+      {#if state.lastOutputSavedPath}
+        <p class="success-hint">Saved to</p>
+        <p class="output-path" title={state.lastOutputSavedPath}>{state.lastOutputSavedPath}</p>
+      {:else if state.lastOutputPath}
+        <p class="success-hint">Added to the media library. Kept at</p>
+        <p class="output-path" title={state.lastOutputPath}>{state.lastOutputPath}</p>
+      {:else}
+        <p class="success-hint">Added to media library + downloaded.</p>
+      {/if}
       <div class="actions">
+        {#if canReveal}
+          <button class="btn-secondary" onclick={reveal}>Show in Finder</button>
+        {/if}
         <button class="btn-primary" onclick={closeAndReset}>Done</button>
       </div>
     </div>
@@ -231,7 +255,7 @@
         {:else if state.status === 'encoding'}
           Encoding to MP4…
         {:else if state.status === 'saving'}
-          {isFrameOutput ? 'Finalizing frame sequence…' : 'Saving to library…'}
+          {isFrameOutput ? 'Finalizing frame sequence…' : 'Saving — choose where to keep your video…'}
         {/if}
       </div>
       <div class="progress-bar">
@@ -647,6 +671,17 @@
     margin-bottom: 8px;
   }
   .success-hint { color: #4ade80; font-size: 12px; margin: 8px 0 0; }
+  /* The full path matters more than tidiness here — a user who dismissed
+     the save dialog has no other way to find the file. Wrap, don't clip. */
+  .output-path {
+    margin: 4px 0 0;
+    font-size: 11px;
+    font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace);
+    color: var(--text-muted, #888);
+    word-break: break-all;
+    line-height: 1.4;
+    user-select: text;
+  }
 
   .error { text-align: center; }
   .error-icon {
