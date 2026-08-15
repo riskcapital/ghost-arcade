@@ -24,6 +24,7 @@ import { WebGPUInkCloudShader, inkCloudParamSchema, inkCloudParamDefaults } from
 // later if we're sure we won't bring it back.
 import { WebGPU3DSmokeShader, smoke3DParamSchema, smoke3DParamDefaults } from './shaders/webgpu3DSmokeShader';
 import { WebGPUSmokeRidersShader, smokeRidersParamSchema, smokeRidersParamDefaults } from './shaders/webgpuSmokeRidersShader';
+import { WebGPUFluidRidersShader, fluidRidersParamSchema, fluidRidersParamDefaults } from './shaders/webgpuFluidRidersShader';
 import { WebGPUWarpLoom, warpLoomParamSchema, warpLoomParamDefaults } from './shaders/webgpuWarpLoom';
 
 const PLANET_DEF: GpuShaderDef = {
@@ -129,6 +130,40 @@ const SMOKE_RIDERS_DEF: GpuShaderDef = {
   defaultParams: smokeRidersParamDefaults,
   needsSource: false,
   create: (device, presentFormat) => new WebGPUSmokeRidersShader(device, presentFormat),
+  // MacCormack doubles the advection cost and surface tension adds a
+  // ~48-read pass, so the two cheapest tiers force the single-pass
+  // advection chain and trim the march instead of the pressure solve
+  // (which is warm-started and must stay at 20+ sweeps everywhere).
+  qualityBudgets: {
+    low: {
+      maxParams: { gridSize: 32, shadowSteps: 2, marchSteps: 36, riderCount: 160, emitterCount: 4 },
+      scaleMaxParams: ['shadowSteps', 'marchSteps', 'riderCount', 'emitterCount'],
+      forceParams: { advection: 'semi-lagrangian' },
+    },
+    balanced: {
+      maxParams: { gridSize: 48, shadowSteps: 5, marchSteps: 72, riderCount: 480, emitterCount: 6 },
+      scaleMaxParams: ['shadowSteps', 'marchSteps', 'riderCount', 'emitterCount'],
+      forceParams: { advection: 'semi-lagrangian' },
+    },
+    high: {
+      maxParams: { gridSize: 64, shadowSteps: 8, marchSteps: 108, riderCount: 1024, emitterCount: 8 },
+      scaleMaxParams: ['shadowSteps', 'marchSteps', 'riderCount'],
+    },
+    ultra: {
+      maxParams: { gridSize: 64, shadowSteps: 12, marchSteps: 160, riderCount: 2048, emitterCount: 8 },
+      scaleMaxParams: ['shadowSteps', 'marchSteps', 'riderCount'],
+    },
+  },
+};
+const FLUID_RIDERS_DEF: GpuShaderDef = {
+  id: 'fluid-riders',
+  label: 'Fluid Riders',
+  description: 'Thick viscous opaque liquid rendered as a lit isosurface, with raytraced riders that drift on the flow and take their colour from the fluid. Accepts an image or video source to colour the pour.',
+  category: 'Generative',
+  paramSchema: fluidRidersParamSchema,
+  defaultParams: fluidRidersParamDefaults,
+  needsSource: false,
+  create: (device, presentFormat) => new WebGPUFluidRidersShader(device, presentFormat),
   // MacCormack doubles the advection cost and surface tension adds a
   // ~48-read pass, so the two cheapest tiers force the single-pass
   // advection chain and trim the march instead of the pressure solve
@@ -301,6 +336,7 @@ export const GPU_SHADER_CATALOG: GpuShaderDef[] = [
   PARTICLE_FIELD_DEF,
   VOLUMETRIC_BALLS_DEF,
   SMOKE_RIDERS_DEF,
+  FLUID_RIDERS_DEF,
   GRAVITY_WELLS_DEF,
   INK_CLOUD_DEF,
   SMOKE_3D_DEF,
@@ -315,6 +351,7 @@ export const NATIVE_READY_GPU_SHADER_IDS = new Set<string>([
   'flythrough',
   'point-cloud-fx',
   'smoke-riders',
+  'fluid-riders',
   'ink-cloud',
   'smoke-3d',
   'volumetric-balls',
