@@ -101,6 +101,22 @@ export type ModSource =
   // See AutomationState below.
   | 'auto';
 
+/** Every ModSource whose value comes out of the audio analyser. The
+ *  remainder ('manual', 'auto', free-running LFOs) is independent of what
+ *  the analyser hears — an offline render reproduces those exactly. */
+const AUDIO_DRIVEN_MOD_SOURCES: ReadonlySet<string> = new Set<ModSource>([
+  'sub', 'bass', 'lowMid', 'mid', 'highMid', 'treble', 'air', 'presence', 'high',
+  'amplitude', 'beatPhase', 'kick', 'snare',
+]);
+
+/** True when this modulation's value depends on incoming audio. BPM-synced
+ *  LFOs count: their rate comes from the detected tempo, so they drift with
+ *  whatever the analyser is hearing. */
+export function isAudioDrivenMod(mod: Pick<ParamModulation, 'source' | 'bpmSync'>): boolean {
+  if (AUDIO_DRIVEN_MOD_SOURCES.has(mod.source)) return true;
+  return !!mod.bpmSync && mod.source.startsWith('lfo-');
+}
+
 /** Modulation target — which side of the app's render graph the
  *  engine should write modulated values to. Independent of which UI
  *  panel is currently open: a 'vj' modulation keeps driving the VJ

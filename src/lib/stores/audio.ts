@@ -138,7 +138,7 @@ function createAudioStore() {
   // kick or cut harsh treble independently). The legacy `high` band is
   // re-derived as the average of the gained treble+air+presence so old
   // shaders that read `bands.high` reflect the user's tuning.
-  audioAnalyzer.setCallback((analysis: AudioAnalysis) => {
+  const applyAnalysis = (analysis: AudioAnalysis) => {
     _lastRawAnalysis = analysis; // Cache for audio texture manager
     update(state => {
       const sens = state.sensitivity;
@@ -177,10 +177,29 @@ function createAudioStore() {
         spectralCentroid: analysis.spectralCentroid,
       };
     });
-  });
+  };
+
+  audioAnalyzer.setCallback(applyAnalysis);
 
   return {
     subscribe,
+
+    /**
+     * Publish an analysis frame the app produced itself rather than one the
+     * live analyser's RAF delivered.
+     *
+     * The offline render uses this for file audio: it decodes the source
+     * once and computes each exported frame's spectrum at the export's
+     * VIRTUAL time, so a 10 s export contains 10 s of audio content no
+     * matter how long the capture takes in wall time. Runs through the same
+     * sensitivity + per-band gain path as the live callback, so the user's
+     * EQ tweaks apply identically, and refreshes `_lastRawAnalysis` so the
+     * audio-texture upload sees the virtual-time FFT too.
+     */
+    injectAnalysisFrame(analysis: AudioAnalysis, isActive = true) {
+      applyAnalysis(analysis);
+      update(state => (state.isActive === isActive ? state : { ...state, isActive }));
+    },
 
     /** Start listening to microphone. Uses the store's preferredInputDeviceId
      *  if set; pass `null` to force the system default, or a specific id to

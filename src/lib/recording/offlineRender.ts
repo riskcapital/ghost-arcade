@@ -48,6 +48,14 @@ import ffmpegCoreUrl from '@ffmpeg/core?url';
 import ffmpegWasmUrl from '@ffmpeg/core/wasm?url';
 import { setISFManualTime } from '../isf/renderer';
 import { setStageEffectsManualTime } from '../stores/stageEffects';
+import { pumpVisualAudio, setVisualAudioManualTime } from '../audio/visualAudio';
+import { audioStore } from '../stores/audio';
+import { audioAnalyzer } from '../audio/analyzer';
+import {
+  offlineFileAudioTime,
+  prepareOfflineFileAudio,
+  type OfflineFileAudioSession,
+} from '../audio/offlineFileAudio';
 import { getActiveNativeRendererSync } from '../sync/nativeRendererSync';
 import { keyframeTimeline } from '../stores/keyframeTimeline';
 import { layerSequencer } from '../stores/layerSequencer';
@@ -970,6 +978,16 @@ function createOfflineRenderStore() {
     let nativeOutputNeedsRestore = false;
     /** True once the live sync RAF has been suspended for this render. */
     let manualClockExportHeld = false;
+    /** Virtual-time analysis of a file audio source, when we could decode
+     *  one. Null for live inputs (mic / system), which cannot be
+     *  virtualized — see the warning in OfflineRenderModal. */
+    let fileAudioSession: OfflineFileAudioSession | null = null;
+    /** True once the live analyser has been told to stand down because
+     *  `fileAudioSession` is supplying frames instead. */
+    let liveAnalysisHeld = false;
+    /** Media element we paused for a file-audio export, so playback can be
+     *  handed back exactly as we found it. */
+    let pausedAudioElement: HTMLAudioElement | HTMLVideoElement | null = null;
     let nativeCapturePixelFormat: 'rgba' | 'bgra' = 'rgba';
     const frameBaseName = frameSequenceBaseName(settings.filename, 'render');
     if (outputMode === 'frames') {
@@ -1060,6 +1078,57 @@ function createOfflineRenderStore() {
           'rgba',
         );
       }
+      // ─── Audio: pin the reactive signal to the render clock ────────
+      //
+      // Two independent wall-clock couplings live here.
+      //
+      // (1) The visual-audio FOLLOWER integrates every envelope, LFO and
+      //     beat-phase on real seconds. Left alone, a 10 s export that
+      //     takes 15 s of wall time folds 15 s of reactive motion into
+      //     10 s of video. Pinning it to the virtual clock fixes that for
+      //     EVERY input type, so it always runs.
+      //
+      // (2) The audio CONTENT itself. Only a file source can be
+      //     virtualized — decode it once and analyse at virtual time
+      //     below. A microphone or system-audio stream has no virtual
+      //     time to seek to; its content necessarily follows real elapsed
+      //     time, which is what the render modal warns about.
+      const audioState = get(audioStore);
+      if (audioState.inputType === 'file') {
+        const element = audioAnalyzer.getMediaElement();
+        // Freeze the playhead BEFORE the decode: the export starts from
+        // wherever the user left the track, not from wherever it drifted
+        // to while a few MB of audio were being decoded.
+        const wasPlaying = !!element && !element.paused;
+        if (wasPlaying && element) {
+          try { element.pause(); } catch { /* best-effort */ }
+        }
+        fileAudioSession = await prepareOfflineFileAudio(
+          element,
+          audioAnalyzer.getAudioContext(),
+          {
+            startOffsetSeconds: element ? element.currentTime : 0,
+            bandSmoothing: audioAnalyzer.getSmoothing(),
+          },
+        );
+        if (fileAudioSession) {
+          // The live RAF would keep overwriting the store with wall-clock
+          // frames — and with the element paused, with silence. Stand it
+          // down for the duration.
+          audioAnalyzer.beginAnalysisHold();
+          liveAnalysisHeld = true;
+          if (wasPlaying) pausedAudioElement = element;
+          console.info(
+            `[offlineRender] file audio pinned to the render clock (${fileAudioSession.durationSeconds.toFixed(2)}s @ +${fileAudioSession.startOffsetSeconds.toFixed(2)}s): ${fileAudioSession.label}`,
+          );
+        } else if (wasPlaying && element) {
+          // Couldn't virtualize it after all — give the user their audio
+          // back and fall through to follower-only pinning.
+          void element.play().catch(() => { /* user can hit play again */ });
+        }
+      }
+      setVisualAudioManualTime(0);
+
       // Let the resize settle before the first capture.
       await nextFrame();
 
@@ -1080,6 +1149,16 @@ function createOfflineRenderStore() {
         if (engine) engine.manualTime = virtualTime;
         setISFManualTime(virtualTime);
           setStageEffectsManualTime(virtualTime);
+          // Audio-reactive content: publish this frame's spectrum (file
+          // sources only) and advance the follower by exactly 1/fps of
+          // virtual time. Must land BEFORE renderManualFrame() — the graph
+          // build reads getVisualAudioSnapshot() synchronously.
+          if (fileAudioSession) {
+            audioStore.injectAnalysisFrame(
+              fileAudioSession.analyzer.frameAt(offlineFileAudioTime(fileAudioSession, virtualTime)),
+            );
+          }
+          pumpVisualAudio(virtualTime);
           keyframeTimeline.seek(virtualTime);
           layerSequencer.seek(virtualTime);
           vjLayerSequencer.seek(virtualTime);
@@ -1344,6 +1423,21 @@ function createOfflineRenderStore() {
       if (canvas) canvas.style.visibility = restoreCanvasVisibility;
       setISFManualTime(null);
       setStageEffectsManualTime(null);
+      // Hand the audio clock back. setVisualAudioManualTime(null) also
+      // resets the follower and restores the pre-export published state,
+      // so the live show doesn't resume mid-envelope on the export's
+      // virtual timeline.
+      setVisualAudioManualTime(null);
+      if (liveAnalysisHeld) {
+        liveAnalysisHeld = false;
+        audioAnalyzer.endAnalysisHold();
+      }
+      if (pausedAudioElement) {
+        const element = pausedAudioElement;
+        pausedAudioElement = null;
+        void element.play().catch(() => { /* user can hit play again */ });
+      }
+      fileAudioSession = null;
       try { engine?.resize(restoreWidth, restoreHeight); } catch (e) { /* nothing we can do */ }
     }
   }

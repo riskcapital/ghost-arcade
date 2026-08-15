@@ -6735,6 +6735,11 @@ export class NativeRendererSync {
 
   private scheduleAudioSync() {
     if (!this.running || this.audioSyncRaf !== null) return;
+    // An offline render pumps the visual-audio store once per exported
+    // frame and then calls renderManualFrame() itself. Riding that store
+    // emission into an extra RAF flush here would bypass the manual-clock
+    // lock that scheduleSync() honours, so stay dormant like it does.
+    if (this.manualClockExportDepth > 0) return;
     const audio = getVisualAudioSnapshot();
     const nextSig = this.audioSignature(audio);
     if (!audio.isActive && nextSig === this.lastAudioSig) return;
