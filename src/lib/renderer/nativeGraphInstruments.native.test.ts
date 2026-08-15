@@ -148,6 +148,28 @@ const EXPECTED_NATIVE_GRAPH_MANIFEST: NativeGraphManifestExpectation[] = [
     shaderIds: [...SMOKE_RIDERS_NATIVE_GRAPH_SHADER_IDS],
   },
   {
+    id: 'fluid-riders',
+    feature: 'native_smoke_riders_graph',
+    // Same solve + pass topology as Smoke Riders; only the WGSL differs
+    // (opaque isosurface instead of a smoke march), so it carries its own
+    // fluid-riders/* shader set over the shared 3d-smoke fluid chain.
+    shaderIds: [
+      '3d-smoke/splat',
+      '3d-smoke/advect-velocity',
+      '3d-smoke/divergence',
+      '3d-smoke/jacobi',
+      '3d-smoke/subtract-gradient',
+      '3d-smoke/advect-density',
+      'fluid-riders/vorticity',
+      'fluid-riders/pressure',
+      'fluid-riders/advect',
+      'fluid-riders/surface',
+      'fluid-riders/riders',
+      'fluid-riders/tiles',
+      'fluid-riders/render',
+    ],
+  },
+  {
     id: 'ink-cloud',
     feature: 'native_ink_cloud_graph',
     shaderIds: shaderIdsFromPrecompileCommands(buildInkCloudNativePrecompileCommands()),

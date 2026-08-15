@@ -1809,6 +1809,7 @@ enum NativeGraphLayerKind {
     Flythrough,
     PointCloudFx,
     SmokeRiders,
+    FluidRiders,
     VolumetricSpheres,
     GhostFx,
     HandFx,
@@ -1835,6 +1836,7 @@ impl NativeGraphLayerKind {
             "flythrough" => Self::Flythrough,
             "point-cloud-fx" => Self::PointCloudFx,
             "smoke-riders" => Self::SmokeRiders,
+            "fluid-riders" => Self::FluidRiders,
             "volumetric-spheres" | "volumetric-balls" => Self::VolumetricSpheres,
             "ghostfx" => Self::GhostFx,
             "handfx" => Self::HandFx,
@@ -1861,6 +1863,7 @@ impl NativeGraphLayerKind {
             Self::Flythrough => "flythrough",
             Self::PointCloudFx => "point-cloud-fx",
             Self::SmokeRiders => "smoke-riders",
+            Self::FluidRiders => "fluid-riders",
             Self::VolumetricSpheres => "volumetric-spheres",
             Self::GhostFx => "ghostfx",
             Self::HandFx => "handfx",
@@ -1888,6 +1891,7 @@ impl NativeGraphLayerKind {
                 | Self::Flythrough
                 | Self::PointCloudFx
                 | Self::SmokeRiders
+                | Self::FluidRiders
                 | Self::VolumetricSpheres
                 | Self::GhostFx
                 | Self::HandFx
@@ -4907,7 +4911,13 @@ impl App {
                     self.build_native_point_cloud_graph_job(&graph_layer)
                 }
                 NativeGraphLayerKind::SmokeRiders => {
-                    self.build_native_smoke_riders_graph_job(&graph_layer)
+                    self.build_native_smoke_riders_graph_job(&graph_layer, "smoke-riders")
+                }
+                // Fluid Riders shares the whole solve + pass topology; only the
+                // WGSL differs (opaque isosurface instead of a smoke march), so
+                // it reuses this builder with its own shader-id prefix.
+                NativeGraphLayerKind::FluidRiders => {
+                    self.build_native_smoke_riders_graph_job(&graph_layer, "fluid-riders")
                 }
                 NativeGraphLayerKind::VolumetricSpheres => {
                     self.build_native_volumetric_spheres_graph_job(&graph_layer)
@@ -7623,6 +7633,7 @@ impl App {
     fn build_native_smoke_riders_graph_job(
         &mut self,
         graph_layer: &NativeGraphLayer,
+        shader_prefix: &str,
     ) -> Result<(NativeGraphLayerState, NativeGraphFrameJob), String> {
         let params = normalize_smoke_riders_native_params(
             &graph_layer.params,
@@ -7993,14 +8004,14 @@ impl App {
             };
             add_pass(
                 "smoke-riders-advect-velocity-fwd".to_string(),
-                "smoke-riders/advect",
+                &format!("{shader_prefix}/advect"),
                 "cs_advect_fwd",
                 grid_dispatch,
                 mac_bindings(),
             )?;
             add_pass(
                 "smoke-riders-advect-velocity".to_string(),
-                "smoke-riders/advect",
+                &format!("{shader_prefix}/advect"),
                 "cs_advect_mc_vel",
                 grid_dispatch,
                 mac_bindings(),
@@ -8040,7 +8051,7 @@ impl App {
         // injected swirl is made divergence-free with everything else.
         add_pass(
             "smoke-riders-vorticity".to_string(),
-            "smoke-riders/vorticity",
+            &format!("{shader_prefix}/vorticity"),
             "cs_vorticity",
             grid_dispatch,
             vec![
@@ -8066,7 +8077,7 @@ impl App {
         // the projection so the interface force comes out divergence-free.
         add_pass(
             "smoke-riders-surface-tension".to_string(),
-            "smoke-riders/surface",
+            &format!("{shader_prefix}/surface"),
             "cs_surface_tension",
             grid_dispatch,
             vec![
@@ -8126,7 +8137,7 @@ impl App {
         // pass worth roughly triple the Jacobi sweeps it precedes.
         add_pass(
             "smoke-riders-pressure-warm".to_string(),
-            "smoke-riders/pressure",
+            &format!("{shader_prefix}/pressure"),
             "cs_pressure_warm",
             [(cell_count as u32).div_ceil(64).max(1), 1, 1],
             vec![
@@ -8249,14 +8260,14 @@ impl App {
             };
             add_pass(
                 "smoke-riders-advect-density-fwd".to_string(),
-                "smoke-riders/advect",
+                &format!("{shader_prefix}/advect"),
                 "cs_advect_fwd",
                 grid_dispatch,
                 mac_bindings(),
             )?;
             add_pass(
                 "smoke-riders-advect-density".to_string(),
-                "smoke-riders/advect",
+                &format!("{shader_prefix}/advect"),
                 "cs_advect_mc_den",
                 grid_dispatch,
                 mac_bindings(),
@@ -8297,7 +8308,7 @@ impl App {
         // the final density and the pressure field the projection solved.
         add_pass(
             "smoke-riders-riders".to_string(),
-            "smoke-riders/riders",
+            &format!("{shader_prefix}/riders"),
             "cs_riders",
             rider_dispatch,
             vec![
@@ -8354,14 +8365,14 @@ impl App {
         };
         add_pass(
             "smoke-riders-clear-tiles".to_string(),
-            "smoke-riders/tiles",
+            &format!("{shader_prefix}/tiles"),
             "cs_clear_tiles",
             tile_dispatch,
             tile_bindings(),
         )?;
         add_pass(
             "smoke-riders-bin-riders".to_string(),
-            "smoke-riders/tiles",
+            &format!("{shader_prefix}/tiles"),
             "cs_bin_riders",
             rider_dispatch,
             tile_bindings(),
@@ -8375,7 +8386,7 @@ impl App {
         state.den_flip = den_flip;
         state.prs_flip = prs_flip;
 
-        let render_shader_id = "smoke-riders/render";
+        let render_shader_id = &format!("{shader_prefix}/render");
         let (render_hash, render_source) =
             self.native_graph_shader_source(render_shader_id, "fs_main")?;
         self.native_graph_shader_source(render_shader_id, "vs_main")?;
@@ -20798,6 +20809,9 @@ struct NativeSmokeRidersParams {
     vignette: f32,
     exposure: f32,
     flow_speed: f32,
+    iso_level: f32,
+    viscosity: f32,
+    color_follow: f32,
     /// 0 = AgX, 1 = ACES, 2 = Linear.
     tonemap: f32,
     // camera
@@ -20980,6 +20994,9 @@ fn normalize_smoke_riders_native_params(
         vignette: native_graph_param_f32(params, "vignette", 0.0, 1.0, 0.45),
         exposure: native_graph_param_f32(params, "exposure", 0.1, 4.0, 1.5),
         flow_speed: native_graph_param_f32(params, "flowSpeed", 0.05, 2.0, 0.32),
+        iso_level: native_graph_param_f32(params, "isoLevel", 0.02, 2.5, 0.42),
+        viscosity: native_graph_param_f32(params, "viscosity", 0.0, 1.0, 0.72),
+        color_follow: native_graph_param_f32(params, "colorFollow", 0.0, 10.0, 3.2),
         tonemap: match native_particle_field_enum(params, "tonemap", "agx").as_str() {
             "aces" => 1.0,
             "linear" => 2.0,
@@ -21279,6 +21296,9 @@ fn build_smoke_riders_render_uniform_bytes(
     write_f32_le(&mut bytes, 81, params.tonemap);
     write_f32_le(&mut bytes, 82, params.clear_coat);
     write_f32_le(&mut bytes, 83, params.coat_roughness);
+    write_f32_le(&mut bytes, 84, params.iso_level);
+    write_f32_le(&mut bytes, 85, params.paint_thickness);
+    write_f32_le(&mut bytes, 86, params.color_follow);
     bytes
 }
 

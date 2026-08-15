@@ -118,6 +118,9 @@ import {
   type SmokeRidersNativeGraphState,
 } from '$lib/renderer/shaders/webgpuSmokeRidersShader';
 import {
+  buildFluidRidersNativePrecompileCommands,
+} from '$lib/renderer/shaders/webgpuFluidRidersShader';
+import {
   buildVolumetricSpheresNativeComputeGraph,
   buildVolumetricSpheresNativePrecompileCommands,
   type VolumetricSpheresNativeGraphState,
@@ -288,7 +291,7 @@ type NativeRenderClockCommand = {
 
 export type PresentPolicyProfile = 'vsync-live' | 'low-latency-safe' | 'low-latency-aggressive';
 
-type NativeGraphRouteKind = 'planet' | 'smoke-3d' | 'particle-field' | 'volumetric-spheres' | 'smoke-riders' | 'ink-cloud' | 'flythrough' | 'pixel-particles' | 'point-cloud-fx' | 'ghostfx' | 'handfx' | 'performer-world' | 'vj-crossfade' | 'vj-mix' | 'effect-pass' | 'lines' | 'svg' | 'light-painting' | 'text' | 'splat' | 'model3d';
+type NativeGraphRouteKind = 'planet' | 'fluid-riders' | 'smoke-3d' | 'particle-field' | 'volumetric-spheres' | 'smoke-riders' | 'ink-cloud' | 'flythrough' | 'pixel-particles' | 'point-cloud-fx' | 'ghostfx' | 'handfx' | 'performer-world' | 'vj-crossfade' | 'vj-mix' | 'effect-pass' | 'lines' | 'svg' | 'light-painting' | 'text' | 'splat' | 'model3d';
 
 export type NativeEffectPassRuntime = {
   effect: NativeEffectPassId;
@@ -310,6 +313,7 @@ const NATIVE_CORE_OWNED_GRAPH_KINDS = new Set<NativeGraphRouteKind>([
   'flythrough',
   'point-cloud-fx',
   'smoke-riders',
+  'fluid-riders',
   'ink-cloud',
   'smoke-3d',
   'volumetric-spheres',
@@ -376,6 +380,26 @@ const NATIVE_GRAPH_ROUTE_REQUIREMENTS: ReadonlyArray<NativeGraphRouteRequirement
     feature: 'native_volumetric_spheres_graph',
     instrument: 'volumetric-spheres',
     shaderIds: ['volumetric-spheres/sim', 'volumetric-spheres/render'],
+  },
+  {
+    kind: 'fluid-riders',
+    feature: 'native_smoke_riders_graph',
+    instrument: 'fluid-riders',
+    shaderIds: [
+      '3d-smoke/splat',
+      '3d-smoke/advect-velocity',
+      '3d-smoke/divergence',
+      '3d-smoke/jacobi',
+      '3d-smoke/subtract-gradient',
+      '3d-smoke/advect-density',
+      'fluid-riders/vorticity',
+      'fluid-riders/pressure',
+      'fluid-riders/advect',
+      'fluid-riders/surface',
+      'fluid-riders/riders',
+      'fluid-riders/tiles',
+      'fluid-riders/render',
+    ],
   },
   {
     kind: 'smoke-riders',
@@ -5734,6 +5758,11 @@ export class NativeRendererSync {
     ) {
       kind = 'smoke-3d';
     } else if (
+      normalizedShaderId === 'fluid-riders' &&
+      this.supportsNativeGraphRoute('fluid-riders')
+    ) {
+      kind = 'fluid-riders';
+    } else if (
       normalizedShaderId === 'smoke-riders' &&
       this.supportsNativeGraphRoute('smoke-riders')
     ) {
@@ -9208,6 +9237,7 @@ fn fs_main() -> @location(0) vec4<f32> {
     commands.push(...buildParticleFieldNativePrecompileCommands());
     commands.push(...buildVolumetricSpheresNativePrecompileCommands());
     commands.push(...buildSmokeRidersNativePrecompileCommands());
+    commands.push(...buildFluidRidersNativePrecompileCommands());
     commands.push(...buildFlythroughNativePrecompileCommands());
     commands.push(...buildPixelParticlesNativePrecompileCommands());
     commands.push(...buildPointCloudFXNativePrecompileCommands());
