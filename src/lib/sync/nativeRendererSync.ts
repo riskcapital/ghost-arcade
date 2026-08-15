@@ -4888,6 +4888,11 @@ export class NativeRendererSync {
   private liveClockOriginMs = performance.now();
   private latestRenderClockSeconds: number | null = null;
   private lastRenderClockSentSeconds: number | null = null;
+  /** >0 while an offline render owns the clock. The per-frame sync RAF is
+   *  suspended for that whole window so the ONLY thing driving the core is
+   *  the export loop's explicit renderManualFrame() call — one flush, one
+   *  present, one simulation step per exported frame. */
+  private manualClockExportDepth = 0;
   private sentWidth = 0;
   private sentHeight = 0;
   private lastLayers = new Map<string, LayerSnapshot>();
@@ -7451,6 +7456,9 @@ export class NativeRendererSync {
     this.nativeWgslStdlibWarmed = false;
     this.latestRenderClockSeconds = null;
     this.lastRenderClockSentSeconds = null;
+    // A render that was still in flight when this sync was torn down must
+    // not leave the next session's RAF suspended.
+    this.manualClockExportDepth = 0;
     this.nextStatusPollAt = 0;
     this.nextReadinessPollAt = 0;
     this.statusPollInFlight = false;
@@ -7494,12 +7502,22 @@ export class NativeRendererSync {
     this.latestLayers = layers;
     if (!this.startupReady) return;
 
+    // An offline render drives the world clock itself, frame by frame.
+    // Letting the live RAF keep flushing during the export interleaves
+    // extra presents at the export's virtual time and re-queues the
+    // host-built graph jobs, so the exported motion no longer matches the
+    // captured frame times. Stay dormant until the export releases us.
+    if (this.manualClockExportDepth > 0) {
+      this.stopShaderAnimation();
+      return;
+    }
+
     const hasVisibleNativeLayers = layers.some((layer) => layer.visible);
     const hasContinuousNativeLayers =
       hasVisibleNativeLayers || layers.some((layer) => nativeLayerNeedsContinuousSync(layer));
     if (hasContinuousNativeLayers && this.shaderAnimationRaf === null) {
       const loop = () => {
-        if (!this.running) {
+        if (!this.running || this.manualClockExportDepth > 0) {
           this.stopShaderAnimation();
           return;
         }
@@ -7672,6 +7690,36 @@ export class NativeRendererSync {
     this.setRenderClock(seconds);
     if (!this.running || !this.startupReady) return;
     await this.flush(this.desiredWidth, this.desiredHeight, this.latestLayers);
+  }
+
+  /**
+   * Take ownership of the world clock for an offline render.
+   *
+   * Suspends the per-frame sync RAF and any pending coalesced flush so
+   * nothing but renderManualFrame() advances the core while frames are
+   * being captured. Reference counted, and always paired with
+   * endManualClockExport() in a finally block.
+   */
+  beginManualClockExport(): void {
+    this.manualClockExportDepth += 1;
+    if (this.manualClockExportDepth !== 1) return;
+    this.stopShaderAnimation();
+    if (this.pendingSyncTimer !== null) {
+      clearTimeout(this.pendingSyncTimer);
+      this.pendingSyncTimer = null;
+    }
+    this.pendingSync = false;
+  }
+
+  /** Hand the clock back to the live loop and restart the sync RAF. */
+  endManualClockExport(): void {
+    if (this.manualClockExportDepth <= 0) return;
+    this.manualClockExportDepth -= 1;
+    if (this.manualClockExportDepth > 0) return;
+    // The live clock must not jump forward by the export's wall time —
+    // resume from where the live show left off.
+    this.lastRenderClockSentSeconds = null;
+    this.scheduleSync(this.desiredWidth, this.desiredHeight, this.latestLayers);
   }
 
   /** Stop the per-frame sync RAF only. This runs whenever the layer list

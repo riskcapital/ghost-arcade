@@ -735,6 +735,11 @@ struct CoreStatus {
     render_clock_time: f32,
     render_clock_frame_index: u64,
     render_clock_updates: u64,
+    /// Renders that recomposited an already-stepped manual clock frame
+    /// instead of double-stepping the simulation. Non-zero during an
+    /// offline export is expected and healthy; it is the count of extra
+    /// renders the clock lock absorbed.
+    manual_clock_graph_steps_skipped: u64,
     frame_snapshot_reads: u64,
     frame_snapshot_bytes_read: u64,
     frame_health_checks: u64,
@@ -863,6 +868,7 @@ struct CoreStats {
     compute_graph_readback_bytes: u64,
     compute_graph_persistent_buffers: u64,
     render_clock_updates: u64,
+    manual_clock_graph_steps_skipped: u64,
     frame_snapshot_reads: u64,
     frame_snapshot_bytes_read: u64,
     frame_health_checks: u64,
@@ -2572,6 +2578,22 @@ struct App {
     render_clock_time: Option<f32>,
     render_clock_delta: f32,
     render_clock_frame_index: Option<u64>,
+    /// Manual-clock (offline render) simulation lock. Every native graph
+    /// steps by `render_clock_delta` once per `render()`, but `render()` is
+    /// ALSO driven by this core's own `about_to_wait` pacing loop — so a
+    /// slow export (readback + IPC + encode per frame) let 1-3 extra
+    /// renders slip between captured frames and each one re-applied the
+    /// full frame delta. Measured 1.9x-3.8x over-stepping at 20-60ms of
+    /// per-frame host cost, which is exactly the "exports play fast" bug.
+    /// Remembering the clock value the graphs last advanced on makes
+    /// repeated renders at the same virtual time idempotent: the world
+    /// clock and the render clock advance together, one step per frame.
+    last_native_graph_step_clock: Option<f32>,
+    /// The delta `run_native_graph_layers` claimed for the render in
+    /// flight — `render_clock_delta` on the first render of a virtual
+    /// frame, 0 on every repeat of it. Every graph builder reads this
+    /// instead of `render_clock_delta` directly.
+    native_graph_step_delta_this_render: f32,
     isf_layer_bindings: HashMap<String, String>,
     isf_uniforms: HashMap<String, IsfUniformState>,
     shader_registry: HashMap<String, ShaderRecord>,
@@ -2836,6 +2858,8 @@ impl App {
             render_clock_time: None,
             render_clock_delta: 1.0 / 60.0,
             render_clock_frame_index: None,
+            last_native_graph_step_clock: None,
+            native_graph_step_delta_this_render: 1.0 / 60.0,
             isf_layer_bindings: HashMap::new(),
             isf_uniforms: HashMap::new(),
             shader_registry: HashMap::new(),
@@ -3581,6 +3605,7 @@ impl App {
             render_clock_time: self.native_graph_time_seconds(),
             render_clock_frame_index: self.native_frame_index(),
             render_clock_updates: self.stats.render_clock_updates,
+            manual_clock_graph_steps_skipped: self.stats.manual_clock_graph_steps_skipped,
             frame_snapshot_reads: self.stats.frame_snapshot_reads,
             frame_snapshot_bytes_read: self.stats.frame_snapshot_bytes_read,
             frame_health_checks: self.stats.frame_health_checks,
@@ -4592,14 +4617,17 @@ impl App {
             self.render_clock_time = None;
             self.render_clock_frame_index = None;
             self.render_clock_delta = 1.0 / self.target_fps.max(1) as f32;
+            self.last_native_graph_step_clock = None;
             self.stats.render_clock_updates = self.stats.render_clock_updates.saturating_add(1);
             return;
         }
-        self.render_clock_mode = if mode == "manual" {
-            "manual".to_string()
-        } else {
-            "live".to_string()
-        };
+        let next_mode = if mode == "manual" { "manual" } else { "live" };
+        if next_mode != self.render_clock_mode {
+            // Leaving or entering manual export: forget the last stepped
+            // virtual frame so the next manual run always steps.
+            self.last_native_graph_step_clock = None;
+        }
+        self.render_clock_mode = next_mode.to_string();
         self.render_clock_time = number_at(params, &["time"])
             .or_else(|| number_at(params, &["time_seconds"]))
             .or_else(|| number_at(params, &["clock_time"]))
@@ -4831,9 +4859,44 @@ impl App {
     fn native_frame_delta(&self) -> f32 {
         effective_native_frame_delta(
             &self.render_clock_mode,
-            self.render_clock_delta,
+            // Manual clock: the step this render actually claimed, which is
+            // 0 when the frame has already been advanced once. See
+            // claim_native_graph_step().
+            self.native_graph_step_delta_this_render,
             self.target_fps,
         )
+    }
+
+    /// Claim this render's slice of the world clock.
+    ///
+    /// Live mode is unchanged: every render advances by the frame delta.
+    /// Under a manual (offline render) clock the declared delta is
+    /// consumed exactly ONCE per virtual frame. `render()` also fires from
+    /// this core's own `about_to_wait` pacing loop and from redraw
+    /// requests, and each of those used to re-apply the full delta — a
+    /// slow export (readback + IPC + encode per frame) let 1-3 extra
+    /// renders slip between captured frames, so simulations ran 2-4x ahead
+    /// of the frame timeline and the exported video played fast. Repeat
+    /// renders still rebuild and re-run every graph (so a param or
+    /// effect-graph edit at the same virtual time still lands) — they just
+    /// advance the world by 0.
+    fn claim_native_graph_step(&mut self) {
+        if self.render_clock_mode != "manual" {
+            self.last_native_graph_step_clock = None;
+            self.native_graph_step_delta_this_render = self.render_clock_delta;
+            return;
+        }
+        let already_stepped = self.last_native_graph_step_clock == self.render_clock_time;
+        if already_stepped {
+            self.stats.manual_clock_graph_steps_skipped =
+                self.stats.manual_clock_graph_steps_skipped.saturating_add(1);
+        }
+        self.last_native_graph_step_clock = self.render_clock_time;
+        self.native_graph_step_delta_this_render = if already_stepped {
+            0.0
+        } else {
+            self.render_clock_delta
+        };
     }
 
     fn run_native_graph_layers(&mut self) -> Vec<NativeGraphFrameJob> {
@@ -5470,7 +5533,7 @@ impl App {
         let time = self.native_graph_time_seconds();
         let mut state = graph_layer.planet_state.clone();
         let mut dt = if self.render_clock_mode == "manual" {
-            self.render_clock_delta
+            self.native_graph_step_delta_this_render
         } else if state.prev_frame_time <= 0.0 {
             1.0 / self.target_fps.max(1) as f32
         } else {
@@ -5580,7 +5643,7 @@ impl App {
             state = NativeInkCloudGraphState::new(params.particle_count, seed_key.clone(), time);
         }
         let mut dt = if self.render_clock_mode == "manual" {
-            self.render_clock_delta
+            self.native_graph_step_delta_this_render
         } else if state.prev_frame_time <= 0.0 {
             1.0 / self.target_fps.max(1) as f32
         } else {
@@ -5894,7 +5957,7 @@ impl App {
             state = NativeSmoke3DGraphState::new(params.grid_size, time);
         }
         let mut dt = if self.render_clock_mode == "manual" {
-            self.render_clock_delta
+            self.native_graph_step_delta_this_render
         } else if state.prev_frame_time <= 0.0 {
             1.0 / self.target_fps.max(1) as f32
         } else {
@@ -6294,7 +6357,7 @@ impl App {
             state = NativeParticleFieldGraphState::new(params.mode_id, params.particle_count, time);
         }
         let mut dt = if self.render_clock_mode == "manual" {
-            self.render_clock_delta
+            self.native_graph_step_delta_this_render
         } else if state.prev_frame_time <= 0.0 {
             1.0 / self.target_fps.max(1) as f32
         } else {
@@ -6781,7 +6844,7 @@ impl App {
             );
         }
         let mut dt = if self.render_clock_mode == "manual" {
-            self.render_clock_delta
+            self.native_graph_step_delta_this_render
         } else if state.prev_frame_time <= 0.0 {
             1.0 / self.target_fps.max(1) as f32
         } else {
@@ -7027,7 +7090,7 @@ impl App {
             );
         }
         let mut dt = if self.render_clock_mode == "manual" {
-            self.render_clock_delta
+            self.native_graph_step_delta_this_render
         } else if state.prev_frame_time <= 0.0 {
             1.0 / self.target_fps.max(1) as f32
         } else {
@@ -7248,7 +7311,7 @@ impl App {
                 NativePointCloudGraphState::new(asset.signature.clone(), asset.point_count, time);
         }
         let mut dt = if self.render_clock_mode == "manual" {
-            self.render_clock_delta
+            self.native_graph_step_delta_this_render
         } else if state.prev_frame_time <= 0.0 {
             1.0 / self.target_fps.max(1) as f32
         } else {
@@ -7707,7 +7770,7 @@ impl App {
         }
 
         let mut dt = if self.render_clock_mode == "manual" {
-            self.render_clock_delta
+            self.native_graph_step_delta_this_render
         } else if state.prev_frame_time <= 0.0 {
             1.0 / self.target_fps.max(1) as f32
         } else {
@@ -8508,7 +8571,7 @@ impl App {
             );
         }
         let mut dt = if self.render_clock_mode == "manual" {
-            self.render_clock_delta
+            self.native_graph_step_delta_this_render
         } else if state.prev_frame_time <= 0.0 {
             1.0 / self.target_fps.max(1) as f32
         } else {
@@ -8744,6 +8807,11 @@ impl App {
         if self.output_frozen {
             return;
         }
+        // Everything below advances time. Claim this render's step first so
+        // ISF uniforms, plugin graphs and instrument graphs all agree on how
+        // far the world moved — and so a repeat render of an already-stepped
+        // manual clock frame moves it by nothing.
+        self.claim_native_graph_step();
         self.render_bound_isf_layers();
         let mut native_graph_jobs = self.run_native_graph_layers();
         native_graph_jobs.append(&mut self.pending_native_graph_jobs);
