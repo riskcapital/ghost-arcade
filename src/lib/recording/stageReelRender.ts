@@ -57,6 +57,7 @@ import { setStageEffectsManualTime } from '../stores/stageEffects';
 import { keyframeTimeline } from '../stores/keyframeTimeline';
 import { layerSequencer } from '../stores/layerSequencer';
 import { vjLayerSequencer } from '../stores/vjLayerSequencer';
+import { showTimeline } from '../stores/showTimeline';
 import { project } from '../stores/layers';
 import { mediaLibrary } from '../stores/media';
 import { generateUUID } from '../utils/uuid';
@@ -406,6 +407,10 @@ function createReelRenderStore() {
           keyframeTimeline.seek(virtualTime);
           layerSequencer.seek(virtualTime);
           vjLayerSequencer.seek(virtualTime);
+          // Show timeline drives the LED content's preset arrangement too,
+          // so a Demo Reel of a programmed show cuts presets where the show
+          // does. No-op when the timeline is empty.
+          showTimeline.seek(virtualTime);
 
           if (nativeStageCaptureActive) {
             const at = shotAtTime(shots, virtualTime);

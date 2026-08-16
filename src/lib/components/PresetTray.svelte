@@ -1,5 +1,6 @@
 <script lang="ts">
   import { project, compositions, activeCompositionId } from '../stores/layers';
+  import { showTimelineIsPlaying } from '../stores/showTimeline';
   import { audioStore } from '../stores/audio';
   import type { Composition } from '../types';
   import type { TransitionType } from '../renderer/engine';
@@ -161,6 +162,9 @@
 
   function autoPlayStart() {
     if ($compositions.length < 2) return;
+    // The show timeline owns scheduled preset changes while it runs — two
+    // schedulers firing loadComposition would fight over the layer stack.
+    if ($showTimelineIsPlaying) return;
     autoPlaying = true;
     autoPaused = false;
     autoElapsed = 0;
@@ -212,6 +216,14 @@
     autoLastTime = now;
     autoAnimFrame = requestAnimationFrame(autoTick);
   }
+
+  // ── Show-timeline handover ──────────────────────────────────────────
+  // Exactly one scheduler may drive presets. The show timeline is the
+  // programmed one, so it wins: starting it stops tray auto-play, and the
+  // tray's play button stays disabled for the duration. Manual preset
+  // CLICKS still work as an operator punch-in — the show takes back over at
+  // its next clip boundary.
+  $: if ($showTimelineIsPlaying && autoPlaying) autoPlayStop();
 
   /** Reactive: pick up live BPM from audio store when in beat mode */
   $: if (autoTimingMode === 'beat' && $audioStore.bpm > 0) {
@@ -471,7 +483,14 @@
         <!-- Auto-Play Controls -->
         <div class="auto-play-controls">
           {#if !autoPlaying}
-            <button class="ap-btn play" onclick={autoPlayStart} title="Auto-play presets" disabled={$compositions.length < 2}>
+            <button
+              class="ap-btn play"
+              onclick={autoPlayStart}
+              title={$showTimelineIsPlaying
+                ? 'The show timeline is driving presets — stop it to use tray auto-play'
+                : 'Auto-play presets'}
+              disabled={$compositions.length < 2 || $showTimelineIsPlaying}
+            >
               ▶
             </button>
           {:else}
