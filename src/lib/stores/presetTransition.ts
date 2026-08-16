@@ -17,7 +17,7 @@
  */
 
 import { writable, get } from 'svelte/store';
-import type { TransitionStyle } from '../types';
+import type { CompositionTransitionStyle } from '../types';
 
 const KEY_TYPE = 'ghostarcade-transition-type';
 const KEY_DURATION = 'ghostarcade-transition-duration';
@@ -26,27 +26,30 @@ const KEY_ENABLED = 'ghostarcade-transition-enabled';
 export interface PresetTransitionSettings {
   /** Master on/off. Off means preset changes hard-cut. */
   enabled: boolean;
-  style: TransitionStyle;
+  style: CompositionTransitionStyle;
   /** Seconds. */
   duration: number;
 }
 
-/** Every style the UI offers, in menu order. */
-export const TRANSITION_OPTIONS: { value: TransitionStyle; label: string }[] = [
-  { value: 'dissolve',  label: 'Dissolve' },
-  { value: 'wave',      label: 'Wave (Disney)' },
-  { value: 'wipeUp',    label: 'Wipe Up' },
-  { value: 'wipeDown',  label: 'Wipe Down' },
-  { value: 'wipeLeft',  label: 'Wipe Left' },
-  { value: 'wipeRight', label: 'Wipe Right' },
-  { value: 'iris',      label: 'Iris' },
-  { value: 'voxelize',  label: 'Voxelize' },
-  { value: 'warp',      label: 'Warp' },
-  { value: 'explode',   label: 'Explode' },
-  { value: 'pixelMelt', label: 'Pixel Melt' },
+/**
+ * Every style the UI offers, in menu order.
+ *
+ * SHORT LIST ON PURPOSE. This used to list eleven WebGL shader transitions
+ * (wave, iris, voxelize, pixelMelt…). None of them ever ran: they live in
+ * `renderer/engine.ts`, and this build is `NATIVE_ENGINE_ONLY`, where
+ * `getEngine()` returns null and every preset change hard-cut regardless of
+ * what the menu said. The native transition is a two-stack per-layer opacity
+ * crossfade (`renderer/compositionTransitionLayers.ts`), so these three are
+ * the envelopes it can genuinely express — and each of them looks different
+ * on screen. Old saved values still load; they resolve to 'dissolve'.
+ */
+export const TRANSITION_OPTIONS: { value: CompositionTransitionStyle; label: string }[] = [
+  { value: 'dissolve',   label: 'Dissolve' },
+  { value: 'dipToBlack', label: 'Dip to Black' },
+  { value: 'additive',   label: 'Additive' },
 ];
 
-export function isTransitionStyle(value: unknown): value is TransitionStyle {
+export function isTransitionStyle(value: unknown): value is CompositionTransitionStyle {
   return typeof value === 'string' && TRANSITION_OPTIONS.some((o) => o.value === value);
 }
 
