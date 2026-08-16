@@ -1588,6 +1588,12 @@ impl NativeInkCloudGraphState {
 }
 
 const SMOKE_3D_MAX_EMITTERS: usize = 8;
+
+// Ceiling on how much emission one riders frame may deposit, in whole
+// splats. Mirrors SPLAT_QUOTA_CAP in the TS builders. Emission is
+// continuous (`dt * splat_rate` of a splat per frame), so this is not a
+// rate knob: it is a blast shield for a pathological frame.
+const SPLAT_QUOTA_CAP: f32 = 4.0;
 const SMOKE_3D_PRESSURE_ITERATIONS: usize = 20;
 
 #[derive(Clone, Debug)]
@@ -1636,7 +1642,6 @@ struct NativeSmokeRidersGraphState {
     vel_flip: bool,
     den_flip: bool,
     prs_flip: bool,
-    splat_timer: f32,
     prev_bass: f32,
     burst_hold_timer: f32,
     auto_rot_x_phase: f32,
@@ -1655,7 +1660,6 @@ impl NativeSmokeRidersGraphState {
             vel_flip: false,
             den_flip: false,
             prs_flip: false,
-            splat_timer: 0.0,
             prev_bass: 0.0,
             burst_hold_timer: 0.0,
             auto_rot_x_phase: 0.0,
@@ -7810,13 +7814,32 @@ impl App {
         state.burst_hold_timer = (state.burst_hold_timer - dt).max(0.0);
         state.prev_bass = params.bass;
         let burst_active = state.burst_hold_timer > 0.0;
-        state.splat_timer += dt;
-        let splat_period = 1.0 / params.splat_rate.max(0.1);
-        let scheduled_fire = state.splat_timer >= splat_period;
-        if scheduled_fire {
-            state.splat_timer = 0.0;
-        }
-        let fire = scheduled_fire || burst_active || reset_buffers;
+        // ── CONTINUOUS EMISSION ──────────────────────────────────────
+        // Mirrors the TS builders byte for byte. The emitter used to bank
+        // dt in an accumulator and dump ONE WHOLE splat the frame it
+        // crossed 1/splat_rate. At 60 fps with the default flow_speed
+        // (0.32) a frame advances the sim 5.3 ms against a 22.7 ms
+        // period, so the field got a lump every FIFTH frame and nothing
+        // on the other four — a 12 Hz sawtooth in the glow, which is the
+        // jagged flicker. The reset-to-zero also threw the remainder
+        // away, realising 37.5 splats/s for a requested 44 and making
+        // the realised rate depend on the framerate.
+        //
+        // Deposit the same mass CONTINUOUSLY instead: every frame
+        // carries exactly `dt * splat_rate` of one splat. Nothing in the
+        // solve changes; only the source term stops being a pulse train.
+        // The cap only exists so a pathological hitch (dt is already
+        // clamped to 1/15 s) cannot detonate the field in one frame; at
+        // the default rate it sits 17x above the per-frame quota.
+        let emit_quota = (dt * params.splat_rate).clamp(0.0, SPLAT_QUOTA_CAP);
+        // Buffers were just (re)created and are zero: prime with a full
+        // splat so the first frame is not empty.
+        let emit_scale = if reset_buffers {
+            emit_quota.max(1.0)
+        } else {
+            emit_quota
+        };
+        let fire = emit_scale > 0.0;
         let burst_mul = if burst_active {
             2.5 + params.audio_burst
         } else {
@@ -7859,7 +7882,10 @@ impl App {
                 byte_length: 96,
                 kind: NativeComputeBufferBindingKind::Uniform,
                 initial_bytes: build_smoke_riders_sim_uniform_bytes(
-                    &params, dt, time, fire, burst_mul,
+                    &params,
+                    dt,
+                    time,
+                    emit_scale * burst_mul,
                 ),
                 persistent: true,
                 clear: false,
@@ -7928,7 +7954,7 @@ impl App {
                 id: emitters_id.clone(),
                 byte_length: (SMOKE_3D_MAX_EMITTERS * 48) as u64,
                 kind: NativeComputeBufferBindingKind::StorageRead,
-                initial_bytes: build_smoke_riders_emitter_bytes(&params),
+                initial_bytes: build_smoke_riders_emitter_bytes(&params, emit_scale),
                 persistent: true,
                 clear: false,
                 indirect: false,
@@ -21320,8 +21346,9 @@ fn build_smoke_riders_sim_uniform_bytes(
     params: &NativeSmokeRidersParams,
     dt: f32,
     time: f32,
-    fire: bool,
-    burst_mul: f32,
+    // Fraction of one full splat this frame carries (see CONTINUOUS
+    // EMISSION above), already multiplied by the audio burst gain.
+    emit_mul: f32,
 ) -> Vec<u8> {
     let mut bytes = vec![0_u8; 96];
     write_u32_le(&mut bytes, 0, params.grid_size);
@@ -21330,7 +21357,7 @@ fn build_smoke_riders_sim_uniform_bytes(
     write_u32_le(&mut bytes, 3, params.emitter_count);
     write_f32_le(&mut bytes, 4, dt);
     write_f32_le(&mut bytes, 5, time);
-    write_f32_le(&mut bytes, 6, if fire { burst_mul } else { 0.0 });
+    write_f32_le(&mut bytes, 6, emit_mul);
     write_f32_le(&mut bytes, 8, params.density_decay);
     write_f32_le(&mut bytes, 9, params.velocity_decay);
     write_f32_le(&mut bytes, 10, params.splat_radius);
@@ -21342,7 +21369,16 @@ fn build_smoke_riders_sim_uniform_bytes(
     bytes
 }
 
-fn build_smoke_riders_emitter_bytes(params: &NativeSmokeRidersParams) -> Vec<u8> {
+// `vel_scale` is the same per-frame emission fraction the density term
+// gets. The shared splat WGSL adds emitter velocity WITHOUT the strength
+// multiplier, so rate-normalising the injected momentum has to happen
+// here: without it, running the pass every frame instead of every fifth
+// would quintuple the jet and the plume would change shape, not just
+// stop flickering.
+fn build_smoke_riders_emitter_bytes(
+    params: &NativeSmokeRidersParams,
+    vel_scale: f32,
+) -> Vec<u8> {
     let mut bytes = vec![0_u8; SMOKE_3D_MAX_EMITTERS * 48];
     let emitter_count = params.emitter_count.clamp(1, SMOKE_3D_MAX_EMITTERS as u32);
     let palette = [
@@ -21367,17 +21403,10 @@ fn build_smoke_riders_emitter_bytes(params: &NativeSmokeRidersParams) -> Vec<u8>
         write_f32_le(&mut bytes, off + 5, color[1]);
         write_f32_le(&mut bytes, off + 6, color[2]);
         write_f32_le(&mut bytes, off + 7, params.splat_strength);
-        write_f32_le(
-            &mut bytes,
-            off + 8,
-            angle.cos() * params.splat_velocity_mag * 0.18,
-        );
-        write_f32_le(&mut bytes, off + 9, params.splat_velocity_mag);
-        write_f32_le(
-            &mut bytes,
-            off + 10,
-            angle.sin() * params.splat_velocity_mag * 0.18,
-        );
+        let vm = params.splat_velocity_mag * vel_scale;
+        write_f32_le(&mut bytes, off + 8, angle.cos() * vm * 0.18);
+        write_f32_le(&mut bytes, off + 9, vm);
+        write_f32_le(&mut bytes, off + 10, angle.sin() * vm * 0.18);
     }
     bytes
 }
