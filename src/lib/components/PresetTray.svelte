@@ -1,6 +1,7 @@
 <script lang="ts">
   import { project, compositions, activeCompositionId } from '../stores/layers';
   import { showTimelineIsPlaying } from '../stores/showTimeline';
+  import { presetTransition, TRANSITION_OPTIONS } from '../stores/presetTransition';
   import { audioStore } from '../stores/audio';
   import type { Composition } from '../types';
   import type { TransitionType } from '../renderer/engine';
@@ -74,35 +75,16 @@
   // Callback before loading a preset (for triggering transitions)
   export let onBeforeLoad: ((durationSeconds: number, type: TransitionType) => void) | null = null;
 
-  // Transition settings — restored from localStorage in onMount.
-  let transitionEnabled = true;
-  let transitionDuration = 2; // seconds
-  let transitionType: TransitionType = 'dissolve';
-
-  const TRANSITION_OPTIONS: { value: TransitionType; label: string }[] = [
-    { value: 'dissolve',  label: 'Dissolve' },
-    { value: 'wave',      label: 'Wave (Disney)' },
-    { value: 'wipeUp',    label: 'Wipe Up' },
-    { value: 'wipeDown',  label: 'Wipe Down' },
-    { value: 'wipeLeft',  label: 'Wipe Left' },
-    { value: 'wipeRight', label: 'Wipe Right' },
-    { value: 'iris',      label: 'Iris' },
-    { value: 'voxelize',  label: 'Voxelize' },
-    { value: 'warp',      label: 'Warp' },
-    { value: 'explode',   label: 'Explode' },
-    { value: 'pixelMelt', label: 'Pixel Melt' },
-  ];
+  // Transition settings live in `stores/presetTransition.ts` (loaded from,
+  // and written back to, the same three localStorage keys they always used).
+  // They are shared state now: the show timeline seeds every preset clip it
+  // creates from these, so a crossfade set here is the crossfade a programmed
+  // show uses.
+  $: transitionEnabled = $presetTransition.enabled;
+  $: transitionDuration = $presetTransition.duration;
+  $: transitionType = $presetTransition.style;
 
   onMount(() => {
-    try {
-      const t = localStorage.getItem('ghostarcade-transition-type');
-      if (t && TRANSITION_OPTIONS.some(o => o.value === t)) transitionType = t as TransitionType;
-      const d = parseFloat(localStorage.getItem('ghostarcade-transition-duration') || '');
-      if (!isNaN(d) && d > 0) transitionDuration = d;
-      const e = localStorage.getItem('ghostarcade-transition-enabled');
-      if (e !== null) transitionEnabled = e === '1';
-    } catch {}
-
     // MIDI: bridge map:preset:<index> triggers into loadPreset(). The router
     // dispatches the event but had no listener until this hook — bound notes
     // appeared to do nothing. Index is into the *current* $compositions list,
@@ -117,10 +99,6 @@
     window.addEventListener('midi-mapping-preset', handler);
     return () => window.removeEventListener('midi-mapping-preset', handler);
   });
-  $: try { localStorage.setItem('ghostarcade-transition-type', transitionType); } catch {}
-  $: try { localStorage.setItem('ghostarcade-transition-duration', String(transitionDuration)); } catch {}
-  $: try { localStorage.setItem('ghostarcade-transition-enabled', transitionEnabled ? '1' : '0'); } catch {}
-
   // Recording state (shared recorder)
   let recorderHandle: RecorderHandle | null = null;
   let isRecording = false;
@@ -432,16 +410,30 @@
         <span class="tray-title">MAPPING PRESETS</span>
         <div class="transition-controls">
           <label class="transition-toggle" title="Enable transition between presets">
-            <input type="checkbox" bind:checked={transitionEnabled} />
+            <input
+              type="checkbox"
+              checked={transitionEnabled}
+              onchange={(e) => presetTransition.patch({ enabled: (e.currentTarget as HTMLInputElement).checked })}
+            />
             <span class="transition-label">Transition</span>
           </label>
           {#if transitionEnabled}
-            <select class="transition-duration" bind:value={transitionType} title="Transition style">
+            <select
+              class="transition-duration"
+              value={transitionType}
+              onchange={(e) => presetTransition.patch({ style: (e.currentTarget as HTMLSelectElement).value as TransitionType })}
+              title="Transition style"
+            >
               {#each TRANSITION_OPTIONS as opt}
                 <option value={opt.value}>{opt.label}</option>
               {/each}
             </select>
-            <select class="transition-duration" bind:value={transitionDuration} title="Transition duration">
+            <select
+              class="transition-duration"
+              value={transitionDuration}
+              onchange={(e) => presetTransition.patch({ duration: Number((e.currentTarget as HTMLSelectElement).value) })}
+              title="Transition duration"
+            >
               <option value={0.5}>0.5s</option>
               <option value={1}>1s</option>
               <option value={2}>2s</option>

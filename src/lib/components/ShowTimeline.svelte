@@ -25,7 +25,11 @@
     SHOW_MIN_ZOOM,
     SHOW_MAX_ZOOM,
     SHOW_DEFAULT_PRESET_SECONDS,
+    clampShowTransitionDuration,
+    findPrecedingShowClip,
+    resolveTransitionStyle,
   } from '../stores/showTimeline';
+  import { TRANSITION_OPTIONS, isTransitionStyle } from '../stores/presetTransition';
   import { compositions } from '../stores/layers';
   import { vjClipLauncher } from '../stores/vjClipLauncher';
   import { clipAudioBus, clipAudioMaster, CLIP_AUDIO_BLOCK_TEXT } from '../audio/clipAudioBus';
@@ -69,6 +73,111 @@
   const AUDIO_LANE_HEIGHT = 52;
   const RULER_HEIGHT = 20;
 
+  // ── Tray height ────────────────────────────────────────────────────────
+  // This is a bottom TRAY, not a takeover. It sizes to exactly the height its
+  // own content needs — transport + the lanes that actually exist + the
+  // inspector when one is showing — instead of reserving a fixed tall block
+  // and leaving most of it empty grid. Past the ceiling the lane stack
+  // scrolls rather than the panel growing.
+  //
+  // The ceiling is `min(260px, 38vh)` so a 13" laptop does not lose a third
+  // of its screen to it. Dragging the top edge overrides the height (up to a
+  // larger but still sane ceiling) and that override persists.
+  const TRAY_HEIGHT_KEY = 'ghostarcade-show-tray-height';
+  const TRAY_MIN_HEIGHT = 150;
+  /** Space an always-on horizontal scrollbar would eat inside the grid.
+   *  Zero on macOS overlay scrollbars, ~8–15 px on Windows. */
+  const GRID_SCROLLBAR_ALLOWANCE = 10;
+
+  function autoCeiling(vh: number): number {
+    return Math.max(TRAY_MIN_HEIGHT, Math.round(Math.min(260, vh * 0.38)));
+  }
+  /** A hand-dragged tray may be taller than the auto ceiling — the user
+   *  asked for it — but never so tall the app underneath disappears. */
+  function dragCeiling(vh: number): number {
+    return Math.max(TRAY_MIN_HEIGHT, Math.round(Math.min(720, vh * 0.62)));
+  }
+
+  function loadUserHeight(): number | null {
+    if (typeof localStorage === 'undefined') return null;
+    try {
+      const raw = parseFloat(localStorage.getItem(TRAY_HEIGHT_KEY) || '');
+      return Number.isFinite(raw) && raw > 0 ? raw : null;
+    } catch {
+      return null;
+    }
+  }
+  function saveUserHeight(h: number | null): void {
+    if (typeof localStorage === 'undefined') return;
+    try {
+      if (h === null) localStorage.removeItem(TRAY_HEIGHT_KEY);
+      else localStorage.setItem(TRAY_HEIGHT_KEY, String(Math.round(h)));
+    } catch {
+      /* private mode — the session still resizes fine */
+    }
+  }
+
+  let viewportH = typeof window !== 'undefined' ? window.innerHeight : 900;
+  let userHeight: number | null = loadUserHeight();
+  /** Measured, not assumed: both bars wrap at narrow widths, and a wrapped
+   *  transport that the height maths did not know about is exactly how the
+   *  inspector ends up hanging out of the bottom of the tray. */
+  let transportH = 36;
+  let inspectorH = 0;
+
+  $: laneStackH = RULER_HEIGHT + audioLaneCount * AUDIO_LANE_HEIGHT + PRESET_LANE_HEIGHT;
+  // The bound clientHeight keeps its last value after the inspector
+  // unmounts, so gate it on the selection rather than trusting the binding.
+  $: inspectorVisible = !!(selectedPreset || selectedAudio);
+  $: contentH =
+    transportH + laneStackH + (inspectorVisible ? inspectorH : 0) + GRID_SCROLLBAR_ALLOWANCE + 1 /* top border */;
+  $: autoH = Math.max(TRAY_MIN_HEIGHT, Math.min(contentH, autoCeiling(viewportH)));
+  $: trayHeight = userHeight === null
+    ? autoH
+    : Math.max(TRAY_MIN_HEIGHT, Math.min(userHeight, dragCeiling(viewportH)));
+
+  let resizingTray = false;
+
+  function startTrayResize(e: MouseEvent) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const startY = e.clientY;
+    const startH = trayHeight;
+    resizingTray = true;
+    const onMove = (ev: MouseEvent) => {
+      // Top edge: dragging UP (a negative delta) makes the tray taller.
+      const next = startH - (ev.clientY - startY);
+      userHeight = Math.max(TRAY_MIN_HEIGHT, Math.min(Math.round(next), dragCeiling(viewportH)));
+    };
+    const onUp = () => {
+      resizingTray = false;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+      saveUserHeight(userHeight);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+
+  /** Double-click the grip to go back to auto-fit. */
+  function resetTrayHeight() {
+    userHeight = null;
+    saveUserHeight(null);
+  }
+
+  // Publish the live height so App.svelte can reserve viewport space for the
+  // tray, the way it already does for the Presets / Sequencer / Keyframes
+  // panels. Those three hard-code a constant because their heights are
+  // constant; this one is content-sized and resizable, so it has to be a
+  // variable. Cleared on close so the viewport springs straight back.
+  $: if (typeof document !== 'undefined') {
+    document.documentElement.style.setProperty(
+      '--ga-show-tray-height',
+      isOpen && !hiddenInVJ ? `${trayHeight}px` : '0px',
+    );
+  }
+
   $: zoom = state.zoom;
   $: rulerSeconds = Math.max(state.duration, SHOW_MIN_RULER_SECONDS);
   $: totalWidth = rulerSeconds * zoom;
@@ -107,6 +216,8 @@
 
   // ── Grid geometry ──────────────────────────────────────────────────────
   let gridEl: HTMLDivElement | undefined;
+  /** Grid scrollTop, mirrored onto the lane-label column. */
+  let laneScrollTop = 0;
 
   function timeAt(e: MouseEvent | DragEvent): number {
     if (!gridEl) return 0;
@@ -261,6 +372,26 @@
     else if (selectedAudio) showTimeline.removeAudioTrack(selectedAudio.id);
   }
 
+  // ── Clip transition (inspector) ────────────────────────────────────────
+  // `transitionIn` runs FORWARD from the clip's start time — see the
+  // "Clip transitions" block in stores/showTimeline.ts for why start-at and
+  // not lead-in. The effective length is clamped to the shorter of the two
+  // neighbouring clips, and the inspector says so out loud when the clamp
+  // actually bites: a 5 s dissolve silently becoming 1 s is the kind of
+  // thing you otherwise only discover mid-show.
+  $: selectedTransitionIn = selectedPreset?.transitionIn ?? 'cut';
+  $: selectedTransitionStyle = resolveTransitionStyle(selectedTransitionIn);
+  $: selectedTransitionPrev = selectedPreset
+    ? findPrecedingShowClip(state.presetClips, selectedPreset)
+    : null;
+  $: selectedTransitionEffective = selectedPreset
+    ? clampShowTransitionDuration(selectedPreset.transitionDuration, selectedPreset, selectedTransitionPrev)
+    : 0;
+  $: selectedTransitionClamped =
+    !!selectedPreset &&
+    selectedTransitionStyle !== null &&
+    (selectedPreset.transitionDuration ?? 0) - selectedTransitionEffective > 0.01;
+
   // ── Waveform path ──────────────────────────────────────────────────────
   const WAVE_VIEW_H = 40;
 
@@ -319,7 +450,7 @@
   }
 </script>
 
-<svelte:window onkeydown={handleKeydown} />
+<svelte:window onkeydown={handleKeydown} bind:innerHeight={viewportH} />
 
 {#if !hiddenInVJ}
   <button
@@ -340,11 +471,23 @@
 {#if isOpen && !hiddenInVJ}
   <div
     class="show-tray"
+    class:resizing={resizingTray}
+    style="height: {trayHeight}px"
     role="region"
     aria-label="Show timeline"
     onmouseenter={() => pointerInTray = true}
     onmouseleave={() => pointerInTray = false}
   >
+    <!-- svelte-ignore a11y_no_static_element_interactions -->
+    <div
+      class="tray-resize"
+      onmousedown={startTrayResize}
+      ondblclick={resetTrayHeight}
+      title="Drag to resize the show panel — double-click to fit its contents"
+    >
+      <div class="resize-grip"></div>
+    </div>
+
     <div class="show-header-btns">
       <button class="show-clear" onclick={() => showClearConfirm = true} title="Clear the whole show">Clear</button>
       <button class="show-close" onclick={() => showTimeline.setOpen(false)} title="Close show timeline">
@@ -355,7 +498,7 @@
     </div>
 
     <!-- Transport -->
-    <div class="show-transport">
+    <div class="show-transport" bind:clientHeight={transportH}>
       <button
         class="t-btn"
         class:active={state.isPlaying}
@@ -467,13 +610,18 @@
     <div class="show-body">
       <div class="lane-labels">
         <div class="label-ruler-spacer" style="height: {RULER_HEIGHT}px"></div>
-        {#each audioLanes as lane}
-          <div class="lane-label audio" style="height: {AUDIO_LANE_HEIGHT}px">
-            <span class="lane-name">Audio {lane + 1}</span>
+        <!-- Translated, not scrolled: the grid owns the scroll and the ruler
+             spacer above has to stay pinned the way the sticky ruler does.
+             Matters now that a short tray really can clip the lane stack. -->
+        <div class="label-rows" style="transform: translateY({-laneScrollTop}px)">
+          {#each audioLanes as lane}
+            <div class="lane-label audio" style="height: {AUDIO_LANE_HEIGHT}px">
+              <span class="lane-name">Audio {lane + 1}</span>
+            </div>
+          {/each}
+          <div class="lane-label preset" style="height: {PRESET_LANE_HEIGHT}px">
+            <span class="lane-name">Presets</span>
           </div>
-        {/each}
-        <div class="lane-label preset" style="height: {PRESET_LANE_HEIGHT}px">
-          <span class="lane-name">Presets</span>
         </div>
       </div>
 
@@ -484,6 +632,7 @@
         class:drag-hover={dragHover}
         bind:this={gridEl}
         onclick={seekFromClick}
+        onscroll={() => laneScrollTop = gridEl?.scrollTop ?? 0}
         onwheel={handleWheel}
         ondragover={handleDragOver}
         ondragleave={() => dragHover = false}
@@ -556,7 +705,7 @@
 
     <!-- Inspector -->
     {#if selectedPreset}
-      <div class="show-inspector">
+      <div class="show-inspector" bind:clientHeight={inspectorH}>
         <span class="insp-title">Preset clip</span>
         <label class="insp-field insp-wide">
           <span>Composition</span>
@@ -596,11 +745,56 @@
           />
           <span class="insp-unit">s</span>
         </label>
+
+        <!-- Transition. Same styles the preset tray offers, fired through
+             the same engine call; new clips are born with whatever the tray
+             is set to, and this is the per-clip override. -->
+        <label class="insp-field">
+          <span>Transition</span>
+          <select
+            class="insp-transition"
+            value={selectedTransitionIn}
+            onchange={(e) => showTimeline.updatePresetClip(selectedPreset.id, {
+              transitionIn: (e.target as HTMLSelectElement).value as typeof selectedTransitionIn,
+            })}
+            title="What happens at this clip's start. The blend runs forward from the clip's start time."
+          >
+            <option value="cut">Cut</option>
+            {#each TRANSITION_OPTIONS as opt}
+              <option value={opt.value}>{opt.label}</option>
+            {/each}
+            {#if !isTransitionStyle(selectedTransitionIn) && selectedTransitionIn !== 'cut'}
+              <!-- Legacy VJ-timeline value from an older project file. -->
+              <option value={selectedTransitionIn}>{selectedTransitionIn} (legacy)</option>
+            {/if}
+          </select>
+        </label>
+        {#if selectedTransitionStyle}
+          <label class="insp-field">
+            <span>Fade</span>
+            <input
+              class="insp-fade"
+              type="number" min="0" step="0.25"
+              value={(selectedPreset.transitionDuration ?? 0).toFixed(2)}
+              onchange={(e) => showTimeline.updatePresetClip(selectedPreset.id, {
+                transitionDuration: Math.max(0, parseFloat((e.target as HTMLInputElement).value) || 0),
+              })}
+            />
+            <span class="insp-unit">s</span>
+          </label>
+          {#if selectedTransitionClamped}
+            <span
+              class="insp-note"
+              title="Clamped to the shorter of this clip and the one before it, so a transition can never outlive its clip."
+            >→ {selectedTransitionEffective.toFixed(2)}s</span>
+          {/if}
+        {/if}
+
         <button class="insp-delete" onclick={deleteSelected}>Delete</button>
         <button class="insp-close" onclick={() => showTimeline.select(null)}>×</button>
       </div>
     {:else if selectedAudio}
-      <div class="show-inspector">
+      <div class="show-inspector" bind:clientHeight={inspectorH}>
         <span class="insp-title">Audio track</span>
         <label class="insp-field insp-wide">
           <span>Name</span>
@@ -703,23 +897,57 @@
     background: linear-gradient(135deg, #1a2020, #201515);
   }
 
+  /* Height comes from the inline style (auto-fit to content, or the user's
+     dragged override) — see the "Tray height" block in the script.
+
+     The background is FULLY OPAQUE on purpose. At 0.98 alpha the canvas and
+     the layer-panel chrome behind it ghosted straight through, which is
+     unreadable over high-contrast visuals; every inner surface below is
+     opaque for the same reason. Anything wanting a blur here has to sit on
+     top of this base layer, not replace it. */
   .show-tray {
     position: fixed;
     bottom: var(--ga-bottom-rail-offset, 74px);
     left: 0;
     right: 0;
-    height: 320px;
     z-index: 90;
-    background: rgba(10, 10, 14, 0.98);
+    background: #0a0a0e;
     border-top: 1px solid color-mix(in srgb, var(--ga-coral, #ff6f5e) 15%, transparent);
     display: flex;
     flex-direction: column;
+    overflow: hidden;
     animation: slideUp 0.2s ease-out;
     box-shadow: 0 -4px 20px rgba(0, 0, 0, 0.5);
   }
+  /* Suppress the entry animation mid-drag: re-running it on every reactive
+     height change makes the panel visibly jitter under the pointer. */
+  .show-tray.resizing { animation: none; }
   @keyframes slideUp {
     from { transform: translateY(100%); }
     to { transform: translateY(0); }
+  }
+
+  .tray-resize {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 7px;
+    z-index: 12;
+    cursor: ns-resize;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  .resize-grip {
+    width: 40px;
+    height: 3px;
+    border-radius: 2px;
+    background: rgba(255, 255, 255, 0.14);
+  }
+  .tray-resize:hover .resize-grip,
+  .show-tray.resizing .resize-grip {
+    background: color-mix(in srgb, var(--ga-coral, #ff6f5e) 70%, transparent);
   }
 
   .show-header-btns {
@@ -763,10 +991,12 @@
     display: flex;
     align-items: center;
     gap: 5px;
-    padding: 5px 8px;
+    /* 7px of top padding clears the resize strip so the transport buttons
+       are not sitting under an ns-resize cursor. */
+    padding: 7px 8px 5px;
     padding-right: 130px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
-    background: rgba(10, 10, 14, 0.95);
+    background: #0a0a0e;
     flex-shrink: 0;
     flex-wrap: wrap;
   }
@@ -867,19 +1097,26 @@
   }
   .t-audio-warn:hover { color: #fff; background: rgba(248, 113, 113, 0.25); border-color: #f87171; }
 
+  /* `flex: 1` + `min-height: 0` is what lets the tray be short: the body
+     takes whatever is left after the transport and the inspector have had
+     their intrinsic heights, and the grid inside it scrolls. Without the
+     min-height a wrapped transport bar or a tall lane stack would refuse to
+     shrink and push the inspector out through the bottom of the tray. */
   .show-body {
     display: flex;
-    flex: 1;
+    flex: 1 1 auto;
+    min-height: 0;
     overflow: hidden;
   }
   .lane-labels {
     width: 108px;
     flex: 0 0 108px;
-    background: rgba(14, 14, 18, 0.98);
+    background: #0e0e12;
     border-right: 1px solid rgba(255, 255, 255, 0.08);
     overflow: hidden;
   }
   .label-ruler-spacer { border-bottom: 1px solid rgba(255, 255, 255, 0.08); }
+  .label-rows { will-change: transform; }
   .lane-label {
     display: flex;
     align-items: center;
@@ -898,18 +1135,19 @@
 
   .show-grid {
     flex: 1;
+    min-width: 0;
     overflow: auto;
     position: relative;
-    background: rgba(8, 8, 12, 0.98);
+    background: #08080c;
     cursor: crosshair;
   }
-  .show-grid.drag-hover { background: rgba(18, 14, 12, 0.98); box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ga-coral, #ff6f5e) 45%, transparent); }
+  .show-grid.drag-hover { background: #12100c; box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--ga-coral, #ff6f5e) 45%, transparent); }
 
   .show-ruler {
     position: sticky;
     top: 0;
     z-index: 4;
-    background: rgba(14, 14, 18, 0.98);
+    background: #0e0e12;
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
     cursor: col-resize;
   }
@@ -1094,8 +1332,22 @@
     font-family: inherit;
   }
   .insp-wide input[type="text"], .insp-wide select { width: 168px; }
+  .insp-field select.insp-transition { width: 118px; }
+  .insp-field input.insp-fade { width: 62px; }
   .insp-range { width: 90px; }
   .insp-unit { color: rgba(255, 255, 255, 0.35); }
+  /* Shown only when the transition-length clamp actually shortens the
+     value the user typed. */
+  .insp-note {
+    font-size: 11px;
+    font-weight: 600;
+    color: #FFD96B;
+    background: rgba(255, 217, 107, 0.1);
+    border: 1px solid rgba(255, 217, 107, 0.3);
+    border-radius: 3px;
+    padding: 2px 6px;
+    white-space: nowrap;
+  }
   .insp-chip {
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.15);

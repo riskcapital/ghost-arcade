@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import type { Layer, WarpCorners, BlendMode, MeshWarpGrid, Effect, ColorContent, MaskConfig, LayerShapeType, Point2D, ContentFitMode, EdgeEffect, GroupConfig } from '../types';
+import type { Layer, WarpCorners, BlendMode, MeshWarpGrid, Effect, ColorContent, MaskConfig, LayerShapeType, Point2D, ContentFitMode, EdgeEffect, GroupConfig, TransitionStyle } from '../types';
 import { GpuEffectRunner, isGpuEffect } from './gpuEffectRunner';
 import { getShapeVertices } from '../types';
 
@@ -3224,18 +3224,9 @@ export class RenderEngine {
 // us at one ShaderMaterial / one program compile. Snapshot is the OLD frame
 // frozen at switch time; live is the NEW preset rendered each frame.
 
-export type TransitionType =
-  | 'dissolve'    // Crossfade with subtle radial drift to break the frozen-snapshot feel
-  | 'wipeUp'      // New emerges from bottom, sweeping up
-  | 'wipeDown'    // New emerges from top, sweeping down
-  | 'wipeLeft'    // New sweeps in from right edge
-  | 'wipeRight'   // New sweeps in from left edge
-  | 'wave'        // Sinusoidal vertical wipe (Disney projection-mapping style)
-  | 'iris'        // Circular reveal expanding from center
-  | 'voxelize'    // Pixel-block reveal — chunks flip from snapshot to live
-  | 'warp'        // Snapshot warps outward radially, blending into live
-  | 'explode'     // Snapshot fragments fly outward, live fades in beneath
-  | 'pixelMelt';  // Snapshot drips/melts down per-column, live revealed above
+/** Alias of `types.ts` TransitionStyle — that is the canonical list, so the
+ *  preset tray, the show timeline and this shader registry cannot drift. */
+export type TransitionType = TransitionStyle;
 
 export const TRANSITION_TYPE_INDEX: Record<TransitionType, number> = {
   dissolve: 0,

@@ -4821,13 +4821,43 @@ export interface VJDeck {
   transitionDuration?: number;    // Duration of transition in seconds
 }
 
+/**
+ * Preset-player transition styles. THE canonical list — `renderer/engine.ts`
+ * aliases its `TransitionType` to this so the preset tray, the show timeline
+ * and the engine can never drift apart. Declared here (and not in engine.ts)
+ * because the show-timeline store must be able to name a style without
+ * dragging three.js into its unit tests.
+ */
+export type TransitionStyle =
+  | 'dissolve'    // Crossfade with subtle radial drift to break the frozen-snapshot feel
+  | 'wipeUp'      // New emerges from bottom, sweeping up
+  | 'wipeDown'    // New emerges from top, sweeping down
+  | 'wipeLeft'    // New sweeps in from right edge
+  | 'wipeRight'   // New sweeps in from left edge
+  | 'wave'        // Sinusoidal vertical wipe (Disney projection-mapping style)
+  | 'iris'        // Circular reveal expanding from center
+  | 'voxelize'    // Pixel-block reveal — chunks flip from snapshot to live
+  | 'warp'        // Snapshot warps outward radially, blending into live
+  | 'explode'     // Snapshot fragments fly outward, live fades in beneath
+  | 'pixelMelt';  // Snapshot drips/melts down per-column, live revealed above
+
+/**
+ * What a clip does at its own start boundary.
+ *
+ * 'cut' is a hard swap. 'fade' / 'crossfade' are the ORIGINAL VJ-timeline
+ * values, kept so old project files keep loading — both resolve to
+ * 'dissolve'. Anything else names an engine transition style directly, which
+ * is what lets a show clip use the exact same transitions as the preset tray.
+ */
+export type ClipTransitionIn = 'cut' | 'fade' | 'crossfade' | TransitionStyle;
+
 // Timeline clip - A composition in the timeline with duration
 export interface TimelineClip {
   id: string;
   compositionId: string;
   startTime: number;     // Start time in seconds
   duration: number;      // Duration in seconds
-  transitionIn?: 'cut' | 'fade' | 'crossfade';   // Transition type
+  transitionIn?: ClipTransitionIn;   // Transition style at this clip's start
   transitionDuration?: number; // Duration of transition in seconds
 }
 
