@@ -8,6 +8,9 @@ const require = createRequire(import.meta.url);
 const COMMAND_PREFIX = 'native_renderer_';
 const SOURCE_FRAME_FILE_HANDOFF_B64_THRESHOLD = 512 * 1024;
 const VIDEO_FRAME_PREFETCH_TIMEOUT_MS = 8000;
+// One core stall trips every in-flight RPC at once. Roll those up instead of
+// emitting a line per failure for a condition the operator cannot act on.
+const TRANSIENT_RPC_FAILURE_LOG_WINDOW_MS = 5000;
 const defaultDecodeBackend = (platform = process.platform) => (platform === 'win32' ? 'ffmpeg_d3d11va' : 'ffmpeg_software');
 const STATIC_IMAGE_EXTENSIONS = new Set([
   '.avif',
@@ -1677,16 +1680,31 @@ class NativeRendererBroker {
 
   noteTransientRpcFailure(method, err) {
     const message = err?.message || String(err);
+    const now = Date.now();
     this.lastStatus = {
       ...this.lastStatus,
       last_rpc_error: message,
       last_rpc_error_method: method,
-      last_rpc_error_at_ms: Date.now(),
+      last_rpc_error_at_ms: now,
     };
-    console.warn(`[NativeRenderer] transient RPC failure during ${method}: ${message}`);
+    // A single core stall times out every RPC in flight at once, so the raw
+    // failure stream is dozens of identical lines the operator can do nothing
+    // about. Log the first of a burst, then one rolled-up line per window.
+    this.transientRpcFailureCount = (this.transientRpcFailureCount || 0) + 1;
+    const windowStartedAt = this.transientRpcFailureWindowAt || 0;
+    if (now - windowStartedAt >= TRANSIENT_RPC_FAILURE_LOG_WINDOW_MS) {
+      const suppressed = (this.transientRpcFailureCount || 1) - 1;
+      const tail =
+        windowStartedAt > 0 && suppressed > 0 ? ` (+${suppressed} more in the last ${Math.round((now - windowStartedAt) / 1000)}s)` : '';
+      console.warn(`[NativeRenderer] transient RPC failure during ${method}: ${message}${tail}`);
+      this.transientRpcFailureWindowAt = now;
+      this.transientRpcFailureCount = 0;
+    }
   }
 
   clearTransientRpcFailure() {
+    this.transientRpcFailureWindowAt = 0;
+    this.transientRpcFailureCount = 0;
     if (!this.lastStatus.last_rpc_error) return;
     this.lastStatus = {
       ...this.lastStatus,
