@@ -28,9 +28,37 @@
   } from '../stores/showTimeline';
   import { compositions } from '../stores/layers';
   import { vjClipLauncher } from '../stores/vjClipLauncher';
+  import { clipAudioBus, clipAudioMaster, CLIP_AUDIO_BLOCK_TEXT } from '../audio/clipAudioBus';
 
   $: state = $showTimeline;
   $: isOpen = state.isOpen;
+
+  // ── Audio output state ───────────────────────────────────────────────────
+  // The clip-audio master is a persisted, APP-WIDE control whose only other UI
+  // is a self-hiding button in the top bar. A mute set once (in VJ mode, weeks
+  // ago) silenced the show timeline forever with no visible cause — and zeroed
+  // the recording mixdown with it. Surface it here, where the audio is being
+  // authored, so a silent show always names its own reason and is one click
+  // from fixed.
+  $: audioBlocked = state.audioTracks.length > 0 ? $clipAudioMaster.blocked : null;
+  $: audioMuted = $clipAudioMaster.muted;
+  $: audioVolumePct = Math.round($clipAudioMaster.volume * 100);
+  $: audioTitle = audioBlocked
+    ? `${CLIP_AUDIO_BLOCK_TEXT[audioBlocked]} — click to fix`
+    : `Show audio output — ${audioVolumePct}%`;
+
+  /** One click clears whatever is silencing the show, in the order a user
+   *  would try them by hand. */
+  function fixAudioOutput() {
+    if ($clipAudioMaster.muted) clipAudioBus.setMasterMuted(false);
+    if ($clipAudioMaster.volume <= 0) clipAudioBus.setMasterVolume(1);
+    clipAudioBus.resume();
+  }
+
+  function toggleAudioOutput() {
+    if (audioBlocked) fixAudioOutput();
+    else clipAudioBus.setMasterMuted(true);
+  }
 
   // Content-creation tool: hide + auto-close in VJ mode, exactly like the
   // keyframe timeline does.
@@ -354,6 +382,53 @@
       <span class="t-time">{formatPrecise(state.currentTime)}</span>
       <span class="t-sep">/</span>
       <span class="t-total" title="Total programmed show length">{formatPrecise(state.duration)}</span>
+
+      <span class="t-divider"></span>
+
+      <!-- Show audio output. Never hidden while the show has audio: a muted
+           or blocked bus is exactly the state the user needs to SEE. -->
+      {#if state.audioTracks.length > 0}
+        <button
+          class="t-btn t-audio"
+          class:blocked={audioBlocked !== null}
+          onclick={toggleAudioOutput}
+          title={audioTitle}
+          aria-label={audioTitle}
+        >
+          {#if audioBlocked !== null}
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+              <line x1="23" y1="9" x2="17" y2="15"/><line x1="17" y1="9" x2="23" y2="15"/>
+            </svg>
+          {:else}
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
+              <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+              <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
+            </svg>
+          {/if}
+        </button>
+<!-- Wrapper, not a width on the input: the app-wide
+             `input[type="range"]:not(…)` skin in App.svelte sets width:100%
+             at a specificity this scoped rule cannot beat. Constraining the
+             parent keeps that shared track/thumb styling AND the size. -->
+        <span class="t-audio-level">
+          <input
+            type="range"
+            min="0" max="1" step="0.01"
+            value={$clipAudioMaster.volume}
+            disabled={audioMuted}
+            oninput={(e) => clipAudioBus.setMasterVolume(+(e.currentTarget as HTMLInputElement).value)}
+            title="Show audio output level"
+            aria-label="Show audio output level"
+          />
+        </span>
+        {#if audioBlocked !== null}
+          <button class="t-audio-warn" onclick={fixAudioOutput} title="Click to restore show audio output">
+            {CLIP_AUDIO_BLOCK_TEXT[audioBlocked]}
+          </button>
+        {/if}
+      {/if}
 
       <span class="t-divider"></span>
 
@@ -758,6 +833,39 @@
   .t-sep { color: #444; }
   .t-divider { width: 1px; height: 18px; background: rgba(255, 255, 255, 0.1); margin: 0 4px; }
   .hidden-file { display: none; }
+
+  /* Audio output — amber when the show is audible, red when something is
+     silencing it, so a dead show is never mistaken for a working one.
+     Literal hex rather than --ga-coral: that token resolves to a near-white
+     (#e7eef5) on the current theme, which would render the warning state
+     indistinguishable from every other control in this bar. */
+  .t-audio { color: #fbbf24; border-color: rgba(251, 191, 36, 0.35); }
+  .t-audio:hover:not(:disabled) { color: #fde68a; border-color: rgba(251, 191, 36, 0.6); }
+  .t-audio.blocked {
+    color: #f87171;
+    border-color: rgba(248, 113, 113, 0.6);
+    background: rgba(248, 113, 113, 0.15);
+  }
+  .t-audio.blocked:hover { color: #fca5a5; border-color: #f87171; }
+  .t-audio-level {
+    display: flex;
+    align-items: center;
+    flex: 0 0 62px;
+    width: 62px;
+    accent-color: #fbbf24;
+  }
+  .t-audio-warn {
+    font-size: 10.5px;
+    font-weight: 600;
+    font-family: inherit;
+    color: #f87171;
+    background: rgba(248, 113, 113, 0.12);
+    border: 1px solid rgba(248, 113, 113, 0.45);
+    border-radius: 4px;
+    padding: 4px 8px;
+    cursor: pointer;
+  }
+  .t-audio-warn:hover { color: #fff; background: rgba(248, 113, 113, 0.25); border-color: #f87171; }
 
   .show-body {
     display: flex;

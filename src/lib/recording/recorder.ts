@@ -8,7 +8,7 @@ import { project } from '../stores/layers';
 import { settings, getMimeType, getFileExtension } from '../stores/settings';
 import { mediaLibrary } from '../stores/media';
 import { generateUUID } from '../types';
-import { getRecordingAudioStream } from '../audio/clipAudioBus';
+import { getRecordingAudioStream, type RecordingAudioStream } from '../audio/clipAudioBus';
 import { createAssetRefFromGeneratedBlob, pathToFileUrl } from '../storage/assetRegistry';
 import { NATIVE_ENGINE_ONLY } from '../stores/settings';
 import { invoke, isElectron } from '../bridge';
@@ -119,8 +119,12 @@ type AudioSidecar = { stop(): Promise<Uint8Array | null>; discard(): void };
 
 function startRecordingAudioSidecar(): AudioSidecar | null {
   const recSettings = settings.get().recording;
-  if (recSettings.includeAudio === false) return null;
-  let audioResult: { stream: MediaStream; cleanup?: () => void } | null = null;
+  // Deliberate setting, not a fault — log, don't warn.
+  if (recSettings.includeAudio === false) {
+    console.log('[Recorder] Audio capture is OFF in settings — recording video-only.');
+    return null;
+  }
+  let audioResult: RecordingAudioStream | null = null;
   try {
     // Mixdown of clip-audio bus + live analyzer input. Falls back to the
     // analyzer-only stream when no clip has opted into audio, so shows that
@@ -128,12 +132,14 @@ function startRecordingAudioSidecar(): AudioSidecar | null {
     // whose only sound is clip playback recorded silent: analyzer
     // getAudioStream() returns null unless an analyzer INPUT is running.
     audioResult = getRecordingAudioStream();
-  } catch {
+  } catch (err) {
+    console.warn('[Recorder] audio mixdown unavailable:', err);
     return null;
   }
   if (!audioResult) return null;
   const tracks = audioResult.stream.getAudioTracks();
   if (!tracks.length) {
+    console.warn('[Recorder] Audio mixdown produced no tracks — recording video-only.');
     audioResult.cleanup?.();
     return null;
   }
@@ -154,7 +160,7 @@ function startRecordingAudioSidecar(): AudioSidecar | null {
   };
   // 1s timeslices bound the data lost if the app dies mid-recording.
   recorder.start(1000);
-  console.log('[Recorder] audio sidecar started');
+  console.log(`[Recorder] audio sidecar started — capturing: ${audioResult.sources.join(' + ')}`);
   let finished = false;
   const finish = async (): Promise<Uint8Array | null> => {
     if (finished) return null;
@@ -430,14 +436,14 @@ export function startRecording(options: RecorderOptions = {}): RecorderHandle | 
         ]);
         hasAudio = true;
         audioCleanup = audioResult.cleanup;
-        console.log('[Recorder] Audio track attached to recording');
+        console.log(`[Recorder] Audio track attached — capturing: ${audioResult.sources.join(' + ')}`);
       } else {
         combinedStream = videoStream;
-        console.log('[Recorder] Audio stream had no tracks, recording video-only');
+        console.warn('[Recorder] Audio stream had no tracks, recording video-only');
       }
     } else {
       combinedStream = videoStream;
-      console.log('[Recorder] No audio source active, recording video-only');
+      console.warn('[Recorder] No audio source active, recording video-only');
     }
   } else {
     combinedStream = videoStream;

@@ -584,6 +584,12 @@ export const showTimeline = {
     // An empty show has nothing to play — stay completely inert.
     if (s.duration <= 0) return;
     syncAudioWiring(s.audioTracks);
+    // Transport start is the moment audio has to be ready. A context built
+    // outside a user gesture starts suspended (browser / mobile builds) and
+    // would play nothing at all; `resume()` also un-does an explicit
+    // `suspend()` and arms the click-to-enable fallback if the policy still
+    // refuses. Cheap and idempotent when the context is already running.
+    clipAudioBus.resume();
     store.update((x) => ({ ...x, isPlaying: true }));
     // Re-evaluate at the current position. Fires only when the clip under
     // the playhead differs from what is loaded, so resuming from pause does

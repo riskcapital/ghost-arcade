@@ -18,10 +18,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import * as visualAudio from './visualAudio';
 import {
   ClipAudioBus,
+  clipAudioMaster,
   computeClipAudioDrift,
   CLIP_AUDIO_HARD_SEEK_SECONDS,
   CLIP_AUDIO_NUDGE_SECONDS,
   CLIP_AUDIO_MAX_NUDGE,
+  CLIP_AUDIO_BLOCK_TEXT,
+  type ClipAudioBlockReason,
+  type ClipAudioMasterState,
   type ClipAudioTransport,
 } from './clipAudioBus';
 
@@ -49,6 +53,10 @@ class FakeAudioContext {
   gainCount = 0;
   mediaElementSourceCount = 0;
   streamDestCount = 0;
+  resumeCalls = 0;
+  /** When false, resume() leaves the context suspended — the Chromium
+   *  "needs a user gesture" behaviour the bus has to survive. */
+  resumeSucceeds = true;
   private wired = new Set<unknown>();
 
   createGain() { this.gainCount++; return new FakeGainNode(); }
@@ -63,7 +71,11 @@ class FakeAudioContext {
     this.mediaElementSourceCount++;
     return new FakeMediaElementSourceNode(element);
   }
-  resume() { return Promise.resolve(); }
+  resume() {
+    this.resumeCalls++;
+    if (this.resumeSucceeds) this.state = 'running';
+    return Promise.resolve();
+  }
 }
 
 interface FakeMediaElement {
@@ -694,5 +706,232 @@ describe('mix stream', () => {
     // Repeated recordings must not stack destination nodes on the master.
     expect(bus.getMixStream()).toBe(first);
     expect(ctx.streamDestCount).toBe(1);
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 9. Silence is always diagnosable
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// REGRESSION GUARD. Shipped bug: the master mute is persisted to
+// localStorage, and a `muted: true` written once (from the self-hiding
+// button in the top bar) silenced the show timeline on every later launch —
+// `masterGain.gain.value` sat at 0, so bus RMS measured 0.000000 and the
+// recording mixdown muxed a −91 dB (digitally silent) AAC track while
+// reporting success. Nothing logged, nothing in the UI, no way to tell that
+// state apart from a broken decoder. Every silent state must now name itself.
+
+describe('audibility diagnosis', () => {
+  it('reports nothing wrong when no clip has opted in', () => {
+    const ctx = new FakeAudioContext();
+    const bus = makeBus(ctx);
+    // Silence with nothing wired is CORRECT — it must not light up the UI.
+    expect(bus.blockedReason()).toBeNull();
+    expect(bus.isAudible()).toBe(false);
+  });
+
+  it('names a persisted master mute as the reason the show is silent', () => {
+    const ctx = new FakeAudioContext();
+    const bus = makeBus(ctx);
+    bus.attachClip('a', fakeMediaElement());
+    const master = bus.masterNode() as unknown as FakeGainNode;
+
+    expect(bus.blockedReason()).toBeNull();
+    expect(bus.isAudible()).toBe(true);
+
+    bus.setMasterMuted(true);
+    expect(master.gain.value).toBe(0);
+    expect(bus.blockedReason()).toBe('master-muted');
+    expect(bus.isAudible()).toBe(false);
+
+    bus.setMasterMuted(false);
+    expect(bus.blockedReason()).toBeNull();
+    expect(bus.isAudible()).toBe(true);
+  });
+
+  it('distinguishes a zeroed level, a suspend, an export and all-muted clips', () => {
+    const ctx = new FakeAudioContext();
+    const bus = makeBus(ctx);
+    bus.attachClip('a', fakeMediaElement());
+
+    bus.setMasterVolume(0);
+    expect(bus.blockedReason()).toBe('master-volume-zero');
+    bus.setMasterVolume(1);
+
+    bus.suspend();
+    expect(bus.blockedReason()).toBe('suspended');
+    bus.resume();
+    expect(bus.blockedReason()).toBeNull();
+
+    bus.setClipMuted('a', true);
+    expect(bus.blockedReason()).toBe('all-clips-silent');
+    bus.setClipMuted('a', false);
+
+    const manual = vi.spyOn(visualAudio, 'isVisualAudioManualClock').mockReturnValue(true);
+    bus.tick();
+    expect(bus.blockedReason()).toBe('export-silenced');
+    manual.mockReturnValue(false);
+    bus.tick();
+    expect(bus.blockedReason()).toBeNull();
+  });
+
+  it('publishes the diagnosis on the master store for the UI to render', () => {
+    const ctx = new FakeAudioContext();
+    const bus = makeBus(ctx);
+    bus.attachClip('a', fakeMediaElement());
+
+    let seen: ClipAudioMasterState | null = null;
+    const unsub = clipAudioMaster.subscribe((s) => { seen = s; });
+    bus.setMasterMuted(true);
+    expect(seen!.blocked).toBe('master-muted');
+    expect(seen!.muted).toBe(true);
+    bus.setMasterMuted(false);
+    expect(seen!.blocked).toBeNull();
+    unsub();
+  });
+
+  it('has copy for every reason it can report', () => {
+    const reasons: ClipAudioBlockReason[] = [
+      'master-muted', 'master-volume-zero', 'suspended',
+      'export-silenced', 'context-suspended', 'autoplay-blocked', 'all-clips-silent',
+    ];
+    for (const r of reasons) expect(CLIP_AUDIO_BLOCK_TEXT[r]).toBeTruthy();
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 10. A suspended AudioContext gets resumed
+// ═══════════════════════════════════════════════════════════════════════════
+//
+// `resume()` used to have ZERO callers anywhere in src/, so the
+// `state === 'suspended'` branch was dead code. Electron passes
+// --autoplay-policy=no-user-gesture-required and hides it; the browser and
+// mobile builds do not, and a suspended context produces nothing at all.
+
+describe('context readiness', () => {
+  it('resumes a suspended context on attach', () => {
+    const ctx = new FakeAudioContext();
+    ctx.state = 'suspended';
+    const bus = makeBus(ctx);
+
+    bus.attachClip('a', fakeMediaElement());
+
+    expect(ctx.resumeCalls).toBeGreaterThan(0);
+    expect(ctx.state).toBe('running');
+    expect(bus.blockedReason()).toBeNull();
+  });
+
+  it('resume() on the bus also un-suspends the context', () => {
+    const ctx = new FakeAudioContext();
+    const bus = makeBus(ctx);
+    bus.attachClip('a', fakeMediaElement());
+    const before = ctx.resumeCalls;
+
+    ctx.state = 'suspended';
+    bus.resume();
+
+    expect(ctx.resumeCalls).toBeGreaterThan(before);
+    expect(ctx.state).toBe('running');
+  });
+
+  it('reports context-suspended and retries on a user gesture when resume is refused', async () => {
+    const listeners = new Map<string, EventListener>();
+    const fakeWindow = {
+      addEventListener: (name: string, fn: EventListener) => listeners.set(name, fn),
+      removeEventListener: (name: string) => listeners.delete(name),
+    };
+    const hadWindow = 'window' in globalThis;
+    (globalThis as unknown as { window: unknown }).window = fakeWindow;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const ctx = new FakeAudioContext();
+      ctx.state = 'suspended';
+      ctx.resumeSucceeds = false;
+      const bus = makeBus(ctx);
+
+      bus.attachClip('a', fakeMediaElement());
+      expect(ctx.state).toBe('suspended');
+      expect(bus.blockedReason()).toBe('context-suspended');
+
+      // The gesture fallback must be armed — that is the only way out of a
+      // policy gate — and it must be a real listener, not a hopeful retry.
+      expect(listeners.has('pointerdown')).toBe(true);
+      expect(listeners.has('keydown')).toBe(true);
+
+      // The user clicks; the policy now lets the resume through.
+      ctx.resumeSucceeds = true;
+      listeners.get('pointerdown')!(new Event('pointerdown'));
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(ctx.state).toBe('running');
+      // One-shot: the listeners removed themselves.
+      expect(listeners.size).toBe(0);
+      expect(bus.blockedReason()).toBeNull();
+    } finally {
+      warn.mockRestore();
+      if (!hadWindow) delete (globalThis as unknown as { window?: unknown }).window;
+    }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// 11. A rejected play() is never swallowed
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('autoplay failures', () => {
+  it('warns and reports autoplay-blocked instead of retrying silently forever', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const ctx = new FakeAudioContext();
+      const bus = makeBus(ctx);
+      const el = fakeMediaElement({
+        play() { el.playCalls++; return Promise.reject(new Error('NotAllowedError')); },
+      });
+      bus.attachClip('a', el, { provider: () => transport() });
+
+      bus.tick();
+      await Promise.resolve();
+      await Promise.resolve();
+
+      expect(el.playCalls).toBe(1);
+      expect(bus.blockedReason()).toBe('autoplay-blocked');
+      expect(bus.isAudible()).toBe(false);
+      // The old code caught and discarded this — no sound AND no error.
+      expect(warn).toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+
+  it('clears the blocked state once an element actually plays', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    try {
+      const ctx = new FakeAudioContext();
+      const bus = makeBus(ctx);
+      let allow = false;
+      const el = fakeMediaElement({
+        play() {
+          el.playCalls++;
+          if (!allow) return Promise.reject(new Error('NotAllowedError'));
+          el.paused = false;
+          return Promise.resolve();
+        },
+      });
+      bus.attachClip('a', el, { provider: () => transport() });
+
+      bus.tick();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(bus.blockedReason()).toBe('autoplay-blocked');
+
+      allow = true;
+      bus.tick();
+      await Promise.resolve();
+      await Promise.resolve();
+      expect(bus.blockedReason()).toBeNull();
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
