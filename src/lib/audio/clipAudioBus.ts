@@ -169,6 +169,37 @@ export interface ClipAudioAttachOptions {
   provider?: ClipAudioTransportProvider;
 }
 
+/**
+ * Why the bus would make no sound right now, or null when it is audible.
+ *
+ * THIS EXISTS BECAUSE SILENCE USED TO BE UNDIAGNOSABLE. The master mute is
+ * persisted to localStorage and its only control was a self-hiding button in
+ * the top bar, so a mute set once (in VJ mode, weeks earlier) silenced the
+ * show timeline forever with no error, no log, and no visible cause — and
+ * silently zeroed the recording mixdown along with it. Every silent state now
+ * names itself here so UI can show it and offer the one-click fix.
+ */
+export type ClipAudioBlockReason =
+  | 'master-muted'
+  | 'master-volume-zero'
+  | 'suspended'
+  | 'export-silenced'
+  | 'context-suspended'
+  | 'autoplay-blocked'
+  | 'all-clips-silent';
+
+/** Human copy for each reason — shared by the UI and the console warnings so
+ *  the two can never drift apart. */
+export const CLIP_AUDIO_BLOCK_TEXT: Record<ClipAudioBlockReason, string> = {
+  'master-muted': 'Clip audio output is muted',
+  'master-volume-zero': 'Clip audio output level is at zero',
+  suspended: 'Clip audio is suspended',
+  'export-silenced': 'Clip audio is silenced while an offline render owns the clock',
+  'context-suspended': 'Audio is blocked until you click — the browser has not started the audio engine',
+  'autoplay-blocked': 'Playback was blocked — click anywhere to enable audio',
+  'all-clips-silent': 'Every audio track is muted or at zero',
+};
+
 /** Public master state, for UI binding. */
 export interface ClipAudioMasterState {
   volume: number;
@@ -177,6 +208,12 @@ export interface ClipAudioMasterState {
   activeClips: number;
   /** True while an offline export has forced the bus silent. */
   exportSilenced: boolean;
+  /** Null when the bus is audible; otherwise why it is not. Only meaningful
+   *  when `activeClips > 0` — with nothing opted in, silence is correct. */
+  blocked: ClipAudioBlockReason | null;
+  /** True while we are waiting on a user gesture to start/resume the audio
+   *  engine. UI should show a "click to enable audio" affordance. */
+  needsGesture: boolean;
 }
 
 export const clipAudioMaster = writable<ClipAudioMasterState>({
@@ -184,6 +221,8 @@ export const clipAudioMaster = writable<ClipAudioMasterState>({
   muted: false,
   activeClips: 0,
   exportSilenced: false,
+  blocked: null,
+  needsGesture: false,
 });
 
 const MASTER_STORAGE_KEY = 'ghost-arcade.clipAudioMaster';
@@ -247,6 +286,18 @@ export class ClipAudioBus {
   private tappedAnalyser: AudioNode | null = null;
   private masterToDestination = false;
 
+  /** Set when an `element.play()` was rejected by the autoplay policy.
+   *  Cleared the moment any element plays successfully. */
+  private autoplayBlocked = false;
+  /** Removes the one-shot gesture listeners; null when none are armed. */
+  private gestureUnhook: (() => void) | null = null;
+  /** Last reason published, so the RAF tick can publish on CHANGE only. */
+  private lastBlocked: ClipAudioBlockReason | null = null;
+  private lastNeedsGesture = false;
+  /** Rate limiter for the console warnings — a per-frame warn would bury the
+   *  console and cost more than the audio does. */
+  private readonly warnedAt = new Map<string, number>();
+
   constructor(getContext: ContextProvider = () => audioAnalyzer.getOrCreateAudioContext()) {
     this.getContext = getContext;
     const persisted = loadPersistedMaster();
@@ -303,6 +354,11 @@ export class ClipAudioBus {
     }
 
     this.wireMasterOutputs();
+    // A context built outside a user gesture starts SUSPENDED in Chromium
+    // (Electron passes --autoplay-policy=no-user-gesture-required so it does
+    // not there, but the browser + mobile builds have no such flag). Nothing
+    // downstream can hear a suspended context, so ask on every graph build.
+    this.ensureContextRunning();
 
     if (!this.analyzerUnsub) {
       // The analyzer tears its analyser node down and rebuilds it on every
@@ -618,12 +674,160 @@ export class ClipAudioBus {
   }
 
   private publish(): void {
+    this.lastBlocked = this.blockedReason();
+    this.lastNeedsGesture = this.gestureUnhook !== null;
     clipAudioMaster.set({
       volume: this.masterVolume,
       muted: this.masterMuted,
       activeClips: this.clips.size,
       exportSilenced: this.exportSilenced,
+      blocked: this.lastBlocked,
+      needsGesture: this.lastNeedsGesture,
     });
+  }
+
+  /** Publish only when the derived diagnosis moved — safe to call per frame. */
+  private publishIfDiagnosisChanged(): void {
+    if (this.blockedReason() === this.lastBlocked && (this.gestureUnhook !== null) === this.lastNeedsGesture) {
+      return;
+    }
+    this.publish();
+  }
+
+  // ── Audibility diagnosis ─────────────────────────────────────────────────
+
+  /**
+   * Why nothing would be heard right now, or null when the bus is audible.
+   *
+   * Returns null when NO clip has opted in: silence is the correct answer
+   * then, and reporting a fault would light up the UI for every project that
+   * never uses the feature.
+   */
+  blockedReason(): ClipAudioBlockReason | null {
+    if (this.clips.size === 0) return null;
+    if (this.exportSilenced) return 'export-silenced';
+    if (this.suspended) return 'suspended';
+    if (this.masterMuted) return 'master-muted';
+    if (this.masterVolume <= 0) return 'master-volume-zero';
+    if (this.ctx && this.ctx.state !== 'running') return 'context-suspended';
+    if (this.autoplayBlocked) return 'autoplay-blocked';
+    for (const entry of this.clips.values()) {
+      if (!entry.muted && entry.volume > 0) return null;
+    }
+    return 'all-clips-silent';
+  }
+
+  /** True when the bus currently reaches the speakers with a non-zero signal
+   *  path. `getRecordingAudioStream()` uses it to tell an honest mixdown from
+   *  one that is about to record digital silence. */
+  isAudible(): boolean {
+    return this.clips.size > 0 && this.blockedReason() === null;
+  }
+
+  /** One warning per `everyMs` per key. Silence must be reported, but a
+   *  60 fps warn is worse than the bug. */
+  private warnOnce(key: string, everyMs: number, ...args: unknown[]): void {
+    const now = Date.now();
+    const last = this.warnedAt.get(key) ?? 0;
+    if (now - last < everyMs) return;
+    this.warnedAt.set(key, now);
+    console.warn(...args as [unknown, ...unknown[]]);
+  }
+
+  // ── Context readiness ────────────────────────────────────────────────────
+
+  /**
+   * Make sure the shared AudioContext is actually running, and return whether
+   * it is. Idempotent and cheap on the happy path.
+   *
+   * A context constructed outside a user gesture starts `suspended` under the
+   * standard Chromium autoplay policy, and a suspended context produces
+   * exactly nothing — no speakers, no MediaStreamDestination, no analyser
+   * data. `resume()` may itself be refused until a gesture arrives, so when
+   * the context does not come back running we arm a ONE-SHOT
+   * pointerdown/keydown/touchstart listener that retries and removes itself.
+   */
+  ensureContextRunning(): boolean {
+    const ctx = this.ctx;
+    if (!ctx) return false;
+    if (ctx.state === 'running') {
+      this.disarmGestureResume();
+      return true;
+    }
+    if (ctx.state === 'closed') return false;
+
+    try {
+      void ctx.resume().then(
+        () => {
+          if (ctx.state === 'running') {
+            this.disarmGestureResume();
+            this.publish();
+          } else {
+            this.armGestureResume();
+          }
+        },
+        (err) => {
+          this.warnOnce('ctx-resume', 5000, '[ClipAudioBus] AudioContext resume refused — waiting for a user gesture:', err);
+          this.armGestureResume();
+        },
+      );
+    } catch (err) {
+      this.warnOnce('ctx-resume', 5000, '[ClipAudioBus] AudioContext resume threw:', err);
+    }
+    // resume() is async; if it did not take effect synchronously, arm the
+    // gesture path now rather than after a round trip the user waits through.
+    // (Read through a helper: the early returns above narrow `ctx.state` to
+    // the not-running cases, but resume() can have changed it since.)
+    if (!this.contextIsRunning()) this.armGestureResume();
+    return this.contextIsRunning();
+  }
+
+  private contextIsRunning(): boolean {
+    return this.ctx?.state === 'running';
+  }
+
+  /** Arm the one-shot gesture retry. No-op when already armed. */
+  private armGestureResume(): void {
+    if (this.gestureUnhook) return;
+    const target: EventTarget | null =
+      typeof window !== 'undefined' ? window : null;
+    if (!target || typeof target.addEventListener !== 'function') return;
+
+    const events = ['pointerdown', 'keydown', 'touchstart'];
+    const options: AddEventListenerOptions = { capture: true };
+    const onGesture = (): void => {
+      this.disarmGestureResume();
+      // A gesture lifts the ELEMENT autoplay gate too — let the tick retry.
+      this.autoplayBlocked = false;
+      const ctx = this.ctx;
+      if (ctx && ctx.state !== 'closed' && ctx.state !== 'running') {
+        void ctx.resume().then(
+          () => this.publish(),
+          (err) => {
+            console.warn('[ClipAudioBus] AudioContext still refused after a user gesture:', err);
+            this.armGestureResume();
+          },
+        );
+      }
+      this.publish();
+    };
+    for (const name of events) target.addEventListener(name, onGesture, options);
+    this.gestureUnhook = () => {
+      for (const name of events) target.removeEventListener(name, onGesture, options);
+    };
+    this.warnOnce(
+      'needs-gesture',
+      10000,
+      '[ClipAudioBus] Audio engine is suspended — waiting for a click/keypress to start it.',
+    );
+    this.publish();
+  }
+
+  private disarmGestureResume(): void {
+    const unhook = this.gestureUnhook;
+    if (!unhook) return;
+    this.gestureUnhook = null;
+    unhook();
   }
 
   // ── Suspend / resume ─────────────────────────────────────────────────────
@@ -640,13 +844,14 @@ export class ClipAudioBus {
     }
   }
 
+  /** Undo `suspend()` AND make sure the context is running. Safe to call
+   *  unconditionally — transports call it on every play(). */
   resume(): void {
-    if (!this.suspended) return;
-    this.suspended = false;
-    this.applyMaster();
-    if (this.ctx?.state === 'suspended') {
-      this.ctx.resume().catch(() => { /* completes on next gesture */ });
+    if (this.suspended) {
+      this.suspended = false;
+      this.applyMaster();
     }
+    this.ensureContextRunning();
   }
 
   isSuspended(): boolean { return this.suspended; }
@@ -714,6 +919,9 @@ export class ClipAudioBus {
     for (const entry of this.clips.values()) {
       this.syncEntry(entry);
     }
+
+    // Publish on CHANGE only — an unchanged diagnosis costs one comparison.
+    this.publishIfDiagnosisChanged();
   }
 
   private syncEntry(entry: ClipEntry): void {
@@ -785,8 +993,28 @@ export class ClipAudioBus {
 
     if (el.paused) {
       const p = el.play();
-      if (p && typeof p.catch === 'function') {
-        p.catch(() => { /* autoplay gate; retried next tick */ });
+      if (p && typeof p.then === 'function') {
+        p.then(
+          () => {
+            // Cleared on the first element that actually starts — the gate is
+            // per-document, so one success means the policy let us through.
+            if (this.autoplayBlocked) this.autoplayBlocked = false;
+          },
+          (err: unknown) => {
+            // NEVER swallow this. A rejected play() used to produce no sound
+            // AND no error, forever, because the tick just retried next frame.
+            this.autoplayBlocked = true;
+            this.warnOnce(
+              'autoplay',
+              5000,
+              `[ClipAudioBus] play() blocked for "${entry.id}" — audio stays silent until a user gesture:`,
+              err,
+            );
+            // A gesture lifts the element gate and the context gate together.
+            this.ensureContextRunning();
+            this.armGestureResume();
+          },
+        );
       }
     }
   }
@@ -794,10 +1022,13 @@ export class ClipAudioBus {
   /** Full teardown. App shutdown / tests only. */
   dispose(): void {
     this.stopTick();
+    this.disarmGestureResume();
     for (const entry of this.clips.values()) this.releaseEntry(entry);
     this.clips.clear();
     this.analyzerUnsub?.();
     this.analyzerUnsub = null;
+    this.autoplayBlocked = false;
+    this.warnedAt.clear();
     this.teardownGraph();
     this.publish();
   }
@@ -858,36 +1089,87 @@ export const clipAudioBus = new ClipAudioBus();
 // RECORDING
 // ============================================================================
 
+/** What a recording is about to capture, and whether it will be silent. */
+export interface RecordingAudioStream {
+  stream: MediaStream;
+  cleanup: () => void;
+  /** What actually got summed in, for the recorder's log line. */
+  sources: string[];
+  /** True when we can already tell the capture will be digital silence. */
+  silent: boolean;
+  /** Why, when `silent`. Null otherwise. */
+  silentReason: string | null;
+}
+
+/** Label the analyzer's live input for the recorder's log. */
+function liveInputLabel(): string | null {
+  if (!audioAnalyzer.running) return null;
+  if (audioAnalyzer.getMediaElement()) return 'analyzer media element';
+  return audioAnalyzer.getSourceNode() ? 'analyzer input (mic / system)' : null;
+}
+
 /**
- * The stream a recording should capture.
+ * The stream a recording should capture — the sum of everything audible.
  *
- * `analyzer.getAudioStream()` returns null unless an analyzer INPUT source is
- * running, so a show whose only audio is clip playback used to record silent.
- * When the bus is live we build a mixdown that sums the clip bus with the
- * live analyzer input (if any); otherwise we fall through to the historical
- * path byte-for-byte, so nothing changes for projects that never opt in.
+ * A live REC must contain whatever the operator can hear: show/clip audio,
+ * mic, system/internal mix, or any combination. `analyzer.getAudioStream()`
+ * alone returns null unless an analyzer INPUT is running, so a show whose only
+ * audio is clip playback recorded silent; the clip bus alone misses the mic.
+ * When the bus is live we sum both into one MediaStreamDestination, and when
+ * it is not we take the analyzer input on its own.
+ *
+ * FEEDBACK / DOUBLE-AUDIO SAFETY. A MediaStreamDestination is a leaf — it
+ * never reaches the speakers — and we only ever ADD edges into it and remove
+ * exactly those edges in `cleanup()`. `wireMasterOutputs()`'s single chosen
+ * path to `ctx.destination` is untouched, so tapping for a recording cannot
+ * change what the user hears.
+ *
+ * A silent result is legitimate (nothing is playing) but is never left
+ * unreported — it used to mux a dead AAC track and claim success.
  */
-export function getRecordingAudioStream(): { stream: MediaStream; cleanup: () => void } | null {
-  if (!clipAudioBus.hasActiveOutput()) {
-    return audioAnalyzer.getAudioStream();
-  }
+export function getRecordingAudioStream(): RecordingAudioStream | null {
+  const inputLabel = liveInputLabel();
+
+  // A suspended context produces nothing at all, recording included.
+  clipAudioBus.ensureContextRunning();
+
+  const wrapAnalyzerOnly = (): RecordingAudioStream | null => {
+    const fallback = audioAnalyzer.getAudioStream();
+    if (!fallback) {
+      console.warn(
+        '[Recorder] No audio source is active — this capture will have NO audio track. ' +
+          'Start a mic / system input, or add audio to the show timeline, before recording.',
+      );
+      return null;
+    }
+    return {
+      ...fallback,
+      sources: [inputLabel ?? 'analyzer input'],
+      silent: false,
+      silentReason: null,
+    };
+  };
+
+  if (!clipAudioBus.hasActiveOutput()) return wrapAnalyzerOnly();
 
   const ctx = clipAudioBus.contextIfReady();
   const master = clipAudioBus.masterNode();
-  if (!ctx || !master) return audioAnalyzer.getAudioStream();
+  if (!ctx || !master) return wrapAnalyzerOnly();
 
   let dest: MediaStreamAudioDestinationNode;
   try {
     dest = ctx.createMediaStreamDestination();
   } catch (err) {
     console.warn('[ClipAudioBus] Mixdown destination failed:', err);
-    return audioAnalyzer.getAudioStream();
+    return wrapAnalyzerOnly();
   }
 
+  const sources: string[] = [];
   let masterConnected = false;
   try {
     master.connect(dest);
     masterConnected = true;
+    sources.push('clip/show audio bus');
   } catch (err) {
     console.warn('[ClipAudioBus] Mixdown master connect failed:', err);
   }
@@ -902,15 +1184,35 @@ export function getRecordingAudioStream(): { stream: MediaStream; cleanup: () =>
     try {
       liveSource.connect(dest);
       liveConnected = true;
+      sources.push(inputLabel ?? 'analyzer input');
     } catch (err) {
       console.warn('[ClipAudioBus] Mixdown live-input connect failed:', err);
     }
   }
 
-  if (!masterConnected && !liveConnected) return audioAnalyzer.getAudioStream();
+  if (!masterConnected && !liveConnected) return wrapAnalyzerOnly();
+
+  // The bus can be wired and still contribute nothing (master muted, level at
+  // zero, context suspended, autoplay blocked). With no live input alongside
+  // it, that is a capture of digital silence — say so instead of shipping a
+  // dead AAC track that looks like success.
+  const busReason = clipAudioBus.blockedReason();
+  const silent = !liveConnected && (!masterConnected || busReason !== null);
+  const silentReason = silent
+    ? (busReason ? CLIP_AUDIO_BLOCK_TEXT[busReason] : 'the clip audio bus is not connected')
+    : null;
+  if (silent) {
+    console.warn(
+      `[Recorder] This capture will be SILENT — ${silentReason}. ` +
+        'Fix the clip audio output (or start a mic / system input) and record again.',
+    );
+  }
 
   return {
     stream: dest.stream,
+    sources,
+    silent,
+    silentReason,
     cleanup: () => {
       if (masterConnected) { try { master.disconnect(dest); } catch { /* ignore */ } }
       if (liveConnected) { try { liveSource!.disconnect(dest); } catch { /* ignore */ } }
