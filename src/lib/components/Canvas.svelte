@@ -3,6 +3,8 @@
   import { get } from 'svelte/store';
   import { RenderEngine, loadImageTexture, createVideoTexture, getThreeJSIframeContext, createThreeJSIframeContext, getJSAnimationContext, createJSAnimationContext } from '../renderer/engine';
   import { project, layers, compositions } from '../stores/layers';
+  import { compositionTransition } from '../stores/compositionTransition';
+  import { buildCompositionTransitionLayers } from '../renderer/compositionTransitionLayers';
   import { nativePreviewHostEl } from '../stores/nativePreviewHost';
   import { splatPointer } from '../stores/splatPointer';
   import { stage3dScene } from '../stage3d/store';
@@ -1889,9 +1891,26 @@
             appendNativePerformerWorldLayers(output, vjLayers, weights),
           ));
         }
+        // MAPPING mode. Mid-transition this is BOTH compositions' layer
+        // stacks — see renderer/compositionTransitionLayers.ts. Outside a
+        // transition `buildCompositionTransitionLayers` hands the live list
+        // straight back, so the ordinary path costs one null check.
+        //
         // Shallow-copy so per-frame opacity rides (stage FX) captured at
         // call time survive the end-of-frame restore before the sync flush.
-        return (get(layers) as Layer[]).map((l) => ({ ...l }));
+        // The transition builder already copies every layer it touches, so
+        // the copy only has to cover the pass-through case.
+        const mappingLive = get(layers) as Layer[];
+        const xfade = get(compositionTransition).active;
+        if (!xfade) return mappingLive.map((l) => ({ ...l }));
+        const comps = get(compositions);
+        const effective = buildCompositionTransitionLayers({
+          liveLayers: mappingLive,
+          activeCompositionId: get(project).vjMode?.activeCompositionId ?? null,
+          transition: xfade,
+          compositionLayers: (id) => comps.find((c) => c.id === id)?.layers ?? null,
+        });
+        return effective === mappingLive ? mappingLive.map((l) => ({ ...l })) : effective;
       };
       let __vjFeedDebugAt = 0;
       type NativeVjLayersSyncDetail = {
@@ -2038,6 +2057,14 @@
       // sequenced layer would go dark and never come back.
       const nativeSequencerUnsub = layerSequencer.subscribe(() => scheduleNativeLayersSync());
       const nativeKeyframeUnsub = keyframeTimeline.subscribe(() => scheduleNativeLayersSync());
+      // Composition crossfade: `progress` moves every frame of the window and
+      // it IS the layer opacities, so every publish has to reach the core.
+      // The store only emits on a real change, so a settled scene costs
+      // nothing — and an offline render, which publishes from its own
+      // per-frame `showTimeline.seek()`, gets one flush per virtual frame.
+      const nativeCompositionXfadeUnsub = compositionTransition.subscribe(() =>
+        scheduleNativeLayersSync(),
+      );
       const nativePerformerWorldUnsub = nativePerformerWorldOverlays.subscribe(() =>
         scheduleNativeLayersSync(),
       );
@@ -2058,6 +2085,7 @@
         nativeVjStateUnsub();
         nativeSequencerUnsub();
         nativeKeyframeUnsub();
+        nativeCompositionXfadeUnsub();
         nativePerformerWorldUnsub();
         if (stageFxNativeRaf !== null) {
           cancelAnimationFrame(stageFxNativeRaf);

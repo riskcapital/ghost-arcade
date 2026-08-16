@@ -3,8 +3,7 @@
   import { showTimelineIsPlaying } from '../stores/showTimeline';
   import { presetTransition, TRANSITION_OPTIONS } from '../stores/presetTransition';
   import { audioStore } from '../stores/audio';
-  import type { Composition } from '../types';
-  import type { TransitionType } from '../renderer/engine';
+  import type { Composition, CompositionTransitionStyle } from '../types';
   import { showLoading, hideLoading } from '../stores/loading';
   import { invoke, isDesktopApp } from '$lib/bridge';
   import { NATIVE_ENGINE_ONLY } from '../stores/settings';
@@ -72,8 +71,13 @@
     dragOverPresetIndex = null;
   }
 
-  // Callback before loading a preset (for triggering transitions)
-  export let onBeforeLoad: ((durationSeconds: number, type: TransitionType) => void) | null = null;
+  // Callback before loading a preset (for triggering transitions). Fired
+  // while the OUTGOING composition is still the loaded one — the native
+  // crossfade needs both ids, and only the caller can read the outgoing one
+  // before `project.loadComposition` replaces it.
+  export let onBeforeLoad:
+    | ((durationSeconds: number, style: CompositionTransitionStyle, toCompositionId: string) => void)
+    | null = null;
 
   // Transition settings live in `stores/presetTransition.ts` (loaded from,
   // and written back to, the same three localStorage keys they always used).
@@ -224,9 +228,12 @@
   // When a transition is active, suppress the "Loading Composition..." overlay —
   // the transition itself provides visual feedback and the white text just covers it.
   function loadPreset(compId: string) {
-    const useTransition = transitionEnabled && transitionDuration > 0 && !!onBeforeLoad;
+    // A composition crossfading into itself is a no-op that would only cost
+    // a doubled scene layer count, so re-clicking the live preset cuts.
+    const useTransition =
+      transitionEnabled && transitionDuration > 0 && !!onBeforeLoad && compId !== $activeCompositionId;
     if (!useTransition) showLoading('Loading Composition...');
-    if (useTransition) onBeforeLoad!(transitionDuration, transitionType);
+    if (useTransition) onBeforeLoad!(transitionDuration, transitionType, compId);
     project.loadComposition(compId);
     if (!useTransition) requestAnimationFrame(() => hideLoading());
   }
@@ -421,7 +428,7 @@
             <select
               class="transition-duration"
               value={transitionType}
-              onchange={(e) => presetTransition.patch({ style: (e.currentTarget as HTMLSelectElement).value as TransitionType })}
+              onchange={(e) => presetTransition.patch({ style: (e.currentTarget as HTMLSelectElement).value as CompositionTransitionStyle })}
               title="Transition style"
             >
               {#each TRANSITION_OPTIONS as opt}

@@ -25,19 +25,23 @@ import { get } from 'svelte/store';
 import {
   showTimeline,
   setShowCompositionLoader,
-  setShowTransitionStarter,
+  setShowTransitionSink,
   findActiveShowClip,
   computeShowDuration,
   snapShowTime,
   placeOnLane,
   maxDurationAt,
   clampShowTransitionDuration,
-  findPrecedingShowClip,
+  findJunctionPredecessor,
+  maxShowTransitionDuration,
   resolveShowTransition,
+  resolveShowTransitionAt,
   resolveTransitionStyle,
+  showTransitionWindow,
   defaultClipTransition,
   SHOW_SNAP_SECONDS,
 } from './showTimeline';
+import type { ActiveCompositionTransition } from '../renderer/compositionTransitionLayers';
 import { presetTransition } from './presetTransition';
 import * as visualAudio from '../audio/visualAudio';
 import type { ClipTransitionIn, ShowPresetClip } from '../types';
@@ -68,22 +72,33 @@ function spyLoader() {
 }
 
 /**
- * Install BOTH seams onto one ordered log, so a test can assert not just
- * that the transition fired but that it fired BEFORE the load — the engine
- * has to snapshot the outgoing composite while it is still on screen.
+ * Install BOTH seams onto one ordered log.
+ *
+ * The transition seam is no longer a fire-and-forget "start a 4s animation"
+ * call — it publishes the RESOLVED state of the blend at the instant being
+ * evaluated, and it only publishes when that state actually changed. So a
+ * log entry means "the scene should now look like `progress` of the way
+ * from A to B", not "a transition began".
  */
 function spyRenderer() {
   const events: Array<
-    | { kind: 'transition'; style: string; durationSeconds: number }
+    | { kind: 'transition'; transition: ActiveCompositionTransition | null }
     | { kind: 'load'; compositionId: string; restoreTransports: boolean }
   > = [];
-  setShowTransitionStarter((durationSeconds, style) => {
-    events.push({ kind: 'transition', style, durationSeconds });
+  setShowTransitionSink((transition) => {
+    events.push({ kind: 'transition', transition: transition ? { ...transition } : null });
   });
   setShowCompositionLoader((compositionId, options) => {
     events.push({ kind: 'load', compositionId, restoreTransports: options.restoreTransports });
   });
   return events;
+}
+
+/** Only the published transition states, in order. */
+function transitionsOf(events: ReturnType<typeof spyRenderer>) {
+  return events
+    .filter((e): e is { kind: 'transition'; transition: ActiveCompositionTransition | null } => e.kind === 'transition')
+    .map((e) => e.transition);
 }
 
 beforeEach(() => {
@@ -93,7 +108,7 @@ beforeEach(() => {
 
 afterEach(() => {
   setShowCompositionLoader(null);
-  setShowTransitionStarter(null);
+  setShowTransitionSink(null);
   showTimeline._resetForTest();
   presetTransition._resetForTest();
   vi.restoreAllMocks();
@@ -486,12 +501,19 @@ describe('serialize / hydrate', () => {
   });
 });
 
-// ── Clip transitions ─────────────────────────────────────────────────────
+// ── Junction transitions ─────────────────────────────────────────────────
 //
-// Semantics under test: START-AT. A clip's transition runs forward over
-// [startTime, startTime + effectiveDuration) — it BEGINS at the boundary
-// rather than completing there. See the "Clip transitions" block in
-// showTimeline.ts for why the mechanism forces that choice.
+// Semantics under test: CENTRED ON THE JUNCTION. A `D`-second transition at
+// the boundary `t0` between two TOUCHING clips runs over
+// [t0 - D/2, t0 + D/2) — half reaching back into the outgoing clip and half
+// forward into the incoming one, which is where Premiere and CapCut put one.
+//
+// This replaced START-AT semantics (the blend running forward over
+// [startTime, startTime + D)), which existed only because the old WebGL
+// mechanism froze the outgoing composite at the swap and could not show
+// anything before it. The native implementation keeps both compositions'
+// layers in the scene, so it has no such constraint. See the "Clip
+// transitions" block in showTimeline.ts.
 
 describe('resolveTransitionStyle', () => {
   it('treats cut and junk as a hard cut', () => {
@@ -505,9 +527,18 @@ describe('resolveTransitionStyle', () => {
     expect(resolveTransitionStyle('crossfade')).toBe('dissolve');
   });
 
-  it('passes an engine style straight through', () => {
-    expect(resolveTransitionStyle('wave')).toBe('wave');
-    expect(resolveTransitionStyle('pixelMelt')).toBe('pixelMelt');
+  it('maps every legacy WebGL shader style onto dissolve rather than a cut', () => {
+    // These named engine.ts shaders that never ran under NATIVE_ENGINE_ONLY.
+    // A project saved with one still meant "blend here", so it stays a blend.
+    expect(resolveTransitionStyle('wave')).toBe('dissolve');
+    expect(resolveTransitionStyle('pixelMelt')).toBe('dissolve');
+    expect(resolveTransitionStyle('iris')).toBe('dissolve');
+  });
+
+  it('passes a native style straight through', () => {
+    expect(resolveTransitionStyle('dissolve')).toBe('dissolve');
+    expect(resolveTransitionStyle('dipToBlack')).toBe('dipToBlack');
+    expect(resolveTransitionStyle('additive')).toBe('additive');
   });
 });
 
@@ -521,8 +552,8 @@ describe('clampShowTransitionDuration', () => {
   });
 
   it('clamps to the OUTGOING clip when that is the shorter one', () => {
-    // A 5s dissolve out of a 0.5s clip would still be running two clips
-    // later — this is the clamp that stops transitions stacking.
+    // The window is centred, so a 5s transition would reach 2.5s back into a
+    // 0.5s clip — past its own start and into the clip before it.
     expect(clampShowTransitionDuration(5, { duration: 30 }, { duration: 0.5 })).toBe(0.5);
   });
 
@@ -538,63 +569,112 @@ describe('clampShowTransitionDuration', () => {
   });
 });
 
-describe('findPrecedingShowClip', () => {
+describe('transition duration clamping against BOTH neighbours', () => {
+  it('never lets two adjacent junctions overlap, even at their ceilings', () => {
+    // A[0,10) B[10,20) C[20,30), both junctions asking for 60s.
+    const a = clip('a', 'compA', 0, 10);
+    const b = fadeClip('b', 'compB', 10, 10, 60);
+    const c = fadeClip('c', 'compC', 20, 10, 60);
+    const clips = [a, b, c];
+    const first = showTransitionWindow(clips, b)!;
+    const second = showTransitionWindow(clips, c)!;
+    expect(first.duration).toBe(10);
+    expect(second.duration).toBe(10);
+    // [5,15) and [15,25) — they touch, they never overlap. That is what
+    // makes "one transition in flight" structural instead of policed.
+    expect(first.end).toBeLessThanOrEqual(second.start + 1e-9);
+    expect(resolveShowTransitionAt(clips, 14.99)?.clipId).toBe('b');
+    expect(resolveShowTransitionAt(clips, 15)?.clipId).toBe('c');
+  });
+
+  it('a short OUTGOING clip caps the window as hard as a short incoming one', () => {
+    const shortPrev = [clip('a', 'compA', 0, 1), fadeClip('b', 'compB', 1, 30, 8)];
+    expect(showTransitionWindow(shortPrev, shortPrev[1])!.duration).toBe(1);
+    const shortNext = [clip('a', 'compA', 0, 30), fadeClip('b', 'compB', 30, 1, 8)];
+    expect(showTransitionWindow(shortNext, shortNext[1])!.duration).toBe(1);
+    // …and the ceiling the UI clamps a drag against agrees with it.
+    expect(maxShowTransitionDuration(shortPrev, shortPrev[1])).toBe(1);
+    expect(maxShowTransitionDuration(shortNext, shortNext[1])).toBe(1);
+  });
+
+  it('setTransitionDuration refuses to exceed the shorter neighbour', () => {
+    showTimeline.addPresetClip('compA', 4);
+    const bId = showTimeline.addPresetClip('compB', 30);
+    showTimeline.setSnapEnabled(false);
+    showTimeline.addTransitionAt(bId, 'dissolve', 2);
+    showTimeline.setTransitionDuration(bId, 99);
+    const b = get(showTimeline).presetClips.find((c) => c.id === bId)!;
+    expect(b.transitionDuration).toBe(4);
+    // …and never below the floor either.
+    showTimeline.setTransitionDuration(bId, 0);
+    expect(get(showTimeline).presetClips.find((c) => c.id === bId)!.transitionDuration).toBe(0.25);
+  });
+});
+
+describe('findJunctionPredecessor', () => {
   const a = clip('a', 'compA', 0, 10);
   const b = clip('b', 'compB', 10, 10);
   const c = clip('c', 'compC', 40, 10); // after a gap
 
   it('finds the clip butted up against this one', () => {
-    expect(findPrecedingShowClip([a, b, c], b)?.id).toBe('a');
+    expect(findJunctionPredecessor([a, b, c], b)?.id).toBe('a');
   });
 
-  it('reaches back across a gap — that composition is still on screen', () => {
-    expect(findPrecedingShowClip([a, b, c], c)?.id).toBe('b');
+  it('does NOT reach across a gap — that is not a junction', () => {
+    // The previous implementation did, on the reasoning that the last-fired
+    // composition is still on screen through a hole. A centred window cannot
+    // use that: it would start mid-gap, where nothing is playing.
+    expect(findJunctionPredecessor([a, b, c], c)).toBeNull();
   });
 
   it('returns null for the first clip in the show', () => {
-    expect(findPrecedingShowClip([a, b, c], a)).toBeNull();
+    expect(findJunctionPredecessor([a, b, c], a)).toBeNull();
   });
 });
 
 describe('resolveShowTransition', () => {
-  // A: [0,10)  B: [10,20) with a 4s dissolve in.
+  // A: [0,10)  B: [10,20) with a 4s dissolve on their junction.
+  // Window: [8, 12).
   const a = clip('a', 'compA', 0, 10);
   const b = fadeClip('b', 'compB', 10, 10, 4);
   const clips = [a, b];
 
-  it('gives the FULL window when the boundary is hit exactly', () => {
-    const plan = resolveShowTransition(clips, b, 10);
-    expect(plan).toEqual({ style: 'dissolve', durationSeconds: 4 });
+  it('straddles the boundary — half in each clip', () => {
+    const win = showTransitionWindow(clips, b)!;
+    expect(win.start).toBe(8);
+    expect(win.end).toBe(12);
+    expect(win.duration).toBe(4);
   });
 
-  it('gives only the REMAINDER for a cold seek into the middle of one', () => {
-    // Landing at 11.5 with a window of [10, 14): 2.5s still to run, so the
-    // blend still finishes at show time 14 exactly as it would have live.
-    expect(resolveShowTransition(clips, b, 11.5)?.durationSeconds).toBeCloseTo(2.5, 9);
-    expect(resolveShowTransition(clips, b, 13.9)?.durationSeconds).toBeCloseTo(0.1, 9);
+  it('is progress 0 at the open, 0.5 on the boundary and ~1 at the close', () => {
+    expect(resolveShowTransition(clips, b, 8)!.progress).toBe(0);
+    expect(resolveShowTransition(clips, b, 10)!.progress).toBeCloseTo(0.5, 9);
+    expect(resolveShowTransition(clips, b, 11.999)!.progress).toBeCloseTo(0.99975, 5);
+  });
+
+  it('names both sides of the blend', () => {
+    const plan = resolveShowTransition(clips, b, 10)!;
+    expect(plan.fromCompositionId).toBe('compA');
+    expect(plan.toCompositionId).toBe('compB');
+    expect(plan.style).toBe('dissolve');
+    expect(plan.clipId).toBe('b');
   });
 
   it('is a pure function of (clips, clip, time) — two cold seeks agree', () => {
-    const first = resolveShowTransition(clips, b, 12.25);
-    const second = resolveShowTransition(clips, b, 12.25);
-    expect(first).toEqual(second);
-    expect(first?.durationSeconds).toBeCloseTo(1.75, 9);
+    expect(resolveShowTransition(clips, b, 9.25)).toEqual(resolveShowTransition(clips, b, 9.25));
+    expect(resolveShowTransition(clips, b, 9.25)!.progress).toBeCloseTo(0.3125, 9);
   });
 
-  it('hard-cuts once the window has already closed', () => {
-    expect(resolveShowTransition(clips, b, 14)).toBeNull();
+  it('is null outside the window on both sides', () => {
+    expect(resolveShowTransition(clips, b, 7.99)).toBeNull();
+    expect(resolveShowTransition(clips, b, 12)).toBeNull();
     expect(resolveShowTransition(clips, b, 18)).toBeNull();
-  });
-
-  it('never exceeds the window when time runs ahead of the clip start', () => {
-    // A loop wrap can evaluate a clip at a time before its own start.
-    expect(resolveShowTransition(clips, b, 9)?.durationSeconds).toBe(4);
   });
 
   it('applies the short-neighbour clamp', () => {
     const shortA = clip('a', 'compA', 0, 1);
-    const plan = resolveShowTransition([shortA, { ...b, startTime: 1 }], { ...b, startTime: 1 }, 1);
-    expect(plan?.durationSeconds).toBe(1);
+    const nextB = { ...b, startTime: 1 };
+    expect(showTransitionWindow([shortA, nextB], nextB)!.duration).toBe(1);
   });
 
   it('returns null for a cut clip no matter where the playhead is', () => {
@@ -606,10 +686,91 @@ describe('resolveShowTransition', () => {
     const zero = fadeClip('z', 'compZ', 10, 10, 0);
     expect(resolveShowTransition([a, zero], zero, 10)).toBeNull();
   });
+
+  it('returns null when both sides are the SAME composition', () => {
+    // Doubling the scene's layer count to crossfade a picture into itself is
+    // pure cost with no visual.
+    const same = fadeClip('b', 'compA', 10, 10, 4);
+    expect(resolveShowTransition([a, same], same, 10)).toBeNull();
+  });
+
+  it('resolveShowTransitionAt finds the one in flight, and nothing in a gap', () => {
+    expect(resolveShowTransitionAt(clips, 10)?.clipId).toBe('b');
+    expect(resolveShowTransitionAt(clips, 5)).toBeNull();
+  });
+});
+
+describe('creating and removing a transition at a junction', () => {
+  function twoTouchingClips() {
+    presetTransition.patch({ enabled: false, style: 'dissolve', duration: 2 });
+    const aId = showTimeline.addPresetClip('compA', 10);
+    const bId = showTimeline.addPresetClip('compB', 10);
+    showTimeline.setSnapEnabled(false);
+    return { aId, bId };
+  }
+
+  it('creates one at a real junction and it lands centred on the boundary', () => {
+    const { bId } = twoTouchingClips();
+    expect(showTimeline.addTransitionAt(bId, 'dissolve', 3)).toBe(true);
+    const s = get(showTimeline);
+    const win = showTransitionWindow(s.presetClips, s.presetClips.find((c) => c.id === bId)!)!;
+    expect(win.duration).toBe(3);
+    expect(win.start).toBe(8.5);
+    expect(win.end).toBe(11.5);
+    // Creating it also selects it, so the inspector opens on the new object.
+    expect(s.selection).toEqual({ kind: 'transition', id: bId });
+  });
+
+  it('refuses on the first clip and across a gap — a transition needs two clips', () => {
+    const { aId } = twoTouchingClips();
+    expect(showTimeline.addTransitionAt(aId)).toBe(false);
+    const farId = showTimeline.insertPresetClipAt('compC', 40, 10)!;
+    expect(showTimeline.addTransitionAt(farId)).toBe(false);
+  });
+
+  it('clamps a requested length to the shorter neighbour at creation time', () => {
+    presetTransition.patch({ enabled: false, style: 'dissolve', duration: 2 });
+    showTimeline.addPresetClip('compA', 2);
+    const bId = showTimeline.addPresetClip('compB', 30);
+    expect(showTimeline.addTransitionAt(bId, 'dissolve', 25)).toBe(true);
+    expect(get(showTimeline).presetClips.find((c) => c.id === bId)!.transitionDuration).toBe(2);
+  });
+
+  it('removing one restores a hard cut without touching the clip', () => {
+    const { bId } = twoTouchingClips();
+    showTimeline.addTransitionAt(bId, 'dissolve', 3);
+    showTimeline.removeTransitionAt(bId);
+    const s = get(showTimeline);
+    const b = s.presetClips.find((c) => c.id === bId)!;
+    expect(b.transitionIn).toBe('cut');
+    expect(b.startTime).toBe(10);
+    expect(b.duration).toBe(10);
+    expect(showTransitionWindow(s.presetClips, b)).toBeNull();
+    expect(resolveShowTransitionAt(s.presetClips, 10)).toBeNull();
+    expect(s.selection).toBeNull();
+  });
+
+  it('setTransitionStyle swaps the type in place', () => {
+    const { bId } = twoTouchingClips();
+    showTimeline.addTransitionAt(bId, 'dissolve', 3);
+    showTimeline.setTransitionStyle(bId, 'dipToBlack');
+    const s = get(showTimeline);
+    expect(showTransitionWindow(s.presetClips, s.presetClips.find((c) => c.id === bId)!)!.style)
+      .toBe('dipToBlack');
+  });
+
+  it('a transition evaporates when its junction stops being one', () => {
+    const { aId, bId } = twoTouchingClips();
+    showTimeline.addTransitionAt(bId, 'dissolve', 3);
+    // Shrink A so the two clips no longer touch.
+    showTimeline.resizePresetClip(aId, 'end', 6);
+    const s = get(showTimeline);
+    expect(showTransitionWindow(s.presetClips, s.presetClips.find((c) => c.id === bId)!)).toBeNull();
+  });
 });
 
 describe('transition wiring through seek()', () => {
-  /** Two back-to-back clips, B carrying a `secs` dissolve. */
+  /** Two back-to-back clips with a `secs` transition on their junction. */
   function twoClips(secs: number, style: ClipTransitionIn = 'dissolve') {
     const aId = showTimeline.addPresetClip('compA', 10);
     const bId = showTimeline.addPresetClip('compB', 10);
@@ -618,96 +779,177 @@ describe('transition wiring through seek()', () => {
     return { aId, bId };
   }
 
-  it('fires the transition exactly once, immediately BEFORE the load', () => {
+  it('opens the blend BEFORE the boundary and swaps the composition ON it', () => {
     const events = spyRenderer();
-    twoClips(4);
+    twoClips(4); // window [8, 12), boundary at 10
 
-    showTimeline.seek(1);   // into A — cut, load only
-    showTimeline.seek(10);  // the boundary
-    showTimeline.seek(11);  // still inside B, nothing new
+    showTimeline.seek(1);   // deep inside A — nothing blending
+    showTimeline.seek(8);   // the window opens; A is still the live clip
+    showTimeline.seek(10);  // the boundary: composition swap
+    showTimeline.seek(12);  // the window closes
 
     expect(events).toEqual([
       { kind: 'load', compositionId: 'compA', restoreTransports: true },
-      { kind: 'transition', style: 'dissolve', durationSeconds: 4 },
+      { kind: 'transition', transition: { style: 'dissolve', progress: 0, fromCompositionId: 'compA', toCompositionId: 'compB' } },
       { kind: 'load', compositionId: 'compB', restoreTransports: true },
+      { kind: 'transition', transition: { style: 'dissolve', progress: 0.5, fromCompositionId: 'compA', toCompositionId: 'compB' } },
+      { kind: 'transition', transition: null },
     ]);
   });
 
-  it('does not fire once per frame across the boundary', () => {
+  it('loads the composition exactly once across the whole window', () => {
     const events = spyRenderer();
     twoClips(2);
     for (let frame = 0; frame < 60 * 20; frame++) showTimeline.seek(frame / 60);
-    expect(events.filter((e) => e.kind === 'transition')).toHaveLength(1);
+    expect(events.filter((e) => e.kind === 'load')).toHaveLength(2);
+  });
+
+  it('publishes a moving progress for every frame inside the window', () => {
+    const events = spyRenderer();
+    twoClips(4);
+    for (let frame = 0; frame < 60 * 15; frame++) showTimeline.seek(frame / 60);
+    const inside = transitionsOf(events).filter((t): t is ActiveCompositionTransition => t !== null);
+    // 4s at 60fps — every frame of the window is its own resolved state.
+    expect(inside.length).toBeGreaterThan(200);
+    expect(inside[0].progress).toBeCloseTo(0, 2);
+    expect(inside[inside.length - 1].progress).toBeGreaterThan(0.99);
+    // Monotonic: never jumps backwards while the playhead runs forwards.
+    for (let i = 1; i < inside.length; i++) {
+      expect(inside[i].progress).toBeGreaterThanOrEqual(inside[i - 1].progress);
+    }
+    // …and it ends cleanly rather than sticking at 0.99.
+    expect(transitionsOf(events).at(-1)).toBeNull();
   });
 
   it('honours a per-clip style override', () => {
     const events = spyRenderer();
-    twoClips(3, 'pixelMelt');
+    twoClips(3, 'additive');
     showTimeline.seek(1);
     showTimeline.seek(10);
-    expect(events).toContainEqual({ kind: 'transition', style: 'pixelMelt', durationSeconds: 3 });
+    expect(transitionsOf(events).some((t) => t?.style === 'additive')).toBe(true);
   });
 
-  it('cuts — loads with no transition — when the clip says cut', () => {
+  it('cuts — loads with no transition — when the junction says cut', () => {
     const events = spyRenderer();
     twoClips(4, 'cut');
     showTimeline.seek(1);
     showTimeline.seek(10);
-    expect(events.some((e) => e.kind === 'transition')).toBe(false);
+    expect(transitionsOf(events).some((t) => t !== null)).toBe(false);
     expect(events.filter((e) => e.kind === 'load')).toHaveLength(2);
   });
 
   it('hard-cuts a cold seek that lands PAST the transition window', () => {
     const events = spyRenderer();
-    twoClips(2);
-    showTimeline.seek(15); // window was [10, 12) — long gone
+    twoClips(2); // window [9, 11)
+    showTimeline.seek(15);
     expect(events).toEqual([{ kind: 'load', compositionId: 'compB', restoreTransports: true }]);
   });
 
   it('resolves a cold seek INTO a transition to the same state every time', () => {
+    // THE determinism guarantee. A seek straight into the middle of a
+    // transition — no playback, no prior state, nothing running — must land
+    // fully resolved, and land the same way twice.
     const runs: unknown[][] = [];
     for (let run = 0; run < 2; run++) {
       showTimeline._resetForTest();
       const events = spyRenderer();
-      twoClips(4);
-      showTimeline.seek(11.5); // straight in, no playback, no prior clip
+      twoClips(4); // window [8, 12)
+      showTimeline.seek(9); // 25% in
       runs.push([...events]);
     }
     expect(runs[0]).toEqual(runs[1]);
-    expect(runs[0][0]).toEqual({ kind: 'transition', style: 'dissolve', durationSeconds: 2.5 });
-    expect(runs[0][1]).toEqual({ kind: 'load', compositionId: 'compB', restoreTransports: true });
+    expect(runs[0]).toEqual([
+      { kind: 'load', compositionId: 'compA', restoreTransports: true },
+      { kind: 'transition', transition: { style: 'dissolve', progress: 0.25, fromCompositionId: 'compA', toCompositionId: 'compB' } },
+    ]);
+  });
+
+  it('a cold seek matches what playing to the same instant produces', () => {
+    // Same time, two completely different routes to it.
+    showTimeline._resetForTest();
+    const cold = spyRenderer();
+    twoClips(4);
+    showTimeline.seek(11);
+    const coldState = transitionsOf(cold).at(-1);
+
+    showTimeline._resetForTest();
+    const played = spyRenderer();
+    twoClips(4);
+    for (let frame = 0; frame <= 60 * 11; frame++) showTimeline.seek(frame / 60);
+    const playedState = transitionsOf(played).at(-1);
+
+    expect(coldState).toEqual(playedState);
+    expect(coldState).toEqual({
+      style: 'dissolve', progress: 0.75, fromCompositionId: 'compA', toCompositionId: 'compB',
+    });
+  });
+
+  it('scrubbing BACKWARDS through a window resolves the same states', () => {
+    const forward: (number | null)[] = [];
+    const backward: (number | null)[] = [];
+    const times = [8, 8.5, 9, 9.5, 10, 10.5, 11, 11.5];
+
+    showTimeline._resetForTest();
+    let events = spyRenderer();
+    twoClips(4);
+    for (const t of times) {
+      showTimeline.seek(t);
+      forward.push(transitionsOf(events).at(-1)?.progress ?? null);
+    }
+
+    showTimeline._resetForTest();
+    events = spyRenderer();
+    twoClips(4);
+    for (const t of [...times].reverse()) {
+      showTimeline.seek(t);
+      backward.push(transitionsOf(events).at(-1)?.progress ?? null);
+    }
+    expect(backward.reverse()).toEqual(forward);
+  });
+
+  it('stopping mid-blend drops the transition instead of leaving it resident', () => {
+    const events = spyRenderer();
+    twoClips(4);
+    showTimeline.seek(10);
+    expect(transitionsOf(events).at(-1)).not.toBeNull();
+    showTimeline.stop();
+    expect(transitionsOf(events).at(-1)).toBeNull();
   });
 
   it('clamps against a short outgoing clip so transitions cannot stack', () => {
-    const events = spyRenderer();
     showTimeline.addPresetClip('compA', 0.5); // [0, 0.5)
     const bId = showTimeline.addPresetClip('compB', 10); // [0.5, 10.5)
     showTimeline.updatePresetClip(bId, { transitionIn: 'dissolve', transitionDuration: 5 });
-    showTimeline.seek(0.1);
-    showTimeline.seek(0.5);
-    // 5s requested, but A only lasts 0.5s — the blend may not outlive it.
-    expect(events).toContainEqual({ kind: 'transition', style: 'dissolve', durationSeconds: 0.5 });
+    const clips = get(showTimeline).presetClips;
+    // 5s requested, but A only lasts 0.5s — the window may not reach past it.
+    const win = showTransitionWindow(clips, clips.find((c) => c.id === bId)!)!;
+    expect(win.duration).toBe(0.5);
+    expect(win.start).toBe(0.25);
   });
 
-  it('hard-cuts under a manual clock, but still loads the composition', () => {
+  it('runs under a manual clock too — the offline render gets the blend', () => {
     // The offline renderer owns the clock and calls seek() per virtual frame.
-    // engine.startTransition blends off performance.now(), so a transition
-    // there would render differently on every run of the same export.
+    // The OLD seam started a wall-clock animation, which could not be
+    // reproduced from one export run to the next, so it was skipped entirely
+    // and exports hard-cut. Progress is now resolved per evaluation, so the
+    // virtual clock gets exactly the same answer as the live one.
     const manual = vi.spyOn(visualAudio, 'isVisualAudioManualClock').mockReturnValue(true);
     const events = spyRenderer();
     twoClips(4);
     showTimeline.seek(1);
-    showTimeline.seek(10);
-    expect(events.some((e) => e.kind === 'transition')).toBe(false);
-    expect(events).toEqual([
+    showTimeline.seek(9);
+    expect(transitionsOf(events).at(-1)).toEqual({
+      style: 'dissolve', progress: 0.25, fromCompositionId: 'compA', toCompositionId: 'compB',
+    });
+    // Sub-transport restore is still suppressed — the render loop owns them.
+    expect(events.filter((e) => e.kind === 'load')).toEqual([
       { kind: 'load', compositionId: 'compA', restoreTransports: false },
-      { kind: 'load', compositionId: 'compB', restoreTransports: false },
     ]);
     manual.mockRestore();
   });
 
-  it('still loads when no transition starter is registered (native / headless)', () => {
-    const calls = spyLoader(); // loader only — no starter
+  it('still loads when no transition sink is registered (headless)', () => {
+    const calls = spyLoader(); // loader only — no sink
     const aId = showTimeline.addPresetClip('compA', 10);
     const bId = showTimeline.addPresetClip('compB', 10);
     showTimeline.updatePresetClip(aId, { transitionIn: 'cut' });
@@ -722,42 +964,42 @@ describe('transition wiring through seek()', () => {
 
 describe('preset-player inheritance', () => {
   it('gives a new clip whatever the preset tray is set to', () => {
-    presetTransition.patch({ enabled: true, style: 'wave', duration: 3 });
-    expect(defaultClipTransition()).toEqual({ transitionIn: 'wave', transitionDuration: 3 });
+    presetTransition.patch({ enabled: true, style: 'dipToBlack', duration: 3 });
+    expect(defaultClipTransition()).toEqual({ transitionIn: 'dipToBlack', transitionDuration: 3 });
 
     const id = showTimeline.addPresetClip('compA', 30);
     const added = get(showTimeline).presetClips.find((c) => c.id === id)!;
-    expect(added.transitionIn).toBe('wave');
+    expect(added.transitionIn).toBe('dipToBlack');
     expect(added.transitionDuration).toBe(3);
   });
 
   it('gives a DROPPED clip the same inheritance', () => {
-    presetTransition.patch({ enabled: true, style: 'iris', duration: 1.5 });
+    presetTransition.patch({ enabled: true, style: 'additive', duration: 1.5 });
     const id = showTimeline.insertPresetClipAt('compA', 12, 10)!;
     const added = get(showTimeline).presetClips.find((c) => c.id === id)!;
-    expect(added.transitionIn).toBe('iris');
+    expect(added.transitionIn).toBe('additive');
     expect(added.transitionDuration).toBe(1.5);
   });
 
   it('creates cut clips while the tray transition toggle is off', () => {
-    presetTransition.patch({ enabled: false, style: 'wave', duration: 3 });
+    presetTransition.patch({ enabled: false, style: 'dissolve', duration: 3 });
     const id = showTimeline.addPresetClip('compA', 30);
     expect(get(showTimeline).presetClips.find((c) => c.id === id)!.transitionIn).toBe('cut');
   });
 
   it('round-trips a clip transition through serialize / hydrate', () => {
     const id = showTimeline.addPresetClip('compA', 30);
-    showTimeline.updatePresetClip(id, { transitionIn: 'explode', transitionDuration: 1.25 });
+    showTimeline.updatePresetClip(id, { transitionIn: 'additive', transitionDuration: 1.25 });
     const snapshot = showTimeline.serialize();
     showTimeline._resetForTest();
     showTimeline.hydrate(snapshot);
     const restored = get(showTimeline).presetClips[0];
-    expect(restored.transitionIn).toBe('explode');
+    expect(restored.transitionIn).toBe('additive');
     expect(restored.transitionDuration).toBe(1.25);
   });
 
   it('inherits for a clip that predates the feature, and keeps an explicit cut', () => {
-    presetTransition.patch({ enabled: true, style: 'warp', duration: 2.5 });
+    presetTransition.patch({ enabled: true, style: 'dipToBlack', duration: 2.5 });
     showTimeline.hydrate({
       version: 1,
       audioTracks: [],
@@ -768,10 +1010,30 @@ describe('preset-player inheritance', () => {
       ],
     });
     const clips = get(showTimeline).presetClips;
-    expect(clips.find((c) => c.id === 'old')!.transitionIn).toBe('warp');
+    expect(clips.find((c) => c.id === 'old')!.transitionIn).toBe('dipToBlack');
     expect(clips.find((c) => c.id === 'old')!.transitionDuration).toBe(2.5);
     expect(clips.find((c) => c.id === 'cut')!.transitionIn).toBe('cut');
     // Junk falls back rather than silently cutting.
-    expect(clips.find((c) => c.id === 'junk')!.transitionIn).toBe('warp');
+    expect(clips.find((c) => c.id === 'junk')!.transitionIn).toBe('dipToBlack');
+  });
+
+  it('keeps a legacy WebGL style name as a real blend, normalized to dissolve', () => {
+    // A show saved before NATIVE_ENGINE_ONLY could name any of the eleven
+    // engine.ts shaders. Those never ran, but the user DID ask for a blend
+    // there — so it stays one rather than inheriting or hard-cutting.
+    presetTransition.patch({ enabled: true, style: 'additive', duration: 2 });
+    showTimeline.hydrate({
+      version: 1,
+      audioTracks: [],
+      presetClips: [
+        { id: 'a', compositionId: 'c1', startTime: 0, duration: 10, transitionIn: 'cut' },
+        { id: 'b', compositionId: 'c2', startTime: 10, duration: 10, transitionIn: 'pixelMelt', transitionDuration: 3 },
+      ],
+    });
+    const clips = get(showTimeline).presetClips;
+    expect(clips.find((c) => c.id === 'b')!.transitionIn).toBe('dissolve');
+    expect(showTransitionWindow(clips, clips.find((c) => c.id === 'b')!)).toEqual(
+      expect.objectContaining({ style: 'dissolve', duration: 3, start: 8.5, end: 11.5 }),
+    );
   });
 });

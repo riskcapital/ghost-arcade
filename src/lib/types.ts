@@ -4822,11 +4822,38 @@ export interface VJDeck {
 }
 
 /**
- * Preset-player transition styles. THE canonical list — `renderer/engine.ts`
- * aliases its `TransitionType` to this so the preset tray, the show timeline
- * and the engine can never drift apart. Declared here (and not in engine.ts)
- * because the show-timeline store must be able to name a style without
- * dragging three.js into its unit tests.
+ * Composition transition styles the NATIVE renderer actually implements.
+ *
+ * The mechanism is a two-stack per-layer opacity crossfade (see
+ * `renderer/compositionTransitionLayers.ts`): during a transition BOTH
+ * compositions' layers are resident in the scene at once and the core
+ * composites them with time-varying opacity. Only envelopes that per-layer
+ * alpha (plus a blend-mode override) can express are listed here, because
+ * every entry in this union has to look different on screen — a menu of
+ * eleven names that all resolve to the same dissolve is worse than three
+ * that do what they say.
+ *
+ * Anything spatial (wipes, iris, voxelize…) would need the two composites
+ * rendered into separate frames and mixed by a shader; the core has no
+ * "composite this subset of scene layers into a source frame" pass, so
+ * those live on in `TransitionStyle` for project-file compatibility only
+ * and resolve to 'dissolve'.
+ */
+export type CompositionTransitionStyle =
+  | 'dissolve'    // Constant-power crossfade — both stacks visible at once
+  | 'dipToBlack'  // Outgoing falls to nothing by the midpoint, incoming rises after
+  | 'additive';   // Incoming blooms in over the outgoing with an additive blend
+
+/**
+ * LEGACY preset-player transition styles — the WebGL `renderer/engine.ts`
+ * snapshot-crossfade shader registry, which `TransitionType` still aliases.
+ *
+ * This build runs `NATIVE_ENGINE_ONLY`, where `getEngine()` returns null and
+ * none of these shaders ever run. They are kept as a type so project files
+ * and localStorage settings written by older builds still parse; the show
+ * timeline and preset tray both funnel them through
+ * `resolveTransitionStyle()`, which maps every one of them onto the nearest
+ * `CompositionTransitionStyle`.
  */
 export type TransitionStyle =
   | 'dissolve'    // Crossfade with subtle radial drift to break the frozen-snapshot feel
@@ -4842,14 +4869,20 @@ export type TransitionStyle =
   | 'pixelMelt';  // Snapshot drips/melts down per-column, live revealed above
 
 /**
- * What a clip does at its own start boundary.
+ * What happens at the junction on a clip's LEFT edge.
  *
  * 'cut' is a hard swap. 'fade' / 'crossfade' are the ORIGINAL VJ-timeline
- * values, kept so old project files keep loading — both resolve to
- * 'dissolve'. Anything else names an engine transition style directly, which
- * is what lets a show clip use the exact same transitions as the preset tray.
+ * values and the `TransitionStyle` members are the legacy WebGL shader
+ * names; all of them still parse out of old project files and all of them
+ * resolve through `resolveTransitionStyle()` onto a
+ * `CompositionTransitionStyle`, which is what the native renderer runs.
  */
-export type ClipTransitionIn = 'cut' | 'fade' | 'crossfade' | TransitionStyle;
+export type ClipTransitionIn =
+  | 'cut'
+  | 'fade'
+  | 'crossfade'
+  | CompositionTransitionStyle
+  | TransitionStyle;
 
 // Timeline clip - A composition in the timeline with duration
 export interface TimelineClip {

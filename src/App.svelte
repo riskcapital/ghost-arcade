@@ -73,7 +73,8 @@
   import { maskEditingLayerId } from './lib/stores/maskEditing';
   import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, setHistoryCallback } from './lib/stores/layers';
   import { keyframeTimeline } from './lib/stores/keyframeTimeline';
-  import { showTimeline, setShowTransitionStarter } from './lib/stores/showTimeline';
+  import { showTimeline, setShowTransitionSink } from './lib/stores/showTimeline';
+  import { compositionTransition } from './lib/stores/compositionTransition';
   import { layerSequencer } from './lib/stores/layerSequencer';
   import { NATIVE_ENGINE_ONLY, settings, outputFrozen } from './lib/stores/settings';
   import { checkForUpdate, type VersionCheckResult } from './lib/utils/versionCheck';
@@ -588,6 +589,46 @@
   let panStartPanY = 0;
   let isSpacePressed = false;
 
+  /**
+   * Does the show transport own the spacebar right now?
+   *
+   * True only while the show tray is genuinely the thing on screen: mapping
+   * workspace, tray open, no full-screen takeover (VJ / Stage Designer /
+   * projection sim) and no modal in front of it. Everywhere else Space keeps
+   * its original job of arming canvas panning.
+   *
+   * The typing guard is NOT here — the caller checks the event target,
+   * because only it can see what was focused.
+   */
+  function showTransportOwnsSpace(): boolean {
+    if (!$showTimeline.isOpen) return false;
+    // ShowTimeline.svelte force-closes itself when the VJ panel opens, but
+    // check anyway so the two can never disagree for a frame.
+    if ($vjClipLauncher.isOpen) return false;
+    // 'main' is the mapping workspace; 'vj' / 'stage' / 'projection-sim' are
+    // full-screen takeovers with their own key handling.
+    if ($workspace !== 'main') return false;
+    if (
+      showSettings ||
+      showShortcutHelp ||
+      showOfflineRender ||
+      showVideoConverter ||
+      showWelcome ||
+      showCloseModal ||
+      showRecoveryModal ||
+      showNewProjectModal ||
+      showMobileInfo ||
+      showOutputSettings
+    ) {
+      return false;
+    }
+    // Anything that opened a native <dialog> or an ARIA modal on top.
+    if (typeof document !== 'undefined' && document.querySelector('dialog[open], [aria-modal="true"]')) {
+      return false;
+    }
+    return true;
+  }
+
   // Light painting draw mode toggle — when off, warp/mesh handles are accessible
   let lpDrawingEnabled = true;
 
@@ -1056,16 +1097,17 @@
       };
     } catch { /* sealed */ }
 
-    // Show timeline → renderer transitions. The store cannot reach the
-    // engine (it is deliberately component-free so the offline renderer can
-    // drive it with nothing mounted), so hand it the SAME call the preset
-    // tray's `onBeforeLoad` below makes. Native/WebGPU has no
-    // startTransition; getEngine() returns null there and every show
-    // boundary stays a hard cut, exactly as the preset tray already does.
-    setShowTransitionStarter((durationSeconds, style) => {
-      const engine = canvasComponent?.getEngine();
-      if (engine) engine.startTransition(durationSeconds, style);
-    });
+    // Show timeline → renderer transitions.
+    //
+    // This used to call `engine.startTransition()`, which is WebGL-only: this
+    // build runs NATIVE_ENGINE_ONLY, `getEngine()` returns null, and every
+    // show boundary (and every preset-tray click) hard-cut no matter what the
+    // transition menu said. The native implementation instead puts BOTH
+    // compositions' layers in the scene and crossfades their opacity, driven
+    // by a `progress` the show timeline resolves from show time on every
+    // `seek()` — so a scrub, a playing transport and an offline render all
+    // land on the identical frame.
+    setShowTransitionSink((transition) => compositionTransition.driveFromClock(transition));
     const bridgeTimeouts = new Set<ReturnType<typeof setTimeout>>();
     const scheduleBridgeTimeout = (fn: () => void, delay: number) => {
       const id = setTimeout(() => {
@@ -1599,8 +1641,31 @@
         return;
       }
 
+      // ── Spacebar ──────────────────────────────────────────────────────
+      // Two jobs, and the show timeline wins when it is on screen.
+      //
+      // Historically Space was ONLY "arm canvas panning" (hold Space, drag
+      // with the left button). That is still what it does with the show
+      // tray closed. With the tray open it is the transport, because that is
+      // what Space means in every editor the user is comparing this to —
+      // and a panel that shows a playhead but does not respond to Space
+      // reads as broken.
+      //
+      // Conflicts checked before claiming it: VJ mode's own shortcuts are
+      // 1-9/0 and F1-F8 (above); SynthVision/Performer binds its keys on its
+      // own capture-phase document handler and is only live in VJ mode,
+      // where the show tray force-closes itself; nothing else in the app
+      // binds Space.
       if (e.code === 'Space' && !e.repeat) {
-        if (inInput) return;
+        if (inInput || e.ctrlKey || e.metaKey || e.altKey) return;
+        // SELECT is not covered by `inInput` and Space opens a native
+        // dropdown — never steal it from one.
+        if (target.tagName === 'SELECT') return;
+        if (showTransportOwnsSpace()) {
+          e.preventDefault();
+          showTimeline.togglePlay();
+          return;
+        }
         e.preventDefault();
         isSpacePressed = true;
       }
@@ -1657,7 +1722,8 @@
 
     return () => {
       appMounted = false;
-      setShowTransitionStarter(null);
+      setShowTransitionSink(null);
+      compositionTransition.clear();
       unsubscribeSettings();
       for (const id of bridgeTimeouts) clearTimeout(id);
       bridgeTimeouts.clear();
@@ -7079,9 +7145,17 @@
     <PresetTray
       bind:isOpen={presetTrayOpen}
       vjDragMode={vjMapPresetDragActive}
-      onBeforeLoad={(duration, type) => {
-        const engine = canvasComponent?.getEngine();
-        if (engine) engine.startTransition(duration, type);
+      onBeforeLoad={(duration, style, toCompositionId) => {
+        // Same native crossfade the show timeline uses, on a wall clock —
+        // a tray click has no timeline behind it to derive progress from.
+        // Called while the OUTGOING composition is still the loaded one, so
+        // `activeCompositionId` here is the side that fades away.
+        compositionTransition.beginTimed(
+          $project.vjMode?.activeCompositionId ?? null,
+          toCompositionId,
+          style,
+          duration,
+        );
       }}
     />
 

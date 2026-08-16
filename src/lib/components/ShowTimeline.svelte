@@ -7,6 +7,17 @@
    * anywhere on the grid to add a track, drag a card out of the Preset Tray
    * to drop a composition onto the preset lane. Scrub the playhead, zoom the
    * ruler, and the transport at the top plays the whole programmed show.
+   * Spacebar is play/pause — bound in App.svelte's global keydown handler
+   * alongside every other app-wide shortcut, not here.
+   *
+   * TRANSITIONS ARE OBJECTS, NOT FORM FIELDS. Drag the "Transition" chip in
+   * the transport onto the junction between two touching preset clips (or
+   * click the ghost marker that appears on one), and a bowtie element
+   * straddling that boundary appears. Drag either of its edges to retime it,
+   * click it to edit the type and exact duration in the inspector, Delete to
+   * go back to a hard cut. They used to be a `transitionIn` dropdown and a
+   * `Fade` number box inside the preset-clip inspector, which said nothing
+   * about WHEN the blend happened.
    *
    * Every interaction goes through `showTimeline` — this component owns no
    * arrangement state of its own, which is what lets the offline renderer
@@ -25,11 +36,12 @@
     SHOW_MIN_ZOOM,
     SHOW_MAX_ZOOM,
     SHOW_DEFAULT_PRESET_SECONDS,
-    clampShowTransitionDuration,
-    findPrecedingShowClip,
-    resolveTransitionStyle,
+    SHOW_MIN_TRANSITION_SECONDS,
+    maxShowTransitionDuration,
+    showTransitionWindow,
   } from '../stores/showTimeline';
-  import { TRANSITION_OPTIONS, isTransitionStyle } from '../stores/presetTransition';
+  import { TRANSITION_OPTIONS } from '../stores/presetTransition';
+  import type { CompositionTransitionStyle, ShowPresetClip } from '../types';
   import { compositions } from '../stores/layers';
   import { vjClipLauncher } from '../stores/vjClipLauncher';
   import { clipAudioBus, clipAudioMaster, CLIP_AUDIO_BLOCK_TEXT } from '../audio/clipAudioBus';
@@ -128,7 +140,7 @@
   $: laneStackH = RULER_HEIGHT + audioLaneCount * AUDIO_LANE_HEIGHT + PRESET_LANE_HEIGHT;
   // The bound clientHeight keeps its last value after the inspector
   // unmounts, so gate it on the selection rather than trusting the binding.
-  $: inspectorVisible = !!(selectedPreset || selectedAudio);
+  $: inspectorVisible = !!(selectedPreset || selectedAudio || selectedTransitionClip);
   $: contentH =
     transportH + laneStackH + (inspectorVisible ? inspectorH : 0) + GRID_SCROLLBAR_ALLOWANCE + 1 /* top border */;
   $: autoH = Math.max(TRAY_MIN_HEIGHT, Math.min(contentH, autoCeiling(viewportH)));
@@ -239,7 +251,14 @@
   function seekFromClick(e: MouseEvent) {
     if (suppressNextClick) { suppressNextClick = false; return; }
     const target = e.target as HTMLElement;
-    if (target.closest('.show-block') || target.closest('.show-playhead')) return;
+    if (
+      target.closest('.show-block') ||
+      target.closest('.show-playhead') ||
+      target.closest('.show-transition') ||
+      target.closest('.junction-add')
+    ) {
+      return;
+    }
     showTimeline.seek(timeAt(e));
   }
 
@@ -308,6 +327,13 @@
 
   function handleDragOver(e: DragEvent) {
     e.preventDefault();
+    if (transitionDragActive) {
+      // Highlight the junction the drop would land on, so it is obvious
+      // BEFORE releasing which boundary is about to get a transition.
+      transitionDropTarget = junctionNear(timeAt(e))?.clipId ?? null;
+      if (e.dataTransfer) e.dataTransfer.dropEffect = transitionDropTarget ? 'copy' : 'none';
+      return;
+    }
     dragHover = true;
     if (e.dataTransfer) e.dataTransfer.dropEffect = 'copy';
   }
@@ -318,6 +344,18 @@
     const dt = e.dataTransfer;
     if (!dt) return;
     const dropTime = timeAt(e);
+
+    // Transition chip dropped on (or near) a junction. A junction only
+    // exists where two clips actually touch, so a drop into a gap or onto
+    // the middle of a clip finds nothing and is a no-op rather than
+    // inventing a boundary.
+    if (transitionDragActive || dt.types.includes(TRANSITION_DRAG_TYPE)) {
+      const target = junctionNear(dropTime);
+      transitionDragActive = false;
+      transitionDropTarget = null;
+      if (target) createTransitionAt(target.clipId);
+      return;
+    }
 
     // A card dragged out of the Preset Tray carries its index into the
     // current compositions list (PresetTray.handlePresetDragStart).
@@ -366,31 +404,162 @@
   $: selectedAudio = state.selection?.kind === 'audio'
     ? state.audioTracks.find((t) => t.id === state.selection!.id) ?? null
     : null;
+  /** The clip whose LEFT junction carries the selected transition. */
+  $: selectedTransitionClip = state.selection?.kind === 'transition'
+    ? state.presetClips.find((c) => c.id === state.selection!.id) ?? null
+    : null;
 
   function deleteSelected() {
-    if (selectedPreset) showTimeline.removePresetClip(selectedPreset.id);
+    if (selectedTransitionClip) showTimeline.removeTransitionAt(selectedTransitionClip.id);
+    else if (selectedPreset) showTimeline.removePresetClip(selectedPreset.id);
     else if (selectedAudio) showTimeline.removeAudioTrack(selectedAudio.id);
   }
 
-  // ── Clip transition (inspector) ────────────────────────────────────────
-  // `transitionIn` runs FORWARD from the clip's start time — see the
-  // "Clip transitions" block in stores/showTimeline.ts for why start-at and
-  // not lead-in. The effective length is clamped to the shorter of the two
-  // neighbouring clips, and the inspector says so out loud when the clamp
-  // actually bites: a 5 s dissolve silently becoming 1 s is the kind of
-  // thing you otherwise only discover mid-show.
-  $: selectedTransitionIn = selectedPreset?.transitionIn ?? 'cut';
-  $: selectedTransitionStyle = resolveTransitionStyle(selectedTransitionIn);
-  $: selectedTransitionPrev = selectedPreset
-    ? findPrecedingShowClip(state.presetClips, selectedPreset)
+  // ── Junction transitions ───────────────────────────────────────────────
+  //
+  // A transition is an OBJECT on the timeline, not a field in this form. It
+  // straddles the junction between two touching clips — half reaching back
+  // into the outgoing clip, half forward into the incoming one, the way
+  // Premiere and CapCut place one. Drag the "Transition" chip in the
+  // transport onto a junction (or click the ghost marker that appears on
+  // one) to create it, drag either edge to set its length, click it to edit
+  // the type and exact duration below, Delete to go back to a hard cut.
+  //
+  // The geometry drawn here is EXACTLY what the renderer runs:
+  // `showTransitionWindow()` is the same function `resolveShowTransition()`
+  // uses to decide what is on screen, so the element can never lie about
+  // when the blend happens or how long it really lasts.
+  interface Junction {
+    clipId: string;
+    /** Show time the two clips meet. */
+    boundary: number;
+    /** Ceiling a resize clamps against (shorter neighbour). */
+    max: number;
+    /** null when this junction is currently a hard cut. */
+    window: ReturnType<typeof showTransitionWindow>;
+  }
+
+  $: junctions = state.presetClips
+    .map((clip): Junction | null => {
+      const max = maxShowTransitionDuration(state.presetClips, clip);
+      if (max <= 0) return null; // nothing adjacent on the left — not a junction
+      return {
+        clipId: clip.id,
+        boundary: clip.startTime,
+        max,
+        window: showTransitionWindow(state.presetClips, clip),
+      };
+    })
+    .filter((j): j is Junction => j !== null);
+
+  /**
+   * How far a transition eats into each end of a clip, in pixels.
+   *
+   * The element is drawn ON TOP of the two clips it straddles, so without
+   * this the clip's own name (left-aligned at its head) and its duration
+   * (right-aligned at its tail) end up underneath the bowtie and read as
+   * "e Grid" / a half-covered number. Pushing the text clear of the overlap
+   * keeps both legible without moving the transition off the boundary it is
+   * describing.
+   */
+  $: clipTextInsets = (() => {
+    const map = new Map<string, { head: number; tail: number }>();
+    for (const j of junctions) {
+      if (!j.window) continue;
+      const half = (j.window.duration / 2) * zoom;
+      const incoming = map.get(j.clipId) ?? { head: 0, tail: 0 };
+      map.set(j.clipId, { ...incoming, head: half });
+      const outgoing = map.get(j.window.prev.id) ?? { head: 0, tail: 0 };
+      map.set(j.window.prev.id, { ...outgoing, tail: half });
+    }
+    return map;
+  })();
+
+  /** Nearest junction to a dropped/clicked time, inside a zoom-aware reach. */
+  function junctionNear(time: number): Junction | null {
+    let best: Junction | null = null;
+    let bestDelta = Math.max(0.4, 44 / zoom);
+    for (const j of junctions) {
+      const delta = Math.abs(j.boundary - time);
+      if (delta <= bestDelta) {
+        bestDelta = delta;
+        best = j;
+      }
+    }
+    return best;
+  }
+
+  /** Style AND length are inherited from the preset tray's own transition
+   *  settings — a crossfade set once there is the crossfade a dropped
+   *  transition uses. `addTransitionAt` falls back to
+   *  SHOW_DEFAULT_TRANSITION_SECONDS when the tray has nothing usable, and
+   *  clamps against both neighbours either way. */
+  function createTransitionAt(clipId: string) {
+    showTimeline.addTransitionAt(clipId);
+  }
+
+  /**
+   * Drag either edge to set the length. The window is centred on the
+   * boundary, so both edges move together and the duration is twice the
+   * distance from the boundary to the pointer — dragging one edge out by a
+   * second buys a second on each side.
+   */
+  function startTransitionResize(e: MouseEvent, clipId: string, boundary: number) {
+    if (e.button !== 0) return;
+    e.preventDefault();
+    e.stopPropagation();
+    showTimeline.select({ kind: 'transition', id: clipId });
+    let moved = false;
+    const onMove = (ev: MouseEvent) => {
+      moved = true;
+      showTimeline.setTransitionDuration(clipId, Math.abs(timeAt(ev) - boundary) * 2);
+    };
+    const onUp = () => {
+      if (moved) suppressNextClick = true;
+      window.removeEventListener('mousemove', onMove);
+      window.removeEventListener('mouseup', onUp);
+    };
+    window.addEventListener('mousemove', onMove);
+    window.addEventListener('mouseup', onUp);
+  }
+
+  /** Palette chip → junction. Mirrors the preset-card drag contract. */
+  const TRANSITION_DRAG_TYPE = 'application/x-ghost-show-transition';
+  let transitionDragActive = false;
+  let transitionDropTarget: string | null = null;
+
+  function handleTransitionDragStart(e: DragEvent) {
+    if (!e.dataTransfer) return;
+    transitionDragActive = true;
+    e.dataTransfer.setData(TRANSITION_DRAG_TYPE, '1');
+    e.dataTransfer.effectAllowed = 'copy';
+  }
+
+  function handleTransitionDragEnd() {
+    transitionDragActive = false;
+    transitionDropTarget = null;
+  }
+
+  function transitionStyleLabel(style: CompositionTransitionStyle | null | undefined): string {
+    return TRANSITION_OPTIONS.find((o) => o.value === style)?.label ?? 'Dissolve';
+  }
+
+  /** Effective vs requested, so a clamp that actually bites is visible
+   *  rather than something you discover mid-show. */
+  function requestedTransitionDuration(clip: ShowPresetClip): number {
+    const raw = Number(clip.transitionDuration);
+    return Number.isFinite(raw) ? Math.max(0, raw) : 0;
+  }
+  $: selectedTransitionWindow = selectedTransitionClip
+    ? showTransitionWindow(state.presetClips, selectedTransitionClip)
     : null;
-  $: selectedTransitionEffective = selectedPreset
-    ? clampShowTransitionDuration(selectedPreset.transitionDuration, selectedPreset, selectedTransitionPrev)
+  $: selectedTransitionMax = selectedTransitionClip
+    ? maxShowTransitionDuration(state.presetClips, selectedTransitionClip)
     : 0;
   $: selectedTransitionClamped =
-    !!selectedPreset &&
-    selectedTransitionStyle !== null &&
-    (selectedPreset.transitionDuration ?? 0) - selectedTransitionEffective > 0.01;
+    !!selectedTransitionClip &&
+    !!selectedTransitionWindow &&
+    requestedTransitionDuration(selectedTransitionClip) - selectedTransitionWindow.duration > 0.01;
 
   // ── Waveform path ──────────────────────────────────────────────────────
   const WAVE_VIEW_H = 40;
@@ -420,17 +589,19 @@
   }
 
   // ── Keyboard (gated on pointer-over so it can't fight other panels) ────
+  //
+  // SPACE IS NOT HERE. Transport play/pause lives in App.svelte's global
+  // keydown handler next to every other app-wide shortcut, gated on
+  // `showTransportOwnsSpace()`. It used to be handled here too, which meant
+  // that with the pointer over the tray BOTH handlers fired and the show
+  // played and paused in the same event — Space appeared to do nothing.
+  // Delete/Backspace stays local because it acts on this panel's selection.
   let pointerInTray = false;
   function handleKeydown(e: KeyboardEvent) {
     if (!isOpen || hiddenInVJ || !pointerInTray) return;
     const target = e.target as HTMLElement | null;
     const tag = target?.tagName;
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || target?.isContentEditable) return;
-    if (e.code === 'Space') {
-      e.preventDefault();
-      showTimeline.togglePlay();
-      return;
-    }
     if ((e.key === 'Delete' || e.key === 'Backspace') && state.selection) {
       e.preventDefault();
       deleteSelected();
@@ -593,6 +764,28 @@
         + Preset
       </button>
       <button class="t-chip" onclick={() => audioInput?.click()} title="Add an audio file">+ Audio</button>
+      <!-- Transition palette. Drag onto the junction between two touching
+           preset clips; the junction highlights as you pass over it. -->
+      <!-- svelte-ignore a11y_no_static_element_interactions -->
+      <span
+        class="t-chip t-transition-chip"
+        class:dragging={transitionDragActive}
+        class:disabled={junctions.length === 0}
+        draggable={junctions.length > 0}
+        role="button"
+        tabindex="0"
+        ondragstart={handleTransitionDragStart}
+        ondragend={handleTransitionDragEnd}
+        title={junctions.length === 0
+          ? 'Put two preset clips edge to edge first — a transition needs a junction'
+          : 'Drag onto the junction between two clips to add a transition'}
+      >
+        <svg width="15" height="10" viewBox="0 0 15 10" aria-hidden="true">
+          <path d="M0.5 0.5 L7.5 5 L0.5 9.5 Z M14.5 0.5 L7.5 5 L14.5 9.5 Z"
+                fill="currentColor" fill-opacity="0.35" stroke="currentColor" stroke-width="1"/>
+        </svg>
+        Transition
+      </span>
       <button class="t-chip" onclick={() => showTimeline.compactPresetClips()} disabled={state.presetClips.length < 2} title="Close every gap on the preset lane">
         Compact
       </button>
@@ -685,10 +878,69 @@
                 title={`${compositionName(clip.compositionId, clip.label)} — ${formatPrecise(clip.duration)}`}
               >
                 <div class="handle left" onmousedown={(e) => startBlockResize(e, 'preset', clip.id, 'start')}></div>
-                <span class="block-label">{compositionName(clip.compositionId, clip.label)}</span>
-                <span class="block-dur">{formatPrecise(clip.duration)}</span>
+                <span
+                  class="block-label"
+                  style="margin-left: {clipTextInsets.get(clip.id)?.head ?? 0}px"
+                >{compositionName(clip.compositionId, clip.label)}</span>
+                <span
+                  class="block-dur"
+                  style="margin-right: {clipTextInsets.get(clip.id)?.tail ?? 0}px"
+                >{formatPrecise(clip.duration)}</span>
                 <div class="handle right" onmousedown={(e) => startBlockResize(e, 'preset', clip.id, 'end')}></div>
               </div>
+            {/each}
+            <!-- Transitions. Drawn AFTER the clips so they sit on top of the
+                 two blocks they straddle — the element's left/right edges
+                 are literally where the blend starts and ends. -->
+            {#each junctions as junction (junction.clipId)}
+              {#if junction.window}
+                <!-- svelte-ignore a11y_no_static_element_interactions -->
+                <!-- svelte-ignore a11y_click_events_have_key_events -->
+                <div
+                  class="show-transition"
+                  class:selected={state.selection?.kind === 'transition' && state.selection.id === junction.clipId}
+                  style="left: {junction.window.start * zoom}px; width: {Math.max(10, junction.window.duration * zoom)}px"
+                  onmousedown={(e) => {
+                    e.stopPropagation();
+                    showTimeline.select({ kind: 'transition', id: junction.clipId });
+                  }}
+                  ondblclick={() => showTimeline.removeTransitionAt(junction.clipId)}
+                  title={`${transitionStyleLabel(junction.window.style)} — ${junction.window.duration.toFixed(2)}s centred on ${formatPrecise(junction.boundary)}. Drag an edge to retime, double-click to remove.`}
+                >
+                  <div
+                    class="xf-handle left"
+                    onmousedown={(e) => startTransitionResize(e, junction.clipId, junction.boundary)}
+                  ></div>
+                  <svg class="xf-bowtie" viewBox="0 0 100 100" preserveAspectRatio="none" aria-hidden="true">
+                    <path d="M0 0 L100 100 M0 100 L100 0" vector-effect="non-scaling-stroke" />
+                  </svg>
+                  {#if junction.window.duration * zoom > 44}
+                    <span class="xf-dur">{junction.window.duration.toFixed(2)}s</span>
+                  {/if}
+                  <div
+                    class="xf-handle right"
+                    onmousedown={(e) => startTransitionResize(e, junction.clipId, junction.boundary)}
+                  ></div>
+                </div>
+              {:else}
+                <!-- Hard cut: a ghost marker on the junction. Appears on
+                     hover, and lights up while a Transition chip is being
+                     dragged over it. One click adds the transition. -->
+                <button
+                  class="junction-add"
+                  class:targeted={transitionDropTarget === junction.clipId}
+                  class:arming={transitionDragActive}
+                  style="left: {junction.boundary * zoom}px"
+                  onclick={(e) => { e.stopPropagation(); createTransitionAt(junction.clipId); }}
+                  title="Add a transition at this junction"
+                  aria-label="Add a transition at this junction"
+                >
+                  <svg width="13" height="9" viewBox="0 0 15 10" aria-hidden="true">
+                    <path d="M0.5 0.5 L7.5 5 L0.5 9.5 Z M14.5 0.5 L7.5 5 L14.5 9.5 Z"
+                          fill="currentColor" fill-opacity="0.3" stroke="currentColor" stroke-width="1"/>
+                  </svg>
+                </button>
+              {/if}
             {/each}
             {#if state.presetClips.length === 0}
               <span class="lane-empty">Drop a preset card here, or use “+ Preset”.</span>
@@ -746,51 +998,61 @@
           <span class="insp-unit">s</span>
         </label>
 
-        <!-- Transition. Same styles the preset tray offers, fired through
-             the same engine call; new clips are born with whatever the tray
-             is set to, and this is the per-clip override. -->
+        <button class="insp-delete" onclick={deleteSelected}>Delete</button>
+        <button class="insp-close" onclick={() => showTimeline.select(null)}>×</button>
+      </div>
+    {:else if selectedTransitionClip}
+      <!-- Transition inspector. The element on the timeline is the primary
+           control; this is where the exact numbers live. -->
+      <div class="show-inspector" bind:clientHeight={inspectorH}>
+        <span class="insp-title">Transition</span>
+        <span class="insp-junction">
+          {compositionName(selectedTransitionWindow?.prev.compositionId ?? '', selectedTransitionWindow?.prev.label)}
+          <span class="insp-arrow">→</span>
+          {compositionName(selectedTransitionClip.compositionId, selectedTransitionClip.label)}
+        </span>
         <label class="insp-field">
-          <span>Transition</span>
+          <span>Type</span>
           <select
             class="insp-transition"
-            value={selectedTransitionIn}
-            onchange={(e) => showTimeline.updatePresetClip(selectedPreset.id, {
-              transitionIn: (e.target as HTMLSelectElement).value as typeof selectedTransitionIn,
-            })}
-            title="What happens at this clip's start. The blend runs forward from the clip's start time."
+            value={selectedTransitionWindow?.style ?? 'dissolve'}
+            onchange={(e) => showTimeline.setTransitionStyle(
+              selectedTransitionClip.id,
+              (e.target as HTMLSelectElement).value as CompositionTransitionStyle,
+            )}
+            title="How the two compositions blend. Every entry renders differently — see stores/presetTransition.ts."
           >
-            <option value="cut">Cut</option>
             {#each TRANSITION_OPTIONS as opt}
               <option value={opt.value}>{opt.label}</option>
             {/each}
-            {#if !isTransitionStyle(selectedTransitionIn) && selectedTransitionIn !== 'cut'}
-              <!-- Legacy VJ-timeline value from an older project file. -->
-              <option value={selectedTransitionIn}>{selectedTransitionIn} (legacy)</option>
-            {/if}
           </select>
         </label>
-        {#if selectedTransitionStyle}
-          <label class="insp-field">
-            <span>Fade</span>
-            <input
-              class="insp-fade"
-              type="number" min="0" step="0.25"
-              value={(selectedPreset.transitionDuration ?? 0).toFixed(2)}
-              onchange={(e) => showTimeline.updatePresetClip(selectedPreset.id, {
-                transitionDuration: Math.max(0, parseFloat((e.target as HTMLInputElement).value) || 0),
-              })}
-            />
-            <span class="insp-unit">s</span>
-          </label>
-          {#if selectedTransitionClamped}
-            <span
-              class="insp-note"
-              title="Clamped to the shorter of this clip and the one before it, so a transition can never outlive its clip."
-            >→ {selectedTransitionEffective.toFixed(2)}s</span>
-          {/if}
+        <label class="insp-field">
+          <span>Duration</span>
+          <input
+            class="insp-fade"
+            type="number"
+            min={SHOW_MIN_TRANSITION_SECONDS}
+            max={selectedTransitionMax}
+            step="0.25"
+            value={(selectedTransitionWindow?.duration ?? 0).toFixed(2)}
+            onchange={(e) => showTimeline.setTransitionDuration(
+              selectedTransitionClip.id,
+              parseFloat((e.target as HTMLInputElement).value) || 0,
+            )}
+          />
+          <span class="insp-unit">s</span>
+        </label>
+        <span class="insp-hint" title="The window is centred on the junction — half of it plays over the outgoing clip and half over the incoming one.">
+          {formatPrecise(selectedTransitionWindow?.start ?? 0)} → {formatPrecise(selectedTransitionWindow?.end ?? 0)}
+        </span>
+        {#if selectedTransitionClamped}
+          <span
+            class="insp-note"
+            title="Clamped to the shorter of the two clips it sits between — a transition can never be longer than the material it has to work with."
+          >clamped from {requestedTransitionDuration(selectedTransitionClip).toFixed(2)}s</span>
         {/if}
-
-        <button class="insp-delete" onclick={deleteSelected}>Delete</button>
+        <button class="insp-delete" onclick={deleteSelected} title="Remove the transition — the junction goes back to a hard cut">Delete</button>
         <button class="insp-close" onclick={() => showTimeline.select(null)}>×</button>
       </div>
     {:else if selectedAudio}
@@ -1256,6 +1518,124 @@
     pointer-events: none;
   }
 
+  /* ── Junction transitions ──────────────────────────────────────────────
+     The element straddles the boundary: its left edge IS the show time the
+     blend starts and its right edge IS where it ends, so the picture on the
+     timeline and what the renderer does cannot drift apart. Amber to match
+     the playhead/live-clip language; the clip blocks are coral. */
+  .show-transition {
+    position: absolute;
+    top: 3px;
+    bottom: 3px;
+    z-index: 4;
+    border-radius: 3px;
+    box-sizing: border-box;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    background: linear-gradient(180deg, rgba(255, 217, 107, 0.28), rgba(255, 217, 107, 0.12));
+    border: 1px solid rgba(255, 217, 107, 0.75);
+    cursor: pointer;
+    overflow: hidden;
+    user-select: none;
+  }
+  .show-transition:hover { background: linear-gradient(180deg, rgba(255, 217, 107, 0.4), rgba(255, 217, 107, 0.18)); }
+  .show-transition.selected {
+    border-color: #FFD96B;
+    box-shadow: 0 0 0 1px #FFD96B, 0 0 12px rgba(255, 217, 107, 0.45);
+    z-index: 5;
+  }
+  /* The classic bowtie/X. `preserveAspectRatio: none` + non-scaling-stroke
+     keeps the crossing lines spanning the whole element at any duration or
+     zoom without the stroke smearing. */
+  .xf-bowtie {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+  }
+  .xf-bowtie path {
+    stroke: rgba(255, 217, 107, 0.85);
+    stroke-width: 1;
+    fill: none;
+  }
+  .xf-dur {
+    position: relative;
+    z-index: 1;
+    font-size: 9.5px;
+    font-weight: 700;
+    font-family: var(--font-jetbrains), monospace;
+    color: #1a1408;
+    background: rgba(255, 217, 107, 0.92);
+    border-radius: 2px;
+    padding: 1px 4px;
+    pointer-events: none;
+    white-space: nowrap;
+  }
+  .xf-handle {
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 6px;
+    z-index: 2;
+    cursor: ew-resize;
+  }
+  .xf-handle.left { left: 0; }
+  .xf-handle.right { right: 0; }
+  .xf-handle:hover { background: rgba(255, 255, 255, 0.35); }
+
+  /* Ghost marker on a junction that is currently a hard cut. Invisible
+     until the lane is hovered (or a transition chip is in flight) so a
+     dense arrangement is not covered in permanent buttons. */
+  .junction-add {
+    position: absolute;
+    top: 50%;
+    width: 19px;
+    height: 15px;
+    margin-left: -9.5px;
+    transform: translateY(-50%);
+    z-index: 4;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border-radius: 3px;
+    background: rgba(10, 10, 14, 0.85);
+    border: 1px dashed rgba(255, 217, 107, 0.45);
+    color: rgba(255, 217, 107, 0.75);
+    cursor: pointer;
+    opacity: 0;
+    transition: opacity 0.12s ease;
+  }
+  .preset-lane:hover .junction-add,
+  .junction-add.arming { opacity: 1; }
+  .junction-add:hover,
+  .junction-add.targeted {
+    opacity: 1;
+    border-style: solid;
+    border-color: #FFD96B;
+    color: #FFD96B;
+    box-shadow: 0 0 10px rgba(255, 217, 107, 0.5);
+  }
+
+  .t-transition-chip {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    cursor: grab;
+    color: #FFD96B;
+    border-color: rgba(255, 217, 107, 0.4);
+  }
+  .t-transition-chip:hover { border-color: rgba(255, 217, 107, 0.8); }
+  .t-transition-chip.dragging { cursor: grabbing; opacity: 0.6; }
+  .t-transition-chip.disabled {
+    opacity: 0.35;
+    cursor: default;
+    color: var(--text-secondary, #aaa);
+    border-color: rgba(255, 255, 255, 0.12);
+  }
+
   .handle {
     position: absolute;
     top: 0;
@@ -1346,6 +1726,21 @@
     border: 1px solid rgba(255, 217, 107, 0.3);
     border-radius: 3px;
     padding: 2px 6px;
+    white-space: nowrap;
+  }
+  .insp-junction {
+    font-size: 11.5px;
+    color: rgba(255, 255, 255, 0.7);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    max-width: 280px;
+  }
+  .insp-arrow { color: #FFD96B; padding: 0 3px; }
+  .insp-hint {
+    font-size: 11px;
+    color: rgba(255, 255, 255, 0.4);
+    font-family: var(--font-jetbrains), monospace;
     white-space: nowrap;
   }
   .insp-chip {
