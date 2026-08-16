@@ -4841,6 +4841,54 @@ export interface Timeline {
 }
 
 // ═══════════════════════════════════════════════════
+// Show Timeline Types (mapping mode)
+// ═══════════════════════════════════════════════════
+//
+// The show timeline is the mapping-mode arrangement surface: audio files
+// on their own lanes, mapping presets (Compositions) laid out along a
+// single preset lane, one deterministic transport driving both. See
+// src/lib/stores/showTimeline.ts for the transport + evaluation rules.
+
+/** One audio file placed on the show timeline. */
+export interface ShowAudioTrack {
+  id: string;
+  /** Display name — the source filename by default. */
+  name: string;
+  /** Runtime URL (blob: / ghost-asset: / data:). Session-scoped: blanked
+   *  at save whenever `assetRef` can reproduce it on load. */
+  url: string;
+  /** Durable identity of the source file. */
+  assetRef?: import('./storage/assetRegistry').AssetRef;
+  /** Where the track starts on the show timeline, seconds. */
+  startTime: number;
+  /** How much of the show timeline the track occupies, seconds. */
+  duration: number;
+  /** In-point inside the source file, seconds. */
+  offset: number;
+  /** Full decoded length of the source, seconds. 0 = not measured yet. */
+  sourceDuration: number;
+  /** 0..1 per-track level, applied on the clip audio bus. */
+  volume: number;
+  muted: boolean;
+  /** Audio lane row index. Tracks on different lanes may overlap in time
+   *  (that is the point — layering); tracks on the same lane may not. */
+  lane: number;
+  /** Coarse peak envelope for the waveform, 0..255, ~512 buckets over the
+   *  whole source. Persisted so reopening a project doesn't have to decode
+   *  every track again. */
+  peaks?: number[];
+}
+
+/** A mapping preset (Composition) block on the show timeline's preset lane.
+ *  Extends the original VJ-mode TimelineClip shape so the two data models
+ *  stay interchangeable. */
+export interface ShowPresetClip extends TimelineClip {
+  /** Composition name captured when the clip was created, so a clip whose
+   *  composition was later deleted still reads as something in the UI. */
+  label?: string;
+}
+
+// ═══════════════════════════════════════════════════
 // Layer Sequencer Types
 // ═══════════════════════════════════════════════════
 
@@ -4950,6 +4998,10 @@ export interface Project {
    *  explicit file persistence only; scratch scene edits are no longer
    *  auto-restored from localStorage on app launch. */
   stage3d?: unknown;
+  /** Mapping-mode show timeline (audio tracks + preset arrangement).
+   *  Save-only, like stage3d / projectionSim: it holds audio AssetRefs and
+   *  must not ride the live state-sync relay. See showTimeline.serialize(). */
+  showTimeline?: unknown;
   // SynthVision keyboard presets (performer mode keyboard assignments)
   svKeyboardPresets?: SVKeyboardPreset[];
   // Stage Designer surfaces: SVG-imported polygon slice layouts.

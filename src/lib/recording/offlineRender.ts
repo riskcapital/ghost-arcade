@@ -57,9 +57,11 @@ import {
   type OfflineFileAudioSession,
 } from '../audio/offlineFileAudio';
 import { getActiveNativeRendererSync } from '../sync/nativeRendererSync';
+import { prepareShowOfflineAudio } from '../audio/showAudio';
 import { keyframeTimeline } from '../stores/keyframeTimeline';
 import { layerSequencer } from '../stores/layerSequencer';
 import { vjLayerSequencer } from '../stores/vjLayerSequencer';
+import { showTimeline } from '../stores/showTimeline';
 import { mediaLibrary } from '../stores/media';
 import { generateUUID } from '../utils/uuid';
 import { createAssetRefFromGeneratedBlob, pathToFileUrl, type AssetRef } from '../storage/assetRegistry';
@@ -988,6 +990,9 @@ function createOfflineRenderStore() {
     /** Media element we paused for a file-audio export, so playback can be
      *  handed back exactly as we found it. */
     let pausedAudioElement: HTMLAudioElement | HTMLVideoElement | null = null;
+    /** True when the show timeline was running live and we paused it so the
+     *  render loop's per-frame seek is the only thing driving it. */
+    let showTimelineWasPlaying = false;
     let nativeCapturePixelFormat: 'rgba' | 'bgra' = 'rgba';
     const frameBaseName = frameSequenceBaseName(settings.filename, 'render');
     if (outputMode === 'frames') {
@@ -1093,8 +1098,35 @@ function createOfflineRenderStore() {
       //     below. A microphone or system-audio stream has no virtual
       //     time to seek to; its content necessarily follows real elapsed
       //     time, which is what the render modal warns about.
+      // (3) THE SHOW TIMELINE'S OWN AUDIO takes priority over the analyser
+      //     input when the user has programmed one — that IS the show's
+      //     soundtrack, and it is the only signal whose position we can
+      //     reproduce exactly at any virtual time (we know every track's
+      //     offset). Mixed down once, then sampled per frame through the
+      //     same OfflineFileAudioAnalyzer the file-input path uses.
+      const showState = get(showTimeline);
+      if (showState.audioTracks.some(t => !t.muted && t.url && t.duration > 0)) {
+        // Its RAF would race the render loop's own seek() — the render owns
+        // the clock for the duration.
+        showTimelineWasPlaying = showState.isPlaying;
+        if (showTimelineWasPlaying) showTimeline.pause();
+        fileAudioSession = await prepareShowOfflineAudio(
+          showState.audioTracks,
+          showState.duration,
+          { loop: showState.loop, bandSmoothing: audioAnalyzer.getSmoothing() },
+        );
+        if (fileAudioSession) {
+          audioAnalyzer.beginAnalysisHold();
+          liveAnalysisHeld = true;
+          console.info(
+            `[offlineRender] show timeline audio pinned to the render clock ` +
+            `(${fileAudioSession.durationSeconds.toFixed(2)}s): ${fileAudioSession.label}`,
+          );
+        }
+      }
+
       const audioState = get(audioStore);
-      if (audioState.inputType === 'file') {
+      if (!fileAudioSession && audioState.inputType === 'file') {
         const element = audioAnalyzer.getMediaElement();
         // Freeze the playhead BEFORE the decode: the export starts from
         // wherever the user left the track, not from wherever it drifted
@@ -1162,6 +1194,13 @@ function createOfflineRenderStore() {
           keyframeTimeline.seek(virtualTime);
           layerSequencer.seek(virtualTime);
           vjLayerSequencer.seek(virtualTime);
+          // Show timeline: evaluates which preset clip owns this instant and
+          // fires the composition swap ONLY when that answer changes. Must
+          // run after the sub-transport seeks above — loadComposition
+          // re-hydrates them, and with `restoreTransports:false` (which the
+          // show timeline passes under a manual clock) it will not fight the
+          // next frame's seeks. A show with no clips is a no-op.
+          showTimeline.seek(virtualTime);
           // Native graphs (splat, model3d, text, GPU instruments…)
           // animate from the render clock the sync sends — pin it to
           // the virtual time and flush so this frame's compute lands
@@ -1436,6 +1475,14 @@ function createOfflineRenderStore() {
         const element = pausedAudioElement;
         pausedAudioElement = null;
         void element.play().catch(() => { /* user can hit play again */ });
+      }
+      if (showTimelineWasPlaying) {
+        showTimelineWasPlaying = false;
+        // Rewind first: the render left the playhead at the last virtual
+        // frame, and resuming from there would drop the operator into the
+        // middle of a show they were watching from somewhere else.
+        showTimeline.stop();
+        showTimeline.play();
       }
       fileAudioSession = null;
       try { engine?.resize(restoreWidth, restoreHeight); } catch (e) { /* nothing we can do */ }

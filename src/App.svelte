@@ -58,6 +58,7 @@
   import BottomDock from './lib/components/BottomDock.svelte';
   import LayerSequencer from './lib/components/LayerSequencer.svelte';
   import KeyframeTimeline from './lib/components/KeyframeTimeline.svelte';
+  import ShowTimeline from './lib/components/ShowTimeline.svelte';
   import SettingsPanel from './lib/components/SettingsPanel.svelte';
   import MediaPipeLearnHUD from './lib/components/MediaPipeLearnHUD.svelte';
   import MediaPipeLearnOverlay from './lib/components/MediaPipeLearnOverlay.svelte';
@@ -72,6 +73,7 @@
   import { maskEditingLayerId } from './lib/stores/maskEditing';
   import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, setHistoryCallback } from './lib/stores/layers';
   import { keyframeTimeline } from './lib/stores/keyframeTimeline';
+  import { showTimeline } from './lib/stores/showTimeline';
   import { layerSequencer } from './lib/stores/layerSequencer';
   import { NATIVE_ENGINE_ONLY, settings, outputFrozen } from './lib/stores/settings';
   import { checkForUpdate, type VersionCheckResult } from './lib/utils/versionCheck';
@@ -1342,8 +1344,9 @@
             const trimmed = JSON.parse(jsonStr);
             delete trimmed?.project?.stage3d;
             delete trimmed?.project?.projectionSim;
+            delete trimmed?.project?.showTimeline;
             localStorage.setItem('ghostarcade-autosave', JSON.stringify(trimmed));
-            console.warn('[AutoSave] Project too large for autosave — 3D scene excluded from recovery snapshot.');
+            console.warn('[AutoSave] Project too large for autosave — 3D scene, Map Sim and show timeline excluded from recovery snapshot.');
           }
           localStorage.setItem('ghostarcade-autosave-timestamp', Date.now().toString());
           // Remember which file this snapshot belongs to so recovery can
@@ -7064,6 +7067,9 @@
     <!-- Keyframe Timeline (slide-up panel) -->
     <KeyframeTimeline />
 
+    <!-- Show Timeline (slide-up panel) — audio tracks + preset arrangement -->
+    <ShowTimeline />
+
     <!-- Bottom dock pills (Presets / Sequencer / Keyframes) — coral-active. -->
     {#if !vjNativeUnderlayActive}
       <BottomDock
@@ -7263,6 +7269,19 @@
           <path class="ga-neon-stroke ga-neon-thin" d="M2.8 21.2h18.4"/>
         </svg>
         Keyframes
+      </button>
+      <button
+        class="status-pill"
+        class:on={$showTimeline.isOpen}
+        onclick={() => showTimeline.toggleOpen()}
+        title="Show Timeline — audio tracks + preset arrangement"
+      >
+        <svg class="status-pill-icon show-icon" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true">
+          <path class="ga-neon-fill" d="M2.8 4.4h8v5.2h-8zM13.2 4.4h8v5.2h-8z"/>
+          <path class="ga-neon-stroke" d="M2.8 4.4h8v5.2h-8zM13.2 4.4h8v5.2h-8z"/>
+          <path class="ga-neon-stroke ga-neon-thin" d="M2.8 16.4h2.4l1.4-3.4 1.8 7 1.6-5 1.2 3.2h2.2l1.3-3 1.5 5.4 1.4-4.2h2.2"/>
+        </svg>
+        Show
       </button>
 
       <span class="spacer"></span>

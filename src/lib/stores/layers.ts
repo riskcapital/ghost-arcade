@@ -20,6 +20,7 @@ import {
 } from './stagePresetSurfaces';
 import { stage3dScene } from '../stage3d/store';
 import { projectionSimScene } from '../projectionSim/store';
+import { showTimeline, setShowCompositionLoader } from './showTimeline';
 // Catalog of per-effect default params. Used by resetEffectParams to
 // snap an effect back to its baseline values when the user hits the
 // per-effect reset button in LayerPanel.
@@ -4076,8 +4077,17 @@ void main() {
 
     /**
      * Load a composition into the main layers (for editing/preview)
+     *
+     * `options.restoreTransports` (default TRUE — today's behaviour for every
+     * existing caller) controls the deferred sub-transport restart below.
+     * Set it FALSE when something else owns the clock: an offline export
+     * seeks keyframeTimeline / layerSequencer itself once per frame, and the
+     * `queueMicrotask` here lands a microtask later and would re-zero both
+     * out from under the render loop. The show timeline passes false while
+     * a render owns the clock. See stores/showTimeline.ts.
      */
-    loadComposition(compositionId: string) {
+    loadComposition(compositionId: string, options?: { restoreTransports?: boolean }) {
+      const restoreTransports = options?.restoreTransports !== false;
       // First get the composition to access Performer data
       const currentProject = get({ subscribe });
       if (!currentProject.vjMode) return;
@@ -4121,7 +4131,7 @@ void main() {
         queueMicrotask(() => {
           if (seqSnap?.snapshot) {
             layerSequencer.hydrate(seqSnap.snapshot);
-            if (seqSnap.wasPlaying) {
+            if (seqSnap.wasPlaying && restoreTransports) {
               // stop() resets currentStep=0 and clears overrides; play()
               // kicks the RAF loop. Reset-then-play matches the user's
               // "predictable, always starts clean" choice.
@@ -4131,7 +4141,7 @@ void main() {
           }
           if (kfSnap?.snapshot) {
             keyframeTimeline.importAll(kfSnap.snapshot);
-            if (kfSnap.wasPlaying) {
+            if (kfSnap.wasPlaying && restoreTransports) {
               // seek(0) rewinds the playhead and re-evaluates overrides
               // WITHOUT wiping the timelines we just imported. Earlier
               // this called reset(), which calls set(createInitialState())
@@ -4851,6 +4861,11 @@ void main() {
 
       // Deep clone and strip out non-serializable data
       const exportData = {
+        // 1.9.5 = added project.showTimeline (mapping-mode show arrangement:
+        //         audio tracks riding AssetRefs + preset clip lane). Save-only
+        //         section, added by exportProjectJSON / exportProjectForSave —
+        //         NOT by this sync export, same as stage3d / projectionSim.
+        // 1.9.4 = project.projectionSim (Map Sim scene).
         // 1.9.3 = added layerSequencer (step sequencer pattern + config)
         //         and geoDeck (geo performer scenes + mod routes) at the
         //         project root. Older saves skip these on import and the
@@ -4862,7 +4877,7 @@ void main() {
         //         outside this vjClipLauncher payload but versioned together).
         // 1.8.0 = moved bankBClipGrid INSIDE each VJBlock.
         // 1.7.0 = added Bank B deck + crossfader state at launcher root.
-        version: '1.9.3',
+        version: '1.9.5',
         exportedAt: new Date().toISOString(),
         project: {
           id: currentProject.id,
@@ -4950,6 +4965,12 @@ void main() {
       try {
         exportData.project.projectionSim = projectionSimScene.exportForProject();
       } catch { /* ditto */ }
+      try {
+        // Same save-only treatment: the show timeline carries audio
+        // AssetRefs and a whole arrangement, neither of which belongs on
+        // the per-tick sync relay.
+        exportData.project.showTimeline = showTimeline.serialize();
+      } catch { /* ditto */ }
       return JSON.stringify(exportData, null, 2);
     },
 
@@ -4982,13 +5003,15 @@ void main() {
       }
 
       // Keep in lockstep with exportProject() above.
+      // 1.9.5 bump: project.showTimeline (mapping-mode show arrangement;
+      // audio tracks ride AssetRefs, runtime URLs are blanked at save).
       // 1.9.4 bump: project.projectionSim (Map Sim scene; imported models
       // ride AssetRefs, runtime URLs are blanked at save).
       // 1.9.3 bump: layerSequencer + geoDeck now serialize at project root.
       // 1.9.2 bump: AssetRef capture on every File-import site, plus
       // pixelFXContent / gpuLayerContent now actually export. Older saves
       // (1.9.x and earlier) still load via the legacy resolveSrc fallback.
-      syncExport.version = '1.9.4';
+      syncExport.version = '1.9.5';
       try {
         syncExport.project.stage3d = JSON.parse(JSON.stringify(get(stage3dScene)));
       } catch (err) {
@@ -5000,6 +5023,14 @@ void main() {
         syncExport.project.projectionSim = projectionSimScene.exportForProject();
       } catch (err) {
         console.warn('[Store] exportProjectForSave: projection sim snapshot failed', err);
+      }
+      try {
+        // Save-only for the same two reasons: it holds audio AssetRefs, and
+        // the save-path restore is the one that receives projectDir so those
+        // refs can resolve against the .gha's own folder.
+        syncExport.project.showTimeline = showTimeline.serialize();
+      } catch (err) {
+        console.warn('[Store] exportProjectForSave: show timeline snapshot failed', err);
       }
       return syncExport;
     },
@@ -5126,6 +5157,7 @@ void main() {
             mediaFolders?: MediaTrayFolder[];
             stage3d?: unknown;
             projectionSim?: unknown;
+            showTimeline?: unknown;
           };
           mediaLibrary?: any[];
           vjClipLauncher?: any;
@@ -5840,6 +5872,28 @@ void main() {
           } catch (err) {
             console.warn('[Store] importProject: projection sim restore failed', err);
           }
+          try {
+            const importedShow = (proj as any).showTimeline;
+            if (importedShow && typeof importedShow === 'object') {
+              // projectDir-aware so audio AssetRefs saved as siblings of the
+              // .gha resolve on another machine. Never auto-plays.
+              showTimeline.hydrate(importedShow, projectDir);
+            } else if ('stage3d' in (proj as any) || 'projectionSim' in (proj as any)) {
+              // Save-shaped payload (only the save/autosave exports carry the
+              // save-only sections) that has no show of its own — a
+              // pre-1.9.5 file, or a project the user never programmed.
+              // Clear, so the previous project's arrangement cannot bleed
+              // through and start firing presets over the new one.
+              showTimeline.hydrate(null);
+            }
+            // No else: this is a LIVE STATE-SYNC payload. exportProject()
+            // deliberately omits every save-only section, so "absent" here
+            // means "not transmitted", not "empty". Clearing on it would
+            // wipe the receiver's timeline on every relay tick — the exact
+            // failure mode the stage3d note above documents.
+          } catch (err) {
+            console.warn('[Store] importProject: show timeline restore failed', err);
+          }
         });
         // Hydrate $settings.output from the project's multi-output
         // snapshot, if one was saved. Slices run through the migration
@@ -5911,6 +5965,16 @@ void main() {
 }
 
 export const project = createProjectStore();
+
+// ─── Show timeline → composition loader ──────────────────────────────────
+// The show timeline must be able to fire a preset without importing this
+// module (that would be a cycle, and it would drag the whole project store
+// into every unit test of the arrangement maths). Register the real loader
+// here — layers.ts is loaded by everything, so this always lands before any
+// timeline can run.
+setShowCompositionLoader((compositionId, options) => {
+  project.loadComposition(compositionId, { restoreTransports: options.restoreTransports });
+});
 
 // ─── Mapping-mode clip audio reconciliation ──────────────────────────────
 // One central place decides which mapping-mode media layers are audible,

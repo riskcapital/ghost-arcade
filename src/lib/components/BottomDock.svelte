@@ -76,13 +76,14 @@
 
 <style>
   /* Hide the legacy per-panel toggle buttons (Presets, Sequencer,
-     Keyframes) since the dock now serves as the single entry point.
-     Keeping both visible meant three near-identical pills stacking at
+     Keyframes, Show) since the dock now serves as the single entry point.
+     Keeping both visible meant near-identical pills stacking at
      bottom:24px and competing for the same chunk of screen real estate.
      The actual panels stay mounted; we just suppress their toggles. */
   :global(.tray-toggle),
   :global(.seq-toggle),
-  :global(.kf-toggle) { display: none !important; }
+  :global(.kf-toggle),
+  :global(.show-toggle) { display: none !important; }
 
   .bottom-dock {
     position: fixed;

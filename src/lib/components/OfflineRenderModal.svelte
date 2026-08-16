@@ -12,6 +12,7 @@
   import { isDesktopApp } from '../bridge';
   import { getNativeRendererCapabilities } from '../api/native-renderer';
   import { project } from '../stores/layers';
+  import { showTimeline } from '../stores/showTimeline';
   import { audioStore } from '../stores/audio';
   import { isAudioDrivenMod, modulationStore } from '../audio/modulation';
 
@@ -31,11 +32,21 @@
   let nativeFrameCaptureMessage = 'Desktop only';
   let nativeProbeGeneration = 0;
 
+  // A programmed show already knows how long it is — seed the duration
+  // from it so "render my show" is one click. Falls back to the default
+  // when the show timeline is empty.
+  $: showDuration = $showTimeline.duration;
+  $: showIsProgrammed = showDuration > 0
+    && ($showTimeline.presetClips.length > 0 || $showTimeline.audioTracks.length > 0);
+
   function seedSettingsFromProject() {
     settings = {
       ...DEFAULT_OFFLINE_SETTINGS,
       width: $project.width || 1920,
       height: $project.height || 1080,
+      ...(showIsProgrammed
+        ? { durationSeconds: Math.max(0.5, Math.round(showDuration * 100) / 100) }
+        : {}),
     };
     captureBackendTouched = false;
   }
@@ -336,6 +347,14 @@
         <div class="field">
           <label>Duration (seconds)</label>
           <input type="number" min="0.5" max="3600" step="0.5" bind:value={settings.durationSeconds} />
+          {#if showIsProgrammed}
+            <button
+              class="show-length-btn"
+              type="button"
+              onclick={() => settings.durationSeconds = Math.max(0.5, Math.round(showDuration * 100) / 100)}
+              title="Match the show timeline's total programmed length"
+            >Show length: {showDuration.toFixed(1)}s</button>
+          {/if}
         </div>
         <div class="field">
           <label>Frame rate</label>
@@ -456,6 +475,22 @@
 {/if}
 
 <style>
+  .show-length-btn {
+    margin-top: 4px;
+    align-self: flex-start;
+    background: color-mix(in srgb, var(--ga-coral, #ff6f5e) 12%, transparent);
+    border: 1px solid color-mix(in srgb, var(--ga-coral, #ff6f5e) 32%, transparent);
+    color: color-mix(in srgb, var(--ga-coral, #ff6f5e) 80%, #ffffff);
+    font-size: 10px;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 3px;
+    cursor: pointer;
+    font-family: inherit;
+    letter-spacing: 0.3px;
+  }
+  .show-length-btn:hover { background: color-mix(in srgb, var(--ga-coral, #ff6f5e) 22%, transparent); color: #fff; }
+
   .modal-backdrop {
     position: fixed; inset: 0;
     background: rgba(0, 0, 0, 0.6);
