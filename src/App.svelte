@@ -73,7 +73,7 @@
   import { maskEditingLayerId } from './lib/stores/maskEditing';
   import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, setHistoryCallback } from './lib/stores/layers';
   import { keyframeTimeline } from './lib/stores/keyframeTimeline';
-  import { showTimeline } from './lib/stores/showTimeline';
+  import { showTimeline, setShowTransitionStarter } from './lib/stores/showTimeline';
   import { layerSequencer } from './lib/stores/layerSequencer';
   import { NATIVE_ENGINE_ONLY, settings, outputFrozen } from './lib/stores/settings';
   import { checkForUpdate, type VersionCheckResult } from './lib/utils/versionCheck';
@@ -1043,7 +1043,29 @@
     // loop uses (a dynamic `import('/src/...')` over CDP can resolve to a
     // separate module record after a Vite dep re-optimization). Harmless
     // read/write surface; no behaviour depends on it.
-    try { (window as any).__ghostArcade = { project, settings }; } catch { /* sealed */ }
+    // `showTimeline` and `getEngine` are here for the same stated reason as
+    // project/settings: a CDP-driven check of a show crossfade has to observe
+    // the SAME store and the SAME RenderEngine the transport and the render
+    // loop use, and a dynamic import cannot reach either.
+    try {
+      (window as any).__ghostArcade = {
+        project,
+        settings,
+        showTimeline,
+        getEngine: () => canvasComponent?.getEngine() ?? null,
+      };
+    } catch { /* sealed */ }
+
+    // Show timeline → renderer transitions. The store cannot reach the
+    // engine (it is deliberately component-free so the offline renderer can
+    // drive it with nothing mounted), so hand it the SAME call the preset
+    // tray's `onBeforeLoad` below makes. Native/WebGPU has no
+    // startTransition; getEngine() returns null there and every show
+    // boundary stays a hard cut, exactly as the preset tray already does.
+    setShowTransitionStarter((durationSeconds, style) => {
+      const engine = canvasComponent?.getEngine();
+      if (engine) engine.startTransition(durationSeconds, style);
+    });
     const bridgeTimeouts = new Set<ReturnType<typeof setTimeout>>();
     const scheduleBridgeTimeout = (fn: () => void, delay: number) => {
       const id = setTimeout(() => {
@@ -1635,6 +1657,7 @@
 
     return () => {
       appMounted = false;
+      setShowTransitionStarter(null);
       unsubscribeSettings();
       for (const id of bridgeTimeouts) clearTimeout(id);
       bridgeTimeouts.clear();
@@ -6237,6 +6260,7 @@
       class:preset-tray-open={presetTrayOpen}
       class:seq-tray-open={$layerSequencer.isOpen}
       class:kf-tray-open={$keyframeTimeline.isOpen}
+      class:show-tray-open={$showTimeline.isOpen}
     >
       <!-- Left sidebar — Layers / Screens tabs.
            LeftSidebar swaps LayerPanel ↔ ScreenPanel based on the
@@ -9041,6 +9065,13 @@
   .main-content.kf-tray-open {
     margin-bottom: calc(300px + var(--ga-bottom-rail-offset, 74px));
   }
+  /* The show tray is the only one of the four whose height is not a
+     constant — it fits its own content and is drag-resizable — so it
+     publishes `--ga-show-tray-height` from ShowTimeline.svelte instead of
+     hard-coding a number here. */
+  .main-content.show-tray-open {
+    margin-bottom: calc(var(--ga-show-tray-height, 220px) + var(--ga-bottom-rail-offset, 74px));
+  }
 
   .viewport {
     flex: 1;
@@ -9351,7 +9382,8 @@
      visible and the user can always click the pill again to close. */
   :global(.preset-tray),
   :global(.seq-tray),
-  :global(.kf-tray) {
+  :global(.kf-tray),
+  :global(.show-tray) {
     bottom: 30px !important;
   }
 

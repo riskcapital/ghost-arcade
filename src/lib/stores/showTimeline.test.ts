@@ -25,17 +25,37 @@ import { get } from 'svelte/store';
 import {
   showTimeline,
   setShowCompositionLoader,
+  setShowTransitionStarter,
   findActiveShowClip,
   computeShowDuration,
   snapShowTime,
   placeOnLane,
   maxDurationAt,
+  clampShowTransitionDuration,
+  findPrecedingShowClip,
+  resolveShowTransition,
+  resolveTransitionStyle,
+  defaultClipTransition,
   SHOW_SNAP_SECONDS,
 } from './showTimeline';
-import type { ShowPresetClip } from '../types';
+import { presetTransition } from './presetTransition';
+import * as visualAudio from '../audio/visualAudio';
+import type { ClipTransitionIn, ShowPresetClip } from '../types';
 
 function clip(id: string, compositionId: string, startTime: number, duration: number): ShowPresetClip {
   return { id, compositionId, startTime, duration, transitionIn: 'cut', transitionDuration: 0.5 };
+}
+
+/** Same, but with a real transition on it. */
+function fadeClip(
+  id: string,
+  compositionId: string,
+  startTime: number,
+  duration: number,
+  transitionDuration: number,
+  transitionIn: ClipTransitionIn = 'dissolve',
+): ShowPresetClip {
+  return { id, compositionId, startTime, duration, transitionIn, transitionDuration };
 }
 
 /** Install a spy loader and hand back the call log. */
@@ -47,13 +67,35 @@ function spyLoader() {
   return calls;
 }
 
+/**
+ * Install BOTH seams onto one ordered log, so a test can assert not just
+ * that the transition fired but that it fired BEFORE the load — the engine
+ * has to snapshot the outgoing composite while it is still on screen.
+ */
+function spyRenderer() {
+  const events: Array<
+    | { kind: 'transition'; style: string; durationSeconds: number }
+    | { kind: 'load'; compositionId: string; restoreTransports: boolean }
+  > = [];
+  setShowTransitionStarter((durationSeconds, style) => {
+    events.push({ kind: 'transition', style, durationSeconds });
+  });
+  setShowCompositionLoader((compositionId, options) => {
+    events.push({ kind: 'load', compositionId, restoreTransports: options.restoreTransports });
+  });
+  return events;
+}
+
 beforeEach(() => {
   showTimeline._resetForTest();
+  presetTransition._resetForTest();
 });
 
 afterEach(() => {
   setShowCompositionLoader(null);
+  setShowTransitionStarter(null);
   showTimeline._resetForTest();
+  presetTransition._resetForTest();
   vi.restoreAllMocks();
 });
 
@@ -441,5 +483,295 @@ describe('serialize / hydrate', () => {
     expect(s.audioTracks).toHaveLength(1);
     expect(s.audioTracks[0].startTime).toBe(0);
     expect(s.audioTracks[0].duration).toBeGreaterThan(0);
+  });
+});
+
+// ── Clip transitions ─────────────────────────────────────────────────────
+//
+// Semantics under test: START-AT. A clip's transition runs forward over
+// [startTime, startTime + effectiveDuration) — it BEGINS at the boundary
+// rather than completing there. See the "Clip transitions" block in
+// showTimeline.ts for why the mechanism forces that choice.
+
+describe('resolveTransitionStyle', () => {
+  it('treats cut and junk as a hard cut', () => {
+    expect(resolveTransitionStyle('cut')).toBeNull();
+    expect(resolveTransitionStyle(undefined)).toBeNull();
+    expect(resolveTransitionStyle('not-a-style' as ClipTransitionIn)).toBeNull();
+  });
+
+  it('maps the legacy VJ-timeline values onto dissolve', () => {
+    expect(resolveTransitionStyle('fade')).toBe('dissolve');
+    expect(resolveTransitionStyle('crossfade')).toBe('dissolve');
+  });
+
+  it('passes an engine style straight through', () => {
+    expect(resolveTransitionStyle('wave')).toBe('wave');
+    expect(resolveTransitionStyle('pixelMelt')).toBe('pixelMelt');
+  });
+});
+
+describe('clampShowTransitionDuration', () => {
+  it('leaves a transition that fits both neighbours alone', () => {
+    expect(clampShowTransitionDuration(2, { duration: 30 }, { duration: 30 })).toBe(2);
+  });
+
+  it('clamps to the incoming clip when that is the shorter one', () => {
+    expect(clampShowTransitionDuration(5, { duration: 1 }, { duration: 30 })).toBe(1);
+  });
+
+  it('clamps to the OUTGOING clip when that is the shorter one', () => {
+    // A 5s dissolve out of a 0.5s clip would still be running two clips
+    // later — this is the clamp that stops transitions stacking.
+    expect(clampShowTransitionDuration(5, { duration: 30 }, { duration: 0.5 })).toBe(0.5);
+  });
+
+  it('only considers the incoming clip when nothing precedes it', () => {
+    expect(clampShowTransitionDuration(5, { duration: 3 }, null)).toBe(3);
+  });
+
+  it('reads zero / negative / junk as a hard cut', () => {
+    expect(clampShowTransitionDuration(0, { duration: 30 }, null)).toBe(0);
+    expect(clampShowTransitionDuration(-2, { duration: 30 }, null)).toBe(0);
+    expect(clampShowTransitionDuration(undefined, { duration: 30 }, null)).toBe(0);
+    expect(clampShowTransitionDuration(Number.NaN, { duration: 30 }, null)).toBe(0);
+  });
+});
+
+describe('findPrecedingShowClip', () => {
+  const a = clip('a', 'compA', 0, 10);
+  const b = clip('b', 'compB', 10, 10);
+  const c = clip('c', 'compC', 40, 10); // after a gap
+
+  it('finds the clip butted up against this one', () => {
+    expect(findPrecedingShowClip([a, b, c], b)?.id).toBe('a');
+  });
+
+  it('reaches back across a gap — that composition is still on screen', () => {
+    expect(findPrecedingShowClip([a, b, c], c)?.id).toBe('b');
+  });
+
+  it('returns null for the first clip in the show', () => {
+    expect(findPrecedingShowClip([a, b, c], a)).toBeNull();
+  });
+});
+
+describe('resolveShowTransition', () => {
+  // A: [0,10)  B: [10,20) with a 4s dissolve in.
+  const a = clip('a', 'compA', 0, 10);
+  const b = fadeClip('b', 'compB', 10, 10, 4);
+  const clips = [a, b];
+
+  it('gives the FULL window when the boundary is hit exactly', () => {
+    const plan = resolveShowTransition(clips, b, 10);
+    expect(plan).toEqual({ style: 'dissolve', durationSeconds: 4 });
+  });
+
+  it('gives only the REMAINDER for a cold seek into the middle of one', () => {
+    // Landing at 11.5 with a window of [10, 14): 2.5s still to run, so the
+    // blend still finishes at show time 14 exactly as it would have live.
+    expect(resolveShowTransition(clips, b, 11.5)?.durationSeconds).toBeCloseTo(2.5, 9);
+    expect(resolveShowTransition(clips, b, 13.9)?.durationSeconds).toBeCloseTo(0.1, 9);
+  });
+
+  it('is a pure function of (clips, clip, time) — two cold seeks agree', () => {
+    const first = resolveShowTransition(clips, b, 12.25);
+    const second = resolveShowTransition(clips, b, 12.25);
+    expect(first).toEqual(second);
+    expect(first?.durationSeconds).toBeCloseTo(1.75, 9);
+  });
+
+  it('hard-cuts once the window has already closed', () => {
+    expect(resolveShowTransition(clips, b, 14)).toBeNull();
+    expect(resolveShowTransition(clips, b, 18)).toBeNull();
+  });
+
+  it('never exceeds the window when time runs ahead of the clip start', () => {
+    // A loop wrap can evaluate a clip at a time before its own start.
+    expect(resolveShowTransition(clips, b, 9)?.durationSeconds).toBe(4);
+  });
+
+  it('applies the short-neighbour clamp', () => {
+    const shortA = clip('a', 'compA', 0, 1);
+    const plan = resolveShowTransition([shortA, { ...b, startTime: 1 }], { ...b, startTime: 1 }, 1);
+    expect(plan?.durationSeconds).toBe(1);
+  });
+
+  it('returns null for a cut clip no matter where the playhead is', () => {
+    expect(resolveShowTransition(clips, a, 0)).toBeNull();
+    expect(resolveShowTransition(clips, a, 5)).toBeNull();
+  });
+
+  it('returns null when the clip asks for a zero-length transition', () => {
+    const zero = fadeClip('z', 'compZ', 10, 10, 0);
+    expect(resolveShowTransition([a, zero], zero, 10)).toBeNull();
+  });
+});
+
+describe('transition wiring through seek()', () => {
+  /** Two back-to-back clips, B carrying a `secs` dissolve. */
+  function twoClips(secs: number, style: ClipTransitionIn = 'dissolve') {
+    const aId = showTimeline.addPresetClip('compA', 10);
+    const bId = showTimeline.addPresetClip('compB', 10);
+    showTimeline.updatePresetClip(bId, { transitionIn: style, transitionDuration: secs });
+    showTimeline.updatePresetClip(aId, { transitionIn: 'cut' });
+    return { aId, bId };
+  }
+
+  it('fires the transition exactly once, immediately BEFORE the load', () => {
+    const events = spyRenderer();
+    twoClips(4);
+
+    showTimeline.seek(1);   // into A — cut, load only
+    showTimeline.seek(10);  // the boundary
+    showTimeline.seek(11);  // still inside B, nothing new
+
+    expect(events).toEqual([
+      { kind: 'load', compositionId: 'compA', restoreTransports: true },
+      { kind: 'transition', style: 'dissolve', durationSeconds: 4 },
+      { kind: 'load', compositionId: 'compB', restoreTransports: true },
+    ]);
+  });
+
+  it('does not fire once per frame across the boundary', () => {
+    const events = spyRenderer();
+    twoClips(2);
+    for (let frame = 0; frame < 60 * 20; frame++) showTimeline.seek(frame / 60);
+    expect(events.filter((e) => e.kind === 'transition')).toHaveLength(1);
+  });
+
+  it('honours a per-clip style override', () => {
+    const events = spyRenderer();
+    twoClips(3, 'pixelMelt');
+    showTimeline.seek(1);
+    showTimeline.seek(10);
+    expect(events).toContainEqual({ kind: 'transition', style: 'pixelMelt', durationSeconds: 3 });
+  });
+
+  it('cuts — loads with no transition — when the clip says cut', () => {
+    const events = spyRenderer();
+    twoClips(4, 'cut');
+    showTimeline.seek(1);
+    showTimeline.seek(10);
+    expect(events.some((e) => e.kind === 'transition')).toBe(false);
+    expect(events.filter((e) => e.kind === 'load')).toHaveLength(2);
+  });
+
+  it('hard-cuts a cold seek that lands PAST the transition window', () => {
+    const events = spyRenderer();
+    twoClips(2);
+    showTimeline.seek(15); // window was [10, 12) — long gone
+    expect(events).toEqual([{ kind: 'load', compositionId: 'compB', restoreTransports: true }]);
+  });
+
+  it('resolves a cold seek INTO a transition to the same state every time', () => {
+    const runs: unknown[][] = [];
+    for (let run = 0; run < 2; run++) {
+      showTimeline._resetForTest();
+      const events = spyRenderer();
+      twoClips(4);
+      showTimeline.seek(11.5); // straight in, no playback, no prior clip
+      runs.push([...events]);
+    }
+    expect(runs[0]).toEqual(runs[1]);
+    expect(runs[0][0]).toEqual({ kind: 'transition', style: 'dissolve', durationSeconds: 2.5 });
+    expect(runs[0][1]).toEqual({ kind: 'load', compositionId: 'compB', restoreTransports: true });
+  });
+
+  it('clamps against a short outgoing clip so transitions cannot stack', () => {
+    const events = spyRenderer();
+    showTimeline.addPresetClip('compA', 0.5); // [0, 0.5)
+    const bId = showTimeline.addPresetClip('compB', 10); // [0.5, 10.5)
+    showTimeline.updatePresetClip(bId, { transitionIn: 'dissolve', transitionDuration: 5 });
+    showTimeline.seek(0.1);
+    showTimeline.seek(0.5);
+    // 5s requested, but A only lasts 0.5s — the blend may not outlive it.
+    expect(events).toContainEqual({ kind: 'transition', style: 'dissolve', durationSeconds: 0.5 });
+  });
+
+  it('hard-cuts under a manual clock, but still loads the composition', () => {
+    // The offline renderer owns the clock and calls seek() per virtual frame.
+    // engine.startTransition blends off performance.now(), so a transition
+    // there would render differently on every run of the same export.
+    const manual = vi.spyOn(visualAudio, 'isVisualAudioManualClock').mockReturnValue(true);
+    const events = spyRenderer();
+    twoClips(4);
+    showTimeline.seek(1);
+    showTimeline.seek(10);
+    expect(events.some((e) => e.kind === 'transition')).toBe(false);
+    expect(events).toEqual([
+      { kind: 'load', compositionId: 'compA', restoreTransports: false },
+      { kind: 'load', compositionId: 'compB', restoreTransports: false },
+    ]);
+    manual.mockRestore();
+  });
+
+  it('still loads when no transition starter is registered (native / headless)', () => {
+    const calls = spyLoader(); // loader only — no starter
+    const aId = showTimeline.addPresetClip('compA', 10);
+    const bId = showTimeline.addPresetClip('compB', 10);
+    showTimeline.updatePresetClip(aId, { transitionIn: 'cut' });
+    showTimeline.updatePresetClip(bId, { transitionIn: 'dissolve', transitionDuration: 4 });
+    expect(() => {
+      showTimeline.seek(1);
+      showTimeline.seek(10);
+    }).not.toThrow();
+    expect(calls.map((c) => c.compositionId)).toEqual(['compA', 'compB']);
+  });
+});
+
+describe('preset-player inheritance', () => {
+  it('gives a new clip whatever the preset tray is set to', () => {
+    presetTransition.patch({ enabled: true, style: 'wave', duration: 3 });
+    expect(defaultClipTransition()).toEqual({ transitionIn: 'wave', transitionDuration: 3 });
+
+    const id = showTimeline.addPresetClip('compA', 30);
+    const added = get(showTimeline).presetClips.find((c) => c.id === id)!;
+    expect(added.transitionIn).toBe('wave');
+    expect(added.transitionDuration).toBe(3);
+  });
+
+  it('gives a DROPPED clip the same inheritance', () => {
+    presetTransition.patch({ enabled: true, style: 'iris', duration: 1.5 });
+    const id = showTimeline.insertPresetClipAt('compA', 12, 10)!;
+    const added = get(showTimeline).presetClips.find((c) => c.id === id)!;
+    expect(added.transitionIn).toBe('iris');
+    expect(added.transitionDuration).toBe(1.5);
+  });
+
+  it('creates cut clips while the tray transition toggle is off', () => {
+    presetTransition.patch({ enabled: false, style: 'wave', duration: 3 });
+    const id = showTimeline.addPresetClip('compA', 30);
+    expect(get(showTimeline).presetClips.find((c) => c.id === id)!.transitionIn).toBe('cut');
+  });
+
+  it('round-trips a clip transition through serialize / hydrate', () => {
+    const id = showTimeline.addPresetClip('compA', 30);
+    showTimeline.updatePresetClip(id, { transitionIn: 'explode', transitionDuration: 1.25 });
+    const snapshot = showTimeline.serialize();
+    showTimeline._resetForTest();
+    showTimeline.hydrate(snapshot);
+    const restored = get(showTimeline).presetClips[0];
+    expect(restored.transitionIn).toBe('explode');
+    expect(restored.transitionDuration).toBe(1.25);
+  });
+
+  it('inherits for a clip that predates the feature, and keeps an explicit cut', () => {
+    presetTransition.patch({ enabled: true, style: 'warp', duration: 2.5 });
+    showTimeline.hydrate({
+      version: 1,
+      audioTracks: [],
+      presetClips: [
+        { id: 'old', compositionId: 'c1', startTime: 0, duration: 10 },              // no field at all
+        { id: 'cut', compositionId: 'c2', startTime: 10, duration: 10, transitionIn: 'cut' },
+        { id: 'junk', compositionId: 'c3', startTime: 20, duration: 10, transitionIn: 'nonsense' },
+      ],
+    });
+    const clips = get(showTimeline).presetClips;
+    expect(clips.find((c) => c.id === 'old')!.transitionIn).toBe('warp');
+    expect(clips.find((c) => c.id === 'old')!.transitionDuration).toBe(2.5);
+    expect(clips.find((c) => c.id === 'cut')!.transitionIn).toBe('cut');
+    // Junk falls back rather than silently cutting.
+    expect(clips.find((c) => c.id === 'junk')!.transitionIn).toBe('warp');
   });
 });

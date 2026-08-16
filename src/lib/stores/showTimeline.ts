@@ -40,6 +40,13 @@
  * • Snapping is to a 0.25 s grid plus magnetic pull to any other clip edge
  *   and to 0, whichever is nearer, inside a zoom-aware tolerance.
  *
+ * TRANSITIONS (see the "Clip transitions" section below)
+ * ------------------------------------------------------
+ * Every preset clip carries `transitionIn` + `transitionDuration`, seeded
+ * from the preset tray's own transition settings so the two players match.
+ * The blend runs FORWARD from the clip's start time, is clamped to the
+ * shorter neighbouring clip, and is skipped outright under a manual clock.
+ *
  * PRESETTRAY CONFLICT
  * -------------------
  * The show timeline OWNS scheduled preset changes. While it is playing,
@@ -49,8 +56,9 @@
  */
 
 import { writable, derived, get } from 'svelte/store';
-import type { ShowAudioTrack, ShowPresetClip } from '../types';
+import type { ClipTransitionIn, ShowAudioTrack, ShowPresetClip, TransitionStyle } from '../types';
 import { generateUUID } from '../utils/uuid';
+import { getPresetTransitionSettings, isTransitionStyle } from './presetTransition';
 import { clipAudioBus, type ClipAudioTransport } from '../audio/clipAudioBus';
 import { isVisualAudioManualClock } from '../audio/visualAudio';
 import {
@@ -255,6 +263,137 @@ export function maxDurationAt(others: Placeable[], startTime: number): number {
   return right === Number.POSITIVE_INFINITY ? Number.POSITIVE_INFINITY : right - startTime;
 }
 
+// ─── Clip transitions ────────────────────────────────────────────────────
+//
+// SEMANTICS: START-AT, NOT LEAD-IN.
+// -----------------------------------
+// A clip's `transitionIn` runs over `[startTime, startTime + duration)` —
+// the transition BEGINS at the clip's start time, it does not complete
+// there. "Preset 2 at 0:30" therefore means preset 2's content is live from
+// exactly 0:30, with the outgoing picture dissolving away over the seconds
+// that follow.
+//
+// This is forced by the mechanism, not chosen for taste: `engine
+// .startTransition()` snapshots the CURRENT composite and then cross-fades
+// that frozen frame out while the new composition renders live underneath.
+// A true lead-in would have to load the incoming composition at
+// `startTime - duration`, which (a) starts that preset's keyframe/sequencer
+// transports early so they are already `duration` seconds in by the time the
+// playhead reaches its own clip, and (b) fires a composition swap at a time
+// where `findActiveShowClip` says a DIFFERENT clip is live — breaking the
+// one rule the whole store is built on.
+//
+// DETERMINISM. The window is anchored to show time, never to wall time, so a
+// cold `seek()` landing inside a transition plays only the REMAINDER and the
+// blend still finishes at `startTime + duration` of show time. A seek past
+// the window is a hard cut. Under a manual clock (offline export) the
+// transition is skipped entirely — see `fireComposition`.
+//
+// STACKING. The effective duration is clamped to the shorter of the two
+// neighbouring clips, so a transition can never outlive the clip that owns
+// it and two of them can never be in flight at once.
+
+/** What the renderer is asked to do at a clip boundary. */
+export interface ShowTransitionPlan {
+  style: TransitionStyle;
+  /** Seconds of blend remaining from the evaluated time. */
+  durationSeconds: number;
+}
+
+/**
+ * Map a clip's `transitionIn` onto an engine transition style.
+ * null means "hard cut" — that is 'cut', a missing value, or junk from a
+ * hand-edited file. 'fade' / 'crossfade' are the legacy VJ-timeline values
+ * and both mean 'dissolve'.
+ */
+export function resolveTransitionStyle(value: ClipTransitionIn | undefined): TransitionStyle | null {
+  if (!value || value === 'cut') return null;
+  if (value === 'fade' || value === 'crossfade') return 'dissolve';
+  return isTransitionStyle(value) ? value : null;
+}
+
+/**
+ * Longest blend clip `next` may actually run: never longer than `next`
+ * itself, and never longer than the clip it is transitioning away from.
+ *
+ * A 5 s crossfade onto a 1 s clip would still be running when the NEXT clip
+ * fired, so transitions would pile up on a fast arrangement. Clamping to the
+ * shorter neighbour is what makes "one transition in flight" structural
+ * rather than something the transport has to police.
+ */
+export function clampShowTransitionDuration(
+  requested: number | undefined,
+  next: Pick<ShowPresetClip, 'duration'>,
+  prev: Pick<ShowPresetClip, 'duration'> | null,
+): number {
+  const want = Number(requested);
+  if (!Number.isFinite(want) || want <= 0) return 0;
+  let limit = Math.max(0, next.duration);
+  if (prev) limit = Math.min(limit, Math.max(0, prev.duration));
+  return Math.max(0, Math.min(want, limit));
+}
+
+/**
+ * The clip the show is transitioning AWAY from: the nearest one ending at or
+ * before `next.startTime`. Across a gap it is still the right answer — the
+ * store deliberately holds the last-fired picture through a hole, so that
+ * composition is what is on screen when `next` fires.
+ */
+export function findPrecedingShowClip(
+  clips: ShowPresetClip[],
+  next: Pick<ShowPresetClip, 'id' | 'startTime'>,
+): ShowPresetClip | null {
+  let best: ShowPresetClip | null = null;
+  for (const c of clips) {
+    if (c.id === next.id) continue;
+    const end = c.startTime + c.duration;
+    if (end <= next.startTime + 1e-9) {
+      if (!best || end > best.startTime + best.duration) best = c;
+    }
+  }
+  return best;
+}
+
+/**
+ * Resolve what should happen visually when `next` becomes the live clip at
+ * show time `time`. Pure — the transport, a scrub and the offline renderer
+ * all get the identical answer for the identical inputs.
+ *
+ * Returns null for a hard cut.
+ */
+export function resolveShowTransition(
+  clips: ShowPresetClip[],
+  next: ShowPresetClip,
+  time: number,
+): ShowTransitionPlan | null {
+  const style = resolveTransitionStyle(next.transitionIn);
+  if (!style) return null;
+  const window = clampShowTransitionDuration(
+    next.transitionDuration,
+    next,
+    findPrecedingShowClip(clips, next),
+  );
+  if (window <= 0) return null;
+  // Only the remainder of the window from `time`, so a scrub into the middle
+  // of a transition still resolves at startTime + window of SHOW time.
+  const remaining = Math.min(window, next.startTime + window - time);
+  if (remaining <= 1e-6) return null;
+  return { style, durationSeconds: remaining };
+}
+
+/** Transition fields a brand-new clip is born with — whatever the preset
+ *  tray is currently set to, so the two players feel like one feature. */
+export function defaultClipTransition(): {
+  transitionIn: ClipTransitionIn;
+  transitionDuration: number;
+} {
+  const s = getPresetTransitionSettings();
+  return {
+    transitionIn: s.enabled ? s.style : 'cut',
+    transitionDuration: s.duration,
+  };
+}
+
 // ─── Composition loader injection ────────────────────────────────────────
 
 export interface ShowCompositionLoadOptions {
@@ -265,12 +404,33 @@ export type ShowCompositionLoader = (
   options: ShowCompositionLoadOptions,
 ) => void;
 
+/**
+ * Fires a renderer transition. Injected for the same reason the loader is:
+ * the only handle on the engine lives in App.svelte (`canvasComponent
+ * .getEngine()`), and this store must not reach into the component tree.
+ *
+ * It is the SAME seam the preset tray uses — App.svelte hands both
+ * `PresetTray.onBeforeLoad` and this one the identical
+ * `engine.startTransition(duration, style)` call — so a show clip and a tray
+ * click produce the same visual.
+ *
+ * Left unregistered (native renderer, headless tests) every boundary is a
+ * hard cut, exactly as it was before this feature.
+ */
+export type ShowTransitionStarter = (durationSeconds: number, style: TransitionStyle) => void;
+
 let compositionLoader: ShowCompositionLoader | null = null;
+let transitionStarter: ShowTransitionStarter | null = null;
 let lazyLoaderRequested = false;
 
 /** Registered by `layers.ts` at module init. Also the seam tests use. */
 export function setShowCompositionLoader(loader: ShowCompositionLoader | null): void {
   compositionLoader = loader;
+}
+
+/** Registered by `App.svelte`, next to the preset tray's `onBeforeLoad`. */
+export function setShowTransitionStarter(starter: ShowTransitionStarter | null): void {
+  transitionStarter = starter;
 }
 
 function requestLazyLoader(): void {
@@ -408,12 +568,34 @@ function cancelRaf(): void {
   rafId = null;
 }
 
-function fireComposition(clip: ShowPresetClip): void {
+function fireComposition(clip: ShowPresetClip, clips: ShowPresetClip[], time: number): void {
   const loader = compositionLoader;
   if (!loader) {
     requestLazyLoader();
     return;
   }
+  const manual = isManualClock();
+
+  // Transition BEFORE the load, and only live — same order as
+  // PresetTray.loadPreset(), because startTransition() has to snapshot the
+  // outgoing composite while it is still the thing on screen.
+  //
+  // Offline export always hard-cuts. engine.startTransition drives its blend
+  // off `performance.now()`, so under the renderer's virtual clock the same
+  // virtual frame would blend by a different amount on every run — the one
+  // thing a deterministic per-frame `seek()` cannot tolerate. A reproducible
+  // cut beats an irreproducible dissolve.
+  if (!manual && transitionStarter) {
+    const plan = resolveShowTransition(clips, clip, time);
+    if (plan) {
+      try {
+        transitionStarter(plan.durationSeconds, plan.style);
+      } catch (err) {
+        console.warn('[ShowTimeline] transition failed:', err);
+      }
+    }
+  }
+
   try {
     // Live: let loadComposition restore the preset's own sequencer /
     // keyframe transports, so each preset starts its animation clean at its
@@ -422,7 +604,7 @@ function fireComposition(clip: ShowPresetClip): void {
     // Offline export: the render loop owns keyframeTimeline / layerSequencer
     // and seeks them per frame. loadComposition's deferred `seek(0); play()`
     // lands a microtask later and would fight it, so suppress it entirely.
-    loader(clip.compositionId, { restoreTransports: !isManualClock() });
+    loader(clip.compositionId, { restoreTransports: !manual });
   } catch (err) {
     console.warn('[ShowTimeline] preset load failed:', err);
   }
@@ -462,7 +644,10 @@ function applyTime(time: number, bumpSeek: boolean): void {
   // the new playhead and the new active clip, not the old ones.
   store.set({ ...s, currentTime: t, activeClipId: nextId });
 
-  if (changed && next) fireComposition(next);
+  // `evalTime` (not `t`) so a boundary landed on exactly, and the
+  // parked-on-the-end nudge, both resolve the transition window the same
+  // way the clip lookup just did.
+  if (changed && next) fireComposition(next, s.presetClips, evalTime);
 }
 
 function tick(now: number): void {
@@ -517,19 +702,35 @@ function normalizeTrack(raw: unknown, index: number): ShowAudioTrack | null {
   };
 }
 
+/** Accept only values the transition resolver understands; anything else
+ *  (typo in a hand-edited file, a style removed from a later build) reports
+ *  as unknown so the caller can fall back rather than silently hard-cut. */
+function normalizeTransitionIn(raw: unknown): ClipTransitionIn | null {
+  if (raw === 'cut' || raw === 'fade' || raw === 'crossfade') return raw;
+  return isTransitionStyle(raw) ? raw : null;
+}
+
 function normalizeClip(raw: unknown): ShowPresetClip | null {
   if (!raw || typeof raw !== 'object') return null;
   const c = raw as Record<string, unknown>;
   if (typeof c.compositionId !== 'string' || !c.compositionId) return null;
   const duration = Number(c.duration);
   const startTime = Number(c.startTime);
+  // A clip that names no transition predates the feature (or was hand
+  // written) — inherit the preset tray's setting rather than forcing a cut,
+  // so an older show picks the crossfades up on first open.
+  const fallback = defaultClipTransition();
+  const transitionIn = normalizeTransitionIn(c.transitionIn) ?? fallback.transitionIn;
+  const transitionDuration = Number(c.transitionDuration);
   return {
     id: typeof c.id === 'string' && c.id ? c.id : generateUUID(),
     compositionId: c.compositionId,
     startTime: Number.isFinite(startTime) ? Math.max(0, startTime) : 0,
     duration: Number.isFinite(duration) ? Math.max(SHOW_MIN_CLIP_SECONDS, duration) : SHOW_DEFAULT_PRESET_SECONDS,
-    transitionIn: (c.transitionIn as ShowPresetClip['transitionIn']) ?? 'cut',
-    transitionDuration: Number.isFinite(Number(c.transitionDuration)) ? Number(c.transitionDuration) : 0.5,
+    transitionIn,
+    transitionDuration: Number.isFinite(transitionDuration) && transitionDuration >= 0
+      ? transitionDuration
+      : fallback.transitionDuration,
     label: typeof c.label === 'string' ? c.label : undefined,
   };
 }
@@ -640,8 +841,7 @@ export const showTimeline = {
         compositionId,
         startTime: end,
         duration: Math.max(SHOW_MIN_CLIP_SECONDS, duration),
-        transitionIn: 'cut',
-        transitionDuration: 0.5,
+        ...defaultClipTransition(),
         label,
       };
       return withDuration({
@@ -667,8 +867,7 @@ export const showTimeline = {
         compositionId,
         startTime: placed,
         duration: dur,
-        transitionIn: 'cut',
-        transitionDuration: 0.5,
+        ...defaultClipTransition(),
         label,
       };
       return withDuration({
