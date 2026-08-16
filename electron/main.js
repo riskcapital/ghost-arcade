@@ -1894,6 +1894,15 @@ let nativePreviewNextTexturePollAt = 0;
 let nativePreviewLastTextureFrame = -1;
 let nativePreviewLastTextureFrameAt = 0;
 let nativePreviewPausedForStaleFrame = false;
+// True when the last value handed to the pump came straight from the core, false
+// when it is the retained cache because the query failed or timed out. A failed
+// read tells us nothing about whether the core is still rendering, so it must not
+// be counted as evidence of an idle frame counter.
+let nativePreviewLastTextureReadWasLive = false;
+// How long a run of failed reads may suppress the idle check before we accept
+// that the core really is gone and let the display link stop.
+const NATIVE_PREVIEW_STALE_READ_GRACE_MS = 4000;
+let nativePreviewStaleReadSince = 0;
 
 // Multi-slice zero-copy atlas state. The slice-atlas OSR window renders
 // every Spout/Syphon sender slice into one atlas texture and publishes
@@ -2270,6 +2279,8 @@ function stopNativeEditorPreviewPump(reason = 'stopped') {
   nativePreviewLastTextureFrame = -1;
   nativePreviewLastTextureFrameAt = 0;
   nativePreviewPausedForStaleFrame = false;
+  nativePreviewLastTextureReadWasLive = false;
+  nativePreviewStaleReadSince = 0;
   nativePreviewLastAddonFrameCount = 0;
   try {
     const addon = nativePreviewAddon || loadNativePreviewAddon();
@@ -2284,6 +2295,8 @@ async function nativePreviewTextureMetadataForPump() {
   const now = Date.now();
   const cachedReady = isPublishableNativeOutputTexture(nativePreviewCachedTexture);
   if (cachedReady && now < nativePreviewNextTexturePollAt) {
+    // Serving the cache inside its own poll window is a deliberate skip, not a
+    // failed read: the frame counter it carries is as fresh as the last query.
     return nativePreviewCachedTexture;
   }
   const texture = await getNativeOutputSharedTextureMetadata();
@@ -2293,11 +2306,17 @@ async function nativePreviewTextureMetadataForPump() {
     const nextSize = `${texture.width ?? 0}x${texture.height ?? 0}`;
     nativePreviewCachedTexture = texture;
     nativePreviewNextTexturePollAt = now + 250;
+    nativePreviewLastTextureReadWasLive = true;
+    nativePreviewStaleReadSince = 0;
     if (previousHandle !== texture.handle || previousSize !== nextSize) {
       console.log(`[NativePreview] shared texture ${texture.platform}:${texture.handle} ${nextSize}`);
     }
     return texture;
   }
+  // The core did not answer (timeout, or not publishable yet). Whatever we hand
+  // back now carries a frame counter we could not refresh.
+  nativePreviewLastTextureReadWasLive = false;
+  if (nativePreviewStaleReadSince === 0) nativePreviewStaleReadSince = now;
   if (!cachedReady) {
     nativePreviewNextTexturePollAt = now + 100;
     return texture;
@@ -2341,6 +2360,18 @@ function startNativeEditorPreviewPump() {
         nativePreviewPausedForStaleFrame = false;
       } else if (nativePreviewLastTextureFrameAt <= 0) {
         nativePreviewLastTextureFrameAt = now;
+      }
+      // A frame counter that did not move is only evidence of an idle core if we
+      // actually managed to read it. When the query is timing out we are looking
+      // at a retained cache, and stopping the display link then is what turned a
+      // transport hiccup into a visible multi-second freeze. Hold the idle timer
+      // open across a bounded run of failed reads, then let it run again so a
+      // genuinely dead core still parks the pump.
+      if (!nativePreviewLastTextureReadWasLive) {
+        const stalledForMs = nativePreviewStaleReadSince > 0 ? now - nativePreviewStaleReadSince : 0;
+        if (stalledForMs <= NATIVE_PREVIEW_STALE_READ_GRACE_MS) {
+          nativePreviewLastTextureFrameAt = now;
+        }
       }
       const staleForMs = now - nativePreviewLastTextureFrameAt;
       if (nativeDisplayLinkPump && !textureFrameChanged && staleForMs > 1000) {

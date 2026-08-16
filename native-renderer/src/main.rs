@@ -18,7 +18,7 @@ use std::{
     path::{Path, PathBuf},
     ptr::NonNull,
     sync::{
-        Arc,
+        Arc, Mutex,
         atomic::{AtomicU64, Ordering},
         mpsc::{self, Receiver, Sender},
     },
@@ -549,6 +549,11 @@ enum UserEvent {
     Rpc(RpcRequest),
     NativeVideoFrameDecoded(NativeVideoFrameDecodeResult),
     GpuFrameCompleted,
+    /// Fire-and-forget nudge from the stdin reader: someone just read the
+    /// published snapshot, so refresh it for the next reader. Carries no reply
+    /// and takes no part in the `queued`/`applied` ordering contract, because
+    /// republishing can only make the snapshot newer, never older.
+    RepublishRpcSnapshot,
 }
 
 #[derive(Debug, Deserialize)]
@@ -557,6 +562,165 @@ struct RpcRequest {
     method: String,
     #[serde(default)]
     params: Value,
+}
+
+/// Observability and transport reads. These are answered from the published
+/// snapshot **even while commands are still queued for the main thread**.
+///
+/// That is the whole point: the stall the operator sees is a long main-thread
+/// command (a shader warm-up batch, a big scene ingest, a full-resolution
+/// readback) holding the loop while the editor's pumps pile up behind it. If
+/// these waited their turn they would time out together, the preview would stop
+/// seeing the output frame counter advance, and the display link would park —
+/// which is what reads as "the renderer froze".
+///
+/// Serving them one command stale is harmless. `status` is a monitoring readout
+/// and `output_shared_texture` is surface metadata; both are already sampled
+/// asynchronously, and neither is correlated by the caller against a command it
+/// just sent.
+const RPC_FAST_PATH_UNORDERED_METHODS: &[&str] = &[
+    "status",
+    "get_status",
+    "stats",
+    "get_stats",
+    "output_shared_texture",
+    "get_output_shared_texture",
+];
+
+/// Reads whose answer the caller *does* correlate with commands it just sent.
+///
+/// `get_layers_snapshot` feeds the Electron scene reconciler, which repairs any
+/// layer it believes the core dropped. Answering it from a snapshot that predates
+/// an in-flight `submit_batch` would make it "repair" layers that were about to
+/// arrive, so it only takes the fast path when nothing is outstanding.
+const RPC_FAST_PATH_ORDERED_METHODS: &[&str] = &["layers_snapshot", "get_layers_snapshot"];
+
+/// The payloads served by the fast path, rebuilt as one immutable unit so a
+/// reader can never observe a torn mix of old and new fields.
+#[derive(Default)]
+struct PublishedRpcSnapshot {
+    status: Value,
+    stats: Value,
+    layers: Value,
+    output_shared_texture: Value,
+}
+
+impl PublishedRpcSnapshot {
+    fn get(&self, method: &str) -> Option<&Value> {
+        match method {
+            "status" | "get_status" => Some(&self.status),
+            "stats" | "get_stats" => Some(&self.stats),
+            "layers_snapshot" | "get_layers_snapshot" => Some(&self.layers),
+            "output_shared_texture" | "get_output_shared_texture" => {
+                Some(&self.output_shared_texture)
+            }
+            _ => None,
+        }
+    }
+}
+
+/// Lets read-only queries be answered off the render thread.
+///
+/// The core services RPC and rendering on the same winit thread, so a query
+/// issued while a heavy frame is encoding used to sit behind it. At 60 Hz that
+/// is invisible; when the editor also runs two unthrottled `output_shared_texture`
+/// pumps and a pixel-carrying `frame_snapshot` pump through the same stdio pipe,
+/// the queue depth is what turns one slow frame into a multi-second RPC timeout.
+///
+/// Synchronisation contract:
+/// * `queued` is incremented **only** by the stdin reader thread, once for every
+///   request it forwards to the main thread. `applied` is incremented **only**
+///   by the main thread, after that request has been fully handled *and* after a
+///   fresh snapshot has been published.
+/// * The reader serves from the snapshot only when `applied == queued`, i.e. it
+///   has nothing outstanding on the main thread. So a fast-path answer can never
+///   predate a mutation whose reply has already been sent, and a query issued
+///   after a pipelined `submit_batch` still queues behind it exactly as before.
+/// * Because only the reader writes `queued` and only the main thread writes
+///   `applied`, neither counter needs a CAS; a `Release` store paired with an
+///   `Acquire` load carries the published snapshot across the thread boundary.
+struct RpcFastPath {
+    snapshot: Mutex<Option<Arc<PublishedRpcSnapshot>>>,
+    queued: AtomicU64,
+    applied: AtomicU64,
+    /// Epoch-ms at which a fast-path-eligible query last arrived. The render
+    /// loop only pays for republishing while something is actually polling, so
+    /// an offline export or a headless probe never carries the cost.
+    interest_at_ms: AtomicU64,
+    /// Set when a republish nudge is already on its way to the main thread, so a
+    /// burst of polls collapses into one refresh instead of one per request.
+    republish_pending: AtomicU64,
+    /// Non-zero while the render clock is in manual mode (offline export).
+    ///
+    /// The fast path is disabled entirely in that mode. Offline export drives
+    /// one sim step per distinct `render_clock_time`, and it depends on the
+    /// event loop being woken often enough to render each of those frames —
+    /// wakes that the editor's own `status` polling incidentally supplies.
+    /// Answering those polls off-thread removed the wakes and left ~40% of
+    /// exported frames without a sim step. Export has no live preview to
+    /// protect and cares only about determinism, so it keeps the old path.
+    manual_clock: AtomicU64,
+}
+
+/// How long after the last read-only query the render loop keeps republishing.
+const RPC_FAST_PATH_INTEREST_WINDOW_MS: u64 = 4_000;
+
+impl RpcFastPath {
+    fn new() -> Self {
+        Self {
+            snapshot: Mutex::new(None),
+            queued: AtomicU64::new(0),
+            applied: AtomicU64::new(0),
+            interest_at_ms: AtomicU64::new(0),
+            republish_pending: AtomicU64::new(0),
+            manual_clock: AtomicU64::new(0),
+        }
+    }
+
+    fn set_manual_clock(&self, manual: bool) {
+        self.manual_clock
+            .store(u64::from(manual), Ordering::Relaxed);
+    }
+
+    fn manual_clock(&self) -> bool {
+        self.manual_clock.load(Ordering::Relaxed) != 0
+    }
+
+    /// True when this caller owns the outstanding republish nudge and should
+    /// post the event; false when one is already queued.
+    fn claim_republish(&self) -> bool {
+        self.republish_pending
+            .compare_exchange(0, 1, Ordering::AcqRel, Ordering::Acquire)
+            .is_ok()
+    }
+
+    fn release_republish(&self) {
+        self.republish_pending.store(0, Ordering::Release);
+    }
+
+    fn idle(&self) -> bool {
+        self.applied.load(Ordering::Acquire) == self.queued.load(Ordering::Relaxed)
+    }
+
+    fn note_interest(&self) {
+        self.interest_at_ms
+            .store(scene_bridge_epoch_ms(), Ordering::Relaxed);
+    }
+
+    fn wants_publish(&self) -> bool {
+        scene_bridge_epoch_ms().saturating_sub(self.interest_at_ms.load(Ordering::Relaxed))
+            <= RPC_FAST_PATH_INTEREST_WINDOW_MS
+    }
+
+    fn read(&self) -> Option<Arc<PublishedRpcSnapshot>> {
+        self.snapshot.lock().ok().and_then(|guard| guard.clone())
+    }
+
+    fn publish(&self, snapshot: PublishedRpcSnapshot) {
+        if let Ok(mut guard) = self.snapshot.lock() {
+            *guard = Some(Arc::new(snapshot));
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -2342,6 +2506,17 @@ struct RenderState {
     native_shader_uniform_buffer: wgpu::Buffer,
     layer_buffer: wgpu::Buffer,
     source_preview_buffer: wgpu::Buffer,
+    /// Reused staging for the per-frame layer upload. `write_frame_inputs` used
+    /// to allocate a fresh `vec![LayerGpu::zeroed(); MAX_SCENE_LAYERS]` (270 KB)
+    /// and upload all 64 slots every frame no matter how many layers the scene
+    /// actually had. Every `write_buffer` also costs a fresh Metal staging
+    /// buffer, which is an IOKit kernel round-trip — so the redundant upload was
+    /// the single largest CPU item in the render encode path.
+    layer_upload_scratch: Vec<LayerGpu>,
+    /// Bytes of the last layer-buffer upload. An identical re-upload is skipped:
+    /// buffer contents persist, and the compositor only reads slots below
+    /// `layer_count`, so skipping is observationally identical.
+    layer_upload_last: Vec<u8>,
     source_frame_texture: wgpu::Texture,
     native_graph_source_frame_sample_texture: wgpu::Texture,
     source_frame_sampler: wgpu::Sampler,
@@ -2493,6 +2668,9 @@ struct NativePointCloudAsset {
 
 struct App {
     response_tx: Sender<String>,
+    /// Shared with the stdin reader thread so read-only queries can be answered
+    /// without waking this loop. See `RpcFastPath` for the ordering contract.
+    fast_path: Arc<RpcFastPath>,
     event_proxy: EventLoopProxy<UserEvent>,
     renderer: Option<RenderState>,
     adapter_name: Option<String>,
@@ -2795,9 +2973,14 @@ fn promote_appkit_child_window_to_underlay(
 }
 
 impl App {
-    fn new(response_tx: Sender<String>, event_proxy: EventLoopProxy<UserEvent>) -> Self {
+    fn new(
+        response_tx: Sender<String>,
+        event_proxy: EventLoopProxy<UserEvent>,
+        fast_path: Arc<RpcFastPath>,
+    ) -> Self {
         Self {
             response_tx,
+            fast_path,
             event_proxy,
             renderer: None,
             adapter_name: None,
@@ -3744,6 +3927,79 @@ impl App {
             .send(json!({ "id": id, "ok": false, "error": err.to_string() }).to_string());
     }
 
+    /// Ground truth for the Electron-side scene reconciler: what geometry the
+    /// core is ACTUALLY compositing with, so a lost or misapplied upsert_layer
+    /// can be detected and repaired instead of wedging the picture until the
+    /// next unrelated edit.
+    fn layers_snapshot_payload(&self) -> Value {
+        let layers = self
+            .scene_layers
+            .values()
+            .map(|layer| {
+                json!({
+                    "layer_id": layer.id,
+                    "z_index": layer.z_index,
+                    "visible": layer.visible,
+                    "opacity": layer.opacity,
+                    "blend_code": layer.blend_code,
+                    "corners": layer.corners,
+                    "uv0": layer.uv0,
+                    "uv1": layer.uv1,
+                    "source_id": layer.source_id,
+                    "frame_slot": layer.frame_slot,
+                    "shader_frame_slot": layer.shader_frame_slot,
+                    "source_kind": layer.source_kind,
+                    "shader_rendered": layer.shader_rendered,
+                    "mesh_rows": layer.mesh_rows,
+                    "mesh_cols": layer.mesh_cols,
+                    "mask_info": layer.mask_info,
+                    "mask_points_count": layer.mask_points.len(),
+                })
+            })
+            .collect::<Vec<_>>();
+        json!({ "layers": layers })
+    }
+
+    fn stats_payload(&mut self) -> Value {
+        self.stats.avg_render_cpu_ms = self.render_cpu_ema_ms;
+        if let Some(renderer) = self.renderer.as_ref() {
+            let (
+                gpu_timing_supported,
+                last_render_gpu_ms,
+                avg_render_gpu_ms,
+                max_render_gpu_ms,
+                gpu_timing_samples,
+                gpu_timing_resolve_misses,
+            ) = renderer.gpu_timing_stats();
+            self.stats.gpu_timing_supported = gpu_timing_supported;
+            self.stats.last_render_gpu_ms = last_render_gpu_ms;
+            self.stats.avg_render_gpu_ms = avg_render_gpu_ms;
+            self.stats.max_render_gpu_ms = max_render_gpu_ms;
+            self.stats.gpu_timing_samples = gpu_timing_samples;
+            self.stats.gpu_timing_resolve_misses = gpu_timing_resolve_misses;
+            self.stats.compute_graph_persistent_buffers =
+                renderer.native_compute_graph_buffer_count() as u64;
+        }
+        json!(self.stats.clone())
+    }
+
+    /// Rebuild the payloads the stdin reader thread serves. Called after every
+    /// main-thread RPC (before `applied` advances, so a reader that sees the
+    /// core as idle can never read state older than the last applied command)
+    /// and once per rendered frame to keep the counters live.
+    fn publish_rpc_snapshot(&mut self) {
+        // Background workers (video decode pre-roll, GPU completion) mutate the
+        // state `status` reports without routing through `handle_rpc`, so the
+        // snapshot has to be rebuilt from scratch here rather than patched.
+        let stats = self.stats_payload();
+        self.fast_path.publish(PublishedRpcSnapshot {
+            status: json!(self.status()),
+            stats,
+            layers: self.layers_snapshot_payload(),
+            output_shared_texture: self.output_shared_texture(),
+        });
+    }
+
     fn handle_rpc(&mut self, event_loop: &ActiveEventLoop, req: RpcRequest) {
         let result = match req.method.as_str() {
             "start" => {
@@ -3769,56 +4025,8 @@ impl App {
             // geometry the core is ACTUALLY compositing with, so a lost or
             // misapplied upsert_layer can be detected and repaired instead of
             // wedging the picture until the next unrelated edit.
-            "layers_snapshot" | "get_layers_snapshot" => {
-                let layers = self
-                    .scene_layers
-                    .values()
-                    .map(|layer| {
-                        json!({
-                            "layer_id": layer.id,
-                            "z_index": layer.z_index,
-                            "visible": layer.visible,
-                            "opacity": layer.opacity,
-                            "blend_code": layer.blend_code,
-                            "corners": layer.corners,
-                            "uv0": layer.uv0,
-                            "uv1": layer.uv1,
-                            "source_id": layer.source_id,
-                            "frame_slot": layer.frame_slot,
-                            "shader_frame_slot": layer.shader_frame_slot,
-                            "source_kind": layer.source_kind,
-                            "shader_rendered": layer.shader_rendered,
-                            "mesh_rows": layer.mesh_rows,
-                            "mesh_cols": layer.mesh_cols,
-                            "mask_info": layer.mask_info,
-                            "mask_points_count": layer.mask_points.len(),
-                        })
-                    })
-                    .collect::<Vec<_>>();
-                Ok(json!({ "layers": layers }))
-            }
-            "stats" | "get_stats" => {
-                self.stats.avg_render_cpu_ms = self.render_cpu_ema_ms;
-                if let Some(renderer) = self.renderer.as_ref() {
-                    let (
-                        gpu_timing_supported,
-                        last_render_gpu_ms,
-                        avg_render_gpu_ms,
-                        max_render_gpu_ms,
-                        gpu_timing_samples,
-                        gpu_timing_resolve_misses,
-                    ) = renderer.gpu_timing_stats();
-                    self.stats.gpu_timing_supported = gpu_timing_supported;
-                    self.stats.last_render_gpu_ms = last_render_gpu_ms;
-                    self.stats.avg_render_gpu_ms = avg_render_gpu_ms;
-                    self.stats.max_render_gpu_ms = max_render_gpu_ms;
-                    self.stats.gpu_timing_samples = gpu_timing_samples;
-                    self.stats.gpu_timing_resolve_misses = gpu_timing_resolve_misses;
-                    self.stats.compute_graph_persistent_buffers =
-                        renderer.native_compute_graph_buffer_count() as u64;
-                }
-                Ok(json!(self.stats.clone()))
-            }
+            "layers_snapshot" | "get_layers_snapshot" => Ok(self.layers_snapshot_payload()),
+            "stats" | "get_stats" => Ok(self.stats_payload()),
             "snapshot" | "get_snapshot" => Ok(json!({
                 "timestamp_ms": epoch_ms(),
                 "status": self.status(),
@@ -4142,6 +4350,15 @@ impl App {
                 Err(err) => self.send_error(req.id, err),
             }
         }
+
+        // Republish before releasing the fast path, so the reader thread can
+        // only go fast once the snapshot already reflects this command.
+        self.fast_path
+            .set_manual_clock(self.render_clock_mode == "manual");
+        if self.fast_path.wants_publish() {
+            self.publish_rpc_snapshot();
+        }
+        self.fast_path.applied.fetch_add(1, Ordering::Release);
     }
 
     fn apply_start_config(&mut self, params: &Value) {
@@ -9202,6 +9419,12 @@ impl App {
         if deck_monitors_rendered {
             self.deck_monitors_lit = deck_monitors_have_content;
         }
+        // Refresh what the reader thread serves. The output-export frame counter
+        // in particular only changes here, and it is what the editor's preview
+        // display-link watches to decide the core is still alive.
+        if self.fast_path.wants_publish() {
+            self.publish_rpc_snapshot();
+        }
     }
 
     fn snapshot_clock_from_params(&self, params: &Value) -> (Option<f32>, u64) {
@@ -13902,6 +14125,10 @@ impl ApplicationHandler<UserEvent> for App {
             UserEvent::NativeVideoFrameDecoded(result) => {
                 self.apply_native_video_decode_result(result)
             }
+            UserEvent::RepublishRpcSnapshot => {
+                self.fast_path.release_republish();
+                self.publish_rpc_snapshot();
+            }
             UserEvent::GpuFrameCompleted => {
                 self.sync_gpu_frame_stats();
                 if !self.running {
@@ -14773,6 +15000,8 @@ impl RenderState {
             native_shader_uniform_buffer,
             layer_buffer,
             source_preview_buffer,
+            layer_upload_scratch: vec![LayerGpu::zeroed(); MAX_SCENE_LAYERS],
+            layer_upload_last: Vec::new(),
             source_frame_texture,
             native_graph_source_frame_sample_texture,
             source_frame_sampler,
@@ -16101,6 +16330,7 @@ impl RenderState {
                 &mut encoder,
                 &transient_buffers,
                 render,
+                true,
             )?);
         }
 
@@ -16201,11 +16431,20 @@ impl RenderState {
                     );
                 }
             }
+            // `report: false` — this is the per-frame path and the returned
+            // `Value` was dropped on the floor. Building it cost a fresh
+            // serde_json map (18 entries for a render plan) for every pass of
+            // every graph layer, every frame.
             for pass_plan in &job.pass_plans {
-                self.encode_native_compute_graph_pass(encoder, &transient_buffers, pass_plan)?;
+                self.encode_native_compute_graph_pass(
+                    encoder,
+                    &transient_buffers,
+                    pass_plan,
+                    false,
+                )?;
             }
             for render_plan in &job.render_plans {
-                self.render_native_compute_graph(encoder, &transient_buffers, render_plan)?;
+                self.render_native_compute_graph(encoder, &transient_buffers, render_plan, false)?;
             }
         }
         Ok(())
@@ -16216,6 +16455,7 @@ impl RenderState {
         encoder: &mut wgpu::CommandEncoder,
         transient_buffers: &HashMap<String, NativeComputeGraphGpuBuffer>,
         pass_plan: &NativeComputeGraphPassPlan,
+        report: bool,
     ) -> Result<Value, String> {
         let layout_specs = pass_plan
             .bindings
@@ -16238,27 +16478,24 @@ impl RenderState {
             ));
         };
         let mut texture_views = Vec::new();
+        // Labels are borrowed from the plan rather than `format!`ed: the plan
+        // already owns the name, and formatting cost a String allocation per
+        // pass per frame purely to decorate a debug label.
         let entries = self.compute_graph_bind_group_entries(
             transient_buffers,
             &pass_plan.bindings,
-            &format!("pass `{}`", pass_plan.name),
+            &pass_plan.name,
             &mut texture_views,
             None,
         )?;
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some(&format!(
-                "Ghost Native Compute Graph Bind Group {}",
-                pass_plan.name
-            )),
+            label: Some(&pass_plan.name),
             layout: &cached.bind_group_layout,
             entries: &entries,
         });
         {
             let mut pass = encoder.begin_compute_pass(&wgpu::ComputePassDescriptor {
-                label: Some(&format!(
-                    "Ghost Native Compute Graph Pass {}",
-                    pass_plan.name
-                )),
+                label: Some(&pass_plan.name),
                 timestamp_writes: None,
             });
             pass.set_pipeline(&cached.pipeline);
@@ -16268,6 +16505,9 @@ impl RenderState {
                 pass_plan.dispatch[1].max(1),
                 pass_plan.dispatch[2].max(1),
             );
+        }
+        if !report {
+            return Ok(Value::Null);
         }
         Ok(json!({
             "name": pass_plan.name,
@@ -16281,6 +16521,7 @@ impl RenderState {
         encoder: &mut wgpu::CommandEncoder,
         transient_buffers: &HashMap<String, NativeComputeGraphGpuBuffer>,
         render_plan: &NativeComputeGraphRenderPlan,
+        report: bool,
     ) -> Result<Value, String> {
         let (output_format, target_name, target_width, target_height, source_id, source_slot) =
             match &render_plan.target {
@@ -16333,16 +16574,13 @@ impl RenderState {
         let entries = self.compute_graph_bind_group_entries(
             transient_buffers,
             &render_plan.bindings,
-            &format!("render `{}`", render_plan.name),
+            &render_plan.name,
             &mut texture_views,
             use_source_frame_sample_texture
                 .then_some(&self.native_graph_source_frame_sample_texture),
         )?;
         let bind_group = self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-            label: Some(&format!(
-                "Ghost Native Compute Graph Render Bind Group {}",
-                render_plan.name
-            )),
+            label: Some(&render_plan.name),
             layout: &cached.bind_group_layout,
             entries: &entries,
         });
@@ -16407,10 +16645,7 @@ impl RenderState {
         };
         {
             let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
-                label: Some(&format!(
-                    "Ghost Native Compute Graph Render Pass {}",
-                    render_plan.name
-                )),
+                label: Some(&render_plan.name),
                 color_attachments: &[Some(wgpu::RenderPassColorAttachment {
                     view: target_view,
                     resolve_target: None,
@@ -16457,6 +16692,9 @@ impl RenderState {
         }
         if let Some(slot) = source_slot.filter(|_| render_plan.generate_mips) {
             self.generate_source_frame_mips(encoder, slot);
+        }
+        if !report {
+            return Ok(Value::Null);
         }
         let mut result = json!({
             "name": render_plan.name,
@@ -17657,7 +17895,7 @@ impl RenderState {
     }
 
     fn write_frame_inputs(
-        &self,
+        &mut self,
         command_phase: f32,
         layers_seen: u32,
         time_seconds: Option<f32>,
@@ -17709,27 +17947,41 @@ impl RenderState {
         self.queue
             .write_buffer(&self.uniform_buffer, 0, bytemuck::bytes_of(&uniforms));
 
-        let mut gpu_layers = vec![LayerGpu::zeroed(); MAX_SCENE_LAYERS];
-        for (index, layer) in scene_layers.iter().take(MAX_SCENE_LAYERS).enumerate() {
-            gpu_layers[index] = *layer;
+        // Only the slots the compositor will actually read need to reach the
+        // GPU: `heartbeat.wgsl` walks `for i in 0..64 { if f32(i) >= layer_count
+        // { break } ... }`, so anything at or beyond `layer_count` is dead.
+        // Write `layers_seen` slots (and at least as many as the caller handed
+        // us), zero-filling any tail inside that prefix exactly as the old
+        // full-array upload did.
+        let filled = scene_layers.len().min(MAX_SCENE_LAYERS);
+        let upload_len = (layers_seen as usize).max(filled).min(MAX_SCENE_LAYERS);
+        for (slot, layer) in self.layer_upload_scratch[..filled]
+            .iter_mut()
+            .zip(scene_layers.iter())
+        {
+            *slot = *layer;
         }
-        self.queue
-            .write_buffer(&self.layer_buffer, 0, bytemuck::cast_slice(&gpu_layers));
+        for slot in &mut self.layer_upload_scratch[filled..upload_len] {
+            *slot = LayerGpu::zeroed();
+        }
+        let layer_bytes: &[u8] = bytemuck::cast_slice(&self.layer_upload_scratch[..upload_len]);
+        if self.layer_upload_last != layer_bytes {
+            self.queue.write_buffer(&self.layer_buffer, 0, layer_bytes);
+            self.layer_upload_last.clear();
+            self.layer_upload_last.extend_from_slice(layer_bytes);
+        }
 
         if let Some(source_previews) = source_previews {
-            let mut gpu_previews =
-                vec![PreviewPixel::zeroed(); MAX_SOURCE_PREVIEWS * SOURCE_PREVIEW_PIXELS];
-            for (index, pixel) in source_previews
-                .iter()
-                .take(MAX_SOURCE_PREVIEWS * SOURCE_PREVIEW_PIXELS)
-                .enumerate()
-            {
-                gpu_previews[index] = *pixel;
-            }
+            // `source_preview_pixel_data` already hands us an exactly-sized,
+            // zero-filled array, so the old staging copy through a second
+            // 16 MB `vec!` was pure duplication. Upload the caller's slice.
+            let preview_len = source_previews
+                .len()
+                .min(MAX_SOURCE_PREVIEWS * SOURCE_PREVIEW_PIXELS);
             self.queue.write_buffer(
                 &self.source_preview_buffer,
                 0,
-                bytemuck::cast_slice(&gpu_previews),
+                bytemuck::cast_slice(&source_previews[..preview_len]),
             );
         }
     }
@@ -18148,10 +18400,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
     let proxy = event_loop.create_proxy();
     let (response_tx, response_rx) = mpsc::channel::<String>();
+    let fast_path = Arc::new(RpcFastPath::new());
     spawn_stdout_writer(response_rx);
-    spawn_stdin_reader(proxy.clone());
+    spawn_stdin_reader(proxy.clone(), response_tx.clone(), Arc::clone(&fast_path));
 
-    let mut app = App::new(response_tx, proxy);
+    let mut app = App::new(response_tx, proxy, fast_path);
     event_loop.run_app(&mut app)?;
     Ok(())
 }
@@ -18167,7 +18420,11 @@ fn spawn_stdout_writer(response_rx: Receiver<String>) {
     });
 }
 
-fn spawn_stdin_reader(proxy: winit::event_loop::EventLoopProxy<UserEvent>) {
+fn spawn_stdin_reader(
+    proxy: winit::event_loop::EventLoopProxy<UserEvent>,
+    response_tx: Sender<String>,
+    fast_path: Arc<RpcFastPath>,
+) {
     thread::spawn(move || {
         for line in io::stdin().lock().lines() {
             let Ok(line) = line else {
@@ -18178,6 +18435,38 @@ fn spawn_stdin_reader(proxy: winit::event_loop::EventLoopProxy<UserEvent>) {
             }
             match serde_json::from_str::<RpcRequest>(&line) {
                 Ok(req) => {
+                    // Read-only queries are answered here, on the reader thread,
+                    // from the snapshot the render loop republishes each frame —
+                    // so a saturated GPU can no longer make `status` or
+                    // `output_shared_texture` miss their deadline. The `idle()`
+                    // gate keeps them ordered behind any command still in flight.
+                    let unordered = RPC_FAST_PATH_UNORDERED_METHODS.contains(&req.method.as_str());
+                    let ordered = RPC_FAST_PATH_ORDERED_METHODS.contains(&req.method.as_str());
+                    if (unordered || ordered) && !fast_path.manual_clock() {
+                        fast_path.note_interest();
+                        if req.id != 0 && (unordered || fast_path.idle()) {
+                            if let Some(result) = fast_path
+                                .read()
+                                .and_then(|snapshot| snapshot.get(&req.method).cloned())
+                            {
+                                let _ = response_tx.send(
+                                    json!({ "id": req.id, "ok": true, "result": result })
+                                        .to_string(),
+                                );
+                                // Ask the loop to refresh what we just served.
+                                // Without this a poller that only ever issues
+                                // fast-path methods would pin the snapshot
+                                // forever whenever the loop is otherwise idle —
+                                // background work such as video pre-roll would
+                                // never become visible.
+                                if fast_path.claim_republish() {
+                                    let _ = proxy.send_event(UserEvent::RepublishRpcSnapshot);
+                                }
+                                continue;
+                            }
+                        }
+                    }
+                    fast_path.queued.fetch_add(1, Ordering::Relaxed);
                     let _ = proxy.send_event(UserEvent::Rpc(req));
                 }
                 Err(err) => {
