@@ -7885,7 +7885,7 @@ impl App {
             },
             NativeComputeGraphBufferSpec {
                 id: rider_uniform_id.clone(),
-                byte_length: 128,
+                byte_length: 144,
                 kind: NativeComputeBufferBindingKind::Uniform,
                 initial_bytes: build_smoke_riders_rider_uniform_bytes(&params, dt, time),
                 persistent: true,
@@ -20994,6 +20994,10 @@ struct NativeSmokeRidersParams {
     /// Surface-seeking spring toward the iso shell (fluid-riders
     /// defaults 1.6; smoke-riders defaults 0).
     surface_stick: f32,
+    /// How far the surface spring's per-rider target spreads either side
+    /// of the iso level. 0 collects the whole population on the one
+    /// shell; higher fans it through the body of the pour.
+    surface_bias: f32,
     rider_damping: f32,
     rider_life: f32,
     contain_strength: f32,
@@ -21005,6 +21009,11 @@ struct NativeSmokeRidersParams {
     rider_opacity: f32,
     reflect_strength: f32,
     liquid_glass: f32,
+    /// How far the camera can see INTO the paint at a submerged rider
+    /// (fluid-riders only; the smoke kind has no isosurface).
+    submerge_clarity: f32,
+    /// Depth-sorted rider hits the render pass keeps per ray.
+    rider_hits: u32,
     surface_detail: f32,
     detail_scale: f32,
     contact_ao: f32,
@@ -21103,6 +21112,15 @@ fn normalize_smoke_riders_native_params(
         _ => 1.0,
     };
     let shadow_scale = if quality == "performance" { 0.6 } else { 1.0 };
+    // K nearest orb hits the render pass keeps per ray. The gather is
+    // nearly free (the ray-sphere test already runs for every binned
+    // rider); the cost is K PBR evaluations, and the composite early-outs
+    // the moment alpha saturates — so this only bites below Orb Opacity 1.
+    let rider_hits: u32 = match quality.as_str() {
+        "ultra" => 4,
+        "performance" => 2,
+        _ => 3,
+    };
 
     let rider_count = ((native_graph_param_f32(
         params,
@@ -21191,6 +21209,7 @@ fn normalize_smoke_riders_native_params(
             4.0,
             if fluid { 1.6 } else { 0.0 },
         ),
+        surface_bias: native_graph_param_f32(params, "surfaceBias", 0.0, 1.0, 0.62),
         rider_damping: native_graph_param_f32(params, "riderDamping", 0.0, 4.0, 0.45),
         rider_life: native_graph_param_f32(params, "riderLife", 1.0, 60.0, 6.0),
         // Velocity gain, not a spring constant: the containment is folded
@@ -21205,6 +21224,14 @@ fn normalize_smoke_riders_native_params(
         rider_opacity: native_graph_param_f32(params, "riderOpacity", 0.15, 1.0, 1.0),
         reflect_strength: native_graph_param_f32(params, "reflectStrength", 0.0, 3.0, 1.0),
         liquid_glass: native_graph_param_f32(params, "liquidGlass", 0.0, 1.0, 0.0),
+        submerge_clarity: native_graph_param_f32(
+            params,
+            "submergeClarity",
+            0.0,
+            1.0,
+            if fluid { 0.85 } else { 0.0 },
+        ),
+        rider_hits,
         surface_detail: native_graph_param_f32(params, "surfaceDetail", 0.0, 1.0, 0.12),
         detail_scale: native_graph_param_f32(params, "detailScale", 1.0, 24.0, 8.0),
         contact_ao: native_graph_param_f32(params, "contactAO", 0.0, 4.0, 1.1),
@@ -21392,7 +21419,7 @@ fn build_smoke_riders_rider_uniform_bytes(
     dt: f32,
     time: f32,
 ) -> Vec<u8> {
-    let mut bytes = vec![0_u8; 128];
+    let mut bytes = vec![0_u8; 144];
     write_u32_le(&mut bytes, 0, params.grid_size);
     write_u32_le(&mut bytes, 1, params.grid_size);
     write_u32_le(&mut bytes, 2, params.grid_size);
@@ -21433,6 +21460,7 @@ fn build_smoke_riders_rider_uniform_bytes(
     write_f32_le(&mut bytes, 29, SMOKE_RIDERS_TAU_REF_RADIUS);
     write_f32_le(&mut bytes, 30, params.surface_stick);
     write_f32_le(&mut bytes, 31, params.iso_level);
+    write_f32_le(&mut bytes, 32, params.surface_bias);
     bytes
 }
 
@@ -21558,6 +21586,8 @@ fn build_smoke_riders_render_uniform_bytes(
     write_f32_le(&mut bytes, 91, params.surface_detail);
     write_f32_le(&mut bytes, 92, params.detail_scale);
     write_f32_le(&mut bytes, 93, time);
+    write_f32_le(&mut bytes, 94, params.submerge_clarity);
+    write_u32_le(&mut bytes, 95, params.rider_hits);
     bytes
 }
 

@@ -102,6 +102,11 @@ import {
 const FLUID_RIDERS_MAX_EMITTERS = 8;
 const FLUID_RIDERS_TILE_SIZE = 16;
 const FLUID_RIDERS_TILE_CAP = 64;
+/** Register-resident cap on the depth-sorted rider hit list the render
+ *  pass keeps per ray. The live count is a uniform (`riderHits`) so the
+ *  quality tier can scale it without recompiling the shader; this is
+ *  only the array size the WGSL has to reserve. */
+const FLUID_RIDERS_MAX_HITS = 4;
 const FLUID_RIDERS_MAX_COUNT = 2048;
 const FLUID_RIDERS_MIN_COUNT = 16;
 /** pos(3)+radius, vel(3)+tau, seed+tint+life+fade = 12 floats = 48 bytes.
@@ -521,6 +526,7 @@ struct RiderU {
   spawnCenter: vec3<f32>, spawnRadius: f32,
   lifeSpan: f32, pressureGain: f32, bass: f32, treble: f32,
   radiusScale: f32, tauRefRadius: f32, surfaceStick: f32, isoLevel: f32,
+  surfaceBias: f32, _rpad0: f32, _rpad1: f32, _rpad2: f32,
 };
 
 @group(0) @binding(0) var<uniform>             ru:      RiderU;
@@ -695,12 +701,40 @@ fn cs_riders(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (abs(ru.vortexPull) > 0.00001) {
     aExt = aExt - pressureGradient(uvw) * (ru.vortexPull * ru.pressureGain);
   }
-  // ── Surface-seeking spring ("Ride Surface"). ∇ρ points toward
-  //    increasing density, so (iso − ρ)·ĝ pulls a rider hovering outside
-  //    the paint onto the iso shell and pushes a buried one back out:
-  //    the population collects ON the surface and bobs with it instead
-  //    of drifting through the body as unrelated debris. ──────────────
+  // ── Density-seeking ("Ride Surface"). ∇ρ points toward increasing
+  //    density, so (seekLevel − ρ)·ĝ pulls a rider sitting in thinner
+  //    paint inward and pushes an over-buried one back out.
+  //
+  //    Two things were wrong here, and together they are the whole
+  //    "orbs pasted in front of the liquid" complaint.
+  //
+  //    1. It was an ACCELERATION. Everything in aExt reaches the rider
+  //       multiplied by τ_eff — about 0.08 s at the shipped Weight — so
+  //       even the clamped maximum moved a rider at ~0.5 units/s while
+  //       the flow term is a full velocity. Measured: Ride Surface 0 and
+  //       Ride Surface 4 render indistinguishably. Nobody was riding the
+  //       surface; the population simply lived in the thin dye halo the
+  //       isosurface does not draw, which is what put every orb outside
+  //       the mass. It is a velocity the rider relaxes toward now, like
+  //       the containment term below — same reasoning, same units, and
+  //       heavy riders still ease in instead of being catapulted.
+  //
+  //    2. The target was the iso level for EVERYONE, so the best case
+  //       this could ever reach was a single shell — whose near half is
+  //       in front of an opaque surface and whose far half is hidden
+  //       behind it. "Surface Bias" gives each rider its own target from
+  //       a seed-hashed band around the iso level, so the population
+  //       spreads through the BODY: some hovering proud of the skin,
+  //       some straddling it, some deep enough to read only as a tinted
+  //       glow through the paint. 0 restores the single-shell target.
+  var seekVel = vec3<f32>(0.0);
   if (ru.surfaceStick > 0.0001) {
+    // [-0.3, 1]: a minority ride just OUTSIDE the skin, the rest fan
+    // inward. Biased outward so the silhouette keeps orbs breaking the
+    // surface rather than everything sinking out of sight.
+    let depthH = riderHash(r.seed * 41.13 + 7.77) * 1.3 - 0.3;
+    // (WGSL reserves the name "target", hence seekLevel.)
+    let seekLevel = ru.isoLevel * (1.0 + clamp(ru.surfaceBias, 0.0, 1.0) * depthH * 2.4);
     let hs = 1.5 / f32(ru.gridX);
     let gx = sampleDensityAt(uvw + vec3<f32>(hs, 0.0, 0.0)) - sampleDensityAt(uvw - vec3<f32>(hs, 0.0, 0.0));
     let gy = sampleDensityAt(uvw + vec3<f32>(0.0, hs, 0.0)) - sampleDensityAt(uvw - vec3<f32>(0.0, hs, 0.0));
@@ -708,12 +742,9 @@ fn cs_riders(@builtin(global_invocation_id) gid: vec3<u32>) {
     let g = vec3<f32>(gx, gy, gz);
     let gm = length(g);
     if (gm > 1e-4) {
-      var seek = (g / gm) * ((ru.isoLevel - density) * ru.surfaceStick * 3.0);
-      let sm = length(seek);
-      // Clamp: a rider deep inside a dense pour would otherwise be
-      // fired out of the volume like a watermelon seed.
-      if (sm > 7.0) { seek = seek * (7.0 / sm); }
-      aExt = aExt + seek;
+      // Clamped in units of the flow it competes with: a rider crosses
+      // the pour in a second or two at full deflection, never faster.
+      seekVel = (g / gm) * clamp((seekLevel - density) * ru.surfaceStick * 2.5, -2.2, 2.2);
     }
   }
 
@@ -732,10 +763,12 @@ fn cs_riders(@builtin(global_invocation_id) gid: vec3<u32>) {
   //    motion — it spirals riders outward and hollows every vortex into
   //    a ring over time. Sampling the fluid at the midpoint of the step
   //    costs one extra trilinear fetch and fixes it. ─────────────────
-  let u0 = sampleVelocityTrilinear(uvw) * extent * ru.flowScale - outward * ru.containStrength;
+  let u0 = sampleVelocityTrilinear(uvw) * extent * ru.flowScale
+    + seekVel - outward * ru.containStrength;
   let half = riderIntegrate(r.pos, r.vel, u0 * velRatio + aExt * tauEff, tauEff, dt * 0.5);
   let uMidRaw = sampleVelocityTrilinear((half.pos + ru.bounds) / extent);
-  let uMid = uMidRaw * extent * ru.flowScale - outward * ru.containStrength;
+  let uMid = uMidRaw * extent * ru.flowScale
+    + seekVel - outward * ru.containStrength;
   let step = riderIntegrate(r.pos, r.vel, uMid * velRatio + aExt * tauEff, tauEff, dt);
 
   var vel = step.vel;
@@ -892,7 +925,7 @@ struct RenderU {
   frameIndex: u32, tonemap: f32, clearCoat: f32, coatRoughness: f32,
   isoLevel: f32, paintThickness: f32, colorFollow: f32, edgeSoftness: f32,
   riderOpacity: f32, reflectStrength: f32, liquidGlass: f32, surfaceDetail: f32,
-  detailScale: f32, timeSec: f32, _pad4: f32, _pad5: f32,
+  detailScale: f32, timeSec: f32, submergeClarity: f32, riderHits: u32,
 };
 
 @group(0) @binding(0) var<uniform>       u:        RenderU;
@@ -1118,6 +1151,180 @@ fn srTonemap(x: vec3<f32>) -> vec3<f32> {
   return srAgx(x);
 }
 
+// ── Per-orb dielectric shading. ────────────────────────────────────
+// Split into diffuse and specular because a glass sphere's REFLECTIONS
+// do not fade with its transparency — only its body does. The composite
+// emits (diffuse * alpha + spec), so the studio highlight and the env
+// mirror keep full strength at any opacity. Scaling one premultiplied
+// colour by alpha instead is exactly what made the old Orb Opacity read
+// as a global dimmer.
+struct RiderShade {
+  diffuse: vec3<f32>,
+  spec:    vec3<f32>,
+  alpha:   f32,
+};
+
+fn srShadeRider(
+  ri: u32,
+  t: f32,
+  ro: vec3<f32>,
+  rd: vec3<f32>,
+  bmin: vec3<f32>,
+  bmax: vec3<f32>,
+) -> RiderShade {
+  let rider = riders[ri];
+  let radius = max(rider.radius * u.radiusScale * rider.fade, 1e-5);
+  // Re-derive the chord instead of carrying it in a second per-hit
+  // array: ten ALU beats eight live registers held across the whole
+  // fragment shader, and occupancy is what this pass is short of.
+  let ocR = ro - rider.pos;
+  let bqR = dot(ocR, rd);
+  let discR = max(bqR * bqR - (dot(ocR, ocR) - radius * radius), 0.0);
+  let sqR = sqrt(discR);
+  let chord = max((-bqR + sqR) - max(-bqR - sqR, 0.0), 0.0);
+  let extent = bmax - bmin;
+  let hitPos = ro + rd * t;
+  let n = normalize(hitPos - rider.pos);
+  let v = -rd;
+  let nDotV = max(dot(n, v), 1e-4);
+  let rough = clamp(u.roughness, 0.03, 1.0);
+  let a = rough * rough;
+  let paletteAlbedo = srPalette(rider.tint + rider.seed * 0.13);
+  let fluidHere = srSampleDensity((rider.pos - bmin) / extent);
+  // Only follow where there is actually fluid, so riders out in clear air
+  // keep their palette colour instead of fading to black.
+  let followAmt = clamp(u.colorFollow * 0.1, 0.0, 1.0) * smoothstep(0.0, u.isoLevel, fluidHere.w);
+  let albedo = mix(paletteAlbedo, fluidHere.xyz * u.smokeTint, followAmt);
+  let f0 = mix(vec3<f32>(0.04), albedo, clamp(u.metalness, 0.0, 1.0));
+  let diffuseAlbedo = albedo * (1.0 - clamp(u.metalness, 0.0, 1.0));
+
+  // ── Coverage as a dielectric shell rather than a flat opacity. ────
+  // Fresnel first: at grazing incidence a glass sphere is a MIRROR and
+  // fully covers, face-on it is a window. That single term is most of
+  // the bubble read — a bright rim with a see-through middle.
+  // Then Beer-Lambert over the chord the ray actually cut, so the same
+  // orb is denser through its middle than near its edge, and a fat orb
+  // is denser than a droplet at matching angles.
+  let op = clamp(u.riderOpacity, 0.0, 1.0);
+  let fShell = srFSchlick(0.04, nDotV);
+  // Orb Opacity is the body's ABSORPTION COEFFICIENT, not a lerp on the
+  // final alpha. Lerping alpha toward 1 leaves a 0.35 orb still ~0.7
+  // covered — which is why the slider only ever read as a dimmer. As a
+  // coefficient it runs 0 → infinity across the slider, so the bottom
+  // half is genuinely thin glass and the top is solid.
+  let bodyK = (op / max(1.0 - op, 1e-3)) * 1.1;
+  // chord/(2r) is 0..1 pure geometry; radius/radiusScale is the rider's
+  // OWN size in units of the population's reference, so the density
+  // ranking survives the global Rider Size knob.
+  let sizeRatio = radius / max(u.radiusScale, 1e-5);
+  let optical = (chord / max(2.0 * radius, 1e-5)) * sizeRatio * bodyK;
+  let bodyCover = 1.0 - exp(-max(optical, 0.0));
+  let shellA = fShell + (1.0 - fShell) * bodyCover;
+  // Pinned at exactly 1 at the top of the slider so existing projects
+  // render identically to before.
+  let alpha = select(clamp(shellA, 0.0, 1.0), 1.0, op >= 0.999);
+
+  // Volume shadow: march the density grid from the surface toward the
+  // key light. Without this the riders float ON the smoke; with it
+  // they sit IN it.
+  let volShadow = srShadowMarch(hitPos + n * 0.01, u.keyDir, bmin, bmax, 3.0);
+
+  // Fluid AO: how much smoke is packed around the contact point.
+  let aoUvw = (hitPos - bmin) / extent;
+  let aoDen = (srSampleDensity(aoUvw).w
+    + srSampleDensity(aoUvw + n * 0.035).w
+    + srSampleDensity(aoUvw - n * 0.035).w) * 0.3333;
+  let ao = clamp(1.0 / (1.0 + max(u.aoStrength, 0.0) * aoDen * 0.35), 0.25, 1.0);
+
+  // ── An orb BURIED in the paint is not in shadow. It is suspended in a
+  //    lit scattering medium with glowing pigment on every side, so the
+  //    key light's hard volume shadow and the contact AO — both correct
+  //    for an orb sitting ON the surface — punch it out as a black hole
+  //    in the pour instead. Fade both toward an isotropic in-scatter as
+  //    the local density rises past the iso level, and light the orb
+  //    with the surrounding paint's own colour.
+  //    Tuned by eye against the probe: lift it all the way and a buried
+  //    orb takes the paint's own colour and disappears; leave it out and
+  //    it is a black hole. It wants to stay READABLE — a shade deeper
+  //    and more saturated than the pour it is suspended in.
+  let embed = smoothstep(0.0, max(u.isoLevel, 1e-3) * 1.2, aoDen);
+  let shadeIn = mix(volShadow, 1.0, embed * 0.55);
+  let aoIn = mix(ao, 1.0, embed * 0.45);
+  let mediumLit = fluidHere.xyz * u.smokeTint * u.keyColor
+    * (max(u.keyStrength, 0.0) * 0.08 * embed);
+
+  // Glossy paint is not one lobe. It is a pigmented base plus a thin
+  // clear dielectric coat over the top, and the coat is what produces
+  // the tight white highlight that reads as "wet" — a single GGX lobe
+  // widened to match only ever reads as "shiny plastic".
+  let coat = clamp(u.clearCoat, 0.0, 1.0);
+  let coatRough = clamp(u.coatRoughness, 0.03, 1.0);
+  let coatA = coatRough * coatRough;
+
+  var litD = vec3<f32>(0.0);
+  var litS = vec3<f32>(0.0);
+  // Key (warm, shadowed by the volume).
+  {
+    let l = u.keyDir;
+    let h = normalize(l + v);
+    let nDotL = max(dot(n, l), 1e-4);
+    let nDotH = max(dot(n, h), 0.0);
+    let lDotH = max(dot(l, h), 0.0);
+    let spec = srDGgx(nDotH, a) * srVSmith(nDotV, nDotL, a);
+    let fr = srFresnel(f0, lDotH);
+    // Coat f0 = 0.04 (IOR 1.5). Whatever the coat reflects never
+    // reaches the base, so the base lobe is attenuated by (1 - Fc).
+    let fc = srFSchlick(0.04, lDotH) * coat;
+    let specCoat = srDGgx(nDotH, coatA) * srVKelemen(lDotH) * fc;
+    let radiance = u.keyColor * (u.keyStrength * nDotL * shadeIn);
+    litD = litD + radiance * (diffuseAlbedo / SR_PI) * (1.0 - fc);
+    litS = litS + radiance * (fr * spec * (1.0 - fc) + vec3<f32>(specCoat));
+  }
+  // Fill (cool, unshadowed — bounce light does not cast).
+  {
+    let l = u.fillDir;
+    let h = normalize(l + v);
+    let nDotL = max(dot(n, l), 1e-4);
+    let nDotH = max(dot(n, h), 0.0);
+    let lDotH = max(dot(l, h), 0.0);
+    let spec = srDGgx(nDotH, a) * srVSmith(nDotV, nDotL, a);
+    let fr = srFresnel(f0, lDotH);
+    let fc = srFSchlick(0.04, lDotH) * coat;
+    let specCoat = srDGgx(nDotH, coatA) * srVKelemen(lDotH) * fc;
+    let radiance = u.fillColor * (u.fillStrength * nDotL);
+    litD = litD + radiance * (diffuseAlbedo / SR_PI) * (1.0 - fc);
+    litS = litS + radiance * (fr * spec * (1.0 - fc) + vec3<f32>(specCoat));
+  }
+  // Back rim — the separation edge that pops them off the smoke.
+  {
+    let l = u.rimDir;
+    let nDotL = max(dot(n, l), 0.0);
+    let edge = pow(1.0 - nDotV, 2.5);
+    litS = litS + u.rimColor * (u.rimStrength * nDotL * edge);
+  }
+  // Environment reflection — base lobe plus the coat's own mirror
+  // term, which is what puts the studio in the highlight. Scaled by
+  // the Reflections knob, and topped up with a Fresnel-only mirror as
+  // coverage drops so a see-through orb reads as GLASS, not as a ghost.
+  {
+    let refl = reflect(rd, n);
+    let env = srEnv(refl);
+    let fr = srFresnel(f0, nDotV);
+    let fc = srFSchlick(0.04, nDotV) * coat;
+    let reflGain = max(u.reflectStrength, 0.0);
+    litS = litS + env * fr * (0.55 * (1.0 - rough * 0.65)) * (1.0 - fc) * reflGain;
+    litS = litS + env * (fc * (1.0 - coatRough * 0.6)) * reflGain;
+    litS = litS + env * fr * ((1.0 - alpha) * 0.9 * reflGain);
+  }
+  litD = litD + diffuseAlbedo * (vec3<f32>(u.ambient) + mediumLit);
+
+  var out: RiderShade;
+  out.diffuse = litD * aoIn;
+  out.spec = litS * aoIn;
+  out.alpha = alpha;
+  return out;
+}
+
 struct VSOut {
   @builtin(position) pos: vec4<f32>,
   @location(0) ndc: vec2<f32>,
@@ -1145,19 +1352,21 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   let farW  = u.invViewProj * vec4<f32>(ndc, 1.0, 1.0);
   let ro = nearW.xyz / nearW.w;
   let rd = normalize(farW.xyz / farW.w - ro);
-  let viewDir = -rd;
 
   let bmin = -u.volumeScale;
   let bmax =  u.volumeScale;
   let extent = bmax - bmin;
 
-  // ── 2. Analytic sphere pass over this pixel's tile bucket. ─────
-  var tHit = 1.0e30;
-  var hitNormal = vec3<f32>(0.0, 1.0, 0.0);
-  var hitTint = 0.0;
-  var hitCenter = vec3<f32>(0.0);
-  var hitSeed = 0.0;
-  var hasHit = false;
+  // ── 2. Analytic sphere pass over this pixel's tile bucket. The K
+  //     NEAREST hits are kept, insertion-sorted by entry t, instead of
+  //     only the nearest — that is what lets a glass orb show the orbs
+  //     behind it. K = 1 collapses to the old nearest-hit path, and at
+  //     Orb Opacity 1 the composite saturates on the first hit anyway,
+  //     so the extra hits cost nothing until glass is dialled in.
+  var hitT = array<f32, ${FLUID_RIDERS_MAX_HITS}>(1.0e30, 1.0e30, 1.0e30, 1.0e30);
+  var hitRi = array<u32, ${FLUID_RIDERS_MAX_HITS}>(0u, 0u, 0u, 0u);
+  var hitCount: u32 = 0u;
+  let maxHits = clamp(u.riderHits, 1u, ${FLUID_RIDERS_MAX_HITS}u);
   let tu = clamp(u32((ndc.x * 0.5 + 0.5) * f32(u.tileCountX)), 0u, max(u.tileCountX, 1u) - 1u);
   let tv = clamp(u32((0.5 - ndc.y * 0.5) * f32(u.tileCountY)), 0u, max(u.tileCountY, 1u) - 1u);
   let tile = tv * u.tileCountX + tu;
@@ -1177,16 +1386,29 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     let disc = bq * bq - cq;
     if (disc < 0.0) { continue; }
     let sq = sqrt(disc);
-    var t = -bq - sq;
-    if (t < 0.001) { t = -bq + sq; }
-    if (t < 0.001 || t >= tHit) { continue; }
-    tHit = t;
-    hitNormal = normalize(ro + rd * t - rider.pos);
-    hitTint = rider.tint;
-    hitSeed = rider.seed;
-    hitCenter = rider.pos;
-    hasHit = true;
+    let tNear = -bq - sq;
+    let tFar = -bq + sq;
+    var t = tNear;
+    if (t < 0.001) { t = tFar; }
+    if (t < 0.001) { continue; }
+    // Full list and this hit is behind the worst kept one: reject.
+    if (hitCount >= maxHits && t >= hitT[maxHits - 1u]) { continue; }
+    // Insertion sort by t. The list is at most 8 long, so shifting is
+    // cheaper than any sort worth the name.
+    var slot = min(hitCount, maxHits - 1u);
+    loop {
+      if (slot == 0u) { break; }
+      if (hitT[slot - 1u] <= t) { break; }
+      hitT[slot] = hitT[slot - 1u];
+      hitRi[slot] = hitRi[slot - 1u];
+      slot = slot - 1u;
+    }
+    hitT[slot] = t;
+    hitRi[slot] = ri;
+    hitCount = min(hitCount + 1u, maxHits);
   }
+  let hasHit = hitCount > 0u;
+  let tHit = hitT[0];
 
   // ── 3. Iso-surface hunt. An OPAQUE rider clips the march (liquid
   //     behind it is never marched); a transparent rider must NOT stop
@@ -1198,8 +1420,9 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   var surfRGB = vec3<f32>(0.0);
   var surfA = 0.0;
   var surfTint = vec3<f32>(1.0);
-  let riderA = select(0.0, clamp(u.riderOpacity, 0.0, 1.0), hasHit);
-  let riderOpaque = riderA >= 0.999;
+  // Per-unit-depth extinction for looking INTO the paint (section 5).
+  var surfSubK = vec3<f32>(1.0e30);
+  let riderOpaque = clamp(u.riderOpacity, 0.0, 1.0) >= 0.999;
   let slab = srIntersectBox(ro, rd, bmin, bmax);
   if (slab.y >= slab.x && slab.y > 0.0) {
     let tStart = max(slab.x, 0.0);
@@ -1316,6 +1539,15 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
           let fGlass = srFSchlick(0.04, nv);
           alpha = alpha * mix(1.0, fGlass + (1.0 - fGlass) * 0.25, glass);
           surfTint = mix(vec3<f32>(1.0), absorb, glass);
+          // Extinction for radiance travelling back up through the paint
+          // from something SUBMERGED in it. The colour-selective part is
+          // the body tint (an orange pour passes red and eats blue, so a
+          // buried orb glows red before it disappears); the grey floor is
+          // plain turbidity, which is what makes depth read as depth
+          // rather than as a hue shift.
+          let tintC = clamp(tint, vec3<f32>(0.0), vec3<f32>(0.95));
+          surfSubK = (vec3<f32>(0.55) + (vec3<f32>(1.0) - tintC))
+            * ((u.density * max(u.paintThickness, 0.0) + 0.4) * 1.5);
           surfRGB = col * u.emission;
           surfA = clamp(alpha, 0.0, 1.0);
           surfT = ht;
@@ -1328,98 +1560,61 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     }
   }
 
-  // ── 4. Rider shading — GGX + three-point studio rig + env. ─────
-  var baseColor = vec3<f32>(0.0);
-  if (hasHit) {
-    let hitPos = ro + rd * tHit;
-    let n = hitNormal;
-    let v = viewDir;
-    let nDotV = max(dot(n, v), 1e-4);
-    let rough = clamp(u.roughness, 0.03, 1.0);
-    let a = rough * rough;
-    let paletteAlbedo = srPalette(hitTint + hitSeed * 0.13);
-    let fluidHere = srSampleDensity((hitCenter - bmin) / extent);
-    // Only follow where there is actually fluid, so riders out in clear air
-    // keep their palette colour instead of fading to black.
-    let followAmt = clamp(u.colorFollow * 0.1, 0.0, 1.0) * smoothstep(0.0, u.isoLevel, fluidHere.w);
-    let albedo = mix(paletteAlbedo, fluidHere.xyz * u.smokeTint, followAmt);
-    let f0 = mix(vec3<f32>(0.04), albedo, clamp(u.metalness, 0.0, 1.0));
-    let diffuseAlbedo = albedo * (1.0 - clamp(u.metalness, 0.0, 1.0));
-
-    // Volume shadow: march the density grid from the surface toward the
-    // key light. Without this the riders float ON the smoke; with it
-    // they sit IN it.
-    let volShadow = srShadowMarch(hitPos + n * 0.01, u.keyDir, bmin, bmax, 3.0);
-
-    // Fluid AO: how much smoke is packed around the contact point.
-    let aoUvw = (hitPos - bmin) / extent;
-    let aoDen = (srSampleDensity(aoUvw).w
-      + srSampleDensity(aoUvw + n * 0.035).w
-      + srSampleDensity(aoUvw - n * 0.035).w) * 0.3333;
-    let ao = clamp(1.0 / (1.0 + max(u.aoStrength, 0.0) * aoDen * 0.35), 0.25, 1.0);
-
-    // Glossy paint is not one lobe. It is a pigmented base plus a thin
-    // clear dielectric coat over the top, and the coat is what produces
-    // the tight white highlight that reads as "wet" — a single GGX lobe
-    // widened to match only ever reads as "shiny plastic".
-    let coat = clamp(u.clearCoat, 0.0, 1.0);
-    let coatRough = clamp(u.coatRoughness, 0.03, 1.0);
-    let coatA = coatRough * coatRough;
-
-    var lit = vec3<f32>(0.0);
-    // Key (warm, shadowed by the volume).
-    {
-      let l = u.keyDir;
-      let h = normalize(l + v);
-      let nDotL = max(dot(n, l), 1e-4);
-      let nDotH = max(dot(n, h), 0.0);
-      let lDotH = max(dot(l, h), 0.0);
-      let spec = srDGgx(nDotH, a) * srVSmith(nDotV, nDotL, a);
-      let fr = srFresnel(f0, lDotH);
-      // Coat f0 = 0.04 (IOR 1.5). Whatever the coat reflects never
-      // reaches the base, so the base lobe is attenuated by (1 - Fc).
-      let fc = srFSchlick(0.04, lDotH) * coat;
-      let specCoat = srDGgx(nDotH, coatA) * srVKelemen(lDotH) * fc;
-      let radiance = u.keyColor * (u.keyStrength * nDotL * volShadow);
-      lit = lit + radiance * ((diffuseAlbedo / SR_PI + fr * spec) * (1.0 - fc) + specCoat);
+  // ── 4. Shade the depth-sorted orbs, front-to-back, split by whether
+  //     each one sits in front of the liquid surface or under it.
+  //     Everything submerged is attenuated by the paint standing over
+  //     IT specifically — which is what produces a waterline for free
+  //     on an orb straddling the skin: pixels just below the crossing
+  //     have a near-zero path through the paint and darken smoothly as
+  //     the orb sinks away from the camera.
+  var frontRGB = vec3<f32>(0.0);
+  var frontA = 0.0;
+  var backRGB = vec3<f32>(0.0);
+  var backA = 0.0;
+  // Depth-weighted coverage of the submerged stack: how much of the
+  // paint's own glow each buried orb blocks. Without it a submerged orb
+  // can only ADD light and reads as a highlight on the pour rather than
+  // as a solid object suspended inside it.
+  var backOcc = 0.0;
+  let clarity = clamp(u.submergeClarity, 0.0, 1.0);
+  let surfLeak = 1.0 - surfA;
+  var k: u32 = 0u;
+  loop {
+    if (k >= hitCount) { break; }
+    // Saturated: no light from further back can reach the camera, so
+    // stop paying for per-orb PBR. At Orb Opacity 1 this fires on the
+    // very first hit and the cost is identical to the old single-hit
+    // path.
+    if (frontA > 0.995) { break; }
+    let ht = hitT[k];
+    let submerged = surfHit && ht > surfT;
+    if (submerged && backA > 0.995) { break; }
+    let sh = srShadeRider(hitRi[k], ht, ro, rd, bmin, bmax);
+    // Premultiplied contribution: the body scales with coverage, the
+    // reflections do not.
+    let pre = sh.diffuse * sh.alpha + sh.spec;
+    if (submerged) {
+      // Liquid throughput to THIS orb: the surface's own coverage gap
+      // (unchanged from before) plus a look-into-the-paint term that
+      // dies exponentially with how deep the orb sits. At Submerge
+      // Clarity 0 the second term vanishes and the result is exactly
+      // the old behaviour.
+      let du = max(ht - surfT, 0.0);
+      let deep = exp(-min(du * surfSubK, vec3<f32>(60.0)));
+      let through = surfTint * (vec3<f32>(surfLeak) + deep * (surfA * clarity));
+      let oneMinus = 1.0 - backA;
+      backRGB = backRGB + pre * (oneMinus * through);
+      backA = backA + sh.alpha * oneMinus;
+      // Occlusion rides the clarity term only, so Submerge Clarity 0
+      // leaves the old fully-opaque-liquid composite untouched.
+      let deepS = (deep.r + deep.g + deep.b) * 0.33333;
+      backOcc = backOcc + sh.alpha * oneMinus * (surfA * clarity * deepS);
+    } else {
+      let oneMinus = 1.0 - frontA;
+      frontRGB = frontRGB + pre * oneMinus;
+      frontA = frontA + sh.alpha * oneMinus;
     }
-    // Fill (cool, unshadowed — bounce light does not cast).
-    {
-      let l = u.fillDir;
-      let h = normalize(l + v);
-      let nDotL = max(dot(n, l), 1e-4);
-      let nDotH = max(dot(n, h), 0.0);
-      let lDotH = max(dot(l, h), 0.0);
-      let spec = srDGgx(nDotH, a) * srVSmith(nDotV, nDotL, a);
-      let fr = srFresnel(f0, lDotH);
-      let fc = srFSchlick(0.04, lDotH) * coat;
-      let specCoat = srDGgx(nDotH, coatA) * srVKelemen(lDotH) * fc;
-      let radiance = u.fillColor * (u.fillStrength * nDotL);
-      lit = lit + radiance * ((diffuseAlbedo / SR_PI + fr * spec) * (1.0 - fc) + specCoat);
-    }
-    // Back rim — the separation edge that pops them off the smoke.
-    {
-      let l = u.rimDir;
-      let nDotL = max(dot(n, l), 0.0);
-      let edge = pow(1.0 - nDotV, 2.5);
-      lit = lit + u.rimColor * (u.rimStrength * nDotL * edge);
-    }
-    // Environment reflection — base lobe plus the coat's own mirror
-    // term, which is what puts the studio in the highlight. Scaled by
-    // the Reflections knob, and topped up with a Fresnel-only mirror as
-    // opacity drops so a see-through orb reads as GLASS, not as a ghost.
-    {
-      let refl = reflect(rd, n);
-      let env = srEnv(refl);
-      let fr = srFresnel(f0, nDotV);
-      let fc = srFSchlick(0.04, nDotV) * coat;
-      let reflGain = max(u.reflectStrength, 0.0);
-      lit = lit + env * fr * (0.55 * (1.0 - rough * 0.65)) * (1.0 - fc) * reflGain;
-      lit = lit + env * (fc * (1.0 - coatRough * 0.6)) * reflGain;
-      lit = lit + env * fr * ((1.0 - riderA) * 0.9 * reflGain);
-    }
-    lit = lit + diffuseAlbedo * u.ambient;
-    baseColor = lit * ao;
+    k = k + 1u;
   }
 
   // Background: transparent, flat tint, or a vertical studio backdrop.
@@ -1432,28 +1627,19 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   }
   let bgA = select(0.0, clamp(u.bgOpacity, 0.0, 1.0), u.bgMode > 0.5);
 
-  // ── 5. Depth-ordered composite (premultiplied): whichever of the
-  //      liquid surface / rider is nearer goes on top, the other shows
-  //      through partial coverage, and everything transmitted through
-  //      the surface is tinted by its Beer-Lambert absorb.
-  let riderPre = baseColor * riderA;
-  let surfPre = surfRGB * surfA;
+  // ── 5. Composite (premultiplied): front orbs OVER [liquid surface +
+  //      whatever is submerged in it] OVER backdrop. The submerged
+  //      stack already carries the liquid's throughput per orb, so it
+  //      is ADDED to the surface rather than gated by it again — it is
+  //      radiance emerging from inside the medium, which is exactly
+  //      what a sphere buried in paint is.
   let bgPre = bgRGB * bgA;
-  var outRGB = vec3<f32>(0.0);
-  var outA = 0.0;
-  if (surfHit && (!hasHit || surfT <= tHit)) {
-    // Liquid in front of the orb.
-    let midRGB = riderPre + bgPre * (1.0 - riderA);
-    let midA = riderA + bgA * (1.0 - riderA);
-    outRGB = surfPre + midRGB * (1.0 - surfA) * surfTint;
-    outA = surfA + midA * (1.0 - surfA);
-  } else {
-    // Orb in front (or no liquid surface on this ray).
-    let midRGB = surfPre + bgPre * (1.0 - surfA) * surfTint;
-    let midA = surfA + bgA * (1.0 - surfA);
-    outRGB = riderPre + midRGB * (1.0 - riderA);
-    outA = riderA + midA * (1.0 - riderA);
-  }
+  let deepRGB = backRGB + bgPre * ((1.0 - backA) * surfLeak) * surfTint;
+  let deepA = backA + bgA * (1.0 - backA) * surfLeak;
+  let liqRGB = surfRGB * (surfA * (1.0 - clamp(backOcc, 0.0, 1.0))) + deepRGB;
+  let liqA = clamp(surfA + deepA * surfLeak, 0.0, 1.0);
+  let outRGB = frontRGB + liqRGB * (1.0 - frontA);
+  let outA = clamp(frontA + liqA * (1.0 - frontA), 0.0, 1.0);
 
   // ── 6. Tonemap + vignette. Tonemap the UNPREMULTIPLIED colour so a
   //      partially covered pixel keeps a sane hue, then restore the
@@ -1693,6 +1879,15 @@ export const fluidRidersParamSchema: ParamControl[] = [
   // them read as riding the content instead of floating near it.
   { kind: 'slider', key: 'surfaceStick', label: 'Ride Surface', group: 'Riders',
     min: 0, max: 4, step: 0.01, default: 1.6 },
+  // How far the population spreads THROUGH the body instead of collecting
+  // on the one iso shell. 0 is the old everyone-on-the-surface behaviour,
+  // which reads as a shell of orbs pasted in front of the liquid because
+  // the far half of that shell is hidden behind an opaque surface. Higher
+  // values give each rider its own target depth, so some hover proud of
+  // the skin, some straddle it and some sink far enough to show only as a
+  // tinted glow through the paint.
+  { kind: 'slider', key: 'surfaceBias', label: 'Surface Bias', group: 'Riders',
+    min: 0, max: 1, step: 0.01, default: 0.62 },
   { kind: 'slider', key: 'riderDamping', label: 'Damping', group: 'Riders',
     min: 0, max: 4, step: 0.01, default: 0.45 },
   { kind: 'slider', key: 'riderLife', label: 'Recycle Time', group: 'Riders',
@@ -1715,6 +1910,13 @@ export const fluidRidersParamSchema: ParamControl[] = [
   // glass: facing regions let the backdrop through, tinted by the body.
   { kind: 'slider', key: 'liquidGlass', label: 'Glass', group: 'Material',
     min: 0, max: 1, step: 0.01, default: 0 },
+  // How far you can see INTO the paint. Radiance from a submerged orb
+  // climbs back out through a Beer-Lambert path whose length is the orb's
+  // own depth under the surface, so shallow orbs read clearly, deeper
+  // ones go tinted and dim, and the backdrop behind the whole pour stays
+  // hidden exactly as before. 0 restores the fully opaque liquid.
+  { kind: 'slider', key: 'submergeClarity', label: 'Submerge Clarity', group: 'Material',
+    min: 0, max: 1, step: 0.01, default: 0.85 },
   // Micro normal perturbation: 0 = poured glass, 1 = rough cast concrete.
   { kind: 'slider', key: 'surfaceDetail', label: 'Surface Texture', group: 'Material',
     min: 0, max: 1, step: 0.01, default: 0.12 },
@@ -1936,6 +2138,7 @@ export interface FluidRidersResolvedParams {
   vortexPull: number;
   /** Surface-seeking spring toward the iso shell. */
   surfaceStick: number;
+  surfaceBias: number;
   riderDamping: number;
   riderLife: number;
   containStrength: number;
@@ -1947,6 +2150,9 @@ export interface FluidRidersResolvedParams {
   riderOpacity: number;
   reflectStrength: number;
   liquidGlass: number;
+  submergeClarity: number;
+  /** Depth-sorted rider hits the render pass keeps per ray (quality-scaled). */
+  riderHits: number;
   surfaceDetail: number;
   detailScale: number;
   contactAO: number;
@@ -2041,6 +2247,11 @@ export function resolveFluidRidersParams(
   // quality a tenth of the steps used to cost, so the base step count
   // dropped from 80 to 72 without a visible change.
   const qualityMarchScale = quality === 'ultra' ? 1.4 : quality === 'performance' ? 0.5 : 1;
+  // K nearest orb hits per ray. The gather itself is nearly free (the
+  // ray-sphere test already runs for every binned rider); the cost is K
+  // PBR evaluations, and the composite early-outs the moment alpha
+  // saturates — so this only bites when Orb Opacity is below 1.
+  const qualityRiderHits = quality === 'ultra' ? 4 : quality === 'performance' ? 2 : 3;
   // MacCormack doubles the advection cost. Performance keeps the plain
   // semi-Lagrangian chain; the other tiers honour the operator's choice.
   const macCormack = quality === 'performance'
@@ -2104,6 +2315,7 @@ export function resolveFluidRidersParams(
     gravity: num(p.gravity, 1, 0, 4) * tuning.gravityScale,
     vortexPull: num(p.vortexPull, 0, -1, 1),
     surfaceStick: num(p.surfaceStick, 1.6, 0, 4),
+    surfaceBias: num(p.surfaceBias, 0.62, 0, 1),
     riderDamping: num(p.riderDamping, 0.45, 0, 4),
     riderLife: num(p.riderLife, 6, 1, 60),
     // Velocity gain, not a spring constant: the containment is folded
@@ -2118,6 +2330,8 @@ export function resolveFluidRidersParams(
     riderOpacity: num(p.riderOpacity, 1, 0.15, 1),
     reflectStrength: num(p.reflectStrength, 1, 0, 3),
     liquidGlass: num(p.liquidGlass, 0, 0, 1),
+    submergeClarity: num(p.submergeClarity, 0.85, 0, 1),
+    riderHits: qualityRiderHits,
     surfaceDetail: num(p.surfaceDetail, 0.12, 0, 1),
     detailScale: num(p.detailScale, 8, 1, 24),
     contactAO: num(p.contactAO, 1.1, 0, 4),
@@ -2522,7 +2736,7 @@ function buildRiderUniform(
   time: number,
   riderCount: number,
 ): string {
-  const buffer = new ArrayBuffer(128);
+  const buffer = new ArrayBuffer(144);
   const view = new DataView(buffer);
   writeU32(view, 0, params.gridSize);
   writeU32(view, 1, params.gridSize);
@@ -2560,6 +2774,7 @@ function buildRiderUniform(
   writeF32(view, 29, FLUID_RIDERS_TAU_REF_RADIUS);
   writeF32(view, 30, params.surfaceStick);
   writeF32(view, 31, params.isoLevel);
+  writeF32(view, 32, params.surfaceBias);
   return bufferToBase64(buffer);
 }
 
@@ -2686,6 +2901,8 @@ function buildRenderUniform(
   writeF32(view, 91, params.surfaceDetail);
   writeF32(view, 92, params.detailScale);
   writeF32(view, 93, time);
+  writeF32(view, 94, params.submergeClarity);
+  writeU32(view, 95, params.riderHits);
   // `state` participates only through the rotation baked into invViewProj.
   void state;
   return bufferToBase64(buffer);
@@ -2791,7 +3008,7 @@ export function buildFluidRidersNativeComputeGraph(
     { id: uid('sim-uniform'), kind: 'uniform', byte_length: 96, initial_b64: buildSimUniform(params, dt, time, fire, burstMul) },
     { id: uid('vort-uniform'), kind: 'uniform', byte_length: 32, initial_b64: buildVorticityUniform(params, dt) },
     { id: uid('surface-uniform'), kind: 'uniform', byte_length: 32, initial_b64: buildSurfaceUniform(params, dt) },
-    { id: uid('rider-uniform'), kind: 'uniform', byte_length: 128, initial_b64: buildRiderUniform(params, dt, time, riderCount) },
+    { id: uid('rider-uniform'), kind: 'uniform', byte_length: 144, initial_b64: buildRiderUniform(params, dt, time, riderCount) },
     { id: uid('bin-uniform'), kind: 'uniform', byte_length: 96, initial_b64: buildBinUniform(params, viewProj, tileCountX, tileCountY, riderCount, aspect) },
     { id: uid('render-uniform'), kind: 'uniform', byte_length: 384, initial_b64: buildRenderUniform(params, state, invViewProj, model, tileCountX, tileCountY, riderCount, frameIndex, time) },
     { id: uid('emitters'), kind: 'storage', byte_length: FLUID_RIDERS_MAX_EMITTERS * 48, initial_b64: buildEmittersBuffer(params) },
