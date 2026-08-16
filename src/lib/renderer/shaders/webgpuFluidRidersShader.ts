@@ -100,6 +100,15 @@ import {
 /* ============================================================== */
 
 const FLUID_RIDERS_MAX_EMITTERS = 8;
+// Ceiling on how much emission one frame may deposit, in whole splats.
+// Emission is continuous (`dt * splatRate` of a splat per frame — see
+// CONTINUOUS EMISSION in the graph builder), so this is not a rate knob:
+// it is a blast shield for a pathological frame. dt is already clamped to
+// 1/15 s, and the worst legitimate quota (flowSpeed 2, bass 1, 60 fps) is
+// 2.13, so at the shipped defaults it sits 17x above the per-frame quota
+// and never engages.
+const SPLAT_QUOTA_CAP = 4;
+
 const FLUID_RIDERS_TILE_SIZE = 16;
 const FLUID_RIDERS_TILE_CAP = 64;
 /** Register-resident cap on the depth-sorted rider hit list the render
@@ -2540,7 +2549,6 @@ export interface FluidRidersNativeGraphState {
   velFlip: boolean;
   denFlip: boolean;
   prsFlip: boolean;
-  splatTimer: number;
   prevBass: number;
   burstHoldTimer: number;
   autoRotXPhase: number;
@@ -2653,8 +2661,12 @@ function buildSimUniform(
   params: FluidRidersResolvedParams,
   dt: number,
   time: number,
-  fire: boolean,
-  burstMul: number,
+  // Fraction of one full splat this frame carries (see CONTINUOUS
+  // EMISSION above), already multiplied by the audio burst gain. The
+  // splat WGSL multiplies emitter strength by this slot, so a value of
+  // 0.234 deposits 23.4% of a splat — which is what a 5.3 ms step at 44
+  // splats/s is worth.
+  emitMul: number,
 ): string {
   const buffer = new ArrayBuffer(96);
   const view = new DataView(buffer);
@@ -2664,7 +2676,7 @@ function buildSimUniform(
   writeU32(view, 3, params.emitterCount);
   writeF32(view, 4, dt);
   writeF32(view, 5, time);
-  writeF32(view, 6, fire ? burstMul : 0);
+  writeF32(view, 6, emitMul);
   writeF32(view, 8, params.densityDecay);
   writeF32(view, 9, params.velocityDecay);
   writeF32(view, 10, params.splatRadius);
@@ -2676,7 +2688,13 @@ function buildSimUniform(
   return bufferToBase64(buffer);
 }
 
-function buildEmittersBuffer(params: FluidRidersResolvedParams): string {
+// `velScale` is the same per-frame emission fraction the density term
+// gets. The shared splat WGSL adds emitter velocity WITHOUT the strength
+// multiplier, so rate-normalising the injected momentum has to happen
+// here: without it, running the pass every frame instead of every fifth
+// would quintuple the jet and the plume would change shape, not just
+// stop flickering.
+function buildEmittersBuffer(params: FluidRidersResolvedParams, velScale: number): string {
   const buffer = new ArrayBuffer(FLUID_RIDERS_MAX_EMITTERS * 48);
   const values = new Float32Array(buffer);
   const emCount = clamp(params.emitterCount | 0, 1, FLUID_RIDERS_MAX_EMITTERS);
@@ -2695,9 +2713,10 @@ function buildEmittersBuffer(params: FluidRidersResolvedParams): string {
     values[off + 5] = color[1];
     values[off + 6] = color[2];
     values[off + 7] = params.splatStrength;
-    values[off + 8] = Math.cos(angle) * params.splatVelocityMag * 0.18;
-    values[off + 9] = params.splatVelocityMag;
-    values[off + 10] = Math.sin(angle) * params.splatVelocityMag * 0.18;
+    const vm = params.splatVelocityMag * velScale;
+    values[off + 8] = Math.cos(angle) * vm * 0.18;
+    values[off + 9] = vm;
+    values[off + 10] = Math.sin(angle) * vm * 0.18;
   }
   return bufferToBase64(buffer);
 }
@@ -2921,7 +2940,6 @@ function initialState(grid: number, riderCount: number, tileCountX: number, tile
     velFlip: false,
     denFlip: false,
     prsFlip: false,
-    splatTimer: 0,
     prevBass: 0,
     burstHoldTimer: 0,
     autoRotXPhase: 0,
@@ -2974,11 +2992,37 @@ export function buildFluidRidersNativeComputeGraph(
   state.burstHoldTimer = Math.max(0, state.burstHoldTimer - dt);
   state.prevBass = params.bass;
   const burstActive = state.burstHoldTimer > 0;
-  state.splatTimer += dt;
-  const splatPeriod = 1 / Math.max(0.1, params.splatRate);
-  const scheduledFire = state.splatTimer >= splatPeriod;
-  if (scheduledFire) state.splatTimer = 0;
-  const fire = scheduledFire || burstActive || mustReset;
+  // ── CONTINUOUS EMISSION ──────────────────────────────────────────
+  // The emitter used to bank dt in an accumulator and dump ONE WHOLE
+  // splat the frame it crossed 1/splatRate. At 60 fps with the default
+  // flowSpeed (0.32) a frame advances the sim 5.3 ms and the period is
+  // 22.7 ms, so the field got a lump every FIFTH frame and nothing on
+  // the other four: measured mean luma ran 0.1179, 0.1174, 0.1169,
+  // 0.1162, then jumped +0.0044 — a 12 Hz sawtooth in the glow, which
+  // is exactly the jagged flicker. Worse, the accumulator RESET to zero
+  // rather than subtracting the period, so it threw the remainder away
+  // and realised 37.5 splats/s when 44 were asked for, and the realised
+  // rate moved with the framerate.
+  //
+  // Deposit the same mass CONTINUOUSLY instead: every frame carries
+  // exactly `dt * splatRate` of one splat, so the mass per simulated
+  // second is splatRate * splatStrength no matter how the frames fall.
+  // Nothing in the solve changes — the fluid is not smoothed, only the
+  // source term stops being a pulse train. The cap only exists so a
+  // pathological hitch (dt is already clamped to 1/15 s) cannot detonate
+  // the field in one frame; at the default rate it sits 17x above the
+  // per-frame quota and 1.9x above the worst legitimate case
+  // (flowSpeed 2, bass 1, 60 fps), so it never engages in normal use.
+  //
+  // A burst is now a sustained 2.5x on the rate for its hold window
+  // rather than a run of full-strength lumps, which keeps the accent
+  // audible without reintroducing the staircase.
+  const emitQuota = clamp(dt * params.splatRate, 0, SPLAT_QUOTA_CAP);
+  // Buffers were just (re)created and are zero: prime with a full splat
+  // so the first frame is not empty. Deterministic — reset happens on
+  // frame 0 / grid change only, identically for live and offline.
+  const emitScale = mustReset ? Math.max(emitQuota, 1) : emitQuota;
+  const fire = emitScale > 0;
   const burstMul = burstActive ? 2.5 + params.audioBurst : 1;
 
   // Camera / projection.
@@ -3005,13 +3049,13 @@ export function buildFluidRidersNativeComputeGraph(
   const f32Bytes = cellCount * 4;
 
   const buffers: FluidRidersNativeGraphBuffer[] = [
-    { id: uid('sim-uniform'), kind: 'uniform', byte_length: 96, initial_b64: buildSimUniform(params, dt, time, fire, burstMul) },
+    { id: uid('sim-uniform'), kind: 'uniform', byte_length: 96, initial_b64: buildSimUniform(params, dt, time, emitScale * burstMul) },
     { id: uid('vort-uniform'), kind: 'uniform', byte_length: 32, initial_b64: buildVorticityUniform(params, dt) },
     { id: uid('surface-uniform'), kind: 'uniform', byte_length: 32, initial_b64: buildSurfaceUniform(params, dt) },
     { id: uid('rider-uniform'), kind: 'uniform', byte_length: 144, initial_b64: buildRiderUniform(params, dt, time, riderCount) },
     { id: uid('bin-uniform'), kind: 'uniform', byte_length: 96, initial_b64: buildBinUniform(params, viewProj, tileCountX, tileCountY, riderCount, aspect) },
     { id: uid('render-uniform'), kind: 'uniform', byte_length: 384, initial_b64: buildRenderUniform(params, state, invViewProj, model, tileCountX, tileCountY, riderCount, frameIndex, time) },
-    { id: uid('emitters'), kind: 'storage', byte_length: FLUID_RIDERS_MAX_EMITTERS * 48, initial_b64: buildEmittersBuffer(params) },
+    { id: uid('emitters'), kind: 'storage', byte_length: FLUID_RIDERS_MAX_EMITTERS * 48, initial_b64: buildEmittersBuffer(params, emitScale) },
     { id: gid('velocity-a'), kind: 'storage', byte_length: vec4Bytes, persistent: true, clear: mustReset },
     { id: gid('velocity-b'), kind: 'storage', byte_length: vec4Bytes, persistent: true, clear: mustReset },
     { id: gid('density-a'), kind: 'storage', byte_length: vec4Bytes, persistent: true, clear: mustReset },
