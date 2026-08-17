@@ -20,6 +20,13 @@
 
 import type { GpuShaderImpl, GpuShaderQualityApplyResult, GpuShaderQualityContext } from './gpuShaderTypes';
 import { applyGpuShaderQualityBudget, getShaderDef } from './gpuShaderCatalog';
+import {
+  DEFAULT_GPU_SOURCE_ID,
+  getDefaultGpuSourceCanvas,
+  getDefaultGpuSourceImage,
+  gpuShaderUsesDefaultSource,
+  gpuSourceParamIsBound,
+} from './defaultSourceImage';
 import { getGhostGpuRuntime } from './webgpuShared';
 import { createAndWarmWgslShaderModule } from './wgsl';
 import { SpoutCanvasReceiver } from './spoutCanvasReceiver';
@@ -145,6 +152,8 @@ export class GpuLayerRenderer {
   private cachedVideoSrc: string = '';
   private lastResolvedSourceKey: string = '';
   private pendingImage: HTMLImageElement | null = null;
+  /** The impl instance the built-in demo image was last handed to. */
+  private defaultSourceFedImpl: GpuShaderImpl | null = null;
 
   // Camera (getUserMedia) state — one MediaStream per renderer, swapped
   // when the user picks a different deviceId. The stream is wired to
@@ -251,7 +260,7 @@ export class GpuLayerRenderer {
 
     // Resolve + feed source if the shader consumes external pixels.
     if (def?.needsSource && this.impl.setSource && sourceCtx) {
-      this.feedSource(renderParams, sourceCtx);
+      this.feedSource(shaderId, renderParams, sourceCtx);
     }
     this.feedNativeVisionSample(renderParams, sourceCtx);
 
@@ -399,7 +408,33 @@ export class GpuLayerRenderer {
    *      mediaId?, layerId?, url?, mime?, deviceId?, senderName? }
    *  Behaviour mirrors the legacy WebGPUCanvas pixel-fx wiring,
    *  extended to cover live capture sources (webcam + Spout/Syphon). */
-  private feedSource(params: Record<string, any>, ctx: SourceContext): void {
+  /** Push the built-in demo image into the active impl. Keyed on the impl
+   *  INSTANCE, not on a source string, so a shader swap re-feeds the new
+   *  instance while a steady shader uploads exactly once. */
+  private feedDefaultSource(): void {
+    const impl = this.impl;
+    if (!impl || this.defaultSourceFedImpl === impl) return;
+    const image = getDefaultGpuSourceImage();
+    const fromBytes = (impl as any).setSourceFromBytes;
+    if (typeof fromBytes === 'function') {
+      fromBytes.call(
+        impl,
+        new Uint8Array(image.rgba.buffer, image.rgba.byteOffset, image.rgba.length),
+        image.width,
+        image.height,
+      );
+    } else if (impl.setSource) {
+      const canvas = getDefaultGpuSourceCanvas();
+      if (!canvas) return;
+      impl.setSource(canvas);
+    } else {
+      return;
+    }
+    this.defaultSourceFedImpl = impl;
+    this.lastResolvedSourceKey = `builtin:${DEFAULT_GPU_SOURCE_ID}`;
+  }
+
+  private feedSource(shaderId: string, params: Record<string, any>, ctx: SourceContext): void {
     if (!this.impl?.setSource) return;
     const src = params.source;
 
@@ -415,7 +450,14 @@ export class GpuLayerRenderer {
       this.lastSpoutFrameId = 0;
     }
 
-    if (!src) return;
+    if (!gpuSourceParamIsBound(src)) {
+      // Nothing picked. Rather than leave the shader staring at an empty
+      // texture (which renders as a black frame and reads as "broken"),
+      // feed it the built-in demo image. Mirrors the native path in
+      // nativeRendererSync so both engines show the same thing.
+      if (gpuShaderUsesDefaultSource(shaderId, params)) this.feedDefaultSource();
+      return;
+    }
 
     if (src.type === 'media' && src.mediaId) {
       const item = ctx.mediaItems.find((m: any) => m.id === src.mediaId);

@@ -6858,6 +6858,18 @@ impl App {
         }
 
         let empty_source_slot = self.ensure_empty_source_frame_slot();
+        // Media mode positions and colours every particle from the input
+        // picture. Binding 2 was pinned to the empty frame, so it sampled
+        // solid black and media mode collapsed to a flat plate no matter
+        // what the operator picked. Bind the layer's real input when the
+        // renderer has one resident, and fall back to empty otherwise so
+        // the graph still builds while a source is still arriving.
+        let (media_resource_id, media_source_slot) = self
+            .source_frame_slots
+            .get(&graph_layer.input_source_id)
+            .copied()
+            .map(|slot| (graph_layer.input_source_id.clone(), slot))
+            .unwrap_or_else(|| (EMPTY_SOURCE_FRAME_ID.to_string(), empty_source_slot));
         let behavior_bindings = vec![
             NativeComputeGraphBindingSpec {
                 binding: 0,
@@ -6877,11 +6889,11 @@ impl App {
             },
             NativeComputeGraphBindingSpec {
                 binding: 2,
-                resource_id: EMPTY_SOURCE_FRAME_ID.to_string(),
+                resource_id: media_resource_id,
                 kind: NativeComputeGraphBindingKind::SourceFrameTexture(
                     NativeComputeGraphTextureDimension::D2,
                 ),
-                source_slot: Some(empty_source_slot),
+                source_slot: Some(media_source_slot),
             },
             NativeComputeGraphBindingSpec {
                 binding: 3,

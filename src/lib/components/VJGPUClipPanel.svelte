@@ -2,6 +2,7 @@
   import { mediaLibrary } from '../stores/media';
   import { createAssetRefFromFile } from '../storage/assetRegistry';
   import { GPU_SHADER_CATALOG, getShaderDef } from '../renderer/gpuShaderCatalog';
+  import { DEFAULT_GPU_SOURCE_LABEL, gpuLayerNeedsDefaultSource } from '../renderer/defaultSourceImage';
   import type { GPULayerContent } from '../types';
   import type { MediaItem } from '../stores/media';
   import type { ParamControl } from '../renderer/gpuShaderTypes';
@@ -13,6 +14,9 @@
   let fileSourceKey = '';
 
   $: shaderDef = getShaderDef(content.shaderId) || GPU_SHADER_CATALOG[0];
+  // Source-driven shader with an empty picker: both engines fall back to
+  // the shipped demo image rather than rendering black, so label it.
+  $: usingBuiltInDemoSource = gpuLayerNeedsDefaultSource(content.shaderId, content.params);
   $: libraryItems = ($mediaLibrary || []).filter(
     (item: MediaItem) => item.type === 'image' || item.type === 'video',
   );
@@ -168,12 +172,16 @@
           {@const allowed = param.sources}
           {@const showMedia = !allowed || allowed.includes('media')}
           {@const showFile = !allowed || allowed.includes('file')}
+          {@const demoSource = !source && usingBuiltInDemoSource}
           <div class="source-control">
             <div class="source-header">
               <span>{param.label}</span>
-              <em>{sourceLabel(source)}</em>
+              <em class:demo={demoSource}>{demoSource ? DEFAULT_GPU_SOURCE_LABEL : sourceLabel(source)}</em>
               {#if source}<button title="Clear source" onclick={() => setParam(param.key, null)}>x</button>{/if}
             </div>
+            {#if demoSource}
+              <div class="source-demo-hint">Showing the built-in demo image — pick your own to replace it.</div>
+            {/if}
             {#if showMedia && libraryItems.length}
               <div class="media-grid">
                 {#each libraryItems as item}
@@ -226,6 +234,8 @@
   .source-header { display: flex; align-items: center; gap: 6px; }
   .source-header em { margin-left: auto; max-width: 130px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: #62ddec; font-size: 10px; font-style: normal; }
   .source-header button { border: 1px solid #333640; background: #191b23; color: #aaa; cursor: pointer; }
+  .source-header em.demo { color: #fbbf24; }
+  .source-demo-hint { font-size: 10px; line-height: 1.35; color: #d1a54a; opacity: 0.9; margin: 2px 0 4px; }
   .media-grid { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 4px; max-height: 150px; margin-top: 7px; overflow-y: auto; }
   .media-cell { aspect-ratio: 1; padding: 0; overflow: hidden; border: 1px solid #30323c; background: #090a0e; color: #888; cursor: pointer; }
   .media-cell.active { border-color: #55d7ef; }

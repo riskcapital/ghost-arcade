@@ -16,6 +16,7 @@
   import {
     GPU_SHADER_CATALOG,
     NATIVE_READY_GPU_SHADER_CATALOG,
+    PICKER_GPU_SHADER_CATALOG,
     getShaderDef,
     isNativeReadyGpuShaderId,
   } from '../renderer/gpuShaderCatalog';
@@ -27,6 +28,7 @@
   import type { MediaItem } from '../stores/media';
   import type { ParamControl } from '../renderer/gpuShaderTypes';
   import { createAssetRefFromFile, resolveAssetRefForRuntime } from '../storage/assetRegistry';
+  import { DEFAULT_GPU_SOURCE_LABEL, gpuLayerNeedsDefaultSource } from '../renderer/defaultSourceImage';
   import NumericInput from './NumericInput.svelte';
 
   // Media-source picker support (for shaders with kind: 'media-source'
@@ -143,8 +145,14 @@
   $: shaderDef = content ? getShaderDef(content.shaderId) : null;
   $: nativeOutputCoreEnabled = !!$settings.experimental?.outputNativeCore;
   $: nativeSourceInventoryLocked = NATIVE_ENGINE_ONLY && nativeOutputCoreEnabled;
-  $: shaderPickerCatalog = nativeOutputCoreEnabled ? NATIVE_READY_GPU_SHADER_CATALOG : GPU_SHADER_CATALOG;
+  // Both surfaces exclude archived shaders; an archived id already saved in
+  // a project still loads and renders, it just isn't offered for NEW picks.
+  $: shaderPickerCatalog = nativeOutputCoreEnabled ? NATIVE_READY_GPU_SHADER_CATALOG : PICKER_GPU_SHADER_CATALOG;
   $: currentShaderNativeReady = !nativeOutputCoreEnabled || !content || isNativeReadyGpuShaderId(content.shaderId);
+  // True when this shader wants pixels and the picker is empty — both
+  // engines are quietly rendering the built-in demo image instead of a
+  // black frame, and the panel has to say so.
+  $: usingBuiltInDemoSource = !!content && gpuLayerNeedsDefaultSource(content.shaderId, content.params);
 
   function nativeReadablePickerUri(src: string | undefined | null, ref: any): string {
     return resolveAssetRefForRuntime(ref, undefined, String(src ?? '')) ?? String(src ?? '');
@@ -404,13 +412,22 @@
             {@const _showFile  = !_allowed || _allowed.includes('file')}
             {@const _showLive  = (!_allowed || _allowed.includes('live')) && showLiveSources}
             {@const _accept    = (p as any).accept as string | undefined}
+            {@const _demo = !_src && usingBuiltInDemoSource}
             <div class="src-active">
               <span class="src-active-label">{p.label}</span>
-              <span class="src-now" class:empty={!_src}>{sourceLabel(_src)}</span>
+              <span class="src-now" class:empty={!_src} class:demo={_demo}>
+                {_demo ? DEFAULT_GPU_SOURCE_LABEL : sourceLabel(_src)}
+              </span>
               {#if _src}
                 <button class="mini-x" title="Clear" onclick={() => clearSource(p.key)}>×</button>
               {/if}
             </div>
+            {#if _demo}
+              <!-- Nothing bound: the shader is running on the shipped demo
+                   picture. Say so, or the first thing a new user concludes
+                   is that their own file failed to load. -->
+              <div class="src-demo-hint">Showing the built-in demo image — pick your own below to replace it.</div>
+            {/if}
             {#if _showMedia}
               {#if libraryItems.length > 0}
                 <div class="media-grid">
@@ -574,6 +591,8 @@
   .src-active-label { font-size: 11.5px; opacity: 0.85; }
   .src-now { margin-left: auto; font-size: 10.5px; color: #67e8f9; background: rgba(103, 232, 249, 0.08); padding: 1px 6px; border-radius: 8px; max-width: 140px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .src-now.empty { color: #6b7280; background: transparent; opacity: 0.55; }
+  .src-now.demo { color: #fbbf24; background: rgba(251, 191, 36, 0.10); opacity: 1; }
+  .src-demo-hint { font-size: 10.5px; line-height: 1.35; color: #d1a54a; opacity: 0.9; margin: -2px 0 7px; }
   .mini-x { background: transparent; border: 1px solid #333a4a; color: var(--text-secondary, #aaa); width: 22px; height: 22px; border-radius: 3px; cursor: pointer; font-size: 14px; }
   .mini-x:hover { background: #262b3a; color: #fff; }
   .src-select { width: 100%; background: #1f2330; border: 1px solid #333a4a; color: #d4d8e0; padding: 5px 8px; border-radius: 3px; font-size: 12px; cursor: pointer; margin-top: 6px; }
