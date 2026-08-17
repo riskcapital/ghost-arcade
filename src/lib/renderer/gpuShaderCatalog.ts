@@ -138,13 +138,41 @@ const PARTICLE_FIELD_DEF: GpuShaderDef = {
 
 const VOLUMETRIC_BALLS_DEF: GpuShaderDef = {
   id: 'volumetric-balls',
-  label: 'Volumetric Balls',
-  description: 'A dedicated analytic sphere field: real per-fragment ray/sphere hits, depth output, glossy material lighting, depth fog, and GPU motion. Built for large solid spheres instead of particle impostors.',
+  label: 'Volumetric Nodes',
+  description: 'A ray-traced node field in a real lit space. Pick the primitive — sphere, cube, rounded box, octahedron, capsule or torus, each solved analytically or by a bounded sphere trace. Neighbours found through a spatial hash grid connect as thin lines or semi-transparent cylinders that sort correctly through each other. A light-space opacity volume gives the key light genuine volumetric shafts that the nodes cast, land on the ground plane and fall across each other, with Henyey-Greenstein haze, GGX + clear-coat materials, environment reflections, contact AO and AgX.',
   category: 'Generative',
   paramSchema: volumetricSpheresParamSchema,
   defaultParams: volumetricSpheresParamDefaults,
   needsSource: false,
   create: (device, presentFormat) => new WebGPUVolumetricSpheresShader(device, presentFormat),
+  // The real levers here are the node population, how deep the K-hit
+  // transparency sort goes, how many steps the haze march takes and how
+  // fine the light-space opacity volume is. `maxParams` are authored
+  // ceilings; `tierParams` is where a tier parks a knob the operator
+  // never touched — Balanced sits exactly on the shader defaults, so an
+  // untouched project's cost does not move when tiers went live.
+  qualityBudgets: {
+    low: {
+      maxParams: { sphereCount: 320, marchSteps: 28, sphereHits: 2, maxLinks: 4, shadowRes: 64 },
+      scaleMaxParams: ['sphereCount', 'marchSteps'],
+      tierParams: { sphereCount: 150, marchSteps: 20, sphereHits: 2, maxLinks: 3, shadowRes: '48' },
+    },
+    balanced: {
+      maxParams: { sphereCount: 700, marchSteps: 72, sphereHits: 4, maxLinks: 6, shadowRes: 80 },
+      scaleMaxParams: ['sphereCount', 'marchSteps'],
+      tierParams: { sphereCount: 260, marchSteps: 40, sphereHits: 3, maxLinks: 4, shadowRes: '64' },
+    },
+    high: {
+      maxParams: { sphereCount: 1000, marchSteps: 104, sphereHits: 5, maxLinks: 8, shadowRes: 80 },
+      scaleMaxParams: ['sphereCount', 'marchSteps'],
+      tierParams: { sphereCount: 460, marchSteps: 64, sphereHits: 4, maxLinks: 5, shadowRes: '80' },
+    },
+    ultra: {
+      maxParams: { sphereCount: 1200, marchSteps: 128, sphereHits: 6, maxLinks: 8, shadowRes: 80 },
+      scaleMaxParams: ['sphereCount', 'marchSteps'],
+      tierParams: { sphereCount: 720, marchSteps: 96, sphereHits: 6, maxLinks: 6, shadowRes: '80' },
+    },
+  },
 };
 
 /**

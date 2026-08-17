@@ -1452,9 +1452,12 @@ async function main() {
       volumetricManifest.source_uri_prefix !== 'native-graph://volumetric-spheres/' ||
       volumetricManifest.render_target !== 'source_frame' ||
       !volumetricManifest.shader_ids?.includes('volumetric-spheres/sim') ||
+      !volumetricManifest.shader_ids?.includes('volumetric-spheres/links') ||
+      !volumetricManifest.shader_ids?.includes('volumetric-spheres/tiles') ||
+      !volumetricManifest.shader_ids?.includes('volumetric-spheres/shadow') ||
       !volumetricManifest.shader_ids?.includes('volumetric-spheres/render') ||
-      !volumetricManifest.features?.includes('compute_graph_instanced_render') ||
-      !volumetricManifest.features?.includes('compute_graph_depth_render') ||
+      !volumetricManifest.features?.includes('compute_graph_multi_render') ||
+      !volumetricManifest.features?.includes('persistent_compute_buffers') ||
       !volumetricManifest.features?.includes('compute_graph_clear_color') ||
       !volumetricManifest.features?.includes('native_volumetric_spheres_graph')
     ) {

@@ -164,18 +164,23 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
     NativeGraphInstrumentSpec {
         id: "volumetric-spheres",
         label: "Volumetric Spheres",
-        shader_ids: &["volumetric-spheres/sim", "volumetric-spheres/render"],
+        shader_ids: &[
+            "volumetric-spheres/sim",
+            "volumetric-spheres/links",
+            "volumetric-spheres/tiles",
+            "volumetric-spheres/shadow",
+            "volumetric-spheres/render",
+        ],
         features: &[
             "compute_graph_host",
             "compute_graph_render",
-            "compute_graph_instanced_render",
-            "compute_graph_depth_render",
+            "compute_graph_multi_render",
             "compute_graph_clear_color",
             "compute_graph_source_frame_target",
             "persistent_compute_buffers",
             "native_volumetric_spheres_graph",
         ],
-        parity: "sim-render-shared-wgsl",
+        parity: "spatial-hash-links-opacity-volume-raytraced-render",
     },
     NativeGraphInstrumentSpec {
         id: "fluid-riders",
