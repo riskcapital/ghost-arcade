@@ -92,7 +92,16 @@ import { deriveDefaults } from '../gpuShaderTypes';
 import { resolveGhostWgsl } from '../wgsl';
 import {
   RIDERS_COLOR_PRESET_OPTIONS,
+  RIDERS_SHADOW_VOLUME_WGSL,
+  SMOKE_RIDERS_RENDER_UNIFORM_BYTES,
+  SMOKE_RIDERS_SHADOW_UNIFORM_BYTES,
   applyRidersColorPreset,
+  normalizeKeyDir,
+  ridersShadowDim,
+  ridersShadowExtinction,
+  ridersShadowFrame,
+  ridersSpotBlend,
+  ridersSpotCos,
 } from './webgpuSmokeRidersShader';
 
 /* ============================================================== */
@@ -935,6 +944,14 @@ struct RenderU {
   isoLevel: f32, paintThickness: f32, colorFollow: f32, edgeSoftness: f32,
   riderOpacity: f32, reflectStrength: f32, liquidGlass: f32, surfaceDetail: f32,
   detailScale: f32, timeSec: f32, submergeClarity: f32, riderHits: u32,
+  // ── Light-space occlusion volume + god rays (shared tail, both kinds).
+  shLightU: vec3<f32>, shExtent:  f32,
+  shLightV: vec3<f32>, shDepth:   f32,
+  shLightW: vec3<f32>, shDensity: f32,
+  shDim: vec3<u32>, shCellZ: f32,
+  mediumColor: vec3<f32>, mediumDensity: f32,
+  lightPos: vec3<f32>, spotCos: f32,
+  spotBlend: f32, shPad0: f32, shPad1: f32, shPad2: f32,
 };
 
 @group(0) @binding(0) var<uniform>       u:        RenderU;
@@ -942,6 +959,7 @@ struct RenderU {
 @group(0) @binding(2) var<storage, read> riders:   array<Rider>;
 @group(0) @binding(3) var<storage, read> tileCounts:  array<u32>;
 @group(0) @binding(4) var<storage, read> tileIndices: array<u32>;
+@group(0) @binding(5) var<storage, read> lightDepth:  array<f32>;
 
 const SR_PI: f32 = 3.14159265359;
 
@@ -1064,8 +1082,13 @@ fn srPalette(t: f32) -> vec3<f32> {
 }
 
 // Beer-Lambert transmittance along a direction through the volume.
-// Shared by the in-scatter term and by the riders' volume shadow, so
-// smoke shadows land on the spheres exactly as they land on itself.
+// The light-space occlusion volume took over the long-range term, so
+// this survives ONLY as the near-field refinement on SHADED POINTS (orb
+// surfaces and the one iso-surface hit): a handful of evaluations per
+// pixel rather than one per march step. The volume's cell is roughly
+// twice the fluid grid's — it covers the box's bounding sphere, not the
+// box — so this is what keeps a crisp contact shadow where an orb meets
+// the pour.
 fn srShadowMarch(start: vec3<f32>, dir: vec3<f32>, bmin: vec3<f32>, bmax: vec3<f32>, stepScale: f32) -> f32 {
   if (u.shadowSteps == 0u) { return 1.0; }
   let stepLen = max(u.shadowStepLen, 0.001) * stepScale;
@@ -1083,6 +1106,127 @@ fn srShadowMarch(start: vec3<f32>, dir: vec3<f32>, bmin: vec3<f32>, bmax: vec3<f
     s = s + 1u;
   }
   return exp(-depth);
+}
+
+// How far the near march reaches. The volume lookup is OFFSET by exactly
+// this much so the two cover disjoint stretches of the same integral —
+// multiplying them is then a split of one path, not a double shadow.
+fn srNearLen() -> f32 {
+  return f32(u.shadowSteps) * max(u.shadowStepLen, 0.001);
+}
+
+/* ── light-space visibility ─────────────────────────────────────── */
+// One trilinear lookup into the prefix-summed opacity volume. This is
+// what the per-step shadow march used to do at forty times the cost, and
+// it is strictly better: it carries the FULL optical depth to the light
+// (the march only ever reached 0.375 units) and it includes the riders,
+// which never occluded anything before.
+
+fn srShadowPlane(plane: u32, x0: u32, x1: u32, y0: u32, y1: u32, tx: f32, ty: f32) -> f32 {
+  let v00 = lightDepth[plane + y0 * u.shDim.x + x0];
+  let v10 = lightDepth[plane + y0 * u.shDim.x + x1];
+  let v01 = lightDepth[plane + y1 * u.shDim.x + x0];
+  let v11 = lightDepth[plane + y1 * u.shDim.x + x1];
+  return mix(mix(v00, v10, tx), mix(v01, v11, tx), ty);
+}
+
+// The offset walks the sample point back toward the light before the
+// lookup — the volume-shadow equivalent of a depth-map bias, and the
+// hand-off point between the near march and this.
+fn srShadowVol(pIn: vec3<f32>, offset: f32) -> f32 {
+  if (u.shDensity <= 0.0 || u.shDim.x == 0u) { return 1.0; }
+  let p = pIn + u.keyDir * offset;
+  let ax = dot(p, u.shLightU) / max(u.shExtent, 1.0e-4) * 0.5 + 0.5;
+  let ay = dot(p, u.shLightV) / max(u.shExtent, 1.0e-4) * 0.5 + 0.5;
+  let az = dot(p, u.shLightW) / max(u.shDepth, 1.0e-4) + 0.5;
+  if (az < 0.0) { return 1.0; }
+  // Feather the volume's own footprint. A hard in/out test prints the
+  // opacity box's RECTANGLE across everything the moment a beam is wide
+  // enough to reach past it.
+  let fade = min(
+    min(smoothstep(0.0, 0.07, ax), smoothstep(0.0, 0.07, 1.0 - ax)),
+    min(smoothstep(0.0, 0.07, ay), smoothstep(0.0, 0.07, 1.0 - ay)));
+  if (fade <= 0.001) { return 1.0; }
+  let dx = f32(u.shDim.x);
+  let dy = f32(u.shDim.y);
+  let dz = f32(u.shDim.z);
+  let fx = clamp(ax * dx - 0.5, 0.0, dx - 1.0);
+  let fy = clamp(ay * dy - 0.5, 0.0, dy - 1.0);
+  // Trilinear, not bilinear-plus-nearest. Sampling the light axis at the
+  // nearest slab prints the voxel grid as hard rectangular steps.
+  let fz = clamp(az * dz - 0.5, 0.0, dz - 1.0);
+  let x0 = u32(floor(fx));
+  let y0 = u32(floor(fy));
+  let z0 = u32(floor(fz));
+  let x1 = min(x0 + 1u, u.shDim.x - 1u);
+  let y1 = min(y0 + 1u, u.shDim.y - 1u);
+  let z1 = min(z0 + 1u, u.shDim.z - 1u);
+  let tx = fx - floor(fx);
+  let ty = fy - floor(fy);
+  let tz = fz - floor(fz);
+  let planeSize = u.shDim.x * u.shDim.y;
+  let s0 = srShadowPlane(z0 * planeSize, x0, x1, y0, y1, tx, ty);
+  let s1 = srShadowPlane(z1 * planeSize, x0, x1, y0, y1, tx, ty);
+  let s = max(mix(s0, s1, tz), 0.0);
+  return exp(-u.shDensity * s * fade);
+}
+
+// Shaft medium profile. A flat box of haze prints the march volume as a
+// grey RECTANGLE crossing empty space — the beam has to fade toward the
+// boundary to read as light on something rather than as a card. The
+// three-sine dust is what turns a smooth glow into beams: eight hashed
+// taps per march step is not affordable at 1080p, three sines is.
+fn srHazeProfile(p: vec3<f32>) -> f32 {
+  let rel = p / max(u.volumeScale, vec3<f32>(1.0e-4));
+  var d = 1.0 - smoothstep(0.35, 1.05, length(rel));
+  if (d <= 0.0) { return 0.0; }
+  let q = p * 1.9 + vec3<f32>(0.0, u.timeSec * 0.06, u.timeSec * 0.03);
+  let nz = sin(q.x + sin(q.z * 1.3)) * sin(q.y * 1.1 + sin(q.x * 0.7)) * sin(q.z * 0.9 + sin(q.y * 1.7));
+  return max(d * (1.0 + nz * 0.55), 0.0);
+}
+
+// Half-price variant for the SHAFT MARCH: bilinear in the light's screen
+// plane, NEAREST along the light axis. Full trilinear is what stops the
+// voxel grid printing itself on a shaded surface, but the haze is low
+// frequency AND its lookup point is already jittered a cell either way
+// along exactly that axis per pixel and per frame — so the third tap pair
+// is buying a smoothing the dither has already done. Four loads instead
+// of eight, on the one consumer that runs per march step.
+fn srShadowVolFast(pIn: vec3<f32>, offset: f32) -> f32 {
+  if (u.shDensity <= 0.0 || u.shDim.x == 0u) { return 1.0; }
+  let p = pIn + u.keyDir * offset;
+  let ax = dot(p, u.shLightU) / max(u.shExtent, 1.0e-4) * 0.5 + 0.5;
+  let ay = dot(p, u.shLightV) / max(u.shExtent, 1.0e-4) * 0.5 + 0.5;
+  let az = dot(p, u.shLightW) / max(u.shDepth, 1.0e-4) + 0.5;
+  if (az < 0.0 || az > 1.0) { return 1.0; }
+  let fade = min(
+    min(smoothstep(0.0, 0.07, ax), smoothstep(0.0, 0.07, 1.0 - ax)),
+    min(smoothstep(0.0, 0.07, ay), smoothstep(0.0, 0.07, 1.0 - ay)));
+  if (fade <= 0.001) { return 1.0; }
+  let dx = f32(u.shDim.x);
+  let dy = f32(u.shDim.y);
+  let fx = clamp(ax * dx - 0.5, 0.0, dx - 1.0);
+  let fy = clamp(ay * dy - 0.5, 0.0, dy - 1.0);
+  let z0 = u32(clamp(az * f32(u.shDim.z), 0.0, f32(u.shDim.z) - 1.0));
+  let x0 = u32(floor(fx));
+  let y0 = u32(floor(fy));
+  let x1 = min(x0 + 1u, u.shDim.x - 1u);
+  let y1 = min(y0 + 1u, u.shDim.y - 1u);
+  let s = max(srShadowPlane(z0 * u.shDim.x * u.shDim.y, x0, x1, y0, y1,
+    fx - floor(fx), fy - floor(fy)), 0.0);
+  return exp(-u.shDensity * s * fade);
+}
+
+// Spot cone gate. The key stays DIRECTIONAL for shading (nothing about
+// the existing rig changes); this is purely a spatial mask derived from
+// a virtual apex at u.lightPos, so Spot Angle 180 returns 1 everywhere
+// and every existing project renders exactly as before.
+fn srSpot(p: vec3<f32>) -> f32 {
+  if (u.spotCos <= -0.9995) { return 1.0; }
+  let away = p - u.lightPos;
+  let d = max(length(away), 1.0e-4);
+  let cd = dot(away / d, -u.keyDir);
+  return smoothstep(u.spotCos, u.spotCos + max(u.spotBlend, 1.0e-3), cd);
 }
 
 // Outward surface normal for the liquid: the density field's gradient,
@@ -1233,10 +1377,16 @@ fn srShadeRider(
   // render identically to before.
   let alpha = select(clamp(shellA, 0.0, 1.0), 1.0, op >= 0.999);
 
-  // Volume shadow: march the density grid from the surface toward the
-  // key light. Without this the riders float ON the smoke; with it
-  // they sit IN it.
-  let volShadow = srShadowMarch(hitPos + n * 0.01, u.keyDir, bmin, bmax, 3.0);
+  // Volume shadow, in two disjoint stretches of ONE path to the light:
+  // the near march resolves contact detail at the fluid grid's own
+  // frequency, the light-space volume carries everything beyond it —
+  // including the OTHER RIDERS, which the density grid knows nothing
+  // about. Offsetting the lookup by exactly the march's reach is what
+  // keeps this a split of the integral rather than a double shadow, and
+  // it doubles as the self-shadow bias.
+  let volShadow = srShadowMarch(hitPos + n * 0.01, u.keyDir, bmin, bmax, 1.0)
+    * srShadowVol(hitPos, srNearLen() + radius)
+    * srSpot(hitPos);
 
   // Fluid AO: how much smoke is packed around the contact point.
   let aoUvw = (hitPos - bmin) / extent;
@@ -1429,6 +1579,17 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   var surfRGB = vec3<f32>(0.0);
   var surfA = 0.0;
   var surfTint = vec3<f32>(1.0);
+  // ── GOD RAYS. The liquid is an opaque isosurface, so unlike the smoke
+  //    instrument there is no scattering integral to fold this into. The
+  //    haze is the air AROUND and ABOVE the pour, and it is accumulated
+  //    over the camera-side segment only — tStart to the iso crossing,
+  //    or the whole slab when the ray misses the liquid entirely. Behind
+  //    an opaque surface there is nothing to see, and for a glassy one
+  //    the surface's own key term already carries the volume's
+  //    transmittance, so the far-side haze is second order. This layer
+  //    composites OVER everything at the end.
+  var hazeRGB = vec3<f32>(0.0);
+  var hazeA = 0.0;
   // Per-unit-depth extinction for looking INTO the paint (section 5).
   var surfSubK = vec3<f32>(1.0e30);
   let riderOpaque = clamp(u.riderOpacity, 0.0, 1.0) >= 0.999;
@@ -1444,7 +1605,35 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
       // surface-crossing sample a whole step every frame, and on a 48³
       // grid that reads as a crawling, jagged silhouette. A quarter of
       // the sequence still breaks banding without the crawl.
-      let dither = fract(srHash12(in.pos.xy) + 0.61803398875 * f32(u.frameIndex)) * 0.25;
+      let ditherFull = fract(srHash12(in.pos.xy) + 0.61803398875 * f32(u.frameIndex));
+      let dither = ditherFull * 0.25;
+      // Shaft medium + its phase. Same Henyey-Greenstein lobe the smoke
+      // instrument uses, normalised so isotropic reads 1.0 with a 25%
+      // isotropic floor — raw HG at 77 degrees off-axis is 0.025, which
+      // is exactly where a side-lit shaft lives and where it would
+      // otherwise simply not exist.
+      // The 0.15 maps the slider onto an EXTINCTION — haze is thin, and
+      // at 1:1 the default reads as a fog bank rather than a shaft.
+      let sigH = max(u.mediumDensity, 0.0) * 0.15;
+      let phaseHz = mix(srHg(dot(rd, u.keyDir), clamp(u.anisotropy, -0.95, 0.95)) * 4.0 * SR_PI, 1.0, 0.18);
+      // Jitter the volume lookup a cell either way, per pixel and per
+      // frame, so a low-resolution volume grains instead of staircasing.
+      let shOff = u.shCellZ * (0.6 + (ditherFull - 0.5) * 1.8);
+      // The haze does NOT need the iso hunt's step count. The hunt is
+      // fine because it has to resolve a surface crossing; the shaft
+      // integral is low frequency, and paying a volume lookup on all 96
+      // (134 on Ultra) hunt steps measured +55% GPU on Balanced. Striding
+      // it down to ~32 samples costs nothing visible and hands most of
+      // that back.
+      // Sample count is TIER-SCALED off the shadow volume's own edge —
+      // the one control the tier already moves — rather than off the hunt
+      // step count: 32 -> 8 samples, 48/64 -> 12/16, 80 -> 20. The
+      // Performance tier is where this matters; measured, 8 samples costs
+      // +0.6 ms over no haze at all while 16 costs +7.3, which is an
+      // occupancy cliff rather than anything linear.
+      let hazeSamples = clamp(u.shDim.x / 4u, 8u, 20u);
+      let hazeStride = max(1u, steps / hazeSamples);
+      let hazeStepLen = stepLen * f32(hazeStride);
       var t0 = tStart + stepLen * dither;
       var prevT = t0;
       var i: u32 = 0u;
@@ -1457,6 +1646,20 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
         i = i + 1u;
         if (t0 > tEnd) { break; }
         let d = srSampleDensity((ro + rd * t0 - bmin) / extent).w;
+        if (sigH > 0.0 && hazeA < 0.995 && ((i - 1u) % hazeStride) == 0u) {
+          let hp = ro + rd * t0;
+          // Profile FIRST: outside the medium's ellipsoid there is
+          // nothing to light, and skipping there skips the lookup too.
+          let hazeStepA = clamp(sigH * srHazeProfile(hp) * hazeStepLen, 0.0, 1.0);
+          if (hazeStepA > 0.0002) {
+            let hazeShadow = srShadowVolFast(hp, shOff) * srSpot(hp);
+            let hazeLit = u.mediumColor
+              * (u.keyColor * (u.keyStrength * hazeShadow * phaseHz) + vec3<f32>(u.ambient * 0.25));
+            let oneMinus = 1.0 - hazeA;
+            hazeRGB = hazeRGB + hazeLit * (hazeStepA * oneMinus);
+            hazeA = hazeA + hazeStepA * oneMinus;
+          }
+        }
         if (d >= u.isoLevel) {
           // Binary refine so the surface is not stair-stepped.
           var lo = prevT;
@@ -1503,7 +1706,12 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
           let tint = sc.xyz * u.smokeTint;
           let absorb = exp(-max(thick, 0.0) * u.density * u.paintThickness * 3.0 * (vec3<f32>(1.0) - tint));
 
-          let shadow = srShadowMarch(hpos + hn * 0.01, u.keyDir, bmin, bmax, 1.0);
+          // Same split as the orbs: near march for the contact edge, the
+          // light-space volume for everything beyond — which is what puts
+          // the ORBS' shadows onto the pour for the first time.
+          let shadow = srShadowMarch(hpos + hn * 0.01, u.keyDir, bmin, bmax, 1.0)
+            * srShadowVol(hpos, srNearLen() + u.shCellZ * 0.5)
+            * srSpot(hpos);
           let rough = clamp(u.roughness, 0.03, 1.0);
           let a = max(rough * rough, 0.002);
           let nv = max(dot(hn, hv), 1e-4);
@@ -1647,8 +1855,12 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   let deepA = backA + bgA * (1.0 - backA) * surfLeak;
   let liqRGB = surfRGB * (surfA * (1.0 - clamp(backOcc, 0.0, 1.0))) + deepRGB;
   let liqA = clamp(surfA + deepA * surfLeak, 0.0, 1.0);
-  let outRGB = frontRGB + liqRGB * (1.0 - frontA);
-  let outA = clamp(frontA + liqA * (1.0 - frontA), 0.0, 1.0);
+  let stackRGB = frontRGB + liqRGB * (1.0 - frontA);
+  let stackA = clamp(frontA + liqA * (1.0 - frontA), 0.0, 1.0);
+  // Haze last, over everything: it is the medium between the camera and
+  // the scene, so it is literally in front.
+  let outRGB = hazeRGB + stackRGB * (1.0 - hazeA);
+  let outA = clamp(hazeA + stackA * (1.0 - hazeA), 0.0, 1.0);
 
   // ── 6. Tonemap + vignette. Tonemap the UNPREMULTIPLIED colour so a
   //      partially covered pixel keeps a sane hue, then restore the
@@ -1673,6 +1885,7 @@ export const FLUID_RIDERS_NATIVE_SHADER_IDS = Object.freeze({
   surface: 'fluid-riders/surface',
   riders: 'fluid-riders/riders',
   tiles: 'fluid-riders/tiles',
+  shadowvol: 'fluid-riders/shadowvol',
   render: 'fluid-riders/render',
 });
 
@@ -1693,6 +1906,7 @@ export const FLUID_RIDERS_NATIVE_GRAPH_SHADER_IDS: readonly string[] = Object.fr
   FLUID_RIDERS_NATIVE_SHADER_IDS.surface,
   FLUID_RIDERS_NATIVE_SHADER_IDS.riders,
   FLUID_RIDERS_NATIVE_SHADER_IDS.tiles,
+  FLUID_RIDERS_NATIVE_SHADER_IDS.shadowvol,
   FLUID_RIDERS_NATIVE_SHADER_IDS.render,
 ]);
 
@@ -1757,6 +1971,13 @@ export function getFluidRidersNativeShaderSources(): FluidRidersNativeShaderSour
       stage: 'compute',
       entry: 'cs_bin_riders',
       source: resolveGhostWgsl(FLUID_RIDERS_BIN_WGSL, 'fluid-riders/tiles'),
+    },
+    {
+      shaderId: FLUID_RIDERS_NATIVE_SHADER_IDS.shadowvol,
+      label: 'fluid-riders/shadowvol',
+      stage: 'compute',
+      entry: 'cs_shadow_fluid',
+      source: resolveGhostWgsl(RIDERS_SHADOW_VOLUME_WGSL, 'fluid-riders/shadowvol'),
     },
     {
       shaderId: FLUID_RIDERS_NATIVE_SHADER_IDS.render,
@@ -1939,6 +2160,17 @@ export const fluidRidersParamSchema: ParamControl[] = [
     min: -0.9, max: 0.9, step: 0.01, default: 0.4 },
   { kind: 'slider', key: 'multiScatter', label: 'Multi Scatter', group: 'Lighting',
     min: 0, max: 2, step: 0.01, default: 0.35 },
+  // Key DIRECTION, in camera space, rotated into the volume's object
+  // space by the packer. Same names and labels as Volumetric Nodes.
+  // The default pulls the key overhead and off the camera axis: the old
+  // rig sat at z +0.62 — almost straight down the view vector — so every
+  // shaft it cast was foreshortened into a blob instead of a beam.
+  { kind: 'slider', key: 'lightX', label: 'Light X', group: 'Lighting',
+    min: -2, max: 2, step: 0.01, default: -0.52 },
+  { kind: 'slider', key: 'lightY', label: 'Light Y', group: 'Lighting',
+    min: -2, max: 2, step: 0.01, default: 0.94 },
+  { kind: 'slider', key: 'lightZ', label: 'Light Z', group: 'Lighting',
+    min: -2, max: 2, step: 0.01, default: 0.24 },
   { kind: 'slider', key: 'keyStrength', label: 'Key Light', group: 'Lighting',
     min: 0, max: 8, step: 0.01, default: 3.1 },
   { kind: 'color', key: 'keyColor', label: 'Key Color', group: 'Lighting',
@@ -1953,6 +2185,37 @@ export const fluidRidersParamSchema: ParamControl[] = [
     default: [255, 206, 168] },
   { kind: 'slider', key: 'ambient', label: 'Ambient', group: 'Lighting',
     min: 0, max: 2, step: 0.01, default: 0.14 },
+
+  // ── Volumetrics ──────────────────────────────────────────────
+  // Same names, labels and ordering as Volumetric Nodes and Smoke Riders
+  // so the family reads as one instrument set. `anisotropy` already
+  // lives in Lighting and is reused rather than duplicated here.
+  //
+  // Haze starts lower than the smoke instrument's: the liquid's march is
+  // an iso-surface HUNT, so every haze step buys a volume lookup the
+  // hunt would not otherwise pay for. 0.35 is the value where the shafts
+  // over the pour read clearly at Balanced without the march getting
+  // meaningfully more expensive.
+  { kind: 'slider', key: 'mediumDensity', label: 'Haze Density', group: 'Volumetrics',
+    min: 0, max: 3, step: 0.01, default: 0.55 },
+  { kind: 'color', key: 'mediumColor', label: 'Haze Colour', group: 'Volumetrics',
+    default: [226, 232, 255] },
+  { kind: 'slider', key: 'shadowDensity', label: 'Shadow Density', group: 'Volumetrics',
+    min: 0, max: 6, step: 0.01, default: 1.6 },
+  { kind: 'select', key: 'shadowRes', label: 'Shadow Volume', group: 'Volumetrics',
+    options: [
+      { value: '32', label: '32³ (fast)' },
+      { value: '48', label: '48³' },
+      { value: '64', label: '64³' },
+      { value: '80', label: '80³ (sharp)' },
+    ],
+    default: '48' },
+  { kind: 'slider', key: 'spotAngle', label: 'Spot Angle', group: 'Volumetrics',
+    min: 5, max: 180, step: 1, default: 55 },
+  { kind: 'slider', key: 'spotSoftness', label: 'Spot Softness', group: 'Volumetrics',
+    min: 0.01, max: 1, step: 0.01, default: 0.4 },
+  { kind: 'slider', key: 'lightDistance', label: 'Light Distance', group: 'Volumetrics',
+    min: 1, max: 12, step: 0.05, default: 3.8 },
 
   // ── Palette / background ─────────────────────────────────────
   { kind: 'color', key: 'colorA', label: 'Color A', group: 'Palette',
@@ -2168,6 +2431,20 @@ export interface FluidRidersResolvedParams {
   // lighting
   anisotropy: number;
   multiScatter: number;
+  /** Key direction in CAMERA space; the packer rotates it into object space. */
+  keyDir: [number, number, number];
+  /** God-ray medium filling the volume (in-scattering density). */
+  mediumDensity: number;
+  mediumColor: [number, number, number];
+  /** Gain over the physical extinction fed into the light-space volume. */
+  shadowDensity: number;
+  /** Edge of the cubic light-space opacity volume, quality-capped. */
+  shadowDim: number;
+  /** cos(spotAngle/2). -1 disables the cone entirely. */
+  spotCos: number;
+  spotBlend: number;
+  /** Distance of the virtual spot apex from the volume centre. */
+  lightDistance: number;
   keyStrength: number;
   keyColor: [number, number, number];
   fillStrength: number;
@@ -2261,6 +2538,10 @@ export function resolveFluidRidersParams(
   // PBR evaluations, and the composite early-outs the moment alpha
   // saturates — so this only bites when Orb Opacity is below 1.
   const qualityRiderHits = quality === 'ultra' ? 4 : quality === 'performance' ? 2 : 3;
+  // Ceiling on the authored `shadowRes`, so a project saved at 80³ does
+  // not drag a Performance machine down. Mirrors
+  // SMOKE_RIDERS_QUALITY_RESOLUTION[*].shadowDimCap and the Rust arm.
+  const qualityShadowDimCap = quality === 'ultra' ? 80 : quality === 'performance' ? 32 : 64;
   // MacCormack doubles the advection cost. Performance keeps the plain
   // semi-Lagrangian chain; the other tiers honour the operator's choice.
   const macCormack = quality === 'performance'
@@ -2347,6 +2628,18 @@ export function resolveFluidRidersParams(
 
     anisotropy: num(p.anisotropy, 0.4, -0.9, 0.9),
     multiScatter: num(p.multiScatter, 0.35, 0, 2),
+    keyDir: normalizeKeyDir(
+      num(p.lightX, -0.52, -2, 2),
+      num(p.lightY, 0.94, -2, 2),
+      num(p.lightZ, 0.24, -2, 2),
+    ),
+    mediumDensity: num(p.mediumDensity, 0.55, 0, 3),
+    mediumColor: rgb01(p.mediumColor, [0.886, 0.910, 1.0]),
+    shadowDensity: num(p.shadowDensity, 1.6, 0, 6),
+    shadowDim: ridersShadowDim(p.shadowRes, qualityShadowDimCap),
+    spotCos: ridersSpotCos(num(p.spotAngle, 55, 5, 180)),
+    spotBlend: ridersSpotBlend(num(p.spotAngle, 55, 5, 180), num(p.spotSoftness, 0.4, 0.01, 1)),
+    lightDistance: num(p.lightDistance, 3.8, 1, 12),
     keyStrength: num(p.keyStrength, 3.1, 0, 8) * (0.8 + intensity * 0.25),
     keyColor: rgb01(p.keyColor, [1.0, 0.933, 0.839]),
     fillStrength: num(p.fillStrength, 0.6, 0, 4),
@@ -2830,13 +3123,13 @@ function buildRenderUniform(
   frameIndex: number,
   time: number,
 ): string {
-  const buffer = new ArrayBuffer(384);
+  const buffer = new ArrayBuffer(SMOKE_RIDERS_RENDER_UNIFORM_BYTES);
   const view = new DataView(buffer);
   const floats = new Float32Array(buffer);
   floats.set(invViewProj, 0);
   // Studio rig, specified in CAMERA space and rotated into the volume's
   // object space so the lights stay put while the volume spins.
-  const key = lightToObjectSpace(model, [-0.42, 0.68, 0.62]);
+  const key = lightToObjectSpace(model, params.keyDir);
   const fill = lightToObjectSpace(model, [0.66, 0.12, 0.74]);
   const rim = lightToObjectSpace(model, [0.18, 0.28, -0.94]);
   writeF32(view, 16, params.smokeColor[0]);
@@ -2922,8 +3215,87 @@ function buildRenderUniform(
   writeF32(view, 93, time);
   writeF32(view, 94, params.submergeClarity);
   writeU32(view, 95, params.riderHits);
+  // ── Light-space occlusion volume + god rays. The frame is derived
+  //    from the OBJECT-space key, so it spins with the volume exactly
+  //    like the density grid and the riders do.
+  const frame = ridersShadowFrame(key, params.volumeScaleX, params.volumeScaleZ, params.shadowDim);
+  writeF32(view, 96, frame.lu[0]);
+  writeF32(view, 97, frame.lu[1]);
+  writeF32(view, 98, frame.lu[2]);
+  writeF32(view, 99, frame.extent);
+  writeF32(view, 100, frame.lv[0]);
+  writeF32(view, 101, frame.lv[1]);
+  writeF32(view, 102, frame.lv[2]);
+  writeF32(view, 103, frame.depth);
+  writeF32(view, 104, frame.lw[0]);
+  writeF32(view, 105, frame.lw[1]);
+  writeF32(view, 106, frame.lw[2]);
+  writeF32(view, 107, params.shadowDensity);
+  writeU32(view, 108, params.shadowDim);
+  writeU32(view, 109, params.shadowDim);
+  writeU32(view, 110, params.shadowDim);
+  writeF32(view, 111, frame.cellZ);
+  writeF32(view, 112, params.mediumColor[0]);
+  writeF32(view, 113, params.mediumColor[1]);
+  writeF32(view, 114, params.mediumColor[2]);
+  writeF32(view, 115, params.mediumDensity);
+  // Virtual spot apex: up the key direction, in the same object space.
+  writeF32(view, 116, key[0] * params.lightDistance);
+  writeF32(view, 117, key[1] * params.lightDistance);
+  writeF32(view, 118, key[2] * params.lightDistance);
+  writeF32(view, 119, params.spotCos);
+  writeF32(view, 120, params.spotBlend);
+  writeF32(view, 121, 0);
+  writeF32(view, 122, 0);
+  writeF32(view, 123, 0);
   // `state` participates only through the rotation baked into invViewProj.
   void state;
+  return bufferToBase64(buffer);
+}
+
+/**
+ * Uniform for the three light-space occlusion passes. Mirrored byte for
+ * byte in `build_smoke_riders_shadow_uniform_bytes`, which serves BOTH
+ * rider kinds.
+ */
+function buildShadowUniform(
+  params: FluidRidersResolvedParams,
+  model: Float32Array,
+  riderCount: number,
+): string {
+  const buffer = new ArrayBuffer(SMOKE_RIDERS_SHADOW_UNIFORM_BYTES);
+  const view = new DataView(buffer);
+  const key = lightToObjectSpace(model, params.keyDir);
+  const dim = params.shadowDim;
+  const frame = ridersShadowFrame(key, params.volumeScaleX, params.volumeScaleZ, dim);
+  writeF32(view, 0, frame.lu[0]);
+  writeF32(view, 1, frame.lu[1]);
+  writeF32(view, 2, frame.lu[2]);
+  writeF32(view, 3, frame.extent);
+  writeF32(view, 4, frame.lv[0]);
+  writeF32(view, 5, frame.lv[1]);
+  writeF32(view, 6, frame.lv[2]);
+  writeF32(view, 7, frame.depth);
+  writeF32(view, 8, frame.lw[0]);
+  writeF32(view, 9, frame.lw[1]);
+  writeF32(view, 10, frame.lw[2]);
+  writeU32(view, 11, dim * dim * dim);
+  writeF32(view, 12, params.volumeScaleX);
+  writeF32(view, 13, 1);
+  writeF32(view, 14, params.volumeScaleZ);
+  writeU32(view, 15, riderCount);
+  writeU32(view, 16, dim);
+  writeU32(view, 17, dim);
+  writeU32(view, 18, dim);
+  writeF32(view, 19, params.riderSize);
+  writeU32(view, 20, params.gridSize);
+  writeU32(view, 21, params.gridSize);
+  writeU32(view, 22, params.gridSize);
+  writeF32(view, 23, params.density);
+  writeF32(view, 24, ridersShadowExtinction(params.riderOpacity));
+  writeF32(view, 25, 0);
+  writeF32(view, 26, 0);
+  writeF32(view, 27, 0);
   return bufferToBase64(buffer);
 }
 
@@ -3042,9 +3414,11 @@ export function buildFluidRidersNativeComputeGraph(
   const gid = (name: string) => `${prefix}:g${params.gridSize}:${name}`;
   const rid = (name: string) => `${prefix}:r${riderCount}:${name}`;
   const tid = (name: string) => `${prefix}:t${tileCountX}x${tileCountY}:${name}`;
+  const sid = (name: string) => `${prefix}:s${params.shadowDim}:${name}`;
   const uid = (name: string) => `${prefix}:${name}`;
 
   const cellCount = params.gridSize * params.gridSize * params.gridSize;
+  const shadowCells = params.shadowDim * params.shadowDim * params.shadowDim;
   const vec4Bytes = cellCount * 16;
   const f32Bytes = cellCount * 4;
 
@@ -3054,7 +3428,8 @@ export function buildFluidRidersNativeComputeGraph(
     { id: uid('surface-uniform'), kind: 'uniform', byte_length: 32, initial_b64: buildSurfaceUniform(params, dt) },
     { id: uid('rider-uniform'), kind: 'uniform', byte_length: 144, initial_b64: buildRiderUniform(params, dt, time, riderCount) },
     { id: uid('bin-uniform'), kind: 'uniform', byte_length: 96, initial_b64: buildBinUniform(params, viewProj, tileCountX, tileCountY, riderCount, aspect) },
-    { id: uid('render-uniform'), kind: 'uniform', byte_length: 384, initial_b64: buildRenderUniform(params, state, invViewProj, model, tileCountX, tileCountY, riderCount, frameIndex, time) },
+    { id: uid('render-uniform'), kind: 'uniform', byte_length: SMOKE_RIDERS_RENDER_UNIFORM_BYTES, initial_b64: buildRenderUniform(params, state, invViewProj, model, tileCountX, tileCountY, riderCount, frameIndex, time) },
+    { id: uid('shadow-uniform'), kind: 'uniform', byte_length: SMOKE_RIDERS_SHADOW_UNIFORM_BYTES, initial_b64: buildShadowUniform(params, model, riderCount) },
     { id: uid('emitters'), kind: 'storage', byte_length: FLUID_RIDERS_MAX_EMITTERS * 48, initial_b64: buildEmittersBuffer(params, emitScale) },
     { id: gid('velocity-a'), kind: 'storage', byte_length: vec4Bytes, persistent: true, clear: mustReset },
     { id: gid('velocity-b'), kind: 'storage', byte_length: vec4Bytes, persistent: true, clear: mustReset },
@@ -3079,6 +3454,11 @@ export function buildFluidRidersNativeComputeGraph(
     },
     { id: tid('tile-counts'), kind: 'storage', byte_length: tileCount * 4, persistent: true, clear: mustReset },
     { id: tid('tile-indices'), kind: 'storage', byte_length: tileCount * FLUID_RIDERS_TILE_CAP * 4, persistent: true, clear: mustReset },
+    // Light-space opacity volume. `cs_shadow_fluid` stores every cell so
+    // no clear pass is needed; the ids carry the edge so changing
+    // Shadow Volume reallocates instead of reinterpreting.
+    { id: sid('shadow-acc'), kind: 'storage', byte_length: shadowCells * 4, persistent: true, clear: mustReset },
+    { id: sid('shadow-depth'), kind: 'storage', byte_length: shadowCells * 4, persistent: true, clear: mustReset },
   ];
 
   const wg = Math.ceil(params.gridSize / 4);
@@ -3239,6 +3619,23 @@ export function buildFluidRidersNativeComputeGraph(
     { binding: 3, resource: tid('tile-indices'), kind: 'storage' },
   ]);
 
+  // ── LIGHT-SPACE OCCLUSION VOLUME. Runs last, on the FINAL density and
+  //    the FINAL rider positions, so what casts is exactly what renders.
+  //    fluid (gather + clear) → riders (atomic scatter) → prefix sum.
+  const shadowBindings: FluidRidersNativeGraphBinding[] = [
+    { binding: 0, resource: uid('shadow-uniform'), kind: 'uniform' },
+    { binding: 1, resource: denCur(), kind: 'read-only-storage' },
+    { binding: 2, resource: rid('riders'), kind: 'read-only-storage' },
+    { binding: 3, resource: sid('shadow-acc'), kind: 'storage' },
+    { binding: 4, resource: sid('shadow-depth'), kind: 'storage' },
+  ];
+  addPass('fluid-riders-shadow-fluid', FLUID_RIDERS_NATIVE_SHADER_IDS.shadowvol, 'cs_shadow_fluid',
+    [Math.max(1, Math.ceil(shadowCells / 64)), 1, 1], shadowBindings);
+  addPass('fluid-riders-shadow-riders', FLUID_RIDERS_NATIVE_SHADER_IDS.shadowvol, 'cs_shadow_riders',
+    riderDispatch, shadowBindings);
+  addPass('fluid-riders-shadow-prefix', FLUID_RIDERS_NATIVE_SHADER_IDS.shadowvol, 'cs_shadow_prefix',
+    [Math.max(1, Math.ceil((params.shadowDim * params.shadowDim) / 64)), 1, 1], shadowBindings);
+
   const renderPass: FluidRidersNativeGraphRenderPass = {
     name: 'fluid-riders-unified',
     shader_id: FLUID_RIDERS_NATIVE_SHADER_IDS.render,
@@ -3260,6 +3657,7 @@ export function buildFluidRidersNativeComputeGraph(
       { binding: 2, resource: rid('riders'), kind: 'read-only-storage' },
       { binding: 3, resource: tid('tile-counts'), kind: 'read-only-storage' },
       { binding: 4, resource: tid('tile-indices'), kind: 'read-only-storage' },
+      { binding: 5, resource: sid('shadow-depth'), kind: 'read-only-storage' },
     ],
   };
 
