@@ -29,7 +29,14 @@ import { getVisualAudioSnapshot, visualAudio, type VisualAudioState } from '$lib
 import { mediaPipeSource } from '$lib/mediapipe/mediaPipeSource';
 import { ghostAudioCommandFieldsFromVisualAudio } from '$lib/audio/ghostAudioUniform';
 import { WGSL_STDLIB, resolveGhostWgsl } from '$lib/renderer/wgsl';
-import { gravityWellsDefaultParams, isNativeReadyGpuShaderId } from '$lib/renderer/gpuShaderCatalog';
+import { isNativeReadyGpuShaderId } from '$lib/renderer/gpuShaderCatalog';
+import {
+  DEFAULT_NATIVE_GRAPH_QUALITY,
+  describeNativeGraphQuality,
+  resolveNativeGraphInstrumentParams,
+  resolveNativeGraphQuality,
+  type NativeGraphQualityState,
+} from '$lib/renderer/nativeGraphQuality';
 import { nativeShaderSourceFromJavascript } from '$lib/renderer/nativeJsShaderSource';
 import { resolveAssetRefForRuntime } from '$lib/storage/assetRegistry';
 import {
@@ -113,7 +120,6 @@ import {
   type FlythroughNativeGraphState,
 } from '$lib/renderer/webgpuFlythrough';
 import {
-  applyRidersColorPreset,
   buildSmokeRidersNativeComputeGraph,
   buildSmokeRidersNativePrecompileCommands,
   type SmokeRidersNativeGraphState,
@@ -4392,100 +4398,34 @@ function nativeSourceIdentity(source: NativeLayerSource | null | undefined): str
   return `${source.sourceType}:${source.id}:${source.uri}`;
 }
 
-function scaledIntegerParam(
-  params: Record<string, any>,
-  key: string,
-  scale: number,
-  fallback: number,
-  min: number,
-): number {
-  const raw = Number(params[key]);
-  const base = Number.isFinite(raw) && raw > 0 ? raw : fallback;
-  return Math.max(min, Math.round(base * scale));
-}
-
-function scaledSmokeGrid(gridSize: unknown, scale: number): 32 | 48 | 64 {
-  const raw = Math.round(Number(gridSize));
-  const base = raw === 32 || raw === 48 || raw === 64 ? raw : 48;
-  if (scale <= 0.6) return 32;
-  if (scale <= 0.8) return base >= 48 ? 48 : 32;
-  return base === 64 ? 64 : base === 32 ? 32 : 48;
-}
-
-function nativeGraphQualityLabelForScale(scale: number, current: unknown): string {
-  if (scale <= 0.6) return 'performance';
-  if (scale <= 0.8) return 'balanced';
-  if (scale <= 0.93) return 'high';
-  return String(current || 'ultra');
-}
-
-function applyNativeGraphWorkloadScale(
-  params: Record<string, any>,
+function nativeGraphParamsForLayer(
+  layer: Layer,
   kind: NativeGraphRouteKind,
-  scale: number,
+  quality: NativeGraphQualityState = DEFAULT_NATIVE_GRAPH_QUALITY,
 ): Record<string, any> {
-  const safeScale = clampNumber(scale, 0.45, 1);
-  if (safeScale >= 0.995) return params;
-  const next = { ...params };
-  switch (kind) {
-    case 'smoke-3d':
-      next.gridSize = scaledSmokeGrid(next.gridSize, safeScale);
-      next.emitterCount = scaledIntegerParam(next, 'emitterCount', safeScale, 4, 1);
-      next.shadowSteps = Math.max(0, Math.round((Number(next.shadowSteps) || 4) * safeScale));
-      break;
-    case 'smoke-riders':
-      next.quality = nativeGraphQualityLabelForScale(safeScale, next.quality);
-      next.emitters = scaledIntegerParam(next, 'emitters', safeScale, 5, 1);
-      next.sphereCount = scaledIntegerParam(next, 'sphereCount', safeScale, 192, 1);
-      break;
-    case 'ink-cloud':
-      next.particleCount = scaledIntegerParam(next, 'particleCount', safeScale, 150_000, 1024);
-      next.emitterCount = scaledIntegerParam(next, 'emitterCount', safeScale, 4, 1);
-      break;
-    case 'flythrough':
-      next.particleCount = scaledIntegerParam(next, 'particleCount', safeScale, 250_000, 1024);
-      next.slabCount = scaledIntegerParam(next, 'slabCount', Math.max(0.5, safeScale), 4, 1);
-      break;
-    case 'pixel-particles':
-      next.particleCount = scaledIntegerParam(next, 'particleCount', safeScale, 250_000, 1024);
-      break;
-    case 'particle-field':
-      next.particleCount = scaledIntegerParam(next, 'particleCount', safeScale, 80_000, 1024);
-      next.partnerCount = scaledIntegerParam(next, 'partnerCount', safeScale, 6, 1);
-      next.gravityWells = scaledIntegerParam(next, 'gravityWells', Math.max(0.65, safeScale), 3, 1);
-      break;
-    case 'volumetric-spheres':
-      next.sphereCount = scaledIntegerParam(next, 'sphereCount', safeScale, 192, 1);
-      break;
-    default:
-      break;
-  }
-  return next;
-}
-
-function nativeGraphParamsForLayer(layer: Layer, kind: NativeGraphRouteKind, workloadScale = 1): Record<string, any> {
-  const params: Record<string, any> = kind === 'ghostfx'
+  const isEffectGraphKind = kind === 'ghostfx'
     || kind === 'handfx'
     || kind === 'performer-world'
     || kind === 'vj-crossfade'
-    || kind === 'vj-mix'
+    || kind === 'vj-mix';
+  const params: Record<string, any> = isEffectGraphKind
     ? layer.source?.effectSource ?? {}
     : layer.gpuLayerContent?.params ?? {};
-  const shaderId = String(layer.gpuLayerContent?.shaderId || '').trim().toLowerCase();
-  if (kind === 'particle-field' && shaderId === 'gravity-wells') {
-    return applyNativeGraphWorkloadScale({
-      ...gravityWellsDefaultParams,
-      ...params,
-      mode: params.mode ?? gravityWellsDefaultParams.mode ?? 'gravity',
-    }, kind, workloadScale);
-  }
-  if (kind === 'smoke-riders' || kind === 'fluid-riders') {
-    // Colour presets are expanded HERE — the single funnel into the
-    // core — so the Rust side only ever sees concrete colours and the
-    // preset logic lives once, in TS.
-    return applyNativeGraphWorkloadScale(applyRidersColorPreset(params), kind, workloadScale);
-  }
-  return applyNativeGraphWorkloadScale(params, kind, workloadScale);
+  // Everything instrument-shaped goes through the shared funnel in
+  // `nativeGraphQuality`: instrument defaults, colour-preset expansion,
+  // the declared per-tier budget (the SAME function the browser runner
+  // uses), numeric coercion for select-backed params, and finally the
+  // continuous overload trim. Effect-graph kinds have no shader def and
+  // fall through it unchanged.
+  return resolveNativeGraphInstrumentParams(
+    // Effect graphs read their params off `source.effectSource` and have
+    // no shader def; passing the layer's shaderId here would let an
+    // instrument budget clamp keys that mean something else entirely.
+    isEffectGraphKind ? null : layer.gpuLayerContent?.shaderId,
+    kind,
+    params,
+    quality,
+  ).params;
 }
 
 function nativePointCloudBufferBase64(buffer: ArrayBuffer): string {
@@ -5478,9 +5418,25 @@ export class NativeRendererSync {
     this.dynamicSourceFrameCaptureSize = this.nativeSourceFrameSize;
   }
 
-  private nativeGraphWorkloadScale(): number {
-    const scale = Number(this.latestNativeStatus?.native_quality?.quality_scale ?? 0);
-    return Number.isFinite(scale) && scale > 0 ? clampNumber(scale, 0.45, 1) : 0.72;
+  /**
+   * Resolve the quality tier that drives every GPU instrument this frame.
+   *
+   * Replaces the old `nativeGraphWorkloadScale()`, which read the core's
+   * `native_quality.quality_scale` and multiplied every instrument by it.
+   * That number is a property of the core's tier (0.56/0.72/0.90/1.0), not
+   * a measurement, so using it as a workload multiplier flattened all four
+   * declared tiers into a single operating point and put Ultra permanently
+   * out of reach. See `nativeGraphQuality.ts` for the resolution order.
+   */
+  private nativeGraphQuality(): NativeGraphQualityState {
+    return resolveNativeGraphQuality({
+      mode: get(settings).performance.gpuInstrumentQuality ?? 'auto',
+      status: this.latestNativeStatus,
+      // Offline export drives a manual clock; adaptivity must not leak in
+      // or two renders of the same project stop matching.
+      deterministic: this.manualClockExportDepth > 0
+        || String(this.latestNativeStatus?.render_clock_mode ?? '') === 'manual',
+    });
   }
 
   private supportsNativeMethod(method: string): boolean {
@@ -6190,7 +6146,7 @@ export class NativeRendererSync {
       const nativeGraphParams = nativeGraphParamsForLayer(
         layer,
         route.kind,
-        this.nativeGraphWorkloadScale(),
+        this.nativeGraphQuality(),
       );
       const graphSource = nativeGraphRenderSource(route);
       const effectPassSig = route.effectPasses?.map((effectPass) => effectPass.descriptor).join('>') ?? 'none';
@@ -8089,9 +8045,9 @@ export class NativeRendererSync {
       const nativeShape = nativeLayerShapeState(layer);
       const nativeMask = nativeLayerMaskState(layer);
       const nativeEdgeEffects = nativeLayerEdgeEffectsState(layer);
-      const nativeGraphWorkloadScale = this.nativeGraphWorkloadScale();
+      const nativeGraphQuality = this.nativeGraphQuality();
       const nativeGraphScaledParams = nativeGraphRoute
-        ? nativeGraphParamsForLayer(layer, nativeGraphRoute.kind, nativeGraphWorkloadScale)
+        ? nativeGraphParamsForLayer(layer, nativeGraphRoute.kind, nativeGraphQuality)
         : null;
       const nativeGraphParamsSig = nativeGraphScaledParams
         ? stableNativeGraphKey(nativeGraphScaledParams)
@@ -9502,7 +9458,7 @@ fn fs_main() -> @location(0) vec4<f32> {
         `${status.source_frame_shared_texture_rejected_uploads}sharedReject/` +
           `${status.source_frame_rejected_uploads}reject`;
       console.log(
-        `[NativeRendererSync] status backend=${status.backend} ready=${status.backend_ready} adapter=${status.adapter_name ?? 'unknown'} nativeFps=${nativeFps.toFixed(1)} previewFps=${previewFps.toFixed(1)} previewMode=${(previewStatus as any)?.mode ?? 'unknown'} previewAttached=${!!(previewStatus as any)?.attached} quality=${status.native_quality.active_tier}@${status.native_quality.quality_scale.toFixed(2)} clock=${status.render_clock_mode}@${status.render_clock_time.toFixed(3)}s#${status.render_clock_frame_index} layers=${status.layers_seen} blocked=${this.nativeBlockedLayerCount}(${this.nativeBlockedEffectLayerCount}fx/${this.nativeBlockedSourceLayerCount}src) lastBlock=${this.nativeBlockedLayerLastReason ?? 'none'} shaders=${status.shader_cache_entries} compiled=${status.shader_precompile_compiled} failed=${status.shader_precompile_failed} procedural=${status.native_procedural_layers} graphLayers=${status.native_graph_source_frame_layers} proxyLayers=${status.native_instrument_proxy_layers} nativeShaderLayers=${status.native_shader_layers}/${status.isf_shader_bindings} uniforms=${status.isf_uniform_sets} frames=${status.source_frames_active}/${status.source_frame_slots}@${status.source_frame_size}px/${status.source_frame_format}/mips${status.source_frame_mip_levels ?? 1} uploads=${status.source_frame_uploads}(${sourceUploadBreakdown}) last=${status.source_frame_last_upload_transport}:${status.source_frame_last_upload_width}x${status.source_frame_last_upload_height}/${status.source_frame_last_input_bytes}->${status.source_frame_last_upload_bytes}b graphs=${status.compute_graph_runs}/${status.compute_graph_passes} render=${status.compute_graph_render_passes} sourceGraph=${status.compute_graph_source_frame_renders} graphBuffers=${status.compute_graph_persistent_buffers} present=${status.swapchain_last_present_result}:${status.swapchain_presented}/${status.swapchain_present_attempts} fail=${status.output_present_consecutive_failures} preview=${status.source_previews_active}/${status.source_preview_slots}@${status.source_preview_size}px cpu=${status.avg_render_cpu_ms.toFixed(2)}ms gpu=${status.gpu_timing_supported ? status.avg_render_gpu_ms.toFixed(2) : 'off'}ms samples=${status.gpu_timing_samples ?? 0} vjTrig=${Number((status as any).native_video_trigger_last_latency_us ?? 0)}us/max${Number((status as any).native_video_trigger_max_latency_us ?? 0)}us sessions=armed:${Number((status as any).native_video_sessions_armed ?? 0)}+pre:${Number((status as any).native_video_sessions_prerolled ?? 0)} shaderErr=${(status as any).last_shader_error ?? 'none'}`,
+        `[NativeRendererSync] status backend=${status.backend} ready=${status.backend_ready} adapter=${status.adapter_name ?? 'unknown'} nativeFps=${nativeFps.toFixed(1)} previewFps=${previewFps.toFixed(1)} previewMode=${(previewStatus as any)?.mode ?? 'unknown'} previewAttached=${!!(previewStatus as any)?.attached} quality=${describeNativeGraphQuality(this.nativeGraphQuality())} coreQuality=${status.native_quality.active_tier}@${status.native_quality.quality_scale.toFixed(2)} clock=${status.render_clock_mode}@${status.render_clock_time.toFixed(3)}s#${status.render_clock_frame_index} layers=${status.layers_seen} blocked=${this.nativeBlockedLayerCount}(${this.nativeBlockedEffectLayerCount}fx/${this.nativeBlockedSourceLayerCount}src) lastBlock=${this.nativeBlockedLayerLastReason ?? 'none'} shaders=${status.shader_cache_entries} compiled=${status.shader_precompile_compiled} failed=${status.shader_precompile_failed} procedural=${status.native_procedural_layers} graphLayers=${status.native_graph_source_frame_layers} proxyLayers=${status.native_instrument_proxy_layers} nativeShaderLayers=${status.native_shader_layers}/${status.isf_shader_bindings} uniforms=${status.isf_uniform_sets} frames=${status.source_frames_active}/${status.source_frame_slots}@${status.source_frame_size}px/${status.source_frame_format}/mips${status.source_frame_mip_levels ?? 1} uploads=${status.source_frame_uploads}(${sourceUploadBreakdown}) last=${status.source_frame_last_upload_transport}:${status.source_frame_last_upload_width}x${status.source_frame_last_upload_height}/${status.source_frame_last_input_bytes}->${status.source_frame_last_upload_bytes}b graphs=${status.compute_graph_runs}/${status.compute_graph_passes} render=${status.compute_graph_render_passes} sourceGraph=${status.compute_graph_source_frame_renders} graphBuffers=${status.compute_graph_persistent_buffers} present=${status.swapchain_last_present_result}:${status.swapchain_presented}/${status.swapchain_present_attempts} fail=${status.output_present_consecutive_failures} preview=${status.source_previews_active}/${status.source_preview_slots}@${status.source_preview_size}px cpu=${status.avg_render_cpu_ms.toFixed(2)}ms gpu=${status.gpu_timing_supported ? status.avg_render_gpu_ms.toFixed(2) : 'off'}ms samples=${status.gpu_timing_samples ?? 0} vjTrig=${Number((status as any).native_video_trigger_last_latency_us ?? 0)}us/max${Number((status as any).native_video_trigger_max_latency_us ?? 0)}us sessions=armed:${Number((status as any).native_video_sessions_armed ?? 0)}+pre:${Number((status as any).native_video_sessions_prerolled ?? 0)} shaderErr=${(status as any).last_shader_error ?? 'none'}`,
       );
     }
   }

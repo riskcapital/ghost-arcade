@@ -601,6 +601,25 @@ export interface NativeRendererCapabilities {
   notes: string[];
 }
 
+/** One live instrument layer's resolved workload, as reported by the core.
+ *  Fields beyond `layer_id`/`kind` vary per instrument. */
+export interface NativeGraphWorkloadReport {
+  layer_id: string;
+  kind: string;
+  particleCount?: number;
+  partnerCount?: number;
+  connectEnabled?: boolean;
+  modeId?: number;
+  gridSize?: number;
+  shadowSteps?: number;
+  emitterCount?: number;
+  marchSteps?: number;
+  riderCount?: number;
+  riderHits?: number;
+  pressureIterations?: number;
+  macCormack?: boolean;
+}
+
 export interface RendererStatus {
   running: boolean;
   backend: BackendKind | null;
@@ -628,6 +647,12 @@ export interface RendererStatus {
   native_instrument_layers: number;
   native_instrument_proxy_layers: number;
   native_graph_source_frame_layers: number;
+  /** Ground truth for what quality tier actually reached the core: the
+   *  workload numbers each live instrument layer resolved to AFTER the
+   *  core re-derived them (riders grid/march from the `quality` enum,
+   *  smoke-3d grid snapping, particle-count clamping). The TS side can
+   *  only report what it sent; this is what the GPU ran. */
+  native_graph_workload?: NativeGraphWorkloadReport[];
   source_frame_uploads: number;
   source_frame_bytes_uploaded: number;
   source_frame_cpu_fallback_uploads: number;
