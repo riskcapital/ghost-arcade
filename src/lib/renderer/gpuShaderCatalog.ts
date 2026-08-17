@@ -524,8 +524,36 @@ export const NATIVE_READY_GPU_SHADER_IDS = new Set<string>([
   'volumetric-balls',
 ]);
 
-export const NATIVE_READY_GPU_SHADER_CATALOG: GpuShaderDef[] = GPU_SHADER_CATALOG.filter((shader) =>
-  NATIVE_READY_GPU_SHADER_IDS.has(shader.id),
+/**
+ * Shaders retired from the picker but still fully functional.
+ *
+ * Deliberately SEPARATE from NATIVE_READY_GPU_SHADER_IDS: that set does double
+ * duty as "offer this in the picker" AND "allow the native render route"
+ * (isNativeReadyGpuShaderId gates routing in nativeRendererSync). Dropping an
+ * id from it therefore blacks out every existing project already using that
+ * shader. Archiving must only hide the entry from NEW selections.
+ *
+ * point-cloud-fx: the advanced point-cloud work lives on the dedicated Point
+ * Cloud layer. A second, weaker point-cloud entry in the GPU Shader picker
+ * only confused people about which one to reach for. Nothing was deleted —
+ * removing the id below restores it to the picker.
+ */
+export const ARCHIVED_GPU_SHADER_IDS = new Set<string>([
+  'point-cloud-fx',
+]);
+
+export function isArchivedGpuShaderId(id: string | undefined | null): boolean {
+  return ARCHIVED_GPU_SHADER_IDS.has(String(id ?? '').trim().toLowerCase());
+}
+
+/** Picker surface: native-ready, minus anything archived. */
+export const NATIVE_READY_GPU_SHADER_CATALOG: GpuShaderDef[] = GPU_SHADER_CATALOG.filter(
+  (shader) => NATIVE_READY_GPU_SHADER_IDS.has(shader.id) && !ARCHIVED_GPU_SHADER_IDS.has(shader.id),
+);
+
+/** Picker surface for the non-native path, minus anything archived. */
+export const PICKER_GPU_SHADER_CATALOG: GpuShaderDef[] = GPU_SHADER_CATALOG.filter(
+  (shader) => !ARCHIVED_GPU_SHADER_IDS.has(shader.id),
 );
 
 export function isNativeReadyGpuShaderId(id: string | undefined | null): boolean {
