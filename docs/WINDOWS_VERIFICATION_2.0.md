@@ -1,8 +1,12 @@
 # Windows Verification — Ghost Arcade 2.0
 
 Branch: `codex/native-main-driver-wip` · Written 2026-08-17 after the native-renderer
-work landed on macOS (Apple M1 Max). Everything below was verified on **macOS only** unless
-a line says otherwise.
+work landed on macOS (Apple M1 Max). Sections 0–6 were written from **macOS only** unless a
+line says otherwise.
+
+> **§7 is a real Windows pass** (2026-08-17, RTX 4070 Laptop / NVIDIA Optimus / Win11, commit
+> `16a7fee`). It closes several §4.1 rows and corrects the ffmpeg prerequisite. **Read §7.3
+> before touching screen capture** — DXGI Desktop Duplication is a dead end inside Electron.
 
 Work top-to-bottom. Sections 0–2 are "will it even run"; 3 is the feature sweep; 4 is
 known-bad — **read it before filing anything**, it will save you chasing four ghosts.
@@ -13,10 +17,11 @@ known-bad — **read it before filing anything**, it will save you chasing four 
 
 | Need | Notes |
 |---|---|
-| Rust toolchain (stable) | The native core is a Rust/wgpu sidecar built per-platform. There is no prebuilt Windows binary in the repo. |
+| Rust toolchain (stable) | The native core is a Rust/wgpu sidecar built per-platform. There is no prebuilt Windows binary in the repo. **`rust-version = 1.96` — older stable fails outright.** |
 | Node + npm | Matches the macOS dev setup. |
-| **ffmpeg on PATH** | Used for BOTH video playback decode and recording/export encode. Resolved by `ffmpeg_binary()` (`native-renderer/src/media_decode.rs:645`) from `GA_FFMPEG_PATH` env, else bare `ffmpeg` / `ffmpeg.exe`. **If ffmpeg is missing, video layers and every export silently do nothing useful** — check this first if video is blank. |
-| NDI SDK (optional) | Only needed if testing NDI. CMake autodetects `C:/Program Files/NDI/...` or `NDI_SDK_DIR`. If `NDI_FOUND` is false the addon simply isn't built and NDI options should degrade, not crash. |
+| VS Build Tools + Windows SDK | Needed for the C++ addons. Verified against VS2019 Build Tools + Win10 SDK 10.0.19041.0. The SDK supplies the C++/WinRT headers the capture addon needs. |
+| ~~ffmpeg on PATH~~ | **Superseded — ffmpeg is bundled.** `ffmpeg-static` is a dependency, is listed in `asarUnpack`, and the broker resolves `GA_FFMPEG_PATH` → `ffmpeg-static` → bare PATH, then injects the resolved path into the core's env (`native-renderer-broker.js:336` / `:1880`). PATH ffmpeg is only the last-resort fallback. |
+| NDI SDK (optional) | Only needed if testing NDI. CMake autodetects `C:/Program Files/NDI/...` or `NDI_SDK_DIR`. If `NDI_FOUND` is false the addon simply isn't built and NDI options should degrade, not crash. (On this machine the SDK is absent, so `ndi_addon` is skipped and NDI is untestable.) |
 | Spout | Windows equivalent of macOS Syphon. `electron/native/spout_addon.cpp` exists. |
 
 ```bash
@@ -118,11 +123,14 @@ npm run desktop:app       # electron shell (needs vite already serving)
 ## 4. Known-bad — do not chase these
 
 ### 4.1 Windows platform gaps (expected, not regressions)
+> Updated 2026-08-17 after a Windows pass on RTX 4070 Laptop / NVIDIA Optimus / Win11.
+> Several rows below were closed — see §7 for what now works.
+
 | Area | State |
 |---|---|
-| **NDI IN (DXGI)** | Written this session, `#elif defined(_WIN32)`-guarded, **never compiled or run**. Expect compile errors. The cross-platform CPU `receiveFrame` fallback is untouched. |
-| **Deck monitors** | Core returns *"not yet implemented on DXGI"*. macOS-only. |
-| **Slice output targets** | macOS IOSurface only, per the core's own comment. |
+| **NDI IN (DXGI)** | Written on macOS, `#elif defined(_WIN32)`-guarded, **never compiled or run**. The NDI SDK is absent on the Windows test machine, so CMake skips `ndi_addon` entirely and NDI stays untestable. The cross-platform CPU `receiveFrame` fallback is untouched. |
+| **Deck monitors** | Core still returns *"not yet implemented on DXGI"*. **Infrastructure now exists** — `dxgi_preview_addon.cpp` exposes `monitorAttach` / `monitorSetSharedTexture` / `monitorDetach`. This is wiring work now, not missing plumbing. |
+| **Slice output targets** | Core-side is platform-neutral; only presentation was macOS-only. Same as deck monitors: the DXGI presenter now provides the `monitorAttach` pair, so this is wiring. Windows still falls back to the per-slice WebGL path today. |
 | **NDI OUT** | Implemented for macOS only (IOSurface → sendImage pump). Not wired for Windows. |
 | **Syphon** | macOS-only by definition; Windows uses Spout. |
 
@@ -169,8 +177,13 @@ So a packaged 2.0 build would ship **without the renderer that is the entire poi
 Needed before cutting a build:
 - [ ] Add `native-renderer` to `electron-builder.yml` (`extraResources`), per-platform binary
 - [ ] Produce a Windows `ghost-render-core.exe` from a Windows cargo build
+- [ ] **Ship `dxcompiler.dll` + `dxil.dll` beside `ghost-render-core.exe` on Windows.** The core
+      selects `Dx12Compiler::DynamicDxc` and loads these at runtime. Without them wgpu silently
+      falls back to FXC and cold boot goes from ~7s back to ~50s. (`static-dxc` would bundle DXC
+      into the binary but needs ATL, which the VS Build Tools install here does not ship.)
 - [ ] Verify a **packaged** build launches and renders — not just `npm run desktop:app`
-- [ ] Decide the ffmpeg story for shipped builds (bundle vs. require on PATH — currently effectively required)
+- [x] ~~Decide the ffmpeg story~~ — **done**: `ffmpeg-static` is bundled and asarUnpacked, and the
+      broker injects `GA_FFMPEG_PATH` into the core. Nothing further required.
 - [ ] Decide the NDI story (docs say the SDK/runtime is deliberately **not** bundled; the long-term
       answer in `docs/ndi-setup.md` is NDI's dynamic-loading model so CI can build the addon without the SDK)
 
@@ -187,3 +200,57 @@ Tracked, reproducible, not Windows-specific:
   samples a source frame, so it is palette-driven only.
 - **Ground shadow stepping** in Volumetric Nodes at Balanced (64³) in the far corner; Ultra (80³) is clean.
 - **Connectors don't cast shadow** in Volumetric Nodes — only nodes splat into the opacity volume.
+
+---
+
+## 7. Windows pass — 2026-08-17 (RTX 4070 Laptop · NVIDIA Optimus · Win11)
+
+Everything here was run on Windows hardware. Landed in commit `16a7fee`.
+
+### 7.1 Fixed — the Windows path did not work at all before this
+| Fix | Detail |
+|---|---|
+| **Backend was Vulkan, not D3D12** | `Instance::default()` enables `Backends::all()` and wgpu picked Vulkan for the NVIDIA adapter, so every `as_hal::<Dx12>()` (output export, DXGI source import, slice export) returned `None`. Meanwhile `native_backend_name()` is a compile-time `cfg!` constant that always reports `"d3d12"` on Windows — **the status line was lying**. Now pinned to `Backends::DX12`. If DXGI things ever look broken again, verify the *adapter's* backend, not the status line. |
+| **Cold boot 51s → ~7s** | wgpu's default `Dx12Compiler::Auto` fell back to FXC for the 63-shader warm-up. Now `DynamicDxc`. |
+| **`start` RPC timed out** | 8s (fine for Metal) left the core alive but the app stuck on NATIVE OFFLINE while FXC ground away. Now 180s on win32. |
+| **Silent export failure** | `create_output_export_target(...).ok()` swallowed its error. Now logged, plus the selected adapter/backend is printed at startup. |
+| **Hierarchy mask was a no-op** | Three stacked bugs: the sync filtered every shape on a `closed` flag the mask editor never sets; the mask ran *before* the content it was supposed to clip (layers sort descending by z, so the multiply hit an empty composite); and mask layers carry `color=(0,0,0,0)` so an `a > 0.001` gate skipped them. Mask now runs as a second pass over the accumulated composite. |
+| **Editor preview was blank** | Windows had no presenter at all. `dxgi_preview_addon.cpp` is the DXGI twin of `native_preview_addon.mm`. |
+| **Live capture did not exist** | `win_capture_addon.cpp` — Media Foundation webcam + WGC screen/window. |
+
+### 7.2 Preview presenter — read this before changing it
+Windows **cannot** copy the macOS arrangement directly. macOS parents a Metal view *below* the web
+content (`addSubview:positioned:NSWindowBelow` + `hitTest: nil`). A Win32 **child** HWND always
+composites *above* its parent's Chromium surface, so a child can never be an underlay — DOM chrome
+(warp handles, custom-shape points, light painting) ends up buried and un-clickable.
+
+The working arrangement: the main window is `transparent: true` + frameless on Windows, and the
+presenter is a **borderless top-level window kept one z-slot behind** the Electron window, showing
+through the canvas's alpha hole. The DOM stack already computed to `rgba(0,0,0,0)` cross-platform,
+so no CSS changes were needed. Consequence: no OS title bar, so window controls are DOM buttons and
+the toolbar acts as the caption (drag + double-click-to-maximize) driven from the main process —
+Chromium consumes input over `-webkit-app-region: drag`, so the renderer never sees the double-click.
+
+### 7.3 Screen capture — do NOT use DXGI Desktop Duplication
+Duplication is unusable inside Electron: Windows allows **one `IDXGIOutputDuplication` per output per
+process**, and Chromium already holds one for `desktopCapturer` thumbnails. `DuplicateOutput` returns
+`DXGI_ERROR_UNSUPPORTED` regardless of adapter, `VIDEO_SUPPORT`, format list, or GPU-preference —
+none of those are the problem. **Windows.Graphics.Capture** has no such limit and is the only path
+that can capture a single window. Verified: monitor 1920×1200 and window 1600×900, both streaming.
+
+### 7.4 Verified working on Windows
+- Boot: `ready=true`, `backend=d3d12`, 63/63 shaders, 0 failures, 0 panics, ~7s
+- Native preview underlay with all DOM chrome interactive on top
+- Window controls, toolbar drag, double-click-to-maximize
+- Mask layer clipping (rotated polygon → content inside, black outside)
+- Webcam (mapping + VJ), screen capture, per-window capture
+- Light painting: real OS drag → stroke rendered by the core
+- **Snapshots**: save / recall / persist, and recall reaches the core (sync events fire on recall)
+
+### 7.5 Still red on Windows
+| Item | Notes |
+|---|---|
+| `native:wgsl-check` | **Not Windows-specific.** Fails on `shaderModule.ts: Shader module call references unknown WGSL symbol source`, introduced by `bbd8a7b`. It's a Node-side assembly step, so it is red on macOS too. |
+| `native:doctor` — noise golden | `actual=1368,4968,7568 expected=1987,5587,8187`, constant delta 619 on channel 0. Consistent with a genuine D3D12-vs-Metal difference in the noise op. Per §2, record it — do not silently re-baseline. |
+| `native:doctor` — `fullV2=pending(2)` | Down from 4. DXGI export now reports `outputSharedTexture=on`. Remaining: editor preview not flagged "production zero-copy", and the Spout sender not active-ready. |
+| MediaPipe + native webcam together | An OS constraint, not a bug: MF (Windows) and AVFoundation (macOS) both take the camera exclusively, so `getUserMedia` fails while a native session is live. **Check `live_capture_addon.mm` for the same destructor bug fixed on Windows** — a base destructor cannot dispatch to a derived `Release()`, which leaked the MF reader and held the camera for the app's lifetime. If macOS has it, MediaPipe stays broken there until restart even after stopping the source. |
