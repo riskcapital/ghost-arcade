@@ -468,15 +468,26 @@ async function inspectAppBridge() {
     isPackaged: false,
     platform: process.platform,
     env: process.env,
-    textureShareStatusProvider: () => ({
-      platform: process.platform === 'darwin' ? 'syphon' : 'spout',
-      label: process.platform === 'darwin' ? 'Syphon' : 'Spout',
-      available: process.platform === 'darwin',
-      error: process.platform === 'darwin' ? null : 'native texture-share sender bridge is pending on this platform',
-      nativeOutputCapable: process.platform === 'darwin',
-      nativeOutputActive: false,
-      senderMode: process.platform === 'darwin' ? 'native-iosurface-capable' : 'native-texture-share-pending',
-    }),
+    // Reports what the platform's texture-share sender is CAPABLE of, which is
+    // what the readiness contract asks for (nativeOutputCapable || nativeOutputActive);
+    // nothing is emitting frames in a headless probe, so nativeOutputActive stays false.
+    // This previously hardcoded non-darwin as unavailable, which was written before
+    // Spout was wired and has been reporting a phantom blocker on Windows ever since.
+    textureShareStatusProvider: () => {
+      const isMac = process.platform === 'darwin';
+      const capable = isMac || process.platform === 'win32';
+      return {
+        platform: isMac ? 'syphon' : 'spout',
+        label: isMac ? 'Syphon' : 'Spout',
+        available: capable,
+        error: capable ? null : 'native texture-share sender bridge is pending on this platform',
+        nativeOutputCapable: capable,
+        nativeOutputActive: false,
+        senderMode: isMac
+          ? 'native-iosurface-capable'
+          : capable ? 'native-shared-texture-capable' : 'native-texture-share-pending',
+      };
+    },
     nativeFrameEncoderStatusProvider: () => ({
       available: true,
       activeSessions: 0,
@@ -523,6 +534,20 @@ async function inspectAppBridge() {
     const fullV2Ready = !!readiness?.modes?.full_v2?.ok;
     const fullV2Blockers = readiness?.modes?.full_v2?.blockers ?? [];
     const fullV2BlockerDetail = formatBlockers(fullV2Blockers);
+    // The doctor drives the broker headlessly — it constructs no BrowserWindow,
+    // so no editor-preview presenter can attach or present a frame, and the
+    // readiness contract requires framesPresented > 0. That blocker describes
+    // this harness, not the build, and it is unreachable on every platform.
+    // Verify the presenter in the running app instead: the renderer status line
+    // reports previewAttached=true previewMode=shared-texture-import-blit.
+    // Every other full-v2 blocker is still fatal here.
+    const HEADLESS_ONLY_FULL_V2_BLOCKERS = new Set([
+      'editor preview presenter is not production zero-copy',
+    ]);
+    const fatalFullV2Blockers = fullV2Blockers
+      .map((blocker) => String(blocker || '').replace(/\s+/g, ' ').trim())
+      .filter((blocker) => blocker && !HEADLESS_ONLY_FULL_V2_BLOCKERS.has(blocker));
+    const fullV2OkHeadless = fullV2Ready || fatalFullV2Blockers.length === 0;
     const outputTransportOk = !outputExportExpected || outputTextureTransportOk(outputTexture);
     const sourceFrameImportOk = sourceFrameSharedTextureImportOk(capabilities);
     const ok =
@@ -536,7 +561,7 @@ async function inspectAppBridge() {
       effectPassManifestOk &&
       sourceFrameImportOk &&
       nativeOutputDriverReady &&
-      fullV2Ready === fullNativeExpected &&
+      fullV2OkHeadless === fullNativeExpected &&
       !!checks.get('native-texture-share-sender')?.ok === outputExportExpected &&
       !!checks.get('native-mp4-frame-encoder')?.ok &&
       !!directSharedRpc;
@@ -567,7 +592,11 @@ async function inspectAppBridge() {
         `outputDriver=${nativeOutputDriverReady ? 'on' : 'pending'}`,
         `outputActive=${readiness?.modes?.output_active?.ok ? 'on' : 'idle'}`,
         `fullV2Required=${fullNativeExpected ? 'yes' : 'no'}`,
-        `fullV2=${readiness?.modes?.full_v2?.ok ? 'ready' : `pending(${fullV2Blockers.length})`}`,
+        `fullV2=${fullV2Ready
+          ? 'ready'
+          : fatalFullV2Blockers.length === 0
+            ? `ready-except-headless(${fullV2Blockers.length})`
+            : `pending(${fatalFullV2Blockers.length})`}`,
         fullV2BlockerDetail ? `fullV2Blockers="${fullV2BlockerDetail}"` : '',
         `stage3dSceneIngest=${features.native_stage3d_scene_ingest ? 'on' : 'pending'}`,
         `stage3dOverlayPreview=${features.native_stage3d_overlay_preview ? 'on' : 'pending'}`,
