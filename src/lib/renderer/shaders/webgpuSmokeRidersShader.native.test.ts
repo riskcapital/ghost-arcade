@@ -157,6 +157,7 @@ describe('Smoke Riders native graph', () => {
       'smoke-riders/surface',
       'smoke-riders/riders',
       'smoke-riders/tiles',
+      'smoke-riders/shadowvol',
       'smoke-riders/render',
     ]);
     for (const command of commands) {

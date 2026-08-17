@@ -8028,6 +8028,7 @@ impl App {
                 "shadowSteps": params.shadow_steps,
                 "riderCount": params.rider_count,
                 "riderHits": params.rider_hits,
+                "shadowDim": params.shadow_dim,
                 "emitterCount": params.emitter_count,
             }),
         );
@@ -8063,6 +8064,13 @@ impl App {
         let riders_id = rid("riders");
         let tile_counts_id = tid("tile-counts");
         let tile_indices_id = tid("tile-indices");
+        let shadow_dim = params.shadow_dim;
+        let shadow_cells = u64::from(shadow_dim)
+            .saturating_mul(u64::from(shadow_dim))
+            .saturating_mul(u64::from(shadow_dim));
+        let sid = |name: &str| format!("{prefix}:s{shadow_dim}:{name}");
+        let shadow_acc_id = sid("shadow-acc");
+        let shadow_depth_id = sid("shadow-depth");
         let buffers_missing = self
             .renderer
             .as_ref()
@@ -8072,6 +8080,8 @@ impl App {
                     .chain(std::iter::once(&riders_id))
                     .chain(std::iter::once(&tile_counts_id))
                     .chain(std::iter::once(&tile_indices_id))
+                    .chain(std::iter::once(&shadow_acc_id))
+                    .chain(std::iter::once(&shadow_depth_id))
                     .any(|buffer_id| {
                         !renderer
                             .native_compute_graph_buffers
@@ -8177,6 +8187,7 @@ impl App {
         let rider_uniform_id = uid("rider-uniform");
         let bin_uniform_id = uid("bin-uniform");
         let render_uniform_id = uid("render-uniform");
+        let shadow_uniform_id = uid("shadow-uniform");
         let emitters_id = uid("emitters");
 
         let mut buffers = vec![
@@ -8238,7 +8249,7 @@ impl App {
             },
             NativeComputeGraphBufferSpec {
                 id: render_uniform_id.clone(),
-                byte_length: 384,
+                byte_length: SMOKE_RIDERS_RENDER_UNIFORM_BYTES as u64,
                 kind: NativeComputeBufferBindingKind::Uniform,
                 initial_bytes: build_smoke_riders_render_uniform_bytes(
                     &params,
@@ -8249,6 +8260,15 @@ impl App {
                     self.native_frame_index(),
                     time,
                 ),
+                persistent: true,
+                clear: false,
+                indirect: false,
+            },
+            NativeComputeGraphBufferSpec {
+                id: shadow_uniform_id.clone(),
+                byte_length: SMOKE_RIDERS_SHADOW_UNIFORM_BYTES as u64,
+                kind: NativeComputeBufferBindingKind::Uniform,
+                initial_bytes: build_smoke_riders_shadow_uniform_bytes(&params, model),
                 persistent: true,
                 clear: false,
                 indirect: false,
@@ -8317,6 +8337,20 @@ impl App {
             clear: reset_buffers,
             indirect: false,
         });
+        // Light-space opacity volume. `cs_shadow_fluid` stores every cell
+        // so no clear pass is needed; the ids carry the edge so changing
+        // Shadow Volume reallocates instead of reinterpreting.
+        for buffer_id in [&shadow_acc_id, &shadow_depth_id] {
+            buffers.push(NativeComputeGraphBufferSpec {
+                id: buffer_id.clone(),
+                byte_length: shadow_cells.saturating_mul(4),
+                kind: NativeComputeBufferBindingKind::StorageReadWrite,
+                initial_bytes: Vec::new(),
+                persistent: true,
+                clear: reset_buffers,
+                indirect: false,
+            });
+        }
 
         let grid_dispatch = [params.grid_size.div_ceil(4).max(1); 3];
         let rider_dispatch = [params.rider_count.div_ceil(64).max(1), 1, 1];
@@ -8792,6 +8826,65 @@ impl App {
             tile_bindings(),
         )?;
 
+        // ── LIGHT-SPACE OCCLUSION VOLUME. Runs last, on the FINAL density
+        //    and the FINAL rider positions, so what casts is exactly what
+        //    renders. fluid (gather + clear) -> riders (atomic scatter)
+        //    -> prefix sum along the light axis.
+        let shadow_bindings = || {
+            vec![
+                binding(
+                    0,
+                    shadow_uniform_id.clone(),
+                    NativeComputeBufferBindingKind::Uniform,
+                ),
+                binding(
+                    1,
+                    ping(den_flip, "density-a", "density-b"),
+                    NativeComputeBufferBindingKind::StorageRead,
+                ),
+                binding(
+                    2,
+                    riders_id.clone(),
+                    NativeComputeBufferBindingKind::StorageRead,
+                ),
+                binding(
+                    3,
+                    shadow_acc_id.clone(),
+                    NativeComputeBufferBindingKind::StorageReadWrite,
+                ),
+                binding(
+                    4,
+                    shadow_depth_id.clone(),
+                    NativeComputeBufferBindingKind::StorageReadWrite,
+                ),
+            ]
+        };
+        add_pass(
+            "smoke-riders-shadow-fluid".to_string(),
+            &format!("{shader_prefix}/shadowvol"),
+            "cs_shadow_fluid",
+            [(shadow_cells as u32).div_ceil(64).max(1), 1, 1],
+            shadow_bindings(),
+        )?;
+        add_pass(
+            "smoke-riders-shadow-riders".to_string(),
+            &format!("{shader_prefix}/shadowvol"),
+            "cs_shadow_riders",
+            rider_dispatch,
+            shadow_bindings(),
+        )?;
+        add_pass(
+            "smoke-riders-shadow-prefix".to_string(),
+            &format!("{shader_prefix}/shadowvol"),
+            "cs_shadow_prefix",
+            [
+                (shadow_dim * shadow_dim).div_ceil(64).max(1),
+                1,
+                1,
+            ],
+            shadow_bindings(),
+        )?;
+
         state.grid = params.grid_size;
         state.rider_count = params.rider_count;
         state.tile_count_x = tile_count_x;
@@ -8826,6 +8919,11 @@ impl App {
             binding(
                 4,
                 tile_indices_id,
+                NativeComputeBufferBindingKind::StorageRead,
+            ),
+            binding(
+                5,
+                shadow_depth_id.clone(),
                 NativeComputeBufferBindingKind::StorageRead,
             ),
         ];
@@ -21650,6 +21748,20 @@ struct NativeSmokeRidersParams {
     // lighting
     anisotropy: f32,
     multi_scatter: f32,
+    /// Key direction in CAMERA space; the packer rotates it into object space.
+    key_dir: [f32; 3],
+    /// God-ray medium filling the volume (in-scattering density).
+    medium_density: f32,
+    medium_color: [f32; 3],
+    /// Gain over the physical extinction fed into the light-space volume.
+    shadow_density: f32,
+    /// Edge of the cubic light-space opacity volume, quality-capped.
+    shadow_dim: u32,
+    /// cos(spotAngle/2). -1 disables the cone entirely.
+    spot_cos: f32,
+    spot_blend: f32,
+    /// Distance of the virtual spot apex from the volume centre.
+    light_distance: f32,
     key_strength: f32,
     key_color: [f32; 3],
     fill_strength: f32,
@@ -21751,6 +21863,15 @@ fn normalize_smoke_riders_native_params(
         "performance" => 2,
         _ => 3,
     };
+    // Ceiling on the authored `shadowRes` for the light-space opacity
+    // volume. The tier ALSO authors the value through `tierParams`; this
+    // is the backstop that stops a project saved at 80 from dragging a
+    // Performance machine down.
+    let shadow_dim_cap: u32 = match quality.as_str() {
+        "ultra" => 80,
+        "performance" => 32,
+        _ => 64,
+    };
 
     let rider_count = ((native_graph_param_f32(
         params,
@@ -21776,6 +21897,7 @@ fn normalize_smoke_riders_native_params(
         .round() as i64)
         .clamp(0, 12) as u32;
     let rider_density = native_graph_param_f32(params, "riderDensity", 0.2, 4.0, 1.9);
+    let spot_angle = native_graph_param_f32(params, "spotAngle", 5.0, 180.0, 55.0);
 
     NativeSmokeRidersParams {
         grid_size,
@@ -21868,6 +21990,30 @@ fn normalize_smoke_riders_native_params(
 
         anisotropy: native_graph_param_f32(params, "anisotropy", -0.9, 0.9, 0.4),
         multi_scatter: native_graph_param_f32(params, "multiScatter", 0.0, 2.0, 0.35),
+        key_dir: riders_normalize_key_dir(
+            native_graph_param_f32(params, "lightX", -2.0, 2.0, -0.52),
+            native_graph_param_f32(params, "lightY", -2.0, 2.0, 0.94),
+            native_graph_param_f32(params, "lightZ", -2.0, 2.0, 0.24),
+        ),
+        // The liquid's march is an iso-surface HUNT, so every haze step
+        // buys a volume lookup the hunt would not otherwise pay for —
+        // it defaults lower than the smoke instrument's scatter integral.
+        medium_density: native_graph_param_f32(
+            params,
+            "mediumDensity",
+            0.0,
+            3.0,
+            if fluid { 0.55 } else { 0.9 },
+        ),
+        medium_color: native_graph_param_rgb(params, "mediumColor", [0.886, 0.910, 1.0]),
+        shadow_density: native_graph_param_f32(params, "shadowDensity", 0.0, 6.0, 1.6),
+        shadow_dim: riders_shadow_dim(params, shadow_dim_cap),
+        spot_cos: riders_spot_cos(spot_angle),
+        spot_blend: riders_spot_blend(
+            spot_angle,
+            native_graph_param_f32(params, "spotSoftness", 0.01, 1.0, 0.4),
+        ),
+        light_distance: native_graph_param_f32(params, "lightDistance", 1.0, 12.0, 3.8),
         key_strength: native_graph_param_f32(params, "keyStrength", 0.0, 8.0, 3.1)
             * (0.8 + intensity * 0.25),
         key_color: native_graph_param_rgb(params, "keyColor", [1.0, 0.933_333, 0.839_216]),
@@ -22122,6 +22268,165 @@ fn build_smoke_riders_bin_uniform_bytes(
     bytes
 }
 
+/* ── shadow volume geometry (shared by BOTH rider kinds) ────────── */
+// Mirrors `ridersShadowDim` / `ridersSpotCos` / `ridersSpotBlend` /
+// `ridersShadowFrame` / `ridersShadowExtinction` in
+// src/lib/renderer/shaders/webgpuSmokeRidersShader.ts. The two packers
+// must stay byte-identical, so these must stay value-identical.
+
+const RIDERS_SHADOW_DIM_MAX: u32 = 80;
+/// Render uniform size. Grew from 384 when the light-space occlusion
+/// volume added its frame, the haze medium and the spot cone.
+const SMOKE_RIDERS_RENDER_UNIFORM_BYTES: usize = 512;
+const SMOKE_RIDERS_SHADOW_UNIFORM_BYTES: usize = 128;
+
+fn riders_shadow_dim(params: &Value, cap: u32) -> u32 {
+    let raw = native_graph_param_numeric(params, "shadowRes").unwrap_or(48.0);
+    let n = raw.clamp(16.0, RIDERS_SHADOW_DIM_MAX as f64) as f32;
+    let mut best = 48_u32;
+    let mut best_d = f32::INFINITY;
+    for step in [32_u32, 48, 64, 80] {
+        let d = (step as f32 - n).abs();
+        if d < best_d {
+            best_d = d;
+            best = step;
+        }
+    }
+    best.min(cap.min(RIDERS_SHADOW_DIM_MAX)).max(16)
+}
+
+/// cos of the spot half-angle. 180 degrees returns -1, which the shader
+/// treats as "no cone" — an exact no-op, so the default look is untouched.
+fn riders_spot_cos(angle_deg: f32) -> f32 {
+    if !(angle_deg < 179.5) {
+        return -1.0;
+    }
+    (angle_deg.max(1.0).to_radians() * 0.5).cos()
+}
+
+fn riders_spot_blend(angle_deg: f32, softness: f32) -> f32 {
+    let c = riders_spot_cos(angle_deg);
+    softness.min(0.95) * (1.0 - c) + 0.002
+}
+
+struct RidersShadowFrame {
+    lu: [f32; 3],
+    lv: [f32; 3],
+    lw: [f32; 3],
+    extent: f32,
+    depth: f32,
+    cell_z: f32,
+}
+
+/// Orthonormal light frame for the opacity volume. `key_dir` points FROM
+/// the scene TOWARD the light, in the volume's OBJECT space — the same
+/// space the density grid and the rider positions live in, so the volume
+/// spins with them for free. `lw` is the PROPAGATION direction, so the
+/// prefix sum runs down +w.
+fn riders_shadow_frame(
+    key_dir: [f32; 3],
+    volume_scale_x: f32,
+    volume_scale_z: f32,
+    dim: u32,
+) -> RidersShadowFrame {
+    let kl = (key_dir[0] * key_dir[0] + key_dir[1] * key_dir[1] + key_dir[2] * key_dir[2]).sqrt();
+    let kl = if kl > 1.0e-6 { kl } else { 1.0 };
+    let lw = [-key_dir[0] / kl, -key_dir[1] / kl, -key_dir[2] / kl];
+    let up: [f32; 3] = if lw[1].abs() > 0.94 {
+        [1.0, 0.0, 0.0]
+    } else {
+        [0.0, 1.0, 0.0]
+    };
+    let cross = |a: [f32; 3], b: [f32; 3]| {
+        [
+            a[1] * b[2] - a[2] * b[1],
+            a[2] * b[0] - a[0] * b[2],
+            a[0] * b[1] - a[1] * b[0],
+        ]
+    };
+    let norm = |v: [f32; 3], fb: [f32; 3]| {
+        let l = (v[0] * v[0] + v[1] * v[1] + v[2] * v[2]).sqrt();
+        if l > 1.0e-6 {
+            [v[0] / l, v[1] / l, v[2] / l]
+        } else {
+            fb
+        }
+    };
+    let lu = norm(cross(up, lw), [1.0, 0.0, 0.0]);
+    let lv = norm(cross(lw, lu), [0.0, 1.0, 0.0]);
+    // Bounding sphere of the volume box, so the frame covers it at every
+    // light angle without re-fitting per frame (which would make the
+    // shadow resolution flicker as the volume spins).
+    let radius =
+        (volume_scale_x * volume_scale_x + 1.0 + volume_scale_z * volume_scale_z).sqrt();
+    let extent = radius * 1.06;
+    let depth = radius * 2.15;
+    RidersShadowFrame {
+        lu,
+        lv,
+        lw,
+        extent,
+        depth,
+        cell_z: depth / dim.max(1) as f32,
+    }
+}
+
+/// Unit key direction in camera space, with the historical rig as the
+/// fallback for a degenerate (0,0,0) input.
+fn riders_normalize_key_dir(x: f32, y: f32, z: f32) -> [f32; 3] {
+    let l = (x * x + y * y + z * z).sqrt();
+    if !(l > 1.0e-4) {
+        return [-0.42, 0.68, 0.62];
+    }
+    [x / l, y / l, z / l]
+}
+
+/// Per-unit-length extinction a rider contributes to the opacity volume.
+fn riders_shadow_extinction(rider_opacity: f32) -> f32 {
+    34.0 * rider_opacity.clamp(0.0, 1.0)
+}
+
+/// Uniform for the three light-space occlusion passes. Mirrored byte for
+/// byte by `buildShadowUniform` in BOTH rider shader modules.
+fn build_smoke_riders_shadow_uniform_bytes(
+    params: &NativeSmokeRidersParams,
+    model: [f32; 16],
+) -> Vec<u8> {
+    let mut bytes = vec![0_u8; SMOKE_RIDERS_SHADOW_UNIFORM_BYTES];
+    let key = smoke_riders_light_to_object(model, params.key_dir);
+    let dim = params.shadow_dim;
+    let frame = riders_shadow_frame(key, params.volume_scale_x, params.volume_scale_z, dim);
+    write_f32_le(&mut bytes, 0, frame.lu[0]);
+    write_f32_le(&mut bytes, 1, frame.lu[1]);
+    write_f32_le(&mut bytes, 2, frame.lu[2]);
+    write_f32_le(&mut bytes, 3, frame.extent);
+    write_f32_le(&mut bytes, 4, frame.lv[0]);
+    write_f32_le(&mut bytes, 5, frame.lv[1]);
+    write_f32_le(&mut bytes, 6, frame.lv[2]);
+    write_f32_le(&mut bytes, 7, frame.depth);
+    write_f32_le(&mut bytes, 8, frame.lw[0]);
+    write_f32_le(&mut bytes, 9, frame.lw[1]);
+    write_f32_le(&mut bytes, 10, frame.lw[2]);
+    write_u32_le(&mut bytes, 11, dim * dim * dim);
+    write_f32_le(&mut bytes, 12, params.volume_scale_x);
+    write_f32_le(&mut bytes, 13, 1.0);
+    write_f32_le(&mut bytes, 14, params.volume_scale_z);
+    write_u32_le(&mut bytes, 15, params.rider_count);
+    write_u32_le(&mut bytes, 16, dim);
+    write_u32_le(&mut bytes, 17, dim);
+    write_u32_le(&mut bytes, 18, dim);
+    write_f32_le(&mut bytes, 19, params.rider_size);
+    write_u32_le(&mut bytes, 20, params.grid_size);
+    write_u32_le(&mut bytes, 21, params.grid_size);
+    write_u32_le(&mut bytes, 22, params.grid_size);
+    write_f32_le(&mut bytes, 23, params.density);
+    write_f32_le(&mut bytes, 24, riders_shadow_extinction(params.rider_opacity));
+    write_f32_le(&mut bytes, 25, 0.0);
+    write_f32_le(&mut bytes, 26, 0.0);
+    write_f32_le(&mut bytes, 27, 0.0);
+    bytes
+}
+
 fn build_smoke_riders_render_uniform_bytes(
     params: &NativeSmokeRidersParams,
     inv_view_proj: [f32; 16],
@@ -22131,11 +22436,11 @@ fn build_smoke_riders_render_uniform_bytes(
     frame_index: u64,
     time: f32,
 ) -> Vec<u8> {
-    let mut bytes = vec![0_u8; 384];
+    let mut bytes = vec![0_u8; SMOKE_RIDERS_RENDER_UNIFORM_BYTES];
     for (index, value) in inv_view_proj.iter().enumerate() {
         write_f32_le(&mut bytes, index, *value);
     }
-    let key = smoke_riders_light_to_object(model, [-0.42, 0.68, 0.62]);
+    let key = smoke_riders_light_to_object(model, params.key_dir);
     let fill = smoke_riders_light_to_object(model, [0.66, 0.12, 0.74]);
     let rim = smoke_riders_light_to_object(model, [0.18, 0.28, -0.94]);
     write_f32_le(&mut bytes, 16, params.smoke_color[0]);
@@ -22221,6 +22526,44 @@ fn build_smoke_riders_render_uniform_bytes(
     write_f32_le(&mut bytes, 93, time);
     write_f32_le(&mut bytes, 94, params.submerge_clarity);
     write_u32_le(&mut bytes, 95, params.rider_hits);
+    // ── Light-space occlusion volume + god rays. The frame is derived
+    //    from the OBJECT-space key, so it spins with the volume exactly
+    //    like the density grid and the riders do.
+    let frame = riders_shadow_frame(
+        key,
+        params.volume_scale_x,
+        params.volume_scale_z,
+        params.shadow_dim,
+    );
+    write_f32_le(&mut bytes, 96, frame.lu[0]);
+    write_f32_le(&mut bytes, 97, frame.lu[1]);
+    write_f32_le(&mut bytes, 98, frame.lu[2]);
+    write_f32_le(&mut bytes, 99, frame.extent);
+    write_f32_le(&mut bytes, 100, frame.lv[0]);
+    write_f32_le(&mut bytes, 101, frame.lv[1]);
+    write_f32_le(&mut bytes, 102, frame.lv[2]);
+    write_f32_le(&mut bytes, 103, frame.depth);
+    write_f32_le(&mut bytes, 104, frame.lw[0]);
+    write_f32_le(&mut bytes, 105, frame.lw[1]);
+    write_f32_le(&mut bytes, 106, frame.lw[2]);
+    write_f32_le(&mut bytes, 107, params.shadow_density);
+    write_u32_le(&mut bytes, 108, params.shadow_dim);
+    write_u32_le(&mut bytes, 109, params.shadow_dim);
+    write_u32_le(&mut bytes, 110, params.shadow_dim);
+    write_f32_le(&mut bytes, 111, frame.cell_z);
+    write_f32_le(&mut bytes, 112, params.medium_color[0]);
+    write_f32_le(&mut bytes, 113, params.medium_color[1]);
+    write_f32_le(&mut bytes, 114, params.medium_color[2]);
+    write_f32_le(&mut bytes, 115, params.medium_density);
+    // Virtual spot apex: up the key direction, in the same object space.
+    write_f32_le(&mut bytes, 116, key[0] * params.light_distance);
+    write_f32_le(&mut bytes, 117, key[1] * params.light_distance);
+    write_f32_le(&mut bytes, 118, key[2] * params.light_distance);
+    write_f32_le(&mut bytes, 119, params.spot_cos);
+    write_f32_le(&mut bytes, 120, params.spot_blend);
+    write_f32_le(&mut bytes, 121, 0.0);
+    write_f32_le(&mut bytes, 122, 0.0);
+    write_f32_le(&mut bytes, 123, 0.0);
     bytes
 }
 

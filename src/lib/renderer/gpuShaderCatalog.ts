@@ -192,13 +192,20 @@ const VOLUMETRIC_BALLS_DEF: GpuShaderDef = {
  */
 function ridersTierParams(
   quality: SmokeRidersQualityLevel,
-  effective: { marchSteps?: number; shadowSteps?: number; riderCount?: number } = {},
+  effective: { marchSteps?: number; shadowSteps?: number; riderCount?: number; shadowRes?: number } = {},
 ): Record<string, any> {
   const scales = smokeRidersQualityResolution(quality);
   const out: Record<string, any> = { quality };
   if (effective.marchSteps) out.marchSteps = Math.round(effective.marchSteps / scales.marchScale);
   if (effective.shadowSteps) out.shadowSteps = Math.round(effective.shadowSteps / scales.shadowScale);
   if (effective.riderCount) out.riderCount = Math.round(effective.riderCount / scales.countScale);
+  // The light-space opacity volume is authored directly (it is a select,
+  // not a scaled count) and separately ceilinged by `shadowDimCap` in
+  // both resolvers, so a tier can only ever ask for something the core
+  // will honour. Balanced deliberately authors 48 — the shader default —
+  // rather than its 64 ceiling, so the stock cost is unchanged.
+  const shadowResDefault = quality === 'ultra' ? 64 : quality === 'performance' ? 32 : 48;
+  out.shadowRes = String(Math.min(effective.shadowRes ?? shadowResDefault, scales.shadowDimCap));
   return out;
 }
 
@@ -253,7 +260,7 @@ const SMOKE_RIDERS_DEF: GpuShaderDef = {
       // rider population four times the default.
       maxParams: { shadowSteps: 12, marchSteps: 160, riderCount: 2048, emitterCount: 8 },
       scaleMaxParams: ['shadowSteps', 'marchSteps', 'riderCount'],
-      tierParams: ridersTierParams('ultra', { marchSteps: 160, shadowSteps: 10, riderCount: 900 }),
+      tierParams: ridersTierParams('ultra', { marchSteps: 160, shadowSteps: 10, riderCount: 900, shadowRes: 80 }),
     },
   },
 };
@@ -295,7 +302,7 @@ const FLUID_RIDERS_DEF: GpuShaderDef = {
     ultra: {
       maxParams: { shadowSteps: 12, marchSteps: 160, riderCount: 2048, emitterCount: 8 },
       scaleMaxParams: ['shadowSteps', 'marchSteps', 'riderCount'],
-      tierParams: ridersTierParams('ultra', { marchSteps: 160, shadowSteps: 10, riderCount: 900 }),
+      tierParams: ridersTierParams('ultra', { marchSteps: 160, shadowSteps: 10, riderCount: 900, shadowRes: 80 }),
     },
   },
 };

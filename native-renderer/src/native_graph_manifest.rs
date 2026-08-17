@@ -198,6 +198,7 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
             "fluid-riders/surface",
             "fluid-riders/riders",
             "fluid-riders/tiles",
+            "fluid-riders/shadowvol",
             "fluid-riders/render",
         ],
         features: &[
@@ -227,6 +228,7 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
             "smoke-riders/surface",
             "smoke-riders/riders",
             "smoke-riders/tiles",
+            "smoke-riders/shadowvol",
             "smoke-riders/render",
         ],
         features: &[

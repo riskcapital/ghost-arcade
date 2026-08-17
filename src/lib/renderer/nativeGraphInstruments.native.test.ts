@@ -166,6 +166,7 @@ const EXPECTED_NATIVE_GRAPH_MANIFEST: NativeGraphManifestExpectation[] = [
       'fluid-riders/surface',
       'fluid-riders/riders',
       'fluid-riders/tiles',
+      'fluid-riders/shadowvol',
       'fluid-riders/render',
     ],
   },

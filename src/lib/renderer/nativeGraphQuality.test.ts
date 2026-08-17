@@ -329,6 +329,13 @@ describe('TS <-> Rust riders quality resolution', () => {
     expect(hits.ultra).toBe(SMOKE_RIDERS_QUALITY_RESOLUTION.ultra.riderHits);
   });
 
+  it('shadow volume ceiling matches', () => {
+    const arms = matchArms('shadow_dim_cap');
+    expect(arms.performance).toBe(SMOKE_RIDERS_QUALITY_RESOLUTION.performance.shadowDimCap);
+    expect(arms.balanced).toBe(SMOKE_RIDERS_QUALITY_RESOLUTION.balanced.shadowDimCap);
+    expect(arms.ultra).toBe(SMOKE_RIDERS_QUALITY_RESOLUTION.ultra.shadowDimCap);
+  });
+
   it('pressure iterations and shadow scale match', () => {
     const pressure = ifArms('pressure_iterations', 'ultra');
     expect(pressure.match).toBe(SMOKE_RIDERS_QUALITY_RESOLUTION.ultra.pressureIterations);
