@@ -62,7 +62,13 @@ const REQUIRED_GRAPH_MANIFEST = [
   {
     id: 'volumetric-spheres',
     feature: 'native_volumetric_spheres_graph',
-    shaderIds: ['volumetric-spheres/sim', 'volumetric-spheres/render'],
+    shaderIds: [
+      'volumetric-spheres/sim',
+      'volumetric-spheres/links',
+      'volumetric-spheres/tiles',
+      'volumetric-spheres/shadow',
+      'volumetric-spheres/render',
+    ],
   },
   {
     id: 'smoke-riders',
@@ -816,9 +822,19 @@ try {
   const graphManifest = new Map(
     (capabilities?.native_graph_instrument_manifest ?? []).map((entry) => [entry.id, entry]),
   );
+  // Superset, not exact-count. This contract exists to prove the BROKER still
+  // advertises the instruments it promises with the right features/shaders —
+  // it is not the manifest's source of truth. Exhaustive manifest matching
+  // (every instrument, both directions, against the Rust manifest) lives in
+  // nativeGraphInstruments.native.test.ts, which fails loudly on a real drift.
+  // An exact-count assert here just meant every new instrument broke an
+  // unrelated gate, which is why it sat red through most of the native port.
+  const missingRequired = REQUIRED_GRAPH_MANIFEST
+    .map((entry) => entry.id)
+    .filter((id) => !graphInstruments.has(id));
   assert(
-    graphInstruments.size === REQUIRED_GRAPH_MANIFEST.length,
-    `broker graph instrument list has drifted: ${JSON.stringify(capabilities?.native_graph_instruments)}`,
+    missingRequired.length === 0,
+    `broker dropped required graph instrument(s): ${missingRequired.join(', ')} — advertised: ${JSON.stringify(capabilities?.native_graph_instruments)}`,
   );
   assert(
     capabilities?.features?.multi_pass_instruments === true &&

@@ -1724,9 +1724,27 @@ const INK_CLOUD_PARTICLE_BYTES: u64 = 64;
 const INK_CLOUD_DEFAULT_PARTICLES: u32 = 150_000;
 const INK_CLOUD_MAX_PARTICLES: u32 = 600_000;
 const INK_CLOUD_MAX_EMITTERS: usize = 8;
-const VOLUMETRIC_SPHERES_STRIDE_FLOATS: usize = 12;
+const VOLUMETRIC_SPHERES_STRIDE_FLOATS: usize = 16;
 const VOLUMETRIC_SPHERES_MIN: u32 = 1;
 const VOLUMETRIC_SPHERES_MAX: u32 = 1200;
+// Mirrored from src/lib/renderer/shaders/webgpuVolumetricSpheresShader.ts.
+// These size the graph's buffers and are interpolated into the WGSL, so
+// they must not drift from the TS constants of the same name.
+const VS_MAX_LINKS: u32 = 8;
+const VS_TILE_SIZE: u32 = 16;
+const VS_TILE_CAP: u32 = 48;
+const VS_EDGE_TILE_CAP: u32 = 64;
+const VS_MAX_HITS: u32 = 6;
+const VS_GRID_DIM: u32 = 32;
+const VS_GRID_CELLS: u64 = 32768;
+const VS_GRID_CAP: u32 = 12;
+const VS_SHADOW_DIM_MAX: u32 = 80;
+const VS_SHADOW_CELLS_MAX: u64 = 512_000;
+const VS_SIM_UNIFORM_BYTES: u64 = 112;
+const VS_LINK_UNIFORM_BYTES: u64 = 64;
+const VS_BIN_UNIFORM_BYTES: u64 = 112;
+const VS_SHADOW_UNIFORM_BYTES: u64 = 96;
+const VS_RENDER_UNIFORM_BYTES: u64 = 528;
 
 #[derive(Clone, Debug)]
 struct NativeInkCloudGraphState {
@@ -8865,20 +8883,26 @@ impl App {
         graph_layer: &NativeGraphLayer,
     ) -> Result<(NativeGraphLayerState, NativeGraphFrameJob), String> {
         let params = normalize_volumetric_spheres_native_params(&graph_layer.params);
+        let count = params
+            .sphere_count
+            .clamp(VOLUMETRIC_SPHERES_MIN, VOLUMETRIC_SPHERES_MAX);
+        let scene = volumetric_spheres_scene(&params, count);
         let seed_key = volumetric_spheres_seed_key(&params);
         let time = self.native_graph_time_seconds();
         let source_id = graph_layer.source_id.clone();
         let safe_source = native_graph_buffer_safe_id(&source_id);
-        let prefix = format!(
-            "volumetric-spheres:{}:{}",
-            safe_source,
-            params.sphere_count.max(1)
-        );
-        let id = |name: &str| format!("{prefix}:{name}");
-        let spheres_id = id("spheres");
-        let sim_uniform_id = id("sim-uniform");
-        let render_uniform_id = id("render-uniform");
+        let prefix = format!("volumetric-spheres:{safe_source}");
+        let uid = |name: &str| format!("{prefix}:{name}");
+        let nid = |name: &str| format!("{prefix}:n{count}:{name}");
 
+        let width = self.pending_width.max(1);
+        let height = self.pending_height.max(1);
+        let tile_count_x = width.div_ceil(VS_TILE_SIZE).max(1);
+        let tile_count_y = height.div_ceil(VS_TILE_SIZE).max(1);
+        let tile_count = tile_count_x.saturating_mul(tile_count_y);
+        let tid = |name: &str| format!("{prefix}:t{tile_count_x}x{tile_count_y}:{name}");
+
+        let spheres_id = nid("spheres");
         let mut state = graph_layer.volumetric_spheres_state.clone();
         let sphere_buffer_missing = self
             .renderer
@@ -8889,14 +8913,14 @@ impl App {
                     .contains_key(&spheres_id)
             })
             .unwrap_or(true);
-        let reset_spheres = state.sphere_count != params.sphere_count
+        let reset_buffers = state.sphere_count != count
             || state.layout_id != params.layout_id
             || state.seed_key != seed_key
             || sphere_buffer_missing;
-        if reset_spheres {
+        if reset_buffers {
             state = NativeVolumetricSpheresGraphState::new(
                 params.layout_id,
-                params.sphere_count,
+                count,
                 seed_key.clone(),
                 time,
             );
@@ -8925,118 +8949,340 @@ impl App {
             0.0
         };
 
-        let sim_shader_id = "volumetric-spheres/sim";
-        let render_shader_id = "volumetric-spheres/render";
-        let (sim_hash, sim_source) = self.native_graph_shader_source(sim_shader_id, "cs_main")?;
-        let (render_hash, render_source) =
-            self.native_graph_shader_source(render_shader_id, "fs_main")?;
-        self.native_graph_shader_source(render_shader_id, "vs_main")?;
+        // Rays are built in MODEL space, so the auto-spin orbits the
+        // camera around a scene whose ground and light stay put.
+        let aspect = (width as f32 / height as f32).max(0.05);
+        let proj = native_perspective(params.fov_deg, aspect, 0.05, 120.0);
+        let view = native_translate(0.0, 0.0, -params.camera_z);
+        // Yaw FIRST, then pitch, then roll. The other order spins the pitch
+        // axis with the yaw, so an auto-spinning scene rolls its own
+        // horizon over.
+        let model = native_mat4_mul(
+            native_rotate_z((params.rotate[2] + state.auto_rot_z_phase).to_radians()),
+            native_mat4_mul(
+                native_rotate_x((params.rotate[0] + state.auto_rot_x_phase).to_radians()),
+                native_rotate_y((params.rotate[1] + state.auto_rot_y_phase).to_radians()),
+            ),
+        );
+        let view_proj = native_mat4_mul(proj, native_mat4_mul(view, model));
+        let inv_view_proj = native_mat4_invert(view_proj);
+        let camera_pos = [
+            model[2] * params.camera_z,
+            model[6] * params.camera_z,
+            model[10] * params.camera_z,
+        ];
 
-        let seq = self.native_frame_index();
-        let slot = self.assign_source_frame_slot(&source_id);
-        let sphere_bytes = u64::from(params.sphere_count)
-            .saturating_mul(VOLUMETRIC_SPHERES_STRIDE_FLOATS as u64)
-            .saturating_mul(4);
-        let buffers = vec![
-            NativeComputeGraphBufferSpec {
-                id: sim_uniform_id.clone(),
-                byte_length: 80,
+        let sim_uniform_id = uid("sim-uniform");
+        let link_uniform_id = uid("link-uniform");
+        let bin_uniform_id = uid("bin-uniform");
+        let shadow_uniform_id = uid("shadow-uniform");
+        let render_uniform_id = uid("render-uniform");
+        let grid_counts_id = uid("grid-counts");
+        let grid_items_id = uid("grid-items");
+        let edges_id = nid("edges");
+        let edge_count_id = uid("edge-count");
+        let node_tile_counts_id = tid("node-tile-counts");
+        let node_tile_items_id = tid("node-tile-items");
+        let edge_tile_counts_id = tid("edge-tile-counts");
+        let edge_tile_items_id = tid("edge-tile-items");
+        let shadow_acc_id = uid("shadow-acc");
+        let shadow_depth_id = uid("shadow-depth");
+
+        let storage = |id: &String, byte_length: u64, clear: bool| NativeComputeGraphBufferSpec {
+            id: id.clone(),
+            byte_length,
+            kind: NativeComputeBufferBindingKind::StorageReadWrite,
+            initial_bytes: Vec::new(),
+            persistent: true,
+            clear,
+            indirect: false,
+        };
+        let uniform =
+            |id: &String, byte_length: u64, initial_bytes: Vec<u8>| NativeComputeGraphBufferSpec {
+                id: id.clone(),
+                byte_length,
                 kind: NativeComputeBufferBindingKind::Uniform,
-                initial_bytes: build_volumetric_spheres_sim_uniform_bytes(
-                    &params, dt, time, bass, treble,
-                ),
+                initial_bytes,
                 persistent: true,
                 clear: false,
                 indirect: false,
-            },
-            NativeComputeGraphBufferSpec {
-                id: render_uniform_id.clone(),
-                byte_length: 320,
-                kind: NativeComputeBufferBindingKind::Uniform,
-                initial_bytes: build_volumetric_spheres_render_uniform_bytes(
+            };
+
+        let buffers = vec![
+            uniform(
+                &sim_uniform_id,
+                VS_SIM_UNIFORM_BYTES,
+                build_volumetric_spheres_sim_uniform_bytes(
+                    &params, &scene, count, dt, time, bass, treble,
+                ),
+            ),
+            uniform(
+                &link_uniform_id,
+                VS_LINK_UNIFORM_BYTES,
+                build_volumetric_spheres_link_uniform_bytes(&params, &scene, count),
+            ),
+            uniform(
+                &bin_uniform_id,
+                VS_BIN_UNIFORM_BYTES,
+                build_volumetric_spheres_bin_uniform_bytes(
                     &params,
-                    &state,
-                    self.pending_width,
-                    self.pending_height,
+                    &scene,
+                    view_proj,
+                    tile_count_x,
+                    tile_count_y,
+                    count,
+                    aspect,
+                ),
+            ),
+            uniform(
+                &shadow_uniform_id,
+                VS_SHADOW_UNIFORM_BYTES,
+                build_volumetric_spheres_shadow_uniform_bytes(&params, &scene, count),
+            ),
+            uniform(
+                &render_uniform_id,
+                VS_RENDER_UNIFORM_BYTES,
+                build_volumetric_spheres_render_uniform_bytes(
+                    &params,
+                    &scene,
+                    inv_view_proj,
+                    camera_pos,
+                    tile_count_x,
+                    tile_count_y,
+                    count,
+                    self.native_frame_index() as u32,
                     time,
                     bass,
                     treble,
                 ),
-                persistent: true,
-                clear: false,
-                indirect: false,
-            },
+            ),
             NativeComputeGraphBufferSpec {
                 id: spheres_id.clone(),
-                byte_length: sphere_bytes,
+                byte_length: u64::from(count)
+                    .saturating_mul(VOLUMETRIC_SPHERES_STRIDE_FLOATS as u64)
+                    .saturating_mul(4),
                 kind: NativeComputeBufferBindingKind::StorageReadWrite,
-                initial_bytes: if reset_spheres {
+                initial_bytes: if reset_buffers {
                     build_volumetric_spheres_initial_buffer_bytes(&params)
                 } else {
                     Vec::new()
                 },
                 persistent: true,
-                clear: reset_spheres,
+                clear: reset_buffers,
                 indirect: false,
             },
+            storage(&grid_counts_id, VS_GRID_CELLS * 4, reset_buffers),
+            storage(
+                &grid_items_id,
+                VS_GRID_CELLS * u64::from(VS_GRID_CAP) * 4,
+                reset_buffers,
+            ),
+            storage(&edges_id, u64::from(scene.max_edges) * 16, reset_buffers),
+            storage(&edge_count_id, 16, reset_buffers),
+            storage(
+                &node_tile_counts_id,
+                u64::from(tile_count) * 4,
+                reset_buffers,
+            ),
+            storage(
+                &node_tile_items_id,
+                u64::from(tile_count) * u64::from(VS_TILE_CAP) * 4,
+                reset_buffers,
+            ),
+            storage(
+                &edge_tile_counts_id,
+                u64::from(tile_count) * 4,
+                reset_buffers,
+            ),
+            storage(
+                &edge_tile_items_id,
+                u64::from(tile_count) * u64::from(VS_EDGE_TILE_CAP) * 4,
+                reset_buffers,
+            ),
+            storage(&shadow_acc_id, VS_SHADOW_CELLS_MAX * 4, reset_buffers),
+            storage(&shadow_depth_id, VS_SHADOW_CELLS_MAX * 4, reset_buffers),
         ];
 
-        let sim_bindings = vec![
-            NativeComputeGraphBindingSpec {
-                binding: 0,
-                resource_id: spheres_id.clone(),
-                kind: NativeComputeGraphBindingKind::Buffer(
-                    NativeComputeBufferBindingKind::StorageReadWrite,
-                ),
-                source_slot: None,
-            },
-            NativeComputeGraphBindingSpec {
-                binding: 1,
-                resource_id: sim_uniform_id,
-                kind: NativeComputeGraphBindingKind::Buffer(
-                    NativeComputeBufferBindingKind::Uniform,
-                ),
-                source_slot: None,
-            },
-        ];
-        let sim_layout_sig = native_graph_binding_layout_signature(&sim_bindings);
-        let pass_plans = vec![NativeComputeGraphPassPlan {
-            name: "volumetric-spheres-sim".to_string(),
-            cache_key: format!("graph:{sim_shader_id}:{sim_hash}:cs_main:{sim_layout_sig}"),
-            source: sim_source,
-            entry: "cs_main".to_string(),
-            dispatch: [params.sphere_count.div_ceil(64).max(1), 1, 1],
-            bindings: sim_bindings,
-        }];
+        let binding =
+            |binding: u32, resource_id: String, buffer_kind: NativeComputeBufferBindingKind| {
+                NativeComputeGraphBindingSpec {
+                    binding,
+                    resource_id,
+                    kind: NativeComputeGraphBindingKind::Buffer(buffer_kind),
+                    source_slot: None,
+                }
+            };
+        let uni = NativeComputeBufferBindingKind::Uniform;
+        let ro = NativeComputeBufferBindingKind::StorageRead;
+        let rw = NativeComputeBufferBindingKind::StorageReadWrite;
+        let sim_bindings = || {
+            vec![
+                binding(0, spheres_id.clone(), rw),
+                binding(1, sim_uniform_id.clone(), uni),
+                binding(2, grid_counts_id.clone(), ro),
+                binding(3, grid_items_id.clone(), ro),
+            ]
+        };
+        let link_bindings = || {
+            vec![
+                binding(0, link_uniform_id.clone(), uni),
+                binding(1, spheres_id.clone(), ro),
+                binding(2, grid_counts_id.clone(), rw),
+                binding(3, grid_items_id.clone(), rw),
+                binding(4, edges_id.clone(), rw),
+                binding(5, edge_count_id.clone(), rw),
+            ]
+        };
+        let bin_bindings = || {
+            vec![
+                binding(0, bin_uniform_id.clone(), uni),
+                binding(1, spheres_id.clone(), ro),
+                binding(2, edges_id.clone(), ro),
+                binding(3, node_tile_counts_id.clone(), rw),
+                binding(4, node_tile_items_id.clone(), rw),
+                binding(5, edge_tile_counts_id.clone(), rw),
+                binding(6, edge_tile_items_id.clone(), rw),
+                binding(7, edge_count_id.clone(), ro),
+            ]
+        };
+        let shadow_bindings = || {
+            vec![
+                binding(0, shadow_uniform_id.clone(), uni),
+                binding(1, spheres_id.clone(), ro),
+                binding(2, shadow_acc_id.clone(), rw),
+                binding(3, shadow_depth_id.clone(), rw),
+            ]
+        };
 
+        let sim_shader = "volumetric-spheres/sim";
+        let links_shader = "volumetric-spheres/links";
+        let tiles_shader = "volumetric-spheres/tiles";
+        let shadow_shader = "volumetric-spheres/shadow";
+        let render_shader = "volumetric-spheres/render";
+
+        let node_dispatch = [count.div_ceil(64).max(1), 1, 1];
+        let links_active = params.connect_id != 0 && params.max_links > 0;
+        let mut queued: Vec<(String, &str, &str, [u32; 3], Vec<NativeComputeGraphBindingSpec>)> =
+            Vec::new();
+        // The sim reads LAST frame's grid, so the grid rebuild has to
+        // follow it; that ordering is what keeps separation to one
+        // bounded 27-cell gather instead of an O(N²) sweep.
+        queued.push((
+            "volumetric-spheres-sim".to_string(),
+            sim_shader,
+            "cs_main",
+            node_dispatch,
+            sim_bindings(),
+        ));
+        queued.push((
+            "volumetric-spheres-clear-grid".to_string(),
+            links_shader,
+            "cs_clear_grid",
+            [scene.grid_cell_count.div_ceil(64).max(1), 1, 1],
+            link_bindings(),
+        ));
+        queued.push((
+            "volumetric-spheres-bin-grid".to_string(),
+            links_shader,
+            "cs_bin_particles",
+            node_dispatch,
+            link_bindings(),
+        ));
+        if links_active {
+            queued.push((
+                "volumetric-spheres-links".to_string(),
+                links_shader,
+                "cs_build_links",
+                node_dispatch,
+                link_bindings(),
+            ));
+        }
+        queued.push((
+            "volumetric-spheres-clear-tiles".to_string(),
+            tiles_shader,
+            "cs_clear_tiles",
+            [tile_count.div_ceil(64).max(1), 1, 1],
+            bin_bindings(),
+        ));
+        queued.push((
+            "volumetric-spheres-bin-nodes".to_string(),
+            tiles_shader,
+            "cs_bin_nodes",
+            node_dispatch,
+            bin_bindings(),
+        ));
+        if links_active {
+            queued.push((
+                "volumetric-spheres-bin-edges".to_string(),
+                tiles_shader,
+                "cs_bin_edges",
+                [scene.max_edges.div_ceil(64).max(1), 1, 1],
+                bin_bindings(),
+            ));
+        }
+        queued.push((
+            "volumetric-spheres-clear-shadow".to_string(),
+            shadow_shader,
+            "cs_clear_shadow",
+            [scene.shadow_cells.div_ceil(64).max(1), 1, 1],
+            shadow_bindings(),
+        ));
+        queued.push((
+            "volumetric-spheres-splat-shadow".to_string(),
+            shadow_shader,
+            "cs_splat_shadow",
+            node_dispatch,
+            shadow_bindings(),
+        ));
+        queued.push((
+            "volumetric-spheres-prefix-shadow".to_string(),
+            shadow_shader,
+            "cs_prefix_shadow",
+            [
+                (scene.shadow_dim * scene.shadow_dim).div_ceil(64).max(1),
+                1,
+                1,
+            ],
+            shadow_bindings(),
+        ));
+
+        let mut pass_plans = Vec::with_capacity(queued.len());
+        for (name, shader_id, entry, dispatch, bindings) in queued {
+            let (hash, source) = self.native_graph_shader_source(shader_id, entry)?;
+            let layout_sig = native_graph_binding_layout_signature(&bindings);
+            pass_plans.push(NativeComputeGraphPassPlan {
+                name,
+                cache_key: format!("graph:{shader_id}:{hash}:{entry}:{layout_sig}"),
+                source,
+                entry: entry.to_string(),
+                dispatch,
+                bindings,
+            });
+        }
+
+        let (render_hash, render_source) =
+            self.native_graph_shader_source(render_shader, "fs_main")?;
+        self.native_graph_shader_source(render_shader, "vs_main")?;
+        let seq = self.native_frame_index();
+        let slot = self.assign_source_frame_slot(&source_id);
         let render_bindings = vec![
-            NativeComputeGraphBindingSpec {
-                binding: 0,
-                resource_id: spheres_id,
-                kind: NativeComputeGraphBindingKind::Buffer(
-                    NativeComputeBufferBindingKind::StorageRead,
-                ),
-                source_slot: None,
-            },
-            NativeComputeGraphBindingSpec {
-                binding: 1,
-                resource_id: render_uniform_id,
-                kind: NativeComputeGraphBindingKind::Buffer(
-                    NativeComputeBufferBindingKind::Uniform,
-                ),
-                source_slot: None,
-            },
+            binding(0, render_uniform_id, uni),
+            binding(1, spheres_id, ro),
+            binding(2, edges_id, ro),
+            binding(3, node_tile_counts_id, ro),
+            binding(4, node_tile_items_id, ro),
+            binding(5, edge_tile_counts_id, ro),
+            binding(6, edge_tile_items_id, ro),
+            binding(7, shadow_depth_id, ro),
+            binding(8, edge_count_id, ro),
         ];
         let render_layout_sig = native_graph_binding_layout_signature(&render_bindings);
         let render_plan = NativeComputeGraphRenderPlan {
             name: "volumetric-spheres-render".to_string(),
             cache_key: format!(
-                "graph-render:{render_shader_id}:{render_hash}:vs_main:fs_main:{}:{}:{}:{}:{}:{render_layout_sig}",
+                "graph-render:{render_shader}:{render_hash}:vs_main:fs_main:{}:{}:nodepth:{render_layout_sig}",
                 NativeComputeGraphRenderBlend::Alpha.signature(),
                 NativeComputeGraphPrimitiveTopology::TriangleList.signature(),
-                "depth",
-                "write",
-                NativeComputeGraphDepthCompare::Less.signature(),
             ),
             source: render_source,
             vertex_entry: "vs_main".to_string(),
@@ -9050,14 +9296,14 @@ impl App {
                 seq,
             },
             blend: NativeComputeGraphRenderBlend::Alpha,
-            vertex_count: 6,
-            instance_count: params.sphere_count.max(1),
+            vertex_count: 3,
+            instance_count: 1,
             indirect_buffer_id: None,
             indirect_offset: 0,
-            clear_color: volumetric_spheres_clear_color(&params),
+            clear_color: [0.0, 0.0, 0.0, 0.0],
             primitive_topology: NativeComputeGraphPrimitiveTopology::TriangleList,
-            depth_enabled: true,
-            depth_write: true,
+            depth_enabled: false,
+            depth_write: false,
             depth_compare: NativeComputeGraphDepthCompare::Less,
             bindings: render_bindings,
         };
@@ -21027,7 +21273,7 @@ fn normalize_point_cloud_native_params(params: &Value) -> NativePointCloudParams
         wave_strength: native_graph_param_f32(params, "waveStrength", 0.0, 16.0, 0.8),
         hue_shift_speed: native_graph_param_f32(params, "hueShiftSpeed", -64.0, 64.0, 0.05),
         saturation: native_graph_param_f32(params, "saturation", 0.0, 8.0, 1.0),
-        brightness: native_graph_param_f32(params, "brightness", 0.0, 8.0, 1.0),
+        brightness: native_graph_param_f32(params, "brightness", 0.0, 8.0, 1.08),
         color_mode_id,
         color_map_id,
         color_mix: native_graph_param_f32(params, "colorMix", 0.0, 1.0, 1.0),
@@ -21650,7 +21896,7 @@ fn normalize_smoke_riders_native_params(
             [0.062_745, 0.058_824, 0.070_588],
         ),
         background_opacity: native_graph_param_f32(params, "backgroundOpacity", 0.0, 1.0, 1.0),
-        vignette: native_graph_param_f32(params, "vignette", 0.0, 1.0, 0.45),
+        vignette: native_graph_param_f32(params, "vignette", 0.0, 1.0, 0.55),
         exposure: native_graph_param_f32(params, "exposure", 0.1, 4.0, 1.5),
         flow_speed: native_graph_param_f32(params, "flowSpeed", 0.05, 2.0, 0.32),
         iso_level: native_graph_param_f32(params, "isoLevel", 0.02, 2.5, 0.42),
@@ -22256,22 +22502,34 @@ fn build_smoke_3d_render_uniform_bytes(
 
 #[derive(Clone, Debug)]
 struct NativeVolumetricSpheresParams {
-    sphere_count: u32,
+    geometry_id: u32,
     layout: String,
     layout_id: u32,
+    sphere_count: u32,
     radius_scale: f32,
     radius_variance: f32,
+    roundness: f32,
+    spin_rate: f32,
     spread: f32,
     depth: f32,
+
+    connect_id: u32,
+    connect_distance: f32,
+    max_links: u32,
+    edge_thickness: f32,
+    edge_opacity: f32,
+    edge_color_id: u32,
+    edge_color: [f32; 3],
+    edge_fade: f32,
+
     motion: f32,
     swirl: f32,
     pull: f32,
     chaos: f32,
     damping: f32,
-    opacity: f32,
-    fog_density: f32,
-    background_opacity: f32,
-    fog_color: [f32; 3],
+    separation: f32,
+    flow_scale: f32,
+
     color_a: [f32; 3],
     color_b: [f32; 3],
     color_c: [f32; 3],
@@ -22279,19 +22537,59 @@ struct NativeVolumetricSpheresParams {
     color_cycle: f32,
     saturation: f32,
     brightness: f32,
-    ambient: f32,
+
+    opacity: f32,
+    roughness: f32,
+    metalness: f32,
     diffuse: f32,
     specular: f32,
-    shininess: f32,
     reflection: f32,
+    clear_coat: f32,
+    coat_roughness: f32,
     rim: f32,
+    ao_strength: f32,
+
     light: [f32; 3],
+    light_distance: f32,
     light_strength: f32,
+    light_color: [f32; 3],
+    spot_angle: f32,
+    spot_softness: f32,
+    light_decay: f32,
+    ambient: f32,
+    fill_color: [f32; 3],
+    fill_strength: f32,
+    rim_color: [f32; 3],
+
+    medium_density: f32,
+    medium_color: [f32; 3],
+    anisotropy: f32,
+    medium_height: f32,
+    medium_noise: f32,
+    shadow_density: f32,
+    march_steps: u32,
+    shadow_res: u32,
+    sphere_hits: u32,
+
+    fog_density: f32,
+    fog_color: [f32; 3],
+    background_opacity: f32,
+    exposure: f32,
+    tonemap_id: u32,
+    vignette: f32,
+    env_strength: f32,
+
+    ground_enabled: bool,
+    ground_height: f32,
+    ground_color: [f32; 3],
+    ground_roughness: f32,
+
     audio_reactive: bool,
     bass: f32,
     treble: f32,
     bass_pulse: f32,
     treble_sparkle: f32,
+
     fov_deg: f32,
     camera_z: f32,
     rotate: [f32; 3],
@@ -22300,11 +22598,24 @@ struct NativeVolumetricSpheresParams {
     auto_rotate_z: f32,
 }
 
+/// Numbers that arrive as strings. Select-backed params (`shadowRes`)
+/// round-trip through the UI as `"48"`, and `Value::as_f64` returns None
+/// for those — which silently parked the tier's shadow resolution on the
+/// fallback for every project that had ever touched the control.
+fn native_graph_param_numeric(params: &Value, key: &str) -> Option<f64> {
+    match params.get(key) {
+        Some(Value::Number(n)) => n.as_f64(),
+        Some(Value::String(s)) => s.trim().parse::<f64>().ok(),
+        _ => None,
+    }
+}
+
 fn volumetric_spheres_layout_id(layout: &str) -> u32 {
     match layout.trim().to_ascii_lowercase().as_str() {
         "orbital" => 1,
         "column" => 2,
         "cavern" => 3,
+        "lattice" => 4,
         _ => 0,
     }
 }
@@ -22314,8 +22625,87 @@ fn volumetric_spheres_layout_label(layout_id: u32) -> &'static str {
         1 => "orbital",
         2 => "column",
         3 => "cavern",
+        4 => "lattice",
         _ => "cluster",
     }
+}
+
+fn volumetric_spheres_geometry_id(params: &Value) -> u32 {
+    match params
+        .get("geometry")
+        .and_then(Value::as_str)
+        .unwrap_or("sphere")
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "cube" => 1,
+        "rounded" => 2,
+        "octahedron" => 3,
+        "capsule" => 4,
+        "torus" => 5,
+        _ => 0,
+    }
+}
+
+fn volumetric_spheres_connect_id(params: &Value) -> u32 {
+    match params
+        .get("connectMode")
+        .and_then(Value::as_str)
+        .unwrap_or("cylinder")
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "off" => 0,
+        "line" => 1,
+        _ => 2,
+    }
+}
+
+fn volumetric_spheres_edge_color_id(params: &Value) -> u32 {
+    match params
+        .get("edgeColorMode")
+        .and_then(Value::as_str)
+        .unwrap_or("gradient")
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "own" => 0,
+        "endpoints" => 1,
+        _ => 2,
+    }
+}
+
+fn volumetric_spheres_tonemap_id(params: &Value) -> u32 {
+    match params
+        .get("tonemap")
+        .and_then(Value::as_str)
+        .unwrap_or("agx")
+        .trim()
+        .to_ascii_lowercase()
+        .as_str()
+    {
+        "aces" => 1,
+        "none" => 2,
+        _ => 0,
+    }
+}
+
+fn volumetric_spheres_shadow_res(params: &Value) -> u32 {
+    let raw = native_graph_param_numeric(params, "shadowRes").unwrap_or(48.0);
+    let n = raw.clamp(16.0, VS_SHADOW_DIM_MAX as f64) as f32;
+    let mut best = 32_u32;
+    let mut best_d = f32::INFINITY;
+    for step in [32_u32, 48, 64, 80] {
+        let d = (step as f32 - n).abs();
+        if d < best_d {
+            best_d = d;
+            best = step;
+        }
+    }
+    best
 }
 
 fn normalize_volumetric_spheres_native_params(params: &Value) -> NativeVolumetricSpheresParams {
@@ -22326,67 +22716,247 @@ fn normalize_volumetric_spheres_native_params(params: &Value) -> NativeVolumetri
         .trim()
         .to_ascii_lowercase();
     let layout_id = volumetric_spheres_layout_id(&layout);
+    // Projects saved before the PBR rewrite carry `shininess` and no
+    // `roughness`; convert instead of snapping every one of them to the
+    // new default. Same conversion as the TS normaliser.
+    let roughness = if params.get("roughness").is_some() {
+        native_graph_param_f32(params, "roughness", 0.03, 1.0, 0.22)
+    } else if let Some(sh) = native_graph_param_numeric(params, "shininess") {
+        ((2.0 / (sh.max(1.0) + 2.0)).sqrt() as f32).clamp(0.03, 1.0)
+    } else {
+        0.22
+    };
     NativeVolumetricSpheresParams {
+        geometry_id: volumetric_spheres_geometry_id(params),
+        layout: volumetric_spheres_layout_label(layout_id).to_string(),
+        layout_id,
         sphere_count: native_graph_param_u32(
             params,
             "sphereCount",
             VOLUMETRIC_SPHERES_MIN,
             VOLUMETRIC_SPHERES_MAX,
-            192,
+            260,
         ),
-        layout: volumetric_spheres_layout_label(layout_id).to_string(),
-        layout_id,
-        radius_scale: native_graph_param_f32(params, "radiusScale", 0.001, 2.0, 0.085),
-        radius_variance: native_graph_param_f32(params, "radiusVariance", 0.0, 4.0, 0.72),
-        spread: native_graph_param_f32(params, "spread", 0.01, 16.0, 1.08),
-        depth: native_graph_param_f32(params, "depth", 0.01, 16.0, 1.35),
-        motion: native_graph_param_f32(params, "motion", 0.0, 16.0, 0.72),
-        swirl: native_graph_param_f32(params, "swirl", -16.0, 16.0, 0.58),
-        pull: native_graph_param_f32(params, "pull", -16.0, 16.0, 0.28),
-        chaos: native_graph_param_f32(params, "chaos", 0.0, 16.0, 0.34),
-        damping: native_graph_param_f32(params, "damping", 0.0, 32.0, 1.7),
-        opacity: native_graph_param_f32(params, "opacity", 0.0, 4.0, 0.96),
-        fog_density: native_graph_param_f32(params, "fogDensity", 0.0, 16.0, 0.38),
-        background_opacity: native_graph_param_f32(params, "backgroundOpacity", 0.0, 1.0, 0.88),
-        fog_color: native_graph_param_rgb(
+        radius_scale: native_graph_param_f32(params, "radiusScale", 0.001, 2.0, 0.058),
+        radius_variance: native_graph_param_f32(params, "radiusVariance", 0.0, 4.0, 0.6),
+        roundness: native_graph_param_f32(params, "roundness", 0.0, 1.0, 0.45),
+        spin_rate: native_graph_param_f32(params, "spinRate", 0.0, 16.0, 0.5),
+        spread: native_graph_param_f32(params, "spread", 0.01, 16.0, 1.2),
+        depth: native_graph_param_f32(params, "depth", 0.01, 16.0, 1.3),
+
+        connect_id: volumetric_spheres_connect_id(params),
+        connect_distance: native_graph_param_f32(params, "connectDistance", 0.01, 8.0, 0.45),
+        max_links: native_graph_param_u32(params, "maxLinks", 0, VS_MAX_LINKS, 4),
+        edge_thickness: native_graph_param_f32(params, "edgeThickness", 0.0002, 0.5, 0.011),
+        edge_opacity: native_graph_param_f32(params, "edgeOpacity", 0.0, 1.0, 0.7),
+        edge_color_id: volumetric_spheres_edge_color_id(params),
+        edge_color: native_graph_param_rgb(
             params,
-            "fogColor",
-            [8.0 / 255.0, 10.0 / 255.0, 20.0 / 255.0],
+            "edgeColor",
+            [150.0 / 255.0, 205.0 / 255.0, 1.0],
         ),
+        edge_fade: native_graph_param_f32(params, "edgeFade", 0.0, 1.0, 0.55),
+
+        motion: native_graph_param_f32(params, "motion", 0.0, 16.0, 0.7),
+        swirl: native_graph_param_f32(params, "swirl", -16.0, 16.0, 0.42),
+        pull: native_graph_param_f32(params, "pull", -16.0, 16.0, 0.34),
+        chaos: native_graph_param_f32(params, "chaos", 0.0, 16.0, 0.38),
+        damping: native_graph_param_f32(params, "damping", 0.0, 32.0, 1.55),
+        separation: native_graph_param_f32(params, "separation", 0.0, 8.0, 0.65),
+        flow_scale: native_graph_param_f32(params, "flowScale", 0.05, 16.0, 1.15),
+
         color_a: native_graph_param_rgb(params, "colorA", [70.0 / 255.0, 170.0 / 255.0, 1.0]),
         color_b: native_graph_param_rgb(params, "colorB", [1.0, 78.0 / 255.0, 166.0 / 255.0]),
         color_c: native_graph_param_rgb(params, "colorC", [1.0, 218.0 / 255.0, 94.0 / 255.0]),
         color_d: native_graph_param_rgb(params, "colorD", [84.0 / 255.0, 1.0, 214.0 / 255.0]),
         color_cycle: native_graph_param_f32(params, "colorCycle", -16.0, 16.0, 0.018),
-        saturation: native_graph_param_f32(params, "saturation", 0.0, 8.0, 1.08),
-        brightness: native_graph_param_f32(params, "brightness", 0.0, 16.0, 1.12),
-        ambient: native_graph_param_f32(params, "ambient", 0.0, 8.0, 0.24),
-        diffuse: native_graph_param_f32(params, "diffuse", 0.0, 8.0, 1.08),
-        specular: native_graph_param_f32(params, "specular", 0.0, 16.0, 0.9),
-        shininess: native_graph_param_f32(params, "shininess", 1.0, 512.0, 78.0),
-        reflection: native_graph_param_f32(params, "reflection", 0.0, 8.0, 0.22),
-        rim: native_graph_param_f32(params, "rim", 0.0, 8.0, 0.46),
+        saturation: native_graph_param_f32(params, "saturation", 0.0, 8.0, 1.3),
+        brightness: native_graph_param_f32(params, "brightness", 0.0, 16.0, 1.0),
+
+        opacity: native_graph_param_f32(params, "opacity", 0.0, 1.0, 1.0),
+        roughness,
+        metalness: native_graph_param_f32(params, "metalness", 0.0, 1.0, 0.15),
+        diffuse: native_graph_param_f32(params, "diffuse", 0.0, 8.0, 1.5),
+        specular: native_graph_param_f32(params, "specular", 0.0, 16.0, 1.4),
+        reflection: native_graph_param_f32(params, "reflection", 0.0, 8.0, 0.45),
+        clear_coat: native_graph_param_f32(params, "clearCoat", 0.0, 1.0, 0.4),
+        coat_roughness: native_graph_param_f32(params, "coatRoughness", 0.03, 1.0, 0.1),
+        rim: native_graph_param_f32(params, "rim", 0.0, 8.0, 0.35),
+        ao_strength: native_graph_param_f32(params, "aoStrength", 0.0, 8.0, 0.85),
+
         light: [
-            native_graph_param_f32(params, "lightX", -16.0, 16.0, -0.55),
-            native_graph_param_f32(params, "lightY", -16.0, 16.0, 0.8),
-            native_graph_param_f32(params, "lightZ", -16.0, 16.0, 1.0),
+            native_graph_param_f32(params, "lightX", -16.0, 16.0, -0.72),
+            native_graph_param_f32(params, "lightY", -16.0, 16.0, 1.22),
+            native_graph_param_f32(params, "lightZ", -16.0, 16.0, -0.22),
         ],
-        light_strength: native_graph_param_f32(params, "lightStrength", 0.0, 16.0, 1.1),
+        light_distance: native_graph_param_f32(params, "lightDistance", 0.2, 64.0, 5.5),
+        light_strength: native_graph_param_f32(params, "lightStrength", 0.0, 32.0, 4.2),
+        light_color: native_graph_param_rgb(
+            params,
+            "lightColor",
+            [1.0, 238.0 / 255.0, 214.0 / 255.0],
+        ),
+        spot_angle: native_graph_param_f32(params, "spotAngle", 2.0, 180.0, 34.0),
+        spot_softness: native_graph_param_f32(params, "spotSoftness", 0.005, 2.0, 0.85),
+        light_decay: native_graph_param_f32(params, "lightDecay", 0.0, 16.0, 0.5),
+        ambient: native_graph_param_f32(params, "ambient", 0.0, 8.0, 0.09),
+        fill_color: native_graph_param_rgb(
+            params,
+            "fillColor",
+            [86.0 / 255.0, 122.0 / 255.0, 178.0 / 255.0],
+        ),
+        fill_strength: native_graph_param_f32(params, "fillStrength", 0.0, 8.0, 0.5),
+        rim_color: native_graph_param_rgb(
+            params,
+            "rimColor",
+            [150.0 / 255.0, 200.0 / 255.0, 1.0],
+        ),
+
+        medium_density: native_graph_param_f32(params, "mediumDensity", 0.0, 16.0, 0.5),
+        medium_color: native_graph_param_rgb(
+            params,
+            "mediumColor",
+            [214.0 / 255.0, 226.0 / 255.0, 1.0],
+        ),
+        anisotropy: native_graph_param_f32(params, "anisotropy", -0.95, 0.95, 0.55),
+        medium_height: native_graph_param_f32(params, "mediumHeight", 0.0, 16.0, 0.2),
+        medium_noise: native_graph_param_f32(params, "mediumNoise", 0.0, 4.0, 0.5),
+        shadow_density: native_graph_param_f32(params, "shadowDensity", 0.0, 32.0, 6.5),
+        march_steps: native_graph_param_u32(params, "marchSteps", 4, 128, 40),
+        shadow_res: volumetric_spheres_shadow_res(params),
+        sphere_hits: native_graph_param_u32(params, "sphereHits", 1, VS_MAX_HITS, 3),
+
+        fog_density: native_graph_param_f32(params, "fogDensity", 0.0, 16.0, 0.16),
+        fog_color: native_graph_param_rgb(
+            params,
+            "fogColor",
+            [12.0 / 255.0, 16.0 / 255.0, 30.0 / 255.0],
+        ),
+        background_opacity: native_graph_param_f32(params, "backgroundOpacity", 0.0, 1.0, 1.0),
+        exposure: native_graph_param_f32(params, "exposure", 0.01, 16.0, 1.05),
+        tonemap_id: volumetric_spheres_tonemap_id(params),
+        vignette: native_graph_param_f32(params, "vignette", 0.0, 1.0, 0.45),
+        env_strength: native_graph_param_f32(params, "envStrength", 0.0, 8.0, 0.6),
+
+        ground_enabled: native_graph_param_bool(params, "groundEnabled", true),
+        ground_height: native_graph_param_f32(params, "groundHeight", -16.0, 16.0, -1.55),
+        ground_color: native_graph_param_rgb(
+            params,
+            "groundColor",
+            [40.0 / 255.0, 44.0 / 255.0, 54.0 / 255.0],
+        ),
+        ground_roughness: native_graph_param_f32(params, "groundRoughness", 0.03, 1.0, 0.38),
+
         audio_reactive: native_graph_param_bool(params, "audioReactive", true),
         bass: native_graph_param_f32(params, "bass", 0.0, 2.0, 0.0),
         treble: native_graph_param_f32(params, "treble", 0.0, 2.0, 0.0),
-        bass_pulse: native_graph_param_f32(params, "bassPulse", 0.0, 16.0, 1.15),
+        bass_pulse: native_graph_param_f32(params, "bassPulse", 0.0, 16.0, 1.05),
         treble_sparkle: native_graph_param_f32(params, "trebleSparkle", 0.0, 16.0, 0.32),
-        fov_deg: native_graph_param_f32(params, "fovDeg", 1.0, 160.0, 48.0),
-        camera_z: native_graph_param_f32(params, "cameraZ", 0.05, 100.0, 2.75),
+
+        fov_deg: native_graph_param_f32(params, "fovDeg", 1.0, 160.0, 46.0),
+        camera_z: native_graph_param_f32(params, "cameraZ", 0.05, 100.0, 3.8),
         rotate: [
-            native_graph_param_f32(params, "rotateX", -3600.0, 3600.0, -4.0),
+            native_graph_param_f32(params, "rotateX", -3600.0, 3600.0, 10.0),
             native_graph_param_f32(params, "rotateY", -3600.0, 3600.0, 0.0),
             native_graph_param_f32(params, "rotateZ", -3600.0, 3600.0, 0.0),
         ],
-        auto_rotate_x: native_graph_param_f32(params, "autoRotateX", -3600.0, 3600.0, -0.3),
-        auto_rotate_y: native_graph_param_f32(params, "autoRotateY", -3600.0, 3600.0, 4.4),
-        auto_rotate_z: native_graph_param_f32(params, "autoRotateZ", -3600.0, 3600.0, 0.15),
+        auto_rotate_x: native_graph_param_f32(params, "autoRotateX", -3600.0, 3600.0, 0.0),
+        auto_rotate_y: native_graph_param_f32(params, "autoRotateY", -3600.0, 3600.0, 4.0),
+        auto_rotate_z: native_graph_param_f32(params, "autoRotateZ", -3600.0, 3600.0, 0.0),
+    }
+}
+
+/// Everything the graph derives from the params ONCE per frame. The TS
+/// twin is `volumetricSpheresScene`; these two must agree or the shadow
+/// volume and the link grid stop lining up with what the shader expects.
+#[derive(Clone, Debug)]
+struct NativeVolumetricSpheresScene {
+    bounds: [f32; 3],
+    volume_radius: f32,
+    grid_dim: [u32; 3],
+    grid_cell_count: u32,
+    grid_min: [f32; 3],
+    cell_size: f32,
+    max_edges: u32,
+    light_pos: [f32; 3],
+    light_dir: [f32; 3],
+    sh_u: [f32; 3],
+    sh_v: [f32; 3],
+    sh_extent: f32,
+    sh_depth: f32,
+    shadow_dim: u32,
+    shadow_cells: u32,
+}
+
+fn vs_cross3(a: [f32; 3], b: [f32; 3]) -> [f32; 3] {
+    [
+        a[1] * b[2] - a[2] * b[1],
+        a[2] * b[0] - a[0] * b[2],
+        a[0] * b[1] - a[1] * b[0],
+    ]
+}
+
+fn volumetric_spheres_scene(
+    params: &NativeVolumetricSpheresParams,
+    count: u32,
+) -> NativeVolumetricSpheresScene {
+    let bounds = [
+        (params.spread * 1.24).max(0.2),
+        (params.spread * 0.92).max(0.2),
+        (params.depth * 1.16).max(0.2),
+    ];
+    let max_bound = bounds[0].max(bounds[1]).max(bounds[2]);
+    let volume_radius = (max_bound * 1.28)
+        .max(params.ground_height.abs() * 1.08)
+        .max(0.4);
+
+    // The cell must never be smaller than the connect distance — that is
+    // the invariant that makes the 27-cell gather in `cs_build_links`
+    // complete, and therefore the whole neighbour search O(N).
+    let grid_extent = [bounds[0] * 1.06, bounds[1] * 1.06, bounds[2] * 1.06];
+    let widest = grid_extent[0].max(grid_extent[1]).max(grid_extent[2]);
+    let cell_size = params
+        .connect_distance
+        .max((2.0 * widest) / VS_GRID_DIM as f32)
+        .max(1.0e-3);
+    let dim = |half: f32| -> u32 {
+        (((2.0 * half) / cell_size).ceil() as i64).clamp(1, VS_GRID_DIM as i64) as u32
+    };
+    let grid_dim = [dim(grid_extent[0]), dim(grid_extent[1]), dim(grid_extent[2])];
+    let grid_min = [-grid_extent[0], -grid_extent[1], -grid_extent[2]];
+
+    let light_axis = native_vec3_normalize(params.light, [-0.62, 1.05, 0.72]);
+    let light_pos = [
+        light_axis[0] * params.light_distance,
+        light_axis[1] * params.light_distance,
+        light_axis[2] * params.light_distance,
+    ];
+    let light_dir = [-light_axis[0], -light_axis[1], -light_axis[2]];
+    let up = if light_dir[1].abs() > 0.94 {
+        [1.0, 0.0, 0.0]
+    } else {
+        [0.0, 1.0, 0.0]
+    };
+    let sh_u = native_vec3_normalize(vs_cross3(up, light_dir), [1.0, 0.0, 0.0]);
+    let sh_v = native_vec3_normalize(vs_cross3(light_dir, sh_u), [0.0, 1.0, 0.0]);
+
+    let shadow_dim = params.shadow_res.clamp(8, VS_SHADOW_DIM_MAX);
+    NativeVolumetricSpheresScene {
+        bounds,
+        volume_radius,
+        grid_dim,
+        grid_cell_count: grid_dim[0] * grid_dim[1] * grid_dim[2],
+        grid_min,
+        cell_size,
+        max_edges: count.saturating_mul(params.max_links.max(1)).max(1),
+        light_pos,
+        light_dir,
+        sh_u,
+        sh_v,
+        sh_extent: volume_radius * 1.1,
+        sh_depth: volume_radius * 2.9,
+        shadow_dim,
+        shadow_cells: shadow_dim * shadow_dim * shadow_dim,
     }
 }
 
@@ -22472,6 +23042,20 @@ fn build_volumetric_spheres_initial_buffer_bytes(
                 let shell = 0.62 + seed.powf(2.0) * 0.3;
                 (dir[0] * shell, dir[1] * shell * 0.72, dir[2] * shell)
             }
+            4 => {
+                // Cube-root packing, so the node graph starts as a readable
+                // grid and the connectors immediately draw the lattice.
+                let side = ((sphere_count as f64).powf(1.0 / 3.0).ceil() as i64).max(2) as usize;
+                let ix = (i % side) as f32;
+                let iy = ((i / side) % side) as f32;
+                let iz = ((i / (side * side)) % side) as f32;
+                let step = 1.6 / (side.saturating_sub(1).max(1)) as f32;
+                (
+                    (ix * step - 0.8) + (seed - 0.5) * step * 0.22,
+                    (iy * step - 0.8) * 0.78 + (seed2 - 0.5) * step * 0.22,
+                    (iz * step - 0.8) + (seed3 - 0.5) * step * 0.22,
+                )
+            }
             _ => {
                 let dir = volumetric_spheres_random_unit(seed, seed2, seed3);
                 let r = volumetric_spheres_hash(i as f32 * 11.31 + 4.2).powf(0.42);
@@ -22482,6 +23066,13 @@ fn build_volumetric_spheres_initial_buffer_bytes(
             + volumetric_spheres_hash(i as f32 * 29.71 + 1.1).powf(1.8)
                 * (0.65 + params.radius_variance * 1.75);
         let color = colors[i % colors.len()];
+        // Shoemake's uniform random rotation: unit norm by construction
+        // and genuinely uniform over SO(3).
+        let qu = volumetric_spheres_hash(i as f32 * 13.51 + 2.2);
+        let qa = volumetric_spheres_hash(i as f32 * 5.37 + 0.9) * std::f32::consts::TAU;
+        let qb = volumetric_spheres_hash(i as f32 * 8.19 + 3.1) * std::f32::consts::TAU;
+        let s1 = (1.0 - qu).max(0.0).sqrt();
+        let s2 = qu.max(0.0).sqrt();
         let off = i * VOLUMETRIC_SPHERES_STRIDE_FLOATS;
         write_f32_le(&mut bytes, off, x * params.spread);
         write_f32_le(&mut bytes, off + 1, y * params.spread);
@@ -22495,25 +23086,31 @@ fn build_volumetric_spheres_initial_buffer_bytes(
         write_f32_le(&mut bytes, off + 9, color[1]);
         write_f32_le(&mut bytes, off + 10, color[2]);
         write_f32_le(&mut bytes, off + 11, (i % 16) as f32);
+        write_f32_le(&mut bytes, off + 12, s1 * qa.sin());
+        write_f32_le(&mut bytes, off + 13, s1 * qa.cos());
+        write_f32_le(&mut bytes, off + 14, s2 * qb.sin());
+        write_f32_le(&mut bytes, off + 15, s2 * qb.cos());
     }
     bytes
 }
 
 fn build_volumetric_spheres_sim_uniform_bytes(
     params: &NativeVolumetricSpheresParams,
+    scene: &NativeVolumetricSpheresScene,
+    count: u32,
     dt: f32,
     time: f32,
     bass: f32,
     treble: f32,
 ) -> Vec<u8> {
-    let mut bytes = vec![0_u8; 80];
+    let mut bytes = vec![0_u8; VS_SIM_UNIFORM_BYTES as usize];
     write_f32_le(&mut bytes, 0, dt);
     write_f32_le(&mut bytes, 1, time);
-    write_u32_le(&mut bytes, 2, params.sphere_count);
+    write_u32_le(&mut bytes, 2, count);
     write_u32_le(&mut bytes, 3, params.layout_id);
-    write_f32_le(&mut bytes, 4, (params.spread * 1.24).max(0.2));
-    write_f32_le(&mut bytes, 5, (params.spread * 0.92).max(0.2));
-    write_f32_le(&mut bytes, 6, (params.depth * 1.16).max(0.2));
+    write_f32_le(&mut bytes, 4, scene.bounds[0]);
+    write_f32_le(&mut bytes, 5, scene.bounds[1]);
+    write_f32_le(&mut bytes, 6, scene.bounds[2]);
     write_f32_le(&mut bytes, 7, params.motion);
     write_f32_le(&mut bytes, 8, params.swirl);
     write_f32_le(&mut bytes, 9, params.pull);
@@ -22523,92 +23120,263 @@ fn build_volumetric_spheres_sim_uniform_bytes(
     write_f32_le(&mut bytes, 13, treble);
     write_f32_le(&mut bytes, 14, params.bass_pulse);
     write_f32_le(&mut bytes, 15, params.chaos);
+    write_u32_le(&mut bytes, 16, scene.grid_dim[0]);
+    write_u32_le(&mut bytes, 17, scene.grid_dim[1]);
+    write_u32_le(&mut bytes, 18, scene.grid_dim[2]);
+    write_u32_le(&mut bytes, 19, VS_GRID_CAP);
+    write_f32_le(&mut bytes, 20, scene.grid_min[0]);
+    write_f32_le(&mut bytes, 21, scene.grid_min[1]);
+    write_f32_le(&mut bytes, 22, scene.grid_min[2]);
+    write_f32_le(&mut bytes, 23, scene.cell_size);
+    write_f32_le(&mut bytes, 24, params.separation);
+    write_f32_le(&mut bytes, 25, params.spin_rate);
+    write_f32_le(&mut bytes, 26, params.radius_scale);
+    write_f32_le(&mut bytes, 27, params.flow_scale);
     bytes
 }
 
+fn build_volumetric_spheres_link_uniform_bytes(
+    params: &NativeVolumetricSpheresParams,
+    scene: &NativeVolumetricSpheresScene,
+    count: u32,
+) -> Vec<u8> {
+    let mut bytes = vec![0_u8; VS_LINK_UNIFORM_BYTES as usize];
+    write_u32_le(&mut bytes, 0, count);
+    write_u32_le(&mut bytes, 1, VS_GRID_CAP);
+    write_u32_le(
+        &mut bytes,
+        2,
+        if params.connect_id == 0 {
+            0
+        } else {
+            params.max_links
+        },
+    );
+    write_u32_le(&mut bytes, 3, scene.max_edges);
+    write_u32_le(&mut bytes, 4, scene.grid_dim[0]);
+    write_u32_le(&mut bytes, 5, scene.grid_dim[1]);
+    write_u32_le(&mut bytes, 6, scene.grid_dim[2]);
+    write_u32_le(&mut bytes, 7, scene.grid_cell_count);
+    write_f32_le(&mut bytes, 8, scene.grid_min[0]);
+    write_f32_le(&mut bytes, 9, scene.grid_min[1]);
+    write_f32_le(&mut bytes, 10, scene.grid_min[2]);
+    write_f32_le(&mut bytes, 11, scene.cell_size);
+    write_f32_le(&mut bytes, 12, params.connect_distance);
+    write_f32_le(&mut bytes, 13, params.connect_distance * 0.72);
+    write_f32_le(&mut bytes, 14, params.radius_scale);
+    write_f32_le(&mut bytes, 15, params.edge_fade);
+    bytes
+}
+
+fn build_volumetric_spheres_bin_uniform_bytes(
+    params: &NativeVolumetricSpheresParams,
+    scene: &NativeVolumetricSpheresScene,
+    view_proj: [f32; 16],
+    tile_count_x: u32,
+    tile_count_y: u32,
+    count: u32,
+    aspect: f32,
+) -> Vec<u8> {
+    let mut bytes = vec![0_u8; VS_BIN_UNIFORM_BYTES as usize];
+    for (index, value) in view_proj.iter().enumerate() {
+        write_f32_le(&mut bytes, index, *value);
+    }
+    write_u32_le(&mut bytes, 16, tile_count_x);
+    write_u32_le(&mut bytes, 17, tile_count_y);
+    write_u32_le(&mut bytes, 18, VS_TILE_CAP);
+    write_u32_le(&mut bytes, 19, count);
+    write_u32_le(&mut bytes, 20, VS_EDGE_TILE_CAP);
+    write_u32_le(&mut bytes, 21, scene.max_edges);
+    write_f32_le(
+        &mut bytes,
+        22,
+        1.0 / (params.fov_deg.to_radians() * 0.5).tan(),
+    );
+    write_f32_le(&mut bytes, 23, aspect);
+    write_f32_le(&mut bytes, 24, params.radius_scale * 1.08);
+    write_f32_le(&mut bytes, 25, params.edge_thickness * 1.35);
+    write_u32_le(&mut bytes, 26, params.geometry_id);
+    write_f32_le(&mut bytes, 27, 0.0);
+    bytes
+}
+
+fn build_volumetric_spheres_shadow_uniform_bytes(
+    params: &NativeVolumetricSpheresParams,
+    scene: &NativeVolumetricSpheresScene,
+    count: u32,
+) -> Vec<u8> {
+    let mut bytes = vec![0_u8; VS_SHADOW_UNIFORM_BYTES as usize];
+    write_f32_le(&mut bytes, 0, scene.sh_u[0]);
+    write_f32_le(&mut bytes, 1, scene.sh_u[1]);
+    write_f32_le(&mut bytes, 2, scene.sh_u[2]);
+    write_f32_le(&mut bytes, 3, scene.sh_extent);
+    write_f32_le(&mut bytes, 4, scene.sh_v[0]);
+    write_f32_le(&mut bytes, 5, scene.sh_v[1]);
+    write_f32_le(&mut bytes, 6, scene.sh_v[2]);
+    write_f32_le(&mut bytes, 7, scene.sh_depth);
+    write_f32_le(&mut bytes, 8, scene.light_dir[0]);
+    write_f32_le(&mut bytes, 9, scene.light_dir[1]);
+    write_f32_le(&mut bytes, 10, scene.light_dir[2]);
+    write_u32_le(&mut bytes, 11, scene.shadow_cells);
+    write_f32_le(&mut bytes, 12, 0.0);
+    write_f32_le(&mut bytes, 13, 0.0);
+    write_f32_le(&mut bytes, 14, 0.0);
+    write_u32_le(&mut bytes, 15, count);
+    write_u32_le(&mut bytes, 16, scene.shadow_dim);
+    write_u32_le(&mut bytes, 17, scene.shadow_dim);
+    write_u32_le(&mut bytes, 18, scene.shadow_dim);
+    write_f32_le(&mut bytes, 19, params.radius_scale);
+    write_f32_le(&mut bytes, 20, params.shadow_density);
+    write_u32_le(&mut bytes, 21, params.geometry_id);
+    write_f32_le(&mut bytes, 22, 0.55);
+    write_f32_le(&mut bytes, 23, 0.0);
+    bytes
+}
+
+#[allow(clippy::too_many_arguments)]
 fn build_volumetric_spheres_render_uniform_bytes(
     params: &NativeVolumetricSpheresParams,
-    state: &NativeVolumetricSpheresGraphState,
-    width: u32,
-    height: u32,
+    scene: &NativeVolumetricSpheresScene,
+    inv_view_proj: [f32; 16],
+    camera_pos: [f32; 3],
+    tile_count_x: u32,
+    tile_count_y: u32,
+    count: u32,
+    frame_index: u32,
     time: f32,
     bass: f32,
     treble: f32,
 ) -> Vec<u8> {
-    let aspect = width.max(1) as f32 / height.max(1) as f32;
-    let proj = native_perspective(params.fov_deg, aspect, 0.05, 100.0);
-    let view = native_translate(0.0, 0.0, -params.camera_z);
-    let model = native_mat4_mul(
-        native_rotate_z((params.rotate[2] + state.auto_rot_z_phase).to_radians()),
-        native_mat4_mul(
-            native_rotate_y((params.rotate[1] + state.auto_rot_y_phase).to_radians()),
-            native_rotate_x((params.rotate[0] + state.auto_rot_x_phase).to_radians()),
-        ),
-    );
-    let view_proj = native_mat4_mul(proj, view);
-    let light = native_vec3_normalize(params.light, [-0.55, 0.8, 1.0]);
-    let mut bytes = vec![0_u8; 320];
-    for (index, value) in view_proj.iter().enumerate() {
+    let mut bytes = vec![0_u8; VS_RENDER_UNIFORM_BYTES as usize];
+    let spot_cos = (params.spot_angle.min(179.5).to_radians() * 0.5).cos();
+    for (index, value) in inv_view_proj.iter().enumerate() {
         write_f32_le(&mut bytes, index, *value);
     }
-    for (index, value) in model.iter().enumerate() {
-        write_f32_le(&mut bytes, 16 + index, *value);
-    }
-    write_f32_le(&mut bytes, 32, 0.0);
-    write_f32_le(&mut bytes, 33, 0.0);
-    write_f32_le(&mut bytes, 34, params.camera_z);
-    write_f32_le(&mut bytes, 35, params.radius_scale);
-    write_f32_le(&mut bytes, 36, 1.0);
-    write_f32_le(&mut bytes, 37, 0.0);
-    write_f32_le(&mut bytes, 38, 0.0);
-    write_f32_le(&mut bytes, 39, params.opacity);
-    write_f32_le(&mut bytes, 40, 0.0);
-    write_f32_le(&mut bytes, 41, 1.0);
-    write_f32_le(&mut bytes, 42, 0.0);
-    write_f32_le(&mut bytes, 43, time);
-    write_f32_le(&mut bytes, 44, light[0]);
-    write_f32_le(&mut bytes, 45, light[1]);
-    write_f32_le(&mut bytes, 46, light[2]);
-    write_f32_le(&mut bytes, 47, params.light_strength);
-    write_f32_le(&mut bytes, 48, params.fog_color[0]);
-    write_f32_le(&mut bytes, 49, params.fog_color[1]);
-    write_f32_le(&mut bytes, 50, params.fog_color[2]);
-    write_f32_le(&mut bytes, 51, params.fog_density);
-    write_f32_le(&mut bytes, 52, params.ambient);
-    write_f32_le(&mut bytes, 53, params.diffuse);
-    write_f32_le(&mut bytes, 54, params.specular);
-    write_f32_le(&mut bytes, 55, params.shininess);
-    write_f32_le(&mut bytes, 56, params.reflection);
-    write_f32_le(&mut bytes, 57, params.rim);
-    write_f32_le(&mut bytes, 58, 1.0 + bass.max(0.0) * 0.08);
-    write_f32_le(&mut bytes, 59, treble);
-    write_f32_le(&mut bytes, 60, params.color_a[0]);
-    write_f32_le(&mut bytes, 61, params.color_a[1]);
-    write_f32_le(&mut bytes, 62, params.color_a[2]);
-    write_f32_le(&mut bytes, 63, params.color_cycle);
-    write_f32_le(&mut bytes, 64, params.color_b[0]);
-    write_f32_le(&mut bytes, 65, params.color_b[1]);
-    write_f32_le(&mut bytes, 66, params.color_b[2]);
-    write_f32_le(&mut bytes, 67, params.saturation);
-    write_f32_le(&mut bytes, 68, params.color_c[0]);
-    write_f32_le(&mut bytes, 69, params.color_c[1]);
-    write_f32_le(&mut bytes, 70, params.color_c[2]);
-    write_f32_le(&mut bytes, 71, params.brightness);
-    write_f32_le(&mut bytes, 72, params.color_d[0]);
-    write_f32_le(&mut bytes, 73, params.color_d[1]);
-    write_f32_le(&mut bytes, 74, params.color_d[2]);
-    write_f32_le(&mut bytes, 75, bass);
+    write_f32_le(&mut bytes, 16, camera_pos[0]);
+    write_f32_le(&mut bytes, 17, camera_pos[1]);
+    write_f32_le(&mut bytes, 18, camera_pos[2]);
+    write_f32_le(&mut bytes, 19, params.exposure);
+    write_f32_le(&mut bytes, 20, scene.light_pos[0]);
+    write_f32_le(&mut bytes, 21, scene.light_pos[1]);
+    write_f32_le(&mut bytes, 22, scene.light_pos[2]);
+    write_f32_le(&mut bytes, 23, params.light_strength * (1.0 + bass * 0.22));
+    write_f32_le(&mut bytes, 24, scene.light_dir[0]);
+    write_f32_le(&mut bytes, 25, scene.light_dir[1]);
+    write_f32_le(&mut bytes, 26, scene.light_dir[2]);
+    write_f32_le(&mut bytes, 27, spot_cos);
+    write_f32_le(&mut bytes, 28, params.light_color[0]);
+    write_f32_le(&mut bytes, 29, params.light_color[1]);
+    write_f32_le(&mut bytes, 30, params.light_color[2]);
+    write_f32_le(
+        &mut bytes,
+        31,
+        params.spot_softness.min(0.95) * (1.0 - spot_cos) + 0.002,
+    );
+    write_f32_le(&mut bytes, 32, params.fill_color[0]);
+    write_f32_le(&mut bytes, 33, params.fill_color[1]);
+    write_f32_le(&mut bytes, 34, params.fill_color[2]);
+    write_f32_le(&mut bytes, 35, params.fill_strength);
+    write_f32_le(&mut bytes, 36, params.rim_color[0]);
+    write_f32_le(&mut bytes, 37, params.rim_color[1]);
+    write_f32_le(&mut bytes, 38, params.rim_color[2]);
+    write_f32_le(&mut bytes, 39, params.rim);
+    write_f32_le(&mut bytes, 40, params.fog_color[0]);
+    write_f32_le(&mut bytes, 41, params.fog_color[1]);
+    write_f32_le(&mut bytes, 42, params.fog_color[2]);
+    write_f32_le(&mut bytes, 43, params.fog_density);
+    write_f32_le(&mut bytes, 44, params.fog_color[0]);
+    write_f32_le(&mut bytes, 45, params.fog_color[1]);
+    write_f32_le(&mut bytes, 46, params.fog_color[2]);
+    write_f32_le(&mut bytes, 47, params.background_opacity);
+    write_f32_le(&mut bytes, 48, params.color_a[0]);
+    write_f32_le(&mut bytes, 49, params.color_a[1]);
+    write_f32_le(&mut bytes, 50, params.color_a[2]);
+    write_f32_le(&mut bytes, 51, params.color_cycle);
+    write_f32_le(&mut bytes, 52, params.color_b[0]);
+    write_f32_le(&mut bytes, 53, params.color_b[1]);
+    write_f32_le(&mut bytes, 54, params.color_b[2]);
+    write_f32_le(&mut bytes, 55, params.saturation);
+    write_f32_le(&mut bytes, 56, params.color_c[0]);
+    write_f32_le(&mut bytes, 57, params.color_c[1]);
+    write_f32_le(&mut bytes, 58, params.color_c[2]);
+    write_f32_le(&mut bytes, 59, params.brightness);
+    write_f32_le(&mut bytes, 60, params.color_d[0]);
+    write_f32_le(&mut bytes, 61, params.color_d[1]);
+    write_f32_le(&mut bytes, 62, params.color_d[2]);
+    write_f32_le(&mut bytes, 63, params.ambient);
+    write_f32_le(&mut bytes, 64, params.ground_color[0]);
+    write_f32_le(&mut bytes, 65, params.ground_color[1]);
+    write_f32_le(&mut bytes, 66, params.ground_color[2]);
+    write_f32_le(&mut bytes, 67, params.ground_height);
+    write_f32_le(&mut bytes, 68, params.medium_color[0]);
+    write_f32_le(&mut bytes, 69, params.medium_color[1]);
+    write_f32_le(&mut bytes, 70, params.medium_color[2]);
+    write_f32_le(&mut bytes, 71, params.medium_density);
+    write_f32_le(&mut bytes, 72, 0.0);
+    write_f32_le(&mut bytes, 73, 0.0);
+    write_f32_le(&mut bytes, 74, 0.0);
+    write_f32_le(&mut bytes, 75, scene.volume_radius);
+    write_f32_le(&mut bytes, 76, scene.sh_u[0]);
+    write_f32_le(&mut bytes, 77, scene.sh_u[1]);
+    write_f32_le(&mut bytes, 78, scene.sh_u[2]);
+    write_f32_le(&mut bytes, 79, scene.sh_extent);
+    write_f32_le(&mut bytes, 80, scene.sh_v[0]);
+    write_f32_le(&mut bytes, 81, scene.sh_v[1]);
+    write_f32_le(&mut bytes, 82, scene.sh_v[2]);
+    write_f32_le(&mut bytes, 83, scene.sh_depth);
+    write_f32_le(&mut bytes, 84, scene.light_dir[0]);
+    write_f32_le(&mut bytes, 85, scene.light_dir[1]);
+    write_f32_le(&mut bytes, 86, scene.light_dir[2]);
+    write_f32_le(&mut bytes, 87, params.shadow_density);
+    write_f32_le(&mut bytes, 88, params.edge_color[0]);
+    write_f32_le(&mut bytes, 89, params.edge_color[1]);
+    write_f32_le(&mut bytes, 90, params.edge_color[2]);
+    write_f32_le(&mut bytes, 91, params.edge_opacity);
+    write_u32_le(&mut bytes, 92, tile_count_x);
+    write_u32_le(&mut bytes, 93, tile_count_y);
+    write_u32_le(&mut bytes, 94, VS_TILE_CAP);
+    write_u32_le(&mut bytes, 95, VS_EDGE_TILE_CAP);
+    write_u32_le(&mut bytes, 96, count);
+    write_u32_le(&mut bytes, 97, scene.max_edges);
+    write_u32_le(&mut bytes, 98, params.march_steps);
+    write_u32_le(&mut bytes, 99, params.sphere_hits);
+    write_u32_le(&mut bytes, 100, scene.shadow_dim);
+    write_u32_le(&mut bytes, 101, scene.shadow_dim);
+    write_u32_le(&mut bytes, 102, scene.shadow_dim);
+    write_u32_le(&mut bytes, 103, frame_index % 4096);
+    write_u32_le(&mut bytes, 104, params.geometry_id);
+    write_u32_le(&mut bytes, 105, params.connect_id);
+    write_u32_le(&mut bytes, 106, params.edge_color_id);
+    write_u32_le(&mut bytes, 107, params.tonemap_id);
+    write_f32_le(&mut bytes, 108, params.radius_scale);
+    write_f32_le(&mut bytes, 109, params.edge_thickness);
+    write_f32_le(&mut bytes, 110, params.roughness);
+    write_f32_le(&mut bytes, 111, params.metalness);
+    write_f32_le(&mut bytes, 112, params.specular);
+    write_f32_le(&mut bytes, 113, params.diffuse);
+    write_f32_le(&mut bytes, 114, params.reflection);
+    write_f32_le(&mut bytes, 115, params.clear_coat);
+    write_f32_le(&mut bytes, 116, params.coat_roughness);
+    write_f32_le(&mut bytes, 117, params.anisotropy);
+    write_f32_le(&mut bytes, 118, params.medium_height);
+    write_f32_le(&mut bytes, 119, params.vignette);
+    write_f32_le(&mut bytes, 120, params.opacity);
+    write_f32_le(&mut bytes, 121, time);
+    write_f32_le(&mut bytes, 122, treble);
+    write_f32_le(&mut bytes, 123, bass);
+    write_f32_le(&mut bytes, 124, params.light_decay);
+    write_f32_le(
+        &mut bytes,
+        125,
+        if params.ground_enabled { 1.0 } else { 0.0 },
+    );
+    write_f32_le(&mut bytes, 126, params.ground_roughness);
+    write_f32_le(&mut bytes, 127, params.env_strength);
+    write_f32_le(&mut bytes, 128, params.ao_strength);
+    write_f32_le(&mut bytes, 129, params.roundness);
+    write_f32_le(&mut bytes, 130, params.medium_noise);
+    write_f32_le(&mut bytes, 131, params.light_distance);
     bytes
-}
-
-fn volumetric_spheres_clear_color(params: &NativeVolumetricSpheresParams) -> [f64; 4] {
-    let opacity = params.background_opacity.clamp(0.0, 1.0);
-    [
-        (params.fog_color[0] * opacity) as f64,
-        (params.fog_color[1] * opacity) as f64,
-        (params.fog_color[2] * opacity) as f64,
-        opacity as f64,
-    ]
 }
 
 #[derive(Clone, Debug)]

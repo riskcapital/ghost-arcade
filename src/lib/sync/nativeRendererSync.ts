@@ -386,7 +386,13 @@ const NATIVE_GRAPH_ROUTE_REQUIREMENTS: ReadonlyArray<NativeGraphRouteRequirement
     kind: 'volumetric-spheres',
     feature: 'native_volumetric_spheres_graph',
     instrument: 'volumetric-spheres',
-    shaderIds: ['volumetric-spheres/sim', 'volumetric-spheres/render'],
+    shaderIds: [
+      'volumetric-spheres/sim',
+      'volumetric-spheres/links',
+      'volumetric-spheres/tiles',
+      'volumetric-spheres/shadow',
+      'volumetric-spheres/render',
+    ],
   },
   {
     kind: 'fluid-riders',
