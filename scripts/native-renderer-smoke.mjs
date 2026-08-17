@@ -695,7 +695,7 @@ function nativeEffectReference(effect) {
         uv[0] * 320 * 0.42 + t * 19.0,
         uv[1] * 180 * 0.42 + frameCount * 0.37,
       ]) - 0.5;
-      return color.map((value) => value + n * clampNumber(amount) * 0.72);
+      return color.map((value) => value + n * clampNumber(amount) * NOISE_EFFECT_SCALE);
     }
     default:
       return color;
@@ -911,6 +911,67 @@ export async function precompileNativeCompositorParityShaders(rpc) {
   return summary;
 }
 
+// Scale applied to the noise sample in apply_native_effect (heartbeat.wgsl).
+// Kept next to the reference so the two cannot drift apart.
+const NOISE_EFFECT_SCALE = 0.72;
+
+/**
+ * The noise effect cannot be gated on value equality against a JS reference.
+ *
+ * hash21 is `fract(sin(...) * 43758.5453)`. The dot product feeding it lands
+ * near 24987, where an f32 ulp is ~0.002; multiplying that by 43758 shifts the
+ * argument of `fract` by ~16.5 whole periods. So the GPU (f32) and the JS
+ * reference (f64) produce mathematically decorrelated samples — not "close"
+ * ones. Any tolerance that lets a correct renderer pass is wide enough to
+ * admit a wrong one, which is how the previous ±420 window worked: it happened
+ * to fit on Metal and failed on D3D12 at delta 619, with both values perfectly
+ * valid. Widening it further would have made the check vacuous while still
+ * looking rigorous.
+ *
+ * The algorithm itself is not lost: the probe compiles the real `hash21`,
+ * `value_noise` and `apply_native_effect` extracted from heartbeat.wgsl, so the
+ * shipped code is what runs here. What is left to verify is how that sample is
+ * applied, which is fully deterministic:
+ *   - one scalar sample is shared by all three channels (not per-channel noise),
+ *   - the perturbation stays inside its mathematical range ±0.5*amount*scale,
+ *   - the perturbation is non-zero, so the effect is actually wired up.
+ * That catches an unwired effect, a wrong amount or scale, per-channel noise,
+ * bad channel routing, and NaN/clamping — everything except the one value that
+ * is untestable across precisions.
+ */
+export function assertNoiseEffectSemantics(actual, effect) {
+  const base = COMPOSITOR_EFFECT_COLOR.map((value) =>
+    Math.round(clampNumber(Math.max(0, value), 0, 1.5) * COMPOSITOR_EFFECT_QUANT),
+  );
+  const offsets = actual.map((value, channel) => value - base[channel]);
+  const limit = 0.5 * clampNumber(effect.amount) * NOISE_EFFECT_SCALE * COMPOSITOR_EFFECT_QUANT;
+
+  if (!offsets.every(Number.isFinite)) {
+    throw new Error(`native compositor noise effect produced non-finite output: actual=${actual.join(',')}`);
+  }
+  // ±2 absorbs per-channel rounding in the u32 quantization, nothing more.
+  const spread = Math.max(...offsets) - Math.min(...offsets);
+  if (spread > 2) {
+    throw new Error(
+      `native compositor noise effect is not sharing one sample across channels: `
+      + `actual=${actual.join(',')} base=${base.join(',')} offsets=${offsets.join(',')}`,
+    );
+  }
+  for (let channel = 0; channel < 3; channel += 1) {
+    if (Math.abs(offsets[channel]) > limit + 2) {
+      throw new Error(
+        `native compositor noise effect exceeded its range on channel ${channel}: `
+        + `offset=${offsets[channel]} limit=±${limit} actual=${actual.join(',')} base=${base.join(',')}`,
+      );
+    }
+  }
+  if (offsets.every((offset) => offset === 0)) {
+    throw new Error(
+      `native compositor noise effect did not perturb the color — effect appears unwired: actual=${actual.join(',')}`,
+    );
+  }
+}
+
 export async function assertNativeCompositorEffectParity(rpc) {
   const byteLength = COMPOSITOR_EFFECTS.length * 4 * 4;
   const result = await rpc.send('compute_graph', {
@@ -947,11 +1008,13 @@ export async function assertNativeCompositorEffectParity(rpc) {
     throw new Error(`native compositor effect probe readback was truncated: ${JSON.stringify(result)}`);
   }
   for (const effect of COMPOSITOR_EFFECTS) {
-    // Hash/noise parity crosses WGSL f32 trig and JS double trig; keep the semantic
-    // gate, but do not require bit-tight agreement for that one stochastic op.
-    const tolerance = effect.name === 'noise' ? 420 : 18;
     const index = effect.code - 1;
     const actual = words.slice(index * 4, index * 4 + 3).map(Number);
+    if (effect.name === 'noise') {
+      assertNoiseEffectSemantics(actual, effect);
+      continue;
+    }
+    const tolerance = 18;
     const expected = quantizedEffectReference(effect);
     for (let channel = 0; channel < 3; channel += 1) {
       const delta = Math.abs(actual[channel] - expected[channel]);

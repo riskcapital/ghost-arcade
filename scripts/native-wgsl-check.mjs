@@ -1,6 +1,6 @@
 import { spawn } from 'node:child_process';
 import { existsSync, readdirSync, readFileSync } from 'node:fs';
-import { join, relative, resolve } from 'node:path';
+import { join, relative, resolve, sep } from 'node:path';
 
 const root = process.cwd();
 const rendererRoot = join(root, 'src', 'lib', 'renderer');
@@ -116,9 +116,16 @@ function resolveIncludes(source, modules, sourceName) {
   return visit(source, sourceName, [sourceName]);
 }
 
+// Record ids and the skip-list below are compared against forward-slash paths.
+// `relative()` yields backslashes on Windows, which silently broke both: the
+// skip never matched, and record ids differed from the macOS run.
+function repoPath(absolute) {
+  return relative(root, absolute).split(sep).join('/');
+}
+
 function extractFileRecords(path) {
   const source = readFileSync(path, 'utf8');
-  const relativeFile = relative(root, path);
+  const relativeFile = repoPath(path);
   const wgsl = new Map();
   const numerics = new Map();
 
@@ -309,7 +316,7 @@ function collectRecords() {
   const failures = [];
 
   for (const path of walkFiles(rendererRoot)) {
-    const relativePath = relative(root, path);
+    const relativePath = repoPath(path);
     if (relativePath.endsWith('src/lib/renderer/wgsl/shaderModule.ts')) continue;
     try {
       for (const record of extractFileRecords(path)) {
