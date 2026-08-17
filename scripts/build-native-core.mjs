@@ -60,8 +60,21 @@ function installedTargets() {
   }
 }
 
+// Windows: the core loads dxcompiler.dll/dxil.dll from its OWN directory, and
+// silently falls back to slow FXC if they are absent. Keep them in step with
+// every build rather than relying on a one-time manual copy.
+function ensureDxc() {
+  if (process.platform !== 'win32') return;
+  try {
+    execFileSync(process.execPath, [path.join(root, 'scripts', 'ensure-dxc.mjs')], { stdio: 'inherit' });
+  } catch {
+    console.warn('[core-build] ensure-dxc failed — cold boot may fall back to FXC (slow)');
+  }
+}
+
 if (!wantUniversal) {
   cargoBuild(null);
+  ensureDxc();
   console.log(`[core-build] host build -> native-renderer/target/release/${BIN}`);
   process.exit(0);
 }
