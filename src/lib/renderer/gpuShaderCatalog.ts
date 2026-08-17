@@ -23,7 +23,13 @@ import { WebGPUInkCloudShader, inkCloudParamSchema, inkCloudParamDefaults } from
 // The shader file remains on disk for now as dead code; can clean up
 // later if we're sure we won't bring it back.
 import { WebGPU3DSmokeShader, smoke3DParamSchema, smoke3DParamDefaults } from './shaders/webgpu3DSmokeShader';
-import { WebGPUSmokeRidersShader, smokeRidersParamSchema, smokeRidersParamDefaults } from './shaders/webgpuSmokeRidersShader';
+import {
+  WebGPUSmokeRidersShader,
+  smokeRidersParamSchema,
+  smokeRidersParamDefaults,
+  smokeRidersQualityResolution,
+  type SmokeRidersQualityLevel,
+} from './shaders/webgpuSmokeRidersShader';
 import { WebGPUFluidRidersShader, fluidRidersParamSchema, fluidRidersParamDefaults } from './shaders/webgpuFluidRidersShader';
 import { WebGPUWarpLoom, warpLoomParamSchema, warpLoomParamDefaults } from './shaders/webgpuWarpLoom';
 
@@ -102,11 +108,31 @@ const PARTICLE_FIELD_DEF: GpuShaderDef = {
   // visible picker option.
   needsSource: true,
   create: (device, presentFormat) => new WebGPUParticleFieldShader(device, presentFormat),
+  // `maxParams` is the ceiling an authored project may reach at this tier;
+  // `tierParams` is where the tier parks a knob the operator never touched
+  // (default particleCount 80k, partnerCount 12). Balanced's target is the
+  // shader default exactly, so the out-of-the-box cost does not move.
   qualityBudgets: {
-    low: { maxParams: { particleCount: 100000, partnerCount: 8 }, scaleMaxParams: ['particleCount', 'partnerCount'] },
-    balanced: { maxParams: { particleCount: 250000, partnerCount: 12 }, scaleMaxParams: ['particleCount', 'partnerCount'] },
-    high: { maxParams: { particleCount: 500000, partnerCount: 16 }, scaleMaxParams: ['particleCount', 'partnerCount'] },
-    ultra: { maxParams: { particleCount: 500000, partnerCount: 24 }, scaleMaxParams: ['particleCount', 'partnerCount'] },
+    low: {
+      maxParams: { particleCount: 100000, partnerCount: 8 },
+      scaleMaxParams: ['particleCount', 'partnerCount'],
+      tierParams: { particleCount: 60000, partnerCount: 8 },
+    },
+    balanced: {
+      maxParams: { particleCount: 250000, partnerCount: 12 },
+      scaleMaxParams: ['particleCount', 'partnerCount'],
+      tierParams: { particleCount: 80000, partnerCount: 12 },
+    },
+    high: {
+      maxParams: { particleCount: 500000, partnerCount: 16 },
+      scaleMaxParams: ['particleCount', 'partnerCount'],
+      tierParams: { particleCount: 180000, partnerCount: 16 },
+    },
+    ultra: {
+      maxParams: { particleCount: 500000, partnerCount: 24 },
+      scaleMaxParams: ['particleCount', 'partnerCount'],
+      tierParams: { particleCount: 320000, partnerCount: 24 },
+    },
   },
 };
 
@@ -121,6 +147,33 @@ const VOLUMETRIC_BALLS_DEF: GpuShaderDef = {
   create: (device, presentFormat) => new WebGPUVolumetricSpheresShader(device, presentFormat),
 };
 
+/**
+ * Build a riders tier operating point from the EFFECTIVE workload it
+ * should produce.
+ *
+ * The riders instruments do not have a `gridSize` param — the grid, the
+ * pressure sweeps, the rider-hit count and multipliers on march / rider /
+ * shadow counts are all re-derived by the core from the per-layer
+ * `quality` enum. So the tier's real lever here is `quality`, and any
+ * numeric target has to be expressed as the value to AUTHOR such that the
+ * core's multiplier lands it on the number we actually want.
+ *
+ * Writing that inverse by hand would be exactly the silent mismatch this
+ * whole change is meant to remove, so it is computed from the shared
+ * resolution table instead: change a multiplier and these recompute.
+ */
+function ridersTierParams(
+  quality: SmokeRidersQualityLevel,
+  effective: { marchSteps?: number; shadowSteps?: number; riderCount?: number } = {},
+): Record<string, any> {
+  const scales = smokeRidersQualityResolution(quality);
+  const out: Record<string, any> = { quality };
+  if (effective.marchSteps) out.marchSteps = Math.round(effective.marchSteps / scales.marchScale);
+  if (effective.shadowSteps) out.shadowSteps = Math.round(effective.shadowSteps / scales.shadowScale);
+  if (effective.riderCount) out.riderCount = Math.round(effective.riderCount / scales.countScale);
+  return out;
+}
+
 const SMOKE_RIDERS_DEF: GpuShaderDef = {
   id: 'smoke-riders',
   label: 'Smoke Riders',
@@ -130,28 +183,49 @@ const SMOKE_RIDERS_DEF: GpuShaderDef = {
   defaultParams: smokeRidersParamDefaults,
   needsSource: false,
   create: (device, presentFormat) => new WebGPUSmokeRidersShader(device, presentFormat),
-  // MacCormack doubles the advection cost and surface tension adds a
-  // ~48-read pass, so the two cheapest tiers force the single-pass
-  // advection chain and trim the march instead of the pressure solve
-  // (which is warm-started and must stay at 20+ sweeps everywhere).
+  // The tier's real lever on this instrument is the `quality` enum, which
+  // the core turns into the sim grid (32/48/64), the pressure sweep count,
+  // the rider-hit count, MacCormack on/off, and multipliers on the
+  // authored march / rider / shadow counts.
+  //
+  // FIXED: every tier here used to declare a `gridSize` cap, but
+  // smoke-riders has no `gridSize` param — those four caps could never
+  // match anything and the grid stayed wherever `quality` put it. They are
+  // replaced by the `quality` targets below, which move the grid for real.
+  //
+  // `maxParams` are authored ceilings and stay generous except on Live
+  // Saver, whose entire job is to cap. The old balanced ceilings (72 march
+  // / 480 riders) would have started clipping ordinary authored projects
+  // the moment tiers went live, so they are raised to sit above the
+  // instrument's own defaults rather than on top of them.
   qualityBudgets: {
     low: {
-      maxParams: { gridSize: 32, shadowSteps: 2, marchSteps: 36, riderCount: 160, emitterCount: 4 },
+      maxParams: { shadowSteps: 6, marchSteps: 72, riderCount: 512, emitterCount: 6 },
       scaleMaxParams: ['shadowSteps', 'marchSteps', 'riderCount', 'emitterCount'],
+      tierParams: ridersTierParams('performance'),
       forceParams: { advection: 'semi-lagrangian' },
     },
     balanced: {
-      maxParams: { gridSize: 48, shadowSteps: 5, marchSteps: 72, riderCount: 480, emitterCount: 6 },
+      // Targets the shader defaults exactly (48^3, 72 march, 5 shadow,
+      // 220 riders) so the stock look and cost are unchanged.
+      maxParams: { shadowSteps: 8, marchSteps: 120, riderCount: 1024, emitterCount: 8 },
       scaleMaxParams: ['shadowSteps', 'marchSteps', 'riderCount', 'emitterCount'],
-      forceParams: { advection: 'semi-lagrangian' },
+      tierParams: ridersTierParams('balanced'),
     },
     high: {
-      maxParams: { gridSize: 64, shadowSteps: 8, marchSteps: 108, riderCount: 1024, emitterCount: 8 },
+      // 64^3 grid, 24 pressure sweeps, 4 rider hits, and the core's 1.4x
+      // march / 1.35x rider multipliers on the untouched defaults.
+      maxParams: { shadowSteps: 12, marchSteps: 160, riderCount: 2048, emitterCount: 8 },
       scaleMaxParams: ['shadowSteps', 'marchSteps', 'riderCount'],
+      tierParams: ridersTierParams('ultra'),
     },
     ultra: {
-      maxParams: { gridSize: 64, shadowSteps: 12, marchSteps: 160, riderCount: 2048, emitterCount: 8 },
+      // Same 64^3 solve as High, but pushed to the instrument's declared
+      // render ceiling: the full 160-step march, every shadow step, and a
+      // rider population four times the default.
+      maxParams: { shadowSteps: 12, marchSteps: 160, riderCount: 2048, emitterCount: 8 },
       scaleMaxParams: ['shadowSteps', 'marchSteps', 'riderCount'],
+      tierParams: ridersTierParams('ultra', { marchSteps: 160, shadowSteps: 10, riderCount: 900 }),
     },
   },
 };
@@ -167,28 +241,33 @@ const FLUID_RIDERS_DEF: GpuShaderDef = {
   defaultParams: fluidRidersParamDefaults,
   needsSource: false,
   create: (device, presentFormat) => new WebGPUFluidRidersShader(device, presentFormat),
-  // MacCormack doubles the advection cost and surface tension adds a
-  // ~48-read pass, so the two cheapest tiers force the single-pass
-  // advection chain and trim the march instead of the pressure solve
-  // (which is warm-started and must stay at 20+ sweeps everywhere).
+  // Same structure as smoke-riders (the core's builder is literally the
+  // same function), but the liquid's iso-surface hunt needs a finer march
+  // than a scatter integral, so the default is 96 rather than 72 and the
+  // ceilings sit proportionally higher.
+  //
+  // FIXED: the dead `gridSize` caps are gone here too — see SMOKE_RIDERS_DEF.
   qualityBudgets: {
     low: {
-      maxParams: { gridSize: 32, shadowSteps: 2, marchSteps: 48, riderCount: 160, emitterCount: 4 },
+      maxParams: { shadowSteps: 6, marchSteps: 96, riderCount: 512, emitterCount: 6 },
       scaleMaxParams: ['shadowSteps', 'marchSteps', 'riderCount', 'emitterCount'],
+      tierParams: ridersTierParams('performance'),
       forceParams: { advection: 'semi-lagrangian' },
     },
     balanced: {
-      maxParams: { gridSize: 48, shadowSteps: 5, marchSteps: 96, riderCount: 480, emitterCount: 6 },
+      maxParams: { shadowSteps: 8, marchSteps: 140, riderCount: 1024, emitterCount: 8 },
       scaleMaxParams: ['shadowSteps', 'marchSteps', 'riderCount', 'emitterCount'],
-      forceParams: { advection: 'semi-lagrangian' },
+      tierParams: ridersTierParams('balanced'),
     },
     high: {
-      maxParams: { gridSize: 64, shadowSteps: 8, marchSteps: 144, riderCount: 1024, emitterCount: 8 },
+      maxParams: { shadowSteps: 12, marchSteps: 160, riderCount: 2048, emitterCount: 8 },
       scaleMaxParams: ['shadowSteps', 'marchSteps', 'riderCount'],
+      tierParams: ridersTierParams('ultra'),
     },
     ultra: {
-      maxParams: { gridSize: 64, shadowSteps: 12, marchSteps: 160, riderCount: 2048, emitterCount: 8 },
+      maxParams: { shadowSteps: 12, marchSteps: 160, riderCount: 2048, emitterCount: 8 },
       scaleMaxParams: ['shadowSteps', 'marchSteps', 'riderCount'],
+      tierParams: ridersTierParams('ultra', { marchSteps: 160, shadowSteps: 10, riderCount: 900 }),
     },
   },
 };
@@ -262,11 +341,37 @@ const GRAVITY_WELLS_DEF: GpuShaderDef = {
   defaultParams: gravityWellsDefaultParams,
   needsSource: false,
   create: (device, presentFormat) => new WebGPUParticleFieldShader(device, presentFormat),
+  // Gravity Wells ships with a much heavier default than Particle Field
+  // (140k particles, 16 partners) because the filament braid IS the look.
+  // Balanced therefore targets exactly that default — the stock experience
+  // must not get cheaper OR more expensive when tiers went live. Ultra
+  // targets 500k, which is also the core's hard particle ceiling.
+  //
+  // The old balanced cap of 12 partners was one of the caps that had never
+  // been exercised: it silently thinned the signature braid below the
+  // instrument's own default of 16. Raised to 16 so Balanced renders the
+  // instrument as designed.
   qualityBudgets: {
-    low: { maxParams: { particleCount: 90000, partnerCount: 8 }, scaleMaxParams: ['particleCount', 'partnerCount'] },
-    balanced: { maxParams: { particleCount: 180000, partnerCount: 12 }, scaleMaxParams: ['particleCount', 'partnerCount'] },
-    high: { maxParams: { particleCount: 320000, partnerCount: 16 }, scaleMaxParams: ['particleCount', 'partnerCount'] },
-    ultra: { maxParams: { particleCount: 500000, partnerCount: 24 }, scaleMaxParams: ['particleCount', 'partnerCount'] },
+    low: {
+      maxParams: { particleCount: 90000, partnerCount: 8 },
+      scaleMaxParams: ['particleCount', 'partnerCount'],
+      tierParams: { particleCount: 90000, partnerCount: 8 },
+    },
+    balanced: {
+      maxParams: { particleCount: 180000, partnerCount: 16 },
+      scaleMaxParams: ['particleCount', 'partnerCount'],
+      tierParams: { particleCount: 140000, partnerCount: 16 },
+    },
+    high: {
+      maxParams: { particleCount: 320000, partnerCount: 20 },
+      scaleMaxParams: ['particleCount', 'partnerCount'],
+      tierParams: { particleCount: 260000, partnerCount: 16 },
+    },
+    ultra: {
+      maxParams: { particleCount: 500000, partnerCount: 24 },
+      scaleMaxParams: ['particleCount', 'partnerCount'],
+      tierParams: { particleCount: 500000, partnerCount: 24 },
+    },
   },
 };
 
@@ -303,11 +408,35 @@ const SMOKE_3D_DEF: GpuShaderDef = {
   defaultParams: smoke3DParamDefaults,
   needsSource: false,
   create: (device, presentFormat) => new WebGPU3DSmokeShader(device, presentFormat),
+  // 3D Smoke is the one volumetric instrument whose grid IS a real param,
+  // so the tier can move it directly. Note the targets are NUMBERS while
+  // the schema default is the string '48' — the funnel coerces
+  // select-backed numerics on the way to the core, which reads them as
+  // JSON numbers and silently ignores strings.
+  //
+  // `emitterCount` is left alone by the tier: how many plumes are in the
+  // shot is a look decision, not a budget one. It is still capped.
   qualityBudgets: {
-    low: { maxParams: { gridSize: 32, shadowSteps: 2, emitterCount: 4 }, scaleMaxParams: ['shadowSteps', 'emitterCount'] },
-    balanced: { maxParams: { gridSize: 48, shadowSteps: 4, emitterCount: 6 }, scaleMaxParams: ['shadowSteps', 'emitterCount'] },
-    high: { maxParams: { gridSize: 64, shadowSteps: 6, emitterCount: 8 }, scaleMaxParams: ['shadowSteps'] },
-    ultra: { maxParams: { gridSize: 64, shadowSteps: 8, emitterCount: 8 }, scaleMaxParams: ['shadowSteps'] },
+    low: {
+      maxParams: { gridSize: 32, shadowSteps: 2, emitterCount: 4 },
+      scaleMaxParams: ['shadowSteps', 'emitterCount'],
+      tierParams: { gridSize: 32, shadowSteps: 2 },
+    },
+    balanced: {
+      maxParams: { gridSize: 48, shadowSteps: 4, emitterCount: 6 },
+      scaleMaxParams: ['shadowSteps', 'emitterCount'],
+      tierParams: { gridSize: 48, shadowSteps: 4 },
+    },
+    high: {
+      maxParams: { gridSize: 64, shadowSteps: 6, emitterCount: 8 },
+      scaleMaxParams: ['shadowSteps'],
+      tierParams: { gridSize: 64, shadowSteps: 6 },
+    },
+    ultra: {
+      maxParams: { gridSize: 64, shadowSteps: 8, emitterCount: 8 },
+      scaleMaxParams: ['shadowSteps'],
+      tierParams: { gridSize: 64, shadowSteps: 8 },
+    },
   },
 };
 
@@ -397,6 +526,18 @@ function coerceNumericParamValue(original: any, value: number): any {
   return value;
 }
 
+/** Loose equality used to decide "did the operator touch this knob?".
+ *  Select-backed params round-trip as numeric strings ('48' vs 48), so a
+ *  strict compare would read every one of them as authored. */
+function sameParamValue(a: any, b: any): boolean {
+  if (a === b) return true;
+  if (a == null || b == null) return false;
+  const na = Number(a);
+  const nb = Number(b);
+  if (Number.isFinite(na) && Number.isFinite(nb)) return na === nb;
+  return String(a) === String(b);
+}
+
 function clampParamValue(original: any, cap: number): { value: any; changed: boolean } {
   const numeric = Number(original);
   if (!Number.isFinite(numeric)) return { value: original, changed: false };
@@ -446,6 +587,20 @@ export function applyGpuShaderQualityBudget(
   const applied: GpuShaderQualityApplyResult['applied'] = {};
   const scaleKeys = new Set(budget.scaleMaxParams ?? []);
 
+  // Tier operating point first, caps second — so a tier target can never
+  // sneak past the same tier's declared ceiling.
+  for (const [key, target] of Object.entries(budget.tierParams ?? {})) {
+    // Only params the operator has left alone follow the tier. Anything
+    // authored away from the shader default is their call; the caps loop
+    // below still clamps it. A param that is absent entirely (older saved
+    // projects, or a caller passing a sparse object) IS the default.
+    const untouched = out[key] === undefined || sameParamValue(out[key], def.defaultParams?.[key]);
+    if (!untouched) continue;
+    if (sameParamValue(out[key], target)) continue;
+    applied[key] = { from: out[key], to: target };
+    out[key] = target;
+  }
+
   for (const [key, rawCap] of Object.entries(budget.maxParams ?? {})) {
     const tierProfileCap = key === 'particleCount'
       ? GHOST_GPU_QUALITY_PROFILES[suggestedTier].particleBudget
@@ -460,13 +615,15 @@ export function applyGpuShaderQualityBudget(
     const next = clampParamValue(previous, cap);
     if (next.changed) {
       out[key] = next.value;
-      applied[key] = { from: previous, to: next.value, cap };
+      // Keep the operator's original value as `from` when the tier target
+      // already moved this key, so the debug readout shows the real delta.
+      applied[key] = { from: applied[key]?.from ?? previous, to: next.value, cap };
     }
   }
 
   for (const [key, value] of Object.entries(budget.forceParams ?? {})) {
     if (out[key] !== value) {
-      applied[key] = { from: out[key], to: value };
+      applied[key] = { from: applied[key]?.from ?? out[key], to: value };
       out[key] = value;
     }
   }

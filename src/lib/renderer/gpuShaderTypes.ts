@@ -68,6 +68,21 @@ export interface GpuShaderQualityTierBudget {
   maxParams?: Record<string, number>;
   /** Params whose caps should also follow the adaptive qualityScale. */
   scaleMaxParams?: string[];
+  /** This tier's OPERATING POINT — the value the tier targets for a
+   *  workload param the operator has left at the shader default.
+   *
+   *  `maxParams` alone can only ever make an instrument cheaper, so a
+   *  project sitting on shader defaults renders identically at every
+   *  tier and "Ultra" means nothing. `tierParams` is what makes a tier
+   *  visible: pick Ultra and the untouched knobs move up to the tier's
+   *  target; pick Live Saver and they move down.
+   *
+   *  It is deliberately conservative about operator intent — a param
+   *  whose value differs from the shader default is treated as authored
+   *  and is never raised or lowered by the tier, only clamped by
+   *  `maxParams`. Tier targets are still subject to `maxParams`, so a
+   *  target may never exceed the tier's declared ceiling. */
+  tierParams?: Record<string, any>;
   /** Last-resort fixed overrides for a tier. Use sparingly; maxParams
    *  keeps user intent intact and should be preferred. */
   forceParams?: Record<string, any>;

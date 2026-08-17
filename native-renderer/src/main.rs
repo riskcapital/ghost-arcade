@@ -11,7 +11,7 @@ mod shared_texture;
 
 use std::{
     borrow::Cow,
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{BTreeMap, HashMap, HashSet, VecDeque},
     ffi::c_void,
     fs,
     io::{self, BufRead, Write},
@@ -832,6 +832,10 @@ struct CoreStatus {
     native_instrument_layers: u32,
     native_instrument_proxy_layers: u32,
     native_graph_source_frame_layers: u32,
+    /// Ground-truth workload the core resolved for each live instrument
+    /// layer on the last built frame. Lets tooling verify that a quality
+    /// tier actually reached the core instead of trusting the TS values.
+    native_graph_workload: Vec<Value>,
     shader_precompile_queue_cap: u32,
     shader_precompile_per_frame: u32,
     shader_metadata_cache_cap: u32,
@@ -2736,6 +2740,12 @@ struct App {
     scene_layers: HashMap<String, SceneLayer>,
     pending_media_bindings: HashMap<String, PendingMediaBinding>,
     native_graph_layers: HashMap<String, NativeGraphLayer>,
+    /// Resolved per-instrument workload numbers for the most recent frame,
+    /// keyed by layer id. Written by the graph-job builders AFTER the core
+    /// has normalised the incoming params, so this is the ground truth for
+    /// "what quality tier actually reached the core" — the TS side can only
+    /// report what it *sent*. Surfaced in `status.native_graph_workload`.
+    native_graph_workload: BTreeMap<String, Value>,
     native_plugin_liquid_states: HashMap<String, NativePluginLiquidState>,
     native_plugin_templates_initialized: HashSet<String>,
     native_plugin_audio_smooth: NativePluginAudioSmooth,
@@ -3032,6 +3042,7 @@ impl App {
             scene_layers: HashMap::new(),
             pending_media_bindings: HashMap::new(),
             native_graph_layers: HashMap::new(),
+            native_graph_workload: BTreeMap::new(),
             native_plugin_liquid_states: HashMap::new(),
             native_plugin_templates_initialized: HashSet::new(),
             native_plugin_audio_smooth: NativePluginAudioSmooth::default(),
@@ -3701,6 +3712,7 @@ impl App {
             native_instrument_layers: native_instrument_proxy_layers,
             native_instrument_proxy_layers,
             native_graph_source_frame_layers,
+            native_graph_workload: self.native_graph_workload.values().cloned().collect(),
             shader_precompile_queue_cap: self.shader_precompile_queue_cap,
             shader_precompile_per_frame: self.shader_precompile_per_frame,
             shader_metadata_cache_cap: self.shader_metadata_cache_cap,
@@ -5870,6 +5882,26 @@ impl App {
         ))
     }
 
+    /// Record what the core actually resolved for an instrument layer this
+    /// frame. Called from the graph-job builders with the POST-normalisation
+    /// numbers, which is the only place that knows what the GPU will really
+    /// run — the TS sync layer can only report the params it sent, and the
+    /// core re-derives several of them (riders grid size / march + rider
+    /// scaling from the `quality` enum, smoke-3d grid snapping, particle
+    /// count clamping). Surfaced as `status.native_graph_workload`.
+    fn record_native_graph_workload(&mut self, layer_id: &str, kind: &str, workload: Value) {
+        let mut entry = serde_json::Map::new();
+        entry.insert("layer_id".to_string(), Value::String(layer_id.to_string()));
+        entry.insert("kind".to_string(), Value::String(kind.to_string()));
+        if let Value::Object(fields) = workload {
+            for (key, value) in fields {
+                entry.insert(key, value);
+            }
+        }
+        self.native_graph_workload
+            .insert(layer_id.to_string(), Value::Object(entry));
+    }
+
     fn build_native_ink_cloud_graph_job(
         &mut self,
         graph_layer: &NativeGraphLayer,
@@ -6167,6 +6199,15 @@ impl App {
         graph_layer: &NativeGraphLayer,
     ) -> Result<(NativeGraphLayerState, NativeGraphFrameJob), String> {
         let params = normalize_smoke_3d_native_params(&graph_layer.params);
+        self.record_native_graph_workload(
+            &graph_layer.layer_id,
+            "smoke-3d",
+            serde_json::json!({
+                "gridSize": params.grid_size,
+                "shadowSteps": params.shadow_steps,
+                "emitterCount": params.emitter_count,
+            }),
+        );
         let time = self.native_graph_time_seconds();
         let source_id = graph_layer.source_id.clone();
         let safe_source = native_graph_buffer_safe_id(&source_id);
@@ -6590,6 +6631,16 @@ impl App {
         graph_layer: &NativeGraphLayer,
     ) -> Result<(NativeGraphLayerState, NativeGraphFrameJob), String> {
         let params = normalize_particle_field_native_params(&graph_layer.params);
+        self.record_native_graph_workload(
+            &graph_layer.layer_id,
+            "particle-field",
+            serde_json::json!({
+                "particleCount": params.particle_count,
+                "partnerCount": params.partner_count,
+                "connectEnabled": params.connect_enabled,
+                "modeId": params.mode_id,
+            }),
+        );
         let time = self.native_graph_time_seconds();
         let mut state = graph_layer.particle_field_state.clone();
         let mut reset_particles =
@@ -7944,6 +7995,23 @@ impl App {
             self.audio0[1].clamp(0.0, 4.0),
             self.audio0[3].clamp(0.0, 4.0),
             shader_prefix == "fluid-riders",
+        );
+        self.record_native_graph_workload(
+            &graph_layer.layer_id,
+            shader_prefix,
+            serde_json::json!({
+                // grid / pressure / march+rider scaling are re-derived from the
+                // `quality` enum HERE, not in TS, so these are the numbers that
+                // prove a tier landed.
+                "gridSize": params.grid_size,
+                "pressureIterations": params.pressure_iterations,
+                "macCormack": params.mac_cormack,
+                "marchSteps": params.march_steps,
+                "shadowSteps": params.shadow_steps,
+                "riderCount": params.rider_count,
+                "riderHits": params.rider_hits,
+                "emitterCount": params.emitter_count,
+            }),
         );
         let time = self.native_graph_time_seconds();
         let width = self.pending_width.max(1);
@@ -11438,6 +11506,7 @@ impl App {
     /// whatever else binds it.
     fn release_native_graph_layer_state(&mut self, layer_id: &str) -> Vec<String> {
         let removed = self.native_graph_layers.remove(layer_id);
+        self.native_graph_workload.remove(layer_id);
         self.native_plugin_liquid_states.remove(layer_id);
         self.native_plugin_templates_initialized.remove(layer_id);
         let Some(graph_layer) = removed else {

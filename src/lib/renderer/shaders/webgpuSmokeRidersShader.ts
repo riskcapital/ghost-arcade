@@ -1929,6 +1929,45 @@ function rgb01(c: unknown, fallback: [number, number, number]): [number, number,
   return [clamp(r / divisor, 0, 1), clamp(g / divisor, 0, 1), clamp(b / divisor, 0, 1)];
 }
 
+/**
+ * What the per-layer `quality` enum resolves to.
+ *
+ * This one knob is the riders instruments' own tier: it decides the sim
+ * grid, the pressure sweep count, how many orb hits each ray keeps, and
+ * the multipliers applied to the authored march / rider / shadow counts.
+ *
+ * MIRRORED IN RUST — `normalize_smoke_riders_native_params` in
+ * native-renderer/src/main.rs resolves the same enum INDEPENDENTLY (the
+ * core owns the graph, so it re-derives these rather than trusting the
+ * params it is handed), and the smoke-riders builder there is shared by
+ * both `smoke-riders` and `fluid-riders`. The two sides must agree or the
+ * TS-side budget would be reasoning about a workload the GPU never runs.
+ * `nativeGraphQuality.test.ts` parses main.rs and asserts they match, so
+ * changing one side without the other fails the suite instead of silently
+ * drifting.
+ */
+export const SMOKE_RIDERS_QUALITY_RESOLUTION = {
+  performance: { gridSize: 32, pressureIterations: 20, countScale: 0.5, marchScale: 0.5, shadowScale: 0.6, riderHits: 2 },
+  balanced: { gridSize: 48, pressureIterations: 20, countScale: 1, marchScale: 1, shadowScale: 1, riderHits: 3 },
+  ultra: { gridSize: 64, pressureIterations: 24, countScale: 1.35, marchScale: 1.4, shadowScale: 1, riderHits: 4 },
+} as const satisfies Record<string, {
+  gridSize: 32 | 48 | 64;
+  pressureIterations: number;
+  countScale: number;
+  marchScale: number;
+  shadowScale: number;
+  riderHits: number;
+}>;
+
+export type SmokeRidersQualityLevel = keyof typeof SMOKE_RIDERS_QUALITY_RESOLUTION;
+
+/** Unknown / legacy quality strings fall back to `balanced`, matching the
+ *  Rust `_ =>` arms exactly. */
+export function smokeRidersQualityResolution(quality: string) {
+  return SMOKE_RIDERS_QUALITY_RESOLUTION[quality as SmokeRidersQualityLevel]
+    ?? SMOKE_RIDERS_QUALITY_RESOLUTION.balanced;
+}
+
 export function smokeRidersStyleTuning(style: string): SmokeRidersStyleTuning {
   if (style === 'ember') {
     return {
@@ -2125,21 +2164,22 @@ export function resolveSmokeRidersParams(
   const bass = reactive ? clamp(num(bands?.bass, 0, 0, 4) * bassDrive, 0, 1.8) : 0;
   const treble = reactive ? clamp(num(bands?.treble, 0, 0, 4), 0, 1) : 0;
 
-  const gridSize: 32 | 48 | 64 = quality === 'ultra' ? 64 : quality === 'performance' ? 32 : 48;
+  const resolution = smokeRidersQualityResolution(quality);
+  const gridSize: 32 | 48 | 64 = resolution.gridSize;
   // Warm-starting the pressure field is what makes these counts
   // affordable — the floor is 20, below which the projection visibly
   // fails to close and the plume smears sideways.
-  const pressureIterations = quality === 'ultra' ? 24 : 20;
-  const qualityCountScale = quality === 'ultra' ? 1.35 : quality === 'performance' ? 0.5 : 1;
+  const pressureIterations = resolution.pressureIterations;
+  const qualityCountScale = resolution.countScale;
   // The animated low-discrepancy march offset buys back roughly the
   // quality a tenth of the steps used to cost, so the base step count
   // dropped from 80 to 72 without a visible change.
-  const qualityMarchScale = quality === 'ultra' ? 1.4 : quality === 'performance' ? 0.5 : 1;
+  const qualityMarchScale = resolution.marchScale;
   // K nearest orb hits per ray. The gather itself is nearly free (the
   // ray-sphere test already runs for every binned rider); the cost is K
   // PBR evaluations, and the chain early-outs the moment alpha
   // saturates — so this only bites when Orb Opacity is below 1.
-  const qualityRiderHits = quality === 'ultra' ? 4 : quality === 'performance' ? 2 : 3;
+  const qualityRiderHits = resolution.riderHits;
   // MacCormack doubles the advection cost. Performance keeps the plain
   // semi-Lagrangian chain; the other tiers honour the operator's choice.
   const macCormack = quality === 'performance'
@@ -2156,7 +2196,7 @@ export function resolveSmokeRidersParams(
     16,
     192,
   );
-  const shadowSteps = Math.round(num(p.shadowSteps, 5, 0, 12) * (quality === 'performance' ? 0.6 : 1));
+  const shadowSteps = Math.round(num(p.shadowSteps, 5, 0, 12) * resolution.shadowScale);
 
   const riderDensity = num(p.riderDensity, 1.9, 0.2, 4);
   const smokeTint = rgb01(p.smokeColor, [1.0, 0.470, 0.118]);
