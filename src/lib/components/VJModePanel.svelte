@@ -397,15 +397,13 @@
   }
   function stageMenuRename() {
     if (!stageContextMenu) return;
-    const newName = prompt('Rename preset:', stageContextMenu.preset.name);
-    if (newName && newName.trim()) {
-      if (stageContextMenu.preset._scope === 'global') {
-        globalStagePresets.rename(stageContextMenu.preset.id, newName.trim());
-      } else {
-        project.renameStagePreset(stageContextMenu.preset.id, newName.trim());
-      }
-    }
+    // Route into the SAME inline editor double-click uses. This used to call
+    // window.prompt(), which Electron does not implement — it throws
+    // "prompt() is not supported", so context-menu rename was dead in the
+    // desktop app while the double-click path worked fine. Reported as #5.
+    const preset = stageContextMenu.preset;
     stageContextMenu = null;
+    startStageRename(preset, new Event('rename'));
   }
   function stageMenuDelete() {
     if (!stageContextMenu) return;

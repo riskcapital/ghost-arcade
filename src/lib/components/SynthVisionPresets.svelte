@@ -13,6 +13,8 @@
   export let onUpdate: ((preset: Preset) => void) | null = null;
   export let onRename: ((preset: Preset, newName: string) => void) | null = null;
 
+  let renamingPresetId: string | null = null;
+  let renameDraft = '';
   let showNameInput = false;
   let nameInput = '';
   let saveScope: 'project' | 'global' = 'project';
@@ -36,13 +38,21 @@
     onUpdate?.(presetCtxMenu.preset);
     presetCtxMenu = null;
   }
+  // Inline rename rather than window.prompt(): Electron does not implement
+  // prompt() and throws "prompt() is not supported", so this menu item was
+  // dead in the desktop app. Reported as #5. Matches the inline editors used
+  // by the macro bar and the VJ stage presets.
   function ctxRename() {
     if (!presetCtxMenu) return;
-    const newName = prompt('Rename preset:', presetCtxMenu.preset.name);
-    if (newName && newName.trim() && onRename) {
-      onRename(presetCtxMenu.preset, newName.trim());
-    }
+    renamingPresetId = presetCtxMenu.preset.id;
+    renameDraft = presetCtxMenu.preset.name;
     presetCtxMenu = null;
+  }
+  function commitRename(preset: Preset) {
+    const name = renameDraft.trim();
+    if (name && name !== preset.name && onRename) onRename(preset, name);
+    renamingPresetId = null;
+    renameDraft = '';
   }
   function ctxDelete() {
     if (!presetCtxMenu) return;
@@ -72,13 +82,27 @@
   </div>
   <div class="sv-preset-list">
     {#each allPresets as preset (preset.id)}
-      <button class="sv-preset-btn" class:active={activePresetId === preset.id}
-        class:global-preset={preset._scope === 'global'}
-        on:click={() => onLoad(preset)}
-        on:contextmenu={(e) => openPresetCtx(e, preset)}
-        title="{preset.name} — right-click for Update / Rename / Delete">
-        {#if preset._scope === 'global'}<span class="sv-preset-scope" title="Global preset">G</span>{/if}{preset.name}
-      </button>
+      {#if renamingPresetId === preset.id}
+        <input
+          class="sv-preset-rename"
+          bind:value={renameDraft}
+          autofocus
+          on:blur={() => commitRename(preset)}
+          on:keydown={(e) => {
+            if (e.key === 'Enter') commitRename(preset);
+            else if (e.key === 'Escape') { renamingPresetId = null; renameDraft = ''; }
+          }}
+        />
+      {:else}
+        <button class="sv-preset-btn" class:active={activePresetId === preset.id}
+          class:global-preset={preset._scope === 'global'}
+          on:click={() => onLoad(preset)}
+          on:contextmenu={(e) => openPresetCtx(e, preset)}
+          on:dblclick={() => { renamingPresetId = preset.id; renameDraft = preset.name; }}
+          title="{preset.name} — double-click to rename, right-click for Update / Rename / Delete">
+          {#if preset._scope === 'global'}<span class="sv-preset-scope" title="Global preset">G</span>{/if}{preset.name}
+        </button>
+      {/if}
     {/each}
     {#if allPresets.length === 0}
       <span class="sv-preset-hint">No saved presets</span>
@@ -161,6 +185,18 @@
     gap: 4px;
     overflow-x: auto;
     flex: 1;
+  }
+
+  .sv-preset-rename {
+    /* Sized to sit in the same slot as .sv-preset-btn so the row does not
+       reflow while renaming. */
+    min-width: 0;
+    padding: 4px 8px;
+    border-radius: 4px;
+    border: 1px solid var(--ga-icon, #5278ff);
+    background: var(--ga-card, #13161c);
+    color: var(--ga-ink-0, #eef0f4);
+    font: inherit;
   }
 
   .sv-preset-btn {
