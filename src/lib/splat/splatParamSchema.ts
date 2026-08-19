@@ -91,6 +91,15 @@ export const SPLAT_AUTOMATABLE_PARAMS: readonly SplatParamDescriptor[] = [
   p('shadowSoftness', 'Shadow Softness', 'Lighting', 0, 1, 0.01),
   p('specularStrength', 'Specular Strength', 'Lighting', 0, 2, 0.01),
 
+  p('volumetricDensity', 'Haze Density', 'Volumetric Light', 0, 3, 0.01),
+  p('volumetricStrength', 'Shaft Power', 'Volumetric Light', 0, 3, 0.01),
+  p('volumetricShadowDensity', 'Shaft Shadow Density', 'Volumetric Light', 0, 6, 0.01),
+  p('volumetricShadowStrength', 'Cloud Shadowing', 'Volumetric Light', 0, 1, 0.01),
+  p('volumetricSpotAngle', 'Spot Angle', 'Volumetric Light', 5, 180, 1, '°'),
+  p('volumetricSpotSoftness', 'Spot Softness', 'Volumetric Light', 0.01, 1, 0.01),
+  p('volumetricLightDistance', 'Shaft Light Distance', 'Volumetric Light', 1, 20, 0.05),
+  p('volumetricAnisotropy', 'Shaft Scatter Bias', 'Volumetric Light', -0.95, 0.95, 0.01),
+
   p('atmosphereDensity', 'Fog Density', 'Fog / Smoke', 0, 1, 0.01),
   p('atmosphereScale', 'Fog Scale', 'Fog / Smoke', 0.1, 8, 0.01),
   p('atmosphereTurbulence', 'Fog Turbulence', 'Fog / Smoke', 0, 2, 0.01),

@@ -66,7 +66,7 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
     NativeGraphInstrumentSpec {
         id: "splat",
         label: "Splat / Point Cloud",
-        shader_ids: &["splat/render-v1"],
+        shader_ids: &["splat/render-v1", "splat/shadowvol-v1"],
         features: &[
             "compute_graph_host",
             "compute_graph_render",

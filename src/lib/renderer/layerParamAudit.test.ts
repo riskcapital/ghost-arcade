@@ -39,6 +39,10 @@ const CONTEXTS: Record<string, Array<{ match: RegExp; apply: Record<string, unkn
     { match: /^mouseStrength$/, apply: { mouseInteraction: 'attract' } },
     { match: /^autoRotateSpeed$/, apply: { cameraOrbitEnabled: true, autoRotate: true, cameraAutoRotate: true } },
     { match: /^animationProgress$/, apply: { animationLoop: false, animationType: 'explode' } },
+    // The haze/occlusion densities are ZEROED in the packed uniform while
+    // the shafts are off, which is exactly what keeps an unused project
+    // free — so probe them with the feature on.
+    { match: /^volumetric/, apply: { volumetricEnabled: true } },
   ],
   model3d: [
     { match: /^material(Roughness|Metalness)$/, apply: { materialType: 'standard' } },

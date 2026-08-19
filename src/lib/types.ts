@@ -2014,6 +2014,26 @@ export interface SplatContent {
   backgroundOpacity: number; // 0-1
   backgroundColor: string;
 
+  // Volumetric light shafts. A light-space opacity volume is scattered
+  // from the splats themselves, prefix-summed along the light axis, and
+  // then read by both a god-ray march (Henyey-Greenstein in-scattering
+  // through a haze filling the cloud) and the splats (so a splat behind
+  // a dense region is genuinely darker). The key light rig above is
+  // reused as-is — these knobs only add the medium, the cone and the
+  // occlusion. OFF by default: a project that does not use it queues no
+  // extra passes at all.
+  volumetricEnabled: boolean;
+  volumetricDensity: number;        // 0-3   haze density
+  volumetricColor: string;          // haze colour
+  volumetricStrength: number;       // 0-3   shaft brightness
+  volumetricShadowDensity: number;  // 0-6   occlusion gain
+  volumetricShadowStrength: number; // 0-1   how much splats receive it
+  volumetricShadowRes: number;      // light-space volume edge (tier-capped)
+  volumetricSpotAngle: number;      // 5-180 (180 = no cone)
+  volumetricSpotSoftness: number;   // 0.01-1
+  volumetricLightDistance: number;  // 1-20  virtual spot apex distance
+  volumetricAnisotropy: number;     // -0.95..0.95 HG phase g
+
   // Creative effects
   creativeEffectType: SplatCreativeEffectType;
   creativeEffect: SplatCreativeEffectType;  // Alias for UI
@@ -2242,6 +2262,19 @@ export function createDefaultSplatContent(): SplatContent {
     atmosphereSpeed: 0.25,
     backgroundOpacity: 0,
     backgroundColor: '#000000',
+
+    // Volumetric light shafts (off by default)
+    volumetricEnabled: false,
+    volumetricDensity: 1.2,
+    volumetricColor: '#cfe0ff',
+    volumetricStrength: 1.4,
+    volumetricShadowDensity: 1.6,
+    volumetricShadowStrength: 0.5,
+    volumetricShadowRes: 0,
+    volumetricSpotAngle: 38,
+    volumetricSpotSoftness: 0.4,
+    volumetricLightDistance: 6.5,
+    volumetricAnisotropy: 0.6,
 
     // Creative effects
     creativeEffectType: 'none',

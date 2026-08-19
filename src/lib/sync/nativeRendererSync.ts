@@ -359,7 +359,7 @@ const NATIVE_GRAPH_ROUTE_REQUIREMENTS: ReadonlyArray<NativeGraphRouteRequirement
   { kind: 'svg', feature: 'native_svg_graph', instrument: 'svg', shaderIds: ['svg/render-v5'] },
   { kind: 'light-painting', feature: 'native_light_painting_graph', instrument: 'light-painting', shaderIds: ['light-painting/render-v8'] },
   { kind: 'text', feature: 'native_text_graph', instrument: 'text', shaderIds: ['text/render-v1'] },
-  { kind: 'splat', feature: 'native_splat_graph', instrument: 'splat', shaderIds: ['splat/render-v1'] },
+  { kind: 'splat', feature: 'native_splat_graph', instrument: 'splat', shaderIds: ['splat/render-v1', 'splat/shadowvol-v1'] },
   { kind: 'model3d', feature: 'native_model3d_graph', instrument: 'model3d', shaderIds: ['model3d/render-v1'] },
   {
     kind: 'smoke-3d',
@@ -6217,10 +6217,11 @@ export class NativeRendererSync {
         : routeState.seq + 1;
       const audioBass = visual.isActive ? Math.max(visual.bass, visual.bassFast * 0.9) : 0;
       const audioTreble = visual.isActive ? visual.treble : 0;
+      const routeQuality = this.nativeGraphQuality();
       const nativeGraphParams = nativeGraphParamsForLayer(
         layer,
         route.kind,
-        this.nativeGraphQuality(),
+        routeQuality,
       );
       const graphSource = nativeGraphRenderSource(route);
       const effectPassSig = route.effectPasses?.map((effectPass) => effectPass.descriptor).join('>') ?? 'none';
@@ -6511,6 +6512,11 @@ export class NativeRendererSync {
               audioBeat: audio.beat,
               audioBeatPhase: audio.beatPhase,
               pointer: get(splatPointer),
+              // The splat layer is a LAYER kind, not a gpuShaderCatalog
+              // instrument, so it has no catalog budget row — it takes the
+              // resolved tier straight from nativeGraphQuality and applies
+              // its own volumetric budget table (SPLAT_VOLUMETRIC_BUDGETS).
+              qualityTier: routeQuality.tier,
             });
             if (state.packed) state.uploadedSig = fileSig;
             return graph;
