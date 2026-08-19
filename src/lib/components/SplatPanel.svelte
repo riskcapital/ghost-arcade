@@ -192,6 +192,7 @@
   let showDisplacement = false;
   let showLighting = false;
   let showAtmosphere = false;
+  let showVolumetrics = false;
   let showColorEffects = false;
   let showOpacityEffects = false;
   let showCreativeEffects = false;
@@ -1465,6 +1466,221 @@
               {@render splatModButton('specularStrength')}
               <span class="value">{(sc.specularStrength ?? 0.35).toFixed(2)}</span>
             </div>
+          {/if}
+        </div>
+      {/if}
+    </div>
+
+    <!-- Volumetric Light Section -->
+    <div class="section collapsible" class:open={showVolumetrics}>
+      <button class="section-header" onclick={() => (showVolumetrics = !showVolumetrics)}>
+        <span>Volumetric Light</span>
+        <span class="chevron">{showVolumetrics ? '−' : '+'}</span>
+      </button>
+      {#if showVolumetrics}
+        <div class="section-content">
+          <div class="property-row checkbox">
+            <label>
+              <input
+                type="checkbox"
+                checked={sc.volumetricEnabled ?? false}
+                onchange={(e) => doUpdate({ volumetricEnabled: (e.target as HTMLInputElement).checked })}
+                data-midi-path="map:splat:volumetricEnabled"
+                data-midi-label="Volumetric Light"
+                data-midi-mode="toggle"
+              />
+              Enable Light Shafts
+            </label>
+          </div>
+          <p class="section-note">
+            Beams and cast shadows built from the cloud itself, lit by the Key Light above.
+          </p>
+
+          {#if sc.volumetricEnabled ?? false}
+            <div class="property-row">
+              <label>Haze Density</label>
+              <input
+                type="range"
+                min="0"
+                max="3"
+                step="0.01"
+                value={sc.volumetricDensity ?? 1.2}
+                oninput={(e) => doUpdate({ volumetricDensity: parseFloat((e.target as HTMLInputElement).value) })}
+                data-midi-path="map:splat:volumetricDensity"
+                data-midi-label="Haze Density"
+                data-midi-min="0"
+                data-midi-max="3"
+                data-midi-step="0.01"
+              />
+              {@render splatModButton('volumetricDensity')}
+              <span class="value">{(sc.volumetricDensity ?? 1.2).toFixed(2)}</span>
+            </div>
+
+            <div class="property-row">
+              <label>Haze Colour</label>
+              <input
+                type="color"
+                value={sc.volumetricColor ?? '#cfe0ff'}
+                oninput={(e) => doUpdate({ volumetricColor: (e.target as HTMLInputElement).value })}
+                data-midi-path="map:splat:volumetricColor"
+                data-midi-label="Haze Colour"
+              />
+            </div>
+
+            <div class="property-row">
+              <label>Shaft Power</label>
+              <input
+                type="range"
+                min="0"
+                max="3"
+                step="0.01"
+                value={sc.volumetricStrength ?? 1.4}
+                oninput={(e) => doUpdate({ volumetricStrength: parseFloat((e.target as HTMLInputElement).value) })}
+                data-midi-path="map:splat:volumetricStrength"
+                data-midi-label="Shaft Power"
+                data-midi-min="0"
+                data-midi-max="3"
+                data-midi-step="0.01"
+              />
+              {@render splatModButton('volumetricStrength')}
+              <span class="value">{(sc.volumetricStrength ?? 1.4).toFixed(2)}</span>
+            </div>
+
+            <div class="property-row">
+              <label>Shadow Density</label>
+              <input
+                type="range"
+                min="0"
+                max="6"
+                step="0.01"
+                value={sc.volumetricShadowDensity ?? 1.6}
+                oninput={(e) => doUpdate({ volumetricShadowDensity: parseFloat((e.target as HTMLInputElement).value) })}
+                data-midi-path="map:splat:volumetricShadowDensity"
+                data-midi-label="Shaft Shadow Density"
+                data-midi-min="0"
+                data-midi-max="6"
+                data-midi-step="0.01"
+              />
+              {@render splatModButton('volumetricShadowDensity')}
+              <span class="value">{(sc.volumetricShadowDensity ?? 1.6).toFixed(2)}</span>
+            </div>
+
+            <div class="property-row">
+              <label>Cloud Shadowing</label>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.01"
+                value={sc.volumetricShadowStrength ?? 0.5}
+                oninput={(e) => doUpdate({ volumetricShadowStrength: parseFloat((e.target as HTMLInputElement).value) })}
+                data-midi-path="map:splat:volumetricShadowStrength"
+                data-midi-label="Cloud Self Shadowing"
+                data-midi-min="0"
+                data-midi-max="1"
+                data-midi-step="0.01"
+              />
+              {@render splatModButton('volumetricShadowStrength')}
+              <span class="value">{(sc.volumetricShadowStrength ?? 0.5).toFixed(2)}</span>
+            </div>
+
+            <div class="property-row">
+              <label>Shadow Volume</label>
+              <select
+                value={String(sc.volumetricShadowRes ?? 0)}
+                onchange={(e) => doUpdate({ volumetricShadowRes: parseInt((e.target as HTMLSelectElement).value, 10) })}
+                data-midi-path="map:splat:volumetricShadowRes"
+                data-midi-label="Shadow Volume Resolution"
+                data-midi-discrete="0,32,48,64,80,96"
+              >
+                <option value="0">Auto (quality tier)</option>
+                <option value="32">32³ (fast)</option>
+                <option value="48">48³</option>
+                <option value="64">64³</option>
+                <option value="80">80³</option>
+                <option value="96">96³ (sharp)</option>
+              </select>
+            </div>
+
+            <div class="property-row">
+              <label>Spot Angle</label>
+              <input
+                type="range"
+                min="5"
+                max="180"
+                step="1"
+                value={sc.volumetricSpotAngle ?? 38}
+                oninput={(e) => doUpdate({ volumetricSpotAngle: parseFloat((e.target as HTMLInputElement).value) })}
+                data-midi-path="map:splat:volumetricSpotAngle"
+                data-midi-label="Spot Angle"
+                data-midi-min="5"
+                data-midi-max="180"
+                data-midi-step="1"
+              />
+              {@render splatModButton('volumetricSpotAngle')}
+              <span class="value">{Math.round(sc.volumetricSpotAngle ?? 38)}°</span>
+            </div>
+
+            <div class="property-row">
+              <label>Spot Softness</label>
+              <input
+                type="range"
+                min="0.01"
+                max="1"
+                step="0.01"
+                value={sc.volumetricSpotSoftness ?? 0.4}
+                oninput={(e) => doUpdate({ volumetricSpotSoftness: parseFloat((e.target as HTMLInputElement).value) })}
+                data-midi-path="map:splat:volumetricSpotSoftness"
+                data-midi-label="Spot Softness"
+                data-midi-min="0.01"
+                data-midi-max="1"
+                data-midi-step="0.01"
+              />
+              {@render splatModButton('volumetricSpotSoftness')}
+              <span class="value">{(sc.volumetricSpotSoftness ?? 0.4).toFixed(2)}</span>
+            </div>
+
+            <div class="property-row">
+              <label>Light Distance</label>
+              <input
+                type="range"
+                min="1"
+                max="20"
+                step="0.05"
+                value={sc.volumetricLightDistance ?? 6.5}
+                oninput={(e) => doUpdate({ volumetricLightDistance: parseFloat((e.target as HTMLInputElement).value) })}
+                data-midi-path="map:splat:volumetricLightDistance"
+                data-midi-label="Shaft Light Distance"
+                data-midi-min="1"
+                data-midi-max="20"
+                data-midi-step="0.05"
+              />
+              {@render splatModButton('volumetricLightDistance')}
+              <span class="value">{(sc.volumetricLightDistance ?? 6.5).toFixed(2)}</span>
+            </div>
+
+            <div class="property-row">
+              <label>Scatter Bias</label>
+              <input
+                type="range"
+                min="-0.95"
+                max="0.95"
+                step="0.01"
+                value={sc.volumetricAnisotropy ?? 0.6}
+                oninput={(e) => doUpdate({ volumetricAnisotropy: parseFloat((e.target as HTMLInputElement).value) })}
+                data-midi-path="map:splat:volumetricAnisotropy"
+                data-midi-label="Shaft Scatter Bias"
+                data-midi-min="-0.95"
+                data-midi-max="0.95"
+                data-midi-step="0.01"
+              />
+              {@render splatModButton('volumetricAnisotropy')}
+              <span class="value">{(sc.volumetricAnisotropy ?? 0.6).toFixed(2)}</span>
+            </div>
+
+            <p class="section-note">
+              Beam direction follows Key Orbit / Key Pitch in the Lighting section.
+            </p>
           {/if}
         </div>
       {/if}

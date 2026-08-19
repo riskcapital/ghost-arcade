@@ -9,12 +9,129 @@ import { resolveSplatAnimationClock } from '$lib/splat/splatMotion';
 import { composeSplatRotationRadians, hexToRgb01 } from '$lib/splat/splatTransform';
 
 export const SPLAT_NATIVE_SHADER_ID = 'splat/render-v1';
+/** Compute module for the light-space opacity volume (three entries). */
+export const SPLAT_SHADOW_SHADER_ID = 'splat/shadowvol-v1';
 // Matches the release renderer's point budget — larger scans are sampled
 // down to this during parsing (with the loader reporting decimation).
 export const SPLAT_MAX_POINTS = 1_500_000;
 export const SPLAT_POINT_VEC4S = 2;
-export const SPLAT_UNIFORM_VEC4S = 43;
+export const SPLAT_UNIFORM_VEC4S = 58;
 export const SPLAT_UNIFORM_BYTES = SPLAT_UNIFORM_VEC4S * 16;
+
+/* ============================================================== */
+/* Volumetric light shafts — per-tier budgets                      */
+/* ============================================================== */
+/**
+ * The splat layer is not a `gpuShaderCatalog` entry (it is a LAYER kind,
+ * not an instrument), so it has no `qualityBudgets`/`tierParams` row to
+ * participate in. It takes the resolved tier from `nativeGraphQuality`
+ * directly instead and applies its own budget table — same tier
+ * vocabulary, same meaning, one table.
+ *
+ * `scatterBudget` is the hard bound on the shadow scatter. A cloud may
+ * carry 1.5M points; a shadow volume does not need every one of them, so
+ * the scatter walks a uniform stride and each sampled splat deposits one
+ * NORMALISED unit of occupancy (see `cs_shadow_scatter`). The cost is
+ * therefore O(min(points, budget)) and completely independent of the
+ * cloud size — a 1.2M-point gaussian splat costs exactly what a 200k
+ * scan costs, and looks the same doing it.
+ */
+export type SplatQualityTier = 'low' | 'balanced' | 'high' | 'ultra';
+
+export interface SplatVolumetricBudget {
+  /** Cap on the light-space volume edge. */
+  shadowDimCap: number;
+  /** Default edge when the operator leaves Shadow Volume on `auto`. */
+  shadowDim: number;
+  /** God-ray march steps. */
+  marchSteps: number;
+  /** Hard cap on splats visited by the scatter. */
+  scatterBudget: number;
+}
+
+export const SPLAT_VOLUMETRIC_BUDGETS: Record<SplatQualityTier, SplatVolumetricBudget> = {
+  low:      { shadowDimCap: 32, shadowDim: 32, marchSteps: 24, scatterBudget: 60_000 },
+  balanced: { shadowDimCap: 48, shadowDim: 48, marchSteps: 40, scatterBudget: 120_000 },
+  high:     { shadowDimCap: 64, shadowDim: 64, marchSteps: 56, scatterBudget: 220_000 },
+  ultra:    { shadowDimCap: 96, shadowDim: 80, marchSteps: 88, scatterBudget: 420_000 },
+};
+
+const SPLAT_SHADOW_DIM_OPTIONS = [24, 32, 48, 64, 80, 96];
+
+/** Optical depth an average-occupancy column reaches at Shadow Density 1.
+ *  Measured on a 290k-point photogrammetry scan: 3.0 puts the DEFAULT
+ *  Shadow Density (1.6) at a solid, readable beam that still softens at
+ *  the silhouette, and leaves the top of the slider for a hard cut. */
+const SPLAT_SHADOW_UNIT_GAIN = 3.0;
+
+export function splatShadowDim(raw: unknown, cap: number, fallback: number): number {
+  const want = Math.round(Number(raw));
+  let dim = fallback;
+  if (Number.isFinite(want) && want > 0) {
+    let best = Infinity;
+    for (const option of SPLAT_SHADOW_DIM_OPTIONS) {
+      const d = Math.abs(option - want);
+      if (d < best) { best = d; dim = option; }
+    }
+  }
+  return Math.max(16, Math.min(cap, dim));
+}
+
+/** cos of the spot half-angle. 180° returns -1, which the shader reads
+ *  as "no cone" — an exact no-op, so a wide-open spot is free. */
+export function splatSpotCos(angleDeg: number): number {
+  if (!(angleDeg < 179.5)) return -1;
+  return Math.cos(Math.max(angleDeg, 1) * 0.5 * Math.PI / 180);
+}
+
+/** Smoothstep width for the cone edge. A blend wider than (1 - spotCos)
+ *  would push the upper edge past straight-on. */
+export function splatSpotBlend(angleDeg: number, softness: number): number {
+  const c = splatSpotCos(angleDeg);
+  return Math.min(0.95, Math.max(0, softness)) * (1 - c) + 0.002;
+}
+
+export interface SplatShadowFrame {
+  /** Orthonormal light frame. `lw` is the light's PROPAGATION direction
+   *  (away from the light), so the prefix sum runs down +w. */
+  lu: [number, number, number];
+  lv: [number, number, number];
+  lw: [number, number, number];
+  extent: number;
+  depth: number;
+  cellZ: number;
+}
+
+/**
+ * Build the light-space frame for the opacity volume. `keyDir` points
+ * FROM the scene TOWARD the light (the splat rig's convention), in the
+ * same world space the transformed points live in.
+ *
+ * The frame is orthonormal BY CONSTRUCTION — a sheared frame silently
+ * skews every shaft — and it is fitted to the cloud's bounding SPHERE
+ * rather than re-fitted per frame, so the shadow resolution does not
+ * flicker as the cloud spins.
+ */
+export function splatShadowFrame(
+  keyDir: [number, number, number],
+  cloudRadius: number,
+  dim: number,
+): SplatShadowFrame {
+  const kl = Math.hypot(keyDir[0], keyDir[1], keyDir[2]) || 1;
+  const lw: [number, number, number] = [-keyDir[0] / kl, -keyDir[1] / kl, -keyDir[2] / kl];
+  const up: [number, number, number] = Math.abs(lw[1]) > 0.94 ? [1, 0, 0] : [0, 1, 0];
+  const cross = (a: [number, number, number], b: [number, number, number]): [number, number, number] =>
+    [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]];
+  const norm = (v: [number, number, number], fb: [number, number, number]): [number, number, number] => {
+    const l = Math.hypot(v[0], v[1], v[2]);
+    return l > 1e-6 ? [v[0] / l, v[1] / l, v[2] / l] : fb;
+  };
+  const lu = norm(cross(up, lw), [1, 0, 0]);
+  const lv = norm(cross(lw, lu), [0, 1, 0]);
+  const extent = Math.max(cloudRadius, 1e-3);
+  const depth = extent * 2.15;
+  return { lu, lv, lw, extent, depth, cellZ: depth / Math.max(1, dim) };
+}
 
 const ANIMATION_TYPES = [
   'none', 'explode', 'implode', 'slice', 'voxelSnap', 'peel',
@@ -223,6 +340,21 @@ export function splatViewProjection(content: SplatContent, aspect: number, time:
   return vp;
 }
 
+/** Camera eye in world space — the same orbit math `splatViewProjection`
+ *  uses, hoisted so the god-ray march can start its rays at the eye
+ *  instead of unprojecting the (badly conditioned) near plane. */
+export function splatCameraEye(content: SplatContent, time: number): [number, number, number] {
+  const distance = Math.max(0.2, finite(content.cameraDistance, 5));
+  const orbitX = (finite(content.cameraOrbitX, 0) * Math.PI) / 180;
+  let orbitY = (finite(content.cameraOrbitY, 0) * Math.PI) / 180;
+  if (content.autoRotate) orbitY += time * (finite(content.autoRotateSpeed, 30) * Math.PI) / 180;
+  return [
+    Math.sin(orbitY) * Math.cos(orbitX) * distance,
+    Math.sin(orbitX) * distance,
+    Math.cos(orbitY) * Math.cos(orbitX) * distance,
+  ];
+}
+
 export interface SplatNativeGraphOptions {
   sourceId: string;
   content: SplatContent;
@@ -246,6 +378,10 @@ export interface SplatNativeGraphOptions {
   textureSourceId?: string;
   /** True once the texture pixels have been uploaded. */
   hasTexture?: boolean;
+  /** Resolved GPU-instrument quality tier. Drives the volumetric budget
+   *  (shadow-volume edge, march steps, scatter cap). Defaults to
+   *  `balanced`, which is what the native path already ran at. */
+  qualityTier?: SplatQualityTier;
 }
 
 export function buildSplatNativeComputeGraph(options: SplatNativeGraphOptions) {
@@ -463,6 +599,72 @@ export function buildSplatNativeComputeGraph(options: SplatNativeGraphOptions) {
     0,
   );
 
+  /* ── vec4 43-57: volumetric light shafts ───────────────────────── */
+  const tier: SplatQualityTier = options.qualityTier ?? 'balanced';
+  const budget = SPLAT_VOLUMETRIC_BUDGETS[tier] ?? SPLAT_VOLUMETRIC_BUDGETS.balanced;
+  const volOn = c.volumetricEnabled === true;
+  const shadowDim = splatShadowDim(c.volumetricShadowRes, budget.shadowDimCap, budget.shadowDim);
+  // The light frame is fitted to the cloud's bounding sphere. The packed
+  // cloud is normalised to a ~4-unit extent (SPLAT_TARGET_DIAMETER), so
+  // its half-diagonal is 2·√3; the pad covers animation displacement.
+  const cloudRadius = 2 * Math.sqrt(3) * Math.max(0.05, finite(c.scaleUniform, 1)) * 1.15;
+  const frame = splatShadowFrame([keyDir[0], keyDir[1], keyDir[2]], cloudRadius, shadowDim);
+  const volOrigin: [number, number, number] = [
+    finite(c.positionX, 0), finite(c.positionY, 0), finite(c.positionZ, 0),
+  ];
+  // Screen-space quads carry no world radius, so derive one from the
+  // projection: a quad of `size_px` pixels at the attenuation reference
+  // depth spans size_px·6/(height·f) world units, f = 1/tan(fov/2).
+  const fovRad = (clamp(finite(c.cameraFov, 50), 10, 120) * Math.PI) / 180;
+  const focal = 1 / Math.tan(fovRad / 2);
+  const radiusUnit = 6 / (Math.max(2, height) * Math.max(0.05, focal));
+  // Scatter budget. `pointCount` is what was uploaded; the shader also
+  // drops the density tail, which correctly lightens the shadow.
+  const uploadedPoints = Math.max(0, Math.round(options.pointCount || 0));
+  const scatterCount = volOn && uploadedPoints > 0
+    ? Math.min(uploadedPoints, budget.scatterBudget)
+    : 0;
+  const scatterStride = scatterCount > 0
+    ? Math.max(1, uploadedPoints / scatterCount)
+    : 1;
+  // Each sampled splat deposits ONE normalised unit spread over its
+  // footprint, so a column holding N× the average sample count reaches
+  // N× the average optical depth. Scaling by columns/samples makes that
+  // average independent of point count AND of shadow resolution — the
+  // whole reason a single Shadow Density slider can serve every cloud.
+  const scatterUnit = scatterCount > 0
+    ? (SPLAT_SHADOW_UNIT_GAIN * shadowDim * shadowDim) / scatterCount
+    : 0;
+  const mediumColor = hexToRgb01(c.volumetricColor as string | undefined, '#cfe0ff');
+  const spotAngle = clamp(finite(c.volumetricSpotAngle, 38), 5, 180);
+  put4(43, frame.lu[0], frame.lu[1], frame.lu[2], frame.extent);
+  put4(44, frame.lv[0], frame.lv[1], frame.lv[2], frame.depth);
+  put4(45, frame.lw[0], frame.lw[1], frame.lw[2],
+    volOn ? clamp(finite(c.volumetricShadowDensity, 1.6), 0, 6) : 0);
+  put4(46, shadowDim, shadowDim, shadowDim, frame.cellZ);
+  put4(47, mediumColor[0], mediumColor[1], mediumColor[2],
+    volOn ? clamp(finite(c.volumetricDensity, 1.2), 0, 3) : 0);
+  const lightDistance = clamp(finite(c.volumetricLightDistance, 6.5), 1, 20);
+  put4(48,
+    volOrigin[0] + keyDir[0] * lightDistance,
+    volOrigin[1] + keyDir[1] * lightDistance,
+    volOrigin[2] + keyDir[2] * lightDistance,
+    splatSpotCos(spotAngle));
+  put4(49,
+    splatSpotBlend(spotAngle, clamp(finite(c.volumetricSpotSoftness, 0.4), 0.01, 1)),
+    volOn ? 1 : 0,
+    budget.marchSteps,
+    radiusUnit);
+  put4(50, volOrigin[0], volOrigin[1], volOrigin[2], scatterUnit);
+  put4(51, scatterCount, scatterStride,
+    clamp(finite(c.volumetricShadowStrength, 0.5), 0, 1),
+    Math.max(0, finite(c.volumetricStrength, 1.4)));
+  put4(52, clamp(finite(c.volumetricAnisotropy, 0.6), -0.95, 0.95), radiusUnit, 0, 0);
+  const invVp = invertMat4(vp);
+  if (invVp) data.set(invVp, 53 * 4);
+  const eye = splatCameraEye(c, time);
+  put4(57, eye[0], eye[1], eye[2], 0);
+
   const sourceId = String(options.sourceId || 'splat-native-source');
   const safe = sourceId.replace(/[^a-zA-Z0-9:_-]+/g, '_');
   const uniformId = `splat:${safe}:uniform`;
@@ -477,14 +679,94 @@ export function buildSplatNativeComputeGraph(options: SplatNativeGraphOptions) {
     pointsBuffer.initial_b64 = options.pointsB64;
     pointsBuffer.clear = true; // force recreate so byte_length changes apply
   }
+
+  /* ── Light-space opacity volume ────────────────────────────────
+   * OFF by default and completely absent from the graph when off: no
+   * compute passes, no god-ray pass, and the storage binding collapses
+   * to a 16-byte stub. `fs_point` statically references the buffer, so
+   * SOMETHING has to be bound for the pipeline layout — but a project
+   * that does not use the shafts pays one extra bind entry and nothing
+   * else. The buffer ids carry the edge so changing Shadow Volume
+   * reallocates instead of reinterpreting stale cells. */
+  const shadowCells = shadowDim * shadowDim * shadowDim;
+  const shadowAccId = `splat:${safe}:s${shadowDim}:acc`;
+  const shadowDepthId = `splat:${safe}:s${shadowDim}:depth`;
+  const shadowStubId = `splat:${safe}:shadow-stub`;
+  const buffers: Array<Record<string, unknown>> = [
+    { id: uniformId, kind: 'uniform', byte_length: SPLAT_UNIFORM_BYTES, initial_f32: Array.from(data) },
+    pointsBuffer,
+  ];
+  const passes: Array<Record<string, unknown>> = [];
+  if (volOn) {
+    buffers.push(
+      { id: shadowAccId, kind: 'storage', byte_length: shadowCells * 4, persistent: true },
+      { id: shadowDepthId, kind: 'storage', byte_length: shadowCells * 4, persistent: true },
+    );
+    const shadowBindings = [
+      { binding: 0, resource: uniformId, kind: 'uniform' },
+      { binding: 1, resource: options.pointsBufferId, kind: 'read-only-storage' },
+      { binding: 2, resource: shadowAccId, kind: 'storage' },
+      { binding: 3, resource: shadowDepthId, kind: 'storage' },
+    ];
+    passes.push({
+      name: 'splat-shadow-clear',
+      shader_id: SPLAT_SHADOW_SHADER_ID,
+      entry: 'cs_shadow_clear',
+      dispatch: [Math.max(1, Math.ceil(shadowCells / 64)), 1, 1],
+      bindings: shadowBindings,
+    }, {
+      name: 'splat-shadow-scatter',
+      shader_id: SPLAT_SHADOW_SHADER_ID,
+      entry: 'cs_shadow_scatter',
+      dispatch: [Math.max(1, Math.ceil(scatterCount / 64)), 1, 1],
+      bindings: shadowBindings,
+    }, {
+      name: 'splat-shadow-prefix',
+      shader_id: SPLAT_SHADOW_SHADER_ID,
+      entry: 'cs_shadow_prefix',
+      dispatch: [Math.max(1, Math.ceil((shadowDim * shadowDim) / 64)), 1, 1],
+      bindings: shadowBindings,
+    });
+  } else {
+    buffers.push({ id: shadowStubId, kind: 'storage', byte_length: 16, persistent: true });
+  }
+  const lightDepthBinding = {
+    binding: 4,
+    resource: volOn ? shadowDepthId : shadowStubId,
+    kind: 'read-only-storage',
+  };
+  const frameSeq = Math.max(0, Math.round(options.frameIndex ?? 0));
+  const godRayPass = volOn ? [{
+    // God rays LAST, premultiplied over the points: a shaft crossing in
+    // front of the cloud is the shot, and there is no depth buffer to
+    // resolve against (points deliberately never write depth).
+    name: 'splat-godrays',
+    shader_id: SPLAT_NATIVE_SHADER_ID,
+    vertex_entry: 'vs_god',
+    fragment_entry: 'fs_god',
+    target: 'source_frame',
+    source_id: sourceId,
+    seq: frameSeq,
+    clear: false,
+    include_snapshot: !!options.includeSnapshot,
+    depth: false,
+    depth_write: false,
+    blend: 'alpha',
+    primitive: 'triangle-list',
+    vertex_count: 3,
+    instance_count: 1,
+    bindings: [
+      { binding: 0, resource: uniformId, kind: 'uniform' },
+      { binding: 1, resource: options.pointsBufferId, kind: 'read-only-storage' },
+      { binding: 4, resource: shadowDepthId, kind: 'read-only-storage' },
+    ],
+  }] : [];
+
   return {
     state: null as null,
     config: {
-      buffers: [
-        { id: uniformId, kind: 'uniform', byte_length: SPLAT_UNIFORM_BYTES, initial_f32: Array.from(data) },
-        pointsBuffer,
-      ],
-      passes: [],
+      buffers,
+      passes,
       readbacks: [],
       render_passes: [{
         // Backdrop first: background color + scene atmosphere haze so fog
@@ -513,9 +795,11 @@ export function buildSplatNativeComputeGraph(options: SplatNativeGraphOptions) {
         fragment_entry: 'fs_point',
         target: 'source_frame',
         source_id: sourceId,
-        seq: Math.max(0, Math.round(options.frameIndex ?? 0)),
+        seq: frameSeq,
         clear: false,
-        include_snapshot: !!options.includeSnapshot,
+        // The snapshot belongs to the LAST pass into this frame — with the
+        // shafts on that is the god-ray pass, not this one.
+        include_snapshot: !!options.includeSnapshot && !volOn,
         // Mirrors the WebGL material: content.depthTest toggles the test,
         // depth writes stay off (transparent points, depthWrite: false).
         depth: c.depthTest === true,
@@ -533,11 +817,12 @@ export function buildSplatNativeComputeGraph(options: SplatNativeGraphOptions) {
           // an empty slot; texEnabled=0 keeps it a no-op).
           { binding: 2, kind: 'source-frame-texture', source_id: options.textureSourceId || `${sourceId}:splat-texture` },
           { binding: 3, kind: 'source-frame-sampler' },
+          lightDepthBinding,
         ],
-      }],
+      }, ...godRayPass],
     },
     sourceId,
-    passCount: 2,
+    passCount: 2 + passes.length + godRayPass.length,
   };
 }
 
@@ -548,10 +833,16 @@ export function buildSplatNativePrecompileCommands() {
     stage: 'render' as const,
     entry: 'fs_point',
     source: SPLAT_NATIVE_WGSL,
+  }, {
+    type: 'precompile_shader' as const,
+    shader_id: SPLAT_SHADOW_SHADER_ID,
+    stage: 'compute' as const,
+    entry: 'cs_shadow_scatter',
+    source: SPLAT_SHADOW_WGSL,
   }];
 }
 
-export const SPLAT_NATIVE_WGSL = /* wgsl */`
+const SPLAT_SHARED_WGSL = /* wgsl */`
 struct SplatParams {
   vp0: vec4<f32>, vp1: vec4<f32>, vp2: vec4<f32>, vp3: vec4<f32>,
   screen: vec4<f32>,   // 4:  width, height, time, pointCount
@@ -593,11 +884,30 @@ struct SplatParams {
   mi0: vec4<f32>,      // 40: sliceThickness, texEnabled, texProjection, texBlend
   pad: vec4<f32>,      // 41: texScale, texOffsetX, texOffsetY, colorFxSpeed
   phys2: vec4<f32>,    // 42: physicsOn, friction, bounciness, 0
+  // ── Volumetric light shafts (light-space opacity volume + god rays).
+  //    Ported from the riders' shadowvol module: the splats scatter
+  //    into a light-space grid with an analytic chord weight, a prefix
+  //    sum turns occupancy into optical depth, and one trilinear lookup
+  //    then answers "how much key light reaches here?" for BOTH the haze
+  //    march and the splats themselves.
+  sh0: vec4<f32>,      // 43: lightU.xyz, extent
+  sh1: vec4<f32>,      // 44: lightV.xyz, depth
+  sh2: vec4<f32>,      // 45: lightW.xyz, shadowDensity (lookup gain)
+  sh3: vec4<f32>,      // 46: dimX, dimY, dimZ, cellZ
+  sh4: vec4<f32>,      // 47: mediumColor.rgb, mediumDensity
+  sh5: vec4<f32>,      // 48: lightPos.xyz (spot apex), spotCos
+  sh6: vec4<f32>,      // 49: spotBlend, volumetricOn, marchSteps, radiusUnit
+  sh7: vec4<f32>,      // 50: volumeOrigin.xyz, scatterExtinction
+  sh8: vec4<f32>,      // 51: scatterCount, scatterStride, splatShadow, rayStrength
+  sh9: vec4<f32>,      // 52: anisotropy, refRadius, 0, 0
+  iv0: vec4<f32>,      // 53: invViewProj col0
+  iv1: vec4<f32>,      // 54: invViewProj col1
+  iv2: vec4<f32>,      // 55: invViewProj col2
+  iv3: vec4<f32>,      // 56: invViewProj col3
+  eye: vec4<f32>,      // 57: cameraEye.xyz, 0
 }
 @group(0) @binding(0) var<uniform> sp: SplatParams;
 @group(0) @binding(1) var<storage, read> points: array<vec4<f32>>;
-@group(0) @binding(2) var splat_tex: texture_2d<f32>;
-@group(0) @binding(3) var splat_smp: sampler;
 
 fn sp_hash(n: f32) -> f32 { return fract(sin(n * 12.9898 + 78.233) * 43758.5453); }
 fn sp_hash2(p: vec2<f32>) -> f32 { return fract(sin(dot(p, vec2<f32>(127.1, 311.7))) * 43758.5453); }
@@ -642,14 +952,6 @@ fn sp_axis(sel: f32) -> vec3<f32> {
   if (sel < 0.5) { return vec3<f32>(1.0, 0.0, 0.0); }
   if (sel > 1.5) { return vec3<f32>(0.0, 0.0, 1.0); }
   return vec3<f32>(0.0, 1.0, 0.0);
-}
-
-struct VsOut {
-  @builtin(position) position: vec4<f32>,
-  @location(0) corner: vec2<f32>,
-  @location(1) color: vec4<f32>,
-  @location(2) world: vec3<f32>,
-  @location(3) misc: vec4<f32>, // vertexIndex, discard, viewW, mouseDistance
 }
 
 fn apply_animation(pos_in: vec3<f32>, orig: vec3<f32>, vidx: f32, t: f32, kill: ptr<function, f32>) -> vec3<f32> {
@@ -916,11 +1218,24 @@ fn apply_mouse(pos_in: vec3<f32>) -> vec3<f32> {
   return pos; // reveal handled in fragment
 }
 
-@vertex fn vs_point(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VsOut {
-  var out: VsOut;
+/* ── shared position pipeline ──────────────────────────────────────
+ * The full per-splat transform chain — import orientation, object
+ * transform, animation, displacement, pointer interaction, audio scale,
+ * the stateless bounce and the slice cull — extracted verbatim from
+ * vs_point so the light-space opacity volume can run the IDENTICAL
+ * chain on the compute side. A shadow built from un-animated points
+ * would drift away from the cloud the moment any animation is on. */
+struct SplatXf {
+  pos: vec3<f32>,
+  kill: f32,
+  mouseDist: f32,
+  scale: f32,
+}
+
+fn splat_world(ii: u32, t: f32) -> SplatXf {
+  var xf: SplatXf;
   let p0 = points[ii * 2u];
   let p1 = points[ii * 2u + 1u];
-  let t = sp.screen.z;
   let vidx = f32(ii);
   var kill = 0.0;
 
@@ -980,8 +1295,136 @@ fn apply_mouse(pos_in: vec3<f32>) -> vec3<f32> {
     if (abs(d - sp.mo1.w) > sp.mi0.x * 0.5) { kill = 1.0; }
   }
 
+  xf.pos = pos;
+  xf.kill = kill;
+  xf.mouseDist = mouseDistance;
+  xf.scale = p1.x;
+  return xf;
+}
+`;
+
+/* ==============================================================
+ * Render module — the shared prelude plus the splat/backdrop/god-ray
+ * passes. Bindings 2/3 are the projection texture; binding 4 is the
+ * prefix-summed light-space opacity volume (a 16-byte stub when the
+ * volumetrics are off, so the pipeline layout never changes shape).
+ * ============================================================== */
+export const SPLAT_NATIVE_WGSL = /* wgsl */`${SPLAT_SHARED_WGSL}
+@group(0) @binding(2) var splat_tex: texture_2d<f32>;
+@group(0) @binding(3) var splat_smp: sampler;
+@group(0) @binding(4) var<storage, read> lightDepth: array<f32>;
+
+const SP_PI: f32 = 3.14159265359;
+
+/* ── light-space visibility ────────────────────────────────────────
+ * One trilinear lookup into the prefix-summed opacity volume answers
+ * "how much key light reaches this world point?" for both consumers —
+ * the god-ray march and the splats themselves. Trilinear, not
+ * bilinear-plus-nearest: sampling the light axis at the nearest slab
+ * prints the voxel grid onto everything as hard rectangular steps. */
+fn sp_shadow_plane(plane: u32, dimX: u32, x0: u32, x1: u32, y0: u32, y1: u32, tx: f32, ty: f32) -> f32 {
+  let v00 = lightDepth[plane + y0 * dimX + x0];
+  let v10 = lightDepth[plane + y0 * dimX + x1];
+  let v01 = lightDepth[plane + y1 * dimX + x0];
+  let v11 = lightDepth[plane + y1 * dimX + x1];
+  return mix(mix(v00, v10, tx), mix(v01, v11, tx), ty);
+}
+
+// The offset walks the sample point back toward the light before the
+// lookup — the volume-shadow equivalent of a depth-map bias.
+fn sp_shadow_vol(pIn: vec3<f32>, offset: f32) -> f32 {
+  if (sp.sh6.y < 0.5 || sp.sh2.w <= 0.0) { return 1.0; }
+  let keyDir = normalize(sp.li2.xyz);
+  let p = pIn + keyDir * offset - sp.sh7.xyz;
+  let extent = max(sp.sh0.w, 1.0e-4);
+  let ax = dot(p, sp.sh0.xyz) / extent * 0.5 + 0.5;
+  let ay = dot(p, sp.sh1.xyz) / extent * 0.5 + 0.5;
+  let az = dot(p, sp.sh2.xyz) / max(sp.sh1.w, 1.0e-4) + 0.5;
+  if (az < 0.0) { return 1.0; }
+  // Feather the volume's own footprint. A hard in/out test prints the
+  // opacity box's RECTANGLE across everything a wide beam reaches past.
+  let fade = min(
+    min(smoothstep(0.0, 0.07, ax), smoothstep(0.0, 0.07, 1.0 - ax)),
+    min(smoothstep(0.0, 0.07, ay), smoothstep(0.0, 0.07, 1.0 - ay)));
+  if (fade <= 0.001) { return 1.0; }
+  let dimX = max(u32(sp.sh3.x + 0.5), 1u);
+  let dimY = max(u32(sp.sh3.y + 0.5), 1u);
+  let dimZ = max(u32(sp.sh3.z + 0.5), 1u);
+  let dx = f32(dimX); let dy = f32(dimY); let dz = f32(dimZ);
+  let fx = clamp(ax * dx - 0.5, 0.0, dx - 1.0);
+  let fy = clamp(ay * dy - 0.5, 0.0, dy - 1.0);
+  let fz = clamp(az * dz - 0.5, 0.0, dz - 1.0);
+  let x0 = u32(floor(fx));
+  let y0 = u32(floor(fy));
+  let z0 = u32(floor(fz));
+  let x1 = min(x0 + 1u, dimX - 1u);
+  let y1 = min(y0 + 1u, dimY - 1u);
+  let z1 = min(z0 + 1u, dimZ - 1u);
+  let tx = fx - floor(fx);
+  let ty = fy - floor(fy);
+  let tz = fz - floor(fz);
+  let planeSize = dimX * dimY;
+  let s0 = sp_shadow_plane(z0 * planeSize, dimX, x0, x1, y0, y1, tx, ty);
+  let s1 = sp_shadow_plane(z1 * planeSize, dimX, x0, x1, y0, y1, tx, ty);
+  let s = max(mix(s0, s1, tz), 0.0);
+  return exp(-sp.sh2.w * s * fade);
+}
+
+// Spot cone gate. The key stays DIRECTIONAL for shading (nothing about
+// the existing rig changes); this is purely a spatial mask from a
+// virtual apex, so Spot Angle 180 returns 1 everywhere and every
+// existing project renders exactly as before.
+fn sp_spot(p: vec3<f32>) -> f32 {
+  if (sp.sh5.w <= -0.9995) { return 1.0; }
+  let keyDir = normalize(sp.li2.xyz);
+  let away = p - sp.sh5.xyz;
+  let d = max(length(away), 1.0e-4);
+  let cd = dot(away / d, -keyDir);
+  return smoothstep(sp.sh5.w, sp.sh5.w + max(sp.sh6.x, 1.0e-3), cd);
+}
+
+// Henyey-Greenstein phase — the forward-scatter lobe that makes a beam
+// blaze when you look into the light and fade when you look away.
+fn sp_hg(cosTheta: f32, g: f32) -> f32 {
+  let g2 = g * g;
+  let denom = 1.0 + g2 - 2.0 * g * cosTheta;
+  return (1.0 - g2) / (4.0 * SP_PI * pow(max(denom, 1.0e-4), 1.5));
+}
+
+// Shaft medium profile. A flat box of haze prints the march volume as a
+// grey rectangle crossing empty space — the beam has to fade toward the
+// boundary to read as light on something rather than as a card. Three
+// sines of dust is what turns a smooth glow into beams; eight hashed
+// taps per march step is not affordable at 1080p.
+fn sp_haze_profile(p: vec3<f32>) -> f32 {
+  let rel = (p - sp.sh7.xyz) / max(sp.sh0.w, 1.0e-4);
+  let d = 1.0 - smoothstep(0.30, 1.0, length(rel));
+  if (d <= 0.0) { return 0.0; }
+  let t = sp.screen.z;
+  let q = p * 1.9 + vec3<f32>(0.0, t * 0.06, t * 0.03);
+  let nz = sin(q.x + sin(q.z * 1.3)) * sin(q.y * 1.1 + sin(q.x * 0.7)) * sin(q.z * 0.9 + sin(q.y * 1.7));
+  return max(d * (1.0 + nz * 0.55), 0.0);
+}
+
+struct VsOut {
+  @builtin(position) position: vec4<f32>,
+  @location(0) corner: vec2<f32>,
+  @location(1) color: vec4<f32>,
+  @location(2) world: vec3<f32>,
+  @location(3) misc: vec4<f32>, // vertexIndex, discard, viewW, mouseDistance
+}
+
+@vertex fn vs_point(@builtin(vertex_index) vi: u32, @builtin(instance_index) ii: u32) -> VsOut {
+  var out: VsOut;
+  let p0 = points[ii * 2u];
+  let t = sp.screen.z;
+  let vidx = f32(ii);
+  let xf = splat_world(ii, t);
+  let pos = xf.pos;
+  var kill = xf.kill;
+  let mouseDistance = xf.mouseDist;
   let view = sp.vp0 * pos.x + sp.vp1 * pos.y + sp.vp2 * pos.z + sp.vp3;
-  var size_px = sp.render0.x * p1.x;
+  var size_px = sp.render0.x * xf.scale;
   if (sp.aud0.x > 0.5) {
     size_px = size_px * (1.0 + sp.aud0.y * sp.aud0.w * 0.5) * (1.0 + sp.aud0.z * sp.aud0.w * 0.3);
   }
@@ -1158,6 +1601,23 @@ fn apply_color_effect(color_in: vec3<f32>, wp: vec3<f32>, t: f32) -> vec3<f32> {
   }
   color = apply_color_effect(color, wp, t * max(sp.pad.w, 0.0));
 
+  // Volumetric self-shadowing. The same light-space opacity volume the
+  // shafts read, so a splat sitting behind a dense region of the cloud
+  // is genuinely darker — arguably the bigger win over the shafts
+  // themselves, because it is what gives a point cloud real depth.
+  //
+  // Applied to the WHOLE splat rather than folded into the key term: the
+  // splat rig's default Ambient is 1.0, so a key-only occlusion is
+  // invisible (measured — the cloud read identically in and out of a
+  // 16-degree cone). Cloud Shadowing is therefore also the
+  // floor: at 0.7 a fully occluded splat keeps 30% of itself, which
+  // reads as shadow without crushing the cloud to black.
+  var volShadow = 1.0;
+  if (sp.sh6.y > 0.5 && sp.sh8.z > 0.0) {
+    let vs = sp_shadow_vol(wp, sp.sh3.w * 0.75) * sp_spot(wp);
+    volShadow = mix(1.0, vs, clamp(sp.sh8.z, 0.0, 1.0));
+  }
+
   // Lighting
   if (sp.li0.x > 0.5) {
     let keyDir = normalize(sp.li2.xyz);
@@ -1175,6 +1635,7 @@ fn apply_color_effect(color_in: vec3<f32>, wp: vec3<f32>, t: f32) -> vec3<f32> {
     lit = lit + sp.li1.xyz * specular * sp.li0.w;
     color = lit;
   }
+  color = color * volShadow;
 
   // Atmosphere on points
   var atmosphereMix = 0.0;
@@ -1304,5 +1765,276 @@ struct BgOut {
   }
   if (alpha < 0.003) { discard; }
   return vec4<f32>(color * alpha, alpha);
+}
+
+// ── God-ray in-scattering ──
+// A full-screen march of the view ray through the medium filling the
+// cloud's bounding sphere. One trilinear lookup per step answers the
+// shadow (the per-step density march it replaces cost forty times as
+// much), the spot cone shapes the beam, and Henyey-Greenstein decides
+// how much of it scatters toward the camera.
+//
+// Drawn AFTER the points and composited premultiplied, so a shaft can
+// cross IN FRONT of the cloud — which is the shot. Haze behind a splat
+// also dims it slightly, but haze is thin and that error is second
+// order next to losing every beam that passes in front.
+struct GodOut {
+  @builtin(position) position: vec4<f32>,
+  @location(0) ndc: vec2<f32>,
+}
+
+@vertex fn vs_god(@builtin(vertex_index) vi: u32) -> GodOut {
+  var out: GodOut;
+  let x = f32(i32(vi & 1u) * 4 - 1);
+  let y = f32(i32(vi >> 1u) * 4 - 1);
+  out.position = vec4<f32>(x, y, 0.0, 1.0);
+  out.ndc = vec2<f32>(x, y);
+  return out;
+}
+
+@fragment fn fs_god(in: GodOut) -> @location(0) vec4<f32> {
+  if (sp.sh6.y < 0.5 || sp.sh4.w <= 0.0) { discard; }
+  let ndc = in.ndc;
+  // Far-plane unprojection only: the near plane is where the inverse
+  // matrix is worst conditioned, and the eye is passed explicitly.
+  let farH = sp.iv0 * ndc.x + sp.iv1 * ndc.y + sp.iv2 + sp.iv3;
+  let wsign = select(1.0, -1.0, farH.w < 0.0);
+  let farP = farH.xyz / (farH.w + wsign * 1.0e-6);
+  let ro = sp.eye.xyz;
+  let dirRaw = farP - ro;
+  let dirLen = length(dirRaw);
+  if (dirLen < 1.0e-5) { discard; }
+  let rd = dirRaw / dirLen;
+
+  // The medium fills the cloud's bounding sphere — the same sphere the
+  // opacity volume was fitted to, so the two always agree.
+  let center = sp.sh7.xyz;
+  let radius = max(sp.sh0.w, 1.0e-3);
+  let oc = ro - center;
+  let bq = dot(oc, rd);
+  let cq = dot(oc, oc) - radius * radius;
+  let hq = bq * bq - cq;
+  if (hq <= 0.0) { discard; }
+  let hs = sqrt(hq);
+  let tEnter = max(-bq - hs, 0.0);
+  let tExit = -bq + hs;
+  if (tExit <= tEnter) { discard; }
+
+  let steps = clamp(u32(sp.sh6.z + 0.5), 8u, 128u);
+  let stepLen = (tExit - tEnter) / f32(steps);
+  // Golden-ratio-animated low-discrepancy offset: a fixed per-pixel hash
+  // hides banding but repeats the same error every frame, which reads as
+  // fixed-pattern grain. Advancing by phi^-1 each frame lets the eye
+  // integrate successive frames, so the march affords fewer steps.
+  let dither = fract(sp_hash2(in.position.xy) + 0.61803398875 * floor(sp.screen.z * 60.0));
+  let keyDir = normalize(sp.li2.xyz);
+  let g = clamp(sp.sh9.x, -0.95, 0.95);
+  let phase = sp_hg(dot(rd, keyDir), g);
+  // Phase NORMALISED so isotropic reads 1.0, plus an isotropic floor.
+  // Raw HG at 77 degrees off-axis — exactly where a side-lit shaft
+  // lives — is 0.025 and the beams simply do not exist. Real dusty air
+  // is dominated by multiple scattering there; the floor is the
+  // cheapest honest stand-in.
+  let phaseHz = mix(phase * 4.0 * SP_PI, 1.0, 0.18);
+  let sigHRaw = max(sp.sh4.w, 0.0) * 0.15;
+  // Jitter the volume lookup a cell either way. A low-resolution
+  // opacity volume shows its grid as hard steps otherwise, and trading
+  // a staircase for fine noise the eye averages out is far cheaper
+  // than the resolution that would hide it outright.
+  let shOff = sp.sh3.w * (0.6 + (dither - 0.5) * 1.8);
+  let keyPower = max(sp.li0.z, 0.0) * max(sp.sh8.w, 0.0);
+  let ambientCol = sp.sh4.xyz * max(sp.li0.y, 0.0) * 0.05;
+  var accum = vec4<f32>(0.0);
+  var tCur = tEnter + stepLen * dither;
+  var i: u32 = 0u;
+  loop {
+    if (i >= steps) { break; }
+    i = i + 1u;
+    if (tCur > tExit || accum.a > 0.995) { break; }
+    let pos = ro + rd * tCur;
+    tCur = tCur + stepLen;
+    // Profile first: outside the medium there is nothing to light, and
+    // skipping there skips the volume lookup too.
+    let prof = sp_haze_profile(pos);
+    if (prof <= 0.0008) { continue; }
+    let sigHz = sigHRaw * prof;
+    let shadow = sp_shadow_vol(pos, shOff) * sp_spot(pos);
+    let col = sp.sh4.xyz * sp.li1.xyz * (keyPower * shadow * phaseHz) + ambientCol;
+    let alpha = clamp(sigHz * stepLen, 0.0, 1.0);
+    let oneMinusA = 1.0 - accum.a;
+    accum = vec4<f32>(accum.rgb + col * alpha * oneMinusA, accum.a + alpha * oneMinusA);
+  }
+  if (accum.a < 0.002) { discard; }
+  return vec4<f32>(clamp(accum.rgb, vec3<f32>(0.0), vec3<f32>(6.0)), clamp(accum.a, 0.0, 1.0));
+}
+`;
+
+/* ==============================================================
+ * Light-space opacity volume — compute module
+ * ==============================================================
+ * The piece that makes shafts real, ported from the riders' shared
+ * `shadowvol` module and adapted to a point cloud.
+ *
+ *   cs_shadow_clear   — one thread per voxel, atomicStore(0). The
+ *                       riders fold the clear into their fluid GATHER;
+ *                       a point cloud has no medium field to gather, so
+ *                       the clear stands alone. It is one bandwidth-
+ *                       bound pass over dim^3 and costs nothing next to
+ *                       the scatter.
+ *   cs_shadow_scatter — one thread per SAMPLED splat, scattered with
+ *                       fixed-point atomics. The weight is the sphere's
+ *                       analytic CHORD through each slab rather than a
+ *                       distance falloff, so a sub-voxel splat still
+ *                       deposits its full depth instead of popping as
+ *                       its centre crosses cell boundaries.
+ *   cs_shadow_prefix  — prefix sum down the light axis with a half-slab
+ *                       self-shadow bias, turning occupancy into
+ *                       accumulated optical depth.
+ *
+ * It reuses the SHARED prelude, so every splat lands in the volume at
+ * exactly the position the vertex shader draws it — animations,
+ * displacement, pointer interaction, physics and the slice cull
+ * included.
+ */
+export const SPLAT_SHADOW_WGSL = /* wgsl */`${SPLAT_SHARED_WGSL}
+@group(0) @binding(2) var<storage, read_write> shadowAcc: array<atomic<u32>>;
+@group(0) @binding(3) var<storage, read_write> shadowDepth: array<f32>;
+
+const SPLAT_SHADOW_FIXED: f32 = 4096.0;
+// Cap on the lateral kernel. A splat's occupancy is NORMALISED over its
+// own footprint, so clipping a huge kernel loses a little spread, never
+// mass — which is what keeps the scatter O(points), not O(points x area).
+const SPLAT_SHADOW_SPAN_MAX: i32 = 4;
+const SPLAT_SHADOW_SLAB_MAX: i32 = 10;
+
+fn sp_shadow_dims() -> vec3<u32> {
+  return vec3<u32>(
+    max(u32(sp.sh3.x + 0.5), 1u),
+    max(u32(sp.sh3.y + 0.5), 1u),
+    max(u32(sp.sh3.z + 0.5), 1u));
+}
+
+@compute @workgroup_size(64)
+fn cs_shadow_clear(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let dim = sp_shadow_dims();
+  if (gid.x >= dim.x * dim.y * dim.z) { return; }
+  atomicStore(&shadowAcc[gid.x], 0u);
+}
+
+@compute @workgroup_size(64)
+fn cs_shadow_scatter(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let sampleCount = u32(max(sp.sh8.x, 0.0) + 0.5);
+  if (gid.x >= sampleCount) { return; }
+  let unit = sp.sh7.w;
+  if (unit <= 0.0) { return; }
+  // Uniform stride through the cloud. Point files are stored in scan
+  // order, so a fixed stride is stratified sampling of the same spatial
+  // distribution — and it is deterministic, which an offline export
+  // needs. f32 carries the product exactly to 16.7M indices.
+  let total = u32(max(sp.screen.w, 0.0) + 0.5);
+  let ii = u32(f32(gid.x) * max(sp.sh8.y, 1.0));
+  if (ii >= total) { return; }
+  let xf = splat_world(ii, sp.screen.z);
+  if (xf.kill > 0.5) { return; }
+  let radius = sp.render0.x * xf.scale * sp.sh6.w;
+  if (radius < 1.0e-6) { return; }
+
+  let dim = sp_shadow_dims();
+  let extent = max(sp.sh0.w, 1.0e-4);
+  let depth = max(sp.sh1.w, 1.0e-4);
+  let cellX = (2.0 * extent) / f32(dim.x);
+  let cellY = (2.0 * extent) / f32(dim.y);
+  let rel = xf.pos - sp.sh7.xyz;
+  let cu = dot(rel, sp.sh0.xyz);
+  let cv = dot(rel, sp.sh1.xyz);
+  let cw = dot(rel, sp.sh2.xyz);
+  let fx = (cu / extent * 0.5 + 0.5) * f32(dim.x);
+  let fy = (cv / extent * 0.5 + 0.5) * f32(dim.y);
+  let bx = i32(floor(fx));
+  let by = i32(floor(fy));
+  // A splat is typically far smaller than a shadow cell. Floor the
+  // kernel at ~0.6 of a cell so a sub-voxel splat lands as a soft 3x3
+  // footprint instead of a hard nearest-cell hit that flickers every
+  // time the cloud moves half a voxel.
+  let softR = max(radius, 0.6 * max(cellX, cellY));
+  let feather = 0.75 * max(cellX, cellY);
+  let spanX = min(i32(ceil(softR / max(cellX, 1.0e-6))) + 1, SPLAT_SHADOW_SPAN_MAX);
+  let spanY = min(i32(ceil(softR / max(cellY, 1.0e-6))) + 1, SPLAT_SHADOW_SPAN_MAX);
+  let vz0 = max(i32(floor(((cw - softR) / depth + 0.5) * f32(dim.z))), 0);
+  let vz1 = min(
+    min(i32(floor(((cw + softR) / depth + 0.5) * f32(dim.z))), vz0 + SPLAT_SHADOW_SLAB_MAX),
+    i32(dim.z) - 1);
+  if (vz1 < vz0) { return; }
+  let invChord = 1.0 / max(2.0 * softR, 1.0e-6);
+
+  // Pass 1: total kernel mass, so each sampled splat deposits exactly
+  // ONE normalised unit of occupancy into its column no matter what the
+  // shadow resolution or the point size is. That invariance is what
+  // makes one Shadow Density slider read the same on a 30k scan and a
+  // 1.2M gaussian splat.
+  var norm = 0.0;
+  for (var ny = -spanY; ny <= spanY; ny = ny + 1) {
+    let vy = by + ny;
+    if (vy < 0 || vy >= i32(dim.y)) { continue; }
+    let offY = ((f32(vy) + 0.5) - fy) * cellY;
+    for (var nx = -spanX; nx <= spanX; nx = nx + 1) {
+      let vx = bx + nx;
+      if (vx < 0 || vx >= i32(dim.x)) { continue; }
+      let offX = ((f32(vx) + 0.5) - fx) * cellX;
+      let dxy = length(vec2<f32>(offX, offY));
+      let cover = 1.0 - smoothstep(softR * 0.55, softR + feather, dxy);
+      if (cover <= 0.002) { continue; }
+      let chord = 2.0 * sqrt(max(softR * softR - min(dxy * dxy, softR * softR), 0.0));
+      norm = norm + cover * chord * invChord;
+    }
+  }
+  if (norm <= 1.0e-6) { return; }
+  let weight = unit / norm;
+
+  // Pass 2: scatter.
+  for (var dy = -spanY; dy <= spanY; dy = dy + 1) {
+    let vy = by + dy;
+    if (vy < 0 || vy >= i32(dim.y)) { continue; }
+    let offY = ((f32(vy) + 0.5) - fy) * cellY;
+    for (var dx = -spanX; dx <= spanX; dx = dx + 1) {
+      let vx = bx + dx;
+      if (vx < 0 || vx >= i32(dim.x)) { continue; }
+      let offX = ((f32(vx) + 0.5) - fx) * cellX;
+      let dxy = length(vec2<f32>(offX, offY));
+      let cover = 1.0 - smoothstep(softR * 0.55, softR + feather, dxy);
+      if (cover <= 0.002) { continue; }
+      let chord = 2.0 * sqrt(max(softR * softR - min(dxy * dxy, softR * softR), 0.0));
+      let sLo = cw - chord * 0.5;
+      let sHi = cw + chord * 0.5;
+      for (var vz = vz0; vz <= vz1; vz = vz + 1) {
+        let slabLo = (f32(vz) / f32(dim.z) - 0.5) * depth;
+        let slabHi = (f32(vz + 1) / f32(dim.z) - 0.5) * depth;
+        let overlap = max(min(sHi, slabHi) - max(sLo, slabLo), 0.0);
+        if (overlap <= 1.0e-9) { continue; }
+        let w = cover * overlap * invChord * weight;
+        if (w <= 1.0e-7) { continue; }
+        let idx = u32(vz) * dim.x * dim.y + u32(vy) * dim.x + u32(vx);
+        atomicAdd(&shadowAcc[idx], u32(clamp(w, 0.0, 900000.0) * SPLAT_SHADOW_FIXED));
+      }
+    }
+  }
+}
+
+@compute @workgroup_size(64)
+fn cs_shadow_prefix(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let dim = sp_shadow_dims();
+  let plane = dim.x * dim.y;
+  if (gid.x >= plane) { return; }
+  let x = gid.x % dim.x;
+  let y = gid.x / dim.x;
+  var sum = 0.0;
+  for (var z: u32 = 0u; z < dim.z; z = z + 1u) {
+    let idx = z * plane + y * dim.x + x;
+    let v = f32(atomicLoad(&shadowAcc[idx])) * (1.0 / SPLAT_SHADOW_FIXED);
+    // Half the slab's own occupancy: the classic self-shadowing bias,
+    // in volume form.
+    shadowDepth[idx] = sum + v * 0.5;
+    sum = sum + v;
+  }
 }
 `;
