@@ -1895,7 +1895,7 @@
                 checked={$oscStore.enabled}
                 onchange={(e) => oscStore.setEnabled((e.target as HTMLInputElement).checked)}
               />
-              <span class="slider"></span>
+              <span class="toggle-slider"></span>
             </label>
           </div>
 
@@ -2133,7 +2133,7 @@
                 checked={$keyboardStore.enabled}
                 onchange={(e) => keyboardStore.setEnabled((e.target as HTMLInputElement).checked)}
               />
-              <span class="slider"></span>
+              <span class="toggle-slider"></span>
             </label>
           </div>
 
