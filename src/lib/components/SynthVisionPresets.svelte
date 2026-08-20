@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { t } from '../i18n';
+
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   type Preset = { id: string; name: string; _scope?: string; [key: string]: any };
 
@@ -38,7 +40,7 @@
   }
   function ctxRename() {
     if (!presetCtxMenu) return;
-    const newName = prompt('Rename preset:', presetCtxMenu.preset.name);
+    const newName = prompt($t('shaderAi.presets.renamePrompt'), presetCtxMenu.preset.name);
     if (newName && newName.trim() && onRename) {
       onRename(presetCtxMenu.preset, newName.trim());
     }
@@ -46,7 +48,7 @@
   }
   function ctxDelete() {
     if (!presetCtxMenu) return;
-    if (confirm(`Delete "${presetCtxMenu.preset.name}"?`)) {
+    if (confirm($t('shaderAi.presets.deleteConfirm', { values: { name: presetCtxMenu.preset.name } }))) {
       onDelete(presetCtxMenu.preset.id);
     }
     presetCtxMenu = null;
@@ -56,18 +58,26 @@
 <div class="sv-preset-bar">
   <div class="sv-preset-left">
     {#if showNameInput}
-      <input class="sv-preset-input" type="text" placeholder="Preset name..." bind:value={nameInput}
+      <input class="sv-preset-input" type="text" placeholder={$t('shaderAi.presets.namePlaceholder')}
+        aria-label={$t('shaderAi.presets.namePlaceholder')}
+        bind:value={nameInput}
         on:keydown={(e) => { if (e.key === 'Enter') handleSave(nameInput); if (e.key === 'Escape') { showNameInput = false; nameInput = ''; } }} />
       <button class="sv-scope-toggle"
         class:global={saveScope === 'global'}
-        on:click={() => saveScope = saveScope === 'project' ? 'global' : 'project'}
-        title={saveScope === 'project' ? 'Save to this project only' : 'Save globally (all projects)'}>
+        on:click={() => (saveScope = saveScope === 'project' ? 'global' : 'project')}
+        title={saveScope === 'project' ? $t('shaderAi.presets.projectScopeTitle')
+          : $t('shaderAi.presets.globalScopeTitle')}
+        aria-label={saveScope === 'project'
+          ? $t('shaderAi.presets.projectScopeTitle')
+          : $t('shaderAi.presets.globalScopeTitle')}>
         {saveScope === 'project' ? '\u{1F4C1}' : '\u{1F310}'}
       </button>
-      <button class="sv-preset-save-confirm" on:click={() => handleSave(nameInput)}>OK</button>
-      <button class="sv-preset-save-cancel" on:click={() => { showNameInput = false; nameInput = ''; }}>X</button>
+      <button class="sv-preset-save-confirm" on:click={() => handleSave(nameInput)}
+        aria-label={$t('shaderAi.presets.confirm')}>{$t('shaderAi.presets.confirm')}</button>
+      <button class="sv-preset-save-cancel" on:click={() => { showNameInput = false; nameInput = ''; }}
+        aria-label={$t('shaderAi.presets.cancel')}>X</button>
     {:else}
-      <button class="sv-preset-save-btn" on:click={() => { showNameInput = true; }}>SAVE</button>
+      <button class="sv-preset-save-btn" on:click={() => { showNameInput = true; }}>{$t('shaderAi.presets.save')}</button>
     {/if}
   </div>
   <div class="sv-preset-list">
@@ -76,12 +86,15 @@
         class:global-preset={preset._scope === 'global'}
         on:click={() => onLoad(preset)}
         on:contextmenu={(e) => openPresetCtx(e, preset)}
-        title="{preset.name} — right-click for Update / Rename / Delete">
-        {#if preset._scope === 'global'}<span class="sv-preset-scope" title="Global preset">G</span>{/if}{preset.name}
+        title={$t('shaderAi.presets.presetTitle', { values: { name: preset.name } })}
+        aria-label={preset.name}
+      >
+        {#if preset._scope === 'global'}<span class="sv-preset-scope" title={$t('shaderAi.presets.globalPreset')}
+            >G</span>{/if}{preset.name}
       </button>
     {/each}
     {#if allPresets.length === 0}
-      <span class="sv-preset-hint">No saved presets</span>
+      <span class="sv-preset-hint">{$t('shaderAi.presets.noSaved')}</span>
     {/if}
   </div>
 </div>
@@ -90,13 +103,13 @@
   <div class="sv-ctx-backdrop" on:click={closePresetCtx} role="presentation"></div>
   <div class="sv-ctx-menu" style="left:{presetCtxMenu.x}px;top:{presetCtxMenu.y}px">
     {#if onUpdate}
-      <button class="sv-ctx-item sv-ctx-primary" on:click={ctxUpdate}>Update Preset</button>
+      <button class="sv-ctx-item sv-ctx-primary" on:click={ctxUpdate}>{$t('shaderAi.presets.update')}</button>
     {/if}
     {#if onRename}
-      <button class="sv-ctx-item" on:click={ctxRename}>Rename Preset</button>
+      <button class="sv-ctx-item" on:click={ctxRename}>{$t('shaderAi.presets.rename')}</button>
     {/if}
     <div class="sv-ctx-sep"></div>
-    <button class="sv-ctx-item sv-ctx-danger" on:click={ctxDelete}>Delete Preset</button>
+    <button class="sv-ctx-item sv-ctx-danger" on:click={ctxDelete}>{$t('shaderAi.presets.delete')}</button>
   </div>
 {/if}
 
@@ -214,7 +227,7 @@
     border-radius: 4px;
     padding: 4px 0;
     min-width: 140px;
-    box-shadow: 0 4px 12px rgba(0,0,0,.5);
+    box-shadow: 0 4px 12px rgba(0,0,0, 0.5);
   }
   .sv-ctx-item {
     display: block;
@@ -229,11 +242,11 @@
     font-family: inherit;
   }
   .sv-ctx-item:hover {
-    background: rgba(255,255,255,.08);
+    background: rgba(255,255,255, 0.08);
     color: #fff;
   }
   .sv-ctx-primary {
-    color: #FF8577;
+    color: #ff8577;
     font-weight: 700;
   }
   .sv-ctx-primary:hover {
@@ -241,7 +254,7 @@
     color: #ffa899;
   }
   .sv-ctx-danger { color: #ff6b6b; }
-  .sv-ctx-danger:hover { background: rgba(255,80,80,.12); color: #ff4444; }
+  .sv-ctx-danger:hover { background: rgba(255,80,80, 0.12); color: #ff4444; }
   .sv-ctx-sep {
     height: 1px;
     background: rgba(255, 255, 255, 0.08);

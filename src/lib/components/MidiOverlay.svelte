@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, tick } from 'svelte';
+  import { t } from '$lib/i18n';
   import { midiStore } from '../midi/midiStore';
   import { macros } from '../stores/macros';
   import type { MidiMappingMode } from '../midi/midiTypes';
@@ -42,8 +43,12 @@
     while (node && node !== document.body && node !== document.documentElement) {
       const style = getComputedStyle(node);
       const clips =
-        style.overflowX === 'hidden' || style.overflowX === 'auto' || style.overflowX === 'scroll' ||
-        style.overflowY === 'hidden' || style.overflowY === 'auto' || style.overflowY === 'scroll';
+        style.overflowX === 'hidden' ||
+        style.overflowX === 'auto' ||
+        style.overflowX === 'scroll' ||
+        style.overflowY === 'hidden' ||
+        style.overflowY === 'auto' ||
+        style.overflowY === 'scroll';
       if (clips) {
         const ancestorRect = node.getBoundingClientRect();
         if (style.overflowX !== 'visible') {
@@ -90,7 +95,7 @@
       const elements = document.querySelectorAll<HTMLElement>('[data-midi-path]');
       const newItems: OverlayItem[] = [];
 
-      elements.forEach(el => {
+      elements.forEach((el) => {
         const path = el.dataset.midiPath!;
         const label = el.dataset.midiLabel || path;
         const min = parseFloat(el.dataset.midiMin || '0');
@@ -129,11 +134,17 @@
       const newClipRect = computeClipRect(item.element, newRect);
       const wasVisible = item.visible;
       item.visible = isEffectivelyVisible(item.element, newClipRect);
-      if (Math.abs(newRect.left - item.rect.left) > 1 || Math.abs(newRect.top - item.rect.top) > 1 ||
-          Math.abs(newRect.width - item.rect.width) > 1 || Math.abs(newRect.height - item.rect.height) > 1 ||
-          Math.abs(newClipRect.left - item.clipRect.left) > 1 || Math.abs(newClipRect.top - item.clipRect.top) > 1 ||
-          Math.abs(newClipRect.width - item.clipRect.width) > 1 || Math.abs(newClipRect.height - item.clipRect.height) > 1 ||
-          wasVisible !== item.visible) {
+      if (
+        Math.abs(newRect.left - item.rect.left) > 1 ||
+        Math.abs(newRect.top - item.rect.top) > 1 ||
+        Math.abs(newRect.width - item.rect.width) > 1 ||
+        Math.abs(newRect.height - item.rect.height) > 1 ||
+        Math.abs(newClipRect.left - item.clipRect.left) > 1 ||
+        Math.abs(newClipRect.top - item.clipRect.top) > 1 ||
+        Math.abs(newClipRect.width - item.clipRect.width) > 1 ||
+        Math.abs(newClipRect.height - item.clipRect.height) > 1 ||
+        wasVisible !== item.visible
+      ) {
         item.rect = newRect;
         item.clipRect = newClipRect;
         changed = true;
@@ -168,7 +179,7 @@
 
   // Get mapping label for a path
   function getMappingLabel(path: string): string | null {
-    const m = $midiStore.mappings.find(m => m.path === path);
+    const m = $midiStore.mappings.find((m) => m.path === path);
     if (!m) return null;
     if (m.type === 'cc') return `CC${m.number}`;
     if (m.type === 'note') return `N${m.number}`;
@@ -194,8 +205,14 @@
     } else if (!isEdit && wasEditMode) {
       // Just exited edit mode
       wasEditMode = false;
-      if (rafId) { cancelAnimationFrame(rafId); rafId = null; }
-      if (scanTimer) { clearInterval(scanTimer); scanTimer = null; }
+      if (rafId) {
+        cancelAnimationFrame(rafId);
+        rafId = null;
+      }
+      if (scanTimer) {
+        clearInterval(scanTimer);
+        scanTimer = null;
+      }
       document.removeEventListener('toggle', handleDetailsToggle, true);
       overlayItems = [];
       overlayRevision++;
@@ -228,16 +245,28 @@
             class="midi-indicator"
             class:mapped={!!mappingLabel}
             class:learning={isLearning}
-            style="left:{item.clipRect.left}px; top:{item.clipRect.top}px; width:{Math.max(item.clipRect.width, 4)}px; height:{Math.max(item.clipRect.height, 4)}px;"
+            style="left:{item.clipRect.left}px; top:{item.clipRect.top}px; width:{Math.max(
+              item.clipRect.width,
+              4,
+            )}px; height:{Math.max(item.clipRect.height, 4)}px;"
             onclick={(e) => handleControlClick(e, item)}
             oncontextmenu={(e) => handleControlRightClick(e, item)}
-            title={mappingLabel ? `${item.label}: ${mappingLabel} (right-click to clear)` : `Click to learn: ${item.label}`}
+            title={mappingLabel
+              ? $t('controlOverlays.midi.indicator.mappedTitle', {
+                  values: { label: item.label, mapping: mappingLabel },
+                })
+              : $t('controlOverlays.midi.indicator.learnTitle', { values: { label: item.label } })}
+            aria-label={mappingLabel
+              ? $t('controlOverlays.midi.indicator.mappedAria', {
+                  values: { label: item.label, mapping: mappingLabel },
+                })
+              : $t('controlOverlays.midi.indicator.learnAria', { values: { label: item.label } })}
           >
             {#if mappingLabel}
               <span class="midi-tag">{mappingLabel}</span>
             {/if}
             {#if isLearning}
-              <span class="midi-learn-label">LEARN</span>
+              <span class="midi-learn-label">{$t('controlOverlays.midi.indicator.learningLabel')}</span>
             {/if}
           </div>
         {/if}
@@ -246,20 +275,34 @@
 
     <!-- Status bar at bottom -->
     <div class="midi-status-bar">
-      <span class="midi-status-title">MIDI EDIT</span>
+      <span class="midi-status-title">{$t('controlOverlays.midi.status.title')}</span>
       {#if $midiStore.learn.active && $midiStore.learn.targetLabel}
-        <span class="midi-learn-status">Waiting: <strong>{$midiStore.learn.targetLabel}</strong> &mdash; move a control on your MIDI device</span>
+        <span class="midi-learn-status">
+          {$t('controlOverlays.midi.status.waiting', { values: { label: $midiStore.learn.targetLabel } })}
+        </span>
       {:else}
-        <span class="midi-hint">Click control to assign | Right-click to clear | ESC to exit</span>
+        <span class="midi-hint">{$t('controlOverlays.midi.status.hint')}</span>
       {/if}
       {#if $midiStore.lastMessage}
         <span class="midi-last-msg">
-          {$midiStore.lastMessage.type.toUpperCase()} #{$midiStore.lastMessage.number}
-          Ch{$midiStore.lastMessage.channel + 1}
+          {$t('controlOverlays.midi.status.lastMessage', {
+            values: {
+              type: $midiStore.lastMessage.type.toUpperCase(),
+              number: $midiStore.lastMessage.number,
+              channel: $midiStore.lastMessage.channel + 1,
+            },
+          })}
         </span>
       {/if}
-      <span class="midi-map-count">{$midiStore.mappings.length} mapped</span>
-      <button class="midi-exit-btn" onclick={() => midiStore.setEditMode(false)}>EXIT</button>
+      <span class="midi-map-count">
+        {$t('controlOverlays.midi.status.mapCount', { values: { count: $midiStore.mappings.length } })}
+      </span>
+      <button
+        class="midi-exit-btn"
+        onclick={() => midiStore.setEditMode(false)}
+        aria-label={$t('controlOverlays.midi.status.exit')}
+        title={$t('controlOverlays.midi.status.exit')}>{$t('controlOverlays.midi.status.exit')}</button
+      >
     </div>
   </div>
 {/if}
@@ -284,7 +327,9 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: border-color 0.15s, background 0.15s;
+    transition:
+      border-color 0.15s,
+      background 0.15s;
     z-index: 100000;
   }
 
@@ -309,8 +354,14 @@
   }
 
   @keyframes midi-pulse {
-    0% { border-color: #00e5ff; box-shadow: 0 0 4px rgba(0, 229, 255, 0.3); }
-    100% { border-color: #00b8d4; box-shadow: 0 0 12px rgba(0, 229, 255, 0.6); }
+    0% {
+      border-color: #00e5ff;
+      box-shadow: 0 0 4px rgba(0, 229, 255, 0.3);
+    }
+    100% {
+      border-color: #00b8d4;
+      box-shadow: 0 0 12px rgba(0, 229, 255, 0.6);
+    }
   }
 
   .midi-tag {

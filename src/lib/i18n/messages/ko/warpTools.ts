@@ -1,0 +1,47 @@
+export default {
+  corners: {
+    topLeft: '왼쪽 위',
+    topRight: '오른쪽 위',
+    bottomLeft: '왼쪽 아래',
+    bottomRight: '오른쪽 아래',
+  },
+  edges: {
+    top: '위쪽',
+    bottom: '아래쪽',
+    left: '왼쪽',
+    right: '오른쪽',
+  },
+  rectCorners: {
+    tl: 'TL',
+    tr: 'TR',
+    bl: 'BL',
+    br: 'BR',
+  },
+  layer: {
+    cornerAria: '워프 코너 {corner}',
+    cornerAriaSelected: '워프 코너 {corner} (선택됨)',
+    cornerLabel: '{corner}',
+    cornerLabelSelected: '{corner} (선택됨)',
+    edgeStretchAria: '선택한 레이어를 {edge} 엣지에서 늘이기',
+    edgeMoveAria: '{edge} 엣지 이동',
+    moveAria: '레이어 이동',
+    rotateAria: '레이어 회전',
+    scaleSelectedAria: '선택한 레이어 크기 조절',
+    scaleAria: '레이어 크기 조절',
+    fineTuneAria: '{corner} 미세 조정',
+    nudgeUpAria: '위',
+    nudgeLeftAria: '왼쪽',
+    exitFineTuneAria: '미세 조정 종료',
+    nudgeRightAria: '오른쪽',
+    nudgeDownAria: '아래',
+  },
+  screen: {
+    cornerLabel: '{name} {corner}',
+    moveTitle: '{name} 이동: 드래그',
+  },
+  master: {
+    label: '마스터 워프',
+    cornerLabel: '{corner}',
+    moveTitle: '전체 워프 이동: 드래그',
+  },
+};

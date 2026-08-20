@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { OutputSlice } from '../stores/settings';
+  import { t } from '../i18n';
 
   // Top-down preview of the master canvas with each slice drawn as a
   // labeled rectangle. Adjacent slices whose edge-blend regions overlap
@@ -26,8 +27,7 @@
 
   const COLORS = [
     '#5fa8ff', '#ff7e5f', '#5fff8e', '#ffe55f',
-    '#c25fff', '#5fffe7', '#ff5f9e', '#a5ff5f',
-  ];
+    '#c25fff', '#5fffe7', '#ff5f9e', '#a5ff5f'];
 
   type Rect = { x: number; y: number; w: number; h: number };
 
@@ -61,7 +61,7 @@
 
   $: overlaps = (() => {
     const out: Rect[] = [];
-    const active = slices.filter(s => s.enabled);
+    const active = slices.filter((s) => s.enabled);
     for (let i = 0; i < active.length; i++) {
       const aStrips = blendStrips(active[i]);
       for (let j = i + 1; j < active.length; j++) {
@@ -151,7 +151,7 @@
   }
 
   function startDrag(e: PointerEvent, sliceId: string, kind: DragKind) {
-    const slice = slices.find(s => s.id === sliceId);
+    const slice = slices.find((s) => s.id === sliceId);
     if (!slice) return;
     e.preventDefault();
     e.stopPropagation();
@@ -198,21 +198,21 @@
         const newY = Math.min(Math.max(0, y + dyN), y + h - 0.02);
         const sx = snapEdge(newX, dragging.sliceId, 'x');
         const sy = snapEdge(newY, dragging.sliceId, 'y');
-        const newW = (x + w) - sx;
-        const newH = (y + h) - sy;
+        const newW = x + w - sx;
+        const newH = y + h - sy;
         onChange(dragging.sliceId, { cropX: sx, cropY: sy, cropW: newW, cropH: newH });
       } else if (dragging.kind === 'ne') {
         const newR = Math.min(Math.max(x + 0.02, x + w + dxN), 1);
         const newY = Math.min(Math.max(0, y + dyN), y + h - 0.02);
         const sr = snapEdge(newR, dragging.sliceId, 'x');
         const sy = snapEdge(newY, dragging.sliceId, 'y');
-        onChange(dragging.sliceId, { cropY: sy, cropW: sr - x, cropH: (y + h) - sy });
+        onChange(dragging.sliceId, { cropY: sy, cropW: sr - x, cropH: y + h - sy });
       } else if (dragging.kind === 'sw') {
         const newX = Math.min(Math.max(0, x + dxN), x + w - 0.02);
         const newB = Math.min(Math.max(y + 0.02, y + h + dyN), 1);
         const sx = snapEdge(newX, dragging.sliceId, 'x');
         const sb = snapEdge(newB, dragging.sliceId, 'y');
-        onChange(dragging.sliceId, { cropX: sx, cropW: (x + w) - sx, cropH: sb - y });
+        onChange(dragging.sliceId, { cropX: sx, cropW: x + w - sx, cropH: sb - y });
       } else if (dragging.kind === 'se') {
         const newR = Math.min(Math.max(x + 0.02, x + w + dxN), 1);
         const newB = Math.min(Math.max(y + 0.02, y + h + dyN), 1);
@@ -232,10 +232,12 @@
 
 <div class="canvas-preview">
   <div class="preview-meta">
-    <span>Master canvas: <strong>{masterWidth}×{masterHeight}</strong></span>
+    <span>{$t('geometryTools.outputPreview.masterCanvas')} <strong>{masterWidth}×{masterHeight}</strong></span>
     <span class="preview-legend">
-      <span class="legend-dot overlap"></span> overlap zone
-      <span class="legend-dot disabled"></span> disabled slice
+      <span class="legend-dot overlap"></span>
+      {$t('geometryTools.outputPreview.overlapZone')}
+      <span class="legend-dot disabled"></span>
+      {$t('geometryTools.outputPreview.disabledSlice')}
     </span>
   </div>
   <svg

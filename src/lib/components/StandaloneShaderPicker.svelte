@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount } from 'svelte';
+  import { t } from '../i18n';
   import type { MobileShader, MobileShaderCategory } from '../mobile/standaloneShaderList';
   import { getCachedThumb, warmThumbnails } from '../mobile/standaloneThumbnails';
 
@@ -10,15 +11,15 @@
   type Filter = 'all' | MobileShaderCategory;
   let filter: Filter = 'all';
 
-  $: filtered = filter === 'all' ? shaders : shaders.filter(s => s.category === filter);
+  $: filtered = filter === 'all' ? shaders : shaders.filter((s) => s.category === filter);
 
   const CATEGORIES: { id: Filter; label: string }[] = [
-    { id: 'all',     label: 'All' },
-    { id: 'audio',   label: 'Audio' },
-    { id: 'room',    label: 'Rooms' },
-    { id: 'fluid',   label: 'Fluid' },
-    { id: 'pattern', label: 'Pattern' },
-    { id: 'kinetic', label: 'Kinetic' },
+    { id: 'all',     label: 'standalone.shaderPicker.categories.all' },
+    { id: 'audio',   label: 'standalone.shaderPicker.categories.audio' },
+    { id: 'room',    label: 'standalone.shaderPicker.categories.room' },
+    { id: 'fluid',   label: 'standalone.shaderPicker.categories.fluid' },
+    { id: 'pattern', label: 'standalone.shaderPicker.categories.pattern' },
+    { id: 'kinetic', label: 'standalone.shaderPicker.categories.kinetic' },
   ];
 
   // Per-shader cached thumbnail data-URLs. Refreshes whenever a new
@@ -58,23 +59,21 @@
 <div class="picker-bg" onclick={onClose} role="presentation">
   <div class="picker-sheet" onclick={(e) => e.stopPropagation()} role="presentation">
     <header class="picker-head">
-      <h2>Pick a shader</h2>
-      <button class="close-x" onclick={onClose} aria-label="Close">✕</button>
+      <h2>{$t('standalone.shaderPicker.title')}</h2>
+      <button class="close-x" onclick={onClose} aria-label={$t('standalone.shaderPicker.close')}>✕</button>
     </header>
 
     <div class="filters">
       {#each CATEGORIES as cat}
-        <button
-          class="filter-pill"
-          class:active={filter === cat.id}
-          onclick={() => filter = cat.id}
-        >{cat.label}</button>
+        <button class="filter-pill" class:active={filter === cat.id} onclick={() => (filter = cat.id)}
+          >{$t(cat.label)}</button
+        >
       {/each}
     </div>
 
     {#if warming}
       <div class="warm-row" aria-live="polite">
-        Generating shader previews… {warmDone}/{warmTotal}
+        {$t('standalone.shaderPicker.warming', { values: { done: warmDone, total: warmTotal } })}
       </div>
     {/if}
 
@@ -91,7 +90,11 @@
             </div>
           {/if}
           <span class="picker-name">{s.name}</span>
-          <span class="picker-meta">{s.category}{s.audioNative ? ' · audio' : ''}</span>
+          <span class="picker-meta"
+            >{$t(`standalone.shaderPicker.categories.${s.category}`)}{s.audioNative
+              ? $t('standalone.shaderPicker.audioMeta')
+              : ''}</span
+          >
         </button>
       {/each}
     </div>
@@ -120,8 +123,12 @@
     animation: pop-up 0.18s ease-out;
   }
   @keyframes pop-up {
-    from { transform: translateY(20%); }
-    to   { transform: translateY(0); }
+    from {
+      transform: translateY(20%);
+    }
+    to {
+      transform: translateY(0);
+    }
   }
 
   .picker-head {
@@ -130,9 +137,13 @@
     justify-content: space-between;
     margin-bottom: 10px;
   }
-  .picker-head h2 { font-size: 17px; margin: 0; }
+  .picker-head h2 {
+    font-size: 17px;
+    margin: 0;
+  }
   .close-x {
-    width: 30px; height: 30px;
+    width: 30px;
+    height: 30px;
     border: none;
     border-radius: 15px;
     background: #1c1c24;
@@ -156,7 +167,11 @@
     border-radius: 14px;
     font-size: 13px;
   }
-  .filter-pill.active { background: #BB86FC; color: #1a1a1f; border-color: #BB86FC; }
+  .filter-pill.active {
+    background: #bb86fc;
+    color: #1a1a1f;
+    border-color: #bb86fc;
+  }
 
   .picker-grid {
     display: grid;
@@ -174,7 +189,9 @@
     text-align: left;
     color: #fff;
   }
-  .picker-card:active { transform: scale(0.97); }
+  .picker-card:active {
+    transform: scale(0.97);
+  }
   .picker-thumb {
     width: 100%;
     aspect-ratio: 1;
@@ -189,11 +206,11 @@
   }
   /* Category-coded gradient backgrounds — fallback for shaders that
      haven't been rendered to a thumbnail yet (first launch warmup). */
-  .cat-audio  { background: linear-gradient(135deg, #FF6E6E, #BB86FC); }
-  .cat-room   { background: linear-gradient(135deg, #34284A, #FF8577); }
-  .cat-fluid  { background: linear-gradient(135deg, #1A5C8E, #69F0AE); }
-  .cat-pattern{ background: linear-gradient(135deg, #2A2A30, #BB86FC); }
-  .cat-kinetic{ background: linear-gradient(135deg, #FF8577, #FFC857); }
+  .cat-audio  { background: linear-gradient(135deg, #ff6e6e, #bb86fc); }
+  .cat-room   { background: linear-gradient(135deg, #34284a, #ff8577); }
+  .cat-fluid  { background: linear-gradient(135deg, #1a5c8e, #69f0ae); }
+  .cat-pattern{ background: linear-gradient(135deg, #2a2a30, #bb86fc); }
+  .cat-kinetic{ background: linear-gradient(135deg, #ff8577, #ffc857); }
   .picker-letter { opacity: 0.95; text-shadow: 0 1px 2px rgba(0, 0, 0, 0.4); }
 
   /* Real rendered thumbnail — fills the .picker-thumb square. */

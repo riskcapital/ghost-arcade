@@ -1,9 +1,10 @@
 <script lang="ts">
   import { midiStore } from '../midi/midiStore';
   import { midiManager } from '../midi/midiManager';
+  import { t } from '../i18n';
   // Tier-related imports removed — MIDI editing always available.
 
-  $: devices = $midiStore.devices.filter(d => d.state === 'connected');
+  $: devices = $midiStore.devices.filter((d) => d.state === 'connected');
   $: selectedId = $midiStore.selectedDeviceId;
   $: available = $midiStore.available;
   $: editMode = $midiStore.editMode;
@@ -17,8 +18,8 @@
 
 {#if available}
   <div class="midi-selector">
-    <select value={selectedId || ''} onchange={handleDeviceChange} title="MIDI Input Device">
-      <option value="">No MIDI Device</option>
+    <select value={selectedId || ''} onchange={handleDeviceChange} title={$t('inputControls.midi.inputDeviceTitle')}>
+      <option value="">{$t('inputControls.midi.noDevice')}</option>
       {#each devices as device}
         <option value={device.id}>{device.name}</option>
       {/each}
@@ -27,7 +28,7 @@
       class="midi-edit-btn"
       class:active={editMode}
       onclick={() => midiStore.toggleEditMode()}
-      title={editMode ? 'Exit MIDI Edit Mode (ESC)' : 'Enter MIDI Edit Mode'}
+      title={editMode ? $t('inputControls.midi.exitEditModeTitle') : $t('inputControls.midi.enterEditModeTitle')}
     >
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <circle cx="12" cy="12" r="2"/>
@@ -36,10 +37,18 @@
         <path d="M12 2 L12 6"/>
         <path d="M12 18 L12 22"/>
       </svg>
-      MIDI
+      {$t('inputControls.midi.label')}
     </button>
     {#if lastMsg && selectedId}
-      <span class="midi-activity" title="Ch{lastMsg.channel + 1} {lastMsg.type.toUpperCase()} #{lastMsg.number} Val:{lastMsg.value}">
+      <span class="midi-activity" title={$t('inputControls.midi.activityTitle', {
+          values: {
+            channel: lastMsg.channel + 1,
+            type: lastMsg.type.toUpperCase(),
+            number: lastMsg.number,
+            value: lastMsg.value,
+          },
+        })}
+      >
         &#9679;
       </span>
     {/if}

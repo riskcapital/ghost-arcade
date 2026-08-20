@@ -164,5 +164,8 @@ export default {
   },
   errors: {
     openSliceDisplay: 'Slice display window failed to open. Check popup-blocker behaviour.',
+    openOutputWindow: 'Could not open output window: {error}',
+    popupBlocked: 'Output window failed to open. Check Chromium popup-blocker behaviour.',
+    openZeroCopyOutput: 'Could not open zero-copy output window: {error}',
   },
 };

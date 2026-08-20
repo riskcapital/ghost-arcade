@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { t } from '../i18n';
   import { cornersToMatrix3d, identityCorners, type Pt } from '../mobile/standaloneHomography';
 
   export let corners: Pt[] | undefined = undefined;
@@ -27,9 +28,7 @@
   }
 
   /** Reactive: corners → matrix3d for the parent's warp target. */
-  $: matrix = (containerW > 0 && containerH > 0 && corners)
-    ? cornersToMatrix3d(containerW, containerH, corners)
-    : 'none';
+  $: matrix = containerW > 0 && containerH > 0 && corners ? cornersToMatrix3d(containerW, containerH, corners) : 'none';
 
   /** Publish the matrix to a CSS custom property on `<html>` so the
    *  parent's `.warp-target` can pick it up without prop drilling. */
@@ -47,7 +46,7 @@
     const rect = containerEl.getBoundingClientRect();
     const x = Math.max(0, Math.min(rect.width, e.clientX - rect.left));
     const y = Math.max(0, Math.min(rect.height, e.clientY - rect.top));
-    corners = corners.map((c, i) => i === dragging ? { x, y } : c);
+    corners = corners.map((c, i) => (i === dragging ? { x, y } : c));
   }
   function onHandlePointerUp(e: PointerEvent) {
     if (dragging === null) return;
@@ -80,7 +79,7 @@
     <!-- Edge lines between handles -->
     <svg class="proj-lines" width="100%" height="100%" pointer-events="none">
       <polygon
-        points={corners.map(c => `${c.x},${c.y}`).join(' ')}
+        points={corners.map((c) => `${c.x},${c.y}`).join(' ')}
         fill="none"
         stroke="rgba(187, 134, 252, 0.6)"
         stroke-width="2"
@@ -96,11 +95,11 @@
         onpointermove={onHandlePointerMove}
         onpointerup={onHandlePointerUp}
         onpointercancel={onHandlePointerUp}
-        aria-label={`Corner ${i + 1}`}
+        aria-label={$t('projection.map.cornerAria', { values: { index: i + 1 } })}
       ></button>
     {/each}
 
-    <button class="reset-btn" onclick={reset}>Reset map</button>
+    <button class="reset-btn" onclick={reset}>{$t('projection.map.reset')}</button>
   {/if}
 </div>
 
@@ -123,7 +122,7 @@
     width: 44px;
     height: 44px;
     border-radius: 22px;
-    border: 2px solid #BB86FC;
+    border: 2px solid #bb86fc;
     background: rgba(20, 20, 26, 0.85);
     backdrop-filter: blur(6px);
     cursor: grab;
@@ -131,7 +130,7 @@
     box-shadow: 0 2px 8px rgba(0, 0, 0, 0.5);
   }
   .handle:active {
-    background: #BB86FC;
+    background: #bb86fc;
     cursor: grabbing;
   }
 
@@ -148,5 +147,5 @@
     border-radius: 14px;
     font-size: 13px;
   }
-  .reset-btn:active { background: #BB86FC; color: #1a1a1f; }
+  .reset-btn:active { background: #bb86fc; color: #1a1a1f; }
 </style>

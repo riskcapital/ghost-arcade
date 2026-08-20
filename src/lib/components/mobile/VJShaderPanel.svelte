@@ -1,5 +1,6 @@
 <script lang="ts">
   import VJFader from './VJFader.svelte';
+  import { t } from '../../i18n';
 
   export let layerStates: any[] = [];
   export let onUpdateShaderValue: (layerIndex: number, paramName: string, value: any) => void = () => {};
@@ -52,7 +53,7 @@
     const currentLs = selectedLayerIndex !== null ? layerStates[selectedLayerIndex] : null;
     const currentHasShader = currentLs?.activeClip?.type === 'shader' && currentLs.activeClip.shaderCode;
     if (!currentHasShader) {
-      const shaderLayer = layerStates.findIndex(ls =>
+      const shaderLayer = layerStates.findIndex((ls) =>
         ls?.activeClip?.type === 'shader' && ls.activeClip.shaderCode
       );
       if (shaderLayer >= 0 && shaderLayer !== selectedLayerIndex) {
@@ -76,7 +77,8 @@
         class:active={selectedLayerIndex === i}
         class:has-shader={ls?.activeClip?.type === 'shader'}
         style="--lc: {layerColors[i % layerColors.length]}"
-        on:click={() => selectedLayerIndex = i}
+        on:click={() => (selectedLayerIndex = i)}
+        aria-label={$t('mobileAdvanced.shader.selectLayer', { values: { layer: i + 1 } })}
       >
         <span class="layer-dot"></span>
         <span class="layer-num">L{i + 1}</span>
@@ -96,7 +98,7 @@
           {#if input.TYPE === 'float'}
             {@const min = input.MIN ?? 0}
             {@const max = input.MAX ?? 1}
-            {@const currentVal = activeShader.values[input.NAME] ?? input.DEFAULT ?? ((min + max) / 2)}
+            {@const currentVal = activeShader.values[input.NAME] ?? input.DEFAULT ?? (min + max) / 2}
             <div class="param-row">
               <span class="param-label">{input.LABEL || input.NAME}</span>
               <div class="param-slider">
@@ -122,7 +124,10 @@
                 class="bool-toggle"
                 class:on={!!activeShader.values[input.NAME]}
                 on:click={() => onUpdateShaderValue(activeShader.layerIndex, input.NAME, !activeShader.values[input.NAME])}
-              >{activeShader.values[input.NAME] ? 'ON' : 'OFF'}</button>
+                aria-label={$t('mobileAdvanced.shader.toggleInput', { values: { name: input.LABEL || input.NAME } })}
+                >{$t(
+                  activeShader.values[input.NAME] ? 'mobileAdvanced.shader.on' : 'mobileAdvanced.shader.off',
+                )}</button>
             </div>
           {/if}
         {/each}
@@ -134,19 +139,19 @@
           {#if layerStates[selectedLayerIndex]?.activeClip}
             L{selectedLayerIndex + 1}: {layerStates[selectedLayerIndex].activeClip.name}
             {#if layerStates[selectedLayerIndex].activeClip.type !== 'shader'}
-              <br/><span class="empty-sub">Not a shader clip</span>
+              <br/><span class="empty-sub">{$t('mobileAdvanced.shader.empty.notShader')}</span>
             {:else}
-              <br/><span class="empty-sub">No adjustable parameters</span>
+              <br/><span class="empty-sub">{$t('mobileAdvanced.shader.empty.noParams')}</span>
             {/if}
           {:else}
-            No active clip on L{selectedLayerIndex + 1}
+            {$t('mobileAdvanced.shader.empty.noActiveClip', { values: { layer: `L${selectedLayerIndex + 1}` } })}
           {/if}
         </span>
       </div>
     {:else}
       <div class="empty-state">
         <span class="empty-icon">✦</span>
-        <span class="empty-text">Select a layer</span>
+        <span class="empty-text">{$t('mobileAdvanced.shader.empty.selectLayer')}</span>
       </div>
     {/if}
   </div>
@@ -236,7 +241,7 @@
     border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   }
 
-  .shader-icon { color: #BB86FC; font-size: 12px; }
+  .shader-icon { color: #bb86fc; font-size: 12px; }
   .shader-name {
     font-size: 11px;
     font-weight: 700;
@@ -295,8 +300,8 @@
   }
   .bool-toggle.on {
     background: rgba(187, 134, 252, 0.15);
-    border-color: #BB86FC;
-    color: #BB86FC;
+    border-color: #bb86fc;
+    color: #bb86fc;
   }
 
   /* ── Empty State ── */

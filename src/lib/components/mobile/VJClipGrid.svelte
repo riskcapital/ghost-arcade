@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { t } from '../../i18n';
+
   export let clipGrid: (any | null)[][] = [];
   export let layerStates: any[] = [];
   export let numColumns: number = 8;
@@ -42,7 +44,10 @@
       >
         <span class="layer-num">L{layerIndex + 1}</span>
         {#if layerStates[layerIndex]?.activeClip}
-          <button class="stop-layer-btn" on:click={() => onStopLayer(layerIndex)}>
+          <button class="stop-layer-btn" on:click={() => onStopLayer(layerIndex)}
+            title={$t('vjExtras.clipGrid.stopLayer', { values: { layer: layerIndex + 1 } })}
+            aria-label={$t('vjExtras.clipGrid.stopLayer', { values: { layer: layerIndex + 1 } })}
+          >
             <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
           </button>
         {/if}
@@ -58,6 +63,17 @@
             class:tablet={isTablet}
             style="--layer-color: {layerColors[layerIndex % layerColors.length]}"
             on:click={() => clip && handleCellTap(layerIndex, columnIndex)}
+            aria-label={clip
+              ? $t('vjExtras.clipGrid.triggerClip', {
+                  values: {
+                    name: clip.name || $t('vjExtras.clipGrid.unnamedClip'),
+                    layer: layerIndex + 1,
+                    column: columnIndex + 1,
+                  },
+                })
+              : $t('vjExtras.clipGrid.emptySlot', {
+                  values: { layer: layerIndex + 1, column: columnIndex + 1 },
+                })}
           >
             {#if clip}
               {#if clip.thumbnail}

@@ -21,14 +21,21 @@
   import { initLicense } from './lib/stores/license';
   import { settings, masterWarpIsActive } from './lib/stores/settings';
   import {
-    startMasterWarpOutput, stopMasterWarpOutput, tickMasterWarpOutput,
-    getMasterWarpCanvas, disposeMasterWarpOutput,
+    startMasterWarpOutput,
+    stopMasterWarpOutput,
+    tickMasterWarpOutput,
+    getMasterWarpCanvas,
+    disposeMasterWarpOutput,
   } from './lib/sync/outputComposite';
   import {
-    beginSliceAtlasFrame, renderSliceAtlasTile, endSliceAtlasFrame, disposeAtlasRenderer,
+    beginSliceAtlasFrame,
+    renderSliceAtlasTile,
+    endSliceAtlasFrame,
+    disposeAtlasRenderer,
   } from './lib/output/blendRenderer';
   import { packAtlas, atlasLayoutSignature, type AtlasLayout } from './lib/output/atlasLayout';
   import { invoke } from '$lib/bridge';
+  import { t } from '$lib/i18n';
 
   let atlasCanvas: HTMLCanvasElement | null = null;
   let mainCanvasEl: HTMLCanvasElement | null = null;
@@ -48,7 +55,10 @@
     const mw = out?.masterCanvasWidth ?? mainCanvasEl.width;
     const mh = out?.masterCanvasHeight ?? mainCanvasEl.height;
     if (masterWarpIsActive(out?.masterWarp)) {
-      startMasterWarpOutput(() => out?.masterWarp, () => ({ w: mw, h: mh }));
+      startMasterWarpOutput(
+        () => out?.masterWarp,
+        () => ({ w: mw, h: mh }),
+      );
       tickMasterWarpOutput(mainCanvasEl);
       const warped = getMasterWarpCanvas();
       if (warped && warped.width > 0) return warped;
@@ -79,7 +89,9 @@
         atlasH: layout.atlasH,
         overflow: layout.overflow,
         tiles: layout.tiles,
-      }).catch(() => { /* main may not be ready yet */ });
+      }).catch(() => {
+        /* main may not be ready yet */
+      });
     }
 
     if (layout.tiles.length === 0 || layout.atlasW <= 0 || layout.atlasH <= 0) {
@@ -91,7 +103,7 @@
 
     if (!beginSliceAtlasFrame(atlasCanvas, layout.atlasW, layout.atlasH, source)) return;
 
-    const sliceById = new Map(slices.map(s => [s.id, s]));
+    const sliceById = new Map(slices.map((s) => [s.id, s]));
     for (const tile of layout.tiles) {
       const slice = sliceById.get(tile.sliceId);
       if (!slice) continue;
@@ -104,9 +116,12 @@
 
   onMount(() => {
     const splash = document.getElementById('splash');
-    if (splash) { splash.classList.add('hidden'); setTimeout(() => splash.remove(), 600); }
+    if (splash) {
+      splash.classList.add('hidden');
+      setTimeout(() => splash.remove(), 600);
+    }
 
-    initLicense().catch(e => console.warn('[SliceAtlas] License init:', e));
+    initLicense().catch((e) => console.warn('[SliceAtlas] License init:', e));
     initStateBroadcast('receiver');
 
     void (async () => {
@@ -124,7 +139,11 @@
   });
 </script>
 
-<div class="slice-atlas">
+<svelte:head>
+  <title>{$t('windowApps.sliceAtlas.title')}</title>
+</svelte:head>
+
+<div class="slice-atlas" aria-hidden="true">
   <!-- Hidden master compositor — same off-screen-but-composited trick as
        the per-display slice window so Chromium keeps painting it and its
        canvas is uploadable as a WebGL texture (NOT visibility:hidden). -->

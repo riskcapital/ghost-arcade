@@ -16,6 +16,7 @@
    * preview (just shows the thumbnail) without param controls.
    */
   import { onMount, onDestroy, tick } from 'svelte';
+  import { t } from '../i18n';
   import { vjClipLauncher, type VJClip, type VJDeck } from '../stores/vjClipLauncher';
   import { LivePreview } from '../isf/livePreview';
   import { parseISF, type ISFInput } from '../isf/parser';
@@ -131,14 +132,26 @@
 
 <div class="clip-preview-backdrop" on:click={onClose} role="presentation"></div>
 
-<aside class="clip-preview-panel" role="dialog" aria-label="Clip preview">
+<aside class="clip-preview-panel" role="dialog" aria-label={$t('vjExtras.clipPreview.dialogLabel')}>
   <header class="cpp-header">
     <div class="cpp-header-left">
-      <div class="cpp-eyebrow">DECK {bank} · L{layerIndex + 1} · C{columnIndex + 1}</div>
-      <div class="cpp-title" title={clip.name}>{clip.name || clip.id || 'Untitled clip'}</div>
+      <div class="cpp-eyebrow">
+        {$t('vjExtras.clipPreview.deckPosition', {
+          values: { deck: bank, layer: layerIndex + 1, column: columnIndex + 1 },
+        })}
+      </div>
+      <div class="cpp-title" title={clip.name}>{clip.name || clip.id || $t('vjExtras.clipPreview.untitledClip')}</div>
     </div>
-    <button class="cpp-close" type="button" on:click={onClose} aria-label="Close">
-      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round">
+    <button class="cpp-close" type="button" on:click={onClose} aria-label={$t('vjExtras.clipPreview.close')}>
+      <svg
+        width="14"
+        height="14"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2.4"
+        stroke-linecap="round"
+      >
         <path d="M6 6l12 12M18 6L6 18" />
       </svg>
     </button>
@@ -149,18 +162,18 @@
       <canvas bind:this={canvas} width="320" height="180"></canvas>
     {:else if clip.thumbnail}
       <img src={clip.thumbnail} alt={clip.name} />
-      <div class="cpp-preview-note">Live preview only available for shader clips</div>
+      <div class="cpp-preview-note">{$t('vjExtras.clipPreview.livePreviewNote')}</div>
     {:else}
       <div class="cpp-preview-empty">
         <div class="cpp-preview-empty-type">{clip.type}</div>
-        <div class="cpp-preview-empty-note">Trigger to view on output</div>
+        <div class="cpp-preview-empty-note">{$t('vjExtras.clipPreview.outputHint')}</div>
       </div>
     {/if}
   </div>
 
   {#if hasShader && shaderInputs.length > 0}
     <div class="cpp-params">
-      <div class="cpp-section-label">Parameters</div>
+      <div class="cpp-section-label">{$t('vjExtras.clipPreview.parameters')}</div>
       {#each shaderInputs as input (input.NAME)}
         {#if input.TYPE === 'float' || input.TYPE === 'event'}
           {@const min = Number(input.MIN ?? 0)}
@@ -170,15 +183,21 @@
           <div class="cpp-row">
             <div class="cpp-row-head">
               <label class="cpp-row-label" for="cpp-{input.NAME}">{input.LABEL || input.NAME}</label>
-              <button type="button" class="cpp-reset" on:click={() => resetParam(input)} title="Reset to default">↺</button>
+              <button
+                type="button"
+                class="cpp-reset"
+                on:click={() => resetParam(input)}
+                title={$t('vjExtras.clipPreview.resetDefault')}
+                aria-label={$t('vjExtras.clipPreview.resetDefault')}>↺</button
+              >
               <output class="cpp-value">{cur.toFixed(Math.abs(step) < 0.1 ? 3 : 2)}</output>
             </div>
             <input
               id="cpp-{input.NAME}"
               type="range"
-              min={min}
-              max={max}
-              step={step}
+              {min}
+              {max}
+              {step}
               value={cur}
               on:input={(e) => handleValueChange(input.NAME, Number((e.target as HTMLInputElement).value))}
             />
@@ -198,7 +217,13 @@
           <div class="cpp-row">
             <div class="cpp-row-head">
               <label class="cpp-row-label" for="cpp-{input.NAME}">{input.LABEL || input.NAME}</label>
-              <button type="button" class="cpp-reset" on:click={() => resetParam(input)} title="Reset to default">↺</button>
+              <button
+                type="button"
+                class="cpp-reset"
+                on:click={() => resetParam(input)}
+                title={$t('vjExtras.clipPreview.resetDefault')}
+                aria-label={$t('vjExtras.clipPreview.resetDefault')}>↺</button
+              >
               <output class="cpp-value">{cur}</output>
             </div>
             <input
@@ -226,17 +251,17 @@
     </div>
   {:else if hasShader}
     <div class="cpp-params">
-      <div class="cpp-section-label">Parameters</div>
-      <div class="cpp-empty-params">No exposed parameters on this shader.</div>
+      <div class="cpp-section-label">{$t('vjExtras.clipPreview.parameters')}</div>
+      <div class="cpp-empty-params">{$t('vjExtras.clipPreview.noParameters')}</div>
     </div>
   {/if}
 
   <footer class="cpp-footer">
-    <button class="cpp-trigger" type="button" on:click={trigger}>
+    <button class="cpp-trigger" type="button" on:click={trigger} aria-label={$t('vjExtras.clipPreview.trigger')}>
       <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21" /></svg>
-      Trigger
+      {$t('vjExtras.clipPreview.trigger')}
     </button>
-    <span class="cpp-hint">Esc to close</span>
+    <span class="cpp-hint">{$t('vjExtras.clipPreview.closeHint')}</span>
   </footer>
 </aside>
 
@@ -250,8 +275,12 @@
     animation: cpp-fade-in 0.2s ease-out;
   }
   @keyframes cpp-fade-in {
-    from { opacity: 0; }
-    to { opacity: 1; }
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
   }
 
   .clip-preview-panel {
@@ -268,13 +297,21 @@
     z-index: 9991;
     display: flex;
     flex-direction: column;
-    box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55), 0 0 0 1px rgba(255, 133, 119, 0.05);
+    box-shadow:
+      0 24px 60px rgba(0, 0, 0, 0.55),
+      0 0 0 1px rgba(255, 133, 119, 0.05);
     overflow: hidden;
     animation: cpp-pop 0.24s cubic-bezier(0.34, 1.56, 0.64, 1);
   }
   @keyframes cpp-pop {
-    from { opacity: 0; transform: translate(-50%, -50%) scale(0.94); }
-    to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+    from {
+      opacity: 0;
+      transform: translate(-50%, -50%) scale(0.94);
+    }
+    to {
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(1);
+    }
   }
 
   .cpp-header {
@@ -286,11 +323,14 @@
     background: linear-gradient(180deg, rgba(255, 133, 119, 0.06), transparent);
     gap: 10px;
   }
-  .cpp-header-left { min-width: 0; flex: 1; }
+  .cpp-header-left {
+    min-width: 0;
+    flex: 1;
+  }
   .cpp-eyebrow {
     font-size: 11px;
     font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
-    color: #7EC8E3;
+    color: #7ec8e3;
     letter-spacing: 0.1em;
     margin-bottom: 2px;
   }
@@ -314,9 +354,14 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: background 0.15s, color 0.15s;
+    transition:
+      background 0.15s,
+      color 0.15s;
   }
-  .cpp-close:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
+  .cpp-close:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
+  }
 
   .cpp-preview {
     padding: 12px 16px;
@@ -374,7 +419,9 @@
     flex: 1;
     min-height: 0;
   }
-  .cpp-params::-webkit-scrollbar { width: 6px; }
+  .cpp-params::-webkit-scrollbar {
+    width: 6px;
+  }
   .cpp-params::-webkit-scrollbar-thumb {
     background: rgba(255, 255, 255, 0.08);
     border-radius: 3px;
@@ -392,7 +439,9 @@
   .cpp-row {
     margin-bottom: 12px;
   }
-  .cpp-row:last-child { margin-bottom: 0; }
+  .cpp-row:last-child {
+    margin-bottom: 0;
+  }
   .cpp-row-head {
     display: flex;
     align-items: center;
@@ -414,20 +463,22 @@
     padding: 0 4px;
     line-height: 1;
   }
-  .cpp-reset:hover { color: #fff; }
+  .cpp-reset:hover {
+    color: #fff;
+  }
   .cpp-value {
     font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
     font-size: 11px;
-    color: #7EC8E3;
+    color: #7ec8e3;
     min-width: 36px;
     text-align: right;
   }
-  .cpp-row input[type="range"] {
+  .cpp-row input[type='range'] {
     width: 100%;
     height: 18px;
     background: transparent;
     cursor: pointer;
-    accent-color: #FF8577;
+    accent-color: #ff8577;
   }
 
   .cpp-row-bool {
@@ -436,9 +487,11 @@
     gap: 8px;
     margin-bottom: 12px;
   }
-  .cpp-row-bool .cpp-row-label { margin-bottom: 0; }
-  .cpp-row-bool input[type="checkbox"] {
-    accent-color: #FF8577;
+  .cpp-row-bool .cpp-row-label {
+    margin-bottom: 0;
+  }
+  .cpp-row-bool input[type='checkbox'] {
+    accent-color: #ff8577;
   }
 
   .cpp-row-color {
@@ -447,8 +500,10 @@
     gap: 8px;
     margin-bottom: 12px;
   }
-  .cpp-row-color .cpp-row-label { margin-bottom: 0; }
-  .cpp-row-color input[type="color"] {
+  .cpp-row-color .cpp-row-label {
+    margin-bottom: 0;
+  }
+  .cpp-row-color input[type='color'] {
     width: 36px;
     height: 22px;
     border: 1px solid rgba(255, 255, 255, 0.1);
@@ -474,7 +529,7 @@
   }
   .cpp-trigger {
     flex: 1;
-    background: linear-gradient(135deg, #FF8577, #7EC8E3);
+    background: linear-gradient(135deg, #ff8577, #7ec8e3);
     color: #0a0a0a;
     border: none;
     border-radius: 6px;
@@ -488,7 +543,10 @@
     align-items: center;
     justify-content: center;
     gap: 6px;
-    transition: filter 0.15s, transform 0.15s, box-shadow 0.15s;
+    transition:
+      filter 0.15s,
+      transform 0.15s,
+      box-shadow 0.15s;
     box-shadow: 0 4px 12px rgba(255, 133, 119, 0.3);
   }
   .cpp-trigger:hover {
@@ -496,7 +554,9 @@
     transform: translateY(-1px);
     box-shadow: 0 6px 18px rgba(255, 133, 119, 0.45);
   }
-  .cpp-trigger:active { transform: translateY(0); }
+  .cpp-trigger:active {
+    transform: translateY(0);
+  }
   .cpp-hint {
     font-size: 11px;
     color: #666;

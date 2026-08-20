@@ -20,6 +20,7 @@
   import { effectParamLabels, type ParamMeta } from '../effects/effectUX';
   import { EFFECT_CATALOG } from '../effects/effectCatalog';
   import type { EffectType, Effect, EffectParams } from '../types';
+  import { t } from '../i18n';
 
   // Drag state — track which knob is being dragged + start position.
   let dragKnobId: string | null = null;
@@ -86,7 +87,11 @@
   }
   function knobEndDrag(e: PointerEvent) {
     dragKnobId = null;
-    try { (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId); } catch { /* ignore */ }
+    try {
+      (e.currentTarget as HTMLElement).releasePointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
   }
 
   // Wheel: fine-tune. Each notch = 0.02. Shift = 0.005 for finer.
@@ -139,14 +144,14 @@
   function arcPath(value: number, radius: number): string {
     const v = Math.max(0, Math.min(1, value));
     const sweepDeg = v * 270;
-    const startAngle = -225;        // degrees (bottom-left)
+    const startAngle = -225; // degrees (bottom-left)
     const endAngle = startAngle + sweepDeg;
     const cx = radius + 2;
     const cy = radius + 2;
-    const sx = cx + radius * Math.cos(startAngle * Math.PI / 180);
-    const sy = cy + radius * Math.sin(startAngle * Math.PI / 180);
-    const ex = cx + radius * Math.cos(endAngle * Math.PI / 180);
-    const ey = cy + radius * Math.sin(endAngle * Math.PI / 180);
+    const sx = cx + radius * Math.cos((startAngle * Math.PI) / 180);
+    const sy = cy + radius * Math.sin((startAngle * Math.PI) / 180);
+    const ex = cx + radius * Math.cos((endAngle * Math.PI) / 180);
+    const ey = cy + radius * Math.sin((endAngle * Math.PI) / 180);
     // SVG's large-arc-flag flips when the swept ANGLE exceeds 180°.
     // The knob's total range is 270° (not 360°), so the flip happens
     // at v = 180/270 ≈ 0.667 — NOT at 0.5. The old `v > 0.5` test
@@ -163,10 +168,10 @@
 <div class="macro-bar">
   {#each $macros.macros as m (m.id)}
     {@const fxCount = m.effects.length}
-    {@const enabledFxCount = m.effects.filter(e => e.enabled).length}
+    {@const enabledFxCount = m.effects.filter((e) => e.enabled).length}
     <div
       class="macro-slot"
-      title="{m.name} — {enabledFxCount}/{fxCount} effect{fxCount === 1 ? '' : 's'} · drag vertically · right-click to edit"
+      title={$t('sequencer.macro.slotTitle', { values: { name: m.name, enabled: enabledFxCount, total: fxCount } })}
     >
       <button
         class="macro-knob"
@@ -180,29 +185,43 @@
         onwheel={(e) => knobOnWheel(e, m)}
         ondblclick={() => knobReset(m)}
         oncontextmenu={(e) => openEditPopover(e, m)}
-        data-midi-path="vj:macro:{m.id.replace('macro-','')}:value"
-        data-midi-label="Macro {m.name}"
+        data-midi-path="vj:macro:{m.id.replace('macro-', '')}:value"
+        data-midi-label={$t('sequencer.macro.midiLabel', { values: { name: m.name } })}
         data-midi-min="0"
         data-midi-max="1"
         data-midi-step="0.001"
+        aria-label={$t('sequencer.macro.knobLabel', { values: { name: m.name } })}
       >
         <svg width="34" height="34" viewBox="0 0 34 34" class="macro-svg">
           <!-- Background ring -->
-          <path d={arcPath(1, 14)} fill="none" stroke="rgba(255,255,255,0.08)" stroke-width="3" stroke-linecap="round" />
+          <path
+            d={arcPath(1, 14)}
+            fill="none"
+            stroke="rgba(255,255,255,0.08)"
+            stroke-width="3"
+            stroke-linecap="round"
+          />
           <!-- Value arc -->
           {#if m.value > 0.001}
-            <path d={arcPath(m.value, 14)} fill="none" stroke="var(--macro-color)" stroke-width="3" stroke-linecap="round" />
+            <path
+              d={arcPath(m.value, 14)}
+              fill="none"
+              stroke="var(--macro-color)"
+              stroke-width="3"
+              stroke-linecap="round"
+            />
           {/if}
           <!-- Center pip indicator -->
           <circle cx="17" cy="17" r="2" fill="var(--macro-color)" opacity={0.4 + m.value * 0.6} />
         </svg>
-        <span
-          class="macro-pointer"
-          style="transform: rotate({-135 + m.value * 270}deg)"
-          aria-hidden="true"
-        ></span>
+        <span class="macro-pointer" style="transform: rotate({-135 + m.value * 270}deg)" aria-hidden="true"></span>
         {#if fxCount > 0}
-          <span class="macro-dest-count" style="--macro-color: {m.color}" title="{enabledFxCount} of {fxCount} effects enabled">{fxCount}</span>
+          <span
+            class="macro-dest-count"
+            style="--macro-color: {m.color}"
+            title={$t('sequencer.macro.effectsEnabledTitle', { values: { enabled: enabledFxCount, total: fxCount } })}
+            >{fxCount}</span
+          >
         {/if}
       </button>
 
@@ -214,11 +233,13 @@
           onblur={() => commitRename(m)}
           onkeydown={(e) => {
             if (e.key === 'Enter') commitRename(m);
-            else if (e.key === 'Escape') { renamingId = null; }
+            else if (e.key === 'Escape') {
+              renamingId = null;
+            }
           }}
         />
       {:else}
-        <button class="macro-name" ondblclick={() => startRename(m)} title="Double-click to rename">
+        <button class="macro-name" ondblclick={() => startRename(m)} title={$t('sequencer.macro.renameTitle')}>
           {m.name}
         </button>
       {/if}
@@ -227,7 +248,7 @@
 </div>
 
 {#if editPopoverFor}
-  {@const m = $macros.macros.find(x => x.id === editPopoverFor)}
+  {@const m = $macros.macros.find((x) => x.id === editPopoverFor)}
   {#if m}
     <div class="macro-popover" bind:this={popoverEl} style="left:{popoverX}px;top:{popoverY}px">
       <div class="macro-popover-head">
@@ -241,45 +262,57 @@
           type="color"
           value={m.color}
           oninput={(e) => macros.setMacroColor(m.id, (e.target as HTMLInputElement).value)}
-          title="Knob color"
+          title={$t('sequencer.macro.colorTitle')}
         />
-        <button class="macro-popover-close" onclick={closePopover} title="Close">×</button>
+        <button
+          class="macro-popover-close"
+          onclick={closePopover}
+          title={$t('sequencer.macro.close')}
+          aria-label={$t('sequencer.macro.close')}>×</button
+        >
       </div>
 
       <!-- Beat-pulse: auto-cycle the macro value at a beat division.
            Uses the master BPM (manual tap > MIDI clock > audio-detect).
            Off = manual control only. -->
       <div class="macro-popover-section">
-        <div class="macro-popover-section-title">AUTO PULSE</div>
+        <div class="macro-popover-section-title">{$t('sequencer.macro.pulse.title')}</div>
         <div class="macro-popover-row macro-pulse-row">
-          <select class="macro-pulse-mode"
+          <select
+            class="macro-pulse-mode"
             value={m.pulseMode ?? 'off'}
             onchange={(e) => macros.setPulseMode(m.id, (e.target as HTMLSelectElement).value as any)}
-            title="Cycle the macro value automatically at this beat division">
-            <option value="off">Off (manual)</option>
+            title={$t('sequencer.macro.pulse.modeTitle')}
+          >
+            <option value="off">{$t('sequencer.macro.pulseMode.off')}</option>
             <option value="1/4">1/4</option>
             <option value="1/2">1/2</option>
-            <option value="1bar">1 bar</option>
-            <option value="2bar">2 bars</option>
-            <option value="4bar">4 bars</option>
+            <option value="1bar">{$t('sequencer.macro.pulseMode.1bar')}</option>
+            <option value="2bar">{$t('sequencer.macro.pulseMode.2bar')}</option>
+            <option value="4bar">{$t('sequencer.macro.pulseMode.4bar')}</option>
           </select>
-          <select class="macro-pulse-shape"
+          <select
+            class="macro-pulse-shape"
             value={m.pulseShape ?? 'sine'}
             disabled={(m.pulseMode ?? 'off') === 'off'}
             onchange={(e) => macros.setPulseShape(m.id, (e.target as HTMLSelectElement).value as any)}
-            title="Waveform shape during the cycle">
-            <option value="sine">∿ Sine</option>
-            <option value="tri">△ Tri</option>
-            <option value="saw-up">↗ Saw up</option>
-            <option value="saw-down">↘ Saw down</option>
-            <option value="square">▁▔ Square</option>
-            <option value="pulse">⟂ Pulse</option>
+            title={$t('sequencer.macro.pulse.shapeTitle')}
+          >
+            <option value="sine">{$t('sequencer.macro.pulseShape.sine')}</option>
+            <option value="tri">{$t('sequencer.macro.pulseShape.tri')}</option>
+            <option value="saw-up">{$t('sequencer.macro.pulseShape.sawUp')}</option>
+            <option value="saw-down">{$t('sequencer.macro.pulseShape.sawDown')}</option>
+            <option value="square">{$t('sequencer.macro.pulseShape.square')}</option>
+            <option value="pulse">{$t('sequencer.macro.pulseShape.pulse')}</option>
           </select>
         </div>
         {#if (m.pulseMode ?? 'off') !== 'off'}
           <div class="macro-popover-hint" style="border-left-color: {m.color}; background: rgba(187, 134, 252, 0.06);">
-            Cycling at <strong>{m.pulseMode}</strong> on the master BPM. The knob ring shows
-            live phase — you can still drag it manually to nudge the cycle.
+            {$t('sequencer.macro.pulse.hint', {
+              values: {
+                mode: $t(`sequencer.macro.pulseMode.${m.pulseMode ?? 'off'}`),
+              },
+            })}
           </div>
         {/if}
       </div>
@@ -291,26 +324,28 @@
            each effect runs at its own opacity setting. -->
       <div class="macro-popover-section">
         <div class="macro-popover-section-title-row">
-          <span class="macro-popover-section-title">EFFECT BUNDLE ({m.effects.length})</span>
+          <span class="macro-popover-section-title">{$t('sequencer.macro.effectBundle.title', { values: { count: m.effects.length} })}</span>
           <div class="macro-popover-fx-actions">
             {#if m.effects.length > 0}
               <button class="macro-action-btn macro-action-danger"
-                onclick={() => { if (confirm(`Clear all effects from ${m.name}?`)) macros.clearEffects(m.id); }}
-                title="Remove all effects from this macro">
-                Clear
+                onclick={() => { if (confirm($t('sequencer.macro.effectBundle.clearConfirm', { values: { name: m.name } }))) macros.clearEffects(m.id); }}
+                title={$t('sequencer.macro.effectBundle.clearTitle')}
+              >
+                {$t('sequencer.macro.clear')}
               </button>
             {/if}
             <button class="macro-action-btn"
               onclick={() => { effectPickerForMacro = m.id; showEffectPicker = true; }}
-              title="Open the effect picker to add a new effect to this macro's bundle">
-              + Add Effect
+              title={$t('sequencer.macro.effectBundle.addTitle')}
+            >
+              {$t('sequencer.macro.addEffect')}
             </button>
           </div>
         </div>
         {#if m.effects.length === 0}
           <div class="macro-popover-empty">
-            No effects yet — click <strong>+ Add Effect</strong> to build the bundle.
-            The knob will then act as a wet/dry mix for everything you add.
+            {$t('sequencer.macro.effectBundle.emptyBefore')} <strong>{$t('sequencer.macro.addEffect')}</strong>
+            {$t('sequencer.macro.effectBundle.emptyAfter')}
           </div>
         {:else}
           <div class="macro-fx-list">
@@ -341,7 +376,7 @@
                        ⋮⋮ alone owns the reorder grip. -->
                   <span
                     class="macro-fx-handle"
-                    title="Drag to reorder"
+                    title={$t('sequencer.macro.effectBundle.dragToReorder')}
                     draggable="true"
                     ondragstart={(e) => {
                       dragEffectIdx = fxIdx;
@@ -350,25 +385,46 @@
                     }}
                   >⋮⋮</span>
                   <button class="macro-dest-toggle"
-                    title={fx.enabled ? 'Bypass this effect' : 'Enable this effect'}
+                    title={$t(
+                      fx.enabled ? 'sequencer.macro.effectBundle.bypass' : 'sequencer.macro.effectBundle.enable',
+                    )}
+                    aria-label={$t(
+                      fx.enabled ? 'sequencer.macro.effectBundle.bypass' : 'sequencer.macro.effectBundle.enable',
+                    )}
                     onclick={() => macros.toggleEffect(m.id, fx.id)}>
                     {fx.enabled ? '●' : '○'}
                   </button>
                   <button
                     class="macro-fx-expand"
                     class:open={isExpanded}
-                    title={isExpanded ? 'Collapse params' : 'Expand to edit params'}
-                    onclick={() => expandedFxId = isExpanded ? null : fx.id}
+                    title={$t(
+                      isExpanded ? 'sequencer.macro.effectBundle.collapseParams'
+                        : 'sequencer.macro.effectBundle.expandParams',
+                    )}
+                    aria-label={$t(
+                      isExpanded
+                        ? 'sequencer.macro.effectBundle.collapseParams'
+                        : 'sequencer.macro.effectBundle.expandParams',
+                    )}
+                    onclick={() => (expandedFxId = isExpanded ? null : fx.id)}
                   >▶</button>
                   <button
                     class="macro-fx-meta"
-                    title="Click to {isExpanded ? 'collapse' : 'expand'} parameters"
-                    onclick={() => expandedFxId = isExpanded ? null : fx.id}
+                    title={$t(
+                      isExpanded
+                        ? 'sequencer.macro.effectBundle.collapseParams'
+                        : 'sequencer.macro.effectBundle.expandParams',
+                    )}
+                    onclick={() => (expandedFxId = isExpanded ? null : fx.id)}
                   >
                     <div class="macro-fx-label">{EFFECT_LABEL_BY_TYPE[fx.type] ?? fx.type}</div>
                     <div class="macro-fx-sub">
-                      opacity {Math.round((fx.opacity ?? 1) * 100)}%
-                      {#if paramMetas.length > 0} · {paramMetas.length} param{paramMetas.length === 1 ? '' : 's'}{/if}
+                      {$t('sequencer.macro.effectBundle.opacity', {
+                        values: { percent: Math.round((fx.opacity ?? 1) * 100)},
+                      })}
+                      {#if paramMetas.length > 0} · {$t('sequencer.macro.effectBundle.paramsCount', {
+                          values: { count: paramMetas.length},
+                        })}{/if}
                     </div>
                   </button>
                   <input
@@ -376,24 +432,25 @@
                     type="range"
                     min="0" max="1" step="0.01"
                     value={fx.opacity ?? 1}
-                    oninput={(e) => macros.updateEffectMeta(m.id, fx.id, { opacity: parseFloat((e.target as HTMLInputElement).value) })}
-                    title="Per-effect opacity (the macro knob then scales the whole bundle by its wet/dry value)"
+                    oninput={(e) => macros.updateEffectMeta(m.id, fx.id, { opacity: parseFloat((e.target as HTMLInputElement).value),
+                      })}
+                    title={$t('sequencer.macro.effectBundle.opacityTitle')}
                   />
                   <button class="macro-dest-remove"
-                    title="Remove this effect from the bundle"
+                    title={$t('sequencer.macro.effectBundle.remove')}
+                    aria-label={$t('sequencer.macro.effectBundle.remove')}
                     onclick={() => macros.removeEffect(m.id, fx.id)}>×</button>
                 </div>
 
                 {#if isExpanded}
                   <div class="macro-fx-params">
                     <div class="macro-fx-params-title">
-                      <span>Effect</span>
+                      <span>{$t('sequencer.macro.effectBundle.effect')}</span>
                       <strong>{EFFECT_LABEL_BY_TYPE[fx.type] ?? fx.type}</strong>
                     </div>
                     {#if paramMetas.length === 0}
                       <div class="macro-fx-params-empty">
-                        This effect has no editable parameters — just toggle on/off
-                        and tune its opacity above.
+                        {$t('sequencer.macro.effectBundle.noParams')}
                       </div>
                     {:else}
                       {#each paramMetas as { key, meta } (key)}
@@ -404,8 +461,9 @@
                             <select
                               id="mfx-{fx.id}-{key}"
                               class="macro-fx-param-select"
-                              value={value}
-                              onchange={(e) => macros.updateEffectParams(m.id, fx.id, { [key]: parseFloat((e.target as HTMLSelectElement).value) } as Partial<EffectParams>)}
+                              {value}
+                              onchange={(e) => macros.updateEffectParams(m.id, fx.id, { [key]: parseFloat((e.target as HTMLSelectElement).value),
+                                } as Partial<EffectParams>)}
                             >
                               {#each meta.options as opt}
                                 <option value={opt.value}>{opt.label}</option>
@@ -421,7 +479,8 @@
                               type="range"
                               min={meta.min} max={meta.max} step={meta.step}
                               {value}
-                              oninput={(e) => macros.updateEffectParams(m.id, fx.id, { [key]: parseFloat((e.target as HTMLInputElement).value) } as Partial<EffectParams>)}
+                              oninput={(e) => macros.updateEffectParams(m.id, fx.id, { [key]: parseFloat((e.target as HTMLInputElement).value),
+                                } as Partial<EffectParams>)}
                             />
                             <span class="macro-fx-param-value">{value.toFixed(meta.step >= 1 ? 0 : 2)}</span>
                           </div>
@@ -451,7 +510,10 @@
     showEffectPicker = false;
     effectPickerForMacro = null;
   }}
-  onClose={() => { showEffectPicker = false; effectPickerForMacro = null; }}
+  onClose={() => {
+    showEffectPicker = false;
+    effectPickerForMacro = null;
+  }}
 />
 
 <style>
@@ -475,7 +537,9 @@
     min-height: calc(var(--vj-macro-knob, 34px) + 16px);
   }
   .macro-slot.learning .macro-knob {
-    box-shadow: 0 0 0 2px rgba(187, 134, 252, 0.6), 0 0 14px rgba(187, 134, 252, 0.45);
+    box-shadow:
+      0 0 0 2px rgba(187, 134, 252, 0.6),
+      0 0 14px rgba(187, 134, 252, 0.45);
   }
 
   .macro-knob {
@@ -490,7 +554,9 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: background 0.12s, border-color 0.12s;
+    transition:
+      background 0.12s,
+      border-color 0.12s;
     touch-action: none;
   }
   .macro-knob:hover {
@@ -554,7 +620,9 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .macro-name:hover { color: var(--text-primary, #ccc); }
+  .macro-name:hover {
+    color: var(--text-primary, #ccc);
+  }
 
   .macro-name-input {
     width: var(--vj-macro-slot, 46px);
@@ -622,7 +690,10 @@
     align-items: center;
     justify-content: center;
   }
-  .macro-popover-close:hover { background: rgba(255, 255, 255, 0.14); color: #fff; }
+  .macro-popover-close:hover {
+    background: rgba(255, 255, 255, 0.14);
+    color: #fff;
+  }
 
   .macro-popover-section {
     display: flex;
@@ -653,7 +724,9 @@
     gap: 6px;
     align-items: center;
   }
-  .macro-popover-actions { gap: 8px; }
+  .macro-popover-actions {
+    gap: 8px;
+  }
 
   /* Effect-bundle list: each row is one effect in the chain. Drag the
      ⋮⋮ handle to reorder. Toggle ●/○ enables/disables. The ▶ button
@@ -701,7 +774,7 @@
   .macro-fx-expand:hover { color: #fff; }
   .macro-fx-expand.open {
     transform: rotate(90deg);
-    color: #BB86FC;
+    color: #bb86fc;
   }
   /* Make the meta block clickable as a secondary expand affordance —
      clicking the effect name should also toggle the param drawer, since
@@ -786,21 +859,21 @@
     width: 12px;
     height: 12px;
     border-radius: 50%;
-    background: #BB86FC;
+    background: #bb86fc;
     cursor: pointer;
   }
   .macro-fx-param-slider::-moz-range-thumb {
     width: 12px;
     height: 12px;
     border-radius: 50%;
-    background: #BB86FC;
+    background: #bb86fc;
     border: none;
     cursor: pointer;
   }
   .macro-fx-param-value {
     font-size: 13px;
     font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
-    color: #BB86FC;
+    color: #bb86fc;
     text-align: right;
     user-select: none;
   }
@@ -861,14 +934,14 @@
     width: 12px;
     height: 12px;
     border-radius: 50%;
-    background: #BB86FC;
+    background: #bb86fc;
     cursor: pointer;
   }
   .macro-fx-opacity::-moz-range-thumb {
     width: 12px;
     height: 12px;
     border-radius: 50%;
-    background: #BB86FC;
+    background: #bb86fc;
     border: none;
     cursor: pointer;
   }
@@ -876,7 +949,7 @@
   .macro-action-btn {
     background: rgba(255, 133, 119, 0.1);
     border: 1px solid rgba(255, 133, 119, 0.4);
-    color: #FF8577;
+    color: #ff8577;
     font-size: 13px;
     font-weight: 700;
     letter-spacing: 0.05em;
@@ -888,7 +961,7 @@
     background: rgba(255, 133, 119, 0.2);
   }
   .macro-action-btn.active {
-    background: #FF8577;
+    background: #ff8577;
     color: #000;
   }
   .macro-action-btn.macro-action-danger {
@@ -921,7 +994,7 @@
 
   .macro-popover-hint {
     background: rgba(187, 134, 252, 0.08);
-    border-left: 2px solid #BB86FC;
+    border-left: 2px solid #bb86fc;
     padding: 6px 8px;
     font-size: 13px;
     color: var(--text-primary, #ccc);
@@ -958,7 +1031,7 @@
   .macro-dest-toggle {
     background: none;
     border: none;
-    color: #BB86FC;
+    color: #bb86fc;
     cursor: pointer;
     font-size: 17px;
     line-height: 1;
@@ -1014,15 +1087,15 @@
   }
   .macro-dest-remove:hover { color: #ff6b6b; }
 
-  :global(html[data-theme="arcade"]) .macro-bar {
+  :global(html[data-theme='arcade']) .macro-bar {
     gap: 4px;
   }
 
-  :global(html[data-theme="arcade"]) .macro-slot {
+  :global(html[data-theme='arcade']) .macro-slot {
     gap: 4px;
   }
 
-  :global(html[data-theme="arcade"]) .macro-knob {
+  :global(html[data-theme='arcade']) .macro-knob {
     width: 42px;
     height: 42px;
     background:
@@ -1030,78 +1103,78 @@
       conic-gradient(from 210deg, #28231b 0 75%, #0c0b09 75% 100%);
     border: 1px solid #050403;
     box-shadow:
-      inset 0 2px 4px rgba(255, 255, 255, 0.10),
-      inset 0 -5px 8px rgba(0, 0, 0, 0.80),
+      inset 0 2px 4px rgba(255, 255, 255, 0.1),
+      inset 0 -5px 8px rgba(0, 0, 0, 0.8),
       0 0 0 3px #342b20,
       0 0 0 4px rgba(245, 236, 222, 0.11),
       0 7px 15px rgba(0, 0, 0, 0.65);
   }
 
-  :global(html[data-theme="arcade"]) .macro-knob:hover {
+  :global(html[data-theme='arcade']) .macro-knob:hover {
     background:
       radial-gradient(circle at 50% 48%, #211d17 0 45%, #0b0908 46% 62%, transparent 63%),
       conic-gradient(from 210deg, #3a2f22 0 75%, #0f0d0a 75% 100%);
-    border-color: var(--ga-coral-line, rgba(255, 111, 94, 0.50));
+    border-color: var(--ga-coral-line, rgba(255, 111, 94, 0.5));
     box-shadow:
       inset 0 2px 4px rgba(255, 255, 255, 0.12),
-      inset 0 -5px 8px rgba(0, 0, 0, 0.80),
+      inset 0 -5px 8px rgba(0, 0, 0, 0.8),
       0 0 0 3px #3b2f22,
-      0 0 0 4px var(--ga-coral-line, rgba(255, 111, 94, 0.50)),
+      0 0 0 4px var(--ga-coral-line, rgba(255, 111, 94, 0.5)),
       0 0 14px color-mix(in srgb, var(--ga-coral, #ff6f5e) 25%, transparent),
       0 7px 15px rgba(0, 0, 0, 0.65);
   }
 
-  :global(html[data-theme="arcade"]) .macro-knob::before {
-    content: "";
+  :global(html[data-theme='arcade']) .macro-knob::before {
+    content: '';
     position: absolute;
     inset: 5px;
     border-radius: 50%;
     background:
-      radial-gradient(circle at 38% 28%, rgba(255, 255, 255, 0.10), transparent 26%),
+      radial-gradient(circle at 38% 28%, rgba(255, 255, 255, 0.1), transparent 26%),
       linear-gradient(145deg, #242018, #0a0907 58%, #020202);
     box-shadow:
       inset 0 1px 1px rgba(255, 255, 255, 0.16),
       inset 0 -4px 7px rgba(0, 0, 0, 0.82);
   }
 
-  :global(html[data-theme="arcade"]) .macro-svg {
+  :global(html[data-theme='arcade']) .macro-svg {
     opacity: 0.92;
     filter: drop-shadow(0 0 5px color-mix(in srgb, var(--macro-color) 35%, transparent));
     z-index: 1;
   }
 
-  :global(html[data-theme="arcade"]) .macro-svg path:first-child {
+  :global(html[data-theme='arcade']) .macro-svg path:first-child {
     stroke: rgba(245, 236, 222, 0.13);
   }
 
-  :global(html[data-theme="arcade"]) .macro-svg circle {
+  :global(html[data-theme='arcade']) .macro-svg circle {
     opacity: 0;
   }
 
-  :global(html[data-theme="arcade"]) .macro-pointer {
+  :global(html[data-theme='arcade']) .macro-pointer {
     display: block;
     background: linear-gradient(180deg, #fff2d6, var(--ga-coral, #ff6f5e));
-    box-shadow: 0 0 6px var(--ga-coral-glow, rgba(255, 111, 94, 0.50));
+    box-shadow: 0 0 6px var(--ga-coral-glow, rgba(255, 111, 94, 0.5));
   }
 
-  :global(html[data-theme="arcade"]) .macro-name {
-    color: rgba(238, 240, 244, 0.50);
+  :global(html[data-theme='arcade']) .macro-name {
+    color: rgba(238, 240, 244, 0.5);
     font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
     letter-spacing: 0.04em;
   }
 
-  :global(html[data-theme="arcade"]) .macro-name:hover {
+  :global(html[data-theme='arcade']) .macro-name:hover {
     color: var(--ga-coral, #ff6f5e);
-    text-shadow: 0 0 7px var(--ga-coral-glow, rgba(255, 111, 94, 0.50));
+    text-shadow: 0 0 7px var(--ga-coral-glow, rgba(255, 111, 94, 0.5));
   }
 
-  :global(html[data-theme="arcade"]) .macro-dest-count {
+  :global(html[data-theme='arcade']) .macro-dest-count {
     background: var(--ga-coral, #ff6f5e);
     color: #231009;
-    box-shadow: 0 0 8px var(--ga-coral-glow, rgba(255, 111, 94, 0.50));
+    box-shadow: 0 0 8px var(--ga-coral-glow, rgba(255, 111, 94, 0.5));
   }
 
-  :global(html[data-theme="arcade"]) .macro-popover {
+  :global(html[data-theme='arcade']) .macro-popover {
     background: var(--ga-faceplate-bg, #16140f);
     border-color: var(--ga-line-2, rgba(245, 236, 222, 0.13));
     border-radius: var(--ga-r-hard, 3px);
@@ -1110,28 +1183,28 @@
       0 20px 60px rgba(0, 0, 0, 0.66);
   }
 
-  :global(html[data-theme="arcade"]) .macro-fx-card.dragging,
-  :global(html[data-theme="arcade"]) .macro-fx-card.expanded,
-  :global(html[data-theme="arcade"]) .macro-fx-params,
-  :global(html[data-theme="arcade"]) .macro-popover-hint {
+  :global(html[data-theme='arcade']) .macro-fx-card.dragging,
+  :global(html[data-theme='arcade']) .macro-fx-card.expanded,
+  :global(html[data-theme='arcade']) .macro-fx-params,
+  :global(html[data-theme='arcade']) .macro-popover-hint {
     background: var(--ga-coral-soft, rgba(255, 111, 94, 0.13)) !important;
-    border-color: var(--ga-coral-line, rgba(255, 111, 94, 0.50)) !important;
+    border-color: var(--ga-coral-line, rgba(255, 111, 94, 0.5)) !important;
   }
 
-  :global(html[data-theme="arcade"]) .macro-fx-expand.open,
-  :global(html[data-theme="arcade"]) .macro-popover-section-title,
-  :global(html[data-theme="arcade"]) .macro-popover-row strong,
-  :global(html[data-theme="arcade"]) .macro-dest-toggle {
+  :global(html[data-theme='arcade']) .macro-fx-expand.open,
+  :global(html[data-theme='arcade']) .macro-popover-section-title,
+  :global(html[data-theme='arcade']) .macro-popover-row strong,
+  :global(html[data-theme='arcade']) .macro-dest-toggle {
     color: var(--ga-coral, #ff6f5e);
   }
 
-  :global(html[data-theme="arcade"]) .macro-fx-param-slider::-webkit-slider-thumb,
-  :global(html[data-theme="arcade"]) .macro-opacity-slider::-webkit-slider-thumb {
+  :global(html[data-theme='arcade']) .macro-fx-param-slider::-webkit-slider-thumb,
+  :global(html[data-theme='arcade']) .macro-opacity-slider::-webkit-slider-thumb {
     background: var(--ga-coral, #ff6f5e);
   }
 
-  :global(html[data-theme="arcade"]) .macro-fx-param-slider::-moz-range-thumb,
-  :global(html[data-theme="arcade"]) .macro-opacity-slider::-moz-range-thumb {
+  :global(html[data-theme='arcade']) .macro-fx-param-slider::-moz-range-thumb,
+  :global(html[data-theme='arcade']) .macro-opacity-slider::-moz-range-thumb {
     background: var(--ga-coral, #ff6f5e);
   }
 </style>

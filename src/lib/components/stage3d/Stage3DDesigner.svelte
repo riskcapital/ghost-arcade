@@ -30,8 +30,13 @@
   import { ELEMENT_TYPES, makeUserElement } from '../../stage3d/elementTypes';
   import { buildVenue, paPresetElements, type PAPreset } from '../../stage3d/venues';
   import type { Stage3DVenue, UserStageElement } from '../../stage3d/types';
-  import { startRecording as startCanvasRecording, formatRecordingDuration, type RecorderHandle } from '../../recording/recorder';
+  import {
+    startRecording as startCanvasRecording,
+    formatRecordingDuration,
+    type RecorderHandle,
+  } from '../../recording/recorder';
   import { invoke, isDesktopApp } from '../../bridge';
+  import { t } from '../../i18n';
   import StageNodeProperties from './StageNodeProperties.svelte';
   import StageElementProperties from './StageElementProperties.svelte';
   import StageLightingPanel from './StageLightingPanel.svelte';
@@ -59,16 +64,21 @@
   // output resolution (a wide 4000×1080 comp still records 1920×1080 / 4K).
   const REC_RES = {
     '1080': { w: 1920, h: 1080, label: '1080p' },
-    '4k':   { w: 3840, h: 2160, label: '4K' },
+    '4k': { w: 3840, h: 2160, label: '4K' },
   } as const;
   let recRes: keyof typeof REC_RES = '1080';
 
   // Refresh undo/redo button state whenever historyVersion bumps.
   let canUndo = false;
   let canRedo = false;
-  $: { void $historyVersion; const c = stage3dScene.getHistoryCounts(); canUndo = c.past > 0; canRedo = c.future > 0; }
+  $: {
+    void $historyVersion;
+    const c = stage3dScene.getHistoryCounts();
+    canUndo = c.past > 0;
+    canRedo = c.future > 0;
+  }
 
-  $: screenLayers = $project.layers.filter(l => l.type === 'screen' && l.visible !== false);
+  $: screenLayers = $project.layers.filter((l) => l.type === 'screen' && l.visible !== false);
   $: userElements = $stage3dScene.userElements ?? [];
   $: venue = ($stage3dScene.venue ?? 'festival') as Stage3DVenue;
   // Venue scenery pieces (deck, trusses, movers, PA…) the renderer
@@ -77,25 +87,82 @@
   $: sceneryItems = $stage3DSceneryList;
   $: sceneryOverrides = $stage3dScene.sceneryOverrides ?? {};
 
+  const venueTranslationKeys: Record<Stage3DVenue, string> = {
+    festival: 'stage3d.venues.festival',
+    arena: 'stage3d.venues.arena',
+    club: 'stage3d.venues.club',
+    nightclub: 'stage3d.venues.nightclub',
+    sphere: 'stage3d.venues.sphere',
+  };
+  const sceneryWordTranslationKeys: Record<string, string> = {
+    backdrop: 'stage3d.scenery.words.backdrop',
+    deck: 'stage3d.scenery.words.deck',
+    riser: 'stage3d.scenery.words.riser',
+    truss: 'stage3d.scenery.words.truss',
+    front: 'stage3d.scenery.words.front',
+    back: 'stage3d.scenery.words.back',
+    mid: 'stage3d.scenery.words.mid',
+    tower: 'stage3d.scenery.words.tower',
+    beam: 'stage3d.scenery.words.beam',
+    mover: 'stage3d.scenery.words.mover',
+    side: 'stage3d.scenery.words.side',
+    stage: 'stage3d.scenery.words.stage',
+    floor: 'stage3d.scenery.words.floor',
+    par: 'stage3d.scenery.words.par',
+    pa: 'stage3d.scenery.words.pa',
+    bar: 'stage3d.scenery.words.bar',
+    mezzanine: 'stage3d.scenery.words.mezzanine',
+    booth: 'stage3d.scenery.words.booth',
+    mirror: 'stage3d.scenery.words.mirror',
+    ball: 'stage3d.scenery.words.ball',
+    dj: 'stage3d.scenery.words.dj',
+    led: 'stage3d.scenery.words.led',
+    wall: 'stage3d.scenery.words.wall',
+    sub: 'stage3d.scenery.words.sub',
+    speaker: 'stage3d.scenery.words.speaker',
+    array: 'stage3d.scenery.words.array',
+    stack: 'stage3d.scenery.words.stack',
+  };
+
+  function venueLabel(value: Stage3DVenue): string {
+    return $t(venueTranslationKeys[value]);
+  }
+
+  function elementLabel(type: string, fallback: string): string {
+    const key = `stage3d.library.items.${type}`;
+    const value = $t(key);
+    return value === key ? fallback : value;
+  }
+
+  function sceneryLabel(item: { id: string; label: string }): string {
+    const directKey = `stage3d.scenery.items.${item.id}`;
+    const direct = $t(directKey);
+    if (direct !== directKey) return direct;
+    return item.label
+      .split(' ')
+      .map((part) => {
+        const key = sceneryWordTranslationKeys[part.toLowerCase()];
+        return key ? $t(key) : part;
+      })
+      .join(' ');
+  }
+
   function deleteScenery(id: string) {
     stage3dScene.setSceneryOverride(id, { deleted: true });
     setStage3DSelection(null);
-    toast('Venue piece hidden');
+    toast($t('stage3d.toast.venueHidden'));
   }
   function restoreScenery(id: string) {
     // null clears the whole override → piece returns to baseline
     // transform AND visibility.
     stage3dScene.setSceneryOverride(id, null);
-    toast('Venue piece restored');
+    toast($t('stage3d.toast.venueRestored'));
   }
   $: selection = parseSelection($selectedStage3DNodeId);
-  $: selectedScreen = selection?.kind === 'screen'
-    ? screenLayers.find(l => l.id === selection!.id) : null;
-  $: selectedElement = selection?.kind === 'element'
-    ? userElements.find(e => e.id === selection!.id) : null;
-  $: selectedScenery = selection?.kind === 'scenery'
-    ? (sceneryItems.find(s => s.id === selection!.id) ?? null)
-    : null;
+  $: selectedScreen = selection?.kind === 'screen' ? screenLayers.find((l) => l.id === selection!.id) : null;
+  $: selectedElement = selection?.kind === 'element' ? userElements.find((e) => e.id === selection!.id) : null;
+  $: selectedScenery =
+    selection?.kind === 'scenery' ? (sceneryItems.find((s) => s.id === selection!.id) ?? null) : null;
   let sphereInspectorTab: 'screen' | 'room' = 'screen';
   $: sphereScreenLayer = selectedScreen ?? screenLayers[0] ?? null;
   $: if (venue === 'sphere' && sphereInspectorTab === 'screen' && !sphereScreenLayer) {
@@ -114,9 +181,11 @@
   }
 
   function hasStageAdditions(scene = $stage3dScene): boolean {
-    return (scene.userElements?.length ?? 0) > 0
-      || Object.keys(scene.sceneryOverrides ?? {}).length > 0
-      || Object.keys(scene.screenOverrides ?? {}).length > 0;
+    return (
+      (scene.userElements?.length ?? 0) > 0 ||
+      Object.keys(scene.sceneryOverrides ?? {}).length > 0 ||
+      Object.keys(scene.screenOverrides ?? {}).length > 0
+    );
   }
 
   function setVenue(v: Stage3DVenue) {
@@ -125,12 +194,12 @@
     if (v === currentVenue) return;
 
     const keepAdditions = hasStageAdditions(current)
-      ? confirm(`Keep your placed elements and 3D edits when switching to ${v}?\n\nOK = Keep additions\nCancel = Clear for a clean venue`)
+      ? confirm($t('stage3d.dialogs.keepVenue', { values: { venue: venueLabel(v) } }))
       : false;
 
     if (keepAdditions) {
       stage3dScene.setVenue(v);
-      toast(`Venue: ${v} · additions kept`);
+      toast($t('stage3d.toast.venueAdditionsKept', { values: { venue: venueLabel(v) } }));
       return;
     }
 
@@ -142,7 +211,7 @@
       screenOverrides: {},
     });
     setStage3DSelection(null);
-    toast(`Venue: ${v} · clean`);
+    toast($t('stage3d.toast.venueClean', { values: { venue: venueLabel(v) } }));
   }
 
   function addElement(type: string) {
@@ -155,14 +224,14 @@
     el.position = [0, def.group === 'Lighting' ? 9 : 0, 0];
     stage3dScene.addUserElement(el);
     setStage3DSelection(`element:${el.id}`);
-    toast(`${def.label} added`);
+    toast($t('stage3d.toast.elementAdded', { values: { label: elementLabel(type, def.label) } }));
   }
 
   function applyPAPreset(kind: PAPreset) {
     const venueBuild = buildVenue(venue);
     const elements = paPresetElements(kind, venueBuild);
     for (const el of elements) stage3dScene.addUserElement(el);
-    toast(`PA preset added`);
+    toast($t('stage3d.toast.paPresetAdded'));
   }
 
   let onPASelect: (e: Event) => void;
@@ -184,10 +253,10 @@
 
   function clearElements() {
     if (!userElements.length) return;
-    if (confirm(`Clear all ${userElements.length} placed elements?`)) {
+    if (confirm($t('stage3d.dialogs.clearElements', { values: { count: userElements.length } }))) {
       stage3dScene.clearUserElements();
       setStage3DSelection(null);
-      toast('Cleared');
+      toast($t('stage3d.toast.cleared'));
     }
   }
 
@@ -198,11 +267,11 @@
    *  stage into a different project doesn't blow away unrelated work. */
   function saveDesign() {
     const proj = $project;
-    const screenLayers = proj.layers.filter(l => l.type === 'screen');
+    const screenLayers = proj.layers.filter((l) => l.type === 'screen');
     const bundle = {
       format: 'ghost-stage',
       version: 1,
-      name: proj.name ?? 'Untitled Stage',
+      name: proj.name ?? $t('stage3d.file.untitledStage'),
       savedAt: Date.now(),
       stage3d: JSON.parse(stage3dScene.exportJSON()),
       project: {
@@ -216,10 +285,10 @@
     const blob = new Blob([JSON.stringify(bundle, null, 2)], { type: 'application/json' });
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `${(proj.name || 'stage-design').replace(/[^a-z0-9-_ ]/gi, '_')}.ghost-stage.json`;
+    a.download = `${(proj.name || $t('stage3d.file.defaultFilename')).replace(/[^a-z0-9-_ ]/gi, '_')}.ghost-stage.json`;
     a.click();
     URL.revokeObjectURL(a.href);
-    toast('Stage saved');
+    toast($t('stage3d.toast.stageSaved'));
   }
 
   let fileInput: HTMLInputElement;
@@ -231,7 +300,7 @@
     rd.onload = () => {
       const text = rd.result as string;
       const ok = applyStageBundle(text);
-      toast(ok ? 'Stage loaded' : 'Invalid file');
+      toast($t(ok ? 'stage3d.toast.stageLoaded' : 'stage3d.toast.invalidFile'));
     };
     rd.readAsText(file);
     (e.target as HTMLInputElement).value = '';
@@ -246,14 +315,13 @@
       if (data?.format === 'ghost-stage' && data.stage3d) {
         stage3dScene.loadScene(data.stage3d);
         if (data.project?.screenLayers) {
-          project.update(p => ({
+          project.update((p) => ({
             ...p,
             // Replace screens but keep every non-screen layer the user
             // already has (videos, shaders, lights, etc.).
             layers: [
-              ...p.layers.filter(l => l.type !== 'screen'),
-              ...data.project.screenLayers,
-            ],
+              ...p.layers.filter((l) => l.type !== 'screen'),
+              ...data.project.screenLayers],
             surfaces: Array.isArray(data.project.surfaces) && data.project.surfaces.length
               ? data.project.surfaces
               : p.surfaces,
@@ -282,28 +350,33 @@
     // project's output resolution) and record THAT — so a wide comp
     // still produces a clean 1080p / 4K file.
     const recordCanvas = controls?.beginRecording(res.w, res.h) ?? null;
-    if (!recordCanvas) { toast('Stage renderer not ready'); return; }
+    if (!recordCanvas) {
+      toast($t('stage3d.toast.stageRendererNotReady'));
+      return;
+    }
     recordingDuration = 0;
     recorderHandle = startCanvasRecording({
-      namePrefix: 'Stage Recording',
+      namePrefix: $t('stage3d.file.recordingName'),
       canvas: recordCanvas,
-      onDurationUpdate: (s) => { recordingDuration = s; },
+      onDurationUpdate: (s) => {
+        recordingDuration = s;
+      },
       onComplete: () => {
         isRecording = false;
         recorderHandle = null;
         controls?.endRecording();
-        toast('Stage recording saved');
+        toast($t('stage3d.toast.recordingSaved'));
       },
       onError: (err) => {
         isRecording = false;
         recorderHandle = null;
         controls?.endRecording();
-        toast(err.message || 'Recording failed');
+        toast(err.message || $t('stage3d.errors.recordingFailed'));
       },
     });
     if (recorderHandle) {
       isRecording = true;
-      toast(`Stage recording started · ${res.label}`);
+      toast($t('stage3d.toast.recordingStarted', { values: { resolution: res.label } }));
     } else {
       controls?.endRecording();
     }
@@ -323,16 +396,25 @@
 
   // Library grouped by category.
   $: libraryGroups = (() => {
-    const groups: Record<string, [string, typeof ELEMENT_TYPES[string]][]> = {};
+    const groups: Record<string, [string, (typeof ELEMENT_TYPES)[string]][]> = {};
     for (const [type, def] of Object.entries(ELEMENT_TYPES)) {
       (groups[def.group] = groups[def.group] || []).push([type, def]);
     }
-    return ['Stage', 'Lighting', 'Audio'].map(g => ({ name: g, items: groups[g] ?? [] }));
+    return ['Stage', 'Lighting', 'Audio'].map((g) => ({
+      name: $t(`stage3d.library.groups.${g.toLowerCase()}`),
+      items: groups[g] ?? [],
+    }));
   })();
 
-  function undo() { stage3dScene.undo(); }
-  function redo() { stage3dScene.redo(); }
-  function togglePanels() { panelsHidden = !panelsHidden; }
+  function undo() {
+    stage3dScene.undo();
+  }
+  function redo() {
+    stage3dScene.redo();
+  }
+  function togglePanels() {
+    panelsHidden = !panelsHidden;
+  }
 
   function syncStageFullscreen(fullScreen: boolean) {
     const next = !!fullScreen;
@@ -356,7 +438,9 @@
       let applied = false;
       if (isDesktopApp) {
         try {
-          const result = await invoke<{ ok?: boolean; fullScreen?: boolean }>('stage3d_set_fullscreen', { fullScreen: next });
+          const result = await invoke<{ ok?: boolean; fullScreen?: boolean }>('stage3d_set_fullscreen', {
+            fullScreen: next,
+          });
           if (result?.ok) {
             syncStageFullscreen(!!result.fullScreen);
             applied = true;
@@ -369,7 +453,7 @@
       if (!applied) {
         const target = document.querySelector('.stage3d-root') as HTMLElement | null;
         if (next) {
-          if (!target?.requestFullscreen) throw new Error('Fullscreen unavailable');
+          if (!target?.requestFullscreen) throw new Error($t('stage3d.errors.fullscreenUnavailable'));
           await target.requestFullscreen();
           syncStageFullscreen(!!document.fullscreenElement);
         } else if (document.fullscreenElement) {
@@ -380,10 +464,10 @@
         }
       }
 
-      toast(next ? 'Stage fullscreen' : 'Exited fullscreen');
+      toast(next ? $t('stage3d.toast.fullscreen') : $t('stage3d.toast.exitedFullscreen'));
     } catch {
       if (next && !panelsWereHiddenBeforeFullscreen) panelsHidden = false;
-      toast(next ? 'Fullscreen unavailable' : 'Could not exit fullscreen');
+      toast(next ? $t('stage3d.errors.fullscreenUnavailable') : $t('stage3d.errors.exitFullscreenFailed'));
     } finally {
       fullscreenBusy = false;
     }
@@ -403,22 +487,35 @@
 
   function copySelection() {
     const sel = $selectedStage3DTargets;
-    if (!sel.size) { toast('Nothing selected to copy'); return; }
+    if (!sel.size) {
+      toast($t('stage3d.toast.nothingToCopy'));
+      return;
+    }
     const elements = userElements;
     const copies: UserStageElement[] = [];
     for (const key of sel) {
       const s = parseSelection(key);
       if (s?.kind !== 'element') continue;
-      const el = elements.find(e => e.id === s.id);
+      const el = elements.find((e) => e.id === s.id);
       if (el) copies.push(JSON.parse(JSON.stringify(el)));
     }
-    if (!copies.length) { toast('Only library elements can be copied'); return; }
+    if (!copies.length) {
+      toast($t('stage3d.toast.libraryOnlyCopy'));
+      return;
+    }
     elementClipboard = copies;
-    toast(`Copied ${copies.length} element${copies.length === 1 ? '' : 's'}`);
+    toast(
+      $t('stage3d.toast.copied', {
+        values: { count: copies.length, suffix: copies.length === 1 ? '' : 's' },
+      }),
+    );
   }
 
   function pasteSelection() {
-    if (!elementClipboard.length) { toast('Clipboard empty'); return; }
+    if (!elementClipboard.length) {
+      toast($t('stage3d.toast.clipboardEmpty'));
+      return;
+    }
     const newIds: string[] = [];
     for (const original of elementClipboard) {
       const clone: UserStageElement = {
@@ -431,7 +528,11 @@
       newIds.push(`element:${clone.id}`);
     }
     setStage3DMultiSelection(newIds);
-    toast(`Pasted ${newIds.length} element${newIds.length === 1 ? '' : 's'}`);
+    toast(
+      $t('stage3d.toast.pasted', {
+        values: { count: newIds.length, suffix: newIds.length === 1 ? '' : 's' },
+      }),
+    );
   }
 
   // Window-level shortcuts for Cmd/Ctrl-Z undo, Shift-Cmd-Z (or Ctrl-Y)
@@ -477,7 +578,8 @@
         .catch(() => {});
       const off = (window as any).electronAPI?.on?.('stage3d-fullscreen-changed', (payload: { fullScreen?: boolean }) => {
         syncStageFullscreen(!!payload?.fullScreen);
-      });
+      },
+      );
       if (typeof off === 'function') removeStageFullscreenListener = off;
     }
   });
@@ -499,13 +601,15 @@
 <div class="stage3d-root" class:external={!renderViewport}>
   {#if renderViewport}
     <div class="viewport-fallback">
-      <p>Open Stage 3D in the pop-out window for the live view.</p>
+      <p>{$t('stage3d.viewport.fallback')}</p>
     </div>
   {/if}
 
   {#if !panelsHidden}
   <header class="topbar">
-    <button class="icon-btn" onclick={onClose} aria-label="Back to editor" title="Back">
+    <button class="icon-btn" onclick={onClose} aria-label={$t('stage3d.toolbar.backToEditor')}
+        title={$t('stage3d.toolbar.backTitle')}
+      >
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M15 18l-6-6 6-6"/>
       </svg>
@@ -515,60 +619,64 @@
         class="seg-btn"
         class:on={$stage3DGizmoMode === 'translate'}
         onclick={() => setGizmoMode('translate')}
-        title="Move (W / G)">✛ Move</button>
+        title={$t('stage3d.toolbar.gizmo.moveTitle')}>✛ {$t('stage3d.toolbar.gizmo.move')}</button>
       <button
         class="seg-btn"
         class:on={$stage3DGizmoMode === 'rotate'}
         onclick={() => setGizmoMode('rotate')}
-        title="Rotate (E / R)">⟳ Rotate</button>
+        title={$t('stage3d.toolbar.gizmo.rotateTitle')}>⟳ {$t('stage3d.toolbar.gizmo.rotate')}</button>
       <button
         class="seg-btn"
         class:on={$stage3DGizmoMode === 'scale'}
         onclick={() => setGizmoMode('scale')}
-        title="Scale (S)">⤢ Scale</button>
+        title={$t('stage3d.toolbar.gizmo.scaleTitle')}>⤢ {$t('stage3d.toolbar.gizmo.scale')}</button>
     </div>
 
-    <button class="tbtn" onclick={toggleSnap}>⊞ Snap: {snapOn ? '1m / 15°' : 'Off'}</button>
+    <button class="tbtn" onclick={toggleSnap}>⊞ {$t('stage3d.toolbar.snap', {
+          values: { state: snapOn ? $t('stage3d.toolbar.snapOn') : $t('stage3d.toolbar.snapOff') },
+        })}</button>
 
-    <button class="tbtn" onclick={undo} disabled={!canUndo} title="Undo (⌘Z)">↶ Undo</button>
-    <button class="tbtn" onclick={redo} disabled={!canRedo} title="Redo (⇧⌘Z)">↷ Redo</button>
+    <button class="tbtn" onclick={undo} disabled={!canUndo} title={$t('stage3d.toolbar.undoTitle')}
+        >↶ {$t('stage3d.toolbar.undo')}</button>
+    <button class="tbtn" onclick={redo} disabled={!canRedo} title={$t('stage3d.toolbar.redoTitle')}
+        >↷ {$t('stage3d.toolbar.redo')}</button>
 
     <div class="spacer"></div>
 
-    <label class="dim-label" for="stage3d-venue-select">Venue</label>
+    <label class="dim-label" for="stage3d-venue-select">{$t('stage3d.toolbar.venue')}</label>
     <select
       id="stage3d-venue-select"
       class="vsel"
       value={venue}
       onchange={(e) => setVenue((e.target as HTMLSelectElement).value as Stage3DVenue)}
     >
-      <option value="festival">Festival Mainstage</option>
-      <option value="arena">Arena</option>
-      <option value="club">Club</option>
-      <option value="nightclub">Nightclub</option>
-      <option value="sphere">Sphere (Immersive Dome)</option>
+      <option value="festival">{$t('stage3d.venues.festival')}</option>
+      <option value="arena">{$t('stage3d.venues.arena')}</option>
+      <option value="club">{$t('stage3d.venues.club')}</option>
+      <option value="nightclub">{$t('stage3d.venues.nightclub')}</option>
+      <option value="sphere">{$t('stage3d.venues.sphere')}</option>
     </select>
 
-    <label class="dim-label" for="stage3d-pa-select">PA</label>
+    <label class="dim-label" for="stage3d-pa-select">{$t('stage3d.toolbar.pa')}</label>
     <select id="stage3d-pa-select" class="vsel" value="" onchange={onPASelect}>
-      <option value="">Add PA preset…</option>
-      <option value="linearray">Flown Line Array L/R</option>
-      <option value="festivalpa">Festival PA + Subs</option>
-      <option value="groundstack">Ground-Stacked L/R</option>
-      <option value="club">Club Point-Source</option>
-      <option value="nightclub">Nightclub Distributed</option>
+      <option value="">{$t('stage3d.toolbar.paAddPreset')}</option>
+      <option value="linearray">{$t('stage3d.paPresets.linearray')}</option>
+      <option value="festivalpa">{$t('stage3d.paPresets.festivalpa')}</option>
+      <option value="groundstack">{$t('stage3d.paPresets.groundstack')}</option>
+      <option value="club">{$t('stage3d.paPresets.club')}</option>
+      <option value="nightclub">{$t('stage3d.paPresets.nightclub')}</option>
     </select>
 
-    <button class="tbtn" onclick={() => $stage3DRendererControls?.topCamera()}>⬓ Top</button>
-    <button class="tbtn" onclick={() => $stage3DRendererControls?.frameCamera()}>⊡ Frame</button>
-    <button class="tbtn" onclick={() => { $stage3DRendererControls?.reload(); toast('Scene reloaded'); }} title="Rebuild venue + screens">⟳ Reload</button>
+    <button class="tbtn" onclick={() => $stage3DRendererControls?.topCamera()}>⬓ {$t('stage3d.toolbar.top')}</button>
+    <button class="tbtn" onclick={() => $stage3DRendererControls?.frameCamera()}>⊡ {$t('stage3d.toolbar.frame')}</button>
+    <button class="tbtn" onclick={() => { $stage3DRendererControls?.reload(); toast($t('stage3d.toast.sceneReloaded')); }} title={$t('stage3d.toolbar.reloadTitle')}>⟳ {$t('stage3d.toolbar.reload')}</button>
     {#if !isRecording}
       <select
         class="vsel rec-res"
         value={recRes}
         onchange={(e) => (recRes = (e.target as HTMLSelectElement).value as keyof typeof REC_RES)}
-        title="Recording resolution — always 16:9, independent of output resolution"
-      >
+        title={$t('stage3d.toolbar.recordingResolutionTitle')}
+        >
         <option value="1080">1080p</option>
         <option value="4k">4K</option>
       </select>
@@ -577,20 +685,21 @@
       class="tbtn rec-btn"
       class:recording={isRecording}
       onclick={toggleStageRecording}
-      title={isRecording ? 'Stop stage recording' : `Record stage scene (${REC_RES[recRes].label}, 16:9)`}
+      title={isRecording ? $t('stage3d.toolbar.stopRecordingTitle')
+          : $t('stage3d.toolbar.recordTitle', { values: { resolution: REC_RES[recRes].label } })}
     >
-      {isRecording ? `■ ${formatRecordingDuration(recordingDuration)}` : '● Rec'}
+      {isRecording ? `■ ${formatRecordingDuration(recordingDuration)}` : `● ${$t('stage3d.toolbar.rec')}`}
     </button>
     <button
       class="tbtn"
       class:reel-on={reelOpen}
       onclick={() => { reelOpen = !reelOpen; }}
-      title="Demo Reel — shot-based sizzle-reel recorder"
-    >🎬 Reel</button>
-    <button class="tbtn" onclick={togglePanels} title="Hide panels (H)">▤ Hide</button>
-    <button class="tbtn" onclick={saveDesign}>↓ Save</button>
-    <button class="tbtn" onclick={loadDesign}>↑ Load</button>
-    <button class="tbtn danger" onclick={clearElements}>✕ Clear</button>
+      title={$t('stage3d.toolbar.reelTitle')}>🎬 {$t('stage3d.toolbar.reel')}</button>
+    <button class="tbtn" onclick={togglePanels} title={$t('stage3d.toolbar.hideTitle')}
+        >▤ {$t('stage3d.toolbar.hide')}</button>
+    <button class="tbtn" onclick={saveDesign}>↓ {$t('stage3d.toolbar.save')}</button>
+    <button class="tbtn" onclick={loadDesign}>↑ {$t('stage3d.toolbar.load')}</button>
+    <button class="tbtn danger" onclick={clearElements}>✕ {$t('stage3d.toolbar.clear')}</button>
     <input bind:this={fileInput} type="file" accept="application/json" style="display:none" onchange={onFileChosen} />
   </header>
 
@@ -603,16 +712,16 @@
         class:on={stageFullscreen}
         onclick={toggleStageFullscreen}
         disabled={fullscreenBusy}
-        title={stageFullscreen ? 'Exit fullscreen stage view' : 'Fullscreen stage view on this display'}
+        title={stageFullscreen ? $t('stage3d.toolbar.exitFullscreenTitle') : $t('stage3d.toolbar.fullscreenTitle')}
       >
-        {stageFullscreen ? 'Exit Full' : 'Full Screen'}
+        {stageFullscreen ? $t('stage3d.toolbar.exitFullscreen') : $t('stage3d.toolbar.fullscreen')}
       </button>
     </div>
-    <div class="hud-group" title="Camera elevation — ↑/↓ arrows in the viewport work too">
-      <button class="hud-btn" onclick={() => $stage3DRendererControls?.nudgeElevation(1)} title="Camera up (↑)">▲</button>
-      <button class="hud-btn" onclick={() => $stage3DRendererControls?.nudgeElevation(-1)} title="Camera down (↓)">▼</button>
+    <div class="hud-group" title={$t('stage3d.toolbar.cameraElevationTitle')}>
+      <button class="hud-btn" onclick={() => $stage3DRendererControls?.nudgeElevation(1)} title={$t('stage3d.toolbar.cameraUpTitle')}>▲</button>
+      <button class="hud-btn" onclick={() => $stage3DRendererControls?.nudgeElevation(-1)} title={$t('stage3d.toolbar.cameraDownTitle')}>▼</button>
     </div>
-    <div class="hud-group fov-ctl" title="Field of view — go wide to swallow the whole Sphere. Shift+scroll in the viewport works too.">
+    <div class="hud-group fov-ctl" title={$t('stage3d.toolbar.fovTitle')}>
       <span class="fov-label">FOV</span>
       <input type="range" min="15" max="120" step="1"
         value={$stage3DCameraFov}
@@ -624,13 +733,13 @@
 
   {#if !panelsHidden}
   <aside class="lib">
-    <h3>Element Library</h3>
+    <h3>{$t('stage3d.library.title')}</h3>
     {#each libraryGroups as group}
       <div class="grp">
         <div class="ghd">{group.name}</div>
         {#each group.items as [type, def]}
           <button class="additem" onclick={() => addElement(type)}>
-            <span class="ic">{def.icon}</span>{def.label}
+            <span class="ic">{def.icon}</span>{elementLabel(type, def.label)}
           </button>
         {/each}
       </div>
@@ -638,12 +747,11 @@
     {#if screenLayers.length > 0}
       <div class="grp">
         <div class="ghd">
-          Screens (auto)
-          <button
+            {$t('stage3d.library.screensAuto')}
+            <button
             class="ghd-action"
-            onclick={() => setStage3DMultiSelection(screenLayers.map(l => `screen:${l.id}`))}
-            title="Select all screens"
-          >all</button>
+            onclick={() => setStage3DMultiSelection(screenLayers.map((l) => `screen:${l.id}`))}
+            title={$t('stage3d.library.selectAllScreens')}>{$t('stage3d.library.selectAll')}</button>
         </div>
         {#each screenLayers as layer (layer.id)}
           {@const key = `screen:${layer.id}`}
@@ -651,11 +759,10 @@
             class="additem screen"
             class:selected={$selectedStage3DTargets.has(key)}
             class:primary={$selectedStage3DNodeId === key}
-            onclick={(e) => (e.shiftKey || e.metaKey)
-              ? toggleStage3DSelection(key)
-              : setStage3DSelection(key)}
-            title="Shift+click to add to selection"
-          >
+            onclick={(e) => (e.shiftKey || e.metaKey ? toggleStage3DSelection(key)
+              : setStage3DSelection(key))}
+            title={$t('stage3d.library.shiftAdd')}
+            >
             <span class="ic">▦</span>{layer.name}
           </button>
         {/each}
@@ -664,12 +771,11 @@
     {#if userElements.length > 0}
       <div class="grp">
         <div class="ghd">
-          Placed elements
-          <button
+            {$t('stage3d.library.placed')}
+            <button
             class="ghd-action"
-            onclick={() => setStage3DMultiSelection(userElements.map(el => `element:${el.id}`))}
-            title="Select all placed elements"
-          >all</button>
+            onclick={() => setStage3DMultiSelection(userElements.map((el) => `element:${el.id}`))}
+            title={$t('stage3d.library.selectAllPlaced')}>{$t('stage3d.library.selectAll')}</button>
         </div>
         {#each userElements as el (el.id)}
           {@const key = `element:${el.id}`}
@@ -677,12 +783,11 @@
             class="additem screen"
             class:selected={$selectedStage3DTargets.has(key)}
             class:primary={$selectedStage3DNodeId === key}
-            onclick={(e) => (e.shiftKey || e.metaKey)
-              ? toggleStage3DSelection(key)
-              : setStage3DSelection(key)}
-            title="Shift+click to add to selection"
-          >
-            <span class="ic">▤</span>{el.type}
+            onclick={(e) => (e.shiftKey || e.metaKey ? toggleStage3DSelection(key)
+              : setStage3DSelection(key))}
+            title={$t('stage3d.library.shiftAdd')}
+            >
+            <span class="ic">▤</span>{elementLabel(el.type, ELEMENT_TYPES[el.type]?.label ?? el.type)}
           </button>
         {/each}
       </div>
@@ -690,12 +795,11 @@
     {#if sceneryItems.length > 0}
       <div class="grp">
         <div class="ghd">
-          Venue elements
-          <button
+            {$t('stage3d.library.venue')}
+            <button
             class="ghd-action"
             onclick={() => stage3dScene.clearSceneryOverrides()}
-            title="Restore all venue elements to default"
-          >reset</button>
+            title={$t('stage3d.library.restoreAll')}>{$t('stage3d.library.reset')}</button>
         </div>
         {#each sceneryItems as item (item.id)}
           {@const key = `scenery:${item.id}`}
@@ -707,17 +811,16 @@
               class:primary={$selectedStage3DNodeId === key}
               class:deleted={isDeleted}
               disabled={isDeleted}
-              onclick={(e) => (e.shiftKey || e.metaKey)
-                ? toggleStage3DSelection(key)
-                : setStage3DSelection(key)}
-              title={isDeleted ? 'Hidden — click ⟲ to restore' : 'Shift+click to add to selection'}
+              onclick={(e) => (e.shiftKey || e.metaKey ? toggleStage3DSelection(key)
+                : setStage3DSelection(key))}
+              title={isDeleted ? $t('stage3d.library.hidden') : $t('stage3d.library.shiftAdd')}
             >
-              <span class="ic">◇</span>{item.label}
+              <span class="ic">◇</span>{sceneryLabel(item)}
             </button>
             {#if isDeleted}
-              <button class="scenery-act" onclick={() => restoreScenery(item.id)} title="Restore">⟲</button>
+              <button class="scenery-act" onclick={() => restoreScenery(item.id)} title={$t('stage3d.library.restore')}>⟲</button>
             {:else}
-              <button class="scenery-act danger" onclick={() => deleteScenery(item.id)} title="Hide / delete">✕</button>
+              <button class="scenery-act danger" onclick={() => deleteScenery(item.id)} title={$t('stage3d.library.hideDelete')}>✕</button>
             {/if}
           </div>
         {/each}
@@ -726,15 +829,20 @@
   </aside>
 
   <aside class="props">
-    <h3>Inspector</h3>
+    <h3>{$t('stage3d.inspector.title')}</h3>
     {#if $selectedStage3DTargets.size > 1}
       <div class="multi-banner">
-        <b>{$selectedStage3DTargets.size}</b> selected — gizmo moves all together.
-        Inspector shows the primary{selectedScreen ? ' (cyan outline)' : selectedElement ? ' (cyan outline)' : ''}.
-      </div>
+        <b>{$selectedStage3DTargets.size}</b>
+          {$t('stage3d.inspector.multiSelected')}
+          {$t('stage3d.inspector.multiPrimary', {
+            values: {
+              outline: selectedScreen || selectedElement ? $t('stage3d.inspector.primaryOutline') : '',
+            },
+          })}
+        </div>
     {/if}
     {#if venue === 'sphere' && !selectedElement && !selectedScenery}
-      <div class="inspector-tabs" role="tablist" aria-label="Sphere inspector">
+      <div class="inspector-tabs" role="tablist" aria-label={$t('stage3d.inspector.sphereAria')}>
         <button
           class="inspector-tab"
           class:active={sphereInspectorTab === 'screen'}
@@ -742,14 +850,14 @@
           onclick={showSphereScreenInspector}
           role="tab"
           aria-selected={sphereInspectorTab === 'screen'}
-        >Screen</button>
+        >{$t('stage3d.inspector.screenTab')}</button>
         <button
           class="inspector-tab"
           class:active={sphereInspectorTab === 'room'}
           onclick={showSphereRoomInspector}
           role="tab"
           aria-selected={sphereInspectorTab === 'room'}
-        >Room</button>
+        >{$t('stage3d.inspector.roomTab')}</button>
       </div>
       {#if sphereInspectorTab === 'screen' && sphereScreenLayer}
         <StageNodeProperties layerId={sphereScreenLayer.id} />
@@ -762,60 +870,78 @@
       <StageElementProperties elementId={selectedElement.id} />
     {:else if selectedScenery}
       <div class="scenery-inspect">
-        <div class="scenery-title">{selectedScenery.label}</div>
-        <div class="scenery-sub">Venue element</div>
+        <div class="scenery-title">{sceneryLabel(selectedScenery)}</div>
+        <div class="scenery-sub">{$t('stage3d.inspector.scenerySub')}</div>
         <p class="scenery-note">
-          Drag the gizmo to move, rotate, or scale this piece — changes
-          persist with the project. Use <span class="kbd">W</span>
-          <span class="kbd">E</span> <span class="kbd">S</span> to switch
-          tools.
-        </p>
-        <button class="scenery-del" onclick={() => deleteScenery(selectedScenery.id)}>
-          ✕ Hide this element
-        </button>
-        <button class="scenery-restore" onclick={() => restoreScenery(selectedScenery.id)}>
-          ⟲ Reset to default position
-        </button>
-      </div>
-    {:else}
-      <StageLightingPanel />
-      <div class="empty">
-        Click an element in the scene to edit it, or add one from the library.
-        Shift+click any item (or in the library list) to add it to a multi-selection.
-        LED screens are synced from the 2D Stage Designer — they appear on the venue's back wall (or wrap the dome interior on the Sphere venue).
-      </div>
-    {/if}
-  </aside>
+            {$t('stage3d.inspector.sceneryNote', { values: { w: 'W', e: 'E', s: 'S' } })}
+          </p>
+          <button class="scenery-del" onclick={() => deleteScenery(selectedScenery.id)}>
+            ✕ {$t('stage3d.inspector.hideElement')}
+          </button>
+          <button class="scenery-restore" onclick={() => restoreScenery(selectedScenery.id)}>
+            ⟲ {$t('stage3d.inspector.resetPosition')}
+          </button>
+        </div>
+      {:else}
+        <StageLightingPanel />
+        <div class="empty">
+          {$t('stage3d.inspector.emptyLineOne')}
+          {$t('stage3d.inspector.emptyLineTwo')}
+          {$t('stage3d.inspector.emptyLineThree')}
+        </div>
+      {/if}
+    </aside>
 
-  <div class="hud">
-    <span><b>{userElements.length}</b> element{userElements.length === 1 ? '' : 's'}</span>
-    <span><b>{screenLayers.length}</b> screen{screenLayers.length === 1 ? '' : 's'}</span>
-    {#if $selectedStage3DTargets.size > 1}
-      <span class="multi-pill"><b>{$selectedStage3DTargets.size}</b> selected</span>
-    {/if}
-    <span><span class="kbd">⇧</span>+click multi</span>
-    <span><span class="kbd">W</span><span class="kbd">E</span><span class="kbd">S</span> tools</span>
-    <span><span class="kbd">⌘C</span>/<span class="kbd">⌘V</span> copy</span>
-    <span><span class="kbd">⌘Z</span> undo</span>
-    <span><span class="kbd">D</span> dup</span>
-    <span><span class="kbd">⌫</span> del</span>
-    <span><span class="kbd">H</span> hide</span>
-  </div>
+    <div class="hud">
+      <span
+        >{$t('stage3d.hud.elementCount', {
+          values: { count: userElements.length, suffix: userElements.length === 1 ? '' : 's' },
+        })}</span
+      >
+      <span
+        >{$t('stage3d.hud.screenCount', {
+          values: { count: screenLayers.length, suffix: screenLayers.length === 1 ? '' : 's' },
+        })}</span
+      >
+      {#if $selectedStage3DTargets.size > 1}
+        <span class="multi-pill">{$t('stage3d.hud.selected', { values: { count: $selectedStage3DTargets.size } })}</span
+        >
+      {/if}
+      <span><span class="kbd">⇧</span>{$t('stage3d.hud.multiClick')}</span>
+      <span
+        ><span class="kbd">W</span>
+          <span class="kbd">E</span> <span class="kbd">S</span> {$t('stage3d.hud.tools')}</span
+      >
+      <span><span class="kbd">⌘C</span>/<span class="kbd">⌘V</span> {$t('stage3d.hud.copy')}</span>
+      <span><span class="kbd">⌘Z</span> {$t('stage3d.hud.undo')}</span>
+      <span><span class="kbd">D</span> {$t('stage3d.hud.duplicate')}</span>
+      <span><span class="kbd">⌫</span> {$t('stage3d.hud.delete')}</span>
+      <span><span class="kbd">H</span> {$t('stage3d.hud.hide')}</span>
+    </div>
   {/if}
 
   {#if panelsHidden}
     {#if stageFullscreen}
-      <button class="show-panels-btn fullscreen-exit-btn" onclick={toggleStageFullscreen} title="Exit fullscreen stage view">Exit Full Screen</button>
+      <button class="show-panels-btn fullscreen-exit-btn"
+        onclick={toggleStageFullscreen}
+        title={$t('stage3d.panels.exitFullscreenTitle')}>{$t('stage3d.panels.exitFullscreen')}</button
+      >
     {:else}
-      <button class="show-panels-btn" onclick={togglePanels} title="Show panels (H)">▦ Show panels</button>
+      <button class="show-panels-btn" onclick={togglePanels} title={$t('stage3d.panels.showTitle')}
+        >▦ {$t('stage3d.panels.show')}</button
+      >
     {/if}
   {/if}
 
   {#if reelOpen}
     <div class="reel-host">
-      <DemoReelPanel onClose={() => { reelOpen = false; }} />
-    </div>
-  {/if}
+      <DemoReelPanel
+        onClose={() => {
+          reelOpen = false;
+        }}
+      />
+      </div>
+    {/if}
 
   {#if toastMessage}
     <div class="toast">{toastMessage}</div>
@@ -830,9 +956,17 @@
     z-index: 1000;
     overflow: hidden;
     color: #e9edf4;
-    font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    font-family:
+      'Space Grotesk',
+      -apple-system,
+      BlinkMacSystemFont,
+      'Segoe UI',
+      sans-serif;
   }
-  .stage3d-root.external { background: transparent; pointer-events: none; }
+  .stage3d-root.external {
+    background: transparent;
+    pointer-events: none;
+  }
   .stage3d-root.external :global(button),
   .stage3d-root.external :global(input),
   .stage3d-root.external :global(select),
@@ -841,10 +975,22 @@
   .stage3d-root.external .props,
   .stage3d-root.external .hud,
   .stage3d-root.external .reel-host,
-  .stage3d-root.external .toast { pointer-events: auto; }
-  .reel-host { position: absolute; inset: 0; pointer-events: none; z-index: 25; }
-  .reel-host :global(.reel-panel) { pointer-events: auto; }
-  .tbtn.reel-on { background: #3b2a63; border-color: #5b46a3; }
+  .stage3d-root.external .toast {
+    pointer-events: auto;
+  }
+  .reel-host {
+    position: absolute;
+    inset: 0;
+    pointer-events: none;
+    z-index: 25;
+  }
+  .reel-host :global(.reel-panel) {
+    pointer-events: auto;
+  }
+  .tbtn.reel-on {
+    background: #3b2a63;
+    border-color: #5b46a3;
+  }
   .viewport-fallback {
     position: absolute;
     inset: 0;
@@ -872,36 +1018,59 @@
     border-bottom: 1px solid rgba(255, 255, 255, 0.08);
   }
   .icon-btn {
-    width: 36px; height: 36px; border-radius: 18px;
+    width: 36px;
+    height: 36px;
+    border-radius: 18px;
     border: 1px solid rgba(255, 255, 255, 0.08);
     background: rgba(20, 22, 30, 0.85);
-    color: #fff; font-size: 21px; cursor: pointer;
+    color: #fff;
+    font-size: 21px;
+    cursor: pointer;
   }
-  .icon-btn:hover { background: rgba(40, 44, 56, 0.95); }
+  .icon-btn:hover {
+    background: rgba(40, 44, 56, 0.95);
+  }
   .seg {
-    display: flex; gap: 2px;
+    display: flex;
+    gap: 2px;
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 9px;
     padding: 3px;
   }
   .seg-btn {
-    font: inherit; font-size: 12px; color: #8a93a3;
-    background: none; border: none;
-    padding: 6px 9px; border-radius: 6px;
+    font: inherit;
+    font-size: 12px;
+    color: #8a93a3;
+    background: none;
+    border: none;
+    padding: 6px 9px;
+    border-radius: 6px;
     cursor: pointer;
   }
-  .seg-btn:hover { color: #e9edf4; }
-  .seg-btn.on { background: #4af2ff; color: #04161a; font-weight: 600; }
+  .seg-btn:hover {
+    color: #e9edf4;
+  }
+  .seg-btn.on {
+    background: #4af2ff;
+    color: #04161a;
+    font-weight: 600;
+  }
   .tbtn {
-    font: inherit; font-size: 12px; color: #e9edf4;
+    font: inherit;
+    font-size: 12px;
+    color: #e9edf4;
     background: rgba(255, 255, 255, 0.05);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 8px;
-    padding: 7px 9px; cursor: pointer;
+    padding: 7px 9px;
+    cursor: pointer;
     white-space: nowrap;
   }
-  .tbtn:hover { border-color: #4af2ff; color: #4af2ff; }
+  .tbtn:hover {
+    border-color: #4af2ff;
+    color: #4af2ff;
+  }
   /* ── Camera HUD strip (under the topbar, clear of the inspector) ── */
   .viewport-hud {
     position: absolute;
@@ -931,13 +1100,19 @@
     padding: 7px 9px;
     cursor: pointer;
   }
-  .hud-btn:last-child { border-right: none; }
-  .hud-btn:hover { color: #4af2ff; }
+  .hud-btn:last-child {
+    border-right: none;
+  }
+  .hud-btn:hover {
+    color: #4af2ff;
+  }
   .hud-btn:disabled {
     opacity: 0.45;
     cursor: wait;
   }
-  .fullscreen-ctl { overflow: hidden; }
+  .fullscreen-ctl {
+    overflow: hidden;
+  }
   .fullscreen-toggle {
     min-width: 88px;
     border-right: none;
@@ -967,9 +1142,18 @@
     min-width: 30px;
     text-align: right;
   }
-  .tbtn:disabled { opacity: 0.35; cursor: not-allowed; }
-  .tbtn:disabled:hover { border-color: rgba(255, 255, 255, 0.08); color: #e9edf4; }
-  .tbtn.danger:hover { border-color: #ff5cb8; color: #ff5cb8; }
+  .tbtn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+  }
+  .tbtn:disabled:hover {
+    border-color: rgba(255, 255, 255, 0.08);
+    color: #e9edf4;
+  }
+  .tbtn.danger:hover {
+    border-color: #ff5cb8;
+    color: #ff5cb8;
+  }
   .rec-res {
     padding: 6px 6px;
     font-size: 12px;
@@ -991,10 +1175,12 @@
   }
   .show-panels-btn {
     position: absolute;
-    top: 14px; left: 50%;
+    top: 14px;
+    left: 50%;
     transform: translateX(-50%);
     z-index: 15;
-    font: inherit; font-size: 13px;
+    font: inherit;
+    font-size: 13px;
     color: #e9edf4;
     background: rgba(16, 19, 26, 0.92);
     border: 1px solid #4af2ff;
@@ -1005,7 +1191,9 @@
     backdrop-filter: blur(10px);
     box-shadow: 0 6px 24px rgba(0, 0, 0, 0.4);
   }
-  .show-panels-btn:hover { background: rgba(74, 242, 255, 0.15); }
+  .show-panels-btn:hover {
+    background: rgba(74, 242, 255, 0.15);
+  }
   .show-panels-btn.fullscreen-exit-btn {
     left: auto;
     right: 14px;
@@ -1017,7 +1205,10 @@
     background: rgba(255, 92, 184, 0.13);
     opacity: 1;
   }
-  .spacer { flex: 1 1 0; min-width: 0; }
+  .spacer {
+    flex: 1 1 0;
+    min-width: 0;
+  }
   .dim-label {
     font-family: 'IBM Plex Mono', monospace;
     font-size: 11px;
@@ -1026,44 +1217,90 @@
   }
   .vsel {
     min-width: 0;
-    font: inherit; font-size: 12px; color: #e9edf4;
+    font: inherit;
+    font-size: 12px;
+    color: #e9edf4;
     background: #10131a;
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 8px;
-    padding: 7px 8px; cursor: pointer;
+    padding: 7px 8px;
+    cursor: pointer;
   }
-  #stage3d-venue-select { width: clamp(145px, 12vw, 220px); }
-  #stage3d-pa-select { width: clamp(140px, 11vw, 205px); }
+  #stage3d-venue-select {
+    width: clamp(145px, 12vw, 220px);
+  }
+  #stage3d-pa-select {
+    width: clamp(140px, 11vw, 205px);
+  }
   @media (max-width: 1900px) {
-    .dim-label { display: none; }
-    .topbar { gap: 5px; }
-    .tbtn { padding-inline: 8px; }
-    .seg-btn { padding-inline: 8px; }
-    #stage3d-pa-select { width: 185px; }
-    #stage3d-venue-select { width: 205px; }
+    .dim-label {
+      display: none;
+    }
+    .topbar {
+      gap: 5px;
+    }
+    .tbtn {
+      padding-inline: 8px;
+    }
+    .seg-btn {
+      padding-inline: 8px;
+    }
+    #stage3d-pa-select {
+      width: 185px;
+    }
+    #stage3d-venue-select {
+      width: 205px;
+    }
   }
   @media (max-width: 1740px) {
-    .tbtn.danger { display: none; }
-    #stage3d-pa-select { width: 168px; }
-    #stage3d-venue-select { width: 185px; }
+    .tbtn.danger {
+      display: none;
+    }
+    #stage3d-pa-select {
+      width: 168px;
+    }
+    #stage3d-venue-select {
+      width: 185px;
+    }
   }
   @media (max-width: 1620px) {
-    .tbtn { padding-inline: 7px; font-size: 11px; }
-    .seg-btn { padding-inline: 7px; font-size: 11px; }
-    .vsel { font-size: 11px; padding-inline: 7px; }
-    #stage3d-pa-select { width: 150px; }
-    #stage3d-venue-select { width: 168px; }
+    .tbtn {
+      padding-inline: 7px;
+      font-size: 11px;
+    }
+    .seg-btn {
+      padding-inline: 7px;
+      font-size: 11px;
+    }
+    .vsel {
+      font-size: 11px;
+      padding-inline: 7px;
+    }
+    #stage3d-pa-select {
+      width: 150px;
+    }
+    #stage3d-venue-select {
+      width: 168px;
+    }
   }
   @media (max-width: 1500px) {
-    .tbtn:nth-last-of-type(2) { display: none; } /* Load */
-    #stage3d-pa-select { width: 138px; }
-    #stage3d-venue-select { width: 154px; }
+    .tbtn:nth-last-of-type(2) {
+      display: none;
+    } /* Load */
+    #stage3d-pa-select {
+      width: 138px;
+    }
+    #stage3d-venue-select {
+      width: 154px;
+    }
   }
 
   /* ── Library ────────────────────────────────────────────────── */
   .lib {
     position: absolute;
-    top: 66px; left: 12px; bottom: 12px;
+    top: 66px;
+    left: 12px;
+    bottom: 12px;
     width: 212px;
     z-index: 15;
     background: rgba(16, 19, 26, 0.86);
@@ -1076,31 +1313,48 @@
     scrollbar-gutter: stable;
   }
   .lib h3 {
-    font-size: 11px; letter-spacing: 0.22em;
-    color: #8a93a3; text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.22em;
+    color: #8a93a3;
+    text-transform: uppercase;
     margin: 0 0 9px;
   }
-  .grp { margin-bottom: 16px; }
+  .grp {
+    margin-bottom: 16px;
+  }
   .ghd {
-    font-size: 12px; letter-spacing: 0.14em;
-    color: #4af2ff; text-transform: uppercase;
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    color: #4af2ff;
+    text-transform: uppercase;
     margin-bottom: 7px;
-    display: flex; align-items: center; gap: 6px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
   }
   .ghd::before {
-    content: "";
-    width: 5px; height: 5px; border-radius: 50%;
+    content: '';
+    width: 5px;
+    height: 5px;
+    border-radius: 50%;
     background: #4af2ff;
   }
   .additem {
-    width: 100%; text-align: left;
-    font: inherit; font-size: 13.5px; color: #e9edf4;
+    width: 100%;
+    text-align: left;
+    font: inherit;
+    font-size: 13.5px;
+    color: #e9edf4;
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 8px;
-    padding: 9px 11px; margin-bottom: 5px;
-    cursor: pointer; transition: .14s;
-    display: flex; align-items: center; gap: 9px;
+    padding: 9px 11px;
+    margin-bottom: 5px;
+    cursor: pointer;
+    transition: 0.14s;
+    display: flex;
+    align-items: center;
+    gap: 9px;
   }
   .additem:hover {
     background: rgba(74, 242, 255, 0.08);
@@ -1117,50 +1371,104 @@
     background: rgba(74, 242, 255, 0.18);
     border-color: #4af2ff;
   }
-  .additem .ic { width: 16px; text-align: center; opacity: 0.8; }
+  .additem .ic {
+    width: 16px;
+    text-align: center;
+    opacity: 0.8;
+  }
 
   /* ── Venue element rows (scenery) ─────────────────────────────── */
   .scenery-row {
-    display: flex; align-items: center; gap: 4px; margin-bottom: 5px;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    margin-bottom: 5px;
   }
-  .scenery-row .scenery-pick { margin-bottom: 0; flex: 1; min-width: 0; }
-  .scenery-pick :global(span) { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+  .scenery-row .scenery-pick {
+    margin-bottom: 0;
+    flex: 1;
+    min-width: 0;
+  }
+  .scenery-pick :global(span) {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
   .scenery-pick.deleted {
     opacity: 0.4;
     text-decoration: line-through;
     cursor: default;
   }
-  .scenery-pick.deleted:hover { background: rgba(255, 255, 255, 0.03); border-color: rgba(255, 255, 255, 0.08); transform: none; }
+  .scenery-pick.deleted:hover {
+    background: rgba(255, 255, 255, 0.03);
+    border-color: rgba(255, 255, 255, 0.08);
+    transform: none;
+  }
   .scenery-act {
     flex: 0 0 auto;
-    width: 26px; height: 34px;
-    font: inherit; font-size: 13px;
+    width: 26px;
+    height: 34px;
+    font: inherit;
+    font-size: 13px;
     color: #8a93a3;
     background: rgba(255, 255, 255, 0.03);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 8px;
     cursor: pointer;
   }
-  .scenery-act:hover { color: #4af2ff; border-color: #4af2ff; }
-  .scenery-act.danger:hover { color: #ff5cb8; border-color: #ff5cb8; }
+  .scenery-act:hover {
+    color: #4af2ff;
+    border-color: #4af2ff;
+  }
+  .scenery-act.danger:hover {
+    color: #ff5cb8;
+    border-color: #ff5cb8;
+  }
 
   /* ── Venue element inspector ──────────────────────────────────── */
-  .scenery-inspect { display: flex; flex-direction: column; gap: 8px; }
-  .scenery-title { font-size: 16px; font-weight: 600; color: #e9edf4; }
+  .scenery-inspect {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .scenery-title {
+    font-size: 16px;
+    font-weight: 600;
+    color: #e9edf4;
+  }
   .scenery-sub {
     font-family: 'IBM Plex Mono', monospace;
-    font-size: 11px; letter-spacing: 0.1em; text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
     color: #4af2ff;
   }
-  .scenery-note { color: #8a93a3; font-size: 13px; line-height: 1.6; margin: 4px 0 8px; }
-  .scenery-del, .scenery-restore {
-    font: inherit; font-size: 13.5px; text-align: left;
+  .scenery-note {
+    color: #8a93a3;
+    font-size: 13px;
+    line-height: 1.6;
+    margin: 4px 0 8px;
+  }
+  .scenery-del,
+  .scenery-restore {
+    font: inherit;
+    font-size: 13.5px;
+    text-align: left;
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.1);
-    border-radius: 8px; padding: 9px 12px; cursor: pointer; color: #e9edf4;
+    border-radius: 8px;
+    padding: 9px 12px;
+    cursor: pointer;
+    color: #e9edf4;
   }
-  .scenery-del:hover { border-color: #ff5cb8; color: #ff5cb8; }
-  .scenery-restore:hover { border-color: #4af2ff; color: #4af2ff; }
+  .scenery-del:hover {
+    border-color: #ff5cb8;
+    color: #ff5cb8;
+  }
+  .scenery-restore:hover {
+    border-color: #4af2ff;
+    color: #4af2ff;
+  }
 
   .ghd-action {
     margin-left: auto;
@@ -1175,12 +1483,17 @@
     text-transform: lowercase;
     letter-spacing: 0.05em;
   }
-  .ghd-action:hover { color: #4af2ff; border-color: #4af2ff; }
+  .ghd-action:hover {
+    color: #4af2ff;
+    border-color: #4af2ff;
+  }
 
   /* ── Properties ─────────────────────────────────────────────── */
   .props {
     position: absolute;
-    top: 66px; right: 12px; bottom: 12px;
+    top: 66px;
+    right: 12px;
+    bottom: 12px;
     width: 264px;
     z-index: 15;
     background: rgba(16, 19, 26, 0.86);
@@ -1191,8 +1504,10 @@
     overflow-y: auto;
   }
   .props h3 {
-    font-size: 11px; letter-spacing: 0.22em;
-    color: #8a93a3; text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.22em;
+    color: #8a93a3;
+    text-transform: uppercase;
     margin: 0 0 9px;
   }
   .empty {
@@ -1211,7 +1526,9 @@
     line-height: 1.5;
     color: #d8c8ff;
   }
-  .multi-banner b { color: #fff; }
+  .multi-banner b {
+    color: #fff;
+  }
   .inspector-tabs {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -1249,18 +1566,25 @@
   /* ── HUD ────────────────────────────────────────────────────── */
   .hud {
     position: absolute;
-    bottom: 18px; left: 50%;
+    bottom: 18px;
+    left: 50%;
     transform: translateX(-50%);
     z-index: 14;
-    display: flex; gap: 14px; align-items: center;
-    font-size: 12px; color: #8a93a3;
+    display: flex;
+    gap: 14px;
+    align-items: center;
+    font-size: 12px;
+    color: #8a93a3;
     background: rgba(16, 19, 26, 0.86);
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 30px;
     padding: 8px 18px;
     backdrop-filter: blur(10px);
   }
-  .hud b { color: #e9edf4; font-weight: 600; }
+  .hud b {
+    color: #e9edf4;
+    font-weight: 600;
+  }
   .kbd {
     font-family: 'IBM Plex Mono', monospace;
     background: rgba(255, 255, 255, 0.07);

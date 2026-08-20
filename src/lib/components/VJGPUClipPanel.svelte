@@ -5,17 +5,46 @@
   import type { GPULayerContent } from '../types';
   import type { MediaItem } from '../stores/media';
   import type { ParamControl } from '../renderer/gpuShaderTypes';
+  import { t } from '../i18n';
 
   export let content: GPULayerContent;
   export let onUpdate: (updates: Partial<GPULayerContent>) => void;
+
+  function gpuText(key: string, fallback: string, values?: Record<string, string | number>): string {
+    const fullKey = `gpuTools.${key}`;
+    const translated = $t(fullKey, values ? { values } : undefined);
+    return translated === fullKey ? fallback : translated;
+  }
+
+  function gpuSegment(value: string): string {
+    const words = value.match(/[A-Za-z0-9]+/g) ?? [];
+    return words.length === 0
+      ? ''
+      : words[0]!.toLowerCase() +
+          words
+            .slice(1)
+            .map((word) => word[0]!.toUpperCase() + word.slice(1))
+            .join('');
+  }
+
+  function gpuLabel(value: string): string {
+    return gpuText(`labels.${gpuSegment(value)}`, value);
+  }
+
+  function shaderLabel(shader: { id: string; label: string }): string {
+    return gpuText(`shaders.${gpuSegment(shader.id)}.label`, shader.label);
+  }
+
+  function categoryLabel(category: string): string {
+    return gpuText(`categories.${gpuSegment(category)}`, category);
+  }
 
   let fileInput: HTMLInputElement;
   let fileSourceKey = '';
 
   $: shaderDef = getShaderDef(content.shaderId) || GPU_SHADER_CATALOG[0];
   $: libraryItems = ($mediaLibrary || []).filter(
-    (item: MediaItem) => item.type === 'image' || item.type === 'video',
-  );
+    (item: MediaItem) => item.type === 'image' || item.type === 'video');
   $: groupedParams = (() => {
     const groups = new Map<string, ParamControl[]>();
     for (const param of shaderDef?.paramSchema || []) {
@@ -59,24 +88,29 @@
 
   function colorHex(value: [number, number, number] | undefined): string {
     const rgb = value || [255, 255, 255];
-    return `#${rgb.map((channel) => Math.max(0, Math.min(255, Math.round(channel))).toString(16).padStart(2, '0')).join('')}`;
+    return `#${rgb
+      .map((channel) =>
+        Math.max(0, Math.min(255, Math.round(channel)))
+          .toString(16)
+          .padStart(2, '0'),
+      )
+      .join('')}`;
   }
 
   function setColor(key: string, hex: string) {
     setParam(key, [
       parseInt(hex.slice(1, 3), 16),
       parseInt(hex.slice(3, 5), 16),
-      parseInt(hex.slice(5, 7), 16),
-    ]);
+      parseInt(hex.slice(5, 7), 16)]);
   }
 
   function sourceLabel(source: any): string {
-    if (!source) return 'No source';
+    if (!source) return $t('gpuTools.vjSources.noSource');
     if (source.type === 'media') {
-      return libraryItems.find((item: MediaItem) => item.id === source.mediaId)?.name || 'Media source';
+      return libraryItems.find((item: MediaItem) => item.id === source.mediaId)?.name || $t('gpuTools.vjSources.media');
     }
-    if (source.type === 'file') return source.name || 'Local file';
-    return 'Source';
+    if (source.type === 'file') return source.name || $t('gpuTools.vjSources.localFile');
+    return $t('gpuTools.vjSources.source');
   }
 
   function openFilePicker(key: string) {
@@ -102,7 +136,7 @@
 </script>
 
 <div class="gpu-clip-panel">
-  <div class="section-label">Shader</div>
+  <div class="section-label">{$t('gpuTools.sections.shader')}</div>
   <div class="shader-grid">
     {#each GPU_SHADER_CATALOG as shader}
       <button
@@ -110,56 +144,56 @@
         class:active={content.shaderId === shader.id}
         onclick={() => setShader(shader.id)}
       >
-        <span>{shader.label}</span>
-        <small>{shader.category}</small>
+        <span>{shaderLabel(shader)}</span>
+        <small>{categoryLabel(shader.category)}</small>
       </button>
     {/each}
   </div>
 
-  <div class="section-label">Layer</div>
+  <div class="section-label">{$t('gpuTools.sections.layer')}</div>
   <label class="range-row">
-    <span>Background</span>
+    <span>{$t('gpuTools.labels.background')}</span>
     <input type="range" min="0" max="1" step="0.01" value={content.bgOpacity ?? 1}
       oninput={(event) => onUpdate({ bgOpacity: Number((event.target as HTMLInputElement).value) })} />
     <output>{Math.round((content.bgOpacity ?? 1) * 100)}%</output>
   </label>
 
   {#each groupedParams as [group, params]}
-    {#if group}<div class="section-label">{group}</div>{/if}
+    {#if group}<div class="section-label">{gpuLabel(group)}</div>{/if}
     <div class="control-group">
       {#each params as param}
         {#if param.kind === 'slider'}
           <label class="range-row">
-            <span>{param.label}</span>
+            <span>{gpuLabel(param.label)}</span>
             <input type="range" min={param.min} max={param.max} step={param.step} value={paramValue(param)}
               oninput={(event) => setParam(param.key, Number((event.target as HTMLInputElement).value))} />
             <output>{Number(paramValue(param)).toFixed(param.step < 0.1 ? 2 : 1)}</output>
           </label>
         {:else if param.kind === 'angle'}
           <label class="range-row">
-            <span>{param.label}</span>
+            <span>{gpuLabel(param.label)}</span>
             <input type="range" min="-180" max="360" step="0.5" value={paramValue(param)}
               oninput={(event) => setParam(param.key, Number((event.target as HTMLInputElement).value))} />
             <output>{Number(paramValue(param)).toFixed(1)}&deg;</output>
           </label>
         {:else if param.kind === 'toggle'}
           <label class="toggle-row">
-            <span>{param.label}</span>
+            <span>{gpuLabel(param.label)}</span>
             <input type="checkbox" checked={!!paramValue(param)}
               onchange={(event) => setParam(param.key, (event.target as HTMLInputElement).checked)} />
           </label>
         {:else if param.kind === 'select'}
           <label class="select-row">
-            <span>{param.label}</span>
+            <span>{gpuLabel(param.label)}</span>
             <select value={paramValue(param)} onchange={(event) => setParam(param.key, (event.target as HTMLSelectElement).value)}>
               {#each param.options as option}
-                <option value={option.value}>{option.label}</option>
+                <option value={option.value}>{gpuLabel(option.label)}</option>
               {/each}
             </select>
           </label>
         {:else if param.kind === 'color'}
           <label class="color-row">
-            <span>{param.label}</span>
+            <span>{gpuLabel(param.label)}</span>
             <input type="color" value={colorHex(paramValue(param))}
               oninput={(event) => setColor(param.key, (event.target as HTMLInputElement).value)} />
           </label>
@@ -170,9 +204,11 @@
           {@const showFile = !allowed || allowed.includes('file')}
           <div class="source-control">
             <div class="source-header">
-              <span>{param.label}</span>
+              <span>{gpuLabel(param.label)}</span>
               <em>{sourceLabel(source)}</em>
-              {#if source}<button title="Clear source" onclick={() => setParam(param.key, null)}>x</button>{/if}
+              {#if source}<button title={$t('gpuTools.vjSources.clear')}
+                  aria-label={$t('gpuTools.vjSources.clear')}
+                  onclick={() => setParam(param.key, null)}>x</button>{/if}
             </div>
             {#if showMedia && libraryItems.length}
               <div class="media-grid">
@@ -186,14 +222,14 @@
                     {#if item.thumbnail || item.type === 'image'}
                       <img src={item.thumbnail || item.src} alt={item.name} />
                     {:else}
-                      <span>VID</span>
+                      <span>{$t('gpuTools.vjSources.videoPlaceholder')}</span>
                     {/if}
                   </button>
                 {/each}
               </div>
             {/if}
             {#if showFile}
-              <button class="file-button" onclick={() => openFilePicker(param.key)}>Choose File</button>
+              <button class="file-button" onclick={() => openFilePicker(param.key)}>{$t('gpuTools.vjSources.chooseFile')}</button>
             {/if}
           </div>
         {/if}

@@ -12,6 +12,7 @@
    * is already gated upstream.
    */
   import { audioStore } from '../stores/audio';
+  import { t } from '../i18n';
 
   // When false (default) the widget self-hides if audio isn't active.
   // Mapping mode top bar uses this — no clutter when audio is off.
@@ -23,12 +24,16 @@
 
 {#if alwaysShow || $audioStore.isActive}
   <div class="bpm-tap-widget">
-    <button class="bpm-tap-btn" onclick={handleTap} title="Tap to set tempo manually">TAP</button>
+    <button class="bpm-tap-btn" onclick={handleTap} title={$t('inputControls.bpm.tapTitle')}
+      >{$t('inputControls.bpm.tap')}</button>
     <span class="bpm-readout" class:confident={$audioStore.bpmConfidence > 0.5}>
-      {$audioStore.bpm > 0 ? $audioStore.bpm : '--'} BPM
+      {$t('inputControls.bpm.readout', {
+        values: { bpm: $audioStore.bpm > 0 ? $audioStore.bpm : '--'},
+      })}
     </span>
     {#if $audioStore.manualBPM}
-      <button class="bpm-auto-btn" onclick={clearTap} title="Clear manual BPM and resume auto-detection">AUTO</button>
+      <button class="bpm-auto-btn" onclick={clearTap} title={$t('inputControls.bpm.autoTitle')}
+        >{$t('inputControls.bpm.auto')}</button>
     {/if}
   </div>
 {/if}
@@ -98,6 +103,6 @@
 
   .bpm-auto-btn:hover {
     color: var(--ga-ink-1, #9aa0ac);
-    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.2));
   }
 </style>

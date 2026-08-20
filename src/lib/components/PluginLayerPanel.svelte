@@ -4,6 +4,7 @@
   import type { MediaSource, IntegratedEffectSource } from '../types';
   import MilkdropPanel from './MilkdropPanel.svelte';
   import HydraPanel from './HydraPanel.svelte';
+  import { t } from '../i18n';
 
   export let source: MediaSource | null = null;
   export let onUpdateEffectSource: ((next: IntegratedEffectSource) => void) | null = null;
@@ -94,7 +95,7 @@
 
 {#if !pluginManifest || !effectSource}
   <div class="panel-empty">
-    <p>No plugin controls</p>
+    <p>{$t('textTools.plugin.noControls')}</p>
   </div>
 {:else}
   <div class="plugin-panel">
@@ -111,7 +112,7 @@
          Originals (FluidGen, Particles3D) omit poweredBy and skip this. -->
     {#if pluginManifest.poweredBy}
       <div class="powered-by">
-        <span class="pb-label">powered by</span>
+        <span class="pb-label">{$t('textTools.plugin.poweredBy')}</span>
         {#if pluginManifest.poweredBy.url}
           <a
             href={pluginManifest.poweredBy.url}
@@ -151,7 +152,7 @@
       {#each pluginManifest.paramDefs as def (def.param)}
         {#if !def.showWhen || (def.showWhen.values || []).includes(getVal(def.showWhen.param, undefined))}
         {#if def.type === 'select'}
-          {@const optValues = (def.options ?? []).map(o => String(o.value))}
+          {@const optValues = (def.options ?? []).map((o) => String(o.value))}
           <div
             class="control-row"
             data-midi-path={`${midiPrefix}:${def.param}`}
@@ -163,7 +164,7 @@
           >
             <span class="label">{def.name}</span>
             <div class="select-row">
-              {#each (def.options || []) as opt}
+              {#each def.options || [] as opt}
                 <button
                   class="sel-btn"
                   class:active={getVal(def.param, def.default) === opt.value}
@@ -187,7 +188,7 @@
               data-midi-step={1}
               data-midi-mode="toggle"
             >
-              {getVal(def.param, def.default) ? 'ON' : 'OFF'}
+              {getVal(def.param, def.default) ? $t('textTools.plugin.on') : $t('textTools.plugin.off')}
             </button>
           </div>
 
@@ -279,7 +280,7 @@
     gap: 5px;
     padding: 5px 12px;
     background: rgba(255, 107, 107, 0.04);
-    border-bottom: 1px solid rgba(255, 107, 107, 0.10);
+    border-bottom: 1px solid rgba(255, 107, 107, 0.1);
     font-size: 10px;
     color: #666;
     line-height: 1.3;
@@ -292,12 +293,12 @@
     font-size: 9px;
   }
   .pb-engine {
-    color: var(--accent-secondary, #FF8585);
+    color: var(--accent-secondary, #ff8585);
     font-weight: 600;
     text-decoration: none;
   }
   a.pb-engine:hover {
-    color: var(--accent-primary, #FF6B6B);
+    color: var(--accent-primary, #ff6b6b);
     text-decoration: underline;
   }
   .pb-authors {
@@ -306,9 +307,9 @@
   .pb-license {
     margin-left: auto;
     padding: 1px 5px;
-    background: rgba(255, 107, 107, 0.10);
-    border: 1px solid rgba(255, 107, 107, 0.20);
-    color: var(--accent-secondary, #FF8585);
+    background: rgba(255, 107, 107, 0.1);
+    border: 1px solid rgba(255, 107, 107, 0.2);
+    color: var(--accent-secondary, #ff8585);
     border-radius: 2px;
     font-size: 9px;
     letter-spacing: 0.3px;
@@ -367,7 +368,7 @@
 
   .sel-btn.active {
     background: linear-gradient(135deg, #1e1040, #2a1560);
-    border-color: #BB86FC;
+    border-color: #bb86fc;
     color: #d4b8ff;
   }
 
@@ -414,7 +415,7 @@
     margin-bottom: 0;
   }
 
-  .slider-row input[type="range"] {
+  .slider-row input[type='range'] {
     flex: 1;
     height: 3px;
     -webkit-appearance: none;
@@ -423,11 +424,11 @@
     cursor: pointer;
   }
 
-  .slider-row input[type="range"]::-webkit-slider-thumb {
+  .slider-row input[type='range']::-webkit-slider-thumb {
     -webkit-appearance: none;
     width: 10px;
     height: 10px;
-    background: #BB86FC;
+    background: #bb86fc;
     border-radius: 50%;
     cursor: pointer;
     box-shadow: 0 0 4px rgba(187, 134, 252, 0.4);

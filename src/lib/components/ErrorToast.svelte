@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '../i18n';
   import { dismissToast } from '../stores/errorToast';
 
   export let id: number;
@@ -10,7 +11,8 @@
   <div class="toast-content">
     <span class="toast-message">{message}</span>
   </div>
-  <button class="toast-close" on:click={() => dismissToast(id)} aria-label="Dismiss">&times;</button>
+  <button class="toast-close" on:click={() => dismissToast(id)} aria-label={$t('systemUi.error.dismiss')}
+    >&times;</button>
 </div>
 
 <style>

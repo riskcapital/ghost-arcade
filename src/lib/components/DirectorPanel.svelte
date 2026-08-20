@@ -8,10 +8,12 @@
   import { get } from 'svelte/store';
   import { tick } from 'svelte';
   import type { DirectorToolCall, DirectorToolResult } from '../director/types';
+  import { t } from '../i18n';
 
   let inputText = '';
   let messagesEl: HTMLElement | null = null;
-  let activeTab: 'vj' | 'mapping' | 'generate' | 'support' = 'vj';
+  type DirectorTab = 'vj' | 'mapping' | 'generate' | 'support';
+  let activeTab: DirectorTab = 'vj';
 
   // ─── Speech-to-text (Web Speech API — free, no API cost) ───
   let isListening = false;
@@ -80,7 +82,10 @@
 
   function stopAutoVJ() {
     autoVJRunning = false;
-    if (autoVJInterval) { clearInterval(autoVJInterval); autoVJInterval = null; }
+    if (autoVJInterval) {
+      clearInterval(autoVJInterval);
+      autoVJInterval = null;
+    }
   }
 
   function autoVJTriggerRandom() {
@@ -93,12 +98,166 @@
     // Performer mode: handled by SynthVision's auto-mode which already exists
   }
 
-  const quickCommands: Record<string, string[]> = {
-    vj: ['build a deck', 'swap shaders', 'more intense', 'calm it down', 'save preset', 'add effects'],
-    mapping: ['setup cube', 'add 6 layers', 'align grid', 'add feather', 'projection map'],
-    generate: ['create shader', 'dark techno visual', 'ambient particles', 'generate video'],
-    support: ['report bug', 'how to map', 'keyboard shortcuts', 'export help'],
+  const tabDefinitions: Array<{ id: DirectorTab; labelKey: string }> = [
+    { id: 'vj', labelKey: 'performanceTools.director.tabs.vj' },
+    { id: 'mapping', labelKey: 'performanceTools.director.tabs.mapping' },
+    { id: 'generate', labelKey: 'performanceTools.director.tabs.generate' },
+    { id: 'support', labelKey: 'performanceTools.director.tabs.support' },
+  ];
+
+  const quickCommands: Record<DirectorTab, Array<{ id: string; labelKey: string; commandKey: string }>> = {
+    vj: [
+      {
+        id: 'buildDeck',
+        labelKey: 'performanceTools.director.quick.vj.buildDeck.label',
+        commandKey: 'performanceTools.director.quick.vj.buildDeck.command',
+      },
+      {
+        id: 'swapShaders',
+        labelKey: 'performanceTools.director.quick.vj.swapShaders.label',
+        commandKey: 'performanceTools.director.quick.vj.swapShaders.command',
+      },
+      {
+        id: 'moreIntense',
+        labelKey: 'performanceTools.director.quick.vj.moreIntense.label',
+        commandKey: 'performanceTools.director.quick.vj.moreIntense.command',
+      },
+      {
+        id: 'calmDown',
+        labelKey: 'performanceTools.director.quick.vj.calmDown.label',
+        commandKey: 'performanceTools.director.quick.vj.calmDown.command',
+      },
+      {
+        id: 'savePreset',
+        labelKey: 'performanceTools.director.quick.vj.savePreset.label',
+        commandKey: 'performanceTools.director.quick.vj.savePreset.command',
+      },
+      {
+        id: 'addEffects',
+        labelKey: 'performanceTools.director.quick.vj.addEffects.label',
+        commandKey: 'performanceTools.director.quick.vj.addEffects.command',
+      },
+    ],
+    mapping: [
+      {
+        id: 'setupCube',
+        labelKey: 'performanceTools.director.quick.mapping.setupCube.label',
+        commandKey: 'performanceTools.director.quick.mapping.setupCube.command',
+      },
+      {
+        id: 'addLayers',
+        labelKey: 'performanceTools.director.quick.mapping.addLayers.label',
+        commandKey: 'performanceTools.director.quick.mapping.addLayers.command',
+      },
+      {
+        id: 'alignGrid',
+        labelKey: 'performanceTools.director.quick.mapping.alignGrid.label',
+        commandKey: 'performanceTools.director.quick.mapping.alignGrid.command',
+      },
+      {
+        id: 'addFeather',
+        labelKey: 'performanceTools.director.quick.mapping.addFeather.label',
+        commandKey: 'performanceTools.director.quick.mapping.addFeather.command',
+      },
+      {
+        id: 'projectionMap',
+        labelKey: 'performanceTools.director.quick.mapping.projectionMap.label',
+        commandKey: 'performanceTools.director.quick.mapping.projectionMap.command',
+      },
+    ],
+    generate: [
+      {
+        id: 'createShader',
+        labelKey: 'performanceTools.director.quick.generate.createShader.label',
+        commandKey: 'performanceTools.director.quick.generate.createShader.command',
+      },
+      {
+        id: 'darkTechnoVisual',
+        labelKey: 'performanceTools.director.quick.generate.darkTechnoVisual.label',
+        commandKey: 'performanceTools.director.quick.generate.darkTechnoVisual.command',
+      },
+      {
+        id: 'ambientParticles',
+        labelKey: 'performanceTools.director.quick.generate.ambientParticles.label',
+        commandKey: 'performanceTools.director.quick.generate.ambientParticles.command',
+      },
+      {
+        id: 'generateVideo',
+        labelKey: 'performanceTools.director.quick.generate.generateVideo.label',
+        commandKey: 'performanceTools.director.quick.generate.generateVideo.command',
+      },
+    ],
+    support: [
+      {
+        id: 'reportBug',
+        labelKey: 'performanceTools.director.quick.support.reportBug.label',
+        commandKey: 'performanceTools.director.quick.support.reportBug.command',
+      },
+      {
+        id: 'howToMap',
+        labelKey: 'performanceTools.director.quick.support.howToMap.label',
+        commandKey: 'performanceTools.director.quick.support.howToMap.command',
+      },
+      {
+        id: 'keyboardShortcuts',
+        labelKey: 'performanceTools.director.quick.support.keyboardShortcuts.label',
+        commandKey: 'performanceTools.director.quick.support.keyboardShortcuts.command',
+      },
+      {
+        id: 'exportHelp',
+        labelKey: 'performanceTools.director.quick.support.exportHelp.label',
+        commandKey: 'performanceTools.director.quick.support.exportHelp.command',
+      },
+    ],
   };
+
+  const mappingPresets = [
+    {
+      id: 'screen',
+      labelKey: 'performanceTools.director.mapping.presets.screen.label',
+      commandKey: 'performanceTools.director.mapping.presets.screen.command',
+    },
+    {
+      id: 'pyramid',
+      labelKey: 'performanceTools.director.mapping.presets.pyramid.label',
+      commandKey: 'performanceTools.director.mapping.presets.pyramid.command',
+    },
+    {
+      id: 'cube',
+      labelKey: 'performanceTools.director.mapping.presets.cube.label',
+      commandKey: 'performanceTools.director.mapping.presets.cube.command',
+    },
+    {
+      id: 'stage',
+      labelKey: 'performanceTools.director.mapping.presets.stage.label',
+      commandKey: 'performanceTools.director.mapping.presets.stage.command',
+    },
+    {
+      id: 'grid',
+      labelKey: 'performanceTools.director.mapping.presets.grid.label',
+      commandKey: 'performanceTools.director.mapping.presets.grid.command',
+    },
+    {
+      id: 'custom',
+      labelKey: 'performanceTools.director.mapping.presets.custom.label',
+      commandKey: 'performanceTools.director.mapping.presets.custom.command',
+    },
+  ];
+
+  function toolStatusKey(status: DirectorToolCall['status']): string {
+    switch (status) {
+      case 'pending':
+        return 'performanceTools.director.toolStatus.pending';
+      case 'executing':
+        return 'performanceTools.director.toolStatus.executing';
+      case 'success':
+        return 'performanceTools.director.toolStatus.success';
+      case 'error':
+        return 'performanceTools.director.toolStatus.error';
+      default:
+        return 'performanceTools.director.toolStatus.unknown';
+    }
+  }
 
   async function send() {
     const text = inputText.trim();
@@ -140,14 +299,17 @@
         <div class="dp-logo-group">
           <img src="{import.meta.env.BASE_URL}director-icon.png" alt="" width="22" height="22" />
           <div class="dp-logo-text">
-            <span class="dp-title">Director</span>
+            <span class="dp-title">{$t('performanceTools.director.title')}</span>
           </div>
         </div>
         <div class="dp-header-actions">
           {#if isVJLive}
-            <span class="dp-live-badge"><span class="dp-live-dot"></span>LIVE</span>
+            <span class="dp-live-badge" aria-label={$t('performanceTools.director.liveAria')}><span class="dp-live-dot"></span>{$t('performanceTools.director.live')}
+            </span>
           {/if}
-          <button class="dp-close" onclick={() => directorStore.setOpen(false)}>×</button>
+          <button class="dp-close" onclick={() => directorStore.setOpen(false)}
+            title={$t('performanceTools.director.close')}
+            aria-label={$t('performanceTools.director.close')}>×</button>
         </div>
       </div>
 
@@ -155,10 +317,11 @@
 
       <!-- TABS -->
       <div class="dp-tabs">
-        {#each [['vj','VJ'], ['mapping','Mapping'], ['generate','Generate'], ['support','Support']] as [id, label]}
-          <button class="dp-tab" class:active={activeTab === id} onclick={() => activeTab = id as any}>
-            {#if activeTab === id}<span class="dp-tab-dot"></span>{/if}
-            {label}
+        {#each tabDefinitions as tab}
+          <button class="dp-tab" class:active={activeTab === tab.id} onclick={() => (activeTab = tab.id)}
+            aria-current={activeTab === tab.id ? 'page' : undefined}>
+            {#if activeTab === tab.id}<span class="dp-tab-dot"></span>{/if}
+            {$t(tab.labelKey)}
           </button>
         {/each}
       </div>
@@ -168,25 +331,32 @@
     {#if activeTab === 'vj'}
       <div class="dp-auto-bar">
         <div class="dp-auto-header">
-          <span class="dp-auto-title">Auto VJ</span>
+          <span class="dp-auto-title">{$t('performanceTools.director.auto.title')}</span>
           <span class="dp-auto-badge">+AI</span>
           {#if autoVJRunning}
-            <span class="dp-auto-status running">● RUNNING</span>
+            <span class="dp-auto-status running" role="status">{$t('performanceTools.director.auto.running')}</span>
           {:else}
-            <span class="dp-auto-status">IDLE</span>
+            <span class="dp-auto-status" role="status">{$t('performanceTools.director.auto.idle')}</span>
           {/if}
         </div>
         <div class="dp-auto-controls">
           {#if autoVJRunning}
-            <button class="dp-transport-btn stop" onclick={stopAutoVJ}>■</button>
+            <button class="dp-transport-btn stop" onclick={stopAutoVJ}
+              title={$t('performanceTools.director.auto.stop')}
+              aria-label={$t('performanceTools.director.auto.stop')}>■</button>
           {:else}
-            <button class="dp-transport-btn play" onclick={startAutoVJ}>▶ Start</button>
+            <button class="dp-transport-btn play" onclick={startAutoVJ}
+              title={$t('performanceTools.director.auto.start')}
+              aria-label={$t('performanceTools.director.auto.start')}
+              >{$t('performanceTools.director.auto.start')}</button>
           {/if}
-          <select class="dp-auto-select" bind:value={autoVJBeatsPerChange}>
-            <option value={4}>4 beats</option>
-            <option value={8}>8 beats</option>
-            <option value={16}>16 beats</option>
-            <option value={32}>32 beats</option>
+          <select class="dp-auto-select" bind:value={autoVJBeatsPerChange}
+            aria-label={$t('performanceTools.director.auto.beatsLabel')}
+          >
+            <option value={4}>{$t('performanceTools.director.auto.beats', { values: { count: 4 } })}</option>
+            <option value={8}>{$t('performanceTools.director.auto.beats', { values: { count: 8 } })}</option>
+            <option value={16}>{$t('performanceTools.director.auto.beats', { values: { count: 16 } })}</option>
+            <option value={32}>{$t('performanceTools.director.auto.beats', { values: { count: 32 } })}</option>
           </select>
         </div>
       </div>
@@ -195,31 +365,31 @@
     <!-- MAPPING PRESETS (Mapping tab only) -->
     {#if activeTab === 'mapping'}
       <div class="dp-mapping-presets">
-        <span class="dp-mapping-label">SURFACE PRESETS</span>
+        <span class="dp-mapping-label">{$t('performanceTools.director.mapping.title')}</span>
         <div class="dp-preset-grid">
-          <button class="dp-preset" onclick={() => sendQuick('Create a single full-screen media layer')}>
+          <button class="dp-preset" onclick={() => sendQuick($t(mappingPresets[0].commandKey))}>
             <svg viewBox="0 0 32 32" width="28" height="28"><rect x="4" y="8" width="24" height="16" rx="1" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
-            <span>Screen</span>
+            <span>{$t(mappingPresets[0].labelKey)}</span>
           </button>
-          <button class="dp-preset" onclick={() => sendQuick('Create a 3-sided pyramid mapping layout with 3 triangle layers')}>
+          <button class="dp-preset" onclick={() => sendQuick($t(mappingPresets[1].commandKey))}>
             <svg viewBox="0 0 32 32" width="28" height="28"><path d="M8 24L16 6L24 24Z" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
-            <span>Pyramid</span>
+            <span>{$t(mappingPresets[1].labelKey)}</span>
           </button>
-          <button class="dp-preset" onclick={() => sendQuick('Create a 6-face cube mapping layout in isometric view with 6 layers')}>
+          <button class="dp-preset" onclick={() => sendQuick($t(mappingPresets[2].commandKey))}>
             <svg viewBox="0 0 32 32" width="28" height="28"><rect x="8" y="10" width="12" height="12" rx="0.5" fill="none" stroke="currentColor" stroke-width="1.2" transform="rotate(-15 14 16)"/><rect x="14" y="10" width="12" height="12" rx="0.5" fill="none" stroke="currentColor" stroke-width="1.2" transform="rotate(15 20 16)"/></svg>
-            <span>Cube</span>
+            <span>{$t(mappingPresets[2].labelKey)}</span>
           </button>
-          <button class="dp-preset" onclick={() => sendQuick('Create 3 rectangular layers side by side for a stage backdrop')}>
+          <button class="dp-preset" onclick={() => sendQuick($t(mappingPresets[3].commandKey))}>
             <svg viewBox="0 0 32 32" width="28" height="28"><rect x="3" y="12" width="8" height="14" rx="0.5" fill="none" stroke="currentColor" stroke-width="1.2"/><rect x="12" y="6" width="8" height="20" rx="0.5" fill="none" stroke="currentColor" stroke-width="1.2"/><rect x="21" y="12" width="8" height="14" rx="0.5" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
-            <span>Stage</span>
+            <span>{$t(mappingPresets[3].labelKey)}</span>
           </button>
-          <button class="dp-preset" onclick={() => sendQuick('Create 4 layers arranged in a 2x2 grid')}>
+          <button class="dp-preset" onclick={() => sendQuick($t(mappingPresets[4].commandKey))}>
             <svg viewBox="0 0 32 32" width="28" height="28"><rect x="4" y="4" width="11" height="11" rx="0.5" fill="none" stroke="currentColor" stroke-width="1.2"/><rect x="17" y="4" width="11" height="11" rx="0.5" fill="none" stroke="currentColor" stroke-width="1.2"/><rect x="4" y="17" width="11" height="11" rx="0.5" fill="none" stroke="currentColor" stroke-width="1.2"/><rect x="17" y="17" width="11" height="11" rx="0.5" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
-            <span>Grid</span>
+            <span>{$t(mappingPresets[4].labelKey)}</span>
           </button>
-          <button class="dp-preset" onclick={() => sendQuick('Create a custom mapping layout — ask me what shape I need')}>
+          <button class="dp-preset" onclick={() => sendQuick($t(mappingPresets[5].commandKey))}>
             <svg viewBox="0 0 32 32" width="28" height="28"><polygon points="16,3 29,12 29,24 16,29 3,24 3,12" fill="none" stroke="currentColor" stroke-width="1.2"/></svg>
-            <span>Custom</span>
+            <span>{$t(mappingPresets[5].labelKey)}</span>
           </button>
         </div>
       </div>
@@ -230,26 +400,32 @@
       <div class="dp-messages" bind:this={messagesEl}>
         {#if $directorStore.messages.length === 0 && !$isDirectorStreaming}
           <div class="dp-welcome">
-            <p class="dp-welcome-title">What can I help with?</p>
-            <p class="dp-welcome-hint">I can build VJ decks, set up projection mapping, generate shaders, and control your entire setup by voice or text.</p>
+            <p class="dp-welcome-title">{$t('performanceTools.director.welcome.title')}</p>
+            <p class="dp-welcome-hint">{$t('performanceTools.director.welcome.hint')}</p>
           </div>
         {/if}
 
         {#each $directorStore.messages as msg (msg.id)}
           <div class="dp-msg" class:user={msg.role === 'user'} class:ai={msg.role === 'assistant'}>
-            <div class="dp-msg-avatar">{msg.role === 'user' ? 'You' : 'iV'}</div>
+            <div class="dp-msg-avatar">{msg.role === 'user' ? $t('performanceTools.director.messages.user') : 'iV'}</div>
             <div class="dp-msg-body">
               <div class="dp-msg-meta">
-                {msg.role === 'user' ? 'You' : 'Ghost Arcade AI'} · {new Date(msg.timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'})}
+                {msg.role === 'user' ? $t('performanceTools.director.messages.user')
+                  : $t('performanceTools.director.messages.assistant')} · {new Date(msg.timestamp).toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'},
+                )}
               </div>
               <div class="dp-msg-content">
                 {msg.content}
                 {#if msg.toolCalls?.length}
                   <div class="dp-action-card">
-                    <div class="dp-action-header"><span class="dp-action-dot"></span>ACTIONS EXECUTED</div>
+                    <div class="dp-action-header"
+                      role="status"
+                      aria-label={$t('performanceTools.director.messages.actionsExecuted')}
+                    ><span class="dp-action-dot"></span>{$t('performanceTools.director.messages.actionsExecuted')}
+                    </div>
                     {#each msg.toolCalls as tc}
                       <div class="dp-action-item">
-                        <span class="dp-action-check">{tc.status === 'success' ? '✓' : tc.status === 'error' ? '✗' : '⟳'}</span>
+                        <span class="dp-action-check" aria-label={$t(toolStatusKey(tc.status))}>{tc.status === 'success' ? '✓' : tc.status === 'error' ? '✗' : '⟳'}</span>
                         <span>{tc.name}</span>
                         {#if tc.resultSummary}<span class="dp-action-detail">{tc.resultSummary}</span>{/if}
                       </div>
@@ -265,7 +441,7 @@
           <div class="dp-msg ai">
             <div class="dp-msg-avatar">iV</div>
             <div class="dp-msg-body">
-              <div class="dp-msg-meta">Ghost Arcade AI</div>
+              <div class="dp-msg-meta">{$t('performanceTools.director.messages.assistant')}</div>
               <div class="dp-msg-content">
                 {#if $directorStore.streamingText}
                   {$directorStore.streamingText}
@@ -280,14 +456,14 @@
         {/if}
 
         {#if $directorStore.error}
-          <div class="dp-error">{$directorStore.error}</div>
+          <div class="dp-error" role="alert">{$directorStore.error}</div>
         {/if}
       </div>
 
       <!-- QUICK COMMANDS -->
       <div class="dp-quick-cmds">
-        {#each (quickCommands[activeTab] || []) as cmd}
-          <button class="dp-cmd-pill" onclick={() => sendQuick(cmd)}>{cmd}</button>
+        {#each quickCommands[activeTab] as cmd}
+          <button class="dp-cmd-pill" onclick={() => sendQuick($t(cmd.commandKey))}>{$t(cmd.labelKey)}</button>
         {/each}
       </div>
     </div>
@@ -295,21 +471,31 @@
     <!-- INPUT -->
     <div class="dp-input-area">
       <div class="dp-input-wrapper">
-        <button class="dp-mic-btn" class:listening={isListening} onclick={toggleVoice} title={isListening ? 'Stop listening' : 'Voice input'}>
+        <button class="dp-mic-btn" class:listening={isListening} onclick={toggleVoice} title={isListening ? $t('performanceTools.director.input.stopListening')
+            : $t('performanceTools.director.input.voiceInput')}
+          aria-label={isListening
+            ? $t('performanceTools.director.input.stopListening')
+            : $t('performanceTools.director.input.voiceInput')}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/><line x1="12" y1="19" x2="12" y2="23"/><line x1="8" y1="23" x2="16" y2="23"/></svg>
         </button>
         <input
           class="dp-input-field"
           type="text"
-          placeholder={isListening ? 'Listening...' : 'Tell Ghost Arcade what to do...'}
+          placeholder={isListening ? $t('performanceTools.director.input.listening')
+            : $t('performanceTools.director.input.placeholder')}
           bind:value={inputText}
           onkeydown={handleKeydown}
           disabled={$isDirectorStreaming}
+          aria-label={$t('performanceTools.director.input.ariaLabel')}
         />
         {#if $isDirectorStreaming}
-          <button class="dp-send-btn cancel" onclick={cancelDirectorStream}>■</button>
+          <button class="dp-send-btn cancel" onclick={cancelDirectorStream}
+            title={$t('performanceTools.director.input.cancel')}
+            aria-label={$t('performanceTools.director.input.cancel')}>■</button>
         {:else}
-          <button class="dp-send-btn" onclick={send} disabled={!inputText.trim() && !isListening}>
+          <button class="dp-send-btn" onclick={send} disabled={!inputText.trim() && !isListening}
+            title={$t('performanceTools.director.input.send')}
+            aria-label={$t('performanceTools.director.input.send')}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="white"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
           </button>
         {/if}

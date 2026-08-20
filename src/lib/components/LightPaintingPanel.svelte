@@ -19,6 +19,7 @@
     type LightPaintingSequenceMode,
     type LightPaintingStrokePoint,
   } from '../types';
+  import { t } from '../i18n';
 
   // Render mode: true = only draw overlay, false = only sidebar controls
   export let overlayOnly = false;
@@ -37,7 +38,7 @@
 
   // currentBrush is synced via module-level sharedBrush store (see <script context="module">)
   let currentBrush: LightPaintingBrush = createDefaultLightPaintingBrush();
-  const unsubBrush = _sharedBrush.subscribe(b => { currentBrush = b; });
+  const unsubBrush = _sharedBrush.subscribe((b) => { currentBrush = b; });
   onDestroy(unsubBrush);
   let activeSection: 'brush' | 'animation' | 'effects' | 'strokes' = 'brush';
   let isDrawing = false;
@@ -73,22 +74,22 @@
     [180, 50, 255],   [255, 100, 0],    [255, 255, 100],
   ];
 
-  const brushTypes: { type: LightPaintingBrushType; label: string; gpu?: boolean }[] = [
-    { type: 'glow', label: 'Glow' },         { type: 'neon', label: 'Neon' },
-    { type: 'flame', label: 'Flame' },       { type: 'electric', label: 'Electric' },
-    { type: 'ribbon', label: 'Ribbon' },     { type: 'particle', label: 'Particle' },
-    { type: 'smoke', label: 'Smoke' },       { type: 'laser', label: 'Laser' },
-    { type: 'calligraphy', label: 'Callig.' }, { type: 'spray', label: 'Spray' },
-    { type: 'paintbrush', label: 'Paint' },  { type: 'marker', label: 'Marker' },
-    { type: 'watercolor', label: 'Water' },
+  const brushTypes: { type: LightPaintingBrushType; gpu?: boolean }[] = [
+    { type: 'glow' },         { type: 'neon' },
+    { type: 'flame' },       { type: 'electric' },
+    { type: 'ribbon' },     { type: 'particle' },
+    { type: 'smoke' },       { type: 'laser' },
+    { type: 'calligraphy' }, { type: 'spray' },
+    { type: 'paintbrush' },  { type: 'marker' },
+    { type: 'watercolor' },
     // ── WebGPU compute brushes ──
     // Particles bound to the stroke's tangent + normal vectors,
     // animated by per-frame compute shader. Best for projection-
     // mapping plant/tree work — spiral wraps around limbs, firefly
     // drifts outward like sparks, sap-flow simulates fluid motion.
-    { type: 'spiral', label: 'Spiral', gpu: true },
-    { type: 'firefly', label: 'Firefly', gpu: true },
-    { type: 'sap-flow', label: 'Sap Flow', gpu: true },
+    { type: 'spiral', gpu: true },
+    { type: 'firefly', gpu: true },
+    { type: 'sap-flow', gpu: true },
     // 'water' (Ectoplasm) and 'smoke' GPU brushes intentionally hidden from
     // the picker — kept in the type union + shader so any project files that
     // already reference them keep loading without errors. Hide until we have
@@ -98,11 +99,11 @@
     // GPU particle systems — thousands of particles per stroke,
     // additive HDR trails, true motion. Each one is what its WebGL2
     // ancestor only hinted at.
-    { type: 'galaxy', label: 'Galaxy', gpu: true },
-    { type: 'nebula', label: 'Nebula', gpu: true },
-    { type: 'sparkle', label: 'Sparkle', gpu: true },
-    { type: 'vortex', label: 'Vortex', gpu: true },
-    { type: 'plasma', label: 'Plasma', gpu: true },
+    { type: 'galaxy', gpu: true },
+    { type: 'nebula', gpu: true },
+    { type: 'sparkle', gpu: true },
+    { type: 'vortex', gpu: true },
+    { type: 'plasma', gpu: true },
   ];
 
   // Detect whether the current brush is a GPU brush so the panel
@@ -114,20 +115,36 @@
     'galaxy', 'nebula', 'sparkle', 'vortex', 'plasma',
   ]);
 
-  const loopModes: { mode: LightPaintingLoopMode; label: string }[] = [
-    { mode: 'forward', label: 'Fwd' },    { mode: 'reverse', label: 'Rev' },
-    { mode: 'pingpong', label: 'PP' },    { mode: 'once', label: '1x' },
+  const loopModes: { mode: LightPaintingLoopMode }[] = [
+    { mode: 'forward' },    { mode: 'reverse' },
+    { mode: 'pingpong' },    { mode: 'once' },
   ];
 
-  const sequenceModes: { mode: LightPaintingSequenceMode; label: string }[] = [
-    { mode: 'recorded', label: 'Recorded' },
-    { mode: 'random', label: 'Random' },
-    { mode: 'alternating', label: 'Alternating' },
-    { mode: 'bottomUp', label: 'Bottom Up' },
-    { mode: 'topDown', label: 'Top Down' },
-    { mode: 'centerOut', label: 'Center Out' },
-    { mode: 'outsideIn', label: 'Outside In' },
+  const sequenceModes: { mode: LightPaintingSequenceMode }[] = [
+    { mode: 'recorded' },
+    { mode: 'random' },
+    { mode: 'alternating' },
+    { mode: 'bottomUp' },
+    { mode: 'topDown' },
+    { mode: 'centerOut' },
+    { mode: 'outsideIn' },
   ];
+
+  function lightPaintingMessage(key: string, values?: Record<string, string | number>): string {
+    return $t(`lighting.lightPainting.${key}`, { values });
+  }
+
+  function brushLabel(type: LightPaintingBrushType): string {
+    return lightPaintingMessage(`brushes.${type}`);
+  }
+
+  function loopModeLabel(mode: LightPaintingLoopMode): string {
+    return lightPaintingMessage(`loopModes.${mode}`);
+  }
+
+  function sequenceModeLabel(mode: LightPaintingSequenceMode): string {
+    return lightPaintingMessage(`sequenceModes.${mode}`);
+  }
 
   $: layer = $selectedLightPaintingLayer;
   $: content = $selectedLightPaintingContent;
@@ -137,14 +154,15 @@
   $: livePreviewPath = buildSvgPath(livePreviewPoints);
   $: penPreviewSvg = buildPenPreviewSvg(penPoints, penPreviewPoint);
   $: brushColorRgb = `${currentBrush.color[0]},${currentBrush.color[1]},${currentBrush.color[2]}`;
-  $: customColorHex = '#' + currentBrush.color.map(c => c.toString(16).padStart(2, '0')).join('');
+  $: customColorHex = '#' + currentBrush.color.map((c) => c.toString(16).padStart(2, '0')).join('');
   $: secondaryColorHex = currentBrush.secondaryColor
-    ? '#' + currentBrush.secondaryColor.map(c => c.toString(16).padStart(2, '0')).join('')
+    ? '#' + currentBrush.secondaryColor.map((c) => c.toString(16).padStart(2, '0')).join('')
     : '#43e8f9';
   // Glass-tube color hex for the picker. Falls back to the soft
   // cool-white default when the brush hasn't set one explicitly.
   $: glassTubeColorHex = (currentBrush.gpuGlassTubeColor ?? [220, 230, 255])
-    .map(c => Math.max(0, Math.min(255, c)).toString(16).padStart(2, '0')).join('');
+    .map((c) => Math.max(0, Math.min(255, c)).toString(16).padStart(2, '0'))
+    .join('');
   $: glassTubeColorHexFull = '#' + glassTubeColorHex;
 
   function buildSvgPath(points: { x: number; y: number }[]): string {
@@ -152,7 +170,8 @@
     let d = `M ${points[0].x} ${points[0].y}`;
     for (let i = 1; i < points.length; i++) {
       if (i < points.length - 1) {
-        const curr = points[i], next = points[i + 1];
+        const curr = points[i],
+          next = points[i + 1];
         d += ` Q ${curr.x} ${curr.y} ${(curr.x + next.x) / 2} ${(curr.y + next.y) / 2}`;
       } else {
         d += ` L ${points[i].x} ${points[i].y}`;
@@ -173,18 +192,27 @@
     for (let i = 0; i < anchors.length; i++) {
       const ap = toPixel(anchors[i].x, anchors[i].y);
       dots.push(ap);
-      if (i === 0) { d = `M ${ap.x} ${ap.y}`; }
-      else {
-        const prev = anchors[i - 1], prevP = toPixel(prev.x, prev.y);
+      if (i === 0) {
+        d = `M ${ap.x} ${ap.y}`;
+      } else {
+        const prev = anchors[i - 1],
+          prevP = toPixel(prev.x, prev.y);
         const cp1 = prev.handleOut ? toPixel(prev.handleOut.x, prev.handleOut.y) : prevP;
         const cp2 = anchors[i].handleIn ? toPixel(anchors[i].handleIn!.x, anchors[i].handleIn!.y) : ap;
         d += ` C ${cp1.x} ${cp1.y} ${cp2.x} ${cp2.y} ${ap.x} ${ap.y}`;
       }
-      if (anchors[i].handleIn) { const hp = toPixel(anchors[i].handleIn!.x, anchors[i].handleIn!.y); handles.push({ x1: ap.x, y1: ap.y, x2: hp.x, y2: hp.y }); }
-      if (anchors[i].handleOut) { const hp = toPixel(anchors[i].handleOut!.x, anchors[i].handleOut!.y); handles.push({ x1: ap.x, y1: ap.y, x2: hp.x, y2: hp.y }); }
+      if (anchors[i].handleIn) {
+        const hp = toPixel(anchors[i].handleIn!.x, anchors[i].handleIn!.y);
+        handles.push({ x1: ap.x, y1: ap.y, x2: hp.x, y2: hp.y });
+      }
+      if (anchors[i].handleOut) {
+        const hp = toPixel(anchors[i].handleOut!.x, anchors[i].handleOut!.y);
+        handles.push({ x1: ap.x, y1: ap.y, x2: hp.x, y2: hp.y });
+      }
     }
     if (preview && anchors.length > 0) {
-      const last = anchors[anchors.length - 1], lastP = toPixel(last.x, last.y);
+      const last = anchors[anchors.length - 1],
+        lastP = toPixel(last.x, last.y);
       const cp1 = last.handleOut ? toPixel(last.handleOut.x, last.handleOut.y) : lastP;
       d += ` C ${cp1.x} ${cp1.y} ${preview.x} ${preview.y} ${preview.x} ${preview.y}`;
     }
@@ -210,14 +238,26 @@
 
   function penPointsToStrokePoints(anchors: LightPaintingPenPoint[], sps = 40): LightPaintingStrokePoint[] {
     if (anchors.length < 2) return [];
-    const pts: LightPaintingStrokePoint[] = [], ts = anchors.length - 1, dur = ts * 500;
+    const pts: LightPaintingStrokePoint[] = [],
+      ts = anchors.length - 1,
+      dur = ts * 500;
     for (let seg = 0; seg < ts; seg++) {
-      const a = anchors[seg], b = anchors[seg + 1];
-      const c1x = a.handleOut?.x ?? a.x, c1y = a.handleOut?.y ?? a.y, c2x = b.handleIn?.x ?? b.x, c2y = b.handleIn?.y ?? b.y;
+      const a = anchors[seg],
+        b = anchors[seg + 1];
+      const c1x = a.handleOut?.x ?? a.x,
+        c1y = a.handleOut?.y ?? a.y,
+        c2x = b.handleIn?.x ?? b.x,
+        c2y = b.handleIn?.y ?? b.y;
       for (let s = 0; s <= sps; s++) {
         if (seg > 0 && s === 0) continue;
-        const t = s / sps, m = 1 - t;
-        pts.push({ x: m*m*m*a.x+3*m*m*t*c1x+3*m*t*t*c2x+t*t*t*b.x, y: m*m*m*a.y+3*m*m*t*c1y+3*m*t*t*c2y+t*t*t*b.y, pressure: 0.5, timestamp: (seg+t)/ts*dur });
+        const t = s / sps,
+          m = 1 - t;
+        pts.push({
+          x: m * m * m * a.x + 3 * m * m * t * c1x + 3 * m * t * t * c2x + t * t * t * b.x,
+          y: m * m * m * a.y + 3 * m * m * t * c1y + 3 * m * t * t * c2y + t * t * t * b.y,
+          pressure: 0.5,
+          timestamp: ((seg + t) / ts) * dur,
+        });
       }
     }
     return pts;
@@ -228,7 +268,8 @@
     if (pts.length < 3) return pts;
     const result: LightPaintingStrokePoint[] = [pts[0]];
     for (let i = 0; i < pts.length - 1; i++) {
-      const p0 = pts[i], p1 = pts[i + 1];
+      const p0 = pts[i],
+        p1 = pts[i + 1];
       result.push({
         x: p0.x * 0.75 + p1.x * 0.25,
         y: p0.y * 0.75 + p1.y * 0.25,
@@ -252,7 +293,8 @@
     const step = (pts.length - 1) / (maxCount - 1);
     for (let i = 0; i < maxCount; i++) {
       const idx = i * step;
-      const lo = Math.floor(idx), hi = Math.min(lo + 1, pts.length - 1);
+      const lo = Math.floor(idx),
+        hi = Math.min(lo + 1, pts.length - 1);
       const t = idx - lo;
       result.push({
         x: pts[lo].x + (pts[hi].x - pts[lo].x) * t,
@@ -347,7 +389,8 @@
     const dx = sx - lastPt.x, dy = sy - lastPt.y;
     if (dx * dx + dy * dy < minDist * minDist) return;
 
-    currentStrokePoints.push({ x: sx, y: sy, pressure: (e as any).pressure ?? 0.5, timestamp: performance.now() - strokeStartTime });
+    currentStrokePoints.push({ x: sx, y: sy, pressure: (e as any).pressure ?? 0.5, timestamp: performance.now() - strokeStartTime,
+    });
     // Use overlay pixel coords for live SVG preview (matches getOverlayPixelCoords space)
     const overlayPixel = getOverlayPixelCoords(e);
     livePreviewPoints = [...livePreviewPoints, overlayPixel];
@@ -375,7 +418,8 @@
     // Cap point count to bound memory (higher limit to preserve smooth curves)
     finalPoints = resamplePoints(finalPoints, 800);
 
-    project.addLightPaintingStroke(layerId, { id: generateUUID(), points: finalPoints, brush: { ...currentBrush }, duration: performance.now() - strokeStartTime, visible: true, locked: false, drawMode: 'freehand' });
+    project.addLightPaintingStroke(layerId, { id: generateUUID(), points: finalPoints, brush: { ...currentBrush }, duration: performance.now() - strokeStartTime, visible: true, locked: false, drawMode: 'freehand',
+    });
     project.updateLightPaintingContent(layerId, { isRecording: false, livePreviewStroke: null });
     isDrawing = false; currentStrokePoints = []; livePreviewPoints = []; lastSmoothedPoint = null;
   }
@@ -392,7 +436,8 @@
     const coords = getCanvasCoords(e), last = penPoints[penPoints.length - 1];
     const dx = coords.x - last.x, dy = coords.y - last.y;
     const updated = [...penPoints];
-    updated[updated.length - 1] = { ...last, handleOut: { x: last.x + dx, y: last.y + dy }, handleIn: { x: last.x - dx, y: last.y - dy } };
+    updated[updated.length - 1] = { ...last, handleOut: { x: last.x + dx, y: last.y + dy }, handleIn: { x: last.x - dx, y: last.y - dy },
+    };
     penPoints = updated;
   }
 
@@ -400,13 +445,14 @@
     if (!layerId || penPoints.length < 2) { penPoints = []; penPreviewPoint = null; return; }
     const pts = penPointsToStrokePoints(penPoints);
     if (pts.length < 2) { penPoints = []; penPreviewPoint = null; return; }
-    project.addLightPaintingStroke(layerId, { id: generateUUID(), points: pts, brush: { ...currentBrush }, duration: Math.max(pts[pts.length - 1].timestamp, 500), visible: true, locked: false, drawMode: 'pen', penPoints: [...penPoints] });
+    project.addLightPaintingStroke(layerId, { id: generateUUID(), points: pts, brush: { ...currentBrush }, duration: Math.max(pts[pts.length - 1].timestamp, 500), visible: true, locked: false, drawMode: 'pen', penPoints: [...penPoints],
+    });
     penPoints = []; penPreviewPoint = null;
   }
 
   // === STROKE SELECTION & LIVE EDITING ===
   $: selectedStrokeId = content?.selectedStrokeId ?? null;
-  $: selectedStroke = content?.strokes.find(s => s.id === selectedStrokeId) ?? null;
+  $: selectedStroke = content?.strokes.find((s) => s.id === selectedStrokeId) ?? null;
 
   // Track whether we're editing vs drawing (to avoid pushing brush changes during draw)
   let isEditingStroke = false;
@@ -415,7 +461,7 @@
     if (!layerId) return;
     project.updateLightPaintingContent(layerId, { selectedStrokeId: strokeId });
     if (strokeId) {
-      const stroke = content?.strokes.find(s => s.id === strokeId);
+      const stroke = content?.strokes.find((s) => s.id === strokeId);
       if (stroke) {
         // Load the stroke's brush into the panel
         isEditingStroke = true;
@@ -520,7 +566,8 @@
     for (let i = 0; i < count; i++) {
       const t = i / (count - 1);
       const idx = Math.round(t * last);
-      out.push({ x: stroke.points[idx].x, y: stroke.points[idx].y, pointIndex: idx, isAnchor: i === 0 || i === count - 1 });
+      out.push({ x: stroke.points[idx].x, y: stroke.points[idx].y, pointIndex: idx, isAnchor: i === 0 || i === count - 1,
+      });
     }
     return out;
   }
@@ -532,27 +579,34 @@
   // Svelte-5 template-block edge cases that can otherwise silently
   // prevent the {#if} children from entering the DOM even when the
   // condition is truthy and editHandles is populated.
-  $: pathGuidePathD = (isPathEditMode && selectedStroke && editHandles)
-    ? selectedStroke.points.map((p, i) => {
+  $: pathGuidePathD =
+    isPathEditMode && selectedStroke && editHandles
+      ? selectedStroke.points.map((p, i) => {
         const px = normToOverlayPx(p.x, p.y);
         return (i === 0 ? 'M' : 'L') + px.x.toFixed(1) + ',' + px.y.toFixed(1);
       }).join(' ')
     : '';
-  $: pathToolPalette = (
+  $: pathToolPalette =
     pathEditTool === 'delete'
-      ? { stroke: 'rgba(255,90,90,0.95)',  fill: '#FF8080', anchorStroke: 'rgba(255,180,90,0.95)', anchorFill: '#FFC850' }
+      ? { stroke: 'rgba(255,90,90,0.95)',  fill: '#FF8080', anchorStroke: 'rgba(255,180,90,0.95)', anchorFill: '#FFC850',
+        }
       : pathEditTool === 'insert'
-      ? { stroke: 'rgba(120,220,140,0.95)', fill: '#80E89C', anchorStroke: 'rgba(255,180,90,0.95)', anchorFill: '#FFC850' }
-      : { stroke: 'rgba(103,232,249,0.95)', fill: '#67E8F9', anchorStroke: 'rgba(255,200,80,0.95)', anchorFill: '#FFC850' }
-  );
-  $: pathHandlePositions = (isPathEditMode && editHandles)
-    ? editHandles.map(h => normToOverlayPx(h.x, h.y))
+      ? { stroke: 'rgba(120,220,140,0.95)', fill: '#80E89C', anchorStroke: 'rgba(255,180,90,0.95)', anchorFill: '#FFC850',
+          }
+      : { stroke: 'rgba(103,232,249,0.95)', fill: '#67E8F9', anchorStroke: 'rgba(255,200,80,0.95)', anchorFill: '#FFC850',
+          };
+  $: pathHandlePositions = isPathEditMode && editHandles ? editHandles.map((h) => normToOverlayPx(h.x, h.y))
     : [];
 
   // Wipe selection when the handle layout changes — indices wouldn't be
   // valid against the new layout, and the user expectation when toggling
   // Show-all or switching strokes is "clean slate".
-  $: { editHandles; pathEditShowAllRawPoints; selectedStrokeId; pathSelectedHandles = new Set(); }
+  $: {
+    editHandles;
+    pathEditShowAllRawPoints;
+    selectedStrokeId;
+    pathSelectedHandles = new Set();
+  }
 
   // Delete the raw point bound to a handle. For freehand strokes this
   // splices out `selectedStroke.points[h.pointIndex]`; for pen strokes
@@ -618,17 +672,26 @@
       // so projection is approximate, but anchor insertion only needs to
       // be near a click; the user can drag the new anchor afterward.
       const pen = selectedStroke.penPoints;
-      let bestSeg = 0, bestDist = Infinity, bestT = 0;
+      let bestSeg = 0,
+        bestDist = Infinity,
+        bestT = 0;
       for (let i = 0; i < pen.length - 1; i++) {
-        const a = pen[i], b = pen[i + 1];
+        const a = pen[i],
+          b = pen[i + 1];
         for (let s = 0; s <= 10; s++) {
           const t = s / 10;
-          const px = a.x + (b.x - a.x) * t, py = a.y + (b.y - a.y) * t;
+          const px = a.x + (b.x - a.x) * t,
+            py = a.y + (b.y - a.y) * t;
           const d2 = (px - nx) ** 2 + (py - ny) ** 2;
-          if (d2 < bestDist) { bestDist = d2; bestSeg = i; bestT = t; }
+          if (d2 < bestDist) {
+            bestDist = d2;
+            bestSeg = i;
+            bestT = t;
+          }
         }
       }
-      const a = pen[bestSeg], b = pen[bestSeg + 1];
+      const a = pen[bestSeg],
+        b = pen[bestSeg + 1];
       const newAnchor = { x: a.x + (b.x - a.x) * bestT, y: a.y + (b.y - a.y) * bestT, handleIn: null, handleOut: null };
       const newPen = [...pen.slice(0, bestSeg + 1), newAnchor, ...pen.slice(bestSeg + 1)];
       const newPts = penPointsToStrokePoints(newPen);
@@ -637,19 +700,29 @@
     }
     const pts = selectedStroke.points;
     if (pts.length < 2) return;
-    let bestSeg = 0, bestDist = Infinity, bestT = 0;
+    let bestSeg = 0,
+      bestDist = Infinity,
+      bestT = 0;
     for (let i = 0; i < pts.length - 1; i++) {
-      const a = pts[i], b = pts[i + 1];
-      const dxs = b.x - a.x, dys = b.y - a.y;
+      const a = pts[i],
+        b = pts[i + 1];
+      const dxs = b.x - a.x,
+        dys = b.y - a.y;
       const len2 = dxs * dxs + dys * dys;
       if (len2 < 1e-12) continue;
       let t = ((nx - a.x) * dxs + (ny - a.y) * dys) / len2;
       t = Math.max(0, Math.min(1, t));
-      const px = a.x + dxs * t, py = a.y + dys * t;
+      const px = a.x + dxs * t,
+        py = a.y + dys * t;
       const d2 = (px - nx) ** 2 + (py - ny) ** 2;
-      if (d2 < bestDist) { bestDist = d2; bestSeg = i; bestT = t; }
+      if (d2 < bestDist) {
+        bestDist = d2;
+        bestSeg = i;
+        bestT = t;
+      }
     }
-    const a = pts[bestSeg], b = pts[bestSeg + 1];
+    const a = pts[bestSeg],
+      b = pts[bestSeg + 1];
     const newPt = {
       x: a.x + (b.x - a.x) * bestT,
       y: a.y + (b.y - a.y) * bestT,
@@ -665,8 +738,10 @@
   // selection (additive mode would require Shift; we keep marquee simple).
   function applyMarquee(startPx: { x: number; y: number }, endPx: { x: number; y: number }) {
     if (!editHandles) return;
-    const minX = Math.min(startPx.x, endPx.x), maxX = Math.max(startPx.x, endPx.x);
-    const minY = Math.min(startPx.y, endPx.y), maxY = Math.max(startPx.y, endPx.y);
+    const minX = Math.min(startPx.x, endPx.x),
+      maxX = Math.max(startPx.x, endPx.x);
+    const minY = Math.min(startPx.y, endPx.y),
+      maxY = Math.max(startPx.y, endPx.y);
     const next = new Set<number>();
     for (let i = 0; i < editHandles.length; i++) {
       const px = normToOverlayPx(editHandles[i].x, editHandles[i].y);
@@ -689,9 +764,7 @@
   ): LightPaintingStrokePoint[] {
     if (showAll) {
       // Edit a single raw point only — no neighbourhood blending.
-      return originalPoints.map((p, i) =>
-        i === handlePointIndex ? { ...p, x: p.x + dxNorm, y: p.y + dyNorm } : p
-      );
+      return originalPoints.map((p, i) => (i === handlePointIndex ? { ...p, x: p.x + dxNorm, y: p.y + dyNorm } : p));
     }
     // Sigma in INDEX units. With 24 handles across N raw points, the
     // spacing is N/24. Sigma = spacing/2 gives a smooth bump with
@@ -778,8 +851,9 @@
     // Move tool: drag start.
     pathDragHandleIndex = handleIndex;
     pathDragStartNorm = getCanvasCoords(e);
-    pathDragOriginalPoints = selectedStroke.points.map(p => ({ ...p }));
-    pathDragOriginalPenPoints = selectedStroke.penPoints ? selectedStroke.penPoints.map(p => ({ ...p, handleIn: p.handleIn ? { ...p.handleIn } : null, handleOut: p.handleOut ? { ...p.handleOut } : null })) : null;
+    pathDragOriginalPoints = selectedStroke.points.map((p) => ({ ...p }));
+    pathDragOriginalPenPoints = selectedStroke.penPoints ? selectedStroke.penPoints.map((p) => ({ ...p, handleIn: p.handleIn ? { ...p.handleIn } : null, handleOut: p.handleOut ? { ...p.handleOut } : null,
+        })) : null;
     // If this handle is in the selection, drag translates the whole
     // group rigidly (every selected raw point moves by the same delta);
     // otherwise fall through to the existing warp logic.
@@ -821,17 +895,19 @@
           if (h) targetPointIdx.add(h.pointIndex);
         }
         const newPts = pathDragOriginalPoints.map((p, i) =>
-          targetPointIdx.has(i) ? { ...p, x: p.x + dx, y: p.y + dy } : p
+          targetPointIdx.has(i) ? { ...p, x: p.x + dx, y: p.y + dy } : p,
         );
         project.updateLightPaintingStrokePoints(layerId, selectedStroke.id, newPts);
       }
       return;
     }
     if (handle.isAnchor && pathDragOriginalPenPoints && selectedStroke.drawMode === 'pen') {
-      const { penPoints: newPen, strokePoints: newPts } = warpPenStroke(pathDragOriginalPenPoints, handle.pointIndex, dx, dy);
+      const { penPoints: newPen, strokePoints: newPts } = warpPenStroke(pathDragOriginalPenPoints, handle.pointIndex, dx, dy,
+      );
       project.updateLightPaintingStrokePoints(layerId, selectedStroke.id, newPts, newPen);
     } else {
-      const newPts = warpFreehand(pathDragOriginalPoints, handle.pointIndex, dx, dy, PATH_EDIT_HANDLE_COUNT, pathEditShowAllRawPoints);
+      const newPts = warpFreehand(pathDragOriginalPoints, handle.pointIndex, dx, dy, PATH_EDIT_HANDLE_COUNT, pathEditShowAllRawPoints,
+      );
       project.updateLightPaintingStrokePoints(layerId, selectedStroke.id, newPts);
     }
   }
@@ -964,7 +1040,7 @@
       onpointerleave={() => { cursorX = null; cursorY = null; if (!isPathEditMode && drawingEnabled && drawMode !== 'pen') endStroke(); }}
       oncontextmenu={handleOverlayContextMenu}
       role="application"
-      aria-label="Light painting canvas"
+      aria-label={$t('lighting.lightPainting.canvasAria')}
     >
       <svg class="lp-preview-svg">
         <!-- Full-overlay crosshair guide. Two lines (vertical + horizontal)
@@ -973,26 +1049,105 @@
              so it's visible against bright AND dark scenes. Hidden when the
              pointer leaves the overlay. -->
         {#if cursorX !== null && cursorY !== null}
-          <line x1={cursorX} y1="0" x2={cursorX} y2="100%" stroke="rgba(0,0,0,0.6)" stroke-width="3" pointer-events="none" />
-          <line x1="0" y1={cursorY} x2="100%" y2={cursorY} stroke="rgba(0,0,0,0.6)" stroke-width="3" pointer-events="none" />
-          <line x1={cursorX} y1="0" x2={cursorX} y2="100%" stroke="rgba(255,255,255,0.85)" stroke-width="1" pointer-events="none" />
-          <line x1="0" y1={cursorY} x2="100%" y2={cursorY} stroke="rgba(255,255,255,0.85)" stroke-width="1" pointer-events="none" />
-          <circle cx={cursorX} cy={cursorY} r={Math.max(4, currentBrush.size * 0.35)} fill="none" stroke="rgba(0,0,0,0.7)" stroke-width="2" pointer-events="none" />
-          <circle cx={cursorX} cy={cursorY} r={Math.max(4, currentBrush.size * 0.35)} fill="none" stroke="rgba({brushColorRgb},0.95)" stroke-width="1" pointer-events="none" />
+          <line
+            x1={cursorX}
+            y1="0"
+            x2={cursorX}
+            y2="100%"
+            stroke="rgba(0,0,0,0.6)"
+            stroke-width="3"
+            pointer-events="none"
+          />
+          <line
+            x1="0"
+            y1={cursorY}
+            x2="100%"
+            y2={cursorY}
+            stroke="rgba(0,0,0,0.6)"
+            stroke-width="3"
+            pointer-events="none"
+          />
+          <line
+            x1={cursorX}
+            y1="0"
+            x2={cursorX}
+            y2="100%"
+            stroke="rgba(255,255,255,0.85)"
+            stroke-width="1"
+            pointer-events="none"
+          />
+          <line
+            x1="0"
+            y1={cursorY}
+            x2="100%"
+            y2={cursorY}
+            stroke="rgba(255,255,255,0.85)"
+            stroke-width="1"
+            pointer-events="none"
+          />
+          <circle
+            cx={cursorX}
+            cy={cursorY}
+            r={Math.max(4, currentBrush.size * 0.35)}
+            fill="none"
+            stroke="rgba(0,0,0,0.7)"
+            stroke-width="2"
+            pointer-events="none"
+          />
+          <circle
+            cx={cursorX}
+            cy={cursorY}
+            r={Math.max(4, currentBrush.size * 0.35)}
+            fill="none"
+            stroke="rgba({brushColorRgb},0.95)"
+            stroke-width="1"
+            pointer-events="none"
+          />
         {/if}
         {#if drawMode === 'freehand' && isDrawing && livePreviewPath}
-          <path d={livePreviewPath} fill="none" stroke="rgba({brushColorRgb},{currentBrush.opacity * 0.3})"
-            stroke-width={currentBrush.size * 1.5} stroke-linecap="round" stroke-linejoin="round" filter="url(#lp-glow)" />
-          <path d={livePreviewPath} fill="none" stroke="rgba({brushColorRgb},{currentBrush.opacity * 0.8})"
-            stroke-width={Math.max(2, currentBrush.size * 0.4)} stroke-linecap="round" stroke-linejoin="round" />
-          <path d={livePreviewPath} fill="none" stroke="rgba(255,255,255,{currentBrush.opacity * 0.6})"
-            stroke-width={Math.max(1, currentBrush.size * 0.15)} stroke-linecap="round" stroke-linejoin="round" />
+          <path
+            d={livePreviewPath}
+            fill="none"
+            stroke="rgba({brushColorRgb},{currentBrush.opacity * 0.3})"
+            stroke-width={currentBrush.size * 1.5}
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            filter="url(#lp-glow)"
+          />
+          <path
+            d={livePreviewPath}
+            fill="none"
+            stroke="rgba({brushColorRgb},{currentBrush.opacity * 0.8})"
+            stroke-width={Math.max(2, currentBrush.size * 0.4)}
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+          <path
+            d={livePreviewPath}
+            fill="none"
+            stroke="rgba(255,255,255,{currentBrush.opacity * 0.6})"
+            stroke-width={Math.max(1, currentBrush.size * 0.15)}
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
         {/if}
         {#if drawMode === 'pen' && penPreviewSvg.path}
-          <path d={penPreviewSvg.path} fill="none" stroke="rgba({brushColorRgb},0.6)"
-            stroke-width={Math.max(2, currentBrush.size * 0.3)} stroke-linecap="round" stroke-linejoin="round" />
-          <path d={penPreviewSvg.path} fill="none" stroke="rgba(255,255,255,0.4)"
-            stroke-width={Math.max(1, currentBrush.size * 0.1)} stroke-linecap="round" stroke-linejoin="round" />
+          <path
+            d={penPreviewSvg.path}
+            fill="none"
+            stroke="rgba({brushColorRgb},0.6)"
+            stroke-width={Math.max(2, currentBrush.size * 0.3)}
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
+          <path
+            d={penPreviewSvg.path}
+            fill="none"
+            stroke="rgba(255,255,255,0.4)"
+            stroke-width={Math.max(1, currentBrush.size * 0.1)}
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          />
           {#each penPreviewSvg.handles as h}
             <line x1={h.x1} y1={h.y1} x2={h.x2} y2={h.y2} stroke="rgba(103,232,249,0.5)" stroke-width="1" />
             <circle cx={h.x2} cy={h.y2} r="3" fill="#BB86FC" opacity="0.7" />
@@ -1013,13 +1168,7 @@
                with a dark drop-shadow underneath + bright cyan dashed
                on top so it reads against both dark sky and bright glow
                strokes. -->
-          <path
-            d={pathGuidePathD}
-            fill="none"
-            stroke="rgba(0,0,0,0.65)"
-            stroke-width="3"
-            pointer-events="none"
-          />
+          <path d={pathGuidePathD} fill="none" stroke="rgba(0,0,0,0.65)" stroke-width="3" pointer-events="none" />
           <path
             d={pathGuidePathD}
             fill="none"
@@ -1055,7 +1204,11 @@
                 fill={pathDragHandleIndex === i ? 'rgba(103,232,249,0.35)' : 'transparent'}
                 stroke={h.isAnchor ? pathToolPalette.anchorStroke : pathToolPalette.stroke}
                 stroke-width="1.5"
-                style="cursor: {pathEditTool === 'delete' ? 'not-allowed' : pathEditTool === 'insert' ? 'crosshair' : 'grab'}; pointer-events: all; touch-action: none;"
+                style="cursor: {pathEditTool === 'delete'
+                  ? 'not-allowed'
+                  : pathEditTool === 'insert'
+                    ? 'crosshair'
+                    : 'grab'}; pointer-events: all; touch-action: none;"
                 onpointerdown={(e: PointerEvent) => onHandlePointerDown(e, i)}
                 onpointermove={onHandlePointerMove}
                 onpointerup={onHandlePointerUp}
@@ -1109,13 +1262,14 @@
 
       {#if strokeCount === 0 && !isDrawing && penPoints.length === 0}
         <div class="draw-hint">
-          {#if drawMode === 'pen'}Click to place points - Drag for curves - Enter to finish
-          {:else}Click and drag to paint light trails{/if}
+          {#if drawMode === 'pen'}{$t('lighting.lightPainting.hints.pen')}
+          {:else}{$t('lighting.lightPainting.hints.freehand')}{/if}
         </div>
       {/if}
-      {#if isDrawing}<div class="status-pill rec">REC</div>{/if}
+      {#if isDrawing}<div class="status-pill rec">{$t('lighting.lightPainting.status.recording')}</div>{/if}
       {#if drawMode === 'pen' && penPoints.length > 0}
-        <div class="status-pill pen">{penPoints.length} pts - Enter to finish</div>
+        <div class="status-pill pen">{$t('lighting.lightPainting.status.penPoints', { values: { count: penPoints.length} })}
+        </div>
       {/if}
     </div>
   {/if}
@@ -1125,32 +1279,35 @@
     <div class="lp-sidebar">
       <!-- Header -->
       <div class="lp-header">
-        <span class="lp-title">Light Painting</span>
+        <span class="lp-title">{$t('lighting.lightPainting.title')}</span>
       </div>
 
       <!-- Draw / Edit toggle -->
       <div class="lp-row">
-        <span class="row-label">Mode</span>
+        <span class="row-label">{$t('lighting.lightPainting.mode')}</span>
         <div class="mode-btns">
-          <button class:active={drawingEnabled} onclick={() => drawingEnabled = true}>Draw</button>
-          <button class:active={!drawingEnabled} onclick={() => drawingEnabled = false}>Edit</button>
+          <button class:active={drawingEnabled} onclick={() => (drawingEnabled = true)}>{$t('lighting.lightPainting.draw')}</button>
+          <button class:active={!drawingEnabled} onclick={() => (drawingEnabled = false)}>{$t('lighting.lightPainting.edit')}</button>
         </div>
       </div>
 
       <!-- Draw mode -->
       {#if drawingEnabled}
       <div class="lp-row">
-        <span class="row-label">Tool</span>
+        <span class="row-label">{$t('lighting.lightPainting.tool')}</span>
         <div class="mode-btns">
-          <button class:active={drawMode === 'freehand'} onclick={() => setDrawMode('freehand')}>Freehand</button>
-          <button class:active={drawMode === 'pen'} onclick={() => setDrawMode('pen')}>Pen</button>
+          <button class:active={drawMode === 'freehand'} onclick={() => setDrawMode('freehand')}>{$t('lighting.lightPainting.freehand')}</button>
+          <button class:active={drawMode === 'pen'} onclick={() => setDrawMode('pen')}>{$t('lighting.lightPainting.pen')}</button>
         </div>
       </div>
       {/if}
 
       <!-- Playback -->
       <div class="lp-row">
-        <button class="play-btn" class:playing={content.isPlaying} onclick={togglePlayback}>
+        <button class="play-btn" class:playing={content.isPlaying} onclick={togglePlayback}
+          aria-label={content.isPlaying
+            ? $t('lighting.lightPainting.playback.pause')
+            : $t('lighting.lightPainting.playback.play')}>
           {#if content.isPlaying}
             <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
           {:else}
@@ -1158,32 +1315,32 @@
           {/if}
         </button>
         {#each loopModes as lm}
-          <button class="loop-btn" class:active={content.loopMode === lm.mode} onclick={() => setLoopMode(lm.mode)}>{lm.label}</button>
+          <button class="loop-btn" class:active={content.loopMode === lm.mode} onclick={() => setLoopMode(lm.mode)}>{loopModeLabel(lm.mode)}</button>
         {/each}
         {#if strokeCount > 0}<span class="stroke-badge">{strokeCount}</span>{/if}
       </div>
 
       <!-- Tabs -->
       <div class="lp-tabs">
-        <button class:active={activeSection === 'brush'} onclick={() => activeSection = 'brush'}>Brush</button>
-        <button class:active={activeSection === 'animation'} onclick={() => activeSection = 'animation'}>Anim</button>
-        <button class:active={activeSection === 'effects'} onclick={() => activeSection = 'effects'}>FX</button>
-        <button class:active={activeSection === 'strokes'} onclick={() => activeSection = 'strokes'}>Strokes</button>
+        <button class:active={activeSection === 'brush'} onclick={() => (activeSection = 'brush')}>{$t('lighting.lightPainting.tabs.brush')}</button>
+        <button class:active={activeSection === 'animation'} onclick={() => (activeSection = 'animation')}>{$t('lighting.lightPainting.tabs.animation')}</button>
+        <button class:active={activeSection === 'effects'} onclick={() => (activeSection = 'effects')}>{$t('lighting.lightPainting.tabs.effects')}</button>
+        <button class:active={activeSection === 'strokes'} onclick={() => (activeSection = 'strokes')}>{$t('lighting.lightPainting.tabs.strokes')}</button>
       </div>
 
       <!-- Content -->
       <div class="lp-content">
         {#if activeSection === 'brush'}
-          <div class="sec-label">Brush Type</div>
+          <div class="sec-label">{$t('lighting.lightPainting.brushType')}</div>
           <div class="brush-grid">
             {#each brushTypes as bt}
               <button class="brush-btn" class:active={currentBrush.type === bt.type} class:gpu={bt.gpu} onclick={() => setBrushType(bt.type)}>
-                {bt.label}{#if bt.gpu}<span class="gpu-badge">GPU</span>{/if}
+                {brushLabel(bt.type)}{#if bt.gpu}<span class="gpu-badge">{$t('lighting.lightPainting.labels.gpu')}</span>{/if}
               </button>
             {/each}
           </div>
 
-          <div class="sec-label">Color</div>
+          <div class="sec-label">{$t('lighting.lightPainting.color')}</div>
           <div class="color-grid">
             {#each colorPresets as cp}
               <button class="color-dot"
@@ -1191,14 +1348,15 @@
                 style="background:rgb({cp[0]},{cp[1]},{cp[2]}); box-shadow:0 0 8px rgba({cp[0]},{cp[1]},{cp[2]},0.4)"
                 onclick={() => setColor(cp)} />
             {/each}
-            <input type="color" class="color-picker" value={customColorHex} onchange={handleCustomColor} title="Custom" />
+            <input type="color" class="color-picker" value={customColorHex} onchange={handleCustomColor} title={$t('lighting.lightPainting.customColor')}
+            />
           </div>
 
           <div class="sec-label">
-            Secondary Glow
+            {$t('lighting.lightPainting.secondaryGlow')}
             <button class="mini-toggle" class:on={currentBrush.secondaryColor !== null}
               onclick={() => setSecondaryColor(currentBrush.secondaryColor ? null : [67, 232, 249])}>
-              {currentBrush.secondaryColor ? 'ON' : 'OFF'}
+              {currentBrush.secondaryColor ? $t('lighting.lightPainting.on') : $t('lighting.lightPainting.off')}
             </button>
           </div>
           {#if currentBrush.secondaryColor}
@@ -1213,19 +1371,28 @@
             </div>
           {/if}
 
-          <div class="sec-label">Settings</div>
+          <div class="sec-label">{$t('lighting.lightPainting.settings')}</div>
           <div class="slider-col">
-            <div class="sc"><label>Size <b>{currentBrush.size}</b></label><input type="range" min="1" max="100" step="1" value={currentBrush.size} oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, size: parseInt((e.target as HTMLInputElement).value) })} /></div>
-            <div class="sc"><label>Glow <b>{currentBrush.glow.toFixed(1)}</b></label><input type="range" min="0" max="5" step="0.1" value={currentBrush.glow} oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, glow: parseFloat((e.target as HTMLInputElement).value) })} /></div>
-            <div class="sc"><label>Softness <b>{currentBrush.softness.toFixed(1)}</b></label><input type="range" min="0" max="1" step="0.05" value={currentBrush.softness} oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, softness: parseFloat((e.target as HTMLInputElement).value) })} /></div>
-            <div class="sc"><label>Jitter <b>{currentBrush.jitter.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={currentBrush.jitter} oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, jitter: parseFloat((e.target as HTMLInputElement).value) })} /></div>
-            <div class="sc"><label>Opacity <b>{currentBrush.opacity.toFixed(2)}</b></label><input type="range" min="0.05" max="1" step="0.01" value={currentBrush.opacity} oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, opacity: parseFloat((e.target as HTMLInputElement).value) })} /></div>
-            <div class="sc"><label>Smooth <b>{(currentBrush.smoothing ?? 0.5).toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={currentBrush.smoothing} oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, smoothing: parseFloat((e.target as HTMLInputElement).value) })} /></div>
-            <div class="sc"><label>Speed <b>{(currentBrush.speed ?? 1).toFixed(2)}</b></label><input type="range" min="0.1" max="5" step="0.05" value={currentBrush.speed ?? 1} oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, speed: parseFloat((e.target as HTMLInputElement).value) })} /></div>
+            <div class="sc"><label>{$t('lighting.lightPainting.labels.size')} <b>{currentBrush.size}</b></label><input type="range" min="1" max="100" step="1" value={currentBrush.size} oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, size: parseInt((e.target as HTMLInputElement).value) })} /></div>
+            <div class="sc"><label>{$t('lighting.lightPainting.labels.glow')} <b>{currentBrush.glow.toFixed(1)}</b></label><input type="range" min="0" max="5" step="0.1" value={currentBrush.glow} oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, glow: parseFloat((e.target as HTMLInputElement).value),
+                  })} /></div>
+            <div class="sc"><label>{$t('lighting.lightPainting.labels.softness')} <b>{currentBrush.softness.toFixed(1)}</b></label><input type="range" min="0" max="1" step="0.05" value={currentBrush.softness} oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, softness: parseFloat((e.target as HTMLInputElement).value),
+                  })} /></div>
+            <div class="sc"><label>{$t('lighting.lightPainting.labels.jitter')} <b>{currentBrush.jitter.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={currentBrush.jitter} oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, jitter: parseFloat((e.target as HTMLInputElement).value),
+                  })} /></div>
+            <div class="sc"><label>{$t('lighting.lightPainting.labels.opacity')} <b>{currentBrush.opacity.toFixed(2)}</b></label><input type="range" min="0.05" max="1" step="0.01" value={currentBrush.opacity} oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, opacity: parseFloat((e.target as HTMLInputElement).value),
+                  })} /></div>
+            <div class="sc"><label>{$t('lighting.lightPainting.labels.smooth')} <b>{(currentBrush.smoothing ?? 0.5).toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={currentBrush.smoothing} oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, smoothing: parseFloat((e.target as HTMLInputElement).value),
+                  })} /></div>
+            <div class="sc"><label>{$t('lighting.lightPainting.labels.speed')} <b>{(currentBrush.speed ?? 1).toFixed(2)}</b></label><input type="range" min="0.1" max="5" step="0.05" value={currentBrush.speed ?? 1} oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, speed: parseFloat((e.target as HTMLInputElement).value),
+                  })} /></div>
           </div>
           <div class="check-row">
-            <label><input type="checkbox" checked={currentBrush.taper} onchange={(e) => updateBrushAndMaybeStroke({ ...currentBrush, taper: (e.target as HTMLInputElement).checked })} /> Soft Ends</label>
-            <label><input type="checkbox" checked={currentBrush.pressureSensitive} onchange={(e) => updateBrushAndMaybeStroke({ ...currentBrush, pressureSensitive: (e.target as HTMLInputElement).checked })} /> Pressure</label>
+            <label><input type="checkbox" checked={currentBrush.taper} onchange={(e) => updateBrushAndMaybeStroke({ ...currentBrush, taper: (e.target as HTMLInputElement).checked })} />
+              {$t('lighting.lightPainting.labels.softEnds')}</label>
+            <label><input type="checkbox" checked={currentBrush.pressureSensitive} onchange={(e) => updateBrushAndMaybeStroke({ ...currentBrush, pressureSensitive: (e.target as HTMLInputElement).checked,
+                  })} />
+              {$t('lighting.lightPainting.labels.pressure')}</label>
           </div>
 
           <!-- ── Per-stroke taper curve ──
@@ -1241,35 +1408,39 @@
                  root  → 0.25, 1, 0.7  (narrow start, fans wider)
                  even  → 1, 1, 1       (no taper) -->
           <div class="sec-label sub">
-            Taper
+            {$t('lighting.lightPainting.labels.taper')}
             <span style="font-weight:400; opacity:0.7; font-size:0.85em; margin-left:auto;">
-              start → end
+              {$t('lighting.lightPainting.labels.startEnd')}
             </span>
           </div>
           <div class="slider-col">
             <div class="sc">
-              <label>Start Width <b>{(currentBrush.taperStart ?? 1).toFixed(2)}×</b></label>
+              <label>{$t('lighting.lightPainting.labels.startWidth')}
+                <b>{(currentBrush.taperStart ?? 1).toFixed(2)}×</b></label>
               <input type="range" min="0" max="2" step="0.05"
                 value={currentBrush.taperStart ?? 1}
-                oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, taperStart: parseFloat((e.target as HTMLInputElement).value) })} />
+                oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, taperStart: parseFloat((e.target as HTMLInputElement).value),
+                  })} />
             </div>
             <div class="sc">
-              <label>End Width <b>{(currentBrush.taperEnd ?? 1).toFixed(2)}×</b></label>
+              <label>{$t('lighting.lightPainting.labels.endWidth')} <b>{(currentBrush.taperEnd ?? 1).toFixed(2)}×</b></label>
               <input type="range" min="0" max="2" step="0.05"
                 value={currentBrush.taperEnd ?? 1}
-                oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, taperEnd: parseFloat((e.target as HTMLInputElement).value) })} />
+                oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, taperEnd: parseFloat((e.target as HTMLInputElement).value),
+                  })} />
             </div>
             <div class="sc">
-              <label>Curve <b>{(currentBrush.taperCurve ?? 1).toFixed(2)}</b></label>
+              <label>{$t('lighting.lightPainting.labels.curve')} <b>{(currentBrush.taperCurve ?? 1).toFixed(2)}</b></label>
               <input type="range" min="0.25" max="4" step="0.05"
                 value={currentBrush.taperCurve ?? 1}
-                oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, taperCurve: parseFloat((e.target as HTMLInputElement).value) })} />
+                oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, taperCurve: parseFloat((e.target as HTMLInputElement).value),
+                  })} />
             </div>
           </div>
           <div class="check-row" style="gap:6px; flex-wrap:wrap;">
-            <button class="mini-action" onclick={() => updateBrushAndMaybeStroke({ ...currentBrush, taperStart: 1, taperEnd: 0.25, taperCurve: 1.5 })}>Trunk → tip</button>
-            <button class="mini-action" onclick={() => updateBrushAndMaybeStroke({ ...currentBrush, taperStart: 0.25, taperEnd: 1, taperCurve: 0.7 })}>Tip → trunk</button>
-            <button class="mini-action" onclick={() => updateBrushAndMaybeStroke({ ...currentBrush, taperStart: 1, taperEnd: 1, taperCurve: 1 })}>Even</button>
+            <button class="mini-action" onclick={() => updateBrushAndMaybeStroke({ ...currentBrush, taperStart: 1, taperEnd: 0.25, taperCurve: 1.5 })}>{$t('lighting.lightPainting.labels.trunkToTip')}</button>
+            <button class="mini-action" onclick={() => updateBrushAndMaybeStroke({ ...currentBrush, taperStart: 0.25, taperEnd: 1, taperCurve: 0.7 })}>{$t('lighting.lightPainting.labels.tipToTrunk')}</button>
+            <button class="mini-action" onclick={() => updateBrushAndMaybeStroke({ ...currentBrush, taperStart: 1, taperEnd: 1, taperCurve: 1 })}>{$t('lighting.lightPainting.labels.even')}</button>
           </div>
 
           <!-- GPU brush controls — surfaced only when the active brush
@@ -1278,71 +1449,87 @@
                knobs and the WGSL ignores the irrelevant ones. -->
           {#if GPU_BRUSH_TYPES.has(currentBrush.type)}
             <div class="sec-label">
-              GPU Brush <span class="gpu-badge inline">WebGPU</span>
+              {$t('lighting.lightPainting.labels.gpuBrush')}
+              <span class="gpu-badge inline">{$t('lighting.lightPainting.labels.webgpu')}</span>
             </div>
             <div class="slider-col">
               <div class="sc">
-                <label>Particles <b>{currentBrush.gpuParticleCount ?? 800}</b></label>
+                <label>{$t('lighting.lightPainting.labels.particles')} <b>{currentBrush.gpuParticleCount ?? 800}</b></label>
                 <input type="range" min="50" max="4000" step="50"
                   value={currentBrush.gpuParticleCount ?? 800}
-                  oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuParticleCount: parseInt((e.target as HTMLInputElement).value) })} />
+                  oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuParticleCount: parseInt((e.target as HTMLInputElement).value),
+                    })} />
               </div>
               {#if currentBrush.type === 'spiral'}
                 <div class="sc">
-                  <label>Wrap Radius <b>{(currentBrush.gpuSpiralRadius ?? 0.025).toFixed(3)}</b></label>
+                  <label>{$t('lighting.lightPainting.labels.wrapRadius')}
+                    <b>{(currentBrush.gpuSpiralRadius ?? 0.025).toFixed(3)}</b></label>
                   <input type="range" min="0.005" max="0.15" step="0.001"
                     value={currentBrush.gpuSpiralRadius ?? 0.025}
-                    oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuSpiralRadius: parseFloat((e.target as HTMLInputElement).value) })} />
+                    oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuSpiralRadius: parseFloat((e.target as HTMLInputElement).value),
+                      })} />
                 </div>
                 <div class="sc">
-                  <label>Wrap Speed <b>{(currentBrush.gpuSpiralSpeed ?? 1.2).toFixed(2)}</b></label>
+                  <label>{$t('lighting.lightPainting.labels.wrapSpeed')}
+                    <b>{(currentBrush.gpuSpiralSpeed ?? 1.2).toFixed(2)}</b></label>
                   <input type="range" min="-5" max="5" step="0.1"
                     value={currentBrush.gpuSpiralSpeed ?? 1.2}
-                    oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuSpiralSpeed: parseFloat((e.target as HTMLInputElement).value) })} />
+                    oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuSpiralSpeed: parseFloat((e.target as HTMLInputElement).value),
+                      })} />
                 </div>
                 <div class="sc">
-                  <label>Helix Pitch <b>{currentBrush.gpuSpiralPitch ?? 8}</b></label>
+                  <label>{$t('lighting.lightPainting.labels.helixPitch')} <b>{currentBrush.gpuSpiralPitch ?? 8}</b></label>
                   <input type="range" min="1" max="30" step="0.5"
                     value={currentBrush.gpuSpiralPitch ?? 8}
-                    oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuSpiralPitch: parseFloat((e.target as HTMLInputElement).value) })} />
+                    oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuSpiralPitch: parseFloat((e.target as HTMLInputElement).value),
+                      })} />
                 </div>
                 <div class="check-row">
                   <label>
                     <input type="checkbox"
                       checked={currentBrush.gpuSpiralShowCore ?? false}
-                      onchange={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuSpiralShowCore: (e.target as HTMLInputElement).checked })} />
-                    Wrap-around mode (core + back-side cull, for tree trunks)
+                      onchange={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuSpiralShowCore: (e.target as HTMLInputElement).checked,
+                        })} />
+                    {$t('lighting.lightPainting.labels.wrapAroundMode')}
                   </label>
                 </div>
               {/if}
               {#if currentBrush.type === 'firefly' || currentBrush.type === 'sap-flow' || currentBrush.type === 'water' || currentBrush.type === 'smoke'}
                 <div class="sc">
-                  <label>Drift <b>{(currentBrush.gpuParticleDrift ?? 0.05).toFixed(3)}</b></label>
+                  <label>{$t('lighting.lightPainting.labels.drift')}
+                    <b>{(currentBrush.gpuParticleDrift ?? 0.05).toFixed(3)}</b></label>
                   <input type="range" min="0.005" max="0.3" step="0.005"
                     value={currentBrush.gpuParticleDrift ?? 0.05}
-                    oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuParticleDrift: parseFloat((e.target as HTMLInputElement).value) })} />
+                    oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuParticleDrift: parseFloat((e.target as HTMLInputElement).value),
+                      })} />
                 </div>
               {/if}
               {#if currentBrush.type === 'water'}
                 <div class="sc">
-                  <label>Sag (Gravity) <b>{(currentBrush.gpuWaterGravity ?? 1).toFixed(2)}</b></label>
+                  <label>{$t('lighting.lightPainting.labels.sagGravity')}
+                    <b>{(currentBrush.gpuWaterGravity ?? 1).toFixed(2)}</b></label>
                   <input type="range" min="0" max="2" step="0.05"
                     value={currentBrush.gpuWaterGravity ?? 1}
-                    oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuWaterGravity: parseFloat((e.target as HTMLInputElement).value) })} />
+                    oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuWaterGravity: parseFloat((e.target as HTMLInputElement).value),
+                      })} />
                 </div>
                 <div class="sc">
-                  <label>Flow Speed <b>{(currentBrush.gpuSpiralSpeed ?? 1.2).toFixed(2)}</b></label>
+                  <label>{$t('lighting.lightPainting.labels.flowSpeed')}
+                    <b>{(currentBrush.gpuSpiralSpeed ?? 1.2).toFixed(2)}</b></label>
                   <input type="range" min="0.1" max="5" step="0.1"
                     value={currentBrush.gpuSpiralSpeed ?? 1.2}
-                    oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuSpiralSpeed: parseFloat((e.target as HTMLInputElement).value) })} />
+                    oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuSpiralSpeed: parseFloat((e.target as HTMLInputElement).value),
+                      })} />
                 </div>
               {/if}
               {#if currentBrush.type === 'smoke'}
                 <div class="sc">
-                  <label>Rise Speed <b>{(currentBrush.gpuSmokeRise ?? 0.5).toFixed(2)}</b></label>
+                  <label>{$t('lighting.lightPainting.labels.riseSpeed')}
+                    <b>{(currentBrush.gpuSmokeRise ?? 0.5).toFixed(2)}</b></label>
                   <input type="range" min="0.05" max="1.5" step="0.05"
                     value={currentBrush.gpuSmokeRise ?? 0.5}
-                    oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuSmokeRise: parseFloat((e.target as HTMLInputElement).value) })} />
+                    oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuSmokeRise: parseFloat((e.target as HTMLInputElement).value),
+                      })} />
                 </div>
               {/if}
 
@@ -1357,16 +1544,19 @@
                 <label>
                   <input type="checkbox"
                     checked={currentBrush.gpuGlassTube ?? false}
-                    onchange={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuGlassTube: (e.target as HTMLInputElement).checked })} />
-                  Glass tube (translucent container around stroke)
+                    onchange={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuGlassTube: (e.target as HTMLInputElement).checked,
+                      })} />
+                  {$t('lighting.lightPainting.labels.glassTube')}
                 </label>
               </div>
               {#if currentBrush.gpuGlassTube}
                 <div class="sc">
-                  <label>Tube Width <b>{(currentBrush.gpuGlassTubeRadiusScale ?? 1.25).toFixed(2)}×</b></label>
+                  <label>{$t('lighting.lightPainting.labels.tubeWidth')}
+                    <b>{(currentBrush.gpuGlassTubeRadiusScale ?? 1.25).toFixed(2)}×</b></label>
                   <input type="range" min="0.5" max="3" step="0.05"
                     value={currentBrush.gpuGlassTubeRadiusScale ?? 1.25}
-                    oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuGlassTubeRadiusScale: parseFloat((e.target as HTMLInputElement).value) })} />
+                    oninput={(e) => updateBrushAndMaybeStroke({ ...currentBrush, gpuGlassTubeRadiusScale: parseFloat((e.target as HTMLInputElement).value),
+                      })} />
                 </div>
                 <!-- Glass-tube color: independent of the particle color
                      so you can tint the container separately from its
@@ -1374,7 +1564,7 @@
                      amber fireflies). Presets cover the most useful
                      starting points; the swatch on the right opens a
                      full color picker for anything else. -->
-                <div class="sec-label sub">Tube Color</div>
+                <div class="sec-label sub">{$t('lighting.lightPainting.labels.tubeColor')}</div>
                 <div class="color-grid">
                   {#each [[220,230,255],[200,255,240],[255,240,200],[255,200,230],[180,220,255],[255,255,255]] as cp}
                     <button class="color-dot sm"
@@ -1384,7 +1574,8 @@
                         (currentBrush.gpuGlassTubeColor ?? [220,230,255])[2] === cp[2]
                       }
                       style="background:rgb({cp[0]},{cp[1]},{cp[2]})"
-                      onclick={() => updateBrushAndMaybeStroke({ ...currentBrush, gpuGlassTubeColor: [cp[0], cp[1], cp[2]] as [number, number, number] })} />
+                      onclick={() => updateBrushAndMaybeStroke({ ...currentBrush, gpuGlassTubeColor: [cp[0], cp[1], cp[2]] as [number, number, number],
+                        })} />
                   {/each}
                   <input type="color" class="color-picker sm" value={glassTubeColorHexFull}
                     onchange={(e) => {
@@ -1403,120 +1594,128 @@
             </div>
             <div class="gpu-hint">
               {#if currentBrush.type === 'spiral'}
-                360° helix of particles around the stroke — full visibility front and back. Toggle Wrap-around mode for projections onto tree trunks where you want only the front-side particles + a glowing centerline.
+                {$t('lighting.lightPainting.hintsGpu.spiral')}
               {:else if currentBrush.type === 'firefly'}
-                Particles spawn on the stroke and drift outward, twinkling. Place strokes on branch tips for a fireflies-on-a-tree look.
+                {$t('lighting.lightPainting.hintsGpu.firefly')}
               {:else if currentBrush.type === 'sap-flow'}
-                Particles flow along the stroke at varying phases — like sap moving through veins.
+                {lightPaintingMessage('hintsGpu.sap-flow')}
               {:else if currentBrush.type === 'water'}
-                Viscous glowing ectoplasm hugs the stroke and undulates slowly. Use a darker green/teal base color and high glow for the slimy fluid look.
+                {$t('lighting.lightPainting.hintsGpu.water')}
               {:else if currentBrush.type === 'smoke'}
-                Wisps rise upward from the stroke with curl-noise drift. Use white/grey base color and moderate glow.
+                {$t('lighting.lightPainting.hintsGpu.smoke')}
               {/if}
             </div>
           {/if}
 
         {:else if activeSection === 'animation'}
-          <div class="sec-label">Timing</div>
+          <div class="sec-label">{$t('lighting.lightPainting.labels.timing')}</div>
           <div class="slider-col">
-            <div class="sc"><label>Speed <b>{content.animationSpeed.toFixed(1)}x</b></label><input type="range" min="0.1" max="5" step="0.1" value={content.animationSpeed} oninput={(e) => updateSetting('animationSpeed', parseFloat((e.target as HTMLInputElement).value))} /></div>
-            <div class="sc"><label>Draw Speed <b>{content.drawSpeed.toFixed(1)}x</b></label><input type="range" min="0.1" max="10" step="0.1" value={content.drawSpeed} oninput={(e) => updateSetting('drawSpeed', parseFloat((e.target as HTMLInputElement).value))} /></div>
-            <div class="sc"><label>Trail Length <b>{content.trailLength.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.trailLength} oninput={(e) => updateSetting('trailLength', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>{$t('lighting.lightPainting.labels.speed')} <b>{content.animationSpeed.toFixed(1)}x</b></label><input type="range" min="0.1" max="5" step="0.1" value={content.animationSpeed} oninput={(e) => updateSetting('animationSpeed', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>{$t('lighting.lightPainting.labels.drawSpeed')} <b>{content.drawSpeed.toFixed(1)}x</b></label><input type="range" min="0.1" max="10" step="0.1" value={content.drawSpeed} oninput={(e) => updateSetting('drawSpeed', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>{$t('lighting.lightPainting.labels.trailLength')} <b>{content.trailLength.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.trailLength} oninput={(e) => updateSetting('trailLength', parseFloat((e.target as HTMLInputElement).value))} /></div>
             {#if content.loopMode === 'pingpong'}
-              <div class="sc"><label>Ping Pong Hold <b>{content.pingPongHold ?? 0}ms</b></label><input type="range" min="0" max="5000" step="100" value={content.pingPongHold ?? 0} oninput={(e) => updateSetting('pingPongHold', parseInt((e.target as HTMLInputElement).value))} /></div>
+              <div class="sc"><label>{$t('lighting.lightPainting.labels.pingPongHold')} <b>{content.pingPongHold ?? 0}ms</b></label><input type="range" min="0" max="5000" step="100" value={content.pingPongHold ?? 0} oninput={(e) => updateSetting('pingPongHold', parseInt((e.target as HTMLInputElement).value))} /></div>
             {/if}
           </div>
 
-          <div class="sec-label">Stagger</div>
+          <div class="sec-label">{$t('lighting.lightPainting.labels.stagger')}</div>
           <div class="check-row">
-            <label><input type="checkbox" checked={content.staggerStrokes} onchange={(e) => updateSetting('staggerStrokes', (e.target as HTMLInputElement).checked)} /> Stagger strokes sequentially</label>
+            <label><input type="checkbox" checked={content.staggerStrokes} onchange={(e) => updateSetting('staggerStrokes', (e.target as HTMLInputElement).checked)} />
+              {$t('lighting.lightPainting.labels.staggerStrokes')}</label>
           </div>
           {#if content.staggerStrokes}
             <div class="slider-col">
-              <div class="sc"><label>Stagger Delay <b>{content.staggerDelay}ms</b></label><input type="range" min="0" max="2000" step="50" value={content.staggerDelay} oninput={(e) => updateSetting('staggerDelay', parseInt((e.target as HTMLInputElement).value))} /></div>
+              <div class="sc"><label>{$t('lighting.lightPainting.labels.staggerDelay')} <b>{content.staggerDelay}ms</b></label><input type="range" min="0" max="2000" step="50" value={content.staggerDelay} oninput={(e) => updateSetting('staggerDelay', parseInt((e.target as HTMLInputElement).value))} /></div>
             </div>
           {/if}
 
-          <div class="sec-label">Sequence</div>
+          <div class="sec-label">{$t('lighting.lightPainting.labels.sequence')}</div>
           <div class="slider-col">
             <div class="sc">
-              <label>Order <b>{sequenceModes.find(sm => sm.mode === (content.sequenceMode ?? 'recorded'))?.label ?? 'Recorded'}</b></label>
+              <label>{$t('lighting.lightPainting.labels.order')}
+                <b>{sequenceModeLabel(content.sequenceMode ?? 'recorded')}</b></label>
               <select value={content.sequenceMode ?? 'recorded'} onchange={(e) => updateSetting('sequenceMode', (e.target as HTMLSelectElement).value)}>
                 {#each sequenceModes as sm}
-                  <option value={sm.mode}>{sm.label}</option>
+                  <option value={sm.mode}>{sequenceModeLabel(sm.mode)}</option>
                 {/each}
               </select>
             </div>
           </div>
           {#if (content.sequenceMode ?? 'recorded') === 'random'}
-            <div class="check-row"><button class="mini-action" onclick={reshuffleSequence}>Reshuffle Random Order</button></div>
+            <div class="check-row"><button class="mini-action" onclick={reshuffleSequence}>{$t('lighting.lightPainting.labels.reshuffle')}</button></div>
           {/if}
 
-          <div class="sec-label">Snake</div>
+          <div class="sec-label">{$t('lighting.lightPainting.labels.snake')}</div>
           <div class="slider-col">
-            <div class="sc"><label>Head Size <b>{content.snake.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.snake} oninput={(e) => updateSetting('snake', parseFloat((e.target as HTMLInputElement).value))} /></div>
-            <div class="sc"><label>Snake Speed <b>{content.snakeSpeed.toFixed(1)}x</b></label><input type="range" min="0.1" max="5" step="0.1" value={content.snakeSpeed} oninput={(e) => updateSetting('snakeSpeed', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>{$t('lighting.lightPainting.labels.headSize')} <b>{content.snake.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.snake} oninput={(e) => updateSetting('snake', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>{$t('lighting.lightPainting.labels.snakeSpeed')} <b>{content.snakeSpeed.toFixed(1)}x</b></label><input type="range" min="0.1" max="5" step="0.1" value={content.snakeSpeed} oninput={(e) => updateSetting('snakeSpeed', parseFloat((e.target as HTMLInputElement).value))} /></div>
           </div>
 
-          <div class="sec-label">Organic Motion</div>
+          <div class="sec-label">{$t('lighting.lightPainting.labels.organicMotion')}</div>
           <div class="slider-col">
-            <div class="sc"><label>Wind Sway <b>{(content.windSway ?? 0).toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.windSway ?? 0} oninput={(e) => updateSetting('windSway', parseFloat((e.target as HTMLInputElement).value))} /></div>
-            <div class="sc"><label>Wind Speed <b>{(content.windSpeed ?? 1).toFixed(1)}x</b></label><input type="range" min="0.1" max="5" step="0.1" value={content.windSpeed ?? 1} oninput={(e) => updateSetting('windSpeed', parseFloat((e.target as HTMLInputElement).value))} /></div>
-            <div class="sc"><label>Wind Detail <b>{(content.windScale ?? 2).toFixed(1)}</b></label><input type="range" min="0.5" max="8" step="0.1" value={content.windScale ?? 2} oninput={(e) => updateSetting('windScale', parseFloat((e.target as HTMLInputElement).value))} /></div>
-            <div class="sc"><label>Root Lock <b>{(content.windAnchor ?? 0.7).toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.windAnchor ?? 0.7} oninput={(e) => updateSetting('windAnchor', parseFloat((e.target as HTMLInputElement).value))} /></div>
-            <div class="sc"><label>Flow Pulse <b>{(content.flowPulse ?? 0).toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.flowPulse ?? 0} oninput={(e) => updateSetting('flowPulse', parseFloat((e.target as HTMLInputElement).value))} /></div>
-            <div class="sc"><label>Flow Speed <b>{(content.flowSpeed ?? 1).toFixed(1)}x</b></label><input type="range" min="0.1" max="5" step="0.1" value={content.flowSpeed ?? 1} oninput={(e) => updateSetting('flowSpeed', parseFloat((e.target as HTMLInputElement).value))} /></div>
-            <div class="sc"><label>Flow Width <b>{(content.flowWidth ?? 0.12).toFixed(2)}</b></label><input type="range" min="0.03" max="0.5" step="0.01" value={content.flowWidth ?? 0.12} oninput={(e) => updateSetting('flowWidth', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>{$t('lighting.lightPainting.labels.windSway')} <b>{(content.windSway ?? 0).toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.windSway ?? 0} oninput={(e) => updateSetting('windSway', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>{$t('lighting.lightPainting.labels.windSpeed')} <b>{(content.windSpeed ?? 1).toFixed(1)}x</b></label><input type="range" min="0.1" max="5" step="0.1" value={content.windSpeed ?? 1} oninput={(e) => updateSetting('windSpeed', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>{$t('lighting.lightPainting.labels.windDetail')} <b>{(content.windScale ?? 2).toFixed(1)}</b></label><input type="range" min="0.5" max="8" step="0.1" value={content.windScale ?? 2} oninput={(e) => updateSetting('windScale', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>{$t('lighting.lightPainting.labels.rootLock')} <b>{(content.windAnchor ?? 0.7).toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.windAnchor ?? 0.7} oninput={(e) => updateSetting('windAnchor', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>{$t('lighting.lightPainting.labels.flowPulse')} <b>{(content.flowPulse ?? 0).toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.flowPulse ?? 0} oninput={(e) => updateSetting('flowPulse', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>{$t('lighting.lightPainting.labels.flowSpeed')} <b>{(content.flowSpeed ?? 1).toFixed(1)}x</b></label><input type="range" min="0.1" max="5" step="0.1" value={content.flowSpeed ?? 1} oninput={(e) => updateSetting('flowSpeed', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>{$t('lighting.lightPainting.labels.flowWidth')} <b>{(content.flowWidth ?? 0.12).toFixed(2)}</b></label><input type="range" min="0.03" max="0.5" step="0.01" value={content.flowWidth ?? 0.12} oninput={(e) => updateSetting('flowWidth', parseFloat((e.target as HTMLInputElement).value))} /></div>
           </div>
 
         {:else if activeSection === 'effects'}
-          <div class="sec-label">Glow & Light</div>
+          <div class="sec-label">{$t('lighting.lightPainting.labels.glowLight')}</div>
           <div class="slider-col">
-            <div class="sc"><label>Bloom <b>{content.bloom.toFixed(1)}</b></label><input type="range" min="0" max="3" step="0.1" value={content.bloom} oninput={(e) => updateSetting('bloom', parseFloat((e.target as HTMLInputElement).value))} /></div>
-            <div class="sc"><label>Afterglow <b>{content.afterglow.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.afterglow} oninput={(e) => updateSetting('afterglow', parseFloat((e.target as HTMLInputElement).value))} /></div>
-            <div class="sc"><label>Motion Blur <b>{content.motionBlur.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.motionBlur} oninput={(e) => updateSetting('motionBlur', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>{$t('lighting.lightPainting.labels.bloom')} <b>{content.bloom.toFixed(1)}</b></label><input type="range" min="0" max="3" step="0.1" value={content.bloom} oninput={(e) => updateSetting('bloom', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>{$t('lighting.lightPainting.labels.afterglow')} <b>{content.afterglow.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.afterglow} oninput={(e) => updateSetting('afterglow', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>{$t('lighting.lightPainting.labels.motionBlur')} <b>{content.motionBlur.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.motionBlur} oninput={(e) => updateSetting('motionBlur', parseFloat((e.target as HTMLInputElement).value))} /></div>
           </div>
 
-          <div class="sec-label">Color</div>
+          <div class="sec-label">{$t('lighting.lightPainting.color')}</div>
           <div class="slider-col">
-            <div class="sc"><label>Hue Shift <b>{content.colorShift.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.colorShift} oninput={(e) => updateSetting('colorShift', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>{$t('lighting.lightPainting.labels.hueShift')} <b>{content.colorShift.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.colorShift} oninput={(e) => updateSetting('colorShift', parseFloat((e.target as HTMLInputElement).value))} /></div>
           </div>
-          <div class="check-row"><label><input type="checkbox" checked={content.multiColorGlow} onchange={(e) => updateSetting('multiColorGlow', (e.target as HTMLInputElement).checked)} /> Multi-Color Glow</label></div>
+          <div class="check-row"><label><input type="checkbox" checked={content.multiColorGlow} onchange={(e) => updateSetting('multiColorGlow', (e.target as HTMLInputElement).checked)} />
+              {$t('lighting.lightPainting.labels.multiColorGlow')}</label></div>
 
-          <div class="sec-label">Echo Lines</div>
+          <div class="sec-label">{$t('lighting.lightPainting.labels.echoLines')}</div>
           <div class="slider-col">
-            <div class="sc"><label>Echo Count <b>{content.echo}</b></label><input type="range" min="0" max="10" step="1" value={content.echo} oninput={(e) => updateSetting('echo', parseInt((e.target as HTMLInputElement).value))} /></div>
-            <div class="sc"><label>Echo Offset <b>{content.echoOffset.toFixed(2)}</b></label><input type="range" min="0.01" max="0.2" step="0.005" value={content.echoOffset} oninput={(e) => updateSetting('echoOffset', parseFloat((e.target as HTMLInputElement).value))} /></div>
-            <div class="sc"><label>Echo Decay <b>{content.echoDecay.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.echoDecay} oninput={(e) => updateSetting('echoDecay', parseFloat((e.target as HTMLInputElement).value))} /></div>
-          </div>
-
-          <div class="sec-label">Pulse & Strobe</div>
-          <div class="slider-col">
-            <div class="sc"><label>Pulse <b>{content.pulse.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.pulse} oninput={(e) => updateSetting('pulse', parseFloat((e.target as HTMLInputElement).value))} /></div>
-            <div class="sc"><label>Pulse Speed <b>{content.pulseSpeed.toFixed(1)}</b></label><input type="range" min="0.1" max="5" step="0.1" value={content.pulseSpeed} oninput={(e) => updateSetting('pulseSpeed', parseFloat((e.target as HTMLInputElement).value))} /></div>
-            <div class="sc"><label>Strobe <b>{content.strobe.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.strobe} oninput={(e) => updateSetting('strobe', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>{$t('lighting.lightPainting.labels.echoCount')} <b>{content.echo}</b></label><input type="range" min="0" max="10" step="1" value={content.echo} oninput={(e) => updateSetting('echo', parseInt((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>{$t('lighting.lightPainting.labels.echoOffset')} <b>{content.echoOffset.toFixed(2)}</b></label><input type="range" min="0.01" max="0.2" step="0.005" value={content.echoOffset} oninput={(e) => updateSetting('echoOffset', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>{$t('lighting.lightPainting.labels.echoDecay')} <b>{content.echoDecay.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.echoDecay} oninput={(e) => updateSetting('echoDecay', parseFloat((e.target as HTMLInputElement).value))} /></div>
           </div>
 
-          <div class="sec-label">Distortion</div>
+          <div class="sec-label">{$t('lighting.lightPainting.labels.pulseStrobe')}</div>
           <div class="slider-col">
-            <div class="sc"><label>Wave <b>{content.wave.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.wave} oninput={(e) => updateSetting('wave', parseFloat((e.target as HTMLInputElement).value))} /></div>
-            <div class="sc"><label>Wave Freq <b>{content.waveFreq.toFixed(1)}</b></label><input type="range" min="0.5" max="10" step="0.5" value={content.waveFreq} oninput={(e) => updateSetting('waveFreq', parseFloat((e.target as HTMLInputElement).value))} /></div>
-            <div class="sc"><label>Wave Speed <b>{content.waveSpeed.toFixed(1)}</b></label><input type="range" min="0.1" max="5" step="0.1" value={content.waveSpeed} oninput={(e) => updateSetting('waveSpeed', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>{$t('lighting.lightPainting.labels.pulse')} <b>{content.pulse.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.pulse} oninput={(e) => updateSetting('pulse', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>{$t('lighting.lightPainting.labels.pulseSpeed')} <b>{content.pulseSpeed.toFixed(1)}</b></label><input type="range" min="0.1" max="5" step="0.1" value={content.pulseSpeed} oninput={(e) => updateSetting('pulseSpeed', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>{$t('lighting.lightPainting.labels.strobe')} <b>{content.strobe.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.strobe} oninput={(e) => updateSetting('strobe', parseFloat((e.target as HTMLInputElement).value))} /></div>
           </div>
 
-          <div class="sec-label">Particles & Dynamics</div>
+          <div class="sec-label">{$t('lighting.lightPainting.labels.distortion')}</div>
           <div class="slider-col">
-            <div class="sc"><label>Sparkle <b>{content.sparkle.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.sparkle} oninput={(e) => updateSetting('sparkle', parseFloat((e.target as HTMLInputElement).value))} /></div>
-            <div class="sc"><label>Flicker <b>{content.flicker.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.flicker} oninput={(e) => updateSetting('flicker', parseFloat((e.target as HTMLInputElement).value))} /></div>
-            <div class="sc"><label>Breathe <b>{content.breathe.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.breathe} oninput={(e) => updateSetting('breathe', parseFloat((e.target as HTMLInputElement).value))} /></div>
-            <div class="sc"><label>Breathe Speed <b>{content.breatheSpeed.toFixed(1)}</b></label><input type="range" min="0.1" max="5" step="0.1" value={content.breatheSpeed} oninput={(e) => updateSetting('breatheSpeed', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>{$t('lighting.lightPainting.labels.wave')} <b>{content.wave.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.wave} oninput={(e) => updateSetting('wave', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>{$t('lighting.lightPainting.labels.waveFreq')} <b>{content.waveFreq.toFixed(1)}</b></label><input type="range" min="0.5" max="10" step="0.5" value={content.waveFreq} oninput={(e) => updateSetting('waveFreq', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>{$t('lighting.lightPainting.labels.waveSpeed')} <b>{content.waveSpeed.toFixed(1)}</b></label><input type="range" min="0.1" max="5" step="0.1" value={content.waveSpeed} oninput={(e) => updateSetting('waveSpeed', parseFloat((e.target as HTMLInputElement).value))} /></div>
+          </div>
+
+          <div class="sec-label">{$t('lighting.lightPainting.labels.particlesDynamics')}</div>
+          <div class="slider-col">
+            <div class="sc"><label>{$t('lighting.lightPainting.labels.sparkle')} <b>{content.sparkle.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.sparkle} oninput={(e) => updateSetting('sparkle', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>{$t('lighting.lightPainting.labels.flicker')} <b>{content.flicker.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.flicker} oninput={(e) => updateSetting('flicker', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>{$t('lighting.lightPainting.labels.breathe')} <b>{content.breathe.toFixed(2)}</b></label><input type="range" min="0" max="1" step="0.01" value={content.breathe} oninput={(e) => updateSetting('breathe', parseFloat((e.target as HTMLInputElement).value))} /></div>
+            <div class="sc"><label>{$t('lighting.lightPainting.labels.breatheSpeed')} <b>{content.breatheSpeed.toFixed(1)}</b></label><input type="range" min="0.1" max="5" step="0.1" value={content.breatheSpeed} oninput={(e) => updateSetting('breatheSpeed', parseFloat((e.target as HTMLInputElement).value))} /></div>
           </div>
 
         {:else if activeSection === 'strokes'}
           {#if isEditingStroke && selectedStroke}
             <div class="editing-banner">
-              <span>Editing: <b>Stroke {(content.strokes.findIndex(s => s.id === selectedStrokeId) ?? 0) + 1}</b> — {selectedStroke.brush.type}</span>
-              <button class="done-btn" onclick={deselectStroke}>Done</button>
+              <span>{$t('lighting.lightPainting.editing.stroke', {
+                  values: {
+                    index: (content.strokes.findIndex((s) => s.id === selectedStrokeId) ?? 0) + 1,
+                    type: brushLabel(selectedStroke.brush.type),
+                  },
+                })}</span>
+              <button class="done-btn" onclick={deselectStroke}>{$t('lighting.lightPainting.editing.done')}</button>
             </div>
             <!-- Path-edit toggle row. Only meaningful when a stroke is
                  selected; that's why it sits inside the editing banner
@@ -1525,86 +1724,136 @@
               <button
                 class="path-edit-toggle"
                 class:active={isPathEditMode}
-                onclick={() => { isPathEditMode = !isPathEditMode; }}
-                title="Drag control handles on the canvas to reshape this stroke"
+                onclick={() => {
+                  isPathEditMode = !isPathEditMode;
+                }}
+                title={$t('lighting.lightPainting.editing.pathEditTitle')}
               >
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                   <path d="M12 20h9" />
                   <path d="M16.5 3.5a2.121 2.121 0 0 1 3 3L7 19l-4 1 1-4z" />
                 </svg>
-                {isPathEditMode ? 'Done Editing Path' : 'Edit Path'}
+                {isPathEditMode
+                  ? $t('lighting.lightPainting.editing.donePathEdit')
+                  : $t('lighting.lightPainting.editing.pathEdit')}
               </button>
               {#if isPathEditMode}
                 <!-- Tool toolbox: Move / Delete / Insert. Default move
                      keeps the prior drag-to-warp UX; the other tools
                      unlock destructive + additive editing. -->
-                <div class="path-edit-tools" role="radiogroup" aria-label="Path edit tool">
+                <div
+                  class="path-edit-tools"
+                  role="radiogroup"
+                  aria-label={$t('lighting.lightPainting.editing.pathEditTool')}
+                >
                   <button
                     class="path-tool-btn"
                     class:active={pathEditTool === 'move'}
-                    onclick={() => { pathEditTool = 'move'; }}
-                    title="Move tool — drag a handle to warp / drag a selected group to translate rigidly"
-                    aria-pressed={pathEditTool === 'move'}
-                  >Move</button>
+                    onclick={() => {
+                      pathEditTool = 'move';
+                    }}
+                    title={$t('lighting.lightPainting.editing.moveTitle')}
+                    aria-pressed={pathEditTool === 'move'}>{$t('lighting.lightPainting.editing.move')}</button
+                  >
                   <button
                     class="path-tool-btn delete"
                     class:active={pathEditTool === 'delete'}
-                    onclick={() => { pathEditTool = 'delete'; }}
-                    title="Delete tool — click a handle to remove its point. Delete/Backspace also wipes the current selection."
-                    aria-pressed={pathEditTool === 'delete'}
-                  >Delete</button>
+                    onclick={() => {
+                      pathEditTool = 'delete';
+                    }}
+                    title={$t('lighting.lightPainting.editing.deleteTitle')}
+                    aria-pressed={pathEditTool === 'delete'}>{$t('lighting.lightPainting.editing.delete')}</button
+                  >
                   <button
                     class="path-tool-btn insert"
                     class:active={pathEditTool === 'insert'}
-                    onclick={() => { pathEditTool = 'insert'; }}
-                    title="Insert tool — click anywhere near the stroke to insert a new point at the closest position"
-                    aria-pressed={pathEditTool === 'insert'}
-                  >Insert</button>
+                    onclick={() => {
+                      pathEditTool = 'insert';
+                    }}
+                    title={$t('lighting.lightPainting.editing.insertTitle')}
+                    aria-pressed={pathEditTool === 'insert'}>{$t('lighting.lightPainting.editing.insert')}</button
+                  >
                 </div>
               {/if}
               {#if isPathEditMode && selectedStroke.drawMode !== 'pen'}
-                <label class="path-edit-checkbox" title="Show every raw point as a handle (more handles, finer control, but harder to target)">
+                <label class="path-edit-checkbox" title={$t('lighting.lightPainting.editing.showAllPointsTitle')}>
                   <input type="checkbox" bind:checked={pathEditShowAllRawPoints} />
-                  <span>Show all points</span>
+                  <span>{$t('lighting.lightPainting.editing.showAllPoints')}</span>
                 </label>
               {/if}
               {#if isPathEditMode}
                 {#if pathSelectedHandles.size > 0}
-                  <span class="path-edit-selcount">{pathSelectedHandles.size} selected</span>
+                  <span class="path-edit-selcount"
+                    >{$t('lighting.lightPainting.editing.selected', {
+                      values: { count: pathSelectedHandles.size },
+                    })}</span
+                  >
                 {/if}
                 <span class="path-edit-hint">
                   {#if pathEditTool === 'delete'}
-                    Click a handle to delete its point. Shift-click adds to selection. Drag empty space to marquee-select. Delete/Backspace removes selection.
+                    {$t('lighting.lightPainting.editing.deleteHint')}
                   {:else if pathEditTool === 'insert'}
-                    Click anywhere along the stroke to insert a new point at the closest position.
+                    {$t('lighting.lightPainting.editing.insertHint')}
                   {:else if selectedStroke.drawMode === 'pen'}
-                    Drag any anchor to reshape. Yellow handles are pen anchors. Shift-click to select multiple; drag a selected anchor to translate the group.
+                    {$t('lighting.lightPainting.editing.penHint')}
                   {:else if pathEditShowAllRawPoints}
-                    {selectedStroke.points.length} handles — drag any single point. Shift-click or marquee to select multiple; drag a selected handle to translate the group rigidly.
+                    {$t('lighting.lightPainting.editing.allPointsHint', {
+                      values: { count: selectedStroke.points.length },
+                    })}
                   {:else}
-                    {Math.min(PATH_EDIT_HANDLE_COUNT, selectedStroke.points.length)} handles — drag warps the nearby segment. Shift-click or marquee to select multiple; drag a selected handle to translate the group rigidly.
+                    {$t('lighting.lightPainting.editing.sampledHint', {
+                      values: { count: Math.min(PATH_EDIT_HANDLE_COUNT, selectedStroke.points.length) },
+                    })}
                   {/if}
                 </span>
               {/if}
             </div>
           {/if}
           {#if content.strokes.length === 0}
-            <div class="empty-msg">No strokes yet. Draw on the canvas to add strokes.</div>
+            <div class="empty-msg">{$t('lighting.lightPainting.strokes.empty')}</div>
           {:else}
             <div class="strokes-list">
               {#each content.strokes as stroke, i}
-                <div class="stroke-row" class:selected={stroke.id === selectedStrokeId}
-                  onclick={() => selectStroke(stroke.id === selectedStrokeId ? null : stroke.id)}>
-                  <div class="stroke-dot" style="background:rgb({stroke.brush.color[0]},{stroke.brush.color[1]},{stroke.brush.color[2]}); box-shadow:0 0 6px rgba({stroke.brush.color[0]},{stroke.brush.color[1]},{stroke.brush.color[2]},0.5)"></div>
+                <div
+                  class="stroke-row"
+                  class:selected={stroke.id === selectedStrokeId}
+                  onclick={() => selectStroke(stroke.id === selectedStrokeId ? null : stroke.id)}
+                >
+                  <div
+                    class="stroke-dot"
+                    style="background:rgb({stroke.brush.color[0]},{stroke.brush.color[1]},{stroke.brush
+                      .color[2]}); box-shadow:0 0 6px rgba({stroke.brush.color[0]},{stroke.brush.color[1]},{stroke.brush
+                      .color[2]},0.5)"
+                  ></div>
                   <div class="stroke-info">
-                    <span class="sname">{stroke.drawMode === 'pen' ? 'Pen ' : ''}Stroke {i+1}</span>
-                    <span class="smeta">{stroke.brush.type} / size {stroke.brush.size} / {stroke.points.length} pts</span>
+                    <span class="sname"
+                      >{stroke.drawMode === 'pen' ? $t('lighting.lightPainting.strokes.pen') : ''}{$t(
+                        'lighting.lightPainting.strokes.stroke',
+                      )}
+                      {i + 1}</span
+                    >
+                    <span class="smeta"
+                      >{$t('lighting.lightPainting.strokes.metadata', {
+                        values: {
+                          type: brushLabel(stroke.brush.type),
+                          size: stroke.brush.size,
+                          count: stroke.points.length,
+                        },
+                      })}</span
+                    >
                   </div>
-                  <button class="del-btn" onclick={(e) => { e.stopPropagation(); removeStroke(stroke.id); }}>X</button>
+                  <button
+                    class="del-btn"
+                    aria-label={$t('lighting.lightPainting.strokes.delete')}
+                    onclick={(e) => {
+                      e.stopPropagation();
+                      removeStroke(stroke.id);
+                    }}>{$t('lighting.lightPainting.strokes.delete')}</button
+                  >
                 </div>
               {/each}
             </div>
-            <button class="clear-btn" onclick={clearAllStrokes}>Clear All Strokes</button>
+            <button class="clear-btn" onclick={clearAllStrokes}>{$t('lighting.lightPainting.strokes.clearAll')}</button>
           {/if}
         {/if}
       </div>
@@ -1614,22 +1863,80 @@
 
 <style>
   /* ====== OVERLAY (inside viewport) ====== */
-  .lp-draw-overlay { position: absolute; top: 0; left: 0; right: 0; bottom: 0; z-index: 50; cursor: none; touch-action: none; }
-  .lp-draw-overlay.recording { cursor: none; }
-  .lp-draw-overlay.pen-mode { cursor: crosshair; }
+  .lp-draw-overlay {
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    z-index: 50;
+    cursor: none;
+    touch-action: none;
+  }
+  .lp-draw-overlay.recording {
+    cursor: none;
+  }
+  .lp-draw-overlay.pen-mode {
+    cursor: crosshair;
+  }
   /* Click-through state: layer is selected but we're neither drawing
      nor path-editing. Pointer events fall through to whatever's behind
      (layer transform handles, viewport pan, etc.) while inner SVG
      elements that explicitly set pointer-events:all still work — the
      marquee guide is hidden in this state anyway because pathMarquee*
      is null when not editing. */
-  .lp-draw-overlay.inactive { pointer-events: none; cursor: default; }
-  .lp-preview-svg { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; overflow: visible; }
-  .draw-hint { position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); color: rgba(255,255,255,0.25); font-size: 14px; pointer-events: none; text-align: center; max-width: 300px; }
-  .status-pill { position: absolute; top: 10px; left: 10px; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 700; pointer-events: none; }
-  .status-pill.rec { background: rgba(255,50,50,0.85); color: #fff; animation: pulse-rec 1s infinite; }
-  .status-pill.pen { background: rgba(103,232,249,0.85); color: #000; }
-  @keyframes pulse-rec { 0%,100% { opacity: 1; } 50% { opacity: 0.5; } }
+  .lp-draw-overlay.inactive {
+    pointer-events: none;
+    cursor: default;
+  }
+  .lp-preview-svg {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    pointer-events: none;
+    overflow: visible;
+  }
+  .draw-hint {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    color: rgba(255, 255, 255, 0.25);
+    font-size: 14px;
+    pointer-events: none;
+    text-align: center;
+    max-width: 300px;
+  }
+  .status-pill {
+    position: absolute;
+    top: 10px;
+    left: 10px;
+    padding: 3px 10px;
+    border-radius: 12px;
+    font-size: 11px;
+    font-weight: 700;
+    pointer-events: none;
+  }
+  .status-pill.rec {
+    background: rgba(255, 50, 50, 0.85);
+    color: #fff;
+    animation: pulse-rec 1s infinite;
+  }
+  .status-pill.pen {
+    background: rgba(103, 232, 249, 0.85);
+    color: #000;
+  }
+  @keyframes pulse-rec {
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.5;
+    }
+  }
 
   /* ====== SIDEBAR ====== */
   .lp-sidebar {
@@ -1645,95 +1952,238 @@
     padding: 10px 12px 8px;
     border-bottom: 1px solid #161618;
   }
-  .lp-title { font-size: 14px; font-weight: 700; color: #BB86FC; letter-spacing: 0.5px; }
+  .lp-title {
+    font-size: 14px;
+    font-weight: 700;
+    color: #bb86fc;
+    letter-spacing: 0.5px;
+  }
 
   /* Draw mode & playback rows */
   .lp-row {
-    display: flex; align-items: center; gap: 6px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
     padding: 6px 12px;
     border-bottom: 1px solid #222;
   }
-  .row-label { font-size: 12px; color: var(--text-muted, #888); font-weight: 600; }
-
-  .mode-btns { display: flex; border: 1px solid #444; border-radius: 5px; overflow: hidden; }
-  .mode-btns button {
-    background: transparent; border: none; color: var(--text-muted, #888);
-    padding: 4px 12px; font-size: 12px; font-weight: 600; cursor: pointer;
+  .row-label {
+    font-size: 12px;
+    color: var(--text-muted, #888);
+    font-weight: 600;
   }
-  .mode-btns button:hover { color: var(--text-primary, #ddd); background: rgba(255,255,255,0.04); }
-  .mode-btns button.active { color: #BB86FC; background: rgba(103,232,249,0.1); }
-  .mode-btns button + button { border-left: 1px solid #444; }
+
+  .mode-btns {
+    display: flex;
+    border: 1px solid #444;
+    border-radius: 5px;
+    overflow: hidden;
+  }
+  .mode-btns button {
+    background: transparent;
+    border: none;
+    color: var(--text-muted, #888);
+    padding: 4px 12px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+  }
+  .mode-btns button:hover {
+    color: var(--text-primary, #ddd);
+    background: rgba(255, 255, 255, 0.04);
+  }
+  .mode-btns button.active {
+    color: #bb86fc;
+    background: rgba(103, 232, 249, 0.1);
+  }
+  .mode-btns button + button {
+    border-left: 1px solid #444;
+  }
 
   .play-btn {
-    background: var(--bg-tertiary, #161618); border: 1px solid #444; color: var(--text-primary, #eee);
-    width: 26px; height: 26px; border-radius: 50%;
-    display: flex; align-items: center; justify-content: center; cursor: pointer; flex-shrink: 0;
+    background: var(--bg-tertiary, #161618);
+    border: 1px solid #444;
+    color: var(--text-primary, #eee);
+    width: 26px;
+    height: 26px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    flex-shrink: 0;
   }
-  .play-btn:hover { background: #333; }
-  .play-btn.playing { background: #BB86FC; color: #000; border-color: #BB86FC; }
+  .play-btn:hover {
+    background: #333;
+  }
+  .play-btn.playing {
+    background: #bb86fc;
+    color: #000;
+    border-color: #bb86fc;
+  }
 
   .loop-btn {
-    background: #222; border: 1px solid #3a3a3a; color: var(--text-muted, #888);
-    padding: 3px 8px; border-radius: 4px; font-size: 11px; font-weight: 600; cursor: pointer;
+    background: #222;
+    border: 1px solid #3a3a3a;
+    color: var(--text-muted, #888);
+    padding: 3px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
   }
-  .loop-btn:hover { color: var(--text-primary, #ccc); border-color: #555; }
-  .loop-btn.active { color: #BB86FC; border-color: #BB86FC; background: rgba(103,232,249,0.08); }
+  .loop-btn:hover {
+    color: var(--text-primary, #ccc);
+    border-color: #555;
+  }
+  .loop-btn.active {
+    color: #bb86fc;
+    border-color: #bb86fc;
+    background: rgba(103, 232, 249, 0.08);
+  }
 
   .stroke-badge {
-    background: #BB86FC; color: #000; font-size: 10px; font-weight: 700;
-    padding: 1px 5px; border-radius: 8px; margin-left: auto;
+    background: #bb86fc;
+    color: #000;
+    font-size: 10px;
+    font-weight: 700;
+    padding: 1px 5px;
+    border-radius: 8px;
+    margin-left: auto;
   }
 
   /* Tabs */
-  .lp-tabs { display: flex; border-bottom: 1px solid #161618; flex-shrink: 0; }
+  .lp-tabs {
+    display: flex;
+    border-bottom: 1px solid #161618;
+    flex-shrink: 0;
+  }
   .lp-tabs button {
-    flex: 1; background: none; border: none; color: #666;
-    padding: 7px 4px; font-size: 12px; font-weight: 600; cursor: pointer;
+    flex: 1;
+    background: none;
+    border: none;
+    color: #666;
+    padding: 7px 4px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
     border-bottom: 2px solid transparent;
   }
-  .lp-tabs button:hover { color: var(--text-secondary, #aaa); }
-  .lp-tabs button.active { color: #BB86FC; border-bottom-color: #BB86FC; }
+  .lp-tabs button:hover {
+    color: var(--text-secondary, #aaa);
+  }
+  .lp-tabs button.active {
+    color: #bb86fc;
+    border-bottom-color: #bb86fc;
+  }
 
   /* Content */
-  .lp-content { padding: 8px 12px; overflow-y: auto; flex: 1; }
+  .lp-content {
+    padding: 8px 12px;
+    overflow-y: auto;
+    flex: 1;
+  }
 
   /* Section labels */
   .sec-label {
-    display: flex; align-items: center; justify-content: space-between;
-    font-size: 12px; font-weight: 600; color: var(--text-muted, #888); text-transform: uppercase; letter-spacing: 0.4px;
-    margin: 10px 0 6px; padding-bottom: 4px; border-bottom: 1px solid #222;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--text-muted, #888);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    margin: 10px 0 6px;
+    padding-bottom: 4px;
+    border-bottom: 1px solid #222;
   }
-  .sec-label:first-child { margin-top: 0; }
+  .sec-label:first-child {
+    margin-top: 0;
+  }
 
   /* Full-width slider column */
-  .slider-col { display: flex; flex-direction: column; gap: 8px; margin-bottom: 8px; }
-  .sc { display: flex; flex-direction: column; }
+  .slider-col {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+  .sc {
+    display: flex;
+    flex-direction: column;
+  }
   .sc label {
-    font-size: 12px; color: #bbb; margin-bottom: 4px; display: flex; align-items: baseline;
+    font-size: 12px;
+    color: #bbb;
+    margin-bottom: 4px;
+    display: flex;
+    align-items: baseline;
   }
-  .sc label b { color: #BB86FC; font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace); font-size: 12px; font-weight: 400; margin-left: auto; }
-  .sc input[type="range"] {
-    width: 100%; height: 4px; appearance: none; background: #333; border-radius: 2px; outline: none;
+  .sc label b {
+    color: #bb86fc;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    font-size: 12px;
+    font-weight: 400;
+    margin-left: auto;
   }
-  .sc input[type="range"]::-webkit-slider-thumb {
-    appearance: none; width: 14px; height: 14px; border-radius: 50%;
-    background: #BB86FC; cursor: pointer; border: 2px solid #141416;
+  .sc input[type='range'] {
+    width: 100%;
+    height: 4px;
+    appearance: none;
+    background: #333;
+    border-radius: 2px;
+    outline: none;
+  }
+  .sc input[type='range']::-webkit-slider-thumb {
+    appearance: none;
+    width: 14px;
+    height: 14px;
+    border-radius: 50%;
+    background: #bb86fc;
+    cursor: pointer;
+    border: 2px solid #141416;
   }
   .sc select {
-    width: 100%; background: var(--bg-primary, #0d0d10); border: 1px solid #333; color: var(--text-primary, #ddd);
-    border-radius: 5px; padding: 6px 8px; font-size: 12px; outline: none;
+    width: 100%;
+    background: var(--bg-primary, #0d0d10);
+    border: 1px solid #333;
+    color: var(--text-primary, #ddd);
+    border-radius: 5px;
+    padding: 6px 8px;
+    font-size: 12px;
+    outline: none;
   }
 
   /* Brush grid */
-  .brush-grid { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; margin-bottom: 8px; }
+  .brush-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 4px;
+    margin-bottom: 8px;
+  }
   .brush-btn {
-    background: var(--bg-primary, #0d0d10); border: 1px solid #333; color: var(--text-secondary, #aaa);
-    border-radius: 5px; padding: 6px 2px; font-size: 11px; font-weight: 600;
-    cursor: pointer; text-align: center;
+    background: var(--bg-primary, #0d0d10);
+    border: 1px solid #333;
+    color: var(--text-secondary, #aaa);
+    border-radius: 5px;
+    padding: 6px 2px;
+    font-size: 11px;
+    font-weight: 600;
+    cursor: pointer;
+    text-align: center;
     position: relative;
   }
-  .brush-btn:hover { background: var(--bg-tertiary, #161618); color: var(--text-primary, #eee); border-color: #555; }
-  .brush-btn.active { background: rgba(103,232,249,0.1); color: #BB86FC; border-color: #BB86FC; }
+  .brush-btn:hover {
+    background: var(--bg-tertiary, #161618);
+    color: var(--text-primary, #eee);
+    border-color: #555;
+  }
+  .brush-btn.active {
+    background: rgba(103, 232, 249, 0.1);
+    color: #bb86fc;
+    border-color: #bb86fc;
+  }
   /* GPU brush buttons get a subtle gradient hint so they're visually
      distinct from the CPU-rasterised ones in the picker. */
   .brush-btn.gpu {
@@ -1784,16 +2234,16 @@
     background: var(--bg-tertiary, #161618); border: 1px solid #444; color: var(--text-muted, #888);
     padding: 1px 6px; border-radius: 3px; font-size: 10px; font-weight: 600; cursor: pointer;
   }
-  .mini-toggle.on { background: rgba(103,232,249,0.12); color: #BB86FC; border-color: #BB86FC; }
+  .mini-toggle.on { background: rgba(103,232,249,0.12); color: #bb86fc; border-color: #bb86fc; }
 
   .check-row { display: flex; gap: 12px; margin-bottom: 8px; }
   .check-row label { display: flex; align-items: center; gap: 5px; font-size: 12px; color: #bbb; cursor: pointer; }
-  .check-row input[type="checkbox"] { accent-color: #BB86FC; width: 13px; height: 13px; }
+  .check-row input[type='checkbox'] { accent-color: #bb86fc; width: 13px; height: 13px; }
   .mini-action {
     background: var(--bg-tertiary, #161618); border: 1px solid #333; color: #bbb;
     border-radius: 5px; padding: 5px 8px; font-size: 12px; cursor: pointer;
   }
-  .mini-action:hover { border-color: #BB86FC; color: #fff; }
+  .mini-action:hover { border-color: #bb86fc; color: #fff; }
 
   /* Strokes list */
   .strokes-list { max-height: 240px; overflow-y: auto; }
@@ -1828,20 +2278,20 @@
   .path-edit-toggle {
     display: inline-flex; align-items: center; gap: 5px;
     padding: 4px 10px;
-    background: transparent; color: #67E8F9;
+    background: transparent; color: #67e8f9;
     border: 1px solid rgba(103, 232, 249, 0.45);
     border-radius: 4px;
     font-size: 12px; font-weight: 600; cursor: pointer;
     transition: background 0.15s, border-color 0.15s;
   }
-  .path-edit-toggle:hover { background: rgba(103, 232, 249, 0.10); border-color: rgba(103, 232, 249, 0.7); }
-  .path-edit-toggle.active { background: #67E8F9; color: #0a0a0c; border-color: #67E8F9; }
+  .path-edit-toggle:hover { background: rgba(103, 232, 249, 0.1); border-color: rgba(103, 232, 249, 0.7); }
+  .path-edit-toggle.active { background: #67e8f9; color: #0a0a0c; border-color: #67e8f9; }
   .path-edit-toggle.active:hover { background: #8ff0fc; }
   .path-edit-checkbox {
     display: inline-flex; align-items: center; gap: 5px;
     font-size: 11px; color: var(--text-secondary, #aaa); cursor: pointer; user-select: none;
   }
-  .path-edit-checkbox input { width: 12px; height: 12px; cursor: pointer; accent-color: #67E8F9; }
+  .path-edit-checkbox input { width: 12px; height: 12px; cursor: pointer; accent-color: #67e8f9; }
   .path-edit-hint { font-size: 11px; color: var(--text-muted, #888); flex-basis: 100%; }
   .path-edit-tools {
     display: inline-flex; gap: 0; align-items: stretch;
@@ -1850,27 +2300,27 @@
   }
   .path-tool-btn {
     padding: 4px 9px;
-    background: transparent; color: #67E8F9;
+    background: transparent; color: #67e8f9;
     border: none;
     border-right: 1px solid rgba(103, 232, 249, 0.18);
     font-size: 11px; font-weight: 600; cursor: pointer;
     transition: background 0.12s, color 0.12s;
   }
   .path-tool-btn:last-child { border-right: none; }
-  .path-tool-btn:hover { background: rgba(103, 232, 249, 0.10); }
-  .path-tool-btn.active { background: #67E8F9; color: #0a0a0c; }
-  .path-tool-btn.delete { color: #FF8080; }
-  .path-tool-btn.delete:hover { background: rgba(255, 128, 128, 0.10); }
-  .path-tool-btn.delete.active { background: #FF8080; color: #1a0a0a; }
-  .path-tool-btn.insert { color: #80E89C; }
-  .path-tool-btn.insert:hover { background: rgba(128, 232, 156, 0.10); }
-  .path-tool-btn.insert.active { background: #80E89C; color: #0a1a0c; }
+  .path-tool-btn:hover { background: rgba(103, 232, 249, 0.1); }
+  .path-tool-btn.active { background: #67e8f9; color: #0a0a0c; }
+  .path-tool-btn.delete { color: #ff8080; }
+  .path-tool-btn.delete:hover { background: rgba(255, 128, 128, 0.1); }
+  .path-tool-btn.delete.active { background: #ff8080; color: #1a0a0a; }
+  .path-tool-btn.insert { color: #80e89c; }
+  .path-tool-btn.insert:hover { background: rgba(128, 232, 156, 0.1); }
+  .path-tool-btn.insert.active { background: #80e89c; color: #0a1a0c; }
   .path-edit-selcount {
-    font-size: 11px; font-weight: 600; color: #FFDD3C;
+    font-size: 11px; font-weight: 600; color: #ffdd3c;
     padding: 2px 6px;
     border: 1px solid rgba(255, 220, 60, 0.5);
     border-radius: 3px;
-    background: rgba(255, 220, 60, 0.10);
+    background: rgba(255, 220, 60, 0.1);
   }
   .stroke-dot { width: 12px; height: 12px; border-radius: 50%; flex-shrink: 0; }
   .stroke-info { flex: 1; min-width: 0; }

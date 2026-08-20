@@ -7,6 +7,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { findSnapTarget, getOtherLayerOutlines, type SnapTarget } from '../utils/snapUtils';
   import { normalizedWarpNudge } from '../utils/warpNudge';
+  import { t } from '../i18n';
 
   export let containerWidth: number = 800;
   export let containerHeight: number = 600;
@@ -85,10 +86,10 @@
       // Calculate partial derivatives (Jacobian)
       const dxdu = (corners.topRight.x - corners.topLeft.x) * v +
                    (corners.bottomRight.x - corners.bottomLeft.x) * (1 - v);
-      const dxdv = (topX - bottomX);
+      const dxdv = topX - bottomX;
       const dydu = (corners.topRight.y - corners.topLeft.y) * v +
                    (corners.bottomRight.y - corners.bottomLeft.y) * (1 - v);
-      const dydv = (topY - bottomY);
+      const dydv = topY - bottomY;
 
       // Solve for du, dv using inverse Jacobian
       const det = dxdu * dydv - dxdv * dydu;
@@ -305,7 +306,8 @@
   $: corners = $selectedLayer?.corners;
 
   // Generate grid lines - transform mesh points through corner warp
-  function getGridLines(grid: MeshWarpGrid, corners: WarpCorners): Array<{ from: { x: number; y: number }; to: { x: number; y: number } }> {
+  function getGridLines(grid: MeshWarpGrid, corners: WarpCorners,
+  ): Array<{ from: { x: number; y: number }; to: { x: number; y: number } }> {
     const lines: Array<{ from: { x: number; y: number }; to: { x: number; y: number } }> = [];
 
     // Horizontal lines
@@ -335,7 +337,7 @@
 
   // Get screen positions for all mesh handles (transformed through corner warp)
   function getHandlePositions(grid: MeshWarpGrid, corners: WarpCorners): Array<Array<{ x: number; y: number }>> {
-    return grid.points.map(row => row.map(point => meshPointToPixel(point, corners)));
+    return grid.points.map((row) => row.map((point) => meshPointToPixel(point, corners)));
   }
 
   $: handlePositions = meshGrid && corners ? getHandlePositions(meshGrid, corners) : null;
@@ -387,10 +389,26 @@
         {@const snapPxX = activeSnapTarget.point.x * containerWidth}
         {@const snapPxY = (1 - activeSnapTarget.point.y) * containerHeight}
         {#if activeSnapTarget.type === 'corner'}
-          <circle cx={snapPxX} cy={snapPxY} r="8" fill="none" stroke="#00ff88" stroke-width="2.5" class="snap-indicator" />
+          <circle
+            cx={snapPxX}
+            cy={snapPxY}
+            r="8"
+            fill="none"
+            stroke="#00ff88"
+            stroke-width="2.5"
+            class="snap-indicator"
+          />
           <circle cx={snapPxX} cy={snapPxY} r="3" fill="#00ff88" />
         {:else}
-          <circle cx={snapPxX} cy={snapPxY} r="6" fill="none" stroke="#00ff88" stroke-width="2" class="snap-indicator" />
+          <circle
+            cx={snapPxX}
+            cy={snapPxY}
+            r="6"
+            fill="none"
+            stroke="#00ff88"
+            stroke-width="2"
+            class="snap-indicator"
+          />
           <line x1={snapPxX - 8} y1={snapPxY} x2={snapPxX + 8} y2={snapPxY} stroke="#00ff88" stroke-width="1.5" />
           <line x1={snapPxX} y1={snapPxY - 8} x2={snapPxX} y2={snapPxY + 8} stroke="#00ff88" stroke-width="1.5" />
         {/if}
@@ -400,8 +418,10 @@
     <!-- Grid point handles - positions are transformed through corner warp -->
     {#each handlePositions as row, rowIndex}
       {#each row as pos, colIndex}
-        {@const isCorner = (rowIndex === 0 || rowIndex === meshGrid.rows - 1) && (colIndex === 0 || colIndex === meshGrid.cols - 1)}
-        {@const isEdge = rowIndex === 0 || rowIndex === meshGrid.rows - 1 || colIndex === 0 || colIndex === meshGrid.cols - 1}
+        {@const isCorner =
+          (rowIndex === 0 || rowIndex === meshGrid.rows - 1) && (colIndex === 0 || colIndex === meshGrid.cols - 1)}
+        {@const isEdge =
+          rowIndex === 0 || rowIndex === meshGrid.rows - 1 || colIndex === 0 || colIndex === meshGrid.cols - 1}
         <div
           class="handle"
           class:corner={isCorner}
@@ -415,7 +435,12 @@
           ontouchstart={(e) => handleTouchStart(rowIndex, colIndex, e)}
           role="button"
           tabindex="0"
-          aria-label="Mesh point {rowIndex},{colIndex}{selectedPoint?.row === rowIndex && selectedPoint?.col === colIndex ? ' (selected)' : ''}"
+          aria-label={$t(
+            selectedPoint?.row === rowIndex && selectedPoint?.col === colIndex
+              ? 'geometryTools.mesh.pointSelected'
+              : 'geometryTools.mesh.point',
+            { values: { row: rowIndex, col: colIndex } },
+          )}
         >
         </div>
       {/each}

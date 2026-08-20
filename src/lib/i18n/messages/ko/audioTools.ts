@@ -1,0 +1,45 @@
+export default {
+  meter: {
+    inputTweaksTitle: '오디오 입력 조정 — EQ / 감도 / 평활화 설정을 열려면 클릭',
+    beatDetector: '비트 감지기',
+    kickOnset: '킥 온셋 (서브+베이스)',
+    snareOnset: '스네어 온셋 (로우 미드+하이 미드)',
+    popoverTitle: '오디오 입력 조정',
+    sensitivity: '감도',
+    smoothing: '평활화',
+    tuningHint:
+      '감도는 모든 대역의 반응을 조절합니다. 평활화는 프레임 간 지터를 줄입니다 — 값이 높을수록 차분하고, 낮을수록 민첩하게 반응합니다.',
+    perBandGain: '대역별 게인',
+    resetBandGainsTitle: '모든 대역 게인을 1×로 초기화',
+    reset: '초기화',
+    gainTitle: '게인 {value}×',
+    bands: {
+      sub: '서브',
+      bass: '베이스',
+      lowMid: '로우 미드',
+      mid: '미드',
+      highMid: '하이 미드',
+      treble: '트레블',
+      air: '에어',
+      presence: '프레즌스',
+    },
+  },
+  input: {
+    disableMic: '마이크 비활성화',
+    enableMic: '마이크 입력 활성화 (오른쪽에서 장치 선택)',
+    selectDevice: '오디오 입력 장치 선택 (DAW 라우팅에는 BlackHole 사용 가능)',
+    popoverLabel: '오디오 입력',
+    systemDefault: '시스템 기본값',
+    noDevices: '입력 장치를 찾을 수 없습니다',
+    routeHint: 'DAW → 가상 장치 (BlackHole / Loopback) → 여기서 선택하세요.',
+    disableSystemAudio: '시스템 오디오 비활성화',
+    enableSystemAudioMac: '시스템 오디오 캡처 — 선택기에서 "전체 화면"을 고르고 "오디오 공유"를 켜세요',
+    enableSystemAudio: '시스템 오디오 활성화',
+  },
+  waveform: {
+    liveTitle: '실시간 오디오 파형',
+  },
+  errors: {
+    input: '오디오 입력 오류: {message}',
+  },
+};

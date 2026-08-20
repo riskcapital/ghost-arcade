@@ -2,9 +2,25 @@
   import { STAGE_PRESETS, clonePreset } from '../../stage3d/presets';
   import type { Stage3DScene } from '../../stage3d/types';
   import { createEmptyScene } from '../../stage3d/types';
+  import { t } from '../../i18n';
 
   export let onClose: () => void;
   export let onPick: (scene: Stage3DScene) => void;
+
+  const presetMessageKeys: Record<string, { nameKey: string; descriptionKey: string }> = {
+    'preset-festival': {
+      nameKey: 'stageShow.picker.presets.festival.name',
+      descriptionKey: 'stageShow.picker.presets.festival.description',
+    },
+    'preset-arena': {
+      nameKey: 'stageShow.picker.presets.arena.name',
+      descriptionKey: 'stageShow.picker.presets.arena.description',
+    },
+    'preset-club': {
+      nameKey: 'stageShow.picker.presets.club.name',
+      descriptionKey: 'stageShow.picker.presets.club.description',
+    },
+  };
 
   function pickPreset(presetId: string) {
     const cloned = clonePreset(presetId);
@@ -12,15 +28,15 @@
   }
 
   function pickEmpty() {
-    onPick(createEmptyScene('Untitled Stage'));
+    onPick(createEmptyScene($t('stageShow.picker.untitledStage')));
   }
 </script>
 
 <div class="picker-bg" onclick={onClose} role="presentation">
   <div class="picker-card" onclick={(e) => e.stopPropagation()} role="presentation">
     <header>
-      <h2>Pick a stage</h2>
-      <button class="close-x" onclick={onClose}>✕</button>
+      <h2>{$t('stageShow.picker.title')}</h2>
+      <button class="close-x" onclick={onClose} aria-label={$t('stageShow.picker.close')}>✕</button>
     </header>
 
     <div class="picker-grid">
@@ -29,17 +45,18 @@
         <div class="thumb empty">
           <span class="thumb-glyph">+</span>
         </div>
-        <span class="preset-name">Blank stage</span>
-        <span class="preset-desc">Start from scratch — empty floor.</span>
+        <span class="preset-name">{$t('stageShow.picker.blankStage')}</span>
+        <span class="preset-desc">{$t('stageShow.picker.blankDescription')}</span>
       </button>
 
       {#each STAGE_PRESETS as entry (entry.preset.id)}
+        {@const messages = presetMessageKeys[entry.preset.id]}
         <button class="preset-card" onclick={() => pickPreset(entry.preset.id)}>
           <div class="thumb" style="background: linear-gradient(135deg, {entry.thumbnailGradient[0]}, {entry.thumbnailGradient[1]});">
             <span class="thumb-letter">{entry.preset.name.charAt(0)}</span>
           </div>
-          <span class="preset-name">{entry.preset.name}</span>
-          <span class="preset-desc">{entry.description}</span>
+          <span class="preset-name">{messages ? $t(messages.nameKey) : entry.preset.name}</span>
+          <span class="preset-desc">{messages ? $t(messages.descriptionKey) : entry.description}</span>
         </button>
       {/each}
     </div>
@@ -104,7 +121,7 @@
     gap: 6px;
     transition: transform 0.1s ease-out, border-color 0.15s ease-out;
   }
-  .preset-card:hover { border-color: #BB86FC; transform: translateY(-2px); }
+  .preset-card:hover { border-color: #bb86fc; transform: translateY(-2px); }
   .preset-card:active { transform: scale(0.98); }
   .thumb {
     width: 100%;

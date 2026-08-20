@@ -1,16 +1,18 @@
 <script lang="ts">
+  import { t } from '../i18n';
   import { vjClipLauncher } from '../stores/vjClipLauncher';
-  import { vjLayerSequencer, type VJSequencerDeck, type VJSequencerPresetMode, type VJSequencerSubdivision, type VJSequencerTarget } from '../stores/vjLayerSequencer';
+  import { vjLayerSequencer, type VJSequencerDeck, type VJSequencerPresetMode, type VJSequencerSubdivision, type VJSequencerTarget,
+  } from '../stores/vjLayerSequencer';
 
   const DECKS: VJSequencerDeck[] = ['A', 'B'];
-  const SUBDIVISIONS: { value: VJSequencerSubdivision; label: string }[] = [
-    { value: 0.0625, label: '4 bars' },
-    { value: 0.125, label: '2 bars' },
-    { value: 0.25, label: '1 bar' },
-    { value: 0.5, label: '1/2' },
-    { value: 1, label: '1/4' },
-    { value: 2, label: '1/8' },
-    { value: 4, label: '1/16' },
+  const SUBDIVISIONS: { value: VJSequencerSubdivision; key: string }[] = [
+    { value: 0.0625, key: 'sequencer.vj.subdivision.fourBars' },
+    { value: 0.125, key: 'sequencer.vj.subdivision.twoBars' },
+    { value: 0.25, key: 'sequencer.vj.subdivision.oneBar' },
+    { value: 0.5, key: 'sequencer.vj.subdivision.half' },
+    { value: 1, key: 'sequencer.vj.subdivision.quarter' },
+    { value: 2, key: 'sequencer.vj.subdivision.eighth' },
+    { value: 4, key: 'sequencer.vj.subdivision.sixteenth' },
   ];
   let syncedLayerCount = -1;
 
@@ -52,16 +54,24 @@
   <div class="vj-seq-tray" class:minimized={state.minimized}>
     <div class="vj-seq-head">
       <div class="vj-seq-left">
-        <span class="vj-seq-title">LAYER SEQUENCER</span>
+        <span class="vj-seq-title">{$t('sequencer.vj.title')}</span>
         {#if !splitDeck}
-          <select value={state.presetMode} onchange={(e) => onPresetChange(e, 'A')} title="Pattern">
-            <option value="custom">Custom</option>
-            <option value="snake">Snake</option>
-            <option value="everyOther">Every Other</option>
-            <option value="random">Random</option>
+          <select
+            value={state.presetMode}
+            onchange={(e) => onPresetChange(e, 'A')}
+            title={$t('sequencer.preset.title')}
+          >
+            <option value="custom">{$t('sequencer.preset.custom')}</option>
+            <option value="snake">{$t('sequencer.preset.snake')}</option>
+            <option value="everyOther">{$t('sequencer.preset.everyOther')}</option>
+            <option value="random">{$t('sequencer.preset.random')}</option>
           </select>
         {/if}
-        <select value={state.stepCount} onchange={(e) => vjLayerSequencer.setStepCount(+(e.target as HTMLSelectElement).value)} title="Steps">
+        <select
+          value={state.stepCount}
+          onchange={(e) => vjLayerSequencer.setStepCount(+(e.target as HTMLSelectElement).value)}
+          title={$t('sequencer.steps.title')}
+        >
           <option value={8}>8</option>
           <option value={16}>16</option>
           <option value={24}>24</option>
@@ -70,15 +80,31 @@
       </div>
 
       <div class="vj-seq-transport">
-        <button onclick={() => state.isPlaying ? vjLayerSequencer.pause() : vjLayerSequencer.play()} title={state.isPlaying ? 'Pause' : 'Play'}>
+        <button
+          onclick={() => (state.isPlaying ? vjLayerSequencer.pause() : vjLayerSequencer.play())}
+          title={$t(state.isPlaying ? 'sequencer.transport.pause' : 'sequencer.transport.play')}
+          aria-label={$t(state.isPlaying ? 'sequencer.transport.pause' : 'sequencer.transport.play')}
+        >
           {#if state.isPlaying}
-            <svg viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/></svg>
+            <svg viewBox="0 0 24 24"
+              ><rect x="6" y="4" width="4" height="16" /><rect x="14" y="4" width="4" height="16" /></svg
+            >
           {:else}
-            <svg viewBox="0 0 24 24"><path d="M7 4l12 8-12 8z"/></svg>
+            <svg viewBox="0 0 24 24"><path d="M7 4l12 8-12 8z" /></svg>
           {/if}
         </button>
-        <button onclick={() => vjLayerSequencer.stop()} title="Stop"><svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2"/></svg></button>
-        <button onclick={() => vjLayerSequencer.clear(splitDeck ? 'both' : 'A')} title={splitDeck ? 'Clear both deck sequences' : 'Clear'}><svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5h6v2M8 10v8M16 10v8"/></svg></button>
+        <button
+          onclick={() => vjLayerSequencer.stop()}
+          title={$t('sequencer.transport.stop')}
+          aria-label={$t('sequencer.transport.stop')}
+          ><svg viewBox="0 0 24 24"><rect x="5" y="5" width="14" height="14" rx="2" /></svg></button
+        >
+        <button
+          onclick={() => vjLayerSequencer.clear(splitDeck ? 'both' : 'A')}
+          title={$t(splitDeck ? 'sequencer.transport.clearBothDecks' : 'sequencer.transport.clear')}
+          aria-label={$t(splitDeck ? 'sequencer.transport.clearBothDecks' : 'sequencer.transport.clear')}
+          ><svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5h6v2M8 10v8M16 10v8" /></svg></button
+        >
         <span>{state.currentStep + 1}/{state.stepCount}</span>
       </div>
 
@@ -87,51 +113,72 @@
           class="sync-btn"
           class:on={state.syncToMaster}
           onclick={() => vjLayerSequencer.updateConfig({ syncToMaster: !state.syncToMaster })}
-          title={state.syncToMaster ? 'BPM follows the master clock — click to unlock' : 'Sync BPM to the master clock'}
-        >SYNC</button>
+          title={$t(state.syncToMaster ? 'sequencer.vj.sync.unlockTitle' : 'sequencer.vj.sync.lockTitle')}
+          >{$t('sequencer.vj.sync.label')}</button
+        >
         <label class:locked={state.syncToMaster}>
-          BPM
+          {$t('sequencer.common.bpm')}
           <input
             type="number"
             min="30"
             max="300"
             value={Math.round(shownBpm)}
             disabled={state.syncToMaster}
-            title={state.syncToMaster ? 'Locked to master clock' : 'Manual BPM'}
+            title={$t(state.syncToMaster ? 'sequencer.vj.sync.lockedBpm' : 'sequencer.vj.sync.manualBpm')}
             onchange={(e) => vjLayerSequencer.updateConfig({ bpm: +(e.target as HTMLInputElement).value })}
           />
         </label>
-        <select value={state.subdivision} onchange={(e) => vjLayerSequencer.updateConfig({ subdivision: +(e.target as HTMLSelectElement).value as VJSequencerSubdivision })} title="Step length">
+        <select
+          value={state.subdivision}
+          onchange={(e) =>
+            vjLayerSequencer.updateConfig({
+              subdivision: +(e.target as HTMLSelectElement).value as VJSequencerSubdivision,
+            })}
+          title={$t('sequencer.vj.subdivision.title')}
+        >
           {#each SUBDIVISIONS as option}
-            <option value={option.value}>{option.label}</option>
+            <option value={option.value}>{$t(option.key)}</option>
           {/each}
         </select>
         <label class="vj-seq-check">
-          <input type="checkbox" checked={state.crossfade} onchange={() => vjLayerSequencer.updateConfig({ crossfade: !state.crossfade })} />
-          Xfade
+          <input
+            type="checkbox"
+            checked={state.crossfade}
+            onchange={() => vjLayerSequencer.updateConfig({ crossfade: !state.crossfade })}
+          />
+          {$t('sequencer.crossfade.label')}
         </label>
         {#if state.crossfade}
-          <select class="vj-seq-xfade-dur" value={state.crossfadeDuration} onchange={onCrossfadeDurationChange} title="Sequencer crossfade duration">
-            <option value={0.1}>0.1s</option>
-            <option value={0.2}>0.2s</option>
-            <option value={0.3}>0.3s</option>
-            <option value={0.5}>0.5s</option>
-            <option value={1}>1s</option>
-            <option value={2}>2s</option>
-            <option value={4}>4s</option>
-            <option value={8}>8s</option>
+          <select
+            class="vj-seq-xfade-dur"
+            value={state.crossfadeDuration}
+            onchange={onCrossfadeDurationChange}
+            title={$t('sequencer.crossfade.durationTitle')}
+          >
+            <option value={0.1}>{$t('sequencer.duration.seconds', { values: { value: '0.1' } })}</option>
+            <option value={0.2}>{$t('sequencer.duration.seconds', { values: { value: '0.2' } })}</option>
+            <option value={0.3}>{$t('sequencer.duration.seconds', { values: { value: '0.3' } })}</option>
+            <option value={0.5}>{$t('sequencer.duration.seconds', { values: { value: '0.5' } })}</option>
+            <option value={1}>{$t('sequencer.duration.seconds', { values: { value: '1' } })}</option>
+            <option value={2}>{$t('sequencer.duration.seconds', { values: { value: '2' } })}</option>
+            <option value={4}>{$t('sequencer.duration.seconds', { values: { value: '4' } })}</option>
+            <option value={8}>{$t('sequencer.duration.seconds', { values: { value: '8' } })}</option>
           </select>
         {/if}
         <button
           class="vj-seq-min"
           onclick={() => vjLayerSequencer.toggleMinimized()}
-          title={state.minimized ? 'Expand sequencer grid' : 'Minimize sequencer'}
-          aria-label={state.minimized ? 'Expand sequencer' : 'Minimize sequencer'}
+          title={$t(state.minimized ? 'sequencer.vj.expandGrid' : 'sequencer.vj.minimize')}
+          aria-label={$t(state.minimized ? 'sequencer.vj.expandGrid' : 'sequencer.vj.minimize')}
         >
           {#if state.minimized}
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 15l6-6 6 6"/></svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+              ><path d="M6 15l6-6 6 6" /></svg
+            >
           {:else}
-            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M6 9l6 6 6-6"/></svg>
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"
+              ><path d="M6 9l6 6 6-6" /></svg
+            >
           {/if}
         </button>
       </div>
@@ -142,42 +189,51 @@
         {#each visibleDecks as deck}
           {@const deckPattern = deck === 'B' ? (state.bankBCells ?? state.cells) : state.cells}
           {#key deckPattern}
-          <section class="vj-seq-deck" class:deck-a={deck === 'A'} class:deck-b={deck === 'B'}>
-            {#if splitDeck}
-              <div class="vj-seq-deck-head">
-                <span class="vj-seq-deck-title">DECK {deck}</span>
-                <select value={deckPresetMode(deck)} onchange={(e) => onPresetChange(e, deck)} title="Deck {deck} pattern">
-                  <option value="custom">Custom</option>
-                  <option value="snake">Snake</option>
-                  <option value="everyOther">Every Other</option>
-                  <option value="random">Random</option>
-                </select>
-                <button class="vj-seq-deck-clear" onclick={() => vjLayerSequencer.clear(deck)} title="Clear Deck {deck} sequence">
-                  <svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5h6v2M8 10v8M16 10v8"/></svg>
-                </button>
-              </div>
-            {/if}
-            <div class="vj-seq-grid" style="grid-template-columns: 72px repeat({state.stepCount}, 28px);">
-              <div class="corner"></div>
-              {#each stepIndices as step}
-                <div class="step-head" class:current={step === state.currentStep}>{step + 1}</div>
-              {/each}
-              {#each layerIndices as layer}
-                <div class="layer-label">
-                  <span class="layer-dot"></span>
-                  L{layer + 1}
-                </div>
-                {#each stepIndices as step}
-                  {@const isOn = cellOn(deckPattern, layer, step)}
+            <section class="vj-seq-deck" class:deck-a={deck === 'A'} class:deck-b={deck === 'B'}>
+              {#if splitDeck}
+                <div class="vj-seq-deck-head">
+                  <span class="vj-seq-deck-title">{$t('sequencer.vj.deck.title', { values: { deck } })}</span>
+                  <select
+                    value={deckPresetMode(deck)}
+                    onchange={(e) => onPresetChange(e, deck)}
+                    title={$t('sequencer.vj.deck.patternTitle', { values: { deck } })}
+                  >
+                    <option value="custom">{$t('sequencer.preset.custom')}</option>
+                    <option value="snake">{$t('sequencer.preset.snake')}</option>
+                    <option value="everyOther">{$t('sequencer.preset.everyOther')}</option>
+                    <option value="random">{$t('sequencer.preset.random')}</option>
+                  </select>
                   <button
-                    class="seq-cell"
-                    class:on={isOn}
-                    class:current={step === state.currentStep}
-                    class:firing={state.isPlaying && step === state.currentStep && isOn}
-                    class:playhead={state.isPlaying && step === state.currentStep}
-                    onclick={() => vjLayerSequencer.toggleCell(layer, step, deck)}
-                    title="Deck {deck} Layer {layer + 1}, step {step + 1}"
-                  ></button>
+                    class="vj-seq-deck-clear"
+                    onclick={() => vjLayerSequencer.clear(deck)}
+                    title={$t('sequencer.vj.deck.clearTitle', { values: { deck } })}
+                    aria-label={$t('sequencer.vj.deck.clearTitle', { values: { deck } })}
+                  >
+                    <svg viewBox="0 0 24 24"><path d="M4 7h16M9 7V5h6v2M8 10v8M16 10v8" /></svg>
+                  </button>
+                </div>
+              {/if}
+              <div class="vj-seq-grid" style="grid-template-columns: 72px repeat({state.stepCount}, 28px);">
+                <div class="corner"></div>
+                {#each stepIndices as step}
+                  <div class="step-head" class:current={step === state.currentStep}>{step + 1}</div>
+                {/each}
+                {#each layerIndices as layer}
+                  <div class="layer-label">
+                    <span class="layer-dot"></span>
+                    L{layer + 1}
+                  </div>
+                  {#each stepIndices as step}
+                    {@const isOn = cellOn(deckPattern, layer, step)}
+                    <button
+                      class="seq-cell"
+                      class:on={isOn}
+                      class:current={step === state.currentStep}
+                      class:firing={state.isPlaying && step === state.currentStep && isOn}
+                      class:playhead={state.isPlaying && step === state.currentStep}
+                      onclick={() => vjLayerSequencer.toggleCell(layer, step, deck)}
+                      title={$t('sequencer.vj.deck.cellTitle', { values: {deck, layer: layer + 1, step: step + 1} })}
+                    ></button>
                 {/each}
               {/each}
             </div>
@@ -192,7 +248,7 @@
 <style>
   .vj-seq-tray {
     flex: 0 0 210px;
-    border-top: 1px solid var(--ga-coral-line, rgba(255, 111, 94, .4));
+    border-top: 1px solid var(--ga-coral-line, rgba(255, 111, 94, 0.4));
     background: var(--ga-panel, #0b0d11);
     display: flex;
     flex-direction: column;
@@ -208,7 +264,7 @@
     display: flex;
     align-items: center;
     gap: 12px;
-    border-bottom: 1px solid var(--ga-line, rgba(255,255,255,.07));
+    border-bottom: 1px solid var(--ga-line, rgba(255,255,255, 0.07));
   }
   .vj-seq-left,
   .vj-seq-transport,
@@ -223,12 +279,12 @@
     color: var(--ga-coral, #ff6f5e);
     font-size: 12px;
     font-weight: 800;
-    letter-spacing: .08em;
+    letter-spacing: 0.08em;
   }
   select,
   input {
     height: 24px;
-    border: 1px solid var(--ga-line-2, rgba(255,255,255,.12));
+    border: 1px solid var(--ga-line-2, rgba(255,255,255, 0.12));
     background: var(--ga-slot, #050607);
     color: var(--ga-ink-0, #eef0f4);
     border-radius: var(--ga-r-hard, 2px);
@@ -242,8 +298,8 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border: 1px solid var(--ga-coral-line, rgba(255,111,94,.4));
-    background: var(--ga-coral-soft, rgba(255,111,94,.11));
+    border: 1px solid var(--ga-coral-line, rgba(255,111,94, 0.4));
+    background: var(--ga-coral-soft, rgba(255,111,94, 0.11));
     color: var(--ga-coral, #ff6f5e);
     border-radius: var(--ga-r-hard, 2px);
     cursor: pointer;
@@ -279,19 +335,19 @@
   .sync-btn {
     height: 24px;
     padding: 0 8px;
-    border: 1px solid var(--ga-line-2, rgba(255,255,255,.12));
+    border: 1px solid var(--ga-line-2, rgba(255,255,255, 0.12));
     background: var(--ga-slot, #050607);
     color: var(--ga-ink-1, #9aa0ac);
     border-radius: var(--ga-r-hard, 2px);
     font: inherit;
     font-size: 11px;
     font-weight: 800;
-    letter-spacing: .06em;
+    letter-spacing: 0.06em;
     cursor: pointer;
   }
   .sync-btn.on {
     border-color: var(--ga-coral, #ff6f5e);
-    background: var(--ga-coral-soft, rgba(255,111,94,.11));
+    background: var(--ga-coral-soft, rgba(255,111,94, 0.11));
     color: var(--ga-coral, #ff6f5e);
   }
   .vj-seq-right label.locked input {
@@ -304,14 +360,14 @@
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border: 1px solid var(--ga-line-2, rgba(255,255,255,.12));
+    border: 1px solid var(--ga-line-2, rgba(255,255,255, 0.12));
     background: transparent;
     color: var(--ga-ink-1, #9aa0ac);
     border-radius: var(--ga-r-hard, 2px);
     cursor: pointer;
   }
   .vj-seq-min:hover {
-    border-color: var(--ga-coral-line, rgba(255,111,94,.4));
+    border-color: var(--ga-coral-line, rgba(255,111,94, 0.4));
     color: var(--ga-ink-0, #eef0f4);
   }
   .vj-seq-min svg {
@@ -335,7 +391,7 @@
   }
   .vj-seq-body.split .vj-seq-deck {
     padding: 8px;
-    border: 1px solid var(--ga-line, rgba(255,255,255,.07));
+    border: 1px solid var(--ga-line, rgba(255,255,255, 0.07));
     border-radius: 6px;
     background: rgba(255, 255, 255, 0.025);
   }
@@ -351,15 +407,15 @@
     font-weight: 900;
     letter-spacing: 0.12em;
   }
-  .deck-a .vj-seq-deck-title { color: #7EC8E3; }
-  .deck-b .vj-seq-deck-title { color: #FF8577; }
+  .deck-a .vj-seq-deck-title { color: #7ec8e3; }
+  .deck-b .vj-seq-deck-title { color: #ff8577; }
   .vj-seq-deck-clear {
     width: 26px;
     height: 24px;
     display: inline-flex;
     align-items: center;
     justify-content: center;
-    border: 1px solid var(--ga-line-2, rgba(255,255,255,.12));
+    border: 1px solid var(--ga-line-2, rgba(255,255,255, 0.12));
     background: var(--ga-slot, #050607);
     color: var(--ga-ink-1, #9aa0ac);
     border-radius: var(--ga-r-hard, 2px);
@@ -367,7 +423,7 @@
   }
   .vj-seq-deck-clear:hover {
     color: var(--ga-ink-0, #eef0f4);
-    border-color: var(--ga-coral-line, rgba(255,111,94,.4));
+    border-color: var(--ga-coral-line, rgba(255,111,94, 0.4));
   }
   .vj-seq-deck-clear svg {
     width: 13px;
@@ -411,31 +467,31 @@
     border-radius: 999px;
     background: var(--ga-coral, #ff6f5e);
   }
-  .vj-seq-body.split .deck-a .layer-dot { background: #7EC8E3; }
-  .vj-seq-body.split .deck-b .layer-dot { background: #FF8577; }
+  .vj-seq-body.split .deck-a .layer-dot { background: #7ec8e3; }
+  .vj-seq-body.split .deck-b .layer-dot { background: #ff8577; }
   .seq-cell {
     width: 26px;
     height: 22px;
     padding: 0;
-    border: 1px solid var(--ga-line, rgba(255,255,255,.07));
+    border: 1px solid var(--ga-line, rgba(255,255,255, 0.07));
     background: var(--ga-card, #13161c);
     border-radius: var(--ga-r-hard, 2px);
     cursor: pointer;
   }
   .seq-cell:hover {
-    border-color: var(--ga-coral-line, rgba(255,111,94,.4));
+    border-color: var(--ga-coral-line, rgba(255,111,94, 0.4));
   }
   .seq-cell.on {
     background: var(--ga-coral, #ff6f5e);
     border-color: var(--ga-coral, #ff6f5e);
   }
   .vj-seq-body.split .deck-a .seq-cell.on {
-    background: #7EC8E3;
-    border-color: #7EC8E3;
+    background: #7ec8e3;
+    border-color: #7ec8e3;
   }
   .vj-seq-body.split .deck-b .seq-cell.on {
-    background: #FF8577;
-    border-color: #FF8577;
+    background: #ff8577;
+    border-color: #ff8577;
   }
   .seq-cell.current {
     box-shadow: inset 0 0 0 1px var(--ga-green, #46d18a);
@@ -455,10 +511,10 @@
     animation: vj-seq-fire 0.22s ease-out;
   }
   .vj-seq-body.split .deck-a .seq-cell.firing {
-    background: color-mix(in srgb, #7EC8E3 70%, var(--ga-green, #46d18a));
+    background: color-mix(in srgb, #7ec8e3 70%, var(--ga-green, #46d18a));
   }
   .vj-seq-body.split .deck-b .seq-cell.firing {
-    background: color-mix(in srgb, #FF8577 70%, var(--ga-green, #46d18a));
+    background: color-mix(in srgb, #ff8577 70%, var(--ga-green, #46d18a));
   }
   @keyframes vj-seq-fire {
     from { transform: scale(0.92); filter: brightness(1.35); }

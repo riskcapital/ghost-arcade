@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from '../i18n';
   import { loadingDetail, loadingMessage, loadingProgress } from '../stores/loading';
   import { fade } from 'svelte/transition';
 </script>
@@ -12,7 +13,7 @@
         <div class="loading-detail">{$loadingDetail}</div>
       {/if}
       {#if $loadingProgress !== null}
-        <div class="progress-track" aria-label="Loading progress">
+        <div class="progress-track" aria-label={$t('systemUi.loading.progress')}>
           <div class="progress-fill" style="width: {Math.max(0, Math.min(100, $loadingProgress * 100))}%"></div>
         </div>
         <div class="progress-value">{Math.round(Math.max(0, Math.min(1, $loadingProgress)) * 100)}%</div>

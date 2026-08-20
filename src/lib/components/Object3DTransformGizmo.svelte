@@ -2,6 +2,7 @@
   import { onDestroy, onMount } from 'svelte';
   import { project, selectedLayer } from '../stores/layers';
   import type { Model3DContent, SplatContent } from '../types';
+  import { t } from '../i18n';
 
   export let containerWidth = 1920;
   export let containerHeight = 1080;
@@ -211,63 +212,63 @@
     class="object-gizmo"
     class:dragging={!!drag}
     style="left: {centerX}px; top: {centerY}px; --gizmo-scale: {displayScale};"
-    aria-label="3D object transform"
+    aria-label={$t('spatial.gizmo.object')}
   >
     <div class="mode-strip">
       <button
         class:active={mode === 'move'}
         on:pointerdown|stopPropagation
         on:click|stopPropagation={() => selectMode('move')}
-        title="Move object (W)"
-        aria-label="Move object"
-        ><span class="tool-icon move-icon" aria-hidden="true">✥</span><span>Move</span><kbd>W</kbd></button
+        title={$t('spatial.gizmo.modeTitles.move')}
+        aria-label={$t('spatial.gizmo.modeAria.move')}
+        ><span class="tool-icon move-icon" aria-hidden="true">✥</span><span>{$t('spatial.gizmo.modes.move')}</span><kbd>W</kbd></button
       >
       <button
         class:active={mode === 'rotate'}
         on:pointerdown|stopPropagation
         on:click|stopPropagation={() => selectMode('rotate')}
-        title="Rotate object (E)"
-        aria-label="Rotate object"
-        ><span class="tool-icon" aria-hidden="true">↻</span><span>Rotate</span><kbd>E</kbd></button
+        title={$t('spatial.gizmo.modeTitles.rotate')}
+        aria-label={$t('spatial.gizmo.modeAria.rotate')}
+        ><span class="tool-icon" aria-hidden="true">↻</span><span>{$t('spatial.gizmo.modes.rotate')}</span><kbd>E</kbd></button
       >
       <button
         class:active={mode === 'scale'}
         on:pointerdown|stopPropagation
         on:click|stopPropagation={() => selectMode('scale')}
-        title="Scale object (S)"
-        aria-label="Scale object"
-        ><span class="tool-icon" aria-hidden="true">↗</span><span>Scale</span><kbd>S</kbd></button
+        title={$t('spatial.gizmo.modeTitles.scale')}
+        aria-label={$t('spatial.gizmo.modeAria.scale')}
+        ><span class="tool-icon" aria-hidden="true">↗</span><span>{$t('spatial.gizmo.modes.scale')}</span><kbd>S</kbd></button
       >
       <button
         on:pointerdown|stopPropagation
         on:click={frameObject}
-        title="Reset object transform (F)"
-        aria-label="Reset object transform"
-        ><span class="tool-icon" aria-hidden="true">⌖</span><span>Reset</span><kbd>F</kbd></button
+        title={$t('spatial.gizmo.modeTitles.reset')}
+        aria-label={$t('spatial.gizmo.modeAria.reset')}
+        ><span class="tool-icon" aria-hidden="true">⌖</span><span>{$t('spatial.gizmo.modes.reset')}</span><kbd>F</kbd></button
       >
     </div>
 
     {#if mode === 'rotate'}
       <div class="rotation-strip">
-        <span class="rotation-hint">Drag a ring, or step:</span>
+        <span class="rotation-hint">{$t('spatial.gizmo.rotationHint')}</span>
         <button
           on:pointerdown|stopPropagation
           on:click={(event) => stepRotation(event, 'x', 90)}
-          title="Rotate 90° on X"
+          title={$t('spatial.gizmo.rotate90', { values: { axis: 'X' } })}
         >
           X&nbsp;+90°
         </button>
         <button
           on:pointerdown|stopPropagation
           on:click={(event) => stepRotation(event, 'y', 90)}
-          title="Rotate 90° on Y"
+          title={$t('spatial.gizmo.rotate90', { values: { axis: 'Y' } })}
         >
           Y&nbsp;+90°
         </button>
         <button
           on:pointerdown|stopPropagation
           on:click={(event) => stepRotation(event, 'z', 90)}
-          title="Rotate 90° on Z"
+          title={$t('spatial.gizmo.rotate90', { values: { axis: 'Z' } })}
         >
           Z&nbsp;+90°
         </button>
@@ -275,9 +276,9 @@
           class="flip-upright"
           on:pointerdown|stopPropagation
           on:click={(event) => stepRotation(event, 'x', 180)}
-          title="Flip an upside-down scan 180° on X"
+          title={$t('spatial.gizmo.flipUpright')}
         >
-          Flip Upright
+          {$t('spatial.gizmo.flipLabel')}
         </button>
       </div>
     {/if}
@@ -291,11 +292,16 @@
       aria-valuemin={mode === 'scale' ? 0.02 : -50}
       aria-valuemax="50"
       title={mode === 'move'
-        ? 'Drag center for X/Y; drag an axis for constrained movement'
+        ? $t('spatial.gizmo.dragMove')
         : mode === 'rotate'
-          ? 'Drag a colored ring to rotate on that axis'
-          : 'Drag to scale uniformly'}
-      aria-label="{mode} 3D object on {axis} axis"
+          ? $t('spatial.gizmo.dragRotate')
+          : $t('spatial.gizmo.dragScale')}
+      aria-label={$t('spatial.gizmo.ariaModeAxis', {
+        values: {
+          mode: $t(`spatial.gizmo.modes.${mode}`),
+          axis: $t(`spatial.gizmo.axes.${axis}`),
+        },
+      })}
     >
       {#if mode === 'move'}
         <span

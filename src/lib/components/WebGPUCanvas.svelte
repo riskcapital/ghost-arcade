@@ -67,7 +67,11 @@
    */
   import { onMount, onDestroy } from 'svelte';
   import { isWebGPUSupported, probeWebGPU } from '$lib/renderer/webgpuCapability';
-  import { stopOutputSharedTexturePresenter, setOutputCursor, setOutputCursorStyle } from '$lib/sync/outputSharedTexturePresenter';
+  import {
+    stopOutputSharedTexturePresenter,
+    setOutputCursor,
+    setOutputCursorStyle,
+  } from '$lib/sync/outputSharedTexturePresenter';
   import { reconcileMasterWarpOutput, disposeMasterWarpOutput } from '$lib/sync/outputComposite';
   import { settings, outputFrozen, masterWarpIsActive } from '$lib/stores/settings';
   import { WebGPUAdvLightPaint } from '$lib/renderer/webgpuAdvLightPaint';
@@ -96,6 +100,7 @@
   import { visualAudio } from '$lib/audio/visualAudio';
   import { project, selectedLayer } from '$lib/stores/layers';
   import { get as getStore } from 'svelte/store';
+  import { t } from '$lib/i18n';
   // Cheap synchronous read of the project store from inside the
   // animation frame loop — re-reading is cost-free (stores cache
   // their last value). Used by the GPU stroke particle pass below
@@ -310,7 +315,9 @@
       // Best-effort play. If the user hasn't gestured yet some
       // browsers reject the play() promise — we ignore because the
       // muted+autoplay combo is allowed to start anyway.
-      v.play().catch(() => { /* will start when playback policy allows */ });
+      v.play().catch(() => {
+        /* will start when playback policy allows */
+      });
     }
     return v;
   }
@@ -661,7 +668,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     const supported = await probeWebGPU();
     if (!supported || !isWebGPUSupported()) {
       initStatus = 'no-webgpu';
-      initError = 'WebGPU unavailable in this Electron build';
+      initError = $t('gpuTools.webgpu.errors.unavailable');
       console.error('[WebGPUCanvas] ' + initError);
       return;
     }
@@ -740,7 +747,8 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
         // premultiplied alpha so the transparent-cleared background +
         // additive particles upload cleanly as a THREE.CanvasTexture.
         brushCanvas = document.createElement('canvas');
-        brushCanvas.width = 1; brushCanvas.height = 1;
+        brushCanvas.width = 1;
+        brushCanvas.height = 1;
         brushCtx = brushCanvas.getContext('webgpu');
         if (brushCtx) {
           configuredBrushW = 0;
@@ -751,19 +759,19 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
       } catch (err: any) {
         console.error('[WebGPUCanvas] stroke particles init failed (non-fatal):', err?.message || err);
         strokeParticles = null;
-        brushCanvas = null; brushCtx = null;
+        brushCanvas = null;
+        brushCtx = null;
         setGPUBrushCanvas(null);
       }
 
       initStatus = sourceCanvas ? 'running' : 'no-source';
-      console.log('[WebGPUCanvas] WebGPU initialised. Adapter:',
-        (adapter as any).info?.description || 'unknown');
+      console.log('[WebGPUCanvas] WebGPU initialised. Adapter:', (adapter as any).info?.description || 'unknown');
       // WebGPU is now presenting — switch output capture from the WebGL
       // fallback to the live present canvas.
       reconcileOutputRegistration();
     } catch (err: any) {
       initStatus = 'error';
-      initError = `WebGPU init failed: ${err?.message || err}`;
+      initError = $t('gpuTools.webgpu.errors.initFailed', { values: { error: err?.message || err } });
       console.error('[WebGPUCanvas] ' + initError, err);
       // Init failed — make sure the live WebGL source stays registered
       // (presentCanvas would be blank).
@@ -780,7 +788,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     if (!device || !warpUniformBuffer || !warpU32 || !warpF32 || !warpStaging) return;
     const warp = getStore(settings).output?.masterWarp;
     const active = masterWarpIsActive(warp);
-    const c = warp?.corners ?? IDENTITY_C as any;
+    const c = warp?.corners ?? (IDENTITY_C as any);
     const g = warp?.meshGrid;
     const useMesh = active && !!g && g.rows >= 2 && g.cols >= 2 && g.rows <= 16 && g.cols <= 16;
     // cfg (u32 ×4) — was "meta" but that's a WGSL reserved word
@@ -851,18 +859,20 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     const fovDeg = output?.domeFOV ?? 180;
     const rotationDeg = output?.domeRotation ?? 0;
     const tiltDeg = output?.domeTilt ?? 0;
-    const aspect = (presentCanvas?.width && presentCanvas?.height)
-      ? presentCanvas.width / presentCanvas.height
-      : ((sourceCanvas?.width && sourceCanvas?.height) ? sourceCanvas.width / sourceCanvas.height : 16 / 9);
+    const aspect =
+      presentCanvas?.width && presentCanvas?.height
+        ? presentCanvas.width / presentCanvas.height
+      : sourceCanvas?.width && sourceCanvas?.height
+          ? sourceCanvas.width / sourceCanvas.height : 16 / 9;
 
     domeU32[0] = output?.domeEnabled ? 1 : 0;
     domeU32[1] = domeModeIndex(output?.domeMode);
     domeU32[2] = 0;
     domeU32[3] = 0;
 
-    domeF32[4] = Math.max(1, fovDeg) * Math.PI / 180;
-    domeF32[5] = rotationDeg * Math.PI / 180;
-    domeF32[6] = tiltDeg * Math.PI / 180;
+    domeF32[4] = (Math.max(1, fovDeg) * Math.PI) / 180;
+    domeF32[5] = (rotationDeg * Math.PI) / 180;
+    domeF32[6] = (tiltDeg * Math.PI) / 180;
     domeF32[7] = Math.max(0, Math.min(1, output?.domeCurvature ?? 1));
     domeF32[8] = Math.max(-1, Math.min(1, output?.domeOffsetX ?? 0));
     domeF32[9] = Math.max(-1, Math.min(1, output?.domeOffsetY ?? 0));
@@ -890,7 +900,10 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
       reconcileOutputRegistration();
     }
     configurePresentCanvasContext();
-    if (!sw || !sh) { framesSkipped++; return; }
+    if (!sw || !sh) {
+      framesSkipped++;
+      return;
+    }
     lastFrameDim = `${sw}x${sh}`;
     updateWarpUniform();
     updateDomeUniform();
@@ -930,7 +943,8 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
           clearValue: { r: 0, g: 0, b: 0, a: 1 },
           loadOp: 'clear',
           storeOp: 'store',
-        }],
+        },
+          ],
       });
       pass.setPipeline(pipeline);
       pass.setBindGroup(0, bindGroup);
@@ -957,8 +971,8 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
       //
       // Per-frame: re-collect strokes (cheap; setStrokes is hash-
       // keyed so it's a no-op when nothing immutable changed) AND
-      // push current progress values (for the drawing-head animation
-      // — particles "draw on" as the layer's playback timeline runs).
+        // push current progress values (for the drawing-head animation
+        // — particles "draw on" as the layer's playback timeline runs).
       if (strokeParticles && brushCanvas && brushCtx) {
         const proj = getProjectSync();
         if (proj) {
@@ -973,36 +987,38 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
         // present view). Keep it sized to the present resolution. The
         // engine picks this canvas up via gpuBrushBridge and composites
         // it at the light-paint layer's z — see gpuBrushBridge.ts.
-        if (brushCanvas.width !== presentCanvas.width || brushCanvas.height !== presentCanvas.height) {
-          brushCanvas.width = presentCanvas.width;
-          brushCanvas.height = presentCanvas.height;
+          if (brushCanvas.width !== presentCanvas.width || brushCanvas.height !== presentCanvas.height) {
+            brushCanvas.width = presentCanvas.width;
+            brushCanvas.height = presentCanvas.height;
+            configureBrushCanvasContext();
+          }
           configureBrushCanvasContext();
+          const brushView = brushCtx.getCurrentTexture().createView();
+          // Clear the brush surface transparent first — encodeFrame uses
+          // loadOp:'load' (composites additively onto existing content),
+          // so without this clear the brushes would accumulate frame over
+          // frame into a solid smear.
+          const clearPass = encoder.beginRenderPass({
+            colorAttachments: [
+              {
+                view: brushView,
+                clearValue: { r: 0, g: 0, b: 0, a: 0 },
+                loadOp: 'clear',
+                storeOp: 'store',
+              },
+            ],
+          });
+          clearPass.end();
+          strokeParticles.setViewport(brushCanvas.width, brushCanvas.height);
+          strokeParticles.encodeFrame(encoder, brushView);
         }
-        configureBrushCanvasContext();
-        const brushView = brushCtx.getCurrentTexture().createView();
-        // Clear the brush surface transparent first — encodeFrame uses
-        // loadOp:'load' (composites additively onto existing content),
-        // so without this clear the brushes would accumulate frame over
-        // frame into a solid smear.
-        const clearPass = encoder.beginRenderPass({
-          colorAttachments: [{
-            view: brushView,
-            clearValue: { r: 0, g: 0, b: 0, a: 0 },
-            loadOp: 'clear',
-            storeOp: 'store',
-          }],
-        });
-        clearPass.end();
-        strokeParticles.setViewport(brushCanvas.width, brushCanvas.height);
-        strokeParticles.encodeFrame(encoder, brushView);
-      }
 
-      // ── Pixel-FX layers ──
-      // Each pixel-fx layer has its own WebGPUPixelParticles instance,
-      // owns its source texture + particle buffer, and renders in
-      // layer-stack order over the bridge frame. Per-layer state
-      // (mode, knobs, source) is read from the project store each
-      // frame and reconciled into the renderer's setters.
+        // ── Pixel-FX layers ──
+        // Each pixel-fx layer has its own WebGPUPixelParticles instance,
+        // owns its source texture + particle buffer, and renders in
+        // layer-stack order over the bridge frame. Per-layer state
+        // (mode, knobs, source) is read from the project store each
+        // frame and reconciled into the renderer's setters.
       const proj = getProjectSync();
       if (proj && device) {
         // Find/create renderers for visible pixel-fx layers and tear
@@ -1047,176 +1063,188 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
           // needed, applies params, encodes the frame, then `continue`s
           // past the standard pixel-fx code. Mode-flip handling: if the
           // user switches a layer's mode away from flythrough, the
-          // existing flythrough renderer for that layer is disposed
-          // here so its GPU resources don't leak. The reverse case
+            // existing flythrough renderer for that layer is disposed
+            // here so its GPU resources don't leak. The reverse case
           // (flipping INTO flythrough) is handled by the lazy-create
           // below + the standard-mode renderer being disposed by its
           // own loop (it'll see the mode change next frame).
-          if (c.mode === 'flythrough') {
-            // Tear down the standard-mode renderer if it exists — the
-            // user just flipped this layer into flythrough mode.
-            const stale = pixelFXRenderers.get(layer.id);
-            if (stale) {
-              try { stale.dispose?.(); } catch { /* */ }
-              pixelFXRenderers.delete(layer.id);
-              pixelFXLoadedSourceUrl.delete(layer.id);
+            if (c.mode === 'flythrough') {
+              // Tear down the standard-mode renderer if it exists — the
+              // user just flipped this layer into flythrough mode.
+              const stale = pixelFXRenderers.get(layer.id);
+              if (stale) {
+                try {
+                  stale.dispose?.();
+                } catch {
+                  /* */
+                }
+                pixelFXRenderers.delete(layer.id);
+                pixelFXLoadedSourceUrl.delete(layer.id);
+              }
+
+              // Lazy-create the flythrough renderer for this layer.
+              let fly = flythroughRenderers.get(layer.id);
+              if (!fly) {
+                try {
+                  fly = new WebGPUFlythrough(device, preferredFormat);
+                  flythroughRenderers.set(layer.id, fly);
+                } catch (err: any) {
+                  console.error('[flythrough] init failed for layer', layer.id, err?.message || err);
+                  continue;
+                }
+              }
+
+              // ── Source resolution (mirrors the standard-mode logic
+              // immediately below; kept inline so the two paths can
+              // evolve independently without one breaking the other).
+              const loadImageOnceFly = (src: string, cacheKey: string, label: string) => {
+                if (cacheKey === flythroughLoadedSourceKey.get(layer.id)) return;
+                flythroughLoadedSourceKey.set(layer.id, cacheKey);
+                const img = new Image();
+                if (/^https?:/i.test(src)) img.crossOrigin = 'anonymous';
+                img.onload = () => {
+                  fly!
+                    .setSourceImage(img)
+                    .catch((e) => console.warn('[flythrough]', label, 'setSourceImage failed', e));
+                };
+                img.onerror = (e) => console.warn('[flythrough]', label, 'image load failed for', src, e);
+                img.src = src;
+              };
+
+              if (c.sourceType === 'media' && c.sourceMediaId) {
+                const items = getStore(mediaLibrary);
+                const item = items.find((m: any) => m.id === c.sourceMediaId);
+                if (item && item.type === 'video') {
+                  const vid: HTMLVideoElement | undefined =
+                    item.videoElement || (item.src ? ensurePixelFXVideo(layer.id, item.src) : undefined);
+                  if (vid) fly.updateSourceFromVideo(vid);
+                } else if (item && item.src) {
+                  loadImageOnceFly(item.src, `media:${item.id}:${item.src}`, 'media-library');
+                }
+              } else if (c.sourceType === 'layer' && c.sourceLayerId) {
+                const sourceLayer = proj.layers.find((l) => l.id === c.sourceLayerId);
+                if (sourceLayer && sourceLayer.source) {
+                  const ms = sourceLayer.source;
+                  const vid: HTMLVideoElement | undefined =
+                    (ms as any).videoElement ||
+                    (ms.type === 'video' && ms.src ? ensurePixelFXVideo(layer.id, ms.src) : undefined);
+                  if (vid) {
+                    fly.updateSourceFromVideo(vid);
+                    flythroughLoadedSourceKey.set(layer.id, `layer:${c.sourceLayerId}:video`);
+                  } else if (ms.src) {
+                    loadImageOnceFly(ms.src, `layer:${c.sourceLayerId}:${ms.src}`, 'layer-source');
+                  }
+                }
+              } else if (c.sourceUrl) {
+                const isVideo = c.sourceType === 'video';
+                const cacheKey = `file:${c.sourceUrl}`;
+                if (isVideo) {
+                  const v = ensurePixelFXVideo(layer.id, c.sourceUrl);
+                  fly.updateSourceFromVideo(v);
+                  flythroughLoadedSourceKey.set(layer.id, cacheKey);
+                } else {
+                  loadImageOnceFly(c.sourceUrl, cacheKey, 'file');
+                }
+              }
+
+              // Apply per-frame parameters. The renderer hashes nothing
+              // internally — every frame we just set the current values.
+              //
+              // Audio reactivity (when `flythroughAudioReactive` is on):
+              //   bass   → boosts fly speed (kick = forward burst)
+              //   treble → boosts flow strength (high freq = swirl chaos)
+              // The configured baselines stay the "silence" values; the
+              // bands ADD to them rather than replace them, so the layer
+              // never goes static when the music drops out. Both bands
+              // are 0..1 normalized from the audio analyzer.
+              const baseFlySpeed = c.flythroughFlySpeed ?? 0.8;
+              const baseFlowStrength = c.flythroughFlowStrength ?? 0.4;
+              const reactive = c.flythroughAudioReactive && lastAudioBands;
+              const audioFlySpeed = reactive ? baseFlySpeed * (1 + lastAudioBands!.bass * 1.8) : baseFlySpeed;
+              const audioFlowStrength = reactive
+                ? baseFlowStrength * (1 + lastAudioBands!.treble * 1.5)
+                : baseFlowStrength;
+
+              fly.setParams({
+                topology: c.flythroughTopology ?? 'strokes',
+                depthSource: c.flythroughDepthSource ?? 'luminance',
+                flySpeed: audioFlySpeed,
+                tunnelDepth: c.flythroughTunnelDepth ?? 2.0,
+                slabCount: c.flythroughSlabCount ?? 4,
+                flowStrength: audioFlowStrength,
+                flowScale: c.flythroughFlowScale ?? 2.0,
+                anchorPull: c.flythroughAnchorPull ?? 1.2,
+                strokeLength: c.flythroughStrokeLength ?? 0.08,
+                strokeWidth: c.flythroughStrokeWidth ?? 0.006,
+                depthStrength: c.flythroughDepthStrength ?? 0.5,
+                baseSize: c.baseSize ?? 0.005,
+                opacity: (c.opacity ?? 1) * (layer.opacity ?? 1),
+                fovDeg: c.fovDeg ?? 50,
+                cameraYaw: c.cameraYaw ?? 0,
+                cameraPitch: c.cameraPitch ?? 0,
+                particleCount: c.particleCount ?? 250_000,
+              });
+              fly.setBlendMode(layer.blendMode || 'add');
+              fly.setViewport(presentCanvas.width, presentCanvas.height);
+              fly.encodeFrame(encoder, view);
+              continue;
             }
 
-            // Lazy-create the flythrough renderer for this layer.
-            let fly = flythroughRenderers.get(layer.id);
-            if (!fly) {
+            let renderer = pixelFXRenderers.get(layer.id);
+            if (!renderer) {
+              // Lazy create — first frame for this layer. Failures are
+              // non-fatal; the rest of the canvas keeps rendering.
               try {
-                fly = new WebGPUFlythrough(device, preferredFormat);
-                flythroughRenderers.set(layer.id, fly);
+                renderer = new (WebGPUPixelParticles as any)(device, preferredFormat);
+                pixelFXRenderers.set(layer.id, renderer!);
               } catch (err: any) {
-                console.error('[flythrough] init failed for layer', layer.id, err?.message || err);
+                console.error('[pixel-fx] init failed for layer', layer.id, err?.message || err);
                 continue;
               }
             }
-
-            // ── Source resolution (mirrors the standard-mode logic
-            // immediately below; kept inline so the two paths can
-            // evolve independently without one breaking the other).
-            const loadImageOnceFly = (src: string, cacheKey: string, label: string) => {
-              if (cacheKey === flythroughLoadedSourceKey.get(layer.id)) return;
-              flythroughLoadedSourceKey.set(layer.id, cacheKey);
+            renderer = renderer!;
+            // ── Source resolution ──
+            // Three source paths, in priority order:
+            //   sourceType === 'media': pull from a Media Library item
+            //     by id. Same items the Media Tray shows. Most common
+            //     path — items already loaded into the project library.
+            //   sourceType === 'layer': pull from another layer's media
+          //     (image src or videoElement). Use when you've
+            //     configured trim/playback on a media layer and want
+            //     the pixel-fx to inherit it.
+            //   else: load from sourceUrl (one-off file picker).
+            // Videos are pumped per frame for live playback; images
+            // load once per source change (cache-keyed).
+            // Helper: load a still image into the renderer (one-time
+            // per source change). Images that fail to decode are
+            // logged but do not block the rest of the pipeline.
+            const loadImageOnce = (src: string, cacheKey: string, label: string) => {
+              if (cacheKey === pixelFXLoadedSourceUrl.get(layer.id)) return;
+              pixelFXLoadedSourceUrl.set(layer.id, cacheKey);
               const img = new Image();
               if (/^https?:/i.test(src)) img.crossOrigin = 'anonymous';
-              img.onload = () => { fly!.setSourceImage(img).catch(e => console.warn('[flythrough]', label, 'setSourceImage failed', e)); };
-              img.onerror = (e) => console.warn('[flythrough]', label, 'image load failed for', src, e);
+              img.onload = () => {
+                renderer!
+                  .setSourceImage(img)
+                  .catch((e) => console.warn('[pixel-fx]', label, 'setSourceImage failed', e));
+              };
+              img.onerror = (e) => console.warn('[pixel-fx]', label, 'image load failed for', src, e);
               img.src = src;
             };
 
             if (c.sourceType === 'media' && c.sourceMediaId) {
               const items = getStore(mediaLibrary);
               const item = items.find((m: any) => m.id === c.sourceMediaId);
-              if (item && item.type === 'video') {
-                const vid: HTMLVideoElement | undefined = item.videoElement || (item.src ? ensurePixelFXVideo(layer.id, item.src) : undefined);
-                if (vid) fly.updateSourceFromVideo(vid);
-              } else if (item && item.src) {
-                loadImageOnceFly(item.src, `media:${item.id}:${item.src}`, 'media-library');
-              }
-            } else if (c.sourceType === 'layer' && c.sourceLayerId) {
-              const sourceLayer = proj.layers.find((l) => l.id === c.sourceLayerId);
-              if (sourceLayer && sourceLayer.source) {
-                const ms = sourceLayer.source;
-                const vid: HTMLVideoElement | undefined = (ms as any).videoElement
-                  || (ms.type === 'video' && ms.src ? ensurePixelFXVideo(layer.id, ms.src) : undefined);
-                if (vid) {
-                  fly.updateSourceFromVideo(vid);
-                  flythroughLoadedSourceKey.set(layer.id, `layer:${c.sourceLayerId}:video`);
-                } else if (ms.src) {
-                  loadImageOnceFly(ms.src, `layer:${c.sourceLayerId}:${ms.src}`, 'layer-source');
+              if (!item) {
+                const cacheKey = `media:${c.sourceMediaId}:not-found`;
+                if (cacheKey !== pixelFXLoadedSourceUrl.get(layer.id)) {
+                  pixelFXLoadedSourceUrl.set(layer.id, cacheKey);
+                  console.warn('[pixel-fx] media library item not found for id', c.sourceMediaId);
                 }
-              }
-            } else if (c.sourceUrl) {
-              const isVideo = c.sourceType === 'video';
-              const cacheKey = `file:${c.sourceUrl}`;
-              if (isVideo) {
-                const v = ensurePixelFXVideo(layer.id, c.sourceUrl);
-                fly.updateSourceFromVideo(v);
-                flythroughLoadedSourceKey.set(layer.id, cacheKey);
-              } else {
-                loadImageOnceFly(c.sourceUrl, cacheKey, 'file');
-              }
-            }
-
-            // Apply per-frame parameters. The renderer hashes nothing
-            // internally — every frame we just set the current values.
-            //
-            // Audio reactivity (when `flythroughAudioReactive` is on):
-            //   bass   → boosts fly speed (kick = forward burst)
-            //   treble → boosts flow strength (high freq = swirl chaos)
-            // The configured baselines stay the "silence" values; the
-            // bands ADD to them rather than replace them, so the layer
-            // never goes static when the music drops out. Both bands
-            // are 0..1 normalized from the audio analyzer.
-            const baseFlySpeed = c.flythroughFlySpeed ?? 0.8;
-            const baseFlowStrength = c.flythroughFlowStrength ?? 0.4;
-            const reactive = c.flythroughAudioReactive && lastAudioBands;
-            const audioFlySpeed = reactive
-              ? baseFlySpeed * (1 + lastAudioBands!.bass * 1.8)
-              : baseFlySpeed;
-            const audioFlowStrength = reactive
-              ? baseFlowStrength * (1 + lastAudioBands!.treble * 1.5)
-              : baseFlowStrength;
-
-            fly.setParams({
-              topology: c.flythroughTopology ?? 'strokes',
-              depthSource: c.flythroughDepthSource ?? 'luminance',
-              flySpeed: audioFlySpeed,
-              tunnelDepth: c.flythroughTunnelDepth ?? 2.0,
-              slabCount: c.flythroughSlabCount ?? 4,
-              flowStrength: audioFlowStrength,
-              flowScale: c.flythroughFlowScale ?? 2.0,
-              anchorPull: c.flythroughAnchorPull ?? 1.2,
-              strokeLength: c.flythroughStrokeLength ?? 0.08,
-              strokeWidth: c.flythroughStrokeWidth ?? 0.006,
-              depthStrength: c.flythroughDepthStrength ?? 0.5,
-              baseSize: c.baseSize ?? 0.005,
-              opacity: (c.opacity ?? 1) * (layer.opacity ?? 1),
-              fovDeg: c.fovDeg ?? 50,
-              cameraYaw: c.cameraYaw ?? 0,
-              cameraPitch: c.cameraPitch ?? 0,
-              particleCount: c.particleCount ?? 250_000,
-            });
-            fly.setBlendMode(layer.blendMode || 'add');
-            fly.setViewport(presentCanvas.width, presentCanvas.height);
-            fly.encodeFrame(encoder, view);
-            continue;
-          }
-
-          let renderer = pixelFXRenderers.get(layer.id);
-          if (!renderer) {
-            // Lazy create — first frame for this layer. Failures are
-            // non-fatal; the rest of the canvas keeps rendering.
-            try {
-              renderer = new (WebGPUPixelParticles as any)(device, preferredFormat);
-              pixelFXRenderers.set(layer.id, renderer!);
-            } catch (err: any) {
-              console.error('[pixel-fx] init failed for layer', layer.id, err?.message || err);
-              continue;
-            }
-          }
-          renderer = renderer!;
-          // ── Source resolution ──
-          // Three source paths, in priority order:
-          //   sourceType === 'media': pull from a Media Library item
-          //     by id. Same items the Media Tray shows. Most common
-          //     path — items already loaded into the project library.
-          //   sourceType === 'layer': pull from another layer's media
-          //     (image src or videoElement). Use when you've
-          //     configured trim/playback on a media layer and want
-          //     the pixel-fx to inherit it.
-          //   else: load from sourceUrl (one-off file picker).
-          // Videos are pumped per frame for live playback; images
-          // load once per source change (cache-keyed).
-          // Helper: load a still image into the renderer (one-time
-          // per source change). Images that fail to decode are
-          // logged but do not block the rest of the pipeline.
-          const loadImageOnce = (src: string, cacheKey: string, label: string) => {
-            if (cacheKey === pixelFXLoadedSourceUrl.get(layer.id)) return;
-            pixelFXLoadedSourceUrl.set(layer.id, cacheKey);
-            const img = new Image();
-            if (/^https?:/i.test(src)) img.crossOrigin = 'anonymous';
-            img.onload = () => { renderer!.setSourceImage(img).catch(e => console.warn('[pixel-fx]', label, 'setSourceImage failed', e)); };
-            img.onerror = (e) => console.warn('[pixel-fx]', label, 'image load failed for', src, e);
-            img.src = src;
-          };
-
-          if (c.sourceType === 'media' && c.sourceMediaId) {
-            const items = getStore(mediaLibrary);
-            const item = items.find((m: any) => m.id === c.sourceMediaId);
-            if (!item) {
-              const cacheKey = `media:${c.sourceMediaId}:not-found`;
-              if (cacheKey !== pixelFXLoadedSourceUrl.get(layer.id)) {
-                pixelFXLoadedSourceUrl.set(layer.id, cacheKey);
-                console.warn('[pixel-fx] media library item not found for id', c.sourceMediaId);
-              }
-            } else if (item.type === 'video') {
-              // Prefer the existing videoElement if MediaTray made
-              // one; otherwise create our own from the src so the
-              // user doesn't need to first place the media on a
+              } else if (item.type === 'video') {
+                // Prefer the existing videoElement if MediaTray made
+                // one; otherwise create our own from the src so the
+                // user doesn't need to first place the media on a
               // layer. Pumped per frame.
               const vid: HTMLVideoElement | undefined = item.videoElement || (item.src ? ensurePixelFXVideo(layer.id, item.src) : undefined);
               if (vid) {
@@ -1283,7 +1311,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
           );
           renderer.setNoise(c.noiseAmpXY ?? 0, c.noiseAmpZ ?? 0, c.noiseFreq ?? 4, c.noiseSpeed ?? 0.5);
           // Honor the layer's blend mode so pixel-fx composites
-          // properly with whatever's behind (the bridge frame, which
+            // properly with whatever's behind (the bridge frame, which
           // contains all CPU layers). Default 'add' kept unintended-
           // additive behaviour visible; users will probably want
           // 'normal' or 'screen' for video sources.
@@ -1544,10 +1572,10 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   <canvas bind:this={presentCanvas} class="webgpu-present"></canvas>
   {#if initStatus === 'no-webgpu' || initStatus === 'error'}
     <div class="error-overlay">
-      <div class="error-title">WebGPU bridge error</div>
+      <div class="error-title">{$t('gpuTools.webgpu.bridgeError')}</div>
       <div class="error-body">{initError}</div>
       <div class="error-hint">
-        Toggle <code>experimental.editorWebGPU</code> off to fall back to WebGL only.
+        {$t('gpuTools.webgpu.errorHint', { values: { flag: 'experimental.editorWebGPU' } })}
       </div>
     </div>
   {/if}

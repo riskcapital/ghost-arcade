@@ -10,6 +10,7 @@
 
   import { offlineRender, DEFAULT_OFFLINE_SETTINGS, type OfflineRenderSettings } from '../recording/offlineRender';
   import { project } from '../stores/layers';
+  import { t } from '../i18n';
 
   export let isOpen = false;
   export let onClose: () => void = () => {};
@@ -34,13 +35,15 @@
   }
 
   const RESOLUTION_PRESETS = [
-    { label: 'Project size',  fn: () => ({ w: $project.width || 1920, h: $project.height || 1080 }) },
-    { label: '720p (HD)',     fn: () => ({ w: 1280, h: 720 }) },
-    { label: '1080p (FHD)',   fn: () => ({ w: 1920, h: 1080 }) },
-    { label: '1440p (2K)',    fn: () => ({ w: 2560, h: 1440 }) },
-    { label: '2160p (4K)',    fn: () => ({ w: 3840, h: 2160 }) },
-    { label: 'Square 1080',   fn: () => ({ w: 1080, h: 1080 }) },
-    { label: 'Vertical 1080', fn: () => ({ w: 1080, h: 1920 }) },
+    {
+      labelKey: 'mediaTools.offline.presets.projectSize',  fn: () => ({ w: $project.width || 1920, h: $project.height || 1080 }),
+    },
+    { labelKey: 'mediaTools.offline.presets.hd720',     fn: () => ({ w: 1280, h: 720 }) },
+    { labelKey: 'mediaTools.offline.presets.fhd1080',   fn: () => ({ w: 1920, h: 1080 }) },
+    { labelKey: 'mediaTools.offline.presets.k2',    fn: () => ({ w: 2560, h: 1440 }) },
+    { labelKey: 'mediaTools.offline.presets.k4',    fn: () => ({ w: 3840, h: 2160 }) },
+    { labelKey: 'mediaTools.offline.presets.square1080',   fn: () => ({ w: 1080, h: 1080 }) },
+    { labelKey: 'mediaTools.offline.presets.vertical1080', fn: () => ({ w: 1080, h: 1920 }) },
   ];
   const FPS_PRESETS = [24, 30, 60];
 
@@ -111,187 +114,239 @@
 <svelte:window onkeydown={onKey} />
 
 {#if isOpen}
-<div class="modal-backdrop" onclick={closeAndReset} role="presentation"></div>
-<div class="modal-shell" role="dialog" aria-label="Render to video">
-  <header class="modal-head">
-    <h2>Render to Video</h2>
-    <button class="close-btn" onclick={closeAndReset} disabled={isRunning} title={isRunning ? 'Cancel before closing' : 'Close'}>×</button>
-  </header>
+  <div class="modal-backdrop" onclick={closeAndReset} role="presentation"></div>
+  <div class="modal-shell" role="dialog" aria-label={$t('mediaTools.offline.ariaLabel')}>
+    <header class="modal-head">
+      <h2>{$t('mediaTools.offline.title')}</h2>
+      <button
+        class="close-btn"
+        onclick={closeAndReset}
+        disabled={isRunning}
+        title={$t(isRunning ? 'mediaTools.offline.closeWhileRunning' : 'mediaTools.offline.closeTitle')}
+        aria-label={$t(isRunning ? 'mediaTools.offline.closeWhileRunning' : 'mediaTools.offline.closeTitle')}>×</button
+      >
+    </header>
 
-  {#if state.status === 'complete' && state.lastOutputKind === 'frames'}
-    <!-- Success state — frame sequence folder. -->
-    <div class="modal-body success">
-      <div class="success-icon">✓</div>
-      <h3>Frames exported</h3>
-      <p class="success-meta">{state.lastOutputName ?? 'render'}_%06d.jpg · {state.totalFrames} frames · {fmtTime(elapsedSec)}</p>
-      {#if state.lastOutputPath}
-        <p class="success-hint">Saved to {state.lastOutputPath}</p>
-      {/if}
-      <p class="success-hint">A manifest with an FFmpeg compile command was written beside the frames.</p>
-      <div class="actions">
-        <button class="btn-primary" onclick={closeAndReset}>Done</button>
-      </div>
-    </div>
-
-  {:else if state.status === 'complete' && state.lastOutputUrl}
-    <!-- Success state — preview thumbnail + actions. -->
-    <div class="modal-body success">
-      <div class="success-icon">✓</div>
-      <h3>Render complete</h3>
-      <p class="success-meta">{state.lastOutputName ?? 'render'}.mp4 · {state.totalFrames} frames · {fmtTime(elapsedSec)}</p>
-      <video class="preview" src={state.lastOutputUrl} controls muted loop></video>
-      <p class="success-hint">Added to media library + downloaded.</p>
-      <div class="actions">
-        <button class="btn-primary" onclick={closeAndReset}>Done</button>
-      </div>
-    </div>
-
-  {:else if isRunning}
-    <!-- Progress state — bar + phase + cancel. -->
-    <div class="modal-body progress">
-      <div class="phase">
-        {#if state.status === 'choosing-folder'}
-          Choose an output folder…
-        {:else if state.status === 'loading-ffmpeg'}
-          Loading FFmpeg encoder…
-        {:else if state.status === 'rendering'}
-          {isFrameOutput ? 'Writing' : 'Rendering'} frame {state.currentFrame} / {state.totalFrames}
-        {:else if state.status === 'encoding'}
-          Encoding to MP4…
-        {:else if state.status === 'saving'}
-          {isFrameOutput ? 'Finalizing frame sequence…' : 'Saving to library…'}
+    {#if state.status === 'complete' && state.lastOutputKind === 'frames'}
+      <!-- Success state — frame sequence folder. -->
+      <div class="modal-body success">
+        <div class="success-icon">✓</div>
+        <h3>{$t('mediaTools.offline.success.framesExported')}</h3>
+        <p class="success-meta">
+          {state.lastOutputName ?? 'render'}_%06d.jpg · {$t('mediaTools.offline.success.frames', {
+            values: { count: state.totalFrames },
+          })} · {fmtTime(elapsedSec)}
+        </p>
+        {#if state.lastOutputPath}
+          <p class="success-hint">
+            {$t('mediaTools.offline.success.savedTo', { values: { path: state.lastOutputPath ?? '' } })}
+          </p>
         {/if}
-      </div>
-      <div class="progress-bar">
-        <div class="progress-fill" style="width: {progressPct}%"></div>
-      </div>
-      <div class="progress-meta">
-        <span>{progressPct}%</span>
-        <span>
-          {fmtTime(elapsedSec)} elapsed
-          {#if remainingSec > 0 && state.status === 'rendering'}
-            · ~{fmtTime(remainingSec)} remaining
-          {/if}
-        </span>
-      </div>
-      <div class="actions">
-        <button class="btn-secondary" onclick={cancel}>Cancel</button>
-      </div>
-    </div>
-
-  {:else if state.status === 'cancelled' || state.status === 'error'}
-    <!-- Error / cancelled state. -->
-    <div class="modal-body error">
-      <div class="error-icon">{state.status === 'error' ? '!' : '×'}</div>
-      <h3>{state.status === 'error' ? 'Render failed' : 'Render cancelled'}</h3>
-      {#if state.errorMessage}
-        <p class="error-msg">{state.errorMessage}</p>
-      {/if}
-      <div class="actions">
-        <button class="btn-secondary" onclick={() => offlineRender.reset()}>Back to settings</button>
-        <button class="btn-primary" onclick={closeAndReset}>Close</button>
-      </div>
-    </div>
-
-  {:else}
-    <!-- Settings form. -->
-    <div class="modal-body">
-      <div class="field">
-        <label>Filename</label>
-        <input type="text" bind:value={settings.filename} placeholder="render" />
-      </div>
-
-      <div class="row">
-        <div class="field">
-          <label>Duration (seconds)</label>
-          <input type="number" min="0.5" max="3600" step="0.5" bind:value={settings.durationSeconds} />
+        <p class="success-hint">{$t('mediaTools.offline.success.manifestHint')}</p>
+        <div class="actions">
+          <button class="btn-primary" onclick={closeAndReset}>{$t('mediaTools.offline.success.done')}</button>
         </div>
+      </div>
+    {:else if state.status === 'complete' && state.lastOutputUrl}
+      <!-- Success state — preview thumbnail + actions. -->
+      <div class="modal-body success">
+        <div class="success-icon">✓</div>
+        <h3>{$t('mediaTools.offline.success.renderComplete')}</h3>
+        <p class="success-meta">
+          {state.lastOutputName ?? 'render'}.mp4 · {$t('mediaTools.offline.success.frames', {
+            values: { count: state.totalFrames },
+          })} · {fmtTime(elapsedSec)}
+        </p>
+        <video class="preview" src={state.lastOutputUrl} controls muted loop></video>
+        <p class="success-hint">{$t('mediaTools.offline.success.addedToLibrary')}</p>
+        <div class="actions">
+          <button class="btn-primary" onclick={closeAndReset}>{$t('mediaTools.offline.success.done')}</button>
+        </div>
+      </div>
+    {:else if isRunning}
+      <!-- Progress state — bar + phase + cancel. -->
+      <div class="modal-body progress">
+        <div class="phase">
+          {#if state.status === 'choosing-folder'}
+            {$t('mediaTools.offline.progress.chooseFolder')}
+          {:else if state.status === 'loading-ffmpeg'}
+            {$t('mediaTools.offline.progress.loadingEncoder')}
+          {:else if state.status === 'rendering'}
+            {$t(
+              isFrameOutput ? 'mediaTools.offline.progress.writingFrame' : 'mediaTools.offline.progress.renderingFrame',
+              { values: { current: state.currentFrame, total: state.totalFrames } },
+            )}
+          {:else if state.status === 'encoding'}
+            {$t('mediaTools.offline.progress.encodingMp4')}
+          {:else if state.status === 'saving'}
+            {$t(
+              isFrameOutput
+                ? 'mediaTools.offline.progress.finalizingFrames'
+                : 'mediaTools.offline.progress.savingLibrary',
+            )}
+          {/if}
+        </div>
+        <div class="progress-bar">
+          <div class="progress-fill" style="width: {progressPct}%"></div>
+        </div>
+        <div class="progress-meta">
+          <span>{progressPct}%</span>
+          <span>
+            {$t('mediaTools.offline.progress.elapsed', { values: { time: fmtTime(elapsedSec) } })}
+            {#if remainingSec > 0 && state.status === 'rendering'}
+              · {$t('mediaTools.offline.progress.remaining', { values: { time: fmtTime(remainingSec) } })}
+            {/if}
+          </span>
+        </div>
+        <div class="actions">
+          <button class="btn-secondary" onclick={cancel}>{$t('mediaTools.offline.progress.cancel')}</button>
+        </div>
+      </div>
+    {:else if state.status === 'cancelled' || state.status === 'error'}
+      <!-- Error / cancelled state. -->
+      <div class="modal-body error">
+        <div class="error-icon">{state.status === 'error' ? '!' : '×'}</div>
+        <h3>
+          {$t(
+            state.status === 'error'
+              ? 'mediaTools.offline.error.renderFailed'
+              : 'mediaTools.offline.error.renderCancelled',
+          )}
+        </h3>
+        {#if state.errorMessage}
+          <p class="error-msg">{state.errorMessage}</p>
+        {/if}
+        <div class="actions">
+          <button class="btn-secondary" onclick={() => offlineRender.reset()}
+            >{$t('mediaTools.offline.error.backToSettings')}</button
+          >
+          <button class="btn-primary" onclick={closeAndReset}>{$t('mediaTools.offline.error.close')}</button>
+        </div>
+      </div>
+    {:else}
+      <!-- Settings form. -->
+      <div class="modal-body">
         <div class="field">
-          <label>Frame rate</label>
-          <select bind:value={settings.fps}>
-            {#each FPS_PRESETS as fps}
-              <option value={fps}>{fps} fps</option>
+          <label>{$t('mediaTools.offline.settings.filename')}</label>
+          <input
+            type="text"
+            bind:value={settings.filename}
+            placeholder={$t('mediaTools.offline.settings.filenamePlaceholder')}
+          />
+        </div>
+
+        <div class="row">
+          <div class="field">
+            <label>{$t('mediaTools.offline.settings.duration')}</label>
+            <input type="number" min="0.5" max="3600" step="0.5" bind:value={settings.durationSeconds} />
+          </div>
+          <div class="field">
+            <label>{$t('mediaTools.offline.settings.frameRate')}</label>
+            <select bind:value={settings.fps}>
+              {#each FPS_PRESETS as fps}
+                <option value={fps}>{$t('mediaTools.offline.settings.fps', { values: { fps } })}</option>
+              {/each}
+            </select>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>{$t('mediaTools.offline.settings.resolution')}</label>
+          <div class="preset-grid">
+            {#each RESOLUTION_PRESETS as preset}
+              {@const p = preset.fn()}
+              {@const active = settings.width === p.w && settings.height === p.h}
+              <button
+                class="preset-btn"
+                class:active
+                onclick={() => {
+                  settings.width = p.w;
+                  settings.height = p.h;
+                }}
+              >
+                <span class="preset-label">{$t(preset.labelKey)}</span>
+                <span class="preset-dims">{p.w}×{p.h}</span>
+              </button>
             {/each}
+          </div>
+          <div class="row tight">
+            <div class="field small">
+              <label>{$t('mediaTools.offline.settings.width')}</label>
+              <input type="number" min="64" max="7680" step="2" bind:value={settings.width} />
+            </div>
+            <div class="field small">
+              <label>{$t('mediaTools.offline.settings.height')}</label>
+              <input type="number" min="64" max="4320" step="2" bind:value={settings.height} />
+            </div>
+          </div>
+        </div>
+
+        <div class="field">
+          <label>{$t('mediaTools.offline.settings.output')}</label>
+          <select bind:value={settings.outputMode}>
+            <option value="mp4">{$t('mediaTools.offline.settings.mp4Video')}</option>
+            <option value="frames">{$t('mediaTools.offline.settings.jpegSequence')}</option>
           </select>
         </div>
-      </div>
 
-      <div class="field">
-        <label>Resolution</label>
-        <div class="preset-grid">
-          {#each RESOLUTION_PRESETS as preset}
-            {@const p = preset.fn()}
-            {@const active = settings.width === p.w && settings.height === p.h}
-            <button
-              class="preset-btn"
-              class:active
-              onclick={() => { settings.width = p.w; settings.height = p.h; }}
-            >
-              <span class="preset-label">{preset.label}</span>
-              <span class="preset-dims">{p.w}×{p.h}</span>
-            </button>
-          {/each}
+        <div class="field">
+          <label
+            >{$t(
+              isFrameOutput
+                ? 'mediaTools.offline.settings.compileQualityPreset'
+                : 'mediaTools.offline.settings.quality',
+            )}</label
+          >
+          <select bind:value={settings.quality}>
+            <option value="web">{$t('mediaTools.offline.settings.qualityWeb')}</option>
+            <option value="high">{$t('mediaTools.offline.settings.qualityHigh')}</option>
+            <option value="archive">{$t('mediaTools.offline.settings.qualityArchive')}</option>
+          </select>
         </div>
-        <div class="row tight">
-          <div class="field small">
-            <label>Width</label>
-            <input type="number" min="64" max="7680" step="2" bind:value={settings.width} />
-          </div>
-          <div class="field small">
-            <label>Height</label>
-            <input type="number" min="64" max="4320" step="2" bind:value={settings.height} />
-          </div>
+
+        <div class="summary">
+          {#if isFrameOutput}
+            {$t('mediaTools.offline.settings.summaryFrames', {
+              values: {
+                frames: Math.round(settings.durationSeconds * settings.fps),
+                width: settings.width,
+                height: settings.height,
+              },
+            })}
+          {:else}
+            {$t('mediaTools.offline.settings.summaryVideo', {
+              values: {
+                frames: Math.round(settings.durationSeconds * settings.fps),
+                width: settings.width,
+                height: settings.height,
+              },
+            })}
+          {/if}
+        </div>
+
+        <div class="actions">
+          <button class="btn-secondary" onclick={closeAndReset}>{$t('mediaTools.offline.settings.cancel')}</button>
+          <button class="btn-primary" onclick={start} disabled={!settings.durationSeconds || !settings.fps}>
+            {$t('mediaTools.offline.settings.start')}
+          </button>
         </div>
       </div>
-
-      <div class="field">
-        <label>Output</label>
-        <select bind:value={settings.outputMode}>
-          <option value="mp4">MP4 video</option>
-          <option value="frames">JPEG frame sequence</option>
-        </select>
-      </div>
-
-      <div class="field">
-        <label>{isFrameOutput ? 'Compile quality preset' : 'Quality'}</label>
-        <select bind:value={settings.quality}>
-          <option value="web">Web (smaller file, CRF 23)</option>
-          <option value="high">High (recommended, CRF 18)</option>
-          <option value="archive">Archive (near-lossless, CRF 14, slow)</option>
-        </select>
-      </div>
-
-      <div class="summary">
-        {#if isFrameOutput}
-          Will write <strong>{Math.round(settings.durationSeconds * settings.fps)}</strong> JPEG frames at
-          <strong>{settings.width}×{settings.height}</strong> to a folder.
-        {:else}
-          Will produce <strong>{Math.round(settings.durationSeconds * settings.fps)}</strong> frames at
-          <strong>{settings.width}×{settings.height}</strong>.
-        {/if}
-      </div>
-
-      <div class="actions">
-        <button class="btn-secondary" onclick={closeAndReset}>Cancel</button>
-        <button class="btn-primary" onclick={start} disabled={!settings.durationSeconds || !settings.fps}>
-          Start Render
-        </button>
-      </div>
-    </div>
-  {/if}
-</div>
+    {/if}
+  </div>
 {/if}
 
 <style>
   .modal-backdrop {
-    position: fixed; inset: 0;
+    position: fixed;
+    inset: 0;
     background: rgba(0, 0, 0, 0.6);
     backdrop-filter: blur(4px);
     z-index: 1100;
   }
   .modal-shell {
     position: fixed;
-    top: 50%; left: 50%;
+    top: 50%;
+    left: 50%;
     transform: translate(-50%, -50%);
     width: 560px;
     max-width: calc(100vw - 40px);
@@ -322,7 +377,8 @@
   }
   .close-btn {
     /* 32×32 satisfies the 32px tap-target accessibility floor. */
-    width: 32px; height: 32px;
+    width: 32px;
+    height: 32px;
     border: 1px solid var(--border-secondary, #2a2a30);
     background: transparent;
     color: var(--text-secondary, #aaa);
@@ -334,8 +390,14 @@
     align-items: center;
     justify-content: center;
   }
-  .close-btn:hover:not(:disabled) { background: rgba(255,255,255,0.06); color: #fff; }
-  .close-btn:disabled { opacity: 0.3; cursor: not-allowed; }
+  .close-btn:hover:not(:disabled) {
+    background: rgba(255, 255, 255, 0.06);
+    color: #fff;
+  }
+  .close-btn:disabled {
+    opacity: 0.3;
+    cursor: not-allowed;
+  }
 
   .modal-body {
     padding: 18px;
@@ -347,7 +409,9 @@
     gap: 5px;
     margin-bottom: 14px;
   }
-  .field.small { flex: 1; }
+  .field.small {
+    flex: 1;
+  }
   .field label {
     font-size: 11px;
     letter-spacing: 1px;
@@ -369,8 +433,14 @@
     border-color: #4cd1ff;
     outline: none;
   }
-  .row { display: flex; gap: 10px; }
-  .row.tight { gap: 6px; margin-top: 6px; }
+  .row {
+    display: flex;
+    gap: 10px;
+  }
+  .row.tight {
+    gap: 6px;
+    margin-top: 6px;
+  }
   .preset-grid {
     display: grid;
     grid-template-columns: 1fr 1fr;
@@ -399,9 +469,18 @@
     border-color: #4cd1ff;
     color: #4cd1ff;
   }
-  .preset-label { font-size: 12px; font-weight: 500; }
-  .preset-dims { font-size: 11px; font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace); color: #666; }
-  .preset-btn.active .preset-dims { color: #4cd1ff; }
+  .preset-label {
+    font-size: 12px;
+    font-weight: 500;
+  }
+  .preset-dims {
+    font-size: 11px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    color: #666;
+  }
+  .preset-btn.active .preset-dims {
+    color: #4cd1ff;
+  }
 
   .summary {
     background: rgba(76, 209, 255, 0.05);
@@ -413,7 +492,9 @@
     line-height: 1.5;
     margin-bottom: 14px;
   }
-  .summary strong { color: #4cd1ff; }
+  .summary strong {
+    color: #4cd1ff;
+  }
 
   .actions {
     display: flex;
@@ -437,7 +518,10 @@
   .btn-primary:hover:not(:disabled) {
     background: linear-gradient(135deg, #80dfff, #8a7aff);
   }
-  .btn-primary:disabled { opacity: 0.4; cursor: not-allowed; }
+  .btn-primary:disabled {
+    opacity: 0.4;
+    cursor: not-allowed;
+  }
   .btn-secondary {
     background: transparent;
     border: 1px solid #2a2a30;
@@ -476,9 +560,12 @@
     font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
     color: var(--text-muted, #888);
   }
-  .success { text-align: center; }
+  .success {
+    text-align: center;
+  }
   .success-icon {
-    width: 56px; height: 56px;
+    width: 56px;
+    height: 56px;
     background: rgba(76, 222, 128, 0.15);
     color: #4ade80;
     border: 1px solid #4ade80;
@@ -487,8 +574,17 @@
     line-height: 56px;
     margin: 6px auto 12px;
   }
-  .success h3 { margin: 0 0 4px; color: var(--text-primary, #ddd); font-size: 17px; }
-  .success-meta { color: var(--text-muted, #888); font-size: 12px; font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace); margin: 0 0 12px; }
+  .success h3 {
+    margin: 0 0 4px;
+    color: var(--text-primary, #ddd);
+    font-size: 17px;
+  }
+  .success-meta {
+    color: var(--text-muted, #888);
+    font-size: 12px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+    margin: 0 0 12px;
+  }
   .preview {
     width: 100%;
     max-height: 280px;
@@ -496,11 +592,18 @@
     background: #000;
     margin-bottom: 8px;
   }
-  .success-hint { color: #4ade80; font-size: 12px; margin: 8px 0 0; }
+  .success-hint {
+    color: #4ade80;
+    font-size: 12px;
+    margin: 8px 0 0;
+  }
 
-  .error { text-align: center; }
+  .error {
+    text-align: center;
+  }
   .error-icon {
-    width: 56px; height: 56px;
+    width: 56px;
+    height: 56px;
     background: rgba(255, 80, 80, 0.15);
     color: #ff5252;
     border: 1px solid #ff5252;
@@ -510,6 +613,13 @@
     margin: 6px auto 12px;
     font-weight: 700;
   }
-  .error h3 { margin: 0 0 8px; color: var(--text-primary, #ddd); font-size: 17px; }
-  .error-msg { color: #ff8888; font-size: 13px; font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace); word-break: break-word; }
+  .error h3 {
+    margin: 0 0 8px;
+    color: var(--text-primary, #ddd);
+    font-size: 17px;
+  }
+  .error-msg {
+    color: #ff8888;
+    font-size: 13px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace); word-break: break-word; }
 </style>

@@ -1,23 +1,25 @@
 <script lang="ts">
+  import { t } from '../i18n';
+
   export let onSelect: (mode: 'standalone' | 'remote') => void;
 </script>
 
 <div class="mode-select">
-  <img src="{import.meta.env.BASE_URL}logo.png" alt="Ghost Arcade" class="logo" />
-  <h1>Ghost Arcade</h1>
-  <p class="tagline">Projection mapping & VJ — right on your phone</p>
+  <img src="{import.meta.env.BASE_URL}logo.png" alt={$t('standalone.modeSelect.logoAlt')} class="logo" />
+  <h1>{$t('standalone.brand')}</h1>
+  <p class="tagline">{$t('standalone.modeSelect.tagline')}</p>
 
   <button class="mode-card primary" onclick={() => onSelect('standalone')}>
-    <div class="mode-title">Standalone</div>
-    <div class="mode-desc">VJ + projection mapping from this device alone. Plug into a projector with USB-C → HDMI.</div>
+    <div class="mode-title">{$t('standalone.modeSelect.standaloneTitle')}</div>
+    <div class="mode-desc">{$t('standalone.modeSelect.standaloneDescription')}</div>
   </button>
 
   <button class="mode-card" onclick={() => onSelect('remote')}>
-    <div class="mode-title">Remote to Desktop</div>
-    <div class="mode-desc">Control a desktop Ghost Arcade running on your computer over WiFi.</div>
+    <div class="mode-title">{$t('standalone.modeSelect.remoteTitle')}</div>
+    <div class="mode-desc">{$t('standalone.modeSelect.remoteDescription')}</div>
   </button>
 
-  <p class="footnote">You can switch modes any time from settings.</p>
+  <p class="footnote">{$t('standalone.modeSelect.footnote')}</p>
 </div>
 
 <style>
@@ -69,7 +71,7 @@
     background: #1c1c24;
   }
   .mode-card.primary {
-    border-color: #BB86FC;
+    border-color: #bb86fc;
     background: linear-gradient(135deg, rgba(187, 134, 252, 0.12), rgba(105, 240, 174, 0.06));
   }
   .mode-title {

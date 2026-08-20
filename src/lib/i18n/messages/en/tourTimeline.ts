@@ -1,0 +1,135 @@
+export default {
+  trackList: {
+    selectLayer: 'Select a layer to keyframe its parameters',
+    noParameters: 'No keyframeable parameters',
+    armAutoKeyframeTitle: 'Click to arm auto-keyframe',
+  },
+  onboarding: {
+    closeTitle: 'Close (Esc) — picks up where you left off',
+    progressStepTitle: 'Step {step}',
+    whereLabel: 'Where:',
+    actions: {
+      skip: 'Skip tour',
+      back: 'Back',
+      done: 'Done · Start using',
+      next: 'Next',
+    },
+    demoSnapshotName: 'Tour demo',
+    steps: {
+      welcome: {
+        eyebrow: 'WELCOME',
+        title: 'Ghost Arcade · feature tour',
+        body: "60-second walkthrough of what shipped in 0.3.x. Hit Skip if you're a returning user — or stick around for 10 quick steps covering everything new.",
+        bullets: {
+          dualDeck: 'Dual-deck A/B crossfader (only VJ tool that has it)',
+          quantizedLaunch: 'Beat-quantized clip launch + MIDI clock sync',
+          audioAnalysis: '8-band audio analysis with kick/snare events',
+          macros: 'Macros (one knob → many params)',
+        },
+      },
+      modes: {
+        eyebrow: '1 / 9',
+        title: 'Three modes, one source of truth',
+        body: 'Ghost Arcade has three modes that share the same audio input, MIDI router, and project file. Switch between them mid-set without losing state.',
+        bullets: {
+          mapping: 'Mapping Mode — build the projection layout (warps, screens, edge blends, dome)',
+          vj: 'VJ Mode — live clip launching with optional dual decks',
+          performer: 'Performer Mode (SynthVision) — 36-key generative shaders for hands-free play',
+        },
+        action: 'Open VJ Mode',
+      },
+      crossfader: {
+        eyebrow: '2 / 9',
+        title: 'Dual-deck A/B crossfader',
+        body: 'Click the A/B toggle in the VJ header to split the deck into two completely independent banks. Cyan = Bank A, Coral = Bank B. Mix between them with the vertical fader using one of 10 transitions (dissolve, glitch, shatter, halftone, liquid…).',
+        bullets: {
+          scenes: 'Per-block A+B scenes — each block stores its own pair of decks',
+          stage: 'Stage mode + crossfader — different physical screens crossfade independently',
+          save: 'Right-click any block tab → Save Project (Ctrl+S equivalent)',
+        },
+        action: 'Try it: flip A/B on',
+      },
+      quantizedLaunch: {
+        eyebrow: '3 / 9',
+        title: 'Quantized clip launch',
+        body: 'Set the QUANT dropdown in the header to make clip triggers land on a beat boundary instead of firing instantly. Off = beginner-friendly instant trigger. 1/4 / 1/2 / 1 BAR / 2 BAR / 4 BAR for tight musical drops.',
+        bullets: {
+          audioBeat: 'Anchored to detected audio beats when audio is active',
+          virtualClock: 'Falls back to BPM-based virtual clock when audio is off',
+          cancel: 'Click a queued cell again to cancel (no commitment to fire)',
+          stopAll: 'STOP ALL flushes the queue (no surprise time-bombs)',
+        },
+        action: 'Try it: set QUANT to 1 BAR',
+      },
+      audio: {
+        eyebrow: '4 / 9',
+        title: 'Audio reactivity',
+        body: 'Click the audio source picker (top-right) → Mic / System Audio / pick a specific device (BlackHole etc. for DAW routing). Tap tempo with TAP. Click the FFT bars to open the EQ tweaks panel.',
+        bullets: {
+          bands: '8 frequency bands: sub · bass · lowMid · mid · highMid · treble · air · presence',
+          onset: 'Kick + snare onset events (separate from the generic beat detector)',
+          gain: 'Per-band gain sliders to boost the kick or cut harsh treble',
+          tuning: 'Sensitivity + smoothing globally tunable',
+        },
+        action: 'Try it: enable mic input',
+      },
+      midiClock: {
+        eyebrow: '5 / 9',
+        title: 'MIDI clock — sync to / from your DAW',
+        body: "Settings → MIDI → enable Receive MIDI Clock to follow a DAW or drum machine's tempo. Enable Send MIDI Clock to make Ghost Arcade the master and drive slaved gear. 24 PPQN, runs alongside any other MIDI Learn mappings.",
+        bullets: {
+          ticks: '0xF8 ticks averaged across 48 samples for fast lock + stable BPM',
+          receive: 'Receive auto-flows into the master BPM (overrides tap tempo when running)',
+          send: 'Send respects manual BPM override / tap so you can override mid-set',
+        },
+        keyHint: 'Settings → MIDI',
+      },
+      macros: {
+        eyebrow: '6 / 9',
+        title: 'Macros — one knob, an effect bundle',
+        body: '8 user-assignable knobs in the VJ header. Each macro is a wet/dry mix for a stack of effects that runs on the composite output. Right-click a knob → "Edit Macro" → add effects (same picker as layer effects), drag-reorder, toggle, set per-effect opacity.',
+        bullets: {
+          controls: 'Drag knob vertically (DAW-style) · mouse wheel = fine tune · double-click = reset',
+          cc: 'Bind hardware CC to vj:macro:N:value to drive macros via controller',
+          stack: 'All 8 macros stack on the composite — partial blends layer cleanly',
+          pulse: 'Auto-pulse a macro on a beat grid (1/4, 1/2, 1bar, 2bar) for hands-free movement',
+        },
+        action: 'Try it: bump ENERGY macro',
+      },
+      resave: {
+        eyebrow: '7 / 9',
+        title: 'Right-click to resave anything',
+        body: 'Three places now have right-click context menus that overwrite the saved version with the current state — no more delete-and-recreate workflow.',
+        bullets: {
+          blocks: 'Block tabs → Save Project (Ctrl+S equivalent) + Rename / Duplicate / Delete',
+          stage: 'Stage presets → Update Preset (overwrite snapshot) + Rename / Save Project / Delete',
+          synthVision: 'SynthVision keyboard presets → Update / Rename / Delete',
+        },
+        keyHint: 'Right-click',
+      },
+      snapshots: {
+        eyebrow: '8 / 9',
+        title: 'Snapshots — instant scene recall',
+        body: 'Bottom-right of the VJ overlay there\'s a "SNAPS" launcher with 16 slots. Each slot holds a complete capture of layer opacities, blend modes, solos / mutes (both decks), crossfader state, quantization, master opacity, and macro values. Shift-click any slot to save current state. Click to recall. Right-click for rename / overwrite / clear.',
+        bullets: {
+          blocks: 'Different from blocks (clip-grid scenes) — snapshots are live-state freezes',
+          macros: 'Different from macros — recalls all knobs at once instead of driving them continuously',
+          project: 'Save under the project (.gha) so they roll between sessions',
+          hardware: 'Bind hardware buttons to vj:snapshot:N (1-16) for instant scene jumps',
+        },
+        action: 'Try it: save current state to slot 1',
+      },
+      ready: {
+        eyebrow: '9 / 9',
+        title: "You're ready",
+        body: 'Hit Done to dive in. The full feature reference is at FEATURES.md in the install folder. Re-run this tour anytime via File → Help → Show feature tour.',
+        bullets: {
+          save: 'Everything saves and reloads via Ctrl+S to the loaded .gha file',
+          update: 'Right-click block tabs / presets / SV presets to update in place',
+          snapshots: 'Snapshots (▶/⇪ on slot 1-16) jump between full-state scenes',
+          show: 'Have a great show ⚡',
+        },
+      },
+    },
+  },
+};

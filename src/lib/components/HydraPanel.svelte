@@ -7,6 +7,7 @@
   import { onDestroy, onMount } from 'svelte';
   import { hydraStore } from '../stores/hydra';
   import { HYDRA_PRESETS, pickNextHydraPreset } from '../effects/hydraPresets';
+  import { t } from '../i18n';
 
   export let layerId: string;
   export let onPresetSelect: ((preset: { name: string; code: string }) => void) | null = null;
@@ -22,17 +23,17 @@
   $: filteredPresets = (() => {
     const lower = filterText.trim().toLowerCase();
     let out = HYDRA_PRESETS;
-    if (lower) out = out.filter(p => p.name.toLowerCase().includes(lower));
-    if (favoritesOnly) out = out.filter(p => favorites.has(p.name));
+    if (lower) out = out.filter((p) => p.name.toLowerCase().includes(lower));
+    if (favoritesOnly) out = out.filter((p) => favorites.has(p.name));
     return out;
   })();
 
-  $: currentPresetCode = HYDRA_PRESETS.find(p => p.name === currentPresetName)?.code ?? '';
-  $: currentPresetBy   = HYDRA_PRESETS.find(p => p.name === currentPresetName)?.by ?? '';
+  $: currentPresetCode = HYDRA_PRESETS.find((p) => p.name === currentPresetName)?.code ?? '';
+  $: currentPresetBy   = HYDRA_PRESETS.find((p) => p.name === currentPresetName)?.by ?? '';
 
   function targetPresetFor(kind: 'next' | 'prev' | 'random') {
     if (kind === 'random') return pickNextHydraPreset(currentPresetName || null);
-    const idx = currentPresetName ? HYDRA_PRESETS.findIndex(p => p.name === currentPresetName) : -1;
+    const idx = currentPresetName ? HYDRA_PRESETS.findIndex((p) => p.name === currentPresetName) : -1;
     if (kind === 'next') return HYDRA_PRESETS[(idx + 1 + HYDRA_PRESETS.length) % HYDRA_PRESETS.length];
     const prevIdx = idx >= 0 ? idx : 0;
     return HYDRA_PRESETS[(prevIdx - 1 + HYDRA_PRESETS.length) % HYDRA_PRESETS.length];
@@ -47,7 +48,7 @@
     hydraStore.command(layerId, kind);
   }
   function loadByName(name: string) {
-    const target = HYDRA_PRESETS.find(p => p.name === name);
+    const target = HYDRA_PRESETS.find((p) => p.name === name);
     if (target && onPresetSelect) {
       onPresetSelect(target);
       hydraStore.reportPreset(layerId, target.name);
@@ -77,7 +78,7 @@
   }
   function cssEscape(s: string): string {
     if (typeof CSS !== 'undefined' && (CSS as any).escape) return (CSS as any).escape(s);
-    return s.replace(/[^a-zA-Z0-9_-]/g, c => '\\' + c);
+    return s.replace(/[^a-zA-Z0-9_-]/g, (c) => '\\' + c);
   }
 
   onMount(() => { window.addEventListener('keydown', onKeydown); });
@@ -87,32 +88,47 @@
 <div class="hy-panel">
   <!-- Transport -->
   <div class="hy-transport">
-    <button class="hy-btn" title="Previous sketch" onclick={() => fire('prev')}>◀</button>
-    <button class="hy-btn" title="Random sketch (R)" onclick={() => fire('random')}>🎲</button>
-    <button class="hy-btn" title="Next sketch (D)" onclick={() => fire('next')}>▶</button>
+    <button class="hy-btn" title={$t('liveVisuals.hydra.previousSketch')}
+      aria-label={$t('liveVisuals.hydra.previousSketch')}
+      onclick={() => fire('prev')}>◀</button>
+    <button class="hy-btn" title={$t('liveVisuals.hydra.randomSketch', { values: { key: 'R' } })}
+      aria-label={$t('liveVisuals.hydra.randomSketch', { values: { key: 'R' } })}
+      onclick={() => fire('random')}>🎲</button>
+    <button class="hy-btn" title={$t('liveVisuals.hydra.nextSketch', { values: { key: 'D' } })}
+      aria-label={$t('liveVisuals.hydra.nextSketch', { values: { key: 'D' } })}
+      onclick={() => fire('next')}>▶</button>
   </div>
-  <div class="hy-hotkey-hint"><kbd>D</kbd> next · <kbd>R</kbd> random</div>
+  <div class="hy-hotkey-hint"><kbd>D</kbd>
+    {$t('liveVisuals.hydra.hotkeyNext')} · <kbd>R</kbd>
+    {$t('liveVisuals.hydra.hotkeyRandom')}
+  </div>
 
   <!-- Now-playing -->
   <div class="hy-now">
-    <span class="hy-now-label">NOW</span>
+    <span class="hy-now-label">{$t('liveVisuals.hydra.now')}</span>
     <span class="hy-now-name" title={currentPresetName}>{currentPresetName || '—'}</span>
     {#if currentPresetName}
       <button
         class="hy-fav-btn"
         class:active={favorites.has(currentPresetName)}
-        title={favorites.has(currentPresetName) ? 'Unfavorite' : 'Favorite'}
+        title={favorites.has(currentPresetName) ? $t('liveVisuals.hydra.unfavorite') : $t('liveVisuals.hydra.favorite')}
+        aria-label={favorites.has(currentPresetName)
+          ? $t('liveVisuals.hydra.unfavorite')
+          : $t('liveVisuals.hydra.favorite')}
         onclick={(e) => toggleFav(currentPresetName, e)}
       >{favorites.has(currentPresetName) ? '★' : '☆'}</button>
     {/if}
   </div>
   {#if currentPresetBy}
-    <div class="hy-by">sketch by {currentPresetBy}</div>
+    <div class="hy-by">{$t('liveVisuals.hydra.sketchBy', { values: { author: currentPresetBy } })}</div>
   {/if}
 
   <!-- Sketch source viewer (toggle) -->
-  <button class="hy-code-toggle" onclick={() => (showCode = !showCode)}>
-    {showCode ? 'Hide' : 'Show'} sketch source
+  <button class="hy-code-toggle"
+    title={$t(showCode ? 'liveVisuals.hydra.hideSource' : 'liveVisuals.hydra.showSource')}
+    aria-label={$t(showCode ? 'liveVisuals.hydra.hideSource' : 'liveVisuals.hydra.showSource')}
+    onclick={() => (showCode = !showCode)}>
+    {$t(showCode ? 'liveVisuals.hydra.hideSource' : 'liveVisuals.hydra.showSource')}
   </button>
   {#if showCode && currentPresetCode}
     <pre class="hy-code">{currentPresetCode}</pre>
@@ -120,11 +136,14 @@
 
   <!-- Filter -->
   <div class="hy-filter">
-    <input type="text" placeholder="Filter sketches…" bind:value={filterText} />
+    <input type="text" placeholder={$t('liveVisuals.hydra.filterPlaceholder')}
+      aria-label={$t('liveVisuals.hydra.filterPlaceholder')}
+      bind:value={filterText} />
     <button
       class="hy-fav-only"
       class:active={favoritesOnly}
-      title="Show only favorites"
+      title={$t('liveVisuals.hydra.showOnlyFavorites')}
+      aria-label={$t('liveVisuals.hydra.showOnlyFavorites')}
       onclick={() => (favoritesOnly = !favoritesOnly)}
     >★ {favorites.size}</button>
   </div>
@@ -132,7 +151,7 @@
   <!-- Sketch list -->
   <div class="hy-list" bind:this={listEl}>
     {#if filteredPresets.length === 0}
-      <div class="hy-empty">No matches.</div>
+      <div class="hy-empty">{$t('liveVisuals.hydra.noMatches')}</div>
     {:else}
       {#each filteredPresets as p (p.name)}
         <div
@@ -142,12 +161,15 @@
           onclick={() => loadByName(p.name)}
           role="button"
           tabindex="0"
+          aria-label={$t('liveVisuals.hydra.selectSketch', { values: { name: p.name } })}
           onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') loadByName(p.name); }}
         >
           <span class="hy-row-name">{p.name}</span>
           <button
             class="hy-row-fav"
             class:active={favorites.has(p.name)}
+            title={favorites.has(p.name) ? $t('liveVisuals.hydra.unfavorite') : $t('liveVisuals.hydra.favorite')}
+            aria-label={favorites.has(p.name) ? $t('liveVisuals.hydra.unfavorite') : $t('liveVisuals.hydra.favorite')}
             onclick={(e) => toggleFav(p.name, e)}
           >{favorites.has(p.name) ? '★' : '☆'}</button>
         </div>
@@ -171,15 +193,15 @@
     flex: 1;
     padding: 5px 0;
     background: #15101e;
-    border: 1px solid rgba(255, 107, 107, 0.20);
+    border: 1px solid rgba(255, 107, 107, 0.2);
     border-radius: 3px;
-    color: var(--accent-secondary, #FF8585);
+    color: var(--accent-secondary, #ff8585);
     font-size: 12px;
     font-weight: 700;
     cursor: pointer;
     transition: all 0.12s;
   }
-  .hy-btn:hover { background: #20162e; color: var(--accent-primary, #FF6B6B); border-color: rgba(255, 107, 107, 0.55); }
+  .hy-btn:hover { background: #20162e; color: var(--accent-primary, #ff6b6b); border-color: rgba(255, 107, 107, 0.55); }
 
   .hy-hotkey-hint {
     font-size: 10px;
@@ -214,7 +236,7 @@
   .hy-now-name {
     flex: 1;
     font-size: 12px;
-    color: var(--accent-secondary, #FF8585);
+    color: var(--accent-secondary, #ff8585);
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
@@ -243,14 +265,14 @@
 
   .hy-code-toggle {
     background: transparent;
-    border: 1px dashed rgba(255, 107, 107, 0.20);
+    border: 1px dashed rgba(255, 107, 107, 0.2);
     color: var(--text-muted, #888);
     font-size: 10px;
     padding: 3px 6px;
     border-radius: 3px;
     cursor: pointer;
   }
-  .hy-code-toggle:hover { color: var(--accent-secondary, #FF8585); border-color: rgba(255, 107, 107, 0.45); }
+  .hy-code-toggle:hover { color: var(--accent-secondary, #ff8585); border-color: rgba(255, 107, 107, 0.45); }
   .hy-code {
     font-size: 10.5px;
     color: #b8a8d4;
@@ -266,7 +288,7 @@
   }
 
   .hy-filter { display: flex; gap: 4px; }
-  .hy-filter input[type="text"] {
+  .hy-filter input[type='text'] {
     flex: 1;
     background: #0a0612;
     border: 1px solid #2a2235;
@@ -276,7 +298,7 @@
     font-size: 11px;
     outline: none;
   }
-  .hy-filter input[type="text"]:focus { border-color: var(--accent-primary, #FF6B6B); }
+  .hy-filter input[type='text']:focus { border-color: var(--accent-primary, #ff6b6b); }
 
   .hy-list {
     overflow-y: auto;

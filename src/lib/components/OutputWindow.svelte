@@ -3,6 +3,7 @@
   import { invoke } from '$lib/bridge';
   import type { RenderEngine } from '../renderer/engine';
   import { settings } from '../stores/settings';
+  import { t } from '../i18n';
 
   export let isOpen = false;
   export let onClose: () => void = () => {};
@@ -17,11 +18,11 @@
 
   export function setRotation(deg: number) {
     const norm = (((deg % 360) + 360) % 360) as 0 | 90 | 180 | 270;
-    settings.update(s => ({ ...s, output: { ...s.output, outputRotation: norm } }));
+    settings.update((s) => ({ ...s, output: { ...s.output, outputRotation: norm } }));
   }
 
   export function setCropRegion(region: { x: number; y: number; width: number; height: number }) {
-    settings.update(s => ({
+    settings.update((s) => ({
       ...s,
       output: {
         ...s.output,
@@ -34,12 +35,12 @@
   }
 
   export function setShowCursor(show: boolean) {
-    settings.update(s => ({ ...s, output: { ...s.output, outputShowCursor: show } }));
+    settings.update((s) => ({ ...s, output: { ...s.output, outputShowCursor: show } }));
   }
 
   export function toggleCursor() {
     let next = false;
-    settings.update(s => {
+    settings.update((s) => {
       next = !(s.output.outputShowCursor ?? false);
       return { ...s, output: { ...s.output, outputShowCursor: next } };
     });
@@ -127,7 +128,7 @@
         });
         isOpen = true;
       } catch (e2) {
-        alert('Could not open output window: ' + e2);
+        alert($t('screens.errors.openOutputWindow', { values: { error: String(e2) } }));
       }
     }
   }
@@ -186,7 +187,7 @@
       const features = `popup=true,width=${winW},height=${winH},left=${x},top=${y}`;
       const newWin = window.open(url.toString(), 'ga-output', features);
       if (!newWin) {
-        alert('Output window failed to open. Check Chromium popup-blocker behaviour.');
+        alert($t('screens.errors.popupBlocked'));
         return;
       }
       isOpen = true;
@@ -201,7 +202,7 @@
       attachOutputWindow(newWin);
     } catch (err) {
       console.error('[Output] zero-copy open failed:', err);
-      alert('Could not open zero-copy output window: ' + ((err as any)?.message ?? err));
+      alert($t('screens.errors.openZeroCopyOutput', { values: { error: String((err as any)?.message ?? err) } }));
     }
   }
 
@@ -230,7 +231,7 @@
         url.search = '?mode=webgpu-display';
         const newWin = window.open(url.toString(), 'ga-output', 'popup=true');
         if (!newWin) {
-          alert('Output window failed to open. Check Chromium popup-blocker behaviour.');
+          alert($t('screens.errors.popupBlocked'));
           return;
         }
         isOpen = true;
@@ -245,7 +246,8 @@
     }
     const transportTag = experimentalWebRTC ? ' [WebRTC]' : '';
     try {
-      const result: any = await invoke('output_fullscreen_external', { experimentalWebRTC, experimentalZeroCopy: false });
+      const result: any = await invoke('output_fullscreen_external', { experimentalWebRTC, experimentalZeroCopy: false,
+      });
       if (result && result.ok === false) {
         console.warn(`[Output] Fullscreen unavailable: ${result.error || 'no external display'}`);
         return false;

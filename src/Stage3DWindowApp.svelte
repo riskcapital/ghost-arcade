@@ -18,6 +18,7 @@
   import { startModulationBroadcastReceiver } from './lib/sync/modulationBroadcast';
   import { initLicense } from './lib/stores/license';
   import { invoke } from '$lib/bridge';
+  import { t } from '$lib/i18n';
 
   onMount(() => {
     const splash = document.getElementById('splash');
@@ -40,7 +41,9 @@
   });
 
   function notifyClosing() {
-    invoke('stage3d_window_closing').catch(() => { /* main window may already be gone */ });
+    invoke('stage3d_window_closing').catch(() => {
+      /* main window may already be gone */
+    });
   }
 
   function closeWindow() {
@@ -48,7 +51,11 @@
   }
 </script>
 
-<div class="stage3d-window">
+<svelte:head>
+  <title>{$t('windowApps.stage3d.title')}</title>
+</svelte:head>
+
+<div class="stage3d-window" role="application" aria-label={$t('windowApps.stage3d.ariaLabel')}>
   <Canvas stage3DOutput={true} />
   <Stage3DDesigner renderViewport={false} onClose={closeWindow} />
 </div>

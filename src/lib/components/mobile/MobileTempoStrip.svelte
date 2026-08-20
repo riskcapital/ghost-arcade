@@ -7,6 +7,7 @@
    * Tap-tempo and quant set are exposed as one-shot WS messages that the
    * desktop's audio + clip-launcher stores actually consume.
    */
+  import { t } from '../../i18n';
 
   export let bpm: number = 0;
   export let manualBPM: number | null = null;
@@ -29,15 +30,15 @@
   // Quantization grid choices. 'off' = instant, then musical subdivisions.
   // Keep the labels short for mobile where horizontal real estate is tight.
   const QUANT_OPTIONS = [
-    { value: 'off', label: 'OFF' },
-    { value: '1/16', label: '1/16' },
-    { value: '1/8', label: '1/8' },
-    { value: '1/4', label: '1/4' },
-    { value: '1/2', label: '1/2' },
-    { value: '1', label: '1 BAR' },
-    { value: '2', label: '2 BAR' },
-    { value: '4', label: '4 BAR' },
-    { value: '8', label: '8 BAR' },
+    { value: 'off', labelKey: 'mobileControls.tempo.quantOptions.off' },
+    { value: '1/16', labelKey: 'mobileControls.tempo.quantOptions.oneSixteenth' },
+    { value: '1/8', labelKey: 'mobileControls.tempo.quantOptions.oneEighth' },
+    { value: '1/4', labelKey: 'mobileControls.tempo.quantOptions.oneQuarter' },
+    { value: '1/2', labelKey: 'mobileControls.tempo.quantOptions.oneHalf' },
+    { value: '1', labelKey: 'mobileControls.tempo.quantOptions.oneBar' },
+    { value: '2', labelKey: 'mobileControls.tempo.quantOptions.twoBars' },
+    { value: '4', labelKey: 'mobileControls.tempo.quantOptions.fourBars' },
+    { value: '8', labelKey: 'mobileControls.tempo.quantOptions.eightBars' },
   ];
 
   // Tap pulse animation — re-render the .pulse-ring on every beat by
@@ -47,7 +48,7 @@
 
   $: displayBpm = manualBPM != null ? manualBPM : bpm;
   $: bpmRounded = displayBpm > 0 ? displayBpm.toFixed(1) : '--';
-  $: bpmSource = manualBPM != null ? 'TAP' : (bpm > 0 ? 'AUTO' : '--');
+  $: bpmSourceKey = manualBPM != null ? 'manual' : bpm > 0 ? 'auto' : 'none';
 </script>
 
 <div class="tempo-strip" class:compact>
@@ -55,48 +56,67 @@
   <button
     class="tap-btn"
     class:beating
-    onpointerdown={(e) => { e.preventDefault(); onTap(); }}
-    title="Tap tempo (4+ taps in time)"
+    onpointerdown={(e) => {
+      e.preventDefault();
+      onTap();
+    }}
+    title={$t('mobileControls.tempo.tapTitle')}
+    aria-label={$t('mobileControls.tempo.tapTitle')}
   >
     {#key beatPulseCount}
       <span class="pulse-ring" class:firing={beating}></span>
     {/key}
-    <span class="tap-label">TAP</span>
+    <span class="tap-label">{$t('mobileControls.tempo.tap')}</span>
   </button>
 
   <!-- BPM readout -->
-  <div class="bpm-readout">
-    <span class="bpm-num" class:beating>{bpmRounded}</span>
+  <div
+    class="bpm-readout"
+    role="status"
+    aria-label={$t('mobileControls.tempo.bpmReadoutAria', {
+      values: { bpm: bpmRounded, source: $t(`mobileControls.tempo.sources.${bpmSourceKey}`) },
+    })}
+  >
+    <span
+      class="bpm-num"
+      class:beating
+      aria-label={$t('mobileControls.tempo.bpmValueAria', { values: { bpm: bpmRounded } })}>{bpmRounded}</span
+    >
     <div class="bpm-meta">
-      <span class="bpm-unit">BPM</span>
-      <span class="bpm-source" class:manual={manualBPM != null}>{bpmSource}</span>
+      <span class="bpm-unit">{$t('mobileControls.tempo.bpmUnit')}</span>
+      <span class="bpm-source" class:manual={manualBPM != null}
+        >{$t(`mobileControls.tempo.sources.${bpmSourceKey}`)}</span
+      >
     </div>
     {#if manualBPM != null}
       <button
         class="bpm-clear"
         onclick={onClearManualBPM}
-        title="Clear manual BPM and follow audio analysis"
-      >×</button>
+        title={$t('mobileControls.tempo.clearManualTitle')}
+        aria-label={$t('mobileControls.tempo.clearManualTitle')}>×</button
+      >
     {/if}
   </div>
 
   <!-- Quantization grid -->
   <div class="quant-block">
-    <span class="quant-label">QUANT</span>
+    <span class="quant-label">{$t('mobileControls.tempo.quantLabel')}</span>
     <select
       class="quant-select"
       value={quantization}
       onchange={(e) => onQuantizationChange((e.target as HTMLSelectElement).value)}
+      aria-label={$t('mobileControls.tempo.quantLabel')}
     >
-      {#each QUANT_OPTIONS as opt}
-        <option value={opt.value}>{opt.label}</option>
+      {#each QUANT_OPTIONS as quantOption}
+        <option value={quantOption.value}>{$t(quantOption.labelKey)}</option>
       {/each}
     </select>
     {#if pendingTriggerCount > 0}
       <button
         class="pending-pill"
         onclick={onClearPending}
-        title="Clear pending quantized triggers"
+        title={$t('mobileControls.tempo.clearPendingTitle')}
+        aria-label={$t('mobileControls.tempo.pendingAria', { values: { count: pendingTriggerCount }})}
       >
         {pendingTriggerCount} ⌛
       </button>

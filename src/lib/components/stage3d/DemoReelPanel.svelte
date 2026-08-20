@@ -12,6 +12,7 @@
    * a shot from the CURRENT camera; shots drag to reorder.
    */
   import { get } from 'svelte/store';
+  import { t } from '../../i18n';
   import {
     demoReel, MOVE_TEMPLATES, moveTemplate, sequenceDuration, shotAtTime,
     evaluateShotCamera, type DemoShot, type ReelEasing,
@@ -29,7 +30,12 @@
     || render.status === 'encoding' || render.status === 'saving';
 
   let selectedShotId: string | null = null;
-  $: selectedShot = shots.find(s => s.id === selectedShotId) ?? null;
+  $: selectedShot = shots.find((s) => s.id === selectedShotId) ?? null;
+
+  function shotDisplayName(name: string): string {
+    const match = /^Shot (\d+)$/.exec(name);
+    return match ? $t('stageShow.demoReel.defaultShotName', { values: { number: match[1] } }) : name;
+  }
 
   // ── Shot capture ──────────────────────────────────────────────────────
 
@@ -159,51 +165,66 @@
   function fmtSec(s: number): string {
     return `${Math.floor(s / 60)}:${String(Math.round(s % 60)).padStart(2, '0')}`;
   }
+
+  function moveLabel(id: string): string {
+    return $t(`stageShow.demoReel.moves.${moveTemplate(id).id}`);
+  }
 </script>
 
 <div class="reel-panel">
   <div class="reel-head">
-    <span class="reel-title">🎬 Demo Reel</span>
-    <span class="reel-total">{shots.length} shot{shots.length === 1 ? '' : 's'} · {fmtSec(totalSec)}</span>
+    <span class="reel-title">🎬 {$t('stageShow.demoReel.title')}</span>
+    <span class="reel-total">{$t(shots.length === 1 ? 'stageShow.demoReel.shotCountSingular' : 'stageShow.demoReel.shotCountPlural', {
+        values: { count: shots.length, duration: fmtSec(totalSec) },
+      })}</span>
     <div class="reel-spacer"></div>
     {#if previewing}
-      <button class="rbtn" onclick={stopPreview}>⏹ Stop</button>
+      <button class="rbtn" onclick={stopPreview}>⏹ {$t('stageShow.demoReel.stop')}</button>
     {:else}
-      <button class="rbtn" onclick={startPreview} disabled={shots.length === 0 || rendering}>▶ Preview</button>
+      <button class="rbtn" onclick={startPreview} disabled={shots.length === 0 || rendering}>▶ {$t('stageShow.demoReel.preview')}</button>
     {/if}
     <button class="rbtn primary" onclick={renderReel} disabled={shots.length === 0 || rendering}>
-      {rendering ? 'Rendering…' : '⬤ Render Reel'}
+      {rendering ? $t('stageShow.demoReel.rendering') : `⬤ ${$t('stageShow.demoReel.render')}`}
     </button>
-    <button class="rbtn" onclick={onClose} title="Close panel">✕</button>
+    <button class="rbtn" onclick={onClose} title={$t('stageShow.demoReel.closePanel')}>✕</button>
   </div>
 
   {#if rendering || render.status === 'error' || render.status === 'complete'}
     <div class="reel-progress" class:error={render.status === 'error'}>
       {#if render.status === 'choosing-folder'}
-        <span>Choose an output folder…</span>
+        <span>{$t('stageShow.demoReel.progress.chooseOutputFolder')}</span>
       {:else if render.status === 'rendering'}
-        <span>{settings.outputMode === 'frames' ? 'Writing' : 'Rendering'} frame {render.currentFrame}/{render.totalFrames}</span>
+        <span>{$t(
+            settings.outputMode === 'frames' ? 'stageShow.demoReel.progress.writingFrame'
+              : 'stageShow.demoReel.progress.renderingFrame',
+            { values: { current: render.currentFrame, total: render.totalFrames } },
+          )}</span>
         <progress max={render.totalFrames} value={render.currentFrame}></progress>
       {:else if render.status === 'encoding'}
-        <span>Encoding MP4…</span>
+        <span>{$t('stageShow.demoReel.progress.encodingMp4')}</span>
         <progress max="1" value={render.encodeProgress}></progress>
       {:else if render.status === 'loading-ffmpeg'}
-        <span>Loading encoder…</span>
+        <span>{$t('stageShow.demoReel.progress.loadingEncoder')}</span>
       {:else if render.status === 'saving'}
-        <span>Saving…</span>
+        <span>{$t('stageShow.demoReel.progress.saving')}</span>
       {:else if render.status === 'error'}
-        <span>Render failed: {render.errorMessage}</span>
-        <button class="rbtn" onclick={() => stageReelRender.reset()}>Dismiss</button>
+        <span>{$t('stageShow.demoReel.progress.renderFailed', { values: { message: render.errorMessage ?? '' } })}</span>
+        <button class="rbtn" onclick={() => stageReelRender.reset()}>{$t('stageShow.demoReel.progress.dismiss')}</button>
       {:else if render.status === 'complete'}
         {#if render.lastOutputKind === 'frames'}
-          <span>✓ Saved “{render.lastOutputName}” frames to {render.lastOutputPath ?? 'the selected folder'}.</span>
+          <span>✓ {$t('stageShow.demoReel.progress.savedFrames', {
+              values: {
+                name: render.lastOutputName ?? '',
+                path: render.lastOutputPath ?? $t('stageShow.demoReel.progress.selectedFolder'),
+              },
+            })}</span>
         {:else}
-          <span>✓ Saved “{render.lastOutputName}” to the media library + downloads.</span>
+          <span>✓ {$t('stageShow.demoReel.progress.savedVideo', { values: { name: render.lastOutputName ?? '' } })}</span>
         {/if}
-        <button class="rbtn" onclick={() => stageReelRender.reset()}>Dismiss</button>
+        <button class="rbtn" onclick={() => stageReelRender.reset()}>{$t('stageShow.demoReel.progress.dismiss')}</button>
       {/if}
       {#if rendering}
-        <button class="rbtn" onclick={() => stageReelRender.cancel()}>Cancel</button>
+        <button class="rbtn" onclick={() => stageReelRender.cancel()}>{$t('stageShow.demoReel.progress.cancel')}</button>
       {/if}
     </div>
   {/if}
@@ -211,19 +232,21 @@
   <div class="reel-body">
     <!-- Move template tray — drag onto the strip (or click to append). -->
     <div class="tray">
-      <div class="tray-head">Camera moves <span class="tray-hint">drag → strip</span></div>
-      {#each MOVE_TEMPLATES.filter(t => t.id !== 'custom') as tpl}
+      <div class="tray-head">
+        {$t('stageShow.demoReel.tray.cameraMoves')}
+        <span class="tray-hint">{$t('stageShow.demoReel.tray.dragToStrip')}</span></div>
+      {#each MOVE_TEMPLATES.filter((t) => t.id !== 'custom') as tpl}
         <button
           class="tpl-card"
           draggable="true"
           ondragstart={(e) => onTemplateDragStart(e, tpl.id)}
           onclick={() => saveShot(tpl.id)}
-          title="Click to add a shot with the current camera + look"
+          title={$t('stageShow.demoReel.tray.addTemplateTitle')}
         >
-          <span class="tpl-icon">{tpl.icon}</span>{tpl.label}
+          <span class="tpl-icon">{tpl.icon}</span>{moveLabel(tpl.id)}
         </button>
       {/each}
-      <button class="tpl-card save" onclick={() => saveShot('static')}>＋ Save Shot (current view)</button>
+      <button class="tpl-card save" onclick={() => saveShot('static')}>{$t('stageShow.demoReel.tray.saveCurrent')}</button>
     </div>
 
     <!-- Sequence strip -->
@@ -233,7 +256,7 @@
       ondrop={(e) => onStripDrop(e, shots.length)}
     >
       {#if shots.length === 0}
-        <div class="strip-empty">Drag a camera move here — or set up your stage and hit “Save Shot”.</div>
+        <div class="strip-empty">{$t('stageShow.demoReel.strip.empty')}</div>
       {/if}
       {#each shots as shot, i (shot.id)}
         <div
@@ -248,15 +271,17 @@
           onclick={() => { selectedShotId = shot.id; }}
         >
           {#if shot.thumbnail}
-            <img class="shot-thumb" src={shot.thumbnail} alt={shot.name} draggable="false" />
+            <img class="shot-thumb" src={shot.thumbnail} alt={shotDisplayName(shot.name)} draggable="false" />
           {:else}
             <div class="shot-thumb placeholder">{moveTemplate(shot.moveId).icon}</div>
           {/if}
           <div class="shot-meta">
-            <span class="shot-name">{i + 1}. {shot.name}</span>
-            <span class="shot-move">{moveTemplate(shot.moveId).label} · {shot.durationSec.toFixed(1)}s</span>
+            <span class="shot-name">{i + 1}. {shotDisplayName(shot.name)}</span>
+            <span class="shot-move">{moveLabel(shot.moveId)} · {shot.durationSec.toFixed(1)}{$t(
+                'stageShow.demoReel.inspector.seconds',
+              )}</span>
           </div>
-          <button class="shot-del" onclick={(e) => { e.stopPropagation(); demoReel.removeShot(shot.id); if (selectedShotId === shot.id) selectedShotId = null; }} title="Delete shot">✕</button>
+          <button class="shot-del" onclick={(e) => { e.stopPropagation(); demoReel.removeShot(shot.id); if (selectedShotId === shot.id) selectedShotId = null; }} title={$t('stageShow.demoReel.strip.deleteShot')}>✕</button>
         </div>
       {/each}
     </div>
@@ -264,46 +289,48 @@
     <!-- Shot inspector + output settings -->
     <div class="inspector">
       {#if selectedShot}
-        <div class="insp-head">{selectedShot.name}</div>
+        <div class="insp-head">{shotDisplayName(selectedShot.name)}</div>
         <label class="insp-row">
-          <span>Move</span>
+          <span>{$t('stageShow.demoReel.inspector.move')}</span>
           <select value={selectedShot.moveId} onchange={(e) => demoReel.setShotMove(selectedShot!.id, (e.target as HTMLSelectElement).value)}>
             {#each MOVE_TEMPLATES as tpl}
-              <option value={tpl.id}>{tpl.icon} {tpl.label}</option>
+              <option value={tpl.id}>{tpl.icon} {moveLabel(tpl.id)}</option>
             {/each}
           </select>
         </label>
         <label class="insp-row">
-          <span>Duration</span>
+          <span>{$t('stageShow.demoReel.inspector.duration')}</span>
           <input type="number" min="0.5" max="60" step="0.5" value={selectedShot.durationSec}
-            oninput={(e) => demoReel.updateShot(selectedShot!.id, { durationSec: Math.max(0.5, parseFloat((e.target as HTMLInputElement).value) || 5) })} />
-          <span class="unit">s</span>
+            oninput={(e) => demoReel.updateShot(selectedShot!.id, { durationSec: Math.max(0.5, parseFloat((e.target as HTMLInputElement).value) || 5),
+              })} />
+          <span class="unit">{$t('stageShow.demoReel.inspector.seconds')}</span>
         </label>
         <label class="insp-row">
-          <span>Easing</span>
+          <span>{$t('stageShow.demoReel.inspector.easing')}</span>
           <select value={selectedShot.easing} onchange={(e) => demoReel.updateShot(selectedShot!.id, { easing: (e.target as HTMLSelectElement).value as ReelEasing })}>
-            <option value="linear">Linear</option>
-            <option value="ease-in">Ease in</option>
-            <option value="ease-out">Ease out</option>
-            <option value="ease-in-out">Ease in-out</option>
+            <option value="linear">{$t('stageShow.demoReel.inspector.easingOptions.linear')}</option>
+            <option value="ease-in">{$t('stageShow.demoReel.inspector.easingOptions.easeIn')}</option>
+            <option value="ease-out">{$t('stageShow.demoReel.inspector.easingOptions.easeOut')}</option>
+            <option value="ease-in-out">{$t('stageShow.demoReel.inspector.easingOptions.easeInOut')}</option>
           </select>
         </label>
         <button class="rbtn wide" onclick={() => recaptureShot(selectedShot!)}
-          title="Re-save this shot's camera + stage look from the current view">
-          ⟳ Update from current view
+          title={$t('stageShow.demoReel.inspector.updateFromCurrentTitle')}
+        >
+          ⟳ {$t('stageShow.demoReel.inspector.updateFromCurrent')}
         </button>
       {:else}
-        <div class="insp-empty">Select a shot to edit it.</div>
+        <div class="insp-empty">{$t('stageShow.demoReel.inspector.selectShot')}</div>
       {/if}
 
       <div class="insp-divider"></div>
-      <div class="insp-head">Output</div>
+      <div class="insp-head">{$t('stageShow.demoReel.inspector.output')}</div>
       <label class="insp-row">
-        <span>Res</span>
+        <span>{$t('stageShow.demoReel.inspector.resolution')}</span>
         <select
           value={`${settings.width}x${settings.height}`}
           onchange={(e) => {
-            const r = RESOLUTIONS.find(r => `${r.w}x${r.h}` === (e.target as HTMLSelectElement).value);
+            const r = RESOLUTIONS.find((r) => `${r.w}x${r.h}` === (e.target as HTMLSelectElement).value);
             if (r) demoReel.setSettings({ width: r.w, height: r.h });
           }}>
           {#each RESOLUTIONS as r}
@@ -312,7 +339,7 @@
         </select>
       </label>
       <label class="insp-row">
-        <span>FPS</span>
+        <span>{$t('stageShow.demoReel.inspector.fps')}</span>
         <select value={String(settings.fps)} onchange={(e) => demoReel.setSettings({ fps: Number((e.target as HTMLSelectElement).value) as 24 | 30 | 60 })}>
           <option value="24">24</option>
           <option value="30">30</option>
@@ -320,41 +347,43 @@
         </select>
       </label>
       <label class="insp-row">
-        <span>Type</span>
+        <span>{$t('stageShow.demoReel.inspector.type')}</span>
         <select
           value={settings.outputMode ?? 'mp4'}
           onchange={(e) => demoReel.setSettings({ outputMode: (e.target as HTMLSelectElement).value as 'mp4' | 'frames' })}>
-          <option value="mp4">MP4</option>
-          <option value="frames">Frames</option>
+          <option value="mp4">{$t('stageShow.demoReel.inspector.outputModes.mp4')}</option>
+          <option value="frames">{$t('stageShow.demoReel.inspector.outputModes.frames')}</option>
         </select>
       </label>
       <label class="insp-row">
-        <span>Quality</span>
+        <span>{$t('stageShow.demoReel.inspector.quality')}</span>
         <select value={settings.quality} onchange={(e) => demoReel.setSettings({ quality: (e.target as HTMLSelectElement).value as 'high' | 'web' | 'archive' })}>
-          <option value="web">Web</option>
-          <option value="high">High</option>
-          <option value="archive">Archive</option>
+          <option value="web">{$t('stageShow.demoReel.inspector.qualities.web')}</option>
+          <option value="high">{$t('stageShow.demoReel.inspector.qualities.high')}</option>
+          <option value="archive">{$t('stageShow.demoReel.inspector.qualities.archive')}</option>
         </select>
       </label>
       <label class="insp-row">
-        <span>Trans</span>
+        <span>{$t('stageShow.demoReel.inspector.transition')}</span>
         <select
           value={settings.transition ?? 'cut'}
           onchange={(e) => demoReel.setSettings({ transition: (e.target as HTMLSelectElement).value as 'cut' | 'cross-dissolve' })}>
-          <option value="cut">Cut</option>
-          <option value="cross-dissolve">Cross dissolve</option>
+          <option value="cut">{$t('stageShow.demoReel.inspector.transitions.cut')}</option>
+          <option value="cross-dissolve">{$t('stageShow.demoReel.inspector.transitions.crossDissolve')}</option>
         </select>
       </label>
       {#if (settings.transition ?? 'cut') === 'cross-dissolve'}
         <label class="insp-row">
-          <span>Fade</span>
+          <span>{$t('stageShow.demoReel.inspector.fade')}</span>
           <input type="number" min="0.1" max="5" step="0.1" value={settings.transitionDurationSec ?? 0.75}
-            oninput={(e) => demoReel.setSettings({ transitionDurationSec: Math.max(0.1, Math.min(5, parseFloat((e.target as HTMLInputElement).value) || 0.75)) })} />
-          <span class="unit">s</span>
+            oninput={(e) => demoReel.setSettings({ transitionDurationSec: Math.max(0.1, Math.min(5, parseFloat((e.target as HTMLInputElement).value) || 0.75),
+                ),
+              })} />
+          <span class="unit">{$t('stageShow.demoReel.inspector.seconds')}</span>
         </label>
       {/if}
       <label class="insp-row">
-        <span>Name</span>
+        <span>{$t('stageShow.demoReel.inspector.name')}</span>
         <input type="text" value={settings.filename} oninput={(e) => demoReel.setSettings({ filename: (e.target as HTMLInputElement).value })} />
       </label>
     </div>
@@ -446,7 +475,7 @@
     background: #161927; border: 1px solid #252938; border-radius: 8px;
     cursor: grab; overflow: hidden;
   }
-  .shot-card.selected { border-color: #BB86FC; }
+  .shot-card.selected { border-color: #bb86fc; }
   .shot-card.drag-over { border-color: #4af2ff; }
   .shot-thumb { width: 100%; height: 72px; object-fit: cover; background: #0a0b12; }
   .shot-thumb.placeholder {

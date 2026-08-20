@@ -6,6 +6,7 @@
   import { showLoading, hideLoading } from '../stores/loading';
   import { startRecording as startRec, formatRecordingDuration, type RecorderHandle } from '../recording/recorder';
   import { onDestroy, onMount } from 'svelte';
+  import { t } from '../i18n';
 
   export let isOpen = false;
 
@@ -18,23 +19,23 @@
   let transitionType: TransitionType = 'dissolve';
 
   const TRANSITION_OPTIONS: { value: TransitionType; label: string }[] = [
-    { value: 'dissolve',  label: 'Dissolve' },
-    { value: 'wave',      label: 'Wave (Disney)' },
-    { value: 'wipeUp',    label: 'Wipe Up' },
-    { value: 'wipeDown',  label: 'Wipe Down' },
-    { value: 'wipeLeft',  label: 'Wipe Left' },
-    { value: 'wipeRight', label: 'Wipe Right' },
-    { value: 'iris',      label: 'Iris' },
-    { value: 'voxelize',  label: 'Voxelize' },
-    { value: 'warp',      label: 'Warp' },
-    { value: 'explode',   label: 'Explode' },
-    { value: 'pixelMelt', label: 'Pixel Melt' },
+    { value: 'dissolve',  label: 'presets.transition.options.dissolve' },
+    { value: 'wave',      label: 'presets.transition.options.wave' },
+    { value: 'wipeUp',    label: 'presets.transition.options.wipeUp' },
+    { value: 'wipeDown',  label: 'presets.transition.options.wipeDown' },
+    { value: 'wipeLeft',  label: 'presets.transition.options.wipeLeft' },
+    { value: 'wipeRight', label: 'presets.transition.options.wipeRight' },
+    { value: 'iris',      label: 'presets.transition.options.iris' },
+    { value: 'voxelize',  label: 'presets.transition.options.voxelize' },
+    { value: 'warp',      label: 'presets.transition.options.warp' },
+    { value: 'explode',   label: 'presets.transition.options.explode' },
+    { value: 'pixelMelt', label: 'presets.transition.options.pixelMelt' },
   ];
 
   onMount(() => {
     try {
       const t = localStorage.getItem('ghostarcade-transition-type');
-      if (t && TRANSITION_OPTIONS.some(o => o.value === t)) transitionType = t as TransitionType;
+      if (t && TRANSITION_OPTIONS.some((o) => o.value === t)) transitionType = t as TransitionType;
       const d = parseFloat(localStorage.getItem('ghostarcade-transition-duration') || '');
       if (!isNaN(d) && d > 0) transitionDuration = d;
       const e = localStorage.getItem('ghostarcade-transition-enabled');
@@ -107,7 +108,7 @@
     autoElapsed = 0;
     autoLastTime = null;
     // Start from current active preset if possible
-    const idx = $compositions.findIndex(c => c.id === $activeCompositionId);
+    const idx = $compositions.findIndex((c) => c.id === $activeCompositionId);
     autoCurrentIndex = idx >= 0 ? idx : 0;
     loadPreset($compositions[autoCurrentIndex].id);
     autoTick(performance.now());
@@ -176,7 +177,7 @@
   // the transition itself provides visual feedback and the white text just covers it.
   function loadPreset(compId: string) {
     const useTransition = transitionEnabled && transitionDuration > 0 && !!onBeforeLoad;
-    if (!useTransition) showLoading('Loading Composition...');
+    if (!useTransition) showLoading($t('presets.loading'));
     if (useTransition) onBeforeLoad!(transitionDuration, transitionType);
     project.loadComposition(compId);
     if (!useTransition) requestAnimationFrame(() => hideLoading());
@@ -236,7 +237,7 @@
   // Delete preset
   function deletePreset(id: string, e: Event) {
     e.stopPropagation();
-    if (confirm('Delete this preset?')) {
+    if (confirm($t('presets.tray.deleteConfirm'))) {
       project.deleteComposition(id);
     }
   }
@@ -246,9 +247,10 @@
   // preset visually reflects whatever's on screen right now.
   function captureThumbnail(): string | undefined {
     try {
-      const canvas = document.querySelector('canvas.main-canvas') as HTMLCanvasElement ||
-                     document.querySelector('.canvas-container canvas') as HTMLCanvasElement ||
-                     document.querySelector('canvas') as HTMLCanvasElement;
+      const canvas =
+        (document.querySelector('canvas.main-canvas') as HTMLCanvasElement) ||
+        (document.querySelector('.canvas-container canvas') as HTMLCanvasElement) ||
+        (document.querySelector('canvas') as HTMLCanvasElement);
       if (!canvas) return undefined;
       const thumbCanvas = document.createElement('canvas');
       thumbCanvas.width = 120;
@@ -271,7 +273,9 @@
     e.stopPropagation();
     ctxMenu = { x: e.clientX, y: e.clientY, comp };
   }
-  function closeCtxMenu() { ctxMenu = null; }
+  function closeCtxMenu() {
+    ctxMenu = null;
+  }
 
   // Update the active preset (or a specified one) with the current
   // project state — layers, sub-store snapshots, fresh thumbnail.
@@ -287,14 +291,19 @@
 
   // Save current state as new preset
   async function saveNewPreset() {
-    const name = newPresetName.trim() || `Preset ${$compositions.length + 1}`;
+    const name =
+      newPresetName.trim() ||
+      $t('presets.tray.defaultName', {
+        values: { index: $compositions.length + 1 },
+      });
 
     // Capture thumbnail
     let thumbnail: string | undefined;
     try {
-      const canvas = document.querySelector('canvas.main-canvas') as HTMLCanvasElement ||
-                     document.querySelector('.canvas-container canvas') as HTMLCanvasElement ||
-                     document.querySelector('canvas') as HTMLCanvasElement;
+      const canvas =
+        (document.querySelector('canvas.main-canvas') as HTMLCanvasElement) ||
+        (document.querySelector('.canvas-container canvas') as HTMLCanvasElement) ||
+        (document.querySelector('canvas') as HTMLCanvasElement);
       if (canvas) {
         const thumbCanvas = document.createElement('canvas');
         thumbCanvas.width = 120;
@@ -317,10 +326,17 @@
   function startRecording() {
     recordingDuration = 0;
     recorderHandle = startRec({
-      namePrefix: 'Preset Recording',
-      onDurationUpdate: (s) => { recordingDuration = s; },
-      onComplete: () => { isRecording = false; recorderHandle = null; },
-      onError: (err) => { alert('Failed to start recording: ' + err.message); },
+      namePrefix: $t('presets.recording.namePrefix'),
+      onDurationUpdate: (s) => {
+        recordingDuration = s;
+      },
+      onComplete: () => {
+        isRecording = false;
+        recorderHandle = null;
+      },
+      onError: (err) => {
+        alert($t('presets.recording.error', { values: { message: err.message } }));
+      },
     });
     if (recorderHandle) {
       isRecording = true;
@@ -343,9 +359,15 @@
 </script>
 
 <!-- Preset Tray Toggle Button -->
-<button class="tray-toggle" class:open={isOpen} onclick={toggleTray}>
+<button
+  class="tray-toggle"
+  class:open={isOpen}
+  onclick={toggleTray}
+  title={$t(isOpen ? 'presets.tray.closeTitle' : 'presets.tray.openTitle')}
+  aria-label={$t(isOpen ? 'presets.tray.close' : 'presets.tray.open')}
+>
   <span class="toggle-icon">{isOpen ? '▼' : '▲'}</span>
-  <span class="toggle-label">Presets</span>
+  <span class="toggle-label">{$t('presets.tray.toggle')}</span>
   {#if $compositions.length > 0}
     <span class="count-badge">{$compositions.length}</span>
   {/if}
@@ -356,26 +378,30 @@
   <div class="preset-tray">
     <div class="tray-header">
       <div class="header-left">
-        <span class="tray-title">MAPPING PRESETS</span>
+        <span class="tray-title">{$t('presets.tray.title')}</span>
         <div class="transition-controls">
-          <label class="transition-toggle" title="Enable transition between presets">
+          <label class="transition-toggle" title={$t('presets.transition.enableTitle')}>
             <input type="checkbox" bind:checked={transitionEnabled} />
-            <span class="transition-label">Transition</span>
+            <span class="transition-label">{$t('presets.transition.label')}</span>
           </label>
           {#if transitionEnabled}
-            <select class="transition-duration" bind:value={transitionType} title="Transition style">
+            <select class="transition-duration" bind:value={transitionType} title={$t('presets.transition.styleTitle')}>
               {#each TRANSITION_OPTIONS as opt}
-                <option value={opt.value}>{opt.label}</option>
+                <option value={opt.value}>{$t(opt.label)}</option>
               {/each}
             </select>
-            <select class="transition-duration" bind:value={transitionDuration} title="Transition duration">
-              <option value={0.5}>0.5s</option>
-              <option value={1}>1s</option>
-              <option value={2}>2s</option>
-              <option value={3}>3s</option>
-              <option value={5}>5s</option>
-              <option value={8}>8s</option>
-              <option value={10}>10s</option>
+            <select
+              class="transition-duration"
+              bind:value={transitionDuration}
+              title={$t('presets.transition.durationTitle')}
+            >
+              <option value={0.5}>{$t('presets.duration.seconds', { values: { seconds: 0.5 } })}</option>
+              <option value={1}>{$t('presets.duration.seconds', { values: { seconds: 1 } })}</option>
+              <option value={2}>{$t('presets.duration.seconds', { values: { seconds: 2 } })}</option>
+              <option value={3}>{$t('presets.duration.seconds', { values: { seconds: 3 } })}</option>
+              <option value={5}>{$t('presets.duration.seconds', { values: { seconds: 5 } })}</option>
+              <option value={8}>{$t('presets.duration.seconds', { values: { seconds: 8 } })}</option>
+              <option value={10}>{$t('presets.duration.seconds', { values: { seconds: 10 } })}</option>
             </select>
           {/if}
         </div>
@@ -392,17 +418,22 @@
         <div class="save-preset">
           <input
             type="text"
-            placeholder="Preset name..."
+            placeholder={$t('presets.tray.namePlaceholder')}
             bind:value={newPresetName}
             onkeydown={(e) => e.key === 'Enter' && saveNewPreset()}
           />
-          <button class="save-btn" onclick={saveNewPreset} title="Save current state as a new preset">
-            + Save
+          <button class="save-btn" onclick={saveNewPreset} title={$t('presets.tray.saveTitle')}>
+            {$t('presets.tray.save')}
           </button>
-          {#if $activeCompositionId && $compositions.some(c => c.id === $activeCompositionId)}
-            {@const activeName = $compositions.find(c => c.id === $activeCompositionId)?.name ?? 'preset'}
-            <button class="update-btn" onclick={() => updateCurrentPreset()} title={`Overwrite "${activeName}" with the current state`}>
-              ↻ Update
+          {#if $activeCompositionId && $compositions.some((c) => c.id === $activeCompositionId)}
+            {@const activeName =
+              $compositions.find((c) => c.id === $activeCompositionId)?.name ?? $t('presets.tray.defaultFallbackName')}
+            <button
+              class="update-btn"
+              onclick={() => updateCurrentPreset()}
+              title={$t('presets.tray.updateTitle', { values: { name: activeName } })}
+            >
+              {$t('presets.tray.update')}
             </button>
           {/if}
         </div>
@@ -410,47 +441,64 @@
         <!-- Auto-Play Controls -->
         <div class="auto-play-controls">
           {#if !autoPlaying}
-            <button class="ap-btn play" onclick={autoPlayStart} title="Auto-play presets" disabled={$compositions.length < 2}>
+            <button
+              class="ap-btn play"
+              onclick={autoPlayStart}
+              title={$t('presets.auto.playTitle')}
+              disabled={$compositions.length < 2}
+            >
               ▶
             </button>
           {:else}
-            <button class="ap-btn pause" onclick={autoPlayPause} title={autoPaused ? 'Resume' : 'Pause'}>
+            <button
+              class="ap-btn pause"
+              onclick={autoPlayPause}
+              title={$t(autoPaused ? 'presets.auto.resume' : 'presets.auto.pause')}
+            >
               {autoPaused ? '▶' : '⏸'}
             </button>
-            <button class="ap-btn stop" onclick={autoPlayStop} title="Stop">
-              ■
-            </button>
+            <button class="ap-btn stop" onclick={autoPlayStop} title={$t('presets.auto.stop')}> ■ </button>
           {/if}
-          <button class="ap-btn loop" class:active={autoLoop} onclick={() => autoLoop = !autoLoop} title="Loop">
+          <button
+            class="ap-btn loop"
+            class:active={autoLoop}
+            onclick={() => (autoLoop = !autoLoop)}
+            title={$t('presets.auto.loop')}
+          >
             🔁
           </button>
           <select class="ap-select" bind:value={autoTimingMode}>
-            <option value="fixed">Time</option>
-            <option value="beat">Beat</option>
+            <option value="fixed">{$t('presets.auto.time')}</option>
+            <option value="beat">{$t('presets.auto.beat')}</option>
           </select>
           {#if autoTimingMode === 'fixed'}
             <select class="ap-select" bind:value={autoGlobalDuration}>
-              <option value={3}>3s</option>
-              <option value={5}>5s</option>
-              <option value={8}>8s</option>
-              <option value={10}>10s</option>
-              <option value={15}>15s</option>
-              <option value={20}>20s</option>
-              <option value={30}>30s</option>
-              <option value={60}>60s</option>
+              <option value={3}>{$t('presets.duration.seconds', { values: { seconds: 3 } })}</option>
+              <option value={5}>{$t('presets.duration.seconds', { values: { seconds: 5 } })}</option>
+              <option value={8}>{$t('presets.duration.seconds', { values: { seconds: 8 } })}</option>
+              <option value={10}>{$t('presets.duration.seconds', { values: { seconds: 10 } })}</option>
+              <option value={15}>{$t('presets.duration.seconds', { values: { seconds: 15 } })}</option>
+              <option value={20}>{$t('presets.duration.seconds', { values: { seconds: 20 } })}</option>
+              <option value={30}>{$t('presets.duration.seconds', { values: { seconds: 30 } })}</option>
+              <option value={60}>{$t('presets.duration.seconds', { values: { seconds: 60 } })}</option>
             </select>
           {:else}
             <select class="ap-select" bind:value={autoBeatsPerPreset}>
-              <option value={2}>2 beats</option>
-              <option value={4}>4 beats</option>
-              <option value={8}>8 beats</option>
-              <option value={16}>16 beats</option>
-              <option value={32}>32 beats</option>
+              <option value={2}>{$t('presets.auto.beats', { values: { count: 2 } })}</option>
+              <option value={4}>{$t('presets.auto.beats', { values: { count: 4 } })}</option>
+              <option value={8}>{$t('presets.auto.beats', { values: { count: 8 } })}</option>
+              <option value={16}>{$t('presets.auto.beats', { values: { count: 16 } })}</option>
+              <option value={32}>{$t('presets.auto.beats', { values: { count: 32 } })}</option>
             </select>
-            <span class="ap-bpm">{autoBpm} BPM</span>
+            <span class="ap-bpm">{$t('presets.auto.bpm', { values: { bpm: autoBpm } })}</span>
           {/if}
           {#if autoPlaying}
-            <div class="ap-progress" title="{Math.ceil(currentPresetDuration() - autoElapsed)}s left">
+            <div
+              class="ap-progress"
+              title={$t('presets.auto.progressTitle', {
+                values: { seconds: Math.ceil(currentPresetDuration() - autoElapsed) },
+              })}
+            >
               <div class="ap-progress-bar" style="width: {autoProgress * 100}%"></div>
             </div>
           {/if}
@@ -465,11 +513,11 @@
             <span class="rec-time">{formatDuration(recordingDuration)}</span>
           </div>
           <button class="stop-rec-btn" onclick={stopRecording}>
-            ■ Stop Recording
+            {$t('presets.recording.stop')}
           </button>
         {:else}
           <button class="rec-btn" onclick={startRecording}>
-            ● Record Output
+            {$t('presets.recording.start')}
           </button>
         {/if}
       </div>
@@ -490,29 +538,28 @@
         <button
           class="ctx-item"
           onclick={(e) => { e.stopPropagation(); updateCurrentPreset(ctxMenu!.comp.id); closeCtxMenu(); }}
-          title="Overwrite this preset with the current project state"
-        >↻ Update with current state</button>
+          title={$t('presets.context.updateTitle')}>{$t('presets.context.update')}</button>
         <button
           class="ctx-item"
           onclick={(e) => { e.stopPropagation(); loadPreset(ctxMenu!.comp.id); closeCtxMenu(); }}
-        >▶ Load preset</button>
+        >{$t('presets.context.load')}</button>
         <button
           class="ctx-item"
           onclick={(e) => { e.stopPropagation(); const c = ctxMenu!.comp; closeCtxMenu(); startEdit(c, e); }}
-        >✎ Rename</button>
+        >{$t('presets.context.rename')}</button>
         <div class="ctx-divider"></div>
         <button
           class="ctx-item ctx-danger"
-          onclick={(e) => { e.stopPropagation(); const id = ctxMenu!.comp.id; closeCtxMenu(); if (confirm('Delete this preset?')) project.deleteComposition(id); }}
-        >× Delete</button>
+          onclick={(e) => { e.stopPropagation(); const id = ctxMenu!.comp.id; closeCtxMenu(); if (confirm($t('presets.tray.deleteConfirm'))) project.deleteComposition(id); }}
+        >{$t('presets.context.delete')}</button>
       </div>
     {/if}
 
     <div class="preset-list">
       {#if $compositions.length === 0}
         <div class="empty-state">
-          <p>No presets saved yet</p>
-          <p class="hint">Save your current mapping as a preset to quickly switch between different configurations</p>
+          <p>{$t('presets.tray.emptyTitle')}</p>
+          <p class="hint">{$t('presets.tray.emptyHint')}</p>
         </div>
       {:else}
         {#each $compositions as comp, compIdx (comp.id)}
@@ -531,7 +578,7 @@
             tabindex="0"
             onkeydown={(e) => e.key === 'Enter' && loadPreset(comp.id)}
             data-midi-path={`map:preset:${compIdx}`}
-            data-midi-label={`Mapping Preset: ${comp.name}`}
+            data-midi-label={$t('presets.tray.midiLabel', { values: { name: comp.name } })}
             data-midi-mode="toggle"
           >
             <div class="preset-thumb">
@@ -562,30 +609,32 @@
                   {comp.name}
                 </span>
               {/if}
-              <span class="preset-layers">{comp.layers.length} layer{comp.layers.length !== 1 ? 's' : ''}</span>
+              <span class="preset-layers">{$t(comp.layers.length === 1 ? 'presets.tray.layerCount.one' : 'presets.tray.layerCount.many', {
+                  values: { count: comp.layers.length},
+                })}</span>
             </div>
             <select
               class="preset-duration"
               value={autoOverrides[comp.id] || 0}
               onclick={(e) => e.stopPropagation()}
               onchange={(e) => { const v = parseInt((e.target as HTMLSelectElement).value); autoOverrides[comp.id] = v; autoOverrides = autoOverrides; }}
-              title="Override auto-play duration for this preset (0 = use global)"
+              title={$t('presets.tray.durationOverrideTitle')}
             >
               <option value={0}>—</option>
-              <option value={3}>3s</option>
-              <option value={5}>5s</option>
-              <option value={8}>8s</option>
-              <option value={10}>10s</option>
-              <option value={15}>15s</option>
-              <option value={20}>20s</option>
-              <option value={30}>30s</option>
-              <option value={60}>60s</option>
+              <option value={3}>{$t('presets.duration.seconds', { values: { seconds: 3 } })}</option>
+              <option value={5}>{$t('presets.duration.seconds', { values: { seconds: 5 } })}</option>
+              <option value={8}>{$t('presets.duration.seconds', { values: { seconds: 8 } })}</option>
+              <option value={10}>{$t('presets.duration.seconds', { values: { seconds: 10 } })}</option>
+              <option value={15}>{$t('presets.duration.seconds', { values: { seconds: 15 } })}</option>
+              <option value={20}>{$t('presets.duration.seconds', { values: { seconds: 20 } })}</option>
+              <option value={30}>{$t('presets.duration.seconds', { values: { seconds: 30 } })}</option>
+              <option value={60}>{$t('presets.duration.seconds', { values: { seconds: 60 } })}</option>
             </select>
             <button
               class="delete-btn"
               onclick={(e) => deletePreset(comp.id, e)}
-              title="Delete preset"
-            >×</button>
+              title={$t('presets.tray.deleteTitle')}
+              >×</button>
           </div>
         {/each}
       {/if}
@@ -614,12 +663,12 @@
   }
 
   .tray-toggle:hover {
-    border-color: #BB86FC;
+    border-color: #bb86fc;
     box-shadow: 0 4px 30px rgba(0, 170, 255, 0.2);
   }
 
   .tray-toggle.open {
-    border-color: #BB86FC;
+    border-color: #bb86fc;
     background: linear-gradient(135deg, #1a2530, #253040);
   }
 
@@ -634,7 +683,7 @@
   }
 
   .count-badge {
-    background: #BB86FC;
+    background: #bb86fc;
     color: #000;
     padding: 2px 8px;
     border-radius: 10px;
@@ -703,13 +752,13 @@
   }
 
   .transition-toggle input {
-    accent-color: #BB86FC;
+    accent-color: #bb86fc;
     cursor: pointer;
     margin: 0;
   }
 
   .transition-toggle input:checked ~ .transition-label {
-    color: #BB86FC;
+    color: #bb86fc;
   }
 
   .transition-label {
@@ -728,7 +777,7 @@
 
   .transition-duration:focus {
     outline: none;
-    border-color: #BB86FC;
+    border-color: #bb86fc;
   }
 
   .tray-title {
@@ -765,9 +814,9 @@
     padding: 0;
   }
   .ap-btn:hover { background: rgba(255,255,255,0.14); color: #fff; }
-  .ap-btn.play { color: #2ED573; }
-  .ap-btn.stop { color: #FF4757; }
-  .ap-btn.loop.active { background: rgba(187,134,252,0.15); border-color: #BB86FC; color: #BB86FC; }
+  .ap-btn.play { color: #2ed573; }
+  .ap-btn.stop { color: #ff4757; }
+  .ap-btn.loop.active { background: rgba(187,134,252,0.15); border-color: #bb86fc; color: #bb86fc; }
   .ap-select {
     background: var(--bg-tertiary, #161618);
     border: 1px solid #444;
@@ -791,7 +840,7 @@
   }
   .ap-progress-bar {
     height: 100%;
-    background: #BB86FC;
+    background: #bb86fc;
     transition: width 0.1s linear;
   }
   .preset-duration {
@@ -817,11 +866,11 @@
 
   .save-preset input:focus {
     outline: none;
-    border-color: #BB86FC;
+    border-color: #bb86fc;
   }
 
   .save-btn {
-    background: #BB86FC;
+    background: #bb86fc;
     border: none;
     color: #000;
     padding: 5px 12px;
@@ -843,8 +892,8 @@
      re-saved). */
   .update-btn {
     background: transparent;
-    border: 1px solid #BB86FC;
-    color: #BB86FC;
+    border: 1px solid #bb86fc;
+    color: #bb86fc;
     padding: 4px 10px;
     border-radius: 4px;
     font-size: 12px;
@@ -853,7 +902,7 @@
     white-space: nowrap;
   }
   .update-btn:hover {
-    background: rgba(187,134,252,0.15);
+    background: rgba(187, 134, 252, 0.15);
     color: #fff;
   }
 
@@ -871,10 +920,10 @@
     z-index: 1101;
     min-width: 200px;
     background: #1a1a1f;
-    border: 1px solid rgba(255,255,255,0.12);
+    border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 6px;
     padding: 4px;
-    box-shadow: 0 6px 24px rgba(0,0,0,0.5);
+    box-shadow: 0 6px 24px rgba(0, 0, 0, 0.5);
     display: flex;
     flex-direction: column;
     gap: 1px;
@@ -891,19 +940,19 @@
     white-space: nowrap;
   }
   .preset-ctx-menu .ctx-item:hover {
-    background: rgba(255,255,255,0.06);
+    background: rgba(255, 255, 255, 0.06);
     color: #fff;
   }
   .preset-ctx-menu .ctx-item.ctx-danger {
     color: #ff8888;
   }
   .preset-ctx-menu .ctx-item.ctx-danger:hover {
-    background: rgba(255,68,68,0.12);
+    background: rgba(255, 68, 68, 0.12);
     color: #ffb0b0;
   }
   .preset-ctx-menu .ctx-divider {
     height: 1px;
-    background: rgba(255,255,255,0.08);
+    background: rgba(255, 255, 255, 0.08);
     margin: 4px 2px;
   }
 
@@ -965,8 +1014,13 @@
   }
 
   @keyframes blink {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.3; }
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.3;
+    }
   }
 
   .rec-time {
@@ -1021,17 +1075,17 @@
   }
 
   .preset-item:hover {
-    border-color: #BB86FC;
+    border-color: #bb86fc;
     transform: translateY(-2px);
   }
 
   .preset-item.active {
-    border-color: #BB86FC;
+    border-color: #bb86fc;
     box-shadow: 0 0 12px rgba(0, 170, 255, 0.3);
   }
 
   .preset-item.dragover {
-    border-color: #7EC8E3;
+    border-color: #7ec8e3;
     box-shadow: 0 0 0 1px rgba(126, 200, 227, 0.7), 0 0 14px rgba(126, 200, 227, 0.26);
     transform: translateY(-2px);
   }
@@ -1084,7 +1138,7 @@
   .name-edit {
     width: 100%;
     background: #333;
-    border: 1px solid #BB86FC;
+    border: 1px solid #bb86fc;
     color: var(--text-primary, #eee);
     padding: 2px 4px;
     border-radius: 2px;

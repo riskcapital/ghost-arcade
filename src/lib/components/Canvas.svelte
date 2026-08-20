@@ -57,6 +57,7 @@
   import { settings, outputFrozen, SHADER_QUALITY_MULTIPLIERS, masterWarpIsActive } from '../stores/settings';
   import { showToast } from '../stores/errorToast';
   import { beginOwnedLoading, endOwnedLoading, updateOwnedLoading } from '../stores/loading';
+  import { t } from '../i18n';
   import { getTextureShareLabel, invoke, isDesktopApp, isOsrMode, isOutputMode } from '$lib/bridge';
   import { drawTestPattern, type TestPatternType } from '../utils/testPatterns';
   import { layerUsesStageTextureCoordinates } from '../utils/stageTextureOrientation';
@@ -1511,7 +1512,12 @@
             ') — CPU sendImage fallback is disabled',
           );
           if (!wasAlreadyFailed) {
-            showToast(`${getTextureShareLabel()} zero-copy unavailable; CPU fallback is disabled.`, 'error');
+            showToast(
+              $t('outputExtras.output.zeroCopyUnavailable', {
+                values: { texture: getTextureShareLabel() },
+              }),
+              'error',
+            );
           }
         } else {
           console.log('[Canvas] OSR inactive (reason:', status.reason, ')');
@@ -2861,13 +2867,22 @@
     })
       .then((result: any) => {
         if (!result?.success) {
-          throw new Error(result?.error || `${getTextureShareLabel()} sender failed`);
+          throw new Error(
+            result?.error ||
+              $t('outputExtras.output.senderFailed', {
+                values: { texture: getTextureShareLabel() },
+              }),
+          );
         }
         const mode = result?.mode || 'unknown';
         spoutCpuFallbackAllowed = !isElectron || !!result?.cpuFallbackAllowed;
         if (mode === 'zero-copy-unavailable' && !spoutCpuFallbackAllowed) {
           spoutZeroCopyFailed = true;
-          throw new Error(`${getTextureShareLabel()} zero-copy unavailable`);
+          throw new Error(
+            $t('outputExtras.output.zeroCopyUnavailable', {
+              values: { texture: getTextureShareLabel() },
+            }),
+          );
         }
         spoutOutputActive = true;
         spoutZeroCopyFailed = false;
@@ -2875,12 +2890,31 @@
         spoutSendLogCount = 0;
         console.log(`Spout output started: ${s?.spoutName} (${mode})`);
         const label = getTextureShareLabel();
-        const modeLabel = mode === 'zero-copy-pending' ? 'zero-copy starting' : mode;
-        showToast(`${label} ${modeLabel}: ${s?.spoutName} ${spoutW}x${spoutH}`, 'info');
+        const modeLabel = mode === 'zero-copy-pending' ? $t('outputExtras.output.zeroCopyStarting') : mode;
+        showToast(
+          $t('outputExtras.output.started', {
+            values: {
+              texture: label,
+              mode: modeLabel,
+              name: String(s?.spoutName),
+              width: spoutW,
+              height: spoutH,
+            },
+          }),
+          'info',
+        );
       })
       .catch((e: any) => {
         console.warn('Failed to start Spout sender:', e);
-        showToast(`Spout failed: ${e?.message || e}`, 'error');
+        showToast(
+          $t('outputExtras.output.startFailed', {
+            values: {
+              texture: getTextureShareLabel(),
+              error: e?.message || e,
+            },
+          }),
+          'error',
+        );
         spoutZeroCopyFailed = true;
         spoutStarting = false;
       });
@@ -3765,7 +3799,11 @@
         } else {
           // Fallback to magenta if shader failed to compile
           console.error('Shader creation failed, using fallback magenta texture');
-          showToast('Shader compilation failed for: ' + (source.name || 'unknown'));
+          showToast(
+            $t('outputExtras.shader.compilationFailed', {
+              values: { name: source.name || $t('outputExtras.shader.unknownName') },
+            }),
+          );
           const data = new Uint8Array([255, 0, 170, 255]);
           texture = new THREE.DataTexture(data, 1, 1, THREE.RGBAFormat);
           texture.needsUpdate = true;
@@ -4861,6 +4899,30 @@
     }
   }
 
+  function localizeSplatRendererDetail(detail: string): string {
+    const preparingPoints = /^Preparing (.+) points$/.exec(detail);
+    if (preparingPoints) {
+      return $t('outputExtras.splat.detailPreparingPoints', {
+        values: { count: preparingPoints[1] },
+      });
+    }
+
+    const preparingPoint = /^Preparing point (.+) of (.+)$/.exec(detail);
+    if (preparingPoint) {
+      return $t('outputExtras.splat.detailPreparingPoint', {
+        values: { current: preparingPoint[1], total: preparingPoint[2] },
+      });
+    }
+
+    if (detail === 'Creating GPU buffers') {
+      return $t('outputExtras.splat.detailCreatingGpuBuffers');
+    }
+    if (detail === 'GPU buffers ready') {
+      return $t('outputExtras.splat.detailGpuBuffersReady');
+    }
+    return detail;
+  }
+
   // Render splat layer content (point cloud / gaussian splat) to textures
   // Uses WebGLRenderTarget on the main engine's renderer to avoid cross-context issues
   function updateSplatLayerTextures(layerList: Layer[]) {
@@ -4913,8 +4975,13 @@
         const originalFileName = (layer.splatContent as any)._originalFileName || '';
         const isSplatFormat = originalFileName.toLowerCase().endsWith('.splat');
         const layerId = layer.id;
-        const sourceLabel = originalFileName || (isSplatFormat ? 'Gaussian splat' : 'Point cloud');
-        const loadingOwner = beginOwnedLoading(`Loading ${sourceLabel}`, 0, 'Reading source data');
+        const sourceLabel =
+          originalFileName || $t(isSplatFormat ? 'outputExtras.splat.gaussianSplat' : 'outputExtras.splat.pointCloud');
+        const loadingOwner = beginOwnedLoading(
+          $t('outputExtras.splat.loading', { values: { source: sourceLabel } }),
+          0,
+          $t('outputExtras.splat.readingSource'),
+        );
 
         void (async () => {
           try {
@@ -4930,11 +4997,21 @@
               const progress = event.phase === 'read' ? event.progress * 0.12 : 0.12 + event.progress * 0.53;
               const detail =
                 event.phase === 'read'
-                  ? 'Reading source data'
+                  ? $t('outputExtras.splat.readingSource')
                   : event.sourceVertexCount
-                    ? `Parsing ${Math.min(event.loadedVertexCount ?? 0, event.sourceVertexCount).toLocaleString()} of ${event.sourceVertexCount.toLocaleString()} points`
-                    : 'Parsing point data';
-              updateOwnedLoading(loadingOwner, `Loading ${sourceLabel}`, progress, detail);
+                    ? $t('outputExtras.splat.parsingPoints', {
+                        values: {
+                          loaded: Math.min(event.loadedVertexCount ?? 0, event.sourceVertexCount).toLocaleString(),
+                          total: event.sourceVertexCount.toLocaleString(),
+                        },
+                      })
+                    : $t('outputExtras.splat.parsingPointData');
+              updateOwnedLoading(
+                loadingOwner,
+                $t('outputExtras.splat.loading', { values: { source: sourceLabel } }),
+                progress,
+                detail,
+              );
             };
 
             const data = isSplatFormat
@@ -4948,7 +5025,12 @@
             }
 
             await ctx.renderer.loadData(data, (progress, detail) => {
-              updateOwnedLoading(loadingOwner, 'Preparing point cloud', 0.65 + progress * 0.34, detail);
+              updateOwnedLoading(
+                loadingOwner,
+                $t('outputExtras.splat.preparing'),
+                0.65 + progress * 0.34,
+                localizeSplatRendererDetail(detail),
+              );
             });
 
             if (
@@ -4975,9 +5057,16 @@
             });
 
             const readyDetail = data.wasDecimated
-              ? `${data.vertices.length.toLocaleString()} display points from ${data.sourceVertexCount.toLocaleString()} source points`
-              : `${data.vertices.length.toLocaleString()} points ready`;
-            updateOwnedLoading(loadingOwner, 'Point cloud ready', 1, readyDetail);
+              ? $t('outputExtras.splat.displayPoints', {
+                  values: {
+                    display: data.vertices.length.toLocaleString(),
+                    source: data.sourceVertexCount.toLocaleString(),
+                  },
+                })
+              : $t('outputExtras.splat.pointsReady', {
+                  values: { count: data.vertices.length.toLocaleString() },
+                });
+            updateOwnedLoading(loadingOwner, $t('outputExtras.splat.ready'), 1, readyDetail);
 
             // Keep the overlay until the replacement buffers have survived a
             // complete render opportunity, not merely until parsing returns.
@@ -4993,8 +5082,12 @@
               endOwnedLoading(loadingOwner);
             }
             showToast(
-              `Failed to load ${isSplatFormat ? '.splat' : 'PLY'} file: ` +
-                (err instanceof Error ? err.message : String(err)),
+              $t('outputExtras.splat.loadFailed', {
+                values: {
+                  format: $t(isSplatFormat ? 'outputExtras.splat.formatSplat' : 'outputExtras.splat.formatPly'),
+                  error: err instanceof Error ? err.message : String(err),
+                },
+              }),
             );
           } finally {
             endOwnedLoading(loadingOwner);
@@ -5315,7 +5408,7 @@
           .catch((err) => {
             if ((ctx as any)._disposed || model3dRenderers.get(layerId) !== ctx) return;
             console.error('[Canvas] Failed to load model:', err);
-            showToast('3D model could not be loaded. Re-add the model file to this layer.');
+            showToast($t('outputExtras.model3d.loadFailed'));
             ctx.loadingModel = false;
             // Mark this URL as failed so we DON'T retry every frame
             (ctx as any)._failedUrl = currentModelUrl;

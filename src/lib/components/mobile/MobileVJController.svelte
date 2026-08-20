@@ -13,6 +13,7 @@
   import MobileTempoStrip from './MobileTempoStrip.svelte';
   import MobileBankToggle from './MobileBankToggle.svelte';
   import type { EffectType, EffectParams, Effect } from '../../types';
+  import { t } from '../../i18n';
 
   // VJ state from desktop sync
   export let vjClipsState: any = null;
@@ -42,7 +43,11 @@
   export let onAddLayerEffect: (layerIndex: number, effectType: EffectType) => void = () => {};
   export let onRemoveLayerEffect: (layerIndex: number, effectId: string) => void = () => {};
   export let onToggleLayerEffect: (layerIndex: number, effectId: string) => void = () => {};
-  export let onUpdateLayerEffectParams: (layerIndex: number, effectId: string, params: Partial<EffectParams>) => void = () => {};
+  export let onUpdateLayerEffectParams: (
+    layerIndex: number,
+    effectId: string,
+    params: Partial<EffectParams>,
+  ) => void = () => {};
 
   // Composition effect callbacks
   export let onAddCompEffect: (effectType: EffectType) => void = () => {};
@@ -54,7 +59,12 @@
   export let onAddClipEffect: (layerIndex: number, columnIndex: number, effectType: EffectType) => void = () => {};
   export let onRemoveClipEffect: (layerIndex: number, columnIndex: number, effectId: string) => void = () => {};
   export let onToggleClipEffect: (layerIndex: number, columnIndex: number, effectId: string) => void = () => {};
-  export let onUpdateClipEffectParams: (layerIndex: number, columnIndex: number, effectId: string, params: Partial<EffectParams>) => void = () => {};
+  export let onUpdateClipEffectParams: (
+    layerIndex: number,
+    columnIndex: number,
+    effectId: string,
+    params: Partial<EffectParams>,
+  ) => void = () => {};
 
   // Shader callback
   export let onUpdateShaderValue: (layerIndex: number, paramName: string, value: any) => void = () => {};
@@ -158,7 +168,7 @@
   // fallback, switching to Bank B on an older desktop showed a blank
   // grid with no recourse since the user's BankToggle still said 'B'.
   $: bankBHasContent = clipGridB.length > 0 && layerStatesB.length > 0;
-  $: effectiveBank = (activeBank === 'B' && bankBHasContent) ? 'B' : 'A';
+  $: effectiveBank = activeBank === 'B' && bankBHasContent ? 'B' : 'A';
   $: activeGrid = effectiveBank === 'A' ? clipGridA : clipGridB;
   $: activeStates = effectiveBank === 'A' ? layerStatesA : layerStatesB;
 
@@ -194,8 +204,8 @@
         <line x1="12" y1="17" x2="12" y2="21"/>
       </svg>
     </div>
-    <p class="empty-title">No VJ Session Active</p>
-    <p class="empty-hint">Open the VJ panel on the desktop to start</p>
+    <p class="empty-title">{$t('mobileAdvanced.controller.emptyTitle')}</p>
+    <p class="empty-hint">{$t('mobileAdvanced.controller.emptyHint')}</p>
   </div>
 {:else if isTablet}
   <!-- ═══════════════════════════════════════════════════════════════ -->
@@ -245,7 +255,7 @@
         {/if}
         {#if !crossfaderOn}
           <div class="header-slot bank">
-            <MobileBankToggle activeBank={activeBank} onChange={(b) => activeBank = b} />
+            <MobileBankToggle {activeBank} onChange={(b) => (activeBank = b)} />
           </div>
         {/if}
       </div>
@@ -257,7 +267,7 @@
         <!-- ─── Top sub-row: Deck A clips | X-fader | Deck B clips ─── -->
         <div class="deck-clips-row">
           <div class="deck-clips a">
-            <div class="deck-tag a">DECK A</div>
+            <div class="deck-tag a">{$t('mobileAdvanced.controller.deckA')}</div>
             <div class="deck-grid-wrap">
               <VJClipGrid
                 clipGrid={clipGridA}
@@ -283,8 +293,8 @@
               compact={true}
               onChange={onCrossfaderChange}
               onToggleEnabled={onCrossfaderToggle}
-              onCutA={onCutA}
-              onCutB={onCutB}
+              {onCutA}
+              {onCutB}
               onTransitionChange={onCrossfaderTransition}
               onCurveChange={onCrossfaderCurve}
               onBlendModeChange={onCrossfaderBlendMode}
@@ -292,7 +302,7 @@
           </div>
 
           <div class="deck-clips b">
-            <div class="deck-tag b">DECK B</div>
+            <div class="deck-tag b">{$t('mobileAdvanced.controller.deckB')}</div>
             <div class="deck-grid-wrap">
               <VJClipGrid
                 clipGrid={clipGridB}
@@ -326,8 +336,10 @@
 
           <div class="center-tabs">
             <div class="center-tabs-bar">
-              <button class="ctab" class:active={centerTab === 'shader'}  onclick={() => centerTab = 'shader'}>SHADER</button>
-              <button class="ctab" class:active={centerTab === 'effects'} onclick={() => centerTab = 'effects'}>EFFECTS</button>
+              <button class="ctab" class:active={centerTab === 'shader'}  onclick={() => (centerTab = 'shader')}
+                aria-label={$t('mobileAdvanced.controller.shaderTab')}>{$t('mobileAdvanced.controller.shaderTab')}</button>
+              <button class="ctab" class:active={centerTab === 'effects'} onclick={() => (centerTab = 'effects')}
+                aria-label={$t('mobileAdvanced.controller.effectsTab')}>{$t('mobileAdvanced.controller.effectsTab')}</button>
             </div>
             <div class="center-tabs-content">
               {#if centerTab === 'shader'}
@@ -402,8 +414,10 @@
           </div>
           <div class="center-tabs single">
             <div class="center-tabs-bar">
-              <button class="ctab" class:active={centerTab === 'shader'}  onclick={() => centerTab = 'shader'}>SHADER</button>
-              <button class="ctab" class:active={centerTab === 'effects'} onclick={() => centerTab = 'effects'}>EFFECTS</button>
+              <button class="ctab" class:active={centerTab === 'shader'}  onclick={() => (centerTab = 'shader')}
+                aria-label={$t('mobileAdvanced.controller.shaderTab')}>{$t('mobileAdvanced.controller.shaderTab')}</button>
+              <button class="ctab" class:active={centerTab === 'effects'} onclick={() => (centerTab = 'effects')}
+                aria-label={$t('mobileAdvanced.controller.effectsTab')}>{$t('mobileAdvanced.controller.effectsTab')}</button>
             </div>
             <div class="center-tabs-content">
               {#if centerTab === 'shader'}
@@ -463,8 +477,8 @@
             quantization={vjClipsState.quantization}
             pendingTriggerCount={vjClipsState.pendingTriggerCount ?? 0}
             onTap={onTapTempo}
-            onClearManualBPM={onClearManualBPM}
-            onQuantizationChange={onQuantizationChange}
+            {onClearManualBPM}
+            {onQuantizationChange}
             onClearPending={onClearPendingTriggers}
             compact={true}
           />
@@ -503,8 +517,8 @@
         quantization={vjClipsState.quantization}
         pendingTriggerCount={vjClipsState.pendingTriggerCount ?? 0}
         onTap={onTapTempo}
-        onClearManualBPM={onClearManualBPM}
-        onQuantizationChange={onQuantizationChange}
+        {onClearManualBPM}
+        {onQuantizationChange}
         onClearPending={onClearPendingTriggers}
         compact={true}
       />
@@ -515,7 +529,7 @@
       {#if blocks.length > 1}
         <VJBlockSelector {blocks} {activeBlockId} {onSetBlock} />
       {/if}
-      <MobileBankToggle activeBank={activeBank} onChange={(b) => activeBank = b} compact={true} />
+      <MobileBankToggle {activeBank} onChange={(b) => (activeBank = b)} compact={true} />
     </div>
 
     <!-- Crossfader strip (horizontal, only when enabled) -->
@@ -530,8 +544,8 @@
           orientation="horizontal"
           onChange={onCrossfaderChange}
           onToggleEnabled={onCrossfaderToggle}
-          onCutA={onCutA}
-          onCutB={onCutB}
+          {onCutA}
+          {onCutB}
           onTransitionChange={onCrossfaderTransition}
           onCurveChange={onCrossfaderCurve}
         />
@@ -581,15 +595,20 @@
 
       <!-- Phone tab strip — switches the bottom panel content -->
       <div class="phone-tab-strip">
-        <button class="tab-btn" class:active={phoneTab === 'mixer'} onclick={() => phoneTab = 'mixer'}>MIX</button>
+        <button class="tab-btn" class:active={phoneTab === 'mixer'} onclick={() => (phoneTab = 'mixer')}
+          aria-label={$t('mobileAdvanced.controller.mixTab')}>{$t('mobileAdvanced.controller.mixTab')}</button>
         {#if vjClipsState.macros && vjClipsState.macros.length > 0}
-          <button class="tab-btn" class:active={phoneTab === 'macros'} onclick={() => phoneTab = 'macros'}>MAC</button>
+          <button class="tab-btn" class:active={phoneTab === 'macros'} onclick={() => (phoneTab = 'macros')}
+            aria-label={$t('mobileAdvanced.controller.macrosTab')}>{$t('mobileAdvanced.controller.macrosTab')}</button>
         {/if}
         {#if vjClipsState.snapshots && vjClipsState.snapshots.length > 0}
-          <button class="tab-btn" class:active={phoneTab === 'snaps'} onclick={() => phoneTab = 'snaps'}>SNAP</button>
+          <button class="tab-btn" class:active={phoneTab === 'snaps'} onclick={() => (phoneTab = 'snaps')}
+            aria-label={$t('mobileAdvanced.controller.snapshotsTab')}>{$t('mobileAdvanced.controller.snapshotsTab')}</button>
         {/if}
-        <button class="tab-btn" class:active={phoneTab === 'shader'} onclick={() => phoneTab = 'shader'}>SHD</button>
-        <button class="tab-btn" class:active={phoneTab === 'effects'} onclick={() => phoneTab = 'effects'}>FX</button>
+        <button class="tab-btn" class:active={phoneTab === 'shader'} onclick={() => (phoneTab = 'shader')}
+          aria-label={$t('mobileAdvanced.controller.shaderShortTab')}>{$t('mobileAdvanced.controller.shaderShortTab')}</button>
+        <button class="tab-btn" class:active={phoneTab === 'effects'} onclick={() => (phoneTab = 'effects')}
+          aria-label={$t('mobileAdvanced.controller.effectsShortTab')}>{$t('mobileAdvanced.controller.effectsShortTab')}</button>
       </div>
 
       <!-- Phone tab content -->
@@ -631,10 +650,10 @@
             layerStates={activeStates}
             {compositionEffects}
             clipGrid={activeGrid}
-            onAddLayerEffect={onAddLayerEffect}
-            onRemoveLayerEffect={onRemoveLayerEffect}
-            onToggleLayerEffect={onToggleLayerEffect}
-            onUpdateLayerEffectParams={onUpdateLayerEffectParams}
+            {onAddLayerEffect}
+            {onRemoveLayerEffect}
+            {onToggleLayerEffect}
+            {onUpdateLayerEffectParams}
             {onAddCompEffect}
             {onRemoveCompEffect}
             {onToggleCompEffect}
@@ -728,8 +747,14 @@
     flex-wrap: wrap;
     min-height: 36px;
   }
-  .header-slot { display: flex; align-items: center; flex-shrink: 0; }
-  .header-slot.bank { margin-left: auto; }
+  .header-slot {
+    display: flex;
+    align-items: center;
+    flex-shrink: 0;
+  }
+  .header-slot.bank {
+    margin-left: auto;
+  }
 
   /* ROW 3 — main work area (clips on top, opacity+tabs below).
      Bumped the controls sub-row from minmax(180px, 220px) → minmax(
@@ -778,8 +803,12 @@
     height: 100%;
     overflow: hidden;
   }
-  .deck-clips.a { border-right: 1px solid rgba(79, 195, 247, 0.18); }
-  .deck-clips.b { border-left: 1px solid rgba(206, 147, 216, 0.18); }
+  .deck-clips.a {
+    border-right: 1px solid rgba(79, 195, 247, 0.18);
+  }
+  .deck-clips.b {
+    border-left: 1px solid rgba(206, 147, 216, 0.18);
+  }
   .deck-tag {
     font-size: 11px;
     font-weight: 800;
@@ -790,12 +819,12 @@
   }
   .deck-tag.a {
     background: rgba(79, 195, 247, 0.12);
-    color: #4FC3F7;
+    color: #4fc3f7;
     text-shadow: 0 0 6px rgba(79, 195, 247, 0.4);
   }
   .deck-tag.b {
     background: rgba(206, 147, 216, 0.12);
-    color: #CE93D8;
+    color: #ce93d8;
     text-shadow: 0 0 6px rgba(206, 147, 216, 0.4);
   }
   .deck-grid-wrap {
@@ -909,7 +938,7 @@
   .ctab.active {
     color: #fff;
     background: rgba(255, 255, 255, 0.05);
-    box-shadow: inset 0 -2px 0 var(--accent-primary, #FF6B6B);
+    box-shadow: inset 0 -2px 0 var(--accent-primary, #ff6b6b);
   }
   .center-tabs-content {
     overflow-y: auto;

@@ -12,6 +12,7 @@
    * in use, so it stays out of the way during normal play.
    */
   import { snapshots } from '../stores/snapshots';
+  import { t } from '../i18n';
 
   export let placement: 'floating' | 'inline' = 'floating';
 
@@ -51,7 +52,7 @@
     closeCtx();
   }
   function ctxClear() {
-    if (ctxIndex !== null && confirm('Clear this snapshot?')) snapshots.clear(ctxIndex);
+    if (ctxIndex !== null && confirm($t('presets.snapshots.clearConfirm'))) snapshots.clear(ctxIndex);
     closeCtx();
   }
   function ctxRename() {
@@ -77,29 +78,30 @@
   function fmtAge(ts: number): string {
     if (!ts) return '';
     const ago = (Date.now() - ts) / 1000;
-    if (ago < 60) return `${Math.round(ago)}s`;
-    if (ago < 3600) return `${Math.round(ago / 60)}m`;
-    if (ago < 86400) return `${Math.round(ago / 3600)}h`;
-    return `${Math.round(ago / 86400)}d`;
+    if (ago < 60) return $t('presets.snapshots.age.seconds', { values: { count: Math.round(ago) } });
+    if (ago < 3600) return $t('presets.snapshots.age.minutes', { values: { count: Math.round(ago / 60) } });
+    if (ago < 86400) return $t('presets.snapshots.age.hours', { values: { count: Math.round(ago / 3600) } });
+    return $t('presets.snapshots.age.days', { values: { count: Math.round(ago / 86400) } });
   }
 
   // Live count of populated slots — drives the badge on the collapsed
   // launcher button. `$:` reactive so it tracks the snapshots store.
-  $: populatedCount = $snapshots.snapshots.filter(s => s.capturedAt > 0).length;
+  $: populatedCount = $snapshots.snapshots.filter((s) => s.capturedAt > 0).length;
   $: inline = placement === 'inline';
 </script>
 
 <svelte:window onclick={onWindowClick} />
 
-<div class="snap-bank" class:expanded class:inline title="Snapshots — click to recall · shift-click to save · right-click for menu">
-  <button class="snap-handle" onclick={() => expanded = !expanded} title={expanded ? 'Collapse snapshots' : 'Expand snapshots'}>
+<div class="snap-bank" class:expanded class:inline title={$t('presets.snapshots.bankTitle')}>
+  <button class="snap-handle" onclick={() => (expanded = !expanded)} title={$t(expanded ? 'presets.snapshots.collapse' : 'presets.snapshots.expand')}
+    aria-label={$t(expanded ? 'presets.snapshots.collapse' : 'presets.snapshots.expand')}>
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <rect x="3" y="3" width="7" height="7"/>
       <rect x="14" y="3" width="7" height="7"/>
       <rect x="3" y="14" width="7" height="7"/>
       <rect x="14" y="14" width="7" height="7"/>
     </svg>
-    <span class="snap-handle-label">SNAPS</span>
+    <span class="snap-handle-label">{$t('presets.snapshots.label')}</span>
     {#if populatedCount > 0}
       <span class="snap-handle-count">{populatedCount}</span>
     {/if}
@@ -119,11 +121,24 @@
             onclick={(e) => handleClick(idx, e)}
             oncontextmenu={(e) => handleContext(e, idx)}
             data-midi-path="vj:snapshot:{idx + 1}"
-            data-midi-label="Snapshot {idx + 1}"
+            data-midi-label={$t('presets.snapshots.cellMidiLabel', { values: { index: idx + 1 } })}
             data-midi-mode="toggle"
             title={populated
-              ? `${snap.name || `Snapshot ${idx + 1}`} · saved ${fmtAge(snap.capturedAt)} ago`
-              : `Slot ${idx + 1} · empty (shift-click to save current state)`}
+              ? $t('presets.snapshots.populatedTitle', {
+                  values: {
+                    name: snap.name || $t('presets.snapshots.cellMidiLabel', { values: { index: idx + 1} }),
+                    age: fmtAge(snap.capturedAt),
+                  },
+                })
+              : $t('presets.snapshots.emptyTitle', { values: { index: idx + 1 } })}
+            aria-label={populated
+              ? $t('presets.snapshots.populatedTitle', {
+                  values: {
+                    name: snap.name || $t('presets.snapshots.cellMidiLabel', { values: { index: idx + 1 } }),
+                    age: fmtAge(snap.capturedAt),
+                  },
+                })
+              : $t('presets.snapshots.emptyTitle', { values: { index: idx + 1 } })}
           >
             <span class="snap-num">{idx + 1}</span>
             {#if populated}
@@ -135,6 +150,7 @@
               class="snap-rename"
               type="text"
               autofocus
+              placeholder={$t('presets.snapshots.renamePlaceholder')}
               bind:value={renameDraft}
               onblur={commitRename}
               onkeydown={(e) => { if (e.key === 'Enter') commitRename(); if (e.key === 'Escape') { renamingIdx = null; } }}
@@ -152,14 +168,14 @@
   {@const slot = $snapshots.snapshots[ctxIndex]}
   <div class="snap-ctx" bind:this={ctxEl} style="left:{ctxX}px;top:{ctxY}px">
     {#if slot && slot.capturedAt > 0}
-      <button class="snap-ctx-item snap-ctx-primary" onclick={ctxRecall}>Recall</button>
-      <button class="snap-ctx-item" onclick={ctxSave}>Overwrite with current state</button>
-      <button class="snap-ctx-item" onclick={ctxRename}>Rename</button>
+      <button class="snap-ctx-item snap-ctx-primary" onclick={ctxRecall}>{$t('presets.snapshots.recall')}</button>
+      <button class="snap-ctx-item" onclick={ctxSave}>{$t('presets.snapshots.overwrite')}</button>
+      <button class="snap-ctx-item" onclick={ctxRename}>{$t('presets.snapshots.rename')}</button>
       <div class="snap-ctx-sep"></div>
-      <button class="snap-ctx-item snap-ctx-danger" onclick={ctxClear}>Clear</button>
+      <button class="snap-ctx-item snap-ctx-danger" onclick={ctxClear}>{$t('presets.snapshots.clear')}</button>
     {:else}
-      <button class="snap-ctx-item snap-ctx-primary" onclick={ctxSave}>Save current state here</button>
-      <button class="snap-ctx-item" onclick={ctxRename}>Rename slot</button>
+      <button class="snap-ctx-item snap-ctx-primary" onclick={ctxSave}>{$t('presets.snapshots.saveHere')}</button>
+      <button class="snap-ctx-item" onclick={ctxRename}>{$t('presets.snapshots.renameSlot')}</button>
     {/if}
   </div>
 {/if}
@@ -230,7 +246,7 @@
   }
   .snap-handle-label { letter-spacing: 0.16em; }
   .snap-handle-count {
-    background: #BB86FC;
+    background: #bb86fc;
     color: #000;
     font-size: 10px;
     font-weight: 800;
@@ -255,7 +271,7 @@
     padding: 8px;
     background: rgba(20, 20, 26, 0.96);
     backdrop-filter: blur(10px);
-    border: 1px solid rgba(255, 255, 255, 0.10);
+    border: 1px solid rgba(255, 255, 255, 0.1);
     border-radius: 8px;
     box-shadow: 0 14px 36px rgba(0, 0, 0, 0.58);
   }
@@ -365,7 +381,7 @@
     color: #fff;
   }
   .snap-ctx-primary {
-    color: #FF8577;
+    color: #ff8577;
     font-weight: 700;
   }
   .snap-ctx-primary:hover {

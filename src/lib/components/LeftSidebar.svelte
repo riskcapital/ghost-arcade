@@ -11,6 +11,7 @@
   import LayerPanel from './LayerPanel.svelte';
   import ScreenPanel from './ScreenPanel.svelte';
   import { leftSidebarTab, type LeftSidebarTab } from '../stores/uiState';
+  import { t } from '../i18n';
 
   function setTab(t: LeftSidebarTab) {
     leftSidebarTab.set(t);
@@ -18,23 +19,21 @@
 </script>
 
 <div class="left-sidebar">
-  <div class="left-tabs" role="tablist" aria-label="Left sidebar tab">
+  <div class="left-tabs" role="tablist" aria-label={$t('shellExtras.leftSidebar.tabListLabel')}>
     <button
       class="left-tab"
       class:active={$leftSidebarTab === 'layers'}
       role="tab"
       aria-selected={$leftSidebarTab === 'layers'}
       onclick={() => setTab('layers')}
-      title="Layers — content the user composes"
-    >Layers</button>
+      title={$t('shellExtras.leftSidebar.layersTitle')}>{$t('shellExtras.leftSidebar.layers')}</button>
     <button
       class="left-tab"
       class:active={$leftSidebarTab === 'screens'}
       role="tab"
       aria-selected={$leftSidebarTab === 'screens'}
       onclick={() => setTab('screens')}
-      title="Screens — output regions (projectors, senders) with warp + blend + effects"
-    >Screens</button>
+      title={$t('shellExtras.leftSidebar.screensTitle')}>{$t('shellExtras.leftSidebar.screens')}</button>
   </div>
 
   <div class="left-panel-host" role="tabpanel">
@@ -79,7 +78,7 @@
     font-size: 12px;
     font-weight: 500;
     text-transform: uppercase;
-    letter-spacing: 0.10em;
+    letter-spacing: 0.1em;
     cursor: pointer;
     transition: color 80ms ease, border-color 80ms ease;
     font-family: var(--ga-font-mono, ui-monospace, monospace);

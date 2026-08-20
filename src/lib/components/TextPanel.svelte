@@ -1,6 +1,7 @@
 <script lang="ts">
   import { project, selectedLayer } from '../stores/layers';
   import type { TextAnimationType } from '../types';
+  import { t } from '../i18n';
 
   // System font list (common cross-platform fonts + variable fonts)
   const systemFonts = [
@@ -39,25 +40,79 @@
   // Auto-detect on mount (works when permission already granted)
   detectFonts();
 
-  const animationTypes: { value: TextAnimationType; label: string; description: string }[] = [
-    { value: 'none', label: 'None', description: 'Static text' },
-    { value: 'ticker', label: 'Ticker', description: 'Horizontal scrolling marquee' },
-    { value: 'letterReveal', label: 'Letter Reveal', description: 'Letters appear with glow burst' },
-    { value: 'typewriter', label: 'Typewriter', description: 'Typing with cursor blink' },
-    { value: 'fadeInLetters', label: 'Fade In', description: 'Sequential letter fade' },
-    { value: 'waveY', label: 'Wave Y', description: 'Vertical sine wave' },
-    { value: 'waveX', label: 'Wave X', description: 'Horizontal sine wave' },
-    { value: 'elastic', label: 'Elastic', description: 'Bounce in with overshoot' },
-    { value: 'scramble', label: 'Scramble', description: 'Random chars resolve' },
-    { value: 'glitch3d', label: 'Glitch 3D', description: 'RGB split + skew + noise' },
-    { value: 'perspective3d', label: 'Perspective 3D', description: 'Rotating faux-3D' },
-    { value: 'flipLetters', label: 'Flip Letters', description: 'Y-axis letter rotation' },
-    { value: 'spiralIn', label: 'Spiral In', description: 'Letters spiral to position' },
-    { value: 'explode', label: 'Explode', description: 'Burst out and reassemble' },
-    { value: 'liquid', label: 'Liquid', description: 'Fluid distortion warping' },
-    { value: 'neonPulse', label: 'Neon Pulse', description: 'Glowing neon with flicker' },
-    { value: 'matrixRain', label: 'Matrix Rain', description: 'Digital rain cascade' },
-    { value: 'bounce', label: 'Bounce', description: 'Physics bounce from top' },
+  const animationTypes: { value: TextAnimationType; labelKey: string; descriptionKey: string }[] = [
+    { value: 'none',
+      labelKey: 'textTools.animation.types.none.label',
+      descriptionKey: 'textTools.animation.types.none.description',
+    },
+    { value: 'ticker',
+      labelKey: 'textTools.animation.types.ticker.label',
+      descriptionKey: 'textTools.animation.types.ticker.description',
+    },
+    { value: 'letterReveal',
+      labelKey: 'textTools.animation.types.letterReveal.label',
+      descriptionKey: 'textTools.animation.types.letterReveal.description',
+    },
+    { value: 'typewriter',
+      labelKey: 'textTools.animation.types.typewriter.label',
+      descriptionKey: 'textTools.animation.types.typewriter.description',
+    },
+    { value: 'fadeInLetters',
+      labelKey: 'textTools.animation.types.fadeInLetters.label',
+      descriptionKey: 'textTools.animation.types.fadeInLetters.description',
+    },
+    { value: 'waveY',
+      labelKey: 'textTools.animation.types.waveY.label',
+      descriptionKey: 'textTools.animation.types.waveY.description',
+    },
+    { value: 'waveX',
+      labelKey: 'textTools.animation.types.waveX.label',
+      descriptionKey: 'textTools.animation.types.waveX.description',
+    },
+    { value: 'elastic',
+      labelKey: 'textTools.animation.types.elastic.label',
+      descriptionKey: 'textTools.animation.types.elastic.description',
+    },
+    { value: 'scramble',
+      labelKey: 'textTools.animation.types.scramble.label',
+      descriptionKey: 'textTools.animation.types.scramble.description',
+    },
+    { value: 'glitch3d',
+      labelKey: 'textTools.animation.types.glitch3d.label',
+      descriptionKey: 'textTools.animation.types.glitch3d.description',
+    },
+    { value: 'perspective3d',
+      labelKey: 'textTools.animation.types.perspective3d.label',
+      descriptionKey: 'textTools.animation.types.perspective3d.description',
+    },
+    { value: 'flipLetters',
+      labelKey: 'textTools.animation.types.flipLetters.label',
+      descriptionKey: 'textTools.animation.types.flipLetters.description',
+    },
+    { value: 'spiralIn',
+      labelKey: 'textTools.animation.types.spiralIn.label',
+      descriptionKey: 'textTools.animation.types.spiralIn.description',
+    },
+    { value: 'explode',
+      labelKey: 'textTools.animation.types.explode.label',
+      descriptionKey: 'textTools.animation.types.explode.description',
+    },
+    { value: 'liquid',
+      labelKey: 'textTools.animation.types.liquid.label',
+      descriptionKey: 'textTools.animation.types.liquid.description',
+    },
+    { value: 'neonPulse',
+      labelKey: 'textTools.animation.types.neonPulse.label',
+      descriptionKey: 'textTools.animation.types.neonPulse.description',
+    },
+    { value: 'matrixRain',
+      labelKey: 'textTools.animation.types.matrixRain.label',
+      descriptionKey: 'textTools.animation.types.matrixRain.description',
+    },
+    { value: 'bounce',
+      labelKey: 'textTools.animation.types.bounce.label',
+      descriptionKey: 'textTools.animation.types.bounce.description',
+    },
   ];
 
   $: layer = $selectedLayer;
@@ -67,26 +122,26 @@
 
 {#if layer && tc}
   <div class="text-panel">
-    <h3>Text Layer</h3>
+    <h3>{$t('textTools.textLayer.heading')}</h3>
 
     <!-- Text Input -->
     <div class="section">
-      <label class="section-label">Text</label>
+      <label class="section-label">{$t('textTools.labels.text')}</label>
       <textarea
         class="text-input"
         value={tc.text}
         oninput={(e) => project.updateTextContent(layer.id, { text: (e.target as HTMLTextAreaElement).value })}
         rows={3}
-        placeholder="Enter text..."
+        placeholder={$t('textTools.textLayer.placeholder')}
       ></textarea>
     </div>
 
     <!-- Font Settings -->
     <div class="section">
-      <label class="section-label">Font</label>
+      <label class="section-label">{$t('textTools.labels.font')}</label>
 
       <div class="property-row">
-        <label>Family</label>
+        <label>{$t('textTools.labels.family')}</label>
         <select
           value={tc.fontFamily}
           onclick={() => detectFonts()}
@@ -99,7 +154,7 @@
       </div>
 
       <div class="property-row">
-        <label>Size</label>
+        <label>{$t('textTools.labels.size')}</label>
         <input
           type="range" min="12" max="500" step="1"
           value={tc.fontSize}
@@ -109,7 +164,7 @@
       </div>
 
       <div class="property-row">
-        <label>Weight</label>
+        <label>{$t('textTools.labels.weight')}</label>
         <input
           type="range" min="100" max="900" step="100"
           value={tc.fontWeight}
@@ -119,18 +174,19 @@
       </div>
 
       <div class="property-row">
-        <label>Style</label>
+        <label>{$t('textTools.labels.style')}</label>
         <select
           value={tc.fontStyle}
-          onchange={(e) => project.updateTextContent(layer.id, { fontStyle: (e.target as HTMLSelectElement).value as 'normal' | 'italic' })}
+          onchange={(e) => project.updateTextContent(layer.id, { fontStyle: (e.target as HTMLSelectElement).value as 'normal' | 'italic',
+            })}
         >
-          <option value="normal">Normal</option>
-          <option value="italic">Italic</option>
+          <option value="normal">{$t('textTools.labels.normal')}</option>
+          <option value="italic">{$t('textTools.labels.italic')}</option>
         </select>
       </div>
 
       <div class="property-row">
-        <label>Align</label>
+        <label>{$t('textTools.labels.align')}</label>
         <div class="button-group">
           <button class:active={tc.alignment === 'left'} onclick={() => project.updateTextContent(layer.id, { alignment: 'left' })}>L</button>
           <button class:active={tc.alignment === 'center'} onclick={() => project.updateTextContent(layer.id, { alignment: 'center' })}>C</button>
@@ -141,10 +197,10 @@
 
     <!-- Spacing -->
     <div class="section">
-      <label class="section-label">Spacing</label>
+      <label class="section-label">{$t('textTools.labels.spacing')}</label>
 
       <div class="property-row">
-        <label>Letter</label>
+        <label>{$t('textTools.labels.letter')}</label>
         <input
           type="range" min="-20" max="50" step="1"
           value={tc.letterSpacing}
@@ -154,7 +210,7 @@
       </div>
 
       <div class="property-row">
-        <label>Line Height</label>
+        <label>{$t('textTools.labels.lineHeight')}</label>
         <input
           type="range" min="0.5" max="3" step="0.05"
           value={tc.lineHeight}
@@ -166,10 +222,10 @@
 
     <!-- Colors -->
     <div class="section">
-      <label class="section-label">Colors</label>
+      <label class="section-label">{$t('textTools.labels.colors')}</label>
 
       <div class="property-row">
-        <label>Fill</label>
+        <label>{$t('textTools.labels.fill')}</label>
         <input
           type="color"
           value={tc.color}
@@ -178,7 +234,7 @@
       </div>
 
       <div class="property-row">
-        <label>Stroke</label>
+        <label>{$t('textTools.labels.stroke')}</label>
         <input
           type="color"
           value={tc.strokeColor}
@@ -187,7 +243,7 @@
       </div>
 
       <div class="property-row">
-        <label>Stroke W</label>
+        <label>{$t('textTools.labels.strokeWidth')}</label>
         <input
           type="range" min="0" max="20" step="0.5"
           value={tc.strokeWidth}
@@ -197,7 +253,7 @@
       </div>
 
       <div class="property-row">
-        <label>Background</label>
+        <label>{$t('textTools.labels.background')}</label>
         <input
           type="color"
           value={tc.backgroundColor === 'transparent' ? '#000000' : tc.backgroundColor}
@@ -206,16 +262,16 @@
         <button
           class="btn-small"
           onclick={() => project.updateTextContent(layer.id, { backgroundColor: 'transparent' })}
-        >Clear</button>
+        >{$t('textTools.labels.clear')}</button>
       </div>
     </div>
 
     <!-- Shadow -->
     <div class="section">
-      <label class="section-label">Shadow</label>
+      <label class="section-label">{$t('textTools.labels.shadow')}</label>
 
       <div class="property-row">
-        <label>Color</label>
+        <label>{$t('textTools.labels.color')}</label>
         <input
           type="color"
           value={tc.shadowColor.startsWith('rgba') ? '#000000' : tc.shadowColor}
@@ -224,7 +280,7 @@
       </div>
 
       <div class="property-row">
-        <label>Blur</label>
+        <label>{$t('textTools.labels.blur')}</label>
         <input
           type="range" min="0" max="50" step="1"
           value={tc.shadowBlur}
@@ -234,7 +290,7 @@
       </div>
 
       <div class="property-row">
-        <label>Offset X</label>
+        <label>{$t('textTools.labels.offsetX')}</label>
         <input
           type="range" min="-30" max="30" step="1"
           value={tc.shadowOffsetX}
@@ -244,7 +300,7 @@
       </div>
 
       <div class="property-row">
-        <label>Offset Y</label>
+        <label>{$t('textTools.labels.offsetY')}</label>
         <input
           type="range" min="-30" max="30" step="1"
           value={tc.shadowOffsetY}
@@ -256,7 +312,7 @@
 
     <!-- 3D Extrusion -->
     <div class="section">
-      <label class="section-label">3D</label>
+      <label class="section-label">{$t('textTools.labels.threeD')}</label>
 
       <div class="property-row">
         <label>
@@ -265,13 +321,13 @@
             checked={tc.enable3D}
             onchange={() => project.updateTextContent(layer.id, { enable3D: !tc.enable3D })}
           />
-          Enable 3D
+          {$t('textTools.labels.enableThreeD')}
         </label>
       </div>
 
       {#if tc.enable3D}
         <div class="property-row">
-          <label>Depth</label>
+          <label>{$t('textTools.labels.depth')}</label>
           <input
             type="range" min="1" max="100" step="1"
             value={tc.extrudeDepth}
@@ -281,7 +337,7 @@
         </div>
 
         <div class="property-row">
-          <label>Extrude Color</label>
+          <label>{$t('textTools.labels.extrudeColor')}</label>
           <input
             type="color"
             value={tc.extrudeColor}
@@ -290,7 +346,7 @@
         </div>
 
         <div class="property-row">
-          <label>Rotate X</label>
+          <label>{$t('textTools.labels.rotateX')}</label>
           <input
             type="range" min="-90" max="90" step="1"
             value={tc.rotateX}
@@ -300,7 +356,7 @@
         </div>
 
         <div class="property-row">
-          <label>Rotate Y</label>
+          <label>{$t('textTools.labels.rotateY')}</label>
           <input
             type="range" min="-90" max="90" step="1"
             value={tc.rotateY}
@@ -310,7 +366,7 @@
         </div>
 
         <div class="property-row">
-          <label>Rotate Z</label>
+          <label>{$t('textTools.labels.rotateZ')}</label>
           <input
             type="range" min="-180" max="180" step="1"
             value={tc.rotateZ}
@@ -320,7 +376,7 @@
         </div>
 
         <div class="property-row">
-          <label>Light Angle</label>
+          <label>{$t('textTools.labels.lightAngle')}</label>
           <input
             type="range" min="0" max="360" step="1"
             value={tc.lightAngle}
@@ -330,7 +386,7 @@
         </div>
 
         <div class="property-row">
-          <label>Light</label>
+          <label>{$t('textTools.labels.light')}</label>
           <input
             type="range" min="0" max="1" step="0.01"
             value={tc.lightIntensity}
@@ -340,7 +396,7 @@
         </div>
 
         <div class="property-row">
-          <label>Bevel</label>
+          <label>{$t('textTools.labels.bevel')}</label>
           <input
             type="range" min="0" max="10" step="0.5"
             value={tc.bevelSize}
@@ -353,23 +409,23 @@
 
     <!-- Animation -->
     <div class="section animation-section">
-      <label class="section-label">Animation</label>
+      <label class="section-label">{$t('textTools.labels.animation')}</label>
 
       <div class="property-row">
-        <label>Type</label>
+        <label>{$t('textTools.labels.type')}</label>
         <select
           value={anim?.type ?? 'none'}
           onchange={(e) => project.updateTextAnimation(layer.id, { type: (e.target as HTMLSelectElement).value as TextAnimationType })}
         >
           {#each animationTypes as at}
-            <option value={at.value} title={at.description}>{at.label}</option>
+            <option value={at.value} title={$t(at.descriptionKey)}>{$t(at.labelKey)}</option>
           {/each}
         </select>
       </div>
 
       {#if anim && anim.type !== 'none'}
         <div class="property-row">
-          <label>Speed</label>
+          <label>{$t('textTools.labels.speed')}</label>
           <input
             type="range" min="0.1" max="5" step="0.1"
             value={anim.speed}
@@ -379,7 +435,7 @@
         </div>
 
         <div class="property-row">
-          <label>Intensity</label>
+          <label>{$t('textTools.labels.intensity')}</label>
           <input
             type="range" min="0" max="1" step="0.01"
             value={anim.intensity}
@@ -389,7 +445,7 @@
         </div>
 
         <div class="property-row">
-          <label>Stagger</label>
+          <label>{$t('textTools.labels.stagger')}</label>
           <input
             type="range" min="0.01" max="0.5" step="0.01"
             value={anim.staggerDelay}
@@ -405,19 +461,20 @@
               checked={anim.loop}
               onchange={() => project.updateTextAnimation(layer.id, { loop: !anim.loop })}
             />
-            Loop
+            {$t('textTools.labels.loop')}
           </label>
         </div>
 
         <div class="property-row">
-          <label>Direction</label>
+          <label>{$t('textTools.labels.direction')}</label>
           <select
             value={anim.direction}
-            onchange={(e) => project.updateTextAnimation(layer.id, { direction: (e.target as HTMLSelectElement).value as 'forward' | 'reverse' | 'alternate' })}
+            onchange={(e) => project.updateTextAnimation(layer.id, { direction: (e.target as HTMLSelectElement).value as 'forward' | 'reverse' | 'alternate',
+              })}
           >
-            <option value="forward">Forward</option>
-            <option value="reverse">Reverse</option>
-            <option value="alternate">Alternate</option>
+            <option value="forward">{$t('textTools.labels.forward')}</option>
+            <option value="reverse">{$t('textTools.labels.reverse')}</option>
+            <option value="alternate">{$t('textTools.labels.alternate')}</option>
           </select>
         </div>
       {/if}
@@ -426,7 +483,7 @@
     <!-- Animation Description -->
     {#if anim && anim.type !== 'none'}
       <div class="anim-description">
-        {animationTypes.find(a => a.value === anim.type)?.description ?? ''}
+        {$t(animationTypes.find((a) => a.value === anim.type)?.descriptionKey ?? '')}
       </div>
     {/if}
   </div>
@@ -500,13 +557,13 @@
     flex-shrink: 0;
   }
 
-  .property-row input[type="range"] {
+  .property-row input[type='range'] {
     flex: 1;
     height: 4px;
     accent-color: #ff00aa;
   }
 
-  .property-row input[type="color"] {
+  .property-row input[type='color'] {
     width: 28px;
     height: 22px;
     border: 1px solid #444;
@@ -584,7 +641,7 @@
     padding: 2px 6px;
   }
 
-  .property-row input[type="checkbox"] {
+  .property-row input[type='checkbox'] {
     accent-color: #ff00aa;
   }
 </style>

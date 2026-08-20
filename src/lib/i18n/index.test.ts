@@ -25,6 +25,26 @@ function leafPaths(value: unknown, prefix = ''): string[] {
     .sort();
 }
 
+function leafMessages(value: unknown, prefix = ''): Map<string, string> {
+  if (typeof value === 'string') return new Map([[prefix, value]]);
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return new Map();
+
+  return new Map(
+    Object.entries(value).flatMap(([key, child]) => [...leafMessages(child, prefix ? `${prefix}.${key}` : key)]),
+  );
+}
+
+function placeholders(message: string): string[] {
+  // English metadata descriptions delegate to their source descriptor,
+  // while Korean supplies the translated sentence. English plural suffixes
+  // also have no Korean grammatical equivalent.
+  if (message === '{description}') return [];
+  return [...message.matchAll(/\{([A-Za-z0-9_]+)\}/g)]
+    .map((match) => match[1])
+    .filter((placeholder) => placeholder !== 'suffix')
+    .sort();
+}
+
 function sourceFiles(root: string): string[] {
   return readdirSync(root, { withFileTypes: true }).flatMap((entry) => {
     const path = join(root, entry.name);
@@ -36,23 +56,53 @@ function sourceFiles(root: string): string[] {
 function referencedMessageKeys(): string[] {
   const srcRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
   const keys = new Set<string>();
+  const catalogRoots = new Set(Object.keys(en));
   for (const file of sourceFiles(srcRoot)) {
     const source = readFileSync(file, 'utf8');
     for (const match of source.matchAll(/\$t\(\s*['"]([^'"]+)['"]/g)) {
       keys.add(match[1]);
     }
     for (const match of source.matchAll(
-      /\b(?:labelKey|titleKey|hintKey|ariaKey|descriptionKey)\s*:\s*['"]([^'"]+)['"]/g,
+      /\b(?:labelKey|titleKey|hintKey|ariaKey|descriptionKey|commandKey|nameKey|shortKey)\s*:\s*['"]([^'"]+)['"]/g,
     )) {
       if (match[1].includes('.')) keys.add(match[1]);
+    }
+    for (const match of source.matchAll(/['"]([A-Za-z][A-Za-z0-9_-]*(?:\.[A-Za-z0-9_-]+)+)['"]/g)) {
+      if (catalogRoots.has(match[1].split('.')[0])) keys.add(match[1]);
     }
   }
   return [...keys].sort();
 }
 
+function referencedDynamicPrefixes(): string[] {
+  const srcRoot = join(dirname(fileURLToPath(import.meta.url)), '..', '..');
+  const prefixes = new Set<string>();
+  for (const file of sourceFiles(srcRoot)) {
+    const source = readFileSync(file, 'utf8');
+    for (const match of source.matchAll(/\$t\(\s*`([^`$]*)\$\{/g)) {
+      const prefix = match[1].replace(/\.$/, '');
+      if (prefix) prefixes.add(prefix);
+    }
+  }
+  return [...prefixes].sort();
+}
+
 describe('localization catalogs', () => {
   it('keeps English and Korean message keys in parity', () => {
     expect(leafPaths(ko)).toEqual(leafPaths(en));
+  });
+
+  it('keeps English and Korean interpolation placeholders in parity', () => {
+    const english = leafMessages(en);
+    const korean = leafMessages(ko);
+    const mismatches = [...english].flatMap(([key, message]) => {
+      const englishPlaceholders = placeholders(message);
+      const koreanPlaceholders = placeholders(korean.get(key) ?? '');
+      return englishPlaceholders.join('\0') === koreanPlaceholders.join('\0')
+        ? []
+        : [{ key, en: englishPlaceholders, ko: koreanPlaceholders }];
+    });
+    expect(mismatches).toEqual([]);
   });
 
   it('supports only the declared application locales', () => {
@@ -62,6 +112,14 @@ describe('localization catalogs', () => {
   it('defines every statically referenced message key', () => {
     const defined = new Set(leafPaths(en));
     const missing = referencedMessageKeys().filter((key) => !defined.has(key));
+    expect(missing).toEqual([]);
+  });
+
+  it('defines a catalog subtree for every dynamic message prefix', () => {
+    const defined = leafPaths(en);
+    const missing = referencedDynamicPrefixes().filter(
+      (prefix) => !defined.some((key) => key === prefix || key.startsWith(`${prefix}.`)),
+    );
     expect(missing).toEqual([]);
   });
 

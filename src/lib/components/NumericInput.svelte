@@ -21,6 +21,7 @@
    * numeric value itself.
    */
   import { createEventDispatcher, tick } from 'svelte';
+  import { t } from '../i18n';
 
   export let label: string;
   export let value: number;
@@ -91,8 +92,13 @@
     dispatch('change', v);
   }
   function onKeyDown(e: KeyboardEvent) {
-    if (e.key === 'Enter') { e.preventDefault(); commit(); }
-    else if (e.key === 'Escape') { e.preventDefault(); cancel(); }
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      commit();
+    } else if (e.key === 'Escape') {
+      e.preventDefault();
+      cancel();
+    }
   }
 </script>
 
@@ -110,7 +116,7 @@
         onkeydown={onKeyDown}
       />
     {:else}
-      <button type="button" class="ni-display" title="Click to type a value" onclick={startEdit}>
+      <button type="button" class="ni-display" title={$t('inputControls.numeric.clickToType')} onclick={startEdit}>
         {shown}
       </button>
     {/if}
@@ -132,7 +138,11 @@
 </div>
 
 <style>
-  .ni { display: flex; flex-direction: column; gap: 2px; }
+  .ni {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
   .ni-label {
     font-size: 11.5px;
     opacity: 0.85;
@@ -151,7 +161,9 @@
     cursor: text;
     padding: 1px 6px;
     border-radius: 3px;
-    transition: background 0.08s, border-color 0.08s;
+    transition:
+      background 0.08s,
+      border-color 0.08s;
   }
   .ni-display:hover {
     background: rgba(103, 232, 249, 0.08);
@@ -170,5 +182,5 @@
     text-align: right;
     outline: none;
   }
-  input[type="range"] { width: 100%; accent-color: #67e8f9; }
+  input[type='range'] { width: 100%; accent-color: #67e8f9; }
 </style>

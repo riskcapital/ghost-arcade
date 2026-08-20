@@ -13,6 +13,8 @@
    * clear stay on the desktop where you can be careful with them.
    */
 
+  import { t } from '../../i18n';
+
   interface SnapshotInfo {
     id: string;
     slot: number;
@@ -107,8 +109,8 @@
 <div class="snap-bank" class:compact class:top-row={topRow}>
   {#if !topRow}
     <div class="bank-header">
-      <span class="bank-label">SNAPS</span>
-      <span class="bank-hint">tap recall · hold save</span>
+      <span class="bank-label">{$t('presets.mobileSnapshots.label')}</span>
+      <span class="bank-hint">{$t('presets.mobileSnapshots.hint')}</span>
     </div>
   {/if}
   <div class="snap-grid">
@@ -126,7 +128,10 @@
         onpointerup={(e) => handlePointerUp(e, snap, idx)}
         onpointercancel={handlePointerCancel}
         onpointerleave={handlePointerCancel}
-        title={snap.populated ? snap.name : `Slot ${idx + 1} · empty`}
+        title={snap.populated ? snap.name : $t('presets.mobileSnapshots.emptyTitle', { values: { index: idx + 1 } })}
+        aria-label={snap.populated
+          ? snap.name
+          : $t('presets.mobileSnapshots.emptyTitle', { values: { index: idx + 1 } })}
       >
         <span class="slot-num">{idx + 1}</span>
         {#if snap.populated}

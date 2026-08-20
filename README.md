@@ -23,18 +23,20 @@ It's a single product, free, and fully open source under AGPL-3.0. There are no 
 - **MIDI** — full MIDI Learn, clock sync, controller mapping, dual-bank routing.
 - **AI Shader Generation** — bring your own Claude / Gemini / Replicate / Luma keys; edit / iterate generated GLSL inline.
 - **Multi-Output** — output windows with crop / rotate / flip per display, Spout sender for hardware projectors / NDI bridges, MP4 recording.
-- **Localization** — switch between English and Korean in Settings; the preference persists across launches.
+- **Localization** — switch the complete operator interface between English and Korean in Settings; the preference persists across launches and output windows.
 
 ---
 
 ## Getting Started
 
 ### Prerequisites
+
 - **Node.js** ≥ 20
 - **npm** ≥ 10
 - **Windows / macOS** (Linux works for browser-only mode)
 
 ### Install
+
 ```bash
 git clone https://github.com/riskcapital/ghost-arcade.git ghost-arcade
 cd ghost-arcade

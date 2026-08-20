@@ -20,11 +20,24 @@
     resolveWLEDSourceRegion,
   } from '../wled/mapping';
   import { wledTelemetry } from '../wled/sender';
+  import { t } from '../i18n';
 
   export let controller: WLEDController;
   export let onRemove: () => void = () => {};
 
   type PanelTab = 'map' | 'color' | 'test';
+  const MAPPING_MODE_OPTIONS: Array<{ value: WLEDMappingMode; labelKey: string }> = [
+    { value: 'auto-grid', labelKey: 'led.mapping.modes.auto' },
+    { value: 'strip', labelKey: 'led.mapping.modes.strip' },
+    { value: 'matrix', labelKey: 'led.mapping.modes.matrix' },
+    { value: 'custom', labelKey: 'led.mapping.modes.custom' },
+  ];
+  const TEST_PATTERN_OPTIONS: Array<{ value: WLEDTestPattern; labelKey: string }> = [
+    { value: 'off', labelKey: 'led.mapping.testPatterns.content' },
+    { value: 'solid', labelKey: 'led.mapping.testPatterns.solid' },
+    { value: 'rainbow', labelKey: 'led.mapping.testPatterns.rainbow' },
+    { value: 'chase', labelKey: 'led.mapping.testPatterns.chase' },
+  ];
   let activeTab: PanelTab = 'map';
   let mapCanvas: HTMLCanvasElement;
   let resizeObserver: ResizeObserver | null = null;
@@ -105,23 +118,25 @@
         name: `Strip ${ranges.length + 1}`,
         start,
         count,
-      }],
+      },
+      ],
     });
   }
 
   function updateRange(rangeId: string, fields: Partial<WLEDRange>) {
     updateController({
-      ranges: (controller.ranges ?? []).map(range => {
+      ranges: (controller.ranges ?? []).map((range) => {
         if (range.id !== rangeId) return range;
         const nextStart = Math.max(0, Math.min(controller.ledCount - 1, Math.floor(fields.start ?? range.start)));
-        const nextCount = Math.max(1, Math.min(controller.ledCount - nextStart, Math.floor(fields.count ?? range.count)));
+        const nextCount = Math.max(1, Math.min(controller.ledCount - nextStart, Math.floor(fields.count ?? range.count)),
+        );
         return { ...range, ...fields, start: nextStart, count: nextCount, id: range.id };
       }),
     });
   }
 
   function removeRange(rangeId: string) {
-    updateController({ ranges: (controller.ranges ?? []).filter(range => range.id !== rangeId) });
+    updateController({ ranges: (controller.ranges ?? []).filter((range) => range.id !== rangeId) });
   }
 
   function updateMatrixCell(index: number, value: number) {
@@ -155,7 +170,8 @@
 
   function rotateCustomPoints() {
     const points = buildWLEDBasePoints(controller.ledCount, mapping, 16 / 9)
-      .map(point => ({ x: 1 - point.y, y: point.x }));
+      .map((point) => ({ x: 1 - point.y, y: point.x,
+    }));
     updateMapping({ mode: 'custom', points });
   }
 
@@ -202,14 +218,14 @@
     context.strokeStyle = 'rgba(255,255,255,0.07)';
     context.lineWidth = 1;
     for (let column = 1; column < 8; column += 1) {
-      const x = cssWidth * column / 8;
+      const x = (cssWidth * column) / 8;
       context.beginPath();
       context.moveTo(x, 0);
       context.lineTo(x, cssHeight);
       context.stroke();
     }
     for (let row = 1; row < 4; row += 1) {
-      const y = cssHeight * row / 4;
+      const y = (cssHeight * row) / 4;
       context.beginPath();
       context.moveTo(0, y);
       context.lineTo(cssWidth, y);
@@ -225,7 +241,7 @@
       region.x * cssWidth + 0.5,
       region.y * cssHeight + 0.5,
       region.width * cssWidth - 1,
-      region.height * cssHeight - 1
+      region.height * cssHeight - 1,
     );
     context.setLineDash([]);
 
@@ -323,7 +339,7 @@
 
 <article class="wled-card">
   <header class="controller-header">
-    <label class="power-toggle" title="Send LED data">
+    <label class="power-toggle" title={$t('led.mapping.sendDataTitle')}>
       <input
         type="checkbox"
         checked={controller.enabled}
@@ -336,26 +352,26 @@
       type="text"
       value={controller.name}
       onchange={(event) => updateController({ name: (event.target as HTMLInputElement).value })}
-      aria-label="Controller name"
+      aria-label={$t('led.mapping.controllerNameAria')}
     />
     <span class:live={controller.enabled} class="controller-state">
-      {controller.enabled ? 'LIVE' : 'OFF'}
+      {$t(controller.enabled ? 'led.mapping.live' : 'led.mapping.off')}
     </span>
-    <button class="remove-button" onclick={onRemove} title="Remove controller">×</button>
+    <button class="remove-button" onclick={onRemove} title={$t('led.mapping.removeControllerTitle')}>×</button>
   </header>
 
   <div class="connection-grid">
     <label>
-      <span>IP address</span>
+      <span>{$t('led.mapping.ipAddress')}</span>
       <input
         type="text"
         value={controller.ipAddr}
-        placeholder="192.168.1.50"
+        placeholder={$t('led.mapping.ipPlaceholder')}
         onchange={(event) => updateController({ ipAddr: (event.target as HTMLInputElement).value })}
       />
     </label>
     <label>
-      <span>Port</span>
+      <span>{$t('led.mapping.port')}</span>
       <input
         type="number"
         min="1"
@@ -365,7 +381,7 @@
       />
     </label>
     <label>
-      <span>LED count</span>
+      <span>{$t('led.mapping.ledCount')}</span>
       <input
         type="number"
         min="1"
@@ -378,41 +394,36 @@
     </label>
   </div>
 
-  <nav class="panel-tabs" aria-label="LED controller settings">
-    <button class:active={activeTab === 'map'} onclick={() => activeTab = 'map'}>Map</button>
-    <button class:active={activeTab === 'color'} onclick={() => activeTab = 'color'}>Color</button>
-    <button class:active={activeTab === 'test'} onclick={() => activeTab = 'test'}>Test</button>
+  <nav class="panel-tabs" aria-label={$t('led.mapping.tabsAria')}>
+    <button class:active={activeTab === 'map'} onclick={() => (activeTab = 'map')}>{$t('led.mapping.tabs.map')}</button>
+    <button class:active={activeTab === 'color'} onclick={() => (activeTab = 'color')}>{$t('led.mapping.tabs.color')}</button>
+    <button class:active={activeTab === 'test'} onclick={() => (activeTab = 'test')}>{$t('led.mapping.tabs.test')}</button>
   </nav>
 
   {#if activeTab === 'map'}
     <section class="panel-body">
       <div class="mode-row">
-        {#each [
-          ['auto-grid', 'Auto'],
-          ['strip', 'Strip'],
-          ['matrix', 'Matrix'],
-          ['custom', 'Custom'],
-        ] as option}
+        {#each MAPPING_MODE_OPTIONS as option}
           <button
-            class:active={mapping.mode === option[0]}
-            onclick={() => setMappingMode(option[0] as WLEDMappingMode)}
-          >{option[1]}</button>
+            class:active={mapping.mode === option.value}
+            onclick={() => setMappingMode(option.value)}
+          >{$t(option.labelKey)}</button>
         {/each}
       </div>
 
       <div class="map-options">
         {#if mapping.mode === 'strip' || mapping.mode === 'matrix' || mapping.mode === 'auto-grid'}
           <label>
-            <span>Scan</span>
+            <span>{$t('led.mapping.scan')}</span>
             <select value={mapping.axis ?? 'horizontal'} onchange={(event) => setAxis((event.target as HTMLSelectElement).value as WLEDScanAxis)}>
-              <option value="horizontal">Horizontal</option>
-              <option value="vertical">Vertical</option>
+              <option value="horizontal">{$t('led.mapping.axis.horizontal')}</option>
+              <option value="vertical">{$t('led.mapping.axis.vertical')}</option>
             </select>
           </label>
         {/if}
         {#if mapping.mode === 'matrix'}
           <label>
-            <span>Matrix</span>
+            <span>{$t('led.mapping.matrix')}</span>
             <div class="matrix-size">
               <input
                 type="number"
@@ -420,7 +431,8 @@
                 max={controller.ledCount}
                 value={mapping.columns ?? 8}
                 onchange={(event) => updateMapping({
-                  columns: Math.max(1, Math.min(controller.ledCount, Number.parseInt((event.target as HTMLInputElement).value) || 1)),
+                  columns: Math.max(1, Math.min(controller.ledCount, Number.parseInt((event.target as HTMLInputElement).value) || 1),
+                    ),
                 })}
               />
               <span>× {matrixRows}</span>
@@ -429,19 +441,19 @@
         {/if}
         <label class="check-option">
           <input type="checkbox" checked={mapping.serpentine ?? false} onchange={(event) => updateMapping({ serpentine: (event.target as HTMLInputElement).checked })} />
-          <span>Serpentine</span>
+          <span>{$t('led.mapping.serpentine')}</span>
         </label>
         <label class="check-option">
           <input type="checkbox" checked={mapping.reverse ?? false} onchange={(event) => updateMapping({ reverse: (event.target as HTMLInputElement).checked })} />
-          <span>Reverse order</span>
+          <span>{$t('led.mapping.reverseOrder')}</span>
         </label>
         <label class="check-option">
           <input type="checkbox" checked={mapping.flipX ?? false} onchange={(event) => updateMapping({ flipX: (event.target as HTMLInputElement).checked })} />
-          <span>Flip X</span>
+          <span>{$t('led.mapping.flipX')}</span>
         </label>
         <label class="check-option">
           <input type="checkbox" checked={mapping.flipY ?? false} onchange={(event) => updateMapping({ flipY: (event.target as HTMLInputElement).checked })} />
-          <span>Flip Y</span>
+          <span>{$t('led.mapping.flipY')}</span>
         </label>
       </div>
 
@@ -455,20 +467,20 @@
         onpointercancel={handleMapPointerUp}
       ></canvas>
       <div class="map-caption">
-        <span>LED 1 is coral. {mapping.mode === 'custom' ? 'Drag any point to place it.' : 'The line follows physical LED order.'}</span>
-        <span>{controller.ledCount} pixels</span>
+        <span>{$t(mapping.mode === 'custom' ? 'led.mapping.captionCustom' : 'led.mapping.captionAutomatic')}</span>
+        <span>{$t('led.mapping.pixels', { values: { count: controller.ledCount} })}</span>
       </div>
 
       <div class="tool-row">
-        <button onclick={makeCustomFromCurrent}>Edit points</button>
+        <button onclick={makeCustomFromCurrent}>{$t('led.mapping.editPoints')}</button>
         {#if mapping.mode === 'custom'}
-          <button onclick={rotateCustomPoints}>Rotate 90°</button>
-          <button onclick={centerCustomPoints}>Generate grid</button>
+          <button onclick={rotateCustomPoints}>{$t('led.mapping.rotate')}</button>
+          <button onclick={centerCustomPoints}>{$t('led.mapping.generateGrid')}</button>
         {/if}
-        <button onclick={resetMapping}>Reset map</button>
+        <button onclick={resetMapping}>{$t('led.mapping.resetMap')}</button>
       </div>
 
-      <div class="subsection-title">Source region</div>
+      <div class="subsection-title">{$t('led.mapping.sourceRegion')}</div>
       <div class="range-grid">
         <label>
           <span>X <b>{Math.round(resolved.sourceRegion.x * 100)}%</b></span>
@@ -479,25 +491,25 @@
           <input type="range" min="0" max={1 - resolved.sourceRegion.height} step="0.01" value={resolved.sourceRegion.y} oninput={(event) => updateRegion({ y: Number.parseFloat((event.target as HTMLInputElement).value) })} />
         </label>
         <label>
-          <span>Width <b>{Math.round(resolved.sourceRegion.width * 100)}%</b></span>
+          <span>{$t('led.mapping.width')} <b>{Math.round(resolved.sourceRegion.width * 100)}%</b></span>
           <input type="range" min="0.01" max={1 - resolved.sourceRegion.x} step="0.01" value={resolved.sourceRegion.width} oninput={(event) => updateRegion({ width: Number.parseFloat((event.target as HTMLInputElement).value) })} />
         </label>
         <label>
-          <span>Height <b>{Math.round(resolved.sourceRegion.height * 100)}%</b></span>
+          <span>{$t('led.mapping.height')} <b>{Math.round(resolved.sourceRegion.height * 100)}%</b></span>
           <input type="range" min="0.01" max={1 - resolved.sourceRegion.y} step="0.01" value={resolved.sourceRegion.height} oninput={(event) => updateRegion({ height: Number.parseFloat((event.target as HTMLInputElement).value) })} />
         </label>
       </div>
 
       <label class="wide-range">
-        <span>Sample area <b>{Math.round((mapping.sampleRadius ?? 0.015) * 1000) / 10}%</b></span>
+        <span>{$t('led.mapping.sampleArea')} <b>{Math.round((mapping.sampleRadius ?? 0.015) * 1000) / 10}%</b></span>
         <input type="range" min="0" max="0.12" step="0.0025" value={mapping.sampleRadius ?? 0.015} oninput={(event) => updateMapping({ sampleRadius: Number.parseFloat((event.target as HTMLInputElement).value) })} />
       </label>
 
       <div class="subsection-title range-title">
-        <span>Physical ranges</span>
-        <button onclick={addRange}>+ Add strip</button>
+        <span>{$t('led.mapping.physicalRanges')}</span>
+        <button onclick={addRange}>{$t('led.mapping.addStrip')}</button>
       </div>
-      <p class="section-note">Split one WLED controller into named strips or fixtures, then target each range independently from LED FX.</p>
+      <p class="section-note">{$t('led.mapping.rangesNote')}</p>
       <div class="physical-ranges">
         {#each controller.ranges ?? [] as range (range.id)}
           <div class="physical-range">
@@ -505,23 +517,23 @@
               class="range-name"
               value={range.name}
               onchange={(event) => updateRange(range.id, { name: (event.target as HTMLInputElement).value })}
-              aria-label="Range name"
+              aria-label={$t('led.mapping.rangeNameAria')}
             />
             <label>
-              <span>Start</span>
+              <span>{$t('led.mapping.start')}</span>
               <input type="number" min="0" max={controller.ledCount - 1} value={range.start}
                 onchange={(event) => updateRange(range.id, { start: Number.parseInt((event.target as HTMLInputElement).value) || 0 })} />
             </label>
             <label>
-              <span>Count</span>
+              <span>{$t('led.mapping.count')}</span>
               <input type="number" min="1" max={controller.ledCount - range.start} value={range.count}
                 onchange={(event) => updateRange(range.id, { count: Number.parseInt((event.target as HTMLInputElement).value) || 1 })} />
             </label>
-            <button class="range-remove" onclick={() => removeRange(range.id)} title="Remove range">×</button>
+            <button class="range-remove" onclick={() => removeRange(range.id)} title={$t('led.mapping.removeRangeTitle')}>×</button>
           </div>
         {/each}
         {#if (controller.ranges ?? []).length === 0}
-          <div class="empty-ranges">No ranges. The controller is treated as one continuous fixture.</div>
+          <div class="empty-ranges">{$t('led.mapping.noRanges')}</div>
         {/if}
       </div>
     </section>
@@ -529,67 +541,67 @@
     <section class="panel-body color-panel">
       <div class="live-color-match">
         <div>
-          <span class="color-caption">Sampled content</span>
+          <span class="color-caption">{$t('led.mapping.sampledContent')}</span>
           <span class="color-swatch" style={`background:${telemetry?.sourceColor ?? '#000000'}`}></span>
           <code>{telemetry?.sourceColor ?? '#000000'}</code>
         </div>
         <span class="color-arrow">→</span>
         <div>
-          <span class="color-caption">Sent to LEDs</span>
+          <span class="color-caption">{$t('led.mapping.sentToLeds')}</span>
           <span class="color-swatch" style={`background:${telemetry?.outputColor ?? '#000000'}`}></span>
           <code>{telemetry?.outputColor ?? '#000000'}</code>
         </div>
       </div>
       <label class="sampling-select">
-        <span>Color sampling</span>
+        <span>{$t('led.mapping.colorSampling')}</span>
         <select
           value={controller.samplingMode ?? 'dominant'}
           onchange={(event) => updateController({ samplingMode: (event.target as HTMLSelectElement).value as WLEDColorSamplingMode })}
         >
-          <option value="dominant">Dominant color</option>
-          <option value="highlight">Bright highlight</option>
-          <option value="palette">Palette color</option>
-          <option value="luma-hue">Hue + source brightness</option>
-          <option value="average">Linear average</option>
-          <option value="exact">Exact pixel</option>
+          <option value="dominant">{$t('led.mapping.samplingModes.dominant')}</option>
+          <option value="highlight">{$t('led.mapping.samplingModes.highlight')}</option>
+          <option value="palette">{$t('led.mapping.samplingModes.palette')}</option>
+          <option value="luma-hue">{$t('led.mapping.samplingModes.lumaHue')}</option>
+          <option value="average">{$t('led.mapping.samplingModes.average')}</option>
+          <option value="exact">{$t('led.mapping.samplingModes.exact')}</option>
         </select>
       </label>
       <div class="range-grid">
         <label>
-          <span>Brightness <b>{Math.round((controller.brightness ?? 1) * 100)}%</b></span>
+          <span>{$t('led.mapping.brightness')} <b>{Math.round((controller.brightness ?? 1) * 100)}%</b></span>
           <input type="range" min="0" max="1" step="0.01" value={controller.brightness ?? 1} oninput={(event) => updateController({ brightness: Number.parseFloat((event.target as HTMLInputElement).value) })} />
         </label>
         <label>
-          <span>Gamma <b>{(controller.gamma ?? 1).toFixed(2)}</b></span>
+          <span>{$t('led.mapping.gamma')} <b>{(controller.gamma ?? 1).toFixed(2)}</b></span>
           <input type="range" min="0.5" max="3" step="0.05" value={controller.gamma ?? 1} oninput={(event) => updateController({ gamma: Number.parseFloat((event.target as HTMLInputElement).value) })} />
         </label>
         <label class="red">
-          <span>Red <b>{calibration.redGain.toFixed(2)}×</b></span>
+          <span>{$t('led.mapping.red')} <b>{calibration.redGain.toFixed(2)}×</b></span>
           <input type="range" min="0" max="2" step="0.01" value={calibration.redGain} oninput={(event) => updateCalibration({ redGain: Number.parseFloat((event.target as HTMLInputElement).value) })} />
         </label>
         <label class="green">
-          <span>Green <b>{calibration.greenGain.toFixed(2)}×</b></span>
+          <span>{$t('led.mapping.green')} <b>{calibration.greenGain.toFixed(2)}×</b></span>
           <input type="range" min="0" max="2" step="0.01" value={calibration.greenGain} oninput={(event) => updateCalibration({ greenGain: Number.parseFloat((event.target as HTMLInputElement).value) })} />
         </label>
         <label class="blue">
-          <span>Blue <b>{calibration.blueGain.toFixed(2)}×</b></span>
+          <span>{$t('led.mapping.blue')} <b>{calibration.blueGain.toFixed(2)}×</b></span>
           <input type="range" min="0" max="2" step="0.01" value={calibration.blueGain} oninput={(event) => updateCalibration({ blueGain: Number.parseFloat((event.target as HTMLInputElement).value) })} />
         </label>
         <label>
-          <span>Saturation <b>{calibration.saturation.toFixed(2)}×</b></span>
+          <span>{$t('led.mapping.saturation')} <b>{calibration.saturation.toFixed(2)}×</b></span>
           <input type="range" min="0" max="2" step="0.01" value={calibration.saturation} oninput={(event) => updateCalibration({ saturation: Number.parseFloat((event.target as HTMLInputElement).value) })} />
         </label>
         <label>
-          <span>Black threshold <b>{Math.round(calibration.blackThreshold * 100)}%</b></span>
+          <span>{$t('led.mapping.blackThreshold')} <b>{Math.round(calibration.blackThreshold * 100)}%</b></span>
           <input type="range" min="0" max="0.5" step="0.005" value={calibration.blackThreshold} oninput={(event) => updateCalibration({ blackThreshold: Number.parseFloat((event.target as HTMLInputElement).value) })} />
         </label>
         <label>
-          <span>Smoothing <b>{Math.round(calibration.smoothing * 100)}%</b></span>
+          <span>{$t('led.mapping.smoothing')} <b>{Math.round(calibration.smoothing * 100)}%</b></span>
           <input type="range" min="0" max="0.95" step="0.01" value={calibration.smoothing} oninput={(event) => updateCalibration({ smoothing: Number.parseFloat((event.target as HTMLInputElement).value) })} />
         </label>
       </div>
-      <div class="subsection-title">Color correction matrix</div>
-      <p class="section-note">Fine-tune channel crosstalk in linear light. Rows are output red, green and blue.</p>
+      <div class="subsection-title">{$t('led.mapping.colorCorrectionMatrix')}</div>
+      <p class="section-note">{$t('led.mapping.colorMatrixNote')}</p>
       <div class="color-matrix">
         {#each calibration.colorMatrix as value, index}
           <input
@@ -597,8 +609,8 @@
             min="-2"
             max="2"
             step="0.01"
-            value={value}
-            aria-label={`Color matrix ${index + 1}`}
+            {value}
+            aria-label={$t('led.mapping.colorMatrixAria', { values: { index: index + 1 } })}
             onchange={(event) => updateMatrixCell(index, Number.parseFloat((event.target as HTMLInputElement).value))}
           />
         {/each}
@@ -615,30 +627,25 @@
             smoothing: 0,
             colorMatrix: [1, 0, 0, 0, 1, 0, 0, 0, 1],
           });
-        }}>Reset color</button>
+        }}>{$t('led.mapping.resetColor')}</button>
       </div>
     </section>
   {:else}
     <section class="panel-body test-panel">
       <div class="test-patterns">
-        {#each [
-          ['off', 'Content'],
-          ['solid', 'Solid'],
-          ['rainbow', 'LED order'],
-          ['chase', 'Chase'],
-        ] as option}
+        {#each TEST_PATTERN_OPTIONS as option}
           <button
-            class:active={(controller.testPattern ?? 'off') === option[0]}
-            onclick={() => updateController({ testPattern: option[0] as WLEDTestPattern })}
-          >{option[1]}</button>
+            class:active={(controller.testPattern ?? 'off') === option.value}
+            onclick={() => updateController({ testPattern: option.value })}
+          >{$t(option.labelKey)}</button>
         {/each}
       </div>
       <label class="test-color">
-        <span>Test color</span>
+        <span>{$t('led.mapping.testColor')}</span>
         <input type="color" value={controller.testColor ?? '#ffffff'} oninput={(event) => updateController({ testColor: (event.target as HTMLInputElement).value })} />
       </label>
       <p>
-        LED order paints every physical index across a rainbow. Chase moves one lit pixel through the exact packet order, making reversed or serpentine wiring easy to spot.
+        {$t('led.mapping.testNote')}
       </p>
     </section>
   {/if}

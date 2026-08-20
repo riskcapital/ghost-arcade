@@ -15,6 +15,7 @@
 -->
 <script lang="ts">
   import { audioStore } from '../stores/audio';
+  import { t } from '../i18n';
   import AudioInputPicker from './AudioInputPicker.svelte';
   import BpmTapWidget from './BpmTapWidget.svelte';
 
@@ -70,7 +71,7 @@
         <div class="fft-bar" style="height: {$audioStore.bands.highMid * 100}%"></div>
         <div class="fft-bar" style="height: {$audioStore.bands.high * 100}%"></div>
       </div>
-      <span class="fft-label">FFT</span>
+      <span class="fft-label">{$t('vjExtras.audio.fft')}</span>
     </div>
 
     <!-- BPM Display — shared widget (mapping mode + Performer mode use the
@@ -86,7 +87,7 @@
 
     <!-- Sensitivity -->
     <div class="audio-section">
-      <span class="sens-label">SENS</span>
+      <span class="sens-label">{$t('vjExtras.audio.sensitivity')}</span>
       <input
         type="range"
         min="0.2"
@@ -95,6 +96,7 @@
         value={$audioStore.sensitivity}
         oninput={(e) => audioStore.setSensitivity(parseFloat((e.target as HTMLInputElement).value))}
         class="sens-slider"
+        aria-label={$t('vjExtras.audio.sensitivityAria')}
       />
     </div>
   {/if}
@@ -175,7 +177,7 @@
   .fft-bar {
     width: 4px;
     min-height: 1px;
-    background: #BB86FC;
+    background: #bb86fc;
     border-radius: 1px;
     transition: height 0.05s ease-out;
   }
@@ -211,12 +213,12 @@
   }
 
   .tap-btn:hover {
-    border-color: #BB86FC;
-    color: #BB86FC;
+    border-color: #bb86fc;
+    color: #bb86fc;
   }
 
   .tap-btn:active {
-    background: #BB86FC;
+    background: #bb86fc;
     color: #000;
   }
 
@@ -229,7 +231,7 @@
   }
 
   .bpm-display.confident {
-    color: #BB86FC;
+    color: #bb86fc;
   }
 
   .bpm-clear {
@@ -272,6 +274,6 @@
   .sens-slider {
     width: 50px;
     height: 3px;
-    accent-color: #BB86FC;
+    accent-color: #bb86fc;
   }
 </style>

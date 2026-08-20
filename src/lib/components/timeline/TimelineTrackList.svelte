@@ -1,6 +1,7 @@
 <script lang="ts">
   import { keyframeTimeline } from '../../stores/keyframeTimeline';
   import type { KeyframeableParam } from '../../keyframes/paramDiscovery';
+  import { t } from '../../i18n';
 
   type FlatRow = { kind: 'group'; group: string; expanded: boolean } | { kind: 'param'; param: KeyframeableParam };
 
@@ -17,13 +18,13 @@
 
   // Reactive: keys that have any keyframes (for has-kf class) and at-current-time (for active diamond)
   $: trackKeysWithKfs = new Set(
-    timeline ? timeline.tracks.filter(t => t.keyframes.length > 0 || t.boolKeyframes.length > 0).map(t => t.key) : []
+    timeline ? timeline.tracks.filter((t) => t.keyframes.length > 0 || t.boolKeyframes.length > 0).map((t) => t.key) : [],
   );
   $: trackKeysAtCurrentTime = new Set(
-    timeline ? timeline.tracks.filter(t => {
-      if (t.type === 'boolean') return t.boolKeyframes.some(k => Math.abs(k.time - currentTime) < 0.05);
-      return t.keyframes.some(k => Math.abs(k.time - currentTime) < 0.05);
-    }).map(t => t.key) : []
+    timeline ? timeline.tracks.filter((t) => {
+      if (t.type === 'boolean') return t.boolKeyframes.some((k) => Math.abs(k.time - currentTime) < 0.05);
+      return t.keyframes.some((k) => Math.abs(k.time - currentTime) < 0.05);
+    }).map((t) => t.key) : [],
   );
 
   const ROW_HEIGHT = 22;
@@ -56,9 +57,9 @@
   <!-- Spacer to match the grid's ruler height -->
   <div class="ruler-spacer"></div>
   {#if !layerId}
-    <div class="no-layer">Select a layer to keyframe its parameters</div>
+    <div class="no-layer">{$t('tourTimeline.trackList.selectLayer')}</div>
   {:else if flatRows.length === 0}
-    <div class="no-layer">No keyframeable parameters</div>
+    <div class="no-layer">{$t('tourTimeline.trackList.noParameters')}</div>
   {:else}
     {#each flatRows as row}
       {#if row.kind === 'group'}
@@ -67,12 +68,19 @@
           <span class="group-name">{row.group}</span>
         </button>
       {:else}
-        <div class="track-row" class:has-kf={trackHasKeyframes(row.param.key)}
+        <div
+          class="track-row"
+          class:has-kf={trackHasKeyframes(row.param.key)}
           class:armed={isArmed(row.param.key)}
-          style="height: {ROW_HEIGHT}px">
-          <button class="kf-diamond" class:active={hasKfAt(row.param.key)} class:armed={isArmed(row.param.key)}
+          style="height: {ROW_HEIGHT}px"
+        >
+          <button
+            class="kf-diamond"
+            class:active={hasKfAt(row.param.key)}
+            class:armed={isArmed(row.param.key)}
             onclick={() => toggleArm(row.param)}
-            title="Click to arm auto-keyframe">
+            title={$t('tourTimeline.trackList.armAutoKeyframeTitle')}
+          >
             ◆
           </button>
           <span class="track-label" title={row.param.key}>{row.param.label}</span>
@@ -151,9 +159,9 @@
     justify-content: center;
     flex-shrink: 0;
   }
-  .kf-diamond:hover { color: #FF6B6B; }
-  .kf-diamond.active { color: #FF6B6B; }
-  .kf-diamond.armed { color: #FF2020; text-shadow: 0 0 6px rgba(255,32,32,0.6); }
+  .kf-diamond:hover { color: #ff6b6b; }
+  .kf-diamond.active { color: #ff6b6b; }
+  .kf-diamond.armed { color: #ff2020; text-shadow: 0 0 6px rgba(255,32,32,0.6); }
   .track-label {
     overflow: hidden;
     text-overflow: ellipsis;
@@ -184,6 +192,6 @@
     font-family: inherit;
   }
   .ctx-item:hover { background: rgba(255, 107, 107, 0.15); color: #fff; }
-  .ctx-delete { color: #FF4757; }
+  .ctx-delete { color: #ff4757; }
   .ctx-sep { height: 1px; background: rgba(255,255,255,0.08); margin: 4px 0; }
 </style>

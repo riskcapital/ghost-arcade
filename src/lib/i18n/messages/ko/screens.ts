@@ -165,5 +165,8 @@ export default {
   },
   errors: {
     openSliceDisplay: '슬라이스 출력 창을 열지 못했습니다. 팝업 차단 동작을 확인하세요.',
+    openOutputWindow: '출력 창을 열지 못했습니다: {error}',
+    popupBlocked: '출력 창을 열지 못했습니다. Chromium 팝업 차단 설정을 확인하세요.',
+    openZeroCopyOutput: '제로 카피 출력 창을 열지 못했습니다: {error}',
   },
 };

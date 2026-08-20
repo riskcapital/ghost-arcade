@@ -9,12 +9,17 @@
   import { audioStore } from '../stores/audio';
   import { parseISF } from '../isf/parser';
   import type { ISFInput } from '../isf/parser';
+  import { t } from '../i18n';
 
   // Canvas for XY pad rendering
   let padCanvas: HTMLCanvasElement;
   let padCtx: CanvasRenderingContext2D | null = null;
   let padContainer: HTMLDivElement;
   let drawFrameId: number | null = null;
+
+  function getTriggerLabel(triggerId: string): string {
+    return $t(`performanceTools.performancePad.triggers.${triggerId}`);
+  }
 
   // Cached shader inputs for param binding dropdowns
   let cachedInputs: Map<string, ISFInput[]> = new Map();
@@ -42,7 +47,7 @@
       const inputs = getLayerShaderInputs(i);
       for (const inp of inputs) {
         if (inp.TYPE === 'float') {
-          params.push({ layerIndex: i, name: inp.NAME, label: `L${i+1}: ${inp.LABEL || inp.NAME}` });
+          params.push({ layerIndex: i, name: inp.NAME, label: `L${i + 1}: ${inp.LABEL || inp.NAME}` });
         }
       }
     }
@@ -132,12 +137,12 @@
     padCtx.lineWidth = 1;
     for (let i = 1; i < 4; i++) {
       padCtx.beginPath();
-      padCtx.moveTo(w * i / 4, 0);
-      padCtx.lineTo(w * i / 4, h);
+      padCtx.moveTo((w * i) / 4, 0);
+      padCtx.lineTo((w * i) / 4, h);
       padCtx.stroke();
       padCtx.beginPath();
-      padCtx.moveTo(0, h * i / 4);
-      padCtx.lineTo(w, h * i / 4);
+      padCtx.moveTo(0, (h * i) / 4);
+      padCtx.lineTo(w, (h * i) / 4);
       padCtx.stroke();
     }
 
@@ -279,9 +284,10 @@
   <!-- XY Pad -->
   <div class="xy-pad-wrapper">
     <div class="xy-pad-header">
-      <span class="pad-title">PERFORMANCE PAD</span>
-      <span class="pad-status" class:active={$performanceStore.isActive}>
-        {$performanceStore.isActive ? 'LIVE' : 'READY'}
+      <span class="pad-title">{$t('performanceTools.performancePad.title')}</span>
+      <span class="pad-status" class:active={$performanceStore.isActive} role="status">
+        {$performanceStore.isActive ? $t('performanceTools.performancePad.status.live')
+          : $t('performanceTools.performancePad.status.ready')}
       </span>
     </div>
 
@@ -297,50 +303,54 @@
         ontouchmove={handlePadMove}
         ontouchend={handlePadUp}
         ontouchcancel={handlePadUp}
+        role="application"
+        aria-label={$t('performanceTools.performancePad.ariaLabel')}
       ></canvas>
     </div>
 
     <!-- Axis Bindings -->
     <div class="axis-bindings">
       <div class="axis-bind">
-        <span class="axis-label">X</span>
+        <span class="axis-label">{$t('performanceTools.performancePad.axis.x')}</span>
         <select
           class="axis-select"
           value={padState.paramX || ''}
+          aria-label={$t('performanceTools.performancePad.axis.xAria')}
           onchange={(e) => {
             const val = (e.target as HTMLSelectElement).value;
             performanceStore.bindPadParam('x', val || null);
             if (val) {
               // Also set target layer from the param
-              const param = bindableParams.find(p => p.name === val);
+              const param = bindableParams.find((p) => p.name === val);
               if (param) performanceStore.setPadTargetLayer(param.layerIndex);
             }
           }}
         >
-          <option value="">-- none --</option>
+          <option value="">{$t('performanceTools.performancePad.axis.none')}</option>
           {#each bindableParams as p}
             <option value={p.name}>{p.label}</option>
           {/each}
         </select>
       </div>
       <div class="axis-bind">
-        <span class="axis-label">Y</span>
+        <span class="axis-label">{$t('performanceTools.performancePad.axis.y')}</span>
         <select
           class="axis-select"
           value={padState.paramY || ''}
+          aria-label={$t('performanceTools.performancePad.axis.yAria')}
           onchange={(e) => {
             const val = (e.target as HTMLSelectElement).value;
             performanceStore.bindPadParam('y', val || null);
           }}
         >
-          <option value="">-- none --</option>
+          <option value="">{$t('performanceTools.performancePad.axis.none')}</option>
           {#each bindableParams as p}
             <option value={p.name}>{p.label}</option>
           {/each}
         </select>
       </div>
       <div class="momentum-ctrl">
-        <span class="axis-label">MOM</span>
+        <span class="axis-label">{$t('performanceTools.performancePad.axis.momentum')}</span>
         <input
           type="range"
           min="0"
@@ -349,6 +359,7 @@
           value={$performanceStore.momentum}
           oninput={(e) => performanceStore.setMomentum(parseFloat((e.target as HTMLInputElement).value))}
           class="momentum-slider"
+          aria-label={$t('performanceTools.performancePad.axis.momentumAria')}
         />
       </div>
     </div>
@@ -364,15 +375,21 @@
           style="
             --trigger-color: {trigger.color};
             --trigger-intensity: {trigger.intensity};
-            --trigger-glow: {trigger.color}{Math.round(trigger.intensity * 200).toString(16).padStart(2, '0')};
+            --trigger-glow: {trigger.color}{Math.round(trigger.intensity * 200)
+            .toString(16)
+            .padStart(2, '0')};
           "
+          title={getTriggerLabel(trigger.id)}
+          aria-label={$t('performanceTools.performancePad.triggerAria', {
+            values: { label: getTriggerLabel(trigger.id) },
+          })}
           onmousedown={() => handleTriggerDown(trigger.id)}
           onmouseup={() => handleTriggerUp(trigger.id)}
           onmouseleave={() => handleTriggerUp(trigger.id)}
           ontouchstart={(e) => { e.preventDefault(); handleTriggerDown(trigger.id); }}
           ontouchend={(e) => { e.preventDefault(); handleTriggerUp(trigger.id); }}
         >
-          <span class="trigger-label">{trigger.label}</span>
+          <span class="trigger-label">{getTriggerLabel(trigger.id)}</span>
           <div
             class="trigger-intensity-bar"
             style="width: {trigger.intensity * 100}%"
@@ -424,7 +441,7 @@
 
   .pad-status.active {
     background: rgba(187, 134, 252, 0.15);
-    color: #BB86FC;
+    color: #bb86fc;
   }
 
   .xy-pad-area {
@@ -505,7 +522,7 @@
     -webkit-appearance: none;
     width: 8px;
     height: 12px;
-    background: #BB86FC;
+    background: #bb86fc;
     border-radius: 2px;
     cursor: pointer;
   }

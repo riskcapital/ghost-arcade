@@ -16,6 +16,7 @@
    */
   import { audioStore } from '../stores/audio';
   import { isMac } from '../bridge';
+  import { t } from '../i18n';
   import AudioWaveformIndicator from './AudioWaveformIndicator.svelte';
 
   // Internal popover state. Closes on outside click via window listener.
@@ -110,7 +111,8 @@
       class="aip-btn aip-mic-main"
       class:active={$audioStore.inputType === 'microphone'}
       onclick={activateMicInput}
-      title={$audioStore.inputType === 'microphone' ? 'Disable Mic' : 'Enable Mic Input (right side = pick device)'}
+      title={$audioStore.inputType === 'microphone' ? $t('audioTools.input.disableMic')
+        : $t('audioTools.input.enableMic')}
     >
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
         <path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/>
@@ -126,7 +128,7 @@
       class="aip-btn aip-mic-chevron"
       class:active={showMicPicker}
       onclick={toggleMicPicker}
-      title="Select audio input device (e.g. BlackHole for DAW routing)"
+      title={$t('audioTools.input.selectDevice')}
     >
       <svg width="8" height="8" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round">
         <polyline points="6 9 12 15 18 9"/>
@@ -135,13 +137,13 @@
 
     {#if showMicPicker}
       <div class="aip-popover" use:clampToViewport>
-        <div class="aip-popover-label">Audio Input</div>
+        <div class="aip-popover-label">{$t('audioTools.input.popoverLabel')}</div>
         <button
           class="aip-popover-item"
           class:selected={$audioStore.preferredInputDeviceId === null}
           onclick={() => pickMicDevice(null)}
         >
-          System Default
+          {$t('audioTools.input.systemDefault')}
         </button>
         {#each $audioStore.availableInputDevices as dev (dev.deviceId)}
           <button
@@ -153,10 +155,10 @@
           </button>
         {/each}
         {#if $audioStore.availableInputDevices.length === 0}
-          <div class="aip-popover-empty">No input devices found</div>
+          <div class="aip-popover-empty">{$t('audioTools.input.noDevices')}</div>
         {/if}
         <div class="aip-popover-hint">
-          Route DAW → virtual device (BlackHole / Loopback) → pick it here.
+          {$t('audioTools.input.routeHint')}
         </div>
       </div>
     {/if}
@@ -177,15 +179,24 @@
     class:active={$audioStore.inputType === 'system'}
     onclick={activateSystemAudio}
     title={$audioStore.inputType === 'system'
-      ? 'Disable System Audio'
-      : (isMac
-        ? 'Capture System Audio — pick "Entire Screen" and toggle "Share audio" in the picker'
-        : 'Enable System Audio')}
+      ? $t('audioTools.input.disableSystemAudio')
+      : isMac
+        ? $t('audioTools.input.enableSystemAudioMac')
+        : $t('audioTools.input.enableSystemAudio')}
   >
-    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/>
-      <path d="M19.07 4.93a10 10 0 0 1 0 14.14"/>
-      <path d="M15.54 8.46a5 5 0 0 1 0 7.07"/>
+    <svg
+      width="14"
+      height="14"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="2"
+      stroke-linecap="round"
+      stroke-linejoin="round"
+    >
+      <polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5" />
+      <path d="M19.07 4.93a10 10 0 0 1 0 14.14" />
+      <path d="M15.54 8.46a5 5 0 0 1 0 7.07" />
     </svg>
     {#if $audioStore.inputType === 'system'}
       <span class="aip-active-dot"></span>
@@ -218,7 +229,7 @@
   .aip-btn:hover {
     background: var(--ga-card, #13161c);
     color: var(--ga-ink-0, #eef0f4);
-    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.2));
   }
 
   .aip-btn.active {
@@ -310,11 +321,11 @@
     text-overflow: ellipsis;
   }
   .aip-popover-item:hover {
-    background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10));
+    background: var(--ga-violet-soft, rgba(155, 135, 245, 0.1));
     color: var(--ga-ink-0, #eef0f4);
   }
   .aip-popover-item.selected {
-    background: rgba(70, 209, 138, 0.10);
+    background: rgba(70, 209, 138, 0.1);
     border-color: rgba(70, 209, 138, 0.28);
     color: var(--ga-green, #46d18a);
   }

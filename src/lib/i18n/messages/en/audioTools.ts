@@ -1,0 +1,45 @@
+export default {
+  meter: {
+    inputTweaksTitle: 'Audio input tweaks — click to open EQ / sensitivity / smoothing',
+    beatDetector: 'Beat detector',
+    kickOnset: 'Kick onset (sub+bass)',
+    snareOnset: 'Snare onset (lowMid+highMid)',
+    popoverTitle: 'AUDIO INPUT TWEAKS',
+    sensitivity: 'Sensitivity',
+    smoothing: 'Smoothing',
+    tuningHint:
+      "Sensitivity scales every band's response. Smoothing damps frame-to-frame jitter — higher values feel calmer, lower values feel snappier.",
+    perBandGain: 'PER-BAND GAIN',
+    resetBandGainsTitle: 'Reset all band gains to 1×',
+    reset: 'RESET',
+    gainTitle: 'Gain {value}×',
+    bands: {
+      sub: 'SUB',
+      bass: 'BASS',
+      lowMid: 'LO MID',
+      mid: 'MID',
+      highMid: 'HI MID',
+      treble: 'TREBLE',
+      air: 'AIR',
+      presence: 'PRESENCE',
+    },
+  },
+  input: {
+    disableMic: 'Disable Mic',
+    enableMic: 'Enable Mic Input (right side = pick device)',
+    selectDevice: 'Select audio input device (e.g. BlackHole for DAW routing)',
+    popoverLabel: 'Audio Input',
+    systemDefault: 'System Default',
+    noDevices: 'No input devices found',
+    routeHint: 'Route DAW → virtual device (BlackHole / Loopback) → pick it here.',
+    disableSystemAudio: 'Disable System Audio',
+    enableSystemAudioMac: 'Capture System Audio — pick "Entire Screen" and toggle "Share audio" in the picker',
+    enableSystemAudio: 'Enable System Audio',
+  },
+  waveform: {
+    liveTitle: 'Live audio waveform',
+  },
+  errors: {
+    input: 'Audio input error: {message}',
+  },
+};
