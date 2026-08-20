@@ -41,6 +41,11 @@ function referencedMessageKeys(): string[] {
     for (const match of source.matchAll(/\$t\(\s*['"]([^'"]+)['"]/g)) {
       keys.add(match[1]);
     }
+    for (const match of source.matchAll(
+      /\b(?:labelKey|titleKey|hintKey|ariaKey|descriptionKey)\s*:\s*['"]([^'"]+)['"]/g,
+    )) {
+      if (match[1].includes('.')) keys.add(match[1]);
+    }
   }
   return [...keys].sort();
 }
@@ -151,5 +156,28 @@ describe('locale switching', () => {
 
     expect(() => setLocale('ko')).not.toThrow();
     expect(get(activeLocale)).toBe('ko');
+  });
+
+  it('syncs locale changes from another app window', async () => {
+    let storageListener: ((event: StorageEvent) => void) | undefined;
+    vi.stubGlobal('window', {
+      addEventListener: (type: string, listener: (event: StorageEvent) => void) => {
+        if (type === 'storage') storageListener = listener;
+      },
+    });
+    vi.stubGlobal('localStorage', {
+      getItem: () => 'en',
+      setItem: vi.fn(),
+    });
+    const documentElement = { lang: '' };
+    vi.stubGlobal('document', { documentElement });
+    vi.resetModules();
+    const freshI18n = await import('./index');
+
+    storageListener?.({ key: LOCALE_STORAGE_KEY, newValue: 'ko-KR' } as StorageEvent);
+
+    expect(get(freshI18n.activeLocale)).toBe('ko');
+    expect(get(freshI18n.t)('screens.inspector.identity.physicalDisplay')).toBe('실제 디스플레이');
+    expect(documentElement.lang).toBe('ko');
   });
 });

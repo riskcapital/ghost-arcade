@@ -38,6 +38,7 @@
    */
   import { onMount, onDestroy } from 'svelte';
   import { invoke } from '$lib/bridge';
+  import { t } from '$lib/i18n';
 
   const SIGNAL_CHANNEL = 'ghostarcade-output-pixels';
 
@@ -54,7 +55,18 @@
   let pc: RTCPeerConnection | null = null;
   let channel: BroadcastChannel | null = null;
   let connected = false;
-  let statusText = 'Waiting for editor stream…';
+  let outputStatus:
+    | { kind: 'waiting' }
+    | { kind: 'channel-unavailable'; error: string }
+    | { kind: 'peer-reconnecting'; state: string }
+    | { kind: 'none' } = { kind: 'waiting' };
+  $: statusText = outputStatus.kind === 'waiting'
+    ? $t('screens.outputWindow.waitingForStream')
+    : outputStatus.kind === 'channel-unavailable'
+      ? $t('screens.outputWindow.channelUnavailable', { values: { error: outputStatus.error } })
+      : outputStatus.kind === 'peer-reconnecting'
+        ? $t('screens.outputWindow.peerReconnecting', { values: { state: outputStatus.state } })
+        : '';
   let disposed = false;
 
   // Always-on minimal health badge. Visible when connected; hides when
@@ -159,7 +171,7 @@
     try {
       channel = new BroadcastChannel(SIGNAL_CHANNEL);
     } catch (e: any) {
-      statusText = `BroadcastChannel unavailable: ${e?.message ?? e}`;
+      outputStatus = { kind: 'channel-unavailable', error: String(e?.message ?? e) };
       return;
     }
 
@@ -225,12 +237,12 @@
       console.log('[OutputDisplay] connectionState:', pc?.connectionState);
       if (pc?.connectionState === 'connected') {
         connected = true;
-        statusText = '';
+        outputStatus = { kind: 'none' };
         stopReadyHeartbeat();
         if (showStats) startStatsLoop();
       } else if (pc?.connectionState === 'disconnected' || pc?.connectionState === 'failed') {
         connected = false;
-        statusText = `Peer ${pc.connectionState} — reconnecting…`;
+        outputStatus = { kind: 'peer-reconnecting', state: pc.connectionState };
         if (statsTimer) { clearInterval(statsTimer); statsTimer = null; }
         // Restart the heartbeat so we tell the editor we want a fresh
         // peer. Editor will tear down its side on receiving the next

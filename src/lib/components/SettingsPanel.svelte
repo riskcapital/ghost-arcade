@@ -251,7 +251,7 @@
     matchResLabel = '';
     try {
       const { invoke, isDesktopApp } = await import('$lib/bridge');
-      if (!isDesktopApp) { matchResLabel = 'Desktop only'; return; }
+      if (!isDesktopApp) { matchResLabel = $t('settings.output.display.resolution.desktopOnly'); return; }
       const info: any = await invoke('get_output_display_info');
       if (info?.nativeWidth && info?.nativeHeight) {
         project.setProjectDimensions(info.nativeWidth, info.nativeHeight);

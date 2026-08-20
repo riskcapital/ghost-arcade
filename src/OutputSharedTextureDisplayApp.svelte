@@ -48,6 +48,7 @@
    */
   import { onMount, onDestroy } from 'svelte';
   import { invoke } from '$lib/bridge';
+  import { t } from '$lib/i18n';
 
   const urlParams = new URLSearchParams(window.location.search);
   let showStats = urlParams.get('stats') === '1';
@@ -694,10 +695,10 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
 
   // Reactive labels for the overlays
   $: statusText = (() => {
-    if (initStatus === 'init') return 'Initialising WebGPU…';
-    if (initStatus === 'no-webgpu') return `WebGPU required: ${initError}`;
-    if (initStatus === 'no-port') return 'Waiting for editor link…';
-    if (initStatus === 'error') return `Error: ${initError}`;
+    if (initStatus === 'init') return $t('screens.outputWindow.initializingWebGpu');
+    if (initStatus === 'no-webgpu') return $t('screens.outputWindow.webGpuRequired', { values: { error: initError } });
+    if (initStatus === 'no-port') return $t('screens.outputWindow.waitingForEditor');
+    if (initStatus === 'error') return $t('screens.outputWindow.error', { values: { error: initError } });
     return '';
   })();
   $: badgeColor = (() => {

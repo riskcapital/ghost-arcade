@@ -35,6 +35,7 @@ export default {
     closeOutput: 'Close Output',
     outputWindow: 'Output Window',
     fullscreen: 'Fullscreen',
+    fullscreenTitle: 'Open fullscreen output on the first connected external display',
     openStageSimulator: 'Open Stage Simulator',
     stageSimulator: 'Stage Sim',
     openProjectionSimulator: 'Open Projection Mapping Simulator',

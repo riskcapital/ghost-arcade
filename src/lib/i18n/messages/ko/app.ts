@@ -35,6 +35,7 @@ export default {
     closeOutput: '출력 닫기',
     outputWindow: '출력 창',
     fullscreen: '전체 화면',
+    fullscreenTitle: '연결된 첫 번째 외부 디스플레이에서 전체 화면 출력을 엽니다',
     openStageSimulator: '스테이지 시뮬레이터 열기',
     stageSimulator: '스테이지 시뮬',
     openProjectionSimulator: '프로젝션 매핑 시뮬레이터 열기',

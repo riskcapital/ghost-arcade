@@ -231,6 +231,7 @@ export default {
         canvasPrefix: '프로젝트 캔버스: ',
         detecting: '감지 중…',
         matchOutput: '출력 디스플레이에 맞춤',
+        desktopOnly: '데스크톱에서만 사용할 수 있습니다',
         noInfo: '디스플레이 정보를 반환하지 않았습니다',
         failedPrefix: '실패: ',
       },

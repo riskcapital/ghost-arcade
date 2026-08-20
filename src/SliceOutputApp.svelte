@@ -30,6 +30,7 @@
   import { startMasterWarpOutput, stopMasterWarpOutput, tickMasterWarpOutput, getMasterWarpCanvas, disposeMasterWarpOutput } from './lib/sync/outputComposite';
   import { ensureWebGPUDevice } from './lib/renderer/webgpuShared';
   import { invoke } from '$lib/bridge';
+  import { t } from '$lib/i18n';
 
   const urlParams = new URLSearchParams(window.location.search);
   const sliceId = urlParams.get('sliceId') || '';
@@ -852,17 +853,17 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
          arrive from the editor. Show a discrete placeholder so the
          operator knows the window is alive, not frozen. -->
     <div class="slice-waiting">
-      Waiting for slice <code>{sliceId}</code> from editor…
+      {$t('screens.outputWindow.waitingForSliceBefore')} <code>{sliceId}</code> {$t('screens.outputWindow.waitingForSliceAfter')}
     </div>
   {/if}
   {#if showEscHint}
     <!-- 5-second close-hint so the operator always knows the way
          out, even when this slice window lands on their primary
          monitor and covers everything else. -->
-    <div class="esc-hint">Press <kbd>Esc</kbd> to close</div>
+    <div class="esc-hint">{$t('screens.outputWindow.press')} <kbd>Esc</kbd> {$t('screens.outputWindow.toClose')}</div>
   {/if}
-  <button class="fullscreen-exit" onclick={closeSliceOutput} title="Close fullscreen slice output (Esc)">
-    Close Output
+  <button class="fullscreen-exit" onclick={closeSliceOutput} title={$t('screens.outputWindow.closeSliceTitle')}>
+    {$t('screens.outputWindow.closeOutput')}
   </button>
   <!-- Canvas is mounted but visually hidden — it still runs the
        state-synced render loop, just behind the presentation canvas.

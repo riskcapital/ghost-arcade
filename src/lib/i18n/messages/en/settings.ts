@@ -231,6 +231,7 @@ export default {
         canvasPrefix: 'Project canvas: ',
         detecting: 'Detecting…',
         matchOutput: 'Match Output Display',
+        desktopOnly: 'Desktop only',
         noInfo: 'No display info returned',
         failedPrefix: 'Failed: ',
       },

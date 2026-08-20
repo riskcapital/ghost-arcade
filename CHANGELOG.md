@@ -5,7 +5,9 @@
 ## Unreleased
 
 - Added persistent English and Korean interface localization across the app
-  shell, mapping, media, VJ, output, effects, settings, and mobile controls.
+  shell, mapping, media, VJ, output, effects, settings, and mobile controls,
+  including physical-display selection, per-screen calibration, and output
+  window status guidance.
 
 ---
 

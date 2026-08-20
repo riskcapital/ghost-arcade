@@ -59,7 +59,8 @@ export function translate(locale: AppLocale, key: string, options?: TranslateOpt
   return formatMessage(message, options?.values);
 }
 
-const localeStore = writable<AppLocale>(detectInitialLocale());
+const initialLocale = detectInitialLocale();
+const localeStore = writable<AppLocale>(initialLocale);
 export const activeLocale: Readable<AppLocale> = { subscribe: localeStore.subscribe };
 export const t: Readable<Translate> = derived(
   localeStore,
@@ -67,6 +68,12 @@ export const t: Readable<Translate> = derived(
     (key: string, options?: TranslateOptions): string =>
       translate(locale, key, options),
 );
+
+function syncDocumentLanguage(value: AppLocale): void {
+  if (typeof document !== 'undefined') {
+    document.documentElement.lang = value;
+  }
+}
 
 function syncLocaleMetadata(value: AppLocale): void {
   if (typeof localStorage !== 'undefined') {
@@ -76,12 +83,19 @@ function syncLocaleMetadata(value: AppLocale): void {
       // Locale switching must still work when storage is unavailable.
     }
   }
-  if (typeof document !== 'undefined') {
-    document.documentElement.lang = value;
-  }
+  syncDocumentLanguage(value);
 }
 
-syncLocaleMetadata(detectInitialLocale());
+syncLocaleMetadata(initialLocale);
+
+if (typeof window !== 'undefined') {
+  window.addEventListener('storage', (event) => {
+    if (event.key !== LOCALE_STORAGE_KEY) return;
+    const value = normalizeLocale(event.newValue);
+    localeStore.set(value);
+    syncDocumentLanguage(value);
+  });
+}
 
 export function setLocale(value: AppLocale): void {
   localeStore.set(value);

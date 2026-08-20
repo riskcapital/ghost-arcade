@@ -5572,6 +5572,7 @@
           class="output-btn"
           class:active={outputMode === 'fullscreen'}
           onclick={toggleFullscreen}
+          title={$t('app.toolbar.fullscreenTitle')}
         >
           {$t('app.toolbar.fullscreen')}
         </button>
