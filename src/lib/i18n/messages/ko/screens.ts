@@ -1,0 +1,72 @@
+export default {
+  list: {
+    title: '화면',
+    count: '{count}/{max}',
+    ariaLabel: '화면 목록',
+    presets: {
+      twoWide: '2-Wide',
+      threeWide: '3-Wide',
+      twoByTwo: '2×2',
+    },
+    duplicate: '복제',
+    remove: '제거',
+    add: '화면 추가',
+    toggle: '{name} 사용 전환',
+  },
+  targets: {
+    display: 'DISP{displayId}',
+    textureShare: '{textureShare}',
+    open: '출력 창 열림',
+  },
+  masterCanvas: {
+    title: '마스터 캔버스',
+    width: '마스터 캔버스 너비',
+    height: '마스터 캔버스 높이',
+    autoFit: '자동 맞춤',
+    matchTextureShare: '{textureShare}에 맞추기',
+    textureShareMatches: '{textureShare} 일치 ✓',
+  },
+  outputWarp: {
+    title: '출력 워프',
+    active: '워프 활성',
+    mode: '출력 워프 모드',
+    enable: '전체 출력 워프',
+    corners: '엣지 / 코너',
+    mesh: '메시',
+    hint: '캔버스의 주황색 핸들을 드래그하여 전체 출력을 워프하세요.',
+    reset: '아이덴티티로 초기화',
+  },
+  dome: {
+    title: '돔 프로젝션',
+    enabled: '돔 프로젝션 활성화',
+    enable: '피시아이 / 돔마스터 출력',
+    presets: {
+      domemaster: '돔마스터 180',
+      half: '하프 돔',
+      panorama: '파노라마 360',
+    },
+    mode: '모드',
+    modes: {
+      angular: '각도형 피시아이',
+      stereographic: '스테레오그래픽',
+      orthographic: '직교',
+      equirectangular: '이큐렉탱귤러 360',
+    },
+    fields: {
+      fov: 'FOV',
+      rotation: '회전',
+      tilt: '틸트',
+      curvature: '곡률',
+      truncation: '트렁케이션',
+      offsetX: '오프셋 X',
+      offsetY: '오프셋 Y',
+    },
+    reset: '돔 초기화',
+  },
+  inspector: {
+    empty: '화면을 선택하여 워프, 블렌드, 색상, 효과를 편집하세요.',
+  },
+  errors: {
+    openSliceDisplay: '슬라이스 출력 창을 열지 못했습니다. 팝업 차단 동작을 확인하세요.',
+  },
+};

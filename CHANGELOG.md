@@ -2,6 +2,13 @@
 
 ---
 
+## Unreleased
+
+- Added persistent English and Korean interface localization across the app
+  shell, mapping, media, VJ, output, effects, settings, and mobile controls.
+
+---
+
 ## v1.9.99 - Live Performance and Control Polish (July 2026)
 
 - Layer blending, armed video triggering, master-warp keyboard nudging, and

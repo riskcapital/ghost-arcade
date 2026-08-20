@@ -1,0 +1,72 @@
+export default {
+  list: {
+    title: 'Screens',
+    count: '{count}/{max}',
+    ariaLabel: 'Screen list',
+    presets: {
+      twoWide: '2-Wide',
+      threeWide: '3-Wide',
+      twoByTwo: '2×2',
+    },
+    duplicate: 'Duplicate',
+    remove: 'Remove',
+    add: 'Add Screen',
+    toggle: 'Toggle {name}',
+  },
+  targets: {
+    display: 'DISP{displayId}',
+    textureShare: '{textureShare}',
+    open: 'Output window open',
+  },
+  masterCanvas: {
+    title: 'Master canvas',
+    width: 'Master canvas width',
+    height: 'Master canvas height',
+    autoFit: 'Auto-fit',
+    matchTextureShare: 'Match {textureShare}',
+    textureShareMatches: '{textureShare} matches ✓',
+  },
+  outputWarp: {
+    title: 'Master warp',
+    active: 'Warp active',
+    mode: 'Master warp mode',
+    enable: 'Warp entire output',
+    corners: 'Edge / Corners',
+    mesh: 'Mesh',
+    hint: 'Drag the orange handles on the canvas to warp the whole output.',
+    reset: 'Reset to identity',
+  },
+  dome: {
+    title: 'Dome projection',
+    enabled: 'Dome projection enabled',
+    enable: 'Fisheye / domemaster output',
+    presets: {
+      domemaster: 'Domemaster 180',
+      half: 'Half dome',
+      panorama: 'Panorama 360',
+    },
+    mode: 'Mode',
+    modes: {
+      angular: 'Angular fisheye',
+      stereographic: 'Stereographic',
+      orthographic: 'Orthographic',
+      equirectangular: 'Equirectangular 360',
+    },
+    fields: {
+      fov: 'FOV',
+      rotation: 'Rotation',
+      tilt: 'Tilt',
+      curvature: 'Curvature',
+      truncation: 'Truncation',
+      offsetX: 'Offset X',
+      offsetY: 'Offset Y',
+    },
+    reset: 'Reset dome',
+  },
+  inspector: {
+    empty: 'Select a Screen to edit warp, blend, color, and effects.',
+  },
+  errors: {
+    openSliceDisplay: 'Slice display window failed to open. Check popup-blocker behaviour.',
+  },
+};

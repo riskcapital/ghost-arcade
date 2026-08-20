@@ -56,6 +56,7 @@
   import { keyboardStore, formatKeyCombo, type KeyActionMode } from '../keyboard/keyboardStore';
   import WLEDMappingPanel from './WLEDMappingPanel.svelte';
   import WLEDGroupsPanel from './WLEDGroupsPanel.svelte';
+  import { activeLocale, setLocale, SUPPORTED_LOCALES, t, type AppLocale } from '../i18n';
   let keyboardAddOpen = false;
   let keyboardAddPath = '';
   let keyboardAddMode: KeyActionMode = 'momentary';
@@ -256,10 +257,10 @@
         project.setProjectDimensions(info.nativeWidth, info.nativeHeight);
         matchResLabel = `${info.label}: ${info.nativeWidth}x${info.nativeHeight}`;
       } else {
-        matchResLabel = 'No display info returned';
+        matchResLabel = $t('settings.output.display.resolution.noInfo');
       }
     } catch (e) {
-      matchResLabel = 'Failed: ' + (e instanceof Error ? e.message : String(e));
+      matchResLabel = $t('settings.output.display.resolution.failedPrefix') + (e instanceof Error ? e.message : String(e));
     } finally {
       matchResBusy = false;
       setTimeout(() => { matchResLabel = ''; }, 4000);
@@ -301,7 +302,7 @@
   //   • Advanced sections always visible; the Show-Advanced checkbox
   //     was demoted to a power-user no-op.
   type SectionId =
-    | 'app:appearance' | 'app:updates'
+    | 'app:appearance' | 'app:language' | 'app:updates'
     | 'output:display'
     | 'performance:gpu' | 'performance:render-quality' | 'performance:video-decoding'
     | 'recording'
@@ -310,33 +311,34 @@
   interface SidebarSection { id: SectionId; label: string; advanced?: boolean }
   interface SidebarCategory { id: string; label: string; sections: SidebarSection[] }
   const SIDEBAR: SidebarCategory[] = [
-    { id: 'app', label: 'App', sections: [
-      { id: 'app:appearance', label: 'Appearance' },
-      { id: 'app:updates', label: 'Updates' },
+    { id: 'app', label: 'settings.nav.categories.app', sections: [
+      { id: 'app:appearance', label: 'settings.nav.sections.appearance' },
+      { id: 'app:language', label: 'settings.nav.sections.language' },
+      { id: 'app:updates', label: 'settings.nav.sections.updates' },
     ]},
-    { id: 'output', label: 'Output', sections: [
+    { id: 'output', label: 'settings.nav.categories.output', sections: [
       // Display is the single global-output section: cursor overlay,
       // rotation, blackout, plus Canvas (size/aspect) and Layers
       // (default layer behavior) which used to live under "Project".
-      { id: 'output:display', label: 'Display' },
+      { id: 'output:display', label: 'settings.nav.sections.display' },
     ]},
-    { id: 'performance', label: 'Performance', sections: [
-      { id: 'performance:gpu', label: 'GPU Acceleration' },
-      { id: 'performance:render-quality', label: 'Render Quality' },
-      { id: 'performance:video-decoding', label: 'Video Decoding' },
+    { id: 'performance', label: 'settings.nav.categories.performance', sections: [
+      { id: 'performance:gpu', label: 'settings.nav.sections.gpuAcceleration' },
+      { id: 'performance:render-quality', label: 'settings.nav.sections.renderQuality' },
+      { id: 'performance:video-decoding', label: 'settings.nav.sections.videoDecoding' },
     ]},
-    { id: 'recording', label: 'Recording', sections: [
-      { id: 'recording', label: 'Recording' },
+    { id: 'recording', label: 'settings.nav.categories.recording', sections: [
+      { id: 'recording', label: 'settings.nav.sections.recording' },
     ]},
-    { id: 'integrations', label: 'Integrations', sections: [
-      { id: 'integrations:midi', label: 'MIDI' },
-      { id: 'integrations:osc', label: 'OSC' },
-      { id: 'integrations:keyboard', label: 'Keyboard' },
-      { id: 'integrations:wled', label: 'WLED' },
-      { id: 'integrations:mediapipe', label: 'MediaPipe' },
+    { id: 'integrations', label: 'settings.nav.categories.integrations', sections: [
+      { id: 'integrations:midi', label: 'settings.nav.sections.midi' },
+      { id: 'integrations:osc', label: 'settings.nav.sections.osc' },
+      { id: 'integrations:keyboard', label: 'settings.nav.sections.keyboard' },
+      { id: 'integrations:wled', label: 'settings.nav.sections.wled' },
+      { id: 'integrations:mediapipe', label: 'settings.nav.sections.mediapipe' },
     ]},
-    { id: 'ai', label: 'AI', sections: [
-      { id: 'ai', label: 'AI' },
+    { id: 'ai', label: 'settings.nav.categories.ai', sections: [
+      { id: 'ai', label: 'settings.nav.sections.ai' },
     ]},
   ];
 
@@ -427,13 +429,13 @@
 
   // Canvas size presets
   const canvasPresets = [
-    { label: '1920 x 1080 (16:9 Landscape)', width: 1920, height: 1080 },
-    { label: '1080 x 1920 (9:16 Portrait)', width: 1080, height: 1920 },
-    { label: '1080 x 1080 (Square)', width: 1080, height: 1080 },
-    { label: '1024 x 768 (4:3)', width: 1024, height: 768 },
-    { label: '3840 x 2160 (4K)', width: 3840, height: 2160 },
-    { label: '1280 x 720 (720p)', width: 1280, height: 720 },
-    { label: 'Custom', width: 0, height: 0 },
+    { id: 'landscape', labelKey: 'settings.output.canvas.presets.landscape', width: 1920, height: 1080 },
+    { id: 'portrait', labelKey: 'settings.output.canvas.presets.portrait', width: 1080, height: 1920 },
+    { id: 'square', labelKey: 'settings.output.canvas.presets.square', width: 1080, height: 1080 },
+    { id: 'fourThree', labelKey: 'settings.output.canvas.presets.fourThree', width: 1024, height: 768 },
+    { id: 'fourK', labelKey: 'settings.output.canvas.presets.fourK', width: 3840, height: 2160 },
+    { id: 'hd', labelKey: 'settings.output.canvas.presets.hd', width: 1280, height: 720 },
+    { id: 'custom', labelKey: 'settings.output.canvas.presets.custom', width: 0, height: 0 },
   ];
 
   let customWidth = $project.width;
@@ -445,14 +447,14 @@
 
   function handleCanvasPresetChange(e: Event) {
     const value = (e.target as HTMLSelectElement).value;
-    if (value === 'Custom') {
+    if (value === 'custom') {
       showCustomInputs = true;
       customWidth = $project.width;
       customHeight = $project.height;
       return;
     }
     showCustomInputs = false;
-    const preset = canvasPresets.find(p => p.label === value);
+    const preset = canvasPresets.find(p => p.id === value);
     if (preset && preset.width > 0) {
       project.setProjectDimensions(preset.width, preset.height);
       customWidth = preset.width;
@@ -469,15 +471,15 @@
   }
 
   // Spout output resolution options
-  const spoutResolutions: { value: OutputSettings['spoutResolution']; label: string }[] = [
-    { value: 'match', label: 'Match Canvas' },
-    { value: 'output', label: 'Match Output Display' },
-    { value: '720p', label: '1280×720 (720p)' },
-    { value: '1080p', label: '1920×1080 (1080p)' },
-    { value: 'WXGA', label: '1280×800 (WXGA)' },
-    { value: 'WUXGA', label: '1920×1200 (WUXGA)' },
-    { value: '4K', label: '3840×2160 (4K)' },
-    { value: 'custom', label: 'Custom...' },
+  const spoutResolutions: { value: OutputSettings['spoutResolution']; labelKey: string }[] = [
+    { value: 'match', labelKey: 'settings.output.spout.resolutions.matchCanvas' },
+    { value: 'output', labelKey: 'settings.output.spout.resolutions.matchOutputDisplay' },
+    { value: '720p', labelKey: 'settings.output.spout.resolutions.hd' },
+    { value: '1080p', labelKey: 'settings.output.spout.resolutions.fullHd' },
+    { value: 'WXGA', labelKey: 'settings.output.spout.resolutions.wxga' },
+    { value: 'WUXGA', labelKey: 'settings.output.spout.resolutions.wuxga' },
+    { value: '4K', labelKey: 'settings.output.spout.resolutions.fourK' },
+    { value: 'custom', labelKey: 'settings.output.spout.resolutions.custom' },
   ];
 
   // Detected output display resolution
@@ -519,23 +521,23 @@
 
   // Bitrate options
   const bitrateOptions = [
-    { value: 2500000, label: '2.5 Mbps (Small files)' },
-    { value: 5000000, label: '5 Mbps (Balanced)' },
-    { value: 8000000, label: '8 Mbps (High quality)' },
-    { value: 12000000, label: '12 Mbps (Best quality)' },
+    { value: 2500000, labelKey: 'settings.recording.bitrate.small' },
+    { value: 5000000, labelKey: 'settings.recording.bitrate.balanced' },
+    { value: 8000000, labelKey: 'settings.recording.bitrate.high' },
+    { value: 12000000, labelKey: 'settings.recording.bitrate.best' },
   ];
 
-  const fluidQualityModes: { value: FluidQualityMode; label: string }[] = [
-    { value: 'live', label: 'Live (fastest)' },
-    { value: 'balanced', label: 'Balanced' },
-    { value: 'quality', label: 'Quality (best visuals)' },
+  const fluidQualityModes: { value: FluidQualityMode; labelKey: string }[] = [
+    { value: 'live', labelKey: 'settings.output.renderQuality.fluid.options.live' },
+    { value: 'balanced', labelKey: 'settings.output.renderQuality.fluid.options.balanced' },
+    { value: 'quality', labelKey: 'settings.output.renderQuality.fluid.options.quality' },
   ];
 
-  const shaderQualityModes: { value: ShaderQualityMode; label: string }[] = [
-    { value: 'full', label: 'Full (100%)' },
-    { value: 'high', label: 'High (75%)' },
-    { value: 'medium', label: 'Medium (50%)' },
-    { value: 'low', label: 'Low (25%)' },
+  const shaderQualityModes: { value: ShaderQualityMode; labelKey: string }[] = [
+    { value: 'full', labelKey: 'settings.output.renderQuality.shader.full' },
+    { value: 'high', labelKey: 'settings.output.renderQuality.shader.high' },
+    { value: 'medium', labelKey: 'settings.output.renderQuality.shader.medium' },
+    { value: 'low', labelKey: 'settings.output.renderQuality.shader.low' },
   ];
 
   function handleFormatChange(e: Event) {
@@ -586,6 +588,15 @@
     const value = (e.target as HTMLSelectElement).value as ShaderQualityMode;
     settings.setShaderQuality(value);
   }
+
+  function localizedDecodeSupport(value: Parameters<typeof formatDecodeSupport>[0]): string {
+    switch (value) {
+      case 'hw': return $t('settings.performance.videoDecoding.hardware');
+      case 'sw': return $t('settings.performance.videoDecoding.software');
+      case 'no': return $t('settings.performance.videoDecoding.notSupported');
+      default: return $t('settings.performance.videoDecoding.unknown');
+    }
+  }
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -594,8 +605,8 @@
   <div class="settings-overlay" onclick={handleOverlayClick} role="dialog" aria-modal="true">
     <div class="settings-panel">
       <div class="settings-header">
-        <h2>Settings</h2>
-        <button class="close-btn" onclick={onClose} aria-label="Close settings">
+        <h2>{$t('settings.title')}</h2>
+        <button class="close-btn" onclick={onClose} aria-label={$t('settings.close')} title={$t('settings.close')}>
           <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="18" y1="6" x2="6" y2="18"/>
             <line x1="6" y1="6" x2="18" y2="18"/>
@@ -617,14 +628,14 @@
                      than one section to group — single-section
                      categories (Recording, AI) used to read as
                      "Recording > Recording" which is silly. -->
-                <div class="sidebar-category">{cat.label}</div>
+                <div class="sidebar-category">{$t(cat.label)}</div>
               {/if}
               {#each visibleSections as sec (sec.id)}
                 <button
                   class="sidebar-section"
                   class:active={selectedSection === sec.id}
                   onclick={() => selectedSection = sec.id}
-                >{visibleSections.length === 1 ? cat.label : sec.label}</button>
+                >{$t(visibleSections.length === 1 ? cat.label : sec.label)}</button>
               {/each}
             {/if}
           {/each}
@@ -636,15 +647,15 @@
         {#if $updateInfo.available}
           <div class="update-banner">
             <div class="update-banner-content">
-              <div class="update-badge">UPDATE</div>
+              <div class="update-badge">{$t('settings.banner.update')}</div>
               <div class="update-text">
-                <strong>Ghost Arcade v{$updateInfo.latestVersion}</strong> is available
-                <span class="update-current">(you have v{$updateInfo.currentVersion})</span>
+                <strong>Ghost Arcade v{$updateInfo.latestVersion}</strong> {$t('settings.banner.available')}
+                <span class="update-current">{$t('settings.banner.currentPrefix')}{$updateInfo.currentVersion}{$t('settings.banner.currentSuffix')}</span>
               </div>
             </div>
             <div class="update-links">
               <button class="update-cta-btn" onclick={() => updateModalOpen.set(true)}>
-                See what's new
+                {$t('settings.banner.seeWhatsNew')}
               </button>
             </div>
           </div>
@@ -653,15 +664,15 @@
         <!-- Appearance Section -->
         {#if selectedSection === 'app:appearance'}
         <section class="settings-section">
-          <h3>Appearance</h3>
+          <h3>{$t('settings.appearance.heading')}</h3>
 
           <!-- Theme Templates — a complete style overhaul (fonts,
                surfaces, accents, corner system) vs just an accent
                swap. New themes plug in via src/lib/theming/themes/.  -->
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Theme Template</span>
-              <span class="label-hint">Full visual style — fonts, surfaces, corner system, accents. Switches the whole app at once.</span>
+              <span class="label-text">{$t('settings.appearance.themeTemplate.label')}</span>
+              <span class="label-hint">{$t('settings.appearance.themeTemplate.hint')}</span>
             </div>
           </div>
 
@@ -691,16 +702,16 @@
                     </div>
                   </div>
                 </div>
-                <span class="theme-name">{theme.name}</span>
-                <span class="theme-desc">{theme.description ?? ''}</span>
+                <span class="theme-name">{theme.id === 'studio' || theme.id === 'arcade' ? $t(`settings.appearance.themes.${theme.id}.name`) : theme.name}</span>
+                <span class="theme-desc">{theme.id === 'studio' || theme.id === 'arcade' ? $t(`settings.appearance.themes.${theme.id}.description`) : (theme.description ?? '')}</span>
               </button>
             {/each}
           </div>
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Accent Scheme</span>
-              <span class="label-hint">Fine-tune accent colours on top of the active theme template.</span>
+              <span class="label-text">{$t('settings.appearance.accentScheme.label')}</span>
+              <span class="label-hint">{$t('settings.appearance.accentScheme.hint')}</span>
             </div>
           </div>
 
@@ -718,16 +729,16 @@
                   <div class="scheme-accent" style="background: {scheme.colors.accentPrimary};"></div>
                   <div class="scheme-accent-secondary" style="background: {scheme.colors.accentSecondary};"></div>
                 </div>
-                <span class="scheme-name">{scheme.name}</span>
-                <span class="scheme-desc">{scheme.description}</span>
+                <span class="scheme-name">{scheme.id === 'midnight-coral' ? $t('settings.appearance.schemes.midnightCoral.name') : scheme.id === 'purple-green' ? $t('settings.appearance.schemes.purpleGreen.name') : scheme.id === 'cyberpunk' ? $t('settings.appearance.schemes.cyberpunk.name') : scheme.name}</span>
+                <span class="scheme-desc">{scheme.id === 'midnight-coral' ? $t('settings.appearance.schemes.midnightCoral.description') : scheme.id === 'purple-green' ? $t('settings.appearance.schemes.purpleGreen.description') : scheme.id === 'cyberpunk' ? $t('settings.appearance.schemes.cyberpunk.description') : scheme.description}</span>
               </button>
             {/each}
           </div>
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Safe Mode</span>
-              <span class="label-hint">Add a confirmation prompt before deleting layers, shaders, clips, or media library entries. Useful when you're moving fast in a session and don't want a misclick to nuke a layer.</span>
+              <span class="label-text">{$t('settings.appearance.safeMode.label')}</span>
+              <span class="label-hint">{$t('settings.appearance.safeMode.hint')}</span>
             </div>
             <label class="toggle">
               <input type="checkbox" checked={$settings.ui.safeMode ?? false}
@@ -741,8 +752,8 @@
                it again, so it doesn't deserve permanent header real estate. -->
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Reverse VJ layout (right-handed)</span>
-              <span class="label-hint">Mirrors the VJ mode layout so the clip grid sits on the right and the preview / controls land on the left. Useful for right-handed users who'd rather scrub the timeline with their dominant hand.</span>
+              <span class="label-text">{$t('settings.appearance.reverseVjLayout.label')}</span>
+              <span class="label-hint">{$t('settings.appearance.reverseVjLayout.hint')}</span>
             </div>
             <label class="toggle">
               <input type="checkbox" checked={$settings.ui.vjLayoutReversed ?? false}
@@ -753,8 +764,8 @@
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Snap to other layers</span>
-              <span class="label-hint">In mapping mode, snap warp handles to nearby layer edges, centers, and canvas edges. Turn off if the snap is fighting you — handles will then move pixel-by-pixel with no magnetism.</span>
+              <span class="label-text">{$t('settings.appearance.snapToLayers.label')}</span>
+              <span class="label-hint">{$t('settings.appearance.snapToLayers.hint')}</span>
             </div>
             <label class="toggle">
               <input type="checkbox" checked={$settings.ui.gridSettings?.snapToLayers !== false}
@@ -780,8 +791,8 @@
                drop the snap entirely (free). -->
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Warp movement granularity</span>
-              <span class="label-hint">Controls mapping-mode mouse snapping and every arrow-key nudge, including corner, whole-layer, and mesh-point movement. Measured in project pixels and independent of editor zoom.</span>
+              <span class="label-text">{$t('settings.appearance.warpGranularity.label')}</span>
+              <span class="label-hint">{$t('settings.appearance.warpGranularity.hint')}</span>
             </div>
             <select
               class="port-input"
@@ -791,33 +802,54 @@
                 settings.update(s => ({ ...s, ui: { ...s.ui, warpDragGranularity: v } }));
               }}
             >
-              <option value="1px">1 pixel (default)</option>
-              <option value="sub">0.5 pixel (sub)</option>
-              <option value="5px">5 pixels</option>
-              <option value="10px">10 pixels</option>
-              <option value="free">Free (no snap)</option>
+              <option value="1px">{$t('settings.appearance.options.warpDefault')}</option>
+              <option value="sub">{$t('settings.appearance.options.warpSub')}</option>
+              <option value="5px">{$t('settings.appearance.options.warp5')}</option>
+              <option value="10px">{$t('settings.appearance.options.warp10')}</option>
+              <option value="free">{$t('settings.appearance.options.warpFree')}</option>
             </select>
           </div>
         </section>
 
         {/if}
+        <!-- Language Section -->
+        {#if selectedSection === 'app:language'}
+        <section class="settings-section">
+          <h3>{$t('settings.language.title')}</h3>
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">{$t('settings.language.interfaceLanguage')}</span>
+              <span class="label-hint">{$t('settings.language.description')}</span>
+            </div>
+            <select
+              aria-label={$t('settings.language.selectAria')}
+              value={$activeLocale}
+              onchange={(e) => setLocale((e.target as HTMLSelectElement).value as AppLocale)}
+            >
+              {#each SUPPORTED_LOCALES as locale}
+                <option value={locale.id}>{locale.label}</option>
+              {/each}
+            </select>
+          </div>
+        </section>
+        {/if}
         <!-- Updates Section -->
         {#if selectedSection === 'app:updates'}
         <section class="settings-section">
-          <h3>Updates</h3>
+          <h3>{$t('settings.updates.heading')}</h3>
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Version</span>
+              <span class="label-text">{$t('settings.updates.version.label')}</span>
               <span class="label-hint">
-                Currently running v{appVersion}.
+                {$t('settings.updates.version.runningPrefix')}{appVersion}.
                 {#if versionInfo?.error}
-                  Last check failed: {versionInfo.error}.
+                  {$t('settings.updates.version.lastCheckFailedPrefix')}{versionInfo.error}.
                 {:else if versionInfo?.hasUpdate && versionInfo.latest}
-                  <strong style="color: #BB86FC;">{versionInfo.latest}</strong> is available — open the download page to install it.
+                  <strong style="color: #BB86FC;">{versionInfo.latest}</strong>{$t('settings.updates.version.availableSuffix')}
                 {:else if versionInfo?.latest && !versionInfo.hasUpdate}
-                  You're on the latest release.
+                  {$t('settings.updates.version.latestRelease')}
                 {:else}
-                  Click to check for newer releases.
+                  {$t('settings.updates.version.checkPrompt')}
                 {/if}
               </span>
             </div>
@@ -830,13 +862,13 @@
                     event.preventDefault();
                     openExternalUrl(versionInfo?.releaseUrl || '');
                   }}
-                >Download page</a>
+                >{$t('settings.updates.downloadPage')}</a>
               {/if}
               <button
                 class="btn-check-update"
                 onclick={async () => { isCheckingUpdate = true; versionInfo = await checkForUpdate({ force: true }); isCheckingUpdate = false; }}
                 disabled={isCheckingUpdate}
-              >{isCheckingUpdate ? 'Checking…' : 'Check for updates'}</button>
+              >{isCheckingUpdate ? $t('settings.updates.checking') : $t('settings.updates.checkForUpdates')}</button>
             </div>
           </div>
         </section>
@@ -848,19 +880,19 @@
              into the Display section. -->
         {#if selectedSection === 'output:display'}
         <section class="settings-section">
-          <h3>Canvas</h3>
+          <h3>{$t('settings.output.canvas.heading')}</h3>
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Resolution</span>
-              <span class="label-hint">Current: {$project.width} x {$project.height}</span>
+              <span class="label-text">{$t('settings.output.canvas.resolution.label')}</span>
+              <span class="label-hint">{$t('settings.output.canvas.resolution.currentPrefix')}{$project.width} x {$project.height}</span>
             </div>
             <select
-              value={isCustomSize ? 'Custom' : canvasPresets.find(p => p.width === $project.width && p.height === $project.height)?.label || 'Custom'}
+              value={isCustomSize ? 'custom' : canvasPresets.find(p => p.width === $project.width && p.height === $project.height)?.id || 'custom'}
               onchange={handleCanvasPresetChange}
             >
               {#each canvasPresets as preset}
-                <option value={preset.label}>{preset.label}</option>
+                <option value={preset.id}>{$t(preset.labelKey)}</option>
               {/each}
             </select>
           </div>
@@ -868,8 +900,8 @@
           {#if isCustomSize}
             <div class="setting-row custom-size-row">
               <div class="setting-label">
-                <span class="label-text">Custom Size</span>
-                <span class="label-hint">Min 128, Max 7680</span>
+                <span class="label-text">{$t('settings.output.canvas.customSize.label')}</span>
+                <span class="label-hint">{$t('settings.output.canvas.customSize.hint')}</span>
               </div>
               <div class="custom-size-inputs">
                 <input
@@ -878,7 +910,7 @@
                   bind:value={customWidth}
                   min="128"
                   max="7680"
-                  placeholder="Width"
+                  placeholder={$t('settings.output.canvas.customSize.widthPlaceholder')}
                 />
                 <span class="size-separator">x</span>
                 <input
@@ -887,10 +919,10 @@
                   bind:value={customHeight}
                   min="128"
                   max="7680"
-                  placeholder="Height"
+                  placeholder={$t('settings.output.canvas.customSize.heightPlaceholder')}
                 />
                 <button class="secondary-btn" onclick={applyCustomCanvasSize}>
-                  Apply
+                  {$t('settings.output.canvas.customSize.apply')}
                 </button>
               </div>
             </div>
@@ -901,36 +933,36 @@
         <!-- Default Layer Shader -->
         {#if selectedSection === 'output:display'}
         <section class="settings-section">
-          <h3>Layers</h3>
+          <h3>{$t('settings.output.layers.heading')}</h3>
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Default Layer Shader</span>
-              <span class="label-hint">Applied automatically when creating a new layer</span>
+              <span class="label-text">{$t('settings.output.layers.defaultShader.label')}</span>
+              <span class="label-hint">{$t('settings.output.layers.defaultShader.hint')}</span>
             </div>
             <select
               value={$settings.defaultLayerShader || 'grid'}
               onchange={(e) => settings.setDefaultLayerShader((e.target as HTMLSelectElement).value as any)}
             >
               {#each DEFAULT_LAYER_SHADERS as shader}
-                <option value={shader.id}>{shader.label}</option>
+                <option value={shader.id}>{$t(`settings.output.layers.defaultShader.options.${shader.id}`)}</option>
               {/each}
             </select>
           </div>
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">New Layer Placement</span>
-              <span class="label-hint">Where a newly-created layer lands in the layer list (Top = renders on top of everything)</span>
+              <span class="label-text">{$t('settings.output.layers.newPlacement.label')}</span>
+              <span class="label-hint">{$t('settings.output.layers.newPlacement.hint')}</span>
             </div>
             <select
               value={$settings.newLayerPlacement || 'top'}
               onchange={(e) => settings.setNewLayerPlacement((e.target as HTMLSelectElement).value as any)}
             >
-              <option value="top">Top of list</option>
-              <option value="aboveActive">Above active layer</option>
-              <option value="belowActive">Below active layer</option>
-              <option value="bottom">Bottom of list</option>
+              <option value="top">{$t('settings.output.layers.placement.top')}</option>
+              <option value="aboveActive">{$t('settings.output.layers.placement.aboveActive')}</option>
+              <option value="belowActive">{$t('settings.output.layers.placement.belowActive')}</option>
+              <option value="bottom">{$t('settings.output.layers.placement.bottom')}</option>
             </select>
           </div>
         </section>
@@ -939,17 +971,17 @@
         <!-- Recording Settings Section -->
         {#if selectedSection === 'recording'}
         <section class="settings-section">
-          <h3>Recording</h3>
+          <h3>{$t('settings.recording.heading')}</h3>
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Video Format</span>
-              <span class="label-hint">Choose the format for screen recordings</span>
+              <span class="label-text">{$t('settings.recording.format.label')}</span>
+              <span class="label-hint">{$t('settings.recording.format.hint')}</span>
             </div>
             <select value={$settings.recording.format} onchange={handleFormatChange}>
               {#each formats as format}
                 <option value={format.id} disabled={!format.supported}>
-                  {format.label} {!format.supported ? '(Not supported)' : ''}
+                  {format.label} {!format.supported ? $t('settings.recording.format.unsupported') : ''}
                 </option>
               {/each}
             </select>
@@ -957,20 +989,20 @@
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Video Quality</span>
-              <span class="label-hint">Higher quality = larger file size</span>
+              <span class="label-text">{$t('settings.recording.quality.label')}</span>
+              <span class="label-hint">{$t('settings.recording.quality.hint')}</span>
             </div>
             <select value={$settings.recording.videoBitrate} onchange={handleBitrateChange}>
               {#each bitrateOptions as option}
-                <option value={option.value}>{option.label}</option>
+                <option value={option.value}>{$t(option.labelKey)}</option>
               {/each}
             </select>
           </div>
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Auto-Download</span>
-              <span class="label-hint">Automatically save recordings when stopped</span>
+              <span class="label-text">{$t('settings.recording.autoDownload.label')}</span>
+              <span class="label-hint">{$t('settings.recording.autoDownload.hint')}</span>
             </div>
             <label class="toggle">
               <input
@@ -984,16 +1016,16 @@
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Save Location</span>
+              <span class="label-text">{$t('settings.recording.saveLocation.label')}</span>
               <span class="label-hint">{$settings.recording.saveDirectoryName}</span>
             </div>
             <div class="button-group">
               <button class="secondary-btn" onclick={handlePickDirectory}>
-                Choose Folder
+                {$t('settings.recording.saveLocation.chooseFolder')}
               </button>
               {#if $settings.recording.saveDirectoryHandle}
                 <button class="text-btn" onclick={handleClearDirectory}>
-                  Reset
+                  {$t('settings.recording.saveLocation.reset')}
                 </button>
               {/if}
             </div>
@@ -1007,9 +1039,9 @@
             </svg>
             <p>
               {#if $settings.recording.saveDirectoryHandle}
-                Recordings will be saved directly to: <strong>{$settings.recording.saveDirectoryName}</strong>
+                {$t('settings.recording.info.directPrefix')}<strong>{$settings.recording.saveDirectoryName}</strong>
               {:else}
-                Recordings will download to your browser's default Downloads folder.
+                {$t('settings.recording.info.browser')}
               {/if}
             </p>
           </div>
@@ -1019,36 +1051,36 @@
         <!-- Output Settings Section -->
         {#if selectedSection === 'output:display'}
         <section class="settings-section">
-          <h3>Render Quality</h3>
+          <h3>{$t('settings.output.renderQuality.heading')}</h3>
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Fluid Quality</span>
-              <span class="label-hint">Controls fluid simulation smoothness vs fidelity</span>
+              <span class="label-text">{$t('settings.output.renderQuality.fluid.label')}</span>
+              <span class="label-hint">{$t('settings.output.renderQuality.fluid.hint')}</span>
             </div>
             <select value={$settings.ui.fluidQuality} onchange={handleFluidQualityChange}>
               {#each fluidQualityModes as mode}
-                <option value={mode.value}>{mode.label}</option>
+                <option value={mode.value}>{$t(mode.labelKey)}</option>
               {/each}
             </select>
           </div>
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Shader Quality</span>
-              <span class="label-hint">Default render resolution for shader layers (override per-layer in Layer Panel)</span>
+              <span class="label-text">{$t('settings.output.renderQuality.shader.label')}</span>
+              <span class="label-hint">{$t('settings.output.renderQuality.shader.hint')}</span>
             </div>
             <select value={$settings.ui.shaderQuality} onchange={handleShaderQualityChange}>
               {#each shaderQualityModes as mode}
-                <option value={mode.value}>{mode.label}</option>
+                <option value={mode.value}>{$t(mode.labelKey)}</option>
               {/each}
             </select>
           </div>
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">{tsLabel} Output</span>
-              <span class="label-hint">Share GPU texture to other applications</span>
+              <span class="label-text">{tsLabel}{$t('settings.output.spout.labelSuffix')}</span>
+              <span class="label-hint">{$t('settings.output.spout.hint')}</span>
             </div>
             <label class="toggle">
               <input
@@ -1063,30 +1095,30 @@
           {#if $settings.output.spoutEnabled}
             <div class="setting-row">
               <div class="setting-label">
-                <span class="label-text">Sender Name</span>
-                <span class="label-hint">Visible to {tsLabel} receivers (e.g. OBS, TouchDesigner)</span>
+                <span class="label-text">{$t('settings.output.spout.senderName.label')}</span>
+                <span class="label-hint">{$t('settings.output.spout.senderName.hintPrefix')}{tsLabel}{$t('settings.output.spout.senderName.hintSuffix')}</span>
               </div>
               <input
                 type="text"
                 class="text-input"
                 value={$settings.output.spoutName}
                 onchange={handleSpoutNameChange}
-                placeholder="ghostArcade"
+                placeholder={$t('settings.output.spout.senderName.placeholder')}
               />
             </div>
 
             <div class="setting-row">
               <div class="setting-label">
-                <span class="label-text">Output Resolution</span>
+                <span class="label-text">{$t('settings.output.spout.resolution.label')}</span>
                 <span class="label-hint">{$settings.output.spoutResolution === 'output' && detectedOutputRes
-                  ? `Detected: ${detectedOutputRes.width}×${detectedOutputRes.height}`
-                  : `Resolution of the ${tsLabel} texture`}</span>
+                  ? `${$t('settings.output.spout.resolution.detectedPrefix')}${detectedOutputRes.width}×${detectedOutputRes.height}`
+                  : `${$t('settings.output.spout.resolution.texturePrefix')}${tsLabel}${$t('settings.output.spout.resolution.textureSuffix')}`}</span>
               </div>
               <select value={$settings.output.spoutResolution} onchange={handleSpoutResolutionChange}>
                 {#each spoutResolutions as opt}
                   <option value={opt.value}>{opt.value === 'output' && detectedOutputRes
-                    ? `Match Output (${detectedOutputRes.width}×${detectedOutputRes.height})`
-                    : opt.label}</option>
+                    ? `${$t('settings.output.spout.resolution.matchOutputPrefix')}${detectedOutputRes.width}×${detectedOutputRes.height}${$t('settings.output.spout.resolution.matchOutputSuffix')}`
+                    : $t(opt.labelKey)}</option>
                 {/each}
               </select>
             </div>
@@ -1094,7 +1126,7 @@
             {#if $settings.output.spoutResolution === 'custom'}
               <div class="setting-row">
                 <div class="setting-label">
-                  <span class="label-text">Custom Size</span>
+                  <span class="label-text">{$t('settings.output.spout.customSize')}</span>
                 </div>
                 <div class="custom-res-inputs">
                   <input type="number" class="text-input small-input" min="128" max="7680" value={$settings.output.customWidth}
@@ -1113,9 +1145,8 @@
                 <line x1="12" y1="8" x2="12.01" y2="8"/>
               </svg>
               <p>
-                Output will be shared as <strong>"{$settings.output.spoutName}"</strong> to any
-                {tsLabel}-compatible application on this machine (OBS, TouchDesigner, etc).
-                Full GPU texture sharing is available in the desktop build.
+                {$t('settings.output.spout.info.prefix')}<strong>"{$settings.output.spoutName}"</strong>{$t('settings.output.spout.info.middle')}{tsLabel}{$t('settings.output.spout.info.suffix')}
+                {$t('settings.output.spout.info.desktop')}
               </p>
             </div>
           {/if}
@@ -1123,28 +1154,28 @@
 
         <!-- Output Display Section -->
         <section class="settings-section">
-          <h3>Display</h3>
+          <h3>{$t('settings.output.display.heading')}</h3>
 
           <!-- Match Resolution: snaps the project canvas to the native pixel
                dimensions of the display the output window is on (or would be).
                Eliminates source→projector scaling entirely. -->
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Resolution</span>
+              <span class="label-text">{$t('settings.output.display.resolution.label')}</span>
               <span class="label-hint">
-                Project canvas: <strong>{$project.width}×{$project.height}</strong>
+                {$t('settings.output.display.resolution.canvasPrefix')}<strong>{$project.width}×{$project.height}</strong>
                 {#if matchResLabel}<br/><em style="color: #BB86FC;">{matchResLabel}</em>{/if}
               </span>
             </div>
             <button class="secondary-btn" onclick={handleMatchResolution} disabled={matchResBusy}>
-              {matchResBusy ? 'Detecting…' : 'Match Output Display'}
+              {matchResBusy ? $t('settings.output.display.resolution.detecting') : $t('settings.output.display.resolution.matchOutput')}
             </button>
           </div>
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Output Rotation</span>
-              <span class="label-hint">Rotate the output for portrait projectors</span>
+              <span class="label-text">{$t('settings.output.display.rotation.label')}</span>
+              <span class="label-hint">{$t('settings.output.display.rotation.hint')}</span>
             </div>
             <div class="rotation-buttons">
               <button class="rot-btn" class:active={outputRotation === 0} onclick={() => setOutputRotation(0)}>0°</button>
@@ -1156,8 +1187,8 @@
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Input Crop</span>
-              <span class="label-hint">Crop the output region</span>
+              <span class="label-text">{$t('settings.output.display.inputCrop.label')}</span>
+              <span class="label-hint">{$t('settings.output.display.inputCrop.hint')}</span>
             </div>
           </div>
           <div class="crop-grid">
@@ -1186,14 +1217,14 @@
               <span class="crop-value">{Math.round(outputCropRegion.height * 100)}%</span>
             </div>
             <button class="secondary-btn" onclick={resetOutputCrop}>
-              Reset Crop
+              {$t('settings.output.display.inputCrop.reset')}
             </button>
           </div>
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Show Cursor on Output</span>
-              <span class="label-hint">Visualises mouse position on the output window</span>
+              <span class="label-text">{$t('settings.output.display.cursor.label')}</span>
+              <span class="label-hint">{$t('settings.output.display.cursor.hint')}</span>
             </div>
             <label class="toggle">
               <input
@@ -1214,24 +1245,24 @@
                  the MessagePort cursorStyle message. -->
             <div class="setting-row sub-row">
               <div class="setting-label">
-                <span class="label-text">Style</span>
+                <span class="label-text">{$t('settings.output.display.cursor.style')}</span>
               </div>
               <select
                 class="select-input"
                 value={$settings.output.outputCursorStyle ?? 'crosshair'}
                 onchange={(e) => settings.update(s => ({ ...s, output: { ...s.output, outputCursorStyle: (e.target as HTMLSelectElement).value as any } }))}
               >
-                <option value="crosshair">Crosshair</option>
-                <option value="circle">Circle</option>
-                <option value="dot">Dot</option>
-                <option value="reticle">Reticle</option>
-                <option value="fullscreen">Fullscreen lines</option>
+                <option value="crosshair">{$t('settings.output.display.cursor.options.crosshair')}</option>
+                <option value="circle">{$t('settings.output.display.cursor.options.circle')}</option>
+                <option value="dot">{$t('settings.output.display.cursor.options.dot')}</option>
+                <option value="reticle">{$t('settings.output.display.cursor.options.reticle')}</option>
+                <option value="fullscreen">{$t('settings.output.display.cursor.options.fullscreen')}</option>
               </select>
             </div>
 
             <div class="setting-row sub-row">
               <div class="setting-label">
-                <span class="label-text">Size</span>
+                <span class="label-text">{$t('settings.output.display.cursor.size')}</span>
                 <span class="label-hint">{$settings.output.outputCursorSize ?? 28}px</span>
               </div>
               <input
@@ -1244,8 +1275,8 @@
 
             <div class="setting-row sub-row">
               <div class="setting-label">
-                <span class="label-text">Thickness</span>
-                <span class="label-hint">{$settings.output.outputCursorThickness ?? 2}px (1 = hairline for macro)</span>
+                <span class="label-text">{$t('settings.output.display.cursor.thickness')}</span>
+                <span class="label-hint">{$settings.output.outputCursorThickness ?? 2}px{$t('settings.output.display.cursor.hairline')}</span>
               </div>
               <input
                 type="range"
@@ -1257,7 +1288,7 @@
 
             <div class="setting-row sub-row">
               <div class="setting-label">
-                <span class="label-text">Color</span>
+                <span class="label-text">{$t('settings.output.display.cursor.color')}</span>
               </div>
               <input
                 type="color"
@@ -1268,7 +1299,7 @@
 
             <div class="setting-row sub-row">
               <div class="setting-label">
-                <span class="label-text">Opacity</span>
+                <span class="label-text">{$t('settings.output.display.cursor.opacity')}</span>
                 <span class="label-hint">{Math.round(($settings.output.outputCursorOpacity ?? 0.85) * 100)}%</span>
               </div>
               <input
@@ -1311,13 +1342,13 @@
         <section class="settings-section">
           <div class="setting-row" style="border-bottom: 1px solid rgba(255,255,255,0.06); padding-bottom: 12px;">
             <div class="setting-label" style="flex: 1;">
-              <span class="label-text" style="color: #BB86FC;">Tune the editor for your hardware</span>
+              <span class="label-text" style="color: #BB86FC;">{$t('settings.performance.intro.heading')}</span>
               <span class="label-hint" style="line-height: 1.5;">
-                If the app feels laggy, step these down until it feels smooth. None of these change your output content — only how the editor renders and the output stream encodes. Capable machines should leave everything at the defaults.
+                {$t('settings.performance.intro.hint')}
                 <br/><br/>
                 <a href="https://ghostarcade.live/docs/performance" target="_blank" rel="noopener noreferrer"
                    style="color: #BB86FC; text-decoration: underline; font-weight: 600;">
-                  Full guide: optimizing Ghost Arcade for your machine →
+                  {$t('settings.performance.intro.guide')}
                 </a>
               </span>
             </div>
@@ -1333,7 +1364,7 @@
              effect / layer that disappeared from their picker.
              ───────────────────────────────────────────────────────── -->
         <section class="settings-section">
-          <h3>GPU Acceleration <span style="font-size: 11px; padding: 2px 6px; margin-left: 6px; background: linear-gradient(135deg, #1e3a8a, #7c2d12); color: #fff; border-radius: 3px; vertical-align: middle;">EXPERIMENTAL</span></h3>
+          <h3>{$t('settings.performance.gpu.heading')} <span style="font-size: 11px; padding: 2px 6px; margin-left: 6px; background: linear-gradient(135deg, #1e3a8a, #7c2d12); color: #fff; border-radius: 3px; vertical-align: middle;">{$t('settings.performance.gpu.experimental')}</span></h3>
           <!-- Restart-required banner. The renderer chooses which canvas
                and effect-chain path to mount at boot, so toggling these
                flags mid-session leaves a broken state (grid disappears,
@@ -1344,13 +1375,11 @@
           {#if gpuRestartRequired}
             <div class="gpu-restart-banner" role="alert">
               <div class="gpu-restart-text">
-                <strong>Restart required.</strong>
-                These GPU settings only take effect on a fresh process —
-                the editor will appear broken (no grid, missing frames)
-                until you restart the app.
+                <strong>{$t('settings.performance.gpu.restart.required')}</strong>
+                {$t('settings.performance.gpu.restart.description')}
               </div>
               <button class="primary-btn" onclick={restartApp} disabled={restarting} style="white-space: nowrap;">
-                {restarting ? 'Restarting…' : 'Restart app'}
+                {restarting ? $t('settings.performance.gpu.restart.restarting') : $t('settings.performance.gpu.restart.restartApp')}
               </button>
             </div>
           {/if}
@@ -1358,44 +1387,44 @@
             <div class="setting-label" style="flex: 1;">
               <span class="label-text" style:color={webgpuSupported ? '#4caf50' : '#fbbf24'}>
                 {#if webgpuProbing}
-                  Probing WebGPU…
+                  {$t('settings.performance.gpu.status.probing')}
                 {:else if webgpuSupported}
-                  ✓ WebGPU detected
+                  {$t('settings.performance.gpu.status.detected')}
                 {:else}
-                  ⚠ WebGPU not available
+                  {$t('settings.performance.gpu.status.unavailable')}
                 {/if}
               </span>
               <span class="label-hint" style="line-height: 1.5;">
                 {#if webgpuSupported}
-                  Adapter:
+                  {$t('settings.performance.gpu.status.adapterPrefix')}
                   <strong>
-                    {webgpuInfo.description || webgpuInfo.vendor || 'unknown'}
+                    {webgpuInfo.description || webgpuInfo.vendor || $t('settings.performance.gpu.status.unknown')}
                     {#if webgpuInfo.architecture}({webgpuInfo.architecture}){/if}
                   </strong>
                   {#if webgpuInfo.isFallbackAdapter}
-                    <br/><span style="color: #fbbf24;">⚠ Software fallback adapter — performance will be limited.</span>
+                    <br/><span style="color: #fbbf24;">{$t('settings.performance.gpu.status.softwareFallback')}</span>
                   {/if}
                   <br/>
-                  Hardware-accelerated rendering paths are available. The toggles below let you turn the GPU bridge and the zero-copy output transport on or off independently.
+                  {$t('settings.performance.gpu.status.availableHint')}
                 {:else}
-                  {webgpuInfo.failReason ? `Reason: ${webgpuInfo.failReason}.` : 'Your browser/device did not return a WebGPU adapter.'}
+                  {webgpuInfo.failReason ? `${$t('settings.performance.gpu.status.reasonPrefix')}${webgpuInfo.failReason}.` : $t('settings.performance.gpu.status.noAdapter')}
                   <br/>
-                  Effects and layers that require WebGPU (e.g. <em>Fluid Sim</em>, the GPU Shader layer) are hidden in the picker so you don't try to add something that won't run. The legacy WebGL pipeline keeps the rest of the app working normally.
+                  {$t('settings.performance.gpu.status.unavailableHint')}
                 {/if}
               </span>
             </div>
             <button class="primary-btn" onclick={refreshWebGPUStatus} disabled={webgpuProbing} style="white-space: nowrap;">
-              {webgpuProbing ? 'Probing…' : 'Re-probe'}
+              {webgpuProbing ? $t('settings.performance.gpu.status.probingButton') : $t('settings.performance.gpu.status.reprobe')}
             </button>
           </div>
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Editor GPU bridge</span>
+              <span class="label-text">{$t('settings.performance.gpu.editorBridge.label')}</span>
               <span class="label-hint">
-                Use the WebGPU + VideoFrame bridge for the editor → output handoff. When off, falls back to the legacy WebGL transport (works everywhere, slightly higher latency, no zero-copy).
+                {$t('settings.performance.gpu.editorBridge.hint')}
                 {#if !webgpuSupported}
-                  <br/><em style="color: #999;">Disabled — requires WebGPU.</em>
+                  <br/><em style="color: #999;">{$t('settings.performance.gpu.editorBridge.disabled')}</em>
                 {/if}
               </span>
             </div>
@@ -1412,11 +1441,11 @@
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Zero-copy GPU output</span>
+              <span class="label-text">{$t('settings.performance.gpu.zeroCopy.label')}</span>
               <span class="label-hint">
-                Send frames to the output window via WebGPU's <code>importExternalTexture</code> — no encode/decode round trip, true 4K60. Falls back to the legacy WebRTC/Spout transport when off or when WebGPU is unavailable. Apply on next output-window open.
+                {$t('settings.performance.gpu.zeroCopy.hint')}
                 {#if !webgpuSupported}
-                  <br/><em style="color: #999;">Disabled — requires WebGPU.</em>
+                  <br/><em style="color: #999;">{$t('settings.performance.gpu.zeroCopy.disabled')}</em>
                 {/if}
               </span>
             </div>
@@ -1433,11 +1462,11 @@
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Mid-chain GPU effects</span>
+              <span class="label-text">{$t('settings.performance.gpu.midChain.label')}</span>
               <span class="label-hint">
-                Allow WebGPU effects (e.g. <em>Fluid Sim</em>) in the middle of a layer's effect chain. Adds a ~3 ms GPU↔CPU round-trip per affected effect; turn off if you're not using GPU effects and want the steady-state path purely WebGL.
+                {$t('settings.performance.gpu.midChain.hint')}
                 {#if !webgpuSupported}
-                  <br/><em style="color: #999;">Disabled — requires WebGPU.</em>
+                  <br/><em style="color: #999;">{$t('settings.performance.gpu.midChain.disabled')}</em>
                 {/if}
               </span>
             </div>
@@ -1456,129 +1485,127 @@
         {/if}
         {#if selectedSection === 'performance:render-quality'}
         <section class="settings-section">
-          <h3>Render Quality</h3>
+          <h3>{$t('settings.performance.renderQuality.heading')}</h3>
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Shader Quality</span>
-              <span class="label-hint">Internal render resolution for shader layers. Full = native; lower scales then upscales.</span>
+              <span class="label-text">{$t('settings.performance.renderQuality.shader.label')}</span>
+              <span class="label-hint">{$t('settings.performance.renderQuality.shader.hint')}</span>
             </div>
             <select value={$settings.ui.shaderQuality} onchange={handleShaderQualityChange}>
-              <option value="full">Full</option>
-              <option value="high">High (0.75x)</option>
-              <option value="medium">Medium (0.5x)</option>
-              <option value="low">Low (0.25x)</option>
+              <option value="full">{$t('settings.performance.renderQuality.shader.full')}</option>
+              <option value="high">{$t('settings.performance.renderQuality.shader.high')}</option>
+              <option value="medium">{$t('settings.performance.renderQuality.shader.medium')}</option>
+              <option value="low">{$t('settings.performance.renderQuality.shader.low')}</option>
             </select>
           </div>
         </section>
 
         <section class="settings-section">
-          <h3>Editor Render</h3>
+          <h3>{$t('settings.performance.editorRender.heading')}</h3>
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Editor Frame Rate Cap</span>
-              <span class="label-hint">
-                Caps editor render fps. Projectors are 60Hz; rendering at 120/144/165Hz on a high-refresh monitor wastes GPU. Cap to 60 to free budget. Input remains responsive. Applies to mapping mode too.
-              </span>
+              <span class="label-text">{$t('settings.performance.editorRender.frameRate.label')}</span>
+              <span class="label-hint">{$t('settings.performance.editorRender.frameRate.hint')}</span>
             </div>
             <select value={String($settings.performance.editorMaxFps)}
               onchange={(e) => settings.update(s => ({ ...s, performance: { ...s.performance, editorMaxFps: parseInt((e.target as HTMLSelectElement).value) as 0 | 30 | 60 } }))}>
-              <option value="0">Uncapped (match display)</option>
-              <option value="60">60 fps</option>
-              <option value="30">30 fps</option>
+              <option value="0">{$t('settings.performance.editorRender.frameRate.uncapped')}</option>
+              <option value="60">{$t('settings.performance.editorRender.frameRate.fps60')}</option>
+              <option value="30">{$t('settings.performance.editorRender.frameRate.fps30')}</option>
             </select>
           </div>
         </section>
 
         <section class="settings-section">
-          <h3>VJ Preview</h3>
+          <h3>{$t('settings.performance.vjPreview.heading')}</h3>
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Preview Resolution</span>
-              <span class="label-hint">Long-edge cap for the VJ mode preview. Lower frees GPU. Doesn't affect output.</span>
+              <span class="label-text">{$t('settings.performance.vjPreview.resolution.label')}</span>
+              <span class="label-hint">{$t('settings.performance.vjPreview.resolution.hint')}</span>
             </div>
             <select value={String($settings.performance.previewMaxDim)}
               onchange={(e) => settings.update(s => ({ ...s, performance: { ...s.performance, previewMaxDim: parseInt((e.target as HTMLSelectElement).value) } }))}>
-              <option value="0">Full (match canvas)</option>
-              <option value="1280">1280 px (720p)</option>
-              <option value="960">960 px</option>
-              <option value="640">640 px (recommended on integrated GPU)</option>
-              <option value="480">480 px (minimum)</option>
+              <option value="0">{$t('settings.performance.vjPreview.resolution.full')}</option>
+              <option value="1280">{$t('settings.performance.vjPreview.resolution.hd')}</option>
+              <option value="960">{$t('settings.performance.vjPreview.resolution.px960')}</option>
+              <option value="640">{$t('settings.performance.vjPreview.resolution.px640')}</option>
+              <option value="480">{$t('settings.performance.vjPreview.resolution.px480')}</option>
             </select>
           </div>
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Preview Refresh Rate</span>
-              <span class="label-hint">FPS for the preview canvas. 30 is enough to monitor; 15 frees a lot of budget.</span>
+              <span class="label-text">{$t('settings.performance.vjPreview.refresh.label')}</span>
+              <span class="label-hint">{$t('settings.performance.vjPreview.refresh.hint')}</span>
             </div>
             <select value={String($settings.performance.previewFrameRate)}
               onchange={(e) => settings.update(s => ({ ...s, performance: { ...s.performance, previewFrameRate: parseInt((e.target as HTMLSelectElement).value) as 60 | 30 | 15 } }))}>
-              <option value="60">60 fps</option>
-              <option value="30">30 fps</option>
-              <option value="15">15 fps</option>
+              <option value="60">{$t('settings.performance.vjPreview.refresh.fps60')}</option>
+              <option value="30">{$t('settings.performance.vjPreview.refresh.fps30')}</option>
+              <option value="15">{$t('settings.performance.vjPreview.refresh.fps15')}</option>
             </select>
           </div>
         </section>
 
         <section class="settings-section">
-          <h3>Output Stream</h3>
+          <h3>{$t('settings.performance.outputStream.heading')}</h3>
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Output Frame Rate</span>
-              <span class="label-hint">Encoder rate for the output window. 60 = silky; 30 = projector standard; 24 = cinematic.</span>
+              <span class="label-text">{$t('settings.performance.outputStream.frameRate.label')}</span>
+              <span class="label-hint">{$t('settings.performance.outputStream.frameRate.hint')}</span>
             </div>
             <select value={String($settings.performance.outputFrameRate)}
               onchange={(e) => settings.update(s => ({ ...s, performance: { ...s.performance, outputFrameRate: parseInt((e.target as HTMLSelectElement).value) as 60 | 30 | 24 } }))}>
-              <option value="60">60 fps</option>
-              <option value="30">30 fps</option>
-              <option value="24">24 fps</option>
+              <option value="60">{$t('settings.performance.outputStream.frameRate.fps60')}</option>
+              <option value="30">{$t('settings.performance.outputStream.frameRate.fps30')}</option>
+              <option value="24">{$t('settings.performance.outputStream.frameRate.fps24')}</option>
             </select>
           </div>
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Max Bitrate</span>
-              <span class="label-hint">Encoder bitrate ceiling. Same-process loopback so the rate doesn't go on a wire — high = near-lossless, low = encoder works less.</span>
+              <span class="label-text">{$t('settings.performance.outputStream.bitrate.label')}</span>
+              <span class="label-hint">{$t('settings.performance.outputStream.bitrate.hint')}</span>
             </div>
             <select value={String($settings.performance.outputMaxBitrate)}
               onchange={(e) => settings.update(s => ({ ...s, performance: { ...s.performance, outputMaxBitrate: parseInt((e.target as HTMLSelectElement).value) } }))}>
-              <option value="80000000">High — 80 Mbps</option>
-              <option value="40000000">Medium — 40 Mbps</option>
-              <option value="20000000">Low — 20 Mbps</option>
-              <option value="10000000">Minimum — 10 Mbps</option>
+              <option value="80000000">{$t('settings.performance.outputStream.bitrate.high')}</option>
+              <option value="40000000">{$t('settings.performance.outputStream.bitrate.medium')}</option>
+              <option value="20000000">{$t('settings.performance.outputStream.bitrate.low')}</option>
+              <option value="10000000">{$t('settings.performance.outputStream.bitrate.minimum')}</option>
             </select>
           </div>
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Quality vs Smoothness</span>
-              <span class="label-hint">How the encoder degrades under load: keep pixels (drop fps), keep smoothness (drop pixels), or balanced.</span>
+              <span class="label-text">{$t('settings.performance.outputStream.degradation.label')}</span>
+              <span class="label-hint">{$t('settings.performance.outputStream.degradation.hint')}</span>
             </div>
             <select value={$settings.performance.outputDegradationPreference}
               onchange={(e) => settings.update(s => ({ ...s, performance: { ...s.performance, outputDegradationPreference: (e.target as HTMLSelectElement).value as 'maintain-resolution' | 'maintain-framerate' | 'balanced' } }))}>
-              <option value="maintain-resolution">Maintain Resolution</option>
-              <option value="maintain-framerate">Maintain Frame Rate</option>
-              <option value="balanced">Balanced</option>
+              <option value="maintain-resolution">{$t('settings.performance.outputStream.degradation.resolution')}</option>
+              <option value="maintain-framerate">{$t('settings.performance.outputStream.degradation.frameRate')}</option>
+              <option value="balanced">{$t('settings.performance.outputStream.degradation.balanced')}</option>
             </select>
           </div>
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Video Codec</span>
+              <span class="label-text">{$t('settings.performance.outputStream.codec.label')}</span>
               <span class="label-hint">
-                Auto picks VP9 first (best quality/bitrate). Force H.264 if your machine has hardware H.264 — usually a big perf win.
+                {$t('settings.performance.outputStream.codec.hint')}
                 {#if codecEncode}
-                  <br/>Available on this machine: {[codecEncode.vp9 && 'VP9', codecEncode.h264 && 'H.264', codecEncode.vp8 && 'VP8', codecEncode.av1 && 'AV1'].filter(Boolean).join(' · ') || 'none detected'}.
+                  <br/>{$t('settings.performance.outputStream.codec.availablePrefix')}{[codecEncode.vp9 && 'VP9', codecEncode.h264 && 'H.264', codecEncode.vp8 && 'VP8', codecEncode.av1 && 'AV1'].filter(Boolean).join(' · ') || $t('settings.performance.outputStream.codec.none')}.
                 {/if}
               </span>
             </div>
             <select value={$settings.performance.outputCodecPreference}
               onchange={(e) => settings.update(s => ({ ...s, performance: { ...s.performance, outputCodecPreference: (e.target as HTMLSelectElement).value as 'auto' | 'h264' | 'vp8' } }))}>
-              <option value="auto">Auto (recommended)</option>
-              <option value="h264">Force H.264</option>
-              <option value="vp8">Force VP8 (compatibility)</option>
+              <option value="auto">{$t('settings.performance.outputStream.codec.auto')}</option>
+              <option value="h264">{$t('settings.performance.outputStream.codec.h264')}</option>
+              <option value="vp8">{$t('settings.performance.outputStream.codec.vp8')}</option>
             </select>
           </div>
           <div class="setting-row" style="border-top: 1px solid rgba(255,255,255,0.06); padding-top: 8px; margin-top: 4px;">
             <div class="setting-label" style="flex: 1;">
               <span class="label-hint" style="opacity: 0.7;">
-                <strong>Apply on next output-window open.</strong> Stream-tuning settings take effect when the output window opens — close and reopen the output for changes to apply.
+                {$t('settings.performance.outputStream.applyHint')}
               </span>
             </div>
           </div>
@@ -1587,26 +1614,26 @@
         {/if}
         {#if selectedSection === 'performance:video-decoding'}
         <section class="settings-section">
-          <h3>Video Decoding (read-only)</h3>
+          <h3>{$t('settings.performance.videoDecoding.heading')}</h3>
           <div class="setting-row">
             <div class="setting-label" style="flex: 1;">
               <span class="label-hint" style="line-height: 1.7;">
                 {#if codecDecode}
-                  <strong>H.264:</strong> <span style:color={codecDecode.h264 === 'hw' ? '#4caf50' : codecDecode.h264 === 'sw' ? '#fbbf24' : '#999'}>{formatDecodeSupport(codecDecode.h264)}</span>
+                  <strong>H.264:</strong> <span style:color={codecDecode.h264 === 'hw' ? '#4caf50' : codecDecode.h264 === 'sw' ? '#fbbf24' : '#999'}>{localizedDecodeSupport(codecDecode.h264)}</span>
                   &nbsp;·&nbsp;
-                  <strong>HEVC:</strong> <span style:color={codecDecode.hevc === 'hw' ? '#4caf50' : codecDecode.hevc === 'sw' ? '#fbbf24' : '#999'}>{formatDecodeSupport(codecDecode.hevc)}</span>
+                  <strong>HEVC:</strong> <span style:color={codecDecode.hevc === 'hw' ? '#4caf50' : codecDecode.hevc === 'sw' ? '#fbbf24' : '#999'}>{localizedDecodeSupport(codecDecode.hevc)}</span>
                   &nbsp;·&nbsp;
-                  <strong>VP9:</strong> <span style:color={codecDecode.vp9 === 'hw' ? '#4caf50' : codecDecode.vp9 === 'sw' ? '#fbbf24' : '#999'}>{formatDecodeSupport(codecDecode.vp9)}</span>
+                  <strong>VP9:</strong> <span style:color={codecDecode.vp9 === 'hw' ? '#4caf50' : codecDecode.vp9 === 'sw' ? '#fbbf24' : '#999'}>{localizedDecodeSupport(codecDecode.vp9)}</span>
                   &nbsp;·&nbsp;
-                  <strong>AV1:</strong> <span style:color={codecDecode.av1 === 'hw' ? '#4caf50' : codecDecode.av1 === 'sw' ? '#fbbf24' : '#999'}>{formatDecodeSupport(codecDecode.av1)}</span>
+                  <strong>AV1:</strong> <span style:color={codecDecode.av1 === 'hw' ? '#4caf50' : codecDecode.av1 === 'sw' ? '#fbbf24' : '#999'}>{localizedDecodeSupport(codecDecode.av1)}</span>
                   <br/><br/>
-                  For best playback performance, re-encode your video clips with a codec your machine decodes in <strong style="color: #4caf50;">hardware</strong>.
+                  {$t('settings.performance.videoDecoding.playbackHint')}
                   <a href="https://ghostarcade.live/docs/performance#video-codecs" target="_blank" rel="noopener noreferrer"
                      style="color: #BB86FC; text-decoration: underline;">
-                    See ffmpeg recipes →
+                    {$t('settings.performance.videoDecoding.ffmpeg')}
                   </a>
                 {:else}
-                  Probing decode capabilities…
+                  {$t('settings.performance.videoDecoding.probing')}
                 {/if}
               </span>
             </div>
@@ -1617,16 +1644,16 @@
         <!-- MIDI Settings Section -->
         {#if selectedSection === 'integrations:midi'}
         <section class="settings-section">
-          <h3>MIDI Controller</h3>
+          <h3>{$t('settings.integrations.midi.heading')}</h3>
 
           {#if midiAvailable}
             <div class="setting-row">
               <div class="setting-label">
-                <span class="label-text">MIDI Device</span>
-                <span class="label-hint">Select your MIDI controller input</span>
+                <span class="label-text">{$t('settings.integrations.midi.device.label')}</span>
+                <span class="label-hint">{$t('settings.integrations.midi.device.hint')}</span>
               </div>
               <select value={midiSelectedId || ''} onchange={handleMidiDeviceChange}>
-                <option value="">No MIDI Device</option>
+                <option value="">{$t('settings.integrations.midi.device.none')}</option>
                 {#each midiDevices as device}
                   <option value={device.id}>{device.name}</option>
                 {/each}
@@ -1635,8 +1662,8 @@
 
             <div class="setting-row">
               <div class="setting-label">
-                <span class="label-text">MIDI Learn Mode</span>
-                <span class="label-hint">Click a parameter, then move a MIDI control to map it</span>
+                <span class="label-text">{$t('settings.integrations.midi.learn.label')}</span>
+                <span class="label-hint">{$t('settings.integrations.midi.learn.hint')}</span>
               </div>
               <button
                 class="secondary-btn midi-learn-btn"
@@ -1644,7 +1671,7 @@
                 disabled={midiDevices.length === 0 && !midiEditMode}
                 onclick={() => midiStore.toggleEditMode()}
               >
-                {midiEditMode ? 'Exit MIDI Learn' : midiDevices.length === 0 ? 'No MIDI Device' : 'Enter MIDI Learn'}
+                {midiEditMode ? $t('settings.integrations.midi.learn.exit') : midiDevices.length === 0 ? $t('settings.integrations.midi.device.none') : $t('settings.integrations.midi.learn.enter')}
               </button>
             </div>
 
@@ -1655,17 +1682,17 @@
                 <line x1="12" y1="8" x2="12.01" y2="8"/>
               </svg>
               <p>
-                In MIDI Learn mode, click any parameter slider in the main UI, then move a knob or fader on your MIDI controller to create a mapping. Press <strong>ESC</strong> to exit learn mode.
+                {$t('settings.integrations.midi.learnInfo')}
               </p>
             </div>
 
             <!-- MIDI Clock — sync to / from external transport -->
-            <h3 style="margin-top: 18px;">MIDI Clock</h3>
+            <h3 style="margin-top: 18px;">{$t('settings.integrations.midi.clock.heading')}</h3>
 
             <div class="setting-row">
               <div class="setting-label">
-                <span class="label-text">Receive MIDI Clock</span>
-                <span class="label-hint">Sync BPM from a DAW, drum machine, or other clock master</span>
+                <span class="label-text">{$t('settings.integrations.midi.clock.receive.label')}</span>
+                <span class="label-hint">{$t('settings.integrations.midi.clock.receive.hint')}</span>
               </div>
               <label class="toggle">
                 <input type="checkbox"
@@ -1679,11 +1706,11 @@
             {#if $midiStore.clockInEnabled}
               <div class="setting-row" style="padding-left: 16px;">
                 <div class="setting-label">
-                  <span class="label-text">Clock Input</span>
-                  <span class="label-hint">Use a separate virtual MIDI port when clock and controls come from different places</span>
+                  <span class="label-text">{$t('settings.integrations.midi.clock.input.label')}</span>
+                  <span class="label-hint">{$t('settings.integrations.midi.clock.input.hint')}</span>
                 </div>
                 <select value={midiClockSelectedId || ''} onchange={handleMidiClockDeviceChange}>
-                  <option value="">Same as MIDI Device</option>
+                  <option value="">{$t('settings.integrations.midi.clock.input.same')}</option>
                   {#each midiDevices as device}
                     <option value={device.id}>{device.name}</option>
                   {/each}
@@ -1691,8 +1718,8 @@
               </div>
               <div class="setting-row" style="padding-left: 16px;">
                 <div class="setting-label">
-                  <span class="label-text">Clock Status</span>
-                  <span class="label-hint">{$midiStore.clockInRunning ? 'Running' : 'Idle'}{$midiStore.clockInBPM ? ` · ${$midiStore.clockInBPM.toFixed(1)} BPM` : ''}</span>
+                  <span class="label-text">{$t('settings.integrations.midi.clock.status.label')}</span>
+                  <span class="label-hint">{$midiStore.clockInRunning ? $t('settings.integrations.midi.clock.status.running') : $t('settings.integrations.midi.clock.status.idle')}{$midiStore.clockInBPM ? ` · ${$midiStore.clockInBPM.toFixed(1)} BPM` : ''}</span>
                 </div>
                 <span class="clock-status-dot" class:on={$midiStore.clockInRunning}></span>
               </div>
@@ -1700,8 +1727,8 @@
 
             <div class="setting-row">
               <div class="setting-label">
-                <span class="label-text">Send MIDI Clock</span>
-                <span class="label-hint">Drive slaved devices at the master BPM (24 PPQN) — use this to sync drum machines / synths to Ghost Arcade</span>
+                <span class="label-text">{$t('settings.integrations.midi.clock.send.label')}</span>
+                <span class="label-hint">{$t('settings.integrations.midi.clock.send.hint')}</span>
               </div>
               <label class="toggle">
                 <input type="checkbox"
@@ -1715,14 +1742,14 @@
             {#if $midiStore.clockOutEnabled || $midiStore.outputDevices.length > 0}
               <div class="setting-row">
                 <div class="setting-label">
-                  <span class="label-text">Output Device</span>
-                  <span class="label-hint">Where to send clock ticks</span>
+                  <span class="label-text">{$t('settings.integrations.midi.clock.output.label')}</span>
+                  <span class="label-hint">{$t('settings.integrations.midi.clock.output.hint')}</span>
                 </div>
                 <select
                   value={$midiStore.selectedOutputId || ''}
                   onchange={(e) => midiManager.selectOutputDevice((e.target as HTMLSelectElement).value || null)}
                 >
-                  <option value="">No Output Device</option>
+                  <option value="">{$t('settings.integrations.midi.clock.output.none')}</option>
                   {#each $midiStore.outputDevices.filter(d => d.state === 'connected') as device (device.id)}
                     <option value={device.id}>{device.name}</option>
                   {/each}
@@ -1733,12 +1760,12 @@
             <!-- Ableton Link — WiFi/LAN tempo session with DAWs, DJ
                  software, and other Link apps. Tempo flows both ways;
                  a running MIDI clock-in takes priority over Link. -->
-            <h3 style="margin-top: 18px;">Ableton Link</h3>
+            <h3 style="margin-top: 18px;">{$t('settings.integrations.midi.ableton.heading')}</h3>
 
             <div class="setting-row">
               <div class="setting-label">
-                <span class="label-text">Enable Ableton Link</span>
-                <span class="label-hint">Join the tempo session on your network — Serato, Rekordbox, Ableton Live, Resolume and other Link apps sync automatically</span>
+                <span class="label-text">{$t('settings.integrations.midi.ableton.enable.label')}</span>
+                <span class="label-hint">{$t('settings.integrations.midi.ableton.enable.hint')}</span>
               </div>
               <label class="toggle">
                 <input type="checkbox"
@@ -1752,15 +1779,15 @@
             {#if $abletonLink.enabled}
               <div class="setting-row" style="padding-left: 16px;">
                 <div class="setting-label">
-                  <span class="label-text">Session</span>
-                  <span class="label-hint">{$abletonLink.peers} peer{$abletonLink.peers === 1 ? '' : 's'} · {$abletonLink.tempo.toFixed(1)} BPM{$midiStore.clockInEnabled && $midiStore.clockInRunning ? ' · deferring to MIDI clock-in' : ''}</span>
+                  <span class="label-text">{$t('settings.integrations.midi.ableton.session')}</span>
+                  <span class="label-hint">{$abletonLink.peers} {$abletonLink.peers === 1 ? $t('settings.integrations.midi.ableton.peer') : $t('settings.integrations.midi.ableton.peers')} · {$abletonLink.tempo.toFixed(1)} BPM{$midiStore.clockInEnabled && $midiStore.clockInRunning ? $t('settings.integrations.midi.ableton.midiDeferred') : ''}</span>
                 </div>
                 <span class="clock-status-dot" class:on={$abletonLink.peers > 0}></span>
               </div>
             {/if}
             {#if $abletonLink.error}
               <div class="setting-row" style="padding-left: 16px;">
-                <span class="label-hint">Link unavailable: {$abletonLink.error}</span>
+                <span class="label-hint">{$t('settings.integrations.midi.ableton.unavailable')}{$abletonLink.error}</span>
               </div>
             {/if}
 
@@ -1771,7 +1798,7 @@
                 <line x1="12" y1="16" x2="12" y2="12"/>
                 <line x1="12" y1="8" x2="12.01" y2="8"/>
               </svg>
-              <p>No MIDI support detected. Connect a MIDI controller and refresh.</p>
+              <p>{$t('settings.integrations.midi.unavailable')}</p>
             </div>
           {/if}
         </section>
@@ -1784,12 +1811,12 @@
              MIDI-mappable param gets OSC for free. -->
         {#if selectedSection === 'integrations:osc'}
         <section class="settings-section">
-          <h3>OSC (Open Sound Control)</h3>
+          <h3>{$t('settings.integrations.osc.heading')}</h3>
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Enable OSC Listener</span>
-              <span class="label-hint">UDP socket in the desktop app — point TouchOSC / Lemur / your DAW at this machine's IP on the configured port.</span>
+              <span class="label-text">{$t('settings.integrations.osc.enable.label')}</span>
+              <span class="label-hint">{$t('settings.integrations.osc.enable.hint')}</span>
             </div>
             <label class="toggle">
               <input
@@ -1803,8 +1830,8 @@
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Port</span>
-              <span class="label-hint">UDP port to listen on. Common defaults: 8000 (TouchOSC default), 9000 (TouchDesigner). Restart on change is automatic.</span>
+              <span class="label-text">{$t('settings.integrations.osc.port.label')}</span>
+              <span class="label-hint">{$t('settings.integrations.osc.port.hint')}</span>
             </div>
             <input
               type="number" min="1" max="65535" step="1"
@@ -1817,17 +1844,17 @@
           <!-- Live status row — listening dot + error string. -->
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Status</span>
+                <span class="label-text">{$t('settings.integrations.osc.status.label')}</span>
               <span class="label-hint">
                 {#if $oscStore.listening}
-                  <span class="osc-status-dot listening" title="Listening"></span>
-                  Listening on UDP {$oscStore.port}
+                  <span class="osc-status-dot listening" title={$t('settings.integrations.osc.status.listeningTitle')}></span>
+                  {$t('settings.integrations.osc.status.listeningPrefix')}{$oscStore.port}
                 {:else if $oscStore.lastError}
-                  <span class="osc-status-dot error" title="Error"></span>
+                  <span class="osc-status-dot error" title={$t('settings.integrations.osc.status.errorTitle')}></span>
                   {$oscStore.lastError}
                 {:else}
                   <span class="osc-status-dot idle"></span>
-                  Not listening
+                  {$t('settings.integrations.osc.status.idle')}
                 {/if}
               </span>
             </div>
@@ -1836,12 +1863,12 @@
           {#if $oscStore.lastMessage}
             <div class="setting-row">
               <div class="setting-label">
-                <span class="label-text">Last message</span>
+                <span class="label-text">{$t('settings.integrations.osc.lastMessage.label')}</span>
                 <span class="label-hint">
                   <code class="osc-last">{$oscStore.lastMessage.address}</code>
-                  <span style="color: var(--text-muted, #888);"> · args: </span>
+                  <span style="color: var(--text-muted, #888);">{$t('settings.integrations.osc.lastMessage.args')}</span>
                   <code class="osc-last">{JSON.stringify($oscStore.lastMessage.args)}</code>
-                  <span style="color: #555;"> · from {$oscStore.lastMessage.from}</span>
+                  <span style="color: #555;">{$t('settings.integrations.osc.lastMessage.from')}{$oscStore.lastMessage.from}</span>
                 </span>
               </div>
             </div>
@@ -1853,45 +1880,41 @@
           {#if $oscStore.learnTarget}
             <div class="osc-learn-banner">
               <span class="osc-learn-pulse"></span>
-              <span>Listening for OSC message to bind <strong>{$oscStore.learnTarget.label ?? $oscStore.learnTarget.path}</strong> …</span>
-              <button class="osc-learn-cancel" onclick={() => oscStore.cancelLearn()}>Cancel</button>
+              <span>{$t('settings.integrations.osc.learn.waitingPrefix')}<strong>{$oscStore.learnTarget.label ?? $oscStore.learnTarget.path}</strong> …</span>
+              <button class="osc-learn-cancel" onclick={() => oscStore.cancelLearn()}>{$t('settings.integrations.osc.learn.cancel')}</button>
             </div>
           {/if}
 
           <div class="osc-template">
             <div>
-              <strong>VJ / Pro DJ Link OSC template</strong>
-              <p>
-                Installs A/B clip and column triggers for a 4 × 8 deck, plus master,
-                stop-all, and crossfader controls. Send from Beat Link Trigger,
-                Open Beat Control, a DAW, or any OSC controller.
-              </p>
+              <strong>{$t('settings.integrations.osc.template.heading')}</strong>
+              <p>{$t('settings.integrations.osc.template.description')}</p>
               <code>/ghost/vj/a/layer/1/clip/1</code>
-              <span>→ Deck A, layer 1, clip 1</span>
+              <span>{$t('settings.integrations.osc.template.deck')}</span>
             </div>
             <button class="osc-add-btn template" onclick={() => oscStore.installVjTemplate()}>
-              Install template
+              {$t('settings.integrations.osc.template.install')}
             </button>
           </div>
 
-          <h4 style="margin-top: 14px;">Bindings ({$oscStore.bindings.length})</h4>
+          <h4 style="margin-top: 14px;">{$t('settings.integrations.osc.bindings.heading')} ({$oscStore.bindings.length})</h4>
           <p class="settings-hint" style="margin-bottom: 8px;">
-            Each row maps an OSC address to a param path (the same path strings the MIDI router uses, e.g. <code>vj:0:opacity</code>). Trigger bindings accept numeric/boolean values, argument-less messages, and OSC Impulse.
+            {$t('settings.integrations.osc.bindings.hint')}
           </p>
 
           {#if $oscStore.bindings.length === 0}
             <div class="osc-empty">
-              No bindings yet. Add one manually, or click <strong>+ Learn</strong>, type a target path, and send an OSC message from your controller.
+              {$t('settings.integrations.osc.bindings.empty')}
             </div>
           {:else}
             <div class="osc-bindings">
               <div class="osc-binding-head">
-                <span>OSC Address</span>
-                <span>Param Path</span>
-                <span>Mode</span>
-                <span>Min</span>
-                <span>Max</span>
-                <span>Inv</span>
+                <span>{$t('settings.integrations.osc.bindings.address')}</span>
+                <span>{$t('settings.integrations.osc.bindings.paramPath')}</span>
+                <span>{$t('settings.integrations.osc.bindings.mode')}</span>
+                <span>{$t('settings.integrations.osc.bindings.min')}</span>
+                <span>{$t('settings.integrations.osc.bindings.max')}</span>
+                <span>{$t('settings.integrations.osc.bindings.invert')}</span>
                 <span></span>
               </div>
               {#each $oscStore.bindings as b (b.id)}
@@ -1900,16 +1923,16 @@
                     type="text"
                     value={b.address}
                     onchange={(e) => oscStore.updateBinding(b.id, { address: (e.target as HTMLInputElement).value })}
-                    placeholder="/path/to/control"
+                    placeholder={$t('settings.integrations.osc.form.addressPlaceholder')}
                   />
                   <input
                     type="text"
                     value={b.path}
                     onchange={(e) => oscStore.updateBinding(b.id, { path: (e.target as HTMLInputElement).value })}
-                    placeholder="vj:0:opacity"
+                    placeholder={$t('settings.integrations.osc.form.pathPlaceholder')}
                     class:invalid-path={!validateControlPath(b.path).valid}
                     aria-invalid={!validateControlPath(b.path).valid}
-                    title={validateControlPath(b.path).reason ?? `Valid path: ${normalizeControlPath(b.path)}`}
+                    title={validateControlPath(b.path).reason ?? `${$t('settings.integrations.osc.form.validPath')}${normalizeControlPath(b.path)}`}
                   />
                   <select
                     value={b.mode ?? 'auto'}
@@ -1919,11 +1942,11 @@
                         mode: value === 'auto' ? undefined : value as 'continuous' | 'trigger',
                       });
                     }}
-                    title="Auto infers button-style paths; use Trigger for OSC bang/Impulse messages"
+                    title={$t('settings.integrations.osc.bindings.autoTitle')}
                   >
-                    <option value="auto">Auto</option>
-                    <option value="continuous">Control</option>
-                    <option value="trigger">Trigger</option>
+                    <option value="auto">{$t('settings.integrations.osc.bindings.auto')}</option>
+                    <option value="continuous">{$t('settings.integrations.osc.bindings.control')}</option>
+                    <option value="trigger">{$t('settings.integrations.osc.bindings.trigger')}</option>
                   </select>
                   <input
                     type="number" step="any"
@@ -1945,7 +1968,7 @@
                   <button
                     class="osc-binding-del"
                     onclick={() => oscStore.removeBinding(b.id)}
-                    title="Remove binding"
+                    title={$t('settings.integrations.osc.bindings.removeTitle')}
                   >×</button>
                 </div>
               {/each}
@@ -1956,18 +1979,18 @@
             <button
               class="osc-add-btn"
               onclick={() => oscStore.addBinding({ address: '/ghost/vj/master', argIndex: 0, path: 'vj:master:opacity', sourceMin: 0, sourceMax: 1, invert: false, mode: 'continuous' })}
-            >+ Add binding</button>
+            >{$t('settings.integrations.osc.bindings.add')}</button>
             <button
               class="osc-add-btn learn"
               class:active={oscLearnOpen}
               onclick={beginOscLearn}
-              title="Wait for the next OSC message and bind it to a param path"
-            >+ Learn binding</button>
+              title={$t('settings.integrations.osc.bindings.learnTitle')}
+            >{$t('settings.integrations.osc.bindings.learn')}</button>
           </div>
 
           {#if oscLearnOpen}
             <div class="osc-learn-form">
-              <label for="osc-learn-path">Target parameter</label>
+              <label for="osc-learn-path">{$t('settings.integrations.osc.form.target')}</label>
               <div class="osc-learn-controls">
                 <input
                   id="osc-learn-path"
@@ -1981,12 +2004,12 @@
                   }}
                 />
                 <button class="osc-add-btn learn" disabled={!validateControlPath(oscLearnPath).valid} onclick={confirmOscLearn}>
-                  Listen
+                  {$t('settings.integrations.osc.form.listen')}
                 </button>
-                <button class="osc-add-btn" onclick={() => oscLearnOpen = false}>Cancel</button>
+                <button class="osc-add-btn" onclick={() => oscLearnOpen = false}>{$t('settings.integrations.osc.form.cancel')}</button>
               </div>
               {#if validateControlPath(oscLearnPath).valid}
-                <span class="osc-path-valid">Routes to <code>{normalizeControlPath(oscLearnPath)}</code></span>
+                <span class="osc-path-valid">{$t('settings.integrations.osc.form.routesTo')}<code>{normalizeControlPath(oscLearnPath)}</code></span>
               {:else}
                 <span class="osc-path-error">{validateControlPath(oscLearnPath).reason}</span>
               {/if}
@@ -1999,7 +2022,7 @@
           {/if}
 
           <details class="osc-path-reference">
-            <summary>Parameter path reference</summary>
+            <summary>{$t('settings.integrations.osc.reference.summary')}</summary>
             <div class="osc-path-grid">
               {#each CONTROL_PATH_EXAMPLES as example}
                 <button type="button" onclick={() => { oscLearnPath = example.path; oscLearnOpen = true; }}>
@@ -2008,7 +2031,7 @@
                 </button>
               {/each}
             </div>
-            <p>Legacy paths such as <code>vj:layer:0:opacity</code> are accepted and normalized automatically.</p>
+            <p>{$t('settings.integrations.osc.reference.legacy')}</p>
           </details>
         </section>
 
@@ -2019,15 +2042,15 @@
              up), so each binding carries an action mode. -->
         {#if selectedSection === 'integrations:keyboard'}
         <section class="settings-section">
-          <h3>Keyboard Control</h3>
+          <h3>{$t('settings.integrations.keyboard.heading')}</h3>
           <p class="settings-hint" style="margin-bottom: 12px;">
-            Map computer-keyboard keys to any control — the same param paths MIDI and OSC use (e.g. <code>vj:column:0</code>, <code>vj:0:opacity</code>). Works with or without a controller plugged in.
+            {$t('settings.integrations.keyboard.description')}
           </p>
 
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Enable Keyboard Control</span>
-              <span class="label-hint">While on, mapped keys act as dedicated controls and are intercepted (they won't also trigger app shortcuts). Keys typed into text fields are ignored.</span>
+              <span class="label-text">{$t('settings.integrations.keyboard.enable.label')}</span>
+              <span class="label-hint">{$t('settings.integrations.keyboard.enable.hint')}</span>
             </div>
             <label class="toggle">
               <input
@@ -2042,7 +2065,7 @@
           {#if $keyboardStore.lastKey}
             <div class="setting-row">
               <div class="setting-label">
-                <span class="label-text">Last key</span>
+                <span class="label-text">{$t('settings.integrations.keyboard.lastKey')}</span>
                 <span class="label-hint">
                   <code class="osc-last">{formatKeyCombo($keyboardStore.lastKey)}</code>
                 </span>
@@ -2053,8 +2076,8 @@
           {#if $keyboardStore.learnTarget}
             <div class="osc-learn-banner">
               <span class="osc-learn-pulse"></span>
-              <span>Press a key to bind <strong>{$keyboardStore.learnTarget.label ?? $keyboardStore.learnTarget.path}</strong> …</span>
-              <button class="osc-learn-cancel" onclick={() => keyboardStore.cancelLearn()}>Cancel</button>
+              <span>{$t('settings.integrations.keyboard.learn.waitingPrefix')}<strong>{$keyboardStore.learnTarget.label ?? $keyboardStore.learnTarget.path}</strong> …</span>
+              <button class="osc-learn-cancel" onclick={() => keyboardStore.cancelLearn()}>{$t('settings.integrations.keyboard.learn.cancel')}</button>
             </div>
           {/if}
 
@@ -2063,29 +2086,29 @@
               class="osc-add-btn learn"
               class:active={$keyboardStore.editMode}
               onclick={() => keyboardStore.toggleEditMode()}
-              title={$keyboardStore.editMode ? 'Exit Keyboard Edit Mode' : 'Enter Keyboard Edit Mode, then click a control and press a key'}
-            >{$keyboardStore.editMode ? 'Exit Keyboard Edit' : 'Keyboard Edit Mode'}</button>
-            <span class="settings-hint keyboard-edit-hint">Click any highlighted control, then press a key to assign it.</span>
+              title={$keyboardStore.editMode ? $t('settings.integrations.keyboard.edit.exitTitle') : $t('settings.integrations.keyboard.edit.enterTitle')}
+            >{$keyboardStore.editMode ? $t('settings.integrations.keyboard.edit.exit') : $t('settings.integrations.keyboard.edit.enter')}</button>
+            <span class="settings-hint keyboard-edit-hint">{$t('settings.integrations.keyboard.edit.hint')}</span>
           </div>
 
-          <h4 style="margin-top: 14px;">Bindings ({$keyboardStore.bindings.length})</h4>
+          <h4 style="margin-top: 14px;">{$t('settings.integrations.keyboard.bindings.heading')} ({$keyboardStore.bindings.length})</h4>
           <p class="settings-hint" style="margin-bottom: 8px;">
-            <strong>trigger</strong> fires on press (clips/columns/presets) · <strong>toggle</strong> flips min↔max · <strong>momentary</strong> = max while held, min on release · <strong>nudge</strong> steps by the step amount each press (use a negative step for a "down" key).
+            {$t('settings.integrations.keyboard.bindings.hint')}
           </p>
 
           {#if $keyboardStore.bindings.length === 0}
             <div class="osc-empty">
-              No keyboard bindings yet. Use <strong>Keyboard Edit Mode</strong>, click a highlighted control, then press the key you want to bind.
+              {$t('settings.integrations.keyboard.bindings.empty')}
             </div>
           {:else}
             <div class="osc-bindings" style="grid-template-columns: 0.9fr 1.5fr 0.9fr 0.55fr 0.55fr 0.6fr 28px;">
               <div class="osc-binding-head" style="grid-template-columns: 0.9fr 1.5fr 0.9fr 0.55fr 0.55fr 0.6fr 28px;">
-                <span>Key</span>
-                <span>Param Path</span>
-                <span>Mode</span>
-                <span>Min</span>
-                <span>Max</span>
-                <span>Step</span>
+                <span>{$t('settings.integrations.keyboard.bindings.key')}</span>
+                <span>{$t('settings.integrations.keyboard.bindings.paramPath')}</span>
+                <span>{$t('settings.integrations.keyboard.bindings.mode')}</span>
+                <span>{$t('settings.integrations.keyboard.bindings.min')}</span>
+                <span>{$t('settings.integrations.keyboard.bindings.max')}</span>
+                <span>{$t('settings.integrations.keyboard.bindings.step')}</span>
                 <span></span>
               </div>
               {#each $keyboardStore.bindings as b (b.id)}
@@ -2093,22 +2116,22 @@
                   <button
                     class="kbd-combo"
                     onclick={() => keyboardStore.startLearn(b.path, b.label, b.mode)}
-                    title="Click, then press a key to rebind"
-                  >{b.code ? formatKeyCombo(b) : 'Set key…'}</button>
+                    title={$t('settings.integrations.keyboard.bindings.rebindTitle')}
+                  >{b.code ? formatKeyCombo(b) : $t('settings.integrations.keyboard.bindings.setKey')}</button>
                   <input
                     type="text"
                     value={b.path}
                     onchange={(e) => keyboardStore.updateBinding(b.id, { path: (e.target as HTMLInputElement).value })}
-                    placeholder="vj:0:opacity"
+                    placeholder={$t('settings.integrations.osc.form.pathPlaceholder')}
                   />
                   <select
                     value={b.mode}
                     onchange={(e) => keyboardStore.updateBinding(b.id, { mode: (e.target as HTMLSelectElement).value as KeyActionMode })}
                   >
-                    <option value="trigger">trigger</option>
-                    <option value="toggle">toggle</option>
-                    <option value="momentary">momentary</option>
-                    <option value="nudge">nudge</option>
+                    <option value="trigger">{$t('settings.integrations.keyboard.bindings.trigger')}</option>
+                    <option value="toggle">{$t('settings.integrations.keyboard.bindings.toggle')}</option>
+                    <option value="momentary">{$t('settings.integrations.keyboard.bindings.momentary')}</option>
+                    <option value="nudge">{$t('settings.integrations.keyboard.bindings.nudge')}</option>
                   </select>
                   <input
                     type="number" step="any"
@@ -2129,7 +2152,7 @@
                   <button
                     class="osc-binding-del"
                     onclick={() => keyboardStore.removeBinding(b.id)}
-                    title="Remove binding"
+                    title={$t('settings.integrations.osc.bindings.removeTitle')}
                   >×</button>
                 </div>
               {/each}
@@ -2143,12 +2166,12 @@
                   class="kbd-combo kbd-learn"
                   onclick={startKeyboardAddLearn}
                   disabled={!keyboardAddPath.trim()}
-                  title="Press this, then press the key to bind"
-                >Learn key</button>
+                  title={$t('settings.integrations.keyboard.bindings.learnKeyTitle')}
+                >{$t('settings.integrations.keyboard.bindings.learnKey')}</button>
                 <input
                   type="text"
                   bind:value={keyboardAddPath}
-                  placeholder="vj:column:0"
+                  placeholder={$t('settings.integrations.keyboard.bindings.pathPlaceholder')}
                   onkeydown={(e) => {
                     if (e.key === 'Enter') {
                       e.preventDefault();
@@ -2158,10 +2181,10 @@
                   }}
                 />
                 <select bind:value={keyboardAddMode}>
-                  <option value="trigger">trigger</option>
-                  <option value="toggle">toggle</option>
-                  <option value="momentary">momentary</option>
-                  <option value="nudge">nudge</option>
+                  <option value="trigger">{$t('settings.integrations.keyboard.bindings.trigger')}</option>
+                  <option value="toggle">{$t('settings.integrations.keyboard.bindings.toggle')}</option>
+                  <option value="momentary">{$t('settings.integrations.keyboard.bindings.momentary')}</option>
+                  <option value="nudge">{$t('settings.integrations.keyboard.bindings.nudge')}</option>
                 </select>
                 <input type="number" step="any" bind:value={keyboardAddMin} />
                 <input type="number" step="any" bind:value={keyboardAddMax} />
@@ -2169,7 +2192,7 @@
                 <button
                   class="osc-binding-del"
                   onclick={() => keyboardAddOpen = false}
-                  title="Cancel"
+                  title={$t('settings.integrations.keyboard.bindings.cancelTitle')}
                 >x</button>
               </div>
             </div>
@@ -2179,8 +2202,8 @@
             <button
               class="osc-add-btn learn"
               onclick={beginKeyboardAdd}
-              title="Type a param path, then press the key to bind it to"
-            >+ Add binding</button>
+              title={$t('settings.integrations.keyboard.bindings.addTitle')}
+            >{$t('settings.integrations.keyboard.bindings.add')}</button>
           </div>
         </section>
 
@@ -2193,14 +2216,14 @@
              src/lib/wled/sender.ts + electron/main.js → wled_send_frame. -->
         {#if selectedSection === 'integrations:wled'}
         <section class="settings-section">
-          <h3>WLED LED Controllers</h3>
+          <h3>{$t('settings.integrations.wled.heading')}</h3>
           <p class="settings-hint" style="margin-bottom: 12px;">
-            Send the final composite to WLED LEDs on your local network. Colors and bright regions are spatially sampled across the image and shipped over UDP at ~60Hz. WLED's default port is 21324; max 490 LEDs per controller for the DRGB protocol.
+            {$t('settings.integrations.wled.description')}
           </p>
 
           {#if ($project.wledControllers ?? []).length === 0}
             <div class="osc-empty">
-              No WLED controllers configured. Click <strong>+ Add controller</strong> to send shader pixels to a WLED device on your LAN.
+              {$t('settings.integrations.wled.empty')}
             </div>
           {:else}
             {#each ($project.wledControllers ?? []) as c (c.id)}
@@ -2248,7 +2271,7 @@
                 testPattern: 'off',
                 testColor: '#ffffff',
               })}
-            >+ Add controller</button>
+            >{$t('settings.integrations.wled.add')}</button>
           </div>
           <WLEDGroupsPanel />
         </section>
@@ -2260,9 +2283,9 @@
              shared midiRouter. -->
         {#if selectedSection === 'integrations:mediapipe'}
         <section class="settings-section">
-          <h3>MediaPipe</h3>
+          <h3>{$t('settings.integrations.mediapipe.heading')}</h3>
           <p class="settings-hint" style="margin-bottom: 12px;">
-            Use the webcam as a control input. Hand landmarks, pinch distance, palm position, and the canned MediaPipe gestures (open palm, fist, victory, thumb up/down, etc.) become signals that bind to any MIDI-mappable parameter through the same router OSC uses.
+            {$t('settings.integrations.mediapipe.description')}
           </p>
           <MediaPipePanel />
         </section>
@@ -2270,13 +2293,13 @@
         <!-- AI Settings Section -->
         {#if selectedSection === 'ai'}
         <section class="settings-section">
-          <h3>AI</h3>
+          <h3>{$t('settings.ai.heading')}</h3>
 
           <!-- Shader AI Provider -->
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Shader AI Provider</span>
-              <span class="label-hint">AI model used for shader generation</span>
+              <span class="label-text">{$t('settings.ai.shaderProvider.label')}</span>
+              <span class="label-hint">{$t('settings.ai.shaderProvider.hint')}</span>
             </div>
             <select value={$settings.ai.shaderProvider} onchange={(e) => settings.setShaderProvider((e.target as HTMLSelectElement).value as ShaderAIProvider)}>
               <option value="claude">Claude (Anthropic)</option>
@@ -2288,8 +2311,8 @@
           <!-- Claude API Key -->
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Claude API Key
-                {#if claudeKeyValid === true}<span class="key-badge valid">Valid</span>{:else if claudeKeyValid === false}<span class="key-badge invalid">Invalid</span>{/if}
+              <span class="label-text">{$t('settings.ai.claudeKey.label')}
+                {#if claudeKeyValid === true}<span class="key-badge valid">{$t('settings.ai.claudeKey.valid')}</span>{:else if claudeKeyValid === false}<span class="key-badge invalid">{$t('settings.ai.claudeKey.invalid')}</span>{/if}
               </span>
               <span class="label-hint"><a href="https://console.anthropic.com" target="_blank" class="settings-link">console.anthropic.com</a></span>
             </div>
@@ -2302,7 +2325,7 @@
                 oninput={(e) => { settings.setClaudeApiKey((e.target as HTMLInputElement).value); claudeKeyValid = null; }}
               />
               <button class="secondary-btn test-btn" onclick={testClaudeKey} disabled={claudeKeyValidating || !$settings.ai.claudeApiKey}>
-                {claudeKeyValidating ? '...' : 'Test'}
+                {claudeKeyValidating ? '...' : $t('settings.ai.test')}
               </button>
             </div>
           </div>
@@ -2310,7 +2333,7 @@
           <!-- Claude Model -->
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Claude Model</span>
+              <span class="label-text">{$t('settings.ai.claudeModel')}</span>
             </div>
             <select value={$settings.ai.claudeModel} onchange={(e) => settings.setClaudeModel((e.target as HTMLSelectElement).value)}>
               {#each CLAUDE_MODELS as model}
@@ -2322,10 +2345,10 @@
           <!-- Gemini API Key -->
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Gemini API Key
-                {#if geminiKeyValid === true}<span class="key-badge valid">Valid</span>{:else if geminiKeyValid === false}<span class="key-badge invalid">Invalid</span>{/if}
+              <span class="label-text">{$t('settings.ai.geminiKey.label')}
+                {#if geminiKeyValid === true}<span class="key-badge valid">{$t('settings.ai.geminiKey.valid')}</span>{:else if geminiKeyValid === false}<span class="key-badge invalid">{$t('settings.ai.geminiKey.invalid')}</span>{/if}
               </span>
-              <span class="label-hint">Also used for Veo video generation · <a href="https://aistudio.google.com/apikey" target="_blank" class="settings-link">aistudio.google.com</a></span>
+              <span class="label-hint">{$t('settings.ai.geminiKey.hintPrefix')}<a href="https://aistudio.google.com/apikey" target="_blank" class="settings-link">aistudio.google.com</a></span>
             </div>
             <div class="key-row">
               <input
@@ -2336,7 +2359,7 @@
                 oninput={(e) => { settings.setGeminiApiKey((e.target as HTMLInputElement).value); geminiKeyValid = null; }}
               />
               <button class="secondary-btn test-btn" onclick={testGeminiKey} disabled={geminiKeyValidating || !$settings.ai.geminiApiKey}>
-                {geminiKeyValidating ? '...' : 'Test'}
+                {geminiKeyValidating ? '...' : $t('settings.ai.test')}
               </button>
             </div>
           </div>
@@ -2344,7 +2367,7 @@
           <!-- Gemini Model -->
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Gemini Model</span>
+              <span class="label-text">{$t('settings.ai.geminiModel')}</span>
             </div>
             <select value={$settings.ai.geminiModel} onchange={(e) => settings.setGeminiModel((e.target as HTMLSelectElement).value)}>
               {#each GEMINI_MODELS as model}
@@ -2359,8 +2382,8 @@
           <!-- Video AI: both providers' keys always visible -->
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Default Video Provider</span>
-              <span class="label-hint">Which AI to use when generating videos</span>
+              <span class="label-text">{$t('settings.ai.videoProvider.label')}</span>
+              <span class="label-hint">{$t('settings.ai.videoProvider.hint')}</span>
             </div>
             <select value={$settings.ai.videoProvider} onchange={(e) => settings.setVideoProvider((e.target as HTMLSelectElement).value as VideoAIProvider)}>
               <option value="veo">Veo (Google)</option>
@@ -2371,8 +2394,8 @@
           <!-- Veo Model -->
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Veo Model</span>
-              <span class="label-hint">Uses Gemini API key above</span>
+              <span class="label-text">{$t('settings.ai.veoModel.label')}</span>
+              <span class="label-hint">{$t('settings.ai.veoModel.hint')}</span>
             </div>
             <select value={$settings.ai.veoModel} onchange={(e) => settings.setVeoModel((e.target as HTMLSelectElement).value)}>
               {#each VEO_MODELS as model}
@@ -2384,8 +2407,8 @@
           <!-- Luma API Key -->
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Luma API Key
-                {#if lumaKeyValid === true}<span class="key-badge valid">Valid</span>{:else if lumaKeyValid === false}<span class="key-badge invalid">Invalid</span>{/if}
+              <span class="label-text">{$t('settings.ai.lumaKey.label')}
+                {#if lumaKeyValid === true}<span class="key-badge valid">{$t('settings.ai.lumaKey.valid')}</span>{:else if lumaKeyValid === false}<span class="key-badge invalid">{$t('settings.ai.lumaKey.invalid')}</span>{/if}
               </span>
               <span class="label-hint"><a href="https://lumalabs.ai/dream-machine/api/keys" target="_blank" class="settings-link">lumalabs.ai/api/keys</a></span>
             </div>
@@ -2398,7 +2421,7 @@
                 oninput={(e) => { settings.setLumaApiKey((e.target as HTMLInputElement).value); lumaKeyValid = null; }}
               />
               <button class="secondary-btn test-btn" onclick={testLumaKey} disabled={lumaKeyValidating || !$settings.ai.lumaApiKey}>
-                {lumaKeyValidating ? '...' : 'Test'}
+                {lumaKeyValidating ? '...' : $t('settings.ai.test')}
               </button>
             </div>
           </div>
@@ -2406,7 +2429,7 @@
           <!-- Luma Model -->
           <div class="setting-row">
             <div class="setting-label">
-              <span class="label-text">Luma Model</span>
+              <span class="label-text">{$t('settings.ai.lumaModel')}</span>
             </div>
             <select value={$settings.ai.lumaModel} onchange={(e) => settings.setLumaModel((e.target as HTMLSelectElement).value)}>
               {#each LUMA_MODELS as model}
@@ -2425,12 +2448,12 @@
         <div class="section">
           <h3>
             <button class="section-toggle" onclick={() => { diagnosticsOpen = !diagnosticsOpen; if (diagnosticsOpen) errorLog = getErrorLog(); }}>
-              Diagnostics {diagnosticsOpen ? '▾' : '▸'}
+              {$t('settings.nav.footer.diagnostics')} {diagnosticsOpen ? '▾' : '▸'}
             </button>
           </h3>
           {#if diagnosticsOpen}
             <div class="diagnostics">
-              <p class="hint">{errorLog.length} captured error{errorLog.length !== 1 ? 's' : ''}</p>
+              <p class="hint">{errorLog.length} {errorLog.length === 1 ? $t('settings.nav.footer.errorsCaptured') : $t('settings.nav.footer.errorsCapturedPlural')}</p>
               {#if errorLog.length > 0}
                 <div class="error-log">
                   {#each errorLog.slice().reverse() as entry}
@@ -2445,10 +2468,10 @@
                 </div>
                 <div class="diag-actions">
                   <button class="text-btn" onclick={() => { navigator.clipboard.writeText(JSON.stringify(errorLog, null, 2)); }}>
-                    Copy to Clipboard
+                    {$t('settings.nav.footer.copyClipboard')}
                   </button>
                   <button class="text-btn" onclick={() => { clearErrorLog(); errorLog = []; }}>
-                    Clear Log
+                    {$t('settings.nav.footer.clearLog')}
                   </button>
                 </div>
               {/if}
@@ -2457,10 +2480,10 @@
         </div>
 
         <button class="text-btn" onclick={() => settings.reset()}>
-          Reset to Defaults
+          {$t('settings.nav.footer.resetDefaults')}
         </button>
         <button class="primary-btn" onclick={onClose}>
-          Done
+          {$t('settings.nav.footer.done')}
         </button>
       </div>
     </div>

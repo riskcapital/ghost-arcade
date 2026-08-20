@@ -5,6 +5,7 @@
   import { onMount, onDestroy, afterUpdate } from 'svelte';
   import { isMac, getTextureShareLabel } from '$lib/bridge';
   import { get } from 'svelte/store';
+  import { t } from '../i18n';
   import { mediaLibrary, type MediaItem } from '../stores/media';
   import { vjClipLauncher, type VJClip, type VJBlock, type VJDeck } from '../stores/vjClipLauncher';
   import { vjLayerSequencer } from '../stores/vjLayerSequencer';
@@ -100,9 +101,10 @@
     inlineIcon?: 'splat' | 'model3d' | 'gpu' | 'text';
   };
 
-  const vjPluginCards: VJPluginCard[] = [
-    { id: 'gpu-shader', name: 'GPU Shader', description: 'GPU visual instruments and particle shaders', tier: 'free', clipType: 'gpu', inlineIcon: 'gpu' },
-    { id: 'text-creator', name: 'Text Creator', description: 'Live typography, animation, glow, and 3D text', tier: 'free', clipType: 'text', inlineIcon: 'text' },
+  let vjPluginCards: VJPluginCard[] = [];
+  $: vjPluginCards = [
+    { id: 'gpu-shader', name: $t('vj.plugins.gpuShader'), description: $t('vj.plugins.gpuDescription'), tier: 'free', clipType: 'gpu', inlineIcon: 'gpu' },
+    { id: 'text-creator', name: $t('vj.plugins.textCreator'), description: $t('vj.plugins.textDescription'), tier: 'free', clipType: 'text', inlineIcon: 'text' },
     ...getAllPlugins().map((p): VJPluginCard => ({
       id: p.id,
       name: p.name,
@@ -111,8 +113,8 @@
       clipType: 'effect',
       effectType: p.effectType,
     })),
-    { id: 'pointcloud', name: 'Point Cloud', description: 'PLY point cloud / splat', tier: 'free', clipType: 'splat', inlineIcon: 'splat' },
-    { id: 'model3d', name: '3D Model', description: 'GLTF/OBJ/FBX models', tier: 'free', clipType: 'model3d', inlineIcon: 'model3d' },
+    { id: 'pointcloud', name: $t('vj.plugins.pointCloud'), description: $t('vj.plugins.pointCloudDescription'), tier: 'free', clipType: 'splat', inlineIcon: 'splat' },
+    { id: 'model3d', name: $t('vj.plugins.model3d'), description: $t('vj.plugins.model3dDescription'), tier: 'free', clipType: 'model3d', inlineIcon: 'model3d' },
   ];
 
   // Performer panel state
@@ -372,7 +374,7 @@
   function blockMenuDelete() {
     if (!blockContextMenu) return;
     if ($vjClipLauncher.blocks.length <= 1) { blockContextMenu = null; return; }
-    if (confirm('Delete this block?')) {
+    if (confirm($t('vj.errors.deleteBlock'))) {
       vjClipLauncher.deleteBlock(blockContextMenu.blockId);
     }
     blockContextMenu = null;
@@ -393,7 +395,7 @@
   }
   function stageMenuRename() {
     if (!stageContextMenu) return;
-    const newName = prompt('Rename preset:', stageContextMenu.preset.name);
+    const newName = prompt($t('vj.errors.renamePreset'), stageContextMenu.preset.name);
     if (newName && newName.trim()) {
       if (stageContextMenu.preset._scope === 'global') {
         globalStagePresets.rename(stageContextMenu.preset.id, newName.trim());
@@ -405,7 +407,7 @@
   }
   function stageMenuDelete() {
     if (!stageContextMenu) return;
-    if (confirm(`Delete "${stageContextMenu.preset.name}"?`)) {
+    if (confirm($t('vj.errors.deletePreset', { values: { name: stageContextMenu.preset.name } }))) {
       deleteStagePreset(stageContextMenu.preset);
     }
     stageContextMenu = null;
@@ -801,7 +803,7 @@
       namePrefix: 'VJ Recording',
       onDurationUpdate: (s) => { vjRecordingDuration = s; },
       onComplete: () => { vjIsRecording = false; vjRecorderHandle = null; },
-      onError: (err) => { alert('Failed to start recording: ' + err.message); },
+      onError: (err) => { alert($t('vj.errors.recording', { values: { message: err.message } })); },
     });
     if (vjRecorderHandle) {
       vjIsRecording = true;
@@ -995,15 +997,16 @@
     const _states = paramLayerStates;
     const _grid = paramClipGrid;
     const deckTag = $vjClipLauncher.crossfaderEnabled ? ` (Deck ${paramDeck})` : '';
-    if (effectsTab === 'composition') return 'COMPOSITION FX';
+    if (effectsTab === 'composition') return `${$t('vj.effects.context.composition')} FX`;
     if (effectsTab === 'led') return 'LED FX';
     if (effectsTab === 'clip') {
-      if (selectedLayerIndex === null) return 'CLIP FX';
+      if (selectedLayerIndex === null) return `${$t('vj.effects.context.clip')} FX`;
       const activeCol = _states[selectedLayerIndex].activeColumn;
       const clip = activeCol !== null ? _grid[selectedLayerIndex][activeCol] : null;
-      return clip ? `CLIP: ${clip.name}${deckTag}` : 'CLIP FX';
+      return clip ? `${$t('vj.effects.context.clip')}: ${clip.name}${deckTag}` : `${$t('vj.effects.context.clip')} FX`;
     }
-    return selectedLayerIndex !== null ? `LAYER ${selectedLayerIndex + 1} FX${deckTag}` : 'LAYER FX';
+    const layerLabel = $t('vj.effects.context.layer');
+    return selectedLayerIndex !== null ? `${layerLabel} ${selectedLayerIndex + 1} FX${deckTag}` : `${layerLabel} FX`;
   })();
 
   // Track active clip ID to force shader params re-render when clip changes.
@@ -1246,13 +1249,13 @@
   function placeMediaTrayPayloadOnLayer(payload: MediaTrayDropPayload, layerIndex: number, bank: VJDeck): boolean {
     const column = findNextEmptyVJColumn(layerIndex, bank);
     if (column === null) {
-      showToast('No empty slot on that VJ layer.', 'warning');
+      showToast($t('vj.errors.noLayerSlot'), 'warning');
       return true;
     }
 
     const clip = createVJClipFromMediaTrayPayload(payload);
     if (!clip) {
-      showToast('That source is not ready for the VJ deck yet.', 'warning');
+      showToast($t('vj.errors.sourceNotReady'), 'warning');
       return true;
     }
 
@@ -1301,13 +1304,13 @@
   function addMediaTrayPayloadToDeck(payload: MediaTrayDropPayload, bank: VJDeck = activeVJDeckForAdd()) {
     const target = findNextEmptyVJCell(bank);
     if (!target) {
-      showToast('No empty VJ deck slot available.', 'warning');
+      showToast($t('vj.errors.noDeckSlot'), 'warning');
       return;
     }
 
     const clip = createVJClipFromMediaTrayPayload(payload);
     if (!clip) {
-      showToast('That source is not ready for the VJ deck yet.', 'warning');
+      showToast($t('vj.errors.sourceNotReady'), 'warning');
       return;
     }
 
@@ -1332,14 +1335,14 @@
   let vjNdiAvailable = false;
   let vjNdiChecked = false;
   let vjNdiScanning = false;
-  let vjNdiStatusHint = 'Open an NDI® sender in MadMapper, Resolume, OBS, or another VJ app on this machine or network';
+  let vjNdiStatusHint = $t('vj.sources.ndiScanHint');
   async function vjStartNdiScan() {
     const api = (window as any).ghostNDI;
     if (!api) {
       vjNdiChecked = true;
       vjNdiAvailable = false;
       vjDetectedNdiSources = [];
-      vjNdiStatusHint = 'NDI® is optional and not bundled in this build';
+      vjNdiStatusHint = $t('vj.sources.ndiOptional');
       return;
     }
     try {
@@ -1348,13 +1351,13 @@
       vjNdiAvailable = !!avail?.available;
       if (!vjNdiAvailable) {
         vjDetectedNdiSources = [];
-        vjNdiStatusHint = avail?.error || 'Install NDI and restart Ghost Arcade';
+        vjNdiStatusHint = avail?.error || $t('vj.sources.ndiInstall');
       }
     } catch {
       vjNdiChecked = true;
       vjNdiAvailable = false;
       vjDetectedNdiSources = [];
-      vjNdiStatusHint = 'Install NDI and restart Ghost Arcade';
+      vjNdiStatusHint = $t('vj.sources.ndiInstall');
     }
     if (!vjNdiAvailable) return;
     if (vjNdiScanInterval) return;
@@ -1368,7 +1371,7 @@
             url: typeof src === 'object' && src?.url ? String(src.url) : '',
           }))
           .filter((src: { name: string }) => src.name.length > 0);
-        vjNdiStatusHint = 'Open an NDI® sender in MadMapper, Resolume, OBS, or another VJ app on this machine or network';
+        vjNdiStatusHint = $t('vj.sources.ndiScanHint');
       } catch (err) {
         vjNdiStatusHint = err instanceof Error ? err.message : String(err);
       } finally {
@@ -1431,7 +1434,7 @@
     } catch (err) {
       console.error('VJ capture source list error:', err);
       vjScreenPickerSources = [];
-      showToast('Could not list screen capture sources.', 'error');
+      showToast($t('vj.errors.listCaptureSources'), 'error');
     } finally {
       vjScreenPickerLoading = false;
     }
@@ -1472,7 +1475,7 @@
       vjLiveSources = [...vjLiveSources, src];
     } catch (err) {
       console.error('VJ capture source error:', err);
-      showToast(`Could not capture "${picked.name}".`, 'error');
+      showToast($t('vj.errors.capture', { values: { name: picked.name } }), 'error');
     }
   }
 
@@ -1510,7 +1513,7 @@
   let vjSpoutInput = '';
   let vjDetectedSpoutSenders: string[] = [];
   let vjTextureShareAvailable = true;
-  let vjTextureShareHint = `Open a ${getTextureShareLabel()} sender in MadMapper, Resolume, OBS, or another VJ app`;
+  let vjTextureShareHint = $t('vj.sources.textureScanHint', { values: { texture: getTextureShareLabel() } });
 
   async function vjScanSpout() {
     const { invoke: bridgeInvoke, isDesktopApp } = await import('$lib/bridge');
@@ -1523,8 +1526,8 @@
         }>('texture_share_info');
         vjTextureShareAvailable = !!info.available;
         vjTextureShareHint = info.available
-          ? `Open a ${info.label} sender in MadMapper, Resolume, OBS, or another VJ app`
-          : (info.error || `${info.label} native addon unavailable`);
+          ? $t('vj.sources.textureScanHint', { values: { texture: info.label } })
+          : (info.error || $t('vj.sources.textureUnavailable', { values: { texture: info.label } }));
         if (!info.available) {
           vjDetectedSpoutSenders = [];
           return;
@@ -2617,7 +2620,7 @@
         if (!item) continue;
         const target = targets[placed];
         if (!target) {
-          showToast('Media imported, but there are no more empty VJ deck slots.', 'warning');
+          showToast($t('vj.errors.importedNoSlots'), 'warning');
           break;
         }
         vjClipLauncher.setClip(target.layer, target.column, createVJClipFromMediaItem(item), bank);
@@ -3458,25 +3461,25 @@
         <!-- File Menu -->
         <div class="vj-file-menu-container">
           <button class="vj-file-menu-btn" class:active={vjFileMenuOpen} onclick={() => vjFileMenuOpen = !vjFileMenuOpen}>
-            File
+            {$t('vj.file.label')}
             <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg>
           </button>
           {#if vjFileMenuOpen}
             <div class="vj-file-menu-dropdown">
-              <button class="vj-menu-item" onclick={() => vjFileAction('new')}>New<span class="vj-menu-sc">Ctrl+N</span></button>
-              <button class="vj-menu-item" onclick={() => vjFileAction('open')}>Open...<span class="vj-menu-sc">Ctrl+O</span></button>
+              <button class="vj-menu-item" onclick={() => vjFileAction('new')}>{$t('vj.file.new')}<span class="vj-menu-sc">Ctrl+N</span></button>
+              <button class="vj-menu-item" onclick={() => vjFileAction('open')}>{$t('vj.file.open')}<span class="vj-menu-sc">Ctrl+O</span></button>
               <div class="vj-menu-sep"></div>
-              <button class="vj-menu-item" onclick={() => vjFileAction('save')}>Save<span class="vj-menu-sc">Ctrl+S</span></button>
-              <button class="vj-menu-item" onclick={() => vjFileAction('saveAs')}>Save As...<span class="vj-menu-sc">Ctrl+Shift+S</span></button>
+              <button class="vj-menu-item" onclick={() => vjFileAction('save')}>{$t('vj.file.save')}<span class="vj-menu-sc">Ctrl+S</span></button>
+              <button class="vj-menu-item" onclick={() => vjFileAction('saveAs')}>{$t('vj.file.saveAs')}<span class="vj-menu-sc">Ctrl+Shift+S</span></button>
               <div class="vj-menu-sep"></div>
-              <button class="vj-menu-item" onclick={() => vjFileAction('importPresets')}>Import Presets...</button>
+              <button class="vj-menu-item" onclick={() => vjFileAction('importPresets')}>{$t('vj.file.importPresets')}</button>
               <div class="vj-menu-sep"></div>
-              <button class="vj-menu-item" onclick={() => vjFileAction('undo')}>Undo<span class="vj-menu-sc">Ctrl+Z</span></button>
-              <button class="vj-menu-item" onclick={() => vjFileAction('redo')}>Redo<span class="vj-menu-sc">Ctrl+Y</span></button>
+              <button class="vj-menu-item" onclick={() => vjFileAction('undo')}>{$t('vj.file.undo')}<span class="vj-menu-sc">Ctrl+Z</span></button>
+              <button class="vj-menu-item" onclick={() => vjFileAction('redo')}>{$t('vj.file.redo')}<span class="vj-menu-sc">Ctrl+Y</span></button>
             </div>
           {/if}
         </div>
-        <div class="master-control" title="Master output opacity">
+        <div class="master-control" title={$t('vj.header.masterOpacity')}>
           <span class="master-label">M</span>
           <input
             type="range"
@@ -3504,8 +3507,8 @@
           data-midi-path="vj:stopall"
           data-midi-label="Stop All"
           data-midi-mode="toggle"
-          title="Stop All Clips (kills output)"
-          aria-label="Stop all clips"
+          title={$t('vj.header.stopAllTitle')}
+          aria-label={$t('vj.header.stopAllAria')}
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="10"/>
@@ -3516,9 +3519,9 @@
 
       {#if $vjClipLauncher.isLive}
         <div class="header-stage">
-          <button class="stage-mix-btn" class:active={!$vjClipLauncher.stageMode && !$vjClipLauncher.mapMode} onclick={() => vjClipLauncher.setSubMode('mix')} title="Raw VJ clip output">MIX</button>
-          <button class="stage-mix-btn" class:active={$vjClipLauncher.stageMode} onclick={() => vjClipLauncher.setSubMode('stage')} title="Route VJ content through the active mapping topology">STAGE</button>
-          <button class="stage-mix-btn" class:active={$vjClipLauncher.mapMode} onclick={() => vjClipLauncher.setSubMode('map')} title="Preset-only mixer — VJ layer slots hold mapping presets that stack with opacity + blend modes">MAP</button>
+          <button class="stage-mix-btn" class:active={!$vjClipLauncher.stageMode && !$vjClipLauncher.mapMode} onclick={() => vjClipLauncher.setSubMode('mix')} title={$t('vj.header.mode.mixTitle')}>MIX</button>
+          <button class="stage-mix-btn" class:active={$vjClipLauncher.stageMode} onclick={() => vjClipLauncher.setSubMode('stage')} title={$t('vj.header.mode.stageTitle')}>STAGE</button>
+          <button class="stage-mix-btn" class:active={$vjClipLauncher.mapMode} onclick={() => vjClipLauncher.setSubMode('map')} title={$t('vj.header.mode.mapTitle')}>MAP</button>
         </div>
       {/if}
 
@@ -3549,8 +3552,8 @@
              1/4..4bar = beat-aligned launches anchored to detected beats
              (or virtual clock at current BPM if audio is off). Beginners
              leave this OFF; pros snap to bar boundaries for tight drops. -->
-        <div class="header-quant" title="Launch quantize — clips fire on the next beat boundary instead of instantly">
-          <span class="header-quant-label">QUANT</span>
+        <div class="header-quant" title={$t('vj.header.quantize.title')}>
+          <span class="header-quant-label">{$t('vj.header.quantize.label')}</span>
           <select
             class="header-quant-select"
             value={$vjClipLauncher.quantization}
@@ -3559,15 +3562,15 @@
             data-midi-label="Launch Quantize"
             data-midi-discrete="true"
           >
-            <option value="off">OFF</option>
+            <option value="off">{$t('vj.header.quantize.off')}</option>
             <option value="1/4">1/4</option>
             <option value="1/2">1/2</option>
-            <option value="1bar">1 BAR</option>
-            <option value="2bar">2 BAR</option>
-            <option value="4bar">4 BAR</option>
+            <option value="1bar">{$t('vj.header.quantize.oneBar')}</option>
+            <option value="2bar">{$t('vj.header.quantize.twoBar')}</option>
+            <option value="4bar">{$t('vj.header.quantize.fourBar')}</option>
           </select>
           {#if $vjClipLauncher.pendingTriggers.length > 0}
-            <span class="header-quant-pending" title="{$vjClipLauncher.pendingTriggers.length} clip{$vjClipLauncher.pendingTriggers.length === 1 ? '' : 's'} queued">
+            <span class="header-quant-pending" title={$t('vj.header.quantize.pending', { values: { count: $vjClipLauncher.pendingTriggers.length, suffix: $vjClipLauncher.pendingTriggers.length === 1 ? '' : 's' } })}>
               {$vjClipLauncher.pendingTriggers.length} ·
             </span>
           {/if}
@@ -3586,11 +3589,11 @@
             <span class="vj-rec-time">{formatVJRecordingDuration(vjRecordingDuration)}</span>
           </div>
           <button class="vj-stop-rec-btn" onclick={vjStopRecording}>
-            Stop Rec
+            {$t('vj.header.recording.stop')}
           </button>
         {:else}
-          <button class="vj-rec-btn" onclick={vjStartRecording} title="Record Output">
-            ● REC
+          <button class="vj-rec-btn" onclick={vjStartRecording} title={$t('vj.header.recording.title')}>
+            {$t('vj.header.recording.rec')}
           </button>
         {/if}
 
@@ -3598,8 +3601,8 @@
           class="vj-seq-toggle-btn"
           class:active={$vjLayerSequencer.isOpen}
           onclick={() => vjLayerSequencer.toggleOpen()}
-          title="Layer Sequencer"
-          aria-label="Layer Sequencer"
+          title={$t('vj.header.sequencer')}
+          aria-label={$t('vj.header.sequencer')}
         >
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <rect x="3" y="5" width="4" height="14" rx="1.2" fill="#ff7a66"/>
@@ -3616,7 +3619,7 @@
             class="ab-toggle-btn"
             class:active={$vjClipLauncher.crossfaderEnabled}
             onclick={() => vjClipLauncher.setCrossfaderEnabled(!$vjClipLauncher.crossfaderEnabled)}
-            title="A/B Crossfader: split the deck into two independent banks with a transition fader between them"
+            title={$t('vj.header.crossfader')}
             data-midi-path="vj:crossfader:enabled"
             data-midi-label="Crossfader Enabled"
             data-midi-mode="toggle"
@@ -3637,8 +3640,8 @@
           class:active={showPerformer}
           class:running={performerStarted && !showPerformer}
           onclick={() => { showPerformer = !showPerformer; if (showPerformer && !performerStarted) { performerStarted = true; } }}
-          title={showPerformer ? 'Close Performer' : (performerStarted ? 'Show Performer (running)' : 'Open Performer (keyboard launcher)')}
-          aria-label="Toggle Performer"
+          title={showPerformer ? $t('vj.header.performer.close') : (performerStarted ? $t('vj.header.performer.showRunning') : $t('vj.header.performer.open'))}
+          aria-label={$t('vj.header.performer.toggle')}
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
             <!-- nucleus -->
@@ -3650,29 +3653,29 @@
           </svg>
         </button>
 
-        <button class="minimize-btn" onclick={() => window.dispatchEvent(new CustomEvent('open-stage3d'))} title="Open 3D Stage (no need to minimize VJ)">
+        <button class="minimize-btn" onclick={() => window.dispatchEvent(new CustomEvent('open-stage3d'))} title={$t('vj.header.stage3d')}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M12 2L4 7l8 5 8-5z"/><path d="M4 12l8 5 8-5"/><path d="M4 17l8 5 8-5"/>
           </svg>
         </button>
-        <button class="minimize-btn" onclick={() => window.dispatchEvent(new CustomEvent('open-settings'))} title="Settings">
+        <button class="minimize-btn" onclick={() => window.dispatchEvent(new CustomEvent('open-settings'))} title={$t('vj.header.settings')}>
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
           </svg>
         </button>
-        <button class="minimize-btn" onclick={handleExitVJClick} title="Exit VJ and stop live output" aria-label="Exit VJ">
+        <button class="minimize-btn" onclick={handleExitVJClick} title={$t('vj.header.exitTitle')} aria-label={$t('vj.header.exitAria')}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
             <path d="M15 18l-6-6 6-6"/>
           </svg>
         </button>
-        <button class="exit-btn" onclick={handleExitVJClick}>Exit VJ</button>
+        <button class="exit-btn" onclick={handleExitVJClick}>{$t('vj.header.exitButton')}</button>
       </div>
     </div>
 
     <!-- Stage Presets Bar (visible when stage mode active, stays above overlay content) -->
     {#if $vjClipLauncher.stageMode}
       <div class="stage-presets-bar">
-        <span class="stage-presets-label">Stage Presets</span>
+        <span class="stage-presets-label">{$t('vj.stagePresets.label')}</span>
         <div class="stage-presets-list">
           {#each allStagePresets as preset, presetIdx (preset.id)}
             <button
@@ -3680,7 +3683,7 @@
               class:active={$vjClipLauncher.stagePresetId === preset.id}
               onclick={() => stageRenamingPresetId !== preset.id && loadStagePresetFromUI(preset)}
               oncontextmenu={(e) => openStageContextMenu(e, preset)}
-              title="{preset.name} — double-click name to rename · right-click for Update / Delete"
+              title={$t('vj.stagePresets.itemTitle', { values: { name: preset.name } })}
               data-midi-path={`vj:stage:${presetIdx}`}
               data-midi-label={`Stage Preset: ${preset.name}`}
               data-midi-mode="toggle"
@@ -3707,14 +3710,14 @@
                 <span
                   class="stage-preset-name"
                   ondblclick={(e) => startStageRename(preset, e)}
-                  title="Double-click to rename"
+                  title={$t('vj.stagePresets.renameTitle')}
                 >{preset.name}</span>
               {/if}
             </button>
           {/each}
         </div>
-        <button class="stage-preset-save-btn" onclick={() => saveStagePresetWithScope()} title="Save current mapping as a new stage preset">
-          + Save
+        <button class="stage-preset-save-btn" onclick={() => saveStagePresetWithScope()} title={$t('vj.stagePresets.saveTitle')}>
+          {$t('vj.stagePresets.save')}
         </button>
         <!-- Update — overwrites the currently-active stage preset
              with the current layers + effects bundle. Only shown
@@ -3728,17 +3731,17 @@
             <button
               class="stage-preset-update-btn"
               onclick={() => updateStagePresetInPlace(activePreset)}
-              title={`Overwrite "${activePreset.name}" with the current layers + effects`}
+              title={$t('vj.stagePresets.updateTitle', { values: { name: activePreset.name } })}
             >
-              ↻ Update
+              {$t('vj.stagePresets.update')}
             </button>
           {/if}
         {/if}
         <button class="stage-scope-toggle"
           class:global={stageSaveScope === 'global'}
           onclick={() => stageSaveScope = stageSaveScope === 'project' ? 'global' : 'project'}
-          title={stageSaveScope === 'project' ? 'Save to project' : 'Save globally'}
-          aria-label={stageSaveScope === 'project' ? 'Save stage preset to project' : 'Save stage preset globally'}>
+          title={stageSaveScope === 'project' ? $t('vj.stagePresets.saveProject') : $t('vj.stagePresets.saveGlobal')}
+          aria-label={stageSaveScope === 'project' ? $t('vj.stagePresets.ariaProject') : $t('vj.stagePresets.ariaGlobal')}>
           {#if stageSaveScope === 'project'}
             <svg class="stage-scope-icon" viewBox="0 0 24 24" aria-hidden="true">
               <path class="scope-fill" d="M3.5 8.2h17v10.2h-17z"/>
@@ -3768,24 +3771,24 @@
           <div class="effects-tabs">
             <button class="fx-tab" class:active={effectsTab === 'composition'} onclick={() => effectsTab = 'composition'}>
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
-              Comp
+              {$t('vj.effects.tabs.composition')}
             </button>
             <button class="fx-tab" class:active={effectsTab === 'layer'} onclick={() => effectsTab = 'layer'}>
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-              Layer
+              {$t('vj.effects.tabs.layer')}
             </button>
             <button class="fx-tab" class:active={effectsTab === 'clip'} onclick={() => effectsTab = 'clip'}>
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-              Clip
+              {$t('vj.effects.tabs.clip')}
             </button>
-            <button class="fx-tab" class:active={effectsTab === 'stage'} onclick={() => effectsTab = 'stage'} title="Stage Effects — procedural per-slice modulation that animates the bound mapping layers">
+            <button class="fx-tab" class:active={effectsTab === 'stage'} onclick={() => effectsTab = 'stage'} title={$t('vj.effects.stageTabTitle')}>
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="11"/></svg>
-              Stage
+              {$t('vj.effects.tabs.stage')}
             </button>
             {#if ($project.wledControllers ?? []).some(controller => controller.enabled)}
-              <button class="fx-tab" class:active={effectsTab === 'led'} onclick={() => effectsTab = 'led'} title="LED patterns and performance controls">
+              <button class="fx-tab" class:active={effectsTab === 'led'} onclick={() => effectsTab = 'led'} title={$t('vj.effects.ledTabTitle')}>
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/><path d="M7 12h3m4 0h3"/></svg>
-                LED
+                {$t('vj.effects.tabs.led')}
               </button>
             {/if}
           </div>
@@ -3802,15 +3805,15 @@
                    of which workspace is open. -->
               {#if !$activeSurface}
                 <div class="no-effects">
-                  Build a stage first (open STAGE → draw slices → Apply Stage), then add effects here to animate your slice layers.
+                  {$t('vj.effects.stageNoSurface')}
                 </div>
               {:else}
                 {@const effects = $activeSurface.effects ?? []}
                 {@const activeId = $activeSurface.activeEffectId ?? 'still'}
                 {@const auto = $activeSurface.effectAutomation}
                 <div class="effects-info">
-                  <span class="effects-info-label">STAGE FX</span>
-                  <p class="effects-info-hint">{effects.length} effect{effects.length === 1 ? '' : 's'} on "{$activeSurface.name}" · one runs at a time</p>
+                  <span class="effects-info-label">{$t('vj.effects.stageFx')}</span>
+                  <p class="effects-info-hint">{$t('vj.effects.stageEffectCount', { values: { count: effects.length, suffix: effects.length === 1 ? '' : 's', surface: $activeSurface.name } })}</p>
                 </div>
 
                 <!-- Automation transport — play/pause cycles through
@@ -3821,15 +3824,15 @@
                     class="stage-auto-play"
                     class:playing={auto?.playing}
                     onclick={() => surfaceStore.toggleEffectAutomation()}
-                    title={auto?.playing ? 'Stop auto-cycle' : 'Start auto-cycle through ↻-included effects'}
+                    title={auto?.playing ? $t('vj.effects.stopAutoCycle') : $t('vj.effects.startAutoCycle')}
                   >{auto?.playing ? '⏸' : '▶'}</button>
                   <select
                     class="stage-auto-mode"
                     value={auto?.mode ?? 'beat'}
                     onchange={(e) => surfaceStore.updateEffectAutomation({ mode: (e.target as HTMLSelectElement).value as 'time' | 'beat' })}
                   >
-                    <option value="beat">Beat</option>
-                    <option value="time">Time</option>
+                    <option value="beat">{$t('vj.effects.beat')}</option>
+                    <option value="time">{$t('vj.effects.time')}</option>
                   </select>
                   {#if (auto?.mode ?? 'beat') === 'beat'}
                     <input
@@ -3837,18 +3840,18 @@
                       class="stage-auto-interval"
                       value={auto?.beats ?? 8}
                       onchange={(e) => surfaceStore.updateEffectAutomation({ beats: parseInt((e.target as HTMLInputElement).value) || 8 })}
-                      title="Beats per step"
+                      title={$t('vj.effects.beatsPerStep')}
                     />
-                    <span class="stage-auto-unit">bts</span>
+                    <span class="stage-auto-unit">{$t('vj.effects.beatsUnit')}</span>
                   {:else}
                     <input
                       type="number" min="0.5" max="60" step="0.5"
                       class="stage-auto-interval"
                       value={auto?.seconds ?? 4}
                       onchange={(e) => surfaceStore.updateEffectAutomation({ seconds: parseFloat((e.target as HTMLInputElement).value) || 4 })}
-                      title="Seconds per step"
+                      title={$t('vj.effects.secondsPerStep')}
                     />
-                    <span class="stage-auto-unit">sec</span>
+                    <span class="stage-auto-unit">{$t('vj.effects.secondsUnit')}</span>
                   {/if}
                 </div>
 
@@ -3861,7 +3864,7 @@
                       <option value={def.type}>{def.icon} {def.label}</option>
                     {/each}
                   </select>
-                  <button class="add-effect-btn" onclick={() => surfaceStore.addStageEffect(stageAddType)}>+ Add</button>
+                  <button class="add-effect-btn" onclick={() => surfaceStore.addStageEffect(stageAddType)}>{$t('vj.effects.add')}</button>
                 </div>
 
                 <div class="effects-section">
@@ -3879,8 +3882,8 @@
                             aria-pressed={isLive}
                             onclick={(e) => { e.stopPropagation(); toggleStageActiveEffect(eff.id); }}
                             title={isLive
-                              ? 'Turn off this effect and stop auto play'
-                              : 'Activate this effect manually and stop auto play'}
+                              ? $t('vj.effects.deactivate')
+                              : $t('vj.effects.activate')}
                           >{isLive ? '◉' : '○'}</button>
                           <span class="effect-name">
                             <span class="stage-fx-icon">{def?.icon ?? '◆'}</span>
@@ -3895,8 +3898,8 @@
                             class:active={isLive}
                             class:pressed={!!heldStageEffects[eff.id]}
                             type="button"
-                            title={`Hold to show ${def?.label ?? eff.type}`}
-                            aria-label={`Hold to show ${def?.label ?? eff.type}`}
+                            title={$t('vj.effects.hold', { values: { effect: def?.label ?? eff.type } })}
+                            aria-label={$t('vj.effects.hold', { values: { effect: def?.label ?? eff.type } })}
                             data-midi-path={`vj:stage-effect:${eff.id}:hold`}
                             data-midi-label={`Stage FX Hold: ${def?.label ?? eff.type}`}
                             data-midi-mode="toggle"
@@ -3919,19 +3922,19 @@
                             class="effect-cycle-toggle"
                             class:included={eff.enabled}
                             onclick={(e) => { e.stopPropagation(); surfaceStore.updateStageEffect(eff.id, { enabled: !eff.enabled }); }}
-                            title={eff.enabled ? 'In auto-cycle (click to exclude)' : 'Excluded from auto-cycle (click to include)'}
+                            title={eff.enabled ? $t('vj.effects.include') : $t('vj.effects.exclude')}
                           >{eff.enabled ? '↻' : '⊘'}</button>
                           <span class="effect-expand">{expandedEffectId === eff.id ? '▼' : '▶'}</span>
                           <button
                             class="effect-delete"
                             onclick={(e) => { e.stopPropagation(); surfaceStore.deleteStageEffect(eff.id); }}
-                            title="Remove"
+                            title={$t('vj.effects.remove')}
                           >×</button>
                         </div>
                         {#if expandedEffectId === eff.id}
                           <div class="effect-params">
                             <div class="param-row">
-                              <span>Opacity</span>
+                              <span>{$t('vj.effects.opacity')}</span>
                               <input
                                 type="range" min="0" max="1" step="0.01"
                                 value={eff.opacity}
@@ -3962,26 +3965,26 @@
                       </div>
                     {/each}
                     {#if effects.length === 0}
-                      <div class="no-effects">No effects yet. Pick one above and click <strong>+ Add</strong>.</div>
+                      <div class="no-effects">{$t('vj.effects.noEffectsYet')}</div>
                     {/if}
                   </div>
                 </div>
               {/if}
             {:else if (effectsTab === 'layer' || effectsTab === 'clip') && selectedLayerIndex === null}
-              <div class="no-effects">Click a layer to edit effects</div>
+              <div class="no-effects">{$t('vj.effects.selectLayer')}</div>
             {:else if effectsTab === 'clip' && selectedLayerIndex !== null && paramLayerStates[selectedLayerIndex].activeColumn === null}
-              <div class="no-effects">No active clip on layer {selectedLayerIndex + 1}</div>
+              <div class="no-effects">{$t('vj.effects.noActiveClip', { values: { layer: selectedLayerIndex + 1 } })}</div>
             {:else}
               <div class="effects-info">
                 <span class="effects-info-label">{effectsTabLabel}</span>
                 {#if effectsTab === 'composition'}
-                  <p class="effects-info-hint">Applied to all output</p>
+                  <p class="effects-info-hint">{$t('vj.effects.appliedToAll')}</p>
                 {/if}
               </div>
               <div class="effects-section">
                 <div class="effects-header">
-                  <span>Effects</span>
-                  <button class="add-effect-btn" onclick={() => showEffectPicker = true}>+ Add</button>
+                  <span>{$t('vj.effects.listTitle')}</span>
+                  <button class="add-effect-btn" onclick={() => showEffectPicker = true}>{$t('vj.effects.add')}</button>
                 </div>
                 <div class="effects-list">
                   {#each currentEffects as effect (effect.id)}
@@ -3998,34 +4001,34 @@
                       {#if expandedEffectId === effect.id}
                         <div class="effect-params">
                           <div class="effect-param-title">
-                            <span>Effect</span>
+                            <span>{$t('vj.effects.effect')}</span>
                             <strong>{effect.type}</strong>
                           </div>
                           {#if getEffectPresets(effect.type).length > 0}
                             <details open>
-                              <summary>Presets</summary>
+                              <summary>{$t('vj.effects.presets')}</summary>
                               <div class="param-row">
-                                <span>Preset</span>
+                                <span>{$t('vj.effects.preset')}</span>
                                 <select
                                   value={vjPresetSelection[effect.id] ?? ''}
                                   onchange={(e) => {
                                     vjPresetSelection = { ...vjPresetSelection, [effect.id]: (e.target as HTMLSelectElement).value };
                                   }}
                                 >
-                                  <option value="">Select preset</option>
+                                  <option value="">{$t('vj.effects.selectPreset')}</option>
                                   {#each getEffectPresets(effect.type) as preset, i}
                                     <option value={String(i)}>{preset.name}</option>
                                   {/each}
                                 </select>
                               </div>
                               <div class="param-row">
-                                <button class="btn-small" onclick={() => applyVJPreset(effect)}>Apply Preset</button>
+                                <button class="btn-small" onclick={() => applyVJPreset(effect)}>{$t('vj.effects.applyPreset')}</button>
                               </div>
                             </details>
                           {/if}
 
                           <details open>
-                            <summary>Controls</summary>
+                            <summary>{$t('vj.effects.controls')}</summary>
                           <!-- Param renderer mirrors LayerPanel: try
                                effectParamLabels (rich metadata covering
                                every effect with curated min/max/step),
@@ -4146,7 +4149,7 @@
                               {/each}
                             {/if}
                           {:else}
-                            <div class="param-row"><span class="no-params">No adjustable parameters</span></div>
+                            <div class="param-row"><span class="no-params">{$t('vj.effects.noParams')}</span></div>
                           {/if}
                           </details>
                         </div>
@@ -4154,7 +4157,7 @@
                     </div>
                   {/each}
                   {#if currentEffects.length === 0}
-                    <div class="no-effects">No effects - add one above</div>
+                    <div class="no-effects">{$t('vj.effects.noEffects')}</div>
                   {/if}
                 </div>
               </div>
@@ -4167,10 +4170,10 @@
           <div class="preview-layout">
           <div class="preview-container program-preview">
             <canvas bind:this={previewCanvas} class="preview-canvas"></canvas>
-            <div class="preview-label">PROGRAM</div>
+            <div class="preview-label">{$t('vj.preview.program')}</div>
           </div>
           {#if $vjClipLauncher.crossfaderEnabled}
-            <div class="deck-preview-stack" aria-label="Deck confidence monitors">
+            <div class="deck-preview-stack" aria-label={$t('vj.preview.confidenceMonitors')}>
               <div
                 class="deck-preview-container"
                 class:deck-live={$vjClipLauncher.crossfaderValue < 0.5}
@@ -4180,7 +4183,7 @@
                   class="deck-preview-canvas"
                   width="320"
                   height="180"
-                  aria-label="Deck A preview"
+                  aria-label={$t('vj.preview.deckPreview', { values: { deck: 'A' } })}
                 ></canvas>
                 <div class="deck-preview-label">
                   <strong>A</strong>
@@ -4196,7 +4199,7 @@
                   class="deck-preview-canvas"
                   width="320"
                   height="180"
-                  aria-label="Deck B preview"
+                  aria-label={$t('vj.preview.deckPreview', { values: { deck: 'B' } })}
                 ></canvas>
                 <div class="deck-preview-label">
                   <strong>B</strong>
@@ -4213,8 +4216,8 @@
           <button
             class="vj-right-tray-toggle"
             onclick={() => mediaTrayCollapsed = !mediaTrayCollapsed}
-            title={mediaTrayCollapsed ? 'Open media and controls' : 'Close media and controls'}
-            aria-label={mediaTrayCollapsed ? 'Open media and controls' : 'Close media and controls'}
+            title={mediaTrayCollapsed ? $t('vj.preview.openTray') : $t('vj.preview.closeTray')}
+            aria-label={mediaTrayCollapsed ? $t('vj.preview.openTray') : $t('vj.preview.closeTray')}
           >
             <svg class="media-tray-glyph" viewBox="0 0 28 28" fill="none" aria-hidden="true">
               <path class="ghost-body" d="M14 4.2c-4.25 0-7.5 3.35-7.5 7.7v10l2.55-1.9 2.35 2.05 2.6-2.05 2.6 2.05L18.95 20l2.55 1.9v-10c0-4.35-3.25-7.7-7.5-7.7Z" />
@@ -4222,7 +4225,7 @@
               <circle class="ghost-eye" cx="16.9" cy="12.2" r="1.25" />
               <path class="ghost-mouth" d="M12 16.1c1.25.85 2.75.85 4 0" />
             </svg>
-            <span class="media-tray-tab-label">media</span>
+            <span class="media-tray-tab-label">{$t('vj.preview.media')}</span>
           </button>
 
           {#if !mediaTrayCollapsed}
@@ -4237,14 +4240,14 @@
                     {selectedLayerState.activeClip.name}
                     <span class="shader-params-layer-badge">L{selectedLayerIndex! + 1}</span>
                     {#if clipIsAudioReady}
-                      <span class="audio-ready-badge" title="Audio-reactive shader">♪</span>
+                      <span class="audio-ready-badge" title={$t('vj.preview.audioShader')}>♪</span>
                     {/if}
                   </span>
                   <!-- ↺ Reset every shader param to its ISF
                        INPUT.DEFAULT. Sits beside close — matches the
                        per-effect reset button pattern in LayerPanel. -->
-                  <button class="shader-params-reset" onclick={resetShaderParamsToDefaults} title="Reset all params to defaults" aria-label="Reset all params to defaults">↺</button>
-                  <button class="shader-params-close" onclick={() => showShaderParams = false}>×</button>
+                  <button class="shader-params-reset" onclick={resetShaderParamsToDefaults} title={$t('vj.preview.resetParams')} aria-label={$t('vj.preview.resetParams')}>↺</button>
+                  <button class="shader-params-close" onclick={() => showShaderParams = false} title={$t('vj.preview.closeParams')} aria-label={$t('vj.preview.closeParams')}>×</button>
                 </div>
                 <!-- Audio-warn: only show when there's an actual AUDIO
                      source bound to a param (not Auto / not Manual).
@@ -4257,7 +4260,7 @@
                   const m = kClip ?? modulationMap.get(modKeyShader(selectedLayerIndex!, i.NAME, paramDeck));
                   return m && m.source !== 'manual' && m.source !== 'auto';
                 })}
-                  <div class="audio-warn">This shader doesn't use audio uniforms — modulation controls parameters only, not the shader's internal audio response.</div>
+                  <div class="audio-warn">{$t('vj.preview.audioWarning')}</div>
                 {/if}
                 <div class="shader-params-panel-list">
                   {#each selectedClipShaderInputs as input (input.NAME)}
@@ -4287,7 +4290,7 @@
                       <div class="shader-param-header">
                         <span class="shader-param-name">{input.LABEL || input.NAME}</span>
                         <button class="mod-source-chip" class:active={isModulated} class:open={modTrayParam === input.NAME}
-                          title="Modulation — audio bands, LFO with BPM sync, auto playhead"
+                          title={$t('vj.preview.modulation')}
                           onclick={(e) => toggleModTray(input.NAME, e.currentTarget as HTMLElement)}
                         >{modSourceLabel(_currentSource, !!_shaderAuto)}</button>
                       </div>
@@ -4424,7 +4427,7 @@
             <div class="shader-params-panel gpu-params-panel">
               <div class="shader-params-panel-header">
                 <span class="shader-params-overlay-title">
-                  {gpuClip.name || 'GPU Shader'}
+                  {gpuClip.name || $t('vj.plugins.gpuShader')}
                   <span class="shader-params-layer-badge" style="background: rgba(85, 215, 239, 0.22); color: #6ee7f7;">GPU</span>
                 </span>
               </div>
@@ -4443,7 +4446,7 @@
             <div class="shader-params-panel text-params-panel">
               <div class="shader-params-panel-header">
                 <span class="shader-params-overlay-title">
-                  {textClip.name || 'Text Creator'}
+                  {textClip.name || $t('vj.plugins.textCreator')}
                   <span class="shader-params-layer-badge" style="background: rgba(244, 114, 182, 0.22); color: #f9a8d4;">TXT</span>
                 </span>
               </div>
@@ -4463,7 +4466,7 @@
             <div class="shader-params-panel splat-params-panel">
               <div class="shader-params-panel-header">
                 <span class="shader-params-overlay-title">
-                  {splatClip.name || 'Point Cloud'}
+                  {splatClip.name || $t('vj.plugins.pointCloud')}
                   <span class="shader-params-layer-badge" style="background: rgba(52, 211, 153, 0.3); color: #34d399;">PLY</span>
                 </span>
               </div>
@@ -4485,7 +4488,7 @@
             <div class="shader-params-panel model3d-params-panel">
               <div class="shader-params-panel-header">
                 <span class="shader-params-overlay-title">
-                  {modelClip.name || '3D Model'}
+                  {modelClip.name || $t('vj.plugins.model3d')}
                   <span class="shader-params-layer-badge" style="background: rgba(251, 191, 36, 0.3); color: #fbbf24;">3DM</span>
                 </span>
               </div>
@@ -4539,7 +4542,7 @@
             <div class="shader-params-panel video-params-panel">
               <div class="shader-params-panel-header">
                 <span class="shader-params-overlay-title">
-                  {vClip.name || (isVideoClip ? 'Video' : 'Image')}
+                  {vClip.name || (isVideoClip ? $t('vj.video.video') : $t('vj.video.image'))}
                   <span class="shader-params-layer-badge" style={isVideoClip ? 'background: rgba(96, 165, 250, 0.3); color: #60a5fa;' : 'background: rgba(52, 211, 153, 0.26); color: #34d399;'}>
                     {isVideoClip ? 'VID' : 'IMG'}
                   </span>
@@ -4553,7 +4556,7 @@
                     <button
                       class="vt-btn vt-play"
                       onclick={() => vjSetVideoPlaying(selectedLayerIndex!, !vIsPlaying)}
-                      title={vIsPlaying ? 'Pause' : 'Play'}
+                      title={vIsPlaying ? $t('vj.video.pause') : $t('vj.video.play')}
                       data-midi-path="vj:{selectedLayerIndex}:video:play"
                       data-midi-label="{vClip.name} Play/Pause"
                       data-midi-discrete="true"
@@ -4567,7 +4570,7 @@
                     <button
                       class="vt-btn"
                       onclick={() => vjRestartVideo(selectedLayerIndex!)}
-                      title="Restart"
+                      title={$t('vj.video.restart')}
                       data-midi-path="vj:{selectedLayerIndex}:video:restart"
                       data-midi-label="{vClip.name} Restart"
                       data-midi-discrete="true"
@@ -4582,7 +4585,7 @@
                       value={String(vRate)}
                       onchange={(e) => vjSetPlaybackRate(selectedLayerIndex!, parseFloat((e.target as HTMLSelectElement).value))}
                       disabled={!!vSyncBeats}
-                      title={vSyncBeats ? 'Speed is locked to beat/bar sync' : 'Playback speed'}
+                      title={vSyncBeats ? $t('vj.video.speedLocked') : $t('vj.video.playbackSpeed')}
                     >
                       <option value="0.25">0.25x</option>
                       <option value="0.5">0.5x</option>
@@ -4598,14 +4601,14 @@
                         const raw = (e.target as HTMLSelectElement).value;
                         vjSetPlaybackSync(selectedLayerIndex!, raw ? parseFloat(raw) : null);
                       }}
-                      title="Fit this video to the master BPM"
+                      title={$t('vj.video.fitToBpm')}
                     >
-                      <option value="">Free</option>
-                      <option value="1">1 beat</option>
-                      <option value="2">2 beats</option>
-                      <option value="4">1 bar</option>
-                      <option value="8">2 bars</option>
-                      <option value="16">4 bars</option>
+                      <option value="">{$t('vj.video.free')}</option>
+                      <option value="1">{$t('vj.video.beat', { values: { count: 1, suffix: '' } })}</option>
+                      <option value="2">{$t('vj.video.beat', { values: { count: 2, suffix: 's' } })}</option>
+                      <option value="4">{$t('vj.video.bar', { values: { count: 1, suffix: '' } })}</option>
+                      <option value="8">{$t('vj.video.bar', { values: { count: 2, suffix: 's' } })}</option>
+                      <option value="16">{$t('vj.video.bar', { values: { count: 4, suffix: 's' } })}</option>
                     </select>
                   </div>
 
@@ -4616,7 +4619,7 @@
                     onmousedown={(e) => vjHandleTimelineMouseDown(e, vEl)}
                     role="slider"
                     tabindex="0"
-                    aria-label="Video timeline"
+                    aria-label={$t('vj.video.timeline')}
                     aria-valuemin={0}
                     aria-valuemax={100}
                     aria-valuenow={vjVideoDuration > 0 ? Math.round(vjVideoCurrentTime / vjVideoDuration * 100) : 0}
@@ -4637,7 +4640,7 @@
                       onmousedown={(e) => vjHandleTrimMouseDown(e, 'start', selectedLayerIndex!)}
                       role="slider"
                       tabindex="0"
-                      aria-label="Trim start"
+                      aria-label={$t('vj.video.trimStart')}
                     ></div>
                     <div
                       class="vt-trim-handle vt-trim-end"
@@ -4645,22 +4648,22 @@
                       onmousedown={(e) => vjHandleTrimMouseDown(e, 'end', selectedLayerIndex!)}
                       role="slider"
                       tabindex="0"
-                      aria-label="Trim end"
+                      aria-label={$t('vj.video.trimEnd')}
                     ></div>
                   </div>
 
                   <!-- Mode buttons row -->
                   <div class="vt-modes">
-                    <button class="vt-mode-btn" class:active={vMode === 'loop'} onclick={() => vjSetPlaybackMode(selectedLayerIndex!, 'loop')} title="Loop">
+                    <button class="vt-mode-btn" class:active={vMode === 'loop'} onclick={() => vjSetPlaybackMode(selectedLayerIndex!, 'loop')} title={$t('vj.video.loop')}>
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                         <polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/>
                         <polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>
                       </svg>
-                      Loop
+                      {$t('vj.video.loop')}
                     </button>
-                    <button class="vt-mode-btn" class:active={vMode === 'once'} onclick={() => vjSetPlaybackMode(selectedLayerIndex!, 'once')} title="Play Once">
+                    <button class="vt-mode-btn" class:active={vMode === 'once'} onclick={() => vjSetPlaybackMode(selectedLayerIndex!, 'once')} title={$t('vj.video.once')}>
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
-                      Once
+                      {$t('vj.video.once')}
                     </button>
                   </div>
                   {/if}
@@ -4673,38 +4676,38 @@
                        vjClipLauncher.updateActiveClipVideoProps so the change
                        is visible on the next frame. -->
                   <div class="vt-transform">
-                    <div class="vt-section-title">Transform</div>
+                    <div class="vt-section-title">{$t('vj.video.transform')}</div>
 
                     <label class="vt-tf-row">
-                      <span class="vt-tf-label">Fit</span>
+                      <span class="vt-tf-label">{$t('vj.video.fit')}</span>
                       <select
                         class="vt-tf-select"
                         value={vFit}
                         onchange={(e) => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { fit: (e.target as HTMLSelectElement).value as any }, paramDeck)}
                       >
-                        <option value="cover">Cover (fill + crop)</option>
-                        <option value="contain">Contain (letterbox)</option>
-                        <option value="fill">Fill (stretch)</option>
+                        <option value="cover">{$t('vj.video.cover')}</option>
+                        <option value="contain">{$t('vj.video.contain')}</option>
+                        <option value="fill">{$t('vj.video.fill')}</option>
                       </select>
                     </label>
 
                     <label class="vt-tf-row vt-tf-toggle-row">
-                      <span class="vt-tf-label">Mirror</span>
+                      <span class="vt-tf-label">{$t('vj.video.mirror')}</span>
                       <button
                         class="vt-toggle-btn"
                         class:active={vMirrorX}
                         onclick={() => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { mirrorX: !vMirrorX }, paramDeck)}
-                        title="Mirror horizontally"
+                        title={$t('vj.video.mirrorTitle')}
                         data-midi-path="vj:{selectedLayerIndex}:video:mirror"
                         data-midi-label="{vClip.name} Mirror"
                         data-midi-discrete="true"
                       >
-                        {vMirrorX ? 'On' : 'Off'}
+                        {vMirrorX ? $t('vj.video.mirrorOn') : $t('vj.video.mirrorOff')}
                       </button>
                     </label>
 
                     <label class="vt-tf-row">
-                      <span class="vt-tf-label">Zoom</span>
+                      <span class="vt-tf-label">{$t('vj.video.zoom')}</span>
                       <input
                         type="range"
                         min="0.1" max="4" step="0.05"
@@ -4715,7 +4718,7 @@
                     </label>
 
                     <label class="vt-tf-row">
-                      <span class="vt-tf-label">Anchor X</span>
+                      <span class="vt-tf-label">{$t('vj.video.anchorX')}</span>
                       <input
                         type="range"
                         min="0" max="1" step="0.01"
@@ -4726,7 +4729,7 @@
                     </label>
 
                     <label class="vt-tf-row">
-                      <span class="vt-tf-label">Anchor Y</span>
+                      <span class="vt-tf-label">{$t('vj.video.anchorY')}</span>
                       <input
                         type="range"
                         min="0" max="1" step="0.01"
@@ -4737,7 +4740,7 @@
                     </label>
 
                     <label class="vt-tf-row">
-                      <span class="vt-tf-label">Rotation</span>
+                      <span class="vt-tf-label">{$t('vj.video.rotation')}</span>
                       <input
                         type="range"
                         min="-180" max="180" step="1"
@@ -4748,7 +4751,7 @@
                     </label>
 
                     <label class="vt-tf-row">
-                      <span class="vt-tf-label">Opacity</span>
+                      <span class="vt-tf-label">{$t('vj.video.opacity')}</span>
                       <input
                         type="range"
                         min="0" max="1" step="0.01"
@@ -4761,9 +4764,9 @@
                     <button
                       class="vt-tf-reset"
                       onclick={() => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { zoom: 1, fit: 'cover', anchorX: 0.5, anchorY: 0.5, rotation: 0, opacity: 1, mirrorX: false }, paramDeck)}
-                      title="Reset transform to defaults"
+                      title={$t('vj.video.reset')}
                     >
-                      Reset transform
+                      {$t('vj.video.reset')}
                     </button>
                   </div>
                 </div>
@@ -4838,7 +4841,7 @@
               </div>
             {/each}
           </div>
-          <button class="add-block-btn" onclick={handleAddBlock} title="Add new block">
+          <button class="add-block-btn" onclick={handleAddBlock} title={$t('vj.grid.addBlock')}>
             +
           </button>
           <div class="grid-snaps">
@@ -4849,16 +4852,16 @@
         <!-- Grid dimension controls -->
         <div class="grid-dimension-controls">
           <div class="dim-group">
-            <span class="dim-label">Layers</span>
-            <button class="dim-btn" onclick={() => vjClipLauncher.removeLayer()} title="Remove layer">−</button>
+            <span class="dim-label">{$t('vj.grid.layers')}</span>
+            <button class="dim-btn" onclick={() => vjClipLauncher.removeLayer()} title={$t('vj.grid.removeLayer')}>−</button>
             <span class="dim-value">{$vjClipLauncher.numLayers}</span>
-            <button class="dim-btn" onclick={() => vjClipLauncher.addLayer()} title="Add layer">+</button>
+            <button class="dim-btn" onclick={() => vjClipLauncher.addLayer()} title={$t('vj.grid.addLayer')}>+</button>
           </div>
           <div class="dim-group">
-            <span class="dim-label">Columns</span>
-            <button class="dim-btn" onclick={() => vjClipLauncher.removeColumn()} title="Remove column">−</button>
+            <span class="dim-label">{$t('vj.grid.columns')}</span>
+            <button class="dim-btn" onclick={() => vjClipLauncher.removeColumn()} title={$t('vj.grid.removeColumn')}>−</button>
             <span class="dim-value">{$vjClipLauncher.numColumns}</span>
-            <button class="dim-btn" onclick={() => vjClipLauncher.addColumn()} title="Add column">+</button>
+            <button class="dim-btn" onclick={() => vjClipLauncher.addColumn()} title={$t('vj.grid.addColumn')}>+</button>
           </div>
         </div>
 
@@ -4878,13 +4881,13 @@
 
           <!-- Column headers (per-deck — column triggers fire only on this deck) -->
           <div class="column-headers">
-            <div class="live-preview-header">LIVE</div>
+            <div class="live-preview-header">{$t('vj.grid.live')}</div>
             <div class="layer-controls-header"></div>
             {#each columnIndices as colIdx (colIdx)}
               <button
                 class="column-trigger"
                 onclick={() => handleColumnTrigger(colIdx, bank)}
-                title={`Trigger column ${colIdx + 1} on Deck ${bank}`}
+                title={$t('vj.grid.triggerColumn', { values: { column: colIdx + 1, deck: bank } })}
                 data-midi-path="{midiPrefix}:column:{colIdx}"
                 data-midi-label="Deck {bank} Column {colIdx + 1}"
                 data-midi-mode="toggle"
@@ -4911,7 +4914,7 @@
                 draggable="true"
                 ondragstart={(e) => handleLayerDragStart(layerIdx, e)}
                 ondragend={handleLayerDragEnd}
-                title="Drag to reorder layer"
+                title={$t('vj.grid.reorderLayer')}
               >
                 {#if activeClip}
                   {#if activeClip.thumbnail}
@@ -4934,7 +4937,7 @@
                 <div class="layer-header">
                   <button class="layer-select-icon" class:selected={isSelectedDeck && selectedLayerIndex === layerIdx}
                     onclick={(e) => { e.stopPropagation(); selectLayerForEffects(layerIdx); if ($vjClipLauncher.crossfaderEnabled) vjClipLauncher.setSelectedDeck(bank); }}
-                    title="Select layer {layerIdx + 1} on Deck {bank}">
+                    title={$t('vj.grid.selectLayer', { values: { layer: layerIdx + 1, deck: bank } })}>
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 12l10 5 10-5"/></svg>
                   </button>
                   <span class="layer-num">{layerIdx + 1}</span>
@@ -4943,7 +4946,7 @@
                       class="layer-btn solo"
                       class:active={states[layerIdx].solo}
                       onclick={(e) => { e.stopPropagation(); handleToggleSolo(layerIdx, bank); }}
-                      title="Solo (Deck {bank})"
+                      title={$t('vj.grid.solo', { values: { deck: bank } })}
                       data-midi-path="{midiPrefix}:{layerIdx}:solo"
                       data-midi-label="Deck {bank} L{layerIdx + 1} Solo"
                       data-midi-mode="toggle"
@@ -4952,7 +4955,7 @@
                       class="layer-btn mute"
                       class:active={states[layerIdx].mute}
                       onclick={(e) => { e.stopPropagation(); handleToggleMute(layerIdx, bank); }}
-                      title="Mute (Deck {bank})"
+                      title={$t('vj.grid.mute', { values: { deck: bank } })}
                       data-midi-path="{midiPrefix}:{layerIdx}:mute"
                       data-midi-label="Deck {bank} L{layerIdx + 1} Mute"
                       data-midi-mode="toggle"
@@ -4960,7 +4963,7 @@
                     <button
                       class="layer-btn stop"
                       onclick={(e) => { e.stopPropagation(); handleStopLayer(layerIdx, bank); }}
-                      title="Stop layer (Deck {bank})"
+                      title={$t('vj.grid.stopLayer', { values: { deck: bank } })}
                     >■</button>
                   </div>
                 </div>
@@ -5044,7 +5047,7 @@
                       <button
                         class="clear-btn"
                         onclick={(e) => handleClearClip(layerIdx, colIdx, e, bank)}
-                        title="Remove clip"
+                        title={$t('vj.grid.removeClip')}
                       >
                         ×
                       </button>
@@ -5075,7 +5078,7 @@
                   class:active={crossfaderModActive}
                   class:open={crossfaderModTrayAnchor !== null}
                   class:auto={!!crossfaderAuto}
-                  title="Crossfader modulation - audio bands, LFO with BPM sync, auto playhead"
+                  title={$t('vj.crossfader.modulation')}
                   onclick={(e) => toggleCrossfaderModTray(e.currentTarget as HTMLElement)}
                 >{modSourceLabel(crossfaderCurrentSource, !!crossfaderAuto)}</button>
               </div>
@@ -5083,7 +5086,7 @@
                 class="cut-btn cut-a"
                 class:active={$vjClipLauncher.crossfaderValue === 0}
                 onclick={() => glideCrossfaderTo(0)}
-                title="Cut to Deck A"
+                title={$t('vj.crossfader.cutA')}
                 data-midi-path="vj:crossfader:cut-a"
                 data-midi-label="Cut to Deck A"
                 data-midi-mode="toggle"
@@ -5114,7 +5117,7 @@
                 class="cut-btn cut-b"
                 class:active={$vjClipLauncher.crossfaderValue === 1}
                 onclick={() => glideCrossfaderTo(1)}
-                title="Cut to Deck B"
+                title={$t('vj.crossfader.cutB')}
                 data-midi-path="vj:crossfader:cut-b"
                 data-midi-label="Cut to Deck B"
                 data-midi-mode="toggle"
@@ -5122,8 +5125,8 @@
 
               <div class="xfade-readout">{Math.round($vjClipLauncher.crossfaderValue * 100)}%</div>
 
-              <label class="xfade-time-control" title="Fade time for Cut A/B buttons">
-                <span>TIME</span>
+              <label class="xfade-time-control" title={$t('vj.crossfader.fadeTime')}>
+                <span>{$t('vj.crossfader.time')}</span>
                 <select
                   class="xfade-select xfade-time"
                   value={$vjClipLauncher.crossfaderFadeDuration ?? 0}
@@ -5146,21 +5149,21 @@
                 class="xfade-select"
                 value={$vjClipLauncher.crossfaderTransition}
                 onchange={(e) => vjClipLauncher.setCrossfaderTransition((e.target as HTMLSelectElement).value as any)}
-                title="Transition style"
+                title={$t('vj.crossfader.transition')}
                 data-midi-path="vj:crossfader:transition"
                 data-midi-label="Crossfader Transition"
                 data-midi-discrete="true"
               >
-                <option value="dissolve">Dissolve</option>
-                <option value="wipe">Wipe</option>
-                <option value="rgb-split">RGB Split</option>
-                <option value="cube">Cube</option>
-                <option value="shatter">Shatter</option>
-                <option value="halftone">Halftone</option>
-                <option value="glitch">Glitch</option>
-                <option value="liquid">Liquid</option>
-                <option value="strobe">Strobe</option>
-                <option value="slide">Slide</option>
+                <option value="dissolve">{$t('vj.crossfader.transitions.dissolve')}</option>
+                <option value="wipe">{$t('vj.crossfader.transitions.wipe')}</option>
+                <option value="rgb-split">{$t('vj.crossfader.transitions.rgbSplit')}</option>
+                <option value="cube">{$t('vj.crossfader.transitions.cube')}</option>
+                <option value="shatter">{$t('vj.crossfader.transitions.shatter')}</option>
+                <option value="halftone">{$t('vj.crossfader.transitions.halftone')}</option>
+                <option value="glitch">{$t('vj.crossfader.transitions.glitch')}</option>
+                <option value="liquid">{$t('vj.crossfader.transitions.liquid')}</option>
+                <option value="strobe">{$t('vj.crossfader.transitions.strobe')}</option>
+                <option value="slide">{$t('vj.crossfader.transitions.slide')}</option>
               </select>
 
               <!-- Output blend mode for the dual-deck composite. The
@@ -5175,20 +5178,20 @@
                 class="xfade-select xfade-curve"
                 value={$vjClipLauncher.crossfaderBlendMode || 'normal'}
                 onchange={(e) => vjClipLauncher.setCrossfaderBlendMode((e.target as HTMLSelectElement).value as any)}
-                title="Output blend mode — A↔B combination math at the mix point"
+                title={$t('vj.crossfader.blendTitle')}
                 data-midi-path="vj:crossfader:blendMode"
                 data-midi-label="Crossfader Blend Mode"
                 data-midi-discrete="true"
               >
-                <option value="normal">Normal</option>
-                <option value="multiply">Multiply</option>
-                <option value="screen">Screen</option>
-                <option value="add">Add</option>
-                <option value="difference">Difference</option>
-                <option value="darken">Darken</option>
-                <option value="lighten">Lighten</option>
-                <option value="overlay">Overlay</option>
-                <option value="exclusion">Exclusion</option>
+                <option value="normal">{$t('vj.crossfader.blends.normal')}</option>
+                <option value="multiply">{$t('vj.crossfader.blends.multiply')}</option>
+                <option value="screen">{$t('vj.crossfader.blends.screen')}</option>
+                <option value="add">{$t('vj.crossfader.blends.add')}</option>
+                <option value="difference">{$t('vj.crossfader.blends.difference')}</option>
+                <option value="darken">{$t('vj.crossfader.blends.darken')}</option>
+                <option value="lighten">{$t('vj.crossfader.blends.lighten')}</option>
+                <option value="overlay">{$t('vj.crossfader.blends.overlay')}</option>
+                <option value="exclusion">{$t('vj.crossfader.blends.exclusion')}</option>
               </select>
 
               {#if crossfaderModTrayAnchor}
@@ -5198,7 +5201,7 @@
                   source={crossfaderMod?.source ?? 'manual'}
                   mod={crossfaderMod}
                   auto={crossfaderAuto}
-                  autoHint="Auto sweeps the A/B fader between Deck A and Deck B."
+                  autoHint={$t('vj.crossfader.autoHint')}
                   onClose={() => crossfaderModTrayAnchor = null}
                   onSetSource={setCrossfaderSource}
                   onPatchMod={patchCrossfaderMod}
@@ -5223,17 +5226,17 @@
         <div class="ctx-backdrop" onclick={closeCellContextMenu}></div>
         <div class="ctx-menu" style="left:{cellContextMenu.x}px;top:{cellContextMenu.y}px">
           {#if ctxClip}
-            <button class="ctx-item" onclick={openClipPreview}>Edit / Preview</button>
-            <button class="ctx-item" onclick={copyClipToClipboard}>Copy</button>
+            <button class="ctx-item" onclick={openClipPreview}>{$t('vj.context.editPreview')}</button>
+            <button class="ctx-item" onclick={copyClipToClipboard}>{$t('vj.context.copy')}</button>
           {/if}
           {#if clipboardClip}
-            <button class="ctx-item" onclick={pasteClipFromClipboard}>Paste</button>
+            <button class="ctx-item" onclick={pasteClipFromClipboard}>{$t('vj.context.paste')}</button>
           {/if}
           {#if ctxClip}
-            <button class="ctx-item ctx-danger" onclick={clearClipFromMenu}>Remove</button>
+            <button class="ctx-item ctx-danger" onclick={clearClipFromMenu}>{$t('vj.context.remove')}</button>
           {/if}
           {#if !ctxClip && !clipboardClip}
-            <div class="ctx-item ctx-disabled">No actions</div>
+            <div class="ctx-item ctx-disabled">{$t('vj.context.noActions')}</div>
           {/if}
         </div>
       {/if}
@@ -5243,13 +5246,13 @@
         <div class="ctx-backdrop" onclick={closeBlockContextMenu}></div>
         <div class="ctx-menu" style="left:{blockContextMenu.x}px;top:{blockContextMenu.y}px">
           <button class="ctx-item ctx-primary" onclick={blockMenuSaveProject}>
-            Save Project<span class="ctx-shortcut">Ctrl+S</span>
+            {$t('vj.context.saveProject')}<span class="ctx-shortcut">Ctrl+S</span>
           </button>
           <div class="ctx-separator"></div>
-          <button class="ctx-item" onclick={blockMenuRename}>Rename Block</button>
-          <button class="ctx-item" onclick={blockMenuDuplicate}>Duplicate Block</button>
+          <button class="ctx-item" onclick={blockMenuRename}>{$t('vj.context.renameBlock')}</button>
+          <button class="ctx-item" onclick={blockMenuDuplicate}>{$t('vj.context.duplicateBlock')}</button>
           {#if $vjClipLauncher.blocks.length > 1}
-            <button class="ctx-item ctx-danger" onclick={blockMenuDelete}>Delete Block</button>
+            <button class="ctx-item ctx-danger" onclick={blockMenuDelete}>{$t('vj.context.deleteBlock')}</button>
           {/if}
         </div>
       {/if}
@@ -5259,15 +5262,15 @@
         <div class="ctx-backdrop" onclick={closeStageContextMenu}></div>
         <div class="ctx-menu" style="left:{stageContextMenu.x}px;top:{stageContextMenu.y}px">
           <button class="ctx-item ctx-primary" onclick={stageMenuUpdate}>
-            Update Preset
+            {$t('vj.context.updatePreset')}
           </button>
-          <button class="ctx-item" onclick={stageMenuRename}>Rename Preset</button>
+          <button class="ctx-item" onclick={stageMenuRename}>{$t('vj.context.renamePreset')}</button>
           <div class="ctx-separator"></div>
           <button class="ctx-item" onclick={stageMenuSaveProject}>
-            Save Project<span class="ctx-shortcut">Ctrl+S</span>
+            {$t('vj.context.saveProject')}<span class="ctx-shortcut">Ctrl+S</span>
           </button>
           <div class="ctx-separator"></div>
-          <button class="ctx-item ctx-danger" onclick={stageMenuDelete}>Delete Preset</button>
+          <button class="ctx-item ctx-danger" onclick={stageMenuDelete}>{$t('vj.context.deletePreset')}</button>
         </div>
       {/if}
 
@@ -5305,45 +5308,45 @@
             {#if !$vjClipLauncher.mapMode}
               <button class="vj-tab" class:active={vjMediaTab === 'shaders'} onclick={() => vjMediaTab = 'shaders'}>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-                <span>FX</span>
+                <span>{$t('vj.media.tabs.effects')}</span>
                 {#if shaders.length}<span class="vj-tab-count">{shaders.length}</span>{/if}
               </button>
               <button class="vj-tab" class:active={vjMediaTab === 'js'} onclick={() => vjMediaTab = 'js'}>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg>
-                <span>JS</span>
+                <span>{$t('vj.media.tabs.js')}</span>
                 {#if threejsItems.length}<span class="vj-tab-count">{threejsItems.length}</span>{/if}
               </button>
               <button class="vj-tab" class:active={vjMediaTab === 'library'} onclick={() => vjMediaTab = 'library'}>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
-                <span>Saved</span>
+                <span>{$t('vj.media.tabs.saved')}</span>
                 {#if savedShaders.length}<span class="vj-tab-count">{savedShaders.length}</span>{/if}
               </button>
               <button class="vj-tab" class:active={vjMediaTab === 'videos'} onclick={() => vjMediaTab = 'videos'}>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                <span>Vid</span>
+                <span>{$t('vj.media.tabs.video')}</span>
                 {#if $mediaLibrary.filter(m => m.type === 'video').length}<span class="vj-tab-count">{$mediaLibrary.filter(m => m.type === 'video').length}</span>{/if}
               </button>
               <button class="vj-tab" class:active={vjMediaTab === 'images'} onclick={() => vjMediaTab = 'images'}>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-                <span>Img</span>
+                <span>{$t('vj.media.tabs.image')}</span>
                 {#if $mediaLibrary.filter(m => m.type === 'image').length}<span class="vj-tab-count">{$mediaLibrary.filter(m => m.type === 'image').length}</span>{/if}
               </button>
               <button class="vj-tab" class:active={vjMediaTab === 'sources'} onclick={() => vjMediaTab = 'sources'}>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
-                <span>Src</span>
+                <span>{$t('vj.media.tabs.source')}</span>
                 {#if vjLiveSources.filter(s => s.status === 'live').length > 0}
                   <span class="vj-tab-count live">{vjLiveSources.filter(s => s.status === 'live').length}</span>
                 {/if}
               </button>
               <button class="vj-tab" class:active={vjMediaTab === 'plugins'} onclick={() => vjMediaTab = 'plugins'}>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2C6.5 8 4 12 4 15a8 8 0 1 0 16 0c0-3-2.5-7-8-13Z"/></svg>
-                <span>Plug</span>
+                <span>{$t('vj.media.tabs.plugin')}</span>
               </button>
             {/if}
             {#if $vjClipLauncher.mapMode}
-              <button class="vj-tab" class:active={vjMediaTab === 'maps'} onclick={() => vjMediaTab = 'maps'} title="Saved mapping presets — drag onto a clip cell. Stack with VJ layer opacity + blend.">
+              <button class="vj-tab" class:active={vjMediaTab === 'maps'} onclick={() => vjMediaTab = 'maps'} title={$t('vj.media.mapsTitle')}>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="1 6 7 3 17 6 23 3 23 18 17 21 7 18 1 21 1 6"/><line x1="7" y1="3" x2="7" y2="18"/><line x1="17" y1="6" x2="17" y2="21"/></svg>
-                <span>Maps</span>
+                <span>{$t('vj.media.tabs.maps')}</span>
                 {#if $compositions.length}<span class="vj-tab-count">{$compositions.length}</span>{/if}
               </button>
             {/if}
@@ -5356,13 +5359,13 @@
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
             </svg>
-            {vjShowAIGenerator ? 'Hide AI' : 'AI Generate'}
+            {vjShowAIGenerator ? $t('vj.media.aiHide') : $t('vj.media.aiGenerate')}
           </button>
           <button class="vj-ai-btn vj-ai-video-btn" onclick={() => { vjShowVideoGenerator = !vjShowVideoGenerator; if (vjShowVideoGenerator) vjShowAIGenerator = false; }}>
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <polygon points="5 3 19 12 5 21 5 3"/>
             </svg>
-            {vjShowVideoGenerator ? 'Hide' : 'AI Video'}
+            {vjShowVideoGenerator ? $t('vj.media.videoHide') : $t('vj.media.aiVideo')}
           </button>
         </div>
 
@@ -5387,15 +5390,15 @@
 
         <!-- Loading indicator -->
         {#if shadersLoading && (vjMediaTab === 'shaders' || vjMediaTab === 'js')}
-          <div class="loading">Loading shaders...</div>
+          <div class="loading">{$t('vj.media.loadingShaders')}</div>
         {/if}
 
         <!-- Import bar: file picker for VJ-only media import -->
         {#if vjMediaTab === 'videos' || vjMediaTab === 'images'}
           <div class="vj-import-bar">
-            <button class="vj-import-btn" onclick={() => vjMediaFileInput?.click()} title="Import files from disk">
+            <button class="vj-import-btn" onclick={() => vjMediaFileInput?.click()} title={$t('vj.media.importTitle')}>
               <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-              Import {vjMediaTab === 'videos' ? 'Videos' : 'Images'}
+              {$t('vj.media.import')} {vjMediaTab === 'videos' ? $t('vj.media.videos') : $t('vj.media.images')}
             </button>
             <input
               type="file"
@@ -5457,13 +5460,13 @@
                     </div>
                   {:else}
                     <div class="empty-media" style="padding: 12px 14px;">
-                      <p>{!vjNdiChecked || vjNdiScanning ? 'Scanning for NDI® sources...' : vjNdiAvailable ? 'No NDI® sources detected' : 'NDI® unavailable'}</p>
+                      <p>{!vjNdiChecked || vjNdiScanning ? $t('vj.sources.ndiScanning') : vjNdiAvailable ? $t('vj.sources.ndiNone') : $t('vj.sources.ndiUnavailable')}</p>
                       <p class="hint">{vjNdiStatusHint}</p>
                     </div>
                   {/if}
                   <p class="hint" style="padding: 0 14px 10px;">
                     <a href="https://ndi.video/" target="_blank" rel="noreferrer">NDI®</a>
-                    is a registered trademark of Vizrt NDI AB.
+                    {$t('vj.sources.trademark')}
                   </p>
                 </div>
               {/if}
@@ -5479,22 +5482,24 @@
                     </div>
                   {:else}
                     <div class="empty-media" style="padding: 12px 14px;">
-                      <p>{vjTextureShareAvailable ? `No ${getTextureShareLabel()} senders detected` : `${getTextureShareLabel()} native bridge unavailable`}</p>
+                      <p>{vjTextureShareAvailable
+                        ? $t('vj.sources.textureNone', { values: { texture: getTextureShareLabel() } })
+                        : $t('vj.sources.textureUnavailable', { values: { texture: getTextureShareLabel() } })}</p>
                       <p class="hint">{vjTextureShareHint}</p>
                     </div>
                   {/if}
                   <div class="vj-spout-manual">
-                    <input type="text" class="vj-spout-input" placeholder="Sender name..." bind:value={vjSpoutInput} onkeydown={(e) => { if (e.key === 'Enter' && vjSpoutInput.trim()) { vjAddSpoutInput(vjSpoutInput.trim()); vjSpoutInput = ''; vjShowSpoutPicker = false; } }} />
+                    <input type="text" class="vj-spout-input" placeholder={$t('vj.sources.senderPlaceholder')} bind:value={vjSpoutInput} onkeydown={(e) => { if (e.key === 'Enter' && vjSpoutInput.trim()) { vjAddSpoutInput(vjSpoutInput.trim()); vjSpoutInput = ''; vjShowSpoutPicker = false; } }} />
                     <button class="vj-spout-connect" disabled={!vjSpoutInput.trim()} onclick={() => { if (vjSpoutInput.trim()) { vjAddSpoutInput(vjSpoutInput.trim()); vjSpoutInput = ''; vjShowSpoutPicker = false; } }}>
-                      Go
+                      {$t('vj.sources.go')}
                     </button>
                   </div>
                 </div>
               {/if}
               {#if vjLiveSources.length === 0}
                 <div class="empty-media">
-                  <p>No live sources active</p>
-                  <p class="hint">Add webcam, capture, {getTextureShareLabel()}, or NDI® input above</p>
+                  <p>{$t('vj.sources.noneActive')}</p>
+                  <p class="hint">{$t('vj.sources.addHint', { values: { texture: getTextureShareLabel() } })}</p>
                 </div>
               {:else}
                 <div class="vj-live-source-list">
@@ -5506,7 +5511,7 @@
                       draggable={src.status === 'live' ? 'true' : 'false'}
                       ondragstart={(e) => handleLiveSourceDragStart(e, src)}
                       ondragend={handleDragEnd}
-                      title="Drag onto a clip slot or click +"
+                      title={$t('vj.sources.dragTitle')}
                     >
                       <div class="source-thumb">
                         <span class="source-type-icon">{vjLiveSourceIconLabel(src)}</span>
@@ -5523,12 +5528,12 @@
                           class="vj-src-add"
                           disabled={src.status !== 'live'}
                           onclick={(e) => { e.stopPropagation(); addLiveSourceToDeck(src); }}
-                          title="Add to deck"
+                          title={$t('vj.sources.addToDeck')}
                         >+</button>
                         <button
                           class="vj-src-stop"
                           onclick={(e) => { e.stopPropagation(); vjStopSource(src.id); }}
-                          title="Stop"
+                          title={$t('vj.sources.stop')}
                         >
                           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                             <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
@@ -5549,7 +5554,7 @@
                   draggable="true"
                   ondragstart={(e) => handleDragStart(e, { type: plugin.clipType, id: plugin.id, effectType: plugin.effectType, pluginName: plugin.name })}
                   ondragend={handleDragEnd}
-                  title="Drag {plugin.name} onto a clip slot"
+                  title={$t('vj.plugins.dragTitle', { values: { name: plugin.name } })}
                 >
                   <div class="vj-plugin-icon">
                     {#if plugin.inlineIcon === 'gpu'}
@@ -5594,8 +5599,8 @@
                 </div>
               {/each}
               <div class="vj-plugin-hint">
-                <p>Drag content onto a clip slot to use it</p>
-                <p>GPU visuals and text use the same renderer as mapping layers</p>
+                <p>{$t('vj.plugins.hint')}</p>
+                <p>{$t('vj.plugins.rendererHint')}</p>
               </div>
             </div>
           {:else if vjMediaTab === 'maps'}
@@ -5605,8 +5610,8 @@
                  normal content-feed-into-layer trigger. -->
             {#if $compositions.length === 0}
               <div class="empty-media">
-                <p>No saved mapping presets</p>
-                <p class="hint">Save a mapping preset (Presets tray ▲) then come back — drag it onto a clip cell to launch it from the VJ mixer.</p>
+                <p>{$t('vj.media.noSavedMaps')}</p>
+                <p class="hint">{$t('vj.media.savedMapsHint')}</p>
               </div>
             {:else}
               {#each $compositions as comp (comp.id)}
@@ -5617,7 +5622,7 @@
                   ondragend={handleDragEnd}
                   role="button"
                   tabindex="0"
-                  title="Drag onto a clip cell — firing it loads this mapping preset"
+                  title={$t('vj.media.mapDragTitle')}
                 >
                   <div class="item-thumb">
                     {#if comp.thumbnail}
@@ -5628,7 +5633,7 @@
                   </div>
                   <div class="item-info">
                     <span class="item-name">{comp.name}</span>
-                    <span class="item-type">preset · {comp.layers.length} layer{comp.layers.length === 1 ? '' : 's'}</span>
+                    <span class="item-type">{$t('vj.media.presetType', { values: { count: comp.layers.length, suffix: comp.layers.length === 1 ? '' : 's' } })}</span>
                   </div>
                 </div>
               {/each}
@@ -5637,8 +5642,8 @@
             <!-- Saved shaders/videos -->
             {#if savedShaders.length === 0 && savedVideos.length === 0}
               <div class="empty-media">
-                <p>No saved items</p>
-                <p class="hint">Generate shaders or videos with AI to save them here</p>
+                <p>{$t('vj.media.noSavedItems')}</p>
+                <p class="hint">{$t('vj.media.savedItemsHint')}</p>
               </div>
             {:else}
               {#each savedShaders as saved (saved.id)}
@@ -5659,7 +5664,7 @@
                   </div>
                   <div class="item-info">
                     <span class="item-name">{saved.name}</span>
-                    <span class="item-type">saved shader</span>
+                    <span class="item-type">{$t('vj.media.savedShader')}</span>
                   </div>
                 </div>
               {/each}
@@ -5674,15 +5679,15 @@
                   </div>
                   <div class="item-info">
                     <span class="item-name">{vid.name}</span>
-                    <span class="item-type">saved video</span>
+                    <span class="item-type">{$t('vj.media.savedVideo')}</span>
                   </div>
                 </div>
               {/each}
             {/if}
           {:else if vjFilteredMedia.length === 0}
             <div class="empty-media">
-              <p>No media available</p>
-              <p class="hint">Drag & drop files or use AI Generate</p>
+              <p>{$t('vj.media.noMedia')}</p>
+              <p class="hint">{$t('vj.media.noMediaHint')}</p>
             </div>
           {:else}
             {#each vjFilteredMedia as item (item.id)}
@@ -5727,19 +5732,19 @@
     onclick={closeVjScreenPicker}
     role="dialog"
     aria-modal="true"
-    aria-label="Pick a screen or window to capture"
+    aria-label={$t('vj.capture.dialogLabel')}
   >
     <div class="capture-picker-modal" onclick={(e) => e.stopPropagation()} role="document">
       <div class="cpm-header">
-        <div class="cpm-title">Capture a screen or window</div>
-        <button class="cpm-close" onclick={closeVjScreenPicker} title="Close">x</button>
+        <div class="cpm-title">{$t('vj.capture.title')}</div>
+        <button class="cpm-close" onclick={closeVjScreenPicker} title={$t('vj.capture.close')}>x</button>
       </div>
 
       {#if vjScreenPickerLoading}
-        <div class="cpm-loading">Loading sources...</div>
+        <div class="cpm-loading">{$t('vj.capture.loading')}</div>
       {:else if vjScreenPickerSources.length === 0}
         <div class="cpm-empty">
-          No capturable sources found. Make sure screen recording permission is enabled for Ghost Arcade.
+          {$t('vj.capture.empty')}
         </div>
       {:else}
         {@const screens = vjScreenPickerSources.filter(s => s.kind === 'screen')}
@@ -5747,14 +5752,14 @@
 
         <div class="cpm-body">
           {#if screens.length > 0}
-            <div class="cpm-section-title">Screens</div>
+            <div class="cpm-section-title">{$t('vj.capture.screens')}</div>
             <div class="cpm-grid">
               {#each screens as src (src.id)}
                 <button class="cpm-card" onclick={() => vjPickScreenSource(src)} title={src.name}>
                   {#if src.thumbnailDataUrl}
                     <img class="cpm-thumb" src={src.thumbnailDataUrl} alt={src.name} />
                   {:else}
-                    <div class="cpm-thumb cpm-thumb-empty">No preview</div>
+                    <div class="cpm-thumb cpm-thumb-empty">{$t('vj.capture.noPreview')}</div>
                   {/if}
                   <div class="cpm-name">{src.name}</div>
                 </button>
@@ -5763,14 +5768,14 @@
           {/if}
 
           {#if windows.length > 0}
-            <div class="cpm-section-title">Application windows</div>
+            <div class="cpm-section-title">{$t('vj.capture.windows')}</div>
             <div class="cpm-grid">
               {#each windows as src (src.id)}
                 <button class="cpm-card" onclick={() => vjPickScreenSource(src)} title={src.name}>
                   {#if src.thumbnailDataUrl}
                     <img class="cpm-thumb" src={src.thumbnailDataUrl} alt={src.name} />
                   {:else}
-                    <div class="cpm-thumb cpm-thumb-empty">No preview</div>
+                    <div class="cpm-thumb cpm-thumb-empty">{$t('vj.capture.noPreview')}</div>
                   {/if}
                   <div class="cpm-name-row">
                     {#if src.appIconDataUrl}

@@ -23,6 +23,7 @@ It's a single product, free, and fully open source under AGPL-3.0. There are no 
 - **MIDI** — full MIDI Learn, clock sync, controller mapping, dual-bank routing.
 - **AI Shader Generation** — bring your own Claude / Gemini / Replicate / Luma keys; edit / iterate generated GLSL inline.
 - **Multi-Output** — output windows with crop / rotate / flip per display, Spout sender for hardware projectors / NDI bridges, MP4 recording.
+- **Localization** — switch between English and Korean in Settings; the preference persists across launches.
 
 ---
 

@@ -3,6 +3,7 @@
   import type { BlendMode } from '../types';
   import type { StrokeType, FillType, AnimationType } from '../drawing/types';
   import EffectParamRow from './EffectParamRow.svelte';
+  import { t } from '../i18n';
 
   // The modulation engine identifies the target layer by index into the
   // project's layer array, not by id. Derive it reactively from the
@@ -11,56 +12,56 @@
   $: layerIdx = $selectedLayer ? $layers.findIndex(l => l.id === $selectedLayer!.id) : -1;
 
   const strokeTypes: { type: StrokeType; label: string }[] = [
-    { type: 'none', label: 'None' },
-    { type: 'solid', label: 'Solid' },
-    { type: 'glow', label: 'Glow' },
-    { type: 'neon', label: 'Neon' },
-    { type: 'snake', label: 'Snake' },
-    { type: 'rainbow', label: 'Rainbow' },
-    { type: 'dashed', label: 'Dashed' },
-    { type: 'electric', label: 'Electric' },
-    { type: 'pulse', label: 'Pulse' },
-    { type: 'scanner', label: 'Scanner' },
-    { type: 'fire', label: 'Fire' },
+    { type: 'none', label: 'effects.edge.strokeTypes.none' },
+    { type: 'solid', label: 'effects.edge.strokeTypes.solid' },
+    { type: 'glow', label: 'effects.edge.strokeTypes.glow' },
+    { type: 'neon', label: 'effects.edge.strokeTypes.neon' },
+    { type: 'snake', label: 'effects.edge.strokeTypes.snake' },
+    { type: 'rainbow', label: 'effects.edge.strokeTypes.rainbow' },
+    { type: 'dashed', label: 'effects.edge.strokeTypes.dashed' },
+    { type: 'electric', label: 'effects.edge.strokeTypes.electric' },
+    { type: 'pulse', label: 'effects.edge.strokeTypes.pulse' },
+    { type: 'scanner', label: 'effects.edge.strokeTypes.scanner' },
+    { type: 'fire', label: 'effects.edge.strokeTypes.fire' },
   ];
 
   const fillTypes: { type: FillType; label: string }[] = [
-    { type: 'none', label: 'None' },
-    { type: 'solid', label: 'Solid' },
-    { type: 'plasma', label: 'Plasma' },
-    { type: 'liquid', label: 'Liquid' },
-    { type: 'fire', label: 'Fire' },
-    { type: 'electric', label: 'Electric' },
-    { type: 'holographic', label: 'Holographic' },
-    { type: 'noise', label: 'Noise' },
-    { type: 'gradient', label: 'Gradient' },
+    { type: 'none', label: 'effects.edge.fillTypes.none' },
+    { type: 'solid', label: 'effects.edge.fillTypes.solid' },
+    { type: 'plasma', label: 'effects.edge.fillTypes.plasma' },
+    { type: 'liquid', label: 'effects.edge.fillTypes.liquid' },
+    { type: 'fire', label: 'effects.edge.fillTypes.fire' },
+    { type: 'electric', label: 'effects.edge.fillTypes.electric' },
+    { type: 'holographic', label: 'effects.edge.fillTypes.holographic' },
+    { type: 'noise', label: 'effects.edge.fillTypes.noise' },
+    { type: 'gradient', label: 'effects.edge.fillTypes.gradient' },
   ];
 
   const animationTypes: { type: AnimationType; label: string }[] = [
-    { type: 'none', label: 'None' },
-    { type: 'concentric', label: 'Concentric' },
-    { type: 'breathe', label: 'Breathe' },
-    { type: 'rotate', label: 'Rotate' },
-    { type: 'radiate', label: 'Radiate' },
-    { type: 'ripple', label: 'Ripple' },
-    { type: 'wave', label: 'Wave' },
-    { type: 'glitch', label: 'Glitch' },
+    { type: 'none', label: 'effects.edge.animationTypes.none' },
+    { type: 'concentric', label: 'effects.edge.animationTypes.concentric' },
+    { type: 'breathe', label: 'effects.edge.animationTypes.breathe' },
+    { type: 'rotate', label: 'effects.edge.animationTypes.rotate' },
+    { type: 'radiate', label: 'effects.edge.animationTypes.radiate' },
+    { type: 'ripple', label: 'effects.edge.animationTypes.ripple' },
+    { type: 'wave', label: 'effects.edge.animationTypes.wave' },
+    { type: 'glitch', label: 'effects.edge.animationTypes.glitch' },
   ];
 
   const blendModes: { value: BlendMode; label: string }[] = [
-    { value: 'normal', label: 'Normal' },
-    { value: 'add', label: 'Add' },
-    { value: 'multiply', label: 'Multiply' },
-    { value: 'screen', label: 'Screen' },
-    { value: 'overlay', label: 'Overlay' },
-    { value: 'difference', label: 'Difference' },
-    { value: 'exclusion', label: 'Exclusion' },
-    { value: 'softlight', label: 'Soft Light' },
-    { value: 'hardlight', label: 'Hard Light' },
-    { value: 'color-dodge', label: 'Color Dodge' },
-    { value: 'color-burn', label: 'Color Burn' },
-    { value: 'lighten', label: 'Lighten' },
-    { value: 'darken', label: 'Darken' },
+    { value: 'normal', label: 'effects.edge.blendModes.normal' },
+    { value: 'add', label: 'effects.edge.blendModes.add' },
+    { value: 'multiply', label: 'effects.edge.blendModes.multiply' },
+    { value: 'screen', label: 'effects.edge.blendModes.screen' },
+    { value: 'overlay', label: 'effects.edge.blendModes.overlay' },
+    { value: 'difference', label: 'effects.edge.blendModes.difference' },
+    { value: 'exclusion', label: 'effects.edge.blendModes.exclusion' },
+    { value: 'softlight', label: 'effects.edge.blendModes.softlight' },
+    { value: 'hardlight', label: 'effects.edge.blendModes.hardlight' },
+    { value: 'color-dodge', label: 'effects.edge.blendModes.colorDodge' },
+    { value: 'color-burn', label: 'effects.edge.blendModes.colorBurn' },
+    { value: 'lighten', label: 'effects.edge.blendModes.lighten' },
+    { value: 'darken', label: 'effects.edge.blendModes.darken' },
   ];
 
   // Helper to convert RGBA array to hex
@@ -163,39 +164,59 @@
 {#if $selectedLayer}
   <div class="edge-effects-panel">
     <div class="section-header-row">
-      <span class="section-title">Edge Effects</span>
+      <span class="section-title">{$t('effects.edge.title')}</span>
       {#if !$selectedLayer.edgeEffects}
-        <button class="btn-enable" onclick={() => project.enableEdgeEffects($selectedLayer.id)}>
-          Enable
+        <button
+          class="btn-enable"
+          onclick={() => project.enableEdgeEffects($selectedLayer.id)}
+          title={$t('effects.edge.enableTitle')}
+        >
+          {$t('effects.edge.enable')}
         </button>
       {:else}
         <label class="toggle-label">
           <input type="checkbox" checked={$selectedLayer.edgeEffects.enabled}
-            onchange={() => project.toggleEdgeEffectsEnabled($selectedLayer.id)} />
-          <span>Active</span>
+            onchange={() => project.toggleEdgeEffectsEnabled($selectedLayer.id)}
+            aria-label={$t('effects.edge.activeAria')} />
+          <span>{$t('effects.edge.active')}</span>
         </label>
-        <button class="btn-disable" onclick={() => project.disableEdgeEffects($selectedLayer.id)}>
+        <button
+          class="btn-disable"
+          onclick={() => project.disableEdgeEffects($selectedLayer.id)}
+          title={$t('effects.edge.disableTitle')}
+          aria-label={$t('effects.edge.disableAria')}
+        >
           &times;
         </button>
       {/if}
     </div>
 
     {#if $selectedLayer.edgeEffects?.enabled}
+      {#if $selectedLayer.edgeEffects.effects.length === 0}
+        <div class="empty-state">{$t('effects.edge.empty')}</div>
+      {/if}
       {#each $selectedLayer.edgeEffects.effects as effect, idx (effect.id)}
         <div class="effect-card" class:disabled={!effect.enabled}>
           <!-- Effect header -->
           <div class="effect-header">
             <input type="checkbox" checked={effect.enabled}
-              onchange={() => updateEffect(effect.id, { enabled: !effect.enabled })} />
-            <button class="effect-title" onclick={() => expandedEffectId = expandedEffectId === effect.id ? null : effect.id}>
-              Effect {idx + 1}
+              onchange={() => updateEffect(effect.id, { enabled: !effect.enabled })}
+              aria-label={$t('effects.edge.enableEffectAria', { values: { index: idx + 1 } })} />
+            <button
+              class="effect-title"
+              onclick={() => expandedEffectId = expandedEffectId === effect.id ? null : effect.id}
+              title={$t('effects.edge.toggleDetails', { values: { index: idx + 1 } })}
+              aria-expanded={expandedEffectId === effect.id}
+            >
+              {$t('effects.edge.effectTitle', { values: { index: idx + 1 } })}
               <span class="expand-icon">{expandedEffectId === effect.id ? '-' : '+'}</span>
             </button>
             <!-- Blend mode -->
             <select class="blend-select" value={effect.blendMode}
-              onchange={(e) => updateEffect(effect.id, { blendMode: (e.target as HTMLSelectElement).value })}>
+              onchange={(e) => updateEffect(effect.id, { blendMode: (e.target as HTMLSelectElement).value })}
+              aria-label={$t('effects.edge.blendMode')}>
               {#each blendModes as bm}
-                <option value={bm.value}>{bm.label}</option>
+                <option value={bm.value}>{$t(bm.label)}</option>
               {/each}
             </select>
             <!-- Opacity (kept on the header row as a quick slider; the
@@ -203,21 +224,27 @@
                  expanded controls when the effect is opened). -->
             <input type="range" class="opacity-slider" min="0" max="1" step="0.05"
               value={effect.opacity}
-              oninput={(e) => updateEffect(effect.id, { opacity: parseFloat((e.target as HTMLInputElement).value) })} />
-            <button class="btn-remove" onclick={() => project.removeEdgeEffect($selectedLayer.id, effect.id)}>&times;</button>
+              oninput={(e) => updateEffect(effect.id, { opacity: parseFloat((e.target as HTMLInputElement).value) })}
+              aria-label={$t('effects.edge.opacityAria')} />
+            <button
+              class="btn-remove"
+              onclick={() => project.removeEdgeEffect($selectedLayer.id, effect.id)}
+              title={$t('effects.edge.removeTitle')}
+              aria-label={$t('effects.edge.removeAria')}
+            >&times;</button>
           </div>
 
           {#if expandedEffectId === effect.id}
             <div class="effect-controls">
               <!-- STROKE SECTION -->
               <div class="subsection">
-                <span class="subsection-label">Outline</span>
+                <span class="subsection-label">{$t('effects.edge.outline')}</span>
                 <div class="control-row">
-                  <span class="control-label">Type</span>
+                  <span class="control-label">{$t('effects.edge.type')}</span>
                   <select value={effect.stroke.type}
                     onchange={(e) => setStrokeType(effect.id, (e.target as HTMLSelectElement).value as StrokeType)}>
                     {#each strokeTypes as st}
-                      <option value={st.type}>{st.label}</option>
+                      <option value={st.type}>{$t(st.label)}</option>
                     {/each}
                   </select>
                 </div>
@@ -225,7 +252,7 @@
                 {#if effect.stroke.type !== 'none'}
                   {#if 'color' in effect.stroke}
                     <div class="control-row">
-                      <span class="control-label">Color</span>
+                      <span class="control-label">{$t('effects.edge.color')}</span>
                       <input type="color" value={rgbaToHex((effect.stroke as any).color)}
                         oninput={(e) => updateStroke(effect.id, { color: hexToRgba((e.target as HTMLInputElement).value, (effect.stroke as any).color?.[3] ?? 1) })} />
                     </div>
@@ -233,80 +260,80 @@
                   <!-- Layer opacity (top-level, not nested under stroke) —
                        exposed here so users can modulate it via audio
                        without leaving the expanded effect controls. -->
-                  <EffectParamRow label="Opacity" min={0} max={1} step={0.01}
+                  <EffectParamRow label={$t('effects.edge.opacity')} min={0} max={1} step={0.01}
                     layerIndex={layerIdx} effectId={effect.id} paramName="opacity" effectKind="edge"
                     value={effect.opacity}
                     displayValue={(v) => (v * 100).toFixed(0) + '%'}
                     onChange={(v) => updateEffect(effect.id, { opacity: v })} />
                   {#if 'width' in effect.stroke}
-                    <EffectParamRow label="Width" min={1} max={20} step={0.5}
+                    <EffectParamRow label={$t('effects.edge.width')} min={1} max={20} step={0.5}
                       layerIndex={layerIdx} effectId={effect.id} paramName="stroke.width" effectKind="edge"
                       value={effect.stroke.width}
                       displayValue={(v) => v.toFixed(1)}
                       onChange={(v) => updateStroke(effect.id, { width: v })} />
                   {/if}
                   {#if (effect.stroke.type === 'glow' || effect.stroke.type === 'neon') && 'glowSize' in effect.stroke}
-                    <EffectParamRow label="Glow Size" min={5} max={50} step={1}
+                    <EffectParamRow label={$t('effects.edge.glowSize')} min={5} max={50} step={1}
                       layerIndex={layerIdx} effectId={effect.id} paramName="stroke.glowSize" effectKind="edge"
                       value={(effect.stroke as any).glowSize}
                       displayValue={(v) => v.toFixed(0)}
                       onChange={(v) => updateStroke(effect.id, { glowSize: v })} />
-                    <EffectParamRow label="Intensity" min={0.1} max={3} step={0.1}
+                    <EffectParamRow label={$t('effects.edge.intensity')} min={0.1} max={3} step={0.1}
                       layerIndex={layerIdx} effectId={effect.id} paramName="stroke.glowIntensity" effectKind="edge"
                       value={(effect.stroke as any).glowIntensity}
                       displayValue={(v) => v.toFixed(1)}
                       onChange={(v) => updateStroke(effect.id, { glowIntensity: v })} />
-                    <EffectParamRow label="Pulse" min={0} max={3} step={0.1}
+                    <EffectParamRow label={$t('effects.edge.pulse')} min={0} max={3} step={0.1}
                       layerIndex={layerIdx} effectId={effect.id} paramName="stroke.pulseSpeed" effectKind="edge"
                       value={(effect.stroke as any).pulseSpeed}
                       displayValue={(v) => v.toFixed(1)}
                       onChange={(v) => updateStroke(effect.id, { pulseSpeed: v })} />
                   {/if}
                   {#if effect.stroke.type === 'snake' && 'length' in effect.stroke}
-                    <EffectParamRow label="Length" min={0.05} max={0.95} step={0.05}
+                    <EffectParamRow label={$t('effects.edge.length')} min={0.05} max={0.95} step={0.05}
                       layerIndex={layerIdx} effectId={effect.id} paramName="stroke.length" effectKind="edge"
                       value={(effect.stroke as any).length}
                       displayValue={(v) => (v * 100).toFixed(0) + '%'}
                       onChange={(v) => updateStroke(effect.id, { length: v })} />
-                    <EffectParamRow label="Speed" min={0.1} max={3} step={0.1}
+                    <EffectParamRow label={$t('effects.edge.speed')} min={0.1} max={3} step={0.1}
                       layerIndex={layerIdx} effectId={effect.id} paramName="stroke.speed" effectKind="edge"
                       value={(effect.stroke as any).speed}
                       displayValue={(v) => v.toFixed(1) + 'x'}
                       onChange={(v) => updateStroke(effect.id, { speed: v })} />
-                    <EffectParamRow label="Snakes" min={1} max={8} step={1}
+                    <EffectParamRow label={$t('effects.edge.snakes')} min={1} max={8} step={1}
                       layerIndex={layerIdx} effectId={effect.id} paramName="stroke.snakeCount" effectKind="edge"
                       value={(effect.stroke as any).snakeCount}
                       displayValue={(v) => v.toFixed(0)}
                       onChange={(v) => updateStroke(effect.id, { snakeCount: Math.round(v) })} />
                   {/if}
                   {#if effect.stroke.type === 'electric' && 'arcIntensity' in effect.stroke}
-                    <EffectParamRow label="Arc" min={0.1} max={2} step={0.1}
+                    <EffectParamRow label={$t('effects.edge.arc')} min={0.1} max={2} step={0.1}
                       layerIndex={layerIdx} effectId={effect.id} paramName="stroke.arcIntensity" effectKind="edge"
                       value={(effect.stroke as any).arcIntensity}
                       displayValue={(v) => v.toFixed(1)}
                       onChange={(v) => updateStroke(effect.id, { arcIntensity: v })} />
                   {/if}
                   {#if effect.stroke.type === 'pulse'}
-                    <EffectParamRow label="Pulses" min={1} max={8} step={1}
+                    <EffectParamRow label={$t('effects.edge.pulses')} min={1} max={8} step={1}
                       layerIndex={layerIdx} effectId={effect.id} paramName="stroke.pulseCount" effectKind="edge"
                       value={(effect.stroke as any).pulseCount ?? 3}
                       displayValue={(v) => v.toFixed(0)}
                       onChange={(v) => updateStroke(effect.id, { pulseCount: Math.round(v) })} />
                   {/if}
                   {#if effect.stroke.type === 'scanner' && 'beamWidth' in effect.stroke}
-                    <EffectParamRow label="Beam" min={0.02} max={0.3} step={0.01}
+                    <EffectParamRow label={$t('effects.edge.beam')} min={0.02} max={0.3} step={0.01}
                       layerIndex={layerIdx} effectId={effect.id} paramName="stroke.beamWidth" effectKind="edge"
                       value={(effect.stroke as any).beamWidth}
                       displayValue={(v) => (v * 100).toFixed(0) + '%'}
                       onChange={(v) => updateStroke(effect.id, { beamWidth: v })} />
-                    <EffectParamRow label="Trail" min={0.05} max={0.8} step={0.05}
+                    <EffectParamRow label={$t('effects.edge.trail')} min={0.05} max={0.8} step={0.05}
                       layerIndex={layerIdx} effectId={effect.id} paramName="stroke.trailLength" effectKind="edge"
                       value={(effect.stroke as any).trailLength}
                       displayValue={(v) => (v * 100).toFixed(0) + '%'}
                       onChange={(v) => updateStroke(effect.id, { trailLength: v })} />
                   {/if}
                   {#if 'speed' in effect.stroke && (effect.stroke.type as string) !== 'glow' && (effect.stroke.type as string) !== 'neon' && effect.stroke.type !== 'snake'}
-                    <EffectParamRow label="Speed" min={0.1} max={3} step={0.1}
+                    <EffectParamRow label={$t('effects.edge.speed')} min={0.1} max={3} step={0.1}
                       layerIndex={layerIdx} effectId={effect.id} paramName="stroke.speed" effectKind="edge"
                       value={(effect.stroke as any).speed}
                       displayValue={(v) => v.toFixed(1) + 'x'}
@@ -317,45 +344,45 @@
 
               <!-- FILL SECTION -->
               <div class="subsection">
-                <span class="subsection-label">Fill</span>
+                <span class="subsection-label">{$t('effects.edge.fill')}</span>
                 <div class="control-row">
-                  <span class="control-label">Type</span>
+                  <span class="control-label">{$t('effects.edge.type')}</span>
                   <select value={effect.fill.type}
                     onchange={(e) => setFillType(effect.id, (e.target as HTMLSelectElement).value as FillType)}>
                     {#each fillTypes as ft}
-                      <option value={ft.type}>{ft.label}</option>
+                      <option value={ft.type}>{$t(ft.label)}</option>
                     {/each}
                   </select>
                 </div>
 
                 {#if effect.fill.type === 'solid' && 'color' in effect.fill}
                   <div class="control-row">
-                    <span class="control-label">Color</span>
+                    <span class="control-label">{$t('effects.edge.color')}</span>
                     <input type="color" value={rgbaToHex((effect.fill as any).color)}
                       oninput={(e) => updateFill(effect.id, { color: hexToRgba((e.target as HTMLInputElement).value) })} />
                   </div>
-                  <EffectParamRow label="Opacity" min={0} max={1} step={0.05}
+                  <EffectParamRow label={$t('effects.edge.opacity')} min={0} max={1} step={0.05}
                     layerIndex={layerIdx} effectId={effect.id} paramName="fill.opacity" effectKind="edge"
                     value={(effect.fill as any).opacity ?? 1}
                     displayValue={(v) => (v * 100).toFixed(0) + '%'}
                     onChange={(v) => updateFill(effect.id, { opacity: v })} />
                 {/if}
                 {#if effect.fill.type !== 'none' && effect.fill.type !== 'solid' && 'speed' in effect.fill}
-                  <EffectParamRow label="Speed" min={0.1} max={3} step={0.1}
+                  <EffectParamRow label={$t('effects.edge.speed')} min={0.1} max={3} step={0.1}
                     layerIndex={layerIdx} effectId={effect.id} paramName="fill.speed" effectKind="edge"
                     value={(effect.fill as any).speed}
                     displayValue={(v) => v.toFixed(1) + 'x'}
                     onChange={(v) => updateFill(effect.id, { speed: v })} />
                 {/if}
                 {#if effect.fill.type === 'plasma' && 'scale' in effect.fill}
-                  <EffectParamRow label="Scale" min={1} max={10} step={0.5}
+                  <EffectParamRow label={$t('effects.edge.scale')} min={1} max={10} step={0.5}
                     layerIndex={layerIdx} effectId={effect.id} paramName="fill.scale" effectKind="edge"
                     value={(effect.fill as any).scale}
                     displayValue={(v) => v.toFixed(1)}
                     onChange={(v) => updateFill(effect.id, { scale: v })} />
                 {/if}
                 {#if effect.fill.type === 'liquid' && 'viscosity' in effect.fill}
-                  <EffectParamRow label="Viscosity" min={0.1} max={2} step={0.1}
+                  <EffectParamRow label={$t('effects.edge.viscosity')} min={0.1} max={2} step={0.1}
                     layerIndex={layerIdx} effectId={effect.id} paramName="fill.viscosity" effectKind="edge"
                     value={(effect.fill as any).viscosity}
                     displayValue={(v) => v.toFixed(1)}
@@ -365,40 +392,40 @@
 
               <!-- ANIMATION SECTION -->
               <div class="subsection">
-                <span class="subsection-label">Animation</span>
+                <span class="subsection-label">{$t('effects.edge.animation')}</span>
                 <div class="control-row">
-                  <span class="control-label">Type</span>
+                  <span class="control-label">{$t('effects.edge.type')}</span>
                   <select value={effect.animation.type}
                     onchange={(e) => setAnimationType(effect.id, (e.target as HTMLSelectElement).value as AnimationType)}>
                     {#each animationTypes as at}
-                      <option value={at.type}>{at.label}</option>
+                      <option value={at.type}>{$t(at.label)}</option>
                     {/each}
                   </select>
                 </div>
 
                 {#if effect.animation.type === 'concentric' && 'count' in effect.animation}
                   <div class="control-row">
-                    <span class="control-label">Direction</span>
+                    <span class="control-label">{$t('effects.edge.direction')}</span>
                     <select value={(effect.animation as any).direction || 'out'}
                       onchange={(e) => updateEffect(effect.id, { animation: { ...effect.animation, direction: (e.target as HTMLSelectElement).value } })}>
-                      <option value="in">Internal</option>
-                      <option value="out">External</option>
-                      <option value="both">Both</option>
+                      <option value="in">{$t('effects.edge.internal')}</option>
+                      <option value="out">{$t('effects.edge.external')}</option>
+                      <option value="both">{$t('effects.edge.both')}</option>
                     </select>
                   </div>
-                  <EffectParamRow label="Count" min={2} max={20} step={1}
+                  <EffectParamRow label={$t('effects.edge.count')} min={2} max={20} step={1}
                     layerIndex={layerIdx} effectId={effect.id} paramName="animation.count" effectKind="edge"
                     value={(effect.animation as any).count}
                     displayValue={(v) => v.toFixed(0)}
                     onChange={(v) => updateAnimation(effect.id, { count: Math.round(v) })} />
-                  <EffectParamRow label="Spacing" min={0.01} max={0.1} step={0.005}
+                  <EffectParamRow label={$t('effects.edge.spacing')} min={0.01} max={0.1} step={0.005}
                     layerIndex={layerIdx} effectId={effect.id} paramName="animation.spacing" effectKind="edge"
                     value={(effect.animation as any).spacing}
                     displayValue={(v) => (v * 100).toFixed(0) + '%'}
                     onChange={(v) => updateAnimation(effect.id, { spacing: v })} />
                 {/if}
                 {#if effect.animation.type !== 'none' && 'speed' in effect.animation}
-                  <EffectParamRow label="Speed" min={0.1} max={3} step={0.1}
+                  <EffectParamRow label={$t('effects.edge.speed')} min={0.1} max={3} step={0.1}
                     layerIndex={layerIdx} effectId={effect.id} paramName="animation.speed" effectKind="edge"
                     value={(effect.animation as any).speed}
                     displayValue={(v) => v.toFixed(1) + 'x'}
@@ -410,8 +437,12 @@
         </div>
       {/each}
 
-      <button class="btn-add-effect" onclick={() => project.addEdgeEffect($selectedLayer.id)}>
-        + Add Effect
+      <button
+        class="btn-add-effect"
+        onclick={() => project.addEdgeEffect($selectedLayer.id)}
+        title={$t('effects.edge.addTitle')}
+      >
+        {$t('effects.edge.add')}
       </button>
     {/if}
   </div>
