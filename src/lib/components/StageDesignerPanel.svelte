@@ -21,6 +21,7 @@
 
   import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
+  import { t } from '../i18n';
   import { workspace } from '../stores/workspace';
 	import {
 	  surfaceStore,
@@ -75,7 +76,8 @@
 	    | { kind: 'anchor';     sliceId: string; idx: number }
 	    | { kind: 'cpIn';       sliceId: string; idx: number }
 	    | { kind: 'cpOut';      sliceId: string; idx: number }
-	    | { kind: 'sliceMove';  sliceId: string; startMouse: Point2D; startPolygons: { sliceId: string; polygon: BezierPoint[] }[] }
+	    | { kind: 'sliceMove';  sliceId: string; startMouse: Point2D; startPolygons: { sliceId: string; polygon: BezierPoint[] }[];
+      }
 	    | { kind: 'sliceRotate'; sliceId: string; centroid: Point2D; startAngle: number; startPolygon: BezierPoint[] }
 	    | { kind: 'sliceScale';  sliceId: string; centroid: Point2D; startDist: number; startPolygon: BezierPoint[] };
 	  let vertexDrag: VertexDrag | null = null;
@@ -97,7 +99,7 @@
 	  let isSliceMarqueeSelecting = false;
 
 	  function clonePolygon(poly: BezierPoint[]): BezierPoint[] {
-	    return poly.map(p => ({
+	    return poly.map((p) => ({
 	      x: p.x, y: p.y,
 	      cpIn:  p.cpIn  ? { ...p.cpIn  } : undefined,
 	      cpOut: p.cpOut ? { ...p.cpOut } : undefined,
@@ -107,8 +109,12 @@
   /** Centroid of a polygon's anchors (ignores bezier handles).
    *  Used as the pivot for rotation + uniform scaling. */
   function polygonCentroid(poly: BezierPoint[]): Point2D {
-    let sx = 0, sy = 0;
-    for (const p of poly) { sx += p.x; sy += p.y; }
+    let sx = 0,
+      sy = 0;
+    for (const p of poly) {
+      sx += p.x;
+      sy += p.y;
+    }
     return { x: sx / poly.length, y: sy / poly.length };
   }
   /** Bounding box of a polygon's anchors. */
@@ -132,31 +138,51 @@
   function applyTemplate(tpl: StageTemplate) {
     const sliceCount = $activeSurfaceSlices.length;
     if (sliceCount > 0) {
-      const ok = confirm(`Replace ${sliceCount} existing slice${sliceCount === 1 ? '' : 's'} with the "${tpl.label}" template?`);
+      const ok = confirm(
+        $t('projection.stage.confirmReplace', {
+          values: {
+            count: sliceCount,
+            suffix: sliceCount === 1 ? '' : $t('projection.stage.pluralSuffix'),
+            template: templateLabel(tpl),
+          },
+        }),
+      );
       if (!ok) return;
     }
     surfaceStore.applyTemplate(tpl.id);
   }
 
-  /** Compress long template labels for the narrow palette column.
-   *  Splits on spaces and keeps the most distinctive word, or
-   *  abbreviates when needed so the button label stays under 8 chars. */
-  function shortTemplateLabel(label: string): string {
-    const map: Record<string, string> = {
-      'Wall of Circles':  'Circles',
-      'Vertical Stripes': 'Stripes',
-      'Triptych':         'Triptych',
-      'Hexagon Wall':     'Hex Wall',
-      'Concert Stage':    'Concert',
-      'Pillar Array':     'Pillars',
-      'Horizontal Bars':  'Bars',
-      'Diamond Grid':     'Diamonds',
-      'Festival Mainstage': 'Festival',
-      'Arena Hero + IMAG':  'Arena',
-      'Club Booth Wrap':    'Club',
-      'Conference Hero':    'Conf.',
-    };
-    return map[label] ?? label;
+  const templateCatalogKeys: Record<string, string> = {
+    'wall-of-circles': 'wallOfCircles',
+    'vertical-stripes': 'verticalStripes',
+    triptych: 'triptych',
+    'hexagon-wall': 'hexagonWall',
+    concert: 'concert',
+    'pillar-array': 'pillarArray',
+    'horizontal-bars': 'horizontalBars',
+    'diamond-grid': 'diamondGrid',
+    'festival-mainstage': 'festivalMainstage',
+    'arena-hero': 'arenaHero',
+    'club-wrap': 'clubWrap',
+    'conference-curved': 'conferenceCurved',
+    'tetris-tower': 'tetrisTower',
+    'festival-fan': 'festivalFan',
+  };
+
+  function templateLabel(tpl: StageTemplate): string {
+    const catalogKey = templateCatalogKeys[tpl.id];
+    if (!catalogKey) return tpl.label;
+    const key = `projection.stage.templates.${catalogKey}.label`;
+    const translated = $t(key);
+    return translated === key ? tpl.label : translated;
+  }
+
+  function shortTemplateLabel(tpl: StageTemplate): string {
+    const catalogKey = templateCatalogKeys[tpl.id];
+    if (!catalogKey) return tpl.label;
+    const key = `projection.stage.templates.${catalogKey}.short`;
+    const translated = $t(key);
+    return translated === key ? tpl.label : translated;
   }
   function handleFile(e: Event) {
     const f = (e.target as HTMLInputElement).files?.[0];
@@ -166,14 +192,14 @@
   }
   function importSvgFile(file: File) {
     if (!/\.svg$/i.test(file.name) && file.type !== 'image/svg+xml') {
-      alert('Please drop an .svg file.');
+      alert($t('projection.stage.errors.invalidSvg'));
       return;
     }
     const reader = new FileReader();
     reader.onload = () => {
       const text = String(reader.result ?? '');
       if (!surfaceStore.importSVG(text)) {
-        alert('No polygons could be extracted from that SVG.');
+        alert($t('projection.stage.errors.noPolygons'));
       }
     };
     reader.readAsText(file);
@@ -238,7 +264,8 @@
       }
       const first = penDraft[0];
       const closeDistSurface = 12 / zoom;
-      const dx = first.x - pt.x, dy = first.y - pt.y;
+      const dx = first.x - pt.x,
+        dy = first.y - pt.y;
       if (penDraft.length >= 3 && Math.hypot(dx, dy) < closeDistSurface) {
         surfaceStore.addSlice(penDraft);
         penDraft = null;
@@ -253,11 +280,11 @@
       return;
     }
 
-	    // Select tool: hit-test in priority order — handles, anchors,
-	    // selected slice body for moving, then pending click/marquee select.
-	    if (tool === 'select' && $selectedSlice) {
-	      const sl = $selectedSlice;
-	      const hitR = 8 / zoom;
+    // Select tool: hit-test in priority order — handles, anchors,
+    // selected slice body for moving, then pending click/marquee select.
+    if (tool === 'select' && $selectedSlice) {
+      const sl = $selectedSlice;
+      const hitR = 8 / zoom;
       for (let idx = 0; idx < sl.polygon.length; idx++) {
         const v = sl.polygon[idx];
         // Handles only show while selected; check them first so a
@@ -278,67 +305,69 @@
           return;
         }
       }
-	      // Click inside an already-selected slice body → start a move drag.
-	      if (!sl.locked && $selectedSliceIds.includes(sl.id) && pointInPolygon(pt, sl.polygon)) {
-	        const selectedSet = new Set($selectedSliceIds.length > 0 ? $selectedSliceIds : [sl.id]);
-	        const startPolygons = $activeSurfaceSlices
-	          .filter(slice => selectedSet.has(slice.id) && !slice.locked)
-	          .map(slice => ({ sliceId: slice.id, polygon: clonePolygon(slice.polygon) }));
-	        beginVertexDrag({
-	          kind: 'sliceMove', sliceId: sl.id,
-	          startMouse: pt,
-	          startPolygons,
-	        });
-	        e.preventDefault();
-	        return;
-	      }
-	    }
-	    if (tool === 'select') {
-	      const hitSlice = hitTestSlices(pt);
-	      sliceDragSelect = {
-	        startSurface: pt,
-	        startClient: { x: e.clientX, y: e.clientY },
-	        hitSliceId: hitSlice?.id ?? null,
-	        additive: e.metaKey || e.ctrlKey,
-	        initialIds: [...$selectedSliceIds],
-	        active: false,
-	      };
-	      e.preventDefault();
-	    }
-	  }
-	  function onWindowMouseMove(e: MouseEvent) {
-	    if (isPanning) {
+      // Click inside an already-selected slice body → start a move drag.
+      if (!sl.locked && $selectedSliceIds.includes(sl.id) && pointInPolygon(pt, sl.polygon)) {
+        const selectedSet = new Set($selectedSliceIds.length > 0 ? $selectedSliceIds : [sl.id]);
+        const startPolygons = $activeSurfaceSlices
+          .filter((slice) => selectedSet.has(slice.id) && !slice.locked)
+          .map((slice) => ({ sliceId: slice.id, polygon: clonePolygon(slice.polygon) }));
+        beginVertexDrag({
+          kind: 'sliceMove',
+          sliceId: sl.id,
+          startMouse: pt,
+          startPolygons,
+        });
+        e.preventDefault();
+        return;
+      }
+    }
+    if (tool === 'select') {
+      const hitSlice = hitTestSlices(pt);
+      sliceDragSelect = {
+        startSurface: pt,
+        startClient: { x: e.clientX, y: e.clientY },
+        hitSliceId: hitSlice?.id ?? null,
+        additive: e.metaKey || e.ctrlKey,
+        initialIds: [...$selectedSliceIds],
+        active: false,
+      };
+      e.preventDefault();
+    }
+  }
+  function onWindowMouseMove(e: MouseEvent) {
+    if (isPanning) {
       panX = panStart.px + (e.clientX - panStart.x);
       panY = panStart.py + (e.clientY - panStart.y);
       return;
     }
-	    const pt = screenToSurface(e.clientX, e.clientY);
-	    if (!pt) return;
+    const pt = screenToSurface(e.clientX, e.clientY);
+    if (!pt) return;
 
-	    if (sliceDragSelect) {
-	      const start = sliceDragSelect.startClient;
-	      const distance = Math.hypot(e.clientX - start.x, e.clientY - start.y);
-	      if (!sliceDragSelect.active && distance < DRAG_SELECT_THRESHOLD_PX) return;
-	      if (!sliceDragSelect.active) {
-	        sliceDragSelect.active = true;
-	        isSliceMarqueeSelecting = true;
-	        sliceMarqueeStart = sliceDragSelect.startSurface;
-	      }
-	      sliceMarqueeCurrent = pt;
-	      const hits = collectSlicesInRect(sliceDragSelect.startSurface, pt);
-	      const next = sliceDragSelect.additive
-	        ? [...sliceDragSelect.initialIds, ...hits.filter(id => !sliceDragSelect!.initialIds.includes(id))]
-	        : hits;
-	      surfaceStore.setSliceSelection(next[0] ?? null, next);
-	      return;
-	    }
+    if (sliceDragSelect) {
+      const start = sliceDragSelect.startClient;
+      const distance = Math.hypot(e.clientX - start.x, e.clientY - start.y);
+      if (!sliceDragSelect.active && distance < DRAG_SELECT_THRESHOLD_PX) return;
+      if (!sliceDragSelect.active) {
+        sliceDragSelect.active = true;
+        isSliceMarqueeSelecting = true;
+        sliceMarqueeStart = sliceDragSelect.startSurface;
+      }
+      sliceMarqueeCurrent = pt;
+      const hits = collectSlicesInRect(sliceDragSelect.startSurface, pt);
+      const next = sliceDragSelect.additive
+        ? [...sliceDragSelect.initialIds, ...hits.filter((id) => !sliceDragSelect!.initialIds.includes(id))]
+        : hits;
+      surfaceStore.setSliceSelection(next[0] ?? null, next);
+      return;
+    }
 
     // Pen-tool bezier-handle pull-out. While the mouse is held after
     // placing a vertex, drag distance > ~3px (in surface units)
     // pulls symmetric handles out of that vertex.
     if (tool === 'pen' && penPulling && penDraft) {
       const a = penPulling.anchorPos;
-      const dx = pt.x - a.x, dy = pt.y - a.y;
+      const dx = pt.x - a.x,
+        dy = pt.y - a.y;
       const dist = Math.hypot(dx, dy);
       if (dist > 3 / zoom) {
         // Symmetric: cpOut at drag pos, cpIn reflected through anchor.
@@ -347,7 +376,7 @@
         updated[idx] = {
           ...updated[idx],
           cpOut: { x: a.x + dx, y: a.y + dy },
-          cpIn:  { x: a.x - dx, y: a.y - dy },
+          cpIn: { x: a.x - dx, y: a.y - dy },
         };
         penDraft = updated;
       }
@@ -358,34 +387,38 @@
       return;
     }
 
-	    if (vertexDrag) {
-	      if (vertexDrag.kind === 'sliceMove') {
-	        const dx = pt.x - vertexDrag.startMouse.x;
-	        const dy = pt.y - vertexDrag.startMouse.y;
-	        for (const item of vertexDrag.startPolygons) {
-	          const moved: BezierPoint[] = item.polygon.map(p => ({
-	            x: p.x + dx, y: p.y + dy,
-	            cpIn:  p.cpIn  ? { x: p.cpIn.x  + dx, y: p.cpIn.y  + dy } : undefined,
-	            cpOut: p.cpOut ? { x: p.cpOut.x + dx, y: p.cpOut.y + dy } : undefined,
-	          }));
-	          surfaceStore.updateSlice(item.sliceId, { polygon: moved });
-	        }
-	      } else if (vertexDrag.kind === 'sliceRotate') {
+    if (vertexDrag) {
+      if (vertexDrag.kind === 'sliceMove') {
+        const dx = pt.x - vertexDrag.startMouse.x;
+        const dy = pt.y - vertexDrag.startMouse.y;
+        for (const item of vertexDrag.startPolygons) {
+          const moved: BezierPoint[] = item.polygon.map((p) => ({
+            x: p.x + dx,
+            y: p.y + dy,
+            cpIn: p.cpIn ? { x: p.cpIn.x + dx, y: p.cpIn.y + dy } : undefined,
+            cpOut: p.cpOut ? { x: p.cpOut.x + dx, y: p.cpOut.y + dy } : undefined,
+          }));
+          surfaceStore.updateSlice(item.sliceId, { polygon: moved });
+        }
+      } else if (vertexDrag.kind === 'sliceRotate') {
         // Rotate every anchor + handle around the centroid by the
         // angular delta from initial pointer position to current.
         const c = vertexDrag.centroid;
         const ang = Math.atan2(pt.y - c.y, pt.x - c.x);
         const delta = ang - vertexDrag.startAngle;
-        const cos = Math.cos(delta), sin = Math.sin(delta);
+        const cos = Math.cos(delta),
+          sin = Math.sin(delta);
         const rotate = (p: Point2D): Point2D => {
-          const dx = p.x - c.x, dy = p.y - c.y;
+          const dx = p.x - c.x,
+            dy = p.y - c.y;
           return { x: c.x + dx * cos - dy * sin, y: c.y + dx * sin + dy * cos };
         };
-        const next: BezierPoint[] = vertexDrag.startPolygon.map(p => {
+        const next: BezierPoint[] = vertexDrag.startPolygon.map((p) => {
           const r = rotate(p);
           return {
-            x: r.x, y: r.y,
-            cpIn:  p.cpIn  ? rotate(p.cpIn)  : undefined,
+            x: r.x,
+            y: r.y,
+            cpIn: p.cpIn ? rotate(p.cpIn) : undefined,
             cpOut: p.cpOut ? rotate(p.cpOut) : undefined,
           };
         });
@@ -402,11 +435,12 @@
           x: c.x + (p.x - c.x) * ratio,
           y: c.y + (p.y - c.y) * ratio,
         });
-        const next: BezierPoint[] = vertexDrag.startPolygon.map(p => {
+        const next: BezierPoint[] = vertexDrag.startPolygon.map((p) => {
           const s = scale(p);
           return {
-            x: s.x, y: s.y,
-            cpIn:  p.cpIn  ? scale(p.cpIn)  : undefined,
+            x: s.x,
+            y: s.y,
+            cpIn: p.cpIn ? scale(p.cpIn) : undefined,
             cpOut: p.cpOut ? scale(p.cpOut) : undefined,
           };
         });
@@ -417,7 +451,7 @@
         // Local alias so TS keeps the narrow type inside the .map cb
         // (kind: 'anchor' | 'cpIn' | 'cpOut' — all have `idx`).
         const drag = vertexDrag;
-        const slice = ($activeSurfaceSlices.find(x => x.id === drag.sliceId));
+        const slice = $activeSurfaceSlices.find((x) => x.id === drag.sliceId);
         if (slice) {
           const next = slice.polygon.map((v, i) => {
             if (i !== drag.idx) return v;
@@ -428,12 +462,13 @@
               const dx = pt.x - v.x;
               const dy = pt.y - v.y;
               return {
-                x: pt.x, y: pt.y,
-                cpIn:  v.cpIn  ? { x: v.cpIn.x  + dx, y: v.cpIn.y  + dy } : undefined,
+                x: pt.x,
+                y: pt.y,
+                cpIn: v.cpIn ? { x: v.cpIn.x + dx, y: v.cpIn.y + dy } : undefined,
                 cpOut: v.cpOut ? { x: v.cpOut.x + dx, y: v.cpOut.y + dy } : undefined,
               };
             }
-            if (drag.kind === 'cpIn')  return { ...v, cpIn:  { x: pt.x, y: pt.y } };
+            if (drag.kind === 'cpIn') return { ...v, cpIn: { x: pt.x, y: pt.y } };
             if (drag.kind === 'cpOut') return { ...v, cpOut: { x: pt.x, y: pt.y } };
             return v;
           });
@@ -442,87 +477,89 @@
       }
     }
   }
-	  function onWindowMouseUp(_e: MouseEvent) {
-	    if (sliceDragSelect) {
-	      const pending = sliceDragSelect;
-	      if (!pending.active) {
-	        if (pending.hitSliceId) {
-	          if (pending.additive) {
-	            const exists = pending.initialIds.includes(pending.hitSliceId);
-	            const next = exists
-	              ? pending.initialIds.filter(id => id !== pending.hitSliceId)
-	              : [...pending.initialIds, pending.hitSliceId];
-	            surfaceStore.setSliceSelection(pending.hitSliceId, next.length > 0 ? next : [pending.hitSliceId]);
-	          } else {
-	            surfaceStore.selectSlice(pending.hitSliceId);
-	          }
-	        } else if (!pending.additive) {
-	          surfaceStore.selectSlice(null);
-	        }
-	      }
-	      sliceDragSelect = null;
-	      sliceMarqueeStart = null;
-	      sliceMarqueeCurrent = null;
-	      isSliceMarqueeSelecting = false;
-	    }
-	    isPanning = false;
-	    penPulling = null;
-	    if (vertexDrag) surfaceStore.endHistoryGesture();
-	    vertexDrag = null;
-	  }
+  function onWindowMouseUp(_e: MouseEvent) {
+    if (sliceDragSelect) {
+      const pending = sliceDragSelect;
+      if (!pending.active) {
+        if (pending.hitSliceId) {
+          if (pending.additive) {
+            const exists = pending.initialIds.includes(pending.hitSliceId);
+            const next = exists
+              ? pending.initialIds.filter((id) => id !== pending.hitSliceId)
+              : [...pending.initialIds, pending.hitSliceId];
+            surfaceStore.setSliceSelection(pending.hitSliceId, next.length > 0 ? next : [pending.hitSliceId]);
+          } else {
+            surfaceStore.selectSlice(pending.hitSliceId);
+          }
+        } else if (!pending.additive) {
+          surfaceStore.selectSlice(null);
+        }
+      }
+      sliceDragSelect = null;
+      sliceMarqueeStart = null;
+      sliceMarqueeCurrent = null;
+      isSliceMarqueeSelecting = false;
+    }
+    isPanning = false;
+    penPulling = null;
+    if (vertexDrag) surfaceStore.endHistoryGesture();
+    vertexDrag = null;
+  }
 
   /** Ray-cast point-in-polygon test for hit-detecting slice bodies.
    *  Uses anchor positions only — beziers may slightly under/over-test
    *  near curve apexes; acceptable for a click-tolerance test. */
-	  function pointInPolygon(p: Point2D, poly: BezierPoint[]): boolean {
+  function pointInPolygon(p: Point2D, poly: BezierPoint[]): boolean {
     let inside = false;
     for (let i = 0, j = poly.length - 1; i < poly.length; j = i++) {
-      const xi = poly[i].x, yi = poly[i].y;
-      const xj = poly[j].x, yj = poly[j].y;
-      const intersect = ((yi > p.y) !== (yj > p.y)) &&
-        (p.x < ((xj - xi) * (p.y - yi)) / ((yj - yi) || 1e-9) + xi);
+      const xi = poly[i].x,
+        yi = poly[i].y;
+      const xj = poly[j].x,
+        yj = poly[j].y;
+      const intersect = yi > p.y !== yj > p.y && p.x < ((xj - xi) * (p.y - yi)) / (yj - yi || 1e-9) + xi;
       if (intersect) inside = !inside;
     }
-	    return inside;
-	  }
+    return inside;
+  }
 
-	  function hitTestSlices(p: Point2D): SurfaceSlice | null {
-	    for (let i = $activeSurfaceSlices.length - 1; i >= 0; i--) {
-	      const slice = $activeSurfaceSlices[i];
-	      if (!slice.visible || slice.locked) continue;
-	      if (pointInPolygon(p, slice.polygon)) return slice;
-	    }
-	    return null;
-	  }
+  function hitTestSlices(p: Point2D): SurfaceSlice | null {
+    for (let i = $activeSurfaceSlices.length - 1; i >= 0; i--) {
+      const slice = $activeSurfaceSlices[i];
+      if (!slice.visible || slice.locked) continue;
+      if (pointInPolygon(p, slice.polygon)) return slice;
+    }
+    return null;
+  }
 
-	  function collectSlicesInRect(a: Point2D, b: Point2D): string[] {
-	    const minX = Math.min(a.x, b.x);
-	    const maxX = Math.max(a.x, b.x);
-	    const minY = Math.min(a.y, b.y);
-	    const maxY = Math.max(a.y, b.y);
-	    const rectCorners: Point2D[] = [
-	      { x: minX, y: minY },
-	      { x: maxX, y: minY },
-	      { x: maxX, y: maxY },
-	      { x: minX, y: maxY },
-	    ];
-	    const ids: string[] = [];
-	    for (const slice of $activeSurfaceSlices) {
-	      if (!slice.visible || slice.locked) continue;
-	      const bbox = polygonBBox(slice.polygon);
-	      const bboxOverlaps = bbox.maxX >= minX && bbox.minX <= maxX && bbox.maxY >= minY && bbox.minY <= maxY;
-	      if (!bboxOverlaps) continue;
-	      const anchorInRect = slice.polygon.some(p => p.x >= minX && p.x <= maxX && p.y >= minY && p.y <= maxY);
-	      const rectHitsSlice = rectCorners.some(p => pointInPolygon(p, slice.polygon));
-	      if (anchorInRect || rectHitsSlice || bboxOverlaps) ids.push(slice.id);
-	    }
-	    return ids;
-	  }
+  function collectSlicesInRect(a: Point2D, b: Point2D): string[] {
+    const minX = Math.min(a.x, b.x);
+    const maxX = Math.max(a.x, b.x);
+    const minY = Math.min(a.y, b.y);
+    const maxY = Math.max(a.y, b.y);
+    const rectCorners: Point2D[] = [
+      { x: minX, y: minY },
+      { x: maxX, y: minY },
+      { x: maxX, y: maxY },
+      { x: minX, y: maxY },
+    ];
+    const ids: string[] = [];
+    for (const slice of $activeSurfaceSlices) {
+      if (!slice.visible || slice.locked) continue;
+      const bbox = polygonBBox(slice.polygon);
+      const bboxOverlaps = bbox.maxX >= minX && bbox.minX <= maxX && bbox.maxY >= minY && bbox.minY <= maxY;
+      if (!bboxOverlaps) continue;
+      const anchorInRect = slice.polygon.some((p) => p.x >= minX && p.x <= maxX && p.y >= minY && p.y <= maxY);
+      const rectHitsSlice = rectCorners.some((p) => pointInPolygon(p, slice.polygon));
+      if (anchorInRect || rectHitsSlice || bboxOverlaps) ids.push(slice.id);
+    }
+    return ids;
+  }
   function onCanvasWheel(e: WheelEvent) {
     if (!canvasEl) return;
     e.preventDefault();
     const rect = canvasEl.getBoundingClientRect();
-    const cx = e.clientX - rect.left, cy = e.clientY - rect.top;
+    const cx = e.clientX - rect.left,
+      cy = e.clientY - rect.top;
     const oldZoom = zoom;
     const factor = e.deltaY < 0 ? 1.1 : 1 / 1.1;
     const next = Math.max(0.1, Math.min(8, oldZoom * factor));
@@ -555,7 +592,12 @@
         e.preventDefault();
         return;
       }
-      if (penDraft) { penDraft = null; penCursor = null; e.preventDefault(); return; }
+      if (penDraft) {
+        penDraft = null;
+        penCursor = null;
+        e.preventDefault();
+        return;
+      }
       workspace.closeAll();
       return;
     }
@@ -566,30 +608,34 @@
       e.preventDefault();
       return;
     }
-	    if ((e.key === 'Delete' || e.key === 'Backspace') && ($selectedSliceIds.length > 0 || $selectedSlice)) {
-	      const ids = $selectedSliceIds.length > 0 ? $selectedSliceIds : [$selectedSlice!.id];
-	      surfaceStore.beginHistoryGesture();
-	      for (const id of ids) surfaceStore.deleteSlice(id);
-	      surfaceStore.endHistoryGesture();
-	      e.preventDefault();
-	      return;
-	    }
-    if (e.key === 'v' || e.key === 'V') { tool = 'select'; return; }
-    if (e.key === 'p' || e.key === 'P') { tool = 'pen'; return; }
+    if ((e.key === 'Delete' || e.key === 'Backspace') && ($selectedSliceIds.length > 0 || $selectedSlice)) {
+      const ids = $selectedSliceIds.length > 0 ? $selectedSliceIds : [$selectedSlice!.id];
+      surfaceStore.beginHistoryGesture();
+      for (const id of ids) surfaceStore.deleteSlice(id);
+      surfaceStore.endHistoryGesture();
+      e.preventDefault();
+      return;
+    }
+    if (e.key === 'v' || e.key === 'V') {
+      tool = 'select';
+      return;
+    }
+    if (e.key === 'p' || e.key === 'P') {
+      tool = 'pen';
+      return;
+    }
   }
 
   // ── Slice interactions ────────────────────────────────────
-	  function selectSliceFromList(slice: SurfaceSlice, e: MouseEvent | KeyboardEvent) {
-	    if (e.metaKey || e.ctrlKey) {
-	      const exists = $selectedSliceIds.includes(slice.id);
-	      const next = exists
-	        ? $selectedSliceIds.filter(id => id !== slice.id)
-	        : [...$selectedSliceIds, slice.id];
-	      surfaceStore.setSliceSelection(slice.id, next.length > 0 ? next : [slice.id]);
-	    } else {
-	      surfaceStore.selectSlice(slice.id);
-	    }
-	  }
+  function selectSliceFromList(slice: SurfaceSlice, e: MouseEvent | KeyboardEvent) {
+    if (e.metaKey || e.ctrlKey) {
+      const exists = $selectedSliceIds.includes(slice.id);
+      const next = exists ? $selectedSliceIds.filter((id) => id !== slice.id) : [...$selectedSliceIds, slice.id];
+      surfaceStore.setSliceSelection(slice.id, next.length > 0 ? next : [slice.id]);
+    } else {
+      surfaceStore.selectSlice(slice.id);
+    }
+  }
 
   // ── Helpers ──────────────────────────────────────────────
   /**
@@ -639,9 +685,9 @@
     const c = viewportCenter();
     const r = 120;
     let pts: BezierPoint[] = [];
-    let name = 'Shape';
+    let name = $t('projection.stage.shapes.shape');
     if (kind === 'rect') {
-      name = 'Rectangle';
+      name = $t('projection.stage.shapes.rectangle');
       pts = [
         { x: c.x - r, y: c.y - r * 0.7 },
         { x: c.x + r, y: c.y - r * 0.7 },
@@ -649,7 +695,7 @@
         { x: c.x - r, y: c.y + r * 0.7 },
       ];
     } else if (kind === 'circle') {
-      name = 'Circle';
+      name = $t('projection.stage.shapes.circle');
       // True circle as 4 cubic-bezier quadrants. The magic constant
       // 0.5522847... = (4/3) * tan(π/8) makes the quadrant a near-
       // perfect quarter circle (max error < 0.027% of radius). This
@@ -664,7 +710,7 @@
         { x: c.x + r, y: c.y,     cpIn: { x: c.x + r, y: c.y + K }, cpOut: { x: c.x + r, y: c.y - K } },
       ];
     } else if (kind === 'ellipse') {
-      name = 'Ellipse';
+      name = $t('projection.stage.shapes.ellipse');
       const rx = r, ry = r * 0.6;
       const Kx = 0.5522847498307936 * rx, Ky = 0.5522847498307936 * ry;
       pts = [
@@ -676,7 +722,7 @@
     } else if (kind === 'pill') {
       // Rounded rectangle (stadium): two straight long sides + two
       // semicircular caps. Useful for projection mapping LED bars.
-      name = 'Pill';
+      name = $t('projection.stage.shapes.pill');
       const w = r * 1.4, h = r * 0.5;
       const K = 0.5522847498307936 * h;
       pts = [
@@ -700,14 +746,14 @@
           cpOut: { x: c.x - w - h, y: c.y - K } },
       ];
     } else if (kind === 'triangle') {
-      name = 'Triangle';
+      name = $t('projection.stage.shapes.triangle');
       pts = [
         { x: c.x, y: c.y - r },
         { x: c.x + r * 0.866, y: c.y + r * 0.5 },
         { x: c.x - r * 0.866, y: c.y + r * 0.5 },
       ];
     } else if (kind === 'star') {
-      name = 'Star';
+      name = $t('projection.stage.shapes.star');
       const N = 10;
       for (let i = 0; i < N; i++) {
         const t = (i / N) * Math.PI * 2 - Math.PI / 2;
@@ -715,7 +761,7 @@
         pts.push({ x: c.x + Math.cos(t) * rr, y: c.y + Math.sin(t) * rr });
       }
     } else if (kind === 'hex') {
-      name = 'Hexagon';
+      name = $t('projection.stage.shapes.hexagon');
       const N = 6;
       for (let i = 0; i < N; i++) {
         const t = (i / N) * Math.PI * 2 - Math.PI / 6;
@@ -729,7 +775,7 @@
   //    without one — saves them a click.
   $: if (!$activeSurface && $surfaceStore.surfaces.length === 0) {
     // Defer one tick so the reactive graph settles before we mutate.
-    queueMicrotask(() => surfaceStore.createSurface('Stage 1'));
+    queueMicrotask(() => surfaceStore.createSurface($t('projection.stage.defaultSurfaceName')));
   }
 
   // ── Auto-fit the surface to the viewport when it changes —
@@ -741,10 +787,7 @@
     const padding = 40;
     const sw = $activeSurface.width;
     const sh = $activeSurface.height;
-    const fit = Math.min(
-      (rect.width - padding * 2) / sw,
-      (rect.height - padding * 2) / sh
-    );
+    const fit = Math.min((rect.width - padding * 2) / sw, (rect.height - padding * 2) / sh);
     zoom = Math.max(0.05, Math.min(4, fit));
     panX = (rect.width - sw * zoom) / 2;
     panY = (rect.height - sh * zoom) / 2;
@@ -783,10 +826,11 @@
            surface state stays saved on the project; the user can come
            back any time to edit. Apply Stage on the right is the
            commit-to-mapping action. -->
-      <button class="back-btn" onclick={() => workspace.closeAll()} title="Close Stage Designer without applying (Esc)">
-        <span class="back-arrow">←</span> Back to Mapping
+      <button class="back-btn" onclick={() => workspace.closeAll()} title={$t('projection.stage.header.backTitle')}>
+        <span class="back-arrow">←</span>
+        {$t('projection.stage.header.back')}
       </button>
-      <span class="title">STAGE DESIGNER</span>
+      <span class="title">{$t('projection.stage.header.title')}</span>
       {#if $activeSurface}
         <input
           class="surface-name-input"
@@ -817,17 +861,15 @@
         class="zoom-btn"
         disabled={!$surfaceCanUndo}
         onclick={() => surfaceStore.undo()}
-        title="Undo stage edit (⌘Z)"
-        aria-label="Undo stage edit"
-      >↶</button>
+        title={$t('projection.stage.header.undoTitle')}
+        aria-label={$t('projection.stage.header.undoAria')}>↶</button>
       <button
         class="zoom-btn"
         disabled={!$surfaceCanRedo}
         onclick={() => surfaceStore.redo()}
-        title="Redo stage edit (⇧⌘Z)"
-        aria-label="Redo stage edit"
-      >↷</button>
-      <button class="zoom-btn" onclick={fitToViewport} title="Fit to viewport">⛶</button>
+        title={$t('projection.stage.header.redoTitle')}
+        aria-label={$t('projection.stage.header.redoAria')}>↷</button>
+      <button class="zoom-btn" onclick={fitToViewport} title={$t('projection.stage.header.fitTitle')}>⛶</button>
       <span class="zoom-readout">{Math.round(zoom * 100)}%</span>
       <span class="header-sep"></span>
       <!-- Apply Stage: turn slices into mapping layers + jump to the
@@ -838,11 +880,11 @@
         disabled={!$activeSurface || $activeSurfaceSlices.length === 0}
         onclick={async () => {
           const ok = await surfaceStore.applyStage();
-          if (!ok) alert('Add at least one slice before applying the stage.');
+          if (!ok) alert($t('projection.stage.errors.applyEmpty'));
         }}
-        title="Convert slices into custom-shape mapping layers and switch to the main workspace"
+        title={$t('projection.stage.header.applyTitle')}
       >
-        Apply Stage →
+        {$t('projection.stage.header.apply')}
       </button>
     </div>
   </header>
@@ -854,62 +896,81 @@
          live here permanently so they're never cropped off the
          header at narrow window widths. -->
     <aside class="tool-palette">
-      <button class="palette-btn" class:active={tool === 'select'} onclick={() => tool = 'select'} title="Select tool (V)">
-        <span class="p-icon">↖</span><span class="p-label">Select</span>
+      <button
+        class="palette-btn"
+        class:active={tool === 'select'}
+        onclick={() => (tool = 'select')}
+        title={$t('projection.stage.tools.selectTitle')}
+      >
+        <span class="p-icon">↖</span><span class="p-label">{$t('projection.stage.tools.select')}</span>
       </button>
-      <button class="palette-btn" class:active={tool === 'pen'} onclick={() => tool = 'pen'} title="Pen tool — click anchors, drag for bezier handles, click first to close (P)">
-        <span class="p-icon">✎</span><span class="p-label">Pen</span>
-      </button>
-
-      <div class="palette-divider"></div>
-      <div class="palette-section">Shapes</div>
-      <button class="palette-btn" onclick={() => addPremade('rect')}     title="Add rectangle">
-        <span class="p-icon">▭</span><span class="p-label">Rect</span>
-      </button>
-      <button class="palette-btn" onclick={() => addPremade('circle')}   title="Add circle (true cubic-bezier)">
-        <span class="p-icon">◯</span><span class="p-label">Circle</span>
-      </button>
-      <button class="palette-btn" onclick={() => addPremade('ellipse')}  title="Add ellipse">
-        <span class="p-icon">⬭</span><span class="p-label">Ellipse</span>
-      </button>
-      <button class="palette-btn" onclick={() => addPremade('triangle')} title="Add triangle">
-        <span class="p-icon">△</span><span class="p-label">Tri</span>
-      </button>
-      <button class="palette-btn" onclick={() => addPremade('star')}     title="Add 5-point star">
-        <span class="p-icon">☆</span><span class="p-label">Star</span>
-      </button>
-      <button class="palette-btn" onclick={() => addPremade('hex')}      title="Add hexagon">
-        <span class="p-icon">⬡</span><span class="p-label">Hex</span>
-      </button>
-      <button class="palette-btn" onclick={() => addPremade('pill')}     title="Add pill (stadium)">
-        <span class="p-icon">▱</span><span class="p-label">Pill</span>
+      <button
+        class="palette-btn"
+        class:active={tool === 'pen'}
+        onclick={() => (tool = 'pen')}
+        title={$t('projection.stage.tools.penTitle')}
+      >
+        <span class="p-icon">✎</span><span class="p-label">{$t('projection.stage.tools.pen')}</span>
       </button>
 
       <div class="palette-divider"></div>
-      <div class="palette-section">Templates</div>
+      <div class="palette-section">{$t('projection.stage.tools.shapes')}</div>
+      <button class="palette-btn" onclick={() => addPremade('rect')} title={$t('projection.stage.tools.rectTitle')}>
+        <span class="p-icon">▭</span><span class="p-label">{$t('projection.stage.tools.rect')}</span>
+      </button>
+      <button class="palette-btn" onclick={() => addPremade('circle')} title={$t('projection.stage.tools.circleTitle')}>
+        <span class="p-icon">◯</span><span class="p-label">{$t('projection.stage.tools.circle')}</span>
+      </button>
+      <button
+        class="palette-btn"
+        onclick={() => addPremade('ellipse')}
+        title={$t('projection.stage.tools.ellipseTitle')}
+      >
+        <span class="p-icon">⬭</span><span class="p-label">{$t('projection.stage.tools.ellipse')}</span>
+      </button>
+      <button
+        class="palette-btn"
+        onclick={() => addPremade('triangle')}
+        title={$t('projection.stage.tools.triangleTitle')}
+      >
+        <span class="p-icon">△</span><span class="p-label">{$t('projection.stage.tools.triangle')}</span>
+      </button>
+      <button class="palette-btn" onclick={() => addPremade('star')} title={$t('projection.stage.tools.starTitle')}>
+        <span class="p-icon">☆</span><span class="p-label">{$t('projection.stage.tools.star')}</span>
+      </button>
+      <button class="palette-btn" onclick={() => addPremade('hex')} title={$t('projection.stage.tools.hexTitle')}>
+        <span class="p-icon">⬡</span><span class="p-label">{$t('projection.stage.tools.hex')}</span>
+      </button>
+      <button class="palette-btn" onclick={() => addPremade('pill')} title={$t('projection.stage.tools.pillTitle')}>
+        <span class="p-icon">▱</span><span class="p-label">{$t('projection.stage.tools.pill')}</span>
+      </button>
+
+      <div class="palette-divider"></div>
+      <div class="palette-section">{$t('projection.stage.tools.templates')}</div>
       <!-- Predesigned one-click stage layouts. Each replaces the
            active surface's slices with a clean starter geometry. -->
       {#each STAGE_TEMPLATES as tpl (tpl.id)}
         <button
           class="palette-btn"
           onclick={() => applyTemplate(tpl)}
-          title={`${tpl.label} — replaces current slices with this layout`}
+          title={$t('projection.stage.tools.templateTitle', { values: { label: templateLabel(tpl) } })}
         >
-          <span class="p-icon">{tpl.icon}</span><span class="p-label">{shortTemplateLabel(tpl.label)}</span>
+          <span class="p-icon">{tpl.icon}</span><span class="p-label">{shortTemplateLabel(tpl)}</span>
         </button>
       {/each}
 
       <div class="palette-divider"></div>
-      <div class="palette-section">Import</div>
-      <button class="palette-btn primary-btn" onclick={triggerFilePicker} title="Import SVG file — each path becomes a slice with its bezier handles intact">
-        <span class="p-icon">↑</span><span class="p-label">SVG</span>
+      <div class="palette-section">{$t('projection.stage.tools.import')}</div>
+      <button class="palette-btn primary-btn" onclick={triggerFilePicker} title={$t('projection.stage.tools.importTitle')}
+      >
+        <span class="p-icon">↑</span><span class="p-label">{$t('projection.stage.tools.svg')}</span>
       </button>
     </aside>
 
     <!-- Slice list -->
     <aside class="slice-list-panel">
       <div class="panel-header">
-        <span>Slices</span>
+        <span>{$t('projection.stage.slices.heading')}</span>
         <span class="slice-count">{$activeSurfaceSlices.length}</span>
       </div>
       <div class="slice-list">
@@ -929,24 +990,21 @@
               class="slice-icon-btn"
               class:active={slice.visible}
               onclick={(e) => { e.stopPropagation(); surfaceStore.updateSlice(slice.id, { visible: !slice.visible }); }}
-              title="Visible"
-            >{slice.visible ? '◉' : '○'}</button>
+              title={$t('projection.stage.slices.visible')}>{slice.visible ? '◉' : '○'}</button>
             <button
               class="slice-icon-btn"
               class:active={slice.locked}
               onclick={(e) => { e.stopPropagation(); surfaceStore.updateSlice(slice.id, { locked: !slice.locked }); }}
-              title="Locked"
-            >{slice.locked ? '🔒' : '🔓'}</button>
+              title={$t('projection.stage.slices.locked')}>{slice.locked ? '🔒' : '🔓'}</button>
             <button
               class="slice-icon-btn danger"
               onclick={(e) => { e.stopPropagation(); surfaceStore.deleteSlice(slice.id); }}
-              title="Delete"
-            >×</button>
+              title={$t('projection.stage.slices.delete')}>×</button>
           </div>
         {/each}
         {#if $activeSurfaceSlices.length === 0}
           <div class="slice-empty">
-            No slices yet. Import an SVG, drop a premade shape, or use the pen tool.
+            {$t('projection.stage.slices.empty')}
           </div>
         {/if}
       </div>
@@ -1071,8 +1129,10 @@
                 {@const rotateY = bbox.minY - 40 / zoom}
                 {@const rotateX = (bbox.minX + bbox.maxX) / 2}
                 <line
-                  x1={rotateX} y1={bbox.minY}
-                  x2={rotateX} y2={rotateY}
+                  x1={rotateX}
+                  y1={bbox.minY}
+                  x2={rotateX}
+                  y2={rotateY}
                   stroke={slice.color}
                   stroke-width={0.8 / zoom}
                   stroke-dasharray="{3 / zoom},{3 / zoom}"
@@ -1080,7 +1140,8 @@
                 />
                 <!-- Rotate handle (circle with ↻ icon) -->
                 <circle
-                  cx={rotateX} cy={rotateY}
+                  cx={rotateX}
+                  cy={rotateY}
                   r={10 / zoom}
                   fill="#0a0a0c"
                   stroke={slice.color}
@@ -1094,36 +1155,42 @@
                       sliceId: slice.id,
                       centroid: c,
                       startAngle: Math.atan2(rotateY - c.y, rotateX - c.x),
-                      startPolygon: slice.polygon.map(p => ({
-                        x: p.x, y: p.y,
-                        cpIn:  p.cpIn  ? { ...p.cpIn  } : undefined,
+                      startPolygon: slice.polygon.map((p) => ({
+                        x: p.x,
+                        y: p.y,
+                        cpIn: p.cpIn ? { ...p.cpIn } : undefined,
                         cpOut: p.cpOut ? { ...p.cpOut } : undefined,
                       })),
                     });
                   }}
                 />
                 <text
-                  x={rotateX} y={rotateY + 4 / zoom}
+                  x={rotateX}
+                  y={rotateY + 4 / zoom}
                   text-anchor="middle"
                   font-size={11 / zoom}
                   fill={slice.color}
                   pointer-events="none"
-                  font-family="Space Grotesk, system-ui, sans-serif"
-                >↻</text>
+                  font-family="Space Grotesk, system-ui, sans-serif">↻</text
+                >
                 <!-- Scale handle (square at bottom-right of bbox) -->
                 {@const scaleX = bbox.maxX + 24 / zoom}
                 {@const scaleY = bbox.maxY + 24 / zoom}
                 <line
-                  x1={bbox.maxX} y1={bbox.maxY}
-                  x2={scaleX} y2={scaleY}
+                  x1={bbox.maxX}
+                  y1={bbox.maxY}
+                  x2={scaleX}
+                  y2={scaleY}
                   stroke={slice.color}
                   stroke-width={0.8 / zoom}
                   stroke-dasharray="{3 / zoom},{3 / zoom}"
                   opacity="0.55"
                 />
                 <rect
-                  x={scaleX - 8 / zoom} y={scaleY - 8 / zoom}
-                  width={16 / zoom} height={16 / zoom}
+                  x={scaleX - 8 / zoom}
+                  y={scaleY - 8 / zoom}
+                  width={16 / zoom}
+                  height={16 / zoom}
                   fill="#0a0a0c"
                   stroke={slice.color}
                   stroke-width={1.5 / zoom}
@@ -1136,43 +1203,37 @@
                       sliceId: slice.id,
                       centroid: c,
                       startDist: Math.hypot(scaleX - c.x, scaleY - c.y),
-                      startPolygon: slice.polygon.map(p => ({
-                        x: p.x, y: p.y,
-                        cpIn:  p.cpIn  ? { ...p.cpIn  } : undefined,
+                      startPolygon: slice.polygon.map((p) => ({
+                        x: p.x,
+                        y: p.y,
+                        cpIn: p.cpIn ? { ...p.cpIn } : undefined,
                         cpOut: p.cpOut ? { ...p.cpOut } : undefined,
                       })),
                     });
                   }}
                 />
                 <text
-                  x={scaleX} y={scaleY + 4 / zoom}
+                  x={scaleX}
+                  y={scaleY + 4 / zoom}
                   text-anchor="middle"
                   font-size={11 / zoom}
                   fill={slice.color}
                   pointer-events="none"
-                  font-family="Space Grotesk, system-ui, sans-serif"
-                >⤡</text>
+                  font-family="Space Grotesk, system-ui, sans-serif">⤡</text
+                >
               {/if}
             {/if}
-	          {/each}
+          {/each}
 
-	          {#if isSliceMarqueeSelecting && sliceMarqueeStart && sliceMarqueeCurrent}
-	            {@const mx = Math.min(sliceMarqueeStart.x, sliceMarqueeCurrent.x)}
-	            {@const my = Math.min(sliceMarqueeStart.y, sliceMarqueeCurrent.y)}
-	            {@const mw = Math.abs(sliceMarqueeCurrent.x - sliceMarqueeStart.x)}
-	            {@const mh = Math.abs(sliceMarqueeCurrent.y - sliceMarqueeStart.y)}
-	            <rect
-	              class="slice-marquee"
-	              x={mx}
-	              y={my}
-	              width={mw}
-	              height={mh}
-	              stroke-width={1.5 / zoom}
-	              rx={2 / zoom}
-	            />
-	          {/if}
+          {#if isSliceMarqueeSelecting && sliceMarqueeStart && sliceMarqueeCurrent}
+            {@const mx = Math.min(sliceMarqueeStart.x, sliceMarqueeCurrent.x)}
+            {@const my = Math.min(sliceMarqueeStart.y, sliceMarqueeCurrent.y)}
+            {@const mw = Math.abs(sliceMarqueeCurrent.x - sliceMarqueeStart.x)}
+            {@const mh = Math.abs(sliceMarqueeCurrent.y - sliceMarqueeStart.y)}
+            <rect class="slice-marquee" x={mx} y={my} width={mw} height={mh} stroke-width={1.5 / zoom} rx={2 / zoom} />
+          {/if}
 
-	          <!-- Pen-tool live draft. The committed segments render
+          <!-- Pen-tool live draft. The committed segments render
                with their bezier curves (since penDraft is BezierPoint[]);
                the trailing segment from last vertex to cursor renders
                separately as a dashed preview so the user knows it's
@@ -1225,21 +1286,21 @@
       {#if $activeSurfaceSlices.length === 0 && !penDraft}
         <div class="canvas-empty">
           <div class="empty-card">
-            <p class="empty-title">Stage Designer</p>
-            <p class="empty-sub">Import a vector stage layout, or build it from primitives.</p>
+            <p class="empty-title">{$t('projection.stage.empty.title')}</p>
+            <p class="empty-sub">{$t('projection.stage.empty.subtitle')}</p>
             <div class="empty-actions">
               <button class="empty-btn primary" onclick={triggerFilePicker}>
-                ↑ Import SVG file
+                {$t('projection.stage.empty.importSvg')}
               </button>
-              <button class="empty-btn" onclick={() => tool = 'pen'}>
-                ✎ Draw with pen
+              <button class="empty-btn" onclick={() => (tool = 'pen')}>
+                {$t('projection.stage.empty.drawPen')}
               </button>
               <button class="empty-btn" onclick={() => addPremade('rect')}>
-                ▭ Start with a rectangle
+                {$t('projection.stage.empty.startRectangle')}
               </button>
             </div>
-            <p class="empty-hint">…or drop an SVG file anywhere on this canvas.</p>
-            <p class="empty-shortcut">Shift+drag pans · wheel zooms · Esc closes the workspace</p>
+            <p class="empty-hint">{$t('projection.stage.empty.hint')}</p>
+            <p class="empty-shortcut">{$t('projection.stage.empty.shortcut')}</p>
           </div>
         </div>
       {/if}
@@ -1251,7 +1312,7 @@
         <div class="canvas-drop-overlay">
           <div class="drop-card">
             <span class="drop-icon">↧</span>
-            <p>Drop SVG to import</p>
+            <p>{$t('projection.stage.empty.dropSvg')}</p>
           </div>
         </div>
       {/if}
@@ -1259,14 +1320,14 @@
 
     <!-- Inspector -->
     <aside class="inspector-panel">
-      <div class="panel-header"><span>Inspector</span></div>
+      <div class="panel-header"><span>{$t('projection.stage.inspector.heading')}</span></div>
 
       <!-- Slice-specific section (visible only with a selection). -->
       {#if $selectedSlice}
         {@const sl = $selectedSlice}
         <div class="inspector-section">
           <label>
-            Name
+            {$t('projection.stage.inspector.name')}
             <input
               type="text"
               value={sl.name}
@@ -1274,7 +1335,7 @@
             />
           </label>
           <label>
-            Color
+            {$t('projection.stage.inspector.color')}
             <input
               type="color"
               value={sl.color}
@@ -1284,14 +1345,14 @@
           <div class="inspector-row">
             <label class="check">
               <input type="checkbox" checked={sl.visible} onchange={(e) => surfaceStore.updateSlice(sl.id, { visible: (e.target as HTMLInputElement).checked })}/>
-              Visible
+              {$t('projection.stage.inspector.visible')}
             </label>
             <label class="check">
               <input type="checkbox" checked={sl.locked} onchange={(e) => surfaceStore.updateSlice(sl.id, { locked: (e.target as HTMLInputElement).checked })}/>
-              Locked
+              {$t('projection.stage.inspector.locked')}
             </label>
           </div>
-          <div class="inspector-stat"><span>Vertices</span><span>{sl.polygon.length}</span></div>
+          <div class="inspector-stat"><span>{$t('projection.stage.inspector.vertices')}</span><span>{sl.polygon.length}</span></div>
           <!-- Simplify — RDP-reduces the polygon to ~24 anchors, keeping
                bezier-handled anchors intact. Useful for SVG imports
                that arrived with hundreds of dense sample points; the
@@ -1300,8 +1361,7 @@
             <button
               class="inspector-action"
               onclick={() => surfaceStore.simplifySlice(sl.id, 24)}
-              title="Reduce point count (preserves bezier handles)"
-            >Simplify polygon →</button>
+              title={$t('projection.stage.inspector.simplifyTitle')}>{$t('projection.stage.inspector.simplify')}</button>
           {/if}
           <!-- Binding section — shows what content source feeds this
                slice. After Apply Stage, sourceBinding.kind = 'layer'
@@ -1309,25 +1369,25 @@
                in the main workspace. -->
           {#if sl.sourceBinding?.kind === 'layer'}
             {@const bindingLayerId = (sl.sourceBinding as { kind: 'layer'; layerId: string }).layerId}
-            {@const linkedLayer = $projectLayers.find(l => l.id === bindingLayerId)}
+            {@const linkedLayer = $projectLayers.find((l) => l.id === bindingLayerId)}
             <div class="binding-card">
-              <div class="binding-label">Bound to mapping layer</div>
-              <div class="binding-name">{linkedLayer ? linkedLayer.name : 'Layer removed'}</div>
+              <div class="binding-label">{$t('projection.stage.inspector.boundLayer')}</div>
+              <div class="binding-name">{linkedLayer ? linkedLayer.name : $t('projection.stage.inspector.layerRemoved')}</div>
               <button
                 class="binding-action"
                 onclick={() => workspace.closeAll()}
-                title="Switch to the main mapping workspace where you can drop content onto this layer"
-              >Open in mapping →</button>
+                title={$t('projection.stage.inspector.openMappingTitle')}
+                >{$t('projection.stage.inspector.openMapping')}</button>
             </div>
           {:else}
-            <div class="inspector-stat"><span>Binding</span><span class="muted">unbound</span></div>
+            <div class="inspector-stat"><span>{$t('projection.stage.inspector.binding')}</span><span class="muted">{$t('projection.stage.inspector.unbound')}</span></div>
             <div class="inspector-note">
-              Click <strong>Apply Stage</strong> to convert all slices into mapping layers. The active mapping workspace will open where you can drop content (video, shader, image) onto each layer.
+              {$t('projection.stage.inspector.noteBefore')}<strong>{$t('projection.stage.inspector.noteAction')}</strong>{$t('projection.stage.inspector.noteAfter')}
             </div>
           {/if}
         </div>
       {:else}
-        <div class="inspector-empty">Select a slice to edit its properties.</div>
+        <div class="inspector-empty">{$t('projection.stage.inspector.empty')}</div>
       {/if}
 
     </aside>
@@ -1385,7 +1445,10 @@
     border-color: #4cd1ff;
     color: #fff;
   }
-  .back-arrow { font-size: 15px; line-height: 1; }
+  .back-arrow {
+    font-size: 15px;
+    line-height: 1;
+  }
   .title {
     font-size: 12px;
     letter-spacing: 2px;
@@ -1401,8 +1464,13 @@
     font-size: 14px;
     min-width: 160px;
   }
-  .surface-name-input:hover { border-color: #2a2a30; }
-  .surface-name-input:focus { border-color: #4cd1ff; outline: none; }
+  .surface-name-input:hover {
+    border-color: #2a2a30;
+  }
+  .surface-name-input:focus {
+    border-color: #4cd1ff;
+    outline: none;
+  }
   .surface-dims {
     color: #666;
     font-size: 12px;
@@ -1447,7 +1515,7 @@
     color: #fff;
   }
   .tool-btn.active {
-    background: rgba(76,209,255,0.15);
+    background: rgba(76, 209, 255, 0.15);
     border-color: #4cd1ff;
     color: #4cd1ff;
   }
@@ -1457,13 +1525,13 @@
     font-size: 12.5px;
     letter-spacing: 0.5px;
     font-weight: 600;
-    background: linear-gradient(180deg, rgba(76,209,255,0.18), rgba(76,209,255,0.08));
-    border-color: rgba(76,209,255,0.4);
+    background: linear-gradient(180deg, rgba(76, 209, 255, 0.18), rgba(76, 209, 255, 0.08));
+    border-color: rgba(76, 209, 255, 0.4);
     color: #b6e8ff;
     gap: 6px;
   }
   .tool-btn.import-btn:hover {
-    background: linear-gradient(180deg, rgba(76,209,255,0.32), rgba(76,209,255,0.18));
+    background: linear-gradient(180deg, rgba(76, 209, 255, 0.32), rgba(76, 209, 255, 0.18));
     border-color: #4cd1ff;
     color: #fff;
   }
@@ -1491,7 +1559,10 @@
     border-radius: 4px;
     cursor: pointer;
   }
-  .zoom-btn:hover { background: rgba(255,255,255,0.06); color: #fff; }
+  .zoom-btn:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: #fff;
+  }
   .zoom-readout {
     font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
     font-size: 12px;
@@ -1690,7 +1761,7 @@
     border-color: #2a2a30;
   }
   .palette-btn.active {
-    background: rgba(76,209,255,0.15);
+    background: rgba(76, 209, 255, 0.15);
     border-color: #4cd1ff;
     color: #4cd1ff;
   }
@@ -1709,12 +1780,12 @@
     color: inherit;
   }
   .palette-btn.primary-btn {
-    background: linear-gradient(180deg, rgba(76,209,255,0.18), rgba(76,209,255,0.06));
-    border-color: rgba(76,209,255,0.4);
+    background: linear-gradient(180deg, rgba(76, 209, 255, 0.18), rgba(76, 209, 255, 0.06));
+    border-color: rgba(76, 209, 255, 0.4);
     color: #b6e8ff;
   }
   .palette-btn.primary-btn:hover {
-    background: linear-gradient(180deg, rgba(76,209,255,0.32), rgba(76,209,255,0.16));
+    background: linear-gradient(180deg, rgba(76, 209, 255, 0.32), rgba(76, 209, 255, 0.16));
     border-color: #4cd1ff;
     color: #fff;
   }
@@ -1762,15 +1833,15 @@
     border-left: 2px solid transparent;
   }
   .slice-row:hover {
-    background: rgba(255,255,255,0.03);
+    background: rgba(255, 255, 255, 0.03);
   }
-	  .slice-row.selected {
-	    background: rgba(76,209,255,0.08);
-	    border-left-color: #4cd1ff;
-	  }
-	  .slice-row.selected.primary {
-	    background: rgba(76,209,255,0.14);
-	  }
+  .slice-row.selected {
+    background: rgba(76, 209, 255, 0.08);
+    border-left-color: #4cd1ff;
+  }
+  .slice-row.selected.primary {
+    background: rgba(76, 209, 255, 0.14);
+  }
   .slice-color-dot {
     width: 10px;
     height: 10px;
@@ -1793,9 +1864,16 @@
     padding: 2px;
     border-radius: 3px;
   }
-  .slice-icon-btn.active { color: var(--text-secondary, #aaa); }
-  .slice-icon-btn:hover { background: rgba(255,255,255,0.06); color: #fff; }
-  .slice-icon-btn.danger:hover { color: #ff8888; }
+  .slice-icon-btn.active {
+    color: var(--text-secondary, #aaa);
+  }
+  .slice-icon-btn:hover {
+    background: rgba(255, 255, 255, 0.06);
+    color: #fff;
+  }
+  .slice-icon-btn.danger:hover {
+    color: #ff8888;
+  }
   .slice-empty {
     padding: 24px 12px;
     color: #555;
@@ -1809,33 +1887,35 @@
     position: relative;
     overflow: hidden;
     background:
-      linear-gradient(45deg, #0c0c10 25%, transparent 25%),
-      linear-gradient(-45deg, #0c0c10 25%, transparent 25%),
-      linear-gradient(45deg, transparent 75%, #0c0c10 75%),
-      linear-gradient(-45deg, transparent 75%, #0c0c10 75%);
+      linear-gradient(45deg, #0c0c10 25%, transparent 25%), linear-gradient(-45deg, #0c0c10 25%, transparent 25%),
+      linear-gradient(45deg, transparent 75%, #0c0c10 75%), linear-gradient(-45deg, transparent 75%, #0c0c10 75%);
     background-size: 16px 16px;
-    background-position: 0 0, 0 8px, 8px -8px, -8px 0;
+    background-position:
+      0 0,
+      0 8px,
+      8px -8px,
+      -8px 0;
     background-color: #050507;
     cursor: default;
   }
   .design-canvas.tool-pen {
     cursor: crosshair;
   }
-	  .canvas-svg {
-	    position: absolute;
-	    top: 0;
-	    left: 0;
+  .canvas-svg {
+    position: absolute;
+    top: 0;
+    left: 0;
     transform-origin: 0 0;
     /* Wrapper transform scales the SVG via width/height — keeps text
        and stroke widths legible at any zoom via the /zoom divisions
 	       above. */
-	  }
-	  .slice-marquee {
-	    fill: rgba(76, 209, 255, 0.10);
-	    stroke: rgba(76, 209, 255, 0.85);
-	    stroke-dasharray: 6 4;
-	    pointer-events: none;
-	  }
+  }
+  .slice-marquee {
+    fill: rgba(76, 209, 255, 0.1);
+    stroke: rgba(76, 209, 255, 0.85);
+    stroke-dasharray: 6 4;
+    pointer-events: none;
+  }
   /* Empty-state card — replaces the previous tiny hint, gives users
      three actionable buttons + clear instructions to drop an SVG. */
   .canvas-empty {
@@ -1918,12 +1998,12 @@
      canvas. The .drop-active class on the canvas root provides the
      dashed border accent; this is the centered card. */
   .design-canvas.drop-active {
-    box-shadow: inset 0 0 0 3px rgba(76,209,255,0.6);
+    box-shadow: inset 0 0 0 3px rgba(76, 209, 255, 0.6);
   }
   .canvas-drop-overlay {
     position: absolute;
     inset: 0;
-    background: rgba(76,209,255,0.08);
+    background: rgba(76, 209, 255, 0.08);
     display: flex;
     align-items: center;
     justify-content: center;
@@ -1981,7 +2061,7 @@
     color: #bbb;
     text-transform: none;
   }
-  .inspector-section input[type="text"] {
+  .inspector-section input[type='text'] {
     background: var(--bg-tertiary, #14141a);
     border: 1px solid #2a2a30;
     border-radius: 3px;
@@ -1989,11 +2069,11 @@
     padding: 5px 8px;
     font-size: 13px;
   }
-  .inspector-section input[type="text"]:focus {
+  .inspector-section input[type='text']:focus {
     border-color: #4cd1ff;
     outline: none;
   }
-  .inspector-section input[type="color"] {
+  .inspector-section input[type='color'] {
     width: 100%;
     height: 28px;
     background: var(--bg-tertiary, #14141a);

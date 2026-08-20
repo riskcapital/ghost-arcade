@@ -8,6 +8,7 @@
   */
 
   import { openExternalUrl } from '../bridge';
+  import { t } from '../i18n';
   import { CHANGELOG_PAGE_URL, DOWNLOAD_PAGE_URL } from '../releaseNotes';
   import { updateInfo } from '../stores/updateChecker';
 
@@ -38,15 +39,16 @@
     <div class="update-modal" onclick={(e) => e.stopPropagation()}>
       <div class="update-modal-header">
         <div>
-          <div class="update-eyebrow">Update available</div>
-          <h2>Ghost Arcade v{$updateInfo.latestVersion}</h2>
-          <p class="update-version-line">You have v{$updateInfo.currentVersion}</p>
+          <div class="update-eyebrow">{$t('systemUi.update.available')}</div>
+          <h2>{$t('systemUi.update.title', { values: { version: $updateInfo.latestVersion } })}</h2>
+          <p class="update-version-line">
+            {$t('systemUi.update.currentVersion', { values: { version: $updateInfo.currentVersion } })}</p>
         </div>
-        <button class="update-close" onclick={close} aria-label="Close">x</button>
+        <button class="update-close" onclick={close} aria-label={$t('systemUi.update.close')}>x</button>
       </div>
 
       <div class="update-modal-body">
-        <h3 class="update-notes-heading">{$updateInfo.releaseTitle || "What's new"}</h3>
+        <h3 class="update-notes-heading">{$updateInfo.releaseTitle || $t('systemUi.update.whatsNew')}</h3>
 
         {#if $updateInfo.releaseHighlights?.length}
           <ul class="update-highlights">
@@ -57,18 +59,16 @@
         {:else if $updateInfo.releaseNotes}
           <p class="update-no-notes">{$updateInfo.releaseNotes}</p>
         {:else}
-          <p class="update-no-notes">Open the download page for the latest signed installers and release notes.</p>
+          <p class="update-no-notes">{$t('systemUi.update.noNotes')}</p>
         {/if}
 
-        <p class="update-page-copy">
-          The download page always points at the current signed installers and notarized macOS builds.
-        </p>
+        <p class="update-page-copy">{$t('systemUi.update.pageCopy')}</p>
       </div>
 
       <div class="update-modal-footer">
-        <button class="update-link" onclick={openChangelog}>Full changelog</button>
-        <button class="update-secondary" onclick={close}>Maybe Later</button>
-        <button class="update-primary" onclick={openDownloadPage}>Open Download Page</button>
+        <button class="update-link" onclick={openChangelog}>{$t('systemUi.update.fullChangelog')}</button>
+        <button class="update-secondary" onclick={close}>{$t('systemUi.update.maybeLater')}</button>
+        <button class="update-primary" onclick={openDownloadPage}>{$t('systemUi.update.openDownloadPage')}</button>
       </div>
     </div>
   </div>
@@ -115,7 +115,7 @@
     font-weight: 600;
     letter-spacing: 0.15em;
     text-transform: uppercase;
-    color: #7EC8E3;
+    color: #7ec8e3;
     margin-bottom: 4px;
   }
 
@@ -193,7 +193,7 @@
     width: 7px;
     height: 7px;
     border-radius: 50%;
-    background: linear-gradient(135deg, #FF8577, #7EC8E3);
+    background: linear-gradient(135deg, #ff8577, #7ec8e3);
     box-shadow: 0 0 12px rgba(126, 200, 227, 0.45);
   }
 
@@ -222,7 +222,7 @@
     appearance: none;
     background: transparent;
     border: none;
-    color: #7EC8E3;
+    color: #7ec8e3;
     font-size: 13px;
     text-decoration: none;
     margin-right: auto;
@@ -248,7 +248,7 @@
 
   .update-primary {
     padding: 8px 18px;
-    background: linear-gradient(90deg, #FF8577, #7EC8E3);
+    background: linear-gradient(90deg, #ff8577, #7ec8e3);
     border: none;
     border-radius: 4px;
     color: #0a0a0a;

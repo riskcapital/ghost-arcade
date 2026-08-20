@@ -5,6 +5,7 @@
   import { createEventDispatcher, onMount } from 'svelte';
   import { shaderLibrary, type SavedShader } from '../stores/shaderLibrary';
   import { settings } from '../stores/settings';
+  import { t } from '../i18n';
   // Tier-related imports removed — Three.js / p5.js generators always available.
 
   // Props for editing existing content
@@ -57,12 +58,12 @@
   // Generate shader/animation
   async function handleGenerate() {
     if (!currentApiKey) {
-      error = 'Please configure an API key in Settings → AI';
+      error = $t('shaderAi.errors.apiKeyMissing');
       return;
     }
 
     if (!description.trim()) {
-      error = 'Please describe what you want to create';
+      error = $t('shaderAi.errors.descriptionMissing');
       return;
     }
 
@@ -80,7 +81,7 @@
       });
 
       if (!result.success || !result.code) {
-        error = result.error || 'Failed to generate content';
+        error = result.error || $t('shaderAi.errors.generationFailed');
         return;
       }
 
@@ -89,16 +90,17 @@
 
       if (generationType === 'shader-isf') {
         // ISF Shader
-        const inputs: ISFInputDef[] = result.metadata?.inputs?.map(input => ({
-          NAME: input.name,
-          TYPE: input.type as ISFInputDef['TYPE'],
-          DEFAULT: input.default,
-          MIN: input.min,
-          MAX: input.max
-        })) || [];
+        const inputs: ISFInputDef[] =
+          result.metadata?.inputs?.map((input) => ({
+            NAME: input.name,
+            TYPE: input.type as ISFInputDef['TYPE'],
+            DEFAULT: input.default,
+            MIN: input.min,
+            MAX: input.max,
+          })) || [];
 
         const defaultValues: Record<string, number | boolean | number[]> = {};
-        inputs.forEach(input => {
+        inputs.forEach((input) => {
           if (input.DEFAULT !== undefined && typeof input.DEFAULT !== 'string') {
             defaultValues[input.NAME] = input.DEFAULT;
           }
@@ -108,12 +110,12 @@
           id: generateUUID(),
           type: 'shader',
           src: 'ai-generated',
-          name: result.name || 'AI Shader',
+          name: result.name || $t('shaderAi.names.shader'),
           shaderCode: result.code,
           shaderInputs: inputs,
           shaderValues: defaultValues,
           aiGenerated: true,
-          aiPrompt: description.trim()
+          aiPrompt: description.trim(),
         };
       } else {
         // Three.js or p5.js animation
@@ -126,20 +128,23 @@
           animationType,
           htmlCode: result.code,
           params,
-          paramValues: params?.reduce((acc, p) => {
-            acc[p.name] = p.default;
-            return acc;
-          }, {} as Record<string, number | boolean | number[]>),
+          paramValues: params?.reduce(
+            (acc, p) => {
+              acc[p.name] = p.default;
+              return acc;
+            },
+            {} as Record<string, number | boolean | number[]>,
+          ),
           aiGenerated: true,
-          aiPrompt: description
+          aiPrompt: description,
         };
 
         mediaSource = {
           id: generateUUID(),
           type: animationType,
           src: 'ai-generated',
-          name: result.name || `AI ${animationType === 'threejs' ? 'Three.js' : 'p5.js'}`,
-          jsAnimation
+          name: result.name || $t(`shaderAi.names.${animationType === 'threejs' ? 'threejs' : 'p5js'}`),
+          jsAnimation,
         };
       }
 
@@ -149,16 +154,16 @@
           name: mediaSource.name,
           description: description.trim(),
           type: generationType,
-          code: generationType === 'shader-isf' ? result.code : (mediaSource.jsAnimation?.htmlCode || result.code),
-          params: result.metadata?.inputs?.map(input => ({
+          code: generationType === 'shader-isf' ? result.code : mediaSource.jsAnimation?.htmlCode || result.code,
+          params: result.metadata?.inputs?.map((input) => ({
             name: input.name,
             type: input.type as 'number' | 'boolean' | 'color',
             default: input.default,
             min: input.min,
             max: input.max,
-            label: input.name.replace(/([A-Z])/g, ' $1').trim()
+            label: input.name.replace(/([A-Z])/g, ' $1').trim(),
           })),
-          tags: [generationType, 'ai-generated', selectedProvider]
+          tags: [generationType, 'ai-generated', selectedProvider],
         };
         shaderLibrary.addShader(savedShader);
         console.log(`[Shader Library] Saved "${savedShader.name}" to library`);
@@ -172,36 +177,36 @@
         additionalContext = '';
       }
     } catch (e) {
-      error = e instanceof Error ? e.message : 'Unknown error occurred';
+      error = e instanceof Error ? e.message : $t('shaderAi.errors.unknown');
     } finally {
       isGenerating = false;
     }
   }
 
   // Example prompts for inspiration
-  const examplePrompts: Record<GenerationType, string[]> = {
+  $: examplePrompts = {
     'shader-isf': [
-      'Infinite fractal zoom with neon purple and orange glow, slowly rotating',
-      'Liquid metal plasma flowing in organic waves with iridescent rainbow reflections',
-      'Sacred geometry mandala with pulsing golden ratio patterns and deep space colors',
-      'Electric storm with branching lightning bolts and cyan energy fields',
-      'Voronoi cell animation with glowing edges that shift between magenta and teal'
+      $t('shaderAi.examples.shaderIsf1'),
+      $t('shaderAi.examples.shaderIsf2'),
+      $t('shaderAi.examples.shaderIsf3'),
+      $t('shaderAi.examples.shaderIsf4'),
+      $t('shaderAi.examples.shaderIsf5'),
     ],
-    'threejs': [
-      'Galaxy of 2000 glowing particles in spiral arms, slowly orbiting with rainbow trails',
-      'Infinite neon tunnel with rotating geometric rings receding into darkness',
-      'Crystal field of 200 floating octahedrons catching colored light beams',
-      'Energy vortex tornado with particles spiraling upward in neon colors',
-      'Morphing wireframe icosahedron with pulsing vertices and aurora-colored glow'
+    threejs: [
+      $t('shaderAi.examples.threejs1'),
+      $t('shaderAi.examples.threejs2'),
+      $t('shaderAi.examples.threejs3'),
+      $t('shaderAi.examples.threejs4'),
+      $t('shaderAi.examples.threejs5'),
     ],
-    'p5js': [
-      'Perlin noise flow field with 400 neon particles leaving colorful trails',
-      'Gravitational attractor system with glowing orbiting particles and motion blur',
-      'Sacred geometry pattern with rotating overlapping circles in golden ratio',
-      'Particle explosion bursts with radial symmetry and rainbow color cycling',
-      'Constellation network of drifting stars connected by glowing lines'
-    ]
-  };
+    p5js: [
+      $t('shaderAi.examples.p5js1'),
+      $t('shaderAi.examples.p5js2'),
+      $t('shaderAi.examples.p5js3'),
+      $t('shaderAi.examples.p5js4'),
+      $t('shaderAi.examples.p5js5'),
+    ],
+  } satisfies Record<GenerationType, string[]>;
 
   function useExample(prompt: string) {
     description = prompt;
@@ -210,8 +215,13 @@
 
 <div class="ai-generator">
   <div class="header">
-    <h3>{isEditMode ? 'Edit AI Content' : 'AI Content Generator'}</h3>
-    <button class="btn-close" onclick={() => dispatch('close')}>×</button>
+    <h3>{isEditMode ? $t('shaderAi.generator.editTitle') : $t('shaderAi.generator.createTitle')}</h3>
+    <button
+      class="btn-close"
+      onclick={() => dispatch('close')}
+      aria-label={$t('shaderAi.generator.close')}
+      title={$t('shaderAi.generator.close')}>×</button
+    >
   </div>
 
   <!-- Compact AI provider status bar -->
@@ -222,64 +232,73 @@
     {#if currentApiKey}
       <span class="ai-key-ok">●</span>
     {:else}
-      <span class="ai-key-missing">No API key</span>
+      <span class="ai-key-missing">{$t('shaderAi.generator.noApiKey')}</span>
     {/if}
     {#if onOpenSettings}
-      <button class="btn-configure" onclick={onOpenSettings}>Configure</button>
+      <button
+        class="btn-configure"
+        onclick={onOpenSettings}
+        aria-label={$t('shaderAi.generator.configure')}
+        title={$t('shaderAi.generator.configure')}>{$t('shaderAi.generator.configure')}</button
+      >
     {/if}
   </div>
 
   <div class="generation-type">
-    <label>Generate</label>
+    <label>{$t('shaderAi.generator.generateLabel')}</label>
     <div class="type-tabs">
       <button
         class="type-tab"
         class:active={generationType === 'shader-isf'}
-        onclick={() => generationType = 'shader-isf'}
+        onclick={() => (generationType = 'shader-isf')}
+        aria-label={$t('shaderAi.generator.shader')}
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <polygon points="12,2 22,8.5 22,15.5 12,22 2,15.5 2,8.5"/>
+          <polygon points="12,2 22,8.5 22,15.5 12,22 2,15.5 2,8.5" />
         </svg>
-        Shader
+        {$t('shaderAi.generator.shader')}
       </button>
       <button
         class="type-tab"
         class:active={generationType === 'threejs'}
-        onclick={() => generationType = 'threejs'}
-        title="Three.js Animation"
+        onclick={() => (generationType = 'threejs')}
+        title={$t('shaderAi.generator.threejsTitle')}
+        aria-label={$t('shaderAi.generator.threejsTitle')}
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <path d="M12 2L2 7v10l10 5 10-5V7L12 2z"/>
-          <circle cx="12" cy="12" r="2"/>
+          <path d="M12 2L2 7v10l10 5 10-5V7L12 2z" />
+          <circle cx="12" cy="12" r="2" />
         </svg>
-        Three.js
+        {$t('shaderAi.generator.threejs')}
       </button>
       <button
         class="type-tab"
         class:active={generationType === 'p5js'}
-        onclick={() => generationType = 'p5js'}
-        title="p5.js Animation"
+        onclick={() => (generationType = 'p5js')}
+        title={$t('shaderAi.generator.p5jsTitle')}
+        aria-label={$t('shaderAi.generator.p5jsTitle')}
       >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-          <circle cx="12" cy="12" r="10"/>
-          <path d="M8 12l3 3 5-6"/>
+          <circle cx="12" cy="12" r="10" />
+          <path d="M8 12l3 3 5-6" />
         </svg>
-        p5.js
+        {$t('shaderAi.generator.p5js')}
       </button>
     </div>
   </div>
 
   <div class="description-section">
-    <label>Describe what you want</label>
+    <label>{$t('shaderAi.generator.descriptionLabel')}</label>
     <textarea
       bind:value={description}
-      placeholder="e.g., A hypnotic spiral pattern with rainbow colors that pulses to an imaginary beat..."
+      placeholder={$t('shaderAi.generator.descriptionPlaceholder')}
+      aria-label={$t('shaderAi.generator.descriptionLabel')}
       rows="3"
     ></textarea>
   </div>
 
   <div class="examples">
-    <span class="examples-label">Try:</span>
+    <span class="examples-label">{$t('shaderAi.generator.examplesLabel')}</span>
     <div class="example-chips">
       {#each examplePrompts[generationType].slice(0, 3) as prompt}
         <button class="example-chip" onclick={() => useExample(prompt)}>
@@ -290,12 +309,13 @@
   </div>
 
   <details class="advanced-options">
-    <summary>Advanced Options</summary>
+    <summary>{$t('shaderAi.generator.advancedOptions')}</summary>
     <div class="advanced-content">
-      <label>Additional Context (optional)</label>
+      <label>{$t('shaderAi.generator.additionalContextLabel')}</label>
       <textarea
         bind:value={additionalContext}
-        placeholder="Any specific requirements, color schemes, or technical details..."
+        placeholder={$t('shaderAi.generator.additionalContextPlaceholder')}
+        aria-label={$t('shaderAi.generator.additionalContextLabel')}
         rows="2"
       ></textarea>
     </div>
@@ -309,15 +329,24 @@
     class="btn-generate"
     onclick={handleGenerate}
     disabled={isGenerating || !description.trim()}
+    aria-label={isGenerating
+      ? isEditMode
+        ? $t('shaderAi.generator.regenerating')
+        : $t('shaderAi.generator.generating')
+      : isEditMode
+        ? $t('shaderAi.generator.regenerate')
+        : $t('shaderAi.generator.generateWithAi')}
   >
     {#if isGenerating}
       <span class="spinner"></span>
-      {isEditMode ? 'Regenerating...' : 'Generating...'}
+      {isEditMode ? $t('shaderAi.generator.regenerating') : $t('shaderAi.generator.generating')}
     {:else}
       <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
+        <path
+          d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"
+        />
       </svg>
-      {isEditMode ? 'Regenerate' : 'Generate with AI'}
+      {isEditMode ? $t('shaderAi.generator.regenerate') : $t('shaderAi.generator.generateWithAi')}
     {/if}
   </button>
 </div>
@@ -343,7 +372,7 @@
     font-size: 15px;
     font-weight: 600;
     flex: 1;
-    background: linear-gradient(90deg, #BB86FC, #A78BFA);
+    background: linear-gradient(90deg, #bb86fc, #a78bfa);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
@@ -380,8 +409,8 @@
   }
 
   .ai-provider-badge {
-    background: #BB86FC33;
-    color: #BB86FC;
+    background: #bb86fc33;
+    color: #bb86fc;
     padding: 2px 8px;
     border-radius: 4px;
     font-weight: 500;
@@ -413,7 +442,7 @@
 
   .btn-configure:hover {
     color: #fff;
-    border-color: #BB86FC;
+    border-color: #bb86fc;
   }
 
   .generation-type label,
@@ -455,8 +484,8 @@
 
   .type-tab.active {
     background: #333;
-    border-color: #BB86FC;
-    color: #BB86FC;
+    border-color: #bb86fc;
+    color: #bb86fc;
   }
 
   .type-tab svg {
@@ -482,7 +511,7 @@
 
   textarea:focus {
     outline: none;
-    border-color: #BB86FC;
+    border-color: #bb86fc;
   }
 
   textarea::placeholder {
@@ -522,8 +551,8 @@
 
   .example-chip:hover {
     background: var(--bg-tertiary, #161618);
-    border-color: #BB86FC;
-    color: #BB86FC;
+    border-color: #bb86fc;
+    color: #bb86fc;
   }
 
   .advanced-options {
@@ -564,7 +593,7 @@
 
   .btn-generate {
     padding: 12px 16px;
-    background: linear-gradient(135deg, #BB86FC, #A78BFA);
+    background: linear-gradient(135deg, #bb86fc, #a78bfa);
     border: none;
     border-radius: 6px;
     color: #000;

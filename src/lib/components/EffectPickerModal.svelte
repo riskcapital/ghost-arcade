@@ -11,6 +11,8 @@
   // every effect is unlocked in OSS build.
   import { webgpuSupportedStore } from '../renderer/webgpuCapability';
   import { get } from 'svelte/store';
+  import { t } from '../i18n';
+  import { effectTypeLabel } from '../i18n/displayLabels';
 
   // WebGPU capability — reactive store, NOT a snapshot. The probe is
   // async and may not have resolved by the time this modal first
@@ -62,6 +64,48 @@
     } catch {}
   }
   let collapsed = $state<Set<string>>(loadCollapsed());
+
+  const categoryTranslationKeys: Record<string, string> = {
+    WebGPU: 'webgpu',
+    'Vision Lab': 'visionLab',
+    Masking: 'masking',
+    Color: 'color',
+    Stylize: 'stylize',
+    'Blur & Focus': 'blurFocus',
+    'Light & Glow': 'lightGlow',
+    'Generate & Texture': 'generateTexture',
+    Distort: 'distort',
+    Keying: 'keying',
+    'Advanced Color': 'advancedColor',
+    'Advanced Stylize': 'advancedStylize',
+    'Advanced Warp': 'advancedWarp',
+    'Advanced Atmosphere': 'advancedAtmosphere',
+    'Advanced Text & Pattern': 'advancedTextPattern',
+    'Advanced 3D': 'advanced3d',
+    'Geometric 3D': 'geometric3d',
+    'Advanced Depth': 'advancedDepth',
+    'Advanced Feedback': 'advancedFeedback',
+    'Advanced Trails': 'advancedTrails',
+    'New Hero': 'newHero',
+    Custom: 'custom',
+  };
+
+  function categoryLabel(category: string): string {
+    const key = categoryTranslationKeys[category] ?? 'custom';
+    return $t(`effects.picker.categories.${key}`);
+  }
+
+  function effectDescription(entry: EffectCatalogEntry): string {
+    const key = `effects.picker.descriptions.${entry.type}`;
+    const translated = $t(key, {
+      values: { description: entry.description },
+    });
+    return translated === key ? entry.description : translated;
+  }
+
+  function effectDisplayLabel(entry: EffectCatalogEntry): string {
+    return isCustomEntry(entry) ? entry.label : effectTypeLabel($t, entry.type, entry.label);
+  }
 
   function toggleCategory(cat: string) {
     const next = new Set(collapsed);
@@ -122,9 +166,13 @@
     for (const cat of allCategories) map.set(cat, []);
     for (const entry of combinedCatalog) {
       if (q) {
+        const label = effectDisplayLabel(entry);
+        const description = effectDescription(entry);
+        const category = categoryLabel(entry.category);
         const matches =
-          entry.label.toLowerCase().includes(q) ||
-          entry.description.toLowerCase().includes(q) ||
+          label.toLowerCase().includes(q) ||
+          description.toLowerCase().includes(q) ||
+          category.toLowerCase().includes(q) ||
           entry.type.toLowerCase().includes(q);
         if (!matches) continue;
       }
@@ -161,7 +209,9 @@
     if (result.ok && result.effect) {
       importStatus = {
         kind: 'ok',
-        message: `Imported "${result.effect.label}" — it's under the Custom category.`,
+        message: $t('effects.picker.importSuccess', {
+          values: { label: result.effect.label },
+        }),
       };
       // Make sure Custom is expanded so they see it.
       const next = new Set(collapsed);
@@ -169,7 +219,11 @@
       collapsed = next;
       saveCollapsed(next);
     } else {
-      importStatus = { kind: 'err', message: result.error ?? 'Import failed.' };
+      console.error('Failed to import custom effect:', result.error);
+      importStatus = {
+        kind: 'err',
+        message: $t('effects.picker.importFailure'),
+      };
     }
     input.value = '';
     setTimeout(() => (importStatus = { kind: 'idle', message: '' }), 5000);
@@ -177,7 +231,7 @@
 
   function handleDeleteCustom(type: string, ev: MouseEvent) {
     ev.stopPropagation();
-    if (!confirm('Delete this imported effect? Layers already using it will fall back to a passthrough.')) {
+    if (!confirm($t('effects.picker.deleteConfirm'))) {
       return;
     }
     removeCustomEffect(type);
@@ -232,12 +286,12 @@
     onkeydown={handleKeydown}
     role="dialog"
     aria-modal="true"
-    aria-label="Effect Picker"
+    aria-label={$t('effects.picker.ariaLabel')}
   >
     <div class="modal-panel">
       <!-- Header -->
       <div class="modal-header">
-        <h2>Add Effects</h2>
+        <h2>{$t('effects.picker.title')}</h2>
         <div class="header-right">
           <input
             type="file"
@@ -249,21 +303,23 @@
           <button
             class="import-btn"
             onclick={() => fileInput?.click()}
-            title="Import a .dmfx.json custom effect"
+            title={$t('effects.picker.importCustomTitle')}
           >
-            + Import Custom
+            {$t('effects.picker.importCustom')}
           </button>
           <button
             class="template-btn"
             onclick={downloadTemplate}
-            title="Download a .dmfx.json template to edit"
+            title={$t('effects.picker.templateTitle')}
           >
-            Template
+            {$t('effects.picker.template')}
           </button>
           {#if selected.size > 0}
-            <span class="selection-count">{selected.size} selected</span>
+            <span class="selection-count">
+              {$t('effects.picker.selectionCount', { values: { count: selected.size } })}
+            </span>
           {/if}
-          <button class="close-btn" onclick={handleClose} aria-label="Close">&times;</button>
+          <button class="close-btn" onclick={handleClose} aria-label={$t('effects.picker.close')}>&times;</button>
         </div>
       </div>
 
@@ -275,13 +331,17 @@
       <div class="search-bar">
         <input
           type="text"
-          placeholder="Search effects..."
+          placeholder={$t('effects.picker.searchPlaceholder')}
           bind:value={searchQuery}
           class="search-input"
         />
         <div class="accordion-controls">
-          <button class="ctrl-btn" onclick={expandAll} title="Expand all categories">Expand all</button>
-          <button class="ctrl-btn" onclick={collapseAll} title="Collapse all categories">Collapse all</button>
+          <button class="ctrl-btn" onclick={expandAll} title={$t('effects.picker.expandAll')}>
+            {$t('effects.picker.expandAll')}
+          </button>
+          <button class="ctrl-btn" onclick={collapseAll} title={$t('effects.picker.collapseAll')}>
+            {$t('effects.picker.collapseAll')}
+          </button>
         </div>
       </div>
 
@@ -300,7 +360,7 @@
                 aria-controls={`cat-grid-${cat}`}
               >
                 <span class="cat-chevron" class:rotated={!isCollapsed}>▶</span>
-                <span class="cat-label">{cat}</span>
+                <span class="cat-label">{categoryLabel(cat)}</span>
                 <span class="cat-count">{entries.length}</span>
               </button>
 
@@ -314,24 +374,26 @@
                       class:custom
                       onclick={() => handleCardClick(entry)}
                       ondblclick={() => handleDoubleClick(entry)}
-                      title="{entry.description}\nTap to select · Double-click to add instantly"
+                      title={$t('effects.picker.entryTitle', {
+                        values: { description: effectDescription(entry) },
+                      })}
                     >
                       <div class="row-thumb" style="background: {entry.previewCSS};"></div>
                       <div class="row-info">
                         <span class="row-name">
-                          {entry.label}
+                          {effectDisplayLabel(entry)}
                           {#if custom}
-                            <span class="custom-badge">CUSTOM</span>
+                            <span class="custom-badge">{$t('effects.picker.customBadge')}</span>
                           {/if}
                         </span>
-                        <span class="row-desc">{entry.description}</span>
+                        <span class="row-desc">{effectDescription(entry)}</span>
                       </div>
                       {#if custom}
                         <button
                           class="delete-btn"
                           onclick={(e) => handleDeleteCustom(entry.type as unknown as string, e)}
-                          title="Delete this custom effect"
-                          aria-label="Delete custom effect"
+                          title={$t('effects.picker.deleteCustom')}
+                          aria-label={$t('effects.picker.deleteCustom')}
                         >×</button>
                       {/if}
                     </button>
@@ -343,7 +405,9 @@
         {/each}
 
         {#if searchQuery.trim() && totalMatches === 0}
-          <div class="no-results">No effects match "{searchQuery}".</div>
+          <div class="no-results">
+            {$t('effects.picker.noResults', { values: { query: searchQuery } })}
+          </div>
         {/if}
       </div>
 
@@ -352,15 +416,17 @@
 
       <!-- Footer -->
       <div class="modal-footer">
-        <span class="hint">Tap to select · Double-click to add one · Click a category to collapse</span>
+        <span class="hint">{$t('effects.picker.hint')}</span>
         <div class="footer-actions">
-          <button class="secondary-btn" onclick={handleClose}>Cancel</button>
+          <button class="secondary-btn" onclick={handleClose}>{$t('effects.picker.cancel')}</button>
           <button
             class="primary-btn"
             onclick={handleAdd}
             disabled={selected.size === 0}
           >
-            Add{selected.size > 0 ? ` (${selected.size})` : ''}
+            {selected.size > 0
+              ? $t('effects.picker.addCount', { values: { count: selected.size } })
+              : $t('effects.picker.add')}
           </button>
         </div>
       </div>

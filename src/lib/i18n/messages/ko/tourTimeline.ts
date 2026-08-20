@@ -1,0 +1,135 @@
+export default {
+  trackList: {
+    selectLayer: '키프레임을 지정할 레이어를 선택하세요',
+    noParameters: '키프레임을 지정할 수 있는 파라미터가 없습니다',
+    armAutoKeyframeTitle: '클릭하면 자동 키프레임을 활성화합니다',
+  },
+  onboarding: {
+    closeTitle: '닫기(Esc) — 지금까지의 진행 상황을 저장합니다',
+    progressStepTitle: '{step}단계',
+    whereLabel: '위치:',
+    actions: {
+      skip: '둘러보기 건너뛰기',
+      back: '뒤로',
+      done: '완료 · 사용 시작',
+      next: '다음',
+    },
+    demoSnapshotName: '투어 데모',
+    steps: {
+      welcome: {
+        eyebrow: '환영합니다',
+        title: 'Ghost Arcade · 기능 둘러보기',
+        body: '0.3.x에 추가된 기능을 60초 안에 살펴봅니다. 다시 방문한 사용자라면 건너뛰어도 좋고, 새 기능을 익히는 10단계를 함께 따라가도 좋습니다.',
+        bullets: {
+          dualDeck: 'A/B 듀얼 데크 크로스페이더(이 기능을 제공하는 유일한 VJ 도구)',
+          quantizedLaunch: '비트에 맞춰 실행하는 클립 + MIDI 클록 동기화',
+          audioAnalysis: '킥/스네어 이벤트를 포함한 8밴드 오디오 분석',
+          macros: '매크로(노브 하나로 여러 파라미터 조절)',
+        },
+      },
+      modes: {
+        eyebrow: '1 / 9',
+        title: '세 가지 모드, 하나의 기준 상태',
+        body: 'Ghost Arcade에는 같은 오디오 입력, MIDI 라우터, 프로젝트 파일을 공유하는 세 가지 모드가 있습니다. 공연 중에도 상태를 잃지 않고 모드를 전환할 수 있습니다.',
+        bullets: {
+          mapping: '매핑 모드(Mapping Mode) — 프로젝션 레이아웃 구성(워프, 화면, 엣지 블렌드, 돔)',
+          vj: 'VJ 모드(VJ Mode) — 필요하면 듀얼 데크로 라이브 클립 실행',
+          performer: '퍼포머 모드(Performer Mode, SynthVision) — 손을 쓰지 않고 연주하는 36키 생성 셰이더',
+        },
+        action: 'VJ 모드 열기',
+      },
+      crossfader: {
+        eyebrow: '2 / 9',
+        title: 'A/B 듀얼 데크 크로스페이더',
+        body: 'VJ 헤더의 A/B 토글을 눌러 데크를 완전히 독립적인 두 뱅크로 나눕니다. 시안은 Bank A, 코랄은 Bank B를 뜻합니다. 세로 페이더에서 10가지 전환(dissolve, glitch, shatter, halftone, liquid…) 중 하나를 골라 두 뱅크를 섞어 보세요.',
+        bullets: {
+          scenes: '블록별 A+B 장면 — 각 블록이 자체 데크 쌍을 저장합니다',
+          stage: '스테이지 모드 + 크로스페이더 — 실제 화면마다 독립적으로 크로스페이드합니다',
+          save: '블록 탭을 오른쪽 클릭 → 프로젝트 저장(Ctrl+S와 동일)',
+        },
+        action: '사용해 보기: A/B 켜기',
+      },
+      quantizedLaunch: {
+        eyebrow: '3 / 9',
+        title: '비트에 맞춘 클립 실행',
+        body: '헤더의 QUANT 드롭다운을 설정하면 클립이 즉시 실행되지 않고 다음 비트 경계에서 실행됩니다. Off는 초보자에게 쉬운 즉시 실행입니다. 정확한 음악적 드롭에는 1/4 / 1/2 / 1 BAR / 2 BAR / 4 BAR를 사용하세요.',
+        bullets: {
+          audioBeat: '오디오가 켜져 있으면 감지된 오디오 비트에 맞춥니다',
+          virtualClock: '오디오가 꺼져 있으면 BPM 기반 가상 클록으로 전환합니다',
+          cancel: '대기 중인 셀을 다시 클릭하면 취소합니다(실행 확정 없음)',
+          stopAll: 'STOP ALL이 대기열을 비웁니다(예상치 못한 실행 방지)',
+        },
+        action: '사용해 보기: QUANT를 1 BAR로 설정',
+      },
+      audio: {
+        eyebrow: '4 / 9',
+        title: '오디오 반응',
+        body: '오디오 소스 선택기(오른쪽 위)를 클릭하고 Mic / System Audio 또는 특정 장치(DAW 라우팅용 BlackHole 등)를 고르세요. TAP으로 템포를 입력하고, FFT 막대를 클릭하면 EQ 조정 패널이 열립니다.',
+        bullets: {
+          bands: '8개 주파수 밴드: sub · bass · lowMid · mid · highMid · treble · air · presence',
+          onset: '킥 + 스네어 시작 이벤트(일반 비트 감지와 별도)',
+          gain: '밴드별 게인 슬라이더로 킥을 키우거나 거친 트레블을 줄입니다',
+          tuning: '감도와 스무딩을 전체적으로 조절할 수 있습니다',
+        },
+        action: '사용해 보기: 마이크 입력 켜기',
+      },
+      midiClock: {
+        eyebrow: '5 / 9',
+        title: 'MIDI 클록 — DAW와 동기화하기',
+        body: '설정 → MIDI에서 Receive MIDI Clock을 켜면 DAW나 드럼 머신의 템포를 따릅니다. Send MIDI Clock을 켜면 Ghost Arcade가 마스터가 되어 연결된 장비를 구동합니다. 24 PPQN으로 동작하며 다른 MIDI Learn 매핑과 함께 사용할 수 있습니다.',
+        bullets: {
+          ticks: '0xF8 틱을 48개 샘플로 평균 내어 빠르게 잠그고 BPM을 안정화합니다',
+          receive: 'Receive가 마스터 BPM으로 자동 반영됩니다(실행 중에는 탭 템포보다 우선)',
+          send: 'Send는 수동 BPM 재정의와 탭 템포를 따르므로 공연 중 덮어쓸 수 있습니다',
+        },
+        keyHint: '설정 → MIDI',
+      },
+      macros: {
+        eyebrow: '6 / 9',
+        title: '매크로 — 하나의 노브로 효과 묶음 조절',
+        body: 'VJ 헤더에는 사용자가 지정할 수 있는 노브 8개가 있습니다. 각 매크로는 합성 출력에 적용되는 여러 효과의 웨트/드라이 믹스입니다. 노브를 오른쪽 클릭하고 "Edit Macro"를 선택한 뒤 레이어 효과와 같은 선택기에서 효과를 추가하고 순서를 바꾸거나 켜고 끄며 효과별 불투명도를 정하세요.',
+        bullets: {
+          controls: '노브를 세로로 드래그(DAW 방식) · 마우스 휠로 미세 조정 · 더블 클릭으로 초기화',
+          cc: '하드웨어 CC를 vj:macro:N:value에 연결해 컨트롤러로 매크로를 조절합니다',
+          stack: '8개 매크로가 합성 출력에 쌓이며 부분 블렌드도 자연스럽게 겹칩니다',
+          pulse: '비트 그리드(1/4, 1/2, 1bar, 2bar)에 맞춰 매크로를 자동 펄스해 손을 놓고 움직일 수 있습니다',
+        },
+        action: '사용해 보기: ENERGY 매크로 올리기',
+      },
+      resave: {
+        eyebrow: '7 / 9',
+        title: '오른쪽 클릭으로 무엇이든 다시 저장',
+        body: '이제 세 곳의 오른쪽 클릭 메뉴에서 현재 상태를 저장된 버전에 덮어쓸 수 있어 삭제 후 다시 만드는 과정이 필요 없습니다.',
+        bullets: {
+          blocks: '블록 탭 → 프로젝트 저장(Ctrl+S와 동일) + 이름 변경 / 복제 / 삭제',
+          stage: '스테이지 프리셋 → 프리셋 업데이트(스냅샷 덮어쓰기) + 이름 변경 / 프로젝트 저장 / 삭제',
+          synthVision: 'SynthVision 키보드 프리셋 → 업데이트 / 이름 변경 / 삭제',
+        },
+        keyHint: '오른쪽 클릭',
+      },
+      snapshots: {
+        eyebrow: '8 / 9',
+        title: '스냅샷 — 장면을 즉시 불러오기',
+        body: 'VJ 오버레이 오른쪽 아래에 16개 슬롯이 있는 "SNAPS" 실행기가 있습니다. 각 슬롯은 레이어 불투명도, 블렌드 모드, 솔로/뮤트(두 데크 모두), 크로스페이더 상태, 양자화, 마스터 불투명도, 매크로 값을 통째로 저장합니다. 슬롯을 Shift-클릭하면 현재 상태를 저장하고, 클릭하면 불러옵니다. 오른쪽 클릭으로 이름 변경 / 덮어쓰기 / 비우기를 할 수 있습니다.',
+        bullets: {
+          blocks: '블록(클립 그리드 장면)과 다르게 스냅샷은 라이브 상태를 고정합니다',
+          macros: '매크로와 다르게 노브를 계속 움직이는 대신 모든 노브를 한 번에 복원합니다',
+          project: '프로젝트(.gha)에 저장되어 세션 사이에도 유지됩니다',
+          hardware: '하드웨어 버튼을 vj:snapshot:N(1-16)에 연결해 장면을 즉시 전환합니다',
+        },
+        action: '사용해 보기: 현재 상태를 슬롯 1에 저장',
+      },
+      ready: {
+        eyebrow: '9 / 9',
+        title: '준비가 되었습니다',
+        body: '완료를 눌러 시작하세요. 전체 기능 안내서는 설치 폴더의 FEATURES.md에 있습니다. 파일 → 도움말 → 기능 둘러보기를 통해 언제든 이 안내를 다시 실행할 수 있습니다.',
+        bullets: {
+          save: '불러온 .gha 파일에 Ctrl+S로 모든 내용을 저장하고 다시 불러옵니다',
+          update: '블록 탭 / 프리셋 / SV 프리셋을 오른쪽 클릭해 현재 상태로 바로 업데이트합니다',
+          snapshots: '스냅샷(슬롯 1-16의 ▶/⇪)으로 전체 상태 장면 사이를 전환합니다',
+          show: '멋진 공연을 시작해 보세요 ⚡',
+        },
+      },
+    },
+  },
+};

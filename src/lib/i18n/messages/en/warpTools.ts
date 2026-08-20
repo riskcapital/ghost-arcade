@@ -1,0 +1,47 @@
+export default {
+  corners: {
+    topLeft: 'top left',
+    topRight: 'top right',
+    bottomLeft: 'bottom left',
+    bottomRight: 'bottom right',
+  },
+  edges: {
+    top: 'top',
+    bottom: 'bottom',
+    left: 'left',
+    right: 'right',
+  },
+  rectCorners: {
+    tl: 'TL',
+    tr: 'TR',
+    bl: 'BL',
+    br: 'BR',
+  },
+  layer: {
+    cornerAria: 'Warp corner {corner}',
+    cornerAriaSelected: 'Warp corner {corner} (selected)',
+    cornerLabel: '{corner}',
+    cornerLabelSelected: '{corner} (selected)',
+    edgeStretchAria: 'Stretch selected layers from {edge} edge',
+    edgeMoveAria: 'Move {edge} edge',
+    moveAria: 'Move layer',
+    rotateAria: 'Rotate layer',
+    scaleSelectedAria: 'Scale selected layers',
+    scaleAria: 'Scale layer',
+    fineTuneAria: 'Fine-tune {corner}',
+    nudgeUpAria: 'Up',
+    nudgeLeftAria: 'Left',
+    exitFineTuneAria: 'Exit fine-tune',
+    nudgeRightAria: 'Right',
+    nudgeDownAria: 'Down',
+  },
+  screen: {
+    cornerLabel: '{name} {corner}',
+    moveTitle: 'Drag to move {name}',
+  },
+  master: {
+    label: 'Master warp',
+    cornerLabel: '{corner}',
+    moveTitle: 'Drag to move the whole warp',
+  },
+};

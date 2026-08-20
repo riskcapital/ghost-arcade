@@ -13,6 +13,7 @@
    * cluttering the header beforehand.
    */
   import { audioStore } from '../stores/audio';
+  import { t } from '../i18n';
   import BpmTapWidget from './BpmTapWidget.svelte';
 
   let showEq = false;
@@ -26,6 +27,16 @@
   let popTop = 0;
   let popLeft = 0;
   const POP_WIDTH = 280;
+  const BAND_METERS = [
+    { key: 'sub', labelKey: 'audioTools.meter.bands.sub', cls: 'amp-band-sub' },
+    { key: 'bass', labelKey: 'audioTools.meter.bands.bass', cls: 'amp-band-bass' },
+    { key: 'lowMid', labelKey: 'audioTools.meter.bands.lowMid', cls: 'amp-band-lomid' },
+    { key: 'mid', labelKey: 'audioTools.meter.bands.mid', cls: 'amp-band-mid' },
+    { key: 'highMid', labelKey: 'audioTools.meter.bands.highMid', cls: 'amp-band-himid' },
+    { key: 'treble', labelKey: 'audioTools.meter.bands.treble', cls: 'amp-band-treble' },
+    { key: 'air', labelKey: 'audioTools.meter.bands.air', cls: 'amp-band-air' },
+    { key: 'presence', labelKey: 'audioTools.meter.bands.presence', cls: 'amp-band-presence' },
+  ] as const;
 
   function positionPopover() {
     if (!anchorEl) return;
@@ -33,8 +44,7 @@
     popTop = r.bottom + 6;
     popLeft = Math.max(8, Math.min(
       r.left + r.width / 2 - POP_WIDTH / 2,
-      window.innerWidth - POP_WIDTH - 8,
-    ));
+      window.innerWidth - POP_WIDTH - 8));
   }
 
   function toggleEq() {
@@ -61,7 +71,7 @@
     <!-- FFT bars — clickable to open the EQ popover -->
     <button class="amp-fft-btn" onclick={toggleEq}
       class:open={showEq}
-      title="Audio input tweaks — click to open EQ / sensitivity / smoothing">
+      title={$t('audioTools.meter.inputTweaksTitle')}>
       <div class="amp-bars">
         <div class="amp-bar" style="height: {Math.min(100, $audioStore.bands.sub * 100)}%"></div>
         <div class="amp-bar" style="height: {Math.min(100, $audioStore.bands.bass * 100)}%"></div>
@@ -80,15 +90,17 @@
     </button>
 
     <!-- Beat indicator — generic energy-based beat -->
-    <div class="amp-beat" class:flash={$audioStore.beat.isBeat} title="Beat detector"></div>
+    <div class="amp-beat" class:flash={$audioStore.beat.isBeat} title={$t('audioTools.meter.beatDetector')}></div>
 
     <!-- Kick + snare onset dots — pulse on band-specific hits.
          Color-coded so users can see them firing independently of the
          generic beat dot. Useful when tuning kick/snare modulation routes. -->
     {#if $audioStore.kickSnare}
       <div class="amp-ks">
-        <div class="amp-ks-dot amp-kick" class:flash={$audioStore.kickSnare.isKick} title="Kick onset (sub+bass)"></div>
-        <div class="amp-ks-dot amp-snare" class:flash={$audioStore.kickSnare.isSnare} title="Snare onset (lowMid+highMid)"></div>
+        <div class="amp-ks-dot amp-kick" class:flash={$audioStore.kickSnare.isKick} title={$t('audioTools.meter.kickOnset')}
+        ></div>
+        <div class="amp-ks-dot amp-snare" class:flash={$audioStore.kickSnare.isSnare} title={$t('audioTools.meter.snareOnset')}
+        ></div>
       </div>
     {/if}
 
@@ -96,16 +108,16 @@
     <BpmTapWidget alwaysShow={true} />
 
     {#if $audioStore.error}
-      <span class="amp-error" title={$audioStore.error}>⚠</span>
+      <span class="amp-error" title={$t('audioTools.errors.input', { values: { message: $audioStore.error ?? '' } })}>⚠</span>
     {/if}
 
     <!-- Expandable EQ / input-tweaks popover -->
     {#if showEq}
       <div class="amp-popover" bind:this={popoverEl} style="top:{popTop}px; left:{popLeft}px">
-        <div class="amp-popover-title">AUDIO INPUT TWEAKS</div>
+        <div class="amp-popover-title">{$t('audioTools.meter.popoverTitle')}</div>
 
         <div class="amp-row">
-          <label class="amp-row-label">Sensitivity</label>
+          <label class="amp-row-label">{$t('audioTools.meter.sensitivity')}</label>
           <input type="range" min="0.2" max="3" step="0.05"
             value={$audioStore.sensitivity}
             oninput={(e) => audioStore.setSensitivity(parseFloat((e.target as HTMLInputElement).value))}
@@ -114,7 +126,7 @@
         </div>
 
         <div class="amp-row">
-          <label class="amp-row-label">Smoothing</label>
+          <label class="amp-row-label">{$t('audioTools.meter.smoothing')}</label>
           <input type="range" min="0" max="0.95" step="0.01"
             value={$audioStore.smoothing}
             oninput={(e) => audioStore.setSmoothing(parseFloat((e.target as HTMLInputElement).value))}
@@ -123,8 +135,7 @@
         </div>
 
         <div class="amp-popover-hint">
-          Sensitivity scales every band's response. Smoothing damps frame-to-frame
-          jitter — higher values feel calmer, lower values feel snappier.
+          {$t('audioTools.meter.tuningHint')}
         </div>
 
         <!-- Per-band gain — 8 sliders, one per real frequency band. Each
@@ -132,31 +143,31 @@
              user can boost the kick or cut harsh treble while watching
              the band react. -->
         <div class="amp-popover-subhead">
-          <span>PER-BAND GAIN</span>
-          <button class="amp-reset-btn" onclick={() => audioStore.resetBandGain()}
-            title="Reset all band gains to 1×">RESET</button>
+          <span>{$t('audioTools.meter.perBandGain')}</span>
+          <button
+            class="amp-reset-btn"
+            onclick={() => audioStore.resetBandGain()}
+            title={$t('audioTools.meter.resetBandGainsTitle')}>{$t('audioTools.meter.reset')}</button
+          >
         </div>
         <div class="amp-bands-readout">
-          {#each [
-            { key: 'sub',      name: 'SUB',     cls: 'amp-band-sub'   },
-            { key: 'bass',     name: 'BASS',    cls: 'amp-band-bass'  },
-            { key: 'lowMid',   name: 'LO MID',  cls: 'amp-band-lomid' },
-            { key: 'mid',      name: 'MID',     cls: 'amp-band-mid'   },
-            { key: 'highMid',  name: 'HI MID',  cls: 'amp-band-himid' },
-            { key: 'treble',   name: 'TREBLE',  cls: 'amp-band-treble' },
-            { key: 'air',      name: 'AIR',     cls: 'amp-band-air'    },
-            { key: 'presence', name: 'PRESENCE',cls: 'amp-band-presence' },
-          ] as b (b.key)}
+          {#each BAND_METERS as b (b.key)}
             <div class="amp-band">
-              <span class="amp-band-name">{b.name}</span>
+              <span class="amp-band-name">{$t(b.labelKey)}</span>
               <div class="amp-band-track">
                 <div class="amp-band-fill {b.cls}" style="width:{($audioStore.bands as any)[b.key] * 100}%"></div>
               </div>
-              <input type="range" min="0" max="3" step="0.05"
+              <input
+                type="range"
+                min="0"
+                max="3"
+                step="0.05"
                 class="amp-band-gain"
                 value={($audioStore.bandGain as any)[b.key]}
                 oninput={(e) => audioStore.setBandGain(b.key as any, parseFloat((e.target as HTMLInputElement).value))}
-                title="Gain {(($audioStore.bandGain as any)[b.key] as number).toFixed(2)}×"
+                title={$t('audioTools.meter.gainTitle', {
+                  values: { value: (($audioStore.bandGain as any)[b.key] as number).toFixed(2) },
+                })}
               />
             </div>
           {/each}
@@ -186,7 +197,9 @@
     padding: 4px 8px;
     height: 34px;
     cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
+    transition:
+      background 0.15s,
+      border-color 0.15s;
   }
   .amp-fft-btn:hover {
     background: rgba(255, 255, 255, 0.08);
@@ -210,26 +223,44 @@
     transition: height 0.05s ease-out;
   }
   /* 8-band rainbow — matches the per-band readout in the popover */
-  .amp-bar:nth-child(1) { background: #f43f5e; } /* sub */
-  .amp-bar:nth-child(2) { background: #f97316; } /* bass */
-  .amp-bar:nth-child(3) { background: #eab308; } /* lowMid */
-  .amp-bar:nth-child(4) { background: #22c55e; } /* mid */
-  .amp-bar:nth-child(5) { background: #14b8a6; } /* highMid */
-  .amp-bar:nth-child(6) { background: #3b82f6; } /* treble */
-  .amp-bar:nth-child(7) { background: #8b5cf6; } /* air */
-  .amp-bar:nth-child(8) { background: #ec4899; } /* presence */
+  .amp-bar:nth-child(1) {
+    background: #f43f5e;
+  } /* sub */
+  .amp-bar:nth-child(2) {
+    background: #f97316;
+  } /* bass */
+  .amp-bar:nth-child(3) {
+    background: #eab308;
+  } /* lowMid */
+  .amp-bar:nth-child(4) {
+    background: #22c55e;
+  } /* mid */
+  .amp-bar:nth-child(5) {
+    background: #14b8a6;
+  } /* highMid */
+  .amp-bar:nth-child(6) {
+    background: #3b82f6;
+  } /* treble */
+  .amp-bar:nth-child(7) {
+    background: #8b5cf6;
+  } /* air */
+  .amp-bar:nth-child(8) {
+    background: #ec4899;
+  } /* presence */
 
   .amp-eq-glyph {
     color: var(--text-muted, #888);
     line-height: 0;
-    transition: transform 0.18s, color 0.18s;
+    transition:
+      transform 0.18s,
+      color 0.18s;
   }
   .amp-eq-glyph svg {
     width: 10px;
     height: 10px;
   }
   .amp-eq-glyph.active {
-    color: #BB86FC;
+    color: #bb86fc;
     transform: rotate(180deg);
   }
 
@@ -238,7 +269,9 @@
     height: 11px;
     border-radius: 50%;
     background: #333;
-    transition: background 0.06s, box-shadow 0.06s;
+    transition:
+      background 0.06s,
+      box-shadow 0.06s;
   }
   .amp-beat.flash {
     background: #f43f5e;
@@ -284,12 +317,12 @@
   }
   .amp-slider {
     width: 100%;
-    accent-color: #BB86FC;
+    accent-color: #bb86fc;
   }
   .amp-row-value {
     font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
     font-size: 13px;
-    color: #BB86FC;
+    color: #bb86fc;
     text-align: right;
   }
   .amp-popover-hint {
@@ -370,7 +403,7 @@
 
   .amp-band-gain {
     width: 70px;
-    accent-color: #BB86FC;
+    accent-color: #bb86fc;
     height: 4px;
   }
 

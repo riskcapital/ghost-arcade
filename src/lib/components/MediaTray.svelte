@@ -13,7 +13,7 @@
   import { parseISF, getInputDefault } from '../isf/parser';
   import { generateCachedThumbnail as generateShaderThumbnail } from '../isf/thumbnail';
   import { estimateShaderLoadRating, type ShaderLoadRating } from '../isf/loadRating';
-  import { appendNativeVideoSegment, createLoopWithResult, runtimeVideoUrlToPath, type LoopProgress, type LoopTransitionType, LOOP_TRANSITIONS, LOOP_TRANSITION_GROUPS } from '../utils/videoLoop';
+  import { appendNativeVideoSegment, createLoopWithResult, runtimeVideoUrlToPath, type LoopProgress, type LoopTransitionGroup, type LoopTransitionType, LOOP_TRANSITIONS, LOOP_TRANSITION_GROUPS } from '../utils/videoLoop';
   import { downloadRecording } from '../recording/recorder';
   import {
     downloadVeoVideo,
@@ -22,6 +22,7 @@
     type VeoModel,
   } from '../api/ai-client';
   import { settings } from '../stores/settings';
+  import { t } from '../i18n';
   import { updateJSAnimationParams } from '../renderer/js-animation';
   import { confirmDeleteIfSafeMode } from '../utils/safeMode';
   // Tier-related imports removed — FluidGen plugin always available.
@@ -172,7 +173,9 @@
   let ndiScanning = false;
   let ndiScanInterval: ReturnType<typeof setInterval> | null = null;
   let lastVJLiveSourcesSignature = '';
-  let ndiStatusHint = 'Open an NDI® sender in MadMapper, Resolume, OBS, or another VJ app on this machine or network';
+  let ndiStatusHintKey = 'statusNetwork';
+  let ndiStatusHintError = '';
+  let ndiStatusHint = '';
 
   // Check if running in desktop app (Electron)
   import { invoke as bridgeInvoke, isDesktopApp, getTextureShareLabel } from '$lib/bridge';
@@ -291,8 +294,9 @@
   $: availableSpoutSenders = $spoutSenders;
   $: textureShareUnavailable = !!$textureShareInfo && !$textureShareInfo.available;
   $: textureShareStatusHint = textureShareUnavailable
-    ? ($textureShareInfo?.error || `${tsLabel} native addon unavailable`)
-    : `Open a ${tsLabel} sender in MadMapper, Resolume, OBS, or another VJ app`;
+    ? ($textureShareInfo?.error || $t('media.source.nativeUnavailable', { values: { label: tsLabel } }))
+    : $t('media.source.textureStatus', { values: { label: tsLabel } });
+  $: ndiStatusHint = ndiStatusHintError || $t(`media.source.${ndiStatusHintKey}`);
 
   // Enumerate webcams
   async function enumerateWebcams() {
@@ -317,7 +321,7 @@
     try {
       const stream = await navigator.mediaDevices.getUserMedia(constraints);
       const videoTrack = stream.getVideoTracks()[0];
-      const label = videoTrack.label || 'Webcam';
+      const label = videoTrack.label || $t('media.source.webcam');
       const videoEl = document.createElement('video');
       videoEl.srcObject = stream;
       videoEl.muted = true;
@@ -369,7 +373,7 @@
     } catch (err) {
       console.error('Failed to enumerate screen sources:', err);
       screenPickerSources = [];
-      showToast('Could not list screen capture sources.', 'error');
+      showToast($t('media.errors.listCaptureSources'), 'error');
     } finally {
       screenPickerLoading = false;
     }
@@ -404,7 +408,7 @@
       });
 
       const videoTrack = stream.getVideoTracks()[0];
-      const label = picked.name || videoTrack.label || 'Capture';
+      const label = picked.name || videoTrack.label || $t('media.source.capture');
       const videoEl = document.createElement('video');
       videoEl.srcObject = stream;
       videoEl.muted = true;
@@ -432,7 +436,7 @@
     } catch (err) {
       console.error('Failed to start capture for', picked.name, err);
       showToast(
-        `Could not capture "${picked.name}". The window may have closed or the OS denied access.`,
+        $t('media.errors.capture', { values: { name: picked.name } }),
         'error',
       );
     }
@@ -446,7 +450,7 @@
         audio: false,
       });
       const videoTrack = stream.getVideoTracks()[0];
-      const label = videoTrack.label || 'Screen Capture';
+      const label = videoTrack.label || $t('media.source.capture');
       const videoEl = document.createElement('video');
       videoEl.srcObject = stream;
       videoEl.muted = true;
@@ -520,7 +524,8 @@
         ndiChecked = true;
         ndiAvailable = false;
         ndiSources = [];
-        ndiStatusHint = 'NDI® sources are available in the desktop app';
+        ndiStatusHintError = '';
+        ndiStatusHintKey = 'statusDesktop';
         return;
       }
 
@@ -529,7 +534,8 @@
         ndiChecked = true;
         ndiAvailable = false;
         ndiSources = [];
-        ndiStatusHint = 'NDI® is optional and not bundled in this build';
+        ndiStatusHintError = '';
+        ndiStatusHintKey = 'statusOptional';
         return;
       }
 
@@ -538,7 +544,8 @@
       ndiAvailable = !!availability?.available;
       if (!ndiAvailable) {
         ndiSources = [];
-        ndiStatusHint = availability?.error || 'Install NDI and restart Ghost Arcade';
+        ndiStatusHintError = availability?.error || '';
+        ndiStatusHintKey = 'statusInstall';
         return;
       }
 
@@ -549,12 +556,13 @@
           url: typeof src === 'object' && src?.url ? String(src.url) : undefined,
         }))
         .filter((src: NdiDetectedSource) => src.name.length > 0);
-      ndiStatusHint = 'Open an NDI® sender in MadMapper, Resolume, OBS, or another VJ app on this machine or network';
+      ndiStatusHintError = '';
+      ndiStatusHintKey = 'statusNetwork';
     } catch (err) {
       ndiChecked = true;
       ndiAvailable = false;
       ndiSources = [];
-      ndiStatusHint = err instanceof Error ? err.message : String(err);
+      ndiStatusHintError = err instanceof Error ? err.message : String(err);
     } finally {
       ndiScanning = false;
     }
@@ -613,7 +621,7 @@
   function applySourceToLayer(source: LiveSource) {
     const targetIds = getTargetMediaLayerIds();
     if (targetIds.length === 0) {
-      alert('Please select one or more media layers first');
+      alert($t('media.errors.selectLayer'));
       return;
     }
 
@@ -687,7 +695,7 @@
 
   function liveSourceCardTitle(source: LiveSource): string {
     if (source.status !== 'live') return '';
-    return vjMode ? 'Click or drag to add to VJ deck' : 'Double-click to apply to layer';
+    return vjMode ? $t('media.source.cardVj') : $t('media.source.cardLayer');
   }
 
   function onLiveSourceCardDragStart(source: LiveSource, e: DragEvent) {
@@ -930,9 +938,29 @@
   let loopCreationMode: 'crossfade' | 'veo' = 'crossfade';
   let loopTransitionType: LoopTransitionType = 'fade';
   let loopCrossfadeDuration: number = 0.5;
-  let loopVeoPrompt = 'Create a smooth seamless visual transition from the first image to the second image with continuous flowing motion.';
+  let loopVeoPrompt = $t('media.loop.defaultPrompt');
   let showLoopOptions: string | null = null; // item.id when options panel is shown
   let loopPopoverPos = { x: 0, y: 0 };
+
+  const LOOP_TRANSITION_GROUP_KEYS: Record<LoopTransitionGroup, string> = {
+    Essentials: 'essentials',
+    Motion: 'motion',
+    Glitch: 'glitch',
+    'Loop FX': 'loopFx',
+    Reveals: 'reveals',
+  };
+  const BUILT_IN_LOOP_TRANSITION_VALUES = new Set(LOOP_TRANSITIONS.map(({ value }) => value));
+
+  function localizedLoopGroupLabel(group: LoopTransitionGroup): string {
+    return $t(`media.loop.groups.${LOOP_TRANSITION_GROUP_KEYS[group]}`);
+  }
+
+  function localizedLoopTransitionLabel(value: string, sourceLabel = value): string {
+    const key = `media.loop.transitions.${value}`;
+    const translated = $t(key);
+    if (translated !== key) return translated;
+    return BUILT_IN_LOOP_TRANSITION_VALUES.has(value as LoopTransitionType) ? value : sourceLabel;
+  }
 
   function toggleLoopOptions(itemId: string, e: MouseEvent) {
     e.stopPropagation();
@@ -1034,7 +1062,9 @@
 
   function getShaderLoadBadgeTitle(rating: ShaderLoadRating): string {
     const detail = rating.hints.length ? ` - ${rating.hints.slice(0, 2).join(', ')}` : '';
-    return `${rating.label} (score ${rating.score})${detail}`;
+    return $t('media.shaderLoad.title', {
+      values: { label: rating.label, score: rating.score, detail },
+    });
   }
 
   // Editing state
@@ -1701,7 +1731,7 @@
   ) {
     const targetIds = getTargetMediaLayerIds();
     if (targetIds.length === 0) {
-      alert('Please select one or more media layers first');
+      alert($t('media.errors.selectLayer'));
       return;
     }
     for (const layerId of targetIds) {
@@ -2419,7 +2449,9 @@
 
   async function blobFromUrl(url: string): Promise<Blob> {
     const resp = await fetch(url);
-    if (!resp.ok) throw new Error(`Failed to read generated loop (${resp.status})`);
+    if (!resp.ok) {
+      throw new Error($t('media.errors.readLoop', { values: { status: resp.status } }));
+    }
     return await resp.blob();
   }
 
@@ -2500,7 +2532,7 @@
         else resolve();
       };
       const onSeeked = () => finish();
-      const onError = () => finish(new Error('Failed to seek video frame.'));
+      const onError = () => finish(new Error($t('media.errors.seekFrame')));
       video.addEventListener('seeked', onSeeked, { once: true });
       video.addEventListener('error', onError, { once: true });
       video.currentTime = Math.max(0, time);
@@ -2510,7 +2542,7 @@
 
   async function canvasToJpegBlob(canvas: HTMLCanvasElement): Promise<Blob> {
     const blob = await new Promise<Blob | null>((resolve) => canvas.toBlob(resolve, 'image/jpeg', 0.92));
-    if (!blob) throw new Error('Failed to encode video frame.');
+    if (!blob) throw new Error($t('media.errors.encodeFrame'));
     return blob;
   }
 
@@ -2541,12 +2573,12 @@
         else resolve();
       };
       const onLoaded = () => finish();
-      const onError = () => finish(new Error('Failed to load video for loop frames.'));
+      const onError = () => finish(new Error($t('media.errors.loadLoopFrames')));
       video.addEventListener('loadedmetadata', onLoaded, { once: true });
       video.addEventListener('error', onError, { once: true });
       video.src = src;
       video.load();
-      setTimeout(() => finish(new Error('Timed out loading video frames.')), 8000);
+      setTimeout(() => finish(new Error($t('media.errors.timeoutFrames'))), 8000);
     });
 
     const sourceW = video.videoWidth || 1280;
@@ -2558,7 +2590,7 @@
     canvas.width = width;
     canvas.height = height;
     const ctx = canvas.getContext('2d');
-    if (!ctx) throw new Error('Could not capture video frames.');
+    if (!ctx) throw new Error($t('media.errors.captureFrames'));
 
     const duration = Number.isFinite(video.duration) && video.duration > 0 ? video.duration : 0;
     await seekVideo(video, Math.min(0.08, Math.max(0, duration * 0.05)));
@@ -2589,19 +2621,19 @@
   async function createVeoBridgeLoopFromVideo(item: MediaItem, generatedName: string) {
     const ai = get(settings).ai;
     if (!ai.geminiApiKey) {
-      throw new Error('Gemini API key required. Configure it in Settings > AI.');
+      throw new Error($t('media.loop.apiKeyRequired'));
     }
     if (!String(ai.veoModel).startsWith('veo-3.1')) {
-      throw new Error('Veo Bridge requires a Veo 3.1 model.');
+      throw new Error($t('media.loop.modelRequired'));
     }
 
-    loopProgress = { stage: 'processing', progress: 0.05, message: 'Capturing loop frames...' };
+    loopProgress = { stage: 'processing', progress: 0.05, message: $t('media.loop.capturingFrames') };
     const frames = await captureLoopBridgeFrames(item.src);
 
-    loopProgress = { stage: 'processing', progress: 0.15, message: 'Submitting Veo bridge...' };
+    loopProgress = { stage: 'processing', progress: 0.15, message: $t('media.loop.submittingBridge') };
     const startResult = await startVeoGeneration({
       apiKey: ai.geminiApiKey,
-      prompt: loopVeoPrompt.trim() || 'Create a smooth seamless visual transition.',
+      prompt: loopVeoPrompt.trim() || $t('media.loop.shortPrompt'),
       model: ai.veoModel as VeoModel,
       aspectRatio: veoAspectFromSize(frames.width, frames.height),
       durationSeconds: 8,
@@ -2609,7 +2641,7 @@
       lastFrame: frames.firstFrame,
     });
     if (startResult.error || !startResult.operationName) {
-      throw new Error(startResult.error || 'Failed to start Veo bridge generation.');
+      throw new Error(startResult.error || $t('media.errors.startBridge'));
     }
 
     const opName = startResult.operationName;
@@ -2621,14 +2653,16 @@
       loopProgress = {
         stage: 'processing',
         progress: Math.min(0.78, 0.18 + (1 - Math.exp(-elapsed / 120)) * 0.6),
-        message: 'Waiting for Veo bridge...',
+        message: $t('media.loop.waitingBridge'),
       };
       const status = await pollVeoOperation(ai.geminiApiKey, opName);
       if (status.error && status.done) throw new Error(status.error);
       if (status.done && status.videoUri) {
-        loopProgress = { stage: 'processing', progress: 0.80, message: 'Downloading Veo bridge...' };
+        loopProgress = { stage: 'processing', progress: 0.80, message: $t('media.loop.downloadingBridge') };
         const download = await downloadVeoVideo(ai.geminiApiKey, status.videoUri);
-        if (download.error || !download.blob) throw new Error(download.error || 'Failed to download Veo bridge.');
+        if (download.error || !download.blob) {
+          throw new Error(download.error || $t('media.errors.downloadBridge'));
+        }
         bridgeBlob = download.blob;
       }
     }
@@ -2656,7 +2690,7 @@
 
     loopingVideoId = item.id;
     showLoopOptions = null;
-    loopProgress = { stage: 'loading', progress: 0, message: 'Initializing...' };
+    loopProgress = { stage: 'loading', progress: 0, message: $t('media.loop.initializing') };
 
     const baseName = item.name.replace(/\.[^/.]+$/, '');
     const generatedName = loopCreationMode === 'veo'
@@ -2670,15 +2704,18 @@
         await createCrossfadeLoopFromVideo(item, generatedName);
       }
 
-      const transitionLabel = LOOP_TRANSITIONS.find(
-        transition => transition.value === loopTransitionType
-      )?.label ?? loopTransitionType;
+      const transition = LOOP_TRANSITIONS.find(
+        option => option.value === loopTransitionType
+      );
+      const transitionLabel = transition
+        ? localizedLoopTransitionLabel(transition.value, transition.label)
+        : localizedLoopTransitionLabel(loopTransitionType);
       loopProgress = {
         stage: 'complete',
         progress: 1,
         message: loopCreationMode === 'veo'
-          ? 'Veo loop created & saved!'
-          : `${transitionLabel} loop created & saved!`,
+          ? $t('media.loop.createdVeo')
+          : $t('media.loop.created', { values: { transition: transitionLabel } }),
       };
 
       setTimeout(() => {
@@ -2691,7 +2728,7 @@
       loopProgress = {
         stage: 'error',
         progress: 0,
-        message: error instanceof Error ? error.message : 'Failed to create loop',
+        message: error instanceof Error ? error.message : $t('media.loop.failed'),
       };
 
       setTimeout(() => {
@@ -2699,6 +2736,38 @@
         loopProgress = null;
       }, 4000);
     }
+  }
+
+  function mediaTabLabel(tab: typeof activeTab): string {
+    switch (tab) {
+      case 'shaders': return $t('media.tray.tabs.fx');
+      case 'js': return $t('media.tray.tabs.js');
+      case 'library': return $t('media.tray.tabs.saved');
+      case 'videos': return $t('media.tray.tabs.videos');
+      case 'images': return $t('media.tray.tabs.images');
+      case 'sources': return $t('media.tray.tabs.sources');
+      case 'plugins': return $t('media.tray.tabs.plugins');
+    }
+    return '';
+  }
+
+  function mediaDropTypeLabel(tab: typeof activeTab): string {
+    return $t(`media.import.dropTypes.${tab}`);
+  }
+
+  function shaderCategoryLabel(category: string): string {
+    const keys: Record<string, string> = {
+      Visual: 'visual',
+      Generator: 'generator',
+      'Audio Reactive': 'audioReactive',
+      Simulation: 'simulation',
+      '3D Room': 'room3d',
+      Uncategorized: 'uncategorized',
+      Cloud: 'cloud',
+      'My Library': 'myLibrary',
+    };
+    const key = keys[category];
+    return key ? $t(`media.categories.${key}`) : category;
   }
 
   $: currentItems = activeTab === 'videos' ? videos : activeTab === 'images' ? images : activeTab === 'js' ? filteredJSAnimations : filteredByCategory;
@@ -2734,7 +2803,7 @@
     if (activeTab === 'shaders') {
       return [{
         id: 'all-clips',
-        label: shaderCategoryFilter || 'All Shaders',
+        label: shaderCategoryFilter ? shaderCategoryLabel(shaderCategoryFilter) : $t('media.filter.allShaders'),
         items: currentItems,
         kind: 'all' as const,
       }];
@@ -2744,13 +2813,13 @@
       return [
         {
           id: `folder-${activeFolder.id}`,
-          label: `Folder: ${activeFolder.name}`,
+          label: $t('media.folders.sectionFolder', { values: { name: activeFolder.name } }),
           items: activeFolderItems,
           kind: 'folder' as const,
         },
         {
           id: 'all-clips',
-          label: 'All Clips',
+          label: $t('media.filter.allClips'),
           items: currentItems,
           kind: 'all' as const,
         },
@@ -2758,7 +2827,7 @@
     }
     return [{
       id: 'all-clips',
-      label: 'All Clips',
+      label: $t('media.filter.allClips'),
       items: currentItems,
       kind: 'all' as const,
     }];
@@ -2998,7 +3067,7 @@
   }
 
   function trayItemActionTitle(): string {
-    return vjMode ? 'Click to add to VJ deck' : 'Click to apply to selected layer';
+    return vjMode ? $t('media.source.cardVj') : $t('media.source.applyToLayer');
   }
 
   function onFolderDrop(folderId: string, e: DragEvent) {
@@ -3326,7 +3395,7 @@
   // Delete a shader from the library. Safe Mode gates this with the
   // in-app confirm popover.
   async function deleteFromLibrary(savedId: string, event?: MouseEvent) {
-    if (!(await confirmDeleteIfSafeMode('this shader from your library', event))) return;
+    if (!(await confirmDeleteIfSafeMode($t('media.confirm.deleteShader'), event))) return;
     shaderLibrary.removeShader(savedId);
   }
 
@@ -3334,7 +3403,7 @@
   async function loadSavedVideo(saved: SavedVideo) {
     const blob = await videoLibrary.loadVideoBlob(saved.blobKey);
     if (!blob) {
-      alert('Video data not found. It may have been cleared from storage.');
+      alert($t('media.errors.videoMissing'));
       return;
     }
 
@@ -3378,7 +3447,7 @@
   // Delete a saved video from the persistent library. Safe Mode gates
   // this with the in-app confirm popover.
   async function deleteSavedVideo(id: string, event?: MouseEvent) {
-    if (!(await confirmDeleteIfSafeMode('this video from your library', event))) return;
+    if (!(await confirmDeleteIfSafeMode($t('media.confirm.deleteVideo'), event))) return;
     videoLibrary.removeVideo(id);
   }
 
@@ -3489,7 +3558,7 @@
         sources.push({
           type: 'layer',
           id: layer.id,
-          name: `Layer: ${layer.name}`,
+          name: `${$t('media.types.layer')}: ${layer.name}`,
         });
       }
     }
@@ -3499,7 +3568,7 @@
       sources.push({
         type: 'media',
         id: item.id,
-        name: `${item.type === 'video' ? 'Video' : 'Image'}: ${item.name}`,
+        name: `${item.type === 'video' ? $t('media.types.video') : $t('media.types.image')}: ${item.name}`,
       });
     }
 
@@ -3517,14 +3586,14 @@
       <path d="M15 18l-6-6 6-6" />
     {/if}
   </svg>
-  <span class="toggle-label">Media</span>
+  <span class="toggle-label">{$t('media.tray.toggle')}</span>
 </button>
 {/if}
 
 <!-- Slide-out tray -->
 <div class="media-tray" class:open={isOpen || embedded} class:embedded>
   <div class="tray-header">
-    <h3>Media Library</h3>
+    <h3>{$t('media.tray.title')}</h3>
   </div>
 
   <!-- Tabs -->
@@ -3532,39 +3601,39 @@
     <div class="tab-row">
       <button class="tab" class:active={activeTab === 'shaders'} onclick={() => activeTab = 'shaders'}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-        <span>FX</span>
+        <span>{$t('media.tray.tabs.fx')}</span>
         {#if shaders.length}<span class="tab-count">{shaders.length}</span>{/if}
       </button>
       <button class="tab" class:active={activeTab === 'js'} onclick={() => activeTab = 'js'}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg>
-        <span>JS</span>
+        <span>{$t('media.tray.tabs.js')}</span>
         {#if jsAnimations.length}<span class="tab-count">{jsAnimations.length}</span>{/if}
       </button>
       <button class="tab" class:active={activeTab === 'library'} onclick={() => activeTab = 'library'}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
-        <span>Saved</span>
+        <span>{$t('media.tray.tabs.saved')}</span>
         {#if savedShaders.length}<span class="tab-count">{savedShaders.length}</span>{/if}
       </button>
       <button class="tab" class:active={activeTab === 'videos'} onclick={() => activeTab = 'videos'}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-        <span>Vid</span>
+        <span>{$t('media.tray.tabs.videos')}</span>
         {#if videos.length}<span class="tab-count">{videos.length}</span>{/if}
       </button>
       <button class="tab" class:active={activeTab === 'images'} onclick={() => activeTab = 'images'}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-        <span>Img</span>
+        <span>{$t('media.tray.tabs.images')}</span>
         {#if images.length}<span class="tab-count">{images.length}</span>{/if}
       </button>
       <button class="tab" class:active={activeTab === 'sources'} onclick={() => { activeTab = 'sources'; if (!sourcesInitialized) { sourcesInitialized = true; enumerateWebcams(); } }}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
-        <span>Src</span>
+        <span>{$t('media.tray.tabs.sources')}</span>
         {#if liveSources.filter(s => s.status === 'live').length > 0}
           <span class="tab-live">{liveSources.filter(s => s.status === 'live').length}</span>
         {/if}
       </button>
       <button class="tab" class:active={activeTab === 'plugins'} onclick={() => { activeTab = 'plugins'; }}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-        <span>Plug</span>
+        <span>{$t('media.tray.tabs.plugins')}</span>
       </button>
     </div>
   </div>
@@ -3575,13 +3644,13 @@
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
       </svg>
-      {showAIGenerator ? 'Hide AI Generator' : 'AI Generate'}
+      {showAIGenerator ? $t('media.ai.hideGenerator') : $t('media.ai.generate')}
     </button>
     <button class="ai-generate-btn ai-video-btn" onclick={() => { showVideoGenerator = !showVideoGenerator; if (showVideoGenerator) showAIGenerator = false; }}>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <polygon points="5 3 19 12 5 21 5 3"/>
       </svg>
-      {showVideoGenerator ? 'Hide Video Gen' : 'AI Video'}
+      {showVideoGenerator ? $t('media.ai.hideVideo') : $t('media.ai.video')}
     </button>
   </div>
 
@@ -3612,13 +3681,13 @@
   {#if activeTab === 'js'}
     <div class="js-filter-row">
       <button class="js-filter-btn" class:active={jsFilter === 'all'} onclick={() => jsFilter = 'all'}>
-        All
+        {$t('media.filter.all')}
       </button>
       <button class="js-filter-btn" class:active={jsFilter === 'threejs'} onclick={() => jsFilter = 'threejs'}>
-        Three.js
+        {$t('media.filter.threejs')}
       </button>
       <button class="js-filter-btn" class:active={jsFilter === 'p5js'} onclick={() => jsFilter = 'p5js'}>
-        p5.js
+        {$t('media.filter.p5js')}
       </button>
     </div>
   {/if}
@@ -3628,7 +3697,7 @@
     <div class="global-loading">
       <div class="global-loading-info">
         <div class="loading-spinner-inline"></div>
-        <span>Generating thumbnails... {loadedShadersCount}/{totalShadersCount}</span>
+        <span>{$t('media.loading.thumbnails', { values: { loaded: loadedShadersCount, total: totalShadersCount } })}</span>
       </div>
       <div class="global-loading-bar-container">
         <div class="global-loading-bar" style="width: {loadingProgress * 100}%"></div>
@@ -3643,8 +3712,8 @@
         <h4>{selectedShader.name}</h4>
         <!-- ↺ Reset all params + clear modulation. Cyan to read as
              recoverable, matching the VJ Mode shader-params reset. -->
-        <button class="reset-params" onclick={resetMappingShaderToDefaults} title="Reset all params to defaults" aria-label="Reset all params to defaults">↺</button>
-        <button class="close-params" onclick={() => selectedShader = null}>x</button>
+        <button class="reset-params" onclick={resetMappingShaderToDefaults} title={$t('media.params.reset')} aria-label={$t('media.params.reset')}>↺</button>
+        <button class="close-params" onclick={() => selectedShader = null} title={$t('media.capture.close')} aria-label={$t('media.capture.close')}>x</button>
       </div>
       <div class="params-list">
         {#each selectedShader.inputs as input}
@@ -3666,7 +3735,7 @@
               <div class="shader-param-header">
                 <span class="shader-param-name">{input.LABEL || input.NAME}</span>
                 <button class="mod-source-chip" class:active={isModulated} class:open={mapModTrayParam === input.NAME}
-                  title="Modulation — audio bands, LFO with BPM sync, auto playhead"
+                  title={$t('media.params.modulation')}
                   onclick={(e) => toggleMapModTray(input.NAME, e.currentTarget as HTMLElement)}
                 >{modSourceLabel(_currentSrc, !!_mapAuto)}</button>
               </div>
@@ -3800,7 +3869,7 @@
                   }
                 }}
               >
-                <option value="">-- Select source --</option>
+                <option value="">{$t('media.params.selectSource')}</option>
                 {#each availableImageSources as source}
                   <option value={source.id}>{source.name}</option>
                 {/each}
@@ -3836,7 +3905,7 @@
     <div class="shader-params js-params">
       <div class="params-header">
         <h4>{selectedJSAnimation.name}</h4>
-        <button class="close-params" onclick={() => selectedJSAnimation = null}>x</button>
+        <button class="close-params" onclick={() => selectedJSAnimation = null} title={$t('media.capture.close')} aria-label={$t('media.capture.close')}>x</button>
       </div>
       <div class="params-list">
         {#each selectedJSAnimation.jsAnimation.params as param}
@@ -3876,7 +3945,7 @@
     ondrop={handleDrop}
     ondragover={handleDragOver}
     role="region"
-    aria-label="Media drop zone"
+    aria-label={$t('media.import.dropZone')}
   >
     {#if activeTab === 'sources'}
       <!-- Live Sources Panel -->
@@ -3886,31 +3955,31 @@
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
             </svg>
-            Webcam
+            {$t('media.source.webcam')}
           </button>
           <button class="source-add-btn" onclick={() => startScreenCapture()}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
             </svg>
-            Capture
+            {$t('media.source.capture')}
           </button>
           <button class="source-add-btn spout" class:active={showSpoutPicker} onclick={() => { showSpoutPicker = !showSpoutPicker; if (showSpoutPicker) { showNdiPicker = false; stopNdiScan(); scanSpoutSenders(); } }}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M1.42 9a16 16 0 0 1 21.16 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1"/>
             </svg>
-            {tsLabel} In
+            {$t('media.source.textureShareIn', { values: { label: tsLabel } })}
           </button>
           <button class="source-add-btn ndi" class:active={showNdiPicker} onclick={toggleNdiPicker}>
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
               <circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="11"/>
             </svg>
-            NDI® In
+            {$t('media.source.ndiIn')}
           </button>
         </div>
 
         {#if showSpoutPicker}
           <div class="spout-picker">
-            <label class="picker-label">{tsLabel} Senders</label>
+            <label class="picker-label">{$t('media.source.textureShareSenders', { values: { label: tsLabel } })}</label>
             {#if availableSpoutSenders.length > 0}
               <div class="spout-sender-list">
                 {#each availableSpoutSenders as sender}
@@ -3924,13 +3993,13 @@
               </div>
             {:else}
               <div class="spout-no-senders">
-                <p>{textureShareUnavailable ? `${tsLabel} native bridge unavailable` : `No ${tsLabel} senders detected`}</p>
+                <p>{textureShareUnavailable ? $t('media.source.nativeUnavailable', { values: { label: tsLabel } }) : $t('media.source.noSenders', { values: { label: tsLabel } })}</p>
                 <p class="hint">{textureShareStatusHint}</p>
                 <button class="spout-refresh-btn" onclick={() => scanSpoutSenders()}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
                   </svg>
-                  Refresh
+                  {$t('media.source.refresh')}
                 </button>
               </div>
             {/if}
@@ -3939,7 +4008,7 @@
 
         {#if showNdiPicker}
           <div class="spout-picker ndi-picker">
-            <div class="picker-label">NDI® Sources</div>
+            <div class="picker-label">{$t('media.source.ndiSources')}</div>
             {#if ndiSources.length > 0}
               <div class="spout-sender-list">
                 {#each ndiSources as src (src.name)}
@@ -3953,30 +4022,30 @@
               </div>
             {:else}
               <div class="spout-no-senders">
-                <p>{!ndiChecked || ndiScanning ? 'Scanning for NDI® sources...' : ndiAvailable ? 'No NDI® sources detected' : 'NDI® unavailable'}</p>
+                <p>{!ndiChecked || ndiScanning ? $t('media.source.ndiScanning') : ndiAvailable ? $t('media.source.ndiNoSources') : $t('media.source.ndiUnavailable')}</p>
                 <p class="hint">{ndiStatusHint}</p>
                 <button class="spout-refresh-btn" disabled={ndiScanning} onclick={() => scanNdiSources()}>
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/>
                   </svg>
-                  Refresh
+                  {$t('media.source.refresh')}
                 </button>
               </div>
             {/if}
             <p class="hint">
               <a href="https://ndi.video/" target="_blank" rel="noreferrer">NDI®</a>
-              is a registered trademark of Vizrt NDI AB.
+              {$t('media.source.ndiTrademark')}
             </p>
           </div>
         {/if}
 
         {#if availableWebcams.length > 1}
           <div class="webcam-picker">
-            <label class="picker-label">Camera Device</label>
+            <label class="picker-label">{$t('media.source.cameraDevice')}</label>
             <select class="device-select" onchange={(e) => { const v = (e.target as HTMLSelectElement).value; if (v) startWebcam(v); }}>
-              <option value="">Select camera...</option>
+              <option value="">{$t('media.source.selectCamera')}</option>
               {#each availableWebcams as cam}
-                <option value={cam.deviceId}>{cam.label || `Camera ${availableWebcams.indexOf(cam) + 1}`}</option>
+                <option value={cam.deviceId}>{cam.label || $t('media.source.camera', { values: { number: availableWebcams.indexOf(cam) + 1 } })}</option>
               {/each}
             </select>
           </div>
@@ -3987,8 +4056,8 @@
             <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
               <path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
             </svg>
-            <p>No live sources</p>
-            <p class="hint">Add a webcam, screen capture, {tsLabel}, or NDI® input</p>
+            <p>{$t('media.source.noLive')}</p>
+            <p class="hint">{$t('media.source.noLiveHint', { values: { label: tsLabel } })}</p>
           </div>
         {:else}
           <div class="sources-list">
@@ -4042,23 +4111,23 @@
                   <span class="source-name">{source.name}</span>
                   <span class="source-status">
                     {#if source.status === 'live'}
-                      <span class="status-dot live"></span> Live
+                      <span class="status-dot live"></span> {$t('media.source.live')}
                     {:else if source.status === 'connecting'}
-                      <span class="status-dot connecting"></span> Connecting...
+                      <span class="status-dot connecting"></span> {$t('media.source.connecting')}
                     {:else}
-                      <span class="status-dot"></span> Disconnected
+                      <span class="status-dot"></span> {$t('media.source.disconnected')}
                     {/if}
                   </span>
                 </div>
                 <div class="source-actions">
                   {#if source.status === 'live' && (source.videoEl || source.type === 'spout' || source.type === 'ndi')}
-                    <button class="source-apply-btn" onclick={(e) => { e.stopPropagation(); addLiveSourceToCurrentMode(source); }} title={vjMode ? 'Add to VJ deck' : 'Apply to selected layer'}>
+                    <button class="source-apply-btn" onclick={(e) => { e.stopPropagation(); addLiveSourceToCurrentMode(source); }} title={vjMode ? $t('media.source.addToVj') : $t('media.source.applyToLayer')} aria-label={vjMode ? $t('media.source.addToVj') : $t('media.source.applyToLayer')}>
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                         <polyline points="20 6 9 17 4 12"/>
                       </svg>
                     </button>
                   {/if}
-                  <button class="source-stop-btn" onclick={(e) => { e.stopPropagation(); stopSource(source.id); }} title="Stop source">
+                  <button class="source-stop-btn" onclick={(e) => { e.stopPropagation(); stopSource(source.id); }} title={$t('media.source.stop')} aria-label={$t('media.source.stop')}>
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                       <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
                     </svg>
@@ -4073,8 +4142,8 @@
       <!-- Plugins Panel -->
       <div class="plugins-panel">
         <div class="plugins-header">
-          <span class="plugins-title">GPU Plugins</span>
-          <span class="plugins-hint">{vjMode ? 'Click or drag to add to VJ deck' : 'Click to apply to selected layer'}</span>
+          <span class="plugins-title">{$t('media.plugins.title')}</span>
+          <span class="plugins-hint">{vjMode ? $t('media.plugins.hintVj') : $t('media.plugins.hintLayer')}</span>
         </div>
         <div class="plugins-grid">
           {#if vjMode}
@@ -4084,15 +4153,15 @@
               draggable="true"
               ondragstart={(e) => onCreatorCardDragStart('gpu', e)}
               ondragend={clearVJMediaTrayDragPayload}
-              title="Add GPU Shader to VJ deck"
+              title={$t('media.plugins.addGpu')}
             >
               <div class="plugin-preview creator-icon gpu-icon">
                 <PluginIcon pluginId="gpu-shader" size={34} />
               </div>
               <div class="plugin-info">
-                <span class="plugin-name">GPU Shader</span>
-                <span class="plugin-desc">Native generative shaders with live controls</span>
-                <span class="plugin-tier creator-tier">VJ CONTENT</span>
+                <span class="plugin-name">{$t('media.plugins.gpuName')}</span>
+                <span class="plugin-desc">{$t('media.plugins.gpuDescription')}</span>
+                <span class="plugin-tier creator-tier">{$t('media.plugins.tier')}</span>
               </div>
             </button>
             <button
@@ -4101,15 +4170,15 @@
               draggable="true"
               ondragstart={(e) => onCreatorCardDragStart('text', e)}
               ondragend={clearVJMediaTrayDragPayload}
-              title="Add Text Creator to VJ deck"
+              title={$t('media.plugins.addText')}
             >
               <div class="plugin-preview creator-icon text-icon">
                 <PluginIcon pluginId="text-creator" size={34} />
               </div>
               <div class="plugin-info">
-                <span class="plugin-name">Text Creator</span>
-                <span class="plugin-desc">Animated typography with transforms and depth</span>
-                <span class="plugin-tier creator-tier">VJ CONTENT</span>
+                <span class="plugin-name">{$t('media.plugins.textName')}</span>
+                <span class="plugin-desc">{$t('media.plugins.textDescription')}</span>
+                <span class="plugin-tier creator-tier">{$t('media.plugins.tier')}</span>
               </div>
             </button>
           {/if}
@@ -4122,7 +4191,11 @@
               disabled={!vjMode && !$selectedLayer}
               draggable={vjMode ? 'true' : 'false'}
               ondragstart={(e) => onPluginCardDragStart(plugin, e)}
-              title={vjMode ? `Add ${plugin.name} to VJ deck` : ($selectedLayer ? `Apply ${plugin.name} to layer` : 'Select a layer first')}
+              title={vjMode
+                ? $t('media.plugins.addPlugin', { values: { name: plugin.name } })
+                : ($selectedLayer
+                  ? $t('media.plugins.applyPlugin', { values: { name: plugin.name } })
+                  : $t('media.plugins.selectLayer'))}
             >
               <div class="plugin-preview">
                 <PluginIcon pluginId={plugin.id} effectType={plugin.effectType} size={32} />
@@ -4139,7 +4212,7 @@
         </div>
         {#if !vjMode && !$selectedLayer}
           <div class="plugins-hint-footer">
-            Select a media layer, then click a plugin to apply it
+            {$t('media.plugins.footer')}
           </div>
         {/if}
       </div>
@@ -4151,13 +4224,13 @@
             <polyline points="17 21 17 13 7 13 7 21"/>
             <polyline points="7 3 7 8 15 8"/>
           </svg>
-          <p>No saved content yet</p>
-          <p class="hint">AI-generated shaders and videos are automatically saved here</p>
+          <p>{$t('media.library.emptyTitle')}</p>
+          <p class="hint">{$t('media.library.emptyHint')}</p>
         </div>
       {:else}
         <!-- Saved Videos -->
         {#if savedVideos.length > 0}
-          <div class="library-section-label">Videos ({savedVideos.length})</div>
+          <div class="library-section-label">{$t('media.library.videos', { values: { count: savedVideos.length } })}</div>
           <div class="library-grid">
             {#each savedVideos as sv (sv.id)}
               <div class="library-item video-item">
@@ -4177,8 +4250,8 @@
                 <span class="library-name" title={sv.name}>{sv.name}</span>
                 <span class="library-desc" title={sv.prompt}>{sv.prompt}</span>
                 <div class="library-actions">
-                  <button class="library-load-btn" onclick={() => loadSavedVideo(sv)} title="Load into session">Load</button>
-                  <button class="library-delete-btn" onclick={(e) => deleteSavedVideo(sv.id, e)} title="Delete from library">
+                  <button class="library-load-btn" onclick={() => loadSavedVideo(sv)} title={$t('media.library.loadSession')}>{$t('media.library.load')}</button>
+                  <button class="library-delete-btn" onclick={(e) => deleteSavedVideo(sv.id, e)} title={$t('media.library.delete')} aria-label={$t('media.library.delete')}>
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                       <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
                     </svg>
@@ -4191,7 +4264,7 @@
 
         <!-- Saved Shaders -->
         {#if savedShaders.length > 0}
-          <div class="library-section-label">Shaders ({savedShaders.length})</div>
+          <div class="library-section-label">{$t('media.library.shaders', { values: { count: savedShaders.length } })}</div>
           <div class="library-grid">
             {#each savedShaders as saved (saved.id)}
               <div
@@ -4247,8 +4320,8 @@
                 <span class="library-name" title={saved.name}>{saved.name}</span>
                 <span class="library-desc" title={saved.description}>{saved.description}</span>
                 <div class="library-actions">
-                  <button class="library-load-btn" onclick={() => loadFromLibrary(saved)} title="Load and add to active list">Load</button>
-                  <button class="library-delete-btn" onclick={(e) => deleteFromLibrary(saved.id, e)} title="Delete from library">
+                  <button class="library-load-btn" onclick={() => loadFromLibrary(saved)} title={$t('media.library.loadActive')}>{$t('media.library.load')}</button>
+                  <button class="library-delete-btn" onclick={(e) => deleteFromLibrary(saved.id, e)} title={$t('media.library.delete')} aria-label={$t('media.library.delete')}>
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                       <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
                     </svg>
@@ -4264,8 +4337,8 @@
         <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
           <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4"/>
         </svg>
-        <p>No JS animations yet</p>
-        <p class="hint">Use AI Generate to create Three.js or p5.js animations</p>
+        <p>{$t('media.empty.jsTitle')}</p>
+        <p class="hint">{$t('media.empty.jsHint')}</p>
       </div>
     {:else if activeTab === 'js'}
       <div class="media-grid">
@@ -4306,7 +4379,7 @@
                 <button
                   class="edit-btn"
                   onclick={(e) => { e.stopPropagation(); startEditJSAnimation(item); }}
-                  title="Edit prompt and regenerate"
+                  title={$t('media.items.edit')}
                 >
                   <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                     <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
@@ -4318,10 +4391,13 @@
                 class="remove-btn"
                 onclick={async (e) => {
                   e.stopPropagation();
-                  if (!(await confirmDeleteIfSafeMode(`"${item.name ?? 'this animation'}" from the library`, e))) return;
+                  if (!(await confirmDeleteIfSafeMode($t('media.confirm.deleteAnimation', {
+                    values: { name: item.name ?? 'this animation' },
+                  }), e))) return;
                   removeJSAnimation(item.id);
                 }}
-                title="Remove from library"
+                title={$t('media.items.removeLibrary')}
+                aria-label={$t('media.items.removeLibrary')}
               >
                 x
               </button>
@@ -4335,8 +4411,8 @@
           <path d="M12 5v14M5 12h14" />
           <rect x="3" y="3" width="18" height="18" rx="2" />
         </svg>
-        <p>Drop {activeTab} here</p>
-        <p class="hint">or click Add Files below</p>
+        <p>{$t('media.import.dropHere', { values: { type: mediaDropTypeLabel(activeTab) } })}</p>
+        <p class="hint">{$t('media.import.dropHint')}</p>
       </div>
     {:else}
       {#if activeTab === 'shaders' && shaderCategories.length > 1}
@@ -4351,7 +4427,7 @@
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="transform: rotate({foldersOpen ? 90 : 0}deg); transition: transform .15s;">
             <path d="M9 18l6-6-6-6"/>
           </svg>
-          Folders
+          {$t('media.folders.title')}
         </button>
         {#if foldersOpen}
         <div class="category-stack">
@@ -4360,7 +4436,7 @@
             class:active={shaderCategoryFilter === null && !activeFolderId}
             onclick={() => { shaderCategoryFilter = null; activeFolderId = null; }}
           >
-            <span class="category-name">All Shaders</span>
+            <span class="category-name">{$t('media.folders.allShaders')}</span>
             <span class="category-count">{shaders.length}</span>
           </button>
           {#each shaderCategories as cat (cat.name)}
@@ -4369,7 +4445,7 @@
               class:active={shaderCategoryFilter === cat.name && !activeFolderId}
               onclick={() => { shaderCategoryFilter = shaderCategoryFilter === cat.name ? null : cat.name; activeFolderId = null; }}
             >
-              <span class="category-name">{cat.name}</span>
+              <span class="category-name">{shaderCategoryLabel(cat.name)}</span>
               <span class="category-count">{cat.count}</span>
             </button>
           {/each}
@@ -4390,7 +4466,7 @@
                 ondragstart={(e) => { draggedFolderIndex = fi; if (e.dataTransfer) e.dataTransfer.effectAllowed = 'move'; }}
                 ondragend={() => { draggedFolderIndex = null; dragOverFolderIndex = null; }}
                 class:drag-over={dragOverFolderIndex === fi && draggedFolderIndex !== fi}
-                title="Right-click to rename or delete. Drag to reorder."
+                title={$t('media.folders.contextTitle')}
               >
                 <span class="category-name">{folder.name}</span>
                 <span class="category-count">{folder.itemIds.length}</span>
@@ -4409,7 +4485,7 @@
               oncontextmenu={(e) => openFolderContextMenu(folder.id, e)}
               ondragover={(e) => e.preventDefault()}
               ondrop={(e) => onFolderDrop(folder.id, e)}
-              title="Right-click to rename or delete"
+              title={$t('media.folders.chipTitle')}
             >
               <span class="folder-chip-icon">{activeFolderId === folder.id ? '-' : '+'}</span>
               <span>{folder.name} ({folder.itemIds.length})</span>
@@ -4453,7 +4529,7 @@
                   <div class="loading-bar-container">
                     <div class="loading-bar" style="width: {(item.loadingProgress || 0) * 100}%"></div>
                   </div>
-                  <span class="loading-text">Loading...</span>
+                  <span class="loading-text">{$t('media.loading.item')}</span>
                 </div>
               {:else if 'shaderCode' in item}
                 <div class="shader-icon">
@@ -4498,9 +4574,9 @@
 
               <span class="item-name">
                 {#if 'shaderCode' in item && item.userAdded}
-                  <span class="user-badge" title="Added from your computer">•</span>
+                  <span class="user-badge" title={$t('media.items.userAdded')}>•</span>
                 {:else if 'shaderCode' in item && item.cloudShader}
-                  <span class="cloud-badge" title="Synced from ghostarcade.live">•</span>
+                  <span class="cloud-badge" title={$t('media.items.cloudSynced')}>•</span>
                 {/if}
                 {item.name}
               </span>
@@ -4511,7 +4587,7 @@
                   <button
                     class="loop-btn"
                     onclick={(e) => toggleLoopOptions(item.id, e)}
-                    title="Create loop"
+                    title={$t('media.items.createLoop')}
                     disabled={loopingVideoId !== null}
                     class:active={showLoopOptions === item.id}
                   >
@@ -4524,7 +4600,7 @@
                     class="loop-btn"
                     class:active={currentPlaybackMode === 'timelapse' || showTimelapsePopover === item.id}
                     onclick={(e) => { e.stopPropagation(); toggleTimelapsePopover(item.id, e); }}
-                    title="Timelapse frame-by-frame"
+                    title={$t('media.items.timelapse')}
                   >
                     <!-- Camera icon -->
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
@@ -4537,7 +4613,7 @@
                   <button
                     class="edit-btn"
                     onclick={(e) => { e.stopPropagation(); startEditShader(item); }}
-                    title="Edit prompt and regenerate"
+                    title={$t('media.items.edit')}
                   >
                     <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                       <path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/>
@@ -4550,10 +4626,11 @@
                   onclick={async (e) => {
                     e.stopPropagation();
                     const name = ('name' in item ? item.name : 'this item') || 'this item';
-                    if (!(await confirmDeleteIfSafeMode(`"${name}" from the tray`, e))) return;
+                    if (!(await confirmDeleteIfSafeMode($t('media.confirm.deleteItem', { values: { name } }), e))) return;
                     removeItem(item);
                   }}
-                  title="Remove from tray"
+                  title={$t('media.items.removeTray')}
+                  aria-label={$t('media.items.removeTray')}
                 >
                   x
                 </button>
@@ -4563,7 +4640,7 @@
           {/each}
           </div>
         {:else if section.kind === 'folder'}
-          <div class="folder-status">No clips in this folder yet.</div>
+          <div class="folder-status">{$t('media.folders.statusEmpty')}</div>
         {/if}
       {/each}
     {/if}
@@ -4580,36 +4657,41 @@
             <input
               type="text"
               class="folder-name-input"
-              placeholder={folderInputMode === 'create' ? 'Folder name...' : 'New name...'}
+              placeholder={folderInputMode === 'create' ? $t('media.import.folderName') : $t('media.import.newName')}
               bind:value={folderInputValue}
               onkeydown={(e) => { if (e.key === 'Enter') confirmFolderInput(); if (e.key === 'Escape') { folderInputMode = null; closeTrayContextMenu(); } }}
               autofocus
             />
-            <button class="folder-input-ok" onclick={confirmFolderInput}>OK</button>
+            <button class="folder-input-ok" onclick={confirmFolderInput}>{$t('media.import.ok')}</button>
           </div>
         {:else}
           {#if activeFolderId && selectedTrayItemIds.length > 0}
             <button class="ctx-btn" onclick={async (e) => {
               const n = selectedTrayItemIds.length;
-              if (!(await confirmDeleteIfSafeMode(`${n} ${n === 1 ? 'item' : 'items'} from this folder`, e))) return;
+              if (!(await confirmDeleteIfSafeMode($t('media.confirm.deleteFolderItems', {
+                values: {
+                  count: n,
+                  label: n === 1 ? $t('media.folders.items') : $t('media.folders.itemsPlural'),
+                },
+              }), e))) return;
               removeItemsFromFolder(activeFolderId!, selectedTrayItemIds);
             }}>
-              Remove from Folder ({selectedTrayItemIds.length})
+              {$t('media.folders.remove', { values: { count: selectedTrayItemIds.length } })}
             </button>
             <div class="ctx-sep"></div>
           {/if}
           {#if selectedTrayItemIds.length > 0}
             <button class="ctx-btn" onclick={createFolderFromSelection}>
-              Create New Folder ({selectedTrayItemIds.length} selected)
+              {$t('media.folders.create', { values: { count: selectedTrayItemIds.length } })}
             </button>
           {:else}
-            <span class="ctx-hint">Ctrl/Cmd+click to select, then right-click</span>
+            <span class="ctx-hint">{$t('media.folders.selectionHint')}</span>
           {/if}
           {#if activeTabFolders.length > 0 && selectedTrayItemIds.length > 0}
             <div class="ctx-sep"></div>
             {#each activeTabFolders as folder (folder.id)}
               <button class="ctx-btn" onclick={() => assignItemsToFolder(folder.id, selectedTrayItemIds)}>
-                Add to {folder.name}
+                {$t('media.folders.addTo', { values: { name: folder.name } })}
               </button>
             {/each}
           {/if}
@@ -4629,16 +4711,16 @@
             <input
               type="text"
               class="folder-name-input"
-              placeholder="New name..."
+              placeholder={$t('media.import.newName')}
               bind:value={folderInputValue}
               onkeydown={(e) => { if (e.key === 'Enter') { confirmFolderInput(); closeFolderContextMenu(); } if (e.key === 'Escape') { folderInputMode = null; closeFolderContextMenu(); } }}
               autofocus
             />
-            <button class="folder-input-ok" onclick={() => { confirmFolderInput(); closeFolderContextMenu(); }}>OK</button>
+            <button class="folder-input-ok" onclick={() => { confirmFolderInput(); closeFolderContextMenu(); }}>{$t('media.import.ok')}</button>
           </div>
         {:else}
           <button class="ctx-btn" onclick={() => renameFolder(folderContextMenuId!)}>
-            Rename Folder
+            {$t('media.folders.rename')}
           </button>
           <button class="ctx-btn ctx-btn-danger" onclick={async (e) => {
             const folder = mediaFolders.find(f => f.id === folderContextMenuId);
@@ -4647,7 +4729,7 @@
             if (!(await confirmDeleteIfSafeMode(`folder "${folder?.name ?? 'this folder'}"`, e))) return;
             deleteFolder(id);
           }}>
-            Delete Folder
+            {$t('media.folders.delete')}
           </button>
         {/if}
       </div>
@@ -4660,7 +4742,7 @@
       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
         <path d="M12 5v14M5 12h14" />
       </svg>
-      Add Files
+      {$t('media.import.addFiles')}
       <input
         type="file"
         accept="image/*,video/*,.fs,.isf,.html,.htm"
@@ -4682,7 +4764,7 @@
         <path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20" />
         <path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z" />
       </svg>
-      Shader Library
+      {$t('media.import.shaderLibrary')}
     </button>
   </div>
 
@@ -4705,29 +4787,29 @@
       style="left: {loopPopoverPos.x}px; top: {loopPopoverPos.y}px; transform: translate(-50%, -100%);"
       onclick={(e) => e.stopPropagation()}
     >
-      <div class="loop-popover-title">Create Seamless Loop</div>
+      <div class="loop-popover-title">{$t('media.loop.title')}</div>
       <div class="loop-opt-row">
-        <label for="loop-creation-mode">Mode</label>
+        <label for="loop-creation-mode">{$t('media.loop.mode')}</label>
         <select id="loop-creation-mode" bind:value={loopCreationMode}>
-          <option value="crossfade">Crossfade</option>
-          <option value="veo">Veo Bridge</option>
+          <option value="crossfade">{$t('media.loop.crossfade')}</option>
+          <option value="veo">{$t('media.loop.veoBridge')}</option>
         </select>
       </div>
       {#if loopCreationMode === 'crossfade'}
         <div class="loop-opt-row">
-          <label for="loop-transition-type">Transition</label>
+          <label for="loop-transition-type">{$t('media.loop.transition')}</label>
           <select id="loop-transition-type" bind:value={loopTransitionType}>
             {#each LOOP_TRANSITION_GROUPS as group}
-              <optgroup label={group}>
-                {#each LOOP_TRANSITIONS.filter((t) => t.group === group) as t}
-                  <option value={t.value}>{t.label}</option>
+              <optgroup label={localizedLoopGroupLabel(group)}>
+                {#each LOOP_TRANSITIONS.filter((transition) => transition.group === group) as transition}
+                  <option value={transition.value}>{localizedLoopTransitionLabel(transition.value, transition.label)}</option>
                 {/each}
               </optgroup>
             {/each}
           </select>
         </div>
         <div class="loop-opt-row">
-          <label for="loop-crossfade-duration">Duration</label>
+          <label for="loop-crossfade-duration">{$t('media.loop.duration')}</label>
           <select id="loop-crossfade-duration" bind:value={loopCrossfadeDuration}>
             <option value={0.2}>0.2s</option>
             <option value={0.5}>0.5s</option>
@@ -4739,12 +4821,12 @@
         </div>
       {:else}
         <div class="loop-opt-column">
-          <label for="loop-veo-prompt">Prompt</label>
+          <label for="loop-veo-prompt">{$t('media.loop.prompt')}</label>
           <textarea id="loop-veo-prompt" bind:value={loopVeoPrompt} rows="3"></textarea>
         </div>
       {/if}
       <button class="loop-create-btn" onclick={() => createLoopFromVideo(loopItem)}>
-        {loopCreationMode === 'veo' ? 'Create Veo Loop' : 'Create Loop'}
+        {loopCreationMode === 'veo' ? $t('media.loop.createVeo') : $t('media.loop.create')}
       </button>
     </div>
   {/if}
@@ -4762,11 +4844,11 @@
         <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
         <circle cx="12" cy="13" r="4"/>
       </svg>
-      Timelapse Playback
+      {$t('media.timelapse.title')}
     </div>
 
     <div class="timelapse-opt-row">
-      <label>Interval</label>
+      <label>{$t('media.timelapse.interval')}</label>
       <select bind:value={timelapseInterval}>
         <option value={1}>1s</option>
         <option value={2}>2s</option>
@@ -4779,14 +4861,14 @@
         <option value={25}>25s</option>
         <option value={30}>30s</option>
       </select>
-      <span class="timelapse-interval-label">per frame</span>
+      <span class="timelapse-interval-label">{$t('media.timelapse.perFrame')}</span>
     </div>
 
     <div class="timelapse-frame-display">
       <span class="timelapse-frame-current">{timelapseCurrentFrame}</span>
       <span class="timelapse-frame-sep">/</span>
       <span class="timelapse-frame-total">{timelapseTotalFrames}</span>
-      <span class="timelapse-frame-label">frames</span>
+      <span class="timelapse-frame-label">{$t('media.timelapse.frames')}</span>
     </div>
 
     {#if timelapseTotalFrames > 0}
@@ -4797,32 +4879,32 @@
 
     <div class="timelapse-controls">
       {#if timelapseState === 'idle' || timelapseState === 'paused'}
-        <button class="timelapse-ctrl-btn timelapse-start" onclick={startTimelapse} title={timelapseState === 'paused' ? 'Resume' : 'Start'}>
+        <button class="timelapse-ctrl-btn timelapse-start" onclick={startTimelapse} title={timelapseState === 'paused' ? $t('media.timelapse.resume') : $t('media.timelapse.start')}>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none">
             <polygon points="5 3 19 12 5 21 5 3"/>
           </svg>
-          {timelapseState === 'paused' ? 'Resume' : 'Start'}
+          {timelapseState === 'paused' ? $t('media.timelapse.resume') : $t('media.timelapse.start')}
         </button>
       {:else}
-        <button class="timelapse-ctrl-btn timelapse-pause" onclick={pauseTimelapse} title="Pause">
+        <button class="timelapse-ctrl-btn timelapse-pause" onclick={pauseTimelapse} title={$t('media.timelapse.pause')}>
           <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none">
             <rect x="6" y="4" width="4" height="16"/><rect x="14" y="4" width="4" height="16"/>
           </svg>
-          Pause
+          {$t('media.timelapse.pause')}
         </button>
       {/if}
-      <button class="timelapse-ctrl-btn timelapse-stop" onclick={stopTimelapse} title="Stop">
+      <button class="timelapse-ctrl-btn timelapse-stop" onclick={stopTimelapse} title={$t('media.timelapse.stop')}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor" stroke="none">
           <rect x="4" y="4" width="16" height="16" rx="2"/>
         </svg>
-        Stop
+        {$t('media.timelapse.stop')}
       </button>
     </div>
 
     {#if timelapseState === 'running'}
-      <div class="timelapse-status running">Running — next frame in {timelapseInterval}s</div>
+      <div class="timelapse-status running">{$t('media.timelapse.running', { values: { seconds: timelapseInterval } })}</div>
     {:else if timelapseState === 'paused'}
-      <div class="timelapse-status paused">Paused at frame {timelapseCurrentFrame}</div>
+      <div class="timelapse-status paused">{$t('media.timelapse.paused', { values: { frame: timelapseCurrentFrame } })}</div>
     {/if}
   </div>
 {/if}
@@ -4846,34 +4928,31 @@
     onclick={closeScreenPicker}
     role="dialog"
     aria-modal="true"
-    aria-label="Pick a screen or window to capture"
+    aria-label={$t('media.capture.ariaLabel')}
   >
     <div class="capture-picker-modal" onclick={(e) => e.stopPropagation()} role="document">
       <div class="cpm-header">
-        <div class="cpm-title">Capture a screen or window</div>
-        <button class="cpm-close" onclick={closeScreenPicker} title="Close">×</button>
+        <div class="cpm-title">{$t('media.capture.title')}</div>
+        <button class="cpm-close" onclick={closeScreenPicker} title={$t('media.capture.close')} aria-label={$t('media.capture.close')}>×</button>
       </div>
 
       {#if screenPickerLoading}
-        <div class="cpm-loading">Loading sources…</div>
+        <div class="cpm-loading">{$t('media.capture.loading')}</div>
       {:else if screenPickerSources.length === 0}
-        <div class="cpm-empty">
-          No capturable sources found. On Linux you may need to grant
-          screen-share permission in your desktop environment.
-        </div>
+        <div class="cpm-empty">{$t('media.capture.empty')}</div>
       {:else}
         {@const screens = screenPickerSources.filter(s => s.kind === 'screen')}
         {@const windows = screenPickerSources.filter(s => s.kind === 'window')}
 
         {#if screens.length > 0}
-          <div class="cpm-section-title">Screens</div>
+          <div class="cpm-section-title">{$t('media.capture.screens')}</div>
           <div class="cpm-grid">
             {#each screens as src (src.id)}
               <button class="cpm-card" onclick={() => pickScreenSource(src)} title={src.name}>
                 {#if src.thumbnailDataUrl}
                   <img class="cpm-thumb" src={src.thumbnailDataUrl} alt={src.name} />
                 {:else}
-                  <div class="cpm-thumb cpm-thumb-empty">No preview</div>
+                  <div class="cpm-thumb cpm-thumb-empty">{$t('media.capture.noPreview')}</div>
                 {/if}
                 <div class="cpm-name">{src.name}</div>
               </button>
@@ -4882,14 +4961,14 @@
         {/if}
 
         {#if windows.length > 0}
-          <div class="cpm-section-title">Application windows</div>
+          <div class="cpm-section-title">{$t('media.capture.windows')}</div>
           <div class="cpm-grid">
             {#each windows as src (src.id)}
               <button class="cpm-card" onclick={() => pickScreenSource(src)} title={src.name}>
                 {#if src.thumbnailDataUrl}
                   <img class="cpm-thumb" src={src.thumbnailDataUrl} alt={src.name} />
                 {:else}
-                  <div class="cpm-thumb cpm-thumb-empty">No preview</div>
+                  <div class="cpm-thumb cpm-thumb-empty">{$t('media.capture.noPreview')}</div>
                 {/if}
                 <div class="cpm-name-row">
                   {#if src.appIconDataUrl}

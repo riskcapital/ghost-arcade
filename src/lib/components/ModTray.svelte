@@ -1,29 +1,33 @@
 <script lang="ts" module>
+  import { get } from 'svelte/store';
+  import { t as i18nT } from '../i18n';
+
   /** Short chip label for the current source — shared by every
    *  surface that renders a mod chip so naming stays consistent. */
+  const SOURCE_LABEL_KEYS: Record<string, string> = {
+    manual: 'effectTools.modulation.sourceLabels.manual',
+    sub: 'effectTools.modulation.sourceLabels.sub',
+    bass: 'effectTools.modulation.sourceLabels.bass',
+    lowMid: 'effectTools.modulation.sourceLabels.lowMid',
+    mid: 'effectTools.modulation.sourceLabels.mid',
+    highMid: 'effectTools.modulation.sourceLabels.highMid',
+    treble: 'effectTools.modulation.sourceLabels.treble',
+    air: 'effectTools.modulation.sourceLabels.air',
+    presence: 'effectTools.modulation.sourceLabels.presence',
+    high: 'effectTools.modulation.sourceLabels.high',
+    amplitude: 'effectTools.modulation.sourceLabels.amplitude',
+    beatPhase: 'effectTools.modulation.sourceLabels.beatPhase',
+    kick: 'effectTools.modulation.sourceLabels.kick',
+    snare: 'effectTools.modulation.sourceLabels.snare',
+    'lfo-sine': 'effectTools.modulation.sourceLabels.lfoSine',
+    'lfo-saw': 'effectTools.modulation.sourceLabels.lfoSaw',
+    'lfo-square': 'effectTools.modulation.sourceLabels.lfoSquare',
+    'lfo-tri': 'effectTools.modulation.sourceLabels.lfoTri',
+  };
+
   export function modSourceLabel(source: string, isAuto: boolean): string {
-    if (isAuto) return 'Auto';
-    switch (source) {
-      case 'manual': return 'Mod';
-      case 'sub': return 'Sub';
-      case 'bass': return 'Bass';
-      case 'lowMid': return 'Lo Mid';
-      case 'mid': return 'Mid';
-      case 'highMid': return 'Hi Mid';
-      case 'treble': return 'Treble';
-      case 'air': return 'Air';
-      case 'presence': return 'Pres';
-      case 'high': return 'High';
-      case 'amplitude': return 'Volume';
-      case 'beatPhase': return 'Beat';
-      case 'kick': return 'Kick';
-      case 'snare': return 'Snare';
-      case 'lfo-sine': return 'LFO ∿';
-      case 'lfo-saw': return 'LFO ⊿';
-      case 'lfo-square': return 'LFO ⊓';
-      case 'lfo-tri': return 'LFO ⋀';
-      default: return source;
-    }
+    const key = isAuto ? 'effectTools.modulation.sourceLabels.auto' : SOURCE_LABEL_KEYS[source];
+    return key ? get(i18nT)(key) : source;
   }
 </script>
 
@@ -55,6 +59,7 @@
   import { getVisualAudioSnapshot } from '../audio/visualAudio';
   import { audioStore } from '../stores/audio';
   import type { AutoConfig } from '../types';
+  import { t } from '../i18n';
 
   export let label: string;
   /** Anchor element (the mod chip button) the tray positions against. */
@@ -67,7 +72,7 @@
   export let auto: AutoConfig | undefined = undefined;
   /** Hide the Auto tab for surfaces that don't support the playhead. */
   export let supportsAuto = true;
-  export let autoHint = 'Drag the cyan handles on the param slider to clip the sweep range.';
+  export let autoHint = '';
   export let onClose: () => void;
   export let onSetSource: (s: ModSource) => void;
   export let onPatchMod: (patch: Partial<ParamModulation>) => void;
@@ -77,37 +82,37 @@
   type Category = 'manual' | 'audio' | 'lfo' | 'sync' | 'auto';
 
   const AUDIO_SOURCES: { v: ModSource; l: string }[] = [
-    { v: 'sub', l: 'Sub' },
-    { v: 'bass', l: 'Bass' },
-    { v: 'lowMid', l: 'Lo Mid' },
-    { v: 'mid', l: 'Mid' },
-    { v: 'highMid', l: 'Hi Mid' },
-    { v: 'treble', l: 'Treble' },
-    { v: 'air', l: 'Air' },
-    { v: 'presence', l: 'Pres' },
-    { v: 'amplitude', l: 'Volume' },
+    { v: 'sub', l: 'effectTools.modulation.sources.sub' },
+    { v: 'bass', l: 'effectTools.modulation.sources.bass' },
+    { v: 'lowMid', l: 'effectTools.modulation.sources.lowMid' },
+    { v: 'mid', l: 'effectTools.modulation.sources.mid' },
+    { v: 'highMid', l: 'effectTools.modulation.sources.highMid' },
+    { v: 'treble', l: 'effectTools.modulation.sources.treble' },
+    { v: 'air', l: 'effectTools.modulation.sources.air' },
+    { v: 'presence', l: 'effectTools.modulation.sources.presence' },
+    { v: 'amplitude', l: 'effectTools.modulation.sources.amplitude' },
   ];
   const ONSET_SOURCES: { v: ModSource; l: string }[] = [
-    { v: 'kick', l: 'Kick' },
-    { v: 'snare', l: 'Snare' },
+    { v: 'kick', l: 'effectTools.modulation.sources.kick' },
+    { v: 'snare', l: 'effectTools.modulation.sources.snare' },
   ];
   const LFO_SOURCES: { v: ModSource; l: string; glyph: string }[] = [
-    { v: 'lfo-sine', l: 'Sine', glyph: '∿' },
-    { v: 'lfo-tri', l: 'Tri', glyph: '⋀' },
-    { v: 'lfo-saw', l: 'Saw', glyph: '⊿' },
-    { v: 'lfo-square', l: 'Square', glyph: '⊓' },
+    { v: 'lfo-sine', l: 'effectTools.modulation.sources.sine', glyph: '∿' },
+    { v: 'lfo-tri', l: 'effectTools.modulation.sources.tri', glyph: '⋀' },
+    { v: 'lfo-saw', l: 'effectTools.modulation.sources.saw', glyph: '⊿' },
+    { v: 'lfo-square', l: 'effectTools.modulation.sources.square', glyph: '⊓' },
   ];
   /** Musical divisions for BPM-synced LFOs. `speed` is cycles per
    *  beat (engine: rate = speed × bpm/60), so 0.25 = one cycle per
    *  4 beats = 1 bar in 4/4. */
   const SYNC_RATES: { v: number; l: string }[] = [
-    { v: 0.0625, l: '4 bars' },
-    { v: 0.125, l: '2 bars' },
-    { v: 0.25, l: '1 bar' },
-    { v: 0.5, l: '1/2' },
-    { v: 1, l: 'Beat' },
-    { v: 2, l: '1/8' },
-    { v: 4, l: '1/16' },
+    { v: 0.0625, l: 'effectTools.modulation.rates.fourBars' },
+    { v: 0.125, l: 'effectTools.modulation.rates.twoBars' },
+    { v: 0.25, l: 'effectTools.modulation.rates.oneBar' },
+    { v: 0.5, l: 'effectTools.modulation.rates.half' },
+    { v: 1, l: 'effectTools.modulation.rates.beat' },
+    { v: 2, l: 'effectTools.modulation.rates.eighth' },
+    { v: 4, l: 'effectTools.modulation.rates.sixteenth' },
   ];
 
   function categoryOf(s: ModSource | 'auto'): Category {
@@ -125,6 +130,7 @@
   $: invert = mod?.invert ?? false;
   $: speed = mod?.speed ?? 1;
   $: bpm = $audioStore.manualBPM || $audioStore.bpm || 0;
+  $: resolvedAutoHint = autoHint || $t('effectTools.modulation.hints.auto');
 
   function pickCategory(c: Category) {
     if (c === category) return;
@@ -249,98 +255,142 @@
   bind:this={trayEl}
   style="top:{top}px; left:{left}px; width:{WIDTH}px; transform-origin: {flipped ? 'bottom' : 'top'} right"
   role="dialog"
-  aria-label="Modulation settings for {label}"
+  aria-label={$t('effectTools.modulation.dialogAria', { values: { label } })}
   in:scale={{ duration: 160, start: 0.94, opacity: 0, easing: quintOut }}
   out:scale={{ duration: 110, start: 0.96, opacity: 0 }}
 >
   <div class="mt-head">
     <span class="mt-title" title={label}>{label}</span>
-    <button class="mt-close" onclick={onClose} title="Close" aria-label="Close">✕</button>
+    <button
+      class="mt-close"
+      onclick={onClose}
+      title={$t('effectTools.modulation.close')}
+      aria-label={$t('effectTools.modulation.close')}>✕</button
+    >
   </div>
 
   <!-- Category row -->
   <div class="mt-cats">
-    <button class:active={category === 'manual'} onclick={() => pickCategory('manual')}>Manual</button>
-    <button class:active={category === 'audio'} class="cat-audio" onclick={() => pickCategory('audio')}>Audio</button>
-    <button class:active={category === 'lfo'} class="cat-lfo" onclick={() => pickCategory('lfo')}>LFO</button>
-    <button class:active={category === 'sync'} class="cat-sync" onclick={() => pickCategory('sync')}>Beat</button>
+    <button class:active={category === 'manual'} onclick={() => pickCategory('manual')}
+      >{$t('effectTools.modulation.categories.manual')}</button
+    >
+    <button class:active={category === 'audio'} class="cat-audio" onclick={() => pickCategory('audio')}
+      >{$t('effectTools.modulation.categories.audio')}</button
+    >
+    <button class:active={category === 'lfo'} class="cat-lfo" onclick={() => pickCategory('lfo')}
+      >{$t('effectTools.modulation.categories.lfo')}</button
+    >
+    <button class:active={category === 'sync'} class="cat-sync" onclick={() => pickCategory('sync')}
+      >{$t('effectTools.modulation.categories.sync')}</button
+    >
     {#if supportsAuto}
-      <button class:active={category === 'auto'} class="cat-auto" onclick={() => pickCategory('auto')}>Auto</button>
+      <button class:active={category === 'auto'} class="cat-auto" onclick={() => pickCategory('auto')}
+        >{$t('effectTools.modulation.categories.auto')}</button
+      >
     {/if}
   </div>
 
   {#if category === 'manual'}
-    <div class="mt-hint">No modulation — the slider value is used as-is.</div>
+    <div class="mt-hint">{$t('effectTools.modulation.hints.manual')}</div>
   {/if}
 
   {#if category === 'audio'}
-    <div class="mt-section-label">Band</div>
+    <div class="mt-section-label">{$t('effectTools.modulation.sections.band')}</div>
     <div class="mt-grid">
       {#each AUDIO_SOURCES as s (s.v)}
-        <button class="mt-cell" class:active={source === s.v} onclick={() => onSetSource(s.v)}>{s.l}</button>
+        <button class="mt-cell" class:active={source === s.v} onclick={() => onSetSource(s.v)}>{$t(s.l)}</button>
       {/each}
     </div>
-    <div class="mt-section-label">Onsets — fire on the hit, decay smooth</div>
+    <div class="mt-section-label">{$t('effectTools.modulation.hints.onsets')}</div>
     <div class="mt-grid mt-grid-2">
       {#each ONSET_SOURCES as s (s.v)}
-        <button class="mt-cell" class:active={source === s.v} onclick={() => onSetSource(s.v)}>{s.l}</button>
+        <button class="mt-cell" class:active={source === s.v} onclick={() => onSetSource(s.v)}>{$t(s.l)}</button>
       {/each}
     </div>
   {/if}
 
   {#if category === 'lfo'}
-    <div class="mt-section-label">Shape</div>
+    <div class="mt-section-label">{$t('effectTools.modulation.sections.shape')}</div>
     <div class="mt-grid mt-grid-4">
       {#each LFO_SOURCES as s (s.v)}
-        <button class="mt-cell" class:active={source === s.v} title={s.l} onclick={() => onSetSource(s.v)}>
-          <span class="mt-glyph">{s.glyph}</span>{s.l}
+        <button class="mt-cell" class:active={source === s.v} title={$t(s.l)} onclick={() => onSetSource(s.v)}>
+          <span class="mt-glyph">{s.glyph}</span>{$t(s.l)}
         </button>
       {/each}
     </div>
 
     <label class="mt-check">
-      <input type="checkbox" checked={bpmSynced} onchange={(e) => onPatchMod({ bpmSync: (e.target as HTMLInputElement).checked, speed: (e.target as HTMLInputElement).checked ? nearestRate(speed) : speed })} />
-      <span>Sync to BPM {#if bpmSynced && bpm > 0}<em class="mt-bpm">{bpm.toFixed(0)}</em>{/if}</span>
+      <input
+        type="checkbox"
+        checked={bpmSynced}
+        onchange={(e) =>
+          onPatchMod({
+            bpmSync: (e.target as HTMLInputElement).checked,
+            speed: (e.target as HTMLInputElement).checked ? nearestRate(speed) : speed,
+          })}
+      />
+      <span
+        >{$t('effectTools.modulation.controls.syncBpm')}
+        {#if bpmSynced && bpm > 0}<em class="mt-bpm">{bpm.toFixed(0)}</em>{/if}</span
+      >
     </label>
 
     {#if bpmSynced}
-      <div class="mt-section-label">Rate</div>
+      <div class="mt-section-label">{$t('effectTools.modulation.sections.rate')}</div>
       <div class="mt-grid mt-grid-rates">
         {#each SYNC_RATES as r (r.v)}
-          <button class="mt-cell" class:active={activeRate === r.v} onclick={() => onPatchMod({ speed: r.v })}>{r.l}</button>
+          <button class="mt-cell" class:active={activeRate === r.v} onclick={() => onPatchMod({ speed: r.v })}
+            >{$t(r.l)}</button
+          >
         {/each}
       </div>
       {#if bpm <= 0}
-        <div class="mt-hint mt-warn">No BPM detected — tap tempo or enable audio. The LFO free-runs at the slider speed until then.</div>
+        <div class="mt-hint mt-warn">{$t('effectTools.modulation.hints.noBpm')}</div>
       {/if}
     {:else}
       <div class="mt-row">
-        <span class="mt-row-label">Speed</span>
-        <input type="range" min="0.05" max="10" step="0.05" value={speed}
-          oninput={(e) => onPatchMod({ speed: parseFloat((e.target as HTMLInputElement).value) })} />
+        <span class="mt-row-label">{$t('effectTools.modulation.controls.speed')}</span>
+        <input
+          type="range"
+          min="0.05"
+          max="10"
+          step="0.05"
+          value={speed}
+          oninput={(e) => onPatchMod({ speed: parseFloat((e.target as HTMLInputElement).value) })}
+        />
         <span class="mt-row-val">{speed.toFixed(2)}Hz</span>
       </div>
     {/if}
   {/if}
 
   {#if category === 'sync'}
-    <div class="mt-hint">Beat phase — a 0→1 ramp locked to each detected beat. Great for sweeps that restart on the pulse.</div>
+    <div class="mt-hint">{$t('effectTools.modulation.hints.beatPhase')}</div>
   {/if}
 
-  {#if (category === 'audio' || category === 'lfo' || category === 'sync')}
+  {#if category === 'audio' || category === 'lfo' || category === 'sync'}
     <div class="mt-row">
-      <span class="mt-row-label">Depth</span>
-      <input type="range" min="0" max="1" step="0.01" value={depth}
-        oninput={(e) => onPatchMod({ amount: parseFloat((e.target as HTMLInputElement).value) })} />
+      <span class="mt-row-label">{$t('effectTools.modulation.controls.depth')}</span>
+      <input
+        type="range"
+        min="0"
+        max="1"
+        step="0.01"
+        value={depth}
+        oninput={(e) => onPatchMod({ amount: parseFloat((e.target as HTMLInputElement).value) })}
+      />
       <span class="mt-row-val">{(depth * 100).toFixed(0)}%</span>
     </div>
     <label class="mt-check">
-      <input type="checkbox" checked={invert} onchange={(e) => onPatchMod({ invert: (e.target as HTMLInputElement).checked })} />
-      <span>Invert response</span>
+      <input
+        type="checkbox"
+        checked={invert}
+        onchange={(e) => onPatchMod({ invert: (e.target as HTMLInputElement).checked })}
+      />
+      <span>{$t('effectTools.modulation.controls.invert')}</span>
     </label>
 
     <!-- Live signal preview -->
-    <div class="mt-meter" title="Live source signal">
+    <div class="mt-meter" title={$t('effectTools.modulation.sections.liveSignal')}>
       <div class="mt-meter-fill" style="width:{signal * 100}%"></div>
     </div>
   {/if}
@@ -348,21 +398,36 @@
   {#if category === 'auto' && auto}
     <div class="mt-auto">
       <div class="mt-row mt-auto-transport">
-        <button class="mt-play" class:playing={auto.playing}
+        <button
+          class="mt-play"
+          class:playing={auto.playing}
           onclick={() => onPatchAuto({ playing: !auto!.playing })}
-          title={auto.playing ? 'Pause' : 'Play'}>{auto.playing ? '❚❚' : '▶'}</button>
+          title={auto.playing
+            ? $t('effectTools.modulation.controls.pause')
+            : $t('effectTools.modulation.controls.play')}>{auto.playing ? '❚❚' : '▶'}</button
+        >
         <div class="mt-mode">
-          <button class:active={auto.mode === 'loop'} onclick={() => onPatchAuto({ mode: 'loop' })}>Loop</button>
-          <button class:active={auto.mode === 'pingpong'} onclick={() => onPatchAuto({ mode: 'pingpong' })}>Ping-pong</button>
+          <button class:active={auto.mode === 'loop'} onclick={() => onPatchAuto({ mode: 'loop' })}
+            >{$t('effectTools.modulation.controls.loop')}</button
+          >
+          <button class:active={auto.mode === 'pingpong'} onclick={() => onPatchAuto({ mode: 'pingpong' })}
+            >{$t('effectTools.modulation.controls.pingPong')}</button
+          >
         </div>
       </div>
       <div class="mt-row">
-        <span class="mt-row-label">Speed</span>
-        <input type="range" min="0.01" max="1" step="0.005" value={auto.speedHz}
-          oninput={(e) => onPatchAuto({ speedHz: parseFloat((e.target as HTMLInputElement).value) })} />
+        <span class="mt-row-label">{$t('effectTools.modulation.controls.speed')}</span>
+        <input
+          type="range"
+          min="0.01"
+          max="1"
+          step="0.005"
+          value={auto.speedHz}
+          oninput={(e) => onPatchAuto({ speedHz: parseFloat((e.target as HTMLInputElement).value) })}
+        />
         <span class="mt-row-val">{auto.speedHz.toFixed(2)}Hz</span>
       </div>
-      <div class="mt-hint">{autoHint}</div>
+      <div class="mt-hint">{resolvedAutoHint}</div>
     </div>
   {/if}
 </div>
@@ -409,7 +474,10 @@
     border-radius: 3px;
     flex-shrink: 0;
   }
-  .mt-close:hover { color: #fff; background: rgba(255, 255, 255, 0.08); }
+  .mt-close:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.08);
+  }
 
   /* Category segmented row */
   .mt-cats {
@@ -428,15 +496,37 @@
     font-weight: 600;
     padding: 5px 0;
     cursor: pointer;
-    transition: background 0.12s, color 0.12s;
+    transition:
+      background 0.12s,
+      color 0.12s;
   }
-  .mt-cats button:last-child { border-right: none; }
-  .mt-cats button:hover { color: #fff; background: rgba(255, 255, 255, 0.05); }
-  .mt-cats button.active { background: rgba(255, 255, 255, 0.12); color: #fff; }
-  .mt-cats button.cat-audio.active { background: rgba(255, 0, 255, 0.18); color: #ff7af5; }
-  .mt-cats button.cat-lfo.active { background: rgba(255, 159, 67, 0.18); color: #ffb86b; }
-  .mt-cats button.cat-sync.active { background: rgba(244, 63, 94, 0.18); color: #fb7185; }
-  .mt-cats button.cat-auto.active { background: rgba(92, 225, 230, 0.18); color: #5ce1e6; }
+  .mt-cats button:last-child {
+    border-right: none;
+  }
+  .mt-cats button:hover {
+    color: #fff;
+    background: rgba(255, 255, 255, 0.05);
+  }
+  .mt-cats button.active {
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
+  }
+  .mt-cats button.cat-audio.active {
+    background: rgba(255, 0, 255, 0.18);
+    color: #ff7af5;
+  }
+  .mt-cats button.cat-lfo.active {
+    background: rgba(255, 159, 67, 0.18);
+    color: #ffb86b;
+  }
+  .mt-cats button.cat-sync.active {
+    background: rgba(244, 63, 94, 0.18);
+    color: #fb7185;
+  }
+  .mt-cats button.cat-auto.active {
+    background: rgba(92, 225, 230, 0.18);
+    color: #5ce1e6;
+  }
 
   .mt-section-label {
     font-size: 10px;
@@ -452,9 +542,15 @@
     grid-template-columns: repeat(3, 1fr);
     gap: 4px;
   }
-  .mt-grid-2 { grid-template-columns: repeat(2, 1fr); }
-  .mt-grid-4 { grid-template-columns: repeat(4, 1fr); }
-  .mt-grid-rates { grid-template-columns: repeat(4, 1fr); }
+  .mt-grid-2 {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .mt-grid-4 {
+    grid-template-columns: repeat(4, 1fr);
+  }
+  .mt-grid-rates {
+    grid-template-columns: repeat(4, 1fr);
+  }
   .mt-cell {
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.09);
@@ -467,15 +563,24 @@
     align-items: center;
     justify-content: center;
     gap: 3px;
-    transition: background 0.12s, border-color 0.12s, color 0.12s;
+    transition:
+      background 0.12s,
+      border-color 0.12s,
+      color 0.12s;
   }
-  .mt-cell:hover { border-color: rgba(255, 255, 255, 0.3); color: #fff; }
+  .mt-cell:hover {
+    border-color: rgba(255, 255, 255, 0.3);
+    color: #fff;
+  }
   .mt-cell.active {
     background: rgba(255, 0, 255, 0.14);
     border-color: #ff00ff;
     color: #ff7af5;
   }
-  .mt-glyph { font-size: 13px; line-height: 1; }
+  .mt-glyph {
+    font-size: 13px;
+    line-height: 1;
+  }
 
   /* Tune rows */
   .mt-row {
@@ -513,7 +618,11 @@
     cursor: pointer;
     user-select: none;
   }
-  .mt-check input[type='checkbox'] { accent-color: #ff00ff; margin: 0; cursor: pointer; }
+  .mt-check input[type='checkbox'] {
+    accent-color: #ff00ff;
+    margin: 0;
+    cursor: pointer;
+  }
   .mt-bpm {
     font-style: normal;
     color: #ff7af5;
@@ -526,7 +635,9 @@
     line-height: 1.45;
     color: var(--text-muted, #888);
   }
-  .mt-warn { color: #fbbf24; }
+  .mt-warn {
+    color: #fbbf24;
+  }
 
   /* Live signal meter */
   .mt-meter {
@@ -542,7 +653,11 @@
   }
 
   /* Auto transport */
-  .mt-auto { display: flex; flex-direction: column; gap: 8px; }
+  .mt-auto {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
   .mt-play {
     width: 24px;
     height: 24px;
@@ -557,7 +672,11 @@
     align-items: center;
     justify-content: center;
   }
-  .mt-play.playing { background: rgba(92, 225, 230, 0.18); border-color: #5ce1e6; color: #5ce1e6; }
+  .mt-play.playing {
+    background: rgba(92, 225, 230, 0.18);
+    border-color: #5ce1e6;
+    color: #5ce1e6;
+  }
   .mt-mode {
     display: flex;
     border: 1px solid rgba(255, 255, 255, 0.12);
@@ -572,7 +691,10 @@
     color: rgba(255, 255, 255, 0.5);
     cursor: pointer;
   }
-  .mt-mode button.active { background: rgba(92, 225, 230, 0.18); color: #5ce1e6; }
+  .mt-mode button.active {
+    background: rgba(92, 225, 230, 0.18);
+    color: #5ce1e6;
+  }
   .mt-auto .mt-row input[type='range'] { accent-color: #5ce1e6; }
   .mt-auto .mt-row-val { color: #5ce1e6; }
 </style>

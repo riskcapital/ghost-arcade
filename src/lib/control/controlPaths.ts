@@ -5,23 +5,35 @@ export interface ControlPathValidation {
 }
 
 export interface ControlPathExample {
+  id:
+    | 'deckALayer1Clip1'
+    | 'deckBLayer1Clip1'
+    | 'deckALayer1Opacity'
+    | 'deckALayer1PlayPause'
+    | 'deckALayer1Restart'
+    | 'vjMasterOpacity'
+    | 'abCrossfader'
+    | 'stopAllVjClips'
+    | 'mappingPreset1'
+    | 'selectedMappingLayerOpacity'
+    | 'selectedMediaPlayPause'
+    | 'selectedMediaRestart';
   path: string;
-  label: string;
 }
 
 export const CONTROL_PATH_EXAMPLES: ControlPathExample[] = [
-  { path: 'vj:0:trigger:0', label: 'Deck A layer 1, clip 1' },
-  { path: 'vj-b:0:trigger:0', label: 'Deck B layer 1, clip 1' },
-  { path: 'vj:0:opacity', label: 'Deck A layer 1 opacity' },
-  { path: 'vj:0:video:play', label: 'Deck A layer 1 play / pause' },
-  { path: 'vj:0:video:restart', label: 'Deck A layer 1 restart' },
-  { path: 'vj:master:opacity', label: 'VJ master opacity' },
-  { path: 'vj:crossfader:value', label: 'A/B crossfader' },
-  { path: 'vj:stopall', label: 'Stop all VJ clips' },
-  { path: 'map:preset:0', label: 'Mapping preset 1' },
-  { path: 'map:layer:opacity', label: 'Selected mapping layer opacity' },
-  { path: 'map:media:play', label: 'Selected media play / pause' },
-  { path: 'map:media:restart', label: 'Selected media restart' },
+  { id: 'deckALayer1Clip1', path: 'vj:0:trigger:0' },
+  { id: 'deckBLayer1Clip1', path: 'vj-b:0:trigger:0' },
+  { id: 'deckALayer1Opacity', path: 'vj:0:opacity' },
+  { id: 'deckALayer1PlayPause', path: 'vj:0:video:play' },
+  { id: 'deckALayer1Restart', path: 'vj:0:video:restart' },
+  { id: 'vjMasterOpacity', path: 'vj:master:opacity' },
+  { id: 'abCrossfader', path: 'vj:crossfader:value' },
+  { id: 'stopAllVjClips', path: 'vj:stopall' },
+  { id: 'mappingPreset1', path: 'map:preset:0' },
+  { id: 'selectedMappingLayerOpacity', path: 'map:layer:opacity' },
+  { id: 'selectedMediaPlayPause', path: 'map:media:play' },
+  { id: 'selectedMediaRestart', path: 'map:media:restart' },
 ];
 
 /** Accept old documentation/user syntax while keeping one router contract. */

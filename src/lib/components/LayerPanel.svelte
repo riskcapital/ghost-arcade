@@ -21,6 +21,15 @@
   import { createAssetRefFromFile } from '../storage/assetRegistry';
   import { maskEditingLayerId } from '../stores/maskEditing';
   import { syncTrimmedVideoPlayback } from '../utils/videoTrimPlayback';
+  import { t } from '../i18n';
+  import {
+    blendModeLabel,
+    effectOptionLabel,
+    effectParamLabel,
+    effectTypeLabel,
+    stageEffectParamLabel,
+    stageEffectTypeLabel,
+  } from '../i18n/displayLabels';
 
   // WebGPU capability — reactive store, NOT a snapshot. The probe is
   // async and may not have resolved when this panel first mounts;
@@ -439,9 +448,68 @@
     e.preventDefault();
   }
 
+  function displayLabelKey(value: string): string {
+    return value
+      .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+  }
+
+  function getEffectParamDisplayLabel(key: string, fallback = key): string {
+    const translatedById = effectParamLabel($t, key);
+    return translatedById === key
+      ? effectParamLabel($t, displayLabelKey(fallback), fallback)
+      : translatedById;
+  }
+
+  function getEffectOptionDisplayLabel(value: string | number, fallback = String(value)): string {
+    const translatedById = effectOptionLabel($t, value);
+    return translatedById === String(value)
+      ? effectOptionLabel($t, displayLabelKey(fallback), fallback)
+      : translatedById;
+  }
+
+  function getEffectPresetDisplayLabel(type: EffectType, index: number, preset: { name: string }): string {
+    const key = `effects.presets.${type}.${index}`;
+    const translated = $t(key);
+    return translated === key ? preset.name : translated;
+  }
+
   // Available effect types with display names
   const effectTypes: { type: EffectType; label: string; category: string }[] =
     EFFECT_CATALOG.map((e) => ({ type: e.type, label: e.label, category: e.category }));
+  $: localizedEffectLabels = Object.fromEntries(
+    effectTypes.map((effect) => [
+      effect.type,
+      effectTypeLabel($t, effect.type, effect.label),
+    ]),
+  ) as Record<string, string>;
+  $: localizedStageEffectLabels = Object.fromEntries(
+    STAGE_EFFECT_CATALOG.map((effect) => [
+      effect.type,
+      stageEffectTypeLabel($t, effect.type, effect.label),
+    ]),
+  ) as Record<string, string>;
+
+  function getStageEffectLabel(type: StageEffectType | undefined, fallback = ''): string {
+    return type ? stageEffectTypeLabel($t, type, localizedStageEffectLabels[type] || fallback) : fallback;
+  }
+
+  function getStageParamLabel(key: string, fallback = key): string {
+    return stageEffectParamLabel($t, key, fallback);
+  }
+
+  function getLayerTypeLabel(type: string): string {
+    const key = type === 'model3d'
+      ? 'model3d'
+      : type === 'splat'
+        ? 'pointCloud'
+        : ['mask', 'lines', 'svg', 'color', 'media'].includes(type)
+          ? type
+          : 'media';
+    return $t(`layers.types.${key}`);
+  }
 
   // Track which effect's params panel is expanded
   let expandedEffectId: string | null = null;
@@ -669,7 +737,7 @@
   }
 
   function getEffectLabel(type: EffectType): string {
-    return effectTypes.find((e) => e.type === type)?.label || type;
+    return effectTypeLabel($t, type, localizedEffectLabels[type] || effectTypes.find((e) => e.type === type)?.label || type);
   }
 
   // Effect drag and drop
@@ -720,7 +788,7 @@
   <!-- Layers Section (top half when effects are shown) -->
   <div class="layers-section">
     <div class="panel-header">
-      <h3>Layers</h3>
+      <h3>{$t('layers.heading.layers')}</h3>
       <div class="add-layer-wrapper">
         <button class="btn-add" onclick={(e) => {
           showAddLayerMenu = !showAddLayerMenu;
@@ -729,7 +797,7 @@
             addMenuPos = { top: rect.bottom + 4, left: Math.max(8, rect.right - 170) };
           }
         }}>
-          + Add Layer
+          {$t('layers.heading.addLayer')}
         </button>
         {#if showAddLayerMenu}
           <div class="add-layer-backdrop" onclick={() => showAddLayerMenu = false}></div>
@@ -740,7 +808,7 @@
                 <circle cx="8.5" cy="8.5" r="1.5"/>
                 <path d="M21 15l-5-5L5 21"/>
               </svg>
-              Media Layer
+              {$t('layers.menu.media')}
             </button>
             <button onclick={() => { project.addLayer(undefined, 'media', 'custom'); showAddLayerMenu = false; }}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -752,7 +820,7 @@
                 <circle cx="22" cy="14" r="1.5" fill="currentColor"/>
                 <circle cx="16" cy="20" r="1.5" fill="currentColor"/>
               </svg>
-              Custom Shape
+              {$t('layers.menu.customShape')}
             </button>
             <button onclick={() => {
               const id = project.addLayer(undefined, 'mask');
@@ -764,21 +832,21 @@
                 <path d="M12 3v18"/>
                 <path d="M12 3a9 9 0 0 1 0 18" fill="currentColor" opacity="0.35"/>
               </svg>
-              Mask Layer
+              {$t('layers.menu.mask')}
             </button>
             <button onclick={() => { project.addLinesLayer(); showAddLayerMenu = false; }}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polyline points="4 17 10 7 16 13 20 6"/>
                 <line x1="4" y1="20" x2="20" y2="20"/>
               </svg>
-              Lines Layer
+              {$t('layers.menu.lines')}
             </button>
             <button onclick={() => { project.addSVGLayer(); showAddLayerMenu = false; }}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
                 <polygon points="12,2 22,20 2,20"/>
                 <polygon points="12,8 17,16 7,16"/>
               </svg>
-              SVG Layer
+              {$t('layers.menu.svg')}
             </button>
             <button onclick={() => { project.addLightPaintingLayer(); showAddLayerMenu = false; }}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -786,7 +854,7 @@
                 <path d="M12 2c3 4 7 5 7 10a7 7 0 1 1-14 0c0-5 4-6 7-10z"/>
                 <path d="M12 18c-2.2 0-4-1.8-4-4 0-2.5 2-3 4-6"/>
               </svg>
-              Light Painting
+              {$t('layers.menu.lightPainting')}
             </button>
             <!-- Adv Light Paint button hidden — superseded by the
                  in-progress "Light Painting GPU" effort that adds GPU
@@ -806,7 +874,7 @@
                 <line x1="9" y1="20" x2="15" y2="20"/>
                 <line x1="12" y1="4" x2="12" y2="20"/>
               </svg>
-              Text Layer
+              {$t('layers.menu.text')}
             </button>
             <button onclick={() => { project.addSplatLayer(); showAddLayerMenu = false; }}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -821,7 +889,7 @@
                 <circle cx="9" cy="10" r="0.8"/>
                 <circle cx="15" cy="13" r="0.8"/>
               </svg>
-              Splat / Point Cloud
+              {$t('layers.menu.splat')}
             </button>
             <button onclick={() => { project.addModel3DLayer(); showAddLayerMenu = false; }}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -829,7 +897,7 @@
                 <path d="M2 17L12 22L22 17"/>
                 <path d="M2 12L12 17L22 12"/>
               </svg>
-              3D Model
+              {$t('layers.menu.model3d')}
             </button>
             <!-- Legacy Pixel FX layer button hidden — Pixel Particles
                  now ships as a shader inside the GPU Shader layer
@@ -849,7 +917,7 @@
                   <ellipse cx="12" cy="12" rx="9" ry="3.2"/>
                   <path d="M3 12 a9 9 0 0 0 18 0"/>
                 </svg>
-                GPU Shader <span style="font-size:10px; opacity:0.7; padding:1px 4px; background:linear-gradient(135deg,#1e3a8a,#7c2d12); border-radius:2px; margin-left:4px;">WebGPU</span>
+                {$t('layers.menu.gpuShader')} <span style="font-size:10px; opacity:0.7; padding:1px 4px; background:linear-gradient(135deg,#1e3a8a,#7c2d12); border-radius:2px; margin-left:4px;">{$t('layers.menu.webgpu')}</span>
               </button>
             {/if}
             <button onclick={() => { project.addScreenLayer(); showAddLayerMenu = false; }}>
@@ -858,7 +926,7 @@
                 <line x1="8" y1="21" x2="16" y2="21"/>
                 <line x1="12" y1="17" x2="12" y2="21"/>
               </svg>
-              Screen (VJ Output)
+              {$t('layers.menu.screen')}
             </button>
             <button onclick={() => { project.addGroupLayer(); showAddLayerMenu = false; }}>
               <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -866,7 +934,7 @@
                 <rect x="14" y="3" width="7" height="7" rx="1"/>
                 <rect x="3" y="14" width="7" height="7" rx="1"/>
               </svg>
-              Group
+              {$t('layers.menu.group')}
             </button>
           </div>
         {/if}
@@ -880,26 +948,26 @@
           checked={mappingComposition.enabled}
           onchange={(e) => toggleMappingCompositionEnabled((e.target as HTMLInputElement).checked)}
         />
-        <span>Composition</span>
+        <span>{$t('layers.composition.label')}</span>
       </label>
       {#if mappingComposition.enabled}
         <button
           class="composition-edit-btn"
           onclick={() => compositionPanelOpen = !compositionPanelOpen}
-        >{compositionPanelOpen ? 'Hide' : 'Edit'}</button>
+        >{compositionPanelOpen ? $t('layers.composition.hide') : $t('layers.composition.edit')}</button>
       {/if}
     </div>
 
     {#if mappingComposition.enabled && compositionPanelOpen}
       <div class="mapping-composition-panel">
         <div class="composition-tabs">
-          <button class:active={compositionTab === 'effects'} onclick={() => compositionTab = 'effects'}>Effects</button>
-          <button class:active={compositionTab === 'stage'} onclick={() => compositionTab = 'stage'}>Screen FX</button>
+          <button class:active={compositionTab === 'effects'} onclick={() => compositionTab = 'effects'}>{$t('layers.composition.effectsTab')}</button>
+          <button class:active={compositionTab === 'stage'} onclick={() => compositionTab = 'stage'}>{$t('layers.composition.screenFxTab')}</button>
         </div>
 
         {#if compositionTab === 'effects'}
           <div class="composition-section-header">
-            <span>Output Effects</span>
+            <span>{$t('layers.composition.outputEffects')}</span>
             <button
               class="add-effect-btn"
               onclick={() => {
@@ -907,7 +975,7 @@
                 effectPickerLayerId = null;
                 showEffectPicker = true;
               }}
-            >+ Add</button>
+            >{$t('layers.composition.add')}</button>
           </div>
 
           {#if mappingComposition.effects.length > 0}
@@ -928,23 +996,23 @@
                       class="composition-mini-btn"
                       disabled={index === 0}
                       onclick={() => project.reorderMappingCompositionEffects(index, index - 1)}
-                      title="Move up"
+                      title={$t('layers.composition.moveUp')}
                     >↑</button>
                     <button
                       class="composition-mini-btn"
                       disabled={index === mappingComposition.effects.length - 1}
                       onclick={() => project.reorderMappingCompositionEffects(index, index + 1)}
-                      title="Move down"
+                      title={$t('layers.composition.moveDown')}
                     >↓</button>
                     <button
                       class="effect-reset"
                       onclick={() => project.resetMappingCompositionEffectParams(effect.id)}
-                      title="Reset"
+                      title={$t('layers.composition.reset')}
                     >↺</button>
                     <button
                       class="effect-delete"
                       onclick={() => project.removeMappingCompositionEffect(effect.id)}
-                      title="Remove"
+                      title={$t('layers.composition.remove')}
                     >x</button>
                   </div>
 
@@ -952,7 +1020,7 @@
                     <div class="composition-effect-params">
                       <div class="effect-mix-row">
                         <div class="effect-opacity-ctrl">
-                          <span class="param-label">Opacity</span>
+                          <span class="param-label">{$t('layers.composition.opacity')}</span>
                           <input
                             type="range"
                             min="0"
@@ -964,13 +1032,13 @@
                           <span class="param-value">{(((effect.opacity ?? 1) * 100)).toFixed(0)}%</span>
                         </div>
                         <div class="effect-blend-ctrl">
-                          <span class="param-label">Blend</span>
+                          <span class="param-label">{$t('layers.composition.blend')}</span>
                           <select
                             value={effect.blendMode ?? 'normal'}
                             onchange={(e) => project.updateMappingCompositionEffect(effect.id, { blendMode: (e.target as HTMLSelectElement).value as BlendMode })}
                           >
                             {#each blendModes as mode}
-                              <option value={mode}>{mode}</option>
+                              <option value={mode}>{blendModeLabel($t, mode)}</option>
                             {/each}
                           </select>
                         </div>
@@ -978,9 +1046,9 @@
 
                       {#if getEffectPresets(effect.type).length > 0}
                         <details open>
-                          <summary>Presets</summary>
+                          <summary>{$t('layers.composition.presets')}</summary>
                           <div class="param-row">
-                            <span class="param-label">Preset</span>
+                            <span class="param-label">{$t('layers.composition.preset')}</span>
                             <select
                               value={compositionPresetSelection[effect.id] ?? ''}
                               onchange={(e) => {
@@ -989,9 +1057,9 @@
                                 if (val !== '') applyCompositionPreset(effect, parseInt(val, 10));
                               }}
                             >
-                              <option value="">Select preset</option>
+                              <option value="">{$t('layers.composition.selectPreset')}</option>
                               {#each getEffectPresets(effect.type) as preset, i}
-                                <option value={String(i)}>{preset.name}</option>
+                                <option value={String(i)}>{getEffectPresetDisplayLabel(effect.type, i, preset)}</option>
                               {/each}
                             </select>
                           </div>
@@ -1000,24 +1068,24 @@
 
                       {#each [effectParamLabels[effect.type]] as paramMeta}
                         <details open>
-                          <summary>Controls</summary>
+                          <summary>{$t('layers.composition.controls')}</summary>
                           {#if paramMeta}
                             {#each Object.entries(paramMeta) as [paramKey, meta]}
                               {#if meta.type === 'select' && meta.options}
                                 <div class="param-row">
-                                  <span class="param-label">{meta.label}</span>
+                                  <span class="param-label">{getEffectParamDisplayLabel(paramKey, meta.label)}</span>
                                   <select
                                     value={(effect.params as Record<string, number>)[paramKey] ?? meta.default}
                                     onchange={(e) => project.updateMappingCompositionEffectParams(effect.id, { [paramKey]: parseFloat((e.target as HTMLSelectElement).value) })}
                                   >
                                     {#each meta.options as opt}
-                                      <option value={opt.value}>{opt.label}</option>
+                                      <option value={opt.value}>{getEffectOptionDisplayLabel(opt.value, opt.label)}</option>
                                     {/each}
                                   </select>
                                 </div>
                               {:else if meta.type === 'color' && meta.colorParams}
                                 <div class="param-row">
-                                  <span class="param-label">{meta.label}</span>
+                                  <span class="param-label">{getEffectParamDisplayLabel(paramKey, meta.label)}</span>
                                   <input
                                     type="color"
                                     value={getCompositionColorValue(effect, meta)}
@@ -1026,7 +1094,7 @@
                                 </div>
                               {:else}
                                 <div class="param-row">
-                                  <span class="param-label">{meta.label}</span>
+                                  <span class="param-label">{getEffectParamDisplayLabel(paramKey, meta.label)}</span>
                                   <input
                                     type="range"
                                     min={meta.min as number}
@@ -1044,7 +1112,7 @@
                           {:else}
                             {#each getNumericEffectParams(effect.type) as paramKey}
                               <div class="param-row">
-                                <span class="param-label">{paramKey}</span>
+                                <span class="param-label">{getEffectParamDisplayLabel(paramKey)}</span>
                                 <input
                                   type="range"
                                   min="0"
@@ -1065,7 +1133,7 @@
               {/each}
             </div>
           {:else}
-            <div class="composition-empty">No composition effects.</div>
+            <div class="composition-empty">{$t('layers.composition.emptyEffects')}</div>
           {/if}
         {:else}
           {@const auto = mappingComposition.stageEffectAutomation}
@@ -1074,15 +1142,15 @@
               class="stage-auto-play"
               class:playing={auto.playing}
               onclick={() => project.toggleMappingStageEffectAutomation()}
-              title={auto.playing ? 'Stop timeline' : 'Start timeline'}
+              title={auto.playing ? $t('layers.composition.stopTimeline') : $t('layers.composition.startTimeline')}
             >{auto.playing ? '⏸' : '▶'}</button>
             <select
               class="stage-auto-mode"
               value={auto.mode}
               onchange={(e) => project.updateMappingStageEffectAutomation({ mode: (e.target as HTMLSelectElement).value as 'time' | 'beat' })}
             >
-              <option value="beat">Beat</option>
-              <option value="time">Time</option>
+              <option value="beat">{$t('layers.composition.beat')}</option>
+              <option value="time">{$t('layers.composition.time')}</option>
             </select>
             {#if auto.mode === 'beat'}
               <input
@@ -1094,7 +1162,7 @@
                 value={auto.beats}
                 onchange={(e) => project.updateMappingStageEffectAutomation({ beats: parseInt((e.target as HTMLInputElement).value) || 4 })}
               />
-              <span class="stage-auto-unit">bts</span>
+              <span class="stage-auto-unit">{$t('layers.composition.beatsUnit')}</span>
             {:else}
               <input
                 type="number"
@@ -1105,17 +1173,17 @@
                 value={auto.seconds}
                 onchange={(e) => project.updateMappingStageEffectAutomation({ seconds: parseFloat((e.target as HTMLInputElement).value) || 4 })}
               />
-              <span class="stage-auto-unit">sec</span>
+              <span class="stage-auto-unit">{$t('layers.composition.secondsUnit')}</span>
             {/if}
           </div>
 
           <div class="stage-fx-add mapping-stage-add">
             <select bind:value={mappingStageAddType} class="stage-fx-select">
               {#each STAGE_EFFECT_CATALOG as def (def.type)}
-                <option value={def.type}>{def.icon} {def.label}</option>
+                <option value={def.type}>{def.icon} {getStageEffectLabel(def.type, def.label)}</option>
               {/each}
             </select>
-            <button class="add-effect-btn" onclick={() => addMappingStageEffect(mappingStageAddType)}>+ Add</button>
+            <button class="add-effect-btn" onclick={() => addMappingStageEffect(mappingStageAddType)}>{$t('layers.composition.add')}</button>
           </div>
 
           {#if mappingComposition.stageEffects.length > 0}
@@ -1132,28 +1200,28 @@
                       aria-pressed={isLive}
                       onclick={(e) => { e.stopPropagation(); toggleMappingStageActiveEffect(eff.id); }}
                       title={isLive
-                        ? 'Turn off this effect and stop auto play'
-                        : 'Activate this effect manually and stop auto play'}
+                        ? $t('layers.composition.deactivateEffect')
+                        : $t('layers.composition.activateEffect')}
                     >{isLive ? '◉' : '○'}</button>
                     <span class="effect-name"
                     >
                       <span class="stage-fx-icon">{def?.icon ?? '◆'}</span>
-                      {def?.label ?? eff.type}
+                      {getStageEffectLabel(def?.type, def?.label ?? eff.type)}
                     </span>
                     <button
                       class="stage-effect-hold-button"
                       class:active={isLive}
                       class:pressed={!!heldMappingStageEffects[eff.id]}
                       type="button"
-                      title={`Hold to show ${def?.label ?? eff.type}`}
-                      aria-label={`Hold to show ${def?.label ?? eff.type}`}
+                      title={$t('layers.composition.holdToShow', { values: { label: getStageEffectLabel(def?.type, def?.label ?? eff.type) } })}
+                      aria-label={$t('layers.composition.holdToShow', { values: { label: getStageEffectLabel(def?.type, def?.label ?? eff.type) } })}
                       data-midi-path={`map:stage-effect:${eff.id}:hold`}
-                      data-midi-label={`Mapping Stage FX Hold: ${def?.label ?? eff.type}`}
+                      data-midi-label={$t('layers.composition.holdToShow', { values: { label: getStageEffectLabel(def?.type, def?.label ?? eff.type) } })}
                       data-midi-mode="toggle"
                       data-midi-min="0"
                       data-midi-max="1"
                       data-keyboard-path={`map:stage-effect:${eff.id}:hold`}
-                      data-keyboard-label={`Mapping Stage FX Hold: ${def?.label ?? eff.type}`}
+                      data-keyboard-label={$t('layers.composition.holdToShow', { values: { label: getStageEffectLabel(def?.type, def?.label ?? eff.type) } })}
                       data-keyboard-mode="momentary"
                       onpointerdown={(e) => handleMappingStageEffectHoldPointerDown(e, eff.id)}
                       onpointerup={(e) => handleMappingStageEffectHoldPointerEnd(e, eff.id)}
@@ -1171,20 +1239,20 @@
                       class="effect-cycle-toggle"
                       class:included={eff.enabled}
                       onclick={(e) => { e.stopPropagation(); project.toggleMappingStageEffectInTimeline(eff.id); }}
-                      title={eff.enabled ? 'Included in timeline' : 'Excluded from timeline'}
+                      title={eff.enabled ? $t('layers.composition.includedTimeline') : $t('layers.composition.excludedTimeline')}
                     >{eff.enabled ? '↻' : '⊘'}</button>
                     <span class="effect-expand">{expandedMappingStageEffectId === eff.id ? '▼' : '▶'}</span>
                     <button
                       class="effect-delete"
                       onclick={(e) => { e.stopPropagation(); project.removeMappingStageEffect(eff.id); }}
-                      title="Remove"
+                      title={$t('layers.composition.remove')}
                     >×</button>
                   </div>
 
                   {#if expandedMappingStageEffectId === eff.id}
                     <div class="effect-params">
                       <div class="param-row">
-                        <span class="param-label">Opacity</span>
+                        <span class="param-label">{$t('layers.composition.opacity')}</span>
                         <input
                           type="range"
                           min="0"
@@ -1197,7 +1265,7 @@
                       </div>
                       {#each def?.paramSpecs ?? [] as spec (spec.key)}
                         <div class="param-row">
-                          <span class="param-label">{spec.label}</span>
+                          <span class="param-label">{getStageParamLabel(spec.key, spec.label)}</span>
                           <input
                             type="range"
                             min={spec.min}
@@ -1216,7 +1284,7 @@
               </div>
             </div>
           {:else}
-            <div class="composition-empty">No screen effects. Add one to animate the visible mapping layers.</div>
+            <div class="composition-empty">{$t('layers.composition.emptyScreenEffects')}</div>
           {/if}
         {/if}
       </div>
@@ -1252,14 +1320,14 @@
       >
         <!-- Group collapse toggle -->
         {#if layer.type === 'group'}
-          <button class="group-collapse-btn" title={layer.groupCollapsed ? 'Expand group' : 'Collapse group'}
+          <button class="group-collapse-btn" title={layer.groupCollapsed ? $t('layers.layerActions.expandGroup') : $t('layers.layerActions.collapseGroup')}
             onclick={(e) => { e.stopPropagation(); project.toggleGroupCollapse(layer.id); }}>
             {layer.groupCollapsed ? '▸' : '▾'}
           </button>
         {/if}
 
         <!-- Drag handle -->
-        <div class="drag-handle" title="Drag to reorder">
+        <div class="drag-handle" title={$t('layers.layerActions.dragToReorder')}>
           <svg width="12" height="12" viewBox="0 0 12 12" fill="currentColor">
             <circle cx="3" cy="3" r="1.5"/>
             <circle cx="9" cy="3" r="1.5"/>
@@ -1341,7 +1409,7 @@
           class="btn-visibility"
           class:hidden={!layer.visible}
           onclick={(e) => { e.stopPropagation(); project.toggleLayerVisibility(layer.id); }}
-          title={layer.visible ? 'Hide layer' : 'Show layer'}
+          title={layer.visible ? $t('layers.layerActions.hide') : $t('layers.layerActions.show')}
         >
           {#if layer.visible}
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1376,7 +1444,7 @@
           <span
             class="layer-name"
             ondblclick={(e) => { e.stopPropagation(); renamingLayerId = layer.id; }}
-            title="Double-click to rename"
+            title={$t('layers.layerActions.renameHint')}
           >{layer.name}</span>
         {/if}
 
@@ -1384,7 +1452,7 @@
           class="btn-lock"
           class:locked={layer.locked}
           onclick={(e) => { e.stopPropagation(); project.toggleLayerLock(layer.id); }}
-          title={layer.locked ? 'Unlock layer' : 'Lock layer'}
+          title={layer.locked ? $t('layers.layerActions.unlock') : $t('layers.layerActions.lock')}
         >
           {#if layer.locked}
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -1401,8 +1469,8 @@
 
         <button
           class="btn-delete"
-          onclick={async (e) => { e.stopPropagation(); if (await confirmDeleteIfSafeMode(`layer "${layer.name}"`, e)) project.removeLayer(layer.id); }}
-          title="Delete layer"
+          onclick={async (e) => { e.stopPropagation(); if (await confirmDeleteIfSafeMode($t('layers.context.deleteConfirm', { values: { name: layer.name } }), e)) project.removeLayer(layer.id); }}
+          title={$t('layers.layerActions.delete')}
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="3 6 5 6 21 6"/>
@@ -1414,7 +1482,7 @@
     {/each}
 
     {#if $layers.length === 0}
-      <div class="empty-state">No layers. Click "+ Add Layer" to start.</div>
+      <div class="empty-state">{$t('layers.layerActions.empty')}</div>
     {/if}
   </div>
 
@@ -1436,7 +1504,7 @@
             project.createGroupFromIds(snap);
             closeContextMenu();
           }}
-        >Group selected ({snap.length} layers)</button>
+        >{$t('layers.context.groupSelected', { values: { count: snap.length } })}</button>
       {/if}
       <button
         class="ctx-item"
@@ -1450,7 +1518,7 @@
           project.createGroupFromIds(ids);
           closeContextMenu();
         }}
-      >Group all top-level layers ({$layers.filter((l) => l.type !== 'group' && !l.parentGroupId).length})</button>
+      >{$t('layers.context.groupTopLevel', { values: { count: $layers.filter((l) => l.type !== 'group' && !l.parentGroupId).length } })}</button>
       <button
         class="ctx-item"
         onclick={(e) => {
@@ -1458,12 +1526,12 @@
           if (ctxId) project.createGroupFromIds([ctxId]);
           closeContextMenu();
         }}
-      >Wrap this layer in a group</button>
+      >{$t('layers.context.wrapInGroup')}</button>
       <div class="ctx-divider"></div>
       {#if ctxLayer && ctxLayer.type !== 'group'}
         {#if groups.length > 0}
           <button class="ctx-item ctx-has-sub" onclick={() => ctxGroupSubmenu = !ctxGroupSubmenu}>
-            Add to Group ▸
+            {$t('layers.context.addToGroup')}
           </button>
           {#if ctxGroupSubmenu}
             <div class="ctx-submenu">
@@ -1480,14 +1548,14 @@
           {/if}
         {/if}
         {#if ctxLayer.parentGroupId}
-          <button class="ctx-item" onclick={() => { project.removeFromGroup([ctxId]); closeContextMenu(); }}>Remove from Group</button>
+          <button class="ctx-item" onclick={() => { project.removeFromGroup([ctxId]); closeContextMenu(); }}>{$t('layers.context.removeFromGroup')}</button>
         {/if}
       {/if}
       {#if ctxLayer?.type === 'group'}
-        <button class="ctx-item" onclick={() => { project.dissolveGroup(ctxId); closeContextMenu(); }}>Dissolve Group</button>
+        <button class="ctx-item" onclick={() => { project.dissolveGroup(ctxId); closeContextMenu(); }}>{$t('layers.context.dissolveGroup')}</button>
       {/if}
       <div class="ctx-divider"></div>
-      <button class="ctx-item" onclick={() => { project.duplicateLayer(ctxId); closeContextMenu(); }}>Duplicate</button>
+      <button class="ctx-item" onclick={() => { project.duplicateLayer(ctxId); closeContextMenu(); }}>{$t('layers.context.duplicate')}</button>
       <button class="ctx-item ctx-danger" onclick={async () => {
         // Anchor the popover at the original right-click coords (ctxMenu.x/y)
         // so it appears right where the user is — close the menu first so it
@@ -1496,8 +1564,8 @@
         const anchor = ctxMenu ? { clientX: ctxMenu.x, clientY: ctxMenu.y } : undefined;
         const id = ctxId;
         closeContextMenu();
-        if (await confirmDeleteIfSafeMode(`layer "${lyr?.name ?? id}"`, anchor)) project.removeLayer(id);
-      }}>Delete</button>
+        if (await confirmDeleteIfSafeMode($t('layers.context.deleteConfirm', { values: { name: lyr?.name ?? id } }), anchor)) project.removeLayer(id);
+      }}>{$t('layers.context.delete')}</button>
     </div>
   {/if}
 
@@ -1514,34 +1582,34 @@
           {#if layer.type === 'group'}
           <!-- ── Group Properties ── -->
           <div class="layer-properties">
-            <h4>Properties (Group)</h4>
+            <h4>{$t('layers.properties.groupHeading')}</h4>
 
             <div class="property-row">
-              <label>Shader Mode</label>
+              <label>{$t('layers.properties.shaderMode')}</label>
               <div class="radio-group">
                 <label class="radio-label">
                   <input type="radio" name="group-shader-mode" value="individual"
                     checked={layer.groupConfig?.shaderMode === 'individual'}
                     onchange={() => project.updateGroupConfig(layer.id, { shaderMode: 'individual' })} />
-                  Individual
+                  {$t('layers.properties.individual')}
                 </label>
                 <label class="radio-label">
                   <input type="radio" name="group-shader-mode" value="unified"
                     checked={layer.groupConfig?.shaderMode === 'unified'}
                     onchange={() => project.updateGroupConfig(layer.id, { shaderMode: 'unified' })} />
-                  Unified
+                  {$t('layers.properties.unified')}
                 </label>
               </div>
             </div>
 
             <p class="property-hint">
               {layer.groupConfig?.shaderMode === 'unified'
-                ? 'One shader spans the full canvas — each child acts as a masked window into it.'
-                : 'Shader repeats independently on each child layer.'}
+                ? $t('layers.properties.unifiedHint')
+                : $t('layers.properties.individualHint')}
             </p>
 
             <div class="property-row">
-              <label>Override Effects</label>
+              <label>{$t('layers.properties.overrideEffects')}</label>
               <label class="toggle">
                 <input type="checkbox"
                   checked={layer.groupConfig?.overrideStyles ?? false}
@@ -1550,17 +1618,17 @@
               </label>
             </div>
             {#if layer.groupConfig?.overrideStyles}
-              <p class="property-hint">Group effects replace each child's own effects.</p>
+              <p class="property-hint">{$t('layers.properties.overrideHint')}</p>
             {/if}
 
             <div class="property-row">
-              <label>Children</label>
-              <span class="property-value">{$layers.filter(l => l.parentGroupId === layer.id).length} layers</span>
+              <label>{$t('layers.properties.children')}</label>
+              <span class="property-value">{$t('layers.properties.childrenCount', { values: { count: $layers.filter(l => l.parentGroupId === layer.id).length } })}</span>
             </div>
 
             <!-- VJ Source for group (available always, not just when VJ live) -->
             <div class="property-row vj-source-row">
-              <label>VJ Source</label>
+              <label>{$t('layers.source.vj')}</label>
               <select
                 class="vj-source-select"
                 value={layer.vjLayerIndex !== undefined ? String(layer.vjLayerIndex) : ''}
@@ -1569,11 +1637,11 @@
                   project.setLayerVJIndex(layer.id, val === '' ? undefined : parseInt(val));
                 }}
               >
-                <option value="">None (use shader/media)</option>
-                <option value={String(VJ_MIX_SOURCE_INDEX)}>VJ Mix</option>
+                <option value="">{$t('layers.source.noneVj')}</option>
+                <option value={String(VJ_MIX_SOURCE_INDEX)}>{$t('layers.source.mix')}</option>
                 {#each Array($vjClipLauncher.numLayers) as _, i}
                   {@const activeClip = $vjClipLauncher.layerStates[i]?.activeClip}
-                  <option value={String(i)}>VJ Layer {i + 1}{activeClip ? ` — ${activeClip.name}` : ''}</option>
+                  <option value={String(i)}>{$t('layers.source.layer', { values: { index: i + 1, clip: activeClip ? ` — ${activeClip.name}` : '' } })}</option>
                 {/each}
               </select>
             </div>
@@ -1585,19 +1653,19 @@
               ondragover={handleDragOver}
               role="button"
               tabindex="0"
-              aria-label="Drop shader here to apply across group"
+              aria-label={$t('layers.source.dropShaderAria')}
             >
               {#if layer.source}
                 <span class="source-name">{layer.source.name}</span>
                 <span class="source-type">({layer.source.type})</span>
                 <label class="file-label replace-label">
-                  <span class="link">Replace</span>
+                  <span class="link">{$t('layers.source.replace')}</span>
                   <input type="file" accept=".fs,.isf,image/*,video/*" onchange={handleFileSelect} style="display: none;" />
                 </label>
               {:else}
-                <span>Drop shader here for group</span>
+                <span>{$t('layers.source.dropShader')}</span>
                 <label class="file-label">
-                  or <span class="link">browse</span>
+                  {$t('common.or')} <span class="link">{$t('layers.source.browse')}</span>
                   <input type="file" accept=".fs,.isf,image/*,video/*" onchange={handleFileSelect} style="display: none;" />
                 </label>
               {/if}
@@ -1605,22 +1673,22 @@
 
             <!-- Group opacity/blend -->
             <div class="property-row">
-              <label>Opacity</label>
+              <label>{$t('layers.properties.opacity')}</label>
               <input type="range" min="0" max="1" step="0.01" value={layer.opacity}
                 oninput={(e) => project.updateLayer(layer.id, { opacity: parseFloat((e.target as HTMLInputElement).value) })}
                 data-midi-path="map:layer:opacity"
-                data-midi-label="Layer Opacity"
+                data-midi-label={$t('layers.midiLabels.layerOpacity')}
                 data-midi-min="0"
                 data-midi-max="1"
                 data-midi-step="0.01" />
               <span class="property-value">{Math.round(layer.opacity * 100)}%</span>
             </div>
             <div class="property-row">
-              <label>Blend Mode</label>
+              <label>{$t('layers.properties.blendMode')}</label>
               <select value={layer.blendMode}
                 onchange={(e) => project.updateLayer(layer.id, { blendMode: (e.target as HTMLSelectElement).value as BlendMode })}>
                 {#each blendModes as mode}
-                  <option value={mode}>{mode}</option>
+                  <option value={mode}>{blendModeLabel($t, mode)}</option>
                 {/each}
               </select>
             </div>
@@ -1628,12 +1696,12 @@
             <!-- Content Fit (when group has a source, individual mode only) -->
             {#if layer.source && layer.groupConfig?.shaderMode === 'individual'}
               <div class="property-row">
-                <label>Content Fit</label>
+                <label>{$t('layers.properties.contentFit')}</label>
                 <select value={layer.contentFit || 'stretch'}
                   onchange={(e) => project.updateLayer(layer.id, { contentFit: (e.target as HTMLSelectElement).value as any })}>
-                  <option value="stretch">Stretch</option>
-                  <option value="fill">Fill</option>
-                  <option value="crop">Crop</option>
+                  <option value="stretch">{$t('layers.properties.stretch')}</option>
+                  <option value="fill">{$t('layers.properties.fill')}</option>
+                  <option value="crop">{$t('layers.properties.crop')}</option>
                 </select>
               </div>
             {/if}
@@ -1641,7 +1709,7 @@
             <!-- Render Quality (when group has a shader source) -->
             {#if layer.source?.type === 'shader'}
               <div class="property-row">
-                <label>Render Quality</label>
+                <label>{$t('layers.properties.renderQuality')}</label>
                 <select
                   value={String(layer.renderQuality ?? 1.0)}
                   onchange={(e) => {
@@ -1649,38 +1717,38 @@
                     project.setRenderQuality(layer.id, val);
                   }}
                 >
-                  <option value="1.0">Full (100%)</option>
-                  <option value="0.75">High (75%)</option>
-                  <option value="0.5">Medium (50%)</option>
-                  <option value="0.35">Low (35%)</option>
-                  <option value="0.25">Very Low (25%)</option>
+                  <option value="1.0">{$t('layers.properties.fullQuality')}</option>
+                  <option value="0.75">{$t('layers.properties.highQuality')}</option>
+                  <option value="0.5">{$t('layers.properties.mediumQuality')}</option>
+                  <option value="0.35">{$t('layers.properties.lowQuality')}</option>
+                  <option value="0.25">{$t('layers.properties.veryLowQuality')}</option>
                 </select>
               </div>
             {/if}
 
             <!-- Warp Mode -->
             <div class="property-row">
-              <label>Warp Mode</label>
+              <label>{$t('layers.properties.warpMode')}</label>
               <div class="warp-mode-buttons">
                 <button
                   class="warp-mode-btn"
                   class:active={layer.warpMode === 'corners'}
                   onclick={() => project.setWarpMode(layer.id, 'corners')}
                 >
-                  Corner
+                  {$t('layers.properties.corner')}
                 </button>
                 <button
                   class="warp-mode-btn"
                   class:active={layer.warpMode === 'mesh'}
                   onclick={() => project.setWarpMode(layer.id, 'mesh')}
                 >
-                  Mesh
+                  {$t('layers.properties.mesh')}
                 </button>
               </div>
             </div>
 
             <!-- Reset Warp -->
-            <button class="reset-warp-btn" onclick={() => project.resetCorners(layer.id)}>Reset Warp</button>
+            <button class="reset-warp-btn" onclick={() => project.resetCorners(layer.id)}>{$t('layers.properties.resetWarp')}</button>
           </div>
 
           <!-- Group Edge Effects -->
@@ -1690,7 +1758,7 @@
           {:else}
 
           <div class="layer-properties">
-        <h4>Properties ({layer.type === 'mask' ? 'Mask' : layer.type === 'lines' ? 'Lines' : layer.type === 'svg' ? 'SVG' : layer.type === 'color' ? 'Color' : layer.type === 'splat' ? 'Point Cloud' : layer.type === 'model3d' ? '3D Model' : 'Media'})</h4>
+        <h4>{$t('layers.properties.layerHeading', { values: { type: getLayerTypeLabel(layer.type) } })}</h4>
 
         <!-- VJ Source dropdown — only on screen/VJ-slice layers, NOT standard media layers -->
         <!-- Group layers and screen layers have their own VJ source selectors -->
@@ -1698,12 +1766,12 @@
 
         <!-- Orientation Arrows (all layer types) -->
         <div class="orientation-controls">
-          <span class="orient-label">Flip</span>
+          <span class="orient-label">{$t('layers.properties.flip')}</span>
           <button
             class="orient-btn"
             class:active={!layer.flipV}
             onclick={() => { if (layer.flipV) project.toggleLayerFlipV(layer.id); }}
-            title="Normal vertical"
+            title={$t('layers.properties.normalVertical')}
           >
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
               <path d="M12 19V5M5 12l7-7 7 7"/>
@@ -1713,7 +1781,7 @@
             class="orient-btn"
             class:active={layer.flipV}
             onclick={() => { if (!layer.flipV) project.toggleLayerFlipV(layer.id); }}
-            title="Flip vertically"
+            title={$t('layers.properties.flipVertical')}
           >
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
               <path d="M12 5v14M5 12l7 7 7-7"/>
@@ -1723,7 +1791,7 @@
             class="orient-btn"
             class:active={layer.flipH}
             onclick={() => { if (!layer.flipH) project.toggleLayerFlipH(layer.id); }}
-            title="Flip horizontally"
+            title={$t('layers.properties.flipHorizontal')}
           >
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
               <path d="M19 12H5M12 5l-7 7 7 7"/>
@@ -1733,7 +1801,7 @@
             class="orient-btn"
             class:active={!layer.flipH}
             onclick={() => { if (layer.flipH) project.toggleLayerFlipH(layer.id); }}
-            title="Normal horizontal"
+            title={$t('layers.properties.normalHorizontal')}
           >
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
               <path d="M5 12h14M12 5l7 7-7 7"/>
@@ -1746,7 +1814,7 @@
           <div class="color-controls">
             <div class="color-preview-large" style="background: hsl({layer.colorContent.hue}, {layer.colorContent.saturation}%, {layer.colorContent.lightness}%);"></div>
             <div class="property-row">
-              <label for="color-hue-{layer.id}">Hue</label>
+              <label for="color-hue-{layer.id}">{$t('layers.properties.hue')}</label>
               <input
                 id="color-hue-{layer.id}"
                 type="range"
@@ -1761,7 +1829,7 @@
               <span class="value">{Math.round(layer.colorContent.hue)}</span>
             </div>
             <div class="property-row">
-              <label for="color-sat-{layer.id}">Saturation</label>
+              <label for="color-sat-{layer.id}">{$t('layers.properties.saturation')}</label>
               <input
                 id="color-sat-{layer.id}"
                 type="range"
@@ -1774,7 +1842,7 @@
               <span class="value">{Math.round(layer.colorContent.saturation)}%</span>
             </div>
             <div class="property-row">
-              <label for="color-light-{layer.id}">Lightness</label>
+              <label for="color-light-{layer.id}">{$t('layers.properties.lightness')}</label>
               <input
                 id="color-light-{layer.id}"
                 type="range"
@@ -1791,8 +1859,8 @@
           <!-- Lines layer: Elements list -->
           <div class="elements-section">
             <div class="elements-header">
-              <span>Lines</span>
-              <span class="lines-hint">Draw in viewport with pen tools</span>
+              <span>{$t('layers.source.lines')}</span>
+              <span class="lines-hint">{$t('layers.source.drawLinesHint')}</span>
             </div>
             {#if layer.linesContent && layer.linesContent.elements.length > 0}
               <div class="element-list">
@@ -1816,50 +1884,50 @@
                     <button
                       class="element-delete"
                       onclick={(e) => { e.stopPropagation(); project.removeElement(layer.id, element.id); }}
-                      title="Delete element"
+                      title={$t('layers.source.deleteElement')}
                     >x</button>
                   </div>
                 {/each}
               </div>
             {:else}
-              <div class="no-elements">No lines yet. Use pen tools in the right panel to draw.</div>
+              <div class="no-elements">{$t('layers.source.noLines')}</div>
             {/if}
           </div>
         {:else if layer.type === 'svg'}
           <!-- SVG layer info -->
           <div class="svg-info">
-            <span>SVG controls in right panel</span>
+            <span>{$t('layers.source.svgControls')}</span>
           </div>
         {:else if layer.type === 'splat'}
           <!-- Splat layer: info pointing to right panel -->
           <div class="splat-info">
             {#if layer.splatContent?.filePath}
-              <span class="file-loaded-info">{layer.splatContent.pointCount.toLocaleString()} points loaded</span>
+              <span class="file-loaded-info">{$t('layers.source.pointsLoaded', { values: { count: layer.splatContent.pointCount.toLocaleString() } })}</span>
             {:else}
-              <span class="no-file-info">Load a PLY or .splat file in the right panel</span>
+              <span class="no-file-info">{$t('layers.source.loadSplat')}</span>
             {/if}
           </div>
         {:else if layer.type === 'model3d'}
           <!-- Model3D layer: info pointing to right panel -->
           <div class="model3d-info">
             {#if layer.model3dContent?.modelData}
-              <span class="file-loaded-info">{layer.model3dContent.modelName || 'Model loaded'} — {layer.model3dContent.vertexCount.toLocaleString()} vertices</span>
+              <span class="file-loaded-info">{$t('layers.source.modelLoaded', { values: { name: layer.model3dContent.modelName || $t('layers.source.modelLoadedName'), vertices: layer.model3dContent.vertexCount.toLocaleString() } })}</span>
             {:else}
-              <span class="no-file-info">Load a 3D model file in the right panel</span>
+              <span class="no-file-info">{$t('layers.source.loadModel')}</span>
             {/if}
           </div>
         {:else if layer.type === 'screen'}
           <!-- Screen layer: VJ Layer assignment -->
           <div class="screen-layer-config">
-            <label class="screen-label">VJ Layer Source</label>
+            <label class="screen-label">{$t('layers.source.screenLayerSource')}</label>
             <select
               class="screen-vj-select"
               value={String(layer.vjLayerIndex ?? 0)}
               onchange={(e) => project.setLayerVJIndex(layer.id, parseInt(e.currentTarget.value))}
             >
-              <option value={String(VJ_MIX_SOURCE_INDEX)}>VJ Mix</option>
+              <option value={String(VJ_MIX_SOURCE_INDEX)}>{$t('layers.source.mix')}</option>
               {#each Array($vjClipLauncher.numLayers) as _, i}
-                <option value={String(i)}>VJ Layer {i + 1}</option>
+                <option value={String(i)}>{$t('layers.source.screenLayer', { values: { index: i + 1 } })}</option>
               {/each}
             </select>
           </div>
@@ -1874,13 +1942,13 @@
               ondragover={handleDragOver}
               role="button"
               tabindex="0"
-              aria-label="Drop media file here or click to browse"
+              aria-label={$t('layers.source.dropMediaAria')}
             >
               {#if layer.source}
                 <span class="source-name">{layer.source.name}</span>
                 <span class="source-type">({layer.source.type})</span>
                 <label class="file-label replace-label">
-                  <span class="link">Replace</span>
+                  <span class="link">{$t('layers.source.replace')}</span>
                   <input
                     type="file"
                     accept="image/*,video/*,.fs,.isf"
@@ -1889,9 +1957,9 @@
                   />
                 </label>
               {:else}
-                <span>Drop image/video/shader here</span>
+                <span>{$t('layers.source.dropMedia')}</span>
                 <label class="file-label">
-                  or <span class="link">browse</span>
+                  {$t('common.or')} <span class="link">{$t('layers.source.browse')}</span>
                   <input
                     type="file"
                     accept="image/*,video/*,.fs,.isf"
@@ -1919,7 +1987,7 @@
               <button
                 class="vt-btn vt-play"
                 data-midi-path="map:media:play"
-                data-midi-label="Media Play / Pause"
+                data-midi-label={$t('layers.midiLabels.mediaPlayPause')}
                 data-midi-min="0"
                 data-midi-max="1"
                 data-midi-mode="toggle"
@@ -1935,7 +2003,7 @@
                   }
                   project.updateLayer(layer.id, {});
                 }}
-                title={(vSrc.isPlaying !== false) ? 'Pause' : 'Play'}
+                title={(vSrc.isPlaying !== false) ? $t('layers.video.pause') : $t('layers.video.play')}
               >
                 {#if vSrc.isPlaying === false}
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
@@ -1946,7 +2014,7 @@
               <button
                 class="vt-btn"
                 data-midi-path="map:media:restart"
-                data-midi-label="Media Restart"
+                data-midi-label={$t('layers.midiLabels.mediaRestart')}
                 data-midi-min="0"
                 data-midi-max="1"
                 data-midi-mode="toggle"
@@ -1955,7 +2023,7 @@
                   vEl.play(); vSrc.isPlaying = true;
                   project.updateLayer(layer.id, {});
                 }}
-                title="Restart"
+                title={$t('layers.video.restart')}
               >
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                   <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
@@ -1981,14 +2049,14 @@
               class="vt-timeline"
               bind:this={timelineEl}
               data-midi-path="map:media:position"
-              data-midi-label="Media Position"
+              data-midi-label={$t('layers.midiLabels.mediaPosition')}
               data-midi-min="0"
               data-midi-max="1"
               data-midi-step="0.001"
               onmousedown={(e) => handleTimelineMouseDown(e, layer.id, vSrc)}
               role="slider"
               tabindex="0"
-              aria-label="Video timeline"
+              aria-label={$t('layers.video.timeline')}
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={videoDuration > 0 ? Math.round(videoCurrentTime / videoDuration * 100) : 0}
@@ -2009,7 +2077,7 @@
                 onmousedown={(e) => handleTrimMouseDown(e, 'start', layer.id, vSrc)}
                 role="slider"
                 tabindex="0"
-                aria-label="Trim start"
+                aria-label={$t('layers.video.trimStart')}
               ></div>
               <div
                 class="vt-trim-handle vt-trim-end"
@@ -2017,22 +2085,22 @@
                 onmousedown={(e) => handleTrimMouseDown(e, 'end', layer.id, vSrc)}
                 role="slider"
                 tabindex="0"
-                aria-label="Trim end"
+                aria-label={$t('layers.video.trimEnd')}
               ></div>
             </div>
 
             <!-- Mode buttons row -->
             <div class="vt-modes">
-              <button class="vt-mode-btn" class:active={vMode === 'loop'} onclick={() => setPlaybackMode(layer.id, vSrc, 'loop')} title="Loop">
+              <button class="vt-mode-btn" class:active={vMode === 'loop'} onclick={() => setPlaybackMode(layer.id, vSrc, 'loop')} title={$t('layers.video.loop')}>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                   <polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/>
                   <polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>
                 </svg>
-                Loop
+                {$t('layers.video.loop')}
               </button>
-              <button class="vt-mode-btn" class:active={vMode === 'once'} onclick={() => setPlaybackMode(layer.id, vSrc, 'once')} title="Play Once">
+              <button class="vt-mode-btn" class:active={vMode === 'once'} onclick={() => setPlaybackMode(layer.id, vSrc, 'once')} title={$t('layers.video.playOnce')}>
                 <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
-                Once
+                {$t('layers.video.once')}
               </button>
             </div>
           </div>
@@ -2040,7 +2108,7 @@
 
         <!-- Opacity -->
         <div class="property-row">
-          <label>Opacity</label>
+          <label>{$t('layers.properties.opacity')}</label>
           <input
             type="range"
             min="0"
@@ -2055,14 +2123,14 @@
 
         <!-- Blend Mode -->
         <div class="property-row">
-          <label>Blend Mode</label>
+          <label>{$t('layers.properties.blendMode')}</label>
           <select
             value={layer.blendMode}
             onchange={(e) =>
               project.setLayerBlendMode(layer.id, (e.target as HTMLSelectElement).value as BlendMode)}
           >
             {#each blendModes as mode}
-              <option value={mode}>{mode}</option>
+              <option value={mode}>{blendModeLabel($t, mode)}</option>
             {/each}
           </select>
         </div>
@@ -2070,7 +2138,7 @@
         <!-- Render Quality (shader layers only) -->
         {#if layer.source?.type === 'shader'}
           <div class="property-row">
-            <label>Render Quality</label>
+            <label>{$t('layers.properties.renderQuality')}</label>
             <select
               value={String(layer.renderQuality ?? 1.0)}
               onchange={(e) => {
@@ -2078,11 +2146,11 @@
                 project.setRenderQuality(layer.id, val);
               }}
             >
-              <option value="1.0">Full (100%)</option>
-              <option value="0.75">High (75%)</option>
-              <option value="0.5">Medium (50%)</option>
-              <option value="0.35">Low (35%)</option>
-              <option value="0.25">Very Low (25%)</option>
+              <option value="1.0">{$t('layers.properties.fullQuality')}</option>
+              <option value="0.75">{$t('layers.properties.highQuality')}</option>
+              <option value="0.5">{$t('layers.properties.mediumQuality')}</option>
+              <option value="0.35">{$t('layers.properties.lowQuality')}</option>
+              <option value="0.25">{$t('layers.properties.veryLowQuality')}</option>
             </select>
           </div>
         {/if}
@@ -2090,37 +2158,37 @@
         <!-- Content Fit Mode (for media/screen/shader layers) -->
         {#if layer.type === 'media' || layer.type === 'screen'}
           <div class="property-row">
-            <label>Content Fit</label>
+            <label>{$t('layers.properties.contentFit')}</label>
             <select
               value={layer.contentFit || 'stretch'}
               onchange={(e) =>
                 project.setContentFit(layer.id, (e.target as HTMLSelectElement).value as ContentFitMode)}
             >
-              <option value="stretch">Stretch</option>
-              <option value="fill">Fill</option>
-              <option value="crop">Contain</option>
+              <option value="stretch">{$t('layers.properties.stretch')}</option>
+              <option value="fill">{$t('layers.properties.fill')}</option>
+              <option value="crop">{$t('layers.properties.contain')}</option>
             </select>
           </div>
         {/if}
 
         {#if layer.type === 'media' || layer.type === 'screen'}
           <div class="property-row source-crop-row">
-            <label>Source Crop</label>
+            <label>{$t('layers.crop.label')}</label>
             <button
               class="btn-small source-crop-edit"
               disabled={!layer.source}
               onclick={() => { if (layer.source) showSourceCropModal = true; }}
             >
-              {layer.source ? (layer.cropRegion ? 'Edit Crop' : 'Crop Source') : 'No Source'}
+              {layer.source ? (layer.cropRegion ? $t('layers.crop.edit') : $t('layers.crop.crop')) : $t('layers.crop.noSource')}
             </button>
             {#if layer.source && layer.cropRegion}
               <button class="btn-small source-crop-reset" onclick={() => project.resetCropRegion(layer.id)}>
-                Reset
+                {$t('layers.crop.reset')}
               </button>
             {:else if layer.source}
-              <span class="value source-crop-value">Full</span>
+              <span class="value source-crop-value">{$t('layers.crop.full')}</span>
             {:else}
-              <span class="value source-crop-value">--</span>
+              <span class="value source-crop-value">{$t('layers.crop.empty')}</span>
             {/if}
           </div>
         {/if}
@@ -2129,30 +2197,30 @@
         {#if layer.effects}
           {@const featherEffect = layer.effects.find(e => e.type === 'edgeFeather')}
           <div class="property-row feather-row">
-            <label>Edge Feather</label>
+            <label>{effectTypeLabel($t, 'edgeFeather', $t('layers.effects.edgeFeather'))}</label>
             {#if !featherEffect}
               <button class="btn-small" onclick={() => project.addEffect(layer.id, 'edgeFeather', { featherTop: 0, featherBottom: 0, featherLeft: 0, featherRight: 0, featherSoftness: 0.5 })}>
-                + Enable
+                {$t('layers.effects.enableEdge')}
               </button>
             {:else}
               <div class="feather-sliders">
                 <div class="feather-slider">
-                  <span class="feather-label">T</span>
+                  <span class="feather-label">{getEffectParamDisplayLabel('featherTop', $t('layers.effects.top'))}</span>
                   <input type="range" min="0" max="1" step="0.01" value={featherEffect.params?.featherTop ?? 0}
                     oninput={(e) => project.updateEffectParams(layer.id, featherEffect.id, { featherTop: parseFloat((e.target as HTMLInputElement).value) })} />
                 </div>
                 <div class="feather-slider">
-                  <span class="feather-label">B</span>
+                  <span class="feather-label">{getEffectParamDisplayLabel('featherBottom', $t('layers.effects.bottom'))}</span>
                   <input type="range" min="0" max="1" step="0.01" value={featherEffect.params?.featherBottom ?? 0}
                     oninput={(e) => project.updateEffectParams(layer.id, featherEffect.id, { featherBottom: parseFloat((e.target as HTMLInputElement).value) })} />
                 </div>
                 <div class="feather-slider">
-                  <span class="feather-label">L</span>
+                  <span class="feather-label">{getEffectParamDisplayLabel('featherLeft', $t('layers.effects.left'))}</span>
                   <input type="range" min="0" max="1" step="0.01" value={featherEffect.params?.featherLeft ?? 0}
                     oninput={(e) => project.updateEffectParams(layer.id, featherEffect.id, { featherLeft: parseFloat((e.target as HTMLInputElement).value) })} />
                 </div>
                 <div class="feather-slider">
-                  <span class="feather-label">R</span>
+                  <span class="feather-label">{getEffectParamDisplayLabel('featherRight', $t('layers.effects.right'))}</span>
                   <input type="range" min="0" max="1" step="0.01" value={featherEffect.params?.featherRight ?? 0}
                     oninput={(e) => project.updateEffectParams(layer.id, featherEffect.id, { featherRight: parseFloat((e.target as HTMLInputElement).value) })} />
                 </div>
@@ -2161,30 +2229,30 @@
           </div>
         {:else}
           <div class="property-row feather-row">
-            <label>Edge Feather</label>
+            <label>{effectTypeLabel($t, 'edgeFeather', $t('layers.effects.edgeFeather'))}</label>
             <button class="btn-small" onclick={() => project.addEffect(layer.id, 'edgeFeather', { featherTop: 0, featherBottom: 0, featherLeft: 0, featherRight: 0, featherSoftness: 0.5 })}>
-              + Enable
+              {$t('layers.effects.enableEdge')}
             </button>
           </div>
         {/if}
 
         <!-- Warp Mode -->
         <div class="property-row">
-          <label>Warp Mode</label>
+          <label>{$t('layers.properties.warpMode')}</label>
           <div class="warp-mode-buttons">
             <button
               class="warp-mode-btn"
               class:active={layer.warpMode === 'corners'}
               onclick={() => project.setWarpMode(layer.id, 'corners')}
             >
-              Corner
+              {$t('layers.properties.corner')}
             </button>
             <button
               class="warp-mode-btn"
               class:active={layer.warpMode === 'mesh'}
               onclick={() => project.setWarpMode(layer.id, 'mesh')}
             >
-              Mesh
+              {$t('layers.properties.mesh')}
             </button>
           </div>
         </div>
@@ -2192,7 +2260,7 @@
         <!-- Mesh Grid Size (only show when in mesh mode) -->
         {#if layer.warpMode === 'mesh' && layer.meshGrid}
           <div class="property-row">
-            <label>Grid Size</label>
+            <label>{$t('layers.properties.gridSize')}</label>
             <select
               value="{layer.meshGrid.rows}x{layer.meshGrid.cols}"
               onchange={(e) => {
@@ -2216,11 +2284,11 @@
         <div class="property-row">
           {#if layer.warpMode === 'mesh'}
             <button class="btn-reset" onclick={() => project.resetMeshGrid(layer.id)}>
-              Reset Mesh
+              {$t('layers.properties.resetMesh')}
             </button>
           {:else}
             <button class="btn-reset" onclick={() => project.resetCorners(layer.id)}>
-              Reset Warp
+              {$t('layers.properties.resetWarp')}
             </button>
           {/if}
         </div>
@@ -2242,15 +2310,23 @@
                   }
                 }}
               />
-              Enable Mask
+              {$t('layers.mask.enable')}
             </label>
             <span class="mask-point-count">
               {#if layer.mask?.shapes}
                 {@const totalShapes = layer.mask.shapes.length}
                 {@const totalPoints = layer.mask.shapes.reduce((acc, s) => acc + s.points.length, 0)}
-                {totalPoints} points · {totalShapes} {totalShapes === 1 ? 'shape' : 'shapes'}
+                {$t('layers.mask.pointCount', {
+                  values: {
+                    points: totalPoints,
+                    shapes: totalShapes,
+                    shape: totalShapes === 1 ? $t('layers.mask.shape') : $t('layers.mask.shapes'),
+                  },
+                })}
               {:else}
-                0 points · 0 shapes
+                {$t('layers.mask.pointCount', {
+                  values: { points: 0, shapes: 0, shape: $t('layers.mask.shapes') },
+                })}
               {/if}
             </span>
           </div>
@@ -2263,12 +2339,12 @@
                   checked={layer.mask?.inverted ?? false}
                   onchange={() => project.toggleMaskInvert(layer.id)}
                 />
-                Invert Mask
+                {$t('layers.mask.invert')}
               </label>
             </div>
 
             <div class="property-row">
-              <label>Feather</label>
+              <label>{$t('layers.mask.feather')}</label>
               <input
                 type="range"
                 min="0"
@@ -2290,20 +2366,22 @@
                   <div class="mask-shape-row">
                     <span class="mask-shape-swatch" class:open={!shape.closed} aria-hidden="true"></span>
                     <span class="mask-shape-label">
-                      Shape {sIdx + 1}
+                      {$t('layers.mask.shapeLabel', { values: { index: sIdx + 1 } })}
                       <span class="mask-shape-meta">
-                        · {shape.points.length} pt{shape.points.length === 1 ? '' : 's'}
-                        {#if !shape.closed}· <em>open</em>{/if}
+                        {$t('layers.mask.pointMeta', {
+                          values: { count: shape.points.length, suffix: shape.points.length === 1 ? '' : 's' },
+                        })}
+                        {#if !shape.closed}<em>{$t('layers.mask.open')}</em>{/if}
                       </span>
                     </span>
                     <button
                       class="mask-shape-edit"
-                      title="Edit points (drag to move, right-click anchor to delete)"
+                      title={$t('layers.mask.editPointsTitle')}
                       onclick={() => {
                         project.enableMask(layer.id);
                         maskEditingLayerId.set(layer.id);
                       }}
-                      aria-label="Edit shape {sIdx + 1}"
+                      aria-label={$t('layers.mask.editShapeAria', { values: { index: sIdx + 1 } })}
                     >
                       <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                         <path d="M12 20h9"/>
@@ -2312,9 +2390,9 @@
                     </button>
                     <button
                       class="mask-shape-delete"
-                      title="Delete this shape"
+                      title={$t('layers.mask.deleteShapeTitle')}
                       onclick={() => project.removeMaskShape(layer.id, sIdx)}
-                      aria-label="Delete shape {sIdx + 1}"
+                      aria-label={$t('layers.mask.deleteShapeAria', { values: { index: sIdx + 1 } })}
                     >×</button>
                   </div>
                 {/each}
@@ -2323,9 +2401,9 @@
 
             <div class="property-row mask-actions">
               <button class="btn-secondary" onclick={() => project.clearMask(layer.id)}>
-                Clear All
+                {$t('layers.mask.clearAll')}
               </button>
-              <span class="mask-hint">Click to add points · Click+drag for curves · Click first point or right-click empty area to close · Right-click anchor to delete</span>
+              <span class="mask-hint">{$t('layers.mask.hint')}</span>
             </div>
 
             {#if $maskEditingLayerId === layer.id}
@@ -2334,7 +2412,7 @@
                   class="btn-primary mask-done-btn"
                   onclick={() => maskEditingLayerId.set(null)}
                 >
-                  Done Editing Mask
+                  {$t('layers.mask.doneEditing')}
                 </button>
               </div>
             {:else}
@@ -2343,7 +2421,7 @@
                   class="btn-secondary mask-done-btn"
                   onclick={() => maskEditingLayerId.set(layer.id)}
                 >
-                  Edit Mask
+                  {$t('layers.mask.edit')}
                 </button>
               </div>
             {/if}
@@ -2356,13 +2434,13 @@
           {#if layer.type === 'media'}
             {@const shapeType = layer.layerShape?.type ?? 'rectangle'}
             <div class="property-row">
-              <label>Layer Shape</label>
+              <label>{$t('layers.shape.layer')}</label>
               <div class="shape-icon-row">
                 <button
                   class="shape-icon-btn"
                   class:active={shapeType === 'rectangle'}
                   onclick={() => project.setLayerShape(layer.id, 'rectangle')}
-                  title="Rectangle"
+                  title={$t('layers.shape.rectangle')}
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="4" y="6" width="16" height="12" rx="1.5"/></svg>
                 </button>
@@ -2370,7 +2448,7 @@
                   class="shape-icon-btn"
                   class:active={shapeType === 'circle'}
                   onclick={() => project.setLayerShape(layer.id, 'circle')}
-                  title="Circle"
+                  title={$t('layers.shape.circle')}
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="8"/></svg>
                 </button>
@@ -2378,7 +2456,7 @@
                   class="shape-icon-btn"
                   class:active={shapeType === 'ellipse'}
                   onclick={() => project.setLayerShape(layer.id, 'ellipse')}
-                  title="Ellipse"
+                  title={$t('layers.shape.ellipse')}
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><ellipse cx="12" cy="12" rx="9" ry="6"/></svg>
                 </button>
@@ -2386,7 +2464,7 @@
                   class="shape-icon-btn"
                   class:active={shapeType === 'triangle'}
                   onclick={() => project.setLayerShape(layer.id, 'triangle')}
-                  title="Triangle"
+                  title={$t('layers.shape.triangle')}
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 4l8 16H4L12 4z"/></svg>
                 </button>
@@ -2394,7 +2472,7 @@
                   class="shape-icon-btn"
                   class:active={shapeType === 'polygon'}
                   onclick={() => project.setLayerShape(layer.id, 'polygon')}
-                  title="Polygon"
+                  title={$t('layers.shape.polygon')}
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2l9.5 7-3.5 11h-12L2.5 9z"/></svg>
                 </button>
@@ -2405,32 +2483,32 @@
             {#if shapeType === 'circle' || shapeType === 'triangle'}
               <div class="property-row">
                 <button class="btn-secondary" onclick={toggleShapeWarpEditing}>
-                  {shapeWarpEditing ? 'Exit Shape Warp Edit' : 'Edit Shape Warp'}
+                  {shapeWarpEditing ? $t('layers.shape.exitWarp') : $t('layers.shape.editWarp')}
                 </button>
               </div>
             {/if}
 
             {#if layer.layerShape && layer.layerShape.type !== 'custom'}
               <div class="property-row">
-                <button class="btn-secondary" onclick={() => project.convertToCustomShape(layer.id)} title="Convert shape to editable polygon with draggable vertices">
+                <button class="btn-secondary" onclick={() => project.convertToCustomShape(layer.id)} title={$t('layers.shape.convertTitle')}>
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1.5" fill="currentColor"/><path d="M12 5v2m0 10v2m-7-7h2m10 0h2"/></svg>
-                  Edit Points
+                  {$t('layers.shape.editPoints')}
                 </button>
               </div>
             {/if}
             {#if layer.layerShape?.type === 'custom'}
               <div class="property-row shape-help">
-                <span>Drag vertices on canvas. Click edges to add points. Right-click vertex to remove.</span>
+                <span>{$t('layers.shape.help')}</span>
               </div>
               <div class="property-row">
-                <label>Shape Fit</label>
+                <label>{$t('layers.shape.fit')}</label>
                 <select
                   value={layer.layerShape.params.customShapeFit || 'warp'}
                   onchange={(e) => project.updateLayerShapeParams(layer.id, { customShapeFit: (e.target as HTMLSelectElement).value as 'warp' | 'fill' | 'mask' })}
                 >
-                  <option value="warp">Warp</option>
-                  <option value="fill">Fill</option>
-                  <option value="mask">Mask</option>
+                  <option value="warp">{$t('layers.shape.warp')}</option>
+                  <option value="fill">{$t('layers.shape.fill')}</option>
+                  <option value="mask">{$t('layers.shape.mask')}</option>
                 </select>
               </div>
               <!-- Invert: turns the custom shape into a HOLE / cutout
@@ -2438,13 +2516,13 @@
                    and you get cool projection-mapping setups where the
                    shape "punches through" to reveal what's behind. -->
               <div class="property-row">
-                <label>Invert</label>
+                <label>{$t('layers.shape.invert')}</label>
                 <input
                   type="checkbox"
                   checked={layer.layerShape.params.invert === true}
                   onchange={(e) => project.updateLayerShapeParams(layer.id, { invert: (e.target as HTMLInputElement).checked })}
                 />
-                <span class="invert-hint">cutout / negative space</span>
+                <span class="invert-hint">{$t('layers.shape.cutoutHint')}</span>
               </div>
             {/if}
           {/if}
@@ -2453,7 +2531,7 @@
             {@const shapeT = layer.layerShape.type}
             {#if shapeT === 'circle' || shapeT === 'triangle'}
               <div class="property-row shape-help">
-                <span>Shape geometry is controlled directly on canvas via warp points.</span>
+                <span>{$t('layers.shape.geometryHint')}</span>
               </div>
             {/if}
 
@@ -2461,7 +2539,7 @@
               <!-- Radius controls -->
               {#if shapeT === 'circle' || shapeT === 'ellipse'}
                 <div class="property-row">
-                  <label>{shapeT === 'ellipse' ? 'Radius X' : 'Radius'}</label>
+                  <label>{shapeT === 'ellipse' ? $t('layers.shape.radiusX') : $t('layers.shape.radius')}</label>
                   <input
                     type="range"
                     min="0.05"
@@ -2479,7 +2557,7 @@
                 </div>
                 {#if shapeT === 'ellipse'}
                   <div class="property-row">
-                    <label>Radius Y</label>
+                    <label>{$t('layers.shape.radiusY')}</label>
                     <input
                       type="range"
                       min="0.05"
@@ -2496,7 +2574,7 @@
               <!-- Sides control for polygon/star -->
               {#if shapeT === 'polygon' || shapeT === 'star'}
                 <div class="property-row">
-                  <label>Sides</label>
+                  <label>{$t('layers.shape.sides')}</label>
                   <input
                     type="range"
                     min="3"
@@ -2512,7 +2590,7 @@
               <!-- Inner radius for star -->
               {#if shapeT === 'star'}
                 <div class="property-row">
-                  <label>Inner Radius</label>
+                  <label>{$t('layers.shape.innerRadius')}</label>
                   <input
                     type="range"
                     min="0.1"
@@ -2527,7 +2605,7 @@
 
               <!-- Rotation -->
               <div class="property-row">
-                <label>Rotation</label>
+                <label>{$t('layers.shape.rotation')}</label>
                 <input
                   type="range"
                   min="0"
@@ -2541,7 +2619,7 @@
 
               <!-- Scale -->
               <div class="property-row">
-                <label>Scale</label>
+                <label>{$t('layers.shape.scale')}</label>
                 <input
                   type="range"
                   min="0.1"
@@ -2555,7 +2633,7 @@
 
               <!-- Feather -->
               <div class="property-row">
-                <label>Feather</label>
+                <label>{$t('layers.shape.feather')}</label>
                 <input
                   type="range"
                   min="0"
@@ -2569,7 +2647,7 @@
 
               <!-- Invert -->
               <div class="property-row">
-                <label>Invert</label>
+                <label>{$t('layers.shape.invert')}</label>
                 <input
                   type="checkbox"
                   checked={layer.layerShape.params.invert ?? false}
@@ -2581,7 +2659,7 @@
             {#if shapeT === 'custom'}
               <!-- Custom shapes just get feather -->
               <div class="property-row">
-                <label>Feather</label>
+                <label>{$t('layers.shape.feather')}</label>
                 <input
                   type="range"
                   min="0"
@@ -2610,7 +2688,7 @@
           {@const pg = $layers.find(l => l.id === layer.parentGroupId)}
           {#if pg}
             <div class="grouped-child-note">
-              Part of <strong>{pg.name}</strong> — effects and source controlled at group level.
+              {$t('layers.groupedChild', { values: { name: pg.name } })}
             </div>
           {/if}
         {/if}
@@ -2619,11 +2697,11 @@
         {#if !layer.parentGroupId || layer.type === 'group'}
         <div class="effects-section">
             <div class="effects-header">
-              <h4>Layer Effects</h4>
+              <h4>{$t('layers.effects.heading')}</h4>
               <button
                 class="add-effect-btn"
                 onclick={() => { effectPickerTarget = 'layer'; effectPickerLayerId = layer.id; showEffectPicker = true; }}
-              >+ Add Effect</button>
+              >{$t('layers.effects.add')}</button>
             </div>
 
             <!-- Effect List -->
@@ -2660,7 +2738,7 @@
                       type="checkbox"
                       checked={effect.enabled}
                       onchange={() => project.toggleEffect(layer.id, effect.id)}
-                      title={effect.enabled ? 'Disable effect' : 'Enable effect'}
+                      title={effect.enabled ? $t('layers.effects.disable') : $t('layers.effects.enable')}
                     />
 
                     <!-- Effect name (clickable to expand) -->
@@ -2679,15 +2757,15 @@
                     <button
                       class="effect-reset"
                       onclick={(e) => { e.stopPropagation(); project.resetEffectParams(layer.id, effect.id); }}
-                      title="Reset to defaults"
-                      aria-label="Reset effect to defaults"
+                      title={$t('layers.effects.resetTitle')}
+                      aria-label={$t('layers.effects.resetAria')}
                     >↺</button>
 
                     <!-- Delete button -->
                     <button
                       class="effect-delete"
                       onclick={() => project.removeEffect(layer.id, effect.id)}
-                      title="Remove effect"
+                      title={$t('layers.effects.removeTitle')}
                     >
                       x
                     </button>
@@ -2703,7 +2781,7 @@
                       <!-- Per-effect opacity & blend mode -->
                       <div class="effect-mix-row">
                         <div class="effect-opacity-ctrl">
-                          <label>Opacity</label>
+                          <label>{$t('layers.effects.opacity')}</label>
                           <input
                             type="range"
                             min="0"
@@ -2715,13 +2793,13 @@
                           <span class="param-value">{(((effect.opacity ?? 1) * 100)).toFixed(0)}%</span>
                         </div>
                         <div class="effect-blend-ctrl">
-                          <label>Blend</label>
+                          <label>{$t('layers.effects.blend')}</label>
                           <select
                             value={effect.blendMode ?? 'normal'}
                             onchange={(e) => project.updateEffect(layer.id, effect.id, { blendMode: (e.target as HTMLSelectElement).value as BlendMode })}
                           >
                             {#each blendModes as mode}
-                              <option value={mode}>{mode}</option>
+                              <option value={mode}>{blendModeLabel($t, mode)}</option>
                             {/each}
                           </select>
                         </div>
@@ -2729,9 +2807,9 @@
 
                       {#if getEffectPresets(effect.type).length > 0}
                         <details open>
-                          <summary>Presets</summary>
+                          <summary>{$t('layers.effects.presets')}</summary>
                           <div class="param-row">
-                            <label>Preset</label>
+                            <label>{$t('layers.effects.preset')}</label>
                             <select
                               value={layerPresetSelection[effect.id] ?? ''}
                               onchange={(e) => {
@@ -2740,9 +2818,9 @@
                                 if (val !== '') applyLayerPreset(layer.id, effect as any, parseInt(val, 10));
                               }}
                             >
-                              <option value="">Select preset</option>
+                              <option value="">{$t('layers.effects.selectPreset')}</option>
                               {#each getEffectPresets(effect.type) as preset, i}
-                                <option value={String(i)}>{preset.name}</option>
+                                <option value={String(i)}>{getEffectPresetDisplayLabel(effect.type, i, preset)}</option>
                               {/each}
                             </select>
                           </div>
@@ -2750,7 +2828,7 @@
                       {/if}
 
                       <details open>
-                        <summary>Controls</summary>
+                        <summary>{$t('layers.effects.controls')}</summary>
                       {#if effect.type === 'gpuFluidSim'}
                         <!-- ── WebGPU Fluid Simulation ──
                              Real-time Navier-Stokes fluid running on
@@ -2760,32 +2838,32 @@
                              EffectParamRow gives each knob the same
                              mod-source dropdown + click-to-type editor
                              the rest of the panel uses. -->
-                        <EffectParamRow label="Inject Strength" min={0} max={3} step={0.01}
+                        <EffectParamRow label={getEffectParamDisplayLabel('injectStrength', $t('layers.effects.injectStrength'))} min={0} max={3} step={0.01}
                           layerIndex={layerIdx} effectId={effect.id} paramName="injectStrength"
                           value={effect.params.injectStrength ?? 1.5}
                           onChange={(v) => project.updateEffectParams(layer.id, effect.id, { injectStrength: v })} />
-                        <EffectParamRow label="Velocity Push" min={0} max={3} step={0.01}
+                        <EffectParamRow label={getEffectParamDisplayLabel('velocityFromGradient', $t('layers.effects.velocityPush'))} min={0} max={3} step={0.01}
                           layerIndex={layerIdx} effectId={effect.id} paramName="velocityFromGradient"
                           value={effect.params.velocityFromGradient ?? 1.4}
                           onChange={(v) => project.updateEffectParams(layer.id, effect.id, { velocityFromGradient: v })} />
-                        <EffectParamRow label="Vorticity" min={0} max={3} step={0.01}
+                        <EffectParamRow label={getEffectParamDisplayLabel('vorticity', $t('layers.effects.vorticity'))} min={0} max={3} step={0.01}
                           layerIndex={layerIdx} effectId={effect.id} paramName="vorticity"
                           value={effect.params.vorticity ?? 1.0}
                           onChange={(v) => project.updateEffectParams(layer.id, effect.id, { vorticity: v })} />
-                        <EffectParamRow label="Dye Decay" min={0} max={3} step={0.01}
+                        <EffectParamRow label={getEffectParamDisplayLabel('dyeDecay', $t('layers.effects.dyeDecay'))} min={0} max={3} step={0.01}
                           layerIndex={layerIdx} effectId={effect.id} paramName="dyeDecay"
                           value={effect.params.dyeDecay ?? 2.4}
                           onChange={(v) => project.updateEffectParams(layer.id, effect.id, { dyeDecay: v })} />
-                        <EffectParamRow label="Velocity Decay" min={0} max={3} step={0.01}
+                        <EffectParamRow label={getEffectParamDisplayLabel('velocityDecay', $t('layers.effects.velocityDecay'))} min={0} max={3} step={0.01}
                           layerIndex={layerIdx} effectId={effect.id} paramName="velocityDecay"
                           value={effect.params.velocityDecay ?? 2.3}
                           onChange={(v) => project.updateEffectParams(layer.id, effect.id, { velocityDecay: v })} />
-                        <EffectParamRow label="Brightness Boost" min={0.5} max={4} step={0.01}
+                        <EffectParamRow label={getEffectParamDisplayLabel('outputBoost', $t('layers.effects.brightnessBoost'))} min={0.5} max={4} step={0.01}
                           layerIndex={layerIdx} effectId={effect.id} paramName="outputBoost"
                           value={effect.params.outputBoost ?? 0.7}
                           displayValue={(v) => v.toFixed(2) + '×'}
                           onChange={(v) => project.updateEffectParams(layer.id, effect.id, { outputBoost: v })} />
-                        <EffectParamRow label="Time Scale" min={0.1} max={3} step={0.01}
+                        <EffectParamRow label={getEffectParamDisplayLabel('timeScale', $t('layers.effects.timeScale'))} min={0.1} max={3} step={0.01}
                           layerIndex={layerIdx} effectId={effect.id} paramName="timeScale"
                           value={effect.params.timeScale ?? 1.6}
                           displayValue={(v) => v.toFixed(2) + '×'}
@@ -2793,43 +2871,43 @@
 
                       {:else if effect.type === 'colorama'}
                         <div class="param-row">
-                          <label>Palette</label>
+                          <label>{getEffectParamDisplayLabel('coloramaPalette', $t('layers.effects.palette'))}</label>
                           <select
                             value={effect.params.coloramaPalette ?? 0}
                             onchange={(e) => project.updateEffectParams(layer.id, effect.id, { coloramaPalette: parseInt((e.target as HTMLSelectElement).value) })}
                           >
-                            <option value="0">Rainbow</option>
-                            <option value="1">Sunset</option>
-                            <option value="2">Ocean</option>
-                            <option value="3">Neon</option>
-                            <option value="4">Fire</option>
-                            <option value="5">Forest</option>
-                            <option value="6">Ice</option>
-                            <option value="7">Psychedelic</option>
+                            <option value="0">{getEffectOptionDisplayLabel('rainbow', $t('layers.effects.rainbow'))}</option>
+                            <option value="1">{getEffectOptionDisplayLabel('sunset', $t('layers.effects.sunset'))}</option>
+                            <option value="2">{getEffectOptionDisplayLabel('ocean', $t('layers.effects.ocean'))}</option>
+                            <option value="3">{getEffectOptionDisplayLabel('neon', $t('layers.effects.neon'))}</option>
+                            <option value="4">{getEffectOptionDisplayLabel('fire', $t('layers.effects.fire'))}</option>
+                            <option value="5">{getEffectOptionDisplayLabel('forest', $t('layers.effects.forest'))}</option>
+                            <option value="6">{getEffectOptionDisplayLabel('ice', $t('layers.effects.ice'))}</option>
+                            <option value="7">{getEffectOptionDisplayLabel('psychedelic', $t('layers.effects.psychedelic'))}</option>
                           </select>
                         </div>
-                        <EffectParamRow label="Offset" min={0} max={1} step={0.01}
+                        <EffectParamRow label={getEffectParamDisplayLabel('coloramaOffset', $t('layers.effects.offset'))} min={0} max={1} step={0.01}
                           layerIndex={layerIdx} effectId={effect.id} paramName="coloramaOffset"
                           value={effect.params.coloramaOffset ?? 0}
                           displayValue={(v) => (v * 100).toFixed(0) + '%'}
                           onChange={(v) => project.updateEffectParams(layer.id, effect.id, { coloramaOffset: v })} />
-                        <EffectParamRow label="Auto Speed" min={0} max={2} step={0.01}
+                        <EffectParamRow label={getEffectParamDisplayLabel('coloramaSpeed', $t('layers.effects.autoSpeed'))} min={0} max={2} step={0.01}
                           layerIndex={layerIdx} effectId={effect.id} paramName="coloramaSpeed"
                           value={effect.params.coloramaSpeed ?? 0.2}
                           onChange={(v) => project.updateEffectParams(layer.id, effect.id, { coloramaSpeed: v })} />
-                        <EffectParamRow label="Contrast" min={0.5} max={2} step={0.01}
+                        <EffectParamRow label={getEffectParamDisplayLabel('coloramaContrast', $t('layers.effects.contrast'))} min={0.5} max={2} step={0.01}
                           layerIndex={layerIdx} effectId={effect.id} paramName="coloramaContrast"
                           value={effect.params.coloramaContrast ?? 1}
                           displayValue={(v) => (v * 100).toFixed(0) + '%'}
                           onChange={(v) => project.updateEffectParams(layer.id, effect.id, { coloramaContrast: v })} />
-                        <EffectParamRow label="Mix" min={0} max={1} step={0.01}
+                        <EffectParamRow label={getEffectParamDisplayLabel('coloramaMix', $t('layers.effects.mix'))} min={0} max={1} step={0.01}
                           layerIndex={layerIdx} effectId={effect.id} paramName="coloramaMix"
                           value={effect.params.coloramaMix ?? 1}
                           displayValue={(v) => (v * 100).toFixed(0) + '%'}
                           onChange={(v) => project.updateEffectParams(layer.id, effect.id, { coloramaMix: v })} />
 
                       {:else if effect.type === 'invert'}
-                        <div class="param-info">No parameters</div>
+                        <div class="param-info">{$t('layers.effects.noParameters')}</div>
 
                       {:else}
                         {@const paramMeta = effectParamLabels[effect.type]}
@@ -2837,19 +2915,19 @@
                           {#each Object.entries(paramMeta) as [paramKey, meta]}
                             {#if meta.type === 'select' && meta.options}
                               <div class="param-row">
-                                <label>{meta.label}</label>
+                                <label>{getEffectParamDisplayLabel(paramKey, meta.label)}</label>
                                 <select
                                   value={(effect.params as Record<string, number>)[paramKey] ?? meta.default}
                                   onchange={(e) => project.updateEffectParams(layer.id, effect.id, { [paramKey]: parseFloat((e.target as HTMLSelectElement).value) })}
                                 >
                                   {#each meta.options as opt}
-                                    <option value={opt.value}>{opt.label}</option>
+                                    <option value={opt.value}>{getEffectOptionDisplayLabel(opt.value, opt.label)}</option>
                                   {/each}
                                 </select>
                               </div>
                             {:else if meta.type === 'color' && meta.colorParams}
                               <div class="param-row">
-                                <label>{meta.label}</label>
+                                <label>{getEffectParamDisplayLabel(paramKey, meta.label)}</label>
                                 <input type="color"
                                   value={'#' + [meta.colorParams.r, meta.colorParams.g, meta.colorParams.b].map(k => {
                                     const v = (effect.params as Record<string, number>)[k] ?? 0;
@@ -2868,7 +2946,7 @@
                               </div>
                             {:else}
                               <EffectParamRow
-                                label={meta.label}
+                                label={getEffectParamDisplayLabel(paramKey, meta.label)}
                                 value={(effect.params as Record<string, number>)[paramKey] ?? meta.default}
                                 min={meta.min as number}
                                 max={meta.max as number}
@@ -2884,7 +2962,7 @@
                         {:else}
                           {#each getNumericEffectParams(effect.type) as paramKey}
                             <EffectParamRow
-                              label={paramKey}
+                              label={getEffectParamDisplayLabel(paramKey)}
                               value={(effect.params as Record<string, number>)[paramKey] ?? 0.5}
                               min={0}
                               max={1}
@@ -2905,7 +2983,7 @@
               {/each}
               </div>
             {:else}
-              <div class="no-effects">No effects. Click + Add Effect above.</div>
+              <div class="no-effects">{$t('layers.effects.noEffects')}</div>
             {/if}
           </div>
           <!-- End effects-section -->

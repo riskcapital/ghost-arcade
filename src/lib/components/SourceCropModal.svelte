@@ -3,6 +3,7 @@
   import { project } from '../stores/layers';
   import type { CropRegion, MediaSource } from '../types';
   import { createDefaultCropRegion } from '../types';
+  import { t } from '../i18n';
 
   export let open = false;
   export let layerId = '';
@@ -20,8 +21,7 @@
   let previewEl: HTMLDivElement | null = null;
   let previewWidth = 1920;
   let previewHeight = 1080;
-  let drag:
-    | {
+  let drag: {
         handle: DragHandle;
         startX: number;
         startY: number;
@@ -34,6 +34,7 @@
   $: sourceAspect = previewWidth > 0 && previewHeight > 0 ? previewWidth / previewHeight : 16 / 9;
   $: croppedAspect = sourceAspect * (draft.width / Math.max(MIN_CROP, draft.height));
   $: cropSummary = `${Math.round(draft.width * 100)} x ${Math.round(draft.height * 100)}%`;
+  $: sourceLabel = source?.name || $t('effectTools.crop.mediaSource');
 
   $: {
     if (open && !wasOpen) {
@@ -289,17 +290,17 @@
     onkeydown={handleKeydown}
     role="dialog"
     aria-modal="true"
-    aria-label="Source Crop"
+    aria-label={$t('effectTools.crop.dialogAria')}
     tabindex="-1"
   >
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <div class="source-crop-modal" onclick={(e) => e.stopPropagation()}>
       <header class="source-crop-header">
         <div>
-          <h2>Source Crop</h2>
-          <p>{source?.name || 'Media source'} - {previewWidth} x {previewHeight}</p>
+          <h2>{$t('effectTools.crop.title')}</h2>
+          <p>{sourceLabel} - {previewWidth} x {previewHeight}</p>
         </div>
-        <button class="source-crop-close" onclick={restoreAndClose} aria-label="Close">x</button>
+        <button class="source-crop-close" onclick={restoreAndClose} aria-label={$t('effectTools.crop.close')}>x</button>
       </header>
 
       <div class="source-crop-body">
@@ -317,22 +318,23 @@
               <img class="source-crop-media" src={source.src} alt="" onload={handleImageLoad} />
             {:else}
               <div class="source-crop-placeholder">
-                <span>Live Texture</span>
-                <small>Use the fields on the right when a direct preview is not available.</small>
+                <span>{$t('effectTools.crop.liveTexture')}</span>
+                <small>{$t('effectTools.crop.unavailablePreview')}</small>
               </div>
             {/if}
 
             <!-- svelte-ignore a11y_no_static_element_interactions -->
             <div
               class="source-crop-box"
-              style="left: {draft.x * 100}%; top: {draft.y * 100}%; width: {draft.width * 100}%; height: {draft.height * 100}%;"
+              style="left: {draft.x * 100}%; top: {draft.y * 100}%; width: {draft.width * 100}%; height: {draft.height *
+                100}%;"
               onmousedown={(e) => startDrag(e, 'move')}
               role="presentation"
             >
               {#each ['nw', 'n', 'ne', 'e', 'se', 's', 'sw', 'w'] as handle}
                 <button
                   class="source-crop-handle {handle}"
-                  aria-label={`Resize crop ${handle}`}
+                  aria-label={$t('effectTools.crop.resizeHandle', { values: { handle } })}
                   onmousedown={(e) => startDrag(e, handle as DragHandle)}
                 ></button>
               {/each}
@@ -342,11 +344,11 @@
 
         <aside class="source-crop-controls">
           <div class="source-crop-stat">
-            <span>Crop</span>
+            <span>{$t('effectTools.crop.crop')}</span>
             <strong>{cropSummary}</strong>
           </div>
           <div class="source-crop-stat">
-            <span>Aspect</span>
+            <span>{$t('effectTools.crop.aspect')}</span>
             <strong>{croppedAspect.toFixed(2)}:1</strong>
           </div>
 
@@ -354,24 +356,24 @@
             <button onclick={() => setAspect(16 / 9)}>16:9</button>
             <button onclick={() => setAspect(4 / 3)}>4:3</button>
             <button onclick={() => setAspect(1)}>1:1</button>
-            <button onclick={centerCrop}>Center</button>
+            <button onclick={centerCrop}>{$t('effectTools.crop.center')}</button>
           </div>
 
           <div class="source-crop-fields">
             <label>
-              Left
+              {$t('effectTools.crop.left')}
               <input type="number" min="0" max="100" step="0.1" value={percent(draft.x)} oninput={(e) => updateField('x', (e.target as HTMLInputElement).value)} />
             </label>
             <label>
-              Top
+              {$t('effectTools.crop.top')}
               <input type="number" min="0" max="100" step="0.1" value={percent(draft.y)} oninput={(e) => updateField('y', (e.target as HTMLInputElement).value)} />
             </label>
             <label>
-              Width
+              {$t('effectTools.crop.width')}
               <input type="number" min="1" max="100" step="0.1" value={percent(draft.width)} oninput={(e) => updateField('width', (e.target as HTMLInputElement).value)} />
             </label>
             <label>
-              Height
+              {$t('effectTools.crop.height')}
               <input type="number" min="1" max="100" step="0.1" value={percent(draft.height)} oninput={(e) => updateField('height', (e.target as HTMLInputElement).value)} />
             </label>
           </div>
@@ -379,10 +381,10 @@
       </div>
 
       <footer class="source-crop-footer">
-        <button class="source-crop-secondary" onclick={resetCrop}>Reset</button>
+        <button class="source-crop-secondary" onclick={resetCrop}>{$t('effectTools.crop.reset')}</button>
         <div class="source-crop-footer-actions">
-          <button class="source-crop-secondary" onclick={restoreAndClose}>Cancel</button>
-          <button class="source-crop-primary" onclick={done}>Done</button>
+          <button class="source-crop-secondary" onclick={restoreAndClose}>{$t('effectTools.crop.cancel')}</button>
+          <button class="source-crop-primary" onclick={done}>{$t('effectTools.crop.done')}</button>
         </div>
       </footer>
     </div>
@@ -543,7 +545,7 @@
 
   .source-crop-box::before,
   .source-crop-box::after {
-    content: "";
+    content: '';
     position: absolute;
     inset: 33.333% 0 auto 0;
     height: 1px;

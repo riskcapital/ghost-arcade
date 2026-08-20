@@ -3,6 +3,7 @@
   import type { KeyframeableParam } from '../../keyframes/paramDiscovery';
   import type { KeyframeEasing } from '../../types';
   import { onMount, onDestroy } from 'svelte';
+  import { t } from '../../i18n';
 
   // Keyframe clipboard — persists across component instances via module scope
   type KeyframeClipboard = {
@@ -42,9 +43,9 @@
     if (!timeline) return map;
     for (const track of timeline.tracks) {
       if (track.type === 'boolean') {
-        map[track.key] = track.boolKeyframes.map(k => ({ time: k.time, isBool: true }));
+        map[track.key] = track.boolKeyframes.map((k) => ({ time: k.time, isBool: true }));
       } else {
-        map[track.key] = track.keyframes.map(k => ({ time: k.time, isBool: false }));
+        map[track.key] = track.keyframes.map((k) => ({ time: k.time, isBool: false }));
       }
     }
     return map;
@@ -56,7 +57,11 @@
     for (let t = 0; t <= config.duration; t += step) {
       const m = Math.floor(t / 60);
       const s = t % 60;
-      ticks.push({ x: t * zoom, label: `${m}:${String(s).padStart(2, '0')}`, major: t % (step * 5) === 0 || step >= 5 });
+      ticks.push({
+        x: t * zoom,
+        label: `${m}:${String(s).padStart(2, '0')}`,
+        major: t % (step * 5) === 0 || step >= 5,
+      });
     }
     return ticks;
   })();
@@ -86,7 +91,16 @@
     const kfEl = findKfElement(e.target);
     const isPlayhead = (e.target as HTMLElement).closest('.playhead');
 
-    console.log('[KF Grid] mousedown button=', e.button, 'kfEl=', !!kfEl, 'isPlayhead=', !!isPlayhead, 'layerId=', layerId);
+    console.log(
+      '[KF Grid] mousedown button=',
+      e.button,
+      'kfEl=',
+      !!kfEl,
+      'isPlayhead=',
+      !!isPlayhead,
+      'layerId=',
+      layerId,
+    );
 
     if (isPlayhead) {
       startPlayheadDrag(e);
@@ -164,7 +178,10 @@
   }
 
   function seekFromClick(e: MouseEvent) {
-    if (suppressNextClick) { suppressNextClick = false; return; }
+    if (suppressNextClick) {
+      suppressNextClick = false;
+      return;
+    }
     const target = e.target as HTMLElement;
     if (target.closest('.kf-mark') || target.closest('.playhead')) return;
     // Clicking empty space clears the current keyframe selection
@@ -206,7 +223,10 @@
     console.log('[KF Grid] startKfDrag: layerId=', capturedLayerId, 'paramKey=', paramKey, 'time=', time);
 
     const onMove = (ev: MouseEvent) => {
-      if (!capturedLayerId) { console.warn('[KF Grid] drag onMove: no layerId'); return; }
+      if (!capturedLayerId) {
+        console.warn('[KF Grid] drag onMove: no layerId');
+        return;
+      }
       const x = getRelativeX(ev);
       const newTime = Math.max(0, Math.min(x / capturedZoom, capturedDuration));
       if (Math.abs(newTime - currentTrackTime) < 0.01) return;
@@ -231,7 +251,11 @@
   // kind='keyframe' when opened by right-clicking an existing keyframe;
   // kind='empty-track' when opened on empty track area (paste-only menu).
   let contextMenu: {
-    x: number; y: number; paramKey: string; time: number; layerId: string;
+    x: number;
+    y: number;
+    paramKey: string;
+    time: number;
+    layerId: string;
     kind: 'keyframe' | 'empty-track';
   } | null = null;
 
@@ -243,8 +267,14 @@
 
   function deleteKeyframe() {
     console.log('[KF Grid] deleteKeyframe called, contextMenu=', JSON.stringify(contextMenu));
-    if (!contextMenu) { console.warn('[KF Grid] deleteKeyframe: no contextMenu'); return; }
-    if (!contextMenu.layerId) { console.warn('[KF Grid] deleteKeyframe: no layerId in contextMenu'); return; }
+    if (!contextMenu) {
+      console.warn('[KF Grid] deleteKeyframe: no contextMenu');
+      return;
+    }
+    if (!contextMenu.layerId) {
+      console.warn('[KF Grid] deleteKeyframe: no layerId in contextMenu');
+      return;
+    }
     keyframeTimeline.removeKeyframe(contextMenu.layerId, contextMenu.paramKey, contextMenu.time);
     contextMenu = null;
     console.log('[KF Grid] deleteKeyframe done');
@@ -256,11 +286,17 @@
     const track = keyframeTimeline.getTrack(ref.layerId, ref.paramKey);
     if (!track) return false;
     if (track.type === 'number') {
-      const kf = track.keyframes.find(k => k.time === ref.time);
-      if (kf) { kfClipboard = { trackKey: ref.paramKey, type: 'number', value: kf.value, easing: kf.easing }; return true; }
+      const kf = track.keyframes.find((k) => k.time === ref.time);
+      if (kf) {
+        kfClipboard = { trackKey: ref.paramKey, type: 'number', value: kf.value, easing: kf.easing };
+        return true;
+      }
     } else {
-      const kf = track.boolKeyframes.find(k => k.time === ref.time);
-      if (kf) { kfClipboard = { trackKey: ref.paramKey, type: 'boolean', value: kf.value }; return true; }
+      const kf = track.boolKeyframes.find((k) => k.time === ref.time);
+      if (kf) {
+        kfClipboard = { trackKey: ref.paramKey, type: 'boolean', value: kf.value };
+        return true;
+      }
     }
     return false;
   }
@@ -304,11 +340,14 @@
   }
 
   // True when clipboard is compatible with the track under the context menu
-  $: canPasteHere = !!(contextMenu && kfClipboard &&
+  $: canPasteHere = !!(
+    contextMenu &&
+    kfClipboard &&
     (() => {
       const track = keyframeTimeline.getTrack(contextMenu.layerId, contextMenu.paramKey);
       return track && track.type === kfClipboard.type;
-    })());
+    })()
+  );
 
   // ── Keyboard shortcuts ────────────────────────────────────────────
   // Ctrl/Cmd+C copies the active (last-focused) keyframe.
@@ -366,8 +405,8 @@
   onclick={seekFromClick}
   onmousedown={handleMouseDown}
   oncontextmenu={handleContextMenu}
-  onmouseenter={() => mouseOverGrid = true}
-  onmouseleave={() => mouseOverGrid = false}>
+  onmouseenter={() => (mouseOverGrid = true)}
+  onmouseleave={() => (mouseOverGrid = false)}>
   <!-- Ruler -->
   <div class="ruler" style="width: {totalWidth}px">
     {#each rulerTicks as tick}
@@ -384,7 +423,7 @@
         <div class="group-spacer" style="height: {GROUP_HEIGHT}px"></div>
       {:else}
         <div class="track-row" style="height: {ROW_HEIGHT}px" data-param-key={row.param.key}>
-          {#each (kfByParam[row.param.key] || []) as kf}
+          {#each kfByParam[row.param.key] || [] as kf}
             <div class="kf-mark"
               class:bool={kf.isBool}
               class:selected={$keyframeTimeline.selectedKeyframe
@@ -416,21 +455,21 @@
     onclick={(e) => e.stopPropagation()}
     onmousedown={(e) => e.stopPropagation()}
     oncontextmenu={(e) => e.preventDefault()}>
-    <button class="ctx-item" onclick={(e) => { e.stopPropagation(); setEasing('linear'); }}>Linear</button>
-    <button class="ctx-item" onclick={(e) => { e.stopPropagation(); setEasing('ease-in'); }}>Ease In</button>
-    <button class="ctx-item" onclick={(e) => { e.stopPropagation(); setEasing('ease-out'); }}>Ease Out</button>
-    <button class="ctx-item" onclick={(e) => { e.stopPropagation(); setEasing('ease-in-out'); }}>Ease In-Out</button>
-    <button class="ctx-item" onclick={(e) => { e.stopPropagation(); setEasing('step'); }}>Step</button>
+    <button class="ctx-item" onclick={(e) => { e.stopPropagation(); setEasing('linear'); }}>{$t('timeline.easing.linear')}</button>
+    <button class="ctx-item" onclick={(e) => { e.stopPropagation(); setEasing('ease-in'); }}>{$t('timeline.easing.easeIn')}</button>
+    <button class="ctx-item" onclick={(e) => { e.stopPropagation(); setEasing('ease-out'); }}>{$t('timeline.easing.easeOut')}</button>
+    <button class="ctx-item" onclick={(e) => { e.stopPropagation(); setEasing('ease-in-out'); }}>{$t('timeline.easing.easeInOut')}</button>
+    <button class="ctx-item" onclick={(e) => { e.stopPropagation(); setEasing('step'); }}>{$t('timeline.easing.step')}</button>
     <div class="ctx-sep"></div>
     <button class="ctx-item" onclick={(e) => { e.stopPropagation(); copyKeyframe(); }}>
-      Copy Keyframe <span class="ctx-shortcut">Ctrl+C</span>
+      {$t('timeline.context.copyKeyframe')} <span class="ctx-shortcut">Ctrl+C</span>
     </button>
     <button class="ctx-item" disabled={!canPasteHere}
       onclick={(e) => { e.stopPropagation(); if (canPasteHere) pasteAtPlayhead(); }}>
-      Paste at Playhead <span class="ctx-shortcut">Ctrl+V</span>
+      {$t('timeline.context.pasteAtPlayhead')} <span class="ctx-shortcut">Ctrl+V</span>
     </button>
     <div class="ctx-sep"></div>
-    <button class="ctx-item ctx-delete" onclick={(e) => { e.stopPropagation(); deleteKeyframe(); }}>Delete</button>
+    <button class="ctx-item ctx-delete" onclick={(e) => { e.stopPropagation(); deleteKeyframe(); }}>{$t('timeline.context.delete')}</button>
   </div>
 {:else if contextMenu && contextMenu.kind === 'empty-track'}
   <div class="context-menu" style="left: {contextMenu.x}px; top: {contextMenu.y}px"
@@ -439,11 +478,11 @@
     oncontextmenu={(e) => e.preventDefault()}>
     <button class="ctx-item" disabled={!canPasteHere}
       onclick={(e) => { e.stopPropagation(); if (canPasteHere) pasteAtCursor(); }}>
-      Paste Keyframe Here
+      {$t('timeline.context.pasteHere')}
     </button>
     <button class="ctx-item" disabled={!canPasteHere}
       onclick={(e) => { e.stopPropagation(); if (canPasteHere) pasteAtPlayhead(); }}>
-      Paste at Playhead <span class="ctx-shortcut">Ctrl+V</span>
+      {$t('timeline.context.pasteAtPlayhead')} <span class="ctx-shortcut">Ctrl+V</span>
     </button>
   </div>
 {/if}
@@ -499,7 +538,7 @@
     position: absolute;
     top: 50%;
     transform: translate(-50%, -50%);
-    color: #FF6B6B;
+    color: #ff6b6b;
     font-size: 17px;
     cursor: grab;
     padding: 2px 4px;
@@ -508,15 +547,15 @@
     user-select: none;
     pointer-events: auto;
   }
-  .kf-mark:hover { color: #FF8585; font-size: 19px; }
-  .kf-mark:active { cursor: grabbing; color: #FFAAAA; }
-  .kf-mark.bool { color: #7EC8E3; }
+  .kf-mark:hover { color: #ff8585; font-size: 19px; }
+  .kf-mark:active { cursor: grabbing; color: #ffaaaa; }
+  .kf-mark.bool { color: #7ec8e3; }
   .kf-mark.selected {
-    color: #FFD96B;
+    color: #ffd96b;
     text-shadow: 0 0 6px rgba(255, 217, 107, 0.9);
     transform: translate(-50%, -50%) scale(1.25);
   }
-  .kf-mark.selected.bool { color: #FFD96B; }
+  .kf-mark.selected.bool { color: #ffd96b; }
   .playhead {
     position: absolute;
     top: 0;
@@ -532,7 +571,7 @@
     left: -5px;
     width: 11px;
     height: 10px;
-    background: #FF6B6B;
+    background: #ff6b6b;
     clip-path: polygon(0 0, 100% 0, 50% 100%);
   }
   .playhead-line {
@@ -541,7 +580,7 @@
     bottom: 0;
     left: 0;
     width: 1px;
-    background: #FF6B6B;
+    background: #ff6b6b;
     opacity: 0.8;
   }
   .context-menu {
@@ -567,7 +606,7 @@
   }
   .ctx-item:hover:not(:disabled) { background: rgba(255,107,107,0.15); color: #fff; }
   .ctx-item:disabled { opacity: 0.4; cursor: default; }
-  .ctx-delete { color: #FF4757; }
+  .ctx-delete { color: #ff4757; }
   .ctx-sep { height: 1px; background: rgba(255,255,255,0.06); margin: 2px 0; }
   .ctx-shortcut { float: right; color: rgba(255,255,255,0.35); font-size: 11px; padding-left: 8px; }
 </style>

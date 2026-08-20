@@ -1,0 +1,35 @@
+export default {
+  output: {
+    zeroCopyUnavailable: '{texture} 제로 카피를 사용할 수 없습니다. CPU 폴백이 비활성화되었습니다.',
+    zeroCopyStarting: '제로 카피 시작 중',
+    started: '{texture} {mode}: {name} {width}x{height}',
+    senderFailed: '{texture} 송신기를 시작하지 못했습니다',
+    startFailed: '{texture} 실패: {error}',
+  },
+  shader: {
+    compilationFailed: '셰이더 컴파일 실패: {name}',
+    unknownName: '알 수 없음',
+  },
+  splat: {
+    gaussianSplat: '가우시안 스플랫',
+    pointCloud: '포인트 클라우드',
+    loading: '{source} 불러오는 중',
+    readingSource: '소스 데이터 읽는 중',
+    parsingPoints: '{total}개 중 {loaded}개 포인트 분석 중',
+    parsingPointData: '포인트 데이터 분석 중',
+    preparing: '포인트 클라우드 준비 중',
+    ready: '포인트 클라우드 준비 완료',
+    displayPoints: '소스 {source}개 중 {display}개 포인트 표시 중',
+    pointsReady: '{count}개 포인트 준비 완료',
+    loadFailed: '{format} 파일을 불러오지 못했습니다: {error}',
+    formatSplat: '.splat',
+    formatPly: 'PLY',
+    detailPreparingPoints: '{count}개 포인트 준비 중',
+    detailPreparingPoint: '{total}개 중 {current}번째 포인트 준비 중',
+    detailCreatingGpuBuffers: 'GPU 버퍼 생성 중',
+    detailGpuBuffersReady: 'GPU 버퍼 준비 완료',
+  },
+  model3d: {
+    loadFailed: '3D 모델을 불러오지 못했습니다. 이 레이어에 모델 파일을 다시 추가하세요.',
+  },
+};

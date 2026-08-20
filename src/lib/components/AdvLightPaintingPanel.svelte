@@ -15,6 +15,7 @@
   import { selectedAdvLightPaintingLayer } from '$lib/stores/layers';
   import { project } from '$lib/stores/layers';
   import type { AdvLightPaintBrush } from '$lib/types';
+  import { t } from '../i18n';
 
   // Mutate the layer's content via the layers store. Each setter
   // triggers a project update so WebGPUCanvas's subscription
@@ -41,11 +42,16 @@
     size: number;
     lifespanSec: number;
   }>> = {
-    drip:   { baseColor: [1.0, 0.3, 0.82], gravity: 0.85, viscosity: 0.93, glow: 1.8, hueCycleSpeed: 0.04, size: 0.013, lifespanSec: 5 },
-    water:  { baseColor: [0.3, 0.7, 1.0],  gravity: 0.55, viscosity: 0.94, glow: 1.4, hueCycleSpeed: 0.0,  size: 0.018, lifespanSec: 6, spawnSpread: 0.6 },
-    smoke:  { baseColor: [0.85, 0.88, 0.95], gravity: 0.4, viscosity: 0.96, glow: 1.0, hueCycleSpeed: 0.0,  size: 0.022, lifespanSec: 5 },
-    plasma: { baseColor: [0.4, 1.0, 0.7],  gravity: 0.0,  viscosity: 0.96, glow: 2.4, hueCycleSpeed: 0.25, size: 0.012, lifespanSec: 4 },
-    shader: { baseColor: [0.8, 0.5, 1.0],  gravity: 0.3,  viscosity: 0.94, glow: 2.0, hueCycleSpeed: 0.15, size: 0.014, lifespanSec: 5 },
+    drip:   { baseColor: [1.0, 0.3, 0.82], gravity: 0.85, viscosity: 0.93, glow: 1.8, hueCycleSpeed: 0.04, size: 0.013, lifespanSec: 5,
+    },
+    water:  { baseColor: [0.3, 0.7, 1.0],  gravity: 0.55, viscosity: 0.94, glow: 1.4, hueCycleSpeed: 0.0,  size: 0.018, lifespanSec: 6, spawnSpread: 0.6,
+    },
+    smoke:  { baseColor: [0.85, 0.88, 0.95], gravity: 0.4, viscosity: 0.96, glow: 1.0, hueCycleSpeed: 0.0,  size: 0.022, lifespanSec: 5,
+    },
+    plasma: { baseColor: [0.4, 1.0, 0.7],  gravity: 0.0,  viscosity: 0.96, glow: 2.4, hueCycleSpeed: 0.25, size: 0.012, lifespanSec: 4,
+    },
+    shader: { baseColor: [0.8, 0.5, 1.0],  gravity: 0.3,  viscosity: 0.94, glow: 2.0, hueCycleSpeed: 0.15, size: 0.014, lifespanSec: 5,
+    },
   };
 
   function setBrush(b: AdvLightPaintBrush): void {
@@ -90,59 +96,72 @@
     }, 50);
   }
 
-  const BRUSH_PRESETS: { id: AdvLightPaintBrush; label: string; desc: string }[] = [
-    { id: 'drip',   label: 'Drip',   desc: 'Gravity + viscosity. Falling streams.' },
-    { id: 'water',  label: 'Water',  desc: 'Gravity + cohesion. Pools at rest.' },
-    { id: 'smoke',  label: 'Smoke',  desc: 'Buoyant + curl noise. Wispy plumes.' },
-    { id: 'plasma', label: 'Plasma', desc: 'Curl noise chaos. Bright swirls.' },
-    { id: 'shader', label: 'Shader', desc: 'Hue-driven swirl. (Shader source v2.)' },
+  const BRUSH_PRESETS: { id: AdvLightPaintBrush }[] = [
+    { id: 'drip' },
+    { id: 'water' },
+    { id: 'smoke' },
+    { id: 'plasma' },
+    { id: 'shader' },
   ];
+
+  function advMessage(key: string): string {
+    return $t(`lighting.advLightPainting.${key}`);
+  }
+
+  function brushLabel(id: AdvLightPaintBrush): string {
+    return advMessage(`brushes.${id}.label`);
+  }
+
+  function brushDescription(id: AdvLightPaintBrush): string {
+    return advMessage(`brushes.${id}.description`);
+  }
 
   $: c = $selectedAdvLightPaintingLayer?.advLightPaintingContent ?? null;
 </script>
 
 {#if c}
   <div class="adv-paint-panel">
-    <div class="panel-title">Adv Light Paint <span class="badge">WebGPU</span></div>
-    <div class="panel-hint">click + drag over the editor canvas to paint</div>
+    <div class="panel-title">
+      {$t('lighting.advLightPainting.title')} <span class="badge">{$t('lighting.advLightPainting.webgpu')}</span></div>
+    <div class="panel-hint">{$t('lighting.advLightPainting.hint')}</div>
 
     <!-- Brush preset picker -->
     <div class="section">
-      <div class="section-title">Brush</div>
+      <div class="section-title">{$t('lighting.advLightPainting.sections.brush')}</div>
       <div class="brush-grid">
         {#each BRUSH_PRESETS as b}
           <button
             class="brush-button"
             class:active={c.brush === b.id}
             onclick={() => setBrush(b.id)}
-            title={b.desc}
+            title={brushDescription(b.id)}
           >
-            {b.label}
+            {brushLabel(b.id)}
           </button>
         {/each}
       </div>
       <div class="brush-desc">
-        {BRUSH_PRESETS.find((p) => p.id === c.brush)?.desc ?? ''}
+        {BRUSH_PRESETS.find((p) => p.id === c.brush)? brushDescription(c.brush) : ''}
       </div>
     </div>
 
     <!-- Particle population -->
     <div class="section">
-      <div class="section-title">Density</div>
+      <div class="section-title">{$t('lighting.advLightPainting.sections.density')}</div>
       <label class="row">
-        <span>Particles</span>
+        <span>{$t('lighting.advLightPainting.labels.particles')}</span>
         <input type="range" min="10000" max="200000" step="5000" value={c.particleCount}
                oninput={(e) => setNum('particleCount', +(e.currentTarget as HTMLInputElement).value)} />
         <span class="num">{c.particleCount.toLocaleString()}</span>
       </label>
       <label class="row">
-        <span>Spawn rate</span>
+        <span>{$t('lighting.advLightPainting.labels.spawnRate')}</span>
         <input type="range" min="10" max="500" step="10" value={c.spawnRate}
                oninput={(e) => setNum('spawnRate', +(e.currentTarget as HTMLInputElement).value)} />
         <span class="num">{c.spawnRate}</span>
       </label>
       <label class="row">
-        <span>Spawn spread</span>
+        <span>{$t('lighting.advLightPainting.labels.spawnSpread')}</span>
         <input type="range" min="0" max="1" step="0.05" value={c.spawnSpread}
                oninput={(e) => setNum('spawnSpread', +(e.currentTarget as HTMLInputElement).value)} />
         <span class="num">{c.spawnSpread.toFixed(2)}</span>
@@ -151,27 +170,27 @@
 
     <!-- Physics -->
     <div class="section">
-      <div class="section-title">Physics</div>
+      <div class="section-title">{$t('lighting.advLightPainting.sections.physics')}</div>
       <label class="row">
-        <span>Gravity</span>
+        <span>{$t('lighting.advLightPainting.labels.gravity')}</span>
         <input type="range" min="0" max="2" step="0.05" value={c.gravity}
                oninput={(e) => setNum('gravity', +(e.currentTarget as HTMLInputElement).value)} />
         <span class="num">{c.gravity.toFixed(2)}</span>
       </label>
       <label class="row">
-        <span>Viscosity</span>
+        <span>{$t('lighting.advLightPainting.labels.viscosity')}</span>
         <input type="range" min="0.5" max="0.99" step="0.005" value={c.viscosity}
                oninput={(e) => setNum('viscosity', +(e.currentTarget as HTMLInputElement).value)} />
         <span class="num">{c.viscosity.toFixed(3)}</span>
       </label>
       <label class="row">
-        <span>Lifespan (s)</span>
+        <span>{$t('lighting.advLightPainting.labels.lifespan')}</span>
         <input type="range" min="0.5" max="10" step="0.5" value={c.lifespanSec}
                oninput={(e) => setNum('lifespanSec', +(e.currentTarget as HTMLInputElement).value)} />
         <span class="num">{c.lifespanSec.toFixed(1)}</span>
       </label>
       <label class="row">
-        <span>Depth (Z)</span>
+        <span>{$t('lighting.advLightPainting.labels.depth')}</span>
         <input type="range" min="-1" max="1" step="0.05" value={c.emissionZ}
                oninput={(e) => setNum('emissionZ', +(e.currentTarget as HTMLInputElement).value)} />
         <span class="num">{c.emissionZ.toFixed(2)}</span>
@@ -180,27 +199,27 @@
 
     <!-- Visuals -->
     <div class="section">
-      <div class="section-title">Visuals</div>
+      <div class="section-title">{$t('lighting.advLightPainting.sections.visuals')}</div>
       <label class="row">
-        <span>Particle size</span>
+        <span>{$t('lighting.advLightPainting.labels.particleSize')}</span>
         <input type="range" min="0.001" max="0.05" step="0.001" value={c.size}
                oninput={(e) => setNum('size', +(e.currentTarget as HTMLInputElement).value)} />
         <span class="num">{c.size.toFixed(3)}</span>
       </label>
       <label class="row">
-        <span>Glow</span>
+        <span>{$t('lighting.advLightPainting.labels.glow')}</span>
         <input type="range" min="0" max="4" step="0.1" value={c.glow}
                oninput={(e) => setNum('glow', +(e.currentTarget as HTMLInputElement).value)} />
         <span class="num">{c.glow.toFixed(1)}</span>
       </label>
       <label class="row">
-        <span>Hue cycle</span>
+        <span>{$t('lighting.advLightPainting.labels.hueCycle')}</span>
         <input type="range" min="0" max="1" step="0.01" value={c.hueCycleSpeed}
                oninput={(e) => setNum('hueCycleSpeed', +(e.currentTarget as HTMLInputElement).value)} />
         <span class="num">{c.hueCycleSpeed.toFixed(2)}</span>
       </label>
       <label class="row color-row">
-        <span>Base color</span>
+        <span>{$t('lighting.advLightPainting.labels.baseColor')}</span>
         <input type="color" value={rgbToHex(c.baseColor)}
                oninput={(e) => setColor((e.currentTarget as HTMLInputElement).value)} />
         <span class="num">{rgbToHex(c.baseColor)}</span>
@@ -209,9 +228,9 @@
 
     <!-- Audio -->
     <div class="section">
-      <div class="section-title">Audio</div>
+      <div class="section-title">{$t('lighting.advLightPainting.sections.audio')}</div>
       <label class="row">
-        <span>Bass kick</span>
+        <span>{$t('lighting.advLightPainting.labels.bassKick')}</span>
         <input type="range" min="0" max="1" step="0.05" value={c.audioReactivity}
                oninput={(e) => setNum('audioReactivity', +(e.currentTarget as HTMLInputElement).value)} />
         <span class="num">{c.audioReactivity.toFixed(2)}</span>
@@ -220,7 +239,7 @@
 
     <!-- Actions -->
     <div class="section actions">
-      <button class="action-btn danger" onclick={clearAll}>Clear all particles</button>
+      <button class="action-btn danger" onclick={clearAll}>{$t('lighting.advLightPainting.labels.clearAll')}</button>
     </div>
   </div>
 {/if}
@@ -316,7 +335,7 @@
     color: #6df;
   }
   .row.color-row { grid-template-columns: 90px 40px 1fr; }
-  .row.color-row input[type="color"] {
+  .row.color-row input[type='color'] {
     width: 40px;
     height: 24px;
     border: 1px solid #333344;
@@ -324,7 +343,7 @@
     cursor: pointer;
     padding: 0;
   }
-  input[type="range"] {
+  input[type='range'] {
     accent-color: #6df;
     width: 100%;
   }

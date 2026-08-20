@@ -1,4 +1,5 @@
 import { mount } from 'svelte';
+import './lib/i18n';
 import { initErrorReporter } from './lib/utils/errorReporter';
 import { silenceThreeSerializationNoise } from './lib/utils/silenceThreePatches';
 // Theme system: importing the store self-registers + applies the saved

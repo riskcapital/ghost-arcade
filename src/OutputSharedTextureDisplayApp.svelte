@@ -48,9 +48,14 @@
    */
   import { onMount, onDestroy } from 'svelte';
   import { invoke } from '$lib/bridge';
+  import { t } from '$lib/i18n';
 
   const urlParams = new URLSearchParams(window.location.search);
   let showStats = urlParams.get('stats') === '1';
+
+  function outputMessage(key: string, values?: Record<string, string | number>): string {
+    return $t(`screens.outputWindow.${key}`, values ? { values } : undefined);
+  }
 
   let canvasEl: HTMLCanvasElement;
   let disposed = false;
@@ -694,10 +699,10 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
 
   // Reactive labels for the overlays
   $: statusText = (() => {
-    if (initStatus === 'init') return 'Initialising WebGPU…';
-    if (initStatus === 'no-webgpu') return `WebGPU required: ${initError}`;
-    if (initStatus === 'no-port') return 'Waiting for editor link…';
-    if (initStatus === 'error') return `Error: ${initError}`;
+    if (initStatus === 'init') return $t('screens.outputWindow.initializingWebGpu');
+    if (initStatus === 'no-webgpu') return $t('screens.outputWindow.webGpuRequired', { values: { error: initError } });
+    if (initStatus === 'no-port') return $t('screens.outputWindow.waitingForEditor');
+    if (initStatus === 'error') return $t('screens.outputWindow.error', { values: { error: initError } });
     return '';
   })();
   $: badgeColor = (() => {
@@ -712,8 +717,8 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   // permanently — distracting and non-actionable.
   $: badgeShow = initStatus !== 'running' || cpuFallback;
   $: badgeText = (() => {
-    if (initStatus !== 'running') return '●  no link';
-    if (cpuFallback) return `●  CPU fallback (${lastFormat})`;
+    if (initStatus !== 'running') return outputMessage('noLink');
+    if (cpuFallback) return outputMessage('cpuFallback', { format: lastFormat });
     return '';
   })();
 </script>
@@ -774,18 +779,18 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
 
 {#if showStats}
   <pre class="stats-overlay">
-mode webgpu-display
-status {initStatus}
-frames {connectedFrames}  fps {healthFps.toFixed(1)}
-raw-msgs {rawMessagesReceived}  non-vf {nonVideoFrameMessages}
-last-type {lastMessageTypeName}
-format {lastFormat}  cpu-fallback {cpuFallback}
-canvas {lastCanvasW}x{lastCanvasH}  frame {lastFrameDim}
-fit {fit}  rotation {rotationDeg}°
-brightness {brightness.toFixed(2)}  contrast {contrast.toFixed(2)}  gamma {gamma.toFixed(2)}
-gpu-submit {(renderTimeUsEMA).toFixed(1)}μs (EMA)
-adapter {adapter?.info?.description || 'unknown'}
-press S to hide</pre>
+{$t('screens.outputWindow.stats.mode', { values: { mode: 'webgpu-display' } })}
+{$t('screens.outputWindow.stats.status', { values: { status: initStatus } })}
+{$t('screens.outputWindow.stats.framesFps', { values: { frames: connectedFrames, fps: healthFps.toFixed(1) } })}
+{$t('screens.outputWindow.stats.rawMessages', { values: { rawMessages: rawMessagesReceived, nonVideoFrames: nonVideoFrameMessages } })}
+{$t('screens.outputWindow.stats.lastType', { values: { type: lastMessageTypeName } })}
+{$t('screens.outputWindow.stats.formatFallback', { values: { format: lastFormat, fallback: cpuFallback ? 'true' : 'false' } })}
+{$t('screens.outputWindow.stats.canvasFrame', { values: { canvas: `${lastCanvasW}x${lastCanvasH}`, frame: lastFrameDim } })}
+{$t('screens.outputWindow.stats.fitRotation', { values: { fit, rotation: rotationDeg } })}
+{$t('screens.outputWindow.stats.color', { values: { brightness: brightness.toFixed(2), contrast: contrast.toFixed(2), gamma: gamma.toFixed(2) } })}
+{$t('screens.outputWindow.stats.gpuSubmit', { values: { duration: renderTimeUsEMA.toFixed(1) } })}
+{$t('screens.outputWindow.stats.adapter', { values: { adapter: adapter?.info?.description || $t('screens.outputWindow.stats.unknown') } })}
+{$t('screens.outputWindow.pressStatsToHide')}</pre>
 {/if}
 
 <style>

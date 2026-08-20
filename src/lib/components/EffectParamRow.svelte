@@ -26,6 +26,7 @@
   import type { AutoConfig } from '../types';
   import { onMount, tick } from 'svelte';
   import ModTray, { modSourceLabel } from './ModTray.svelte';
+  import { t } from '../i18n';
 
   export let label: string;
   export let value: number;
@@ -283,14 +284,14 @@
           <div class="epr-slipper-fill" style="left: {_aMinFrac * 100}%; right: {(1 - _aMaxFrac) * 100}%"></div>
           <input type="range" min={min} max={max} step={_rSpan / 200} value={_aMin}
             class="epr-slipper epr-slipper-min"
-            aria-label={`${label} auto minimum`}
+            aria-label={`${label} ${$t('effects.param.autoMinimum')}`}
             oninput={(e) => {
               const v = parseFloat((e.target as HTMLInputElement).value);
               setAutoField('min', Math.min(v, _aMax - _rSpan * 0.02));
             }} />
           <input type="range" min={min} max={max} step={_rSpan / 200} value={_aMax}
             class="epr-slipper epr-slipper-max"
-            aria-label={`${label} auto maximum`}
+            aria-label={`${label} ${$t('effects.param.autoMaximum')}`}
             oninput={(e) => {
               const v = parseFloat((e.target as HTMLInputElement).value);
               setAutoField('max', Math.max(v, _aMin + _rSpan * 0.02));
@@ -303,7 +304,7 @@
         class="epr-source"
         class:active={isModulated}
         class:open={trayOpen}
-        title="Modulation — audio bands, LFO with BPM sync, auto playhead"
+        title={$t('effects.param.modulationTitle')}
         onclick={() => trayOpen = !trayOpen}
       >{modSourceLabel(currentSource, isAuto)}</button>
     </div>
@@ -317,7 +318,7 @@
         class="epr-source"
         class:active={isModulated}
         class:open={trayOpen}
-        title="Modulation — audio bands, LFO with BPM sync, auto playhead"
+        title={$t('effects.param.modulationTitle')}
         onclick={() => trayOpen = !trayOpen}
       >{modSourceLabel(currentSource, isAuto)}</button>
       {#if editing}
@@ -331,7 +332,7 @@
           onkeydown={onEditKey}
         />
       {:else}
-        <button type="button" class="epr-value" title="Click to type a precise value" onclick={startEdit} ondblclick={startEdit}>
+        <button type="button" class="epr-value" title={$t('effects.param.preciseValueTitle')} onclick={startEdit} ondblclick={startEdit}>
           {shown}
         </button>
       {/if}

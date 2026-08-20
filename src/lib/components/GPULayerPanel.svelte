@@ -22,6 +22,41 @@
   import type { ParamControl } from '../renderer/gpuShaderTypes';
   import { createAssetRefFromFile } from '../storage/assetRegistry';
   import NumericInput from './NumericInput.svelte';
+  import { t } from '../i18n';
+
+  function gpuText(key: string, fallback: string, values?: Record<string, string | number>): string {
+    const fullKey = `gpuTools.${key}`;
+    const translated = $t(fullKey, values ? { values } : undefined);
+    return translated === fullKey ? fallback : translated;
+  }
+
+  function gpuSegment(value: string): string {
+    const words = value.match(/[A-Za-z0-9]+/g) ?? [];
+    return words.length === 0
+      ? ''
+      : words[0]!.toLowerCase() +
+          words
+            .slice(1)
+            .map((word) => word[0]!.toUpperCase() + word.slice(1))
+            .join('');
+  }
+
+  function gpuLabel(value: string): string {
+    return gpuText(`labels.${gpuSegment(value)}`, value);
+  }
+
+  function shaderLabel(shader: { id: string; label: string }): string {
+    return gpuText(`shaders.${gpuSegment(shader.id)}.label`, shader.label);
+  }
+
+  function shaderDescription(shader: { id: string; description?: string }): string {
+    if (!shader.description) return '';
+    return gpuText(`shaders.${gpuSegment(shader.id)}.description`, shader.description);
+  }
+
+  function categoryLabel(category: string): string {
+    return gpuText(`categories.${gpuSegment(category)}`, category);
+  }
 
   // Media-source picker support (for shaders with kind: 'media-source'
   // controls, e.g. pixel-particles). Lists media library items + the
@@ -33,10 +68,9 @@
   // Index into the project's layer list — needed by EffectParamRow so
   // the modulation engine + autoEngine can route writes to the same
   // layer that owns this panel's GPU content.
-  $: layerIndex = layerId ? $layers.findIndex(l => l.id === layerId) : -1;
+  $: layerIndex = layerId ? $layers.findIndex((l) => l.id === layerId) : -1;
   $: libraryItems = ($mediaLibrary ?? []).filter(
-    (m: MediaItem) => m.type === 'image' || m.type === 'video',
-  );
+    (m: MediaItem) => m.type === 'image' || m.type === 'video');
 
   // Live capture sources — webcams (browser API) + Spout/Syphon senders
   // (desktop-only via the platform bridge). Webcam list is enumerated
@@ -90,7 +124,9 @@
   function pickSpoutSource(key: string, senderName: string) {
     setParam(key, { type: 'spout', senderName });
   }
-  function clearSource(key: string) { setParam(key, null); }
+  function clearSource(key: string) {
+    setParam(key, null);
+  }
   let _fileSourceKey: string = '';
   function openFilePicker(key: string) {
     _fileSourceKey = key;
@@ -113,22 +149,28 @@
     _fileSourceKey = '';
   }
   function sourceLabel(src: any): string {
-    if (!src) return 'no source';
+    if (!src) return $t('gpuTools.sources.noSource');
     if (src.type === 'media') {
       const item = libraryItems.find((m: MediaItem) => m.id === src.mediaId);
-      return item ? `media · ${item.name}` : 'media · ?';
+      return item ? $t('gpuTools.sources.media', { values: { name: item.name } }) : $t('gpuTools.sources.mediaUnknown');
     }
     if (src.type === 'layer') {
       const ml = mediaLayers.find((l) => l.id === src.layerId);
-      return ml ? `layer · ${ml.name}` : 'layer · ?';
+      return ml ? $t('gpuTools.sources.layer', { values: { name: ml.name } }) : $t('gpuTools.sources.layerUnknown');
     }
-    if (src.type === 'file') return 'file';
+    if (src.type === 'file') return $t('gpuTools.sources.file');
     if (src.type === 'camera') {
       const cam = cameraDevices.find((d) => d.deviceId === src.deviceId);
-      return `camera · ${cam?.label || 'default'}`;
+      return $t('gpuTools.sources.camera', {
+        values: { name: cam?.label || $t('gpuTools.sources.defaultCamera') },
+      });
     }
-    if (src.type === 'spout') return `${textureShareLabel.toLowerCase()} · ${src.senderName || '?'}`;
-    return 'unknown';
+    if (src.type === 'spout') {
+      return $t('gpuTools.sources.textureShare', {
+        values: { label: textureShareLabel.toLowerCase(), name: src.senderName || '?' },
+      });
+    }
+    return $t('gpuTools.sources.unknown');
   }
 
   $: layer = $selectedLayer;
@@ -195,9 +237,7 @@
     const stash: Record<string, Record<string, any>> = { ...(content.paramsByShader || {}) };
     if (prevId) stash[prevId] = prevParams;
     const restored = stash[id];
-    const nextParams = restored
-      ? { ...def.defaultParams, ...restored }
-      : { ...def.defaultParams };
+    const nextParams = restored ? { ...def.defaultParams, ...restored } : { ...def.defaultParams };
     project.updateGPULayerContent(layerId, {
       shaderId: id,
       params: nextParams,
@@ -232,37 +272,37 @@
 {#if content && layerId && shaderDef}
   <div class="gpu-panel">
     <div class="sec-label">
-      Shader
-      <span class="active-name">{shaderDef.label}</span>
+      {$t('gpuTools.sections.shader')}
+      <span class="active-name">{shaderLabel(shaderDef)}</span>
     </div>
 
     <!-- Shader picker — every entry in the catalog, grouped by category. -->
     <div class="shader-grid">
       {#each GPU_SHADER_CATALOG as s}
         <button class="shader-btn" class:active={content.shaderId === s.id} onclick={() => setShader(s.id)}>
-          <div class="shader-btn-label">{s.label}</div>
-          <div class="shader-btn-cat">{s.category}</div>
+          <div class="shader-btn-label">{shaderLabel(s)}</div>
+          <div class="shader-btn-cat">{categoryLabel(s.category)}</div>
         </button>
       {/each}
     </div>
 
-    {#if shaderDef.description}
-      <div class="hint">{shaderDef.description}</div>
+    {#if shaderDescription(shaderDef)}
+      <div class="hint">{shaderDescription(shaderDef)}</div>
     {/if}
 
     <!-- Universal layer-level controls (apply to every GPU shader,
          not just the current one). Background Opacity keys out the
          shader's dark areas so the layer below shows through. -->
-    <div class="sec-label sub">Layer</div>
+    <div class="sec-label sub">{$t('gpuTools.sections.layer')}</div>
     <div class="slider-col">
       <NumericInput
-        label="Background Opacity"
+        label={$t('gpuTools.controls.backgroundOpacity')}
         value={content.bgOpacity ?? 1.0}
         min={0}
         max={1}
         step={0.01}
         midiPath="map:gpu:__bgOpacity"
-        midiLabel="GPU Background Opacity"
+        midiLabel={$t('gpuTools.controls.gpuBackgroundOpacity')}
         on:input={(e) => setBgOpacity(e.detail)}
       />
     </div>
@@ -270,18 +310,18 @@
     <!-- Dynamic per-shader params, grouped. -->
     {#each groupedParams as [groupName, params]}
       {#if groupName}
-        <div class="sec-label sub">{groupName}</div>
+        <div class="sec-label sub">{gpuLabel(groupName)}</div>
       {/if}
       <div class="slider-col">
         {#each params as p}
           {#if p.kind === 'slider'}
             <EffectParamRow
-              label={p.label}
+              label={gpuLabel(p.label)}
               value={paramValue(p)}
               min={p.min}
               max={p.max}
               step={p.step}
-              layerIndex={layerIndex}
+              {layerIndex}
               effectId=""
               paramName={p.key}
               effectKind="gpu"
@@ -290,12 +330,12 @@
             />
           {:else if p.kind === 'angle'}
             <EffectParamRow
-              label={p.label}
+              label={gpuLabel(p.label)}
               value={paramValue(p)}
               min={-180}
               max={360}
               step={0.5}
-              layerIndex={layerIndex}
+              {layerIndex}
               effectId=""
               paramName={p.key}
               effectKind="gpu"
@@ -305,30 +345,35 @@
             />
           {:else if p.kind === 'toggle'}
             <label class="toggle-row">
-              <input type="checkbox" checked={paramValue(p)}
+              <input
+                type="checkbox"
+                checked={paramValue(p)}
                 onchange={(e) => setParam(p.key, (e.target as HTMLInputElement).checked)}
                 data-midi-path={`map:gpu:${p.key}`}
-                data-midi-label={p.label}
+                data-midi-label={gpuLabel(p.label)}
                 data-midi-min={0}
                 data-midi-max={1}
                 data-midi-step={1}
-                data-midi-mode="toggle" />
-              {p.label}
+                data-midi-mode="toggle"
+              />
+              {gpuLabel(p.label)}
             </label>
           {:else if p.kind === 'select'}
-            {@const _optValues = p.options.map(o => String(o.value))}
+            {@const _optValues = p.options.map((o) => String(o.value))}
             <div class="select-row">
-              <label>{p.label}</label>
-              <select value={paramValue(p)}
+              <label>{gpuLabel(p.label)}</label>
+              <select
+                value={paramValue(p)}
                 onchange={(e) => setParam(p.key, (e.target as HTMLSelectElement).value)}
                 data-midi-path={`map:gpu:${p.key}`}
-                data-midi-label={p.label}
+                data-midi-label={gpuLabel(p.label)}
                 data-midi-min={0}
                 data-midi-max={Math.max(0, _optValues.length - 1)}
                 data-midi-step={1}
-                data-midi-discrete={_optValues.join(',')}>
+                data-midi-discrete={_optValues.join(',')}
+              >
                 {#each p.options as opt}
-                  <option value={opt.value}>{opt.label}</option>
+                  <option value={opt.value}>{gpuLabel(opt.label)}</option>
                 {/each}
               </select>
             </div>
@@ -345,24 +390,31 @@
             {@const _allowed = (p as any).sources as ('media' | 'layer' | 'file' | 'live')[] | undefined}
             {@const _showMedia = !_allowed || _allowed.includes('media')}
             {@const _showLayer = !_allowed || _allowed.includes('layer')}
-            {@const _showFile  = !_allowed || _allowed.includes('file')}
-            {@const _showLive  = (!_allowed || _allowed.includes('live')) && showLiveSources}
-            {@const _accept    = (p as any).accept as string | undefined}
+            {@const _showFile = !_allowed || _allowed.includes('file')}
+            {@const _showLive = (!_allowed || _allowed.includes('live')) && showLiveSources}
+            {@const _accept = (p as any).accept as string | undefined}
             <div class="src-active">
-              <span class="src-active-label">{p.label}</span>
+              <span class="src-active-label">{gpuLabel(p.label)}</span>
               <span class="src-now" class:empty={!_src}>{sourceLabel(_src)}</span>
               {#if _src}
-                <button class="mini-x" title="Clear" onclick={() => clearSource(p.key)}>×</button>
+                <button
+                  class="mini-x"
+                  title={$t('gpuTools.sources.clear')}
+                  aria-label={$t('gpuTools.sources.clear')}
+                  onclick={() => clearSource(p.key)}>×</button
+                >
               {/if}
             </div>
             {#if _showMedia}
               {#if libraryItems.length > 0}
                 <div class="media-grid">
                   {#each libraryItems as item}
-                    <button class="media-cell"
+                    <button
+                      class="media-cell"
                       class:active={_src && _src.type === 'media' && _src.mediaId === item.id}
                       title={item.name}
-                      onclick={() => pickMediaSource(p.key, item)}>
+                      onclick={() => pickMediaSource(p.key, item)}
+                    >
                       {#if item.thumbnail}
                         <img src={item.thumbnail} alt={item.name} class="media-thumb" />
                       {:else if item.type === 'image'}
@@ -375,14 +427,16 @@
                   {/each}
                 </div>
               {:else}
-                <div class="hint mini">No media in library — drop files on the Media Tray, or use the file upload below.</div>
+                <div class="hint mini">{$t('gpuTools.sources.noMedia')}</div>
               {/if}
             {/if}
             {#if _showLayer && mediaLayers.length > 0}
-              <select class="src-select"
+              <select
+                class="src-select"
                 value={_src && _src.type === 'layer' ? _src.layerId : ''}
-                onchange={(e) => pickLayerSource(p.key, (e.target as HTMLSelectElement).value)}>
-                <option value="">— pick a media layer —</option>
+                onchange={(e) => pickLayerSource(p.key, (e.target as HTMLSelectElement).value)}
+              >
+                <option value="">{$t('gpuTools.sources.pickMediaLayer')}</option>
                 {#each mediaLayers as ml}
                   <option value={ml.id}>{ml.name} ({ml.source?.type})</option>
                 {/each}
@@ -390,7 +444,9 @@
             {/if}
             {#if _showFile}
               <button class="mini-action wide" onclick={() => openFilePicker(p.key)}>
-                {_accept ? `Pick file (${_accept})…` : 'Upload one-off file…'}
+                {_accept
+                  ? $t('gpuTools.sources.pickFile', { values: { accept: _accept } })
+                  : $t('gpuTools.sources.uploadFile')}
               </button>
             {/if}
 
@@ -399,43 +455,59 @@
                  the shader excluded `live` from its `sources` filter. -->
             {#if _showLive}
               <div class="live-sources">
-                <div class="live-label">Live capture</div>
+                <div class="live-label">{$t('gpuTools.sources.liveCapture')}</div>
                 {#if cameraDevices.length > 0}
-                  <select class="src-select"
-                    value={_src && _src.type === 'camera' ? (_src.deviceId || '') : ''}
+                  <select
+                    class="src-select"
+                    value={_src && _src.type === 'camera' ? _src.deviceId || '' : ''}
                     onchange={(e) => {
                       const v = (e.target as HTMLSelectElement).value;
-                      if (v === '') { clearSource(p.key); return; }
+                      if (v === '') {
+                        clearSource(p.key);
+                        return;
+                      }
                       pickCameraSource(p.key, v === '__default__' ? '' : v);
-                    }}>
-                    <option value="">— pick a camera —</option>
-                    <option value="__default__">Default camera</option>
+                    }}
+                  >
+                    <option value="">{$t('gpuTools.sources.pickCamera')}</option>
+                    <option value="__default__">{$t('gpuTools.sources.defaultCamera')}</option>
                     {#each cameraDevices as cam, i}
-                      <option value={cam.deviceId}>{cam.label || `Camera ${i + 1}`}</option>
+                      <option value={cam.deviceId}
+                        >{cam.label || $t('gpuTools.sources.cameraNumber', { values: { index: i + 1 } })}</option
+                      >
                     {/each}
                   </select>
                 {:else}
                   <button class="mini-action wide" onclick={enumerateCameras}>
-                    Detect cameras…
+                    {$t('gpuTools.sources.detectCameras')}
                   </button>
                 {/if}
 
                 {#if isDesktopApp}
                   {#if $spoutSenders.length > 0}
-                    <select class="src-select"
-                      value={_src && _src.type === 'spout' ? (_src.senderName || '') : ''}
+                    <select
+                      class="src-select"
+                      value={_src && _src.type === 'spout' ? _src.senderName || '' : ''}
                       onchange={(e) => {
                         const v = (e.target as HTMLSelectElement).value;
-                        if (v === '') { clearSource(p.key); return; }
+                        if (v === '') {
+                          clearSource(p.key);
+                          return;
+                        }
                         pickSpoutSource(p.key, v);
-                      }}>
-                      <option value="">— pick a {textureShareLabel} sender —</option>
+                      }}
+                    >
+                      <option value=""
+                        >{$t('gpuTools.sources.pickSender', { values: { label: textureShareLabel } })}</option
+                      >
                       {#each $spoutSenders as sender}
                         <option value={sender}>{sender}</option>
                       {/each}
                     </select>
                   {:else}
-                    <div class="hint mini">No active {textureShareLabel} senders. Start a sender from another app (Resolume, OBS plugin, TouchDesigner, etc.) and it'll appear here.</div>
+                    <div class="hint mini">
+                      {$t('gpuTools.sources.noSenders', { values: { label: textureShareLabel } })}
+                    </div>
                   {/if}
                 {/if}
               </div>
@@ -446,10 +518,20 @@
                  picker. Stored as [r, g, b] integers 0-255 to match
                  the convention used by other panels (light painting). -->
             {@const _c = paramValue(p) ?? [255, 255, 255]}
-            {@const _hex = '#' + (_c as number[]).map((v: number) => Math.max(0, Math.min(255, Math.round(v))).toString(16).padStart(2, '0')).join('')}
+            {@const _hex =
+              '#' +
+              (_c as number[])
+                .map((v: number) =>
+                  Math.max(0, Math.min(255, Math.round(v)))
+                    .toString(16)
+                    .padStart(2, '0'),
+                )
+                .join('')}
             <div class="color-row">
-              <label>{p.label}</label>
-              <input type="color" value={_hex}
+              <label>{gpuLabel(p.label)}</label>
+              <input
+                type="color"
+                value={_hex}
                 onchange={(e) => {
                   const h = (e.target as HTMLInputElement).value;
                   setParam(p.key, [
@@ -457,7 +539,8 @@
                     parseInt(h.slice(3, 5), 16),
                     parseInt(h.slice(5, 7), 16),
                   ]);
-                }} />
+                }}
+              />
             </div>
           {/if}
         {/each}
@@ -470,17 +553,49 @@
        as a 2D image / video. The browser sniffs mime as
        application/octet-stream for those formats so we have to list
        extensions explicitly. -->
-  <input type="file" bind:this={fileInput} accept="image/*,video/*,.ply,.splat" onchange={onFileSelected} style="display:none" />
+  <input
+    type="file"
+    bind:this={fileInput}
+    accept="image/*,video/*,.ply,.splat"
+    onchange={onFileSelected}
+    style="display:none"
+  />
 {:else}
-  <div class="empty">Select a GPU layer.</div>
+  <div class="empty">{$t('gpuTools.sources.selectGpuLayer')}</div>
 {/if}
 
 <style>
-  .gpu-panel { padding: 8px 12px; color: #d4d8e0; font-size: 13px; }
-  .sec-label { text-transform: uppercase; font-size: 11px; letter-spacing: 0.5px; opacity: 0.7; margin: 12px 0 6px; display: flex; align-items: center; gap: 6px; }
-  .sec-label.sub { margin-top: 14px; }
-  .active-name { margin-left: auto; font-size: 11.5px; color: #67e8f9; opacity: 0.95; text-transform: none; letter-spacing: 0; }
-  .shader-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 5px; }
+  .gpu-panel {
+    padding: 8px 12px;
+    color: #d4d8e0;
+    font-size: 13px;
+  }
+  .sec-label {
+    text-transform: uppercase;
+    font-size: 11px;
+    letter-spacing: 0.5px;
+    opacity: 0.7;
+    margin: 12px 0 6px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+  }
+  .sec-label.sub {
+    margin-top: 14px;
+  }
+  .active-name {
+    margin-left: auto;
+    font-size: 11.5px;
+    color: #67e8f9;
+    opacity: 0.95;
+    text-transform: none;
+    letter-spacing: 0;
+  }
+  .shader-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 5px;
+  }
   .shader-btn {
     background: #1a1d27;
     border: 1px solid #2a2f3d;
@@ -491,24 +606,83 @@
     text-align: left;
     transition: all 0.08s;
   }
-  .shader-btn:hover { background: #262b3a; color: #fff; border-color: #4a5366; }
-  .shader-btn.active { background: linear-gradient(135deg, #1e3a8a 0%, #1e293b 100%); border-color: #67e8f9; color: #67e8f9; }
-  .shader-btn-label { font-size: 13px; font-weight: 500; }
-  .shader-btn-cat { font-size: 10.5px; opacity: 0.7; margin-top: 2px; }
-  .hint { margin-top: 8px; padding: 6px 8px; background: #14171f; border-left: 2px solid #67e8f9; font-size: 11.5px; color: #8a96a6; line-height: 1.4; border-radius: 0 3px 3px 0; }
-  .slider-col { display: flex; flex-direction: column; gap: 8px; }
-  .toggle-row { display: flex; align-items: center; gap: 6px; font-size: 12px; cursor: pointer; }
-  .toggle-row input { accent-color: #67e8f9; }
-  .select-row { display: flex; flex-direction: column; gap: 3px; }
-  .select-row label { font-size: 11.5px; opacity: 0.85; }
-  .select-row select {
-    background: #1f2330; border: 1px solid #333a4a; color: #d4d8e0;
-    padding: 6px 8px; border-radius: 3px; font-size: 12.5px; cursor: pointer;
+  .shader-btn:hover {
+    background: #262b3a;
+    color: #fff;
+    border-color: #4a5366;
   }
-  .select-row select:focus { outline: none; border-color: #67e8f9; }
-  .color-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; }
-  .color-row label { font-size: 11.5px; opacity: 0.85; }
-  .color-row input[type="color"] {
+  .shader-btn.active {
+    background: linear-gradient(135deg, #1e3a8a 0%, #1e293b 100%);
+    border-color: #67e8f9;
+    color: #67e8f9;
+  }
+  .shader-btn-label {
+    font-size: 13px;
+    font-weight: 500;
+  }
+  .shader-btn-cat {
+    font-size: 10.5px;
+    opacity: 0.7;
+    margin-top: 2px;
+  }
+  .hint {
+    margin-top: 8px;
+    padding: 6px 8px;
+    background: #14171f;
+    border-left: 2px solid #67e8f9;
+    font-size: 11.5px;
+    color: #8a96a6;
+    line-height: 1.4;
+    border-radius: 0 3px 3px 0;
+  }
+  .slider-col {
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+  .toggle-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 12px;
+    cursor: pointer;
+  }
+  .toggle-row input {
+    accent-color: #67e8f9;
+  }
+  .select-row {
+    display: flex;
+    flex-direction: column;
+    gap: 3px;
+  }
+  .select-row label {
+    font-size: 11.5px;
+    opacity: 0.85;
+  }
+  .select-row select {
+    background: #1f2330;
+    border: 1px solid #333a4a;
+    color: #d4d8e0;
+    padding: 6px 8px;
+    border-radius: 3px;
+    font-size: 12.5px;
+    cursor: pointer;
+  }
+  .select-row select:focus {
+    outline: none;
+    border-color: #67e8f9;
+  }
+  .color-row {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
+  .color-row label {
+    font-size: 11.5px;
+    opacity: 0.85;
+  }
+  .color-row input[type='color'] {
     width: 36px; height: 22px; padding: 0; border: 1px solid #333a4a; border-radius: 3px; cursor: pointer; background: transparent;
   }
   /* Media-source picker */

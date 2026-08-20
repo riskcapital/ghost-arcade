@@ -6,6 +6,7 @@
   import TimelineTransport from './timeline/TimelineTransport.svelte';
   import TimelineTrackList from './timeline/TimelineTrackList.svelte';
   import TimelineGrid from './timeline/TimelineGrid.svelte';
+  import { t } from '../i18n';
 
   $: isOpen = $keyframeTimeline.isOpen;
 
@@ -27,13 +28,17 @@
     if (syncing || !trackListScrollEl || !gridScrollEl) return;
     syncing = true;
     gridScrollEl.scrollTop = trackListScrollEl.scrollTop;
-    requestAnimationFrame(() => { syncing = false; });
+    requestAnimationFrame(() => {
+      syncing = false;
+    });
   }
   function syncFromGrid() {
     if (syncing || !trackListScrollEl || !gridScrollEl) return;
     syncing = true;
     trackListScrollEl.scrollTop = gridScrollEl.scrollTop;
-    requestAnimationFrame(() => { syncing = false; });
+    requestAnimationFrame(() => {
+      syncing = false;
+    });
   }
   $: if (trackListScrollEl) trackListScrollEl.onscroll = syncFromList;
   $: if (gridScrollEl) gridScrollEl.onscroll = syncFromGrid;
@@ -66,9 +71,8 @@
   $: vjMode = $vjClipLauncher.isOpen;
   $: vjSelectedIdx = $vjClipLauncher.selectedLayerIndex;
   // Active clip on the currently selected VJ layer
-  $: vjActiveClip = (vjMode && vjSelectedIdx !== null)
-    ? $vjClipLauncher.layerStates[vjSelectedIdx]?.activeClip ?? null
-    : null;
+  $: vjActiveClip =
+    vjMode && vjSelectedIdx !== null ? ($vjClipLauncher.layerStates[vjSelectedIdx]?.activeClip ?? null) : null;
 
   // Auto-select layer when selected layer changes (mapping mode OR VJ mode)
   // In VJ mode, keyframes are keyed per-clip (not per-layer) so switching clips shows
@@ -95,9 +99,9 @@
     if (layerId.startsWith('vj-')) {
       // VJ clip: find the output layer whose source.id matches the clip id
       const clipId = layerId.slice(3);
-      return $vjOutputLayers?.find(l => l.source?.id === clipId) || null;
+      return $vjOutputLayers?.find((l) => l.source?.id === clipId) || null;
     }
-    return $project.layers.find(l => l.id === layerId) || null;
+    return $project.layers.find((l) => l.id === layerId) || null;
   })();
   $: params = targetLayer ? discoverKeyframeableParams(targetLayer) : [];
 
@@ -106,7 +110,8 @@
     if (!acc[p.group]) acc[p.group] = [];
     acc[p.group].push(p);
     return acc;
-  }, {} as Record<string, KeyframeableParam[]>);
+  }, {} as Record<string, KeyframeableParam[]>,
+  );
 
   // Shared expand state
   let expandedGroups: Record<string, boolean> = {};
@@ -122,11 +127,11 @@
     if (!sel) return null;
     const timeline = $keyframeTimeline.timelines[sel.layerId];
     if (!timeline) return null;
-    const track = timeline.tracks.find(t => t.key === sel.trackKey);
+    const track = timeline.tracks.find((t) => t.key === sel.trackKey);
     if (!track) return null;
-    const param = params.find(p => p.key === sel.trackKey);
+    const param = params.find((p) => p.key === sel.trackKey);
     if (track.type === 'number') {
-      const kf = track.keyframes.find(k => Math.abs(k.time - sel.time) < 0.001);
+      const kf = track.keyframes.find((k) => Math.abs(k.time - sel.time) < 0.001);
       if (!kf) return null;
       return {
         layerId: sel.layerId,
@@ -138,7 +143,7 @@
         label: param?.label || track.label || sel.trackKey,
       };
     }
-    const kf = track.boolKeyframes.find(k => Math.abs(k.time - sel.time) < 0.001);
+    const kf = track.boolKeyframes.find((k) => Math.abs(k.time - sel.time) < 0.001);
     if (!kf) return null;
     return {
       layerId: sel.layerId,
@@ -188,7 +193,7 @@
     }
     if (param.key.startsWith('fx:')) {
       const parts = param.key.split(':');
-      const fx = l.effects?.find(e => e.id === parts[1]);
+      const fx = l.effects?.find((e) => e.id === parts[1]);
       if (!fx) return param.defaultValue;
       if (parts[2] === 'enabled') return fx.enabled;
       if (parts[2] === 'opacity') return fx.opacity ?? 1;
@@ -196,7 +201,7 @@
     }
     if (param.key.startsWith('edge:')) {
       const parts = param.key.split(':');
-      const edge = l.edgeEffects?.effects?.find(e => e.id === parts[1]);
+      const edge = l.edgeEffects?.effects?.find((e) => e.id === parts[1]);
       if (!edge) return param.defaultValue;
       if (parts[2] === 'enabled') return edge.enabled;
       if (parts[2] === 'opacity') return edge.opacity ?? 1;
@@ -229,17 +234,18 @@
     class="kf-toggle"
     class:active={isOpen}
     onclick={() => keyframeTimeline.toggleOpen()}
-    title="Keyframe Timeline"
+    title={$t('timeline.header.toggleTitle')}
+    aria-label={$t('timeline.header.toggleTitle')}
   >
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-      <line x1="2" y1="12" x2="22" y2="12"/>
-      <line x1="2" y1="6" x2="22" y2="6"/>
-      <line x1="2" y1="18" x2="22" y2="18"/>
-      <circle cx="8" cy="6" r="2" fill="currentColor"/>
-      <circle cx="16" cy="12" r="2" fill="currentColor"/>
-      <circle cx="12" cy="18" r="2" fill="currentColor"/>
+      <line x1="2" y1="12" x2="22" y2="12" />
+      <line x1="2" y1="6" x2="22" y2="6" />
+      <line x1="2" y1="18" x2="22" y2="18" />
+      <circle cx="8" cy="6" r="2" fill="currentColor" />
+      <circle cx="16" cy="12" r="2" fill="currentColor" />
+      <circle cx="12" cy="18" r="2" fill="currentColor" />
     </svg>
-    <span>Keyframes</span>
+    <span>{$t('timeline.header.toggleLabel')}</span>
   </button>
 {/if}
 
@@ -247,13 +253,26 @@
 {#if isOpen && !hiddenInVJ}
   <div class="kf-tray">
     <div class="kf-header-btns">
-      <button class="kf-clear" onclick={() => { console.log('[KF Timeline] Clear All clicked'); showClearConfirm = true; }} title="Clear all keyframes">
-        Clear All
+      <button
+        class="kf-clear"
+        onclick={() => {
+          console.log('[KF Timeline] Clear All clicked');
+          showClearConfirm = true;
+        }}
+        title={$t('timeline.header.clearTitle')}
+        aria-label={$t('timeline.header.clearTitle')}
+      >
+        {$t('timeline.header.clear')}
       </button>
-      <button class="kf-close" onclick={() => keyframeTimeline.setOpen(false)} title="Close timeline">
+      <button
+        class="kf-close"
+        onclick={() => keyframeTimeline.setOpen(false)}
+        title={$t('timeline.header.closeTitle')}
+        aria-label={$t('timeline.header.closeTitle')}
+      >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-          <line x1="18" y1="6" x2="6" y2="18"/>
-          <line x1="6" y1="6" x2="18" y2="18"/>
+          <line x1="18" y1="6" x2="6" y2="18" />
+          <line x1="6" y1="6" x2="18" y2="18" />
         </svg>
       </button>
     </div>
@@ -270,67 +289,97 @@
           <span class="kfi-label-title">{selectedKfLabel}</span>
         </div>
         <label class="kfi-field">
-          <span>Time</span>
+          <span>{$t('timeline.inspector.time')}</span>
           <input
-            type="number" min="0" max={$keyframeTimeline.config.duration} step="0.01"
+            type="number"
+            min="0"
+            max={$keyframeTimeline.config.duration}
+            step="0.01"
             value={selectedKf.time.toFixed(2)}
             onchange={(e) => handleTimeChange(parseFloat((e.target as HTMLInputElement).value))}
           />
-          <span class="kfi-unit">s</span>
+          <span class="kfi-unit">{$t('timeline.inspector.seconds')}</span>
         </label>
         {#if selectedKf.type === 'number'}
           <label class="kfi-field kfi-field-wide">
-            <span>Value</span>
+            <span>{$t('timeline.inspector.value')}</span>
             <input
-              type="number" step="0.01"
+              type="number"
+              step="0.01"
               value={(selectedKf.value as number).toFixed(3)}
-              onchange={(e) => keyframeTimeline.updateKeyframeValue(selectedKf!.layerId, selectedKf!.trackKey, selectedKf!.time, parseFloat((e.target as HTMLInputElement).value))}
+              onchange={(e) =>
+                keyframeTimeline.updateKeyframeValue(
+                  selectedKf!.layerId,
+                  selectedKf!.trackKey,
+                  selectedKf!.time,
+                  parseFloat((e.target as HTMLInputElement).value),
+                )}
             />
           </label>
         {:else}
           <label class="kfi-field kfi-field-bool">
-            <span>Value</span>
+            <span>{$t('timeline.inspector.value')}</span>
             <input
               type="checkbox"
               checked={!!selectedKf.value}
-              onchange={(e) => keyframeTimeline.updateKeyframeValue(selectedKf!.layerId, selectedKf!.trackKey, selectedKf!.time, (e.target as HTMLInputElement).checked)}
+              onchange={(e) =>
+                keyframeTimeline.updateKeyframeValue(
+                  selectedKf!.layerId,
+                  selectedKf!.trackKey,
+                  selectedKf!.time,
+                  (e.target as HTMLInputElement).checked,
+                )}
             />
           </label>
         {/if}
         {#if selectedKf.type === 'number'}
           <label class="kfi-field">
-            <span>Easing</span>
+            <span>{$t('timeline.inspector.easing')}</span>
             <select
               value={selectedKf.easing || 'linear'}
-              onchange={(e) => keyframeTimeline.updateKeyframeEasing(selectedKf!.layerId, selectedKf!.trackKey, selectedKf!.time, (e.target as HTMLSelectElement).value as any)}
+              onchange={(e) =>
+                keyframeTimeline.updateKeyframeEasing(
+                  selectedKf!.layerId,
+                  selectedKf!.trackKey,
+                  selectedKf!.time,
+                  (e.target as HTMLSelectElement).value as any,
+                )}
             >
-              <option value="linear">Linear</option>
-              <option value="ease-in">Ease In</option>
-              <option value="ease-out">Ease Out</option>
-              <option value="ease-in-out">Ease In-Out</option>
-              <option value="step">Step</option>
+              <option value="linear">{$t('timeline.easing.linear')}</option>
+              <option value="ease-in">{$t('timeline.easing.easeIn')}</option>
+              <option value="ease-out">{$t('timeline.easing.easeOut')}</option>
+              <option value="ease-in-out">{$t('timeline.easing.easeInOut')}</option>
+              <option value="step">{$t('timeline.easing.step')}</option>
             </select>
           </label>
         {/if}
-        <button class="kfi-delete"
+        <button
+          class="kfi-delete"
           onclick={() => keyframeTimeline.removeKeyframe(selectedKf!.layerId, selectedKf!.trackKey, selectedKf!.time)}
-          title="Delete keyframe">
-          Delete
+          title={$t('timeline.inspector.deleteTitle')}
+          aria-label={$t('timeline.inspector.deleteTitle')}
+        >
+          {$t('timeline.inspector.delete')}
         </button>
-        <button class="kfi-close"
+        <button
+          class="kfi-close"
           onclick={() => keyframeTimeline.clearSelection()}
-          title="Close inspector">×</button>
+          title={$t('timeline.inspector.closeTitle')}
+          aria-label={$t('timeline.inspector.closeTitle')}>×</button
+        >
       </div>
     {/if}
 
     {#if showClearConfirm}
-      <div class="kf-modal-backdrop" onclick={() => showClearConfirm = false}>
+      <div class="kf-modal-backdrop" onclick={() => (showClearConfirm = false)}>
         <div class="kf-modal" onclick={(e) => e.stopPropagation()}>
-          <h3>Clear All Keyframes?</h3>
-          <p>This will remove ALL keyframes from ALL layers. This cannot be undone.</p>
+          <h3>{$t('timeline.confirm.title')}</h3>
+          <p>{$t('timeline.confirm.message')}</p>
           <div class="kf-modal-btns">
-            <button class="kf-modal-cancel" onclick={() => showClearConfirm = false}>Cancel</button>
-            <button class="kf-modal-confirm" onclick={confirmClearAll}>Clear All</button>
+            <button class="kf-modal-cancel" onclick={() => (showClearConfirm = false)}
+              >{$t('timeline.confirm.cancel')}</button
+            >
+            <button class="kf-modal-confirm" onclick={confirmClearAll}>{$t('timeline.confirm.clear')}</button>
           </div>
         </div>
       </div>
@@ -361,11 +410,11 @@
     font-family: inherit;
   }
   .kf-toggle:hover {
-    border-color: #FF6B6B;
-    box-shadow: 0 4px 30px rgba(255,107,107,0.2);
+    border-color: #ff6b6b;
+    box-shadow: 0 4px 30px rgba(255, 107, 107, 0.2);
   }
   .kf-toggle.active {
-    border-color: #FF6B6B;
+    border-color: #ff6b6b;
     background: linear-gradient(135deg, #1a2020, #201515);
   }
 
@@ -396,7 +445,7 @@
   .kf-clear {
     background: rgba(255, 107, 107, 0.15);
     border: 1px solid rgba(255, 107, 107, 0.35);
-    color: #FF8585;
+    color: #ff8585;
     font-size: 11px;
     font-weight: 600;
     padding: 5px 10px;
@@ -417,7 +466,7 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    background: linear-gradient(135deg, #FF6B6B, #FF4757);
+    background: linear-gradient(135deg, #ff6b6b, #ff4757);
     border: 1px solid rgba(255, 255, 255, 0.2);
     color: #fff;
     border-radius: 4px;
@@ -426,7 +475,7 @@
     transition: all 0.15s;
   }
   .kf-close:hover {
-    background: linear-gradient(135deg, #FF8585, #FF6B6B);
+    background: linear-gradient(135deg, #ff8585, #ff6b6b);
     box-shadow: 0 2px 12px rgba(255, 107, 107, 0.6);
     transform: scale(1.05);
   }
@@ -454,7 +503,7 @@
     border-right: 1px solid rgba(255, 255, 255, 0.08);
   }
   .kfi-label-title {
-    color: #FFD96B;
+    color: #ffd96b;
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.05em;
@@ -465,8 +514,10 @@
     align-items: center;
     gap: 6px;
   }
-  .kfi-field > span { color: rgba(255,255,255,0.55); }
-  .kfi-field input[type="number"],
+  .kfi-field > span {
+    color: rgba(255, 255, 255, 0.55);
+  }
+  .kfi-field input[type='number'],
   .kfi-field select {
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.1);
@@ -477,11 +528,17 @@
     width: 72px;
     outline: none;
   }
-  .kfi-field-wide input[type="number"] { width: 96px; }
-  .kfi-field select { width: auto; }
+  .kfi-field-wide input[type='number'] {
+    width: 96px;
+  }
+  .kfi-field select {
+    width: auto;
+  }
   .kfi-field input:focus,
-  .kfi-field select:focus { border-color: rgba(92, 225, 230, 0.5); }
-  .kfi-field input[type="checkbox"] {
+  .kfi-field select:focus {
+    border-color: rgba(92, 225, 230, 0.5);
+  }
+  .kfi-field input[type='checkbox'] {
     width: 14px;
     height: 14px;
     cursor: pointer;
@@ -491,7 +548,7 @@
     margin-left: auto;
     background: rgba(255, 71, 87, 0.1);
     border: 1px solid rgba(255, 71, 87, 0.4);
-    color: #FF4757;
+    color: #ff4757;
     font-size: 12px;
     padding: 3px 10px;
     border-radius: 3px;
@@ -534,7 +591,7 @@
   }
   .kf-modal h3 {
     margin: 0 0 10px 0;
-    color: #FF6B6B;
+    color: #ff6b6b;
     font-size: 15px;
     font-weight: 700;
     text-transform: uppercase;
@@ -564,7 +621,7 @@
   }
   .kf-modal-cancel:hover { background: rgba(255, 255, 255, 0.1); }
   .kf-modal-confirm {
-    background: linear-gradient(135deg, #FF6B6B, #FF4757);
+    background: linear-gradient(135deg, #ff6b6b, #ff4757);
     border: 1px solid rgba(255, 107, 107, 0.6);
     color: #fff;
     padding: 6px 14px;

@@ -13,6 +13,7 @@
     type PickedVideoFile,
     type VideoConversionProgress,
   } from '../video/videoConverter';
+  import { t } from '../i18n';
 
   export let isOpen = false;
   export let onClose: () => void = () => {};
@@ -82,8 +83,8 @@
     resetMessages();
     resetResult();
     outputPath = next === 'webm'
-      ? selectedVideo?.defaultOutputPath ?? (selectedVideo ? defaultOutputFromPath(selectedVideo.path) : '')
-      : selectedSequence?.defaultOutputPath ?? '';
+      ? (selectedVideo?.defaultOutputPath ?? (selectedVideo ? defaultOutputFromPath(selectedVideo.path) : ''))
+        : (selectedSequence?.defaultOutputPath ?? '');
   }
 
   async function chooseWebM() {
@@ -121,7 +122,7 @@
     try {
       const defaultPath = outputPath
         || (mode === 'webm'
-          ? selectedVideo?.defaultOutputPath ?? (selectedVideo ? defaultOutputFromPath(selectedVideo.path) : undefined)
+          ? (selectedVideo?.defaultOutputPath ?? (selectedVideo ? defaultOutputFromPath(selectedVideo.path) : undefined))
           : selectedSequence?.defaultOutputPath);
       const picked = await pickVideoOutputPath(defaultPath, activeSourceName || 'converted-video');
       if (picked) outputPath = picked;
@@ -134,7 +135,7 @@
     if (!file || isConverting) return;
     const filePath = window.electronAPI?.getPathForFile?.(file) || '';
     if (!filePath) {
-      errorMessage = 'Drag a file from disk, or use Choose WebM so Ghost can access the source path.';
+      errorMessage = $t('mediaTools.converter.errors.droppedFilePath');
       return;
     }
     resetMessages();
@@ -172,7 +173,7 @@
     progress = {
       stage: 'cancelled',
       progress: progress.progress,
-      message: 'Cancelling conversion...',
+      message: $t('mediaTools.converter.progress.cancelling'),
     };
     try {
       await cancelActiveVideoConversion();
@@ -185,7 +186,8 @@
     resetMessages();
     isCancelling = false;
     isConverting = true;
-    progress = { stage: mode === 'sequence' ? 'scanning' : 'preparing', progress: 0, message: 'Preparing encoder...' };
+    progress = { stage: mode === 'sequence' ? 'scanning' : 'preparing', progress: 0, message: $t('mediaTools.converter.progress.preparingEncoder'),
+    };
 
     try {
       const options = { crf, preset };
@@ -194,14 +196,21 @@
         : await convertWebMToMp4(selectedVideo!.path, outputPath, options, (p) => { progress = p; });
       resultPath = result.outputPath;
       resultUrl = pathToFileUrl(result.outputPath);
-      noticeMessage = 'MP4 ready.';
-      progress = { stage: 'complete', progress: 1, message: 'Conversion complete.', outputPath: result.outputPath };
+      noticeMessage = $t('mediaTools.converter.notice.mp4Ready');
+      progress = { stage: 'complete', progress: 1, message: $t(
+          mode === 'sequence'
+            ? 'mediaTools.converter.progress.sequenceComplete'
+            : 'mediaTools.converter.progress.webmComplete',
+        ), outputPath: result.outputPath,
+      };
     } catch (error: any) {
       if (isVideoConversionCancelled(error)) {
-        progress = { stage: 'cancelled', progress: 0, message: 'Conversion cancelled.' };
-        noticeMessage = 'Conversion cancelled.';
+        progress = { stage: 'cancelled', progress: 0, message: $t('mediaTools.converter.progress.conversionCancelled'),
+        };
+        noticeMessage = $t('mediaTools.converter.notice.conversionCancelled');
       } else {
-        progress = { stage: 'error', progress: 0, message: 'Conversion failed' };
+        progress = { stage: 'error', progress: 0, message: $t('mediaTools.converter.errors.failed'),
+        };
         errorMessage = error?.message || String(error);
       }
     } finally {
@@ -227,6 +236,42 @@
     return `${(mb / 1024).toFixed(2)} GB`;
   }
 
+  function progressLabel(): string {
+    const message = progress.message || '';
+    if (!message) return $t('mediaTools.converter.progress.converting');
+    if (message === 'Preparing encoder...') return $t('mediaTools.converter.progress.preparingEncoder');
+    if (message === 'Scanning frame folder...') return $t('mediaTools.converter.progress.scanningFolder');
+    if (message === 'Preparing native FFmpeg encoder...')
+      return $t('mediaTools.converter.progress.preparingNativeEncoder');
+    if (message === 'Finalizing MP4...') return $t('mediaTools.converter.progress.finalizingMp4');
+    if (message === 'Conversion cancelled.') return $t('mediaTools.converter.progress.conversionCancelled');
+    if (message === 'Image sequence MP4 complete.') return $t('mediaTools.converter.progress.sequenceComplete');
+    if (message === 'WebM MP4 conversion complete.') return $t('mediaTools.converter.progress.webmComplete');
+    if (message === 'Conversion failed') return $t('mediaTools.converter.errors.failed');
+
+    const foundFrames = message.match(/^Found (\d+) frames\. Preparing encoder\.\.\.$/);
+    if (foundFrames) {
+      return $t('mediaTools.converter.progress.foundFrames', { values: { count: Number(foundFrames[1]) } });
+    }
+    const encodingFrames = message.match(/^Encoding (\d+) frames at ([\d.]+) fps\.\.\.$/);
+    if (encodingFrames) {
+      return $t('mediaTools.converter.progress.encodingFrames', {
+        values: { count: Number(encodingFrames[1]), fps: encodingFrames[2] },
+      });
+    }
+    const convertingWebm = message === 'Converting WebM to MP4...';
+    if (convertingWebm) return $t('mediaTools.converter.progress.convertingWebm');
+    const encodingMp4 = message.match(/^Encoding MP4 \((\d+)%\)\.\.\.$/);
+    if (encodingMp4) {
+      return $t('mediaTools.converter.progress.encodingMp4', { values: { percent: Number(encodingMp4[1]) } });
+    }
+    return message;
+  }
+
+  function progressStageLabel(): string {
+    return $t(`mediaTools.converter.stages.${progress.stage}`);
+  }
+
   function onKey(event: KeyboardEvent) {
     if (!isOpen) return;
     if (event.key === 'Escape' && !isConverting) closeModal();
@@ -237,19 +282,20 @@
 
 {#if isOpen}
   <div class="modal-backdrop" onclick={closeModal} role="presentation"></div>
-  <div class="modal-shell" role="dialog" aria-label="Video Converter">
+  <div class="modal-shell" role="dialog" aria-label={$t('mediaTools.converter.ariaLabel')}>
     <header class="modal-head">
       <div>
-        <h2>Video Converter</h2>
-        <p>Native FFmpeg export for WebM files and JPG frame sequences.</p>
+        <h2>{$t('mediaTools.converter.title')}</h2>
+        <p>{$t('mediaTools.converter.subtitle')}</p>
       </div>
-      <button class="close-btn" onclick={closeModal} disabled={isConverting} title={isConverting ? 'Conversion is running' : 'Close'}>×</button>
+      <button class="close-btn" onclick={closeModal} disabled={isConverting} title={$t(isConverting ? 'mediaTools.converter.runningCloseTitle' : 'mediaTools.converter.closeTitle')}
+        aria-label={$t(isConverting ? 'mediaTools.converter.runningCloseTitle' : 'mediaTools.converter.closeTitle')}>×</button>
     </header>
 
     <div class="modal-body">
       <div class="mode-tabs">
-        <button class:active={mode === 'webm'} onclick={() => switchMode('webm')} disabled={isConverting}>WebM to MP4</button>
-        <button class:active={mode === 'sequence'} onclick={() => switchMode('sequence')} disabled={isConverting}>JPG Sequence</button>
+        <button class:active={mode === 'webm'} onclick={() => switchMode('webm')} disabled={isConverting}>{$t('mediaTools.converter.modes.webmToMp4')}</button>
+        <button class:active={mode === 'sequence'} onclick={() => switchMode('sequence')} disabled={isConverting}>{$t('mediaTools.converter.modes.jpgSequence')}</button>
       </div>
 
       {#if mode === 'webm'}
@@ -262,23 +308,29 @@
           ondragleave={onDragLeave}
           disabled={isConverting}
         >
-          <span class="drop-title">{selectedVideo ? selectedVideo.name : 'Choose WebM Video'}</span>
+          <span class="drop-title">{selectedVideo ? selectedVideo.name : $t('mediaTools.converter.source.chooseWebm')}</span>
           <span class="drop-meta">
             {#if selectedVideo}
               {formatBytes(selectedVideo.size) || selectedVideo.path}
             {:else}
-              Drop a .webm file here or browse
+              {$t('mediaTools.converter.source.webmDropHint')}
             {/if}
           </span>
         </button>
       {:else}
         <button class="drop-zone sequence-zone" onclick={chooseSequence} disabled={isConverting}>
-          <span class="drop-title">{selectedSequence ? selectedSequence.name : 'Choose JPG Sequence Folder'}</span>
+          <span class="drop-title">{selectedSequence ? selectedSequence.name : $t('mediaTools.converter.source.chooseSequence')}</span>
           <span class="drop-meta">
             {#if selectedSequence}
-              {selectedSequence.frameCount} frames · {selectedSequence.firstFrame} → {selectedSequence.lastFrame}
+              {$t('mediaTools.converter.source.frames', {
+                values: {
+                  count: selectedSequence.frameCount,
+                  first: selectedSequence.firstFrame || '',
+                  last: selectedSequence.lastFrame || '',
+                },
+              })}
             {:else}
-              Select a folder of numbered .jpg/.jpeg frames
+              {$t('mediaTools.converter.source.sequenceHint')}
             {/if}
           </span>
         </button>
@@ -287,16 +339,16 @@
       <div class="settings-grid">
         {#if mode === 'sequence'}
           <label class="field">
-            <span>FPS</span>
+            <span>{$t('mediaTools.converter.fields.fps')}</span>
             <input type="number" min="1" max="240" step="1" bind:value={fps} disabled={isConverting} />
           </label>
         {/if}
         <label class="field">
-          <span>Quality CRF</span>
+          <span>{$t('mediaTools.converter.fields.qualityCrf')}</span>
           <input type="number" min="10" max="32" step="1" bind:value={crf} disabled={isConverting} />
         </label>
         <label class="field">
-          <span>Speed</span>
+          <span>{$t('mediaTools.converter.fields.speed')}</span>
           <select bind:value={preset} disabled={isConverting}>
             <option value="ultrafast">ultrafast</option>
             <option value="superfast">superfast</option>
@@ -310,32 +362,34 @@
 
       <div class="path-row">
         <div>
-          <span>Output</span>
-          <strong>{outputPath || 'Choose an MP4 output path'}</strong>
+          <span>{$t('mediaTools.converter.fields.output')}</span>
+          <strong>{outputPath || $t('mediaTools.converter.fields.chooseOutputPath')}</strong>
         </div>
-        <button class="btn-secondary" onclick={chooseOutput} disabled={isConverting}>Choose</button>
+        <button class="btn-secondary" onclick={chooseOutput} disabled={isConverting}>{$t('mediaTools.converter.fields.choose')}</button>
       </div>
 
       <div class="summary">
-        Output: <strong>MP4 / H.264</strong>, <strong>yuv420p</strong>, <strong>+faststart</strong>{mode === 'webm' ? ', with AAC audio when present.' : '.'}
+        {$t('mediaTools.converter.fields.outputSummary')} <strong>MP4 / H.264</strong>, <strong>yuv420p</strong>, <strong>+faststart</strong>{$t(
+          mode === 'webm' ? 'mediaTools.converter.fields.withAacAudio' : 'mediaTools.converter.fields.noAacAudio',
+        )}
       </div>
 
       {#if isConverting}
         <div class="progress-block">
-          <div class="phase">{progress.message || 'Converting...'}</div>
+          <div class="phase">{progressLabel()}</div>
           <div class="progress-bar">
             <div class="progress-fill" style="width: {progressPct}%"></div>
           </div>
           <div class="progress-meta">
             <span>{progressPct}%</span>
-            <span>{progress.stage}</span>
+            <span>{progressStageLabel()}</span>
           </div>
         </div>
       {/if}
 
       {#if errorMessage}
         <div class="error-box">
-          <strong>Conversion failed</strong>
+          <strong>{$t('mediaTools.converter.errors.failed')}</strong>
           <span>{errorMessage}</span>
         </div>
       {/if}
@@ -348,7 +402,7 @@
 
       {#if resultPath}
         <div class="success-box">
-          <strong>MP4 saved</strong>
+          <strong>{$t('mediaTools.converter.result.saved')}</strong>
           <span>{resultPath}</span>
           {#if resultUrl}
             <video src={resultUrl} controls muted></video>
@@ -357,17 +411,17 @@
       {/if}
 
       <div class="actions">
-        <button class="btn-secondary" onclick={closeModal} disabled={isConverting}>Close</button>
+        <button class="btn-secondary" onclick={closeModal} disabled={isConverting}>{$t('mediaTools.converter.result.close')}</button>
         {#if resultPath || outputPath}
-          <button class="btn-secondary" onclick={revealResult} disabled={isConverting}>Reveal</button>
+          <button class="btn-secondary" onclick={revealResult} disabled={isConverting}>{$t('mediaTools.converter.result.reveal')}</button>
         {/if}
         {#if isConverting}
           <button class="btn-danger" onclick={cancelConversion} disabled={isCancelling}>
-            {isCancelling ? 'Cancelling...' : 'Cancel'}
+            {isCancelling ? $t('mediaTools.converter.progress.cancelling') : $t('mediaTools.converter.progress.cancel')}
           </button>
         {/if}
         <button class="btn-primary" onclick={startConversion} disabled={!canStart || isConverting}>
-          {isConverting ? 'Converting...' : 'Convert'}
+          {isConverting ? $t('mediaTools.converter.progress.converting') : $t('mediaTools.converter.result.convert')}
         </button>
       </div>
     </div>
@@ -599,7 +653,7 @@
     font-size: 13px;
   }
   .error-box {
-    background: rgba(255, 80, 80, 0.10);
+    background: rgba(255, 80, 80, 0.1);
     border: 1px solid rgba(255, 80, 80, 0.35);
     color: #ff9b9b;
   }
@@ -609,7 +663,7 @@
     color: #9de7ff;
   }
   .success-box {
-    background: rgba(76, 222, 128, 0.10);
+    background: rgba(76, 222, 128, 0.1);
     border: 1px solid rgba(76, 222, 128, 0.35);
     color: #86efac;
   }
@@ -656,8 +710,8 @@
     color: #ff9b9b;
   }
   .btn-danger:hover:not(:disabled) {
-    background: rgba(255, 80, 80, 0.20);
-    border-color: rgba(255, 120, 120, 0.70);
+    background: rgba(255, 80, 80, 0.2);
+    border-color: rgba(255, 120, 120, 0.7);
     color: #ffd0d0;
   }
   .btn-danger:disabled { opacity: 0.45; cursor: wait; }

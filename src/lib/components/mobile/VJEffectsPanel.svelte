@@ -3,6 +3,7 @@
   import EffectPickerModal from '../EffectPickerModal.svelte';
   import type { EffectType, EffectParams, Effect } from '../../types';
   import { EFFECT_PARAM_DEFS } from '../../effects/effectParamDefs';
+  import { t } from '../../i18n';
 
   // Props
   export let layerStates: any[] = [];
@@ -13,7 +14,8 @@
   export let onAddLayerEffect: (layerIndex: number, effectType: EffectType) => void = () => {};
   export let onRemoveLayerEffect: (layerIndex: number, effectId: string) => void = () => {};
   export let onToggleLayerEffect: (layerIndex: number, effectId: string) => void = () => {};
-  export let onUpdateLayerEffectParams: (layerIndex: number, effectId: string, params: Partial<EffectParams>) => void = () => {};
+  export let onUpdateLayerEffectParams: (layerIndex: number, effectId: string, params: Partial<EffectParams>,
+  ) => void = () => {};
 
   // Composition effect callbacks
   export let onAddCompEffect: (effectType: EffectType) => void = () => {};
@@ -25,7 +27,8 @@
   export let onAddClipEffect: (layerIndex: number, columnIndex: number, effectType: EffectType) => void = () => {};
   export let onRemoveClipEffect: (layerIndex: number, columnIndex: number, effectId: string) => void = () => {};
   export let onToggleClipEffect: (layerIndex: number, columnIndex: number, effectId: string) => void = () => {};
-  export let onUpdateClipEffectParams: (layerIndex: number, columnIndex: number, effectId: string, params: Partial<EffectParams>) => void = () => {};
+  export let onUpdateClipEffectParams: (layerIndex: number, columnIndex: number, effectId: string, params: Partial<EffectParams>,
+  ) => void = () => {};
 
   // (Shader params are now in VJShaderPanel)
 
@@ -57,16 +60,43 @@
     }
   })();
 
+  function labelKey(value: string): string {
+    return value
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+  }
+
+  function localizedParamLabel(label: string): string {
+    const key = `mobileAdvanced.effects.params.${labelKey(label)}`;
+    const translated = $t(key);
+    return translated === key ? label : translated;
+  }
+
+  function localizedOptionLabel(label: string): string {
+    const key = `mobileAdvanced.effects.options.${labelKey(label)}`;
+    const translated = $t(key);
+    return translated === key ? label : translated;
+  }
+
+  function localizedEffectLabel(type: string): string {
+    const key = `mobileAdvanced.effects.types.${type}`;
+    const translated = $t(key);
+    return translated === key ? type : translated;
+  }
+
   // Current tab label
   $: tabLabel = (() => {
-    if (effectsTab === 'comp') return 'COMP FX';
+    if (effectsTab === 'comp') return $t('mobileAdvanced.effects.tabLabels.comp');
     if (effectsTab === 'clip') {
-      if (selectedLayerIndex === null) return 'CLIP FX';
+      if (selectedLayerIndex === null) return $t('mobileAdvanced.effects.tabLabels.clip');
       const activeCol = layerStates[selectedLayerIndex]?.activeColumn;
       const clip = activeCol != null ? clipGrid[selectedLayerIndex]?.[activeCol] : null;
-      return clip ? `CLIP: ${clip.name}` : 'CLIP FX';
+      return clip ? $t('mobileAdvanced.effects.tabLabels.clipNamed', { values: { name: clip.name } })
+        : $t('mobileAdvanced.effects.tabLabels.clip');
     }
-    return selectedLayerIndex !== null ? `L${selectedLayerIndex + 1} FX` : 'LAYER FX';
+    return selectedLayerIndex !== null ? $t('mobileAdvanced.effects.tabLabels.layer', { values: { layer: selectedLayerIndex + 1 } })
+      : $t('mobileAdvanced.effects.tabLabels.layerGeneric');
   })();
 
   // Use shared effect parameter definitions (covers all 81+ effects)
@@ -149,17 +179,23 @@
 <div class="effects-panel">
   <!-- ══ COMP / LAYER / CLIP Tabs ══ -->
   <div class="effects-tabs">
-    <button class="fx-tab" class:active={effectsTab === 'comp'} on:click={() => { effectsTab = 'comp'; expandedEffectId = null; }}>
+    <button class="fx-tab" class:active={effectsTab === 'comp'} on:click={() => { effectsTab = 'comp'; expandedEffectId = null; }}
+      aria-label={$t('mobileAdvanced.effects.tabs.comp')}
+    >
       <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
-      Comp
+      {$t('mobileAdvanced.effects.tabs.comp')}
     </button>
-    <button class="fx-tab" class:active={effectsTab === 'layer'} on:click={() => { effectsTab = 'layer'; expandedEffectId = null; }}>
+    <button class="fx-tab" class:active={effectsTab === 'layer'} on:click={() => { effectsTab = 'layer'; expandedEffectId = null; }}
+      aria-label={$t('mobileAdvanced.effects.tabs.layer')}
+    >
       <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-      Layer
+      {$t('mobileAdvanced.effects.tabs.layer')}
     </button>
-    <button class="fx-tab" class:active={effectsTab === 'clip'} on:click={() => { effectsTab = 'clip'; expandedEffectId = null; }}>
+    <button class="fx-tab" class:active={effectsTab === 'clip'} on:click={() => { effectsTab = 'clip'; expandedEffectId = null; }}
+      aria-label={$t('mobileAdvanced.effects.tabs.clip')}
+    >
       <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-      Clip
+      {$t('mobileAdvanced.effects.tabs.clip')}
     </button>
   </div>
 
@@ -173,6 +209,7 @@
           class:has-clip={!!ls.activeClip}
           style="--lc: {layerColors[i % layerColors.length]}"
           on:click={() => { selectedLayerIndex = i; expandedEffectId = null; }}
+          aria-label={$t('mobileAdvanced.effects.selectLayer', { values: { layer: i + 1 } })}
         >
           <span class="layer-sel-dot"></span>
           <span class="layer-sel-num">L{i + 1}</span>
@@ -188,20 +225,23 @@
   <div class="tab-info">
     <span class="tab-label">{tabLabel}</span>
     {#if effectsTab === 'comp'}
-      <span class="tab-hint">Applied to all output</span>
+      <span class="tab-hint">{$t('mobileAdvanced.effects.appliedToAll')}</span>
     {/if}
   </div>
 
   <!-- ══ Effects List ══ -->
   <div class="effects-content">
     {#if (effectsTab === 'layer' || effectsTab === 'clip') && selectedLayerIndex === null}
-      <div class="empty-hint">Tap a layer above to edit effects</div>
+      <div class="empty-hint">{$t('mobileAdvanced.effects.empty.selectLayer')}</div>
     {:else if effectsTab === 'clip' && selectedLayerIndex !== null && layerStates[selectedLayerIndex]?.activeColumn == null}
-      <div class="empty-hint">No active clip on L{selectedLayerIndex + 1}</div>
+      <div class="empty-hint">
+        {$t('mobileAdvanced.effects.empty.noActiveClip', { values: { layer: `L${selectedLayerIndex + 1}` } })}</div>
     {:else}
       <!-- Add effect button - opens full catalog modal -->
-      <button class="add-effect-btn" on:click={() => showEffectPicker = true}>
-        + Add Effect
+      <button class="add-effect-btn" on:click={() => (showEffectPicker = true)}
+        aria-label={$t('mobileAdvanced.effects.add')}
+        title={$t('mobileAdvanced.effects.add')}>
+        {$t('mobileAdvanced.effects.add')}
       </button>
 
       <!-- Current effects -->
@@ -209,37 +249,48 @@
         <div class="effects-list">
           {#each currentEffects as effect (effect.id)}
             <div class="effect-item" class:disabled={!effect.enabled}>
-              <div class="effect-header" on:click={() => expandedEffectId = expandedEffectId === effect.id ? null : effect.id}>
+              <div class="effect-header" on:click={() => (expandedEffectId = expandedEffectId === effect.id ? null : effect.id)}>
                 <button
                   class="fx-toggle"
                   class:enabled={effect.enabled}
                   on:click|stopPropagation={() => handleToggleEffect(effect.id)}
-                >{effect.enabled ? '●' : '○'}</button>
-                <span class="effect-name">{effect.type}</span>
-                <span class="expand-arrow">{expandedEffectId === effect.id ? '▲' : '▼'}</span>
-                <button class="fx-remove" on:click|stopPropagation={() => handleRemoveEffect(effect.id)}>×</button>
+                  aria-pressed={effect.enabled}
+                  aria-label={$t('mobileAdvanced.effects.toggle', {
+                    values: { name: localizedEffectLabel(effect.type) },
+                  })}
+                  title={$t('mobileAdvanced.effects.toggle', { values: { name: localizedEffectLabel(effect.type) } })}
+                  >{effect.enabled ? '●' : '○'}</button>
+                <span class="effect-name">{localizedEffectLabel(effect.type)}</span>
+                <span class="expand-arrow" aria-hidden="true">{expandedEffectId === effect.id ? '▲' : '▼'}</span>
+                <button class="fx-remove" on:click|stopPropagation={() => handleRemoveEffect(effect.id)}
+                  aria-label={$t('mobileAdvanced.effects.remove', {
+                    values: { name: localizedEffectLabel(effect.type) },
+                  })}
+                  title={$t('mobileAdvanced.effects.remove', { values: { name: localizedEffectLabel(effect.type) } })}
+                  >×</button>
               </div>
 
               {#if expandedEffectId === effect.id}
                 <div class="effect-params">
-                  {#each (effectParamDefs[effect.type] || []) as paramDef}
+                  {#each effectParamDefs[effect.type] || [] as paramDef}
                     {@const rawVal = (effect.params as Record<string, number>)[paramDef.param]}
                     {@const currentVal = rawVal ?? paramDef.default}
                     <div class="param-row">
-                      <span class="param-label">{paramDef.name}</span>
+                      <span class="param-label">{localizedParamLabel(paramDef.name)}</span>
                       {#if paramDef.type === 'select' && paramDef.options}
                         <select value={currentVal}
                           on:change={(e) => handleUpdateParams(effect.id, paramDef.param, parseFloat(e.currentTarget.value))}
                           style="flex:1; background:#222; color:#fff; border:1px solid #444; border-radius:3px; padding:4px; font-size:13px;">
                           {#each paramDef.options as opt}
-                            <option value={opt.value} selected={currentVal === opt.value}>{opt.label}</option>
+                            <option value={opt.value} selected={currentVal === opt.value}>{localizedOptionLabel(opt.label)}</option>
                           {/each}
                         </select>
                       {:else if paramDef.type === 'color' && paramDef.colorParams}
                         {@const cr = (effect.params as Record<string, number>)[paramDef.colorParams.r] ?? 0}
                         {@const cg = (effect.params as Record<string, number>)[paramDef.colorParams.g] ?? 1}
                         {@const cb = (effect.params as Record<string, number>)[paramDef.colorParams.b] ?? 0.4}
-                        {@const hexVal = '#' + [cr,cg,cb].map(c => Math.round(c * 255).toString(16).padStart(2, '0')).join('')}
+                        {@const hexVal = '#' + [cr,cg,cb].map((c) => Math.round(c * 255).toString(16).padStart(2, '0'),
+                            ).join('')}
                         <input type="color" value={hexVal}
                           on:input={(e) => {
                             const hex = e.currentTarget.value;
@@ -275,7 +326,7 @@
                     </div>
                   {/each}
                   {#if (effectParamDefs[effect.type] || []).length === 0}
-                    <div class="empty-hint">No adjustable parameters</div>
+                    <div class="empty-hint">{$t('mobileAdvanced.effects.noParams')}</div>
                   {/if}
                 </div>
               {/if}
@@ -283,7 +334,7 @@
           {/each}
         </div>
       {:else}
-        <div class="empty-hint">No effects — tap + Add Effect</div>
+        <div class="empty-hint">{$t('mobileAdvanced.effects.empty.noEffects')}</div>
       {/if}
     {/if}
   </div>
@@ -293,7 +344,7 @@
 <EffectPickerModal
   bind:open={showEffectPicker}
   onAdd={handleAddEffects}
-  onClose={() => showEffectPicker = false}
+  onClose={() => (showEffectPicker = false)}
 />
 
 <style>
@@ -340,7 +391,7 @@
   .fx-tab.active {
     background: rgba(187, 134, 252, 0.1);
     border-color: rgba(187, 134, 252, 0.3);
-    color: #BB86FC;
+    color: #bb86fc;
   }
 
   .fx-tab svg {
@@ -348,7 +399,7 @@
   }
   .fx-tab.active svg {
     opacity: 1;
-    stroke: #BB86FC;
+    stroke: #bb86fc;
   }
 
   /* ── Layer Selector ── */
@@ -410,7 +461,7 @@
   .layer-fx-count {
     font-size: 9px;
     background: rgba(187, 134, 252, 0.2);
-    color: #BB86FC;
+    color: #bb86fc;
     padding: 1px 4px;
     border-radius: 3px;
     font-weight: 800;
@@ -484,7 +535,7 @@
     border-radius: 4px;
     border: 1px dashed rgba(187, 134, 252, 0.25);
     background: rgba(187, 134, 252, 0.05);
-    color: #BB86FC;
+    color: #bb86fc;
     font-size: 12px;
     font-weight: 700;
     cursor: pointer;
@@ -535,7 +586,7 @@
     -webkit-tap-highlight-color: transparent;
     touch-action: manipulation;
   }
-  .fx-toggle.enabled { color: #BB86FC; }
+  .fx-toggle.enabled { color: #bb86fc; }
 
   .effect-name {
     flex: 1;

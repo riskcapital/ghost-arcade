@@ -22,6 +22,7 @@
   import type { OutputSlice } from '../stores/settings';
   import { screenActions } from '../stores/screens';
   import { isDesktopApp, getTextureShareLabel } from '$lib/bridge';
+  import { t } from '../i18n';
 
   type DisplayInfo = {
     id: number; label: string; width: number; height: number;
@@ -98,9 +99,9 @@
   }
 
   const colorPresets = [
-    { label: 'Neutral', brightness: 1, contrast: 1, gamma: 1 },
-    { label: 'Punch', brightness: 1.05, contrast: 1.12, gamma: 1.05 },
-    { label: 'Soft', brightness: 0.96, contrast: 0.92, gamma: 1.18 },
+    { labelKey: 'screens.inspector.color.presets.neutral', brightness: 1, contrast: 1, gamma: 1 },
+    { labelKey: 'screens.inspector.color.presets.punch', brightness: 1.05, contrast: 1.12, gamma: 1.05 },
+    { labelKey: 'screens.inspector.color.presets.soft', brightness: 0.96, contrast: 0.92, gamma: 1.18 },
   ];
 </script>
 
@@ -111,11 +112,11 @@
       class="name-input"
       value={screen.name}
       onchange={(e) => update({ name: (e.target as HTMLInputElement).value })}
-      placeholder="Screen name"
+      placeholder={$t('screens.inspector.identity.namePlaceholder')}
     />
 
     <label class="field">
-      <span class="lbl">Send to</span>
+      <span class="lbl">{$t('screens.inspector.identity.sendTo')}</span>
       <select
         value={screen.targetType ?? 'sender'}
         onchange={(e) => {
@@ -123,19 +124,21 @@
           update({ targetType: t, ...(t === 'sender' ? { displayId: null } : {}) });
         }}
       >
-        <option value="sender">{tsLabel} / NDI® sender</option>
-        <option value="display" disabled={!isDesktopApp}>Physical display</option>
+        <option value="sender">{$t('screens.inspector.identity.senderTarget', { values: { textureShare: tsLabel } })}</option>
+        <option value="display" disabled={!isDesktopApp}>{$t('screens.inspector.identity.physicalDisplay')}</option>
       </select>
     </label>
+    <p class="hint">{$t('screens.inspector.identity.targetHint', { values: { textureShare: tsLabel } })}</p>
 
     <p class="ndi-attribution">
       <a href="https://ndi.video/" target="_blank" rel="noreferrer">NDI®</a>
-      is a registered trademark of Vizrt NDI AB.
+      {$t('screens.inspector.identity.ndiAttribution')}
     </p>
 
     {#if (screen.targetType ?? 'sender') === 'display'}
+      <p class="hint">{$t('screens.inspector.identity.displaySetupHint')}</p>
       <label class="field">
-        <span class="lbl">Display</span>
+        <span class="lbl">{$t('screens.inspector.identity.display')}</span>
         <select
           value={screen.displayId ?? ''}
           onchange={(e) => {
@@ -143,29 +146,29 @@
             update({ displayId: v === '' ? null : parseInt(v) });
           }}
         >
-          <option value="">— pick —</option>
+          <option value="">{$t('screens.inspector.identity.pickDisplay')}</option>
           {#each displays as d}
-            <option value={d.id}>{d.label || `Display ${d.id}`} ({d.width}×{d.height}{d.isPrimary ? ' · primary' : ''})</option>
+            <option value={d.id}>{d.label || $t('screens.inspector.identity.displayFallback', { values: { id: d.id } })} ({d.width}×{d.height}{d.isPrimary ? $t('screens.inspector.identity.primarySuffix') : ''})</option>
           {/each}
         </select>
-        <button class="icon-btn" title="Refresh display list" onclick={onRefreshDisplays}>↻</button>
+        <button class="icon-btn" title={$t('screens.inspector.identity.refreshDisplays')} aria-label={$t('screens.inspector.identity.refreshDisplays')} onclick={onRefreshDisplays}>↻</button>
       </label>
       {#if screen.displayId != null && displays.find(d => d.id === screen.displayId)?.isPrimary}
         <p class="warn-banner">
-          ⚠ This is your primary display. Opening here will cover the editor. Press <kbd>Esc</kbd> in the slice window to close it.
+          {$t('screens.inspector.identity.primaryWarningBefore')} <kbd>Esc</kbd> {$t('screens.inspector.identity.primaryWarningAfter')}
         </p>
       {/if}
       <div class="field">
         <span class="lbl">&nbsp;</span>
         {#if openWindowIds.includes(screen.id)}
-          <button class="full-btn danger" onclick={() => onCloseOnDisplay(screen)}>Close on display</button>
+          <button class="full-btn danger" onclick={() => onCloseOnDisplay(screen)}>{$t('screens.inspector.identity.closeOnDisplay')}</button>
         {:else}
-          <button class="full-btn" disabled={screen.displayId == null} onclick={() => onOpenOnDisplay(screen)}>Open on display</button>
+          <button class="full-btn" disabled={screen.displayId == null} onclick={() => onOpenOnDisplay(screen)}>{$t('screens.inspector.identity.openOnDisplay')}</button>
         {/if}
       </div>
     {:else}
       <label class="field">
-        <span class="lbl">Sender</span>
+        <span class="lbl">{$t('screens.inspector.identity.sender')}</span>
         <input
           type="text"
           value={screen.spoutName}
@@ -182,10 +185,10 @@
        output. Set the slice rectangle by dragging on the editor canvas
        or the top-down preview; only orientation lives here. -->
   <section class="sec">
-    <h4>Slice</h4>
-    <p class="hint">This screen takes a rectangular slice of the total (master-warped) output. Drag its rectangle on the canvas or the preview above to set it.</p>
+    <h4>{$t('screens.inspector.slice.title')}</h4>
+    <p class="hint">{$t('screens.inspector.slice.hint')}</p>
     <label class="field">
-      <span class="lbl">Rotation</span>
+      <span class="lbl">{$t('screens.inspector.slice.rotation')}</span>
       <select value={screen.rotation} onchange={(e) => update({ rotation: parseInt((e.target as HTMLSelectElement).value) as 0 | 90 | 180 | 270 })}>
         <option value={0}>0°</option><option value={90}>90°</option><option value={180}>180°</option><option value={270}>270°</option>
       </select>
@@ -195,61 +198,61 @@
   <!-- Edge blend ───────────────────────────────────────────────── -->
   <section class="sec controls-sec">
     <div class="section-row">
-      <h4>Edge Blend</h4>
-      <button class="section-action" onclick={resetBlend}>Reset</button>
+      <h4>{$t('screens.inspector.edgeBlend.title')}</h4>
+      <button class="section-action" onclick={resetBlend}>{$t('screens.inspector.actions.reset')}</button>
     </div>
     <div class="preset-strip">
-      <button class="chip-btn" onclick={() => setAllBlend(0)}>Clear</button>
-      <button class="chip-btn" onclick={() => setAllBlend(0.10)}>All 10%</button>
-      <button class="chip-btn" onclick={() => setAllBlend(0.15)}>All 15%</button>
+      <button class="chip-btn" onclick={() => setAllBlend(0)}>{$t('screens.inspector.edgeBlend.clear')}</button>
+      <button class="chip-btn" onclick={() => setAllBlend(0.10)}>{$t('screens.inspector.edgeBlend.allPercent', { values: { percent: 10 } })}</button>
+      <button class="chip-btn" onclick={() => setAllBlend(0.15)}>{$t('screens.inspector.edgeBlend.allPercent', { values: { percent: 15 } })}</button>
     </div>
     <div class="control-stack">
       <div class="range-row">
-        <span class="range-label">Left edge</span>
-        <input aria-label="Left edge blend" type="range" min="0" max="0.5" step="0.01" value={screen.edgeBlendLeft}
+        <span class="range-label">{$t('screens.inspector.edgeBlend.left')}</span>
+        <input aria-label={$t('screens.inspector.edgeBlend.leftAria')} type="range" min="0" max="0.5" step="0.01" value={screen.edgeBlendLeft}
           oninput={(e) => updateNumber('edgeBlendLeft', numberFromEvent(e), 0, 0.5)} />
         <span class="value-wrap">
-          <input class="value-box" aria-label="Left edge blend percent" type="number" min="0" max="50" step="1" value={Math.round(screen.edgeBlendLeft * 100)}
+          <input class="value-box" aria-label={$t('screens.inspector.edgeBlend.leftPercentAria')} type="number" min="0" max="50" step="1" value={Math.round(screen.edgeBlendLeft * 100)}
             onchange={(e) => updatePercent('edgeBlendLeft', numberFromEvent(e), 0, 0.5)} />
           <span class="unit">%</span>
         </span>
       </div>
       <div class="range-row">
-        <span class="range-label">Right edge</span>
-        <input aria-label="Right edge blend" type="range" min="0" max="0.5" step="0.01" value={screen.edgeBlendRight}
+        <span class="range-label">{$t('screens.inspector.edgeBlend.right')}</span>
+        <input aria-label={$t('screens.inspector.edgeBlend.rightAria')} type="range" min="0" max="0.5" step="0.01" value={screen.edgeBlendRight}
           oninput={(e) => updateNumber('edgeBlendRight', numberFromEvent(e), 0, 0.5)} />
         <span class="value-wrap">
-          <input class="value-box" aria-label="Right edge blend percent" type="number" min="0" max="50" step="1" value={Math.round(screen.edgeBlendRight * 100)}
+          <input class="value-box" aria-label={$t('screens.inspector.edgeBlend.rightPercentAria')} type="number" min="0" max="50" step="1" value={Math.round(screen.edgeBlendRight * 100)}
             onchange={(e) => updatePercent('edgeBlendRight', numberFromEvent(e), 0, 0.5)} />
           <span class="unit">%</span>
         </span>
       </div>
       <div class="range-row">
-        <span class="range-label">Top edge</span>
-        <input aria-label="Top edge blend" type="range" min="0" max="0.5" step="0.01" value={screen.edgeBlendTop}
+        <span class="range-label">{$t('screens.inspector.edgeBlend.top')}</span>
+        <input aria-label={$t('screens.inspector.edgeBlend.topAria')} type="range" min="0" max="0.5" step="0.01" value={screen.edgeBlendTop}
           oninput={(e) => updateNumber('edgeBlendTop', numberFromEvent(e), 0, 0.5)} />
         <span class="value-wrap">
-          <input class="value-box" aria-label="Top edge blend percent" type="number" min="0" max="50" step="1" value={Math.round(screen.edgeBlendTop * 100)}
+          <input class="value-box" aria-label={$t('screens.inspector.edgeBlend.topPercentAria')} type="number" min="0" max="50" step="1" value={Math.round(screen.edgeBlendTop * 100)}
             onchange={(e) => updatePercent('edgeBlendTop', numberFromEvent(e), 0, 0.5)} />
           <span class="unit">%</span>
         </span>
       </div>
       <div class="range-row">
-        <span class="range-label">Bottom edge</span>
-        <input aria-label="Bottom edge blend" type="range" min="0" max="0.5" step="0.01" value={screen.edgeBlendBottom}
+        <span class="range-label">{$t('screens.inspector.edgeBlend.bottom')}</span>
+        <input aria-label={$t('screens.inspector.edgeBlend.bottomAria')} type="range" min="0" max="0.5" step="0.01" value={screen.edgeBlendBottom}
           oninput={(e) => updateNumber('edgeBlendBottom', numberFromEvent(e), 0, 0.5)} />
         <span class="value-wrap">
-          <input class="value-box" aria-label="Bottom edge blend percent" type="number" min="0" max="50" step="1" value={Math.round(screen.edgeBlendBottom * 100)}
+          <input class="value-box" aria-label={$t('screens.inspector.edgeBlend.bottomPercentAria')} type="number" min="0" max="50" step="1" value={Math.round(screen.edgeBlendBottom * 100)}
             onchange={(e) => updatePercent('edgeBlendBottom', numberFromEvent(e), 0, 0.5)} />
           <span class="unit">%</span>
         </span>
       </div>
       <div class="range-row">
-        <span class="range-label">Blend curve</span>
-        <input aria-label="Edge blend gamma" type="range" min="1" max="4" step="0.1" value={screen.edgeBlendGamma}
+        <span class="range-label">{$t('screens.inspector.edgeBlend.curve')}</span>
+        <input aria-label={$t('screens.inspector.edgeBlend.curveAria')} type="range" min="1" max="4" step="0.1" value={screen.edgeBlendGamma}
           oninput={(e) => updateNumber('edgeBlendGamma', numberFromEvent(e, 2.2), 1, 4)} />
         <span class="value-wrap no-unit">
-          <input class="value-box" aria-label="Edge blend gamma value" type="number" min="1" max="4" step="0.1" value={screen.edgeBlendGamma.toFixed(1)}
+          <input class="value-box" aria-label={$t('screens.inspector.edgeBlend.curveValueAria')} type="number" min="1" max="4" step="0.1" value={screen.edgeBlendGamma.toFixed(1)}
             onchange={(e) => updateNumber('edgeBlendGamma', numberFromEvent(e, 2.2), 1, 4)} />
         </span>
       </div>
@@ -259,46 +262,46 @@
   <!-- Black level ─────────────────────────────────────────────── -->
   <section class="sec controls-sec">
     <div class="section-row">
-      <h4>Black-Level Lift</h4>
-      <button class="section-action" onclick={resetBlackLevel}>Reset</button>
+      <h4>{$t('screens.inspector.blackLevel.title')}</h4>
+      <button class="section-action" onclick={resetBlackLevel}>{$t('screens.inspector.actions.reset')}</button>
     </div>
     <div class="control-stack">
       <div class="range-row">
-        <span class="range-label"><span class="swatch red"></span>Red floor</span>
-        <input aria-label="Red black-level lift" type="range" min="0" max="0.1" step="0.001" value={screen.blackLevelR ?? 0}
+        <span class="range-label"><span class="swatch red"></span>{$t('screens.inspector.blackLevel.redFloor')}</span>
+        <input aria-label={$t('screens.inspector.blackLevel.redAria')} type="range" min="0" max="0.1" step="0.001" value={screen.blackLevelR ?? 0}
           oninput={(e) => updateNumber('blackLevelR', numberFromEvent(e), 0, 0.1)} />
         <span class="value-wrap">
-          <input class="value-box" aria-label="Red black-level lift percent" type="number" min="0" max="10" step="0.1" value={((screen.blackLevelR ?? 0) * 100).toFixed(1)}
+          <input class="value-box" aria-label={$t('screens.inspector.blackLevel.redPercentAria')} type="number" min="0" max="10" step="0.1" value={((screen.blackLevelR ?? 0) * 100).toFixed(1)}
             onchange={(e) => updatePercent('blackLevelR', numberFromEvent(e), 0, 0.1)} />
           <span class="unit">%</span>
         </span>
       </div>
       <div class="range-row">
-        <span class="range-label"><span class="swatch green"></span>Green floor</span>
-        <input aria-label="Green black-level lift" type="range" min="0" max="0.1" step="0.001" value={screen.blackLevelG ?? 0}
+        <span class="range-label"><span class="swatch green"></span>{$t('screens.inspector.blackLevel.greenFloor')}</span>
+        <input aria-label={$t('screens.inspector.blackLevel.greenAria')} type="range" min="0" max="0.1" step="0.001" value={screen.blackLevelG ?? 0}
           oninput={(e) => updateNumber('blackLevelG', numberFromEvent(e), 0, 0.1)} />
         <span class="value-wrap">
-          <input class="value-box" aria-label="Green black-level lift percent" type="number" min="0" max="10" step="0.1" value={((screen.blackLevelG ?? 0) * 100).toFixed(1)}
+          <input class="value-box" aria-label={$t('screens.inspector.blackLevel.greenPercentAria')} type="number" min="0" max="10" step="0.1" value={((screen.blackLevelG ?? 0) * 100).toFixed(1)}
             onchange={(e) => updatePercent('blackLevelG', numberFromEvent(e), 0, 0.1)} />
           <span class="unit">%</span>
         </span>
       </div>
       <div class="range-row">
-        <span class="range-label"><span class="swatch blue"></span>Blue floor</span>
-        <input aria-label="Blue black-level lift" type="range" min="0" max="0.1" step="0.001" value={screen.blackLevelB ?? 0}
+        <span class="range-label"><span class="swatch blue"></span>{$t('screens.inspector.blackLevel.blueFloor')}</span>
+        <input aria-label={$t('screens.inspector.blackLevel.blueAria')} type="range" min="0" max="0.1" step="0.001" value={screen.blackLevelB ?? 0}
           oninput={(e) => updateNumber('blackLevelB', numberFromEvent(e), 0, 0.1)} />
         <span class="value-wrap">
-          <input class="value-box" aria-label="Blue black-level lift percent" type="number" min="0" max="10" step="0.1" value={((screen.blackLevelB ?? 0) * 100).toFixed(1)}
+          <input class="value-box" aria-label={$t('screens.inspector.blackLevel.bluePercentAria')} type="number" min="0" max="10" step="0.1" value={((screen.blackLevelB ?? 0) * 100).toFixed(1)}
             onchange={(e) => updatePercent('blackLevelB', numberFromEvent(e), 0, 0.1)} />
           <span class="unit">%</span>
         </span>
       </div>
       <div class="range-row">
-        <span class="range-label">Feather</span>
-        <input aria-label="Black-level feather" type="range" min="0" max="1" step="0.01" value={screen.blackLevelFeather ?? 0.5}
+        <span class="range-label">{$t('screens.inspector.blackLevel.feather')}</span>
+        <input aria-label={$t('screens.inspector.blackLevel.featherAria')} type="range" min="0" max="1" step="0.01" value={screen.blackLevelFeather ?? 0.5}
           oninput={(e) => updateNumber('blackLevelFeather', numberFromEvent(e, 0.5), 0, 1)} />
         <span class="value-wrap">
-          <input class="value-box" aria-label="Black-level feather percent" type="number" min="0" max="100" step="1" value={Math.round((screen.blackLevelFeather ?? 0.5) * 100)}
+          <input class="value-box" aria-label={$t('screens.inspector.blackLevel.featherPercentAria')} type="number" min="0" max="100" step="1" value={Math.round((screen.blackLevelFeather ?? 0.5) * 100)}
             onchange={(e) => updatePercent('blackLevelFeather', numberFromEvent(e, 50), 0, 1)} />
           <span class="unit">%</span>
         </span>
@@ -309,8 +312,8 @@
   <!-- Color correction ─────────────────────────────────────────── -->
   <section class="sec controls-sec color-sec">
     <div class="section-row">
-      <h4>Color Correction</h4>
-      <button class="section-action" onclick={() => applyColorCorrection(1, 1, 1)}>Reset</button>
+      <h4>{$t('screens.inspector.color.title')}</h4>
+      <button class="section-action" onclick={() => applyColorCorrection(1, 1, 1)}>{$t('screens.inspector.actions.reset')}</button>
     </div>
     <div class="preset-strip">
       {#each colorPresets as preset}
@@ -319,37 +322,37 @@
           class:active={screen.brightness === preset.brightness && screen.contrast === preset.contrast && screen.gamma === preset.gamma}
           onclick={() => applyColorCorrection(preset.brightness, preset.contrast, preset.gamma)}
         >
-          {preset.label}
+          {$t(preset.labelKey)}
         </button>
       {/each}
     </div>
     <div class="control-stack">
       <div class="range-row">
-        <span class="range-label">Brightness</span>
-        <input aria-label="Brightness" type="range" min="0" max="2" step="0.01" value={screen.brightness}
+        <span class="range-label">{$t('screens.inspector.color.brightness')}</span>
+        <input aria-label={$t('screens.inspector.color.brightnessAria')} type="range" min="0" max="2" step="0.01" value={screen.brightness}
           oninput={(e) => updateNumber('brightness', numberFromEvent(e, 1), 0, 2)} />
         <span class="value-wrap">
-          <input class="value-box" aria-label="Brightness percent" type="number" min="0" max="200" step="1" value={(screen.brightness * 100).toFixed(0)}
+          <input class="value-box" aria-label={$t('screens.inspector.color.brightnessPercentAria')} type="number" min="0" max="200" step="1" value={(screen.brightness * 100).toFixed(0)}
             onchange={(e) => updatePercent('brightness', numberFromEvent(e, 100), 0, 2)} />
           <span class="unit">%</span>
         </span>
       </div>
       <div class="range-row">
-        <span class="range-label">Contrast</span>
-        <input aria-label="Contrast" type="range" min="0" max="2" step="0.01" value={screen.contrast}
+        <span class="range-label">{$t('screens.inspector.color.contrast')}</span>
+        <input aria-label={$t('screens.inspector.color.contrastAria')} type="range" min="0" max="2" step="0.01" value={screen.contrast}
           oninput={(e) => updateNumber('contrast', numberFromEvent(e, 1), 0, 2)} />
         <span class="value-wrap">
-          <input class="value-box" aria-label="Contrast percent" type="number" min="0" max="200" step="1" value={(screen.contrast * 100).toFixed(0)}
+          <input class="value-box" aria-label={$t('screens.inspector.color.contrastPercentAria')} type="number" min="0" max="200" step="1" value={(screen.contrast * 100).toFixed(0)}
             onchange={(e) => updatePercent('contrast', numberFromEvent(e, 100), 0, 2)} />
           <span class="unit">%</span>
         </span>
       </div>
       <div class="range-row">
-        <span class="range-label">Gamma</span>
-        <input aria-label="Gamma" type="range" min="0.2" max="5" step="0.05" value={screen.gamma}
+        <span class="range-label">{$t('screens.inspector.color.gamma')}</span>
+        <input aria-label={$t('screens.inspector.color.gammaAria')} type="range" min="0.2" max="5" step="0.05" value={screen.gamma}
           oninput={(e) => updateNumber('gamma', numberFromEvent(e, 1), 0.2, 5)} />
         <span class="value-wrap no-unit">
-          <input class="value-box" aria-label="Gamma value" type="number" min="0.2" max="5" step="0.05" value={screen.gamma.toFixed(2)}
+          <input class="value-box" aria-label={$t('screens.inspector.color.gammaValueAria')} type="number" min="0.2" max="5" step="0.05" value={screen.gamma.toFixed(2)}
             onchange={(e) => updateNumber('gamma', numberFromEvent(e, 1), 0.2, 5)} />
         </span>
       </div>

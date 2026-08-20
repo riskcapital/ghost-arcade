@@ -4,11 +4,13 @@
     startVeoGeneration, pollVeoOperation, downloadVeoVideo,
     startLumaGeneration, pollLumaGeneration, downloadLumaVideo,
     enhancePromptForLoop,
-    type VeoModel, type LumaModel, type LumaAspectRatio, type LumaResolution
+    type AIVideoErrorCode,
+    type VeoModel, type LumaModel, type LumaAspectRatio, type LumaResolution,
   } from '../api/ai-client';
   import { settings, VEO_MODELS, LUMA_MODELS } from '../stores/settings';
   import { downloadRecording } from '../recording/recorder';
   import { generateUUID } from '../types';
+  import { t } from '../i18n';
 
   const dispatch = createEventDispatcher<{
     generated: { id: string; name: string; src: string; blob: Blob };
@@ -53,14 +55,29 @@
   let previewBlob: Blob | null = null;
 
   // Example prompts
-  const examplePrompts = [
-    'Abstract flowing neon ribbons dancing through dark space, vibrant colors',
-    'Cinematic aerial shot over a futuristic cyberpunk city at night with rain',
-    'Liquid chrome morphing organic shapes with iridescent reflections',
-    'Geometric fractal patterns unfolding and rotating, kaleidoscopic',
-    'Slow motion ink drops expanding in water, vivid colors on black',
-    'Electric plasma tendrils arcing through darkness, purple and blue',
+  const examplePromptKeys = [
+    'visionAi.video.examples.neonRibbons',
+    'visionAi.video.examples.cyberpunkCity',
+    'visionAi.video.examples.liquidChrome',
+    'visionAi.video.examples.fractalPatterns',
+    'visionAi.video.examples.inkDrops',
+    'visionAi.video.examples.plasmaTendrils',
   ];
+
+  function formatVideoError(
+    result: { error?: string; errorCode?: AIVideoErrorCode } | undefined,
+    fallback: AIVideoErrorCode,
+  ): string {
+    const code = result?.errorCode ?? fallback;
+    const detail = result?.error && result.error !== code ? result.error.trim() : '';
+    return detail ? `${$t(code)}: ${detail}` : $t(code);
+  }
+
+  function formatThrownVideoError(err: unknown, fallback: AIVideoErrorCode): string {
+    const detail = err instanceof Error ? err.message.trim() : '';
+    if (detail.startsWith('visionAi.video.errors.')) return $t(detail);
+    return detail ? `${$t(fallback)}: ${detail}` : $t(fallback);
+  }
 
   function useExample(ex: string) {
     prompt = ex;
@@ -102,12 +119,12 @@
   async function generate() {
     if (!apiKey) {
       error = isLuma
-        ? 'Luma API key required. Configure in Settings → AI.'
-        : 'Gemini API key required. Configure in Settings → AI.';
+        ? $t('visionAi.video.errors.lumaApiKeyRequired')
+        : $t('visionAi.video.errors.geminiApiKeyRequired');
       return;
     }
     if (!prompt.trim()) {
-      error = 'Enter a video description.';
+      error = $t('visionAi.video.errors.promptRequired');
       return;
     }
 
@@ -123,20 +140,20 @@
         await generateVeo();
       }
     } catch (err) {
-      error = err instanceof Error ? err.message : 'Generation failed';
+      error = formatThrownVideoError(err, 'visionAi.video.errors.generationFailed');
       cleanup();
     }
   }
 
   async function generateVeo() {
-    statusMessage = 'Submitting to Veo...';
+    statusMessage = $t('visionAi.video.status.submittingVeo');
     if (veoLastFrameFile && !veoFirstFrameFile) {
-      error = 'Veo last frame requires a first frame too.';
+      error = $t('visionAi.video.errors.lastFrameNeedsFirst');
       cleanup();
       return;
     }
     if (veoLastFrameFile && !String(currentModel).startsWith('veo-3.1')) {
-      error = 'Veo first/last frame generation requires a Veo 3.1 model.';
+      error = $t('visionAi.video.errors.frameModelRequired');
       cleanup();
       return;
     }
@@ -152,50 +169,50 @@
       lastFrame: veoLastFrameFile || undefined,
     });
 
-    if (startResult.error || !startResult.operationName) {
-      error = startResult.error || 'Failed to start generation';
+    if (startResult.error || startResult.errorCode || !startResult.operationName) {
+      error = formatVideoError(startResult, 'visionAi.video.errors.startFailed');
       cleanup();
       return;
     }
 
-    statusMessage = 'Generating video... this may take a few minutes';
+    statusMessage = $t('visionAi.video.status.generating');
     const opName = startResult.operationName;
 
     pollTimer = setInterval(async () => {
       const status = await pollVeoOperation(apiKey, opName);
 
-      if (status.error && status.done) {
-        error = status.error;
+      if ((status.error || status.errorCode) && status.done) {
+        error = formatVideoError(status, 'visionAi.video.errors.generationFailed');
         cleanup();
         return;
       }
 
       if (status.done && status.videoUri) {
-        statusMessage = 'Downloading video...';
+        statusMessage = $t('visionAi.video.status.downloading');
         const downloadResult = await downloadVeoVideo(apiKey, status.videoUri);
-        if (downloadResult.error || !downloadResult.blob) {
-          error = downloadResult.error || 'Failed to download video';
+        if (downloadResult.error || downloadResult.errorCode || !downloadResult.blob) {
+          error = formatVideoError(downloadResult, 'visionAi.video.errors.downloadFailed');
           cleanup();
           return;
         }
         previewBlob = downloadResult.blob;
         if (previewUrl) URL.revokeObjectURL(previewUrl); // prevent blob leak on re-generation
         previewUrl = URL.createObjectURL(previewBlob);
-        statusMessage = 'Video ready!';
+        statusMessage = $t('visionAi.video.status.ready');
         cleanup();
       }
     }, 10000);
   }
 
   async function generateLuma() {
-    statusMessage = 'Preparing Luma generation...';
+    statusMessage = $t('visionAi.video.status.preparingLuma');
 
     // Enhance prompt for loop if enabled
     const finalPrompt = loopEnabled
       ? enhancePromptForLoop(prompt.trim(), false)
       : prompt.trim();
 
-    statusMessage = 'Submitting to Luma Dream Machine...';
+    statusMessage = $t('visionAi.video.status.submittingLuma');
 
     const startResult = await startLumaGeneration({
       apiKey,
@@ -207,40 +224,40 @@
       loop: loopEnabled,
     });
 
-    if (startResult.error || !startResult.id) {
-      error = startResult.error || 'Failed to start Luma generation';
+    if (startResult.error || startResult.errorCode || !startResult.id) {
+      error = formatVideoError(startResult, 'visionAi.video.errors.lumaStartFailed');
       cleanup();
       return;
     }
 
-    statusMessage = 'Generating video... this may take a few minutes';
+    statusMessage = $t('visionAi.video.status.generating');
     const genId = startResult.id;
 
     pollTimer = setInterval(async () => {
       const status = await pollLumaGeneration(apiKey, genId);
 
       if (status.state === 'dreaming') {
-        statusMessage = 'Dreaming... AI is creating your video';
+        statusMessage = $t('visionAi.video.status.dreaming');
       }
 
       if (status.state === 'failed') {
-        error = status.error || 'Generation failed';
+        error = formatVideoError(status, 'visionAi.video.errors.generationFailed');
         cleanup();
         return;
       }
 
       if (status.state === 'completed' && status.videoUrl) {
-        statusMessage = 'Downloading video...';
+        statusMessage = $t('visionAi.video.status.downloading');
         const downloadResult = await downloadLumaVideo(status.videoUrl);
-        if (downloadResult.error || !downloadResult.blob) {
-          error = downloadResult.error || 'Failed to download video';
+        if (downloadResult.error || downloadResult.errorCode || !downloadResult.blob) {
+          error = formatVideoError(downloadResult, 'visionAi.video.errors.downloadFailed');
           cleanup();
           return;
         }
         previewBlob = downloadResult.blob;
         if (previewUrl) URL.revokeObjectURL(previewUrl); // prevent blob leak on re-generation
         previewUrl = URL.createObjectURL(previewBlob);
-        statusMessage = 'Video ready!';
+        statusMessage = $t('visionAi.video.status.ready');
         cleanup();
       }
     }, 5000); // Luma polls faster
@@ -255,7 +272,7 @@
   async function addToLibrary() {
     if (!previewBlob || !previewUrl) return;
 
-    const name = prompt.trim().slice(0, 40) || (isLuma ? 'Luma Video' : 'Veo Video');
+    const name = prompt.trim().slice(0, 40) || (isLuma ? $t('visionAi.video.defaultLumaName') : $t('visionAi.video.defaultVeoName'));
     const blobRef = previewBlob;
     const urlRef = previewUrl;
     const dispatchId = generateUUID();
@@ -265,7 +282,7 @@
     try {
       dispatch('generated', {
         id: dispatchId,
-        name: `AI: ${name}`,
+        name: $t('visionAi.video.libraryName', { values: { name } }),
         src: urlRef,
         blob: blobRef,
       });
@@ -295,7 +312,8 @@
   function formatTime(s: number): string {
     const m = Math.floor(s / 60);
     const sec = s % 60;
-    return m > 0 ? `${m}m ${sec}s` : `${sec}s`;
+    return m > 0 ? $t('visionAi.video.elapsed.minutesSeconds', { values: { minutes: m, seconds: sec } })
+      : $t('visionAi.video.elapsed.seconds', { values: { seconds: sec } });
   }
 
   onDestroy(() => {
@@ -308,8 +326,8 @@
 
 <div class="veo-generator">
   <div class="header">
-    <h4>AI Video Generator</h4>
-    <button class="close-btn" onclick={() => dispatch('close')}>&times;</button>
+    <h4>{$t('visionAi.video.title')}</h4>
+    <button class="close-btn" onclick={() => dispatch('close')} aria-label={$t('visionAi.video.close')}>&times;</button>
   </div>
 
   <!-- Provider tabs -->
@@ -333,8 +351,8 @@
   <!-- API key warning -->
   {#if !apiKey}
     <div class="api-key-warning">
-      {isLuma ? 'Luma' : 'Gemini'} API key not set.
-      <span class="configure-hint">Configure in Settings → AI</span>
+      {$t('visionAi.video.apiKeyNotSet', { values: { provider: isLuma ? 'Luma' : 'Gemini'} })}
+      <span class="configure-hint">{$t('visionAi.video.configureHint')}</span>
     </div>
   {/if}
 
@@ -342,8 +360,7 @@
   <div class="prompt-section">
     <textarea
       bind:value={prompt}
-      placeholder="Describe the video you want to generate..."
-      rows={3}
+      placeholder={$t('visionAi.video.promptPlaceholder')} rows={3}
       disabled={isGenerating}
     ></textarea>
   </div>
@@ -351,7 +368,8 @@
   <!-- Example prompts -->
   {#if !isGenerating && !previewUrl}
     <div class="examples">
-      {#each examplePrompts as ex}
+      {#each examplePromptKeys as key}
+        {@const ex = $t(key)}
         <button class="example-chip" onclick={() => useExample(ex)} title={ex}>
           {ex.slice(0, 45)}{ex.length > 45 ? '...' : ''}
         </button>
@@ -363,9 +381,9 @@
   <div class="settings-row">
     <!-- Model -->
     <div class="setting">
-      <label>Model</label>
+      <label>{$t('visionAi.video.model')}</label>
       <select value={currentModel} onchange={(e) => isLuma ? settings.setLumaModel((e.target as HTMLSelectElement).value) : settings.setVeoModel((e.target as HTMLSelectElement).value)} disabled={isGenerating}>
-        {#each (isLuma ? LUMA_MODELS : VEO_MODELS) as model}
+        {#each isLuma ? LUMA_MODELS : VEO_MODELS as model}
           <option value={model.id}>{model.label}</option>
         {/each}
       </select>
@@ -373,7 +391,7 @@
 
     <!-- Aspect ratio -->
     <div class="setting">
-      <label>Aspect</label>
+      <label>{$t('visionAi.video.aspect')}</label>
       {#if isLuma}
         <select bind:value={lumaAspectRatio} disabled={isGenerating}>
           <option value="16:9">16:9</option>
@@ -394,7 +412,7 @@
 
     <!-- Duration -->
     <div class="setting">
-      <label>Duration</label>
+      <label>{$t('visionAi.video.duration')}</label>
       {#if isLuma}
         <select bind:value={lumaDuration} disabled={isGenerating}>
           <option value="5s">5s</option>
@@ -409,8 +427,8 @@
       {/if}
     </div>
 
-    <button class="toggle-advanced" onclick={() => showAdvanced = !showAdvanced}>
-      {showAdvanced ? 'Less' : 'More'}
+    <button class="toggle-advanced" onclick={() => (showAdvanced = !showAdvanced)}>
+      {showAdvanced ? $t('visionAi.video.less') : $t('visionAi.video.more')}
     </button>
   </div>
 
@@ -418,7 +436,7 @@
   {#if isLuma}
     <div class="luma-options">
       <div class="setting">
-        <label>Resolution</label>
+        <label>{$t('visionAi.video.resolution')}</label>
         <select bind:value={lumaResolution} disabled={isGenerating}>
           <option value="540p">540p</option>
           <option value="720p">720p</option>
@@ -428,7 +446,7 @@
       </div>
       <label class="loop-toggle">
         <input type="checkbox" bind:checked={loopEnabled} disabled={isGenerating} />
-        <span>Seamless Loop</span>
+        <span>{$t('visionAi.video.seamlessLoop')}</span>
       </label>
     </div>
 
@@ -436,7 +454,7 @@
     <div class="veo-keyframes">
       <div class="keyframe-slot">
         <label class="keyframe-pick" for="veo-first-frame">
-          <span>First Frame</span>
+          <span>{$t('visionAi.video.firstFrame')}</span>
           <input
             id="veo-first-frame"
             type="file"
@@ -447,15 +465,15 @@
         </label>
         {#if veoFirstFramePreview}
           <div class="keyframe-preview">
-            <img src={veoFirstFramePreview} alt="First frame" />
-            <button type="button" onclick={() => clearVeoFrame('first')} disabled={isGenerating}>Clear</button>
+            <img src={veoFirstFramePreview} alt={$t('visionAi.video.firstFrameAlt')} />
+            <button type="button" onclick={() => clearVeoFrame('first')} disabled={isGenerating}>{$t('visionAi.video.clear')}</button>
           </div>
         {/if}
       </div>
 
       <div class="keyframe-slot">
         <label class="keyframe-pick" for="veo-last-frame">
-          <span>Last Frame</span>
+          <span>{$t('visionAi.video.lastFrame')}</span>
           <input
             id="veo-last-frame"
             type="file"
@@ -466,8 +484,8 @@
         </label>
         {#if veoLastFramePreview}
           <div class="keyframe-preview">
-            <img src={veoLastFramePreview} alt="Last frame" />
-            <button type="button" onclick={() => clearVeoFrame('last')} disabled={isGenerating}>Clear</button>
+            <img src={veoLastFramePreview} alt={$t('visionAi.video.lastFrameAlt')} />
+            <button type="button" onclick={() => clearVeoFrame('last')} disabled={isGenerating}>{$t('visionAi.video.clear')}</button>
           </div>
         {/if}
       </div>
@@ -479,11 +497,11 @@
       <!-- Negative prompt (Veo only) -->
       {#if !isLuma}
         <div class="field">
-          <label>Negative Prompt</label>
+          <label>{$t('visionAi.video.negativePrompt')}</label>
           <input
             type="text"
             bind:value={negativePrompt}
-            placeholder="What to avoid..."
+            placeholder={$t('visionAi.video.negativePlaceholder')}
             disabled={isGenerating}
           />
         </div>
@@ -500,9 +518,9 @@
   >
     {#if isGenerating}
       <span class="spinner"></span>
-      Generating...
+      {$t('visionAi.video.generating')}
     {:else}
-      Generate Video
+      {$t('visionAi.video.generate')}
     {/if}
   </button>
 
@@ -527,7 +545,7 @@
       <!-- svelte-ignore a11y_media_has_caption -->
       <video src={previewUrl} controls loop autoplay muted></video>
       <button class="add-btn" onclick={addToLibrary}>
-        Add to Media Library
+        {$t('visionAi.video.addToLibrary')}
       </button>
     </div>
   {/if}
@@ -709,7 +727,7 @@
     padding: 3px 0;
   }
 
-  .loop-toggle input[type="checkbox"] {
+  .loop-toggle input[type='checkbox'] {
     accent-color: #ff00aa;
   }
 

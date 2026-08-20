@@ -65,13 +65,11 @@
     deliverRecording,
     type LayerSnapshot,
   } from '../mobile/standaloneRecorder';
-  import {
-    MOBILE_EFFECTS,
-    findMobileEffect,
-    type MobileEffectInstance,
-  } from '../mobile/standaloneEffects';
+  import { MOBILE_EFFECTS, findMobileEffect, type MobileEffectInstance } from '../mobile/standaloneEffects';
   import { EFFECT_PARAM_DEFS, type EffectParamDef } from '../effects/effectParamDefs';
   import { cornersToMatrix3d, type Pt } from '../mobile/standaloneHomography';
+  import { t, type Translate } from '../i18n';
+  import { effectParamLabel, effectTypeLabel } from '../i18n/displayLabels';
 
   export let onSwitchMode: () => void;
 
@@ -83,58 +81,119 @@
   const LAYER_COLORS = ['#FF6E6E', '#FFC857', '#69F0AE', '#BB86FC'];
   const SNAPSHOT_COUNT = 16;
   const SNAPSHOT_COLORS = [
-    '#FF6E6E', '#FFC857', '#69F0AE', '#4FC3F7',
-    '#BB86FC', '#FF8AD8', '#F59E0B', '#22D3EE',
-    '#A3E635', '#F472B6', '#60A5FA', '#F87171',
-    '#34D399', '#C084FC', '#FACC15', '#E5E7EB',
+    '#FF6E6E',
+    '#FFC857',
+    '#69F0AE',
+    '#4FC3F7',
+    '#BB86FC',
+    '#FF8AD8',
+    '#F59E0B',
+    '#22D3EE',
+    '#A3E635',
+    '#F472B6',
+    '#60A5FA',
+    '#F87171',
+    '#34D399',
+    '#C084FC',
+    '#FACC15',
+    '#E5E7EB',
   ];
   const BLEND_MODES = [
-    'normal', 'multiply', 'screen', 'add', 'difference',
-    'overlay', 'darken', 'lighten', 'exclusion',
-    'hardlight', 'softlight', 'color-dodge', 'color-burn',
+    'normal',
+    'multiply',
+    'screen',
+    'add',
+    'difference',
+    'overlay',
+    'darken',
+    'lighten',
+    'exclusion',
+    'hardlight',
+    'softlight',
+    'color-dodge',
+    'color-burn',
   ];
   const QUICK_BLEND_MODES = ['normal', 'screen', 'multiply', 'add'];
 
   type ControllerSurfaceId = 'ghost' | 'apc' | 'launchpad' | 'nanokontrol';
   type ControllerSurface = {
     id: ControllerSurfaceId;
-    name: string;
-    short: string;
-    description: string;
+    nameKey: string;
+    shortKey: string;
+    descriptionKey: string;
   };
 
   const CONTROLLER_SURFACES: ControllerSurface[] = [
     {
       id: 'ghost',
-      name: 'Ghost Performance',
-      short: 'Ghost',
-      description: 'Layer faders, mapping toggles, edge fade, blend, and global show controls.',
+      nameKey: 'standalone.app.controllerSurfaces.ghost.name',
+      shortKey: 'standalone.app.controllerSurfaces.ghost.short',
+      descriptionKey: 'standalone.app.controllerSurfaces.ghost.description',
     },
     {
       id: 'apc',
-      name: 'APC Mini',
-      short: 'APC',
-      description: 'Fader row with a compact clip-launcher style pad matrix for layer actions.',
+      nameKey: 'standalone.app.controllerSurfaces.apc.name',
+      shortKey: 'standalone.app.controllerSurfaces.apc.short',
+      descriptionKey: 'standalone.app.controllerSurfaces.apc.description',
     },
     {
       id: 'launchpad',
-      name: 'Launchpad',
-      short: 'Launch',
-      description: 'Large performance pads for toggles, mapping, blends, and show commands.',
+      nameKey: 'standalone.app.controllerSurfaces.launchpad.name',
+      shortKey: 'standalone.app.controllerSurfaces.launchpad.short',
+      descriptionKey: 'standalone.app.controllerSurfaces.launchpad.description',
     },
     {
       id: 'nanokontrol',
-      name: 'nanoKONTROL',
-      short: 'nano',
-      description: 'Mixer-channel workflow with faders, edge knobs, and channel buttons.',
+      nameKey: 'standalone.app.controllerSurfaces.nanokontrol.name',
+      shortKey: 'standalone.app.controllerSurfaces.nanokontrol.short',
+      descriptionKey: 'standalone.app.controllerSurfaces.nanokontrol.description',
     },
   ];
 
+  type ControlMetadataPresetKind = 'midi' | 'osc';
+  type ControlMetadataPresetField = 'name' | 'controller' | 'description';
+
+  const CONTROL_METADATA_PRESET_IDS: Record<ControlMetadataPresetKind, ReadonlySet<string>> = {
+    midi: new Set(['generic-lpd8', 'akai-apc-mini', 'novation-launchpad', 'korg-nanokontrol']),
+    osc: new Set([
+      'ghost-performance',
+      'touchosc-mixer',
+      'apc-tablet',
+      'launchpad-tablet',
+      'nanokontrol-tablet',
+    ]),
+  };
+
+  function controlMetadataText(
+    translate: Translate,
+    key: string,
+    fallback: string,
+    values?: Record<string, string | number>,
+  ): string {
+    const translated = translate(key, values ? { values } : undefined);
+    return translated === key ? fallback : translated;
+  }
+
+  function controlMetadataPresetText(
+    translate: Translate,
+    kind: ControlMetadataPresetKind,
+    id: string,
+    field: ControlMetadataPresetField,
+    fallback: string,
+  ): string {
+    if (!CONTROL_METADATA_PRESET_IDS[kind].has(id)) return fallback;
+    return controlMetadataText(
+      translate,
+      `standalone.app.controlMetadata.presets.${kind}.${id}.${field}`,
+      fallback,
+    );
+  }
+
   type StandaloneEffect = {
     id: string;
-    type: string;                          // matches an entry in standaloneEffects.MOBILE_EFFECTS
+    type: string; // matches an entry in standaloneEffects.MOBILE_EFFECTS
     enabled: boolean;
-    params: Record<string, number>;        // EFFECT_PARAM_DEFS-style param values
+    params: Record<string, number>; // EFFECT_PARAM_DEFS-style param values
   };
 
   type LayerSourceType = 'shader' | 'media';
@@ -201,12 +260,12 @@
   const MAP_PRESETS = [
     {
       id: 'full',
-      label: 'Full frame',
+      labelKey: 'standalone.app.mapPresets.fullFrame',
       corners: FULL_FRAME_CORNERS,
     },
     {
       id: 'center',
-      label: 'Center panel',
+      labelKey: 'standalone.app.mapPresets.centerPanel',
       corners: [
         { x: 0.18, y: 0.16 },
         { x: 0.82, y: 0.13 },
@@ -216,7 +275,7 @@
     },
     {
       id: 'left-wall',
-      label: 'Left wall',
+      labelKey: 'standalone.app.mapPresets.leftWall',
       corners: [
         { x: 0.03, y: 0.18 },
         { x: 0.52, y: 0.08 },
@@ -226,7 +285,7 @@
     },
     {
       id: 'right-wall',
-      label: 'Right wall',
+      labelKey: 'standalone.app.mapPresets.rightWall',
       corners: [
         { x: 0.48, y: 0.08 },
         { x: 0.97, y: 0.18 },
@@ -236,7 +295,7 @@
     },
     {
       id: 'floor',
-      label: 'Floor tilt',
+      labelKey: 'standalone.app.mapPresets.floorTilt',
       corners: [
         { x: 0.22, y: 0.48 },
         { x: 0.78, y: 0.48 },
@@ -265,11 +324,13 @@
   }
 
   function normalizeProjectName(value: unknown): string {
-    return typeof value === 'string' && value.trim() ? value.trim().slice(0, 80) : 'Untitled Show';
+    return typeof value === 'string' && value.trim()
+      ? value.trim().slice(0, 80)
+      : $t('standalone.app.project.untitledShow');
   }
 
   function cloneCorners(corners: Pt[] = FULL_FRAME_CORNERS): Pt[] {
-    return corners.map(p => ({ x: clamp01(p.x), y: clamp01(p.y) }));
+    return corners.map((p) => ({ x: clamp01(p.x), y: clamp01(p.y) }));
   }
 
   function sanitizedCorners(value: unknown): Pt[] {
@@ -289,9 +350,10 @@
       sourceType: rawSource,
       shaderId,
       mediaName: typeof raw?.mediaName === 'string' ? raw.mediaName : null,
-      mediaKind: raw?.mediaKind === 'video' || raw?.mediaKind === 'image' || raw?.mediaKind === 'camera' ? raw.mediaKind : null,
+      mediaKind:
+        raw?.mediaKind === 'video' || raw?.mediaKind === 'image' || raw?.mediaKind === 'camera' ? raw.mediaKind : null,
       cameraFacing: raw?.cameraFacing === 'user' || raw?.cameraFacing === 'environment' ? raw.cameraFacing : null,
-      enabled: !!(raw?.enabled) && hasRestorableSource,
+      enabled: !!raw?.enabled && hasRestorableSource,
       opacity: typeof raw?.opacity === 'number' ? Math.max(0, Math.min(1, raw.opacity)) : 1,
       blendMode: typeof raw?.blendMode === 'string' ? raw.blendMode : 'normal',
       effects: Array.isArray(raw?.effects)
@@ -301,7 +363,7 @@
               id: typeof e.id === 'string' ? e.id : `${e.type}-${Math.random().toString(36).slice(2, 8)}`,
               type: e.type,
               enabled: e.enabled !== false,
-              params: (e.params && typeof e.params === 'object') ? { ...e.params } : {},
+              params: e.params && typeof e.params === 'object' ? { ...e.params } : {},
             }))
         : [],
       mapped: !!raw?.mapped,
@@ -316,7 +378,7 @@
     return {
       ...layer,
       id: `layer-${i}`,
-      effects: layer.effects.map(e => ({
+      effects: layer.effects.map((e) => ({
         id: e.id,
         type: e.type,
         enabled: e.enabled,
@@ -330,7 +392,7 @@
     return {
       id: `standalone-snap-${slot}`,
       slot,
-      name: `Snap ${slot + 1}`,
+      name: $t('standalone.app.project.snapshot', { values: { slot: slot + 1 } }),
       color: SNAPSHOT_COLORS[slot % SNAPSHOT_COLORS.length],
       populated: false,
       capturedAt: 0,
@@ -392,10 +454,10 @@
     return out;
   }
 
-  function defaultSavedState(projectName = 'Untitled Show'): SavedState {
+  function defaultSavedState(projectName?: string): SavedState {
     return {
       projectId: makeProjectId(),
-      projectName: normalizeProjectName(projectName),
+      projectName: normalizeProjectName(projectName ?? $t('standalone.app.project.untitledShow')),
       updatedAt: Date.now(),
       layers: defaultLayers(),
       snapshots: defaultSnapshots(),
@@ -422,55 +484,63 @@
           parsed.layers = defaultLayers();
         }
         parsed.snapshots = normalizedSnapshots(parsed.snapshots);
-        parsed.activeSnapshotId = typeof parsed.activeSnapshotId === 'string'
-          && parsed.snapshots.some((snap: StandaloneSnapshot) => snap.id === parsed.activeSnapshotId && snap.populated)
-          ? parsed.activeSnapshotId
-          : null;
-        parsed.projectId = typeof parsed.projectId === 'string' && parsed.projectId.trim()
-          ? parsed.projectId
-          : makeProjectId();
+        parsed.activeSnapshotId =
+          typeof parsed.activeSnapshotId === 'string' &&
+          parsed.snapshots.some((snap: StandaloneSnapshot) => snap.id === parsed.activeSnapshotId && snap.populated)
+            ? parsed.activeSnapshotId
+            : null;
+        parsed.projectId =
+          typeof parsed.projectId === 'string' && parsed.projectId.trim() ? parsed.projectId : makeProjectId();
         parsed.projectName = normalizeProjectName(parsed.projectName);
-        parsed.updatedAt = typeof parsed.updatedAt === 'number' && Number.isFinite(parsed.updatedAt)
-          ? parsed.updatedAt
-          : Date.now();
-	        if (!parsed.midi || typeof parsed.midi !== 'object') {
-	          parsed.midi = { enabled: false, mappings: { ...DEFAULT_MIDI_MAPPINGS }, presetId: DEFAULT_MIDI_PRESET_ID };
-	        } else {
-	          parsed.midi.enabled = !!parsed.midi.enabled;
-          parsed.midi.presetId = parsed.midi.presetId === CUSTOM_MIDI_PRESET_ID
-            ? CUSTOM_MIDI_PRESET_ID
-            : (typeof parsed.midi.presetId === 'string'
-              ? findMidiLayoutPreset(parsed.midi.presetId).id
-              : DEFAULT_MIDI_PRESET_ID);
-	          parsed.midi.mappings = parsed.midi.mappings && typeof parsed.midi.mappings === 'object'
-	            ? { ...(parsed.midi.mappings || {}) }
-	            : { ...findMidiLayoutPreset(parsed.midi.presetId).mappings };
-	        }
-	        if (!parsed.osc || typeof parsed.osc !== 'object') {
-	          parsed.osc = defaultOscState();
-	        } else {
-	          const presetId = normalizeOscPresetId(parsed.osc.presetId);
-	          const preset = findOscLayoutPreset(presetId);
-	          const port = typeof parsed.osc.port === 'number' && parsed.osc.port >= 1 && parsed.osc.port <= 65535
-	            ? Math.round(parsed.osc.port)
-	            : preset.port;
-	          parsed.osc = {
-	            enabled: !!parsed.osc.enabled,
-	            port,
-	            presetId,
-	            bindings: normalizeOscBindings(parsed.osc.bindings, presetId),
-	          };
-	        }
-	        return parsed;
-	      }
-	    } catch { /* corrupt save — fall through */ }
-	    return defaultSavedState();
-	  }
+        parsed.updatedAt =
+          typeof parsed.updatedAt === 'number' && Number.isFinite(parsed.updatedAt) ? parsed.updatedAt : Date.now();
+        if (!parsed.midi || typeof parsed.midi !== 'object') {
+          parsed.midi = { enabled: false, mappings: { ...DEFAULT_MIDI_MAPPINGS }, presetId: DEFAULT_MIDI_PRESET_ID };
+        } else {
+          parsed.midi.enabled = !!parsed.midi.enabled;
+          parsed.midi.presetId =
+            parsed.midi.presetId === CUSTOM_MIDI_PRESET_ID
+              ? CUSTOM_MIDI_PRESET_ID
+              : typeof parsed.midi.presetId === 'string'
+                ? findMidiLayoutPreset(parsed.midi.presetId).id
+                : DEFAULT_MIDI_PRESET_ID;
+          parsed.midi.mappings =
+            parsed.midi.mappings && typeof parsed.midi.mappings === 'object'
+              ? { ...(parsed.midi.mappings || {}) }
+              : { ...findMidiLayoutPreset(parsed.midi.presetId).mappings };
+        }
+        if (!parsed.osc || typeof parsed.osc !== 'object') {
+          parsed.osc = defaultOscState();
+        } else {
+          const presetId = normalizeOscPresetId(parsed.osc.presetId);
+          const preset = findOscLayoutPreset(presetId);
+          const port =
+            typeof parsed.osc.port === 'number' && parsed.osc.port >= 1 && parsed.osc.port <= 65535
+              ? Math.round(parsed.osc.port)
+              : preset.port;
+          parsed.osc = {
+            enabled: !!parsed.osc.enabled,
+            port,
+            presetId,
+            bindings: normalizeOscBindings(parsed.osc.bindings, presetId),
+          };
+        }
+        return parsed;
+      }
+    } catch {
+      /* corrupt save — fall through */
+    }
+    return defaultSavedState();
+  }
 
   let state: SavedState = loadSavedState();
   function save() {
     state.updatedAt = Date.now();
-    try { localStorage.setItem(SAVE_KEY, JSON.stringify(state)); } catch { /* private mode */ }
+    try {
+      localStorage.setItem(SAVE_KEY, JSON.stringify(state));
+    } catch {
+      /* private mode */
+    }
   }
 
   function cloneSavedState(input: SavedState): SavedState {
@@ -487,9 +557,8 @@
         .map((entry: any) => ({
           id: entry.id,
           name: normalizeProjectName(entry.name ?? entry.state?.projectName),
-          updatedAt: typeof entry.updatedAt === 'number' && Number.isFinite(entry.updatedAt)
-            ? entry.updatedAt
-            : Date.now(),
+          updatedAt:
+            typeof entry.updatedAt === 'number' && Number.isFinite(entry.updatedAt) ? entry.updatedAt : Date.now(),
           state: entry.state as SavedState,
         }))
         .sort((a, b) => b.updatedAt - a.updatedAt);
@@ -499,10 +568,12 @@
   }
 
   function persistSavedShows(next: StandaloneShowEntry[]): void {
-    savedShows = next
-      .slice(0, 24)
-      .sort((a, b) => b.updatedAt - a.updatedAt);
-    try { localStorage.setItem(SHOWS_KEY, JSON.stringify(savedShows)); } catch { /* private mode */ }
+    savedShows = next.slice(0, 24).sort((a, b) => b.updatedAt - a.updatedAt);
+    try {
+      localStorage.setItem(SHOWS_KEY, JSON.stringify(savedShows));
+    } catch {
+      /* private mode */
+    }
   }
 
   let savedShows: StandaloneShowEntry[] = loadSavedShows();
@@ -531,9 +602,9 @@
       updatedAt: snapshot.updatedAt,
       state: snapshot,
     };
-    persistSavedShows([entry, ...savedShows.filter(show => show.id !== entry.id)]);
+    persistSavedShows([entry, ...savedShows.filter((show) => show.id !== entry.id)]);
     state = state;
-    showControllerMessage('Show saved');
+    showControllerMessage($t('standalone.app.project.showSaved'));
   }
 
   function refreshRenderersFromState(): void {
@@ -554,11 +625,11 @@
     save();
     showSettings = false;
     tab = 'shaders';
-    showControllerMessage('New show ready');
+    showControllerMessage($t('standalone.app.project.newShowReady'));
   }
 
   function loadStandaloneShow(id: string): void {
-    const entry = savedShows.find(show => show.id === id);
+    const entry = savedShows.find((show) => show.id === id);
     if (!entry) return;
     try {
       localStorage.setItem(SAVE_KEY, JSON.stringify(entry.state));
@@ -566,15 +637,15 @@
       refreshRenderersFromState();
       showSettings = false;
       tab = 'shaders';
-      showControllerMessage('Show loaded');
+      showControllerMessage($t('standalone.app.project.showLoaded'));
     } catch {
-      recError = 'Could not load show';
+      recError = $t('standalone.app.project.showLoadError');
     }
   }
 
   function deleteStandaloneShow(id: string): void {
-    persistSavedShows(savedShows.filter(show => show.id !== id));
-    showControllerMessage('Show deleted');
+    persistSavedShows(savedShows.filter((show) => show.id !== id));
+    showControllerMessage($t('standalone.app.project.showDeleted'));
   }
 
   function formatShowDate(ts: number): string {
@@ -608,7 +679,8 @@
   let showSettings = false;
   let showMidi = false;
   let controllerSurfaceId: ControllerSurfaceId = 'ghost';
-  $: activeControllerSurface = CONTROLLER_SURFACES.find(surface => surface.id === controllerSurfaceId) ?? CONTROLLER_SURFACES[0];
+  $: activeControllerSurface =
+    CONTROLLER_SURFACES.find((surface) => surface.id === controllerSurfaceId) ?? CONTROLLER_SURFACES[0];
   let canvasStackEl: HTMLDivElement | null = null;
   let stackW = 1;
   let stackH = 1;
@@ -619,11 +691,20 @@
   let cleanOutput = false;
   let longPressTimer: ReturnType<typeof setTimeout> | null = null;
   function onCanvasPointerDown() {
-    if (cleanOutput) { cleanOutput = false; return; }
-    longPressTimer = setTimeout(() => { cleanOutput = true; longPressTimer = null; }, 650);
+    if (cleanOutput) {
+      cleanOutput = false;
+      return;
+    }
+    longPressTimer = setTimeout(() => {
+      cleanOutput = true;
+      longPressTimer = null;
+    }, 650);
   }
   function onCanvasPointerUp() {
-    if (longPressTimer) { clearTimeout(longPressTimer); longPressTimer = null; }
+    if (longPressTimer) {
+      clearTimeout(longPressTimer);
+      longPressTimer = null;
+    }
   }
 
   // ── Projection mapping controls ──
@@ -635,7 +716,7 @@
   }
   function layerCornersPx(l: StandaloneLayer): Pt[] {
     const corners = l.corners?.length === 4 ? l.corners : FULL_FRAME_CORNERS;
-    return corners.map(p => ({ x: p.x * stackW, y: p.y * stackH }));
+    return corners.map((p) => ({ x: p.x * stackW, y: p.y * stackH }));
   }
   function layerMapTransform(l: StandaloneLayer): string {
     if (!l.mapped) return 'none';
@@ -660,7 +741,7 @@
     pushLayerEffects(i);
   }
   function applyMapPreset(i: number, presetId: string): void {
-    const preset = MAP_PRESETS.find(p => p.id === presetId);
+    const preset = MAP_PRESETS.find((p) => p.id === presetId);
     if (!preset) return;
     state.layers[i].corners = cloneCorners(preset.corners);
     state.layers[i].mapped = true;
@@ -735,21 +816,41 @@
   }
   function layerDisplayName(l: StandaloneLayer): string | null {
     if (l.sourceType === 'media') return l.mediaName;
-    return l.shaderId ? findShader(l.shaderId)?.name ?? l.shaderId : null;
+    return l.shaderId ? (findShader(l.shaderId)?.name ?? l.shaderId) : null;
   }
   function layerDisplayKind(l: StandaloneLayer): string {
-    if (l.sourceType === 'media') return l.mediaKind === 'camera' ? 'camera' : l.mediaKind === 'video' ? 'video' : 'image';
-    return l.shaderId ? findShader(l.shaderId)?.category ?? 'shader' : 'empty';
+    if (l.sourceType === 'media') {
+      return l.mediaKind === 'camera'
+        ? $t('standalone.app.source.camera')
+        : l.mediaKind === 'video'
+          ? $t('standalone.app.source.video')
+          : $t('standalone.app.source.image');
+    }
+    if (!l.shaderId) return $t('standalone.app.source.empty');
+    const category = findShader(l.shaderId)?.category;
+    return category ? $t(`standalone.app.source.categories.${category}`) : $t('standalone.app.source.shader');
   }
   function cleanupMediaLayer(i: number): void {
     const el = mediaElements[i];
     if (el instanceof HTMLVideoElement) {
-      try { el.pause(); } catch { /* ignore */ }
+      try {
+        el.pause();
+      } catch {
+        /* ignore */
+      }
       const stream = el.srcObject;
       if (stream instanceof MediaStream) {
-        try { stream.getTracks().forEach(track => track.stop()); } catch { /* ignore */ }
+        try {
+          stream.getTracks().forEach((track) => track.stop());
+        } catch {
+          /* ignore */
+        }
       }
-      try { el.srcObject = null; } catch { /* ignore */ }
+      try {
+        el.srcObject = null;
+      } catch {
+        /* ignore */
+      }
       el.removeAttribute('src');
       el.load();
     }
@@ -784,7 +885,7 @@
         video.src = url;
         await new Promise<void>((resolve, reject) => {
           video.onloadedmetadata = () => resolve();
-          video.onerror = () => reject(new Error('Could not load video'));
+          video.onerror = () => reject(new Error($t('standalone.app.errors.videoLoad')));
         });
         await video.play().catch(() => undefined);
         el = video;
@@ -793,7 +894,7 @@
         image.crossOrigin = 'anonymous';
         await new Promise<void>((resolve, reject) => {
           image.onload = () => resolve();
-          image.onerror = () => reject(new Error('Could not load image'));
+          image.onerror = () => reject(new Error($t('standalone.app.errors.imageLoad')));
           image.src = url;
         });
         el = image;
@@ -816,20 +917,23 @@
       save();
     } catch (err: any) {
       URL.revokeObjectURL(url);
-      recError = err?.message || 'Could not import media';
+      recError = err?.message || $t('standalone.app.errors.importMedia');
     }
   }
   async function requestCameraForLayer(i: number): Promise<void> {
     const current = state.layers[i];
-    const facing: CameraFacing = current?.mediaKind === 'camera'
-      ? (current.cameraFacing === 'environment' ? 'user' : 'environment')
-      : 'environment';
+    const facing: CameraFacing =
+      current?.mediaKind === 'camera'
+        ? current.cameraFacing === 'environment'
+          ? 'user'
+          : 'environment'
+        : 'environment';
     await startCameraForLayer(i, facing);
   }
   async function startCameraForLayer(i: number, facing: CameraFacing): Promise<void> {
     recError = null;
     if (!navigator.mediaDevices?.getUserMedia) {
-      recError = 'Camera is not available in this browser.';
+      recError = $t('standalone.app.errors.cameraUnavailable');
       return;
     }
     let stream: MediaStream | null = null;
@@ -851,7 +955,10 @@
       video.setAttribute('playsinline', 'true');
       video.srcObject = stream;
       await new Promise<void>((resolve) => {
-        if (video.readyState >= 1) { resolve(); return; }
+        if (video.readyState >= 1) {
+          resolve();
+          return;
+        }
         video.onloadedmetadata = () => resolve();
       });
       await video.play().catch(() => undefined);
@@ -863,7 +970,7 @@
         ...state.layers[i],
         sourceType: 'media',
         shaderId: null,
-        mediaName: facing === 'user' ? 'Front Camera' : 'Rear Camera',
+        mediaName: facing === 'user' ? $t('standalone.app.source.frontCamera') : $t('standalone.app.source.rearCamera'),
         mediaKind: 'camera',
         cameraFacing: facing,
         enabled: true,
@@ -873,8 +980,12 @@
       pushLayerEffects(i);
       save();
     } catch (err: any) {
-      try { stream?.getTracks().forEach(track => track.stop()); } catch { /* ignore */ }
-      recError = err?.message || 'Could not start camera';
+      try {
+        stream?.getTracks().forEach((track) => track.stop());
+      } catch {
+        /* ignore */
+      }
+      recError = err?.message || $t('standalone.app.errors.cameraStart');
     }
   }
   function setLayerShader(i: number, shaderId: string | null): void {
@@ -960,10 +1071,14 @@
       ...base,
       populated: true,
       capturedAt,
-      name: `Look ${new Date(capturedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}`,
+      name: $t('standalone.app.project.look', {
+        values: {
+          time: new Date(capturedAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
+        },
+      }),
       layers: state.layers.map((layer, i) => cloneLayerState(layer, i)),
     };
-    state.snapshots = state.snapshots.map((snap, i) => i === index ? next : snap);
+    state.snapshots = state.snapshots.map((snap, i) => (i === index ? next : snap));
     state.activeSnapshotId = next.id;
     state = state;
     save();
@@ -992,11 +1107,12 @@
         return { ...next, enabled: false };
       }
 
-      const canKeepRuntimeMedia = current.sourceType === 'media'
-        && current.mediaName === next.mediaName
-        && current.mediaKind === next.mediaKind
-        && current.cameraFacing === next.cameraFacing
-        && !!mediaElements[i];
+      const canKeepRuntimeMedia =
+        current.sourceType === 'media' &&
+        current.mediaName === next.mediaName &&
+        current.mediaKind === next.mediaKind &&
+        current.cameraFacing === next.cameraFacing &&
+        !!mediaElements[i];
       if (canKeepRuntimeMedia) {
         renderers[i]?.loadMediaSource(mediaElements[i]!);
         return next;
@@ -1016,9 +1132,10 @@
     for (const camera of cameraStarts) void startCameraForLayer(camera.index, camera.facing);
     save();
     if (needsMediaReimport) {
-      controllerMsg = 'Snapshot recalled · re-import media sources';
+      const message = $t('standalone.app.messages.snapshotRecalled');
+      controllerMsg = message;
       setTimeout(() => {
-        if (controllerMsg === 'Snapshot recalled · re-import media sources') controllerMsg = null;
+        if (controllerMsg === message) controllerMsg = null;
       }, 3200);
     }
   }
@@ -1028,7 +1145,7 @@
   // for the registry + GLSL. Effect TYPE strings + PARAM names match
   // the desktop catalog so EFFECT_PARAM_DEFS slider defs are shared.
   function getEffectDefList() {
-    return MOBILE_EFFECTS.filter(fx => !fx.internal);
+    return MOBILE_EFFECTS.filter((fx) => !fx.internal);
   }
   function getEffectParamDefs(type: string) {
     return EFFECT_PARAM_DEFS[type] ?? [];
@@ -1057,13 +1174,13 @@
     pushLayerEffects(i);
   }
   function removeLayerEffect(i: number, effectId: string): void {
-    state.layers[i].effects = state.layers[i].effects.filter(e => e.id !== effectId);
+    state.layers[i].effects = state.layers[i].effects.filter((e) => e.id !== effectId);
     state = state;
     save();
     pushLayerEffects(i);
   }
   function toggleLayerEffect(i: number, effectId: string): void {
-    state.layers[i].effects = state.layers[i].effects.map(e =>
+    state.layers[i].effects = state.layers[i].effects.map((e) =>
       e.id === effectId ? { ...e, enabled: !e.enabled } : e,
     );
     state = state;
@@ -1071,7 +1188,7 @@
     pushLayerEffects(i);
   }
   function setLayerEffectParam(i: number, effectId: string, param: string, value: number): void {
-    state.layers[i].effects = state.layers[i].effects.map(e =>
+    state.layers[i].effects = state.layers[i].effects.map((e) =>
       e.id === effectId ? { ...e, params: { ...e.params, [param]: value } } : e,
     );
     state = state;
@@ -1088,7 +1205,7 @@
       speed: state.layers[i].playbackSpeed,
       intensity: state.layers[i].audioIntensity,
     });
-    const chain: MobileEffectInstance[] = state.layers[i].effects.map(e => ({
+    const chain: MobileEffectInstance[] = state.layers[i].effects.map((e) => ({
       type: e.type,
       params: e.params,
       enabled: e.enabled,
@@ -1104,18 +1221,205 @@
     r.setEffectChain(chain);
   }
 
-  function dynamicControllerTargets(current: SavedState): ControllerTargetDef[] {
-    const targets = defaultControllerTargets(N_LAYERS);
+  const CONTROL_METADATA_TARGET_KEYS: Record<string, string> = {
+    micToggle: 'micToggle',
+    cleanOutput: 'cleanOutput',
+    autopilotToggle: 'autopilotToggle',
+    crossfader: 'crossfader',
+    bank: 'bank',
+    clip: 'clip',
+    snapshot: 'snapshot',
+    opacity: 'layer.opacity',
+    enabled: 'layer.enabled',
+    blend: 'layer.blend',
+    mapped: 'layer.mapped',
+    edge: 'layer.edge',
+    speed: 'layer.speed',
+    intensity: 'layer.intensity',
+    corner: 'layer.corner',
+    effect: 'layer.effect',
+  };
+
+  function standaloneEffectParamLabel(translate: Translate, param: string, fallback: string): string {
+    const snakeParam = param.replace(/[A-Z]/g, (character) => `_${character.toLowerCase()}`);
+    const suffixParam = /[A-Z][A-Za-z0-9]*$/.exec(param)?.[0]?.toLowerCase();
+    const genericParam = param === 'amount2' ? 'detail' : undefined;
+    const displayParam = fallback
+      .trim()
+      .replace(/[^A-Za-z0-9]+(.)/g, (_, character: string) => character.toUpperCase())
+      .replace(/[^A-Za-z0-9]/g, '')
+      .replace(/^[A-Z]/, (character) => character.toLowerCase());
+    for (const candidate of [param, snakeParam, suffixParam, genericParam, displayParam]) {
+      if (!candidate) continue;
+      const translated = effectParamLabel(translate, candidate, candidate);
+      if (translated !== candidate) return translated;
+    }
+    return fallback;
+  }
+
+  function controllerTargetMetadataLabel(
+    translate: Translate,
+    target: MidiTarget,
+    fallback: string,
+  ): string {
+    if (target === 'micToggle' || target === 'cleanOutput' || target === 'autopilotToggle') {
+      return controlMetadataText(
+        translate,
+        `standalone.app.controlMetadata.targets.${CONTROL_METADATA_TARGET_KEYS[target]}`,
+        fallback,
+      );
+    }
+    if (target === 'crossfader') {
+      return controlMetadataText(
+        translate,
+        'standalone.app.controlMetadata.targets.crossfader',
+        fallback,
+        { layer: 1 },
+      );
+    }
+    const legacy = /^(bank|clip):(\d+)$/.exec(target);
+    if (legacy) {
+      const layerIndex = Number(legacy[2]);
+      if (layerIndex < 0 || layerIndex >= N_LAYERS) return fallback;
+      return controlMetadataText(
+        translate,
+        `standalone.app.controlMetadata.targets.${CONTROL_METADATA_TARGET_KEYS[legacy[1]]}`,
+        fallback,
+        { layer: layerIndex + 1 },
+      );
+    }
+    const snapshot = /^snapshot:(\d+)$/.exec(target);
+    if (snapshot) {
+      const slot = Number(snapshot[1]);
+      if (slot < 0 || slot >= SNAPSHOT_COUNT) return fallback;
+      return controlMetadataText(
+        translate,
+        `standalone.app.controlMetadata.targets.${CONTROL_METADATA_TARGET_KEYS.snapshot}`,
+        fallback,
+        { slot: slot + 1 },
+      );
+    }
+    const layer = /^layer:(\d+):([a-z]+)$/.exec(target);
+    if (layer && CONTROL_METADATA_TARGET_KEYS[layer[2]]) {
+      const layerIndex = Number(layer[1]);
+      if (layerIndex < 0 || layerIndex >= N_LAYERS) return fallback;
+      return controlMetadataText(
+        translate,
+        `standalone.app.controlMetadata.targets.${CONTROL_METADATA_TARGET_KEYS[layer[2]]}`,
+        fallback,
+        { layer: layerIndex + 1 },
+      );
+    }
+    const corner = /^layer:(\d+):corner:(\d+):(x|y)$/.exec(target);
+    if (corner) {
+      const layerIndex = Number(corner[1]);
+      const cornerIndex = Number(corner[2]);
+      if (layerIndex < 0 || layerIndex >= N_LAYERS || cornerIndex < 0 || cornerIndex >= CORNER_LABELS.length) {
+        return fallback;
+      }
+      return controlMetadataText(
+        translate,
+        'standalone.app.controlMetadata.targets.layer.corner',
+        fallback,
+        {
+          layer: layerIndex + 1,
+          corner: CORNER_LABELS[cornerIndex],
+          axis: corner[3].toUpperCase(),
+        },
+      );
+    }
+    const effect = /^layer:(\d+):effect:([^:]+):(.+)$/.exec(target);
+    if (effect) {
+      const layerIndex = Number(effect[1]);
+      const effectDef = findMobileEffect(effect[2]);
+      const paramDef = getEffectParamDefs(effect[2]).find((pd) => pd.param === effect[3]);
+      if (
+        layerIndex < 0
+        || layerIndex >= N_LAYERS
+        || !effectDef
+        || !paramDef
+      ) {
+        return fallback;
+      }
+      const effectType = effectTypeLabel(translate, effect[2], effect[2]);
+      const param = standaloneEffectParamLabel(translate, effect[3], effect[3]);
+      return controlMetadataText(
+        translate,
+        'standalone.app.controlMetadata.targets.layer.effect',
+        fallback,
+        { layer: layerIndex + 1, effect: effectType, param },
+      );
+    }
+    return fallback;
+  }
+
+  function controllerTargetMetadataGroup(
+    translate: Translate,
+    target: MidiTarget,
+    fallback: string,
+  ): string {
+    if (target === 'micToggle' || target === 'cleanOutput' || target === 'autopilotToggle') {
+      return controlMetadataText(translate, 'standalone.app.controlMetadata.groups.global', fallback);
+    }
+    if (/^snapshot:\d+$/.test(target)) {
+      const slot = Number(target.slice('snapshot:'.length));
+      if (slot < 0 || slot >= SNAPSHOT_COUNT) return fallback;
+      return controlMetadataText(translate, 'standalone.app.controlMetadata.groups.snapshots', fallback);
+    }
+    const layer = /^layer:(\d+):(corner|effect|[a-z]+)(?::.*)?$/.exec(target);
+    if (!layer) return fallback;
+    const layerIndex = Number(layer[1]);
+    if (layerIndex < 0 || layerIndex >= N_LAYERS) return fallback;
+    const values = { layer: layerIndex + 1 };
+    if (layer[2] === 'corner') {
+      return controlMetadataText(
+        translate,
+        'standalone.app.controlMetadata.groups.layerMapping',
+        fallback,
+        values,
+      );
+    }
+    if (layer[2] === 'effect') {
+      return controlMetadataText(
+        translate,
+        'standalone.app.controlMetadata.groups.layerFx',
+        fallback,
+        values,
+      );
+    }
+    return controlMetadataText(translate, 'standalone.app.controlMetadata.groups.layer', fallback, values);
+  }
+
+  function localizeControllerTarget(
+    translate: Translate,
+    target: ControllerTargetDef,
+  ): ControllerTargetDef {
+    return {
+      ...target,
+      label: controllerTargetMetadataLabel(translate, target.target, target.label),
+      group: controllerTargetMetadataGroup(translate, target.target, target.group),
+    };
+  }
+
+  function dynamicControllerTargets(current: SavedState, translate: Translate): ControllerTargetDef[] {
+    const targets = defaultControllerTargets(N_LAYERS).map((target) =>
+      localizeControllerTarget(translate, target),
+    );
     for (let i = 0; i < N_LAYERS; i++) {
       const layer = current.layers[i];
       if (!layer) continue;
       for (const effect of layer.effects) {
         const fx = findMobileEffect(effect.type);
         for (const pd of getEffectParamDefs(effect.type)) {
+          const target = `layer:${i}:effect:${effect.type}:${pd.param}` as MidiTarget;
           targets.push({
-            target: `layer:${i}:effect:${effect.type}:${pd.param}` as MidiTarget,
-            label: `L${i + 1} ${fx?.label ?? effect.type} ${pd.name}`,
-            group: `Layer ${i + 1} FX`,
+            target,
+            label: controllerTargetMetadataLabel(
+              translate,
+              target,
+              `L${i + 1} ${fx?.label ?? effect.type} ${pd.name}`,
+            ),
+            group: controllerTargetMetadataGroup(translate, target, `Layer ${i + 1} FX`),
             mode: pd.step >= 1 && pd.min === 0 && pd.max === 1 ? 'trigger' : 'continuous',
           });
         }
@@ -1123,8 +1427,8 @@
     }
     return targets;
   }
-  let controllerTargets: ControllerTargetDef[] = dynamicControllerTargets(state);
-  $: controllerTargets = dynamicControllerTargets(state);
+  let controllerTargets: ControllerTargetDef[] = dynamicControllerTargets(state, $t);
+  $: controllerTargets = dynamicControllerTargets(state, $t);
 
   // ── Audio pump ──
   function pumpAudio() {
@@ -1141,7 +1445,7 @@
       await audio.start();
       micEnabled = true;
     } catch (e: any) {
-      micError = e?.message || 'Mic permission denied';
+      micError = e?.message || $t('standalone.app.errors.micPermission');
       audio = null;
     } finally {
       micRequesting = false;
@@ -1249,9 +1553,9 @@
       const effectType = parts[3];
       const param = parts.slice(4).join(':');
       if (!effectType || !param) return true;
-      const effect = layer.effects.find(e => e.type === effectType);
+      const effect = layer.effects.find((e) => e.type === effectType);
       if (!effect) return true;
-      const paramDef = getEffectParamDefs(effectType).find(pd => pd.param === param);
+      const paramDef = getEffectParamDefs(effectType).find((pd) => pd.param === param);
       setLayerEffectParam(layerIndex, effect.id, param, paramDef ? scaledParamValue(paramDef, ev.value) : ev.value);
       return true;
     }
@@ -1306,7 +1610,8 @@
       return;
     }
   }
-  function layerTarget(i: number, key: 'opacity' | 'enabled' | 'mapped' | 'edge' | 'speed' | 'intensity' | 'blend'): MidiTarget {
+  function layerTarget(i: number, key: 'opacity' | 'enabled' | 'mapped' | 'edge' | 'speed' | 'intensity' | 'blend',
+  ): MidiTarget {
     return `layer:${i}:${key}` as MidiTarget;
   }
   function controllerTargetValue(target: MidiTarget): number {
@@ -1341,9 +1646,9 @@
     if (action === 'effect') {
       const effectType = parts[3];
       const param = parts.slice(4).join(':');
-      const effect = layer.effects.find(e => e.type === effectType);
+      const effect = layer.effects.find((e) => e.type === effectType);
       const value = effect?.params[param];
-      const pd = getEffectParamDefs(effectType).find(def => def.param === param);
+      const pd = getEffectParamDefs(effectType).find((def) => def.param === param);
       if (typeof value !== 'number') return 0;
       if (!pd || pd.max === pd.min) return clamp01(value);
       return clamp01((value - pd.min) / (pd.max - pd.min));
@@ -1451,23 +1756,21 @@
     if (next?.enabled && nativeOsc?.status === 'listening') void nativeOsc.start(next.port);
   }
   function controllerTargetLabel(target: MidiTarget): string {
-    const targetDef = controllerTargets.find(t => t.target === target);
-    if (targetDef) return targetDef.label;
-    if (target === 'crossfader') return 'L1 opacity';
-    if (target === 'micToggle') return 'Mic';
-    if (target === 'cleanOutput') return 'Clean output';
-    if (target === 'autopilotToggle') return 'Record';
-    if (target.startsWith('bank:')) return `L${Number(target.slice(5)) + 1} toggle`;
-    if (target.startsWith('clip:')) return `L${Number(target.slice(5)) + 1} opacity`;
-    if (target.startsWith('snapshot:')) return `Snapshot ${Number(target.slice('snapshot:'.length)) + 1}`;
-    if (target.startsWith('layer:')) {
-      const parts = target.split(':');
-      const layerNum = Number(parts[1]) + 1;
-      if (parts[2] === 'corner') return `L${layerNum} ${CORNER_LABELS[Number(parts[3])] ?? 'Corner'} ${parts[4]?.toUpperCase() ?? ''}`.trim();
-      if (parts[2] === 'effect') return `L${layerNum} ${parts[3]} ${parts.slice(4).join(':')}`;
-      return `L${layerNum} ${parts[2] ?? 'control'}`;
-    }
-    return target;
+    const targetDef = controllerTargets.find((t) => t.target === target);
+    return controllerTargetMetadataLabel($t, target, targetDef?.label ?? target);
+  }
+  function isBuiltInOscBinding(binding: StandaloneOscBinding): boolean {
+    return OSC_LAYOUT_PRESETS.some((preset) =>
+      preset.bindings.some((candidate) =>
+        candidate.address === binding.address
+        && candidate.target === binding.target
+        && candidate.label === binding.label,
+      ),
+    );
+  }
+  function oscTargetLabel(binding: StandaloneOscBinding): string {
+    if (!isBuiltInOscBinding(binding) && binding.label.trim()) return binding.label;
+    return controllerTargetLabel(binding.target);
   }
   async function copyOscLayout(): Promise<void> {
     const preset = currentOscPreset;
@@ -1475,12 +1778,14 @@
     const text = standaloneOscLayoutText(bindings, state.osc?.port ?? preset.port);
     try {
       await navigator.clipboard?.writeText(text);
-      controllerMsg = 'OSC layout copied';
+      controllerMsg = $t('standalone.app.controller.oscCopied');
     } catch {
-      controllerMsg = 'Could not copy OSC layout';
+      controllerMsg = $t('standalone.app.controller.oscCopyError');
     }
+    const copiedMessage = $t('standalone.app.controller.oscCopied');
+    const copyErrorMessage = $t('standalone.app.controller.oscCopyError');
     setTimeout(() => {
-      if (controllerMsg === 'OSC layout copied' || controllerMsg === 'Could not copy OSC layout') controllerMsg = null;
+      if (controllerMsg === copiedMessage || controllerMsg === copyErrorMessage) controllerMsg = null;
     }, 3000);
   }
   function handleNativeOscMessage(message: NativeOscMessage): void {
@@ -1539,11 +1844,13 @@
     if (next?.enabled && nativeOsc?.status === 'listening') void nativeOsc.start(port);
   }
   function oscStatusLabel(): string {
-    if (oscStatus === 'listening') return `Listening on ${state.osc?.port ?? currentOscPreset.port}`;
-    if (oscStatus === 'starting') return 'Starting...';
-    if (oscStatus === 'error') return oscError ?? 'Could not start OSC';
-    if (oscStatus === 'unavailable') return 'Native OSC unavailable';
-    return 'Not listening';
+    if (oscStatus === 'listening') {
+      return $t('standalone.app.osc.listening', { values: { port: state.osc?.port ?? currentOscPreset.port } });
+    }
+    if (oscStatus === 'starting') return $t('standalone.app.osc.starting');
+    if (oscStatus === 'error') return oscError ?? $t('standalone.app.osc.startError');
+    if (oscStatus === 'unavailable') return $t('standalone.app.osc.unavailable');
+    return $t('standalone.app.osc.idle');
   }
   async function enableMidi(): Promise<void> {
     if (!isWebMidiAvailable()) { midiStatus = 'unavailable'; return; }
@@ -1604,7 +1911,7 @@
   function startRecording(): void {
     if (recorder) return;
     recError = null;
-    if (!recSupported) { recError = 'Recording not supported here. Try Chrome on Android.'; return; }
+    if (!recSupported) { recError = $t('standalone.app.recording.unsupported'); return; }
     try {
       recorder = new StandaloneRecorder({ getStack: buildLayerStack });
       recorder.start();
@@ -1613,7 +1920,7 @@
         recElapsed = recorder ? recorder.elapsedSec() : 0;
       }, 250);
     } catch (e: any) {
-      recError = e?.message || 'Could not start recorder';
+      recError = e?.message || $t('standalone.app.recording.startError');
       recorder = null;
     }
   }
@@ -1624,11 +1931,11 @@
     if (recElapsedTimer) { clearInterval(recElapsedTimer); recElapsedTimer = null; }
     const result = await r.stop();
     recElapsed = 0;
-    if (!result) { recError = 'Recording produced no data'; return; }
-    recDeliveringMsg = 'Saving…';
+    if (!result) { recError = $t('standalone.app.recording.noData'); return; }
+    recDeliveringMsg = $t('standalone.app.recording.saving');
     const outcome = await deliverRecording(result);
-    if (outcome === 'failed') { recError = 'Could not save the clip'; recDeliveringMsg = null; return; }
-    recDeliveringMsg = outcome === 'shared' ? 'Shared' : 'Saved to downloads';
+    if (outcome === 'failed') { recError = $t('standalone.app.recording.saveError'); recDeliveringMsg = null; return; }
+    recDeliveringMsg = outcome === 'shared' ? $t('standalone.app.recording.shared') : $t('standalone.app.recording.saved');
     setTimeout(() => { recDeliveringMsg = null; }, 3500);
   }
   function toggleRecording(): void {
@@ -1656,21 +1963,27 @@
     });
     if (canvasStackEl) resizeObs.observe(canvasStackEl);
     for (const c of canvases) if (c) resizeObs.observe(c);
-	    updateStackSize();
-	    if (state.midi?.enabled) void enableMidi();
-	    if (state.osc?.enabled) void enableOsc();
-	  });
-	  onDestroy(() => {
+    updateStackSize();
+    if (state.midi?.enabled) void enableMidi();
+    if (state.osc?.enabled) void enableOsc();
+  });
+  onDestroy(() => {
     if (pumpTimer) clearInterval(pumpTimer);
     resizeObs?.disconnect();
     for (let i = 0; i < N_LAYERS; i++) cleanupMediaLayer(i);
     for (const r of renderers) r?.destroy();
     renderers = new Array(N_LAYERS).fill(null);
-	    audio?.stop(); audio = null;
-	    midi?.stop(); midi = null;
-	    void nativeOsc?.dispose(); nativeOsc = null;
-	    cancelLearn();
-    if (recElapsedTimer) { clearInterval(recElapsedTimer); recElapsedTimer = null; }
+    audio?.stop();
+    audio = null;
+    midi?.stop();
+    midi = null;
+    void nativeOsc?.dispose();
+    nativeOsc = null;
+    cancelLearn();
+    if (recElapsedTimer) {
+      clearInterval(recElapsedTimer);
+      recElapsedTimer = null;
+    }
     void recorder?.stop();
     recorder = null;
   });
@@ -1734,7 +2047,7 @@
             {#if l.mapped || i === mapLayerIndex}
               <polygon
                 class={i === mapLayerIndex ? 'active-map-poly' : ''}
-                points={layerCornersPx(l).map(p => `${p.x},${p.y}`).join(' ')}
+                points={layerCornersPx(l).map((p) => `${p.x},${p.y}`).join(' ')}
                 style="--lc: {LAYER_COLORS[i % LAYER_COLORS.length]}"
               />
             {/if}
@@ -1749,7 +2062,7 @@
               top: {corner.y * 100}%;
             "
             onpointerdown={(e) => handleMapCornerDown(mapLayerIndex, ci, e)}
-            aria-label={`Move ${CORNER_LABELS[ci]} corner`}
+            aria-label={$t('standalone.app.mapping.moveCorner', { values: { corner: CORNER_LABELS[ci] } })}
           >
             {CORNER_LABELS[ci]}
           </button>
@@ -1760,30 +2073,30 @@
 
   <!-- Top bar -->
   <div class="top-bar">
-    <span class="brand">Ghost Arcade</span>
+    <span class="brand">{$t('standalone.brand')}</span>
     <div class="top-actions">
       {#if recSupported}
         <button
           class="top-btn rec"
           class:on={isRecording}
           onclick={(e) => { e.stopPropagation(); toggleRecording(); }}
-          aria-label={isRecording ? 'Stop recording' : 'Record'}
+          aria-label={isRecording ? $t('standalone.app.record.stopAria') : $t('standalone.app.record.recordAria')}
         >
           {#if isRecording}● {Math.floor(recElapsed / 60)}:{String(Math.floor(recElapsed % 60)).padStart(2, '0')}
-          {:else}● REC{/if}
+          {:else}{$t('standalone.app.record.rec')}{/if}
         </button>
       {/if}
-      <button class="top-btn" onclick={(e) => { e.stopPropagation(); showSettings = true; }} aria-label="Settings">⋯</button>
+      <button class="top-btn" onclick={(e) => { e.stopPropagation(); showSettings = true; }} aria-label={$t('standalone.app.settings.title')}>⋯</button>
     </div>
   </div>
 
   <!-- Tab bar -->
   <div class="tab-bar">
-    <button class="tab" class:active={tab === 'shaders'} onclick={(e) => { e.stopPropagation(); tab = 'shaders'; }}>Sources</button>
-    <button class="tab" class:active={tab === 'fx'}      onclick={(e) => { e.stopPropagation(); tab = 'fx'; }}>FX</button>
-    <button class="tab" class:active={tab === 'map'}     onclick={(e) => { e.stopPropagation(); tab = 'map'; updateStackSize(); }}>Map</button>
-    <button class="tab" class:active={tab === 'mix'}     onclick={(e) => { e.stopPropagation(); tab = 'mix'; }}>Mix</button>
-    <button class="tab" class:active={tab === 'ctrl'}    onclick={(e) => { e.stopPropagation(); tab = 'ctrl'; }}>Ctrl</button>
+    <button class="tab" class:active={tab === 'shaders'} onclick={(e) => { e.stopPropagation(); tab = 'shaders'; }}>{$t('standalone.app.tabs.sources')}</button>
+    <button class="tab" class:active={tab === 'fx'}      onclick={(e) => { e.stopPropagation(); tab = 'fx'; }}>{$t('standalone.app.tabs.fx')}</button>
+    <button class="tab" class:active={tab === 'map'}     onclick={(e) => { e.stopPropagation(); tab = 'map'; updateStackSize(); }}>{$t('standalone.app.tabs.map')}</button>
+    <button class="tab" class:active={tab === 'mix'}     onclick={(e) => { e.stopPropagation(); tab = 'mix'; }}>{$t('standalone.app.tabs.mix')}</button>
+    <button class="tab" class:active={tab === 'ctrl'}    onclick={(e) => { e.stopPropagation(); tab = 'ctrl'; }}>{$t('standalone.app.tabs.ctrl')}</button>
   </div>
 
   <!-- Panel -->
@@ -1796,28 +2109,30 @@
           {@const hasSource = layerHasSource(l)}
           <div class="shader-row" style="--lc: {LAYER_COLORS[i % LAYER_COLORS.length]}">
             <span class="row-label">L{i + 1}</span>
-            <button class="shader-pick" onclick={() => pickerForLayer = i}>
+            <button class="shader-pick" onclick={() => (pickerForLayer = i)}>
               {#if name && hasSource}
                 <span class="pick-name">{name}</span>
                 <span class="pick-cat">{kind}</span>
               {:else if l.sourceType === 'media' && l.mediaName}
                 <span class="pick-name muted">{l.mediaName}</span>
-                <span class="pick-cat">{l.mediaKind === 'camera' ? 'restart camera' : 're-import media'}</span>
+                <span class="pick-cat">{l.mediaKind === 'camera' ? $t('standalone.app.source.restartCamera')
+                    : $t('standalone.app.source.reimportMedia')}</span>
               {:else}
-                <span class="pick-empty">+ pick a source</span>
+                <span class="pick-empty">{$t('standalone.app.source.pick')}</span>
               {/if}
             </button>
             <div class="source-actions">
               <button
                 class="row-source-btn"
                 onclick={() => requestMediaForLayer(i)}
-                aria-label="Import photo or video"
-              >File</button>
+                aria-label={$t('standalone.app.source.importPhotoVideo')}>{$t('standalone.app.source.file')}</button>
               <button
                 class="row-source-btn camera"
                 onclick={() => void requestCameraForLayer(i)}
-                aria-label={l.mediaKind === 'camera' ? 'Switch camera' : 'Start camera'}
-              >{l.mediaKind === 'camera' && hasSource ? 'Flip' : 'Cam'}</button>
+                aria-label={l.mediaKind === 'camera' ? $t('standalone.app.source.switchCamera')
+                  : $t('standalone.app.source.startCamera')}
+              >{l.mediaKind === 'camera' && hasSource ? $t('standalone.app.source.flip')
+                  : $t('standalone.app.source.cam')}</button>
             </div>
             <button
               class="row-enable"
@@ -1825,10 +2140,11 @@
               onclick={() => setLayerEnabled(i, !l.enabled)}
               aria-pressed={l.enabled}
               disabled={!hasSource}
-              aria-label={l.enabled ? 'Mute layer' : 'Unmute layer'}
+              aria-label={l.enabled ? $t('standalone.app.source.muteLayer') : $t('standalone.app.source.unmuteLayer')}
             >{l.enabled ? '●' : '○'}</button>
             {#if hasSource || l.mediaName}
-              <button class="row-stop" onclick={() => stopLayer(i)} aria-label="Remove source">✕</button>
+              <button class="row-stop" onclick={() => stopLayer(i)} aria-label={$t('standalone.app.source.remove')}
+                >✕</button>
             {/if}
           </div>
         {/each}
@@ -1839,12 +2155,12 @@
           <div class="fx-layer-block" style="--lc: {LAYER_COLORS[i % LAYER_COLORS.length]}">
             <div class="fx-layer-head">
               <span class="row-label">L{i + 1}</span>
-              <span class="fx-layer-name">{layerDisplayName(l) ?? '— empty —'}</span>
+              <span class="fx-layer-name">{layerDisplayName(l) ?? $t('standalone.app.effects.emptyLayer')}</span>
               <details class="fx-add-wrap">
-                <summary class="fx-add-btn">+ FX</summary>
+                <summary class="fx-add-btn">{$t('standalone.app.effects.add')}</summary>
                 <div class="fx-add-menu">
                   {#each getEffectDefList() as fx}
-                    {@const already = l.effects.some(e => e.type === fx.type)}
+                    {@const already = l.effects.some((e) => e.type === fx.type)}
                     <button
                       class="fx-add-row"
                       disabled={already}
@@ -1852,14 +2168,14 @@
                     >
                       <span class="fx-add-cat">{fx.category}</span>
                       <span class="fx-add-label">{fx.label}</span>
-                      {#if already}<span class="fx-add-meta">added</span>{/if}
+                      {#if already}<span class="fx-add-meta">{$t('standalone.app.effects.added')}</span>{/if}
                     </button>
                   {/each}
                 </div>
               </details>
             </div>
             {#if l.effects.length === 0}
-              <div class="fx-empty">No effects. Tap + FX to add one.</div>
+              <div class="fx-empty">{$t('standalone.app.effects.none')}</div>
             {:else}
               {#each l.effects as e (e.id)}
                 {@const fx = findMobileEffect(e.type)}
@@ -1867,9 +2183,9 @@
                   {@const paramDefs = getEffectParamDefs(e.type)}
                   <div class="fx-row" class:disabled={!e.enabled}>
                     <div class="fx-row-head">
-                      <button class="fx-bypass" class:on={e.enabled} onclick={() => toggleLayerEffect(i, e.id)} aria-label="Bypass">{e.enabled ? '●' : '○'}</button>
+                      <button class="fx-bypass" class:on={e.enabled} onclick={() => toggleLayerEffect(i, e.id)} aria-label={$t('standalone.app.effects.bypass')}>{e.enabled ? '●' : '○'}</button>
                       <span class="fx-name">{fx.label}</span>
-                      <button class="fx-remove" onclick={() => removeLayerEffect(i, e.id)} aria-label="Remove">✕</button>
+                      <button class="fx-remove" onclick={() => removeLayerEffect(i, e.id)} aria-label={$t('standalone.app.effects.remove')}>✕</button>
                     </div>
                     {#if paramDefs.length === 0}
                       <!-- Parameterless effect (e.g. invert) — bypass button is the whole control. -->
@@ -1911,7 +2227,7 @@
               onclick={() => setMapLayerIndex(i)}
             >
               <span>L{i + 1}</span>
-              <small>{layer.mapped ? 'mapped' : 'flat'}</small>
+              <small>{layer.mapped ? $t('standalone.app.mapping.mapped') : $t('standalone.app.mapping.flat')}</small>
             </button>
           {/each}
         </div>
@@ -1919,8 +2235,10 @@
         <div class="map-control-card" style="--lc: {LAYER_COLORS[mapLayerIndex % LAYER_COLORS.length]}">
           <div class="map-control-head">
             <div>
-              <div class="map-title">Layer {mapLayerIndex + 1} mapping</div>
-              <div class="map-subtitle">{layerDisplayName(l) ?? 'No source assigned'}</div>
+              <div class="map-title">
+                {$t('standalone.app.mapping.title', { values: { layer: mapLayerIndex + 1} })}
+              </div>
+              <div class="map-subtitle">{layerDisplayName(l) ?? $t('standalone.app.mapping.noSource')}</div>
             </div>
             <label class="map-switch">
               <input
@@ -1928,20 +2246,20 @@
                 checked={l.mapped}
                 onchange={(e) => setLayerMapped(mapLayerIndex, (e.target as HTMLInputElement).checked)}
               />
-              <span>{l.mapped ? 'On' : 'Off'}</span>
+              <span>{l.mapped ? $t('standalone.app.mapping.on') : $t('standalone.app.mapping.off')}</span>
             </label>
           </div>
 
           <div class="map-presets">
             {#each MAP_PRESETS as preset}
               <button class="map-preset-btn" onclick={() => applyMapPreset(mapLayerIndex, preset.id)}>
-                {preset.label}
+                {$t(preset.labelKey)}
               </button>
             {/each}
           </div>
 
           <label class="map-range">
-            <span>Edge fade</span>
+            <span>{$t('standalone.app.mapping.edgeFade')}</span>
             <input
               type="range"
               min="0"
@@ -1978,7 +2296,7 @@
           </div>
 
           <button class="map-reset-btn" onclick={() => resetLayerMapping(mapLayerIndex)}>
-            Reset layer mapping
+            {$t('standalone.app.mapping.reset')}
           </button>
         </div>
       </div>
@@ -1992,25 +2310,25 @@
           compact={true}
         />
 
-        <div class="ctrl-layout-picker" aria-label="Controller surface">
+        <div class="ctrl-layout-picker" aria-label={$t('standalone.app.mapping.controllerSurfaceAria')}>
           {#each CONTROLLER_SURFACES as surface (surface.id)}
             <button
               class="ctrl-layout-btn"
               class:active={controllerSurfaceId === surface.id}
-              onclick={() => controllerSurfaceId = surface.id}
+              onclick={() => (controllerSurfaceId = surface.id)}
               aria-pressed={controllerSurfaceId === surface.id}
             >
-              <span>{surface.short}</span>
+              <span>{$t(surface.shortKey)}</span>
             </button>
           {/each}
         </div>
 
         <div class="ctrl-surface-head">
           <div>
-            <div class="ctrl-title">{activeControllerSurface.name}</div>
-            <div class="ctrl-subtitle">{activeControllerSurface.description}</div>
+            <div class="ctrl-title">{$t(activeControllerSurface.nameKey)}</div>
+            <div class="ctrl-subtitle">{$t(activeControllerSurface.descriptionKey)}</div>
           </div>
-          <button class="ctrl-map-btn" onclick={() => showMidi = true}>MIDI / OSC</button>
+          <button class="ctrl-map-btn" onclick={() => (showMidi = true)}>{$t('standalone.app.settings.midiOscController')}</button>
         </div>
 
         {#if controllerSurfaceId === 'ghost'}
@@ -2026,7 +2344,7 @@
               <div class="ctrl-channel" style="--lc: {LAYER_COLORS[i % LAYER_COLORS.length]}">
                 <div class="ctrl-channel-head">
                   <span>L{i + 1}</span>
-                  <small>{layerDisplayName(layer) ?? 'empty'}</small>
+                  <small>{layerDisplayName(layer) ?? $t('standalone.app.controller.empty')}</small>
                 </div>
                 <label class="ctrl-fader">
                   <input
@@ -2039,12 +2357,12 @@
                   />
                 </label>
                 <div class="ctrl-pad-row">
-                  <button class="ctrl-pad" class:on={controllerTargetOn(enabledTarget)} onclick={() => triggerControllerTarget(enabledTarget)}>On</button>
-                  <button class="ctrl-pad" class:on={controllerTargetOn(mappedTarget)} onclick={() => triggerControllerTarget(mappedTarget)}>Map</button>
-                  <button class="ctrl-pad" onclick={() => triggerControllerTarget(blendTarget)}>Blend</button>
+                  <button class="ctrl-pad" class:on={controllerTargetOn(enabledTarget)} onclick={() => triggerControllerTarget(enabledTarget)}>{$t('standalone.app.controller.on')}</button>
+                  <button class="ctrl-pad" class:on={controllerTargetOn(mappedTarget)} onclick={() => triggerControllerTarget(mappedTarget)}>{$t('standalone.app.controller.map')}</button>
+                  <button class="ctrl-pad" onclick={() => triggerControllerTarget(blendTarget)}>{$t('standalone.app.controller.blend')}</button>
                 </div>
                 <label class="ctrl-mini-range">
-                  <span>Edge</span>
+                  <span>{$t('standalone.app.controller.edge')}</span>
                   <input
                     type="range"
                     min="0"
@@ -2055,7 +2373,7 @@
                   />
                 </label>
                 <label class="ctrl-mini-range">
-                  <span>Speed</span>
+                  <span>{$t('standalone.app.controller.speed')}</span>
                   <input
                     type="range"
                     min="0"
@@ -2066,7 +2384,7 @@
                   />
                 </label>
                 <label class="ctrl-mini-range">
-                  <span>Audio</span>
+                  <span>{$t('standalone.app.controller.audio')}</span>
                   <input
                     type="range"
                     min="0"
@@ -2081,9 +2399,9 @@
           </div>
 
           <div class="ctrl-global-row">
-            <button class="ctrl-pad global" class:on={micEnabled} onclick={() => triggerControllerTarget('micToggle')}>Mic</button>
-            <button class="ctrl-pad global" class:on={cleanOutput} onclick={() => triggerControllerTarget('cleanOutput')}>Clean</button>
-            <button class="ctrl-pad global rec" class:on={isRecording} onclick={() => triggerControllerTarget('autopilotToggle')}>Rec</button>
+            <button class="ctrl-pad global" class:on={micEnabled} onclick={() => triggerControllerTarget('micToggle')}>{$t('standalone.app.controller.mic')}</button>
+            <button class="ctrl-pad global" class:on={cleanOutput} onclick={() => triggerControllerTarget('cleanOutput')}>{$t('standalone.app.controller.clean')}</button>
+            <button class="ctrl-pad global rec" class:on={isRecording} onclick={() => triggerControllerTarget('autopilotToggle')}>{$t('standalone.app.controller.rec')}</button>
           </div>
         {:else if controllerSurfaceId === 'apc'}
           <div class="ctrl-apc">
@@ -2097,19 +2415,19 @@
               {#each state.layers as layer, i (layer.id)}
                 {@const mappedTarget = layerTarget(i, 'mapped')}
                 <button class="apc-pad amber" class:on={controllerTargetOn(mappedTarget)} onclick={() => triggerControllerTarget(mappedTarget)}>
-                  Map
+                  {$t('standalone.app.controller.map')}
                 </button>
               {/each}
               {#each state.layers as layer, i (layer.id)}
                 {@const blendTarget = layerTarget(i, 'blend')}
                 <button class="apc-pad blue" onclick={() => triggerControllerTarget(blendTarget)}>
-                  Blend
+                  {$t('standalone.app.controller.blend')}
                 </button>
               {/each}
-              <button class="apc-pad red" onclick={() => triggerControllerTarget('autopilotToggle')}>Rec</button>
-              <button class="apc-pad cyan" onclick={() => triggerControllerTarget('micToggle')}>Mic</button>
-              <button class="apc-pad white" onclick={() => triggerControllerTarget('cleanOutput')}>Clean</button>
-              <button class="apc-pad red" onclick={stopAllLayers}>Stop</button>
+              <button class="apc-pad red" onclick={() => triggerControllerTarget('autopilotToggle')}>{$t('standalone.app.controller.rec')}</button>
+              <button class="apc-pad cyan" onclick={() => triggerControllerTarget('micToggle')}>{$t('standalone.app.controller.mic')}</button>
+              <button class="apc-pad white" onclick={() => triggerControllerTarget('cleanOutput')}>{$t('standalone.app.controller.clean')}</button>
+              <button class="apc-pad red" onclick={stopAllLayers}>{$t('standalone.app.controller.stop')}</button>
             </div>
             <div class="apc-faders">
               {#each state.layers as layer, i (layer.id)}
@@ -2139,7 +2457,7 @@
             {#each state.layers as layer, i (layer.id)}
               {@const mappedTarget = layerTarget(i, 'mapped')}
               <button class="launch-pad map" class:on={controllerTargetOn(mappedTarget)} onclick={() => triggerControllerTarget(mappedTarget)}>
-                Map {i + 1}
+                {$t('standalone.app.controller.mapLayer', { values: { layer: i + 1 } })}
               </button>
             {/each}
             {#each QUICK_BLEND_MODES as mode}
@@ -2147,10 +2465,10 @@
                 {mode}
               </button>
             {/each}
-            <button class="launch-pad global" class:on={micEnabled} onclick={() => triggerControllerTarget('micToggle')}>Mic</button>
-            <button class="launch-pad global" class:on={cleanOutput} onclick={() => triggerControllerTarget('cleanOutput')}>Clean</button>
-            <button class="launch-pad global rec" class:on={isRecording} onclick={() => triggerControllerTarget('autopilotToggle')}>Rec</button>
-            <button class="launch-pad global stop" onclick={stopAllLayers}>Stop</button>
+            <button class="launch-pad global" class:on={micEnabled} onclick={() => triggerControllerTarget('micToggle')}>{$t('standalone.app.controller.mic')}</button>
+            <button class="launch-pad global" class:on={cleanOutput} onclick={() => triggerControllerTarget('cleanOutput')}>{$t('standalone.app.controller.clean')}</button>
+            <button class="launch-pad global rec" class:on={isRecording} onclick={() => triggerControllerTarget('autopilotToggle')}>{$t('standalone.app.controller.rec')}</button>
+            <button class="launch-pad global stop" onclick={stopAllLayers}>{$t('standalone.app.controller.stop')}</button>
           </div>
         {:else}
           <div class="nano-strip">
@@ -2165,7 +2483,7 @@
               <div class="nano-channel" style="--lc: {LAYER_COLORS[i % LAYER_COLORS.length]}">
                 <div class="nano-label">L{i + 1}</div>
                 <label class="nano-knob">
-                  <span>Edge</span>
+                  <span>{$t('standalone.app.controller.edge')}</span>
                   <input
                     type="range"
                     min="0"
@@ -2176,7 +2494,7 @@
                   />
                 </label>
                 <label class="nano-knob">
-                  <span>Speed</span>
+                  <span>{$t('standalone.app.controller.speed')}</span>
                   <input
                     type="range"
                     min="0"
@@ -2187,7 +2505,7 @@
                   />
                 </label>
                 <label class="nano-knob">
-                  <span>Audio</span>
+                  <span>{$t('standalone.app.controller.audio')}</span>
                   <input
                     type="range"
                     min="0"
@@ -2198,9 +2516,9 @@
                   />
                 </label>
                 <div class="nano-buttons">
-                  <button class:on={controllerTargetOn(enabledTarget)} onclick={() => triggerControllerTarget(enabledTarget)}>S</button>
-                  <button class:on={controllerTargetOn(mappedTarget)} onclick={() => triggerControllerTarget(mappedTarget)}>M</button>
-                  <button onclick={() => triggerControllerTarget(blendTarget)}>B</button>
+                  <button class:on={controllerTargetOn(enabledTarget)} onclick={() => triggerControllerTarget(enabledTarget)}>{$t('standalone.app.controller.nanoSolo')}</button>
+                  <button class:on={controllerTargetOn(mappedTarget)} onclick={() => triggerControllerTarget(mappedTarget)}>{$t('standalone.app.controller.nanoMap')}</button>
+                  <button onclick={() => triggerControllerTarget(blendTarget)}>{$t('standalone.app.controller.nanoBlend')}</button>
                 </div>
                 <label class="nano-fader">
                   <input
@@ -2216,9 +2534,9 @@
             {/each}
           </div>
           <div class="ctrl-global-row">
-            <button class="ctrl-pad global" class:on={micEnabled} onclick={() => triggerControllerTarget('micToggle')}>Mic</button>
-            <button class="ctrl-pad global" class:on={cleanOutput} onclick={() => triggerControllerTarget('cleanOutput')}>Clean</button>
-            <button class="ctrl-pad global rec" class:on={isRecording} onclick={() => triggerControllerTarget('autopilotToggle')}>Rec</button>
+            <button class="ctrl-pad global" class:on={micEnabled} onclick={() => triggerControllerTarget('micToggle')}>{$t('standalone.app.controller.mic')}</button>
+            <button class="ctrl-pad global" class:on={cleanOutput} onclick={() => triggerControllerTarget('cleanOutput')}>{$t('standalone.app.controller.clean')}</button>
+            <button class="ctrl-pad global rec" class:on={isRecording} onclick={() => triggerControllerTarget('autopilotToggle')}>{$t('standalone.app.controller.rec')}</button>
           </div>
         {/if}
       </div>
@@ -2237,7 +2555,7 @@
             />
             <div class="performance-rack">
               <label class="performance-control">
-                <span>Speed</span>
+                <span>{$t('standalone.app.controller.speed')}</span>
                 <input
                   type="range"
                   min="0"
@@ -2249,7 +2567,7 @@
                 <strong>{l.playbackSpeed.toFixed(2)}x</strong>
               </label>
               <label class="performance-control">
-                <span>Audio</span>
+                <span>{$t('standalone.app.controller.audio')}</span>
                 <input
                   type="range"
                   min="0"
@@ -2270,7 +2588,7 @@
   <!-- Mic prompt — bottom-floating until enabled -->
   {#if !micEnabled}
     <button class="mic-prompt" onclick={(e) => { e.stopPropagation(); void enableMic(); }} disabled={micRequesting}>
-      {micRequesting ? 'Enabling mic…' : '🎤 Enable mic for audio-reactive shaders'}
+      {micRequesting ? $t('standalone.app.mic.enabling') : $t('standalone.app.mic.enablePrompt')}
     </button>
   {/if}
 
@@ -2284,19 +2602,19 @@
     <StandaloneShaderPicker
       shaders={MOBILE_SHADERS}
       onPick={(s) => { setLayerShader(pickerForLayer!, s.id); pickerForLayer = null; }}
-      onClose={() => pickerForLayer = null}
+      onClose={() => (pickerForLayer = null)}
     />
   {/if}
 
   <!-- Settings sheet -->
   {#if showSettings}
-    <div class="modal-bg" onclick={() => showSettings = false} role="presentation">
+    <div class="modal-bg" onclick={() => (showSettings = false)} role="presentation">
       <div class="modal-card settings-card" onclick={(e) => e.stopPropagation()} role="presentation">
-	        <h2>Settings</h2>
+	        <h2>{$t('standalone.app.settings.title')}</h2>
 
         <div class="project-card">
           <label class="project-name-row">
-            <span>Current show</span>
+            <span>{$t('standalone.app.project.currentShow')}</span>
             <input
               type="text"
               value={state.projectName}
@@ -2304,8 +2622,8 @@
             />
           </label>
           <div class="project-actions">
-            <button class="project-action-btn primary" onclick={saveCurrentShowToBank}>Save show</button>
-            <button class="project-action-btn" onclick={newStandaloneShow}>New show</button>
+            <button class="project-action-btn primary" onclick={saveCurrentShowToBank}>{$t('standalone.app.project.saveShow')}</button>
+            <button class="project-action-btn" onclick={newStandaloneShow}>{$t('standalone.app.project.newShow')}</button>
           </div>
 
           {#if savedShows.length > 0}
@@ -2314,27 +2632,29 @@
                 <div class="saved-show-row" class:current={show.id === state.projectId}>
                   <button class="saved-show-main" onclick={() => loadStandaloneShow(show.id)}>
                     <strong>{show.name}</strong>
-                    <span>{formatShowDate(show.updatedAt)}{show.id === state.projectId ? ' · current' : ''}</span>
+                    <span>{formatShowDate(show.updatedAt)}{show.id === state.projectId ? $t('standalone.app.project.currentSuffix')
+                        : ''}</span>
                   </button>
-                  <button class="saved-show-delete" onclick={() => deleteStandaloneShow(show.id)} aria-label={`Delete ${show.name}`}>
+                  <button class="saved-show-delete" onclick={() => deleteStandaloneShow(show.id)} aria-label={$t('standalone.app.project.deleteAria', { values: { name: show.name } })}>
                     ✕
                   </button>
                 </div>
               {/each}
             </div>
           {:else}
-            <div class="saved-show-empty">No saved shows yet.</div>
+            <div class="saved-show-empty">{$t('standalone.app.project.noSavedShows')}</div>
           {/if}
         </div>
 
 	        <button class="row-btn" onclick={() => { showSettings = false; showMidi = true; }}>
-	          MIDI / OSC controller{midiStatus === 'connected' && midiDevices.length ? ` · ${midiDevices[0]}` : ''}
+          {$t('standalone.app.settings.midiOscController')}{midiStatus === 'connected' && midiDevices.length ? ` · ${midiDevices[0]}` : ''}
 	        </button>
         <button class="row-btn" onclick={() => { micEnabled ? disableMic() : void enableMic(); showSettings = false; }}>
-          {micEnabled ? 'Disable mic' : 'Enable mic'}
+          {micEnabled ? $t('standalone.app.mic.disable') : $t('standalone.app.mic.enable')}
         </button>
-        <button class="row-btn" onclick={onSwitchMode}>Switch mode (Standalone / Remote)</button>
-        <button class="close-x" onclick={() => showSettings = false} aria-label="Close">✕</button>
+        <button class="row-btn" onclick={onSwitchMode}>{$t('standalone.app.settings.switchMode')}</button>
+        <button class="close-x" onclick={() => (showSettings = false)} aria-label={$t('standalone.app.settings.close')}
+          >✕</button>
       </div>
     </div>
   {/if}
@@ -2343,85 +2663,110 @@
   {#if showMidi}
     <div class="modal-bg" onclick={() => { showMidi = false; cancelLearn(); }} role="presentation">
       <div class="modal-card midi-card" onclick={(e) => e.stopPropagation()} role="presentation">
-        <h2>MIDI / OSC controller</h2>
+        <h2>{$t('standalone.app.midi.title')}</h2>
         <div class="controller-section">
-          <h3>MIDI</h3>
+          <h3>{$t('standalone.app.midi.section')}</h3>
           {#if midiStatus === 'unavailable'}
-            <p class="midi-hint">Web MIDI isn't available in this browser. Try Chrome on Android, or the iOS Capacitor build.</p>
+            <p class="midi-hint">{$t('standalone.app.midi.unavailable')}</p>
           {:else}
-          <div class="midi-status">
-            <span class="midi-dot midi-dot-{midiStatus}"></span>
-            <span>
-              {#if midiStatus === 'connected'}Connected{midiDevices.length ? ` · ${midiDevices.join(', ')}` : ''}
-              {:else if midiStatus === 'requesting'}Requesting permission…
-              {:else if midiStatus === 'denied'}Permission denied
-              {:else if midiStatus === 'error'}Could not connect
-              {:else}Not connected{/if}
-            </span>
-          </div>
-          {#if midiStatus !== 'connected'}
-            <button class="row-btn" onclick={() => void enableMidi()}>Enable MIDI</button>
-          {:else}
-            <button class="row-btn" onclick={disableMidi}>Disable MIDI</button>
-          {/if}
-          <div class="midi-preset-card">
-            <label class="midi-preset-row">
-              <span>Controller layout</span>
-              <select
-                value={state.midi?.presetId ?? DEFAULT_MIDI_PRESET_ID}
-                onchange={(e) => selectMidiPreset((e.target as HTMLSelectElement).value)}
-              >
-                {#each MIDI_LAYOUT_PRESETS as p (p.id)}
-                  <option value={p.id}>{p.name}</option>
-                {/each}
-                <option value={CUSTOM_MIDI_PRESET_ID}>Custom</option>
-              </select>
-            </label>
-            <div class="midi-preset-copy">
-              {#if currentMidiPreset}
-                <strong>{currentMidiPreset.controller}</strong>
-                <span>{currentMidiPreset.description}</span>
-              {:else}
-                <strong>Custom layout</strong>
-                <span>MIDI Learn edits are stored here until another preset is selected.</span>
-              {/if}
+            <div class="midi-status">
+              <span class="midi-dot midi-dot-{midiStatus}"></span>
+              <span>
+                {#if midiStatus === 'connected'}{$t('standalone.app.midi.connected')}{midiDevices.length
+                    ? ` · ${midiDevices.join(', ')}`
+                    : ''}
+                {:else if midiStatus === 'requesting'}{$t('standalone.app.midi.requesting')}
+                {:else if midiStatus === 'denied'}{$t('standalone.app.midi.denied')}
+                {:else if midiStatus === 'error'}{$t('standalone.app.midi.error')}
+                {:else}{$t('standalone.app.midi.idle')}{/if}
+              </span>
             </div>
-          </div>
-          {#if midiStatus === 'connected'}
-            {#if learnTarget}
-              <div class="midi-learn-banner">
-                Move a control on your controller to map <strong>{controllerTargetLabel(learnTarget)}</strong>…
-                <button class="learn-cancel" onclick={cancelLearn}>Cancel</button>
-              </div>
+            {#if midiStatus !== 'connected'}
+              <button class="row-btn" onclick={() => void enableMidi()}>{$t('standalone.app.midi.enable')}</button>
+            {:else}
+              <button class="row-btn" onclick={disableMidi}>{$t('standalone.app.midi.disable')}</button>
             {/if}
-            <div class="midi-binding-list">
-              {#each controllerTargets as item (item.target)}
-                {@const b = state.midi?.mappings[item.target]}
-                <div class="midi-row" class:learning={learnTarget === item.target}>
-                  <span class="midi-target">
-                    <small>{item.group}</small>
-                    {item.label}
+            <div class="midi-preset-card">
+              <label class="midi-preset-row">
+                <span>{$t('standalone.app.midi.controllerLayout')}</span>
+                <select
+                  value={state.midi?.presetId ?? DEFAULT_MIDI_PRESET_ID}
+                  onchange={(e) => selectMidiPreset((e.target as HTMLSelectElement).value)}
+                >
+                  {#each MIDI_LAYOUT_PRESETS as p (p.id)}
+                    <option value={p.id}>{controlMetadataPresetText($t, 'midi', p.id, 'name', p.name)}</option>
+                  {/each}
+                  <option value={CUSTOM_MIDI_PRESET_ID}>{$t('standalone.app.midi.custom')}</option>
+                </select>
+              </label>
+              <div class="midi-preset-copy">
+                {#if currentMidiPreset}
+                  <strong>
+                    {controlMetadataPresetText($t, 'midi', currentMidiPreset.id, 'controller', currentMidiPreset.controller)}
+                  </strong>
+                  <span>
+                    {controlMetadataPresetText($t, 'midi', currentMidiPreset.id, 'description', currentMidiPreset.description)}
                   </span>
-                  <span class="midi-binding">
-                    {#if b}{b.kind === 'cc' ? 'CC' : 'Note'} {b.num} · ch{b.channel + 1}{:else}<em>unbound</em>{/if}
-                  </span>
-                  <button class="midi-btn" onclick={() => startLearn(item.target)}>Learn</button>
-                  <button class="midi-btn midi-btn-clear" onclick={() => clearBinding(item.target)} disabled={!b}>Clear</button>
-                </div>
-              {/each}
+                {:else}
+                  <strong>{$t('standalone.app.midi.customLayout')}</strong>
+                  <span>{$t('standalone.app.midi.customHint')}</span>
+                {/if}
+              </div>
             </div>
-            <button class="row-btn" onclick={resetMidiMappings}>Reset to defaults</button>
-          {/if}
+            {#if midiStatus === 'connected'}
+              {#if learnTarget}
+                <div class="midi-learn-banner">
+                  {$t('standalone.app.midi.learnBannerBefore')}
+                  <strong>{controllerTargetLabel(learnTarget)}</strong>
+                  {$t('standalone.app.midi.learnBannerAfter')}
+                  <button class="learn-cancel" onclick={cancelLearn}>{$t('standalone.app.midi.cancel')}</button>
+                </div>
+              {/if}
+              <div class="midi-binding-list">
+                {#each controllerTargets as item (item.target)}
+                  {@const b = state.midi?.mappings[item.target]}
+                  <div class="midi-row" class:learning={learnTarget === item.target}>
+                    <span class="midi-target">
+                      <small>{item.group}</small>
+                      {item.label}
+                    </span>
+                    <span class="midi-binding">
+                      {#if b}{b.kind === 'cc'
+                          ? $t('standalone.app.midi.bindingCc')
+                          : $t('standalone.app.midi.bindingNote')}
+                        {b.num} · {$t('standalone.app.midi.channel', { values: { channel: b.channel + 1 } })}{:else}<em
+                          >{$t('standalone.app.midi.unbound')}</em
+                        >{/if}
+                    </span>
+                    <button class="midi-btn" onclick={() => startLearn(item.target)}
+                      >{$t('standalone.app.midi.learn')}</button
+                    >
+                    <button class="midi-btn midi-btn-clear" onclick={() => clearBinding(item.target)} disabled={!b}
+                      >{$t('standalone.app.midi.clear')}</button
+                    >
+                  </div>
+                {/each}
+              </div>
+              <button class="row-btn" onclick={resetMidiMappings}>{$t('standalone.app.midi.resetDefaults')}</button>
+            {/if}
           {/if}
         </div>
         <div class="controller-section">
-          <h3>OSC layout</h3>
+          <h3>{$t('standalone.app.midi.oscSection')}</h3>
           <div class="midi-status">
-            <span class="midi-dot {oscStatus === 'listening' ? 'midi-dot-connected' : oscStatus === 'starting' ? 'midi-dot-requesting' : (oscStatus === 'error' || oscStatus === 'unavailable') ? 'midi-dot-error' : ''}"></span>
+            <span
+              class="midi-dot {oscStatus === 'listening'
+                ? 'midi-dot-connected'
+                : oscStatus === 'starting'
+                  ? 'midi-dot-requesting'
+                  : oscStatus === 'error' || oscStatus === 'unavailable'
+                    ? 'midi-dot-error'
+                    : ''}"
+            ></span>
             <span>{oscStatusLabel()}{oscLastMessage ? ` · ${oscLastMessage}` : ''}</span>
           </div>
           <label class="midi-preset-row osc-port-row">
-            <span>UDP port</span>
+            <span>{$t('standalone.app.midi.udpPort')}</span>
             <input
               type="number"
               min="1"
@@ -2432,40 +2777,49 @@
             />
           </label>
           {#if oscStatus === 'listening'}
-            <button class="row-btn" onclick={() => void disableOsc()}>Disable OSC</button>
+            <button class="row-btn" onclick={() => void disableOsc()}>{$t('standalone.app.midi.disableOsc')}</button>
           {:else}
-            <button class="row-btn" onclick={() => void enableOsc()} disabled={oscStatus === 'unavailable' || oscStatus === 'starting'}>
-              Enable OSC
+            <button
+              class="row-btn"
+              onclick={() => void enableOsc()}
+              disabled={oscStatus === 'unavailable' || oscStatus === 'starting'}
+            >
+              {$t('standalone.app.midi.enableOsc')}
             </button>
           {/if}
           <div class="midi-preset-card">
             <label class="midi-preset-row">
-              <span>Address map</span>
+              <span>{$t('standalone.app.midi.addressMap')}</span>
               <select
                 value={state.osc?.presetId ?? DEFAULT_OSC_PRESET_ID}
                 onchange={(e) => selectOscPreset((e.target as HTMLSelectElement).value)}
               >
                 {#each OSC_LAYOUT_PRESETS as p (p.id)}
-                  <option value={p.id}>{p.name}</option>
+                  <option value={p.id}>{controlMetadataPresetText($t, 'osc', p.id, 'name', p.name)}</option>
                 {/each}
               </select>
             </label>
             <div class="midi-preset-copy">
-              <strong>{currentOscPreset.controller}</strong>
-              <span>{currentOscPreset.description}</span>
+              <strong>
+                {controlMetadataPresetText($t, 'osc', currentOscPreset.id, 'controller', currentOscPreset.controller)}
+              </strong>
+              <span>
+                {controlMetadataPresetText($t, 'osc', currentOscPreset.id, 'description', currentOscPreset.description)}
+              </span>
             </div>
           </div>
           <div class="osc-binding-list">
             {#each state.osc?.bindings ?? [] as b (b.address)}
               <div class="osc-row">
                 <span class="osc-address">{b.address}</span>
-                <span class="osc-target">{controllerTargetLabel(b.target)}{b.trigger ? ' · trig' : ''}</span>
+                <span class="osc-target"
+                  >{oscTargetLabel(b)}{b.trigger ? $t('standalone.app.midi.triggerSuffix') : ''}</span>
               </div>
             {/each}
           </div>
-          <button class="row-btn" onclick={() => void copyOscLayout()}>Copy OSC layout</button>
+          <button class="row-btn" onclick={() => void copyOscLayout()}>{$t('standalone.app.midi.copyLayout')}</button>
         </div>
-        <button class="close-x" onclick={() => { showMidi = false; cancelLearn(); }} aria-label="Close">✕</button>
+        <button class="close-x" onclick={() => { showMidi = false; cancelLearn(); }} aria-label={$t('standalone.app.settings.close')}>✕</button>
       </div>
     </div>
   {/if}
@@ -2573,11 +2927,11 @@
     backdrop-filter: blur(6px);
     -webkit-backdrop-filter: blur(6px);
   }
-  .top-btn.rec { color: #FF6E6E; }
+  .top-btn.rec { color: #ff6e6e; }
   .top-btn.rec.on {
-    background: #FF6E6E;
+    background: #ff6e6e;
     color: #1a1a1f;
-    border-color: #FF6E6E;
+    border-color: #ff6e6e;
     font-variant-numeric: tabular-nums;
     animation: rec-blink 1.4s ease-in-out infinite;
   }
@@ -2789,7 +3143,7 @@
     font-size: 13px;
     flex: 0 0 auto;
   }
-  .fx-bypass.on { background: #69F0AE; color: #1a1a1f; border-color: #69F0AE; }
+  .fx-bypass.on { background: #69f0ae; color: #1a1a1f; border-color: #69f0ae; }
   .fx-name { font-size: 13px; font-weight: 600; flex: 1; }
   .fx-remove {
     background: transparent;
@@ -2807,7 +3161,7 @@
     font-size: 12px;
   }
   .fx-param-name { color: rgba(255, 255, 255, 0.65); }
-  .fx-param-row input[type="range"] { width: 100%; accent-color: #BB86FC; }
+  .fx-param-row input[type='range'] { width: 100%; accent-color: #bb86fc; }
   .fx-param-value {
     text-align: right;
     color: rgba(255, 255, 255, 0.65);
@@ -3094,7 +3448,7 @@
   .nano-knob input,
   .nano-fader input {
     width: 100%;
-    accent-color: var(--lc, #69F0AE);
+    accent-color: var(--lc, #69f0ae);
   }
   .ctrl-fader input {
     height: 28px;
@@ -3139,17 +3493,17 @@
   .apc-pad.on,
   .launch-pad.on,
   .nano-buttons button.on {
-    background: color-mix(in srgb, var(--lc, #69F0AE) 72%, #111 28%);
-    border-color: color-mix(in srgb, var(--lc, #69F0AE) 84%, white 16%);
+    background: color-mix(in srgb, var(--lc, #69f0ae) 72%, #111 28%);
+    border-color: color-mix(in srgb, var(--lc, #69f0ae) 84%, white 16%);
     color: #050508;
   }
   .ctrl-pad.global {
-    --lc: #69F0AE;
+    --lc: #69f0ae;
     background: rgba(105, 240, 174, 0.1);
     border-color: rgba(105, 240, 174, 0.22);
   }
   .ctrl-pad.global.rec {
-    --lc: #FF6E6E;
+    --lc: #ff6e6e;
     background: rgba(255, 110, 110, 0.1);
     border-color: rgba(255, 110, 110, 0.22);
   }
@@ -3172,12 +3526,12 @@
     min-height: 46px;
     aspect-ratio: 1.25;
   }
-  .apc-pad.green { --lc: #69F0AE; }
-  .apc-pad.amber { --lc: #FFC857; }
-  .apc-pad.blue  { --lc: #4FC3F7; }
-  .apc-pad.cyan  { --lc: #67E8F9; }
-  .apc-pad.red   { --lc: #FF6E6E; }
-  .apc-pad.white { --lc: #F4F4F5; }
+  .apc-pad.green { --lc: #69f0ae; }
+  .apc-pad.amber { --lc: #ffc857; }
+  .apc-pad.blue  { --lc: #4fc3f7; }
+  .apc-pad.cyan  { --lc: #67e8f9; }
+  .apc-pad.red   { --lc: #ff6e6e; }
+  .apc-pad.white { --lc: #f4f4f5; }
   .apc-pad.green,
   .apc-pad.amber,
   .apc-pad.blue,
@@ -3204,11 +3558,11 @@
     min-height: 58px;
   }
   .launch-pad.layer { border-color: var(--lc); background: color-mix(in srgb, var(--lc) 14%, rgba(255,255,255,0.035)); }
-  .launch-pad.map { --lc: #FFC857; }
-  .launch-pad.blend { --lc: #BB86FC; }
-  .launch-pad.global { --lc: #69F0AE; }
+  .launch-pad.map { --lc: #ffc857; }
+  .launch-pad.blend { --lc: #bb86fc; }
+  .launch-pad.global { --lc: #69f0ae; }
   .launch-pad.rec,
-  .launch-pad.stop { --lc: #FF6E6E; }
+  .launch-pad.stop { --lc: #ff6e6e; }
   .launch-pad.map,
   .launch-pad.blend,
   .launch-pad.global {
@@ -3363,7 +3717,7 @@
   .project-action-btn.primary {
     background: rgba(105, 240, 174, 0.16);
     border-color: rgba(105, 240, 174, 0.32);
-    color: #69F0AE;
+    color: #69f0ae;
   }
   .saved-show-list {
     display: grid;
@@ -3472,9 +3826,9 @@
     font-size: 13px;
   }
   .midi-dot { width: 8px; height: 8px; border-radius: 4px; background: #888; }
-  .midi-dot-connected  { background: #69F0AE; }
-  .midi-dot-requesting { background: #FFC857; animation: midi-pulse 1.2s infinite; }
-  .midi-dot-denied, .midi-dot-error { background: #FF6E6E; }
+  .midi-dot-connected  { background: #69f0ae; }
+  .midi-dot-requesting { background: #ffc857; animation: midi-pulse 1.2s infinite; }
+  .midi-dot-denied, .midi-dot-error { background: #ff6e6e; }
   @keyframes midi-pulse { 0%, 100% { opacity: 0.4; } 50% { opacity: 1; } }
   .midi-preset-card {
     background: rgba(255,255,255,0.035);
@@ -3534,7 +3888,7 @@
   }
   .midi-learn-banner {
     background: rgba(187, 134, 252, 0.18);
-    border: 1px solid #BB86FC;
+    border: 1px solid #bb86fc;
     color: #fff;
     padding: 10px 12px;
     border-radius: 10px;
@@ -3547,8 +3901,8 @@
   .learn-cancel {
     margin-left: auto;
     background: transparent;
-    border: 1px solid #BB86FC;
-    color: #BB86FC;
+    border: 1px solid #bb86fc;
+    color: #bb86fc;
     border-radius: 8px;
     padding: 4px 10px;
     font-size: 12px;
@@ -3620,7 +3974,7 @@
 	    overflow: hidden;
 	    text-overflow: ellipsis;
 	    white-space: nowrap;
-	    color: #66D9EF;
+	    color: #66d9ef;
 	    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 	  }
 	  .osc-target {

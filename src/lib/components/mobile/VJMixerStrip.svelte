@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { t } from '../../i18n';
+  import { blendModeLabel } from '../../i18n/displayLabels';
   import VJFader from './VJFader.svelte';
 
   export let layerIndex: number = 0;
@@ -61,7 +63,7 @@
     />
     <select class="blend-select" value={blendMode} on:change={handleBlendChange}>
       {#each blendModes as mode}
-        <option value={mode}>{mode}</option>
+        <option value={mode}>{blendModeLabel($t, mode, mode)}</option>
       {/each}
     </select>
     <button
@@ -91,7 +93,7 @@
     </div>
     <select class="blend-select-h" value={blendMode} on:change={handleBlendChange}>
       {#each blendModes as mode}
-        <option value={mode}>{mode.slice(0, 6)}</option>
+        <option value={mode}>{blendModeLabel($t, mode, mode)}</option>
       {/each}
     </select>
     <button

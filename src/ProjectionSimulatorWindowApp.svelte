@@ -16,6 +16,7 @@
   import { startModulationBroadcastReceiver } from './lib/sync/modulationBroadcast';
   import { initLicense } from './lib/stores/license';
   import { invoke } from '$lib/bridge';
+  import { t } from '$lib/i18n';
 
   let canvasComponent: Canvas | null = null;
   let sourceCanvas: HTMLCanvasElement | null = null;
@@ -62,7 +63,11 @@
   }
 </script>
 
-<div class="projection-sim-window">
+<svelte:head>
+  <title>{$t('windowApps.projectionSimulator.title')}</title>
+</svelte:head>
+
+<div class="projection-sim-window" role="application" aria-label={$t('windowApps.projectionSimulator.ariaLabel')}>
   <div class="projection-sim-source" aria-hidden="true">
     <Canvas bind:this={canvasComponent} />
   </div>

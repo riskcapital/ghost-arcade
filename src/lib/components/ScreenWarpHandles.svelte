@@ -37,6 +37,7 @@
   import { settings } from '../stores/settings';
   import { screens, selectedScreenId, screenActions } from '../stores/screens';
   import { normalizedWarpNudge } from '../utils/warpNudge';
+  import { t } from '../i18n';
 
   interface Props {
     containerWidth: number;
@@ -89,7 +90,7 @@
   function startDrag(e: MouseEvent, sliceId: string, kind: DragKind) {
     e.preventDefault();
     e.stopPropagation();
-    const slice = $screens.find(s => s.id === sliceId);
+    const slice = $screens.find((s) => s.id === sliceId);
     if (!slice) return;
     cancelDrag();
     drag = {
@@ -105,7 +106,11 @@
         // Manual deep-copy — structuredClone throws DataCloneError on
         // some nested store values; the mesh is just {rows,cols,points}.
         meshGrid: slice.meshGrid
-          ? { rows: slice.meshGrid.rows, cols: slice.meshGrid.cols, points: slice.meshGrid.points.map(r => r.map(p => ({ x: p.x, y: p.y }))) }
+          ? {
+              rows: slice.meshGrid.rows,
+              cols: slice.meshGrid.cols,
+              points: slice.meshGrid.points.map((r) => r.map((p) => ({ x: p.x, y: p.y }))),
+            }
           : undefined,
       },
     };
@@ -137,13 +142,13 @@
     const active = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     return Boolean(
       el?.closest('input, textarea, select, [contenteditable="true"]') ||
-      active?.closest('input, textarea, select, [contenteditable="true"]')
+      active?.closest('input, textarea, select, [contenteditable="true"]'),
     );
   }
 
   function nudgeSelectedSlice(dx: number, dy: number) {
     const id = $selectedScreenId;
-    const slice = $screens.find(s => s.id === id);
+    const slice = $screens.find((s) => s.id === id);
     if (!slice) return;
     const mode = slice.warpMode ?? 'rect';
 
@@ -173,9 +178,7 @@
         meshGrid: {
           rows: slice.meshGrid.rows,
           cols: slice.meshGrid.cols,
-          points: slice.meshGrid.points.map(row =>
-            row.map(pt => ({ x: pt.x + dx, y: pt.y + dy }))
-          ),
+          points: slice.meshGrid.points.map((row) => row.map((pt) => ({ x: pt.x + dx, y: pt.y + dy }))),
         },
       });
     }
@@ -242,8 +245,8 @@
     // container. Zoom-correct so dragging feels 1:1 with screen px
     // even when the viewport is zoomed in. Same recipe as
     // WarpHandles:367-373.
-    const dxN = ((e.clientX - drag.startClientX) / zoom) / Math.max(1, containerWidth);
-    const dyN = ((e.clientY - drag.startClientY) / zoom) / Math.max(1, containerHeight);
+    const dxN = (e.clientX - drag.startClientX) / zoom / Math.max(1, containerWidth);
+    const dyN = (e.clientY - drag.startClientY) / zoom / Math.max(1, containerHeight);
     const k = drag.kind;
     const id = drag.sliceId;
     const init = drag.startSlice;
@@ -256,34 +259,44 @@
         cropY: snapAxis(ny, id, 'y'),
       });
     } else if (k.kind === 'rect-corner') {
-      const x = init.cropX, y = init.cropY, w = init.cropW, h = init.cropH;
+      const x = init.cropX,
+        y = init.cropY,
+        w = init.cropW,
+        h = init.cropH;
       if (k.corner === 'nw') {
         const nx = Math.min(Math.max(0, x + dxN), x + w - 0.02);
         const ny = Math.min(Math.max(0, y + dyN), y + h - 0.02);
-        const sx = snapAxis(nx, id, 'x'), sy = snapAxis(ny, id, 'y');
-        screenActions.update(id, { cropX: sx, cropY: sy, cropW: (x + w) - sx, cropH: (y + h) - sy });
+        const sx = snapAxis(nx, id, 'x'),
+          sy = snapAxis(ny, id, 'y');
+        screenActions.update(id, { cropX: sx, cropY: sy, cropW: x + w - sx, cropH: y + h - sy });
       } else if (k.corner === 'ne') {
         const nr = Math.min(Math.max(x + 0.02, x + w + dxN), 1);
         const ny = Math.min(Math.max(0, y + dyN), y + h - 0.02);
-        const sr = snapAxis(nr, id, 'x'), sy = snapAxis(ny, id, 'y');
-        screenActions.update(id, { cropY: sy, cropW: sr - x, cropH: (y + h) - sy });
+        const sr = snapAxis(nr, id, 'x'),
+          sy = snapAxis(ny, id, 'y');
+        screenActions.update(id, { cropY: sy, cropW: sr - x, cropH: y + h - sy });
       } else if (k.corner === 'sw') {
         const nx = Math.min(Math.max(0, x + dxN), x + w - 0.02);
         const nb = Math.min(Math.max(y + 0.02, y + h + dyN), 1);
-        const sx = snapAxis(nx, id, 'x'), sb = snapAxis(nb, id, 'y');
-        screenActions.update(id, { cropX: sx, cropW: (x + w) - sx, cropH: sb - y });
+        const sx = snapAxis(nx, id, 'x'),
+          sb = snapAxis(nb, id, 'y');
+        screenActions.update(id, { cropX: sx, cropW: x + w - sx, cropH: sb - y });
       } else {
         const nr = Math.min(Math.max(x + 0.02, x + w + dxN), 1);
         const nb = Math.min(Math.max(y + 0.02, y + h + dyN), 1);
-        const sr = snapAxis(nr, id, 'x'), sb = snapAxis(nb, id, 'y');
+        const sr = snapAxis(nr, id, 'x'),
+          sb = snapAxis(nb, id, 'y');
         screenActions.update(id, { cropW: sr - x, cropH: sb - y });
       }
     } else if (k.kind === 'rect-edge') {
-      const x = init.cropX, y = init.cropY, w = init.cropW, h = init.cropH;
+      const x = init.cropX,
+        y = init.cropY,
+        w = init.cropW,
+        h = init.cropH;
       if (k.edge === 'top') {
         const ny = Math.min(Math.max(0, y + dyN), y + h - 0.02);
         const sy = snapAxis(ny, id, 'y');
-        screenActions.update(id, { cropY: sy, cropH: (y + h) - sy });
+        screenActions.update(id, { cropY: sy, cropH: y + h - sy });
       } else if (k.edge === 'bottom') {
         const nb = Math.min(Math.max(y + 0.02, y + h + dyN), 1);
         const sb = snapAxis(nb, id, 'y');
@@ -291,7 +304,7 @@
       } else if (k.edge === 'left') {
         const nx = Math.min(Math.max(0, x + dxN), x + w - 0.02);
         const sx = snapAxis(nx, id, 'x');
-        screenActions.update(id, { cropX: sx, cropW: (x + w) - sx });
+        screenActions.update(id, { cropX: sx, cropW: x + w - sx });
       } else {
         const nr = Math.min(Math.max(x + 0.02, x + w + dxN), 1);
         const sr = snapAxis(nr, id, 'x');
@@ -306,9 +319,9 @@
     } else if (k.kind === 'corners-move' && init.corners) {
       const c = init.corners;
       const newCorners: WarpCorners = {
-        topLeft:     { x: c.topLeft.x     + dxN, y: c.topLeft.y     + dyN },
-        topRight:    { x: c.topRight.x    + dxN, y: c.topRight.y    + dyN },
-        bottomLeft:  { x: c.bottomLeft.x  + dxN, y: c.bottomLeft.y  + dyN },
+        topLeft: { x: c.topLeft.x + dxN, y: c.topLeft.y + dyN },
+        topRight: { x: c.topRight.x + dxN, y: c.topRight.y + dyN },
+        bottomLeft: { x: c.bottomLeft.x + dxN, y: c.bottomLeft.y + dyN },
         bottomRight: { x: c.bottomRight.x + dxN, y: c.bottomRight.y + dyN },
       };
       screenActions.update(id, { corners: newCorners });
@@ -318,20 +331,22 @@
       const nx = Math.min(Math.max(0, p0.x + dxN), 1);
       const ny = Math.min(Math.max(0, p0.y + dyN), 1);
       const points = init.meshGrid.points.map((row, r) =>
-        row.map((pt, c) => (r === k.row && c === k.col ? { x: nx, y: ny } : pt))
+        row.map((pt, c) => (r === k.row && c === k.col ? { x: nx, y: ny } : pt)),
       );
       screenActions.update(id, { meshGrid: { rows: init.meshGrid.rows, cols: init.meshGrid.cols, points } });
     } else if (k.kind === 'mesh-move' && init.meshGrid) {
-      const points = init.meshGrid.points.map(row =>
-        row.map(pt => ({ x: pt.x + dxN, y: pt.y + dyN }))
-      );
+      const points = init.meshGrid.points.map((row) => row.map((pt) => ({ x: pt.x + dxN, y: pt.y + dyN })));
       screenActions.update(id, { meshGrid: { rows: init.meshGrid.rows, cols: init.meshGrid.cols, points } });
     }
   }
 
   // ─── Pixel helpers ─────────────────────────────────────────────────
-  function px(nx: number): number { return nx * containerWidth; }
-  function py(ny: number): number { return ny * containerHeight; }
+  function px(nx: number): number {
+    return nx * containerWidth;
+  }
+  function py(ny: number): number {
+    return ny * containerHeight;
+  }
 
   function rectCenter(s: OutputSlice): { x: number; y: number } {
     return { x: px(s.cropX + s.cropW / 2), y: py(s.cropY + s.cropH / 2) };
@@ -343,14 +358,23 @@
     };
   }
   function meshCenter(g: MeshWarpGrid): { x: number; y: number } {
-    let sx = 0, sy = 0, n = 0;
-    for (const row of g.points) for (const p of row) { sx += p.x; sy += p.y; n++; }
+    let sx = 0,
+      sy = 0,
+      n = 0;
+    for (const row of g.points)
+      for (const p of row) {
+        sx += p.x;
+        sy += p.y;
+        n++;
+      }
     return { x: px(sx / Math.max(1, n)), y: py(sy / Math.max(1, n)) };
   }
 
   function rectPath(s: OutputSlice): string {
-    const x0 = px(s.cropX), y0 = py(s.cropY);
-    const x1 = px(s.cropX + s.cropW), y1 = py(s.cropY + s.cropH);
+    const x0 = px(s.cropX),
+      y0 = py(s.cropY);
+    const x1 = px(s.cropX + s.cropW),
+      y1 = py(s.cropY + s.cropH);
     return `${x0},${y0} ${x1},${y0} ${x1},${y1} ${x0},${y1}`;
   }
   function cornersPath(c: WarpCorners): string {
@@ -372,20 +396,36 @@
       {@const dash = s.enabled ? 'none' : '5 4'}
       {@const mode = s.warpMode ?? 'rect'}
       {#if mode === 'rect'}
-        <polygon points={rectPath(s)} fill="none" stroke={stroke} stroke-width={sw} stroke-dasharray={dash} />
+        <polygon points={rectPath(s)} fill="none" {stroke} stroke-width={sw} stroke-dasharray={dash} />
       {:else if mode === 'corners' && s.corners}
-        <polygon points={cornersPath(s.corners)} fill="none" stroke={stroke} stroke-width={sw} stroke-dasharray={dash} />
+        <polygon points={cornersPath(s.corners)} fill="none" {stroke} stroke-width={sw} stroke-dasharray={dash} />
       {:else if mode === 'mesh' && s.meshGrid}
         {@const g = s.meshGrid}
         {#each g.points as row, ri}
           {#each row as p, ci}
             {#if ci < g.cols - 1}
               {@const pn = g.points[ri][ci + 1]}
-              <line x1={px(p.x)} y1={py(p.y)} x2={px(pn.x)} y2={py(pn.y)} stroke={stroke} stroke-width={sw} stroke-dasharray={dash}/>
+              <line
+                x1={px(p.x)}
+                y1={py(p.y)}
+                x2={px(pn.x)}
+                y2={py(pn.y)}
+                {stroke}
+                stroke-width={sw}
+                stroke-dasharray={dash}
+              />
             {/if}
             {#if ri < g.rows - 1}
               {@const pd = g.points[ri + 1][ci]}
-              <line x1={px(p.x)} y1={py(p.y)} x2={px(pd.x)} y2={py(pd.y)} stroke={stroke} stroke-width={sw} stroke-dasharray={dash}/>
+              <line
+                x1={px(p.x)}
+                y1={py(p.y)}
+                x2={px(pd.x)}
+                y2={py(pd.y)}
+                {stroke}
+                stroke-width={sw}
+                stroke-dasharray={dash}
+              />
             {/if}
           {/each}
         {/each}
@@ -415,22 +455,30 @@
         <div class="handle corner-handle" class:dragging={drag?.kind.kind === 'rect-corner' && drag?.kind.corner === 'nw'}
           style="left:{cx0}px; top:{cy0}px;"
           onmousedown={(e) => startDrag(e, s.id, { kind: 'rect-corner', corner: 'nw' })}>
-          <span class="handle-label">{s.name} TL</span>
+          <span class="handle-label">{$t('warpTools.screen.cornerLabel', {
+              values: { name: s.name, corner: $t('warpTools.rectCorners.tl') },
+            })}</span>
         </div>
         <div class="handle corner-handle" class:dragging={drag?.kind.kind === 'rect-corner' && drag?.kind.corner === 'ne'}
           style="left:{cx1}px; top:{cy0}px;"
           onmousedown={(e) => startDrag(e, s.id, { kind: 'rect-corner', corner: 'ne' })}>
-          <span class="handle-label">{s.name} TR</span>
+          <span class="handle-label">{$t('warpTools.screen.cornerLabel', {
+              values: { name: s.name, corner: $t('warpTools.rectCorners.tr') },
+            })}</span>
         </div>
         <div class="handle corner-handle" class:dragging={drag?.kind.kind === 'rect-corner' && drag?.kind.corner === 'sw'}
           style="left:{cx0}px; top:{cy1}px;"
           onmousedown={(e) => startDrag(e, s.id, { kind: 'rect-corner', corner: 'sw' })}>
-          <span class="handle-label">{s.name} BL</span>
+          <span class="handle-label">{$t('warpTools.screen.cornerLabel', {
+              values: { name: s.name, corner: $t('warpTools.rectCorners.bl') },
+            })}</span>
         </div>
         <div class="handle corner-handle" class:dragging={drag?.kind.kind === 'rect-corner' && drag?.kind.corner === 'se'}
           style="left:{cx1}px; top:{cy1}px;"
           onmousedown={(e) => startDrag(e, s.id, { kind: 'rect-corner', corner: 'se' })}>
-          <span class="handle-label">{s.name} BR</span>
+          <span class="handle-label">{$t('warpTools.screen.cornerLabel', {
+              values: { name: s.name, corner: $t('warpTools.rectCorners.br') },
+            })}</span>
         </div>
 
         <!-- 4 edge handles -->
@@ -454,22 +502,26 @@
         <div class="handle move-handle" class:dragging={drag?.kind.kind === 'rect-move'}
           style="left:{ctr.x}px; top:{ctr.y}px;"
           onmousedown={(e) => startDrag(e, s.id, { kind: 'rect-move' })}
-          title="Drag to move {s.name}">✥</div>
+          title={$t('warpTools.screen.moveTitle', { values: { name: s.name } })}
+        >✥</div>
 
       {:else if mode === 'corners' && s.corners}
-        {#each (['topLeft', 'topRight', 'bottomLeft', 'bottomRight'] as Array<keyof WarpCorners>) as cn}
+        {#each ['topLeft', 'topRight', 'bottomLeft', 'bottomRight'] as Array<keyof WarpCorners> as cn}
           {@const cp = s.corners[cn]}
           <div class="handle corner-handle" class:dragging={drag?.kind.kind === 'corner' && drag?.kind.corner === cn}
             style="left:{px(cp.x)}px; top:{py(cp.y)}px;"
             onmousedown={(e) => startDrag(e, s.id, { kind: 'corner', corner: cn })}>
-            <span class="handle-label">{s.name} {cn}</span>
+            <span class="handle-label">{$t('warpTools.screen.cornerLabel', {
+                values: { name: s.name, corner: $t(`warpTools.corners.${cn}`) },
+              })}</span>
           </div>
         {/each}
         {@const ctr = cornersCenter(s.corners)}
         <div class="handle move-handle" class:dragging={drag?.kind.kind === 'corners-move'}
           style="left:{ctr.x}px; top:{ctr.y}px;"
           onmousedown={(e) => startDrag(e, s.id, { kind: 'corners-move' })}
-          title="Drag to move {s.name}">✥</div>
+          title={$t('warpTools.screen.moveTitle', { values: { name: s.name } })}
+        >✥</div>
 
       {:else if mode === 'mesh' && s.meshGrid}
         {@const g = s.meshGrid}
@@ -492,7 +544,8 @@
         <div class="handle move-handle" class:dragging={drag?.kind.kind === 'mesh-move'}
           style="left:{ctr.x}px; top:{ctr.y}px;"
           onmousedown={(e) => startDrag(e, s.id, { kind: 'mesh-move' })}
-          title="Drag to move {s.name}">✥</div>
+          title={$t('warpTools.screen.moveTitle', { values: { name: s.name } })}
+        >✥</div>
       {/if}
 
     {/if}
@@ -527,12 +580,12 @@
   .corner-handle {
     width: 20px; height: 20px;
     margin-left: -10px; margin-top: -10px;
-    background: #BB86FC;
+    background: #bb86fc;
     border: 2px solid #fff;
     border-radius: 50%;
     cursor: grab;
   }
-  .corner-handle:hover { transform: scale(1.2); background: #CF6EFF; }
+  .corner-handle:hover { transform: scale(1.2); background: #cf6eff; }
   .corner-handle.dragging {
     cursor: grabbing;
     transform: scale(1.3);
@@ -558,13 +611,13 @@
     width: 36px; height: 36px;
     margin-left: -18px; margin-top: -18px;
     background: rgba(0, 0, 0, 0.7);
-    border: 2px solid #BB86FC;
+    border: 2px solid #bb86fc;
     border-radius: 50%;
     cursor: grab;
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #BB86FC;
+    color: #bb86fc;
     font-size: 19px;
     line-height: 1;
   }

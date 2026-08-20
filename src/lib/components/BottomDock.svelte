@@ -16,6 +16,7 @@
   import { keyframeTimeline } from '../stores/keyframeTimeline';
   import { compositions } from '../stores/layers';
   import { vjClipLauncher } from '../stores/vjClipLauncher';
+  import { t } from '../i18n';
   // Hide the dock while the VJ panel is up — VJ has its own bottom
   // bar (clip grid + master sliders) and overlapping pills compete for
   // attention during a live performance. Show again when minimised.
@@ -28,8 +29,12 @@
   $: seqOpen = $layerSequencer.isOpen;
   $: kfOpen = $keyframeTimeline.isOpen;
 
-  function toggleSeq() { layerSequencer.toggleOpen(); }
-  function toggleKf()  { keyframeTimeline.toggleOpen(); }
+  function toggleSeq() {
+    layerSequencer.toggleOpen();
+  }
+  function toggleKf() {
+    keyframeTimeline.toggleOpen();
+  }
 
   // ⌘P opens presets, ⌘B sequencer (Beat), ⌘K keyframes — quick muscle
   // memory for live sessions. Skip when an input has focus.
@@ -38,9 +43,16 @@
     if (tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT') return;
     if (!(e.metaKey || e.ctrlKey)) return;
     const k = e.key.toLowerCase();
-    if (k === 'p') { e.preventDefault(); onTogglePresets(); }
-    else if (k === 'b') { e.preventDefault(); toggleSeq(); }
-    else if (k === 'k') { e.preventDefault(); toggleKf(); }
+    if (k === 'p') {
+      e.preventDefault();
+      onTogglePresets();
+    } else if (k === 'b') {
+      e.preventDefault();
+      toggleSeq();
+    } else if (k === 'k') {
+      e.preventDefault();
+      toggleKf();
+    }
   }
 
   onMount(() => window.addEventListener('keydown', onKey));
@@ -48,29 +60,61 @@
 </script>
 
 {#if !vjOpen}
-<div class="bottom-dock">
-  <button class="pill" class:on={presetsOpen} onclick={onTogglePresets} title="Presets (⌘P)">
-    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M6 15l6-6 6 6"/>
-    </svg>
-    Presets
-    {#if $compositions.length > 0}<span class="count">{$compositions.length}</span>{/if}
-  </button>
-  <button class="pill" class:on={seqOpen} onclick={toggleSeq} title="Sequencer (⌘B)">
-    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-      <rect x="3" y="9" width="3" height="6"/>
-      <rect x="9" y="6" width="3" height="12"/>
-      <rect x="15" y="11" width="3" height="4"/>
-      <rect x="21" y="8" width="0.0001" height="0.0001"/>
-    </svg>
-    Sequencer
-  </button>
-  <button class="pill" class:on={kfOpen} onclick={toggleKf} title="Keyframes (⌘K)">
-    <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M12 3l9 9-9 9-9-9z"/>
-    </svg>
-    Keyframes
-  </button>
+  <div class="bottom-dock">
+    <button
+      class="pill"
+      class:on={presetsOpen}
+      onclick={onTogglePresets}
+      title={$t('shellExtras.bottomDock.presetsTitle')}
+    >
+      <svg
+        viewBox="0 0 24 24"
+        width="14"
+        height="14"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.8"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <path d="M6 15l6-6 6 6" />
+      </svg>
+      {$t('shellExtras.bottomDock.presets')}
+      {#if $compositions.length > 0}<span class="count">{$compositions.length}</span>{/if}
+    </button>
+    <button class="pill" class:on={seqOpen} onclick={toggleSeq} title={$t('shellExtras.bottomDock.sequencerTitle')}>
+      <svg
+        viewBox="0 0 24 24"
+        width="14"
+        height="14"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.8"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <rect x="3" y="9" width="3" height="6" />
+        <rect x="9" y="6" width="3" height="12" />
+        <rect x="15" y="11" width="3" height="4" />
+        <rect x="21" y="8" width="0.0001" height="0.0001" />
+      </svg>
+      {$t('shellExtras.bottomDock.sequencer')}
+    </button>
+    <button class="pill" class:on={kfOpen} onclick={toggleKf} title={$t('shellExtras.bottomDock.keyframesTitle')}>
+      <svg
+        viewBox="0 0 24 24"
+        width="14"
+        height="14"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="1.8"
+        stroke-linecap="round"
+        stroke-linejoin="round"
+      >
+        <path d="M12 3l9 9-9 9-9-9z" />
+      </svg>
+      {$t('shellExtras.bottomDock.keyframes')}
+    </button>
 </div>
 {/if}
 
@@ -96,15 +140,15 @@
     justify-content: center;
     gap: 6px;
     padding: 7px 14px;
-    background: var(--ga-bar, rgba(14, 16, 20, .92));
-    border-top: 1px solid var(--ga-line-2, rgba(255, 255, 255, .12));
-    border-bottom: 1px solid var(--ga-line, rgba(255, 255, 255, .07));
+    background: var(--ga-bar, rgba(14, 16, 20, 0.92));
+    border-top: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
+    border-bottom: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
     border-left: 0;
     border-right: 0;
     border-radius: 0;
     backdrop-filter: blur(10px);
     pointer-events: auto;
-    box-shadow: 0 -10px 30px rgba(0, 0, 0, .34);
+    box-shadow: 0 -10px 30px rgba(0, 0, 0, 0.34);
   }
   .pill {
     display: inline-flex;
@@ -126,7 +170,7 @@
   }
   .pill:hover {
     color: var(--ga-ink-0, #eef0f4);
-    background: var(--ga-card, rgba(255, 255, 255, .04));
+    background: var(--ga-card, rgba(255, 255, 255, 0.04));
   }
   .pill.on {
     color: #23110c;

@@ -6,6 +6,7 @@
   import type { MediaSource, JSAnimationSource } from '../types';
   import { generateUUID } from '../types';
   import { createAssetRefFromFile } from '../storage/assetRegistry';
+  import { t } from '../i18n';
   import AIShaderGenerator from './AIShaderGenerator.svelte';
 
   // Library state
@@ -159,11 +160,13 @@
   }
 
   async function removeFromLibrary(id: string, event?: MouseEvent) {
-    const item = libraryItems.find(i => i.id === id);
+    const item = libraryItems.find((i) => i.id === id);
     // Safe Mode: confirm before nuking media-library entries. The × is
     // tiny and easy to misclick when scanning thumbnails. The click event
     // is passed through so the in-app popover anchors right at the ×.
-    if (!(await confirmDeleteIfSafeMode(item ? `"${item.name}" from the media library` : 'this media item', event))) return;
+    if (!(await confirmDeleteIfSafeMode(item ? $t('mediaTools.library.confirm.named', { values: { name: item.name } })
+          : $t('mediaTools.library.confirm.generic'), event,
+      ))) return;
     if (item) {
       URL.revokeObjectURL(item.src);
       if (item.videoElement) {
@@ -171,11 +174,11 @@
         item.videoElement.src = '';
       }
     }
-    libraryItems = libraryItems.filter(i => i.id !== id);
+    libraryItems = libraryItems.filter((i) => i.id !== id);
   }
 
   function updateLibraryItem(id: string, updates: Partial<MediaSource>) {
-    libraryItems = libraryItems.map(i => i.id === id ? { ...i, ...updates } : i);
+    libraryItems = libraryItems.map((i) => (i.id === id ? { ...i, ...updates } : i));
   }
 
   // Apply media to selected layer
@@ -200,7 +203,7 @@
         video = document.createElement('video');
         video.src = item.src;
         item.videoElement = video;
-        libraryItems = libraryItems.map(i => i.id === item.id ? { ...i, videoElement: video } : i);
+        libraryItems = libraryItems.map((i) => (i.id === item.id ? { ...i, videoElement: video } : i));
       }
       // Pause whatever video was previously bound to this layer so it
       // doesn't keep decoding in the background. The decoder budget is
@@ -271,23 +274,28 @@
   // Shared with the file-upload path in MediaTray. Both need to extract
   // the same object-literal-with-unquoted-keys format from raw HTML.
   function parseShaderParamDefs(html: string): Array<{
-    name: string; type: 'number' | 'boolean' | 'color';
+    name: string;
+    type: 'number' | 'boolean' | 'color';
     default: number | boolean | number[];
-    min?: number; max?: number; label?: string;
+    min?: number;
+    max?: number;
+    label?: string;
   }> {
     const m = html.match(/window\.shaderParamDefs\s*=\s*(\[[\s\S]*?\])\s*;?/);
     if (!m) return [];
     try {
       const arr = new Function('return ' + m[1])();
       if (!Array.isArray(arr)) return [];
-      return arr.filter(d => d && typeof d.name === 'string' && d.type).map(d => ({
-        name: String(d.name),
-        type: d.type as 'number' | 'boolean' | 'color',
-        default: d.default,
-        min: typeof d.min === 'number' ? d.min : undefined,
-        max: typeof d.max === 'number' ? d.max : undefined,
-        label: typeof d.label === 'string' ? d.label : d.name,
-      }));
+      return arr
+        .filter((d) => d && typeof d.name === 'string' && d.type)
+        .map((d) => ({
+          name: String(d.name),
+          type: d.type as 'number' | 'boolean' | 'color',
+          default: d.default,
+          min: typeof d.min === 'number' ? d.min : undefined,
+          max: typeof d.max === 'number' ? d.max : undefined,
+          label: typeof d.label === 'string' ? d.label : d.name,
+        }));
     } catch {
       return [];
     }
@@ -297,8 +305,10 @@
     if (!m) return {};
     try {
       const obj = new Function('return ' + m[1])();
-      return (obj && typeof obj === 'object') ? obj : {};
-    } catch { return {}; }
+      return obj && typeof obj === 'object' ? obj : {};
+    } catch {
+      return {};
+    }
   }
 
   // Drag Three.js item
@@ -308,7 +318,10 @@
     draggedThreeJS = item;
     if (e.dataTransfer) {
       e.dataTransfer.effectAllowed = 'copy';
-      e.dataTransfer.setData('application/json', JSON.stringify({ type: 'threejs-item', id: item.id, src: item.src, name: item.name }));
+      e.dataTransfer.setData(
+        'application/json',
+        JSON.stringify({ type: 'threejs-item', id: item.id, src: item.src, name: item.name }),
+      );
     }
   }
 
@@ -330,7 +343,7 @@
   }
 
   // Filter items by tab
-  $: filteredItems = libraryItems.filter(item => {
+  $: filteredItems = libraryItems.filter((item) => {
     // Tab filter
     let tabMatch = false;
     if (activeTab === 'images') tabMatch = item.type === 'image';
@@ -354,7 +367,8 @@
   // JS animation items are available via libraryItems filtered by type === 'threejs' || 'p5js'
 
   // Accept type for file input
-  $: acceptType = activeTab === 'images' ? 'image/*' : activeTab === 'videos' ? 'video/*' : activeTab === 'js' ? '.html' : '.fs,.isf';
+  $: acceptType =
+    activeTab === 'images' ? 'image/*' : activeTab === 'videos' ? 'video/*' : activeTab === 'js' ? '.html' : '.fs,.isf';
 
   // Handle AI-generated content
   function handleAIGenerated(event: CustomEvent<{ item: MediaSource }>) {
@@ -384,7 +398,7 @@
       const jsAnimation: JSAnimationSource = {
         animationType,
         htmlCode,
-        aiGenerated: false
+        aiGenerated: false,
       };
 
       const item: MediaSource = {
@@ -392,7 +406,7 @@
         type: animationType,
         src: 'file',
         name: file.name.replace('.html', ''),
-        jsAnimation
+        jsAnimation,
       };
 
       libraryItems = [...libraryItems, item];
@@ -426,7 +440,7 @@
       type: item.type,
       src: item.src,
       name: item.name,
-      jsAnimation: item.jsAnimation ? { ...item.jsAnimation } : undefined
+      jsAnimation: item.jsAnimation ? { ...item.jsAnimation } : undefined,
     };
 
     project.setLayerSource($selectedLayerId, layerSource);
@@ -443,8 +457,9 @@
         type: 'js-animation',
         id: item.id,
         mediaType: item.type,
-        name: item.name
-      }));
+        name: item.name,
+        }),
+      );
     }
   }
 
@@ -452,13 +467,17 @@
     draggedJS = null;
   }
 
+  function mediaTypeLabel(type: typeof activeTab): string {
+    return $t(`mediaTools.library.types.${type}`);
+  }
+
 </script>
 
 <div class="media-library" class:collapsed={!isExpanded}>
-  <div class="library-header" onclick={() => isExpanded = !isExpanded}>
+  <div class="library-header" onclick={() => (isExpanded = !isExpanded)}>
     <h3>
       <span class="toggle-icon">{isExpanded ? '▼' : '▶'}</span>
-      Media Library
+      {$t('mediaTools.library.title')}
     </h3>
     <span class="item-count">{libraryItems.length}</span>
   </div>
@@ -468,60 +487,62 @@
       <button
         class="tab"
         class:active={activeTab === 'images'}
-        onclick={() => activeTab = 'images'}
+        onclick={() => (activeTab = 'images')}
       >
-        Images
+        {$t('mediaTools.library.tabs.images')}
       </button>
       <button
         class="tab"
         class:active={activeTab === 'videos'}
-        onclick={() => activeTab = 'videos'}
+        onclick={() => (activeTab = 'videos')}
       >
-        Videos
+        {$t('mediaTools.library.tabs.videos')}
       </button>
       <button
         class="tab"
         class:active={activeTab === 'shaders'}
-        onclick={() => activeTab = 'shaders'}
+        onclick={() => (activeTab = 'shaders')}
       >
-        Shaders
+        {$t('mediaTools.library.tabs.shaders')}
       </button>
       <button
         class="tab"
         class:active={activeTab === 'js'}
-        onclick={() => activeTab = 'js'}
+        onclick={() => (activeTab = 'js')}
       >
-        JS
+        {$t('mediaTools.library.tabs.js')}
       </button>
       <button
         class="tab"
         class:active={activeTab === 'threejs'}
-        onclick={() => activeTab = 'threejs'}
+        onclick={() => (activeTab = 'threejs')}
       >
-        3.js
+        {$t('mediaTools.library.tabs.threejs')}
       </button>
     </div>
 
     <!-- AI Buttons row (Generate + Video, side-by-side per v10 mock) -->
     <div class="ai-generator-row">
-      <button class="btn-ai-generate" onclick={() => showAIGenerator = !showAIGenerator}>
+      <button class="btn-ai-generate" onclick={() => (showAIGenerator = !showAIGenerator)}>
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M12 3l2 5 5 2-5 2-2 5-2-5-5-2 5-2z"/>
         </svg>
-        {showAIGenerator ? 'Hide AI Generator' : 'AI Generate'}
+        {showAIGenerator ? $t('mediaTools.library.ai.hideGenerator') : $t('mediaTools.library.ai.generate')}
       </button>
-      <button class="btn-ai-video" onclick={() => window.dispatchEvent(new CustomEvent('open-ai-video'))} title="AI Video generation">
+      <button class="btn-ai-video" onclick={() => window.dispatchEvent(new CustomEvent('open-ai-video'))} title={$t('mediaTools.library.ai.videoTitle')}
+        aria-label={$t('mediaTools.library.ai.videoTitle')}
+      >
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
           <path d="M8 5v14l11-7z"/>
         </svg>
-        AI Video
+        {$t('mediaTools.library.ai.video')}
       </button>
     </div>
 
     {#if showAIGenerator}
       <AIShaderGenerator
         on:generated={handleAIGenerated}
-        on:close={() => showAIGenerator = false}
+        on:close={() => (showAIGenerator = false)}
       />
     {/if}
 
@@ -530,11 +551,12 @@
       <input
         type="text"
         class="media-search-input"
-        placeholder="Search media..."
+        placeholder={$t('mediaTools.library.searchPlaceholder')}
         bind:value={searchQuery}
       />
       {#if searchQuery}
-        <button class="media-search-clear" onclick={() => searchQuery = ''} title="Clear">×</button>
+        <button class="media-search-clear" onclick={() => (searchQuery = '')} title={$t('mediaTools.library.clearSearchTitle')}
+          aria-label={$t('mediaTools.library.clearSearchTitle')}>×</button>
       {/if}
     </div>
 
@@ -544,23 +566,23 @@
         <button
           class="js-filter-btn"
           class:active={jsFilter === 'all'}
-          onclick={() => jsFilter = 'all'}
+          onclick={() => (jsFilter = 'all')}
         >
-          All
+          {$t('mediaTools.library.filters.all')}
         </button>
         <button
           class="js-filter-btn"
           class:active={jsFilter === 'threejs'}
-          onclick={() => jsFilter = 'threejs'}
+          onclick={() => (jsFilter = 'threejs')}
         >
-          Three.js
+          {$t('mediaTools.library.filters.threejs')}
         </button>
         <button
           class="js-filter-btn"
           class:active={jsFilter === 'p5js'}
-          onclick={() => jsFilter = 'p5js'}
+          onclick={() => (jsFilter = 'p5js')}
         >
-          p5.js
+          {$t('mediaTools.library.filters.p5js')}
         </button>
       </div>
       <div
@@ -568,9 +590,9 @@
         ondrop={handleDrop}
         ondragover={handleDragOver}
       >
-        <p>Drop .html files here</p>
+        <p>{$t('mediaTools.library.drop.html')}</p>
         <label class="browse-link">
-          or <span>browse</span>
+          {$t('mediaTools.library.drop.or')} <span>{$t('mediaTools.library.drop.browse')}</span>
           <input
             type="file"
             accept=".html"
@@ -586,9 +608,9 @@
         ondrop={handleDrop}
         ondragover={handleDragOver}
       >
-        <p>Drop {activeTab} here</p>
+        <p>{$t('mediaTools.library.drop.media', { values: { type: mediaTypeLabel(activeTab) } })}</p>
         <label class="browse-link">
-          or <span>browse</span>
+          {$t('mediaTools.library.drop.or')} <span>{$t('mediaTools.library.drop.browse')}</span>
           <input
             type="file"
             accept={acceptType}
@@ -611,7 +633,7 @@
             ondragstart={(e) => handleThreeJSDragStart(item, e)}
             ondragend={handleThreeJSDragEnd}
             ondblclick={() => applyThreeJSToLayer(item)}
-            title="Double-click to apply to selected layer"
+            title={$t('mediaTools.library.threejs.applyTitle')}
           >
             <div class="item-preview">
               {#if item.thumbnail}
@@ -633,7 +655,7 @@
 
         {#if threejsItems.length === 0}
           <div class="empty-message">
-            No 3.js items available
+            {$t('mediaTools.library.threejs.empty')}
           </div>
         {/if}
       {:else if activeTab === 'js'}
@@ -646,7 +668,7 @@
             ondragstart={(e) => handleJSDragStart(item, e)}
             ondragend={handleJSDragEnd}
             ondblclick={() => applyJSToLayer(item)}
-            title="Double-click to apply to selected layer"
+            title={$t('mediaTools.library.threejs.applyTitle')}
           >
             <div class="item-preview">
               <div class="js-icon" class:threejs={item.jsAnimation?.animationType === 'threejs'} class:p5js={item.jsAnimation?.animationType === 'p5js'}>
@@ -671,7 +693,8 @@
             <button
               class="btn-remove"
               onclick={(e) => { e.stopPropagation(); removeFromLibrary(item.id, e); }}
-              title="Remove from library"
+              title={$t('mediaTools.library.items.removeTitle')}
+              aria-label={$t('mediaTools.library.items.removeTitle')}
             >
               ×
             </button>
@@ -680,8 +703,8 @@
 
         {#if filteredItems.length === 0}
           <div class="empty-message">
-            <p>No JS animations yet</p>
-            <p class="hint">Use AI Generate or drop .html files</p>
+            <p>{$t('mediaTools.library.items.jsEmptyTitle')}</p>
+            <p class="hint">{$t('mediaTools.library.items.jsEmptyHint')}</p>
           </div>
         {/if}
       {:else}
@@ -694,14 +717,15 @@
             ondragstart={(e) => handleItemDragStart(item, e)}
             ondragend={handleItemDragEnd}
             ondblclick={() => applyToLayer(item)}
-            title="Double-click to apply to selected layer"
+            title={$t('mediaTools.library.threejs.applyTitle')}
           >
             <div class="item-preview">
               {#if item.type === 'image'}
                 <img
                   src={item.src}
                   alt={item.name}
-                  onerror={() => updateLibraryItem(item.id, { broken: true, brokenReason: 'File not found or failed to load' })}
+                  onerror={() => updateLibraryItem(item.id, { broken: true, brokenReason: $t('mediaTools.library.items.imageLoadError'),
+                    })}
                   onload={() => { if (item.broken) updateLibraryItem(item.id, { broken: false, brokenReason: undefined }); }}
                 />
               {:else if item.type === 'video'}
@@ -709,7 +733,8 @@
                   src={item.src}
                   muted
                   playsinline
-                  onerror={() => updateLibraryItem(item.id, { broken: true, brokenReason: 'Video failed to load' })}
+                  onerror={() => updateLibraryItem(item.id, { broken: true, brokenReason: $t('mediaTools.library.items.videoLoadError'),
+                    })}
                   onloadeddata={() => { if (item.broken) updateLibraryItem(item.id, { broken: false, brokenReason: undefined }); }}
                 ></video>
               {:else}
@@ -722,7 +747,7 @@
                 </div>
               {/if}
               {#if item.broken}
-                <div class="broken-badge" title={item.brokenReason || 'Missing file'}>
+                <div class="broken-badge" title={item.brokenReason || $t('mediaTools.library.items.brokenMissing')}>
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
                     <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z"/>
                     <line x1="12" y1="9" x2="12" y2="13"/>
@@ -735,7 +760,8 @@
             <button
               class="btn-remove"
               onclick={(e) => { e.stopPropagation(); removeFromLibrary(item.id, e); }}
-              title="Remove from library"
+              title={$t('mediaTools.library.items.removeTitle')}
+              aria-label={$t('mediaTools.library.items.removeTitle')}
             >
               ×
             </button>
@@ -744,7 +770,7 @@
 
         {#if filteredItems.length === 0}
           <div class="empty-message">
-            No {activeTab} in library
+            {$t('mediaTools.library.items.empty', { values: { type: mediaTypeLabel(activeTab) } })}
           </div>
         {/if}
       {/if}
@@ -755,22 +781,42 @@
          zone shares; "Library" dispatches an event the host wires to
          the Shader Library modal. -->
     <div class="lib-footer">
-      <button class="lib-add-btn" onclick={() => {
-        const fileInputs = document.querySelectorAll<HTMLInputElement>('.library-drop-zone input[type=file]');
-        const inp = fileInputs[fileInputs.length - 1];
-        if (inp) inp.click();
-      }}>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round">
-          <path d="M12 5v14M5 12h14"/>
+      <button
+        class="lib-add-btn"
+        onclick={() => {
+          const fileInputs = document.querySelectorAll<HTMLInputElement>('.library-drop-zone input[type=file]');
+          const inp = fileInputs[fileInputs.length - 1];
+          if (inp) inp.click();
+        }}
+      >
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="2.2"
+          stroke-linecap="round"
+        >
+          <path d="M12 5v14M5 12h14" />
         </svg>
-        Add
+        {$t('mediaTools.library.footer.add')}
       </button>
       <button class="lib-library-btn" onclick={() => window.dispatchEvent(new CustomEvent('open-shader-library'))}>
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <rect x="3" y="3" width="18" height="18" rx="2"/>
-          <path d="M3 9h18"/>
+        <svg
+          width="14"
+          height="14"
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke="currentColor"
+          stroke-width="1.8"
+          stroke-linecap="round"
+          stroke-linejoin="round"
+        >
+          <rect x="3" y="3" width="18" height="18" rx="2" />
+          <path d="M3 9h18" />
         </svg>
-        Library
+        {$t('mediaTools.library.footer.library')}
       </button>
     </div>
   {/if}
@@ -872,7 +918,7 @@
   }
 
   .library-drop-zone:hover {
-    border-color: #BB86FC;
+    border-color: #bb86fc;
   }
 
   .library-drop-zone p {
@@ -884,7 +930,7 @@
   }
 
   .browse-link span {
-    color: #BB86FC;
+    color: #bb86fc;
     text-decoration: underline;
   }
 
@@ -1012,7 +1058,7 @@
     gap: 7px;
     height: 38px;
     padding: 0;
-    background: var(--ga-violet-soft, rgba(155, 135, 245, 0.10));
+    background: var(--ga-violet-soft, rgba(155, 135, 245, 0.1));
     border: 1px solid var(--ga-violet-line, rgba(155, 135, 245, 0.36));
     border-radius: var(--ga-r-soft, 7px);
     color: var(--ga-violet, #9b87f5);
@@ -1033,7 +1079,7 @@
     gap: 7px;
     height: 38px;
     padding: 0;
-    background: var(--ga-blue-soft, rgba(91, 141, 239, 0.10));
+    background: var(--ga-blue-soft, rgba(91, 141, 239, 0.1));
     border: 1px solid var(--ga-blue-line, rgba(91, 141, 239, 0.38));
     border-radius: var(--ga-r-soft, 7px);
     color: var(--ga-blue, #5b8def);
@@ -1092,7 +1138,7 @@
   }
   .lib-library-btn:hover {
     color: var(--ga-ink-0, #eef0f4);
-    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
+    border-color: var(--ga-line-3, rgba(255, 255, 255, 0.2));
   }
 
   .btn-ai-generate svg {
@@ -1183,8 +1229,8 @@
 
   .js-filter-btn.active {
     background: #333;
-    border-color: #BB86FC;
-    color: #BB86FC;
+    border-color: #bb86fc;
+    color: #bb86fc;
   }
 
   /* JS Icon Styles */
@@ -1211,7 +1257,7 @@
     position: absolute;
     top: 4px;
     right: 4px;
-    background: linear-gradient(135deg, #BB86FC, #A78BFA);
+    background: linear-gradient(135deg, #bb86fc, #a78bfa);
     color: #000;
     font-size: 9px;
     font-weight: 700;
@@ -1257,7 +1303,7 @@
   }
 
   .plugin-card:hover {
-    border-color: #BB86FC;
+    border-color: #bb86fc;
     box-shadow: 0 0 12px rgba(187, 134, 252, 0.15);
     transform: translateX(4px);
   }

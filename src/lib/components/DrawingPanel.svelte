@@ -8,8 +8,8 @@
     Animation,
     StrokeType,
     FillType,
-    AnimationType,
-  } from '../drawing/types';
+    AnimationType } from '../drawing/types';
+  import { t } from '../i18n';
 
   // Listen for drawing mode resets from App.svelte
   onMount(() => {
@@ -25,20 +25,20 @@
 
   // Shape library items - basic shapes
   const shapeLibrary: { type: ShapeType; label: string; icon: string }[] = [
-    { type: 'circle', label: 'Circle', icon: '○' },
-    { type: 'rectangle', label: 'Rectangle', icon: '▢' },
-    { type: 'triangle', label: 'Triangle', icon: '△' },
-    { type: 'polygon', label: 'Hexagon', icon: '⬡' },
-    { type: 'star', label: 'Star', icon: '★' },
-    { type: 'ring', label: 'Ring', icon: '◎' },
-    { type: 'line', label: 'Line', icon: '━' },
-    { type: 'spiral', label: 'Spiral', icon: '@' },
+    { type: 'circle', label: 'creative.drawing.shapes.circle', icon: '○' },
+    { type: 'rectangle', label: 'creative.drawing.shapes.rectangle', icon: '▢' },
+    { type: 'triangle', label: 'creative.drawing.shapes.triangle', icon: '△' },
+    { type: 'polygon', label: 'creative.drawing.shapes.polygon', icon: '⬡' },
+    { type: 'star', label: 'creative.drawing.shapes.star', icon: '★' },
+    { type: 'ring', label: 'creative.drawing.shapes.ring', icon: '◎' },
+    { type: 'line', label: 'creative.drawing.shapes.line', icon: '━' },
+    { type: 'spiral', label: 'creative.drawing.shapes.spiral', icon: '@' },
   ];
 
   // Line tools for drawing paths
   const lineTools: { type: ShapeType; label: string; icon: string }[] = [
-    { type: 'freehand', label: 'Freehand', icon: '✏' },
-    { type: 'pointClickLine', label: 'Polyline', icon: '⌇' },
+    { type: 'freehand', label: 'creative.drawing.tools.freehand', icon: '✏' },
+    { type: 'pointClickLine', label: 'creative.drawing.tools.polyline', icon: '⌇' },
   ];
 
   // Drawing mode for interactive line creation
@@ -52,40 +52,40 @@
   }
 
   const strokeTypes: { type: StrokeType; label: string }[] = [
-    { type: 'none', label: 'None' },
-    { type: 'solid', label: 'Solid' },
-    { type: 'glow', label: 'Glow' },
-    { type: 'neon', label: 'Neon' },
-    { type: 'snake', label: 'Snake' },
-    { type: 'rainbow', label: 'Rainbow' },
-    { type: 'dashed', label: 'Dashed' },
-    { type: 'electric', label: 'Electric' },
-    { type: 'pulse', label: 'Pulse' },
-    { type: 'scanner', label: 'Scanner' },
-    { type: 'fire', label: 'Fire' },
+    { type: 'none', label: 'creative.drawing.strokeTypes.none' },
+    { type: 'solid', label: 'creative.drawing.strokeTypes.solid' },
+    { type: 'glow', label: 'creative.drawing.strokeTypes.glow' },
+    { type: 'neon', label: 'creative.drawing.strokeTypes.neon' },
+    { type: 'snake', label: 'creative.drawing.strokeTypes.snake' },
+    { type: 'rainbow', label: 'creative.drawing.strokeTypes.rainbow' },
+    { type: 'dashed', label: 'creative.drawing.strokeTypes.dashed' },
+    { type: 'electric', label: 'creative.drawing.strokeTypes.electric' },
+    { type: 'pulse', label: 'creative.drawing.strokeTypes.pulse' },
+    { type: 'scanner', label: 'creative.drawing.strokeTypes.scanner' },
+    { type: 'fire', label: 'creative.drawing.strokeTypes.fire' },
   ];
 
   const fillTypes: { type: FillType; label: string }[] = [
-    { type: 'none', label: 'None' },
-    { type: 'solid', label: 'Solid' },
-    { type: 'plasma', label: 'Plasma' },
-    { type: 'liquid', label: 'Liquid' },
-    { type: 'fire', label: 'Fire' },
-    { type: 'electric', label: 'Electric' },
-    { type: 'holographic', label: 'Holographic' },
-    { type: 'noise', label: 'Noise' },
-    { type: 'gradient', label: 'Gradient' },
+    { type: 'none', label: 'creative.drawing.fillTypes.none' },
+    { type: 'solid', label: 'creative.drawing.fillTypes.solid' },
+    { type: 'plasma', label: 'creative.drawing.fillTypes.plasma' },
+    { type: 'liquid', label: 'creative.drawing.fillTypes.liquid' },
+    { type: 'fire', label: 'creative.drawing.fillTypes.fire' },
+    { type: 'electric', label: 'creative.drawing.fillTypes.electric' },
+    { type: 'holographic', label: 'creative.drawing.fillTypes.holographic' },
+    { type: 'noise', label: 'creative.drawing.fillTypes.noise' },
+    { type: 'gradient', label: 'creative.drawing.fillTypes.gradient' },
   ];
 
   const animationTypes: { type: AnimationType; label: string }[] = [
-    { type: 'none', label: 'None' },
-    { type: 'concentric', label: 'Concentric' },
-    { type: 'breathe', label: 'Breathe' },
-    { type: 'rotate', label: 'Rotate' },
-    { type: 'radiate', label: 'Radiate' },
-    { type: 'ripple', label: 'Ripple' },
-    { type: 'wave', label: 'Wave' },
-    { type: 'glitch', label: 'Glitch' },
+    { type: 'none', label: 'creative.drawing.animationTypes.none' },
+    { type: 'concentric', label: 'creative.drawing.animationTypes.concentric' },
+    { type: 'breathe', label: 'creative.drawing.animationTypes.breathe' },
+    { type: 'rotate', label: 'creative.drawing.animationTypes.rotate' },
+    { type: 'radiate', label: 'creative.drawing.animationTypes.radiate' },
+    { type: 'ripple', label: 'creative.drawing.animationTypes.ripple' },
+    { type: 'wave', label: 'creative.drawing.animationTypes.wave' },
+    { type: 'glitch', label: 'creative.drawing.animationTypes.glitch' },
   ];
 
   // Color picker helpers
@@ -281,7 +281,7 @@
         angle: 0,
         stops: [
           { position: 0, color: [0.3, 0.5, 1, 1] },
-          { position: 1, color: [1, 0.3, 0.5, 1] }
+          { position: 1, color: [1, 0.3, 0.5, 1] },
         ],
         animated: true,
         animationSpeed: 0.5,
@@ -372,7 +372,7 @@
 
 <div class="drawing-panel">
   <div class="panel-header">
-    <h3>Shape Editor</h3>
+    <h3>{$t('creative.drawing.title')}</h3>
   </div>
 
   {#if $selectedGenerativeLayer}
@@ -380,9 +380,9 @@
     <div class="section">
       <button
         class="section-header"
-        onclick={() => expandedSection = expandedSection === 'shapes' ? null : 'shapes'}
+        onclick={() => (expandedSection = expandedSection === 'shapes' ? null : 'shapes')}
       >
-        <span>Add Shapes</span>
+        <span>{$t('creative.drawing.sections.shapes')}</span>
         <span class="expand-icon">{expandedSection === 'shapes' ? '-' : '+'}</span>
       </button>
 
@@ -392,35 +392,35 @@
             <button
               class="shape-item"
               onclick={() => addShape(shape.type)}
-              title={shape.label}
+              title={$t(shape.label)}
             >
               <span class="shape-icon">{shape.icon}</span>
-              <span class="shape-label">{shape.label}</span>
+              <span class="shape-label">{$t(shape.label)}</span>
             </button>
           {/each}
         </div>
 
         <!-- Line Drawing Tools -->
-        <div class="subsection-header">Draw Lines</div>
+        <div class="subsection-header">{$t('creative.drawing.sections.drawLines')}</div>
         <div class="line-tools">
           {#each lineTools as tool}
             <button
               class="tool-btn"
               class:active={drawingMode === tool.type}
-              onclick={() => setDrawingMode(drawingMode === tool.type ? 'none' : tool.type as 'freehand' | 'pointClickLine')}
-              title={tool.label}
+              onclick={() => setDrawingMode(drawingMode === tool.type ? 'none' : (tool.type as 'freehand' | 'pointClickLine'))}
+              title={$t(tool.label)}
             >
               <span class="tool-icon">{tool.icon}</span>
-              <span class="tool-label">{tool.label}</span>
+              <span class="tool-label">{$t(tool.label)}</span>
             </button>
           {/each}
         </div>
         {#if drawingMode !== 'none'}
           <div class="drawing-hint">
             {#if drawingMode === 'freehand'}
-              Click and drag on canvas to draw
+              {$t('creative.drawing.tools.hints.freehand')}
             {:else}
-              Click to add points, double-click to finish
+              {$t('creative.drawing.tools.hints.polyline')}
             {/if}
           </div>
         {/if}
@@ -433,29 +433,29 @@
       <div class="section">
         <button
           class="section-header"
-          onclick={() => expandedSection = expandedSection === 'stroke' ? null : 'stroke'}
+          onclick={() => (expandedSection = expandedSection === 'stroke' ? null : 'stroke')}
         >
-          <span>Outline Effect</span>
+          <span>{$t('creative.drawing.sections.outline')}</span>
           <span class="expand-icon">{expandedSection === 'stroke' ? '-' : '+'}</span>
         </button>
 
         {#if expandedSection === 'stroke'}
           <div class="effect-controls">
             <div class="control-row">
-              <span class="control-label">Type</span>
+              <span class="control-label">{$t('creative.common.type')}</span>
               <select
                 value={$selectedElement.stroke.type}
                 onchange={(e) => updateStrokeType((e.target as HTMLSelectElement).value as StrokeType)}
               >
                 {#each strokeTypes as st}
-                  <option value={st.type}>{st.label}</option>
+                  <option value={st.type}>{$t(st.label)}</option>
                 {/each}
               </select>
             </div>
 
             {#if ($selectedElement.stroke.type as string) !== 'none' && 'color' in $selectedElement.stroke}
               <div class="control-row">
-                <span class="control-label">Color</span>
+                <span class="control-label">{$t('creative.common.color')}</span>
                 <input
                   type="color"
                   value={rgbaToHex($selectedElement.stroke.color)}
@@ -465,7 +465,8 @@
                       project.updateElementStroke(
                         $selectedGenerativeLayer.id,
                         $selectedElement.id,
-                        { ...$selectedElement.stroke, color: newColor } as Stroke
+                        { ...$selectedElement.stroke, color: newColor,
+                      } as Stroke
                       );
                     }
                   }}
@@ -475,7 +476,7 @@
 
             {#if ($selectedElement.stroke.type as string) !== 'none' && 'width' in $selectedElement.stroke}
               <div class="control-row">
-                <span class="control-label">Width</span>
+                <span class="control-label">{$t('creative.common.width')}</span>
                 <input
                   type="range"
                   min="1"
@@ -487,7 +488,8 @@
                       project.updateElementStroke(
                         $selectedGenerativeLayer.id,
                         $selectedElement.id,
-                        { ...$selectedElement.stroke, width: parseFloat((e.target as HTMLInputElement).value) } as Stroke
+                        { ...$selectedElement.stroke, width: parseFloat((e.target as HTMLInputElement).value),
+                      } as Stroke
                       );
                     }
                   }}
@@ -498,7 +500,7 @@
 
             {#if ($selectedElement.stroke.type === 'glow' || $selectedElement.stroke.type === 'neon') && 'glowSize' in $selectedElement.stroke}
               <div class="control-row">
-                <span class="control-label">Glow Size</span>
+                <span class="control-label">{$t('creative.common.glowSize')}</span>
                 <input
                   type="range"
                   min="5"
@@ -510,7 +512,8 @@
                       project.updateElementStroke(
                         $selectedGenerativeLayer.id,
                         $selectedElement.id,
-                        { ...$selectedElement.stroke, glowSize: parseFloat((e.target as HTMLInputElement).value) } as Stroke
+                        { ...$selectedElement.stroke, glowSize: parseFloat((e.target as HTMLInputElement).value),
+                      } as Stroke
                       );
                     }
                   }}
@@ -521,7 +524,7 @@
 
             {#if $selectedElement.stroke.type === 'snake' && 'length' in $selectedElement.stroke}
               <div class="control-row">
-                <span class="control-label">Length</span>
+                <span class="control-label">{$t('creative.common.length')}</span>
                 <input
                   type="range"
                   min="0.05"
@@ -533,7 +536,8 @@
                       project.updateElementStroke(
                         $selectedGenerativeLayer.id,
                         $selectedElement.id,
-                        { ...$selectedElement.stroke, length: parseFloat((e.target as HTMLInputElement).value) } as Stroke
+                        { ...$selectedElement.stroke, length: parseFloat((e.target as HTMLInputElement).value),
+                      } as Stroke
                       );
                     }
                   }}
@@ -541,7 +545,7 @@
                 <span class="control-value">{($selectedElement.stroke.length * 100).toFixed(0)}%</span>
               </div>
               <div class="control-row">
-                <span class="control-label">Speed</span>
+                <span class="control-label">{$t('creative.common.speed')}</span>
                 <input
                   type="range"
                   min="0.1"
@@ -553,7 +557,8 @@
                       project.updateElementStroke(
                         $selectedGenerativeLayer.id,
                         $selectedElement.id,
-                        { ...$selectedElement.stroke, speed: parseFloat((e.target as HTMLInputElement).value) } as Stroke
+                        { ...$selectedElement.stroke, speed: parseFloat((e.target as HTMLInputElement).value),
+                      } as Stroke
                       );
                     }
                   }}
@@ -561,7 +566,7 @@
                 <span class="control-value">{$selectedElement.stroke.speed.toFixed(1)}x</span>
               </div>
               <div class="control-row">
-                <span class="control-label">Snakes</span>
+                <span class="control-label">{$t('creative.drawing.strokeControls.snakes')}</span>
                 <input
                   type="range"
                   min="1"
@@ -573,7 +578,8 @@
                       project.updateElementStroke(
                         $selectedGenerativeLayer.id,
                         $selectedElement.id,
-                        { ...$selectedElement.stroke, snakeCount: parseInt((e.target as HTMLInputElement).value) } as Stroke
+                        { ...$selectedElement.stroke, snakeCount: parseInt((e.target as HTMLInputElement).value),
+                      } as Stroke
                       );
                     }
                   }}
@@ -584,25 +590,27 @@
 
             {#if $selectedElement.stroke.type === 'electric' && 'arcIntensity' in $selectedElement.stroke}
               <div class="control-row">
-                <span class="control-label">Arc</span>
+                <span class="control-label">{$t('creative.common.arc')}</span>
                 <input type="range" min="0.1" max="3" step="0.1"
                   value={$selectedElement.stroke.arcIntensity}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementStroke($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.stroke, arcIntensity: parseFloat((e.target as HTMLInputElement).value) } as Stroke);
+                        { ...$selectedElement.stroke, arcIntensity: parseFloat((e.target as HTMLInputElement).value),
+                      } as Stroke);
                     }
                   }} />
                 <span class="control-value">{$selectedElement.stroke.arcIntensity?.toFixed(1)}</span>
               </div>
               <div class="control-row">
-                <span class="control-label">Speed</span>
+                <span class="control-label">{$t('creative.common.speed')}</span>
                 <input type="range" min="0.1" max="3" step="0.1"
                   value={$selectedElement.stroke.speed ?? 1}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementStroke($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.stroke, speed: parseFloat((e.target as HTMLInputElement).value) } as Stroke);
+                        { ...$selectedElement.stroke, speed: parseFloat((e.target as HTMLInputElement).value),
+                      } as Stroke);
                     }
                   }} />
                 <span class="control-value">{($selectedElement.stroke.speed ?? 1).toFixed(1)}x</span>
@@ -611,37 +619,40 @@
 
             {#if $selectedElement.stroke.type === 'pulse' && 'pulseCount' in $selectedElement.stroke}
               <div class="control-row">
-                <span class="control-label">Pulses</span>
+                <span class="control-label">{$t('creative.common.pulses')}</span>
                 <input type="range" min="1" max="20" step="1"
                   value={$selectedElement.stroke.pulseCount}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementStroke($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.stroke, pulseCount: parseInt((e.target as HTMLInputElement).value) } as Stroke);
+                        { ...$selectedElement.stroke, pulseCount: parseInt((e.target as HTMLInputElement).value),
+                      } as Stroke);
                     }
                   }} />
                 <span class="control-value">{$selectedElement.stroke.pulseCount}</span>
               </div>
               <div class="control-row">
-                <span class="control-label">Speed</span>
+                <span class="control-label">{$t('creative.common.speed')}</span>
                 <input type="range" min="0.1" max="3" step="0.1"
                   value={$selectedElement.stroke.speed ?? 1}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementStroke($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.stroke, speed: parseFloat((e.target as HTMLInputElement).value) } as Stroke);
+                        { ...$selectedElement.stroke, speed: parseFloat((e.target as HTMLInputElement).value),
+                      } as Stroke);
                     }
                   }} />
                 <span class="control-value">{($selectedElement.stroke.speed ?? 1).toFixed(1)}x</span>
               </div>
               <div class="control-row">
-                <span class="control-label">Fade</span>
+                <span class="control-label">{$t('creative.common.fade')}</span>
                 <input type="range" min="0.05" max="0.5" step="0.05"
                   value={$selectedElement.stroke.fadeLength ?? 0.2}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementStroke($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.stroke, fadeLength: parseFloat((e.target as HTMLInputElement).value) } as Stroke);
+                        { ...$selectedElement.stroke, fadeLength: parseFloat((e.target as HTMLInputElement).value),
+                      } as Stroke);
                     }
                   }} />
                 <span class="control-value">{(($selectedElement.stroke.fadeLength ?? 0.2) * 100).toFixed(0)}%</span>
@@ -650,37 +661,40 @@
 
             {#if $selectedElement.stroke.type === 'scanner' && 'beamWidth' in $selectedElement.stroke}
               <div class="control-row">
-                <span class="control-label">Beam</span>
+                <span class="control-label">{$t('creative.common.beam')}</span>
                 <input type="range" min="0.02" max="0.3" step="0.01"
                   value={$selectedElement.stroke.beamWidth}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementStroke($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.stroke, beamWidth: parseFloat((e.target as HTMLInputElement).value) } as Stroke);
+                        { ...$selectedElement.stroke, beamWidth: parseFloat((e.target as HTMLInputElement).value),
+                      } as Stroke);
                     }
                   }} />
                 <span class="control-value">{($selectedElement.stroke.beamWidth * 100)?.toFixed(0)}%</span>
               </div>
               <div class="control-row">
-                <span class="control-label">Trail</span>
+                <span class="control-label">{$t('creative.common.trail')}</span>
                 <input type="range" min="0.05" max="0.8" step="0.05"
                   value={$selectedElement.stroke.trail ?? 0.3}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementStroke($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.stroke, trail: parseFloat((e.target as HTMLInputElement).value) } as Stroke);
+                        { ...$selectedElement.stroke, trail: parseFloat((e.target as HTMLInputElement).value),
+                      } as Stroke);
                     }
                   }} />
                 <span class="control-value">{(($selectedElement.stroke.trail ?? 0.3) * 100).toFixed(0)}%</span>
               </div>
               <div class="control-row">
-                <span class="control-label">Speed</span>
+                <span class="control-label">{$t('creative.common.speed')}</span>
                 <input type="range" min="0.1" max="3" step="0.1"
                   value={$selectedElement.stroke.speed ?? 1}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementStroke($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.stroke, speed: parseFloat((e.target as HTMLInputElement).value) } as Stroke);
+                        { ...$selectedElement.stroke, speed: parseFloat((e.target as HTMLInputElement).value),
+                      } as Stroke);
                     }
                   }} />
                 <span class="control-value">{($selectedElement.stroke.speed ?? 1).toFixed(1)}x</span>
@@ -689,40 +703,43 @@
 
             {#if $selectedElement.stroke.type === 'dashed' && 'dashLength' in $selectedElement.stroke}
               <div class="control-row">
-                <span class="control-label">Dash</span>
+                <span class="control-label">{$t('creative.common.dash')}</span>
                 <input type="range" min="0.05" max="0.8" step="0.05"
                   value={$selectedElement.stroke.dashLength}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementStroke($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.stroke, dashLength: parseFloat((e.target as HTMLInputElement).value) } as Stroke);
+                        { ...$selectedElement.stroke, dashLength: parseFloat((e.target as HTMLInputElement).value),
+                      } as Stroke);
                     }
                   }} />
                 <span class="control-value">{$selectedElement.stroke.dashLength?.toFixed(2)}</span>
               </div>
               <div class="control-row">
-                <span class="control-label">Gap</span>
+                <span class="control-label">{$t('creative.common.gap')}</span>
                 <input type="range" min="0.05" max="0.8" step="0.05"
                   value={$selectedElement.stroke.gapLength}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementStroke($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.stroke, gapLength: parseFloat((e.target as HTMLInputElement).value) } as Stroke);
+                        { ...$selectedElement.stroke, gapLength: parseFloat((e.target as HTMLInputElement).value),
+                      } as Stroke);
                     }
                   }} />
                 <span class="control-value">{$selectedElement.stroke.gapLength?.toFixed(2)}</span>
               </div>
             {/if}
 
-            {#if ($selectedElement.stroke.type === 'fire') && 'speed' in $selectedElement.stroke}
+            {#if $selectedElement.stroke.type === 'fire' && 'speed' in $selectedElement.stroke}
               <div class="control-row">
-                <span class="control-label">Speed</span>
+                <span class="control-label">{$t('creative.common.speed')}</span>
                 <input type="range" min="0.1" max="3" step="0.1"
                   value={$selectedElement.stroke.speed ?? 1}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementStroke($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.stroke, speed: parseFloat((e.target as HTMLInputElement).value) } as Stroke);
+                        { ...$selectedElement.stroke, speed: parseFloat((e.target as HTMLInputElement).value),
+                      } as Stroke);
                     }
                   }} />
                 <span class="control-value">{($selectedElement.stroke.speed ?? 1).toFixed(1)}x</span>
@@ -736,29 +753,29 @@
       <div class="section">
         <button
           class="section-header"
-          onclick={() => expandedSection = expandedSection === 'fill' ? null : 'fill'}
+          onclick={() => (expandedSection = expandedSection === 'fill' ? null : 'fill')}
         >
-          <span>Fill Effect</span>
+          <span>{$t('creative.drawing.sections.fill')}</span>
           <span class="expand-icon">{expandedSection === 'fill' ? '-' : '+'}</span>
         </button>
 
         {#if expandedSection === 'fill'}
           <div class="effect-controls">
             <div class="control-row">
-              <span class="control-label">Type</span>
+              <span class="control-label">{$t('creative.common.type')}</span>
               <select
                 value={$selectedElement.fill.type}
                 onchange={(e) => updateFillType((e.target as HTMLSelectElement).value as FillType)}
               >
                 {#each fillTypes as ft}
-                  <option value={ft.type}>{ft.label}</option>
+                  <option value={ft.type}>{$t(ft.label)}</option>
                 {/each}
               </select>
             </div>
 
             {#if $selectedElement.fill.type === 'solid' && 'color' in $selectedElement.fill}
               <div class="control-row">
-                <span class="control-label">Color</span>
+                <span class="control-label">{$t('creative.common.color')}</span>
                 <input
                   type="color"
                   value={rgbaToHex($selectedElement.fill.color)}
@@ -769,14 +786,15 @@
                       project.updateElementFill(
                         $selectedGenerativeLayer.id,
                         $selectedElement.id,
-                        { type: 'solid', color: newColor }
+                        { type: 'solid', color: newColor,
+                      }
                       );
                     }
                   }}
                 />
               </div>
               <div class="control-row">
-                <span class="control-label">Opacity</span>
+                <span class="control-label">{$t('creative.common.opacity')}</span>
                 <input
                   type="range"
                   min="0"
@@ -789,7 +807,8 @@
                       project.updateElementFill(
                         $selectedGenerativeLayer.id,
                         $selectedElement.id,
-                        { type: 'solid', color: [c[0], c[1], c[2], parseFloat((e.target as HTMLInputElement).value)] }
+                        { type: 'solid', color: [c[0], c[1], c[2], parseFloat((e.target as HTMLInputElement).value)],
+                      }
                       );
                     }
                   }}
@@ -800,13 +819,14 @@
 
             {#if ($selectedElement.fill.type === 'plasma' || $selectedElement.fill.type === 'liquid' || $selectedElement.fill.type === 'fire' || $selectedElement.fill.type === 'electric') && 'speed' in $selectedElement.fill}
               <div class="control-row">
-                <span class="control-label">Speed</span>
+                <span class="control-label">{$t('creative.common.speed')}</span>
                 <input type="range" min="0.1" max="3" step="0.1"
                   value={$selectedElement.fill.speed ?? 1}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementFill($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.fill, speed: parseFloat((e.target as HTMLInputElement).value) } as any);
+                        { ...$selectedElement.fill, speed: parseFloat((e.target as HTMLInputElement).value),
+                      } as any);
                     }
                   }} />
                 <span class="control-value">{($selectedElement.fill.speed ?? 1).toFixed(1)}x</span>
@@ -816,43 +836,46 @@
             <!-- PLASMA controls -->
             {#if $selectedElement.fill.type === 'plasma'}
               <div class="control-row">
-                <span class="control-label">Scale</span>
+                <span class="control-label">{$t('creative.common.scale')}</span>
                 <input type="range" min="2" max="20" step="0.5"
                   value={$selectedElement.fill.scale ?? 8}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementFill($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.fill, scale: parseFloat((e.target as HTMLInputElement).value) } as any);
+                        { ...$selectedElement.fill, scale: parseFloat((e.target as HTMLInputElement).value),
+                      } as any);
                     }
                   }} />
                 <span class="control-value">{($selectedElement.fill.scale ?? 8).toFixed(1)}</span>
               </div>
               <div class="control-row">
-                <span class="control-label">Complexity</span>
+                <span class="control-label">{$t('creative.common.complexity')}</span>
                 <input type="range" min="1" max="6" step="0.5"
                   value={$selectedElement.fill.complexity ?? 3}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementFill($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.fill, complexity: parseFloat((e.target as HTMLInputElement).value) } as any);
+                        { ...$selectedElement.fill, complexity: parseFloat((e.target as HTMLInputElement).value),
+                      } as any);
                     }
                   }} />
                 <span class="control-value">{($selectedElement.fill.complexity ?? 3).toFixed(1)}</span>
               </div>
               <div class="control-row">
-                <span class="control-label">Palette</span>
+                <span class="control-label">{$t('creative.common.palette')}</span>
                 <select
                   value={$selectedElement.fill.palette ?? 'rainbow'}
                   onchange={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementFill($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.fill, palette: (e.target as HTMLSelectElement).value } as any);
+                        { ...$selectedElement.fill, palette: (e.target as HTMLSelectElement).value,
+                      } as any);
                     }
                   }}>
-                  <option value="rainbow">Rainbow</option>
-                  <option value="fire">Fire</option>
-                  <option value="ocean">Ocean</option>
-                  <option value="neon">Neon</option>
+                  <option value="rainbow">{$t('creative.drawing.palette.rainbow')}</option>
+                  <option value="fire">{$t('creative.drawing.palette.fire')}</option>
+                  <option value="ocean">{$t('creative.drawing.palette.ocean')}</option>
+                  <option value="neon">{$t('creative.drawing.palette.neon')}</option>
                 </select>
               </div>
             {/if}
@@ -860,48 +883,52 @@
             <!-- LIQUID controls -->
             {#if $selectedElement.fill.type === 'liquid'}
               <div class="control-row">
-                <span class="control-label">Color</span>
+                <span class="control-label">{$t('creative.common.color')}</span>
                 <input type="color"
                   value={rgbaToHex($selectedElement.fill.color ?? [0, 0.5, 1, 1])}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementFill($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.fill, color: hexToRgba((e.target as HTMLInputElement).value, 1) } as any);
+                        { ...$selectedElement.fill, color: hexToRgba((e.target as HTMLInputElement).value, 1),
+                      } as any);
                     }
                   }} />
               </div>
               <div class="control-row">
-                <span class="control-label">Viscosity</span>
+                <span class="control-label">{$t('creative.common.viscosity')}</span>
                 <input type="range" min="0" max="1" step="0.05"
                   value={$selectedElement.fill.viscosity ?? 0.5}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementFill($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.fill, viscosity: parseFloat((e.target as HTMLInputElement).value) } as any);
+                        { ...$selectedElement.fill, viscosity: parseFloat((e.target as HTMLInputElement).value),
+                      } as any);
                     }
                   }} />
                 <span class="control-value">{(($selectedElement.fill.viscosity ?? 0.5) * 100).toFixed(0)}%</span>
               </div>
               <div class="control-row">
-                <span class="control-label">Turbulence</span>
+                <span class="control-label">{$t('creative.common.turbulence')}</span>
                 <input type="range" min="0" max="1" step="0.05"
                   value={$selectedElement.fill.turbulence ?? 0.5}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementFill($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.fill, turbulence: parseFloat((e.target as HTMLInputElement).value) } as any);
+                        { ...$selectedElement.fill, turbulence: parseFloat((e.target as HTMLInputElement).value),
+                      } as any);
                     }
                   }} />
                 <span class="control-value">{(($selectedElement.fill.turbulence ?? 0.5) * 100).toFixed(0)}%</span>
               </div>
               <div class="control-row">
-                <span class="control-label">Metallic</span>
+                <span class="control-label">{$t('creative.common.metallic')}</span>
                 <input type="range" min="0" max="1" step="0.05"
                   value={$selectedElement.fill.metallic ?? 0.5}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementFill($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.fill, metallic: parseFloat((e.target as HTMLInputElement).value) } as any);
+                        { ...$selectedElement.fill, metallic: parseFloat((e.target as HTMLInputElement).value),
+                      } as any);
                     }
                   }} />
                 <span class="control-value">{(($selectedElement.fill.metallic ?? 0.5) * 100).toFixed(0)}%</span>
@@ -911,43 +938,46 @@
             <!-- FIRE controls -->
             {#if $selectedElement.fill.type === 'fire'}
               <div class="control-row">
-                <span class="control-label">Intensity</span>
+                <span class="control-label">{$t('creative.common.intensity')}</span>
                 <input type="range" min="0.2" max="2" step="0.1"
                   value={$selectedElement.fill.intensity ?? 1}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementFill($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.fill, intensity: parseFloat((e.target as HTMLInputElement).value) } as any);
+                        { ...$selectedElement.fill, intensity: parseFloat((e.target as HTMLInputElement).value),
+                      } as any);
                     }
                   }} />
                 <span class="control-value">{($selectedElement.fill.intensity ?? 1).toFixed(1)}</span>
               </div>
               <div class="control-row">
-                <span class="control-label">Turbulence</span>
+                <span class="control-label">{$t('creative.common.turbulence')}</span>
                 <input type="range" min="0" max="1" step="0.05"
                   value={$selectedElement.fill.turbulence ?? 0.5}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementFill($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.fill, turbulence: parseFloat((e.target as HTMLInputElement).value) } as any);
+                        { ...$selectedElement.fill, turbulence: parseFloat((e.target as HTMLInputElement).value),
+                      } as any);
                     }
                   }} />
                 <span class="control-value">{(($selectedElement.fill.turbulence ?? 0.5) * 100).toFixed(0)}%</span>
               </div>
               <div class="control-row">
-                <span class="control-label">Palette</span>
+                <span class="control-label">{$t('creative.common.palette')}</span>
                 <select
                   value={$selectedElement.fill.palette ?? 'orange'}
                   onchange={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementFill($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.fill, palette: (e.target as HTMLSelectElement).value } as any);
+                        { ...$selectedElement.fill, palette: (e.target as HTMLSelectElement).value,
+                      } as any);
                     }
                   }}>
-                  <option value="orange">Orange</option>
-                  <option value="blue">Blue</option>
-                  <option value="green">Green</option>
-                  <option value="purple">Purple</option>
+                  <option value="orange">{$t('creative.drawing.palette.orange')}</option>
+                  <option value="blue">{$t('creative.drawing.palette.blue')}</option>
+                  <option value="green">{$t('creative.drawing.palette.green')}</option>
+                  <option value="purple">{$t('creative.drawing.palette.purple')}</option>
                 </select>
               </div>
             {/if}
@@ -955,36 +985,39 @@
             <!-- ELECTRIC controls -->
             {#if $selectedElement.fill.type === 'electric'}
               <div class="control-row">
-                <span class="control-label">Color</span>
+                <span class="control-label">{$t('creative.common.color')}</span>
                 <input type="color"
                   value={rgbaToHex($selectedElement.fill.color ?? [0.3, 0.5, 1, 1])}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementFill($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.fill, color: hexToRgba((e.target as HTMLInputElement).value, 1) } as any);
+                        { ...$selectedElement.fill, color: hexToRgba((e.target as HTMLInputElement).value, 1),
+                      } as any);
                     }
                   }} />
               </div>
               <div class="control-row">
-                <span class="control-label">Intensity</span>
+                <span class="control-label">{$t('creative.common.intensity')}</span>
                 <input type="range" min="0.2" max="2" step="0.1"
                   value={$selectedElement.fill.intensity ?? 1}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementFill($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.fill, intensity: parseFloat((e.target as HTMLInputElement).value) } as any);
+                        { ...$selectedElement.fill, intensity: parseFloat((e.target as HTMLInputElement).value),
+                      } as any);
                     }
                   }} />
                 <span class="control-value">{($selectedElement.fill.intensity ?? 1).toFixed(1)}</span>
               </div>
               <div class="control-row">
-                <span class="control-label">Arc Count</span>
+                <span class="control-label">{$t('creative.common.arcCount')}</span>
                 <input type="range" min="1" max="10" step="1"
                   value={$selectedElement.fill.arcCount ?? 5}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementFill($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.fill, arcCount: parseInt((e.target as HTMLInputElement).value) } as any);
+                        { ...$selectedElement.fill, arcCount: parseInt((e.target as HTMLInputElement).value),
+                      } as any);
                     }
                   }} />
                 <span class="control-value">{$selectedElement.fill.arcCount ?? 5}</span>
@@ -994,38 +1027,41 @@
             <!-- HOLOGRAPHIC controls -->
             {#if $selectedElement.fill.type === 'holographic'}
               <div class="control-row">
-                <span class="control-label">Hue Shift</span>
+                <span class="control-label">{$t('creative.drawing.fillControls.hueShift')}</span>
                 <input type="range" min="0" max="1" step="0.05"
                   value={$selectedElement.fill.shiftAmount ?? 0.5}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementFill($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.fill, shiftAmount: parseFloat((e.target as HTMLInputElement).value) } as any);
+                        { ...$selectedElement.fill, shiftAmount: parseFloat((e.target as HTMLInputElement).value),
+                      } as any);
                     }
                   }} />
                 <span class="control-value">{(($selectedElement.fill.shiftAmount ?? 0.5) * 100).toFixed(0)}%</span>
               </div>
               <div class="control-row">
-                <span class="control-label">Scanlines</span>
+                <span class="control-label">{$t('creative.common.scanlines')}</span>
                 <input
                   type="checkbox"
                   checked={$selectedElement.fill.scanlines ?? false}
                   onchange={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementFill($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.fill, scanlines: (e.target as HTMLInputElement).checked } as any);
+                        { ...$selectedElement.fill, scanlines: (e.target as HTMLInputElement).checked,
+                      } as any);
                     }
                   }}
                 />
               </div>
               <div class="control-row">
-                <span class="control-label">Flicker</span>
+                <span class="control-label">{$t('creative.drawing.fillControls.flicker')}</span>
                 <input type="range" min="0" max="1" step="0.05"
                   value={$selectedElement.fill.flicker ?? 0.5}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementFill($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.fill, flicker: parseFloat((e.target as HTMLInputElement).value) } as any);
+                        { ...$selectedElement.fill, flicker: parseFloat((e.target as HTMLInputElement).value),
+                      } as any);
                     }
                   }} />
                 <span class="control-value">{(($selectedElement.fill.flicker ?? 0.5) * 100).toFixed(0)}%</span>
@@ -1035,47 +1071,51 @@
             <!-- NOISE controls -->
             {#if $selectedElement.fill.type === 'noise'}
               <div class="control-row">
-                <span class="control-label">Color 1</span>
+                <span class="control-label">{$t('creative.common.color1')}</span>
                 <input type="color"
                   value={rgbaToHex($selectedElement.fill.color1 ?? [0, 1, 0.5, 1])}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementFill($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.fill, color1: hexToRgba((e.target as HTMLInputElement).value, 1) } as any);
+                        { ...$selectedElement.fill, color1: hexToRgba((e.target as HTMLInputElement).value, 1),
+                      } as any);
                     }
                   }} />
               </div>
               <div class="control-row">
-                <span class="control-label">Color 2</span>
+                <span class="control-label">{$t('creative.common.color2')}</span>
                 <input type="color"
                   value={rgbaToHex($selectedElement.fill.color2 ?? [0, 0.2, 0.4, 1])}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementFill($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.fill, color2: hexToRgba((e.target as HTMLInputElement).value, 1) } as any);
+                        { ...$selectedElement.fill, color2: hexToRgba((e.target as HTMLInputElement).value, 1),
+                      } as any);
                     }
                   }} />
               </div>
               <div class="control-row">
-                <span class="control-label">Scale</span>
+                <span class="control-label">{$t('creative.common.scale')}</span>
                 <input type="range" min="1" max="20" step="0.5"
                   value={$selectedElement.fill.scale ?? 5}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementFill($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.fill, scale: parseFloat((e.target as HTMLInputElement).value) } as any);
+                        { ...$selectedElement.fill, scale: parseFloat((e.target as HTMLInputElement).value),
+                      } as any);
                     }
                   }} />
                 <span class="control-value">{($selectedElement.fill.scale ?? 5).toFixed(1)}</span>
               </div>
               <div class="control-row">
-                <span class="control-label">Octaves</span>
+                <span class="control-label">{$t('creative.drawing.fillControls.octaves')}</span>
                 <input type="range" min="1" max="8" step="1"
                   value={$selectedElement.fill.octaves ?? 4}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementFill($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.fill, octaves: parseInt((e.target as HTMLInputElement).value) } as any);
+                        { ...$selectedElement.fill, octaves: parseInt((e.target as HTMLInputElement).value),
+                      } as any);
                     }
                   }} />
                 <span class="control-value">{$selectedElement.fill.octaves ?? 4}</span>
@@ -1085,7 +1125,7 @@
             <!-- GRADIENT controls -->
             {#if $selectedElement.fill.type === 'gradient'}
               <div class="control-row">
-                <span class="control-label">Color 1</span>
+                <span class="control-label">{$t('creative.common.color1')}</span>
                 <input type="color"
                   value={rgbaToHex($selectedElement.fill.stops[0]?.color ?? [0.3, 0.5, 1, 1])}
                   oninput={(e) => {
@@ -1097,12 +1137,13 @@
                         newStops[0] = { position: 0, color: hexToRgba((e.target as HTMLInputElement).value, 1) };
                       }
                       project.updateElementFill($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.fill, stops: newStops } as any);
+                        { ...$selectedElement.fill, stops: newStops,
+                      } as any);
                     }
                   }} />
               </div>
               <div class="control-row">
-                <span class="control-label">Color 2</span>
+                <span class="control-label">{$t('creative.common.color2')}</span>
                 <input type="color"
                   value={rgbaToHex($selectedElement.fill.stops[1]?.color ?? [1, 0.3, 0.5, 1])}
                   oninput={(e) => {
@@ -1114,44 +1155,48 @@
                         newStops[1] = { position: 1, color: hexToRgba((e.target as HTMLInputElement).value, 1) };
                       }
                       project.updateElementFill($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.fill, stops: newStops } as any);
+                        { ...$selectedElement.fill, stops: newStops,
+                      } as any);
                     }
                   }} />
               </div>
               <div class="control-row">
-                <span class="control-label">Angle</span>
+                <span class="control-label">{$t('creative.common.angle')}</span>
                 <input type="range" min="0" max="6.28" step="0.1"
                   value={$selectedElement.fill.angle ?? 0}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementFill($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.fill, angle: parseFloat((e.target as HTMLInputElement).value) } as any);
+                        { ...$selectedElement.fill, angle: parseFloat((e.target as HTMLInputElement).value),
+                      } as any);
                     }
                   }} />
-                <span class="control-value">{(($selectedElement.fill.angle ?? 0) * 180 / Math.PI).toFixed(0)}deg</span>
+                <span class="control-value">{((($selectedElement.fill.angle ?? 0) * 180) / Math.PI).toFixed(0)}deg</span>
               </div>
               <div class="control-row">
-                <span class="control-label">Animated</span>
+                <span class="control-label">{$t('creative.common.animated')}</span>
                 <input
                   type="checkbox"
                   checked={$selectedElement.fill.animated ?? false}
                   onchange={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementFill($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.fill, animated: (e.target as HTMLInputElement).checked } as any);
+                        { ...$selectedElement.fill, animated: (e.target as HTMLInputElement).checked,
+                      } as any);
                     }
                   }}
                 />
               </div>
               {#if $selectedElement.fill.animated}
                 <div class="control-row">
-                  <span class="control-label">Speed</span>
+                  <span class="control-label">{$t('creative.common.speed')}</span>
                   <input type="range" min="0.1" max="3" step="0.1"
                     value={$selectedElement.fill.animationSpeed ?? 0.5}
                     oninput={(e) => {
                       if ($selectedGenerativeLayer && $selectedElement) {
                         project.updateElementFill($selectedGenerativeLayer.id, $selectedElement.id,
-                          { ...$selectedElement.fill, animationSpeed: parseFloat((e.target as HTMLInputElement).value) } as any);
+                          { ...$selectedElement.fill, animationSpeed: parseFloat((e.target as HTMLInputElement).value),
+                        } as any);
                       }
                     }} />
                   <span class="control-value">{($selectedElement.fill.animationSpeed ?? 0.5).toFixed(1)}x</span>
@@ -1166,29 +1211,29 @@
       <div class="section">
         <button
           class="section-header"
-          onclick={() => expandedSection = expandedSection === 'animation' ? null : 'animation'}
+          onclick={() => (expandedSection = expandedSection === 'animation' ? null : 'animation')}
         >
-          <span>Animation</span>
+          <span>{$t('creative.drawing.sections.animation')}</span>
           <span class="expand-icon">{expandedSection === 'animation' ? '-' : '+'}</span>
         </button>
 
         {#if expandedSection === 'animation'}
           <div class="effect-controls">
             <div class="control-row">
-              <span class="control-label">Type</span>
+              <span class="control-label">{$t('creative.common.type')}</span>
               <select
                 value={$selectedElement.animation.type}
                 onchange={(e) => updateAnimationType((e.target as HTMLSelectElement).value as AnimationType)}
               >
                 {#each animationTypes as at}
-                  <option value={at.type}>{at.label}</option>
+                  <option value={at.type}>{$t(at.label)}</option>
                 {/each}
               </select>
             </div>
 
             {#if $selectedElement.animation.type === 'concentric'}
               <div class="control-row">
-                <span class="control-label">Direction</span>
+                <span class="control-label">{$t('creative.common.direction')}</span>
                 <select
                   value={$selectedElement.animation.direction ?? 'out'}
                   onchange={(e) => {
@@ -1196,18 +1241,19 @@
                       project.updateElementAnimation(
                         $selectedGenerativeLayer.id,
                         $selectedElement.id,
-                        { ...$selectedElement.animation, direction: (e.target as HTMLSelectElement).value as 'in' | 'out' | 'both' } as Animation
+                        { ...$selectedElement.animation, direction: (e.target as HTMLSelectElement).value as 'in' | 'out' | 'both',
+                      } as Animation
                       );
                     }
                   }}
                 >
-                  <option value="out">Outward</option>
-                  <option value="in">Inward</option>
-                  <option value="both">Both</option>
+                  <option value="out">{$t('creative.drawing.animationDirection.outward')}</option>
+                  <option value="in">{$t('creative.drawing.animationDirection.inward')}</option>
+                  <option value="both">{$t('creative.drawing.animationDirection.both')}</option>
                 </select>
               </div>
               <div class="control-row">
-                <span class="control-label">Count</span>
+                <span class="control-label">{$t('creative.common.count')}</span>
                 <input
                   type="range"
                   min="2"
@@ -1219,7 +1265,8 @@
                       project.updateElementAnimation(
                         $selectedGenerativeLayer.id,
                         $selectedElement.id,
-                        { ...$selectedElement.animation, count: parseInt((e.target as HTMLInputElement).value) } as Animation
+                        { ...$selectedElement.animation, count: parseInt((e.target as HTMLInputElement).value),
+                      } as Animation
                       );
                     }
                   }}
@@ -1227,7 +1274,7 @@
                 <span class="control-value">{$selectedElement.animation.count}</span>
               </div>
               <div class="control-row">
-                <span class="control-label">Spacing</span>
+                <span class="control-label">{$t('creative.common.spacing')}</span>
                 <input
                   type="range"
                   min="0.01"
@@ -1239,7 +1286,8 @@
                       project.updateElementAnimation(
                         $selectedGenerativeLayer.id,
                         $selectedElement.id,
-                        { ...$selectedElement.animation, spacing: parseFloat((e.target as HTMLInputElement).value) } as Animation
+                        { ...$selectedElement.animation, spacing: parseFloat((e.target as HTMLInputElement).value),
+                      } as Animation
                       );
                     }
                   }}
@@ -1247,7 +1295,7 @@
                 <span class="control-value">{($selectedElement.animation.spacing * 100).toFixed(1)}</span>
               </div>
               <div class="control-row">
-                <span class="control-label">Speed</span>
+                <span class="control-label">{$t('creative.common.speed')}</span>
                 <input
                   type="range"
                   min="0.1"
@@ -1259,7 +1307,8 @@
                       project.updateElementAnimation(
                         $selectedGenerativeLayer.id,
                         $selectedElement.id,
-                        { ...$selectedElement.animation, speed: parseFloat((e.target as HTMLInputElement).value) } as Animation
+                        { ...$selectedElement.animation, speed: parseFloat((e.target as HTMLInputElement).value),
+                      } as Animation
                       );
                     }
                   }}
@@ -1270,66 +1319,71 @@
 
             {#if $selectedElement.animation.type === 'rotate'}
               <div class="control-row">
-                <span class="control-label">Speed</span>
+                <span class="control-label">{$t('creative.common.speed')}</span>
                 <input type="range" min="0.1" max="5" step="0.1"
                   value={$selectedElement.animation.speed}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementAnimation($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.animation, speed: parseFloat((e.target as HTMLInputElement).value) } as Animation);
+                        { ...$selectedElement.animation, speed: parseFloat((e.target as HTMLInputElement).value),
+                      } as Animation);
                     }
                   }} />
                 <span class="control-value">{$selectedElement.animation.speed.toFixed(1)}x</span>
               </div>
               <div class="control-row">
-                <span class="control-label">Dir</span>
+                <span class="control-label">{$t('creative.drawing.animationDirection.directionShort')}</span>
                 <select
                   value={$selectedElement.animation.direction ?? 'cw'}
                   onchange={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementAnimation($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.animation, direction: (e.target as HTMLSelectElement).value } as Animation);
+                        { ...$selectedElement.animation, direction: (e.target as HTMLSelectElement).value,
+                      } as Animation);
                     }
                   }}>
-                  <option value="cw">Clockwise</option>
-                  <option value="ccw">Counter-CW</option>
+                  <option value="cw">{$t('creative.drawing.animationDirection.clockwise')}</option>
+                  <option value="ccw">{$t('creative.drawing.animationDirection.counterClockwise')}</option>
                 </select>
               </div>
             {/if}
 
             {#if $selectedElement.animation.type === 'breathe'}
               <div class="control-row">
-                <span class="control-label">Speed</span>
+                <span class="control-label">{$t('creative.common.speed')}</span>
                 <input type="range" min="0.1" max="5" step="0.1"
                   value={$selectedElement.animation.speed ?? 1}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementAnimation($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.animation, speed: parseFloat((e.target as HTMLInputElement).value) } as Animation);
+                        { ...$selectedElement.animation, speed: parseFloat((e.target as HTMLInputElement).value),
+                      } as Animation);
                     }
                   }} />
                 <span class="control-value">{($selectedElement.animation.speed ?? 1).toFixed(1)}x</span>
               </div>
               <div class="control-row">
-                <span class="control-label">Min</span>
+                <span class="control-label">{$t('creative.common.min')}</span>
                 <input type="range" min="0.1" max="1" step="0.05"
                   value={$selectedElement.animation.minScale ?? 0.8}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementAnimation($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.animation, minScale: parseFloat((e.target as HTMLInputElement).value) } as Animation);
+                        { ...$selectedElement.animation, minScale: parseFloat((e.target as HTMLInputElement).value),
+                      } as Animation);
                     }
                   }} />
                 <span class="control-value">{($selectedElement.animation.minScale ?? 0.8).toFixed(2)}</span>
               </div>
               <div class="control-row">
-                <span class="control-label">Max</span>
+                <span class="control-label">{$t('creative.common.max')}</span>
                 <input type="range" min="1" max="2" step="0.05"
                   value={$selectedElement.animation.maxScale ?? 1.2}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementAnimation($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.animation, maxScale: parseFloat((e.target as HTMLInputElement).value) } as Animation);
+                        { ...$selectedElement.animation, maxScale: parseFloat((e.target as HTMLInputElement).value),
+                      } as Animation);
                     }
                   }} />
                 <span class="control-value">{($selectedElement.animation.maxScale ?? 1.2).toFixed(2)}</span>
@@ -1338,25 +1392,27 @@
 
             {#if $selectedElement.animation.type === 'radiate'}
               <div class="control-row">
-                <span class="control-label">Rays</span>
+                <span class="control-label">{$t('creative.drawing.animationControls.rays')}</span>
                 <input type="range" min="2" max="24" step="1"
                   value={$selectedElement.animation.rays ?? 8}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementAnimation($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.animation, rays: parseInt((e.target as HTMLInputElement).value) } as Animation);
+                        { ...$selectedElement.animation, rays: parseInt((e.target as HTMLInputElement).value),
+                      } as Animation);
                     }
                   }} />
                 <span class="control-value">{$selectedElement.animation.rays ?? 8}</span>
               </div>
               <div class="control-row">
-                <span class="control-label">Speed</span>
+                <span class="control-label">{$t('creative.common.speed')}</span>
                 <input type="range" min="0.1" max="3" step="0.1"
                   value={$selectedElement.animation.speed ?? 1}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementAnimation($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.animation, speed: parseFloat((e.target as HTMLInputElement).value) } as Animation);
+                        { ...$selectedElement.animation, speed: parseFloat((e.target as HTMLInputElement).value),
+                      } as Animation);
                     }
                   }} />
                 <span class="control-value">{($selectedElement.animation.speed ?? 1).toFixed(1)}x</span>
@@ -1365,37 +1421,40 @@
 
             {#if $selectedElement.animation.type === 'ripple'}
               <div class="control-row">
-                <span class="control-label">Count</span>
+                <span class="control-label">{$t('creative.common.count')}</span>
                 <input type="range" min="2" max="10" step="1"
                   value={$selectedElement.animation.count ?? 5}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementAnimation($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.animation, count: parseInt((e.target as HTMLInputElement).value) } as Animation);
+                        { ...$selectedElement.animation, count: parseInt((e.target as HTMLInputElement).value),
+                      } as Animation);
                     }
                   }} />
                 <span class="control-value">{$selectedElement.animation.count ?? 5}</span>
               </div>
               <div class="control-row">
-                <span class="control-label">Speed</span>
+                <span class="control-label">{$t('creative.common.speed')}</span>
                 <input type="range" min="0.1" max="3" step="0.1"
                   value={$selectedElement.animation.speed ?? 1}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementAnimation($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.animation, speed: parseFloat((e.target as HTMLInputElement).value) } as Animation);
+                        { ...$selectedElement.animation, speed: parseFloat((e.target as HTMLInputElement).value),
+                      } as Animation);
                     }
                   }} />
                 <span class="control-value">{($selectedElement.animation.speed ?? 1).toFixed(1)}x</span>
               </div>
               <div class="control-row">
-                <span class="control-label">Decay</span>
+                <span class="control-label">{$t('creative.common.decay')}</span>
                 <input type="range" min="0.1" max="3" step="0.1"
                   value={$selectedElement.animation.decay ?? 1}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementAnimation($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.animation, decay: parseFloat((e.target as HTMLInputElement).value) } as Animation);
+                        { ...$selectedElement.animation, decay: parseFloat((e.target as HTMLInputElement).value),
+                      } as Animation);
                     }
                   }} />
                 <span class="control-value">{($selectedElement.animation.decay ?? 1).toFixed(1)}</span>
@@ -1404,37 +1463,40 @@
 
             {#if $selectedElement.animation.type === 'wave'}
               <div class="control-row">
-                <span class="control-label">Amplitude</span>
+                <span class="control-label">{$t('creative.drawing.animationControls.amplitude')}</span>
                 <input type="range" min="0.1" max="3" step="0.1"
                   value={$selectedElement.animation.amplitude ?? 1}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementAnimation($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.animation, amplitude: parseFloat((e.target as HTMLInputElement).value) } as Animation);
+                        { ...$selectedElement.animation, amplitude: parseFloat((e.target as HTMLInputElement).value),
+                      } as Animation);
                     }
                   }} />
                 <span class="control-value">{($selectedElement.animation.amplitude ?? 1).toFixed(1)}</span>
               </div>
               <div class="control-row">
-                <span class="control-label">Freq</span>
+                <span class="control-label">{$t('creative.drawing.animationControls.frequency')}</span>
                 <input type="range" min="0.1" max="5" step="0.1"
                   value={$selectedElement.animation.frequency ?? 1}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementAnimation($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.animation, frequency: parseFloat((e.target as HTMLInputElement).value) } as Animation);
+                        { ...$selectedElement.animation, frequency: parseFloat((e.target as HTMLInputElement).value),
+                      } as Animation);
                     }
                   }} />
                 <span class="control-value">{($selectedElement.animation.frequency ?? 1).toFixed(1)}</span>
               </div>
               <div class="control-row">
-                <span class="control-label">Speed</span>
+                <span class="control-label">{$t('creative.common.speed')}</span>
                 <input type="range" min="0.1" max="3" step="0.1"
                   value={$selectedElement.animation.speed ?? 1}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementAnimation($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.animation, speed: parseFloat((e.target as HTMLInputElement).value) } as Animation);
+                        { ...$selectedElement.animation, speed: parseFloat((e.target as HTMLInputElement).value),
+                      } as Animation);
                     }
                   }} />
                 <span class="control-value">{($selectedElement.animation.speed ?? 1).toFixed(1)}x</span>
@@ -1443,37 +1505,40 @@
 
             {#if $selectedElement.animation.type === 'glitch'}
               <div class="control-row">
-                <span class="control-label">Intensity</span>
+                <span class="control-label">{$t('creative.common.intensity')}</span>
                 <input type="range" min="0.1" max="3" step="0.1"
                   value={$selectedElement.animation.intensity ?? 1}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementAnimation($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.animation, intensity: parseFloat((e.target as HTMLInputElement).value) } as Animation);
+                        { ...$selectedElement.animation, intensity: parseFloat((e.target as HTMLInputElement).value),
+                      } as Animation);
                     }
                   }} />
                 <span class="control-value">{($selectedElement.animation.intensity ?? 1).toFixed(1)}</span>
               </div>
               <div class="control-row">
-                <span class="control-label">Block</span>
+                <span class="control-label">{$t('creative.drawing.animationControls.block')}</span>
                 <input type="range" min="0.2" max="3" step="0.1"
                   value={$selectedElement.animation.blockSize ?? 1}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementAnimation($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.animation, blockSize: parseFloat((e.target as HTMLInputElement).value) } as Animation);
+                        { ...$selectedElement.animation, blockSize: parseFloat((e.target as HTMLInputElement).value),
+                      } as Animation);
                     }
                   }} />
                 <span class="control-value">{($selectedElement.animation.blockSize ?? 1).toFixed(1)}</span>
               </div>
               <div class="control-row">
-                <span class="control-label">Speed</span>
+                <span class="control-label">{$t('creative.common.speed')}</span>
                 <input type="range" min="0.1" max="3" step="0.1"
                   value={$selectedElement.animation.speed ?? 1}
                   oninput={(e) => {
                     if ($selectedGenerativeLayer && $selectedElement) {
                       project.updateElementAnimation($selectedGenerativeLayer.id, $selectedElement.id,
-                        { ...$selectedElement.animation, speed: parseFloat((e.target as HTMLInputElement).value) } as Animation);
+                        { ...$selectedElement.animation, speed: parseFloat((e.target as HTMLInputElement).value),
+                      } as Animation);
                     }
                   }} />
                 <span class="control-value">{($selectedElement.animation.speed ?? 1).toFixed(1)}x</span>
@@ -1487,23 +1552,23 @@
       <div class="section">
         <button
           class="section-header"
-          onclick={() => expandedSection = expandedSection === 'warp' ? null : 'warp'}
+          onclick={() => (expandedSection = expandedSection === 'warp' ? null : 'warp')}
         >
-          <span>Corner Warp</span>
+          <span>{$t('creative.drawing.sections.cornerWarp')}</span>
           <span class="expand-icon">{expandedSection === 'warp' ? '-' : '+'}</span>
         </button>
 
         {#if expandedSection === 'warp'}
           <div class="effect-controls">
             <div class="control-row">
-              <span class="control-label">Enable</span>
+              <span class="control-label">{$t('creative.common.enable')}</span>
               <input
                 type="checkbox"
                 checked={$selectedElement.warpEnabled ?? false}
                 onchange={(e) => {
                   if ($selectedGenerativeLayer && $selectedElement) {
                     project.updateElement($selectedGenerativeLayer.id, $selectedElement.id, {
-                      warpEnabled: (e.target as HTMLInputElement).checked
+                      warpEnabled: (e.target as HTMLInputElement).checked,
                     });
                   }
                 }}
@@ -1525,8 +1590,9 @@
                         project.updateElement($selectedGenerativeLayer.id, $selectedElement.id, {
                           warpCorners: {
                             ...$selectedElement.warpCorners,
-                            topLeft: { ...$selectedElement.warpCorners.topLeft, x: parseFloat((e.target as HTMLInputElement).value) }
-                          }
+                            topLeft: { ...$selectedElement.warpCorners.topLeft, x: parseFloat((e.target as HTMLInputElement).value),
+                            },
+                          },
                         });
                       }
                     }}
@@ -1542,8 +1608,9 @@
                         project.updateElement($selectedGenerativeLayer.id, $selectedElement.id, {
                           warpCorners: {
                             ...$selectedElement.warpCorners,
-                            topLeft: { ...$selectedElement.warpCorners.topLeft, y: parseFloat((e.target as HTMLInputElement).value) }
-                          }
+                            topLeft: { ...$selectedElement.warpCorners.topLeft, y: parseFloat((e.target as HTMLInputElement).value),
+                            },
+                          },
                         });
                       }
                     }}
@@ -1562,8 +1629,9 @@
                         project.updateElement($selectedGenerativeLayer.id, $selectedElement.id, {
                           warpCorners: {
                             ...$selectedElement.warpCorners,
-                            topRight: { ...$selectedElement.warpCorners.topRight, x: parseFloat((e.target as HTMLInputElement).value) }
-                          }
+                            topRight: { ...$selectedElement.warpCorners.topRight, x: parseFloat((e.target as HTMLInputElement).value),
+                            },
+                          },
                         });
                       }
                     }}
@@ -1579,8 +1647,9 @@
                         project.updateElement($selectedGenerativeLayer.id, $selectedElement.id, {
                           warpCorners: {
                             ...$selectedElement.warpCorners,
-                            topRight: { ...$selectedElement.warpCorners.topRight, y: parseFloat((e.target as HTMLInputElement).value) }
-                          }
+                            topRight: { ...$selectedElement.warpCorners.topRight, y: parseFloat((e.target as HTMLInputElement).value),
+                            },
+                          },
                         });
                       }
                     }}
@@ -1599,8 +1668,9 @@
                         project.updateElement($selectedGenerativeLayer.id, $selectedElement.id, {
                           warpCorners: {
                             ...$selectedElement.warpCorners,
-                            bottomLeft: { ...$selectedElement.warpCorners.bottomLeft, x: parseFloat((e.target as HTMLInputElement).value) }
-                          }
+                            bottomLeft: { ...$selectedElement.warpCorners.bottomLeft, x: parseFloat((e.target as HTMLInputElement).value),
+                            },
+                          },
                         });
                       }
                     }}
@@ -1616,8 +1686,9 @@
                         project.updateElement($selectedGenerativeLayer.id, $selectedElement.id, {
                           warpCorners: {
                             ...$selectedElement.warpCorners,
-                            bottomLeft: { ...$selectedElement.warpCorners.bottomLeft, y: parseFloat((e.target as HTMLInputElement).value) }
-                          }
+                            bottomLeft: { ...$selectedElement.warpCorners.bottomLeft, y: parseFloat((e.target as HTMLInputElement).value),
+                            },
+                          },
                         });
                       }
                     }}
@@ -1636,8 +1707,9 @@
                         project.updateElement($selectedGenerativeLayer.id, $selectedElement.id, {
                           warpCorners: {
                             ...$selectedElement.warpCorners,
-                            bottomRight: { ...$selectedElement.warpCorners.bottomRight, x: parseFloat((e.target as HTMLInputElement).value) }
-                          }
+                            bottomRight: { ...$selectedElement.warpCorners.bottomRight, x: parseFloat((e.target as HTMLInputElement).value),
+                            },
+                          },
                         });
                       }
                     }}
@@ -1653,8 +1725,9 @@
                         project.updateElement($selectedGenerativeLayer.id, $selectedElement.id, {
                           warpCorners: {
                             ...$selectedElement.warpCorners,
-                            bottomRight: { ...$selectedElement.warpCorners.bottomRight, y: parseFloat((e.target as HTMLInputElement).value) }
-                          }
+                            bottomRight: { ...$selectedElement.warpCorners.bottomRight, y: parseFloat((e.target as HTMLInputElement).value),
+                            },
+                          },
                         });
                       }
                     }}
@@ -1671,12 +1744,12 @@
                         topRight: { x: 1, y: 0 },
                         bottomLeft: { x: 0, y: 1 },
                         bottomRight: { x: 1, y: 1 },
-                      }
+                      },
                     });
                   }
                 }}
               >
-                Reset Corners
+                {$t('creative.drawing.resetCorners')}
               </button>
             {/if}
           </div>
@@ -1687,16 +1760,16 @@
       <div class="section">
         <button
           class="section-header"
-          onclick={() => expandedSection = expandedSection === 'transform' ? null : 'transform'}
+          onclick={() => (expandedSection = expandedSection === 'transform' ? null : 'transform')}
         >
-          <span>Transform</span>
+          <span>{$t('creative.drawing.sections.transform')}</span>
           <span class="expand-icon">{expandedSection === 'transform' ? '-' : '+'}</span>
         </button>
 
         {#if expandedSection === 'transform'}
           <div class="effect-controls">
             <div class="control-row">
-              <span class="control-label">Position X</span>
+              <span class="control-label">{$t('creative.drawing.transform.positionX')}</span>
               <input
                 type="range"
                 min="0"
@@ -1708,7 +1781,9 @@
                     project.updateElementShape(
                       $selectedGenerativeLayer.id,
                       $selectedElement.id,
-                      { position: { ...$selectedElement.shape.position, x: parseFloat((e.target as HTMLInputElement).value) } }
+                      { position: { ...$selectedElement.shape.position, x: parseFloat((e.target as HTMLInputElement).value),
+                      },
+                    }
                     );
                   }
                 }}
@@ -1716,7 +1791,7 @@
               <span class="control-value">{($selectedElement.shape.position.x * 100).toFixed(0)}%</span>
             </div>
             <div class="control-row">
-              <span class="control-label">Position Y</span>
+              <span class="control-label">{$t('creative.drawing.transform.positionY')}</span>
               <input
                 type="range"
                 min="0"
@@ -1728,7 +1803,9 @@
                     project.updateElementShape(
                       $selectedGenerativeLayer.id,
                       $selectedElement.id,
-                      { position: { ...$selectedElement.shape.position, y: parseFloat((e.target as HTMLInputElement).value) } }
+                      { position: { ...$selectedElement.shape.position, y: parseFloat((e.target as HTMLInputElement).value),
+                      },
+                    }
                     );
                   }
                 }}
@@ -1736,7 +1813,7 @@
               <span class="control-value">{($selectedElement.shape.position.y * 100).toFixed(0)}%</span>
             </div>
             <div class="control-row">
-              <span class="control-label">Rotation</span>
+              <span class="control-label">{$t('creative.drawing.transform.rotation')}</span>
               <input
                 type="range"
                 min="0"
@@ -1748,7 +1825,8 @@
                     project.updateElementShape(
                       $selectedGenerativeLayer.id,
                       $selectedElement.id,
-                      { rotation: parseFloat((e.target as HTMLInputElement).value) }
+                      { rotation: parseFloat((e.target as HTMLInputElement).value),
+                    }
                     );
                   }
                 }}
@@ -1756,7 +1834,7 @@
               <span class="control-value">{$selectedElement.shape.rotation}deg</span>
             </div>
             <div class="control-row">
-              <span class="control-label">Scale</span>
+              <span class="control-label">{$t('creative.common.scale')}</span>
               <input
                 type="range"
                 min="0.1"
@@ -1769,7 +1847,8 @@
                     project.updateElementShape(
                       $selectedGenerativeLayer.id,
                       $selectedElement.id,
-                      { scale: { x: s, y: s } }
+                      { scale: { x: s, y: s },
+                    }
                     );
                   }
                 }}
@@ -1786,20 +1865,20 @@
                 }
               }}
             >
-              Delete Shape
+              {$t('creative.drawing.deleteShape')}
             </button>
           </div>
         {/if}
       </div>
     {:else}
       <div class="no-selection">
-        <p>Click on a shape in the canvas to edit it, or add a new shape above.</p>
+        <p>{$t('creative.drawing.empty.selection')}</p>
       </div>
     {/if}
   {:else}
     <div class="no-layer">
-      <p>Select a Drawing layer from the left panel to edit shapes.</p>
-      <p class="hint">Click "+ Add Layer" and choose "Drawing Layer" to create one.</p>
+      <p>{$t('creative.drawing.empty.layer')}</p>
+      <p class="hint">{$t('creative.drawing.empty.addLayerHint')}</p>
     </div>
   {/if}
 </div>
@@ -1883,7 +1962,7 @@
 
   .shape-item:hover {
     background: #444;
-    border-color: #BB86FC;
+    border-color: #bb86fc;
     transform: scale(1.05);
   }
 
@@ -1915,12 +1994,12 @@
     flex-shrink: 0;
   }
 
-  .control-row input[type="range"] {
+  .control-row input[type='range'] {
     flex: 1;
     background: #000000;
   }
 
-  .control-row input[type="color"] {
+  .control-row input[type='color'] {
     width: 40px;
     height: 24px;
     border: none;
@@ -2017,9 +2096,9 @@
   }
 
   .tool-btn.active {
-    background: #BB86FC33;
-    border-color: #BB86FC;
-    color: #BB86FC;
+    background: #bb86fc33;
+    border-color: #bb86fc;
+    color: #bb86fc;
   }
 
   .tool-icon {
@@ -2032,15 +2111,15 @@
   }
 
   .tool-btn.active .tool-label {
-    color: #BB86FC;
+    color: #bb86fc;
   }
 
   .drawing-hint {
     padding: 6px 10px;
     font-size: 11px;
-    color: #BB86FC;
-    background: #BB86FC11;
-    border-top: 1px solid #BB86FC33;
+    color: #bb86fc;
+    background: #bb86fc11;
+    border-top: 1px solid #bb86fc33;
   }
 
   /* Warp controls */
@@ -2066,7 +2145,7 @@
     width: 20px;
   }
 
-  .warp-corner input[type="number"] {
+  .warp-corner input[type='number'] {
     width: 50px;
     background: #222;
     border: 1px solid #444;
@@ -2094,10 +2173,10 @@
     color: #fff;
   }
 
-  .control-row input[type="checkbox"] {
+  .control-row input[type='checkbox'] {
     width: 18px;
     height: 18px;
-    accent-color: #BB86FC;
+    accent-color: #bb86fc;
     cursor: pointer;
   }
 </style>

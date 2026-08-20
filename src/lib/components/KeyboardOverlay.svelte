@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onDestroy, tick } from 'svelte';
+  import { t } from '$lib/i18n';
   import { keyboardStore, formatKeyCombo, type KeyActionMode } from '../keyboard/keyboardStore';
 
   interface OverlayItem {
@@ -84,7 +85,7 @@
     try {
       const elements = document.querySelectorAll<HTMLElement>('[data-midi-path]');
       const nextItems: OverlayItem[] = [];
-      elements.forEach(el => {
+      elements.forEach((el) => {
         const path = el.dataset.midiPath;
         if (!path) return;
         const rect = el.getBoundingClientRect();
@@ -166,13 +167,13 @@
   function handleControlRightClick(event: MouseEvent, item: OverlayItem) {
     event.preventDefault();
     event.stopPropagation();
-    for (const binding of $keyboardStore.bindings.filter(binding => binding.path === item.path)) {
+    for (const binding of $keyboardStore.bindings.filter((binding) => binding.path === item.path)) {
       keyboardStore.removeBinding(binding.id);
     }
   }
 
   function getBindingLabel(path: string): string | null {
-    const bindings = $keyboardStore.bindings.filter(binding => binding.path === path);
+    const bindings = $keyboardStore.bindings.filter((binding) => binding.path === path);
     if (bindings.length === 0) return null;
     if (bindings.length === 1) return formatKeyCombo(bindings[0]);
     return `${bindings.length} keys`;
@@ -223,16 +224,27 @@
             class="keyboard-indicator"
             class:mapped={!!bindingLabel}
             class:learning={isLearning}
-            style="left:{item.clipRect.left}px; top:{item.clipRect.top}px; width:{Math.max(item.clipRect.width, 4)}px; height:{Math.max(item.clipRect.height, 4)}px;"
+            style="left:{item.clipRect.left}px; top:{item.clipRect.top}px; width:{Math.max(
+              item.clipRect.width,
+              4,
+            )}px; height:{Math.max(item.clipRect.height, 4)}px;"
             onclick={(event) => handleControlClick(event, item)}
             oncontextmenu={(event) => handleControlRightClick(event, item)}
-            title={bindingLabel ? `${item.label}: ${bindingLabel} (right-click to clear)` : `Click, then press a key: ${item.label}`}
+            title={bindingLabel ? $t('controlOverlays.keyboard.indicator.mappedTitle', {
+                  values: { label: item.label, binding: bindingLabel },
+                })
+              : $t('controlOverlays.keyboard.indicator.learnTitle', { values: { label: item.label } })}
+            aria-label={bindingLabel
+              ? $t('controlOverlays.keyboard.indicator.mappedAria', {
+                  values: { label: item.label, binding: bindingLabel },
+                })
+              : $t('controlOverlays.keyboard.indicator.learnAria', { values: { label: item.label } })}
           >
             {#if bindingLabel}
               <span class="keyboard-tag">{bindingLabel}</span>
             {/if}
             {#if isLearning}
-              <span class="keyboard-learn-label">KEY</span>
+              <span class="keyboard-learn-label">{$t('controlOverlays.keyboard.indicator.learningLabel')}</span>
             {/if}
           </div>
         {/if}
@@ -240,17 +252,24 @@
     {/key}
 
     <div class="keyboard-status-bar">
-      <span class="keyboard-status-title">KEYBOARD EDIT</span>
+      <span class="keyboard-status-title">{$t('controlOverlays.keyboard.status.title')}</span>
       {#if $keyboardStore.learnTarget}
-        <span class="keyboard-learn-status">Press key for <strong>{$keyboardStore.learnTarget.label ?? $keyboardStore.learnTarget.path}</strong></span>
+        <span class="keyboard-learn-status">
+          {$t('controlOverlays.keyboard.status.waiting', {
+            values: { label: $keyboardStore.learnTarget.label ?? $keyboardStore.learnTarget.path},
+          })}
+        </span>
       {:else}
-        <span class="keyboard-hint">Click control to assign | Right-click to clear | ESC to exit</span>
+        <span class="keyboard-hint">{$t('controlOverlays.keyboard.status.hint')}</span>
       {/if}
       {#if $keyboardStore.lastKey}
         <span class="keyboard-last-msg">{formatKeyCombo($keyboardStore.lastKey)}</span>
       {/if}
-      <span class="keyboard-map-count">{$keyboardStore.bindings.length} mapped</span>
-      <button class="keyboard-exit-btn" onclick={() => keyboardStore.setEditMode(false)}>EXIT</button>
+      <span class="keyboard-map-count">{$t('controlOverlays.keyboard.status.mapCount', { values: { count: $keyboardStore.bindings.length} })}
+      </span>
+      <button class="keyboard-exit-btn" onclick={() => keyboardStore.setEditMode(false)}
+        aria-label={$t('controlOverlays.keyboard.status.exit')}
+        title={$t('controlOverlays.keyboard.status.exit')}>{$t('controlOverlays.keyboard.status.exit')}</button>
     </div>
   </div>
 {/if}

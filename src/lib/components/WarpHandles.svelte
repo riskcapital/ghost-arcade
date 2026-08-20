@@ -7,6 +7,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { findSnapTarget, getOtherLayerOutlines, type SnapTarget } from '../utils/snapUtils';
   import { normalizedWarpNudge, warpNudgeStepPixels } from '../utils/warpNudge';
+  import { t } from '../i18n';
   import {
     scaleWarpCornersFromSelectionEdge,
     type SelectionBounds,
@@ -51,7 +52,7 @@
     const ids = get(selectedLayerIds);
     const allLayers = get(layers);
     if (ids.length <= 1) return [];
-    return allLayers.filter(l => ids.includes(l.id) && !l.locked && (includePrimary || l.id !== $selectedLayer?.id));
+    return allLayers.filter((l) => ids.includes(l.id) && !l.locked && (includePrimary || l.id !== $selectedLayer?.id));
   }
 
   // Apply a corner delta to all batch-selected layers
@@ -72,10 +73,14 @@
     for (const [layerId, initial] of batchInitialCorners) {
       const cx = sharedCenter?.x ?? (initial.topLeft.x + initial.topRight.x + initial.bottomLeft.x + initial.bottomRight.x) / 4;
       const cy = sharedCenter?.y ?? (initial.topLeft.y + initial.topRight.y + initial.bottomLeft.y + initial.bottomRight.y) / 4;
-      project.setCorner(layerId, 'topLeft', { x: cx + (initial.topLeft.x - cx) * scaleFactor, y: cy + (initial.topLeft.y - cy) * scaleFactor });
-      project.setCorner(layerId, 'topRight', { x: cx + (initial.topRight.x - cx) * scaleFactor, y: cy + (initial.topRight.y - cy) * scaleFactor });
-      project.setCorner(layerId, 'bottomLeft', { x: cx + (initial.bottomLeft.x - cx) * scaleFactor, y: cy + (initial.bottomLeft.y - cy) * scaleFactor });
-      project.setCorner(layerId, 'bottomRight', { x: cx + (initial.bottomRight.x - cx) * scaleFactor, y: cy + (initial.bottomRight.y - cy) * scaleFactor });
+      project.setCorner(layerId, 'topLeft', { x: cx + (initial.topLeft.x - cx) * scaleFactor, y: cy + (initial.topLeft.y - cy) * scaleFactor,
+      });
+      project.setCorner(layerId, 'topRight', { x: cx + (initial.topRight.x - cx) * scaleFactor, y: cy + (initial.topRight.y - cy) * scaleFactor,
+      });
+      project.setCorner(layerId, 'bottomLeft', { x: cx + (initial.bottomLeft.x - cx) * scaleFactor, y: cy + (initial.bottomLeft.y - cy) * scaleFactor,
+      });
+      project.setCorner(layerId, 'bottomRight', { x: cx + (initial.bottomRight.x - cx) * scaleFactor, y: cy + (initial.bottomRight.y - cy) * scaleFactor,
+      });
     }
   }
 
@@ -87,8 +92,7 @@
         batchEdgeBounds,
         edge,
         deltaX,
-        deltaY,
-      );
+        deltaY);
       project.setCorner(layerId, 'topLeft', next.topLeft);
       project.setCorner(layerId, 'topRight', next.topRight);
       project.setCorner(layerId, 'bottomLeft', next.bottomLeft);
@@ -115,7 +119,8 @@
   }
 
   // Capture initial corners for all batch layers (+ children of group layers)
-  function getCornersBounds(cornerSets: Iterable<WarpCorners>): { minX: number; maxX: number; minY: number; maxY: number } | null {
+  function getCornersBounds(cornerSets: Iterable<WarpCorners>,
+  ): { minX: number; maxX: number; minY: number; maxY: number } | null {
     let minX = Infinity;
     let maxX = -Infinity;
     let minY = Infinity;
@@ -209,16 +214,13 @@
   function pixelSnap(p: Point2D): Point2D {
     const granularity = get(settings).ui.warpDragGranularity ?? '1px';
     if (granularity === 'free') return p;
-    const step =
-      granularity === 'sub'  ? 0.5 :
-      granularity === '5px'  ? 5 :
-      granularity === '10px' ? 10 : 1;
+    const step = granularity === 'sub' ? 0.5 : granularity === '5px' ? 5 : granularity === '10px' ? 10 : 1;
     const proj = get(project);
     const pw = Math.max(1, proj.width);
     const ph = Math.max(1, proj.height);
     return {
-      x: Math.round(p.x * pw / step) * step / pw,
-      y: Math.round(p.y * ph / step) * step / ph,
+      x: (Math.round((p.x * pw) / step) * step) / pw,
+      y: (Math.round((p.y * ph) / step) * step) / ph,
     };
   }
 
@@ -252,11 +254,17 @@
       case 'top':
         return { x: (corners.topLeft.x + corners.topRight.x) / 2, y: (corners.topLeft.y + corners.topRight.y) / 2 };
       case 'bottom':
-        return { x: (corners.bottomLeft.x + corners.bottomRight.x) / 2, y: (corners.bottomLeft.y + corners.bottomRight.y) / 2 };
+        return {
+          x: (corners.bottomLeft.x + corners.bottomRight.x) / 2,
+          y: (corners.bottomLeft.y + corners.bottomRight.y) / 2,
+        };
       case 'left':
         return { x: (corners.topLeft.x + corners.bottomLeft.x) / 2, y: (corners.topLeft.y + corners.bottomLeft.y) / 2 };
       case 'right':
-        return { x: (corners.topRight.x + corners.bottomRight.x) / 2, y: (corners.topRight.y + corners.bottomRight.y) / 2 };
+        return {
+          x: (corners.topRight.x + corners.bottomRight.x) / 2,
+          y: (corners.topRight.y + corners.bottomRight.y) / 2,
+        };
     }
   }
 
@@ -267,7 +275,7 @@
     e.stopPropagation();
     dragging = 'corner';
     dragTarget = corner;
-    selectedCorner = corner;  // Set selected corner for keyboard navigation
+    selectedCorner = corner; // Set selected corner for keyboard navigation
     window.addEventListener('mousemove', handleMouseMove);
     window.addEventListener('mouseup', handleMouseUp);
   }
@@ -337,12 +345,14 @@
     const ids = get(selectedLayerIds);
     const selectedIds = ids.length ? ids : [$selectedLayer.id];
     const allLayers = get(layers);
-    const movable = allLayers.filter(l => selectedIds.includes(l.id) && !l.locked);
+    const movable = allLayers.filter((l) => selectedIds.includes(l.id) && !l.locked);
     for (const layer of movable) {
       project.setCorner(layer.id, 'topLeft', { x: layer.corners.topLeft.x + dx, y: layer.corners.topLeft.y + dy });
       project.setCorner(layer.id, 'topRight', { x: layer.corners.topRight.x + dx, y: layer.corners.topRight.y + dy });
-      project.setCorner(layer.id, 'bottomLeft', { x: layer.corners.bottomLeft.x + dx, y: layer.corners.bottomLeft.y + dy });
-      project.setCorner(layer.id, 'bottomRight', { x: layer.corners.bottomRight.x + dx, y: layer.corners.bottomRight.y + dy });
+      project.setCorner(layer.id, 'bottomLeft', { x: layer.corners.bottomLeft.x + dx, y: layer.corners.bottomLeft.y + dy,
+      });
+      project.setCorner(layer.id, 'bottomRight', { x: layer.corners.bottomRight.x + dx, y: layer.corners.bottomRight.y + dy,
+      });
     }
     if (movable.length > 0) history.record(get(project));
   }
@@ -496,19 +506,19 @@
       const newCorners: WarpCorners = {
         topLeft: {
           x: initialCorners.topLeft.x + dx,
-          y: initialCorners.topLeft.y + dy
+          y: initialCorners.topLeft.y + dy,
         },
         topRight: {
           x: initialCorners.topRight.x + dx,
-          y: initialCorners.topRight.y + dy
+          y: initialCorners.topRight.y + dy,
         },
         bottomLeft: {
           x: initialCorners.bottomLeft.x + dx,
-          y: initialCorners.bottomLeft.y + dy
+          y: initialCorners.bottomLeft.y + dy,
         },
         bottomRight: {
           x: initialCorners.bottomRight.x + dx,
-          y: initialCorners.bottomRight.y + dy
+          y: initialCorners.bottomRight.y + dy,
         },
       };
 
@@ -621,7 +631,7 @@
    *  showing the pad there is just chrome. */
   let fineTuneCorner: keyof WarpCorners | null = null;
   const isTouchPrimary = typeof window !== 'undefined' &&
-    (('ontouchstart' in window) || (navigator.maxTouchPoints ?? 0) > 0) &&
+    ('ontouchstart' in window || (navigator.maxTouchPoints ?? 0) > 0) &&
     // Heuristic: phones / tablets report coarse pointer; laptops with
     // touchscreens report fine. Suppresses the pad on Surface devices
     // / touchscreen monitors where the user has a mouse + keyboard.
@@ -667,7 +677,9 @@
     project.setCorner($selectedLayer.id, fineTuneCorner, next);
   }
 
-  function exitFineTune() { fineTuneCorner = null; }
+  function exitFineTune() {
+    fineTuneCorner = null;
+  }
 
   function handleMoveTouchStart(e: TouchEvent) {
     if ($selectedLayer?.locked) return;
@@ -706,19 +718,19 @@
       const newCorners: WarpCorners = {
         topLeft: {
           x: initialCorners.topLeft.x + dx,
-          y: initialCorners.topLeft.y + dy
+          y: initialCorners.topLeft.y + dy,
         },
         topRight: {
           x: initialCorners.topRight.x + dx,
-          y: initialCorners.topRight.y + dy
+          y: initialCorners.topRight.y + dy,
         },
         bottomLeft: {
           x: initialCorners.bottomLeft.x + dx,
-          y: initialCorners.bottomLeft.y + dy
+          y: initialCorners.bottomLeft.y + dy,
         },
         bottomRight: {
           x: initialCorners.bottomRight.x + dx,
-          y: initialCorners.bottomRight.y + dy
+          y: initialCorners.bottomRight.y + dy,
         },
       };
 
@@ -758,36 +770,32 @@
     : null;
 
   // Edge midpoint positions
-  $: edgePositions = corners && handlePositions
-    ? {
-        top: toPixel(getEdgeMidpoint(corners, 'top')),
-        bottom: toPixel(getEdgeMidpoint(corners, 'bottom')),
-        left: toPixel(getEdgeMidpoint(corners, 'left')),
-        right: toPixel(getEdgeMidpoint(corners, 'right')),
-      }
-    : null;
+  $: edgePositions =
+    corners && handlePositions
+      ? {
+          top: toPixel(getEdgeMidpoint(corners, 'top')),
+          bottom: toPixel(getEdgeMidpoint(corners, 'bottom')),
+          left: toPixel(getEdgeMidpoint(corners, 'left')),
+          right: toPixel(getEdgeMidpoint(corners, 'right')),
+        }
+      : null;
 
   // Center position for move handle
   $: centerPosition = corners ? toPixel(getCenter(corners)) : null;
 
   // Rotation handle position (above top edge)
-  $: rotatePosition = edgePositions
-    ? { x: edgePositions.top.x, y: edgePositions.top.y - 40 }
-    : null;
+  $: rotatePosition = edgePositions ? { x: edgePositions.top.x, y: edgePositions.top.y - 40 } : null;
 
   // Scale handle position (below bottom edge)
-  $: scalePosition = edgePositions
-    ? { x: edgePositions.bottom.x, y: edgePositions.bottom.y + 40 }
-    : null;
+  $: scalePosition = edgePositions ? { x: edgePositions.bottom.x, y: edgePositions.bottom.y + 40 } : null;
 
   $: selectedTransformLayers = (() => {
     const ids = $selectedLayerIds;
     if (!ids || ids.length <= 1) return [];
-    return $layers.filter(l => ids.includes(l.id) && !l.locked && l.corners);
+    return $layers.filter((l) => ids.includes(l.id) && !l.locked && l.corners);
   })();
-  $: selectionBounds = selectedTransformLayers.length > 1
-    ? getCornersBounds(selectedTransformLayers.map(l => l.corners))
-    : null;
+  $: selectionBounds =
+    selectedTransformLayers.length > 1 ? getCornersBounds(selectedTransformLayers.map((l) => l.corners)) : null;
   $: selectionBoundsPx = selectionBounds
     ? {
         left: selectionBounds.minX * containerWidth,
@@ -844,8 +852,9 @@
   // between. Move/Rotate/Scale stay visible so users can still
   // reposition the whole layer as a unit.
   $: nonRectShape = shapeHidesBoundingRect;
-  $: lines = (handlePositions && !shapeHidesBoundingRect)
-    ? [
+  $: lines =
+    handlePositions && !shapeHidesBoundingRect
+      ? [
         { from: handlePositions.topLeft, to: handlePositions.topRight },
         { from: handlePositions.topRight, to: handlePositions.bottomRight },
         { from: handlePositions.bottomRight, to: handlePositions.bottomLeft },
@@ -908,10 +917,26 @@
       {#if activeSnapTarget}
         {@const snapPx = toPixel(activeSnapTarget.point)}
         {#if activeSnapTarget.type === 'corner'}
-          <circle cx={snapPx.x} cy={snapPx.y} r="8" fill="none" stroke="#00ff88" stroke-width="2.5" class="snap-indicator" />
+          <circle
+            cx={snapPx.x}
+            cy={snapPx.y}
+            r="8"
+            fill="none"
+            stroke="#00ff88"
+            stroke-width="2.5"
+            class="snap-indicator"
+          />
           <circle cx={snapPx.x} cy={snapPx.y} r="3" fill="#00ff88" />
         {:else}
-          <circle cx={snapPx.x} cy={snapPx.y} r="6" fill="none" stroke="#00ff88" stroke-width="2" class="snap-indicator" />
+          <circle
+            cx={snapPx.x}
+            cy={snapPx.y}
+            r="6"
+            fill="none"
+            stroke="#00ff88"
+            stroke-width="2"
+            class="snap-indicator"
+          />
           <line x1={snapPx.x - 8} y1={snapPx.y} x2={snapPx.x + 8} y2={snapPx.y} stroke="#00ff88" stroke-width="1.5" />
           <line x1={snapPx.x} y1={snapPx.y - 8} x2={snapPx.x} y2={snapPx.y + 8} stroke="#00ff88" stroke-width="1.5" />
         {/if}
@@ -949,6 +974,7 @@
          become the primary warps). -->
     {#if !hideCorners && !nonRectShape}
       {#each Object.entries(handlePositions) as [corner, pos]}
+        {@const cornerLabel = $t(`warpTools.corners.${corner}`)}
         <div
           class="handle corner-handle"
           class:dragging={dragging === 'corner' && dragTarget === corner}
@@ -959,16 +985,22 @@
           ontouchstart={(e) => handleCornerTouchStart(corner as keyof WarpCorners, e)}
           role="button"
           tabindex="0"
-          aria-label="Warp corner {corner}"
+          aria-label={$t(
+            selectedCorner === corner ? 'warpTools.layer.cornerAriaSelected' : 'warpTools.layer.cornerAria',
+            { values: { corner: cornerLabel } },
+          )}
         >
-          <span class="handle-label">{corner.replace(/([A-Z])/g, ' $1').trim()}{selectedCorner === corner ? ' (selected)' : ''}</span>
+          <span class="handle-label">{$t(selectedCorner === corner ? 'warpTools.layer.cornerLabelSelected' : 'warpTools.layer.cornerLabel', {
+              values: { corner: cornerLabel },
+            })}</span>
         </div>
       {/each}
     {/if}
 
     <!-- Edge handles (bars) — also suppressed for non-rect shapes
          (same reasoning as the corner handles above). -->
-    {#each (nonRectShape || !visibleEdgePositions ? [] : Object.entries(visibleEdgePositions)) as [edge, pos]}
+    {#each nonRectShape || !visibleEdgePositions ? [] : Object.entries(visibleEdgePositions) as [edge, pos]}
+      {@const edgeLabel = $t(`warpTools.edges.${edge}`)}
       <div
         class="handle edge-handle edge-{edge}"
         class:dragging={dragging === 'edge' && dragTarget === edge}
@@ -977,7 +1009,8 @@
         onmousedown={(e) => handleEdgeMouseDown(edge as 'top' | 'bottom' | 'left' | 'right', e)}
         role="button"
         tabindex="0"
-        aria-label={selectionBoundsPx ? `Stretch selected layers from ${edge} edge` : `Move ${edge} edge`}
+        aria-label={selectionBoundsPx ? $t('warpTools.layer.edgeStretchAria', { values: { edge: edgeLabel } })
+          : $t('warpTools.layer.edgeMoveAria', { values: { edge: edgeLabel } })}
       >
       </div>
     {/each}
@@ -996,10 +1029,12 @@
       ontouchstart={handleMoveTouchStart}
       role="button"
       tabindex="0"
-      aria-label="Move layer"
+      aria-label={$t('warpTools.layer.moveAria')}
     >
       <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-        <path d="M12 2L12 22M2 12L22 12M12 2L8 6M12 2L16 6M12 22L8 18M12 22L16 18M2 12L6 8M2 12L6 16M22 12L18 8M22 12L18 16" />
+        <path
+          d="M12 2L12 22M2 12L22 12M12 2L8 6M12 2L16 6M12 22L8 18M12 22L16 18M2 12L6 8M2 12L6 16M22 12L18 8M22 12L18 16"
+        />
       </svg>
     </div>
 
@@ -1013,7 +1048,7 @@
         onmousedown={handleRotateMouseDown}
         role="button"
         tabindex="0"
-        aria-label="Rotate layer"
+        aria-label={$t('warpTools.layer.rotateAria')}
       >
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
           <path d="M21 12a9 9 0 11-9-9c2.52 0 4.93 1 6.74 2.74L21 8" />
@@ -1033,10 +1068,10 @@
         onmousedown={handleScaleMouseDown}
         role="button"
         tabindex="0"
-        aria-label={selectionBoundsPx ? 'Scale selected layers' : 'Scale layer'}
+        aria-label={$t(selectionBoundsPx ? 'warpTools.layer.scaleSelectedAria' : 'warpTools.layer.scaleAria')}
       >
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-          <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7"/>
+          <path d="M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7" />
         </svg>
       </div>
     {/if}
@@ -1054,14 +1089,18 @@
         onmousedown={(e) => e.stopPropagation()}
         ontouchstart={(e) => e.stopPropagation()}
         role="group"
-        aria-label="Fine-tune {fineTuneCorner}"
+        aria-label={$t('warpTools.layer.fineTuneAria', {
+          values: { corner: $t(`warpTools.corners.${fineTuneCorner}`) },
+        })}
       >
-        <div class="ft-label">{fineTuneCorner.replace(/([A-Z])/g, ' $1').trim()}</div>
-        <button class="ft-btn ft-up"    onclick={() => nudgeFineTune(0, 1)}  aria-label="Up">▲</button>
-        <button class="ft-btn ft-left"  onclick={() => nudgeFineTune(-1, 0)} aria-label="Left">◀</button>
-        <button class="ft-btn ft-exit"  onclick={exitFineTune}                aria-label="Exit fine-tune">×</button>
-        <button class="ft-btn ft-right" onclick={() => nudgeFineTune(1, 0)}  aria-label="Right">▶</button>
-        <button class="ft-btn ft-down"  onclick={() => nudgeFineTune(0, -1)} aria-label="Down">▼</button>
+        <div class="ft-label">{$t(`warpTools.corners.${fineTuneCorner}`)}</div>
+        <button class="ft-btn ft-up"    onclick={() => nudgeFineTune(0, 1)}  aria-label={$t('warpTools.layer.nudgeUpAria')}
+          >▲</button>
+        <button class="ft-btn ft-left"  onclick={() => nudgeFineTune(-1, 0)} aria-label={$t('warpTools.layer.nudgeLeftAria')}>◀</button>
+        <button class="ft-btn ft-exit"  onclick={exitFineTune}                aria-label={$t('warpTools.layer.exitFineTuneAria')}
+          >×</button>
+        <button class="ft-btn ft-right" onclick={() => nudgeFineTune(1, 0)}  aria-label={$t('warpTools.layer.nudgeRightAria')}>▶</button>
+        <button class="ft-btn ft-down"  onclick={() => nudgeFineTune(0, -1)} aria-label={$t('warpTools.layer.nudgeDownAria')}>▼</button>
       </div>
     {/if}
 
@@ -1097,7 +1136,7 @@
     height: 20px;
     margin-left: -10px;
     margin-top: -10px;
-    background: #BB86FC;
+    background: #bb86fc;
     border: 2px solid #fff;
     border-radius: 50%;
     cursor: grab;
@@ -1105,7 +1144,7 @@
 
   .corner-handle:hover {
     transform: scale(1.2);
-    background: #CF6EFF;
+    background: #cf6eff;
   }
 
   .corner-handle.dragging {
@@ -1192,13 +1231,13 @@
     margin-left: -18px;
     margin-top: -18px;
     background: rgba(0, 0, 0, 0.7);
-    border: 2px solid #BB86FC;
+    border: 2px solid #bb86fc;
     border-radius: 50%;
     cursor: grab;
     display: flex;
     align-items: center;
     justify-content: center;
-    color: #BB86FC;
+    color: #bb86fc;
   }
 
   .move-handle.mesh-offset {

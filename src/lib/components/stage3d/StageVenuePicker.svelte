@@ -1,19 +1,28 @@
 <script lang="ts">
+  import { t } from '../../i18n';
   import { VENUE_PRESETS } from '../../stage3d/venuePresets';
   import type { Stage3DBasePreset } from '../../stage3d/types';
 
   export let currentId: Stage3DBasePreset;
   export let onPick: (id: Stage3DBasePreset) => void;
   export let onClose: () => void;
+
+  function venueName(id: Stage3DBasePreset): string {
+    return $t(`stageShow.venuePicker.venues.${id}.name`);
+  }
+
+  function venueDescription(id: Stage3DBasePreset): string {
+    return $t(`stageShow.venuePicker.venues.${id}.description`);
+  }
 </script>
 
 <div class="picker-bg" onclick={onClose} role="presentation">
   <div class="picker-card" onclick={(e) => e.stopPropagation()} role="presentation">
     <header>
-      <h2>Pick a venue</h2>
+      <h2>{$t('stageShow.venuePicker.title')}</h2>
       <button class="close-x" onclick={onClose}>✕</button>
     </header>
-    <p class="lead">Sets the stage scenery — truss, ceiling, walls, lighting baseline, floor finish. LED layout still flows from your 2D Stage Designer.</p>
+    <p class="lead">{$t('stageShow.venuePicker.lead')}</p>
 
     <div class="picker-grid">
       {#each VENUE_PRESETS as entry (entry.id)}
@@ -23,10 +32,10 @@
           onclick={() => onPick(entry.id)}
         >
           <div class="thumb" style="background: linear-gradient(135deg, {entry.gradient[0]}, {entry.gradient[1]});">
-            <span class="thumb-letter">{entry.label.charAt(0)}</span>
+            <span class="thumb-letter">{venueName(entry.id).charAt(0)}</span>
           </div>
-          <span class="venue-name">{entry.label}</span>
-          <span class="venue-desc">{entry.tagline}</span>
+          <span class="venue-name">{venueName(entry.id)}</span>
+          <span class="venue-desc">{venueDescription(entry.id)}</span>
         </button>
       {/each}
     </div>
@@ -96,9 +105,9 @@
     gap: 6px;
     transition: transform 0.1s ease-out, border-color 0.15s ease-out;
   }
-  .venue-card:hover { border-color: #BB86FC; transform: translateY(-2px); }
+  .venue-card:hover { border-color: #bb86fc; transform: translateY(-2px); }
   .venue-card:active { transform: scale(0.98); }
-  .venue-card.active { border-color: #BB86FC; box-shadow: 0 0 0 2px rgba(187, 134, 252, 0.18); }
+  .venue-card.active { border-color: #bb86fc; box-shadow: 0 0 0 2px rgba(187, 134, 252, 0.18); }
   .thumb {
     width: 100%;
     aspect-ratio: 16 / 10;

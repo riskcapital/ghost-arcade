@@ -7,6 +7,7 @@
   import { onDestroy, onMount } from 'svelte';
   import { milkdropStore } from '../stores/milkdrop';
   import { loadPresetPack, type MilkdropPresetPack } from '../effects/milkdropPresets';
+  import { t } from '../i18n';
 
   export let layerId: string;
   export let presetPack: string = 'minimal';
@@ -26,8 +27,8 @@
   $: filteredPresets = (() => {
     const lower = filterText.trim().toLowerCase();
     let out = presetNames;
-    if (lower) out = out.filter(n => n.toLowerCase().includes(lower));
-    if (favoritesOnly) out = out.filter(n => favorites.has(n));
+    if (lower) out = out.filter((n) => n.toLowerCase().includes(lower));
+    if (favoritesOnly) out = out.filter((n) => favorites.has(n));
     return out;
   })();
 
@@ -73,7 +74,7 @@
   function cssEscape(s: string): string {
     // Minimal escape — preset names occasionally contain quotes/parens; CSS.escape is the standard.
     if (typeof CSS !== 'undefined' && (CSS as any).escape) return (CSS as any).escape(s);
-    return s.replace(/[^a-zA-Z0-9_-]/g, c => '\\' + c);
+    return s.replace(/[^a-zA-Z0-9_-]/g, (c) => '\\' + c);
   }
 
   // ── Keyboard shortcuts (scoped to when this panel is mounted) ────────
@@ -107,30 +108,61 @@
 <div class="mk-panel">
   <!-- Transport row -->
   <div class="mk-transport">
-    <button class="mk-btn" title="Previous preset" onclick={() => fire('prev')}>◀</button>
-    <button class="mk-btn" title="Random preset (R)" onclick={() => fire('random')}>🎲</button>
-    <button class="mk-btn" title="Next preset (D)" onclick={() => fire('next')}>▶</button>
-    <button class="mk-btn cut" title="Hard cut now (instant blend)" onclick={() => fire('cut')}>CUT</button>
+    <button
+      class="mk-btn"
+      title={$t('liveVisuals.milkdrop.previousPreset')}
+      aria-label={$t('liveVisuals.milkdrop.previousPreset')}
+      onclick={() => fire('prev')}>◀</button
+    >
+    <button
+      class="mk-btn"
+      title={$t('liveVisuals.milkdrop.randomPreset', { values: { key: 'R' } })}
+      aria-label={$t('liveVisuals.milkdrop.randomPreset', { values: { key: 'R' } })}
+      onclick={() => fire('random')}>🎲</button
+    >
+    <button
+      class="mk-btn"
+      title={$t('liveVisuals.milkdrop.nextPreset', { values: { key: 'D' } })}
+      aria-label={$t('liveVisuals.milkdrop.nextPreset', { values: { key: 'D' } })}
+      onclick={() => fire('next')}>▶</button
+    >
+    <button
+      class="mk-btn cut"
+      title={$t('liveVisuals.milkdrop.hardCut')}
+      aria-label={$t('liveVisuals.milkdrop.hardCut')}
+      onclick={() => fire('cut')}>{$t('liveVisuals.milkdrop.cutLabel')}</button
+    >
     <button
       class="mk-btn lock"
       class:active={locked}
-      title={locked ? 'Locked — auto-evolve paused' : 'Lock current preset'}
-      onclick={toggleLock}
-    >{locked ? '🔒' : '🔓'}</button>
+      title={locked ? $t('liveVisuals.milkdrop.locked') : $t('liveVisuals.milkdrop.lock')}
+      aria-label={locked ? $t('liveVisuals.milkdrop.locked') : $t('liveVisuals.milkdrop.lock')}
+      onclick={toggleLock}>{locked ? '🔒' : '🔓'}</button
+    >
   </div>
-  <div class="mk-hotkey-hint"><kbd>D</kbd> next · <kbd>R</kbd> random</div>
+  <div class="mk-hotkey-hint">
+    <kbd>D</kbd>
+    {$t('liveVisuals.milkdrop.hotkeyNext')} ·
+    <kbd>R</kbd>
+    {$t('liveVisuals.milkdrop.hotkeyRandom')}
+  </div>
 
   <!-- Now-playing -->
   <div class="mk-now">
-    <span class="mk-now-label">NOW</span>
+    <span class="mk-now-label">{$t('liveVisuals.milkdrop.now')}</span>
     <span class="mk-now-name" title={currentPresetName}>{currentPresetName || '—'}</span>
     {#if currentPresetName}
       <button
         class="mk-fav-btn"
         class:active={favorites.has(currentPresetName)}
-        title={favorites.has(currentPresetName) ? 'Unfavorite' : 'Favorite'}
-        onclick={(e) => toggleFav(currentPresetName, e)}
-      >{favorites.has(currentPresetName) ? '★' : '☆'}</button>
+        title={favorites.has(currentPresetName)
+          ? $t('liveVisuals.milkdrop.unfavorite')
+          : $t('liveVisuals.milkdrop.favorite')}
+        aria-label={favorites.has(currentPresetName)
+          ? $t('liveVisuals.milkdrop.unfavorite')
+          : $t('liveVisuals.milkdrop.favorite')}
+        onclick={(e) => toggleFav(currentPresetName, e)}>{favorites.has(currentPresetName) ? '★' : '☆'}</button
+      >
     {/if}
   </div>
 
@@ -138,25 +170,27 @@
   <div class="mk-filter">
     <input
       type="text"
-      placeholder="Filter presets…"
+      placeholder={$t('liveVisuals.milkdrop.filterPlaceholder')}
+      aria-label={$t('liveVisuals.milkdrop.filterPlaceholder')}
       bind:value={filterText}
     />
     <button
       class="mk-fav-only"
       class:active={favoritesOnly}
-      title="Show only favorites"
-      onclick={() => (favoritesOnly = !favoritesOnly)}
-    >★ {favorites.size}</button>
+      title={$t('liveVisuals.milkdrop.showOnlyFavorites')}
+      aria-label={$t('liveVisuals.milkdrop.showOnlyFavorites')}
+      onclick={() => (favoritesOnly = !favoritesOnly)}>★ {favorites.size}</button
+    >
   </div>
 
   <!-- Preset list -->
   <div class="mk-list" bind:this={listEl}>
     {#if loading}
-      <div class="mk-empty">Loading {presetPack}…</div>
+      <div class="mk-empty">{$t('liveVisuals.milkdrop.loading', { values: { pack: presetPack } })}</div>
     {:else if loadError}
-      <div class="mk-empty err">Failed: {loadError}</div>
+      <div class="mk-empty err">{$t('liveVisuals.milkdrop.failed', { values: { error: loadError ?? '' } })}</div>
     {:else if filteredPresets.length === 0}
-      <div class="mk-empty">No matches in {presetPack}.</div>
+      <div class="mk-empty">{$t('liveVisuals.milkdrop.noMatches', { values: { pack: presetPack } })}</div>
     {:else}
       {#each filteredPresets as name (name)}
         <div
@@ -166,15 +200,21 @@
           onclick={() => loadByName(name)}
           role="button"
           tabindex="0"
-          onkeydown={(e) => { if (e.key === 'Enter' || e.key === ' ') loadByName(name); }}
+          aria-label={$t('liveVisuals.milkdrop.selectPreset', { values: { name } })}
+          onkeydown={(e) => {
+            if (e.key === 'Enter' || e.key === ' ') loadByName(name);
+          }}
         >
           <span class="mk-row-name">{name}</span>
           <button
             class="mk-row-fav"
             class:active={favorites.has(name)}
-            title={favorites.has(name) ? 'Unfavorite' : 'Favorite'}
-            onclick={(e) => toggleFav(name, e)}
-          >{favorites.has(name) ? '★' : '☆'}</button>
+            title={favorites.has(name) ? $t('liveVisuals.milkdrop.unfavorite') : $t('liveVisuals.milkdrop.favorite')}
+            aria-label={favorites.has(name)
+              ? $t('liveVisuals.milkdrop.unfavorite')
+              : $t('liveVisuals.milkdrop.favorite')}
+            onclick={(e) => toggleFav(name, e)}>{favorites.has(name) ? '★' : '☆'}</button
+          >
         </div>
       {/each}
     {/if}
@@ -207,10 +247,23 @@
     cursor: pointer;
     transition: all 0.12s;
   }
-  .mk-btn:hover { background: #2a1f50; color: #fff; }
-  .mk-btn.cut { background: #3a0d2a; border-color: #8a1f5e; color: #ff80c0; }
-  .mk-btn.cut:hover { background: #5a153f; }
-  .mk-btn.lock.active { background: #0d3320; border-color: #22c55e; color: #4ade80; }
+  .mk-btn:hover {
+    background: #2a1f50;
+    color: #fff;
+  }
+  .mk-btn.cut {
+    background: #3a0d2a;
+    border-color: #8a1f5e;
+    color: #ff80c0;
+  }
+  .mk-btn.cut:hover {
+    background: #5a153f;
+  }
+  .mk-btn.lock.active {
+    background: #0d3320;
+    border-color: #22c55e;
+    color: #4ade80;
+  }
 
   .mk-hotkey-hint {
     font-size: 10px;
@@ -252,7 +305,8 @@
     text-overflow: ellipsis;
     font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
   }
-  .mk-fav-btn, .mk-fav-only {
+  .mk-fav-btn,
+  .mk-fav-only {
     background: transparent;
     border: 1px solid #333;
     color: #555;
@@ -261,7 +315,8 @@
     border-radius: 3px;
     cursor: pointer;
   }
-  .mk-fav-btn.active, .mk-fav-only.active {
+  .mk-fav-btn.active,
+  .mk-fav-only.active {
     color: #fcd34d;
     border-color: #92681f;
     background: #2a1f08;
@@ -271,7 +326,7 @@
     display: flex;
     gap: 4px;
   }
-  .mk-filter input[type="text"] {
+  .mk-filter input[type='text'] {
     flex: 1;
     background: #0a0612;
     border: 1px solid #2a2235;
@@ -281,7 +336,9 @@
     font-size: 11px;
     outline: none;
   }
-  .mk-filter input[type="text"]:focus { border-color: #6938aa; }
+  .mk-filter input[type='text']:focus {
+    border-color: #6938aa;
+  }
 
   .mk-list {
     overflow-y: auto;
@@ -300,9 +357,15 @@
     gap: 4px;
     border-bottom: 1px solid #110a1c;
   }
-  .mk-row:hover { background: #15102a; }
-  .mk-row.active { background: #2a1560; }
-  .mk-row.active .mk-row-name { color: #fff; }
+  .mk-row:hover {
+    background: #15102a;
+  }
+  .mk-row.active {
+    background: #2a1560;
+  }
+  .mk-row.active .mk-row-name {
+    color: #fff;
+  }
   .mk-row-name {
     flex: 1;
     font-size: 11px;

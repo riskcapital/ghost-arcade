@@ -12,6 +12,7 @@
   import { settings, identityOutputMesh, masterWarpIsActive, type OutputSettings, type OutputSlice } from '../stores/settings';
   import { maxOutputSlices } from '../stores/license';
   import { isDesktopApp, getTextureShareLabel, invoke } from '$lib/bridge';
+  import { t } from '../i18n';
   import OutputCanvasPreview from './OutputCanvasPreview.svelte';
   import ScreenInspector from './ScreenInspector.svelte';
 
@@ -79,7 +80,7 @@
         url.search = `?mode=slice-display&sliceId=${encodeURIComponent(s.id)}&webgpu-disable=1`;
         const newWin = window.open(url.toString(), `ga-slice-${s.id}`, 'popup=true');
         if (!newWin) {
-          alert('Slice display window failed to open. Check popup-blocker behaviour.');
+          alert($t('screens.errors.openSliceDisplay'));
           return;
         }
         _zeroCopySliceWindows.set(s.id, newWin);
@@ -215,11 +216,11 @@
     | 'domeCurvature'
     | 'domeTruncation';
 
-  const domeModes: { value: OutputSettings['domeMode']; label: string }[] = [
-    { value: 'angular', label: 'Angular fisheye' },
-    { value: 'stereographic', label: 'Stereographic' },
-    { value: 'orthographic', label: 'Orthographic' },
-    { value: 'equirectangular', label: 'Equirectangular 360' },
+  const domeModes: { value: OutputSettings['domeMode']; labelKey: string }[] = [
+    { value: 'angular', labelKey: 'screens.dome.modes.angular' },
+    { value: 'stereographic', labelKey: 'screens.dome.modes.stereographic' },
+    { value: 'orthographic', labelKey: 'screens.dome.modes.orthographic' },
+    { value: 'equirectangular', labelKey: 'screens.dome.modes.equirectangular' },
   ];
 
   function clamp(value: number, min: number, max: number) {
@@ -288,8 +289,15 @@
 <div class="screen-panel">
   <div class="screens-section">
     <div class="section-head">
-      <span class="section-title">Screens</span>
-      <span class="section-count">{$screens.length}/{$maxOutputSlices === Infinity ? '∞' : $maxOutputSlices}</span>
+      <span class="section-title">{$t('screens.list.title')}</span>
+      <span class="section-count">
+        {$t('screens.list.count', {
+          values: {
+            count: $screens.length,
+            max: $maxOutputSlices === Infinity ? '∞' : $maxOutputSlices,
+          },
+        })}
+      </span>
     </div>
 
     <!-- Top-down preview pane (master canvas + slice rects + overlap zones) -->
@@ -307,15 +315,15 @@
     <!-- Quick-setup presets, only when there are no screens yet -->
     {#if $screens.length === 0}
       <div class="preset-row">
-        <button class="preset-btn" onclick={() => screenActions.applyPreset('2-wide')}>2-Wide</button>
-        <button class="preset-btn" onclick={() => screenActions.applyPreset('3-wide')} disabled={$maxOutputSlices < 3}>3-Wide</button>
+        <button class="preset-btn" onclick={() => screenActions.applyPreset('2-wide')}>{$t('screens.list.presets.twoWide')}</button>
+        <button class="preset-btn" onclick={() => screenActions.applyPreset('3-wide')} disabled={$maxOutputSlices < 3}>{$t('screens.list.presets.threeWide')}</button>
         {#if $maxOutputSlices >= 4}
-          <button class="preset-btn" onclick={() => screenActions.applyPreset('2x2')}>2×2</button>
+          <button class="preset-btn" onclick={() => screenActions.applyPreset('2x2')}>{$t('screens.list.presets.twoByTwo')}</button>
         {/if}
       </div>
     {/if}
 
-    <div class="screen-list" role="list">
+    <div class="screen-list" role="list" aria-label={$t('screens.list.ariaLabel')}>
       {#each $screens as s, i (s.id)}
         <!-- Row is a <div> rather than <button> because it contains
              interactive children (checkbox + duplicate/remove buttons).
@@ -340,41 +348,59 @@
             type="checkbox"
             class="row-enable"
             checked={s.enabled}
+            aria-label={$t('screens.list.toggle', { values: { name: s.name } })}
             onclick={(e) => e.stopPropagation()}
             onchange={(e) => screenActions.update(s.id, { enabled: (e.target as HTMLInputElement).checked })}
           />
           <span class="row-name">{s.name}</span>
           <span class="row-target">
             {#if (s.targetType ?? 'sender') === 'display'}
-              {#if openWindowIds.includes(s.id)}● {/if}DISP{s.displayId ?? '?'}
+              {#if openWindowIds.includes(s.id)}
+                <span aria-label={$t('screens.targets.open')}>●</span>{' '}
+              {/if}
+              {$t('screens.targets.display', { values: { displayId: s.displayId ?? '?' } })}
             {:else}
-              {tsLabel}
+              {$t('screens.targets.textureShare', { values: { textureShare: tsLabel } })}
             {/if}
           </span>
-          <button class="row-act" title="Duplicate" onclick={(e) => { e.stopPropagation(); duplicate(s); }}>⎘</button>
-          <button class="row-act danger" title="Remove" onclick={(e) => { e.stopPropagation(); screenActions.remove(s.id); }}>×</button>
+          <button
+            class="row-act"
+            title={$t('screens.list.duplicate')}
+            aria-label={$t('screens.list.duplicate')}
+            onclick={(e) => { e.stopPropagation(); duplicate(s); }}
+          >⎘</button>
+          <button
+            class="row-act danger"
+            title={$t('screens.list.remove')}
+            aria-label={$t('screens.list.remove')}
+            onclick={(e) => { e.stopPropagation(); screenActions.remove(s.id); }}
+          >×</button>
         </div>
       {/each}
     </div>
 
     <div class="add-row">
-      <button class="add-btn" onclick={add} disabled={$screens.length >= $maxOutputSlices}>+ Add Screen</button>
+      <button class="add-btn" onclick={add} disabled={$screens.length >= $maxOutputSlices}>
+        + {$t('screens.list.add')}
+      </button>
     </div>
 
     <!-- Master-canvas controls. Tucked between the list and inspector
          so they're discoverable when working on the rig as a whole
          but don't dominate the top of the panel. -->
     <details class="master-details" open={$screens.length > 0}>
-      <summary>Master canvas</summary>
+      <summary>{$t('screens.masterCanvas.title')}</summary>
       <div class="master-row">
         <input
           type="number" min="128" max="15360" step="2" class="master-num"
+          aria-label={$t('screens.masterCanvas.width')}
           value={$settings.output.masterCanvasWidth}
           onchange={(e) => setMaster(parseInt((e.target as HTMLInputElement).value) || 1920, $settings.output.masterCanvasHeight)}
         />
         <span class="dim-x">×</span>
         <input
           type="number" min="128" max="15360" step="2" class="master-num"
+          aria-label={$t('screens.masterCanvas.height')}
           value={$settings.output.masterCanvasHeight}
           onchange={(e) => setMaster($settings.output.masterCanvasWidth, parseInt((e.target as HTMLInputElement).value) || 1080)}
         />
@@ -382,10 +408,12 @@
       <div class="master-row">
         <button class="mini-btn" onclick={autoFitMaster}
           disabled={!$screens.some(s => s.enabled && s.targetType === 'display' && s.displayId != null)}>
-          Auto-fit
+          {$t('screens.masterCanvas.autoFit')}
         </button>
         <button class="mini-btn" onclick={matchSpoutToMaster} disabled={spoutMatchesMaster}>
-          {spoutMatchesMaster ? `${tsLabel} matches ✓` : `Match ${tsLabel}`}
+          {spoutMatchesMaster
+            ? $t('screens.masterCanvas.textureShareMatches', { values: { textureShare: tsLabel } })
+            : $t('screens.masterCanvas.matchTextureShare', { values: { textureShare: tsLabel } })}
         </button>
       </div>
     </details>
@@ -395,8 +423,14 @@
          orange handles on the canvas; this panel is just enable + mode. -->
     <details class="master-details" open={masterWarp.enabled}>
       <summary>
-        Master warp
-        {#if masterWarpActive}<span class="mw-active-dot" title="Warp active"></span>{/if}
+        {$t('screens.outputWarp.title')}
+        {#if masterWarpActive}
+          <span
+            class="mw-active-dot"
+            title={$t('screens.outputWarp.active')}
+            aria-label={$t('screens.outputWarp.active')}
+          ></span>
+        {/if}
       </summary>
       <label class="mw-enable">
         <input
@@ -404,22 +438,22 @@
           checked={masterWarp.enabled}
           onchange={(e) => toggleMasterWarp((e.target as HTMLInputElement).checked)}
         />
-        <span>Warp entire output</span>
+        <span>{$t('screens.outputWarp.enable')}</span>
       </label>
       {#if masterWarp.enabled}
-        <div class="mw-modes" role="group" aria-label="Master warp mode">
+        <div class="mw-modes" role="group" aria-label={$t('screens.outputWarp.mode')}>
           <button class="mw-mode" class:active={masterMode === 'corners'} onclick={() => setMasterMode('corners')}>
-            Edge / Corners
+            {$t('screens.outputWarp.corners')}
           </button>
           <button class="mw-mode" class:active={masterMode === 'mesh'} onclick={() => setMasterMode('mesh')}>
-            Mesh
+            {$t('screens.outputWarp.mesh')}
           </button>
         </div>
         <div class="mw-hint">
-          Drag the orange handles on the canvas to warp the whole output.
+          {$t('screens.outputWarp.hint')}
         </div>
         <div class="master-row">
-          <button class="mini-btn" onclick={resetMasterWarp}>Reset to identity</button>
+          <button class="mini-btn" onclick={resetMasterWarp}>{$t('screens.outputWarp.reset')}</button>
         </div>
       {/if}
     </details>
@@ -429,8 +463,14 @@
          master output before Screens slice it. -->
     <details class="master-details dome-details" open={$settings.output.domeEnabled}>
       <summary>
-        Dome projection
-        {#if $settings.output.domeEnabled}<span class="mw-active-dot dome-dot" title="Dome projection enabled"></span>{/if}
+        {$t('screens.dome.title')}
+        {#if $settings.output.domeEnabled}
+          <span
+            class="mw-active-dot dome-dot"
+            title={$t('screens.dome.enabled')}
+            aria-label={$t('screens.dome.enabled')}
+          ></span>
+        {/if}
       </summary>
       <label class="mw-enable">
         <input
@@ -438,12 +478,12 @@
           checked={$settings.output.domeEnabled ?? false}
           onchange={(e) => settings.setDomeEnabled((e.target as HTMLInputElement).checked)}
         />
-        <span>Fisheye / domemaster output</span>
+        <span>{$t('screens.dome.enable')}</span>
       </label>
       <div class="dome-presets">
-        <button class="dome-chip" onclick={() => applyDomePreset('domemaster')}>Domemaster 180</button>
-        <button class="dome-chip" onclick={() => applyDomePreset('half')}>Half dome</button>
-        <button class="dome-chip" onclick={() => applyDomePreset('panorama')}>Panorama 360</button>
+        <button class="dome-chip" onclick={() => applyDomePreset('domemaster')}>{$t('screens.dome.presets.domemaster')}</button>
+        <button class="dome-chip" onclick={() => applyDomePreset('half')}>{$t('screens.dome.presets.half')}</button>
+        <button class="dome-chip" onclick={() => applyDomePreset('panorama')}>{$t('screens.dome.presets.panorama')}</button>
       </div>
       {#if $settings.output.domeEnabled ?? false}
         {@const dome = {
@@ -456,62 +496,62 @@
           offsetY: $settings.output.domeOffsetY ?? 0,
         }}
         <label class="dome-field">
-          <span>Mode</span>
+          <span>{$t('screens.dome.mode')}</span>
           <select
             value={$settings.output.domeMode ?? 'angular'}
             onchange={(e) => settings.setDomeMode((e.target as HTMLSelectElement).value as OutputSettings['domeMode'])}
           >
             {#each domeModes as mode}
-              <option value={mode.value}>{mode.label}</option>
+              <option value={mode.value}>{$t(mode.labelKey)}</option>
             {/each}
           </select>
         </label>
         <div class="dome-controls">
           <label class="dome-row">
-            <span>FOV</span>
-            <input type="range" min="90" max="360" step="1" value={dome.fov}
+            <span>{$t('screens.dome.fields.fov')}</span>
+            <input type="range" aria-label={$t('screens.dome.fields.fov')} min="90" max="360" step="1" value={dome.fov}
               oninput={(e) => updateDomeNumber('domeFOV', eventNumber(e, 180), 90, 360)} />
             <em>{dome.fov.toFixed(0)}°</em>
           </label>
           <label class="dome-row">
-            <span>Rotation</span>
-            <input type="range" min="0" max="360" step="1" value={dome.rotation}
+            <span>{$t('screens.dome.fields.rotation')}</span>
+            <input type="range" aria-label={$t('screens.dome.fields.rotation')} min="0" max="360" step="1" value={dome.rotation}
               oninput={(e) => updateDomeNumber('domeRotation', eventNumber(e), 0, 360)} />
             <em>{dome.rotation.toFixed(0)}°</em>
           </label>
           <label class="dome-row">
-            <span>Tilt</span>
-            <input type="range" min="-90" max="90" step="1" value={dome.tilt}
+            <span>{$t('screens.dome.fields.tilt')}</span>
+            <input type="range" aria-label={$t('screens.dome.fields.tilt')} min="-90" max="90" step="1" value={dome.tilt}
               oninput={(e) => updateDomeNumber('domeTilt', eventNumber(e), -90, 90)} />
             <em>{dome.tilt.toFixed(0)}°</em>
           </label>
           <label class="dome-row">
-            <span>Curvature</span>
-            <input type="range" min="0" max="1" step="0.01" value={dome.curvature}
+            <span>{$t('screens.dome.fields.curvature')}</span>
+            <input type="range" aria-label={$t('screens.dome.fields.curvature')} min="0" max="1" step="0.01" value={dome.curvature}
               oninput={(e) => updateDomeNumber('domeCurvature', eventNumber(e, 1), 0, 1)} />
             <em>{(dome.curvature * 100).toFixed(0)}%</em>
           </label>
           <label class="dome-row">
-            <span>Truncation</span>
-            <input type="range" min="0.5" max="1" step="0.01" value={dome.truncation}
+            <span>{$t('screens.dome.fields.truncation')}</span>
+            <input type="range" aria-label={$t('screens.dome.fields.truncation')} min="0.5" max="1" step="0.01" value={dome.truncation}
               oninput={(e) => updateDomeNumber('domeTruncation', eventNumber(e, 1), 0.5, 1)} />
             <em>{(dome.truncation * 100).toFixed(0)}%</em>
           </label>
           <label class="dome-row">
-            <span>Offset X</span>
-            <input type="range" min="-1" max="1" step="0.01" value={dome.offsetX}
+            <span>{$t('screens.dome.fields.offsetX')}</span>
+            <input type="range" aria-label={$t('screens.dome.fields.offsetX')} min="-1" max="1" step="0.01" value={dome.offsetX}
               oninput={(e) => updateDomeNumber('domeOffsetX', eventNumber(e), -1, 1)} />
             <em>{dome.offsetX.toFixed(2)}</em>
           </label>
           <label class="dome-row">
-            <span>Offset Y</span>
-            <input type="range" min="-1" max="1" step="0.01" value={dome.offsetY}
+            <span>{$t('screens.dome.fields.offsetY')}</span>
+            <input type="range" aria-label={$t('screens.dome.fields.offsetY')} min="-1" max="1" step="0.01" value={dome.offsetY}
               oninput={(e) => updateDomeNumber('domeOffsetY', eventNumber(e), -1, 1)} />
             <em>{dome.offsetY.toFixed(2)}</em>
           </label>
         </div>
         <div class="master-row">
-          <button class="mini-btn" onclick={resetDome}>Reset dome</button>
+          <button class="mini-btn" onclick={resetDome}>{$t('screens.dome.reset')}</button>
         </div>
       {/if}
     </details>
@@ -528,7 +568,7 @@
         />
       {:else}
         <div class="inspector-empty">
-          Select a Screen to edit warp, blend, color, and effects.
+          {$t('screens.inspector.empty')}
         </div>
       {/if}
     </div>

@@ -1,0 +1,35 @@
+export default {
+  output: {
+    zeroCopyUnavailable: '{texture} zero-copy unavailable; CPU fallback is disabled.',
+    zeroCopyStarting: 'zero-copy starting',
+    started: '{texture} {mode}: {name} {width}x{height}',
+    senderFailed: '{texture} sender failed',
+    startFailed: '{texture} failed: {error}',
+  },
+  shader: {
+    compilationFailed: 'Shader compilation failed for: {name}',
+    unknownName: 'unknown',
+  },
+  splat: {
+    gaussianSplat: 'Gaussian splat',
+    pointCloud: 'Point cloud',
+    loading: 'Loading {source}',
+    readingSource: 'Reading source data',
+    parsingPoints: 'Parsing {loaded} of {total} points',
+    parsingPointData: 'Parsing point data',
+    preparing: 'Preparing point cloud',
+    ready: 'Point cloud ready',
+    displayPoints: '{display} display points from {source} source points',
+    pointsReady: '{count} points ready',
+    loadFailed: 'Failed to load {format} file: {error}',
+    formatSplat: '.splat',
+    formatPly: 'PLY',
+    detailPreparingPoints: 'Preparing {count} points',
+    detailPreparingPoint: 'Preparing point {current} of {total}',
+    detailCreatingGpuBuffers: 'Creating GPU buffers',
+    detailGpuBuffersReady: 'GPU buffers ready',
+  },
+  model3d: {
+    loadFailed: '3D model could not be loaded. Re-add the model file to this layer.',
+  },
+};

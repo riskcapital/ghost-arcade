@@ -1,5 +1,6 @@
 <script lang="ts">
   import VJFader from './VJFader.svelte';
+  import { t } from '../../i18n';
 
   export let masterOpacity: number = 1;
   export let isLive: boolean = false;
@@ -20,7 +21,7 @@
 
 <div class="master-section" class:compact>
   <div class="master-fader-row">
-    <span class="master-label">MASTER</span>
+    <span class="master-label">{$t('mobileControls.master.label')}</span>
     <div class="master-fader">
       <VJFader
         value={masterOpacity}
@@ -41,16 +42,15 @@
         on:click={onToggleLive}
       >
         <span class="live-dot" class:active={isLive}></span>
-        {isLive ? 'LIVE' : 'GO LIVE'}
+        {isLive ? $t('mobileControls.master.live') : $t('mobileControls.master.goLive')}
       </button>
     {/if}
     <button
       class="stop-all-btn"
       on:click={onStopAll}
-      title="Stop all clips on both decks"
-    >
+      title={$t('mobileControls.master.stopAllTitle')}>
       <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="16" height="16" rx="2"/></svg>
-      STOP
+      {$t('mobileControls.master.stop')}
     </button>
   </div>
 </div>
@@ -108,9 +108,9 @@
   .master-label {
     font-size: 11px;
     font-weight: 800;
-    color: var(--accent-primary, #FF6B6B);
+    color: var(--accent-primary, #ff6b6b);
     letter-spacing: 2px;
-    text-shadow: 0 0 10px var(--accent-primary, #FF6B6B);
+    text-shadow: 0 0 10px var(--accent-primary, #ff6b6b);
     white-space: nowrap;
   }
 

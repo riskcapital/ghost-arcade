@@ -18,6 +18,7 @@
   import { audioStore } from '../stores/audio';
   import { macros } from '../stores/macros';
   import { snapshots } from '../stores/snapshots';
+  import { t } from '../i18n';
 
   interface TourStep {
     title: string;
@@ -44,7 +45,9 @@
   }
   function getCurrentCrossfaderEnabled(): boolean {
     let on = false;
-    const unsub = vjClipLauncher.subscribe(s => { on = s.crossfaderEnabled; });
+    const unsub = vjClipLauncher.subscribe((s) => {
+      on = s.crossfaderEnabled;
+    });
     unsub();
     return on;
   }
@@ -61,122 +64,123 @@
   }
   function saveDemoSnapshot() {
     openVJMode();
-    setTimeout(() => snapshots.save(0, 'Tour demo'), 200);
+    setTimeout(() => snapshots.save(0, $t('tourTimeline.onboarding.demoSnapshotName')), 200);
   }
 
-  const steps: TourStep[] = [
+  let steps: TourStep[] = [];
+  $: steps = [
     {
-      eyebrow: 'WELCOME',
-      title: 'Ghost Arcade · feature tour',
-      body: '60-second walkthrough of what shipped in 0.3.x. Hit Skip if you\'re a returning user — or stick around for 10 quick steps covering everything new.',
+      eyebrow: $t('tourTimeline.onboarding.steps.welcome.eyebrow'),
+      title: $t('tourTimeline.onboarding.steps.welcome.title'),
+      body: $t('tourTimeline.onboarding.steps.welcome.body'),
       bullets: [
-        'Dual-deck A/B crossfader (only VJ tool that has it)',
-        'Beat-quantized clip launch + MIDI clock sync',
-        '8-band audio analysis with kick/snare events',
-        'Macros (one knob → many params)',
+        $t('tourTimeline.onboarding.steps.welcome.bullets.dualDeck'),
+        $t('tourTimeline.onboarding.steps.welcome.bullets.quantizedLaunch'),
+        $t('tourTimeline.onboarding.steps.welcome.bullets.audioAnalysis'),
+        $t('tourTimeline.onboarding.steps.welcome.bullets.macros'),
       ],
     },
     {
-      eyebrow: '1 / 9',
-      title: 'Three modes, one source of truth',
-      body: 'Ghost Arcade has three modes that share the same audio input, MIDI router, and project file. Switch between them mid-set without losing state.',
+      eyebrow: $t('tourTimeline.onboarding.steps.modes.eyebrow'),
+      title: $t('tourTimeline.onboarding.steps.modes.title'),
+      body: $t('tourTimeline.onboarding.steps.modes.body'),
       bullets: [
-        'Mapping Mode — build the projection layout (warps, screens, edge blends, dome)',
-        'VJ Mode — live clip launching with optional dual decks',
-        'Performer Mode (SynthVision) — 36-key generative shaders for hands-free play',
+        $t('tourTimeline.onboarding.steps.modes.bullets.mapping'),
+        $t('tourTimeline.onboarding.steps.modes.bullets.vj'),
+        $t('tourTimeline.onboarding.steps.modes.bullets.performer'),
       ],
-      action: { label: 'Open VJ Mode', run: openVJMode },
+      action: { label: $t('tourTimeline.onboarding.steps.modes.action'), run: openVJMode },
     },
     {
-      eyebrow: '2 / 9',
-      title: 'Dual-deck A/B crossfader',
-      body: 'Click the A/B toggle in the VJ header to split the deck into two completely independent banks. Cyan = Bank A, Coral = Bank B. Mix between them with the vertical fader using one of 10 transitions (dissolve, glitch, shatter, halftone, liquid…).',
+      eyebrow: $t('tourTimeline.onboarding.steps.crossfader.eyebrow'),
+      title: $t('tourTimeline.onboarding.steps.crossfader.title'),
+      body: $t('tourTimeline.onboarding.steps.crossfader.body'),
       bullets: [
-        'Per-block A+B scenes — each block stores its own pair of decks',
-        'Stage mode + crossfader — different physical screens crossfade independently',
-        'Right-click any block tab → Save Project (Ctrl+S equivalent)',
+        $t('tourTimeline.onboarding.steps.crossfader.bullets.scenes'),
+        $t('tourTimeline.onboarding.steps.crossfader.bullets.stage'),
+        $t('tourTimeline.onboarding.steps.crossfader.bullets.save'),
       ],
-      action: { label: 'Try it: flip A/B on', run: flipCrossfader },
+      action: { label: $t('tourTimeline.onboarding.steps.crossfader.action'), run: flipCrossfader },
     },
     {
-      eyebrow: '3 / 9',
-      title: 'Quantized clip launch',
-      body: 'Set the QUANT dropdown in the header to make clip triggers land on a beat boundary instead of firing instantly. Off = beginner-friendly instant trigger. 1/4 / 1/2 / 1 BAR / 2 BAR / 4 BAR for tight musical drops.',
+      eyebrow: $t('tourTimeline.onboarding.steps.quantizedLaunch.eyebrow'),
+      title: $t('tourTimeline.onboarding.steps.quantizedLaunch.title'),
+      body: $t('tourTimeline.onboarding.steps.quantizedLaunch.body'),
       bullets: [
-        'Anchored to detected audio beats when audio is active',
-        'Falls back to BPM-based virtual clock when audio is off',
-        'Click a queued cell again to cancel (no commitment to fire)',
-        'STOP ALL flushes the queue (no surprise time-bombs)',
+        $t('tourTimeline.onboarding.steps.quantizedLaunch.bullets.audioBeat'),
+        $t('tourTimeline.onboarding.steps.quantizedLaunch.bullets.virtualClock'),
+        $t('tourTimeline.onboarding.steps.quantizedLaunch.bullets.cancel'),
+        $t('tourTimeline.onboarding.steps.quantizedLaunch.bullets.stopAll'),
       ],
-      action: { label: 'Try it: set QUANT to 1 BAR', run: () => setQuantize('1bar') },
+      action: { label: $t('tourTimeline.onboarding.steps.quantizedLaunch.action'), run: () => setQuantize('1bar') },
     },
     {
-      eyebrow: '4 / 9',
-      title: 'Audio reactivity',
-      body: 'Click the audio source picker (top-right) → Mic / System Audio / pick a specific device (BlackHole etc. for DAW routing). Tap tempo with TAP. Click the FFT bars to open the EQ tweaks panel.',
+      eyebrow: $t('tourTimeline.onboarding.steps.audio.eyebrow'),
+      title: $t('tourTimeline.onboarding.steps.audio.title'),
+      body: $t('tourTimeline.onboarding.steps.audio.body'),
       bullets: [
-        '8 frequency bands: sub · bass · lowMid · mid · highMid · treble · air · presence',
-        'Kick + snare onset events (separate from the generic beat detector)',
-        'Per-band gain sliders to boost the kick or cut harsh treble',
-        'Sensitivity + smoothing globally tunable',
+        $t('tourTimeline.onboarding.steps.audio.bullets.bands'),
+        $t('tourTimeline.onboarding.steps.audio.bullets.onset'),
+        $t('tourTimeline.onboarding.steps.audio.bullets.gain'),
+        $t('tourTimeline.onboarding.steps.audio.bullets.tuning'),
       ],
-      action: { label: 'Try it: enable mic input', run: startMicAudio },
+      action: { label: $t('tourTimeline.onboarding.steps.audio.action'), run: startMicAudio },
     },
     {
-      eyebrow: '5 / 9',
-      title: 'MIDI clock — sync to / from your DAW',
-      body: 'Settings → MIDI → enable Receive MIDI Clock to follow a DAW or drum machine\'s tempo. Enable Send MIDI Clock to make Ghost Arcade the master and drive slaved gear. 24 PPQN, runs alongside any other MIDI Learn mappings.',
+      eyebrow: $t('tourTimeline.onboarding.steps.midiClock.eyebrow'),
+      title: $t('tourTimeline.onboarding.steps.midiClock.title'),
+      body: $t('tourTimeline.onboarding.steps.midiClock.body'),
       bullets: [
-        '0xF8 ticks averaged across 48 samples for fast lock + stable BPM',
-        'Receive auto-flows into the master BPM (overrides tap tempo when running)',
-        'Send respects manual BPM override / tap so you can override mid-set',
+        $t('tourTimeline.onboarding.steps.midiClock.bullets.ticks'),
+        $t('tourTimeline.onboarding.steps.midiClock.bullets.receive'),
+        $t('tourTimeline.onboarding.steps.midiClock.bullets.send'),
       ],
-      keyHint: 'Settings → MIDI',
+      keyHint: $t('tourTimeline.onboarding.steps.midiClock.keyHint'),
     },
     {
-      eyebrow: '6 / 9',
-      title: 'Macros — one knob, an effect bundle',
-      body: '8 user-assignable knobs in the VJ header. Each macro is a wet/dry mix for a stack of effects that runs on the composite output. Right-click a knob → "Edit Macro" → add effects (same picker as layer effects), drag-reorder, toggle, set per-effect opacity.',
+      eyebrow: $t('tourTimeline.onboarding.steps.macros.eyebrow'),
+      title: $t('tourTimeline.onboarding.steps.macros.title'),
+      body: $t('tourTimeline.onboarding.steps.macros.body'),
       bullets: [
-        'Drag knob vertically (DAW-style) · mouse wheel = fine tune · double-click = reset',
-        'Bind hardware CC to vj:macro:N:value to drive macros via controller',
-        'All 8 macros stack on the composite — partial blends layer cleanly',
-        'Auto-pulse a macro on a beat grid (1/4, 1/2, 1bar, 2bar) for hands-free movement',
+        $t('tourTimeline.onboarding.steps.macros.bullets.controls'),
+        $t('tourTimeline.onboarding.steps.macros.bullets.cc'),
+        $t('tourTimeline.onboarding.steps.macros.bullets.stack'),
+        $t('tourTimeline.onboarding.steps.macros.bullets.pulse'),
       ],
-      action: { label: 'Try it: bump ENERGY macro', run: nudgeMacro1 },
+      action: { label: $t('tourTimeline.onboarding.steps.macros.action'), run: nudgeMacro1 },
     },
     {
-      eyebrow: '7 / 9',
-      title: 'Right-click to resave anything',
-      body: 'Three places now have right-click context menus that overwrite the saved version with the current state — no more delete-and-recreate workflow.',
+      eyebrow: $t('tourTimeline.onboarding.steps.resave.eyebrow'),
+      title: $t('tourTimeline.onboarding.steps.resave.title'),
+      body: $t('tourTimeline.onboarding.steps.resave.body'),
       bullets: [
-        'Block tabs → Save Project (Ctrl+S equivalent) + Rename / Duplicate / Delete',
-        'Stage presets → Update Preset (overwrite snapshot) + Rename / Save Project / Delete',
-        'SynthVision keyboard presets → Update / Rename / Delete',
+        $t('tourTimeline.onboarding.steps.resave.bullets.blocks'),
+        $t('tourTimeline.onboarding.steps.resave.bullets.stage'),
+        $t('tourTimeline.onboarding.steps.resave.bullets.synthVision'),
       ],
-      keyHint: 'Right-click',
+      keyHint: $t('tourTimeline.onboarding.steps.resave.keyHint'),
     },
     {
-      eyebrow: '8 / 9',
-      title: 'Snapshots — instant scene recall',
-      body: 'Bottom-right of the VJ overlay there\'s a "SNAPS" launcher with 16 slots. Each slot holds a complete capture of layer opacities, blend modes, solos / mutes (both decks), crossfader state, quantization, master opacity, and macro values. Shift-click any slot to save current state. Click to recall. Right-click for rename / overwrite / clear.',
+      eyebrow: $t('tourTimeline.onboarding.steps.snapshots.eyebrow'),
+      title: $t('tourTimeline.onboarding.steps.snapshots.title'),
+      body: $t('tourTimeline.onboarding.steps.snapshots.body'),
       bullets: [
-        'Different from blocks (clip-grid scenes) — snapshots are live-state freezes',
-        'Different from macros — recalls all knobs at once instead of driving them continuously',
-        'Save under the project (.gha) so they roll between sessions',
-        'Bind hardware buttons to vj:snapshot:N (1-16) for instant scene jumps',
+        $t('tourTimeline.onboarding.steps.snapshots.bullets.blocks'),
+        $t('tourTimeline.onboarding.steps.snapshots.bullets.macros'),
+        $t('tourTimeline.onboarding.steps.snapshots.bullets.project'),
+        $t('tourTimeline.onboarding.steps.snapshots.bullets.hardware'),
       ],
-      action: { label: 'Try it: save current state to slot 1', run: saveDemoSnapshot },
+      action: { label: $t('tourTimeline.onboarding.steps.snapshots.action'), run: saveDemoSnapshot },
     },
     {
-      eyebrow: '9 / 9',
-      title: 'You\'re ready',
-      body: 'Hit Done to dive in. The full feature reference is at FEATURES.md in the install folder. Re-run this tour anytime via File → Help → Show feature tour.',
+      eyebrow: $t('tourTimeline.onboarding.steps.ready.eyebrow'),
+      title: $t('tourTimeline.onboarding.steps.ready.title'),
+      body: $t('tourTimeline.onboarding.steps.ready.body'),
       bullets: [
-        'Everything saves and reloads via Ctrl+S to the loaded .gha file',
-        'Right-click block tabs / presets / SV presets to update in place',
-        'Snapshots (▶/⇪ on slot 1-16) jump between full-state scenes',
-        'Have a great show ⚡',
+        $t('tourTimeline.onboarding.steps.ready.bullets.save'),
+        $t('tourTimeline.onboarding.steps.ready.bullets.update'),
+        $t('tourTimeline.onboarding.steps.ready.bullets.snapshots'),
+        $t('tourTimeline.onboarding.steps.ready.bullets.show'),
       ],
     },
   ];
@@ -201,12 +205,24 @@
   function handleKey(e: KeyboardEvent) {
     if (!$onboarding.open) return;
     const tag = (e.target as HTMLElement | null)?.tagName?.toLowerCase();
-    const isEditable = tag === 'input' || tag === 'textarea' || tag === 'select'
-      || (e.target as HTMLElement | null)?.isContentEditable === true;
-    if (e.key === 'Escape') { e.preventDefault(); onboarding.close(); return; }
+    const isEditable =
+      tag === 'input' ||
+      tag === 'textarea' ||
+      tag === 'select' ||
+      (e.target as HTMLElement | null)?.isContentEditable === true;
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      onboarding.close();
+      return;
+    }
     if (isEditable) return;
-    if (e.key === 'ArrowRight' || e.key === 'Enter') { e.preventDefault(); next(); }
-    else if (e.key === 'ArrowLeft') { e.preventDefault(); prev(); }
+    if (e.key === 'ArrowRight' || e.key === 'Enter') {
+      e.preventDefault();
+      next();
+  } else if (e.key === 'ArrowLeft') {
+      e.preventDefault();
+      prev();
+  }
   }
 </script>
 
@@ -216,7 +232,9 @@
   <div class="ot-backdrop" onclick={() => onboarding.close()} role="presentation"></div>
 
   <div class="ot-modal" role="dialog" aria-modal="true" aria-labelledby="ot-title">
-    <button class="ot-close" onclick={() => onboarding.close()} title="Close (Esc) — picks up where you left off">×</button>
+    <button class="ot-close" onclick={() => onboarding.close()} title={$t('tourTimeline.onboarding.closeTitle')}
+      >×</button
+    >
 
     <div class="ot-progress">
       {#each steps as _s, i}
@@ -225,7 +243,7 @@
           class:active={i === currentStep}
           class:done={i < currentStep}
           onclick={() => onboarding.setStep(i)}
-          title="Step {i + 1}"
+          title={$t('tourTimeline.onboarding.progressStepTitle', { values: { step: i + 1 } })}
         ></button>
       {/each}
     </div>
@@ -247,7 +265,7 @@
 
       {#if step.keyHint}
         <div class="ot-keyhint">
-          <span class="ot-keyhint-label">Where:</span>
+          <span class="ot-keyhint-label">{$t('tourTimeline.onboarding.whereLabel')}</span>
           <kbd>{step.keyHint}</kbd>
         </div>
       {/if}
@@ -261,13 +279,13 @@
 
     <div class="ot-footer">
       {#if isFirst}
-        <button class="ot-skip" onclick={() => onboarding.skip()}>Skip tour</button>
+        <button class="ot-skip" onclick={() => onboarding.skip()}>{$t('tourTimeline.onboarding.actions.skip')}</button>
       {:else}
-        <button class="ot-skip" onclick={prev}>← Back</button>
+        <button class="ot-skip" onclick={prev}>← {$t('tourTimeline.onboarding.actions.back')}</button>
       {/if}
       <span class="ot-counter">{currentStep + 1} / {steps.length}</span>
       <button class="ot-next" onclick={next}>
-        {isLast ? 'Done · Start using' : 'Next →'}
+        {isLast ? $t('tourTimeline.onboarding.actions.done') : `${$t('tourTimeline.onboarding.actions.next')} →`}
       </button>
     </div>
   </div>
@@ -282,7 +300,14 @@
     z-index: 19000;
     animation: ot-fade-in 0.2s ease-out;
   }
-  @keyframes ot-fade-in { from { opacity: 0; } to { opacity: 1; } }
+  @keyframes ot-fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
+    }
+  }
 
   .ot-modal {
     position: fixed;
@@ -294,7 +319,9 @@
     background: linear-gradient(180deg, #1a1a22 0%, #14141a 100%);
     border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 14px;
-    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 133, 119, 0.06);
+    box-shadow:
+      0 24px 80px rgba(0, 0, 0, 0.7),
+      0 0 0 1px rgba(255, 133, 119, 0.06);
     z-index: 19001;
     display: flex;
     flex-direction: column;
@@ -302,8 +329,14 @@
     animation: ot-pop 0.28s cubic-bezier(0.34, 1.56, 0.64, 1);
   }
   @keyframes ot-pop {
-    from { opacity: 0; transform: translate(-50%, -50%) scale(0.94); }
-    to   { opacity: 1; transform: translate(-50%, -50%) scale(1); }
+    from {
+      opacity: 0;
+      transform: translate(-50%, -50%) scale(0.94);
+    }
+    to {
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(1);
+    }
   }
 
   .ot-close {
@@ -323,9 +356,14 @@
     align-items: center;
     justify-content: center;
     z-index: 1;
-    transition: background 0.15s, color 0.15s;
+    transition:
+      background 0.15s,
+      color 0.15s;
   }
-  .ot-close:hover { background: rgba(255, 255, 255, 0.14); color: #fff; }
+  .ot-close:hover {
+    background: rgba(255, 255, 255, 0.14);
+    color: #fff;
+  }
 
   /* Progress dot strip */
   .ot-progress {
@@ -342,10 +380,14 @@
     cursor: pointer;
     transition: background 0.15s;
   }
-  .ot-progress-dot:hover { background: rgba(255, 255, 255, 0.18); }
-  .ot-progress-dot.done { background: rgba(126, 200, 227, 0.45); }
+  .ot-progress-dot:hover {
+    background: rgba(255, 255, 255, 0.18);
+  }
+  .ot-progress-dot.done {
+    background: rgba(126, 200, 227, 0.45);
+  }
   .ot-progress-dot.active {
-    background: linear-gradient(90deg, #FF8577, #7EC8E3);
+    background: linear-gradient(90deg, #ff8577, #7ec8e3);
   }
 
   .ot-content {
@@ -358,7 +400,7 @@
   .ot-eyebrow {
     font-size: 11px;
     font-weight: 700;
-    color: #FF8577;
+    color: #ff8577;
     letter-spacing: 0.18em;
     margin-bottom: 6px;
   }
@@ -397,7 +439,7 @@
     position: absolute;
     left: 0;
     top: 0;
-    color: #7EC8E3;
+    color: #7ec8e3;
     font-size: 11px;
   }
 
@@ -420,7 +462,7 @@
   .ot-keyhint kbd {
     font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
     font-size: 12px;
-    color: #FF8577;
+    color: #ff8577;
     background: rgba(255, 133, 119, 0.1);
     padding: 2px 6px;
     border-radius: 3px;
@@ -431,14 +473,16 @@
     display: inline-block;
     background: rgba(126, 200, 227, 0.12);
     border: 1px solid rgba(126, 200, 227, 0.45);
-    color: #7EC8E3;
+    color: #7ec8e3;
     font-size: 13px;
     font-weight: 700;
     letter-spacing: 0.04em;
     padding: 8px 14px;
     border-radius: 5px;
     cursor: pointer;
-    transition: background 0.15s, transform 0.12s;
+    transition:
+      background 0.15s,
+      transform 0.12s;
   }
   .ot-action:hover {
     background: rgba(126, 200, 227, 0.22);
@@ -464,7 +508,10 @@
     border-radius: 4px;
     cursor: pointer;
   }
-  .ot-skip:hover { color: var(--text-primary, #ccc); border-color: rgba(255, 255, 255, 0.2); }
+  .ot-skip:hover {
+    color: var(--text-primary, #ccc);
+    border-color: rgba(255, 255, 255, 0.2);
+  }
 
   .ot-counter {
     font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
@@ -474,7 +521,7 @@
   }
 
   .ot-next {
-    background: linear-gradient(135deg, #FF8577, #7EC8E3);
+    background: linear-gradient(135deg, #ff8577, #7ec8e3);
     border: none;
     color: #0a0a0a;
     font-size: 13px;

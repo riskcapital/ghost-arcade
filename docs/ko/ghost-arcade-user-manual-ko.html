@@ -1,0 +1,244 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<title>Ghost Arcade 한국어 사용설명서</title>
+<style>
+@page { size: A4; margin: 15mm 14mm 17mm; }
+* { box-sizing: border-box; }
+body { margin: 0; color: #20242b; font-family: "Malgun Gothic", "Noto Sans KR", Arial, sans-serif; font-size: 10.2pt; line-height: 1.58; }
+h1, h2, h3, h4 { color: #171a20; margin: 0 0 8px; line-height: 1.3; }
+h1 { font-size: 28pt; letter-spacing: -1px; }
+h2 { font-size: 18pt; border-bottom: 2px solid #ff786d; padding-bottom: 5px; margin-top: 12px; }
+h3 { font-size: 13.5pt; margin-top: 15px; color: #6944a8; }
+h4 { font-size: 11pt; margin-top: 12px; }
+p { margin: 5px 0 9px; }
+ul, ol { margin: 5px 0 10px 20px; padding: 0; }
+li { margin: 3px 0; }
+code, .mono { font-family: Consolas, "IBM Plex Mono", monospace; font-size: 9.2pt; background: #f2f0f7; padding: 1px 4px; border-radius: 3px; }
+table { width: 100%; border-collapse: collapse; margin: 9px 0 14px; font-size: 9pt; }
+th { background: #2f263d; color: white; text-align: left; }
+th, td { border: 1px solid #d9d4df; padding: 6px 7px; vertical-align: top; }
+tr:nth-child(even) td { background: #faf9fc; }
+.cover { height: 255mm; display: flex; flex-direction: column; justify-content: center; padding: 18mm; background: linear-gradient(145deg,#18131f 0%,#302240 55%,#ff786d 160%); color: white; margin: -15mm -14mm -17mm; }
+.cover h1, .cover h2 { color: white; border: 0; }
+.cover .kicker { color: #ff9f95; font-weight: 700; letter-spacing: 2px; }
+.cover .subtitle { font-size: 15pt; color: #ddd4e8; margin-top: 12px; }
+.cover .meta { margin-top: 45px; color: #c9bfd5; }
+.page-break { page-break-before: always; }
+.keep { page-break-inside: avoid; }
+.note, .warning, .tip { border-left: 4px solid #7952b3; background: #f5f1fa; padding: 8px 10px; margin: 9px 0 12px; }
+.warning { border-color: #e05252; background: #fff2f1; }
+.tip { border-color: #2c9c78; background: #effaf6; }
+.quick { display: grid; grid-template-columns: repeat(3, 1fr); gap: 7px; margin: 12px 0; }
+.quick div { border: 1px solid #d9d4df; border-top: 4px solid #ff786d; border-radius: 5px; padding: 9px; background: #fff; }
+.quick b { display: block; color: #6944a8; margin-bottom: 3px; }
+.toc a { color: #533287; text-decoration: none; }
+.badge { display: inline-block; border: 1px solid #8567a8; border-radius: 12px; padding: 1px 7px; margin-right: 4px; color: #59367f; background: #f6f2fa; font-size: 8.5pt; }
+.footer-note { color: #666; font-size: 8.5pt; }
+.flowline { display:flex; align-items:stretch; gap:5px; margin:10px 0 14px; }
+.flowline .node { flex:1; border:1px solid #cfc7d8; border-radius:5px; padding:7px; text-align:center; background:#faf8fc; }
+.flowline .arrow { align-self:center; color:#ff786d; font-weight:bold; }
+</style>
+</head>
+<body>
+<section class="cover">
+  <div class="kicker">GHOST ARCADE 1.9.993</div>
+  <h1>한국어 사용설명서</h1>
+  <div class="subtitle">프로젝션 매핑 · VJ · 실시간 이펙트 · 다중 출력 · 모바일 원격 제어</div>
+  <div class="meta">문서 기준: 소스 브랜치 <span class="mono">feat/korean-localization-full</span><br/>작성일: 2026-08-21<br/>대상: Windows/macOS 데스크톱 및 브라우저·모바일 동반 UI</div>
+</section>
+
+<section class="page-break toc">
+<h2>목차</h2>
+<ol>
+<li><a href="#scope">문서 범위와 번역 원칙</a></li>
+<li><a href="#start">설치·실행과 한국어 전환</a></li>
+<li><a href="#quick">10분 빠른 시작</a></li>
+<li><a href="#workspace">화면 구성과 프로젝트 관리</a></li>
+<li><a href="#media">미디어 가져오기와 레이어 구성</a></li>
+<li><a href="#mapping">매핑·워프·마스크·이펙트</a></li>
+<li><a href="#screens">화면·프로젝터·출력 보정</a></li>
+<li><a href="#vj">VJ 모드와 A/B 크로스페이더</a></li>
+<li><a href="#audio">오디오·MIDI·OSC 연동</a></li>
+<li><a href="#mobile">모바일 원격 제어</a></li>
+<li><a href="#record">실시간 녹화·오프라인 렌더·변환</a></li>
+<li><a href="#advanced">고급 도구</a></li>
+<li><a href="#trouble">문제 해결과 안전 운용</a></li>
+<li><a href="#shortcuts">핵심 단축키·기술 표기</a></li>
+</ol>
+
+<h3 id="scope">1. 문서 범위와 번역 원칙</h3>
+<p>이 설명서는 Ghost Arcade 1.9.993의 현재 공개 소스와 한국어 UI catalog를 기준으로 작성했습니다. 앱에서 선택 가능한 내장 UI는 영어와 한국어이며, 한국어가 누락된 catalog key는 영어로 fallback됩니다.</p>
+<div class="note"><b>영문이 정상인 항목</b><br/>사용자가 입력한 프로젝트·레이어·프리셋 이름, 외부 플러그인·카메라·오디오 장치·OS가 제공하는 이름, API/코덱/제품명, MIDI·OSC 경로, IPC/protocol 값, GPU·FOV·NDI·A/B·X/Y/Z와 같은 기술 표기는 번역하지 않거나 업계 표기를 유지합니다.</div>
+</section>
+
+<section class="page-break" id="start">
+<h2>2. 설치·실행과 한국어 전환</h2>
+<h3>2.1 설치된 데스크톱 앱</h3>
+<ol>
+<li>Windows 시작 메뉴 또는 바탕 화면에서 <b>Ghost Arcade</b>를 실행합니다.</li>
+<li>프로젝터를 사용할 경우 OS 디스플레이 설정에서 <b>복제</b>가 아니라 <b>확장</b>을 선택합니다.</li>
+<li>앱 우측 상단의 <b>설정</b>을 엽니다.</li>
+<li><b>앱 → 언어 → 인터페이스 언어</b>에서 <b>한국어</b>를 선택합니다. 즉시 반영되고 다음 실행에도 유지됩니다.</li>
+</ol>
+<h3>2.2 소스에서 실행</h3>
+<table><tr><th>목적</th><th>명령</th><th>특징</th></tr>
+<tr><td>권장 데스크톱 개발 실행</td><td><code>npm install</code><br/><code>npm run desktop</code></td><td>Vite + Electron + LAN WebSocket 서버(9001)</td></tr>
+<tr><td>브라우저 전용</td><td><code>npm start</code><br/><code>http://localhost:1420</code></td><td>Spout와 native 파일 대화상자 없음</td></tr>
+<tr><td>웹 빌드</td><td><code>npm run build</code></td><td>Vite production bundle</td></tr>
+<tr><td>Windows 배포</td><td><code>npm run build:desktop</code></td><td>Electron Windows installer</td></tr>
+</table>
+<div class="warning"><b>공연 전 원칙:</b> 해상도, 출력 화면, 오디오 장치, MIDI mapping, 프로젝트 저장과 백업을 공연 시작 전에 확인하십시오. 공개 Wi-Fi가 아닌 신뢰할 수 있는 private LAN에서만 모바일 원격을 사용하십시오.</div>
+</section>
+
+<section class="page-break" id="quick">
+<h2>3. 10분 빠른 시작</h2>
+<div class="flowline"><div class="node">한국어 선택</div><div class="arrow">→</div><div class="node">미디어 추가</div><div class="arrow">→</div><div class="node">레이어 편집</div><div class="arrow">→</div><div class="node">화면 지정</div><div class="arrow">→</div><div class="node">출력·저장</div></div>
+<div class="quick">
+<div><b>1. 새 프로젝트</b>파일 → 새로 만들기. 기존 미저장 작업은 사라질 수 있으므로 먼저 저장합니다.</div>
+<div><b>2. 파일 추가</b>미디어 라이브러리의 파일 추가 또는 drag & drop으로 이미지·영상·ISF 등을 가져옵니다.</div>
+<div><b>3. 레이어 선택</b>레이어 목록에서 미디어 레이어를 추가하고 source를 지정합니다.</div>
+<div><b>4. 화면에 맞추기</b>position/scale/rotation과 코너 또는 메시 워프로 물리 표면에 맞춥니다.</div>
+<div><b>5. 이펙트 적용</b>레이어 이펙트에서 추가하고 enable·parameter·preset·modulation을 조정합니다.</div>
+<div><b>6. 출력</b>화면 탭에서 물리 display를 지정한 뒤 출력 창 또는 전체 화면을 엽니다.</div>
+</div>
+<ol start="7"><li>필요하면 <b>VJ</b>를 열어 clip grid에 미디어를 놓고 trigger합니다.</li><li><b>Ctrl+S</b>로 프로젝트를 저장합니다.</li><li>상단 <b>● 녹화</b>로 실시간 결과를 기록하거나 파일 → <b>비디오로 렌더링...</b>을 사용합니다.</li></ol>
+</section>
+
+<section class="page-break" id="workspace">
+<h2>4. 화면 구성과 프로젝트 관리</h2>
+<table><tr><th>영역</th><th>역할</th></tr>
+<tr><td>상단 toolbar</td><td>파일, 출력 창, 전체 화면, Stage/Mapping Simulator, Blackout, test pattern, freeze, audio/BPM, screenshot, recording, VJ, settings, mobile 연결</td></tr>
+<tr><td>중앙 canvas</td><td>레이어 합성과 워프 결과를 편집·미리보기</td></tr>
+<tr><td>레이어 panel</td><td>레이어 생성·선택·정렬·그룹화·표시·잠금·복제·삭제와 속성 편집</td></tr>
+<tr><td>미디어 라이브러리</td><td>FX, JS, 저장됨, 영상, 이미지, source, plugin을 관리하고 레이어 또는 VJ deck에 적용</td></tr>
+<tr><td>화면 panel</td><td>output slice, master canvas, dome, edge blend, black level, color correction, 물리 display 지정</td></tr>
+</table>
+<h3>4.1 파일 메뉴</h3>
+<ul><li><b>새로 만들기</b> <span class="badge">Ctrl+N</span></li><li><b>열기...</b> <span class="badge">Ctrl+O</span> — <code>.gha</code>, legacy <code>.shrnk</code>, <code>.json</code></li><li><b>저장</b> <span class="badge">Ctrl+S</span></li><li><b>다른 이름으로 저장...</b> <span class="badge">Ctrl+Shift+S</span></li><li><b>실행 취소/다시 실행</b> <span class="badge">Ctrl+Z</span><span class="badge">Ctrl+Y</span></li><li>프리셋 가져오기·내보내기, 비디오 렌더, 비디오 변환기</li></ul>
+<div class="tip">Electron의 <code>.gha</code> 저장은 asset reference를 유지합니다. 외부 미디어 원본을 이동하면 다시 열 때 source를 재지정해야 할 수 있으므로 프로젝트와 asset을 함께 백업하십시오.</div>
+</section>
+
+<section class="page-break" id="media">
+<h2>5. 미디어 가져오기와 레이어 구성</h2>
+<h3>5.1 지원 source</h3>
+<p>이미지, 영상, ISF shader(<code>.fs/.isf</code>), HTML, JS/p5/Three.js animation, 화면·창 capture, webcam, NDI, Windows texture-share(Spout), PLY·Splat point cloud, GLTF/GLB/OBJ/FBX 3D model을 사용할 수 있습니다.</p>
+<h3>5.2 미디어 라이브러리</h3>
+<ol><li><b>파일 추가</b>로 source를 선택합니다.</li><li>항목을 클릭해 선택합니다. <b>Ctrl/⌘</b>은 다중 선택, <b>Shift</b>는 범위 선택입니다.</li><li>선택한 미디어 레이어에 적용하거나 VJ deck으로 drag합니다.</li><li>Webcam/Capture/texture-share/NDI는 <b>소스</b> 탭에서 연결하고 live card의 추가 또는 정지 control을 사용합니다.</li></ol>
+<h3>5.3 레이어 유형</h3>
+<table><tr><th>유형</th><th>용도</th></tr>
+<tr><td>미디어</td><td>이미지·영상·shader·live source</td></tr><tr><td>사용자 지정 도형/마스크</td><td>shape와 cutout 영역</td></tr><tr><td>선·SVG·라이트 페인팅·텍스트</td><td>procedural drawing·animation</td></tr><tr><td>Splat/3D model/GPU shader</td><td>point cloud·3D asset·WebGPU content</td></tr><tr><td>화면</td><td>VJ layer output을 매핑 stage에 routing</td></tr><tr><td>그룹</td><td>child layer 묶음, unified/individual shader</td></tr></table>
+<h3>5.4 기본 layer 작업</h3>
+<ul><li>클릭: 선택</li><li>drag: 순서 변경</li><li>눈 아이콘: 표시/숨김</li><li>이름 double-click: rename, Enter/blur 저장, Esc 취소</li><li>lock: 실수 편집 방지</li><li>우클릭: group, ungroup, duplicate, delete</li></ul>
+</section>
+
+<section class="page-break" id="mapping">
+<h2>6. 매핑·워프·마스크·이펙트</h2>
+<h3>6.1 transform과 content fit</h3>
+<p>선택 레이어의 position, scale, rotation, horizontal/vertical flip, opacity, blend mode를 설정합니다. 미디어는 Stretch/Fill/Crop 등 content fit을 선택하고 source crop을 별도로 조정할 수 있습니다.</p>
+<h3>6.2 코너와 메시 워프</h3>
+<ol><li>레이어의 <b>워프</b> 영역에서 <b>코너</b> 또는 <b>메시</b>를 선택합니다.</li><li>코너 control point를 물리 표면의 네 꼭짓점에 맞춥니다.</li><li>곡면은 2×2~12×12 mesh grid를 선택하고 point를 조정합니다.</li><li>문제가 생기면 해당 layer warp의 <b>초기화</b>를 사용합니다.</li></ol>
+<h3>6.3 mask·shape·edge feather</h3>
+<ul><li>polygon mask: point 추가, invert, feather, shape별 edit/delete</li><li>shape: rectangle, circle, ellipse, triangle, polygon, custom path 등</li><li>edge feather: top/bottom/left/right를 독립 조정</li></ul>
+<h3>6.4 이펙트 chain</h3>
+<ol><li>레이어 이펙트의 <b>추가</b>를 눌러 catalog를 엽니다.</li><li>effect enable/disable, expand, reset, remove, drag reorder를 사용합니다.</li><li>각 effect의 opacity, blend, preset, parameter를 조정합니다.</li><li>parameter의 modulation control에서 audio band, amplitude, beat phase, LFO 등을 연결할 수 있습니다.</li></ol>
+</section>
+
+<section class="page-break" id="screens">
+<h2>7. 화면·프로젝터·출력 보정</h2>
+<h3>7.1 화면 구성</h3>
+<ol><li><b>화면</b> 탭에서 화면을 추가하거나 2-wide, 3-wide, 2×2 quick preset을 사용합니다.</li><li>Master Canvas 해상도를 정합니다. 출력 장치의 실제 pixel topology와 맞추십시오.</li><li>각 화면의 slice rectangle을 canvas preview에서 배치합니다.</li><li>필요하면 rotation 0/90/180/270을 지정합니다.</li></ol>
+<h3>7.2 물리 display 선택</h3>
+<ol><li>OS display 설정에서 projector를 <b>확장</b> 모드로 연결합니다.</li><li>Screen Inspector에서 <b>물리 디스플레이</b>를 선택합니다.</li><li>목록이 오래되었으면 <b>새로 고침</b>을 누릅니다.</li><li><b>디스플레이에서 열기</b>를 누릅니다. 주 모니터 선택 시 경고를 확인하십시오.</li><li>output window를 닫으려면 inspector의 닫기 또는 output 창에서 <b>Esc</b>를 사용합니다.</li></ol>
+<h3>7.3 보정 순서</h3>
+<div class="flowline"><div class="node">Slice/Rotation</div><div class="arrow">→</div><div class="node">Warp</div><div class="arrow">→</div><div class="node">Edge Blend</div><div class="arrow">→</div><div class="node">Black Level</div><div class="arrow">→</div><div class="node">색 보정</div></div>
+<table><tr><th>항목</th><th>범위/사용법</th></tr><tr><td>Edge Blend</td><td>각 edge 0~50%, curve gamma 1~4; reset/clear/전체 10%·15% preset</td></tr><tr><td>Black Level</td><td>RGB 0~10%, feather 0~100%</td></tr><tr><td>색 보정</td><td>Neutral/Punch/Soft preset, brightness·contrast 0~200%, gamma 0.2~5</td></tr><tr><td>Dome</td><td>Domemaster/Half/Panorama, angular/stereographic/orthographic/equirectangular, FOV 90~360°</td></tr></table>
+<div class="note"><b>출력 transport:</b> 기본은 zero-copy WebGPU입니다. WebGPU를 사용할 수 없는 출력 창이 자동으로 WebRTC/legacy로 전환되지는 않으므로, 설정에서 zero-copy를 끄고 앱을 재시작한 뒤 대체 경로를 사용하십시오. WebRTC 경로는 현재 rotation·brightness·contrast·fit을 적용하지만 gamma와 crop은 완전 지원 경로가 아닙니다.</div>
+</section>
+
+<section class="page-break" id="vj">
+<h2>8. VJ 모드와 A/B 크로스페이더</h2>
+<h3>8.1 clip grid</h3>
+<ol><li>상단 <b>VJ</b>를 엽니다.</li><li>미디어·shader·preset을 grid cell로 drag하거나 선택 후 deck에 추가합니다.</li><li>cell click으로 trigger합니다. 우클릭으로 미리보기, 복사, 붙여넣기, 지우기를 사용합니다.</li><li>column trigger는 같은 column의 clip을 함께 실행합니다.</li><li>layer별 Solo, Mute, Stop, opacity, blend, effects를 설정합니다.</li></ol>
+<h3>8.2 MIX·STAGE·MAP</h3>
+<ul><li><b>MIX</b>: VJ 합성 output을 전면 출력</li><li><b>STAGE</b>: VJ layer를 mapping의 Screen layer로 routing</li><li><b>MAP</b>: mapping view와 관련 control</li></ul>
+<h3>8.3 Quantize와 panic</h3>
+<p>OFF, 1/4, 1/2, 1 bar, 2 bar, 4 bar 중 trigger timing을 선택합니다. 대기 중인 cell을 다시 누르면 취소됩니다. 긴급 시 <b>모두 정지</b>를 눌러 두 deck과 queue를 정리합니다.</p>
+<h3>8.4 A/B 크로스페이더</h3>
+<ol><li>A/B Crossfader를 켜면 두 독립 deck이 표시됩니다.</li><li>Cut A/Cut B 또는 fader로 전환합니다.</li><li>fade duration 0~8초, transition(dissolve, wipe, rgb-split, cube, shatter, halftone, glitch, liquid, strobe, slide), blend mode를 선택합니다.</li><li>block은 클릭 선택, double-click rename, 우클릭 메뉴로 저장·복제·삭제합니다.</li></ol>
+<h3>8.5 추가 공연 도구</h3><p>Macro, Snapshot, Layer Sequencer, Composition/Layer/Clip/Stage effect, Performer(SynthVision), Stage3D를 같은 VJ workspace에서 사용할 수 있습니다.</p>
+</section>
+
+<section class="page-break" id="audio">
+<h2>9. 오디오·MIDI·OSC 연동</h2>
+<h3>9.1 오디오</h3>
+<ol><li>toolbar의 audio picker에서 microphone 또는 system audio를 선택합니다.</li><li>FFT bar를 눌러 sensitivity, smoothing, 8-band gain을 조정합니다.</li><li><b>TAP</b>으로 BPM을 입력하거나 자동 감지를 사용합니다.</li><li>effect/layer parameter의 modulation에서 band, amplitude, beat, LFO를 연결합니다.</li></ol>
+<div class="note">Electron Desktop의 system audio는 기본 화면의 loopback capture를 사용합니다. Browser의 화면 공유 절차와 다릅니다. macOS에서 Screen Recording 권한을 처음 허용한 뒤에는 앱을 완전히 종료하고 다시 실행해야 할 수 있습니다.</div>
+<h3>9.2 MIDI Learn</h3>
+<ol><li>설정 → 연동 → MIDI에서 장치를 선택합니다.</li><li><b>MIDI Learn 시작</b>을 누릅니다.</li><li>앱 control을 클릭한 뒤 controller의 knob/fader/pad를 움직입니다.</li><li>Esc로 Learn mode를 끝냅니다.</li></ol>
+<p>MIDI path(<code>map:</code>, <code>vj:</code>, <code>vj-b:</code>, <code>sv:</code>)는 저장·routing 식별자이므로 한국어 UI에서도 원문을 유지합니다.</p>
+<h3>9.3 OSC</h3>
+<p>설정 → 연동 → OSC에서 listener와 UDP port(기본 8000)를 설정합니다. binding의 address, target path, mode, min/max, invert를 지정하거나 Learn을 사용합니다.</p>
+<div class="warning">OSC listener는 network interface에 열리며 별도 인증을 제공하지 않습니다. 신뢰할 수 있는 LAN과 firewall 안에서만 켜고 인터넷에 port forwarding하지 마십시오.</div>
+<div class="warning">MIDI Clock 입력이 활성화되면 Ableton Link보다 우선할 수 있습니다. 공연 중 clock source를 하나로 정리하십시오.</div>
+</section>
+
+<section class="page-break" id="mobile">
+<h2>10. 모바일 원격 제어</h2>
+<ol><li>데스크톱 앱을 실행합니다.</li><li>toolbar의 <b>모바일 연결</b>을 누릅니다.</li><li>휴대전화와 데스크톱을 동일한 신뢰할 수 있는 Wi-Fi에 연결합니다.</li><li>QR code를 camera로 scan합니다. 기본 control WebSocket은 <code>ws://호스트:9001</code>, mobile page는 built-in HTTP server를 사용합니다.</li><li>연결 후 Mapping/VJ/Vision(native)/Paint mode를 선택합니다.</li></ol>
+<h3>10.1 Mapping 원격</h3><p>layer 선택, corner/mesh warp, opacity/blend/visibility, source·shape·effects, freeze/resume를 control합니다. touch drag와 two-finger zoom/pan을 지원합니다.</p>
+<h3>10.2 VJ 원격</h3><p>clip/column trigger, block/bank, mixer, tempo·quantize, A/B crossfader·cut·transition, macro, snapshot, shader/effects, Stop All을 control합니다.</p>
+<h3>10.3 연결 복구</h3><p>첫 연결은 6초 timeout을 사용합니다. 기존 연결이 끊기면 backoff로 재연결합니다. 연결 화면에서 URL을 확인하고 desktop firewall과 같은-LAN 상태를 점검하십시오.</p>
+<div class="warning"><b>보안:</b> 모바일 제어 server를 공용 인터넷이나 신뢰할 수 없는 LAN에 노출하지 마십시오. 공연용 private router/hotspot 사용을 권장합니다.</div>
+</section>
+
+<section class="page-break" id="record">
+<h2>11. 실시간 녹화·오프라인 렌더·변환</h2>
+<h3>11.1 실시간 녹화</h3>
+<ol><li>설정 → 녹화에서 format, bitrate(2.5/5/8/12 Mbps), 자동 다운로드와 저장 폴더를 정합니다.</li><li>audio source가 활성이고 audio 포함 설정이 켜져 있으면 영상과 함께 기록합니다.</li><li>toolbar <b>● 녹화</b>를 누르고, 끝날 때 <b>녹화 중지</b>를 누릅니다.</li><li>결과는 미디어 라이브러리에 추가되고 설정에 따라 지정 폴더 또는 다운로드로 저장됩니다.</li></ol>
+<div class="warning">실시간 Record와 Screenshot은 editor의 raw/hidden canvas source를 우선 사용하므로 최종 WebGPU present, Master Warp, Dome 또는 output overlay와 화면이 다를 수 있습니다. 공연 전 짧은 test 녹화를 확인하십시오. Screenshot library 항목은 blob 기반이므로 project 재실행 후 유지되지 않을 수 있어 저장된 PNG 원본을 보관해야 합니다.</div>
+<h3>11.2 오프라인 비디오 렌더</h3>
+<ol><li>파일 → <b>비디오로 렌더링...</b></li><li>이름, duration(0.5~3600초), FPS(24/30/60), resolution preset 또는 custom 값을 선택합니다.</li><li>MP4 또는 JPEG sequence와 Web/High/Archive quality를 선택합니다.</li><li>시작 후 frame render → FFmpeg encoding → save 단계가 끝날 때까지 기다립니다.</li></ol>
+<div class="note">오프라인 MP4 렌더는 project engine composite를 deterministic seek하여 생성하며 audio, Blackout/output overlay, 최종 WebGPU present와 per-output slice를 포함하지 않습니다. 실시간 audio 포함 결과가 필요하면 toolbar의 실시간 녹화를 사용하십시오.</div>
+<h3>11.3 비디오 변환기</h3><p>WebM→MP4 또는 JPG sequence→MP4를 변환합니다. sequence FPS, CRF, speed preset과 output path를 지정할 수 있습니다.</p>
+<div class="note">비디오 변환기는 native desktop 기능입니다. Browser-only 실행에서는 메뉴가 보여도 Desktop-only 오류가 발생할 수 있습니다.</div>
+</section>
+
+<section class="page-break" id="advanced">
+<h2>12. 고급 도구</h2>
+<table><tr><th>도구</th><th>용도·주의</th></tr>
+<tr><td>SynthVision Performer</td><td>keyboard shader/world/style, camera mode, DRIFT, auto cycle, BPM sync</td></tr>
+<tr><td>Stage Simulator / Stage 3D</td><td>stage element·venue·lighting·Demo Reel 구성; display label만 번역되고 저장 ID는 유지</td></tr>
+<tr><td>Mapping Simulator</td><td>projection scene, object/projector, snapping, preset, record</td></tr>
+<tr><td>Splat / 3D model</td><td>PLY/Splat와 3D model transform, material, animation, camera, lighting, effect</td></tr>
+<tr><td>WLED / LED FX</td><td>group·mapping·pattern을 LED target에 연결; network/device 이름은 원문 유지</td></tr>
+<tr><td>AI shader/video</td><td>사용자 API key 필요. provider·model·API 명칭은 기술 고유명사로 유지</td></tr>
+<tr><td>Offline render</td><td>가상 time으로 frame을 재생성하므로 live recording과 결과 특성이 다를 수 있음</td></tr></table>
+</section>
+
+<section class="page-break" id="trouble">
+<h2>13. 문제 해결과 안전 운용</h2>
+<table><tr><th>증상</th><th>확인 순서</th></tr>
+<tr><td>프로젝터가 목록에 없음</td><td>OS에서 확장 display 확인 → cable/전원 확인 → Screen Inspector 새로 고침 → 앱 재실행</td></tr>
+<tr><td>주 화면이 전체 화면 output으로 덮임</td><td>Esc → 물리 display를 외부 projector로 다시 선택</td></tr>
+<tr><td>출력 창이 열리지 않음</td><td>popup 차단/Chromium 동작 확인 → zero-copy/WebRTC 설정 확인 → legacy output 재시도</td></tr>
+<tr><td>WebRTC output에서 crop/gamma 불일치</td><td>기본 zero-copy 또는 legacy path 사용; WebRTC fallback의 현재 제한</td></tr>
+<tr><td>검은 화면·저해상도 fallback</td><td>GPU 한계와 project resolution 확인 → render quality 낮춤 → WebGPU 재탐색/앱 재시작</td></tr>
+<tr><td>미디어가 재생되지 않음</td><td>layer visibility/opacity/source/trim/loop 확인 → asset 원본 위치 확인</td></tr>
+<tr><td>오디오 반응 없음</td><td>audio source permission/device → sensitivity/gain → modulation source → output 창 audio sync 확인</td></tr>
+<tr><td>MIDI Learn 실패</td><td>browser/OS MIDI permission → device 선택 → Learn 시작 → control 클릭 → controller 조작</td></tr>
+<tr><td>모바일 연결 실패</td><td>같은 LAN → desktop app 실행 → firewall의 9001/9002 → QR URL host 확인</td></tr>
+<tr><td>한국어 대신 key가 표시됨</td><td>언어 재선택 → 앱 재시작 → catalog parity/test 상태 확인; custom plugin metadata는 원문일 수 있음</td></tr></table>
+<h3>공연 전 checklist</h3>
+<ul><li>프로젝트 Save As + backup</li><li>외부 display ID·native resolution·rotation 확인</li><li>test pattern으로 warp와 edge blend 확인</li><li>Blackout·Freeze·Stop All 동작 확인</li><li>audio/MIDI/mobile 연결과 fallback control 준비</li><li>10분 이상 실제 output에서 안정성 test</li></ul>
+<div class="warning"><b>운영·개인정보 주의:</b> Desktop 시작 과정은 9001 port를 점유한 process를 강제 종료할 수 있으므로 다른 service 사용 여부를 확인하십시오. 또한 전역 오류 보고는 error/stack/context와 환경 정보를 원격 endpoint로 전송할 수 있습니다. 민감한 공연·network 환경에서는 source 정책과 firewall을 사전 검토하십시오.</div>
+</section>
+
+<section class="page-break" id="shortcuts">
+<h2>14. 핵심 단축키·기술 표기</h2>
+<table><tr><th>키</th><th>작업</th></tr><tr><td>Ctrl+N</td><td>새 프로젝트</td></tr><tr><td>Ctrl+O</td><td>열기</td></tr><tr><td>Ctrl+S</td><td>저장</td></tr><tr><td>Ctrl+Shift+S</td><td>다른 이름으로 저장</td></tr><tr><td>Ctrl+Z / Ctrl+Y</td><td>실행 취소 / 다시 실행</td></tr><tr><td>B</td><td>Blackout toggle</td></tr><tr><td>Esc</td><td>mode·overlay·output window 종료/취소</td></tr><tr><td>F1 / F8 등</td><td>UI에 표시된 기능키 동작</td></tr></table>
+<p class="footer-note">본 문서는 현재 구현을 기준으로 합니다. 사용자 지정 이름, 외부 metadata 및 기술 식별자는 의도적으로 원문을 유지할 수 있습니다. 기능 변경 시 catalog와 함께 설명서를 갱신하십시오.</p>
+</section>
+</body>
+</html>

@@ -2,6 +2,7 @@
   import { selectedLayer, project } from '../stores/layers';
   import type { Point2D, BezierPoint } from '../types';
   import { onDestroy } from 'svelte';
+  import { t } from '../i18n';
 
   // Container dimensions (set by parent)
   export let containerWidth: number = 800;
@@ -74,8 +75,8 @@
       const ex = tx - px2, ey = ty - py2;
       const dTopU = tr.x - tl.x, dTopUy = tr.y - tl.y;
       const dBotU = br.x - bl.x, dBotUy = br.y - bl.y;
-      const dxdu = (dBotU + (dTopU - dBotU) * v);
-      const dydu = (dBotUy + (dTopUy - dBotUy) * v);
+      const dxdu = dBotU + (dTopU - dBotU) * v;
+      const dydu = dBotUy + (dTopUy - dBotUy) * v;
       const dxdv = topX - botX;
       const dydv = topY - botY;
       const det = dxdu * dydv - dydu * dxdv;
@@ -87,7 +88,8 @@
   }
 
   // Distance from point to line segment
-  function distToSegment(p: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number }): { dist: number; t: number } {
+  function distToSegment(p: { x: number; y: number }, a: { x: number; y: number }, b: { x: number; y: number },
+  ): { dist: number; t: number } {
     const dx = b.x - a.x, dy = b.y - a.y;
     const len2 = dx * dx + dy * dy;
     if (len2 === 0) return { dist: Math.hypot(p.x - a.x, p.y - a.y), t: 0 };
@@ -97,7 +99,8 @@
   }
 
   // Cubic bezier point at t
-  function cubicBezier(p0: {x:number,y:number}, cp1: {x:number,y:number}, cp2: {x:number,y:number}, p3: {x:number,y:number}, t: number): {x:number,y:number} {
+  function cubicBezier(p0: {x:number; y:number}, cp1: {x:number; y:number}, cp2: {x:number; y:number}, p3: {x:number; y:number}, t: number,
+  ): {x:number; y:number} {
     const mt = 1 - t;
     const mt2 = mt * mt;
     const t2 = t * t;
@@ -108,7 +111,7 @@
   }
 
   // Min distance from point to a bezier/line segment (sampled)
-  function distToBezierSegment(mouse: {x:number,y:number}, i: number): { dist: number; t: number } {
+  function distToBezierSegment(mouse: {x:number; y:number}, i: number): { dist: number; t: number } {
     const nextI = (i + 1) % customPoints.length;
     const a = customPoints[i];
     const b = customPoints[nextI];
@@ -432,7 +435,10 @@
   }
 
   // Clear selection when layer changes
-  $: if ($selectedLayer?.id) { selectedVertexIndex = -1; penMode = 'edit'; }
+  $: if ($selectedLayer?.id) {
+    selectedVertexIndex = -1;
+    penMode = 'edit';
+  }
 
   // Cleanup on destroy
   onDestroy(() => {
@@ -478,12 +484,7 @@
   {#if $selectedLayer && isCustom}
     <svg class="shape-overlay" width={containerWidth} height={containerHeight}>
       {#if customPoints.length >= 2}
-        <path
-          d={svgPath}
-          fill="none"
-          stroke={isClosed ? '#ff9800' : '#ffffff'}
-          stroke-width="2"
-        />
+        <path d={svgPath} fill="none" stroke={isClosed ? '#ff9800' : '#ffffff'} stroke-width="2" />
       {/if}
 
       <!-- Pen-tool drag preview: while dragging from a fresh anchor, show
@@ -495,10 +496,14 @@
         {@const cpInPx = { x: 2 * anchorPx.x - cpOutPx.x, y: 2 * anchorPx.y - cpOutPx.y }}
         {@const prevPx = penDraft.insertOnEdge
           ? vertexPixels[penDraft.edgeIndex]
-          : (customPoints.length > 0 ? vertexPixels[customPoints.length - 1] : null)}
+          : customPoints.length > 0
+            ? vertexPixels[customPoints.length - 1]
+            : null}
         {@const prevPt = penDraft.insertOnEdge
           ? customPoints[penDraft.edgeIndex]
-          : (customPoints.length > 0 ? customPoints[customPoints.length - 1] : null)}
+          : customPoints.length > 0
+            ? customPoints[customPoints.length - 1]
+            : null}
         {@const prevCpOutPx = prevPt && prevPt.cpOut ? toPixel(prevPt.cpOut) : prevPx}
 
         <!-- Live bezier curve from the previous vertex to the in-progress anchor -->
@@ -516,35 +521,46 @@
         {#if penDraft.isCurve}
           <!-- Handle bar: cpIn — anchor — cpOut -->
           <line
-            x1={cpInPx.x} y1={cpInPx.y}
-            x2={cpOutPx.x} y2={cpOutPx.y}
-            stroke="#7EC8E3" stroke-width="1" opacity="0.85"
+            x1={cpInPx.x}
+            y1={cpInPx.y}
+            x2={cpOutPx.x}
+            y2={cpOutPx.y}
+            stroke="#7EC8E3"
+            stroke-width="1"
+            opacity="0.85"
           />
           <circle cx={cpInPx.x} cy={cpInPx.y} r="4" fill="#7EC8E3" opacity="0.9" />
           <circle cx={cpOutPx.x} cy={cpOutPx.y} r="4" fill="#7EC8E3" opacity="0.9" />
         {/if}
 
         <!-- Anchor dot, on top of everything else -->
-        <circle
-          cx={anchorPx.x} cy={anchorPx.y} r="6"
-          fill="#ff9800" stroke="#ffffff" stroke-width="2"
-        />
+        <circle cx={anchorPx.x} cy={anchorPx.y} r="6" fill="#ff9800" stroke="#ffffff" stroke-width="2" />
       {/if}
 
       <!-- Preview line from last vertex to mouse (draw mode only) -->
       {#if !isClosed && customPoints.length > 0 && !penDraft}
         {@const lastPx = vertexPixels[customPoints.length - 1]}
         <line
-          x1={lastPx.x} y1={lastPx.y}
-          x2={mousePos.x} y2={mousePos.y}
-          stroke="#ffffff" stroke-width="1" stroke-dasharray="5,5" opacity="0.6"
+          x1={lastPx.x}
+          y1={lastPx.y}
+          x2={mousePos.x}
+          y2={mousePos.y}
+          stroke="#ffffff"
+          stroke-width="1"
+          stroke-dasharray="5,5"
+          opacity="0.6"
         />
         {#if customPoints.length >= 3}
           {@const firstPx = vertexPixels[0]}
           <line
-            x1={firstPx.x} y1={firstPx.y}
-            x2={mousePos.x} y2={mousePos.y}
-            stroke="#ff9800" stroke-width="1" stroke-dasharray="3,3" opacity="0.4"
+            x1={firstPx.x}
+            y1={firstPx.y}
+            x2={mousePos.x}
+            y2={mousePos.y}
+            stroke="#ff9800"
+            stroke-width="1"
+            stroke-dasharray="3,3"
+            opacity="0.4"
           />
         {/if}
       {/if}
@@ -556,18 +572,26 @@
             {@const anchorPx = vertexPixels[i]}
             {@const cpOutPx = toPixel(pt.cpOut)}
             <line
-              x1={anchorPx.x} y1={anchorPx.y}
-              x2={cpOutPx.x} y2={cpOutPx.y}
-              stroke="#00bfff" stroke-width="1" opacity="0.7"
+              x1={anchorPx.x}
+              y1={anchorPx.y}
+              x2={cpOutPx.x}
+              y2={cpOutPx.y}
+              stroke="#00bfff"
+              stroke-width="1"
+              opacity="0.7"
             />
           {/if}
           {#if pt.cpIn}
             {@const anchorPx = vertexPixels[i]}
             {@const cpInPx = toPixel(pt.cpIn)}
             <line
-              x1={anchorPx.x} y1={anchorPx.y}
-              x2={cpInPx.x} y2={cpInPx.y}
-              stroke="#00bfff" stroke-width="1" opacity="0.7"
+              x1={anchorPx.x}
+              y1={anchorPx.y}
+              x2={cpInPx.x}
+              y2={cpInPx.y}
+              stroke="#00bfff"
+              stroke-width="1"
+              opacity="0.7"
             />
           {/if}
         {/each}
@@ -575,19 +599,46 @@
 
       <!-- Hover edge insert indicator (add mode) -->
       {#if hoverInsertPoint && isClosed && penMode === 'add'}
-        <circle
-          cx={hoverInsertPoint.x} cy={hoverInsertPoint.y} r="5"
-          fill="none" stroke="#00ff88" stroke-width="2"
+        <circle cx={hoverInsertPoint.x} cy={hoverInsertPoint.y} r="5" fill="none" stroke="#00ff88" stroke-width="2" />
+        <line
+          x1={hoverInsertPoint.x - 4}
+          y1={hoverInsertPoint.y}
+          x2={hoverInsertPoint.x + 4}
+          y2={hoverInsertPoint.y}
+          stroke="#00ff88"
+          stroke-width="2"
         />
-        <line x1={hoverInsertPoint.x - 4} y1={hoverInsertPoint.y} x2={hoverInsertPoint.x + 4} y2={hoverInsertPoint.y} stroke="#00ff88" stroke-width="2" />
-        <line x1={hoverInsertPoint.x} y1={hoverInsertPoint.y - 4} x2={hoverInsertPoint.x} y2={hoverInsertPoint.y + 4} stroke="#00ff88" stroke-width="2" />
+        <line
+          x1={hoverInsertPoint.x}
+          y1={hoverInsertPoint.y - 4}
+          x2={hoverInsertPoint.x}
+          y2={hoverInsertPoint.y + 4}
+          stroke="#00ff88"
+          stroke-width="2"
+        />
       {/if}
 
       <!-- Centroid crosshair -->
       {#if isClosed && customPoints.length >= 3}
         {@const center = toPixel(getCentroid(customPoints))}
-        <line x1={center.x - 6} y1={center.y} x2={center.x + 6} y2={center.y} stroke="#ff9800" stroke-width="1" opacity="0.5" />
-        <line x1={center.x} y1={center.y - 6} x2={center.x} y2={center.y + 6} stroke="#ff9800" stroke-width="1" opacity="0.5" />
+        <line
+          x1={center.x - 6}
+          y1={center.y}
+          x2={center.x + 6}
+          y2={center.y}
+          stroke="#ff9800"
+          stroke-width="1"
+          opacity="0.5"
+        />
+        <line
+          x1={center.x}
+          y1={center.y - 6}
+          x2={center.x}
+          y2={center.y + 6}
+          stroke="#ff9800"
+          stroke-width="1"
+          opacity="0.5"
+        />
       {/if}
     </svg>
 
@@ -601,8 +652,9 @@
             class="cp-handle"
             style="left: {cpOutPx.x}px; top: {cpOutPx.y}px;"
             on:mousedown={(e) => handleCPMouseDown(i, 'cpOut', e)}
-            role="button" tabindex="-1"
-            aria-label="Control handle out {i}"
+            role="button"
+            tabindex="-1"
+            aria-label={$t('geometryTools.customShape.controlHandleOut', { values: { index: i } })}
           />
         {/if}
         {#if pt.cpIn}
@@ -612,8 +664,9 @@
             class="cp-handle"
             style="left: {cpInPx.x}px; top: {cpInPx.y}px;"
             on:mousedown={(e) => handleCPMouseDown(i, 'cpIn', e)}
-            role="button" tabindex="-1"
-            aria-label="Control handle in {i}"
+            role="button"
+            tabindex="-1"
+            aria-label={$t('geometryTools.customShape.controlHandleIn', { values: { index: i } })}
           />
         {/if}
       {/each}
@@ -633,7 +686,10 @@
         on:dblclick={(e) => handleVertexDblClick(i, e)}
         role="button"
         tabindex="-1"
-        aria-label="Shape vertex {i}{selectedVertexIndex === i ? ' (selected)' : ''}"
+        aria-label={$t(
+          selectedVertexIndex === i ? 'geometryTools.customShape.vertexSelected' : 'geometryTools.customShape.vertex',
+          { values: { index: i } },
+        )}
       />
     {/each}
 
@@ -641,43 +697,46 @@
     {#if isClosed}
       <div class="pen-toolbar">
         <button
-          class="pen-btn" class:active={penMode === 'edit'}
-          on:click|stopPropagation={() => penMode = 'edit'}
-          title="Select & Move (V)"
+          class="pen-btn"
+          class:active={penMode === 'edit'}
+          on:click|stopPropagation={() => (penMode = 'edit')}
+          title={$t('geometryTools.customShape.selectMove')}
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z"/>
+            <path d="M3 3l7.07 16.97 2.51-7.39 7.39-2.51L3 3z" />
           </svg>
         </button>
         <button
-          class="pen-btn" class:active={penMode === 'add'}
-          on:click|stopPropagation={() => penMode = 'add'}
-          title="Add Point (+)"
+          class="pen-btn"
+          class:active={penMode === 'add'}
+          on:click|stopPropagation={() => (penMode = 'add')}
+          title={$t('geometryTools.customShape.addPoint')}
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M4 20L8 4l4 10 6-2"/>
-            <line x1="16" y1="6" x2="16" y2="14"/>
-            <line x1="12" y1="10" x2="20" y2="10"/>
+            <path d="M4 20L8 4l4 10 6-2" />
+            <line x1="16" y1="6" x2="16" y2="14" />
+            <line x1="12" y1="10" x2="20" y2="10" />
           </svg>
         </button>
         <button
-          class="pen-btn" class:active={penMode === 'remove'}
-          on:click|stopPropagation={() => penMode = 'remove'}
-          title="Remove Point (-)"
+          class="pen-btn"
+          class:active={penMode === 'remove'}
+          on:click|stopPropagation={() => (penMode = 'remove')}
+          title={$t('geometryTools.customShape.removePoint')}
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <path d="M4 20L8 4l4 10 6-2"/>
-            <line x1="12" y1="10" x2="20" y2="10"/>
+            <path d="M4 20L8 4l4 10 6-2" />
+            <line x1="12" y1="10" x2="20" y2="10" />
           </svg>
         </button>
         <div class="pen-divider"></div>
         <span class="pen-hint">
           {#if penMode === 'edit'}
-            Drag to move. Dbl-click for curves.
+            {$t('geometryTools.customShape.hints.edit')}
           {:else if penMode === 'add'}
-            Click edge to add point.
+            {$t('geometryTools.customShape.hints.add')}
           {:else}
-            Click point to remove.
+            {$t('geometryTools.customShape.hints.remove')}
           {/if}
         </span>
       </div>
@@ -687,11 +746,11 @@
     {#if !isClosed}
       <div class="draw-instructions">
         {#if customPoints.length === 0}
-          Click to place vertices
+          {$t('geometryTools.customShape.drawInstructions.empty')}
         {:else if customPoints.length < 3}
-          Click to add points ({3 - customPoints.length} more to close)
+          {$t('geometryTools.customShape.drawInstructions.addPoints', { values: { count: 3 - customPoints.length } })}
         {:else}
-          Click first point or right-click to close
+          {$t('geometryTools.customShape.drawInstructions.close')}
         {/if}
       </div>
     {/if}

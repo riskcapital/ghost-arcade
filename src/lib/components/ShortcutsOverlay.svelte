@@ -1,5 +1,6 @@
 <script lang="ts">
   import { isMac } from '$lib/bridge';
+  import { t } from '$lib/i18n';
   export let visible = false;
   export let onClose: () => void;
 
@@ -9,42 +10,44 @@
 {#if visible}
   <div class="shortcut-overlay-backdrop" onclick={onClose}>
     <div class="shortcut-overlay" onclick={(e) => e.stopPropagation()}>
-      <button class="shortcut-overlay-close" onclick={onClose}>&times;</button>
-      <h2 class="shortcut-overlay-title">Keyboard Shortcuts</h2>
+      <button class="shortcut-overlay-close" onclick={onClose}
+        aria-label={$t('controlOverlays.shortcuts.close')}
+        title={$t('controlOverlays.shortcuts.close')}>&times;</button>
+      <h2 class="shortcut-overlay-title">{$t('controlOverlays.shortcuts.title')}</h2>
       <div class="shortcut-columns">
         <div class="shortcut-section">
-          <h3>General</h3>
-          <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>N</kbd><span>New project</span></div>
-          <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>O</kbd><span>Open project</span></div>
-          <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>S</kbd><span>Save</span></div>
-          <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd><span>Save As</span></div>
-          <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>Z</kbd><span>Undo</span></div>
-          <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>Y</kbd><span>Redo</span></div>
+          <h3>{$t('controlOverlays.shortcuts.sections.general')}</h3>
+          <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>N</kbd><span>{$t('controlOverlays.shortcuts.actions.newProject')}</span></div>
+          <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>O</kbd><span>{$t('controlOverlays.shortcuts.actions.openProject')}</span></div>
+          <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>S</kbd><span>{$t('controlOverlays.shortcuts.actions.save')}</span></div>
+          <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd><span>{$t('controlOverlays.shortcuts.actions.saveAs')}</span></div>
+          <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>Z</kbd><span>{$t('controlOverlays.shortcuts.actions.undo')}</span></div>
+          <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>Y</kbd><span>{$t('controlOverlays.shortcuts.actions.redo')}</span></div>
         </div>
         <div class="shortcut-section">
-          <h3>Layers</h3>
-          <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>C</kbd><span>Copy layer(s)</span></div>
-          <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>V</kbd><span>Paste layer(s)</span></div>
-          <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>D</kbd><span>Duplicate layer</span></div>
-          <div class="shortcut-row"><kbd>Delete</kbd><span>Remove layer</span></div>
-          <div class="shortcut-row"><kbd>{isMac ? 'Fn+Delete' : 'Backspace'}</kbd><span>Remove layer</span></div>
+          <h3>{$t('controlOverlays.shortcuts.sections.layers')}</h3>
+          <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>C</kbd><span>{$t('controlOverlays.shortcuts.actions.copyLayers')}</span></div>
+          <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>V</kbd><span>{$t('controlOverlays.shortcuts.actions.pasteLayers')}</span></div>
+          <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>D</kbd><span>{$t('controlOverlays.shortcuts.actions.duplicateLayer')}</span></div>
+          <div class="shortcut-row"><kbd>Delete</kbd><span>{$t('controlOverlays.shortcuts.actions.removeLayer')}</span></div>
+          <div class="shortcut-row"><kbd>{isMac ? 'Fn+Delete' : 'Backspace'}</kbd><span>{$t('controlOverlays.shortcuts.actions.removeLayer')}</span></div>
         </div>
         <div class="shortcut-section">
-          <h3>View</h3>
-          <div class="shortcut-row"><kbd>Space</kbd><span>Hold to pan viewport</span></div>
-          <div class="shortcut-row"><kbd>Esc</kbd><span>Exit drawing / edit mode</span></div>
-          <div class="shortcut-row"><kbd>?</kbd><span>Toggle this help</span></div>
+          <h3>{$t('controlOverlays.shortcuts.sections.view')}</h3>
+          <div class="shortcut-row"><kbd>Space</kbd><span>{$t('controlOverlays.shortcuts.actions.panViewport')}</span></div>
+          <div class="shortcut-row"><kbd>Esc</kbd><span>{$t('controlOverlays.shortcuts.actions.exitDrawingMode')}</span></div>
+          <div class="shortcut-row"><kbd>?</kbd><span>{$t('controlOverlays.shortcuts.actions.toggleHelp')}</span></div>
         </div>
         <div class="shortcut-section">
-          <h3>Output</h3>
-          <div class="shortcut-row"><kbd>B</kbd><span>Blackout toggle</span></div>
-          <div class="shortcut-row"><kbd>T</kbd><span>Cycle test patterns</span></div>
+          <h3>{$t('controlOverlays.shortcuts.sections.output')}</h3>
+          <div class="shortcut-row"><kbd>B</kbd><span>{$t('controlOverlays.shortcuts.actions.blackoutToggle')}</span></div>
+          <div class="shortcut-row"><kbd>T</kbd><span>{$t('controlOverlays.shortcuts.actions.cycleTestPatterns')}</span></div>
         </div>
         <div class="shortcut-section">
-          <h3>VJ Mode</h3>
-          <div class="shortcut-row"><kbd>1</kbd>-<kbd>9</kbd><span>Trigger columns 1-9</span></div>
-          <div class="shortcut-row"><kbd>0</kbd><span>Trigger column 10</span></div>
-          <div class="shortcut-row"><kbd>F1</kbd>-<kbd>F8</kbd><span>Switch blocks 1-8</span></div>
+          <h3>{$t('controlOverlays.shortcuts.sections.vjMode')}</h3>
+          <div class="shortcut-row"><kbd>1</kbd>-<kbd>9</kbd><span>{$t('controlOverlays.shortcuts.actions.triggerColumns')}</span></div>
+          <div class="shortcut-row"><kbd>0</kbd><span>{$t('controlOverlays.shortcuts.actions.triggerColumn10')}</span></div>
+          <div class="shortcut-row"><kbd>F1</kbd>-<kbd>F8</kbd><span>{$t('controlOverlays.shortcuts.actions.switchBlocks')}</span></div>
         </div>
       </div>
     </div>
@@ -106,7 +109,7 @@
     margin: 0 0 18px;
     font-size: 19px;
     font-weight: 600;
-    color: #BB86FC;
+    color: #bb86fc;
   }
   .shortcut-columns {
     display: grid;
@@ -117,7 +120,7 @@
     margin: 0 0 8px;
     font-size: 12px;
     font-weight: 600;
-    color: #BB86FC;
+    color: #bb86fc;
     text-transform: uppercase;
     letter-spacing: 0.5px;
   }

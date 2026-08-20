@@ -15,22 +15,26 @@
     createWLEDEffect,
     getWLEDPatternDefinition,
   } from '../wled/effects';
+  import { t } from '../i18n';
 
   const COLOR_PATTERN_OPTIONS = [
-    { id: 0, label: 'Solid' },
-    { id: 1, label: 'Gradient' },
-    { id: 2, label: 'Every other' },
-    { id: 3, label: 'Blocks' },
-    { id: 4, label: 'Random' },
-    { id: 5, label: 'Wave' },
+    { id: 0, labelKey: 'led.fx.colorPatterns.solid' },
+    { id: 1, labelKey: 'led.fx.colorPatterns.gradient' },
+    { id: 2, labelKey: 'led.fx.colorPatterns.everyOther' },
+    { id: 3, labelKey: 'led.fx.colorPatterns.blocks' },
+    { id: 4, labelKey: 'led.fx.colorPatterns.random' },
+    { id: 5, labelKey: 'led.fx.colorPatterns.wave' },
   ];
   const COLOR_PALETTES = [
-    { label: 'White', colors: ['#ffffff', '#ffffff', '#ffffff', '#ffffff'] },
-    { label: 'Fire embers', colors: ['#ff3100', '#ff8a00', '#ffd166', '#3a0900'] },
-    { label: 'Green lanterns', colors: ['#00ff8a', '#7cff6b', '#1a5f35', '#d8ffe0'] },
-    { label: 'Fireflies', colors: ['#ecff91', '#a8ff4f', '#2a5d18', '#fff6a6'] },
-    { label: 'Cyber', colors: ['#00f0ff', '#ff2bd6', '#6633ff', '#ffffff'] },
-    { label: 'Ocean', colors: ['#00d4ff', '#006eff', '#00ffb3', '#001a3a'] },
+    { id: 'white', labelKey: 'led.fx.palettes.white', colors: ['#ffffff', '#ffffff', '#ffffff', '#ffffff'] },
+    { id: 'fire-embers', labelKey: 'led.fx.palettes.fireEmbers', colors: ['#ff3100', '#ff8a00', '#ffd166', '#3a0900'] },
+    {
+      id: 'green-lanterns',
+      labelKey: 'led.fx.palettes.greenLanterns', colors: ['#00ff8a', '#7cff6b', '#1a5f35', '#d8ffe0'],
+    },
+    { id: 'fireflies', labelKey: 'led.fx.palettes.fireflies', colors: ['#ecff91', '#a8ff4f', '#2a5d18', '#fff6a6'] },
+    { id: 'cyber', labelKey: 'led.fx.palettes.cyber', colors: ['#00f0ff', '#ff2bd6', '#6633ff', '#ffffff'] },
+    { id: 'ocean', labelKey: 'led.fx.palettes.ocean', colors: ['#00d4ff', '#006eff', '#00ffb3', '#001a3a'] },
   ];
 
   let selectedPattern: WLEDPatternId = 'solid-color';
@@ -63,7 +67,7 @@
 
   function beginHold(effectId: string) {
     if (heldEffects[effectId]) return;
-    const effect = effects.find(item => item.id === effectId);
+    const effect = effects.find((item) => item.id === effectId);
     if (!effect) return;
     holdRestore = { ...holdRestore, [effectId]: effect.active };
     heldEffects = { ...heldEffects, [effectId]: true };
@@ -112,8 +116,27 @@
     updateEffect(effect.id, { params: { ...effect.params, [key]: value } });
   }
 
+  function patternLabel(pattern: WLEDPatternId): string {
+    const definition = getWLEDPatternDefinition(pattern);
+    return $t(`led.fx.patterns.${definition.id}.label`);
+  }
+
   function patternDescription(pattern: WLEDPatternId): string {
-    return getWLEDPatternDefinition(pattern).description;
+    const definition = getWLEDPatternDefinition(pattern);
+    return $t(`led.fx.patterns.${definition.id}.description`);
+  }
+
+  function categoryLabel(category: string): string {
+    return $t(`led.fx.categories.${category}`);
+  }
+
+  function targetModeLabel(mode: string): string {
+    return $t(`led.fx.targetModes.${mode}`);
+  }
+
+  function effectName(effect: WLEDEffect, pattern: WLEDPatternId): string {
+    const definition = getWLEDPatternDefinition(pattern);
+    return effect.name === definition.label ? patternLabel(pattern) : effect.name;
   }
 
   function setColorCount(effect: WLEDEffect, count: number) {
@@ -138,7 +161,7 @@
         pressed?: boolean;
       }>).detail;
       if (!detail?.effectId || !detail.action) return;
-      const effect = effects.find(item => item.id === detail.effectId);
+      const effect = effects.find((item) => item.id === detail.effectId);
       if (!effect) return;
       if (detail.action === 'toggle') {
         if (detail.pressed) toggleEffect(effect);
@@ -156,14 +179,19 @@
 <div class="led-fx-panel">
   <header class="panel-heading">
     <div>
-      <strong>LED FX</strong>
-      <span>{effects.filter(effect => effect.active).length} live · {effects.length} loaded</span>
+      <strong>{$t('led.fx.title')}</strong>
+      <span>{$t('led.fx.status', {
+          values: {
+            live: effects.filter((effect) => effect.active).length,
+            loaded: effects.length,
+          },
+        })}</span>
     </div>
     <button
       class:active={automation.playing}
       class="automation-play"
       onclick={() => project.updateWLEDEffectAutomation({ playing: !automation.playing })}
-      title={automation.playing ? 'Stop LED sequence' : 'Start LED sequence'}
+      title={$t(automation.playing ? 'led.fx.automation.stopTitle' : 'led.fx.automation.startTitle')}
     >{automation.playing ? 'Ⅱ' : '▶'}</button>
   </header>
 
@@ -171,11 +199,11 @@
     <select
       value={automation.mode}
       onchange={(event) => project.updateWLEDEffectAutomation({
-        mode: (event.target as HTMLSelectElement).value as 'beat' | 'time'
-      })}
+        mode: (event.target as HTMLSelectElement).value as 'beat' | 'time',
+        })}
     >
-      <option value="beat">Beat</option>
-      <option value="time">Time</option>
+      <option value="beat">{$t('led.fx.automation.beat')}</option>
+      <option value="time">{$t('led.fx.automation.time')}</option>
     </select>
     {#if automation.mode === 'beat'}
       <input
@@ -185,11 +213,11 @@
         step="1"
         value={automation.beats}
         onchange={(event) => project.updateWLEDEffectAutomation({
-          beats: Math.max(1, parseInt((event.target as HTMLInputElement).value, 10) || 1)
-        })}
-        aria-label="Beats per LED effect"
+          beats: Math.max(1, parseInt((event.target as HTMLInputElement).value, 10) || 1),
+          })}
+        aria-label={$t('led.fx.automation.beatsAria')}
       />
-      <span>beats</span>
+      <span>{$t('led.fx.automation.beatsUnit')}</span>
     {:else}
       <input
         type="number"
@@ -198,41 +226,41 @@
         step="0.1"
         value={automation.seconds}
         onchange={(event) => project.updateWLEDEffectAutomation({
-          seconds: Math.max(0.1, parseFloat((event.target as HTMLInputElement).value) || 0.1)
-        })}
-        aria-label="Seconds per LED effect"
+          seconds: Math.max(0.1, parseFloat((event.target as HTMLInputElement).value) || 0.1),
+          })}
+        aria-label={$t('led.fx.automation.secondsAria')}
       />
-      <span>sec</span>
+      <span>{$t('led.fx.automation.secondsUnit')}</span>
     {/if}
     <select
       value={automation.order}
       onchange={(event) => project.updateWLEDEffectAutomation({
-        order: (event.target as HTMLSelectElement).value as 'forward' | 'random' | 'pingpong'
-      })}
-      aria-label="LED sequence order"
+        order: (event.target as HTMLSelectElement).value as 'forward' | 'random' | 'pingpong',
+        })}
+      aria-label={$t('led.fx.automation.orderAria')}
     >
-      <option value="forward">Forward</option>
-      <option value="random">Random</option>
-      <option value="pingpong">Ping pong</option>
+      <option value="forward">{$t('led.fx.automation.forward')}</option>
+      <option value="random">{$t('led.fx.automation.random')}</option>
+      <option value="pingpong">{$t('led.fx.automation.pingpong')}</option>
     </select>
   </div>
 
   <section class="catalog">
     <div class="catalog-title">
-      <span>Pattern Catalog</span>
-      <small>{WLED_PATTERN_CATALOG.length} patterns</small>
+      <span>{$t('led.fx.catalog.title')}</span>
+      <small>{$t('led.fx.catalog.count', { values: { count: WLED_PATTERN_CATALOG.length} })}</small>
     </div>
     <label class="catalog-picker">
-      <span>Pattern</span>
+      <span>{$t('led.fx.catalog.pattern')}</span>
       <select
         value={selectedPattern}
         title={patternDescription(selectedPattern)}
-        onchange={(event) => selectedPattern = (event.target as HTMLSelectElement).value as WLEDPatternId}
+        onchange={(event) => (selectedPattern = (event.target as HTMLSelectElement).value as WLEDPatternId)}
       >
         {#each WLED_PATTERN_CATEGORIES as category (category.id)}
-          <optgroup label={category.label}>
-            {#each WLED_PATTERN_CATALOG.filter(pattern => pattern.category === category.id) as pattern (pattern.id)}
-              <option value={pattern.id}>{pattern.label}</option>
+          <optgroup label={categoryLabel(category.id)}>
+            {#each WLED_PATTERN_CATALOG.filter((pattern) => pattern.category === category.id) as pattern (pattern.id)}
+              <option value={pattern.id}>{patternLabel(pattern.id)}</option>
             {/each}
           </optgroup>
         {/each}
@@ -240,10 +268,10 @@
     </label>
     <div class="catalog-add">
       <div>
-        <strong>{getWLEDPatternDefinition(selectedPattern).label}</strong>
-        <span>{getWLEDPatternDefinition(selectedPattern).description}</span>
+        <strong>{patternLabel(selectedPattern)}</strong>
+        <span>{patternDescription(selectedPattern)}</span>
       </div>
-      <button onclick={() => addEffect()}>+ Add</button>
+      <button onclick={() => addEffect()}>{$t('led.fx.catalog.add')}</button>
     </div>
   </section>
 
@@ -257,26 +285,26 @@
             class:active={effect.active}
             onclick={() => toggleEffect(effect)}
             aria-pressed={effect.active}
-            title={effect.active ? 'Turn effect off' : 'Latch effect on'}
+            title={$t(effect.active ? 'led.fx.effect.turnOffTitle' : 'led.fx.effect.latchOnTitle')}
             data-midi-path={`vj:led-effect:${effect.id}:toggle`}
-            data-midi-label={`LED FX Toggle: ${effect.name}`}
+            data-midi-label={$t('led.fx.effect.toggleLabel', { values: { name: effectName(effect, effect.pattern) } })}
             data-midi-mode="toggle"
             data-midi-min="0"
             data-midi-max="1"
           ><span></span></button>
           <button
             class="effect-name"
-            onclick={() => expandedEffectId = expandedEffectId === effect.id ? null : effect.id}
+            onclick={() => (expandedEffectId = expandedEffectId === effect.id ? null : effect.id)}
           >
-            <strong>{effect.name}</strong>
-            <span>{definition.category} · {effect.target.mode}</span>
+            <strong>{effectName(effect, effect.pattern)}</strong>
+            <span>{categoryLabel(definition.category)} · {targetModeLabel(effect.target.mode)}</span>
           </button>
           <button
             class="hold"
             class:active={!!heldEffects[effect.id]}
-            title={`Hold to show ${effect.name}`}
+            title={$t('led.fx.effect.holdTitle', { values: { name: effectName(effect, effect.pattern) } })}
             data-midi-path={`vj:led-effect:${effect.id}:hold`}
-            data-midi-label={`LED FX Hold: ${effect.name}`}
+            data-midi-label={$t('led.fx.effect.holdLabel', { values: { name: effectName(effect, effect.pattern) } })}
             data-midi-mode="toggle"
             data-midi-min="0"
             data-midi-max="1"
@@ -290,49 +318,48 @@
             class="sequence"
             class:included={effect.enabled}
             onclick={() => updateEffect(effect.id, { enabled: !effect.enabled })}
-            title={effect.enabled ? 'Included in sequence' : 'Excluded from sequence'}
+            title={$t(effect.enabled ? 'led.fx.effect.includedTitle' : 'led.fx.effect.excludedTitle')}
           >{effect.enabled ? '↻' : '⊘'}</button>
           <button
             class="remove"
             onclick={() => project.removeWLEDEffect(effect.id)}
-            title="Remove LED effect"
-          >×</button>
+            title={$t('led.fx.effect.removeTitle')}>×</button>
         </div>
 
         {#if expandedEffectId === effect.id}
           <div class="effect-controls">
             <label class="wide">
-              <span>Name</span>
+              <span>{$t('led.fx.controls.name')}</span>
               <input
                 type="text"
                 value={effect.name}
                 onchange={(event) => updateEffect(effect.id, {
-                  name: (event.target as HTMLInputElement).value || definition.label
-                })}
+                  name: (event.target as HTMLInputElement).value || definition.label,
+                  })}
               />
             </label>
             <label class="wide">
-              <span>Target</span>
+              <span>{$t('led.fx.controls.target')}</span>
               <select
                 value={targetValue(effect.target)}
                 onchange={(event) => updateEffect(effect.id, {
-                  target: parseTarget((event.target as HTMLSelectElement).value)
-                })}
+                  target: parseTarget((event.target as HTMLSelectElement).value),
+                  })}
               >
-                <option value="all">Entire LED rig</option>
+                <option value="all">{$t('led.fx.controls.entireRig')}</option>
                 {#each $project.wledGroups ?? [] as group (group.id)}
-                  <option value={`group:${group.id}`}>Group · {group.name}</option>
+                  <option value={`group:${group.id}`}>{$t('led.fx.controls.group')} · {group.name}</option>
                 {/each}
                 {#each $project.wledControllers ?? [] as controller (controller.id)}
-                  <option value={`controller:${controller.id}`}>Controller · {controller.name}</option>
+                  <option value={`controller:${controller.id}`}>{$t('led.fx.controls.controller')} · {controller.name}</option>
                   {#each controller.ranges ?? [] as range (range.id)}
-                    <option value={`range:${controller.id}:${range.id}`}>Range · {controller.name} / {range.name}</option>
+                    <option value={`range:${controller.id}:${range.id}`}>{$t('led.fx.controls.range')} · {controller.name} / {range.name}</option>
                   {/each}
                 {/each}
               </select>
             </label>
             <label>
-              <span>Amount <b>{Math.round(effect.amount * 100)}%</b></span>
+              <span>{$t('led.fx.controls.amount')} <b>{Math.round(effect.amount * 100)}%</b></span>
               <input
                 type="range"
                 min="0"
@@ -340,40 +367,40 @@
                 step="0.01"
                 value={effect.amount}
                 oninput={(event) => updateEffect(effect.id, {
-                  amount: parseFloat((event.target as HTMLInputElement).value)
-                })}
+                  amount: parseFloat((event.target as HTMLInputElement).value),
+                  })}
               />
             </label>
             <label>
-              <span>Blend</span>
+              <span>{$t('led.fx.controls.blend')}</span>
               <select
                 value={effect.blendMode}
                 onchange={(event) => updateEffect(effect.id, {
-                  blendMode: (event.target as HTMLSelectElement).value as WLEDEffectBlendMode
-                })}
+                  blendMode: (event.target as HTMLSelectElement).value as WLEDEffectBlendMode,
+                  })}
               >
-                <option value="replace">Replace</option>
-                <option value="add">Add</option>
-                <option value="multiply">Multiply</option>
-                <option value="gate">Gate</option>
-                <option value="colorize">Colorize</option>
+                <option value="replace">{$t('led.fx.controls.blendModes.replace')}</option>
+                <option value="add">{$t('led.fx.controls.blendModes.add')}</option>
+                <option value="multiply">{$t('led.fx.controls.blendModes.multiply')}</option>
+                <option value="gate">{$t('led.fx.controls.blendModes.gate')}</option>
+                <option value="colorize">{$t('led.fx.controls.blendModes.colorize')}</option>
               </select>
             </label>
             <label>
-              <span>Timing</span>
+              <span>{$t('led.fx.controls.timing')}</span>
               <select
                 value={effect.speedMode}
                 onchange={(event) => updateEffect(effect.id, {
-                  speedMode: (event.target as HTMLSelectElement).value as WLEDSpeedMode
-                })}
+                  speedMode: (event.target as HTMLSelectElement).value as WLEDSpeedMode,
+                  })}
               >
-                <option value="manual">Manual</option>
-                <option value="bpm">BPM sync</option>
+                <option value="manual">{$t('led.fx.controls.speedModes.manual')}</option>
+                <option value="bpm">{$t('led.fx.controls.speedModes.bpm')}</option>
               </select>
             </label>
             {#if effect.speedMode === 'bpm'}
               <label>
-                <span>Cycles / beat <b>{effect.beatDivision.toFixed(2)}</b></span>
+                <span>{$t('led.fx.controls.cyclesPerBeat')} <b>{effect.beatDivision.toFixed(2)}</b></span>
                 <input
                   type="range"
                   min="0.0625"
@@ -381,13 +408,13 @@
                   step="0.0625"
                   value={effect.beatDivision}
                   oninput={(event) => updateEffect(effect.id, {
-                    beatDivision: parseFloat((event.target as HTMLInputElement).value)
-                  })}
+                    beatDivision: parseFloat((event.target as HTMLInputElement).value),
+                    })}
                 />
               </label>
             {:else}
               <label>
-                <span>Speed <b>{effect.speed.toFixed(2)}</b></span>
+                <span>{$t('led.fx.controls.speed')} <b>{effect.speed.toFixed(2)}</b></span>
                 <input
                   type="range"
                   min="0.01"
@@ -395,138 +422,138 @@
                   step="0.01"
                   value={effect.speed}
                   oninput={(event) => updateEffect(effect.id, {
-                    speed: parseFloat((event.target as HTMLInputElement).value)
-                  })}
+                    speed: parseFloat((event.target as HTMLInputElement).value),
+                    })}
                 />
               </label>
             {/if}
             {#if effect.pattern === 'solid-color'}
               <label class="wide">
-                <span>Color preset</span>
+                <span>{$t('led.fx.controls.colorPreset')}</span>
                 <select
                   value=""
                   onchange={(event) => {
-                    const preset = COLOR_PALETTES.find(item => item.label === (event.target as HTMLSelectElement).value);
+                    const preset = COLOR_PALETTES.find((item) => item.id === (event.target as HTMLSelectElement).value);
                     if (preset) applyColorPalette(effect, preset.colors);
                     (event.target as HTMLSelectElement).value = '';
                   }}
                 >
-                  <option value="">Choose preset…</option>
-                  {#each COLOR_PALETTES as preset (preset.label)}
-                    <option value={preset.label}>{preset.label}</option>
+                  <option value="">{$t('led.fx.catalog.choosePreset')}</option>
+                  {#each COLOR_PALETTES as preset (preset.id)}
+                    <option value={preset.id}>{$t(preset.labelKey)}</option>
                   {/each}
                 </select>
               </label>
               <label>
-                <span>Color count</span>
+                <span>{$t('led.fx.controls.colorCount')}</span>
                 <select
                   value={Math.round(effect.params.colorCount ?? 1)}
                   onchange={(event) => setColorCount(effect, parseInt((event.target as HTMLSelectElement).value, 10))}
                 >
-                  <option value="1">1 color</option>
-                  <option value="2">2 colors</option>
-                  <option value="3">3 colors</option>
-                  <option value="4">4 colors</option>
+                  <option value="1">{$t('led.fx.controls.colorCounts.one')}</option>
+                  <option value="2">{$t('led.fx.controls.colorCounts.two')}</option>
+                  <option value="3">{$t('led.fx.controls.colorCounts.three')}</option>
+                  <option value="4">{$t('led.fx.controls.colorCounts.four')}</option>
                 </select>
               </label>
               <label>
-                <span>Pattern</span>
+                <span>{$t('led.fx.controls.pattern')}</span>
                 <select
                   value={Math.round(effect.params.colorPattern ?? 0)}
                   onchange={(event) => updateParam(effect, 'colorPattern', parseInt((event.target as HTMLSelectElement).value, 10))}
                 >
                   {#each COLOR_PATTERN_OPTIONS as option (option.id)}
-                    <option value={option.id}>{option.label}</option>
+                    <option value={option.id}>{$t(option.labelKey)}</option>
                   {/each}
                 </select>
               </label>
               <label>
-                <span>Color A</span>
+                <span>{$t('led.fx.controls.colorA')}</span>
                 <input
                   type="color"
                   value={effect.color}
                   oninput={(event) => updateEffect(effect.id, {
-                    color: (event.target as HTMLInputElement).value
-                  })}
+                    color: (event.target as HTMLInputElement).value,
+                    })}
                 />
               </label>
               {#if (effect.params.colorCount ?? 1) >= 2}
                 <label>
-                  <span>Color B</span>
+                  <span>{$t('led.fx.controls.colorB')}</span>
                   <input
                     type="color"
                     value={effect.secondaryColor}
                     oninput={(event) => updateEffect(effect.id, {
-                      secondaryColor: (event.target as HTMLInputElement).value
-                    })}
+                      secondaryColor: (event.target as HTMLInputElement).value,
+                      })}
                   />
                 </label>
               {/if}
               {#if (effect.params.colorCount ?? 1) >= 3}
                 <label>
-                  <span>Color C</span>
+                  <span>{$t('led.fx.controls.colorC')}</span>
                   <input
                     type="color"
                     value={effect.tertiaryColor ?? '#ffd166'}
                     oninput={(event) => updateEffect(effect.id, {
-                      tertiaryColor: (event.target as HTMLInputElement).value
-                    })}
+                      tertiaryColor: (event.target as HTMLInputElement).value,
+                      })}
                   />
                 </label>
               {/if}
               {#if (effect.params.colorCount ?? 1) >= 4}
                 <label>
-                  <span>Color D</span>
+                  <span>{$t('led.fx.controls.colorD')}</span>
                   <input
                     type="color"
                     value={effect.quaternaryColor ?? '#7cff6b'}
                     oninput={(event) => updateEffect(effect.id, {
-                      quaternaryColor: (event.target as HTMLInputElement).value
-                    })}
+                      quaternaryColor: (event.target as HTMLInputElement).value,
+                      })}
                   />
                 </label>
               {/if}
             {:else}
               <label class="wide">
-                <span>Color source</span>
+                <span>{$t('led.fx.controls.colorSource')}</span>
                 <select
                   value={effect.colorSource}
                   onchange={(event) => updateEffect(effect.id, {
-                    colorSource: (event.target as HTMLSelectElement).value as WLEDColorSource
-                  })}
+                    colorSource: (event.target as HTMLSelectElement).value as WLEDColorSource,
+                    })}
                 >
-                  <option value="shader">Live content pixels</option>
-                  <option value="palette">Dominant content palette</option>
-                  <option value="custom">Custom colors</option>
-                  <option value="rainbow">Rainbow</option>
+                  <option value="shader">{$t('led.fx.controls.colorSources.shader')}</option>
+                  <option value="palette">{$t('led.fx.controls.colorSources.palette')}</option>
+                  <option value="custom">{$t('led.fx.controls.colorSources.custom')}</option>
+                  <option value="rainbow">{$t('led.fx.controls.colorSources.rainbow')}</option>
                 </select>
               </label>
               {#if effect.colorSource === 'custom'}
                 <label>
-                  <span>Color A</span>
+                  <span>{$t('led.fx.controls.colorA')}</span>
                   <input
                     type="color"
                     value={effect.color}
                     oninput={(event) => updateEffect(effect.id, {
-                      color: (event.target as HTMLInputElement).value
-                    })}
+                      color: (event.target as HTMLInputElement).value,
+                      })}
                   />
                 </label>
                 <label>
-                  <span>Color B</span>
+                  <span>{$t('led.fx.controls.colorB')}</span>
                   <input
                     type="color"
                     value={effect.secondaryColor}
                     oninput={(event) => updateEffect(effect.id, {
-                      secondaryColor: (event.target as HTMLInputElement).value
-                    })}
+                      secondaryColor: (event.target as HTMLInputElement).value,
+                      })}
                   />
                 </label>
               {/if}
             {/if}
             {#each ['width', 'tail', 'density'] as key}
               <label>
-                <span>{key[0].toUpperCase() + key.slice(1)} <b>{Math.round((effect.params[key] ?? 0.5) * 100)}%</b></span>
+                <span>{$t(`led.fx.controls.params.${key}`)} <b>{Math.round((effect.params[key] ?? 0.5) * 100)}%</b></span>
                 <input
                   type="range"
                   min="0"
@@ -547,7 +574,7 @@
     {/each}
 
     {#if effects.length === 0}
-      <div class="empty">Choose any pattern above and add it to build your performance bank.</div>
+      <div class="empty">{$t('led.fx.empty')}</div>
     {/if}
   </section>
 </div>

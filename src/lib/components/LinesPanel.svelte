@@ -2,6 +2,7 @@
   import { onMount } from 'svelte';
   import { project, selectedLayer, layers } from '../stores/layers';
   import { linesStore } from '../stores/lines';
+  import { t } from '../i18n';
   import { generateUUID } from '../types';
   import type {
     LinesContent,
@@ -34,20 +35,20 @@
 
   // Stroke type options
   const strokeTypes: { type: LineStrokeType; label: string }[] = [
-    { type: 'solid', label: 'Solid' },
-    { type: 'dashed', label: 'Dashed' },
-    { type: 'dotted', label: 'Dotted' },
-    { type: 'glow', label: 'Glow' },
-    { type: 'neon', label: 'Neon' },
-    { type: 'electric', label: 'Electric' },
-    { type: 'fire', label: 'Fire' },
-    { type: 'snake', label: 'Snake' },
-    { type: 'multiTail', label: 'Multi-Tail' },
-    { type: 'pulse', label: 'Pulse' },
-    { type: 'scanner', label: 'Scanner' },
-    { type: 'rainbow', label: 'Rainbow' },
-    { type: 'laser', label: 'Laser' },
-    { type: 'pipe', label: 'Pipe' },
+    { type: 'solid', label: 'creative.lines.stroke.types.solid' },
+    { type: 'dashed', label: 'creative.lines.stroke.types.dashed' },
+    { type: 'dotted', label: 'creative.lines.stroke.types.dotted' },
+    { type: 'glow', label: 'creative.lines.stroke.types.glow' },
+    { type: 'neon', label: 'creative.lines.stroke.types.neon' },
+    { type: 'electric', label: 'creative.lines.stroke.types.electric' },
+    { type: 'fire', label: 'creative.lines.stroke.types.fire' },
+    { type: 'snake', label: 'creative.lines.stroke.types.snake' },
+    { type: 'multiTail', label: 'creative.lines.stroke.types.multiTail' },
+    { type: 'pulse', label: 'creative.lines.stroke.types.pulse' },
+    { type: 'scanner', label: 'creative.lines.stroke.types.scanner' },
+    { type: 'rainbow', label: 'creative.lines.stroke.types.rainbow' },
+    { type: 'laser', label: 'creative.lines.stroke.types.laser' },
+    { type: 'pipe', label: 'creative.lines.stroke.types.pipe' },
   ];
 
   // === Reactive derivations ===
@@ -91,9 +92,7 @@
 
   function updateSelectedElement(updates: Partial<LineElement>) {
     if (!selectedEl || !lc) return;
-    const updated = elements.map((e) =>
-      e.id === selectedEl!.id ? { ...e, ...updates } : e
-    );
+    const updated = elements.map((e) => (e.id === selectedEl!.id ? { ...e, ...updates } : e));
     updateElements(updated);
   }
 
@@ -130,16 +129,20 @@
         stroke = { type: 'solid', color: currentColor, width: currentWidth, cap: 'round', join: 'round' };
         break;
       case 'dashed':
-        stroke = { type: 'dashed', color: currentColor, width: currentWidth, dashLength: 0.3, gapLength: 0.2, animated: true, animationSpeed: 1 };
+        stroke = { type: 'dashed', color: currentColor, width: currentWidth, dashLength: 0.3, gapLength: 0.2, animated: true, animationSpeed: 1,
+        };
         break;
       case 'dotted':
-        stroke = { type: 'dotted', color: currentColor, width: currentWidth, dotSize: 0.1, spacing: 0.15, animated: false, animationSpeed: 1 };
+        stroke = { type: 'dotted', color: currentColor, width: currentWidth, dotSize: 0.1, spacing: 0.15, animated: false, animationSpeed: 1,
+        };
         break;
       case 'glow':
-        stroke = { type: 'glow', color: currentColor, width: currentWidth, glowSize: 15, glowIntensity: 1, pulseSpeed: 0 };
+        stroke = { type: 'glow', color: currentColor, width: currentWidth, glowSize: 15, glowIntensity: 1, pulseSpeed: 0,
+        };
         break;
       case 'neon':
-        stroke = { type: 'neon', color: currentColor, width: currentWidth, glowSize: 20, flickerSpeed: 0.5, flickerIntensity: 0.3 };
+        stroke = { type: 'neon', color: currentColor, width: currentWidth, glowSize: 20, flickerSpeed: 0.5, flickerIntensity: 0.3,
+        };
         break;
       case 'electric':
         stroke = { type: 'electric', color: currentColor, width: currentWidth, arcIntensity: 1, speed: 1, branches: 3 };
@@ -148,13 +151,16 @@
         stroke = { type: 'fire', color: [1, 0.4, 0, 1], width: currentWidth, intensity: 1, speed: 1 };
         break;
       case 'snake':
-        stroke = { type: 'snake', color: currentColor, width: currentWidth, length: 0.5, speed: 1, tailFade: true, headGlow: true, bidirectional: false, snakeCount: 1 };
+        stroke = { type: 'snake', color: currentColor, width: currentWidth, length: 0.5, speed: 1, tailFade: true, headGlow: true, bidirectional: false, snakeCount: 1,
+        };
         break;
       case 'multiTail':
-        stroke = { type: 'multiTail', color: currentColor, width: currentWidth, tailCount: 3, tailLength: 0.3, spacing: 0.2, speed: 1, tailFade: true, headGlow: true, colorShift: false, colorShiftAmount: 0.1 };
+        stroke = { type: 'multiTail', color: currentColor, width: currentWidth, tailCount: 3, tailLength: 0.3, spacing: 0.2, speed: 1, tailFade: true, headGlow: true, colorShift: false, colorShiftAmount: 0.1,
+        };
         break;
       case 'pulse':
-        stroke = { type: 'pulse', color: currentColor, width: currentWidth, pulseCount: 5, speed: 1, fadeLength: 0.2, direction: 'forward' };
+        stroke = { type: 'pulse', color: currentColor, width: currentWidth, pulseCount: 5, speed: 1, fadeLength: 0.2, direction: 'forward',
+        };
         break;
       case 'scanner':
         stroke = { type: 'scanner', color: currentColor, width: currentWidth, beamWidth: 0.1, speed: 1, trail: 0.3 };
@@ -163,10 +169,12 @@
         stroke = { type: 'rainbow', width: currentWidth, saturation: 1, brightness: 1, speed: 0.5, segments: 6 };
         break;
       case 'laser':
-        stroke = { type: 'laser', color: currentColor, width: currentWidth, intensity: 1.5, scatter: 0.3, flicker: 0.1 };
+        stroke = { type: 'laser', color: currentColor, width: currentWidth, intensity: 1.5, scatter: 0.3, flicker: 0.1,
+        };
         break;
       case 'pipe':
-        stroke = { type: 'pipe', color: currentColor, width: currentWidth, depth: 0.5, edgeLight: 1, edgeLightColor: [1, 1, 1, 0.5], specular: 0.5, roughness: 0.3 };
+        stroke = { type: 'pipe', color: currentColor, width: currentWidth, depth: 0.5, edgeLight: 1, edgeLightColor: [1, 1, 1, 0.5], specular: 0.5, roughness: 0.3,
+        };
         break;
       default:
         stroke = { type: 'solid', color: currentColor, width: currentWidth, cap: 'round', join: 'round' };
@@ -193,7 +201,7 @@
     const newEl: LineElement = {
       ...structuredClone(el),
       id: generateUUID(),
-      name: `${el.name} Copy`,
+      name: `${el.name} ${$t('creative.lines.copySuffix')}`,
       position: { x: el.position.x + 0.05, y: el.position.y + 0.05 },
       zIndex: elements.length,
     };
@@ -201,16 +209,12 @@
   }
 
   function toggleElementVisibility(elementId: string) {
-    const updated = elements.map((e) =>
-      e.id === elementId ? { ...e, visible: !e.visible } : e
-    );
+    const updated = elements.map((e) => (e.id === elementId ? { ...e, visible: !e.visible } : e));
     updateElements(updated);
   }
 
   function toggleElementLock(elementId: string) {
-    const updated = elements.map((e) =>
-      e.id === elementId ? { ...e, locked: !e.locked } : e
-    );
+    const updated = elements.map((e) => (e.id === elementId ? { ...e, locked: !e.locked } : e));
     updateElements(updated);
   }
 
@@ -241,7 +245,7 @@
     .map((l: any) => ({
       id: l.source.src === 'ai-generated' || l.source.src === 'js-animation'
         ? l.source.id : l.source.src,
-      label: l.source.name || l.name || 'Unnamed',
+      label: l.source.name || l.name || $t('creative.lines.unnamed'),
       type: l.source.type || 'unknown',
       layerName: l.name,
     }));
@@ -254,15 +258,16 @@
   <div class="lines-panel" class:compact>
     <!-- Header -->
     <div class="lp-header">
-      <span class="lp-title">Lines</span>
+      <span class="lp-title">{$t('creative.lines.title')}</span>
       <span class="el-badge">{elements.length}</span>
     </div>
 
     <!-- Compact elements list — always visible -->
     {#if elements.length > 0}
       <div class="elements-strip">
-        <button class="strip-toggle" onclick={() => elementsCollapsed = !elementsCollapsed}>
-          {elementsCollapsed ? '▶' : '▼'} Elements ({elements.length})
+        <button class="strip-toggle" onclick={() => (elementsCollapsed = !elementsCollapsed)}>
+          {elementsCollapsed ? '▶' : '▼'}
+          {$t('creative.lines.elementsToggle', { values: { count: elements.length} })}
         </button>
         {#if !elementsCollapsed}
           <div class="elements-strip-list">
@@ -271,13 +276,14 @@
                 class="strip-el"
                 class:selected={selectedElementId === el.id}
                 onclick={() => selectElement(el.id)}
-                title="{el.name} — {el.stroke.type}"
+                title={$t('creative.lines.elementTitle', { values: { name: el.name, type: el.stroke.type } })}
                 role="button"
                 tabindex="0"
               >
                 <span class="strip-name">{el.name}</span>
                 <span class="strip-type">{el.stroke.type}</span>
-                <button class="strip-del" title="Delete" onclick={(e) => { e.stopPropagation(); removeElement(el.id); }}>✕</button>
+                <button class="strip-del" title={$t('creative.lines.actions.delete')}
+                  onclick={(e) => { e.stopPropagation(); removeElement(el.id); }}>✕</button>
               </div>
             {/each}
           </div>
@@ -287,78 +293,78 @@
 
     <!-- Tabs -->
     <div class="lp-tabs">
-      <button class:active={activeTab === 'tools'} onclick={() => activeTab = 'tools'}>Draw</button>
-      <button class:active={activeTab === 'stroke'} onclick={() => activeTab = 'stroke'}>Stroke</button>
-      <button class:active={activeTab === 'animation'} onclick={() => activeTab = 'animation'}>Anim</button>
-      <button class:active={activeTab === 'settings'} onclick={() => activeTab = 'settings'}>Settings</button>
+      <button class:active={activeTab === 'tools'} onclick={() => (activeTab = 'tools')}>{$t('creative.lines.tabs.draw')}</button>
+      <button class:active={activeTab === 'stroke'} onclick={() => (activeTab = 'stroke')}>{$t('creative.lines.tabs.stroke')}</button>
+      <button class:active={activeTab === 'animation'} onclick={() => (activeTab = 'animation')}>{$t('creative.lines.tabs.animation')}</button>
+      <button class:active={activeTab === 'settings'} onclick={() => (activeTab = 'settings')}>{$t('creative.lines.tabs.settings')}</button>
     </div>
 
     <!-- Content -->
     <div class="lp-content">
       <!-- ============ TAB 1: DRAW TOOLS ============ -->
       {#if activeTab === 'tools'}
-        <div class="sec-label">Tool Mode</div>
+        <div class="sec-label">{$t('creative.lines.toolMode')}</div>
         <div class="tool-grid">
           <button class="tool-btn" class:active={toolMode === 'select'} onclick={() => setToolMode('select')}>
             <span class="tool-icon">&#10022;</span>
-            <span class="tool-label">Select</span>
+            <span class="tool-label">{$t('creative.lines.tools.select')}</span>
           </button>
           <button class="tool-btn" class:active={toolMode === 'freehand'} onclick={() => setToolMode('freehand')}>
             <span class="tool-icon">&#9998;</span>
-            <span class="tool-label">Freehand</span>
+            <span class="tool-label">{$t('creative.lines.tools.freehand')}</span>
           </button>
           <button class="tool-btn" class:active={toolMode === 'pointClick'} onclick={() => setToolMode('pointClick')}>
             <span class="tool-icon">&#8889;</span>
-            <span class="tool-label">Point-Click</span>
+            <span class="tool-label">{$t('creative.lines.tools.pointClick')}</span>
           </button>
         </div>
 
         {#if toolMode === 'freehand'}
-          <div class="sec-label">Freehand Settings</div>
+          <div class="sec-label">{$t('creative.lines.tools.freehandSettings')}</div>
           <div class="slider-col">
             <div class="sc">
-              <label>Smoothing <b>0.50</b></label>
+              <label>{$t('creative.lines.tools.smoothing')} <b>0.50</b></label>
               <input type="range" min="0" max="1" step="0.05" value="0.5" />
             </div>
           </div>
-          <div class="drawing-hint">Click and drag to draw. Hold Shift to constrain.</div>
+          <div class="drawing-hint">{$t('creative.lines.tools.hints.freehand')}</div>
         {/if}
 
         {#if toolMode === 'pointClick'}
-          <div class="sec-label">Point-Click Settings</div>
+          <div class="sec-label">{$t('creative.lines.tools.pointClickSettings')}</div>
           <div class="slider-col">
             <div class="sc">
-              <label>Corner Style</label>
+              <label>{$t('creative.lines.tools.cornerStyle')}</label>
               <select class="inline-select" value="sharp">
-                <option value="sharp">Sharp</option>
-                <option value="rounded">Rounded</option>
-                <option value="chamfer">Chamfer</option>
+                <option value="sharp">{$t('creative.lines.tools.options.sharp')}</option>
+                <option value="rounded">{$t('creative.lines.tools.options.rounded')}</option>
+                <option value="chamfer">{$t('creative.lines.tools.options.chamfer')}</option>
               </select>
             </div>
             <div class="sc">
-              <label>Corner Radius <b>0</b></label>
+              <label>{$t('creative.lines.tools.cornerRadius')} <b>0</b></label>
               <input type="range" min="0" max="50" step="1" value="0" />
             </div>
           </div>
-          <div class="drawing-hint">Click to add points. Shift = straight. Double-click or right-click to finish. Esc to cancel.</div>
+          <div class="drawing-hint">{$t('creative.lines.tools.hints.pointClick')}</div>
         {/if}
 
         {#if toolMode === 'select'}
-          <div class="drawing-hint">Click elements on canvas to select. Use Freehand or Point-Click to draw new lines.</div>
+          <div class="drawing-hint">{$t('creative.lines.tools.hints.select')}</div>
         {/if}
 
       <!-- ============ TAB 2: STROKE EFFECTS ============ -->
       {:else if activeTab === 'stroke'}
         {#if selectedEl}
-          <div class="sec-label">Stroke Type</div>
+          <div class="sec-label">{$t('creative.lines.stroke.type')}</div>
           <div class="control-row">
-            <span class="control-label">Type</span>
+            <span class="control-label">{$t('creative.lines.stroke.labels.type')}</span>
             <select
               value={selectedEl.stroke.type}
               onchange={(e) => changeStrokeType((e.target as HTMLSelectElement).value as LineStrokeType)}
             >
               {#each strokeTypes as st}
-                <option value={st.type}>{st.label}</option>
+                <option value={st.type}>{$t(st.label)}</option>
               {/each}
             </select>
           </div>
@@ -366,17 +372,18 @@
           <!-- Color (all types except rainbow) -->
           {#if 'color' in selectedEl.stroke}
             <div class="control-row">
-              <span class="control-label">Color</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.color')}</span>
               <input
                 type="color"
                 value={rgbaToHex(selectedEl.stroke.color)}
                 oninput={(e) => {
                   if (!selectedEl) return;
-                  const c = hexToRgba((e.target as HTMLInputElement).value, 'color' in selectedEl.stroke ? selectedEl.stroke.color[3] : 1);
+                  const c = hexToRgba((e.target as HTMLInputElement).value, 'color' in selectedEl.stroke ? selectedEl.stroke.color[3] : 1,
+                  );
                   updateStrokeProp('color', c);
                 }}
               />
-              <span class="control-label" style="width:auto">Alpha</span>
+              <span class="control-label" style="width:auto">{$t('creative.lines.stroke.labels.alpha')}</span>
               <input
                 type="range" min="0" max="1" step="0.05"
                 value={selectedEl.stroke.color[3]}
@@ -391,7 +398,7 @@
 
           <!-- Width (all types) -->
           <div class="control-row">
-            <span class="control-label">Width</span>
+            <span class="control-label">{$t('creative.lines.stroke.labels.width')}</span>
             <input
               type="range" min="1" max="50" step="0.5"
               value={selectedEl.stroke.width}
@@ -402,45 +409,46 @@
 
           <!-- Type-specific controls -->
           {#if selectedEl.stroke.type === 'solid'}
-            <div class="sec-label">Solid Options</div>
+            <div class="sec-label">{$t('creative.lines.stroke.options.solid')}</div>
             <div class="control-row">
-              <span class="control-label">Cap</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.cap')}</span>
               <select value={selectedEl.stroke.cap} onchange={(e) => updateStrokeProp('cap', (e.target as HTMLSelectElement).value)}>
-                <option value="butt">Butt</option>
-                <option value="round">Round</option>
-                <option value="square">Square</option>
+                <option value="butt">{$t('creative.lines.stroke.cap.butt')}</option>
+                <option value="round">{$t('creative.lines.stroke.cap.round')}</option>
+                <option value="square">{$t('creative.lines.stroke.cap.square')}</option>
               </select>
             </div>
             <div class="control-row">
-              <span class="control-label">Join</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.join')}</span>
               <select value={selectedEl.stroke.join} onchange={(e) => updateStrokeProp('join', (e.target as HTMLSelectElement).value)}>
-                <option value="miter">Miter</option>
-                <option value="round">Round</option>
-                <option value="bevel">Bevel</option>
+                <option value="miter">{$t('creative.lines.stroke.join.miter')}</option>
+                <option value="round">{$t('creative.lines.stroke.join.round')}</option>
+                <option value="bevel">{$t('creative.lines.stroke.join.bevel')}</option>
               </select>
             </div>
 
           {:else if selectedEl.stroke.type === 'dashed'}
-            <div class="sec-label">Dash Options</div>
+            <div class="sec-label">{$t('creative.lines.stroke.options.dashed')}</div>
             <div class="control-row">
-              <span class="control-label">Dash</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.dash')}</span>
               <input type="range" min="0.05" max="1" step="0.05" value={selectedEl.stroke.dashLength}
                 oninput={(e) => updateStrokeProp('dashLength', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.dashLength.toFixed(2)}</span>
             </div>
             <div class="control-row">
-              <span class="control-label">Gap</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.gap')}</span>
               <input type="range" min="0.05" max="1" step="0.05" value={selectedEl.stroke.gapLength}
                 oninput={(e) => updateStrokeProp('gapLength', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.gapLength.toFixed(2)}</span>
             </div>
             <div class="check-row">
               <label><input type="checkbox" checked={selectedEl.stroke.animated}
-                onchange={(e) => updateStrokeProp('animated', (e.target as HTMLInputElement).checked)} /> Animated</label>
+                onchange={(e) => updateStrokeProp('animated', (e.target as HTMLInputElement).checked)} />
+                {$t('creative.lines.stroke.labels.animated')}</label>
             </div>
             {#if selectedEl.stroke.animated}
               <div class="control-row">
-                <span class="control-label">Speed</span>
+                <span class="control-label">{$t('creative.lines.stroke.labels.speed')}</span>
                 <input type="range" min="0.1" max="5" step="0.1" value={selectedEl.stroke.animationSpeed}
                   oninput={(e) => updateStrokeProp('animationSpeed', parseFloat((e.target as HTMLInputElement).value))} />
                 <span class="control-value">{selectedEl.stroke.animationSpeed.toFixed(1)}</span>
@@ -448,26 +456,27 @@
             {/if}
 
           {:else if selectedEl.stroke.type === 'dotted'}
-            <div class="sec-label">Dot Options</div>
+            <div class="sec-label">{$t('creative.lines.stroke.options.dotted')}</div>
             <div class="control-row">
-              <span class="control-label">Dot Size</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.dotSize')}</span>
               <input type="range" min="0.01" max="0.5" step="0.01" value={selectedEl.stroke.dotSize}
                 oninput={(e) => updateStrokeProp('dotSize', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.dotSize.toFixed(2)}</span>
             </div>
             <div class="control-row">
-              <span class="control-label">Spacing</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.spacing')}</span>
               <input type="range" min="0.02" max="0.5" step="0.01" value={selectedEl.stroke.spacing}
                 oninput={(e) => updateStrokeProp('spacing', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.spacing.toFixed(2)}</span>
             </div>
             <div class="check-row">
               <label><input type="checkbox" checked={selectedEl.stroke.animated}
-                onchange={(e) => updateStrokeProp('animated', (e.target as HTMLInputElement).checked)} /> Animated</label>
+                onchange={(e) => updateStrokeProp('animated', (e.target as HTMLInputElement).checked)} />
+                {$t('creative.lines.stroke.labels.animated')}</label>
             </div>
             {#if selectedEl.stroke.animated}
               <div class="control-row">
-                <span class="control-label">Speed</span>
+                <span class="control-label">{$t('creative.lines.stroke.labels.speed')}</span>
                 <input type="range" min="0.1" max="5" step="0.1" value={selectedEl.stroke.animationSpeed}
                   oninput={(e) => updateStrokeProp('animationSpeed', parseFloat((e.target as HTMLInputElement).value))} />
                 <span class="control-value">{selectedEl.stroke.animationSpeed.toFixed(1)}</span>
@@ -475,151 +484,157 @@
             {/if}
 
           {:else if selectedEl.stroke.type === 'glow'}
-            <div class="sec-label">Glow Options</div>
+            <div class="sec-label">{$t('creative.lines.stroke.options.glow')}</div>
             <div class="control-row">
-              <span class="control-label">Glow Size</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.glowSize')}</span>
               <input type="range" min="1" max="100" step="1" value={selectedEl.stroke.glowSize}
                 oninput={(e) => updateStrokeProp('glowSize', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.glowSize}</span>
             </div>
             <div class="control-row">
-              <span class="control-label">Intensity</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.intensity')}</span>
               <input type="range" min="0" max="3" step="0.1" value={selectedEl.stroke.glowIntensity}
                 oninput={(e) => updateStrokeProp('glowIntensity', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.glowIntensity.toFixed(1)}</span>
             </div>
             <div class="control-row">
-              <span class="control-label">Pulse</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.pulse')}</span>
               <input type="range" min="0" max="10" step="0.1" value={selectedEl.stroke.pulseSpeed}
                 oninput={(e) => updateStrokeProp('pulseSpeed', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.pulseSpeed.toFixed(1)}</span>
             </div>
 
           {:else if selectedEl.stroke.type === 'neon'}
-            <div class="sec-label">Neon Options</div>
+            <div class="sec-label">{$t('creative.lines.stroke.options.neon')}</div>
             <div class="control-row">
-              <span class="control-label">Glow Size</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.glowSize')}</span>
               <input type="range" min="1" max="100" step="1" value={selectedEl.stroke.glowSize}
                 oninput={(e) => updateStrokeProp('glowSize', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.glowSize}</span>
             </div>
             <div class="control-row">
-              <span class="control-label">Flicker Spd</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.flickerSpd')}</span>
               <input type="range" min="0" max="5" step="0.1" value={selectedEl.stroke.flickerSpeed}
                 oninput={(e) => updateStrokeProp('flickerSpeed', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.flickerSpeed.toFixed(1)}</span>
             </div>
             <div class="control-row">
-              <span class="control-label">Flicker Int</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.flickerInt')}</span>
               <input type="range" min="0" max="1" step="0.05" value={selectedEl.stroke.flickerIntensity}
                 oninput={(e) => updateStrokeProp('flickerIntensity', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.flickerIntensity.toFixed(2)}</span>
             </div>
 
           {:else if selectedEl.stroke.type === 'electric'}
-            <div class="sec-label">Electric Options</div>
+            <div class="sec-label">{$t('creative.lines.stroke.options.electric')}</div>
             <div class="control-row">
-              <span class="control-label">Arc</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.arc')}</span>
               <input type="range" min="0" max="3" step="0.1" value={selectedEl.stroke.arcIntensity}
                 oninput={(e) => updateStrokeProp('arcIntensity', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.arcIntensity.toFixed(1)}</span>
             </div>
             <div class="control-row">
-              <span class="control-label">Speed</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.speed')}</span>
               <input type="range" min="0.1" max="5" step="0.1" value={selectedEl.stroke.speed}
                 oninput={(e) => updateStrokeProp('speed', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.speed.toFixed(1)}</span>
             </div>
             <div class="control-row">
-              <span class="control-label">Branches</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.branches')}</span>
               <input type="range" min="1" max="10" step="1" value={selectedEl.stroke.branches}
                 oninput={(e) => updateStrokeProp('branches', parseInt((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.branches}</span>
             </div>
 
           {:else if selectedEl.stroke.type === 'fire'}
-            <div class="sec-label">Fire Options</div>
+            <div class="sec-label">{$t('creative.lines.stroke.options.fire')}</div>
             <div class="control-row">
-              <span class="control-label">Intensity</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.intensity')}</span>
               <input type="range" min="0" max="3" step="0.1" value={selectedEl.stroke.intensity}
                 oninput={(e) => updateStrokeProp('intensity', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.intensity.toFixed(1)}</span>
             </div>
             <div class="control-row">
-              <span class="control-label">Speed</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.speed')}</span>
               <input type="range" min="0.1" max="5" step="0.1" value={selectedEl.stroke.speed}
                 oninput={(e) => updateStrokeProp('speed', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.speed.toFixed(1)}</span>
             </div>
 
           {:else if selectedEl.stroke.type === 'snake'}
-            <div class="sec-label">Snake Options</div>
+            <div class="sec-label">{$t('creative.lines.stroke.options.snake')}</div>
             <div class="control-row">
-              <span class="control-label">Length</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.length')}</span>
               <input type="range" min="0.01" max="2" step="0.01" value={selectedEl.stroke.length}
                 oninput={(e) => updateStrokeProp('length', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.length.toFixed(2)}</span>
             </div>
             <div class="control-row">
-              <span class="control-label">Speed</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.speed')}</span>
               <input type="range" min="0.1" max="5" step="0.1" value={selectedEl.stroke.speed}
                 oninput={(e) => updateStrokeProp('speed', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.speed.toFixed(1)}</span>
             </div>
             <div class="control-row">
-              <span class="control-label">Count</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.count')}</span>
               <input type="range" min="1" max="8" step="1" value={selectedEl.stroke.snakeCount}
                 oninput={(e) => updateStrokeProp('snakeCount', parseInt((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.snakeCount}</span>
             </div>
             <div class="check-row">
               <label><input type="checkbox" checked={selectedEl.stroke.tailFade}
-                onchange={(e) => updateStrokeProp('tailFade', (e.target as HTMLInputElement).checked)} /> Tail Fade</label>
+                onchange={(e) => updateStrokeProp('tailFade', (e.target as HTMLInputElement).checked)} />
+                {$t('creative.lines.stroke.labels.tailFade')}</label>
               <label><input type="checkbox" checked={selectedEl.stroke.headGlow}
-                onchange={(e) => updateStrokeProp('headGlow', (e.target as HTMLInputElement).checked)} /> Head Glow</label>
+                onchange={(e) => updateStrokeProp('headGlow', (e.target as HTMLInputElement).checked)} />
+                {$t('creative.lines.stroke.labels.headGlow')}</label>
               <label><input type="checkbox" checked={selectedEl.stroke.bidirectional}
-                onchange={(e) => updateStrokeProp('bidirectional', (e.target as HTMLInputElement).checked)} /> Bidir</label>
+                onchange={(e) => updateStrokeProp('bidirectional', (e.target as HTMLInputElement).checked)} />
+                {$t('creative.lines.stroke.labels.bidir')}</label>
             </div>
 
           {:else if selectedEl.stroke.type === 'multiTail'}
-            <div class="sec-label">Multi-Tail Options</div>
+            <div class="sec-label">{$t('creative.lines.stroke.options.multiTail')}</div>
             <div class="control-row">
-              <span class="control-label">Tails</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.tails')}</span>
               <input type="range" min="2" max="12" step="1" value={selectedEl.stroke.tailCount}
                 oninput={(e) => updateStrokeProp('tailCount', parseInt((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.tailCount}</span>
             </div>
             <div class="control-row">
-              <span class="control-label">Tail Len</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.tailLen')}</span>
               <input type="range" min="0" max="1" step="0.05" value={selectedEl.stroke.tailLength}
                 oninput={(e) => updateStrokeProp('tailLength', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.tailLength.toFixed(2)}</span>
             </div>
             <div class="control-row">
-              <span class="control-label">Spacing</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.spacing')}</span>
               <input type="range" min="0" max="1" step="0.05" value={selectedEl.stroke.spacing}
                 oninput={(e) => updateStrokeProp('spacing', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.spacing.toFixed(2)}</span>
             </div>
             <div class="control-row">
-              <span class="control-label">Speed</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.speed')}</span>
               <input type="range" min="0.1" max="5" step="0.1" value={selectedEl.stroke.speed}
                 oninput={(e) => updateStrokeProp('speed', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.speed.toFixed(1)}</span>
             </div>
             <div class="check-row">
               <label><input type="checkbox" checked={selectedEl.stroke.tailFade}
-                onchange={(e) => updateStrokeProp('tailFade', (e.target as HTMLInputElement).checked)} /> Tail Fade</label>
+                onchange={(e) => updateStrokeProp('tailFade', (e.target as HTMLInputElement).checked)} />
+                {$t('creative.lines.stroke.labels.tailFade')}</label>
               <label><input type="checkbox" checked={selectedEl.stroke.headGlow}
-                onchange={(e) => updateStrokeProp('headGlow', (e.target as HTMLInputElement).checked)} /> Head Glow</label>
+                onchange={(e) => updateStrokeProp('headGlow', (e.target as HTMLInputElement).checked)} />
+                {$t('creative.lines.stroke.labels.headGlow')}</label>
             </div>
             <div class="check-row">
               <label><input type="checkbox" checked={selectedEl.stroke.colorShift}
-                onchange={(e) => updateStrokeProp('colorShift', (e.target as HTMLInputElement).checked)} /> Color Shift</label>
+                onchange={(e) => updateStrokeProp('colorShift', (e.target as HTMLInputElement).checked)} />
+                {$t('creative.lines.stroke.labels.colorShift')}</label>
             </div>
             {#if selectedEl.stroke.colorShift}
               <div class="control-row">
-                <span class="control-label">Shift Amt</span>
+                <span class="control-label">{$t('creative.lines.stroke.labels.shiftAmt')}</span>
                 <input type="range" min="0" max="1" step="0.05" value={selectedEl.stroke.colorShiftAmount}
                   oninput={(e) => updateStrokeProp('colorShiftAmount', parseFloat((e.target as HTMLInputElement).value))} />
                 <span class="control-value">{selectedEl.stroke.colorShiftAmount.toFixed(2)}</span>
@@ -627,120 +642,120 @@
             {/if}
 
           {:else if selectedEl.stroke.type === 'pulse'}
-            <div class="sec-label">Pulse Options</div>
+            <div class="sec-label">{$t('creative.lines.stroke.options.pulse')}</div>
             <div class="control-row">
-              <span class="control-label">Pulses</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.pulses')}</span>
               <input type="range" min="1" max="20" step="1" value={selectedEl.stroke.pulseCount}
                 oninput={(e) => updateStrokeProp('pulseCount', parseInt((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.pulseCount}</span>
             </div>
             <div class="control-row">
-              <span class="control-label">Speed</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.speed')}</span>
               <input type="range" min="0.1" max="5" step="0.1" value={selectedEl.stroke.speed}
                 oninput={(e) => updateStrokeProp('speed', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.speed.toFixed(1)}</span>
             </div>
             <div class="control-row">
-              <span class="control-label">Fade Len</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.fadeLen')}</span>
               <input type="range" min="0" max="1" step="0.05" value={selectedEl.stroke.fadeLength}
                 oninput={(e) => updateStrokeProp('fadeLength', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.fadeLength.toFixed(2)}</span>
             </div>
             <div class="control-row">
-              <span class="control-label">Direction</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.direction')}</span>
               <select value={selectedEl.stroke.direction}
                 onchange={(e) => updateStrokeProp('direction', (e.target as HTMLSelectElement).value)}>
-                <option value="forward">Forward</option>
-                <option value="backward">Backward</option>
-                <option value="both">Both</option>
+                <option value="forward">{$t('creative.lines.stroke.direction.forward')}</option>
+                <option value="backward">{$t('creative.lines.stroke.direction.backward')}</option>
+                <option value="both">{$t('creative.lines.stroke.direction.both')}</option>
               </select>
             </div>
 
           {:else if selectedEl.stroke.type === 'scanner'}
-            <div class="sec-label">Scanner Options</div>
+            <div class="sec-label">{$t('creative.lines.stroke.options.scanner')}</div>
             <div class="control-row">
-              <span class="control-label">Beam W</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.beamW')}</span>
               <input type="range" min="0" max="1" step="0.05" value={selectedEl.stroke.beamWidth}
                 oninput={(e) => updateStrokeProp('beamWidth', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.beamWidth.toFixed(2)}</span>
             </div>
             <div class="control-row">
-              <span class="control-label">Speed</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.speed')}</span>
               <input type="range" min="0.1" max="5" step="0.1" value={selectedEl.stroke.speed}
                 oninput={(e) => updateStrokeProp('speed', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.speed.toFixed(1)}</span>
             </div>
             <div class="control-row">
-              <span class="control-label">Trail</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.trail')}</span>
               <input type="range" min="0" max="1" step="0.05" value={selectedEl.stroke.trail}
                 oninput={(e) => updateStrokeProp('trail', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.trail.toFixed(2)}</span>
             </div>
 
           {:else if selectedEl.stroke.type === 'rainbow'}
-            <div class="sec-label">Rainbow Options</div>
+            <div class="sec-label">{$t('creative.lines.stroke.options.rainbow')}</div>
             <div class="control-row">
-              <span class="control-label">Saturation</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.saturation')}</span>
               <input type="range" min="0" max="1" step="0.05" value={selectedEl.stroke.saturation}
                 oninput={(e) => updateStrokeProp('saturation', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.saturation.toFixed(2)}</span>
             </div>
             <div class="control-row">
-              <span class="control-label">Brightness</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.brightness')}</span>
               <input type="range" min="0" max="1" step="0.05" value={selectedEl.stroke.brightness}
                 oninput={(e) => updateStrokeProp('brightness', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.brightness.toFixed(2)}</span>
             </div>
             <div class="control-row">
-              <span class="control-label">Speed</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.speed')}</span>
               <input type="range" min="0.1" max="5" step="0.1" value={selectedEl.stroke.speed}
                 oninput={(e) => updateStrokeProp('speed', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.speed.toFixed(1)}</span>
             </div>
             <div class="control-row">
-              <span class="control-label">Segments</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.segments')}</span>
               <input type="range" min="1" max="20" step="1" value={selectedEl.stroke.segments}
                 oninput={(e) => updateStrokeProp('segments', parseInt((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.segments}</span>
             </div>
 
           {:else if selectedEl.stroke.type === 'laser'}
-            <div class="sec-label">Laser Options</div>
+            <div class="sec-label">{$t('creative.lines.stroke.options.laser')}</div>
             <div class="control-row">
-              <span class="control-label">Intensity</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.intensity')}</span>
               <input type="range" min="0" max="3" step="0.1" value={selectedEl.stroke.intensity}
                 oninput={(e) => updateStrokeProp('intensity', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.intensity.toFixed(1)}</span>
             </div>
             <div class="control-row">
-              <span class="control-label">Scatter</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.scatter')}</span>
               <input type="range" min="0" max="1" step="0.05" value={selectedEl.stroke.scatter}
                 oninput={(e) => updateStrokeProp('scatter', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.scatter.toFixed(2)}</span>
             </div>
             <div class="control-row">
-              <span class="control-label">Flicker</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.flicker')}</span>
               <input type="range" min="0" max="1" step="0.05" value={selectedEl.stroke.flicker}
                 oninput={(e) => updateStrokeProp('flicker', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.flicker.toFixed(2)}</span>
             </div>
 
           {:else if selectedEl.stroke.type === 'pipe'}
-            <div class="sec-label">Pipe Options</div>
+            <div class="sec-label">{$t('creative.lines.stroke.options.pipe')}</div>
             <div class="control-row">
-              <span class="control-label">Depth</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.depth')}</span>
               <input type="range" min="0" max="1" step="0.05" value={selectedEl.stroke.depth}
                 oninput={(e) => updateStrokeProp('depth', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.depth.toFixed(2)}</span>
             </div>
             <div class="control-row">
-              <span class="control-label">Edge Light</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.edgeLight')}</span>
               <input type="range" min="0" max="2" step="0.1" value={selectedEl.stroke.edgeLight}
                 oninput={(e) => updateStrokeProp('edgeLight', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.edgeLight.toFixed(1)}</span>
             </div>
             <div class="control-row">
-              <span class="control-label">Edge Color</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.edgeColor')}</span>
               <input
                 type="color"
                 value={rgbaToHex(selectedEl.stroke.edgeLightColor)}
@@ -752,13 +767,13 @@
               />
             </div>
             <div class="control-row">
-              <span class="control-label">Specular</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.specular')}</span>
               <input type="range" min="0" max="1" step="0.05" value={selectedEl.stroke.specular}
                 oninput={(e) => updateStrokeProp('specular', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.specular.toFixed(2)}</span>
             </div>
             <div class="control-row">
-              <span class="control-label">Roughness</span>
+              <span class="control-label">{$t('creative.lines.stroke.labels.roughness')}</span>
               <input type="range" min="0" max="1" step="0.05" value={selectedEl.stroke.roughness}
                 oninput={(e) => updateStrokeProp('roughness', parseFloat((e.target as HTMLInputElement).value))} />
               <span class="control-value">{selectedEl.stroke.roughness.toFixed(2)}</span>
@@ -769,124 +784,130 @@
           <!-- Apply stroke to all lines -->
           {#if elements.length > 1}
             <button class="apply-all-btn" onclick={applyStrokeToAll}>
-              Apply Stroke to All Lines
+              {$t('creative.lines.stroke.applyAll')}
             </button>
           {/if}
 
           <!-- Compositing -->
-          <div class="sec-label">Compositing</div>
+          <div class="sec-label">{$t('creative.lines.stroke.labels.compositing')}</div>
           <div class="control-row">
-            <span class="control-label">Blend</span>
+            <span class="control-label">{$t('creative.lines.stroke.labels.blend')}</span>
             <select value={selectedEl.blendMode}
               onchange={(e) => updateSelectedElement({ blendMode: (e.target as HTMLSelectElement).value as LineElement['blendMode'] })}>
-              <option value="normal">Normal</option>
-              <option value="add">Add</option>
-              <option value="multiply">Multiply</option>
-              <option value="screen">Screen</option>
+              <option value="normal">{$t('creative.lines.stroke.blend.normal')}</option>
+              <option value="add">{$t('creative.lines.stroke.blend.add')}</option>
+              <option value="multiply">{$t('creative.lines.stroke.blend.multiply')}</option>
+              <option value="screen">{$t('creative.lines.stroke.blend.screen')}</option>
             </select>
           </div>
           <div class="control-row">
-            <span class="control-label">Opacity</span>
+            <span class="control-label">{$t('creative.lines.stroke.labels.opacity')}</span>
             <input type="range" min="0" max="1" step="0.05" value={selectedEl.opacity}
               oninput={(e) => updateSelectedElement({ opacity: parseFloat((e.target as HTMLInputElement).value) })} />
             <span class="control-value">{(selectedEl.opacity * 100).toFixed(0)}%</span>
           </div>
         {:else}
-          <div class="empty-msg">Select an element to edit its stroke effects</div>
+          <div class="empty-msg">{$t('creative.lines.stroke.empty')}</div>
         {/if}
 
       <!-- ============ TAB 3: ANIMATION ============ -->
       {:else if activeTab === 'animation'}
         <!-- Animation status -->
-        {@const animatedCount = elements.filter(e => e.drawAnimation.enabled).length}
-        <div class="anim-status">{animatedCount} / {elements.length} lines animated</div>
+        {@const animatedCount = elements.filter((e) => e.drawAnimation.enabled).length}
+        <div class="anim-status">{$t('creative.lines.animation.status', { values: { animated: animatedCount, total: elements.length} })}
+        </div>
 
         {#if selectedEl}
-          <div class="sec-label">Draw Animation</div>
+          <div class="sec-label">{$t('creative.lines.animation.title')}</div>
           <div class="check-row">
             <label><input type="checkbox" checked={selectedEl.drawAnimation.enabled}
-              onchange={(e) => updateSelectedDrawAnimation({ enabled: (e.target as HTMLInputElement).checked })} /> Enabled</label>
+              onchange={(e) => updateSelectedDrawAnimation({ enabled: (e.target as HTMLInputElement).checked })} />
+              {$t('creative.lines.animation.enabled')}</label>
           </div>
 
           {#if selectedEl.drawAnimation.enabled}
             <div class="slider-col">
               <div class="sc">
-                <label>Draw Speed <b>{selectedEl.drawAnimation.drawSpeed.toFixed(1)}</b></label>
+                <label>{$t('creative.lines.animation.drawSpeed')}
+                  <b>{selectedEl.drawAnimation.drawSpeed.toFixed(1)}</b></label>
                 <input type="range" min="0.1" max="10" step="0.1" value={selectedEl.drawAnimation.drawSpeed}
                   oninput={(e) => updateSelectedDrawAnimation({ drawSpeed: parseFloat((e.target as HTMLInputElement).value) })} />
               </div>
               <div class="sc">
-                <label>Trail Length <b>{selectedEl.drawAnimation.trailLength.toFixed(2)}</b></label>
+                <label>{$t('creative.lines.animation.trailLength')}
+                  <b>{selectedEl.drawAnimation.trailLength.toFixed(2)}</b></label>
                 <input type="range" min="0" max="1" step="0.01" value={selectedEl.drawAnimation.trailLength}
                   oninput={(e) => updateSelectedDrawAnimation({ trailLength: parseFloat((e.target as HTMLInputElement).value) })} />
               </div>
             </div>
 
             <div class="control-row">
-              <span class="control-label">Loop</span>
+              <span class="control-label">{$t('creative.lines.animation.loop')}</span>
               <select value={selectedEl.drawAnimation.loopMode}
                 onchange={(e) => updateSelectedDrawAnimation({ loopMode: (e.target as HTMLSelectElement).value as LineLoopMode })}>
-                <option value="once">Once</option>
-                <option value="loop">Loop</option>
-                <option value="pingpong">Ping-Pong</option>
-                <option value="continuous">Continuous</option>
+                <option value="once">{$t('creative.lines.animation.loopOptions.once')}</option>
+                <option value="loop">{$t('creative.lines.animation.loopOptions.loop')}</option>
+                <option value="pingpong">{$t('creative.lines.animation.loopOptions.pingpong')}</option>
+                <option value="continuous">{$t('creative.lines.animation.loopOptions.continuous')}</option>
               </select>
             </div>
 
             <div class="check-row">
               <label><input type="checkbox" checked={selectedEl.drawAnimation.reverse}
-                onchange={(e) => updateSelectedDrawAnimation({ reverse: (e.target as HTMLInputElement).checked })} /> Reverse</label>
+                onchange={(e) => updateSelectedDrawAnimation({ reverse: (e.target as HTMLInputElement).checked })} />
+                {$t('creative.lines.animation.reverse')}</label>
             </div>
 
             <div class="control-row">
-              <span class="control-label">Easing</span>
+              <span class="control-label">{$t('creative.lines.animation.easing')}</span>
               <select value={selectedEl.drawAnimation.easing}
-                onchange={(e) => updateSelectedDrawAnimation({ easing: (e.target as HTMLSelectElement).value as LineDrawAnimation['easing'] })}>
-                <option value="linear">Linear</option>
-                <option value="easeIn">Ease In</option>
-                <option value="easeOut">Ease Out</option>
-                <option value="easeInOut">Ease In/Out</option>
+                onchange={(e) => updateSelectedDrawAnimation({ easing: (e.target as HTMLSelectElement).value as LineDrawAnimation['easing'],
+                  })}>
+                <option value="linear">{$t('creative.lines.animation.easingOptions.linear')}</option>
+                <option value="easeIn">{$t('creative.lines.animation.easingOptions.easeIn')}</option>
+                <option value="easeOut">{$t('creative.lines.animation.easingOptions.easeOut')}</option>
+                <option value="easeInOut">{$t('creative.lines.animation.easingOptions.easeInOut')}</option>
               </select>
             </div>
 
             <!-- Apply animation to all lines -->
             {#if elements.length > 1}
               <button class="apply-all-btn" onclick={applyAnimationToAll}>
-                Apply Animation to All Lines
+                {$t('creative.lines.animation.applyAll')}
               </button>
             {/if}
           {/if}
         {:else}
-          <div class="empty-msg">Select an element to edit its draw animation</div>
+          <div class="empty-msg">{$t('creative.lines.animation.empty')}</div>
         {/if}
 
         <!-- Layer-level animation -->
-        <div class="sec-label">Layer Animation</div>
+        <div class="sec-label">{$t('creative.lines.animation.layerTitle')}</div>
         <div class="slider-col">
           <div class="sc">
-            <label>Global Speed <b>{(lc.globalDrawSpeed).toFixed(1)}x</b></label>
+            <label>{$t('creative.lines.animation.globalSpeed')} <b>{lc.globalDrawSpeed.toFixed(1)}x</b></label>
             <input type="range" min="0.1" max="5" step="0.1" value={lc.globalDrawSpeed}
               oninput={(e) => updateContent({ globalDrawSpeed: parseFloat((e.target as HTMLInputElement).value) })} />
           </div>
         </div>
 
         <div class="control-row">
-          <span class="control-label">Stagger</span>
+          <span class="control-label">{$t('creative.lines.animation.stagger')}</span>
           <select value={lc.staggerMode}
             onchange={(e) => updateContent({ staggerMode: (e.target as HTMLSelectElement).value as LinesContent['staggerMode'] })}>
-            <option value="simultaneous">Simultaneous</option>
-            <option value="sequential">Sequential (One at a time)</option>
-            <option value="cascade">Cascade (Staggered start)</option>
-            <option value="solo">Solo (Draw on/off)</option>
-            <option value="random">Random</option>
-            <option value="wave">Wave (Sliding window)</option>
+            <option value="simultaneous">{$t('creative.lines.animation.staggerOptions.simultaneous')}</option>
+            <option value="sequential">{$t('creative.lines.animation.staggerOptions.sequential')}</option>
+            <option value="cascade">{$t('creative.lines.animation.staggerOptions.cascade')}</option>
+            <option value="solo">{$t('creative.lines.animation.staggerOptions.solo')}</option>
+            <option value="random">{$t('creative.lines.animation.staggerOptions.random')}</option>
+            <option value="wave">{$t('creative.lines.animation.staggerOptions.wave')}</option>
           </select>
         </div>
 
         {#if lc.staggerMode === 'cascade' || lc.staggerMode === 'sequential' || lc.staggerMode === 'solo' || lc.staggerMode === 'random' || lc.staggerMode === 'wave'}
           <div class="slider-col">
             <div class="sc">
-              <label>Stagger Delay <b>{lc.staggerDelay}ms</b></label>
+              <label>{$t('creative.lines.animation.staggerDelay')} <b>{lc.staggerDelay}ms</b></label>
               <input type="range" min="0" max="2000" step="50" value={lc.staggerDelay}
                 oninput={(e) => updateContent({ staggerDelay: parseInt((e.target as HTMLInputElement).value) })} />
             </div>
@@ -896,7 +917,7 @@
         {#if lc.staggerMode === 'wave'}
           <div class="slider-col">
             <div class="sc">
-              <label>Wave Window Size <b>{lc.waveWindowSize ?? 3}</b></label>
+              <label>{$t('creative.lines.animation.waveWindowSize')} <b>{lc.waveWindowSize ?? 3}</b></label>
               <input type="range" min="1" max="12" step="1" value={lc.waveWindowSize ?? 3}
                 oninput={(e) => updateContent({ waveWindowSize: parseInt((e.target as HTMLInputElement).value) })} />
             </div>
@@ -904,14 +925,14 @@
         {/if}
 
         <button class="reset-btn" onclick={() => window.dispatchEvent(new CustomEvent('lines-reset-animations'))}>
-          Reset All Animations
+          {$t('creative.lines.animation.reset')}
         </button>
 
       <!-- ============ TAB 4: SETTINGS ============ -->
       {:else if activeTab === 'settings'}
-        <div class="sec-label">Elements</div>
+        <div class="sec-label">{$t('creative.lines.settings.elements')}</div>
         {#if elements.length === 0}
-          <div class="empty-msg">No elements yet. Use Draw Tools to add lines.</div>
+          <div class="empty-msg">{$t('creative.lines.settings.emptyElements')}</div>
         {:else}
           <div class="elements-list">
             {#each elements as el}
@@ -920,33 +941,33 @@
                   <span class="el-name">{el.name}</span>
                   <span class="el-meta">{el.shape.type} / {el.stroke.type}</span>
                 </div>
-                <button class="icon-btn" class:off={!el.visible} title="Visibility"
+                <button class="icon-btn" class:off={!el.visible} title={$t('creative.lines.actions.visibility')}
                   onclick={(e) => { e.stopPropagation(); toggleElementVisibility(el.id); }}>
                   {#if el.visible}&#128065;{:else}&#128064;{/if}
                 </button>
-                <button class="icon-btn" class:on={el.locked} title="Lock"
+                <button class="icon-btn" class:on={el.locked} title={$t('creative.lines.actions.lock')}
                   onclick={(e) => { e.stopPropagation(); toggleElementLock(el.id); }}>
                   {#if el.locked}&#128274;{:else}&#128275;{/if}
                 </button>
-                <button class="icon-btn" title="Duplicate"
+                <button class="icon-btn" title={$t('creative.lines.actions.duplicate')}
                   onclick={(e) => { e.stopPropagation(); duplicateElement(el.id); }}>&#10697;</button>
-                <button class="icon-btn del" title="Delete"
+                <button class="icon-btn del" title={$t('creative.lines.actions.delete')}
                   onclick={(e) => { e.stopPropagation(); removeElement(el.id); }}>&#10005;</button>
               </div>
             {/each}
           </div>
         {/if}
 
-        <div class="sec-label">Layer Settings</div>
+        <div class="sec-label">{$t('creative.lines.settings.layerSettings')}</div>
         <div class="control-row">
-          <span class="control-label">BG Color</span>
+          <span class="control-label">{$t('creative.lines.settings.bgColor')}</span>
           <input type="color"
             value={rgbaToHex(lc.backgroundColor)}
             oninput={(e) => {
               const c = hexToRgba((e.target as HTMLInputElement).value, lc!.backgroundColor[3]);
               updateContent({ backgroundColor: c });
             }} />
-          <span class="control-label" style="width:auto">Alpha</span>
+          <span class="control-label" style="width:auto">{$t('creative.lines.stroke.labels.alpha')}</span>
           <input type="range" min="0" max="1" step="0.05"
             value={lc.backgroundColor[3]}
             oninput={(e) => {
@@ -957,25 +978,25 @@
 
         <div class="slider-col">
           <div class="sc">
-            <label>Bloom <b>{lc.bloom.toFixed(1)}</b></label>
+            <label>{$t('creative.lines.settings.bloom')} <b>{lc.bloom.toFixed(1)}</b></label>
             <input type="range" min="0" max="3" step="0.1" value={lc.bloom}
               oninput={(e) => updateContent({ bloom: parseFloat((e.target as HTMLInputElement).value) })} />
           </div>
           <div class="sc">
-            <label>Afterglow <b>{lc.afterglow.toFixed(2)}</b></label>
+            <label>{$t('creative.lines.settings.afterglow')} <b>{lc.afterglow.toFixed(2)}</b></label>
             <input type="range" min="0" max="1" step="0.01" value={lc.afterglow}
               oninput={(e) => updateContent({ afterglow: parseFloat((e.target as HTMLInputElement).value) })} />
           </div>
         </div>
 
         <!-- Shared Shader Mask Mode -->
-        <div class="sec-label">Shader Mask</div>
+        <div class="sec-label">{$t('creative.lines.settings.shaderMask')}</div>
         <div class="control-row">
           <label class="toggle-row">
             <input type="checkbox"
               checked={lc.sharedShaderMode ?? false}
               onchange={(e) => updateContent({ sharedShaderMode: (e.target as HTMLInputElement).checked })} />
-            <span>Lines as mask windows</span>
+            <span>{$t('creative.lines.settings.maskWindows')}</span>
           </label>
         </div>
         {#if lc.sharedShaderMode}
@@ -983,18 +1004,18 @@
             Lines reveal a shared shader/video underneath — like looking through line-shaped windows.
           </div>
           <div class="control-row">
-            <span class="control-label">Source Layer</span>
+            <span class="control-label">{$t('creative.lines.settings.sourceLayer')}</span>
             <select class="param-select"
               value={lc.sharedShaderSourceId ?? ''}
               onchange={(e) => updateContent({ sharedShaderSourceId: (e.target as HTMLSelectElement).value })}>
-              <option value="">— Select a layer —</option>
+              <option value="">{$t('creative.lines.settings.selectLayer')}</option>
               {#each sharedShaderSources as src}
                 <option value={src.id}>{src.layerName} ({src.type})</option>
               {/each}
             </select>
           </div>
           {#if sharedShaderSources.length === 0}
-            <div class="hint-text" style="color: #f59e0b;">Add a shader or video layer to the project to use as a mask source.</div>
+            <div class="hint-text" style="color: #f59e0b;">{$t('creative.lines.settings.addMaskSource')}</div>
           {/if}
         {/if}
       {/if}
@@ -1002,7 +1023,7 @@
   </div>
 {:else}
   <div class="lines-panel">
-    <div class="empty-msg">No Lines layer selected</div>
+    <div class="empty-msg">{$t('creative.lines.settings.noLayer')}</div>
   </div>
 {/if}
 
@@ -1030,9 +1051,9 @@
     padding: 10px 12px 8px;
     border-bottom: 1px solid #161618;
   }
-  .lp-title { font-size: 14px; font-weight: 700; color: #BB86FC; letter-spacing: 0.5px; }
+  .lp-title { font-size: 14px; font-weight: 700; color: #bb86fc; letter-spacing: 0.5px; }
   .el-badge {
-    background: #BB86FC; color: #000; font-size: 10px; font-weight: 700;
+    background: #bb86fc; color: #000; font-size: 10px; font-weight: 700;
     padding: 1px 5px; border-radius: 8px;
   }
 
@@ -1044,7 +1065,7 @@
     border-bottom: 2px solid transparent;
   }
   .lp-tabs button:hover { color: var(--text-secondary, #aaa); }
-  .lp-tabs button.active { color: #BB86FC; border-bottom-color: #BB86FC; }
+  .lp-tabs button.active { color: #bb86fc; border-bottom-color: #bb86fc; }
 
   /* Content */
   .lp-content { padding: 8px 12px; overflow-y: auto; flex: 1; }
@@ -1066,15 +1087,15 @@
     transition: all 0.15s;
   }
   .tool-btn:hover { background: var(--bg-tertiary, #161618); color: var(--text-primary, #eee); border-color: #555; }
-  .tool-btn.active { background: rgba(187, 134, 252, 0.1); color: #BB86FC; border-color: #BB86FC; }
+  .tool-btn.active { background: rgba(187, 134, 252, 0.1); color: #bb86fc; border-color: #bb86fc; }
   .tool-icon { font-size: 19px; line-height: 1; }
   .tool-label { font-size: 10px; }
-  .tool-btn.active .tool-label { color: #BB86FC; }
+  .tool-btn.active .tool-label { color: #bb86fc; }
 
   /* Drawing hint */
   .drawing-hint {
     padding: 6px 8px; margin: 6px 0;
-    font-size: 11px; color: #BB86FC;
+    font-size: 11px; color: #bb86fc;
     background: rgba(187, 134, 252, 0.06);
     border: 1px solid rgba(187, 134, 252, 0.15);
     border-radius: 4px;
@@ -1087,14 +1108,14 @@
   .control-label {
     width: 70px; font-size: 12px; color: var(--text-muted, #888); flex-shrink: 0;
   }
-  .control-row input[type="range"] {
+  .control-row input[type='range'] {
     flex: 1; height: 4px; appearance: none; background: #333; border-radius: 2px; outline: none;
   }
-  .control-row input[type="range"]::-webkit-slider-thumb {
+  .control-row input[type='range']::-webkit-slider-thumb {
     appearance: none; width: 14px; height: 14px; border-radius: 50%;
-    background: #BB86FC; cursor: pointer; border: 2px solid #141416;
+    background: #bb86fc; cursor: pointer; border: 2px solid #141416;
   }
-  .control-row input[type="color"] {
+  .control-row input[type='color'] {
     width: 40px; height: 24px; border: none; border-radius: 4px; cursor: pointer; padding: 0;
   }
   .control-row select, .inline-select {
@@ -1111,30 +1132,30 @@
   .sc label {
     font-size: 12px; color: #bbb; margin-bottom: 4px; display: flex; align-items: baseline;
   }
-  .sc label b { color: #BB86FC; font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace); font-size: 12px; font-weight: 400; margin-left: auto; }
+  .sc label b { color: #bb86fc; font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace); font-size: 12px; font-weight: 400; margin-left: auto; }
   .sc select {
     background: #333; color: var(--text-primary, #eee); border: 1px solid #555;
     padding: 4px 8px; border-radius: 4px; font-size: 12px;
   }
-  .sc input[type="range"] {
+  .sc input[type='range'] {
     width: 100%; height: 4px; appearance: none; background: #333; border-radius: 2px; outline: none;
   }
-  .sc input[type="range"]::-webkit-slider-thumb {
+  .sc input[type='range']::-webkit-slider-thumb {
     appearance: none; width: 14px; height: 14px; border-radius: 50%;
-    background: #BB86FC; cursor: pointer; border: 2px solid #141416;
+    background: #bb86fc; cursor: pointer; border: 2px solid #141416;
   }
 
   /* Check row */
   .check-row { display: flex; gap: 12px; margin-bottom: 8px; flex-wrap: wrap; }
   .check-row label { display: flex; align-items: center; gap: 5px; font-size: 12px; color: #bbb; cursor: pointer; }
-  .check-row input[type="checkbox"] { accent-color: #BB86FC; width: 13px; height: 13px; }
+  .check-row input[type='checkbox'] { accent-color: #bb86fc; width: 13px; height: 13px; }
 
   /* Text input */
   .text-input {
     flex: 1; background: #222; color: var(--text-primary, #eee); border: 1px solid #444;
     padding: 4px 8px; border-radius: 4px; font-size: 12px; outline: none;
   }
-  .text-input:focus { border-color: #BB86FC; }
+  .text-input:focus { border-color: #bb86fc; }
 
   /* Elements list */
   .elements-list { max-height: 260px; overflow-y: auto; margin-bottom: 8px; }
@@ -1144,7 +1165,7 @@
     cursor: pointer; transition: all 0.1s;
   }
   .element-row:hover { background: var(--bg-primary, #0d0d10); border-color: #333; }
-  .element-row.selected { background: rgba(187, 134, 252, 0.08); border-color: #BB86FC; }
+  .element-row.selected { background: rgba(187, 134, 252, 0.08); border-color: #bb86fc; }
   .el-info { flex: 1; min-width: 0; }
   .el-name { display: block; font-size: 13px; color: var(--text-primary, #ddd); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .el-meta { display: block; font-size: 11px; color: #666; }
@@ -1156,7 +1177,7 @@
   }
   .icon-btn:hover { color: var(--text-primary, #ddd); background: rgba(255,255,255,0.05); }
   .icon-btn.off { opacity: 0.4; }
-  .icon-btn.on { color: #BB86FC; }
+  .icon-btn.on { color: #bb86fc; }
   .icon-btn.del:hover { color: #ff5555; background: rgba(255,85,85,0.1); border-color: rgba(255,85,85,0.3); }
 
   /* Empty state */
@@ -1188,7 +1209,7 @@
     text-align: left;
   }
   .strip-el:hover { background: var(--bg-tertiary, #1a1a1e); border-color: #333; }
-  .strip-el.selected { background: rgba(187, 134, 252, 0.08); border-color: #BB86FC; color: var(--text-primary, #eee); }
+  .strip-el.selected { background: rgba(187, 134, 252, 0.08); border-color: #bb86fc; color: var(--text-primary, #eee); }
   .strip-name { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 12px; }
   .strip-type { font-size: 10px; color: #666; flex-shrink: 0; }
   .strip-del {
@@ -1202,7 +1223,7 @@
     width: 100%; padding: 6px 12px; margin: 8px 0;
     background: rgba(187, 134, 252, 0.1);
     border: 1px solid rgba(187, 134, 252, 0.25);
-    color: #BB86FC; border-radius: 4px;
+    color: #bb86fc; border-radius: 4px;
     font-size: 12px; font-weight: 600; cursor: pointer;
   }
   .apply-all-btn:hover {
@@ -1221,7 +1242,7 @@
 
   /* Animation status */
   .anim-status {
-    font-size: 11px; color: #BB86FC;
+    font-size: 11px; color: #bb86fc;
     padding: 4px 0 6px; margin-bottom: 4px;
     border-bottom: 1px solid #222;
     text-align: center; font-weight: 600;
@@ -1232,8 +1253,8 @@
     display: flex; align-items: center; gap: 8px;
     cursor: pointer; font-size: 13px; color: var(--text-primary, #ccc);
   }
-  .toggle-row input[type="checkbox"] {
-    accent-color: #BB86FC;
+  .toggle-row input[type='checkbox'] {
+    accent-color: #bb86fc;
   }
 
   /* Hint text */

@@ -4,6 +4,7 @@
     Layer, SVGFillMode, SVGColorMode, SVGContent,
     SVGRenderMode, SVGMaterialPreset, SVGLightPreset, SVGOutlineStyle, SVGConnectionStyle,
   } from '../types';
+  import { t } from '../i18n';
 
   // Tray state
   export let isOpen = false;
@@ -14,72 +15,72 @@
 
   // Fill mode options
   const fillModes: { value: SVGFillMode; label: string }[] = [
-    { value: 'liquid', label: 'Liquid' },
-    { value: 'solid', label: 'Solid' },
-    { value: 'gradient', label: 'Gradient' },
-    { value: 'shimmer', label: 'Shimmer' },
-    { value: 'pulse', label: 'Pulse' },
-    { value: 'noise', label: 'Noise' },
-    { value: 'particles', label: 'Particles' },
-    { value: 'fluid', label: 'Fluid' },
-    { value: 'flow', label: 'Flow' },
+    { value: 'liquid', label: 'creative.svg.fillModes.liquid' },
+    { value: 'solid', label: 'creative.svg.fillModes.solid' },
+    { value: 'gradient', label: 'creative.svg.fillModes.gradient' },
+    { value: 'shimmer', label: 'creative.svg.fillModes.shimmer' },
+    { value: 'pulse', label: 'creative.svg.fillModes.pulse' },
+    { value: 'noise', label: 'creative.svg.fillModes.noise' },
+    { value: 'particles', label: 'creative.svg.fillModes.particles' },
+    { value: 'fluid', label: 'creative.svg.fillModes.fluid' },
+    { value: 'flow', label: 'creative.svg.fillModes.flow' },
   ];
 
   const renderModes: { value: SVGRenderMode; label: string }[] = [
-    { value: 'flat', label: 'Flat (2D)' },
-    { value: 'extrude', label: '3D Extrude' },
+    { value: 'flat', label: 'creative.svg.renderModes.flat' },
+    { value: 'extrude', label: 'creative.svg.renderModes.extrude' },
   ];
   const materialPresets: { value: SVGMaterialPreset; label: string }[] = [
-    { value: 'holographic', label: 'Holographic' },
-    { value: 'chrome', label: 'Chrome' },
-    { value: 'glass', label: 'Glass' },
-    { value: 'neon', label: 'Neon' },
-    { value: 'matte', label: 'Matte' },
+    { value: 'holographic', label: 'creative.svg.materials.holographic' },
+    { value: 'chrome', label: 'creative.svg.materials.chrome' },
+    { value: 'glass', label: 'creative.svg.materials.glass' },
+    { value: 'neon', label: 'creative.svg.materials.neon' },
+    { value: 'matte', label: 'creative.svg.materials.matte' },
   ];
   const lightPresets: { value: SVGLightPreset; label: string }[] = [
-    { value: 'studio', label: 'Studio' },
-    { value: 'neon', label: 'Neon' },
-    { value: 'rim', label: 'Rim' },
+    { value: 'studio', label: 'creative.svg.lights.studio' },
+    { value: 'neon', label: 'creative.svg.lights.neon' },
+    { value: 'rim', label: 'creative.svg.lights.rim' },
   ];
   const outlineStyles: { value: SVGOutlineStyle; label: string }[] = [
-    { value: 'solid', label: 'Solid' },
-    { value: 'dashed', label: 'Marching Ants' },
-    { value: 'gradient', label: 'Gradient' },
-    { value: 'double', label: 'Neon (Double)' },
-    { value: 'taper', label: 'Taper' },
-    { value: 'glow-pulse', label: 'Glow Pulse' },
+    { value: 'solid', label: 'creative.svg.outlineStyles.solid' },
+    { value: 'dashed', label: 'creative.svg.outlineStyles.dashed' },
+    { value: 'gradient', label: 'creative.svg.outlineStyles.gradient' },
+    { value: 'double', label: 'creative.svg.outlineStyles.double' },
+    { value: 'taper', label: 'creative.svg.outlineStyles.taper' },
+    { value: 'glow-pulse', label: 'creative.svg.outlineStyles.glowPulse' },
   ];
   const connectionStyles: { value: SVGConnectionStyle; label: string }[] = [
-    { value: 'arc', label: 'Arc' },
-    { value: 'straight', label: 'Straight' },
-    { value: 'electric', label: 'Electric' },
-    { value: 'orbital', label: 'Orbital' },
-    { value: 'beaded', label: 'Beaded' },
-    { value: 'gravity', label: 'Gravity Sag' },
-    { value: 'dataflow', label: 'Data Flow' },
+    { value: 'arc', label: 'creative.svg.connectionStyles.arc' },
+    { value: 'straight', label: 'creative.svg.connectionStyles.straight' },
+    { value: 'electric', label: 'creative.svg.connectionStyles.electric' },
+    { value: 'orbital', label: 'creative.svg.connectionStyles.orbital' },
+    { value: 'beaded', label: 'creative.svg.connectionStyles.beaded' },
+    { value: 'gravity', label: 'creative.svg.connectionStyles.gravity' },
+    { value: 'dataflow', label: 'creative.svg.connectionStyles.dataflow' },
   ];
 
   // Color mode options
   const colorModes: { value: SVGColorMode; label: string }[] = [
-    { value: 'perShape', label: 'Per Shape' },
-    { value: 'rainbow', label: 'Rainbow' },
-    { value: 'monochrome', label: 'Monochrome' },
-    { value: 'complementary', label: 'Complementary' },
-    { value: 'analogous', label: 'Analogous' },
-    { value: 'white', label: 'White' },
+    { value: 'perShape', label: 'creative.svg.colorModes.perShape' },
+    { value: 'rainbow', label: 'creative.svg.colorModes.rainbow' },
+    { value: 'monochrome', label: 'creative.svg.colorModes.monochrome' },
+    { value: 'complementary', label: 'creative.svg.colorModes.complementary' },
+    { value: 'analogous', label: 'creative.svg.colorModes.analogous' },
+    { value: 'white', label: 'creative.svg.colorModes.white' },
   ];
 
   // Preset configurations
   const presets = [
-    { name: 'Default', key: 'default' },
-    { name: 'Electric', key: 'electric' },
-    { name: 'Organic', key: 'organic' },
-    { name: 'Neon', key: 'neon' },
-    { name: 'Minimal', key: 'minimal' },
-    { name: 'Chaos', key: 'chaos' },
-    { name: '✦ Hologram 3D', key: 'hologram' },
-    { name: '✦ Chrome Logo', key: 'chrome3d' },
-    { name: '✦ Liquid Glass', key: 'glass3d' },
+    { name: 'creative.svg.presets.default', key: 'default' },
+    { name: 'creative.svg.presets.electric', key: 'electric' },
+    { name: 'creative.svg.presets.organic', key: 'organic' },
+    { name: 'creative.svg.presets.neon', key: 'neon' },
+    { name: 'creative.svg.presets.minimal', key: 'minimal' },
+    { name: 'creative.svg.presets.chaos', key: 'chaos' },
+    { name: 'creative.svg.presets.hologram', key: 'hologram' },
+    { name: 'creative.svg.presets.chrome3d', key: 'chrome3d' },
+    { name: 'creative.svg.presets.glass3d', key: 'glass3d' },
   ];
 
   // Collapsed sections state
@@ -141,7 +142,7 @@
       const svgSource = await file.text();
       project.setSVGSource($selectedSVGLayer.id, svgSource);
     } catch (err) {
-      console.error('Failed to load SVG:', err);
+      console.error($t('creative.svg.source.loadError'), err);
     }
     input.value = '';
   }
@@ -160,7 +161,7 @@
           const svgSource = await file.text();
           project.setSVGSource($selectedSVGLayer.id, svgSource);
         } catch (err) {
-          console.error('Failed to load SVG:', err);
+          console.error($t('creative.svg.source.loadError'), err);
         }
         break;
       }
@@ -323,7 +324,7 @@
   }
 
   // Get SVG layers from the project
-  $: svgLayers = $layers.filter(l => l.type === 'svg') as Layer[];
+  $: svgLayers = $layers.filter((l) => l.type === 'svg') as Layer[];
 </script>
 
 {#if !embedded}
@@ -343,7 +344,7 @@
 <!-- Slide-out tray -->
 <div class="svg-tray" class:open={isOpen || embedded} class:embedded>
   <div class="tray-header">
-    <h3>SVG Controls</h3>
+    <h3>{$t('creative.svg.title')}</h3>
   </div>
 
   <div class="tray-content">
@@ -354,14 +355,14 @@
           <path d="M3 15l6-6 4 4 8-8" />
           <circle cx="8" cy="8" r="2" />
         </svg>
-        <p>No SVG layer selected</p>
-        <p class="hint">Select an SVG layer in the Layers panel</p>
+        <p>{$t('creative.svg.empty.noLayer')}</p>
+        <p class="hint">{$t('creative.svg.empty.selectHint')}</p>
       </div>
     {:else}
       <!-- SVG Source Section -->
       <div class="section">
         <button class="section-header" onclick={() => toggleSection('source')}>
-          <span>SVG Source</span>
+          <span>{$t('creative.svg.sections.source')}</span>
           <span class="toggle">{expandedSections.source ? '-' : '+'}</span>
         </button>
         {#if expandedSections.source}
@@ -372,7 +373,7 @@
             ondragover={handleDragOver}
             ondragleave={handleDragLeave}
             role="region"
-            aria-label="SVG drop zone"
+            aria-label={$t('creative.svg.source.dropZoneAria')}
           >
             {#if $selectedSVGContent?.svgSource}
               <div class="svg-loaded">
@@ -381,15 +382,15 @@
                     <path d="M9 12l2 2 4-4" />
                     <circle cx="12" cy="12" r="10" />
                   </svg>
-                  <span>SVG Loaded</span>
+                  <span>{$t('creative.svg.source.loaded')}</span>
                 </div>
                 <div class="svg-actions">
                   <label class="action-btn replace">
                     <input type="file" accept=".svg" onchange={handleSVGUpload} />
-                    Replace
+                    {$t('creative.svg.source.replace')}
                   </label>
                   <button class="action-btn clear" onclick={clearSVGSource}>
-                    Clear
+                    {$t('creative.svg.source.clear')}
                   </button>
                 </div>
               </div>
@@ -400,10 +401,10 @@
                   <polyline points="17 8 12 3 7 8" />
                   <line x1="12" y1="3" x2="12" y2="15" />
                 </svg>
-                <p>Drop SVG here</p>
+                <p>{$t('creative.svg.source.dropHere')}</p>
                 <label class="upload-btn">
                   <input type="file" accept=".svg" onchange={handleSVGUpload} />
-                  Upload SVG
+                  {$t('creative.svg.source.upload')}
                 </label>
               </div>
             {/if}
@@ -414,13 +415,13 @@
       <!-- Position & Scale Section -->
       <div class="section">
         <button class="section-header" onclick={() => toggleSection('position')}>
-          <span>Position & Scale</span>
+          <span>{$t('creative.svg.sections.position')}</span>
           <span class="toggle">{expandedSections.position ? '-' : '+'}</span>
         </button>
         {#if expandedSections.position && $selectedSVGContent}
           <div class="section-content">
             <div class="param-row">
-              <label>Pan X</label>
+              <label>{$t('creative.svg.labels.panX')}</label>
               <input
                 type="range"
                 min="-1"
@@ -432,7 +433,7 @@
               <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={($selectedSVGContent.panX ?? 0).toFixed(2)} />
             </div>
             <div class="param-row">
-              <label>Pan Y</label>
+              <label>{$t('creative.svg.labels.panY')}</label>
               <input
                 type="range"
                 min="-1"
@@ -444,7 +445,7 @@
               <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={($selectedSVGContent.panY ?? 0).toFixed(2)} />
             </div>
             <div class="param-row">
-              <label>Scale</label>
+              <label>{$t('creative.common.scale')}</label>
               <input
                 type="range"
                 min="0.1"
@@ -460,7 +461,7 @@
               updateParam('panY', 0);
               updateParam('contentScale', 1);
             }}>
-              Reset Position
+              {$t('creative.svg.labels.resetPosition')}
             </button>
           </div>
         {/if}
@@ -469,33 +470,33 @@
       <!-- 3D / Material Section -->
       <div class="section">
         <button class="section-header" onclick={() => toggleSection('threeD')}>
-          <span>3D / Material</span>
+          <span>{$t('creative.svg.sections.threeD')}</span>
           <span class="toggle">{expandedSections.threeD ? '-' : '+'}</span>
         </button>
         {#if expandedSections.threeD && $selectedSVGContent}
           <div class="section-content">
             <div class="param-row">
-              <label>Render Mode</label>
+              <label>{$t('creative.svg.labels.renderMode')}</label>
               <select
                 value={$selectedSVGContent.renderMode ?? 'flat'}
                 onchange={(e) => updateParam('renderMode', (e.target as HTMLSelectElement).value)}
               >
-                {#each renderModes as m}<option value={m.value}>{m.label}</option>{/each}
+                {#each renderModes as m}<option value={m.value}>{$t(m.label)}</option>{/each}
               </select>
             </div>
 
             {#if ($selectedSVGContent.renderMode ?? 'flat') === 'extrude'}
               <div class="param-row">
-                <label>Material</label>
+                <label>{$t('creative.svg.labels.material')}</label>
                 <select
                   value={$selectedSVGContent.materialPreset ?? 'holographic'}
                   onchange={(e) => updateParam('materialPreset', (e.target as HTMLSelectElement).value)}
                 >
-                  {#each materialPresets as m}<option value={m.value}>{m.label}</option>{/each}
+                  {#each materialPresets as m}<option value={m.value}>{$t(m.label)}</option>{/each}
                 </select>
               </div>
               <div class="param-row">
-                <label>Depth</label>
+                <label>{$t('creative.common.depth')}</label>
                 <input type="range" min="0" max="120" step="1"
                   value={$selectedSVGContent.extrudeDepth ?? 28}
                   oninput={(e) => updateParam('extrudeDepth', parseFloat((e.target as HTMLInputElement).value))} />
@@ -504,13 +505,11 @@
               <div class="param-row">
                 <label>
                   <input type="checkbox" checked={$selectedSVGContent.bevelEnabled ?? true}
-                    onchange={() => toggleParam('bevelEnabled')} />
-                  Bevel
-                </label>
+                    onchange={() => toggleParam('bevelEnabled')} />{$t('creative.common.bevel')}</label>
               </div>
               {#if $selectedSVGContent.bevelEnabled ?? true}
                 <div class="param-row">
-                  <label>Bevel Size</label>
+                  <label>{$t('creative.common.bevelSize')}</label>
                   <input type="range" min="0" max="6" step="0.1"
                     value={$selectedSVGContent.bevelSize ?? 2}
                     oninput={(e) => updateParam('bevelSize', parseFloat((e.target as HTMLInputElement).value))} />
@@ -519,7 +518,7 @@
               {/if}
               {#if ($selectedSVGContent.materialPreset ?? 'holographic') === 'holographic'}
                 <div class="param-row">
-                  <label>Iridescence</label>
+                  <label>{$t('creative.svg.labels.iridescence')}</label>
                   <input type="range" min="0" max="1" step="0.01"
                     value={$selectedSVGContent.iridescence ?? 1}
                     oninput={(e) => updateParam('iridescence', parseFloat((e.target as HTMLInputElement).value))} />
@@ -528,7 +527,7 @@
               {/if}
               {#if ($selectedSVGContent.materialPreset ?? 'holographic') === 'glass'}
                 <div class="param-row">
-                  <label>Transmission</label>
+                  <label>{$t('creative.svg.labels.transmission')}</label>
                   <input type="range" min="0" max="1" step="0.01"
                     value={$selectedSVGContent.glassTransmission ?? 0.9}
                     oninput={(e) => updateParam('glassTransmission', parseFloat((e.target as HTMLInputElement).value))} />
@@ -536,102 +535,102 @@
                 </div>
               {/if}
               <div class="param-row">
-                <label>Metalness</label>
+                <label>{$t('creative.svg.labels.metalness')}</label>
                 <input type="range" min="0" max="1" step="0.01"
                   value={$selectedSVGContent.materialMetalness ?? 0.6}
                   oninput={(e) => updateParam('materialMetalness', parseFloat((e.target as HTMLInputElement).value))} />
                 <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={($selectedSVGContent.materialMetalness ?? 0.6).toFixed(2)} />
               </div>
               <div class="param-row">
-                <label>Roughness</label>
+                <label>{$t('creative.common.roughness')}</label>
                 <input type="range" min="0" max="1" step="0.01"
                   value={$selectedSVGContent.materialRoughness ?? 0.25}
                   oninput={(e) => updateParam('materialRoughness', parseFloat((e.target as HTMLInputElement).value))} />
                 <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={($selectedSVGContent.materialRoughness ?? 0.25).toFixed(2)} />
               </div>
               <div class="param-row">
-                <label>Reflections</label>
+                <label>{$t('creative.svg.labels.reflections')}</label>
                 <input type="range" min="0" max="2" step="0.01"
                   value={$selectedSVGContent.envIntensity ?? 1}
                   oninput={(e) => updateParam('envIntensity', parseFloat((e.target as HTMLInputElement).value))} />
                 <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={($selectedSVGContent.envIntensity ?? 1).toFixed(2)} />
               </div>
               <div class="param-row">
-                <label>Lights</label>
+                <label>{$t('creative.svg.labels.lights')}</label>
                 <select
                   value={$selectedSVGContent.lightPreset ?? 'studio'}
                   onchange={(e) => updateParam('lightPreset', (e.target as HTMLSelectElement).value)}
                 >
-                  {#each lightPresets as m}<option value={m.value}>{m.label}</option>{/each}
+                  {#each lightPresets as m}<option value={m.value}>{$t(m.label)}</option>{/each}
                 </select>
               </div>
               <div class="param-row">
-                <label>Light Power</label>
+                <label>{$t('creative.svg.labels.lightPower')}</label>
                 <input type="range" min="0" max="3" step="0.05"
                   value={$selectedSVGContent.lightIntensity ?? 1}
                   oninput={(e) => updateParam('lightIntensity', parseFloat((e.target as HTMLInputElement).value))} />
                 <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={($selectedSVGContent.lightIntensity ?? 1).toFixed(2)} />
               </div>
               <div class="param-row">
-                <label>FOV</label>
+                <label>{$t('creative.svg.labels.fov')}</label>
                 <input type="range" min="25" max="75" step="1"
                   value={$selectedSVGContent.cameraFov ?? 40}
                   oninput={(e) => updateParam('cameraFov', parseFloat((e.target as HTMLInputElement).value))} />
                 <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={Math.round($selectedSVGContent.cameraFov ?? 40)} />
               </div>
-              <div class="param-subhead">Rotate (manual)</div>
+              <div class="param-subhead">{$t('creative.svg.subheads.rotateManual')}</div>
               <div class="param-row">
-                <label>Rotate X</label>
+                <label>{$t('creative.svg.labels.rotateX')}</label>
                 <input type="range" min="-180" max="180" step="1"
                   value={$selectedSVGContent.rotateX ?? 0}
                   oninput={(e) => updateParam('rotateX', parseFloat((e.target as HTMLInputElement).value))} />
                 <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={Math.round($selectedSVGContent.rotateX ?? 0)} />
               </div>
               <div class="param-row">
-                <label>Rotate Y</label>
+                <label>{$t('creative.svg.labels.rotateY')}</label>
                 <input type="range" min="-180" max="180" step="1"
                   value={$selectedSVGContent.rotateY ?? 0}
                   oninput={(e) => updateParam('rotateY', parseFloat((e.target as HTMLInputElement).value))} />
                 <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={Math.round($selectedSVGContent.rotateY ?? 0)} />
               </div>
               <div class="param-row">
-                <label>Rotate Z</label>
+                <label>{$t('creative.svg.labels.rotateZ')}</label>
                 <input type="range" min="-180" max="180" step="1"
                   value={$selectedSVGContent.rotateZ ?? 0}
                   oninput={(e) => updateParam('rotateZ', parseFloat((e.target as HTMLInputElement).value))} />
                 <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={Math.round($selectedSVGContent.rotateZ ?? 0)} />
               </div>
-              <div class="param-subhead">Auto-spin (speed)</div>
+              <div class="param-subhead">{$t('creative.svg.subheads.autoSpin')}</div>
               <div class="param-row">
-                <label>Spin X</label>
+                <label>{$t('creative.svg.labels.spinX')}</label>
                 <input type="range" min="-1.5" max="1.5" step="0.01"
                   value={$selectedSVGContent.rotateSpeedX ?? 0}
                   oninput={(e) => updateParam('rotateSpeedX', parseFloat((e.target as HTMLInputElement).value))} />
                 <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={($selectedSVGContent.rotateSpeedX ?? 0).toFixed(2)} />
               </div>
               <div class="param-row">
-                <label>Spin Y</label>
+                <label>{$t('creative.svg.labels.spinY')}</label>
                 <input type="range" min="-1.5" max="1.5" step="0.01"
                   value={$selectedSVGContent.rotateSpeedY ?? 0.25}
                   oninput={(e) => updateParam('rotateSpeedY', parseFloat((e.target as HTMLInputElement).value))} />
                 <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={($selectedSVGContent.rotateSpeedY ?? 0.25).toFixed(2)} />
               </div>
               <div class="param-row">
-                <label>Spin Z</label>
+                <label>{$t('creative.svg.labels.spinZ')}</label>
                 <input type="range" min="-1.5" max="1.5" step="0.01"
                   value={$selectedSVGContent.rotateSpeedZ ?? 0}
                   oninput={(e) => updateParam('rotateSpeedZ', parseFloat((e.target as HTMLInputElement).value))} />
                 <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={($selectedSVGContent.rotateSpeedZ ?? 0).toFixed(2)} />
               </div>
               <div class="param-row">
-                <label>Float</label>
+                <label>{$t('creative.svg.labels.float')}</label>
                 <input type="range" min="0" max="40" step="1"
                   value={$selectedSVGContent.floatAmount ?? 8}
                   oninput={(e) => updateParam('floatAmount', parseFloat((e.target as HTMLInputElement).value))} />
                 <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={Math.round($selectedSVGContent.floatAmount ?? 8)} />
               </div>
               <div class="param-row">
-                <label>Bloom</label>
+                <label>{$t('creative.common.bloom')}</label>
                 <input type="range" min="0" max="4" step="0.05"
                   value={$selectedSVGContent.bloomStrength ?? 0}
                   oninput={(e) => updateParam('bloomStrength', parseFloat((e.target as HTMLInputElement).value))} />
@@ -645,16 +644,16 @@
       <!-- Presets -->
       <div class="section">
         <div class="section-header static">
-          <span>Presets</span>
+          <span>{$t('creative.svg.sections.presets')}</span>
         </div>
         <div class="section-content presets">
           {#each presets as preset}
             <button class="preset-btn" onclick={() => applyPreset(preset.key)}>
-              {preset.name}
+              {$t(preset.name)}
             </button>
           {/each}
           <button class="preset-btn reset" onclick={resetToDefaults}>
-            Reset
+            {$t('creative.svg.presets.reset')}
           </button>
         </div>
       </div>
@@ -662,19 +661,19 @@
       <!-- Fill Mode Section -->
       <div class="section">
         <button class="section-header" onclick={() => toggleSection('fillMode')}>
-          <span>Fill Mode</span>
+          <span>{$t('creative.svg.sections.fillMode')}</span>
           <span class="toggle">{expandedSections.fillMode ? '-' : '+'}</span>
         </button>
         {#if expandedSections.fillMode && $selectedSVGContent}
           <div class="section-content">
             <div class="param-row">
-              <label>Mode</label>
+              <label>{$t('creative.common.mode')}</label>
               <select
                 value={$selectedSVGContent.fillMode}
                 onchange={(e) => updateParam('fillMode', (e.target as HTMLSelectElement).value)}
               >
                 {#each fillModes as mode}
-                  <option value={mode.value}>{mode.label}</option>
+                  <option value={mode.value}>{$t(mode.label)}</option>
                 {/each}
               </select>
             </div>
@@ -686,12 +685,10 @@
                     type="checkbox"
                     checked={$selectedSVGContent.liquidEnabled}
                     onchange={() => toggleParam('liquidEnabled')}
-                  />
-                  Enabled
-                </label>
+                  />{$t('creative.common.enabled')}</label>
               </div>
               <div class="param-row">
-                <label>Speed</label>
+                <label>{$t('creative.common.speed')}</label>
                 <input
                   type="range"
                   min="0.05"
@@ -703,7 +700,7 @@
                 <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.liquidSpeed.toFixed(2)} />
               </div>
               <div class="param-row">
-                <label>Wave Amp</label>
+                <label>{$t('creative.svg.labels.waveAmp')}</label>
                 <input
                   type="range"
                   min="0.02"
@@ -718,7 +715,7 @@
 
             {#if $selectedSVGContent.fillMode === 'gradient'}
               <div class="param-row">
-                <label>Angle</label>
+                <label>{$t('creative.common.angle')}</label>
                 <input
                   type="range"
                   min="0"
@@ -730,7 +727,7 @@
                 <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.gradientAngle} />
               </div>
               <div class="param-row">
-                <label>Spread</label>
+                <label>{$t('creative.svg.labels.spread')}</label>
                 <input
                   type="range"
                   min="0.1"
@@ -745,7 +742,7 @@
 
             {#if $selectedSVGContent.fillMode === 'shimmer'}
               <div class="param-row">
-                <label>Speed</label>
+                <label>{$t('creative.common.speed')}</label>
                 <input
                   type="range"
                   min="1"
@@ -757,7 +754,7 @@
                 <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.shimmerSpeed.toFixed(1)} />
               </div>
               <div class="param-row">
-                <label>Scale</label>
+                <label>{$t('creative.common.scale')}</label>
                 <input
                   type="range"
                   min="0.02"
@@ -769,7 +766,7 @@
                 <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.shimmerScale.toFixed(2)} />
               </div>
               <div class="param-row">
-                <label>Intensity</label>
+                <label>{$t('creative.common.intensity')}</label>
                 <input
                   type="range"
                   min="0.2"
@@ -784,7 +781,7 @@
 
             {#if $selectedSVGContent.fillMode === 'pulse'}
               <div class="param-row">
-                <label>Speed</label>
+                <label>{$t('creative.common.speed')}</label>
                 <input
                   type="range"
                   min="0.5"
@@ -796,7 +793,7 @@
                 <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.pulseSpeed.toFixed(1)} />
               </div>
               <div class="param-row">
-                <label>Ring Scale</label>
+                <label>{$t('creative.svg.labels.ringScale')}</label>
                 <input
                   type="range"
                   min="2"
@@ -811,7 +808,7 @@
 
             {#if $selectedSVGContent.fillMode === 'noise'}
               <div class="param-row">
-                <label>Scale</label>
+                <label>{$t('creative.common.scale')}</label>
                 <input
                   type="range"
                   min="0.005"
@@ -823,7 +820,7 @@
                 <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.noiseScale.toFixed(3)} />
               </div>
               <div class="param-row">
-                <label>Speed</label>
+                <label>{$t('creative.common.speed')}</label>
                 <input
                   type="range"
                   min="0.1"
@@ -838,7 +835,7 @@
 
             {#if $selectedSVGContent.fillMode === 'particles'}
               <div class="param-row">
-                <label>Density</label>
+                <label>{$t('creative.svg.labels.density')}</label>
                 <input
                   type="range"
                   min="50"
@@ -850,7 +847,7 @@
                 <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.particleFillDensity} />
               </div>
               <div class="param-row">
-                <label>Size</label>
+                <label>{$t('creative.svg.labels.size')}</label>
                 <input
                   type="range"
                   min="1"
@@ -865,21 +862,21 @@
 
             {#if $selectedSVGContent.fillMode === 'fluid' || $selectedSVGContent.fillMode === 'flow'}
               <div class="param-row">
-                <label>Fluid Scale</label>
+                <label>{$t('creative.svg.labels.fluidScale')}</label>
                 <input type="range" min="0.5" max="6" step="0.1"
                   value={$selectedSVGContent.fluidScale ?? 2.5}
                   oninput={(e) => updateParam('fluidScale', parseFloat((e.target as HTMLInputElement).value))} />
                 <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={($selectedSVGContent.fluidScale ?? 2.5).toFixed(1)} />
               </div>
               <div class="param-row">
-                <label>Fluid Speed</label>
+                <label>{$t('creative.svg.labels.fluidSpeed')}</label>
                 <input type="range" min="0.1" max="3" step="0.05"
                   value={$selectedSVGContent.fluidSpeed ?? 0.6}
                   oninput={(e) => updateParam('fluidSpeed', parseFloat((e.target as HTMLInputElement).value))} />
                 <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={($selectedSVGContent.fluidSpeed ?? 0.6).toFixed(2)} />
               </div>
               <div class="param-row">
-                <label>Turbulence</label>
+                <label>{$t('creative.common.turbulence')}</label>
                 <input type="range" min="0" max="2" step="0.05"
                   value={$selectedSVGContent.fluidTurbulence ?? 1}
                   oninput={(e) => updateParam('fluidTurbulence', parseFloat((e.target as HTMLInputElement).value))} />
@@ -891,20 +888,18 @@
             <div class="param-row">
               <label>
                 <input type="checkbox" checked={$selectedSVGContent.particleFillEnabled ?? false}
-                  onchange={() => toggleParam('particleFillEnabled')} />
-                Particle Fill
-              </label>
+                  onchange={() => toggleParam('particleFillEnabled')} />{$t('creative.svg.labels.particleFill')}</label>
             </div>
             {#if $selectedSVGContent.particleFillEnabled}
               <div class="param-row">
-                <label>Fill Density</label>
+                <label>{$t('creative.svg.labels.fillDensity')}</label>
                 <input type="range" min="50" max="500" step="10"
                   value={$selectedSVGContent.particleFillDensity}
                   oninput={(e) => updateParam('particleFillDensity', parseFloat((e.target as HTMLInputElement).value))} />
                 <input class="value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.particleFillDensity} />
               </div>
               <div class="param-row">
-                <label>Fill Speed</label>
+                <label>{$t('creative.svg.labels.fillSpeed')}</label>
                 <input type="range" min="0.1" max="3" step="0.05"
                   value={$selectedSVGContent.particleFillSpeed}
                   oninput={(e) => updateParam('particleFillSpeed', parseFloat((e.target as HTMLInputElement).value))} />
@@ -914,16 +909,16 @@
 
             <!-- Outline (always visible) -->
             <div class="param-row">
-              <label>Outline Style</label>
+              <label>{$t('creative.svg.labels.outlineStyle')}</label>
               <select
                 value={$selectedSVGContent.outlineStyle ?? 'solid'}
                 onchange={(e) => updateParam('outlineStyle', (e.target as HTMLSelectElement).value)}
               >
-                {#each outlineStyles as s}<option value={s.value}>{s.label}</option>{/each}
+                {#each outlineStyles as s}<option value={s.value}>{$t(s.label)}</option>{/each}
               </select>
             </div>
             <div class="param-row">
-              <label>Outline</label>
+              <label>{$t('creative.svg.labels.outline')}</label>
               <input
                 type="range"
                 min="1"
@@ -941,26 +936,26 @@
       <!-- Color Mode Section -->
       <div class="section">
         <button class="section-header" onclick={() => toggleSection('colorMode')}>
-          <span>Color Mode</span>
+          <span>{$t('creative.svg.sections.colorMode')}</span>
           <span class="toggle">{expandedSections.colorMode ? '-' : '+'}</span>
         </button>
         {#if expandedSections.colorMode && $selectedSVGContent}
           <div class="section-content">
             <div class="param-row">
-              <label>Mode</label>
+              <label>{$t('creative.common.mode')}</label>
               <select
                 value={$selectedSVGContent.colorMode}
                 onchange={(e) => updateParam('colorMode', (e.target as HTMLSelectElement).value)}
               >
                 {#each colorModes as mode}
-                  <option value={mode.value}>{mode.label}</option>
+                  <option value={mode.value}>{$t(mode.label)}</option>
                 {/each}
               </select>
             </div>
 
             {#if $selectedSVGContent.colorMode === 'monochrome' || $selectedSVGContent.colorMode === 'complementary' || $selectedSVGContent.colorMode === 'analogous'}
               <div class="param-row">
-                <label>Hue</label>
+                <label>{$t('creative.svg.labels.hue')}</label>
                 <input
                   type="range"
                   min="0"
@@ -979,14 +974,12 @@
                   type="checkbox"
                   checked={$selectedSVGContent.colorCycleEnabled}
                   onchange={() => toggleParam('colorCycleEnabled')}
-                />
-                Color Cycle
-              </label>
+                />{$t('creative.svg.labels.colorCycle')}</label>
             </div>
 
             {#if $selectedSVGContent.colorCycleEnabled}
               <div class="param-row">
-                <label>Speed</label>
+                <label>{$t('creative.common.speed')}</label>
                 <input
                   type="range"
                   min="0.05"
@@ -1005,7 +998,7 @@
       <!-- Effects Section -->
       <div class="section">
         <button class="section-header" onclick={() => toggleSection('effects')}>
-          <span>Effects</span>
+          <span>{$t('creative.svg.sections.effects')}</span>
           <span class="toggle">{expandedSections.effects ? '-' : '+'}</span>
         </button>
         {#if expandedSections.effects && $selectedSVGContent}
@@ -1017,13 +1010,11 @@
                   type="checkbox"
                   checked={$selectedSVGContent.energyEnabled}
                   onchange={() => toggleParam('energyEnabled')}
-                />
-                Energy Pulses
-              </label>
+                />{$t('creative.svg.labels.energyPulses')}</label>
               {#if $selectedSVGContent.energyEnabled}
                 <div class="effect-params">
                   <div class="mini-param">
-                    <span>Speed</span>
+                    <span>{$t('creative.common.speed')}</span>
                     <input
                       type="range"
                       min="50"
@@ -1044,22 +1035,20 @@
                   type="checkbox"
                   checked={$selectedSVGContent.connectionsEnabled}
                   onchange={() => toggleParam('connectionsEnabled')}
-                />
-                Connections
-              </label>
+                />{$t('creative.svg.labels.connections')}</label>
               {#if $selectedSVGContent.connectionsEnabled}
                 <div class="effect-params">
                   <div class="mini-param">
-                    <span>Style</span>
+                    <span>{$t('creative.svg.labels.style')}</span>
                     <select
                       value={$selectedSVGContent.connectionStyle ?? 'arc'}
                       onchange={(e) => updateParam('connectionStyle', (e.target as HTMLSelectElement).value)}
                     >
-                      {#each connectionStyles as s}<option value={s.value}>{s.label}</option>{/each}
+                      {#each connectionStyles as s}<option value={s.value}>{$t(s.label)}</option>{/each}
                     </select>
                   </div>
                   <div class="mini-param">
-                    <span>Range</span>
+                    <span>{$t('creative.svg.labels.range')}</span>
                     <input
                       type="range"
                       min="50"
@@ -1071,7 +1060,7 @@
                     <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={Math.round($selectedSVGContent.connectionRange ?? 200)} />
                   </div>
                   <div class="mini-param">
-                    <span>Pulse</span>
+                    <span>{$t('creative.svg.labels.pulse')}</span>
                     <input
                       type="range"
                       min="0.5"
@@ -1083,7 +1072,7 @@
                     <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.connectionPulseSpeed?.toFixed(1)} />
                   </div>
                   <div class="mini-param">
-                    <span>Thickness</span>
+                    <span>{$t('creative.common.thickness')}</span>
                     <input
                       type="range"
                       min="1"
@@ -1105,13 +1094,11 @@
                   type="checkbox"
                   checked={$selectedSVGContent.glowEnabled}
                   onchange={() => toggleParam('glowEnabled')}
-                />
-                Vertex Glow
-              </label>
+                />{$t('creative.svg.labels.vertexGlow')}</label>
               {#if $selectedSVGContent.glowEnabled}
                 <div class="effect-params">
                   <div class="mini-param">
-                    <span>Pulse</span>
+                    <span>{$t('creative.svg.labels.pulse')}</span>
                     <input
                       type="range"
                       min="0.5"
@@ -1133,13 +1120,11 @@
                   type="checkbox"
                   checked={$selectedSVGContent.ripplesEnabled}
                   onchange={() => toggleParam('ripplesEnabled')}
-                />
-                Ripples
-              </label>
+                />{$t('creative.svg.labels.ripples')}</label>
               {#if $selectedSVGContent.ripplesEnabled}
                 <div class="effect-params">
                   <div class="mini-param">
-                    <span>Speed</span>
+                    <span>{$t('creative.common.speed')}</span>
                     <input
                       type="range"
                       min="0.3"
@@ -1161,13 +1146,11 @@
                   type="checkbox"
                   checked={$selectedSVGContent.lightningEnabled}
                   onchange={() => toggleParam('lightningEnabled')}
-                />
-                Lightning
-              </label>
+                />{$t('creative.svg.labels.lightning')}</label>
               {#if $selectedSVGContent.lightningEnabled}
                 <div class="effect-params">
                   <div class="mini-param">
-                    <span>Frequency</span>
+                    <span>{$t('creative.svg.labels.frequency')}</span>
                     <input
                       type="range"
                       min="0.1"
@@ -1179,7 +1162,7 @@
                     <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.lightningFrequency?.toFixed(1)} />
                   </div>
                   <div class="mini-param">
-                    <span>Thickness</span>
+                    <span>{$t('creative.common.thickness')}</span>
                     <input
                       type="range"
                       min="1"
@@ -1191,7 +1174,7 @@
                     <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.lightningThickness?.toFixed(1)} />
                   </div>
                   <div class="mini-param">
-                    <span>Branches</span>
+                    <span>{$t('creative.common.branches')}</span>
                     <input
                       type="range"
                       min="0"
@@ -1203,7 +1186,7 @@
                     <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.lightningBranches} />
                   </div>
                   <div class="mini-param">
-                    <span>Duration</span>
+                    <span>{$t('creative.svg.labels.duration')}</span>
                     <input
                       type="range"
                       min="0.05"
@@ -1225,13 +1208,11 @@
                   type="checkbox"
                   checked={$selectedSVGContent.edgeFlowEnabled}
                   onchange={() => toggleParam('edgeFlowEnabled')}
-                />
-                Edge Flow
-              </label>
+                />{$t('creative.svg.labels.edgeFlow')}</label>
               {#if $selectedSVGContent.edgeFlowEnabled}
                 <div class="effect-params">
                   <div class="mini-param">
-                    <span>Speed</span>
+                    <span>{$t('creative.common.speed')}</span>
                     <input
                       type="range"
                       min="0.5"
@@ -1243,7 +1224,7 @@
                     <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.edgeFlowSpeed?.toFixed(1)} />
                   </div>
                   <div class="mini-param">
-                    <span>Thickness</span>
+                    <span>{$t('creative.common.thickness')}</span>
                     <input
                       type="range"
                       min="1"
@@ -1265,13 +1246,11 @@
                   type="checkbox"
                   checked={$selectedSVGContent.innerGlowEnabled}
                   onchange={() => toggleParam('innerGlowEnabled')}
-                />
-                Inner Glow
-              </label>
+                />{$t('creative.svg.labels.innerGlow')}</label>
               {#if $selectedSVGContent.innerGlowEnabled}
                 <div class="effect-params">
                   <div class="mini-param">
-                    <span>Intensity</span>
+                    <span>{$t('creative.common.intensity')}</span>
                     <input
                       type="range"
                       min="0.1"
@@ -1293,13 +1272,11 @@
                   type="checkbox"
                   checked={$selectedSVGContent.nebulaEnabled}
                   onchange={() => toggleParam('nebulaEnabled')}
-                />
-                Nebula BG
-              </label>
+                />{$t('creative.svg.labels.nebulaBg')}</label>
               {#if $selectedSVGContent.nebulaEnabled}
                 <div class="effect-params">
                   <div class="mini-param">
-                    <span>Intensity</span>
+                    <span>{$t('creative.common.intensity')}</span>
                     <input
                       type="range"
                       min="0.1"
@@ -1311,7 +1288,7 @@
                     <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.nebulaIntensity?.toFixed(2)} />
                   </div>
                   <div class="mini-param">
-                    <span>Speed</span>
+                    <span>{$t('creative.common.speed')}</span>
                     <input
                       type="range"
                       min="0.05"
@@ -1333,13 +1310,11 @@
                   type="checkbox"
                   checked={$selectedSVGContent.heartbeatEnabled}
                   onchange={() => toggleParam('heartbeatEnabled')}
-                />
-                Heartbeat
-              </label>
+                />{$t('creative.svg.labels.heartbeat')}</label>
               {#if $selectedSVGContent.heartbeatEnabled}
                 <div class="effect-params">
                   <div class="mini-param">
-                    <span>Speed</span>
+                    <span>{$t('creative.common.speed')}</span>
                     <input
                       type="range"
                       min="0.3"
@@ -1351,7 +1326,7 @@
                     <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.heartbeatSpeed?.toFixed(1)} />
                   </div>
                   <div class="mini-param">
-                    <span>Intensity</span>
+                    <span>{$t('creative.common.intensity')}</span>
                     <input
                       type="range"
                       min="0.1"
@@ -1373,13 +1348,11 @@
                   type="checkbox"
                   checked={$selectedSVGContent.plasmaEnabled}
                   onchange={() => toggleParam('plasmaEnabled')}
-                />
-                Plasma Tendrils
-              </label>
+                />{$t('creative.svg.labels.plasmaTendrils')}</label>
               {#if $selectedSVGContent.plasmaEnabled}
                 <div class="effect-params">
                   <div class="mini-param">
-                    <span>Intensity</span>
+                    <span>{$t('creative.common.intensity')}</span>
                     <input
                       type="range"
                       min="0.2"
@@ -1391,7 +1364,7 @@
                     <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.plasmaIntensity?.toFixed(2)} />
                   </div>
                   <div class="mini-param">
-                    <span>Speed</span>
+                    <span>{$t('creative.common.speed')}</span>
                     <input
                       type="range"
                       min="0.5"
@@ -1403,7 +1376,7 @@
                     <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.plasmaSpeed?.toFixed(1)} />
                   </div>
                   <div class="mini-param">
-                    <span>Thickness</span>
+                    <span>{$t('creative.common.thickness')}</span>
                     <input
                       type="range"
                       min="1"
@@ -1415,7 +1388,7 @@
                     <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.plasmaThickness?.toFixed(1)} />
                   </div>
                   <div class="mini-param">
-                    <span>Opacity</span>
+                    <span>{$t('creative.common.opacity')}</span>
                     <input
                       type="range"
                       min="0.2"
@@ -1437,13 +1410,11 @@
                   type="checkbox"
                   checked={$selectedSVGContent.particleLinksEnabled}
                   onchange={() => toggleParam('particleLinksEnabled')}
-                />
-                Particle Links
-              </label>
+                />{$t('creative.svg.labels.particleLinks')}</label>
               {#if $selectedSVGContent.particleLinksEnabled}
                 <div class="effect-params">
                   <div class="mini-param">
-                    <span>Distance</span>
+                    <span>{$t('creative.svg.labels.distance')}</span>
                     <input
                       type="range"
                       min="20"
@@ -1455,7 +1426,7 @@
                     <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.particleLinkDistance} />
                   </div>
                   <div class="mini-param">
-                    <span>Opacity</span>
+                    <span>{$t('creative.common.opacity')}</span>
                     <input
                       type="range"
                       min="0.1"
@@ -1467,7 +1438,7 @@
                     <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.particleLinkOpacity?.toFixed(2)} />
                   </div>
                   <div class="mini-param">
-                    <span>Thickness</span>
+                    <span>{$t('creative.common.thickness')}</span>
                     <input
                       type="range"
                       min="1"
@@ -1479,7 +1450,7 @@
                     <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.particleLinkThickness?.toFixed(1)} />
                   </div>
                   <div class="mini-param">
-                    <span>Max Links</span>
+                    <span>{$t('creative.svg.labels.maxLinks')}</span>
                     <input
                       type="range"
                       min="100"
@@ -1501,13 +1472,11 @@
                   type="checkbox"
                   checked={$selectedSVGContent.echoEnabled}
                   onchange={() => toggleParam('echoEnabled')}
-                />
-                Echo Layers
-              </label>
+                />{$t('creative.svg.labels.echoLayers')}</label>
               {#if $selectedSVGContent.echoEnabled}
                 <div class="effect-params">
                   <div class="mini-param">
-                    <span>Layers</span>
+                    <span>{$t('creative.common.layers')}</span>
                     <input
                       type="range"
                       min="1"
@@ -1519,7 +1488,7 @@
                     <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.echoLayers} />
                   </div>
                   <div class="mini-param">
-                    <span>Spacing</span>
+                    <span>{$t('creative.common.spacing')}</span>
                     <input
                       type="range"
                       min="3"
@@ -1531,7 +1500,7 @@
                     <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.echoSpacing} />
                   </div>
                   <div class="mini-param">
-                    <span>Thickness</span>
+                    <span>{$t('creative.common.thickness')}</span>
                     <input
                       type="range"
                       min="1"
@@ -1543,7 +1512,7 @@
                     <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.echoThickness?.toFixed(1)} />
                   </div>
                   <div class="mini-param">
-                    <span>Opacity</span>
+                    <span>{$t('creative.common.opacity')}</span>
                     <input
                       type="range"
                       min="0.1"
@@ -1565,13 +1534,11 @@
                   type="checkbox"
                   checked={$selectedSVGContent.arcBridgesEnabled}
                   onchange={() => toggleParam('arcBridgesEnabled')}
-                />
-                Arc Bridges
-              </label>
+                />{$t('creative.svg.labels.arcBridges')}</label>
               {#if $selectedSVGContent.arcBridgesEnabled}
                 <div class="effect-params">
                   <div class="mini-param">
-                    <span>Height</span>
+                    <span>{$t('creative.svg.labels.height')}</span>
                     <input
                       type="range"
                       min="5"
@@ -1583,7 +1550,7 @@
                     <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.arcBridgeHeight} />
                   </div>
                   <div class="mini-param">
-                    <span>Thickness</span>
+                    <span>{$t('creative.common.thickness')}</span>
                     <input
                       type="range"
                       min="1"
@@ -1595,7 +1562,7 @@
                     <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.arcBridgeThickness?.toFixed(1)} />
                   </div>
                   <div class="mini-param">
-                    <span>Opacity</span>
+                    <span>{$t('creative.common.opacity')}</span>
                     <input
                       type="range"
                       min="0.1"
@@ -1614,20 +1581,18 @@
             <div class="effect-group">
               <label class="effect-toggle">
                 <input type="checkbox" checked={$selectedSVGContent.organicWarpEnabled ?? false}
-                  onchange={() => toggleParam('organicWarpEnabled')} />
-                Organic Warp
-              </label>
+                  onchange={() => toggleParam('organicWarpEnabled')} />{$t('creative.svg.labels.organicWarp')}</label>
               {#if $selectedSVGContent.organicWarpEnabled}
                 <div class="effect-params">
                   <div class="mini-param">
-                    <span>Amount</span>
+                    <span>{$t('creative.common.amount')}</span>
                     <input type="range" min="0" max="30" step="0.5"
                       value={$selectedSVGContent.warpAmount ?? 6}
                       oninput={(e) => updateParam('warpAmount', parseFloat((e.target as HTMLInputElement).value))} />
                     <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={($selectedSVGContent.warpAmount ?? 6).toFixed(1)} />
                   </div>
                   <div class="mini-param">
-                    <span>Speed</span>
+                    <span>{$t('creative.common.speed')}</span>
                     <input type="range" min="0.1" max="3" step="0.05"
                       value={$selectedSVGContent.warpSpeed ?? 0.8}
                       oninput={(e) => updateParam('warpSpeed', parseFloat((e.target as HTMLInputElement).value))} />
@@ -1641,20 +1606,18 @@
             <div class="effect-group">
               <label class="effect-toggle">
                 <input type="checkbox" checked={$selectedSVGContent.breatheEnabled ?? false}
-                  onchange={() => toggleParam('breatheEnabled')} />
-                Breathe
-              </label>
+                  onchange={() => toggleParam('breatheEnabled')} />{$t('creative.svg.labels.breathe')}</label>
               {#if $selectedSVGContent.breatheEnabled}
                 <div class="effect-params">
                   <div class="mini-param">
-                    <span>Amount</span>
+                    <span>{$t('creative.common.amount')}</span>
                     <input type="range" min="0" max="0.3" step="0.01"
                       value={$selectedSVGContent.breatheAmount ?? 0.08}
                       oninput={(e) => updateParam('breatheAmount', parseFloat((e.target as HTMLInputElement).value))} />
                     <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={($selectedSVGContent.breatheAmount ?? 0.08).toFixed(2)} />
                   </div>
                   <div class="mini-param">
-                    <span>Speed</span>
+                    <span>{$t('creative.common.speed')}</span>
                     <input type="range" min="0.2" max="3" step="0.05"
                       value={$selectedSVGContent.breatheSpeed ?? 1}
                       oninput={(e) => updateParam('breatheSpeed', parseFloat((e.target as HTMLInputElement).value))} />
@@ -1671,13 +1634,11 @@
                   type="checkbox"
                   checked={$selectedSVGContent.colorCycleEnabled}
                   onchange={() => toggleParam('colorCycleEnabled')}
-                />
-                Color Cycle
-              </label>
+                />{$t('creative.svg.labels.colorCycle')}</label>
               {#if $selectedSVGContent.colorCycleEnabled}
                 <div class="effect-params">
                   <div class="mini-param">
-                    <span>Speed</span>
+                    <span>{$t('creative.common.speed')}</span>
                     <input
                       type="range"
                       min="0.05"
@@ -1689,7 +1650,7 @@
                     <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.colorCycleSpeed?.toFixed(2)} />
                   </div>
                   <div class="mini-param">
-                    <span>Saturation</span>
+                    <span>{$t('creative.common.saturation')}</span>
                     <input
                       type="range"
                       min="0.3"
@@ -1701,7 +1662,7 @@
                     <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.colorCycleSaturation?.toFixed(2)} />
                   </div>
                   <div class="mini-param">
-                    <span>Lightness</span>
+                    <span>{$t('creative.svg.labels.lightness')}</span>
                     <input
                       type="range"
                       min="0.3"
@@ -1723,9 +1684,7 @@
                   type="checkbox"
                   checked={$selectedSVGContent.perShapeColors}
                   onchange={() => toggleParam('perShapeColors')}
-                />
-                Per-Shape Colors
-              </label>
+                />{$t('creative.svg.labels.perShapeColors')}</label>
             </div>
 
             <!-- Particles (edge particles) -->
@@ -1735,13 +1694,11 @@
                   type="checkbox"
                   checked={$selectedSVGContent.particlesEnabled}
                   onchange={() => toggleParam('particlesEnabled')}
-                />
-                Edge Particles
-              </label>
+                />{$t('creative.svg.labels.edgeParticles')}</label>
               {#if $selectedSVGContent.particlesEnabled}
                 <div class="effect-params">
                   <div class="mini-param">
-                    <span>Speed</span>
+                    <span>{$t('creative.common.speed')}</span>
                     <input
                       type="range"
                       min="20"
@@ -1752,7 +1709,7 @@
                     <input class="mini-value vnum" type="number" inputmode="decimal" onchange={syncFromNumber} value={$selectedSVGContent.particleSpeed} />
                   </div>
                   <div class="mini-param">
-                    <span>Size</span>
+                    <span>{$t('creative.svg.labels.size')}</span>
                     <input
                       type="range"
                       min="1"
@@ -1776,7 +1733,7 @@
   {#if svgLayers.length > 0}
     <div class="layer-list">
       <div class="layer-list-header">
-        <span>SVG Layers</span>
+        <span>{$t('creative.svg.layers.title')}</span>
       </div>
       {#each svgLayers as layer (layer.id)}
         <button
@@ -1786,9 +1743,9 @@
         >
           <span class="layer-name">{layer.name}</span>
           {#if layer.svgContent?.svgSource}
-            <span class="layer-status loaded">Loaded</span>
+            <span class="layer-status loaded">{$t('creative.svg.layers.loaded')}</span>
           {:else}
-            <span class="layer-status empty">Empty</span>
+            <span class="layer-status empty">{$t('creative.svg.layers.empty')}</span>
           {/if}
         </button>
       {/each}
@@ -2012,7 +1969,7 @@
   }
 
   .svg-preview span {
-    color: #BB86FC;
+    color: #bb86fc;
     font-weight: 600;
     font-size: 13px;
   }
@@ -2127,7 +2084,9 @@
     padding-bottom: 4px;
     border-bottom: 1px solid rgba(255, 255, 255, 0.07);
   }
-  .param-subhead:first-child { margin-top: 2px; }
+  .param-subhead:first-child {
+    margin-top: 2px;
+  }
 
   .param-row label {
     flex: 0 0 70px;
@@ -2138,7 +2097,7 @@
     font-size: 12px;
   }
 
-  .param-row input[type="range"] {
+  .param-row input[type='range'] {
     flex: 1;
     height: 4px;
     background: #333;
@@ -2147,7 +2106,7 @@
     appearance: none;
   }
 
-  .param-row input[type="range"]::-webkit-slider-thumb {
+  .param-row input[type='range']::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
     width: 12px;
@@ -2187,9 +2146,13 @@
     -moz-appearance: textfield;
     appearance: textfield;
     cursor: text;
-    transition: border-color 0.12s, background 0.12s;
+    transition:
+      border-color 0.12s,
+      background 0.12s;
   }
-  .vnum:hover { border-color: rgba(255, 255, 255, 0.18); }
+  .vnum:hover {
+    border-color: rgba(255, 255, 255, 0.18);
+  }
   .vnum:focus {
     outline: none;
     border-color: #ff00aa;
@@ -2197,9 +2160,18 @@
     color: #fff;
   }
   .vnum::-webkit-inner-spin-button,
-  .vnum::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
-  .param-row .value.vnum { flex: 0 0 58px; }
-  .mini-value.vnum { flex: 0 0 46px; text-align: right; font-size: 11px; }
+  .vnum::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+  }
+  .param-row .value.vnum {
+    flex: 0 0 58px;
+  }
+  .mini-value.vnum {
+    flex: 0 0 46px;
+    text-align: right;
+    font-size: 11px;
+  }
 
   .effects-grid {
     display: flex;
@@ -2223,7 +2195,7 @@
     font-size: 12px;
   }
 
-  .effect-toggle input[type="checkbox"] {
+  .effect-toggle input[type='checkbox'] {
     margin: 0;
     accent-color: #ff00aa;
   }
@@ -2242,7 +2214,9 @@
     min-height: 20px;
     min-width: 0;
   }
-  .mini-param:last-child { margin-bottom: 2px; }
+  .mini-param:last-child {
+    margin-bottom: 2px;
+  }
 
   .mini-param span {
     flex: 0 0 52px;
@@ -2253,7 +2227,7 @@
     text-overflow: ellipsis;
   }
 
-  .mini-param input[type="range"] {
+  .mini-param input[type='range'] {
     flex: 1;
     min-width: 0;
     height: 3px;
@@ -2263,7 +2237,7 @@
     appearance: none;
   }
 
-  .mini-param input[type="range"]::-webkit-slider-thumb {
+  .mini-param input[type='range']::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
     width: 10px;
@@ -2337,8 +2311,8 @@
   }
 
   .layer-status.loaded {
-    background: #BB86FC33;
-    color: #BB86FC;
+    background: #bb86fc33;
+    color: #bb86fc;
   }
 
   .layer-status.empty {

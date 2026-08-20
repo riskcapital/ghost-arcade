@@ -1,6 +1,7 @@
 <script lang="ts">
   import { project } from '../stores/layers';
   import type { WLEDGroup, WLEDGroupMember } from '../types';
+  import { t } from '../i18n';
 
   function addGroup() {
     const index = ($project.wledGroups ?? []).length + 1;
@@ -17,13 +18,13 @@
 
   function isMember(group: WLEDGroup, member: WLEDGroupMember): boolean {
     const key = memberKey(member);
-    return group.members.some(item => memberKey(item) === key);
+    return group.members.some((item) => memberKey(item) === key);
   }
 
   function toggleMember(group: WLEDGroup, member: WLEDGroupMember) {
     const key = memberKey(member);
     const members = isMember(group, member)
-      ? group.members.filter(item => memberKey(item) !== key)
+      ? group.members.filter((item) => memberKey(item) !== key)
       : [...group.members, member];
     project.updateWLEDGroup(group.id, { members });
   }
@@ -32,10 +33,10 @@
 <section class="groups-panel">
   <header>
     <div>
-      <h4>Fixture Groups</h4>
-      <p>Combine controllers and named ranges into reusable LED FX targets.</p>
+      <h4>{$t('led.groups.title')}</h4>
+      <p>{$t('led.groups.description')}</p>
     </div>
-    <button onclick={addGroup}>+ Add group</button>
+    <button onclick={addGroup}>{$t('led.groups.add')}</button>
   </header>
 
   {#each $project.wledGroups ?? [] as group (group.id)}
@@ -44,10 +45,13 @@
         <input
           value={group.name}
           onchange={(event) => project.updateWLEDGroup(group.id, { name: (event.target as HTMLInputElement).value })}
-          aria-label="LED group name"
+          aria-label={$t('led.groups.groupNameAria')}
         />
-        <span>{group.members.length} target{group.members.length === 1 ? '' : 's'}</span>
-        <button class="remove" onclick={() => project.removeWLEDGroup(group.id)} title="Remove group">×</button>
+        <span>{$t(group.members.length === 1 ? 'led.groups.target' : 'led.groups.targets', {
+            values: { count: group.members.length },
+          })}</span>
+        <button class="remove" onclick={() => project.removeWLEDGroup(group.id)} title={$t('led.groups.removeTitle')}
+          >×</button>
       </div>
       <div class="member-grid">
         {#each $project.wledControllers ?? [] as controller (controller.id)}
@@ -57,7 +61,7 @@
               checked={isMember(group, { controllerId: controller.id })}
               onchange={() => toggleMember(group, { controllerId: controller.id })}
             />
-            <span>{controller.name}<small>All {controller.ledCount} LEDs</small></span>
+            <span>{controller.name}<small>{$t('led.groups.allLeds', { values: { count: controller.ledCount} })}</small></span>
           </label>
           {#each controller.ranges ?? [] as range (range.id)}
             <label class="range-member">
@@ -75,7 +79,7 @@
   {/each}
 
   {#if ($project.wledGroups ?? []).length === 0}
-    <div class="empty">No groups yet. Effects can still target all LEDs, a controller, or one named range.</div>
+    <div class="empty">{$t('led.groups.empty')}</div>
   {/if}
 </section>
 

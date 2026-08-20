@@ -1,6 +1,13 @@
 <script lang="ts">
   import { onMount, onDestroy, tick } from 'svelte';
   import { createDefaultLayerShape } from '../types';
+  import { t } from '../i18n';
+  import {
+    effectTypeLabel,
+    effectParamLabel,
+    effectOptionLabel,
+    blendModeLabel,
+  } from '../i18n/displayLabels';
   import type { Project, Point2D, WarpCorners, BlendMode, Effect, EffectType, EffectParams, LayerShape, LayerShapeParams, LayerShapeType } from '../types';
   import { EFFECT_CATALOG } from '../effects/effectCatalog';
   import { EFFECT_PARAM_DEFS } from '../effects/effectParamDefs';
@@ -55,7 +62,9 @@
     if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS || !serverUrl) return;
     const delay = getReconnectDelay();
     console.log(`[Mobile] Reconnecting in ${delay / 1000}s (attempt ${reconnectAttempts + 1}/${MAX_RECONNECT_ATTEMPTS})`);
-    error = `Disconnected. Reconnecting in ${Math.round(delay / 1000)}s...`;
+    error = $t('mobile.connection.errors.disconnectedReconnecting', {
+      values: { seconds: Math.round(delay / 1000) },
+    });
     reconnectTimer = setTimeout(() => {
       reconnectAttempts++;
       if (!connected && !connecting && serverUrl) {
@@ -456,26 +465,68 @@
   $: visionCaptureFrameRate = visionNativeHints?.frameRate ?? visionCaptureConfig.frameRate;
   $: nativeVisionSummary = nativeVisionActive
     ? nativeVisionHasDepth
-      ? `Depth ${nativeVisionFrameCount}`
-      : `Native ${nativeVisionFrameCount}`
+      ? $t('mobile.vision.depthFrames', { values: { count: nativeVisionFrameCount } })
+      : $t('mobile.vision.nativeFrames', { values: { count: nativeVisionFrameCount } })
     : nativeVisionCapabilities?.available
       ? nativeVisionCapabilities.nativeDepth
-        ? 'Native Depth'
+        ? $t('mobile.vision.nativeDepth')
         : nativeVisionCapabilities.personSegmentation
-          ? 'Native Mask'
-          : 'Native RGB'
+          ? $t('mobile.vision.nativeMask')
+          : $t('mobile.vision.nativeRgb')
     : nativeVisionBridgeAvailable
-      ? 'Native Ready'
-      : 'Browser RGB';
+      ? $t('mobile.vision.nativeReady')
+      : $t('mobile.vision.browserRgb');
   $: visionStatusLabel = visionStatus === 'idle'
-    ? 'Camera idle'
+    ? $t('mobile.vision.cameraIdle')
     : visionStatus === 'starting'
-      ? 'Starting camera'
+      ? $t('mobile.vision.startingCamera')
       : visionStatus === 'connecting'
-        ? 'Connecting'
+        ? $t('mobile.vision.connecting')
         : visionStatus === 'live'
-          ? 'Live'
-          : 'Camera failed';
+          ? $t('mobile.vision.live')
+          : $t('mobile.vision.cameraFailed');
+
+  const visionCapabilityTranslationKeys: Record<'transport' | 'depth' | 'segmentation', Record<string, string>> = {
+    transport: {
+      'native-rtc': 'mobile.vision.nativeReady',
+      'browser-rtc': 'mobile.vision.browserRgb',
+    },
+    depth: {
+      none: 'mobile.vision.nativeRgb',
+      'image-estimated': 'mobile.vision.phoneColorParticles',
+      'native-depth': 'mobile.vision.nativeDepth',
+    },
+    segmentation: {
+      none: 'mobile.vision.nativeRgb',
+      'person-mask': 'mobile.vision.nativeMask',
+      'object-edge': 'mobile.vision.nativeMask',
+    },
+  };
+
+  function visionCapabilityLabel(
+    kind: 'transport' | 'depth' | 'segmentation',
+    value: unknown,
+  ): string {
+    const key = visionCapabilityTranslationKeys[kind][String(value)];
+    return key ? $t(key) : $t('mobile.common.unknown');
+  }
+
+  const visionErrorTranslationKeys: Record<string, string> = {
+    nativeUnavailable: 'mobile.vision.errors.nativeUnavailable',
+    nativeOnly: 'mobile.vision.errors.nativeOnly',
+    connectDesktop: 'mobile.vision.errors.connectDesktop',
+    nativeDidNotStart: 'mobile.vision.errors.nativeDidNotStart',
+    secureCamera: 'mobile.vision.errors.secureCamera',
+    connectionFailed: 'mobile.vision.errors.connectionFailed',
+    cameraFailed: 'mobile.vision.errors.cameraFailed',
+    couldNotConnect: 'mobile.vision.errors.couldNotConnect',
+    phoneVision: 'mobile.vision.errors.phoneVision',
+  };
+
+  function visionErrorLabel(value: unknown, fallback = 'phoneVision'): string {
+    const key = visionErrorTranslationKeys[String(value)];
+    return $t(key ?? visionErrorTranslationKeys[fallback] ?? 'mobile.vision.errors.phoneVision');
+  }
 
   function sendVisionSignal(payload: Record<string, unknown>) {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
@@ -597,7 +648,7 @@
 
   function handleNativeVisionStatus(status: NativeVisionStatus) {
     nativeVisionActive = status.active;
-    nativeVisionError = status.error || '';
+    nativeVisionError = status.error ? visionErrorLabel(status.error) : '';
     if (status.capabilities) nativeVisionCapabilities = status.capabilities;
   }
 
@@ -644,9 +695,9 @@
       nativeVisionError = '';
       const status = await startNativeVisionCapture(visionFacingMode, visionCaptureProfile, visionCaptureFrameRate);
       if (status) handleNativeVisionStatus(status);
-    } catch (err: any) {
+    } catch {
       nativeVisionActive = false;
-      nativeVisionError = err?.message || 'Native vision unavailable.';
+      nativeVisionError = visionErrorLabel('nativeUnavailable');
     }
   }
 
@@ -672,12 +723,12 @@
 
   async function startPhoneVision() {
     if (!isCapacitorNative) {
-      visionError = 'Phone Vision is available in the native mobile app.';
+      visionError = $t('mobile.vision.errors.nativeOnly');
       visionStatus = 'failed';
       return;
     }
     if (!ws || ws.readyState !== WebSocket.OPEN) {
-      visionError = 'Connect to desktop first.';
+      visionError = $t('mobile.vision.errors.connectDesktop');
       visionStatus = 'failed';
       return;
     }
@@ -708,12 +759,12 @@
           if (nativeVisionActive) {
             visionStatus = 'live';
             visionError = '';
-            visionLastAction = 'Native vision live';
+            visionLastAction = $t('mobile.vision.actions.nativeLive');
             return;
           }
-          throw new Error(nativeVisionError || 'Native vision did not start.');
+          throw new Error(nativeVisionError || $t('mobile.vision.errors.nativeDidNotStart'));
         }
-        throw new Error('Phone Vision camera needs the native app or a secure HTTPS browser session. The QR browser page cannot use the camera over LAN HTTP.');
+        throw new Error($t('mobile.vision.errors.secureCamera'));
       }
       const stream = await navigator.mediaDevices.getUserMedia({
         audio: false,
@@ -752,7 +803,7 @@
           visionError = '';
         } else if (peer.connectionState === 'failed') {
           visionStatus = 'failed';
-          visionError = 'Connection failed.';
+          visionError = $t('mobile.vision.errors.connectionFailed');
         } else if (peer.connectionState === 'disconnected') {
           visionStatus = 'connecting';
         } else if (peer.connectionState === 'closed') {
@@ -775,10 +826,10 @@
     } catch (err: any) {
       console.error('[PhoneVision] camera start failed:', err);
       visionStatus = 'failed';
-      visionError = err?.message || 'Camera failed.';
+      visionError = visionErrorLabel('cameraFailed');
       stopPhoneVision(true);
       visionStatus = 'failed';
-      visionError = err?.message || 'Camera failed.';
+      visionError = visionErrorLabel('cameraFailed');
     }
   }
 
@@ -789,9 +840,9 @@
       for (const candidate of pendingVisionIce.splice(0)) {
         try { await visionPeer.addIceCandidate(new RTCIceCandidate(candidate)); } catch {}
       }
-    } catch (err: any) {
+    } catch {
       visionStatus = 'failed';
-      visionError = err?.message || 'Could not connect camera.';
+      visionError = visionErrorLabel('couldNotConnect');
     }
   }
 
@@ -804,15 +855,41 @@
     try { await visionPeer.addIceCandidate(new RTCIceCandidate(candidate)); } catch {}
   }
 
+  const visionPresetTranslationKeys: Record<'aura' | 'point-cloud', Record<string, string>> = {
+    aura: {
+      'body-glow': 'mobile.vision.presets.aura.bodyGlow',
+      'object-halo': 'mobile.vision.presets.aura.objectHalo',
+      'edge-trace': 'mobile.vision.presets.aura.edgeTrace',
+    },
+    'point-cloud': {
+      'object-relief': 'mobile.vision.presets.pointCloud.objectRelief',
+      'human-ghost': 'mobile.vision.presets.pointCloud.humanGhost',
+      'liquid-swarm': 'mobile.vision.presets.pointCloud.liquidSwarm',
+    },
+  };
+
+  const visionCaptureTranslationKeys: Record<string, string> = {
+    'rgb-fast': 'mobile.vision.presets.capture.rgbFast',
+    'object-relief': 'mobile.vision.presets.capture.objectRelief',
+    'person-aura': 'mobile.vision.presets.capture.personAura',
+    'lidar-depth': 'mobile.vision.presets.capture.lidarDepth',
+  };
+
   function visionPresetLabel(kind: 'aura' | 'point-cloud', presetId: unknown): string {
     const id = typeof presetId === 'string' ? presetId : '';
-    const presets = kind === 'aura' ? PHONE_VISION_AURA_PRESETS : PHONE_VISION_POINT_CLOUD_PRESETS;
-    return presets.find(preset => preset.id === id)?.label ?? (kind === 'aura' ? 'Aura' : 'Point Cloud');
+    const translationKey = visionPresetTranslationKeys[kind][id];
+    if (translationKey) return $t(translationKey);
+    return $t('mobile.common.unknown');
+  }
+
+  function visionCaptureProfileLabel(profileId: string): string {
+    const translationKey = visionCaptureTranslationKeys[profileId];
+    return translationKey ? $t(translationKey) : $t('mobile.common.unknown');
   }
 
   function visionLayerAction(kind: 'aura' | 'point-cloud', msg: Record<string, unknown>): string {
     const label = visionPresetLabel(kind, msg.preset);
-    const calibrated = msg.calibrated === true ? ' · calibrated' : '';
+    const calibrated = msg.calibrated === true ? ` · ${$t('mobile.vision.calibrated')}` : '';
     return `${label}${calibrated}`;
   }
 
@@ -825,19 +902,19 @@
     }
     if (status === 'failed' || status === 'error') {
       visionStatus = 'failed';
-      visionError = String(msg.error || 'Phone vision error.');
+      visionError = visionErrorLabel(msg.error);
       return;
     }
     if (status === 'created_aura_layer') {
       visionLastAuraAction = visionLayerAction('aura', msg);
-      visionLastAction = 'Aura layer added';
+      visionLastAction = $t('mobile.vision.actions.auraAdded');
     }
     if (status === 'created_point_cloud_layer') {
       visionLastPointCloudAction = visionLayerAction('point-cloud', msg);
-      visionLastAction = 'Point cloud layer added';
+      visionLastAction = $t('mobile.vision.actions.pointCloudAdded');
     }
     if (status === 'calibration_reset') {
-      visionLastAction = 'Calibration cleared';
+      visionLastAction = $t('mobile.vision.actions.calibrationCleared');
       visionLastPointCloudAction = '';
       visionLastAuraAction = '';
     }
@@ -986,10 +1063,42 @@
     return Array.from(groups.values());
   })();
 
-  const effectLabels = new Map(EFFECT_CATALOG.map(entry => [entry.type, entry.label]));
-
   // Use shared effect parameter definitions (covers all 81+ effects)
   const effectParamDefs = EFFECT_PARAM_DEFS;
+  const effectLabelByType = new Map<string, string>(
+    EFFECT_CATALOG.map(entry => [entry.type, entry.label]),
+  );
+
+  function displayCatalogKey(value: string): string {
+    return value
+      .trim()
+      .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+      .replace(/[^a-zA-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .toLowerCase();
+  }
+
+  function mobileEffectTypeDisplayLabel(type: string, fallback = type): string {
+    return effectTypeLabel($t, type, effectLabelByType.get(type) ?? fallback);
+  }
+
+  function mobileEffectParamDisplayLabel(key: string, fallback = key): string {
+    const translated = effectParamLabel($t, key);
+    return translated === key
+      ? effectParamLabel($t, displayCatalogKey(fallback), fallback)
+      : translated;
+  }
+
+  function mobileEffectOptionDisplayLabel(value: string | number, fallback: string): string {
+    const translated = effectOptionLabel($t, value);
+    return translated === String(value)
+      ? effectOptionLabel($t, displayCatalogKey(fallback), fallback)
+      : translated;
+  }
+
+  function mobileBlendModeDisplayLabel(mode: string): string {
+    return blendModeLabel($t, mode, mode);
+  }
 
   const layerShapeOptions: { type: LayerShapeType; label: string; glyph: string }[] = [
     { type: 'rectangle', label: 'Rectangle', glyph: '▭' },
@@ -1002,7 +1111,45 @@
     { type: 'polyline', label: 'Polyline', glyph: '⌁' },
   ];
 
-  const shapeLabels = new Map(layerShapeOptions.map(option => [option.type, option.label]));
+  const shapeTranslationKeys: Record<string, string> = {
+    rectangle: 'mobile.shape.types.rectangle',
+    circle: 'mobile.shape.types.circle',
+    ellipse: 'mobile.shape.types.ellipse',
+    triangle: 'mobile.shape.types.triangle',
+    polygon: 'mobile.shape.types.polygon',
+    star: 'mobile.shape.types.star',
+    line: 'mobile.shape.types.line',
+    polyline: 'mobile.shape.types.polyline',
+  };
+  const cornerTranslationKeys: Record<string, string> = {
+    topLeft: 'mobile.mapping.cornerLabels.topLeft',
+    topRight: 'mobile.mapping.cornerLabels.topRight',
+    bottomLeft: 'mobile.mapping.cornerLabels.bottomLeft',
+    bottomRight: 'mobile.mapping.cornerLabels.bottomRight',
+  };
+  const effectCategoryTranslationKeys: Record<string, string> = {
+    WebGPU: 'mobile.effects.categories.webgpu',
+    'Vision Lab': 'mobile.effects.categories.visionLab',
+    Masking: 'mobile.effects.categories.masking',
+    Color: 'mobile.effects.categories.color',
+    Stylize: 'mobile.effects.categories.stylize',
+    'Blur & Focus': 'mobile.effects.categories.blurFocus',
+    'Light & Glow': 'mobile.effects.categories.lightGlow',
+    'Generate & Texture': 'mobile.effects.categories.generateTexture',
+    Distort: 'mobile.effects.categories.distort',
+    Keying: 'mobile.effects.categories.keying',
+    'Advanced Color': 'mobile.effects.categories.advancedColor',
+    'Advanced Stylize': 'mobile.effects.categories.advancedStylize',
+    'Advanced Warp': 'mobile.effects.categories.advancedWarp',
+    'Advanced Atmosphere': 'mobile.effects.categories.advancedAtmosphere',
+    'Advanced Text & Pattern': 'mobile.effects.categories.advancedTextPattern',
+    'Advanced 3D': 'mobile.effects.categories.advanced3d',
+    'Geometric 3D': 'mobile.effects.categories.geometric3d',
+    'Advanced Depth': 'mobile.effects.categories.advancedDepth',
+    'Advanced Feedback': 'mobile.effects.categories.advancedFeedback',
+    'Advanced Trails': 'mobile.effects.categories.advancedTrails',
+    'New Hero': 'mobile.effects.categories.newHero',
+  };
 
   // Shaders for the picker. Two sources, in priority order:
   //   1. shader_library_sync from the desktop (preferred — same list +
@@ -1367,7 +1514,7 @@
     try {
       socket = new WebSocket(targetUrl);
     } catch (err) {
-      error = 'Invalid URL format. Use format: ws://IP_ADDRESS:9001';
+      error = $t('mobile.connection.errors.invalidUrl');
       connecting = false;
       return;
     }
@@ -1379,7 +1526,7 @@
       if (!connected && socket.readyState !== WebSocket.OPEN) {
         socket.close();
         connecting = false;
-        error = `Could not reach server at ${targetUrl}. Check that the desktop app is running and both devices are on the same network.`;
+        error = $t('mobile.connection.errors.unreachable', { values: { url: targetUrl } });
       }
     }, 6000);
 
@@ -1433,7 +1580,7 @@
 
     socket.onerror = (evt) => {
       console.error('[Mobile] WebSocket error:', evt);
-      error = `Connection failed to ${targetUrl}. Check the server URL and ensure both devices are on the same WiFi.`;
+      error = $t('mobile.connection.errors.failed', { values: { url: targetUrl } });
       connected = false;
       connecting = false;
       if (connectTimeout) {
@@ -2728,8 +2875,12 @@
       ? (vjClipsState.layerStates[effectsLayerIndex]?.effects || [])
       : []);
   $: effectsPanelTitle = effectsPanelTarget === 'mapping'
-    ? `${selectedLayer?.name || 'Layer'} Effects`
-    : `Layer ${(effectsLayerIndex ?? 0) + 1} Effects`;
+    ? $t('mobile.effects.layerTitle', {
+      values: { layer: selectedLayer?.name || $t('mobile.mapping.layerFallback') },
+    })
+    : $t('mobile.effects.layerNumberTitle', {
+      values: { layer: (effectsLayerIndex ?? 0) + 1 },
+    });
   $: effectsPanelReady = effectsPanelTarget === 'mapping'
     ? !!selectedLayerId
     : effectsLayerIndex !== null;
@@ -3089,27 +3240,27 @@
     <!-- Connection Screen -->
     <div class="connect-screen">
       {#if isCapacitorNative}
-        <button class="switch-mode-link" onclick={switchMobileMode}>‹ Switch mode</button>
+        <button class="switch-mode-link" onclick={switchMobileMode}>‹ {$t('mobile.connection.switchMode')}</button>
       {/if}
-      <img class="connect-logo" src="{import.meta.env.BASE_URL}logo.png" alt="Ghost Arcade" />
+      <img class="connect-logo" src="{import.meta.env.BASE_URL}logo.png" alt={$t('mobile.connection.logoAlt')} />
 
       {#if connecting}
         <div class="connecting-indicator">
           <div class="spinner"></div>
-          <p>Connecting to {serverUrl}...</p>
+          <p>{$t('mobile.connection.connectingTo', { values: { url: serverUrl } })}</p>
         </div>
       {:else}
-        <p class="connect-subtitle">Connect to your desktop app</p>
+        <p class="connect-subtitle">{$t('mobile.connection.subtitle')}</p>
       {/if}
 
       <div class="connect-form">
         <input
           type="text"
           bind:value={serverUrl}
-          placeholder="ws://192.168.x.x:9001"
+          placeholder={$t('mobile.connection.urlPlaceholder')}
         />
         <button onclick={connect}>
-          {connecting ? 'Connecting...' : 'Connect'}
+          {connecting ? $t('mobile.connection.connecting') : $t('mobile.connection.connect')}
         </button>
       </div>
 
@@ -3118,8 +3269,8 @@
       {/if}
 
       <div class="help">
-        <p>Enter the WebSocket URL shown in your desktop app.</p>
-        <p>Make sure both devices are on the same WiFi network.</p>
+        <p>{$t('mobile.connection.websocketHelp')}</p>
+        <p>{$t('mobile.connection.networkHelp')}</p>
       </div>
 
       <!-- PWA Install Banner -->
@@ -3128,27 +3279,27 @@
           <div class="pwa-install-content">
             <img src="{import.meta.env.BASE_URL}logo.png" alt="" class="pwa-install-icon" />
             <div class="pwa-install-text">
-              <strong>Install Ghost Arcade</strong>
-              <span>Launch fullscreen from your home screen</span>
+              <strong>{$t('mobile.connection.installTitle')}</strong>
+              <span>{$t('mobile.connection.installDescription')}</span>
             </div>
           </div>
           {#if deferredInstallPrompt}
             <button class="pwa-install-btn" onclick={() => {
               deferredInstallPrompt.prompt();
               deferredInstallPrompt.userChoice.then(() => { showInstallBanner = false; });
-            }}>Install</button>
+            }}>{$t('mobile.connection.install')}</button>
           {:else}
             <div class="pwa-install-ios">
-              Tap <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#007AFF" stroke-width="2"><path d="M12 5v14M5 12l7-7 7 7"/><rect x="3" y="15" width="18" height="6" rx="2" fill="none"/></svg> then <strong>"Add to Home Screen"</strong>
+              {$t('mobile.connection.tap')} <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#007AFF" stroke-width="2"><path d="M12 5v14M5 12l7-7 7 7"/><rect x="3" y="15" width="18" height="6" rx="2" fill="none"/></svg> {$t('mobile.connection.then')} <strong>"{$t('mobile.connection.addToHomeScreen')}"</strong>
             </div>
           {/if}
-          <button class="pwa-dismiss" onclick={() => showInstallBanner = false}>×</button>
+          <button class="pwa-dismiss" onclick={() => showInstallBanner = false} aria-label={$t('mobile.connection.dismiss')}>×</button>
         </div>
       {/if}
 
       {#if !showInstallBanner && !isPWA}
         <button class="pwa-hint-btn" onclick={() => showInstallBanner = true}>
-          📲 Add to Home Screen for fullscreen
+          {$t('mobile.connection.addToHomeScreenHint')}
         </button>
       {/if}
     </div>
@@ -3161,24 +3312,24 @@
           class="mode-pill"
           class:active={mobileMode === 'mapping'}
           onclick={() => mobileMode = 'mapping'}
-        >Mapping</button>
+        >{$t('mobile.modes.mapping')}</button>
         <button
           class="mode-pill"
           class:active={mobileMode === 'vj'}
           onclick={() => mobileMode = 'vj'}
-        >VJ</button>
+        >{$t('mobile.modes.vj')}</button>
         {#if showVisionMode}
           <button
             class="mode-pill"
             class:active={mobileMode === 'vision'}
             onclick={() => mobileMode = 'vision'}
-          >Vision</button>
+          >{$t('mobile.modes.vision')}</button>
         {/if}
         <button
           class="mode-pill"
           class:active={mobileMode === 'paint'}
           onclick={() => mobileMode = 'paint'}
-        >Paint</button>
+        >{$t('mobile.modes.paint')}</button>
       </div>
       {#if mobileMode === 'mapping'}
         <!-- Output freeze pill — pause/play the output canvas from the
@@ -3188,8 +3339,8 @@
           class="freeze-btn"
           class:active={outputFrozen}
           onclick={toggleOutputFreeze}
-          title={outputFrozen ? 'Resume output' : 'Freeze output'}
-          aria-label={outputFrozen ? 'Resume output' : 'Freeze output'}
+          title={outputFrozen ? $t('mobile.modes.resumeOutput') : $t('mobile.modes.freezeOutput')}
+          aria-label={outputFrozen ? $t('mobile.modes.resumeOutput') : $t('mobile.modes.freezeOutput')}
         >
           {#if outputFrozen}
             <!-- play triangle when frozen (tap to resume) -->
@@ -3205,10 +3356,10 @@
           {/if}
         </button>
         <button class="media-btn" onclick={() => showMediaLibrary = !showMediaLibrary}>
-          {showMediaLibrary ? 'Close' : 'Media'}
+          {showMediaLibrary ? $t('mobile.modes.close') : $t('mobile.modes.media')}
         </button>
       {/if}
-      <button class="disconnect-btn" onclick={disconnect} title="Disconnect">×</button>
+      <button class="disconnect-btn" onclick={disconnect} title={$t('mobile.connection.disconnect')} aria-label={$t('mobile.connection.disconnect')}>×</button>
     </div>
 
     {#if mobileMode === 'vj'}
@@ -3264,9 +3415,9 @@
     <!-- Layer Selector -->
     <div class="layer-selector mapping-layer-selector">
       <div class="layer-selector-heading">
-        <h3>Layers</h3>
+        <h3>{$t('mobile.mapping.layers')}</h3>
         {#if selectedLayer}
-          <span class="layer-effect-chip">{selectedLayer.effects?.length || 0} FX</span>
+          <span class="layer-effect-chip">{selectedLayer.effects?.length || 0} {$t('mobile.mapping.effectsShort')}</span>
         {/if}
       </div>
       <div class="layer-list">
@@ -3283,7 +3434,7 @@
             </button>
           {/each}
         {:else}
-          <p class="no-layers">No layers in project</p>
+          <p class="no-layers">{$t('mobile.mapping.noLayers')}</p>
         {/if}
       </div>
     </div>
@@ -3294,23 +3445,23 @@
         <button
           class:active={viewMode === 'corners'}
           onclick={() => setViewMode('corners')}
-          aria-label="Corner warp"
+          aria-label={$t('mobile.mapping.cornerWarp')}
         >
-          Corners
+          {$t('mobile.mapping.corners')}
         </button>
         <button
           class:active={viewMode === 'mesh'}
           onclick={() => setViewMode('mesh')}
-          aria-label="Mesh warp"
+          aria-label={$t('mobile.mapping.meshWarp')}
         >
-          Mesh Grid
+          {$t('mobile.mapping.meshGrid')}
         </button>
         <button
           class="layer-tool-fx"
           onclick={openMappingEffectsPanel}
-          aria-label="Layer effects"
+          aria-label={$t('mobile.mapping.layerEffects')}
         >
-          FX
+          {$t('mobile.mapping.effectsShort')}
           {#if selectedLayer.effects?.length}
             <span>{selectedLayer.effects.length}</span>
           {/if}
@@ -3319,15 +3470,15 @@
           class="layer-tool-shape"
           class:active={!!selectedLayer.layerShape && selectedLayer.layerShape.type !== 'rectangle'}
           onclick={openShapePanel}
-          aria-label="Layer shape"
+          aria-label={$t('mobile.mapping.layerShape')}
         >
-          Shape
+          {$t('mobile.mapping.shape')}
         </button>
         <button
           onclick={() => { showMediaLibrary = true; mediaTab = 'shaders'; }}
-          aria-label="Layer source"
+          aria-label={$t('mobile.mapping.layerSource')}
         >
-          Source
+          {$t('mobile.mapping.source')}
         </button>
       </div>
     {/if}
@@ -3335,7 +3486,7 @@
     <!-- Mesh Grid Preset (visible in mesh mode) - matches desktop presets -->
     {#if selectedLayer && viewMode === 'mesh'}
       <div class="mesh-controls">
-        <span class="mesh-preset-label">Grid</span>
+        <span class="mesh-preset-label">{$t('mobile.mapping.grid')}</span>
         <select
           class="mesh-preset-select"
           value="{meshRows}x{meshCols}"
@@ -3407,7 +3558,7 @@
               style="left: {pos.x}px; top: {pos.y}px; transform: scale({1 / viewportScale});"
               ontouchstart={(e) => handleTouchStart(corner as keyof WarpCorners, e)}
             >
-              <span class="handle-label">{corner.replace(/([A-Z])/g, ' $1')}</span>
+              <span class="handle-label">{cornerTranslationKeys[corner] ? $t(cornerTranslationKeys[corner]) : corner}</span>
             </div>
           {/each}
         {:else}
@@ -3441,7 +3592,7 @@
         </div><!-- end viewport-content -->
       {:else}
         <div class="no-layer">
-          <p>Select a layer to control</p>
+          <p>{$t('mobile.mapping.selectLayer')}</p>
         </div>
       {/if}
 
@@ -3449,11 +3600,11 @@
       {#if viewportScale !== 1 || viewportPanX !== 0 || viewportPanY !== 0}
         <div class="viewport-gesture-overlay">
           <span class="gesture-zoom-label">{viewportScale.toFixed(1)}x</span>
-          <button class="gesture-reset-btn" onclick={resetViewportTransform}>Reset</button>
+          <button class="gesture-reset-btn" onclick={resetViewportTransform}>{$t('mobile.mapping.reset')}</button>
         </div>
       {/if}
       <div class="viewport-gesture-hint">
-        <span>Pinch to zoom &bull; Two fingers to pan</span>
+        <span>{$t('mobile.mapping.gestureHint')}</span>
       </div>
     </div>
 
@@ -3476,7 +3627,7 @@
                 const val = parseFloat((e.target as HTMLInputElement).value);
                 sendParameter(selectedLayer.id, 'opacity', val);
               }}
-              aria-label="Layer opacity"
+              aria-label={$t('mobile.mapping.layerOpacity')}
             />
             <span class="quick-pct">{Math.round(selectedLayer.opacity * 100)}%</span>
           </div>
@@ -3486,10 +3637,10 @@
               onchange={(e) => {
                 sendParameter(selectedLayer.id, 'blendMode', (e.target as HTMLSelectElement).value);
               }}
-              aria-label="Layer blend mode"
+              aria-label={$t('mobile.mapping.layerBlendMode')}
             >
               {#each blendModes as mode}
-                <option value={mode}>{mode}</option>
+                <option value={mode}>{mobileBlendModeDisplayLabel(mode)}</option>
               {/each}
             </select>
           </div>
@@ -3497,8 +3648,8 @@
             class="visibility-btn quick-vis"
             class:hidden={!selectedLayer.visible}
             onclick={() => sendParameter(selectedLayer.id, 'visible', !selectedLayer.visible)}
-            title={selectedLayer.visible ? 'Hide layer' : 'Show layer'}
-            aria-label={selectedLayer.visible ? 'Hide layer' : 'Show layer'}
+            title={selectedLayer.visible ? $t('mobile.mapping.hideLayer') : $t('mobile.mapping.showLayer')}
+            aria-label={selectedLayer.visible ? $t('mobile.mapping.hideLayer') : $t('mobile.mapping.showLayer')}
           >
             {#if selectedLayer.visible}
               <!-- Open eye: layer is visible; tap to hide -->
@@ -3525,23 +3676,23 @@
       <div class="media-library-overlay" onclick={() => showMediaLibrary = false}></div>
       <div class="media-library-slideout">
         <div class="media-library-header">
-          <h3>Media & Clips</h3>
-          <button onclick={() => showMediaLibrary = false}>Close</button>
+          <h3>{$t('mobile.library.title')}</h3>
+          <button onclick={() => showMediaLibrary = false}>{$t('mobile.library.close')}</button>
         </div>
 
         <!-- Tab Navigation -->
         <div class="media-tabs">
           <button class:active={mediaTab === 'vj'} onclick={() => mediaTab = 'vj'}>
-            VJ Clips
+            {$t('mobile.library.tabs.vj')}
           </button>
           <button class:active={mediaTab === 'presets'} onclick={() => mediaTab = 'presets'}>
-            Presets
+            {$t('mobile.library.tabs.presets')}
           </button>
           <button class:active={mediaTab === 'shaders'} onclick={() => mediaTab = 'shaders'}>
-            Shaders
+            {$t('mobile.library.tabs.shaders')}
           </button>
           <button class:active={mediaTab === 'media'} onclick={() => mediaTab = 'media'}>
-            Media
+            {$t('mobile.library.tabs.media')}
           </button>
         </div>
 
@@ -3556,17 +3707,17 @@
                   class:active={vjClipsState.isLive}
                   onclick={toggleVJLive}
                 >
-                  {vjClipsState.isLive ? 'LIVE' : 'GO LIVE'}
+                  {vjClipsState.isLive ? $t('mobile.library.live') : $t('mobile.library.goLive')}
                 </button>
                 <button
                   class="vj-mixer-btn"
                   class:active={showVJMixer}
                   onclick={() => showVJMixer = !showVJMixer}
                 >
-                  Mixer
+                  {$t('mobile.library.mixer')}
                 </button>
                 <button class="vj-stop-btn" onclick={stopAllVJ}>
-                  Stop All
+                  {$t('mobile.library.stopAll')}
                 </button>
               </div>
 
@@ -3574,7 +3725,7 @@
               {#if showVJMixer}
                 <div class="vj-mixer-panel">
                   <div class="mixer-header">
-                    <span>Layer Mixer</span>
+                    <span>{$t('mobile.library.layerMixer')}</span>
                   </div>
                   {#each vjClipsState.layerStates as layerState, layerIndex}
                     <div class="mixer-layer" class:active={layerState.activeColumn !== null}>
@@ -3585,20 +3736,22 @@
                           class="mixer-fx-btn"
                           class:has-effects={(layerState.effects?.length || 0) > 0}
                           onclick={() => openEffectsPanel(layerIndex)}
-                          title="Layer effects"
+                          title={$t('mobile.library.layerEffects')}
                         >
-                          FX {#if (layerState.effects?.length || 0) > 0}<span class="fx-count">{layerState.effects.length}</span>{/if}
+                          {$t('mobile.mapping.effectsShort')} {#if (layerState.effects?.length || 0) > 0}<span class="fx-count">{layerState.effects.length}</span>{/if}
                         </button>
                         <button
                           class="mixer-stop-btn"
                           onclick={() => stopVJLayer(layerIndex)}
+                          title={$t('mobile.library.stopLayer')}
+                          aria-label={$t('mobile.library.stopLayer')}
                         >
                           ×
                         </button>
                       </div>
                       <div class="mixer-controls">
                         <div class="mixer-slider-row">
-                          <span class="mixer-label">Opacity</span>
+                          <span class="mixer-label">{$t('mobile.library.opacity')}</span>
                           <input
                             type="range"
                             min="0"
@@ -3611,14 +3764,14 @@
                           <span class="mixer-value">{Math.round(layerState.opacity * 100)}%</span>
                         </div>
                         <div class="mixer-blend-row">
-                          <span class="mixer-label">Blend</span>
+                          <span class="mixer-label">{$t('mobile.library.blend')}</span>
                           <select
                             value={layerState.blendMode}
                             onchange={(e) => setVJLayerBlendMode(layerIndex, e.currentTarget.value)}
                             class="mixer-select"
                           >
                             {#each vjBlendModes as mode}
-                              <option value={mode}>{mode}</option>
+                              <option value={mode}>{mobileBlendModeDisplayLabel(mode)}</option>
                             {/each}
                           </select>
                         </div>
@@ -3651,7 +3804,8 @@
                       <button
                         class="layer-stop-btn"
                         onclick={() => stopVJLayer(layerIndex)}
-                        title="Stop layer"
+                        title={$t('mobile.library.stopLayer')}
+                        aria-label={$t('mobile.library.stopLayer')}
                       >
                         X
                       </button>
@@ -3685,21 +3839,21 @@
                   <button
                     class="col-trigger"
                     onclick={() => triggerVJColumn(colIdx)}
-                    title="Trigger column {colIdx + 1}"
+                    title={$t('mobile.library.triggerColumn', { values: { column: colIdx + 1 } })}
                   >
                     {colIdx + 1}
                   </button>
                 {/each}
               </div>
             {:else}
-              <p class="empty-hint">No VJ clips in project. Add clips to the VJ Clip Launcher on desktop.</p>
+              <p class="empty-hint">{$t('mobile.library.noVjClips')}</p>
             {/if}
 
           <!-- Presets/Compositions Tab -->
           {:else if mediaTab === 'presets'}
             {#if compositions.length > 0}
               <div class="media-section">
-                <h4>Saved Presets ({compositions.length})</h4>
+                <h4>{$t('mobile.library.savedPresets', { values: { count: compositions.length } })}</h4>
                 <div class="presets-grid">
                   {#each compositions as comp}
                     <button
@@ -3723,16 +3877,16 @@
                 </div>
               </div>
             {:else}
-              <p class="empty-hint">No presets saved. Create presets in VJ Mode on desktop.</p>
+              <p class="empty-hint">{$t('mobile.library.noPresets')}</p>
             {/if}
 
           <!-- Shaders Tab -->
           {:else if mediaTab === 'shaders'}
             {#if !selectedLayerId}
-              <p class="hint">Select a layer first to trigger shaders</p>
+              <p class="hint">{$t('mobile.library.selectLayerShaders')}</p>
             {:else}
               <div class="media-section">
-                <h4>Shaders {shadersLoading ? '(loading...)' : `(${shaders.length})`}</h4>
+                <h4>{$t('mobile.library.shaders')} ({shadersLoading ? $t('mobile.common.loading') : shaders.length})</h4>
                 <div class="shader-thumb-grid scrollable">
                   {#each shaders as shader}
                     <button
@@ -3754,7 +3908,7 @@
                     </button>
                   {/each}
                   {#if shaders.length === 0 && !shadersLoading}
-                    <p class="empty-hint">No shaders loaded</p>
+                    <p class="empty-hint">{$t('mobile.library.noShaders')}</p>
                   {/if}
                 </div>
               </div>
@@ -3765,19 +3919,19 @@
 
               <!-- Current Layer Info -->
               <div class="media-section">
-                <h4>Target Layer</h4>
-                <p class="layer-target">{selectedLayer?.name || 'Unknown'}</p>
+                <h4>{$t('mobile.library.targetLayer')}</h4>
+                <p class="layer-target">{selectedLayer?.name || $t('mobile.common.unknown')}</p>
               </div>
             {/if}
 
           <!-- Media Tab -->
           {:else if mediaTab === 'media'}
             {#if !selectedLayerId}
-              <p class="hint">Select a layer first to trigger media</p>
+              <p class="hint">{$t('mobile.library.selectLayerMedia')}</p>
             {:else}
               {#if libraryItems.length > 0}
                 <div class="media-section">
-                  <h4>Media Library ({libraryItems.length})</h4>
+                  <h4>{$t('mobile.library.mediaLibrary', { values: { count: libraryItems.length } })}</h4>
                   <!-- Thumbnail grid: matches the Shaders tab layout so users
                        can see what they're about to launch instead of scanning
                        a list of names + generic image/video icons. The desktop
@@ -3819,7 +3973,7 @@
                   </div>
                 </div>
               {:else}
-                <p class="empty-hint">No media in library. Add videos/images on desktop.</p>
+                <p class="empty-hint">{$t('mobile.library.noMedia')}</p>
               {/if}
             {/if}
           {/if}
@@ -3834,8 +3988,8 @@
       <div class="effects-overlay" onclick={closeShapePanel}></div>
       <div class="effects-slideout shape-slideout">
         <div class="effects-header">
-          <h3>{selectedLayer.name} Shape</h3>
-          <button class="effects-close-btn" onclick={closeShapePanel}>Done</button>
+          <h3>{$t('mobile.shape.title', { values: { layer: selectedLayer.name } })}</h3>
+          <button class="effects-close-btn" onclick={closeShapePanel}>{$t('mobile.shape.done')}</button>
         </div>
 
         <div class="effects-content">
@@ -3847,15 +4001,15 @@
                 onclick={() => setMappingLayerShape(selectedLayer.id, option.type)}
               >
                 <span class="shape-glyph">{option.glyph}</span>
-                <span>{option.label}</span>
+                <span>{$t(shapeTranslationKeys[option.type])}</span>
               </button>
             {/each}
           </div>
 
           <div class="shape-current-row">
             <div>
-              <span class="shape-current-label">Current</span>
-              <strong>{shapeLabels.get(shapeType) || shapeType}</strong>
+              <span class="shape-current-label">{$t('mobile.shape.current')}</span>
+              <strong>{$t(shapeTranslationKeys[shapeType] || 'mobile.mapping.layerFallback')}</strong>
             </div>
             <div class="shape-current-actions">
               {#if shape}
@@ -3863,11 +4017,11 @@
                   class:active={shape.enabled}
                   onclick={() => toggleMappingLayerShape(selectedLayer.id)}
                 >
-                  {shape.enabled ? 'On' : 'Off'}
+                  {shape.enabled ? $t('mobile.shape.on') : $t('mobile.shape.off')}
                 </button>
               {/if}
               <button onclick={() => clearMappingLayerShape(selectedLayer.id)} disabled={!shape}>
-                Clear
+                {$t('mobile.shape.clear')}
               </button>
             </div>
           </div>
@@ -3876,7 +4030,7 @@
             <div class="shape-param-list">
               {#if shapeType === 'circle' || shapeType === 'ellipse'}
                 <div class="effect-param-row">
-                  <span class="param-name">{shapeType === 'ellipse' ? 'Radius X' : 'Radius'}</span>
+                  <span class="param-name">{shapeType === 'ellipse' ? $t('mobile.shape.radiusX') : $t('mobile.shape.radius')}</span>
                   <input
                     class="effect-slider"
                     type="range"
@@ -3901,7 +4055,7 @@
                 </div>
                 {#if shapeType === 'ellipse'}
                   <div class="effect-param-row">
-                    <span class="param-name">Radius Y</span>
+                    <span class="param-name">{$t('mobile.shape.radiusY')}</span>
                     <input
                       class="effect-slider"
                       type="range"
@@ -3920,7 +4074,7 @@
 
               {#if shapeType === 'polygon' || shapeType === 'star'}
                 <div class="effect-param-row">
-                  <span class="param-name">{shapeType === 'star' ? 'Points' : 'Sides'}</span>
+                  <span class="param-name">{shapeType === 'star' ? $t('mobile.shape.points') : $t('mobile.shape.sides')}</span>
                   <input
                     class="effect-slider"
                     type="range"
@@ -3938,7 +4092,7 @@
 
               {#if shapeType === 'star'}
                 <div class="effect-param-row">
-                  <span class="param-name">Inner</span>
+                  <span class="param-name">{$t('mobile.shape.inner')}</span>
                   <input
                     class="effect-slider"
                     type="range"
@@ -3956,7 +4110,7 @@
 
               {#if shapeType === 'line' || shapeType === 'polyline'}
                 <div class="effect-param-row">
-                  <span class="param-name">Width</span>
+                  <span class="param-name">{$t('mobile.shape.width')}</span>
                   <input
                     class="effect-slider"
                     type="range"
@@ -3971,23 +4125,23 @@
                   <span class="param-value">{Math.round((shape.params.lineWidth ?? 0.04) * 100)}%</span>
                 </div>
                 <div class="effect-param-row">
-                  <span class="param-name">Cap</span>
+                  <span class="param-name">{$t('mobile.shape.cap')}</span>
                   <select
                     class="shape-select"
                     value={shape.params.lineCap ?? 'round'}
                     onchange={(e) => updateMappingLayerShapeParams(selectedLayer.id, { lineCap: e.currentTarget.value as 'butt' | 'round' | 'square' })}
                     onblur={() => onMappingShapeParamDragEnd(selectedLayer.id, 'lineCap')}
                   >
-                    <option value="round">Round</option>
-                    <option value="butt">Butt</option>
-                    <option value="square">Square</option>
+                    <option value="round">{$t('mobile.shape.round')}</option>
+                    <option value="butt">{$t('mobile.shape.butt')}</option>
+                    <option value="square">{$t('mobile.shape.square')}</option>
                   </select>
                 </div>
               {/if}
 
               {#if shapeType !== 'rectangle'}
                 <div class="effect-param-row">
-                  <span class="param-name">Rotate</span>
+                  <span class="param-name">{$t('mobile.shape.rotate')}</span>
                   <input
                     class="effect-slider"
                     type="range"
@@ -4002,7 +4156,7 @@
                   <span class="param-value">{Math.round(shape.params.rotation ?? 0)}°</span>
                 </div>
                 <div class="effect-param-row">
-                  <span class="param-name">Scale</span>
+                  <span class="param-name">{$t('mobile.shape.scale')}</span>
                   <input
                     class="effect-slider"
                     type="range"
@@ -4019,7 +4173,7 @@
               {/if}
 
               <div class="effect-param-row">
-                <span class="param-name">Feather</span>
+                <span class="param-name">{$t('mobile.shape.feather')}</span>
                 <input
                   class="effect-slider"
                   type="range"
@@ -4040,11 +4194,11 @@
                   checked={shape.params.invert ?? false}
                   onchange={(e) => updateMappingLayerShapeParams(selectedLayer.id, { invert: e.currentTarget.checked })}
                 />
-                <span>Invert shape</span>
+                <span>{$t('mobile.shape.invert')}</span>
               </label>
             </div>
           {:else}
-            <p class="no-effects">No layer shape assigned</p>
+            <p class="no-effects">{$t('mobile.shape.noAssigned')}</p>
           {/if}
         </div>
       </div>
@@ -4056,7 +4210,7 @@
       <div class="effects-slideout">
         <div class="effects-header">
           <h3>{effectsPanelTitle}</h3>
-          <button class="effects-close-btn" onclick={closeEffectsPanel}>Done</button>
+          <button class="effects-close-btn" onclick={closeEffectsPanel}>{$t('mobile.effects.done')}</button>
         </div>
 
         <div class="effects-content">
@@ -4073,11 +4227,12 @@
                     >
                       {effect.enabled ? '●' : '○'}
                     </button>
-                    <span class="effect-name">{effectLabels.get(effect.type) || effect.type}</span>
+                    <span class="effect-name">{mobileEffectTypeDisplayLabel(effect.type)}</span>
                     <span class="effect-expand">{expandedEffectId === effect.id ? '▲' : '▼'}</span>
                     <button
                       class="effect-remove"
                       onclick={(e) => { e.stopPropagation(); removePanelEffect(effect.id); }}
+                      aria-label={$t('mobile.effects.remove')}
                     >
                       ×
                     </button>
@@ -4087,7 +4242,7 @@
                     <div class="effect-params">
                       {#each (effectParamDefs[effect.type] || []) as paramDef}
                         <div class="effect-param-row">
-                          <span class="param-name">{paramDef.name}</span>
+                          <span class="param-name">{mobileEffectParamDisplayLabel(paramDef.param as string, paramDef.name)}</span>
                           {#if paramDef.type === 'select' && paramDef.options}
                             <select value={(effect.params as Record<string, number>)[paramDef.param as string] ?? paramDef.default}
                               oninput={(e) => {
@@ -4097,7 +4252,7 @@
                               onblur={() => onPanelEffectParamDragEnd(effect.id, paramDef.param as string)}
                               style="flex:1; background:#222; color:#fff; border:1px solid #444; border-radius:3px; padding:4px; font-size:13px;">
                               {#each paramDef.options as opt}
-                                <option value={opt.value}>{opt.label}</option>
+                                <option value={opt.value}>{mobileEffectOptionDisplayLabel(opt.value, opt.label)}</option>
                               {/each}
                             </select>
                           {:else if paramDef.type === 'color' && paramDef.colorParams}
@@ -4149,7 +4304,7 @@
                         </div>
                       {/each}
                       {#if (effectParamDefs[effect.type] || []).length === 0}
-                        <p class="no-params">No adjustable parameters</p>
+                        <p class="no-params">{$t('mobile.effects.noParams')}</p>
                       {/if}
                     </div>
                   {/if}
@@ -4157,34 +4312,36 @@
               {/each}
             </div>
           {:else}
-            <p class="no-effects">No effects on this layer</p>
+            <p class="no-effects">{$t('mobile.effects.noEffects')}</p>
           {/if}
 
           <!-- Add Effect Section -->
           <div class="add-effect-section">
             <div class="add-effect-heading">
-              <h4>Add Effect</h4>
+              <h4>{$t('mobile.effects.add')}</h4>
               <input
                 class="effect-search"
                 type="search"
-                placeholder="Search FX"
+                placeholder={$t('mobile.effects.searchPlaceholder')}
                 bind:value={effectSearch}
-                aria-label="Search effects"
+                aria-label={$t('mobile.effects.searchAria')}
               />
             </div>
             <div class="effect-categories">
               {#each visibleEffectCategories as category}
                 <div class="effect-category">
-                  <span class="category-name">{category.name}</span>
+                  <span class="category-name">{effectCategoryTranslationKeys[category.name] ? $t(effectCategoryTranslationKeys[category.name]) : category.name}</span>
                   <div class="category-effects">
                     {#each category.effects as effectDef}
                       <button
                         class="add-effect-btn"
                         onclick={() => addPanelEffect(effectDef.type)}
-                        title={effectDef.requiresWebGPU ? `${effectDef.name} · WebGPU` : effectDef.name}
+                        title={effectDef.requiresWebGPU
+                          ? `${mobileEffectTypeDisplayLabel(effectDef.type, effectDef.name)} · WebGPU`
+                          : mobileEffectTypeDisplayLabel(effectDef.type, effectDef.name)}
                       >
                         <span class="effect-swatch" style="background: {effectDef.previewCSS};"></span>
-                        <span class="effect-btn-name">{effectDef.name}</span>
+                        <span class="effect-btn-name">{mobileEffectTypeDisplayLabel(effectDef.type, effectDef.name)}</span>
                         {#if effectDef.requiresWebGPU}
                           <span class="effect-badge">GPU</span>
                         {/if}
@@ -4194,7 +4351,7 @@
                 </div>
               {/each}
               {#if visibleEffectCategories.length === 0}
-                <p class="no-effects">No matching effects</p>
+                <p class="no-effects">{$t('mobile.effects.noMatching')}</p>
               {/if}
             </div>
           </div>
@@ -4217,7 +4374,7 @@
               playsinline
             ></video>
             {#if !visionStream}
-              <div class="vision-empty">{nativeVisionActive ? 'Native Vision' : 'Phone Camera'}</div>
+              <div class="vision-empty">{nativeVisionActive ? $t('mobile.vision.native') : $t('mobile.vision.phoneCamera')}</div>
             {/if}
             {#each visionCalibrationPoints as point}
               <div
@@ -4241,38 +4398,38 @@
             class:danger={visionIsLive}
             onclick={() => visionIsLive ? stopPhoneVision(true) : startPhoneVision()}
           >
-            {visionIsLive ? 'Stop Camera' : 'Start Camera'}
+            {visionIsLive ? $t('mobile.vision.stopCamera') : $t('mobile.vision.startCamera')}
           </button>
           <button class="vision-secondary" onclick={switchVisionCamera}>
-            {visionFacingMode === 'environment' ? 'Rear Camera' : 'Front Camera'}
+            {visionFacingMode === 'environment' ? $t('mobile.vision.rearCamera') : $t('mobile.vision.frontCamera')}
           </button>
         </div>
 
         <div class="vision-preset-grid">
           <label class="vision-field wide">
-            <span>Capture</span>
+            <span>{$t('mobile.vision.capture')}</span>
             <select
               value={visionCaptureProfile}
               onchange={(e) => void setVisionCaptureProfile((e.currentTarget as HTMLSelectElement).value as PhoneVisionCaptureProfile)}
             >
               {#each PHONE_VISION_CAPTURE_PROFILES as profile}
-                <option value={profile.id}>{profile.label}</option>
+                <option value={profile.id}>{visionCaptureProfileLabel(profile.id)}</option>
               {/each}
             </select>
           </label>
           <label class="vision-field">
-            <span>Point Cloud</span>
+            <span>{$t('mobile.vision.pointCloud')}</span>
             <select bind:value={visionPointCloudPreset}>
               {#each PHONE_VISION_POINT_CLOUD_PRESETS as preset}
-                <option value={preset.id}>{preset.label}</option>
+                <option value={preset.id}>{visionPresetLabel('point-cloud', preset.id)}</option>
               {/each}
             </select>
           </label>
           <label class="vision-field">
-            <span>Aura</span>
+            <span>{$t('mobile.vision.aura')}</span>
             <select bind:value={visionAuraPreset}>
               {#each PHONE_VISION_AURA_PRESETS as preset}
-                <option value={preset.id}>{preset.label}</option>
+                <option value={preset.id}>{visionPresetLabel('aura', preset.id)}</option>
               {/each}
             </select>
           </label>
@@ -4280,32 +4437,33 @@
         <div class="vision-profile-strip">
           <span>{visionCaptureWidth}×{visionCaptureHeight}</span>
           <span>{visionCaptureFrameRate} fps</span>
-          <span>{visionCapabilitiesPayload().depthPipeline}</span>
-          <span>{visionCapabilitiesPayload().segmentationPipeline}</span>
+          <span>{visionCapabilityLabel('transport', visionCapabilitiesPayload().transport)}</span>
+          <span>{visionCapabilityLabel('depth', visionCapabilitiesPayload().depthPipeline)}</span>
+          <span>{visionCapabilityLabel('segmentation', visionCapabilitiesPayload().segmentationPipeline)}</span>
           <span>{nativeVisionSummary}</span>
         </div>
 
         <div class="vision-effect-actions">
           <div class="vision-effect-card point-cloud">
             <button disabled={!visionHasCapture} onclick={createVisionPointCloudLayer}>
-              Create Point Cloud
+              {$t('mobile.vision.createPointCloud')}
             </button>
-            <span>{visionLastPointCloudAction || (visionNativeOnly ? 'Depth particles from native sidecar' : 'Depth particles from phone color')}</span>
+            <span>{visionLastPointCloudAction || (visionNativeOnly ? $t('mobile.vision.nativeDepthParticles') : $t('mobile.vision.phoneColorParticles'))}</span>
           </div>
           <div class="vision-effect-card aura">
             <button disabled={!visionHasCapture} onclick={createVisionAuraLayer}>
-              Create Aura
+              {$t('mobile.vision.createAura')}
             </button>
-            <span>{visionLastAuraAction || (visionNativeOnly ? 'Halo from native person mask' : 'Halo and edge field from phone feed')}</span>
+            <span>{visionLastAuraAction || (visionNativeOnly ? $t('mobile.vision.nativeHalo') : $t('mobile.vision.phoneFeedHalo'))}</span>
           </div>
         </div>
 
         <div class="vision-calibration">
-          <div class="vision-section-title">Calibration</div>
+          <div class="vision-section-title">{$t('mobile.vision.calibration')}</div>
           <div class="vision-cal-row">
-            <span>{visionCalibrationPoints.length}/4 points</span>
-            <span class="vision-cal-order">TL · TR · BR · BL</span>
-            <button onclick={resetVisionCalibration} disabled={visionCalibrationPoints.length === 0}>Clear</button>
+            <span>{$t('mobile.vision.points', { values: { count: visionCalibrationPoints.length } })}</span>
+            <span class="vision-cal-order">{$t('mobile.vision.calibrationOrder')}</span>
+            <button onclick={resetVisionCalibration} disabled={visionCalibrationPoints.length === 0}>{$t('mobile.vision.clear')}</button>
           </div>
         </div>
       </div>
@@ -4315,7 +4473,7 @@
         <!-- Floating controls at top (overlay the canvas; don't steal vertical space) -->
         <div class="paint-floating-controls">
           <select class="paint-layer-select" bind:value={paintLayerId}>
-            <option value={null}>Select Layer…</option>
+            <option value={null}>{$t('mobile.paint.selectLayer')}</option>
             {#each (projectState?.layers || []).filter(l => l.type === 'lightpainting') as layer}
               <option value={layer.id}>{layer.name}</option>
             {/each}
@@ -4323,7 +4481,8 @@
           <button
             class="paint-brush-chip"
             onclick={() => showBrushPanel = !showBrushPanel}
-            title="Brush settings"
+            title={$t('mobile.paint.brushSettings')}
+            aria-label={$t('mobile.paint.brushSettings')}
           >
             <span
               class="paint-brush-swatch"
@@ -4349,8 +4508,8 @@
         >
           {#if !paintLayerId}
             <div class="paint-empty">
-              <p>Select a light painting layer above to start drawing.</p>
-              <p class="hint">Create one on the desktop if you don't have any.</p>
+              <p>{$t('mobile.paint.empty')}</p>
+              <p class="hint">{$t('mobile.paint.desktopHint')}</p>
             </div>
           {:else}
             <!-- Mirror canvas: positioned via style to match project aspect ratio (letterboxed). -->
@@ -4394,11 +4553,11 @@
             {/if}
             <div class="paint-status">
               {#if isPainting}
-                <span class="paint-active">● Drawing</span>
+                <span class="paint-active">{$t('mobile.paint.drawing')}</span>
               {:else if cursorX < 0}
-                <span>Apple Pencil: hover or touch to draw</span>
+                <span>{$t('mobile.paint.pencilHint')}</span>
               {:else}
-                <span>Ready</span>
+                <span>{$t('mobile.paint.ready')}</span>
               {/if}
             </div>
           {/if}
@@ -4409,7 +4568,7 @@
           <div class="paint-sheet-backdrop" onclick={() => showBrushPanel = false}></div>
           <div class="paint-sheet" onclick={(e) => e.stopPropagation()}>
             <div class="paint-sheet-handle" onclick={() => showBrushPanel = false}></div>
-            <div class="paint-sheet-title">Brush</div>
+            <div class="paint-sheet-title">{$t('mobile.paint.brush')}</div>
 
             <!-- Brush type pills -->
             <div class="brush-types">
@@ -4422,7 +4581,7 @@
               {/each}
             </div>
 
-            <div class="paint-sheet-section-title">Color</div>
+            <div class="paint-sheet-section-title">{$t('mobile.paint.color')}</div>
             <div class="color-swatches">
               {#each colorPresets as c}
                 <button
@@ -4436,22 +4595,22 @@
 
             <div class="paint-sliders">
               <div class="paint-slider-row">
-                <span class="slider-label">Size</span>
+                <span class="slider-label">{$t('mobile.paint.size')}</span>
                 <input type="range" min="1" max="80" step="1" bind:value={paintBrush.size} />
                 <span class="slider-val">{paintBrush.size}</span>
               </div>
               <div class="paint-slider-row">
-                <span class="slider-label">Glow</span>
+                <span class="slider-label">{$t('mobile.paint.glow')}</span>
                 <input type="range" min="0" max="5" step="0.1" bind:value={paintBrush.glow} />
                 <span class="slider-val">{paintBrush.glow.toFixed(1)}</span>
               </div>
               <div class="paint-slider-row">
-                <span class="slider-label">Opacity</span>
+                <span class="slider-label">{$t('mobile.paint.opacity')}</span>
                 <input type="range" min="0" max="1" step="0.01" bind:value={paintBrush.opacity} />
                 <span class="slider-val">{Math.round(paintBrush.opacity * 100)}%</span>
               </div>
               <div class="paint-slider-row">
-                <span class="slider-label">Softness</span>
+                <span class="slider-label">{$t('mobile.paint.softness')}</span>
                 <input type="range" min="0" max="1" step="0.01" bind:value={paintBrush.softness} />
                 <span class="slider-val">{Math.round(paintBrush.softness * 100)}%</span>
               </div>

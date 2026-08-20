@@ -1,6 +1,7 @@
 <script lang="ts">
   import { keyframeTimeline } from '../../stores/keyframeTimeline';
   import { project } from '../../stores/layers';
+  import { t } from '../../i18n';
 
   $: config = $keyframeTimeline.config;
   $: layers = $project.layers;
@@ -19,19 +20,24 @@
 <div class="transport">
   <div class="transport-left">
     <button class="transport-btn" class:active={config.isPlaying}
-      onclick={() => config.isPlaying ? keyframeTimeline.pause() : keyframeTimeline.play()}
-      title={config.isPlaying ? 'Pause' : 'Play'}>
+      onclick={() => (config.isPlaying ? keyframeTimeline.pause() : keyframeTimeline.play())}
+      title={$t(config.isPlaying ? 'timeline.transport.pause' : 'timeline.transport.play')}
+      aria-label={$t(config.isPlaying ? 'timeline.transport.pause' : 'timeline.transport.play')}>
       {#if config.isPlaying}
         <svg width="12" height="12" viewBox="0 0 12 12"><rect x="1" y="1" width="3.5" height="10" fill="currentColor"/><rect x="7.5" y="1" width="3.5" height="10" fill="currentColor"/></svg>
       {:else}
         <svg width="12" height="12" viewBox="0 0 12 12"><polygon points="2,0 12,6 2,12" fill="currentColor"/></svg>
       {/if}
     </button>
-    <button class="transport-btn" onclick={() => keyframeTimeline.stop()} title="Stop">
+    <button class="transport-btn" onclick={() => keyframeTimeline.stop()} title={$t('timeline.transport.stop')}
+      aria-label={$t('timeline.transport.stop')}
+    >
       <svg width="12" height="12" viewBox="0 0 12 12"><rect x="1" y="1" width="10" height="10" fill="currentColor"/></svg>
     </button>
     <button class="transport-btn" class:active={config.isLooping}
-      onclick={() => keyframeTimeline.setLooping(!config.isLooping)} title="Loop">
+      onclick={() => keyframeTimeline.setLooping(!config.isLooping)} title={$t('timeline.transport.loop')}
+      aria-label={$t('timeline.transport.loop')}
+    >
       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
         <path d="M17 2l4 4-4 4"/><path d="M3 11V9a4 4 0 014-4h14"/>
         <path d="M7 22l-4-4 4-4"/><path d="M21 13v2a4 4 0 01-4 4H3"/>
@@ -40,17 +46,20 @@
     <span class="time-display">{formatTime(config.currentTime)}</span>
     <span class="time-sep">/</span>
     <select class="duration-select" value={config.duration}
+      aria-label={$t('timeline.transport.duration')}
       onchange={(e) => keyframeTimeline.setDuration(Number((e.target as HTMLSelectElement).value))}>
       {#each durations as d}
-        <option value={d}>{d < 60 ? `${d}s` : `${d / 60}m`}</option>
+        <option value={d}>{d < 60 ? $t('timeline.transport.durationSeconds', { values: { value: d } })
+            : $t('timeline.transport.durationMinutes', { values: { value: d / 60 } })}</option>
       {/each}
     </select>
   </div>
   <div class="transport-right">
-    <span class="transport-label">Layer:</span>
+    <span class="transport-label">{$t('timeline.transport.layer')}</span>
     <select class="layer-select" value={selectedLayerId || ''}
+      aria-label={$t('timeline.transport.layerAria')}
       onchange={(e) => keyframeTimeline.selectLayer((e.target as HTMLSelectElement).value || null)}>
-      <option value="">Select layer...</option>
+      <option value="">{$t('timeline.transport.selectLayer')}</option>
       {#each layers as layer}
         <option value={layer.id}>{layer.name}</option>
       {/each}
@@ -89,7 +98,7 @@
     padding: 0;
   }
   .transport-btn:hover { color: #fff; border-color: rgba(255,255,255,0.2); }
-  .transport-btn.active { color: #FF6B6B; border-color: rgba(255,107,107,0.4); }
+  .transport-btn.active { color: #ff6b6b; border-color: rgba(255,107,107,0.4); }
   .time-display {
     font-family: var(--font-jetbrains), monospace;
     font-size: 13px;

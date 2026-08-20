@@ -38,6 +38,7 @@
    */
   import { onMount, onDestroy } from 'svelte';
   import { invoke } from '$lib/bridge';
+  import { t } from '$lib/i18n';
 
   const SIGNAL_CHANNEL = 'ghostarcade-output-pixels';
 
@@ -50,11 +51,26 @@
   // on a projector vs. a healthy 60fps HDTV without opening DevTools.
   let showStats = urlParams.get('stats') === '1';
 
+  function outputMessage(key: string, values?: Record<string, string | number>): string {
+    return $t(`screens.outputWindow.${key}`, values ? { values } : undefined);
+  }
+
   let videoEl: HTMLVideoElement;
   let pc: RTCPeerConnection | null = null;
   let channel: BroadcastChannel | null = null;
   let connected = false;
-  let statusText = 'Waiting for editor stream…';
+  let outputStatus:
+    | { kind: 'waiting' }
+    | { kind: 'channel-unavailable'; error: string }
+    | { kind: 'peer-reconnecting'; state: string }
+    | { kind: 'none' } = { kind: 'waiting' };
+  $: statusText = outputStatus.kind === 'waiting'
+    ? $t('screens.outputWindow.waitingForStream')
+    : outputStatus.kind === 'channel-unavailable'
+      ? $t('screens.outputWindow.channelUnavailable', { values: { error: outputStatus.error } })
+      : outputStatus.kind === 'peer-reconnecting'
+        ? $t('screens.outputWindow.peerReconnecting', { values: { state: outputStatus.state } })
+        : '';
   let disposed = false;
 
   // Always-on minimal health badge. Visible when connected; hides when
@@ -159,7 +175,7 @@
     try {
       channel = new BroadcastChannel(SIGNAL_CHANNEL);
     } catch (e: any) {
-      statusText = `BroadcastChannel unavailable: ${e?.message ?? e}`;
+      outputStatus = { kind: 'channel-unavailable', error: String(e?.message ?? e) };
       return;
     }
 
@@ -225,12 +241,12 @@
       console.log('[OutputDisplay] connectionState:', pc?.connectionState);
       if (pc?.connectionState === 'connected') {
         connected = true;
-        statusText = '';
+        outputStatus = { kind: 'none' };
         stopReadyHeartbeat();
         if (showStats) startStatsLoop();
       } else if (pc?.connectionState === 'disconnected' || pc?.connectionState === 'failed') {
         connected = false;
-        statusText = `Peer ${pc.connectionState} — reconnecting…`;
+        outputStatus = { kind: 'peer-reconnecting', state: pc.connectionState };
         if (statsTimer) { clearInterval(statsTimer); statsTimer = null; }
         // Restart the heartbeat so we tell the editor we want a fresh
         // peer. Editor will tear down its side on receiving the next
@@ -275,8 +291,8 @@
     // doesn't expose actual display refresh rate via DOM; rVFC fps is
     // the closest proxy.
     healthDisplay = `${window.innerWidth}×${window.innerHeight}` +
-                    `  screen ${screen.width}×${screen.height}` +
-                    `  dpr ${window.devicePixelRatio.toFixed(2)}`;
+                    `  ${outputMessage('stats.screen')} ${screen.width}×${screen.height}` +
+                    `  ${outputMessage('stats.dpr')} ${window.devicePixelRatio.toFixed(2)}`;
     healthTimer = setInterval(async () => {
       if (!pc || disposed) return;
       try {
@@ -321,12 +337,28 @@
         });
         const dims = videoEl ? `${videoEl.videoWidth}×${videoEl.videoHeight}` : '?';
         statsOverlay = [
-          `RTC ${inboundFps.toFixed(1)} fps  pres ${videoFps.toFixed(1)} fps`,
-          `${dims}  ${codec || 'codec?'}`,
-          `frames decoded ${inboundFramesDecoded}  dropped ${framesDropped}`,
-          `jitter ${(jitter * 1000).toFixed(2)}ms  proc-delay ${(processingDelay * 1000).toFixed(2)}ms`,
-          `bytes received ${(inboundBytes / 1024 / 1024).toFixed(1)} MiB`,
-          `rotation ${rotation}°  fit ${fit}  bri ${brightness.toFixed(2)}  con ${contrast.toFixed(2)}`,
+          outputMessage('stats.rtc', {
+            rtcFps: inboundFps.toFixed(1),
+            presentedFps: videoFps.toFixed(1),
+          }),
+          outputMessage('stats.dimensionsCodec', { dimensions: dims, codec: codec || 'codec?' }),
+          outputMessage('stats.decodedDropped', {
+            decoded: inboundFramesDecoded,
+            dropped: framesDropped,
+          }),
+          outputMessage('stats.jitterProcessing', {
+            jitter: (jitter * 1000).toFixed(2),
+            processingDelay: (processingDelay * 1000).toFixed(2),
+          }),
+          outputMessage('stats.bytesReceived', {
+            bytes: (inboundBytes / 1024 / 1024).toFixed(1),
+          }),
+          outputMessage('stats.transform', {
+            rotation,
+            fit,
+            brightness: brightness.toFixed(2),
+            contrast: contrast.toFixed(2),
+          }),
         ].join('\n');
       } catch (e) {
         // getStats can throw transiently during connection setup. Ignore.
@@ -424,14 +456,14 @@
        distracting and non-actionable. Press-S stats overlay still
        covers diagnostics. -->
   <div class="health-badge" style="background: {healthBadgeColor};">
-    ●  no link
+    {$t('screens.outputWindow.noLink')}
   </div>
 {/if}
 
 {#if showStats && connected}
-  <pre class="stats-overlay">{statsOverlay || 'gathering stats…'}
-display {healthDisplay}
-press S to hide</pre>
+  <pre class="stats-overlay">{statsOverlay || $t('screens.outputWindow.gatheringStats')}
+{$t('screens.outputWindow.stats.display', { values: { info: healthDisplay } })}
+{$t('screens.outputWindow.pressStatsToHide')}</pre>
 {/if}
 
 <style>

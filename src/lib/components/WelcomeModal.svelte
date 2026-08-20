@@ -3,6 +3,8 @@
   // No license activation, no purchase upsell, no demo/watermark fork.
   // Just a friendly hello + a "Get started" button.
 
+  import { t } from '../i18n';
+
   export let onClose: () => void = () => {};
 
   function getStarted() {
@@ -17,24 +19,22 @@
 <div class="welcome-overlay">
   <div class="welcome-panel">
     <div class="welcome-logo">
-      <img src="{import.meta.env.BASE_URL}logo.png" alt="Ghost Arcade" class="logo-img" />
+      <img src="{import.meta.env.BASE_URL}logo.png" alt={$t('shellExtras.welcome.logoAlt')} class="logo-img" />
     </div>
-    <h1 class="welcome-title">Welcome to Ghost Arcade</h1>
-    <p class="welcome-subtitle">Open-source projection mapping &amp; VJ software</p>
+    <h1 class="welcome-title">{$t('shellExtras.welcome.title')}</h1>
+    <p class="welcome-subtitle">{$t('shellExtras.welcome.subtitle')}</p>
 
     <div class="welcome-actions">
       <button class="welcome-btn primary" onclick={getStarted}>
-        Get started
+        {$t('shellExtras.welcome.getStarted')}
       </button>
       <button class="welcome-btn outline" onclick={openGitHub}>
-        View on GitHub
+        {$t('shellExtras.welcome.viewOnGitHub')}
       </button>
     </div>
 
     <p class="welcome-hint">
-      Free, AGPL-3.0. Every effect, layer type, and output is unlocked — no
-      tiers, no watermarks, no signup. Pair your phone via the QR-code button
-      in the toolbar.
+      {$t('shellExtras.welcome.hint')}
     </p>
   </div>
 </div>

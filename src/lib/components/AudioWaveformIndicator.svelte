@@ -12,6 +12,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { getLastRawAnalysis } from '../stores/audio';
   import { audioStore } from '../stores/audio';
+  import { t } from '../i18n';
 
   // Logical pixel size; canvas backing-store gets devicePixelRatio'd.
   const W = 92;
@@ -28,7 +29,7 @@
     const ctx = canvas.getContext('2d');
     if (!ctx) return;
     const dpr = window.devicePixelRatio || 1;
-    const w = canvas.width;   // backing-store px
+    const w = canvas.width; // backing-store px
     const h = canvas.height;
 
     // Always clear (transparent over the toolbar)
@@ -86,11 +87,7 @@
   });
 </script>
 
-<canvas
-  bind:this={canvas}
-  class="awi"
-  title="Live audio waveform"
-></canvas>
+<canvas bind:this={canvas} class="awi" title={$t('audioTools.waveform.liveTitle')}></canvas>
 
 <style>
   .awi {

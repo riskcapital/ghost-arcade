@@ -11,14 +11,12 @@
     SV_SHADER_DEFS, SV_WORLD_DEFS,
     SV_REACTIVITY_MODES,
     type SVState, type SVLayer, type SVParams, type SVParamKey,
-    type SVReactivityMode
+    type SVReactivityMode,
   } from '../stores/synthVision';
   import {
-    performerDeckStore,
-  } from '../stores/performerDecks';
+    performerDeckStore } from '../stores/performerDecks';
   import {
-    geoDeckStore,
-  } from '../stores/geoDeck';
+    geoDeckStore } from '../stores/geoDeck';
   import { evaluateGeoDeck, type GeoEngineRuntime } from '../geo/engine';
   import { vjClipLauncher, type VJClip } from '../stores/vjClipLauncher';
   import { mediaLibrary, type MediaItem } from '../stores/media';
@@ -33,7 +31,8 @@
   import { getDefaultEffectParams as getRendererDefaultEffectParams } from '../renderer/effects';
   import EffectPickerModal from './EffectPickerModal.svelte';
   import SynthVisionPresets from './SynthVisionPresets.svelte';
-  import { modulationStore, setParamModSource, updateParamMod, setBaseValue, registerParamRanges, getModulatedValue, type ModSource, type ParamModulation } from '../audio/modulation';
+  import { modulationStore, setParamModSource, updateParamMod, setBaseValue, registerParamRanges, getModulatedValue, type ModSource, type ParamModulation,
+  } from '../audio/modulation';
   import ModTray, { modSourceLabel } from './ModTray.svelte';
   import { audioStore } from '../stores/audio';
   import { getVisualAudioSnapshot } from '../audio/visualAudio';
@@ -43,9 +42,64 @@
   import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
   import AudioInputPicker from './AudioInputPicker.svelte';
   import { showLoading, hideLoading } from '../stores/loading';
+  import { t } from '../i18n';
 
   export let onClose: () => void = () => {};
   export let visible: boolean = true;
+
+  function synthMessage(key: string, values?: Record<string, string | number>): string {
+    return $t(`lighting.synthVision.${key}`, { values });
+  }
+
+  function synthValue(path: string, fallback: string): string {
+    const key = `lighting.synthVision.${path}`;
+    const translated = $t(key);
+    return translated === key ? fallback : translated;
+  }
+
+  function reactivityLabel(id: SVReactivityMode, fallback: string): string {
+    return synthValue(`reactivity.${id}.label`, fallback);
+  }
+
+  function reactivityDescription(id: SVReactivityMode, fallback: string): string {
+    return synthValue(`reactivity.${id}.description`, fallback);
+  }
+
+  function cameraBlendLabel(id: number, fallback: string): string {
+    return synthValue(`cameraBlends.${id}`, fallback);
+  }
+
+  function cameraModeLabel(id: string, fallback: string): string {
+    return synthValue(`cameraModes.${id}.name`, fallback);
+  }
+
+  function spaceFxName(id: string, fallback: string): string {
+    return synthValue(`spaceFx.${id}.name`, fallback);
+  }
+
+  function spaceFxDescription(id: string, fallback: string): string {
+    return synthValue(`spaceFx.${id}.description`, fallback);
+  }
+
+  function shaderNameLabel(index: number, fallback: string): string {
+    return synthValue(`shaderNames.${index}`, fallback);
+  }
+
+  function worldNameLabel(index: number, fallback: string): string {
+    return synthValue(`worldNames.${index}`, fallback);
+  }
+
+  function parameterLabel(label: string): string {
+    return synthValue(`parameterLabels.${label}`, label);
+  }
+
+  function spaceLabel(value: string): string {
+    return synthValue(`spaces.${value}`, value);
+  }
+
+  function worldLabel(value: string): string {
+    return synthValue(`worlds.${value}`, value);
+  }
 
   // Save clips to session cache and close — clips persist across VJ mode toggles
   function handleClose() {
@@ -71,8 +125,8 @@
 
   // Combine project + global presets for display
   $: allPresets = [
-    ...($svKeyboardPresets).map(p => ({ ...p, _scope: 'project' as const })),
-    ...($globalSVKeyboardPresets).map(p => ({ ...p, _scope: 'global' as const })),
+    ...$svKeyboardPresets.map((p) => ({ ...p, _scope: 'project' as const })),
+    ...$globalSVKeyboardPresets.map((p) => ({ ...p, _scope: 'global' as const })),
   ];
 
   let activePresetId: string | null = null;
@@ -80,7 +134,8 @@
   let showPresetNameInput = false;
 
   // Shader library for edit tray (loaded from ISF manifest, same as VJModePanel)
-  let editShaders: Array<{ id: string; name: string; src: string; shaderCode: string; thumbnail?: string; manifestDefaults?: Record<string, any> }> = [];
+  let editShaders: Array<{ id: string; name: string; src: string; shaderCode: string; thumbnail?: string; manifestDefaults?: Record<string, any>;
+  }> = [];
   let editShadersLoading = true;
   let thumbsCancelled = false; // set true on destroy to stop background thumbnail generation + shader loading
 
@@ -116,10 +171,15 @@
       // ISF is rendering inside SynthVision pipeline
       const inputs = isfShaderInstance.metadata?.INPUTS || [];
       activeISFInputs = inputs.filter(
-        (i: ISFInput) => (i.TYPE === 'float' || i.TYPE === 'long' || i.TYPE === 'bool' || i.TYPE === 'color' || i.TYPE === 'point2D')
-          && !i.NAME.startsWith('sv') // Hide SV bridge params from UI
+        (i: ISFInput) =>
+          (i.TYPE === 'float' ||
+            i.TYPE === 'long' ||
+            i.TYPE === 'bool' ||
+            i.TYPE === 'color' ||
+            i.TYPE === 'point2D') &&
+          !i.NAME.startsWith('sv'), // Hide SV bridge params from UI
       );
-      activeISFName = isfAssignment?.shaderName || 'ISF Shader';
+      activeISFName = isfAssignment?.shaderName || synthMessage('isfShader');
       activeISFShaderCode = isfShaderCode_internal;
     } else {
       // Fallback: check VJ clip launcher for ISF clips
@@ -129,9 +189,14 @@
         try {
           const parsed = parseISF(clip.shaderCode);
           activeISFInputs = parsed.metadata.INPUTS.filter(
-            (i: ISFInput) => i.TYPE === 'float' || i.TYPE === 'long' || i.TYPE === 'bool' || i.TYPE === 'color' || i.TYPE === 'point2D'
+            (i: ISFInput) =>
+              i.TYPE === 'float' ||
+              i.TYPE === 'long' ||
+              i.TYPE === 'bool' ||
+              i.TYPE === 'color' ||
+              i.TYPE === 'point2D',
           );
-          activeISFName = clip.name || 'ISF Shader';
+          activeISFName = clip.name || synthMessage('isfShader');
           activeISFShaderCode = clip.shaderCode;
         } catch {
           activeISFInputs = [];
@@ -281,7 +346,9 @@
 
   // Reactive state
   let state: SVState;
-  const unsub = synthVisionStore.subscribe(s => { state = s; });
+  const unsub = synthVisionStore.subscribe((s) => {
+    state = s;
+  });
 
   // Camera stream for live cam layer
   let camVideo: HTMLVideoElement;
@@ -303,7 +370,7 @@
   async function startCamera() {
     try {
       camStream = await navigator.mediaDevices.getUserMedia({
-        video: { width: 640, height: 480, facingMode: 'user' }
+        video: { width: 640, height: 480, facingMode: 'user' },
       });
       if (camVideo) {
         camVideo.srcObject = camStream;
@@ -321,7 +388,7 @@
 
   function stopCamera() {
     if (camStream) {
-      camStream.getTracks().forEach(t => t.stop());
+      camStream.getTracks().forEach((t) => t.stop());
       camStream = null;
     }
     synthVisionStore.setCamActive(false);
@@ -1759,9 +1826,15 @@ void main() {
 }`;
 
   function initShaders() {
-    if (!shaderCanvas) { console.error('SynthVision: shaderCanvas not available'); return; }
+    if (!shaderCanvas) {
+      console.error('SynthVision: shaderCanvas not available');
+      return;
+    }
     gl = shaderCanvas.getContext('webgl2', { antialias: false, alpha: false });
-    if (!gl) { console.error('SynthVision: WebGL2 not available'); return; }
+    if (!gl) {
+      console.error('SynthVision: WebGL2 not available');
+      return;
+    }
     console.log('SynthVision: Main shader init started, canvas:', shaderCanvas.width, 'x', shaderCanvas.height);
 
     const vs = compileShader(gl, VERT, gl.VERTEX_SHADER);
@@ -1798,18 +1871,54 @@ void main() {
     gl.bindVertexArray(quadVAO);
     const buf = gl.createBuffer();
     gl.bindBuffer(gl.ARRAY_BUFFER, buf);
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,1,1]), gl.STATIC_DRAW);
+    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), gl.STATIC_DRAW);
     const attr = gl.getAttribLocation(shaderProgram, 'p');
     gl.enableVertexAttribArray(attr);
     gl.vertexAttribPointer(attr, 2, gl.FLOAT, false, 0, 0);
     gl.bindVertexArray(null);
 
     // Cache uniforms (including per-shader parameter uniforms)
-    const names = ['t','bp','pump','res','ms','chaos','spd','zm','col','glow','warp','mirr','feedback','lofi','mic','bass','mode','style','inv','prevFrame','blackout','whiteout','fxShockwave','fxTwist','fxChromatic','fxPixelate','fxStrobe','fxIntensity','sp0','sp1','sp2','camFlowX','camFlowY'];
-    names.forEach(n => { shaderUniforms[n] = gl!.getUniformLocation(shaderProgram!, n); });
+    const names = [
+      't',
+      'bp',
+      'pump',
+      'res',
+      'ms',
+      'chaos',
+      'spd',
+      'zm',
+      'col',
+      'glow',
+      'warp',
+      'mirr',
+      'feedback',
+      'lofi',
+      'mic',
+      'bass',
+      'mode',
+      'style',
+      'inv',
+      'prevFrame',
+      'blackout',
+      'whiteout',
+      'fxShockwave',
+      'fxTwist',
+      'fxChromatic',
+      'fxPixelate',
+      'fxStrobe',
+      'fxIntensity',
+      'sp0',
+      'sp1',
+      'sp2',
+      'camFlowX',
+      'camFlowY',
+    ];
+    names.forEach((n) => {
+      shaderUniforms[n] = gl!.getUniformLocation(shaderProgram!, n);
+    });
 
     // Debug: log which uniforms were NOT found (null)
-    const missingUniforms = names.filter(n => shaderUniforms[n] === null);
+    const missingUniforms = names.filter((n) => shaderUniforms[n] === null);
     if (missingUniforms.length > 0) {
       console.warn('SynthVision: Missing uniforms:', missingUniforms);
     } else {
@@ -1827,8 +1936,23 @@ void main() {
       gl.bindAttribLocation(postFxProgram, attr, 'p');
       gl.linkProgram(postFxProgram);
       if (gl.getProgramParameter(postFxProgram, gl.LINK_STATUS)) {
-        const pfxNames = ['inputTex','res','pump','fxShockwave','fxTwist','fxChromatic','fxPixelate','fxStrobe','fxIntensity','inv','blackout','whiteout'];
-        pfxNames.forEach(n => { postFxUniforms[n] = gl!.getUniformLocation(postFxProgram!, n); });
+        const pfxNames = [
+          'inputTex',
+          'res',
+          'pump',
+          'fxShockwave',
+          'fxTwist',
+          'fxChromatic',
+          'fxPixelate',
+          'fxStrobe',
+          'fxIntensity',
+          'inv',
+          'blackout',
+          'whiteout',
+        ];
+        pfxNames.forEach((n) => {
+          postFxUniforms[n] = gl!.getUniformLocation(postFxProgram!, n);
+        });
         // Create texture for ISF canvas upload
         isfTexture = gl.createTexture();
         gl.bindTexture(gl.TEXTURE_2D, isfTexture);
@@ -1868,8 +1992,17 @@ void main() {
           const lineNum = parseInt(match[1]);
           const lines = src.split('\n');
           console.error('Problematic line', lineNum, ':', lines[lineNum - 1]);
-          console.error('Context (lines', lineNum - 2, 'to', lineNum + 2, '):\n',
-            lines.slice(Math.max(0, lineNum - 3), lineNum + 2).map((l, i) => `${lineNum - 2 + i}: ${l}`).join('\n'));
+          console.error(
+            'Context (lines',
+            lineNum - 2,
+            'to',
+            lineNum + 2,
+            '):\n',
+            lines
+              .slice(Math.max(0, lineNum - 3), lineNum + 2)
+              .map((l, i) => `${lineNum - 2 + i}: ${l}`)
+              .join('\n'),
+          );
         }
       }
       g.deleteShader(s);
@@ -1903,9 +2036,11 @@ void main() {
 
   function ensureFBO() {
     if (!gl || !shaderCanvas) return;
-    const w = shaderCanvas.width, h = shaderCanvas.height;
+    const w = shaderCanvas.width,
+      h = shaderCanvas.height;
     if (w === fboW && h === fboH) return;
-    fboW = w; fboH = h;
+    fboW = w;
+    fboH = h;
     fboA = makeFBO(gl, w, h);
     fboB = makeFBO(gl, w, h);
   }
@@ -1914,9 +2049,15 @@ void main() {
   //  Camera Effects WebGL Init
   // ================================================================
   function initCamShaders() {
-    if (!camCanvas) { console.error('SynthVision: camCanvas not available'); return; }
+    if (!camCanvas) {
+      console.error('SynthVision: camCanvas not available');
+      return;
+    }
     camGl = camCanvas.getContext('webgl2', { antialias: false, alpha: true });
-    if (!camGl) { console.error('SynthVision: Camera WebGL2 not available'); return; }
+    if (!camGl) {
+      console.error('SynthVision: Camera WebGL2 not available');
+      return;
+    }
     console.log('SynthVision: Camera shader init started, canvas:', camCanvas.width, 'x', camCanvas.height);
 
     const vs = compileShader(camGl, CAM_VERT, camGl.VERTEX_SHADER);
@@ -1937,14 +2078,16 @@ void main() {
     // Fullscreen quad
     const buf = camGl.createBuffer();
     camGl.bindBuffer(camGl.ARRAY_BUFFER, buf);
-    camGl.bufferData(camGl.ARRAY_BUFFER, new Float32Array([-1,-1,1,-1,-1,1,1,1]), camGl.STATIC_DRAW);
+    camGl.bufferData(camGl.ARRAY_BUFFER, new Float32Array([-1, -1, 1, -1, -1, 1, 1, 1]), camGl.STATIC_DRAW);
     const attr = camGl.getAttribLocation(camShader, 'p');
     camGl.enableVertexAttribArray(attr);
     camGl.vertexAttribPointer(attr, 2, camGl.FLOAT, false, 0, 0);
 
     // Cache uniforms
     const names = ['camTex', 'prevFrame', 't', 'motion', 'mic', 'mode', 'res', 'param1'];
-    names.forEach(n => { camUniforms[n] = camGl!.getUniformLocation(camShader!, n); });
+    names.forEach((n) => {
+      camUniforms[n] = camGl!.getUniformLocation(camShader!, n);
+    });
 
     // Create video texture
     camVideoTexture = camGl.createTexture()!;
@@ -1971,7 +2114,8 @@ void main() {
   let motionCanvas: HTMLCanvasElement | null = null;
   let motionCtx: CanvasRenderingContext2D | null = null;
   let prevFrameData: Uint8ClampedArray | null = null;
-  const CAM_W = 64, CAM_H = 48; // Low res for performance
+  const CAM_W = 64,
+    CAM_H = 48; // Low res for performance
 
   function detectMotion() {
     if (!camVideo || camVideo.readyState < 2) return;
@@ -1999,7 +2143,9 @@ void main() {
     let totalMotion = 0;
     let totalEdge = 0;
     let motionPixels = 0;
-    let flowSumX = 0, flowSumY = 0, flowCount = 0;
+    let flowSumX = 0,
+      flowSumY = 0,
+      flowCount = 0;
 
     // Sobel kernels for edge detection
     const sobelX = [-1, 0, 1, -2, 0, 2, -1, 0, 1];
@@ -2041,7 +2187,8 @@ void main() {
         }
 
         // Edge detection using Sobel filter
-        let gx = 0, gy = 0;
+        let gx = 0,
+          gy = 0;
         for (let ky = -1; ky <= 1; ky++) {
           for (let kx = -1; kx <= 1; kx++) {
             const ni = ((y + ky) * CAM_W + (x + kx)) * 4;
@@ -2062,8 +2209,8 @@ void main() {
     const motion = Math.min(1, (totalMotion / innerPixels) * 8); // Scale for sensitivity
     const edge = Math.min(1, totalEdge / innerPixels / 1.414); // Max gradient ~1.414
     const presence = Math.min(1, (motionPixels / innerPixels) * 3); // Scale for sensitivity
-    const flowX = flowCount > 0 ? Math.max(-1, Math.min(1, flowSumX / flowCount * 10)) : 0;
-    const flowY = flowCount > 0 ? Math.max(-1, Math.min(1, flowSumY / flowCount * 10)) : 0;
+    const flowX = flowCount > 0 ? Math.max(-1, Math.min(1, (flowSumX / flowCount) * 10)) : 0;
+    const flowY = flowCount > 0 ? Math.max(-1, Math.min(1, (flowSumY / flowCount) * 10)) : 0;
 
     // Update store with extracted camera data
     synthVisionStore.updateCamData({
@@ -2072,7 +2219,7 @@ void main() {
       edge,
       flowX,
       flowY,
-      presence
+      presence,
     });
 
     // Update local motion for camera shader uniforms
@@ -2123,14 +2270,14 @@ void main() {
     composer.addPass(new RenderPass(scene, camera));
     bloomPass = new UnrealBloomPass(
       new THREE.Vector2(threeCanvas.width, threeCanvas.height),
-      0.55,  // strength — moderate. Lifts emissive highlights without
-             // washing out the whole frame. Earlier 1.4 was a "neon
-             // club" overshoot that hid geometry detail.
-      0.5,   // radius — soft halo extent.
-      0.85,  // threshold — selective. Only HDR-pushed pixels (worlds
-             // that explicitly multiplyScalar above 1.0) contribute.
-             // Everything in [0..1] passes through clean so the
-             // geometry detail and user param effects stay visible.
+      0.55, // strength — moderate. Lifts emissive highlights without
+      // washing out the whole frame. Earlier 1.4 was a "neon
+      // club" overshoot that hid geometry detail.
+      0.5, // radius — soft halo extent.
+      0.85, // threshold — selective. Only HDR-pushed pixels (worlds
+      // that explicitly multiplyScalar above 1.0) contribute.
+      // Everything in [0..1] passes through clean so the
+      // geometry detail and user param effects stay visible.
     );
     composer.addPass(bloomPass);
     composer.addPass(new OutputPass());
@@ -2141,43 +2288,90 @@ void main() {
   // ================================================================
   const BLEND_MAP = [THREE.AdditiveBlending, THREE.SubtractiveBlending, THREE.MultiplyBlending, THREE.NormalBlending];
 
-  function activeLayer(): SVLayer { return state.layers[state.focus]; }
-  function getBlend(): THREE.Blending { return BLEND_MAP[activeLayer().blend] || THREE.AdditiveBlending; }
+  function activeLayer(): SVLayer {
+    return state.layers[state.focus];
+  }
+  function getBlend(): THREE.Blending {
+    return BLEND_MAP[activeLayer().blend] || THREE.AdditiveBlending;
+  }
 
   function sCol(u: number): THREE.Color {
     const c = activeLayer().p.color;
     const s = activeLayer().style;
     const col = new THREE.Color();
     switch (s) {
-      case 0: col.setHSL((c + u * .1) % 1, .85, .55); break;
-      case 1: { const l = .5 + c * .35 + u * .1; col.setRGB(l, l, l + .02); break; }
-      case 2: col.setHSL((c + u * .03) % 1, .2, .6); break;
-      case 3: col.setHSL((c + u * .06) % 1, .6, .42); break;
-      case 4: { const v = .5 + .5 * Math.sin(u * 5); col.setHSL((c + v * .06) % 1, .18, .68 + v * .18); break; }
-      case 5: col.setHSL((c + u * .03) % 1, .35, .12); break;
-      case 6: col.setHSL((c + u * .5 + state.time * .012) % 1, .92, .58); break;
-      case 7: col.setHSL(c * .07, .9, .32 + u * .18); break;
+      case 0:
+        col.setHSL((c + u * 0.1) % 1, 0.85, 0.55);
+        break;
+      case 1: {
+        const l = 0.5 + c * 0.35 + u * 0.1;
+        col.setRGB(l, l, l + 0.02);
+        break;
+      }
+      case 2:
+        col.setHSL((c + u * 0.03) % 1, 0.2, 0.6);
+        break;
+      case 3:
+        col.setHSL((c + u * 0.06) % 1, 0.6, 0.42);
+        break;
+      case 4: {
+        const v = 0.5 + 0.5 * Math.sin(u * 5);
+        col.setHSL((c + v * 0.06) % 1, 0.18, 0.68 + v * 0.18);
+        break;
+      }
+      case 5:
+        col.setHSL((c + u * 0.03) % 1, 0.35, 0.12);
+        break;
+      case 6:
+        col.setHSL((c + u * 0.5 + state.time * 0.012) % 1, 0.92, 0.58);
+        break;
+      case 7:
+        col.setHSL(c * 0.07, 0.9, 0.32 + u * 0.18);
+        break;
     }
     return col;
   }
 
   function lineMat(op: number) {
-    return new THREE.LineBasicMaterial({ color: 0xffffff, transparent: true, opacity: op || .5, blending: getBlend() });
+    return new THREE.LineBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: op || 0.5,
+      blending: getBlend(),
+    });
   }
   function solidMat(op: number) {
-    return new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: op || .2, blending: getBlend(), side: THREE.DoubleSide });
+    return new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: op || 0.2,
+      blending: getBlend(),
+      side: THREE.DoubleSide,
+    });
   }
   function meshMat(op: number) {
-    return new THREE.MeshBasicMaterial({ color: 0xffffff, transparent: true, opacity: op || .4, blending: getBlend(), wireframe: true, side: THREE.DoubleSide });
+    return new THREE.MeshBasicMaterial({
+      color: 0xffffff,
+      transparent: true,
+      opacity: op || 0.4,
+      blending: getBlend(),
+      wireframe: true,
+      side: THREE.DoubleSide,
+    });
   }
-  function outlinedMeshGroup(geometry: THREE.BufferGeometry, fillOpacity = .16, outlineOpacity = .55, outlineLayers = 2) {
+  function outlinedMeshGroup(
+    geometry: THREE.BufferGeometry,
+    fillOpacity = 0.16,
+    outlineOpacity = 0.55,
+    outlineLayers = 2,
+  ) {
     const group = new THREE.Group();
     const fill = new THREE.Mesh(geometry, solidMat(fillOpacity));
     group.add(fill);
     const outlines: THREE.Mesh[] = [];
     for (let i = 0; i < outlineLayers; i++) {
-      const shell = new THREE.Mesh(geometry.clone(), meshMat(outlineOpacity / (1 + i * .35)));
-      shell.scale.setScalar(1.015 + i * .025);
+      const shell = new THREE.Mesh(geometry.clone(), meshMat(outlineOpacity / (1 + i * 0.35)));
+      shell.scale.setScalar(1.015 + i * 0.025);
       outlines.push(shell);
       group.add(shell);
     }
@@ -2187,7 +2381,7 @@ void main() {
   }
 
   function clearWorld() {
-    worldObjects.forEach(o => {
+    worldObjects.forEach((o) => {
       scene.remove(o);
       o.traverse((c: any) => {
         if (c.geometry) c.geometry.dispose();
@@ -2200,7 +2394,11 @@ void main() {
     worldObjects.length = 0;
   }
 
-  function addW(obj: THREE.Object3D) { scene.add(obj); worldObjects.push(obj); return obj; }
+  function addW(obj: THREE.Object3D) {
+    scene.add(obj);
+    worldObjects.push(obj);
+    return obj;
+  }
 
   function buildWorld(w: number) {
     if (!scene) return;
@@ -2210,13 +2408,21 @@ void main() {
     const T = THREE;
 
     switch (w) {
-      case 0: { // PARTICLES
+      case 0: {
+        // PARTICLES
         const N = 4000;
-        const pos = new Float32Array(N * 3), vel = new Float32Array(N * 3), col = new Float32Array(N * 3), sz = new Float32Array(N);
+        const pos = new Float32Array(N * 3),
+          vel = new Float32Array(N * 3),
+          col = new Float32Array(N * 3),
+          sz = new Float32Array(N);
         for (let i = 0; i < N; i++) {
-          pos[i*3] = (Math.random() - .5) * 80; pos[i*3+1] = (Math.random() - .5) * 55; pos[i*3+2] = (Math.random() - .5) * 45;
-          vel[i*3] = (Math.random() - .5) * .3; vel[i*3+1] = (Math.random() - .5) * .3; vel[i*3+2] = (Math.random() - .5) * .2;
-          sz[i] = .3 + Math.random();
+          pos[i * 3] = (Math.random() - 0.5) * 80;
+          pos[i * 3 + 1] = (Math.random() - 0.5) * 55;
+          pos[i * 3 + 2] = (Math.random() - 0.5) * 45;
+          vel[i * 3] = (Math.random() - 0.5) * 0.3;
+          vel[i * 3 + 1] = (Math.random() - 0.5) * 0.3;
+          vel[i * 3 + 2] = (Math.random() - 0.5) * 0.2;
+          sz[i] = 0.3 + Math.random();
         }
         const bg = new T.BufferGeometry();
         bg.setAttribute('position', new T.BufferAttribute(pos, 3));
@@ -2226,100 +2432,140 @@ void main() {
           uniforms: { uP: { value: 0 } },
           vertexShader: `attribute float size;varying vec3 vc;varying float va;uniform float uP;void main(){vc=color;vec4 mv=modelViewMatrix*vec4(position,1);float dl=length(mv.xyz);va=clamp(1.-dl/70.,.02,1.);gl_PointSize=size*(1.+uP*1.5)*(200./dl);gl_Position=projectionMatrix*mv;}`,
           fragmentShader: `varying vec3 vc;varying float va;void main(){float d=length(gl_PointCoord-.5);if(d>.5)discard;gl_FragColor=vec4(vc*(1.+.2*smoothstep(.5,.0,d)),smoothstep(.5,.05,d)*va);}`,
-          transparent: true, blending: getBlend(), depthWrite: false, vertexColors: true
+          transparent: true,
+          blending: getBlend(),
+          depthWrite: false,
+          vertexColors: true,
         });
         addW(new T.Points(bg, mat));
-        worldData.pos = pos; worldData.vel = vel; worldData.col = col; worldData.sz = sz; worldData.N = N;
+        worldData.pos = pos;
+        worldData.vel = vel;
+        worldData.col = col;
+        worldData.sz = sz;
+        worldData.N = N;
         break;
       }
-      case 1: { // CUBES — solid cores with layered wire shells
+      case 1: {
+        // CUBES — solid cores with layered wire shells
         for (let i = 0; i < 120; i++) {
           const s = 1 + Math.random() * 4;
-          const g = outlinedMeshGroup(new T.BoxGeometry(s, s, s), .12, .48, 2);
-          const baseX = (Math.random() - .5) * 24;
-          const baseY = (Math.random() - .5) * 18;
-          g.position.z = -i * 5; g.position.x = baseX; g.position.y = baseY;
+          const g = outlinedMeshGroup(new T.BoxGeometry(s, s, s), 0.12, 0.48, 2);
+          const baseX = (Math.random() - 0.5) * 24;
+          const baseY = (Math.random() - 0.5) * 18;
+          g.position.z = -i * 5;
+          g.position.x = baseX;
+          g.position.y = baseY;
           g.userData = {
             ...g.userData,
             oz: -i * 5,
             baseX,
             baseY,
-            rx: (Math.random() - .5) * .5,
-            ry: (Math.random() - .5) * .5,
-            hu: Math.random()
+            rx: (Math.random() - 0.5) * 0.5,
+            ry: (Math.random() - 0.5) * 0.5,
+            hu: Math.random(),
           };
           addW(g);
         }
         break;
       }
-      case 2: { // FRACTAL — solid bloom-friendly leaf boxes (Menger-cube variant)
+      case 2: {
+        // FRACTAL — solid bloom-friendly leaf boxes (Menger-cube variant)
         // Sierpinski tetrahedron version had a userData.depth bug
         // where all leaves shared depth=1 and got hidden by the
         // DEPTH gate — went black. Reverted to the recursive
         // box variant that ships visible.
         const fracBox = (x: number, y: number, z: number, s: number, d: number) => {
-          if (d <= 0 || s < .15) {
+          if (d <= 0 || s < 0.15) {
             const g = new T.BoxGeometry(s, s, s);
             const mat = new T.MeshBasicMaterial({
-              color: 0xffffff, transparent: true, opacity: .55,
-              blending: getBlend(), side: T.DoubleSide,
+              color: 0xffffff,
+              transparent: true,
+              opacity: 0.55,
+              blending: getBlend(),
+              side: T.DoubleSide,
             });
             const m = new T.Mesh(g, mat);
             m.position.set(x, y, z);
-            m.userData = { hu: d * .15, rx: (Math.random() - .5) * .2, ry: (Math.random() - .5) * .2 };
+            m.userData = { hu: d * 0.15, rx: (Math.random() - 0.5) * 0.2, ry: (Math.random() - 0.5) * 0.2 };
             addW(m);
             return;
           }
           const ns = s / 3;
-          for (let dx = -1; dx <= 1; dx++) for (let dy = -1; dy <= 1; dy++) for (let dz = -1; dz <= 1; dz++) {
-            const cnt = (dx === 0 ? 1 : 0) + (dy === 0 ? 1 : 0) + (dz === 0 ? 1 : 0);
-            if (cnt >= 2) continue;
-            fracBox(x + dx * ns, y + dy * ns, z + dz * ns, ns, d - 1);
-          }
+          for (let dx = -1; dx <= 1; dx++)
+            for (let dy = -1; dy <= 1; dy++)
+              for (let dz = -1; dz <= 1; dz++) {
+                const cnt = (dx === 0 ? 1 : 0) + (dy === 0 ? 1 : 0) + (dz === 0 ? 1 : 0);
+                if (cnt >= 2) continue;
+                fracBox(x + dx * ns, y + dy * ns, z + dz * ns, ns, d - 1);
+              }
         };
         fracBox(0, 0, 0, 18, 2);
         break;
       }
-      case 3: { // TERRAIN
-        const gx = 80, gz = 120, sp = 1.2;
+      case 3: {
+        // TERRAIN
+        const gx = 80,
+          gz = 120,
+          sp = 1.2;
         const posArr: number[] = [];
         for (let z = 0; z < gz; z++) for (let x = 0; x < gx; x++) posArr.push((x - gx / 2) * sp, 0, (z - gz / 2) * sp);
         const bg = new T.BufferGeometry();
         const pa = new Float32Array(posArr);
         bg.setAttribute('position', new T.BufferAttribute(pa, 3));
         const idx: number[] = [];
-        for (let z = 0; z < gz - 1; z++) for (let x = 0; x < gx - 1; x++) { const i = z * gx + x; idx.push(i, i + 1, i, i + gx); }
+        for (let z = 0; z < gz - 1; z++)
+          for (let x = 0; x < gx - 1; x++) {
+            const i = z * gx + x;
+            idx.push(i, i + 1, i, i + gx);
+          }
         bg.setIndex(idx);
-        addW(new T.LineSegments(bg, lineMat(.25)));
-        worldData.terrPos = pa; worldData.gx = gx; worldData.gz = gz; worldData.sp = sp;
+        addW(new T.LineSegments(bg, lineMat(0.25)));
+        worldData.terrPos = pa;
+        worldData.gx = gx;
+        worldData.gz = gz;
+        worldData.sp = sp;
         break;
       }
-      case 4: { // NODES
+      case 4: {
+        // NODES
         const N = 120;
         const nds: THREE.Mesh[] = [];
         for (let i = 0; i < N; i++) {
-          const p = new T.Vector3((Math.random() - .5) * 50, (Math.random() - .5) * 35, (Math.random() - .5) * 30);
-          const sg = new T.SphereGeometry(.15, 4, 3);
-          const m = new T.Mesh(sg, meshMat(.5));
+          const p = new T.Vector3((Math.random() - 0.5) * 50, (Math.random() - 0.5) * 35, (Math.random() - 0.5) * 30);
+          const sg = new T.SphereGeometry(0.15, 4, 3);
+          const m = new T.Mesh(sg, meshMat(0.5));
           m.position.copy(p);
-          m.userData = { vel: new T.Vector3((Math.random() - .5) * .5, (Math.random() - .5) * .5, (Math.random() - .5) * .3), hu: Math.random() };
+          m.userData = {
+            vel: new T.Vector3((Math.random() - 0.5) * 0.5, (Math.random() - 0.5) * 0.5, (Math.random() - 0.5) * 0.3),
+            hu: Math.random(),
+          };
           addW(m);
           nds.push(m);
         }
         const eg = new T.BufferGeometry();
         const epos = new Float32Array(N * N * 6);
         eg.setAttribute('position', new T.BufferAttribute(epos, 3));
-        addW(new T.LineSegments(eg, lineMat(.12)));
-        worldData.nodes = nds; worldData.edgeGeo = eg; worldData.edgePos = epos; worldData.NC = N;
+        addW(new T.LineSegments(eg, lineMat(0.12)));
+        worldData.nodes = nds;
+        worldData.edgeGeo = eg;
+        worldData.edgePos = epos;
+        worldData.NC = N;
         break;
       }
-      case 5: { // FLUID
+      case 5: {
+        // FLUID
         const N = 3000;
-        const pos = new Float32Array(N * 3), vel = new Float32Array(N * 3), col = new Float32Array(N * 3), sz = new Float32Array(N);
+        const pos = new Float32Array(N * 3),
+          vel = new Float32Array(N * 3),
+          col = new Float32Array(N * 3),
+          sz = new Float32Array(N);
         for (let i = 0; i < N; i++) {
-          const a = Math.random() * Math.PI * 2, r = Math.random() * 20;
-          pos[i*3] = Math.cos(a) * r; pos[i*3+1] = Math.sin(a) * r; pos[i*3+2] = (Math.random() - .5) * 10;
-          sz[i] = .5 + Math.random() * .8;
+          const a = Math.random() * Math.PI * 2,
+            r = Math.random() * 20;
+          pos[i * 3] = Math.cos(a) * r;
+          pos[i * 3 + 1] = Math.sin(a) * r;
+          pos[i * 3 + 2] = (Math.random() - 0.5) * 10;
+          sz[i] = 0.5 + Math.random() * 0.8;
         }
         const bg = new T.BufferGeometry();
         bg.setAttribute('position', new T.BufferAttribute(pos, 3));
@@ -2329,35 +2575,54 @@ void main() {
           uniforms: { uP: { value: 0 } },
           vertexShader: `attribute float size;varying vec3 vc;varying float va;uniform float uP;void main(){vc=color;vec4 mv=modelViewMatrix*vec4(position,1);float dl=length(mv.xyz);va=clamp(1.-dl/60.,.05,1.);gl_PointSize=size*(1.5+uP)*(180./dl);gl_Position=projectionMatrix*mv;}`,
           fragmentShader: `varying vec3 vc;varying float va;void main(){float d=length(gl_PointCoord-.5);if(d>.5)discard;float a=smoothstep(.5,.1,d)*va;gl_FragColor=vec4(vc*(1.+.5*smoothstep(.3,.0,d)),a);}`,
-          transparent: true, blending: getBlend(), depthWrite: false, vertexColors: true
+          transparent: true,
+          blending: getBlend(),
+          depthWrite: false,
+          vertexColors: true,
         });
         addW(new T.Points(bg, mat));
-        worldData.fPos = pos; worldData.fVel = vel; worldData.fCol = col; worldData.fSz = sz; worldData.fN = N;
+        worldData.fPos = pos;
+        worldData.fVel = vel;
+        worldData.fCol = col;
+        worldData.fSz = sz;
+        worldData.fN = N;
         break;
       }
-      case 6: { // CRYSTAL — faceted cores with thicker wire shells
-        const s = 3, r = 4;
-        for (let x = -r; x <= r; x++) for (let y = -r; y <= r; y++) for (let z = -r; z <= r; z++) {
-          if ((x + y + z) % 2 !== 0) continue;
-          const m = outlinedMeshGroup(new T.IcosahedronGeometry(.38, 0), .09, .52, 2);
-          m.position.set(x * s, y * s, z * s);
-          m.userData = {
-            ...m.userData,
-            hu: ((x + r) / (r * 2) + (y + r) / (r * 2)) * .5,
-            rx: .1,
-            ry: .15
-          };
-          addW(m);
-        }
+      case 6: {
+        // CRYSTAL — faceted cores with thicker wire shells
+        const s = 3,
+          r = 4;
+        for (let x = -r; x <= r; x++)
+          for (let y = -r; y <= r; y++)
+            for (let z = -r; z <= r; z++) {
+              if ((x + y + z) % 2 !== 0) continue;
+              const m = outlinedMeshGroup(new T.IcosahedronGeometry(0.38, 0), 0.09, 0.52, 2);
+              m.position.set(x * s, y * s, z * s);
+              m.userData = {
+                ...m.userData,
+                hu: ((x + r) / (r * 2) + (y + r) / (r * 2)) * 0.5,
+                rx: 0.1,
+                ry: 0.15,
+              };
+              addW(m);
+            }
         break;
       }
-      case 7: { // VORTEX
+      case 7: {
+        // VORTEX
         const N = 4000;
-        const pos = new Float32Array(N * 3), vel = new Float32Array(N * 3), col = new Float32Array(N * 3), sz = new Float32Array(N);
+        const pos = new Float32Array(N * 3),
+          vel = new Float32Array(N * 3),
+          col = new Float32Array(N * 3),
+          sz = new Float32Array(N);
         for (let i = 0; i < N; i++) {
-          const h = i / N * 80 - 40, r = 3 + Math.random() * 15, a = Math.random() * Math.PI * 2;
-          pos[i*3] = Math.cos(a) * r; pos[i*3+1] = h; pos[i*3+2] = Math.sin(a) * r;
-          sz[i] = .3 + Math.random() * .6;
+          const h = (i / N) * 80 - 40,
+            r = 3 + Math.random() * 15,
+            a = Math.random() * Math.PI * 2;
+          pos[i * 3] = Math.cos(a) * r;
+          pos[i * 3 + 1] = h;
+          pos[i * 3 + 2] = Math.sin(a) * r;
+          sz[i] = 0.3 + Math.random() * 0.6;
         }
         const bg = new T.BufferGeometry();
         bg.setAttribute('position', new T.BufferAttribute(pos, 3));
@@ -2367,46 +2632,78 @@ void main() {
           uniforms: { uP: { value: 0 } },
           vertexShader: `attribute float size;varying vec3 vc;varying float va;uniform float uP;void main(){vc=color;vec4 mv=modelViewMatrix*vec4(position,1);float dl=length(mv.xyz);va=clamp(1.-dl/80.,.02,1.);gl_PointSize=size*(1.+uP)*(160./dl);gl_Position=projectionMatrix*mv;}`,
           fragmentShader: `varying vec3 vc;varying float va;void main(){float d=length(gl_PointCoord-.5);if(d>.5)discard;gl_FragColor=vec4(vc,smoothstep(.5,.05,d)*va);}`,
-          transparent: true, blending: getBlend(), depthWrite: false, vertexColors: true
+          transparent: true,
+          blending: getBlend(),
+          depthWrite: false,
+          vertexColors: true,
         });
         addW(new T.Points(bg, mat));
-        worldData.vPos = pos; worldData.vVel = vel; worldData.vCol = col; worldData.vSz = sz; worldData.vN = N;
+        worldData.vPos = pos;
+        worldData.vVel = vel;
+        worldData.vCol = col;
+        worldData.vSz = sz;
+        worldData.vN = N;
         break;
       }
-      case 8: { // STARFIELD
+      case 8: {
+        // STARFIELD
         const N = 2500;
-        const pos = new Float32Array(N * 6), col = new Float32Array(N * 6);
+        const pos = new Float32Array(N * 6),
+          col = new Float32Array(N * 6);
         worldData.sOrig = new Float32Array(N * 3);
         for (let i = 0; i < N; i++) {
-          const x = (Math.random() - .5) * 120, y = (Math.random() - .5) * 80, z = -Math.random() * 200;
-          worldData.sOrig[i*3] = x; worldData.sOrig[i*3+1] = y; worldData.sOrig[i*3+2] = z;
-          pos[i*6] = x; pos[i*6+1] = y; pos[i*6+2] = z;
-          pos[i*6+3] = x; pos[i*6+4] = y; pos[i*6+5] = z + .5;
+          const x = (Math.random() - 0.5) * 120,
+            y = (Math.random() - 0.5) * 80,
+            z = -Math.random() * 200;
+          worldData.sOrig[i * 3] = x;
+          worldData.sOrig[i * 3 + 1] = y;
+          worldData.sOrig[i * 3 + 2] = z;
+          pos[i * 6] = x;
+          pos[i * 6 + 1] = y;
+          pos[i * 6 + 2] = z;
+          pos[i * 6 + 3] = x;
+          pos[i * 6 + 4] = y;
+          pos[i * 6 + 5] = z + 0.5;
         }
         const bg = new T.BufferGeometry();
         bg.setAttribute('position', new T.BufferAttribute(pos, 3));
         bg.setAttribute('color', new T.BufferAttribute(col, 3));
-        addW(new T.LineSegments(bg, new T.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: .7, blending: getBlend() })));
-        worldData.sPos = pos; worldData.sCol = col; worldData.sN = N;
+        addW(
+          new T.LineSegments(
+            bg,
+            new T.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.7, blending: getBlend() }),
+          ),
+        );
+        worldData.sPos = pos;
+        worldData.sCol = col;
+        worldData.sN = N;
         break;
       }
-      case 9: { // ORGANISM
-        const segs = 40, rings = 20;
+      case 9: {
+        // ORGANISM
+        const segs = 40,
+          rings = 20;
         const pos = new Float32Array(segs * rings * 3);
         const bg = new T.BufferGeometry();
         bg.setAttribute('position', new T.BufferAttribute(pos, 3));
         const idx: number[] = [];
-        for (let r = 0; r < rings - 1; r++) for (let s = 0; s < segs; s++) {
-          const i = r * segs + s, ns = (s + 1) % segs;
-          idx.push(i, r * segs + ns, i, (r + 1) * segs + s);
-        }
+        for (let r = 0; r < rings - 1; r++)
+          for (let s = 0; s < segs; s++) {
+            const i = r * segs + s,
+              ns = (s + 1) % segs;
+            idx.push(i, r * segs + ns, i, (r + 1) * segs + s);
+          }
         bg.setIndex(idx);
-        addW(new T.LineSegments(bg, lineMat(.3)));
-        worldData.oPos = pos; worldData.oSegs = segs; worldData.oRings = rings;
+        addW(new T.LineSegments(bg, lineMat(0.3)));
+        worldData.oPos = pos;
+        worldData.oSegs = segs;
+        worldData.oRings = rings;
         break;
       }
-      case 10: { // AURORA - northern lights ribbons
-        const RIBBONS = 8, SEGS = 120;
+      case 10: {
+        // AURORA - northern lights ribbons
+        const RIBBONS = 8,
+          SEGS = 120;
         const pos = new Float32Array(RIBBONS * SEGS * 3);
         const col = new Float32Array(RIBBONS * SEGS * 3);
         const bg = new T.BufferGeometry();
@@ -2419,16 +2716,35 @@ void main() {
           }
         }
         bg.setIndex(idx);
-        addW(new T.LineSegments(bg, new T.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: .6, blending: getBlend(), linewidth: 1 })));
-        worldData.aPos = pos; worldData.aCol = col; worldData.aRibbons = RIBBONS; worldData.aSegs = SEGS;
+        addW(
+          new T.LineSegments(
+            bg,
+            new T.LineBasicMaterial({
+              vertexColors: true,
+              transparent: true,
+              opacity: 0.6,
+              blending: getBlend(),
+              linewidth: 1,
+            }),
+          ),
+        );
+        worldData.aPos = pos;
+        worldData.aCol = col;
+        worldData.aRibbons = RIBBONS;
+        worldData.aSegs = SEGS;
         // Store random offsets per ribbon for variety
         worldData.aOffsets = Array.from({ length: RIBBONS }, () => ({
-          x: (Math.random() - .5) * 60, y: Math.random() * 15 + 10, z: (Math.random() - .5) * 30,
-          phase: Math.random() * Math.PI * 2, freq: .5 + Math.random() * 1.5, amp: 3 + Math.random() * 8
+          x: (Math.random() - 0.5) * 60,
+          y: Math.random() * 15 + 10,
+          z: (Math.random() - 0.5) * 30,
+          phase: Math.random() * Math.PI * 2,
+          freq: 0.5 + Math.random() * 1.5,
+          amp: 3 + Math.random() * 8,
         }));
         break;
       }
-      case 11: { // DNA - double helix
+      case 11: {
+        // DNA - double helix
         const RUNGS = 80;
         // Two backbone strands as line strips
         const strandPos = new Float32Array(RUNGS * 2 * 3);
@@ -2442,27 +2758,47 @@ void main() {
         // Strand B
         for (let i = 0; i < RUNGS - 1; i++) strandIdx.push(RUNGS + i, RUNGS + i + 1);
         strandGeo.setIndex(strandIdx);
-        addW(new T.LineSegments(strandGeo, new T.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: .6, blending: getBlend() })));
+        addW(
+          new T.LineSegments(
+            strandGeo,
+            new T.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.6, blending: getBlend() }),
+          ),
+        );
         // Rungs connecting the two strands
         const rungPos = new Float32Array(RUNGS * 6);
         const rungCol = new Float32Array(RUNGS * 6);
         const rungGeo = new T.BufferGeometry();
         rungGeo.setAttribute('position', new T.BufferAttribute(rungPos, 3));
         rungGeo.setAttribute('color', new T.BufferAttribute(rungCol, 3));
-        addW(new T.LineSegments(rungGeo, new T.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: .35, blending: getBlend() })));
-        worldData.dStrandPos = strandPos; worldData.dStrandCol = strandCol;
-        worldData.dRungPos = rungPos; worldData.dRungCol = rungCol;
+        addW(
+          new T.LineSegments(
+            rungGeo,
+            new T.LineBasicMaterial({ vertexColors: true, transparent: true, opacity: 0.35, blending: getBlend() }),
+          ),
+        );
+        worldData.dStrandPos = strandPos;
+        worldData.dStrandCol = strandCol;
+        worldData.dRungPos = rungPos;
+        worldData.dRungCol = rungCol;
         worldData.dRungs = RUNGS;
         break;
       }
-      case 12: { // SWARM - boid flocking
+      case 12: {
+        // SWARM - boid flocking
         const N = 2000;
-        const pos = new Float32Array(N * 3), vel = new Float32Array(N * 3), col = new Float32Array(N * 3), sz = new Float32Array(N);
+        const pos = new Float32Array(N * 3),
+          vel = new Float32Array(N * 3),
+          col = new Float32Array(N * 3),
+          sz = new Float32Array(N);
         for (let i = 0; i < N; i++) {
-          pos[i*3] = (Math.random() - .5) * 60; pos[i*3+1] = (Math.random() - .5) * 40; pos[i*3+2] = (Math.random() - .5) * 30;
+          pos[i * 3] = (Math.random() - 0.5) * 60;
+          pos[i * 3 + 1] = (Math.random() - 0.5) * 40;
+          pos[i * 3 + 2] = (Math.random() - 0.5) * 30;
           const a = Math.random() * Math.PI * 2;
-          vel[i*3] = Math.cos(a) * 2; vel[i*3+1] = Math.sin(a) * 2; vel[i*3+2] = (Math.random() - .5) * .5;
-          sz[i] = .2 + Math.random() * .5;
+          vel[i * 3] = Math.cos(a) * 2;
+          vel[i * 3 + 1] = Math.sin(a) * 2;
+          vel[i * 3 + 2] = (Math.random() - 0.5) * 0.5;
+          sz[i] = 0.2 + Math.random() * 0.5;
         }
         const bg = new T.BufferGeometry();
         bg.setAttribute('position', new T.BufferAttribute(pos, 3));
@@ -2472,28 +2808,36 @@ void main() {
           uniforms: { uP: { value: 0 } },
           vertexShader: `attribute float size;varying vec3 vc;varying float va;uniform float uP;void main(){vc=color;vec4 mv=modelViewMatrix*vec4(position,1);float dl=length(mv.xyz);va=clamp(1.-dl/70.,.02,1.);gl_PointSize=size*(1.+uP)*(180./dl);gl_Position=projectionMatrix*mv;}`,
           fragmentShader: `varying vec3 vc;varying float va;void main(){float d=length(gl_PointCoord-.5);if(d>.45)discard;float tri=max(0.,1.-abs(gl_PointCoord.x-.5)*4.)*step(gl_PointCoord.y,.7);gl_FragColor=vec4(vc*(1.+tri*.3),smoothstep(.45,.05,d)*va);}`,
-          transparent: true, blending: getBlend(), depthWrite: false, vertexColors: true
+          transparent: true,
+          blending: getBlend(),
+          depthWrite: false,
+          vertexColors: true,
         });
         addW(new T.Points(bg, mat));
-        worldData.swPos = pos; worldData.swVel = vel; worldData.swCol = col; worldData.swSz = sz; worldData.swN = N;
+        worldData.swPos = pos;
+        worldData.swVel = vel;
+        worldData.swCol = col;
+        worldData.swSz = sz;
+        worldData.swN = N;
         break;
       }
-      case 13: { // RINGS - nested rotating bands with wire shells
+      case 13: {
+        // RINGS - nested rotating bands with wire shells
         const RING_COUNT = 12;
         for (let i = 0; i < RING_COUNT; i++) {
           const r = 4 + i * 2.5;
-          const tube = .12 + i * .01;
+          const tube = 0.12 + i * 0.01;
           const tg = new T.TorusGeometry(r, tube, 10, 96);
-          const m = outlinedMeshGroup(tg, .06, .42, 2);
+          const m = outlinedMeshGroup(tg, 0.06, 0.42, 2);
           m.userData = {
             ...m.userData,
             ringIdx: i,
             baseR: r,
             baseTube: tube,
             hu: i / RING_COUNT,
-            tiltX: (Math.random() - .5) * Math.PI * .8,
-            tiltZ: (Math.random() - .5) * Math.PI * .4,
-            spinDir: Math.random() > .5 ? 1 : -1
+            tiltX: (Math.random() - 0.5) * Math.PI * 0.8,
+            tiltZ: (Math.random() - 0.5) * Math.PI * 0.4,
+            spinDir: Math.random() > 0.5 ? 1 : -1,
           };
           addW(m);
         }
@@ -2509,15 +2853,17 @@ void main() {
     const def = SV_WORLD_DEFS[worldIdx];
     if (!def) return stored;
     const result: Record<string, number> = {};
-    def.params.forEach(p => { result[p.k] = stored[p.k] ?? p.d; });
+    def.params.forEach((p) => {
+      result[p.k] = stored[p.k] ?? p.d;
+    });
     return result;
   }
 
   function updateWorld(dt: number) {
     const t = state.time;
     const p = activeLayer().p;
-    const mx = (state.mx - .5) * 50;
-    const my = (.5 - state.my) * 35;
+    const mx = (state.mx - 0.5) * 50;
+    const my = (0.5 - state.my) * 35;
     const bpulse = Math.exp(-state.bp * 4);
     const w = activeLayer().world;
     const wp = getWorldParams(w); // World-specific params
@@ -2525,38 +2871,54 @@ void main() {
     if (currentWorldIdx !== w) buildWorld(w);
 
     switch (w) {
-      case 0: { // PARTICLES - wp: count, size, spread, speed, trail, gravity
+      case 0: {
+        // PARTICLES - wp: count, size, spread, speed, trail, gravity
         if (!worldData.pos) break;
-        const N = worldData.N, pos = worldData.pos, vel = worldData.vel, col = worldData.col, sz = worldData.sz;
-        const wSpeed = wp.speed * 2 + .5;  // 0.5 - 2.5
-        const wSpread = wp.spread * 60 + 20;  // 20 - 80
-        const wGravity = (wp.gravity - .5) * .02;  // -0.01 to 0.01
-        const wTrail = 1 - wp.trail * .05;  // damping 0.95 - 1.0
-        const wSize = wp.size * 1.5 + .2;  // 0.2 - 1.7
+        const N = worldData.N,
+          pos = worldData.pos,
+          vel = worldData.vel,
+          col = worldData.col,
+          sz = worldData.sz;
+        const wSpeed = wp.speed * 2 + 0.5; // 0.5 - 2.5
+        const wSpread = wp.spread * 60 + 20; // 20 - 80
+        const wGravity = (wp.gravity - 0.5) * 0.02; // -0.01 to 0.01
+        const wTrail = 1 - wp.trail * 0.05; // damping 0.95 - 1.0
+        const wSize = wp.size * 1.5 + 0.2; // 0.2 - 1.7
         for (let i = 0; i < N; i++) {
           const ix = i * 3;
-          const dx = mx - pos[ix], dy = my - pos[ix+1], dz = -pos[ix+2];
-          const dist = Math.sqrt(dx*dx + dy*dy + dz*dz) + 1;
+          const dx = mx - pos[ix],
+            dy = my - pos[ix + 1],
+            dz = -pos[ix + 2];
+          const dist = Math.sqrt(dx * dx + dy * dy + dz * dz) + 1;
           const attr = state.mDown ? -80 : 20;
-          vel[ix] += dx * attr / (dist * dist) * dt * wSpeed;
-          vel[ix+1] += dy * attr / (dist * dist) * dt * wSpeed;
-          vel[ix+2] += dz * attr / (dist * dist) * dt * .1;
-          vel[ix] += (-pos[ix+1] * .0007 + p.warp * Math.sin(pos[ix+1] * .1 + t) * 2) * dt * 60 * wSpeed;
-          vel[ix+1] += (pos[ix] * .0007 + p.warp * Math.cos(pos[ix] * .1 + t) * 2) * dt * 60 * wSpeed + wGravity;
+          vel[ix] += ((dx * attr) / (dist * dist)) * dt * wSpeed;
+          vel[ix + 1] += ((dy * attr) / (dist * dist)) * dt * wSpeed;
+          vel[ix + 2] += ((dz * attr) / (dist * dist)) * dt * 0.1;
+          vel[ix] += (-pos[ix + 1] * 0.0007 + p.warp * Math.sin(pos[ix + 1] * 0.1 + t) * 2) * dt * 60 * wSpeed;
+          vel[ix + 1] += (pos[ix] * 0.0007 + p.warp * Math.cos(pos[ix] * 0.1 + t) * 2) * dt * 60 * wSpeed + wGravity;
           // Kick-triggered jitter — fires on every kick onset and
           // decays smoothly via the AR envelope. Replaces the prior
           // raw-bass amplitude trigger, which only fired on huge
           // bass spikes in smooth mode and produced jagged motion
           // in aggressive mode. kickEnv gives a clean punch + fall.
-          if (state.kickEnv > .1) { vel[ix] += (Math.random() - .5) * state.kickEnv * 9 * dt; vel[ix+1] += (Math.random() - .5) * state.kickEnv * 9 * dt; }
-          vel[ix] *= wTrail; vel[ix+1] *= wTrail; vel[ix+2] *= .96;
-          pos[ix] += vel[ix] * dt * 60; pos[ix+1] += vel[ix+1] * dt * 60; pos[ix+2] += vel[ix+2] * dt * 60;
-          if (Math.abs(pos[ix]) > wSpread) vel[ix] *= -.5;
-          if (Math.abs(pos[ix+1]) > wSpread * .7) vel[ix+1] *= -.5;
-          if (Math.abs(pos[ix+2]) > wSpread * .5) vel[ix+2] *= -.5;
-          const c = sCol((i / N + t * .02) % 1);
-          col[ix] = c.r; col[ix+1] = c.g; col[ix+2] = c.b;
-          sz[i] = (.3 + Math.random() * .1) * wSize * (1 + bpulse * .15 + state.pump * .3);
+          if (state.kickEnv > 0.1) {
+            vel[ix] += (Math.random() - 0.5) * state.kickEnv * 9 * dt;
+            vel[ix + 1] += (Math.random() - 0.5) * state.kickEnv * 9 * dt;
+          }
+          vel[ix] *= wTrail;
+          vel[ix + 1] *= wTrail;
+          vel[ix + 2] *= 0.96;
+          pos[ix] += vel[ix] * dt * 60;
+          pos[ix + 1] += vel[ix + 1] * dt * 60;
+          pos[ix + 2] += vel[ix + 2] * dt * 60;
+          if (Math.abs(pos[ix]) > wSpread) vel[ix] *= -0.5;
+          if (Math.abs(pos[ix + 1]) > wSpread * 0.7) vel[ix + 1] *= -0.5;
+          if (Math.abs(pos[ix + 2]) > wSpread * 0.5) vel[ix + 2] *= -0.5;
+          const c = sCol((i / N + t * 0.02) % 1);
+          col[ix] = c.r;
+          col[ix + 1] = c.g;
+          col[ix + 2] = c.b;
+          sz[i] = (0.3 + Math.random() * 0.1) * wSize * (1 + bpulse * 0.15 + state.pump * 0.3);
         }
         const obj0 = worldObjects[0];
         if (obj0) {
@@ -2567,22 +2929,27 @@ void main() {
         }
         break;
       }
-      case 1: { // CUBES - wp: count, size, spacing, rotate, explode, thick
-        const wCount = wp.count;           // 0-1 visible fraction (gate)
-        const wSize = wp.size * 2 + .5;    // 0.5 - 2.5 scale
-        const wSpacing = wp.spacing * 1.6 + .4; // 0.4 - 2.0 z-stretch
-        const wRotate = wp.rotate * 3 + .5; // 0.5 - 3.5 rotation speed
-        const wExplode = wp.explode;       // 0-1 explosion scatter
-        const wThick = wp.thick * 1.8 + .2;
+      case 1: {
+        // CUBES - wp: count, size, spacing, rotate, explode, thick
+        const wCount = wp.count; // 0-1 visible fraction (gate)
+        const wSize = wp.size * 2 + 0.5; // 0.5 - 2.5 scale
+        const wSpacing = wp.spacing * 1.6 + 0.4; // 0.4 - 2.0 z-stretch
+        const wRotate = wp.rotate * 3 + 0.5; // 0.5 - 3.5 rotation speed
+        const wExplode = wp.explode; // 0-1 explosion scatter
+        const wThick = wp.thick * 1.8 + 0.2;
         const spd = 8 + p.speed * 30;
-        worldObjects.forEach(m => {
+        worldObjects.forEach((m) => {
           if (m.userData.oz === undefined) return;
           m.position.z += spd * dt;
           // wSpacing stretches the z wrap window so the cubes spread
           // farther apart in depth (or pack tighter). Cycle length
           // scales 1.0 → 5.0 of the base 300-unit loop.
           const wrap = 300 * (0.5 + wSpacing * 0.6);
-          if (m.position.z > 30) { m.position.z -= wrap; m.position.x = (Math.random() - .5) * 24; m.position.y = (Math.random() - .5) * 18; }
+          if (m.position.z > 30) {
+            m.position.z -= wrap;
+            m.position.x = (Math.random() - 0.5) * 24;
+            m.position.y = (Math.random() - 0.5) * 18;
+          }
           // wCount filters per-cube visibility — smoothstep edge
           // so cubes fade in/out across a small band rather than
           // snapping (the prior binary gate produced the flicker
@@ -2590,8 +2957,10 @@ void main() {
           const gateEdge = wCount * 1.1;
           const visible = Math.max(0, Math.min(1, (gateEdge - m.userData.hu) / 0.12 + 0.5));
           const explodeDrift = wExplode * (5 + state.kickEnv * 8);
-          m.position.x = m.userData.baseX + Math.sin(t * (.6 + wRotate * .3) + m.userData.hu * 10) * explodeDrift;
-          m.position.y = m.userData.baseY + Math.cos(t * (.5 + wRotate * .25) + m.userData.hu * 8) * explodeDrift * (.55 + state.midPulse * .35);
+          m.position.x = m.userData.baseX + Math.sin(t * (0.6 + wRotate * 0.3) + m.userData.hu * 10) * explodeDrift;
+          m.position.y =
+            m.userData.baseY +
+            Math.cos(t * (0.5 + wRotate * 0.25) + m.userData.hu * 8) * explodeDrift * (0.55 + state.midPulse * 0.35);
           m.rotation.x += m.userData.rx * dt * wRotate * (1 + p.chaos * 3);
           m.rotation.y += m.userData.ry * dt * wRotate * (1 + p.chaos * 3);
           const fade = Math.max(0, 1 - Math.abs(m.position.z) / 150);
@@ -2599,9 +2968,16 @@ void main() {
           // visibility gate. bpulse + state.pump give continuous
           // smooth bounce; kickEnv gives a smooth punch via the AR
           // envelope.
-          const sc = wSize * (1 + state.pump * .4 + bpulse * .15 + state.kickEnv * 0.35 + wExplode * Math.sin(t * 2 + m.userData.hu * 10) * .5) * visible;
+          const sc =
+            wSize *
+            (1 +
+              state.pump * 0.4 +
+              bpulse * 0.15 +
+              state.kickEnv * 0.35 +
+              wExplode * Math.sin(t * 2 + m.userData.hu * 10) * 0.5) *
+            visible;
           m.scale.setScalar(sc);
-          const cubeCol = sCol((m.userData.hu + state.centroidHue * .18 + t * .01) % 1);
+          const cubeCol = sCol((m.userData.hu + state.centroidHue * 0.18 + t * 0.01) % 1);
           const fill = m.userData.fill as THREE.Mesh | undefined;
           const outlines = (m.userData.outlines as THREE.Mesh[] | undefined) ?? [];
           if (fill?.material instanceof THREE.MeshBasicMaterial) {
@@ -2612,141 +2988,185 @@ void main() {
             shell.scale.setScalar(1.018 + wThick * 0.085 + idx * 0.026 + state.kickEnv * 0.02);
             if (shell.material instanceof THREE.MeshBasicMaterial) {
               shell.material.color.copy(cubeCol);
-              shell.material.opacity = fade * visible * (0.16 + wThick * 0.22 + state.midPulse * 0.08) / (1 + idx * 0.35);
+              shell.material.opacity =
+                (fade * visible * (0.16 + wThick * 0.22 + state.midPulse * 0.08)) / (1 + idx * 0.35);
             }
           });
         });
         break;
       }
-      case 2: { // FRACTAL - wp: depth, scale, twist, branch, glow, animate
-        const wDepth = wp.depth;          // 0-1 deep-leaf reveal
-        const wScale = wp.scale * 1.5 + .5;  // 0.5 - 2.0
-        const wTwist = wp.twist * 2;     // 0 - 2 twist intensity
-        const wBranch = wp.branch * 2.5 + .25; // 0.25 - 2.75 chaos
-        const wGlow = wp.glow * .4 + .15; // 0.15 - 0.55 baseline
-        const wAnimate = wp.animate * 2;  // 0 - 2 animation speed
+      case 2: {
+        // FRACTAL - wp: depth, scale, twist, branch, glow, animate
+        const wDepth = wp.depth; // 0-1 deep-leaf reveal
+        const wScale = wp.scale * 1.5 + 0.5; // 0.5 - 2.0
+        const wTwist = wp.twist * 2; // 0 - 2 twist intensity
+        const wBranch = wp.branch * 2.5 + 0.25; // 0.25 - 2.75 chaos
+        const wGlow = wp.glow * 0.4 + 0.15; // 0.15 - 0.55 baseline
+        const wAnimate = wp.animate * 2; // 0 - 2 animation speed
         // Treble drives the per-leaf twist amount so the fractal's
         // small-scale flutter tracks the bright transients of the
         // music; bass drives the overall scale via wpump + bpulse.
         const trebTwist = 1 + state.trebShimmer * 1.5;
-        worldObjects.forEach(m => {
+        worldObjects.forEach((m) => {
           if (m.userData.hu === undefined) return;
           // wBranch chaos-multiplies per-leaf rotation rates — at
           // low values the fractal counter-rotates slowly, at high
           // values each leaf spins at its own erratic rate.
           m.rotation.x += (m.userData.rx || 0) * dt * (1 + p.chaos) * (1 + wAnimate) * trebTwist * wBranch;
           m.rotation.y += (m.userData.ry || 0) * dt * (1 + p.chaos) * (1 + wAnimate) * trebTwist * wBranch;
-          m.rotation.z += wTwist * Math.sin(t * .5 + m.userData.hu * 5) * dt;
+          m.rotation.z += wTwist * Math.sin(t * 0.5 + m.userData.hu * 5) * dt;
           // Smooth bass-driven breath + kick punch on the whole tree.
-          const sc = wScale * (1 + state.pump * .3 + bpulse * .12 + state.bass * 0.2 + state.kickEnv * 0.3);
+          const sc = wScale * (1 + state.pump * 0.3 + bpulse * 0.12 + state.bass * 0.2 + state.kickEnv * 0.3);
           m.scale.setScalar(sc);
           // Solid colour at unit intensity — bloom catches overlap
           // when colours stack. No HDR multiplier so we don't blow
           // the whole frame out into white.
-          (m as any).material.color.copy(sCol(m.userData.hu + t * .01 * (1 + wAnimate)));
+          (m as any).material.color.copy(sCol(m.userData.hu + t * 0.01 * (1 + wAnimate)));
           // wDepth uses userData.hu (which Menger stores as
           // d * 0.15, so deeper leaves have higher hu). Drag DEPTH
           // low → only outer leaves visible; high → full density.
           // wGlow controls baseline opacity headroom.
-          const depthGate = Math.max(0, 1 - (m.userData.hu - wDepth * .9));
+          const depthGate = Math.max(0, 1 - (m.userData.hu - wDepth * 0.9));
           (m as any).material.opacity = (0.35 + wGlow * 0.7) * depthGate;
         });
         break;
       }
-      case 3: { // TERRAIN - wp: height, detail, water, erosion, fog, sun
+      case 3: {
+        // TERRAIN - wp: height, detail, water, erosion, fog, sun
         if (!worldData.terrPos) break;
-        const pos = worldData.terrPos, gx = worldData.gx, gz = worldData.gz, sp = worldData.sp;
-        const wHeight = wp.height * 8 + 2;  // 2 - 10 height multiplier
-        const wDetail = wp.detail * .15 + .05;  // 0.05 - 0.2 wave frequency
-        const wErosion = wp.erosion;  // smoothing factor
-        const wSun = wp.sun;  // color warmth
+        const pos = worldData.terrPos,
+          gx = worldData.gx,
+          gz = worldData.gz,
+          sp = worldData.sp;
+        const wHeight = wp.height * 8 + 2; // 2 - 10 height multiplier
+        const wDetail = wp.detail * 0.15 + 0.05; // 0.05 - 0.2 wave frequency
+        const wErosion = wp.erosion; // smoothing factor
+        const wSun = wp.sun; // color warmth
         const scroll = t * p.speed * 8;
-        for (let z = 0; z < gz; z++) for (let x = 0; x < gx; x++) {
-          const wx = (x - gx / 2) * sp, wz = (z - gz / 2) * sp + scroll;
-          let h = 0; const ch = p.chaos * 3 + 1;
-          h += Math.sin(wx * wDetail + t * .3) * 2 * ch;
-          h += Math.sin(wz * wDetail * .8 + t * .2) * 3 * ch;
-          h += Math.sin((wx + wz) * wDetail * 1.5 + t * .5) * 1.5;
-          h *= wHeight / 5;
-          // Apply erosion smoothing
-          h = h * (1 - wErosion * .5) + Math.sign(h) * Math.sqrt(Math.abs(h)) * wErosion * 2;
-          pos[(z * gx + x) * 3 + 1] = h;
-        }
+        for (let z = 0; z < gz; z++)
+          for (let x = 0; x < gx; x++) {
+            const wx = (x - gx / 2) * sp,
+              wz = (z - gz / 2) * sp + scroll;
+            let h = 0;
+            const ch = p.chaos * 3 + 1;
+            h += Math.sin(wx * wDetail + t * 0.3) * 2 * ch;
+            h += Math.sin(wz * wDetail * 0.8 + t * 0.2) * 3 * ch;
+            h += Math.sin((wx + wz) * wDetail * 1.5 + t * 0.5) * 1.5;
+            h *= wHeight / 5;
+            // Apply erosion smoothing
+            h = h * (1 - wErosion * 0.5) + Math.sign(h) * Math.sqrt(Math.abs(h)) * wErosion * 2;
+            pos[(z * gx + x) * 3 + 1] = h;
+          }
         (worldObjects[0] as any).geometry.attributes.position.needsUpdate = true;
-        (worldObjects[0] as any).material.color.copy(sCol(.3 + wSun * .4));
-        (worldObjects[0] as any).material.opacity = .25 + (1 - wp.fog) * .15;
+        (worldObjects[0] as any).material.color.copy(sCol(0.3 + wSun * 0.4));
+        (worldObjects[0] as any).material.opacity = 0.25 + (1 - wp.fog) * 0.15;
         break;
       }
-      case 4: { // NODES - wp: count, connect, pulse, attract, thick, glow
+      case 4: {
+        // NODES - wp: count, connect, pulse, attract, thick, glow
         if (!worldData.nodes) break;
-        const nds = worldData.nodes, ep = worldData.edgePos;
+        const nds = worldData.nodes,
+          ep = worldData.edgePos;
         const wCount = wp.count;
-        const wConnect = wp.connect * 20 + 5;  // 5 - 25 connection threshold
-        const wPulse = wp.pulse;  // pulsing intensity
-        const wAttract = wp.attract * .001;  // mouse attraction strength
-        const wThick = wp.thick * 1.8 + .35;
-        const wGlow = wp.glow * .6 + .3;  // 0.3 - 0.9 brightness
-        let ec = 0; const thresh = wConnect + p.chaos * 15;
+        const wConnect = wp.connect * 20 + 5; // 5 - 25 connection threshold
+        const wPulse = wp.pulse; // pulsing intensity
+        const wAttract = wp.attract * 0.001; // mouse attraction strength
+        const wThick = wp.thick * 1.8 + 0.35;
+        const wGlow = wp.glow * 0.6 + 0.3; // 0.3 - 0.9 brightness
+        let ec = 0;
+        const thresh = wConnect + p.chaos * 15;
         nds.forEach((n: any) => {
           const v = n.userData.vel;
-          v.x += (mx - n.position.x) * wAttract; v.y += (my - n.position.y) * wAttract;
-          v.multiplyScalar(.995);
+          v.x += (mx - n.position.x) * wAttract;
+          v.y += (my - n.position.y) * wAttract;
+          v.multiplyScalar(0.995);
           n.position.add(v.clone().multiplyScalar(dt * 60));
-          if (Math.abs(n.position.x) > 30) v.x *= -.8;
-          if (Math.abs(n.position.y) > 22) v.y *= -.8;
+          if (Math.abs(n.position.x) > 30) v.x *= -0.8;
+          if (Math.abs(n.position.y) > 22) v.y *= -0.8;
           const visible = Math.max(0, Math.min(1, (wCount * 1.15 - n.userData.hu) / 0.12 + 0.5));
-          const pulseSc = 1 + wPulse * Math.sin(t * 3 + n.userData.hu * 10) * .5;
+          const pulseSc = 1 + wPulse * Math.sin(t * 3 + n.userData.hu * 10) * 0.5;
           n.scale.setScalar((0.35 + wThick * 0.75) * pulseSc * (0.35 + visible * 0.65 + state.kickEnv * 0.15));
           n.material.color.copy(sCol(n.userData.hu));
           n.material.opacity = visible * (0.12 + wGlow * 0.55);
         });
-        for (let i = 0; i < nds.length; i++) for (let j = i + 1; j < nds.length; j++) {
-          if (ec >= worldData.NC * worldData.NC) break;
-          if (nds[i].scale.x < 0.1 || nds[j].scale.x < 0.1) continue;
-          const d = nds[i].position.distanceTo(nds[j].position);
-          if (d < thresh) {
-            const k = ec * 6;
-            ep[k] = nds[i].position.x; ep[k+1] = nds[i].position.y; ep[k+2] = nds[i].position.z;
-            ep[k+3] = nds[j].position.x; ep[k+4] = nds[j].position.y; ep[k+5] = nds[j].position.z;
-            ec++;
+        for (let i = 0; i < nds.length; i++)
+          for (let j = i + 1; j < nds.length; j++) {
+            if (ec >= worldData.NC * worldData.NC) break;
+            if (nds[i].scale.x < 0.1 || nds[j].scale.x < 0.1) continue;
+            const d = nds[i].position.distanceTo(nds[j].position);
+            if (d < thresh) {
+              const k = ec * 6;
+              ep[k] = nds[i].position.x;
+              ep[k + 1] = nds[i].position.y;
+              ep[k + 2] = nds[i].position.z;
+              ep[k + 3] = nds[j].position.x;
+              ep[k + 4] = nds[j].position.y;
+              ep[k + 5] = nds[j].position.z;
+              ec++;
+            }
           }
-        }
         for (let i = ec * 6; i < Math.min(ec * 6 + 600, ep.length); i++) ep[i] = 0;
         worldData.edgeGeo.attributes.position.needsUpdate = true;
         worldData.edgeGeo.setDrawRange(0, ec * 2);
-        if (worldObjects[1]) (worldObjects[1] as any).material.opacity = (0.08 + wThick * 0.22 + state.midPulse * 0.12) * wGlow;
+        if (worldObjects[1])
+          (worldObjects[1] as any).material.opacity = (0.08 + wThick * 0.22 + state.midPulse * 0.12) * wGlow;
         break;
       }
-      case 5: { // FLUID - wp: viscosity, turbulence, density, color, flow, splash
+      case 5: {
+        // FLUID - wp: viscosity, turbulence, density, color, flow, splash
         if (!worldData.fPos) break;
-        const N = worldData.fN, pos = worldData.fPos, vel = worldData.fVel, col = worldData.fCol, sz = worldData.fSz;
-        const wViscosity = 1 - wp.viscosity * .04;  // damping 0.96 - 1.0
-        const wTurbulence = wp.turbulence * 6 + 2;  // 2 - 8 noise strength
-        const wFlow = wp.flow * 2 + .5;  // 0.5 - 2.5 flow speed
-        const wSplash = wp.splash * 15;  // splash intensity
-        const wColor = wp.color;  // color shift
-        const wDensity = wp.density * 1.2 + .4;  // 0.4 - 1.6 size
-        const cx = mx, cy = my, vsc = p.chaos * 2 + .5;
+        const N = worldData.fN,
+          pos = worldData.fPos,
+          vel = worldData.fVel,
+          col = worldData.fCol,
+          sz = worldData.fSz;
+        const wViscosity = 1 - wp.viscosity * 0.04; // damping 0.96 - 1.0
+        const wTurbulence = wp.turbulence * 6 + 2; // 2 - 8 noise strength
+        const wFlow = wp.flow * 2 + 0.5; // 0.5 - 2.5 flow speed
+        const wSplash = wp.splash * 15; // splash intensity
+        const wColor = wp.color; // color shift
+        const wDensity = wp.density * 1.2 + 0.4; // 0.4 - 1.6 size
+        const cx = mx,
+          cy = my,
+          vsc = p.chaos * 2 + 0.5;
         for (let i = 0; i < N; i++) {
           const ix = i * 3;
-          const px = pos[ix], py = pos[ix+1], pz = pos[ix+2];
-          const nx = Math.sin(py * .08 + t * .3 * wFlow) * wTurbulence + Math.cos(pz * .1 + t * .2 * wFlow) * (wTurbulence * .75);
-          const ny = Math.sin(pz * .09 - t * .25 * wFlow) * wTurbulence + Math.cos(px * .07 + t * .35 * wFlow) * (wTurbulence * .75);
-          const nz = Math.sin(px * .06 + t * .2 * wFlow) * (wTurbulence * .5);
-          vel[ix] += (nx * vsc - vel[ix]) * .02; vel[ix+1] += (ny * vsc - vel[ix+1]) * .02; vel[ix+2] += (nz * vsc - vel[ix+2]) * .015;
-          const dx = cx - px, dy = cy - py;
-          const d = Math.sqrt(dx*dx + dy*dy) + 1;
+          const px = pos[ix],
+            py = pos[ix + 1],
+            pz = pos[ix + 2];
+          const nx =
+            Math.sin(py * 0.08 + t * 0.3 * wFlow) * wTurbulence +
+            Math.cos(pz * 0.1 + t * 0.2 * wFlow) * (wTurbulence * 0.75);
+          const ny =
+            Math.sin(pz * 0.09 - t * 0.25 * wFlow) * wTurbulence +
+            Math.cos(px * 0.07 + t * 0.35 * wFlow) * (wTurbulence * 0.75);
+          const nz = Math.sin(px * 0.06 + t * 0.2 * wFlow) * (wTurbulence * 0.5);
+          vel[ix] += (nx * vsc - vel[ix]) * 0.02;
+          vel[ix + 1] += (ny * vsc - vel[ix + 1]) * 0.02;
+          vel[ix + 2] += (nz * vsc - vel[ix + 2]) * 0.015;
+          const dx = cx - px,
+            dy = cy - py;
+          const d = Math.sqrt(dx * dx + dy * dy) + 1;
           const f = state.mDown ? -40 : 15;
-          vel[ix] += dx * f / (d * d) * dt; vel[ix+1] += dy * f / (d * d) * dt;
-          vel[ix] += state.pump * (Math.random() - .5) * wSplash; vel[ix+1] += state.pump * (Math.random() - .5) * wSplash;
-          vel[ix] *= wViscosity; vel[ix+1] *= wViscosity;
-          pos[ix] += vel[ix] * dt * 60; pos[ix+1] += vel[ix+1] * dt * 60; pos[ix+2] += vel[ix+2] * dt * 60;
-          if (pos[ix] > 40) pos[ix] -= 80; if (pos[ix] < -40) pos[ix] += 80;
-          if (pos[ix+1] > 30) pos[ix+1] -= 60; if (pos[ix+1] < -30) pos[ix+1] += 60;
-          const spd2 = Math.sqrt(vel[ix]*vel[ix] + vel[ix+1]*vel[ix+1]);
-          const c = sCol((spd2 * .1 + i / N * .3 + wColor) % 1);
-          col[ix] = c.r; col[ix+1] = c.g; col[ix+2] = c.b;
-          sz[i] = (.5 + spd2 * .15) * wDensity * (1 + state.pump * .5);
+          vel[ix] += ((dx * f) / (d * d)) * dt;
+          vel[ix + 1] += ((dy * f) / (d * d)) * dt;
+          vel[ix] += state.pump * (Math.random() - 0.5) * wSplash;
+          vel[ix + 1] += state.pump * (Math.random() - 0.5) * wSplash;
+          vel[ix] *= wViscosity;
+          vel[ix + 1] *= wViscosity;
+          pos[ix] += vel[ix] * dt * 60;
+          pos[ix + 1] += vel[ix + 1] * dt * 60;
+          pos[ix + 2] += vel[ix + 2] * dt * 60;
+          if (pos[ix] > 40) pos[ix] -= 80;
+          if (pos[ix] < -40) pos[ix] += 80;
+          if (pos[ix + 1] > 30) pos[ix + 1] -= 60;
+          if (pos[ix + 1] < -30) pos[ix + 1] += 60;
+          const spd2 = Math.sqrt(vel[ix] * vel[ix] + vel[ix + 1] * vel[ix + 1]);
+          const c = sCol((spd2 * 0.1 + (i / N) * 0.3 + wColor) % 1);
+          col[ix] = c.r;
+          col[ix + 1] = c.g;
+          col[ix + 2] = c.b;
+          sz[i] = (0.5 + spd2 * 0.15) * wDensity * (1 + state.pump * 0.5);
         }
         const obj5 = worldObjects[0];
         if (obj5) {
@@ -2757,17 +3177,18 @@ void main() {
         }
         break;
       }
-      case 6: { // CRYSTAL - wp: facets, size, thick, cluster, glow, rotate
-        const wFacets = wp.facets * 8 + .5;  // 0.5 - 8.5 wobble freq
-        const wSize = wp.size * 1.5 + .5;    // 0.5 - 2.0 scale
-        const wThick = wp.thick * 1.8 + .25;
+      case 6: {
+        // CRYSTAL - wp: facets, size, thick, cluster, glow, rotate
+        const wFacets = wp.facets * 8 + 0.5; // 0.5 - 8.5 wobble freq
+        const wSize = wp.size * 1.5 + 0.5; // 0.5 - 2.0 scale
+        const wThick = wp.thick * 1.8 + 0.25;
         // Stash original lattice positions on first use so wCluster
         // can lerp them toward/away from origin each frame without
         // them being lost across param changes.
-        const wCluster = wp.cluster;         // 0-1 pull-tight factor
-        const wGlow = wp.glow * .5 + .3;     // 0.3 - 0.8 brightness
-        const wRotate = wp.rotate * 2;       // rotation speed
-        worldObjects.forEach(m => {
+        const wCluster = wp.cluster; // 0-1 pull-tight factor
+        const wGlow = wp.glow * 0.5 + 0.3; // 0.3 - 0.8 brightness
+        const wRotate = wp.rotate * 2; // rotation speed
+        worldObjects.forEach((m) => {
           if (m.userData.hu === undefined) return;
           if (!m.userData.origPos) m.userData.origPos = m.position.clone();
           // wCluster lerps each crystal toward origin (1 = pulled in,
@@ -2778,12 +3199,14 @@ void main() {
           // base rotation — reads as "facet shimmer" when high,
           // smooth slow rotation when low.
           const facWobble = Math.sin(t * wFacets + m.userData.hu * 8) * 0.15;
-          m.rotation.x = Math.sin(t * (.3 + wRotate) + m.position.x * .2) * p.chaos * .5 + facWobble;
-          m.rotation.y = Math.sin(t * (.25 + wRotate) + m.position.y * .2) * p.chaos * .5 + facWobble;
-          m.rotation.z += wRotate * dt * (.4 + state.lfoBeat * 0.25);
+          m.rotation.x = Math.sin(t * (0.3 + wRotate) + m.position.x * 0.2) * p.chaos * 0.5 + facWobble;
+          m.rotation.y = Math.sin(t * (0.25 + wRotate) + m.position.y * 0.2) * p.chaos * 0.5 + facWobble;
+          m.rotation.z += wRotate * dt * (0.4 + state.lfoBeat * 0.25);
           // Smooth audio breath via bass_att + kick punch.
-          m.scale.setScalar(wSize * (1 + state.pump * .22 + state.bass * 0.24 + state.kickEnv * 0.32 + state.trebShimmer * 0.16));
-          const crystalCol = sCol((m.userData.hu + t * .005 + state.centroidHue * .18) % 1);
+          m.scale.setScalar(
+            wSize * (1 + state.pump * 0.22 + state.bass * 0.24 + state.kickEnv * 0.32 + state.trebShimmer * 0.16),
+          );
+          const crystalCol = sCol((m.userData.hu + t * 0.005 + state.centroidHue * 0.18) % 1);
           const fill = m.userData.fill as THREE.Mesh | undefined;
           const outlines = (m.userData.outlines as THREE.Mesh[] | undefined) ?? [];
           if (fill?.material instanceof THREE.MeshBasicMaterial) {
@@ -2800,26 +3223,34 @@ void main() {
         });
         break;
       }
-      case 7: { // VORTEX - wp: arms, spin, pull, depth, particles, color
+      case 7: {
+        // VORTEX - wp: arms, spin, pull, depth, particles, color
         if (!worldData.vPos) break;
-        const N = worldData.vN, pos = worldData.vPos, col = worldData.vCol;
-        const wSpin = wp.spin * 4 + .5;  // 0.5 - 4.5 spin speed
-        const wPull = wp.pull * .5;  // 0 - 0.5 inward pull
-        const wDepth = wp.depth * 20 + 5;  // 5 - 25 vertical movement
-        const wColor = wp.color;  // color shift
-        const rotSpd = (p.speed * 3 + .5) * wSpin;
+        const N = worldData.vN,
+          pos = worldData.vPos,
+          col = worldData.vCol;
+        const wSpin = wp.spin * 4 + 0.5; // 0.5 - 4.5 spin speed
+        const wPull = wp.pull * 0.5; // 0 - 0.5 inward pull
+        const wDepth = wp.depth * 20 + 5; // 5 - 25 vertical movement
+        const wColor = wp.color; // color shift
+        const rotSpd = (p.speed * 3 + 0.5) * wSpin;
         for (let i = 0; i < N; i++) {
           const ix = i * 3;
-          const x = pos[ix], z = pos[ix+2];
-          let r = Math.sqrt(x*x + z*z);
+          const x = pos[ix],
+            z = pos[ix + 2];
+          let r = Math.sqrt(x * x + z * z);
           const a = Math.atan2(z, x);
-          const na = a + rotSpd * dt * (1 + (30 - r) * .01);  // faster spin near center
-          r -= wPull * dt * 10;  // pull toward center
-          if (r < 1) r = 25 + Math.random() * 10;  // respawn at edge
-          pos[ix] = Math.cos(na) * r; pos[ix+2] = Math.sin(na) * r;
-          pos[ix+1] += dt * wDepth * p.speed; if (pos[ix+1] > 40) pos[ix+1] -= 80;
-          const c = sCol((r * .03 + pos[ix+1] * .01 + t * .05 + wColor) % 1);
-          col[ix] = c.r; col[ix+1] = c.g; col[ix+2] = c.b;
+          const na = a + rotSpd * dt * (1 + (30 - r) * 0.01); // faster spin near center
+          r -= wPull * dt * 10; // pull toward center
+          if (r < 1) r = 25 + Math.random() * 10; // respawn at edge
+          pos[ix] = Math.cos(na) * r;
+          pos[ix + 2] = Math.sin(na) * r;
+          pos[ix + 1] += dt * wDepth * p.speed;
+          if (pos[ix + 1] > 40) pos[ix + 1] -= 80;
+          const c = sCol((r * 0.03 + pos[ix + 1] * 0.01 + t * 0.05 + wColor) % 1);
+          col[ix] = c.r;
+          col[ix + 1] = c.g;
+          col[ix + 2] = c.b;
         }
         const obj7 = worldObjects[0];
         if (obj7) {
@@ -2829,15 +3260,19 @@ void main() {
         }
         break;
       }
-      case 8: { // STARFIELD - wp: density, speed, size, depth, nebula, twinkle
+      case 8: {
+        // STARFIELD - wp: density, speed, size, depth, nebula, twinkle
         if (!worldData.sPos) break;
-        const N = worldData.sN, pos = worldData.sPos, col = worldData.sCol, orig = worldData.sOrig;
-        const wDensity = wp.density;        // 0-1 visible fraction
-        const wSpeed = wp.speed * 50 + 5;   // 5 - 55 warp speed
-        const wSize = wp.size * 1.8 + .4;   // 0.4 - 2.2 brightness × stretch
-        const wDepth = wp.depth * 1.5 + .5; // 0.5 - 2.0 depth range
-        const wNebula = wp.nebula;          // nebula coloring
-        const wTwinkle = wp.twinkle;        // brightness variation
+        const N = worldData.sN,
+          pos = worldData.sPos,
+          col = worldData.sCol,
+          orig = worldData.sOrig;
+        const wDensity = wp.density; // 0-1 visible fraction
+        const wSpeed = wp.speed * 50 + 5; // 5 - 55 warp speed
+        const wSize = wp.size * 1.8 + 0.4; // 0.4 - 2.2 brightness × stretch
+        const wDepth = wp.depth * 1.5 + 0.5; // 0.5 - 2.0 depth range
+        const wNebula = wp.nebula; // nebula coloring
+        const wTwinkle = wp.twinkle; // brightness variation
         // Subtle audio-reactive warp — bass_att gives a smooth ~15%
         // speed nudge; kickEnv adds a brief streak elongation on
         // every kick. Original prefactor (1 + 0.8*bass + 1.4*kick)
@@ -2847,87 +3282,121 @@ void main() {
         const audioWarp = 1 + state.bass * 0.15 + state.kickEnv * 0.18;
         const audioStretch = 1 + state.kickEnv * 0.6;
         const warpSpd = (wSpeed + p.speed * 40) * audioWarp;
-        const stretch = (p.chaos * 8 + .5) * audioStretch;
+        const stretch = (p.chaos * 8 + 0.5) * audioStretch;
         const audioBright = 1 + state.bass * 0.15 + state.kickEnv * 0.25;
         for (let i = 0; i < N; i++) {
           const ix = i * 6;
-          let z = orig[i*3+2] * wDepth; z += t * warpSpd; z = ((z % 200) + 200) % 200 - 200;
-          const x = orig[i*3], y = orig[i*3+1];
-          pos[ix] = x; pos[ix+1] = y; pos[ix+2] = z;
+          let z = orig[i * 3 + 2] * wDepth;
+          z += t * warpSpd;
+          z = (((z % 200) + 200) % 200) - 200;
+          const x = orig[i * 3],
+            y = orig[i * 3 + 1];
+          pos[ix] = x;
+          pos[ix + 1] = y;
+          pos[ix + 2] = z;
           // wSize stretches the streak length — small stars = short
           // points, large stars = long warp streaks. Multiplies the
           // base stretch + kickEnv accent.
-          pos[ix+3] = x; pos[ix+4] = y; pos[ix+5] = z + (stretch + state.pump * 5) * wSize;
+          pos[ix + 3] = x;
+          pos[ix + 4] = y;
+          pos[ix + 5] = z + (stretch + state.pump * 5) * wSize;
           // wDensity gates per-star visibility. Stable per-star hash
           // (i / N) means the same stars dim out at low density
           // rather than the field flickering.
-          const visible = (i / N) < wDensity ? 1 : 0;
+          const visible = i / N < wDensity ? 1 : 0;
           // Brightness scales with wSize so larger stars also burn
           // brighter (matches the "closer / bigger = visibly more
           // luminous" intuition).
-          const bright = Math.max(0, 1 + z / 200) * (1 - wTwinkle * .5 + wTwinkle * Math.sin(t * 5 + i) * .5) * audioBright * wSize * visible;
-          const c = sCol((bright * .5 + i / N * .3 + wNebula * .3) % 1);
-          col[ix] = c.r * bright; col[ix+1] = c.g * bright; col[ix+2] = c.b * bright;
-          col[ix+3] = c.r * bright * .3; col[ix+4] = c.g * bright * .3; col[ix+5] = c.b * bright * .3;
+          const bright =
+            Math.max(0, 1 + z / 200) *
+            (1 - wTwinkle * 0.5 + wTwinkle * Math.sin(t * 5 + i) * 0.5) *
+            audioBright *
+            wSize *
+            visible;
+          const c = sCol((bright * 0.5 + (i / N) * 0.3 + wNebula * 0.3) % 1);
+          col[ix] = c.r * bright;
+          col[ix + 1] = c.g * bright;
+          col[ix + 2] = c.b * bright;
+          col[ix + 3] = c.r * bright * 0.3;
+          col[ix + 4] = c.g * bright * 0.3;
+          col[ix + 5] = c.b * bright * 0.3;
         }
         (worldObjects[0] as any).geometry.attributes.position.needsUpdate = true;
         (worldObjects[0] as any).geometry.attributes.color.needsUpdate = true;
         break;
       }
-      case 9: { // ORGANISM - wp: cells, pulse, branch, color, flow, mutate
+      case 9: {
+        // ORGANISM - wp: cells, pulse, branch, color, flow, mutate
         if (!worldData.oPos) break;
-        const pos = worldData.oPos, segs = worldData.oSegs, rings = worldData.oRings;
-        const wPulse = wp.pulse * 4 + 1;  // 1 - 5 pulse intensity
-        const wBranch = wp.branch * 4 + 2;  // 2 - 6 wave complexity
-        const wColor = wp.color;  // color shift
-        const wFlow = wp.flow * 2 + .5;  // 0.5 - 2.5 flow speed
-        const wMutate = wp.mutate * 5;  // mutation intensity
+        const pos = worldData.oPos,
+          segs = worldData.oSegs,
+          rings = worldData.oRings;
+        const wPulse = wp.pulse * 4 + 1; // 1 - 5 pulse intensity
+        const wBranch = wp.branch * 4 + 2; // 2 - 6 wave complexity
+        const wColor = wp.color; // color shift
+        const wFlow = wp.flow * 2 + 0.5; // 0.5 - 2.5 flow speed
+        const wMutate = wp.mutate * 5; // mutation intensity
         for (let r = 0; r < rings; r++) {
           const rv = r / rings;
           const baseR = 5 + Math.sin(rv * Math.PI) * 12;
-          const y2 = (rv - .5) * 40;
+          const y2 = (rv - 0.5) * 40;
           for (let s = 0; s < segs; s++) {
             const sv = s / segs;
             const a = sv * Math.PI * 2;
             const wave = Math.sin(a * wBranch + t * p.speed * 2 * wFlow + rv * 6) * p.chaos * 3;
             const breath = Math.sin(t * p.speed * wFlow + rv * 4) * wPulse;
-            const mutation = Math.sin(t * .5 + a * 2 + rv * 3) * wMutate;
-            const rad = baseR + wave + breath + mutation + state.pump * 4 * Math.exp(-((rv - .5) * (rv - .5)) * 10);
+            const mutation = Math.sin(t * 0.5 + a * 2 + rv * 3) * wMutate;
+            const rad = baseR + wave + breath + mutation + state.pump * 4 * Math.exp(-((rv - 0.5) * (rv - 0.5)) * 10);
             const ix = (r * segs + s) * 3;
-            pos[ix] = Math.cos(a) * rad; pos[ix+1] = y2 + Math.sin(a * 2 + t * wFlow) * p.warp * 2; pos[ix+2] = Math.sin(a) * rad;
+            pos[ix] = Math.cos(a) * rad;
+            pos[ix + 1] = y2 + Math.sin(a * 2 + t * wFlow) * p.warp * 2;
+            pos[ix + 2] = Math.sin(a) * rad;
           }
         }
         (worldObjects[0] as any).geometry.attributes.position.needsUpdate = true;
-        (worldObjects[0] as any).material.color.copy(sCol((.5 + wColor) % 1));
+        (worldObjects[0] as any).material.color.copy(sCol((0.5 + wColor) % 1));
         break;
       }
-      case 10: { // AURORA - wp: ribbons, height, wave, shimmer, color, spread
+      case 10: {
+        // AURORA - wp: ribbons, height, wave, shimmer, color, spread
         if (!worldData.aPos) break;
-        const pos = worldData.aPos, col = worldData.aCol;
-        const RIBBONS = worldData.aRibbons, SEGS = worldData.aSegs;
+        const pos = worldData.aPos,
+          col = worldData.aCol;
+        const RIBBONS = worldData.aRibbons,
+          SEGS = worldData.aSegs;
         const offsets = worldData.aOffsets;
         const wRibbonCount = Math.max(1, Math.round(1 + wp.ribbons * (RIBBONS - 1)));
-        const wHeight = wp.height * 20 + 5;    // 5 - 25 ribbon height
-        const wWave = wp.wave * 6 + 1;         // 1 - 7 wave complexity
-        const wShimmer = wp.shimmer * 3 + .5;  // 0.5 - 3.5 shimmer speed
-        const wColor = wp.color;               // color shift
-        const wSpread = wp.spread * 40 + 20;   // 20 - 60 horizontal spread
+        const wHeight = wp.height * 20 + 5; // 5 - 25 ribbon height
+        const wWave = wp.wave * 6 + 1; // 1 - 7 wave complexity
+        const wShimmer = wp.shimmer * 3 + 0.5; // 0.5 - 3.5 shimmer speed
+        const wColor = wp.color; // color shift
+        const wSpread = wp.spread * 40 + 20; // 20 - 60 horizontal spread
         for (let r = 0; r < RIBBONS; r++) {
           const off = offsets[r];
           const ribbonVisible = r < wRibbonCount ? 1 : 0;
           for (let s = 0; s < SEGS; s++) {
             const sv = s / SEGS;
             const ix = (r * SEGS + s) * 3;
-            const xBase = (sv - .5) * wSpread * 2 + off.x * (wSpread / 30);
+            const xBase = (sv - 0.5) * wSpread * 2 + off.x * (wSpread / 30);
             const phase = sv * wWave * Math.PI + off.phase + t * p.speed * wShimmer;
-            const y = off.y + Math.sin(phase) * off.amp * (wHeight / 10) + Math.sin(sv * 3 + t * .5) * 2;
-            const z = off.z + Math.cos(phase * .7 + t * .3) * 4 + Math.sin(sv * 5 + t * wShimmer * .4) * 2;
-            pos[ix] = xBase; pos[ix+1] = y + state.pump * 3 * Math.sin(sv * Math.PI); pos[ix+2] = z;
+            const y = off.y + Math.sin(phase) * off.amp * (wHeight / 10) + Math.sin(sv * 3 + t * 0.5) * 2;
+            const z = off.z + Math.cos(phase * 0.7 + t * 0.3) * 4 + Math.sin(sv * 5 + t * wShimmer * 0.4) * 2;
+            pos[ix] = xBase;
+            pos[ix + 1] = y + state.pump * 3 * Math.sin(sv * Math.PI);
+            pos[ix + 2] = z;
             // Aurora colors: greens, teals, purples with shimmer
-            const hue = (.3 + wColor * .5 + sv * .15 + Math.sin(t * wShimmer + sv * 4) * .1 + state.centroidHue * .12) % 1;
-            const bright = (.4 + Math.sin(sv * Math.PI) * .4 + Math.sin(t * wShimmer * 2 + sv * 8 + r) * .15 + state.trebShimmer * .2) * ribbonVisible;
-            const c = new THREE.Color().setHSL(hue, .8, bright * (.3 + p.chaos * .2));
-            col[ix] = c.r; col[ix+1] = c.g; col[ix+2] = c.b;
+            const hue =
+              (0.3 + wColor * 0.5 + sv * 0.15 + Math.sin(t * wShimmer + sv * 4) * 0.1 + state.centroidHue * 0.12) % 1;
+            const bright =
+              (0.4 +
+                Math.sin(sv * Math.PI) * 0.4 +
+                Math.sin(t * wShimmer * 2 + sv * 8 + r) * 0.15 +
+                state.trebShimmer * 0.2) *
+              ribbonVisible;
+            const c = new THREE.Color().setHSL(hue, 0.8, bright * (0.3 + p.chaos * 0.2));
+            col[ix] = c.r;
+            col[ix + 1] = c.g;
+            col[ix + 2] = c.b;
           }
         }
         const obj10 = worldObjects[0];
@@ -2938,43 +3407,64 @@ void main() {
         }
         break;
       }
-      case 11: { // DNA - wp: twist, rungs, radius, speed, glow, pairs
+      case 11: {
+        // DNA - wp: twist, rungs, radius, speed, glow, pairs
         if (!worldData.dStrandPos) break;
-        const spos = worldData.dStrandPos, scol = worldData.dStrandCol;
-        const rpos = worldData.dRungPos, rcol = worldData.dRungCol;
+        const spos = worldData.dStrandPos,
+          scol = worldData.dStrandCol;
+        const rpos = worldData.dRungPos,
+          rcol = worldData.dRungCol;
         const RUNGS = worldData.dRungs;
-        const wTwist = wp.twist * 4 + 1;       // 1 - 5 helix twist rate
+        const wTwist = wp.twist * 4 + 1; // 1 - 5 helix twist rate
         const wRungs = Math.max(2, Math.round(4 + wp.rungs * (RUNGS - 4)));
-        const wRadius = wp.radius * 8 + 3;     // 3 - 11 helix radius
-        const wSpeed = wp.speed * 3 + .5;      // 0.5 - 3.5 rotation speed
-        const wGlow = wp.glow * .5 + .3;       // 0.3 - 0.8 brightness
-        const wPairs = wp.pairs;               // base pair visibility
+        const wRadius = wp.radius * 8 + 3; // 3 - 11 helix radius
+        const wSpeed = wp.speed * 3 + 0.5; // 0.5 - 3.5 rotation speed
+        const wGlow = wp.glow * 0.5 + 0.3; // 0.3 - 0.8 brightness
+        const wPairs = wp.pairs; // base pair visibility
         const scroll = t * p.speed * wSpeed;
         for (let i = 0; i < RUNGS; i++) {
           const frac = i / RUNGS;
-          const y = (frac - .5) * 60;
+          const y = (frac - 0.5) * 60;
           const angle = frac * Math.PI * 2 * wTwist + scroll;
-          const pulse = 1 + state.pump * .3 * Math.sin(frac * Math.PI * 4);
+          const pulse = 1 + state.pump * 0.3 * Math.sin(frac * Math.PI * 4);
           const r = wRadius * pulse;
           // Strand A
-          const ax = Math.cos(angle) * r, az = Math.sin(angle) * r;
-          spos[i*3] = ax; spos[i*3+1] = y; spos[i*3+2] = az;
+          const ax = Math.cos(angle) * r,
+            az = Math.sin(angle) * r;
+          spos[i * 3] = ax;
+          spos[i * 3 + 1] = y;
+          spos[i * 3 + 2] = az;
           // Strand B (opposite side)
-          const bx = Math.cos(angle + Math.PI) * r, bz = Math.sin(angle + Math.PI) * r;
-          spos[(RUNGS + i)*3] = bx; spos[(RUNGS + i)*3+1] = y; spos[(RUNGS + i)*3+2] = bz;
+          const bx = Math.cos(angle + Math.PI) * r,
+            bz = Math.sin(angle + Math.PI) * r;
+          spos[(RUNGS + i) * 3] = bx;
+          spos[(RUNGS + i) * 3 + 1] = y;
+          spos[(RUNGS + i) * 3 + 2] = bz;
           // Colors
-          const hue = (.5 + frac * .3 + t * .02) % 1;
-          const c1 = new THREE.Color().setHSL(hue, .85, wGlow);
-          const c2 = new THREE.Color().setHSL((hue + .15) % 1, .85, wGlow);
-          scol[i*3] = c1.r; scol[i*3+1] = c1.g; scol[i*3+2] = c1.b;
-          scol[(RUNGS + i)*3] = c2.r; scol[(RUNGS + i)*3+1] = c2.g; scol[(RUNGS + i)*3+2] = c2.b;
+          const hue = (0.5 + frac * 0.3 + t * 0.02) % 1;
+          const c1 = new THREE.Color().setHSL(hue, 0.85, wGlow);
+          const c2 = new THREE.Color().setHSL((hue + 0.15) % 1, 0.85, wGlow);
+          scol[i * 3] = c1.r;
+          scol[i * 3 + 1] = c1.g;
+          scol[i * 3 + 2] = c1.b;
+          scol[(RUNGS + i) * 3] = c2.r;
+          scol[(RUNGS + i) * 3 + 1] = c2.g;
+          scol[(RUNGS + i) * 3 + 2] = c2.b;
           // Rungs (base pairs) connecting strands
-          const rungVisible = i < wRungs && (i % 3 === 0) && wPairs > .1;
-          rpos[i*6] = rungVisible ? ax : 0; rpos[i*6+1] = rungVisible ? y : 0; rpos[i*6+2] = rungVisible ? az : 0;
-          rpos[i*6+3] = rungVisible ? bx : 0; rpos[i*6+4] = rungVisible ? y : 0; rpos[i*6+5] = rungVisible ? bz : 0;
-          const rc = new THREE.Color().setHSL((hue + .3) % 1, .6, wGlow * .7);
-          rcol[i*6] = rc.r; rcol[i*6+1] = rc.g; rcol[i*6+2] = rc.b;
-          rcol[i*6+3] = rc.r; rcol[i*6+4] = rc.g; rcol[i*6+5] = rc.b;
+          const rungVisible = i < wRungs && i % 3 === 0 && wPairs > 0.1;
+          rpos[i * 6] = rungVisible ? ax : 0;
+          rpos[i * 6 + 1] = rungVisible ? y : 0;
+          rpos[i * 6 + 2] = rungVisible ? az : 0;
+          rpos[i * 6 + 3] = rungVisible ? bx : 0;
+          rpos[i * 6 + 4] = rungVisible ? y : 0;
+          rpos[i * 6 + 5] = rungVisible ? bz : 0;
+          const rc = new THREE.Color().setHSL((hue + 0.3) % 1, 0.6, wGlow * 0.7);
+          rcol[i * 6] = rc.r;
+          rcol[i * 6 + 1] = rc.g;
+          rcol[i * 6 + 2] = rc.b;
+          rcol[i * 6 + 3] = rc.r;
+          rcol[i * 6 + 4] = rc.g;
+          rcol[i * 6 + 5] = rc.b;
         }
         if (worldObjects[0]) {
           (worldObjects[0] as any).geometry.attributes.position.needsUpdate = true;
@@ -2987,52 +3477,92 @@ void main() {
         }
         break;
       }
-      case 12: { // SWARM - wp: count, cohesion, speed, scatter, trail, color
+      case 12: {
+        // SWARM - wp: count, cohesion, speed, scatter, trail, color
         if (!worldData.swPos) break;
-        const N = worldData.swN, pos = worldData.swPos, vel = worldData.swVel, col = worldData.swCol, sz = worldData.swSz;
-        const wCohesion = wp.cohesion * .003 + .001;  // 0.001 - 0.004
-        const wSpeed = wp.speed * 3 + 1;              // 1 - 4 max speed
-        const wScatter = wp.scatter * 15;              // scatter force
-        const wTrail = 1 - wp.trail * .03;             // damping 0.97 - 1.0
+        const N = worldData.swN,
+          pos = worldData.swPos,
+          vel = worldData.swVel,
+          col = worldData.swCol,
+          sz = worldData.swSz;
+        const wCohesion = wp.cohesion * 0.003 + 0.001; // 0.001 - 0.004
+        const wSpeed = wp.speed * 3 + 1; // 1 - 4 max speed
+        const wScatter = wp.scatter * 15; // scatter force
+        const wTrail = 1 - wp.trail * 0.03; // damping 0.97 - 1.0
         const wColor = wp.color;
         // Compute flock center
-        let cx2 = 0, cy2 = 0, cz2 = 0;
-        for (let i = 0; i < Math.min(N, 200); i++) { cx2 += pos[i*3]; cy2 += pos[i*3+1]; cz2 += pos[i*3+2]; }
+        let cx2 = 0,
+          cy2 = 0,
+          cz2 = 0;
+        for (let i = 0; i < Math.min(N, 200); i++) {
+          cx2 += pos[i * 3];
+          cy2 += pos[i * 3 + 1];
+          cz2 += pos[i * 3 + 2];
+        }
         const sampleN = Math.min(N, 200);
-        cx2 /= sampleN; cy2 /= sampleN; cz2 /= sampleN;
+        cx2 /= sampleN;
+        cy2 /= sampleN;
+        cz2 /= sampleN;
         // Attractor point that moves
-        const atX = Math.sin(t * .3) * 20 + mx * .5;
-        const atY = Math.cos(t * .25) * 15 + my * .5;
-        const atZ = Math.sin(t * .2) * 10;
+        const atX = Math.sin(t * 0.3) * 20 + mx * 0.5;
+        const atY = Math.cos(t * 0.25) * 15 + my * 0.5;
+        const atZ = Math.sin(t * 0.2) * 10;
         for (let i = 0; i < N; i++) {
           const ix = i * 3;
           // Cohesion: steer toward flock center
-          vel[ix] += (cx2 - pos[ix]) * wCohesion; vel[ix+1] += (cy2 - pos[ix+1]) * wCohesion; vel[ix+2] += (cz2 - pos[ix+2]) * wCohesion;
+          vel[ix] += (cx2 - pos[ix]) * wCohesion;
+          vel[ix + 1] += (cy2 - pos[ix + 1]) * wCohesion;
+          vel[ix + 2] += (cz2 - pos[ix + 2]) * wCohesion;
           // Attractor
-          vel[ix] += (atX - pos[ix]) * .0005; vel[ix+1] += (atY - pos[ix+1]) * .0005; vel[ix+2] += (atZ - pos[ix+2]) * .0003;
+          vel[ix] += (atX - pos[ix]) * 0.0005;
+          vel[ix + 1] += (atY - pos[ix + 1]) * 0.0005;
+          vel[ix + 2] += (atZ - pos[ix + 2]) * 0.0003;
           // Scatter on beat
           // Snare-triggered scatter — pairs better with swarm feel
           // (snares are the "step" in flock dynamics) than the prior
           // raw-bass amplitude trigger.
-          if (state.snareEnv > .1) { vel[ix] += (Math.random() - .5) * wScatter * state.snareEnv * 1.2 * dt; vel[ix+1] += (Math.random() - .5) * wScatter * state.snareEnv * 1.2 * dt; }
+          if (state.snareEnv > 0.1) {
+            vel[ix] += (Math.random() - 0.5) * wScatter * state.snareEnv * 1.2 * dt;
+            vel[ix + 1] += (Math.random() - 0.5) * wScatter * state.snareEnv * 1.2 * dt;
+          }
           // Pump burst
-          if (state.pump > .1) { const dx = pos[ix] - cx2, dy = pos[ix+1] - cy2; const d = Math.sqrt(dx*dx+dy*dy) + 1; vel[ix] += dx / d * state.pump * 8 * dt; vel[ix+1] += dy / d * state.pump * 8 * dt; }
+          if (state.pump > 0.1) {
+            const dx = pos[ix] - cx2,
+              dy = pos[ix + 1] - cy2;
+            const d = Math.sqrt(dx * dx + dy * dy) + 1;
+            vel[ix] += (dx / d) * state.pump * 8 * dt;
+            vel[ix + 1] += (dy / d) * state.pump * 8 * dt;
+          }
           // Speed limit
-          const spd2 = Math.sqrt(vel[ix]*vel[ix] + vel[ix+1]*vel[ix+1] + vel[ix+2]*vel[ix+2]);
-          if (spd2 > wSpeed) { const sc = wSpeed / spd2; vel[ix] *= sc; vel[ix+1] *= sc; vel[ix+2] *= sc; }
+          const spd2 = Math.sqrt(vel[ix] * vel[ix] + vel[ix + 1] * vel[ix + 1] + vel[ix + 2] * vel[ix + 2]);
+          if (spd2 > wSpeed) {
+            const sc = wSpeed / spd2;
+            vel[ix] *= sc;
+            vel[ix + 1] *= sc;
+            vel[ix + 2] *= sc;
+          }
           // Damping
-          vel[ix] *= wTrail; vel[ix+1] *= wTrail; vel[ix+2] *= wTrail;
+          vel[ix] *= wTrail;
+          vel[ix + 1] *= wTrail;
+          vel[ix + 2] *= wTrail;
           // Move
-          pos[ix] += vel[ix] * dt * 60; pos[ix+1] += vel[ix+1] * dt * 60; pos[ix+2] += vel[ix+2] * dt * 60;
+          pos[ix] += vel[ix] * dt * 60;
+          pos[ix + 1] += vel[ix + 1] * dt * 60;
+          pos[ix + 2] += vel[ix + 2] * dt * 60;
           // Wrap
-          if (pos[ix] > 40) pos[ix] -= 80; if (pos[ix] < -40) pos[ix] += 80;
-          if (pos[ix+1] > 30) pos[ix+1] -= 60; if (pos[ix+1] < -30) pos[ix+1] += 60;
-          if (pos[ix+2] > 20) pos[ix+2] -= 40; if (pos[ix+2] < -20) pos[ix+2] += 40;
+          if (pos[ix] > 40) pos[ix] -= 80;
+          if (pos[ix] < -40) pos[ix] += 80;
+          if (pos[ix + 1] > 30) pos[ix + 1] -= 60;
+          if (pos[ix + 1] < -30) pos[ix + 1] += 60;
+          if (pos[ix + 2] > 20) pos[ix + 2] -= 40;
+          if (pos[ix + 2] < -20) pos[ix + 2] += 40;
           // Color based on velocity direction
-          const heading = Math.atan2(vel[ix+1], vel[ix]) / (Math.PI * 2) + .5;
-          const c = sCol((heading + wColor + i / N * .1) % 1);
-          col[ix] = c.r; col[ix+1] = c.g; col[ix+2] = c.b;
-          sz[i] = (.2 + spd2 * .1) * (1 + state.pump * .4);
+          const heading = Math.atan2(vel[ix + 1], vel[ix]) / (Math.PI * 2) + 0.5;
+          const c = sCol((heading + wColor + (i / N) * 0.1) % 1);
+          col[ix] = c.r;
+          col[ix + 1] = c.g;
+          col[ix + 2] = c.b;
+          sz[i] = (0.2 + spd2 * 0.1) * (1 + state.pump * 0.4);
         }
         const obj12 = worldObjects[0];
         if (obj12) {
@@ -3043,25 +3573,30 @@ void main() {
         }
         break;
       }
-      case 13: { // RINGS - wp: count, radius, spin, tilt, gap, thick
+      case 13: {
+        // RINGS - wp: count, radius, spin, tilt, gap, thick
         const wCount = wp.count;
-        const wRadius = wp.radius * 1.5 + .5;   // 0.5 - 2.0 scale
-        const wSpin = wp.spin * 3 + .5;          // 0.5 - 3.5 spin speed
-        const wTilt = wp.tilt * 2;               // 0 - 2 tilt variation
-        const wGap = wp.gap * 1.5 + .5;          // 0.5 - 2.0 gap between rings
-        const wThick = wp.thick * 1.7 + .25;
-        worldObjects.forEach(m => {
+        const wRadius = wp.radius * 1.5 + 0.5; // 0.5 - 2.0 scale
+        const wSpin = wp.spin * 3 + 0.5; // 0.5 - 3.5 spin speed
+        const wTilt = wp.tilt * 2; // 0 - 2 tilt variation
+        const wGap = wp.gap * 1.5 + 0.5; // 0.5 - 2.0 gap between rings
+        const wThick = wp.thick * 1.7 + 0.25;
+        worldObjects.forEach((m) => {
           if (m.userData.ringIdx === undefined) return;
           const ri = m.userData.ringIdx;
-          const visible = Math.max(0, Math.min(1, (wCount * 1.15 - ri / Math.max(1, worldData.ringCount - 1)) / 0.14 + 0.5));
+          const visible = Math.max(
+            0,
+            Math.min(1, (wCount * 1.15 - ri / Math.max(1, worldData.ringCount - 1)) / 0.14 + 0.5),
+          );
           const baseTiltX = m.userData.tiltX * wTilt;
           const baseTiltZ = m.userData.tiltZ * wTilt;
-          m.rotation.x = baseTiltX + Math.sin(t * (.2 + ri * .05) * wSpin) * p.chaos * .3;
-          m.rotation.y += m.userData.spinDir * dt * wSpin * (.5 + ri * .1) * (1 + p.speed);
-          m.rotation.z = baseTiltZ + Math.cos(t * (.15 + ri * .04) * wSpin) * p.chaos * .2;
-          const sc = wRadius * (wGap * (.35 + ri * .045) + .35) * (1 + state.pump * .2 * Math.sin(ri + t * 3)) * visible;
+          m.rotation.x = baseTiltX + Math.sin(t * (0.2 + ri * 0.05) * wSpin) * p.chaos * 0.3;
+          m.rotation.y += m.userData.spinDir * dt * wSpin * (0.5 + ri * 0.1) * (1 + p.speed);
+          m.rotation.z = baseTiltZ + Math.cos(t * (0.15 + ri * 0.04) * wSpin) * p.chaos * 0.2;
+          const sc =
+            wRadius * (wGap * (0.35 + ri * 0.045) + 0.35) * (1 + state.pump * 0.2 * Math.sin(ri + t * 3)) * visible;
           m.scale.setScalar(sc);
-          const ringCol = sCol((m.userData.hu + t * .01 + state.centroidHue * .16) % 1);
+          const ringCol = sCol((m.userData.hu + t * 0.01 + state.centroidHue * 0.16) % 1);
           const fill = m.userData.fill as THREE.Mesh | undefined;
           const outlines = (m.userData.outlines as THREE.Mesh[] | undefined) ?? [];
           if (fill?.material instanceof THREE.MeshBasicMaterial) {
@@ -3072,7 +3607,9 @@ void main() {
             shell.scale.setScalar(1.015 + wThick * 0.08 + idx * 0.025 + state.kickEnv * 0.018);
             if (shell.material instanceof THREE.MeshBasicMaterial) {
               shell.material.color.copy(ringCol);
-              shell.material.opacity = visible * (0.15 + wThick * 0.24 + state.pump * 0.12 + Math.sin(t * 2 + ri * .8) * .04) / (1 + idx * 0.35);
+              shell.material.opacity =
+                (visible * (0.15 + wThick * 0.24 + state.pump * 0.12 + Math.sin(t * 2 + ri * 0.8) * 0.04)) /
+                (1 + idx * 0.35);
             }
           });
         });
@@ -3086,43 +3623,58 @@ void main() {
   // ================================================================
   function updateCamera(dt: number) {
     if (!camera) return;
-    const mx = (state.mx - .5) * 2, my = (state.my - .5) * 2, t = state.time;
+    const mx = (state.mx - 0.5) * 2,
+      my = (state.my - 0.5) * 2,
+      t = state.time;
     switch (activeLayer().space) {
-      case 0: { // ORBIT
+      case 0: {
+        // ORBIT
         const r = 32 + my * 10;
-        camera.position.lerp(new THREE.Vector3(Math.cos(t * .15 + mx * 2) * r, my * 14 + Math.sin(t * .1) * 4, Math.sin(t * .15 + mx * 2) * r), .03);
+        camera.position.lerp(
+          new THREE.Vector3(
+            Math.cos(t * 0.15 + mx * 2) * r,
+            my * 14 + Math.sin(t * 0.1) * 4,
+            Math.sin(t * 0.15 + mx * 2) * r,
+          ),
+          0.03,
+        );
         camera.lookAt(0, 0, 0);
         break;
       }
-      case 1: { // FLY
-        camera.position.z -= dt * 22 * (.5 + activeLayer().p.speed);
-        camera.position.x += (mx * 28 - camera.position.x) * .02;
-        camera.position.y += (-my * 18 - camera.position.y) * .02;
+      case 1: {
+        // FLY
+        camera.position.z -= dt * 22 * (0.5 + activeLayer().p.speed);
+        camera.position.x += (mx * 28 - camera.position.x) * 0.02;
+        camera.position.y += (-my * 18 - camera.position.y) * 0.02;
         if (camera.position.z < -75) camera.position.z = 75;
-        camera.lookAt(camera.position.x * .5, camera.position.y * .5, camera.position.z - 45);
+        camera.lookAt(camera.position.x * 0.5, camera.position.y * 0.5, camera.position.z - 45);
         break;
       }
-      case 2: { // LANDSCAPE
-        camera.position.set(mx * 38, 11 + my * 7, 28 + Math.sin(t * .08) * 13);
+      case 2: {
+        // LANDSCAPE
+        camera.position.set(mx * 38, 11 + my * 7, 28 + Math.sin(t * 0.08) * 13);
         camera.lookAt(mx * 18, -4, camera.position.z - 38);
         break;
       }
-      case 3: { // TUNNEL
+      case 3: {
+        // TUNNEL
         const tz = t * 14 * activeLayer().p.speed;
-        camera.position.set(Math.sin(tz * .03) * 7 + mx * 4, Math.cos(tz * .04) * 5 - my * 4, 38 - ((tz) % 75));
-        camera.lookAt(camera.position.x * .3, camera.position.y * .3, camera.position.z - 28);
+        camera.position.set(Math.sin(tz * 0.03) * 7 + mx * 4, Math.cos(tz * 0.04) * 5 - my * 4, 38 - (tz % 75));
+        camera.lookAt(camera.position.x * 0.3, camera.position.y * 0.3, camera.position.z - 28);
         break;
       }
-      case 4: { // ZERO-G
-        camera.position.x += (mx * 45 - camera.position.x) * .01;
-        camera.position.y += (-my * 35 - camera.position.y) * .01;
-        camera.position.z = 33 + Math.sin(t * .05) * 9;
+      case 4: {
+        // ZERO-G
+        camera.position.x += (mx * 45 - camera.position.x) * 0.01;
+        camera.position.y += (-my * 35 - camera.position.y) * 0.01;
+        camera.position.z = 33 + Math.sin(t * 0.05) * 9;
         camera.lookAt(mx * 9, -my * 9, 0);
         break;
       }
-      case 5: { // FALL
+      case 5: {
+        // FALL
         camera.position.set(mx * 13, 46 - ((t * 18 * activeLayer().p.speed) % 95), 13 + my * 9);
-        camera.lookAt(camera.position.x * .5, camera.position.y - 28, 0);
+        camera.lookAt(camera.position.x * 0.5, camera.position.y - 28, 0);
         break;
       }
     }
@@ -3152,14 +3704,14 @@ void main() {
     // Even with reactivityMode='off' we keep this branch so a paused
     // song doesn't leave the visuals frozen on a hit.
     if (!audio.isActive || state.reactivityMode === 'off') {
-      synthVisionStore.update(s => ({
+      synthVisionStore.update((s) => ({
         ...s,
-        micLevel: s.micLevel * .92,
-        bass: s.bass * .92,
-        kickEnv: s.kickEnv * .85,
-        snareEnv: s.snareEnv * .85,
-        midPulse: s.midPulse * .92,
-        trebShimmer: s.trebShimmer * .92,
+        micLevel: s.micLevel * 0.92,
+        bass: s.bass * 0.92,
+        kickEnv: s.kickEnv * 0.85,
+        snareEnv: s.snareEnv * 0.85,
+        midPulse: s.midPulse * 0.92,
+        trebShimmer: s.trebShimmer * 0.92,
         // centroidHue + lfoBeat we let live so the visuals don't
         // freeze mid-cycle — they're cosmetic continuous oscillators
         // not energy levels.
@@ -3170,33 +3722,39 @@ void main() {
     // ── Map shared visual audio → local world-facing controls ─────
     let bassOut: number;
     switch (state.reactivityMode) {
-      case 'smooth':     bassOut = audio.bass; break;
-      case 'default':    bassOut = audio.bass; break;
-      case 'aggressive': bassOut = Math.max(audio.bass, audio.bassFast * 0.9, audio.beat * 0.6); break;
-      default:           bassOut = 0; break;
+      case 'smooth':
+        bassOut = audio.bass;
+        break;
+      case 'default':
+        bassOut = audio.bass;
+        break;
+      case 'aggressive':
+        bassOut = Math.max(audio.bass, audio.bassFast * 0.9, audio.beat * 0.6);
+        break;
+      default:
+        bassOut = 0;
+        break;
     }
 
     // Envelopes only fire in 'default' / 'aggressive'. In 'smooth'
     // mode we pin them to 0 so worlds that opted into envelope-based
     // bursts don't add accent flashes when the user wants pure
     // continuous reactivity.
-    const envScale = (state.reactivityMode === 'default' || state.reactivityMode === 'aggressive') ? 1 : 0;
-    const kickOut  = audio.kick * envScale;
+    const envScale = state.reactivityMode === 'default' || state.reactivityMode === 'aggressive' ? 1 : 0;
+    const kickOut = audio.kick * envScale;
     const snareOut = audio.snare * envScale;
 
     // BPM-locked LFO only in 'aggressive'. 0-1 sine at one cycle
     // per beat — drives orbital motion / breathing in worlds that
     // wire it up.
-    const lfoOut = state.reactivityMode === 'aggressive'
-      ? audio.lfoBeat
-      : 0.5; // neutral midpoint when off — worlds can ignore the
-              // signal by computing relative to 0.5.
+    const lfoOut = state.reactivityMode === 'aggressive' ? audio.lfoBeat : 0.5; // neutral midpoint when off — worlds can ignore the
+    // signal by computing relative to 0.5.
 
     // Centroid hue is always on (when audio is on) — it's a slow
     // smoothed timbre signal, hard to make ugly.
     const centroidOut = audio.centroid;
 
-    synthVisionStore.update(s => ({
+    synthVisionStore.update((s) => ({
       ...s,
       mic: true,
       micLevel: audio.level,
@@ -3272,7 +3830,8 @@ void main() {
           const a = (s / sides) * Math.PI * 2 + ang;
           const rx = Math.cos(a) * radius;
           const ry = Math.sin(a) * radius * (0.9 + mouseY * 0.5);
-          if (s === 0) ctx.moveTo(rx, ry); else ctx.lineTo(rx, ry);
+          if (s === 0) ctx.moveTo(rx, ry);
+          else ctx.lineTo(rx, ry);
         }
       } else if (evalGeo.form === 'hex') {
         const sides = 6;
@@ -3280,7 +3839,8 @@ void main() {
           const a = (s / sides) * Math.PI * 2 + ang;
           const rx = Math.cos(a) * radius;
           const ry = Math.sin(a) * radius;
-          if (s === 0) ctx.moveTo(rx, ry); else ctx.lineTo(rx, ry);
+          if (s === 0) ctx.moveTo(rx, ry);
+          else ctx.lineTo(rx, ry);
         }
       } else if (evalGeo.form === 'grid') {
         const span = radius * 1.6;
@@ -3308,7 +3868,8 @@ void main() {
           const a = (s / sides) * Math.PI * 2 + ang;
           const rx = Math.cos(a) * radius * (1 + z * 0.25);
           const ry = Math.sin(a) * radius * (1 - z * 0.18);
-          if (s === 0) ctx.moveTo(rx, ry); else ctx.lineTo(rx, ry);
+          if (s === 0) ctx.moveTo(rx, ry);
+          else ctx.lineTo(rx, ry);
         }
       } else {
         const segs = 56;
@@ -3318,7 +3879,8 @@ void main() {
           const rr = radius + wave;
           const rx = Math.cos(a) * rr;
           const ry = Math.sin(a) * rr * (0.55 + mouseY * 0.65);
-          if (s === 0) ctx.moveTo(rx, ry); else ctx.lineTo(rx, ry);
+          if (s === 0) ctx.moveTo(rx, ry);
+          else ctx.lineTo(rx, ry);
         }
       }
 
@@ -3371,7 +3933,8 @@ void main() {
   // ================================================================
   function renderSplash() {
     if (!compCtx || !outputCanvas) return;
-    const w = outputCanvas.width, h = outputCanvas.height;
+    const w = outputCanvas.width,
+      h = outputCanvas.height;
     compCtx.fillStyle = '#000';
     compCtx.fillRect(0, 0, w, h);
 
@@ -3381,10 +3944,11 @@ void main() {
     compCtx.fillStyle = 'rgba(255, 255, 255, 0.85)';
     compCtx.textAlign = 'center';
     compCtx.textBaseline = 'middle';
-    compCtx.fillText('P  E  R  F  O  R  M  E  R', w / 2, h / 2);
+    const performerLabel = synthMessage('logo').split('').join('  ');
+    compCtx.fillText(performerLabel, w / 2, h / 2);
 
     // Subtle underline accent
-    const textW = compCtx.measureText('P  E  R  F  O  R  M  E  R').width;
+    const textW = compCtx.measureText(performerLabel).width;
     compCtx.strokeStyle = 'rgba(187, 134, 252, 0.4)';
     compCtx.lineWidth = 1;
     compCtx.beginPath();
@@ -3394,7 +3958,7 @@ void main() {
   }
 
   function dismissSplash() {
-    synthVisionStore.update(s => ({ ...s, showSplash: false }));
+    synthVisionStore.update((s) => ({ ...s, showSplash: false }));
   }
 
   // ================================================================
@@ -3403,7 +3967,10 @@ void main() {
   let _renderLogCount = 0;
   function renderFrame(now: number) {
     animFrame = requestAnimationFrame(renderFrame);
-    if (!state.active) { if (_renderLogCount++ < 3) console.log('[SV render] skipped: not active'); return; }
+    if (!state.active) {
+      if (_renderLogCount++ < 3) console.log('[SV render] skipped: not active');
+      return;
+    }
     // Keep rendering even when Performer UI is hidden — the VJ layer needs live canvas output.
     // Only skip rendering if VJ mode itself is closed (performerStarted will be false → component unmounts).
 
@@ -3413,20 +3980,20 @@ void main() {
       return;
     }
 
-    const dt = Math.min((now - lastTime) / 1000, .05);
+    const dt = Math.min((now - lastTime) / 1000, 0.05);
     lastTime = now;
 
     // Update time
-    synthVisionStore.update(s => {
+    synthVisionStore.update((s) => {
       const newTime = s.time + dt;
       // BPM
       const bI = 60000 / s.bpm;
       let newBp = ((now - s.lastBeat) % bI) / bI;
       let newLastBeat = s.lastBeat;
-      let newPump = s.pump * .93;
+      let newPump = s.pump * 0.93;
       if (now - s.lastBeat > bI) {
         newLastBeat = now;
-        if (s.bpmSync) newPump = Math.max(newPump, .4);
+        if (s.bpmSync) newPump = Math.max(newPump, 0.4);
       }
       // Drift
       let newDriftTarget = s.driftTarget;
@@ -3444,10 +4011,19 @@ void main() {
           newDriftTimer = 0;
           newDriftTarget = {} as SVParams;
           for (const param of SV_PARAMS) (newDriftTarget as any)[param.k] = Math.random();
-          if (Math.random() > .6) l.sh = Math.floor(Math.random() * 36);
-          if (Math.random() > .75) l.style = Math.floor(Math.random() * 8);
+          if (Math.random() > 0.6) l.sh = Math.floor(Math.random() * 36);
+          if (Math.random() > 0.75) l.style = Math.floor(Math.random() * 8);
         }
-        return { ...s, time: newTime, bp: newBp, lastBeat: newLastBeat, pump: newPump, driftTimer: newDriftTimer, driftTarget: newDriftTarget, layers: newLayers };
+        return {
+          ...s,
+          time: newTime,
+          bp: newBp,
+          lastBeat: newLastBeat,
+          pump: newPump,
+          driftTimer: newDriftTimer,
+          driftTarget: newDriftTarget,
+          layers: newLayers,
+        };
       }
       // Auto mode
       let newAutoTimer = s.autoTimer;
@@ -3471,7 +4047,7 @@ void main() {
       } else {
         synthVisionStore.doRandom();
       }
-      synthVisionStore.update(s => ({ ...s, autoTimer: 0 }));
+      synthVisionStore.update((s) => ({ ...s, autoTimer: 0 }));
     }
 
     // Decay spacebar effects over time
@@ -3488,8 +4064,9 @@ void main() {
 
     // Resolve crossfade mix params
     const xf = state.xfade;
-    const aL = state.layers.a, bL = state.layers.b;
-    const activeL = xf < .5 ? aL : bL;
+    const aL = state.layers.a,
+      bL = state.layers.b;
+    const activeL = xf < 0.5 ? aL : bL;
     const mixP: Record<string, number> = {};
     for (const param of SV_PARAMS) {
       mixP[param.k] = aL.p[param.k] * (1 - xf) + bL.p[param.k] * xf;
@@ -3512,7 +4089,17 @@ void main() {
       if (fboA && fboB) {
         const frameNum = Math.floor(state.time * 60);
 
-        if (isfActive && isfShaderInstance && isfRenderer && isfScene && isfCamera && isfQuad && postFxProgram && isfTexture && isfCanvas) {
+        if (
+          isfActive &&
+          isfShaderInstance &&
+          isfRenderer &&
+          isfScene &&
+          isfCamera &&
+          isfQuad &&
+          postFxProgram &&
+          isfTexture &&
+          isfCanvas
+        ) {
           // ── ISF MODE: Render ISF shader → post-FX → shaderCanvas ──
           // 1. Bridge SV params to ISF uniforms
           bridgeSVParamsToISF(mixP);
@@ -3566,7 +4153,16 @@ void main() {
           gl.drawArrays(gl.TRIANGLE_STRIP, 0, 4);
 
           if (frameNum < 3) {
-            console.log('SynthVision ISF render: frame=', frameNum, 'shader=', isfShaderInstance.name, 'size=', w, 'x', h);
+            console.log(
+              'SynthVision ISF render: frame=',
+              frameNum,
+              'shader=',
+              isfShaderInstance.name,
+              'size=',
+              w,
+              'x',
+              h,
+            );
           }
         } else {
           // ── NO CLIP ACTIVE: clear to black so stale framebuffers and
@@ -3585,7 +4181,8 @@ void main() {
       }
     } else {
       const frameNum = Math.floor(state.time * 60);
-      if (frameNum < 5) console.warn('SynthVision: Shader rendering skipped', { gl: !!gl, shaderProgram: !!shaderProgram });
+      if (frameNum < 5)
+        console.warn('SynthVision: Shader rendering skipped', { gl: !!gl, shaderProgram: !!shaderProgram });
     }
 
     // Render Three.js (skip if worlds disabled). Goes through the
@@ -3601,7 +4198,8 @@ void main() {
 
     // Render camera effects layer (separate visual layer, not data input)
     if (state.camActive && camGl && camShader && camVideo && camVideo.readyState >= 2 && camFboA && camFboB) {
-      const camW = camCanvas.width, camH = camCanvas.height;
+      const camW = camCanvas.width,
+        camH = camCanvas.height;
       const src = camFboPing ? camFboA : camFboB;
       const dst = camFboPing ? camFboB : camFboA;
 
@@ -3624,7 +4222,7 @@ void main() {
       camGl.uniform1f(camUniforms.t, state.time);
       camGl.uniform2f(camUniforms.res, camW, camH);
       // Convert camMode string to index
-      const camModeIdx = SV_CAM_MODES.findIndex(m => m.id === state.camMode);
+      const camModeIdx = SV_CAM_MODES.findIndex((m) => m.id === state.camMode);
       camGl.uniform1i(camUniforms.mode, camModeIdx >= 0 ? camModeIdx : 0);
       camGl.uniform1f(camUniforms.motion, lastMotion);
       camGl.uniform1f(camUniforms.mic, state.micLevel);
@@ -3666,8 +4264,12 @@ void main() {
       // Debug: Log why compositing isn't happening
       const frameNum = Math.floor(state.time * 60);
       if (frameNum < 10) {
-        console.warn('SynthVision: Compositing skipped - missing:',
-          { compCtx: !!compCtx, outputCanvas: !!outputCanvas, shaderCanvas: !!shaderCanvas, threeCanvas: !!threeCanvas });
+        console.warn('SynthVision: Compositing skipped - missing:', {
+          compCtx: !!compCtx,
+          outputCanvas: !!outputCanvas,
+          shaderCanvas: !!shaderCanvas,
+          threeCanvas: !!threeCanvas,
+        });
       }
       // Fallback: draw a debug pattern to the output canvas to verify it's being displayed
       if (compCtx && outputCanvas) {
@@ -3675,7 +4277,7 @@ void main() {
         compCtx.fillRect(0, 0, outputCanvas.width, outputCanvas.height);
         compCtx.fillStyle = '#fff';
         compCtx.font = '24px monospace';
-        compCtx.fillText('SynthVision: Waiting for render...', 20, 50);
+        compCtx.fillText(synthMessage('renderWaiting'), 20, 50);
       }
     }
   }
@@ -3689,13 +4291,18 @@ void main() {
     const pW = $project.width || 1920;
     const pH = $project.height || 1080;
     const maxPx = 1920 * 1080;
-    const sc = (pW * pH) > maxPx ? Math.sqrt(maxPx / (pW * pH)) : 1;
+    const sc = pW * pH > maxPx ? Math.sqrt(maxPx / (pW * pH)) : 1;
     const isfW = Math.round(pW * sc);
     const isfH = Math.round(pH * sc);
     isfCanvas = document.createElement('canvas');
     isfCanvas.width = isfW;
     isfCanvas.height = isfH;
-    isfRenderer = new THREE.WebGLRenderer({ canvas: isfCanvas, alpha: false, antialias: false, powerPreference: 'high-performance' });
+    isfRenderer = new THREE.WebGLRenderer({
+      canvas: isfCanvas,
+      alpha: false,
+      antialias: false,
+      powerPreference: 'high-performance',
+    });
     isfRenderer.setSize(isfW, isfH, false);
     isfScene = new THREE.Scene();
     isfCamera = new THREE.OrthographicCamera(-1, 1, 1, -1, 0, 1);
@@ -3715,7 +4322,7 @@ void main() {
         isfShaderInstance = createISFShader(
           `sv-isf-${Date.now()}`,
           assignment.shaderName || 'ISF',
-          assignment.shaderCode
+          assignment.shaderCode,
         );
         isfShaderCode_internal = assignment.shaderCode;
         // Apply manifest default overrides if present
@@ -3798,7 +4405,7 @@ void main() {
     // the library.
     let liveAssignment = assignment;
     if (assignment.shaderId) {
-      const live = editShaders.find(s => s.id === assignment.shaderId);
+      const live = editShaders.find((s) => s.id === assignment.shaderId);
       if (live && live.shaderCode) {
         liveAssignment = {
           ...assignment,
@@ -3890,11 +4497,23 @@ void main() {
 
   // ─── Clip Assignment Functions ─────────────────────
   function triggerClip(clipPos: number) {
-    console.log('[SV triggerClip]', clipPos, 'editMode:', performerEditMode, 'active:', state.active, 'visible:', visible);
+    console.log(
+      '[SV triggerClip]',
+      clipPos,
+      'editMode:',
+      performerEditMode,
+      'active:',
+      state.active,
+      'visible:',
+      visible,
+    );
     // Dismiss splash on any clip trigger (allows click-to-launch without needing keyboard first)
     if (state.showSplash) dismissSplash();
     const assignment = clipAssignments[clipPos];
-    if (!assignment) { console.log('[SV triggerClip] no assignment at', clipPos); return; }
+    if (!assignment) {
+      console.log('[SV triggerClip] no assignment at', clipPos);
+      return;
+    }
 
     // Re-activate SynthVision clip on VJ layer if STOP ALL cleared it
     ensureSVClipActive();
@@ -3915,9 +4534,9 @@ void main() {
       const svClip: VJClip = {
         id: svClipId,
         type: 'synthvision',
-        name: 'PERFORMER',
+        name: synthMessage('logo'),
         src: '',
-        synthVisionCanvas: outputCanvas
+        synthVisionCanvas: outputCanvas,
       };
       vjClipLauncher.setClip(assignedVJLayer, 0, svClip);
       vjClipLauncher.triggerClip(assignedVJLayer, 0);
@@ -3932,9 +4551,7 @@ void main() {
     if (assignment.mediaType === 'video') {
       // Reuse library item's <video> element if available so rapid
       // Performer keyboard switching doesn't churn fresh elements.
-      const libraryItem = assignment.mediaId
-        ? $mediaLibrary.find(m => m.id === assignment.mediaId)
-        : null;
+      const libraryItem = assignment.mediaId ? $mediaLibrary.find((m) => m.id === assignment.mediaId) : null;
       let video = libraryItem?.videoElement as HTMLVideoElement | undefined;
       if (!video) {
         video = document.createElement('video');
@@ -3945,12 +4562,16 @@ void main() {
       video.playsInline = true;
       // Restart from frame 0 on every Performer keypress — clicking a key
       // means "play this clip from the top", not "resume mid-stream".
-      try { video.currentTime = 0; } catch { /* ignore */ }
+      try {
+        video.currentTime = 0;
+      } catch {
+        /* ignore */
+      }
       if (video.paused) video.play().catch(() => {});
       const clip: VJClip = {
         id: clipId,
         type: 'video',
-        name: assignment.mediaName || 'Media Clip',
+        name: assignment.mediaName || synthMessage('clipTypes.mediaClip'),
         src: assignment.mediaSrc,
         thumbnail: assignment.mediaThumbnail || libraryItem?.thumbnail,
         videoElement: video,
@@ -3961,7 +4582,7 @@ void main() {
       const clip: VJClip = {
         id: clipId,
         type: 'image',
-        name: assignment.mediaName || 'Image Clip',
+        name: assignment.mediaName || synthMessage('clipTypes.imageClip'),
         src: assignment.mediaSrc,
         thumbnail: assignment.mediaThumbnail || assignment.mediaSrc,
       };
@@ -3971,28 +4592,39 @@ void main() {
   }
 
   // ─── Drag-Drop Assignment Handlers ─────────────────────
-  function handleEditDragStart(e: DragEvent, type: 'shader' | 'media', shader?: typeof editShaders[0], item?: MediaItem) {
+  function handleEditDragStart(
+    e: DragEvent,
+    type: 'shader' | 'media',
+    shader?: (typeof editShaders)[0],
+    item?: MediaItem,
+  ) {
     if (!e.dataTransfer) return;
     if (type === 'shader' && shader) {
-      e.dataTransfer.setData('text/plain', JSON.stringify({
-        type: 'shader',
-        id: shader.id,
-        name: shader.name,
-        src: shader.src,
-        thumbnail: shader.thumbnail,
-        shaderCode: shader.shaderCode,
-        manifestDefaults: shader.manifestDefaults,
-      }));
+      e.dataTransfer.setData(
+        'text/plain',
+        JSON.stringify({
+          type: 'shader',
+          id: shader.id,
+          name: shader.name,
+          src: shader.src,
+          thumbnail: shader.thumbnail,
+          shaderCode: shader.shaderCode,
+          manifestDefaults: shader.manifestDefaults,
+        }),
+      );
     } else if (item) {
-      const mediaThumbnail = item.type === 'image' ? item.src : (item.thumbnail || '');
-      e.dataTransfer.setData('text/plain', JSON.stringify({
-        type: 'media',
-        mediaId: item.id,
-        mediaName: item.name,
-        mediaSrc: item.src,
-        mediaType: item.type,
-        mediaThumbnail,
-      }));
+      const mediaThumbnail = item.type === 'image' ? item.src : item.thumbnail || '';
+      e.dataTransfer.setData(
+        'text/plain',
+        JSON.stringify({
+          type: 'media',
+          mediaId: item.id,
+          mediaName: item.name,
+          mediaSrc: item.src,
+          mediaType: item.type,
+          mediaThumbnail,
+        }),
+      );
     }
     e.dataTransfer.effectAllowed = 'copy';
   }
@@ -4038,16 +4670,20 @@ void main() {
         clipsDirty = true;
 
         if (data.mediaType === 'video' && data.mediaSrc) {
-          captureVideoKeyThumbnail(data.mediaSrc).then(thumb => {
-            if (!thumb) return;
-            const cur = clipAssignments[clipPos];
-            // Slot may have been reassigned or cleared while we waited
-            // for the frame — bail silently in that case.
-            if (!cur || cur.type !== 'media' || cur.mediaSrc !== data.mediaSrc) return;
-            clipAssignments[clipPos] = { ...cur, mediaThumbnail: thumb };
-            clipAssignments = { ...clipAssignments };
-            clipsDirty = true;
-          }).catch(() => { /* */ });
+          captureVideoKeyThumbnail(data.mediaSrc)
+            .then((thumb) => {
+              if (!thumb) return;
+              const cur = clipAssignments[clipPos];
+              // Slot may have been reassigned or cleared while we waited
+              // for the frame — bail silently in that case.
+              if (!cur || cur.type !== 'media' || cur.mediaSrc !== data.mediaSrc) return;
+              clipAssignments[clipPos] = { ...cur, mediaThumbnail: thumb };
+              clipAssignments = { ...clipAssignments };
+              clipsDirty = true;
+            })
+            .catch(() => {
+              /* */
+            });
         }
       }
     } catch (err) {
@@ -4064,7 +4700,9 @@ void main() {
   async function captureVideoKeyThumbnail(url: string): Promise<string | undefined> {
     return new Promise((resolve) => {
       const v = document.createElement('video');
-      v.muted = true; v.playsInline = true; v.preload = 'auto';
+      v.muted = true;
+      v.playsInline = true;
+      v.preload = 'auto';
       // ghost-asset:// is cross-origin from the renderer; without anonymous
       // CORS the canvas drawImage below taints and toDataURL throws.
       if (/^(https?:|ghost-asset:)/i.test(url)) v.crossOrigin = 'anonymous';
@@ -4074,15 +4712,23 @@ void main() {
       const finish = (out: string | undefined) => {
         if (done) return;
         done = true;
-        try { v.pause(); v.removeAttribute('src'); v.load(); } catch { /* */ }
+        try {
+          v.pause();
+          v.removeAttribute('src');
+          v.load();
+        } catch {
+          /* */
+        }
         resolve(out);
       };
 
       const grab = () => {
         try {
-          const w = 160, h = 90;
+          const w = 160,
+            h = 90;
           const c = document.createElement('canvas');
-          c.width = w; c.height = h;
+          c.width = w;
+          c.height = h;
           const ctx = c.getContext('2d');
           if (!ctx) return finish(undefined);
           ctx.drawImage(v, 0, 0, w, h);
@@ -4092,11 +4738,20 @@ void main() {
         }
       };
 
-      v.addEventListener('loadeddata', () => {
-        // Seek slightly past 0 so demuxers that produce a black initial
-        // frame land on actual content.
-        try { v.currentTime = 0.1; } catch { grab(); return; }
-      }, { once: true });
+      v.addEventListener(
+        'loadeddata',
+        () => {
+          // Seek slightly past 0 so demuxers that produce a black initial
+          // frame land on actual content.
+          try {
+            v.currentTime = 0.1;
+          } catch {
+            grab();
+            return;
+          }
+        },
+        { once: true },
+      );
       v.addEventListener('seeked', grab, { once: true });
       v.addEventListener('error', () => finish(undefined), { once: true });
       // Hard timeout — never let a hung video stall the slot forever.
@@ -4132,7 +4787,7 @@ void main() {
     presetNameInput = '';
   }
   function loadPreset(preset: KeyboardPreset) {
-    showLoading('Loading Preset...');
+    showLoading(synthMessage('loadingPreset'));
     // Dismiss splash if still showing
     if (state.showSplash) dismissSplash();
     clipAssignments = JSON.parse(JSON.stringify(preset.assignments));
@@ -4143,7 +4798,7 @@ void main() {
   }
   function deletePreset(id: string) {
     // Find which store it belongs to
-    const isGlobal = $globalSVKeyboardPresets.some(p => p.id === id);
+    const isGlobal = $globalSVKeyboardPresets.some((p) => p.id === id);
     if (isGlobal) {
       globalSVKeyboardPresets.remove(id);
     } else {
@@ -4178,28 +4833,37 @@ void main() {
     }
   }
 
-  function getClipLabel(clipPos: number, assignments: Record<number, ClipAssignment>): { name: string; desc: string; isMedia: boolean; isAssigned: boolean; thumbnail?: string } {
+  function getClipLabel(
+    clipPos: number,
+    assignments: Record<number, ClipAssignment>,
+  ): { name: string; desc: string; isMedia: boolean; isAssigned: boolean; thumbnail?: string } {
     const assignment = assignments[clipPos];
-    if (!assignment) return { name: '', desc: 'EMPTY', isMedia: false, isAssigned: false };
+    if (!assignment) return { name: '', desc: synthMessage('clipTypes.empty'), isMedia: false, isAssigned: false };
     if (assignment.type === 'media') {
       let thumb = assignment.mediaThumbnail;
       if (!thumb && assignment.mediaId) {
-        const libItem = $mediaLibrary.find(m => m.id === assignment.mediaId);
-        thumb = libItem?.thumbnail
-          || (libItem?.type === 'image' ? libItem.src : undefined);
+        const libItem = $mediaLibrary.find((m) => m.id === assignment.mediaId);
+        thumb = libItem?.thumbnail || (libItem?.type === 'image' ? libItem.src : undefined);
       }
       if (!thumb && assignment.mediaType === 'image') thumb = assignment.mediaSrc;
       return {
-        name: assignment.mediaName || 'Media',
-        desc: assignment.mediaType === 'video' ? 'VIDEO' : 'IMAGE',
+        name: assignment.mediaName || synthMessage('clipTypes.media'),
+        desc: synthMessage(`clipTypes.${assignment.mediaType === 'video' ? 'video' : 'image'}`),
         isMedia: true,
         isAssigned: true,
         thumbnail: thumb,
       };
     }
+    const shaderIndex = assignment.shaderName
+      ? SV_SHADER_DEFS.findIndex((shader) => shader.name === assignment.shaderName)
+      : -1;
     return {
-      name: assignment.shaderName || 'Shader',
-      desc: 'SHADER',
+      name: assignment.shaderName
+        ? shaderIndex >= 0
+          ? shaderNameLabel(shaderIndex, assignment.shaderName)
+          : assignment.shaderName
+        : synthMessage('clipTypes.shaderName'),
+      desc: synthMessage('clipTypes.shader'),
       isMedia: false,
       isAssigned: true,
       thumbnail: assignment.shaderThumbnail,
@@ -4207,7 +4871,9 @@ void main() {
   }
 
   const CODE_TO_CLIP: Record<string, number> = {};
-  SV_ALL_CLIPS.forEach((c, i) => { CODE_TO_CLIP[c.code] = i; });
+  SV_ALL_CLIPS.forEach((c, i) => {
+    CODE_TO_CLIP[c.code] = i;
+  });
   function handleKeydown(e: KeyboardEvent) {
     if (!state.active) return;
     // Don't capture if typing in an input
@@ -4231,34 +4897,81 @@ void main() {
     if (e.repeat) return;
 
     // Tab = full random (shader, world, style, space, params, effects)
-    if (code === 'Tab') { e.preventDefault(); randomizeAll(); return; }
+    if (code === 'Tab') {
+      e.preventDefault();
+      randomizeAll();
+      return;
+    }
 
     // Arrow left/right = crossfade nudge
-    if (code === 'ArrowLeft') { e.preventDefault(); synthVisionStore.nudgeXfade(-.05); return; }
-    if (code === 'ArrowRight') { e.preventDefault(); synthVisionStore.nudgeXfade(.05); return; }
+    if (code === 'ArrowLeft') {
+      e.preventDefault();
+      synthVisionStore.nudgeXfade(-0.05);
+      return;
+    }
+    if (code === 'ArrowRight') {
+      e.preventDefault();
+      synthVisionStore.nudgeXfade(0.05);
+      return;
+    }
 
     // ; ' = space
-    if (code === 'Semicolon') { synthVisionStore.cycleSpace(-1); return; }
-    if (code === 'Quote') { synthVisionStore.cycleSpace(1); return; }
+    if (code === 'Semicolon') {
+      synthVisionStore.cycleSpace(-1);
+      return;
+    }
+    if (code === 'Quote') {
+      synthVisionStore.cycleSpace(1);
+      return;
+    }
 
     // , . = world (comma/period)
-    if (code === 'Comma') { synthVisionStore.cycleWorld(-1); return; }
-    if (code === 'Period') { synthVisionStore.cycleWorld(1); return; }
+    if (code === 'Comma') {
+      synthVisionStore.cycleWorld(-1);
+      return;
+    }
+    if (code === 'Period') {
+      synthVisionStore.cycleWorld(1);
+      return;
+    }
 
     // Space = trigger selected spacebar effect + tap tempo
-    if (code === 'Space') { e.preventDefault(); synthVisionStore.triggerSpaceFx(); tapBPM(); return; }
+    if (code === 'Space') {
+      e.preventDefault();
+      synthVisionStore.triggerSpaceFx();
+      tapBPM();
+      return;
+    }
 
     // Backtick = toggle focus
-    if (code === 'Backquote') { synthVisionStore.toggleFocus(); return; }
+    if (code === 'Backquote') {
+      synthVisionStore.toggleFocus();
+      return;
+    }
 
     // Actions
-    if (kl === 'n') { synthVisionStore.toggleInvert(); return; }
-    if (kl === 'b') { synthVisionStore.doBlackout(); return; }
-    if (kl === 'm') { synthVisionStore.doGlitch(); return; }
-    if (kl === 'x') { synthVisionStore.toggleDrift(); return; }
-    if (kl === 'c') { randomizeAll(); return; }
+    if (kl === 'n') {
+      synthVisionStore.toggleInvert();
+      return;
+    }
+    if (kl === 'b') {
+      synthVisionStore.doBlackout();
+      return;
+    }
+    if (kl === 'm') {
+      synthVisionStore.doGlitch();
+      return;
+    }
+    if (kl === 'x') {
+      synthVisionStore.toggleDrift();
+      return;
+    }
+    if (kl === 'c') {
+      randomizeAll();
+      return;
+    }
     if (code === 'Escape') {
-      synthVisionStore.update(s => ({ ...s, blackout: 0, whiteout: 0, invert: false }));
+      synthVisionStore.update((s) => ({ ...s, blackout: 0, whiteout: 0, invert: false }));
       return;
     }
   }
@@ -4271,11 +4984,11 @@ void main() {
     if (taps.length > 8) taps.shift();
     if (taps.length >= 2) {
       let total = 0;
-      for (let i = 1; i < taps.length; i++) total += taps[i] - taps[i-1];
+      for (let i = 1; i < taps.length; i++) total += taps[i] - taps[i - 1];
       const bpm = Math.round(60000 / (total / (taps.length - 1)));
       if (bpm >= 40 && bpm <= 300) synthVisionStore.setBpm(bpm);
     }
-    synthVisionStore.update(s => ({ ...s, lastBeat: now, bp: 0 }));
+    synthVisionStore.update((s) => ({ ...s, lastBeat: now, bp: 0 }));
   }
 
   // ================================================================
@@ -4289,7 +5002,9 @@ void main() {
   function xfMouseMove(e: MouseEvent) {
     if (xfDragging) updateXfFromEvent(e);
   }
-  function xfMouseUp() { xfDragging = false; }
+  function xfMouseUp() {
+    xfDragging = false;
+  }
   function updateXfFromEvent(e: MouseEvent) {
     const track = document.querySelector('.sv-xf-track') as HTMLElement;
     if (!track) return;
@@ -4303,7 +5018,11 @@ void main() {
   // ================================================================
   function handleResize() {
     if (!outputCanvas || !shaderCanvas || !threeCanvas) {
-      console.warn('SynthVision handleResize: canvases not ready', { outputCanvas: !!outputCanvas, shaderCanvas: !!shaderCanvas, threeCanvas: !!threeCanvas });
+      console.warn('SynthVision handleResize: canvases not ready', {
+        outputCanvas: !!outputCanvas,
+        shaderCanvas: !!shaderCanvas,
+        threeCanvas: !!threeCanvas,
+      });
       return;
     }
     // Use project dimensions but cap total pixels at ~2MP (1920×1080) for performer performance
@@ -4315,13 +5034,23 @@ void main() {
     const scale = pixels > maxPixels ? Math.sqrt(maxPixels / pixels) : 1;
     const w = Math.round(projW * scale);
     const h = Math.round(projH * scale);
-    outputCanvas.width = w; outputCanvas.height = h;
-    shaderCanvas.width = w; shaderCanvas.height = h;
-    threeCanvas.width = w; threeCanvas.height = h;
-    if (camCanvas) { camCanvas.width = w; camCanvas.height = h; }
+    outputCanvas.width = w;
+    outputCanvas.height = h;
+    shaderCanvas.width = w;
+    shaderCanvas.height = h;
+    threeCanvas.width = w;
+    threeCanvas.height = h;
+    if (camCanvas) {
+      camCanvas.width = w;
+      camCanvas.height = h;
+    }
     if (gl) gl.viewport(0, 0, w, h);
     if (camGl) camGl.viewport(0, 0, w, h);
-    if (renderer) { renderer.setSize(w, h); camera.aspect = w / h; camera.updateProjectionMatrix(); }
+    if (renderer) {
+      renderer.setSize(w, h);
+      camera.aspect = w / h;
+      camera.updateProjectionMatrix();
+    }
     // Keep the post-processing chain's internal render targets in sync
     // with the canvas size, otherwise the composer renders to a stale
     // resolution and the output gets stretched / blurred.
@@ -4345,21 +5074,33 @@ void main() {
   //  VJ Layer Assignment
   // ================================================================
   function assignToVJLayer(layerIdx: number) {
-    if (!outputCanvas) { console.error('[SV] assignToVJLayer: outputCanvas is null!'); return; }
-    console.log('[SV] assignToVJLayer:', layerIdx, 'canvas:', outputCanvas.width, 'x', outputCanvas.height, 'clipId:', svClipId);
+    if (!outputCanvas) {
+      console.error('[SV] assignToVJLayer: outputCanvas is null!');
+      return;
+    }
+    console.log(
+      '[SV] assignToVJLayer:',
+      layerIdx,
+      'canvas:',
+      outputCanvas.width,
+      'x',
+      outputCanvas.height,
+      'clipId:',
+      svClipId,
+    );
     assignedVJLayer = layerIdx;
 
     // Create Performer clip for VJ layer
-    const svClip: VJClip = {
+    const clip: VJClip = {
       id: svClipId,
       type: 'synthvision',
-      name: 'PERFORMER',
+      name: synthMessage('logo'),
       src: '',
-      synthVisionCanvas: outputCanvas
+      synthVisionCanvas: outputCanvas,
     };
 
     // Set clip in first column of the target layer and trigger it
-    vjClipLauncher.setClip(layerIdx, 0, svClip);
+    vjClipLauncher.setClip(layerIdx, 0, clip);
     vjClipLauncher.triggerClip(layerIdx, 0);
 
     // Update store
@@ -4380,7 +5121,7 @@ void main() {
   onMount(() => {
     console.log('SynthVision: Starting initialization...');
     _attachDialListeners(); // see comment above the $:-removed attach block
-    showLoading('Initializing Performer...');
+    showLoading(synthMessage('loading.initializing'));
     loadPresetsFromStorage();
 
     // Restore clip assignments and VJ layer from session cache (persists across VJ mode toggles)
@@ -4391,7 +5132,12 @@ void main() {
       activePresetId = cached.activePresetId;
       clipsDirty = cached.dirty;
       restoredVJLayer = cached.assignedVJLayer ?? 0;
-      console.log('SynthVision: Restored', Object.keys(cached.assignments).length, 'clip assignments, VJ layer:', restoredVJLayer);
+      console.log(
+        'SynthVision: Restored',
+        Object.keys(cached.assignments).length,
+        'clip assignments, VJ layer:',
+        restoredVJLayer,
+      );
     } else if (savedPresets.length > 0) {
       // No cached state and at least one saved preset exists — auto-load
       // the first one so the performer screen has working clips ready
@@ -4409,10 +5155,24 @@ void main() {
     // Reset effects state to ensure clean start (blackout/whiteout should be 0)
     // Skip splash if clips are already assigned (returning user is ready to perform)
     const skipSplash = Object.keys(clipAssignments).length > 0;
-    synthVisionStore.update(s => ({ ...s, blackout: 0, whiteout: 0, pump: 0, fxIntensity: 0, fxShockwave: 0, fxTwist: 0, fxChromatic: 0, fxPixelate: 0, fxStrobe: 0, autoMode: false, drift: false, ...(skipSplash ? { showSplash: false } : {}) }));
+    synthVisionStore.update((s) => ({
+      ...s,
+      blackout: 0,
+      whiteout: 0,
+      pump: 0,
+      fxIntensity: 0,
+      fxShockwave: 0,
+      fxTwist: 0,
+      fxChromatic: 0,
+      fxPixelate: 0,
+      fxStrobe: 0,
+      autoMode: false,
+      drift: false,
+      ...(skipSplash ? { showSplash: false } : {}),
+    }));
 
     // Check WebGL availability first
-    showLoading('Checking WebGL...');
+    showLoading(synthMessage('loading.checkingWebgl'));
     const testCanvas = document.createElement('canvas');
     const testGl = testCanvas.getContext('webgl2');
     if (!testGl) {
@@ -4437,13 +5197,13 @@ void main() {
     // Wrap sync initialization in try-catch to ensure hideLoading is always called
     // (prevents frozen full-screen loading overlay if WebGL init fails on re-mount)
     try {
-      showLoading('Compiling shaders...');
+      showLoading(synthMessage('loading.compiling'));
       handleResize();
       initShaders();
       // Defer camera shader init until camera is actually used to save WebGL contexts
       // initCamShaders(); -- will be called on first camera activation
 
-      showLoading('Building 3D scene...');
+      showLoading(synthMessage('loading.buildingScene'));
       initThree();
       buildWorld(0);
     } catch (initErr) {
@@ -4474,10 +5234,10 @@ void main() {
         const cachedShaders = isfShaderCache.get();
         if (cachedShaders) {
           // Instant restore from module-level cache (no network fetches needed)
-          editShaders = cachedShaders.map(s => ({ ...s }));
+          editShaders = cachedShaders.map((s) => ({ ...s }));
           editShadersLoading = false;
           console.log(`SynthVision: ${editShaders.length} shaders restored from cache (instant)`);
-          showLoading('Ready');
+          showLoading(synthMessage('loading.ready'));
           hideLoading();
           clearTimeout(safetyTimeout);
           return;
@@ -4485,7 +5245,7 @@ void main() {
 
         // First-time load: fetch from network
         if (thumbsCancelled) return; // component was destroyed
-        showLoading('Loading shader library...');
+        showLoading(synthMessage('loading.shaderLibrary'));
         console.log('SynthVision: Loading shader library from network...');
         const response = await fetch('./ISF/manifest.json');
         if (thumbsCancelled) return;
@@ -4504,7 +5264,13 @@ void main() {
         for (let i = 0; i < totalShaders; i += BATCH_SIZE) {
           if (thumbsCancelled) break; // component was destroyed during loading
           const batch = entries.slice(i, i + BATCH_SIZE);
-          if (!thumbsCancelled) showLoading(`Loading shader library... (${Math.min(i + BATCH_SIZE, totalShaders)}/${totalShaders})`);
+          if (!thumbsCancelled)
+            showLoading(
+              synthMessage('loading.shaderLibraryProgress', {
+                current: Math.min(i + BATCH_SIZE, totalShaders),
+                total: totalShaders,
+              }),
+            );
           const results = await Promise.allSettled(
             batch.map(async (entry) => {
               const filename = entry.file;
@@ -4518,7 +5284,7 @@ void main() {
                 shaderCode,
                 manifestDefaults: entry.defaults,
               };
-            })
+            }),
           );
           if (thumbsCancelled) break; // component destroyed while awaiting batch
           for (const r of results) {
@@ -4528,7 +5294,7 @@ void main() {
         if (thumbsCancelled) return; // component was destroyed
         editShaders = loaded;
         editShadersLoading = false;
-        showLoading('Ready');
+        showLoading(synthMessage('loading.ready'));
         hideLoading();
         clearTimeout(safetyTimeout);
         console.log(`SynthVision: ${loaded.length} shaders loaded, generating thumbnails in background...`);
@@ -4542,7 +5308,7 @@ void main() {
             editShaders[i].thumbnail = await generateCachedThumbnail(editShaders[i].shaderCode, 0.5);
           } catch {}
           // Yield to main thread after EVERY thumbnail (setTimeout gives macrotask queue a chance)
-          await new Promise<void>(r => setTimeout(r, 0));
+          await new Promise<void>((r) => setTimeout(r, 0));
           // Trigger Svelte reactivity periodically (not every single one — avoids GC churn)
           if ((i + 1) % UI_UPDATE_BATCH === 0 || i === editShaders.length - 1) {
             editShaders = [...editShaders];
@@ -4551,7 +5317,7 @@ void main() {
         if (!thumbsCancelled) {
           console.log('SynthVision: All thumbnails generated, caching for future mounts.');
           // Cache to module-level so next mount is instant
-          isfShaderCache.set(editShaders.map(s => ({ ...s })));
+          isfShaderCache.set(editShaders.map((s) => ({ ...s })));
         }
       } catch (err) {
         console.error('Failed to load shaders for edit tray:', err);
@@ -4586,8 +5352,14 @@ void main() {
 
     // Cleanup WebGL — release contexts to avoid exhausting browser limits
     if (gl) {
-      if (fboA) { gl.deleteFramebuffer(fboA.fb); gl.deleteTexture(fboA.tex); }
-      if (fboB) { gl.deleteFramebuffer(fboB.fb); gl.deleteTexture(fboB.tex); }
+      if (fboA) {
+        gl.deleteFramebuffer(fboA.fb);
+        gl.deleteTexture(fboA.tex);
+      }
+      if (fboB) {
+        gl.deleteFramebuffer(fboB.fb);
+        gl.deleteTexture(fboB.tex);
+      }
       if (isfTexture) gl.deleteTexture(isfTexture);
       if (postFxProgram) gl.deleteProgram(postFxProgram);
       // Explicitly lose WebGL context to free GPU resources for re-mount
@@ -4597,14 +5369,23 @@ void main() {
     }
 
     // Cleanup ISF renderer
-    if (isfRenderer) { isfRenderer.dispose(); isfRenderer = null; }
+    if (isfRenderer) {
+      isfRenderer.dispose();
+      isfRenderer = null;
+    }
     isfShaderInstance = null;
     isfActive = false;
 
     // Cleanup Camera WebGL
     if (camGl) {
-      if (camFboA) { camGl.deleteFramebuffer(camFboA.fb); camGl.deleteTexture(camFboA.tex); }
-      if (camFboB) { camGl.deleteFramebuffer(camFboB.fb); camGl.deleteTexture(camFboB.tex); }
+      if (camFboA) {
+        camGl.deleteFramebuffer(camFboA.fb);
+        camGl.deleteTexture(camFboA.tex);
+      }
+      if (camFboB) {
+        camGl.deleteFramebuffer(camFboB.fb);
+        camGl.deleteTexture(camFboB.tex);
+      }
       if (camVideoTexture) camGl.deleteTexture(camVideoTexture);
       if (camPrevTexture) camGl.deleteTexture(camPrevTexture);
       // Explicitly lose camera WebGL context
@@ -4618,7 +5399,10 @@ void main() {
 
     // Cleanup Three.js
     clearWorld();
-    if (renderer) { renderer.dispose(); renderer = null; }
+    if (renderer) {
+      renderer.dispose();
+      renderer = null;
+    }
 
     // Release shared thumbnail WebGL context
     disposeThumbnailResources();
@@ -4692,7 +5476,7 @@ void main() {
     shaderDialDragging = { shaderIdx, paramKey };
     shaderDialStartY = e.clientY;
     const currentParams = state?.shaderParams?.[shaderIdx] ?? {};
-    const paramDef = SV_SHADER_DEFS[shaderIdx]?.params?.find(p => p.k === paramKey);
+    const paramDef = SV_SHADER_DEFS[shaderIdx]?.params?.find((p) => p.k === paramKey);
     shaderDialStartVal = currentParams[paramKey] ?? paramDef?.d ?? 0.5;
     e.preventDefault();
   }
@@ -4713,7 +5497,7 @@ void main() {
     worldDialDragging = { worldIdx, paramKey };
     worldDialStartY = e.clientY;
     const currentParams = state?.worldParams?.[worldIdx] ?? {};
-    const paramDef = SV_WORLD_DEFS[worldIdx]?.params?.find(p => p.k === paramKey);
+    const paramDef = SV_WORLD_DEFS[worldIdx]?.params?.find((p) => p.k === paramKey);
     worldDialStartVal = currentParams[paramKey] ?? paramDef?.d ?? 0.5;
     e.preventDefault();
   }
@@ -4765,38 +5549,49 @@ void main() {
   <canvas bind:this={camCanvas}></canvas>
 </div>
 
-<div class="sv-root" on:click={() => { if (state.showSplash) dismissSplash(); }}>
+<div
+  class="sv-root"
+  on:click={() => {
+    if (state.showSplash) dismissSplash();
+  }}
+>
   <!-- HEADER -->
   <div class="sv-header">
-    <div class="sv-logo">PERFORMER</div>
+    <div class="sv-logo">{$t('lighting.synthVision.logo')}</div>
     <div class="sv-deck-tabs">
-      <button class="sv-deck-tab active" title="Shader clip instrument">SHADER MODE</button>
+      <button class="sv-deck-tab active" title={$t('lighting.synthVision.shaderModeTitle')}
+        >{$t('lighting.synthVision.shaderMode')}</button
+      >
     </div>
 
     <!-- VJ Layer Assignment -->
     <div class="sv-vj-assign">
-      <span class="sv-vj-lbl">VJ LAYER</span>
+      <span class="sv-vj-lbl">{$t('lighting.synthVision.vjLayer')}</span>
       {#each Array($vjClipLauncher.numLayers) as _, i}
         <button class="sv-vj-btn" class:on={assignedVJLayer === i} on:click={() => assignToVJLayer(i)}>{i + 1}</button>
       {/each}
     </div>
 
     <!-- BPM Section -->
-    <div class="sv-bpm-section"
+    <div
+      class="sv-bpm-section"
       data-midi-path="sv:bpm"
-      data-midi-label="BPM"
+      data-midi-label={$t('lighting.synthVision.bpm')}
       data-midi-min="40"
       data-midi-max="300"
-      data-midi-step="1">
+      data-midi-step="1"
+    >
       <button class="sv-bpm-btn" on:click={() => synthVisionStore.nudgeBpm(-5)}>-5</button>
       <div class="sv-bpm-display">
         <span class="sv-bpm-val">{state?.bpm || 120}</span>
-        <span class="sv-bpm-lbl">BPM</span>
+        <span class="sv-bpm-lbl">{$t('lighting.synthVision.bpm')}</span>
       </div>
       <button class="sv-bpm-btn" on:click={() => synthVisionStore.nudgeBpm(5)}>+5</button>
-      <button class="sv-tap-btn" on:click={tapBPM}>TAP</button>
-      <div class="sv-beat-indicator" class:flash={state && state.bp < .15}></div>
-      <button class="sv-sync-btn" class:on={state?.bpmSync} on:click={() => synthVisionStore.toggleSync()}>SYNC</button>
+      <button class="sv-tap-btn" on:click={tapBPM}>{$t('lighting.synthVision.tap')}</button>
+      <div class="sv-beat-indicator" class:flash={state && state.bp < 0.15}></div>
+      <button class="sv-sync-btn" class:on={state?.bpmSync} on:click={() => synthVisionStore.toggleSync()}
+        >{$t('lighting.synthVision.sync')}</button
+      >
     </div>
 
     <!-- Reactivity Mode picker. Controls how the Milkdrop-style smooth
@@ -4806,15 +5601,24 @@ void main() {
            DEFAULT    — smooth + kick/snare onset envelopes
            AGGRESSIVE — smooth + envelopes + BPM LFO + raw bass blend
          See `milkdropFollower.ts` for the underlying math. -->
-    <div class="sv-react-section" title={SV_REACTIVITY_MODES.find(m => m.id === state?.reactivityMode)?.description ?? ''}>
-      <span class="sv-react-lbl">REACT</span>
+    <div
+      class="sv-react-section"
+      title={state?.reactivityMode
+        ? reactivityDescription(
+            state.reactivityMode,
+            SV_REACTIVITY_MODES.find((m) => m.id === state.reactivityMode)?.description ?? '',
+          )
+        : ''}
+    >
+      <span class="sv-react-lbl">{$t('lighting.synthVision.react')}</span>
       <select
         class="sv-react-select"
         value={state?.reactivityMode ?? 'smooth'}
-        on:change={(e) => synthVisionStore.setReactivityMode((e.currentTarget as HTMLSelectElement).value as SVReactivityMode)}
+        on:change={(e) =>
+          synthVisionStore.setReactivityMode((e.currentTarget as HTMLSelectElement).value as SVReactivityMode)}
       >
         {#each SV_REACTIVITY_MODES as m}
-          <option value={m.id}>{m.label}</option>
+          <option value={m.id}>{reactivityLabel(m.id, m.label)}</option>
         {/each}
       </select>
     </div>
@@ -4827,21 +5631,40 @@ void main() {
          AUTO   → auto-cycles to a new random shader/world every few seconds
                   (interval is set in the performer's auto-mode config). -->
     <div class="sv-quick-actions">
-      <button class="sv-action-btn" class:on={state?.drift}
+      <button
+        class="sv-action-btn"
+        class:on={state?.drift}
         on:click={() => synthVisionStore.toggleDrift()}
-        title="DRIFT: slowly randomize all performer params over time. Hands-free evolution.">DRIFT</button>
-      <button class="sv-action-btn" class:on={state?.autoMode}
+        title={$t('lighting.synthVision.driftTitle')}>{$t('lighting.synthVision.drift')}</button
+      >
+      <button
+        class="sv-action-btn"
+        class:on={state?.autoMode}
         on:click={toggleShaderAuto}
-        title="SHADER AUTO: auto-cycle to a new random shader / world at the configured interval.">SHADER AUTO</button>
+        title={$t('lighting.synthVision.shaderAutoTitle')}>{$t('lighting.synthVision.shaderAuto')}</button
+      >
     </div>
 
-    <button class="sv-edit-btn" class:active={performerEditMode} on:click={() => performerEditMode = !performerEditMode}>
-      {performerEditMode ? '✓ EDIT' : 'EDIT'}
+    <button
+      class="sv-edit-btn"
+      class:active={performerEditMode}
+      on:click={() => (performerEditMode = !performerEditMode)}
+    >
+      {performerEditMode ? $t('lighting.synthVision.editActive') : $t('lighting.synthVision.edit')}
     </button>
     {#if performerEditMode}
-      <button class="sv-reset-btn" on:click={() => { clipAssignments = {}; activePresetId = null; clipsDirty = false; }}>RESET</button>
+      <button
+        class="sv-reset-btn"
+        on:click={() => {
+          clipAssignments = {};
+          activePresetId = null;
+          clipsDirty = false;
+        }}>{$t('lighting.synthVision.reset')}</button
+      >
     {/if}
-    <button class="sv-close-btn" on:click={handleClose}>X</button>
+    <button class="sv-close-btn" aria-label={$t('lighting.synthVision.close')} on:click={handleClose}
+      >{$t('lighting.synthVision.close')}</button
+    >
   </div>
 
   <!-- MAIN CONTROLS -->
@@ -4850,9 +5673,8 @@ void main() {
     <div class="sv-left-col">
       <!-- XY Pad -->
       <div class="sv-xy-section">
-        <div class="sv-section-title">XY PAD</div>
-        <div class="sv-xy-pad" bind:this={xyPadEl}
-          on:mousedown={handleXYPadMouseDown}>
+        <div class="sv-section-title">{$t('lighting.synthVision.xyPad')}</div>
+        <div class="sv-xy-pad" bind:this={xyPadEl} on:mousedown={handleXYPadMouseDown}>
           <div class="sv-xy-crosshair-h" style="top:{(state?.my ?? 0.5) * 100}%"></div>
           <div class="sv-xy-crosshair-v" style="left:{(state?.mx ?? 0.5) * 100}%"></div>
           <div class="sv-xy-dot" style="left:{(state?.mx ?? 0.5) * 100}%;top:{(state?.my ?? 0.5) * 100}%"></div>
@@ -4867,73 +5689,116 @@ void main() {
       <div class="sv-keyboard-area">
         <!-- LEFT SIDE: Camera Controls -->
         <div class="sv-kb-side sv-kb-left">
-          <div class="sv-section-title">LIVE CAMERA</div>
+          <div class="sv-section-title">{$t('lighting.synthVision.liveCamera')}</div>
           <button class="sv-cam-toggle" class:active={state?.camActive} on:click={toggleCamera}>
-            <span class="sv-cam-icon">{state?.camActive ? '[ ON ]' : '[ OFF ]'}</span>
-            <span class="sv-cam-label">{state?.camActive ? 'STREAMING' : 'CLICK TO START'}</span>
+            <span class="sv-cam-icon"
+              >{state?.camActive ? $t('lighting.synthVision.cameraOn') : $t('lighting.synthVision.cameraOff')}</span
+            >
+            <span class="sv-cam-label"
+              >{state?.camActive ? $t('lighting.synthVision.streaming') : $t('lighting.synthVision.clickToStart')}</span
+            >
           </button>
           {#if state?.camActive}
             <div class="sv-cam-blend-row">
-              <span class="sv-cam-blend-lbl">BLEND</span>
+              <span class="sv-cam-blend-lbl">{$t('lighting.synthVision.blend')}</span>
               <div class="sv-cam-blend-controls">
                 <button class="sv-cam-blend-btn" on:click={() => synthVisionStore.cycleCamBlend(-1)}>&lt;</button>
-                <span class="sv-cam-blend-val">{SV_CAM_BLENDS[state?.camBlend ?? 0]?.name || 'ADD'}</span>
+                <span class="sv-cam-blend-val"
+                  >{cameraBlendLabel(state?.camBlend ?? 0, SV_CAM_BLENDS[state?.camBlend ?? 0]?.name ?? '')}</span
+                >
                 <button class="sv-cam-blend-btn" on:click={() => synthVisionStore.cycleCamBlend(1)}>&gt;</button>
               </div>
             </div>
             <div class="sv-cam-opacity-vert">
-              <span class="sv-cam-opacity-lbl">OPACITY</span>
-              <input type="range" min="0" max="1" step="0.05"
+              <span class="sv-cam-opacity-lbl">{$t('lighting.synthVision.opacity')}</span>
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.05"
                 data-midi-path="sv:camOpacity"
-                data-midi-label="Camera Opacity"
+                data-midi-label={$t('lighting.synthVision.cameraOpacity')}
                 data-midi-min="0"
                 data-midi-max="1"
                 value={state?.camOpacity ?? 0.8}
-                on:input={(e) => synthVisionStore.setCamOpacity(parseFloat((e.target as HTMLInputElement).value))} />
+                on:input={(e) => synthVisionStore.setCamOpacity(parseFloat((e.target as HTMLInputElement).value))}
+              />
               <span class="sv-cam-opacity-val">{Math.round((state?.camOpacity ?? 0.8) * 100)}%</span>
             </div>
             <div class="sv-cam-mode-row">
-              <span class="sv-cam-mode-lbl">MODE</span>
+              <span class="sv-cam-mode-lbl">{$t('lighting.synthVision.mode')}</span>
               <button class="sv-cam-nav" on:click={() => synthVisionStore.cycleCamMode(-1)}>&lt;</button>
-              <span class="sv-cam-mode-name">{SV_CAM_MODES.find(m => m.id === state?.camMode)?.name || 'DIRECT'}</span>
+              <span class="sv-cam-mode-name"
+                >{state?.camMode
+                  ? cameraModeLabel(state.camMode, SV_CAM_MODES.find((m) => m.id === state.camMode)?.name ?? '')
+                  : ''}</span
+              >
               <button class="sv-cam-nav" on:click={() => synthVisionStore.cycleCamMode(1)}>&gt;</button>
             </div>
           {/if}
 
           <!-- Shader Mix -->
-          <div class="sv-section-title sv-shader-mix-title">SHADER MIX</div>
-          <button class="sv-shader-mix-btn" class:active={shaderMixActive}
-            on:click={() => { shaderMixActive = !shaderMixActive; if (shaderMixActive) randomizeAll(); }}>
+          <div class="sv-section-title sv-shader-mix-title">{$t('lighting.synthVision.shaderMix')}</div>
+          <button
+            class="sv-shader-mix-btn"
+            class:active={shaderMixActive}
+            on:click={() => {
+              shaderMixActive = !shaderMixActive;
+              if (shaderMixActive) randomizeAll();
+            }}
+          >
             <span class="sv-shader-mix-icon">&#9876;</span>
-            <span class="sv-shader-mix-label">{shaderMixActive ? 'MIXING' : 'START MIX'}</span>
+            <span class="sv-shader-mix-label"
+              >{shaderMixActive ? $t('lighting.synthVision.mixing') : $t('lighting.synthVision.startMix')}</span
+            >
           </button>
           {#if shaderMixActive}
-            <div class="sv-shader-mix-hint">Press <kbd>TAB</kbd> to randomize</div>
+            <div class="sv-shader-mix-hint">{$t('lighting.synthVision.randomizeHint', { values: { key: 'TAB' } })}</div>
           {/if}
         </div>
 
         <!-- CENTER: Keyboard -->
         <div class="sv-kb-center">
-          <div class="sv-section-title">CLIPS {#if performerEditMode}<span class="sv-assign-hint">(drag items onto keys to assign)</span>{/if}</div>
+          <div class="sv-section-title">
+            {$t('lighting.synthVision.clips')}
+            {#if performerEditMode}<span class="sv-assign-hint">{$t('lighting.synthVision.clipAssignHint')}</span>{/if}
+          </div>
           <div class="sv-keyboard" class:edit-mode={performerEditMode}>
             <!-- Row 1: 1-0 (10 keys) -->
             <div class="sv-kb-row sv-kb-row1">
               {#each SV_CLIP_ROW1 as clip, i}
                 {@const label = getClipLabel(i, clipAssignments)}
-                <button class="sv-clip-btn"
+                <button
+                  class="sv-clip-btn"
                   data-midi-path="sv:clip:{i}"
-                  data-midi-label="Clip {clip.key}"
+                  data-midi-label={$t('lighting.synthVision.clipMidiLabel', { values: { key: clip.key } })}
                   data-midi-mode="toggle"
                   class:assigned={label.isAssigned && !label.isMedia}
                   class:media-assigned={label.isMedia}
                   class:has-thumb={!!label.thumbnail}
                   class:drag-over={performerEditMode && dragOverClipSlot === i}
                   style={label.thumbnail ? `background-image:url('${label.thumbnail}')` : ''}
-                  on:click={() => { if (!performerEditMode) triggerClip(i); }}
-                  on:contextmenu={(e) => { if (performerEditMode && clipAssignments[i]) { e.preventDefault(); delete clipAssignments[i]; clipAssignments = clipAssignments; clipsDirty = true; } }}
-                  on:dragover={(e) => { if (performerEditMode) handleClipDragOver(e, i); }}
-                  on:dragleave={() => { if (performerEditMode) handleClipDragLeave(i); }}
-                  on:drop={(e) => { if (performerEditMode) handleClipDrop(e, i); }}>
+                  on:click={() => {
+                    if (!performerEditMode) triggerClip(i);
+                  }}
+                  on:contextmenu={(e) => {
+                    if (performerEditMode && clipAssignments[i]) {
+                      e.preventDefault();
+                      delete clipAssignments[i];
+                      clipAssignments = clipAssignments;
+                      clipsDirty = true;
+                    }
+                  }}
+                  on:dragover={(e) => {
+                    if (performerEditMode) handleClipDragOver(e, i);
+                  }}
+                  on:dragleave={() => {
+                    if (performerEditMode) handleClipDragLeave(i);
+                  }}
+                  on:drop={(e) => {
+                    if (performerEditMode) handleClipDrop(e, i);
+                  }}
+                >
                   <span class="sv-clip-key">{clip.key}</span>
                   <span class="sv-clip-name">{label.name}</span>
                   <span class="sv-clip-desc">{label.desc}</span>
@@ -4945,20 +5810,37 @@ void main() {
               {#each SV_CLIP_ROW2 as clip, i}
                 {@const clipPos = 10 + i}
                 {@const label = getClipLabel(clipPos, clipAssignments)}
-                <button class="sv-clip-btn"
+                <button
+                  class="sv-clip-btn"
                   data-midi-path="sv:clip:{clipPos}"
-                  data-midi-label="Clip {clip.key}"
+                  data-midi-label={$t('lighting.synthVision.clipMidiLabel', { values: { key: clip.key } })}
                   data-midi-mode="toggle"
                   class:assigned={label.isAssigned && !label.isMedia}
                   class:media-assigned={label.isMedia}
                   class:has-thumb={!!label.thumbnail}
                   class:drag-over={performerEditMode && dragOverClipSlot === clipPos}
                   style={label.thumbnail ? `background-image:url('${label.thumbnail}')` : ''}
-                  on:click={() => { if (!performerEditMode) triggerClip(clipPos); }}
-                  on:contextmenu={(e) => { if (performerEditMode && clipAssignments[clipPos]) { e.preventDefault(); delete clipAssignments[clipPos]; clipAssignments = clipAssignments; clipsDirty = true; } }}
-                  on:dragover={(e) => { if (performerEditMode) handleClipDragOver(e, clipPos); }}
-                  on:dragleave={() => { if (performerEditMode) handleClipDragLeave(clipPos); }}
-                  on:drop={(e) => { if (performerEditMode) handleClipDrop(e, clipPos); }}>
+                  on:click={() => {
+                    if (!performerEditMode) triggerClip(clipPos);
+                  }}
+                  on:contextmenu={(e) => {
+                    if (performerEditMode && clipAssignments[clipPos]) {
+                      e.preventDefault();
+                      delete clipAssignments[clipPos];
+                      clipAssignments = clipAssignments;
+                      clipsDirty = true;
+                    }
+                  }}
+                  on:dragover={(e) => {
+                    if (performerEditMode) handleClipDragOver(e, clipPos);
+                  }}
+                  on:dragleave={() => {
+                    if (performerEditMode) handleClipDragLeave(clipPos);
+                  }}
+                  on:drop={(e) => {
+                    if (performerEditMode) handleClipDrop(e, clipPos);
+                  }}
+                >
                   <span class="sv-clip-key">{clip.key}</span>
                   <span class="sv-clip-name">{label.name}</span>
                   <span class="sv-clip-desc">{label.desc}</span>
@@ -4970,20 +5852,37 @@ void main() {
               {#each SV_CLIP_ROW3 as clip, i}
                 {@const clipPos = 20 + i}
                 {@const label = getClipLabel(clipPos, clipAssignments)}
-                <button class="sv-clip-btn"
+                <button
+                  class="sv-clip-btn"
                   data-midi-path="sv:clip:{clipPos}"
-                  data-midi-label="Clip {clip.key}"
+                  data-midi-label={$t('lighting.synthVision.clipMidiLabel', { values: { key: clip.key } })}
                   data-midi-mode="toggle"
                   class:assigned={label.isAssigned && !label.isMedia}
                   class:media-assigned={label.isMedia}
                   class:has-thumb={!!label.thumbnail}
                   class:drag-over={performerEditMode && dragOverClipSlot === clipPos}
                   style={label.thumbnail ? `background-image:url('${label.thumbnail}')` : ''}
-                  on:click={() => { if (!performerEditMode) triggerClip(clipPos); }}
-                  on:contextmenu={(e) => { if (performerEditMode && clipAssignments[clipPos]) { e.preventDefault(); delete clipAssignments[clipPos]; clipAssignments = clipAssignments; clipsDirty = true; } }}
-                  on:dragover={(e) => { if (performerEditMode) handleClipDragOver(e, clipPos); }}
-                  on:dragleave={() => { if (performerEditMode) handleClipDragLeave(clipPos); }}
-                  on:drop={(e) => { if (performerEditMode) handleClipDrop(e, clipPos); }}>
+                  on:click={() => {
+                    if (!performerEditMode) triggerClip(clipPos);
+                  }}
+                  on:contextmenu={(e) => {
+                    if (performerEditMode && clipAssignments[clipPos]) {
+                      e.preventDefault();
+                      delete clipAssignments[clipPos];
+                      clipAssignments = clipAssignments;
+                      clipsDirty = true;
+                    }
+                  }}
+                  on:dragover={(e) => {
+                    if (performerEditMode) handleClipDragOver(e, clipPos);
+                  }}
+                  on:dragleave={() => {
+                    if (performerEditMode) handleClipDragLeave(clipPos);
+                  }}
+                  on:drop={(e) => {
+                    if (performerEditMode) handleClipDrop(e, clipPos);
+                  }}
+                >
                   <span class="sv-clip-key">{clip.key}</span>
                   <span class="sv-clip-name">{label.name}</span>
                   <span class="sv-clip-desc">{label.desc}</span>
@@ -4995,20 +5894,37 @@ void main() {
               {#each SV_CLIP_ROW4 as clip, i}
                 {@const clipPos = 29 + i}
                 {@const label = getClipLabel(clipPos, clipAssignments)}
-                <button class="sv-clip-btn"
+                <button
+                  class="sv-clip-btn"
                   data-midi-path="sv:clip:{clipPos}"
-                  data-midi-label="Clip {clip.key}"
+                  data-midi-label={$t('lighting.synthVision.clipMidiLabel', { values: { key: clip.key } })}
                   data-midi-mode="toggle"
                   class:assigned={label.isAssigned && !label.isMedia}
                   class:media-assigned={label.isMedia}
                   class:has-thumb={!!label.thumbnail}
                   class:drag-over={performerEditMode && dragOverClipSlot === clipPos}
                   style={label.thumbnail ? `background-image:url('${label.thumbnail}')` : ''}
-                  on:click={() => { if (!performerEditMode) triggerClip(clipPos); }}
-                  on:contextmenu={(e) => { if (performerEditMode && clipAssignments[clipPos]) { e.preventDefault(); delete clipAssignments[clipPos]; clipAssignments = clipAssignments; clipsDirty = true; } }}
-                  on:dragover={(e) => { if (performerEditMode) handleClipDragOver(e, clipPos); }}
-                  on:dragleave={() => { if (performerEditMode) handleClipDragLeave(clipPos); }}
-                  on:drop={(e) => { if (performerEditMode) handleClipDrop(e, clipPos); }}>
+                  on:click={() => {
+                    if (!performerEditMode) triggerClip(clipPos);
+                  }}
+                  on:contextmenu={(e) => {
+                    if (performerEditMode && clipAssignments[clipPos]) {
+                      e.preventDefault();
+                      delete clipAssignments[clipPos];
+                      clipAssignments = clipAssignments;
+                      clipsDirty = true;
+                    }
+                  }}
+                  on:dragover={(e) => {
+                    if (performerEditMode) handleClipDragOver(e, clipPos);
+                  }}
+                  on:dragleave={() => {
+                    if (performerEditMode) handleClipDragLeave(clipPos);
+                  }}
+                  on:drop={(e) => {
+                    if (performerEditMode) handleClipDrop(e, clipPos);
+                  }}
+                >
                   <span class="sv-clip-key">{clip.key}</span>
                   <span class="sv-clip-name">{label.name}</span>
                   <span class="sv-clip-desc">{label.desc}</span>
@@ -5019,9 +5935,9 @@ void main() {
           <!-- SPACE selector - inline under keyboard keys -->
           <div class="sv-selectors-row">
             <div class="sv-selector-horiz">
-              <span class="sv-sel-lbl">SPACE</span>
+              <span class="sv-sel-lbl">{$t('lighting.synthVision.space')}</span>
               <button class="sv-sel-btn" on:click={() => synthVisionStore.cycleSpace(-1)}>&lt;</button>
-              <span class="sv-sel-val">{SV_SPACES[focusedLayer?.space ?? 0]}</span>
+              <span class="sv-sel-val">{spaceLabel(SV_SPACES[focusedLayer?.space ?? 0])}</span>
               <button class="sv-sel-btn" on:click={() => synthVisionStore.cycleSpace(1)}>&gt;</button>
             </div>
           </div>
@@ -5029,19 +5945,23 @@ void main() {
 
         <!-- RIGHT SIDE: 3D Worlds -->
         <div class="sv-kb-side sv-kb-right">
-          <div class="sv-section-title">3D WORLDS</div>
+          <div class="sv-section-title">{$t('lighting.synthVision.worldsTitle')}</div>
           <div class="sv-world-grid-vert">
             {#each SV_WORLDS as world, i}
-              <button class="sv-world-btn" class:on={worldsEnabled && focusedLayer && focusedLayer.world === i}
+              <button
+                class="sv-world-btn"
+                class:on={worldsEnabled && focusedLayer && focusedLayer.world === i}
                 class:worlds-off={!worldsEnabled}
-                on:click={() => { if (worldsEnabled) synthVisionStore.setWorld(i); }}>
-                {world}
+                on:click={() => {
+                  if (worldsEnabled) synthVisionStore.setWorld(i);
+                }}
+              >
+                {worldLabel(world)}
               </button>
             {/each}
           </div>
-          <button class="sv-worlds-toggle" class:on={worldsEnabled}
-            on:click={() => worldsEnabled = !worldsEnabled}>
-            {worldsEnabled ? '3D ON' : '3D OFF'}
+          <button class="sv-worlds-toggle" class:on={worldsEnabled} on:click={() => (worldsEnabled = !worldsEnabled)}>
+            {worldsEnabled ? $t('lighting.synthVision.worldsOn') : $t('lighting.synthVision.worldsOff')}
           </button>
         </div>
       </div>
@@ -5051,47 +5971,70 @@ void main() {
     <div class="sv-right-col">
       <!-- Tab selector for Effects vs Shader vs World params -->
       <div class="sv-param-tabs">
-        <button class="sv-param-tab" class:active={state?.paramTab === 'effects'} on:click={() => synthVisionStore.setParamTab('effects')}>EFFECTS</button>
-        <button class="sv-param-tab" class:active={state?.paramTab === 'shader'} on:click={() => synthVisionStore.setParamTab('shader')}>SHADER</button>
-        <button class="sv-param-tab world" class:active={state?.paramTab === 'world'} on:click={() => synthVisionStore.setParamTab('world')}>WORLD</button>
+        <button
+          class="sv-param-tab"
+          class:active={state?.paramTab === 'effects'}
+          on:click={() => synthVisionStore.setParamTab('effects')}>{$t('lighting.synthVision.tabs.effects')}</button
+        >
+        <button
+          class="sv-param-tab"
+          class:active={state?.paramTab === 'shader'}
+          on:click={() => synthVisionStore.setParamTab('shader')}>{$t('lighting.synthVision.tabs.shader')}</button
+        >
+        <button
+          class="sv-param-tab world"
+          class:active={state?.paramTab === 'world'}
+          on:click={() => synthVisionStore.setParamTab('world')}>{$t('lighting.synthVision.tabs.world')}</button
+        >
       </div>
 
       {#if state?.paramTab === 'effects'}
         <!-- Layer Effects (applied to SynthVision's VJ layer) -->
         <div class="sv-effects-panel">
           <div class="sv-effects-header">
-            <span>Layer Effects</span>
-            <button class="sv-add-fx-btn" on:click={() => showEffectPicker = true}>+ Add</button>
+            <span>{$t('lighting.synthVision.effects.layerEffects')}</span>
+            <button class="sv-add-fx-btn" on:click={() => (showEffectPicker = true)}
+              >{$t('lighting.synthVision.effects.add')}</button
+            >
           </div>
           <div class="sv-effects-list">
             {#each svLayerEffects as effect (effect.id)}
               <div class="sv-effect-item" class:disabled={!effect.enabled}>
-                <div class="sv-effect-header"
-                  on:click={() => expandedEffectId = expandedEffectId === effect.id ? null : effect.id}>
-                  <button class="sv-fx-toggle" class:active={effect.enabled}
-                    on:click|stopPropagation={() => toggleSvEffect(effect.id)}>
+                <div
+                  class="sv-effect-header"
+                  on:click={() => (expandedEffectId = expandedEffectId === effect.id ? null : effect.id)}
+                >
+                  <button
+                    class="sv-fx-toggle"
+                    class:active={effect.enabled}
+                    on:click|stopPropagation={() => toggleSvEffect(effect.id)}
+                  >
                     {effect.enabled ? '●' : '○'}
                   </button>
                   <span class="sv-fx-name">{effect.type}</span>
                   <span class="sv-fx-expand">{expandedEffectId === effect.id ? '▼' : '▶'}</span>
-                  <button class="sv-fx-delete"
-                    on:click|stopPropagation={() => deleteSvEffect(effect.id)}>×</button>
+                  <button class="sv-fx-delete" on:click|stopPropagation={() => deleteSvEffect(effect.id)}>×</button>
                 </div>
                 {#if expandedEffectId === effect.id}
                   <div class="sv-effect-params">
-                    {#each (EFFECT_PARAM_DEFS[effect.type] || []) as pd}
+                    {#each EFFECT_PARAM_DEFS[effect.type] || [] as pd}
                       {@const val = (effect.params as Record<string, number>)[pd.param] ?? pd.default}
-                      <div class="sv-fx-param-row"
+                      <div
+                        class="sv-fx-param-row"
                         data-midi-path="sv:fx:{effect.type}:{pd.param}"
-                        data-midi-label="{pd.name}"
-                        data-midi-min="{pd.min}"
-                        data-midi-max="{pd.max}"
-                        data-midi-step="{pd.step}">
+                        data-midi-label={pd.name}
+                        data-midi-min={pd.min}
+                        data-midi-max={pd.max}
+                        data-midi-step={pd.step}
+                      >
                         <span class="sv-fx-param-name">{pd.name}</span>
                         {#if pd.type === 'select' && pd.options}
-                          <select value={val}
-                            on:change={(e) => updateSvEffectParam(effect.id, pd.param, parseFloat(e.currentTarget.value))}
-                            style="flex:1; background:#222; color:#fff; border:1px solid #444; border-radius:3px; padding:2px 4px; font-size:12px;">
+                          <select
+                            value={val}
+                            on:change={(e) =>
+                              updateSvEffectParam(effect.id, pd.param, parseFloat(e.currentTarget.value))}
+                            style="flex:1; background:#222; color:#fff; border:1px solid #444; border-radius:3px; padding:2px 4px; font-size:12px;"
+                          >
                             {#each pd.options as opt}
                               <option value={opt.value} selected={val === opt.value}>{opt.label}</option>
                             {/each}
@@ -5100,38 +6043,54 @@ void main() {
                           {@const cr = (effect.params as Record<string, number>)[pd.colorParams.r] ?? 0}
                           {@const cg = (effect.params as Record<string, number>)[pd.colorParams.g] ?? 1}
                           {@const cb = (effect.params as Record<string, number>)[pd.colorParams.b] ?? 0.4}
-                          {@const hexVal = '#' + [cr,cg,cb].map(c => Math.round(c * 255).toString(16).padStart(2, '0')).join('')}
-                          <input type="color" value={hexVal}
+                          {@const hexVal =
+                            '#' +
+                            [cr, cg, cb]
+                              .map((c) =>
+                                Math.round(c * 255)
+                                  .toString(16)
+                                  .padStart(2, '0'),
+                              )
+                              .join('')}
+                          <input
+                            type="color"
+                            value={hexVal}
                             on:input={(e) => {
                               const hex = e.currentTarget.value;
-                              const r = parseInt(hex.slice(1,3), 16) / 255;
-                              const g = parseInt(hex.slice(3,5), 16) / 255;
-                              const b = parseInt(hex.slice(5,7), 16) / 255;
+                              const r = parseInt(hex.slice(1, 3), 16) / 255;
+                              const g = parseInt(hex.slice(3, 5), 16) / 255;
+                              const b = parseInt(hex.slice(5, 7), 16) / 255;
                               if (pd.colorParams) {
                                 updateSvEffectParam(effect.id, pd.colorParams.r, r);
                                 updateSvEffectParam(effect.id, pd.colorParams.g, g);
                                 updateSvEffectParam(effect.id, pd.colorParams.b, b);
                               }
                             }}
-                            style="flex:0 0 40px; height:22px; padding:0; border:1px solid #444; border-radius:3px; cursor:pointer;" />
+                            style="flex:0 0 40px; height:22px; padding:0; border:1px solid #444; border-radius:3px; cursor:pointer;"
+                          />
                         {:else}
-                          <input type="range" min={pd.min} max={pd.max} step={pd.step}
+                          <input
+                            type="range"
+                            min={pd.min}
+                            max={pd.max}
+                            step={pd.step}
                             value={val}
-                            on:input={(e) => updateSvEffectParam(effect.id, pd.param,
-                              parseFloat(e.currentTarget.value))} />
+                            on:input={(e) =>
+                              updateSvEffectParam(effect.id, pd.param, parseFloat(e.currentTarget.value))}
+                          />
                           <span class="sv-fx-param-val">{val.toFixed(pd.step < 0.1 ? 2 : 1)}</span>
                         {/if}
                       </div>
                     {/each}
                     {#if (EFFECT_PARAM_DEFS[effect.type] || []).length === 0}
-                      <div class="sv-fx-no-params">No adjustable parameters</div>
+                      <div class="sv-fx-no-params">{$t('lighting.synthVision.effects.noParams')}</div>
                     {/if}
                   </div>
                 {/if}
               </div>
             {/each}
             {#if svLayerEffects.length === 0}
-              <div class="sv-fx-empty">No effects — tap + Add</div>
+              <div class="sv-fx-empty">{$t('lighting.synthVision.effects.empty')}</div>
             {/if}
           </div>
         </div>
@@ -5147,68 +6106,85 @@ void main() {
               {@const canModulate = input.TYPE === 'float' || (input.TYPE === 'long' && !input.VALUES)}
               {@const mod = canModulate ? getSvShaderMod(input.NAME) : undefined}
               {@const isModulated = mod && mod.source !== 'manual'}
-              <div class="sv-isf-control" class:sv-modulated={isModulated}
+              <div
+                class="sv-isf-control"
+                class:sv-modulated={isModulated}
                 data-midi-path="sv:isf:{input.NAME}"
-                data-midi-label="{input.LABEL || input.NAME}"
-                data-midi-min="{input.MIN ?? 0}"
-                data-midi-max="{input.MAX ?? 1}">
+                data-midi-label={input.LABEL || input.NAME}
+                data-midi-min={input.MIN ?? 0}
+                data-midi-max={input.MAX ?? 1}
+              >
                 <div class="sv-isf-header">
                   <label class="sv-isf-label">{input.LABEL || input.NAME}</label>
                   {#if input.TYPE === 'float' || (input.TYPE === 'long' && !input.VALUES)}
-                    <button class="sv-mod-chip" class:active={isModulated} class:open={svModTrayParam === input.NAME}
-                      title="Modulation — audio bands, LFO with BPM sync"
+                    <button
+                      class="sv-mod-chip"
+                      class:active={isModulated}
+                      class:open={svModTrayParam === input.NAME}
+                      title={$t('lighting.synthVision.modulationTitle')}
                       on:click={(e) => toggleSvModTray(input.NAME, e.currentTarget as HTMLElement)}
-                    >{modSourceLabel(mod?.source ?? 'manual', false)}</button>
+                      >{modSourceLabel(mod?.source ?? 'manual', false)}</button
+                    >
                   {/if}
                 </div>
                 {#if input.TYPE === 'float'}
                   <div class="sv-isf-slider-row">
-                    <input type="range"
+                    <input
+                      type="range"
                       class="sv-isf-range"
                       min={input.MIN ?? 0}
                       max={input.MAX ?? 1}
                       step={((input.MAX ?? 1) - (input.MIN ?? 0)) / 200}
                       value={typeof val === 'number' ? val : 0}
-                      on:input={(e) => setISFValue(input.NAME, parseFloat(e.currentTarget.value))} />
+                      on:input={(e) => setISFValue(input.NAME, parseFloat(e.currentTarget.value))}
+                    />
                     <span class="sv-isf-val">{typeof val === 'number' ? val.toFixed(2) : '0'}</span>
                   </div>
                 {:else if input.TYPE === 'long'}
                   {#if input.VALUES && input.LABELS}
-                    <select class="sv-isf-select"
+                    <select
+                      class="sv-isf-select"
                       value={typeof val === 'number' ? val : 0}
-                      on:change={(e) => setISFValue(input.NAME, parseInt(e.currentTarget.value))}>
+                      on:change={(e) => setISFValue(input.NAME, parseInt(e.currentTarget.value))}
+                    >
                       {#each input.VALUES as v, vi}
                         <option value={v}>{input.LABELS[vi] || v}</option>
                       {/each}
                     </select>
                   {:else if input.VALUES}
-                    <select class="sv-isf-select"
+                    <select
+                      class="sv-isf-select"
                       value={typeof val === 'number' ? val : 0}
-                      on:change={(e) => setISFValue(input.NAME, parseInt(e.currentTarget.value))}>
+                      on:change={(e) => setISFValue(input.NAME, parseInt(e.currentTarget.value))}
+                    >
                       {#each input.VALUES as v}
                         <option value={v}>{v}</option>
                       {/each}
                     </select>
                   {:else}
                     <div class="sv-isf-slider-row">
-                      <input type="range"
+                      <input
+                        type="range"
                         class="sv-isf-range"
                         min={input.MIN ?? 0}
                         max={input.MAX ?? 10}
                         step="1"
                         value={typeof val === 'number' ? val : 0}
-                        on:input={(e) => setISFValue(input.NAME, parseInt(e.currentTarget.value))} />
+                        on:input={(e) => setISFValue(input.NAME, parseInt(e.currentTarget.value))}
+                      />
                       <span class="sv-isf-val">{typeof val === 'number' ? val : '0'}</span>
                     </div>
                   {/if}
                 {:else if input.TYPE === 'bool'}
-                  <button class="sv-isf-toggle" class:on={!!val}
-                    on:click={() => setISFValue(input.NAME, !val)}>
-                    {val ? 'ON' : 'OFF'}
+                  <button class="sv-isf-toggle" class:on={!!val} on:click={() => setISFValue(input.NAME, !val)}>
+                    {val ? $t('lighting.synthVision.on') : $t('lighting.synthVision.off')}
                   </button>
                 {:else if input.TYPE === 'color'}
-                  <input type="color" class="sv-isf-color"
-                    value={Array.isArray(val) ? `#${Math.round((val[0]??1)*255).toString(16).padStart(2,'0')}${Math.round((val[1]??1)*255).toString(16).padStart(2,'0')}${Math.round((val[2]??1)*255).toString(16).padStart(2,'0')}` : '#ffffff'}
+                  <input
+                    type="color"
+                    class="sv-isf-color"
+                    value={Array.isArray(val)
+                      ? `#${Math.round((val[0]??1)*255).toString(16).padStart(2,'0')}${Math.round((val[1]??1)*255).toString(16).padStart(2,'0')}${Math.round((val[2]??1)*255).toString(16).padStart(2,'0')}` : '#ffffff'}
                     on:input={(e) => {
                       const hex = e.currentTarget.value;
                       const r = parseInt(hex.slice(1,3),16)/255;
@@ -5225,7 +6201,7 @@ void main() {
                  are layer-keyed VJ mods (no clip sidecar) so the Auto
                  tab is hidden. -->
             {#if svModTrayParam && svModTrayAnchor}
-              {@const _tInput = activeISFInputs.find(i => i.NAME === svModTrayParam)}
+              {@const _tInput = activeISFInputs.find((i) => i.NAME === svModTrayParam)}
               {@const _tMod = getSvShaderMod(svModTrayParam)}
               <ModTray
                 label={_tInput?.LABEL || svModTrayParam}
@@ -5234,7 +6210,7 @@ void main() {
                 mod={_tMod}
                 auto={undefined}
                 supportsAuto={false}
-                onClose={() => svModTrayParam = null}
+                onClose={() => (svModTrayParam = null)}
                 onSetSource={(s) => setParamModSource(assignedVJLayer, svModTrayParam!, s)}
                 onPatchMod={(p) => patchSvShaderMod(svModTrayParam!, p)}
                 onPatchAuto={() => {}}
@@ -5247,14 +6223,15 @@ void main() {
           {@const shaderDef = SV_SHADER_DEFS[currentShaderIdx]}
           {@const shaderParams = state?.shaderParams?.[currentShaderIdx] ?? {}}
           <div class="sv-shader-info">
-            <span class="sv-shader-name">{shaderDef?.name ?? 'SHADER'}</span>
+            <span class="sv-shader-name">{shaderDef? shaderNameLabel(currentShaderIdx, shaderDef.name)
+                : $t('lighting.synthVision.shaderFallback')}</span>
           </div>
           <div class="sv-dial-grid sv-shader-params">
             {#if shaderDef?.params}
               {#each shaderDef.params as param}
                 <div class="sv-dial-wrap"
                   data-midi-path="sv:param:shader:{param.k}"
-                  data-midi-label="{param.l}"
+                  data-midi-label={parameterLabel(param.l)}
                   data-midi-min="0"
                   data-midi-max="1"
                   on:mousedown={(e) => handleShaderDialMouseDown(e, currentShaderIdx, param.k)}>
@@ -5267,7 +6244,7 @@ void main() {
                     </svg>
                     <span class="sv-dial-val">{Math.round((shaderParams[param.k] ?? param.d) * 100)}</span>
                   </div>
-                  <span class="sv-dial-lbl shader">{param.l}</span>
+                  <span class="sv-dial-lbl shader">{parameterLabel(param.l)}</span>
                 </div>
               {/each}
             {/if}
@@ -5279,14 +6256,15 @@ void main() {
         {@const worldDef = SV_WORLD_DEFS[currentWorldIdx]}
         {@const worldParams = state?.worldParams?.[currentWorldIdx] ?? {}}
         <div class="sv-shader-info world">
-          <span class="sv-shader-name world">{worldDef?.name ?? 'WORLD'}</span>
+          <span class="sv-shader-name world">{worldDef? worldNameLabel(currentWorldIdx, worldDef.name)
+              : $t('lighting.synthVision.worldFallback')}</span>
         </div>
         <div class="sv-dial-grid sv-world-params">
           {#if worldDef?.params}
             {#each worldDef.params as param}
               <div class="sv-dial-wrap"
                 data-midi-path="sv:param:world:{param.k}"
-                data-midi-label="{param.l}"
+                data-midi-label={parameterLabel(param.l)}
                 data-midi-min="0"
                 data-midi-max="1"
                 on:mousedown={(e) => handleWorldDialMouseDown(e, currentWorldIdx, param.k)}>
@@ -5299,7 +6277,7 @@ void main() {
                   </svg>
                   <span class="sv-dial-val">{Math.round((worldParams[param.k] ?? param.d) * 100)}</span>
                 </div>
-                <span class="sv-dial-lbl world">{param.l}</span>
+                <span class="sv-dial-lbl world">{parameterLabel(param.l)}</span>
               </div>
             {/each}
           {/if}
@@ -5307,29 +6285,33 @@ void main() {
       {/if}
 
       <!-- Spacebar Effect Selector -->
-      <div class="sv-section-title" style="margin-top:8px">SPACEBAR FX</div>
+      <div class="sv-section-title" style="margin-top:8px">{$t('lighting.synthVision.spacebarFx')}</div>
       <div class="sv-spacefx-selector">
         <button class="sv-spacefx-btn trigger" on:click={() => synthVisionStore.triggerSpaceFx()}>
-          <span class="sv-spacefx-key">SPACE</span>
+          <span class="sv-spacefx-key">{$t('lighting.synthVision.space')}</span>
         </button>
         <div class="sv-spacefx-dropdown">
           <button class="sv-spacefx-nav" on:click={() => synthVisionStore.cycleSpaceFx(-1)}>&lt;</button>
           <div class="sv-spacefx-current">
-            <span class="sv-spacefx-name">{SV_SPACE_FX.find(f => f.id === state?.spaceFx)?.name || 'PUMP'}</span>
-            <span class="sv-spacefx-desc">{SV_SPACE_FX.find(f => f.id === state?.spaceFx)?.desc || ''}</span>
+            <span class="sv-spacefx-name">{state?.spaceFx
+                ? spaceFxName(state.spaceFx, SV_SPACE_FX.find((f) => f.id === state.spaceFx)?.name ?? '')
+                : $t('lighting.synthVision.spaceFxFallback')}</span>
+            <span class="sv-spacefx-desc">{state?.spaceFx
+                ? spaceFxDescription(state.spaceFx, SV_SPACE_FX.find((f) => f.id === state.spaceFx)?.desc ?? '')
+                : ''}</span>
           </div>
           <button class="sv-spacefx-nav" on:click={() => synthVisionStore.cycleSpaceFx(1)}>&gt;</button>
         </div>
       </div>
 
-      <div class="sv-section-title" style="margin-top:8px">ACTIONS</div>
+      <div class="sv-section-title" style="margin-top:8px">{$t('lighting.synthVision.actions')}</div>
       <div class="sv-action-grid">
-        <button class="sv-big-btn pump" on:click={() => synthVisionStore.doPump()}>PUMP</button>
-        <button class="sv-big-btn glitch" on:click={() => synthVisionStore.doGlitch()}>GLITCH</button>
-        <button class="sv-big-btn" on:click={() => randomizeAll()}>RANDOM</button>
-        <button class="sv-big-btn invert" class:on={state?.invert} on:click={() => synthVisionStore.toggleInvert()}>INVERT</button>
-        <button class="sv-big-btn black" class:on={state?.blackout > 0.5} on:click={() => synthVisionStore.doBlackout()}>BLACK</button>
-        <button class="sv-big-btn white" class:on={state?.whiteout > 0.5} on:click={() => synthVisionStore.doWhiteout()}>WHITE</button>
+        <button class="sv-big-btn pump" on:click={() => synthVisionStore.doPump()}>{$t('lighting.synthVision.actionPump')}</button>
+        <button class="sv-big-btn glitch" on:click={() => synthVisionStore.doGlitch()}>{$t('lighting.synthVision.actionGlitch')}</button>
+        <button class="sv-big-btn" on:click={() => randomizeAll()}>{$t('lighting.synthVision.actionRandom')}</button>
+        <button class="sv-big-btn invert" class:on={state?.invert} on:click={() => synthVisionStore.toggleInvert()}>{$t('lighting.synthVision.actionInvert')}</button>
+        <button class="sv-big-btn black" class:on={state?.blackout > 0.5} on:click={() => synthVisionStore.doBlackout()}>{$t('lighting.synthVision.actionBlack')}</button>
+        <button class="sv-big-btn white" class:on={state?.whiteout > 0.5} on:click={() => synthVisionStore.doWhiteout()}>{$t('lighting.synthVision.actionWhite')}</button>
       </div>
     </div>
 
@@ -5337,16 +6319,16 @@ void main() {
     {#if performerEditMode}
       <div class="sv-edit-tray">
         <div class="sv-edit-tray-tabs">
-          <button class="sv-edit-tab" class:active={editMediaTab === 'fx'} on:click={() => editMediaTab = 'fx'}>FX</button>
-          <button class="sv-edit-tab" class:active={editMediaTab === 'vid'} on:click={() => editMediaTab = 'vid'}>VID</button>
-          <button class="sv-edit-tab" class:active={editMediaTab === 'img'} on:click={() => editMediaTab = 'img'}>IMG</button>
+          <button class="sv-edit-tab" class:active={editMediaTab === 'fx'} on:click={() => (editMediaTab = 'fx')}>{$t('lighting.synthVision.editTabs.fx')}</button>
+          <button class="sv-edit-tab" class:active={editMediaTab === 'vid'} on:click={() => (editMediaTab = 'vid')}>{$t('lighting.synthVision.editTabs.video')}</button>
+          <button class="sv-edit-tab" class:active={editMediaTab === 'img'} on:click={() => (editMediaTab = 'img')}>{$t('lighting.synthVision.editTabs.image')}</button>
         </div>
         <div class="sv-edit-tray-list">
           {#if editMediaTab === 'fx'}
             {#if editShadersLoading}
-              <div class="sv-edit-empty">Loading shaders...</div>
+              <div class="sv-edit-empty">{$t('lighting.synthVision.editTray.loadingShaders')}</div>
             {:else if editShaders.length === 0}
-              <div class="sv-edit-empty">No shaders found</div>
+              <div class="sv-edit-empty">{$t('lighting.synthVision.editTray.noShaders')}</div>
             {:else}
               {#each editShaders as shader, i}
                 <div class="sv-edit-item"
@@ -5364,7 +6346,7 @@ void main() {
               {/each}
             {/if}
           {:else if editMediaTab === 'vid'}
-            {#each $mediaLibrary.filter(m => m.type === 'video') as item}
+            {#each $mediaLibrary.filter((m) => m.type === 'video') as item}
               <div class="sv-edit-item"
                 draggable="true"
                 on:dragstart={(e) => handleEditDragStart(e, 'media', undefined, item)}>
@@ -5378,10 +6360,10 @@ void main() {
                 <span class="sv-edit-item-name">{item.name}</span>
               </div>
             {:else}
-              <div class="sv-edit-empty">No videos in media library</div>
+              <div class="sv-edit-empty">{$t('lighting.synthVision.editTray.noVideos')}</div>
             {/each}
           {:else}
-            {#each $mediaLibrary.filter(m => m.type === 'image') as item}
+            {#each $mediaLibrary.filter((m) => m.type === 'image') as item}
               <div class="sv-edit-item"
                 draggable="true"
                 on:dragstart={(e) => handleEditDragStart(e, 'media', undefined, item)}>
@@ -5395,7 +6377,7 @@ void main() {
                 <span class="sv-edit-item-name">{item.name}</span>
               </div>
             {:else}
-              <div class="sv-edit-empty">No images in media library</div>
+              <div class="sv-edit-empty">{$t('lighting.synthVision.editTray.noImages')}</div>
             {/each}
           {/if}
         </div>
@@ -5422,19 +6404,19 @@ void main() {
 <EffectPickerModal
   bind:open={showEffectPicker}
   onAdd={handleEffectPickerAdd}
-  onClose={() => showEffectPicker = false}
+  onClose={() => (showEffectPicker = false)}
 />
 
 <style>
   :root {
     /* Use global theme variables for consistent styling */
-    --sv-c: var(--accent-primary, #FF6B6B);
-    --sv-m: var(--accent-secondary, #FF8585);
-    --sv-g: var(--success, #2ED573);
-    --sv-y: var(--warning, #FFA502);
+    --sv-c: var(--accent-primary, #ff6b6b);
+    --sv-m: var(--accent-secondary, #ff8585);
+    --sv-g: var(--success, #2ed573);
+    --sv-y: var(--warning, #ffa502);
     --sv-bg: var(--bg-primary, #0a0a0c);
     --sv-bg2: var(--bg-tertiary, #141418);
-    --sv-brd: var(--border-secondary, rgba(255,255,255,.06));
+    --sv-brd: var(--border-secondary, rgba(255,255,255, 0.06));
   }
 
   /* Hidden canvases for offscreen rendering */
@@ -5481,7 +6463,7 @@ void main() {
     font-size: 15px;
     letter-spacing: 3px;
     color: var(--sv-c);
-    text-shadow: 0 0 10px rgba(187,134,252,.3);
+    text-shadow: 0 0 10px rgba(187,134,252, 0.3);
   }
   .sv-logo em { color: var(--sv-m); font-style: normal; }
 
@@ -5495,23 +6477,23 @@ void main() {
     height: 24px;
     padding: 0 10px;
     border: 1px solid var(--sv-brd);
-    background: rgba(255,255,255,.04);
-    color: rgba(255,255,255,.55);
+    background: rgba(255,255,255, 0.04);
+    color: rgba(255,255,255, 0.55);
     font-size: 11px;
-    letter-spacing: .08em;
+    letter-spacing: 0.08em;
     font-weight: 700;
     cursor: pointer;
-    transition: all .12s ease;
+    transition: all 0.12s ease;
   }
   .sv-deck-tab:hover {
-    border-color: rgba(255,255,255,.2);
+    border-color: rgba(255,255,255, 0.2);
     color: #fff;
   }
   .sv-deck-tab.active {
     border-color: var(--sv-c);
     color: var(--sv-c);
-    background: rgba(255,255,255,.08);
-    box-shadow: 0 0 10px rgba(255,255,255,.08);
+    background: rgba(255,255,255, 0.08);
+    box-shadow: 0 0 10px rgba(255,255,255, 0.08);
   }
   .sv-deck-tab.geo.active {
     border-color: var(--sv-g);
@@ -5527,28 +6509,28 @@ void main() {
   }
   .sv-vj-lbl {
     font-size: 10px;
-    opacity: .4;
+    opacity: 0.4;
     letter-spacing: 1px;
     text-transform: uppercase;
   }
   .sv-vj-btn {
     width: 28px;
     height: 24px;
-    background: rgba(255,255,255,.04);
+    background: rgba(255,255,255, 0.04);
     border: 1px solid var(--sv-brd);
-    color: rgba(255,255,255,.4);
+    color: rgba(255,255,255, 0.4);
     font-family: 'Orbitron', sans-serif;
     font-size: 12px;
     font-weight: 700;
     cursor: pointer;
-    transition: all .1s;
+    transition: all 0.1s;
   }
-  .sv-vj-btn:hover { border-color: rgba(255,255,255,.2); color: #fff; }
+  .sv-vj-btn:hover { border-color: rgba(255,255,255, 0.2); color: #fff; }
   .sv-vj-btn.on {
-    background: rgba(187,134,252,.15);
+    background: rgba(187,134,252, 0.15);
     border-color: var(--sv-c);
     color: var(--sv-c);
-    box-shadow: 0 0 8px rgba(187,134,252,.2);
+    box-shadow: 0 0 8px rgba(187,134,252, 0.2);
   }
 
   /* BPM Section */
@@ -5560,15 +6542,15 @@ void main() {
   }
   .sv-bpm-btn {
     padding: 4px 8px;
-    background: rgba(255,255,255,.04);
+    background: rgba(255,255,255, 0.04);
     border: 1px solid var(--sv-brd);
-    color: rgba(255,255,255,.5);
+    color: rgba(255,255,255, 0.5);
     font-family: 'Orbitron', sans-serif;
     font-size: 10px;
     cursor: pointer;
-    transition: all .1s;
+    transition: all 0.1s;
   }
-  .sv-bpm-btn:hover { background: rgba(255,255,255,.08); color: #fff; }
+  .sv-bpm-btn:hover { background: rgba(255,255,255, 0.08); color: #fff; }
   .sv-bpm-display {
     display: flex;
     flex-direction: column;
@@ -5584,28 +6566,28 @@ void main() {
   }
   .sv-bpm-lbl {
     font-size: 8px;
-    opacity: .3;
+    opacity: 0.3;
     letter-spacing: 1px;
   }
   .sv-tap-btn {
     padding: 6px 14px;
-    background: linear-gradient(135deg, rgba(187,134,252,.15), rgba(187,134,252,.05));
-    border: 1px solid rgba(187,134,252,.3);
+    background: linear-gradient(135deg, rgba(187,134,252, 0.15), rgba(187,134,252, 0.05));
+    border: 1px solid rgba(187,134,252, 0.3);
     color: var(--sv-c);
     font-family: 'Orbitron', sans-serif;
     font-size: 11px;
     font-weight: 700;
     cursor: pointer;
-    transition: all .1s;
+    transition: all 0.1s;
   }
-  .sv-tap-btn:hover { background: linear-gradient(135deg, rgba(187,134,252,.25), rgba(187,134,252,.1)); }
-  .sv-tap-btn:active { transform: scale(.95); }
+  .sv-tap-btn:hover { background: linear-gradient(135deg, rgba(187,134,252, 0.25), rgba(187,134,252, 0.1)); }
+  .sv-tap-btn:active { transform: scale(0.95); }
   .sv-beat-indicator {
     width: 10px;
     height: 10px;
     border-radius: 50%;
-    background: rgba(255,255,255,.1);
-    transition: all .05s;
+    background: rgba(255,255,255, 0.1);
+    transition: all 0.05s;
   }
   .sv-beat-indicator.flash {
     background: var(--sv-c);
@@ -5613,16 +6595,16 @@ void main() {
   }
   .sv-sync-btn {
     padding: 4px 10px;
-    background: rgba(255,255,255,.04);
+    background: rgba(255,255,255, 0.04);
     border: 1px solid var(--sv-brd);
-    color: rgba(255,255,255,.4);
+    color: rgba(255,255,255, 0.4);
     font-family: 'Orbitron', sans-serif;
     font-size: 10px;
     cursor: pointer;
-    transition: all .1s;
+    transition: all 0.1s;
   }
   .sv-sync-btn.on {
-    background: rgba(105,240,174,.1);
+    background: rgba(105,240,174, 0.1);
     border-color: var(--sv-g);
     color: var(--sv-g);
   }
@@ -5636,14 +6618,14 @@ void main() {
     font-family: 'Orbitron', sans-serif;
     font-size: 9px;
     letter-spacing: 1.5px;
-    opacity: .45;
+    opacity: 0.45;
     color: #fff;
   }
   .sv-react-select {
     padding: 4px 8px;
-    background: rgba(255,255,255,.04);
+    background: rgba(255,255,255, 0.04);
     border: 1px solid var(--sv-brd);
-    color: rgba(255,255,255,.7);
+    color: rgba(255,255,255, 0.7);
     font-family: 'Orbitron', sans-serif;
     font-size: 10px;
     letter-spacing: 1px;
@@ -5651,7 +6633,7 @@ void main() {
     outline: none;
     border-radius: 2px;
   }
-  .sv-react-select:hover { background: rgba(255,255,255,.08); color: #fff; }
+  .sv-react-select:hover { background: rgba(255,255,255, 0.08); color: #fff; }
   .sv-react-select:focus { border-color: var(--sv-c); }
 
   /* Quick Actions */
@@ -5661,17 +6643,17 @@ void main() {
   }
   .sv-action-btn {
     padding: 6px 12px;
-    background: rgba(255,255,255,.04);
+    background: rgba(255,255,255, 0.04);
     border: 1px solid var(--sv-brd);
-    color: rgba(255,255,255,.5);
+    color: rgba(255,255,255, 0.5);
     font-family: 'Orbitron', sans-serif;
     font-size: 10px;
     cursor: pointer;
-    transition: all .1s;
+    transition: all 0.1s;
   }
-  .sv-action-btn:hover { background: rgba(255,255,255,.08); color: #fff; }
+  .sv-action-btn:hover { background: rgba(255,255,255, 0.08); color: #fff; }
   .sv-action-btn.on {
-    background: rgba(105,240,174,.1);
+    background: rgba(105,240,174, 0.1);
     border-color: var(--sv-g);
     color: var(--sv-g);
   }
@@ -5679,17 +6661,17 @@ void main() {
   .sv-close-btn {
     width: 32px;
     height: 32px;
-    background: rgba(255,0,170,.1);
-    border: 1px solid rgba(255,0,170,.3);
+    background: rgba(255,0,170, 0.1);
+    border: 1px solid rgba(255,0,170, 0.3);
     color: var(--sv-m);
     font-family: 'Orbitron', sans-serif;
     font-size: 15px;
     font-weight: 700;
     cursor: pointer;
-    transition: all .1s;
+    transition: all 0.1s;
     margin-left: 8px;
   }
-  .sv-close-btn:hover { background: rgba(255,0,170,.2); }
+  .sv-close-btn:hover { background: rgba(255,0,170, 0.2); }
 
   /* MAIN LAYOUT */
   .sv-main {
@@ -5729,17 +6711,17 @@ void main() {
   .sv-geo-tab-btn {
     height: 28px;
     border: 1px solid var(--sv-brd);
-    background: rgba(255,255,255,.04);
-    color: rgba(255,255,255,.6);
+    background: rgba(255,255,255, 0.04);
+    color: rgba(255,255,255, 0.6);
     font-size: 11px;
-    letter-spacing: .06em;
+    letter-spacing: 0.06em;
     font-weight: 700;
     cursor: pointer;
   }
   .sv-geo-tab-btn.on {
     border-color: var(--sv-g);
     color: var(--sv-g);
-    background: rgba(46, 213, 115, .12);
+    background: rgba(46, 213, 115, 0.12);
   }
   .sv-geo-scenes {
     display: grid;
@@ -5752,7 +6734,7 @@ void main() {
   }
   .sv-geo-scene-btn {
     border: 1px solid var(--sv-brd);
-    background: rgba(255,255,255,.03);
+    background: rgba(255,255,255, 0.03);
     color: var(--text-primary, #ddd);
     font-size: 11px;
     padding: 5px 8px;
@@ -5763,19 +6745,19 @@ void main() {
   }
   .sv-geo-scene-btn small {
     font-size: 10px;
-    color: rgba(255,255,255,.55);
+    color: rgba(255,255,255, 0.55);
   }
   .sv-geo-scene-btn.on {
     border-color: var(--sv-c);
     color: var(--sv-c);
-    background: rgba(255,255,255,.08);
+    background: rgba(255,255,255, 0.08);
   }
   .sv-geo-scene-store {
     border: 1px solid var(--sv-brd);
-    background: rgba(255,255,255,.03);
-    color: rgba(255,255,255,.65);
+    background: rgba(255,255,255, 0.03);
+    color: rgba(255,255,255, 0.65);
     font-size: 10px;
-    letter-spacing: .06em;
+    letter-spacing: 0.06em;
     cursor: pointer;
   }
   .sv-geo-morph-controls {
@@ -5786,41 +6768,41 @@ void main() {
   }
   .sv-geo-morph-controls select {
     height: 24px;
-    background: rgba(255,255,255,.05);
+    background: rgba(255,255,255, 0.05);
     color: var(--text-primary, #ddd);
     border: 1px solid var(--sv-brd);
     font-size: 11px;
   }
   .sv-geo-form-btn {
     border: 1px solid var(--sv-brd);
-    background: rgba(255,255,255,.03);
+    background: rgba(255,255,255, 0.03);
     color: var(--text-primary, #ddd);
     text-align: left;
     padding: 8px;
     cursor: pointer;
-    transition: all .12s ease;
+    transition: all 0.12s ease;
     min-height: 58px;
   }
   .sv-geo-form-btn:hover {
-    border-color: rgba(255,255,255,.2);
-    background: rgba(255,255,255,.06);
+    border-color: rgba(255,255,255, 0.2);
+    background: rgba(255,255,255, 0.06);
   }
   .sv-geo-form-btn.on {
     border-color: var(--sv-g);
-    background: rgba(46, 213, 115, .12);
-    box-shadow: inset 0 0 12px rgba(46, 213, 115, .08);
+    background: rgba(46, 213, 115, 0.12);
+    box-shadow: inset 0 0 12px rgba(46, 213, 115, 0.08);
   }
   .sv-geo-form-name {
     display: block;
     font-size: 12px;
     font-weight: 800;
-    letter-spacing: .08em;
+    letter-spacing: 0.08em;
     margin-bottom: 4px;
   }
   .sv-geo-form-hint {
     display: block;
     font-size: 11px;
-    color: rgba(255,255,255,.55);
+    color: rgba(255,255,255, 0.55);
   }
   .sv-geo-shortcuts {
     margin-top: 10px;
@@ -5831,15 +6813,15 @@ void main() {
   }
   .sv-geo-shortcut {
     font-size: 11px;
-    color: rgba(255,255,255,.6);
-    letter-spacing: .05em;
+    color: rgba(255,255,255, 0.6);
+    letter-spacing: 0.05em;
   }
   .sv-xy-pad-geo {
     min-height: 300px;
     margin-top: 8px;
     background:
-      radial-gradient(circle at 50% 50%, rgba(255,255,255,.06), transparent 55%),
-      linear-gradient(180deg, rgba(255,255,255,.03), rgba(255,255,255,.01));
+      radial-gradient(circle at 50% 50%, rgba(255,255,255, 0.06), transparent 55%),
+      linear-gradient(180deg, rgba(255,255,255, 0.03), rgba(255,255,255, 0.01));
   }
   .sv-geo-status-grid {
     display: grid;
@@ -5849,7 +6831,7 @@ void main() {
   }
   .sv-geo-stat {
     border: 1px solid var(--sv-brd);
-    background: rgba(255,255,255,.03);
+    background: rgba(255,255,255, 0.03);
     padding: 6px 8px;
     display: flex;
     flex-direction: column;
@@ -5857,14 +6839,14 @@ void main() {
   }
   .sv-geo-stat-label {
     font-size: 10px;
-    letter-spacing: .1em;
-    color: rgba(255,255,255,.5);
+    letter-spacing: 0.1em;
+    color: rgba(255,255,255, 0.5);
   }
   .sv-geo-stat-value {
     font-size: 13px;
     font-weight: 800;
     color: #fff;
-    letter-spacing: .06em;
+    letter-spacing: 0.06em;
   }
   .sv-geo-slider-wrap {
     display: grid;
@@ -5875,10 +6857,10 @@ void main() {
   }
   .sv-geo-slider-label {
     font-size: 11px;
-    letter-spacing: .08em;
-    color: rgba(255,255,255,.7);
+    letter-spacing: 0.08em;
+    color: rgba(255,255,255, 0.7);
   }
-  .sv-geo-slider-wrap input[type="range"] {
+  .sv-geo-slider-wrap input[type='range'] {
     width: 100%;
   }
   .sv-geo-slider-val {
@@ -5894,23 +6876,23 @@ void main() {
   }
   .sv-geo-action-btn {
     border: 1px solid var(--sv-brd);
-    background: rgba(255,255,255,.03);
+    background: rgba(255,255,255, 0.03);
     color: #dcdcdc;
     font-size: 11px;
-    letter-spacing: .08em;
+    letter-spacing: 0.08em;
     font-weight: 700;
     padding: 8px 6px;
     cursor: pointer;
-    transition: all .12s ease;
+    transition: all 0.12s ease;
   }
   .sv-geo-action-btn:hover {
-    border-color: rgba(255,255,255,.2);
-    background: rgba(255,255,255,.08);
+    border-color: rgba(255,255,255, 0.2);
+    background: rgba(255,255,255, 0.08);
   }
   .sv-geo-action-btn.on {
     border-color: var(--sv-c);
     color: var(--sv-c);
-    background: rgba(255,255,255,.08);
+    background: rgba(255,255,255, 0.08);
   }
   .sv-geo-footer-actions {
     display: grid;
@@ -5924,7 +6906,7 @@ void main() {
   }
   .sv-geo-route {
     border: 1px solid var(--sv-brd);
-    background: rgba(255,255,255,.03);
+    background: rgba(255,255,255, 0.03);
     padding: 6px;
     display: grid;
     grid-template-columns: 1fr;
@@ -5932,20 +6914,20 @@ void main() {
   }
   .sv-geo-route label {
     font-size: 11px;
-    color: rgba(255,255,255,.72);
+    color: rgba(255,255,255, 0.72);
     display: flex;
     gap: 6px;
     align-items: center;
   }
   .sv-geo-route span {
     font-size: 11px;
-    color: rgba(255,255,255,.6);
+    color: rgba(255,255,255, 0.6);
     text-align: right;
   }
 
   .sv-section-title {
     font-size: 10px;
-    opacity: .35;
+    opacity: 0.35;
     letter-spacing: 1.5px;
     text-transform: uppercase;
     margin-bottom: 6px;
@@ -5967,7 +6949,7 @@ void main() {
   .sv-xy-section { flex: 1; display: flex; flex-direction: column; }
   .sv-xy-pad {
     flex: 1;
-    background: linear-gradient(135deg, rgba(187,134,252,.02), rgba(255,0,170,.02));
+    background: linear-gradient(135deg, rgba(187,134,252, 0.02), rgba(255,0,170, 0.02));
     border: 1px solid var(--sv-brd);
     border-radius: 4px;
     position: relative;
@@ -5978,14 +6960,14 @@ void main() {
     position: absolute;
     left: 0; right: 0;
     height: 1px;
-    background: rgba(187,134,252,.2);
+    background: rgba(187,134,252, 0.2);
     pointer-events: none;
   }
   .sv-xy-crosshair-v {
     position: absolute;
     top: 0; bottom: 0;
     width: 1px;
-    background: rgba(187,134,252,.2);
+    background: rgba(187,134,252, 0.2);
     pointer-events: none;
   }
   .sv-xy-dot {
@@ -6009,7 +6991,7 @@ void main() {
   }
   .sv-layer-box {
     flex: 1;
-    background: rgba(255,255,255,.02);
+    background: rgba(255,255,255, 0.02);
     border: 1px solid var(--sv-brd);
     border-radius: 4px;
     padding: 8px;
@@ -6018,12 +7000,12 @@ void main() {
     align-items: center;
     justify-content: center;
     cursor: pointer;
-    transition: all .1s;
+    transition: all 0.1s;
   }
-  .sv-layer-box:hover { border-color: rgba(255,255,255,.15); }
+  .sv-layer-box:hover { border-color: rgba(255,255,255, 0.15); }
   .sv-layer-box.active {
     border-color: var(--sv-c);
-    background: rgba(187,134,252,.05);
+    background: rgba(187,134,252, 0.05);
   }
   .sv-layer-letter {
     font-family: 'Orbitron', sans-serif;
@@ -6032,10 +7014,10 @@ void main() {
     color: var(--sv-c);
   }
   .sv-layer-box:last-child .sv-layer-letter { color: var(--sv-m); }
-  .sv-layer-box:last-child.active { border-color: var(--sv-m); background: rgba(255,0,170,.05); }
+  .sv-layer-box:last-child.active { border-color: var(--sv-m); background: rgba(255,0,170, 0.05); }
   .sv-layer-shader {
     font-size: 9px;
-    opacity: .5;
+    opacity: 0.5;
     margin-top: 2px;
     text-align: center;
   }
@@ -6070,7 +7052,7 @@ void main() {
     background: #fff;
     border-radius: 3px;
     border: none;
-    box-shadow: 0 0 6px rgba(255,255,255,.3);
+    box-shadow: 0 0 6px rgba(255,255,255, 0.3);
     margin-left: -5px; /* center thumb on 6px track */
   }
 
@@ -6096,7 +7078,7 @@ void main() {
     flex-direction: column;
     gap: 10px;
     padding: 8px;
-    background: rgba(0,0,0,.15);
+    background: rgba(0,0,0, 0.15);
     border-radius: 6px;
     border: 1px solid var(--sv-brd);
   }
@@ -6131,7 +7113,7 @@ void main() {
     position: relative;
     width: 54px;
     height: 56px;
-    background-color: rgba(255,255,255,.02);
+    background-color: rgba(255,255,255, 0.02);
     background-image: none;
     background-size: cover;
     background-position: center;
@@ -6142,41 +7124,41 @@ void main() {
     align-items: center;
     justify-content: flex-start;
     cursor: pointer;
-    transition: border-color .08s, background-color .08s, box-shadow .08s;
+    transition: border-color 0.08s, background-color 0.08s, box-shadow 0.08s;
     padding: 5px 3px 3px;
     overflow: hidden;
   }
-  .sv-clip-btn:hover { border-color: rgba(255,255,255,.25); background-color: rgba(255,255,255,.05); }
+  .sv-clip-btn:hover { border-color: rgba(255,255,255, 0.25); background-color: rgba(255,255,255, 0.05); }
   .sv-clip-btn.on {
     border-color: var(--sv-c);
-    background-color: rgba(187,134,252,.12);
-    box-shadow: 0 0 12px rgba(187,134,252,.2);
+    background-color: rgba(187,134,252, 0.12);
+    box-shadow: 0 0 12px rgba(187,134,252, 0.2);
   }
   .sv-clip-key {
     font-family: 'Orbitron', sans-serif;
     font-size: 15px;
     font-weight: 700;
-    color: rgba(255,255,255,.45);
+    color: rgba(255,255,255, 0.45);
     line-height: 1;
   }
   .sv-clip-btn.on .sv-clip-key { color: var(--sv-c); }
   .sv-clip-btn.media-assigned {
     border-color: var(--sv-g);
-    background-color: rgba(46,213,115,.08);
+    background-color: rgba(46,213,115, 0.08);
   }
   .sv-clip-btn.media-assigned .sv-clip-key { color: var(--sv-g); }
-  .sv-clip-btn.media-assigned .sv-clip-name { opacity: .85; color: var(--sv-g); }
+  .sv-clip-btn.media-assigned .sv-clip-name { opacity: 0.85; color: var(--sv-g); }
   .sv-clip-btn.media-assigned .sv-clip-desc { color: var(--sv-g); }
   .sv-clip-btn.assigned {
     border-color: var(--sv-y);
-    background-color: rgba(255,165,2,.10);
+    background-color: rgba(255,165,2, 0.1);
   }
   .sv-clip-btn.assigned .sv-clip-key { color: var(--sv-y); }
-  .sv-clip-btn.assigned .sv-clip-name { opacity: .85; color: var(--sv-y); }
+  .sv-clip-btn.assigned .sv-clip-name { opacity: 0.85; color: var(--sv-y); }
   .sv-clip-btn.assigned .sv-clip-desc { color: var(--sv-y); }
   .sv-clip-name {
     font-size: 8px;
-    opacity: .55;
+    opacity: 0.55;
     text-align: center;
     overflow: hidden;
     white-space: nowrap;
@@ -6184,10 +7166,10 @@ void main() {
     line-height: 1.15;
     margin-top: 3px;
   }
-  .sv-clip-btn.on .sv-clip-name { opacity: .85; }
+  .sv-clip-btn.on .sv-clip-name { opacity: 0.85; }
   .sv-clip-desc {
     font-size: 7px;
-    opacity: .4;
+    opacity: 0.4;
     text-align: center;
     overflow: hidden;
     white-space: nowrap;
@@ -6196,7 +7178,7 @@ void main() {
     margin-top: 2px;
     color: var(--sv-c);
   }
-  .sv-clip-btn.on .sv-clip-desc { opacity: .65; }
+  .sv-clip-btn.on .sv-clip-desc { opacity: 0.65; }
 
   /* World Grid - LARGER for Side Panel */
   .sv-world-grid-vert {
@@ -6207,22 +7189,22 @@ void main() {
   }
   .sv-world-btn {
     height: 32px;
-    background: rgba(255,0,170,.03);
-    border: 1px solid rgba(255,0,170,.2);
+    background: rgba(255,0,170, 0.03);
+    border: 1px solid rgba(255,0,170, 0.2);
     border-radius: 4px;
-    color: rgba(255,255,255,.55);
+    color: rgba(255,255,255, 0.55);
     font-size: 10px;
     font-weight: 500;
     cursor: pointer;
-    transition: all .08s;
+    transition: all 0.08s;
     padding: 0 4px;
   }
-  .sv-world-btn:hover { border-color: rgba(255,0,170,.4); background: rgba(255,0,170,.08); }
+  .sv-world-btn:hover { border-color: rgba(255,0,170, 0.4); background: rgba(255,0,170, 0.08); }
   .sv-world-btn.on {
     border-color: var(--sv-m);
-    background: rgba(255,0,170,.18);
+    background: rgba(255,0,170, 0.18);
     color: var(--sv-m);
-    box-shadow: 0 0 10px rgba(255,0,170,.2);
+    box-shadow: 0 0 10px rgba(255,0,170, 0.2);
   }
   .sv-world-btn.worlds-off {
     opacity: 0.3;
@@ -6232,19 +7214,19 @@ void main() {
     width: 100%;
     margin-top: 4px;
     height: 24px;
-    background: rgba(255,0,170,.05);
-    border: 1px solid rgba(255,0,170,.2);
+    background: rgba(255,0,170, 0.05);
+    border: 1px solid rgba(255,0,170, 0.2);
     border-radius: 4px;
-    color: rgba(255,255,255,.4);
+    color: rgba(255,255,255, 0.4);
     font-size: 10px;
     font-weight: 600;
     cursor: pointer;
-    transition: all .12s;
+    transition: all 0.12s;
     letter-spacing: 1px;
   }
-  .sv-worlds-toggle:hover { border-color: rgba(255,0,170,.4); }
+  .sv-worlds-toggle:hover { border-color: rgba(255,0,170, 0.4); }
   .sv-worlds-toggle.on {
-    background: rgba(255,0,170,.15);
+    background: rgba(255,0,170, 0.15);
     border-color: var(--sv-m);
     color: var(--sv-m);
   }
@@ -6263,22 +7245,22 @@ void main() {
   }
   .sv-sel-lbl {
     font-size: 11px;
-    opacity: .5;
+    opacity: 0.5;
     font-weight: 500;
     min-width: 45px;
   }
   .sv-sel-btn {
     width: 32px;
     height: 32px;
-    background: rgba(255,255,255,.05);
+    background: rgba(255,255,255, 0.05);
     border: 1px solid var(--sv-brd);
-    color: rgba(255,255,255,.6);
+    color: rgba(255,255,255, 0.6);
     font-size: 17px;
     cursor: pointer;
-    transition: all .1s;
+    transition: all 0.1s;
     border-radius: 4px;
   }
-  .sv-sel-btn:hover { background: rgba(255,255,255,.1); color: #fff; }
+  .sv-sel-btn:hover { background: rgba(255,255,255, 0.1); color: #fff; }
   .sv-sel-val {
     min-width: 80px;
     text-align: center;
@@ -6297,37 +7279,37 @@ void main() {
     align-items: center;
     justify-content: center;
     padding: 10px 8px;
-    background: rgba(187,134,252,.04);
-    border: 1px solid rgba(187,134,252,.25);
+    background: rgba(187,134,252, 0.04);
+    border: 1px solid rgba(187,134,252, 0.25);
     border-radius: 6px;
     cursor: pointer;
-    transition: all .15s;
+    transition: all 0.15s;
     width: 100%;
   }
   .sv-shader-mix-btn:hover {
-    background: rgba(187,134,252,.12);
-    border-color: rgba(187,134,252,.5);
+    background: rgba(187,134,252, 0.12);
+    border-color: rgba(187,134,252, 0.5);
   }
   .sv-shader-mix-btn.active {
-    background: rgba(187,134,252,.18);
-    border-color: #BB86FC;
-    box-shadow: 0 0 18px rgba(187,134,252,.25);
+    background: rgba(187,134,252, 0.18);
+    border-color: #bb86fc;
+    box-shadow: 0 0 18px rgba(187,134,252, 0.25);
     animation: sv-mix-pulse 2s ease-in-out infinite;
   }
   @keyframes sv-mix-pulse {
-    0%, 100% { box-shadow: 0 0 10px rgba(187,134,252,.2); }
-    50% { box-shadow: 0 0 24px rgba(187,134,252,.4); }
+    0%, 100% { box-shadow: 0 0 10px rgba(187,134,252, 0.2); }
+    50% { box-shadow: 0 0 24px rgba(187,134,252, 0.4); }
   }
   .sv-shader-mix-icon {
     font-size: 19px;
-    color: #BB86FC;
+    color: #bb86fc;
   }
   .sv-shader-mix-label {
     font-family: 'Orbitron', sans-serif;
     font-size: 11px;
     font-weight: 700;
-    color: #BB86FC;
-    letter-spacing: .08em;
+    color: #bb86fc;
+    letter-spacing: 0.08em;
     margin-top: 2px;
   }
   .sv-shader-mix-hint {
@@ -6337,13 +7319,13 @@ void main() {
     margin-top: 4px;
   }
   .sv-shader-mix-hint kbd {
-    background: rgba(187,134,252,.15);
-    border: 1px solid rgba(187,134,252,.3);
+    background: rgba(187,134,252, 0.15);
+    border: 1px solid rgba(187,134,252, 0.3);
     border-radius: 3px;
     padding: 1px 4px;
     font-family: 'Orbitron', sans-serif;
     font-size: 10px;
-    color: #BB86FC;
+    color: #bb86fc;
   }
 
   /* LIVE CAMERA - LARGER Vertical Layout */
@@ -6353,21 +7335,21 @@ void main() {
     align-items: center;
     justify-content: center;
     padding: 14px 10px;
-    background: rgba(105,240,174,.04);
-    border: 1px solid rgba(105,240,174,.25);
+    background: rgba(105,240,174, 0.04);
+    border: 1px solid rgba(105,240,174, 0.25);
     border-radius: 6px;
     cursor: pointer;
-    transition: all .15s;
+    transition: all 0.15s;
     width: 100%;
   }
   .sv-cam-toggle:hover {
-    background: rgba(105,240,174,.1);
-    border-color: rgba(105,240,174,.5);
+    background: rgba(105,240,174, 0.1);
+    border-color: rgba(105,240,174, 0.5);
   }
   .sv-cam-toggle.active {
-    background: rgba(105,240,174,.18);
+    background: rgba(105,240,174, 0.18);
     border-color: var(--sv-g);
-    box-shadow: 0 0 18px rgba(105,240,174,.25);
+    box-shadow: 0 0 18px rgba(105,240,174, 0.25);
   }
   .sv-cam-icon {
     font-family: 'Orbitron', sans-serif;
@@ -6377,11 +7359,11 @@ void main() {
   }
   .sv-cam-label {
     font-size: 10px;
-    opacity: .55;
+    opacity: 0.55;
     margin-top: 4px;
   }
   .sv-cam-toggle.active .sv-cam-label {
-    opacity: .85;
+    opacity: 0.85;
     color: var(--sv-g);
   }
   .sv-cam-blend-row {
@@ -6390,13 +7372,13 @@ void main() {
     align-items: center;
     gap: 4px;
     width: 100%;
-    background: rgba(0,0,0,.25);
+    background: rgba(0,0,0, 0.25);
     padding: 6px 8px;
     border-radius: 5px;
   }
   .sv-cam-blend-lbl {
     font-size: 9px;
-    opacity: .5;
+    opacity: 0.5;
     text-align: center;
   }
   .sv-cam-blend-controls {
@@ -6407,15 +7389,15 @@ void main() {
   .sv-cam-blend-btn {
     width: 22px;
     height: 22px;
-    background: rgba(255,255,255,.05);
+    background: rgba(255,255,255, 0.05);
     border: 1px solid var(--sv-brd);
-    color: rgba(255,255,255,.6);
+    color: rgba(255,255,255, 0.6);
     font-size: 13px;
     cursor: pointer;
     border-radius: 3px;
     flex-shrink: 0;
   }
-  .sv-cam-blend-btn:hover { background: rgba(255,255,255,.1); }
+  .sv-cam-blend-btn:hover { background: rgba(255,255,255, 0.1); }
   .sv-cam-blend-val {
     flex: 1;
     text-align: center;
@@ -6430,21 +7412,21 @@ void main() {
     gap: 6px;
     width: 100%;
     padding: 6px;
-    background: rgba(0,0,0,.15);
+    background: rgba(0,0,0, 0.15);
     border-radius: 4px;
   }
   .sv-cam-opacity-lbl {
     font-size: 9px;
-    opacity: .5;
+    opacity: 0.5;
   }
-  .sv-cam-opacity-vert input[type="range"] {
+  .sv-cam-opacity-vert input[type='range'] {
     width: 120px;
     height: 6px;
     -webkit-appearance: none;
-    background: rgba(105,240,174,.25);
+    background: rgba(105,240,174, 0.25);
     border-radius: 3px;
   }
-  .sv-cam-opacity-vert input[type="range"]::-webkit-slider-thumb {
+  .sv-cam-opacity-vert input[type='range']::-webkit-slider-thumb {
     -webkit-appearance: none;
     width: 14px;
     height: 14px;
@@ -6462,13 +7444,13 @@ void main() {
     align-items: center;
     gap: 4px;
     width: 100%;
-    background: rgba(0,0,0,.25);
+    background: rgba(0,0,0, 0.25);
     padding: 6px 8px;
     border-radius: 5px;
   }
   .sv-cam-mode-lbl {
     font-size: 9px;
-    opacity: .5;
+    opacity: 0.5;
     min-width: 36px;
   }
   .sv-cam-mode-name {
@@ -6481,17 +7463,17 @@ void main() {
   .sv-cam-nav {
     width: 22px;
     height: 22px;
-    background: rgba(255,255,255,.05);
+    background: rgba(255,255,255, 0.05);
     border: 1px solid var(--sv-brd);
-    color: rgba(255,255,255,.5);
+    color: rgba(255,255,255, 0.5);
     font-size: 13px;
     cursor: pointer;
-    transition: all .1s;
+    transition: all 0.1s;
     border-radius: 3px;
     flex-shrink: 0;
   }
   .sv-cam-nav:hover {
-    background: rgba(255,255,255,.08);
+    background: rgba(255,255,255, 0.08);
     color: #fff;
   }
   /* Duplicate sv-cam-mode-name removed - defined above */
@@ -6504,7 +7486,7 @@ void main() {
   }
   .sv-cam-mode-desc {
     font-size: 9px;
-    opacity: .4;
+    opacity: 0.4;
   }
   .sv-cam-mode-grid {
     display: grid;
@@ -6514,23 +7496,23 @@ void main() {
   }
   .sv-cam-mode-btn {
     height: 28px;
-    background: rgba(105,240,174,.02);
-    border: 1px solid rgba(105,240,174,.15);
+    background: rgba(105,240,174, 0.02);
+    border: 1px solid rgba(105,240,174, 0.15);
     border-radius: 3px;
-    color: rgba(255,255,255,.5);
+    color: rgba(255,255,255, 0.5);
     font-size: 8px;
     cursor: pointer;
-    transition: all .08s;
+    transition: all 0.08s;
   }
   .sv-cam-mode-btn:hover {
-    border-color: rgba(105,240,174,.3);
-    background: rgba(105,240,174,.05);
+    border-color: rgba(105,240,174, 0.3);
+    background: rgba(105,240,174, 0.05);
   }
   .sv-cam-mode-btn.active {
     border-color: var(--sv-g);
-    background: rgba(105,240,174,.15);
+    background: rgba(105,240,174, 0.15);
     color: var(--sv-g);
-    box-shadow: 0 0 8px rgba(105,240,174,.15);
+    box-shadow: 0 0 8px rgba(105,240,174, 0.15);
   }
 
   /* Camera Blend & Opacity Controls */
@@ -6546,21 +7528,21 @@ void main() {
   }
   .sv-cam-blend-lbl, .sv-cam-opacity-lbl {
     font-size: 9px;
-    opacity: .4;
+    opacity: 0.4;
     width: 40px;
   }
   .sv-cam-blend-btn {
     width: 20px;
     height: 20px;
-    background: rgba(255,255,255,.04);
+    background: rgba(255,255,255, 0.04);
     border: 1px solid var(--sv-brd);
-    color: rgba(255,255,255,.5);
+    color: rgba(255,255,255, 0.5);
     font-size: 11px;
     cursor: pointer;
-    transition: all .1s;
+    transition: all 0.1s;
   }
   .sv-cam-blend-btn:hover {
-    background: rgba(255,255,255,.08);
+    background: rgba(255,255,255, 0.08);
     color: #fff;
   }
   .sv-cam-blend-val {
@@ -6576,23 +7558,23 @@ void main() {
     gap: 4px;
     flex: 1;
   }
-  .sv-cam-opacity input[type="range"] {
+  .sv-cam-opacity input[type='range'] {
     flex: 1;
     height: 4px;
     -webkit-appearance: none;
     appearance: none;
-    background: rgba(255,255,255,.1);
+    background: rgba(255,255,255, 0.1);
     border-radius: 2px;
     cursor: pointer;
   }
-  .sv-cam-opacity input[type="range"]::-webkit-slider-thumb {
+  .sv-cam-opacity input[type='range']::-webkit-slider-thumb {
     -webkit-appearance: none;
     width: 12px;
     height: 12px;
     background: var(--sv-g);
     border-radius: 50%;
     cursor: pointer;
-    box-shadow: 0 0 6px rgba(105,240,174,.4);
+    box-shadow: 0 0 6px rgba(105,240,174, 0.4);
   }
   .sv-cam-opacity-val {
     font-family: 'Orbitron', sans-serif;
@@ -6614,14 +7596,14 @@ void main() {
   .sv-effects-panel { display: flex; flex-direction: column; gap: 4px; overflow-y: auto; flex: 1; min-height: 0; }
   .sv-effects-header { display: flex; justify-content: space-between; align-items: center; padding: 2px 4px; }
   .sv-effects-header span { font-size: 11px; color: var(--text-muted, #888); text-transform: uppercase; }
-  .sv-add-fx-btn { background: #BB86FC22; border: 1px solid #BB86FC44; border-radius: 4px; color: #BB86FC; font-size: 11px; padding: 2px 8px; cursor: pointer; transition: all 0.15s; }
-  .sv-add-fx-btn:hover { background: #BB86FC33; border-color: #BB86FC88; }
+  .sv-add-fx-btn { background: #bb86fc22; border: 1px solid #bb86fc44; border-radius: 4px; color: #bb86fc; font-size: 11px; padding: 2px 8px; cursor: pointer; transition: all 0.15s; }
+  .sv-add-fx-btn:hover { background: #bb86fc33; border-color: #bb86fc88; }
   .sv-effects-list { display: flex; flex-direction: column; gap: 2px; overflow-y: auto; }
   .sv-effect-item { background: var(--bg-tertiary, #1a1a1e); border: 1px solid #333; border-radius: 4px; overflow: hidden; }
   .sv-effect-item.disabled { opacity: 0.5; }
   .sv-effect-header { display: flex; align-items: center; gap: 6px; padding: 4px 6px; cursor: pointer; }
-  .sv-fx-toggle { background: none; border: none; color: #BB86FC; font-size: 11px; cursor: pointer; padding: 0; }
-  .sv-fx-toggle.active { color: #BB86FC; }
+  .sv-fx-toggle { background: none; border: none; color: #bb86fc; font-size: 11px; cursor: pointer; padding: 0; }
+  .sv-fx-toggle.active { color: #bb86fc; }
   .sv-fx-name { font-size: 11px; color: var(--text-primary, #ccc); flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
   .sv-fx-expand { font-size: 9px; color: #666; }
   .sv-fx-delete { background: none; border: none; color: #666; font-size: 13px; cursor: pointer; padding: 0 2px; }
@@ -6629,7 +7611,7 @@ void main() {
   .sv-effect-params { padding: 4px 8px 6px; border-top: 1px solid #2a2a2a; }
   .sv-fx-param-row { display: flex; align-items: center; gap: 6px; margin: 6px 0; }
   .sv-fx-param-name { font-size: 10px; color: var(--text-muted, #888); min-width: 50px; }
-  .sv-fx-param-row input[type=range] { flex: 1; height: 3px; accent-color: #BB86FC; }
+  .sv-fx-param-row input[type='range'] { flex: 1; height: 3px; accent-color: #bb86fc; }
   .sv-fx-param-val { font-size: 10px; color: #666; min-width: 28px; text-align: right; }
   .sv-fx-no-params, .sv-fx-empty { font-size: 11px; color: #555; text-align: center; padding: 8px; }
 
@@ -6655,7 +7637,7 @@ void main() {
   }
   .sv-dial-bg {
     fill: none;
-    stroke: rgba(255,255,255,.06);
+    stroke: rgba(255,255,255, 0.06);
     stroke-width: 8;
   }
   .sv-dial-arc {
@@ -6663,7 +7645,7 @@ void main() {
     stroke: var(--sv-c);
     stroke-width: 8;
     stroke-linecap: round;
-    filter: drop-shadow(0 0 4px rgba(187,134,252,.3));
+    filter: drop-shadow(0 0 4px rgba(187,134,252, 0.3));
   }
   .sv-dial-val {
     position: absolute;
@@ -6677,12 +7659,12 @@ void main() {
   }
   .sv-dial-lbl {
     font-size: 9px;
-    opacity: .55;
+    opacity: 0.55;
     margin-top: 2px;
     text-transform: uppercase;
-    letter-spacing: .5px;
+    letter-spacing: 0.5px;
   }
-  .sv-dial-lbl.shader { color: var(--sv-m); opacity: .7; }
+  .sv-dial-lbl.shader { color: var(--sv-m); opacity: 0.7; }
 
   /* Param tab selector */
   .sv-param-tabs {
@@ -6693,20 +7675,20 @@ void main() {
   .sv-param-tab {
     flex: 1;
     height: 26px;
-    background: rgba(255,255,255,.04);
+    background: rgba(255,255,255, 0.04);
     border: 1px solid var(--sv-brd);
     border-radius: 4px;
-    color: rgba(255,255,255,.5);
+    color: rgba(255,255,255, 0.5);
     font-family: 'Orbitron', sans-serif;
     font-size: 10px;
     font-weight: 600;
     cursor: pointer;
-    transition: all .15s;
+    transition: all 0.15s;
   }
-  .sv-param-tab:hover { background: rgba(255,255,255,.08); color: #fff; }
+  .sv-param-tab:hover { background: rgba(255,255,255, 0.08); color: #fff; }
   .sv-param-tab.active {
-    background: rgba(187,134,252,.1);
-    border-color: rgba(187,134,252,.4);
+    background: rgba(187,134,252, 0.1);
+    border-color: rgba(187,134,252, 0.4);
     color: var(--sv-c);
   }
 
@@ -6715,8 +7697,8 @@ void main() {
     text-align: center;
     margin-bottom: 8px;
     padding: 4px 8px;
-    background: rgba(255,0,170,.08);
-    border: 1px solid rgba(255,0,170,.3);
+    background: rgba(255,0,170, 0.08);
+    border: 1px solid rgba(255,0,170, 0.3);
     border-radius: 4px;
   }
   .sv-shader-name {
@@ -6728,10 +7710,10 @@ void main() {
   }
   .sv-shader-params .sv-dial-arc.shader {
     stroke: var(--sv-m);
-    filter: drop-shadow(0 0 4px rgba(255,0,170,.3));
+    filter: drop-shadow(0 0 4px rgba(255,0,170, 0.3));
   }
   .sv-shader-params .sv-dial-bg.shader {
-    stroke: rgba(255,0,170,.15);
+    stroke: rgba(255,0,170, 0.15);
   }
 
   /* ISF Shader controls */
@@ -6748,7 +7730,7 @@ void main() {
     padding-right: 4px;
   }
   .sv-isf-controls::-webkit-scrollbar { width: 3px; }
-  .sv-isf-controls::-webkit-scrollbar-thumb { background: rgba(255,255,255,.15); border-radius: 2px; }
+  .sv-isf-controls::-webkit-scrollbar-thumb { background: rgba(255,255,255, 0.15); border-radius: 2px; }
   .sv-isf-control {
     display: flex;
     flex-direction: column;
@@ -6772,9 +7754,9 @@ void main() {
     font-size: 9px;
     padding: 1px 6px;
     background: #000;
-    border: 1px solid rgba(255,255,255,.12);
+    border: 1px solid rgba(255,255,255, 0.12);
     border-radius: 3px;
-    color: rgba(255,255,255,.5);
+    color: rgba(255,255,255, 0.5);
     cursor: pointer;
     max-width: 70px;
     font-family: 'Orbitron', sans-serif;
@@ -6784,8 +7766,8 @@ void main() {
     transition: border-color 0.12s, color 0.12s, background 0.12s;
   }
   .sv-mod-chip:hover {
-    border-color: rgba(255,255,255,.3);
-    color: rgba(255,255,255,.8);
+    border-color: rgba(255,255,255, 0.3);
+    color: rgba(255,255,255, 0.8);
   }
   .sv-mod-chip.active {
     border-color: #a855f7;
@@ -6801,10 +7783,10 @@ void main() {
     font-family: 'Orbitron', sans-serif;
     font-size: 9px;
     font-weight: 600;
-    letter-spacing: .8px;
+    letter-spacing: 0.8px;
     color: var(--sv-y);
     text-transform: uppercase;
-    opacity: .85;
+    opacity: 0.85;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -6819,7 +7801,7 @@ void main() {
     height: 4px;
     -webkit-appearance: none;
     appearance: none;
-    background: rgba(255,165,2,.15);
+    background: rgba(255,165,2, 0.15);
     border-radius: 2px;
     outline: none;
     cursor: pointer;
@@ -6831,20 +7813,20 @@ void main() {
     border-radius: 50%;
     background: var(--sv-y);
     cursor: pointer;
-    box-shadow: 0 0 6px rgba(255,165,2,.4);
+    box-shadow: 0 0 6px rgba(255,165,2, 0.4);
   }
   .sv-isf-val {
     font-family: 'Orbitron', sans-serif;
     font-size: 10px;
-    color: rgba(255,255,255,.6);
+    color: rgba(255,255,255, 0.6);
     min-width: 32px;
     text-align: right;
   }
   .sv-isf-select {
     width: 100%;
     height: 24px;
-    background: rgba(255,165,2,.08);
-    border: 1px solid rgba(255,165,2,.3);
+    background: rgba(255,165,2, 0.08);
+    border: 1px solid rgba(255,165,2, 0.3);
     border-radius: 3px;
     color: #fff;
     font-family: 'Orbitron', sans-serif;
@@ -6858,27 +7840,27 @@ void main() {
   .sv-isf-toggle {
     width: 48px;
     height: 22px;
-    border: 1px solid rgba(255,165,2,.3);
+    border: 1px solid rgba(255,165,2, 0.3);
     border-radius: 3px;
-    background: rgba(255,255,255,.03);
-    color: rgba(255,255,255,.5);
+    background: rgba(255,255,255, 0.03);
+    color: rgba(255,255,255, 0.5);
     font-family: 'Orbitron', sans-serif;
     font-size: 9px;
     font-weight: 700;
     letter-spacing: 1px;
     cursor: pointer;
-    transition: all .1s;
+    transition: all 0.1s;
   }
   .sv-isf-toggle.on {
     border-color: var(--sv-y);
-    background: rgba(255,165,2,.15);
+    background: rgba(255,165,2, 0.15);
     color: var(--sv-y);
-    box-shadow: 0 0 8px rgba(255,165,2,.2);
+    box-shadow: 0 0 8px rgba(255,165,2, 0.2);
   }
   .sv-isf-color {
     width: 44px;
     height: 24px;
-    border: 1px solid rgba(255,165,2,.3);
+    border: 1px solid rgba(255,165,2, 0.3);
     border-radius: 3px;
     background: transparent;
     cursor: pointer;
@@ -6888,25 +7870,25 @@ void main() {
 
   /* World tab button styling */
   .sv-param-tab.world.active {
-    background: rgba(105,240,174,.1);
-    border-color: rgba(105,240,174,.4);
+    background: rgba(105,240,174, 0.1);
+    border-color: rgba(105,240,174, 0.4);
     color: var(--sv-g);
   }
 
   /* World-specific param styling */
   .sv-shader-info.world {
-    background: rgba(105,240,174,.08);
-    border: 1px solid rgba(105,240,174,.3);
+    background: rgba(105,240,174, 0.08);
+    border: 1px solid rgba(105,240,174, 0.3);
   }
   .sv-shader-name.world {
     color: var(--sv-g);
   }
   .sv-world-params .sv-dial-arc.world {
     stroke: var(--sv-g);
-    filter: drop-shadow(0 0 4px rgba(105,240,174,.3));
+    filter: drop-shadow(0 0 4px rgba(105,240,174, 0.3));
   }
   .sv-world-params .sv-dial-bg.world {
-    stroke: rgba(105,240,174,.15);
+    stroke: rgba(105,240,174, 0.15);
   }
   .sv-dial-lbl.world {
     color: var(--sv-g);
@@ -6919,25 +7901,25 @@ void main() {
   }
   .sv-big-btn {
     height: 36px;
-    background: rgba(255,255,255,.04);
+    background: rgba(255,255,255, 0.04);
     border: 1px solid var(--sv-brd);
     border-radius: 4px;
-    color: rgba(255,255,255,.6);
+    color: rgba(255,255,255, 0.6);
     font-family: 'Orbitron', sans-serif;
     font-size: 11px;
     font-weight: 700;
     cursor: pointer;
-    transition: all .1s;
+    transition: all 0.1s;
   }
-  .sv-big-btn:hover { background: rgba(255,255,255,.08); color: #fff; }
-  .sv-big-btn:active { transform: scale(.97); }
-  .sv-big-btn.pump { border-color: rgba(187,134,252,.3); color: var(--sv-c); }
-  .sv-big-btn.pump:hover { background: rgba(187,134,252,.1); }
-  .sv-big-btn.glitch { border-color: rgba(255,0,170,.3); color: var(--sv-m); }
-  .sv-big-btn.glitch:hover { background: rgba(255,0,170,.1); }
-  .sv-big-btn.invert.on { background: rgba(255,213,79,.15); border-color: var(--sv-y); color: var(--sv-y); }
+  .sv-big-btn:hover { background: rgba(255,255,255, 0.08); color: #fff; }
+  .sv-big-btn:active { transform: scale(0.97); }
+  .sv-big-btn.pump { border-color: rgba(187,134,252, 0.3); color: var(--sv-c); }
+  .sv-big-btn.pump:hover { background: rgba(187,134,252, 0.1); }
+  .sv-big-btn.glitch { border-color: rgba(255,0,170, 0.3); color: var(--sv-m); }
+  .sv-big-btn.glitch:hover { background: rgba(255,0,170, 0.1); }
+  .sv-big-btn.invert.on { background: rgba(255,213,79, 0.15); border-color: var(--sv-y); color: var(--sv-y); }
   .sv-big-btn.black.on { background: #111; border-color: #333; color: #666; }
-  .sv-big-btn.white.on { background: rgba(255,255,255,.2); border-color: #fff; color: #fff; }
+  .sv-big-btn.white.on { background: rgba(255,255,255, 0.2); border-color: #fff; color: #fff; }
 
   /* Spacebar Effect Selector */
   .sv-spacefx-selector {
@@ -6948,26 +7930,26 @@ void main() {
   .sv-spacefx-btn {
     width: 100%;
     height: 40px;
-    background: linear-gradient(135deg, rgba(255,0,170,.15), rgba(187,134,252,.1));
-    border: 2px solid rgba(255,0,170,.4);
+    background: linear-gradient(135deg, rgba(255,0,170, 0.15), rgba(187,134,252, 0.1));
+    border: 2px solid rgba(255,0,170, 0.4);
     border-radius: 6px;
     font-family: 'Orbitron', sans-serif;
     font-size: 13px;
     font-weight: 800;
     color: var(--sv-m);
     cursor: pointer;
-    transition: all .15s;
-    text-shadow: 0 0 8px rgba(255,0,170,.4);
+    transition: all 0.15s;
+    text-shadow: 0 0 8px rgba(255,0,170, 0.4);
   }
   .sv-spacefx-btn:hover {
-    background: linear-gradient(135deg, rgba(255,0,170,.25), rgba(187,134,252,.15));
+    background: linear-gradient(135deg, rgba(255,0,170, 0.25), rgba(187,134,252, 0.15));
     border-color: var(--sv-m);
     transform: scale(1.02);
-    box-shadow: 0 0 15px rgba(255,0,170,.3);
+    box-shadow: 0 0 15px rgba(255,0,170, 0.3);
   }
   .sv-spacefx-btn:active {
-    transform: scale(.98);
-    background: linear-gradient(135deg, rgba(255,0,170,.4), rgba(187,134,252,.2));
+    transform: scale(0.98);
+    background: linear-gradient(135deg, rgba(255,0,170, 0.4), rgba(187,134,252, 0.2));
   }
   .sv-spacefx-key {
     letter-spacing: 3px;
@@ -6980,18 +7962,18 @@ void main() {
   .sv-spacefx-nav {
     width: 28px;
     height: 32px;
-    background: rgba(255,255,255,.04);
+    background: rgba(255,255,255, 0.04);
     border: 1px solid var(--sv-brd);
     border-radius: 4px;
-    color: rgba(255,255,255,.5);
+    color: rgba(255,255,255, 0.5);
     font-family: 'Orbitron', sans-serif;
     font-size: 13px;
     cursor: pointer;
-    transition: all .1s;
+    transition: all 0.1s;
   }
   .sv-spacefx-nav:hover {
-    background: rgba(255,255,255,.08);
-    border-color: rgba(255,255,255,.2);
+    background: rgba(255,255,255, 0.08);
+    border-color: rgba(255,255,255, 0.2);
     color: #fff;
   }
   .sv-spacefx-current {
@@ -7000,8 +7982,8 @@ void main() {
     flex-direction: column;
     align-items: center;
     padding: 4px 8px;
-    background: rgba(187,134,252,.06);
-    border: 1px solid rgba(187,134,252,.2);
+    background: rgba(187,134,252, 0.06);
+    border: 1px solid rgba(187,134,252, 0.2);
     border-radius: 4px;
   }
   .sv-spacefx-name {
@@ -7013,21 +7995,21 @@ void main() {
   }
   .sv-spacefx-desc {
     font-size: 8px;
-    opacity: .4;
+    opacity: 0.4;
     text-transform: uppercase;
-    letter-spacing: .5px;
+    letter-spacing: 0.5px;
     margin-top: 1px;
   }
 
   /* Clip button variations */
   .sv-clip-btn.video {
-    border-color: rgba(105, 240, 174, .3);
-    background: rgba(105, 240, 174, .05);
+    border-color: rgba(105, 240, 174, 0.3);
+    background: rgba(105, 240, 174, 0.05);
   }
   .sv-clip-btn.video .sv-clip-key { color: var(--sv-g); }
   .sv-clip-btn.camera {
-    border-color: rgba(255, 0, 170, .3);
-    background: rgba(255, 0, 170, .05);
+    border-color: rgba(255, 0, 170, 0.3);
+    background: rgba(255, 0, 170, 0.05);
   }
   .sv-clip-btn.camera .sv-clip-key { color: var(--sv-m); }
   .sv-clip-type {
@@ -7035,8 +8017,8 @@ void main() {
     bottom: 2px;
     right: 3px;
     font-size: 7px;
-    opacity: .5;
-    letter-spacing: .5px;
+    opacity: 0.5;
+    letter-spacing: 0.5px;
   }
 
   @media (max-width: 1400px) {
@@ -7071,7 +8053,7 @@ void main() {
   .sv-assign-hint {
     font-size: 10px;
     font-weight: 400;
-    color: rgba(255,255,255,.3);
+    color: rgba(255,255,255, 0.3);
     font-family: inherit;
     letter-spacing: 0;
   }
@@ -7079,39 +8061,39 @@ void main() {
   /* ═══ EDIT Button ═══ */
   .sv-edit-btn {
     padding: 4px 12px;
-    background: rgba(255,255,255,.06);
-    border: 1px solid rgba(255,255,255,.12);
+    background: rgba(255,255,255, 0.06);
+    border: 1px solid rgba(255,255,255, 0.12);
     border-radius: 4px;
     color: var(--text-secondary, #aaa);
     font-size: 11px;
     font-weight: 700;
     letter-spacing: 1px;
     cursor: pointer;
-    transition: all .15s;
+    transition: all 0.15s;
     font-family: inherit;
     margin-left: auto;
   }
   .sv-edit-btn:hover {
-    background: rgba(255,255,255,.1);
+    background: rgba(255,255,255, 0.1);
     color: var(--text-primary, #ddd);
-    border-color: rgba(255,255,255,.2);
+    border-color: rgba(255,255,255, 0.2);
   }
   .sv-edit-btn.active {
-    background: rgba(46,213,115,.15);
-    border-color: rgba(46,213,115,.4);
+    background: rgba(46,213,115, 0.15);
+    border-color: rgba(46,213,115, 0.4);
     color: var(--sv-g);
-    box-shadow: 0 0 8px rgba(46,213,115,.15);
+    box-shadow: 0 0 8px rgba(46,213,115, 0.15);
   }
 
   /* ═══ Drag-over state on clip buttons ═══ */
   .sv-clip-btn.drag-over {
     border: 2px dashed var(--sv-g) !important;
-    background: rgba(46,213,115,.1) !important;
-    box-shadow: inset 0 0 12px rgba(46,213,115,.15);
+    background: rgba(46,213,115, 0.1) !important;
+    box-shadow: inset 0 0 12px rgba(46,213,115, 0.15);
   }
 
   .sv-keyboard.edit-mode .sv-clip-btn {
-    border: 1px dashed rgba(255,255,255,.15);
+    border: 1px dashed rgba(255,255,255, 0.15);
     cursor: default;
   }
 
@@ -7142,7 +8124,7 @@ void main() {
     font-weight: 700;
     letter-spacing: 1px;
     cursor: pointer;
-    transition: all .12s;
+    transition: all 0.12s;
     font-family: inherit;
   }
   .sv-edit-tab:hover { color: var(--text-secondary, #aaa); }
@@ -7169,11 +8151,11 @@ void main() {
     border-radius: 4px;
     overflow: hidden;
     cursor: grab;
-    transition: all .12s;
+    transition: all 0.12s;
   }
   .sv-edit-item:hover {
     transform: scale(1.02);
-    box-shadow: 0 2px 8px rgba(0,0,0,.3);
+    box-shadow: 0 2px 8px rgba(0,0,0, 0.3);
   }
   .sv-edit-item:active { cursor: grabbing; }
   .sv-edit-item-thumb {
@@ -7209,7 +8191,7 @@ void main() {
     left: 0;
     right: 0;
     padding: 2px 4px;
-    background: rgba(0,0,0,.8);
+    background: rgba(0,0,0, 0.8);
     font-size: 10px;
     color: var(--text-primary, #eee);
     white-space: nowrap;
@@ -7233,7 +8215,7 @@ void main() {
     content: '';
     position: absolute;
     inset: 0;
-    background: rgba(0,0,0,.55);
+    background: rgba(0,0,0, 0.55);
     border-radius: 4px;
     pointer-events: none;
   }
@@ -7242,7 +8224,7 @@ void main() {
   .sv-clip-btn.has-thumb .sv-clip-desc {
     position: relative;
     z-index: 1;
-    text-shadow: 0 1px 3px rgba(0,0,0,.8);
+    text-shadow: 0 1px 3px rgba(0,0,0, 0.8);
   }
 
   /* Reset button */
@@ -7251,13 +8233,13 @@ void main() {
     font-size: 10px;
     font-weight: 700;
     padding: 4px 8px;
-    border: 1px solid rgba(255,80,80,.4);
+    border: 1px solid rgba(255,80,80, 0.4);
     border-radius: 4px;
-    background: rgba(255,80,80,.1);
+    background: rgba(255,80,80, 0.1);
     color: #ff5050;
     cursor: pointer;
   }
-  .sv-reset-btn:hover { background: rgba(255,80,80,.25); }
+  .sv-reset-btn:hover { background: rgba(255,80,80, 0.25); }
 
   /* Preset bar */
   .sv-preset-bar {
@@ -7265,7 +8247,7 @@ void main() {
     align-items: center;
     gap: 8px;
     padding: 6px 12px;
-    background: rgba(0,0,0,.3);
+    background: rgba(0,0,0, 0.3);
     border-top: 1px solid var(--sv-brd);
     min-height: 34px;
   }
@@ -7280,21 +8262,21 @@ void main() {
     font-size: 10px;
     font-weight: 700;
     padding: 4px 10px;
-    border: 1px solid rgba(187,134,252,.4);
+    border: 1px solid rgba(187,134,252, 0.4);
     border-radius: 4px;
-    background: rgba(187,134,252,.1);
+    background: rgba(187,134,252, 0.1);
     color: var(--sv-c);
     cursor: pointer;
   }
-  .sv-preset-save-btn:hover { background: rgba(187,134,252,.25); }
+  .sv-preset-save-btn:hover { background: rgba(187,134,252, 0.25); }
   .sv-preset-input {
     font-family: 'Orbitron', sans-serif;
     font-size: 10px;
     width: 100px;
     padding: 3px 6px;
-    border: 1px solid rgba(187,134,252,.4);
+    border: 1px solid rgba(187,134,252, 0.4);
     border-radius: 3px;
-    background: rgba(0,0,0,.4);
+    background: rgba(0,0,0, 0.4);
     color: #fff;
     outline: none;
   }
@@ -7306,7 +8288,7 @@ void main() {
     padding: 3px 6px;
     border: 1px solid var(--sv-brd);
     border-radius: 3px;
-    background: rgba(255,255,255,.05);
+    background: rgba(255,255,255, 0.05);
     color: var(--text-secondary, #aaa);
     cursor: pointer;
   }
@@ -7328,21 +8310,21 @@ void main() {
     padding: 4px 10px;
     border: 1px solid var(--sv-brd);
     border-radius: 4px;
-    background: rgba(255,255,255,.03);
-    color: rgba(255,255,255,.6);
+    background: rgba(255,255,255, 0.03);
+    color: rgba(255,255,255, 0.6);
     cursor: pointer;
     white-space: nowrap;
     flex-shrink: 0;
   }
-  .sv-preset-btn:hover { border-color: rgba(255,255,255,.25); background: rgba(255,255,255,.08); color: #fff; }
+  .sv-preset-btn:hover { border-color: rgba(255,255,255, 0.25); background: rgba(255,255,255, 0.08); color: #fff; }
   .sv-preset-btn.active {
     border-color: var(--sv-c);
-    background: rgba(187,134,252,.12);
+    background: rgba(187,134,252, 0.12);
     color: var(--sv-c);
   }
   .sv-preset-hint {
     font-size: 10px;
-    color: rgba(255,255,255,.2);
+    color: rgba(255,255,255, 0.2);
     font-style: italic;
   }
   .sv-scope-toggle {

@@ -5,6 +5,7 @@
   import { onMount, onDestroy, afterUpdate } from 'svelte';
   import { isMac, getTextureShareLabel } from '$lib/bridge';
   import { get } from 'svelte/store';
+  import { t } from '../i18n';
   import { mediaLibrary, type MediaItem } from '../stores/media';
   import { vjClipLauncher, type VJClip, type VJBlock, type VJDeck } from '../stores/vjClipLauncher';
   import { vjLayerSequencer } from '../stores/vjLayerSequencer';
@@ -21,13 +22,16 @@
   import { globalStagePresets } from '../stores/globalPresets';
   import { parseISF, getInputDefault } from '../isf/parser';
   import { generateCachedThumbnail as generateShaderThumbnail } from '../isf/thumbnail';
-  import type { BlendMode, Effect, EffectType, ISFInputDef, JSAnimationSource, SplatContent, Model3DContent, Model3DFormat, SplatAnimationType, SplatDisplacementType, Model3DAnimationType, Model3DDeformationType, Model3DMaterialType, Model3DWireframeMode, Model3DLightingPreset } from '../types';
-  import { generateUUID, createDefaultSplatContent, createDefaultModel3DContent, createDefaultGPULayerContent, createDefaultTextContent } from '../types';
+  import type { BlendMode, Effect, EffectType, ISFInputDef, JSAnimationSource, SplatContent, Model3DContent, Model3DFormat, SplatAnimationType, SplatDisplacementType, Model3DAnimationType, Model3DDeformationType, Model3DMaterialType, Model3DWireframeMode, Model3DLightingPreset,
+  } from '../types';
+  import { generateUUID, createDefaultSplatContent, createDefaultModel3DContent, createDefaultGPULayerContent, createDefaultTextContent,
+  } from '../types';
   import { audioStore } from '../stores/audio';
   import { createAssetRefFromFile, createAssetRefFromGeneratedBlob } from '../storage/assetRegistry';
   import ClipPreviewPanel from './ClipPreviewPanel.svelte';
   import { markUserInteracting } from '../midi/midiRouter';
-  import { modulationStore, modulationEngine, setParamModSource, setCrossfaderModSource, updateParamMod, registerParamRanges, getModulatedValue, setBaseValue, clearBaseValues, clearModulatedValues, modKeyShader, MOD_KEY_XFADE_VALUE, type ModSource, type ParamModulation } from '../audio/modulation';
+  import { modulationStore, modulationEngine, setParamModSource, setCrossfaderModSource, updateParamMod, registerParamRanges, getModulatedValue, setBaseValue, clearBaseValues, clearModulatedValues, modKeyShader, MOD_KEY_XFADE_VALUE, type ModSource, type ParamModulation,
+  } from '../audio/modulation';
   import ModTray, { modSourceLabel } from './ModTray.svelte';
   import { defaultAutoFor } from '../audio/autoEngine';
   import type { AutoConfig } from '../types';
@@ -42,10 +46,19 @@
   import { shaderLibrary } from '../stores/shaderLibrary';
   import { videoLibrary } from '../stores/videoLibrary';
   import { settings } from '../stores/settings';
+  import {
+    effectTypeLabel,
+    effectParamLabel,
+    effectOptionLabel,
+    blendModeLabel,
+    stageEffectTypeLabel,
+    stageEffectParamLabel,
+  } from '../i18n/displayLabels';
   import { startRecording as startRec, formatRecordingDuration, type RecorderHandle } from '../recording/recorder';
   import { showLoading } from '../stores/loading';
   import { showToast } from '../stores/errorToast';
-  import { listScreenCaptureSources, screenCaptureSourcePickerAvailable, type ScreenCaptureSource } from '$lib/capture/screenSources';
+  import { listScreenCaptureSources, screenCaptureSourcePickerAvailable, type ScreenCaptureSource,
+  } from '$lib/capture/screenSources';
   import SynthVision from './SynthVision.svelte';
   import VJAudioBar from './VJAudioBar.svelte';
   import AudioInputPicker from './AudioInputPicker.svelte';
@@ -57,7 +70,62 @@
   // standalone strip below the header was dropped — its contents are now
   // inline in the header (single source of truth, no second tap/tempo row).
   void VJAudioBar;
-  import { applyPresetToEffect, getEffectPresets, getNumericEffectParams, effectParamLabels } from '../effects/effectUX';
+
+  function displayCatalogKey(value: string): string {
+    return value
+      .trim()
+      .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+      .replace(/[^a-zA-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .toLowerCase();
+  }
+
+  function vjEffectTypeDisplayLabel(type: string, fallback = type): string {
+    const catalogFallback = EFFECT_CATALOG.find((entry) => entry.type === type)?.label;
+    return effectTypeLabel($t, type, catalogFallback ?? fallback);
+  }
+
+  function vjEffectParamDisplayLabel(key: string, fallback = key): string {
+    const translated = effectParamLabel($t, key);
+    return translated === key
+      ? effectParamLabel($t, displayCatalogKey(fallback), fallback)
+      : translated;
+  }
+
+  function vjEffectOptionDisplayLabel(value: string | number, fallback: string): string {
+    const translated = effectOptionLabel($t, value);
+    return translated === String(value)
+      ? effectOptionLabel($t, displayCatalogKey(fallback), fallback)
+      : translated;
+  }
+
+  function vjBlendModeDisplayLabel(mode: string): string {
+    return blendModeLabel($t, mode, mode);
+  }
+
+  function vjStageEffectTypeDisplayLabel(type: string, fallback = type): string {
+    return stageEffectTypeLabel($t, type, fallback);
+  }
+
+  function vjStageEffectParamDisplayLabel(key: string, fallback = key): string {
+    return stageEffectParamLabel($t, key, fallback);
+  }
+
+  function vjPresetDisplayName(type: string, index: number, preset: {
+    name: string;
+    id?: unknown;
+    presetId?: unknown;
+    effectId?: unknown;
+    userName?: unknown;
+  }): string {
+    if (typeof preset.userName === 'string' && preset.userName.trim()) return preset.userName;
+    const key = `effects.presets.${type}.${index}`;
+    const translated = $t(key);
+    return translated === key ? preset.name : translated;
+  }
+
+  import { applyPresetToEffect, getEffectPresets, getNumericEffectParams, effectParamLabels,
+  } from '../effects/effectUX';
   import { EFFECT_CATALOG } from '../effects/effectCatalog';
   import { EFFECT_PARAM_DEFS } from '../effects/effectParamDefs';
   import EffectParamRow from './EffectParamRow.svelte';
@@ -77,7 +145,8 @@
   import bundledThreeJSItems from 'virtual:threejs-bundles';
 
   // File menu callback (wired by parent App.svelte)
-  export let onFileAction: ((action: 'new' | 'open' | 'save' | 'saveAs' | 'importPresets' | 'undo' | 'redo') => void) | null = null;
+  export let onFileAction:
+    | ((action: 'new' | 'open' | 'save' | 'saveAs' | 'importPresets' | 'undo' | 'redo') => void) | null = null;
   export let renderEngine: RenderEngine | null = null;
   let vjFileMenuOpen = false;
   function vjFileAction(action: 'new' | 'open' | 'save' | 'saveAs' | 'importPresets' | 'undo' | 'redo') {
@@ -100,9 +169,12 @@
     inlineIcon?: 'splat' | 'model3d' | 'gpu' | 'text';
   };
 
-  const vjPluginCards: VJPluginCard[] = [
-    { id: 'gpu-shader', name: 'GPU Shader', description: 'GPU visual instruments and particle shaders', tier: 'free', clipType: 'gpu', inlineIcon: 'gpu' },
-    { id: 'text-creator', name: 'Text Creator', description: 'Live typography, animation, glow, and 3D text', tier: 'free', clipType: 'text', inlineIcon: 'text' },
+  let vjPluginCards: VJPluginCard[] = [];
+  $: vjPluginCards = [
+    { id: 'gpu-shader', name: $t('vj.plugins.gpuShader'), description: $t('vj.plugins.gpuDescription'), tier: 'free', clipType: 'gpu', inlineIcon: 'gpu',
+    },
+    { id: 'text-creator', name: $t('vj.plugins.textCreator'), description: $t('vj.plugins.textDescription'), tier: 'free', clipType: 'text', inlineIcon: 'text',
+    },
     ...getAllPlugins().map((p): VJPluginCard => ({
       id: p.id,
       name: p.name,
@@ -110,9 +182,12 @@
       tier: p.tier,
       clipType: 'effect',
       effectType: p.effectType,
-    })),
-    { id: 'pointcloud', name: 'Point Cloud', description: 'PLY point cloud / splat', tier: 'free', clipType: 'splat', inlineIcon: 'splat' },
-    { id: 'model3d', name: '3D Model', description: 'GLTF/OBJ/FBX models', tier: 'free', clipType: 'model3d', inlineIcon: 'model3d' },
+    }),
+    ),
+    { id: 'pointcloud', name: $t('vj.plugins.pointCloud'), description: $t('vj.plugins.pointCloudDescription'), tier: 'free', clipType: 'splat', inlineIcon: 'splat',
+    },
+    { id: 'model3d', name: $t('vj.plugins.model3d'), description: $t('vj.plugins.model3dDescription'), tier: 'free', clipType: 'model3d', inlineIcon: 'model3d',
+    },
   ];
 
   // Performer panel state
@@ -131,7 +206,8 @@
 
   // Effect types available
   const effectTypes: { value: EffectType; label: string }[] =
-    EFFECT_CATALOG.map((e) => ({ value: e.type, label: e.label }));
+    EFFECT_CATALOG.map((e) => ({ value: e.type, label: e.label,
+  }));
 
   // Expanded effect param
   let expandedEffectId: string | null = null;
@@ -144,8 +220,8 @@
   let stageSaveScope: 'project' | 'global' = 'project';
 
   $: allStagePresets = [
-    ...$stagePresets.map(p => ({ ...p, _scope: (p.scope || 'project') as 'project' | 'global' })),
-    ...$globalStagePresets.map(p => ({ ...p, _scope: 'global' as const })),
+    ...$stagePresets.map((p) => ({ ...p, _scope: (p.scope || 'project') as 'project' | 'global' })),
+    ...$globalStagePresets.map((p) => ({ ...p, _scope: 'global' as const })),
   ];
 
   function loadStagePresetFromUI(preset: (typeof allStagePresets)[number]) {
@@ -214,7 +290,7 @@
 
   function releaseStageEffectHold(effectId: string) {
     if (!effectId || !heldStageEffects[effectId]) return;
-    const nextStack = stageEffectHoldStack.filter(id => id !== effectId);
+    const nextStack = stageEffectHoldStack.filter((id) => id !== effectId);
     setStageEffectHeld(effectId, false);
     stageEffectHoldStack = nextStack;
 
@@ -337,8 +413,7 @@
         preset.name,
         preset.thumbnail,
         'global',
-        preset.id,
-      );
+        preset.id);
       globalStagePresets.updateContents(preset.id, snapshot);
     } else {
       project.updateStagePreset(preset.id);
@@ -360,7 +435,7 @@
   }
   function blockMenuRename() {
     if (!blockContextMenu) return;
-    const block = $vjClipLauncher.blocks.find(b => b.id === blockContextMenu!.blockId);
+    const block = $vjClipLauncher.blocks.find((b) => b.id === blockContextMenu!.blockId);
     blockContextMenu = null;
     if (block) startEditingBlock(block, new MouseEvent('click'));
   }
@@ -372,7 +447,7 @@
   function blockMenuDelete() {
     if (!blockContextMenu) return;
     if ($vjClipLauncher.blocks.length <= 1) { blockContextMenu = null; return; }
-    if (confirm('Delete this block?')) {
+    if (confirm($t('vj.errors.deleteBlock'))) {
       vjClipLauncher.deleteBlock(blockContextMenu.blockId);
     }
     blockContextMenu = null;
@@ -393,7 +468,7 @@
   }
   function stageMenuRename() {
     if (!stageContextMenu) return;
-    const newName = prompt('Rename preset:', stageContextMenu.preset.name);
+    const newName = prompt($t('vj.errors.renamePreset'), stageContextMenu.preset.name);
     if (newName && newName.trim()) {
       if (stageContextMenu.preset._scope === 'global') {
         globalStagePresets.rename(stageContextMenu.preset.id, newName.trim());
@@ -405,7 +480,7 @@
   }
   function stageMenuDelete() {
     if (!stageContextMenu) return;
-    if (confirm(`Delete "${stageContextMenu.preset.name}"?`)) {
+    if (confirm($t('vj.errors.deletePreset', { values: { name: stageContextMenu.preset.name } }))) {
       deleteStagePreset(stageContextMenu.preset);
     }
     stageContextMenu = null;
@@ -460,9 +535,7 @@
   function startVjVideoTick() {
     if (vjVideoTickFrame !== null) return;
     function tick() {
-      const clip = selectedLayerIndex !== null
-        ? paramLayerStates[selectedLayerIndex]?.activeClip
-        : null;
+      const clip = selectedLayerIndex !== null ? paramLayerStates[selectedLayerIndex]?.activeClip : null;
       const v = clip?.videoElement;
       if (clip?.type === 'video' && v) {
         syncTrimmedVideoPlayback(v, clip);
@@ -612,7 +685,7 @@
   let performerResizeStartY = 0;
   let performerResizeStartTop = 0;
 
-  $: performerTop = performerTopOverride ?? (previewSectionHeight + 56);
+  $: performerTop = performerTopOverride ?? previewSectionHeight + 56;
 
   function onPerformerResizeStart(e: PointerEvent) {
     isResizingPerformer = true;
@@ -698,13 +771,8 @@
   // crossfader UI and must exist before the engine can bind them.
   afterUpdate(() => {
     const engine = renderEngine;
-    const shouldMonitor = (
-      $vjClipLauncher.isOpen &&
-      $vjClipLauncher.crossfaderEnabled &&
-      engine &&
-      deckAPreviewCanvas &&
-      deckBPreviewCanvas
-    );
+    const shouldMonitor =
+      $vjClipLauncher.isOpen && $vjClipLauncher.crossfaderEnabled && engine && deckAPreviewCanvas && deckBPreviewCanvas;
 
     if (shouldMonitor) {
       if (
@@ -741,7 +809,9 @@
     window.removeEventListener('vj-stage-effect-hold', stageEffectHoldHandler);
     releaseAllStageEffectHolds();
     if (vjRecorderHandle && vjIsRecording) {
-      try { vjRecorderHandle.stop(); } catch {}
+      try {
+        vjRecorderHandle.stop();
+      } catch {}
     }
   });
 
@@ -775,7 +845,6 @@
     'pin-light',
   ];
 
-
   // Shader library
   interface ShaderItem {
     id: string;
@@ -799,9 +868,16 @@
     vjRecordingDuration = 0;
     vjRecorderHandle = startRec({
       namePrefix: 'VJ Recording',
-      onDurationUpdate: (s) => { vjRecordingDuration = s; },
-      onComplete: () => { vjIsRecording = false; vjRecorderHandle = null; },
-      onError: (err) => { alert('Failed to start recording: ' + err.message); },
+      onDurationUpdate: (s) => {
+        vjRecordingDuration = s;
+      },
+      onComplete: () => {
+        vjIsRecording = false;
+        vjRecorderHandle = null;
+      },
+      onError: (err) => {
+        alert($t('vj.errors.recording', { values: { message: err.message } }));
+      },
     });
     if (vjRecorderHandle) {
       vjIsRecording = true;
@@ -821,7 +897,19 @@
   }
 
   type VJDragPayload = {
-    type: 'shader' | 'video' | 'image' | 'threejs' | 'spout' | 'effect' | 'splat' | 'model3d' | 'gpu' | 'text' | 'preset' | 'live-source';
+    type:
+      | 'shader'
+      | 'video'
+      | 'image'
+      | 'threejs'
+      | 'spout'
+      | 'effect'
+      | 'splat'
+      | 'model3d'
+      | 'gpu'
+      | 'text'
+      | 'preset'
+      | 'live-source';
     id: string;
     spoutName?: string;
     pluginName?: string;
@@ -870,7 +958,11 @@
     src: 'gpu-layer' | 'text-layer';
   };
 
-  type MediaTrayDropPayload = MediaTrayMediaPayload | MediaTrayLiveSourcePayload | MediaTrayPluginPayload | MediaTrayCreatorPayload;
+  type MediaTrayDropPayload =
+    | MediaTrayMediaPayload
+    | MediaTrayLiveSourcePayload
+    | MediaTrayPluginPayload
+    | MediaTrayCreatorPayload;
 
   // Drag state for clips
   let draggedClip: VJDragPayload | null = null;
@@ -932,7 +1024,10 @@
   /** Tiny Svelte action — focus + select the input on mount so the
    *  user can type immediately. Used by the inline rename input. */
   function focusOnMount(node: HTMLInputElement) {
-    queueMicrotask(() => { node.focus(); node.select(); });
+    queueMicrotask(() => {
+      node.focus();
+      node.select();
+    });
   }
   // Clip-preview panel state — opened from the cell context menu's Edit/Preview item.
   let previewPanel: { layer: number; column: number; clip: VJClip; bank: VJDeck } | null = null;
@@ -995,15 +1090,16 @@
     const _states = paramLayerStates;
     const _grid = paramClipGrid;
     const deckTag = $vjClipLauncher.crossfaderEnabled ? ` (Deck ${paramDeck})` : '';
-    if (effectsTab === 'composition') return 'COMPOSITION FX';
+    if (effectsTab === 'composition') return `${$t('vj.effects.context.composition')} FX`;
     if (effectsTab === 'led') return 'LED FX';
     if (effectsTab === 'clip') {
-      if (selectedLayerIndex === null) return 'CLIP FX';
+      if (selectedLayerIndex === null) return `${$t('vj.effects.context.clip')} FX`;
       const activeCol = _states[selectedLayerIndex].activeColumn;
       const clip = activeCol !== null ? _grid[selectedLayerIndex][activeCol] : null;
-      return clip ? `CLIP: ${clip.name}${deckTag}` : 'CLIP FX';
+      return clip ? `${$t('vj.effects.context.clip')}: ${clip.name}${deckTag}` : `${$t('vj.effects.context.clip')} FX`;
     }
-    return selectedLayerIndex !== null ? `LAYER ${selectedLayerIndex + 1} FX${deckTag}` : 'LAYER FX';
+    const layerLabel = $t('vj.effects.context.layer');
+    return selectedLayerIndex !== null ? `${layerLabel} ${selectedLayerIndex + 1} FX${deckTag}` : `${layerLabel} FX`;
   })();
 
   // Track active clip ID to force shader params re-render when clip changes.
@@ -1066,7 +1162,7 @@
   let vjScreenPickerLoading = false;
 
   function disposeVjLiveSource(source: VJLiveSource) {
-    try { source.stream?.getTracks().forEach(track => { track.onended = null; track.stop(); }); } catch {}
+    try { source.stream?.getTracks().forEach((track) => { track.onended = null; track.stop(); }); } catch {}
     if (source.videoEl) {
       try { source.videoEl.pause(); } catch {}
       try { source.videoEl.srcObject = null; } catch {}
@@ -1094,8 +1190,10 @@
   }
 
   function vjSpoutSenderName(source: VJLiveSource): string {
-    return source.spoutSenderName
-      || source.name.replace(`${getTextureShareLabel()}: `, '').replace('Spout: ', '').trim();
+    return (
+      source.spoutSenderName
+      || source.name.replace(`${getTextureShareLabel()}: `, '').replace('Spout: ', '').trim()
+    );
   }
 
   function createVJClipFromLiveSource(source: VJLiveSource): VJClip | null {
@@ -1154,9 +1252,11 @@
   }
 
   function findMediaTrayLiveSource(sourceId: string): MediaTrayLiveSourcePayload | null {
-    return mediaTrayLiveSources.find((source) => source.id === sourceId)
+    return (
+      mediaTrayLiveSources.find((source) => source.id === sourceId)
       || windowMediaTrayLiveSources().find((source) => source.id === sourceId)
-      || null;
+      || null
+    );
   }
 
   function ensureMediaTrayLiveVideoElement(source: MediaTrayLiveSourcePayload): HTMLVideoElement | undefined {
@@ -1173,8 +1273,9 @@
   }
 
   function mediaTraySourceAsVJLiveSource(source: MediaTrayLiveSourcePayload): VJLiveSource {
-    const videoEl = (source.sourceType === 'webcam' || source.sourceType === 'capture')
-      ? ensureMediaTrayLiveVideoElement(source)
+    const videoEl =
+      source.sourceType === 'webcam' || source.sourceType === 'capture'
+        ? ensureMediaTrayLiveVideoElement(source)
       : source.videoEl;
     return {
       id: source.id,
@@ -1204,7 +1305,8 @@
       `live://ndi/${sourceId}`,
       sourceId,
       senderName,
-    ].filter(Boolean));
+    ].filter(Boolean),
+    );
 
     const grids = [deckGrid('A'), deckGrid('B')];
     return grids.some((grid) => grid.some((row) => row.some((clip) => {
@@ -1212,7 +1314,9 @@
       if (candidates.has(clip.src) || (clip.spoutSource && candidates.has(clip.spoutSource))) return true;
       if (clip.ndiSource?.senderName && candidates.has(clip.ndiSource.senderName)) return true;
       return false;
-    })));
+    }),
+      ),
+    );
   }
 
   function activeVJDeckForAdd(): VJDeck {
@@ -1224,8 +1328,7 @@
     const startLayer = selectedLayerIndex ?? 0;
     const layerOrder = [
       startLayer,
-      ...layerIndices.filter((idx) => idx !== startLayer),
-    ];
+      ...layerIndices.filter((idx) => idx !== startLayer)];
     for (const layer of layerOrder) {
       for (const column of columnIndices) {
         if (!grid[layer]?.[column]) return { layer, column };
@@ -1246,13 +1349,13 @@
   function placeMediaTrayPayloadOnLayer(payload: MediaTrayDropPayload, layerIndex: number, bank: VJDeck): boolean {
     const column = findNextEmptyVJColumn(layerIndex, bank);
     if (column === null) {
-      showToast('No empty slot on that VJ layer.', 'warning');
+      showToast($t('vj.errors.noLayerSlot'), 'warning');
       return true;
     }
 
     const clip = createVJClipFromMediaTrayPayload(payload);
     if (!clip) {
-      showToast('That source is not ready for the VJ deck yet.', 'warning');
+      showToast($t('vj.errors.sourceNotReady'), 'warning');
       return true;
     }
 
@@ -1301,13 +1404,13 @@
   function addMediaTrayPayloadToDeck(payload: MediaTrayDropPayload, bank: VJDeck = activeVJDeckForAdd()) {
     const target = findNextEmptyVJCell(bank);
     if (!target) {
-      showToast('No empty VJ deck slot available.', 'warning');
+      showToast($t('vj.errors.noDeckSlot'), 'warning');
       return;
     }
 
     const clip = createVJClipFromMediaTrayPayload(payload);
     if (!clip) {
-      showToast('That source is not ready for the VJ deck yet.', 'warning');
+      showToast($t('vj.errors.sourceNotReady'), 'warning');
       return;
     }
 
@@ -1332,14 +1435,14 @@
   let vjNdiAvailable = false;
   let vjNdiChecked = false;
   let vjNdiScanning = false;
-  let vjNdiStatusHint = 'Open an NDI® sender in MadMapper, Resolume, OBS, or another VJ app on this machine or network';
+  let vjNdiStatusHint = $t('vj.sources.ndiScanHint');
   async function vjStartNdiScan() {
     const api = (window as any).ghostNDI;
     if (!api) {
       vjNdiChecked = true;
       vjNdiAvailable = false;
       vjDetectedNdiSources = [];
-      vjNdiStatusHint = 'NDI® is optional and not bundled in this build';
+      vjNdiStatusHint = $t('vj.sources.ndiOptional');
       return;
     }
     try {
@@ -1348,13 +1451,13 @@
       vjNdiAvailable = !!avail?.available;
       if (!vjNdiAvailable) {
         vjDetectedNdiSources = [];
-        vjNdiStatusHint = avail?.error || 'Install NDI and restart Ghost Arcade';
+        vjNdiStatusHint = avail?.error || $t('vj.sources.ndiInstall');
       }
     } catch {
       vjNdiChecked = true;
       vjNdiAvailable = false;
       vjDetectedNdiSources = [];
-      vjNdiStatusHint = 'Install NDI and restart Ghost Arcade';
+      vjNdiStatusHint = $t('vj.sources.ndiInstall');
     }
     if (!vjNdiAvailable) return;
     if (vjNdiScanInterval) return;
@@ -1368,7 +1471,7 @@
             url: typeof src === 'object' && src?.url ? String(src.url) : '',
           }))
           .filter((src: { name: string }) => src.name.length > 0);
-        vjNdiStatusHint = 'Open an NDI® sender in MadMapper, Resolume, OBS, or another VJ app on this machine or network';
+        vjNdiStatusHint = $t('vj.sources.ndiScanHint');
       } catch (err) {
         vjNdiStatusHint = err instanceof Error ? err.message : String(err);
       } finally {
@@ -1379,7 +1482,10 @@
     vjNdiScanInterval = setInterval(tick, 2000);
   }
   function vjStopNdiScan() {
-    if (vjNdiScanInterval) { clearInterval(vjNdiScanInterval); vjNdiScanInterval = null; }
+    if (vjNdiScanInterval) {
+      clearInterval(vjNdiScanInterval);
+      vjNdiScanInterval = null;
+    }
   }
   function vjAddNdiSource(sourceName: string) {
     const senderName = sourceName.trim();
@@ -1398,21 +1504,24 @@
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
       const videoTrack = stream.getVideoTracks()[0];
-      const label = videoTrack.label || 'Webcam';
+      const label = videoTrack.label || $t('vj.sources.webcam');
       const videoEl = document.createElement('video');
       videoEl.srcObject = stream;
       videoEl.muted = true;
       videoEl.playsInline = true;
       videoEl.autoplay = true;
       await videoEl.play();
-      vjLiveSources = [...vjLiveSources, {
-        id: crypto.randomUUID?.() || Date.now().toString(),
-        name: label,
-        type: 'webcam',
-        status: 'live',
-        stream,
-        videoEl,
-      }];
+      vjLiveSources = [
+        ...vjLiveSources,
+        {
+          id: crypto.randomUUID?.() || Date.now().toString(),
+          name: label,
+          type: 'webcam',
+          status: 'live',
+          stream,
+          videoEl,
+        },
+      ];
     } catch (err) {
       console.error('VJ webcam error:', err);
     }
@@ -1431,7 +1540,7 @@
     } catch (err) {
       console.error('VJ capture source list error:', err);
       vjScreenPickerSources = [];
-      showToast('Could not list screen capture sources.', 'error');
+      showToast($t('vj.errors.listCaptureSources'), 'error');
     } finally {
       vjScreenPickerLoading = false;
     }
@@ -1453,7 +1562,7 @@
         } as any,
       });
       const videoTrack = stream.getVideoTracks()[0];
-      const label = picked.name || videoTrack.label || 'Capture';
+      const label = picked.name || videoTrack.label || $t('vj.sources.capture');
       const videoEl = document.createElement('video');
       videoEl.srcObject = stream;
       videoEl.muted = true;
@@ -1472,7 +1581,7 @@
       vjLiveSources = [...vjLiveSources, src];
     } catch (err) {
       console.error('VJ capture source error:', err);
-      showToast(`Could not capture "${picked.name}".`, 'error');
+      showToast($t('vj.errors.capture', { values: { name: picked.name } }), 'error');
     }
   }
 
@@ -1483,7 +1592,7 @@
         audio: false,
       });
       const videoTrack = stream.getVideoTracks()[0];
-      const label = videoTrack.label || 'Screen Capture';
+      const label = videoTrack.label || $t('vj.sources.capture');
       const videoEl = document.createElement('video');
       videoEl.srcObject = stream;
       videoEl.muted = true;
@@ -1510,7 +1619,7 @@
   let vjSpoutInput = '';
   let vjDetectedSpoutSenders: string[] = [];
   let vjTextureShareAvailable = true;
-  let vjTextureShareHint = `Open a ${getTextureShareLabel()} sender in MadMapper, Resolume, OBS, or another VJ app`;
+  let vjTextureShareHint = $t('vj.sources.textureScanHint', { values: { texture: getTextureShareLabel() } });
 
   async function vjScanSpout() {
     const { invoke: bridgeInvoke, isDesktopApp } = await import('$lib/bridge');
@@ -1523,8 +1632,8 @@
         }>('texture_share_info');
         vjTextureShareAvailable = !!info.available;
         vjTextureShareHint = info.available
-          ? `Open a ${info.label} sender in MadMapper, Resolume, OBS, or another VJ app`
-          : (info.error || `${info.label} native addon unavailable`);
+          ? $t('vj.sources.textureScanHint', { values: { texture: info.label } })
+          : info.error || $t('vj.sources.textureUnavailable', { values: { texture: info.label } });
         if (!info.available) {
           vjDetectedSpoutSenders = [];
           return;
@@ -1551,16 +1660,14 @@
     };
     vjLiveSources = [...vjLiveSources, src];
     setTimeout(() => {
-      vjLiveSources = vjLiveSources.map(s =>
-        s.id === src.id ? { ...s, status: 'live' as const } : s
-      );
+      vjLiveSources = vjLiveSources.map((s) => (s.id === src.id ? { ...s, status: 'live' as const } : s));
     }, 1500);
   }
 
   function vjStopSource(id: string) {
-    const s = vjLiveSources.find(s => s.id === id);
+    const s = vjLiveSources.find((s) => s.id === id);
     if (s) disposeVjLiveSource(s);
-    vjLiveSources = vjLiveSources.filter(s => s.id !== id);
+    vjLiveSources = vjLiveSources.filter((s) => s.id !== id);
   }
 
   // Three.js items (built-in)
@@ -1683,9 +1790,8 @@
               if (input.TYPE !== 'image') {
                 // Apply manifest default overrides if present
                 const manifestDefault = entry.defaults?.[input.NAME];
-                shaderItem.values[input.NAME] = manifestDefault !== undefined
-                  ? manifestDefault
-                  : getInputDefault(input);
+                shaderItem.values[input.NAME] =
+                  manifestDefault !== undefined ? manifestDefault : getInputDefault(input);
               }
             }
 
@@ -1831,7 +1937,7 @@
     try {
       const parsed = parseISF(clip.shaderCode);
       const inputs = parsed.metadata.INPUTS.filter(
-        i => i.TYPE !== 'image' && i.TYPE !== 'audio' && i.TYPE !== 'audioFFT'
+        (i) => i.TYPE !== 'image' && i.TYPE !== 'audio' && i.TYPE !== 'audioFFT',
       );
       cachedShaderInputs.set(cacheKey, inputs);
       // Register param ranges in the per-clip namespace.
@@ -1886,8 +1992,7 @@
     // shader library's loaded items have `values` already merged
     // from manifest.defaults + INPUT.DEFAULT at load time.
     const libraryEntry = activeClip
-      ? shaders.find(s => s.src === activeClip.src)
-        ?? shaders.find(s => s.shaderCode === activeClip.shaderCode)
+      ? (shaders.find((s) => s.src === activeClip.src) ?? shaders.find((s) => s.shaderCode === activeClip.shaderCode))
       : undefined;
     for (const input of selectedClipShaderInputs) {
       // Clear modulations on BOTH the per-clip and legacy layer
@@ -1959,11 +2064,7 @@
   /** Update one field on a shader param's Auto config. Writes through
    *  vjClipLauncher.setClipShaderValueAuto so the change rides with
    *  the clip — survives clip-grid moves, deck swaps, project saves. */
-  function setShaderAutoField<K extends keyof AutoConfig>(
-    paramName: string,
-    field: K,
-    value: AutoConfig[K],
-  ) {
+  function setShaderAutoField<K extends keyof AutoConfig>(paramName: string, field: K, value: AutoConfig[K]) {
     if (!activeClipId) return;
     const cur = getShaderAuto(paramName);
     if (!cur) return;
@@ -1975,7 +2076,8 @@
    *  shaderValueAuto; everything else continues through the audio
    *  modulation store. Switching between auto and audio-source
    *  clears the OTHER path to keep them mutually exclusive. */
-  function setShaderParamSource(layerIndex: number, paramName: string, source: ModSource, paramMin: number, paramMax: number) {
+  function setShaderParamSource(layerIndex: number, paramName: string, source: ModSource, paramMin: number, paramMax: number,
+  ) {
     if (source === 'auto') {
       // Clear any audio modulation for this param.
       const mClip = activeClipId ? modulationStore.getModulation(layerIndex, paramName, paramDeck, 'vj', activeClipId) : undefined;
@@ -2301,7 +2403,11 @@
     if (kind === 'video') {
       const video = document.createElement('video');
       // crossOrigin BEFORE src — order matters on Chromium 130.
-      video.crossOrigin = 'anonymous'; video.loop = false; video.muted = true; video.playsInline = true; video.preload = 'auto';
+      video.crossOrigin = 'anonymous';
+      video.loop = false;
+      video.muted = true;
+      video.playsInline = true;
+      video.preload = 'auto';
       video.src = url;
       const item: MediaItem = {
         id: generateUUID(),
@@ -2398,7 +2504,7 @@
   function handleCellDragOver(e: DragEvent, layerIndex: number, columnIndex: number, bank: VJDeck = 'A') {
     e.preventDefault();
     if (e.dataTransfer) {
-      e.dataTransfer.dropEffect = e.dataTransfer.files.length > 0 ? 'copy' : (dragSourceCell ? 'move' : 'copy');
+      e.dataTransfer.dropEffect = e.dataTransfer.files.length > 0 ? 'copy' : dragSourceCell ? 'move' : 'copy';
     }
     dragOverCell = { layer: layerIndex, column: columnIndex, bank };
   }
@@ -2448,32 +2554,48 @@
           dataType: isSplatFormat ? 'gaussian' : 'pointcloud',
           _originalFileName: file.name,  // Pass filename so Canvas can detect .splat format
           _assetRef: assetRef,
-        } as any, bank);
+        } as any, bank,
+        );
         vjClipLauncher.setClip(layerIndex, columnIndex, {
           ...(deckGrid(bank)[layerIndex]?.[columnIndex] as VJClip),
           name: file.name.replace(/\.[^.]+$/, ''),
-        }, bank);
+        }, bank,
+        );
       } else {
         // Use blob URL for 3D model files. AssetRef carries the durable disk
         // path so save/reload restores the model — blob URLs alone can't.
         const { assetRef, runtimeUrl: blobUrl } = createAssetRefFromFile(file);
         const ext = file.name.split('.').pop()?.toLowerCase() || 'glb';
-        vjClipLauncher.updateClipModel3DContent(layerIndex, columnIndex, {
-          modelData: blobUrl,
-          modelFormat: ext as Model3DFormat,
-          modelName: file.name,
-          _assetRef: assetRef,
-        } as any, bank);
-        vjClipLauncher.setClip(layerIndex, columnIndex, {
-          ...(deckGrid(bank)[layerIndex]?.[columnIndex] as VJClip),
-          name: file.name.replace(/\.[^.]+$/, ''),
-        }, bank);
+        vjClipLauncher.updateClipModel3DContent(
+          layerIndex,
+          columnIndex,
+          {
+            modelData: blobUrl,
+            modelFormat: ext as Model3DFormat,
+            modelName: file.name,
+            _assetRef: assetRef,
+          } as any,
+          bank,
+        );
+        vjClipLauncher.setClip(
+          layerIndex,
+          columnIndex,
+          {
+            ...(deckGrid(bank)[layerIndex]?.[columnIndex] as VJClip),
+            name: file.name.replace(/\.[^.]+$/, ''),
+          },
+          bank,
+        );
       }
 
       // Revoke after a short tick — gives Canvas a frame to swap in the new
       // texture before we yank the old one from memory.
       if (priorBlobUrl) {
-        setTimeout(() => { try { URL.revokeObjectURL(priorBlobUrl); } catch {} }, 500);
+        setTimeout(() => {
+          try {
+            URL.revokeObjectURL(priorBlobUrl);
+          } catch {}
+        }, 500);
       }
     };
     input.click();
@@ -2514,7 +2636,7 @@
 
     if (payload.type === 'live-source') {
       const registeredSource = findMediaTrayLiveSource(payload.id);
-      const source = (payload.videoEl || payload.stream) ? payload : (registeredSource ?? payload);
+      const source = payload.videoEl || payload.stream ? payload : (registeredSource ?? payload);
       return createVJClipFromMediaTrayLiveSource(source);
     }
 
@@ -2606,10 +2728,9 @@
       const grid = deckGrid(bank);
       const targets = [
         { layer: layerIndex, column: columnIndex },
-        ...layerIndices.flatMap((layer) => columnIndices.map((column) => ({ layer, column })))
-          .filter(({ layer, column }) =>
-            !(layer === layerIndex && column === columnIndex) && !grid[layer]?.[column]
-          ),
+        ...layerIndices
+          .flatMap((layer) => columnIndices.map((column) => ({ layer, column })))
+          .filter(({ layer, column }) => !(layer === layerIndex && column === columnIndex) && !grid[layer]?.[column]),
       ];
       let placed = 0;
       for (const file of externalFiles) {
@@ -2617,7 +2738,7 @@
         if (!item) continue;
         const target = targets[placed];
         if (!target) {
-          showToast('Media imported, but there are no more empty VJ deck slots.', 'warning');
+          showToast($t('vj.errors.importedNoSlots'), 'warning');
           break;
         }
         vjClipLauncher.setClip(target.layer, target.column, createVJClipFromMediaItem(item), bank);
@@ -2647,9 +2768,7 @@
       const srcClip = deckGrid(dragSourceCell.bank)[dragSourceCell.layer]?.[dragSourceCell.column];
       const destClip = deckGrid(bank)[layerIndex]?.[columnIndex];
       const sameSpot =
-        dragSourceCell.bank === bank &&
-        dragSourceCell.layer === layerIndex &&
-        dragSourceCell.column === columnIndex;
+        dragSourceCell.bank === bank && dragSourceCell.layer === layerIndex && dragSourceCell.column === columnIndex;
       if (srcClip && !sameSpot) {
         const movedClip: VJClip = { ...srcClip, id: generateUUID() };
         vjClipLauncher.setClip(layerIndex, columnIndex, movedClip, bank);
@@ -2684,17 +2803,17 @@
     if (!draggedClip && e.dataTransfer) {
       const raw = e.dataTransfer.getData('application/x-ghost-vj-clip') || e.dataTransfer.getData('text/plain');
       try {
-        const parsed = raw ? JSON.parse(raw) as VJDragPayload : null;
+        const parsed = raw ? (JSON.parse(raw) as VJDragPayload) : null;
         if (parsed && typeof parsed.type === 'string' && typeof parsed.id === 'string') {
           draggedClip = parsed;
         }
       } catch {
-        const media = raw ? $mediaLibrary.find(m => m.id === raw) : null;
+        const media = raw ? $mediaLibrary.find((m) => m.id === raw) : null;
         if (media) {
           draggedClip = { type: media.type, id: media.id };
-        } else if (raw && shaders.some(s => s.id === raw)) {
+        } else if (raw && shaders.some((s) => s.id === raw)) {
           draggedClip = { type: 'shader', id: raw };
-        } else if (raw && threejsItems.some(t => t.id === raw)) {
+        } else if (raw && threejsItems.some((t) => t.id === raw)) {
           draggedClip = { type: 'threejs', id: raw };
         }
       }
@@ -2707,12 +2826,14 @@
       const traySource = findMediaTrayLiveSource(draggedClip.id);
       const vjClip = liveSource
         ? createVJClipFromLiveSource(liveSource)
-        : (traySource ? createVJClipFromMediaTrayLiveSource(traySource) : null);
+        : traySource
+          ? createVJClipFromMediaTrayLiveSource(traySource)
+          : null;
       if (vjClip) {
         vjClipLauncher.setClip(layerIndex, columnIndex, vjClip, bank);
       }
     } else if (draggedClip.type === 'shader') {
-      const shader = shaders.find(s => s.id === draggedClip!.id);
+      const shader = shaders.find((s) => s.id === draggedClip!.id);
       if (shader) {
         const vjClip: VJClip = {
           id: generateUUID(),
@@ -2726,7 +2847,7 @@
         vjClipLauncher.setClip(layerIndex, columnIndex, vjClip, bank);
       }
     } else if (draggedClip.type === 'threejs') {
-      const threejsItem = threejsItems.find(t => t.id === draggedClip!.id);
+      const threejsItem = threejsItems.find((t) => t.id === draggedClip!.id);
       if (threejsItem) {
         const vjClip: VJClip = {
           id: generateUUID(),
@@ -2746,7 +2867,7 @@
       // ("spout" became the umbrella for live-stream-from-elsewhere
       // because Spout was the first one) — kept for back-compat with
       // saved projects.
-      const ndiLive = vjLiveSources.find(s => s.id === draggedClip!.id && s.type === 'ndi');
+      const ndiLive = vjLiveSources.find((s) => s.id === draggedClip!.id && s.type === 'ndi');
       const vjClip: VJClip = {
         id: generateUUID(),
         type: 'spout',
@@ -2847,7 +2968,7 @@
         vjClipLauncher.setClip(layerIndex, columnIndex, vjClip, bank);
       }
     } else {
-      const media = $mediaLibrary.find(m => m.id === draggedClip!.id);
+      const media = $mediaLibrary.find((m) => m.id === draggedClip!.id);
       if (media) {
         const vjClip: VJClip = {
           id: generateUUID(),
@@ -3264,22 +3385,22 @@
     if ($mediaLibrary !== _vjMediaLib) {
       _vjMediaLib = $mediaLibrary;
       _vjMediaVideos = $mediaLibrary
-        .filter(m => m.type === 'video')
-        .map(m => ({ ...m, itemType: 'video' as const }));
+        .filter((m) => m.type === 'video')
+        .map((m) => ({ ...m, itemType: 'video' as const }));
       _vjMediaImages = $mediaLibrary
-        .filter(m => m.type === 'image')
-        .map(m => ({ ...m, itemType: 'image' as const }));
+        .filter((m) => m.type === 'image')
+        .map((m) => ({ ...m, itemType: 'image' as const }));
     }
     if (shaders !== _vjMediaShadersSrc) {
       _vjMediaShadersSrc = shaders;
-      _vjMediaShaders = shaders.map(s => ({
+      _vjMediaShaders = shaders.map((s) => ({
         id: s.id, name: s.name, thumbnail: s.thumbnail, src: s.src,
         itemType: 'shader' as const,
       }));
     }
     if (threejsItems !== _vjMediaThreejsSrc) {
       _vjMediaThreejsSrc = threejsItems;
-      _vjMediaThreejs = threejsItems.map(t => ({
+      _vjMediaThreejs = threejsItems.map((t) => ({
         id: t.id, name: t.name, thumbnail: t.thumbnail, src: t.src,
         itemType: 'threejs' as const,
       }));
@@ -3342,7 +3463,12 @@
     // `.src=` already initiated the load — don't call `.load()`.
     await new Promise<void>((resolve) => {
       let resolved = false;
-      const done = () => { if (!resolved) { resolved = true; resolve(); } };
+      const done = () => {
+        if (!resolved) {
+          resolved = true;
+          resolve();
+        }
+      };
       video.oncanplaythrough = done;
       video.onloadeddata = done;
       video.onerror = done;
@@ -3353,7 +3479,7 @@
     let thumbnail = '';
     try {
       await video.play().catch(() => {});
-      await new Promise(r => setTimeout(r, 120));
+      await new Promise((r) => setTimeout(r, 120));
       video.pause();
       const canvas = document.createElement('canvas');
       canvas.width = 160;
@@ -3369,7 +3495,9 @@
     }
 
     if (thumbnail) {
-      try { mediaLibrary.updateItem(id, { thumbnail }); } catch {}
+      try {
+        mediaLibrary.updateItem(id, { thumbnail });
+      } catch {}
     }
 
     try {
@@ -3385,7 +3513,9 @@
     }
 
     if (src && src !== blobUrl) {
-      try { URL.revokeObjectURL(src); } catch {}
+      try {
+        URL.revokeObjectURL(src);
+      } catch {}
     }
   }
 
@@ -3429,9 +3559,7 @@
   }
 
   function vjEffectControlLayerId(layerIndex: number, deck: VJDeck): string {
-    return $vjClipLauncher.crossfaderEnabled
-      ? `vj-layer-${layerIndex}-${deck}`
-      : `vj-layer-${layerIndex}`;
+    return $vjClipLauncher.crossfaderEnabled ? `vj-layer-${layerIndex}-${deck}` : `vj-layer-${layerIndex}`;
   }
 
   // Drive the video-controls polling tick from the selected clip type. Same
@@ -3457,26 +3585,26 @@
         <img src="{import.meta.env.BASE_URL}logo.png" alt="Ghost Arcade" class="vj-logo" />
         <!-- File Menu -->
         <div class="vj-file-menu-container">
-          <button class="vj-file-menu-btn" class:active={vjFileMenuOpen} onclick={() => vjFileMenuOpen = !vjFileMenuOpen}>
-            File
+          <button class="vj-file-menu-btn" class:active={vjFileMenuOpen} onclick={() => (vjFileMenuOpen = !vjFileMenuOpen)}>
+            {$t('vj.file.label')}
             <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor"><path d="M7 10l5 5 5-5z"/></svg>
           </button>
           {#if vjFileMenuOpen}
             <div class="vj-file-menu-dropdown">
-              <button class="vj-menu-item" onclick={() => vjFileAction('new')}>New<span class="vj-menu-sc">Ctrl+N</span></button>
-              <button class="vj-menu-item" onclick={() => vjFileAction('open')}>Open...<span class="vj-menu-sc">Ctrl+O</span></button>
+              <button class="vj-menu-item" onclick={() => vjFileAction('new')}>{$t('vj.file.new')}<span class="vj-menu-sc">Ctrl+N</span></button>
+              <button class="vj-menu-item" onclick={() => vjFileAction('open')}>{$t('vj.file.open')}<span class="vj-menu-sc">Ctrl+O</span></button>
               <div class="vj-menu-sep"></div>
-              <button class="vj-menu-item" onclick={() => vjFileAction('save')}>Save<span class="vj-menu-sc">Ctrl+S</span></button>
-              <button class="vj-menu-item" onclick={() => vjFileAction('saveAs')}>Save As...<span class="vj-menu-sc">Ctrl+Shift+S</span></button>
+              <button class="vj-menu-item" onclick={() => vjFileAction('save')}>{$t('vj.file.save')}<span class="vj-menu-sc">Ctrl+S</span></button>
+              <button class="vj-menu-item" onclick={() => vjFileAction('saveAs')}>{$t('vj.file.saveAs')}<span class="vj-menu-sc">Ctrl+Shift+S</span></button>
               <div class="vj-menu-sep"></div>
-              <button class="vj-menu-item" onclick={() => vjFileAction('importPresets')}>Import Presets...</button>
+              <button class="vj-menu-item" onclick={() => vjFileAction('importPresets')}>{$t('vj.file.importPresets')}</button>
               <div class="vj-menu-sep"></div>
-              <button class="vj-menu-item" onclick={() => vjFileAction('undo')}>Undo<span class="vj-menu-sc">Ctrl+Z</span></button>
-              <button class="vj-menu-item" onclick={() => vjFileAction('redo')}>Redo<span class="vj-menu-sc">Ctrl+Y</span></button>
+              <button class="vj-menu-item" onclick={() => vjFileAction('undo')}>{$t('vj.file.undo')}<span class="vj-menu-sc">Ctrl+Z</span></button>
+              <button class="vj-menu-item" onclick={() => vjFileAction('redo')}>{$t('vj.file.redo')}<span class="vj-menu-sc">Ctrl+Y</span></button>
             </div>
           {/if}
         </div>
-        <div class="master-control" title="Master output opacity">
+        <div class="master-control" title={$t('vj.header.masterOpacity')}>
           <span class="master-label">M</span>
           <input
             type="range"
@@ -3487,7 +3615,7 @@
             oninput={handleMasterOpacityChange}
             class="master-slider"
             data-midi-path="vj:master:opacity"
-            data-midi-label="Master Opacity"
+            data-midi-label={$t('vj.midiLabels.masterOpacity')}
             data-midi-min="0"
             data-midi-max="1"
             data-midi-step="0.01"
@@ -3502,10 +3630,10 @@
              trained on mapping mode recognize it immediately. -->
         <button class="kill-output-btn" onclick={handleStopAll}
           data-midi-path="vj:stopall"
-          data-midi-label="Stop All"
+          data-midi-label={$t('vj.midiLabels.stopAll')}
           data-midi-mode="toggle"
-          title="Stop All Clips (kills output)"
-          aria-label="Stop all clips"
+          title={$t('vj.header.stopAllTitle')}
+          aria-label={$t('vj.header.stopAllAria')}
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="10"/>
@@ -3516,9 +3644,9 @@
 
       {#if $vjClipLauncher.isLive}
         <div class="header-stage">
-          <button class="stage-mix-btn" class:active={!$vjClipLauncher.stageMode && !$vjClipLauncher.mapMode} onclick={() => vjClipLauncher.setSubMode('mix')} title="Raw VJ clip output">MIX</button>
-          <button class="stage-mix-btn" class:active={$vjClipLauncher.stageMode} onclick={() => vjClipLauncher.setSubMode('stage')} title="Route VJ content through the active mapping topology">STAGE</button>
-          <button class="stage-mix-btn" class:active={$vjClipLauncher.mapMode} onclick={() => vjClipLauncher.setSubMode('map')} title="Preset-only mixer — VJ layer slots hold mapping presets that stack with opacity + blend modes">MAP</button>
+          <button class="stage-mix-btn" class:active={!$vjClipLauncher.stageMode && !$vjClipLauncher.mapMode} onclick={() => vjClipLauncher.setSubMode('mix')} title={$t('vj.header.mode.mixTitle')}>MIX</button>
+          <button class="stage-mix-btn" class:active={$vjClipLauncher.stageMode} onclick={() => vjClipLauncher.setSubMode('stage')} title={$t('vj.header.mode.stageTitle')}>STAGE</button>
+          <button class="stage-mix-btn" class:active={$vjClipLauncher.mapMode} onclick={() => vjClipLauncher.setSubMode('map')} title={$t('vj.header.mode.mapTitle')}>MAP</button>
         </div>
       {/if}
 
@@ -3549,25 +3677,33 @@
              1/4..4bar = beat-aligned launches anchored to detected beats
              (or virtual clock at current BPM if audio is off). Beginners
              leave this OFF; pros snap to bar boundaries for tight drops. -->
-        <div class="header-quant" title="Launch quantize — clips fire on the next beat boundary instead of instantly">
-          <span class="header-quant-label">QUANT</span>
+        <div class="header-quant" title={$t('vj.header.quantize.title')}>
+          <span class="header-quant-label">{$t('vj.header.quantize.label')}</span>
           <select
             class="header-quant-select"
             value={$vjClipLauncher.quantization}
             onchange={(e) => vjClipLauncher.setQuantization((e.target as HTMLSelectElement).value as any)}
             data-midi-path="vj:quantize"
-            data-midi-label="Launch Quantize"
+            data-midi-label={$t('vj.midiLabels.launchQuantize')}
             data-midi-discrete="true"
           >
-            <option value="off">OFF</option>
+            <option value="off">{$t('vj.header.quantize.off')}</option>
             <option value="1/4">1/4</option>
             <option value="1/2">1/2</option>
-            <option value="1bar">1 BAR</option>
-            <option value="2bar">2 BAR</option>
-            <option value="4bar">4 BAR</option>
+            <option value="1bar">{$t('vj.header.quantize.oneBar')}</option>
+            <option value="2bar">{$t('vj.header.quantize.twoBar')}</option>
+            <option value="4bar">{$t('vj.header.quantize.fourBar')}</option>
           </select>
           {#if $vjClipLauncher.pendingTriggers.length > 0}
-            <span class="header-quant-pending" title="{$vjClipLauncher.pendingTriggers.length} clip{$vjClipLauncher.pendingTriggers.length === 1 ? '' : 's'} queued">
+            <span
+              class="header-quant-pending"
+              title={$t('vj.header.quantize.pending', {
+                values: {
+                  count: $vjClipLauncher.pendingTriggers.length,
+                  suffix: $vjClipLauncher.pendingTriggers.length === 1 ? '' : 's',
+                },
+              })}
+            >
               {$vjClipLauncher.pendingTriggers.length} ·
             </span>
           {/if}
@@ -3586,11 +3722,11 @@
             <span class="vj-rec-time">{formatVJRecordingDuration(vjRecordingDuration)}</span>
           </div>
           <button class="vj-stop-rec-btn" onclick={vjStopRecording}>
-            Stop Rec
+            {$t('vj.header.recording.stop')}
           </button>
         {:else}
-          <button class="vj-rec-btn" onclick={vjStartRecording} title="Record Output">
-            ● REC
+          <button class="vj-rec-btn" onclick={vjStartRecording} title={$t('vj.header.recording.title')}>
+            {$t('vj.header.recording.rec')}
           </button>
         {/if}
 
@@ -3598,14 +3734,14 @@
           class="vj-seq-toggle-btn"
           class:active={$vjLayerSequencer.isOpen}
           onclick={() => vjLayerSequencer.toggleOpen()}
-          title="Layer Sequencer"
-          aria-label="Layer Sequencer"
+          title={$t('vj.header.sequencer')}
+          aria-label={$t('vj.header.sequencer')}
         >
           <svg width="17" height="17" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <rect x="3" y="5" width="4" height="14" rx="1.2" fill="#ff7a66"/>
-            <rect x="10" y="8" width="4" height="11" rx="1.2" fill="#ffd166"/>
-            <rect x="17" y="3" width="4" height="16" rx="1.2" fill="#46d18a"/>
-            <path d="M4 20h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+            <rect x="3" y="5" width="4" height="14" rx="1.2" fill="#ff7a66" />
+            <rect x="10" y="8" width="4" height="11" rx="1.2" fill="#ffd166" />
+            <rect x="17" y="3" width="4" height="16" rx="1.2" fill="#46d18a" />
+            <path d="M4 20h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" />
           </svg>
         </button>
 
@@ -3616,9 +3752,9 @@
             class="ab-toggle-btn"
             class:active={$vjClipLauncher.crossfaderEnabled}
             onclick={() => vjClipLauncher.setCrossfaderEnabled(!$vjClipLauncher.crossfaderEnabled)}
-            title="A/B Crossfader: split the deck into two independent banks with a transition fader between them"
+            title={$t('vj.header.crossfader')}
             data-midi-path="vj:crossfader:enabled"
-            data-midi-label="Crossfader Enabled"
+            data-midi-label={$t('vj.midiLabels.crossfaderEnabled')}
             data-midi-mode="toggle"
           >
             <span class="ab-toggle-glyph">A/B</span>
@@ -3633,46 +3769,89 @@
                • idle      → translucent purple outline
                • active    → solid purple glow (overlay open)
                • running   → green pulse (started but minimized) -->
-        <button class="performer-atom-btn"
+        <button
+          class="performer-atom-btn"
           class:active={showPerformer}
           class:running={performerStarted && !showPerformer}
-          onclick={() => { showPerformer = !showPerformer; if (showPerformer && !performerStarted) { performerStarted = true; } }}
-          title={showPerformer ? 'Close Performer' : (performerStarted ? 'Show Performer (running)' : 'Open Performer (keyboard launcher)')}
-          aria-label="Toggle Performer"
+          onclick={() => {
+            showPerformer = !showPerformer;
+            if (showPerformer && !performerStarted) {
+              performerStarted = true;
+            }
+          }}
+          title={showPerformer
+            ? $t('vj.header.performer.close')
+            : performerStarted
+              ? $t('vj.header.performer.showRunning')
+              : $t('vj.header.performer.open')}
+          aria-label={$t('vj.header.performer.toggle')}
         >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6">
             <!-- nucleus -->
-            <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none"/>
+            <circle cx="12" cy="12" r="1.5" fill="currentColor" stroke="none" />
             <!-- three orbital ellipses at 60° offsets -->
-            <ellipse cx="12" cy="12" rx="10" ry="4"/>
-            <ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(60 12 12)"/>
-            <ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(120 12 12)"/>
+            <ellipse cx="12" cy="12" rx="10" ry="4" />
+            <ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(60 12 12)" />
+            <ellipse cx="12" cy="12" rx="10" ry="4" transform="rotate(120 12 12)" />
           </svg>
         </button>
 
-        <button class="minimize-btn" onclick={() => window.dispatchEvent(new CustomEvent('open-stage3d'))} title="Open 3D Stage (no need to minimize VJ)">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M12 2L4 7l8 5 8-5z"/><path d="M4 12l8 5 8-5"/><path d="M4 17l8 5 8-5"/>
+        <button
+          class="minimize-btn"
+          onclick={() => window.dispatchEvent(new CustomEvent('open-stage3d'))}
+          title={$t('vj.header.stage3d')}
+        >
+          <svg
+            width="16"
+            height="16"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M12 2L4 7l8 5 8-5z" /><path d="M4 12l8 5 8-5" /><path d="M4 17l8 5 8-5" />
           </svg>
         </button>
-        <button class="minimize-btn" onclick={() => window.dispatchEvent(new CustomEvent('open-settings'))} title="Settings">
+        <button
+          class="minimize-btn"
+          onclick={() => window.dispatchEvent(new CustomEvent('open-settings'))}
+          title={$t('vj.header.settings')}
+        >
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            <circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+            <circle cx="12" cy="12" r="3" /><path
+              d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"
+            />
           </svg>
         </button>
-        <button class="minimize-btn" onclick={handleExitVJClick} title="Exit VJ and stop live output" aria-label="Exit VJ">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M15 18l-6-6 6-6"/>
+        <button
+          class="minimize-btn"
+          onclick={handleExitVJClick}
+          title={$t('vj.header.exitTitle')}
+          aria-label={$t('vj.header.exitAria')}
+        >
+          <svg
+            width="14"
+            height="14"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            stroke-width="2.5"
+            stroke-linecap="round"
+            stroke-linejoin="round"
+          >
+            <path d="M15 18l-6-6 6-6" />
           </svg>
         </button>
-        <button class="exit-btn" onclick={handleExitVJClick}>Exit VJ</button>
+        <button class="exit-btn" onclick={handleExitVJClick}>{$t('vj.header.exitButton')}</button>
       </div>
     </div>
 
     <!-- Stage Presets Bar (visible when stage mode active, stays above overlay content) -->
     {#if $vjClipLauncher.stageMode}
       <div class="stage-presets-bar">
-        <span class="stage-presets-label">Stage Presets</span>
+        <span class="stage-presets-label">{$t('vj.stagePresets.label')}</span>
         <div class="stage-presets-list">
           {#each allStagePresets as preset, presetIdx (preset.id)}
             <button
@@ -3680,9 +3859,9 @@
               class:active={$vjClipLauncher.stagePresetId === preset.id}
               onclick={() => stageRenamingPresetId !== preset.id && loadStagePresetFromUI(preset)}
               oncontextmenu={(e) => openStageContextMenu(e, preset)}
-              title="{preset.name} — double-click name to rename · right-click for Update / Delete"
+              title={$t('vj.stagePresets.itemTitle', { values: { name: preset.name } })}
               data-midi-path={`vj:stage:${presetIdx}`}
-              data-midi-label={`Stage Preset: ${preset.name}`}
+              data-midi-label={$t('vj.stagePresets.itemTitle', { values: { name: preset.name } })}
               data-midi-mode="toggle"
             >
               {#if preset._scope === 'global'}<span class="stage-preset-scope">G</span>{/if}
@@ -3707,14 +3886,18 @@
                 <span
                   class="stage-preset-name"
                   ondblclick={(e) => startStageRename(preset, e)}
-                  title="Double-click to rename"
-                >{preset.name}</span>
+                  title={$t('vj.stagePresets.renameTitle')}>{preset.name}</span
+                >
               {/if}
             </button>
           {/each}
         </div>
-        <button class="stage-preset-save-btn" onclick={() => saveStagePresetWithScope()} title="Save current mapping as a new stage preset">
-          + Save
+        <button
+          class="stage-preset-save-btn"
+          onclick={() => saveStagePresetWithScope()}
+          title={$t('vj.stagePresets.saveTitle')}
+        >
+          {$t('vj.stagePresets.save')}
         </button>
         <!-- Update — overwrites the currently-active stage preset
              with the current layers + effects bundle. Only shown
@@ -3723,22 +3906,22 @@
              destructive overwrite isn't reached by muscle memory
              when the user means "save a new one." -->
         {#if $vjClipLauncher.stagePresetId}
-          {@const activePreset = allStagePresets.find(p => p.id === $vjClipLauncher.stagePresetId)}
+          {@const activePreset = allStagePresets.find((p) => p.id === $vjClipLauncher.stagePresetId)}
           {#if activePreset}
             <button
               class="stage-preset-update-btn"
               onclick={() => updateStagePresetInPlace(activePreset)}
-              title={`Overwrite "${activePreset.name}" with the current layers + effects`}
+              title={$t('vj.stagePresets.updateTitle', { values: { name: activePreset.name } })}
             >
-              ↻ Update
+              {$t('vj.stagePresets.update')}
             </button>
           {/if}
         {/if}
         <button class="stage-scope-toggle"
           class:global={stageSaveScope === 'global'}
-          onclick={() => stageSaveScope = stageSaveScope === 'project' ? 'global' : 'project'}
-          title={stageSaveScope === 'project' ? 'Save to project' : 'Save globally'}
-          aria-label={stageSaveScope === 'project' ? 'Save stage preset to project' : 'Save stage preset globally'}>
+          onclick={() => (stageSaveScope = stageSaveScope === 'project' ? 'global' : 'project')}
+          title={stageSaveScope === 'project' ? $t('vj.stagePresets.saveProject') : $t('vj.stagePresets.saveGlobal')}
+          aria-label={stageSaveScope === 'project' ? $t('vj.stagePresets.ariaProject') : $t('vj.stagePresets.ariaGlobal')}>
           {#if stageSaveScope === 'project'}
             <svg class="stage-scope-icon" viewBox="0 0 24 24" aria-hidden="true">
               <path class="scope-fill" d="M3.5 8.2h17v10.2h-17z"/>
@@ -3766,26 +3949,26 @@
         <!-- LEFT: Composition / Layer / Clip effects -->
         <div class="effects-panel-vj">
           <div class="effects-tabs">
-            <button class="fx-tab" class:active={effectsTab === 'composition'} onclick={() => effectsTab = 'composition'}>
+            <button class="fx-tab" class:active={effectsTab === 'composition'} onclick={() => (effectsTab = 'composition')}>
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="9" y1="21" x2="9" y2="9"/></svg>
-              Comp
+              {$t('vj.effects.tabs.composition')}
             </button>
-            <button class="fx-tab" class:active={effectsTab === 'layer'} onclick={() => effectsTab = 'layer'}>
+            <button class="fx-tab" class:active={effectsTab === 'layer'} onclick={() => (effectsTab = 'layer')}>
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-              Layer
+              {$t('vj.effects.tabs.layer')}
             </button>
-            <button class="fx-tab" class:active={effectsTab === 'clip'} onclick={() => effectsTab = 'clip'}>
+            <button class="fx-tab" class:active={effectsTab === 'clip'} onclick={() => (effectsTab = 'clip')}>
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-              Clip
+              {$t('vj.effects.tabs.clip')}
             </button>
-            <button class="fx-tab" class:active={effectsTab === 'stage'} onclick={() => effectsTab = 'stage'} title="Stage Effects — procedural per-slice modulation that animates the bound mapping layers">
+            <button class="fx-tab" class:active={effectsTab === 'stage'} onclick={() => (effectsTab = 'stage')} title={$t('vj.effects.stageTabTitle')}>
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="11"/></svg>
-              Stage
+              {$t('vj.effects.tabs.stage')}
             </button>
-            {#if ($project.wledControllers ?? []).some(controller => controller.enabled)}
-              <button class="fx-tab" class:active={effectsTab === 'led'} onclick={() => effectsTab = 'led'} title="LED patterns and performance controls">
+            {#if ($project.wledControllers ?? []).some((controller) => controller.enabled)}
+              <button class="fx-tab" class:active={effectsTab === 'led'} onclick={() => (effectsTab = 'led')} title={$t('vj.effects.ledTabTitle')}>
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/><path d="M7 12h3m4 0h3"/></svg>
-                LED
+                {$t('vj.effects.tabs.led')}
               </button>
             {/if}
           </div>
@@ -3802,15 +3985,17 @@
                    of which workspace is open. -->
               {#if !$activeSurface}
                 <div class="no-effects">
-                  Build a stage first (open STAGE → draw slices → Apply Stage), then add effects here to animate your slice layers.
+                  {$t('vj.effects.stageNoSurface')}
                 </div>
               {:else}
                 {@const effects = $activeSurface.effects ?? []}
                 {@const activeId = $activeSurface.activeEffectId ?? 'still'}
                 {@const auto = $activeSurface.effectAutomation}
                 <div class="effects-info">
-                  <span class="effects-info-label">STAGE FX</span>
-                  <p class="effects-info-hint">{effects.length} effect{effects.length === 1 ? '' : 's'} on "{$activeSurface.name}" · one runs at a time</p>
+                  <span class="effects-info-label">{$t('vj.effects.stageFx')}</span>
+                  <p class="effects-info-hint">{$t('vj.effects.stageEffectCount', { values: { count: effects.length, suffix: effects.length === 1 ? '' : 's', surface: $activeSurface.name,
+                      },
+                    })}</p>
                 </div>
 
                 <!-- Automation transport — play/pause cycles through
@@ -3821,34 +4006,37 @@
                     class="stage-auto-play"
                     class:playing={auto?.playing}
                     onclick={() => surfaceStore.toggleEffectAutomation()}
-                    title={auto?.playing ? 'Stop auto-cycle' : 'Start auto-cycle through ↻-included effects'}
+                    title={auto?.playing ? $t('vj.effects.stopAutoCycle') : $t('vj.effects.startAutoCycle')}
                   >{auto?.playing ? '⏸' : '▶'}</button>
                   <select
                     class="stage-auto-mode"
                     value={auto?.mode ?? 'beat'}
-                    onchange={(e) => surfaceStore.updateEffectAutomation({ mode: (e.target as HTMLSelectElement).value as 'time' | 'beat' })}
+                    onchange={(e) => surfaceStore.updateEffectAutomation({ mode: (e.target as HTMLSelectElement).value as 'time' | 'beat',
+                      })}
                   >
-                    <option value="beat">Beat</option>
-                    <option value="time">Time</option>
+                    <option value="beat">{$t('vj.effects.beat')}</option>
+                    <option value="time">{$t('vj.effects.time')}</option>
                   </select>
                   {#if (auto?.mode ?? 'beat') === 'beat'}
                     <input
                       type="number" min="1" max="64" step="1"
                       class="stage-auto-interval"
                       value={auto?.beats ?? 8}
-                      onchange={(e) => surfaceStore.updateEffectAutomation({ beats: parseInt((e.target as HTMLInputElement).value) || 8 })}
-                      title="Beats per step"
+                      onchange={(e) => surfaceStore.updateEffectAutomation({ beats: parseInt((e.target as HTMLInputElement).value) || 8,
+                        })}
+                      title={$t('vj.effects.beatsPerStep')}
                     />
-                    <span class="stage-auto-unit">bts</span>
+                    <span class="stage-auto-unit">{$t('vj.effects.beatsUnit')}</span>
                   {:else}
                     <input
                       type="number" min="0.5" max="60" step="0.5"
                       class="stage-auto-interval"
                       value={auto?.seconds ?? 4}
-                      onchange={(e) => surfaceStore.updateEffectAutomation({ seconds: parseFloat((e.target as HTMLInputElement).value) || 4 })}
-                      title="Seconds per step"
+                      onchange={(e) => surfaceStore.updateEffectAutomation({ seconds: parseFloat((e.target as HTMLInputElement).value) || 4,
+                        })}
+                      title={$t('vj.effects.secondsPerStep')}
                     />
-                    <span class="stage-auto-unit">sec</span>
+                    <span class="stage-auto-unit">{$t('vj.effects.secondsUnit')}</span>
                   {/if}
                 </div>
 
@@ -3858,10 +4046,10 @@
                 <div class="stage-fx-add">
                   <select bind:value={stageAddType} class="stage-fx-select">
                     {#each STAGE_EFFECT_CATALOG as def (def.type)}
-                      <option value={def.type}>{def.icon} {def.label}</option>
+                      <option value={def.type}>{def.icon} {vjStageEffectTypeDisplayLabel(def.type, def.label)}</option>
                     {/each}
                   </select>
-                  <button class="add-effect-btn" onclick={() => surfaceStore.addStageEffect(stageAddType)}>+ Add</button>
+                  <button class="add-effect-btn" onclick={() => surfaceStore.addStageEffect(stageAddType)}>{$t('vj.effects.add')}</button>
                 </div>
 
                 <div class="effects-section">
@@ -3870,7 +4058,7 @@
                       {@const def = getEffectDef(eff.type)}
                       {@const isLive = activeId === eff.id}
                       <div class="effect-item" class:live={isLive}>
-                        <div class="effect-header" onclick={() => expandedEffectId = expandedEffectId === eff.id ? null : eff.id}>
+                        <div class="effect-header" onclick={() => (expandedEffectId = expandedEffectId === eff.id ? null : eff.id)}>
                           <!-- Live toggle — selecting an effect enters manual mode;
                                selecting the live effect again turns it off. -->
                           <button
@@ -3879,12 +4067,12 @@
                             aria-pressed={isLive}
                             onclick={(e) => { e.stopPropagation(); toggleStageActiveEffect(eff.id); }}
                             title={isLive
-                              ? 'Turn off this effect and stop auto play'
-                              : 'Activate this effect manually and stop auto play'}
+                              ? $t('vj.effects.deactivate')
+                              : $t('vj.effects.activate')}
                           >{isLive ? '◉' : '○'}</button>
                           <span class="effect-name">
                             <span class="stage-fx-icon">{def?.icon ?? '◆'}</span>
-                            {def?.label ?? eff.type}
+                            {vjStageEffectTypeDisplayLabel(eff.type, def?.label ?? eff.type)}
                           </span>
                           <!-- Cycle-include toggle. Auto-cycle visits
                                only ↻-included effects; muting this
@@ -3895,10 +4083,12 @@
                             class:active={isLive}
                             class:pressed={!!heldStageEffects[eff.id]}
                             type="button"
-                            title={`Hold to show ${def?.label ?? eff.type}`}
-                            aria-label={`Hold to show ${def?.label ?? eff.type}`}
+                            title={$t('vj.effects.hold', { values: { effect: vjStageEffectTypeDisplayLabel(eff.type, def?.label ?? eff.type) } })}
+                            aria-label={$t('vj.effects.hold', { values: { effect: vjStageEffectTypeDisplayLabel(eff.type, def?.label ?? eff.type) } })}
                             data-midi-path={`vj:stage-effect:${eff.id}:hold`}
-                            data-midi-label={`Stage FX Hold: ${def?.label ?? eff.type}`}
+                            data-midi-label={$t('vj.effects.hold', {
+                              values: { effect: vjStageEffectTypeDisplayLabel(eff.type, def?.label ?? eff.type) },
+                            })}
                             data-midi-mode="toggle"
                             data-midi-min="0"
                             data-midi-max="1"
@@ -3919,31 +4109,31 @@
                             class="effect-cycle-toggle"
                             class:included={eff.enabled}
                             onclick={(e) => { e.stopPropagation(); surfaceStore.updateStageEffect(eff.id, { enabled: !eff.enabled }); }}
-                            title={eff.enabled ? 'In auto-cycle (click to exclude)' : 'Excluded from auto-cycle (click to include)'}
+                            title={eff.enabled ? $t('vj.effects.include') : $t('vj.effects.exclude')}
                           >{eff.enabled ? '↻' : '⊘'}</button>
                           <span class="effect-expand">{expandedEffectId === eff.id ? '▼' : '▶'}</span>
                           <button
                             class="effect-delete"
                             onclick={(e) => { e.stopPropagation(); surfaceStore.deleteStageEffect(eff.id); }}
-                            title="Remove"
+                            title={$t('vj.effects.remove')}
                           >×</button>
                         </div>
                         {#if expandedEffectId === eff.id}
                           <div class="effect-params">
                             <div class="param-row">
-                              <span>Opacity</span>
+                              <span>{$t('vj.effects.opacity')}</span>
                               <input
                                 type="range" min="0" max="1" step="0.01"
                                 value={eff.opacity}
                                 oninput={(e) => surfaceStore.updateStageEffect(eff.id, {
-                                  opacity: parseFloat((e.target as HTMLInputElement).value)
-                                })}
+                                  opacity: parseFloat((e.target as HTMLInputElement).value),
+                                  })}
                               />
                               <span class="param-val">{eff.opacity.toFixed(2)}</span>
                             </div>
                             {#each def?.paramSpecs ?? [] as spec (spec.key)}
                               <div class="param-row">
-                                <span>{spec.label}</span>
+                                <span>{vjStageEffectParamDisplayLabel(spec.key, spec.label)}</span>
                                 <input
                                   type="range"
                                   min={spec.min}
@@ -3951,8 +4141,8 @@
                                   step={spec.step ?? 0.01}
                                   value={eff.params[spec.key] ?? def?.defaultParams[spec.key] ?? 0}
                                   oninput={(e) => surfaceStore.updateStageEffectParam(eff.id, spec.key,
-                                    parseFloat((e.target as HTMLInputElement).value)
-                                  )}
+                                    parseFloat((e.target as HTMLInputElement).value),
+                                    )}
                                 />
                                 <span class="param-val">{(eff.params[spec.key] ?? def?.defaultParams[spec.key] ?? 0).toFixed(2)}</span>
                               </div>
@@ -3962,70 +4152,71 @@
                       </div>
                     {/each}
                     {#if effects.length === 0}
-                      <div class="no-effects">No effects yet. Pick one above and click <strong>+ Add</strong>.</div>
+                      <div class="no-effects">{$t('vj.effects.noEffectsYet')}</div>
                     {/if}
                   </div>
                 </div>
               {/if}
             {:else if (effectsTab === 'layer' || effectsTab === 'clip') && selectedLayerIndex === null}
-              <div class="no-effects">Click a layer to edit effects</div>
+              <div class="no-effects">{$t('vj.effects.selectLayer')}</div>
             {:else if effectsTab === 'clip' && selectedLayerIndex !== null && paramLayerStates[selectedLayerIndex].activeColumn === null}
-              <div class="no-effects">No active clip on layer {selectedLayerIndex + 1}</div>
+              <div class="no-effects">{$t('vj.effects.noActiveClip', { values: { layer: selectedLayerIndex + 1 } })}</div>
             {:else}
               <div class="effects-info">
                 <span class="effects-info-label">{effectsTabLabel}</span>
                 {#if effectsTab === 'composition'}
-                  <p class="effects-info-hint">Applied to all output</p>
+                  <p class="effects-info-hint">{$t('vj.effects.appliedToAll')}</p>
                 {/if}
               </div>
               <div class="effects-section">
                 <div class="effects-header">
-                  <span>Effects</span>
-                  <button class="add-effect-btn" onclick={() => showEffectPicker = true}>+ Add</button>
+                  <span>{$t('vj.effects.listTitle')}</span>
+                  <button class="add-effect-btn" onclick={() => (showEffectPicker = true)}>{$t('vj.effects.add')}</button>
                 </div>
                 <div class="effects-list">
                   {#each currentEffects as effect (effect.id)}
                     <div class="effect-item" class:disabled={!effect.enabled}>
-                      <div class="effect-header" onclick={() => expandedEffectId = expandedEffectId === effect.id ? null : effect.id}>
+                      <div class="effect-header" onclick={() => (expandedEffectId = expandedEffectId === effect.id ? null : effect.id)}>
                         <button class="effect-toggle" class:active={effect.enabled}
                           onclick={(e) => { e.stopPropagation(); toggleEffect(effect.id); }}>
                           {effect.enabled ? '●' : '○'}
                         </button>
-                        <span class="effect-name">{effect.type}</span>
+                        <span class="effect-name">{vjEffectTypeDisplayLabel(effect.type)}</span>
                         <span class="effect-expand">{expandedEffectId === effect.id ? '▼' : '▶'}</span>
                         <button class="effect-delete" onclick={(e) => { e.stopPropagation(); deleteEffect(effect.id); }}>×</button>
                       </div>
                       {#if expandedEffectId === effect.id}
                         <div class="effect-params">
                           <div class="effect-param-title">
-                            <span>Effect</span>
-                            <strong>{effect.type}</strong>
+                            <span>{$t('vj.effects.effect')}</span>
+                            <strong>{vjEffectTypeDisplayLabel(effect.type)}</strong>
                           </div>
                           {#if getEffectPresets(effect.type).length > 0}
                             <details open>
-                              <summary>Presets</summary>
+                              <summary>{$t('vj.effects.presets')}</summary>
                               <div class="param-row">
-                                <span>Preset</span>
+                                <span>{$t('vj.effects.preset')}</span>
                                 <select
                                   value={vjPresetSelection[effect.id] ?? ''}
                                   onchange={(e) => {
-                                    vjPresetSelection = { ...vjPresetSelection, [effect.id]: (e.target as HTMLSelectElement).value };
+                                    vjPresetSelection = { ...vjPresetSelection, [effect.id]: (e.target as HTMLSelectElement).value,
+                                    };
                                   }}
                                 >
-                                  <option value="">Select preset</option>
+                                  <option value="">{$t('vj.effects.selectPreset')}</option>
                                   {#each getEffectPresets(effect.type) as preset, i}
-                                    <option value={String(i)}>{preset.name}</option>
+                                    <option value={String(i)}>{vjPresetDisplayName(effect.type, i, preset)}</option>
                                   {/each}
                                 </select>
                               </div>
                               <div class="param-row">
-                                <button class="btn-small" onclick={() => applyVJPreset(effect)}>Apply Preset</button>
+                                <button class="btn-small" onclick={() => applyVJPreset(effect)}>{$t('vj.effects.applyPreset')}</button>
                               </div>
                             </details>
                           {/if}
 
                           <details open>
-                            <summary>Controls</summary>
+                            <summary>{$t('vj.effects.controls')}</summary>
                           <!-- Param renderer mirrors LayerPanel: try
                                effectParamLabels (rich metadata covering
                                every effect with curated min/max/step),
@@ -4051,21 +4242,22 @@
                               {#each Object.entries(_paramMeta) as [paramKey, meta]}
                                 {#if meta.type === 'select' && meta.options}
                                   <div class="param-row">
-                                    <span class="param-name">{meta.label}</span>
+                                    <span class="param-name">{vjEffectParamDisplayLabel(paramKey, meta.label)}</span>
                                     <select
                                       value={(effect.params as Record<string, number>)[paramKey] ?? meta.default}
-                                      onchange={(e) => updateEffectParam(effect.id, paramKey, parseFloat((e.target as HTMLSelectElement).value))}
+                                      onchange={(e) => updateEffectParam(effect.id, paramKey, parseFloat((e.target as HTMLSelectElement).value),
+                                          )}
                                       style="flex:1; background:#222; color:#fff; border:1px solid #444; border-radius:3px; padding:2px 4px; font-size:12px;">
                                       {#each meta.options as opt}
-                                        <option value={opt.value}>{opt.label}</option>
+                                        <option value={opt.value}>{vjEffectOptionDisplayLabel(opt.value, opt.label)}</option>
                                       {/each}
                                     </select>
                                   </div>
                                 {:else if meta.type === 'color' && meta.colorParams}
                                   <div class="param-row">
-                                    <span class="param-name">{meta.label}</span>
+                                    <span class="param-name">{vjEffectParamDisplayLabel(paramKey, meta.label)}</span>
                                     <input type="color"
-                                      value={'#' + [meta.colorParams.r, meta.colorParams.g, meta.colorParams.b].map(k => {
+                                      value={'#' + [meta.colorParams.r, meta.colorParams.g, meta.colorParams.b].map((k) => {
                                         const v = (effect.params as Record<string, number>)[k] ?? 0;
                                         return Math.round(v * 255).toString(16).padStart(2, '0');
                                       }).join('')}
@@ -4084,7 +4276,7 @@
                                   </div>
                                 {:else if effectsTab === 'layer' && selectedLayerIndex !== null}
                                   <EffectParamRow
-                                    label={meta.label}
+                                    label={vjEffectParamDisplayLabel(paramKey, meta.label)}
                                     value={(effect.params as Record<string, number>)[paramKey] ?? meta.default}
                                     min={meta.min as number}
                                     max={meta.max as number}
@@ -4101,15 +4293,17 @@
                                   <!-- Composition / clip tabs: plain slider, no modulation dropdown. -->
                                   {@const val = (effect.params as Record<string, number>)[paramKey] ?? meta.default}
                                   <div class="param-row">
-                                    <span class="param-name">{meta.label}</span>
+                                    <span class="param-name">{vjEffectParamDisplayLabel(paramKey, meta.label)}</span>
                                     <input type="range" min={meta.min as number} max={meta.max as number} step={meta.step as number} value={val}
-                                      oninput={(e) => updateEffectParam(effect.id, paramKey, parseFloat((e.target as HTMLInputElement).value))}
+                                      oninput={(e) => updateEffectParam(effect.id, paramKey, parseFloat((e.target as HTMLInputElement).value),
+                                          )}
                                       data-midi-path="vj:fx:{effect.id}:{paramKey}"
-                                      data-midi-label="{effect.type} {meta.label}"
+                                      data-midi-label={`${vjEffectTypeDisplayLabel(effect.type)} ${vjEffectParamDisplayLabel(paramKey, meta.label)}`}
                                       data-midi-min={meta.min}
                                       data-midi-max={meta.max}
                                       data-midi-step={meta.step} />
-                                    <span class="param-value">{val.toFixed((meta.step as number) < 0.1 ? 2 : (meta.step as number) < 1 ? 1 : 0)}</span>
+                                    <span class="param-value">{val.toFixed((meta.step as number) < 0.1 ? 2 : (meta.step as number) < 1 ? 1 : 0,
+                                        )}</span>
                                   </div>
                                 {/if}
                               {/each}
@@ -4121,7 +4315,7 @@
                               {#each _fallbackKeys as paramKey}
                                 {#if effectsTab === 'layer' && selectedLayerIndex !== null}
                                   <EffectParamRow
-                                    label={paramKey}
+                                    label={vjEffectParamDisplayLabel(paramKey)}
                                     value={(effect.params as Record<string, number>)[paramKey] ?? 0.5}
                                     min={0}
                                     max={1}
@@ -4137,16 +4331,17 @@
                                 {:else}
                                   {@const val = (effect.params as Record<string, number>)[paramKey] ?? 0.5}
                                   <div class="param-row">
-                                    <span class="param-name">{paramKey}</span>
+                                    <span class="param-name">{vjEffectParamDisplayLabel(paramKey)}</span>
                                     <input type="range" min="0" max="1" step="0.01" value={val}
-                                      oninput={(e) => updateEffectParam(effect.id, paramKey, parseFloat((e.target as HTMLInputElement).value))} />
+                                      oninput={(e) => updateEffectParam(effect.id, paramKey, parseFloat((e.target as HTMLInputElement).value),
+                                          )} />
                                     <span class="param-value">{(val * 100).toFixed(0)}%</span>
                                   </div>
                                 {/if}
                               {/each}
                             {/if}
                           {:else}
-                            <div class="param-row"><span class="no-params">No adjustable parameters</span></div>
+                            <div class="param-row"><span class="no-params">{$t('vj.effects.noParams')}</span></div>
                           {/if}
                           </details>
                         </div>
@@ -4154,7 +4349,7 @@
                     </div>
                   {/each}
                   {#if currentEffects.length === 0}
-                    <div class="no-effects">No effects - add one above</div>
+                    <div class="no-effects">{$t('vj.effects.noEffects')}</div>
                   {/if}
                 </div>
               </div>
@@ -4167,10 +4362,10 @@
           <div class="preview-layout">
           <div class="preview-container program-preview">
             <canvas bind:this={previewCanvas} class="preview-canvas"></canvas>
-            <div class="preview-label">PROGRAM</div>
+            <div class="preview-label">{$t('vj.preview.program')}</div>
           </div>
           {#if $vjClipLauncher.crossfaderEnabled}
-            <div class="deck-preview-stack" aria-label="Deck confidence monitors">
+            <div class="deck-preview-stack" aria-label={$t('vj.preview.confidenceMonitors')}>
               <div
                 class="deck-preview-container"
                 class:deck-live={$vjClipLauncher.crossfaderValue < 0.5}
@@ -4180,7 +4375,7 @@
                   class="deck-preview-canvas"
                   width="320"
                   height="180"
-                  aria-label="Deck A preview"
+                  aria-label={$t('vj.preview.deckPreview', { values: { deck: 'A' } })}
                 ></canvas>
                 <div class="deck-preview-label">
                   <strong>A</strong>
@@ -4196,7 +4391,7 @@
                   class="deck-preview-canvas"
                   width="320"
                   height="180"
-                  aria-label="Deck B preview"
+                  aria-label={$t('vj.preview.deckPreview', { values: { deck: 'B' } })}
                 ></canvas>
                 <div class="deck-preview-label">
                   <strong>B</strong>
@@ -4212,9 +4407,9 @@
         <div class="right-panel-vj" class:collapsed={mediaTrayCollapsed}>
           <button
             class="vj-right-tray-toggle"
-            onclick={() => mediaTrayCollapsed = !mediaTrayCollapsed}
-            title={mediaTrayCollapsed ? 'Open media and controls' : 'Close media and controls'}
-            aria-label={mediaTrayCollapsed ? 'Open media and controls' : 'Close media and controls'}
+            onclick={() => (mediaTrayCollapsed = !mediaTrayCollapsed)}
+            title={mediaTrayCollapsed ? $t('vj.preview.openTray') : $t('vj.preview.closeTray')}
+            aria-label={mediaTrayCollapsed ? $t('vj.preview.openTray') : $t('vj.preview.closeTray')}
           >
             <svg class="media-tray-glyph" viewBox="0 0 28 28" fill="none" aria-hidden="true">
               <path class="ghost-body" d="M14 4.2c-4.25 0-7.5 3.35-7.5 7.7v10l2.55-1.9 2.35 2.05 2.6-2.05 2.6 2.05L18.95 20l2.55 1.9v-10c0-4.35-3.25-7.7-7.5-7.7Z" />
@@ -4222,7 +4417,7 @@
               <circle class="ghost-eye" cx="16.9" cy="12.2" r="1.25" />
               <path class="ghost-mouth" d="M12 16.1c1.25.85 2.75.85 4 0" />
             </svg>
-            <span class="media-tray-tab-label">media</span>
+            <span class="media-tray-tab-label">{$t('vj.preview.media')}</span>
           </button>
 
           {#if !mediaTrayCollapsed}
@@ -4237,14 +4432,14 @@
                     {selectedLayerState.activeClip.name}
                     <span class="shader-params-layer-badge">L{selectedLayerIndex! + 1}</span>
                     {#if clipIsAudioReady}
-                      <span class="audio-ready-badge" title="Audio-reactive shader">♪</span>
+                      <span class="audio-ready-badge" title={$t('vj.preview.audioShader')}>♪</span>
                     {/if}
                   </span>
                   <!-- ↺ Reset every shader param to its ISF
                        INPUT.DEFAULT. Sits beside close — matches the
                        per-effect reset button pattern in LayerPanel. -->
-                  <button class="shader-params-reset" onclick={resetShaderParamsToDefaults} title="Reset all params to defaults" aria-label="Reset all params to defaults">↺</button>
-                  <button class="shader-params-close" onclick={() => showShaderParams = false}>×</button>
+                  <button class="shader-params-reset" onclick={resetShaderParamsToDefaults} title={$t('vj.preview.resetParams')} aria-label={$t('vj.preview.resetParams')}>↺</button>
+                  <button class="shader-params-close" onclick={() => (showShaderParams = false)} title={$t('vj.preview.closeParams')} aria-label={$t('vj.preview.closeParams')}>×</button>
                 </div>
                 <!-- Audio-warn: only show when there's an actual AUDIO
                      source bound to a param (not Auto / not Manual).
@@ -4252,12 +4447,12 @@
                      vs the shader's lack of them; "Auto" is a
                      playhead, not audio-reactive, so showing this
                      for an auto-bound param is just noise. -->
-                {#if !clipIsAudioReady && selectedClipShaderInputs.some(i => {
+                {#if !clipIsAudioReady && selectedClipShaderInputs.some((i) => {
                   const kClip = activeClipId ? modulationMap.get(modKeyShader(selectedLayerIndex!, i.NAME, paramDeck, 'vj', activeClipId)) : undefined;
                   const m = kClip ?? modulationMap.get(modKeyShader(selectedLayerIndex!, i.NAME, paramDeck));
                   return m && m.source !== 'manual' && m.source !== 'auto';
                 })}
-                  <div class="audio-warn">This shader doesn't use audio uniforms — modulation controls parameters only, not the shader's internal audio response.</div>
+                  <div class="audio-warn">{$t('vj.preview.audioWarning')}</div>
                 {/if}
                 <div class="shader-params-panel-list">
                   {#each selectedClipShaderInputs as input (input.NAME)}
@@ -4268,31 +4463,45 @@
                          dependency since Svelte doesn't trace through
                          function bodies — that's why earlier revs
                          didn't re-render after the dropdown change. -->
-                    <!-- Prefer the clip-keyed (vjc:) modulation so two
+                          <!-- Prefer the clip-keyed (vjc:) modulation so two
                          different shaders with the same param name
                          (e.g. both have "speed") don't share an auto
                          binding. Falls back to legacy layer-keyed for
                          older mods that haven't been migrated. -->
-                    {@const _modKeyClip = activeClipId ? modKeyShader(selectedLayerIndex!, input.NAME, paramDeck, 'vj', activeClipId) : null}
-                    {@const _modKey = modKeyShader(selectedLayerIndex!, input.NAME, paramDeck, 'vj')}
-                    {@const mod = (_modKeyClip ? modulationMap.get(_modKeyClip) : undefined) ?? modulationMap.get(_modKey)}
-                    <!-- Auto state lives on the clip itself (shaderValueAuto sidecar);
+                          {@const _modKeyClip = activeClipId
+                            ? modKeyShader(selectedLayerIndex!, input.NAME, paramDeck, 'vj', activeClipId)
+                            : null}
+                          {@const _modKey = modKeyShader(selectedLayerIndex!, input.NAME, paramDeck, 'vj')}
+                          {@const mod =
+                            (_modKeyClip ? modulationMap.get(_modKeyClip) : undefined) ?? modulationMap.get(_modKey)}
+                          <!-- Auto state lives on the clip itself (shaderValueAuto sidecar);
                          audio / LFO sources still go through the modulation store.
                          The select value reflects whichever is active — Auto wins
                          if both somehow exist (mutually exclusive in normal flow). -->
-                    {@const _shaderAuto = paramLayerStates[selectedLayerIndex!]?.activeClip?.shaderValueAuto?.[input.NAME] as (AutoConfig | undefined)}
-                    {@const _currentSource = _shaderAuto ? 'auto' : (mod?.source ?? 'manual')}
-                    {@const isModulated = _currentSource !== 'manual'}
-                    <div class="shader-param" class:modulated={isModulated} data-modkey={_modKey} data-modsrc={_currentSource}>
-                      <div class="shader-param-header">
-                        <span class="shader-param-name">{input.LABEL || input.NAME}</span>
-                        <button class="mod-source-chip" class:active={isModulated} class:open={modTrayParam === input.NAME}
-                          title="Modulation — audio bands, LFO with BPM sync, auto playhead"
-                          onclick={(e) => toggleModTray(input.NAME, e.currentTarget as HTMLElement)}
-                        >{modSourceLabel(_currentSource, !!_shaderAuto)}</button>
-                      </div>
-                      {#if input.TYPE === 'float' || input.TYPE === 'event'}
-                        <!-- Inline the value read against paramLayerStates
+                          {@const _shaderAuto = paramLayerStates[selectedLayerIndex!]?.activeClip?.shaderValueAuto?.[
+                            input.NAME
+                          ] as AutoConfig | undefined}
+                          {@const _currentSource = _shaderAuto ? 'auto' : (mod?.source ?? 'manual')}
+                          {@const isModulated = _currentSource !== 'manual'}
+                          <div
+                            class="shader-param"
+                            class:modulated={isModulated}
+                            data-modkey={_modKey}
+                            data-modsrc={_currentSource}
+                          >
+                            <div class="shader-param-header">
+                              <span class="shader-param-name">{input.LABEL || input.NAME}</span>
+                              <button
+                                class="mod-source-chip"
+                                class:active={isModulated}
+                                class:open={modTrayParam === input.NAME}
+                                title={$t('vj.preview.modulation')}
+                                onclick={(e) => toggleModTray(input.NAME, e.currentTarget as HTMLElement)}
+                                >{modSourceLabel(_currentSource, !!_shaderAuto)}</button
+                              >
+                            </div>
+                            {#if input.TYPE === 'float' || input.TYPE === 'event'}
+                              <!-- Inline the value read against paramLayerStates
                              so Svelte sees the reactive dependency in the
                              template — going through getShaderParamValue()
                              hid the dep, so the slider thumb didn't move
@@ -4305,14 +4514,18 @@
                           <div class="slider-track-wrap">
                             <input type="range" min={input.MIN ?? 0} max={input.MAX ?? 1} step={((input.MAX ?? 1) - (input.MIN ?? 0)) / 200}
                               value={_sliderVal}
-                              oninput={(e) => { markUserInteracting(`vj:${selectedLayerIndex}:shader:${input.NAME}`); setShaderParamValue(selectedLayerIndex!, input.NAME, parseFloat((e.target as HTMLInputElement).value)); }} class="param-slider"
+                              oninput={(e) => { markUserInteracting(`vj:${selectedLayerIndex}:shader:${input.NAME}`); setShaderParamValue(selectedLayerIndex!, input.NAME, parseFloat((e.target as HTMLInputElement).value),
+                                      ); }} class="param-slider"
                               data-midi-path="vj:{selectedLayerIndex}:shader:{input.NAME}"
-                              data-midi-label="{input.LABEL || input.NAME}"
-                              data-midi-min={input.MIN ?? 0}
+                              data-midi-label={input.LABEL || input.NAME}
+                                    data-midi-min={input.MIN ?? 0}
                               data-midi-max={input.MAX ?? 1}
                               data-midi-step={((input.MAX ?? 1) - (input.MIN ?? 0)) / 200} />
                             {#if isModulated && modGhostValues[input.NAME] !== undefined}
-                              <div class="mod-ghost" style="left: {((modGhostValues[input.NAME] - (input.MIN ?? 0)) / ((input.MAX ?? 1) - (input.MIN ?? 0))) * 100}%"></div>
+                              <div class="mod-ghost" style="left: {((modGhostValues[input.NAME] - (input.MIN ?? 0)) /
+                                        ((input.MAX ?? 1) - (input.MIN ?? 0))) *
+                                        100}%"
+                                    ></div>
                             {/if}
                             <!-- Auto-mode slippers — overlay on the
                                  main slider track. Slipper inputs use
@@ -4325,32 +4538,52 @@
                                  track). Internal storage stays as
                                  0..1 fractions; we map to/from the
                                  absolute slider range at the boundary. -->
-                            {#if _shaderAuto}
-                              {@const _rMin = input.MIN ?? 0}
-                              {@const _rMax = input.MAX ?? 1}
-                              {@const _rSpan = (_rMax - _rMin) || 1}
-                              {@const _aMin = _shaderAuto.min}
-                              {@const _aMax = _shaderAuto.max}
-                              {@const _aMinFrac = (_aMin - _rMin) / _rSpan}
-                              {@const _aMaxFrac = (_aMax - _rMin) / _rSpan}
-                              <div class="slipper-fill" style="left: {_aMinFrac * 100}%; right: {(1 - _aMaxFrac) * 100}%"></div>
-                              <input type="range" min={_rMin} max={_rMax} step={_rSpan / 200} value={_aMin}
-                                class="slipper slipper-min"
-                                oninput={(e) => {
-                                  const v = parseFloat((e.target as HTMLInputElement).value);
-                                  setShaderAutoField(input.NAME, 'min', Math.min(v, _aMax - _rSpan * 0.02));
-                                }} />
-                              <input type="range" min={_rMin} max={_rMax} step={_rSpan / 200} value={_aMax}
-                                class="slipper slipper-max"
-                                oninput={(e) => {
-                                  const v = parseFloat((e.target as HTMLInputElement).value);
-                                  setShaderAutoField(input.NAME, 'max', Math.max(v, _aMin + _rSpan * 0.02));
-                                }} />
-                            {/if}
-                          </div>
-                          <span class="param-val">{(isModulated && modGhostValues[input.NAME] !== undefined ? modGhostValues[input.NAME] : _sliderVal).toFixed(2)}</span>
-                        </div>
-                        <!-- Auto transport / speed moved into the
+                                  {#if _shaderAuto}
+                                    {@const _rMin = input.MIN ?? 0}
+                                    {@const _rMax = input.MAX ?? 1}
+                                    {@const _rSpan = _rMax - _rMin || 1}
+                                    {@const _aMin = _shaderAuto.min}
+                                    {@const _aMax = _shaderAuto.max}
+                                    {@const _aMinFrac = (_aMin - _rMin) / _rSpan}
+                                    {@const _aMaxFrac = (_aMax - _rMin) / _rSpan}
+                                    <div
+                                      class="slipper-fill"
+                                      style="left: {_aMinFrac * 100}%; right: {(1 - _aMaxFrac) * 100}%"
+                                    ></div>
+                                    <input
+                                      type="range"
+                                      min={_rMin}
+                                      max={_rMax}
+                                      step={_rSpan / 200}
+                                      value={_aMin}
+                                      class="slipper slipper-min"
+                                      oninput={(e) => {
+                                        const v = parseFloat((e.target as HTMLInputElement).value);
+                                        setShaderAutoField(input.NAME, 'min', Math.min(v, _aMax - _rSpan * 0.02));
+                                      }}
+                                    />
+                                    <input
+                                      type="range"
+                                      min={_rMin}
+                                      max={_rMax}
+                                      step={_rSpan / 200}
+                                      value={_aMax}
+                                      class="slipper slipper-max"
+                                      oninput={(e) => {
+                                        const v = parseFloat((e.target as HTMLInputElement).value);
+                                        setShaderAutoField(input.NAME, 'max', Math.max(v, _aMin + _rSpan * 0.02));
+                                      }}
+                                    />
+                                  {/if}
+                                </div>
+                                <span class="param-val"
+                                  >{(isModulated && modGhostValues[input.NAME] !== undefined
+                                    ? modGhostValues[input.NAME]
+                                    : _sliderVal
+                                  ).toFixed(2)}</span
+                                >
+                              </div>
+                              <!-- Auto transport / speed moved into the
                              ModTray popover. Range slippers stay on
                              the main slider track above (see .slipper
                              inputs) since they map 1:1 to the param's
@@ -4361,32 +4594,37 @@
                           <button class="bool-toggle" class:on={getShaderParamValue(selectedLayerIndex!, input.NAME, 0) > 0.5}
                             onclick={() => { const cur = getShaderParamValue(selectedLayerIndex!, input.NAME, 0); setShaderParamValue(selectedLayerIndex!, input.NAME, cur > 0.5 ? 0 : 1); }}
                             data-midi-path="vj:{selectedLayerIndex}:shader:{input.NAME}"
-                            data-midi-label="{input.LABEL || input.NAME}"
-                            data-midi-discrete="true">
+                            data-midi-label={input.LABEL || input.NAME}
+                                  data-midi-discrete="true">
                             {getShaderParamValue(selectedLayerIndex!, input.NAME, 0) > 0.5 ? 'ON' : 'OFF'}
                           </button>
                         </div>
                       {:else if input.TYPE === 'long' && input.VALUES && input.LABELS}
                         <div class="shader-param-select">
-                          <select class="long-select" value={getShaderParamValue(selectedLayerIndex!, input.NAME, (input.DEFAULT as number) ?? 0)}
-                            onchange={(e) => setShaderParamValue(selectedLayerIndex!, input.NAME, parseInt((e.target as HTMLSelectElement).value))}
+                          <select class="long-select" value={getShaderParamValue(selectedLayerIndex!, input.NAME, (input.DEFAULT as number) ?? 0,
+                                  )}
+                            onchange={(e) => setShaderParamValue(selectedLayerIndex!, input.NAME, parseInt((e.target as HTMLSelectElement).value),
+                                    )}
                             data-midi-path="vj:{selectedLayerIndex}:shader:{input.NAME}"
-                            data-midi-label="{input.LABEL || input.NAME}"
-                            data-midi-discrete="true">
+                            data-midi-label={input.LABEL || input.NAME}
+                                  data-midi-discrete="true">
                             {#each input.VALUES as val, i}<option value={val}>{input.LABELS?.[i] ?? val}</option>{/each}
                           </select>
                         </div>
                       {:else if input.TYPE === 'long'}
                         <div class="shader-param-slider">
                           <input type="range" min={input.MIN ?? 0} max={input.MAX ?? 10} step="1"
-                            value={getShaderParamValue(selectedLayerIndex!, input.NAME, (input.DEFAULT as number) ?? 0)}
-                            oninput={(e) => setShaderParamValue(selectedLayerIndex!, input.NAME, parseInt((e.target as HTMLInputElement).value))} class="param-slider"
+                            value={getShaderParamValue(selectedLayerIndex!, input.NAME, (input.DEFAULT as number) ?? 0,
+                                  )}
+                            oninput={(e) => setShaderParamValue(selectedLayerIndex!, input.NAME, parseInt((e.target as HTMLInputElement).value),
+                                    )} class="param-slider"
                             data-midi-path="vj:{selectedLayerIndex}:shader:{input.NAME}"
-                            data-midi-label="{input.LABEL || input.NAME}"
-                            data-midi-min={input.MIN ?? 0}
+                            data-midi-label={input.LABEL || input.NAME}
+                                  data-midi-min={input.MIN ?? 0}
                             data-midi-max={input.MAX ?? 10}
                             data-midi-step="1" />
-                          <span class="param-val">{getShaderParamValue(selectedLayerIndex!, input.NAME, (input.DEFAULT as number) ?? 0)}</span>
+                          <span class="param-val">{getShaderParamValue(selectedLayerIndex!, input.NAME, (input.DEFAULT as number) ?? 0,
+                                  )}</span>
                         </div>
                       {/if}
                     </div>
@@ -4398,18 +4636,19 @@
                      depth / invert / LFO speed / BPM-sync / auto
                      transport tuning lives here. -->
                 {#if modTrayParam && modTrayAnchor && selectedLayerIndex !== null}
-                  {@const _tInput = selectedClipShaderInputs.find(i => i.NAME === modTrayParam)}
+                  {@const _tInput = selectedClipShaderInputs.find((i) => i.NAME === modTrayParam)}
                   {@const _tModClipKey = activeClipId ? modKeyShader(selectedLayerIndex, modTrayParam, paramDeck, 'vj', activeClipId) : null}
                   {@const _tMod = (_tModClipKey ? modulationMap.get(_tModClipKey) : undefined) ?? modulationMap.get(modKeyShader(selectedLayerIndex, modTrayParam, paramDeck, 'vj'))}
-                  {@const _tAuto = paramLayerStates[selectedLayerIndex]?.activeClip?.shaderValueAuto?.[modTrayParam] as (AutoConfig | undefined)}
+                  {@const _tAuto = paramLayerStates[selectedLayerIndex]?.activeClip?.shaderValueAuto?.[modTrayParam] as AutoConfig | undefined}
                   <ModTray
                     label={_tInput?.LABEL || modTrayParam}
                     anchor={modTrayAnchor}
                     source={_tMod?.source ?? 'manual'}
                     mod={_tMod}
                     auto={_tAuto}
-                    onClose={() => modTrayParam = null}
-                    onSetSource={(s) => setShaderParamSource(selectedLayerIndex!, modTrayParam!, s, _tInput?.MIN ?? 0, _tInput?.MAX ?? 1)}
+                    onClose={() => (modTrayParam = null)}
+                    onSetSource={(s) => setShaderParamSource(selectedLayerIndex!, modTrayParam!, s, _tInput?.MIN ?? 0, _tInput?.MAX ?? 1,
+                            )}
                     onPatchMod={(p) => patchShaderMod(modTrayParam!, p)}
                     onPatchAuto={(p) => patchShaderAuto(modTrayParam!, p)}
                   />
@@ -4424,7 +4663,7 @@
             <div class="shader-params-panel gpu-params-panel">
               <div class="shader-params-panel-header">
                 <span class="shader-params-overlay-title">
-                  {gpuClip.name || 'GPU Shader'}
+                  {gpuClip.name || $t('vj.plugins.gpuShader')}
                   <span class="shader-params-layer-badge" style="background: rgba(85, 215, 239, 0.22); color: #6ee7f7;">GPU</span>
                 </span>
               </div>
@@ -4443,7 +4682,7 @@
             <div class="shader-params-panel text-params-panel">
               <div class="shader-params-panel-header">
                 <span class="shader-params-overlay-title">
-                  {textClip.name || 'Text Creator'}
+                  {textClip.name || $t('vj.plugins.textCreator')}
                   <span class="shader-params-layer-badge" style="background: rgba(244, 114, 182, 0.22); color: #f9a8d4;">TXT</span>
                 </span>
               </div>
@@ -4463,7 +4702,7 @@
             <div class="shader-params-panel splat-params-panel">
               <div class="shader-params-panel-header">
                 <span class="shader-params-overlay-title">
-                  {splatClip.name || 'Point Cloud'}
+                  {splatClip.name || $t('vj.plugins.pointCloud')}
                   <span class="shader-params-layer-badge" style="background: rgba(52, 211, 153, 0.3); color: #34d399;">PLY</span>
                 </span>
               </div>
@@ -4471,7 +4710,8 @@
                 <SplatPanel
                   content={vjSplatContent}
                   onUpdate={(updates) => vjClipLauncher.updateActiveClipSplatContent(selectedLayerIndex!, updates, paramDeck)}
-                  onFileLoad={() => reloadVJClipFile(selectedLayerIndex!, paramLayerStates[selectedLayerIndex!]?.activeColumn ?? 0, paramDeck)}
+                  onFileLoad={() => reloadVJClipFile(selectedLayerIndex!, paramLayerStates[selectedLayerIndex!]?.activeColumn ?? 0, paramDeck,
+                          )}
                   compact={true}
                 />
               </div>
@@ -4485,7 +4725,7 @@
             <div class="shader-params-panel model3d-params-panel">
               <div class="shader-params-panel-header">
                 <span class="shader-params-overlay-title">
-                  {modelClip.name || '3D Model'}
+                  {modelClip.name || $t('vj.plugins.model3d')}
                   <span class="shader-params-layer-badge" style="background: rgba(251, 191, 36, 0.3); color: #fbbf24;">3DM</span>
                 </span>
               </div>
@@ -4493,7 +4733,8 @@
                 <Model3DPanel
                   content={vjModel3DContent}
                   onUpdate={(updates) => vjClipLauncher.updateActiveClipModel3DContent(selectedLayerIndex!, updates, paramDeck)}
-                  onFileLoad={() => reloadVJClipFile(selectedLayerIndex!, paramLayerStates[selectedLayerIndex!]?.activeColumn ?? 0, paramDeck)}
+                  onFileLoad={() => reloadVJClipFile(selectedLayerIndex!, paramLayerStates[selectedLayerIndex!]?.activeColumn ?? 0, paramDeck,
+                          )}
                   compact={true}
                 />
               </div>
@@ -4539,7 +4780,7 @@
             <div class="shader-params-panel video-params-panel">
               <div class="shader-params-panel-header">
                 <span class="shader-params-overlay-title">
-                  {vClip.name || (isVideoClip ? 'Video' : 'Image')}
+                  {vClip.name || (isVideoClip ? $t('vj.video.video') : $t('vj.video.image'))}
                   <span class="shader-params-layer-badge" style={isVideoClip ? 'background: rgba(96, 165, 250, 0.3); color: #60a5fa;' : 'background: rgba(52, 211, 153, 0.26); color: #34d399;'}>
                     {isVideoClip ? 'VID' : 'IMG'}
                   </span>
@@ -4553,7 +4794,7 @@
                     <button
                       class="vt-btn vt-play"
                       onclick={() => vjSetVideoPlaying(selectedLayerIndex!, !vIsPlaying)}
-                      title={vIsPlaying ? 'Pause' : 'Play'}
+                      title={vIsPlaying ? $t('vj.video.pause') : $t('vj.video.play')}
                       data-midi-path="vj:{selectedLayerIndex}:video:play"
                       data-midi-label="{vClip.name} Play/Pause"
                       data-midi-discrete="true"
@@ -4567,7 +4808,7 @@
                     <button
                       class="vt-btn"
                       onclick={() => vjRestartVideo(selectedLayerIndex!)}
-                      title="Restart"
+                      title={$t('vj.video.restart')}
                       data-midi-path="vj:{selectedLayerIndex}:video:restart"
                       data-midi-label="{vClip.name} Restart"
                       data-midi-discrete="true"
@@ -4580,9 +4821,10 @@
                     <select
                       class="vt-speed"
                       value={String(vRate)}
-                      onchange={(e) => vjSetPlaybackRate(selectedLayerIndex!, parseFloat((e.target as HTMLSelectElement).value))}
+                      onchange={(e) => vjSetPlaybackRate(selectedLayerIndex!, parseFloat((e.target as HTMLSelectElement).value),
+                                )}
                       disabled={!!vSyncBeats}
-                      title={vSyncBeats ? 'Speed is locked to beat/bar sync' : 'Playback speed'}
+                      title={vSyncBeats ? $t('vj.video.speedLocked') : $t('vj.video.playbackSpeed')}
                     >
                       <option value="0.25">0.25x</option>
                       <option value="0.5">0.5x</option>
@@ -4598,14 +4840,14 @@
                         const raw = (e.target as HTMLSelectElement).value;
                         vjSetPlaybackSync(selectedLayerIndex!, raw ? parseFloat(raw) : null);
                       }}
-                      title="Fit this video to the master BPM"
+                      title={$t('vj.video.fitToBpm')}
                     >
-                      <option value="">Free</option>
-                      <option value="1">1 beat</option>
-                      <option value="2">2 beats</option>
-                      <option value="4">1 bar</option>
-                      <option value="8">2 bars</option>
-                      <option value="16">4 bars</option>
+                      <option value="">{$t('vj.video.free')}</option>
+                      <option value="1">{$t('vj.video.beat', { values: { count: 1, suffix: '' } })}</option>
+                      <option value="2">{$t('vj.video.beat', { values: { count: 2, suffix: 's' } })}</option>
+                      <option value="4">{$t('vj.video.bar', { values: { count: 1, suffix: '' } })}</option>
+                      <option value="8">{$t('vj.video.bar', { values: { count: 2, suffix: 's' } })}</option>
+                      <option value="16">{$t('vj.video.bar', { values: { count: 4, suffix: 's' } })}</option>
                     </select>
                   </div>
 
@@ -4616,10 +4858,10 @@
                     onmousedown={(e) => vjHandleTimelineMouseDown(e, vEl)}
                     role="slider"
                     tabindex="0"
-                    aria-label="Video timeline"
+                    aria-label={$t('vj.video.timeline')}
                     aria-valuemin={0}
                     aria-valuemax={100}
-                    aria-valuenow={vjVideoDuration > 0 ? Math.round(vjVideoCurrentTime / vjVideoDuration * 100) : 0}
+                    aria-valuenow={vjVideoDuration > 0 ? Math.round((vjVideoCurrentTime / vjVideoDuration) * 100) : 0}
                   >
                     <!-- Grayed areas outside trim -->
                     <div class="vt-trim-outside-left" style="width: {vTrimS * 100}%"></div>
@@ -4637,7 +4879,7 @@
                       onmousedown={(e) => vjHandleTrimMouseDown(e, 'start', selectedLayerIndex!)}
                       role="slider"
                       tabindex="0"
-                      aria-label="Trim start"
+                      aria-label={$t('vj.video.trimStart')}
                     ></div>
                     <div
                       class="vt-trim-handle vt-trim-end"
@@ -4645,22 +4887,22 @@
                       onmousedown={(e) => vjHandleTrimMouseDown(e, 'end', selectedLayerIndex!)}
                       role="slider"
                       tabindex="0"
-                      aria-label="Trim end"
+                      aria-label={$t('vj.video.trimEnd')}
                     ></div>
                   </div>
 
                   <!-- Mode buttons row -->
                   <div class="vt-modes">
-                    <button class="vt-mode-btn" class:active={vMode === 'loop'} onclick={() => vjSetPlaybackMode(selectedLayerIndex!, 'loop')} title="Loop">
+                    <button class="vt-mode-btn" class:active={vMode === 'loop'} onclick={() => vjSetPlaybackMode(selectedLayerIndex!, 'loop')} title={$t('vj.video.loop')}>
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                         <polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/>
                         <polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>
                       </svg>
-                      Loop
+                      {$t('vj.video.loop')}
                     </button>
-                    <button class="vt-mode-btn" class:active={vMode === 'once'} onclick={() => vjSetPlaybackMode(selectedLayerIndex!, 'once')} title="Play Once">
+                    <button class="vt-mode-btn" class:active={vMode === 'once'} onclick={() => vjSetPlaybackMode(selectedLayerIndex!, 'once')} title={$t('vj.video.once')}>
                       <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
-                      Once
+                      {$t('vj.video.once')}
                     </button>
                   </div>
                   {/if}
@@ -4672,117 +4914,175 @@
                        contentFit fields. Each input writes immediately via
                        vjClipLauncher.updateActiveClipVideoProps so the change
                        is visible on the next frame. -->
-                  <div class="vt-transform">
-                    <div class="vt-section-title">Transform</div>
+                        <div class="vt-transform">
+                          <div class="vt-section-title">{$t('vj.video.transform')}</div>
 
-                    <label class="vt-tf-row">
-                      <span class="vt-tf-label">Fit</span>
-                      <select
-                        class="vt-tf-select"
-                        value={vFit}
-                        onchange={(e) => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { fit: (e.target as HTMLSelectElement).value as any }, paramDeck)}
-                      >
-                        <option value="cover">Cover (fill + crop)</option>
-                        <option value="contain">Contain (letterbox)</option>
-                        <option value="fill">Fill (stretch)</option>
-                      </select>
-                    </label>
+                          <label class="vt-tf-row">
+                            <span class="vt-tf-label">{$t('vj.video.fit')}</span>
+                            <select
+                              class="vt-tf-select"
+                              value={vFit}
+                              onchange={(e) =>
+                                vjClipLauncher.updateActiveClipVideoProps(
+                                  selectedLayerIndex!,
+                                  { fit: (e.target as HTMLSelectElement).value as any },
+                                  paramDeck,
+                                )}
+                            >
+                              <option value="cover">{$t('vj.video.cover')}</option>
+                              <option value="contain">{$t('vj.video.contain')}</option>
+                              <option value="fill">{$t('vj.video.fill')}</option>
+                            </select>
+                          </label>
 
-                    <label class="vt-tf-row vt-tf-toggle-row">
-                      <span class="vt-tf-label">Mirror</span>
-                      <button
-                        class="vt-toggle-btn"
-                        class:active={vMirrorX}
-                        onclick={() => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { mirrorX: !vMirrorX }, paramDeck)}
-                        title="Mirror horizontally"
-                        data-midi-path="vj:{selectedLayerIndex}:video:mirror"
-                        data-midi-label="{vClip.name} Mirror"
-                        data-midi-discrete="true"
-                      >
-                        {vMirrorX ? 'On' : 'Off'}
-                      </button>
-                    </label>
+                          <label class="vt-tf-row vt-tf-toggle-row">
+                            <span class="vt-tf-label">{$t('vj.video.mirror')}</span>
+                            <button
+                              class="vt-toggle-btn"
+                              class:active={vMirrorX}
+                              onclick={() =>
+                                vjClipLauncher.updateActiveClipVideoProps(
+                                  selectedLayerIndex!,
+                                  { mirrorX: !vMirrorX },
+                                  paramDeck,
+                                )}
+                              title={$t('vj.video.mirrorTitle')}
+                              data-midi-path="vj:{selectedLayerIndex}:video:mirror"
+                              data-midi-label="{vClip.name} Mirror"
+                              data-midi-discrete="true"
+                            >
+                              {vMirrorX ? $t('vj.video.mirrorOn') : $t('vj.video.mirrorOff')}
+                            </button>
+                          </label>
 
-                    <label class="vt-tf-row">
-                      <span class="vt-tf-label">Zoom</span>
-                      <input
-                        type="range"
-                        min="0.1" max="4" step="0.05"
-                        value={vZoom}
-                        oninput={(e) => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { zoom: +(e.target as HTMLInputElement).value }, paramDeck)}
-                      />
-                      <span class="vt-tf-num">{vZoom.toFixed(2)}×</span>
-                    </label>
+                          <label class="vt-tf-row">
+                            <span class="vt-tf-label">{$t('vj.video.zoom')}</span>
+                            <input
+                              type="range"
+                              min="0.1"
+                              max="4"
+                              step="0.05"
+                              value={vZoom}
+                              oninput={(e) =>
+                                vjClipLauncher.updateActiveClipVideoProps(
+                                  selectedLayerIndex!,
+                                  { zoom: +(e.target as HTMLInputElement).value },
+                                  paramDeck,
+                                )}
+                            />
+                            <span class="vt-tf-num">{vZoom.toFixed(2)}×</span>
+                          </label>
 
-                    <label class="vt-tf-row">
-                      <span class="vt-tf-label">Anchor X</span>
-                      <input
-                        type="range"
-                        min="0" max="1" step="0.01"
-                        value={vAnchorX}
-                        oninput={(e) => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { anchorX: +(e.target as HTMLInputElement).value }, paramDeck)}
-                      />
-                      <span class="vt-tf-num">{vAnchorX.toFixed(2)}</span>
-                    </label>
+                          <label class="vt-tf-row">
+                            <span class="vt-tf-label">{$t('vj.video.anchorX')}</span>
+                            <input
+                              type="range"
+                              min="0"
+                              max="1"
+                              step="0.01"
+                              value={vAnchorX}
+                              oninput={(e) =>
+                                vjClipLauncher.updateActiveClipVideoProps(
+                                  selectedLayerIndex!,
+                                  { anchorX: +(e.target as HTMLInputElement).value },
+                                  paramDeck,
+                                )}
+                            />
+                            <span class="vt-tf-num">{vAnchorX.toFixed(2)}</span>
+                          </label>
 
-                    <label class="vt-tf-row">
-                      <span class="vt-tf-label">Anchor Y</span>
-                      <input
-                        type="range"
-                        min="0" max="1" step="0.01"
-                        value={vAnchorY}
-                        oninput={(e) => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { anchorY: +(e.target as HTMLInputElement).value }, paramDeck)}
-                      />
-                      <span class="vt-tf-num">{vAnchorY.toFixed(2)}</span>
-                    </label>
+                          <label class="vt-tf-row">
+                            <span class="vt-tf-label">{$t('vj.video.anchorY')}</span>
+                            <input
+                              type="range"
+                              min="0"
+                              max="1"
+                              step="0.01"
+                              value={vAnchorY}
+                              oninput={(e) =>
+                                vjClipLauncher.updateActiveClipVideoProps(
+                                  selectedLayerIndex!,
+                                  { anchorY: +(e.target as HTMLInputElement).value },
+                                  paramDeck,
+                                )}
+                            />
+                            <span class="vt-tf-num">{vAnchorY.toFixed(2)}</span>
+                          </label>
 
-                    <label class="vt-tf-row">
-                      <span class="vt-tf-label">Rotation</span>
-                      <input
-                        type="range"
-                        min="-180" max="180" step="1"
-                        value={vRotation}
-                        oninput={(e) => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { rotation: +(e.target as HTMLInputElement).value }, paramDeck)}
-                      />
-                      <span class="vt-tf-num">{vRotation}°</span>
-                    </label>
+                          <label class="vt-tf-row">
+                            <span class="vt-tf-label">{$t('vj.video.rotation')}</span>
+                            <input
+                              type="range"
+                              min="-180"
+                              max="180"
+                              step="1"
+                              value={vRotation}
+                              oninput={(e) =>
+                                vjClipLauncher.updateActiveClipVideoProps(
+                                  selectedLayerIndex!,
+                                  { rotation: +(e.target as HTMLInputElement).value },
+                                  paramDeck,
+                                )}
+                            />
+                            <span class="vt-tf-num">{vRotation}°</span>
+                          </label>
 
-                    <label class="vt-tf-row">
-                      <span class="vt-tf-label">Opacity</span>
-                      <input
-                        type="range"
-                        min="0" max="1" step="0.01"
-                        value={vOpacity}
-                        oninput={(e) => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { opacity: +(e.target as HTMLInputElement).value }, paramDeck)}
-                      />
-                      <span class="vt-tf-num">{Math.round(vOpacity * 100)}%</span>
-                    </label>
+                          <label class="vt-tf-row">
+                            <span class="vt-tf-label">{$t('vj.video.opacity')}</span>
+                            <input
+                              type="range"
+                              min="0"
+                              max="1"
+                              step="0.01"
+                              value={vOpacity}
+                              oninput={(e) =>
+                                vjClipLauncher.updateActiveClipVideoProps(
+                                  selectedLayerIndex!,
+                                  { opacity: +(e.target as HTMLInputElement).value },
+                                  paramDeck,
+                                )}
+                            />
+                            <span class="vt-tf-num">{Math.round(vOpacity * 100)}%</span>
+                          </label>
 
-                    <button
-                      class="vt-tf-reset"
-                      onclick={() => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { zoom: 1, fit: 'cover', anchorX: 0.5, anchorY: 0.5, rotation: 0, opacity: 1, mirrorX: false }, paramDeck)}
-                      title="Reset transform to defaults"
-                    >
-                      Reset transform
-                    </button>
+                          <button
+                            class="vt-tf-reset"
+                            onclick={() =>
+                              vjClipLauncher.updateActiveClipVideoProps(
+                                selectedLayerIndex!,
+                                {
+                                  zoom: 1,
+                                  fit: 'cover',
+                                  anchorX: 0.5,
+                                  anchorY: 0.5,
+                                  rotation: 0,
+                                  opacity: 1,
+                                  mirrorX: false,
+                                },
+                                paramDeck,
+                              )}
+                            title={$t('vj.video.reset')}
+                          >
+                            {$t('vj.video.reset')}
+                          </button>
+                        </div>
+                      </div>
+                    </div>
                   </div>
-                </div>
+                {/if}
+              </div>
+              <div class="vj-shared-media-host">
+                <MediaTray
+                  embedded={true}
+                  vjMode={true}
+                  onVJAddPayload={addMediaTrayPayloadToDeck}
+                  onVJLiveSourcesChange={handleMediaTrayLiveSourcesChange}
+                  isVJLiveSourceInUse={isMediaTrayLiveSourceInUse}
+                />
               </div>
             </div>
           {/if}
-            </div>
-            <div class="vj-shared-media-host">
-              <MediaTray
-                embedded={true}
-                vjMode={true}
-                onVJAddPayload={addMediaTrayPayloadToDeck}
-                onVJLiveSourcesChange={handleMediaTrayLiveSourcesChange}
-                isVJLiveSourceInUse={isMediaTrayLiveSourceInUse}
-              />
-            </div>
-          </div>
-          {/if}
-      </div>
+        </div>
       </div>
 
       <!-- Resize handle for preview section -->
@@ -4798,71 +5098,78 @@
 
       <!-- Bottom Section: Grid + Media Tray -->
       <div class="vj-bottom">
-      <!-- Clip Grid (now takes more space without left panel) -->
-      <div class="grid-section" class:reversed={$settings.ui.vjLayoutReversed}>
-        <!-- Blocks Tab Bar -->
-        <div class="blocks-tab-bar">
-          <div class="blocks-tabs">
-            {#each $vjClipLauncher.blocks as block, blockIdx (block.id)}
-              <div
-                class="block-tab"
-                class:active={$vjClipLauncher.activeBlockId === block.id}
-                class:dragover={dragOverBlockIndex === blockIdx}
-                draggable={editingBlockId !== block.id}
-                onclick={() => handleSelectBlock(block.id)}
-                ondblclick={(e) => startEditingBlock(block, e)}
-                oncontextmenu={(e) => openBlockContextMenu(e, block.id)}
-                ondragstart={(e) => handleBlockDragStart(e, blockIdx)}
-                ondragover={(e) => handleBlockDragOver(e, blockIdx)}
-                ondrop={(e) => handleBlockDrop(e, blockIdx)}
-                ondragend={handleBlockDragEnd}
-                role="tab"
-                tabindex="0"
-                data-midi-path="vj:block:{blockIdx}"
-                data-midi-label="Block {blockIdx + 1}: {block.name}"
-                data-midi-mode="toggle"
+        <!-- Clip Grid (now takes more space without left panel) -->
+        <div class="grid-section" class:reversed={$settings.ui.vjLayoutReversed}>
+          <!-- Blocks Tab Bar -->
+          <div class="blocks-tab-bar">
+            <div class="blocks-tabs">
+              {#each $vjClipLauncher.blocks as block, blockIdx (block.id)}
+                <div
+                  class="block-tab"
+                  class:active={$vjClipLauncher.activeBlockId === block.id}
+                  class:dragover={dragOverBlockIndex === blockIdx}
+                  draggable={editingBlockId !== block.id}
+                  onclick={() => handleSelectBlock(block.id)}
+                  ondblclick={(e) => startEditingBlock(block, e)}
+                  oncontextmenu={(e) => openBlockContextMenu(e, block.id)}
+                  ondragstart={(e) => handleBlockDragStart(e, blockIdx)}
+                  ondragover={(e) => handleBlockDragOver(e, blockIdx)}
+                  ondrop={(e) => handleBlockDrop(e, blockIdx)}
+                  ondragend={handleBlockDragEnd}
+                  role="tab"
+                  tabindex="0"
+                  data-midi-path="vj:block:{blockIdx}"
+                  data-midi-label={$t('vj.midiLabels.block', {
+                    values: { number: blockIdx + 1, name: block.name },
+                  })}
+                  data-midi-mode="toggle"
+                >
+                  {#if editingBlockId === block.id}
+                    <input
+                      bind:this={blockInputEl}
+                      type="text"
+                      class="block-name-input"
+                      bind:value={editingBlockName}
+                      onblur={finishEditingBlock}
+                      onkeydown={handleBlockKeyDown}
+                      onclick={(e) => e.stopPropagation()}
+                    />
+                  {:else}
+                    <span class="block-name">{block.name}</span>
+                  {/if}
+                </div>
+              {/each}
+            </div>
+            <button class="add-block-btn" onclick={handleAddBlock} title={$t('vj.grid.addBlock')}> + </button>
+            <div class="grid-snaps">
+              <SnapshotBank placement="inline" />
+            </div>
+          </div>
+
+          <!-- Grid dimension controls -->
+          <div class="grid-dimension-controls">
+            <div class="dim-group">
+              <span class="dim-label">{$t('vj.grid.layers')}</span>
+              <button class="dim-btn" onclick={() => vjClipLauncher.removeLayer()} title={$t('vj.grid.removeLayer')}
+                >−</button
               >
-                {#if editingBlockId === block.id}
-                  <input
-                    bind:this={blockInputEl}
-                    type="text"
-                    class="block-name-input"
-                    bind:value={editingBlockName}
-                    onblur={finishEditingBlock}
-                    onkeydown={handleBlockKeyDown}
-                    onclick={(e) => e.stopPropagation()}
-                  />
-                {:else}
-                  <span class="block-name">{block.name}</span>
-                {/if}
-              </div>
-            {/each}
+              <span class="dim-value">{$vjClipLauncher.numLayers}</span>
+              <button class="dim-btn" onclick={() => vjClipLauncher.addLayer()} title={$t('vj.grid.addLayer')}>+</button
+              >
+            </div>
+            <div class="dim-group">
+              <span class="dim-label">{$t('vj.grid.columns')}</span>
+              <button class="dim-btn" onclick={() => vjClipLauncher.removeColumn()} title={$t('vj.grid.removeColumn')}
+                >−</button
+              >
+              <span class="dim-value">{$vjClipLauncher.numColumns}</span>
+              <button class="dim-btn" onclick={() => vjClipLauncher.addColumn()} title={$t('vj.grid.addColumn')}
+                >+</button
+              >
+            </div>
           </div>
-          <button class="add-block-btn" onclick={handleAddBlock} title="Add new block">
-            +
-          </button>
-          <div class="grid-snaps">
-            <SnapshotBank placement="inline" />
-          </div>
-        </div>
 
-        <!-- Grid dimension controls -->
-        <div class="grid-dimension-controls">
-          <div class="dim-group">
-            <span class="dim-label">Layers</span>
-            <button class="dim-btn" onclick={() => vjClipLauncher.removeLayer()} title="Remove layer">−</button>
-            <span class="dim-value">{$vjClipLauncher.numLayers}</span>
-            <button class="dim-btn" onclick={() => vjClipLauncher.addLayer()} title="Add layer">+</button>
-          </div>
-          <div class="dim-group">
-            <span class="dim-label">Columns</span>
-            <button class="dim-btn" onclick={() => vjClipLauncher.removeColumn()} title="Remove column">−</button>
-            <span class="dim-value">{$vjClipLauncher.numColumns}</span>
-            <button class="dim-btn" onclick={() => vjClipLauncher.addColumn()} title="Add column">+</button>
-          </div>
-        </div>
-
-        <!-- ====================================================================
+          <!-- ====================================================================
              DECK SNIPPET: renders one full deck (column triggers + layer rows
              + cells), parameterized by `bank`. In single-deck mode it's
              rendered once with bank='A'. When the crossfader is enabled, it
@@ -4878,15 +5185,17 @@
 
           <!-- Column headers (per-deck — column triggers fire only on this deck) -->
           <div class="column-headers">
-            <div class="live-preview-header">LIVE</div>
+            <div class="live-preview-header">{$t('vj.grid.live')}</div>
             <div class="layer-controls-header"></div>
             {#each columnIndices as colIdx (colIdx)}
               <button
                 class="column-trigger"
                 onclick={() => handleColumnTrigger(colIdx, bank)}
-                title={`Trigger column ${colIdx + 1} on Deck ${bank}`}
+                title={$t('vj.grid.triggerColumn', { values: { column: colIdx + 1, deck: bank } })}
                 data-midi-path="{midiPrefix}:column:{colIdx}"
-                data-midi-label="Deck {bank} Column {colIdx + 1}"
+                data-midi-label={$t('vj.midiLabels.deckColumn', {
+                  values: { bank, column: colIdx + 1 },
+                })}
                 data-midi-mode="toggle"
               >
                 {colIdx + 1}
@@ -4911,7 +5220,7 @@
                 draggable="true"
                 ondragstart={(e) => handleLayerDragStart(layerIdx, e)}
                 ondragend={handleLayerDragEnd}
-                title="Drag to reorder layer"
+                title={$t('vj.grid.reorderLayer')}
               >
                 {#if activeClip}
                   {#if activeClip.thumbnail}
@@ -4934,7 +5243,7 @@
                 <div class="layer-header">
                   <button class="layer-select-icon" class:selected={isSelectedDeck && selectedLayerIndex === layerIdx}
                     onclick={(e) => { e.stopPropagation(); selectLayerForEffects(layerIdx); if ($vjClipLauncher.crossfaderEnabled) vjClipLauncher.setSelectedDeck(bank); }}
-                    title="Select layer {layerIdx + 1} on Deck {bank}">
+                    title={$t('vj.grid.selectLayer', { values: { layer: layerIdx + 1, deck: bank } })}>
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 12l10 5 10-5"/></svg>
                   </button>
                   <span class="layer-num">{layerIdx + 1}</span>
@@ -4943,24 +5252,28 @@
                       class="layer-btn solo"
                       class:active={states[layerIdx].solo}
                       onclick={(e) => { e.stopPropagation(); handleToggleSolo(layerIdx, bank); }}
-                      title="Solo (Deck {bank})"
+                      title={$t('vj.grid.solo', { values: { deck: bank } })}
                       data-midi-path="{midiPrefix}:{layerIdx}:solo"
-                      data-midi-label="Deck {bank} L{layerIdx + 1} Solo"
+                      data-midi-label={$t('vj.midiLabels.deckLayerSolo', {
+                        values: { bank, layer: layerIdx + 1 },
+                      })}
                       data-midi-mode="toggle"
                     >S</button>
                     <button
                       class="layer-btn mute"
                       class:active={states[layerIdx].mute}
                       onclick={(e) => { e.stopPropagation(); handleToggleMute(layerIdx, bank); }}
-                      title="Mute (Deck {bank})"
+                      title={$t('vj.grid.mute', { values: { deck: bank } })}
                       data-midi-path="{midiPrefix}:{layerIdx}:mute"
-                      data-midi-label="Deck {bank} L{layerIdx + 1} Mute"
+                      data-midi-label={$t('vj.midiLabels.deckLayerMute', {
+                        values: { bank, layer: layerIdx + 1 },
+                      })}
                       data-midi-mode="toggle"
                     >M</button>
                     <button
                       class="layer-btn stop"
                       onclick={(e) => { e.stopPropagation(); handleStopLayer(layerIdx, bank); }}
-                      title="Stop layer (Deck {bank})"
+                      title={$t('vj.grid.stopLayer', { values: { deck: bank } })}
                     >■</button>
                   </div>
                 </div>
@@ -4977,7 +5290,9 @@
                   onclick={(e) => e.stopPropagation()}
                   onpointerdown={(e) => e.stopPropagation()}
                   data-midi-path="{midiPrefix}:{layerIdx}:opacity"
-                  data-midi-label="Deck {bank} L{layerIdx + 1} Opacity"
+                  data-midi-label={$t('vj.midiLabels.deckLayerOpacity', {
+                    values: { bank, layer: layerIdx + 1 },
+                  })}
                   data-midi-min="0"
                   data-midi-max="1"
                   data-midi-step="0.01"
@@ -4988,11 +5303,13 @@
                   onchange={(e) => handleLayerBlendChange(layerIdx, e, bank)}
                   onclick={(e) => e.stopPropagation()}
                   data-midi-path="{midiPrefix}:{layerIdx}:blend"
-                  data-midi-label="Deck {bank} L{layerIdx + 1} Blend"
+                  data-midi-label={$t('vj.midiLabels.deckLayerBlend', {
+                    values: { bank, layer: layerIdx + 1 },
+                  })}
                   data-midi-discrete="true"
                 >
                   {#each blendModes as mode}
-                    <option value={mode}>{mode}</option>
+                    <option value={mode}>{vjBlendModeDisplayLabel(mode)}</option>
                   {/each}
                 </select>
               </div>
@@ -5002,7 +5319,9 @@
                 {@const clip = grid[layerIdx]?.[colIdx]}
                 {@const isActive = activeClip !== null && clip != null && activeClip.id === clip.id}
                 {@const isPresetActive = clip != null && clip.type === 'preset' && clip.presetId === $activeCompositionId}
-                {@const isQueued = $vjClipLauncher.pendingTriggers.some(p => p.layerIndex === layerIdx && p.columnIndex === colIdx && p.bank === bank)}
+                {@const isQueued = $vjClipLauncher.pendingTriggers.some(
+                    (p) => p.layerIndex === layerIdx && p.columnIndex === colIdx && p.bank === bank,
+                  )}
                 {@const isClipFirable = clip == null || (clip.type === 'preset' ? $vjClipLauncher.mapMode : !$vjClipLauncher.mapMode)}
                 <div
                   class="clip-cell"
@@ -5028,7 +5347,9 @@
                   role="button"
                   tabindex="0"
                   data-midi-path="{midiPrefix}:{layerIdx}:trigger:{colIdx}"
-                  data-midi-label="Deck {bank} L{layerIdx + 1} C{colIdx + 1}"
+                  data-midi-label={$t('vj.midiLabels.deckLayerColumn', {
+                    values: { bank, layer: layerIdx + 1, column: colIdx + 1 },
+                  })}
                   data-midi-mode="toggle"
                 >
                   {#if clip}
@@ -5044,7 +5365,7 @@
                       <button
                         class="clear-btn"
                         onclick={(e) => handleClearClip(layerIdx, colIdx, e, bank)}
-                        title="Remove clip"
+                        title={$t('vj.grid.removeClip')}
                       >
                         ×
                       </button>
@@ -5075,7 +5396,7 @@
                   class:active={crossfaderModActive}
                   class:open={crossfaderModTrayAnchor !== null}
                   class:auto={!!crossfaderAuto}
-                  title="Crossfader modulation - audio bands, LFO with BPM sync, auto playhead"
+                  title={$t('vj.crossfader.modulation')}
                   onclick={(e) => toggleCrossfaderModTray(e.currentTarget as HTMLElement)}
                 >{modSourceLabel(crossfaderCurrentSource, !!crossfaderAuto)}</button>
               </div>
@@ -5083,9 +5404,9 @@
                 class="cut-btn cut-a"
                 class:active={$vjClipLauncher.crossfaderValue === 0}
                 onclick={() => glideCrossfaderTo(0)}
-                title="Cut to Deck A"
+                title={$t('vj.crossfader.cutA')}
                 data-midi-path="vj:crossfader:cut-a"
-                data-midi-label="Cut to Deck A"
+                data-midi-label={$t('vj.midiLabels.cutDeckA')}
                 data-midi-mode="toggle"
               >◀</button>
               <div class="xfade-vertical-track">
@@ -5098,7 +5419,7 @@
                   oninput={(e) => setCrossfaderManualValue(1 - parseFloat((e.target as HTMLInputElement).value))}
                   class="xfade-vertical-input"
                   data-midi-path="vj:crossfader:value"
-                  data-midi-label="Crossfader"
+                  data-midi-label={$t('vj.midiLabels.crossfader')}
                   data-midi-min="0"
                   data-midi-max="1"
                   data-midi-step="0.001"
@@ -5114,22 +5435,22 @@
                 class="cut-btn cut-b"
                 class:active={$vjClipLauncher.crossfaderValue === 1}
                 onclick={() => glideCrossfaderTo(1)}
-                title="Cut to Deck B"
+                title={$t('vj.crossfader.cutB')}
                 data-midi-path="vj:crossfader:cut-b"
-                data-midi-label="Cut to Deck B"
+                data-midi-label={$t('vj.midiLabels.cutDeckB')}
                 data-midi-mode="toggle"
               >▶</button>
 
               <div class="xfade-readout">{Math.round($vjClipLauncher.crossfaderValue * 100)}%</div>
 
-              <label class="xfade-time-control" title="Fade time for Cut A/B buttons">
-                <span>TIME</span>
+              <label class="xfade-time-control" title={$t('vj.crossfader.fadeTime')}>
+                <span>{$t('vj.crossfader.time')}</span>
                 <select
                   class="xfade-select xfade-time"
                   value={$vjClipLauncher.crossfaderFadeDuration ?? 0}
                   onchange={(e) => vjClipLauncher.setCrossfaderFadeDuration(parseFloat((e.target as HTMLSelectElement).value))}
                   data-midi-path="vj:crossfader:fadeDuration"
-                  data-midi-label="Crossfader Fade Time"
+                  data-midi-label={$t('vj.midiLabels.crossfaderFadeTime')}
                   data-midi-discrete="true"
                 >
                   <option value={0}>0s</option>
@@ -5146,21 +5467,21 @@
                 class="xfade-select"
                 value={$vjClipLauncher.crossfaderTransition}
                 onchange={(e) => vjClipLauncher.setCrossfaderTransition((e.target as HTMLSelectElement).value as any)}
-                title="Transition style"
+                title={$t('vj.crossfader.transition')}
                 data-midi-path="vj:crossfader:transition"
-                data-midi-label="Crossfader Transition"
+                data-midi-label={$t('vj.midiLabels.crossfaderTransition')}
                 data-midi-discrete="true"
               >
-                <option value="dissolve">Dissolve</option>
-                <option value="wipe">Wipe</option>
-                <option value="rgb-split">RGB Split</option>
-                <option value="cube">Cube</option>
-                <option value="shatter">Shatter</option>
-                <option value="halftone">Halftone</option>
-                <option value="glitch">Glitch</option>
-                <option value="liquid">Liquid</option>
-                <option value="strobe">Strobe</option>
-                <option value="slide">Slide</option>
+                <option value="dissolve">{$t('vj.crossfader.transitions.dissolve')}</option>
+                <option value="wipe">{$t('vj.crossfader.transitions.wipe')}</option>
+                <option value="rgb-split">{$t('vj.crossfader.transitions.rgbSplit')}</option>
+                <option value="cube">{$t('vj.crossfader.transitions.cube')}</option>
+                <option value="shatter">{$t('vj.crossfader.transitions.shatter')}</option>
+                <option value="halftone">{$t('vj.crossfader.transitions.halftone')}</option>
+                <option value="glitch">{$t('vj.crossfader.transitions.glitch')}</option>
+                <option value="liquid">{$t('vj.crossfader.transitions.liquid')}</option>
+                <option value="strobe">{$t('vj.crossfader.transitions.strobe')}</option>
+                <option value="slide">{$t('vj.crossfader.transitions.slide')}</option>
               </select>
 
               <!-- Output blend mode for the dual-deck composite. The
@@ -5175,20 +5496,20 @@
                 class="xfade-select xfade-curve"
                 value={$vjClipLauncher.crossfaderBlendMode || 'normal'}
                 onchange={(e) => vjClipLauncher.setCrossfaderBlendMode((e.target as HTMLSelectElement).value as any)}
-                title="Output blend mode — A↔B combination math at the mix point"
+                title={$t('vj.crossfader.blendTitle')}
                 data-midi-path="vj:crossfader:blendMode"
-                data-midi-label="Crossfader Blend Mode"
+                data-midi-label={$t('vj.midiLabels.crossfaderBlendMode')}
                 data-midi-discrete="true"
               >
-                <option value="normal">Normal</option>
-                <option value="multiply">Multiply</option>
-                <option value="screen">Screen</option>
-                <option value="add">Add</option>
-                <option value="difference">Difference</option>
-                <option value="darken">Darken</option>
-                <option value="lighten">Lighten</option>
-                <option value="overlay">Overlay</option>
-                <option value="exclusion">Exclusion</option>
+                <option value="normal">{vjBlendModeDisplayLabel('normal')}</option>
+                <option value="multiply">{vjBlendModeDisplayLabel('multiply')}</option>
+                <option value="screen">{vjBlendModeDisplayLabel('screen')}</option>
+                <option value="add">{vjBlendModeDisplayLabel('add')}</option>
+                <option value="difference">{vjBlendModeDisplayLabel('difference')}</option>
+                <option value="darken">{vjBlendModeDisplayLabel('darken')}</option>
+                <option value="lighten">{vjBlendModeDisplayLabel('lighten')}</option>
+                <option value="overlay">{vjBlendModeDisplayLabel('overlay')}</option>
+                <option value="exclusion">{vjBlendModeDisplayLabel('exclusion')}</option>
               </select>
 
               {#if crossfaderModTrayAnchor}
@@ -5198,8 +5519,8 @@
                   source={crossfaderMod?.source ?? 'manual'}
                   mod={crossfaderMod}
                   auto={crossfaderAuto}
-                  autoHint="Auto sweeps the A/B fader between Deck A and Deck B."
-                  onClose={() => crossfaderModTrayAnchor = null}
+                  autoHint={$t('vj.crossfader.autoHint')}
+                  onClose={() => (crossfaderModTrayAnchor = null)}
                   onSetSource={setCrossfaderSource}
                   onPatchMod={patchCrossfaderMod}
                   onPatchAuto={patchCrossfaderAuto}
@@ -5223,17 +5544,17 @@
         <div class="ctx-backdrop" onclick={closeCellContextMenu}></div>
         <div class="ctx-menu" style="left:{cellContextMenu.x}px;top:{cellContextMenu.y}px">
           {#if ctxClip}
-            <button class="ctx-item" onclick={openClipPreview}>Edit / Preview</button>
-            <button class="ctx-item" onclick={copyClipToClipboard}>Copy</button>
+            <button class="ctx-item" onclick={openClipPreview}>{$t('vj.context.editPreview')}</button>
+            <button class="ctx-item" onclick={copyClipToClipboard}>{$t('vj.context.copy')}</button>
           {/if}
           {#if clipboardClip}
-            <button class="ctx-item" onclick={pasteClipFromClipboard}>Paste</button>
+            <button class="ctx-item" onclick={pasteClipFromClipboard}>{$t('vj.context.paste')}</button>
           {/if}
           {#if ctxClip}
-            <button class="ctx-item ctx-danger" onclick={clearClipFromMenu}>Remove</button>
+            <button class="ctx-item ctx-danger" onclick={clearClipFromMenu}>{$t('vj.context.remove')}</button>
           {/if}
           {#if !ctxClip && !clipboardClip}
-            <div class="ctx-item ctx-disabled">No actions</div>
+            <div class="ctx-item ctx-disabled">{$t('vj.context.noActions')}</div>
           {/if}
         </div>
       {/if}
@@ -5243,13 +5564,13 @@
         <div class="ctx-backdrop" onclick={closeBlockContextMenu}></div>
         <div class="ctx-menu" style="left:{blockContextMenu.x}px;top:{blockContextMenu.y}px">
           <button class="ctx-item ctx-primary" onclick={blockMenuSaveProject}>
-            Save Project<span class="ctx-shortcut">Ctrl+S</span>
+            {$t('vj.context.saveProject')}<span class="ctx-shortcut">Ctrl+S</span>
           </button>
           <div class="ctx-separator"></div>
-          <button class="ctx-item" onclick={blockMenuRename}>Rename Block</button>
-          <button class="ctx-item" onclick={blockMenuDuplicate}>Duplicate Block</button>
+          <button class="ctx-item" onclick={blockMenuRename}>{$t('vj.context.renameBlock')}</button>
+          <button class="ctx-item" onclick={blockMenuDuplicate}>{$t('vj.context.duplicateBlock')}</button>
           {#if $vjClipLauncher.blocks.length > 1}
-            <button class="ctx-item ctx-danger" onclick={blockMenuDelete}>Delete Block</button>
+            <button class="ctx-item ctx-danger" onclick={blockMenuDelete}>{$t('vj.context.deleteBlock')}</button>
           {/if}
         </div>
       {/if}
@@ -5259,466 +5580,721 @@
         <div class="ctx-backdrop" onclick={closeStageContextMenu}></div>
         <div class="ctx-menu" style="left:{stageContextMenu.x}px;top:{stageContextMenu.y}px">
           <button class="ctx-item ctx-primary" onclick={stageMenuUpdate}>
-            Update Preset
+            {$t('vj.context.updatePreset')}
           </button>
-          <button class="ctx-item" onclick={stageMenuRename}>Rename Preset</button>
+          <button class="ctx-item" onclick={stageMenuRename}>{$t('vj.context.renamePreset')}</button>
           <div class="ctx-separator"></div>
           <button class="ctx-item" onclick={stageMenuSaveProject}>
-            Save Project<span class="ctx-shortcut">Ctrl+S</span>
+            {$t('vj.context.saveProject')}<span class="ctx-shortcut">Ctrl+S</span>
           </button>
           <div class="ctx-separator"></div>
-          <button class="ctx-item ctx-danger" onclick={stageMenuDelete}>Delete Preset</button>
+          <button class="ctx-item ctx-danger" onclick={stageMenuDelete}>{$t('vj.context.deletePreset')}</button>
         </div>
       {/if}
 
       <!-- Clip Preview Panel — opened from cell context menu's Edit/Preview.
            Bank tag passed through so writes target the correct deck. -->
-      {#if previewPanel}
-        <ClipPreviewPanel
-          layerIndex={previewPanel.layer}
-          columnIndex={previewPanel.column}
-          clip={previewPanel.clip}
-          bank={previewPanel.bank}
-          onClose={() => previewPanel = null}
-        />
-      {/if}
+        {#if previewPanel}
+          <ClipPreviewPanel
+            layerIndex={previewPanel.layer}
+            columnIndex={previewPanel.column}
+            clip={previewPanel.clip}
+            bank={previewPanel.bank}
+            onClose={() => (previewPanel = null)}
+          />
+        {/if}
 
-      <!-- Right Panel: Media Tray (collapsible) -->
-      <div class="media-tray-vj" class:collapsed={mediaTrayCollapsed}>
-        <button class="tray-collapse-btn" onclick={() => mediaTrayCollapsed = !mediaTrayCollapsed} title={mediaTrayCollapsed ? 'Expand media tray' : 'Collapse media tray'}>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-            {#if mediaTrayCollapsed}
-              <polyline points="15 18 9 12 15 6"/>
-            {:else}
-              <polyline points="9 18 15 12 9 6"/>
-            {/if}
-          </svg>
-        </button>
-        {#if !mediaTrayCollapsed}
-        <!-- Tab Icons Row (matching mapping mode).  In MAP sub-mode only
+        <!-- Right Panel: Media Tray (collapsible) -->
+        <div class="media-tray-vj" class:collapsed={mediaTrayCollapsed}>
+          <button
+            class="tray-collapse-btn"
+            onclick={() => (mediaTrayCollapsed = !mediaTrayCollapsed)}
+            title={mediaTrayCollapsed ? 'Expand media tray' : 'Collapse media tray'}
+          >
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+              {#if mediaTrayCollapsed}
+                <polyline points="15 18 9 12 15 6" />
+              {:else}
+                <polyline points="9 18 15 12 9 6" />
+              {/if}
+            </svg>
+          </button>
+          {#if !mediaTrayCollapsed}
+            <!-- Tab Icons Row (matching mapping mode).  In MAP sub-mode only
              the Maps tab is shown — the panel becomes a preset-only mixer
              so hiding the other source tabs prevents accidentally dragging
              non-preset content into the cells. Reactive auto-select below
              ensures the tab pointer lands on 'maps' when entering MAP. -->
-        <div class="vj-tabs">
-          <div class="vj-tab-row">
-            {#if !$vjClipLauncher.mapMode}
-              <button class="vj-tab" class:active={vjMediaTab === 'shaders'} onclick={() => vjMediaTab = 'shaders'}>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
-                <span>FX</span>
-                {#if shaders.length}<span class="vj-tab-count">{shaders.length}</span>{/if}
-              </button>
-              <button class="vj-tab" class:active={vjMediaTab === 'js'} onclick={() => vjMediaTab = 'js'}>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 18l6-6-6-6M8 6l-6 6 6 6"/></svg>
-                <span>JS</span>
-                {#if threejsItems.length}<span class="vj-tab-count">{threejsItems.length}</span>{/if}
-              </button>
-              <button class="vj-tab" class:active={vjMediaTab === 'library'} onclick={() => vjMediaTab = 'library'}>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z"/></svg>
-                <span>Saved</span>
-                {#if savedShaders.length}<span class="vj-tab-count">{savedShaders.length}</span>{/if}
-              </button>
-              <button class="vj-tab" class:active={vjMediaTab === 'videos'} onclick={() => vjMediaTab = 'videos'}>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-                <span>Vid</span>
-                {#if $mediaLibrary.filter(m => m.type === 'video').length}<span class="vj-tab-count">{$mediaLibrary.filter(m => m.type === 'video').length}</span>{/if}
-              </button>
-              <button class="vj-tab" class:active={vjMediaTab === 'images'} onclick={() => vjMediaTab = 'images'}>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2" ry="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
-                <span>Img</span>
-                {#if $mediaLibrary.filter(m => m.type === 'image').length}<span class="vj-tab-count">{$mediaLibrary.filter(m => m.type === 'image').length}</span>{/if}
-              </button>
-              <button class="vj-tab" class:active={vjMediaTab === 'sources'} onclick={() => vjMediaTab = 'sources'}>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/></svg>
-                <span>Src</span>
-                {#if vjLiveSources.filter(s => s.status === 'live').length > 0}
-                  <span class="vj-tab-count live">{vjLiveSources.filter(s => s.status === 'live').length}</span>
+            <div class="vj-tabs">
+              <div class="vj-tab-row">
+                {#if !$vjClipLauncher.mapMode}
+                  <button
+                    class="vj-tab"
+                    class:active={vjMediaTab === 'shaders'}
+                    onclick={() => (vjMediaTab = 'shaders')}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                      ><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5" /></svg
+                    >
+                    <span>{$t('vj.media.tabs.effects')}</span>
+                    {#if shaders.length}<span class="vj-tab-count">{shaders.length}</span>{/if}
+                  </button>
+                  <button class="vj-tab" class:active={vjMediaTab === 'js'} onclick={() => (vjMediaTab = 'js')}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                      ><path d="M16 18l6-6-6-6M8 6l-6 6 6 6" /></svg
+                    >
+                    <span>{$t('vj.media.tabs.js')}</span>
+                    {#if threejsItems.length}<span class="vj-tab-count">{threejsItems.length}</span>{/if}
+                  </button>
+                  <button
+                    class="vj-tab"
+                    class:active={vjMediaTab === 'library'}
+                    onclick={() => (vjMediaTab = 'library')}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                      ><path d="M19 21l-7-5-7 5V5a2 2 0 0 1 2-2h10a2 2 0 0 1 2 2z" /></svg
+                    >
+                    <span>{$t('vj.media.tabs.saved')}</span>
+                    {#if savedShaders.length}<span class="vj-tab-count">{savedShaders.length}</span>{/if}
+                  </button>
+                  <button class="vj-tab" class:active={vjMediaTab === 'videos'} onclick={() => (vjMediaTab = 'videos')}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                      ><polygon points="5 3 19 12 5 21 5 3" /></svg
+                    >
+                    <span>{$t('vj.media.tabs.video')}</span>
+                    {#if $mediaLibrary.filter((m) => m.type === 'video').length}<span class="vj-tab-count"
+                        >{$mediaLibrary.filter((m) => m.type === 'video').length}</span
+                      >{/if}
+                  </button>
+                  <button class="vj-tab" class:active={vjMediaTab === 'images'} onclick={() => (vjMediaTab = 'images')}>
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                      ><rect x="3" y="3" width="18" height="18" rx="2" ry="2" /><circle
+                        cx="8.5"
+                        cy="8.5"
+                        r="1.5"
+                      /><polyline points="21 15 16 10 5 21" /></svg
+                    >
+                    <span>{$t('vj.media.tabs.image')}</span>
+                    {#if $mediaLibrary.filter((m) => m.type === 'image').length}<span class="vj-tab-count"
+                        >{$mediaLibrary.filter((m) => m.type === 'image').length}</span
+                      >{/if}
+                  </button>
+                  <button
+                    class="vj-tab"
+                    class:active={vjMediaTab === 'sources'}
+                    onclick={() => (vjMediaTab = 'sources')}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                      ><path d="M23 7l-7 5 7 5V7z" /><rect x="1" y="5" width="15" height="14" rx="2" ry="2" /></svg
+                    >
+                    <span>{$t('vj.media.tabs.source')}</span>
+                    {#if vjLiveSources.filter((s) => s.status === 'live').length > 0}
+                      <span class="vj-tab-count live">{vjLiveSources.filter((s) => s.status === 'live').length}</span>
+                    {/if}
+                  </button>
+                  <button
+                    class="vj-tab"
+                    class:active={vjMediaTab === 'plugins'}
+                    onclick={() => (vjMediaTab = 'plugins')}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                      ><path d="M12 2C6.5 8 4 12 4 15a8 8 0 1 0 16 0c0-3-2.5-7-8-13Z" /></svg
+                    >
+                    <span>{$t('vj.media.tabs.plugin')}</span>
+                  </button>
                 {/if}
-              </button>
-              <button class="vj-tab" class:active={vjMediaTab === 'plugins'} onclick={() => vjMediaTab = 'plugins'}>
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2C6.5 8 4 12 4 15a8 8 0 1 0 16 0c0-3-2.5-7-8-13Z"/></svg>
-                <span>Plug</span>
-              </button>
-            {/if}
-            {#if $vjClipLauncher.mapMode}
-              <button class="vj-tab" class:active={vjMediaTab === 'maps'} onclick={() => vjMediaTab = 'maps'} title="Saved mapping presets — drag onto a clip cell. Stack with VJ layer opacity + blend.">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="1 6 7 3 17 6 23 3 23 18 17 21 7 18 1 21 1 6"/><line x1="7" y1="3" x2="7" y2="18"/><line x1="17" y1="6" x2="17" y2="21"/></svg>
-                <span>Maps</span>
-                {#if $compositions.length}<span class="vj-tab-count">{$compositions.length}</span>{/if}
-              </button>
-            {/if}
-          </div>
-        </div>
-
-        <!-- AI Generator Buttons -->
-        <div class="vj-ai-section">
-          <button class="vj-ai-btn" onclick={() => { vjShowAIGenerator = !vjShowAIGenerator; if (vjShowAIGenerator) vjShowVideoGenerator = false; }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/>
-            </svg>
-            {vjShowAIGenerator ? 'Hide AI' : 'AI Generate'}
-          </button>
-          <button class="vj-ai-btn vj-ai-video-btn" onclick={() => { vjShowVideoGenerator = !vjShowVideoGenerator; if (vjShowVideoGenerator) vjShowAIGenerator = false; }}>
-            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <polygon points="5 3 19 12 5 21 5 3"/>
-            </svg>
-            {vjShowVideoGenerator ? 'Hide' : 'AI Video'}
-          </button>
-        </div>
-
-        <!-- AI Generator Panels -->
-        {#if vjShowAIGenerator}
-          <div class="vj-ai-container">
-            <AIShaderGenerator
-              on:generated={handleVJAIGenerated}
-              on:close={() => { vjShowAIGenerator = false; }}
-            />
-          </div>
-        {/if}
-
-        {#if vjShowVideoGenerator}
-          <div class="vj-ai-container">
-            <AIVideoGenerator
-              on:generated={handleVJAIVideoGenerated}
-              on:close={() => { vjShowVideoGenerator = false; }}
-            />
-          </div>
-        {/if}
-
-        <!-- Loading indicator -->
-        {#if shadersLoading && (vjMediaTab === 'shaders' || vjMediaTab === 'js')}
-          <div class="loading">Loading shaders...</div>
-        {/if}
-
-        <!-- Import bar: file picker for VJ-only media import -->
-        {#if vjMediaTab === 'videos' || vjMediaTab === 'images'}
-          <div class="vj-import-bar">
-            <button class="vj-import-btn" onclick={() => vjMediaFileInput?.click()} title="Import files from disk">
-              <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
-              Import {vjMediaTab === 'videos' ? 'Videos' : 'Images'}
-            </button>
-            <input
-              type="file"
-              bind:this={vjMediaFileInput}
-              accept={vjMediaTab === 'videos' ? 'video/*' : 'image/*'}
-              multiple
-              style="display:none;"
-              onchange={vjHandleMediaFilePick}
-            />
-          </div>
-        {/if}
-
-        <!-- Media List -->
-        <div
-          class="media-list"
-          class:vj-media-drag-over={vjMediaDragOver}
-          ondragover={vjHandleMediaDragOver}
-          ondragleave={vjHandleMediaDragLeave}
-          ondrop={vjHandleMediaDrop}
-          role="region">
-          {#if vjMediaTab === 'sources'}
-            <!-- Live Sources Panel for VJ -->
-            <div class="vj-sources-panel">
-              <div class="vj-sources-btns">
-                <button class="vj-src-btn" onclick={() => vjStartWebcam()}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M23 7l-7 5 7 5V7z"/><rect x="1" y="5" width="15" height="14" rx="2" ry="2"/>
-                  </svg>
-                  Webcam
-                </button>
-                <button class="vj-src-btn" onclick={() => vjStartCapture()}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/>
-                  </svg>
-                  Capture
-                </button>
-                <button class="vj-src-btn spout-btn" class:active={vjShowSpoutPicker} onclick={() => { vjShowSpoutPicker = !vjShowSpoutPicker; if (vjShowSpoutPicker) vjScanSpout(); }}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <path d="M5 12.55a11 11 0 0 1 14.08 0"/><path d="M8.53 16.11a6 6 0 0 1 6.95 0"/><circle cx="12" cy="20" r="1"/>
-                  </svg>
-                  {getTextureShareLabel()}
-                </button>
-                <button class="vj-src-btn ndi-btn" class:active={vjShowNdiPicker} onclick={() => { vjShowNdiPicker = !vjShowNdiPicker; if (vjShowNdiPicker) { vjShowSpoutPicker = false; void vjStartNdiScan(); } }}>
-                  <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                    <circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="11"/>
-                  </svg>
-                  NDI®
-                </button>
+                {#if $vjClipLauncher.mapMode}
+                  <button
+                    class="vj-tab"
+                    class:active={vjMediaTab === 'maps'}
+                    onclick={() => (vjMediaTab = 'maps')}
+                    title={$t('vj.media.mapsTitle')}
+                  >
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                      ><polygon points="1 6 7 3 17 6 23 3 23 18 17 21 7 18 1 21 1 6" /><line
+                        x1="7"
+                        y1="3"
+                        x2="7"
+                        y2="18"
+                      /><line x1="17" y1="6" x2="17" y2="21" /></svg
+                    >
+                    <span>{$t('vj.media.tabs.maps')}</span>
+                    {#if $compositions.length}<span class="vj-tab-count">{$compositions.length}</span>{/if}
+                  </button>
+                {/if}
               </div>
-              {#if vjShowNdiPicker}
-                <div class="vj-spout-picker">
-                  {#if vjDetectedNdiSources.length > 0}
-                    <div class="vj-spout-list">
-                      {#each vjDetectedNdiSources as src (src.name)}
-                        <button class="vj-spout-sender" onclick={() => { vjAddNdiSource(src.name); vjShowNdiPicker = false; }} title={src.url}>
-                          {src.name}
-                        </button>
-                      {/each}
-                    </div>
-                  {:else}
-                    <div class="empty-media" style="padding: 12px 14px;">
-                      <p>{!vjNdiChecked || vjNdiScanning ? 'Scanning for NDI® sources...' : vjNdiAvailable ? 'No NDI® sources detected' : 'NDI® unavailable'}</p>
-                      <p class="hint">{vjNdiStatusHint}</p>
-                    </div>
-                  {/if}
-                  <p class="hint" style="padding: 0 14px 10px;">
-                    <a href="https://ndi.video/" target="_blank" rel="noreferrer">NDI®</a>
-                    is a registered trademark of Vizrt NDI AB.
-                  </p>
-                </div>
-              {/if}
-              {#if vjShowSpoutPicker}
-                <div class="vj-spout-picker">
-                  {#if vjDetectedSpoutSenders.length > 0}
-                    <div class="vj-spout-list">
-                      {#each vjDetectedSpoutSenders as sender}
-                        <button class="vj-spout-sender" onclick={() => { vjAddSpoutInput(sender); vjShowSpoutPicker = false; }}>
-                          {sender}
-                        </button>
-                      {/each}
-                    </div>
-                  {:else}
-                    <div class="empty-media" style="padding: 12px 14px;">
-                      <p>{vjTextureShareAvailable ? `No ${getTextureShareLabel()} senders detected` : `${getTextureShareLabel()} native bridge unavailable`}</p>
-                      <p class="hint">{vjTextureShareHint}</p>
-                    </div>
-                  {/if}
-                  <div class="vj-spout-manual">
-                    <input type="text" class="vj-spout-input" placeholder="Sender name..." bind:value={vjSpoutInput} onkeydown={(e) => { if (e.key === 'Enter' && vjSpoutInput.trim()) { vjAddSpoutInput(vjSpoutInput.trim()); vjSpoutInput = ''; vjShowSpoutPicker = false; } }} />
-                    <button class="vj-spout-connect" disabled={!vjSpoutInput.trim()} onclick={() => { if (vjSpoutInput.trim()) { vjAddSpoutInput(vjSpoutInput.trim()); vjSpoutInput = ''; vjShowSpoutPicker = false; } }}>
-                      Go
+            </div>
+
+            <!-- AI Generator Buttons -->
+            <div class="vj-ai-section">
+              <button
+                class="vj-ai-btn"
+                onclick={() => {
+                  vjShowAIGenerator = !vjShowAIGenerator;
+                  if (vjShowAIGenerator) vjShowVideoGenerator = false;
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <path
+                    d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"
+                  />
+                </svg>
+                {vjShowAIGenerator ? $t('vj.media.aiHide') : $t('vj.media.aiGenerate')}
+              </button>
+              <button
+                class="vj-ai-btn vj-ai-video-btn"
+                onclick={() => {
+                  vjShowVideoGenerator = !vjShowVideoGenerator;
+                  if (vjShowVideoGenerator) vjShowAIGenerator = false;
+                }}
+              >
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                  <polygon points="5 3 19 12 5 21 5 3" />
+                </svg>
+                {vjShowVideoGenerator ? $t('vj.media.videoHide') : $t('vj.media.aiVideo')}
+              </button>
+            </div>
+
+            <!-- AI Generator Panels -->
+            {#if vjShowAIGenerator}
+              <div class="vj-ai-container">
+                <AIShaderGenerator
+                  on:generated={handleVJAIGenerated}
+                  on:close={() => {
+                    vjShowAIGenerator = false;
+                  }}
+                />
+              </div>
+            {/if}
+
+            {#if vjShowVideoGenerator}
+              <div class="vj-ai-container">
+                <AIVideoGenerator
+                  on:generated={handleVJAIVideoGenerated}
+                  on:close={() => {
+                    vjShowVideoGenerator = false;
+                  }}
+                />
+              </div>
+            {/if}
+
+            <!-- Loading indicator -->
+            {#if shadersLoading && (vjMediaTab === 'shaders' || vjMediaTab === 'js')}
+              <div class="loading">{$t('vj.media.loadingShaders')}</div>
+            {/if}
+
+            <!-- Import bar: file picker for VJ-only media import -->
+            {#if vjMediaTab === 'videos' || vjMediaTab === 'images'}
+              <div class="vj-import-bar">
+                <button
+                  class="vj-import-btn"
+                  onclick={() => vjMediaFileInput?.click()}
+                  title={$t('vj.media.importTitle')}
+                >
+                  <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+                    ><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" /><polyline points="17 8 12 3 7 8" /><line
+                      x1="12"
+                      y1="3"
+                      x2="12"
+                      y2="15"
+                    /></svg
+                  >
+                  {$t('vj.media.import')}
+                  {vjMediaTab === 'videos' ? $t('vj.media.videos') : $t('vj.media.images')}
+                </button>
+                <input
+                  type="file"
+                  bind:this={vjMediaFileInput}
+                  accept={vjMediaTab === 'videos' ? 'video/*' : 'image/*'}
+                  multiple
+                  style="display:none;"
+                  onchange={vjHandleMediaFilePick}
+                />
+              </div>
+            {/if}
+
+            <!-- Media List -->
+            <div
+              class="media-list"
+              class:vj-media-drag-over={vjMediaDragOver}
+              ondragover={vjHandleMediaDragOver}
+              ondragleave={vjHandleMediaDragLeave}
+              ondrop={vjHandleMediaDrop}
+              role="region"
+            >
+              {#if vjMediaTab === 'sources'}
+                <!-- Live Sources Panel for VJ -->
+                <div class="vj-sources-panel">
+                  <div class="vj-sources-btns">
+                    <button class="vj-src-btn" onclick={() => vjStartWebcam()}>
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                      >
+                        <path d="M23 7l-7 5 7 5V7z" /><rect x="1" y="5" width="15" height="14" rx="2" ry="2" />
+                      </svg>
+                      {$t('vj.sources.webcam')}
+                    </button>
+                    <button class="vj-src-btn" onclick={() => vjStartCapture()}>
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                      >
+                        <rect x="2" y="3" width="20" height="14" rx="2" ry="2" /><line
+                          x1="8"
+                          y1="21"
+                          x2="16"
+                          y2="21"
+                        /><line x1="12" y1="17" x2="12" y2="21" />
+                      </svg>
+                      {$t('vj.sources.capture')}
+                    </button>
+                    <button
+                      class="vj-src-btn spout-btn"
+                      class:active={vjShowSpoutPicker}
+                      onclick={() => {
+                        vjShowSpoutPicker = !vjShowSpoutPicker;
+                        if (vjShowSpoutPicker) vjScanSpout();
+                      }}
+                    >
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                      >
+                        <path d="M5 12.55a11 11 0 0 1 14.08 0" /><path d="M8.53 16.11a6 6 0 0 1 6.95 0" /><circle
+                          cx="12"
+                          cy="20"
+                          r="1"
+                        />
+                      </svg>
+                      {getTextureShareLabel()}
+                    </button>
+                    <button
+                      class="vj-src-btn ndi-btn"
+                      class:active={vjShowNdiPicker}
+                      onclick={() => {
+                        vjShowNdiPicker = !vjShowNdiPicker;
+                        if (vjShowNdiPicker) {
+                          vjShowSpoutPicker = false;
+                          void vjStartNdiScan();
+                        }
+                      }}
+                    >
+                      <svg
+                        width="14"
+                        height="14"
+                        viewBox="0 0 24 24"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="2"
+                      >
+                        <circle cx="12" cy="12" r="3" /><circle cx="12" cy="12" r="7" /><circle
+                          cx="12"
+                          cy="12"
+                          r="11"
+                        />
+                      </svg>
+                      NDI®
                     </button>
                   </div>
+                  {#if vjShowNdiPicker}
+                    <div class="vj-spout-picker">
+                      {#if vjDetectedNdiSources.length > 0}
+                        <div class="vj-spout-list">
+                          {#each vjDetectedNdiSources as src (src.name)}
+                            <button
+                              class="vj-spout-sender"
+                              onclick={() => {
+                                vjAddNdiSource(src.name);
+                                vjShowNdiPicker = false;
+                              }}
+                              title={src.url}
+                            >
+                              {src.name}
+                            </button>
+                          {/each}
+                        </div>
+                      {:else}
+                        <div class="empty-media" style="padding: 12px 14px;">
+                          <p>
+                            {!vjNdiChecked || vjNdiScanning
+                              ? $t('vj.sources.ndiScanning')
+                              : vjNdiAvailable
+                                ? $t('vj.sources.ndiNone')
+                                : $t('vj.sources.ndiUnavailable')}
+                          </p>
+                          <p class="hint">{vjNdiStatusHint}</p>
+                        </div>
+                      {/if}
+                      <p class="hint" style="padding: 0 14px 10px;">
+                        <a href="https://ndi.video/" target="_blank" rel="noreferrer">NDI®</a>
+                        {$t('vj.sources.trademark')}
+                      </p>
+                    </div>
+                  {/if}
+                  {#if vjShowSpoutPicker}
+                    <div class="vj-spout-picker">
+                      {#if vjDetectedSpoutSenders.length > 0}
+                        <div class="vj-spout-list">
+                          {#each vjDetectedSpoutSenders as sender}
+                            <button
+                              class="vj-spout-sender"
+                              onclick={() => {
+                                vjAddSpoutInput(sender);
+                                vjShowSpoutPicker = false;
+                              }}
+                            >
+                              {sender}
+                            </button>
+                          {/each}
+                        </div>
+                      {:else}
+                        <div class="empty-media" style="padding: 12px 14px;">
+                          <p>
+                            {vjTextureShareAvailable
+                              ? $t('vj.sources.textureNone', { values: { texture: getTextureShareLabel() } })
+                              : $t('vj.sources.textureUnavailable', { values: { texture: getTextureShareLabel() } })}
+                          </p>
+                          <p class="hint">{vjTextureShareHint}</p>
+                        </div>
+                      {/if}
+                      <div class="vj-spout-manual">
+                        <input
+                          type="text"
+                          class="vj-spout-input"
+                          placeholder={$t('vj.sources.senderPlaceholder')}
+                          bind:value={vjSpoutInput}
+                          onkeydown={(e) => {
+                            if (e.key === 'Enter' && vjSpoutInput.trim()) {
+                              vjAddSpoutInput(vjSpoutInput.trim());
+                              vjSpoutInput = '';
+                              vjShowSpoutPicker = false;
+                            }
+                          }}
+                        />
+                        <button
+                          class="vj-spout-connect"
+                          disabled={!vjSpoutInput.trim()}
+                          onclick={() => {
+                            if (vjSpoutInput.trim()) {
+                              vjAddSpoutInput(vjSpoutInput.trim());
+                              vjSpoutInput = '';
+                              vjShowSpoutPicker = false;
+                            }
+                          }}
+                        >
+                          {$t('vj.sources.go')}
+                        </button>
+                      </div>
+                    </div>
+                  {/if}
+                  {#if vjLiveSources.length === 0}
+                    <div class="empty-media">
+                      <p>{$t('vj.sources.noneActive')}</p>
+                      <p class="hint">{$t('vj.sources.addHint', { values: { texture: getTextureShareLabel() } })}</p>
+                    </div>
+                  {:else}
+                    <div class="vj-live-source-list">
+                      {#each vjLiveSources as src (src.id)}
+                        <div
+                          class="vj-source-item"
+                          class:source-live={src.status === 'live'}
+                          class:source-pending={src.status !== 'live'}
+                          draggable={src.status === 'live' ? 'true' : 'false'}
+                          ondragstart={(e) => handleLiveSourceDragStart(e, src)}
+                          ondragend={handleDragEnd}
+                          title={$t('vj.sources.dragTitle')}
+                        >
+                          <div class="source-thumb">
+                            <span class="source-type-icon">{vjLiveSourceIconLabel(src)}</span>
+                            {#if src.status === 'live'}
+                              <span class="thumb-live-dot"></span>
+                            {/if}
+                          </div>
+                          <div class="source-info">
+                            <span class="source-name">{src.name}</span>
+                            <span class="source-status">{src.status}</span>
+                          </div>
+                          <div class="source-actions">
+                            <button
+                              class="vj-src-add"
+                              disabled={src.status !== 'live'}
+                              onclick={(e) => {
+                                e.stopPropagation();
+                                addLiveSourceToDeck(src);
+                              }}
+                              title={$t('vj.sources.addToDeck')}>+</button
+                            >
+                            <button
+                              class="vj-src-stop"
+                              onclick={(e) => {
+                                e.stopPropagation();
+                                vjStopSource(src.id);
+                              }}
+                              title={$t('vj.sources.stop')}
+                            >
+                              <svg
+                                width="12"
+                                height="12"
+                                viewBox="0 0 24 24"
+                                fill="none"
+                                stroke="currentColor"
+                                stroke-width="2"
+                              >
+                                <line x1="18" y1="6" x2="6" y2="18" /><line x1="6" y1="6" x2="18" y2="18" />
+                              </svg>
+                            </button>
+                          </div>
+                        </div>
+                      {/each}
+                    </div>
+                  {/if}
                 </div>
-              {/if}
-              {#if vjLiveSources.length === 0}
-                <div class="empty-media">
-                  <p>No live sources active</p>
-                  <p class="hint">Add webcam, capture, {getTextureShareLabel()}, or NDI® input above</p>
-                </div>
-              {:else}
-                <div class="vj-live-source-list">
-                  {#each vjLiveSources as src (src.id)}
+              {:else if vjMediaTab === 'plugins'}
+                <!-- Plugins Panel (FluidGen, Particles3D) - Integrated WebGL effects -->
+                <div class="vj-plugins-panel">
+                  {#each vjPluginCards as plugin (plugin.id)}
                     <div
-                      class="vj-source-item"
-                      class:source-live={src.status === 'live'}
-                      class:source-pending={src.status !== 'live'}
-                      draggable={src.status === 'live' ? 'true' : 'false'}
-                      ondragstart={(e) => handleLiveSourceDragStart(e, src)}
+                      class="vj-plugin-card running"
+                      draggable="true"
+                      ondragstart={(e) =>
+                        handleDragStart(e, {
+                          type: plugin.clipType,
+                          id: plugin.id,
+                          effectType: plugin.effectType,
+                          pluginName: plugin.name,
+                        })}
                       ondragend={handleDragEnd}
-                      title="Drag onto a clip slot or click +"
+                      title={$t('vj.plugins.dragTitle', { values: { name: plugin.name } })}
                     >
-                      <div class="source-thumb">
-                        <span class="source-type-icon">{vjLiveSourceIconLabel(src)}</span>
-                        {#if src.status === 'live'}
-                          <span class="thumb-live-dot"></span>
+                      <div class="vj-plugin-icon">
+                        {#if plugin.inlineIcon === 'gpu'}
+                          <svg
+                            width="24"
+                            height="24"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                          >
+                            <circle cx="12" cy="12" r="9" />
+                            <path d="M3 12h18M12 3c3 3 4 6 4 9s-1 6-4 9c-3-3-4-6-4-9s1-6 4-9Z" />
+                          </svg>
+                        {:else if plugin.inlineIcon === 'text'}
+                          <svg
+                            width="24"
+                            height="24"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                          >
+                            <path d="M4 5h16M12 5v14M8 19h8" />
+                          </svg>
+                        {:else if plugin.inlineIcon === 'splat'}
+                          <svg
+                            width="24"
+                            height="24"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                          >
+                            <circle cx="12" cy="12" r="1.5" />
+                            <circle cx="8" cy="8" r="1" />
+                            <circle cx="16" cy="8" r="1" />
+                            <circle cx="6" cy="14" r="1" />
+                            <circle cx="18" cy="14" r="1" />
+                            <circle cx="10" cy="18" r="1" />
+                            <circle cx="15" cy="17" r="1" />
+                            <circle cx="4" cy="10" r="0.8" />
+                            <circle cx="20" cy="10" r="0.8" />
+                            <circle cx="12" cy="6" r="0.8" />
+                            <circle cx="9" cy="12" r="0.6" />
+                            <circle cx="15" cy="12" r="0.6" />
+                          </svg>
+                        {:else if plugin.inlineIcon === 'model3d'}
+                          <svg
+                            width="24"
+                            height="24"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="1.5"
+                          >
+                            <path d="M12 2L2 7l10 5 10-5-10-5Z" />
+                            <path d="M2 17l10 5 10-5" />
+                            <path d="M2 12l10 5 10-5" />
+                          </svg>
+                        {:else}
+                          <PluginIcon pluginId={plugin.id} effectType={plugin.effectType ?? null} size={24} />
                         {/if}
                       </div>
-                      <div class="source-info">
-                        <span class="source-name">{src.name}</span>
-                        <span class="source-status">{src.status}</span>
-                      </div>
-                      <div class="source-actions">
-                        <button
-                          class="vj-src-add"
-                          disabled={src.status !== 'live'}
-                          onclick={(e) => { e.stopPropagation(); addLiveSourceToDeck(src); }}
-                          title="Add to deck"
-                        >+</button>
-                        <button
-                          class="vj-src-stop"
-                          onclick={(e) => { e.stopPropagation(); vjStopSource(src.id); }}
-                          title="Stop"
-                        >
-                          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-                            <line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/>
-                          </svg>
-                        </button>
+                      <div class="vj-plugin-info">
+                        <span class="vj-plugin-name">{plugin.name}</span>
+                        <span class="vj-plugin-desc">{plugin.description}</span>
+                        <span class="vj-plugin-status live">{plugin.tier.toUpperCase()}</span>
                       </div>
                     </div>
                   {/each}
-                </div>
-              {/if}
-            </div>
-          {:else if vjMediaTab === 'plugins'}
-            <!-- Plugins Panel (FluidGen, Particles3D) - Integrated WebGL effects -->
-            <div class="vj-plugins-panel">
-              {#each vjPluginCards as plugin (plugin.id)}
-                <div
-                  class="vj-plugin-card running"
-                  draggable="true"
-                  ondragstart={(e) => handleDragStart(e, { type: plugin.clipType, id: plugin.id, effectType: plugin.effectType, pluginName: plugin.name })}
-                  ondragend={handleDragEnd}
-                  title="Drag {plugin.name} onto a clip slot"
-                >
-                  <div class="vj-plugin-icon">
-                    {#if plugin.inlineIcon === 'gpu'}
-                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                        <circle cx="12" cy="12" r="9"/>
-                        <path d="M3 12h18M12 3c3 3 4 6 4 9s-1 6-4 9c-3-3-4-6-4-9s1-6 4-9Z"/>
-                      </svg>
-                    {:else if plugin.inlineIcon === 'text'}
-                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                        <path d="M4 5h16M12 5v14M8 19h8"/>
-                      </svg>
-                    {:else if plugin.inlineIcon === 'splat'}
-                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                        <circle cx="12" cy="12" r="1.5"/>
-                        <circle cx="8" cy="8" r="1"/>
-                        <circle cx="16" cy="8" r="1"/>
-                        <circle cx="6" cy="14" r="1"/>
-                        <circle cx="18" cy="14" r="1"/>
-                        <circle cx="10" cy="18" r="1"/>
-                        <circle cx="15" cy="17" r="1"/>
-                        <circle cx="4" cy="10" r="0.8"/>
-                        <circle cx="20" cy="10" r="0.8"/>
-                        <circle cx="12" cy="6" r="0.8"/>
-                        <circle cx="9" cy="12" r="0.6"/>
-                        <circle cx="15" cy="12" r="0.6"/>
-                      </svg>
-                    {:else if plugin.inlineIcon === 'model3d'}
-                      <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
-                        <path d="M12 2L2 7l10 5 10-5-10-5Z"/>
-                        <path d="M2 17l10 5 10-5"/>
-                        <path d="M2 12l10 5 10-5"/>
-                      </svg>
-                    {:else}
-                      <PluginIcon pluginId={plugin.id} effectType={plugin.effectType ?? null} size={24} />
-                    {/if}
-                  </div>
-                  <div class="vj-plugin-info">
-                    <span class="vj-plugin-name">{plugin.name}</span>
-                    <span class="vj-plugin-desc">{plugin.description}</span>
-                    <span class="vj-plugin-status live">{plugin.tier.toUpperCase()}</span>
+                  <div class="vj-plugin-hint">
+                    <p>{$t('vj.plugins.hint')}</p>
+                    <p>{$t('vj.plugins.rendererHint')}</p>
                   </div>
                 </div>
-              {/each}
-              <div class="vj-plugin-hint">
-                <p>Drag content onto a clip slot to use it</p>
-                <p>GPU visuals and text use the same renderer as mapping layers</p>
-              </div>
-            </div>
-          {:else if vjMediaTab === 'maps'}
-            <!-- Maps tab — saved mapping presets, drag onto a clip cell to
+              {:else if vjMediaTab === 'maps'}
+                <!-- Maps tab — saved mapping presets, drag onto a clip cell to
                  install a "load preset on fire" trigger. Firing the cell
                  calls project.loadComposition() (mapping swap), not a
                  normal content-feed-into-layer trigger. -->
-            {#if $compositions.length === 0}
-              <div class="empty-media">
-                <p>No saved mapping presets</p>
-                <p class="hint">Save a mapping preset (Presets tray ▲) then come back — drag it onto a clip cell to launch it from the VJ mixer.</p>
-              </div>
-            {:else}
-              {#each $compositions as comp (comp.id)}
-                <div
-                  class="media-item"
-                  draggable="true"
-                  ondragstart={(e) => handleDragStart(e, { type: 'preset', id: comp.id })}
-                  ondragend={handleDragEnd}
-                  role="button"
-                  tabindex="0"
-                  title="Drag onto a clip cell — firing it loads this mapping preset"
-                >
-                  <div class="item-thumb">
-                    {#if comp.thumbnail}
-                      <img src={comp.thumbnail} alt={comp.name} />
-                    {:else}
-                      <div class="thumb-placeholder"><span>MAP</span></div>
-                    {/if}
+                {#if $compositions.length === 0}
+                  <div class="empty-media">
+                    <p>{$t('vj.media.noSavedMaps')}</p>
+                    <p class="hint">{$t('vj.media.savedMapsHint')}</p>
                   </div>
-                  <div class="item-info">
-                    <span class="item-name">{comp.name}</span>
-                    <span class="item-type">preset · {comp.layers.length} layer{comp.layers.length === 1 ? '' : 's'}</span>
-                  </div>
-                </div>
-              {/each}
-            {/if}
-          {:else if vjMediaTab === 'library'}
-            <!-- Saved shaders/videos -->
-            {#if savedShaders.length === 0 && savedVideos.length === 0}
-              <div class="empty-media">
-                <p>No saved items</p>
-                <p class="hint">Generate shaders or videos with AI to save them here</p>
-              </div>
-            {:else}
-              {#each savedShaders as saved (saved.id)}
-                <div
-                  class="media-item"
-                  draggable="true"
-                  ondragstart={(e) => handleDragStart(e, { type: 'shader', id: saved.id })}
-                  ondragend={handleDragEnd}
-                  role="button"
-                  tabindex="0"
-                >
-                  <div class="item-thumb">
-                    {#if saved.thumbnail}
-                      <img src={saved.thumbnail} alt={saved.name} />
-                    {:else}
-                      <div class="thumb-placeholder shader"><span>ISF</span></div>
-                    {/if}
-                  </div>
-                  <div class="item-info">
-                    <span class="item-name">{saved.name}</span>
-                    <span class="item-type">saved shader</span>
-                  </div>
-                </div>
-              {/each}
-              {#each savedVideos as vid (vid.id)}
-                <div class="media-item" draggable="true" ondragstart={(e) => handleDragStart(e, { type: 'video', id: vid.id })} ondragend={handleDragEnd} role="button" tabindex="0">
-                  <div class="item-thumb">
-                    {#if vid.thumbnail}
-                      <img src={vid.thumbnail} alt={vid.name} />
-                    {:else}
-                      <div class="thumb-placeholder video"><span>VID</span></div>
-                    {/if}
-                  </div>
-                  <div class="item-info">
-                    <span class="item-name">{vid.name}</span>
-                    <span class="item-type">saved video</span>
-                  </div>
-                </div>
-              {/each}
-            {/if}
-          {:else if vjFilteredMedia.length === 0}
-            <div class="empty-media">
-              <p>No media available</p>
-              <p class="hint">Drag & drop files or use AI Generate</p>
-            </div>
-          {:else}
-            {#each vjFilteredMedia as item (item.id)}
-              <div
-                class="media-item"
-                class:dragging={draggedClip?.id === item.id}
-                draggable="true"
-                ondragstart={(e) => handleDragStart(e, { type: item.itemType, id: item.id })}
-                ondragend={handleDragEnd}
-                role="button"
-                tabindex="0"
-              >
-                <div class="item-thumb">
-                  {#if item.thumbnail}
-                    <img src={item.thumbnail} alt={item.name} />
-                  {:else}
-                    <div class="thumb-placeholder {item.itemType}">
-                      <span>{item.itemType === 'shader' ? 'ISF' : item.itemType === 'video' ? 'VID' : item.itemType === 'threejs' ? '3JS' : 'IMG'}</span>
+                {:else}
+                  {#each $compositions as comp (comp.id)}
+                    <div
+                      class="media-item"
+                      draggable="true"
+                      ondragstart={(e) => handleDragStart(e, { type: 'preset', id: comp.id })}
+                      ondragend={handleDragEnd}
+                      role="button"
+                      tabindex="0"
+                      title={$t('vj.media.mapDragTitle')}
+                    >
+                      <div class="item-thumb">
+                        {#if comp.thumbnail}
+                          <img src={comp.thumbnail} alt={comp.name} />
+                        {:else}
+                          <div class="thumb-placeholder"><span>MAP</span></div>
+                        {/if}
+                      </div>
+                      <div class="item-info">
+                        <span class="item-name">{comp.name}</span>
+                        <span class="item-type"
+                          >{$t('vj.media.presetType', {
+                            values: { count: comp.layers.length, suffix: comp.layers.length === 1 ? '' : 's' },
+                          })}</span
+                        >
+                      </div>
                     </div>
-                  {/if}
+                  {/each}
+                {/if}
+              {:else if vjMediaTab === 'library'}
+                <!-- Saved shaders/videos -->
+                {#if savedShaders.length === 0 && savedVideos.length === 0}
+                  <div class="empty-media">
+                    <p>{$t('vj.media.noSavedItems')}</p>
+                    <p class="hint">{$t('vj.media.savedItemsHint')}</p>
+                  </div>
+                {:else}
+                  {#each savedShaders as saved (saved.id)}
+                    <div
+                      class="media-item"
+                      draggable="true"
+                      ondragstart={(e) => handleDragStart(e, { type: 'shader', id: saved.id })}
+                      ondragend={handleDragEnd}
+                      role="button"
+                      tabindex="0"
+                    >
+                      <div class="item-thumb">
+                        {#if saved.thumbnail}
+                          <img src={saved.thumbnail} alt={saved.name} />
+                        {:else}
+                          <div class="thumb-placeholder shader"><span>ISF</span></div>
+                        {/if}
+                      </div>
+                      <div class="item-info">
+                        <span class="item-name">{saved.name}</span>
+                        <span class="item-type">{$t('vj.media.savedShader')}</span>
+                      </div>
+                    </div>
+                  {/each}
+                  {#each savedVideos as vid (vid.id)}
+                    <div
+                      class="media-item"
+                      draggable="true"
+                      ondragstart={(e) => handleDragStart(e, { type: 'video', id: vid.id })}
+                      ondragend={handleDragEnd}
+                      role="button"
+                      tabindex="0"
+                    >
+                      <div class="item-thumb">
+                        {#if vid.thumbnail}
+                          <img src={vid.thumbnail} alt={vid.name} />
+                        {:else}
+                          <div class="thumb-placeholder video"><span>VID</span></div>
+                        {/if}
+                      </div>
+                      <div class="item-info">
+                        <span class="item-name">{vid.name}</span>
+                        <span class="item-type">{$t('vj.media.savedVideo')}</span>
+                      </div>
+                    </div>
+                  {/each}
+                {/if}
+              {:else if vjFilteredMedia.length === 0}
+                <div class="empty-media">
+                  <p>{$t('vj.media.noMedia')}</p>
+                  <p class="hint">{$t('vj.media.noMediaHint')}</p>
                 </div>
-                <div class="item-info">
-                  <span class="item-name">{item.name}</span>
-                  <span class="item-type">{item.itemType}</span>
-                </div>
-              </div>
-            {/each}
+              {:else}
+                {#each vjFilteredMedia as item (item.id)}
+                  <div
+                    class="media-item"
+                    class:dragging={draggedClip?.id === item.id}
+                    draggable="true"
+                    ondragstart={(e) => handleDragStart(e, { type: item.itemType, id: item.id })}
+                    ondragend={handleDragEnd}
+                    role="button"
+                    tabindex="0"
+                  >
+                    <div class="item-thumb">
+                      {#if item.thumbnail}
+                        <img src={item.thumbnail} alt={item.name} />
+                      {:else}
+                        <div class="thumb-placeholder {item.itemType}">
+                          <span
+                            >{item.itemType === 'shader'
+                              ? 'ISF'
+                              : item.itemType === 'video'
+                                ? 'VID'
+                                : item.itemType === 'threejs'
+                                  ? '3JS'
+                                  : 'IMG'}</span
+                          >
+                        </div>
+                      {/if}
+                    </div>
+                    <div class="item-info">
+                      <span class="item-name">{item.name}</span>
+                      <span class="item-type">{item.itemType}</span>
+                    </div>
+                  </div>
+                {/each}
+              {/if}
+            </div>
           {/if}
         </div>
-        {/if}
       </div>
-      </div> <!-- End vj-bottom -->
+      <!-- End vj-bottom -->
     </div>
 
     <VJLayerSequencer />
-</div>
+  </div>
 {/if}
 
 {#if vjScreenPickerOpen}
@@ -5727,34 +6303,34 @@
     onclick={closeVjScreenPicker}
     role="dialog"
     aria-modal="true"
-    aria-label="Pick a screen or window to capture"
+    aria-label={$t('vj.capture.dialogLabel')}
   >
     <div class="capture-picker-modal" onclick={(e) => e.stopPropagation()} role="document">
       <div class="cpm-header">
-        <div class="cpm-title">Capture a screen or window</div>
-        <button class="cpm-close" onclick={closeVjScreenPicker} title="Close">x</button>
+        <div class="cpm-title">{$t('vj.capture.title')}</div>
+        <button class="cpm-close" onclick={closeVjScreenPicker} title={$t('vj.capture.close')}>x</button>
       </div>
 
       {#if vjScreenPickerLoading}
-        <div class="cpm-loading">Loading sources...</div>
+        <div class="cpm-loading">{$t('vj.capture.loading')}</div>
       {:else if vjScreenPickerSources.length === 0}
         <div class="cpm-empty">
-          No capturable sources found. Make sure screen recording permission is enabled for Ghost Arcade.
+          {$t('vj.capture.empty')}
         </div>
       {:else}
-        {@const screens = vjScreenPickerSources.filter(s => s.kind === 'screen')}
-        {@const windows = vjScreenPickerSources.filter(s => s.kind === 'window')}
+        {@const screens = vjScreenPickerSources.filter((s) => s.kind === 'screen')}
+        {@const windows = vjScreenPickerSources.filter((s) => s.kind === 'window')}
 
         <div class="cpm-body">
           {#if screens.length > 0}
-            <div class="cpm-section-title">Screens</div>
+            <div class="cpm-section-title">{$t('vj.capture.screens')}</div>
             <div class="cpm-grid">
               {#each screens as src (src.id)}
                 <button class="cpm-card" onclick={() => vjPickScreenSource(src)} title={src.name}>
                   {#if src.thumbnailDataUrl}
                     <img class="cpm-thumb" src={src.thumbnailDataUrl} alt={src.name} />
                   {:else}
-                    <div class="cpm-thumb cpm-thumb-empty">No preview</div>
+                    <div class="cpm-thumb cpm-thumb-empty">{$t('vj.capture.noPreview')}</div>
                   {/if}
                   <div class="cpm-name">{src.name}</div>
                 </button>
@@ -5763,14 +6339,14 @@
           {/if}
 
           {#if windows.length > 0}
-            <div class="cpm-section-title">Application windows</div>
+            <div class="cpm-section-title">{$t('vj.capture.windows')}</div>
             <div class="cpm-grid">
               {#each windows as src (src.id)}
                 <button class="cpm-card" onclick={() => vjPickScreenSource(src)} title={src.name}>
                   {#if src.thumbnailDataUrl}
                     <img class="cpm-thumb" src={src.thumbnailDataUrl} alt={src.name} />
                   {:else}
-                    <div class="cpm-thumb cpm-thumb-empty">No preview</div>
+                    <div class="cpm-thumb cpm-thumb-empty">{$t('vj.capture.noPreview')}</div>
                   {/if}
                   <div class="cpm-name-row">
                     {#if src.appIconDataUrl}
@@ -5800,16 +6376,12 @@
     >
       <div class="resize-grip"></div>
     </div>
-    <SynthVision onClose={() => showPerformer = false} visible={showPerformer} />
+    <SynthVision onClose={() => (showPerformer = false)} visible={showPerformer} />
   </div>
 {/if}
 
 <!-- Effect Picker Modal (full catalog, multi-select, 3-col grid) -->
-<EffectPickerModal
-  bind:open={showEffectPicker}
-  onAdd={handlePickerAdd}
-  onClose={() => showEffectPicker = false}
-/>
+<EffectPickerModal bind:open={showEffectPicker} onAdd={handlePickerAdd} onClose={() => (showEffectPicker = false)} />
 
 <style>
   /* VJ Overlay */
@@ -5906,16 +6478,20 @@
     font-weight: 700;
     letter-spacing: 0.06em;
     cursor: pointer;
-    transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
+    transition:
+      background 0.15s,
+      color 0.15s,
+      border-color 0.15s,
+      box-shadow 0.15s;
     flex: 0 0 auto;
   }
   .ab-toggle-btn:hover {
     background: rgba(255, 255, 255, 0.06);
-    border-color: rgba(255, 255, 255, 0.30);
+    border-color: rgba(255, 255, 255, 0.3);
     color: var(--ga-ink-0, #eef0f4);
   }
   .ab-toggle-btn.active {
-    background: linear-gradient(135deg, #FF8577, #7EC8E3);
+    background: linear-gradient(135deg, #ff8577, #7ec8e3);
     color: #0a0a0a;
     border-color: transparent;
     box-shadow: 0 0 12px rgba(255, 133, 119, 0.45);
@@ -5938,7 +6514,11 @@
     background: transparent;
     color: var(--ga-ink-1, #b8bdc6);
     cursor: pointer;
-    transition: background 0.15s, color 0.15s, border-color 0.15s, box-shadow 0.15s;
+    transition:
+      background 0.15s,
+      color 0.15s,
+      border-color 0.15s,
+      box-shadow 0.15s;
     flex: 0 0 auto;
   }
   .vj-seq-toggle-btn:hover {
@@ -5949,7 +6529,7 @@
   .vj-seq-toggle-btn.active {
     background: var(--ga-coral-soft, rgba(255, 111, 94, 0.11));
     border-color: var(--ga-coral, #ff6f5e);
-    box-shadow: 0 0 12px var(--ga-coral-glow, rgba(255,111,94,.35));
+    box-shadow: 0 0 12px var(--ga-coral-glow, rgba(255, 111, 94, 0.35));
   }
 
   /* ===== Dual decks (crossfader on) ===== */
@@ -5972,12 +6552,20 @@
     border-radius: 8px;
     background: #0c0c10;
     padding: 8px;
-    transition: border-color 0.18s, box-shadow 0.18s;
+    transition:
+      border-color 0.18s,
+      box-shadow 0.18s;
   }
-  .deck-wrapper.deck-a { border-top: 2px solid rgba(126, 200, 227, 0.55); }
-  .deck-wrapper.deck-b { border-top: 2px solid rgba(255, 133, 119, 0.55); }
+  .deck-wrapper.deck-a {
+    border-top: 2px solid rgba(126, 200, 227, 0.55);
+  }
+  .deck-wrapper.deck-b {
+    border-top: 2px solid rgba(255, 133, 119, 0.55);
+  }
   .deck-wrapper.focused {
-    box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.06), 0 12px 32px rgba(0, 0, 0, 0.45);
+    box-shadow:
+      0 0 0 1px rgba(255, 255, 255, 0.06),
+      0 12px 32px rgba(0, 0, 0, 0.45);
     border-color: #555;
   }
   .deck-label {
@@ -5992,8 +6580,12 @@
     border-radius: 3px;
     background: rgba(255, 255, 255, 0.04);
   }
-  .deck-wrapper.deck-a .deck-label { color: #7EC8E3; }
-  .deck-wrapper.deck-b .deck-label { color: #FF8577; }
+  .deck-wrapper.deck-a .deck-label {
+    color: #7ec8e3;
+  }
+  .deck-wrapper.deck-b .deck-label {
+    color: #ff8577;
+  }
 
   /* Vertical crossfader strip between the two decks */
   .crossfader-strip {
@@ -6037,12 +6629,12 @@
   .crossfader-strip .mod-source-chip.xfade-mod-chip.active {
     border-color: rgba(126, 200, 227, 0.85);
     color: #bff2ff;
-    background: rgba(126, 200, 227, 0.10);
+    background: rgba(126, 200, 227, 0.1);
   }
   .crossfader-strip .mod-source-chip.xfade-mod-chip.auto {
     border-color: rgba(34, 211, 238, 0.9);
     color: #9af7ff;
-    background: rgba(34, 211, 238, 0.10);
+    background: rgba(34, 211, 238, 0.1);
   }
   .cut-btn {
     width: 44px;
@@ -6054,11 +6646,25 @@
     font-size: 14px;
     line-height: 1;
     cursor: pointer;
-    transition: background 0.12s, border-color 0.12s, color 0.12s;
+    transition:
+      background 0.12s,
+      border-color 0.12s,
+      color 0.12s;
   }
-  .cut-btn:hover { background: #232330; color: #fff; }
-  .cut-btn.cut-a.active { background: #7EC8E3; color: #000; border-color: #7EC8E3; }
-  .cut-btn.cut-b.active { background: #FF8577; color: #000; border-color: #FF8577; }
+  .cut-btn:hover {
+    background: #232330;
+    color: #fff;
+  }
+  .cut-btn.cut-a.active {
+    background: #7ec8e3;
+    color: #000;
+    border-color: #7ec8e3;
+  }
+  .cut-btn.cut-b.active {
+    background: #ff8577;
+    color: #000;
+    border-color: #ff8577;
+  }
 
   .xfade-vertical-track {
     flex: 1;
@@ -6095,7 +6701,7 @@
     padding: 0;
     background: transparent;
     opacity: 0;
-    accent-color: var(--accent-primary, #BB86FC);
+    accent-color: var(--accent-primary, #bb86fc);
     cursor: pointer;
   }
   .xfade-vertical-rail {
@@ -6105,7 +6711,7 @@
     left: 50%;
     width: 6px;
     transform: translateX(-50%);
-    background: linear-gradient(to bottom, #7EC8E3, #9f75ad 50%, #FF8577);
+    background: linear-gradient(to bottom, #7ec8e3, #9f75ad 50%, #ff8577);
     border-radius: 999px;
     box-shadow:
       inset 0 0 0 1px rgba(255, 255, 255, 0.08),
@@ -6145,7 +6751,7 @@
   }
   .xfade-vertical-input::-webkit-slider-runnable-track {
     width: 6px;
-    background: linear-gradient(to bottom, #7EC8E3, #9f75ad 50%, #FF8577);
+    background: linear-gradient(to bottom, #7ec8e3, #9f75ad 50%, #ff8577);
     border-radius: 3px;
     box-shadow:
       inset 0 0 0 1px rgba(255, 255, 255, 0.08),
@@ -6172,7 +6778,7 @@
   .xfade-vertical-input::-webkit-slider-thumb:active { cursor: grabbing; }
   .xfade-vertical-input::-moz-range-track {
     width: 6px;
-    background: linear-gradient(to bottom, #7EC8E3, #9f75ad 50%, #FF8577);
+    background: linear-gradient(to bottom, #7ec8e3, #9f75ad 50%, #ff8577);
     border-radius: 3px;
     border: 0;
   }
@@ -6195,7 +6801,7 @@
   .xfade-readout {
     font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
     font-size: 11px;
-    color: var(--accent-primary, #BB86FC);
+    color: var(--accent-primary, #bb86fc);
     letter-spacing: 0.05em;
     padding: 2px 6px;
     background: rgba(187, 134, 252, 0.08);
@@ -6241,7 +6847,7 @@
      at every scroll offset. */
   .deck-wrapper {
     overflow: auto;
-    position: relative;       /* anchor for the .scroll-hint arrow below */
+    position: relative; /* anchor for the .scroll-hint arrow below */
   }
 
   /* Lock cell + column-trigger widths inside dual-deck mode so the two
@@ -6277,7 +6883,7 @@
      pseudo-elements. */
   .deck-wrapper::-webkit-scrollbar {
     width: 8px;
-    height: 10px;            /* horizontal — the part users actually see */
+    height: 10px; /* horizontal — the part users actually see */
   }
   .deck-wrapper::-webkit-scrollbar-track {
     background: rgba(255, 255, 255, 0.04);
@@ -6427,12 +7033,17 @@
     font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
     font-size: calc(var(--vj-header-font) - 1px);
     font-weight: 700;
-    color: var(--accent-primary, #BB86FC);
+    color: var(--accent-primary, #bb86fc);
     animation: quantPendingPulse 0.8s ease-in-out infinite;
   }
   @keyframes quantPendingPulse {
-    0%, 100% { opacity: 0.6; }
-    50%      { opacity: 1; }
+    0%,
+    100% {
+      opacity: 0.6;
+    }
+    50% {
+      opacity: 1;
+    }
   }
   /* Audio input picker now lives inside .header-meter (right of the
      analyzer), so no positioning override is needed in the right
@@ -6444,31 +7055,78 @@
     margin-right: var(--vj-half-gap);
   }
 
-  .vj-file-menu-container { position: relative; margin-right: var(--vj-half-gap); }
-  .vj-file-menu-btn {
-    display: flex; align-items: center; gap: 4px;
-    background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1);
-    color: var(--text-primary, #ddd); font-size: var(--vj-header-font); height: var(--vj-control-h); padding: 0 var(--vj-file-pad-x); border-radius: 4px; cursor: pointer;
+  .vj-file-menu-container {
+    position: relative;
+    margin-right: var(--vj-half-gap);
   }
-  .vj-file-menu-btn:hover, .vj-file-menu-btn.active { background: rgba(255,255,255,0.14); color: #fff; }
+  .vj-file-menu-btn {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    color: var(--text-primary, #ddd);
+    font-size: var(--vj-header-font);
+    height: var(--vj-control-h);
+    padding: 0 var(--vj-file-pad-x);
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .vj-file-menu-btn:hover,
+  .vj-file-menu-btn.active {
+    background: rgba(255, 255, 255, 0.14);
+    color: #fff;
+  }
   .vj-file-menu-dropdown {
-    position: absolute; top: 100%; left: 0; margin-top: 4px;
-    background: var(--bg-tertiary, #1a1a1e); border: 1px solid #333; border-radius: 6px;
-    min-width: 220px; padding: 4px 0; z-index: 10000;
-    box-shadow: 0 8px 24px rgba(0,0,0,0.5);
+    position: absolute;
+    top: 100%;
+    left: 0;
+    margin-top: 4px;
+    background: var(--bg-tertiary, #1a1a1e);
+    border: 1px solid #333;
+    border-radius: 6px;
+    min-width: 220px;
+    padding: 4px 0;
+    z-index: 10000;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
   }
   .vj-menu-item {
-    display: flex; justify-content: space-between; align-items: center;
-    width: 100%; background: none; border: none; color: var(--text-primary, #ddd);
-    font-size: 13px; padding: 7px 14px; cursor: pointer; text-align: left;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    width: 100%;
+    background: none;
+    border: none;
+    color: var(--text-primary, #ddd);
+    font-size: 13px;
+    padding: 7px 14px;
+    cursor: pointer;
+    text-align: left;
   }
-  .vj-menu-item:hover { background: rgba(255,255,255,0.08); color: #fff; }
-  .vj-menu-sc { color: #666; font-size: 11px; margin-left: 16px; font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace); }
-  .vj-menu-sep { height: 1px; background: #333; margin: 4px 0; }
+  .vj-menu-item:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: #fff;
+  }
+  .vj-menu-sc {
+    color: #666;
+    font-size: 11px;
+    margin-left: 16px;
+    font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
+  }
+  .vj-menu-sep {
+    height: 1px;
+    background: #333;
+    margin: 4px 0;
+  }
 
   @keyframes blink {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.4; }
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.4;
+    }
   }
 
   /* Master opacity in the desktop top bar — kept as compact as
@@ -6504,7 +7162,7 @@
     -webkit-appearance: none;
     width: 13px;
     height: 13px;
-    background: var(--accent-primary, #BB86FC);
+    background: var(--accent-primary, #bb86fc);
     border-radius: 50%;
     cursor: pointer;
   }
@@ -6533,7 +7191,11 @@
     border-radius: 4px;
     color: #ff5555;
     cursor: pointer;
-    transition: background 0.12s, border-color 0.12s, color 0.12s, box-shadow 0.12s;
+    transition:
+      background 0.12s,
+      border-color 0.12s,
+      color 0.12s,
+      box-shadow 0.12s;
   }
   .kill-output-btn:hover {
     background: rgba(255, 51, 51, 0.25);
@@ -6562,7 +7224,9 @@
     font-weight: 700;
     letter-spacing: 0.04em;
     cursor: pointer;
-    transition: background 0.15s, border-color 0.15s;
+    transition:
+      background 0.15s,
+      border-color 0.15s;
     white-space: nowrap;
   }
 
@@ -6603,8 +7267,13 @@
   }
 
   @keyframes vj-rec-blink {
-    0%, 100% { opacity: 1; }
-    50% { opacity: 0.3; }
+    0%,
+    100% {
+      opacity: 1;
+    }
+    50% {
+      opacity: 0.3;
+    }
   }
 
   .vj-rec-time {
@@ -6635,7 +7304,7 @@
 
   .minimize-btn:hover {
     background: rgba(255, 255, 255, 0.06);
-    border-color: rgba(255, 255, 255, 0.30);
+    border-color: rgba(255, 255, 255, 0.3);
     color: var(--ga-ink-0, #eef0f4);
   }
 
@@ -6655,7 +7324,7 @@
 
   .exit-btn:hover {
     background: rgba(255, 255, 255, 0.06);
-    border-color: rgba(255, 255, 255, 0.30);
+    border-color: rgba(255, 255, 255, 0.3);
     color: var(--ga-ink-0, #eef0f4);
   }
 
@@ -6850,7 +7519,7 @@
     display: flex;
     min-height: 36px;
     background: #15181f;
-    border-bottom: 1px solid rgba(255, 255, 255, 0.10);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
   }
 
   .fx-tab {
@@ -6875,8 +7544,8 @@
   }
 
   .fx-tab.active {
-    color: var(--accent-primary, #BB86FC);
-    border-bottom-color: var(--accent-primary, #BB86FC);
+    color: var(--accent-primary, #bb86fc);
+    border-bottom-color: var(--accent-primary, #bb86fc);
     background: rgba(187, 134, 252, 0.05);
   }
 
@@ -6902,7 +7571,7 @@
   .effects-info-label {
     font-size: 11px;
     font-weight: 700;
-    color: var(--accent-primary, #BB86FC);
+    color: var(--accent-primary, #bb86fc);
     letter-spacing: 0.5px;
   }
 
@@ -6929,7 +7598,7 @@
   .add-effect-btn {
     background: rgba(187, 134, 252, 0.1);
     border: 1px solid rgba(187, 134, 252, 0.3);
-    color: var(--accent-primary, #BB86FC);
+    color: var(--accent-primary, #bb86fc);
     padding: 3px 10px;
     border-radius: 4px;
     font-size: 11px;
@@ -6939,7 +7608,7 @@
   }
   .add-effect-btn:hover {
     background: rgba(187, 134, 252, 0.2);
-    border-color: var(--accent-primary, #BB86FC);
+    border-color: var(--accent-primary, #bb86fc);
   }
 
   /* Stage Effects tab — its own +Add row with a picker + button.
@@ -6977,12 +7646,13 @@
     align-items: center;
     gap: 6px;
     padding: 6px 8px;
-    background: linear-gradient(180deg, rgba(76,209,255,0.06), rgba(76,209,255,0.02));
-    border-bottom: 1px solid rgba(76,209,255,0.18);
+    background: linear-gradient(180deg, rgba(76, 209, 255, 0.06), rgba(76, 209, 255, 0.02));
+    border-bottom: 1px solid rgba(76, 209, 255, 0.18);
     margin-bottom: 4px;
   }
   .stage-auto-play {
-    width: 30px; height: 26px;
+    width: 30px;
+    height: 26px;
     background: var(--bg-tertiary, #14141a);
     border: 1px solid #2a2a30;
     color: #4cd1ff;
@@ -6990,7 +7660,10 @@
     font-size: 14px;
     cursor: pointer;
   }
-  .stage-auto-play:hover { background: rgba(76,209,255,0.12); border-color: #4cd1ff; }
+  .stage-auto-play:hover {
+    background: rgba(76, 209, 255, 0.12);
+    border-color: #4cd1ff;
+  }
   .stage-auto-play.playing {
     background: #4cd1ff;
     color: #0a0a0c;
@@ -7023,7 +7696,8 @@
   }
   /* ── Stage Effects: live-radio + cycle toggle on each row ── */
   .effect-live-radio {
-    width: 22px; height: 22px;
+    width: 22px;
+    height: 22px;
     border: 1px solid #2a2a30;
     background: transparent;
     color: #555;
@@ -7038,7 +7712,8 @@
 
   .stage-effect-hold-button {
     position: relative;
-    width: 24px; height: 22px;
+    width: 24px;
+    height: 22px;
     flex: 0 0 24px;
     border: 1px solid rgba(255, 255, 255, 0.18);
     border-radius: 4px;
@@ -7056,7 +7731,11 @@
       inset 0 -4px 6px rgba(0, 0, 0, 0.55),
       0 1px 2px rgba(0, 0, 0, 0.6);
     transform: translateY(0);
-    transition: transform 80ms ease, border-color 120ms ease, box-shadow 120ms ease, color 120ms ease;
+    transition:
+      transform 80ms ease,
+      border-color 120ms ease,
+      box-shadow 120ms ease,
+      color 120ms ease;
   }
 
   .stage-effect-hold-button:hover {
@@ -7076,7 +7755,12 @@
     color: #fff;
     border-color: rgba(255, 147, 102, 0.95);
     background:
-      radial-gradient(circle at 50% 42%, rgba(255, 244, 218, 0.95), rgba(255, 126, 69, 0.72) 45%, rgba(84, 24, 18, 0.88) 100%),
+      radial-gradient(
+        circle at 50% 42%,
+        rgba(255, 244, 218, 0.95),
+        rgba(255, 126, 69, 0.72) 45%,
+        rgba(84, 24, 18, 0.88) 100%
+      ),
       linear-gradient(180deg, #4b1f18, #130b0a);
     box-shadow:
       inset 0 1px 2px rgba(255, 255, 255, 0.55),
@@ -7119,8 +7803,8 @@
   .effect-live-radio.active {
     color: #4cd1ff;
     border-color: #4cd1ff;
-    background: rgba(76,209,255,0.12);
-    box-shadow: 0 0 8px rgba(76,209,255,0.35);
+    background: rgba(76, 209, 255, 0.12);
+    box-shadow: 0 0 8px rgba(76, 209, 255, 0.35);
   }
   .effect-cycle-toggle {
     background: transparent;
@@ -7131,13 +7815,16 @@
     font-size: 12px;
     padding: 2px 4px;
   }
-  .effect-cycle-toggle:hover { color: var(--text-secondary, #aaa); border-color: #2a2a30; }
+  .effect-cycle-toggle:hover {
+    color: var(--text-secondary, #aaa);
+    border-color: #2a2a30;
+  }
   .effect-cycle-toggle.included {
     color: #4cd1ff;
-    border-color: rgba(76,209,255,0.35);
+    border-color: rgba(76, 209, 255, 0.35);
   }
   .effect-item.live {
-    background: rgba(76,209,255,0.04);
+    background: rgba(76, 209, 255, 0.04);
     border-left: 2px solid #4cd1ff;
   }
 
@@ -7158,7 +7845,9 @@
     margin-top: 3px;
   }
 
-  .effect-item.disabled { opacity: 0.4; }
+  .effect-item.disabled {
+    opacity: 0.4;
+  }
 
   .effect-header {
     display: flex;
@@ -7169,12 +7858,14 @@
     transition: background 0.1s;
   }
 
-  .effect-header:hover { background: var(--bg-secondary, #111114); }
+  .effect-header:hover {
+    background: var(--bg-secondary, #111114);
+  }
 
   .effect-toggle {
     background: none;
     border: none;
-    color: var(--accent-primary, #BB86FC);
+    color: var(--accent-primary, #bb86fc);
     font-size: 13px;
     cursor: pointer;
     padding: 2px;
@@ -7182,7 +7873,9 @@
     text-align: center;
   }
 
-  .effect-toggle:not(.active) { color: #555; }
+  .effect-toggle:not(.active) {
+    color: #555;
+  }
 
   .effect-name {
     flex: 1;
@@ -7212,8 +7905,12 @@
     transition: opacity 0.1s;
   }
 
-  .effect-header:hover .effect-delete { opacity: 1; }
-  .effect-delete:hover { color: #ff4444; }
+  .effect-header:hover .effect-delete {
+    opacity: 1;
+  }
+  .effect-delete:hover {
+    color: #ff4444;
+  }
 
   .effect-params {
     padding: 8px 12px 10px;
@@ -7271,15 +7968,15 @@
     letter-spacing: 0.2px;
   }
 
-  .param-row input[type="range"] {
+  .param-row input[type='range'] {
     flex: 1;
     height: 6px;
-    accent-color: var(--accent-primary, #BB86FC);
+    accent-color: var(--accent-primary, #bb86fc);
     border-radius: 3px;
     cursor: pointer;
   }
 
-  .param-row input[type="range"]::-webkit-slider-thumb {
+  .param-row input[type='range']::-webkit-slider-thumb {
     width: 14px;
     height: 14px;
   }
@@ -7387,7 +8084,9 @@
     border: 1px solid rgba(154, 123, 255, 0.38);
     border-radius: 3px;
     box-shadow: inset 0 0 0 1px rgba(0, 0, 0, 0.75);
-    transition: border-color 120ms ease, box-shadow 120ms ease;
+    transition:
+      border-color 120ms ease,
+      box-shadow 120ms ease;
   }
 
   .deck-preview-container.deck-live {
@@ -7477,8 +8176,7 @@
     width: 46px;
     height: 64px;
     flex: 0 0 auto;
-    background:
-      linear-gradient(180deg, rgba(16, 38, 18, 0.98), rgba(5, 15, 8, 0.98));
+    background: linear-gradient(180deg, rgba(16, 38, 18, 0.98), rgba(5, 15, 8, 0.98));
     border: 1px solid rgba(57, 255, 20, 0.55);
     border-right: 0;
     border-radius: 8px 0 0 8px;
@@ -7492,7 +8190,7 @@
     box-shadow:
       0 0 18px rgba(57, 255, 20, 0.26),
       inset 0 1px 0 rgba(183, 255, 170, 0.28),
-      inset -1px 0 0 rgba(57, 255, 20, 0.20);
+      inset -1px 0 0 rgba(57, 255, 20, 0.2);
     pointer-events: auto;
     z-index: 2;
   }
@@ -7500,12 +8198,11 @@
   .vj-right-tray-toggle:hover {
     color: #b7ffaa;
     border-color: rgba(57, 255, 20, 0.85);
-    background:
-      linear-gradient(180deg, rgba(26, 58, 25, 0.98), rgba(7, 23, 10, 0.98));
+    background: linear-gradient(180deg, rgba(26, 58, 25, 0.98), rgba(7, 23, 10, 0.98));
     box-shadow:
       0 0 24px rgba(57, 255, 20, 0.42),
       inset 0 1px 0 rgba(214, 255, 206, 0.34),
-      inset -1px 0 0 rgba(57, 255, 20, 0.30);
+      inset -1px 0 0 rgba(57, 255, 20, 0.3);
   }
 
   .media-tray-glyph {
@@ -7600,7 +8297,7 @@
   .shader-params-overlay-title {
     font-size: 11px;
     font-weight: 600;
-    color: var(--accent-primary, #BB86FC);
+    color: var(--accent-primary, #bb86fc);
     display: flex;
     align-items: center;
     gap: 6px;
@@ -7612,10 +8309,10 @@
   .shader-params-layer-badge {
     font-size: 9px;
     padding: 1px 4px;
-    background: var(--accent-primary, #BB86FC)30;
-    border: 1px solid var(--accent-primary, #BB86FC)50;
+    background: var(--accent-primary, #bb86fc) 30;
+    border: 1px solid var(--accent-primary, #bb86fc) 50;
     border-radius: 3px;
-    color: var(--accent-primary, #BB86FC);
+    color: var(--accent-primary, #bb86fc);
     font-weight: 700;
   }
 
@@ -7660,8 +8357,13 @@
     flex: 1;
   }
 
-  .shader-params-panel-list::-webkit-scrollbar { width: 4px; }
-  .shader-params-panel-list::-webkit-scrollbar-thumb { background: #333; border-radius: 2px; }
+  .shader-params-panel-list::-webkit-scrollbar {
+    width: 4px;
+  }
+  .shader-params-panel-list::-webkit-scrollbar-thumb {
+    background: #333;
+    border-radius: 2px;
+  }
 
   /* Bottom Section: Grid + Media Tray */
   .vj-bottom {
@@ -7690,14 +8392,14 @@
   }
 
   .layer-select-icon:hover {
-    border-color: var(--accent-primary, #BB86FC);
-    color: var(--accent-primary, #BB86FC);
+    border-color: var(--accent-primary, #bb86fc);
+    color: var(--accent-primary, #bb86fc);
   }
 
   .layer-select-icon.selected {
-    background: var(--accent-primary, #BB86FC)20;
-    border-color: var(--accent-primary, #BB86FC);
-    color: var(--accent-primary, #BB86FC);
+    background: var(--accent-primary, #bb86fc) 20;
+    border-color: var(--accent-primary, #bb86fc);
+    color: var(--accent-primary, #bb86fc);
   }
 
   /* Grid Section */
@@ -7746,8 +8448,8 @@
   }
 
   .column-trigger:hover {
-    background: var(--accent-primary, #BB86FC);
-    border-color: var(--accent-primary, #BB86FC);
+    background: var(--accent-primary, #bb86fc);
+    border-color: var(--accent-primary, #bb86fc);
     color: #000;
   }
 
@@ -7761,11 +8463,15 @@
   }
 
   /* Reversed layout: controls on right, clips flow left-to-right */
-  .grid-section.reversed .column-headers { flex-direction: row-reverse; }
-  .grid-section.reversed .layer-row { flex-direction: row-reverse; }
+  .grid-section.reversed .column-headers {
+    flex-direction: row-reverse;
+  }
+  .grid-section.reversed .layer-row {
+    flex-direction: row-reverse;
+  }
 
   .layer-row.selected .layer-controls {
-    border-color: var(--accent-primary, #BB86FC);
+    border-color: var(--accent-primary, #bb86fc);
   }
 
   .layer-controls {
@@ -7821,11 +8527,11 @@
 
   .layer-btn.solo:hover {
     background: #444;
-    color: #FFD54F;
+    color: #ffd54f;
   }
 
   .layer-btn.solo.active {
-    background: #FFD54F;
+    background: #ffd54f;
     color: #000;
   }
 
@@ -7857,7 +8563,7 @@
   .opacity-slider {
     width: 100%;
     height: 18px;
-    accent-color: var(--accent-primary, #BB86FC);
+    accent-color: var(--accent-primary, #bb86fc);
     cursor: pointer;
     -webkit-appearance: none;
     appearance: none;
@@ -7880,7 +8586,7 @@
     width: 18px;
     height: 18px;
     border-radius: 50%;
-    background: var(--accent-primary, #BB86FC);
+    background: var(--accent-primary, #bb86fc);
     cursor: pointer;
     border: 2px solid #111;
     margin-top: -5px;
@@ -7931,11 +8637,11 @@
   }
 
   .clip-cell.has-clip:hover {
-    border-color: var(--accent-primary, #BB86FC);
+    border-color: var(--accent-primary, #bb86fc);
   }
 
   .clip-cell.active {
-    border-color: var(--accent-primary, #BB86FC);
+    border-color: var(--accent-primary, #bb86fc);
     box-shadow: 0 0 12px rgba(187, 134, 252, 0.4);
   }
 
@@ -7949,15 +8655,22 @@
   .clip-cell.queued.active {
     /* If the queued clip happens to be the currently-playing one,
        blend the two glows so it reads as "armed to re-trigger". */
-    box-shadow: 0 0 14px rgba(249, 115, 22, 0.55), 0 0 12px rgba(187, 134, 252, 0.4);
+    box-shadow:
+      0 0 14px rgba(249, 115, 22, 0.55),
+      0 0 12px rgba(187, 134, 252, 0.4);
   }
   @keyframes cellQueuedPulse {
-    0%, 100% { box-shadow: 0 0 6px rgba(249, 115, 22, 0.45); }
-    50%      { box-shadow: 0 0 18px rgba(249, 115, 22, 0.85); }
+    0%,
+    100% {
+      box-shadow: 0 0 6px rgba(249, 115, 22, 0.45);
+    }
+    50% {
+      box-shadow: 0 0 18px rgba(249, 115, 22, 0.85);
+    }
   }
 
   .clip-cell.dragover {
-    border-color: var(--accent-primary, #BB86FC);
+    border-color: var(--accent-primary, #bb86fc);
     background: #1a2530;
   }
 
@@ -7974,7 +8687,9 @@
   .clip-cell.wrong-mode .clip-content {
     opacity: 0.28;
     filter: grayscale(0.65);
-    transition: opacity 0.15s, filter 0.15s;
+    transition:
+      opacity 0.15s,
+      filter 0.15s;
   }
   .clip-cell.wrong-mode:hover .clip-content {
     opacity: 0.45;
@@ -7985,14 +8700,13 @@
     position: absolute;
     inset: 0;
     pointer-events: none;
-    background:
-      repeating-linear-gradient(
-        135deg,
-        rgba(0, 0, 0, 0.0) 0px,
-        rgba(0, 0, 0, 0.0) 6px,
-        rgba(255, 255, 255, 0.04) 6px,
-        rgba(255, 255, 255, 0.04) 7px
-      );
+    background: repeating-linear-gradient(
+      135deg,
+      rgba(0, 0, 0, 0) 0px,
+      rgba(0, 0, 0, 0) 6px,
+      rgba(255, 255, 255, 0.04) 6px,
+      rgba(255, 255, 255, 0.04) 7px
+    );
     border-radius: inherit;
   }
   /* Suppress the active-glow on wrong-mode cells so the user doesn't
@@ -8130,7 +8844,7 @@
     border-radius: 4px;
     padding: 4px 0;
     min-width: 100px;
-    box-shadow: 0 4px 12px rgba(0,0,0,.5);
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.5);
   }
   .ctx-item {
     display: block;
@@ -8145,17 +8859,28 @@
     font-family: inherit;
   }
   .ctx-item:hover {
-    background: rgba(255,255,255,.08);
+    background: rgba(255, 255, 255, 0.08);
     color: #fff;
   }
-  .ctx-danger { color: #ff6b6b; }
-  .ctx-danger:hover { background: rgba(255,80,80,.12); color: #ff4444; }
-  .ctx-disabled { color: #555; cursor: default; }
-  .ctx-disabled:hover { background: none; color: #555; }
+  .ctx-danger {
+    color: #ff6b6b;
+  }
+  .ctx-danger:hover {
+    background: rgba(255, 80, 80, 0.12);
+    color: #ff4444;
+  }
+  .ctx-disabled {
+    color: #555;
+    cursor: default;
+  }
+  .ctx-disabled:hover {
+    background: none;
+    color: #555;
+  }
   /* Highlighted "primary" menu item — used for the most-likely action like
      "Save Project" or "Update Preset" so it stands out in the menu. */
   .ctx-primary {
-    color: #FF8577;
+    color: #ff8577;
     font-weight: 700;
     display: flex;
     align-items: center;
@@ -8210,7 +8935,7 @@
   }
 
   .tray-collapse-btn:hover {
-    color: var(--accent-primary, #BB86FC);
+    color: var(--accent-primary, #bb86fc);
   }
 
   /* VJ Tab Row (matching mapping mode icons) */
@@ -8246,8 +8971,8 @@
   }
 
   .vj-tab.active {
-    color: var(--accent-primary, #BB86FC);
-    border-bottom-color: var(--accent-primary, #BB86FC);
+    color: var(--accent-primary, #bb86fc);
+    border-bottom-color: var(--accent-primary, #bb86fc);
     background: rgba(187, 134, 252, 0.06);
   }
 
@@ -8269,7 +8994,7 @@
   }
 
   .vj-tab.active .vj-tab-count {
-    color: var(--accent-primary, #BB86FC);
+    color: var(--accent-primary, #bb86fc);
   }
 
   .vj-tab-count.live {
@@ -8341,7 +9066,9 @@
     gap: 4px;
     align-content: start;
     position: relative;
-    transition: background 0.15s, outline-color 0.15s;
+    transition:
+      background 0.15s,
+      outline-color 0.15s;
     outline: 2px dashed transparent;
     outline-offset: -4px;
   }
@@ -8351,7 +9078,7 @@
   }
   .vj-import-bar {
     padding: 6px 8px;
-    border-bottom: 1px solid rgba(255,255,255,0.06);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
   }
   .vj-import-btn {
     width: 100%;
@@ -8360,15 +9087,18 @@
     justify-content: center;
     gap: 6px;
     padding: 7px 10px;
-    background: rgba(255,255,255,0.06);
-    border: 1px solid rgba(255,255,255,0.12);
+    background: rgba(255, 255, 255, 0.06);
+    border: 1px solid rgba(255, 255, 255, 0.12);
     border-radius: 4px;
     color: var(--text-primary, #ddd);
     font-size: 12px;
     cursor: pointer;
     transition: background 0.15s;
   }
-  .vj-import-btn:hover { background: rgba(255,255,255,0.14); color: #fff; }
+  .vj-import-btn:hover {
+    background: rgba(255, 255, 255, 0.14);
+    color: #fff;
+  }
 
   .empty-media {
     text-align: center;
@@ -8394,7 +9124,9 @@
     border-radius: 4px;
     overflow: hidden;
     cursor: grab;
-    transition: transform 0.15s, box-shadow 0.15s;
+    transition:
+      transform 0.15s,
+      box-shadow 0.15s;
   }
 
   .media-item:hover {
@@ -8556,8 +9288,8 @@
   }
 
   .block-tab.active {
-    background: var(--accent-primary, #BB86FC);
-    border-color: var(--accent-primary, #BB86FC);
+    background: var(--accent-primary, #bb86fc);
+    border-color: var(--accent-primary, #bb86fc);
     color: #000;
   }
 
@@ -8566,8 +9298,10 @@
   }
 
   .block-tab.dragover {
-    border-color: var(--accent-primary, #BB86FC);
-    box-shadow: 0 0 0 1px rgba(187, 134, 252, 0.55), 0 0 12px rgba(187, 134, 252, 0.22);
+    border-color: var(--accent-primary, #bb86fc);
+    box-shadow:
+      0 0 0 1px rgba(187, 134, 252, 0.55),
+      0 0 12px rgba(187, 134, 252, 0.22);
     transform: translateY(-1px);
   }
 
@@ -8582,7 +9316,7 @@
 
   .block-name-input {
     background: #111;
-    border: 1px solid var(--accent-primary, #BB86FC);
+    border: 1px solid var(--accent-primary, #bb86fc);
     border-radius: 3px;
     color: #fff;
     font-size: 12px;
@@ -8611,8 +9345,8 @@
 
   .add-block-btn:hover {
     background: #333;
-    border-color: var(--accent-primary, #BB86FC);
-    color: var(--accent-primary, #BB86FC);
+    border-color: var(--accent-primary, #bb86fc);
+    color: var(--accent-primary, #bb86fc);
   }
 
   /* Layer Live Preview */
@@ -8636,7 +9370,7 @@
   }
 
   .layer-live-preview.has-clip {
-    border-color: var(--accent-primary, #BB86FC);
+    border-color: var(--accent-primary, #bb86fc);
     box-shadow: 0 0 8px rgba(187, 134, 252, 0.3);
   }
 
@@ -8712,7 +9446,7 @@
   }
 
   .layer-row.drag-over {
-    border-top: 2px solid var(--accent-primary, #BB86FC);
+    border-top: 2px solid var(--accent-primary, #bb86fc);
     margin-top: -2px;
   }
 
@@ -8779,8 +9513,8 @@
   }
 
   .vj-src-btn:hover {
-    border-color: var(--accent-primary, #BB86FC);
-    color: var(--accent-primary, #BB86FC);
+    border-color: var(--accent-primary, #bb86fc);
+    color: var(--accent-primary, #bb86fc);
     background: #1a2a2d;
   }
 
@@ -8872,7 +9606,10 @@
     border: 1px solid rgba(255, 255, 255, 0.08);
     border-radius: 4px;
     cursor: grab;
-    transition: border-color 0.15s, background 0.15s, transform 0.15s;
+    transition:
+      border-color 0.15s,
+      background 0.15s,
+      transform 0.15s;
   }
 
   .vj-source-item:hover {
@@ -8910,7 +9647,7 @@
   .source-type-icon {
     font-size: 10px;
     font-weight: 700;
-    color: var(--accent-primary, #BB86FC);
+    color: var(--accent-primary, #bb86fc);
     letter-spacing: 0.5px;
   }
 
@@ -8958,7 +9695,7 @@
     height: 20px;
     border-radius: 3px;
     border: 1px solid rgba(255, 255, 255, 0.08);
-    background: rgba(0,0,0,0.6);
+    background: rgba(0, 0, 0, 0.6);
     color: var(--text-muted, #888);
     display: flex;
     align-items: center;
@@ -8988,7 +9725,7 @@
 
   .vj-src-stop:hover {
     color: #f44;
-    background: rgba(255,68,68,0.2);
+    background: rgba(255, 68, 68, 0.2);
   }
 
   .capture-picker-backdrop {
@@ -9088,12 +9825,14 @@
     border-radius: 6px;
     cursor: pointer;
     text-align: left;
-    transition: border-color 120ms, background 120ms;
+    transition:
+      border-color 120ms,
+      background 120ms;
   }
 
   .cpm-card:hover {
     background: #1f1c2a;
-    border-color: #BB86FC;
+    border-color: #bb86fc;
   }
 
   .cpm-thumb {
@@ -9144,7 +9883,7 @@
   /* ========== Shader Parameters ========== */
   .active-clip-name {
     font-size: 11px;
-    color: var(--accent-primary, #BB86FC);
+    color: var(--accent-primary, #bb86fc);
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -9161,7 +9900,7 @@
     padding: 6px 0;
     font-size: 11px;
     font-weight: 700;
-    color: var(--accent-primary, #BB86FC);
+    color: var(--accent-primary, #bb86fc);
     letter-spacing: 0.5px;
   }
 
@@ -9212,7 +9951,10 @@
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
-    transition: border-color 0.12s, color 0.12s, background 0.12s;
+    transition:
+      border-color 0.12s,
+      color 0.12s,
+      background 0.12s;
   }
 
   .mod-source-chip:hover {
@@ -9253,7 +9995,7 @@
   .param-slider {
     width: 100%;
     height: 3px;
-    accent-color: var(--accent-primary, #BB86FC);
+    accent-color: var(--accent-primary, #bb86fc);
   }
 
   /* ─── Auto-mode slippers (overlay on slider track) ─── */
@@ -9276,8 +10018,14 @@
     appearance: none;
     margin: 0;
   }
-  .slipper::-webkit-slider-runnable-track { background: transparent; height: 100%; }
-  .slipper::-moz-range-track             { background: transparent; height: 100%; }
+  .slipper::-webkit-slider-runnable-track {
+    background: transparent;
+    height: 100%;
+  }
+  .slipper::-moz-range-track {
+    background: transparent;
+    height: 100%;
+  }
   .slipper::-webkit-slider-thumb {
     -webkit-appearance: none;
     pointer-events: auto;
@@ -9310,7 +10058,13 @@
     pointer-events: none;
     z-index: 1;
   }
-  .auto-val-grow { min-width: 0; flex: 1; text-align: left; color: #5ce1e6; opacity: 0.75; }
+  .auto-val-grow {
+    min-width: 0;
+    flex: 1;
+    text-align: left;
+    color: #5ce1e6;
+    opacity: 0.75;
+  }
 
   .mod-ghost {
     position: absolute;
@@ -9409,12 +10163,17 @@
     width: var(--vj-icon-btn);
     height: var(--vj-control-h);
     padding: 0;
-    background: rgba(187, 134, 252, .08);
-    border: 1px solid rgba(187, 134, 252, .25);
+    background: rgba(187, 134, 252, 0.08);
+    border: 1px solid rgba(187, 134, 252, 0.25);
     border-radius: 4px;
-    color: var(--accent-primary, #BB86FC);
+    color: var(--accent-primary, #bb86fc);
     cursor: pointer;
-    transition: background .15s, border-color .15s, color .15s, box-shadow .15s, transform .08s;
+    transition:
+      background 0.15s,
+      border-color 0.15s,
+      color 0.15s,
+      box-shadow 0.15s,
+      transform 0.08s;
   }
   .performer-atom-btn svg {
     /* Slow continuous spin so the atom feels alive even when idle.
@@ -9430,24 +10189,34 @@
      vestibular-sensitive users don't get a constantly rotating
      icon in their field of view. */
   @media (prefers-reduced-motion: reduce) {
-    .performer-atom-btn svg { animation: none; }
+    .performer-atom-btn svg {
+      animation: none;
+    }
   }
   .performer-atom-btn:hover {
-    background: rgba(187, 134, 252, .18);
-    border-color: rgba(187, 134, 252, .5);
-    color: #DAB6FF;
+    background: rgba(187, 134, 252, 0.18);
+    border-color: rgba(187, 134, 252, 0.5);
+    color: #dab6ff;
   }
-  .performer-atom-btn:active { transform: scale(.94); }
+  .performer-atom-btn:active {
+    transform: scale(0.94);
+  }
   .performer-atom-btn.active {
-    background: rgba(187, 134, 252, .22);
-    border-color: rgba(187, 134, 252, .7);
+    background: rgba(187, 134, 252, 0.22);
+    border-color: rgba(187, 134, 252, 0.7);
     color: #fff;
-    box-shadow: 0 0 12px rgba(187, 134, 252, .55);
+    box-shadow: 0 0 12px rgba(187, 134, 252, 0.55);
   }
-  .performer-atom-btn.active svg { animation-duration: 4s; }
+  .performer-atom-btn.active svg {
+    animation-duration: 4s;
+  }
   @keyframes performer-atom-spin {
-    from { transform: rotate(0deg); }
-    to   { transform: rotate(360deg); }
+    from {
+      transform: rotate(0deg);
+    }
+    to {
+      transform: rotate(360deg);
+    }
   }
 
   /* Performer Overlay - aligns exactly over vj-bottom section */
@@ -9458,7 +10227,7 @@
     bottom: 0;
     /* top is set dynamically via inline style */
     z-index: 1001; /* Above vj-overlay (z-index: 1000) */
-    animation: performer-slide-up .25s ease-out;
+    animation: performer-slide-up 0.25s ease-out;
     display: flex;
     flex-direction: column;
   }
@@ -9495,26 +10264,41 @@
     pointer-events: none;
     opacity: 0;
     transform: translateY(100%);
-    transition: opacity .2s, transform .25s;
+    transition:
+      opacity 0.2s,
+      transform 0.25s;
   }
   @keyframes performer-slide-up {
-    from { transform: translateY(100%); opacity: 0; }
-    to { transform: translateY(0); opacity: 1; }
+    from {
+      transform: translateY(100%);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
   }
 
   /* Performer atom running state — overlay was opened earlier and is
      still alive but currently minimized. Green pulse so the user knows
      they have a SynthVision session running in the background. */
   .performer-atom-btn.running {
-    background: rgba(105, 240, 174, .12);
-    border-color: rgba(105, 240, 174, .4);
-    color: #69F0AE;
+    background: rgba(105, 240, 174, 0.12);
+    border-color: rgba(105, 240, 174, 0.4);
+    color: #69f0ae;
     animation: sv-pulse 2s ease-in-out infinite;
   }
-  .performer-atom-btn.running svg { animation-duration: 6s; }
+  .performer-atom-btn.running svg {
+    animation-duration: 6s;
+  }
   @keyframes sv-pulse {
-    0%, 100% { box-shadow: 0 0 4px rgba(105, 240, 174, .2); }
-    50% { box-shadow: 0 0 12px rgba(105, 240, 174, .4); }
+    0%,
+    100% {
+      box-shadow: 0 0 4px rgba(105, 240, 174, 0.2);
+    }
+    50% {
+      box-shadow: 0 0 12px rgba(105, 240, 174, 0.4);
+    }
   }
 
   /* Plugin Panel Styles */
@@ -9537,25 +10321,30 @@
     gap: 10px;
     padding: 9px 10px;
     background: #0a0a0d;
-    border: 1px solid rgba(255, 107, 107, 0.10);
+    border: 1px solid rgba(255, 107, 107, 0.1);
     border-radius: 6px;
     cursor: grab;
-    transition: border-color 0.15s, background 0.15s, box-shadow 0.15s;
+    transition:
+      border-color 0.15s,
+      background 0.15s,
+      box-shadow 0.15s;
   }
 
   .vj-plugin-card:hover {
     border-color: rgba(255, 107, 107, 0.55);
     background: #100a0c;
-    box-shadow: 0 0 0 1px rgba(255, 107, 107, 0.06), 0 0 10px rgba(255, 107, 107, 0.10);
+    box-shadow:
+      0 0 0 1px rgba(255, 107, 107, 0.06),
+      0 0 10px rgba(255, 107, 107, 0.1);
   }
 
   .vj-plugin-card:hover .vj-plugin-icon {
-    color: var(--accent-primary, #FF6B6B);
+    color: var(--accent-primary, #ff6b6b);
     filter: drop-shadow(0 0 4px rgba(255, 107, 107, 0.4));
   }
 
   .vj-plugin-card.running {
-    border-color: var(--accent-primary, #FF6B6B);
+    border-color: var(--accent-primary, #ff6b6b);
     background: rgba(255, 107, 107, 0.05);
   }
 
@@ -9569,8 +10358,10 @@
     border-radius: 5px;
     background: var(--bg-primary, #050507);
     border: 1px solid rgba(255, 107, 107, 0.08);
-    color: var(--accent-secondary, #FF8585);
-    transition: color 0.15s, filter 0.15s;
+    color: var(--accent-secondary, #ff8585);
+    transition:
+      color 0.15s,
+      filter 0.15s;
   }
 
   /* Per-type classes kept for selector specificity, but all share the
@@ -9582,7 +10373,7 @@
   .vj-plugin-icon.wavejs,
   .vj-plugin-icon.hydra,
   .vj-plugin-icon.ghostfx {
-    color: var(--accent-secondary, #FF8585);
+    color: var(--accent-secondary, #ff8585);
   }
 
   /* Splat / Model3D param panel details sections */
@@ -9635,7 +10426,7 @@
 
   .vj-plugin-icon.splat,
   .vj-plugin-icon.model3d {
-    color: var(--accent-secondary, #FF8585);
+    color: var(--accent-secondary, #ff8585);
     background: var(--bg-primary, #050507);
     border: 1px solid rgba(255, 107, 107, 0.08);
   }
@@ -9757,8 +10548,8 @@
   }
 
   .dim-btn:hover {
-    background: var(--accent-primary, #BB86FC);
-    border-color: var(--accent-primary, #BB86FC);
+    background: var(--accent-primary, #bb86fc);
+    border-color: var(--accent-primary, #bb86fc);
     color: #000;
   }
 
@@ -9906,7 +10697,7 @@
     flex-shrink: 0;
   }
   .stage-preset-update-btn:hover {
-    background: rgba(76,209,255,0.15);
+    background: rgba(76, 209, 255, 0.15);
     color: #fff;
   }
 
@@ -9924,7 +10715,11 @@
     cursor: pointer;
     flex-shrink: 0;
     filter: drop-shadow(0 0 8px rgba(57, 255, 20, 0.16));
-    transition: background 0.14s, border-color 0.14s, box-shadow 0.14s, color 0.14s;
+    transition:
+      background 0.14s,
+      border-color 0.14s,
+      box-shadow 0.14s,
+      color 0.14s;
   }
   .stage-scope-toggle:hover {
     background: rgba(57, 255, 20, 0.12);
@@ -9956,7 +10751,7 @@
   .stage-preset-scope {
     font-size: 9px;
     font-weight: bold;
-    color: rgba(100,200,255,0.8);
+    color: rgba(100, 200, 255, 0.8);
     margin-right: 2px;
   }
 
@@ -10034,7 +10829,10 @@
     font-size: 13px;
     transition: all 0.15s;
   }
-  .xfade-trans-arrow:hover { background: rgba(255, 255, 255, 0.12); color: #fff; }
+  .xfade-trans-arrow:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
+  }
   .xfade-trans-select {
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(126, 200, 227, 0.25);
@@ -10074,10 +10872,18 @@
     color: var(--text-muted, #888);
     min-width: 16px;
     text-align: center;
-    transition: color 0.15s, text-shadow 0.15s;
+    transition:
+      color 0.15s,
+      text-shadow 0.15s;
   }
-  .xfade-end-label.peaked.xfade-end-a { color: #FF8577; text-shadow: 0 0 8px rgba(255, 133, 119, 0.7); }
-  .xfade-end-label.peaked.xfade-end-b { color: #7EC8E3; text-shadow: 0 0 8px rgba(126, 200, 227, 0.7); }
+  .xfade-end-label.peaked.xfade-end-a {
+    color: #ff8577;
+    text-shadow: 0 0 8px rgba(255, 133, 119, 0.7);
+  }
+  .xfade-end-label.peaked.xfade-end-b {
+    color: #7ec8e3;
+    text-shadow: 0 0 8px rgba(126, 200, 227, 0.7);
+  }
 
   .xfade-fader {
     flex: 1;
@@ -10100,10 +10906,14 @@
     border: 2px solid #333;
     border-radius: 4px;
     cursor: grab;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5), 0 0 12px rgba(255, 255, 255, 0.3);
+    box-shadow:
+      0 2px 6px rgba(0, 0, 0, 0.5),
+      0 0 12px rgba(255, 255, 255, 0.3);
     margin-top: -2px;
   }
-  .xfade-fader::-webkit-slider-thumb:active { cursor: grabbing; }
+  .xfade-fader::-webkit-slider-thumb:active {
+    cursor: grabbing;
+  }
   .xfade-fader::-moz-range-thumb {
     width: 22px;
     height: 32px;
@@ -10111,7 +10921,9 @@
     border: 2px solid #333;
     border-radius: 4px;
     cursor: grab;
-    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.5), 0 0 12px rgba(255, 255, 255, 0.3);
+    box-shadow:
+      0 2px 6px rgba(0, 0, 0, 0.5),
+      0 0 12px rgba(255, 255, 255, 0.3);
   }
 
   /* Column header tinting when crossfader is on */
@@ -10128,10 +10940,18 @@
   }
 
   /* Cell tinting per bank */
-  .clip-cell.cell-bank-a { box-shadow: inset 2px 0 0 rgba(255, 133, 119, 0.18); }
-  .clip-cell.cell-bank-b { box-shadow: inset -2px 0 0 rgba(126, 200, 227, 0.18); }
-  .clip-cell.cell-bank-divider { border-left: 2px solid rgba(255, 255, 255, 0.18); }
-  .clip-cell.cell-bank-dimmed { opacity: 0.45; }
+  .clip-cell.cell-bank-a {
+    box-shadow: inset 2px 0 0 rgba(255, 133, 119, 0.18);
+  }
+  .clip-cell.cell-bank-b {
+    box-shadow: inset -2px 0 0 rgba(126, 200, 227, 0.18);
+  }
+  .clip-cell.cell-bank-divider {
+    border-left: 2px solid rgba(255, 255, 255, 0.18);
+  }
+  .clip-cell.cell-bank-dimmed {
+    opacity: 0.45;
+  }
 
   /* Per-row bank routing pill */
   .bank-pill {
@@ -10151,15 +10971,22 @@
     font-family: var(--ga-font-mono, 'IBM Plex Mono', ui-monospace, monospace);
     padding: 3px 6px;
     cursor: pointer;
-    transition: background 0.15s, color 0.15s;
+    transition:
+      background 0.15s,
+      color 0.15s;
     letter-spacing: 0.05em;
   }
-  .bank-pill-seg:hover { background: rgba(255, 255, 255, 0.08); color: #fff; }
+  .bank-pill-seg:hover {
+    background: rgba(255, 255, 255, 0.08);
+    color: #fff;
+  }
   .bank-pill-seg.active {
     background: linear-gradient(135deg, rgba(255, 133, 119, 0.3), rgba(126, 200, 227, 0.3));
     color: #fff;
   }
-  .bank-pill-seg + .bank-pill-seg { border-left: 1px solid rgba(255, 255, 255, 0.1); }
+  .bank-pill-seg + .bank-pill-seg {
+    border-left: 1px solid rgba(255, 255, 255, 0.1);
+  }
 
   /* ─── VJ Video Controls Panel — mirrors LayerPanel mapping-mode video ─── */
   .video-controls-panel {
@@ -10186,15 +11013,23 @@
     display: flex;
     align-items: center;
     justify-content: center;
-    transition: background 0.15s, color 0.15s;
+    transition:
+      background 0.15s,
+      color 0.15s;
     flex-shrink: 0;
   }
-  .vt-btn:hover { background: rgba(255, 255, 255, 0.15); color: #fff; }
+  .vt-btn:hover {
+    background: rgba(255, 255, 255, 0.15);
+    color: #fff;
+  }
   .vt-play {
-    background: var(--accent-primary, #BB86FC);
+    background: var(--accent-primary, #bb86fc);
     color: #111;
   }
-  .vt-play:hover { background: #CF6EFF; color: #000; }
+  .vt-play:hover {
+    background: #cf6eff;
+    color: #000;
+  }
   .vt-time {
     font-size: 12px;
     color: var(--text-muted, #888);
@@ -10213,7 +11048,9 @@
     cursor: pointer;
     flex-shrink: 0;
   }
-  .vt-speed:hover { border-color: rgba(255, 255, 255, 0.25); }
+  .vt-speed:hover {
+    border-color: rgba(255, 255, 255, 0.25);
+  }
 
   .vt-timeline {
     position: relative;
@@ -10234,8 +11071,14 @@
     pointer-events: none;
     z-index: 1;
   }
-  .vt-trim-outside-left { left: 0; border-radius: 3px 0 0 3px; }
-  .vt-trim-outside-right { right: 0; border-radius: 0 3px 3px 0; }
+  .vt-trim-outside-left {
+    left: 0;
+    border-radius: 3px 0 0 3px;
+  }
+  .vt-trim-outside-right {
+    right: 0;
+    border-radius: 0 3px 3px 0;
+  }
   .vt-trim-region {
     position: absolute;
     top: 0;
@@ -10251,7 +11094,7 @@
     top: -2px;
     width: 2px;
     height: calc(100% + 4px);
-    background: var(--accent-primary, #BB86FC);
+    background: var(--accent-primary, #bb86fc);
     box-shadow: 0 0 4px rgba(187, 134, 252, 0.6);
     z-index: 3;
     pointer-events: none;
@@ -10279,8 +11122,12 @@
     background: rgba(187, 134, 252, 0.7);
     border-radius: 1px;
   }
-  .vt-trim-handle:hover { background: rgba(187, 134, 252, 0.25); }
-  .vt-trim-handle:hover::after { background: var(--accent-primary, #BB86FC); }
+  .vt-trim-handle:hover {
+    background: rgba(187, 134, 252, 0.25);
+  }
+  .vt-trim-handle:hover::after {
+    background: var(--accent-primary, #bb86fc);
+  }
 
   .vt-modes {
     display: flex;
@@ -10320,7 +11167,7 @@
     color: #6df;
     text-align: right;
   }
-  .vt-tf-row input[type="range"] {
+  .vt-tf-row input[type='range'] {
     width: 100%;
     accent-color: #6df;
   }
@@ -10393,7 +11240,7 @@
   }
   .vt-mode-btn.active {
     background: rgba(187, 134, 252, 0.2);
-    color: var(--accent-primary, #BB86FC);
+    color: var(--accent-primary, #bb86fc);
     border-color: rgba(187, 134, 252, 0.4);
   }
 </style>

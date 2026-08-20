@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
+  import { t } from './lib/i18n';
   import Canvas from './lib/components/Canvas.svelte';
   import WebGPUCanvas from './lib/components/WebGPUCanvas.svelte';
   import AudioInputPicker from './lib/components/AudioInputPicker.svelte';
@@ -532,7 +533,9 @@
       namePrefix: 'Recording',
       onDurationUpdate: (s) => { recordingDuration = s; },
       onComplete: () => { isRecording = false; recorderHandle = null; },
-      onError: (err) => { alert('Failed to start recording: ' + err.message); },
+      onError: (err) => {
+        alert($t('app.errors.recordingStart', { values: { error: err.message } }));
+      },
     });
     if (recorderHandle) {
       isRecording = true;
@@ -989,7 +992,7 @@
     const savedAutosave = localStorage.getItem('ghostarcade-autosave');
     if (savedAutosave) {
       const ts = localStorage.getItem('ghostarcade-autosave-timestamp');
-      recoveryTimestamp = ts ? new Date(parseInt(ts, 10)).toLocaleString() : 'unknown time';
+      recoveryTimestamp = ts ? new Date(parseInt(ts, 10)).toLocaleString() : $t('app.dialog.recovery.unknownTime');
       showRecoveryModal = true;
     }
 
@@ -1962,6 +1965,24 @@
     return raw.facingMode === 'user' ? 'user' : 'environment';
   }
 
+  function phoneVisionStartError(err: unknown): string {
+    const detail = err instanceof Error ? err.message.trim() : '';
+    const prefix = $t('app.errors.phoneCameraFailed');
+    return detail ? `${prefix}: ${detail}` : prefix;
+  }
+
+  function phoneVisionCapabilityLabel(
+    rawTransport: unknown,
+    fallbackTransport: PhoneVisionCapabilities['transport'],
+  ): string {
+    if (rawTransport === 'native-rtc') return $t('app.phoneVision.capabilities.native');
+    if (rawTransport === 'browser-rtc') return $t('app.phoneVision.capabilities.browser');
+    if (typeof rawTransport === 'string' && rawTransport.trim()) return rawTransport;
+    return fallbackTransport === 'browser-rtc'
+      ? $t('app.phoneVision.capabilities.browser')
+      : $t('app.phoneVision.capabilities.native');
+  }
+
   function phoneVisionCaptureProfileFrom(raw: unknown): PhoneVisionCaptureProfile {
     return raw === 'rgb-fast' || raw === 'person-aura' || raw === 'lidar-depth' || raw === 'object-relief'
       ? raw
@@ -2074,7 +2095,7 @@
     destroyPhoneVisionSession(false);
     phoneVisionSessionId = sessionId;
     const facingMode = phoneVisionFacingMode(detail);
-    const capabilityDetail = isPhoneVisionRecord(detail.capabilities)
+    const capabilityDetail: Record<string, unknown> = isPhoneVisionRecord(detail.capabilities)
       ? {
           ...detail.capabilities,
           captureProfile: detail.capabilities.captureProfile ?? detail.captureProfile,
@@ -2086,7 +2107,7 @@
     phoneVision.set({
       status: 'live',
       sessionId,
-      label: 'Phone Vision',
+      label: phoneVisionCapabilityLabel(capabilityDetail.transport, capabilities.transport),
       error: '',
       capabilities,
       nativeFrame: null,
@@ -2422,7 +2443,7 @@
     const existing = get(mediaLibrary).find(item => item.id === PHONE_CAMERA_MEDIA_ID);
     const mediaItem = {
       id: PHONE_CAMERA_MEDIA_ID,
-      name: 'Phone Camera',
+      name: $t('app.phoneVision.labels.camera'),
       src: phoneVisionMediaSrc(sessionId),
       type: 'video' as const,
       videoElement: video,
@@ -2434,7 +2455,7 @@
       ...state,
       status: 'live',
       sessionId,
-      label: 'Phone Camera',
+      label: $t('app.phoneVision.labels.camera'),
       error: '',
     }));
     sendPhoneVisionStatus('live');
@@ -2443,14 +2464,14 @@
   function phoneCameraMediaSource(emitError = true): MediaSource | null {
     const item = get(mediaLibrary).find(i => i.id === PHONE_CAMERA_MEDIA_ID);
     if (!item?.videoElement || !phoneVisionSessionId) {
-      if (emitError) sendPhoneVisionStatus('error', { error: 'Start the phone camera first.' });
+      if (emitError) sendPhoneVisionStatus('error', { error: $t('app.errors.phoneCameraStart') });
       return null;
     }
     return {
       id: `phone-camera-${Date.now()}`,
       type: 'video',
       src: item.src,
-      name: 'Phone Camera',
+      name: $t('app.phoneVision.labels.camera'),
       videoElement: item.videoElement,
       isPlaying: true,
       mirrorX: false,
@@ -2479,13 +2500,13 @@
     const source = phoneCameraMediaSource(false);
     const nativeOnly = !source && phoneVisionCanCreateNativeAura(raw);
     if (!source && !nativeOnly) {
-      sendPhoneVisionStatus('error', { error: 'Start the phone camera first.' });
+      sendPhoneVisionStatus('error', { error: $t('app.errors.phoneCameraStart') });
       return;
     }
     if (source) {
-      project.addLayer('Phone Aura', 'media');
+      project.addLayer($t('app.phoneVision.labels.auraLayer'), 'media');
     } else {
-      project.addColorLayer('Phone Aura');
+      project.addColorLayer($t('app.phoneVision.labels.auraLayer'));
     }
     const layerId = get(project).selectedLayerId;
     if (!layerId) return;
@@ -2524,10 +2545,10 @@
     const item = get(mediaLibrary).find(i => i.id === PHONE_CAMERA_MEDIA_ID);
     const nativeOnly = !item?.videoElement && phoneVisionCanCreateNativeDepth(raw);
     if ((!item?.videoElement && !nativeOnly) || !phoneVisionSessionId) {
-      sendPhoneVisionStatus('error', { error: 'Start the phone camera first.' });
+      sendPhoneVisionStatus('error', { error: $t('app.errors.phoneCameraStart') });
       return;
     }
-    project.addGPULayer('Phone Point Cloud');
+    project.addGPULayer($t('app.phoneVision.labels.pointCloudLayer'));
     const layerId = get(project).selectedLayerId;
     if (!layerId) return;
 
@@ -2643,7 +2664,7 @@
     destroyPhoneVisionSession(false);
     phoneVisionSessionId = sessionId;
     const facingMode = phoneVisionFacingMode(detail);
-    const capabilityDetail = isPhoneVisionRecord(detail.capabilities)
+    const capabilityDetail: Record<string, unknown> = isPhoneVisionRecord(detail.capabilities)
       ? {
           ...detail.capabilities,
           captureProfile: detail.capabilities.captureProfile ?? detail.captureProfile,
@@ -2655,7 +2676,7 @@
     phoneVision.set({
       status: 'connecting',
       sessionId,
-      label: 'Phone Camera',
+      label: phoneVisionCapabilityLabel(capabilityDetail.transport, capabilities.transport),
       error: '',
       capabilities,
       nativeFrame: null,
@@ -2686,10 +2707,10 @@
     peer.onconnectionstatechange = () => {
       if (phoneVisionPeer !== peer) return;
       if (peer.connectionState === 'failed') {
-        phoneVision.update(state => ({ ...state, status: 'failed', error: 'Phone camera connection failed.' }));
-        sendPhoneVisionStatus('failed', { error: 'Phone camera connection failed.' });
+        phoneVision.update(state => ({ ...state, status: 'failed', error: $t('app.phoneVision.status.connectionFailed') }));
+        sendPhoneVisionStatus('failed', { error: $t('app.phoneVision.status.connectionFailed') });
       } else if (peer.connectionState === 'disconnected') {
-        phoneVision.update(state => ({ ...state, status: 'connecting', error: 'Phone camera reconnecting.' }));
+        phoneVision.update(state => ({ ...state, status: 'connecting', error: $t('app.phoneVision.status.reconnecting') }));
         sendPhoneVisionStatus('reconnecting');
       } else if (peer.connectionState === 'closed') {
         destroyPhoneVisionSession(true);
@@ -2710,8 +2731,9 @@
       });
     } catch (err: any) {
       console.error('[PhoneVision] Failed to accept camera offer:', err);
-      phoneVision.update(state => ({ ...state, status: 'failed', error: err?.message || 'Failed to start phone camera.' }));
-      sendPhoneVisionStatus('failed', { error: err?.message || 'Failed to start phone camera.' });
+      const errorMessage = phoneVisionStartError(err);
+      phoneVision.update(state => ({ ...state, status: 'failed', error: errorMessage }));
+      sendPhoneVisionStatus('failed', { error: errorMessage });
       destroyPhoneVisionSession(false);
     }
   }
@@ -2748,7 +2770,7 @@
     try {
       ws = new WebSocket(url);
     } catch (err) {
-      connectionError = 'Failed to create WebSocket connection. Is the server running?';
+      connectionError = $t('app.errors.websocketCreate');
       console.error('WebSocket creation failed:', err);
       return;
     }
@@ -2770,7 +2792,7 @@
 
     ws.onerror = (event) => {
       mobileConnected = false;
-      connectionError = 'Could not connect to WebSocket server. Retrying...';
+      connectionError = $t('app.errors.websocketConnect');
       console.error('WebSocket error:', event);
     };
 
@@ -3868,7 +3890,7 @@
       const displays: any[] = await invoke('get_displays');
       const external = displays.find((d: any) => !(d.isPrimary ?? d.primary));
       if (!external) {
-        showToast('Connect an external display or projector to use fullscreen output.', 'info');
+        showToast($t('app.errors.fullscreenDisplay'), 'info');
         return;
       }
     } catch {
@@ -4161,7 +4183,9 @@
             const portableJson = await materializeAssetsInProject(jsonStr, projectDir);
             const result = await api.invoke('save_file_text', { path: currentProjectPath, content: portableJson });
             if (!result?.success) {
-              alert(`Save failed: ${result?.error || 'unknown error'}`);
+              alert($t('app.errors.saveFailed', {
+                values: { error: result?.error || $t('app.errors.unknown') },
+              }));
               return;
             }
             console.log('Project saved successfully:', currentProjectPath);
@@ -4178,7 +4202,9 @@
             // for what was meant to be an in-place save and confused users
             // into a save loop. Surface the error instead.
             console.error('[Save] Electron save failed:', err);
-            alert(`Save failed: ${err?.message || err}`);
+            alert($t('app.errors.saveFailed', {
+              values: { error: err?.message || err },
+            }));
             return;
           }
         }
@@ -4248,7 +4274,7 @@
         try {
           const dialogResult = await api.invoke('save_project_dialog', {
             defaultPath: suggestedName,
-            title: 'Save Project As',
+            title: $t('app.file.saveProjectAs'),
           });
           if (dialogResult?.canceled || !dialogResult?.filePath) return;
           const filePath: string = dialogResult.filePath;
@@ -4258,7 +4284,9 @@
           const portableJson = await materializeAssetsInProject(jsonStr, projectDir);
           const writeResult = await api.invoke('save_file_text', { path: filePath, content: portableJson });
           if (!writeResult?.success) {
-            alert(`Save failed: ${writeResult?.error || 'unknown error'}`);
+            alert($t('app.errors.saveFailed', {
+              values: { error: writeResult?.error || $t('app.errors.unknown') },
+            }));
             return;
           }
           currentProjectPath = filePath;
@@ -4275,7 +4303,9 @@
           // failed one and explains the "two dialogs in a row" bug. Surface
           // the error and let the user retry.
           console.error('[Save As] Electron save failed:', err);
-          alert(`Save failed: ${err?.message || err}`);
+          alert($t('app.errors.saveFailed', {
+            values: { error: err?.message || err },
+          }));
           return;
         }
       }
@@ -4288,7 +4318,7 @@
           suggestedName,
           types: [
             {
-              description: 'Ghost Arcade Project',
+              description: $t('app.file.projectDescription'),
               accept: { 'application/json': ['.gha'] },
             },
           ],
@@ -4376,12 +4406,12 @@
           recentFiles.add(file.name, electronPath);
           markAsSaved();
         } else {
-          alert('Failed to load project. The file may be corrupted or invalid.');
+          alert($t('app.errors.loadProject'));
         }
       }
     };
     reader.onerror = () => {
-      alert('Failed to read the file.');
+      alert($t('app.errors.readFile'));
     };
     reader.readAsText(file);
 
@@ -4447,15 +4477,17 @@
           markAsSaved();
           return;
         }
-        alert('Failed to load project. The file may be corrupted or invalid.');
+        alert($t('app.errors.loadProject'));
       } catch (err: any) {
         const missing = /not found|ENOENT/i.test(err?.message || '');
         if (missing) {
-          if (confirm(`"${entry.name}" could not be found.\n\nRemove it from Recent Files?`)) {
+          if (confirm($t('app.dialog.recent.missingConfirm', { values: { name: entry.name } }))) {
             recentFiles.remove(entry);
           }
         } else {
-          alert(`Failed to open recent file: ${err?.message || err}`);
+          alert($t('app.errors.recentOpen', {
+            values: { error: err?.message || err },
+          }));
         }
       }
       return;
@@ -4473,7 +4505,7 @@
     const proj = get(project);
     const count = (proj.stagePresets?.length || 0) + (proj.svKeyboardPresets?.length || 0);
     if (count === 0) {
-      alert('This project has no presets to export.');
+      alert($t('app.errors.noProjectPresets'));
       return;
     }
 
@@ -4485,7 +4517,7 @@
       try {
         const handle = await (window as any).showSaveFilePicker({
           suggestedName,
-          types: [{ description: 'Ghost Arcade Presets', accept: { 'application/json': ['.json'] } }],
+          types: [{ description: $t('app.file.presetsDescription'), accept: { 'application/json': ['.json'] } }],
         });
         const writable = await handle.createWritable();
         await writable.write(jsonStr);
@@ -4526,19 +4558,24 @@
           const data = JSON.parse(reader.result as string);
           const presets = project.importPresetsFromFile(data);
           if (!presets) {
-            alert('No presets found in this file.');
+            alert($t('app.errors.noFilePresets'));
             return;
           }
           const count = presets.stagePresets.length + presets.svKeyboardPresets.length;
           if (count === 0) {
-            alert('No presets found in this file.');
+            alert($t('app.errors.noFilePresets'));
             return;
           }
-          if (confirm(`Import ${presets.stagePresets.length} stage preset(s) and ${presets.svKeyboardPresets.length} keyboard preset(s) into this project?`)) {
+          if (confirm($t('app.errors.importConfirm', {
+            values: {
+              stageCount: presets.stagePresets.length,
+              keyboardCount: presets.svKeyboardPresets.length,
+            },
+          }))) {
             project.mergeImportedPresets(presets);
           }
         } catch {
-          alert('Failed to read presets from file.');
+          alert($t('app.errors.readPresets'));
         }
       };
       reader.readAsText(file);
@@ -5352,17 +5389,17 @@
           </svg>
         </div>
         <div class="gpu-warning-body">
-          <strong>Running on integrated graphics</strong>
-          <span class="gpu-warning-detail">Detected: <code>{gpuInfo.renderer}</code>. For smoother playback you can either switch to your dedicated GPU in system settings, or dial down the editor's performance settings to match.</span>
+          <strong>{$t('app.gpu.integratedTitle')}</strong>
+          <span class="gpu-warning-detail">{$t('app.gpu.detected')} <code>{gpuInfo.renderer}</code>. {$t('app.gpu.smootherPlayback')}</span>
           <a class="gpu-warning-link"
              href="https://ghostarcade.live/docs/performance"
              target="_blank"
-             rel="noopener noreferrer">Performance guide →</a>
+             rel="noopener noreferrer">{$t('app.gpu.performanceGuide')}</a>
         </div>
         <div class="gpu-warning-actions">
-          <button class="gpu-warning-dismiss persist" onclick={() => { showSettings = true; window.location.hash = '#performance'; }} title="Open Settings → Performance">Tune Performance</button>
-          <button class="gpu-warning-dismiss" onclick={() => dismissIntegratedGpuBanner(false)} title="Dismiss for this session">Dismiss</button>
-          <button class="gpu-warning-dismiss" onclick={() => dismissIntegratedGpuBanner(true)} title="Never show this again">Don't show again</button>
+          <button class="gpu-warning-dismiss persist" onclick={() => { showSettings = true; window.location.hash = '#performance'; }} title={$t('app.gpu.openPerformance')}>{$t('app.gpu.tunePerformance')}</button>
+          <button class="gpu-warning-dismiss" onclick={() => dismissIntegratedGpuBanner(false)} title={$t('app.gpu.dismissSession')}>{$t('app.gpu.dismiss')}</button>
+          <button class="gpu-warning-dismiss" onclick={() => dismissIntegratedGpuBanner(true)} title={$t('app.gpu.neverShowAgain')}>{$t('app.gpu.dontShowAgain')}</button>
         </div>
       </div>
     {/if}
@@ -5375,7 +5412,7 @@
           <span
             class="gpu-indicator"
             class:integrated={gpuInfo.isIntegrated}
-            title="{gpuInfo.renderer} ({gpuInfo.vendor}){gpuInfo.isIntegrated ? ' — WARNING: Integrated GPU. Set this app to High Performance in Windows Graphics Settings.' : ''}"
+            title={`${gpuInfo.renderer} (${gpuInfo.vendor})${gpuInfo.isIntegrated ? ` — ${$t('app.gpu.integratedWarning')}` : ''}`}
           >
             <span class="gpu-dot"></span>
             GPU
@@ -5388,7 +5425,7 @@
             class:active={fileMenuOpen}
             onclick={() => fileMenuOpen = !fileMenuOpen}
           >
-            File
+            {$t('app.file.menu')}
             <svg width="10" height="10" viewBox="0 0 24 24" fill="currentColor">
               <path d="M7 10l5 5 5-5z"/>
             </svg>
@@ -5404,7 +5441,7 @@
                     <line x1="9" y1="15" x2="15" y2="15"></line>
                   </svg>
                 </span>
-                <span class="menu-label">New</span>
+                <span class="menu-label">{$t('app.file.new')}</span>
                 <span class="menu-shortcut">Ctrl+N</span>
               </button>
               <button class="menu-item" onclick={loadComposition}>
@@ -5413,12 +5450,12 @@
                     <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
                   </svg>
                 </span>
-                <span class="menu-label">Open...</span>
+                <span class="menu-label">{$t('app.file.open')}</span>
                 <span class="menu-shortcut">Ctrl+O</span>
               </button>
               {#if $recentFiles.length > 0}
                 <div class="menu-separator"></div>
-                <div class="menu-section-label">Recent Files</div>
+                <div class="menu-section-label">{$t('app.file.recentFiles')}</div>
                 {#each $recentFiles as recent (recent.timestamp)}
                   <button
                     class="menu-item menu-item-recent"
@@ -5436,7 +5473,7 @@
                 {/each}
                 <button class="menu-item menu-item-small" onclick={() => { recentFiles.clear(); fileMenuOpen = false; }}>
                   <span class="menu-icon"></span>
-                  <span class="menu-label">Clear Recent Files</span>
+                  <span class="menu-label">{$t('app.file.clearRecent')}</span>
                 </button>
               {/if}
               <div class="menu-separator"></div>
@@ -5448,7 +5485,7 @@
                     <polyline points="7 3 7 8 15 8"></polyline>
                   </svg>
                 </span>
-                <span class="menu-label">Save</span>
+                <span class="menu-label">{$t('app.file.save')}</span>
                 <span class="menu-shortcut">Ctrl+S</span>
               </button>
               <button class="menu-item" onclick={saveCompositionAs}>
@@ -5459,7 +5496,7 @@
                     <polyline points="7 3 7 8 15 8"></polyline>
                   </svg>
                 </span>
-                <span class="menu-label">Save As...</span>
+                <span class="menu-label">{$t('app.file.saveAs')}</span>
                 <span class="menu-shortcut">Ctrl+Shift+S</span>
               </button>
               <div class="menu-separator"></div>
@@ -5473,7 +5510,7 @@
                     <rect x="1" y="5" width="15" height="14" rx="2" ry="2"></rect>
                   </svg>
                 </span>
-                <span class="menu-label">Render to Video...</span>
+                <span class="menu-label">{$t('app.file.renderVideo')}</span>
               </button>
               <button class="menu-item" onclick={() => { fileMenuOpen = false; showVideoConverter = true; }}>
                 <span class="menu-icon">
@@ -5483,7 +5520,7 @@
                     <path d="m10 12 4 3-4 3v-6z"></path>
                   </svg>
                 </span>
-                <span class="menu-label">Video Converter...</span>
+                <span class="menu-label">{$t('app.file.videoConverter')}</span>
               </button>
               <div class="menu-separator"></div>
               <button class="menu-item" onclick={importPresetsFromFile}>
@@ -5494,7 +5531,7 @@
                     <line x1="12" y1="15" x2="12" y2="3"></line>
                   </svg>
                 </span>
-                <span class="menu-label">Import Presets...</span>
+                <span class="menu-label">{$t('app.file.importPresets')}</span>
               </button>
               <button class="menu-item" onclick={exportPresetsToFile}>
                 <span class="menu-icon">
@@ -5504,7 +5541,7 @@
                     <line x1="12" y1="3" x2="12" y2="15"></line>
                   </svg>
                 </span>
-                <span class="menu-label">Export Presets...</span>
+                <span class="menu-label">{$t('app.file.exportPresets')}</span>
               </button>
               <div class="menu-separator"></div>
               <button class="menu-item" onclick={handleUndo} disabled={!$canUndo}>
@@ -5514,7 +5551,7 @@
                     <path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13"></path>
                   </svg>
                 </span>
-                <span class="menu-label">Undo</span>
+                <span class="menu-label">{$t('app.file.undo')}</span>
                 <span class="menu-shortcut">Ctrl+Z</span>
               </button>
               <button class="menu-item" onclick={handleRedo} disabled={!$canRedo}>
@@ -5524,7 +5561,7 @@
                     <path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13"></path>
                   </svg>
                 </span>
-                <span class="menu-label">Redo</span>
+                <span class="menu-label">{$t('app.file.redo')}</span>
                 <span class="menu-shortcut">Ctrl+Y</span>
               </button>
             </div>
@@ -5548,21 +5585,22 @@
           class:active={outputMode === 'window'}
           onclick={outputIsOpen ? closeOutputWindow : openOutputWindow}
         >
-          {outputIsOpen ? 'Close Output' : 'Output Window'}
+          {outputIsOpen ? $t('app.toolbar.closeOutput') : $t('app.toolbar.outputWindow')}
         </button>
         <button
           class="output-btn"
           class:active={outputMode === 'fullscreen'}
           onclick={toggleFullscreen}
+          title={$t('app.toolbar.fullscreenTitle')}
         >
-          Fullscreen
+          {$t('app.toolbar.fullscreen')}
         </button>
         <button
           class="output-btn sim-launch-btn stage-sim-btn"
           class:active={showStage3D || stage3DWindowOpen}
           onclick={openStage3D}
-          title="Open Stage Simulator"
-          aria-label="Open Stage Simulator"
+          title={$t('app.toolbar.openStageSimulator')}
+          aria-label={$t('app.toolbar.openStageSimulator')}
         >
           <svg class="sim-launch-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <path d="M4 16.4 12 12l8 4.4-8 4.5-8-4.5Z" />
@@ -5570,14 +5608,14 @@
             <path d="M7.2 8.6 12 11.5l4.8-2.9" />
             <path d="M12 5.5v6" />
           </svg>
-          Stage Sim
+          {$t('app.toolbar.stageSimulator')}
         </button>
         <button
           class="output-btn sim-launch-btn map-sim-btn"
           class:active={$workspace === 'projection-sim' || projectionSimWindowOpen}
           onclick={openProjectionSim}
-          title="Open Projection Mapping Simulator"
-          aria-label="Open Projection Mapping Simulator"
+          title={$t('app.toolbar.openProjectionSimulator')}
+          aria-label={$t('app.toolbar.openProjectionSimulator')}
         >
           <svg class="sim-launch-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <path d="M3.5 8.2h4.2l2.2 1.7v4.2l-2.2 1.7H3.5V8.2Z" />
@@ -5586,7 +5624,7 @@
             <path d="M5.5 15.8v2.3" />
             <path d="M4.4 18.1h3.4" />
           </svg>
-          Map Sim
+          {$t('app.toolbar.projectionSimulator')}
         </button>
       </div>
 
@@ -5596,7 +5634,7 @@
           class="blackout-btn"
           class:active={$settings.output.blackout}
           onclick={() => settings.update(s => ({ ...s, output: { ...s.output, blackout: !s.output.blackout } }))}
-          title={$settings.output.blackout ? 'End Blackout (B)' : 'Blackout (B)'}
+          title={$settings.output.blackout ? $t('app.toolbar.endBlackout') : $t('app.toolbar.blackout')}
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="10"/>
@@ -5618,8 +5656,8 @@
           })}
           title={
             $settings.output.testPattern && $settings.output.testPattern !== 'none'
-              ? 'Test Pattern ON — click to hide and see content'
-              : 'Show alignment grid (test pattern)'
+              ? $t('app.toolbar.testPatternOn')
+              : $t('app.toolbar.showTestPattern')
           }
         >
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -5636,7 +5674,7 @@
           class="freeze-btn"
           class:active={$outputFrozen}
           onclick={toggleFreeze}
-          title={$outputFrozen ? 'Resume Output' : 'Freeze Output'}
+          title={$outputFrozen ? $t('app.toolbar.resumeOutput') : $t('app.toolbar.freezeOutput')}
         >
           {#if $outputFrozen}
             <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor">
@@ -5662,7 +5700,7 @@
         <BpmTapWidget />
 
         <!-- Screenshot Button -->
-        <button class="screenshot-btn" onclick={takeScreenshot} title="Take Screenshot">
+        <button class="screenshot-btn" onclick={takeScreenshot} title={$t('app.toolbar.takeScreenshot')}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/>
             <circle cx="12" cy="13" r="4"/>
@@ -5673,15 +5711,15 @@
         {#if isRecording}
           <div class="recording-indicator">
             <span class="rec-dot"></span>
-            {#if recorderHandle?.hasAudio}<span class="rec-audio-badge" title="Recording audio">🔊</span>{/if}
+            {#if recorderHandle?.hasAudio}<span class="rec-audio-badge" title={$t('app.toolbar.recordingAudio')}>🔊</span>{/if}
             <span class="rec-time">{formatRecordingDuration(recordingDuration)}</span>
           </div>
           <button class="stop-rec-btn" onclick={stopRecording}>
-            Stop Rec
+            {$t('app.toolbar.stopRecording')}
           </button>
         {:else}
-          <button class="rec-btn" onclick={startRecording} title="Record Output (with audio if active)">
-            ● REC
+          <button class="rec-btn" onclick={startRecording} title={$t('app.toolbar.recordOutput')}>
+            {$t('app.toolbar.recordShort')}
           </button>
         {/if}
 
@@ -5689,9 +5727,9 @@
         <button
           class="vj-btn"
           onclick={openVJMode}
-          title="Open VJ Mixer"
+          title={$t('app.toolbar.openVjMixer')}
           data-midi-path="vj:mode"
-          data-midi-label="VJ Mode"
+          data-midi-label={$t('app.midiLabels.vjMode')}
           data-midi-mode="toggle"
         >
           VJ
@@ -5704,8 +5742,8 @@
           class="stage-btn stage-edit-btn"
           class:active={$workspace === 'stage'}
           onclick={() => workspace.openStage()}
-          title="Open Stage Editor"
-          aria-label="Open Stage Editor"
+          title={$t('app.toolbar.openStageEditor')}
+          aria-label={$t('app.toolbar.openStageEditor')}
         >
           <svg class="stage-edit-icon" width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <path d="M4 20l4.1-.9L19.2 8l-3.3-3.3L4.9 15.8 4 20Z" />
@@ -5713,11 +5751,11 @@
             <path d="M13.5 19.5h6" />
             <path d="M16.5 16.5v6" />
           </svg>
-          Stage
+          {$t('app.toolbar.stage')}
         </button>
 
         <!-- Settings Button -->
-        <button class="settings-btn" onclick={() => showSettings = true} title="Settings">
+        <button class="settings-btn" onclick={() => showSettings = true} title={$t('app.toolbar.settings')}>
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <circle cx="12" cy="12" r="3"/>
             <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/>
@@ -5742,42 +5780,42 @@
           >
             <span class="dot"></span>
             {#if mobileConnected}
-              Mobile: {clientCount - 1} connected
+              {$t('app.mobile.connected', { values: { count: clientCount - 1 } })}
             {:else}
-              Connect Mobile
+              {$t('app.mobile.connect')}
             {/if}
           </button>
 
           {#if showMobileInfo}
             <div class="mobile-info-popup">
-            <h4>Mobile Control</h4>
+            <h4>{$t('app.mobile.title')}</h4>
 
             <!-- Connection Status -->
             {#if connectionError}
               <div class="connection-error">
                 <p>{connectionError}</p>
                 <button class="retry-btn" onclick={() => { connectionError = ''; connectToServer(); }}>
-                  Retry Connection
+                  {$t('app.mobile.retry')}
                 </button>
               </div>
             {:else if !wsServerReady}
               <div class="connecting-status">
-                <p>Connecting to WebSocket server...</p>
-                <p class="hint">WebSocket server starting... please wait</p>
+                <p>{$t('app.mobile.connecting')}</p>
+                <p class="hint">{$t('app.mobile.starting')}</p>
               </div>
             {:else}
               <!-- QR Code -->
               {#if qrCodeDataUrl}
                 <div class="qr-container">
-                  <img src={qrCodeDataUrl} alt="QR Code for mobile connection" class="qr-code" />
-                  <p class="qr-hint">Scan with your phone/iPad camera</p>
+                  <img src={qrCodeDataUrl} alt={$t('app.mobile.qrAlt')} class="qr-code" />
+                  <p class="qr-hint">{$t('app.mobile.qrHint')}</p>
                 </div>
               {/if}
 
               <!-- Network Selection -->
               {#if localIPs.length > 1}
                 <div class="ip-selector">
-                  <label>Select Network:</label>
+                  <label>{$t('app.mobile.selectNetwork')}</label>
                   <select bind:value={selectedIP}>
                     {#each localIPs as ip}
                       <option value={ip}>{ip}</option>
@@ -5789,27 +5827,27 @@
               <!-- Connection Details -->
               <div class="connection-details">
                 <div class="detail-row">
-                  <span class="detail-label">URL:</span>
+                  <span class="detail-label">{$t('app.mobile.url')}</span>
                   <code class="detail-value">{getMobileUrl()}</code>
                 </div>
                 <div class="detail-row">
-                  <span class="detail-label">WebSocket:</span>
+                  <span class="detail-label">{$t('app.mobile.websocket')}</span>
                   <code class="detail-value">{getWebSocketUrl()}</code>
                 </div>
               </div>
 
               <div class="instructions">
-                <p><strong>Quick Setup:</strong></p>
+                <p><strong>{$t('app.mobile.quickSetup')}</strong></p>
                 <ol>
-                  <li>Connect iPad to same WiFi/hotspot</li>
-                  <li>Scan QR code or enter URL manually</li>
-                  <li>Enter WebSocket URL when prompted</li>
-                  <li>Tap Connect - drag corners to warp!</li>
+                  <li>{$t('app.mobile.sameWifi')}</li>
+                  <li>{$t('app.mobile.scanQr')}</li>
+                  <li>{$t('app.mobile.enterWebsocket')}</li>
+                  <li>{$t('app.mobile.tapConnect')}</li>
                 </ol>
               </div>
             {/if}
 
-            <button onclick={() => (showMobileInfo = false)}>Close</button>
+            <button onclick={() => (showMobileInfo = false)}>{$t('app.mobile.close')}</button>
           </div>
           {/if}
         </div>
@@ -6091,7 +6129,7 @@
                         dragStartCustomVertices = null;
                       }}
                     >
-                      <title>Drag to move line</title>
+                      <title>{$t('app.mapping.dragMoveLine')}</title>
                     </circle>
                   {/if}
                 {/each}
@@ -6120,7 +6158,7 @@
                           width: 100%;
                           font-weight: {warpModeEnabled ? 'bold' : 'normal'};
                         "
-                      >{warpModeEnabled ? 'Exit Edit' : 'Edit Points'}</button>
+                      >{warpModeEnabled ? $t('app.mapping.exitEdit') : $t('app.mapping.editPoints')}</button>
                     </div>
                   </foreignObject>
                 {/if}
@@ -6158,7 +6196,7 @@
                           style="cursor: pointer; pointer-events: all; opacity: 0.7;"
                           onmousedown={(e) => { e.stopPropagation(); addVertexToShape(i); }}
                         >
-                          <title>Click to add vertex</title>
+                          <title>{$t('app.mapping.addVertex')}</title>
                         </circle>
                         <text
                           x={midX}
@@ -6192,7 +6230,7 @@
                         if (selectedVertices.length > 2) removeVertexFromShape(vertex.index);
                       }}
                     >
-                      <title>Drag to move point, right-click to remove</title>
+                      <title>{$t('app.mapping.dragMovePoint')}</title>
                     </circle>
                     <!-- Vertex number label -->
                     {#if selectedVertices.length <= 20}
@@ -6248,20 +6286,20 @@
             {/if}
 
             {#if isDraggingShape}
-              <div class="drag-hint">Dragging line...</div>
+              <div class="drag-hint">{$t('app.mapping.draggingLine')}</div>
             {/if}
             {#if isDraggingVertex}
-              <div class="drag-hint vertex-drag">Editing vertex...</div>
+              <div class="drag-hint vertex-drag">{$t('app.mapping.editingVertex')}</div>
             {/if}
             {#if linesDrawingMode !== 'none'}
               <div class="drawing-mode-hint">
                 {#if linesDrawingMode === 'freehand'}
-                  Freehand: Click and drag to draw
+                  {$t('app.mapping.freehand')}
                 {:else if linesDrawingMode === 'pointClick'}
-                  Polyline: Click to add points, double-click to finish
+                  {$t('app.mapping.polyline')}
                 {/if}
                 <button class="cancel-btn" onclick={() => { linesDrawingMode = 'none'; isLinesDrawing = false; linesDrawingPoints = []; }}>
-                  Cancel
+                  {$t('app.mapping.cancel')}
                 </button>
               </div>
             {/if}
@@ -6441,11 +6479,11 @@
                  toolbar mirrors CustomShapeHandles' pen toolbar exactly so
                  users get the same UX between masks and custom shapes. -->
             {#if maskHasClosedShape}
-              <div class="mask-pen-toolbar" role="toolbar" aria-label="Mask pen tool">
+              <div class="mask-pen-toolbar" role="toolbar" aria-label={$t('app.mapping.maskPenTool')}>
                 <button
                   class="mask-pen-btn"
                   class:active={maskPenMode === 'edit'}
-                  title="Select & Move"
+                  title={$t('app.mapping.selectMove')}
                   onclick={(e) => { e.stopPropagation(); maskPenMode = 'edit'; }}
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -6455,7 +6493,7 @@
                 <button
                   class="mask-pen-btn"
                   class:active={maskPenMode === 'add'}
-                  title="Add Point — click an edge to insert"
+                  title={$t('app.mapping.addPoint')}
                   onclick={(e) => { e.stopPropagation(); maskPenMode = 'add'; }}
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -6467,7 +6505,7 @@
                 <button
                   class="mask-pen-btn"
                   class:active={maskPenMode === 'remove'}
-                  title="Remove Point — click an anchor to delete"
+                  title={$t('app.mapping.removePoint')}
                   onclick={(e) => { e.stopPropagation(); maskPenMode = 'remove'; }}
                 >
                   <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -6477,18 +6515,18 @@
                 </button>
                 <span class="mask-pen-hint">
                   {#if maskPenMode === 'edit'}
-                    Drag anchors. Right-click anchor to delete.
+                    {$t('app.mapping.editHint')}
                   {:else if maskPenMode === 'add'}
-                    Click an edge to insert a point.
+                    {$t('app.mapping.addHint')}
                   {:else}
-                    Click an anchor to remove it.
+                    {$t('app.mapping.removeHint')}
                   {/if}
                 </span>
               </div>
             {/if}
 
             <div class="mask-hint">
-              Click to add points · Drag to add curves · Right-click empty area to close shape · Right-click anchor to delete
+              {$t('app.mapping.maskHint')}
             </div>
           </div>
         {/if}
@@ -6513,14 +6551,14 @@
         <div class="viewport-info">
           {$project.width} x {$project.height}
           {#if $selectedLayer}
-            | {$selectedLayer.warpMode === 'mesh' ? 'Corner + Mesh' : 'Corner Warp'}
+            | {$selectedLayer.warpMode === 'mesh' ? $t('app.mapping.cornerMesh') : $t('app.mapping.cornerWarp')}
           {/if}
           {#if linesDrawingMode !== 'none'}
-            | Drawing: {linesDrawingMode}
+            | {$t('app.mapping.drawing')} {linesDrawingMode}
           {/if}
           {#if viewportZoom !== 1 || viewportPanX !== 0 || viewportPanY !== 0}
-            | Zoom: {(viewportZoom * 100).toFixed(0)}%
-            <button class="reset-view-btn" onclick={resetViewportTransform}>Reset View</button>
+            | {$t('app.mapping.zoom')} {(viewportZoom * 100).toFixed(0)}%
+            <button class="reset-view-btn" onclick={resetViewportTransform}>{$t('app.mapping.resetView')}</button>
           {/if}
         </div>
 
@@ -6609,14 +6647,14 @@
                 class:active={mediaSidebarTab === 'plugin'}
                 onclick={() => mediaSidebarTab = 'plugin'}
               >
-                Plugin Controls
+                {$t('app.sidebar.pluginControls')}
               </button>
               <button
                 class="media-sidebar-tab"
                 class:active={mediaSidebarTab === 'media'}
                 onclick={() => mediaSidebarTab = 'media'}
               >
-                Media
+                {$t('app.sidebar.media')}
               </button>
             </div>
             {#if mediaSidebarTab === 'plugin'}
@@ -6671,7 +6709,7 @@
     {#if $vjClipLauncher.isLive && !$vjClipLauncher.isOpen}
       <button class="vj-reopen-btn" onclick={() => vjClipLauncher.setOpen(true)}>
         <span class="live-dot-pulse"></span>
-        VJ Live — Open Panel
+        {$t('app.sidebar.vjLiveOpen')}
       </button>
     {/if}
 
@@ -6740,19 +6778,19 @@
 
     <!-- Footer / Status bar -->
     <footer class="statusbar">
-      <span>Project: {$project.name}</span>
-      <span>Layers: {$project.layers.length}</span>
+      <span>{$t('app.status.project', { values: { name: $project.name } })}</span>
+      <span>{$t('app.status.layers', { values: { count: $project.layers.length } })}</span>
       {#if $selectedLayer}
-        <span>Selected: {$selectedLayer.name}</span>
+        <span>{$t('app.status.selected', { values: { name: $selectedLayer.name } })}</span>
       {/if}
       {#if outputIsOpen}
-        <span class="output-status">Output: Active</span>
+        <span class="output-status">{$t('app.status.outputActive')}</span>
       {/if}
       {#if $settings.output.blackout}
-        <span class="blackout-status">BLACKOUT</span>
+        <span class="blackout-status">{$t('app.status.blackout')}</span>
       {/if}
       {#if $settings.output.testPattern && $settings.output.testPattern !== 'none'}
-        <span class="test-pattern-status">TEST: {$settings.output.testPattern}</span>
+        <span class="test-pattern-status">{$t('app.status.test', { values: { pattern: $settings.output.testPattern } })}</span>
       {/if}
       <span class="spacer"></span>
 
@@ -6761,19 +6799,19 @@
           class="status-pill map-tool-pill"
           class:on={$settings.ui.gridSettings?.enabled}
           onclick={() => settings.toggleGrid()}
-          title="Toggle mapping grid"
+          title={$t('app.status.toggleGrid')}
         >
           <svg class="status-pill-icon grid-icon" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true">
             <path class="ga-neon-stroke" d="M4 8h16M4 16h16M8 4v16M16 4v16"/>
             <path class="ga-neon-stroke ga-neon-thin" d="M4 4h16v16H4z"/>
           </svg>
-          Grid
+          {$t('app.status.grid')}
         </button>
         {#if $settings.ui.gridSettings?.enabled}
           <select
             class="status-grid-select"
             value="{$settings.ui.gridSettings?.columns || 12}x{$settings.ui.gridSettings?.rows || 12}"
-            title="Grid size"
+            title={$t('app.status.gridSize')}
             onchange={(e) => {
               const [c, r] = e.currentTarget.value.split('x').map(Number);
               settings.setGridDimensions(c, r);
@@ -6789,13 +6827,13 @@
             class="status-pill map-tool-pill snap-pill"
             class:on={$settings.ui.gridSettings?.snapToGrid}
             onclick={() => settings.toggleSnap()}
-            title="Snap mapping handles to grid"
+            title={$t('app.status.snapGrid')}
           >
             <svg class="status-pill-icon snap-icon" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true">
               <path class="ga-neon-stroke" d="M5 12h6l2-5 2 5h4"/>
               <circle class="ga-neon-fill" cx="12" cy="12" r="4"/>
             </svg>
-            Snap
+            {$t('app.status.snap')}
           </button>
         {/if}
       {/if}
@@ -6807,42 +6845,42 @@
         class="status-pill"
         class:on={presetTrayOpen}
         onclick={() => presetTrayOpen = !presetTrayOpen}
-        title="Presets (⌘P)"
+        title={$t('app.status.presetsTooltip')}
       >
         <svg class="status-pill-icon preset-icon" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true">
           <path class="ga-neon-fill" d="M4 8.4h16v10.2H4z"/>
           <path class="ga-neon-stroke" d="M4 8.4h16v10.2H4zM6.3 8.4l1.8-3h5.1l1.7 3M7.2 12h9.6M7.2 15.5h6.6"/>
         </svg>
-        Presets
+        {$t('app.status.presets')}
       </button>
       <button
         class="status-pill"
         class:on={$layerSequencer.isOpen}
         onclick={() => layerSequencer.toggleOpen()}
-        title="Sequencer (⌘B)"
+        title={$t('app.status.sequencerTooltip')}
       >
         <svg class="status-pill-icon sequencer-icon" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true">
           <path class="ga-neon-stroke" d="M3.5 18.7h17M5.5 14.6h3.1v4.1H5.5zM10.5 8h3.1v10.7h-3.1zM15.5 11.6h3.1v7.1h-3.1z"/>
           <path class="ga-neon-stroke ga-neon-thin" d="M7.1 5.5v5.2M12.1 3.5v2.1M17.1 6.3v2.1"/>
         </svg>
-        Sequencer
+        {$t('app.status.sequencer')}
       </button>
       <button
         class="status-pill"
         class:on={$keyframeTimeline.isOpen}
         onclick={() => keyframeTimeline.toggleOpen()}
-        title="Keyframes (⌘K)"
+        title={$t('app.status.keyframesTooltip')}
       >
         <svg class="status-pill-icon keyframe-icon" width="15" height="15" viewBox="0 0 24 24" aria-hidden="true">
           <path class="ga-neon-stroke" d="M12 3.8l8.2 8.2-8.2 8.2L3.8 12z"/>
           <path class="ga-neon-fill" d="M12 8.1l3.9 3.9-3.9 3.9L8.1 12z"/>
           <path class="ga-neon-stroke ga-neon-thin" d="M2.8 21.2h18.4"/>
         </svg>
-        Keyframes
+        {$t('app.status.keyframes')}
       </button>
 
       <span class="spacer"></span>
-      <span class="fps-counter" class:fps-good={$fpsStore > 50} class:fps-warn={$fpsStore >= 30 && $fpsStore <= 50} class:fps-bad={$fpsStore < 30 && $fpsStore > 0}>{$fpsStore} FPS</span>
+      <span class="fps-counter" class:fps-good={$fpsStore > 50} class:fps-warn={$fpsStore >= 30 && $fpsStore <= 50} class:fps-bad={$fpsStore < 30 && $fpsStore > 0}>{$t('app.status.fps', { values: { fps: $fpsStore } })}</span>
       {#if versionInfo?.hasUpdate && versionInfo.releaseUrl}
         <!-- Update available — clickable badge that opens the download page. -->
         <a
@@ -6852,12 +6890,12 @@
             event.preventDefault();
             openExternalUrl(versionInfo?.releaseUrl || '');
           }}
-          title="A newer version is available - open the download page"
+          title={$t('app.status.updateAvailable')}
         >v{appVersion} → {versionInfo.latest}</a>
       {:else}
-        <span class="version-label" title="Ghost Arcade v{appVersion}">v{appVersion}</span>
+        <span class="version-label" title={$t('app.status.version', { values: { version: appVersion } })}>v{appVersion}</span>
       {/if}
-      <button class="shortcut-help-btn" onclick={() => showShortcutHelp = true} title="Keyboard Shortcuts (?)">?</button>
+      <button class="shortcut-help-btn" onclick={() => showShortcutHelp = true} title={$t('app.status.shortcuts')}>?</button>
     </footer>
   </div>
 
@@ -6889,18 +6927,18 @@
           <line x1="9" y1="15" x2="15" y2="15"/>
         </svg>
       </div>
-      <h2 class="close-modal-title">New Composition</h2>
-      <p class="close-modal-desc">Start a new project? Any unsaved changes will be lost.</p>
+      <h2 class="close-modal-title">{$t('app.dialog.newProject.title')}</h2>
+      <p class="close-modal-desc">{$t('app.dialog.newProject.description')}</p>
       <div class="close-modal-actions">
         <button class="close-modal-btn btn-save" onclick={newProjectConfirm}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <line x1="12" y1="5" x2="12" y2="19"/>
             <line x1="5" y1="12" x2="19" y2="12"/>
           </svg>
-          Create New
+          {$t('app.dialog.newProject.create')}
         </button>
         <button class="close-modal-btn btn-cancel" onclick={newProjectCancel}>
-          Cancel
+          {$t('app.dialog.newProject.cancel')}
         </button>
       </div>
     </div>
@@ -6917,8 +6955,8 @@
           <line x1="12" y1="17" x2="12.01" y2="17"/>
         </svg>
       </div>
-      <h2 class="close-modal-title">Unsaved Changes</h2>
-      <p class="close-modal-desc">Your project has unsaved changes that will be lost if you close without saving.</p>
+      <h2 class="close-modal-title">{$t('app.dialog.unsaved.title')}</h2>
+      <p class="close-modal-desc">{$t('app.dialog.unsaved.description')}</p>
       <div class="close-modal-actions">
         <button class="close-modal-btn btn-save" onclick={closeModalSave}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -6926,17 +6964,17 @@
             <polyline points="17 21 17 13 7 13 7 21"/>
             <polyline points="7 3 7 8 15 8"/>
           </svg>
-          Save &amp; Close
+          {$t('app.dialog.unsaved.saveClose')}
         </button>
         <button class="close-modal-btn btn-discard" onclick={closeModalDiscard}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polyline points="3 6 5 6 21 6"/>
             <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
           </svg>
-          Close Without Saving
+          {$t('app.dialog.unsaved.closeWithoutSaving')}
         </button>
         <button class="close-modal-btn btn-cancel" onclick={closeModalCancel}>
-          Cancel
+          {$t('app.dialog.unsaved.cancel')}
         </button>
       </div>
     </div>
@@ -6953,22 +6991,22 @@
           <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
         </svg>
       </div>
-      <h2 class="close-modal-title">Recover Unsaved Project?</h2>
-      <p class="close-modal-desc">An auto-saved project was found from {recoveryTimestamp}. Would you like to recover it?</p>
+      <h2 class="close-modal-title">{$t('app.dialog.recovery.title')}</h2>
+      <p class="close-modal-desc">{$t('app.dialog.recovery.description', { values: { timestamp: recoveryTimestamp } })}</p>
       <div class="close-modal-actions">
         <button class="close-modal-btn btn-recover" onclick={recoverAutosave}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polyline points="1 4 1 10 7 10"/>
             <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
           </svg>
-          Recover
+          {$t('app.dialog.recovery.recover')}
         </button>
         <button class="close-modal-btn btn-discard" onclick={discardAutosave}>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
             <polyline points="3 6 5 6 21 6"/>
             <path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/>
           </svg>
-          Discard
+          {$t('app.dialog.recovery.discard')}
         </button>
       </div>
     </div>

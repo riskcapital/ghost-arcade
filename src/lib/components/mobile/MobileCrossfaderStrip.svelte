@@ -14,6 +14,7 @@
    *     (linear / equal-power / sharp) from the small selectors.
    */
   import { onMount, onDestroy } from 'svelte';
+  import { t } from '../../i18n';
 
   export let enabled: boolean = false;
   export let value: number = 0;            // 0 = full A · 1 = full B
@@ -45,16 +46,16 @@
   // failed validation and silently fell back to dissolve, which is
   // why glitch + the other "cool" transitions disappeared on iPad.
   const TRANSITIONS = [
-    { value: 'dissolve',  label: 'Dissolve' },
-    { value: 'wipe',      label: 'Hard Wipe' },
-    { value: 'rgb-split', label: 'RGB Split' },
-    { value: 'cube',      label: 'Cube' },
-    { value: 'shatter',   label: 'Shatter' },
-    { value: 'halftone',  label: 'Halftone' },
-    { value: 'glitch',    label: 'Glitch' },
-    { value: 'liquid',    label: 'Liquid' },
-    { value: 'strobe',    label: 'Strobe Mix' },
-    { value: 'slide',     label: 'Slide' },
+    { value: 'dissolve', labelKey: 'mobileControls.crossfader.transitions.dissolve' },
+    { value: 'wipe', labelKey: 'mobileControls.crossfader.transitions.wipe' },
+    { value: 'rgb-split', labelKey: 'mobileControls.crossfader.transitions.rgbSplit' },
+    { value: 'cube', labelKey: 'mobileControls.crossfader.transitions.cube' },
+    { value: 'shatter', labelKey: 'mobileControls.crossfader.transitions.shatter' },
+    { value: 'halftone', labelKey: 'mobileControls.crossfader.transitions.halftone' },
+    { value: 'glitch', labelKey: 'mobileControls.crossfader.transitions.glitch' },
+    { value: 'liquid', labelKey: 'mobileControls.crossfader.transitions.liquid' },
+    { value: 'strobe', labelKey: 'mobileControls.crossfader.transitions.strobe' },
+    { value: 'slide', labelKey: 'mobileControls.crossfader.transitions.slide' },
   ];
   // Output blend modes — must match the CrossfaderBlendMode union in
   // vjClipLauncher.ts (which mirrors what the renderer's
@@ -62,8 +63,15 @@
   // earlier 13-mode list to only the ones the shader actually
   // implements; extras silently fell back to 'normal' before.
   const BLEND_MODES = [
-    'normal', 'multiply', 'screen', 'add',
-    'difference', 'darken', 'lighten', 'overlay', 'exclusion',
+    'normal',
+    'multiply',
+    'screen',
+    'add',
+    'difference',
+    'darken',
+    'lighten',
+    'overlay',
+    'exclusion',
   ];
 
   let trackEl: HTMLDivElement;
@@ -179,14 +187,23 @@
       class="xfade-power"
       class:on={enabled}
       onclick={() => onToggleEnabled(!enabled)}
-      title={enabled ? 'Disable crossfader' : 'Enable crossfader'}
+      title={$t(enabled ? 'mobileControls.crossfader.disableTitle' : 'mobileControls.crossfader.enableTitle')}
+      aria-label={$t(enabled ? 'mobileControls.crossfader.disableTitle' : 'mobileControls.crossfader.enableTitle')}
     >
-      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round">
-        <path d="M18.36 6.64a9 9 0 1 1-12.73 0"/>
-        <line x1="12" y1="2" x2="12" y2="12"/>
+      <svg
+        width="12"
+        height="12"
+        viewBox="0 0 24 24"
+        fill="none"
+        stroke="currentColor"
+        stroke-width="2.5"
+        stroke-linecap="round"
+      >
+        <path d="M18.36 6.64a9 9 0 1 1-12.73 0" />
+        <line x1="12" y1="2" x2="12" y2="12" />
       </svg>
     </button>
-    <span class="xfade-label">XFADE</span>
+    <span class="xfade-label">{$t('mobileControls.crossfader.label')}</span>
   </div>
 
   <!-- Cut buttons -->
@@ -197,14 +214,16 @@
       class:selected={selectedDeck === 'A'}
       onclick={onCutA}
       disabled={!enabled}
-    >A</button>
+      aria-label={$t('mobileControls.crossfader.cutAAria')}>A</button
+    >
     <button
       class="xfade-cut b"
       class:active={enabled && deckBBias > 0.95}
       class:selected={selectedDeck === 'B'}
       onclick={onCutB}
       disabled={!enabled}
-    >B</button>
+      aria-label={$t('mobileControls.crossfader.cutBAria')}>B</button
+    >
   </div>
 
   <!-- Fader -->
@@ -217,6 +236,7 @@
     aria-valuenow={Math.round(localValue * 100)}
     aria-valuemin={0}
     aria-valuemax={100}
+    aria-label={$t('mobileControls.crossfader.sliderAria')}
     tabindex={0}
   >
     <div class="xfade-track" bind:this={trackEl}>
@@ -227,14 +247,22 @@
       <!-- Center detent -->
       <div class="xfade-center"></div>
       <!-- Fill from A side -->
-      <div class="xfade-fill-a" style="{orientation === 'vertical' ? `height: ${deckABias * 100}%` : `width: ${deckABias * 100}%`}"></div>
+      <div
+        class="xfade-fill-a"
+        style={orientation === 'vertical' ? `height: ${deckABias * 100}%` : `width: ${deckABias * 100}%`}
+      ></div>
       <!-- Fill from B side -->
-      <div class="xfade-fill-b" style="{orientation === 'vertical' ? `height: ${deckBBias * 100}%` : `width: ${deckBBias * 100}%`}"></div>
+      <div
+        class="xfade-fill-b"
+        style={orientation === 'vertical' ? `height: ${deckBBias * 100}%` : `width: ${deckBBias * 100}%`}
+      ></div>
       <!-- Thumb -->
       <div
         class="xfade-thumb"
         class:dragging
-        style="{orientation === 'vertical' ? `top: calc(${localValue * 100}% - 12px)` : `left: calc(${localValue * 100}% - 12px)`}"
+        style={orientation === 'vertical'
+          ? `top: calc(${localValue * 100}% - 12px)`
+          : `left: calc(${localValue * 100}% - 12px)`}
       ></div>
     </div>
   </div>
@@ -253,10 +281,11 @@
       value={transition}
       onchange={(e) => onTransitionChange((e.target as HTMLSelectElement).value)}
       disabled={!enabled}
-      title="Transition style — spatial journey from A to B"
+      title={$t('mobileControls.crossfader.transitionTitle')}
+      aria-label={$t('mobileControls.crossfader.transitionLabel')}
     >
-      {#each TRANSITIONS as t}
-        <option value={t.value}>{t.label}</option>
+      {#each TRANSITIONS as transitionOption}
+        <option value={transitionOption.value}>{$t(transitionOption.labelKey)}</option>
       {/each}
     </select>
     <select
@@ -264,10 +293,11 @@
       value={blendMode}
       onchange={(e) => onBlendModeChange((e.target as HTMLSelectElement).value)}
       disabled={!enabled}
-      title="Blend mode — A↔B math at the mix point (combines with the transition)"
+      title={$t('mobileControls.crossfader.blendModeTitle')}
+      aria-label={$t('mobileControls.crossfader.blendModeLabel')}
     >
-      {#each BLEND_MODES as b}
-        <option value={b}>{b}</option>
+      {#each BLEND_MODES as blendModeOption}
+        <option value={blendModeOption}>{$t(`mobileControls.crossfader.blends.${blendModeOption}`)}</option>
       {/each}
     </select>
   </div>
@@ -375,13 +405,13 @@
   .xfade-cut.a.active, .xfade-cut.a.selected {
     background: rgba(79, 195, 247, 0.18);
     border-color: rgba(79, 195, 247, 0.6);
-    color: #4FC3F7;
+    color: #4fc3f7;
     box-shadow: 0 0 8px rgba(79, 195, 247, 0.4);
   }
   .xfade-cut.b.active, .xfade-cut.b.selected {
     background: rgba(206, 147, 216, 0.18);
     border-color: rgba(206, 147, 216, 0.6);
-    color: #CE93D8;
+    color: #ce93d8;
     box-shadow: 0 0 8px rgba(206, 147, 216, 0.4);
   }
   .xfade-cut:active:not(:disabled) {
@@ -443,15 +473,15 @@
     height: 2px;
     left: 0;
   }
-  .xfade.vertical .xfade-endpoint.a { top: 0; background: #4FC3F7; }
-  .xfade.vertical .xfade-endpoint.b { bottom: 0; background: #CE93D8; }
+  .xfade.vertical .xfade-endpoint.a { top: 0; background: #4fc3f7; }
+  .xfade.vertical .xfade-endpoint.b { bottom: 0; background: #ce93d8; }
   .xfade.horizontal .xfade-endpoint {
     height: 100%;
     width: 2px;
     top: 0;
   }
-  .xfade.horizontal .xfade-endpoint.a { left: 0; background: #4FC3F7; }
-  .xfade.horizontal .xfade-endpoint.b { right: 0; background: #CE93D8; }
+  .xfade.horizontal .xfade-endpoint.a { left: 0; background: #4fc3f7; }
+  .xfade.horizontal .xfade-endpoint.b { right: 0; background: #ce93d8; }
 
   .xfade-center {
     position: absolute;

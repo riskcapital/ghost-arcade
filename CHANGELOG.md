@@ -2,6 +2,18 @@
 
 ---
 
+## Unreleased
+
+- Added persistent English and Korean interface localization across the app
+  shell, mapping, media, VJ, output, effects, settings, and mobile controls,
+  including physical-display selection, per-screen calibration, and output
+  window status guidance. Advanced drawing, 3D, projection, lighting, LED,
+  timeline, AI, standalone, and auxiliary operator panels are included.
+- Added a Korean user manual and implementation-based process flowchart in
+  printable PDF form under `docs/ko/`.
+
+---
+
 ## v1.9.99 - Live Performance and Control Polish (July 2026)
 
 - Layer blending, armed video triggering, master-warp keyboard nudging, and
@@ -73,13 +85,13 @@ primitives), and a hardened crossfader transition pipeline.
   midpoint detent, A/B cut buttons, % readout, and a power toggle.
 - **10 transition styles** — dissolve / hard wipe / RGB split / cube /
   shatter / halftone / glitch / liquid / strobe / slide. Each is a
-  custom GLSL fragment shader designed so the *midpoint* is the peak
+  custom GLSL fragment shader designed so the _midpoint_ is the peak
   visual moment (no muddy 50/50 — park the fader at 0.5 for a
   deliberate aesthetic). Compiled lazily; switching transitions costs
   zero recompiles.
 - **Output blend modes** (new in this release) — normal / multiply /
   screen / add / difference / darken / lighten / overlay / exclusion.
-  Combines *with* the transition: the transition determines the spatial
+  Combines _with_ the transition: the transition determines the spatial
   journey from A → B; the blend mode determines the per-pixel math at
   any fragment where both decks contribute. So `glitch + multiply` gives
   multiplied scattered shards; `dissolve + screen` gives screen-blended
@@ -95,7 +107,7 @@ primitives), and a hardened crossfader transition pipeline.
 ### Macros (effect-bank wet/dry knobs)
 
 - **8 user-assignable knobs** in the VJ header. Each macro is a wet/dry
-  mix for a *bundle of effects* that runs on the composite output. This
+  mix for a _bundle of effects_ that runs on the composite output. This
   is a major rework of the v1 macro system (which was a destination
   router with per-param min/max/curve config — confusing for operators
   to set up and easy to break).
@@ -320,16 +332,19 @@ A maintenance + UX release. Fixes the cloud-shader workflow that shipped in v0.3
 > features, correct domain.
 
 ### Overview
+
 A shader-heavy release. Twelve new ISF shaders built from scratch under a new "Shader Lab" workflow, plus universal upgrades to every 3D-chamber shader (movable vanishing point, mirror-reflective walls). On the app side, fixed a bug where user-imported shaders disappeared after switching layers, and shipped a cloud-sync button that pulls the latest shaders from the public catalog.
 
 ### Shader Lab Collection (12 new shaders in `shader-lab/`)
 
 Edge-reactive minimal:
+
 - **DataNebula** — Iridescent volumetric pigment compressing against the layer's edges with thin-film color shifts.
 - **EdgeEcho** — Concentric pulse frames echoing inward from the chamber edge with perimeter runners and corner flashes.
 - **ChladniPlate** — Eigenmodes of a vibrating rectangular membrane. Wavefunction is mathematically zero at the edges; nodal lines bloom into Chladni figures.
 
 3D chambers:
+
 - **QuantumChamber** — Raymarched 3D particle-in-a-box. Probability density |ψ|² oscillates inside; ray-integrated cube wireframe lights all 12 edges.
 - **ShadowBoxBouncers** — Diffusely lit greyscale chamber with bouncing 3D spheres casting soft shadows on every wall.
 - **FluidChamber** — Dense flow-field particle system (up to 1280 particles) with selectable flow modes: traveling waves, curl noise, vortex, radial breathing.
@@ -354,6 +369,7 @@ Applied to all nine room shaders (QuantumChamber, ShadowBoxBouncers, FluidChambe
 **Root cause:** Dropped shaders were appended to a component-local array in `MediaTray.svelte`, not routed through the persistent `shaderLibrary` store. Since `MediaTray` is destroyed and remounted on every layer switch, the local array reset every time.
 
 **Fix:**
+
 - `addMediaFile()` now calls `shaderLibrary.addShader()` for `.fs` drops, persisting to localStorage and the optional WebSocket server.
 - `hydrateUserShaders()` runs in all three `onMount` paths (cache hit, cache wait, fresh fetch) to merge persisted shaders back into the active list.
 - New `userAdded` flag on `ShaderItem`, surfaced as a small cyan dot before the shader name in the tray.
@@ -361,6 +377,7 @@ Applied to all nine room shaders (QuantumChamber, ShadowBoxBouncers, FluidChambe
 ### Cloud Shader Sync
 
 New "Find Latest" button in the shader-tab footer. Clicking it:
+
 1. Hits `https://ghost-arcade.com/api/shaders/catalog` (override via `localStorage['ghost-arcade-shader-catalog-url']`)
 2. Diffs against local shaders by id + version
 3. Downloads new entries and updates entries whose version has bumped
@@ -372,6 +389,7 @@ User-added and AI-generated shaders are never touched by sync. No auto-sync on a
 ### Files
 
 #### Added
+
 - `shader-lab/AquariumFill.fs`
 - `shader-lab/ChladniPlate.fs`
 - `shader-lab/DataNebula.fs`
@@ -386,6 +404,7 @@ User-added and AI-generated shaders are never touched by sync. No auto-sync on a
 - `shader-lab/VoxelCity.fs`
 
 #### Modified
+
 - `src/lib/stores/shaderLibrary.ts` — added `source`, `version`, `author` fields; `getCatalogUrl`/`setCatalogUrl`; `syncFromCloud()` method.
 - `src/lib/components/MediaTray.svelte` — `userAdded` / `cloudShader` flags; `savedShaderToItem` helper; `hydrateUserShaders`; "Find Latest" button + sync handler; `.user-badge` and `.cloud-badge` styles.
 
@@ -394,9 +413,11 @@ User-added and AI-generated shaders are never touched by sync. No auto-sync on a
 ## Session 3 - UX Rework: Scale, Screen Layers, VJ Minimize, Flips, Delete (Feb 2026)
 
 ### Overview
+
 Major UX rework session replacing the initial canvas toolbar/scale tool implementation with pro-level natural drag handles, introducing the Screen layer type for VJ-to-mapping bridging, adding VJ panel minimize, universal flip arrows with actual renderer support, and Delete key layer removal.
 
 ### Stage/Mix Mode Fixes
+
 1. Removed the `.stage-active` CSS that made the VJ overlay transparent in Stage mode. The correct behavior: the VJ panel stays fully visible in both Mix and Stage modes. The output preview automatically reflects the correct Canvas.svelte render path — **Mix** shows standard VJ composite (all VJ layers as full-screen quads), **Stage** shows mapping layout with Screen layers receiving VJ content via `vjLayerIndex` injection.
 
 2. **Fixed stage mode black screen (Canvas.svelte + engine.ts):**
@@ -434,6 +455,7 @@ Major UX rework session replacing the initial canvas toolbar/scale tool implemen
   - Undo history via `recordDiscreteAction()`
 
 #### 3. Screen Layer Type + VJ Layer Assignment
+
 **Files Modified:** `src/lib/types.ts`, `src/lib/stores/layers.ts`, `src/lib/components/LayerPanel.svelte`
 
 - **Extended `LayerType`** with `'screen'` variant
@@ -449,6 +471,7 @@ Major UX rework session replacing the initial canvas toolbar/scale tool implemen
 - **Canvas.svelte**: No changes needed - existing stage mode rendering (lines 233-275) already handles `vjLayerIndex` injection, so Screen layers with a `vjLayerIndex` automatically receive VJ content in stage mode
 
 #### 4. VJ Panel Minimize + Reopen
+
 **Files Modified:** `src/lib/components/VJModePanel.svelte`, `src/App.svelte`
 
 - **`minimizeVJMode()` function** in VJModePanel.svelte: calls `vjClipLauncher.setOpen(false)` only - `isLive` stays `true`, VJ output keeps running
@@ -463,9 +486,11 @@ Major UX rework session replacing the initial canvas toolbar/scale tool implemen
   - CSS: `.vj-reopen-btn` with glassmorphism background, red border accent
 
 #### 5. Flip/Orientation Arrows on All Layer Types + Renderer Support
+
 **Files Modified:** `src/lib/components/LayerPanel.svelte`, `src/lib/renderer/shaders.ts`, `src/lib/renderer/engine.ts`
 
 **UI Changes (LayerPanel.svelte):**
+
 - **Removed** old SVG-only flip controls (`<div class="flip-controls">` with Flip H / Flip V buttons)
 - **Added** universal `.orientation-controls` div with 4 directional arrow buttons for ALL layer types
   - Placed in the common properties area before type-specific blocks
@@ -475,6 +500,7 @@ Major UX rework session replacing the initial canvas toolbar/scale tool implemen
   - CSS: `.orientation-controls` flex row, `.orient-label` uppercase label, `.orient-btn` 26px squares with purple accent active state
 
 **Renderer Changes (shaders.ts + engine.ts):**
+
 - **Added `uFlipH` and `uFlipV` boolean uniforms** to the `textureFragmentShader`
 - **Added flip UV logic** in shader `main()`:
   ```glsl
@@ -495,11 +521,13 @@ Major UX rework session replacing the initial canvas toolbar/scale tool implemen
 ## Session 2 - Initial UX Features (Feb 2026)
 
 ### Overview
+
 First pass at UX improvements: media tray collapse, Stage/Mix toggle, canvas click-to-select, scale tool, and copy/paste shortcuts.
 
 ### Features Implemented
 
 #### 1. Media Tray Collapse (VJModePanel)
+
 - `mediaTrayCollapsed` state toggle
 - Chevron button at top of `.media-tray-vj`
 - Collapsed: 40px width with expand arrow
@@ -507,6 +535,7 @@ First pass at UX improvements: media tray collapse, Stage/Mix toggle, canvas cli
 - CSS transition on width
 
 #### 2. Stage/Mix Toggle on VJ Header
+
 - MIX/STAGE segmented pill buttons in `.vj-header`
 - Only visible when `$vjClipLauncher.isLive`
 - STAGE mode: `.vj-overlay.stage-active` with `background: transparent; pointer-events: none`
@@ -515,6 +544,7 @@ First pass at UX improvements: media tray collapse, Stage/Mix toggle, canvas cli
 - Stage presets bar moved to right after header
 
 #### 3. Canvas Click-to-Select
+
 - Point-in-quadrilateral hit-testing: `triSign()`, `pointInTriangle()`, `pointInQuad()`, `hitTestLayers()`
 - Modified `handleViewportMouseDown`: converts mouse coords through viewport pan/zoom, canvas offset, OpenGL Y-flip
 - Iterates layers in reverse order (topmost first)
@@ -584,7 +614,7 @@ Screen Layer (mapping mode)
 
 ### File Map (Key Files)
 | File | Purpose |
-|------|---------|
+|--------------------------------------- | -----------------------------------------------------------------|
 | `src/App.svelte` | Main app: viewport, keyboard handlers, click-to-select, VJ reopen |
 | `src/lib/components/WarpHandles.svelte` | Corner/edge/move/rotate/scale drag handles |
 | `src/lib/components/VJModePanel.svelte` | VJ deck UI, Stage/Mix toggle, minimize |

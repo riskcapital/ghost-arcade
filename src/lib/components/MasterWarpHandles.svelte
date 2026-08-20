@@ -21,6 +21,7 @@
   import { settings } from '../stores/settings';
   import type { WarpCorners, MeshWarpGrid } from '../types';
   import { normalizedWarpNudge } from '../utils/warpNudge';
+  import { t } from '../i18n';
 
   interface Props {
     containerWidth: number;
@@ -75,11 +76,13 @@
       kind,
       startClientX: e.clientX,
       startClientY: e.clientY,
-      startCorners: { ...corners, topLeft: { ...corners.topLeft }, topRight: { ...corners.topRight }, bottomLeft: { ...corners.bottomLeft }, bottomRight: { ...corners.bottomRight } },
+      startCorners: { ...corners, topLeft: { ...corners.topLeft }, topRight: { ...corners.topRight }, bottomLeft: { ...corners.bottomLeft }, bottomRight: { ...corners.bottomRight },
+      },
       // Manual deep-copy (not structuredClone — it throws DataCloneError
       // on some nested store values) of the {rows,cols,points} lattice.
       startMesh: meshGrid
-        ? { rows: meshGrid.rows, cols: meshGrid.cols, points: meshGrid.points.map(r => r.map(p => ({ x: p.x, y: p.y }))) }
+        ? { rows: meshGrid.rows, cols: meshGrid.cols, points: meshGrid.points.map((r) => r.map((p) => ({ x: p.x, y: p.y }))),
+          }
         : null,
     };
     if ((window as any).__MWARP_DEBUG__ === true) console.log('[mwarp] handle drag start', kind, { enabled: warp.enabled, mode });
@@ -186,7 +189,7 @@
       const curNorm = meshLocalToNorm(p.x, p.y);
       const next = normToMeshLocal(clamp01(curNorm.x + dx), clamp01(curNorm.y + dy));
       const points = meshGrid.points.map((meshRow, ri) =>
-        meshRow.map((pt, ci) => (ri === row && ci === col ? { x: next.u, y: next.v } : pt))
+        meshRow.map((pt, ci) => (ri === row && ci === col ? { x: next.u, y: next.v } : pt)),
       );
       settings.setMasterWarp({ meshGrid: { rows: meshGrid.rows, cols: meshGrid.cols, points } });
       return;
@@ -213,8 +216,8 @@
   function onMouseMove(e: MouseEvent) {
     if (!drag) return;
     // Zoom-corrected normalized delta — same recipe as ScreenWarpHandles.
-    const dxN = ((e.clientX - drag.startClientX) / zoom) / Math.max(1, containerWidth);
-    const dyN = ((e.clientY - drag.startClientY) / zoom) / Math.max(1, containerHeight);
+    const dxN = (e.clientX - drag.startClientX) / zoom / Math.max(1, containerWidth);
+    const dyN = (e.clientY - drag.startClientY) / zoom / Math.max(1, containerHeight);
     const k = drag.kind;
 
     if (k.kind === 'corner') {
@@ -242,14 +245,14 @@
       const curNorm = meshLocalToNorm(p0.x, p0.y);
       const next = normToMeshLocal(clamp01(curNorm.x + dxN), clamp01(curNorm.y + dyN));
       const points = g.points.map((row, r) =>
-        row.map((pt, c) => (r === k.row && c === k.col ? { x: next.u, y: next.v } : pt))
+        row.map((pt, c) => (r === k.row && c === k.col ? { x: next.u, y: next.v } : pt)),
       );
       settings.setMasterWarp({ meshGrid: { rows: g.rows, cols: g.cols, points } });
     } else if (k.kind === 'mesh-move' && drag.startMesh) {
       // Whole-mesh nudge in local space (deltas are small; local≈master
       // scale near identity — good enough for a coarse move handle).
       const g = drag.startMesh;
-      const points = g.points.map(row => row.map(pt => ({ x: clamp01(pt.x + dxN), y: clamp01(pt.y + dyN) })));
+      const points = g.points.map((row) => row.map((pt) => ({ x: clamp01(pt.x + dxN), y: clamp01(pt.y + dyN) })));
       settings.setMasterWarp({ meshGrid: { rows: g.rows, cols: g.cols, points } });
     }
   }
@@ -272,14 +275,23 @@
   const meshPx = (u: number, v: number) => px(meshLocalToNorm(u, v).x);
   const meshPy = (u: number, v: number) => py(meshLocalToNorm(u, v).y);
   // Inverse bilinear (Inigo Quilez closed form) — master-canvas 0..1 → quad-local.
-  function cross2(ax: number, ay: number, bx: number, by: number) { return ax * by - ay * bx; }
+  function cross2(ax: number, ay: number, bx: number, by: number) {
+    return ax * by - ay * bx;
+  }
   function normToMeshLocal(pxN: number, pyN: number): { u: number; v: number } {
     const c = corners;
-    const a = c.topLeft, b = c.topRight, cc = c.bottomRight, d = c.bottomLeft;
-    const ex = b.x - a.x, ey = b.y - a.y;
-    const fx = d.x - a.x, fy = d.y - a.y;
-    const gx = a.x - b.x + cc.x - d.x, gy = a.y - b.y + cc.y - d.y;
-    const hx = pxN - a.x, hy = pyN - a.y;
+    const a = c.topLeft,
+      b = c.topRight,
+      cc = c.bottomRight,
+      d = c.bottomLeft;
+    const ex = b.x - a.x,
+      ey = b.y - a.y;
+    const fx = d.x - a.x,
+      fy = d.y - a.y;
+    const gx = a.x - b.x + cc.x - d.x,
+      gy = a.y - b.y + cc.y - d.y;
+    const hx = pxN - a.x,
+      hy = pyN - a.y;
     const k2 = cross2(gx, gy, fx, fy);
     const k1 = cross2(ex, ey, fx, fy) + cross2(hx, hy, gx, gy);
     const k0 = cross2(hx, hy, ex, ey);
@@ -295,14 +307,14 @@
       const w = k1 * k1 - 4 * k0 * k2;
       if (w < 0) return { u: 0.5, v: 0.5 };
       const sq = Math.sqrt(w);
-      const v1 = (-k1 - sq) / (2 * k2), v2 = (-k1 + sq) / (2 * k2);
-      v = (v1 >= 0 && v1 <= 1) ? v1 : v2;
+      const v1 = (-k1 - sq) / (2 * k2),
+        v2 = (-k1 + sq) / (2 * k2);
+      v = v1 >= 0 && v1 <= 1 ? v1 : v2;
     }
     const denomU = ex + gx * v;
     const denomU2 = ey + gy * v;
-    const u = Math.abs(denomU) > 1e-6
-      ? (hx - fx * v) / denomU
-      : (Math.abs(denomU2) > 1e-6 ? (hy - fy * v) / denomU2 : 0.5);
+    const u =
+      Math.abs(denomU) > 1e-6 ? (hx - fx * v) / denomU : Math.abs(denomU2) > 1e-6 ? (hy - fy * v) / denomU2 : 0.5;
     // Final NaN/Int sanitize — never let a bad value reach the stored mesh.
     const su = Number.isFinite(u) ? u : 0.5;
     const sv = Number.isFinite(v) ? v : 0.5;
@@ -318,10 +330,16 @@
   function meshCenter(g: MeshWarpGrid) {
     // Average the points in master-canvas space (each pushed through the
     // corner quad) so the move handle sits at the visual center.
-    let sx = 0, sy = 0, n = 0;
-    for (const row of g.points) for (const p of row) {
-      const np = meshLocalToNorm(p.x, p.y); sx += np.x; sy += np.y; n++;
-    }
+    let sx = 0,
+      sy = 0,
+      n = 0;
+    for (const row of g.points)
+      for (const p of row) {
+        const np = meshLocalToNorm(p.x, p.y);
+        sx += np.x;
+        sy += np.y;
+        n++;
+      }
     return { x: px(sx / Math.max(1, n)), y: py(sy / Math.max(1, n)) };
   }
   const cornersPath = (c: WarpCorners) =>
@@ -329,7 +347,10 @@
 
   const CORNER_KEYS: Array<keyof WarpCorners> = ['topLeft', 'topRight', 'bottomLeft', 'bottomRight'];
   const CORNER_LABEL: Record<keyof WarpCorners, string> = {
-    topLeft: 'TL', topRight: 'TR', bottomLeft: 'BL', bottomRight: 'BR',
+    topLeft: 'TL',
+    topRight: 'TR',
+    bottomLeft: 'BL',
+    bottomRight: 'BR',
   };
 </script>
 
@@ -339,26 +360,54 @@
     <svg class="lines-overlay" width={containerWidth} height={containerHeight}>
       {#if mode === 'corners'}
         <polygon points={cornersPath(corners)} fill="none" stroke="#f0a35e" stroke-width="2" />
-        <text x={px(corners.topLeft.x) + 6} y={py(corners.topLeft.y) + 16} fill="#f0a35e"
-          font-size="13" font-family="IBM Plex Mono, ui-monospace, monospace"
-          paint-order="stroke" stroke="rgba(0,0,0,0.7)" stroke-width="3">Master warp</text>
+        <text
+          x={px(corners.topLeft.x) + 6}
+          y={py(corners.topLeft.y) + 16}
+          fill="#f0a35e"
+          font-size="13"
+          font-family="IBM Plex Mono, ui-monospace, monospace"
+          paint-order="stroke"
+          stroke="rgba(0,0,0,0.7)"
+          stroke-width="3">{$t('warpTools.master.label')}</text
+        >
       {:else if mode === 'mesh' && meshGrid}
         {@const g = meshGrid}
         {#each g.points as row, ri}
           {#each row as p, ci}
             {#if ci < g.cols - 1}
               {@const pn = g.points[ri][ci + 1]}
-              <line x1={meshPx(p.x, p.y)} y1={meshPy(p.x, p.y)} x2={meshPx(pn.x, pn.y)} y2={meshPy(pn.x, pn.y)} stroke="#f0a35e" stroke-width="1.5" />
+              <line
+                x1={meshPx(p.x, p.y)}
+                y1={meshPy(p.x, p.y)}
+                x2={meshPx(pn.x, pn.y)}
+                y2={meshPy(pn.x, pn.y)}
+                stroke="#f0a35e"
+                stroke-width="1.5"
+              />
             {/if}
             {#if ri < g.rows - 1}
               {@const pd = g.points[ri + 1][ci]}
-              <line x1={meshPx(p.x, p.y)} y1={meshPy(p.x, p.y)} x2={meshPx(pd.x, pd.y)} y2={meshPy(pd.x, pd.y)} stroke="#f0a35e" stroke-width="1.5" />
+              <line
+                x1={meshPx(p.x, p.y)}
+                y1={meshPy(p.x, p.y)}
+                x2={meshPx(pd.x, pd.y)}
+                y2={meshPy(pd.x, pd.y)}
+                stroke="#f0a35e"
+                stroke-width="1.5"
+              />
             {/if}
           {/each}
         {/each}
-        <text x={meshPx(g.points[0][0].x, g.points[0][0].y) + 6} y={meshPy(g.points[0][0].x, g.points[0][0].y) + 16} fill="#f0a35e"
-          font-size="13" font-family="IBM Plex Mono, ui-monospace, monospace"
-          paint-order="stroke" stroke="rgba(0,0,0,0.7)" stroke-width="3">Master warp</text>
+        <text
+          x={meshPx(g.points[0][0].x, g.points[0][0].y) + 6}
+          y={meshPy(g.points[0][0].x, g.points[0][0].y) + 16}
+          fill="#f0a35e"
+          font-size="13"
+          font-family="IBM Plex Mono, ui-monospace, monospace"
+          paint-order="stroke"
+          stroke="rgba(0,0,0,0.7)"
+          stroke-width="3">{$t('warpTools.master.label')}</text
+        >
       {/if}
     </svg>
 
@@ -366,18 +415,30 @@
     {#if mode === 'corners'}
       {#each CORNER_KEYS as cn}
         {@const cp = corners[cn]}
-        <div class="handle corner-handle" class:dragging={drag?.kind.kind === 'corner' && drag?.kind.corner === cn}
+        <div
+          class="handle corner-handle"
+          class:dragging={drag?.kind.kind === 'corner' && drag?.kind.corner === cn}
           class:selected={selectedCorner === cn}
           style="left:{px(cp.x)}px; top:{py(cp.y)}px;"
-          onmousedown={(e) => startDrag(e, { kind: 'corner', corner: cn })}>
-          <span class="handle-label">{CORNER_LABEL[cn]}</span>
+          onmousedown={(e) => startDrag(e, { kind: 'corner', corner: cn })}
+        >
+          <span class="handle-label"
+            >{$t('warpTools.master.cornerLabel', {
+              values: { corner: $t(`warpTools.rectCorners.${CORNER_LABEL[cn].toLowerCase()}`) },
+            })}</span
+          >
         </div>
       {/each}
       {@const ctr = cornersCenter(corners)}
-      <div class="handle move-handle" class:dragging={drag?.kind.kind === 'corners-move'}
+      <div
+        class="handle move-handle"
+        class:dragging={drag?.kind.kind === 'corners-move'}
         style="left:{ctr.x}px; top:{ctr.y}px;"
         onmousedown={(e) => startDrag(e, { kind: 'corners-move' })}
-        title="Drag to move the whole warp">✥</div>
+        title={$t('warpTools.master.moveTitle')}
+      >
+        ✥
+      </div>
     {:else if mode === 'mesh' && meshGrid}
       {@const g = meshGrid}
       {#each g.points as row, ri}
@@ -397,10 +458,13 @@
         {/each}
       {/each}
       {@const ctr = meshCenter(g)}
-      <div class="handle move-handle" class:dragging={drag?.kind.kind === 'mesh-move'}
+      <div
+        class="handle move-handle"
+        class:dragging={drag?.kind.kind === 'mesh-move'}
         style="left:{ctr.x}px; top:{ctr.y}px;"
         onmousedown={(e) => startDrag(e, { kind: 'mesh-move' })}
-        title="Drag to move the whole warp">✥</div>
+        title={$t('warpTools.master.moveTitle')}
+      >✥</div>
     {/if}
   </div>
 {/if}
