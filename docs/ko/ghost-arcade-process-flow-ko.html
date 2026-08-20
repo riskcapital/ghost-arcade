@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="ko">
+<head>
+<meta charset="utf-8" />
+<title>Ghost Arcade 작동 프로세스 순서도</title>
+<style>
+@page { size: A4 landscape; margin: 11mm 12mm 13mm; }
+* { box-sizing: border-box; }
+body { margin:0; color:#20242b; font-family:"Malgun Gothic","Noto Sans KR",Arial,sans-serif; font-size:9.2pt; line-height:1.42; }
+h1,h2,h3 { margin:0 0 7px; line-height:1.25; }
+h1 { font-size:26pt; } h2 { font-size:17pt; border-bottom:2px solid #ff786d; padding-bottom:4px; } h3 { font-size:12pt; color:#65418f; margin-top:10px; }
+.cover { height:186mm; display:flex; flex-direction:column; justify-content:center; padding:20mm; background:linear-gradient(135deg,#17121e,#38264b 70%,#8a4e5b); color:white; margin:-11mm -12mm -13mm; }
+.cover h1 { color:white; } .cover .kicker { color:#ff9f95; font-weight:700; letter-spacing:2px; } .cover .sub { color:#d9cfdf; font-size:14pt; margin-top:10px; } .cover .meta { margin-top:30px; color:#c8bdcf; }
+.page { page-break-before:always; }
+.flow { display:flex; align-items:center; gap:5px; margin:8px 0 12px; }
+.node { border:1.5px solid #8d7b9f; border-radius:6px; padding:7px 8px; min-height:48px; flex:1; background:#faf8fc; text-align:center; display:flex; flex-direction:column; justify-content:center; }
+.node strong { color:#4d2b73; } .node small { color:#666; margin-top:2px; }
+.node.start { background:#2f263d; color:white; border-color:#2f263d; } .node.start strong { color:white; }
+.node.action { border-color:#e46f64; background:#fff5f4; }
+.node.store { border-color:#2c9c78; background:#effaf6; }
+.node.output { border-color:#3573a8; background:#eff7fd; }
+.node.warn { border-color:#d59b2d; background:#fff9e9; }
+.arrow { color:#ff786d; font-size:17pt; font-weight:bold; flex:0 0 auto; }
+.branch { display:grid; grid-template-columns:repeat(3,1fr); gap:7px; margin:8px 0 12px; }
+.branch .lane { border:1px solid #d5cfdb; border-radius:7px; padding:7px; background:white; }
+.branch .lane h4 { margin:0 0 6px; color:#5c3a83; text-align:center; }
+.vertical { display:grid; grid-template-columns:1fr; gap:4px; }
+.vertical .arrow { text-align:center; line-height:15px; }
+.legend { display:flex; gap:8px; flex-wrap:wrap; margin:7px 0; } .legend span { padding:3px 8px; border-radius:12px; background:#f2eef6; }
+table { width:100%; border-collapse:collapse; margin:7px 0 10px; font-size:8.5pt; }
+th,td { border:1px solid #d8d2dd; padding:5px 6px; vertical-align:top; } th { background:#2f263d; color:white; text-align:left; }
+.note { border-left:4px solid #7952b3; background:#f5f1fa; padding:7px 9px; margin:7px 0; }
+.warning { border-left-color:#e05252; background:#fff1f0; }
+code { font-family:Consolas,monospace; background:#f1eef4; padding:1px 3px; border-radius:3px; }
+.two { display:grid; grid-template-columns:1fr 1fr; gap:10px; }
+.invariant { border:1px solid #d7d0dc; border-radius:6px; padding:7px 9px; margin:5px 0; page-break-inside:avoid; }
+.footer { color:#666; font-size:8pt; }
+</style>
+</head>
+<body>
+<section class="cover">
+<div class="kicker">GHOST ARCADE 1.9.993</div>
+<h1>작동 프로세스 및 순서도</h1>
+<div class="sub">사용자 작업 · 부팅 routing · 렌더 pipeline · 출력 transport · 모바일 동기화</div>
+<div class="meta">문서 기준: <code>feat/korean-localization-full</code><br/>작성일: 2026-08-21<br/>실제 구현 모듈 기준 — 존재하지 않는 단일 outputSync facade를 가정하지 않음</div>
+</section>
+
+<section class="page">
+<h2>1. 사용자 작업 전체 흐름</h2>
+<div class="flow">
+<div class="node start"><strong>앱 실행</strong><small>Electron / browser / native mobile</small></div><div class="arrow">→</div>
+<div class="node"><strong>Locale 결정</strong><small>저장값 → OS 언어 → English</small></div><div class="arrow">→</div>
+<div class="node"><strong>프로젝트</strong><small>새로 만들기 / 열기 / 복구</small></div><div class="arrow">→</div>
+<div class="node action"><strong>콘텐츠 구성</strong><small>미디어 · 레이어 · 이펙트</small></div><div class="arrow">→</div>
+<div class="node action"><strong>운영 모드</strong><small>Mapping / VJ / Performer</small></div><div class="arrow">→</div>
+<div class="node output"><strong>출력</strong><small>화면 · 프로젝터 · 녹화</small></div><div class="arrow">→</div>
+<div class="node store"><strong>저장·백업</strong><small>.gha + asset references</small></div>
+</div>
+<div class="branch">
+<div class="lane"><h4>Mapping</h4><div class="vertical"><div class="node">Layer 선택</div><div class="arrow">↓</div><div class="node">Transform / Shape</div><div class="arrow">↓</div><div class="node">Corner / Mesh Warp</div><div class="arrow">↓</div><div class="node">Mask / Effect</div><div class="arrow">↓</div><div class="node output">Screen Slice / Display</div></div></div>
+<div class="lane"><h4>VJ</h4><div class="vertical"><div class="node">Media → Clip Grid</div><div class="arrow">↓</div><div class="node">Trigger / Quantize</div><div class="arrow">↓</div><div class="node">Layer / Clip / Composition FX</div><div class="arrow">↓</div><div class="node">Deck A/B Crossfade</div><div class="arrow">↓</div><div class="node output">MIX 또는 STAGE Output</div></div></div>
+<div class="lane"><h4>Performer / Advanced</h4><div class="vertical"><div class="node">SynthVision Shader / World</div><div class="arrow">↓</div><div class="node">Audio / BPM / MIDI</div><div class="arrow">↓</div><div class="node">Stage3D / Projection Sim</div><div class="arrow">↓</div><div class="node">Preset / Snapshot</div><div class="arrow">↓</div><div class="node output">Live / Offline Result</div></div></div>
+</div>
+<div class="note"><b>정본:</b> 사용자 편집 상태의 중심은 <code>project</code> writable store입니다. 저장·모바일·출력 동기화에서는 WebGL texture, DOM, video/canvas 등 runtime object를 제거합니다.</div>
+</section>
+
+<section class="page">
+<h2>2. 부팅·Locale·URL Mode Routing</h2>
+<div class="flow">
+<div class="node start"><strong>main.ts 평가</strong><small>i18n · theme · error reporter</small></div><div class="arrow">→</div>
+<div class="node"><strong>Locale 감지</strong><small>ghost-arcade_locale</small></div><div class="arrow">→</div>
+<div class="node store"><strong>localeStore / t</strong><small>document.lang + storage event</small></div><div class="arrow">→</div>
+<div class="node warn"><strong>URL mode 판정</strong><small>?mode=...</small></div>
+</div>
+<div class="branch">
+<div class="lane"><h4>일반 Editor</h4><div class="vertical"><div class="node"><code>mode 없음</code></div><div class="arrow">↓</div><div class="node action">App.svelte mount</div><div class="arrow">↓</div><div class="node store">Project / history / autosave / WS</div></div></div>
+<div class="lane"><h4>출력·시뮬레이터</h4><div class="vertical"><div class="node"><code>webgpu-display</code><br/><code>webrtc-display</code><br/><code>output/spout-output</code><br/><code>slice-display/atlas</code><br/><code>stage-3d/projection-sim</code></div><div class="arrow">↓</div><div class="node output">전용 Svelte App lazy mount</div></div></div>
+<div class="lane"><h4>Mobile</h4><div class="vertical"><div class="node"><code>mobile-remote</code></div><div class="arrow">↓</div><div class="node action">MobileApp mount</div><div class="arrow">↓</div><div class="node"><code>native-mobile-main.ts</code><br/>ga-mobile-mode</div><div class="arrow">↓</div><div class="node">Standalone / Remote / Picker</div></div></div>
+</div>
+<h3>Locale 분기</h3>
+<div class="flow"><div class="node">localStorage 접근 가능?</div><div class="arrow">→</div><div class="node">저장 locale 있음?</div><div class="arrow">→</div><div class="node">ko / ko-* ?</div><div class="arrow">→</div><div class="node store">ko, 그 외 en</div></div>
+<div class="note">저장소 접근이 차단되어도 언어 store 전환과 <code>document.documentElement.lang</code> 갱신은 계속됩니다. 다른 창의 변경은 storage event로 동기화됩니다.</div>
+</section>
+
+<section class="page">
+<h2>3. 한 프레임 렌더 Pipeline</h2>
+<div class="flow">
+<div class="node store"><strong>$project.layers</strong><small>runtime texture 포함</small></div><div class="arrow">→</div>
+<div class="node"><strong>buildRenderPlan</strong><small>visible · parent group · mask</small></div><div class="arrow">→</div>
+<div class="node"><strong>getLayerTexture</strong><small>media / SVG / text / splat / 3D / GPU</small></div><div class="arrow">→</div>
+<div class="node action"><strong>Layer Pipeline</strong><small>crop · shape · flip · fit · warp</small></div>
+</div>
+<div class="flow">
+<div class="node action"><strong>Layer Effects</strong><small>WebGL ping-pong / GPU / temporal</small></div><div class="arrow">→</div>
+<div class="node"><strong>Mask / Edge</strong><small>polygon · shape · feather</small></div><div class="arrow">→</div>
+<div class="node"><strong>Composite</strong><small>blend + opacity</small></div><div class="arrow">→</div>
+<div class="node action"><strong>Composition FX</strong><small>macro wet/dry</small></div>
+</div>
+<div class="flow">
+<div class="node"><strong>Dome / Transition</strong><small>A/B monitor</small></div><div class="arrow">→</div>
+<div class="node output"><strong>Output Shader</strong><small>rotation · crop · brightness · contrast · gamma</small></div><div class="arrow">→</div>
+<div class="node output"><strong>Editor Canvas</strong></div><div class="arrow">→</div>
+<div class="node output"><strong>outputComposite</strong><small>raw 또는 master-warp canvas</small></div>
+</div>
+<div class="two">
+<div><h3>레이어 ordering 불변식</h3><div class="invariant">Layer list는 render plan에서 reverse되어 UI 목록 상단 layer가 시각적으로 위에 합성됩니다.</div><div class="invariant">비가시 layer, group child, renderable texture가 없는 layer는 해당 frame 합성에서 제외됩니다.</div></div>
+<div><h3>GPU fallback</h3><div class="invariant">Project resolution이 GPU texture/renderbuffer 한계를 넘으면 clamp합니다.</div><div class="invariant">RenderTarget allocation 실패 시 64×64 safe target으로 계속 진행합니다.</div><div class="invariant">Master warp renderer 실패 시 검은 화면 대신 raw base canvas를 사용합니다.</div></div>
+</div>
+</section>
+
+<section class="page">
+<h2>4. 출력 Transport 선택과 동기화</h2>
+<div class="flow"><div class="node store">outputComposite<br/>raw/warped source</div><div class="arrow">→</div><div class="node warn">Transport 설정</div><div class="arrow">→</div><div class="node output"><strong>우선순위</strong><br/>zero-copy &gt; WebRTC &gt; legacy</div></div>
+<div class="branch">
+<div class="lane"><h4>Zero-copy WebGPU</h4><div class="vertical"><div class="node"><code>window.open(?mode=webgpu-display)</code></div><div class="arrow">↓</div><div class="node">output-ready</div><div class="arrow">↓</div><div class="node">MessageChannel / MessagePort</div><div class="arrow">↓</div><div class="node">captureStream → TrackProcessor</div><div class="arrow">↓</div><div class="node output">VideoFrame → external texture</div></div></div>
+<div class="lane"><h4>WebRTC fallback</h4><div class="vertical"><div class="node">outputPixelBroadcast</div><div class="arrow">↓</div><div class="node">ready heartbeat</div><div class="arrow">↓</div><div class="node">offer / answer / ICE queue</div><div class="arrow">↓</div><div class="node">OutputDisplayApp video</div><div class="arrow">↓</div><div class="node warn">rotation/brightness/contrast/fit<br/>gamma/crop 제한</div></div></div>
+<div class="lane"><h4>Legacy / Spout</h4><div class="vertical"><div class="node">Electron display IPC</div><div class="arrow">↓</div><div class="node">stateBroadcast</div><div class="arrow">↓</div><div class="node">audio/modulation receiver</div><div class="arrow">↓</div><div class="node output">Output/Spout window</div><div class="arrow">↓</div><div class="node warn">display 조회 실패→1280×720 재시도→alert</div></div></div>
+</div>
+<h3>동기화 역할 분리</h3>
+<table><tr><th>모듈</th><th>책임</th></tr><tr><td><code>stateBroadcast.ts</code></td><td>Project full/patch, VJ, output settings의 diff/debounce·receiver merge</td></tr><tr><td><code>outputPixelBroadcast.ts</code></td><td>WebRTC pixel signaling, heartbeat, ICE candidate queue</td></tr><tr><td><code>outputSharedTexturePresenter.ts</code></td><td>Same-process VideoFrame pump, fan-out, detach/error 처리</td></tr><tr><td><code>outputComposite.ts</code></td><td>Raw canvas와 master-warp canvas 중 authoritative source 선택</td></tr></table>
+<div class="note warning"><b>중요:</b> 저장소에는 단일 <code>outputSync.ts</code>가 없습니다. 위 네 모듈이 상태·pixel·frame·source 선택을 분담합니다.</div>
+</section>
+
+<section class="page">
+<h2>5. Mobile/Remote 동기화</h2>
+<div class="flow">
+<div class="node start">Desktop App</div><div class="arrow">→</div>
+<div class="node">WS server<br/><code>127.0.0.1:9001</code></div><div class="arrow">↔</div>
+<div class="node action">MobileApp</div><div class="arrow">→</div>
+<div class="node store">Project/VJ UI state</div><div class="arrow">→</div>
+<div class="node action">Control message</div><div class="arrow">→</div>
+<div class="node store">Desktop store update</div><div class="arrow">→</div>
+<div class="node output">Render pipeline</div>
+</div>
+<div class="two">
+<div><h3>연결</h3><div class="vertical"><div class="node">저장 URL 검증<br/>host 불일치 시 현재 hostname</div><div class="arrow">↓</div><div class="node">WebSocket open<br/>6초 timeout</div><div class="arrow">↓</div><div class="node">sync_request 즉시</div><div class="arrow">↓</div><div class="node">무레이어면 2초/5초 재요청</div><div class="arrow">↓</div><div class="node store">sync/library/VJ 수신</div></div></div>
+<div><h3>복구</h3><div class="vertical"><div class="node warn">첫 연결 실패</div><div class="arrow">↓</div><div class="node">오류 표시</div><div class="node warn">기존 연결 끊김</div><div class="arrow">↓</div><div class="node">2/3/5/10/15/30초 backoff</div><div class="arrow">↓</div><div class="node">최대 20회 재연결</div></div></div>
+</div>
+<h3>메시지 경계</h3>
+<table><tr><th>Desktop → Mobile</th><th>Mobile → Desktop</th></tr><tr><td>Project sanitize snapshot, media/library, shader library, VJ clips(약 33ms), composition, freeze, beat pulse</td><td>corner/mesh point, parameter, source, VJ trigger/mixer/crossfader, block, snapshot, macro, freeze</td></tr></table>
+<div class="note">WebSocket이 OPEN일 때만 control을 보냅니다. Desktop 경계에서 bank는 A/B로 제한하고 opacity·crossfader 등 수치 범위를 clamp합니다. Drag 중 local 값은 desktop echo가 올 때까지 유지하여 control 반동을 줄입니다.</div>
+</section>
+
+<section class="page">
+<h2>6. Recording·Offline Render·Fallback</h2>
+<div class="branch">
+<div class="lane"><h4>실시간 녹화</h4><div class="vertical"><div class="node">Toolbar Record</div><div class="arrow">↓</div><div class="node">canvas.captureStream(60)</div><div class="arrow">↓</div><div class="node">선택적 audio stream 합성</div><div class="arrow">↓</div><div class="node">MediaRecorder</div><div class="arrow">↓</div><div class="node store">Media Library + Download/Folder</div></div></div>
+<div class="lane"><h4>오프라인 렌더</h4><div class="vertical"><div class="node">Duration/FPS/Resolution</div><div class="arrow">↓</div><div class="node">virtualTime = frame/FPS</div><div class="arrow">↓</div><div class="node">Engine/ISF/Stage/Timeline seek</div><div class="arrow">↓</div><div class="node">MP4 또는 JPEG frame</div><div class="arrow">↓</div><div class="node warn">Audio 미포함</div></div></div>
+<div class="lane"><h4>오류·Fallback</h4><div class="vertical"><div class="node warn">GPU target 실패</div><div class="arrow">↓</div><div class="node">64×64 safe target</div><div class="node warn">Warp 실패</div><div class="arrow">↓</div><div class="node">Raw canvas</div><div class="node warn">Display 실패</div><div class="arrow">↓</div><div class="node">기본 위치 재시도 → 번역 alert</div></div></div>
+</div>
+<h3>운영 판단표</h3>
+<table><tr><th>목적</th><th>권장 경로</th><th>주의</th></tr><tr><td>공연 전체 + audio</td><td>실시간 녹화</td><td>audio source와 include audio 확인</td></tr><tr><td>고품질 deterministic visual</td><td>오프라인 MP4</td><td>audio 없음</td></tr><tr><td>후반 합성용 frame</td><td>JPEG sequence</td><td>manifest/FFmpeg command 함께 저장</td></tr><tr><td>4K60 물리 output</td><td>Zero-copy WebGPU</td><td>GPU/driver와 external display 사전 test</td></tr></table>
+</section>
+
+<section class="page">
+<h2>7. 핵심 불변식과 문서 유지 규칙</h2>
+<div class="two">
+<div>
+<div class="invariant"><b>Locale</b><br/><code>en | ko</code>만 지원하며 알 수 없는 값은 영어입니다.</div>
+<div class="invariant"><b>Identifier</b><br/>Effect ID, display ID, targetType, MIDI/OSC path, IPC payload, protocol/persisted value는 번역하지 않습니다.</div>
+<div class="invariant"><b>Store</b><br/>렌더 입력의 정본은 project writable store이며 UI·mobile·output은 이를 직접 또는 sanitize snapshot으로 소비합니다.</div>
+<div class="invariant"><b>Runtime object</b><br/>Texture, render target, DOM/video/canvas는 저장·WS·BroadcastChannel payload에서 제거합니다.</div>
+</div>
+<div>
+<div class="invariant"><b>Output priority</b><br/>Zero-copy &gt; WebRTC &gt; legacy. 기능 설명에서 세 경로를 혼동하지 않습니다.</div>
+<div class="invariant"><b>WebRTC 제한</b><br/>현재 gamma/crop을 완전 지원한다고 문서화하지 않습니다.</div>
+<div class="invariant"><b>Cursor shim</b><br/><code>OutputWindow.updateCursorPosition/clearCursor</code>는 현재 no-op이며 실제 cursor sync와 구분합니다.</div>
+<div class="invariant"><b>Mobile security</b><br/>LAN control은 신뢰할 수 있는 private network에서 사용합니다.</div>
+</div>
+</div>
+<h3>코드 근거</h3>
+<table><tr><th>영역</th><th>정본 파일</th></tr><tr><td>부팅 routing</td><td><code>src/main.ts</code>, <code>src/native-mobile-main.ts</code></td></tr><tr><td>Locale</td><td><code>src/lib/i18n/index.ts</code></td></tr><tr><td>Project/store</td><td><code>src/lib/stores/layers.ts</code></td></tr><tr><td>Render</td><td><code>src/lib/renderer/engine.ts</code></td></tr><tr><td>Output</td><td><code>OutputWindow.svelte</code>, <code>stateBroadcast.ts</code>, <code>outputPixelBroadcast.ts</code>, <code>outputSharedTexturePresenter.ts</code>, <code>outputComposite.ts</code></td></tr><tr><td>Mobile</td><td><code>App.svelte</code>, <code>MobileApp.svelte</code>, <code>server/ws-server.js</code></td></tr></table>
+<p class="footer">본 순서도는 Ghost Arcade 1.9.993 현재 구현을 기준으로 합니다. Runtime 경로가 변경되면 사용자 설명서와 함께 갱신해야 합니다.</p>
+</section>
+</body>
+</html>

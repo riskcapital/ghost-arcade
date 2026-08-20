@@ -2,6 +2,12 @@
   import { onMount, onDestroy, tick } from 'svelte';
   import { createDefaultLayerShape } from '../types';
   import { t } from '../i18n';
+  import {
+    effectTypeLabel,
+    effectParamLabel,
+    effectOptionLabel,
+    blendModeLabel,
+  } from '../i18n/displayLabels';
   import type { Project, Point2D, WarpCorners, BlendMode, Effect, EffectType, EffectParams, LayerShape, LayerShapeParams, LayerShapeType } from '../types';
   import { EFFECT_CATALOG } from '../effects/effectCatalog';
   import { EFFECT_PARAM_DEFS } from '../effects/effectParamDefs';
@@ -480,6 +486,48 @@
           ? $t('mobile.vision.live')
           : $t('mobile.vision.cameraFailed');
 
+  const visionCapabilityTranslationKeys: Record<'transport' | 'depth' | 'segmentation', Record<string, string>> = {
+    transport: {
+      'native-rtc': 'mobile.vision.nativeReady',
+      'browser-rtc': 'mobile.vision.browserRgb',
+    },
+    depth: {
+      none: 'mobile.vision.nativeRgb',
+      'image-estimated': 'mobile.vision.phoneColorParticles',
+      'native-depth': 'mobile.vision.nativeDepth',
+    },
+    segmentation: {
+      none: 'mobile.vision.nativeRgb',
+      'person-mask': 'mobile.vision.nativeMask',
+      'object-edge': 'mobile.vision.nativeMask',
+    },
+  };
+
+  function visionCapabilityLabel(
+    kind: 'transport' | 'depth' | 'segmentation',
+    value: unknown,
+  ): string {
+    const key = visionCapabilityTranslationKeys[kind][String(value)];
+    return key ? $t(key) : $t('mobile.common.unknown');
+  }
+
+  const visionErrorTranslationKeys: Record<string, string> = {
+    nativeUnavailable: 'mobile.vision.errors.nativeUnavailable',
+    nativeOnly: 'mobile.vision.errors.nativeOnly',
+    connectDesktop: 'mobile.vision.errors.connectDesktop',
+    nativeDidNotStart: 'mobile.vision.errors.nativeDidNotStart',
+    secureCamera: 'mobile.vision.errors.secureCamera',
+    connectionFailed: 'mobile.vision.errors.connectionFailed',
+    cameraFailed: 'mobile.vision.errors.cameraFailed',
+    couldNotConnect: 'mobile.vision.errors.couldNotConnect',
+    phoneVision: 'mobile.vision.errors.phoneVision',
+  };
+
+  function visionErrorLabel(value: unknown, fallback = 'phoneVision'): string {
+    const key = visionErrorTranslationKeys[String(value)];
+    return $t(key ?? visionErrorTranslationKeys[fallback] ?? 'mobile.vision.errors.phoneVision');
+  }
+
   function sendVisionSignal(payload: Record<string, unknown>) {
     if (!ws || ws.readyState !== WebSocket.OPEN) return;
     ws.send(JSON.stringify(payload));
@@ -600,7 +648,7 @@
 
   function handleNativeVisionStatus(status: NativeVisionStatus) {
     nativeVisionActive = status.active;
-    nativeVisionError = status.error || '';
+    nativeVisionError = status.error ? visionErrorLabel(status.error) : '';
     if (status.capabilities) nativeVisionCapabilities = status.capabilities;
   }
 
@@ -647,9 +695,9 @@
       nativeVisionError = '';
       const status = await startNativeVisionCapture(visionFacingMode, visionCaptureProfile, visionCaptureFrameRate);
       if (status) handleNativeVisionStatus(status);
-    } catch (err: any) {
+    } catch {
       nativeVisionActive = false;
-      nativeVisionError = err?.message || $t('mobile.vision.errors.nativeUnavailable');
+      nativeVisionError = visionErrorLabel('nativeUnavailable');
     }
   }
 
@@ -778,10 +826,10 @@
     } catch (err: any) {
       console.error('[PhoneVision] camera start failed:', err);
       visionStatus = 'failed';
-      visionError = err?.message || $t('mobile.vision.errors.cameraFailed');
+      visionError = visionErrorLabel('cameraFailed');
       stopPhoneVision(true);
       visionStatus = 'failed';
-      visionError = err?.message || $t('mobile.vision.errors.cameraFailed');
+      visionError = visionErrorLabel('cameraFailed');
     }
   }
 
@@ -792,9 +840,9 @@
       for (const candidate of pendingVisionIce.splice(0)) {
         try { await visionPeer.addIceCandidate(new RTCIceCandidate(candidate)); } catch {}
       }
-    } catch (err: any) {
+    } catch {
       visionStatus = 'failed';
-      visionError = err?.message || $t('mobile.vision.errors.couldNotConnect');
+      visionError = visionErrorLabel('couldNotConnect');
     }
   }
 
@@ -829,16 +877,14 @@
 
   function visionPresetLabel(kind: 'aura' | 'point-cloud', presetId: unknown): string {
     const id = typeof presetId === 'string' ? presetId : '';
-    const presets = kind === 'aura' ? PHONE_VISION_AURA_PRESETS : PHONE_VISION_POINT_CLOUD_PRESETS;
-    const preset = presets.find(item => item.id === id);
     const translationKey = visionPresetTranslationKeys[kind][id];
     if (translationKey) return $t(translationKey);
-    return preset?.label ?? (kind === 'aura' ? $t('mobile.vision.aura') : $t('mobile.vision.pointCloud'));
+    return $t('mobile.common.unknown');
   }
 
-  function visionCaptureProfileLabel(profileId: string, fallback: string): string {
+  function visionCaptureProfileLabel(profileId: string): string {
     const translationKey = visionCaptureTranslationKeys[profileId];
-    return translationKey ? $t(translationKey) : fallback;
+    return translationKey ? $t(translationKey) : $t('mobile.common.unknown');
   }
 
   function visionLayerAction(kind: 'aura' | 'point-cloud', msg: Record<string, unknown>): string {
@@ -856,7 +902,7 @@
     }
     if (status === 'failed' || status === 'error') {
       visionStatus = 'failed';
-      visionError = String(msg.error || $t('mobile.vision.errors.phoneVision'));
+      visionError = visionErrorLabel(msg.error);
       return;
     }
     if (status === 'created_aura_layer') {
@@ -1017,10 +1063,42 @@
     return Array.from(groups.values());
   })();
 
-  const effectLabels = new Map(EFFECT_CATALOG.map(entry => [entry.type, entry.label]));
-
   // Use shared effect parameter definitions (covers all 81+ effects)
   const effectParamDefs = EFFECT_PARAM_DEFS;
+  const effectLabelByType = new Map<string, string>(
+    EFFECT_CATALOG.map(entry => [entry.type, entry.label]),
+  );
+
+  function displayCatalogKey(value: string): string {
+    return value
+      .trim()
+      .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+      .replace(/[^a-zA-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .toLowerCase();
+  }
+
+  function mobileEffectTypeDisplayLabel(type: string, fallback = type): string {
+    return effectTypeLabel($t, type, effectLabelByType.get(type) ?? fallback);
+  }
+
+  function mobileEffectParamDisplayLabel(key: string, fallback = key): string {
+    const translated = effectParamLabel($t, key);
+    return translated === key
+      ? effectParamLabel($t, displayCatalogKey(fallback), fallback)
+      : translated;
+  }
+
+  function mobileEffectOptionDisplayLabel(value: string | number, fallback: string): string {
+    const translated = effectOptionLabel($t, value);
+    return translated === String(value)
+      ? effectOptionLabel($t, displayCatalogKey(fallback), fallback)
+      : translated;
+  }
+
+  function mobileBlendModeDisplayLabel(mode: string): string {
+    return blendModeLabel($t, mode, mode);
+  }
 
   const layerShapeOptions: { type: LayerShapeType; label: string; glyph: string }[] = [
     { type: 'rectangle', label: 'Rectangle', glyph: '▭' },
@@ -3562,7 +3640,7 @@
               aria-label={$t('mobile.mapping.layerBlendMode')}
             >
               {#each blendModes as mode}
-                <option value={mode}>{mode}</option>
+                <option value={mode}>{mobileBlendModeDisplayLabel(mode)}</option>
               {/each}
             </select>
           </div>
@@ -3693,7 +3771,7 @@
                             class="mixer-select"
                           >
                             {#each vjBlendModes as mode}
-                              <option value={mode}>{mode}</option>
+                              <option value={mode}>{mobileBlendModeDisplayLabel(mode)}</option>
                             {/each}
                           </select>
                         </div>
@@ -4149,7 +4227,7 @@
                     >
                       {effect.enabled ? '●' : '○'}
                     </button>
-                    <span class="effect-name">{effectLabels.get(effect.type) || effect.type}</span>
+                    <span class="effect-name">{mobileEffectTypeDisplayLabel(effect.type)}</span>
                     <span class="effect-expand">{expandedEffectId === effect.id ? '▲' : '▼'}</span>
                     <button
                       class="effect-remove"
@@ -4164,7 +4242,7 @@
                     <div class="effect-params">
                       {#each (effectParamDefs[effect.type] || []) as paramDef}
                         <div class="effect-param-row">
-                          <span class="param-name">{paramDef.name}</span>
+                          <span class="param-name">{mobileEffectParamDisplayLabel(paramDef.param as string, paramDef.name)}</span>
                           {#if paramDef.type === 'select' && paramDef.options}
                             <select value={(effect.params as Record<string, number>)[paramDef.param as string] ?? paramDef.default}
                               oninput={(e) => {
@@ -4174,7 +4252,7 @@
                               onblur={() => onPanelEffectParamDragEnd(effect.id, paramDef.param as string)}
                               style="flex:1; background:#222; color:#fff; border:1px solid #444; border-radius:3px; padding:4px; font-size:13px;">
                               {#each paramDef.options as opt}
-                                <option value={opt.value}>{opt.label}</option>
+                                <option value={opt.value}>{mobileEffectOptionDisplayLabel(opt.value, opt.label)}</option>
                               {/each}
                             </select>
                           {:else if paramDef.type === 'color' && paramDef.colorParams}
@@ -4258,10 +4336,12 @@
                       <button
                         class="add-effect-btn"
                         onclick={() => addPanelEffect(effectDef.type)}
-                        title={effectDef.requiresWebGPU ? `${effectDef.name} · WebGPU` : effectDef.name}
+                        title={effectDef.requiresWebGPU
+                          ? `${mobileEffectTypeDisplayLabel(effectDef.type, effectDef.name)} · WebGPU`
+                          : mobileEffectTypeDisplayLabel(effectDef.type, effectDef.name)}
                       >
                         <span class="effect-swatch" style="background: {effectDef.previewCSS};"></span>
-                        <span class="effect-btn-name">{effectDef.name}</span>
+                        <span class="effect-btn-name">{mobileEffectTypeDisplayLabel(effectDef.type, effectDef.name)}</span>
                         {#if effectDef.requiresWebGPU}
                           <span class="effect-badge">GPU</span>
                         {/if}
@@ -4333,7 +4413,7 @@
               onchange={(e) => void setVisionCaptureProfile((e.currentTarget as HTMLSelectElement).value as PhoneVisionCaptureProfile)}
             >
               {#each PHONE_VISION_CAPTURE_PROFILES as profile}
-                <option value={profile.id}>{visionCaptureProfileLabel(profile.id, profile.label)}</option>
+                <option value={profile.id}>{visionCaptureProfileLabel(profile.id)}</option>
               {/each}
             </select>
           </label>
@@ -4357,8 +4437,9 @@
         <div class="vision-profile-strip">
           <span>{visionCaptureWidth}×{visionCaptureHeight}</span>
           <span>{visionCaptureFrameRate} fps</span>
-          <span>{visionCapabilitiesPayload().depthPipeline}</span>
-          <span>{visionCapabilitiesPayload().segmentationPipeline}</span>
+          <span>{visionCapabilityLabel('transport', visionCapabilitiesPayload().transport)}</span>
+          <span>{visionCapabilityLabel('depth', visionCapabilitiesPayload().depthPipeline)}</span>
+          <span>{visionCapabilityLabel('segmentation', visionCapabilitiesPayload().segmentationPipeline)}</span>
           <span>{nativeVisionSummary}</span>
         </div>
 

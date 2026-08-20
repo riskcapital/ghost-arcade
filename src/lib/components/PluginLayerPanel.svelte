@@ -91,6 +91,29 @@
     if (step && step < 0.1) return val.toFixed(2);
     return val.toFixed(1);
   }
+
+  function pluginLabel(path: string, fallback: string): string {
+    const key = `textTools.plugin.${path}`;
+    const translated = $t(key);
+    return translated === key ? fallback : translated;
+  }
+
+  function pluginName(id: string, fallback: string): string {
+    return pluginLabel(`names.${id}`, fallback);
+  }
+
+  function pluginParamLabel(pluginId: string, paramKey: string, fallback: string): string {
+    return pluginLabel(`params.${pluginId}.${paramKey}`, fallback);
+  }
+
+  function pluginOptionLabel(
+    pluginId: string,
+    paramKey: string,
+    optionValue: string | number,
+    fallback: string,
+  ): string {
+    return pluginLabel(`options.${pluginId}.${paramKey}.${String(optionValue)}`, fallback);
+  }
 </script>
 
 {#if !pluginManifest || !effectSource}
@@ -103,7 +126,7 @@
     <div class="panel-header">
       <span class="header-icon">{pluginManifest.icon}</span>
       <div class="header-text">
-        <span class="header-title">{pluginManifest.name}</span>
+        <span class="header-title">{pluginName(pluginManifest.id, pluginManifest.name)}</span>
         <span class="header-version">v{pluginManifest.version} · {pluginManifest.author}</span>
       </div>
     </div>
@@ -156,33 +179,33 @@
           <div
             class="control-row"
             data-midi-path={`${midiPrefix}:${def.param}`}
-            data-midi-label={def.name}
+            data-midi-label={pluginParamLabel(pluginManifest.id, def.param, def.name)}
             data-midi-min={0}
             data-midi-max={Math.max(0, optValues.length - 1)}
             data-midi-step={1}
             data-midi-discrete={optValues.join(',')}
           >
-            <span class="label">{def.name}</span>
+            <span class="label">{pluginParamLabel(pluginManifest.id, def.param, def.name)}</span>
             <div class="select-row">
               {#each def.options || [] as opt}
                 <button
                   class="sel-btn"
                   class:active={getVal(def.param, def.default) === opt.value}
                   onclick={() => setParam(def.param, opt.value)}
-                >{opt.label}</button>
+                >{pluginOptionLabel(pluginManifest.id, def.param, opt.value, opt.label)}</button>
               {/each}
             </div>
           </div>
 
         {:else if def.type === 'toggle'}
           <div class="control-row toggle-row">
-            <span class="label">{def.name}</span>
+            <span class="label">{pluginParamLabel(pluginManifest.id, def.param, def.name)}</span>
             <button
               class="toggle-btn"
               class:active={!!getVal(def.param, def.default)}
               onclick={() => setParam(def.param, !getVal(def.param, def.default))}
               data-midi-path={`${midiPrefix}:${def.param}`}
-              data-midi-label={def.name}
+              data-midi-label={pluginParamLabel(pluginManifest.id, def.param, def.name)}
               data-midi-min={0}
               data-midi-max={1}
               data-midi-step={1}
@@ -194,7 +217,7 @@
 
         {:else if def.type === 'slider'}
           <div class="control-row slider-row">
-            <span class="label">{def.name}</span>
+            <span class="label">{pluginParamLabel(pluginManifest.id, def.param, def.name)}</span>
             <input
               type="range"
               min={def.min}
@@ -203,7 +226,7 @@
               value={getVal(def.param, def.default)}
               oninput={(e) => setParam(def.param, parseFloat((e.target as HTMLInputElement).value))}
               data-midi-path={`${midiPrefix}:${def.param}`}
-              data-midi-label={def.name}
+              data-midi-label={pluginParamLabel(pluginManifest.id, def.param, def.name)}
               data-midi-min={def.min ?? 0}
               data-midi-max={def.max ?? 1}
               data-midi-step={def.step ?? 0.01}
@@ -212,13 +235,13 @@
           </div>
         {:else if def.type === 'color'}
           <div class="control-row color-row">
-            <span class="label">{def.name}</span>
+            <span class="label">{pluginParamLabel(pluginManifest.id, def.param, def.name)}</span>
             <input
               type="color"
               value={colorToHex(getVal(def.param, def.default), def.default)}
               oninput={(e) => setParam(def.param, hexToRgbArray((e.target as HTMLInputElement).value))}
               data-midi-path={`${midiPrefix}:${def.param}`}
-              data-midi-label={def.name}
+              data-midi-label={pluginParamLabel(pluginManifest.id, def.param, def.name)}
             />
           </div>
         {/if}

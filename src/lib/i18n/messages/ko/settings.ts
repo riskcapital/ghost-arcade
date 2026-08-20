@@ -264,11 +264,18 @@ export default {
     },
   },
   recording: {
+    folderSelectionUnsupported:
+      '이 브라우저는 폴더 선택을 지원하지 않습니다. 녹화 파일은 다운로드 폴더에 저장됩니다.',
     heading: '녹화',
     format: {
       label: '동영상 형식',
       hint: '화면 녹화에 사용할 형식을 선택합니다',
       unsupported: '(지원되지 않음)',
+      descriptions: {
+        webmVp9: '최고 품질',
+        webmVp8: '높은 호환성',
+        mp4H264: '범용 재생',
+      },
     },
     quality: {
       label: '동영상 품질',
@@ -282,6 +289,7 @@ export default {
       label: '저장 위치',
       chooseFolder: '폴더 선택',
       reset: '초기화',
+      defaultFolder: '다운로드(기본값)',
     },
     info: {
       directPrefix: '녹화 파일을 다음 위치에 바로 저장합니다: ',
@@ -529,6 +537,20 @@ export default {
       reference: {
         summary: '파라미터 경로 참조',
         legacy: 'vj:layer:0:opacity 같은 이전 경로도 허용되며 자동으로 정규화됩니다.',
+        examples: {
+          deckALayer1Clip1: '덱 A 레이어 1, 클립 1',
+          deckBLayer1Clip1: '덱 B 레이어 1, 클립 1',
+          deckALayer1Opacity: '덱 A 레이어 1 불투명도',
+          deckALayer1PlayPause: '덱 A 레이어 1 재생/일시정지',
+          deckALayer1Restart: '덱 A 레이어 1 다시 시작',
+          vjMasterOpacity: 'VJ 마스터 불투명도',
+          abCrossfader: 'A/B 크로스페이더',
+          stopAllVjClips: 'VJ 클립 모두 정지',
+          mappingPreset1: '매핑 프리셋 1',
+          selectedMappingLayerOpacity: '선택한 매핑 레이어 불투명도',
+          selectedMediaPlayPause: '선택한 미디어 재생/일시정지',
+          selectedMediaRestart: '선택한 미디어 다시 시작',
+        },
       },
     },
     keyboard: {

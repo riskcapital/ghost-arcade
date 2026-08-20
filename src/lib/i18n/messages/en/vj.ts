@@ -1,4 +1,23 @@
 export default {
+  midiLabels: {
+    masterOpacity: 'Master Opacity',
+    stopAll: 'Stop All',
+    launchQuantize: 'Launch Quantize',
+    crossfaderEnabled: 'Crossfader Enabled',
+    block: 'Block {number}: {name}',
+    deckColumn: 'Deck {bank} Column {column}',
+    deckLayerSolo: 'Deck {bank} L{layer} Solo',
+    deckLayerMute: 'Deck {bank} L{layer} Mute',
+    deckLayerOpacity: 'Deck {bank} L{layer} Opacity',
+    deckLayerBlend: 'Deck {bank} L{layer} Blend',
+    deckLayerColumn: 'Deck {bank} L{layer} C{column}',
+    cutDeckA: 'Cut to Deck A',
+    crossfader: 'Crossfader',
+    cutDeckB: 'Cut to Deck B',
+    crossfaderFadeTime: 'Crossfader Fade Time',
+    crossfaderTransition: 'Crossfader Transition',
+    crossfaderBlendMode: 'Crossfader Blend Mode',
+  },
   file: {
     label: 'File',
     new: 'New',

@@ -63,6 +63,10 @@ Then open `http://localhost:1420`.
 3. Scan with any phone on the same Wi-Fi.
 4. The mobile UI loads from the desktop's built-in HTTP server (no app install needed).
 
+### Korean Documentation
+- [한국어 사용설명서 (PDF)](docs/ko/Ghost-Arcade-사용설명서-KO.pdf)
+- [작동 프로세스 및 순서도 (PDF)](docs/ko/Ghost-Arcade-작동-프로세스-순서도-KO.pdf)
+
 ### Build a Distributable
 ```bash
 npm run build:desktop          # Windows installer

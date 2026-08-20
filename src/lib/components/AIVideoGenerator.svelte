@@ -4,6 +4,7 @@
     startVeoGeneration, pollVeoOperation, downloadVeoVideo,
     startLumaGeneration, pollLumaGeneration, downloadLumaVideo,
     enhancePromptForLoop,
+    type AIVideoErrorCode,
     type VeoModel, type LumaModel, type LumaAspectRatio, type LumaResolution,
   } from '../api/ai-client';
   import { settings, VEO_MODELS, LUMA_MODELS } from '../stores/settings';
@@ -62,6 +63,21 @@
     'visionAi.video.examples.inkDrops',
     'visionAi.video.examples.plasmaTendrils',
   ];
+
+  function formatVideoError(
+    result: { error?: string; errorCode?: AIVideoErrorCode } | undefined,
+    fallback: AIVideoErrorCode,
+  ): string {
+    const code = result?.errorCode ?? fallback;
+    const detail = result?.error && result.error !== code ? result.error.trim() : '';
+    return detail ? `${$t(code)}: ${detail}` : $t(code);
+  }
+
+  function formatThrownVideoError(err: unknown, fallback: AIVideoErrorCode): string {
+    const detail = err instanceof Error ? err.message.trim() : '';
+    if (detail.startsWith('visionAi.video.errors.')) return $t(detail);
+    return detail ? `${$t(fallback)}: ${detail}` : $t(fallback);
+  }
 
   function useExample(ex: string) {
     prompt = ex;
@@ -124,7 +140,7 @@
         await generateVeo();
       }
     } catch (err) {
-      error = err instanceof Error ? err.message : $t('visionAi.video.errors.generationFailed');
+      error = formatThrownVideoError(err, 'visionAi.video.errors.generationFailed');
       cleanup();
     }
   }
@@ -153,8 +169,8 @@
       lastFrame: veoLastFrameFile || undefined,
     });
 
-    if (startResult.error || !startResult.operationName) {
-      error = startResult.error || $t('visionAi.video.errors.startFailed');
+    if (startResult.error || startResult.errorCode || !startResult.operationName) {
+      error = formatVideoError(startResult, 'visionAi.video.errors.startFailed');
       cleanup();
       return;
     }
@@ -165,8 +181,8 @@
     pollTimer = setInterval(async () => {
       const status = await pollVeoOperation(apiKey, opName);
 
-      if (status.error && status.done) {
-        error = status.error;
+      if ((status.error || status.errorCode) && status.done) {
+        error = formatVideoError(status, 'visionAi.video.errors.generationFailed');
         cleanup();
         return;
       }
@@ -174,8 +190,8 @@
       if (status.done && status.videoUri) {
         statusMessage = $t('visionAi.video.status.downloading');
         const downloadResult = await downloadVeoVideo(apiKey, status.videoUri);
-        if (downloadResult.error || !downloadResult.blob) {
-          error = downloadResult.error || $t('visionAi.video.errors.downloadFailed');
+        if (downloadResult.error || downloadResult.errorCode || !downloadResult.blob) {
+          error = formatVideoError(downloadResult, 'visionAi.video.errors.downloadFailed');
           cleanup();
           return;
         }
@@ -208,8 +224,8 @@
       loop: loopEnabled,
     });
 
-    if (startResult.error || !startResult.id) {
-      error = startResult.error || $t('visionAi.video.errors.lumaStartFailed');
+    if (startResult.error || startResult.errorCode || !startResult.id) {
+      error = formatVideoError(startResult, 'visionAi.video.errors.lumaStartFailed');
       cleanup();
       return;
     }
@@ -225,7 +241,7 @@
       }
 
       if (status.state === 'failed') {
-        error = status.error || $t('visionAi.video.errors.generationFailed');
+        error = formatVideoError(status, 'visionAi.video.errors.generationFailed');
         cleanup();
         return;
       }
@@ -233,8 +249,8 @@
       if (status.state === 'completed' && status.videoUrl) {
         statusMessage = $t('visionAi.video.status.downloading');
         const downloadResult = await downloadLumaVideo(status.videoUrl);
-        if (downloadResult.error || !downloadResult.blob) {
-          error = downloadResult.error || $t('visionAi.video.errors.downloadFailed');
+        if (downloadResult.error || downloadResult.errorCode || !downloadResult.blob) {
+          error = formatVideoError(downloadResult, 'visionAi.video.errors.downloadFailed');
           cleanup();
           return;
         }

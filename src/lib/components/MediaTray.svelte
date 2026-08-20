@@ -13,7 +13,7 @@
   import { parseISF, getInputDefault } from '../isf/parser';
   import { generateCachedThumbnail as generateShaderThumbnail } from '../isf/thumbnail';
   import { estimateShaderLoadRating, type ShaderLoadRating } from '../isf/loadRating';
-  import { appendNativeVideoSegment, createLoopWithResult, runtimeVideoUrlToPath, type LoopProgress, type LoopTransitionType, LOOP_TRANSITIONS, LOOP_TRANSITION_GROUPS } from '../utils/videoLoop';
+  import { appendNativeVideoSegment, createLoopWithResult, runtimeVideoUrlToPath, type LoopProgress, type LoopTransitionGroup, type LoopTransitionType, LOOP_TRANSITIONS, LOOP_TRANSITION_GROUPS } from '../utils/videoLoop';
   import { downloadRecording } from '../recording/recorder';
   import {
     downloadVeoVideo,
@@ -941,6 +941,26 @@
   let loopVeoPrompt = $t('media.loop.defaultPrompt');
   let showLoopOptions: string | null = null; // item.id when options panel is shown
   let loopPopoverPos = { x: 0, y: 0 };
+
+  const LOOP_TRANSITION_GROUP_KEYS: Record<LoopTransitionGroup, string> = {
+    Essentials: 'essentials',
+    Motion: 'motion',
+    Glitch: 'glitch',
+    'Loop FX': 'loopFx',
+    Reveals: 'reveals',
+  };
+  const BUILT_IN_LOOP_TRANSITION_VALUES = new Set(LOOP_TRANSITIONS.map(({ value }) => value));
+
+  function localizedLoopGroupLabel(group: LoopTransitionGroup): string {
+    return $t(`media.loop.groups.${LOOP_TRANSITION_GROUP_KEYS[group]}`);
+  }
+
+  function localizedLoopTransitionLabel(value: string, sourceLabel = value): string {
+    const key = `media.loop.transitions.${value}`;
+    const translated = $t(key);
+    if (translated !== key) return translated;
+    return BUILT_IN_LOOP_TRANSITION_VALUES.has(value as LoopTransitionType) ? value : sourceLabel;
+  }
 
   function toggleLoopOptions(itemId: string, e: MouseEvent) {
     e.stopPropagation();
@@ -2684,9 +2704,12 @@
         await createCrossfadeLoopFromVideo(item, generatedName);
       }
 
-      const transitionLabel = LOOP_TRANSITIONS.find(
-        transition => transition.value === loopTransitionType
-      )?.label ?? loopTransitionType;
+      const transition = LOOP_TRANSITIONS.find(
+        option => option.value === loopTransitionType
+      );
+      const transitionLabel = transition
+        ? localizedLoopTransitionLabel(transition.value, transition.label)
+        : localizedLoopTransitionLabel(loopTransitionType);
       loopProgress = {
         stage: 'complete',
         progress: 1,
@@ -4777,9 +4800,9 @@
           <label for="loop-transition-type">{$t('media.loop.transition')}</label>
           <select id="loop-transition-type" bind:value={loopTransitionType}>
             {#each LOOP_TRANSITION_GROUPS as group}
-              <optgroup label={group}>
+              <optgroup label={localizedLoopGroupLabel(group)}>
                 {#each LOOP_TRANSITIONS.filter((transition) => transition.group === group) as transition}
-                  <option value={transition.value}>{transition.label}</option>
+                  <option value={transition.value}>{localizedLoopTransitionLabel(transition.value, transition.label)}</option>
                 {/each}
               </optgroup>
             {/each}

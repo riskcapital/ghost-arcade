@@ -1,4 +1,23 @@
 export default {
+  midiLabels: {
+    masterOpacity: '마스터 불투명도',
+    stopAll: '모두 정지',
+    launchQuantize: '실행 퀀타이즈',
+    crossfaderEnabled: '크로스페이더 사용',
+    block: '블록 {number}: {name}',
+    deckColumn: '데크 {bank} 컬럼 {column}',
+    deckLayerSolo: '데크 {bank} L{layer} 솔로',
+    deckLayerMute: '데크 {bank} L{layer} 음소거',
+    deckLayerOpacity: '데크 {bank} L{layer} 불투명도',
+    deckLayerBlend: '데크 {bank} L{layer} 블렌드',
+    deckLayerColumn: '데크 {bank} L{layer} C{column}',
+    cutDeckA: '데크 A로 컷',
+    crossfader: '크로스페이더',
+    cutDeckB: '데크 B로 컷',
+    crossfaderFadeTime: '크로스페이더 페이드 시간',
+    crossfaderTransition: '크로스페이더 전환',
+    crossfaderBlendMode: '크로스페이더 블렌드 모드',
+  },
   file: {
     label: '파일',
     new: '새로 만들기',

@@ -23,6 +23,90 @@ export default {
         description: 'Mixer-channel workflow with faders, edge knobs, and channel buttons.',
       },
     },
+    controlMetadata: {
+      presets: {
+        midi: {
+          'generic-lpd8': {
+            name: 'Generic 8-pad',
+            controller: 'Akai LPD8-style',
+            description:
+              'Small pad/knob starter map: pads recall snapshots, knobs drive layer opacity, and extra pads handle transport actions.',
+          },
+          'akai-apc-mini': {
+            name: 'APC Mini',
+            controller: 'Akai APC Mini / APC Mini Mk2-style',
+            description:
+              'Grid/fader workflow: first 16 pads recall snapshots, faders drive layer opacity, and scene buttons handle performance actions.',
+          },
+          'novation-launchpad': {
+            name: 'Launchpad',
+            controller: 'Novation Launchpad-style',
+            description:
+              'Pad-first map for tablet VJ mode: first two rows recall snapshots, the next row toggles layers, and side controls handle output.',
+          },
+          'korg-nanokontrol': {
+            name: 'nanoKONTROL',
+            controller: 'Korg nanoKONTROL2-style',
+            description:
+              'Fader-heavy mix map: first four sliders drive layer opacity, upper button banks recall snapshots, transport handles record and output.',
+          },
+        },
+        osc: {
+          'ghost-performance': {
+            name: 'Ghost Performance',
+            controller: 'Ghost tablet / OSC mixer',
+            description: 'Canonical Ghost Arcade addresses for layers, output, mic, and recording.',
+          },
+          'touchosc-mixer': {
+            name: 'TouchOSC Mixer',
+            controller: 'TouchOSC / OSC Pilot-style',
+            description: 'Straight fader and button map for common tablet OSC mixer layouts.',
+          },
+          'apc-tablet': {
+            name: 'APC Tablet',
+            controller: 'APC Mini-style OSC surface',
+            description: 'Fader row plus arm/solo-style buttons for a compact VJ layer deck.',
+          },
+          'launchpad-tablet': {
+            name: 'Launchpad Tablet',
+            controller: 'Launchpad-style OSC grid',
+            description: 'Pad grid layout for quick layer toggles and performance buttons.',
+          },
+          'nanokontrol-tablet': {
+            name: 'nanoKONTROL Tablet',
+            controller: 'nanoKONTROL-style OSC mixer',
+            description: 'Four-channel fader surface with transport buttons for output and recording.',
+          },
+        },
+      },
+      targets: {
+        micToggle: 'Toggle mic',
+        cleanOutput: 'Clean output',
+        autopilotToggle: 'Record',
+        crossfader: 'L{layer} opacity',
+        bank: 'L{layer} toggle',
+        clip: 'L{layer} opacity',
+        snapshot: 'Snapshot {slot}',
+        layer: {
+          opacity: 'L{layer} opacity',
+          enabled: 'L{layer} on/off',
+          blend: 'L{layer} blend mode',
+          mapped: 'L{layer} mapping on/off',
+          edge: 'L{layer} edge fade',
+          speed: 'L{layer} speed',
+          intensity: 'L{layer} audio intensity',
+          corner: 'L{layer} {corner} {axis}',
+          effect: 'L{layer} {effect} {param}',
+        },
+      },
+      groups: {
+        global: 'Global',
+        layer: 'Layer {layer}',
+        layerMapping: 'Layer {layer} Mapping',
+        layerFx: 'Layer {layer} FX',
+        snapshots: 'Snapshots',
+      },
+    },
     mapPresets: {
       fullFrame: 'Full frame',
       centerPanel: 'Center panel',

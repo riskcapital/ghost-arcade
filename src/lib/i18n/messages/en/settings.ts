@@ -264,11 +264,18 @@ export default {
     },
   },
   recording: {
+    folderSelectionUnsupported:
+      'Your browser does not support folder selection. Recordings will be saved to Downloads.',
     heading: 'Recording',
     format: {
       label: 'Video Format',
       hint: 'Choose the format for screen recordings',
       unsupported: '(Not supported)',
+      descriptions: {
+        webmVp9: 'Best quality',
+        webmVp8: 'Good compatibility',
+        mp4H264: 'Universal playback',
+      },
     },
     quality: {
       label: 'Video Quality',
@@ -282,6 +289,7 @@ export default {
       label: 'Save Location',
       chooseFolder: 'Choose Folder',
       reset: 'Reset',
+      defaultFolder: 'Downloads (default)',
     },
     info: {
       directPrefix: 'Recordings will be saved directly to: ',
@@ -529,6 +537,20 @@ export default {
       reference: {
         summary: 'Parameter path reference',
         legacy: 'Legacy paths such as vj:layer:0:opacity are accepted and normalized automatically.',
+        examples: {
+          deckALayer1Clip1: 'Deck A layer 1, clip 1',
+          deckBLayer1Clip1: 'Deck B layer 1, clip 1',
+          deckALayer1Opacity: 'Deck A layer 1 opacity',
+          deckALayer1PlayPause: 'Deck A layer 1 play / pause',
+          deckALayer1Restart: 'Deck A layer 1 restart',
+          vjMasterOpacity: 'VJ master opacity',
+          abCrossfader: 'A/B crossfader',
+          stopAllVjClips: 'Stop all VJ clips',
+          mappingPreset1: 'Mapping preset 1',
+          selectedMappingLayerOpacity: 'Selected mapping layer opacity',
+          selectedMediaPlayPause: 'Selected media play / pause',
+          selectedMediaRestart: 'Selected media restart',
+        },
       },
     },
     keyboard: {

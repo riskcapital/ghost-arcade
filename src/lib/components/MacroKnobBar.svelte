@@ -21,6 +21,7 @@
   import { EFFECT_CATALOG } from '../effects/effectCatalog';
   import type { EffectType, Effect, EffectParams } from '../types';
   import { t } from '../i18n';
+  import { effectOptionLabel, effectParamLabel, effectTypeLabel } from '../i18n/displayLabels';
 
   // Drag state — track which knob is being dragged + start position.
   let dragKnobId: string | null = null;
@@ -57,6 +58,32 @@
     for (const e of EFFECT_CATALOG) map[e.type] = e.label;
     return map;
   })();
+
+  function displayLabelKey(value: string): string {
+    return value
+      .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+  }
+
+  function getEffectLabel(type: string): string {
+    return effectTypeLabel($t, type, EFFECT_LABEL_BY_TYPE[type] ?? type);
+  }
+
+  function getEffectParamDisplayLabel(key: string, fallback = key): string {
+    const translatedById = effectParamLabel($t, key);
+    return translatedById === key
+      ? effectParamLabel($t, displayLabelKey(fallback), fallback)
+      : translatedById;
+  }
+
+  function getEffectOptionDisplayLabel(value: string | number, fallback = String(value)): string {
+    const translatedById = effectOptionLabel($t, value);
+    return translatedById === String(value)
+      ? effectOptionLabel($t, displayLabelKey(fallback), fallback)
+      : translatedById;
+  }
 
   // Param metadata helpers — pull the per-effect-type param schema from
   // effectUX.ts and turn it into an iterable list for the slider grid.
@@ -417,7 +444,7 @@
                     )}
                     onclick={() => (expandedFxId = isExpanded ? null : fx.id)}
                   >
-                    <div class="macro-fx-label">{EFFECT_LABEL_BY_TYPE[fx.type] ?? fx.type}</div>
+                    <div class="macro-fx-label">{getEffectLabel(fx.type)}</div>
                     <div class="macro-fx-sub">
                       {$t('sequencer.macro.effectBundle.opacity', {
                         values: { percent: Math.round((fx.opacity ?? 1) * 100)},
@@ -446,7 +473,7 @@
                   <div class="macro-fx-params">
                     <div class="macro-fx-params-title">
                       <span>{$t('sequencer.macro.effectBundle.effect')}</span>
-                      <strong>{EFFECT_LABEL_BY_TYPE[fx.type] ?? fx.type}</strong>
+                      <strong>{getEffectLabel(fx.type)}</strong>
                     </div>
                     {#if paramMetas.length === 0}
                       <div class="macro-fx-params-empty">
@@ -457,7 +484,7 @@
                         {@const value = getParamValue(fx, key, meta.default)}
                         {#if meta.type === 'select' && meta.options}
                           <div class="macro-fx-param">
-                            <label class="macro-fx-param-label" for="mfx-{fx.id}-{key}">{meta.label}</label>
+                            <label class="macro-fx-param-label" for="mfx-{fx.id}-{key}">{getEffectParamDisplayLabel(key, meta.label)}</label>
                             <select
                               id="mfx-{fx.id}-{key}"
                               class="macro-fx-param-select"
@@ -466,13 +493,13 @@
                                 } as Partial<EffectParams>)}
                             >
                               {#each meta.options as opt}
-                                <option value={opt.value}>{opt.label}</option>
+                                <option value={opt.value}>{getEffectOptionDisplayLabel(opt.value, opt.label)}</option>
                               {/each}
                             </select>
                           </div>
                         {:else}
                           <div class="macro-fx-param">
-                            <label class="macro-fx-param-label" for="mfx-{fx.id}-{key}">{meta.label}</label>
+                            <label class="macro-fx-param-label" for="mfx-{fx.id}-{key}">{getEffectParamDisplayLabel(key, meta.label)}</label>
                             <input
                               id="mfx-{fx.id}-{key}"
                               class="macro-fx-param-slider"

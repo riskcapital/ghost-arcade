@@ -1,4 +1,7 @@
 export default {
+  midiLabels: {
+    vjMode: 'VJ Mode',
+  },
   gpu: {
     integratedTitle: 'Running on integrated graphics',
     detected: 'Detected:',
@@ -74,6 +77,22 @@ export default {
     enterWebsocket: 'Enter WebSocket URL when prompted',
     tapConnect: 'Tap Connect - drag corners to warp!',
     close: 'Close',
+  },
+  phoneVision: {
+    labels: {
+      vision: 'Phone Vision',
+      camera: 'Phone Camera',
+      auraLayer: 'Phone Aura',
+      pointCloudLayer: 'Phone Point Cloud',
+    },
+    status: {
+      connectionFailed: 'Phone camera connection failed.',
+      reconnecting: 'Phone camera reconnecting.',
+    },
+    capabilities: {
+      native: 'Native Vision',
+      browser: 'Browser Vision',
+    },
   },
   mapping: {
     dragMoveLine: 'Drag to move line',

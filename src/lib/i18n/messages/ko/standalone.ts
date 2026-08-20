@@ -23,6 +23,90 @@ export default {
         description: '페이더, 가장자리 노브와 채널 버튼을 사용하는 믹서 채널 작업 방식입니다.',
       },
     },
+    controlMetadata: {
+      presets: {
+        midi: {
+          'generic-lpd8': {
+            name: '일반 8패드',
+            controller: 'Akai LPD8 스타일',
+            description:
+              '작은 패드·노브 시작 매핑으로, 패드는 스냅샷을 불러오고 노브는 레이어 불투명도를 조절하며 추가 패드는 트랜스포트 동작을 담당합니다.',
+          },
+          'akai-apc-mini': {
+            name: 'APC Mini',
+            controller: 'Akai APC Mini / APC Mini Mk2 스타일',
+            description:
+              '그리드·페이더 작업 방식으로, 처음 16개 패드는 스냅샷을 불러오고 페이더는 레이어 불투명도를 조절하며 씬 버튼은 퍼포먼스 동작을 담당합니다.',
+          },
+          'novation-launchpad': {
+            name: 'Launchpad',
+            controller: 'Novation Launchpad 스타일',
+            description:
+              '태블릿 VJ 모드용 패드 중심 매핑으로, 처음 두 행은 스냅샷을 불러오고 다음 행은 레이어를 전환하며 측면 컨트롤은 출력을 다룹니다.',
+          },
+          'korg-nanokontrol': {
+            name: 'nanoKONTROL',
+            controller: 'Korg nanoKONTROL2 스타일',
+            description:
+              '페이더 중심 믹스 매핑으로, 처음 네 슬라이더는 레이어 불투명도를 조절하고 위쪽 버튼 뱅크는 스냅샷을 불러오며 트랜스포트는 녹화와 출력을 담당합니다.',
+          },
+        },
+        osc: {
+          'ghost-performance': {
+            name: 'Ghost 퍼포먼스',
+            controller: 'Ghost 태블릿 / OSC 믹서',
+            description: '레이어, 출력, 마이크와 녹화를 위한 Ghost Arcade 표준 주소입니다.',
+          },
+          'touchosc-mixer': {
+            name: 'TouchOSC 믹서',
+            controller: 'TouchOSC / OSC Pilot 스타일',
+            description: '일반적인 태블릿 OSC 믹서 레이아웃을 위한 페이더와 버튼 매핑입니다.',
+          },
+          'apc-tablet': {
+            name: 'APC 태블릿',
+            controller: 'APC Mini 스타일 OSC 표면',
+            description: '간결한 VJ 레이어 데크를 위한 페이더 행과 암·솔로 스타일 버튼입니다.',
+          },
+          'launchpad-tablet': {
+            name: 'Launchpad 태블릿',
+            controller: 'Launchpad 스타일 OSC 그리드',
+            description: '빠른 레이어 전환과 퍼포먼스 버튼을 위한 패드 그리드 레이아웃입니다.',
+          },
+          'nanokontrol-tablet': {
+            name: 'nanoKONTROL 태블릿',
+            controller: 'nanoKONTROL 스타일 OSC 믹서',
+            description: '출력과 녹화를 위한 트랜스포트 버튼이 있는 4채널 페이더 표면입니다.',
+          },
+        },
+      },
+      targets: {
+        micToggle: '마이크 전환',
+        cleanOutput: '클린 출력',
+        autopilotToggle: '녹화',
+        crossfader: 'L{layer} 불투명도',
+        bank: 'L{layer} 전환',
+        clip: 'L{layer} 불투명도',
+        snapshot: '스냅샷 {slot}',
+        layer: {
+          opacity: 'L{layer} 불투명도',
+          enabled: 'L{layer} 켜기/끄기',
+          blend: 'L{layer} 블렌드 모드',
+          mapped: 'L{layer} 매핑 켜기/끄기',
+          edge: 'L{layer} 가장자리 페이드',
+          speed: 'L{layer} 속도',
+          intensity: 'L{layer} 오디오 강도',
+          corner: 'L{layer} {corner} {axis}',
+          effect: 'L{layer} {effect} {param}',
+        },
+      },
+      groups: {
+        global: '전역',
+        layer: '{layer} 레이어',
+        layerMapping: '{layer} 레이어 매핑',
+        layerFx: '{layer} 레이어 FX',
+        snapshots: '스냅샷',
+      },
+    },
     mapPresets: {
       fullFrame: '전체 화면',
       centerPanel: '중앙 패널',

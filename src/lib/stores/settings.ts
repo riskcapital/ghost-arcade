@@ -4,6 +4,7 @@
 import { writable, get } from 'svelte/store';
 import { invoke, isDesktopApp } from '$lib/bridge';
 import type { WarpCorners, MeshWarpGrid, Effect } from '../types';
+import { t } from '../i18n';
 
 // ============================================================================
 // COLOR SCHEME DEFINITIONS
@@ -836,11 +837,32 @@ export interface AppSettings {
 }
 
 // Check which formats are supported by this browser
-export function getSupportedFormats(): { id: string; label: string; mimeType: string; supported: boolean }[] {
+export function getSupportedFormats(): {
+  id: string;
+  label: string;
+  descriptionKey: string;
+  mimeType: string;
+  supported: boolean;
+}[] {
   const formats = [
-    { id: 'webm-vp9', label: 'WebM (VP9) - Best Quality', mimeType: 'video/webm;codecs=vp9' },
-    { id: 'webm-vp8', label: 'WebM (VP8) - Good Compatibility', mimeType: 'video/webm;codecs=vp8' },
-    { id: 'mp4-h264', label: 'MP4 (H.264) - Universal Playback', mimeType: 'video/mp4;codecs=avc1.424028' },
+    {
+      id: 'webm-vp9',
+      label: 'WebM (VP9)',
+      descriptionKey: 'settings.recording.format.descriptions.webmVp9',
+      mimeType: 'video/webm;codecs=vp9',
+    },
+    {
+      id: 'webm-vp8',
+      label: 'WebM (VP8)',
+      descriptionKey: 'settings.recording.format.descriptions.webmVp8',
+      mimeType: 'video/webm;codecs=vp8',
+    },
+    {
+      id: 'mp4-h264',
+      label: 'MP4 (H.264)',
+      descriptionKey: 'settings.recording.format.descriptions.mp4H264',
+      mimeType: 'video/mp4;codecs=avc1.424028',
+    },
   ];
 
   return formats.map(f => ({
@@ -1366,7 +1388,7 @@ function createSettingsStore() {
 
         // Browser: File System Access API
         if (!('showDirectoryPicker' in window)) {
-          alert('Your browser does not support folder selection. Recordings will be saved to Downloads.');
+          alert(get(t)('settings.recording.folderSelectionUnsupported'));
           return false;
         }
 

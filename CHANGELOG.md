@@ -9,6 +9,8 @@
   including physical-display selection, per-screen calibration, and output
   window status guidance. Advanced drawing, 3D, projection, lighting, LED,
   timeline, AI, standalone, and auxiliary operator panels are included.
+- Added a Korean user manual and implementation-based process flowchart in
+  printable PDF form under `docs/ko/`.
 
 ---
 

@@ -35,6 +35,10 @@
   const urlParams = new URLSearchParams(window.location.search);
   const sliceId = urlParams.get('sliceId') || '';
 
+  function outputMessage(key: string, values?: Record<string, string | number>): string {
+    return $t(`screens.outputWindow.${key}`, values ? { values } : undefined);
+  }
+
   let presentCanvas: HTMLCanvasElement | null = null;
   let presentCtx: CanvasRenderingContext2D | null = null;
   let rafId = 0;
@@ -50,7 +54,7 @@
   // each frame; the WebGPU path keeps only this one live frame.
   let latestFrame: VideoFrame | null = null;
   let attachedPort: MessagePort | null = null;
-  let zeroCopyDiagMsg = 'waiting for editor link…';
+  let zeroCopyDiagMsg = '';
   let zeroCopyFramesReceived = 0;
   let latestBitmap: ImageBitmap | null = null;
   let useBitmapFallback = false;
@@ -226,14 +230,14 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
       useBitmapFallback = false;
       closeLatestFrame();
       latestFrame = frame;
-      zeroCopyDiagMsg = 'createImageBitmap unavailable; using VideoFrame draw';
+      zeroCopyDiagMsg = outputMessage('diagnostics.createImageBitmapUnavailable');
       return;
     }
 
     const seq = ++bitmapFallbackSeq;
     const fw = sourceWidth(frame, zeroCopyLastSourceW || 1920);
     const fh = sourceHeight(frame, zeroCopyLastSourceH || 1080);
-    zeroCopyDiagMsg = 'converting VideoFrame to ImageBitmap';
+    zeroCopyDiagMsg = outputMessage('diagnostics.convertingVideoFrame');
     makeBitmap(frame as any)
       .then((bitmap) => {
         if (seq !== bitmapFallbackSeq) {
@@ -244,11 +248,13 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
         latestBitmap = bitmap;
         zeroCopyLastSourceW = fw;
         zeroCopyLastSourceH = fh;
-        zeroCopyDiagMsg = 'bitmap fallback active';
+        zeroCopyDiagMsg = outputMessage('diagnostics.bitmapFallbackActive');
       })
       .catch((err: any) => {
         if (seq === bitmapFallbackSeq) {
-          zeroCopyDiagMsg = `bitmap fallback failed: ${err?.message ?? err}`;
+          zeroCopyDiagMsg = outputMessage('diagnostics.bitmapFallbackFailed', {
+            error: err?.message ?? err,
+          });
         }
       })
       .finally(() => {
@@ -269,7 +275,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
     closeLatestFrame();
     closeLatestBitmap();
     latestFrame = frame;
-    zeroCopyDiagMsg = 'frame received';
+    zeroCopyDiagMsg = outputMessage('diagnostics.frameReceived');
   }
 
   function enableBitmapFallback(reason: string, frame: VideoFrame): void {
@@ -277,7 +283,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
       console.warn('[SliceOutput] drawImage(VideoFrame) failed; switching to ImageBitmap fallback:', reason);
     }
     useBitmapFallback = true;
-    zeroCopyDiagMsg = `drawImage fallback: ${reason}`;
+    zeroCopyDiagMsg = outputMessage('diagnostics.drawImageFallback', { reason });
     if (latestFrame === frame) latestFrame = null;
     queueBitmapFallback(frame);
   }
@@ -388,13 +394,15 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
         usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
       });
       sliceGpuReady = true;
-      zeroCopyDiagMsg = 'webgpu slice renderer ready';
+      zeroCopyDiagMsg = outputMessage('diagnostics.webGpuSliceRendererReady');
       console.log('[SliceOutput] WebGPU zero-copy slice renderer ready');
       return true;
     } catch (err: any) {
       sliceGpuFailed = true;
       sliceGpuReady = false;
-      zeroCopyDiagMsg = `webgpu unavailable: ${err?.message ?? err}`;
+      zeroCopyDiagMsg = outputMessage('diagnostics.webGpuUnavailable', {
+        error: err?.message ?? err,
+      });
       console.warn('[SliceOutput] WebGPU slice renderer unavailable; falling back to Canvas2D:', err?.message ?? err);
       return false;
     }
@@ -459,10 +467,12 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
       pass.draw(6, 1, 0, 0);
       pass.end();
       sliceGpuDevice.queue.submit([encoder.finish()]);
-      zeroCopyDiagMsg = 'webgpu frame presented';
+      zeroCopyDiagMsg = outputMessage('diagnostics.webGpuFramePresented');
       return true;
     } catch (err: any) {
-      zeroCopyDiagMsg = `webgpu present failed: ${err?.message ?? err}`;
+      zeroCopyDiagMsg = outputMessage('diagnostics.webGpuPresentFailed', {
+        error: err?.message ?? err,
+      });
       console.warn('[SliceOutput] WebGPU zero-copy present failed:', err?.message ?? err);
       return false;
     }
@@ -492,7 +502,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
       }
     };
     port.start();
-    zeroCopyDiagMsg = 'port attached';
+    zeroCopyDiagMsg = outputMessage('diagnostics.portAttached');
     console.log('[SliceOutput] MessagePort attached');
   }
 
@@ -512,11 +522,15 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
   function signalReadyToOpener(): void {
     const opener = (window as any).opener as Window | null;
     if (!opener) {
-      zeroCopyDiagMsg = 'no window.opener — open via Open on display';
+      zeroCopyDiagMsg = outputMessage('diagnostics.noWindowOpener');
       return;
     }
     try { opener.postMessage({ type: 'ghostarcade-output-ready' }, '*'); }
-    catch (err: any) { zeroCopyDiagMsg = `opener.postMessage failed: ${err?.message ?? err}`; }
+    catch (err: any) {
+      zeroCopyDiagMsg = outputMessage('diagnostics.openerPostMessageFailed', {
+        error: err?.message ?? err,
+      });
+    }
   }
 
   // Register the message listener at script-init so we don't race the
@@ -618,8 +632,11 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
       presentCtx.fillStyle = '#fa5';
       presentCtx.font = '24px monospace';
       presentCtx.textBaseline = 'top';
-      presentCtx.fillText(`NO SLICE CONFIG sliceId=${sliceId}`, 20, 20);
-      presentCtx.fillText(`frames=${zeroCopyFramesReceived} slices=${$settings.output?.slices?.length ?? 0}`, 20, 56);
+      presentCtx.fillText(outputMessage('diagnostics.noSliceConfig', { sliceId }), 20, 20);
+      presentCtx.fillText(outputMessage('diagnostics.noSliceConfigDetails', {
+        frames: zeroCopyFramesReceived,
+        slices: $settings.output?.slices?.length ?? 0,
+      }), 20, 56);
       return;
     }
 
@@ -664,8 +681,15 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
       presentCtx.fillStyle = '#fa5';
       presentCtx.font = '18px monospace';
       presentCtx.textBaseline = 'top';
-      presentCtx.fillText(`INVALID SLICE CROP sliceId=${sliceId}`, 20, 20);
-      presentCtx.fillText(`src=${mw}x${mh} crop=${slice.cropX},${slice.cropY} ${slice.cropW}x${slice.cropH}`, 20, 48);
+      presentCtx.fillText(outputMessage('diagnostics.invalidSliceCrop', { sliceId }), 20, 20);
+      presentCtx.fillText(outputMessage('diagnostics.invalidSliceCropDetails', {
+        sourceWidth: mw,
+        sourceHeight: mh,
+        cropX: slice.cropX,
+        cropY: slice.cropY,
+        cropWidth: slice.cropW,
+        cropHeight: slice.cropH,
+      }), 20, 48);
       return;
     }
     const sx = Math.max(0, Math.min(mw - 1, rawSx));

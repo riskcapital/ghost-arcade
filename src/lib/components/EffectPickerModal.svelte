@@ -12,6 +12,7 @@
   import { webgpuSupportedStore } from '../renderer/webgpuCapability';
   import { get } from 'svelte/store';
   import { t } from '../i18n';
+  import { effectTypeLabel } from '../i18n/displayLabels';
 
   // WebGPU capability — reactive store, NOT a snapshot. The probe is
   // async and may not have resolved by the time this modal first
@@ -102,6 +103,10 @@
     return translated === key ? entry.description : translated;
   }
 
+  function effectDisplayLabel(entry: EffectCatalogEntry): string {
+    return isCustomEntry(entry) ? entry.label : effectTypeLabel($t, entry.type, entry.label);
+  }
+
   function toggleCategory(cat: string) {
     const next = new Set(collapsed);
     if (next.has(cat)) next.delete(cat);
@@ -161,10 +166,11 @@
     for (const cat of allCategories) map.set(cat, []);
     for (const entry of combinedCatalog) {
       if (q) {
+        const label = effectDisplayLabel(entry);
         const description = effectDescription(entry);
         const category = categoryLabel(entry.category);
         const matches =
-          entry.label.toLowerCase().includes(q) ||
+          label.toLowerCase().includes(q) ||
           description.toLowerCase().includes(q) ||
           category.toLowerCase().includes(q) ||
           entry.type.toLowerCase().includes(q);
@@ -375,7 +381,7 @@
                       <div class="row-thumb" style="background: {entry.previewCSS};"></div>
                       <div class="row-info">
                         <span class="row-name">
-                          {entry.label}
+                          {effectDisplayLabel(entry)}
                           {#if custom}
                             <span class="custom-badge">{$t('effects.picker.customBadge')}</span>
                           {/if}

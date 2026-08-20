@@ -46,6 +46,14 @@
   import { shaderLibrary } from '../stores/shaderLibrary';
   import { videoLibrary } from '../stores/videoLibrary';
   import { settings } from '../stores/settings';
+  import {
+    effectTypeLabel,
+    effectParamLabel,
+    effectOptionLabel,
+    blendModeLabel,
+    stageEffectTypeLabel,
+    stageEffectParamLabel,
+  } from '../i18n/displayLabels';
   import { startRecording as startRec, formatRecordingDuration, type RecorderHandle } from '../recording/recorder';
   import { showLoading } from '../stores/loading';
   import { showToast } from '../stores/errorToast';
@@ -62,6 +70,60 @@
   // standalone strip below the header was dropped — its contents are now
   // inline in the header (single source of truth, no second tap/tempo row).
   void VJAudioBar;
+
+  function displayCatalogKey(value: string): string {
+    return value
+      .trim()
+      .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+      .replace(/[^a-zA-Z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '')
+      .toLowerCase();
+  }
+
+  function vjEffectTypeDisplayLabel(type: string, fallback = type): string {
+    const catalogFallback = EFFECT_CATALOG.find((entry) => entry.type === type)?.label;
+    return effectTypeLabel($t, type, catalogFallback ?? fallback);
+  }
+
+  function vjEffectParamDisplayLabel(key: string, fallback = key): string {
+    const translated = effectParamLabel($t, key);
+    return translated === key
+      ? effectParamLabel($t, displayCatalogKey(fallback), fallback)
+      : translated;
+  }
+
+  function vjEffectOptionDisplayLabel(value: string | number, fallback: string): string {
+    const translated = effectOptionLabel($t, value);
+    return translated === String(value)
+      ? effectOptionLabel($t, displayCatalogKey(fallback), fallback)
+      : translated;
+  }
+
+  function vjBlendModeDisplayLabel(mode: string): string {
+    return blendModeLabel($t, mode, mode);
+  }
+
+  function vjStageEffectTypeDisplayLabel(type: string, fallback = type): string {
+    return stageEffectTypeLabel($t, type, fallback);
+  }
+
+  function vjStageEffectParamDisplayLabel(key: string, fallback = key): string {
+    return stageEffectParamLabel($t, key, fallback);
+  }
+
+  function vjPresetDisplayName(type: string, index: number, preset: {
+    name: string;
+    id?: unknown;
+    presetId?: unknown;
+    effectId?: unknown;
+    userName?: unknown;
+  }): string {
+    if (typeof preset.userName === 'string' && preset.userName.trim()) return preset.userName;
+    const key = `effects.presets.${type}.${index}`;
+    const translated = $t(key);
+    return translated === key ? preset.name : translated;
+  }
+
   import { applyPresetToEffect, getEffectPresets, getNumericEffectParams, effectParamLabels,
   } from '../effects/effectUX';
   import { EFFECT_CATALOG } from '../effects/effectCatalog';
@@ -3553,7 +3615,7 @@
             oninput={handleMasterOpacityChange}
             class="master-slider"
             data-midi-path="vj:master:opacity"
-            data-midi-label="Master Opacity"
+            data-midi-label={$t('vj.midiLabels.masterOpacity')}
             data-midi-min="0"
             data-midi-max="1"
             data-midi-step="0.01"
@@ -3568,7 +3630,7 @@
              trained on mapping mode recognize it immediately. -->
         <button class="kill-output-btn" onclick={handleStopAll}
           data-midi-path="vj:stopall"
-          data-midi-label="Stop All"
+          data-midi-label={$t('vj.midiLabels.stopAll')}
           data-midi-mode="toggle"
           title={$t('vj.header.stopAllTitle')}
           aria-label={$t('vj.header.stopAllAria')}
@@ -3622,7 +3684,7 @@
             value={$vjClipLauncher.quantization}
             onchange={(e) => vjClipLauncher.setQuantization((e.target as HTMLSelectElement).value as any)}
             data-midi-path="vj:quantize"
-            data-midi-label="Launch Quantize"
+            data-midi-label={$t('vj.midiLabels.launchQuantize')}
             data-midi-discrete="true"
           >
             <option value="off">{$t('vj.header.quantize.off')}</option>
@@ -3692,7 +3754,7 @@
             onclick={() => vjClipLauncher.setCrossfaderEnabled(!$vjClipLauncher.crossfaderEnabled)}
             title={$t('vj.header.crossfader')}
             data-midi-path="vj:crossfader:enabled"
-            data-midi-label="Crossfader Enabled"
+            data-midi-label={$t('vj.midiLabels.crossfaderEnabled')}
             data-midi-mode="toggle"
           >
             <span class="ab-toggle-glyph">A/B</span>
@@ -3799,7 +3861,7 @@
               oncontextmenu={(e) => openStageContextMenu(e, preset)}
               title={$t('vj.stagePresets.itemTitle', { values: { name: preset.name } })}
               data-midi-path={`vj:stage:${presetIdx}`}
-              data-midi-label={`Stage Preset: ${preset.name}`}
+              data-midi-label={$t('vj.stagePresets.itemTitle', { values: { name: preset.name } })}
               data-midi-mode="toggle"
             >
               {#if preset._scope === 'global'}<span class="stage-preset-scope">G</span>{/if}
@@ -3984,7 +4046,7 @@
                 <div class="stage-fx-add">
                   <select bind:value={stageAddType} class="stage-fx-select">
                     {#each STAGE_EFFECT_CATALOG as def (def.type)}
-                      <option value={def.type}>{def.icon} {def.label}</option>
+                      <option value={def.type}>{def.icon} {vjStageEffectTypeDisplayLabel(def.type, def.label)}</option>
                     {/each}
                   </select>
                   <button class="add-effect-btn" onclick={() => surfaceStore.addStageEffect(stageAddType)}>{$t('vj.effects.add')}</button>
@@ -4010,7 +4072,7 @@
                           >{isLive ? '◉' : '○'}</button>
                           <span class="effect-name">
                             <span class="stage-fx-icon">{def?.icon ?? '◆'}</span>
-                            {def?.label ?? eff.type}
+                            {vjStageEffectTypeDisplayLabel(eff.type, def?.label ?? eff.type)}
                           </span>
                           <!-- Cycle-include toggle. Auto-cycle visits
                                only ↻-included effects; muting this
@@ -4021,10 +4083,12 @@
                             class:active={isLive}
                             class:pressed={!!heldStageEffects[eff.id]}
                             type="button"
-                            title={$t('vj.effects.hold', { values: { effect: def?.label ?? eff.type } })}
-                            aria-label={$t('vj.effects.hold', { values: { effect: def?.label ?? eff.type } })}
+                            title={$t('vj.effects.hold', { values: { effect: vjStageEffectTypeDisplayLabel(eff.type, def?.label ?? eff.type) } })}
+                            aria-label={$t('vj.effects.hold', { values: { effect: vjStageEffectTypeDisplayLabel(eff.type, def?.label ?? eff.type) } })}
                             data-midi-path={`vj:stage-effect:${eff.id}:hold`}
-                            data-midi-label={`Stage FX Hold: ${def?.label ?? eff.type}`}
+                            data-midi-label={$t('vj.effects.hold', {
+                              values: { effect: vjStageEffectTypeDisplayLabel(eff.type, def?.label ?? eff.type) },
+                            })}
                             data-midi-mode="toggle"
                             data-midi-min="0"
                             data-midi-max="1"
@@ -4069,7 +4133,7 @@
                             </div>
                             {#each def?.paramSpecs ?? [] as spec (spec.key)}
                               <div class="param-row">
-                                <span>{spec.label}</span>
+                                <span>{vjStageEffectParamDisplayLabel(spec.key, spec.label)}</span>
                                 <input
                                   type="range"
                                   min={spec.min}
@@ -4117,7 +4181,7 @@
                           onclick={(e) => { e.stopPropagation(); toggleEffect(effect.id); }}>
                           {effect.enabled ? '●' : '○'}
                         </button>
-                        <span class="effect-name">{effect.type}</span>
+                        <span class="effect-name">{vjEffectTypeDisplayLabel(effect.type)}</span>
                         <span class="effect-expand">{expandedEffectId === effect.id ? '▼' : '▶'}</span>
                         <button class="effect-delete" onclick={(e) => { e.stopPropagation(); deleteEffect(effect.id); }}>×</button>
                       </div>
@@ -4125,7 +4189,7 @@
                         <div class="effect-params">
                           <div class="effect-param-title">
                             <span>{$t('vj.effects.effect')}</span>
-                            <strong>{effect.type}</strong>
+                            <strong>{vjEffectTypeDisplayLabel(effect.type)}</strong>
                           </div>
                           {#if getEffectPresets(effect.type).length > 0}
                             <details open>
@@ -4141,7 +4205,7 @@
                                 >
                                   <option value="">{$t('vj.effects.selectPreset')}</option>
                                   {#each getEffectPresets(effect.type) as preset, i}
-                                    <option value={String(i)}>{preset.name}</option>
+                                    <option value={String(i)}>{vjPresetDisplayName(effect.type, i, preset)}</option>
                                   {/each}
                                 </select>
                               </div>
@@ -4178,20 +4242,20 @@
                               {#each Object.entries(_paramMeta) as [paramKey, meta]}
                                 {#if meta.type === 'select' && meta.options}
                                   <div class="param-row">
-                                    <span class="param-name">{meta.label}</span>
+                                    <span class="param-name">{vjEffectParamDisplayLabel(paramKey, meta.label)}</span>
                                     <select
                                       value={(effect.params as Record<string, number>)[paramKey] ?? meta.default}
                                       onchange={(e) => updateEffectParam(effect.id, paramKey, parseFloat((e.target as HTMLSelectElement).value),
                                           )}
                                       style="flex:1; background:#222; color:#fff; border:1px solid #444; border-radius:3px; padding:2px 4px; font-size:12px;">
                                       {#each meta.options as opt}
-                                        <option value={opt.value}>{opt.label}</option>
+                                        <option value={opt.value}>{vjEffectOptionDisplayLabel(opt.value, opt.label)}</option>
                                       {/each}
                                     </select>
                                   </div>
                                 {:else if meta.type === 'color' && meta.colorParams}
                                   <div class="param-row">
-                                    <span class="param-name">{meta.label}</span>
+                                    <span class="param-name">{vjEffectParamDisplayLabel(paramKey, meta.label)}</span>
                                     <input type="color"
                                       value={'#' + [meta.colorParams.r, meta.colorParams.g, meta.colorParams.b].map((k) => {
                                         const v = (effect.params as Record<string, number>)[k] ?? 0;
@@ -4212,7 +4276,7 @@
                                   </div>
                                 {:else if effectsTab === 'layer' && selectedLayerIndex !== null}
                                   <EffectParamRow
-                                    label={meta.label}
+                                    label={vjEffectParamDisplayLabel(paramKey, meta.label)}
                                     value={(effect.params as Record<string, number>)[paramKey] ?? meta.default}
                                     min={meta.min as number}
                                     max={meta.max as number}
@@ -4229,12 +4293,12 @@
                                   <!-- Composition / clip tabs: plain slider, no modulation dropdown. -->
                                   {@const val = (effect.params as Record<string, number>)[paramKey] ?? meta.default}
                                   <div class="param-row">
-                                    <span class="param-name">{meta.label}</span>
+                                    <span class="param-name">{vjEffectParamDisplayLabel(paramKey, meta.label)}</span>
                                     <input type="range" min={meta.min as number} max={meta.max as number} step={meta.step as number} value={val}
                                       oninput={(e) => updateEffectParam(effect.id, paramKey, parseFloat((e.target as HTMLInputElement).value),
                                           )}
                                       data-midi-path="vj:fx:{effect.id}:{paramKey}"
-                                      data-midi-label="{effect.type} {meta.label}"
+                                      data-midi-label={`${vjEffectTypeDisplayLabel(effect.type)} ${vjEffectParamDisplayLabel(paramKey, meta.label)}`}
                                       data-midi-min={meta.min}
                                       data-midi-max={meta.max}
                                       data-midi-step={meta.step} />
@@ -4251,7 +4315,7 @@
                               {#each _fallbackKeys as paramKey}
                                 {#if effectsTab === 'layer' && selectedLayerIndex !== null}
                                   <EffectParamRow
-                                    label={paramKey}
+                                    label={vjEffectParamDisplayLabel(paramKey)}
                                     value={(effect.params as Record<string, number>)[paramKey] ?? 0.5}
                                     min={0}
                                     max={1}
@@ -4267,7 +4331,7 @@
                                 {:else}
                                   {@const val = (effect.params as Record<string, number>)[paramKey] ?? 0.5}
                                   <div class="param-row">
-                                    <span class="param-name">{paramKey}</span>
+                                    <span class="param-name">{vjEffectParamDisplayLabel(paramKey)}</span>
                                     <input type="range" min="0" max="1" step="0.01" value={val}
                                       oninput={(e) => updateEffectParam(effect.id, paramKey, parseFloat((e.target as HTMLInputElement).value),
                                           )} />
@@ -5055,7 +5119,9 @@
                   role="tab"
                   tabindex="0"
                   data-midi-path="vj:block:{blockIdx}"
-                  data-midi-label="Block {blockIdx + 1}: {block.name}"
+                  data-midi-label={$t('vj.midiLabels.block', {
+                    values: { number: blockIdx + 1, name: block.name },
+                  })}
                   data-midi-mode="toggle"
                 >
                   {#if editingBlockId === block.id}
@@ -5127,7 +5193,9 @@
                 onclick={() => handleColumnTrigger(colIdx, bank)}
                 title={$t('vj.grid.triggerColumn', { values: { column: colIdx + 1, deck: bank } })}
                 data-midi-path="{midiPrefix}:column:{colIdx}"
-                data-midi-label="Deck {bank} Column {colIdx + 1}"
+                data-midi-label={$t('vj.midiLabels.deckColumn', {
+                  values: { bank, column: colIdx + 1 },
+                })}
                 data-midi-mode="toggle"
               >
                 {colIdx + 1}
@@ -5186,7 +5254,9 @@
                       onclick={(e) => { e.stopPropagation(); handleToggleSolo(layerIdx, bank); }}
                       title={$t('vj.grid.solo', { values: { deck: bank } })}
                       data-midi-path="{midiPrefix}:{layerIdx}:solo"
-                      data-midi-label="Deck {bank} L{layerIdx + 1} Solo"
+                      data-midi-label={$t('vj.midiLabels.deckLayerSolo', {
+                        values: { bank, layer: layerIdx + 1 },
+                      })}
                       data-midi-mode="toggle"
                     >S</button>
                     <button
@@ -5195,7 +5265,9 @@
                       onclick={(e) => { e.stopPropagation(); handleToggleMute(layerIdx, bank); }}
                       title={$t('vj.grid.mute', { values: { deck: bank } })}
                       data-midi-path="{midiPrefix}:{layerIdx}:mute"
-                      data-midi-label="Deck {bank} L{layerIdx + 1} Mute"
+                      data-midi-label={$t('vj.midiLabels.deckLayerMute', {
+                        values: { bank, layer: layerIdx + 1 },
+                      })}
                       data-midi-mode="toggle"
                     >M</button>
                     <button
@@ -5218,7 +5290,9 @@
                   onclick={(e) => e.stopPropagation()}
                   onpointerdown={(e) => e.stopPropagation()}
                   data-midi-path="{midiPrefix}:{layerIdx}:opacity"
-                  data-midi-label="Deck {bank} L{layerIdx + 1} Opacity"
+                  data-midi-label={$t('vj.midiLabels.deckLayerOpacity', {
+                    values: { bank, layer: layerIdx + 1 },
+                  })}
                   data-midi-min="0"
                   data-midi-max="1"
                   data-midi-step="0.01"
@@ -5229,11 +5303,13 @@
                   onchange={(e) => handleLayerBlendChange(layerIdx, e, bank)}
                   onclick={(e) => e.stopPropagation()}
                   data-midi-path="{midiPrefix}:{layerIdx}:blend"
-                  data-midi-label="Deck {bank} L{layerIdx + 1} Blend"
+                  data-midi-label={$t('vj.midiLabels.deckLayerBlend', {
+                    values: { bank, layer: layerIdx + 1 },
+                  })}
                   data-midi-discrete="true"
                 >
                   {#each blendModes as mode}
-                    <option value={mode}>{mode}</option>
+                    <option value={mode}>{vjBlendModeDisplayLabel(mode)}</option>
                   {/each}
                 </select>
               </div>
@@ -5271,7 +5347,9 @@
                   role="button"
                   tabindex="0"
                   data-midi-path="{midiPrefix}:{layerIdx}:trigger:{colIdx}"
-                  data-midi-label="Deck {bank} L{layerIdx + 1} C{colIdx + 1}"
+                  data-midi-label={$t('vj.midiLabels.deckLayerColumn', {
+                    values: { bank, layer: layerIdx + 1, column: colIdx + 1 },
+                  })}
                   data-midi-mode="toggle"
                 >
                   {#if clip}
@@ -5328,7 +5406,7 @@
                 onclick={() => glideCrossfaderTo(0)}
                 title={$t('vj.crossfader.cutA')}
                 data-midi-path="vj:crossfader:cut-a"
-                data-midi-label="Cut to Deck A"
+                data-midi-label={$t('vj.midiLabels.cutDeckA')}
                 data-midi-mode="toggle"
               >◀</button>
               <div class="xfade-vertical-track">
@@ -5341,7 +5419,7 @@
                   oninput={(e) => setCrossfaderManualValue(1 - parseFloat((e.target as HTMLInputElement).value))}
                   class="xfade-vertical-input"
                   data-midi-path="vj:crossfader:value"
-                  data-midi-label="Crossfader"
+                  data-midi-label={$t('vj.midiLabels.crossfader')}
                   data-midi-min="0"
                   data-midi-max="1"
                   data-midi-step="0.001"
@@ -5359,7 +5437,7 @@
                 onclick={() => glideCrossfaderTo(1)}
                 title={$t('vj.crossfader.cutB')}
                 data-midi-path="vj:crossfader:cut-b"
-                data-midi-label="Cut to Deck B"
+                data-midi-label={$t('vj.midiLabels.cutDeckB')}
                 data-midi-mode="toggle"
               >▶</button>
 
@@ -5372,7 +5450,7 @@
                   value={$vjClipLauncher.crossfaderFadeDuration ?? 0}
                   onchange={(e) => vjClipLauncher.setCrossfaderFadeDuration(parseFloat((e.target as HTMLSelectElement).value))}
                   data-midi-path="vj:crossfader:fadeDuration"
-                  data-midi-label="Crossfader Fade Time"
+                  data-midi-label={$t('vj.midiLabels.crossfaderFadeTime')}
                   data-midi-discrete="true"
                 >
                   <option value={0}>0s</option>
@@ -5391,7 +5469,7 @@
                 onchange={(e) => vjClipLauncher.setCrossfaderTransition((e.target as HTMLSelectElement).value as any)}
                 title={$t('vj.crossfader.transition')}
                 data-midi-path="vj:crossfader:transition"
-                data-midi-label="Crossfader Transition"
+                data-midi-label={$t('vj.midiLabels.crossfaderTransition')}
                 data-midi-discrete="true"
               >
                 <option value="dissolve">{$t('vj.crossfader.transitions.dissolve')}</option>
@@ -5420,18 +5498,18 @@
                 onchange={(e) => vjClipLauncher.setCrossfaderBlendMode((e.target as HTMLSelectElement).value as any)}
                 title={$t('vj.crossfader.blendTitle')}
                 data-midi-path="vj:crossfader:blendMode"
-                data-midi-label="Crossfader Blend Mode"
+                data-midi-label={$t('vj.midiLabels.crossfaderBlendMode')}
                 data-midi-discrete="true"
               >
-                <option value="normal">{$t('vj.crossfader.blends.normal')}</option>
-                <option value="multiply">{$t('vj.crossfader.blends.multiply')}</option>
-                <option value="screen">{$t('vj.crossfader.blends.screen')}</option>
-                <option value="add">{$t('vj.crossfader.blends.add')}</option>
-                <option value="difference">{$t('vj.crossfader.blends.difference')}</option>
-                <option value="darken">{$t('vj.crossfader.blends.darken')}</option>
-                <option value="lighten">{$t('vj.crossfader.blends.lighten')}</option>
-                <option value="overlay">{$t('vj.crossfader.blends.overlay')}</option>
-                <option value="exclusion">{$t('vj.crossfader.blends.exclusion')}</option>
+                <option value="normal">{vjBlendModeDisplayLabel('normal')}</option>
+                <option value="multiply">{vjBlendModeDisplayLabel('multiply')}</option>
+                <option value="screen">{vjBlendModeDisplayLabel('screen')}</option>
+                <option value="add">{vjBlendModeDisplayLabel('add')}</option>
+                <option value="difference">{vjBlendModeDisplayLabel('difference')}</option>
+                <option value="darken">{vjBlendModeDisplayLabel('darken')}</option>
+                <option value="lighten">{vjBlendModeDisplayLabel('lighten')}</option>
+                <option value="overlay">{vjBlendModeDisplayLabel('overlay')}</option>
+                <option value="exclusion">{vjBlendModeDisplayLabel('exclusion')}</option>
               </select>
 
               {#if crossfaderModTrayAnchor}

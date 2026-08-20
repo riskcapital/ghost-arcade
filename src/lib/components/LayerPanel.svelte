@@ -22,6 +22,14 @@
   import { maskEditingLayerId } from '../stores/maskEditing';
   import { syncTrimmedVideoPlayback } from '../utils/videoTrimPlayback';
   import { t } from '../i18n';
+  import {
+    blendModeLabel,
+    effectOptionLabel,
+    effectParamLabel,
+    effectTypeLabel,
+    stageEffectParamLabel,
+    stageEffectTypeLabel,
+  } from '../i18n/displayLabels';
 
   // WebGPU capability — reactive store, NOT a snapshot. The probe is
   // async and may not have resolved when this panel first mounts;
@@ -440,28 +448,56 @@
     e.preventDefault();
   }
 
+  function displayLabelKey(value: string): string {
+    return value
+      .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, '_')
+      .replace(/^_+|_+$/g, '');
+  }
+
+  function getEffectParamDisplayLabel(key: string, fallback = key): string {
+    const translatedById = effectParamLabel($t, key);
+    return translatedById === key
+      ? effectParamLabel($t, displayLabelKey(fallback), fallback)
+      : translatedById;
+  }
+
+  function getEffectOptionDisplayLabel(value: string | number, fallback = String(value)): string {
+    const translatedById = effectOptionLabel($t, value);
+    return translatedById === String(value)
+      ? effectOptionLabel($t, displayLabelKey(fallback), fallback)
+      : translatedById;
+  }
+
+  function getEffectPresetDisplayLabel(type: EffectType, index: number, preset: { name: string }): string {
+    const key = `effects.presets.${type}.${index}`;
+    const translated = $t(key);
+    return translated === key ? preset.name : translated;
+  }
+
   // Available effect types with display names
   const effectTypes: { type: EffectType; label: string; category: string }[] =
     EFFECT_CATALOG.map((e) => ({ type: e.type, label: e.label, category: e.category }));
   $: localizedEffectLabels = Object.fromEntries(
     effectTypes.map((effect) => [
       effect.type,
-      $t('layers.effectLabel', { values: { label: effect.label } }),
+      effectTypeLabel($t, effect.type, effect.label),
     ]),
   ) as Record<string, string>;
   $: localizedStageEffectLabels = Object.fromEntries(
     STAGE_EFFECT_CATALOG.map((effect) => [
       effect.type,
-      $t('layers.stageEffectLabel', { values: { label: effect.label } }),
+      stageEffectTypeLabel($t, effect.type, effect.label),
     ]),
   ) as Record<string, string>;
 
   function getStageEffectLabel(type: StageEffectType | undefined, fallback = ''): string {
-    return (type && localizedStageEffectLabels[type]) || fallback;
+    return type ? stageEffectTypeLabel($t, type, localizedStageEffectLabels[type] || fallback) : fallback;
   }
 
-  function getStageParamLabel(label: string): string {
-    return $t('layers.stageParamLabel', { values: { label } });
+  function getStageParamLabel(key: string, fallback = key): string {
+    return stageEffectParamLabel($t, key, fallback);
   }
 
   function getLayerTypeLabel(type: string): string {
@@ -701,7 +737,7 @@
   }
 
   function getEffectLabel(type: EffectType): string {
-    return localizedEffectLabels[type] || effectTypes.find((e) => e.type === type)?.label || type;
+    return effectTypeLabel($t, type, localizedEffectLabels[type] || effectTypes.find((e) => e.type === type)?.label || type);
   }
 
   // Effect drag and drop
@@ -1002,7 +1038,7 @@
                             onchange={(e) => project.updateMappingCompositionEffect(effect.id, { blendMode: (e.target as HTMLSelectElement).value as BlendMode })}
                           >
                             {#each blendModes as mode}
-                              <option value={mode}>{mode}</option>
+                              <option value={mode}>{blendModeLabel($t, mode)}</option>
                             {/each}
                           </select>
                         </div>
@@ -1023,7 +1059,7 @@
                             >
                               <option value="">{$t('layers.composition.selectPreset')}</option>
                               {#each getEffectPresets(effect.type) as preset, i}
-                                <option value={String(i)}>{preset.name}</option>
+                                <option value={String(i)}>{getEffectPresetDisplayLabel(effect.type, i, preset)}</option>
                               {/each}
                             </select>
                           </div>
@@ -1037,19 +1073,19 @@
                             {#each Object.entries(paramMeta) as [paramKey, meta]}
                               {#if meta.type === 'select' && meta.options}
                                 <div class="param-row">
-                                  <span class="param-label">{meta.label}</span>
+                                  <span class="param-label">{getEffectParamDisplayLabel(paramKey, meta.label)}</span>
                                   <select
                                     value={(effect.params as Record<string, number>)[paramKey] ?? meta.default}
                                     onchange={(e) => project.updateMappingCompositionEffectParams(effect.id, { [paramKey]: parseFloat((e.target as HTMLSelectElement).value) })}
                                   >
                                     {#each meta.options as opt}
-                                      <option value={opt.value}>{opt.label}</option>
+                                      <option value={opt.value}>{getEffectOptionDisplayLabel(opt.value, opt.label)}</option>
                                     {/each}
                                   </select>
                                 </div>
                               {:else if meta.type === 'color' && meta.colorParams}
                                 <div class="param-row">
-                                  <span class="param-label">{meta.label}</span>
+                                  <span class="param-label">{getEffectParamDisplayLabel(paramKey, meta.label)}</span>
                                   <input
                                     type="color"
                                     value={getCompositionColorValue(effect, meta)}
@@ -1058,7 +1094,7 @@
                                 </div>
                               {:else}
                                 <div class="param-row">
-                                  <span class="param-label">{meta.label}</span>
+                                  <span class="param-label">{getEffectParamDisplayLabel(paramKey, meta.label)}</span>
                                   <input
                                     type="range"
                                     min={meta.min as number}
@@ -1076,7 +1112,7 @@
                           {:else}
                             {#each getNumericEffectParams(effect.type) as paramKey}
                               <div class="param-row">
-                                <span class="param-label">{paramKey}</span>
+                                <span class="param-label">{getEffectParamDisplayLabel(paramKey)}</span>
                                 <input
                                   type="range"
                                   min="0"
@@ -1180,12 +1216,12 @@
                       title={$t('layers.composition.holdToShow', { values: { label: getStageEffectLabel(def?.type, def?.label ?? eff.type) } })}
                       aria-label={$t('layers.composition.holdToShow', { values: { label: getStageEffectLabel(def?.type, def?.label ?? eff.type) } })}
                       data-midi-path={`map:stage-effect:${eff.id}:hold`}
-                      data-midi-label={`Mapping Stage FX Hold: ${def?.label ?? eff.type}`}
+                      data-midi-label={$t('layers.composition.holdToShow', { values: { label: getStageEffectLabel(def?.type, def?.label ?? eff.type) } })}
                       data-midi-mode="toggle"
                       data-midi-min="0"
                       data-midi-max="1"
                       data-keyboard-path={`map:stage-effect:${eff.id}:hold`}
-                      data-keyboard-label={`Mapping Stage FX Hold: ${def?.label ?? eff.type}`}
+                      data-keyboard-label={$t('layers.composition.holdToShow', { values: { label: getStageEffectLabel(def?.type, def?.label ?? eff.type) } })}
                       data-keyboard-mode="momentary"
                       onpointerdown={(e) => handleMappingStageEffectHoldPointerDown(e, eff.id)}
                       onpointerup={(e) => handleMappingStageEffectHoldPointerEnd(e, eff.id)}
@@ -1229,7 +1265,7 @@
                       </div>
                       {#each def?.paramSpecs ?? [] as spec (spec.key)}
                         <div class="param-row">
-                          <span class="param-label">{getStageParamLabel(spec.label)}</span>
+                          <span class="param-label">{getStageParamLabel(spec.key, spec.label)}</span>
                           <input
                             type="range"
                             min={spec.min}
@@ -1641,7 +1677,7 @@
               <input type="range" min="0" max="1" step="0.01" value={layer.opacity}
                 oninput={(e) => project.updateLayer(layer.id, { opacity: parseFloat((e.target as HTMLInputElement).value) })}
                 data-midi-path="map:layer:opacity"
-                data-midi-label="Layer Opacity"
+                data-midi-label={$t('layers.midiLabels.layerOpacity')}
                 data-midi-min="0"
                 data-midi-max="1"
                 data-midi-step="0.01" />
@@ -1652,7 +1688,7 @@
               <select value={layer.blendMode}
                 onchange={(e) => project.updateLayer(layer.id, { blendMode: (e.target as HTMLSelectElement).value as BlendMode })}>
                 {#each blendModes as mode}
-                  <option value={mode}>{mode}</option>
+                  <option value={mode}>{blendModeLabel($t, mode)}</option>
                 {/each}
               </select>
             </div>
@@ -1951,7 +1987,7 @@
               <button
                 class="vt-btn vt-play"
                 data-midi-path="map:media:play"
-                data-midi-label="Media Play / Pause"
+                data-midi-label={$t('layers.midiLabels.mediaPlayPause')}
                 data-midi-min="0"
                 data-midi-max="1"
                 data-midi-mode="toggle"
@@ -1978,7 +2014,7 @@
               <button
                 class="vt-btn"
                 data-midi-path="map:media:restart"
-                data-midi-label="Media Restart"
+                data-midi-label={$t('layers.midiLabels.mediaRestart')}
                 data-midi-min="0"
                 data-midi-max="1"
                 data-midi-mode="toggle"
@@ -2013,7 +2049,7 @@
               class="vt-timeline"
               bind:this={timelineEl}
               data-midi-path="map:media:position"
-              data-midi-label="Media Position"
+              data-midi-label={$t('layers.midiLabels.mediaPosition')}
               data-midi-min="0"
               data-midi-max="1"
               data-midi-step="0.001"
@@ -2094,7 +2130,7 @@
               project.setLayerBlendMode(layer.id, (e.target as HTMLSelectElement).value as BlendMode)}
           >
             {#each blendModes as mode}
-              <option value={mode}>{mode}</option>
+              <option value={mode}>{blendModeLabel($t, mode)}</option>
             {/each}
           </select>
         </div>
@@ -2161,7 +2197,7 @@
         {#if layer.effects}
           {@const featherEffect = layer.effects.find(e => e.type === 'edgeFeather')}
           <div class="property-row feather-row">
-            <label>{$t('layers.effects.edgeFeather')}</label>
+            <label>{effectTypeLabel($t, 'edgeFeather', $t('layers.effects.edgeFeather'))}</label>
             {#if !featherEffect}
               <button class="btn-small" onclick={() => project.addEffect(layer.id, 'edgeFeather', { featherTop: 0, featherBottom: 0, featherLeft: 0, featherRight: 0, featherSoftness: 0.5 })}>
                 {$t('layers.effects.enableEdge')}
@@ -2169,22 +2205,22 @@
             {:else}
               <div class="feather-sliders">
                 <div class="feather-slider">
-                  <span class="feather-label">{$t('layers.effects.top')}</span>
+                  <span class="feather-label">{getEffectParamDisplayLabel('featherTop', $t('layers.effects.top'))}</span>
                   <input type="range" min="0" max="1" step="0.01" value={featherEffect.params?.featherTop ?? 0}
                     oninput={(e) => project.updateEffectParams(layer.id, featherEffect.id, { featherTop: parseFloat((e.target as HTMLInputElement).value) })} />
                 </div>
                 <div class="feather-slider">
-                  <span class="feather-label">{$t('layers.effects.bottom')}</span>
+                  <span class="feather-label">{getEffectParamDisplayLabel('featherBottom', $t('layers.effects.bottom'))}</span>
                   <input type="range" min="0" max="1" step="0.01" value={featherEffect.params?.featherBottom ?? 0}
                     oninput={(e) => project.updateEffectParams(layer.id, featherEffect.id, { featherBottom: parseFloat((e.target as HTMLInputElement).value) })} />
                 </div>
                 <div class="feather-slider">
-                  <span class="feather-label">{$t('layers.effects.left')}</span>
+                  <span class="feather-label">{getEffectParamDisplayLabel('featherLeft', $t('layers.effects.left'))}</span>
                   <input type="range" min="0" max="1" step="0.01" value={featherEffect.params?.featherLeft ?? 0}
                     oninput={(e) => project.updateEffectParams(layer.id, featherEffect.id, { featherLeft: parseFloat((e.target as HTMLInputElement).value) })} />
                 </div>
                 <div class="feather-slider">
-                  <span class="feather-label">{$t('layers.effects.right')}</span>
+                  <span class="feather-label">{getEffectParamDisplayLabel('featherRight', $t('layers.effects.right'))}</span>
                   <input type="range" min="0" max="1" step="0.01" value={featherEffect.params?.featherRight ?? 0}
                     oninput={(e) => project.updateEffectParams(layer.id, featherEffect.id, { featherRight: parseFloat((e.target as HTMLInputElement).value) })} />
                 </div>
@@ -2193,7 +2229,7 @@
           </div>
         {:else}
           <div class="property-row feather-row">
-            <label>{$t('layers.effects.edgeFeather')}</label>
+            <label>{effectTypeLabel($t, 'edgeFeather', $t('layers.effects.edgeFeather'))}</label>
             <button class="btn-small" onclick={() => project.addEffect(layer.id, 'edgeFeather', { featherTop: 0, featherBottom: 0, featherLeft: 0, featherRight: 0, featherSoftness: 0.5 })}>
               {$t('layers.effects.enableEdge')}
             </button>
@@ -2763,7 +2799,7 @@
                             onchange={(e) => project.updateEffect(layer.id, effect.id, { blendMode: (e.target as HTMLSelectElement).value as BlendMode })}
                           >
                             {#each blendModes as mode}
-                              <option value={mode}>{mode}</option>
+                              <option value={mode}>{blendModeLabel($t, mode)}</option>
                             {/each}
                           </select>
                         </div>
@@ -2784,7 +2820,7 @@
                             >
                               <option value="">{$t('layers.effects.selectPreset')}</option>
                               {#each getEffectPresets(effect.type) as preset, i}
-                                <option value={String(i)}>{preset.name}</option>
+                                <option value={String(i)}>{getEffectPresetDisplayLabel(effect.type, i, preset)}</option>
                               {/each}
                             </select>
                           </div>
@@ -2802,32 +2838,32 @@
                              EffectParamRow gives each knob the same
                              mod-source dropdown + click-to-type editor
                              the rest of the panel uses. -->
-                        <EffectParamRow label={$t('layers.effects.injectStrength')} min={0} max={3} step={0.01}
+                        <EffectParamRow label={getEffectParamDisplayLabel('injectStrength', $t('layers.effects.injectStrength'))} min={0} max={3} step={0.01}
                           layerIndex={layerIdx} effectId={effect.id} paramName="injectStrength"
                           value={effect.params.injectStrength ?? 1.5}
                           onChange={(v) => project.updateEffectParams(layer.id, effect.id, { injectStrength: v })} />
-                        <EffectParamRow label={$t('layers.effects.velocityPush')} min={0} max={3} step={0.01}
+                        <EffectParamRow label={getEffectParamDisplayLabel('velocityFromGradient', $t('layers.effects.velocityPush'))} min={0} max={3} step={0.01}
                           layerIndex={layerIdx} effectId={effect.id} paramName="velocityFromGradient"
                           value={effect.params.velocityFromGradient ?? 1.4}
                           onChange={(v) => project.updateEffectParams(layer.id, effect.id, { velocityFromGradient: v })} />
-                        <EffectParamRow label={$t('layers.effects.vorticity')} min={0} max={3} step={0.01}
+                        <EffectParamRow label={getEffectParamDisplayLabel('vorticity', $t('layers.effects.vorticity'))} min={0} max={3} step={0.01}
                           layerIndex={layerIdx} effectId={effect.id} paramName="vorticity"
                           value={effect.params.vorticity ?? 1.0}
                           onChange={(v) => project.updateEffectParams(layer.id, effect.id, { vorticity: v })} />
-                        <EffectParamRow label={$t('layers.effects.dyeDecay')} min={0} max={3} step={0.01}
+                        <EffectParamRow label={getEffectParamDisplayLabel('dyeDecay', $t('layers.effects.dyeDecay'))} min={0} max={3} step={0.01}
                           layerIndex={layerIdx} effectId={effect.id} paramName="dyeDecay"
                           value={effect.params.dyeDecay ?? 2.4}
                           onChange={(v) => project.updateEffectParams(layer.id, effect.id, { dyeDecay: v })} />
-                        <EffectParamRow label={$t('layers.effects.velocityDecay')} min={0} max={3} step={0.01}
+                        <EffectParamRow label={getEffectParamDisplayLabel('velocityDecay', $t('layers.effects.velocityDecay'))} min={0} max={3} step={0.01}
                           layerIndex={layerIdx} effectId={effect.id} paramName="velocityDecay"
                           value={effect.params.velocityDecay ?? 2.3}
                           onChange={(v) => project.updateEffectParams(layer.id, effect.id, { velocityDecay: v })} />
-                        <EffectParamRow label={$t('layers.effects.brightnessBoost')} min={0.5} max={4} step={0.01}
+                        <EffectParamRow label={getEffectParamDisplayLabel('outputBoost', $t('layers.effects.brightnessBoost'))} min={0.5} max={4} step={0.01}
                           layerIndex={layerIdx} effectId={effect.id} paramName="outputBoost"
                           value={effect.params.outputBoost ?? 0.7}
                           displayValue={(v) => v.toFixed(2) + '×'}
                           onChange={(v) => project.updateEffectParams(layer.id, effect.id, { outputBoost: v })} />
-                        <EffectParamRow label={$t('layers.effects.timeScale')} min={0.1} max={3} step={0.01}
+                        <EffectParamRow label={getEffectParamDisplayLabel('timeScale', $t('layers.effects.timeScale'))} min={0.1} max={3} step={0.01}
                           layerIndex={layerIdx} effectId={effect.id} paramName="timeScale"
                           value={effect.params.timeScale ?? 1.6}
                           displayValue={(v) => v.toFixed(2) + '×'}
@@ -2835,36 +2871,36 @@
 
                       {:else if effect.type === 'colorama'}
                         <div class="param-row">
-                          <label>{$t('layers.effects.palette')}</label>
+                          <label>{getEffectParamDisplayLabel('coloramaPalette', $t('layers.effects.palette'))}</label>
                           <select
                             value={effect.params.coloramaPalette ?? 0}
                             onchange={(e) => project.updateEffectParams(layer.id, effect.id, { coloramaPalette: parseInt((e.target as HTMLSelectElement).value) })}
                           >
-                            <option value="0">{$t('layers.effects.rainbow')}</option>
-                            <option value="1">{$t('layers.effects.sunset')}</option>
-                            <option value="2">{$t('layers.effects.ocean')}</option>
-                            <option value="3">{$t('layers.effects.neon')}</option>
-                            <option value="4">{$t('layers.effects.fire')}</option>
-                            <option value="5">{$t('layers.effects.forest')}</option>
-                            <option value="6">{$t('layers.effects.ice')}</option>
-                            <option value="7">{$t('layers.effects.psychedelic')}</option>
+                            <option value="0">{getEffectOptionDisplayLabel('rainbow', $t('layers.effects.rainbow'))}</option>
+                            <option value="1">{getEffectOptionDisplayLabel('sunset', $t('layers.effects.sunset'))}</option>
+                            <option value="2">{getEffectOptionDisplayLabel('ocean', $t('layers.effects.ocean'))}</option>
+                            <option value="3">{getEffectOptionDisplayLabel('neon', $t('layers.effects.neon'))}</option>
+                            <option value="4">{getEffectOptionDisplayLabel('fire', $t('layers.effects.fire'))}</option>
+                            <option value="5">{getEffectOptionDisplayLabel('forest', $t('layers.effects.forest'))}</option>
+                            <option value="6">{getEffectOptionDisplayLabel('ice', $t('layers.effects.ice'))}</option>
+                            <option value="7">{getEffectOptionDisplayLabel('psychedelic', $t('layers.effects.psychedelic'))}</option>
                           </select>
                         </div>
-                        <EffectParamRow label={$t('layers.effects.offset')} min={0} max={1} step={0.01}
+                        <EffectParamRow label={getEffectParamDisplayLabel('coloramaOffset', $t('layers.effects.offset'))} min={0} max={1} step={0.01}
                           layerIndex={layerIdx} effectId={effect.id} paramName="coloramaOffset"
                           value={effect.params.coloramaOffset ?? 0}
                           displayValue={(v) => (v * 100).toFixed(0) + '%'}
                           onChange={(v) => project.updateEffectParams(layer.id, effect.id, { coloramaOffset: v })} />
-                        <EffectParamRow label={$t('layers.effects.autoSpeed')} min={0} max={2} step={0.01}
+                        <EffectParamRow label={getEffectParamDisplayLabel('coloramaSpeed', $t('layers.effects.autoSpeed'))} min={0} max={2} step={0.01}
                           layerIndex={layerIdx} effectId={effect.id} paramName="coloramaSpeed"
                           value={effect.params.coloramaSpeed ?? 0.2}
                           onChange={(v) => project.updateEffectParams(layer.id, effect.id, { coloramaSpeed: v })} />
-                        <EffectParamRow label={$t('layers.effects.contrast')} min={0.5} max={2} step={0.01}
+                        <EffectParamRow label={getEffectParamDisplayLabel('coloramaContrast', $t('layers.effects.contrast'))} min={0.5} max={2} step={0.01}
                           layerIndex={layerIdx} effectId={effect.id} paramName="coloramaContrast"
                           value={effect.params.coloramaContrast ?? 1}
                           displayValue={(v) => (v * 100).toFixed(0) + '%'}
                           onChange={(v) => project.updateEffectParams(layer.id, effect.id, { coloramaContrast: v })} />
-                        <EffectParamRow label={$t('layers.effects.mix')} min={0} max={1} step={0.01}
+                        <EffectParamRow label={getEffectParamDisplayLabel('coloramaMix', $t('layers.effects.mix'))} min={0} max={1} step={0.01}
                           layerIndex={layerIdx} effectId={effect.id} paramName="coloramaMix"
                           value={effect.params.coloramaMix ?? 1}
                           displayValue={(v) => (v * 100).toFixed(0) + '%'}
@@ -2879,19 +2915,19 @@
                           {#each Object.entries(paramMeta) as [paramKey, meta]}
                             {#if meta.type === 'select' && meta.options}
                               <div class="param-row">
-                                <label>{meta.label}</label>
+                                <label>{getEffectParamDisplayLabel(paramKey, meta.label)}</label>
                                 <select
                                   value={(effect.params as Record<string, number>)[paramKey] ?? meta.default}
                                   onchange={(e) => project.updateEffectParams(layer.id, effect.id, { [paramKey]: parseFloat((e.target as HTMLSelectElement).value) })}
                                 >
                                   {#each meta.options as opt}
-                                    <option value={opt.value}>{opt.label}</option>
+                                    <option value={opt.value}>{getEffectOptionDisplayLabel(opt.value, opt.label)}</option>
                                   {/each}
                                 </select>
                               </div>
                             {:else if meta.type === 'color' && meta.colorParams}
                               <div class="param-row">
-                                <label>{meta.label}</label>
+                                <label>{getEffectParamDisplayLabel(paramKey, meta.label)}</label>
                                 <input type="color"
                                   value={'#' + [meta.colorParams.r, meta.colorParams.g, meta.colorParams.b].map(k => {
                                     const v = (effect.params as Record<string, number>)[k] ?? 0;
@@ -2910,7 +2946,7 @@
                               </div>
                             {:else}
                               <EffectParamRow
-                                label={meta.label}
+                                label={getEffectParamDisplayLabel(paramKey, meta.label)}
                                 value={(effect.params as Record<string, number>)[paramKey] ?? meta.default}
                                 min={meta.min as number}
                                 max={meta.max as number}
@@ -2926,7 +2962,7 @@
                         {:else}
                           {#each getNumericEffectParams(effect.type) as paramKey}
                             <EffectParamRow
-                              label={paramKey}
+                              label={getEffectParamDisplayLabel(paramKey)}
                               value={(effect.params as Record<string, number>)[paramKey] ?? 0.5}
                               min={0}
                               max={1}

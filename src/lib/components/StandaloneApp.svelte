@@ -68,7 +68,8 @@
   import { MOBILE_EFFECTS, findMobileEffect, type MobileEffectInstance } from '../mobile/standaloneEffects';
   import { EFFECT_PARAM_DEFS, type EffectParamDef } from '../effects/effectParamDefs';
   import { cornersToMatrix3d, type Pt } from '../mobile/standaloneHomography';
-  import { t } from '../i18n';
+  import { t, type Translate } from '../i18n';
+  import { effectParamLabel, effectTypeLabel } from '../i18n/displayLabels';
 
   export let onSwitchMode: () => void;
 
@@ -148,6 +149,45 @@
       descriptionKey: 'standalone.app.controllerSurfaces.nanokontrol.description',
     },
   ];
+
+  type ControlMetadataPresetKind = 'midi' | 'osc';
+  type ControlMetadataPresetField = 'name' | 'controller' | 'description';
+
+  const CONTROL_METADATA_PRESET_IDS: Record<ControlMetadataPresetKind, ReadonlySet<string>> = {
+    midi: new Set(['generic-lpd8', 'akai-apc-mini', 'novation-launchpad', 'korg-nanokontrol']),
+    osc: new Set([
+      'ghost-performance',
+      'touchosc-mixer',
+      'apc-tablet',
+      'launchpad-tablet',
+      'nanokontrol-tablet',
+    ]),
+  };
+
+  function controlMetadataText(
+    translate: Translate,
+    key: string,
+    fallback: string,
+    values?: Record<string, string | number>,
+  ): string {
+    const translated = translate(key, values ? { values } : undefined);
+    return translated === key ? fallback : translated;
+  }
+
+  function controlMetadataPresetText(
+    translate: Translate,
+    kind: ControlMetadataPresetKind,
+    id: string,
+    field: ControlMetadataPresetField,
+    fallback: string,
+  ): string {
+    if (!CONTROL_METADATA_PRESET_IDS[kind].has(id)) return fallback;
+    return controlMetadataText(
+      translate,
+      `standalone.app.controlMetadata.presets.${kind}.${id}.${field}`,
+      fallback,
+    );
+  }
 
   type StandaloneEffect = {
     id: string;
@@ -1181,20 +1221,205 @@
     r.setEffectChain(chain);
   }
 
-  function dynamicControllerTargets(current: SavedState): ControllerTargetDef[] {
-    const targets = defaultControllerTargets(N_LAYERS);
+  const CONTROL_METADATA_TARGET_KEYS: Record<string, string> = {
+    micToggle: 'micToggle',
+    cleanOutput: 'cleanOutput',
+    autopilotToggle: 'autopilotToggle',
+    crossfader: 'crossfader',
+    bank: 'bank',
+    clip: 'clip',
+    snapshot: 'snapshot',
+    opacity: 'layer.opacity',
+    enabled: 'layer.enabled',
+    blend: 'layer.blend',
+    mapped: 'layer.mapped',
+    edge: 'layer.edge',
+    speed: 'layer.speed',
+    intensity: 'layer.intensity',
+    corner: 'layer.corner',
+    effect: 'layer.effect',
+  };
+
+  function standaloneEffectParamLabel(translate: Translate, param: string, fallback: string): string {
+    const snakeParam = param.replace(/[A-Z]/g, (character) => `_${character.toLowerCase()}`);
+    const suffixParam = /[A-Z][A-Za-z0-9]*$/.exec(param)?.[0]?.toLowerCase();
+    const genericParam = param === 'amount2' ? 'detail' : undefined;
+    const displayParam = fallback
+      .trim()
+      .replace(/[^A-Za-z0-9]+(.)/g, (_, character: string) => character.toUpperCase())
+      .replace(/[^A-Za-z0-9]/g, '')
+      .replace(/^[A-Z]/, (character) => character.toLowerCase());
+    for (const candidate of [param, snakeParam, suffixParam, genericParam, displayParam]) {
+      if (!candidate) continue;
+      const translated = effectParamLabel(translate, candidate, candidate);
+      if (translated !== candidate) return translated;
+    }
+    return fallback;
+  }
+
+  function controllerTargetMetadataLabel(
+    translate: Translate,
+    target: MidiTarget,
+    fallback: string,
+  ): string {
+    if (target === 'micToggle' || target === 'cleanOutput' || target === 'autopilotToggle') {
+      return controlMetadataText(
+        translate,
+        `standalone.app.controlMetadata.targets.${CONTROL_METADATA_TARGET_KEYS[target]}`,
+        fallback,
+      );
+    }
+    if (target === 'crossfader') {
+      return controlMetadataText(
+        translate,
+        'standalone.app.controlMetadata.targets.crossfader',
+        fallback,
+        { layer: 1 },
+      );
+    }
+    const legacy = /^(bank|clip):(\d+)$/.exec(target);
+    if (legacy) {
+      const layerIndex = Number(legacy[2]);
+      if (layerIndex < 0 || layerIndex >= N_LAYERS) return fallback;
+      return controlMetadataText(
+        translate,
+        `standalone.app.controlMetadata.targets.${CONTROL_METADATA_TARGET_KEYS[legacy[1]]}`,
+        fallback,
+        { layer: layerIndex + 1 },
+      );
+    }
+    const snapshot = /^snapshot:(\d+)$/.exec(target);
+    if (snapshot) {
+      const slot = Number(snapshot[1]);
+      if (slot < 0 || slot >= SNAPSHOT_COUNT) return fallback;
+      return controlMetadataText(
+        translate,
+        `standalone.app.controlMetadata.targets.${CONTROL_METADATA_TARGET_KEYS.snapshot}`,
+        fallback,
+        { slot: slot + 1 },
+      );
+    }
+    const layer = /^layer:(\d+):([a-z]+)$/.exec(target);
+    if (layer && CONTROL_METADATA_TARGET_KEYS[layer[2]]) {
+      const layerIndex = Number(layer[1]);
+      if (layerIndex < 0 || layerIndex >= N_LAYERS) return fallback;
+      return controlMetadataText(
+        translate,
+        `standalone.app.controlMetadata.targets.${CONTROL_METADATA_TARGET_KEYS[layer[2]]}`,
+        fallback,
+        { layer: layerIndex + 1 },
+      );
+    }
+    const corner = /^layer:(\d+):corner:(\d+):(x|y)$/.exec(target);
+    if (corner) {
+      const layerIndex = Number(corner[1]);
+      const cornerIndex = Number(corner[2]);
+      if (layerIndex < 0 || layerIndex >= N_LAYERS || cornerIndex < 0 || cornerIndex >= CORNER_LABELS.length) {
+        return fallback;
+      }
+      return controlMetadataText(
+        translate,
+        'standalone.app.controlMetadata.targets.layer.corner',
+        fallback,
+        {
+          layer: layerIndex + 1,
+          corner: CORNER_LABELS[cornerIndex],
+          axis: corner[3].toUpperCase(),
+        },
+      );
+    }
+    const effect = /^layer:(\d+):effect:([^:]+):(.+)$/.exec(target);
+    if (effect) {
+      const layerIndex = Number(effect[1]);
+      const effectDef = findMobileEffect(effect[2]);
+      const paramDef = getEffectParamDefs(effect[2]).find((pd) => pd.param === effect[3]);
+      if (
+        layerIndex < 0
+        || layerIndex >= N_LAYERS
+        || !effectDef
+        || !paramDef
+      ) {
+        return fallback;
+      }
+      const effectType = effectTypeLabel(translate, effect[2], effect[2]);
+      const param = standaloneEffectParamLabel(translate, effect[3], effect[3]);
+      return controlMetadataText(
+        translate,
+        'standalone.app.controlMetadata.targets.layer.effect',
+        fallback,
+        { layer: layerIndex + 1, effect: effectType, param },
+      );
+    }
+    return fallback;
+  }
+
+  function controllerTargetMetadataGroup(
+    translate: Translate,
+    target: MidiTarget,
+    fallback: string,
+  ): string {
+    if (target === 'micToggle' || target === 'cleanOutput' || target === 'autopilotToggle') {
+      return controlMetadataText(translate, 'standalone.app.controlMetadata.groups.global', fallback);
+    }
+    if (/^snapshot:\d+$/.test(target)) {
+      const slot = Number(target.slice('snapshot:'.length));
+      if (slot < 0 || slot >= SNAPSHOT_COUNT) return fallback;
+      return controlMetadataText(translate, 'standalone.app.controlMetadata.groups.snapshots', fallback);
+    }
+    const layer = /^layer:(\d+):(corner|effect|[a-z]+)(?::.*)?$/.exec(target);
+    if (!layer) return fallback;
+    const layerIndex = Number(layer[1]);
+    if (layerIndex < 0 || layerIndex >= N_LAYERS) return fallback;
+    const values = { layer: layerIndex + 1 };
+    if (layer[2] === 'corner') {
+      return controlMetadataText(
+        translate,
+        'standalone.app.controlMetadata.groups.layerMapping',
+        fallback,
+        values,
+      );
+    }
+    if (layer[2] === 'effect') {
+      return controlMetadataText(
+        translate,
+        'standalone.app.controlMetadata.groups.layerFx',
+        fallback,
+        values,
+      );
+    }
+    return controlMetadataText(translate, 'standalone.app.controlMetadata.groups.layer', fallback, values);
+  }
+
+  function localizeControllerTarget(
+    translate: Translate,
+    target: ControllerTargetDef,
+  ): ControllerTargetDef {
+    return {
+      ...target,
+      label: controllerTargetMetadataLabel(translate, target.target, target.label),
+      group: controllerTargetMetadataGroup(translate, target.target, target.group),
+    };
+  }
+
+  function dynamicControllerTargets(current: SavedState, translate: Translate): ControllerTargetDef[] {
+    const targets = defaultControllerTargets(N_LAYERS).map((target) =>
+      localizeControllerTarget(translate, target),
+    );
     for (let i = 0; i < N_LAYERS; i++) {
       const layer = current.layers[i];
       if (!layer) continue;
       for (const effect of layer.effects) {
         const fx = findMobileEffect(effect.type);
         for (const pd of getEffectParamDefs(effect.type)) {
+          const target = `layer:${i}:effect:${effect.type}:${pd.param}` as MidiTarget;
           targets.push({
-            target: `layer:${i}:effect:${effect.type}:${pd.param}` as MidiTarget,
-            label: $t('standalone.app.controller.effectTarget', {
-              values: { layer: i + 1, effect: fx?.label ?? effect.type, param: pd.name },
-            }),
-            group: $t('standalone.app.controller.layerFxGroup', { values: { layer: i + 1 } }),
+            target,
+            label: controllerTargetMetadataLabel(
+              translate,
+              target,
+              `L${i + 1} ${fx?.label ?? effect.type} ${pd.name}`,
+            ),
+            group: controllerTargetMetadataGroup(translate, target, `Layer ${i + 1} FX`),
             mode: pd.step >= 1 && pd.min === 0 && pd.max === 1 ? 'trigger' : 'continuous',
           });
         }
@@ -1202,8 +1427,8 @@
     }
     return targets;
   }
-  let controllerTargets: ControllerTargetDef[] = dynamicControllerTargets(state);
-  $: controllerTargets = dynamicControllerTargets(state);
+  let controllerTargets: ControllerTargetDef[] = dynamicControllerTargets(state, $t);
+  $: controllerTargets = dynamicControllerTargets(state, $t);
 
   // ── Audio pump ──
   function pumpAudio() {
@@ -1532,44 +1757,20 @@
   }
   function controllerTargetLabel(target: MidiTarget): string {
     const targetDef = controllerTargets.find((t) => t.target === target);
-    if (targetDef) return targetDef.label;
-    if (target === 'crossfader') return $t('standalone.app.controller.layerOpacity', { values: { layer: 1 } });
-    if (target === 'micToggle') return $t('standalone.app.controller.micTarget');
-    if (target === 'cleanOutput') return $t('standalone.app.controller.cleanTarget');
-    if (target === 'autopilotToggle') return $t('standalone.app.controller.recordTarget');
-    if (target.startsWith('bank:')) {
-      return $t('standalone.app.controller.toggleTarget', { values: { layer: Number(target.slice(5)) + 1 } });
-    }
-    if (target.startsWith('clip:')) {
-      return $t('standalone.app.controller.layerOpacity', { values: { layer: Number(target.slice(5)) + 1 } });
-    }
-    if (target.startsWith('snapshot:')) {
-      return $t('standalone.app.controller.snapshotTarget', {
-        values: { slot: Number(target.slice('snapshot:'.length)) + 1 },
-      });
-    }
-    if (target.startsWith('layer:')) {
-      const parts = target.split(':');
-      const layerNum = Number(parts[1]) + 1;
-      if (parts[2] === 'corner') {
-        return $t('standalone.app.controller.cornerTarget', {
-          values: {
-            layer: layerNum,
-            corner: CORNER_LABELS[Number(parts[3])] ?? $t('standalone.app.controller.corner'),
-            axis: parts[4]?.toUpperCase() ?? '',
-          },
-        }).trim();
-      }
-      if (parts[2] === 'effect') {
-        return $t('standalone.app.controller.effectTarget', {
-          values: { layer: layerNum, effect: parts[3], param: parts.slice(4).join(':') },
-        });
-      }
-      return $t('standalone.app.controller.controlTarget', {
-        values: { layer: layerNum, control: parts[2] ?? $t('standalone.app.controller.control') },
-      });
-    }
-    return target;
+    return controllerTargetMetadataLabel($t, target, targetDef?.label ?? target);
+  }
+  function isBuiltInOscBinding(binding: StandaloneOscBinding): boolean {
+    return OSC_LAYOUT_PRESETS.some((preset) =>
+      preset.bindings.some((candidate) =>
+        candidate.address === binding.address
+        && candidate.target === binding.target
+        && candidate.label === binding.label,
+      ),
+    );
+  }
+  function oscTargetLabel(binding: StandaloneOscBinding): string {
+    if (!isBuiltInOscBinding(binding) && binding.label.trim()) return binding.label;
+    return controllerTargetLabel(binding.target);
   }
   async function copyOscLayout(): Promise<void> {
     const preset = currentOscPreset;
@@ -2493,15 +2694,19 @@
                   onchange={(e) => selectMidiPreset((e.target as HTMLSelectElement).value)}
                 >
                   {#each MIDI_LAYOUT_PRESETS as p (p.id)}
-                    <option value={p.id}>{p.name}</option>
+                    <option value={p.id}>{controlMetadataPresetText($t, 'midi', p.id, 'name', p.name)}</option>
                   {/each}
                   <option value={CUSTOM_MIDI_PRESET_ID}>{$t('standalone.app.midi.custom')}</option>
                 </select>
               </label>
               <div class="midi-preset-copy">
                 {#if currentMidiPreset}
-                  <strong>{currentMidiPreset.controller}</strong>
-                  <span>{currentMidiPreset.description}</span>
+                  <strong>
+                    {controlMetadataPresetText($t, 'midi', currentMidiPreset.id, 'controller', currentMidiPreset.controller)}
+                  </strong>
+                  <span>
+                    {controlMetadataPresetText($t, 'midi', currentMidiPreset.id, 'description', currentMidiPreset.description)}
+                  </span>
                 {:else}
                   <strong>{$t('standalone.app.midi.customLayout')}</strong>
                   <span>{$t('standalone.app.midi.customHint')}</span>
@@ -2590,13 +2795,17 @@
                 onchange={(e) => selectOscPreset((e.target as HTMLSelectElement).value)}
               >
                 {#each OSC_LAYOUT_PRESETS as p (p.id)}
-                  <option value={p.id}>{p.name}</option>
+                  <option value={p.id}>{controlMetadataPresetText($t, 'osc', p.id, 'name', p.name)}</option>
                 {/each}
               </select>
             </label>
             <div class="midi-preset-copy">
-              <strong>{currentOscPreset.controller}</strong>
-              <span>{currentOscPreset.description}</span>
+              <strong>
+                {controlMetadataPresetText($t, 'osc', currentOscPreset.id, 'controller', currentOscPreset.controller)}
+              </strong>
+              <span>
+                {controlMetadataPresetText($t, 'osc', currentOscPreset.id, 'description', currentOscPreset.description)}
+              </span>
             </div>
           </div>
           <div class="osc-binding-list">
@@ -2604,7 +2813,7 @@
               <div class="osc-row">
                 <span class="osc-address">{b.address}</span>
                 <span class="osc-target"
-                  >{controllerTargetLabel(b.target)}{b.trigger ? $t('standalone.app.midi.triggerSuffix') : ''}</span>
+                  >{oscTargetLabel(b)}{b.trigger ? $t('standalone.app.midi.triggerSuffix') : ''}</span>
               </div>
             {/each}
           </div>

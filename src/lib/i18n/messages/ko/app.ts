@@ -1,4 +1,7 @@
 export default {
+  midiLabels: {
+    vjMode: 'VJ 모드',
+  },
   gpu: {
     integratedTitle: '통합 그래픽으로 실행 중',
     detected: '감지된 장치:',
@@ -74,6 +77,22 @@ export default {
     enterWebsocket: '안내가 나오면 WebSocket URL 입력',
     tapConnect: '연결을 누른 뒤 모서리를 드래그해 워프하세요!',
     close: '닫기',
+  },
+  phoneVision: {
+    labels: {
+      vision: '휴대폰 비전',
+      camera: '휴대폰 카메라',
+      auraLayer: '휴대폰 오라',
+      pointCloudLayer: '휴대폰 포인트 클라우드',
+    },
+    status: {
+      connectionFailed: '휴대폰 카메라 연결에 실패했습니다.',
+      reconnecting: '휴대폰 카메라에 다시 연결하는 중입니다.',
+    },
+    capabilities: {
+      native: '네이티브 비전',
+      browser: '브라우저 비전',
+    },
   },
   mapping: {
     dragMoveLine: '선을 드래그하여 이동',

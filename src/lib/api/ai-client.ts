@@ -34,6 +34,37 @@ export interface AIGenerationResult {
   };
 }
 
+/**
+ * Stable local catalog keys used by the AI video helpers.  Provider detail is
+ * kept separately in `error`; callers can translate the code and append that
+ * detail without exposing local fallback copy in the wrong locale.
+ */
+export const AI_VIDEO_ERROR_KEYS = {
+  veoStart: 'visionAi.video.errors.startFailed',
+  lumaStart: 'visionAi.video.errors.lumaStartFailed',
+  generation: 'visionAi.video.errors.generationFailed',
+  download: 'visionAi.video.errors.downloadFailed',
+  lastFrameNeedsFirst: 'visionAi.video.errors.lastFrameNeedsFirst',
+  frameModelRequired: 'visionAi.video.errors.frameModelRequired',
+} as const;
+
+export type AIVideoErrorCode = (typeof AI_VIDEO_ERROR_KEYS)[keyof typeof AI_VIDEO_ERROR_KEYS];
+
+export interface AIVideoErrorResult {
+  /** Provider or runtime detail. Local failures use `errorCode` as `error`. */
+  error?: string;
+  errorCode?: AIVideoErrorCode;
+}
+
+function localVideoError(errorCode: AIVideoErrorCode): AIVideoErrorResult {
+  return { error: errorCode, errorCode };
+}
+
+function providerVideoError(errorCode: AIVideoErrorCode, detail: unknown): AIVideoErrorResult {
+  const message = typeof detail === 'string' ? detail : String(detail ?? '').trim();
+  return message ? { error: message, errorCode } : localVideoError(errorCode);
+}
+
 // System prompts for each generation type
 const SYSTEM_PROMPTS: Record<GenerationType, string> = {
   'shader-isf': `You are a world-class shader artist creating stunning real-time visual effects for a projection mapping / VJ application called "Ghost Arcade". Users range from beginners to professionals — the shader MUST compile on first try with zero errors and look visually spectacular.
@@ -736,6 +767,7 @@ export interface VeoGenerationStatus {
   operationName: string;
   videoUri?: string;
   error?: string;
+  errorCode?: AIVideoErrorCode;
 }
 
 /**
@@ -782,7 +814,9 @@ function veoImagePayload(
   };
 }
 
-export async function startVeoGeneration(request: VeoGenerationRequest): Promise<{ operationName?: string; error?: string }> {
+export async function startVeoGeneration(
+  request: VeoGenerationRequest,
+): Promise<AIVideoErrorResult & { operationName?: string }> {
   const {
     apiKey,
     prompt,
@@ -795,10 +829,10 @@ export async function startVeoGeneration(request: VeoGenerationRequest): Promise
   } = request;
 
   if (lastFrame && !firstFrame) {
-    return { error: 'Veo last-frame generation requires a first frame too.' };
+    return localVideoError(AI_VIDEO_ERROR_KEYS.lastFrameNeedsFirst);
   }
   if (lastFrame && !String(model).startsWith('veo-3.1')) {
-    return { error: 'Veo first/last frame generation requires a Veo 3.1 model.' };
+    return localVideoError(AI_VIDEO_ERROR_KEYS.frameModelRequired);
   }
 
   const params: Record<string, unknown> = {
@@ -850,18 +884,18 @@ export async function startVeoGeneration(request: VeoGenerationRequest): Promise
         }
       }
       if (!response.ok) {
-        return { error: msg };
+        return providerVideoError(AI_VIDEO_ERROR_KEYS.veoStart, msg);
       }
     }
 
     const data = await response.json();
     const operationName = data.name;
     if (!operationName) {
-      return { error: 'No operation name returned from Veo API' };
+      return localVideoError(AI_VIDEO_ERROR_KEYS.veoStart);
     }
     return { operationName };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Network error starting Veo generation' };
+    return providerVideoError(AI_VIDEO_ERROR_KEYS.veoStart, err instanceof Error ? err.message : err);
   }
 }
 
@@ -882,10 +916,14 @@ export async function pollVeoOperation(apiKey: string, operationName: string): P
 
     if (!response.ok) {
       const errorData = await response.json().catch(() => ({}));
+      const providerError = providerVideoError(
+        AI_VIDEO_ERROR_KEYS.generation,
+        errorData.error?.message || `Poll error: ${response.status}`,
+      );
       return {
         done: false,
         operationName,
-        error: errorData.error?.message || `Poll error: ${response.status}`,
+        ...providerError,
       };
     }
 
@@ -899,9 +937,13 @@ export async function pollVeoOperation(apiKey: string, operationName: string): P
       }
       // Check for error in response
       if (data.error) {
-        return { done: true, operationName, error: data.error.message || 'Generation failed' };
+        return {
+          done: true,
+          operationName,
+          ...providerVideoError(AI_VIDEO_ERROR_KEYS.generation, data.error.message),
+        };
       }
-      return { done: true, operationName, error: 'No video URI in completed response' };
+      return { done: true, operationName, ...localVideoError(AI_VIDEO_ERROR_KEYS.generation) };
     }
 
     return { done: false, operationName };
@@ -909,7 +951,7 @@ export async function pollVeoOperation(apiKey: string, operationName: string): P
     return {
       done: false,
       operationName,
-      error: err instanceof Error ? err.message : 'Network error polling Veo',
+      ...providerVideoError(AI_VIDEO_ERROR_KEYS.generation, err instanceof Error ? err.message : err),
     };
   }
 }
@@ -918,7 +960,7 @@ export async function pollVeoOperation(apiKey: string, operationName: string): P
  * Download a Veo-generated video as a Blob.
  * The video URI requires the API key for authentication.
  */
-export async function downloadVeoVideo(apiKey: string, videoUri: string): Promise<{ blob?: Blob; error?: string }> {
+export async function downloadVeoVideo(apiKey: string, videoUri: string): Promise<AIVideoErrorResult & { blob?: Blob }> {
   try {
     const response = await fetch(videoUri, {
       headers: {
@@ -927,7 +969,7 @@ export async function downloadVeoVideo(apiKey: string, videoUri: string): Promis
     });
 
     if (!response.ok) {
-      return { error: `Download failed: ${response.status}` };
+      return providerVideoError(AI_VIDEO_ERROR_KEYS.download, `Download failed: ${response.status}`);
     }
 
     let blob = await response.blob();
@@ -937,7 +979,7 @@ export async function downloadVeoVideo(apiKey: string, videoUri: string): Promis
     }
     return { blob };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Network error downloading video' };
+    return providerVideoError(AI_VIDEO_ERROR_KEYS.download, err instanceof Error ? err.message : err);
   }
 }
 
@@ -1003,6 +1045,7 @@ export interface LumaGenerationStatus {
   videoUrl?: string;
   thumbnailUrl?: string;
   error?: string;
+  errorCode?: AIVideoErrorCode;
 }
 
 const LUMA_API_BASE = 'https://api.lumalabs.ai/dream-machine/v1';
@@ -1048,7 +1091,9 @@ async function lumaFetch(
 /**
  * Start a Luma video generation.
  */
-export async function startLumaGeneration(request: LumaGenerationRequest): Promise<{ id?: string; error?: string }> {
+export async function startLumaGeneration(
+  request: LumaGenerationRequest,
+): Promise<AIVideoErrorResult & { id?: string }> {
   const {
     apiKey,
     prompt,
@@ -1073,15 +1118,15 @@ export async function startLumaGeneration(request: LumaGenerationRequest): Promi
 
     if (status < 200 || status >= 300) {
       const msg = (data.detail || data.message || `Luma API error: ${status}`) as string;
-      return { error: msg };
+      return providerVideoError(AI_VIDEO_ERROR_KEYS.lumaStart, msg);
     }
 
     if (!data.id) {
-      return { error: 'No generation ID returned from Luma API' };
+      return localVideoError(AI_VIDEO_ERROR_KEYS.lumaStart);
     }
     return { id: data.id as string };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Network error starting Luma generation' };
+    return providerVideoError(AI_VIDEO_ERROR_KEYS.lumaStart, err instanceof Error ? err.message : err);
   }
 }
 
@@ -1096,7 +1141,7 @@ export async function pollLumaGeneration(apiKey: string, generationId: string): 
       return {
         id: generationId,
         state: 'failed',
-        error: (data.detail || `Poll error: ${status}`) as string,
+        ...providerVideoError(AI_VIDEO_ERROR_KEYS.generation, data.detail || `Poll error: ${status}`),
       };
     }
 
@@ -1117,7 +1162,7 @@ export async function pollLumaGeneration(apiKey: string, generationId: string): 
       return {
         id: generationId,
         state: 'failed',
-        error: (data.failure_reason || 'Generation failed') as string,
+        ...providerVideoError(AI_VIDEO_ERROR_KEYS.generation, data.failure_reason),
       };
     }
 
@@ -1126,7 +1171,7 @@ export async function pollLumaGeneration(apiKey: string, generationId: string): 
     return {
       id: generationId,
       state: 'queued',
-      error: err instanceof Error ? err.message : 'Network error polling Luma',
+      ...providerVideoError(AI_VIDEO_ERROR_KEYS.generation, err instanceof Error ? err.message : err),
     };
   }
 }
@@ -1135,7 +1180,7 @@ export async function pollLumaGeneration(apiKey: string, generationId: string): 
  * Download a Luma-generated video as a Blob.
  * Uses Tauri http_fetch_binary to bypass potential CORS on CDN URLs.
  */
-export async function downloadLumaVideo(videoUrl: string): Promise<{ blob?: Blob; error?: string }> {
+export async function downloadLumaVideo(videoUrl: string): Promise<AIVideoErrorResult & { blob?: Blob }> {
   try {
     // Try direct fetch first (works if CDN allows CORS)
     try {
@@ -1155,12 +1200,12 @@ export async function downloadLumaVideo(videoUrl: string): Promise<{ blob?: Blob
     );
 
     if (result.status < 200 || result.status >= 300) {
-      return { error: `Download failed: ${result.status}` };
+      return providerVideoError(AI_VIDEO_ERROR_KEYS.download, `Download failed: ${result.status}`);
     }
 
     // Decode base64 safely — handle potential data URL prefix or padding issues
     let b64 = result.base64 || result.data || '';
-    if (!b64) return { error: 'Download failed: empty video payload' };
+    if (!b64) return localVideoError(AI_VIDEO_ERROR_KEYS.download);
     if (b64.includes(',')) b64 = b64.split(',')[1]; // Strip data URL prefix if present
     const binaryString = atob(b64);
     const bytes = new Uint8Array(binaryString.length);
@@ -1172,7 +1217,7 @@ export async function downloadLumaVideo(videoUrl: string): Promise<{ blob?: Blob
     const blob = new Blob([bytes], { type: contentType });
     return { blob };
   } catch (err) {
-    return { error: err instanceof Error ? err.message : 'Network error downloading Luma video' };
+    return providerVideoError(AI_VIDEO_ERROR_KEYS.download, err instanceof Error ? err.message : err);
   }
 }
 

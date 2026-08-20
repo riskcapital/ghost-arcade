@@ -52,7 +52,12 @@
   import { midiManager } from '../midi/midiManager';
   import { abletonLink } from '../sync/abletonLink';
   import { oscStore } from '../osc/oscStore';
-  import { CONTROL_PATH_EXAMPLES, normalizeControlPath, validateControlPath } from '../control/controlPaths';
+  import {
+    CONTROL_PATH_EXAMPLES,
+    normalizeControlPath,
+    validateControlPath,
+    type ControlPathExample,
+  } from '../control/controlPaths';
   import { keyboardStore, formatKeyCombo, type KeyActionMode } from '../keyboard/keyboardStore';
   import WLEDMappingPanel from './WLEDMappingPanel.svelte';
   import WLEDGroupsPanel from './WLEDGroupsPanel.svelte';
@@ -65,6 +70,25 @@
   let keyboardAddStep = 0.05;
   let oscLearnOpen = false;
   let oscLearnPath = 'vj:0:trigger:0';
+
+  const controlPathLabelKeys: Record<ControlPathExample['id'], string> = {
+    deckALayer1Clip1: 'settings.integrations.osc.reference.examples.deckALayer1Clip1',
+    deckBLayer1Clip1: 'settings.integrations.osc.reference.examples.deckBLayer1Clip1',
+    deckALayer1Opacity: 'settings.integrations.osc.reference.examples.deckALayer1Opacity',
+    deckALayer1PlayPause: 'settings.integrations.osc.reference.examples.deckALayer1PlayPause',
+    deckALayer1Restart: 'settings.integrations.osc.reference.examples.deckALayer1Restart',
+    vjMasterOpacity: 'settings.integrations.osc.reference.examples.vjMasterOpacity',
+    abCrossfader: 'settings.integrations.osc.reference.examples.abCrossfader',
+    stopAllVjClips: 'settings.integrations.osc.reference.examples.stopAllVjClips',
+    mappingPreset1: 'settings.integrations.osc.reference.examples.mappingPreset1',
+    selectedMappingLayerOpacity: 'settings.integrations.osc.reference.examples.selectedMappingLayerOpacity',
+    selectedMediaPlayPause: 'settings.integrations.osc.reference.examples.selectedMediaPlayPause',
+    selectedMediaRestart: 'settings.integrations.osc.reference.examples.selectedMediaRestart',
+  };
+
+  function controlPathLabel(example: ControlPathExample): string {
+    return $t(controlPathLabelKeys[example.id]);
+  }
 
   function beginOscLearn() {
     oscLearnOpen = true;
@@ -981,7 +1005,7 @@
             <select value={$settings.recording.format} onchange={handleFormatChange}>
               {#each formats as format}
                 <option value={format.id} disabled={!format.supported}>
-                  {format.label} {!format.supported ? $t('settings.recording.format.unsupported') : ''}
+                  {format.label} — {$t(format.descriptionKey)} {!format.supported ? $t('settings.recording.format.unsupported') : ''}
                 </option>
               {/each}
             </select>
@@ -1017,7 +1041,13 @@
           <div class="setting-row">
             <div class="setting-label">
               <span class="label-text">{$t('settings.recording.saveLocation.label')}</span>
-              <span class="label-hint">{$settings.recording.saveDirectoryName}</span>
+              <span class="label-hint">
+                {#if $settings.recording.saveDirectoryName === 'Downloads (default)'}
+                  {$t('settings.recording.saveLocation.defaultFolder')}
+                {:else}
+                  {$settings.recording.saveDirectoryName}
+                {/if}
+              </span>
             </div>
             <div class="button-group">
               <button class="secondary-btn" onclick={handlePickDirectory}>
@@ -2015,7 +2045,7 @@
               {/if}
               <datalist id="osc-path-examples">
                 {#each CONTROL_PATH_EXAMPLES as example}
-                  <option value={example.path}>{example.label}</option>
+                  <option value={example.path}>{controlPathLabel(example)}</option>
                 {/each}
               </datalist>
             </div>
@@ -2027,7 +2057,7 @@
               {#each CONTROL_PATH_EXAMPLES as example}
                 <button type="button" onclick={() => { oscLearnPath = example.path; oscLearnOpen = true; }}>
                   <code>{example.path}</code>
-                  <span>{example.label}</span>
+                  <span>{controlPathLabel(example)}</span>
                 </button>
               {/each}
             </div>

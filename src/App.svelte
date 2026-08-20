@@ -1965,6 +1965,24 @@
     return raw.facingMode === 'user' ? 'user' : 'environment';
   }
 
+  function phoneVisionStartError(err: unknown): string {
+    const detail = err instanceof Error ? err.message.trim() : '';
+    const prefix = $t('app.errors.phoneCameraFailed');
+    return detail ? `${prefix}: ${detail}` : prefix;
+  }
+
+  function phoneVisionCapabilityLabel(
+    rawTransport: unknown,
+    fallbackTransport: PhoneVisionCapabilities['transport'],
+  ): string {
+    if (rawTransport === 'native-rtc') return $t('app.phoneVision.capabilities.native');
+    if (rawTransport === 'browser-rtc') return $t('app.phoneVision.capabilities.browser');
+    if (typeof rawTransport === 'string' && rawTransport.trim()) return rawTransport;
+    return fallbackTransport === 'browser-rtc'
+      ? $t('app.phoneVision.capabilities.browser')
+      : $t('app.phoneVision.capabilities.native');
+  }
+
   function phoneVisionCaptureProfileFrom(raw: unknown): PhoneVisionCaptureProfile {
     return raw === 'rgb-fast' || raw === 'person-aura' || raw === 'lidar-depth' || raw === 'object-relief'
       ? raw
@@ -2077,7 +2095,7 @@
     destroyPhoneVisionSession(false);
     phoneVisionSessionId = sessionId;
     const facingMode = phoneVisionFacingMode(detail);
-    const capabilityDetail = isPhoneVisionRecord(detail.capabilities)
+    const capabilityDetail: Record<string, unknown> = isPhoneVisionRecord(detail.capabilities)
       ? {
           ...detail.capabilities,
           captureProfile: detail.capabilities.captureProfile ?? detail.captureProfile,
@@ -2089,7 +2107,7 @@
     phoneVision.set({
       status: 'live',
       sessionId,
-      label: 'Phone Vision',
+      label: phoneVisionCapabilityLabel(capabilityDetail.transport, capabilities.transport),
       error: '',
       capabilities,
       nativeFrame: null,
@@ -2425,7 +2443,7 @@
     const existing = get(mediaLibrary).find(item => item.id === PHONE_CAMERA_MEDIA_ID);
     const mediaItem = {
       id: PHONE_CAMERA_MEDIA_ID,
-      name: 'Phone Camera',
+      name: $t('app.phoneVision.labels.camera'),
       src: phoneVisionMediaSrc(sessionId),
       type: 'video' as const,
       videoElement: video,
@@ -2437,7 +2455,7 @@
       ...state,
       status: 'live',
       sessionId,
-      label: 'Phone Camera',
+      label: $t('app.phoneVision.labels.camera'),
       error: '',
     }));
     sendPhoneVisionStatus('live');
@@ -2453,7 +2471,7 @@
       id: `phone-camera-${Date.now()}`,
       type: 'video',
       src: item.src,
-      name: 'Phone Camera',
+      name: $t('app.phoneVision.labels.camera'),
       videoElement: item.videoElement,
       isPlaying: true,
       mirrorX: false,
@@ -2482,13 +2500,13 @@
     const source = phoneCameraMediaSource(false);
     const nativeOnly = !source && phoneVisionCanCreateNativeAura(raw);
     if (!source && !nativeOnly) {
-      sendPhoneVisionStatus('error', { error: 'Start the phone camera first.' });
+      sendPhoneVisionStatus('error', { error: $t('app.errors.phoneCameraStart') });
       return;
     }
     if (source) {
-      project.addLayer('Phone Aura', 'media');
+      project.addLayer($t('app.phoneVision.labels.auraLayer'), 'media');
     } else {
-      project.addColorLayer('Phone Aura');
+      project.addColorLayer($t('app.phoneVision.labels.auraLayer'));
     }
     const layerId = get(project).selectedLayerId;
     if (!layerId) return;
@@ -2527,10 +2545,10 @@
     const item = get(mediaLibrary).find(i => i.id === PHONE_CAMERA_MEDIA_ID);
     const nativeOnly = !item?.videoElement && phoneVisionCanCreateNativeDepth(raw);
     if ((!item?.videoElement && !nativeOnly) || !phoneVisionSessionId) {
-      sendPhoneVisionStatus('error', { error: 'Start the phone camera first.' });
+      sendPhoneVisionStatus('error', { error: $t('app.errors.phoneCameraStart') });
       return;
     }
-    project.addGPULayer('Phone Point Cloud');
+    project.addGPULayer($t('app.phoneVision.labels.pointCloudLayer'));
     const layerId = get(project).selectedLayerId;
     if (!layerId) return;
 
@@ -2646,7 +2664,7 @@
     destroyPhoneVisionSession(false);
     phoneVisionSessionId = sessionId;
     const facingMode = phoneVisionFacingMode(detail);
-    const capabilityDetail = isPhoneVisionRecord(detail.capabilities)
+    const capabilityDetail: Record<string, unknown> = isPhoneVisionRecord(detail.capabilities)
       ? {
           ...detail.capabilities,
           captureProfile: detail.capabilities.captureProfile ?? detail.captureProfile,
@@ -2658,7 +2676,7 @@
     phoneVision.set({
       status: 'connecting',
       sessionId,
-      label: 'Phone Camera',
+      label: phoneVisionCapabilityLabel(capabilityDetail.transport, capabilities.transport),
       error: '',
       capabilities,
       nativeFrame: null,
@@ -2689,10 +2707,10 @@
     peer.onconnectionstatechange = () => {
       if (phoneVisionPeer !== peer) return;
       if (peer.connectionState === 'failed') {
-        phoneVision.update(state => ({ ...state, status: 'failed', error: 'Phone camera connection failed.' }));
-        sendPhoneVisionStatus('failed', { error: 'Phone camera connection failed.' });
+        phoneVision.update(state => ({ ...state, status: 'failed', error: $t('app.phoneVision.status.connectionFailed') }));
+        sendPhoneVisionStatus('failed', { error: $t('app.phoneVision.status.connectionFailed') });
       } else if (peer.connectionState === 'disconnected') {
-        phoneVision.update(state => ({ ...state, status: 'connecting', error: 'Phone camera reconnecting.' }));
+        phoneVision.update(state => ({ ...state, status: 'connecting', error: $t('app.phoneVision.status.reconnecting') }));
         sendPhoneVisionStatus('reconnecting');
       } else if (peer.connectionState === 'closed') {
         destroyPhoneVisionSession(true);
@@ -2713,8 +2731,9 @@
       });
     } catch (err: any) {
       console.error('[PhoneVision] Failed to accept camera offer:', err);
-      phoneVision.update(state => ({ ...state, status: 'failed', error: err?.message || $t('app.errors.phoneCameraFailed') }));
-      sendPhoneVisionStatus('failed', { error: err?.message || $t('app.errors.phoneCameraFailed') });
+      const errorMessage = phoneVisionStartError(err);
+      phoneVision.update(state => ({ ...state, status: 'failed', error: errorMessage }));
+      sendPhoneVisionStatus('failed', { error: errorMessage });
       destroyPhoneVisionSession(false);
     }
   }
@@ -5710,7 +5729,7 @@
           onclick={openVJMode}
           title={$t('app.toolbar.openVjMixer')}
           data-midi-path="vj:mode"
-          data-midi-label="VJ Mode"
+          data-midi-label={$t('app.midiLabels.vjMode')}
           data-midi-mode="toggle"
         >
           VJ
