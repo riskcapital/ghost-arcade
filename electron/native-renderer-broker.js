@@ -377,6 +377,7 @@ export function createNativeRendererBroker({
   nativeEditorPreviewStatusProvider = null,
   nativeFrameEncoderStatusProvider = null,
   sharedTextureHandlePreparer = null,
+  linuxFdChannelReceiver = null,
 }) {
   return new NativeRendererBroker({
     appRoot,
@@ -388,6 +389,7 @@ export function createNativeRendererBroker({
     nativeEditorPreviewStatusProvider,
     nativeFrameEncoderStatusProvider,
     sharedTextureHandlePreparer,
+    linuxFdChannelReceiver,
   });
 }
 
@@ -402,6 +404,7 @@ class NativeRendererBroker {
     nativeEditorPreviewStatusProvider,
     nativeFrameEncoderStatusProvider,
     sharedTextureHandlePreparer,
+    linuxFdChannelReceiver,
   }) {
     this.appRoot = appRoot;
     this.resourcesPath = resourcesPath;
@@ -416,6 +419,12 @@ class NativeRendererBroker {
       typeof nativeFrameEncoderStatusProvider === 'function' ? nativeFrameEncoderStatusProvider : null;
     this.sharedTextureHandlePreparer =
       typeof sharedTextureHandlePreparer === 'function' ? sharedTextureHandlePreparer : null;
+    // Optional consumer for real dma-buf fds received over the Linux
+    // SCM_RIGHTS side channel (see startLinuxFdChannel below). Takes
+    // ownership of the fd (must close it) — when unset, received fds are
+    // just logged and closed (Milestone 1/2 proof-of-transport behavior).
+    this.linuxFdChannelReceiver =
+      typeof linuxFdChannelReceiver === 'function' ? linuxFdChannelReceiver : null;
     this.child = null;
     this.nextId = 1;
     this.pending = new Map();
@@ -2040,7 +2049,19 @@ class NativeRendererBroker {
       if (result.received) {
         this.linuxFdChannelReceiptCount += 1;
         console.log(`[NativeRenderer] fd-channel: received fd=${result.fd} tag=${result.tag} (receipt #${this.linuxFdChannelReceiptCount})`);
-        try { addon.closeFd(result.fd); } catch {}
+        // A registered receiver (the Linux preview presenter, once wired)
+        // takes ownership of the fd and is responsible for closing it —
+        // otherwise we close it ourselves so nothing leaks.
+        if (this.linuxFdChannelReceiver) {
+          try {
+            this.linuxFdChannelReceiver(result.fd, result.tag);
+          } catch (err) {
+            console.warn(`[NativeRenderer] fd-channel: receiver threw: ${err?.message || err}`);
+            try { addon.closeFd(result.fd); } catch {}
+          }
+        } else {
+          try { addon.closeFd(result.fd); } catch {}
+        }
       }
     }, 250);
 

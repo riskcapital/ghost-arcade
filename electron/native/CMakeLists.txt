@@ -376,6 +376,48 @@ else()
         BUILD_WITH_INSTALL_RPATH TRUE
         INSTALL_RPATH "$ORIGIN"
     )
+
+    # --- Linux: embedded native editor preview presenter (Milestone 3).
+    # X11/EGL twin of native_preview_addon.mm / dxgi_preview_addon.cpp —
+    # imports the render core's dma-buf export (via EGL_EXT_image_dma_buf_import)
+    # and blits it into a child X11 window parented under the Electron window.
+    find_package(PkgConfig REQUIRED)
+    pkg_check_modules(EGL REQUIRED egl)
+    pkg_check_modules(GLESV2 REQUIRED glesv2)
+    pkg_check_modules(X11 REQUIRED x11)
+
+    add_library(linux_preview_addon SHARED
+        linux_preview_addon.cpp
+        ${CMAKE_JS_SRC}
+    )
+
+    target_include_directories(linux_preview_addon PRIVATE
+        ${CMAKE_JS_INC}
+        ${NODE_ADDON_API_DIR}
+        ${EGL_INCLUDE_DIRS}
+        ${GLESV2_INCLUDE_DIRS}
+        ${X11_INCLUDE_DIRS}
+    )
+
+    target_link_libraries(linux_preview_addon PRIVATE
+        ${CMAKE_JS_LIB}
+        ${EGL_LIBRARIES}
+        ${GLESV2_LIBRARIES}
+        ${X11_LIBRARIES}
+    )
+
+    target_compile_definitions(linux_preview_addon PRIVATE
+        NAPI_VERSION=9
+        NODE_ADDON_API_DISABLE_DEPRECATED
+    )
+
+    set_target_properties(linux_preview_addon PROPERTIES
+        PREFIX ""
+        SUFFIX ".node"
+        CXX_STANDARD 17
+        BUILD_WITH_INSTALL_RPATH TRUE
+        INSTALL_RPATH "$ORIGIN"
+    )
 endif()
 
 # ============================================================
