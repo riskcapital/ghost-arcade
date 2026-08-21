@@ -1436,6 +1436,15 @@ struct DeckMonitorTarget {
 /// but sized to the display and carrying the slice's own output transform, so
 /// each projector gets a full-resolution native composite of its own region
 /// instead of a second WebGL renderer cropping a downscaled master.
+///
+/// Gated like DeckMonitorTarget above it: the `export` field is a
+/// NativeOutputExport, which only exists on the platforms with a shared-
+/// texture path (IOSurface on macOS, DXGI on Windows). Both places that use
+/// this struct — the `slice_targets` field and `ensure_slice_target()` —
+/// already carry the gate; only the definition was missing it, so the core
+/// simply did not compile on Linux. Nothing caught it because CI never built
+/// the core at all until this release.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
 struct SliceOutputTarget {
     _render_texture: wgpu::Texture,
     render_view: wgpu::TextureView,
