@@ -346,6 +346,36 @@ elseif(APPLE)
         COMMENT "Re-signing live_capture_addon for Apple Silicon"
     )
 
+else()
+    # --- Linux: SCM_RIGHTS fd-passing side channel (Milestone 1 of the
+    # Linux zero-copy native-renderer preview work). No GPU/windowing code
+    # yet — see linux_fd_channel_addon.cpp for scope.
+    add_library(linux_fd_channel_addon SHARED
+        linux_fd_channel_addon.cpp
+        ${CMAKE_JS_SRC}
+    )
+
+    target_include_directories(linux_fd_channel_addon PRIVATE
+        ${CMAKE_JS_INC}
+        ${NODE_ADDON_API_DIR}
+    )
+
+    target_link_libraries(linux_fd_channel_addon PRIVATE
+        ${CMAKE_JS_LIB}
+    )
+
+    target_compile_definitions(linux_fd_channel_addon PRIVATE
+        NAPI_VERSION=9
+        NODE_ADDON_API_DISABLE_DEPRECATED
+    )
+
+    set_target_properties(linux_fd_channel_addon PROPERTIES
+        PREFIX ""
+        SUFFIX ".node"
+        CXX_STANDARD 17
+        BUILD_WITH_INSTALL_RPATH TRUE
+        INSTALL_RPATH "$ORIGIN"
+    )
 endif()
 
 # ============================================================

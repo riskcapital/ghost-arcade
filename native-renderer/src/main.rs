@@ -18837,9 +18837,131 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let fast_path = Arc::new(RpcFastPath::new());
     spawn_stdout_writer(response_rx);
     spawn_stdin_reader(proxy.clone(), response_tx.clone(), Arc::clone(&fast_path));
+    #[cfg(target_os = "linux")]
+    spawn_linux_fd_channel_sender();
 
     let mut app = App::new(response_tx, proxy, fast_path);
     event_loop.run_app(&mut app)?;
+    Ok(())
+}
+
+// ============================================================
+// Linux SCM_RIGHTS fd-passing side channel (Milestone 1 of the Linux
+// zero-copy preview work — see `.claude/plans` history / GhostArcade issue
+// tracker). Electron main creates a Unix socket at `GA_NATIVE_RENDER_FD_SOCKET`
+// and listens on it (via a dedicated native addon, since Node's `net` module
+// can't receive SCM_RIGHTS ancillary data) *before* spawning this process.
+// We connect out and, for now, prove the transport by sending a tagged
+// anonymous memfd once a second. The real Vulkan dma-buf export (Milestone 2)
+// will replace `send_dummy_fd` with the actual composited-frame fd, reusing
+// this same connect/send plumbing.
+// ============================================================
+
+#[cfg(target_os = "linux")]
+fn spawn_linux_fd_channel_sender() {
+    use std::os::unix::net::UnixStream;
+
+    let Ok(socket_path) = std::env::var("GA_NATIVE_RENDER_FD_SOCKET") else {
+        return;
+    };
+
+    thread::spawn(move || {
+        let mut stream = None;
+        for _ in 0..50 {
+            match UnixStream::connect(&socket_path) {
+                Ok(s) => {
+                    stream = Some(s);
+                    break;
+                }
+                Err(_) => thread::sleep(Duration::from_millis(100)),
+            }
+        }
+        let Some(stream) = stream else {
+            eprintln!("[GhostRenderCore] fd-channel: failed to connect to {socket_path}");
+            return;
+        };
+        eprintln!("[GhostRenderCore] fd-channel: connected to {socket_path}");
+
+        let mut generation: u64 = 0;
+        loop {
+            generation += 1;
+            match send_dummy_fd(&stream, generation) {
+                Ok(()) => {
+                    eprintln!("[GhostRenderCore] fd-channel: sent dummy fd gen={generation}");
+                }
+                Err(err) => {
+                    eprintln!("[GhostRenderCore] fd-channel: send failed, stopping: {err}");
+                    break;
+                }
+            }
+            thread::sleep(Duration::from_secs(1));
+        }
+    });
+}
+
+#[cfg(target_os = "linux")]
+fn send_dummy_fd(stream: &std::os::unix::net::UnixStream, generation: u64) -> io::Result<()> {
+    use std::ffi::CString;
+    use std::os::fd::{AsRawFd, RawFd};
+
+    // memfd carries a small payload purely to prove the fd survives the
+    // hop into Electron's process intact — not a stand-in for a real
+    // texture handle. Milestone 2 replaces this with the exported dma-buf.
+    let name = CString::new("ga_fd_channel_probe").unwrap();
+    let memfd: RawFd = unsafe { libc::memfd_create(name.as_ptr(), 0) };
+    if memfd < 0 {
+        return Err(io::Error::last_os_error());
+    }
+    let payload = generation.to_le_bytes();
+    let write_result =
+        unsafe { libc::write(memfd, payload.as_ptr() as *const c_void, payload.len()) };
+    if write_result < 0 {
+        let err = io::Error::last_os_error();
+        unsafe { libc::close(memfd) };
+        return Err(err);
+    }
+
+    let result = send_fd_with_tag(stream.as_raw_fd(), memfd, generation);
+    unsafe { libc::close(memfd) };
+    result
+}
+
+#[cfg(target_os = "linux")]
+fn send_fd_with_tag(sock_fd: std::os::fd::RawFd, fd_to_send: std::os::fd::RawFd, tag: u64) -> io::Result<()> {
+    use std::mem;
+
+    let payload = tag.to_le_bytes();
+    let mut iov = [libc::iovec {
+        iov_base: payload.as_ptr() as *mut c_void,
+        iov_len: payload.len(),
+    }];
+
+    unsafe {
+        let cmsg_space = libc::CMSG_SPACE(mem::size_of::<std::os::fd::RawFd>() as u32) as usize;
+        let mut cmsg_buf = vec![0u8; cmsg_space];
+
+        let mut msg: libc::msghdr = mem::zeroed();
+        msg.msg_iov = iov.as_mut_ptr();
+        msg.msg_iovlen = 1;
+        msg.msg_control = cmsg_buf.as_mut_ptr() as *mut c_void;
+        msg.msg_controllen = cmsg_space as _;
+
+        let cmsg = libc::CMSG_FIRSTHDR(&msg);
+        if cmsg.is_null() {
+            return Err(io::Error::other("no cmsg header available"));
+        }
+        (*cmsg).cmsg_level = libc::SOL_SOCKET;
+        (*cmsg).cmsg_type = libc::SCM_RIGHTS;
+        (*cmsg).cmsg_len = libc::CMSG_LEN(mem::size_of::<std::os::fd::RawFd>() as u32) as _;
+        let data_ptr = libc::CMSG_DATA(cmsg) as *mut std::os::fd::RawFd;
+        data_ptr.write_unaligned(fd_to_send);
+        msg.msg_controllen = cmsg_space as _;
+
+        let ret = libc::sendmsg(sock_fd, &msg, 0);
+        if ret < 0 {
+            return Err(io::Error::last_os_error());
+        }
+    }
     Ok(())
 }
 

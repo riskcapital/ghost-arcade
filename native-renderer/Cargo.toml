@@ -32,6 +32,12 @@ objc2-foundation = { version = "0.2.2", default-features = false, features = ["N
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.62", default-features = false, features = ["Win32_Foundation", "Win32_Graphics_Direct3D12", "Win32_Graphics_Dxgi_Common", "Win32_Security"] }
 
+[target.'cfg(target_os = "linux")'.dependencies]
+# SCM_RIGHTS fd-passing to the Electron main process (see
+# spawn_linux_fd_channel_sender in main.rs) needs raw sendmsg/cmsg access
+# that std::os::unix::net doesn't expose.
+libc = "0.2.186"
+
 [profile.release]
 codegen-units = 1
 lto = "thin"

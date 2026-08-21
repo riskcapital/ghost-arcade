@@ -420,6 +420,13 @@ class NativeRendererBroker {
     this.nextId = 1;
     this.pending = new Map();
     this.stdoutBuffer = '';
+    // Linux SCM_RIGHTS fd-passing side channel — Milestone 1 of the Linux
+    // zero-copy preview work. See linux_fd_channel_addon.cpp.
+    this.linuxFdChannelAddon = null;
+    this.linuxFdChannelLoadAttempted = false;
+    this.linuxFdChannelSocketPath = null;
+    this.linuxFdChannelPollTimer = null;
+    this.linuxFdChannelReceiptCount = 0;
     this.tempFrameDir = null;
     this.tempFrameSerial = 1;
     this.lastStatus = makeDefaultStatus({
@@ -1880,6 +1887,10 @@ class NativeRendererBroker {
     if (!childEnv.GA_FFMPEG_PATH) {
       childEnv.GA_FFMPEG_PATH = resolveFfmpegPath(this.env, this.platform);
     }
+    if (this.platform === 'linux') {
+      const socketPath = this.startLinuxFdChannel();
+      if (socketPath) childEnv.GA_NATIVE_RENDER_FD_SOCKET = socketPath;
+    }
     this.child = spawn(executable, [], {
       cwd: this.isPackaged ? this.resourcesPath : this.appRoot,
       stdio: ['pipe', 'pipe', 'pipe'],
@@ -1956,6 +1967,7 @@ class NativeRendererBroker {
   }
 
   killProcess() {
+    this.stopLinuxFdChannel();
     if (!this.child) {
       this.cleanupTempFrameDir();
       return;
@@ -1964,6 +1976,86 @@ class NativeRendererBroker {
     this.child = null;
     this.rejectPending(new Error('Native render core stopped'));
     this.cleanupTempFrameDir();
+  }
+
+  // ============================================================
+  // Linux SCM_RIGHTS fd-passing side channel (Milestone 1 of the Linux
+  // zero-copy native-renderer preview work). Node's `net` module can't
+  // receive ancillary SCM_RIGHTS data, so listen()/poll() are done by
+  // linux_fd_channel_addon.cpp via raw socket syscalls. For now this only
+  // proves the transport (logs each tagged dummy fd it receives, then
+  // closes it) — Milestone 3 will consume real dma-buf fds here instead.
+  // ============================================================
+
+  loadLinuxFdChannelAddon() {
+    if (this.linuxFdChannelAddon) return this.linuxFdChannelAddon;
+    if (this.linuxFdChannelLoadAttempted) return null;
+    this.linuxFdChannelLoadAttempted = true;
+    try {
+      const addonPath = this.findLinuxFdChannelAddon();
+      if (!addonPath) {
+        console.warn('[NativeRenderer] fd-channel: linux_fd_channel_addon.node not found');
+        return null;
+      }
+      this.linuxFdChannelAddon = require(addonPath);
+      console.log(`[NativeRenderer] fd-channel: addon loaded from ${addonPath}`);
+      return this.linuxFdChannelAddon;
+    } catch (err) {
+      console.warn(`[NativeRenderer] fd-channel: failed to load addon: ${err?.message || err}`);
+      return null;
+    }
+  }
+
+  findLinuxFdChannelAddon() {
+    const bin = 'linux_fd_channel_addon.node';
+    const candidates = [];
+    if (this.isPackaged && this.resourcesPath) {
+      candidates.push(path.join(this.resourcesPath, 'app.asar.unpacked', 'electron', 'native', 'build', 'Release', bin));
+    }
+    candidates.push(path.join(this.appRoot, 'electron', 'native', 'build', 'Release', bin));
+    return candidates.find((candidate) => fs.existsSync(candidate)) || null;
+  }
+
+  startLinuxFdChannel() {
+    const addon = this.loadLinuxFdChannelAddon();
+    if (!addon) return null;
+
+    const socketPath = path.join(os.tmpdir(), `ga-native-render-fds-${process.pid}-${Date.now()}.sock`);
+    if (!addon.listen(socketPath)) {
+      console.warn(`[NativeRenderer] fd-channel: failed to listen on ${socketPath}`);
+      return null;
+    }
+    this.linuxFdChannelSocketPath = socketPath;
+    console.log(`[NativeRenderer] fd-channel: listening on ${socketPath}`);
+
+    this.linuxFdChannelPollTimer = setInterval(() => {
+      let result;
+      try {
+        result = addon.poll();
+      } catch (err) {
+        console.warn(`[NativeRenderer] fd-channel: poll failed: ${err?.message || err}`);
+        return;
+      }
+      if (!result) return;
+      if (result.received) {
+        this.linuxFdChannelReceiptCount += 1;
+        console.log(`[NativeRenderer] fd-channel: received fd=${result.fd} tag=${result.tag} (receipt #${this.linuxFdChannelReceiptCount})`);
+        try { addon.closeFd(result.fd); } catch {}
+      }
+    }, 250);
+
+    return socketPath;
+  }
+
+  stopLinuxFdChannel() {
+    if (this.linuxFdChannelPollTimer) {
+      clearInterval(this.linuxFdChannelPollTimer);
+      this.linuxFdChannelPollTimer = null;
+    }
+    if (this.linuxFdChannelAddon) {
+      try { this.linuxFdChannelAddon.close(); } catch {}
+    }
+    this.linuxFdChannelSocketPath = null;
   }
 
   findExecutable() {
