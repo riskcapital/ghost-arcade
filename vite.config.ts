@@ -36,7 +36,7 @@ function threejsBundlesPlugin(): Plugin {
         id: `builtin-threejs-${name}`,
         folder: name,
         name: name.replace(/[-_]+/g, ' ').replace(/\b\w/g, c => c.toUpperCase()),
-        url: `/threejs/${name}/index.html`,
+        url: `threejs/${name}/index.html`,
       }));
       return `export default ${JSON.stringify(items, null, 2)};`;
     },

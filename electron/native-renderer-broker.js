@@ -1881,7 +1881,7 @@ class NativeRendererBroker {
       childEnv.GA_FFMPEG_PATH = resolveFfmpegPath(this.env, this.platform);
     }
     this.child = spawn(executable, [], {
-      cwd: this.appRoot,
+      cwd: this.isPackaged ? this.resourcesPath : this.appRoot,
       stdio: ['pipe', 'pipe', 'pipe'],
       env: childEnv,
     });

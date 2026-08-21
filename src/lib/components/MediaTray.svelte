@@ -1393,7 +1393,7 @@
       // Skip if already in the list (re-mount of MediaTray would duplicate)
       if (jsAnimations.some(a => a.id === def.id)) continue;
       try {
-        const resp = await fetch(def.url);
+        const resp = await fetch(`${import.meta.env.BASE_URL}${def.url}`);
         if (!resp.ok) {
           console.warn('[MediaTray] failed to fetch built-in', def.url, resp.status);
           continue;
