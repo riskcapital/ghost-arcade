@@ -25,6 +25,27 @@ files:
 
 # Platform-specific extra resources
 extraResources:
+  # The native render core. 2.0 is native-only (NATIVE_ENGINE_ONLY): if this
+  # binary is not inside the package the broker's findExecutable() returns
+  # null and the app opens straight into NATIVE OFFLINE with no renderer to
+  # fall back to. It resolves from
+  # `{resourcesPath}/native-renderer/ghost-render-core` — see
+  # electron/native-renderer-broker.js.
+  #
+  # One entry covers every platform on purpose. The `from` directory is the
+  # same everywhere, and the filter picks whichever artefacts that platform
+  # actually produced: the bare binary on macOS/Linux, the .exe plus the DXC
+  # DLLs on Windows (scripts/ensure-dxc.mjs drops those beside the binary,
+  # because Windows resolves them relative to the launched executable rather
+  # than the app root). Naming the files per platform instead would mean
+  # three near-identical blocks that can drift apart.
+  - from: native-renderer/target/release/
+    to: native-renderer/
+    filter:
+      - ghost-render-core
+      - ghost-render-core.exe
+      - "*.dll"
+
   # Shaders (all platforms)
   - from: ISF/
     to: ISF/
