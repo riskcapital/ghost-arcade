@@ -2051,14 +2051,19 @@ class NativeRendererBroker {
         console.log(`[NativeRenderer] fd-channel: received fd=${result.fd} tag=${result.tag} (receipt #${this.linuxFdChannelReceiptCount})`);
         // A registered receiver (the Linux preview presenter, once wired)
         // takes ownership of the fd and is responsible for closing it —
-        // otherwise we close it ourselves so nothing leaks.
+        // otherwise we close it ourselves so nothing leaks. The receiver
+        // may be async (e.g. it needs an RPC round-trip to correlate the
+        // fd's generation with output-export metadata before importing
+        // it) — wrapped so a rejection is caught the same as a sync throw.
         if (this.linuxFdChannelReceiver) {
-          try {
-            this.linuxFdChannelReceiver(result.fd, result.tag);
-          } catch (err) {
-            console.warn(`[NativeRenderer] fd-channel: receiver threw: ${err?.message || err}`);
-            try { addon.closeFd(result.fd); } catch {}
-          }
+          (async () => {
+            try {
+              await this.linuxFdChannelReceiver(result.fd, result.tag);
+            } catch (err) {
+              console.warn(`[NativeRenderer] fd-channel: receiver threw: ${err?.message || err}`);
+              try { addon.closeFd(result.fd); } catch {}
+            }
+          })();
         } else {
           try { addon.closeFd(result.fd); } catch {}
         }
@@ -2223,6 +2228,17 @@ function expectedOutputSharedTextureExport(platform = process.platform) {
       handleScope: 'process-local',
       preferredTransport: 'shared_name',
       handleByteLength: 8,
+    };
+  }
+  if (platform === 'linux') {
+    return {
+      supported: true,
+      backend: 'vulkan',
+      platform: 'dma-buf',
+      exporter: 'vulkan-dma-buf',
+      handleScope: 'process-local',
+      preferredTransport: 'fd',
+      handleByteLength: 4,
     };
   }
   return {

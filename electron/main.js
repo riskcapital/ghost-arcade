@@ -51,6 +51,7 @@ const nativeRendererBroker = createNativeRendererBroker({
   nativeEditorPreviewStatusProvider: () => getNativePreviewStatus(),
   nativeFrameEncoderStatusProvider: () => getNativeFrameEncoderStatus(),
   sharedTextureHandlePreparer: prepareSharedTextureHandlesForNativeCore,
+  linuxFdChannelReceiver: (fd, tag) => handleLinuxDmaBufReceived(fd, tag),
 });
 
 // Force Chromium to use the discrete GPU (NVIDIA/AMD) on Optimus laptops.
@@ -2167,6 +2168,7 @@ function loadSpoutAddon() {
 function getNativePreviewAddonCandidates() {
   if (isMac) return getTextureShareAddonCandidates('native_preview_addon.node');
   if (process.platform === 'win32') return getTextureShareAddonCandidates('dxgi_preview_addon.node');
+  if (process.platform === 'linux') return getTextureShareAddonCandidates('linux_preview_addon.node');
   return [];
 }
 
@@ -2178,8 +2180,8 @@ function loadNativePreviewAddon() {
   nativePreviewAddonLoadCandidates = getNativePreviewAddonCandidates();
   nativePreviewAddonLoadPath = null;
 
-  if (!isMac && process.platform !== 'win32') {
-    nativePreviewAddonLoadError = 'embedded native editor preview presenter is implemented on macOS and Windows only';
+  if (!isMac && process.platform !== 'win32' && process.platform !== 'linux') {
+    nativePreviewAddonLoadError = 'embedded native editor preview presenter is implemented on macOS, Windows, and Linux only';
     return null;
   }
 
@@ -2188,7 +2190,9 @@ function loadNativePreviewAddon() {
     if (!addonPath) {
       nativePreviewAddonLoadError = isMac
         ? 'native_preview_addon.node not built'
-        : 'dxgi_preview_addon.node not built';
+        : process.platform === 'win32'
+          ? 'dxgi_preview_addon.node not built'
+          : 'linux_preview_addon.node not built';
       console.warn(`[NativePreview] ${nativePreviewAddonLoadError}. Checked: ${nativePreviewAddonLoadCandidates.join(', ')}`);
       return null;
     }
@@ -2259,7 +2263,7 @@ function getNativePreviewStatus(extra = {}) {
     failCount: nativePreviewFailCount,
     mode: addonStatus?.mode || (addon ? 'shared-texture-import-blit' : 'unavailable'),
     presentation: addonStatus?.presentation || (addon ? 'underlay-zero-copy' : 'unavailable'),
-    transport: addonStatus?.transport || (isMac ? 'iosurface' : 'none'),
+    transport: addonStatus?.transport || (isMac ? 'iosurface' : process.platform === 'win32' ? 'dxgi' : process.platform === 'linux' ? 'dma-buf' : 'none'),
     width: addonStatus?.width ?? 0,
     height: addonStatus?.height ?? 0,
     lastSurfaceID: addonStatus?.lastSurfaceID ?? 0,
@@ -2325,9 +2329,95 @@ async function nativePreviewTextureMetadataForPump() {
   return nativePreviewCachedTexture;
 }
 
+// Linux only: called by the broker whenever a real dma-buf fd for the
+// output export arrives over the SCM_RIGHTS side channel (see
+// linuxFdChannelReceiver above and native-renderer-broker.js's
+// startLinuxFdChannel). Unlike macOS/Windows, where the same global
+// IOSurface ID / named DXGI resource is re-presented every pump tick, a
+// dma-buf fd only needs importing once per generation — the underlying
+// GPU memory is what the render core keeps writing into, so re-drawing
+// the already-imported texture on the pump's clock (see the Linux branch
+// of startNativeEditorPreviewPump) is enough to show live content.
+//
+// Throwing here (rather than returning) is deliberate: the caller
+// (native-renderer-broker.js's poll loop) closes the fd itself when this
+// rejects, so every early-exit path below is a `throw`, not a leak.
+async function handleLinuxDmaBufReceived(fd, tag) {
+  const addon = loadNativePreviewAddon();
+  if (!addon || typeof addon.importDmaBuf !== 'function') {
+    throw new Error('linux preview addon unavailable');
+  }
+  const metadata = await getNativeOutputSharedTextureMetadata();
+  if (!metadata?.available || metadata.platform !== 'dma-buf') {
+    throw new Error(`output export metadata unavailable: ${JSON.stringify(metadata)}`);
+  }
+  if (String(metadata.handle) !== String(tag)) {
+    // A newer generation was created and reported between the fd being
+    // queued and us reading metadata — this fd is already stale, and the
+    // sender will have queued (or will queue) the fd matching the metadata
+    // we just read. Drop this one rather than importing outdated geometry.
+    throw new Error(`fd generation ${tag} does not match current metadata handle ${metadata.handle}`);
+  }
+  // From here on, addon.importDmaBuf owns fd unconditionally — it closes
+  // it itself whether the EGL import succeeds or fails. Do NOT throw past
+  // this point: the caller's catch handler would try to close fd again.
+  const ok = addon.importDmaBuf(fd, metadata.width, metadata.height, metadata.stride, metadata.offset);
+  if (!ok) {
+    console.warn(`[NativePreview] importDmaBuf failed: ${addon.status?.().error ?? 'unknown error'}`);
+    return;
+  }
+  console.log(`[NativePreview] imported dma-buf gen=${tag} ${metadata.width}x${metadata.height} stride=${metadata.stride}`);
+}
+
+// Linux twin of the mac/win pump below, but much simpler: a dma-buf fd is
+// imported once per generation out-of-band (handleLinuxDmaBufReceived, fired
+// by the fd-channel as soon as a new one arrives) rather than re-presented
+// by handle every tick. This pump's only job is to keep re-drawing whatever
+// is currently imported — the render core writes new pixels into that same
+// GPU memory every frame, so a plain present() on a steady clock is a live
+// picture with no new RPC or import per tick.
+function startLinuxPreviewPump(addon) {
+  if (!addon || typeof addon.present !== 'function') return false;
+  const intervalMs = Math.max(4, Math.round(1000 / OSR_PAINT_FPS));
+  nativePreviewLastLogTime = Date.now();
+  nativePreviewPump = setInterval(() => {
+    if (!nativePreviewAttached || nativePreviewPumpInFlight) return;
+    nativePreviewPumpInFlight = true;
+    try {
+      const ok = addon.present();
+      if (!ok) {
+        nativePreviewFailCount++;
+        if (nativePreviewFailCount <= 5) {
+          console.warn('[NativePreview] present() returned false', getNativePreviewStatus());
+        }
+        return;
+      }
+      nativePreviewFrameCount++;
+      const now = Date.now();
+      if (now - nativePreviewLastLogTime > 5000) {
+        const elapsed = Math.max(0.001, (now - nativePreviewLastLogTime) / 1000);
+        console.log(`[NativePreview] presented ${nativePreviewFrameCount} dma-buf frame(s) @ ${(nativePreviewFrameCount / elapsed).toFixed(1)} fps`);
+        nativePreviewFrameCount = 0;
+        nativePreviewLastLogTime = now;
+      }
+    } catch (err) {
+      nativePreviewFailCount++;
+      if (nativePreviewFailCount <= 5) {
+        console.warn('[NativePreview] pump failed:', err?.message || err);
+      }
+    } finally {
+      nativePreviewPumpInFlight = false;
+    }
+  }, intervalMs);
+  nativePreviewPump.unref?.();
+  console.log(`[NativePreview] pump started @ ${OSR_PAINT_FPS} fps (linux dma-buf)`);
+  return true;
+}
+
 function startNativeEditorPreviewPump() {
   if (nativePreviewPump) return true;
   const addon = nativePreviewAddon || loadNativePreviewAddon();
+  if (process.platform === 'linux') return startLinuxPreviewPump(addon);
   // macOS presents an IOSurface by global ID; Windows presents a named DXGI
   // shared texture. Either presenter is enough to run the pump.
   const dxgiPresenter = typeof addon?.presentSharedTexture === 'function';
@@ -2908,6 +2998,9 @@ function attachNativeEditorPreview(rectArgs = {}) {
       ? addon.update(rect)
       : addon.attach(handle, rect);
     nativePreviewAttached = !!status?.attached;
+    if (!nativePreviewAttached && status?.error) {
+      console.warn(`[NativePreview] attach reported not-attached: ${status.error}`);
+    }
     const geometryMatches = nativePreviewGeometryMatches(rect, status);
     nativePreviewLastRectSignature = geometryMatches ? signature : '';
     startNativeEditorPreviewPump();

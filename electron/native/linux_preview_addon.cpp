@@ -61,13 +61,25 @@ Rect RectFromObject(const Napi::Object& obj) {
   return rect;
 }
 
+// Electron's getNativeWindowHandle() docs promise "Window (unsigned long)"
+// on Linux, but X11's Window is a 32-bit resource ID on the wire (Xlib's
+// `unsigned long` typedef is a historical/portability artifact, not the
+// actual value width) — Electron returns a 4-byte buffer in practice, not
+// sizeof(unsigned long) (8 on x86_64). Accept either.
 Window WindowFromBuffer(const Napi::Value& value) {
   if (!value.IsBuffer()) return 0;
   Napi::Buffer<uint8_t> buf = value.As<Napi::Buffer<uint8_t>>();
-  if (buf.Length() < sizeof(unsigned long)) return 0;
-  unsigned long xid = 0;
-  memcpy(&xid, buf.Data(), sizeof(unsigned long));
-  return (Window)xid;
+  if (buf.Length() >= sizeof(unsigned long)) {
+    unsigned long xid = 0;
+    memcpy(&xid, buf.Data(), sizeof(unsigned long));
+    return (Window)xid;
+  }
+  if (buf.Length() >= sizeof(uint32_t)) {
+    uint32_t xid = 0;
+    memcpy(&xid, buf.Data(), sizeof(uint32_t));
+    return (Window)xid;
+  }
+  return 0;
 }
 
 GLuint CompileShader(GLenum type, const char* source) {
