@@ -58,7 +58,17 @@ jobs:
 
   build-windows:
     needs: create-release
-    runs-on: windows-latest
+    # Pinned, not drifting. GitHub moved `windows-latest` to VS 18 /
+    # MSVC 14.51, where <experimental/coroutine> now hard-errors on a
+    # static_assert. win_capture_addon.cpp includes <winrt/base.h>, and
+    # C++/WinRT pulls that header in, so the addon build fails before the
+    # Electron build is even reached. Nothing in this repo changed — the
+    # last green Windows build (v1.9.993, 29 Jul) ran on the previous
+    # image. windows-2022 is that toolchain.
+    #
+    # This is a hold, not a fix: the real repair is moving C++/WinRT onto
+    # <coroutine>, and windows-2022 is itself on a deprecation path.
+    runs-on: windows-2022
     steps:
       - uses: actions/checkout@v4
 
