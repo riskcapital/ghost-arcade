@@ -44,7 +44,8 @@ extraResources:
     filter:
       - ghost-render-core
       - ghost-render-core.exe
-      - "*.dll"
+      - dxcompiler.dll
+      - dxil.dll
 
   # Shaders (all platforms)
   - from: ISF/
