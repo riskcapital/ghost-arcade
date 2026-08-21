@@ -90,6 +90,27 @@ jobs:
           Install-Module -Name TrustedSigning -RequiredVersion 0.4.1 -Force -Scope CurrentUser -AllowClobber
           Get-Module -ListAvailable -Name TrustedSigning | Format-List Name, Version
 
+      # ─── Native render core ────────────────────────────────────────────
+      # 2.0 is native-only. Without this binary electron-builder produces an
+      # installer whose app boots into NATIVE OFFLINE, so the core has to be
+      # built BEFORE electron-builder packages it (see the native-renderer
+      # entry in electron-builder.yml extraResources).
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native-renderer/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('native-renderer/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Build native render core
+        run: npm run native:build
+
       - name: Build Electron (Windows NSIS, signed via Azure Trusted Signing)
         # --publish never disables electron-builder's auto-publish step. With
         # GH_TOKEN in env it would otherwise try to push assets to the SOURCE
@@ -153,6 +174,29 @@ jobs:
 
       - name: Build frontend
         run: npm run build
+
+      # ─── Native render core ────────────────────────────────────────────
+      # 2.0 is native-only. Without this binary electron-builder produces an
+      # installer whose app boots into NATIVE OFFLINE, so the core has to be
+      # built BEFORE electron-builder packages it (see the native-renderer
+      # entry in electron-builder.yml extraResources).
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin, x86_64-apple-darwin
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native-renderer/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('native-renderer/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Build native render core
+        run: npm run native:build:universal
 
       - name: Build Electron (macOS DMG - signed + notarized)
         # --publish never: see windows job comment.
@@ -220,6 +264,27 @@ jobs:
 
       - name: Build frontend
         run: npm run build
+
+      # ─── Native render core ────────────────────────────────────────────
+      # 2.0 is native-only. Without this binary electron-builder produces an
+      # installer whose app boots into NATIVE OFFLINE, so the core has to be
+      # built BEFORE electron-builder packages it (see the native-renderer
+      # entry in electron-builder.yml extraResources).
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native-renderer/target
+          key: ${{ runner.os }}-cargo-${{ hashFiles('native-renderer/Cargo.lock') }}
+          restore-keys: ${{ runner.os }}-cargo-
+
+      - name: Build native render core
+        run: npm run native:build
 
       - name: Build Electron (Linux AppImage + deb)
         # --publish never: see windows job comment. No signing on Linux.
