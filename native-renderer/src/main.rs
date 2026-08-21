@@ -1395,7 +1395,7 @@ struct Stage3DMeshFrame {
     items: Vec<Stage3DMeshItemGpu>,
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 struct NativeOutputExport {
     #[cfg(target_os = "macos")]
     surface: objc2_core_foundation::CFRetained<objc2_io_surface::IOSurfaceRef>,
@@ -1403,6 +1403,20 @@ struct NativeOutputExport {
     shared_handle: windows::Win32::Foundation::HANDLE,
     #[cfg(target_os = "windows")]
     shared_name: String,
+    // Linux: the dma-buf fd itself is not kept here — it's handed off to the
+    // SCM_RIGHTS side channel (queue_output_export_fd_for_channel) once at
+    // creation/resize and this process doesn't need to hold its own copy
+    // open afterwards (the exported VkDeviceMemory, owned via
+    // TextureMemory::Dedicated below, is what keeps the buffer alive). Only
+    // the metadata a poller needs to interpret a *received* fd is kept.
+    #[cfg(target_os = "linux")]
+    dmabuf_generation: u64,
+    #[cfg(target_os = "linux")]
+    dmabuf_modifier: u64,
+    #[cfg(target_os = "linux")]
+    dmabuf_stride: u32,
+    #[cfg(target_os = "linux")]
+    dmabuf_offset: u32,
     texture: wgpu::Texture,
     view: wgpu::TextureView,
     blitter: TextureBlitter,
@@ -2578,7 +2592,7 @@ struct RenderState {
     output_mirror_texture: wgpu::Texture,
     output_mirror_view: wgpu::TextureView,
     surface_copy_dst_supported: bool,
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
     output_export: Option<NativeOutputExport>,
     /// Deck confidence monitors: two small shared-texture targets (bank A,
     /// bank B) the VJ panel presents beside Program. Created lazily on the
@@ -3484,7 +3498,30 @@ impl App {
                 "reason": if output_export_ready { Value::Null } else { json!("native output DXGI export target is unavailable") },
             })
         }
-        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        #[cfg(target_os = "linux")]
+        {
+            json!({
+                "available": output_export_ready,
+                "backend": native_backend_name(),
+                "platform": "dma-buf",
+                "exporter": "vulkan-dma-buf",
+                "handle_scope": "process-local",
+                "preferred_transport": "fd",
+                "handle_encoding": "integer",
+                "handle_byte_length": 4,
+                "exported_formats": ["bgra8unorm"],
+                "color_space": "srgb",
+                "storage_format": "bgra8unorm",
+                "storage_encoding": "srgb-encoded-bgra8unorm",
+                "alpha_mode": "opaque",
+                "premultiplied_alpha": false,
+                "single_render_source": "core-output-composite",
+                "zero_conversions": true,
+                "publisher": "LinuxFdChannel.sendmsgScmRights",
+                "reason": if output_export_ready { Value::Null } else { json!("native output dma-buf export target is unavailable") },
+            })
+        }
+        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
         {
             json!({
                 "available": false,
@@ -14963,7 +15000,7 @@ impl RenderState {
             format,
             "Ghost Render Core Output Mirror",
         );
-        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
         let output_export = Self::create_output_export_target(
             &device,
             config.width,
@@ -15466,7 +15503,7 @@ impl RenderState {
             output_mirror_texture,
             output_mirror_view,
             surface_copy_dst_supported,
-            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
             output_export,
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             deck_monitor_targets: None,
@@ -15843,7 +15880,207 @@ impl RenderState {
         })
     }
 
-    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    /// Linux twin of the macOS IOSurface / Windows DXGI branches above:
+    /// exports the composited output as a real Vulkan dma-buf.
+    ///
+    /// Uses `VK_IMAGE_TILING_LINEAR` (DRM_FORMAT_MOD_LINEAR) rather than
+    /// negotiating an implicit/tiled modifier via
+    /// `VK_EXT_image_drm_format_modifier` — that negotiation matters once a
+    /// consumer (e.g. Chromium's OSR importer) needs a *tiled* zero-copy
+    /// import; for now this produces a real, GPU-resident, dma-buf-exportable
+    /// image with a well-defined, universally-supported layout. wgpu-hal
+    /// already unconditionally enables `VK_EXT_external_memory_dma_buf` and
+    /// `VK_KHR_external_memory_fd` on the logical device whenever the
+    /// physical device supports them (see wgpu_hal::vulkan::adapter), so no
+    /// extra device-extension request is needed here.
+    #[cfg(target_os = "linux")]
+    fn create_output_export_target(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        format: wgpu::TextureFormat,
+    ) -> Result<NativeOutputExport, String> {
+        use ash::vk;
+        use wgpu::hal::{self, api::Vulkan};
+
+        let width = width.max(1);
+        let height = height.max(1);
+
+        let raw_device = unsafe { device.as_hal::<Vulkan>() }
+            .ok_or_else(|| "native renderer is not running on the Vulkan backend".to_string())?;
+        let vk_device = raw_device.raw_device();
+        let vk_instance = raw_device.shared_instance().raw_instance();
+        let vk_phys = raw_device.raw_physical_device();
+        let vk_format = vulkan_format_for_wgpu_output(format);
+
+        let mut external_image_info = vk::ExternalMemoryImageCreateInfo::default()
+            .handle_types(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT);
+        let image_create_info = vk::ImageCreateInfo::default()
+            .push_next(&mut external_image_info)
+            .image_type(vk::ImageType::TYPE_2D)
+            .format(vk_format)
+            .extent(vk::Extent3D {
+                width,
+                height,
+                depth: 1,
+            })
+            .mip_levels(1)
+            .array_layers(1)
+            .samples(vk::SampleCountFlags::TYPE_1)
+            .tiling(vk::ImageTiling::LINEAR)
+            .usage(
+                vk::ImageUsageFlags::COLOR_ATTACHMENT
+                    | vk::ImageUsageFlags::SAMPLED
+                    | vk::ImageUsageFlags::TRANSFER_SRC,
+            )
+            .sharing_mode(vk::SharingMode::EXCLUSIVE)
+            .initial_layout(vk::ImageLayout::UNDEFINED);
+        let image = unsafe { vk_device.create_image(&image_create_info, None) }
+            .map_err(|err| format!("vkCreateImage failed for native output dma-buf export {width}x{height}: {err}"))?;
+
+        let mem_requirements = unsafe { vk_device.get_image_memory_requirements(image) };
+        let mem_properties = unsafe { vk_instance.get_physical_device_memory_properties(vk_phys) };
+        let memory_type_index = (0..mem_properties.memory_type_count)
+            .find(|&i| {
+                let type_bit_set = (mem_requirements.memory_type_bits & (1 << i)) != 0;
+                let is_device_local = mem_properties.memory_types[i as usize]
+                    .property_flags
+                    .contains(vk::MemoryPropertyFlags::DEVICE_LOCAL);
+                type_bit_set && is_device_local
+            })
+            .or_else(|| (0..mem_properties.memory_type_count).find(|&i| (mem_requirements.memory_type_bits & (1 << i)) != 0))
+            .ok_or_else(|| {
+                unsafe { vk_device.destroy_image(image, None) };
+                format!("no suitable Vulkan memory type for native output dma-buf export {width}x{height}")
+            })?;
+
+        let mut export_alloc_info = vk::ExportMemoryAllocateInfo::default()
+            .handle_types(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT);
+        let mut dedicated_alloc_info = vk::MemoryDedicatedAllocateInfo::default().image(image);
+        let allocate_info = vk::MemoryAllocateInfo::default()
+            .push_next(&mut export_alloc_info)
+            .push_next(&mut dedicated_alloc_info)
+            .allocation_size(mem_requirements.size)
+            .memory_type_index(memory_type_index);
+        let memory = unsafe { vk_device.allocate_memory(&allocate_info, None) }.map_err(|err| {
+            unsafe { vk_device.destroy_image(image, None) };
+            format!("vkAllocateMemory failed for native output dma-buf export {width}x{height}: {err}")
+        })?;
+
+        if let Err(err) = unsafe { vk_device.bind_image_memory(image, memory, 0) } {
+            unsafe {
+                vk_device.free_memory(memory, None);
+                vk_device.destroy_image(image, None);
+            }
+            return Err(format!(
+                "vkBindImageMemory failed for native output dma-buf export {width}x{height}: {err}"
+            ));
+        }
+
+        let subresource_layout = unsafe {
+            vk_device.get_image_subresource_layout(
+                image,
+                vk::ImageSubresource {
+                    aspect_mask: vk::ImageAspectFlags::COLOR,
+                    mip_level: 0,
+                    array_layer: 0,
+                },
+            )
+        };
+
+        let external_memory_fd = ash::khr::external_memory_fd::Device::new(vk_instance, vk_device);
+        let get_fd_info = vk::MemoryGetFdInfoKHR::default()
+            .memory(memory)
+            .handle_type(vk::ExternalMemoryHandleTypeFlags::DMA_BUF_EXT);
+        let dmabuf_fd = unsafe { external_memory_fd.get_memory_fd(&get_fd_info) }.map_err(|err| {
+            unsafe {
+                vk_device.free_memory(memory, None);
+                vk_device.destroy_image(image, None);
+            }
+            format!("vkGetMemoryFdKHR failed for native output dma-buf export {width}x{height}: {err}")
+        })?;
+
+        let dmabuf_generation = queue_output_export_fd_for_channel(PendingOutputExportFd {
+            fd: dmabuf_fd,
+            width,
+            height,
+            modifier: 0, // DRM_FORMAT_MOD_LINEAR
+            stride: subresource_layout.row_pitch as u32,
+            offset: subresource_layout.offset as u32,
+            byte_size: subresource_layout.size,
+        });
+
+        let hal_texture = unsafe {
+            raw_device.texture_from_raw(
+                image,
+                &hal::TextureDescriptor {
+                    label: Some("Ghost Render Core Output dma-buf Export"),
+                    size: wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format,
+                    usage: wgpu::TextureUses::COLOR_TARGET
+                        | wgpu::TextureUses::RESOURCE
+                        | wgpu::TextureUses::COPY_SRC,
+                    memory_flags: hal::MemoryFlags::empty(),
+                    view_formats: Vec::new(),
+                },
+                None,
+                hal::vulkan::TextureMemory::Dedicated(memory),
+            )
+        };
+        let texture = unsafe {
+            device.create_texture_from_hal::<Vulkan>(
+                hal_texture,
+                &wgpu::TextureDescriptor {
+                    label: Some("Ghost Render Core Output dma-buf Export"),
+                    size: wgpu::Extent3d {
+                        width,
+                        height,
+                        depth_or_array_layers: 1,
+                    },
+                    mip_level_count: 1,
+                    sample_count: 1,
+                    dimension: wgpu::TextureDimension::D2,
+                    format,
+                    usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                        | wgpu::TextureUsages::TEXTURE_BINDING
+                        | wgpu::TextureUsages::COPY_SRC,
+                    view_formats: &[],
+                },
+                wgpu::TextureUses::COLOR_TARGET,
+            )
+        };
+        let view = texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("Ghost Render Core Output dma-buf Export View"),
+            format: Some(format),
+            dimension: Some(wgpu::TextureViewDimension::D2),
+            ..Default::default()
+        });
+        let blitter = TextureBlitterBuilder::new(device, format)
+            .sample_type(wgpu::FilterMode::Linear)
+            .build();
+        Ok(NativeOutputExport {
+            dmabuf_generation,
+            dmabuf_modifier: 0,
+            dmabuf_stride: subresource_layout.row_pitch as u32,
+            dmabuf_offset: subresource_layout.offset as u32,
+            texture,
+            view,
+            blitter,
+            width,
+            height,
+            format,
+            frame: 0,
+        })
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
     fn refresh_output_export(&mut self, encoder: &mut wgpu::CommandEncoder) {
         if let Some(export) = self.output_export.as_mut() {
             let _keep_texture_alive = &export.texture;
@@ -16253,11 +16490,11 @@ impl RenderState {
     }
 
     fn output_export_ready(&self) -> bool {
-        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
         {
             self.output_export.is_some()
         }
-        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
         {
             false
         }
@@ -16318,13 +16555,44 @@ impl RenderState {
                 });
             }
         }
+        #[cfg(target_os = "linux")]
+        {
+            if let Some(export) = self.output_export.as_ref() {
+                return json!({
+                    "available": true,
+                    "platform": "dma-buf",
+                    "handle": export.dmabuf_generation.to_string(),
+                    "handle_encoding": "integer",
+                    "handle_scope": "process-local",
+                    "preferred_transport": "fd",
+                    "handle_byte_length": 4,
+                    "modifier": export.dmabuf_modifier.to_string(),
+                    "stride": export.dmabuf_stride,
+                    "offset": export.dmabuf_offset,
+                    "width": export.width,
+                    "height": export.height,
+                    "format": texture_format_label(export.format),
+                    "color_space": "srgb",
+                    "storage_format": "bgra8unorm",
+                    "storage_encoding": "srgb-encoded-bgra8unorm",
+                    "alpha_mode": "opaque",
+                    "premultiplied_alpha": false,
+                    "single_render_source": "core-output-composite",
+                    "zero_conversions": true,
+                    "frame": export.frame,
+                    "flipped": false,
+                });
+            }
+        }
         json!({
             "available": false,
-            "platform": if cfg!(target_os = "macos") { "iosurface" } else if cfg!(target_os = "windows") { "dxgi" } else { "unsupported" },
+            "platform": if cfg!(target_os = "macos") { "iosurface" } else if cfg!(target_os = "windows") { "dxgi" } else if cfg!(target_os = "linux") { "dma-buf" } else { "unsupported" },
             "reason": if cfg!(target_os = "macos") {
                 "native output IOSurface export target is unavailable"
             } else if cfg!(target_os = "windows") {
                 "native output DXGI export target is unavailable"
+            } else if cfg!(target_os = "linux") {
+                "native output dma-buf export target is unavailable"
             } else {
                 "native output shared texture export is pending for this backend"
             },
@@ -16359,7 +16627,7 @@ impl RenderState {
         );
         self.output_mirror_texture = output_mirror_texture;
         self.output_mirror_view = output_mirror_view;
-        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
         {
             self.output_export = Self::create_output_export_target(
                 &self.device,
@@ -18252,7 +18520,7 @@ impl RenderState {
     /// presenter/Syphon are showing) without re-compositing the scene —
     /// the cheap capture path for live recording.
     fn read_output_export_frame(&mut self) -> Result<FrameSnapshotReadback, String> {
-        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
         {
             let Some(export) = self.output_export.as_ref() else {
                 return Err(
@@ -18271,7 +18539,7 @@ impl RenderState {
             self.last_frame_metrics = Some(readback.metrics.clone());
             return Ok(readback);
         }
-        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
         {
             Err("output export capture is not available on this platform".to_string())
         }
@@ -18287,7 +18555,7 @@ impl RenderState {
     }
 
     fn output_export_snapshot(&mut self, include_pixels: bool) -> Result<Value, String> {
-        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
         {
             let Some(export) = self.output_export.as_ref() else {
                 return Err("native output shared-texture export target is unavailable".to_string());
@@ -18321,7 +18589,7 @@ impl RenderState {
             }
             Ok(value)
         }
-        #[cfg(not(any(target_os = "macos", target_os = "windows")))]
+        #[cfg(not(any(target_os = "macos", target_os = "windows", target_os = "linux")))]
         {
             let _ = include_pixels;
             Err("native output shared-texture export is pending for this backend".to_string())
@@ -18773,7 +19041,7 @@ impl RenderState {
             time_seconds,
             stage3d_overlay_items,
         );
-        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        #[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
         self.refresh_output_export(&mut mirror_encoder);
         if let Some(frame) = surface_frame.as_ref() {
             if self.surface_copy_dst_supported {
@@ -18837,9 +19105,113 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let fast_path = Arc::new(RpcFastPath::new());
     spawn_stdout_writer(response_rx);
     spawn_stdin_reader(proxy.clone(), response_tx.clone(), Arc::clone(&fast_path));
+    #[cfg(target_os = "linux")]
+    spawn_linux_fd_channel_sender();
 
     let mut app = App::new(response_tx, proxy, fast_path);
     event_loop.run_app(&mut app)?;
+    Ok(())
+}
+
+// ============================================================
+// Linux SCM_RIGHTS fd-passing side channel. Electron main creates a Unix
+// socket at `GA_NATIVE_RENDER_FD_SOCKET` and listens on it (via a dedicated
+// native addon, since Node's `net` module can't receive SCM_RIGHTS ancillary
+// data) *before* spawning this process. We connect out once, then poll
+// PENDING_OUTPUT_EXPORT_FD (populated by create_output_export_target's Linux
+// branch on init/resize) and send whatever real dma-buf fd shows up there —
+// tagged with a generation counter so a poller on the JS side can tell a new
+// fd apart from a re-send of one already seen.
+// ============================================================
+
+#[cfg(target_os = "linux")]
+fn spawn_linux_fd_channel_sender() {
+    use std::os::fd::AsRawFd;
+    use std::os::unix::net::UnixStream;
+
+    let Ok(socket_path) = std::env::var("GA_NATIVE_RENDER_FD_SOCKET") else {
+        return;
+    };
+
+    thread::spawn(move || {
+        let mut stream = None;
+        for _ in 0..50 {
+            match UnixStream::connect(&socket_path) {
+                Ok(s) => {
+                    stream = Some(s);
+                    break;
+                }
+                Err(_) => thread::sleep(Duration::from_millis(100)),
+            }
+        }
+        let Some(stream) = stream else {
+            eprintln!("[GhostRenderCore] fd-channel: failed to connect to {socket_path}");
+            return;
+        };
+        eprintln!("[GhostRenderCore] fd-channel: connected to {socket_path}");
+
+        let mut last_sent_generation: u64 = 0;
+        loop {
+            thread::sleep(Duration::from_millis(250));
+            let current_generation = OUTPUT_EXPORT_FD_GENERATION.load(Ordering::SeqCst);
+            if current_generation == last_sent_generation {
+                continue;
+            }
+            let pending = PENDING_OUTPUT_EXPORT_FD.lock().unwrap().take();
+            let Some(pending) = pending else { continue };
+            match send_fd_with_tag(stream.as_raw_fd(), pending.fd, current_generation) {
+                Ok(()) => {
+                    eprintln!(
+                        "[GhostRenderCore] fd-channel: sent output export dma-buf fd gen={current_generation} {}x{} stride={} offset={} size={}",
+                        pending.width, pending.height, pending.stride, pending.offset, pending.byte_size
+                    );
+                    last_sent_generation = current_generation;
+                }
+                Err(err) => {
+                    eprintln!("[GhostRenderCore] fd-channel: send failed: {err}");
+                }
+            }
+            unsafe { libc::close(pending.fd) };
+        }
+    });
+}
+
+#[cfg(target_os = "linux")]
+fn send_fd_with_tag(sock_fd: std::os::fd::RawFd, fd_to_send: std::os::fd::RawFd, tag: u64) -> io::Result<()> {
+    use std::mem;
+
+    let payload = tag.to_le_bytes();
+    let mut iov = [libc::iovec {
+        iov_base: payload.as_ptr() as *mut c_void,
+        iov_len: payload.len(),
+    }];
+
+    unsafe {
+        let cmsg_space = libc::CMSG_SPACE(mem::size_of::<std::os::fd::RawFd>() as u32) as usize;
+        let mut cmsg_buf = vec![0u8; cmsg_space];
+
+        let mut msg: libc::msghdr = mem::zeroed();
+        msg.msg_iov = iov.as_mut_ptr();
+        msg.msg_iovlen = 1;
+        msg.msg_control = cmsg_buf.as_mut_ptr() as *mut c_void;
+        msg.msg_controllen = cmsg_space as _;
+
+        let cmsg = libc::CMSG_FIRSTHDR(&msg);
+        if cmsg.is_null() {
+            return Err(io::Error::other("no cmsg header available"));
+        }
+        (*cmsg).cmsg_level = libc::SOL_SOCKET;
+        (*cmsg).cmsg_type = libc::SCM_RIGHTS;
+        (*cmsg).cmsg_len = libc::CMSG_LEN(mem::size_of::<std::os::fd::RawFd>() as u32) as _;
+        let data_ptr = libc::CMSG_DATA(cmsg) as *mut std::os::fd::RawFd;
+        data_ptr.write_unaligned(fd_to_send);
+        msg.msg_controllen = cmsg_space as _;
+
+        let ret = libc::sendmsg(sock_fd, &msg, 0);
+        if ret < 0 {
+            return Err(io::Error::last_os_error());
+        }
+    }
     Ok(())
 }
 
@@ -24330,7 +24702,7 @@ fn texture_format_bytes_per_texel(format: wgpu::TextureFormat) -> usize {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[cfg(any(target_os = "macos", target_os = "windows", target_os = "linux"))]
 fn native_output_export_format(output_format: wgpu::TextureFormat) -> wgpu::TextureFormat {
     let _ = output_format;
     wgpu::TextureFormat::Bgra8Unorm
@@ -24364,6 +24736,58 @@ fn dxgi_format_for_wgpu_output(
         }
         _ => windows::Win32::Graphics::Dxgi::Common::DXGI_FORMAT_B8G8R8A8_UNORM,
     }
+}
+
+#[cfg(target_os = "linux")]
+fn vulkan_format_for_wgpu_output(format: wgpu::TextureFormat) -> ash::vk::Format {
+    match format {
+        wgpu::TextureFormat::Bgra8UnormSrgb => ash::vk::Format::B8G8R8A8_SRGB,
+        wgpu::TextureFormat::Rgba8Unorm => ash::vk::Format::R8G8B8A8_UNORM,
+        wgpu::TextureFormat::Rgba8UnormSrgb => ash::vk::Format::R8G8B8A8_SRGB,
+        _ => ash::vk::Format::B8G8R8A8_UNORM,
+    }
+}
+
+/// One dma-buf fd waiting to be handed to the SCM_RIGHTS side channel by
+/// `spawn_linux_fd_channel_sender`'s connection thread — set whenever
+/// `create_output_export_target`'s Linux branch (re)creates the export
+/// target (init or resize). The generation counter is what a listener
+/// downstream (currently just the fd-channel sender thread) uses to tell
+/// "already sent this one" apart from "new fd, send it".
+#[cfg(target_os = "linux")]
+struct PendingOutputExportFd {
+    fd: std::os::fd::RawFd,
+    #[allow(dead_code)]
+    width: u32,
+    #[allow(dead_code)]
+    height: u32,
+    #[allow(dead_code)]
+    modifier: u64,
+    #[allow(dead_code)]
+    stride: u32,
+    #[allow(dead_code)]
+    offset: u32,
+    #[allow(dead_code)]
+    byte_size: u64,
+}
+
+#[cfg(target_os = "linux")]
+static PENDING_OUTPUT_EXPORT_FD: Mutex<Option<PendingOutputExportFd>> = Mutex::new(None);
+#[cfg(target_os = "linux")]
+static OUTPUT_EXPORT_FD_GENERATION: AtomicU64 = AtomicU64::new(0);
+
+/// Called from the render thread once a new dma-buf export target exists.
+/// If a previously-queued (never sent) fd is still sitting here, it's closed
+/// first — the render thread only calls this on init/resize, which is rare
+/// enough that losing an unsent intermediate fd to a resize storm is fine.
+#[cfg(target_os = "linux")]
+fn queue_output_export_fd_for_channel(pending: PendingOutputExportFd) -> u64 {
+    let mut slot = PENDING_OUTPUT_EXPORT_FD.lock().unwrap();
+    if let Some(stale) = slot.take() {
+        unsafe { libc::close(stale.fd) };
+    }
+    *slot = Some(pending);
+    OUTPUT_EXPORT_FD_GENERATION.fetch_add(1, Ordering::SeqCst) + 1
 }
 
 #[cfg(target_os = "macos")]

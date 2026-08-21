@@ -534,9 +534,11 @@ dependencies = [
 name = "ghost-render-core"
 version = "0.1.0"
 dependencies = [
+ "ash",
  "base64",
  "bytemuck",
  "image",
+ "libc",
  "naga",
  "objc2 0.5.2",
  "objc2-app-kit",

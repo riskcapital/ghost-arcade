@@ -377,6 +377,7 @@ export function createNativeRendererBroker({
   nativeEditorPreviewStatusProvider = null,
   nativeFrameEncoderStatusProvider = null,
   sharedTextureHandlePreparer = null,
+  linuxFdChannelReceiver = null,
 }) {
   return new NativeRendererBroker({
     appRoot,
@@ -388,6 +389,7 @@ export function createNativeRendererBroker({
     nativeEditorPreviewStatusProvider,
     nativeFrameEncoderStatusProvider,
     sharedTextureHandlePreparer,
+    linuxFdChannelReceiver,
   });
 }
 
@@ -402,6 +404,7 @@ class NativeRendererBroker {
     nativeEditorPreviewStatusProvider,
     nativeFrameEncoderStatusProvider,
     sharedTextureHandlePreparer,
+    linuxFdChannelReceiver,
   }) {
     this.appRoot = appRoot;
     this.resourcesPath = resourcesPath;
@@ -416,10 +419,23 @@ class NativeRendererBroker {
       typeof nativeFrameEncoderStatusProvider === 'function' ? nativeFrameEncoderStatusProvider : null;
     this.sharedTextureHandlePreparer =
       typeof sharedTextureHandlePreparer === 'function' ? sharedTextureHandlePreparer : null;
+    // Optional consumer for real dma-buf fds received over the Linux
+    // SCM_RIGHTS side channel (see startLinuxFdChannel below). Takes
+    // ownership of the fd (must close it) — when unset, received fds are
+    // just logged and closed (Milestone 1/2 proof-of-transport behavior).
+    this.linuxFdChannelReceiver =
+      typeof linuxFdChannelReceiver === 'function' ? linuxFdChannelReceiver : null;
     this.child = null;
     this.nextId = 1;
     this.pending = new Map();
     this.stdoutBuffer = '';
+    // Linux SCM_RIGHTS fd-passing side channel — Milestone 1 of the Linux
+    // zero-copy preview work. See linux_fd_channel_addon.cpp.
+    this.linuxFdChannelAddon = null;
+    this.linuxFdChannelLoadAttempted = false;
+    this.linuxFdChannelSocketPath = null;
+    this.linuxFdChannelPollTimer = null;
+    this.linuxFdChannelReceiptCount = 0;
     this.tempFrameDir = null;
     this.tempFrameSerial = 1;
     this.lastStatus = makeDefaultStatus({
@@ -1880,8 +1896,12 @@ class NativeRendererBroker {
     if (!childEnv.GA_FFMPEG_PATH) {
       childEnv.GA_FFMPEG_PATH = resolveFfmpegPath(this.env, this.platform);
     }
+    if (this.platform === 'linux') {
+      const socketPath = this.startLinuxFdChannel();
+      if (socketPath) childEnv.GA_NATIVE_RENDER_FD_SOCKET = socketPath;
+    }
     this.child = spawn(executable, [], {
-      cwd: this.appRoot,
+      cwd: this.isPackaged ? this.resourcesPath : this.appRoot,
       stdio: ['pipe', 'pipe', 'pipe'],
       env: childEnv,
     });
@@ -1956,6 +1976,7 @@ class NativeRendererBroker {
   }
 
   killProcess() {
+    this.stopLinuxFdChannel();
     if (!this.child) {
       this.cleanupTempFrameDir();
       return;
@@ -1964,6 +1985,103 @@ class NativeRendererBroker {
     this.child = null;
     this.rejectPending(new Error('Native render core stopped'));
     this.cleanupTempFrameDir();
+  }
+
+  // ============================================================
+  // Linux SCM_RIGHTS fd-passing side channel (Milestone 1 of the Linux
+  // zero-copy native-renderer preview work). Node's `net` module can't
+  // receive ancillary SCM_RIGHTS data, so listen()/poll() are done by
+  // linux_fd_channel_addon.cpp via raw socket syscalls. For now this only
+  // proves the transport (logs each tagged dummy fd it receives, then
+  // closes it) — Milestone 3 will consume real dma-buf fds here instead.
+  // ============================================================
+
+  loadLinuxFdChannelAddon() {
+    if (this.linuxFdChannelAddon) return this.linuxFdChannelAddon;
+    if (this.linuxFdChannelLoadAttempted) return null;
+    this.linuxFdChannelLoadAttempted = true;
+    try {
+      const addonPath = this.findLinuxFdChannelAddon();
+      if (!addonPath) {
+        console.warn('[NativeRenderer] fd-channel: linux_fd_channel_addon.node not found');
+        return null;
+      }
+      this.linuxFdChannelAddon = require(addonPath);
+      console.log(`[NativeRenderer] fd-channel: addon loaded from ${addonPath}`);
+      return this.linuxFdChannelAddon;
+    } catch (err) {
+      console.warn(`[NativeRenderer] fd-channel: failed to load addon: ${err?.message || err}`);
+      return null;
+    }
+  }
+
+  findLinuxFdChannelAddon() {
+    const bin = 'linux_fd_channel_addon.node';
+    const candidates = [];
+    if (this.isPackaged && this.resourcesPath) {
+      candidates.push(path.join(this.resourcesPath, 'app.asar.unpacked', 'electron', 'native', 'build', 'Release', bin));
+    }
+    candidates.push(path.join(this.appRoot, 'electron', 'native', 'build', 'Release', bin));
+    return candidates.find((candidate) => fs.existsSync(candidate)) || null;
+  }
+
+  startLinuxFdChannel() {
+    const addon = this.loadLinuxFdChannelAddon();
+    if (!addon) return null;
+
+    const socketPath = path.join(os.tmpdir(), `ga-native-render-fds-${process.pid}-${Date.now()}.sock`);
+    if (!addon.listen(socketPath)) {
+      console.warn(`[NativeRenderer] fd-channel: failed to listen on ${socketPath}`);
+      return null;
+    }
+    this.linuxFdChannelSocketPath = socketPath;
+    console.log(`[NativeRenderer] fd-channel: listening on ${socketPath}`);
+
+    this.linuxFdChannelPollTimer = setInterval(() => {
+      let result;
+      try {
+        result = addon.poll();
+      } catch (err) {
+        console.warn(`[NativeRenderer] fd-channel: poll failed: ${err?.message || err}`);
+        return;
+      }
+      if (!result) return;
+      if (result.received) {
+        this.linuxFdChannelReceiptCount += 1;
+        console.log(`[NativeRenderer] fd-channel: received fd=${result.fd} tag=${result.tag} (receipt #${this.linuxFdChannelReceiptCount})`);
+        // A registered receiver (the Linux preview presenter, once wired)
+        // takes ownership of the fd and is responsible for closing it —
+        // otherwise we close it ourselves so nothing leaks. The receiver
+        // may be async (e.g. it needs an RPC round-trip to correlate the
+        // fd's generation with output-export metadata before importing
+        // it) — wrapped so a rejection is caught the same as a sync throw.
+        if (this.linuxFdChannelReceiver) {
+          (async () => {
+            try {
+              await this.linuxFdChannelReceiver(result.fd, result.tag);
+            } catch (err) {
+              console.warn(`[NativeRenderer] fd-channel: receiver threw: ${err?.message || err}`);
+              try { addon.closeFd(result.fd); } catch {}
+            }
+          })();
+        } else {
+          try { addon.closeFd(result.fd); } catch {}
+        }
+      }
+    }, 250);
+
+    return socketPath;
+  }
+
+  stopLinuxFdChannel() {
+    if (this.linuxFdChannelPollTimer) {
+      clearInterval(this.linuxFdChannelPollTimer);
+      this.linuxFdChannelPollTimer = null;
+    }
+    if (this.linuxFdChannelAddon) {
+      try { this.linuxFdChannelAddon.close(); } catch {}
+    }
+    this.linuxFdChannelSocketPath = null;
   }
 
   findExecutable() {
@@ -2110,6 +2228,17 @@ function expectedOutputSharedTextureExport(platform = process.platform) {
       handleScope: 'process-local',
       preferredTransport: 'shared_name',
       handleByteLength: 8,
+    };
+  }
+  if (platform === 'linux') {
+    return {
+      supported: true,
+      backend: 'vulkan',
+      platform: 'dma-buf',
+      exporter: 'vulkan-dma-buf',
+      handleScope: 'process-local',
+      preferredTransport: 'fd',
+      handleByteLength: 4,
     };
   }
   return {

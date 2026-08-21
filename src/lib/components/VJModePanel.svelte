@@ -1797,7 +1797,7 @@
     {
       id: 'threejs-embryo',
       name: 'Embryo',
-      src: '/threejs/embryo/index.html',
+      src: `${import.meta.env.BASE_URL}threejs/embryo/index.html`,
       thumbnail: undefined,
     },
   ];
@@ -1807,7 +1807,7 @@
       ? bundledVJThreeJSItems.map((def) => ({
           id: def.id,
           name: def.name,
-          src: def.url,
+          src: `${import.meta.env.BASE_URL}${def.url}`,
           thumbnail: undefined,
         }))
       : fallbackThreeJSItems;

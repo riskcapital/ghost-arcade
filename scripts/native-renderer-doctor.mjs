@@ -209,6 +209,9 @@ function expectedOutputTextureTransport() {
   if (process.platform === 'win32') {
     return { platform: 'dxgi', handleScope: 'process-local', preferredTransport: 'shared_name' };
   }
+  if (process.platform === 'linux') {
+    return { platform: 'dma-buf', handleScope: 'process-local', preferredTransport: 'fd' };
+  }
   return { platform: 'unsupported', handleScope: '', preferredTransport: '' };
 }
 
@@ -461,7 +464,11 @@ async function inspectAppBridge() {
     return { ok: false, detail: 'render-core binary missing' };
   }
   const fullNativeExpected = process.platform === 'darwin' || process.platform === 'win32';
-  const outputExportExpected = fullNativeExpected;
+  // Linux has the dma-buf output export (Milestone 2 of the zero-copy
+  // preview work) but not yet the embedded preview presenter or a
+  // texture-share sender (Spout/Syphon equivalent) — those still gate
+  // fullNativeExpected, not outputExportExpected.
+  const outputExportExpected = fullNativeExpected || process.platform === 'linux';
   const broker = createNativeRendererBroker({
     appRoot: root,
     resourcesPath: null,
@@ -553,7 +560,7 @@ async function inspectAppBridge() {
     const ok =
       !!status?.backend_ready &&
       !!features.shared_texture_output_export === outputExportExpected &&
-      !!features.native_texture_share_sender === outputExportExpected &&
+      !!features.native_texture_share_sender === fullNativeExpected &&
       outputTransportOk &&
       !!features.native_mp4_frame_encoder &&
       !!features.native_recording &&
@@ -562,7 +569,7 @@ async function inspectAppBridge() {
       sourceFrameImportOk &&
       nativeOutputDriverReady &&
       fullV2OkHeadless === fullNativeExpected &&
-      !!checks.get('native-texture-share-sender')?.ok === outputExportExpected &&
+      !!checks.get('native-texture-share-sender')?.ok === fullNativeExpected &&
       !!checks.get('native-mp4-frame-encoder')?.ok &&
       !!directSharedRpc;
     return {
