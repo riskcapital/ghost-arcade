@@ -348,6 +348,15 @@ pub fn output_shared_texture_export_readiness(capabilities: &Value) -> (bool, St
             "shared_name",
             8_u64,
         )
+    } else if cfg!(target_os = "linux") {
+        (
+            "vulkan",
+            "dma-buf",
+            "vulkan-dma-buf",
+            "process-local",
+            "fd",
+            4_u64,
+        )
     } else {
         return (
             false,

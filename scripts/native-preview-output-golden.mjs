@@ -115,7 +115,7 @@ function comparePixels(a, b) {
 }
 
 async function main() {
-  if (process.platform !== 'darwin' && process.platform !== 'win32') {
+  if (process.platform !== 'darwin' && process.platform !== 'win32' && process.platform !== 'linux') {
     console.log('native preview/output golden skipped: shared output texture export is unsupported on this platform');
     return;
   }
@@ -124,7 +124,7 @@ async function main() {
   try {
     const started = await rpc.send('start', {
       config: {
-        backend: process.platform === 'darwin' ? 'metal' : 'd3d12',
+        backend: process.platform === 'darwin' ? 'metal' : process.platform === 'win32' ? 'd3d12' : 'vulkan',
         width: WIDTH,
         height: HEIGHT,
         target_fps: 30,

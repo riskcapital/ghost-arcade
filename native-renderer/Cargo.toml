@@ -37,6 +37,11 @@ windows = { version = "0.62", default-features = false, features = ["Win32_Found
 # spawn_linux_fd_channel_sender in main.rs) needs raw sendmsg/cmsg access
 # that std::os::unix::net doesn't expose.
 libc = "0.2.186"
+# Same version wgpu-hal 30.0.0 pulls in (see Cargo.lock) — must match so
+# ash::vk::Image/DeviceMemory/etc. from device.as_hal::<Vulkan>() are the
+# same types we build VkExternalMemoryImageCreateInfo etc. against for the
+# dma-buf output export (create_output_export_target's Linux branch).
+ash = "0.38"
 
 [profile.release]
 codegen-units = 1
