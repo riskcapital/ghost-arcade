@@ -6,7 +6,7 @@
     "INPUTS": [
         {"NAME": "colorMode", "TYPE": "long", "DEFAULT": 0,
          "VALUES": [0, 1, 2, 3, 4, 5, 6],
-         "LABELS": ["Steel", "Ice", "Ember", "Chrome", "Toxic", "Orchid", "Spectrum"]},
+         "LABELS": ["Nacre", "Abyss", "Verdigris", "Magma", "Porcelain", "Ultraviolet", "Solaris"]},
         {"NAME": "constant",  "TYPE": "float", "DEFAULT": 0.68, "MIN": 0.35, "MAX": 0.92},
         {"NAME": "slice4D",   "TYPE": "float", "DEFAULT": 0.00, "MIN": -1.00, "MAX": 1.00},
         {"NAME": "foldRate",  "TYPE": "float", "DEFAULT": 0.35, "MIN": 0.00, "MAX": 1.50},
@@ -122,39 +122,49 @@ vec3 juliaNormal(vec3 p, vec4 c, float wSlice, float ra, float rb) {
 }
 
 /*
- * Shared GA2 palettes, columns [body, deep, accent]. Kept identical across the
- * pack so a show can switch shaders without the colour language changing.
+ * Palettes for this shader alone. The pack deliberately does NOT share one
+ * colour set: twenty shaders with the same seven presets read as one effect
+ * with knobs on rather than twenty pieces.
+ *
+ * These are picked for a smooth sculptural solid rather than a thin-membraned
+ * lattice. A surface this continuous shows a body colour honestly, so several
+ * modes carry real colour in the body instead of hiding behind a white shell.
+ * Magma inverts the usual arrangement -- near-black body, all the energy in the
+ * accent -- which works here because the orbit trap bands the interior and
+ * gives those glowing edges somewhere to live.
+ *
+ * Columns: [body, deep, accent].
  */
 mat3 paletteFor(int mode, float t) {
     vec3 body, deep, accent;
-    if (mode == 1) {            /* Ice */
-        body   = vec3(0.82, 0.94, 1.00);
-        deep   = vec3(0.020, 0.080, 0.190);
-        accent = mix(vec3(0.28, 0.80, 1.00), vec3(0.76, 0.96, 1.00), t);
-    } else if (mode == 2) {     /* Ember */
-        body   = vec3(1.00, 0.74, 0.44);
-        deep   = vec3(0.130, 0.025, 0.015);
-        accent = mix(vec3(1.00, 0.32, 0.08), vec3(1.00, 0.82, 0.34), t);
-    } else if (mode == 3) {     /* Chrome */
-        body   = vec3(0.88, 0.89, 0.93);
-        deep   = vec3(0.035, 0.037, 0.045);
-        accent = mix(vec3(0.55, 0.58, 0.64), vec3(1.00, 1.00, 1.00), t);
-    } else if (mode == 4) {     /* Toxic */
-        body   = vec3(0.80, 1.00, 0.48);
-        deep   = vec3(0.020, 0.090, 0.030);
-        accent = mix(vec3(0.42, 1.00, 0.22), vec3(0.94, 1.00, 0.32), t);
-    } else if (mode == 5) {     /* Orchid */
-        body   = vec3(0.86, 0.78, 1.00);
-        deep   = vec3(0.080, 0.020, 0.160);
-        accent = mix(vec3(0.72, 0.24, 1.00), vec3(1.00, 0.44, 0.86), t);
-    } else if (mode == 6) {     /* Spectrum */
-        body   = 0.5 + 0.5 * cos(PI2 * (t + vec3(0.00, 0.33, 0.67)));
-        deep   = vec3(0.030, 0.030, 0.080);
-        accent = 0.5 + 0.5 * cos(PI2 * (t + 0.35 + vec3(0.00, 0.33, 0.67)));
-    } else {                    /* Steel */
-        body   = vec3(0.74, 0.81, 0.95);
-        deep   = vec3(0.030, 0.060, 0.160);
-        accent = mix(vec3(0.25, 0.45, 1.00), vec3(0.45, 0.95, 1.00), t);
+    if (mode == 1) {            /* Abyss - deep water, bioluminescent rim */
+        body   = vec3(0.30, 0.62, 0.63);
+        deep   = vec3(0.010, 0.040, 0.070);
+        accent = mix(vec3(0.10, 1.00, 0.72), vec3(0.35, 0.90, 1.00), t);
+    } else if (mode == 2) {     /* Verdigris - aged bronze gone green */
+        body   = vec3(0.72, 0.60, 0.36);
+        deep   = vec3(0.045, 0.070, 0.055);
+        accent = mix(vec3(0.30, 0.86, 0.66), vec3(0.90, 0.78, 0.40), t);
+    } else if (mode == 3) {     /* Magma - basalt body, fissure light */
+        body   = vec3(0.16, 0.13, 0.13);
+        deep   = vec3(0.020, 0.010, 0.010);
+        accent = mix(vec3(1.00, 0.28, 0.04), vec3(1.00, 0.85, 0.25), t);
+    } else if (mode == 4) {     /* Porcelain - cream body, cool shadow */
+        body   = vec3(0.97, 0.94, 0.88);
+        deep   = vec3(0.090, 0.100, 0.135);
+        accent = mix(vec3(0.85, 0.72, 0.45), vec3(0.70, 0.80, 0.95), t);
+    } else if (mode == 5) {     /* Ultraviolet - saturated violet, white edge */
+        body   = vec3(0.40, 0.20, 0.72);
+        deep   = vec3(0.035, 0.010, 0.070);
+        accent = mix(vec3(0.65, 0.30, 1.00), vec3(0.95, 0.90, 1.00), t);
+    } else if (mode == 6) {     /* Solaris - white hot core, deep red fall-off */
+        body   = vec3(1.00, 0.93, 0.72);
+        deep   = vec3(0.120, 0.020, 0.010);
+        accent = mix(vec3(1.00, 0.62, 0.14), vec3(1.00, 1.00, 0.92), t);
+    } else {                    /* Nacre - pearlescent, iridescent rim */
+        body   = vec3(0.93, 0.90, 0.92);
+        deep   = vec3(0.060, 0.070, 0.110);
+        accent = mix(vec3(0.45, 0.90, 0.95), vec3(1.00, 0.62, 0.82), t);
     }
     return mat3(body, deep, accent);
 }
@@ -284,7 +294,13 @@ void main() {
                body colour: shadow -> accent -> near-white. */
             vec3 interiorCol = mix(DEEP * 1.6, ACCENT, smoothstep(0.15, 0.75, tp));
             interiorCol = mix(interiorCol, BODY, smoothstep(0.7, 1.0, tp) * 0.30);
-            interiorCol *= 0.50 + 0.60 * bands;
+            /* Bands GATE the interior rather than merely modulating it. With a
+               0.5 floor the accent covers the whole surface and any dark-bodied
+               palette gets flooded -- Magma rendered as pale gold instead of
+               basalt with lit fissures. Dropping the floor lets the shadow
+               survive between bands, which is what makes the glow read as
+               coming from inside the solid. */
+            interiorCol *= 0.10 + 1.00 * bands;
 
             col = mix(DEEP, BODY * 0.80, shaped) * ao;
             col = mix(col, interiorCol, interior);
