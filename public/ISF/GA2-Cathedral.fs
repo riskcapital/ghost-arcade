@@ -1,5 +1,5 @@
 /*{
-    "DESCRIPTION": "Cathedral: a Menger lattice lit from behind, so the structure is silhouette and the subject is the light pouring through its square holes. Every volumetric sample is shadow-marched toward the source, which is what turns haze into hard-edged beams. The lattice folds and refolds as it turns. Bass widens the aperture, beats flare the source, spectral centroid walks the light around the lattice.",
+    "DESCRIPTION": "Cathedral: a flight through an endless Menger lattice, lit by shafts pouring through its square holes. The structure is generated rather than placed -- an infinite tiling whose fold angle drifts with depth, so the architecture is rebuilt continuously ahead of the camera and never repeats a room. Every volumetric sample is shadow-marched toward the source, which is what turns haze into hard-edged beams. Bass widens the aperture, beats flare the source, spectral centroid walks the light.",
     "CREDIT": "Ghost Arcade 2.0 pack",
     "ISFVSN": "2",
     "CATEGORIES": ["Generator", "3D Room", "Audio Reactive"],
@@ -9,10 +9,11 @@
          "LABELS": ["Vault", "Chapel", "Reactor", "Forge", "Chlorine", "Rose", "Silver"]},
         {"NAME": "depth",     "TYPE": "float", "MIN": 1.0,  "MAX": 5.0,  "DEFAULT": 4.0},
         {"NAME": "aperture",  "TYPE": "float", "MIN": 0.3,  "MAX": 1.6,  "DEFAULT": 1.0},
-        {"NAME": "beams",     "TYPE": "float", "MIN": 0.0,  "MAX": 3.0,  "DEFAULT": 1.15},
-        {"NAME": "density",   "TYPE": "float", "MIN": 0.1,  "MAX": 2.0,  "DEFAULT": 0.85},
+        {"NAME": "beams",     "TYPE": "float", "MIN": 0.0,  "MAX": 3.0,  "DEFAULT": 1.70},
+        {"NAME": "density",   "TYPE": "float", "MIN": 0.1,  "MAX": 2.0,  "DEFAULT": 1.25},
         {"NAME": "fold",      "TYPE": "float", "MIN": 0.0,  "MAX": 1.0,  "DEFAULT": 0.35},
-        {"NAME": "orbitSpin", "TYPE": "float", "MIN": 0.0,  "MAX": 1.5,  "DEFAULT": 0.20},
+        {"NAME": "flySpeed",  "TYPE": "float", "MIN": 0.0,  "MAX": 4.0,  "DEFAULT": 1.15},
+        {"NAME": "evolve",    "TYPE": "float", "MIN": 0.0,  "MAX": 1.0,  "DEFAULT": 0.45},
         {"NAME": "lightWalk", "TYPE": "float", "MIN": 0.0,  "MAX": 1.5,  "DEFAULT": 0.30},
         {"NAME": "hueShift",  "TYPE": "float", "MIN": 0.0,  "MAX": 1.0,  "DEFAULT": 0.0},
         {"NAME": "exposure",  "TYPE": "float", "MIN": 0.2,  "MAX": 2.2,  "DEFAULT": 1.0}
@@ -56,11 +57,7 @@ const int MAX_LEVELS = 5;
 const int MAX_STEPS = 90;
 const int VOL = 56;
 const int SHADOW_STEPS = 10;
-/* The medium only exists inside this, so it also decides how much of the frame
-   the haze covers. At 4.2 the sphere subtended more than the field of view and
-   every pixel accumulated glow -- there was no dark surround left for the beams
-   to read against. */
-const float BOUND = 2.9;
+const float FAR = 26.0;
 
 mat2 rot(float a){ float c = cos(a), s = sin(a); return mat2(c, -s, s, c); }
 float hash21(vec2 p){ p = fract(p*vec2(123.34, 345.45)); p += dot(p, p + 34.345); return fract(p.x*p.y); }
@@ -74,8 +71,23 @@ float boxDist(vec3 p, vec3 b){
  * Menger lattice. `ap` widens the cut shafts, which is the aperture control:
  * larger cuts leave thinner struts and let more light through.
  */
+/*
+ * Infinite Menger.
+ *
+ * IQ's construction opens with a bounding box, which is what makes it a single
+ * finite sponge. Drop that and only the cross subtractions remain -- and those
+ * are periodic by their own mod(), so the lattice tiles outward for ever with
+ * no seam and nothing to place. That is the whole procedural generation here:
+ * no cells, no instancing, no per-room decisions. The structure ahead of the
+ * camera exists because the function is evaluated there.
+ *
+ * The fold angle drifts with DEPTH as well as time. Constant, the tiling is
+ * genuinely periodic and a flight through it loops visibly every couple of
+ * cells; drifting, every level is rotated by a slightly different amount at
+ * each z, so the architecture is rebuilt continuously ahead and no room repeats.
+ */
 float menger(vec3 p, int levels, float ap, float fld){
-    float d = boxDist(p, vec3(1.0));
+    float d = -1e5;                       /* no bounding box: tiles for ever */
     float s = 1.0;
     for(int i = 0; i < MAX_LEVELS; i++){
         if(i >= levels) break;
@@ -87,16 +99,13 @@ float menger(vec3 p, int levels, float ap, float fld){
         float dc = max(r.z, r.x);
         float c = (min(da, min(db, dc)) - 1.0)/s;
         d = max(d, c);
-        /* A small twist between levels so the tracery is not perfectly
-           axis-aligned at every scale, which reads as a stack of identical
-           boxes rather than as built structure. */
         if(fld > 0.001) p.xz *= rot(fld*0.35);
     }
     return d;
 }
 
 float mapScene(vec3 p, int levels, float ap, float fld){
-    return max(menger(p, levels, ap, fld), length(p) - BOUND);
+    return menger(p, levels, ap, fld);
 }
 
 vec3 sceneNormal(vec3 p, int levels, float ap, float fld){
@@ -177,24 +186,37 @@ void main(){
 
     int levels = int(clamp(depth, 1.0, 5.0));
     float ap = aperture*(0.92 + 0.16*bass);
-    float fld = fold;
+    float z = TIME*flySpeed;                  /* depth along the flight */
+    float fld = fold + evolve*(0.30*sin(TIME*0.13) + 0.22*sin(z*0.045));
 
-    float ang = TIME*orbitSpin;
-    float camR = 5.4;
-    vec3 ro = vec3(sin(ang)*camR, 0.9 + 0.7*sin(TIME*0.13), cos(ang)*camR);
-    vec3 fwd = normalize(-ro);
+    /*
+     * Flight down the central shaft.
+     *
+     * The lattice's first-level cross cuts a clear corridor along each axis
+     * through every cell, so a path near x=y=0 stays in open space for ever --
+     * no collision handling, no route to author. The sway is kept well inside
+     * the shaft's half width; push it further and the camera clips into a wall,
+     * which on an infinite structure means every frame after that is solid.
+     */
+    vec3 ro = vec3(sin(TIME*0.19)*0.16, cos(TIME*0.14)*0.13, z);
+    vec3 fwd = normalize(vec3(sin(TIME*0.11)*0.05, sin(TIME*0.09)*0.04, 1.0));
     vec3 right = normalize(cross(vec3(0.0, 1.0, 0.0), fwd));
     vec3 up = cross(fwd, right);
-    vec3 rd = normalize(right*uv.x + up*uv.y + fwd*1.45);
+    float roll = TIME*0.05;
+    vec3 rr = right*cos(roll) + up*sin(roll);
+    vec3 uu = up*cos(roll) - right*sin(roll);
+    vec3 rd = normalize(rr*uv.x + uu*uv.y + fwd*1.30);
 
     /*
      * The source sits BEHIND the lattice from the camera's point of view. It
      * walks around slowly, but never in front: put it on the camera's side and
      * the whole piece collapses into an ordinary lit object.
      */
+    /* Source sits ahead and off to one side, so shafts rake ACROSS the corridor
+       rather than pointing down it -- a light directly ahead casts no visible
+       beam, because every shaft would run parallel to the view. */
     float lw = TIME*lightWalk;
-    vec3 Lpos = -fwd*7.0 + right*sin(lw)*3.4 + up*(1.2 + cos(lw*0.7)*1.6);
-    vec3 L = normalize(Lpos);
+    vec3 L = normalize(vec3(sin(lw)*0.85, 0.42 + cos(lw*0.7)*0.35, 0.30));
 
     /* Backdrop: the source seen directly, as a soft disc with bloom. Beams have
        to come FROM something visible or they read as unmotivated streaks. */
@@ -203,14 +225,10 @@ void main(){
     col += LIGHT*pow(toL, 220.0)*3.2*(1.0 + beat*0.7);
     col += BLOOM*pow(toL, 26.0)*0.30*(0.7 + 0.6*level);
 
-    float bq = dot(ro, rd);
-    float disc = bq*bq - dot(ro, ro) + BOUND*BOUND;
     float hitT = 1e9;
-
-    if(disc > 0.0){
-        float hs = sqrt(disc);
-        float tIn = max(-bq - hs, 0.0);
-        float tOut = -bq + hs;
+    {
+        float tIn = 0.02;
+        float tOut = FAR;
 
         /* Surface pass: the lattice as silhouette, with just enough grazing
            light on the near faces to read as stone rather than a hole. */
@@ -231,8 +249,9 @@ void main(){
             /* Backlit, so the faces turned toward the camera get almost
                nothing; the edges catch the source and that is what draws the
                tracery. */
-            col = STONE*(0.22 + 0.78*lit*0.30);
-            col += LIGHT*rim*0.70*(0.6 + 0.7*level);
+            col = STONE*(0.14 + 0.86*lit*0.55);
+            col *= exp(-hitT*0.055);   /* corridor falls away into dark */
+            col += LIGHT*rim*0.40*(0.6 + 0.7*level);
         }
 
         /*
@@ -260,26 +279,22 @@ void main(){
                erases the very contrast between lit and shadowed air that makes
                a beam a beam. Optical depth across the whole lattice wants to
                stay well under one. */
-            float sigma = density*0.85;
+            /* Far thinner than the finite version needed. That one confined the
+               medium to a 2-unit cube; this corridor runs to FAR, so the same
+               coefficient gives an optical depth of ~18 and every ray saturates
+               to white. Scale with the distance actually being integrated. */
+            float sigma = density*0.075;
             float trans = 1.0;
             float acc = 0.0;
             for(int i = 0; i < VOL; i++){
                 float tv = tIn + (float(i) + jitter)*dt;
                 if(tv > far || trans < 0.01) break;
                 vec3 p = ro + rd*tv;
-                /*
-                 * The medium lives ONLY inside the lattice's own cube.
-                 *
-                 * Filling the bounding sphere lit the air all around the
-                 * structure as well, and open air anywhere sees the source --
-                 * so every ray accumulated the same glow and the frame washed to
-                 * an even cream with no figure against ground. Shafts need most
-                 * of the air to be SHADOWED, which is only true inside the
-                 * lattice. Outside it there is nothing to scatter, so the
-                 * surround stays black and the beams have something to read
-                 * against.
-                 */
-                if(max(abs(p.x), max(abs(p.y), abs(p.z))) > 1.04) continue;
+                /* Inside the lattice the medium needs no bound: most of the air
+                   here is already shadowed by surrounding structure, which is
+                   exactly the condition beams require. The finite version had to
+                   confine it to the sponge's own cube to get the same effect. */
+
                 /* The shadow march is the effect: without it this is fog. */
                 float reach = lightReach(p, L, levels, ap, fld);
                 float a = 1.0 - exp(-sigma*dt);
@@ -291,8 +306,8 @@ void main(){
                beam is the difference between lit and shadowed air, so if a
                clear ray already reads bright there is nowhere left for the
                shadow to go and the whole thing turns to fog. */
-            col += LIGHT*acc*beams*1.30;
-            col += BLOOM*acc*acc*beams*0.55;
+            col += LIGHT*acc*beams*0.75;
+            col += BLOOM*acc*acc*beams*0.30;
         }
     }
 
