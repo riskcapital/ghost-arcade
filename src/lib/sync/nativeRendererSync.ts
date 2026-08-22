@@ -180,7 +180,9 @@ import {
   setNativeRendererMediaDropPolicy,
   setNativeRendererMediaPrefetchPolicy,
   setNativeRendererPresentPolicy,
+  setNativeRendererQualityPolicy,
   setNativeRendererShaderPrecompilePolicy,
+  type NativeQualityPolicy,
   setNativeRendererTargetFps,
   setNativeRendererTexturePoolCap,
   startNativeRenderer,
@@ -4664,6 +4666,21 @@ let activeNativeRendererSync: NativeRendererSync | null = null;
 
 /** The running sync instance (Canvas owns its lifecycle). Offline render
  *  uses this to drive native graph content from the virtual clock. */
+/*
+ * The render-quality tier the user picked, held at module scope rather than on
+ * the sync instance so it can be set before a core exists and survives a core
+ * restart. The core's own default policy is "auto", which starts at balanced
+ * (0.72 scale); every start therefore has to state the preference explicitly or
+ * a user sitting on Native would silently get a soft picture.
+ */
+let preferredNativeQualityPolicy: NativeQualityPolicy = 'insane';
+
+export function setPreferredNativeQualityPolicy(policy: NativeQualityPolicy): void {
+  preferredNativeQualityPolicy = policy;
+  const sync = getActiveNativeRendererSync();
+  void sync?.setNativeQualityPolicy(policy);
+}
+
 export function getActiveNativeRendererSync(): NativeRendererSync | null {
   return activeNativeRendererSync;
 }
@@ -7405,6 +7422,7 @@ export class NativeRendererSync {
       this.setAutoPresentPolicy(this.autoPresentOnStateChange),
       this.setDecodeCpuBackupPolicy(this.decodeStoreCpuBackupFrames),
       this.setDecodeSyntheticFallbackPolicy(this.decodeAllowSyntheticFallback),
+      this.setNativeQualityPolicy(preferredNativeQualityPolicy),
       this.setTexturePoolCapMb(this.texturePoolCapMb),
       this.setMediaPrefetchPolicy(
         this.mediaHighBurstLimit,
@@ -9640,6 +9658,13 @@ fn fs_main() -> @location(0) vec4<f32> {
     await setNativeRendererDecodeSyntheticFallbackPolicy({
       decode_allow_synthetic_fallback: false,
     }).catch(() => {});
+  }
+
+  async setNativeQualityPolicy(policy: NativeQualityPolicy) {
+    preferredNativeQualityPolicy = policy;
+    if (!this.running) return;
+    if (!this.supportsNativeMethod('set_native_quality_policy')) return;
+    await setNativeRendererQualityPolicy({ native_quality_policy: policy }).catch(() => {});
   }
 
   async setTexturePoolCapMb(texturePoolCapMb: number) {
