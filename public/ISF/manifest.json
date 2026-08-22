@@ -56,6 +56,24 @@
       "enabled": true
     },
     {
+      "file": "GA2-HopfFibration.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "hopf",
+        "fibration",
+        "4d",
+        "volumetric",
+        "topology",
+        "audio",
+        "ga2-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
       "file": "DM-SolidColor.fs",
       "tier": "demo",
       "category": "Visual",
