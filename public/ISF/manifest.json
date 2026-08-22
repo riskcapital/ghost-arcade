@@ -20,6 +20,24 @@
       "enabled": true
     },
     {
+      "file": "GA2-QuaternionJulia.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "quaternion",
+        "julia",
+        "fractal",
+        "4d",
+        "raymarch",
+        "audio",
+        "ga2-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
       "file": "DM-SolidColor.fs",
       "tier": "demo",
       "category": "Visual",
