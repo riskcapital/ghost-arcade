@@ -7278,7 +7278,10 @@ export class NativeRendererSync {
       decode_predecode_estimate_cache_cap_entries:
         this.decodePredecodeEstimateCacheCapEntries,
       decode_use_output_resolution: this.decodeUseOutputResolution,
-      native_quality_policy: 'fixed',
+      /* Start on the user's tier rather than 'fixed'. applyStartupPolicies
+         pushes it again a moment later either way; starting here just avoids a
+         short window at full scale before the real tier lands. */
+      native_quality_policy: preferredNativeQualityPolicy,
       decode_gpu_bridge_path: this.decodeGpuBridgePath,
     });
     if (!this.ownsLifecycle(lifecycleGeneration)) return;
@@ -9663,8 +9666,16 @@ fn fs_main() -> @location(0) vec4<f32> {
   async setNativeQualityPolicy(policy: NativeQualityPolicy) {
     preferredNativeQualityPolicy = policy;
     if (!this.running) return;
-    if (!this.supportsNativeMethod('set_native_quality_policy')) return;
-    await setNativeRendererQualityPolicy({ native_quality_policy: policy }).catch(() => {});
+    if (!this.supportsNativeMethod('set_native_quality_policy')) {
+      console.warn('[NativeRendererSync] core does not implement set_native_quality_policy');
+      return;
+    }
+    /* Reported rather than swallowed like the neighbouring policies: this one
+       is the difference between the picture the user asked for and a softer
+       one, and a silent failure here looks exactly like a shader problem. */
+    await setNativeRendererQualityPolicy({ native_quality_policy: policy })
+      .then(() => console.log('[NativeRendererSync] native quality tier ->', policy))
+      .catch((err) => console.warn('[NativeRendererSync] native quality tier failed:', err));
   }
 
   async setTexturePoolCapMb(texturePoolCapMb: number) {
