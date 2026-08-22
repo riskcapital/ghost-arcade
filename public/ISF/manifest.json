@@ -74,6 +74,24 @@
       "enabled": true
     },
     {
+      "file": "GA2-Apollonian.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [
+        "apollonian",
+        "packing",
+        "thin-film",
+        "iridescent",
+        "raymarch",
+        "audio",
+        "ga2-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
       "file": "DM-SolidColor.fs",
       "tier": "demo",
       "category": "Visual",
