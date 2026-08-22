@@ -2377,7 +2377,8 @@ void main() {
       recordDiscreteAction();
     },
 
-    setRenderQuality(id: string, renderQuality: number) {
+    /** undefined clears the override so the layer follows the global tier. */
+    setRenderQuality(id: string, renderQuality: number | undefined) {
       update((project) => ({
         ...project,
         layers: project.layers.map((l) => (l.id === id ? { ...l, renderQuality } : l)),

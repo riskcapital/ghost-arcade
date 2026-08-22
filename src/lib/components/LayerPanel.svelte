@@ -35,6 +35,26 @@
   // until the next remount.
 
   // Shader thumbnail cache: layerId -> { url, codeSnippet }
+  /*
+   * Per-layer render scale. The empty value is the default and clears the
+   * override, so a layer that has never been touched reads as inheriting
+   * rather than claiming to be pinned at 100% -- which is what "Full" said
+   * before, on every layer, whatever the global tier was set to.
+   *
+   * The first four match the global tiers so the two controls speak the same
+   * language; the last two go below any global tier, for the one heavy
+   * raymarcher that needs to come down on its own.
+   */
+  const LAYER_RENDER_QUALITY_OPTIONS = [
+    { value: '', label: 'Match global' },
+    { value: '1.0', label: 'Native (100%)' },
+    { value: '0.9', label: 'Ultra (90%)' },
+    { value: '0.72', label: 'Balanced (72%)' },
+    { value: '0.56', label: 'Performance (56%)' },
+    { value: '0.4', label: 'Low (40%)' },
+    { value: '0.25', label: 'Minimum (25%)' },
+  ];
+
   let shaderThumbnails: Record<string, string> = {};
   let shaderThumbCodes: Record<string, string> = {}; // track which code generated the thumb
   $: nativeInventoryLocked = NATIVE_ENGINE_ONLY && Boolean($settings.experimental?.outputNativeCore);
@@ -1906,17 +1926,15 @@
               <div class="property-row">
                 <label>Render Quality</label>
                 <select
-                  value={String(layer.renderQuality ?? 1.0)}
+                  value={layer.renderQuality == null ? '' : String(layer.renderQuality)}
                   onchange={(e) => {
-                    const val = parseFloat((e.target as HTMLSelectElement).value);
-                    project.setRenderQuality(layer.id, val);
+                    const raw = (e.target as HTMLSelectElement).value;
+                    project.setRenderQuality(layer.id, raw === '' ? undefined : parseFloat(raw));
                   }}
                 >
-                  <option value="1.0">Full (100%)</option>
-                  <option value="0.75">High (75%)</option>
-                  <option value="0.5">Medium (50%)</option>
-                  <option value="0.35">Low (35%)</option>
-                  <option value="0.25">Very Low (25%)</option>
+                  {#each LAYER_RENDER_QUALITY_OPTIONS as opt}
+                    <option value={opt.value}>{opt.label}</option>
+                  {/each}
                 </select>
               </div>
             {/if}
@@ -2407,17 +2425,15 @@
           <div class="property-row">
             <label>Render Quality</label>
             <select
-              value={String(layer.renderQuality ?? 1.0)}
+              value={layer.renderQuality == null ? '' : String(layer.renderQuality)}
               onchange={(e) => {
-                const val = parseFloat((e.target as HTMLSelectElement).value);
-                project.setRenderQuality(layer.id, val);
+                const raw = (e.target as HTMLSelectElement).value;
+                project.setRenderQuality(layer.id, raw === '' ? undefined : parseFloat(raw));
               }}
             >
-              <option value="1.0">Full (100%)</option>
-              <option value="0.75">High (75%)</option>
-              <option value="0.5">Medium (50%)</option>
-              <option value="0.35">Low (35%)</option>
-              <option value="0.25">Very Low (25%)</option>
+              {#each LAYER_RENDER_QUALITY_OPTIONS as opt}
+                <option value={opt.value}>{opt.label}</option>
+              {/each}
             </select>
           </div>
         {/if}
