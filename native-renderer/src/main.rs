@@ -1674,6 +1674,10 @@ struct SceneLayer {
     source_id: Option<String>,
     shader_id: Option<String>,
     shader_rendered: bool,
+    /// Per-layer override for the global quality tier's render scale. None
+    /// means inherit. A layer carrying one heavy raymarcher can be dropped on
+    /// its own without softening everything else on the wall.
+    render_quality: Option<f32>,
     preview_slot: Option<usize>,
     frame_slot: Option<usize>,
     /// Slot holding this layer's core-rendered FS/ISF shader frame — kept
@@ -2240,6 +2244,7 @@ impl SceneLayer {
             source_id: None,
             shader_id: None,
             shader_rendered: false,
+            render_quality: None,
             preview_slot: None,
             frame_slot: None,
             shader_frame_slot: None,
@@ -11236,6 +11241,12 @@ impl App {
                 .unwrap_or(1.0)
                 .clamp(0.0, 1.0) as f32;
         }
+        /* Absent means "leave as is", explicit null means "back to inherit" --
+           the same contract as the other optional layer fields above. */
+        if command_has_key(command, "render_quality") {
+            entry.render_quality = number_at(command, &["render_quality"])
+                .map(|value| (value as f32).clamp(0.2, 1.0));
+        }
         if let Some(blend_mode) = string_at(command, &["blend_mode"]) {
             entry.blend_code = blend_mode_code(&blend_mode);
         }
@@ -12163,8 +12174,16 @@ impl App {
             let slot = self.assign_source_frame_slot(&source_id);
             /* The quality tier finally reaches the renderer. quality_scale has
                been maintained and reported in status since this was written and
-               never applied to anything, so every tier rendered identically. */
-            let quality_scale = self.native_quality.quality_scale;
+               never applied to anything, so every tier rendered identically.
+               A per-layer override, when set, wins outright over the tier
+               rather than multiplying with it: two independent scales that
+               compound would make "50% on a layer" mean something different on
+               every global setting. */
+            let quality_scale = self
+                .scene_layers
+                .get(&layer_id)
+                .and_then(|layer| layer.render_quality)
+                .unwrap_or(self.native_quality.quality_scale);
             match self.renderer.as_mut() {
                 Some(renderer) => {
                     match renderer.render_native_wgsl_shader_frame(

@@ -207,6 +207,7 @@ type LayerSnapshot = {
   visible: boolean;
   blend: string;
   opacity: number;
+  renderQuality: number | null;
   geometrySig: string;
   deckMonitorSig: string;
   uvSig: string;
@@ -4681,6 +4682,17 @@ export function setPreferredNativeQualityPolicy(policy: NativeQualityPolicy): vo
   void sync?.setNativeQualityPolicy(policy);
 }
 
+/*
+ * A layer's own render scale, or null to inherit the global quality tier.
+ * Sent explicitly as null rather than omitted so clearing the override on a
+ * layer actually reaches the core -- an absent key means "leave as is" there.
+ */
+export function nativeLayerRenderQuality(layer: Pick<Layer, 'renderQuality'>): number | null {
+  const raw = Number((layer as any).renderQuality);
+  if (!Number.isFinite(raw) || raw <= 0) return null;
+  return Math.min(1, Math.max(0.2, raw));
+}
+
 export function getActiveNativeRendererSync(): NativeRendererSync | null {
   return activeNativeRendererSync;
 }
@@ -7685,6 +7697,7 @@ export class NativeRendererSync {
           vj_layer_index: vjLayerIndex,
           blend_mode: layer.type === 'mask' ? 'hierarchy-mask' : canonicalBlendMode(layer.blendMode),
           opacity: layer.opacity,
+          render_quality: nativeLayerRenderQuality(layer),
           deck_monitor_bank: layer._deckMonitorBank ?? null,
           deck_monitor_opacity: layer._deckMonitorOpacity ?? 1,
           corners: layer.corners,
@@ -8179,6 +8192,7 @@ export class NativeRendererSync {
         visible: effectiveVisible,
         blend: layer.type === 'mask' ? 'hierarchy-mask' : canonicalBlendMode(layer.blendMode),
         opacity: layer.opacity,
+        renderQuality: nativeLayerRenderQuality(layer),
         geometrySig: geometrySignature(layer),
         deckMonitorSig: layer._deckMonitorBank
           ? `${layer._deckMonitorBank}:${quantizeNative(layer._deckMonitorOpacity ?? 1)}`
@@ -8254,7 +8268,7 @@ export class NativeRendererSync {
         }
       }
 
-      if (!prev || prev.z !== snap.z || prev.vjIndex !== snap.vjIndex || prev.visible !== snap.visible || prev.blend !== snap.blend || prev.opacity !== snap.opacity || prev.deckMonitorSig !== snap.deckMonitorSig || prev.geometrySig !== snap.geometrySig || prev.uvSig !== snap.uvSig || prev.shapeSig !== snap.shapeSig || prev.maskSig !== snap.maskSig) {
+      if (!prev || prev.z !== snap.z || prev.vjIndex !== snap.vjIndex || prev.visible !== snap.visible || prev.blend !== snap.blend || prev.opacity !== snap.opacity || prev.renderQuality !== snap.renderQuality || prev.deckMonitorSig !== snap.deckMonitorSig || prev.geometrySig !== snap.geometrySig || prev.uvSig !== snap.uvSig || prev.shapeSig !== snap.shapeSig || prev.maskSig !== snap.maskSig) {
         commands.push({
           type: 'upsert_layer',
           layer_id: layer.id,
@@ -8262,6 +8276,7 @@ export class NativeRendererSync {
           vj_layer_index: vjLayerIndex,
           blend_mode: layer.type === 'mask' ? 'hierarchy-mask' : canonicalBlendMode(layer.blendMode),
           opacity: layer.opacity,
+          render_quality: nativeLayerRenderQuality(layer),
           deck_monitor_bank: layer._deckMonitorBank ?? null,
           deck_monitor_opacity: layer._deckMonitorOpacity ?? 1,
           corners: layer.corners,

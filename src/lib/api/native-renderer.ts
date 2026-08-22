@@ -304,6 +304,12 @@ export type RendererCommand =
       vj_layer_index?: number | null;
       blend_mode: string;
       opacity: number;
+      /**
+       * Per-layer render scale for a shader layer, overriding the global
+       * quality tier. null means inherit; omitted means leave whatever the
+       * core already has.
+       */
+      render_quality?: number | null;
       /** Deck confidence monitor tag — bank the core re-renders this layer
        *  into ('a'/'b'), at deck_monitor_opacity (true pre-crossfader level). */
       deck_monitor_bank?: 'a' | 'b' | null;
