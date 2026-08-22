@@ -4,7 +4,7 @@
     "ISFVSN": "2",
     "CATEGORIES": ["Generator", "Audio Reactive"],
     "INPUTS": [
-        {"NAME": "colorMode", "TYPE": "long", "DEFAULT": 0,
+        {"NAME": "colorMode", "TYPE": "long", "DEFAULT": 5,
          "VALUES": [0, 1, 2, 3, 4, 5, 6],
          "LABELS": ["Fibre", "Ion", "Neon", "Copper", "Jade", "Sodium", "Mono"]},
         {"NAME": "fibres",    "TYPE": "float", "DEFAULT": 7.0,  "MIN": 3.00, "MAX": 16.0},

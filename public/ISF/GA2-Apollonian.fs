@@ -7,6 +7,8 @@
         {"NAME": "colorMode", "TYPE": "long", "DEFAULT": 0,
          "VALUES": [0, 1, 2, 3, 4, 5, 6],
          "LABELS": ["Bubble", "Oilslick", "Anodised", "Pearl", "Bismuth", "Platinum", "Peacock"]},
+        {"NAME": "radius",    "TYPE": "float", "DEFAULT": 1.05, "MIN": 0.55, "MAX": 2.60},
+        {"NAME": "zoom",      "TYPE": "float", "DEFAULT": 1.00, "MIN": 0.45, "MAX": 2.20},
         {"NAME": "packing",   "TYPE": "float", "DEFAULT": 1.28, "MIN": 1.02, "MAX": 1.60},
         {"NAME": "film",      "TYPE": "float", "DEFAULT": 1.00, "MIN": 0.20, "MAX": 3.00},
         {"NAME": "polish",    "TYPE": "float", "DEFAULT": 0.75, "MIN": 0.00, "MAX": 1.00},
@@ -58,7 +60,6 @@ const float PI = 3.14159265359;
 const float PI2 = 6.28318530718;
 const int APOLLO_ITERS = 8;
 const int MAX_STEPS = 130;
-const float BOUND = 1.05;
 
 /*
  * Apollonian distance estimate. `s` is the inversion constant: how hard each
@@ -86,21 +87,29 @@ float apollonian(vec3 p, float s, out float trap) {
     return 0.22 * abs(p.y) / scale;
 }
 
-/* The packing carved down to a ball, so there is an object to orbit rather
-   than a space to fly through. */
-float mapScene(vec3 p, float s, out float trap) {
+/*
+ * The packing carved down to a ball, so there is an object to orbit rather than
+ * a space to fly through.
+ *
+ * `bound` is exposed rather than fixed because the packing is space-filling:
+ * widening the ball does not scale the same cluster up, it admits MORE of the
+ * packing, so new spheres appear at the rim instead of the existing ones simply
+ * growing. That is a different picture, not a zoom, which is why framing gets
+ * its own control.
+ */
+float mapScene(vec3 p, float s, float bound, out float trap) {
     float d = apollonian(p, s, trap);
-    return max(d, length(p) - BOUND);
+    return max(d, length(p) - bound);
 }
 
-vec3 sceneNormal(vec3 p, float s) {
+vec3 sceneNormal(vec3 p, float s, float bound) {
     vec2 e = vec2(1.0, -1.0) * 0.0016;
     float t;
     return normalize(
-        e.xyy * mapScene(p + e.xyy, s, t) +
-        e.yyx * mapScene(p + e.yyx, s, t) +
-        e.yxy * mapScene(p + e.yxy, s, t) +
-        e.xxx * mapScene(p + e.xxx, s, t));
+        e.xyy * mapScene(p + e.xyy, s, bound, t) +
+        e.yyx * mapScene(p + e.yyx, s, bound, t) +
+        e.yxy * mapScene(p + e.yxy, s, bound, t) +
+        e.xxx * mapScene(p + e.xxx, s, bound, t));
 }
 
 /*
@@ -209,9 +218,14 @@ void main() {
     vec3 SUBSTRATE = f[1];
     vec3 SPECTINT = f[2];
 
-    /* Camera orbits the ball. */
+    /* Camera orbits the ball. Distance tracks the radius so a wider ball stays
+       framed, and `zoom` then pushes in or pulls out from there -- one control
+       for how much packing is shown, another for how much of the frame it
+       fills. */
+    float bound = radius;
+    float camDist = (2.55 + bound * 1.55) / max(zoom, 0.05);
     float ang = TIME * orbitSpin;
-    vec3 ro = vec3(sin(ang) * 4.2, 0.75 + 0.40 * sin(TIME * 0.15), cos(ang) * 4.2);
+    vec3 ro = vec3(sin(ang) * camDist, (0.18 + 0.55 * bound) + 0.40 * sin(TIME * 0.15), cos(ang) * camDist);
     vec3 fwd = normalize(-ro);
     vec3 right = normalize(cross(vec3(0.0, 1.0, 0.0), fwd));
     vec3 up = cross(fwd, right);
@@ -219,7 +233,7 @@ void main() {
 
     /* Analytic entry to the bounding ball: rays that miss cost nothing. */
     float bq = dot(ro, rd);
-    float disc = bq * bq - dot(ro, ro) + BOUND * BOUND;
+    float disc = bq * bq - dot(ro, ro) + bound * bound;
 
     vec3 col;
 
@@ -237,7 +251,7 @@ void main() {
         for (int i = 0; i < MAX_STEPS; i++) {
             vec3 p = ro + rd * dist;
             float t;
-            float d = mapScene(p, s, t);
+            float d = mapScene(p, s, bound, t);
             if (d < 0.0007 * dist + 0.00025) {
                 trap = t;
                 hit = true;
@@ -252,7 +266,7 @@ void main() {
             col = backdrop(uv, SPECTINT * 0.0);
         } else {
             vec3 p = ro + rd * dist;
-            vec3 nrm = sceneNormal(p, s);
+            vec3 nrm = sceneNormal(p, s, bound);
             float cosI = clamp(dot(nrm, -rd), 0.0, 1.0);
 
             /* Film thickness varies over the surface with depth into the
@@ -303,7 +317,7 @@ void main() {
             /* Barely any fog. The whole object spans about two units, so a
                haze tuned for a landscape buries it -- the previous rate washed
                the entire cluster into the backdrop. */
-            float fog = 1.0 - exp(-max(dist - 3.2, 0.0) * 0.22);
+            float fog = 1.0 - exp(-max(dist - (camDist - bound * 0.4), 0.0) * 0.22);
             col = mix(col, backdrop(uv, vec3(0.0)), fog * 0.5);
         }
     }
