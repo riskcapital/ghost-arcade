@@ -2,6 +2,11 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
+import {
+  cameraDeviceIdFromSourceFrameId,
+  cameraSourceFrameId,
+  isCameraSourceFrameId,
+} from './cameraSourceFrames';
 import { buildNativePluginPrecompileCommands } from './nativePluginGraphs';
 import { buildVJCrossfadePrecompileCommands } from './vjCrossfadeNative';
 import { buildVJMixPrecompileCommands } from './vjMixNative';
@@ -770,8 +775,103 @@ async function snapshotSourceFrameLayer(
   return snapshot;
 }
 
+describe('Camera source frame ids', () => {
+  it('round-trips a device id, with the empty id meaning the default camera', () => {
+    expect(cameraSourceFrameId('')).toBe('camera:default');
+    expect(cameraSourceFrameId(null)).toBe('camera:default');
+    expect(cameraSourceFrameId('abc123')).toBe('camera:abc123');
+
+    // The inverse has to give back '' for the default, because that is what
+    // getUserMedia wants for "let the OS pick" -- an id of 'default' would be
+    // matched against real device ids and find nothing.
+    expect(cameraDeviceIdFromSourceFrameId('camera:default')).toBe('');
+    expect(cameraDeviceIdFromSourceFrameId('camera:abc123')).toBe('abc123');
+  });
+
+  it('recognises only its own ids', () => {
+    expect(isCameraSourceFrameId('camera:default')).toBe(true);
+    expect(isCameraSourceFrameId('ghost:builtin-demo-source')).toBe(false);
+    expect(isCameraSourceFrameId('')).toBe(false);
+    expect(isCameraSourceFrameId(null)).toBe(false);
+  });
+});
+
 describe('Native graph instrument runtime fixtures', () => {
   const itIfNativeCore = existsSync(nativeCoreBin) ? it : it.skip;
+
+  itIfNativeCore('renders Pixel Particles from a camera source frame id', async () => {
+    /* The camera ingest uploads under `camera:<device>` and binds the graph to
+       that same id. Nothing else in the pipeline treats camera ids specially,
+       so this is the one thing worth pinning: an id of that shape is a source
+       frame like any other, and the instrument draws what was uploaded. */
+    const rpc = createNativeRpc();
+    const cameraSourceId = cameraSourceFrameId('');
+    const outputSize = { width: 160, height: 90 };
+    try {
+      await rpc.send('start', {
+        config: {
+          backend: process.platform === 'darwin' ? 'metal' : process.platform === 'win32' ? 'd3d12' : 'vulkan',
+          width: outputSize.width,
+          height: outputSize.height,
+          target_fps: 30,
+          native_quality_policy: 'performance',
+        },
+      }, 12000);
+      await delay(80);
+
+      await rpc.send('submit_commands', {
+        commands: [
+          ...buildPixelParticlesNativePrecompileCommands(),
+          {
+            type: 'precompile_shader',
+            shader_id: SOURCE_FRAME_PROBE_SHADER_ID,
+            stage: 'compute',
+            entry: 'cs_probe',
+            source: sourceFrameProbeWgsl(),
+          },
+        ],
+      }, 8000);
+
+      await uploadTintedSourceFrame(rpc, cameraSourceId, [30, 220, 70], 1);
+
+      const graph = buildPixelParticlesNativeComputeGraph({
+        sourceId: 'camera-ingest-pixel-particles',
+        mediaSourceId: cameraSourceId,
+        params: {
+          mode: 'identity',
+          particleCount: 1024,
+          baseSize: 0.038,
+          opacity: 1,
+          mirrorX: false,
+        },
+        width: outputSize.width,
+        height: outputSize.height,
+        sourceFrameSize: 32,
+        time: 1.5,
+        frameDelta: 1 / 30,
+        frameIndex: 31,
+        reset: true,
+      });
+      await rpc.send('compute_graph', encodeNativeGraphConfigForRpc(graph.config), 12000);
+
+      const probe = await readSourceFrameProbe(
+        rpc,
+        'camera-ingest-pixel-particles',
+        'camera-ingest',
+        outputSize.width,
+        outputSize.height,
+      );
+      const [r, g, b] = meanRgbFromProbe(probe);
+      // The uploaded frame is green-dominant; the render has to carry that
+      // through rather than coming back black (the "input is not ready" case)
+      // or grey (a different source standing in).
+      expect(g).toBeGreaterThan(r);
+      expect(g).toBeGreaterThan(b);
+      expect(g).toBeGreaterThan(0.02);
+    } finally {
+      await rpc.close();
+    }
+  }, 45000);
 
   itIfNativeCore('keeps Pixel Particles and Flythrough core-owned and advancing while the UI is idle', async () => {
     const rpc = createNativeRpc();

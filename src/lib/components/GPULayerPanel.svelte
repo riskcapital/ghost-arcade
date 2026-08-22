@@ -139,6 +139,8 @@
     return 'unknown';
   }
 
+  const NATIVE_CAMERA_SOURCE_SHADERS = new Set(['flythrough', 'pixel-particles']);
+
   $: layer = $selectedLayer;
   $: content = (layer && layer.type === 'gpu' ? layer.gpuLayerContent : null) as GPULayerContent | null;
   $: layerId = layer?.id ?? null;
@@ -153,6 +155,15 @@
   // engines are quietly rendering the built-in demo image instead of a
   // black frame, and the panel has to say so.
   $: usingBuiltInDemoSource = !!content && gpuLayerNeedsDefaultSource(content.shaderId, content.params);
+  /*
+   * Native mode hides the live-capture pickers because most of them have no
+   * native ingest. Flythrough and Pixel Particles now do -- the sync opens the
+   * camera and pushes frames as a source frame -- so the camera picker is
+   * offered for those two. Spout/Syphon stays hidden: still no graph input.
+   */
+  $: cameraIngestReady =
+    !nativeSourceInventoryLocked ||
+    NATIVE_CAMERA_SOURCE_SHADERS.has(String(content?.shaderId ?? '').trim().toLowerCase());
 
   function nativeReadablePickerUri(src: string | undefined | null, ref: any): string {
     return resolveAssetRefForRuntime(ref, undefined, String(src ?? '')) ?? String(src ?? '');
@@ -477,7 +488,7 @@
             {#if _showLive}
               <div class="live-sources">
                 <div class="live-label">Live capture</div>
-                {#if !nativeSourceInventoryLocked && cameraDevices.length > 0}
+                {#if cameraIngestReady && cameraDevices.length > 0}
                   <select class="src-select"
                     value={_src && _src.type === 'camera' ? (_src.deviceId || '') : ''}
                     onchange={(e) => {
@@ -491,7 +502,7 @@
                       <option value={cam.deviceId}>{cam.label || `Camera ${i + 1}`}</option>
                     {/each}
                   </select>
-                {:else if !nativeSourceInventoryLocked}
+                {:else if cameraIngestReady}
                   <button class="mini-action wide" onclick={enumerateCameras}>
                     Detect cameras…
                   </button>
