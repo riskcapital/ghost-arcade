@@ -180,6 +180,24 @@
       "enabled": true
     },
     {
+      "file": "GA2-Cathedral.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [
+        "menger",
+        "lattice",
+        "volumetric",
+        "godrays",
+        "architecture",
+        "audio",
+        "ga2-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
       "file": "DM-TestBars.fs",
       "tier": "demo",
       "category": "Visual",
