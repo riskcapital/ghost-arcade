@@ -8,7 +8,7 @@
          "VALUES": [0, 1, 2, 3, 4, 5, 6],
          "LABELS": ["Kelp", "Abyss", "Bloom", "Sulphur", "Glacier", "Ink", "Ember"]},
         {"NAME": "speed",     "TYPE": "float", "MIN": 0.0,  "MAX": 3.0,  "DEFAULT": 1.0},
-        {"NAME": "sheets",    "TYPE": "float", "MIN": 1.0,  "MAX": 5.0,  "DEFAULT": 4.0},
+        {"NAME": "sheets",    "TYPE": "float", "MIN": 1.0,  "MAX": 5.0,  "DEFAULT": 5.0},
         {"NAME": "swell",     "TYPE": "float", "MIN": 0.1,  "MAX": 2.5,  "DEFAULT": 1.35},
         {"NAME": "curl",      "TYPE": "float", "MIN": 0.0,  "MAX": 2.5,  "DEFAULT": 1.05},
         {"NAME": "thickness", "TYPE": "float", "MIN": 0.02, "MAX": 0.40, "DEFAULT": 0.11},
@@ -17,6 +17,8 @@
         {"NAME": "shaftBoost","TYPE": "float", "MIN": 0.0,  "MAX": 3.0,  "DEFAULT": 1.0},
         {"NAME": "causticBoost","TYPE":"float","MIN": 0.0,  "MAX": 3.0,  "DEFAULT": 1.0},
         {"NAME": "moteBoost", "TYPE": "float", "MIN": 0.0,  "MAX": 3.0,  "DEFAULT": 1.0},
+        {"NAME": "bubbles",   "TYPE": "float", "MIN": 0.0,  "MAX": 3.0,  "DEFAULT": 1.0},
+        {"NAME": "haze",      "TYPE": "float", "MIN": 0.3,  "MAX": 2.5,  "DEFAULT": 1.0},
         {"NAME": "audioDrive","TYPE": "float", "MIN": 0.0,  "MAX": 1.0,  "DEFAULT": 0.55},
         {"NAME": "dispersion","TYPE": "float", "MIN": 0.0,  "MAX": 0.35, "DEFAULT": 0.16},
         {"NAME": "camHeight", "TYPE": "float", "MIN": -8.0, "MAX": 6.0,  "DEFAULT": -1.6},
@@ -73,6 +75,7 @@ float aBass, aLevel, aBeat, aCentroid;
 
 mat2 rot(float a){ float c=cos(a),s=sin(a); return mat2(c,-s,s,c); }
 vec3 hue2rgb(float h){ return clamp(abs(mod(h*6.0+vec3(0.0,4.0,2.0),6.0)-3.0)-1.0,0.0,1.0); }
+float hash11(float n){ return fract(sin(n*127.1)*43758.5453); }
 float hash21(vec2 p){ p=fract(p*vec2(123.34,345.45)); p+=dot(p,p+34.345); return fract(p.x*p.y); }
 float vnoise(vec2 p){
   vec2 i=floor(p), f=fract(p); vec2 u=f*f*(3.0-2.0*f);
@@ -140,7 +143,7 @@ float lipschitz(){
 float map(vec3 p){
   vec3 w = domain(p);
   int n = int(clamp(sheets, 1.0, 5.0));
-  float gap = 3.4;
+  float gap = 2.15;
   float amp = swell*(0.85 + 0.45*aBass);
   float d = 1e3;
   for(int i = 0; i < 5; i++){
@@ -161,28 +164,22 @@ float map(vec3 p){
      * layer through. The additive term is what makes the absence real rather
      * than a zero-thickness surface the march would still find.
      */
-    float pres = smoothstep(-0.35, 0.45,
+    float pres = smoothstep(0.10, 0.62,
                    wave(w.xz*0.86 + vec2(fi*13.1, fi*9.7), ph*0.55));
     float ds = abs(w.y - baseY - h) - thickness*pres + (1.0 - pres)*0.9;
     d = (i == 0) ? ds : smin(d, ds, 0.35);
   }
 
   /*
-   * Carve the sheets down to a drifting mass.
+   * No hull.
    *
-   * Left unbounded these are infinite planes, and a camera anywhere inside the
-   * stack sees a wall -- no subject, no silhouette, nothing to read against the
-   * water. Deep Descent works because it is a compact body in a large volume,
-   * and the same applies here. The bound is a fixed window that the sheets flow
-   * THROUGH rather than a shape carried along with them, so material keeps
-   * entering on one side and leaving on the other and the mass is never twice
-   * the same.
+   * Bounding the sheets into discrete bodies was the wrong instrument: most
+   * cells happened to contain no sheet material and rendered as empty water,
+   * and the ones that did swallowed the camera. The tearing already does the
+   * job -- a gated thickness breaks each sheet into fragments on its own, and
+   * because the sheets run to the horizon those fragments recede naturally and
+   * the haze takes them. Shoal for free, no cells to fall between.
    */
-  float bodyR = 5.0 + 0.5*sin(T*0.17);
-  vec2 ctr = vec2(sin(T*0.13)*0.9, cos(T*0.11)*0.9);
-  float hull = length(vec3(p.x - ctr.x, p.y*0.72, p.z - ctr.y)) - bodyR;
-  d = smax(d, hull, 0.75);
-
   return d/lipschitz()*0.85;
 }
 
@@ -243,21 +240,16 @@ void main(){
   vec3  keyTint  = pal[2];
 
   float surfaceY = 7.0;
-  float murk = 0.62;
-  float fogK = 0.072;
+  float murk = 0.62*haze;
+  float fogK = 0.072*haze;
   float absorb = 2.05;
 
   /* Camera drifts along +Z and sways, rather than sinking. The height control
      puts the eye above, between or below the stack of sheets. */
-  float orb = T*0.085;
-  float camR = 10.8;
-  vec3 ro = vec3(sin(orb)*camR, camHeight + sin(T*0.09)*0.6, cos(orb)*camR);
-  /* Face the mass. rot(yaw) takes the forward ray (0,1) to (-sin yaw, cos yaw),
-     and looking at the origin from (sin orb, cos orb)*R needs -(sin orb,
-     cos orb) -- which solves to PI - orb, not PI + orb. With the wrong sign the
-     camera orbits correctly and looks away from the subject the whole time,
-     visible only once the orbit angle leaves zero. */
-  float yaw = PI - orb;
+  /* Drift down the field rather than orbiting one mass, so bodies come out of
+     the haze, pass, and recede -- the depth cue the shoal exists to provide. */
+  vec3 ro = vec3(sin(T*0.11)*2.2, camHeight + sin(T*0.09)*0.6, T*1.9);
+  float yaw = sin(T*0.047)*0.26;
   /* Below the stack looking up. Veils overhead read against the lit surface
      rather than against dark water, so the sheets are backlit -- which is what
      the transmission term in the shading is for, and it is the whole reason a
@@ -391,7 +383,7 @@ void main(){
   float stepL = far/float(VOL);
   float dither = hash21(gl_FragCoord.xy + fract(T)*57.0);
   vec3 shaftCol = mix(vec3(1.0), keyTint, 0.45);
-  float fogAcc = 0.0, moteAcc = 0.0;
+  float fogAcc = 0.0, moteAcc = 0.0, bubAcc = 0.0;
   for(int i = 0; i < VOL; i++){
     float tv = (float(i) + dither)*stepL;
     if(tv > far) break;
@@ -414,10 +406,39 @@ void main(){
     float m = hash21(mi.xy + mi.z*31.7);
     vec3 fq = fract(mc) - 0.5;
     float pt = smoothstep(0.15, 0.0, dot(fq, fq));
-    moteAcc += step(0.988, m)*pt*(0.55 + 0.45*sin(T*2.0 + m*40.0))*atten;
+    moteAcc += step(0.992, m)*pt*(0.55 + 0.45*sin(T*2.0 + m*40.0))*atten;
+
+    /*
+     * Bubbles. A lattice sheared upward by time, so every cell holds one bubble
+     * climbing toward the surface; the cell index is taken AFTER the shear so a
+     * bubble keeps its identity as it rises rather than being reseeded each
+     * time it crosses a boundary. Far coarser than the particulate lattice --
+     * these are meant to read individually.
+     *
+     * Shaded as a rim rather than a disc: a bubble underwater is a lens, dark
+     * through the middle and bright where the surface turns edge-on, which is
+     * the only cue that separates one from a mote.
+     */
+    /* Coarse lattice deliberately. The volumetric march takes ~18 steps over
+       the whole ray, so a bubble smaller than one step is hit at most once and
+       renders as a soft blotch rather than a bubble. These are sized to span
+       several steps, and made rare enough that they still read as individuals. */
+    vec3 bc = p*0.5;
+    bc.y -= T*0.75;
+    vec3 bi = floor(bc);
+    float bh = hash21(bi.xy + bi.z*17.3);
+    if(bh > 0.965){
+      vec3 bf = fract(bc) - 0.5;
+      bf.xz += 0.16*vec2(sin(T*1.6 + bh*31.0), cos(T*1.2 + bh*23.0));
+      float br = 0.20 + 0.14*fract(bh*7.0);
+      float bl = length(bf);
+      float rim = smoothstep(br, br*0.55, bl) - smoothstep(br*0.72, br*0.30, bl);
+      bubAcc += max(rim, 0.0)*(0.55 + 0.45*sin(T*3.0 + bh*40.0))*atten;
+    }
   }
   col += shaftCol*(fogAcc/float(VOL))*shaftBoost*2.5*(1.0 - acc.a*0.55);
   col += vec3(0.78, 0.93, 1.0)*(moteAcc/float(VOL))*moteBoost*1.1;
+  col += mix(vec3(1.0), envUp, 0.5)*(bubAcc/float(VOL))*bubbles*4.0;
   col *= 1.0 + aBeat*audioDrive*0.26;
 
   /* ---------------- grade ---------------- */
