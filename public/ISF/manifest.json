@@ -110,6 +110,24 @@
       "enabled": true
     },
     {
+      "file": "GA2-DeepDescent.fs",
+      "tier": "demo",
+      "category": "3D Room",
+      "tags": [
+        "glass",
+        "translucent",
+        "caustics",
+        "godrays",
+        "organic",
+        "audio",
+        "ga2-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
       "file": "DM-SolidColor.fs",
       "tier": "demo",
       "category": "Visual",
