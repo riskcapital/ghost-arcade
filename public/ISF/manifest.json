@@ -38,6 +38,24 @@
       "enabled": true
     },
     {
+      "file": "GA2-Quasicrystal.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "quasicrystal",
+        "aperiodic",
+        "interference",
+        "duotone",
+        "print",
+        "audio",
+        "ga2-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
       "file": "DM-SolidColor.fs",
       "tier": "demo",
       "category": "Visual",
