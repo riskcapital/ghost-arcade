@@ -1880,8 +1880,30 @@ class NativeRendererBroker {
     if (!childEnv.GA_FFMPEG_PATH) {
       childEnv.GA_FFMPEG_PATH = resolveFfmpegPath(this.env, this.platform);
     }
+    // cwd is the executable's own directory, NOT appRoot.
+    //
+    // In a packaged build `appRoot` is `path.join(__dirname, '..')` evaluated
+    // from inside the archive, i.e. `.../Contents/Resources/app.asar`. That is
+    // a FILE, so spawning with it as cwd fails with ENOTDIR before the core
+    // ever runs, and a native-only build sits on NATIVE OFFLINE with a
+    // working, signed binary right there on disk.
+    //
+    // Do NOT try to detect this with fs. Electron's asar-aware fs reports
+    // app.asar as a directory — existsSync() and statSync().isDirectory() both
+    // return true inside Electron (plain node says false) — so an fs guard
+    // passes and the spawn still fails. spawn() uses the real syscall, which
+    // sees the file. That is exactly how the first attempt at this fix broke.
+    //
+    // The core never reads its cwd, so the binary's own directory is a safe
+    // home in both dev and packaged builds. On Windows it is also where the
+    // DXC dlls ship, which is the directory Windows resolves them from anyway.
+    //
+    // This never fired before 1.9.9999: the core was not bundled, so
+    // findExecutable() returned null, start() reported "binary missing", and
+    // the spawn was never reached.
+    const spawnCwd = path.dirname(executable);
     this.child = spawn(executable, [], {
-      cwd: this.appRoot,
+      cwd: spawnCwd,
       stdio: ['pipe', 'pipe', 'pipe'],
       env: childEnv,
     });
