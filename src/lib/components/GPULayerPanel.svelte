@@ -29,6 +29,7 @@
   import type { ParamControl } from '../renderer/gpuShaderTypes';
   import { createAssetRefFromFile, resolveAssetRefForRuntime } from '../storage/assetRegistry';
   import { DEFAULT_GPU_SOURCE_LABEL, gpuLayerNeedsDefaultSource } from '../renderer/defaultSourceImage';
+  import { cameraLiveSourceError, listNativeCameras } from '../renderer/cameraLiveSource';
   import NumericInput from './NumericInput.svelte';
 
   // Media-source picker support (for shaders with kind: 'media-source'
@@ -55,6 +56,17 @@
   $: showLiveSources = isDesktopApp || cameraDevices.length > 0;
 
   async function enumerateCameras() {
+    /*
+     * Native mode lists the capture addon's cameras, not the browser's. The
+     * two id spaces do not interchange: handing a navigator.mediaDevices
+     * deviceId to native_live_capture_start_camera matches no device, and the
+     * layer sits blank with no error to explain it.
+     */
+    if (nativeSourceInventoryLocked) {
+      cameraDevices = (await listNativeCameras())
+        .map((device) => ({ deviceId: device.id, label: device.name }) as MediaDeviceInfo);
+      return;
+    }
     if (typeof navigator === 'undefined' || !navigator.mediaDevices?.enumerateDevices) return;
     try {
       // First call returns devices without labels until the user has
@@ -68,7 +80,11 @@
   }
 
   onMount(() => {
-    enumerateCameras();
+    void enumerateCameras();
+    cameraErrorPoll = setInterval(() => {
+      const src = content?.params?.source as any;
+      cameraError = src?.type === 'camera' ? cameraLiveSourceError(String(src.deviceId ?? '')) : null;
+    }, 700);
     // Re-enumerate whenever a device is plugged/unplugged so the
     // dropdown stays in sync without a panel re-mount.
     if (typeof navigator !== 'undefined' && navigator.mediaDevices?.addEventListener) {
@@ -80,12 +96,54 @@
   });
 
   onDestroy(() => {
+    if (cameraErrorPoll) {
+      clearInterval(cameraErrorPoll);
+      cameraErrorPoll = null;
+    }
     if (typeof navigator !== 'undefined' && navigator.mediaDevices?.removeEventListener) {
       navigator.mediaDevices.removeEventListener('devicechange', enumerateCameras);
     }
   });
 
   let fileInput: HTMLInputElement;
+  type SourceKind = 'media' | 'layer' | 'file' | 'camera' | 'spout';
+
+  /*
+   * Which sub-picker is showing. Remembered per param key so choosing "Camera"
+   * and finding no camera picked yet does not snap the dropdown back to
+   * whatever the stored source was.
+   */
+  let sourceKindChoice: Record<string, SourceKind> = {};
+
+  /* `chosen` is passed in rather than read from sourceKindChoice inside here:
+     the template's {@const} only re-evaluates when something it references
+     changes, and it cannot see a store read that happens inside a function
+     body. Reading it here left the dropdown switching while the picker below
+     it never followed. */
+  function sourceKindFor(
+    chosen: SourceKind | undefined,
+    src: any,
+    offered: Record<SourceKind, boolean>,
+  ): SourceKind {
+    if (chosen && offered[chosen]) return chosen;
+    // No explicit choice: follow the bound source, so re-opening the panel
+    // lands on the picker that produced what is playing.
+    const bound = String(src?.type ?? '') as SourceKind;
+    if (bound && offered[bound]) return bound;
+    return (['media', 'layer', 'file', 'camera', 'spout'] as SourceKind[])
+      .find((kind) => offered[kind]) ?? 'file';
+  }
+
+  function setSourceKind(key: string, kind: string) {
+    sourceKindChoice = { ...sourceKindChoice, [key]: kind as SourceKind };
+    /* Enumerate on demand. The mount-time call can run before the panel knows
+       whether it is in native mode, and the two id spaces come from different
+       APIs -- so a list gathered too early is either empty or the wrong one. */
+    if (kind === 'camera') void enumerateCameras();
+    // Switching kind does NOT clear the bound source. Opening the dropdown to
+    // look at what else is available should not black out the layer.
+  }
+
   function pickMediaSource(key: string, mediaItem: MediaItem) {
     setParam(key, { type: 'media', mediaId: mediaItem.id });
   }
@@ -161,6 +219,22 @@
    * camera and pushes frames as a source frame -- so the camera picker is
    * offered for those two. Spout/Syphon stays hidden: still no graph input.
    */
+  // Re-enumerate when the answer to "which API lists the cameras" changes.
+  /*
+   * The camera start failure -- a denied OS permission, most often -- is only
+   * known to the sync, which learns it a frame or two after the user picks.
+   * Polled rather than pushed so the panel can say what went wrong: without
+   * this the layer just stays black and the picker looks like it worked.
+   */
+  let cameraError: string | null = null;
+  let cameraErrorPoll: ReturnType<typeof setInterval> | null = null;
+
+  let lastCameraInventoryMode: boolean | null = null;
+  $: if (nativeSourceInventoryLocked !== lastCameraInventoryMode) {
+    lastCameraInventoryMode = nativeSourceInventoryLocked;
+    void enumerateCameras();
+  }
+
   $: cameraIngestReady =
     !nativeSourceInventoryLocked ||
     NATIVE_CAMERA_SOURCE_SHADERS.has(String(content?.shaderId ?? '').trim().toLowerCase());
@@ -418,12 +492,15 @@
                  only meaningfully arrive via file upload. -->
             {@const _src = paramValue(p)}
             {@const _allowed = (p as any).sources as ('media' | 'layer' | 'file' | 'live')[] | undefined}
-            {@const _showMedia = !_allowed || _allowed.includes('media')}
-            {@const _showLayer = !_allowed || _allowed.includes('layer')}
+            {@const _showMedia = (!_allowed || _allowed.includes('media')) && libraryItems.length > 0}
+            {@const _showLayer = (!_allowed || _allowed.includes('layer')) && mediaLayers.length > 0}
             {@const _showFile  = !_allowed || _allowed.includes('file')}
-            {@const _showLive  = (!_allowed || _allowed.includes('live')) && showLiveSources}
+            {@const _showLive  = (!_allowed || _allowed.includes('live')) && showLiveSources && cameraIngestReady}
+            {@const _showShare = (!_allowed || _allowed.includes('live')) && !nativeSourceInventoryLocked
+                                  && isDesktopApp && $spoutSenders.length > 0}
             {@const _accept    = (p as any).accept as string | undefined}
             {@const _demo = !_src && usingBuiltInDemoSource}
+            {@const _kind = sourceKindFor(sourceKindChoice[p.key], _src, { media: _showMedia, layer: _showLayer, file: _showFile, camera: _showLive, spout: _showShare })}
             <div class="src-active">
               <span class="src-active-label">{p.label}</span>
               <span class="src-now" class:empty={!_src} class:demo={_demo}>
@@ -439,31 +516,42 @@
                    is that their own file failed to load. -->
               <div class="src-demo-hint">Showing the built-in demo image — pick your own below to replace it.</div>
             {/if}
-            {#if _showMedia}
-              {#if libraryItems.length > 0}
-                <div class="media-grid">
-                  {#each libraryItems as item}
-                    {@const _nativeMediaReady = mediaItemNativeReady(item)}
-                    <button class="media-cell"
-                      class:active={_src && _src.type === 'media' && _src.mediaId === item.id}
-                      class:native-pending={!_nativeMediaReady}
-                      title={mediaItemNativeReason(item)}
-                      disabled={!_nativeMediaReady}
-                      onclick={() => _nativeMediaReady && pickMediaSource(p.key, item)}>
-                      {#if item.thumbnail}
-                        <img src={item.thumbnail} alt={item.name} class="media-thumb" />
-                      {:else if item.type === 'image'}
-                        <img src={item.src} alt={item.name} class="media-thumb" />
-                      {:else}
-                        <div class="media-thumb video-placeholder">▶</div>
-                      {/if}
-                      <span class="media-cell-label">{item.name}</span>
-                    </button>
-                  {/each}
-                </div>
-              {/if}
-            {/if}
-            {#if _showLayer && mediaLayers.length > 0}
+
+            <!-- One dropdown chooses WHERE the pixels come from, and only that
+                 picker follows. The sub-pickers used to all be on screen at
+                 once, so a file button and a camera list sat in separate places
+                 with no indication they were alternatives for the same slot. -->
+            <select class="src-select" value={_kind}
+              onchange={(e) => setSourceKind(p.key, (e.target as HTMLSelectElement).value)}>
+              {#if _showMedia}<option value="media">Media library</option>{/if}
+              {#if _showLayer}<option value="layer">Another layer</option>{/if}
+              {#if _showFile}<option value="file">File</option>{/if}
+              {#if _showLive}<option value="camera">Camera</option>{/if}
+              {#if _showShare}<option value="spout">{textureShareLabel}</option>{/if}
+            </select>
+
+            {#if _kind === 'media' && _showMedia}
+              <div class="media-grid">
+                {#each libraryItems as item}
+                  {@const _nativeMediaReady = mediaItemNativeReady(item)}
+                  <button class="media-cell"
+                    class:active={_src && _src.type === 'media' && _src.mediaId === item.id}
+                    class:native-pending={!_nativeMediaReady}
+                    title={mediaItemNativeReason(item)}
+                    disabled={!_nativeMediaReady}
+                    onclick={() => _nativeMediaReady && pickMediaSource(p.key, item)}>
+                    {#if item.thumbnail}
+                      <img src={item.thumbnail} alt={item.name} class="media-thumb" />
+                    {:else if item.type === 'image'}
+                      <img src={item.src} alt={item.name} class="media-thumb" />
+                    {:else}
+                      <div class="media-thumb video-placeholder">▶</div>
+                    {/if}
+                    <span class="media-cell-label">{item.name}</span>
+                  </button>
+                {/each}
+              </div>
+            {:else if _kind === 'layer' && _showLayer}
               <select class="src-select"
                 value={_src && _src.type === 'layer' ? _src.layerId : ''}
                 onchange={(e) => pickLayerSource(p.key, (e.target as HTMLSelectElement).value)}>
@@ -475,56 +563,51 @@
                   </option>
                 {/each}
               </select>
-            {/if}
-            {#if _showFile}
+            {:else if _kind === 'file' && _showFile}
               <button class="mini-action wide" onclick={() => openFilePicker(p.key)}>
                 {_accept ? `Pick file (${_accept})…` : 'Upload one-off file…'}
               </button>
-            {/if}
-
-            <!-- Live capture sources: webcam + Spout/Syphon. Hidden if
-                 nothing is available (web build with no camera) OR if
-                 the shader excluded `live` from its `sources` filter. -->
-            {#if _showLive}
-              <div class="live-sources">
-                <div class="live-label">Live capture</div>
-                {#if cameraIngestReady && cameraDevices.length > 0}
-                  <select class="src-select"
-                    value={_src && _src.type === 'camera' ? (_src.deviceId || '') : ''}
-                    onchange={(e) => {
-                      const v = (e.target as HTMLSelectElement).value;
-                      if (v === '') { clearSource(p.key); return; }
-                      pickCameraSource(p.key, v === '__default__' ? '' : v);
-                    }}>
-                    <option value="">— pick a camera —</option>
+            {:else if _kind === 'camera' && _showLive}
+              {#if cameraDevices.length > 0}
+                <select class="src-select"
+                  value={_src && _src.type === 'camera' ? (_src.deviceId || '') : ''}
+                  onchange={(e) => {
+                    const v = (e.target as HTMLSelectElement).value;
+                    if (v === '') { clearSource(p.key); return; }
+                    pickCameraSource(p.key, v === '__default__' ? '' : v);
+                  }}>
+                  <option value="">— pick a camera —</option>
+                  {#if !nativeSourceInventoryLocked}
+                    <!-- The capture addon opens a named device; it has no
+                         "let the OS pick" mode, so offering one here would
+                         start a session against a device id of ''. -->
                     <option value="__default__">Default camera</option>
-                    {#each cameraDevices as cam, i}
-                      <option value={cam.deviceId}>{cam.label || `Camera ${i + 1}`}</option>
-                    {/each}
-                  </select>
-                {:else if cameraIngestReady}
-                  <button class="mini-action wide" onclick={enumerateCameras}>
-                    Detect cameras…
-                  </button>
-                {/if}
-
-                {#if !nativeSourceInventoryLocked && isDesktopApp}
-                  {#if $spoutSenders.length > 0}
-                    <select class="src-select"
-                      value={_src && _src.type === 'spout' ? (_src.senderName || '') : ''}
-                      onchange={(e) => {
-                        const v = (e.target as HTMLSelectElement).value;
-                        if (v === '') { clearSource(p.key); return; }
-                        pickSpoutSource(p.key, v);
-                      }}>
-                      <option value="">— pick a {textureShareLabel} sender —</option>
-                      {#each $spoutSenders as sender}
-                        <option value={sender}>{sender}</option>
-                      {/each}
-                    </select>
                   {/if}
-                {/if}
-              </div>
+                  {#each cameraDevices as cam, i}
+                    <option value={cam.deviceId}>{cam.label || `Camera ${i + 1}`}</option>
+                  {/each}
+                </select>
+              {:else}
+                <button class="mini-action wide" onclick={enumerateCameras}>
+                  Detect cameras…
+                </button>
+              {/if}
+              {#if cameraError}
+                <div class="src-error">{cameraError}</div>
+              {/if}
+            {:else if _kind === 'spout' && _showShare}
+              <select class="src-select"
+                value={_src && _src.type === 'spout' ? (_src.senderName || '') : ''}
+                onchange={(e) => {
+                  const v = (e.target as HTMLSelectElement).value;
+                  if (v === '') { clearSource(p.key); return; }
+                  pickSpoutSource(p.key, v);
+                }}>
+                <option value="">— pick a {textureShareLabel} sender —</option>
+                {#each $spoutSenders as sender}
+                  <option value={sender}>{sender}</option>
+                {/each}
+              </select>
             {/if}
           {:else if p.kind === 'color'}
             <!-- Color picker — shows the current color as a swatch
@@ -603,6 +686,17 @@
   .src-now { margin-left: auto; font-size: 10.5px; color: #67e8f9; background: rgba(103, 232, 249, 0.08); padding: 1px 6px; border-radius: 8px; max-width: 140px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .src-now.empty { color: #6b7280; background: transparent; opacity: 0.55; }
   .src-now.demo { color: #fbbf24; background: rgba(251, 191, 36, 0.10); opacity: 1; }
+  .src-error {
+    margin-top: 6px;
+    padding: 6px 8px;
+    font-size: 11px;
+    line-height: 1.35;
+    color: #ffb4a8;
+    background: rgba(255, 80, 60, 0.08);
+    border: 1px solid rgba(255, 80, 60, 0.28);
+    border-radius: 3px;
+  }
+
   .src-demo-hint { font-size: 10.5px; line-height: 1.35; color: #d1a54a; opacity: 0.9; margin: -2px 0 7px; }
   .mini-x { background: transparent; border: 1px solid #333a4a; color: var(--text-secondary, #aaa); width: 22px; height: 22px; border-radius: 3px; cursor: pointer; font-size: 14px; }
   .mini-x:hover { background: #262b3a; color: #fff; }

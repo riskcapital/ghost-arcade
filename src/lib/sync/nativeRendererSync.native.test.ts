@@ -1019,6 +1019,9 @@ describe('native renderer sync effect-pass descriptors', () => {
       },
     })).toBe('gpu-shader:pixel-particles:source-required');
 
+    // Camera is a supported SOURCE for the two instruments whose ingest is
+    // wired, so it is no longer what blocks them -- this fixture has no native
+    // graph route, which is what the reason now names.
     expect(nativeUnsupportedSourceReason({
       id: 'gpu-pixel-particles-camera',
       type: 'gpu',
@@ -1027,6 +1030,22 @@ describe('native renderer sync effect-pass descriptors', () => {
       gpuLayerContent: {
         shaderId: 'pixel-particles',
         params: {
+          source: { type: 'camera', deviceId: 'cam-a' },
+        },
+      },
+    })).toBe('gpu-shader:pixel-particles:route-unavailable');
+
+    // Every other instrument still reports the source as the blocker rather
+    // than rendering black on a camera it cannot read.
+    expect(nativeUnsupportedSourceReason({
+      id: 'gpu-particle-field-camera',
+      type: 'gpu',
+      visible: true,
+      source: null,
+      gpuLayerContent: {
+        shaderId: 'particle-field',
+        params: {
+          mode: 'media',
           source: { type: 'camera', deviceId: 'cam-a' },
         },
       },
