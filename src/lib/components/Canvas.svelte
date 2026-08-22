@@ -101,7 +101,7 @@
   // reconcile here only handles the LEGACY WebRTC path; zero-copy
   // start is triggered by user action in OutputWindow.openPopup().
   // We DO call stop on teardown to be safe.
-  import { NativeRendererSync, getProjectOutputSize } from '$lib/sync/nativeRendererSync';
+  import { NativeRendererSync, getProjectOutputSize, setPreferredNativeQualityPolicy } from '$lib/sync/nativeRendererSync';
   import {
     attachNativeEditorPreview,
     detachNativeEditorPreview,
@@ -180,6 +180,22 @@
   // native scene explicitly. Live publishing overlaid the venue onto the
   // 2D output.
   let nativeRendererStatusTimer: ReturnType<typeof setInterval> | null = null;
+  let nativeQualityUnsub: (() => void) | null = null;
+  let lastPushedNativeQuality: string | null = null;
+
+  /*
+   * Settings' Shader Quality -> the native core's quality tier. The
+   * percentages in the UI labels are these tiers' real render scales; the
+   * browser renderer's own SHADER_QUALITY_MULTIPLIERS are a separate ladder
+   * (1 / 0.75 / 0.5 / 0.25) and only apply to the WebGL path below.
+   */
+  const NATIVE_QUALITY_TIER = {
+    full: 'insane',
+    high: 'ultra',
+    medium: 'balanced',
+    low: 'performance',
+  } as const;
+
   let nativeLayersUnsub: (() => void) | null = null;
   let nativeProjectUnsub: (() => void) | null = null;
   let nativeInteractionRaf: number | null = null;
@@ -1570,6 +1586,19 @@
     function startNativeRendererSyncLifecycle(): void {
       if (!((isTauriRuntime || isElectron) && !isOsrMode && !isOutputMode)) return;
       if (nativeRendererSync) return;
+      /*
+       * Seed the render-quality tier BEFORE start(), so the core's own default
+       * ("auto", which begins at balanced/0.72) never gets a frame in edgeways.
+       * settings.subscribe fires on every settings emit -- including every
+       * corner-drag frame -- so only push when the tier actually changes.
+       */
+      nativeQualityUnsub = settings.subscribe((s) => {
+        const tier = NATIVE_QUALITY_TIER[s.ui.shaderQuality] ?? 'insane';
+        if (tier === lastPushedNativeQuality) return;
+        lastPushedNativeQuality = tier;
+        setPreferredNativeQualityPolicy(tier);
+      });
+
       nativeRendererSync = new NativeRendererSync();
       const size = getProjectOutputSize();
       void nativeRendererSync.start(size.width, size.height).then(() => {
@@ -3866,6 +3895,11 @@
     if (nativeLayersUnsub) {
       nativeLayersUnsub();
       nativeLayersUnsub = null;
+    }
+    if (nativeQualityUnsub) {
+      nativeQualityUnsub();
+      nativeQualityUnsub = null;
+      lastPushedNativeQuality = null;
     }
     if (nativeProjectUnsub) {
       nativeProjectUnsub();

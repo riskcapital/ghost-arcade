@@ -5,7 +5,6 @@
   // + corners + accents). See src/lib/theming/themes/.
   import { activeThemeId, themes } from '../theming/store';
   const themesList = themes.list();
-  import { setNativeRendererQualityPolicy } from '../api/native-renderer';
   import {
     probeDecodeSupport,
     probeEncodeSupport,
@@ -18,13 +17,6 @@
   let codecDecode: CodecDecodeReport | null = null;
   let codecEncode: CodecEncodeReport | null = null;
   let codecProbed = false;
-  /* Push the stored tier to the core once on mount. Without this the setting
-     only takes effect when the dropdown is touched, so a saved preference is
-     silently ignored for the whole session. */
-  onMount(() => {
-    void applyNativeQualityTier($settings.ui.shaderQuality);
-  });
-
   async function runCodecProbe() {
     if (codecProbed) return;
     codecProbed = true;
@@ -559,14 +551,6 @@
     { value: 'low', label: 'Performance (56%)' },
   ];
 
-  /** UI quality mode -> the core's native quality tier. */
-  const NATIVE_QUALITY_TIER: Record<ShaderQualityMode, string> = {
-    full: 'insane',
-    high: 'ultra',
-    medium: 'balanced',
-    low: 'performance',
-  };
-
   const gpuInstrumentQualityModes: { value: GpuInstrumentQualityMode; label: string }[] = [
     { value: 'auto', label: 'Auto' },
     { value: 'low', label: 'Performance' },
@@ -621,21 +605,9 @@
 
   function handleShaderQualityChange(e: Event) {
     const value = (e.target as HTMLSelectElement).value as ShaderQualityMode;
+    /* Storing it is the whole job: App.svelte watches this and pushes the
+       matching tier to the native core, on change and at startup. */
     settings.setShaderQuality(value);
-    /* Push it to the core as well. The stored setting only ever reached
-       Canvas.svelte, which is the browser renderer and does not run in a
-       native-only build, so changing this did nothing to the shaders. */
-    void applyNativeQualityTier(value);
-  }
-
-  async function applyNativeQualityTier(mode: ShaderQualityMode) {
-    try {
-      await setNativeRendererQualityPolicy({
-        native_quality_policy: NATIVE_QUALITY_TIER[mode] ?? 'balanced',
-      } as never);
-    } catch (err) {
-      console.warn('[Settings] native quality tier not applied:', err);
-    }
   }
 
   function handleGpuInstrumentQualityChange(e: Event) {
