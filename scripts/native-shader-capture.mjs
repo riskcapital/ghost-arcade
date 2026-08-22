@@ -102,6 +102,13 @@ try {
     },
   }, 20000);
 
+  /* Optional quality tier, so one shader can be compared across tiers:
+     CAP_TIER=performance node scripts/native-shader-capture.mjs ... */
+  if (process.env.CAP_TIER) {
+    await rpc.send('set_native_quality_policy',
+      { config: { native_quality_policy: process.env.CAP_TIER } }, 5000).catch(() => {});
+  }
+
   await rpc.send('submit_commands', {
     commands: [{
       type: 'precompile_shader',

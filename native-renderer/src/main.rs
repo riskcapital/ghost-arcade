@@ -2556,6 +2556,11 @@ struct RenderState {
     source_frame_format: wgpu::TextureFormat,
     source_frame_mip_levels: u32,
     source_frame_blitter: TextureBlitter,
+    /// Off-screen target for reduced-resolution ISF rendering. Allocated lazily
+    /// and only when a quality tier below native is actually in use, so the full
+    /// quality path costs nothing extra.
+    native_shader_scale_texture: Option<wgpu::Texture>,
+    native_shader_scale_size: u32,
     native_shader_vertex_module: wgpu::ShaderModule,
     native_shader_bind_group_layout: wgpu::BindGroupLayout,
     native_shader_bind_group: wgpu::BindGroup,
@@ -12156,6 +12161,10 @@ impl App {
         {
             let source_id = format!("native-shader:{layer_id}:{shader_id}:{source_hash:016x}");
             let slot = self.assign_source_frame_slot(&source_id);
+            /* The quality tier finally reaches the renderer. quality_scale has
+               been maintained and reported in status since this was written and
+               never applied to anything, so every tier rendered identically. */
+            let quality_scale = self.native_quality.quality_scale;
             match self.renderer.as_mut() {
                 Some(renderer) => {
                     match renderer.render_native_wgsl_shader_frame(
@@ -12166,6 +12175,7 @@ impl App {
                         &fragment_entry,
                         &shader_uniforms,
                         &image_input_slots,
+                        quality_scale,
                     ) {
                         Ok(()) => {
                             self.source_frames.insert(source_id, SourceFrame::full(seq));
@@ -15444,6 +15454,8 @@ impl RenderState {
             source_frame_format,
             source_frame_mip_levels,
             source_frame_blitter,
+            native_shader_scale_texture: None,
+            native_shader_scale_size: 0,
             native_shader_vertex_module,
             native_shader_bind_group_layout,
             native_shader_bind_group,
@@ -17656,6 +17668,40 @@ impl RenderState {
         })
     }
 
+    /// Reduced-resolution target for a quality tier below native.
+    ///
+    /// Rendering into a viewport-confined corner of the slot would leave the
+    /// rest of mip 0 stale, and everything downstream samples the slot over the
+    /// full 0..1 range. A separate smaller texture keeps that contract intact:
+    /// the shader draws at reduced size, then one linear blit fills the slot
+    /// completely. The blit is a single full-target draw of trivial work, which
+    /// is far cheaper than the fragment shader it saves -- these shaders run
+    /// 100+ raymarch steps per pixel.
+    fn ensure_native_shader_scale_target(&mut self, size: u32) -> wgpu::TextureView {
+        if self.native_shader_scale_size != size || self.native_shader_scale_texture.is_none() {
+            let texture = self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some("Ghost Render Core Native Shader Scale Target"),
+                size: wgpu::Extent3d {
+                    width: size,
+                    height: size,
+                    depth_or_array_layers: 1,
+                },
+                mip_level_count: 1,
+                sample_count: 1,
+                dimension: wgpu::TextureDimension::D2,
+                format: self.source_frame_format,
+                usage: wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::TEXTURE_BINDING,
+                view_formats: &[],
+            });
+            self.native_shader_scale_texture = Some(texture);
+            self.native_shader_scale_size = size;
+        }
+        self.native_shader_scale_texture
+            .as_ref()
+            .expect("scale target just ensured")
+            .create_view(&wgpu::TextureViewDescriptor::default())
+    }
+
     fn render_native_wgsl_shader_frame(
         &mut self,
         slot: usize,
@@ -17665,6 +17711,7 @@ impl RenderState {
         fragment_entry: &str,
         uniforms: &NativeShaderUniforms,
         image_input_slots: &[usize],
+        quality_scale: f32,
     ) -> Result<(), String> {
         self.ensure_native_shader_pipeline(cache_key, source_kind, source, fragment_entry)?;
         self.queue.write_buffer(
@@ -17673,7 +17720,30 @@ impl RenderState {
             bytemuck::bytes_of(uniforms),
         );
         let safe_slot = slot.min(MAX_SOURCE_FRAME_SLOTS - 1);
-        let view = self
+
+        /*
+         * Quality tier. Below native, the shader draws into a smaller target
+         * and one linear blit expands it into the slot; at native it renders
+         * straight into the slot as before, with no extra texture and no extra
+         * pass. The saving is real because these shaders are fragment-bound --
+         * a tier of 0.56 is a third of the pixels, and each pixel is a full
+         * raymarch.
+         *
+         * Rounded to a multiple of 8 and floored at 128: a scale that lands on
+         * an awkward size gains nothing and can miss tile alignment, and below
+         * 128 the mip chain built from it is coarser than the mip levels the
+         * slot expects.
+         */
+        let scale = quality_scale.clamp(0.2, 1.0);
+        let full_size = self.source_frame_size as u32;
+        let scaled_size = if scale >= 0.995 {
+            full_size
+        } else {
+            (((full_size as f32 * scale) as u32) / 8 * 8).clamp(128, full_size)
+        };
+        let use_scaled = scaled_size < full_size;
+
+        let slot_view = self
             .source_frame_texture
             .create_view(&wgpu::TextureViewDescriptor {
                 label: Some("Ghost Render Core Native Shader Source Frame View"),
@@ -17685,6 +17755,12 @@ impl RenderState {
                 array_layer_count: Some(1),
                 ..Default::default()
             });
+        let scale_view = if use_scaled {
+            Some(self.ensure_native_shader_scale_target(scaled_size))
+        } else {
+            None
+        };
+        let view = scale_view.as_ref().unwrap_or(&slot_view);
         let mut encoder = self
             .device
             .create_command_encoder(&wgpu::CommandEncoderDescriptor {
@@ -17756,6 +17832,12 @@ impl RenderState {
             pass.set_pipeline(&pipeline.pipeline);
             pass.set_bind_group(0, &self.native_shader_bind_group, &[]);
             pass.draw(0..3, 0..1);
+        }
+        if let Some(scale_view) = scale_view.as_ref() {
+            /* Expand the reduced render into the slot so every downstream
+               sampler still sees a fully populated mip 0 over 0..1. */
+            self.source_frame_blitter
+                .copy(&self.device, &mut encoder, scale_view, &slot_view);
         }
         self.generate_source_frame_mips(&mut encoder, safe_slot);
         self.queue.submit(Some(encoder.finish()));
