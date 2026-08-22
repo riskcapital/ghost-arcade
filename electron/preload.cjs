@@ -112,6 +112,7 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'native_renderer_set_decode_cpu_backup_policy',
   'native_renderer_set_decode_synthetic_fallback_policy',
   'native_renderer_set_texture_pool_cap', 'native_renderer_set_shader_precompile_policy',
+  'native_renderer_set_native_quality_policy',
   'native_renderer_set_media_prefetch_policy', 'native_renderer_set_media_drop_policy',
   'native_renderer_set_decode_preview_policy', 'native_renderer_set_decode_target_policy',
   'native_renderer_set_decode_upload_policy', 'native_renderer_set_decode_handoff_policy',

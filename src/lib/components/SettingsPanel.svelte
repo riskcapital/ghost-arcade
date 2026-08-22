@@ -1064,7 +1064,7 @@
           <div class="setting-row">
             <div class="setting-label">
               <span class="label-text">Shader Quality</span>
-              <span class="label-hint">Default render resolution for shader layers (override per-layer in Layer Panel)</span>
+              <span class="label-hint">Render resolution for shader layers. Native renders at output size; lower tiers render smaller and upscale.</span>
             </div>
             <select value={$settings.ui.shaderQuality} onchange={handleShaderQualityChange}>
               {#each shaderQualityModes as mode}
@@ -1556,13 +1556,12 @@
           <div class="setting-row">
             <div class="setting-label">
               <span class="label-text">Shader Quality</span>
-              <span class="label-hint">Internal render resolution for shader layers. Full = native; lower scales then upscales.</span>
+              <span class="label-hint">Internal render resolution for shader layers. Native renders at output size; lower tiers render smaller and upscale.</span>
             </div>
             <select value={$settings.ui.shaderQuality} onchange={handleShaderQualityChange}>
-              <option value="full">Full</option>
-              <option value="high">High (0.75x)</option>
-              <option value="medium">Medium (0.5x)</option>
-              <option value="low">Low (0.25x)</option>
+              {#each shaderQualityModes as mode}
+                <option value={mode.value}>{mode.label}</option>
+              {/each}
             </select>
           </div>
           <div class="setting-row">
