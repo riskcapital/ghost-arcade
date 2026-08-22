@@ -13,11 +13,34 @@ function countMatches(source: string, pattern: RegExp): number {
   return matches ? matches.length : 0;
 }
 
+/**
+ * Strip comments before scoring.
+ *
+ * Every metric below is a proxy for GPU cost, and comments have none. Left in,
+ * they distort the score twice over: a well-documented shader trips the
+ * "large shader source" size bucket on prose alone, and the keyword tests fire
+ * on any comment that happens to mention raymarching, blur or a kernel --
+ * describing a technique is enough to be charged for it.
+ *
+ * This is not hypothetical. Four of the five GA2 shaders scored 43-47 (Extreme)
+ * purely on their comments, and an Extreme rating makes MediaTray drop the
+ * layer to half render quality on load. Shaders measured at 1.6-4.8ms on the
+ * native core were being rendered at half resolution because of their prose.
+ *
+ * The ISF header is itself a block comment, so this removes the metadata JSON
+ * too -- correct, since none of it executes. Input count is passed separately.
+ */
+function stripComments(source: string): string {
+  return source
+    .replace(/\/\*[\s\S]*?\*\//g, ' ')
+    .replace(/\/\/[^\n]*/g, ' ');
+}
+
 export function estimateShaderLoadRating(
   shaderCode: string,
   inputCount = 0,
 ): ShaderLoadRating {
-  const source = shaderCode || '';
+  const source = stripComments(shaderCode || '');
   const lower = source.toLowerCase();
   let score = 0;
   const hints: string[] = [];

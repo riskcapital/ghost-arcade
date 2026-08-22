@@ -4,7 +4,7 @@
     "ISFVSN": "2",
     "CATEGORIES": ["Generator", "Audio Reactive"],
     "INPUTS": [
-        {"NAME": "colorMode", "TYPE": "long", "DEFAULT": 0,
+        {"NAME": "colorMode", "TYPE": "long", "DEFAULT": 3,
          "VALUES": [0, 1, 2, 3, 4, 5, 6],
          "LABELS": ["Nacre", "Abyss", "Verdigris", "Magma", "Porcelain", "Ultraviolet", "Solaris"]},
         {"NAME": "constant",  "TYPE": "float", "DEFAULT": 0.68, "MIN": 0.35, "MAX": 0.92},

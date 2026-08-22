@@ -4,7 +4,7 @@
     "ISFVSN": "2",
     "CATEGORIES": ["Generator", "Audio Reactive"],
     "INPUTS": [
-        {"NAME": "colorMode", "TYPE": "long", "DEFAULT": 0,
+        {"NAME": "colorMode", "TYPE": "long", "DEFAULT": 3,
          "VALUES": [0, 1, 2, 3, 4, 5, 6],
          "LABELS": ["Riso", "Blueprint", "GoldLeaf", "Cinnabar", "Phosphor", "Bauhaus", "Platinum"]},
         {"NAME": "waves",     "TYPE": "long",  "DEFAULT": 5,
