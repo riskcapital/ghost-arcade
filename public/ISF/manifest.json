@@ -2,6 +2,39 @@
   "version": 2,
   "shaders": [
     {
+      "file": "DM-SolidColor.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "DM-TestPattern.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "DM-GridMatrix.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "gridSize": 4.8,
+        "lineWidth": 0.09455
+      },
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
       "file": "GA2-MinimalSurface.fs",
       "tier": "demo",
       "category": "3D Room",
@@ -145,35 +178,6 @@
       "featured": true,
       "defaultLoad": true,
       "enabled": true
-    },
-    {
-      "file": "DM-SolidColor.fs",
-      "tier": "demo",
-      "category": "Visual",
-      "tags": [],
-      "defaults": {},
-      "featured": false
-    },
-    {
-      "file": "DM-TestPattern.fs",
-      "tier": "demo",
-      "category": "Visual",
-      "tags": [],
-      "defaults": {},
-      "featured": false,
-      "defaultLoad": true
-    },
-    {
-      "file": "DM-GridMatrix.fs",
-      "tier": "demo",
-      "category": "Visual",
-      "tags": [],
-      "defaults": {
-        "gridSize": 4.8,
-        "lineWidth": 0.09455
-      },
-      "featured": false,
-      "defaultLoad": true
     },
     {
       "file": "DM-TestBars.fs",
