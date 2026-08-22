@@ -37,6 +37,14 @@ import {
   resolveNativeGraphQuality,
   type NativeGraphQualityState,
 } from '$lib/renderer/nativeGraphQuality';
+import {
+  cameraDeviceIdFromSourceFrameId,
+  cameraSourceError,
+  cameraSourceFrameId,
+  isCameraSourceFrameId,
+  nextCameraFrame,
+  pruneCameraCaptures,
+} from '$lib/renderer/cameraSourceFrames';
 import { nativeShaderSourceFromJavascript } from '$lib/renderer/nativeJsShaderSource';
 import { resolveAssetRefForRuntime } from '$lib/storage/assetRegistry';
 import {
@@ -3422,6 +3430,10 @@ function nativeGpuSourceParamUnsupportedReason(
   }
 
   if (sourceParam.type === 'camera') {
+    /* Only the two instruments whose ingest is actually wired. The rest still
+       have no camera path, and claiming otherwise would render them black
+       instead of telling the user why. */
+    if (shaderId === 'flythrough' || shaderId === 'pixel-particles') return null;
     return 'gpu-source:camera:native-ingest-pending';
   }
 
@@ -4444,6 +4456,29 @@ function nativeGraphParamsForLayer(
   ).params;
 }
 
+/**
+ * Input source for a webcam.
+ *
+ * `source` is null and nothing is prefetched or previewed, the same shape the
+ * built-in demo image uses: there is no MediaSource behind a camera and no URI
+ * to fetch. Frames arrive by id, pushed each sync pass from the MediaStream.
+ *
+ * aspect 1 because the frames are centre-cropped square before upload.
+ */
+function cameraNativeLayerSource(deviceId: string): NativeLayerSource {
+  const id = cameraSourceFrameId(deviceId);
+  return {
+    id,
+    uri: id,
+    sourceType: 'image',
+    source: null,
+    shouldPrefetch: false,
+    shouldPreview: false,
+    previewElement: null,
+    aspect: 1,
+  };
+}
+
 function nativePointCloudBufferBase64(buffer: ArrayBuffer): string {
   const bytes = new Uint8Array(buffer);
   let binary = '';
@@ -5173,6 +5208,7 @@ export class NativeRendererSync {
   private autoPresentOnStateChange = true;
   private decodeStoreCpuBackupFrames = false;
   private decodeAllowSyntheticFallback = false;
+  private cameraErrorsReported = new Map<string, string>();
   private texturePoolCapMb = 512;
   private shaderPrecompileQueueCap = 4096;
   private shaderPrecompilePerFrame = 4;
@@ -5564,6 +5600,10 @@ export class NativeRendererSync {
       return fileSourceParamToNativeLayerSource(layer, sourceParam);
     }
 
+    if (sourceParam.type === 'camera') {
+      return cameraNativeLayerSource(String(sourceParam.deviceId ?? ''));
+    }
+
     return null;
   }
 
@@ -5913,6 +5953,43 @@ export class NativeRendererSync {
     console.log(
       `[NativeRendererSync] built-in demo source uploaded ${image.width}x${image.height} as ${DEFAULT_GPU_SOURCE_ID}`,
     );
+  }
+
+  /**
+   * Push one camera frame, if a new one is ready.
+   *
+   * Same base64 transport as the demo image and the text atlas, but every
+   * frame rather than once: the id is stable per device, so the core keeps
+   * reusing one slot and the graph binding never changes.
+   */
+  private appendCameraSourceUpload(
+    commands: RendererCommand[],
+    sourceFrameId: string,
+    now: number,
+  ): void {
+    if (!this.supportsNativeFeature('source_frame_upload')) return;
+    const deviceId = cameraDeviceIdFromSourceFrameId(sourceFrameId);
+    const frame = nextCameraFrame(deviceId, now);
+    if (!frame) {
+      /* No frame yet is the normal case for the first second — opening the
+         device and the permission prompt both land here. Only report a real
+         failure, and only once per device. */
+      const err = cameraSourceError(deviceId);
+      if (err && this.cameraErrorsReported.get(deviceId) !== err) {
+        this.cameraErrorsReported.set(deviceId, err);
+        console.warn(`[NativeRendererSync] ${sourceFrameId} unavailable: ${err}`);
+      }
+      return;
+    }
+    this.cameraErrorsReported.delete(deviceId);
+    commands.push({
+      type: 'upload_source_frame',
+      source_id: sourceFrameId,
+      seq: frame.seq,
+      width: frame.width,
+      height: frame.height,
+      rgba_b64: encodeAtlasBase64(frame.rgba),
+    } as unknown as RendererCommand);
   }
 
   private canUseNativeStaticImageDecode(
@@ -8011,6 +8088,7 @@ export class NativeRendererSync {
     const graphInputCommands: RendererCommand[] = [];
     const current = new Map<string, LayerSnapshot>();
     const activeVideoKeys = new Set<string>();
+    const activeCameraDeviceIds = new Set<string>();
     const playbackSourcesSent = new Set<string>();
     const visual = getVisualAudioSnapshot();
 
@@ -8220,6 +8298,10 @@ export class NativeRendererSync {
       // already resident by the time the core builds the graph.
       if (graphInput?.id === DEFAULT_GPU_SOURCE_ID) {
         this.appendDefaultGpuSourceUpload(graphInputCommands);
+      }
+      if (graphInput && isCameraSourceFrameId(graphInput.id)) {
+        activeCameraDeviceIds.add(cameraDeviceIdFromSourceFrameId(graphInput.id));
+        this.appendCameraSourceUpload(graphInputCommands, graphInput.id, now);
       }
       if (graphInput && graphInputSrc && graphInput.shouldPreview) {
         const sourceKey = this.sourceCacheKey(graphInputSrc.id, graphInputSrc.src);
@@ -8823,6 +8905,11 @@ export class NativeRendererSync {
         this.nativeVideoDecodeDimensionCache.delete(key);
       }
     });
+    /* Stop any camera no layer is pointed at any more. Done from the full
+       active set rather than reference counted: a missed decrement would leave
+       the camera light on after the user switched the source away, which is
+       the most visible way this feature could misbehave. */
+    pruneCameraCaptures(activeCameraDeviceIds);
 
     if (graphInputCommands.length) {
       const graphInputSummary = await submitNativeRendererCommands(graphInputCommands);

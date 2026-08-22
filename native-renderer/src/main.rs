@@ -7166,6 +7166,15 @@ impl App {
             .get(&graph_layer.input_source_id)
             .copied()
             .ok_or_else(|| {
+                if std::env::var("GHOST_DEBUG_LAYERS").is_ok() {
+                    let mut keys: Vec<&str> =
+                        self.source_frame_slots.keys().map(|k| k.as_str()).collect();
+                    keys.sort_unstable();
+                    eprintln!(
+                        "[slot-debug] want `{}` have {:?}",
+                        graph_layer.input_source_id, keys
+                    );
+                }
                 format!(
                     "pixel particles input `{}` is not ready",
                     graph_layer.input_source_id
@@ -7414,6 +7423,15 @@ impl App {
             .get(&graph_layer.input_source_id)
             .copied()
             .ok_or_else(|| {
+                if std::env::var("GHOST_DEBUG_LAYERS").is_ok() {
+                    let mut keys: Vec<&str> =
+                        self.source_frame_slots.keys().map(|k| k.as_str()).collect();
+                    keys.sort_unstable();
+                    eprintln!(
+                        "[slot-debug] want `{}` have {:?}",
+                        graph_layer.input_source_id, keys
+                    );
+                }
                 format!(
                     "flythrough input `{}` is not ready",
                     graph_layer.input_source_id
