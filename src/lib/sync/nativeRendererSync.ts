@@ -38,13 +38,9 @@ import {
   type NativeGraphQualityState,
 } from '$lib/renderer/nativeGraphQuality';
 import {
-  cameraDeviceIdFromSourceFrameId,
-  cameraSourceError,
-  cameraSourceFrameId,
-  isCameraSourceFrameId,
-  nextCameraFrame,
-  pruneCameraCaptures,
-} from '$lib/renderer/cameraSourceFrames';
+  cameraLayerSource,
+  pruneCameraLiveSources,
+} from '$lib/renderer/cameraLiveSource';
 import { nativeShaderSourceFromJavascript } from '$lib/renderer/nativeJsShaderSource';
 import { resolveAssetRefForRuntime } from '$lib/storage/assetRegistry';
 import {
@@ -4459,24 +4455,16 @@ function nativeGraphParamsForLayer(
 /**
  * Input source for a webcam.
  *
- * `source` is null and nothing is prefetched or previewed, the same shape the
- * built-in demo image uses: there is no MediaSource behind a camera and no URI
- * to fetch. Frames arrive by id, pushed each sync pass from the MediaStream.
- *
- * aspect 1 because the frames are centre-cropped square before upload.
+ * Returns null while the addon session is still opening, which reads as "not
+ * bound yet" and leaves the instrument blank for the moment it takes. It must
+ * NOT fall through to the demo image: a camera that is starting and a camera
+ * that failed would then look identical, both showing a picture the user did
+ * not pick.
  */
-function cameraNativeLayerSource(deviceId: string): NativeLayerSource {
-  const id = cameraSourceFrameId(deviceId);
-  return {
-    id,
-    uri: id,
-    sourceType: 'image',
-    source: null,
-    shouldPrefetch: false,
-    shouldPreview: false,
-    previewElement: null,
-    aspect: 1,
-  };
+function cameraNativeLayerSource(deviceId: string): NativeLayerSource | null {
+  const source = cameraLayerSource(deviceId);
+  if (!source) return null;
+  return nativeLayerSourceFromMediaSource(source);
 }
 
 function nativePointCloudBufferBase64(buffer: ArrayBuffer): string {
@@ -5208,7 +5196,6 @@ export class NativeRendererSync {
   private autoPresentOnStateChange = true;
   private decodeStoreCpuBackupFrames = false;
   private decodeAllowSyntheticFallback = false;
-  private cameraErrorsReported = new Map<string, string>();
   private texturePoolCapMb = 512;
   private shaderPrecompileQueueCap = 4096;
   private shaderPrecompilePerFrame = 4;
@@ -5953,43 +5940,6 @@ export class NativeRendererSync {
     console.log(
       `[NativeRendererSync] built-in demo source uploaded ${image.width}x${image.height} as ${DEFAULT_GPU_SOURCE_ID}`,
     );
-  }
-
-  /**
-   * Push one camera frame, if a new one is ready.
-   *
-   * Same base64 transport as the demo image and the text atlas, but every
-   * frame rather than once: the id is stable per device, so the core keeps
-   * reusing one slot and the graph binding never changes.
-   */
-  private appendCameraSourceUpload(
-    commands: RendererCommand[],
-    sourceFrameId: string,
-    now: number,
-  ): void {
-    if (!this.supportsNativeFeature('source_frame_upload')) return;
-    const deviceId = cameraDeviceIdFromSourceFrameId(sourceFrameId);
-    const frame = nextCameraFrame(deviceId, now);
-    if (!frame) {
-      /* No frame yet is the normal case for the first second — opening the
-         device and the permission prompt both land here. Only report a real
-         failure, and only once per device. */
-      const err = cameraSourceError(deviceId);
-      if (err && this.cameraErrorsReported.get(deviceId) !== err) {
-        this.cameraErrorsReported.set(deviceId, err);
-        console.warn(`[NativeRendererSync] ${sourceFrameId} unavailable: ${err}`);
-      }
-      return;
-    }
-    this.cameraErrorsReported.delete(deviceId);
-    commands.push({
-      type: 'upload_source_frame',
-      source_id: sourceFrameId,
-      seq: frame.seq,
-      width: frame.width,
-      height: frame.height,
-      rgba_b64: encodeAtlasBase64(frame.rgba),
-    } as unknown as RendererCommand);
   }
 
   private canUseNativeStaticImageDecode(
@@ -8299,9 +8249,20 @@ export class NativeRendererSync {
       if (graphInput?.id === DEFAULT_GPU_SOURCE_ID) {
         this.appendDefaultGpuSourceUpload(graphInputCommands);
       }
-      if (graphInput && isCameraSourceFrameId(graphInput.id)) {
-        activeCameraDeviceIds.add(cameraDeviceIdFromSourceFrameId(graphInput.id));
-        this.appendCameraSourceUpload(graphInputCommands, graphInput.id, now);
+      /*
+       * Track the camera the layer ASKS for, not the one that resolved.
+       *
+       * Reading this off graphInput is circular: the source only resolves once
+       * the addon session is live, so before that the device never lands in the
+       * active set, the prune below tears the half-started session down, and
+       * the next pass starts over -- a permission prompt loop that never
+       * settles. The picked device id is known from the params either way.
+       */
+      const cameraParam = layer.type === 'gpu'
+        ? (layer.gpuLayerContent?.params?.source as any)
+        : null;
+      if (cameraParam?.type === 'camera') {
+        activeCameraDeviceIds.add(String(cameraParam.deviceId ?? ''));
       }
       if (graphInput && graphInputSrc && graphInput.shouldPreview) {
         const sourceKey = this.sourceCacheKey(graphInputSrc.id, graphInputSrc.src);
@@ -8909,7 +8870,7 @@ export class NativeRendererSync {
        active set rather than reference counted: a missed decrement would leave
        the camera light on after the user switched the source away, which is
        the most visible way this feature could misbehave. */
-    pruneCameraCaptures(activeCameraDeviceIds);
+    pruneCameraLiveSources(activeCameraDeviceIds);
 
     if (graphInputCommands.length) {
       const graphInputSummary = await submitNativeRendererCommands(graphInputCommands);

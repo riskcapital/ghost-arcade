@@ -3,10 +3,10 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
-  cameraDeviceIdFromSourceFrameId,
-  cameraSourceFrameId,
-  isCameraSourceFrameId,
-} from './cameraSourceFrames';
+  cameraDeviceIdFromLiveSourceId,
+  cameraLiveSourceId,
+  isCameraLiveSourceId,
+} from './cameraLiveSource';
 import { buildNativePluginPrecompileCommands } from './nativePluginGraphs';
 import { buildVJCrossfadePrecompileCommands } from './vjCrossfadeNative';
 import { buildVJMixPrecompileCommands } from './vjMixNative';
@@ -775,37 +775,37 @@ async function snapshotSourceFrameLayer(
   return snapshot;
 }
 
-describe('Camera source frame ids', () => {
+describe('Camera live source ids', () => {
   it('round-trips a device id, with the empty id meaning the default camera', () => {
-    expect(cameraSourceFrameId('')).toBe('camera:default');
-    expect(cameraSourceFrameId(null)).toBe('camera:default');
-    expect(cameraSourceFrameId('abc123')).toBe('camera:abc123');
+    expect(cameraLiveSourceId('')).toBe('camera:default');
+    expect(cameraLiveSourceId(null)).toBe('camera:default');
+    expect(cameraLiveSourceId('abc123')).toBe('camera:abc123');
 
     // The inverse has to give back '' for the default, because that is what
     // getUserMedia wants for "let the OS pick" -- an id of 'default' would be
     // matched against real device ids and find nothing.
-    expect(cameraDeviceIdFromSourceFrameId('camera:default')).toBe('');
-    expect(cameraDeviceIdFromSourceFrameId('camera:abc123')).toBe('abc123');
+    expect(cameraDeviceIdFromLiveSourceId('camera:default')).toBe('');
+    expect(cameraDeviceIdFromLiveSourceId('camera:abc123')).toBe('abc123');
   });
 
   it('recognises only its own ids', () => {
-    expect(isCameraSourceFrameId('camera:default')).toBe(true);
-    expect(isCameraSourceFrameId('ghost:builtin-demo-source')).toBe(false);
-    expect(isCameraSourceFrameId('')).toBe(false);
-    expect(isCameraSourceFrameId(null)).toBe(false);
+    expect(isCameraLiveSourceId('camera:default')).toBe(true);
+    expect(isCameraLiveSourceId('ghost:builtin-demo-source')).toBe(false);
+    expect(isCameraLiveSourceId('')).toBe(false);
+    expect(isCameraLiveSourceId(null)).toBe(false);
   });
 });
 
 describe('Native graph instrument runtime fixtures', () => {
   const itIfNativeCore = existsSync(nativeCoreBin) ? it : it.skip;
 
-  itIfNativeCore('renders Pixel Particles from a camera source frame id', async () => {
-    /* The camera ingest uploads under `camera:<device>` and binds the graph to
-       that same id. Nothing else in the pipeline treats camera ids specially,
-       so this is the one thing worth pinning: an id of that shape is a source
-       frame like any other, and the instrument draws what was uploaded. */
+  itIfNativeCore('renders Pixel Particles from a camera-shaped source id', async () => {
+    /* The camera ingest binds the instrument to `camera:<device>` and lets the
+       live shared-texture path fill that slot. Nothing downstream treats camera
+       ids specially, and this is what pins that: an id of that shape is an
+       ordinary source id and the instrument draws whatever occupies it. */
     const rpc = createNativeRpc();
-    const cameraSourceId = cameraSourceFrameId('');
+    const cameraSourceId = cameraLiveSourceId('');
     const outputSize = { width: 160, height: 90 };
     try {
       await rpc.send('start', {
@@ -862,9 +862,8 @@ describe('Native graph instrument runtime fixtures', () => {
         outputSize.height,
       );
       const [r, g, b] = meanRgbFromProbe(probe);
-      // The uploaded frame is green-dominant; the render has to carry that
-      // through rather than coming back black (the "input is not ready" case)
-      // or grey (a different source standing in).
+      // Green-dominant in, green-dominant out: not black (the "input is not
+      // ready" case) and not grey (a different source standing in).
       expect(g).toBeGreaterThan(r);
       expect(g).toBeGreaterThan(b);
       expect(g).toBeGreaterThan(0.02);
