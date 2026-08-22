@@ -35,6 +35,38 @@
       "enabled": true
     },
     {
+      "file": "DM-TestBars.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "DM-UVGrid.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {},
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
+      "file": "DM-SafeArea.fs",
+      "tier": "demo",
+      "category": "Visual",
+      "tags": [],
+      "defaults": {
+        "lineWidth": 0.005205
+      },
+      "featured": false,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
       "file": "GA2-MinimalSurface.fs",
       "tier": "demo",
       "category": "3D Room",
@@ -196,35 +228,6 @@
       "featured": true,
       "defaultLoad": true,
       "enabled": true
-    },
-    {
-      "file": "DM-TestBars.fs",
-      "tier": "demo",
-      "category": "Visual",
-      "tags": [],
-      "defaults": {},
-      "featured": false,
-      "defaultLoad": true
-    },
-    {
-      "file": "DM-UVGrid.fs",
-      "tier": "demo",
-      "category": "Visual",
-      "tags": [],
-      "defaults": {},
-      "featured": false,
-      "defaultLoad": true
-    },
-    {
-      "file": "DM-SafeArea.fs",
-      "tier": "demo",
-      "category": "Visual",
-      "tags": [],
-      "defaults": {
-        "lineWidth": 0.005205
-      },
-      "featured": false,
-      "defaultLoad": true
     },
     {
       "file": "crystal-dimension.fs",

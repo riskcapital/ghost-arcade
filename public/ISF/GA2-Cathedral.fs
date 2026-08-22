@@ -15,7 +15,9 @@
         {"NAME": "flySpeed",  "TYPE": "float", "MIN": 0.0,  "MAX": 4.0,  "DEFAULT": 1.15},
         {"NAME": "evolve",    "TYPE": "float", "MIN": 0.0,  "MAX": 1.0,  "DEFAULT": 0.45},
         {"NAME": "lightWalk", "TYPE": "float", "MIN": 0.0,  "MAX": 1.5,  "DEFAULT": 0.30},
-        {"NAME": "hueShift",  "TYPE": "float", "MIN": 0.0,  "MAX": 1.0,  "DEFAULT": 0.0},
+        {"NAME": "hazeHue",   "TYPE": "float", "MIN": 0.0,  "MAX": 1.0,  "DEFAULT": 0.0},
+        {"NAME": "hazeTint",  "TYPE": "float", "MIN": 0.0,  "MAX": 1.0,  "DEFAULT": 1.0},
+        {"NAME": "sway",      "TYPE": "float", "MIN": 0.0,  "MAX": 2.0,  "DEFAULT": 1.0},
         {"NAME": "exposure",  "TYPE": "float", "MIN": 0.2,  "MAX": 2.2,  "DEFAULT": 1.0}
     ]
 }*/
@@ -61,6 +63,19 @@ const float FAR = 26.0;
 
 mat2 rot(float a){ float c = cos(a), s = sin(a); return mat2(c, -s, s, c); }
 float hash21(vec2 p){ p = fract(p*vec2(123.34, 345.45)); p += dot(p, p + 34.345); return fract(p.x*p.y); }
+
+/*
+ * Hue rotation about the grey axis (Rodrigues). Rotating the LIGHT rather than
+ * swapping palettes is what turns seven fixed haze colours into a continuous
+ * wheel of them: the stone keeps its own character and only the air and the
+ * beams shift, which is the part worth being able to dial on a given wall.
+ */
+vec3 hueRotate(vec3 c, float h){
+    const vec3 k = vec3(0.5773502692);
+    float a = h*PI2;
+    float ca = cos(a), sa = sin(a);
+    return clamp(c*ca + cross(k, c)*sa + k*dot(k, c)*(1.0 - ca), 0.0, 4.0);
+}
 
 float boxDist(vec3 p, vec3 b){
     vec3 q = abs(p) - b;
@@ -184,6 +199,14 @@ void main(){
     vec3 LIGHT = pal[1];
     vec3 BLOOM = pal[2];
 
+    /* hazeHue was declared and then never referenced anywhere in the body -- a
+       dead input, which is why turning it did nothing at all. It now rotates
+       the light and bloom, so the haze colour is continuous rather than one
+       fixed choice per palette. hazeTint fades that back toward the palette's
+       own light for anyone who wants the preset as authored. */
+    LIGHT = mix(LIGHT, hueRotate(LIGHT, hazeHue), hazeTint);
+    BLOOM = mix(BLOOM, hueRotate(BLOOM, hazeHue), hazeTint);
+
     int levels = int(clamp(depth, 1.0, 5.0));
     float ap = aperture*(0.92 + 0.16*bass);
     float z = TIME*flySpeed;                  /* depth along the flight */
@@ -198,11 +221,15 @@ void main(){
      * the shaft's half width; push it further and the camera clips into a wall,
      * which on an infinite structure means every frame after that is solid.
      */
-    vec3 ro = vec3(sin(TIME*0.19)*0.16, cos(TIME*0.14)*0.13, z);
-    vec3 fwd = normalize(vec3(sin(TIME*0.11)*0.05, sin(TIME*0.09)*0.04, 1.0));
+    /* `sway` scales every non-forward camera motion together -- the lateral
+       drift, the look-around, and the roll. At 0 the flight is dead straight and
+       perfectly level, which is what a projection-mapped surface wants; the
+       rocking is nice on a screen and unwelcome on geometry. */
+    vec3 ro = vec3(sin(TIME*0.19)*0.16*sway, cos(TIME*0.14)*0.13*sway, z);
+    vec3 fwd = normalize(vec3(sin(TIME*0.11)*0.05*sway, sin(TIME*0.09)*0.04*sway, 1.0));
     vec3 right = normalize(cross(vec3(0.0, 1.0, 0.0), fwd));
     vec3 up = cross(fwd, right);
-    float roll = TIME*0.05;
+    float roll = TIME*0.05*sway;
     vec3 rr = right*cos(roll) + up*sin(roll);
     vec3 uu = up*cos(roll) - right*sin(roll);
     vec3 rd = normalize(rr*uv.x + uu*uv.y + fwd*1.30);
