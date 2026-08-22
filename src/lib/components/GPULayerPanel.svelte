@@ -191,7 +191,10 @@
     if (src.type === 'file') return 'file';
     if (src.type === 'camera') {
       const cam = cameraDevices.find((d) => d.deviceId === src.deviceId);
-      return `camera · ${cam?.label || 'default'}`;
+      if (cam?.label) return `camera · ${cam.label}`;
+      // Falling back to "default" was a lie whenever the list had not loaded
+      // yet: a named device would read as the default camera.
+      return src.deviceId ? 'camera · (device not listed)' : 'camera · default';
     }
     if (src.type === 'spout') return `${textureShareLabel.toLowerCase()} · ${src.senderName || '?'}`;
     return 'unknown';
