@@ -92,6 +92,24 @@
       "enabled": true
     },
     {
+      "file": "GA2-SphericalHarmonics.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "spherical-harmonics",
+        "orbital",
+        "lobes",
+        "complementary",
+        "raymarch",
+        "audio",
+        "ga2-pack"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
+    },
+    {
       "file": "DM-SolidColor.fs",
       "tier": "demo",
       "category": "Visual",
