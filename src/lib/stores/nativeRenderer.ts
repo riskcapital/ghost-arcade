@@ -40,6 +40,8 @@ export interface NativeRendererRuntimeState {
   sourceFrameFormat: string;
   sourceFrameMipLevels: number;
   averageGpuMs: number | null;
+  /** True output frame rate, from the core's presented-frame counter. */
+  outputFps: number | null;
   readinessDetail: string;
   blockers: string[];
   textureShareLabel: string | null;
@@ -110,6 +112,7 @@ export const initialNativeRendererRuntimeState: NativeRendererRuntimeState = {
   sourceFrameFormat: 'unknown',
   sourceFrameMipLevels: 1,
   averageGpuMs: null,
+  outputFps: null,
   readinessDetail: 'native renderer is offline',
   blockers: [],
   textureShareLabel: null,
@@ -515,6 +518,7 @@ export function deriveNativeRendererRuntimeState(
     sourceFrameFormat: String(status?.source_frame_format ?? 'unknown'),
     sourceFrameMipLevels: Number(status?.source_frame_mip_levels ?? capabilities?.limits?.source_frame_mip_levels ?? 1),
     averageGpuMs: Number.isFinite(status?.avg_render_gpu_ms) ? Number(status?.avg_render_gpu_ms) : null,
+    outputFps: null,   /* filled per poll by updateNativeRendererRuntimeFromStatus */
     readinessDetail,
     blockers: blockersForMode(mode, readiness, localBlockers),
     textureShareLabel: textureShare?.label ?? null,
@@ -583,6 +587,60 @@ export function updateNativeRendererRuntimeFromStartup(
   }));
 }
 
+/*
+ * Output frame rate, measured from the core's own presented-frame counter.
+ *
+ * The FPS readout used to show only the editor's render loop, labelled "UI"
+ * because that is honestly what it was -- with the native core owning
+ * rendering, the editor's loop says nothing about what reaches a projector. The
+ * core does not report a rate, but it counts frames_presented, so the real
+ * figure is a delta over wall time.
+ *
+ * Deliberately computed HERE rather than in deriveNativeRendererRuntimeState:
+ * that function is pure and may be called more than once for the same status
+ * (and is, from tests), and every extra call would divide a zero frame delta by
+ * a near-zero interval and produce garbage. This is the one place that runs
+ * exactly once per poll.
+ */
+let lastPresentedFrames = 0;
+let lastPresentedAt = 0;
+let smoothedOutputFps: number | null = null;
+
+export function resetOutputFpsTracking() {
+  lastPresentedFrames = 0;
+  lastPresentedAt = 0;
+  smoothedOutputFps = null;
+}
+
+function measureOutputFps(status: RendererStatus | null | undefined): number | null {
+  const presented = Number((status as any)?.frames_presented ?? NaN);
+  if (!Number.isFinite(presented) || !status?.running) {
+    resetOutputFpsTracking();
+    return null;
+  }
+  const now = typeof performance !== 'undefined' ? performance.now() : Date.now();
+  if (lastPresentedAt === 0) {
+    lastPresentedFrames = presented;
+    lastPresentedAt = now;
+    return null;                        /* no interval yet; do not guess */
+  }
+  const elapsed = (now - lastPresentedAt) / 1000;
+  if (elapsed < 0.25) return smoothedOutputFps;   /* too short to be meaningful */
+
+  const delta = presented - lastPresentedFrames;
+  lastPresentedFrames = presented;
+  lastPresentedAt = now;
+  if (delta < 0) { smoothedOutputFps = null; return null; }   /* core restarted */
+
+  const instant = delta / elapsed;
+  /* Light smoothing: the poll interval is not locked to the frame clock, so the
+     raw ratio jitters by a few frames even when output is perfectly steady. */
+  smoothedOutputFps = smoothedOutputFps === null
+    ? instant
+    : smoothedOutputFps + (instant - smoothedOutputFps) * 0.35;
+  return smoothedOutputFps;
+}
+
 export function updateNativeRendererRuntimeFromStatus(
   status: RendererStatus | null | undefined,
   options: {
@@ -599,6 +657,7 @@ export function updateNativeRendererRuntimeFromStatus(
     nativeBlockedLayerLastReason?: string | null;
   } = {},
 ) {
+  const measuredFps = measureOutputFps(status);
   nativeRendererRuntime.update((current) => {
     const next = deriveNativeRendererRuntimeState(
       status,
@@ -621,6 +680,7 @@ export function updateNativeRendererRuntimeFromStatus(
           : current.nativeBlockedLayerLastReason,
       },
     );
+    next.outputFps = measuredFps;
     if (options.readiness || !status?.running) return next;
     return {
       ...next,

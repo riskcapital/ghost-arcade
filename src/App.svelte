@@ -449,15 +449,36 @@
       try { window.localStorage?.setItem(INTEGRATED_GPU_BANNER_DISMISSED_KEY, '1'); } catch { /* */ }
     }
   }
+  /*
+   * Show the OUTPUT frame rate whenever the native core is rendering.
+   *
+   * This counter used to report the editor's own render loop and label it "UI",
+   * which was honest but not useful: with the core owning rendering, the
+   * editor's loop rate says nothing about what actually reaches a projector.
+   * state.outputFps is measured from the core's presented-frame counter, so it
+   * is the real figure. The UI rate is kept in the tooltip, since a stalled
+   * editor is still worth being able to see.
+   *
+   * It falls back to the UI rate for the first poll or two, while the frame
+   * delta has no interval to measure over -- better a briefly stale honest
+   * number than a fabricated one.
+   */
   function fpsCounterLabel(state: NativeRendererRuntimeState, fps: number): string {
-    return state.driverMode !== 'offline' || nativePrimaryRenderer ? `UI ${fps} FPS` : `${fps} FPS`;
+    const nativeOwns = state.driverMode !== 'offline' || nativePrimaryRenderer;
+    if (!nativeOwns) return `${fps} FPS`;
+    const out = state.outputFps;
+    return Number.isFinite(out ?? NaN) ? `${Math.round(out as number)} FPS` : `UI ${fps} FPS`;
   }
   function fpsCounterTitle(state: NativeRendererRuntimeState): string {
     if (state.driverMode === 'offline' && !nativePrimaryRenderer) return 'Editor render loop frame rate';
+    const out = state.outputFps;
     const nativeMs = Number.isFinite(state.averageGpuMs ?? NaN)
-      ? ` Native render average: ${Number(state.averageGpuMs).toFixed(2)} ms.`
+      ? ` Native GPU average: ${Number(state.averageGpuMs).toFixed(2)} ms.`
       : '';
-    return `Editor UI refresh rate while the native core owns rendering.${nativeMs}`;
+    if (Number.isFinite(out ?? NaN)) {
+      return `Output frame rate, measured from frames presented by the native render core.${nativeMs}`;
+    }
+    return `Editor UI refresh rate. Waiting on the first output measurement from the native core.${nativeMs}`;
   }
   async function checkGPU() {
     // First try native render-core status (this is the real GPU for native shader rendering)
