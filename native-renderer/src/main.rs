@@ -10167,6 +10167,11 @@ impl App {
             self.shader_registry.clear();
             self.shader_sources.clear();
             self.shader_isf_inputs.clear();
+            // Same key space as the three above: uniform state for a shader
+            // whose record is gone can never be read again. It was the one
+            // shader-keyed map with no removal path anywhere, so clearing the
+            // caches to reclaim memory left it behind.
+            self.isf_uniforms.clear();
             count
         } else {
             0
