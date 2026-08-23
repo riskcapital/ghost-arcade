@@ -34,6 +34,10 @@ export const flythroughParamSchema: ParamControl[] = [
   // Source picker (media library / layer / file upload). Required —
   // the tunnel is the source replicated into N slabs.
   { kind: 'media-source', key: 'source', label: 'Source', group: 'Source' },
+  // Horizontal mirror — the selfie flip. A camera pointed at you reads
+  // backwards without it, so this belongs beside the source, not in a
+  // rendering group.
+  { kind: 'toggle', key: 'mirrorX', label: 'Mirror Horizontally', group: 'Source', default: false },
 
   // ── Topology ──────────────────────────────────────────────────
   // The big aesthetic switch: classic billboarded points vs. quads
