@@ -21232,6 +21232,7 @@ struct NativeFlythroughParams {
     camera_pitch: f32,
     particle_count: u32,
     audio_reactive: bool,
+    mirror_x: bool,
 }
 
 fn normalize_flythrough_native_params(params: &Value) -> NativeFlythroughParams {
@@ -21271,6 +21272,10 @@ fn normalize_flythrough_native_params(params: &Value) -> NativeFlythroughParams 
         ),
         audio_reactive: params
             .get("audioReactive")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        mirror_x: params
+            .get("mirrorX")
             .and_then(Value::as_bool)
             .unwrap_or(false),
     }
@@ -21329,6 +21334,7 @@ fn build_flythrough_compute_bytes(
     write_u32_le(&mut bytes, 7, params.particle_count);
     write_u32_le(&mut bytes, 8, params.depth_source_id);
     write_f32_le(&mut bytes, 9, state.fly_distance);
+    write_u32_le(&mut bytes, 10, u32::from(params.mirror_x));
     bytes
 }
 
@@ -21388,6 +21394,7 @@ fn build_flythrough_render_bytes(
     write_f32_le(&mut bytes, 32, params.opacity);
     write_f32_le(&mut bytes, 33, 1.0);
     write_f32_le(&mut bytes, 34, 1.0);
+    write_u32_le(&mut bytes, 35, u32::from(params.mirror_x));
     bytes
 }
 
@@ -26542,5 +26549,27 @@ void main() { gl_FragColor = vec4(fractalDepth); }"#,
         assert_eq!(gpu.style[3], 2.0);
         assert_eq!(gpu.mesh[0], [0.0, 0.0, 1.0, 0.0]);
         assert_eq!(gpu.mesh[1], [0.1, 1.0, 0.9, 1.0]);
+    }
+
+    /// The selfie flip has to survive the whole hop from the panel's `mirrorX`
+    /// toggle into both flythrough uniform buffers. The shader reads it as a
+    /// u32 at a fixed word, so a wrong offset silently mirrors nothing --
+    /// exactly the failure this pins.
+    #[test]
+    fn flythrough_mirror_reaches_both_uniform_buffers() {
+        let read_u32 = |bytes: &[u8], word: usize| {
+            u32::from_le_bytes(bytes[word * 4..word * 4 + 4].try_into().unwrap())
+        };
+        let state = NativeFlythroughGraphState::new(1024, "src".to_string(), 0.0);
+
+        let off = normalize_flythrough_native_params(&serde_json::json!({}));
+        assert!(!off.mirror_x, "mirror defaults to off");
+        assert_eq!(read_u32(&build_flythrough_compute_bytes(&off, &state, 0.016, 1.0, 0.0), 10), 0);
+        assert_eq!(read_u32(&build_flythrough_render_bytes(&off, &state, 160, 90), 35), 0);
+
+        let on = normalize_flythrough_native_params(&serde_json::json!({ "mirrorX": true }));
+        assert!(on.mirror_x);
+        assert_eq!(read_u32(&build_flythrough_compute_bytes(&on, &state, 0.016, 1.0, 0.0), 10), 1);
+        assert_eq!(read_u32(&build_flythrough_render_bytes(&on, &state, 160, 90), 35), 1);
     }
 }

@@ -135,7 +135,7 @@ struct U {
   particleCount:   u32,
   depthSource:     u32,
   flyDistance:     f32,
-  _pad0:           f32,
+  mirrorX:         u32,
 };
 
 @group(0) @binding(0) var<storage, read_write> particles: array<Particle>;
@@ -240,7 +240,8 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   let i = gid.x;
   if (i >= u.particleCount) { return; }
   var p = particles[i];
-  let anchorUV = vec2<f32>(p.anchor.x * 0.5 + 0.5, 1.0 - (p.anchor.y * 0.5 + 0.5));
+  var anchorUV = vec2<f32>(p.anchor.x * 0.5 + 0.5, 1.0 - (p.anchor.y * 0.5 + 0.5));
+  if (u.mirrorX == 1u) { anchorUV.x = 1.0 - anchorUV.x; }
   let sourceColor = textureSampleLevel(sourceTexture, sourceSampler, anchorUV, 0.0);
   let sourceDepth = sourceDepthAt(anchorUV, u.depthSource);
   let sourceMix = clamp(u.dt * 12.0, 0.0, 1.0);
@@ -313,7 +314,7 @@ struct U {
   opacity:         f32,
   fadeNearAlpha:   f32,        // alpha at the camera-nearest slab boundary
   fadeFarAlpha:    f32,        // alpha at the farthest slab boundary
-  _pad2:           f32,
+  mirrorX:         u32,
 };
 
 @group(0) @binding(0) var<storage, read> particles: array<Particle>;
@@ -354,7 +355,8 @@ fn vs_main(
 
   // Anchor color sample: use UV derived from anchor.xy (already in
   // [-1..1]; remap to [0..1] for texture sampling).
-  let anchorUV = vec2<f32>(p.anchor.x * 0.5 + 0.5, 1.0 - (p.anchor.y * 0.5 + 0.5));
+  var anchorUV = vec2<f32>(p.anchor.x * 0.5 + 0.5, 1.0 - (p.anchor.y * 0.5 + 0.5));
+  if (u.mirrorX == 1u) { anchorUV.x = 1.0 - anchorUV.x; }
 
   // Slab-local position + slab Z offset = world position.
   let worldPos = vec3<f32>(p.pos.x, p.pos.y, p.pos.z + slabZ(sIdx));
@@ -461,6 +463,7 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
 interface FlythroughParams {
   topology: Topology;
   depthSource: DepthSource;
+  mirrorX: boolean;
   flySpeed: number;
   tunnelDepth: number;
   slabCount: number;
@@ -485,6 +488,7 @@ interface FlythroughParams {
 const DEFAULT_PARAMS: FlythroughParams = {
   topology: 'strokes',
   depthSource: 'luminance',
+  mirrorX: false,
   flySpeed: 0.8,
   tunnelDepth: 2.0,
   slabCount: 4,
@@ -658,6 +662,7 @@ function normalizeFlythroughParams(raw: Partial<FlythroughParams> & Record<strin
   return {
     topology: enumParam(src.topology, { points: 0, strokes: 1 }, DEFAULT_PARAMS.topology),
     depthSource: enumParam(src.depthSource, DEPTH_SRC_IDS, DEFAULT_PARAMS.depthSource),
+    mirrorX: !!src.mirrorX,
     flySpeed: clampFinite(src.flySpeed, -16, 16, DEFAULT_PARAMS.flySpeed),
     tunnelDepth: clampFinite(src.tunnelDepth, 0.05, 64, DEFAULT_PARAMS.tunnelDepth),
     slabCount: Math.round(clampFinite(src.slabCount, 1, 8, DEFAULT_PARAMS.slabCount)),
@@ -747,6 +752,7 @@ function buildFlythroughComputeUniform(params: FlythroughParams, state: Flythrou
   u[7] = params.particleCount >>> 0;
   u[8] = DEPTH_SRC_IDS[params.depthSource] >>> 0;
   f[9] = state.flyDistance;
+  u[10] = params.mirrorX ? 1 : 0;
   return bufferToBase64(buffer);
 }
 
@@ -779,7 +785,7 @@ function buildFlythroughRenderUniform(params: FlythroughParams, state: Flythroug
   f[32] = params.opacity;
   f[33] = 1;
   f[34] = 1;
-  f[35] = 0;
+  u[35] = params.mirrorX ? 1 : 0;
   return bufferToBase64(buffer);
 }
 
@@ -1224,6 +1230,7 @@ export class WebGPUFlythrough {
     new Uint32Array(cu.buffer, cu.byteOffset)[7] = this.particleCount >>> 0;
     new Uint32Array(cu.buffer, cu.byteOffset)[8] = DEPTH_SRC_IDS[this.params.depthSource] >>> 0;
     cu[9]  = this.flyDistance;
+    new Uint32Array(cu.buffer, cu.byteOffset)[10] = this.params.mirrorX ? 1 : 0;
     // remaining padding stays zero
     this.device.queue.writeBuffer(this.computeUniformBuffer, 0, cu);
 
@@ -1288,7 +1295,7 @@ export class WebGPUFlythrough {
     ruF[32] = this.params.opacity;
     ruF[33] = 1.0;   // fadeNearAlpha — fully visible at near edge of stack
     ruF[34] = 1.0;   // fadeFarAlpha  — fully visible at far edge of stack
-    ruF[35] = 0;     // pad
+    ruU[35] = this.params.mirrorX ? 1 : 0;
     this.device.queue.writeBuffer(this.renderUniformBuffer, 0, ru);
 
     // ── Render pass ───────────────────────────────────────────────
