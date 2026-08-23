@@ -4598,6 +4598,22 @@ void main() {
         exportLayer.gpuLayerContent = gp;
       }
 
+      // _importLayer restores this, so not exporting it meant an arcade layer
+      // came back empty from its own save file.
+      if ((layer as any).arcadeContent) {
+        exportLayer.arcadeContent = (layer as any).arcadeContent;
+      }
+
+      /*
+       * Stage Designer's texture-orientation marker. Dropping it left reload
+       * relying on stageTextureNeedsVerticalFlip's corner-geometry fallback --
+       * which was written for pre-flag saves, and infers the wrong answer once
+       * the user flips or re-corners a mapped surface.
+       */
+      if (typeof (layer as any).stageTextureFlipV === 'boolean') {
+        exportLayer.stageTextureFlipV = (layer as any).stageTextureFlipV;
+      }
+
       return exportLayer;
     },
 
@@ -5132,6 +5148,7 @@ void main() {
         vjLayerIndex: layer.vjLayerIndex,
         contentFit: layer.contentFit,
         renderQuality: layer.renderQuality,
+        stageTextureFlipV: layer.stageTextureFlipV,
         parentGroupId: layer.parentGroupId ?? null,
         groupConfig: layer.groupConfig,
         groupCollapsed: layer.groupCollapsed,
