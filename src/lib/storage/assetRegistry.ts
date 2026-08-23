@@ -263,7 +263,9 @@ export function resolveAssetRefForRuntime(
   }
   // Legacy fallback — relative-path projects from before AssetRef shipped.
   if (fallbackSrc) {
-    if (/^(https?:|blob:|data:|ghost-asset:)/i.test(fallbackSrc)) return fallbackSrc;
+    // Drive letters before schemes: `C:\clip.mp4` looks like one, but a real
+    // scheme is two or more characters and a drive is exactly one.
+    if (/^[A-Za-z]:[\\/]/.test(fallbackSrc)) return pathToFileUrl(fallbackSrc);
     if (/^file:/i.test(fallbackSrc)) {
       const m = fallbackSrc.match(/^file:\/\/+(.*)$/i);
       if (!m) return fallbackSrc;
@@ -273,7 +275,12 @@ export function resolveAssetRefForRuntime(
         return fallbackSrc;
       }
     }
-    if (/^[A-Za-z]:\\/.test(fallbackSrc) || fallbackSrc.startsWith('/')) {
+    /* Any other scheme passes through untouched. Listing only
+       https/blob/data/ghost-asset meant `builtin:grid` and `live://webcam/<id>`
+       fell through to the projectDir join below and came back as paths to
+       files that do not exist. */
+    if (/^[A-Za-z][A-Za-z0-9+.-]+:/.test(fallbackSrc)) return fallbackSrc;
+    if (fallbackSrc.startsWith('/')) {
       return pathToFileUrl(fallbackSrc);
     }
     if (projectDir) {
