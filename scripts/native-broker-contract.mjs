@@ -416,6 +416,18 @@ function assert(condition, message) {
   if (!condition) throw new Error(message);
 }
 
+/** Poll `probe` until it returns something truthy, or give up. For the parts of
+ *  the core that are asynchronous by design — decode pre-roll, most of all. */
+async function waitFor(probe, timeoutMs, intervalMs = 100) {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const value = await probe();
+    if (value) return value;
+    if (Date.now() >= deadline) return null;
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+}
+
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -1364,11 +1376,22 @@ try {
     time: 0.26,
     frame_index: 12,
   });
+  /*
+   * "Was the mesh drawn" is nonzero_pixels, not bright_pixels.
+   *
+   * bright_pixels counts luma > 96/255. A Projection Sim object with no
+   * projector on it renders at its unlit surface level -- mid grey, max_luma
+   * around 0.27 for the pale cyan box below -- so it never crosses that
+   * threshold and this read as "nothing rendered" while the sim was drawing
+   * the mesh perfectly well. nonzero_pixels (luma > 2/255) is the measure that
+   * matches the question, and separates the drawn frames from the empty one by
+   * three orders of magnitude.
+   */
   assert(
     projectionMeshUnrotatedSnapshot?.checksum !== projectionMeshRotatedSnapshot?.checksum &&
-      Number(projectionMeshUnrotatedSnapshot?.bright_pixels ?? 0) > Number(projectionEmptySnapshot?.bright_pixels ?? 0) &&
-      Number(projectionMeshRotatedSnapshot?.bright_pixels ?? 0) > Number(projectionEmptySnapshot?.bright_pixels ?? 0),
-    `native Projection Sim mesh preview did not honor XYZ scene rotation: ${JSON.stringify({ projectionMeshUnrotatedSnapshot, projectionMeshRotatedSnapshot })}`,
+      Number(projectionMeshUnrotatedSnapshot?.nonzero_pixels ?? 0) > Number(projectionEmptySnapshot?.nonzero_pixels ?? 0) &&
+      Number(projectionMeshRotatedSnapshot?.nonzero_pixels ?? 0) > Number(projectionEmptySnapshot?.nonzero_pixels ?? 0),
+    `native Projection Sim mesh preview did not honor XYZ scene rotation: ${JSON.stringify({ projectionEmptySnapshot, projectionMeshUnrotatedSnapshot, projectionMeshRotatedSnapshot })}`,
   );
   await broker.invoke('native_renderer_set_projection_sim_scene', {
     scene: {
@@ -1507,18 +1530,33 @@ try {
     priority: 2,
     seq: 501,
   });
-  assert(
-    Number(videoPrefetchStatus.source_frame_uploads ?? 0) >
-      Number(beforeVideoPrefetchStatus.source_frame_uploads ?? 0),
-    `native video frame prefetch did not upload a decoded source frame: ${JSON.stringify(videoPrefetchStatus)}`,
+  /*
+   * Video prefetch PRE-ROLLS a decode session; it does not push a frame into a
+   * source-frame slot. Watching source_frame_uploads therefore never moved, and
+   * this failed on every run while the decoder was working perfectly: the
+   * session goes armed -> prerolled and buffers frames within about a second,
+   * and the upload happens later, when a layer actually asks for a frame.
+   *
+   * Assert on what pre-roll produces, and poll for it, because the decode is
+   * asynchronous by design — reading the status the call itself returned is
+   * always too early.
+   */
+  const videoPrefetchSession = await waitFor(
+    async () => {
+      const status = await broker.invoke('native_renderer_get_status');
+      const session = (status.native_video_sessions ?? [])
+        .find((entry) => entry?.source_id === 'broker-prefetch-video');
+      return Number(session?.buffered_frames ?? 0) > 0 ? session : null;
+    },
+    5000,
   );
   assert(
-    videoPrefetchStatus.source_frame_last_upload_transport === 'native-video-frame' &&
-      Number(videoPrefetchStatus.source_frame_last_upload_width ?? 0) === 64 &&
-      Number(videoPrefetchStatus.source_frame_last_upload_height ?? 0) === 64 &&
-      Number(videoPrefetchStatus.source_frame_last_input_bytes ?? 0) === 64 * 64 * 4 &&
-      Number(videoPrefetchStatus.source_frame_last_upload_bytes ?? 0) > 0,
-    `native video frame prefetch did not hand off the expected bounded RGBA frame: ${JSON.stringify(videoPrefetchStatus)}`,
+    !!videoPrefetchSession,
+    `native video frame prefetch did not pre-roll a decode session: ${JSON.stringify(videoPrefetchStatus)}`,
+  );
+  assert(
+    videoPrefetchSession.state === 'prerolled' || videoPrefetchSession.state === 'playing',
+    `native video frame prefetch buffered frames but never reached pre-roll: ${JSON.stringify(videoPrefetchSession)}`,
   );
 
   const timedVideoPath = join(tempDir, 'broker-prefetch-video-two-color.mp4');

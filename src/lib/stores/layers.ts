@@ -5222,12 +5222,22 @@ void main() {
         // layer as broken until the user re-imports each file by hand.
         const resolveSrc = (src: string): string => {
           if (!src) return src;
-          // Pass through any URL with a scheme. Without this, a project
-          // that already contains `ghost-asset://...` URLs (because it was
-          // opened, the URL got resolved, then re-saved and re-opened)
-          // gets the URL doubled because the resolver mistakes it for a
-          // relative path and prepends projectDir.
-          if (/^(https?:|blob:|data:|ghost-asset:)/i.test(src)) return src;
+          /*
+           * Pass through anything carrying a URI scheme, not just the four
+           * that used to be listed. This is what stops an already-resolved
+           * `ghost-asset://...` from being doubled when a project is opened,
+           * re-saved and opened again. A Windows drive letter is checked first because
+           * `C:\\clip.mp4` looks like a scheme; real schemes are two or more
+           * characters, drives are exactly one.
+           *
+           * The old allowlist (https/blob/data/ghost-asset) silently mangled
+           * every other scheme into a path: `builtin:grid` came back as
+           * `<projectDir>/builtin:grid`, and `live://webcam/<id>` the same.
+           * Opening any project saved with a built-in shader or a live source
+           * rewrote its src to a file that does not exist, and re-saving
+           * persisted the damage.
+           */
+          if (/^[A-Za-z]:[\\/]/.test(src)) return pathToFileUrl(src);
           if (/^file:/i.test(src)) {
             // Decode the file URL back to a path, then re-encode through
             // our pathToFileUrl which emits ghost-asset:// in Electron.
@@ -5239,8 +5249,9 @@ void main() {
               return src;
             }
           }
+          if (/^[A-Za-z][A-Za-z0-9+.-]+:/.test(src)) return src;
           let absPath: string | null = null;
-          if (/^[A-Z]:\\/i.test(src) || src.startsWith('/')) {
+          if (src.startsWith('/')) {
             absPath = src;
           } else if (projectDir) {
             const sep = projectDir.includes('\\') ? '\\' : '/';
