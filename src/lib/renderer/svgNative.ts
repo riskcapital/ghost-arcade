@@ -382,12 +382,62 @@ function setHeader(data: Float32Array, index: number, values: number[]) {
   data.set(values.map((value) => finite(value, 0)).slice(0, 4), index * 4);
 }
 
+function polygonArea(points: SvgPoint[]): number {
+  let doubled = 0;
+  for (let index = 0; index < points.length; index += 1) {
+    const a = points[index];
+    const b = points[(index + 1) % points.length];
+    doubled += a.x * b.y - b.x * a.y;
+  }
+  return Math.abs(doubled) * 0.5;
+}
+
+/**
+ * Drop background / artboard rectangles from the contour set.
+ *
+ * Logos routinely ship with a full-canvas backing rect. The generated modes
+ * treat every contour as part of the artwork, so that rect got colorized,
+ * outlined, glowed and extruded -- the user plays with the logo, and the
+ * backing plate should be empty space. (The Chromium raster keeps it, so the
+ * authored look is untouched.)
+ *
+ * Background = closed, fills its own bbox like a rectangle does (area ratio >
+ * 0.92 -- a circle is at ~0.785 and survives), and covers nearly the whole
+ * artwork's bbox. Never dropped when it is the only shape: a single rect IS
+ * the artwork.
+ */
+function withoutBackground(contours: SvgNativeContour[]): SvgNativeContour[] {
+  if (contours.length < 2) return contours;
+  let minX = Infinity; let minY = Infinity; let maxX = -Infinity; let maxY = -Infinity;
+  const boxes = contours.map((contour) => {
+    let bMinX = Infinity; let bMinY = Infinity; let bMaxX = -Infinity; let bMaxY = -Infinity;
+    for (const point of contour.points) {
+      bMinX = Math.min(bMinX, point.x); bMinY = Math.min(bMinY, point.y);
+      bMaxX = Math.max(bMaxX, point.x); bMaxY = Math.max(bMaxY, point.y);
+    }
+    minX = Math.min(minX, bMinX); minY = Math.min(minY, bMinY);
+    maxX = Math.max(maxX, bMaxX); maxY = Math.max(maxY, bMaxY);
+    return { bMinX, bMinY, bMaxX, bMaxY };
+  });
+  const overallArea = Math.max(1e-6, (maxX - minX) * (maxY - minY));
+  const filtered = contours.filter((contour, index) => {
+    if (!contour.closed) return true;
+    const box = boxes[index];
+    const bboxArea = Math.max(1e-6, (box.bMaxX - box.bMinX) * (box.bMaxY - box.bMinY));
+    if (bboxArea < overallArea * 0.85) return true;
+    return polygonArea(contour.points) / bboxArea < 0.92;
+  });
+  // Everything qualified as background (e.g. a stack of full-bleed rects):
+  // keep the original set rather than rendering nothing.
+  return filtered.length ? filtered : contours;
+}
+
 let svgParseCacheSource = '';
 let svgParseCacheContours: SvgNativeContour[] = [];
 function cachedSvgContours(source: string): SvgNativeContour[] {
   if (source !== svgParseCacheSource) {
     svgParseCacheSource = source;
-    svgParseCacheContours = parseSvgNativeContours(source);
+    svgParseCacheContours = withoutBackground(parseSvgNativeContours(source));
   }
   return svgParseCacheContours;
 }
