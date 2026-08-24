@@ -6,6 +6,7 @@ import { createDefaultSVGContent, type SVGContent } from '$lib/types';
 import {
   SVG_NATIVE_SHADER_ID,
   SVG_NATIVE_WGSL,
+  SVG_TRANSFORM_WGSL,
   SVG_UNIFORM_BYTES,
   buildSvgNativeComputeGraph,
   buildSvgNativePrecompileCommands,
@@ -136,8 +137,8 @@ describe('native SVG graph', () => {
     expect(graph.config.render_passes[0]?.target).toBe('source_frame');
     expect(graph.config.render_passes[0]?.shader_id).toBe(SVG_NATIVE_SHADER_ID);
     expect(graph.config.buffers[0]?.initial_f32).toHaveLength(SVG_UNIFORM_BYTES / 4);
-    expect(graph.config.buffers[0]?.initial_f32[4]).toBe(1);
-    expect(graph.config.buffers[0]?.initial_f32[5]).toBeGreaterThanOrEqual(3);
+    expect(graph.config.buffers[0]?.initial_f32?.[4]).toBe(1);
+    expect(graph.config.buffers[0]?.initial_f32?.[5]).toBeGreaterThanOrEqual(3);
   });
 
   it('packs every SVG effect switch into the native effect mask', () => {
@@ -171,14 +172,32 @@ describe('native SVG graph', () => {
       time: 1,
     });
 
-    expect(graph.config.buffers[0]?.initial_f32[36]).toBe((1 << 19) - 1);
+    expect(graph.config.buffers[0]?.initial_f32?.[36]).toBe((1 << 19) - 1);
   });
 
-  it('registers the native SVG shader for warm precompile', () => {
+  it('keeps the WGSL template literals free of backticks', () => {
+    /*
+     * A backtick in a comment inside the /* wgsl *\/ template closes the
+     * string early, and the error surfaces hundreds of lines away as a
+     * confusing "Expected ;" in prose. Cost two debugging rounds; now it is a
+     * test instead of a trap.
+     */
+    for (const source of [SVG_TRANSFORM_WGSL, SVG_NATIVE_WGSL]) {
+      expect(source.includes('`')).toBe(false);
+    }
+  });
+
+  it('registers the native SVG shaders for warm precompile', () => {
+    // Two modules now: the geometry transform (compute) and the render pass.
+    // One module cannot declare binding 1 as both storage and texture, so the
+    // split is structural, not stylistic.
     const commands = buildSvgNativePrecompileCommands();
-    expect(commands).toHaveLength(1);
-    expect(commands[0]?.shader_id).toBe(SVG_NATIVE_SHADER_ID);
-    expect(commands[0]?.source).toContain('@fragment');
+    expect(commands).toHaveLength(2);
+    expect(commands.map((command) => command.shader_id).sort()).toEqual(
+      ['svg/render-v6', 'svg/transform-v6'],
+    );
+    expect(commands[0]?.source).toContain('@compute');
+    expect(commands[1]?.source).toContain('@fragment');
   });
 
   it('keeps open SVG paths open in the native contour stream', () => {

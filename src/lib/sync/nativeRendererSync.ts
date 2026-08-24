@@ -364,7 +364,7 @@ export function isNativeExternallyQueuedGraphKind(kind: string): boolean {
 const NATIVE_GRAPH_ROUTE_REQUIREMENTS: ReadonlyArray<NativeGraphRouteRequirement> = [
   { kind: 'planet', feature: 'native_planet_graph', instrument: 'planet', shaderIds: ['planet/render'] },
   { kind: 'lines', feature: 'native_lines_graph', instrument: 'lines', shaderIds: ['lines/render'] },
-  { kind: 'svg', feature: 'native_svg_graph', instrument: 'svg', shaderIds: ['svg/render-v6'] },
+  { kind: 'svg', feature: 'native_svg_graph', instrument: 'svg', shaderIds: ['svg/render-v6', 'svg/transform-v6'] },
   { kind: 'light-painting', feature: 'native_light_painting_graph', instrument: 'light-painting', shaderIds: ['light-painting/render-v8'] },
   { kind: 'text', feature: 'native_text_graph', instrument: 'text', shaderIds: ['text/render-v1'] },
   { kind: 'splat', feature: 'native_splat_graph', instrument: 'splat', shaderIds: ['splat/render-v1', 'splat/shadowvol-v1'] },

@@ -3,13 +3,23 @@
 import type { SVGContent } from '../types';
 
 export const SVG_NATIVE_SHADER_ID = 'svg/render-v6';
-export const SVG_MAX_CONTOURS = 32;
-export const SVG_MAX_POINTS = 768;
+export const SVG_TRANSFORM_SHADER_ID = 'svg/transform-v6';
+/*
+ * Geometry lives in persistent storage buffers with a GPU transform pass, not
+ * in the uniform — which is what lifts the old caps of 32 contours / 768
+ * points (a third of a real logo silently discarded) to limits nothing
+ * realistic hits. Per frame the CPU uploads only the 22-vec4 header; the
+ * transform (fit, pan, breathe, 3D rotate + extrude projection) runs in a
+ * compute pass over the raw points, exactly the flythrough instrument's
+ * pattern.
+ */
+export const SVG_MAX_CONTOURS = 256;
+export const SVG_MAX_POINTS = 8192;
 
-const HEADER_VEC4S = 19;
-const CONTOUR_ARRAYS = 5;
-const TOTAL_VEC4S = HEADER_VEC4S + SVG_MAX_CONTOURS * CONTOUR_ARRAYS + SVG_MAX_POINTS;
-export const SVG_UNIFORM_BYTES = TOTAL_VEC4S * 16;
+const HEADER_VEC4S = 22;
+export const SVG_UNIFORM_BYTES = HEADER_VEC4S * 16;
+/** Per contour in the meta buffer: info, fill, stroke, style. */
+const META_VEC4S = 4;
 
 type SvgPoint = { x: number; y: number };
 type SvgColor = [number, number, number, number];
@@ -442,17 +452,80 @@ function cachedSvgContours(source: string): SvgNativeContour[] {
   return svgParseCacheContours;
 }
 
-function packedSvgData(options: SvgNativeGraphOptions): Float32Array {
+function geometrySignature(source: string): string {
+  let hash = 5381;
+  for (let index = 0; index < source.length; index += 1) {
+    hash = ((hash << 5) + hash + source.charCodeAt(index)) >>> 0;
+  }
+  return `${source.length}:${hash.toString(36)}`;
+}
+
+type SvgGeometry = {
+  pointCount: number;
+  contourCount: number;
+  /** vec4 per point: raw x, y in art space; z = unused; w = unused. */
+  raw: Float32Array;
+  /** 4 vec4s per contour: info(start,count,closed,colorT), fill, stroke, style. */
+  meta: Float32Array;
+  bboxCenterX: number;
+  bboxCenterY: number;
+  bboxWidth: number;
+  bboxHeight: number;
+};
+
+let svgGeometryCacheSource = '';
+let svgGeometryCache: SvgGeometry | null = null;
+function cachedSvgGeometry(source: string): SvgGeometry {
+  if (source === svgGeometryCacheSource && svgGeometryCache) return svgGeometryCache;
+  const parsed = cachedSvgContours(source);
+  const raw = new Float32Array(SVG_MAX_POINTS * 4);
+  const meta = new Float32Array(SVG_MAX_CONTOURS * META_VEC4S * 4);
+  let minX = Infinity; let minY = Infinity; let maxX = -Infinity; let maxY = -Infinity;
+  let pointCount = 0; let contourCount = 0;
+  for (const contour of parsed) {
+    if (contourCount >= SVG_MAX_CONTOURS) break;
+    // A contour that will not fit whole is skipped whole. Slicing it at the
+    // cap turned closed shapes into open garbage edges — the stray glitch
+    // marks in every capture of the old renderer.
+    if (pointCount + contour.points.length > SVG_MAX_POINTS) continue;
+    if (contour.points.length < 2) continue;
+    const start = pointCount;
+    for (const point of contour.points) {
+      raw[pointCount * 4] = point.x;
+      raw[pointCount * 4 + 1] = point.y;
+      minX = Math.min(minX, point.x); minY = Math.min(minY, point.y);
+      maxX = Math.max(maxX, point.x); maxY = Math.max(maxY, point.y);
+      pointCount += 1;
+    }
+    const fill = contour.fill ?? [0, 0, 0, 0];
+    const stroke = contour.stroke ?? [0, 0, 0, 0];
+    const base = contourCount * META_VEC4S * 4;
+    meta.set([start, contour.points.length, contour.closed ? 1 : 0, contourCount / Math.max(1, parsed.length)], base);
+    meta.set(fill, base + 4);
+    meta.set(stroke, base + 8);
+    meta.set([contour.strokeWidth, fill[3] > 0 ? 1 : 0, stroke[3] > 0 ? 1 : 0, contour.group], base + 12);
+    contourCount += 1;
+  }
+  if (!Number.isFinite(minX)) { minX = 0; minY = 0; maxX = 1; maxY = 1; }
+  svgGeometryCacheSource = source;
+  svgGeometryCache = {
+    pointCount,
+    contourCount,
+    raw,
+    meta,
+    bboxCenterX: (minX + maxX) * 0.5,
+    bboxCenterY: (minY + maxY) * 0.5,
+    bboxWidth: Math.max(1e-4, maxX - minX),
+    bboxHeight: Math.max(1e-4, maxY - minY),
+  };
+  return svgGeometryCache;
+}
+
+function packedSvgHeader(options: SvgNativeGraphOptions, geometry: SvgGeometry): Float32Array {
   const width = Math.max(1, Math.round(options.width)); const height = Math.max(1, Math.round(options.height));
-  const content = options.content; const parsed = cachedSvgContours(content.svgSource);
-  const allPoints = parsed.flatMap((contour) => contour.points);
-  const minX = allPoints.length ? Math.min(...allPoints.map((point) => point.x)) : 0;
-  const minY = allPoints.length ? Math.min(...allPoints.map((point) => point.y)) : 0;
-  const maxX = allPoints.length ? Math.max(...allPoints.map((point) => point.x)) : 1;
-  const maxY = allPoints.length ? Math.max(...allPoints.map((point) => point.y)) : 1;
-  const sourceWidth = Math.max(1e-4, maxX - minX); const sourceHeight = Math.max(1e-4, maxY - minY);
-  const fitScale = Math.min(width / sourceWidth, height / sourceHeight) * 0.78 * clamp(finite(content.contentScale, 1), 0.05, 8);
-  const centerX = (minX + maxX) * 0.5; const centerY = (minY + maxY) * 0.5;
+  const content = options.content;
+  const fitScale = Math.min(width / geometry.bboxWidth, height / geometry.bboxHeight) * 0.78
+    * clamp(finite(content.contentScale, 1), 0.05, 8);
   const offsetX = width * (0.5 + clamp(finite(content.panX, 0), -2, 2) * 0.5);
   const offsetY = height * (0.5 + clamp(finite(content.panY, 0), -2, 2) * 0.5);
   const time = finite(options.time, 0);
@@ -461,55 +534,15 @@ function packedSvgData(options: SvgNativeGraphOptions): Float32Array {
     ? 1 + Math.sin(time * finite(content.breatheSpeed, 1) * Math.PI * 2) * clamp(finite(content.breatheAmount, 0.08), 0, 0.5)
     : 1;
   const floatY = renderMode === 2 ? Math.sin(time * finite(content.floatSpeed, 0.8)) * finite(content.floatAmount, 0) : 0;
-  const rx = (finite(content.rotateX, 0) * Math.PI / 180) + time * finite(content.rotateSpeedX, 0);
-  const ry = (finite(content.rotateY, 0) * Math.PI / 180) + time * finite(content.rotateSpeedY, 0);
-  const rz = (finite(content.rotateZ, 0) * Math.PI / 180) + time * finite(content.rotateSpeedZ, 0);
+  const rx = renderMode === 2 ? (finite(content.rotateX, 0) * Math.PI / 180) + time * finite(content.rotateSpeedX, 0) : 0;
+  const ry = renderMode === 2 ? (finite(content.rotateY, 0) * Math.PI / 180) + time * finite(content.rotateSpeedY, 0) : 0;
+  const rz = renderMode === 2 ? (finite(content.rotateZ, 0) * Math.PI / 180) + time * finite(content.rotateSpeedZ, 0) : 0;
   const depth = renderMode === 2 ? clamp(finite(content.extrudeDepth, 24), 0, 160) : 0;
   const fov = clamp(finite(content.cameraFov, 45), 20, 90) * Math.PI / 180;
   const focal = height * 0.5 / Math.tan(fov * 0.5);
-  const data = new Float32Array(TOTAL_VEC4S * 4);
-  const metaBase = HEADER_VEC4S;
-  const fillBase = metaBase + SVG_MAX_CONTOURS;
-  const strokeBase = fillBase + SVG_MAX_CONTOURS;
-  const styleBase = strokeBase + SVG_MAX_CONTOURS;
-  const boundsBase = styleBase + SVG_MAX_CONTOURS;
-  const pointBase = boundsBase + SVG_MAX_CONTOURS;
-  let contourCount = 0; let pointCount = 0;
-  const projected = (point: SvgPoint, z: number): SvgPoint => {
-    const localX = (point.x - centerX) * fitScale * breathe;
-    const localY = (point.y - centerY) * fitScale * breathe;
-    if (renderMode !== 2) return { x: localX + offsetX, y: localY + offsetY };
-    const [x, y, projectedZ] = rotatePoint(localX, localY, z, rx, ry, rz);
-    const perspective = focal / Math.max(focal * 0.22, focal + projectedZ);
-    return { x: x * perspective + offsetX, y: y * perspective + offsetY + floatY };
-  };
-  for (const contour of parsed) {
-    if (contourCount >= SVG_MAX_CONTOURS || pointCount >= SVG_MAX_POINTS) break;
-    const sourcePoints = contour.points.slice(0, SVG_MAX_POINTS - pointCount);
-    if (sourcePoints.length < 2) continue;
-    const start = pointCount;
-    let bbMinX = Infinity; let bbMinY = Infinity; let bbMaxX = -Infinity; let bbMaxY = -Infinity;
-    for (const raw of sourcePoints) {
-      const front = projected(raw, depth * 0.5); const back = projected(raw, -depth * 0.5);
-      data.set([front.x, front.y, back.x, back.y], (pointBase + pointCount) * 4);
-      bbMinX = Math.min(bbMinX, front.x, back.x); bbMinY = Math.min(bbMinY, front.y, back.y);
-      bbMaxX = Math.max(bbMaxX, front.x, back.x); bbMaxY = Math.max(bbMaxY, front.y, back.y);
-      pointCount += 1;
-    }
-    const fill = contour.fill ?? [0, 0, 0, 0]; const stroke = contour.stroke ?? [0, 0, 0, 0];
-    data.set([start, sourcePoints.length, contour.closed ? 1 : 0, contourCount / Math.max(1, parsed.length)], (metaBase + contourCount) * 4);
-    data.set(fill, (fillBase + contourCount) * 4);
-    data.set(stroke, (strokeBase + contourCount) * 4);
-    data.set([contour.strokeWidth * fitScale, fill[3] > 0 ? 1 : 0, stroke[3] > 0 ? 1 : 0, contour.group], (styleBase + contourCount) * 4);
-    // Padded bbox: distance-field effects (glow/echo/outline) reach beyond
-    // the geometry; anything past the pad is culled per pixel.
-    const reach = contour.strokeWidth * fitScale + 150;
-    data.set([bbMinX - reach, bbMinY - reach, bbMaxX + reach, bbMaxY + reach], (boundsBase + contourCount) * 4);
-    contourCount += 1;
-  }
-
+  const data = new Float32Array(HEADER_VEC4S * 4);
   setHeader(data, 0, [width, height, time, clamp(finite(options.frameDelta, 1 / 60), 0, 0.1)]);
-  setHeader(data, 1, [contourCount, pointCount, FILL_CODES[content.fillMode] ?? 0, COLOR_CODES[content.colorMode] ?? 0]);
+  setHeader(data, 1, [geometry.contourCount, geometry.pointCount, FILL_CODES[content.fillMode] ?? 0, COLOR_CODES[content.colorMode] ?? 0]);
   setHeader(data, 2, [clamp(finite(content.outlineThickness, 2), 0, 32), (((finite(content.monochromeHue, 190) % 360) + 360) % 360) / 360, content.colorCycleEnabled ? 1 : 0, clamp(finite(content.colorCycleSpeed, 0.15), 0, 4)]);
   setHeader(data, 3, [clamp(finite(content.colorCycleSaturation, 0.85), 0, 1), clamp(finite(content.colorCycleLightness, 0.55), 0.05, 1), finite(content.gradientAngle, 0) * Math.PI / 180, clamp(finite(content.gradientSpread, 0.4), 0.02, 2)]);
   setHeader(data, 4, [finite(content.shimmerSpeed, 5), finite(content.shimmerScale, 0.08), finite(content.shimmerIntensity, 0.6), finite(content.pulseSpeed, 2)]);
@@ -526,70 +559,180 @@ function packedSvgData(options: SvgNativeGraphOptions): Float32Array {
   setHeader(data, 15, [finite(content.fluidScale, 2), finite(content.fluidSpeed, 1), finite(content.fluidTurbulence, 0.8), finite(content.particleFillDensity, 200)]);
   setHeader(data, 16, [finite(content.echoLayers, 3), finite(content.echoSpacing, 8), finite(content.echoOpacity, 0.25), finite(content.growthSpeed, 0.6)]);
   setHeader(data, 17, [finite(content.lightningFrequency, 1.5), finite(content.lightningThickness, 3), finite(content.nebulaIntensity, 0.3), finite(content.nebulaSpeed, 0.2)]);
-  /* Raster path: pan/scale are applied to UVs in the shader rather than baked
-     into the raster, so dragging those sliders never forces a re-upload. */
   setHeader(data, 18, [
     options.rasterReady ? 1 : 0,
     clamp(finite(content.panX, 0), -2, 2),
     clamp(finite(content.panY, 0), -2, 2),
     clamp(finite(content.contentScale, 1), 0.05, 8),
   ]);
+  setHeader(data, 19, [geometry.bboxCenterX, geometry.bboxCenterY, fitScale, breathe]);
+  setHeader(data, 20, [rx, ry, rz, floatY]);
+  setHeader(data, 21, [depth, focal, offsetX, offsetY]);
   return data;
 }
 
+/** Persistent-buffer bookkeeping: geometry re-uploads only when it changes. */
+const geometryInitSent = new Map<string, string>();
+
 export function buildSvgNativeComputeGraph(options: SvgNativeGraphOptions) {
-  const data = packedSvgData(options);
   const sourceId = String(options.sourceId || 'svg-native-source');
   const safeSourceId = sourceId.replace(/[^a-zA-Z0-9:_-]+/g, '_');
+  const geometry = cachedSvgGeometry(options.content.svgSource);
+  const header = packedSvgHeader(options, geometry);
   const uniformId = `svg:${safeSourceId}:uniform`;
+  const rawId = `svg:${safeSourceId}:raw`;
+  const outId = `svg:${safeSourceId}:pts`;
+  const metaId = `svg:${safeSourceId}:meta`;
+  const boundsId = `svg:${safeSourceId}:bounds`;
+  const signature = geometrySignature(options.content.svgSource);
+  const reset = geometryInitSent.get(sourceId) !== signature;
+  if (reset) geometryInitSent.set(sourceId, signature);
+  if (geometryInitSent.size > 512) geometryInitSent.clear();
+  const seq = Math.max(0, Math.round(options.frameIndex ?? 0));
   return {
     state: null as null,
     config: {
-      buffers: [{ id: uniformId, kind: 'uniform', byte_length: SVG_UNIFORM_BYTES, initial_f32: Array.from(data) }],
-      passes: [],
+      buffers: [
+        { id: uniformId, kind: 'uniform', byte_length: SVG_UNIFORM_BYTES, initial_f32: Array.from(header) },
+        {
+          id: rawId, kind: 'storage', byte_length: SVG_MAX_POINTS * 16, persistent: true,
+          clear: reset, ...(reset ? { initial_f32: Array.from(geometry.raw) } : {}),
+        },
+        { id: outId, kind: 'storage', byte_length: SVG_MAX_POINTS * 16, persistent: true, clear: reset },
+        {
+          id: metaId, kind: 'storage', byte_length: SVG_MAX_CONTOURS * META_VEC4S * 16, persistent: true,
+          clear: reset, ...(reset ? { initial_f32: Array.from(geometry.meta) } : {}),
+        },
+        { id: boundsId, kind: 'storage', byte_length: SVG_MAX_CONTOURS * 16, persistent: true, clear: reset },
+      ],
+      passes: [
+        {
+          name: 'svg-transform', shader_id: SVG_TRANSFORM_SHADER_ID, entry: 'cs_points',
+          dispatch: [Math.max(1, Math.ceil(geometry.pointCount / 64)), 1, 1],
+          bindings: [
+            { binding: 0, resource: uniformId, kind: 'uniform' },
+            { binding: 1, resource: rawId, kind: 'storage' },
+            { binding: 2, resource: outId, kind: 'storage' },
+          ],
+        },
+        {
+          name: 'svg-bounds', shader_id: SVG_TRANSFORM_SHADER_ID, entry: 'cs_bounds',
+          dispatch: [Math.max(1, Math.ceil(geometry.contourCount / 16)), 1, 1],
+          // Binding numbers match the module's declarations, not this pass's
+          // argument order -- both entries share one layout.
+          bindings: [
+            { binding: 0, resource: uniformId, kind: 'uniform' },
+            { binding: 2, resource: outId, kind: 'storage' },
+            { binding: 3, resource: metaId, kind: 'storage' },
+            { binding: 4, resource: boundsId, kind: 'storage' },
+          ],
+        },
+      ],
       render_passes: [{
-        name: 'svg-render-v3', shader_id: SVG_NATIVE_SHADER_ID, vertex_entry: 'vs_full', fragment_entry: 'fs_svg',
-        target: 'source_frame', source_id: sourceId, seq: Math.max(0, Math.round(options.frameIndex ?? 0)),
+        name: 'svg-render-v6', shader_id: SVG_NATIVE_SHADER_ID, vertex_entry: 'vs_full', fragment_entry: 'fs_svg',
+        target: 'source_frame', source_id: sourceId, seq,
         clear: true, clear_color: [0, 0, 0, 0], include_snapshot: !!options.includeSnapshot,
         blend: 'replace', primitive: 'triangle-list', vertex_count: 3, instance_count: 1,
         bindings: [
           { binding: 0, resource: uniformId, kind: 'uniform' },
-          // allow_missing: before the first raster upload the core binds its
-          // empty frame, and h18.x keeps the shader off the raster path.
           options.rasterSourceId && options.rasterReady
             ? { binding: 1, kind: 'source-frame-texture', source_id: options.rasterSourceId }
             : { binding: 1, kind: 'source-frame-texture', allow_missing: true },
           { binding: 2, kind: 'source-frame-sampler' },
+          { binding: 3, resource: outId, kind: 'read-only-storage' },
+          { binding: 4, resource: metaId, kind: 'read-only-storage' },
+          { binding: 5, resource: boundsId, kind: 'read-only-storage' },
         ],
       }],
       readbacks: [],
-    }, sourceId, passCount: 1,
+    }, sourceId, passCount: 3,
   };
 }
-export function getSvgNativeShaderSource() {
-  return { shaderId: SVG_NATIVE_SHADER_ID, stage: 'render' as const, entry: 'fs_svg', source: SVG_NATIVE_WGSL };
-}
-export function buildSvgNativePrecompileCommands() {
-  const shader = getSvgNativeShaderSource();
-  return [{ type: 'precompile_shader' as const, shader_id: shader.shaderId, stage: shader.stage, entry: shader.entry, source: shader.source }];
-}
-
-export const SVG_NATIVE_WGSL = /* wgsl */`
-struct SvgData {
+export const SVG_TRANSFORM_WGSL = /* wgsl */`
+struct SvgHeader {
   h0: vec4<f32>, h1: vec4<f32>, h2: vec4<f32>, h3: vec4<f32>, h4: vec4<f32>, h5: vec4<f32>,
   h6: vec4<f32>, h7: vec4<f32>, h8: vec4<f32>, h9: vec4<f32>, h10: vec4<f32>, h11: vec4<f32>,
   h12: vec4<f32>, h13: vec4<f32>, h14: vec4<f32>, h15: vec4<f32>, h16: vec4<f32>, h17: vec4<f32>,
-  h18: vec4<f32>,
-  contours: array<vec4<f32>, ${SVG_MAX_CONTOURS}>,
-  fills: array<vec4<f32>, ${SVG_MAX_CONTOURS}>,
-  strokes: array<vec4<f32>, ${SVG_MAX_CONTOURS}>,
-  styles: array<vec4<f32>, ${SVG_MAX_CONTOURS}>,
-  bounds: array<vec4<f32>, ${SVG_MAX_CONTOURS}>,
-  points: array<vec4<f32>, ${SVG_MAX_POINTS}>,
+  h18: vec4<f32>, h19: vec4<f32>, h20: vec4<f32>, h21: vec4<f32>,
 }
-@group(0) @binding(0) var<uniform> svg: SvgData;
+/*
+ * One layout shared by both entry points, every storage binding read_write:
+ * the core's storage binding kind is storage-rw, and declaring read-only here
+ * fails pipeline layout matching ("Storage class doesn't match the shader").
+ * Each pass binds only the buffers its entry actually reaches.
+ */
+@group(0) @binding(0) var<uniform> svg: SvgHeader;
+@group(0) @binding(1) var<storage, read_write> raw_pts: array<vec4<f32>>;
+@group(0) @binding(2) var<storage, read_write> out_pts: array<vec4<f32>>;
+@group(0) @binding(3) var<storage, read_write> cmeta: array<vec4<f32>>;
+@group(0) @binding(4) var<storage, read_write> bounds_out: array<vec4<f32>>;
+
+fn transform_point(art: vec2<f32>, z: f32) -> vec2<f32> {
+  // h19 = bbox center xy, fitScale, breathe.  h20 = rx, ry, rz, floatY.
+  // h21 = depth, focal, offset xy.  Same math the CPU used to run per frame.
+  let local = (art - svg.h19.xy) * svg.h19.z * svg.h19.w;
+  let mode = i32(svg.h6.x + 0.5);
+  if (mode != 2) { return local + svg.h21.zw; }
+  let cx = cos(svg.h20.x); let sx = sin(svg.h20.x);
+  let cy = cos(svg.h20.y); let sy = sin(svg.h20.y);
+  let cz = cos(svg.h20.z); let sz = sin(svg.h20.z);
+  var py = local.y * cx - z * sx;
+  var pz = local.y * sx + z * cx;
+  var px = local.x;
+  let px2 = px * cy + pz * sy; pz = -px * sy + pz * cy; px = px2;
+  let fx = px * cz - py * sz;
+  let fy = px * sz + py * cz;
+  let focal = svg.h21.y;
+  let perspective = focal / max(focal * 0.22, focal + pz);
+  return vec2<f32>(fx * perspective, fy * perspective + svg.h20.w) + svg.h21.zw;
+}
+
+@compute @workgroup_size(64)
+fn cs_points(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let index = gid.x;
+  if (index >= u32(svg.h1.y + 0.5)) { return; }
+  let art = raw_pts[index].xy;
+  let depth = svg.h21.x;
+  let front = transform_point(art, depth * 0.5);
+  let back = transform_point(art, -depth * 0.5);
+  out_pts[index] = vec4<f32>(front, back);
+}
+
+@compute @workgroup_size(16)
+fn cs_bounds(@builtin(global_invocation_id) gid: vec3<u32>) {
+  let ci = gid.x;
+  if (ci >= u32(svg.h1.x + 0.5)) { return; }
+  let info = cmeta[ci * 4u];
+  let start = u32(info.x + 0.5);
+  let count = u32(info.y + 0.5);
+  var lo = vec2<f32>(1e9, 1e9);
+  var hi = vec2<f32>(-1e9, -1e9);
+  for (var j = 0u; j < ${SVG_MAX_POINTS}u; j += 1u) {
+    if (j >= count) { break; }
+    let point = out_pts[start + j];
+    lo = min(lo, min(point.xy, point.zw));
+    hi = max(hi, max(point.xy, point.zw));
+  }
+  // Padded reach: distance-field effects extend past the geometry; the
+  // envelope in the render pass decays well inside this pad, so no seams.
+  let reach = cmeta[ci * 4u + 3u].x * svg.h19.z + 150.0;
+  bounds_out[ci] = vec4<f32>(lo - vec2<f32>(reach), hi + vec2<f32>(reach));
+}
+`;
+
+export const SVG_NATIVE_WGSL = /* wgsl */`
+struct SvgHeader {
+  h0: vec4<f32>, h1: vec4<f32>, h2: vec4<f32>, h3: vec4<f32>, h4: vec4<f32>, h5: vec4<f32>,
+  h6: vec4<f32>, h7: vec4<f32>, h8: vec4<f32>, h9: vec4<f32>, h10: vec4<f32>, h11: vec4<f32>,
+  h12: vec4<f32>, h13: vec4<f32>, h14: vec4<f32>, h15: vec4<f32>, h16: vec4<f32>, h17: vec4<f32>,
+  h18: vec4<f32>, h19: vec4<f32>, h20: vec4<f32>, h21: vec4<f32>,
+}
+@group(0) @binding(0) var<uniform> svg: SvgHeader;
 @group(0) @binding(1) var raster_tex: texture_2d<f32>;
 @group(0) @binding(2) var raster_samp: sampler;
+@group(0) @binding(3) var<storage, read> pts: array<vec4<f32>>;
+@group(0) @binding(4) var<storage, read> cmeta: array<vec4<f32>>;
+@group(0) @binding(5) var<storage, read> bounds: array<vec4<f32>>;
 struct VertexOutput { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> }
 @vertex fn vs_full(@builtin(vertex_index) i: u32) -> VertexOutput {
   let x = f32((i << 1u) & 2u); let y = f32(i & 2u); var o: VertexOutput;
@@ -615,9 +758,9 @@ fn in_tri(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>, c: vec2<f32>) -> bool {
 }
 fn bit_on(bits: u32, index: u32) -> bool { return (bits & (1u << index)) != 0u; }
 fn generated_color(ci: i32, p: vec2<f32>) -> vec3<f32> {
-  let cycle=svg.h2.z*svg.h0.z*svg.h2.w; let mode=i32(svg.h1.w+0.5); var h=fract(svg.h2.y+svg.contours[ci].w+cycle);
+  let cycle=svg.h2.z*svg.h0.z*svg.h2.w; let mode=i32(svg.h1.w+0.5); var h=fract(svg.h2.y+cmeta[u32(ci)*4u].w+cycle);
   if(mode==1){h=fract(p.x/svg.h0.x+p.y/svg.h0.y*0.35+cycle);} else if(mode==2){h=fract(svg.h2.y+cycle);}
-  else if(mode==3){h=fract(svg.h2.y+f32(ci%2)*0.5+cycle);} else if(mode==4){h=fract(svg.h2.y+svg.contours[ci].w*0.16+cycle);} else if(mode==5){return vec3<f32>(1.0);}
+  else if(mode==3){h=fract(svg.h2.y+f32(ci%2)*0.5+cycle);} else if(mode==4){h=fract(svg.h2.y+cmeta[u32(ci)*4u].w*0.16+cycle);} else if(mode==5){return vec3<f32>(1.0);}
   return hsv(h,svg.h3.x,svg.h3.y);
 }
 fn material_face_color(ci: i32, p: vec2<f32>, resolution: vec2<f32>, time: f32, face_light: f32) -> vec3<f32> {
@@ -632,8 +775,8 @@ fn material_face_color(ci: i32, p: vec2<f32>, resolution: vec2<f32>, time: f32, 
   let resolution=max(svg.h0.xy,vec2<f32>(1.0)); var p=input.uv*resolution; let time=svg.h0.z;
   let render_mode=i32(svg.h6.x+0.5); let bits=u32(svg.h9.x+0.5);
   // Authored mode: sample the Chromium raster. Pan/scale on UVs; premultiplied
-  // output to match the contour path below. This is the whole fidelity story —
-  // gradients, arcs, text and masks are Chromium's, not a reconstruction.
+  // output. This is the whole fidelity story -- gradients, arcs, text and
+  // masks are Chromium's, not a reconstruction.
   if(render_mode==0 && svg.h18.x>0.5){
     let uv=(input.uv-vec2<f32>(svg.h18.y,svg.h18.z)*0.5-0.5)/max(svg.h18.w,0.05)+0.5;
     if(uv.x<0.0||uv.y<0.0||uv.x>1.0||uv.y>1.0){ return vec4<f32>(0.0); }
@@ -646,35 +789,33 @@ fn material_face_color(ci: i32, p: vec2<f32>, resolution: vec2<f32>, time: f32, 
   var front_any=false; var back_any=false; var side_any=false; var back_ci=0; var side_ci=0;
   var stroke_rgb=vec3<f32>(0.0); var stroke_a=0.0;
   // Even-odd parity accumulates ACROSS the subpaths of one shape element so
-  // inner contours punch holes (letter counters, donut logos) instead of
-  // painting on top.
+  // inner contours punch holes (letter counters, donut logos).
   var group_id=-1.0; var group_front=false; var group_back=false; var group_ci=0;
   let count=min(i32(svg.h1.x+0.5),${SVG_MAX_CONTOURS});
   let aa_px=1.25;
   for(var ci=0;ci<${SVG_MAX_CONTOURS};ci+=1){
-    if(ci>=count){break;} let contour_info=svg.contours[ci]; let start=i32(contour_info.x+0.5); let n=i32(contour_info.y+0.5);
-    let this_group=svg.styles[ci].w;
+    if(ci>=count){break;}
+    let contour_info=cmeta[u32(ci)*4u]; let start=i32(contour_info.x+0.5); let n=i32(contour_info.y+0.5);
+    let style=cmeta[u32(ci)*4u+3u];
+    let this_group=style.w;
     if(this_group!=group_id){
-      // Flush the previous shape element's fill.
       if(group_front){
-        front_any=true; let source=svg.fills[group_ci]; var c=source.rgb; var alpha=source.a;
+        front_any=true; let source=cmeta[u32(group_ci)*4u+1u]; var c=source.rgb; var alpha=source.a;
         if(render_mode!=0){c=generated_color(group_ci,p);alpha=1.0;}
         front_rgb=mix(front_rgb,c,alpha); front_a=alpha+front_a*(1.0-alpha);
       }
       if(render_mode==2 && group_back){back_any=true;back_ci=group_ci;}
       group_id=this_group; group_front=false; group_back=false; group_ci=ci;
     }
-    // Padded-bbox cull: pixels beyond a contour's reach skip its segment
-    // loop entirely (fill parity outside the bbox is provably zero).
-    let bb=svg.bounds[ci];
+    // Padded-bbox cull (bounds computed on GPU after transform).
+    let bb=bounds[u32(ci)];
     if(p.x<bb.x||p.y<bb.y||p.x>bb.z||p.y>bb.w){continue;}
     var front_inside=false; var back_inside=false; var contour_d=100000.0;
     for(var j=0;j<${SVG_MAX_POINTS};j+=1){
       if(j>=n){break;}
-      // Open paths must not acquire a synthetic closing segment.
       if(j==n-1 && contour_info.z<0.5){continue;}
       let next=select(j+1,0,j==n-1); if(next>=n){continue;}
-      let a=svg.points[start+j]; let b=svg.points[start+next];
+      let a=pts[u32(start+j)]; let b=pts[u32(start+next)];
       let d=seg_dist(p,a.xy,b.xy); if(d<nearest){nearest=d;nearest_ci=ci;} contour_d=min(contour_d,d);
       if(render_mode==2){
         let back_d=seg_dist(p,a.zw,b.zw); if(back_d<nearest){nearest=back_d;nearest_ci=ci;} contour_d=min(contour_d,back_d);
@@ -685,10 +826,9 @@ fn material_face_color(ci: i32, p: vec2<f32>, resolution: vec2<f32>, time: f32, 
     }
     if(front_inside){group_front=!group_front;}
     if(back_inside){group_back=!group_back;}
-    // Authored strokes composite per contour with their OWN distance so a
-    // shape never wears its neighbour's stroke colour.
-    if(render_mode==0 && svg.styles[ci].z>0.5){
-      let authored=svg.strokes[ci]; let half_w=max(svg.styles[ci].x*0.5,0.5);
+    // Authored strokes composite per contour with their OWN distance.
+    if(render_mode==0 && style.z>0.5){
+      let authored=cmeta[u32(ci)*4u+2u]; let half_w=max(style.x*svg.h19.z*0.5,0.5);
       let cov=(1.0-smoothstep(half_w-aa_px,half_w+aa_px,contour_d))*authored.a;
       if(cov>0.001){
         stroke_rgb=mix(stroke_rgb,authored.rgb,cov);
@@ -696,9 +836,8 @@ fn material_face_color(ci: i32, p: vec2<f32>, resolution: vec2<f32>, time: f32, 
       }
     }
   }
-  // Flush the final group.
   if(group_front){
-    front_any=true; let source=svg.fills[group_ci]; var c=source.rgb; var alpha=source.a;
+    front_any=true; let source=cmeta[u32(group_ci)*4u+1u]; var c=source.rgb; var alpha=source.a;
     if(render_mode!=0){c=generated_color(group_ci,p);alpha=1.0;}
     front_rgb=mix(front_rgb,c,alpha); front_a=alpha+front_a*(1.0-alpha);
   }
@@ -718,6 +857,21 @@ fn material_face_color(ci: i32, p: vec2<f32>, resolution: vec2<f32>, time: f32, 
     color=mix(color,stroke_rgb,stroke_a); alpha=stroke_a+alpha*(1.0-stroke_a); edge=stroke_a;
   } else { color=mix(color,min(color*1.8,vec3<f32>(1.0)),edge); alpha=max(alpha,edge); }
   let fill_mode=i32(svg.h1.z+0.5);
+  /*
+   * Distance envelope for every effect that is not already bounded.
+   *
+   * Two problems, one fix. sin(nearest) terms oscillate at any distance, so
+   * unbounded they tile the whole frame. And the per-contour padded-bbox cull
+   * above means a pixel outside a contour's bbox never measures against it --
+   * so nearest jumps discontinuously across bbox edges, and ANY effect still
+   * alive out there paints those jumps as a rectangle around the artwork. That
+   * is the artboard-looking border; there is no background shape involved.
+   *
+   * So the envelope must reach EXACTLY zero inside the cull pad (strokeWidth *
+   * fit + 150), not merely get small: the smoothstep terminates it at 130px,
+   * leaving the seam in a region where every effect is already nothing.
+   */
+  let envelope=exp(-nearest*0.03)*(1.0-smoothstep(90.0,130.0,nearest));
   if(alpha>0.0 && render_mode!=0){
     if(fill_mode==1){let dir=vec2<f32>(cos(svg.h3.z),sin(svg.h3.z));color*=mix(0.4,1.35,0.5+0.5*sin(dot(p/resolution,dir)*6.283/max(svg.h3.w,0.02)));}
     else if(fill_mode==2){color+=pow(max(0.0,sin((p.x+p.y)*svg.h4.y+time*svg.h4.x)),8.0)*svg.h4.z;}
@@ -726,18 +880,17 @@ fn material_face_color(ci: i32, p: vec2<f32>, resolution: vec2<f32>, time: f32, 
     else if(fill_mode==6||bit_on(bits,15u)){let cell=fract(p*max(0.02,sqrt(svg.h15.w)*0.002));alpha*=1.0-smoothstep(0.08,0.24,length(cell-0.5));}
   }
   if(bit_on(bits,10u)){let beat=pow(max(0.0,sin(time*svg.h14.z*6.283)),8.0)*svg.h14.w;color*=1.0+beat;}
-  if(bit_on(bits,11u)&&alpha>0.0){color+=hsv(fract(time*svg.h13.w*0.07+p.x/resolution.x),0.9,1.0)*svg.h13.z*(0.5+0.5*sin(p.y*0.04+time*svg.h13.w));}
-  if(bit_on(bits,7u)){let flow=pow(max(0.0,sin(nearest*0.35-time*svg.h10.w*6.0)),10.0);color+=generated_color(nearest_ci,p)*flow*edge*2.0;alpha=max(alpha,flow*edge);}
+  if(bit_on(bits,11u)&&alpha>0.0){color+=hsv(fract(time*svg.h13.w*0.07+p.x/resolution.x),0.9,1.0)*svg.h13.z*(0.5+0.5*sin(p.y*0.04+time*svg.h13.w))*max(envelope,0.15);}
+  if(bit_on(bits,7u)){let flow=pow(max(0.0,sin(nearest*0.35-time*svg.h10.w*6.0)),10.0)*envelope;color+=generated_color(nearest_ci,p)*flow*edge*2.0;alpha=max(alpha,flow*edge);}
   if(bit_on(bits,8u)&&inside_any){color+=generated_color(nearest_ci,p)*exp(-nearest*0.08)*svg.h5.w;}
-  if(bit_on(bits,4u)){let glow=exp(-nearest/max(2.0,svg.h12.y*14.0))*svg.h12.z*(0.7+0.3*sin(time*svg.h12.x));color+=generated_color(nearest_ci,p)*glow;alpha=max(alpha,glow*0.7);}
-  if(bit_on(bits,5u)){let rings=pow(max(0.0,sin(nearest/max(1.0,svg.h13.x)*0.4-time*svg.h12.w*5.0)),12.0)*svg.h13.y;color+=generated_color(nearest_ci,p)*rings;alpha=max(alpha,rings);}
-  if(bit_on(bits,1u)||bit_on(bits,12u)){let cell=floor(p/max(5.0,svg.h11.y*6.0));let dot=step(0.86,hash2(cell+floor(time*svg.h11.x*0.03)));color+=generated_color(nearest_ci,p)*dot*exp(-nearest*0.045);alpha=max(alpha,dot*exp(-nearest*0.06));}
-  if(bit_on(bits,2u)){let pulse=pow(max(0.0,sin(nearest*0.08-time*svg.h11.z*0.025)),18.0)*svg.h11.w;color+=vec3<f32>(pulse);alpha=max(alpha,pulse);}
-  let envelope=exp(-nearest*0.012);
+  if(bit_on(bits,4u)){let glow=exp(-nearest/max(2.0,svg.h12.y*14.0))*svg.h12.z*(0.7+0.3*sin(time*svg.h12.x))*(1.0-smoothstep(90.0,130.0,nearest));color+=generated_color(nearest_ci,p)*glow;alpha=max(alpha,glow*0.7);}
+  if(bit_on(bits,5u)){let rings=pow(max(0.0,sin(nearest/max(1.0,svg.h13.x)*0.4-time*svg.h12.w*5.0)),12.0)*svg.h13.y*envelope;color+=generated_color(nearest_ci,p)*rings;alpha=max(alpha,rings);}
+  if(bit_on(bits,1u)||bit_on(bits,12u)){let cell=floor(p/max(5.0,svg.h11.y*6.0));let dot=step(0.86,hash2(cell+floor(time*svg.h11.x*0.03)))*envelope;color+=generated_color(nearest_ci,p)*dot*exp(-nearest*0.045);alpha=max(alpha,dot*exp(-nearest*0.06));}
+  if(bit_on(bits,2u)){let pulse=pow(max(0.0,sin(nearest*0.08-time*svg.h11.z*0.025)),18.0)*svg.h11.w*envelope;color+=vec3<f32>(pulse);alpha=max(alpha,pulse);}
   if(bit_on(bits,6u)){let strike=step(0.985,hash2(vec2<f32>(floor(time*svg.h17.x*8.0),floor(p.y*0.02))));let line=exp(-abs(p.x-resolution.x*(0.5+0.36*sin(p.y*0.025+time*4.0)))/max(1.0,svg.h17.y))*envelope;color+=vec3<f32>(0.7,0.85,1.0)*strike*line;alpha=max(alpha,strike*line);}
   if(bit_on(bits,9u)){let neb=noise2(p*0.006+time*svg.h17.w)*svg.h17.z*envelope;color+=hsv(fract(p.x/resolution.x+time*0.03),0.7,neb);alpha=max(alpha,neb*0.35);}
-  if(bit_on(bits,13u)){let echo=exp(-abs(nearest-svg.h16.y*(1.0+floor(fmod(time*2.0,max(1.0,svg.h16.x)))))*0.12)*svg.h16.z;color+=generated_color(nearest_ci,p)*echo;alpha=max(alpha,echo);}
-  if(bit_on(bits,3u)||bit_on(bits,14u)){let bridge=pow(max(0.0,sin((p.x+p.y)*0.025-time*3.0)),22.0)*exp(-nearest*0.02);color+=generated_color(nearest_ci,p)*bridge*0.6;alpha=max(alpha,bridge*0.35);}
+  if(bit_on(bits,13u)){let echo=exp(-abs(nearest-svg.h16.y*(1.0+floor(fmod(time*2.0,max(1.0,svg.h16.x)))))*0.12)*svg.h16.z*envelope;color+=generated_color(nearest_ci,p)*echo;alpha=max(alpha,echo);}
+  if(bit_on(bits,3u)||bit_on(bits,14u)){let bridge=pow(max(0.0,sin((p.x+p.y)*0.025-time*3.0)),22.0)*exp(-nearest*0.02)*envelope;color+=generated_color(nearest_ci,p)*bridge*0.6;alpha=max(alpha,bridge*0.35);}
   if(bit_on(bits,17u)&&alpha>0.0){
     let progress=clamp(p.x/resolution.x,0.0,1.0);let sweep=fract(time*max(0.05,svg.h16.w)*0.15);
     let reveal=1.0-smoothstep(sweep,min(1.0,sweep+0.06),progress);let head=1.0-smoothstep(0.0,0.035,abs(progress-sweep));
@@ -748,3 +901,13 @@ fn material_face_color(ci: i32, p: vec2<f32>, resolution: vec2<f32>, time: f32, 
   return vec4<f32>(color*clamp(alpha,0.0,1.0),clamp(alpha,0.0,1.0));
 }
 `;
+
+export function getSvgNativeShaderSource() {
+  return { shaderId: SVG_NATIVE_SHADER_ID, stage: 'render' as const, entry: 'fs_svg', source: SVG_NATIVE_WGSL };
+}
+export function buildSvgNativePrecompileCommands() {
+  return [
+    { type: 'precompile_shader' as const, shader_id: SVG_TRANSFORM_SHADER_ID, stage: 'compute' as const, entry: 'cs_points', source: SVG_TRANSFORM_WGSL },
+    { type: 'precompile_shader' as const, shader_id: SVG_NATIVE_SHADER_ID, stage: 'render' as const, entry: 'fs_svg', source: SVG_NATIVE_WGSL },
+  ];
+}
