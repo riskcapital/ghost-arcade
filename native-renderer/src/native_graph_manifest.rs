@@ -12,7 +12,7 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
     NativeGraphInstrumentSpec {
         id: "svg",
         label: "SVG",
-        shader_ids: &["svg/render-v5"],
+        shader_ids: &["svg/render-v6"],
         features: &[
             "compute_graph_host",
             "compute_graph_render",
