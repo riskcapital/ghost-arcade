@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
   import { get } from 'svelte/store';
+  import { resolveDisplayForSurface } from '$lib/output/displayAssignment';
   import { invoke, isDesktopApp, isMac, isWindows } from '$lib/bridge';
   import {
     getNativeRendererCapabilities,
@@ -178,10 +179,19 @@
   async function openPopupZeroCopy(preferExternal: boolean) {
     try {
       const displays: any[] = await invoke('get_displays');
+      /*
+       * The shared resolver, so Live Output does not silently take the screen
+       * Stage Sim or Map Sim has been assigned. preferExternal only decides
+       * whether we look past the primary at all.
+       */
       let target = displays[0];
       if (preferExternal) {
-        const external = displays.find((d: any) => !(d.isPrimary ?? d.primary));
-        if (external) target = external;
+        const assigned = resolveDisplayForSurface(
+          displays as never,
+          get(settings).output.displayAssignments,
+          'liveOutput',
+        );
+        if (assigned) target = assigned;
       }
       const bounds = target.bounds || target;
       const winW = Math.min(1280, bounds.width);

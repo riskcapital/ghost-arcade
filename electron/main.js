@@ -5274,13 +5274,13 @@ function registerIpcHandlers() {
   // shape inside is identical to a regular full editor (mounts Canvas +
   // Stage3DDesigner with state-sync over BroadcastChannel), so visuals
   // flowing through the editor's layers appear on the LED-screen meshes.
-  ipcMain.handle('open_stage3d_window', () => {
+  ipcMain.handle('open_stage3d_window', (_event, args = {}) => {
     if (stage3dWindow && !stage3dWindow.isDestroyed()) {
       stage3dWindow.show();
       stage3dWindow.focus();
       return { alreadyOpen: true };
     }
-    createStage3DWindow();
+    createStage3DWindow(args?.displayId ?? null);
     return { alreadyOpen: false };
   });
 
@@ -5311,13 +5311,13 @@ function registerIpcHandlers() {
   // ── Projection Simulator pop-out window ───────────────────────────
   // Same performer workflow as Stage 3D: keep the editor/mapping UI
   // available while the 3D simulation lives on another monitor.
-  ipcMain.handle('open_projection_sim_window', () => {
+  ipcMain.handle('open_projection_sim_window', (_event, args = {}) => {
     if (projectionSimWindow && !projectionSimWindow.isDestroyed()) {
       projectionSimWindow.show();
       projectionSimWindow.focus();
       return { alreadyOpen: true };
     }
-    createProjectionSimWindow();
+    createProjectionSimWindow(args?.displayId ?? null);
     return { alreadyOpen: false };
   });
 
@@ -7825,18 +7825,57 @@ function createMainWindow() {
 // frame: true (so they get OS chrome to drag + close), and persists
 // across the editor lifetime only: closing the main app window also
 // closes this pop-out so it cannot keep Electron alive by itself.
-function createStage3DWindow() {
+
+/*
+ * Tell the editor where a sim window ended up.
+ *
+ * The user asked that dragging a window to another screen be remembered, so the
+ * renderer maps these bounds back to a display and stores the assignment. Fired
+ * on 'moved' (debounced -- macOS emits it continuously during a drag) and once
+ * more when the window closes.
+ */
+function reportSimWindowDisplay(surface, win) {
+  if (!win || win.isDestroyed()) return;
+  try {
+    const bounds = win.getBounds();
+    if (mainWindow && !mainWindow.isDestroyed()) {
+      mainWindow.webContents.send('sim-window-moved', { surface, bounds });
+    }
+  } catch { /* window torn down mid-report */ }
+}
+
+function trackSimWindowMoves(surface, win) {
+  if (!win) return;
+  let timer = null;
+  const schedule = () => {
+    if (timer) clearTimeout(timer);
+    timer = setTimeout(() => { timer = null; reportSimWindowDisplay(surface, win); }, 400);
+  };
+  win.on('moved', schedule);
+  win.on('close', () => {
+    if (timer) { clearTimeout(timer); timer = null; }
+    reportSimWindowDisplay(surface, win);
+  });
+}
+
+function createStage3DWindow(targetDisplayId = null) {
   // Default size: a wide 16:10 that's bigger than typical editor
   // sidebars but doesn't try to fill the whole screen. Users can
   // resize or drag to a second monitor freely.
   const winW = 1400;
   const winH = 900;
 
-  // Place on a second display if one's available — Stage 3D is a
-  // performance / preview surface, the main editor wants the primary.
+  /*
+   * The renderer resolves which display this belongs on and passes the id --
+   * see src/lib/output/displayAssignment.ts. Picking "first non-primary" here
+   * is what made Live Output, Stage Sim and Map Sim all land on the same screen
+   * on a projector-plus-monitor rig.
+   */
   const allDisplays = screen.getAllDisplays();
   const primary = screen.getPrimaryDisplay();
-  const target = allDisplays.find(d => d.id !== primary.id) || primary;
+  const target = allDisplays.find(d => d.id === targetDisplayId)
+    || allDisplays.find(d => d.id !== primary.id)
+    || primary;
   const winX = Math.round(target.bounds.x + (target.bounds.width - winW) / 2);
   const winY = Math.round(target.bounds.y + (target.bounds.height - winH) / 2);
 
@@ -7880,6 +7919,8 @@ function createStage3DWindow() {
     });
   }
 
+  trackSimWindowMoves('stageSim', stage3dWindow);
+
   stage3dWindow.on('closed', () => {
     stage3dWindow = null;
     // The 3D stage window owns the native stage scene; when it closes the
@@ -7895,13 +7936,16 @@ function createStage3DWindow() {
   stage3dWindow.on('leave-full-screen', () => publishStage3DFullscreenState(false));
 }
 
-function createProjectionSimWindow() {
+function createProjectionSimWindow(targetDisplayId = null) {
   const winW = 1400;
   const winH = 900;
 
+  // Same as Stage Sim: the renderer owns the assignment, this honours it.
   const allDisplays = screen.getAllDisplays();
   const primary = screen.getPrimaryDisplay();
-  const target = allDisplays.find(d => d.id !== primary.id) || primary;
+  const target = allDisplays.find(d => d.id === targetDisplayId)
+    || allDisplays.find(d => d.id !== primary.id)
+    || primary;
   const winX = Math.round(target.bounds.x + (target.bounds.width - winW) / 2);
   const winY = Math.round(target.bounds.y + (target.bounds.height - winH) / 2);
 
@@ -7934,6 +7978,8 @@ function createProjectionSimWindow() {
       search: 'mode=projection-sim',
     });
   }
+
+  trackSimWindowMoves('mapSim', projectionSimWindow);
 
   projectionSimWindow.on('closed', () => {
     projectionSimWindow = null;
