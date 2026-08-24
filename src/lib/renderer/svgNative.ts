@@ -2,11 +2,11 @@
 // side; animation, materials, effects, extrusion, and compositing run in core.
 import type { SVGContent } from '../types';
 
-export const SVG_NATIVE_SHADER_ID = 'svg/render-v5';
+export const SVG_NATIVE_SHADER_ID = 'svg/render-v6';
 export const SVG_MAX_CONTOURS = 32;
 export const SVG_MAX_POINTS = 768;
 
-const HEADER_VEC4S = 18;
+const HEADER_VEC4S = 19;
 const CONTOUR_ARRAYS = 5;
 const TOTAL_VEC4S = HEADER_VEC4S + SVG_MAX_CONTOURS * CONTOUR_ARRAYS + SVG_MAX_POINTS;
 export const SVG_UNIFORM_BYTES = TOTAL_VEC4S * 16;
@@ -34,6 +34,14 @@ type SvgNativeGraphOptions = {
   frameDelta?: number;
   frameIndex?: number;
   includeSnapshot?: boolean;
+  /*
+   * Chromium-rasterized copy of the authored SVG, uploaded as a source frame
+   * by the sync (see svgRaster.ts). When present and ready, `source` render
+   * mode samples it instead of the parsed-contour reconstruction — exact
+   * gradients, arcs, text, masks, and no contour caps.
+   */
+  rasterSourceId?: string;
+  rasterReady?: boolean;
 };
 
 const FILL_CODES: Record<string, number> = {
@@ -468,6 +476,14 @@ function packedSvgData(options: SvgNativeGraphOptions): Float32Array {
   setHeader(data, 15, [finite(content.fluidScale, 2), finite(content.fluidSpeed, 1), finite(content.fluidTurbulence, 0.8), finite(content.particleFillDensity, 200)]);
   setHeader(data, 16, [finite(content.echoLayers, 3), finite(content.echoSpacing, 8), finite(content.echoOpacity, 0.25), finite(content.growthSpeed, 0.6)]);
   setHeader(data, 17, [finite(content.lightningFrequency, 1.5), finite(content.lightningThickness, 3), finite(content.nebulaIntensity, 0.3), finite(content.nebulaSpeed, 0.2)]);
+  /* Raster path: pan/scale are applied to UVs in the shader rather than baked
+     into the raster, so dragging those sliders never forces a re-upload. */
+  setHeader(data, 18, [
+    options.rasterReady ? 1 : 0,
+    clamp(finite(content.panX, 0), -2, 2),
+    clamp(finite(content.panY, 0), -2, 2),
+    clamp(finite(content.contentScale, 1), 0.05, 8),
+  ]);
   return data;
 }
 
@@ -486,7 +502,15 @@ export function buildSvgNativeComputeGraph(options: SvgNativeGraphOptions) {
         target: 'source_frame', source_id: sourceId, seq: Math.max(0, Math.round(options.frameIndex ?? 0)),
         clear: true, clear_color: [0, 0, 0, 0], include_snapshot: !!options.includeSnapshot,
         blend: 'replace', primitive: 'triangle-list', vertex_count: 3, instance_count: 1,
-        bindings: [{ binding: 0, resource: uniformId, kind: 'uniform' }],
+        bindings: [
+          { binding: 0, resource: uniformId, kind: 'uniform' },
+          // allow_missing: before the first raster upload the core binds its
+          // empty frame, and h18.x keeps the shader off the raster path.
+          options.rasterSourceId && options.rasterReady
+            ? { binding: 1, kind: 'source-frame-texture', source_id: options.rasterSourceId }
+            : { binding: 1, kind: 'source-frame-texture', allow_missing: true },
+          { binding: 2, kind: 'source-frame-sampler' },
+        ],
       }],
       readbacks: [],
     }, sourceId, passCount: 1,
@@ -505,6 +529,7 @@ struct SvgData {
   h0: vec4<f32>, h1: vec4<f32>, h2: vec4<f32>, h3: vec4<f32>, h4: vec4<f32>, h5: vec4<f32>,
   h6: vec4<f32>, h7: vec4<f32>, h8: vec4<f32>, h9: vec4<f32>, h10: vec4<f32>, h11: vec4<f32>,
   h12: vec4<f32>, h13: vec4<f32>, h14: vec4<f32>, h15: vec4<f32>, h16: vec4<f32>, h17: vec4<f32>,
+  h18: vec4<f32>,
   contours: array<vec4<f32>, ${SVG_MAX_CONTOURS}>,
   fills: array<vec4<f32>, ${SVG_MAX_CONTOURS}>,
   strokes: array<vec4<f32>, ${SVG_MAX_CONTOURS}>,
@@ -513,6 +538,8 @@ struct SvgData {
   points: array<vec4<f32>, ${SVG_MAX_POINTS}>,
 }
 @group(0) @binding(0) var<uniform> svg: SvgData;
+@group(0) @binding(1) var raster_tex: texture_2d<f32>;
+@group(0) @binding(2) var raster_samp: sampler;
 struct VertexOutput { @builtin(position) position: vec4<f32>, @location(0) uv: vec2<f32> }
 @vertex fn vs_full(@builtin(vertex_index) i: u32) -> VertexOutput {
   let x = f32((i << 1u) & 2u); let y = f32(i & 2u); var o: VertexOutput;
@@ -554,6 +581,15 @@ fn material_face_color(ci: i32, p: vec2<f32>, resolution: vec2<f32>, time: f32, 
 @fragment fn fs_svg(input: VertexOutput) -> @location(0) vec4<f32> {
   let resolution=max(svg.h0.xy,vec2<f32>(1.0)); var p=input.uv*resolution; let time=svg.h0.z;
   let render_mode=i32(svg.h6.x+0.5); let bits=u32(svg.h9.x+0.5);
+  // Authored mode: sample the Chromium raster. Pan/scale on UVs; premultiplied
+  // output to match the contour path below. This is the whole fidelity story —
+  // gradients, arcs, text and masks are Chromium's, not a reconstruction.
+  if(render_mode==0 && svg.h18.x>0.5){
+    let uv=(input.uv-vec2<f32>(svg.h18.y,svg.h18.z)*0.5-0.5)/max(svg.h18.w,0.05)+0.5;
+    if(uv.x<0.0||uv.y<0.0||uv.x>1.0||uv.y>1.0){ return vec4<f32>(0.0); }
+    let texel=textureSampleLevel(raster_tex,raster_samp,uv,0.0);
+    return vec4<f32>(texel.rgb*texel.a,texel.a);
+  }
   if(bit_on(bits,16u)){ let n=noise2(p*0.008+vec2<f32>(time*svg.h14.y,-time*svg.h14.y)); p += (n-0.5)*svg.h14.x; }
   if(bit_on(bits,0u)){ p.x += sin(p.y*0.025+time*svg.h10.y*4.0)*svg.h10.z*60.0; }
   var front_rgb=vec3<f32>(0.0); var front_a=0.0; var nearest=100000.0; var nearest_ci=0;
@@ -647,8 +683,9 @@ fn material_face_color(ci: i32, p: vec2<f32>, resolution: vec2<f32>, time: f32, 
   if(bit_on(bits,5u)){let rings=pow(max(0.0,sin(nearest/max(1.0,svg.h13.x)*0.4-time*svg.h12.w*5.0)),12.0)*svg.h13.y;color+=generated_color(nearest_ci,p)*rings;alpha=max(alpha,rings);}
   if(bit_on(bits,1u)||bit_on(bits,12u)){let cell=floor(p/max(5.0,svg.h11.y*6.0));let dot=step(0.86,hash2(cell+floor(time*svg.h11.x*0.03)));color+=generated_color(nearest_ci,p)*dot*exp(-nearest*0.045);alpha=max(alpha,dot*exp(-nearest*0.06));}
   if(bit_on(bits,2u)){let pulse=pow(max(0.0,sin(nearest*0.08-time*svg.h11.z*0.025)),18.0)*svg.h11.w;color+=vec3<f32>(pulse);alpha=max(alpha,pulse);}
-  if(bit_on(bits,6u)){let strike=step(0.985,hash2(vec2<f32>(floor(time*svg.h17.x*8.0),floor(p.y*0.02))));let line=exp(-abs(p.x-resolution.x*(0.5+0.36*sin(p.y*0.025+time*4.0)))/max(1.0,svg.h17.y));color+=vec3<f32>(0.7,0.85,1.0)*strike*line;alpha=max(alpha,strike*line);}
-  if(bit_on(bits,9u)){let neb=noise2(p*0.006+time*svg.h17.w)*svg.h17.z;color+=hsv(fract(p.x/resolution.x+time*0.03),0.7,neb);alpha=max(alpha,neb*0.35);}
+  let envelope=exp(-nearest*0.012);
+  if(bit_on(bits,6u)){let strike=step(0.985,hash2(vec2<f32>(floor(time*svg.h17.x*8.0),floor(p.y*0.02))));let line=exp(-abs(p.x-resolution.x*(0.5+0.36*sin(p.y*0.025+time*4.0)))/max(1.0,svg.h17.y))*envelope;color+=vec3<f32>(0.7,0.85,1.0)*strike*line;alpha=max(alpha,strike*line);}
+  if(bit_on(bits,9u)){let neb=noise2(p*0.006+time*svg.h17.w)*svg.h17.z*envelope;color+=hsv(fract(p.x/resolution.x+time*0.03),0.7,neb);alpha=max(alpha,neb*0.35);}
   if(bit_on(bits,13u)){let echo=exp(-abs(nearest-svg.h16.y*(1.0+floor(fmod(time*2.0,max(1.0,svg.h16.x)))))*0.12)*svg.h16.z;color+=generated_color(nearest_ci,p)*echo;alpha=max(alpha,echo);}
   if(bit_on(bits,3u)||bit_on(bits,14u)){let bridge=pow(max(0.0,sin((p.x+p.y)*0.025-time*3.0)),22.0)*exp(-nearest*0.02);color+=generated_color(nearest_ci,p)*bridge*0.6;alpha=max(alpha,bridge*0.35);}
   if(bit_on(bits,17u)&&alpha>0.0){

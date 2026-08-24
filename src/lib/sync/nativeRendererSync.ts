@@ -41,6 +41,7 @@ import {
   cameraLayerSource,
   pruneCameraLiveSources,
 } from '$lib/renderer/cameraLiveSource';
+import { rasterizeSvg, svgRasterSignature, type SvgRaster } from '$lib/renderer/svgRaster';
 import { nativeShaderSourceFromJavascript } from '$lib/renderer/nativeJsShaderSource';
 import { resolveAssetRefForRuntime } from '$lib/storage/assetRegistry';
 import {
@@ -363,7 +364,7 @@ export function isNativeExternallyQueuedGraphKind(kind: string): boolean {
 const NATIVE_GRAPH_ROUTE_REQUIREMENTS: ReadonlyArray<NativeGraphRouteRequirement> = [
   { kind: 'planet', feature: 'native_planet_graph', instrument: 'planet', shaderIds: ['planet/render'] },
   { kind: 'lines', feature: 'native_lines_graph', instrument: 'lines', shaderIds: ['lines/render'] },
-  { kind: 'svg', feature: 'native_svg_graph', instrument: 'svg', shaderIds: ['svg/render-v5'] },
+  { kind: 'svg', feature: 'native_svg_graph', instrument: 'svg', shaderIds: ['svg/render-v6'] },
   { kind: 'light-painting', feature: 'native_light_painting_graph', instrument: 'light-painting', shaderIds: ['light-painting/render-v8'] },
   { kind: 'text', feature: 'native_text_graph', instrument: 'text', shaderIds: ['text/render-v1'] },
   { kind: 'splat', feature: 'native_splat_graph', instrument: 'splat', shaderIds: ['splat/render-v1', 'splat/shadowvol-v1'] },
@@ -4914,6 +4915,29 @@ export class NativeRendererSync {
   private sourcePreviewSeq = new Map<string, number>();
   // Text layers: CPU-rasterized glyph atlas + cached layout, re-uploaded
   // only when the text signature changes (never per frame).
+  /*
+   * Chromium-raster lifecycle per SVG layer — the same shape as the text
+   * atlas below: rasterize when (source, slot size) changes, upload once,
+   * bind by stable id every frame. `pending` guards the async rasterize so a
+   * slider storm cannot stack decodes of the same signature.
+   */
+  private nativeSvgState = new Map<string, {
+    signature: string;
+    pending: string | null;
+    raster: SvgRaster | null;
+    uploaded: boolean;
+    seq: number;
+  }>();
+
+  private nativeSvgStateFor(layerId: string) {
+    let state = this.nativeSvgState.get(layerId);
+    if (!state) {
+      state = { signature: '', pending: null, raster: null, uploaded: false, seq: 0 };
+      this.nativeSvgState.set(layerId, state);
+    }
+    return state;
+  }
+
   private nativeTextState = new Map<string, {
     atlasSig: string;
     atlasSeq: number;
@@ -6389,14 +6413,51 @@ export class NativeRendererSync {
             });
           }
           if (route.kind === 'svg') {
+            const content = layer.svgContent!;
+            const state = this.nativeSvgStateFor(layer.id);
+            const slotSize = Math.max(256, this.nativeSourceFrameSize || 1024);
+            const rasterSourceId = `svg-raster:${layer.id}`;
+            const signature = svgRasterSignature(content.svgSource, slotSize);
+            if (state.signature !== signature && state.pending !== signature) {
+              state.pending = signature;
+              void rasterizeSvg(content.svgSource, slotSize)
+                .then((raster) => {
+                  const current = this.nativeSvgState.get(layer.id);
+                  // Stale async result: the source changed again mid-decode.
+                  if (!current || current.pending !== signature) return;
+                  current.raster = raster;
+                  current.signature = signature;
+                  current.pending = null;
+                  current.uploaded = false;
+                })
+                .catch((err) => {
+                  const current = this.nativeSvgState.get(layer.id);
+                  if (current && current.pending === signature) current.pending = null;
+                  console.warn('[NativeRendererSync] SVG rasterize failed:', err);
+                });
+            }
+            if (state.raster && !state.uploaded) {
+              state.seq += 1;
+              queuedCommands.push({
+                type: 'upload_source_frame',
+                source_id: rasterSourceId,
+                seq: state.seq,
+                width: state.raster.size,
+                height: state.raster.size,
+                rgba_b64: encodeAtlasBase64(state.raster.rgba),
+              } as unknown as RendererCommand);
+              state.uploaded = true;
+            }
             return buildSvgNativeComputeGraph({
               sourceId: graphSource.id,
-              content: layer.svgContent!,
+              content,
               width,
               height,
               time: graphTime,
               frameDelta: graphDelta,
               frameIndex: graphFrameIndex,
+              rasterSourceId,
+              rasterReady: state.uploaded && state.signature === signature,
             });
           }
           if (route.kind === 'light-painting') {
@@ -8892,6 +8953,9 @@ export class NativeRendererSync {
     });
     this.nativeModel3DState.forEach((_state, layerId) => {
       if (!liveLayerIds.has(layerId)) this.nativeModel3DState.delete(layerId);
+    });
+    this.nativeSvgState.forEach((_state, layerId) => {
+      if (!liveLayerIds.has(layerId)) this.nativeSvgState.delete(layerId);
     });
 
 

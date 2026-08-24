@@ -195,7 +195,7 @@ describe('native SVG graph', () => {
   });
 
   it('keeps native extrusion and growth behavior in the shader contract', () => {
-    expect(SVG_NATIVE_SHADER_ID).toBe('svg/render-v5');
+    expect(SVG_NATIVE_SHADER_ID).toBe('svg/render-v6');
     expect(SVG_NATIVE_WGSL).toContain('var back_inside=false');
     expect(SVG_NATIVE_WGSL).toContain('contour_info.z<0.5');
     expect(SVG_NATIVE_WGSL).toContain('bit_on(bits,17u)');
