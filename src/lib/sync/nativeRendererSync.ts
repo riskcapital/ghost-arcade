@@ -5220,9 +5220,6 @@ export class NativeRendererSync {
   private sharedTextureInfoCache = new Map<string, SharedTextureInfoCacheEntry>();
   private sharedTextureInfoInFlight = new Set<string>();
   private sharedTextureInfoNextPollAt = new Map<string, number>();
-  /** Shared-texture keys touched during the current flush, so the two caches
-   *  above can be pruned to what is actually on screen. */
-  private sharedTextureKeysThisFlush = new Set<string>();
   private sharedTextureReceiverSender: string | null = null;
   /** Has the built-in demo source frame been pushed to THIS core session?
    *  Cleared on teardown so a relaunched core gets it again. */
@@ -8042,7 +8039,6 @@ export class NativeRendererSync {
     const current = new Map<string, LayerSnapshot>();
     const activeVideoKeys = new Set<string>();
     const activeCameraDeviceIds = new Set<string>();
-    this.sharedTextureKeysThisFlush.clear();
     const playbackSourcesSent = new Set<string>();
     const visual = getVisualAudioSnapshot();
 
@@ -8877,13 +8873,18 @@ export class NativeRendererSync {
     pruneCameraLiveSources(activeCameraDeviceIds);
 
     /*
-     * Prune the per-layer and per-source caches to what is still on screen.
+     * Prune the per-layer caches to the layers still on screen. Neither was
+     * ever deleted from, and the text atlas is the expensive one: it holds
+     * rasterized RGBA for the whole glyph sheet, so every text layer the user
+     * ever created stayed resident for the life of the process.
      *
-     * All four are keyed by something that churns during a set -- a layer id,
-     * or a live-capture session id that is regenerated on every restart -- and
-     * none of them were ever deleted from. The text atlas is the expensive one:
-     * it holds rasterized RGBA for the glyph sheet, so every text layer the
-     * user ever created stayed resident for the life of the process.
+     * The two shared-texture caches are deliberately NOT pruned here. Their
+     * liveness is not knowable at this point in the flush: the info poll sits
+     * behind a 16ms cadence gate, so on most passes a perfectly live Syphon or
+     * camera source is simply not touched, and pruning on that signal deleted
+     * its cached handle -- which drops the next frame for that source. They
+     * leak a few hundred bytes per capture-session restart; that is the better
+     * trade during a show.
      */
     const liveLayerIds = new Set(layers.map((layer) => layer.id));
     this.nativeTextState.forEach((_state, layerId) => {
@@ -8892,16 +8893,7 @@ export class NativeRendererSync {
     this.nativeModel3DState.forEach((_state, layerId) => {
       if (!liveLayerIds.has(layerId)) this.nativeModel3DState.delete(layerId);
     });
-    this.sharedTextureInfoCache.forEach((_entry, key) => {
-      if (!this.sharedTextureKeysThisFlush.has(key)) this.sharedTextureInfoCache.delete(key);
-    });
-    this.sharedTextureInfoNextPollAt.forEach((_due, key) => {
-      // The failure counters hang off the same key with a suffix.
-      const base = key.endsWith(':failures') ? key.slice(0, -':failures'.length) : key;
-      if (!this.sharedTextureKeysThisFlush.has(base)) {
-        this.sharedTextureInfoNextPollAt.delete(key);
-      }
-    });
+
 
     if (graphInputCommands.length) {
       const graphInputSummary = await submitNativeRendererCommands(graphInputCommands);
@@ -9124,7 +9116,6 @@ export class NativeRendererSync {
     if (!isElectron || !isNativeSharedTextureSource(src, sourceType)) return;
 
     const key = this.sharedTextureInfoKey(src, sourceType);
-    this.sharedTextureKeysThisFlush.add(key);
     const nextPollAt = this.sharedTextureInfoNextPollAt.get(key) ?? 0;
     if (now < nextPollAt || this.sharedTextureInfoInFlight.has(key)) return;
 

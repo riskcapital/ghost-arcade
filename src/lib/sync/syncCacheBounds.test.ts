@@ -29,6 +29,16 @@ import { join } from 'node:path';
  */
 const BOUNDED_BY_DESIGN: Record<string, string> = {
   displayBounds: 'keyed by OS display id — bounded by the number of monitors',
+  /*
+   * These two were pruned briefly and it caused live-source dropouts. Their
+   * liveness is not knowable at the end of a flush: the info poll sits behind a
+   * 16ms cadence gate, so on most passes a live Syphon/NDI/camera source is not
+   * touched at all, and pruning on that signal deleted the cached handle and
+   * dropped the source's next frame. They grow by a few hundred bytes per
+   * capture-session restart, which is the better trade during a show.
+   */
+  sharedTextureInfoCache: 'keyed by capture session; liveness unknowable at prune time',
+  sharedTextureInfoNextPollAt: 'same key space as sharedTextureInfoCache',
 };
 
 function syncSource(): string {
