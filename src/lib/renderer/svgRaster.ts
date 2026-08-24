@@ -42,8 +42,13 @@ function hashString(value: string): string {
   return hash.toString(36);
 }
 
-export function svgRasterSignature(svgSource: string, size: number): string {
-  return `${size}:${svgSource.length}:${hashString(svgSource)}`;
+export function svgRasterSignature(
+  svgSource: string,
+  size: number,
+  outputWidth: number,
+  outputHeight: number,
+): string {
+  return `${size}:${outputWidth}x${outputHeight}:${svgSource.length}:${hashString(svgSource)}`;
 }
 
 /**
@@ -76,7 +81,12 @@ function intrinsicBox(svgSource: string): { width: number; height: number } {
  * with no drawable content resolves to transparent pixels, which renders as an
  * empty layer rather than an error — matching what a browser shows for it.
  */
-export async function rasterizeSvg(svgSource: string, size: number): Promise<SvgRaster> {
+export async function rasterizeSvg(
+  svgSource: string,
+  size: number,
+  outputWidth: number,
+  outputHeight: number,
+): Promise<SvgRaster> {
   const edge = Math.max(64, Math.round(size));
   const box = intrinsicBox(svgSource);
 
@@ -111,15 +121,28 @@ export async function rasterizeSvg(svgSource: string, size: number): Promise<Svg
     canvas.height = edge;
     const context = canvas.getContext('2d', { willReadFrequently: true });
     if (!context) throw new Error('2d context unavailable');
-    const scale = Math.min(edge / box.width, edge / box.height) * SVG_RASTER_FIT;
-    const drawWidth = box.width * scale;
-    const drawHeight = box.height * scale;
+    /*
+     * Fit in OUTPUT space, then map into the square slot.
+     *
+     * The core's slots are square and the compositor stretches them across
+     * the project-aspect quad, so a square drawn square in the slot shows up
+     * 16:9-wide on screen (measured: a 100x100 calibration SVG rendered
+     * 1348x741). Fitting against the real output dimensions and compressing
+     * each axis by slot/output makes the stretch land back on true
+     * proportions -- and matches the contour path, which works in output
+     * pixels and was measured screen-true.
+     */
+    const outW = Math.max(1, outputWidth);
+    const outH = Math.max(1, outputHeight);
+    const scale = Math.min(outW / box.width, outH / box.height) * SVG_RASTER_FIT;
+    const drawWidth = box.width * scale * (edge / outW);
+    const drawHeight = box.height * scale * (edge / outH);
     context.clearRect(0, 0, edge, edge);
     context.drawImage(image, (edge - drawWidth) / 2, (edge - drawHeight) / 2, drawWidth, drawHeight);
     return {
       size: edge,
       rgba: context.getImageData(0, 0, edge, edge).data,
-      signature: svgRasterSignature(svgSource, edge),
+      signature: svgRasterSignature(svgSource, edge, outW, outH),
     };
   } finally {
     URL.revokeObjectURL(url);

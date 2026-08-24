@@ -6417,10 +6417,10 @@ export class NativeRendererSync {
             const state = this.nativeSvgStateFor(layer.id);
             const slotSize = Math.max(256, this.nativeSourceFrameSize || 1024);
             const rasterSourceId = `svg-raster:${layer.id}`;
-            const signature = svgRasterSignature(content.svgSource, slotSize);
+            const signature = svgRasterSignature(content.svgSource, slotSize, width, height);
             if (state.signature !== signature && state.pending !== signature) {
               state.pending = signature;
-              void rasterizeSvg(content.svgSource, slotSize)
+              void rasterizeSvg(content.svgSource, slotSize, width, height)
                 .then((raster) => {
                   const current = this.nativeSvgState.get(layer.id);
                   // Stale async result: the source changed again mid-decode.
