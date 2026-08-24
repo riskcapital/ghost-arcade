@@ -328,12 +328,112 @@
   // WebGL context, so LED screens sample the local composite texture
   // without a canvas/media bridge.
   let showStage3D = false;
+  import {
+    isWindowed,
+    resolveDisplayForSurface,
+    surfacesDisplacedBy,
+    SURFACE_LABELS,
+    displayForBounds,
+    type DisplayInfo,
+    type OutputSurface,
+  } from './lib/output/displayAssignment';
+
   let stage3DWindowOpen = false;
   let projectionSimWindowOpen = false;
+  /*
+   * Output surfaces and the screens they compete for.
+   *
+   * Live Output, Stage Sim and Map Sim used to each resolve "first non-primary
+   * display" independently, so with a projector AND a monitor they all landed on
+   * the same one. Now each has an assignment, and when two share a screen they
+   * take turns: opening one closes whoever is holding it. A surface set to
+   * `windowed` opts out and floats beside the editor instead.
+   */
+  let cachedDisplays: DisplayInfo[] = [];
+
+  async function refreshDisplays(): Promise<DisplayInfo[]> {
+    if (!isDesktopApp) return [];
+    try {
+      cachedDisplays = (await invoke<DisplayInfo[]>('get_displays')) ?? [];
+    } catch (e) {
+      console.warn('[Displays] enumeration failed:', e);
+    }
+    return cachedDisplays;
+  }
+
+  function openSurfaces(): OutputSurface[] {
+    const open: OutputSurface[] = [];
+    if (outputIsOpen) open.push('liveOutput');
+    if (stage3DWindowOpen) open.push('stageSim');
+    if (projectionSimWindowOpen) open.push('mapSim');
+    return open;
+  }
+
+  /** Close whatever is holding the screen this surface is about to take. */
+  async function yieldDisplayFor(surface: OutputSurface) {
+    const displays = await refreshDisplays();
+    const assignments = $settings.output.displayAssignments;
+    for (const other of surfacesDisplacedBy(displays, assignments, surface, openSurfaces())) {
+      if (other === 'liveOutput') {
+        closeOutputWindow();
+      } else if (other === 'stageSim') {
+        await invoke('stage3d_window_closing').catch(() => {});
+        stage3DWindowOpen = false;
+      } else if (other === 'mapSim') {
+        await invoke('projection_sim_window_closing').catch(() => {});
+        projectionSimWindowOpen = false;
+      }
+    }
+  }
+
+  /* Right-click menu state for the three output buttons. */
+  let displayMenu: { surface: OutputSurface; x: number; y: number } | null = null;
+
+  async function openDisplayMenu(event: MouseEvent, surface: OutputSurface) {
+    if (!isDesktopApp) return;
+    event.preventDefault();
+    await refreshDisplays();
+    displayMenu = { surface, x: event.clientX, y: event.clientY };
+  }
+
+  function chooseSurfaceTarget(surface: OutputSurface, target: number | 'windowed' | null) {
+    settings.setDisplayAssignment(surface, target);
+    displayMenu = null;
+  }
+
+  /*
+   * Remember where the user dragged a sim window. Main reports the bounds when
+   * the window settles or closes; mapping the centre back to a display is what
+   * makes "put it here and keep it here" work across launches.
+   */
+  function handleSimWindowMoved(payload: { surface?: string; bounds?: { x: number; y: number; width: number; height: number } }) {
+    const surface = payload?.surface as OutputSurface | undefined;
+    const bounds = payload?.bounds;
+    if (!surface || !bounds || !cachedDisplays.length) return;
+    // A window the user parked as a floating one should stay floating.
+    if (isWindowed($settings.output.displayAssignments, surface)) return;
+    const display = displayForBounds(cachedDisplays, bounds);
+    if (display && $settings.output.displayAssignments[surface] !== display.id) {
+      settings.setDisplayAssignment(surface, display.id);
+    }
+  }
+
   async function openStage3D() {
     if (isDesktopApp) {
+      // Toggle: a second click on the button that owns the screen closes it.
+      if (stage3DWindowOpen) {
+        await invoke('stage3d_window_closing').catch(() => {});
+        stage3DWindowOpen = false;
+        return;
+      }
       try {
-        await invoke('open_stage3d_window');
+        await yieldDisplayFor('stageSim');
+        const displays = await refreshDisplays();
+        const assignments = $settings.output.displayAssignments;
+        const target = isWindowed(assignments, 'stageSim')
+          ? null
+          : resolveDisplayForSurface(displays, assignments, 'stageSim');
+        await invoke('open_stage3d_window', { displayId: target?.id ?? null });
         stage3DWindowOpen = true;
         return;
       } catch (e) {
@@ -345,8 +445,19 @@
 
   async function openProjectionSim() {
     if (isDesktopApp) {
+      if (projectionSimWindowOpen) {
+        await invoke('projection_sim_window_closing').catch(() => {});
+        projectionSimWindowOpen = false;
+        return;
+      }
       try {
-        await invoke('open_projection_sim_window');
+        await yieldDisplayFor('mapSim');
+        const displays = await refreshDisplays();
+        const assignments = $settings.output.displayAssignments;
+        const target = isWindowed(assignments, 'mapSim')
+          ? null
+          : resolveDisplayForSurface(displays, assignments, 'mapSim');
+        await invoke('open_projection_sim_window', { displayId: target?.id ?? null });
         projectionSimWindowOpen = true;
         return;
       } catch (e) {
@@ -1100,6 +1211,9 @@
 
   onMount(() => {
     let appMounted = true;
+    // Sim windows report where they settle so the assignment follows a drag.
+    void refreshDisplays();
+    const offSimMoved = (window as any).electronAPI?.on?.('sim-window-moved', handleSimWindowMoved);
     // Debug/automation hook: expose the live store singletons on window so
     // CDP-driven tests and DevTools reach the SAME instances the render
     // loop uses (a dynamic `import('/src/...')` over CDP can resolve to a
@@ -1746,6 +1860,7 @@
       setShowTransitionSink(null);
       compositionTransition.clear();
       unsubscribeSettings();
+      offSimMoved?.();
       for (const id of bridgeTimeouts) clearTimeout(id);
       bridgeTimeouts.clear();
       window.removeEventListener('error', onError);
@@ -6047,6 +6162,7 @@
           class="output-btn"
           class:active={outputMode === 'fullscreen'}
           onclick={toggleFullscreen}
+          oncontextmenu={(e) => openDisplayMenu(e, 'liveOutput')}
         >
           Fullscreen
         </button>
@@ -6054,7 +6170,8 @@
           class="output-btn sim-launch-btn stage-sim-btn"
           class:active={showStage3D || stage3DWindowOpen}
           onclick={openStage3D}
-          title="Open Stage Simulator"
+          oncontextmenu={(e) => openDisplayMenu(e, 'stageSim')}
+          title="Open Stage Simulator — right-click to choose its display"
           aria-label="Open Stage Simulator"
         >
           <svg class="sim-launch-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -6069,7 +6186,8 @@
           class="output-btn sim-launch-btn map-sim-btn"
           class:active={$workspace === 'projection-sim' || projectionSimWindowOpen}
           onclick={openProjectionSim}
-          title="Open Projection Mapping Simulator"
+          oncontextmenu={(e) => openDisplayMenu(e, 'mapSim')}
+          title="Open Projection Mapping Simulator — right-click to choose its display"
           aria-label="Open Projection Mapping Simulator"
         >
           <svg class="sim-launch-icon" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -6082,6 +6200,43 @@
           Map Sim
         </button>
       </div>
+
+      {#if displayMenu}
+        {@const _menu = displayMenu}
+        {@const _assigned = $settings.output.displayAssignments[_menu.surface]}
+        <!-- Display picker. Right-click lives on the button that launches the
+             surface, so the assignment is set where you look for it rather than
+             buried in Settings. -->
+        <div class="display-menu-backdrop" onclick={() => (displayMenu = null)} oncontextmenu={(e) => { e.preventDefault(); displayMenu = null; }} role="presentation"></div>
+        <div class="display-menu" style="left:{_menu.x}px; top:{_menu.y}px;" role="menu">
+          <div class="display-menu-title">{SURFACE_LABELS[_menu.surface]} — display</div>
+          <button class="display-menu-item" class:checked={_assigned == null}
+            onclick={() => chooseSurfaceTarget(_menu.surface, null)}>
+            <span class="display-menu-check">{_assigned == null ? '✓' : ''}</span>
+            Auto
+          </button>
+          {#each cachedDisplays as display}
+            <button class="display-menu-item" class:checked={_assigned === display.id}
+              onclick={() => chooseSurfaceTarget(_menu.surface, display.id)}>
+              <span class="display-menu-check">{_assigned === display.id ? '✓' : ''}</span>
+              {display.label}{display.isPrimary ? ' (main)' : ''}
+              <span class="display-menu-dim">{display.width}×{display.height}</span>
+            </button>
+          {/each}
+          {#if _menu.surface !== 'liveOutput'}
+            <div class="display-menu-sep"></div>
+            <button class="display-menu-item" class:checked={_assigned === 'windowed'}
+              onclick={() => chooseSurfaceTarget(_menu.surface, 'windowed')}>
+              <span class="display-menu-check">{_assigned === 'windowed' ? '✓' : ''}</span>
+              Open in window
+            </button>
+            <div class="display-menu-hint">
+              A floating window never gives up a screen, so this can stay open
+              while the show holds the projector.
+            </div>
+          {/if}
+        </div>
+      {/if}
 
       <div class="toolbar-right">
         <!-- Blackout Button -->
@@ -8248,6 +8403,66 @@
     position: relative;
     flex: 1;
     justify-content: center;
+  }
+
+  /* Display picker (right-click on the output buttons). */
+  .display-menu-backdrop {
+    position: fixed;
+    inset: 0;
+    z-index: 9998;
+  }
+  .display-menu {
+    position: fixed;
+    z-index: 9999;
+    min-width: 230px;
+    padding: 6px;
+    background: #14161c;
+    border: 1px solid #2c313d;
+    border-radius: 6px;
+    box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+    font-size: 12px;
+  }
+  .display-menu-title {
+    padding: 5px 8px 7px;
+    color: #7d8595;
+    font-size: 10px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+  }
+  .display-menu-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    width: 100%;
+    padding: 6px 8px;
+    background: none;
+    border: 0;
+    border-radius: 4px;
+    color: #d7dbe4;
+    text-align: left;
+    cursor: pointer;
+  }
+  .display-menu-item:hover { background: #232734; }
+  .display-menu-item.checked { color: #fff; }
+  .display-menu-check {
+    width: 10px;
+    color: #4f8cff;
+  }
+  .display-menu-dim {
+    margin-left: auto;
+    color: #6c7484;
+    font-size: 10px;
+  }
+  .display-menu-sep {
+    height: 1px;
+    margin: 5px 4px;
+    background: #262b36;
+  }
+  .display-menu-hint {
+    padding: 4px 8px 6px;
+    color: #6c7484;
+    font-size: 10px;
+    line-height: 1.4;
   }
 
   .output-btn {

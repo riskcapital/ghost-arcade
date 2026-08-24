@@ -586,6 +586,22 @@ export interface OutputSettings {
   customHeight: number;
   // Output window state (not persisted — runtime only)
   outputWindowOpen: boolean;
+  /*
+   * Which physical display each output surface opens on.
+   *
+   * null means "auto": claim the first non-primary display nothing else has
+   * taken. Every surface used to resolve `allDisplays.find(d => d.id !==
+   * primary.id)` independently, so with a projector AND a monitor all three
+   * landed on whichever the OS listed first and stacked on top of each other.
+   *
+   * Display ids are not stable across replug, so a stored id that no longer
+   * exists falls back to auto rather than opening nothing.
+   */
+  displayAssignments: {
+    liveOutput: number | 'windowed' | null;
+    stageSim: number | 'windowed' | null;
+    mapSim: number | 'windowed' | null;
+  };
   // Projection controls
   blackout: boolean;
   testPattern: string;
@@ -885,6 +901,11 @@ function createDefaultSettings(): AppSettings {
       customWidth: 1920,
       customHeight: 1080,
       outputWindowOpen: false,
+      displayAssignments: {
+        liveOutput: null,
+        stageSim: null,
+        mapSim: null,
+      },
       blackout: false,
       testPattern: 'none',
       edgeBlendLeft: 0,
@@ -1409,6 +1430,20 @@ function createSettingsStore() {
         saveSettings(newSettings);
         return newSettings;
       });
+    },
+
+    /** Assign an output surface to a display, or null to go back to auto. */
+    setDisplayAssignment(
+      surface: 'liveOutput' | 'stageSim' | 'mapSim',
+      displayId: number | 'windowed' | null,
+    ) {
+      update((s) => ({
+        ...s,
+        output: {
+          ...s.output,
+          displayAssignments: { ...s.output.displayAssignments, [surface]: displayId },
+        },
+      }));
     },
 
     setOutputWindowOpen(open: boolean) {
