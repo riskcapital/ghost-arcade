@@ -120,10 +120,10 @@ describe('native Splat graph', () => {
   });
 
   it('pins the uniform layout', () => {
-    expect(SPLAT_UNIFORM_VEC4S).toBe(58);
-    expect(SPLAT_UNIFORM_BYTES).toBe(58 * 16);
+    expect(SPLAT_UNIFORM_VEC4S).toBe(63);
+    expect(SPLAT_UNIFORM_BYTES).toBe(63 * 16);
     const data = uniformOf(buildGraph());
-    expect(data).toHaveLength(58 * 4);
+    expect(data).toHaveLength(63 * 4);
     // 0-3 view-projection, 4 screen(w, h, time, pointCount)
     expect(v4(data, 4)).toEqual([1920, 1080, 1.25, 512]);
     // 42 stateless physics (the last pre-volumetric slot) still lands here

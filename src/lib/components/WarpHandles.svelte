@@ -1,6 +1,5 @@
 <script lang="ts">
-  import { selectedLayer, project, layers, selectedLayerIds } from '../stores/layers';
-  import { history } from '../stores/history';
+  import { selectedLayer, project, layers, selectedLayerIds, recordDiscreteAction } from '../stores/layers';
   import { settings } from '../stores/settings';
   import { get } from 'svelte/store';
   import type { WarpCorners, Point2D, Layer } from '../types';
@@ -344,7 +343,7 @@
         x: currentPos.x + dx,
         y: currentPos.y + dy,
       });
-      history.record(get(project));
+      recordDiscreteAction();
       return;
     }
 
@@ -358,7 +357,7 @@
       project.setCorner(layer.id, 'bottomLeft', { x: layer.corners.bottomLeft.x + dx, y: layer.corners.bottomLeft.y + dy });
       project.setCorner(layer.id, 'bottomRight', { x: layer.corners.bottomRight.x + dx, y: layer.corners.bottomRight.y + dy });
     }
-    if (movable.length > 0) history.record(get(project));
+    if (movable.length > 0) recordDiscreteAction();
   }
 
   // Set up keyboard event listener
@@ -605,7 +604,7 @@
   }
 
   function handleMouseUp() {
-    if (dragging) history.record(get(project));
+    if (dragging) recordDiscreteAction();
     dragging = null;
     dragTarget = null;
     dragStartPos = null;
@@ -747,7 +746,7 @@
   }
 
   function handleTouchEnd() {
-    if (dragging) history.record(get(project));
+    if (dragging) recordDiscreteAction();
     dragging = null;
     dragTarget = null;
     dragStartPos = null;

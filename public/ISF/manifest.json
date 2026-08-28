@@ -4327,6 +4327,21 @@
       "featured": true,
       "defaultLoad": true,
       "enabled": true
+    },
+    {
+      "file": "Quotron.fs",
+      "tier": "demo",
+      "category": "Generator",
+      "tags": [
+        "terminal",
+        "ascii",
+        "generative",
+        "retro"
+      ],
+      "defaults": {},
+      "featured": true,
+      "defaultLoad": true,
+      "enabled": true
     }
   ]
 }

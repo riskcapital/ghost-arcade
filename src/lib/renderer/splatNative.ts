@@ -15,7 +15,7 @@ export const SPLAT_SHADOW_SHADER_ID = 'splat/shadowvol-v1';
 // down to this during parsing (with the loader reporting decimation).
 export const SPLAT_MAX_POINTS = 1_500_000;
 export const SPLAT_POINT_VEC4S = 2;
-export const SPLAT_UNIFORM_VEC4S = 58;
+export const SPLAT_UNIFORM_VEC4S = 63;
 export const SPLAT_UNIFORM_BYTES = SPLAT_UNIFORM_VEC4S * 16;
 
 /* ============================================================== */
@@ -198,6 +198,8 @@ function unprojectSplatPointer(vp: number[], px: number, py: number): [number, n
   return [world[0] / world[3], world[1] / world[3], world[2] / world[3]];
 }
 const RENDER_MODES = ['points', 'gaussians', 'spheres', 'billboards', 'cubes'];
+// Order is the shader's blend index — keep in sync with SplatEffectBlendMode.
+const SPLAT_EFFECT_BLENDS = ['add', 'screen', 'multiply', 'replace'];
 // Names must match the panel/WebGL canon (SplatRenderer.getColorEffectIndex):
 // 'chromatic' and 'neon', not 'chromaticShift'/'neonGlow'.
 const COLOR_EFFECTS = [
@@ -454,7 +456,10 @@ export function buildSplatNativeComputeGraph(options: SplatNativeGraphOptions) {
   const interaction = c.mouseInteraction as string | undefined;
   const mouseModeName = interaction && interaction !== 'none' ? interaction : (c.mouseMode ?? 'attract');
   const mouseModeIdx = Math.max(0, idx(MOUSE_MODES, mouseModeName));
-  const mouseStrength = clamp(finite(c.mouseStrength, 1), 0, 2);
+  // Upper bounds match the widened panel ranges in splatParamSchema.ts
+  // (Strength 0.1-8, Radius 0.05-3). Clamping to the old 2/1 caps here
+  // silently swallowed anything past the old maximum.
+  const mouseStrength = clamp(finite(c.mouseStrength, 1.2), 0, 8);
   // The panel floors mouseInfluence to 1 whenever an interaction is chosen,
   // but MIDI/preset writes to mouseInteraction skip that mirror — apply the
   // same floor here so Strength is live whenever the interaction is on.
@@ -468,7 +473,7 @@ export function buildSplatNativeComputeGraph(options: SplatNativeGraphOptions) {
   const mouseWorld = mouseActive
     ? unprojectSplatPointer(vp, clamp(finite(pointer!.x, 0.5), 0, 1), clamp(finite(pointer!.y, 0.5), 0, 1))
     : [0, 0, 0];
-  const mouseRadius = clamp(finite(c.mouseRadius, 0.2), 0, 1)
+  const mouseRadius = clamp(finite(c.mouseRadius, 0.45), 0, 3)
     * 4 * Math.max(0.05, finite(c.scaleUniform, 1)) * 0.5;
 
   const slicePlane = (c as { slicePlane?: { enabled?: boolean; axis?: string; position?: number; thickness?: number; animated?: boolean; speed?: number } }).slicePlane;
@@ -664,6 +669,33 @@ export function buildSplatNativeComputeGraph(options: SplatNativeGraphOptions) {
   if (invVp) data.set(invVp, 53 * 4);
   const eye = splatCameraEye(c, time);
   put4(57, eye[0], eye[1], eye[2], 0);
+
+  // ── Material (58-60) ──
+  const specTint = hexToRgb01(c.specularTint as string | undefined, '#ffffff');
+  const rimTintCol = hexToRgb01(c.rimTint as string | undefined, '#ffffff');
+  put4(58, specTint[0], specTint[1], specTint[2],
+    clamp(finite(c.specularShininess, 24), 1, 128));
+  put4(59, rimTintCol[0], rimTintCol[1], rimTintCol[2],
+    clamp(finite(c.fresnelPower, 3), 0.5, 8));
+  put4(60,
+    clamp(finite(c.metallic, 0), 0, 1),
+    Math.max(0, finite(c.emissiveStrength, 0)),
+    Math.max(0, finite(c.bloom, 0)),
+    clamp(finite(c.bloomThreshold, 0.5), 0, 1));
+
+  // ── Creative-effect shaping (61-62) ──
+  const constBlendIdx = Math.max(0, idx(SPLAT_EFFECT_BLENDS, c.constellationBlend ?? 'add'));
+  const constWaveAxisIdx = c.constellationWaveAxis === 'x' ? 0 : c.constellationWaveAxis === 'z' ? 2 : 1;
+  put4(61,
+    Math.max(0, finite(c.datamoshSpeed, 1)),
+    Math.max(0, finite(c.constellationSpeed, 1)),
+    constBlendIdx,
+    c.constellationWave === true ? 1 : 0);
+  put4(62,
+    constWaveAxisIdx,
+    Math.max(0.01, finite(c.constellationWaveFrequency, 1.5)),
+    finite(c.constellationWaveSpeed, 1),
+    clamp(finite(c.bloomRadius, 2), 1, 4));
 
   const sourceId = String(options.sourceId || 'splat-native-source');
   const safe = sourceId.replace(/[^a-zA-Z0-9:_-]+/g, '_');
@@ -905,6 +937,11 @@ struct SplatParams {
   iv2: vec4<f32>,      // 55: invViewProj col2
   iv3: vec4<f32>,      // 56: invViewProj col3
   eye: vec4<f32>,      // 57: cameraEye.xyz, 0
+  mat0: vec4<f32>,     // 58: specTint.rgb, shininess
+  mat1: vec4<f32>,     // 59: rimTint.rgb, fresnelPower
+  mat2: vec4<f32>,     // 60: metallic, emissive, glowStrength, glowThreshold
+  cfx0: vec4<f32>,     // 61: datamoshSpeed, constSpeed, constBlend, constWaveOn
+  cfx1: vec4<f32>,     // 62: constWaveAxis, constWaveFreq, constWaveSpeed, glowRadius
 }
 @group(0) @binding(0) var<uniform> sp: SplatParams;
 @group(0) @binding(1) var<storage, read> points: array<vec4<f32>>;
@@ -1623,16 +1660,30 @@ fn apply_color_effect(color_in: vec3<f32>, wp: vec3<f32>, t: f32) -> vec3<f32> {
     let keyDir = normalize(sp.li2.xyz);
     let keyDiffuse = max(0.0, dot(pointNormal, keyDir));
     let softness = sp.li2.w;
-    var rim = pow(1.0 - max(pointNormal.z, 0.0), mix(5.0, 1.25, softness));
+    // Fresnel/rim: fresnelPower (mat1.w) now shapes the falloff. Softness
+    // still widens it, but the material param is the primary control —
+    // low = broad wash across the splat, high = a thin edge highlight.
+    let fresnelP = max(0.5, sp.mat1.w);
+    var rim = pow(1.0 - max(pointNormal.z, 0.0), mix(fresnelP * 1.6, fresnelP * 0.4, softness));
     rim = rim * max(0.0, dot(pointNormal, normalize(sp.li4.xyz)) * 0.5 + 0.5);
-    let halfVec = normalize(keyDir + vec3<f32>(0.0, 0.0, 1.0));
-    let specular = pow(max(0.0, dot(pointNormal, halfVec)), mix(48.0, 6.0, softness));
+    // Specular now tracks the real camera (sp.eye) instead of a hardcoded
+    // +Z view vector, so highlights move when the cloud is orbited.
+    let viewDir = normalize(sp.eye.xyz - wp);
+    let halfVec = normalize(keyDir + viewDir);
+    // Shininess (mat0.w) sets the lobe tightness; softness still broadens it.
+    let shininess = max(1.0, sp.mat0.w);
+    let specular = pow(max(0.0, dot(pointNormal, halfVec)), mix(shininess, max(1.0, shininess * 0.15), softness));
     let heightShadow = smoothstep(-1.5, 1.5, wp.y);
     let shadow = mix(1.0 - sp.li1.w, 1.0, mix(heightShadow, 1.0, softness));
     var lit = color * max(sp.li0.y, 0.0);
     lit = lit + color * sp.li1.xyz * keyDiffuse * sp.li0.z * shadow;
-    lit = lit + sp.li3.xyz * rim * sp.li3.w;
-    lit = lit + sp.li1.xyz * specular * sp.li0.w;
+    lit = lit + sp.li3.xyz * sp.mat1.xyz * rim * sp.li3.w;
+    // Metallic biases the specular toward the point's own colour (metals
+    // tint their highlight) and away from the light/tint colour.
+    let specColor = mix(sp.li1.xyz * sp.mat0.xyz, color, clamp(sp.mat2.x, 0.0, 1.0));
+    lit = lit + specColor * specular * sp.li0.w;
+    // Emissive: unlit add-back so a point can glow regardless of the rig.
+    lit = lit + color * max(0.0, sp.mat2.y);
     color = lit;
   }
   color = color * volShadow;
@@ -1698,14 +1749,35 @@ fn apply_color_effect(color_in: vec3<f32>, wp: vec3<f32>, t: f32) -> vec3<f32> {
     var hsv = sp_rgb2hsv(frag.rgb);
     hsv.x = fract(hsv.x + kaleid * ci);
     frag = vec4<f32>(sp_hsv2rgb(hsv), frag.a);
-  } else if (cfx == 3) { // constellation
-    let sparkle = sin(t * 10.0 + in.misc.x * 0.1) * 0.5 + 0.5;
+  } else if (cfx == 3) { // constellation (per-point sparkle, not lines)
+    // Rate is now driven by constellationSpeed (cfx0.y); 10.0 keeps the
+    // original feel at speed = 1.
+    let cs = sp.cfx0.y;
+    var phase = t * 10.0 * cs + in.misc.x * 0.1;
+    // Wave mode: offset each point's phase by its position along the chosen
+    // axis so the sparkle sweeps across the cloud as a travelling front
+    // instead of firing uniformly. Mirrors the Animation group's wave math.
+    if (sp.cfx0.w > 0.5) {
+      let waveAxis = sp_axis(sp.cfx1.x);
+      let along = dot(wp, waveAxis);
+      phase = along * sp.cfx1.y - t * sp.cfx1.z * 6.28318 + in.misc.x * 0.02;
+    }
+    let sparkle = sin(phase) * 0.5 + 0.5;
     let twinkle = pow(sparkle, 3.0);
-    frag = vec4<f32>(frag.rgb + vec3<f32>(twinkle * ci), mix(frag.a, frag.a * (0.5 + twinkle), ci));
+    let spark = vec3<f32>(twinkle * ci);
+    let blend = i32(sp.cfx0.z + 0.5);
+    var rgb = frag.rgb + spark;                                   // 0: add
+    if (blend == 1) { rgb = 1.0 - (1.0 - frag.rgb) * (1.0 - spark); } // screen
+    if (blend == 2) { rgb = frag.rgb * (1.0 - spark); }              // multiply
+    if (blend == 3) { rgb = mix(frag.rgb, spark, ci); }              // replace
+    frag = vec4<f32>(rgb, mix(frag.a, frag.a * (0.5 + twinkle), ci));
   } else if (cfx == 4) { // datamosh
-    let glitch = step(0.95, sp_hash2(vec2<f32>(floor(t * 10.0), wp.y)));
+    // Flicker rate scales with datamoshSpeed (cfx0.x); 1.0 reproduces the
+    // original hardcoded 10Hz re-roll.
+    let dms = sp.cfx0.x;
+    let glitch = step(0.95, sp_hash2(vec2<f32>(floor(t * 10.0 * dms), wp.y)));
     if (glitch > 0.5) { frag = vec4<f32>(frag.bgr, frag.a); }
-    let shift = sp_hash2(vec2<f32>(t, wp.x)) * ci * 0.1;
+    let shift = sp_hash2(vec2<f32>(t * dms, wp.x)) * ci * 0.1;
     frag.r = frag.r + shift;
     frag.b = frag.b - shift;
   } else if (cfx == 5) { // pixel sort
@@ -1725,6 +1797,27 @@ fn apply_color_effect(color_in: vec3<f32>, wp: vec3<f32>, t: f32) -> vec3<f32> {
     let reveal = 1.0 - smoothstep(0.0, 1.0, in.misc.w);
     let inf = min(sp.mo1.x, 1.0);
     frag.a = frag.a * (reveal * inf + (1.0 - inf));
+  }
+
+  // ── Per-splat glow ("bloom") ──
+  // A real full-frame bloom is available via the generic layer Effect chain;
+  // this is the cheaper per-point variant, which has the advantage of
+  // staying welded to bright points as they move rather than smearing in
+  // screen space. Points whose luminance clears the threshold get an
+  // additive halo that reaches past the sprite core out to glowRadius,
+  // falling off smoothly so it reads as light rather than a bigger dot.
+  let glowStrength = max(0.0, sp.mat2.z);
+  if (glowStrength > 0.0) {
+    let lum = dot(frag.rgb, vec3<f32>(0.299, 0.587, 0.114));
+    let over = max(0.0, lum - clamp(sp.mat2.w, 0.0, 1.0));
+    if (over > 0.0) {
+      let gr = clamp(sp.cfx1.w, 1.0, 4.0);
+      // dist is 0 at the sprite centre, 0.5 at its edge; extend the falloff
+      // to gr * 0.5 so radius > 1 spills beyond the core.
+      let halo = 1.0 - smoothstep(0.0, 0.5 * gr, dist);
+      let add = over * glowStrength * halo;
+      frag = vec4<f32>(frag.rgb + frag.rgb * add, min(1.0, frag.a + add * 0.35));
+    }
   }
 
   if (frag.a < 0.004) { discard; }

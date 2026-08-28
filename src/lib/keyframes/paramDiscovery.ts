@@ -2,6 +2,7 @@ import type { Layer } from '../types';
 import { effectParamLabels } from '../effects/effectUX';
 import { getShaderDef } from '../renderer/gpuShaderCatalog';
 import { SPLAT_AUTOMATABLE_PARAMS } from '../splat/splatParamSchema';
+import { MODEL3D_AUTOMATABLE_PARAMS } from '../model3d/model3dParamSchema';
 
 export interface KeyframeableParam {
   key: string;             // track key: "shader:speed", "fx:abc:blurRadius", "fx:abc:enabled"
@@ -55,80 +56,10 @@ export function discoverKeyframeableParams(layer: Layer): KeyframeableParam[] {
   // Use dot-paths after the "model3d:" prefix for nested fields (echo.count, camera.fov).
   if (layer.type === 'model3d' && layer.model3dContent) {
     const mc: any = layer.model3dContent;
-    const m3d: { path: string; label: string; min: number; max: number; step: number; group: string }[] = [
-      // Transform
-      { path: 'scaleUniform',  label: 'Scale',         min: 0.01, max: 10,  step: 0.01, group: '3D Transform' },
-      { path: 'rotationX',     label: 'Rotation X',    min: -360, max: 360, step: 1,    group: '3D Transform' },
-      { path: 'rotationY',     label: 'Rotation Y',    min: -360, max: 360, step: 1,    group: '3D Transform' },
-      { path: 'rotationZ',     label: 'Rotation Z',    min: -360, max: 360, step: 1,    group: '3D Transform' },
-      { path: 'positionX',     label: 'Position X',    min: -5,   max: 5,   step: 0.01, group: '3D Transform' },
-      { path: 'positionY',     label: 'Position Y',    min: -5,   max: 5,   step: 0.01, group: '3D Transform' },
-      { path: 'positionZ',     label: 'Position Z',    min: -5,   max: 5,   step: 0.01, group: '3D Transform' },
-      // Camera
-      { path: 'camera.fov',         label: 'FOV',           min: 10,   max: 120, step: 1,    group: '3D Camera' },
-      { path: 'camera.distance',    label: 'Distance',      min: 0.5,  max: 30,  step: 0.1,  group: '3D Camera' },
-      { path: 'camera.orbitX',      label: 'Orbit X',       min: -90,  max: 90,  step: 1,    group: '3D Camera' },
-      { path: 'camera.orbitY',      label: 'Orbit Y',       min: -360, max: 360, step: 1,    group: '3D Camera' },
-      { path: 'camera.panX',        label: 'Pan X',         min: -5,   max: 5,   step: 0.01, group: '3D Camera' },
-      { path: 'camera.panY',        label: 'Pan Y',         min: -5,   max: 5,   step: 0.01, group: '3D Camera' },
-      { path: 'camera.roll',        label: 'Roll',          min: -180, max: 180, step: 1,    group: '3D Camera' },
-      { path: 'camera.rotateSpeed', label: 'Auto-Rotate Speed', min: -5, max: 5, step: 0.01, group: '3D Camera' },
-      // Deformation
-      { path: 'deformationIntensity', label: 'Deform Intensity', min: 0,   max: 2,  step: 0.01, group: '3D Deformation' },
-      { path: 'deformationSpeed',     label: 'Deform Speed',     min: 0,   max: 5,  step: 0.01, group: '3D Deformation' },
-      { path: 'deformationScale',     label: 'Deform Scale',     min: 0.1, max: 10, step: 0.05, group: '3D Deformation' },
-      { path: 'deformationSpread',    label: 'Deform Spread',    min: 0,   max: 6,  step: 0.05, group: '3D Deformation' },
-      // Animation
-      { path: 'animationSpeed',     label: 'Anim Speed',     min: 0, max: 5, step: 0.01, group: '3D Animation' },
-      { path: 'animationIntensity', label: 'Anim Intensity', min: 0, max: 2, step: 0.01, group: '3D Animation' },
-      { path: 'animationProgress',  label: 'Anim Progress',  min: 0, max: 1, step: 0.001, group: '3D Animation' },
-      // Echo
-      { path: 'echo.count',             label: 'Echo Count',         min: 1, max: 30, step: 1,    group: '3D Echo' },
-      { path: 'echo.spacing',           label: 'Echo Spacing',       min: 0, max: 2,  step: 0.01, group: '3D Echo' },
-      { path: 'echo.fadeRate',          label: 'Echo Fade',          min: 0, max: 3,  step: 0.01, group: '3D Echo' },
-      { path: 'echo.scaleVariation',    label: 'Echo Scale Var',     min: 0, max: 1,  step: 0.01, group: '3D Echo' },
-      { path: 'echo.rotationVariation', label: 'Echo Rotation Var',  min: 0, max: 1,  step: 0.01, group: '3D Echo' },
-      { path: 'echo.colorVariation',    label: 'Echo Color Var',     min: 0, max: 1,  step: 0.01, group: '3D Echo' },
-      { path: 'echo.phaseOffset',       label: 'Echo Phase Offset',  min: 0, max: 2,  step: 0.01, group: '3D Echo' },
-      { path: 'echo.speed',             label: 'Echo Speed',         min: 0, max: 5,  step: 0.01, group: '3D Echo' },
-      // Material
-      { path: 'materialOpacity',           label: 'Mat Opacity',    min: 0, max: 1, step: 0.01, group: '3D Material' },
-      { path: 'materialRoughness',         label: 'Roughness',      min: 0, max: 1, step: 0.01, group: '3D Material' },
-      { path: 'materialMetalness',         label: 'Metalness',      min: 0, max: 1, step: 0.01, group: '3D Material' },
-      { path: 'materialEmissiveIntensity', label: 'Emissive',       min: 0, max: 5, step: 0.01, group: '3D Material' },
-      { path: 'glassThickness',            label: 'Glass Thickness', min: 0,  max: 5, step: 0.01, group: '3D Material' },
-      { path: 'glassIOR',                  label: 'Glass IOR',       min: 1,  max: 3, step: 0.01, group: '3D Material' },
-      { path: 'chromeReflectivity',        label: 'Chrome Reflect',  min: 0,  max: 1, step: 0.01, group: '3D Material' },
-      { path: 'dissolveAmount',            label: 'Dissolve',        min: 0,  max: 1, step: 0.01, group: '3D Material' },
-      // Lighting
-      { path: 'ambientIntensity',     label: 'Ambient',     min: 0, max: 2, step: 0.01, group: '3D Lighting' },
-      { path: 'directionalIntensity', label: 'Key Power',   min: 0, max: 3, step: 0.01, group: '3D Lighting' },
-      { path: 'environmentIntensity', label: 'Environment', min: 0, max: 3, step: 0.01, group: '3D Lighting' },
-      { path: 'toneMappingExposure',  label: 'Exposure',    min: 0.1, max: 3, step: 0.01, group: '3D Lighting' },
-      { path: 'keyLightAzimuth',      label: 'Key Azimuth', min: -180, max: 180, step: 1, group: '3D Lighting' },
-      { path: 'keyLightElevation',    label: 'Key Elevation', min: -10, max: 90, step: 1, group: '3D Lighting' },
-      { path: 'fillIntensity',        label: 'Fill Power',  min: 0, max: 3, step: 0.01, group: '3D Lighting' },
-      { path: 'rimIntensity',         label: 'Rim Power',   min: 0, max: 3, step: 0.01, group: '3D Lighting' },
-      { path: 'shadowSoftness',       label: 'Shadow Softness', min: 0, max: 4, step: 0.01, group: '3D Shadows' },
-      { path: 'shadowBias',           label: 'Shadow Bias', min: -0.01, max: 0.01, step: 0.0001, group: '3D Shadows' },
-      // Wireframe / Decorations
-      { path: 'wireframeOpacity',     label: 'Wireframe Opacity', min: 0, max: 1, step: 0.01, group: '3D Style' },
-      { path: 'wireframeAnimSpeed',   label: 'Wireframe Speed',   min: 0, max: 5, step: 0.01, group: '3D Style' },
-      { path: 'vertexDecorationSize', label: 'Vertex Deco Size',  min: 0.001, max: 0.5, step: 0.001, group: '3D Style' },
-      // Audio reactivity
-      { path: 'audio.scaleResponse',     label: 'Audio→Scale',     min: 0, max: 5, step: 0.01, group: '3D Audio' },
-      { path: 'audio.rotationResponse',  label: 'Audio→Rotation',  min: 0, max: 5, step: 0.01, group: '3D Audio' },
-      { path: 'audio.deformResponse',    label: 'Audio→Deform',    min: 0, max: 5, step: 0.01, group: '3D Audio' },
-      // Beat sync
-      { path: 'beatScale',   label: 'Beat Scale',   min: 0, max: 2, step: 0.01, group: '3D Beat' },
-      { path: 'beatRotate',  label: 'Beat Rotate',  min: 0, max: 2, step: 0.01, group: '3D Beat' },
-      { path: 'beatExplode', label: 'Beat Explode', min: 0, max: 2, step: 0.01, group: '3D Beat' },
-    ];
-
-    for (const def of m3d) {
-      const cur = readDotPath(mc, def.path);
+    for (const def of MODEL3D_AUTOMATABLE_PARAMS) {
+      const cur = readDotPath(mc, def.key);
       params.push({
-        key: `model3d:${def.path}`,
+        key: `model3d:${def.key}`,
         label: def.label,
         type: 'number',
         min: def.min,

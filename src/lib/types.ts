@@ -1757,10 +1757,22 @@ export type SplatCreativeEffectType =
   | 'none'
   | 'feedback'          // Temporal feedback loops
   | 'kaleidoscope'      // Kaleidoscopic mirroring
-  | 'constellation'     // Connect nearby points with lines
+  | 'constellation'     // Per-point sparkle / twinkle pulse
   | 'datamosh'          // Digital glitch aesthetic
   | 'pixelSort'         // Pixel sorting effect
   | 'echo';             // Temporal echo/ghosting
+
+/**
+ * How a creative effect's contribution combines with the point's colour.
+ * Deliberately a small set — these are evaluated per-splat inside the
+ * fragment shader, NOT the layer-level `BlendMode` (which composites the
+ * whole rendered layer downstream in the engine).
+ */
+export type SplatEffectBlendMode =
+  | 'add'               // Additive — the original constellation behaviour
+  | 'screen'            // Softer highlight, never clips to white as hard
+  | 'multiply'          // Darkens; sparkle punches holes instead of dots
+  | 'replace';          // Sparkle colour overrides the point colour
 
 // Render mode for points
 export type SplatRenderMode =
@@ -2005,6 +2017,17 @@ export interface SplatContent {
   shadowStrength: number; // 0-1
   shadowSoftness: number; // 0-1
   specularStrength: number; // 0-2
+  // Material — splat had lighting but no material model at all. These sit
+  // between the point's own colour and the lighting rig: shininess tightens
+  // the specular lobe, the two tints colour the specular/rim highlights
+  // independently of the light colours, and fresnelPower shapes the rim
+  // falloff (low = broad wash, high = thin edge).
+  specularShininess: number; // 1-128
+  specularTint: string;
+  rimTint: string;
+  fresnelPower: number; // 0.5-8
+  metallic: number; // 0-1 — biases specular toward the point's own colour
+  emissiveStrength: number; // 0-3 — self-illumination, unlit add-back
   atmosphereEnabled: boolean;
   atmosphereDensity: number; // 0-1
   atmosphereColor: string;
@@ -2046,6 +2069,19 @@ export interface SplatContent {
   constellationDistance: number;  // 0-1
   constellationMaxDistance: number;  // Alias 0-1
   constellationOpacity: number;   // 0-1
+  // Constellation twinkle shaping. The effect is a per-point sparkle (it
+  // does not draw connecting lines); speed sets the pulse rate, blend picks
+  // how the sparkle combines with the point colour, and the wave controls
+  // turn the uniform sparkle into a travelling front across the cloud.
+  constellationSpeed: number;     // 0-8 pulse rate multiplier
+  constellationBlend: SplatEffectBlendMode;
+  constellationWave: boolean;
+  constellationWaveAxis: 'x' | 'y' | 'z';
+  constellationWaveFrequency: number; // 0.1-8 spatial frequency
+  constellationWaveSpeed: number; // -4..4 travel speed (sign = direction)
+  // Datamosh flicker rate. Was hardcoded at 10Hz with no control; intensity
+  // only ever scaled the RGB shift, never the rate.
+  datamoshSpeed: number;          // 0-4 (1 = the original 10Hz feel)
   echoCount: number;              // 1-10
   echoDelay: number;              // 0-1
 
@@ -2056,11 +2092,18 @@ export interface SplatContent {
   mouseMode: 'attract' | 'repel' | 'swirl' | 'reveal';
   mouseInteraction: SplatMouseInteraction;  // Alias for UI
 
-  // Post-processing
-  bloom: number;                  // 0-3
-  bloomThreshold: number;         // 0-1
-  chromatic: number;              // 0-0.02
-  vignette: number;               // 0-1
+  // Post-processing.
+  // NOTE: `chromatic` and `vignette` are still inert here — full-frame post
+  // belongs to the generic layer Effect chain (Add Effect -> Bloom /
+  // Chromatic Aberration / Vignette), which splat layers already route
+  // through. `bloom`/`bloomThreshold` ARE live: they drive a per-splat glow
+  // halo in the splat shader (cheap, and unlike a full-frame pass it keeps
+  // the glow attached to bright points as they move).
+  bloom: number;                  // 0-3   glow strength
+  bloomThreshold: number;         // 0-1   luminance above which points glow
+  bloomRadius: number;            // 1-4   halo size multiplier on the sprite
+  chromatic: number;              // 0-0.02 (inert — use the Effect chain)
+  vignette: number;               // 0-1    (inert — use the Effect chain)
 
   // Per-parameter Auto playheads. Audio/LFO routing lives in the
   // modulation store; Auto persists with the splat layer itself.
@@ -2254,6 +2297,12 @@ export function createDefaultSplatContent(): SplatContent {
     shadowStrength: 0.35,
     shadowSoftness: 0.5,
     specularStrength: 0.35,
+    specularShininess: 24,
+    specularTint: '#ffffff',
+    rimTint: '#ffffff',
+    fresnelPower: 3,
+    metallic: 0,
+    emissiveStrength: 0,
     atmosphereEnabled: false,
     atmosphereDensity: 0.25,
     atmosphereColor: '#6a7da8',
@@ -2288,18 +2337,29 @@ export function createDefaultSplatContent(): SplatContent {
     constellationDistance: 0.1,
     constellationMaxDistance: 0.1,  // Alias
     constellationOpacity: 0.5,
+    constellationSpeed: 1,
+    constellationBlend: 'add',
+    constellationWave: false,
+    constellationWaveAxis: 'y',
+    constellationWaveFrequency: 1.5,
+    constellationWaveSpeed: 1,
+    datamoshSpeed: 1,
     echoCount: 3,
     echoDelay: 0.1,
 
-    // Mouse interaction
+    // Mouse interaction. Radius/strength default higher than the original
+    // 0.2/0.5: at those values the affected zone was ~15% of the cloud and
+    // the displacement ~7% of its width, which read as "not working" unless
+    // you hovered exactly over the cloud and knew what to look for.
     mouseInfluence: 0,
-    mouseRadius: 0.2,
-    mouseStrength: 0.5,  // Alias for UI
+    mouseRadius: 0.45,
+    mouseStrength: 1.2,  // Alias for UI
     mouseMode: 'attract',
     mouseInteraction: 'none',  // Alias for UI
 
     bloom: 0,
     bloomThreshold: 0.5,
+    bloomRadius: 2,
     chromatic: 0,
     vignette: 0,
   };

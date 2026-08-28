@@ -3962,6 +3962,21 @@
                   }} />
               </div>
             </div>
+          {:else if input.TYPE === 'event'}
+            <!-- ISF `event` inputs are momentary actions, not values. The
+                 uniform is a float, so clicking writes a fresh random one:
+                 a generative shader reads it as its seed and re-rolls, and
+                 a shader that only wants "did it fire" still sees a change.
+                 Goes through updateShaderParam like every other control, so
+                 it persists, keyframes and MIDI-maps for free. -->
+            <div class="param-row">
+              <button
+                type="button"
+                class="param-event-btn"
+                title="Re-roll this shader"
+                onclick={() => updateShaderParam(input.NAME, Math.random())}
+              >{input.LABEL || input.NAME}</button>
+            </div>
           {:else if input.TYPE === 'bool'}
             <div class="param-row">
               <label>{input.LABEL || input.NAME}</label>
@@ -5615,6 +5630,29 @@
     font-size: 11px;
     outline: none;
     cursor: pointer;
+  }
+  /* ISF `event` inputs — a momentary action, styled as an accented
+     button so it reads as "do something" rather than "set a value". */
+  .param-event-btn {
+    flex: 1;
+    background-color: #1a1a2e;
+    color: #BB86FC;
+    border: 1px solid #BB86FC;
+    border-radius: 3px;
+    padding: 5px 8px;
+    font-size: 11px;
+    font-weight: 600;
+    letter-spacing: 0.04em;
+    outline: none;
+    cursor: pointer;
+    transition: background-color 0.15s, color 0.15s;
+  }
+  .param-event-btn:hover {
+    background-color: #BB86FC;
+    color: #12121c;
+  }
+  .param-event-btn:active {
+    transform: translateY(1px);
   }
   .param-select:focus {
     border-color: #BB86FC;
