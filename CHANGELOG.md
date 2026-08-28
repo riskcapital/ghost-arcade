@@ -2,6 +2,39 @@
 
 ---
 
+## v2.0.1 - Keyframing, Undo, and Point-Cloud Materials (August 2026)
+
+- The on-canvas transform gizmo is now keyframeable on point cloud and 3D
+  model layers, so object position, rotation and scale can be animated to
+  build camera-style moves.
+- Keyframes apply while you scrub the timeline, not only during playback.
+  Setting a start and end pose and then adjusting the middle no longer means
+  working blind.
+- Rendered video honors keyframes. Export drives the timeline by seeking, and
+  that path previously skipped every keyframe, so exports came out static.
+- Undo and redo now cover layer property edits across the app. Previously only
+  structural actions (adding, removing and grouping layers) were recorded, so
+  a single undo after editing a layer discarded the whole layer.
+- Undo and redo now cover keyframe edits — adding, deleting, moving, retiming,
+  value and easing changes — restored together with the project state.
+- Point cloud layers gain a Material and Glow section: shininess, metallic,
+  fresnel power, emissive, independent specular and rim tints, and a per-point
+  glow with threshold and radius.
+- Point cloud specular highlights now track the camera. They were computed
+  against a fixed view direction and did not move when the cloud was orbited.
+- Point cloud Datamosh gains a flicker-speed control, previously fixed at a
+  hardcoded rate. Constellation gains speed, a per-effect blend mode, and a
+  travelling wave mode.
+- Point cloud mouse interaction is stronger by default with a wider usable
+  range; the previous defaults were nearly invisible.
+- New Quotron ISF generator: a 1970s stock-quote terminal with eleven live
+  programs, six phosphors, seven glyph ROMs and seven screen aberrations,
+  rolled from a seed with a Generate button. The character grid adapts to the
+  composition resolution.
+- ISF `event` inputs now render as action buttons instead of sliders.
+
+---
+
 ## v1.9.99 - Live Performance and Control Polish (July 2026)
 
 - Layer blending, armed video triggering, master-warp keyboard nudging, and

@@ -1,6 +1,9 @@
 <script lang="ts">
   import { onDestroy, onMount } from 'svelte';
-  import { project, selectedLayer } from '../stores/layers';
+  import { project, selectedLayer, recordDiscreteAction } from '../stores/layers';
+  import { keyframeTimeline } from '../stores/keyframeTimeline';
+  import { SPLAT_AUTOMATABLE_PARAM_MAP } from '../splat/splatParamSchema';
+  import { MODEL3D_AUTOMATABLE_PARAM_MAP } from '../model3d/model3dParamSchema';
   import type { Model3DContent, SplatContent } from '../types';
 
   export let containerWidth = 1920;
@@ -38,12 +41,31 @@
   $: centerY = Math.max(86, containerHeight - 104);
   $: displayScale = Math.max(0.8, Math.min(1.25, zoom || 1));
 
+  // Hands a changed field to the keyframe timeline. autoRecord() itself is a
+  // no-op unless the track is armed, so it's safe to call unconditionally on
+  // every transform change — same pattern SplatPanel's doUpdate() uses.
+  function recordAutomatable(key: string, value: unknown) {
+    if (!layer || typeof value !== 'number') return;
+    if (layer.type === 'splat') {
+      const descriptor = SPLAT_AUTOMATABLE_PARAM_MAP.get(key as keyof SplatContent & string);
+      if (descriptor) keyframeTimeline.autoRecord(layer.id, `splat:${key}`, value, descriptor.label, 'number');
+    } else if (layer.type === 'model3d') {
+      const descriptor = MODEL3D_AUTOMATABLE_PARAM_MAP.get(key);
+      if (descriptor) keyframeTimeline.autoRecord(layer.id, `model3d:${key}`, value, descriptor.label, 'number');
+    }
+  }
+
   function updateTransform(updates: Partial<SplatContent> & Partial<Model3DContent>) {
     if (!layer) return;
     if (layer.type === 'splat') {
       project.updateSplatContent(layer.id, updates as Partial<SplatContent>);
     } else if (layer.type === 'model3d') {
       project.updateModel3DContent(layer.id, updates as Partial<Model3DContent>);
+    } else {
+      return;
+    }
+    for (const [key, value] of Object.entries(updates)) {
+      recordAutomatable(key, value);
     }
   }
 
@@ -66,6 +88,7 @@
     updateTransform({ [key]: current + degrees });
     mode = 'rotate';
     axis = rotationAxis;
+    recordDiscreteAction();
   }
 
   function beginDrag(event: PointerEvent, dragAxis: GizmoAxis = axis) {
@@ -146,10 +169,15 @@
 
   function endDrag(event: PointerEvent) {
     if (drag && event.pointerId !== drag.pointerId) return;
+    const hadDrag = !!drag;
     drag = null;
     window.removeEventListener('pointermove', handleDrag);
     window.removeEventListener('pointerup', endDrag);
     window.removeEventListener('pointercancel', endDrag);
+    // One undo step per drag, matching WarpHandles.svelte's mouseup pattern —
+    // handleDrag() never records mid-drag, so this is the only point a real
+    // transform change becomes undoable.
+    if (hadDrag) recordDiscreteAction();
   }
 
   function frameObject(event: MouseEvent) {
@@ -166,21 +194,25 @@
       positionZ: 0,
     };
     if (layer.type === 'splat') {
-      project.updateSplatContent(layer.id, { ...updates, cameraDistance: 5, cameraOrbitX: 0, cameraOrbitY: 0 });
+      const splatUpdates = { ...updates, cameraDistance: 5, cameraOrbitX: 0, cameraOrbitY: 0 };
+      project.updateSplatContent(layer.id, splatUpdates);
+      for (const [key, value] of Object.entries(splatUpdates)) {
+        recordAutomatable(key, value);
+      }
     } else if (layer.type === 'model3d') {
+      const cameraResets = { distance: 5, orbitX: 0, orbitY: 20, roll: 0, panX: 0, panY: 0 };
       project.updateModel3DContent(layer.id, {
         ...updates,
-        camera: {
-          ...layer.model3dContent!.camera,
-          distance: 5,
-          orbitX: 0,
-          orbitY: 20,
-          roll: 0,
-          panX: 0,
-          panY: 0,
-        },
+        camera: { ...layer.model3dContent!.camera, ...cameraResets },
       });
+      for (const [key, value] of Object.entries(updates)) {
+        recordAutomatable(key, value);
+      }
+      for (const [key, value] of Object.entries(cameraResets)) {
+        recordAutomatable(`camera.${key}`, value);
+      }
     }
+    recordDiscreteAction();
   }
 
   function handleKeydown(event: KeyboardEvent) {

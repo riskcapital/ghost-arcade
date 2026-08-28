@@ -91,6 +91,14 @@ export const SPLAT_AUTOMATABLE_PARAMS: readonly SplatParamDescriptor[] = [
   p('shadowSoftness', 'Shadow Softness', 'Lighting', 0, 1, 0.01),
   p('specularStrength', 'Specular Strength', 'Lighting', 0, 2, 0.01),
 
+  p('specularShininess', 'Shininess', 'Material', 1, 128, 1),
+  p('fresnelPower', 'Fresnel Power', 'Material', 0.5, 8, 0.05),
+  p('metallic', 'Metallic', 'Material', 0, 1, 0.01),
+  p('emissiveStrength', 'Emissive', 'Material', 0, 3, 0.01),
+  p('bloom', 'Glow Strength', 'Material', 0, 3, 0.01),
+  p('bloomThreshold', 'Glow Threshold', 'Material', 0, 1, 0.01),
+  p('bloomRadius', 'Glow Radius', 'Material', 1, 4, 0.05),
+
   p('volumetricDensity', 'Haze Density', 'Volumetric Light', 0, 3, 0.01),
   p('volumetricStrength', 'Shaft Power', 'Volumetric Light', 0, 3, 0.01),
   p('volumetricShadowDensity', 'Shaft Shadow Density', 'Volumetric Light', 0, 6, 0.01),
@@ -119,6 +127,10 @@ export const SPLAT_AUTOMATABLE_PARAMS: readonly SplatParamDescriptor[] = [
   p('kaleidoscopeSegments', 'Kaleidoscope Segments', 'Creative Effects', 2, 16, 1),
   p('constellationMaxDistance', 'Constellation Distance', 'Creative Effects', 0, 1, 0.01),
   p('constellationOpacity', 'Constellation Opacity', 'Creative Effects', 0, 1, 0.01),
+  p('constellationSpeed', 'Constellation Speed', 'Creative Effects', 0, 8, 0.01),
+  p('constellationWaveFrequency', 'Constellation Wave Freq', 'Creative Effects', 0.1, 8, 0.01),
+  p('constellationWaveSpeed', 'Constellation Wave Speed', 'Creative Effects', -4, 4, 0.01),
+  p('datamoshSpeed', 'Datamosh Speed', 'Creative Effects', 0, 4, 0.01),
   p('echoCount', 'Echo Count', 'Creative Effects', 1, 10, 1),
   p('echoDelay', 'Echo Delay', 'Creative Effects', 0, 1, 0.01),
 
@@ -130,8 +142,10 @@ export const SPLAT_AUTOMATABLE_PARAMS: readonly SplatParamDescriptor[] = [
   p('cameraRoll', 'Camera Roll', 'Camera', -180, 180, 1, '°'),
   p('cameraPanX', 'Camera Pan X', 'Camera', -100, 100, 0.5),
   p('cameraPanY', 'Camera Pan Y', 'Camera', -100, 100, 0.5),
-  p('mouseRadius', 'Mouse Radius', 'Interaction', 0.05, 1, 0.01),
-  p('mouseStrength', 'Mouse Strength', 'Interaction', 0.1, 3, 0.05),
+  // Ranges widened: the old 0.05-1 / 0.1-3 caps made the interaction hard to
+  // even notice at default settings.
+  p('mouseRadius', 'Mouse Radius', 'Interaction', 0.05, 3, 0.01),
+  p('mouseStrength', 'Mouse Strength', 'Interaction', 0.1, 8, 0.05),
   p('gravity', 'Physics Gravity', 'Physics', -20, 20, 0.1),
   p('friction', 'Physics Friction', 'Physics', 0, 1, 0.01),
   p('bounciness', 'Physics Bounce', 'Physics', 0, 1, 0.01),

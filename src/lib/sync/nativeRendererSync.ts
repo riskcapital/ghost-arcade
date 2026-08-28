@@ -8015,9 +8015,47 @@ export class NativeRendererSync {
    *  rows here: the native core re-renders content every frame regardless
    *  of opacity, so the WebGL-side `_seqGate` distinction (kept to avoid
    *  shader-state resets) has no native equivalent to preserve. */
+  /** Shallow-clone `root` and any intermediate dot-path segments, then set
+   *  the leaf value. Never mutates the original object graph — `root` (and
+   *  any nested object along `dotPath`) may still be referenced by the
+   *  persistent layer store, and `applyTimelineOverrides` only shallow-copies
+   *  the top-level layer, not its `splatContent`/`model3dContent`. */
+  private setDotPathClone(root: Record<string, any>, dotPath: string, value: unknown): Record<string, any> {
+    const parts = dotPath.split('.');
+    const last = parts.pop()!;
+    const clone: Record<string, any> = { ...root };
+    let cursor = clone;
+    let source = root;
+    for (const part of parts) {
+      const childClone = { ...(source?.[part] ?? {}) };
+      cursor[part] = childClone;
+      cursor = childClone;
+      source = source?.[part];
+    }
+    cursor[last] = value;
+    return clone;
+  }
+
   private applyTimelineOverrides(layers: Layer[]): Layer[] {
     const kfState = get(keyframeTimeline);
-    const kfOverrides = kfState.config.isPlaying ? kfState.activeOverrides : null;
+    // Overrides apply in three situations, all of which recompute
+    // activeOverrides but only the first of which sets isPlaying:
+    //
+    //   1. playback            — isPlaying
+    //   2. offline export      — manualClockExportDepth > 0; export drives
+    //      time via keyframeTimeline.seek(), so gating on isPlaying alone
+    //      meant no keyframe of any kind reached a rendered video frame.
+    //   3. scrubbing the panel — isOpen; dragging the playhead seeks, which
+    //      evaluates every track at that instant. Without this the viewport
+    //      kept showing the raw stored layer values (i.e. whatever was set
+    //      last), so authoring an in-between keyframe meant guessing and
+    //      hitting play to find out.
+    //
+    // With the panel CLOSED and stopped, overrides are skipped so sliders
+    // read and write freely — that was the original reason for the gate.
+    const exporting = this.manualClockExportDepth > 0;
+    const kfActive = kfState.config.isPlaying || exporting || kfState.isOpen;
+    const kfOverrides = kfActive ? kfState.activeOverrides : null;
     const seqState = get(layerSequencer);
     const seqOverrides = (seqState.isPlaying || Object.keys(seqState.opacityOverrides ?? {}).length > 0)
       ? seqState.opacityOverrides
@@ -8058,6 +8096,10 @@ export class NativeRendererSync {
               if (prop === 'enabled') effect.enabled = !!value;
               else effect.params[prop] = value;
             }
+          } else if (key.startsWith('splat:') && next.splatContent) {
+            next.splatContent = this.setDotPathClone(next.splatContent, key.slice('splat:'.length), value);
+          } else if (key.startsWith('model3d:') && next.model3dContent) {
+            next.model3dContent = this.setDotPathClone(next.model3dContent, key.slice('model3d:'.length), value);
           }
         }
       }

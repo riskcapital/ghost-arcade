@@ -8,6 +8,26 @@ export interface AppReleaseNotes {
 }
 
 const RELEASE_NOTES: Record<string, AppReleaseNotes> = {
+  '2.0.1': {
+    title: 'Keyframing, undo, and point-cloud materials',
+    summary: [
+      'The transform gizmo on point cloud and 3D model layers is now keyframeable.',
+      'Keyframes apply while scrubbing, and rendered video finally honors them.',
+      'Undo and redo now cover layer property and keyframe edits, not just adding and removing layers.',
+    ],
+    highlights: [
+      'Point cloud and 3D model layers can keyframe the on-canvas gizmo, so position, rotation and scale animate into camera-style moves.',
+      'Scrubbing the keyframe timeline shows the interpolated pose instead of the last value set, so in-between keyframes can be judged by eye.',
+      'Rendered video honors keyframes — export seeks the timeline, and that path previously skipped every keyframe and exported a static frame.',
+      'Undo and redo record layer property edits across the app; previously only structural actions were tracked, so one undo could discard a whole layer of work.',
+      'Undo and redo also cover keyframe edits — add, delete, move, retime, value and easing — restored together with the project.',
+      'Point cloud layers gain a Material and Glow section: shininess, metallic, fresnel, emissive, specular and rim tints, and a per-point glow.',
+      'Point cloud specular highlights now track the camera instead of a fixed view direction, so they move as the cloud is orbited.',
+      'Datamosh gains a flicker-speed control, and Constellation gains speed, a blend mode, and a travelling wave mode.',
+      'Point cloud mouse interaction is stronger by default with a much wider usable range.',
+      'New Quotron generator: a 1970s quote terminal with eleven programs, six phosphors and seven glyph ROMs, rolled from a seed with a Generate button, adapting its character grid to the composition resolution.',
+    ],
+  },
   '1.9.992': {
     title: 'Reliable OSC, trimmed playback, and portable media',
     summary: [

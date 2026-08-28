@@ -2894,9 +2894,18 @@
         }
         stage3DSourceLayers ??= layersToRender;
 
-        // ── Keyframe timeline overrides (applied only during playback so sliders work freely when paused) ──
+        // ── Keyframe timeline overrides ──
+        // Applied during playback, during offline export (which drives time
+        // via keyframeTimeline.seek() and sets engine.manualTime rather than
+        // isPlaying), and while the keyframe panel is open so scrubbing the
+        // playhead shows the interpolated pose instead of the raw stored
+        // values. Panel closed + stopped still skips them, so sliders read
+        // and write freely.
         const kfState = get(keyframeTimeline);
-        const kfOverrides = kfState.config.isPlaying ? kfState.activeOverrides : {};
+        const kfKeyframesActive = kfState.config.isPlaying
+          || kfState.isOpen
+          || (typeof engine.manualTime === 'number' && Number.isFinite(engine.manualTime));
+        const kfOverrides = kfKeyframesActive ? kfState.activeOverrides : {};
         const kfStash: Array<{ layer: any; key: string; orig: any; target: any; prop: string }> = [];
 
         // Debug: log once per second during playback. Behind a manual
@@ -2957,6 +2966,10 @@
                   edge.opacity = value as number;
                 }
               }
+            } else if (key.startsWith('splat:') && layer.splatContent) {
+              const prop = key.slice('splat:'.length);
+              kfStash.push({ layer, key, orig: (layer.splatContent as any)[prop], target: layer.splatContent, prop });
+              (layer.splatContent as any)[prop] = value;
             } else if (key.startsWith('model3d:') && layer.model3dContent) {
               // Dot-path support: model3d:echo.count → layer.model3dContent.echo.count
               const path = key.slice('model3d:'.length).split('.');

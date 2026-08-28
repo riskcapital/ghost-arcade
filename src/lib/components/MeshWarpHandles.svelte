@@ -1,6 +1,5 @@
 <script lang="ts">
-  import { selectedLayer, project, layers } from '../stores/layers';
-  import { history } from '../stores/history';
+  import { selectedLayer, project, layers, recordDiscreteAction } from '../stores/layers';
   import { settings } from '../stores/settings';
   import { get } from 'svelte/store';
   import type { Point2D, MeshWarpGrid, WarpCorners } from '../types';
@@ -170,7 +169,7 @@
     };
 
     project.setMeshPoint($selectedLayer.id, selectedPoint.row, selectedPoint.col, newPos);
-    history.record(get(project));
+    recordDiscreteAction();
   }
 
   // Set up keyboard event listener
@@ -201,7 +200,7 @@
   // component teardown must release its global listeners or the next
   // session inherits phantom mousemove handlers.
   function cancelDrag(record = true) {
-    if (record && dragging) history.record(get(project));
+    if (record && dragging) recordDiscreteAction();
     dragging = null;
     activeSnapTarget = null;
     removeMouseDragListeners();

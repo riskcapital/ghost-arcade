@@ -86,13 +86,33 @@ function sanitize(value: unknown, ancestors: WeakSet<object> = new WeakSet()): u
 }
 
 /**
- * Serialize a Project into a JSON snapshot for history. sanitize() strips all
- * runtime refs (textures, DOM elements) BEFORE JSON.stringify sees them, so
- * no toJSON() hooks run — avoiding the "Unable to serialize Texture." flood
- * that otherwise starves the renderer when VJ clips hold live textures.
+ * A single undo step.
+ *
+ * Keyframe timelines live in their own store (stores/keyframeTimeline.ts), not
+ * inside `Project` — the project only gains a `keyframeTimelines` field at
+ * save time. So snapshotting the project alone left every keyframe edit
+ * outside undo entirely. Each step carries both, and undo/redo restore them
+ * together so a keyframe and the layer edit beside it unwind as one action.
  */
-function serializeSnapshot(project: Project): string {
-  return JSON.stringify(sanitize(project));
+export interface HistorySnapshot {
+  project: Project;
+  /** Output of keyframeTimeline.exportAll(); null when nothing is keyframed. */
+  keyframes: unknown;
+}
+
+/**
+ * Serialize a snapshot for history. sanitize() strips all runtime refs
+ * (textures, DOM elements) BEFORE JSON.stringify sees them, so no toJSON()
+ * hooks run — avoiding the "Unable to serialize Texture." flood that
+ * otherwise starves the renderer when VJ clips hold live textures.
+ */
+function serializeSnapshot(project: Project, keyframes: unknown): string {
+  return JSON.stringify({ project: sanitize(project), keyframes: sanitize(keyframes) });
+}
+
+function parseSnapshot(json: string): { project: Project; keyframes: unknown } {
+  const parsed = JSON.parse(json) as { project: Project; keyframes: unknown };
+  return { project: parsed.project, keyframes: parsed.keyframes ?? null };
 }
 
 /**
@@ -151,19 +171,19 @@ function createHistoryStore() {
     subscribe,
 
     // Initialize with a project state
-    init(project: Project) {
+    init(project: Project, keyframes: unknown = null) {
       set({
         past: [],
         future: [],
-        current: serializeSnapshot(project),
+        current: serializeSnapshot(project, keyframes),
       });
     },
 
     // Record a new state (called after discrete user actions)
-    record(project: Project) {
+    record(project: Project, keyframes: unknown = null) {
       if (suppressCount > 0) return;
 
-      const serialized = serializeSnapshot(project);
+      const serialized = serializeSnapshot(project, keyframes);
 
       update((state) => {
         // Skip if identical to current state
@@ -185,9 +205,9 @@ function createHistoryStore() {
     suppress() { suppressCount++; },
     unsuppress() { setTimeout(() => { suppressCount = Math.max(0, suppressCount - 1); }, 50); },
 
-    // Undo — returns the previous project state (hydrated with live refs)
-    undo(liveProject: Project): Project | null {
-      let result: Project | null = null;
+    // Undo — returns the previous snapshot (project hydrated with live refs)
+    undo(liveProject: Project): HistorySnapshot | null {
+      let result: HistorySnapshot | null = null;
 
       update((state) => {
         if (state.past.length === 0) return state;
@@ -198,8 +218,11 @@ function createHistoryStore() {
           ? [state.current, ...state.future]
           : state.future;
 
-        const parsed = JSON.parse(previousJson) as Project;
-        result = hydrateProject(parsed, liveProject);
+        const parsed = parseSnapshot(previousJson);
+        result = {
+          project: hydrateProject(parsed.project, liveProject),
+          keyframes: parsed.keyframes,
+        };
 
         return {
           past: newPast,
@@ -211,9 +234,9 @@ function createHistoryStore() {
       return result;
     },
 
-    // Redo — returns the next project state (hydrated with live refs)
-    redo(liveProject: Project): Project | null {
-      let result: Project | null = null;
+    // Redo — returns the next snapshot (project hydrated with live refs)
+    redo(liveProject: Project): HistorySnapshot | null {
+      let result: HistorySnapshot | null = null;
 
       update((state) => {
         if (state.future.length === 0) return state;
@@ -224,8 +247,11 @@ function createHistoryStore() {
           ? [...state.past, state.current]
           : state.past;
 
-        const parsed = JSON.parse(nextJson) as Project;
-        result = hydrateProject(parsed, liveProject);
+        const parsed = parseSnapshot(nextJson);
+        result = {
+          project: hydrateProject(parsed.project, liveProject),
+          keyframes: parsed.keyframes,
+        };
 
         return {
           past: newPast,

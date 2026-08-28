@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { selectedLayer, layers, project } from '../stores/layers';
+  import { selectedLayer, layers, project, scheduleHistorySnapshot, recordDiscreteAction } from '../stores/layers';
   import type { BlendMode } from '../types';
   import type { StrokeType, FillType, AnimationType } from '../drawing/types';
   import EffectParamRow from './EffectParamRow.svelte';
@@ -82,6 +82,7 @@
   function updateEffect(effectId: string, updates: Record<string, unknown>) {
     if (!$selectedLayer) return;
     project.updateEdgeEffect($selectedLayer.id, effectId, updates as any);
+    scheduleHistorySnapshot();
   }
 
   function updateStroke(effectId: string, strokeUpdates: Record<string, unknown>) {
@@ -90,6 +91,7 @@
     project.updateEdgeEffect($selectedLayer.id, effectId, {
       stroke: { ...effect.stroke, ...strokeUpdates },
     });
+    scheduleHistorySnapshot();
   }
 
   function setStrokeType(effectId: string, type: StrokeType) {
@@ -108,6 +110,7 @@
       fire: { type: 'fire', color: [1, 0.5, 0, 1], width: 4, speed: 1 },
     };
     project.updateEdgeEffect($selectedLayer.id, effectId, { stroke: defaults[type] || { type } });
+    recordDiscreteAction();
   }
 
   function updateFill(effectId: string, fillUpdates: Record<string, unknown>) {
@@ -116,6 +119,7 @@
     project.updateEdgeEffect($selectedLayer.id, effectId, {
       fill: { ...effect.fill, ...fillUpdates },
     });
+    scheduleHistorySnapshot();
   }
 
   function updateAnimation(effectId: string, animUpdates: Record<string, unknown>) {
@@ -124,6 +128,7 @@
     project.updateEdgeEffect($selectedLayer.id, effectId, {
       animation: { ...effect.animation, ...animUpdates },
     });
+    scheduleHistorySnapshot();
   }
 
   function setFillType(effectId: string, type: FillType) {
@@ -140,6 +145,7 @@
       gradient: { type: 'gradient', stops: [{ color: [1, 0, 0, 1], position: 0 }, { color: [0, 0, 1, 1], position: 1 }], angle: 0, gradientType: 'linear', speed: 0 },
     };
     project.updateEdgeEffect($selectedLayer.id, effectId, { fill: defaults[type] || { type } });
+    recordDiscreteAction();
   }
 
   function setAnimationType(effectId: string, type: AnimationType) {
@@ -155,6 +161,7 @@
       glitch: { type: 'glitch', intensity: 0.5, speed: 2, rgbSplit: true },
     };
     project.updateEdgeEffect($selectedLayer.id, effectId, { animation: defaults[type] || { type } });
+    recordDiscreteAction();
   }
 
   let expandedEffectId: string | null = null;

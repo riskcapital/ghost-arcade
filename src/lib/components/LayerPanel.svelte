@@ -1,5 +1,15 @@
 <script lang="ts">
-  import { project, layers, selectedLayer, selectedLayerId, selectedLayerIds, getGroupLayers } from '../stores/layers';
+  import { project, layers, selectedLayer, selectedLayerId, selectedLayerIds, getGroupLayers, scheduleHistorySnapshot } from '../stores/layers';
+
+  // updateEffectParams itself stays un-hooked in the store: the audio-reactive
+  // modulation engine (src/lib/audio/autoEngine.ts, src/lib/audio/modulation.ts)
+  // calls it continuously too, and a store-level debounce would never quiet
+  // down while modulation is active. This wraps every UI-driven call in this
+  // panel so slider/dropdown edits still get recorded.
+  function updateEffectParamsTracked(layerId: string, effectId: string, params: Record<string, any>) {
+    project.updateEffectParams(layerId, effectId, params);
+    scheduleHistorySnapshot();
+  }
   import { confirmDeleteIfSafeMode } from '../utils/safeMode';
   // import AutoMapPanel from './AutoMapPanel.svelte';
   import { vjClipLauncher } from '../stores/vjClipLauncher';
@@ -697,7 +707,7 @@
     if (Number.isNaN(presetIndex)) return;
     const patch = applyPresetToEffect(effect as any, presetIndex);
     if (!patch) return;
-    project.updateEffectParams(layerId, effect.id, patch);
+    updateEffectParamsTracked(layerId, effect.id, patch);
   }
 
   function toggleMappingCompositionEnabled(enabled: boolean) {
@@ -871,7 +881,7 @@
     if (!eff) return;
     const binding = layerMacroBindings[effectId]?.[macro];
     if (!binding) return;
-    project.updateEffectParams(selected.id, effectId, { [binding]: value } as any);
+    updateEffectParamsTracked(selected.id, effectId, { [binding]: value } as any);
   }
 
   function onLayerMacro1Change(v: number) {
@@ -2490,22 +2500,22 @@
                 <div class="feather-slider">
                   <span class="feather-label">T</span>
                   <input type="range" min="0" max="1" step="0.01" value={featherEffect.params?.featherTop ?? 0}
-                    oninput={(e) => project.updateEffectParams(layer.id, featherEffect.id, { featherTop: parseFloat((e.target as HTMLInputElement).value) })} />
+                    oninput={(e) => updateEffectParamsTracked(layer.id, featherEffect.id, { featherTop: parseFloat((e.target as HTMLInputElement).value) })} />
                 </div>
                 <div class="feather-slider">
                   <span class="feather-label">B</span>
                   <input type="range" min="0" max="1" step="0.01" value={featherEffect.params?.featherBottom ?? 0}
-                    oninput={(e) => project.updateEffectParams(layer.id, featherEffect.id, { featherBottom: parseFloat((e.target as HTMLInputElement).value) })} />
+                    oninput={(e) => updateEffectParamsTracked(layer.id, featherEffect.id, { featherBottom: parseFloat((e.target as HTMLInputElement).value) })} />
                 </div>
                 <div class="feather-slider">
                   <span class="feather-label">L</span>
                   <input type="range" min="0" max="1" step="0.01" value={featherEffect.params?.featherLeft ?? 0}
-                    oninput={(e) => project.updateEffectParams(layer.id, featherEffect.id, { featherLeft: parseFloat((e.target as HTMLInputElement).value) })} />
+                    oninput={(e) => updateEffectParamsTracked(layer.id, featherEffect.id, { featherLeft: parseFloat((e.target as HTMLInputElement).value) })} />
                 </div>
                 <div class="feather-slider">
                   <span class="feather-label">R</span>
                   <input type="range" min="0" max="1" step="0.01" value={featherEffect.params?.featherRight ?? 0}
-                    oninput={(e) => project.updateEffectParams(layer.id, featherEffect.id, { featherRight: parseFloat((e.target as HTMLInputElement).value) })} />
+                    oninput={(e) => updateEffectParamsTracked(layer.id, featherEffect.id, { featherRight: parseFloat((e.target as HTMLInputElement).value) })} />
                 </div>
               </div>
             {/if}
@@ -3106,40 +3116,40 @@
                         <EffectParamRow label="Inject Strength" min={0} max={3} step={0.01}
                           layerIndex={layerIdx} effectId={effect.id} paramName="injectStrength"
                           value={effect.params.injectStrength ?? 1.5}
-                          onChange={(v) => project.updateEffectParams(layer.id, effect.id, { injectStrength: v })} />
+                          onChange={(v) => updateEffectParamsTracked(layer.id, effect.id, { injectStrength: v })} />
                         <EffectParamRow label="Velocity Push" min={0} max={3} step={0.01}
                           layerIndex={layerIdx} effectId={effect.id} paramName="velocityFromGradient"
                           value={effect.params.velocityFromGradient ?? 1.4}
-                          onChange={(v) => project.updateEffectParams(layer.id, effect.id, { velocityFromGradient: v })} />
+                          onChange={(v) => updateEffectParamsTracked(layer.id, effect.id, { velocityFromGradient: v })} />
                         <EffectParamRow label="Vorticity" min={0} max={3} step={0.01}
                           layerIndex={layerIdx} effectId={effect.id} paramName="vorticity"
                           value={effect.params.vorticity ?? 1.0}
-                          onChange={(v) => project.updateEffectParams(layer.id, effect.id, { vorticity: v })} />
+                          onChange={(v) => updateEffectParamsTracked(layer.id, effect.id, { vorticity: v })} />
                         <EffectParamRow label="Dye Decay" min={0} max={3} step={0.01}
                           layerIndex={layerIdx} effectId={effect.id} paramName="dyeDecay"
                           value={effect.params.dyeDecay ?? 2.4}
-                          onChange={(v) => project.updateEffectParams(layer.id, effect.id, { dyeDecay: v })} />
+                          onChange={(v) => updateEffectParamsTracked(layer.id, effect.id, { dyeDecay: v })} />
                         <EffectParamRow label="Velocity Decay" min={0} max={3} step={0.01}
                           layerIndex={layerIdx} effectId={effect.id} paramName="velocityDecay"
                           value={effect.params.velocityDecay ?? 2.3}
-                          onChange={(v) => project.updateEffectParams(layer.id, effect.id, { velocityDecay: v })} />
+                          onChange={(v) => updateEffectParamsTracked(layer.id, effect.id, { velocityDecay: v })} />
                         <EffectParamRow label="Brightness Boost" min={0.5} max={4} step={0.01}
                           layerIndex={layerIdx} effectId={effect.id} paramName="outputBoost"
                           value={effect.params.outputBoost ?? 0.7}
                           displayValue={(v) => v.toFixed(2) + '×'}
-                          onChange={(v) => project.updateEffectParams(layer.id, effect.id, { outputBoost: v })} />
+                          onChange={(v) => updateEffectParamsTracked(layer.id, effect.id, { outputBoost: v })} />
                         <EffectParamRow label="Time Scale" min={0.1} max={3} step={0.01}
                           layerIndex={layerIdx} effectId={effect.id} paramName="timeScale"
                           value={effect.params.timeScale ?? 1.6}
                           displayValue={(v) => v.toFixed(2) + '×'}
-                          onChange={(v) => project.updateEffectParams(layer.id, effect.id, { timeScale: v })} />
+                          onChange={(v) => updateEffectParamsTracked(layer.id, effect.id, { timeScale: v })} />
 
                       {:else if effect.type === 'colorama'}
                         <div class="param-row">
                           <label>Palette</label>
                           <select
                             value={effect.params.coloramaPalette ?? 0}
-                            onchange={(e) => project.updateEffectParams(layer.id, effect.id, { coloramaPalette: parseInt((e.target as HTMLSelectElement).value) })}
+                            onchange={(e) => updateEffectParamsTracked(layer.id, effect.id, { coloramaPalette: parseInt((e.target as HTMLSelectElement).value) })}
                           >
                             <option value="0">Rainbow</option>
                             <option value="1">Sunset</option>
@@ -3155,21 +3165,21 @@
                           layerIndex={layerIdx} effectId={effect.id} paramName="coloramaOffset"
                           value={effect.params.coloramaOffset ?? 0}
                           displayValue={(v) => (v * 100).toFixed(0) + '%'}
-                          onChange={(v) => project.updateEffectParams(layer.id, effect.id, { coloramaOffset: v })} />
+                          onChange={(v) => updateEffectParamsTracked(layer.id, effect.id, { coloramaOffset: v })} />
                         <EffectParamRow label="Auto Speed" min={0} max={2} step={0.01}
                           layerIndex={layerIdx} effectId={effect.id} paramName="coloramaSpeed"
                           value={effect.params.coloramaSpeed ?? 0.2}
-                          onChange={(v) => project.updateEffectParams(layer.id, effect.id, { coloramaSpeed: v })} />
+                          onChange={(v) => updateEffectParamsTracked(layer.id, effect.id, { coloramaSpeed: v })} />
                         <EffectParamRow label="Contrast" min={0.5} max={2} step={0.01}
                           layerIndex={layerIdx} effectId={effect.id} paramName="coloramaContrast"
                           value={effect.params.coloramaContrast ?? 1}
                           displayValue={(v) => (v * 100).toFixed(0) + '%'}
-                          onChange={(v) => project.updateEffectParams(layer.id, effect.id, { coloramaContrast: v })} />
+                          onChange={(v) => updateEffectParamsTracked(layer.id, effect.id, { coloramaContrast: v })} />
                         <EffectParamRow label="Mix" min={0} max={1} step={0.01}
                           layerIndex={layerIdx} effectId={effect.id} paramName="coloramaMix"
                           value={effect.params.coloramaMix ?? 1}
                           displayValue={(v) => (v * 100).toFixed(0) + '%'}
-                          onChange={(v) => project.updateEffectParams(layer.id, effect.id, { coloramaMix: v })} />
+                          onChange={(v) => updateEffectParamsTracked(layer.id, effect.id, { coloramaMix: v })} />
 
                       {:else if effect.type === 'invert'}
                         <div class="param-info">No parameters</div>
@@ -3183,7 +3193,7 @@
                                 <label>{meta.label}</label>
                                 <select
                                   value={(effect.params as Record<string, number>)[paramKey] ?? meta.default}
-                                  onchange={(e) => project.updateEffectParams(layer.id, effect.id, { [paramKey]: parseFloat((e.target as HTMLSelectElement).value) })}
+                                  onchange={(e) => updateEffectParamsTracked(layer.id, effect.id, { [paramKey]: parseFloat((e.target as HTMLSelectElement).value) })}
                                 >
                                   {#each meta.options as opt}
                                     <option value={opt.value}>{opt.label}</option>
@@ -3203,7 +3213,7 @@
                                     const r = parseInt(hex.slice(1, 3), 16) / 255;
                                     const g = parseInt(hex.slice(3, 5), 16) / 255;
                                     const b = parseInt(hex.slice(5, 7), 16) / 255;
-                                    project.updateEffectParams(layer.id, effect.id, {
+                                    updateEffectParamsTracked(layer.id, effect.id, {
                                       [meta.colorParams!.r]: r, [meta.colorParams!.g]: g, [meta.colorParams!.b]: b
                                     });
                                   }}
@@ -3220,7 +3230,7 @@
                                 effectId={effect.id}
                                 paramName={paramKey}
                                 displayValue={(v) => (meta.max as number) <= 1 ? (v * 100).toFixed(0) + '%' : v.toFixed(2)}
-                                onChange={(v) => project.updateEffectParams(layer.id, effect.id, { [paramKey]: v })}
+                                onChange={(v) => updateEffectParamsTracked(layer.id, effect.id, { [paramKey]: v })}
                               />
                             {/if}
                           {/each}
@@ -3236,7 +3246,7 @@
                               effectId={effect.id}
                               paramName={paramKey}
                               displayValue={(v) => (v * 100).toFixed(0) + '%'}
-                              onChange={(v) => project.updateEffectParams(layer.id, effect.id, { [paramKey]: v })}
+                              onChange={(v) => updateEffectParamsTracked(layer.id, effect.id, { [paramKey]: v })}
                             />
                           {/each}
                         {/if}

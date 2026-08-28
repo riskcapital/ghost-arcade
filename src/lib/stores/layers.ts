@@ -40,18 +40,19 @@ import { recoverVJClipAssetRef } from '../storage/vjAssetPersistence';
 import { restoreVideoSourceElement } from '../media/videoSourceRestore';
 import { clipAudioBus, type ClipAudioTransport } from '../audio/clipAudioBus';
 
-// History recording callback — set from App.svelte to avoid circular imports.
-// We record SYNCHRONOUSLY (no setTimeout) so each discrete action lands in its
-// own undo step. Previously this used setTimeout(_, 0) which coalesced rapid
-// successive actions — drawing 10 light-painting strokes in quick succession
-// scheduled 10 callbacks that all fired in the next tick reading the SAME
-// post-mutation project, so the undo stack only got 1 entry pointing at the
-// pre-first-stroke state. One undo would wipe every stroke. Now each call
-// captures the project state synchronously, post-update, so undo unwinds
-// stroke-by-stroke as expected.
-let _onDiscreteAction: (() => void) | null = null;
-export function setHistoryCallback(fn: () => void) { _onDiscreteAction = fn; }
-function recordDiscreteAction() { if (_onDiscreteAction) _onDiscreteAction(); }
+// History hooks now live in ./historyHooks so the keyframe store can use them
+// too (layers.ts imports keyframeTimeline, so it cannot import back from here).
+// Re-exported for the many components that already import them from this file.
+import {
+  recordDiscreteAction,
+  scheduleHistorySnapshot,
+} from './historyHooks';
+export {
+  setHistoryCallback,
+  recordDiscreteAction,
+  scheduleHistorySnapshot,
+  flushPendingHistorySnapshot,
+} from './historyHooks';
 const selectedLayerIdsState = writable<string[]>([]);
 
 function cleanMediaSourceName(source: MediaSource): string {
@@ -1210,6 +1211,7 @@ void main() {
             : layer
         ),
       }));
+      scheduleHistorySnapshot();
     },
 
     updateTextAnimation(layerId: string, updates: Partial<TextAnimation>) {
@@ -1227,6 +1229,7 @@ void main() {
             : layer
         ),
       }));
+      scheduleHistorySnapshot();
     },
 
     // Light painting methods
@@ -1254,6 +1257,7 @@ void main() {
             : layer
         ),
       }));
+      scheduleHistorySnapshot();
     },
 
     addLightPaintingStroke(layerId: string, stroke: LightPaintingStroke) {
@@ -1312,6 +1316,7 @@ void main() {
             : layer
         ),
       }));
+      scheduleHistorySnapshot();
     },
 
     // Replace the entire points array of a stroke. Used by path-edit mode
@@ -1350,7 +1355,12 @@ void main() {
             : layer
         ),
       }));
-      recordDiscreteAction();
+      // Debounced, not immediate: this is called on every pointermove tick
+      // while reshaping an existing stroke's handles (Path Edit Mode), so an
+      // unconditional recordDiscreteAction() here would push a full-project
+      // snapshot per pixel of drag and blow through MAX_HISTORY_SIZE almost
+      // instantly.
+      scheduleHistorySnapshot();
     },
 
     clearLightPaintingStrokes(layerId: string) {
@@ -1381,6 +1391,7 @@ void main() {
             : layer
         ),
       }));
+      scheduleHistorySnapshot();
     },
 
     // ============================================================================
@@ -1409,6 +1420,7 @@ void main() {
           };
         }),
       }));
+      recordDiscreteAction();
     },
 
     disableMask(layerId: string) {
@@ -1420,6 +1432,7 @@ void main() {
             : layer
         ),
       }));
+      recordDiscreteAction();
     },
 
     clearMask(layerId: string) {
@@ -1431,6 +1444,7 @@ void main() {
             : layer
         ),
       }));
+      recordDiscreteAction();
     },
 
     /**
@@ -1518,6 +1532,7 @@ void main() {
           return { ...layer, mask: { ...layer.mask, shapes: newShapes } };
         }),
       }));
+      recordDiscreteAction();
     },
 
     /**
@@ -1624,6 +1639,7 @@ void main() {
             : layer
         ),
       }));
+      recordDiscreteAction();
     },
 
     setMaskFeather(layerId: string, feather: number) {
@@ -1635,6 +1651,7 @@ void main() {
             : layer
         ),
       }));
+      scheduleHistorySnapshot();
     },
 
     // ============================================================================
@@ -1656,6 +1673,7 @@ void main() {
           };
         }),
       }));
+      scheduleHistorySnapshot();
     },
 
     updateCustomShapePoint(layerId: string, pointIndex: number, point: Point2D) {
@@ -1676,6 +1694,7 @@ void main() {
           };
         }),
       }));
+      scheduleHistorySnapshot();
     },
 
     removeCustomShapePoint(layerId: string, pointIndex: number) {
@@ -1762,6 +1781,7 @@ void main() {
           };
         }),
       }));
+      scheduleHistorySnapshot();
     },
 
     toggleCustomShapePointCurve(layerId: string, pointIndex: number) {
@@ -1908,6 +1928,7 @@ void main() {
           };
         }),
       }));
+      recordDiscreteAction();
     },
 
     // ============================================================================
@@ -1921,6 +1942,7 @@ void main() {
           layer.id === layerId ? { ...layer, cropRegion } : layer
         ),
       }));
+      scheduleHistorySnapshot();
     },
 
     updateCropRegion(layerId: string, updates: Partial<CropRegion>) {
@@ -1943,6 +1965,7 @@ void main() {
           layer.id === layerId ? { ...layer, cropRegion: null } : layer
         ),
       }));
+      recordDiscreteAction();
     },
 
     // ============================================================================
@@ -1997,6 +2020,7 @@ void main() {
             : layer
         ),
       }));
+      scheduleHistorySnapshot();
     },
 
     toggleLayerShapeEnabled(layerId: string) {
@@ -2008,6 +2032,7 @@ void main() {
             : layer
         ),
       }));
+      recordDiscreteAction();
     },
 
     clearLayerShape(layerId: string) {
@@ -2017,6 +2042,7 @@ void main() {
           layer.id === layerId ? { ...layer, layerShape: null } : layer
         ),
       }));
+      recordDiscreteAction();
     },
 
     // Add/update polyline points for line shapes
@@ -2280,6 +2306,12 @@ void main() {
         ...project,
         layers: project.layers.map((l) => (l.id === id ? { ...l, ...updates } : l)),
       }));
+      // Safe to debounce here (unlike updateEffectParams/updateEdgeEffect/
+      // updateGPULayerParams/updateSplatContent): confirmed no caller in
+      // src/lib/audio/autoEngine.ts or src/lib/audio/modulation.ts, so this
+      // won't fight the audio-reactive modulation engine. A no-op update
+      // (identical project state) is naturally deduped by history.record().
+      scheduleHistorySnapshot();
     },
 
     setLayerSource(id: string, source: MediaSource | null) {
@@ -2359,6 +2391,7 @@ void main() {
         ...project,
         layers: project.layers.map((l) => (l.id === id ? { ...l, opacity } : l)),
       }));
+      scheduleHistorySnapshot();
     },
 
     setLayerBlendMode(id: string, blendMode: BlendMode) {
@@ -2452,6 +2485,7 @@ void main() {
         ...project,
         layers: project.layers.map((l) => (l.id === id ? { ...l, flipH: !l.flipH } : l)),
       }));
+      recordDiscreteAction();
     },
 
     toggleLayerFlipV(id: string) {
@@ -2459,6 +2493,7 @@ void main() {
         ...project,
         layers: project.layers.map((l) => (l.id === id ? { ...l, flipV: !l.flipV } : l)),
       }));
+      recordDiscreteAction();
     },
 
     // Warp mode
@@ -2625,6 +2660,7 @@ void main() {
           };
         }),
       }));
+      scheduleHistorySnapshot();
     },
 
     updateEffectParams(layerId: string, effectId: string, params: Partial<EffectParams>) {
@@ -3220,6 +3256,7 @@ void main() {
           c.id === controllerId ? { ...c, ...fields, id: controllerId } : c
         ),
       }));
+      scheduleHistorySnapshot();
     },
     addWLEDGroup(group: WLEDGroup) {
       update((project) => ({
@@ -3379,6 +3416,7 @@ void main() {
           };
         }),
       }));
+      recordDiscreteAction();
     },
 
     reorderEffects(layerId: string, fromIndex: number, toIndex: number) {
@@ -3392,6 +3430,7 @@ void main() {
           return { ...l, effects: newEffects };
         }),
       }));
+      recordDiscreteAction();
     },
 
     // ============================================================================
@@ -3453,6 +3492,7 @@ void main() {
           };
         }),
       }));
+      recordDiscreteAction();
     },
 
     selectElement(layerId: string, elementId: string | null) {
@@ -3487,6 +3527,7 @@ void main() {
           };
         }),
       }));
+      scheduleHistorySnapshot();
     },
 
     updateElementShape(layerId: string, elementId: string, shapeUpdates: Partial<LineShape> & Record<string, any>) {
@@ -3515,6 +3556,7 @@ void main() {
           };
         }),
       }));
+      scheduleHistorySnapshot();
     },
 
     updateElementStroke(layerId: string, elementId: string, stroke: LineStroke | any) {
@@ -3533,6 +3575,7 @@ void main() {
           };
         }),
       }));
+      scheduleHistorySnapshot();
     },
 
     // Compatibility aliases for DrawingPanel (maps old drawing API to lines API)
@@ -3572,6 +3615,7 @@ void main() {
           };
         }),
       }));
+      scheduleHistorySnapshot();
     },
 
     duplicateElement(layerId: string, elementId: string) {
@@ -3726,6 +3770,7 @@ void main() {
           };
         }),
       }));
+      recordDiscreteAction();
     },
 
     updateSVGContent(layerId: string, updates: Partial<SVGContent>) {
@@ -3739,6 +3784,7 @@ void main() {
           };
         }),
       }));
+      scheduleHistorySnapshot();
     },
 
     setSVGFillMode(layerId: string, fillMode: SVGFillMode) {
@@ -3780,6 +3826,7 @@ void main() {
           };
         }),
       }));
+      recordDiscreteAction();
     },
 
     setSVGParam(layerId: string, paramKey: keyof SVGContent, value: number | boolean | string) {
@@ -3793,6 +3840,7 @@ void main() {
           };
         }),
       }));
+      scheduleHistorySnapshot();
     },
 
     resetSVGContent(layerId: string) {
@@ -3807,6 +3855,7 @@ void main() {
           };
         }),
       }));
+      recordDiscreteAction();
     },
 
     // ============================================================================

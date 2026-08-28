@@ -7,7 +7,7 @@
 
 <script lang="ts">
   import { onDestroy } from 'svelte';
-  import { project, selectedLightPaintingLayer, selectedLightPaintingContent, selectedLayerId } from '../stores/layers';
+  import { project, selectedLightPaintingLayer, selectedLightPaintingContent, selectedLayerId, scheduleHistorySnapshot, recordDiscreteAction } from '../stores/layers';
   import { NATIVE_ENGINE_ONLY, settings } from '../stores/settings';
   import { isNativeLightPaintingBrush } from '$lib/renderer/lightPaintingNative';
   import {
@@ -920,14 +920,19 @@
     if (drawMode === 'pen' && penPoints.length > 1) finishPenPath();
     penPoints = []; penPreviewPoint = null;
     project.updateLightPaintingContent(layerId, { drawMode: mode });
+    recordDiscreteAction();
   }
-  function setLoopMode(mode: LightPaintingLoopMode) { if (layerId) project.updateLightPaintingContent(layerId, { loopMode: mode }); }
+  function setLoopMode(mode: LightPaintingLoopMode) { if (layerId) { project.updateLightPaintingContent(layerId, { loopMode: mode }); recordDiscreteAction(); } }
   function togglePlayback() { if (layerId && content) project.updateLightPaintingContent(layerId, { isPlaying: !content.isPlaying }); }
   function clearAllStrokes() { if (layerId) project.clearLightPaintingStrokes(layerId); }
   function removeStroke(strokeId: string) { if (layerId) project.removeLightPaintingStroke(layerId, strokeId); }
-  function updateSetting(key: string, value: number | boolean | string) { if (layerId) project.updateLightPaintingContent(layerId, { [key]: value }); }
+  // updateLightPaintingContent itself stays un-hooked in the store — it's
+  // also used for transient state (live-draw preview strokes, isRecording,
+  // selectedStrokeId) that must never trigger history, so recording only
+  // happens here, at the "this is a real setting" call sites.
+  function updateSetting(key: string, value: number | boolean | string) { if (layerId) { project.updateLightPaintingContent(layerId, { [key]: value }); scheduleHistorySnapshot(); } }
   function reshuffleSequence() {
-    if (layerId) project.updateLightPaintingContent(layerId, { randomSequenceSeed: Math.floor(Math.random() * 1_000_000_000) });
+    if (layerId) { project.updateLightPaintingContent(layerId, { randomSequenceSeed: Math.floor(Math.random() * 1_000_000_000) }); recordDiscreteAction(); }
   }
 
   function handleCustomColor(e: Event) { const h = (e.target as HTMLInputElement).value; setColor([parseInt(h.slice(1,3),16), parseInt(h.slice(3,5),16), parseInt(h.slice(5,7),16)]); }

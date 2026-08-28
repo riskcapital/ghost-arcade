@@ -9,7 +9,7 @@
    * driven UI picks it up automatically.
    */
   import { onMount, onDestroy } from 'svelte';
-  import { project, selectedLayer, layers } from '../stores/layers';
+  import { project, selectedLayer, layers, scheduleHistorySnapshot, recordDiscreteAction } from '../stores/layers';
   import { NATIVE_ENGINE_ONLY, settings } from '../stores/settings';
   import EffectParamRow from './EffectParamRow.svelte';
   import { clearGPUParamRanges } from '../audio/modulation';
@@ -346,6 +346,7 @@
       params: nextParams,
       paramsByShader: stash,
     } as any);
+    recordDiscreteAction();
   }
 
   function prewarmShader(id: string) {
@@ -361,11 +362,18 @@
   function setBgOpacity(value: number) {
     if (!layerId || !content) return;
     project.updateGPULayerContent(layerId, { bgOpacity: value });
+    scheduleHistorySnapshot();
   }
 
   function setParam(key: string, value: any) {
     if (!layerId) return;
     project.updateGPULayerParams(layerId, { [key]: value });
+    // Debounced, not hooked in the store: updateGPULayerParams is also
+    // called continuously by the audio-reactive modulation engine
+    // (src/lib/audio/autoEngine.ts, src/lib/audio/modulation.ts), so
+    // recording has to happen here — at the UI call site — or the
+    // debounce would never quiet down while modulation is active.
+    scheduleHistorySnapshot();
     // Hand the same change to the keyframe timeline. autoRecord
     // is a no-op when the user hasn't armed the track; when they
     // have, every drag becomes a keyframe at the current playhead.

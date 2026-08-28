@@ -71,8 +71,9 @@
   import { updateModalOpen, leftSidebarTab } from './lib/stores/uiState';
   import { showToast } from './lib/stores/errorToast';
   import { maskEditingLayerId } from './lib/stores/maskEditing';
-  import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, setHistoryCallback } from './lib/stores/layers';
+  import { project, selectedLayer, selectedLayerIds, selectedLinesLayer, selectedLineElement, selectedLightPaintingLayer, selectedAdvLightPaintingLayer, selectedTextLayer, selectedSVGLayer, selectedMediaLayer, selectedSplatLayer, selectedModel3DLayer, selectedPixelFXLayer, selectedGPULayer, selectedGroupLayer, setHistoryCallback, flushPendingHistorySnapshot } from './lib/stores/layers';
   import { keyframeTimeline } from './lib/stores/keyframeTimeline';
+  import { beginHistoryRestore, endHistoryRestore } from './lib/stores/historyHooks';
   import { showTimeline, setShowTransitionSink } from './lib/stores/showTimeline';
   import { compositionTransition } from './lib/stores/compositionTransition';
   import { layerSequencer } from './lib/stores/layerSequencer';
@@ -5140,31 +5141,52 @@
   // Initialize history with first project state
   let historyInitialized = false;
   $: if ($project && !historyInitialized) {
-    history.init($project);
+    history.init($project, keyframeTimeline.exportAll());
     historyInitialized = true;
   }
 
-  // Record a snapshot — call this AFTER discrete user actions (warp end, layer add/delete, etc.)
+  // Record a snapshot — call this AFTER discrete user actions (warp end, layer
+  // add/delete, keyframe edits, etc.). Keyframe timelines live in their own
+  // store rather than inside Project, so they are captured alongside it here;
+  // this is the only place that can see both.
   function recordHistory() {
-    history.record(get(project));
+    history.record(get(project), keyframeTimeline.exportAll());
+  }
+
+  /** Restore a snapshot into every store it spans. */
+  function applyHistorySnapshot(snapshot: { project: any; keyframes: unknown }) {
+    project.set(snapshot.project);
+    // beginHistoryRestore() stops importAll() from recording the state it is
+    // restoring as a fresh undo entry (which would poison the redo stack).
+    beginHistoryRestore();
+    try {
+      keyframeTimeline.importAll(Array.isArray(snapshot.keyframes) ? snapshot.keyframes as any : []);
+    } finally {
+      endHistoryRestore();
+    }
   }
 
   function handleUndo() {
     fileMenuOpen = false;
+    // Commit any debounced-but-not-yet-recorded slider or keyframe edit first,
+    // so it becomes its own undo step instead of being silently lost or merged
+    // into whatever the undo below jumps back to.
+    flushPendingHistorySnapshot();
     history.suppress();
     const previousState = history.undo(get(project));
     if (previousState) {
-      project.set(previousState);
+      applyHistorySnapshot(previousState);
     }
     history.unsuppress();
   }
 
   function handleRedo() {
     fileMenuOpen = false;
+    flushPendingHistorySnapshot();
     history.suppress();
     const nextState = history.redo(get(project));
     if (nextState) {
-      project.set(nextState);
+      applyHistorySnapshot(nextState);
     }
     history.unsuppress();
   }
