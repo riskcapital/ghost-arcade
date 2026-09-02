@@ -31,7 +31,7 @@
   import SourceCropModal from './SourceCropModal.svelte';
   import { generateCachedThumbnail } from '../isf/thumbnail';
   import { webgpuSupportedStore } from '../renderer/webgpuCapability';
-  import { createAssetRefFromFile } from '../storage/assetRegistry';
+  import { createDurableAssetRefFromFile } from '../storage/assetRegistry';
   import { NATIVE_ENGINE_ONLY, settings } from '../stores/settings';
   import { nativeRendererRuntime, nativeFailedRouteLayers } from '../stores/nativeRenderer';
   import { submitNativeRendererCommands } from '../api/native-renderer';
@@ -572,7 +572,7 @@
   async function createMediaSource(file: File): Promise<MediaSource> {
     // Capture both runtime URL and durable AssetRef so this layer's source
     // survives save+reload (the blob URL alone won't).
-    const { assetRef, runtimeUrl: url } = createAssetRefFromFile(file);
+    const { assetRef, runtimeUrl: url } = await createDurableAssetRefFromFile(file);
     const mediaType = getMediaType(file);
 
     const source: MediaSource = {

@@ -27,7 +27,7 @@
   import type { BlendMode, Effect, EffectType, ISFInputDef, JSAnimationSource, SplatContent, Model3DContent, Model3DFormat, SplatAnimationType, SplatDisplacementType, Model3DAnimationType, Model3DDeformationType, Model3DMaterialType, Model3DWireframeMode, Model3DLightingPreset } from '../types';
   import { generateUUID, createDefaultSplatContent, createDefaultModel3DContent, createDefaultGPULayerContent, createDefaultTextContent } from '../types';
   import { audioStore } from '../stores/audio';
-  import { createAssetRefFromFile, createAssetRefFromGeneratedBlob } from '../storage/assetRegistry';
+  import { createDurableAssetRefFromFile, createAssetRefFromGeneratedBlob } from '../storage/assetRegistry';
   import ClipPreviewPanel from './ClipPreviewPanel.svelte';
   import { markUserInteracting } from '../midi/midiRouter';
   import { modulationStore, modulationEngine, setParamModSource, setCrossfaderModSource, updateParamMod, registerParamRanges, getModulatedValue, setBaseValue, clearBaseValues, clearModulatedValues, modKeyShader, MOD_KEY_XFADE_VALUE, type ModSource, type ParamModulation } from '../audio/modulation';
@@ -2538,7 +2538,7 @@
     if (!kind) { console.warn('[VJ Media] Unsupported file type:', file.name); return null; }
     // Capture both runtime URL and durable AssetRef so VJ media library entries
     // survive save/reload (the blob URL alone won't).
-    const { assetRef, runtimeUrl: url } = createAssetRefFromFile(file);
+    const { assetRef, runtimeUrl: url } = await createDurableAssetRefFromFile(file);
     if (kind === 'video') {
       const video = document.createElement('video');
       // crossOrigin BEFORE src — order matters on Chromium 130.
@@ -2663,7 +2663,7 @@
         // Use blob URL for splat files (more efficient than data URLs for binary).
         // Pair with AssetRef so the clip survives save/reload — without it,
         // every VJ splat clip comes back broken after closing the app.
-        const { assetRef, runtimeUrl: blobUrl } = createAssetRefFromFile(file);
+        const { assetRef, runtimeUrl: blobUrl } = await createDurableAssetRefFromFile(file);
         const isSplatFormat = file.name.toLowerCase().endsWith('.splat');
         vjClipLauncher.updateClipSplatContent(layerIndex, columnIndex, {
           filePath: blobUrl,
@@ -2678,7 +2678,7 @@
       } else {
         // Use blob URL for 3D model files. AssetRef carries the durable disk
         // path so save/reload restores the model — blob URLs alone can't.
-        const { assetRef, runtimeUrl: blobUrl } = createAssetRefFromFile(file);
+        const { assetRef, runtimeUrl: blobUrl } = await createDurableAssetRefFromFile(file);
         const ext = file.name.split('.').pop()?.toLowerCase() || 'glb';
         vjClipLauncher.updateClipModel3DContent(layerIndex, columnIndex, {
           modelData: blobUrl,

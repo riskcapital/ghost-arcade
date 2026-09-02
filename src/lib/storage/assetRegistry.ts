@@ -71,6 +71,19 @@ function blobToDataUrl(blob: Blob): Promise<string> {
  * The returned `runtimeUrl` is a `blob:` URL the caller can hand to <video>,
  * <img>, Three.js loaders, etc. immediately.
  */
+/**
+ * Does this ref point at something that still exists after the session ends?
+ *
+ * A ref carrying only name/mime/size is a husk: enough to label a clip in the
+ * UI, nothing to reload it from. That is the difference between a project that
+ * reopens and one that reopens empty, so the check lives next to the AssetRef
+ * definition rather than being restated per call site.
+ */
+export function hasDurableAssetLocation(ref: AssetRef | null | undefined): ref is AssetRef {
+  const durableUrl = ref?.url && !ref.url.startsWith('blob:');
+  return !!(ref?.projectPath || ref?.originalPath || ref?.dataUrl || durableUrl);
+}
+
 export function createAssetRefFromFile(file: File): CapturedAsset {
   const w = window as any;
   const electronPath: string | null = w.electronAPI?.getPathForFile?.(file) || null;
@@ -148,6 +161,34 @@ export async function createAssetRefFromGeneratedBlob(
     console.warn('[AssetRef] Failed to embed generated asset:', err);
     return { runtimeUrl, assetRef: baseRef };
   }
+}
+
+/**
+ * Capture an AssetRef for a picked File that is durable even when the file has
+ * no path on disk.
+ *
+ * createAssetRefFromFile leans on webUtils.getPathForFile, which returns '' for
+ * anything that did not come from the OS filesystem — a drag out of a browser
+ * window, a sandboxed source, or any browser build. That empty path produced a
+ * ref with no originalPath and no dataUrl, so the clip saved with nothing but a
+ * session blob: URL and reopened dead. Dragging media straight into the deck is
+ * the most direct way to hit it.
+ *
+ * The sync path stays the fast path: a real OS file keeps its disk path and
+ * nothing is copied. Only when that fails do we pay to persist the bytes, which
+ * is the same route generated media already takes.
+ */
+export async function createDurableAssetRefFromFile(file: File): Promise<CapturedAsset> {
+  const captured = createAssetRefFromFile(file);
+  if (hasDurableAssetLocation(captured.assetRef)) return captured;
+  // Reuse the runtime URL already created above so this does not leak a second
+  // object URL for the same file.
+  return createAssetRefFromGeneratedBlob(
+    file,
+    file.name,
+    file.type || undefined,
+    captured.runtimeUrl,
+  );
 }
 
 /**
