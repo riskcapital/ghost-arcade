@@ -56,6 +56,7 @@
   import { midiStore } from '../midi/midiStore';
   import { midiManager } from '../midi/midiManager';
   import { abletonLink } from '../sync/abletonLink';
+  import AbletonLinkMonitor from './AbletonLinkMonitor.svelte';
   import { oscStore } from '../osc/oscStore';
   import { CONTROL_PATH_EXAMPLES, normalizeControlPath, validateControlPath } from '../control/controlPaths';
   import { keyboardStore, formatKeyCombo, type KeyActionMode } from '../keyboard/keyboardStore';
@@ -1862,6 +1863,20 @@
                   <span class="label-hint">{$abletonLink.peers} peer{$abletonLink.peers === 1 ? '' : 's'} · {$abletonLink.tempo.toFixed(1)} BPM{$midiStore.clockInEnabled && $midiStore.clockInRunning ? ' · deferring to MIDI clock-in' : ''}</span>
                 </div>
                 <span class="clock-status-dot" class:on={$abletonLink.peers > 0}></span>
+              </div>
+
+              <!-- Beat / phase readout. Tempo alone was never enough to tell
+                   whether Ghost Arcade was actually following the session's
+                   downbeat; this shows the phase it is acting on. -->
+              <div class="setting-row" style="padding-left: 16px; align-items: flex-start;">
+                <div class="setting-label">
+                  <span class="label-text">Beat</span>
+                  <span class="label-hint">
+                    The highlighted beat should march in time with the music from your
+                    other Link app. Clip launch quantization follows this phase.
+                  </span>
+                </div>
+                <AbletonLinkMonitor />
               </div>
             {/if}
             {#if $abletonLink.error}
