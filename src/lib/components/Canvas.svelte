@@ -24,7 +24,7 @@
   import { layerSequencer } from '../stores/layerSequencer';
   import { evaluateStageEffectForScreen, stageEffectsRuntime, resolveStageEffectForLayer } from '../stores/stageEffects';
   import { keyframeTimeline } from '../stores/keyframeTimeline';
-  import { createLayer, VJ_MIX_SOURCE_INDEX, type Layer, type MappingCompositionState } from '../types';
+  import { createLayer, VJ_MIX_SOURCE_INDEX, type Layer, type Effect, type MappingCompositionState } from '../types';
   import * as THREE from 'three';
   import { createISFShader, updateISFShader, setISFInputValue, setISFInputTexture, type ISFShaderInstance } from '../isf/renderer';
   import { LinesRenderer } from '../lines/renderer';
@@ -101,7 +101,13 @@
   // reconcile here only handles the LEGACY WebRTC path; zero-copy
   // start is triggered by user action in OutputWindow.openPopup().
   // We DO call stop on teardown to be safe.
-  import { NativeRendererSync, getProjectOutputSize, setPreferredNativeQualityPolicy } from '$lib/sync/nativeRendererSync';
+  import {
+    NativeRendererSync,
+    getProjectOutputSize,
+    setPreferredNativeQualityPolicy,
+    effectToNativeDescriptor,
+    nativeEffectPassFromDescriptor,
+  } from '$lib/sync/nativeRendererSync';
   import {
     attachNativeEditorPreview,
     detachNativeEditorPreview,
@@ -1705,6 +1711,25 @@
       // carrier's source via resolveNativeGroupLayers, replacing the old
       // lowest-active-row approximation. Opacity 0 — it never composites
       // itself, it only keeps the mix frame rendering.
+      // Composition FX that the native effect-pass chain can actually run.
+      //
+      // nativeEffectPassesForLayer is all-or-nothing and caps at 4: one
+      // effect without a native pass makes it return null and the whole
+      // chain is dropped, so an exotic pick would silently take the working
+      // effects down with it. Filtering here keeps the supported ones live
+      // and degrades one effect at a time instead of all of them.
+      const NATIVE_EFFECT_PASS_LIMIT = 4;
+      const nativeCompositionEffects = (source: unknown): Effect[] => {
+        const list = Array.isArray(source) ? (source as Effect[]) : [];
+        const usable = list.filter(
+          (effect) =>
+            effect
+            && effect.enabled !== false
+            && !!nativeEffectPassFromDescriptor(effectToNativeDescriptor(effect)),
+        );
+        return usable.slice(0, NATIVE_EFFECT_PASS_LIMIT);
+      };
+
       const appendNativeVjMixCarrier = (list: Layer[]): Layer[] => {
         type MixRowEntry = { layerId: string; opacity: number; blendMode: string };
         const rowsByIdx = new Map<number, MixRowEntry>();
@@ -1757,7 +1782,23 @@
                 vjmixRows: rows,
               },
             } as NonNullable<Layer['source']>,
-            effects: [],
+            // Composition FX ride the carrier's own effect chain.
+            //
+            // This is the whole VJ-mode fix for "composition FX do nothing".
+            // The carrier renders the full row stack into ONE source frame,
+            // and nativeEffectPassRouteForLayer already chains a layer's
+            // effects onto its source frame with real intermediate textures
+            // — the same path that makes layer and clip FX work. Leaving
+            // this empty meant composition FX only ever reached the
+            // compositor's inline colour ops, which implement nine simple
+            // operations and silently drop everything else.
+            //
+            // Filtered rather than passed whole: nativeEffectPassesForLayer
+            // is all-or-nothing (one unsupported effect returns null and the
+            // entire chain falls back), so a single exotic effect would take
+            // the working ones down with it. Capped at 4 for the same
+            // reason.
+            effects: nativeCompositionEffects(get(vjClipLauncher)?.compositionEffects),
             edgeEffects: null,
           } as Layer,
         ];
