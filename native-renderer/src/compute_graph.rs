@@ -87,6 +87,13 @@ impl NativeComputeGraphTextureDimension {
 pub(crate) enum NativeComputeGraphBindingKind {
     Buffer(NativeComputeBufferBindingKind),
     SourceFrameTexture(NativeComputeGraphTextureDimension),
+    /// One layer of the full-resolution composite ping-pong texture, sampled
+    /// as a plain 2D texture. Composition FX run the ordinary effect-pass
+    /// chain over the finished composite, which must stay at output
+    /// resolution — routing it through the square source-frame array would
+    /// resample every pixel on screen. The layer index rides in
+    /// `NativeComputeGraphBindingSpec::source_slot`.
+    CompositeFrameTexture,
     SourceFrameSampler,
 }
 
@@ -95,6 +102,7 @@ impl NativeComputeGraphBindingKind {
         match self {
             Self::Buffer(kind) => kind.signature(),
             Self::SourceFrameTexture(dimension) => dimension.signature(),
+            Self::CompositeFrameTexture => "composite-frame-texture",
             Self::SourceFrameSampler => "source-frame-sampler",
         }
     }
@@ -102,6 +110,11 @@ impl NativeComputeGraphBindingKind {
     pub(crate) fn binding_type(self) -> wgpu::BindingType {
         match self {
             Self::Buffer(kind) => kind.binding_type(),
+            Self::CompositeFrameTexture => wgpu::BindingType::Texture {
+                sample_type: wgpu::TextureSampleType::Float { filterable: true },
+                view_dimension: wgpu::TextureViewDimension::D2,
+                multisampled: false,
+            },
             Self::SourceFrameTexture(dimension) => wgpu::BindingType::Texture {
                 sample_type: wgpu::TextureSampleType::Float { filterable: true },
                 view_dimension: dimension.view_dimension(),
@@ -157,6 +170,12 @@ pub(crate) enum NativeComputeGraphRenderTarget {
         source_id: String,
         slot: usize,
         seq: u64,
+    },
+    /// One layer of the full-resolution composite ping-pong texture. Used by
+    /// composition FX, which run after the compositor has drawn every layer
+    /// and must not lose resolution on the way through.
+    CompositeFrame {
+        index: usize,
     },
 }
 
@@ -362,6 +381,9 @@ fn compute_graph_binding_kind_from_str(kind: &str) -> Option<NativeComputeGraphB
         | "texture-2d-array" => Some(NativeComputeGraphBindingKind::SourceFrameTexture(
             NativeComputeGraphTextureDimension::D2Array,
         )),
+        "composite-frame-texture" | "composite-texture" | "composite-frame" => {
+            Some(NativeComputeGraphBindingKind::CompositeFrameTexture)
+        }
         "source-frame-sampler" | "source-sampler" => {
             Some(NativeComputeGraphBindingKind::SourceFrameSampler)
         }
