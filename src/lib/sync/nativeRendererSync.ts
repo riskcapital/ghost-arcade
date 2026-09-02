@@ -250,6 +250,8 @@ type NativeLayerUvState = {
 type SharedTextureInfoCacheEntry = {
   info: SpoutSharedTextureInfo;
   updatedAt: number;
+  /** Host-side receive count; see NativeRendererSync.sharedTextureRevision. */
+  revision: number;
 };
 
 type SharedTextureUploadState = {
@@ -9327,7 +9329,24 @@ export class NativeRendererSync {
             : await receiveSpoutTextureInfo();
         if (!info?.available || !info.handle || !info.width || !info.height) return;
         if (liveSourceType === 'syphon' && senderName && info.senderName && info.senderName !== senderName) return;
-        this.sharedTextureInfoCache.set(key, { info, updatedAt: performance.now() });
+        // Host-side receive count, because the sender's frame number cannot
+        // be trusted to change.
+        //
+        // The upload command is skipped when a source's signature is
+        // unchanged, and for a live shared-texture sender every field in that
+        // signature is constant except the frame number. Syphon's addon
+        // returns its own counter and bumps it per receive, so macOS uploaded
+        // every frame. Spout's addon returns the SENDER's counter, which the
+        // Spout SDK leaves at zero unless the user has enabled frame counting
+        // in SpoutSettings.exe — so on Windows the signature never changed,
+        // exactly one upload was ever emitted, and the input froze on the
+        // frame it was added.
+        //
+        // Counted on the cache entry rather than in a Map of its own: the key
+        // space is the same, and a second map would be one more thing with no
+        // removal path.
+        const revision = (this.sharedTextureInfoCache.get(key)?.revision ?? 0) + 1;
+        this.sharedTextureInfoCache.set(key, { info, updatedAt: performance.now(), revision });
       } catch (err) {
         const failures = this.sharedTextureInfoNextPollAt.get(`${key}:failures`) ?? 0;
         if (failures < 3) {
@@ -9366,7 +9385,16 @@ export class NativeRendererSync {
       'shared',
       info.platform,
       info.senderName ?? sharedTextureSenderName(src),
-      info.frame ?? 0,
+      // NOT info.frame. On macOS the Syphon addon returns its own counter,
+      // bumped on every successful receive, so the signature changed each
+      // poll and a new upload was emitted. On Windows the Spout addon
+      // returns the SENDER's frame counter, which the Spout SDK leaves at 0
+      // unless the user has turned frame counting on in SpoutSettings.exe.
+      // Every other field here is constant for a live sender, so the
+      // signature never changed, the upload was emitted exactly once, and
+      // the input froze on the frame it was added — while other Spout
+      // receivers showed the stream updating perfectly.
+      cached?.revision ?? 0,
       width,
       height,
       info.format ?? 'unknown',
