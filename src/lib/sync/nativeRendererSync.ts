@@ -7167,10 +7167,17 @@ export class NativeRendererSync {
       }
       entries.push({ descriptor, mix });
     };
-    for (const effect of get(vjClipLauncher)?.compositionEffects ?? []) {
-      if (effect?.enabled === false) continue;
-      push(effect, 1);
-    }
+    // VJ composition FX are NOT pushed here any more. They now ride the VJ
+    // mix carrier's effect-pass chain (see appendNativeVjMixCarrier in
+    // Canvas.svelte), which runs the full native effect set instead of the
+    // nine inline colour ops this path supports. Pushing them here as well
+    // would apply brightness/contrast/etc twice — once in the chain and
+    // again in the compositor.
+    //
+    // Mapping composition FX stay below until the core grows a
+    // post-composite pass phase: its layers are warped and blended
+    // per-layer inside the compositor, so there is no composited source
+    // frame for a chain to read, and the inline colour ops are all it has.
     // Mapping-mode composition effects. The WebGL engine passed
     // `mappingComposition.effects` as its composite chain in mapping mode
     // (Canvas chose per-mode); this push previously read only the VJ store,
