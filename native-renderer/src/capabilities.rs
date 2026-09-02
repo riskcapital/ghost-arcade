@@ -122,6 +122,7 @@ pub const CORE_COMMAND_TYPES: &[&str] = &[
     "update_native_graph_buffer",
     "remove_native_graph_layer",
     "queue_compute_graph",
+    "clear_composite_graph",
     "enqueue_compute_graph",
     "set_effect_chain",
     "set_texture_pool_cap",

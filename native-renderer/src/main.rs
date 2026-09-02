@@ -5048,6 +5048,10 @@ impl App {
                         continue;
                     }
                 }
+                "clear_composite_graph" => {
+                    self.pending_composite_graph_jobs.clear();
+                    self.pending_composite_output_index = 0;
+                }
                 "set_effect_chain" => self.apply_effect_chain(command),
                 "set_present_policy" => self.apply_present_policy(command),
                 "set_command_drain_policy" | "set_command_drain_limit" => {
@@ -9571,8 +9575,14 @@ impl App {
         self.render_bound_isf_layers();
         let mut native_graph_jobs = self.run_native_graph_layers();
         native_graph_jobs.append(&mut self.pending_native_graph_jobs);
-        let mut composite_graph_jobs: Vec<NativeGraphFrameJob> = Vec::new();
-        composite_graph_jobs.append(&mut self.pending_composite_graph_jobs);
+        // Cloned, NOT drained. The core renders on its own clock while the
+        // host re-queues on its flush, so draining meant any frame that
+        // rendered before the next queue arrived came out with no
+        // composition FX at all — the two rates beat against each other and
+        // the output flickered between graded and ungraded. The chain is
+        // persistent state: it stays until it is replaced or cleared.
+        let composite_graph_jobs: Vec<NativeGraphFrameJob> =
+            self.pending_composite_graph_jobs.clone();
         let composite_output_index = self.pending_composite_output_index;
         let render_time = if self.render_clock_mode == "manual" {
             self.render_clock_time

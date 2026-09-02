@@ -4879,6 +4879,8 @@ export class NativeRendererSync {
   // auto-pauses on tab visibility and lines up with the compositor so uniform
   // uploads aren't done just to be thrown away.
   private shaderAnimationRaf: number | null = null;
+  /** True while the core is holding a composition-FX chain for us. */
+  private compositeFxResident = false;
   private lastCompositeEffectsSig: string | null = null;
   private lastOutputStageSig: string | null = null;
   private lastSliceOutputsSig: string | null = null;
@@ -7166,13 +7168,27 @@ export class NativeRendererSync {
    * post-composite queue each render, and the uniforms carry time.
    */
   private compositeEffectGraphCommand(width: number, height: number): RendererCommand | null {
-    if (!this.supportsNativeFeature('native_post_composite_graph')) return null;
+    // The core keeps the last chain resident on purpose: it renders on its
+    // own clock while we re-queue on our flush, and draining per render made
+    // any frame that landed between queues come out ungraded, so the output
+    // flickered. The cost of that is that "no chain" has to be said out loud,
+    // or the last one grades forever.
+    const noChain = () => {
+      if (this.compositeFxResident) {
+        this.compositeFxResident = false;
+        void submitNativeRendererCommands([
+          { type: 'clear_composite_graph' } as unknown as RendererCommand,
+        ]).catch(() => { /* core without post-composite support */ });
+      }
+      return null;
+    };
+    if (!this.supportsNativeFeature('native_post_composite_graph')) return noChain();
     const mappingComposition = get(project)?.mappingComposition;
-    if (!mappingComposition?.enabled) return null;
+    if (!mappingComposition?.enabled) return noChain();
     const candidates = (mappingComposition.effects ?? []).filter(
       (effect: any) => effect && effect.enabled !== false,
     );
-    if (!candidates.length) return null;
+    if (!candidates.length) return noChain();
 
     // Same all-or-nothing rule the layer chain has: drop what the core cannot
     // run rather than losing the whole chain to one unsupported pick.
@@ -7183,8 +7199,10 @@ export class NativeRendererSync {
       }))
       .filter((entry) => !!entry.pass)
       .slice(0, 4);
-    if (!effectPasses.length) return null;
-    if (!this.supportsNativeEffectPassRoute(effectPasses.map((entry) => entry.pass!))) return null;
+    if (!effectPasses.length) return noChain();
+    if (!this.supportsNativeEffectPassRoute(effectPasses.map((entry) => entry.pass!))) {
+      return noChain();
+    }
 
     const graphTime = Math.max(0, (performance.now() - this.liveClockOriginMs) / 1000);
     const frameIndex = Math.max(0, Math.round(graphTime * this.targetFps));
@@ -7204,12 +7222,13 @@ export class NativeRendererSync {
         frameIndex,
         seq: frameIndex * 16 + 12,
       });
+      this.compositeFxResident = true;
       return {
         type: 'queue_compute_graph',
         ...(graph.config as unknown as Record<string, unknown>),
       } as RendererCommand;
     } catch {
-      return null;
+      return noChain();
     }
   }
 
@@ -7821,8 +7840,6 @@ export class NativeRendererSync {
     const renderClock = this.renderClockCommand();
     const now = Date.now();
     const commands: RendererCommand[] = [renderClock];
-    const compositeFxCommand = this.compositeEffectGraphCommand(width, height);
-    if (compositeFxCommand) commands.push(compositeFxCommand);
 
     for (const [index, layer] of layers.entries()) {
       if (!layer.visible) continue;
@@ -8199,6 +8216,10 @@ export class NativeRendererSync {
     const urgentVideoRevisionAtStart = this.urgentVideoRevision;
     this.latestLayers = layers;
     const commands: RendererCommand[] = [];
+    // Mapping composition FX: rebuilt every frame, because the core drains
+    // its post-composite queue each render and the uniforms carry time.
+    const compositeFxCommand = this.compositeEffectGraphCommand(width, height);
+    if (compositeFxCommand) commands.push(compositeFxCommand);
     const graphInputCommands: RendererCommand[] = [];
     const current = new Map<string, LayerSnapshot>();
     const activeVideoKeys = new Set<string>();
