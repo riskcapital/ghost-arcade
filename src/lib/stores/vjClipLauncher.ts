@@ -504,6 +504,22 @@ import { abletonLink } from '../sync/abletonLink';
 
 const QUANT_CLOCK_EPOCH = performance.now();
 
+/**
+ * Clip kinds that accept the per-clip transform (zoom / anchor / rotation /
+ * opacity / fit / mirror).
+ *
+ * The transform is baked into the layer's warp-quad corners, which is media
+ * agnostic — but it was gated on 'video' in three separate places, so an
+ * image clip could not be resized or repositioned at all. Video and image are
+ * both plain 2D media in the quad and behave identically here. The richer
+ * types are deliberately left out: splat, model3d and gpu carry their own
+ * position/scale controls, and stacking a second transform on top of those
+ * would double-apply.
+ */
+function clipSupportsTransform(clip: { type?: string } | null | undefined): boolean {
+  return clip?.type === 'video' || clip?.type === 'image';
+}
+
 /** Convert a quantization grid label to its size in beats (4/4 assumed). */
 function gridToBeats(grid: QuantizationGrid): number {
   switch (grid) {
@@ -2036,7 +2052,8 @@ function createVJClipLauncherStore() {
         const newLayerStates = [...targetLayerStates];
         if (layerIndex < 0 || layerIndex >= newLayerStates.length) return state;
         const activeClip = newLayerStates[layerIndex]?.activeClip;
-        if (!activeClip || activeClip.type !== 'video') return state;
+        // Video-only would silently drop every image transform edit.
+        if (!activeClip || !clipSupportsTransform(activeClip)) return state;
 
         const newClip = { ...activeClip, ...updates };
         newLayerStates[layerIndex] = { ...newLayerStates[layerIndex], activeClip: newClip };
@@ -3227,15 +3244,16 @@ export const vjOutputLayers = derived(
       // contentFit + opacity are still consumed via the existing
       // shader uniforms (they're UV-based and per-layer-multiply,
       // not corner-based).
-      const clipZoom = clip.type === 'video' ? (clip.zoom ?? 1) : 1;
-      const clipRotation = clip.type === 'video' ? (clip.rotation ?? 0) : 0;
-      const clipOpacity = clip.type === 'video' ? (clip.opacity ?? 1) : 1;
-      const clipMirrorX = clip.type === 'video' ? !!clip.mirrorX : false;
-      const ax = clip.type === 'video' ? (clip.anchorX ?? 0.5) : 0.5;
-      const ay = clip.type === 'video' ? (clip.anchorY ?? 0.5) : 0.5;
+      const transformable = clipSupportsTransform(clip);
+      const clipZoom = transformable ? (clip.zoom ?? 1) : 1;
+      const clipRotation = transformable ? (clip.rotation ?? 0) : 0;
+      const clipOpacity = transformable ? (clip.opacity ?? 1) : 1;
+      const clipMirrorX = transformable ? !!clip.mirrorX : false;
+      const ax = transformable ? (clip.anchorX ?? 0.5) : 0.5;
+      const ay = transformable ? (clip.anchorY ?? 0.5) : 0.5;
       // Map VJ-friendly fit names to engine ContentFitMode.
       let clipContentFit: 'stretch' | 'fill' | 'crop' | undefined;
-      if (clip.type === 'video') {
+      if (transformable) {
         const f = clip.fit ?? 'cover';
         clipContentFit = f === 'cover' ? 'fill' : f === 'contain' ? 'crop' : 'stretch';
       }

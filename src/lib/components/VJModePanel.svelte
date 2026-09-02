@@ -40,6 +40,7 @@
   import PluginIcon from './PluginIcon.svelte';
   import PluginLayerPanel from './PluginLayerPanel.svelte';
   import MediaTray from './MediaTray.svelte';
+  import VJClipTransform from './VJClipTransform.svelte';
   import AIShaderGenerator from './AIShaderGenerator.svelte';
   import AIVideoGenerator from './AIVideoGenerator.svelte';
   import { shaderLibrary } from '../stores/shaderLibrary';
@@ -5108,107 +5109,38 @@
                     {/if}
                   </div>
 
-                  <!-- Per-clip transform: zoom, fit, anchor, rotation, opacity.
-                       Maps to VJClip.zoom/fit/anchorX/anchorY/rotation/opacity
-                       which Layer construction in vjOutputLayers translates to
-                       the engine's existing position/scale/rotation/opacity/
-                       contentFit fields. Each input writes immediately via
-                       vjClipLauncher.updateActiveClipVideoProps so the change
-                       is visible on the next frame. -->
-                  <div class="vt-transform">
-                    <div class="vt-section-title">Transform</div>
+                  <VJClipTransform
+                    clip={vClip}
+                    layerIndex={selectedLayerIndex!}
+                    deck={paramDeck}
+                  />
+                </div>
+              </div>
+            </div>
+          {/if}
 
-                    <label class="vt-tf-row">
-                      <span class="vt-tf-label">Fit</span>
-                      <select
-                        class="vt-tf-select"
-                        value={vFit}
-                        onchange={(e) => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { fit: (e.target as HTMLSelectElement).value as any }, paramDeck)}
-                      >
-                        <option value="cover">Cover (fill + crop)</option>
-                        <option value="contain">Contain (letterbox)</option>
-                        <option value="fill">Fill (stretch)</option>
-                      </select>
-                    </label>
-
-                    <label class="vt-tf-row vt-tf-toggle-row">
-                      <span class="vt-tf-label">Mirror</span>
-                      <button
-                        class="vt-toggle-btn"
-                        class:active={vMirrorX}
-                        onclick={() => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { mirrorX: !vMirrorX }, paramDeck)}
-                        title="Mirror horizontally"
-                        data-midi-path="vj:{selectedLayerIndex}:video:mirror"
-                        data-midi-label="{vClip.name} Mirror"
-                        data-midi-discrete="true"
-                      >
-                        {vMirrorX ? 'On' : 'Off'}
-                      </button>
-                    </label>
-
-                    <label class="vt-tf-row">
-                      <span class="vt-tf-label">Zoom</span>
-                      <input
-                        type="range"
-                        min="0.1" max="4" step="0.05"
-                        value={vZoom}
-                        oninput={(e) => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { zoom: +(e.target as HTMLInputElement).value }, paramDeck)}
-                      />
-                      <span class="vt-tf-num">{vZoom.toFixed(2)}×</span>
-                    </label>
-
-                    <label class="vt-tf-row">
-                      <span class="vt-tf-label">Anchor X</span>
-                      <input
-                        type="range"
-                        min="0" max="1" step="0.01"
-                        value={vAnchorX}
-                        oninput={(e) => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { anchorX: +(e.target as HTMLInputElement).value }, paramDeck)}
-                      />
-                      <span class="vt-tf-num">{vAnchorX.toFixed(2)}</span>
-                    </label>
-
-                    <label class="vt-tf-row">
-                      <span class="vt-tf-label">Anchor Y</span>
-                      <input
-                        type="range"
-                        min="0" max="1" step="0.01"
-                        value={vAnchorY}
-                        oninput={(e) => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { anchorY: +(e.target as HTMLInputElement).value }, paramDeck)}
-                      />
-                      <span class="vt-tf-num">{vAnchorY.toFixed(2)}</span>
-                    </label>
-
-                    <label class="vt-tf-row">
-                      <span class="vt-tf-label">Rotation</span>
-                      <input
-                        type="range"
-                        min="-180" max="180" step="1"
-                        value={vRotation}
-                        oninput={(e) => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { rotation: +(e.target as HTMLInputElement).value }, paramDeck)}
-                      />
-                      <span class="vt-tf-num">{vRotation}°</span>
-                    </label>
-
-                    <label class="vt-tf-row">
-                      <span class="vt-tf-label">Opacity</span>
-                      <input
-                        type="range"
-                        min="0" max="1" step="0.01"
-                        value={vOpacity}
-                        oninput={(e) => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { opacity: +(e.target as HTMLInputElement).value }, paramDeck)}
-                      />
-                      <span class="vt-tf-num">{Math.round(vOpacity * 100)}%</span>
-                    </label>
-
-                    <button
-                      class="vt-tf-reset"
-                      onclick={() => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { zoom: 1, fit: 'cover', anchorX: 0.5, anchorY: 0.5, rotation: 0, opacity: 1, mirrorX: false }, paramDeck)}
-                      title="Reset transform to defaults"
-                    >
-                      Reset transform
-                    </button>
-                  </div>
+          <!-- Image Controls Panel.
+               Images get the same transform as video: it is baked into the
+               layer's warp-quad corners, which does not care what the source
+               is. It was only ever unavailable because the controls lived
+               inside the video-only panel, so an image clip could not be
+               scaled or repositioned at all. -->
+          {#if selectedLayerIndex !== null && selectedLayerState?.activeClip?.type === 'image'}
+            {@const iClip = selectedLayerState.activeClip}
+            <div class="shader-params-panel video-params-panel">
+              <div class="shader-params-panel-header">
+                <span class="shader-params-overlay-title">
+                  {iClip.name || 'Image'}
+                  <span class="shader-params-layer-badge" style="background: rgba(167, 139, 250, 0.3); color: #a78bfa;">IMG</span>
+                </span>
+              </div>
+              <div class="shader-params-panel-list">
+                <div class="video-controls-panel">
+                  <VJClipTransform
+                    clip={iClip}
+                    layerIndex={selectedLayerIndex!}
+                    deck={paramDeck}
+                  />
                 </div>
               </div>
             </div>
@@ -11139,9 +11071,6 @@
     font-size: 11px;
     cursor: pointer;
     width: 100%;
-  }
-  .vt-tf-row:has(.vt-tf-select) {
-    grid-template-columns: 56px 1fr;
   }
   .vt-tf-toggle-row {
     grid-template-columns: 56px 1fr;
