@@ -145,6 +145,7 @@ import {
 import {
   NATIVE_EFFECT_PASS_MANIFEST,
   buildNativeEffectPassChainGraph,
+  buildCompositeEffectPassChainGraph,
   buildNativeEffectPassPrecompileCommands,
   type NativeEffectPassId,
   type NativeEffectPassOptions,
@@ -7151,6 +7152,67 @@ export class NativeRendererSync {
     });
   }
 
+  /**
+   * Mapping-mode composition FX as a post-composite effect-pass chain.
+   *
+   * These cannot ride a layer's chain the way VJ composition FX do: mapping
+   * layers are warped, masked and blended inside the compositor, so there is
+   * no single pre-composite frame that represents the scene. The core instead
+   * keeps a full-resolution ping-pong pair, seeds it with the finished
+   * composite and runs this chain over it — which is why blur and everything
+   * else that samples neighbouring pixels now works here at all.
+   *
+   * Rebuilt every frame rather than on change: the core drains its
+   * post-composite queue each render, and the uniforms carry time.
+   */
+  private compositeEffectGraphCommand(width: number, height: number): RendererCommand | null {
+    if (!this.supportsNativeFeature('native_post_composite_graph')) return null;
+    const mappingComposition = get(project)?.mappingComposition;
+    if (!mappingComposition?.enabled) return null;
+    const candidates = (mappingComposition.effects ?? []).filter(
+      (effect: any) => effect && effect.enabled !== false,
+    );
+    if (!candidates.length) return null;
+
+    // Same all-or-nothing rule the layer chain has: drop what the core cannot
+    // run rather than losing the whole chain to one unsupported pick.
+    const effectPasses = candidates
+      .map((effect: any) => ({
+        effect,
+        pass: nativeEffectPassFromDescriptor(effectToNativeDescriptor(effect)),
+      }))
+      .filter((entry) => !!entry.pass)
+      .slice(0, 4);
+    if (!effectPasses.length) return null;
+    if (!this.supportsNativeEffectPassRoute(effectPasses.map((entry) => entry.pass!))) return null;
+
+    const graphTime = Math.max(0, (performance.now() - this.liveClockOriginMs) / 1000);
+    const frameIndex = Math.max(0, Math.round(graphTime * this.targetFps));
+    try {
+      const graph = buildCompositeEffectPassChainGraph({
+        sourceId: 'composite-frame:0',
+        targetSourceId: 'composite-frame:1',
+        effects: effectPasses.map((entry) => ({
+          effect: entry.pass!.effect,
+          amount: entry.pass!.amount,
+          mix: Math.max(0, Math.min(1, Number(entry.effect.opacity ?? 1))),
+          params: { ...entry.pass!.params, audioLevel: getVisualAudioSnapshot().level },
+        })),
+        width,
+        height,
+        time: graphTime,
+        frameIndex,
+        seq: frameIndex * 16 + 12,
+      });
+      return {
+        type: 'queue_compute_graph',
+        ...(graph.config as unknown as Record<string, unknown>),
+      } as RendererCommand;
+    } catch {
+      return null;
+    }
+  }
+
   private pushCompositeEffects() {
     const entries: Array<{ descriptor: string; mix: number }> = [];
     const unsupported: string[] = [];
@@ -7174,23 +7236,13 @@ export class NativeRendererSync {
     // would apply brightness/contrast/etc twice — once in the chain and
     // again in the compositor.
     //
-    // Mapping composition FX stay below until the core grows a
-    // post-composite pass phase: its layers are warped and blended
-    // per-layer inside the compositor, so there is no composited source
-    // frame for a chain to read, and the inline colour ops are all it has.
-    // Mapping-mode composition effects. The WebGL engine passed
-    // `mappingComposition.effects` as its composite chain in mapping mode
-    // (Canvas chose per-mode); this push previously read only the VJ store,
-    // so mapping-mode composition FX were a silent no-op natively. The two
-    // sets never coexist — mapping composition is disabled in VJ mode — so
-    // including both here preserves each mode's behaviour.
-    const mappingComposition = get(project)?.mappingComposition;
-    if (mappingComposition?.enabled) {
-      for (const effect of mappingComposition.effects ?? []) {
-        if (effect?.enabled === false) continue;
-        push(effect, 1);
-      }
-    }
+    // Mapping composition FX are not pushed here either: they run as a
+    // post-composite effect-pass chain (compositeEffectGraphCommand), so
+    // sending them again would apply the colour ops twice.
+    //
+    // What is left below is macros, which genuinely do want the compositor's
+    // cheap inline path — they modulate the whole output continuously and
+    // never need to sample neighbouring pixels.
     for (const macro of get(macros)?.macros ?? []) {
       if (macro.value <= 0.001 || !macro.effects?.length) continue;
       for (const effect of macro.effects) {
@@ -7769,6 +7821,8 @@ export class NativeRendererSync {
     const renderClock = this.renderClockCommand();
     const now = Date.now();
     const commands: RendererCommand[] = [renderClock];
+    const compositeFxCommand = this.compositeEffectGraphCommand(width, height);
+    if (compositeFxCommand) commands.push(compositeFxCommand);
 
     for (const [index, layer] of layers.entries()) {
       if (!layer.visible) continue;

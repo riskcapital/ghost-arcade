@@ -100,6 +100,9 @@ const MAX_SOURCE_PREVIEWS: usize = 16;
 const SOURCE_PREVIEW_SIZE: usize = 256;
 const SOURCE_PREVIEW_PIXELS: usize = SOURCE_PREVIEW_SIZE * SOURCE_PREVIEW_SIZE;
 const MAX_SOURCE_FRAME_SLOTS: usize = 24;
+/// Ping-pong layers for the full-resolution composite used by composition FX.
+/// Two is all an effect chain needs: read one, write the other, swap.
+const COMPOSITE_FRAME_SLOTS: usize = 2;
 const SOURCE_FRAME_SIZE_PERFORMANCE: usize = 1024;
 const SOURCE_FRAME_SIZE_BALANCED: usize = 1536;
 const SOURCE_FRAME_SIZE_DEFAULT: usize = 2048;
@@ -2561,6 +2564,7 @@ struct RenderState {
     source_frame_format: wgpu::TextureFormat,
     source_frame_mip_levels: u32,
     source_frame_blitter: TextureBlitter,
+    composite_frame_blitter: TextureBlitter,
     /// Off-screen target for reduced-resolution ISF rendering. Allocated lazily
     /// and only when a quality tier below native is actually in use, so the full
     /// quality path costs nothing extra.
@@ -2586,6 +2590,12 @@ struct RenderState {
     native_graph_render_pipelines: HashMap<String, NativeGraphRenderPipeline>,
     native_compute_graph_buffers: HashMap<String, NativeComputeGraphGpuBuffer>,
     output_mirror_texture: wgpu::Texture,
+    /// Two full-resolution textures that composition FX ping-pong between.
+    /// Deliberately separate textures rather than one two-layer array: wgpu
+    /// treats a texture as a single usage scope inside a pass, so reading
+    /// layer 0 while writing layer 1 of the same texture is a validation
+    /// error (COLOR_TARGET is exclusive).
+    composite_frame_textures: [wgpu::Texture; COMPOSITE_FRAME_SLOTS],
     output_mirror_view: wgpu::TextureView,
     surface_copy_dst_supported: bool,
     #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -2788,6 +2798,14 @@ struct App {
     native_plugin_audio_smooth: NativePluginAudioSmooth,
     native_point_cloud_assets: HashMap<String, NativePointCloudAsset>,
     pending_native_graph_jobs: Vec<NativeGraphFrameJob>,
+    /// Graph jobs that must run AFTER the compositor has drawn every layer:
+    /// composition FX, which act on the finished image rather than on any one
+    /// source. Kept separate because the pre-composite list is encoded before
+    /// the composite pass and these have to land after it.
+    pending_composite_graph_jobs: Vec<NativeGraphFrameJob>,
+    /// Which composite ping-pong layer the queued chain finishes on, so the
+    /// blit back to the mirror reads the right one.
+    pending_composite_output_index: usize,
     source_previews: HashMap<String, SourcePreview>,
     source_preview_slots: HashMap<String, usize>,
     source_preview_dirty: bool,
@@ -3085,6 +3103,8 @@ impl App {
             native_plugin_audio_smooth: NativePluginAudioSmooth::default(),
             native_point_cloud_assets: HashMap::new(),
             pending_native_graph_jobs: Vec::new(),
+            pending_composite_graph_jobs: Vec::new(),
+            pending_composite_output_index: 0,
             source_previews: HashMap::new(),
             source_preview_slots: HashMap::new(),
             source_preview_dirty: true,
@@ -3327,6 +3347,7 @@ impl App {
             "storage_buffer_instruments": true,
             "shared_texture_source_frame_upload": source_frame_shared_texture_import_ready,
             "native_output_mirror_texture": true,
+            "native_post_composite_graph": true,
             "shared_texture_upload": shared_texture_media_transport,
             "shared_texture_output_export": output_shared_texture_export_ready,
             "native_texture_share_sender": false,
@@ -9550,6 +9571,9 @@ impl App {
         self.render_bound_isf_layers();
         let mut native_graph_jobs = self.run_native_graph_layers();
         native_graph_jobs.append(&mut self.pending_native_graph_jobs);
+        let mut composite_graph_jobs: Vec<NativeGraphFrameJob> = Vec::new();
+        composite_graph_jobs.append(&mut self.pending_composite_graph_jobs);
+        let composite_output_index = self.pending_composite_output_index;
         let render_time = if self.render_clock_mode == "manual" {
             self.render_clock_time
         } else {
@@ -9631,6 +9655,8 @@ impl App {
             stage3d_mesh_frame.as_ref(),
             &scene_overlay_items,
             &native_graph_jobs,
+            &composite_graph_jobs,
+            composite_output_index,
             self.audio0,
             self.audio1,
             self.audio2,
@@ -10290,6 +10316,31 @@ impl App {
     fn apply_queue_compute_graph(&mut self, command: &Value) -> Result<(), String> {
         let job = self.compute_graph_frame_job(command)?;
         self.register_compute_graph_source_frame_targets(&job.render_plans);
+        // A job that renders into the composite ping-pong is composition FX:
+        // it reads the finished composite, so it has to run after the
+        // compositor rather than alongside the per-source graphs. Route it to
+        // the post-composite queue, replacing whatever was queued last frame
+        // — the chain is rebuilt each frame and only the newest is wanted.
+        if job.render_plans.iter().any(|plan| {
+            matches!(
+                plan.target,
+                NativeComputeGraphRenderTarget::CompositeFrame { .. }
+            )
+        }) {
+            let output_index = job
+                .render_plans
+                .iter()
+                .rev()
+                .find_map(|plan| match plan.target {
+                    NativeComputeGraphRenderTarget::CompositeFrame { index } => Some(index),
+                    _ => None,
+                })
+                .unwrap_or(0);
+            self.pending_composite_graph_jobs.clear();
+            self.pending_composite_output_index = output_index.min(COMPOSITE_FRAME_SLOTS - 1);
+            self.pending_composite_graph_jobs.push(job);
+            return Ok(());
+        }
         // Coalesce: a newer job rendering into the same source frame(s)
         // REPLACES any still-pending job for those targets. The render
         // loop executes every pending job per frame, so a submission
@@ -10429,6 +10480,12 @@ impl App {
                         self.stats.compute_graph_snapshot_renders =
                             self.stats.compute_graph_snapshot_renders.saturating_add(1);
                     }
+                    NativeComputeGraphRenderTarget::CompositeFrame { .. } => {
+                        self.stats.compute_graph_source_frame_renders = self
+                            .stats
+                            .compute_graph_source_frame_renders
+                            .saturating_add(1);
+                    }
                 }
             }
         }
@@ -10495,6 +10552,25 @@ impl App {
             .clamp(0.0, u32::MAX as f64) as u32;
         let explicit_graph_kind = compute_graph_binding_kind_from_value(binding);
         match explicit_graph_kind {
+            Some(NativeComputeGraphBindingKind::CompositeFrameTexture) => {
+                // Composition FX read one layer of the full-resolution
+                // composite ping-pong; the layer index rides in `slot`.
+                let resource_id = string_at(binding, &["resource"])
+                    .or_else(|| string_at(binding, &["resource_id"]))
+                    .unwrap_or_else(|| "composite-frame".to_string());
+                let index = number_at(binding, &["slot"])
+                    .or_else(|| number_at(binding, &["index"]))
+                    .unwrap_or(0.0)
+                    .round()
+                    .clamp(0.0, (COMPOSITE_FRAME_SLOTS - 1) as f64)
+                    as usize;
+                Ok(NativeComputeGraphBindingSpec {
+                    binding: binding_number,
+                    resource_id,
+                    kind: NativeComputeGraphBindingKind::CompositeFrameTexture,
+                    source_slot: Some(index),
+                })
+            }
             Some(NativeComputeGraphBindingKind::SourceFrameSampler) => {
                 let resource_id = string_at(binding, &["resource"])
                     .or_else(|| string_at(binding, &["resource_id"]))
@@ -10854,6 +10930,18 @@ impl App {
         let target = match target_key.as_str() {
             "snapshot" | "frame-snapshot" | "snapshot-texture" => {
                 NativeComputeGraphRenderTarget::Snapshot
+            }
+            "composite" | "composite-frame" | "composite-texture" => {
+                // number_at walks a NESTED path, so alternatives must be
+                // chained rather than listed.
+                let index = number_at(render, &["slot"])
+                    .or_else(|| number_at(render, &["index"]))
+                    .or_else(|| number_at(render, &["composite_index"]))
+                    .unwrap_or(0.0)
+                    .round()
+                    .clamp(0.0, (COMPOSITE_FRAME_SLOTS - 1) as f64)
+                    as usize;
+                NativeComputeGraphRenderTarget::CompositeFrame { index }
             }
             "source" | "source-frame" | "source-texture" | "layer-source" => {
                 let Some(source_id) = string_at(render, &["source_id"])
@@ -15008,6 +15096,11 @@ impl RenderState {
         let source_frame_blitter = TextureBlitterBuilder::new(&device, source_frame_format)
             .sample_type(wgpu::FilterMode::Linear)
             .build();
+        // Same size and format as the mirror, so this is a straight copy of
+        // the pixels rather than a rescale.
+        let composite_frame_blitter = TextureBlitterBuilder::new(&device, format)
+            .sample_type(wgpu::FilterMode::Linear)
+            .build();
         let (output_mirror_texture, output_mirror_view) = Self::create_offscreen_target(
             &device,
             config.width,
@@ -15015,6 +15108,10 @@ impl RenderState {
             format,
             "Ghost Render Core Output Mirror",
         );
+        let composite_frame_textures = [
+            Self::create_composite_frame_target(&device, config.width, config.height, format),
+            Self::create_composite_frame_target(&device, config.width, config.height, format),
+        ];
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         let output_export = Self::create_output_export_target(
             &device,
@@ -15496,6 +15593,7 @@ impl RenderState {
             source_frame_format,
             source_frame_mip_levels,
             source_frame_blitter,
+            composite_frame_blitter,
             native_shader_scale_texture: None,
             native_shader_scale_size: 0,
             native_shader_vertex_module,
@@ -15518,6 +15616,7 @@ impl RenderState {
             native_graph_render_pipelines: HashMap::new(),
             native_compute_graph_buffers: HashMap::new(),
             output_mirror_texture,
+            composite_frame_textures,
             output_mirror_view,
             surface_copy_dst_supported,
             #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -15542,6 +15641,39 @@ impl RenderState {
 
     fn adapter_name(&self) -> Option<String> {
         Some(self.adapter_name.clone())
+    }
+
+    /// Full-resolution ping-pong target for composition FX.
+    ///
+    /// Deliberately NOT part of the source-frame array: that array is square
+    /// and quality-tier sized (1024-3072), so pushing a 1920x1080 composite
+    /// through it would resample every pixel on screen the moment a
+    /// composition effect was switched on. This matches the swapchain's size
+    /// and format instead, so the composite goes in and comes back untouched
+    /// apart from the effects themselves.
+    fn create_composite_frame_target(
+        device: &wgpu::Device,
+        width: u32,
+        height: u32,
+        format: wgpu::TextureFormat,
+    ) -> wgpu::Texture {
+        device.create_texture(&wgpu::TextureDescriptor {
+            label: Some("Ghost Render Core Composite Frame"),
+            size: wgpu::Extent3d {
+                width: width.max(1),
+                height: height.max(1),
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: wgpu::TextureDimension::D2,
+            format,
+            usage: wgpu::TextureUsages::RENDER_ATTACHMENT
+                | wgpu::TextureUsages::TEXTURE_BINDING
+                | wgpu::TextureUsages::COPY_SRC
+                | wgpu::TextureUsages::COPY_DST,
+            view_formats: &[],
+        })
     }
 
     fn create_offscreen_target(
@@ -16413,6 +16545,20 @@ impl RenderState {
         );
         self.output_mirror_texture = output_mirror_texture;
         self.output_mirror_view = output_mirror_view;
+        self.composite_frame_textures = [
+            Self::create_composite_frame_target(
+                &self.device,
+                self.config.width,
+                self.config.height,
+                self.config.format,
+            ),
+            Self::create_composite_frame_target(
+                &self.device,
+                self.config.width,
+                self.config.height,
+                self.config.format,
+            ),
+        ];
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         {
             self.output_export = Self::create_output_export_target(
@@ -17031,7 +17177,23 @@ impl RenderState {
                     Some(source_id.clone()),
                     Some((*slot).min(MAX_SOURCE_FRAME_SLOTS - 1)),
                 ),
+                // Full output resolution, and the swapchain's format so the
+                // finished chain can go straight back to the mirror.
+                NativeComputeGraphRenderTarget::CompositeFrame { .. } => (
+                    self.config.format,
+                    "composite_frame",
+                    self.config.width.max(1),
+                    self.config.height.max(1),
+                    None::<String>,
+                    None::<usize>,
+                ),
             };
+        let composite_target_index = match &render_plan.target {
+            NativeComputeGraphRenderTarget::CompositeFrame { index } => {
+                Some((*index).min(COMPOSITE_FRAME_SLOTS - 1))
+            }
+            _ => None,
+        };
         let pipeline_key = native_graph_render_pipeline_key(&render_plan.cache_key, output_format);
         let layout_specs = render_plan
             .bindings
@@ -17073,7 +17235,22 @@ impl RenderState {
             entries: &entries,
         });
         let source_frame_target_view;
-        let target_view = if let Some(slot) = source_slot {
+        let composite_target_view;
+        let target_view = if let Some(index) = composite_target_index {
+            composite_target_view = self.composite_frame_textures[index].create_view(
+                &wgpu::TextureViewDescriptor {
+                    label: Some("Ghost Native Composite Frame Target View"),
+                    format: Some(self.config.format),
+                    dimension: Some(wgpu::TextureViewDimension::D2),
+                    base_mip_level: 0,
+                    mip_level_count: Some(1),
+                    base_array_layer: 0,
+                    array_layer_count: Some(1),
+                    ..Default::default()
+                },
+            );
+            &composite_target_view
+        } else if let Some(slot) = source_slot {
             source_frame_target_view =
                 self.source_frame_texture
                     .create_view(&wgpu::TextureViewDescriptor {
@@ -17369,6 +17546,25 @@ impl RenderState {
                             } else {
                                 Some(MAX_SOURCE_FRAME_SLOTS as u32)
                             },
+                            ..Default::default()
+                        },
+                    ));
+                    prepared.push(PreparedBinding::TextureView(texture_views.len() - 1));
+                }
+                NativeComputeGraphBindingKind::CompositeFrameTexture => {
+                    let index = binding
+                        .source_slot
+                        .unwrap_or(0)
+                        .min(COMPOSITE_FRAME_SLOTS - 1);
+                    texture_views.push(self.composite_frame_textures[index].create_view(
+                        &wgpu::TextureViewDescriptor {
+                            label: Some("Ghost Native Composite Frame Texture View"),
+                            format: Some(self.config.format),
+                            dimension: Some(wgpu::TextureViewDimension::D2),
+                            base_mip_level: 0,
+                            mip_level_count: Some(1),
+                            base_array_layer: 0,
+                            array_layer_count: Some(1),
                             ..Default::default()
                         },
                     ));
@@ -18792,6 +18988,8 @@ impl RenderState {
         stage3d_mesh_frame: Option<&Stage3DMeshFrame>,
         stage3d_overlay_items: &[Stage3DOverlayItemGpu],
         native_graph_jobs: &[NativeGraphFrameJob],
+        composite_graph_jobs: &[NativeGraphFrameJob],
+        composite_output_index: usize,
         audio0: [f32; 4],
         audio1: [f32; 4],
         audio2: [f32; 4],
@@ -18883,6 +19081,59 @@ impl RenderState {
             "Ghost Render Core Output Mirror Pass",
             mirror_timestamp_writes,
         );
+        // ── Composition FX ──
+        // The compositor has now drawn every layer into the mirror. Copy that
+        // finished image into layer 0 of the composite ping-pong, run the
+        // ordinary effect-pass chain over it, and blit the result back.
+        //
+        // This is what makes composition FX behave like layer and clip FX.
+        // They used to reach the core only as inline colour maths inside the
+        // compositor's single fullscreen pass, which has no texture to sample
+        // neighbours from — so blur and everything like it was dropped.
+        //
+        // Runs before the Stage3D draws below, so composition FX colour the
+        // composited layers without also tinting the 3D stage overlay.
+        if !composite_graph_jobs.is_empty() {
+            mirror_encoder.copy_texture_to_texture(
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.output_mirror_texture,
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::TexelCopyTextureInfo {
+                    texture: &self.composite_frame_textures[0],
+                    mip_level: 0,
+                    origin: wgpu::Origin3d::ZERO,
+                    aspect: wgpu::TextureAspect::All,
+                },
+                wgpu::Extent3d {
+                    width: self.config.width.max(1),
+                    height: self.config.height.max(1),
+                    depth_or_array_layers: 1,
+                },
+            );
+            self.render_native_graph_frame_jobs(&mut mirror_encoder, composite_graph_jobs)?;
+            let finished_index = composite_output_index.min(COMPOSITE_FRAME_SLOTS - 1);
+            let finished_view = self.composite_frame_textures[finished_index].create_view(
+                &wgpu::TextureViewDescriptor {
+                    label: Some("Ghost Render Core Composite FX Result View"),
+                    format: Some(self.config.format),
+                    dimension: Some(wgpu::TextureViewDimension::D2),
+                    base_mip_level: 0,
+                    mip_level_count: Some(1),
+                    base_array_layer: 0,
+                    array_layer_count: Some(1),
+                    ..Default::default()
+                },
+            );
+            self.composite_frame_blitter.copy(
+                &self.device,
+                &mut mirror_encoder,
+                &finished_view,
+                &self.output_mirror_view,
+            );
+        }
         self.draw_stage3d_mesh_to_view(
             &mut mirror_encoder,
             &self.output_mirror_view,

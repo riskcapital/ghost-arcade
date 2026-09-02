@@ -10957,6 +10957,84 @@ export function buildNativeEffectPassGraph(options: NativeEffectPassOptions): Na
   };
 }
 
+/** Ping-pong layers in the core's full-resolution composite texture. */
+const COMPOSITE_FRAME_SLOTS = 2;
+
+/**
+ * Effect-pass chain over the finished composite, for composition FX.
+ *
+ * Same shaders and same uniforms as the per-layer chain — the only
+ * difference is where the pixels live. Per-layer effects read and write the
+ * square, quality-tier-sized source-frame array; the composite must stay at
+ * output resolution, so the core keeps a separate pair of full-size layers
+ * and these passes ping-pong between them.
+ *
+ * The core seeds layer 0 with the composited frame, so pass i reads layer
+ * i % 2 and writes the other. The last pass therefore lands on
+ * effects.length % 2, which is the layer the core blits back to the mirror.
+ */
+export function buildCompositeEffectPassChainGraph(
+  options: NativeEffectPassChainOptions,
+): NativeEffectPassGraph {
+  const effects = options.effects.filter(
+    (effect) => effect && NATIVE_EFFECT_PASS_BY_ID.has(effect.effect),
+  );
+  if (!effects.length) {
+    throw new Error('Composite effect-pass chain requires at least one supported effect');
+  }
+
+  const buffers: Array<Record<string, unknown>> = [];
+  const renderPasses: Array<Record<string, unknown>> = [];
+
+  effects.forEach((effect, index) => {
+    const manifest = nativeEffectPassManifestEntry(effect.effect);
+    const readIndex = index % COMPOSITE_FRAME_SLOTS;
+    const writeIndex = (index + 1) % COMPOSITE_FRAME_SLOTS;
+    const uniformId = `composite-fx:pass:${index}:uniform`;
+    const passOptions: NativeEffectPassOptions = {
+      ...options,
+      sourceId: `composite-frame:${readIndex}`,
+      targetSourceId: `composite-frame:${writeIndex}`,
+      effect: effect.effect,
+      amount: effect.amount,
+      mix: effect.mix,
+      params: effect.params,
+    };
+    buffers.push({
+      id: uniformId,
+      kind: 'uniform',
+      byte_length: 96,
+      initial_f32: packNativeEffectPassUniforms(passOptions),
+    });
+    renderPasses.push({
+      name: `composite-fx-${manifest.id}-${index}`,
+      shader_id: NATIVE_EFFECT_PASS_SHADER_ID,
+      target: 'composite_frame',
+      slot: writeIndex,
+      seq: Math.max(0, Math.round(options.seq ?? options.frameIndex ?? 0)) + index,
+      vertex_entry: 'vs_full',
+      fragment_entry: 'fs_effect',
+      vertex_count: 3,
+      instance_count: 1,
+      // Replace, not blend: each pass owns its target layer outright.
+      clear: true,
+      clear_color: [0, 0, 0, 0],
+      blend: 'replace',
+      bindings: [
+        { binding: 0, kind: 'composite-frame-texture', slot: readIndex },
+        { binding: 1, kind: 'source-frame-sampler' },
+        { binding: 2, resource: uniformId, kind: 'uniform' },
+      ],
+    });
+  });
+
+  return {
+    effect: effects[0].effect,
+    effects: effects.map((effect) => effect.effect),
+    config: { buffers, passes: [], readbacks: [], render_passes: renderPasses },
+  };
+}
+
 export function buildNativeEffectPassChainGraph(options: NativeEffectPassChainOptions): NativeEffectPassGraph {
   const effects = options.effects.filter((effect) => effect && NATIVE_EFFECT_PASS_BY_ID.has(effect.effect));
   if (!effects.length) {
