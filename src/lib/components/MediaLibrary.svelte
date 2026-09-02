@@ -5,7 +5,7 @@
   import { confirmDeleteIfSafeMode } from '../utils/safeMode';
   import type { MediaSource, JSAnimationSource } from '../types';
   import { generateUUID } from '../types';
-  import { createAssetRefFromFile } from '../storage/assetRegistry';
+  import { createDurableAssetRefFromFile } from '../storage/assetRegistry';
   import AIShaderGenerator from './AIShaderGenerator.svelte';
 
   // Library state
@@ -102,22 +102,22 @@
   // Drag state
   let draggedItem: MediaSource | null = null;
 
-  function handleFileSelect(e: Event) {
+  async function handleFileSelect(e: Event) {
     const input = e.target as HTMLInputElement;
     const files = input.files;
     if (!files) return;
 
     for (const file of files) {
-      addFileToLibrary(file);
+      await addFileToLibrary(file);
     }
     input.value = '';
   }
 
-  function addFileToLibrary(file: File) {
+  async function addFileToLibrary(file: File) {
     // Capture an AssetRef so the library entry survives save/reload. Without
     // this the URL is a blob: that dies at session end and the library item
     // becomes unresolvable.
-    const { assetRef, runtimeUrl: url } = createAssetRefFromFile(file);
+    const { assetRef, runtimeUrl: url } = await createDurableAssetRefFromFile(file);
     const isVideo = file.type.startsWith('video/');
 
     const item: MediaSource = {
@@ -141,13 +141,13 @@
     libraryItems = [...libraryItems, item];
   }
 
-  function handleDrop(e: DragEvent) {
+  async function handleDrop(e: DragEvent) {
     e.preventDefault();
     const files = e.dataTransfer?.files;
     if (!files) return;
 
     for (const file of files) {
-      addFileToLibrary(file);
+      await addFileToLibrary(file);
     }
   }
 
@@ -401,7 +401,7 @@
   }
 
   // Updated file handling to support HTML files
-  function handleFileSelectUpdated(e: Event) {
+  async function handleFileSelectUpdated(e: Event) {
     const input = e.target as HTMLInputElement;
     const files = input.files;
     if (!files) return;
@@ -410,7 +410,7 @@
       if (file.name.endsWith('.html')) {
         addJSFileToLibrary(file);
       } else {
-        addFileToLibrary(file);
+        await addFileToLibrary(file);
       }
     }
     input.value = '';

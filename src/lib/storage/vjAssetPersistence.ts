@@ -1,4 +1,6 @@
-import type { AssetRef } from './assetRegistry';
+import { hasDurableAssetLocation, type AssetRef } from './assetRegistry';
+
+export { hasDurableAssetLocation };
 
 type AssetRefCarrier = {
   name?: string;
@@ -6,16 +8,6 @@ type AssetRefCarrier = {
   type?: string;
   _assetRef?: AssetRef;
 };
-
-export function hasDurableAssetLocation(ref: AssetRef | null | undefined): ref is AssetRef {
-  const durableUrl = ref?.url && !ref.url.startsWith('blob:');
-  return !!(
-    ref?.projectPath ||
-    ref?.originalPath ||
-    ref?.dataUrl ||
-    durableUrl
-  );
-}
 
 function normalizedMediaName(value: string | undefined): string {
   return (value || '')
