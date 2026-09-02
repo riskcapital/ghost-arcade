@@ -220,3 +220,82 @@ describe('Layer persistence', () => {
     });
   });
 });
+
+/**
+ * Per-clip transform survives a save for IMAGE clips, not just video.
+ *
+ * The transform (zoom / fit / anchor / rotation / opacity / mirrorX) was gated
+ * on `type === 'video'` in three separate places — the panel, the store setter,
+ * and the clip-to-layer conversion — which is why images appeared to have no
+ * size control at all. Those are fixed, but a fourth gate in the save path
+ * would produce a subtler version of the same complaint: adjust the image, save,
+ * reopen, and it is back to default.
+ *
+ * exportProject and importClip are both hand-maintained flat whitelists with no
+ * type branch today. This drives a real payload through both to prove the round
+ * trip is type-agnostic, so that adding such a branch fails here.
+ */
+describe('image clip transform persistence', () => {
+  const TRANSFORM = {
+    zoom: 2.4,
+    fit: 'contain' as const,
+    anchorX: 0.15,
+    anchorY: 0.85,
+    rotation: 37.5,
+    opacity: 0.42,
+    mirrorX: true,
+  };
+
+  function projectWithClip(type: 'image' | 'video') {
+    return {
+      version: '2.0.1',
+      project: { id: 'p1', name: 'transform round trip', width: 1920, height: 1080, layers: [] },
+      vjClipLauncher: {
+        numLayers: 1,
+        numColumns: 1,
+        layerStates: [{
+          opacity: 1,
+          blendMode: 'normal',
+          solo: false,
+          mute: false,
+          activeColumn: 0,
+          activeClip: {
+            id: `clip-${type}`,
+            type,
+            name: `a ${type}`,
+            // Not a blob: URL — those are dropped as session-only on save.
+            src: `/media/sample.${type === 'image' ? 'png' : 'mp4'}`,
+            ...TRANSFORM,
+          },
+          effects: [],
+        }],
+      },
+    };
+  }
+
+  function roundTrip(type: 'image' | 'video'): any {
+    expect(layers.project.importProject(projectWithClip(type)), 'import failed').toBe(true);
+    // Through JSON, because that is what actually reaches disk.
+    const saved = JSON.parse(JSON.stringify(layers.project.exportProject()));
+    return saved?.vjClipLauncher?.layerStates?.[0]?.activeClip ?? null;
+  }
+
+  it('round-trips every transform field on an image clip', () => {
+    const clip = roundTrip('image');
+    expect(clip, 'image clip did not survive the round trip at all').toBeTruthy();
+    expect(clip.type).toBe('image');
+    for (const [field, value] of Object.entries(TRANSFORM)) {
+      expect(clip[field], `${field} was lost or reset saving an image clip`).toEqual(value);
+    }
+  });
+
+  it('treats image and video identically', () => {
+    // The bug was never that the transform did not persist — it was that
+    // images were singled out. Comparing the two is what pins that down.
+    const image = roundTrip('image');
+    const video = roundTrip('video');
+    for (const field of Object.keys(TRANSFORM)) {
+      expect(image[field], `${field} differs between image and video`).toEqual(video[field]);
+    }
+  });
+});
