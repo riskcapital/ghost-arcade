@@ -479,7 +479,14 @@ function blocksWithDeckGrid(
 
 // ─── Quantization clock helpers ──────────────────────────────────────────
 //
-// Two ground truths for "where are we in the bar":
+// Three ground truths for "where are we in the bar", in priority order:
+//   0) Ableton Link is in a session → anchor to the session's beat phase.
+//      Link carries the phase as well as the tempo, and it is the phase
+//      the other apps on the network are already agreeing on, so it beats
+//      anything derived locally. Without this the app locked to Link's
+//      TEMPO but kept its own downbeat: a Traktor user would see the BPM
+//      match exactly while clips fired off the beat, with no way to tell
+//      whether the phase, the quantum or the offset was at fault.
 //   1) Audio is active + has detected beats → anchor to the most recent
 //      detected beat using audioStore.beat.timeSinceLastBeat. This stays
 //      tight even if BPM drifts because we measure against a real beat.
@@ -493,6 +500,7 @@ function blocksWithDeckGrid(
 
 import { get as getStore } from 'svelte/store';
 import { audioStore } from './audio';
+import { abletonLink } from '../sync/abletonLink';
 
 const QUANT_CLOCK_EPOCH = performance.now();
 
@@ -513,14 +521,16 @@ function gridToBeats(grid: QuantizationGrid): number {
  * the requested grid. Returns the current time if grid is 'off' so callers
  * can use the same code path for unscheduled triggers.
  */
-function nextQuantumWallTime(grid: QuantizationGrid): number {
+export function nextQuantumWallTime(grid: QuantizationGrid): number {
   const now = performance.now();
   const beats = gridToBeats(grid);
   if (beats === 0) return now;
 
   const audio = getStore(audioStore);
-  // Resolve BPM with manual override > auto-detected > fallback 120
-  const bpm = audio.manualBPM || audio.bpm || 120;
+  const link = getStore(abletonLink);
+  // Resolve BPM with Link > manual override > auto-detected > fallback 120.
+  const linkLocked = link.enabled && link.peers > 0 && link.tempo > 0;
+  const bpm = linkLocked ? link.tempo : (audio.manualBPM || audio.bpm || 120);
   if (bpm <= 0) return now;
   const beatMs = 60000 / bpm;
 
@@ -529,7 +539,12 @@ function nextQuantumWallTime(grid: QuantizationGrid): number {
   let anchorMs: number;
   let anchorBeatPos: number;
 
-  if (audio.isActive && audio.beat.beatCount > 0 && audio.beat.timeSinceLastBeat >= 0) {
+  if (linkLocked) {
+    // phaseNow() extrapolates the session phase to this instant, so the
+    // anchor is simply "here, at this position in the bar".
+    anchorMs = now;
+    anchorBeatPos = abletonLink.phaseNow();
+  } else if (audio.isActive && audio.beat.beatCount > 0 && audio.beat.timeSinceLastBeat >= 0) {
     // Snap anchor to the most recent detected beat. timeSinceLastBeat is
     // in seconds; convert to ms.
     anchorMs = now - audio.beat.timeSinceLastBeat * 1000;
