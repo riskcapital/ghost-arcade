@@ -1983,12 +1983,15 @@
             <div>
               <strong>VJ / Pro DJ Link OSC template</strong>
               <p>
-                Installs A/B clip and column triggers for a 4 × 8 deck, plus master,
-                stop-all, and crossfader controls. Send from Beat Link Trigger,
-                Open Beat Control, a DAW, or any OSC controller.
+                Installs A/B clip and column triggers sized to your current deck,
+                plus master, stop-all, and crossfader controls. Send from Beat Link
+                Trigger, Open Beat Control, a DAW, or any OSC controller. Re-run it
+                after adding layers or columns to cover the new cells.
               </p>
               <code>/ghost/vj/a/layer/1/clip/1</code>
               <span>→ Deck A, layer 1, clip 1</span>
+              <code>/ghost/vj/a/column/1</code>
+              <span>→ Deck A, fires column 1 across every layer at once</span>
             </div>
             <button class="osc-add-btn template" onclick={() => oscStore.installVjTemplate()}>
               Install template
