@@ -912,6 +912,38 @@ function armVJVideoClip(clip: VJClip): HTMLVideoElement | undefined {
   return video;
 }
 
+/**
+ * How far the incoming timeline can drift from our own playhead before we
+ * re-anchor rather than let the clip free-run.
+ *
+ * A timeline source (Beat Link Trigger following a CDJ, a DAW, a show
+ * controller) sends position continuously — tens of messages a second. Seeking
+ * on every one would restart the native decoder constantly and look far worse
+ * than not syncing at all. Playback here is anchor-based, so between
+ * corrections the clip advances on its own at the right rate and stays in
+ * agreement on its own; a correction is only needed when it has actually
+ * fallen out of step.
+ *
+ * 80ms is about two frames at 25fps — past the point a cut looks late, and
+ * comfortably above the jitter of position sent over UDP.
+ */
+export const CLIP_POSITION_SYNC_DRIFT_SECONDS = 0.08;
+
+/**
+ * Where this clip's playhead is right now, predicted from the native anchor.
+ * The core free-runs between seeks, so the stored time is only the last anchor,
+ * not the live position.
+ */
+export function predictedClipPlayheadSeconds(clip: VJClip, nowMs = performance.now()): number {
+  const anchored = Number(clip._nativePlaybackTimeSeconds);
+  if (!Number.isFinite(anchored)) return 0;
+  if (clip.isPlaying === false) return Math.max(0, anchored);
+  const anchorMs = Number(clip._nativePlaybackUpdatedAtMs);
+  if (!Number.isFinite(anchorMs)) return Math.max(0, anchored);
+  const rate = Number(clip.playbackRate) || 1;
+  return Math.max(0, anchored + (Math.max(0, nowMs - anchorMs) / 1000) * rate);
+}
+
 function triggerNativeVJVideoClip(clip: VJClip): number {
   // Trigger is a pure handoff to an already-armed native decoder. Never call
   // ensure/arm here: creating browser media or issuing a prefetch RPC on the
@@ -2045,6 +2077,56 @@ function createVJClipLauncherStore() {
     // splat/model3d shape so the VJ video controls panel can write through to
     // the store without touching the live videoElement (the panel does that
     // separately on the DOM node).
+    /**
+     * Drive the active clip's playhead from an external timeline.
+     *
+     * This is what a DAW, a show controller, or Beat Link Trigger following a
+     * CDJ sends: "the track is at N seconds". The OSC path vj:<layer>:video:
+     * position already existed, but it only wrote videoElement.currentTime —
+     * and under the native engine that element is not what renders, so the
+     * visuals never moved. That is the whole of "Ghost Arcade does not receive
+     * the track's timeline position": the message arrived and was applied to
+     * the wrong clock.
+     *
+     * Correcting only past a drift threshold is what makes a continuous stream
+     * usable. Seeking on every message would re-arm the decoder tens of times a
+     * second; between corrections the anchor already advances the clip at the
+     * right rate.
+     *
+     * Returns true when it actually re-anchored, so callers and tests can see
+     * corrections rather than infer them.
+     */
+    syncActiveClipPosition(
+      layerIndex: number,
+      seconds: number,
+      deck: VJDeck = 'A',
+      driftToleranceSeconds = CLIP_POSITION_SYNC_DRIFT_SECONDS,
+    ): boolean {
+      if (!Number.isFinite(seconds)) return false;
+      const state = get({ subscribe });
+      const layerStates = deck === 'B' ? state.bankBLayerStates : state.layerStates;
+      const clip = layerStates[layerIndex]?.activeClip;
+      if (!clip || clip.type !== 'video') return false;
+
+      const duration = knownClipDurationSeconds(clip);
+      const target = Math.max(0, duration ? Math.min(duration, seconds) : seconds);
+      const drift = Math.abs(target - predictedClipPlayheadSeconds(clip));
+      // Already in step — leave the decoder alone and let it free-run.
+      if (drift <= Math.max(0, driftToleranceSeconds)) return false;
+
+      this.updateActiveClipVideoProps(layerIndex, {
+        _nativePlaybackTimeSeconds: target,
+        _nativePlaybackUpdatedAtMs: performance.now(),
+        _nativePlaybackSeekSeq: Math.max(0, Math.floor(Number(clip._nativePlaybackSeekSeq) || 0)) + 1,
+      }, deck);
+
+      // Best effort so any audible element follows; the native transport stays
+      // authoritative for what is actually on screen.
+      const el = clip.videoElement || videoElementCache.get(clip.id);
+      if (el) { try { el.currentTime = target; } catch { /* may still be loading */ } }
+      return true;
+    },
+
     updateActiveClipVideoProps(layerIndex: number, updates: Partial<Pick<VJClip, 'playbackMode' | 'playbackRate' | 'playbackSyncBeats' | 'durationSeconds' | '_nativePlaybackTimeSeconds' | '_nativePlaybackUpdatedAtMs' | '_nativePlaybackSeekSeq' | 'trimStart' | 'trimEnd' | 'isPlaying' | 'zoom' | 'fit' | 'anchorX' | 'anchorY' | 'rotation' | 'opacity' | 'mirrorX' | 'audioPlayback' | 'audioVolume' | 'audioMuted'>>, deck: VJDeck = 'A') {
       update(state => {
         const targetLayerStates = pickLayerStates(state, deck);

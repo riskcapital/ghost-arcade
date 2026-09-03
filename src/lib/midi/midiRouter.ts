@@ -688,9 +688,14 @@ class MidiRouter {
         } else if (action === 'mirror' && value > 0) {
           vjClipLauncher.updateActiveClipVideoProps(layerIndex, { mirrorX: !clip.mirrorX }, bank);
         } else if (action === 'position') {
+          // Position drives the NATIVE transport, not the DOM element. Writing
+          // videoElement.currentTime alone moved a clock nothing renders from,
+          // which is why an external timeline appeared to be ignored.
           const normalized = Math.max(0, Math.min(1, value));
           const sourcePosition = trimStart + normalized * (trimEnd - trimStart);
-          if (Number.isFinite(video.duration)) video.currentTime = video.duration * sourcePosition;
+          if (Number.isFinite(video.duration)) {
+            vjClipLauncher.syncActiveClipPosition(layerIndex, video.duration * sourcePosition, bank);
+          }
         }
         break;
       }
