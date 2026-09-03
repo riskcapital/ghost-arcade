@@ -29,6 +29,7 @@ import {
   type OscBindingSpec,
 } from './oscBindings';
 import { normalizeControlPath, validateControlPath } from '../control/controlPaths';
+import { collectOscFeedback, OSC_OUTPUT_POLL_MS } from './oscOutput';
 import { vjClipLauncher } from '../stores/vjClipLauncher';
 
 const OSC_RUNTIME_KEY = 'ghost-arcade:osc-runtime';
@@ -66,6 +67,12 @@ export interface OscState {
   /** When set, the next incoming message's address is bound to this
    *  param path instead of being dispatched normally. */
   learnTarget: { path: string; label?: string } | null;
+  /** Send app state back to the control surface. Off by default: it puts
+   *  traffic on the network, and a wrong address is confusing rather than
+   *  harmless once a surface starts acting on what it hears. */
+  outputEnabled: boolean;
+  outputHost: string;
+  outputPort: number;
 }
 
 const INITIAL_STATE: OscState = {
@@ -76,6 +83,12 @@ const INITIAL_STATE: OscState = {
   bindings: [],
   lastMessage: null,
   learnTarget: null,
+  outputEnabled: false,
+  // Loopback by default: the common setup is a surface app on the same
+  // machine, and it is the only default that cannot put traffic on someone
+  // else's network by accident.
+  outputHost: '127.0.0.1',
+  outputPort: 9000,
 };
 
 function createOscStore() {
@@ -87,6 +100,24 @@ function createOscStore() {
   let messageUnsub: (() => void) | null = null;
   let statusUnsub: (() => void) | null = null;
   let initialized = false;
+  let outputTimer: number | null = null;
+  /** What the surface has already been told, keyed by address. */
+  const lastSentValues = new Map<string, number>();
+
+  async function flushOutput() {
+    const state = get({ subscribe });
+    if (!state.outputEnabled || state.bindings.length === 0) return;
+    const messages = collectOscFeedback(state.bindings, lastSentValues);
+    if (messages.length === 0) return;
+    const api = (window as any).ghostOSC;
+    if (!api?.send) return;
+    try {
+      await api.send({ host: state.outputHost, port: state.outputPort, messages });
+    } catch {
+      // A surface that is closed makes every send fail. That is normal and
+      // must not stop the loop or spam the console at 20Hz.
+    }
+  }
 
   function persistRuntime() {
     if (typeof localStorage === 'undefined') return;
@@ -95,6 +126,9 @@ function createOscStore() {
       localStorage.setItem(OSC_RUNTIME_KEY, JSON.stringify({
         enabled: state.enabled,
         port: state.port,
+        outputEnabled: state.outputEnabled,
+        outputHost: state.outputHost,
+        outputPort: state.outputPort,
       }));
     } catch {
       // Project persistence still carries the OSC configuration. A
@@ -216,11 +250,16 @@ function createOscStore() {
             ...s,
             enabled: typeof saved.enabled === 'boolean' ? saved.enabled : s.enabled,
             port: Number.isInteger(saved.port) ? saved.port : s.port,
+            outputEnabled: typeof saved.outputEnabled === 'boolean' ? saved.outputEnabled : s.outputEnabled,
+            outputHost: typeof saved.outputHost === 'string' && saved.outputHost ? saved.outputHost : s.outputHost,
+            outputPort: Number.isInteger(saved.outputPort) ? saved.outputPort : s.outputPort,
           }));
         }
       } catch {
         // Ignore malformed legacy runtime state.
       }
+
+      if (get({ subscribe }).outputEnabled) this.startOutput();
 
       const state = get({ subscribe });
       const status = await api.status();
@@ -337,6 +376,45 @@ function createOscStore() {
       }
     },
 
+    /**
+     * Start mirroring state to the surface.
+     *
+     * Polled rather than subscribed: the values worth sending come from
+     * several stores and from a playhead that advances on its own with no
+     * event to subscribe to. One 20Hz diff covers all of it, and sends
+     * nothing when nothing moved.
+     */
+    startOutput() {
+      if (outputTimer !== null) return;
+      lastSentValues.clear();
+      outputTimer = setInterval(() => { void flushOutput(); }, OSC_OUTPUT_POLL_MS) as unknown as number;
+    },
+
+    stopOutput() {
+      if (outputTimer !== null) { clearInterval(outputTimer); outputTimer = null; }
+      lastSentValues.clear();
+      try { (window as any).ghostOSC?.stopSending?.(); } catch { /* bridge may be gone */ }
+    },
+
+    setOutputEnabled(enabled: boolean) {
+      update(s => ({ ...s, outputEnabled: enabled }));
+      if (enabled) this.startOutput(); else this.stopOutput();
+      persistRuntime();
+    },
+
+    setOutputTarget(host: string, port: number) {
+      const nextPort = Number(port);
+      update(s => ({
+        ...s,
+        outputHost: (host || '').trim() || '127.0.0.1',
+        outputPort: Number.isInteger(nextPort) && nextPort > 0 && nextPort < 65536 ? nextPort : s.outputPort,
+      }));
+      // Retarget means the new surface knows nothing yet, so drop the record
+      // of what was sent and let the next tick resend everything.
+      lastSentValues.clear();
+      persistRuntime();
+    },
+
     /** Serialize the persistent subset (no transient runtime fields)
      *  for project save. */
     serialize() {
@@ -345,16 +423,21 @@ function createOscStore() {
         enabled: s.enabled,
         port: s.port,
         bindings: s.bindings,
+        outputEnabled: s.outputEnabled,
+        outputHost: s.outputHost,
+        outputPort: s.outputPort,
       };
     },
 
     reset() {
       void stopListener();
+      this.stopOutput();
       set({ ...INITIAL_STATE });
       persistRuntime();
     },
 
     destroy() {
+      this.stopOutput();
       if (messageUnsub) { messageUnsub(); messageUnsub = null; }
       if (statusUnsub) { statusUnsub(); statusUnsub = null; }
       initialized = false;

@@ -11,6 +11,7 @@ import type { MidiMapping, MidiMessageType } from './midiTypes';
 import type { BlendMode } from '../types';
 import { getPluginByEffectType } from '../plugins/registry';
 import { normalizeControlPath } from '../control/controlPaths';
+import { audioStore } from '../stores/audio';
 
 // Prebuilt lookup: "cc:74" -> [MidiMapping, ...]
 // Rebuilt automatically when mappings change
@@ -529,6 +530,15 @@ class MidiRouter {
           detail: { effectId, action, pressed: value > 0, value },
         }));
       }
+      return;
+    }
+
+    // Master tempo: vj:tempo — a DAW or timeline source telling us the BPM.
+    // Writes the manual override, which is what the quantizer falls back to
+    // when no Link session is running; a live Link session still outranks it,
+    // because a real session phase beats a number sent over UDP.
+    if (layerPart === 'tempo' && bank === 'A') {
+      if (Number.isFinite(value) && value > 0) audioStore.setManualBPM(value);
       return;
     }
 
