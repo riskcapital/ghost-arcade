@@ -29,6 +29,7 @@ import {
   type OscBindingSpec,
 } from './oscBindings';
 import { normalizeControlPath, validateControlPath } from '../control/controlPaths';
+import { vjClipLauncher } from '../stores/vjClipLauncher';
 
 const OSC_RUNTIME_KEY = 'ghost-arcade:osc-runtime';
 
@@ -278,8 +279,21 @@ function createOscStore() {
       const path = normalizeControlPath(binding.path);
       update(s => ({ ...s, bindings: [...s.bindings, { id: generateUUID(), ...binding, path }] }));
     },
-    installVjTemplate(layerCount = 4, columnCount = 8) {
-      const template = createVjOscTemplateBindings(layerCount, columnCount);
+    /**
+     * Install the VJ template for the deck the user actually has.
+     *
+     * The size used to be pinned at 4x8. Decks are resizable at runtime
+     * (addLayer / addColumn), so anyone who grew theirs got bindings for the
+     * first four layers and first eight columns and nothing for the rest —
+     * including no column trigger past column 8, which reads as "column
+     * launch does not work" rather than "the template stopped early".
+     */
+    installVjTemplate(layerCount?: number, columnCount?: number) {
+      const deck = get(vjClipLauncher);
+      const template = createVjOscTemplateBindings(
+        layerCount ?? deck.numLayers,
+        columnCount ?? deck.numColumns,
+      );
       update(s => {
         const existing = new Set(s.bindings.map(b => `${b.address}\n${b.path}`));
         const additions = template
