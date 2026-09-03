@@ -1935,6 +1935,55 @@
             />
           </div>
 
+          <!-- Output / feedback. Receive-only OSC leaves a surface guessing:
+               a fader moved in the app never reaches the hardware. Sending
+               state back is what makes a layout track the app. -->
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">Send feedback</span>
+              <span class="label-hint">
+                Mirror app state back to your controller, so faders follow and clip
+                buttons light when their clip is live. Uses the bindings below —
+                whatever address you map, we answer on.
+              </span>
+            </div>
+            <label class="toggle-switch">
+              <input
+                type="checkbox"
+                checked={$oscStore.outputEnabled}
+                onchange={(e) => oscStore.setOutputEnabled((e.target as HTMLInputElement).checked)}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          {#if $oscStore.outputEnabled}
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="label-text">Send to</span>
+                <span class="label-hint">
+                  Host and port your controller listens on. 127.0.0.1 for an app on
+                  this machine; use the tablet's IP for TouchOSC over Wi-Fi.
+                </span>
+              </div>
+              <div style="display: flex; gap: 6px; align-items: center;">
+                <input
+                  type="text"
+                  class="port-input"
+                  style="width: 120px;"
+                  value={$oscStore.outputHost}
+                  onchange={(e) => oscStore.setOutputTarget((e.target as HTMLInputElement).value, $oscStore.outputPort)}
+                />
+                <input
+                  type="number" min="1" max="65535" step="1"
+                  class="port-input"
+                  value={$oscStore.outputPort}
+                  onchange={(e) => oscStore.setOutputTarget($oscStore.outputHost, parseInt((e.target as HTMLInputElement).value) || 9000)}
+                />
+              </div>
+            </div>
+          {/if}
+
           <!-- Live status row — listening dot + error string. -->
           <div class="setting-row">
             <div class="setting-label">

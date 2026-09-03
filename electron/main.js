@@ -32,7 +32,7 @@ import {
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
-const { parseOSCPacket } = require('./osc-parser.cjs');
+const { parseOSCPacket, encodeOSCMessage } = require('./osc-parser.cjs');
 const nativeRendererBroker = createNativeRendererBroker({
   appRoot: path.join(__dirname, '..'),
   resourcesPath: process.resourcesPath,
@@ -4541,6 +4541,67 @@ function listSpoutSenders() {
 // IPC Handlers
 // ============================================================
 
+// ─── OSC output (feedback to control surfaces) ──────────────
+// Receive-only OSC is fire-and-forget: a fader moved inside the app never
+// reaches the surface, so the two drift apart and a layout cannot show
+// state — no clip button that lights when its clip is live. One shared
+// send socket, addressed per-message, so retargeting host/port costs
+// nothing and an unreachable target cannot wedge the app.
+let oscSendSocket = null;
+
+function ensureOscSendSocket() {
+  if (oscSendSocket) return oscSendSocket;
+  oscSendSocket = dgram.createSocket('udp4');
+  // A destination that is not listening makes the OS return ICMP
+  // port-unreachable, which surfaces here as an error event. That is the
+  // normal state while a controller is closed, so it must not be fatal.
+  oscSendSocket.on('error', (err) => {
+    console.warn('[OSC out] socket error:', err?.message || err);
+  });
+  oscSendSocket.unref();
+  return oscSendSocket;
+}
+
+function closeOscSendSocket() {
+  if (!oscSendSocket) return;
+  try { oscSendSocket.close(); } catch {}
+  oscSendSocket = null;
+}
+
+/**
+ * Send a batch of { address, args } out to one host/port.
+ * Batched because feedback is emitted per state change and a single fader
+ * sweep produces a burst; one IPC call per burst rather than per value.
+ */
+function sendOscBatch(host, port, messages) {
+  if (!Array.isArray(messages) || messages.length === 0) return { ok: true, sent: 0 };
+  const targetPort = Number(port);
+  if (!Number.isInteger(targetPort) || targetPort < 1 || targetPort > 65535) {
+    return { ok: false, error: 'OSC output port must be between 1 and 65535' };
+  }
+  const targetHost = typeof host === 'string' && host.trim() ? host.trim() : '127.0.0.1';
+
+  let sock;
+  try {
+    sock = ensureOscSendSocket();
+  } catch (err) {
+    return { ok: false, error: err?.message || 'could not open OSC send socket' };
+  }
+
+  let sent = 0;
+  for (const msg of messages) {
+    const buf = encodeOSCMessage(msg?.address, msg?.args);
+    if (!buf) continue;
+    try {
+      sock.send(buf, targetPort, targetHost);
+      sent += 1;
+    } catch (err) {
+      return { ok: false, error: err?.message || 'OSC send failed', sent };
+    }
+  }
+  return { ok: true, sent };
+}
+
 // ─── OSC (Open Sound Control) UDP listener ──────────────────
 // Pure dgram socket; the parser lives in osc-parser.cjs. State is
 // module-scoped so handlers can start/stop/query it. Parsed messages
@@ -4725,6 +4786,11 @@ function registerIpcHandlers() {
     port: oscPort,
     error: oscLastError,
   }));
+  ipcMain.handle('osc_send', (_, { host, port, messages }) => sendOscBatch(host, port, messages));
+  ipcMain.handle('osc_send_stop', () => {
+    closeOscSendSocket();
+    return { ok: true };
+  });
 
   // --- NDI ---
   // available() reflects WHETHER WE CAN SEND: addon built + NDI runtime

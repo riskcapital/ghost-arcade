@@ -110,6 +110,37 @@ export function createVjOscTemplateBindings(
       }
     }
 
+    // Per-layer mixer and transport. The router has always understood these;
+    // the template only ever emitted clip and column triggers, so anyone who
+    // wanted a fader had to hand-write the path string. Everything here is
+    // addressable without knowing what is loaded in the layer — shader, splat
+    // and plugin params are not, which is why they stay out.
+    for (let layer = 0; layer < layerCount; layer += 1) {
+      const label = `Deck ${bankLabel} L${layer + 1}`;
+      const layerControls: Array<[string, string, string, OscBindingMode]> = [
+        ['opacity', 'opacity', `${label} opacity`, 'continuous'],
+        ['blend', 'blend', `${label} blend mode`, 'continuous'],
+        ['solo', 'solo', `${label} solo`, 'trigger'],
+        ['mute', 'mute', `${label} mute`, 'trigger'],
+        ['video/play', 'video:play', `${label} play / pause`, 'trigger'],
+        ['video/restart', 'video:restart', `${label} restart`, 'trigger'],
+        // Continuous: this is the one an external timeline drives.
+        ['video/position', 'video:position', `${label} playhead`, 'continuous'],
+      ];
+      for (const [suffix, pathSuffix, controlLabel, mode] of layerControls) {
+        bindings.push({
+          address: `/ghost/vj/${bank}/layer/${layer + 1}/${suffix}`,
+          argIndex: 0,
+          path: `${prefix}:${layer}:${pathSuffix}`,
+          sourceMin: 0,
+          sourceMax: 1,
+          invert: false,
+          label: controlLabel,
+          mode,
+        });
+      }
+    }
+
     for (let column = 0; column < columnCount; column += 1) {
       bindings.push({
         address: `/ghost/vj/${bank}/column/${column + 1}`,
@@ -125,6 +156,18 @@ export function createVjOscTemplateBindings(
   }
 
   bindings.push(
+    {
+      // Master tempo from a DAW or timeline source. Not 0..1: this carries a
+      // BPM, so the range is set wide enough to pass one through untouched.
+      address: '/ghost/vj/tempo',
+      argIndex: 0,
+      path: 'vj:tempo',
+      sourceMin: 0,
+      sourceMax: 300,
+      invert: false,
+      label: 'Master tempo (BPM)',
+      mode: 'continuous',
+    },
     {
       address: '/ghost/vj/stop',
       argIndex: 0,
