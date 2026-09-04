@@ -12,6 +12,7 @@ import type { BlendMode } from '../types';
 import { getPluginByEffectType } from '../plugins/registry';
 import { normalizeControlPath } from '../control/controlPaths';
 import { audioStore } from '../stores/audio';
+import { buildNativeAnchor, needsNativeReanchor } from '../media/nativeTransport';
 
 // Prebuilt lookup: "cc:74" -> [MidiMapping, ...]
 // Rebuilt automatically when mappings change
@@ -248,13 +249,28 @@ class MidiRouter {
         if (shouldPlay) void video.play().catch(() => undefined);
         else video.pause();
       } else if (property === 'restart' && value > 0) {
-        video.currentTime = startTime;
-        project.setLayerSource(layer.id, { ...source, isPlaying: true });
+        // Re-anchor the native clock, not just the element: under the native
+        // engine the element is not what renders. Restart is a discrete press,
+        // so it always seeks — no drift gate.
+        project.setLayerSource(layer.id, {
+          ...source,
+          isPlaying: true,
+          ...buildNativeAnchor(source, startTime),
+        });
+        try { video.currentTime = startTime; } catch { /* native stays authoritative */ }
         void video.play().catch(() => undefined);
       } else if (property === 'position') {
         const normalized = Math.max(0, Math.min(1, value));
         const sourcePosition = trimStart + normalized * (trimEnd - trimStart);
-        if (Number.isFinite(video.duration)) video.currentTime = video.duration * sourcePosition;
+        if (Number.isFinite(video.duration)) {
+          const target = video.duration * sourcePosition;
+          // An external timeline sends this continuously; only correct once it
+          // has actually drifted, or the decoder re-arms tens of times a second.
+          if (needsNativeReanchor(source, target)) {
+            project.setLayerSource(layer.id, { ...source, ...buildNativeAnchor(source, target) });
+            try { video.currentTime = target; } catch { /* native stays authoritative */ }
+          }
+        }
       }
       return;
     }

@@ -25,6 +25,11 @@ const storeSource = readFileSync(
   join(process.cwd(), 'src', 'lib', 'stores', 'vjClipLauncher.ts'),
   'utf8',
 );
+// The anchor rules are shared with mapping mode so the two cannot diverge.
+const transportSource = readFileSync(
+  join(process.cwd(), 'src', 'lib', 'media', 'nativeTransport.ts'),
+  'utf8',
+);
 
 function positionBranch(): string {
   const start = routerSource.indexOf("} else if (action === 'position') {");
@@ -58,27 +63,30 @@ describe('external timeline position sync', () => {
 
   it('re-anchors all three native fields together', () => {
     // A time with no fresh anchor is read as an old position that has since
-    // advanced; no seek bump and the core never re-seeks. All three or nothing.
-    const method = syncMethod();
-    expect(method).toContain('_nativePlaybackTimeSeconds');
-    expect(method).toContain('_nativePlaybackUpdatedAtMs');
-    expect(method).toContain('_nativePlaybackSeekSeq');
+    // advanced; no seek bump and the core never re-seeks. All three or nothing,
+    // which is why they are built in one place rather than set field by field.
+    const builder = transportSource.slice(transportSource.indexOf('export function buildNativeAnchor'));
+    expect(builder).toContain('_nativePlaybackTimeSeconds');
+    expect(builder).toContain('_nativePlaybackUpdatedAtMs');
+    expect(builder).toContain('_nativePlaybackSeekSeq');
+    expect(syncMethod()).toContain('buildNativeAnchor');
   });
 
   it('only corrects once the clip has actually drifted', () => {
     // Seeking per message would re-arm the decoder tens of times a second.
-    const method = syncMethod();
-    expect(method).toContain('predictedClipPlayheadSeconds');
-    expect(method).toMatch(/drift\s*<=|<=\s*.*driftTolerance/);
-    expect(storeSource).toMatch(/CLIP_POSITION_SYNC_DRIFT_SECONDS\s*=\s*0\.0[0-9]/);
+    expect(syncMethod()).toContain('needsNativeReanchor');
+    const gate = transportSource.slice(transportSource.indexOf('export function needsNativeReanchor'));
+    expect(gate).toContain('predictNativePlayheadSeconds');
+    expect(gate).toMatch(/drift\s*>/);
+    expect(transportSource).toMatch(/NATIVE_POSITION_DRIFT_SECONDS\s*=\s*0\.0[0-9]/);
   });
 
   it('predicts the playhead from the anchor rather than trusting the stored time', () => {
     // The core free-runs between seeks, so the stored value is the last anchor,
     // not the live position. Comparing against it would make drift look like
     // the whole elapsed time and re-seek constantly.
-    const predictor = storeSource.slice(
-      storeSource.indexOf('export function predictedClipPlayheadSeconds'),
+    const predictor = transportSource.slice(
+      transportSource.indexOf('export function predictNativePlayheadSeconds'),
     );
     expect(predictor).toContain('_nativePlaybackUpdatedAtMs');
     expect(predictor).toContain('playbackRate');
