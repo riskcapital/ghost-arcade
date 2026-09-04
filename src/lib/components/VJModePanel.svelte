@@ -455,6 +455,26 @@
   let deckMonitorGeneration = 0;
   let deckMonitorLastSig = '';
   let deckMonitorsAttached = false;
+  // Output-stage overrides that change what leaves the app but live in global
+  // settings, not the project — so they survive project switches and upgrades.
+  // A user hit dome projection and could not tell what had happened or where
+  // it lived; the preview showed a warped image and named nothing. There was
+  // already precedent for this shape (blackout and test pattern latching on
+  // after an upgrade), so this names whatever is active rather than waiting
+  // for the next mode to catch someone out.
+  $: activeOutputOverrides = (() => {
+    const out = $settings?.output;
+    if (!out) return [] as string[];
+    const active: string[] = [];
+    if (out.blackout) active.push('Blackout');
+    if (out.testPattern && out.testPattern !== 'none') active.push('Test pattern');
+    if (out.domeEnabled) active.push('Dome');
+    if (out.masterWarp?.enabled) active.push('Master warp');
+    if (out.outputRotation) active.push(`Rotated ${out.outputRotation}°`);
+    if ((out.outputCropWidth ?? 1) < 1 || (out.outputCropHeight ?? 1) < 1) active.push('Cropped');
+    return active;
+  })();
+
   $: deckMonitorsVisible = nativePreviewActive
     && $vjClipLauncher.isOpen
     && $vjClipLauncher.crossfaderEnabled;
@@ -4470,6 +4490,14 @@
             <div class="preview-container program-preview" class:native-hole={nativePreviewActive} bind:this={previewContainerEl}>
               <canvas bind:this={previewCanvas} class="preview-canvas" class:hidden-for-native={nativePreviewActive}></canvas>
               <div class="preview-label">{deckMonitorsVisible ? 'PROGRAM' : 'OUTPUT PREVIEW'}</div>
+              {#if activeOutputOverrides.length > 0}
+                <div
+                  class="output-override-badge"
+                  title="Output overrides are active. They live in Screens → Output, not in the project, so they stay on until turned off."
+                >
+                  {activeOutputOverrides.join(' · ')}
+                </div>
+              {/if}
             </div>
             {#if deckMonitorsVisible}
               <div class="deck-preview-stack" aria-label="Deck confidence monitors">
@@ -8040,6 +8068,29 @@
     padding: 2px 6px;
     border-radius: 3px;
     letter-spacing: 0.5px;
+  }
+
+  /* Sits directly under the OUTPUT PREVIEW label. Amber rather than the
+     label's grey because this is reporting something the user probably did
+     not mean to leave on — it should read as a notice, not a caption. */
+  .output-override-badge {
+    position: absolute;
+    top: 28px;
+    left: 8px;
+    font-size: 10px;
+    font-weight: 600;
+    color: #ffb000;
+    background: rgba(0, 0, 0, 0.72);
+    border: 1px solid rgba(255, 176, 0, 0.45);
+    padding: 2px 6px;
+    border-radius: 3px;
+    letter-spacing: 0.4px;
+    pointer-events: auto;
+    cursor: help;
+    max-width: calc(100% - 16px);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
   }
 
   /* RIGHT: Shader Params Panel (above media tabs) */
