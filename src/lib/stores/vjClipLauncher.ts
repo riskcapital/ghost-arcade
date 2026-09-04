@@ -13,6 +13,12 @@ import { isNativeSelectableEffect } from '../renderer/nativeEffectCoverage';
 import { NATIVE_ENGINE_ONLY } from './settings';
 import { armNativeLibraryVideo } from '../sync/nativeRendererSync';
 import { clipAudioBus, type ClipAudioTransport } from '../audio/clipAudioBus';
+import {
+  NATIVE_POSITION_DRIFT_SECONDS,
+  buildNativeAnchor,
+  needsNativeReanchor,
+  predictNativePlayheadSeconds,
+} from '../media/nativeTransport';
 
 // Cache parsed ISF shader inputs per shader code to avoid re-parsing every
 // frame. Bounded: keys are entire shader source strings, so an unbounded
@@ -913,35 +919,15 @@ function armVJVideoClip(clip: VJClip): HTMLVideoElement | undefined {
 }
 
 /**
- * How far the incoming timeline can drift from our own playhead before we
- * re-anchor rather than let the clip free-run.
- *
- * A timeline source (Beat Link Trigger following a CDJ, a DAW, a show
- * controller) sends position continuously — tens of messages a second. Seeking
- * on every one would restart the native decoder constantly and look far worse
- * than not syncing at all. Playback here is anchor-based, so between
- * corrections the clip advances on its own at the right rate and stays in
- * agreement on its own; a correction is only needed when it has actually
- * fallen out of step.
- *
- * 80ms is about two frames at 25fps — past the point a cut looks late, and
- * comfortably above the jitter of position sent over UDP.
+ * Re-exported so callers that already reach for these keep working; the rule
+ * itself lives in nativeTransport, shared with mapping mode so the two cannot
+ * drift apart.
  */
-export const CLIP_POSITION_SYNC_DRIFT_SECONDS = 0.08;
+export const CLIP_POSITION_SYNC_DRIFT_SECONDS = NATIVE_POSITION_DRIFT_SECONDS;
 
-/**
- * Where this clip's playhead is right now, predicted from the native anchor.
- * The core free-runs between seeks, so the stored time is only the last anchor,
- * not the live position.
- */
+/** Where this clip's playhead is right now, predicted from the native anchor. */
 export function predictedClipPlayheadSeconds(clip: VJClip, nowMs = performance.now()): number {
-  const anchored = Number(clip._nativePlaybackTimeSeconds);
-  if (!Number.isFinite(anchored)) return 0;
-  if (clip.isPlaying === false) return Math.max(0, anchored);
-  const anchorMs = Number(clip._nativePlaybackUpdatedAtMs);
-  if (!Number.isFinite(anchorMs)) return Math.max(0, anchored);
-  const rate = Number(clip.playbackRate) || 1;
-  return Math.max(0, anchored + (Math.max(0, nowMs - anchorMs) / 1000) * rate);
+  return predictNativePlayheadSeconds(clip, nowMs);
 }
 
 function triggerNativeVJVideoClip(clip: VJClip): number {
@@ -2110,15 +2096,10 @@ function createVJClipLauncherStore() {
 
       const duration = knownClipDurationSeconds(clip);
       const target = Math.max(0, duration ? Math.min(duration, seconds) : seconds);
-      const drift = Math.abs(target - predictedClipPlayheadSeconds(clip));
       // Already in step — leave the decoder alone and let it free-run.
-      if (drift <= Math.max(0, driftToleranceSeconds)) return false;
+      if (!needsNativeReanchor(clip, target, driftToleranceSeconds)) return false;
 
-      this.updateActiveClipVideoProps(layerIndex, {
-        _nativePlaybackTimeSeconds: target,
-        _nativePlaybackUpdatedAtMs: performance.now(),
-        _nativePlaybackSeekSeq: Math.max(0, Math.floor(Number(clip._nativePlaybackSeekSeq) || 0)) + 1,
-      }, deck);
+      this.updateActiveClipVideoProps(layerIndex, buildNativeAnchor(clip, target), deck);
 
       // Best effort so any audible element follows; the native transport stays
       // authoritative for what is actually on screen.

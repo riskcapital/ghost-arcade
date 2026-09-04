@@ -97,6 +97,9 @@ function clipBinding(
 export function createVjOscTemplateBindings(
   layerCount = 4,
   columnCount = 8,
+  blockCount = 8,
+  snapshotCount = 16,
+  mappingPresetCount = 8,
 ): OscBindingSpec[] {
   const bindings: OscBindingSpec[] = [];
 
@@ -153,6 +156,71 @@ export function createVjOscTemplateBindings(
         mode: 'trigger',
       });
     }
+  }
+
+  // Blocks and snapshots: whole-look recall, the thing a performer reaches for
+  // between sections. Both were already routed and neither was ever generated,
+  // so they could only be used by hand-writing the path.
+  for (let block = 0; block < blockCount; block += 1) {
+    bindings.push({
+      address: `/ghost/vj/block/${block + 1}`,
+      argIndex: 0,
+      path: `vj:block:${block}`,
+      sourceMin: 0,
+      sourceMax: 1,
+      invert: false,
+      label: `Block ${block + 1}`,
+      mode: 'trigger',
+    });
+  }
+
+  // Snapshots are 1-based in the router (1..16), unlike everything else here.
+  for (let snapshot = 1; snapshot <= snapshotCount; snapshot += 1) {
+    bindings.push({
+      address: `/ghost/vj/snapshot/${snapshot}`,
+      argIndex: 0,
+      path: `vj:snapshot:${snapshot}`,
+      sourceMin: 0,
+      sourceMax: 1,
+      invert: false,
+      label: `Snapshot ${snapshot}`,
+      mode: 'trigger',
+    });
+  }
+
+  // Mapping mode. Projection mapping is half the product and had no template at
+  // all — presets recall a whole mapping, and the media transport is the same
+  // surface VJ clips expose, aimed at the selected layer.
+  for (let preset = 0; preset < mappingPresetCount; preset += 1) {
+    bindings.push({
+      address: `/ghost/map/preset/${preset + 1}`,
+      argIndex: 0,
+      path: `map:preset:${preset}`,
+      sourceMin: 0,
+      sourceMax: 1,
+      invert: false,
+      label: `Mapping preset ${preset + 1}`,
+      mode: 'trigger',
+    });
+  }
+
+  const mappingControls: Array<[string, string, string, OscBindingMode]> = [
+    ['layer/opacity', 'layer:opacity', 'Mapping layer opacity', 'continuous'],
+    ['media/play', 'media:play', 'Mapping media play / pause', 'trigger'],
+    ['media/restart', 'media:restart', 'Mapping media restart', 'trigger'],
+    ['media/position', 'media:position', 'Mapping media playhead', 'continuous'],
+  ];
+  for (const [suffix, pathSuffix, label, mode] of mappingControls) {
+    bindings.push({
+      address: `/ghost/map/${suffix}`,
+      argIndex: 0,
+      path: `map:${pathSuffix}`,
+      sourceMin: 0,
+      sourceMax: 1,
+      invert: false,
+      label,
+      mode,
+    });
   }
 
   bindings.push(

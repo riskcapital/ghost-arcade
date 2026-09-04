@@ -50,10 +50,14 @@ describe('VJ OSC template', () => {
     const DECKS = 2;
     const LAYER_CONTROLS = 7;   // opacity, blend, solo, mute, play, restart, position
     const GLOBALS = 4;          // stop, master, crossfader, tempo
+    const BLOCKS = 8;
+    const SNAPSHOTS = 16;
+    const MAPPING = 8 + 4;      // presets + layer opacity / media transport
     expect(bindings).toHaveLength(
       DECKS * 2 * 3            // clip triggers
       + DECKS * 3              // column triggers
       + DECKS * 2 * LAYER_CONTROLS
+      + BLOCKS + SNAPSHOTS + MAPPING
       + GLOBALS,
     );
     expect(new Set(bindings.map(b => b.address)).size).toBe(bindings.length);
