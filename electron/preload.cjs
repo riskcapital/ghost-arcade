@@ -275,6 +275,32 @@ contextBridge.exposeInMainWorld('ghostOSC', {
   },
 });
 
+// MCP bridge. The server lives in main (it owns the socket); tools run here
+// (the renderer owns the stores), so main forwards each call and waits for
+// the reply this exposes.
+contextBridge.exposeInMainWorld('ghostMCP', {
+  start: ({ port } = {}) => ipcRenderer.invoke('mcp_start', { port }),
+  stop: () => ipcRenderer.invoke('mcp_stop'),
+  status: () => ipcRenderer.invoke('mcp_status'),
+  /** Register the tool executor. Returns an unsubscribe. */
+  onToolCall: (cb) => {
+    const handler = (_e, payload) => {
+      try { cb(payload); } catch (err) {
+        // A throwing executor must still answer, or the client hangs until
+        // the call times out with no explanation.
+        ipcRenderer.send('mcp-tool-result', {
+          callId: payload?.callId,
+          error: err?.message || String(err),
+        });
+      }
+    };
+    ipcRenderer.on('mcp-tool-call', handler);
+    return () => ipcRenderer.removeListener('mcp-tool-call', handler);
+  },
+  respond: ({ callId, result, error }) =>
+    ipcRenderer.send('mcp-tool-result', { callId, result, error }),
+});
+
 // OSR zero-copy status events from main process
 contextBridge.exposeInMainWorld('electronOSR', {
   /**

@@ -58,6 +58,7 @@
   import { abletonLink } from '../sync/abletonLink';
   import AbletonLinkMonitor from './AbletonLinkMonitor.svelte';
   import { oscStore } from '../osc/oscStore';
+  import { mcpStore } from '../mcp/mcpStore';
   import { CONTROL_PATH_EXAMPLES, normalizeControlPath, validateControlPath } from '../control/controlPaths';
   import { keyboardStore, formatKeyCombo, type KeyActionMode } from '../keyboard/keyboardStore';
   import WLEDMappingPanel from './WLEDMappingPanel.svelte';
@@ -1935,6 +1936,92 @@
             />
           </div>
 
+          <!-- MCP. Off by default and never auto-enabled: this is an open
+               port that can black out the output mid-show, so switching it on
+               should be a decision, not a convenience. -->
+          <div class="setting-row" style="margin-top: 14px;">
+            <div class="setting-label">
+              <span class="label-text">AI control (MCP)</span>
+              <span class="label-hint">
+                Let an AI client such as Claude Desktop operate Ghost Arcade: fire
+                clips, move faders, launch columns, and look at the output to check
+                the result. Listens on this machine only, and every request needs
+                the token below.
+              </span>
+            </div>
+            <label class="toggle-switch">
+              <input
+                type="checkbox"
+                checked={$mcpStore.enabled}
+                onchange={(e) => mcpStore.setEnabled((e.target as HTMLInputElement).checked)}
+              />
+              <span class="toggle-slider"></span>
+            </label>
+          </div>
+
+          {#if $mcpStore.enabled}
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="label-text">Port</span>
+                <span class="label-hint">Bound to 127.0.0.1. Nothing outside this machine can reach it.</span>
+              </div>
+              <input
+                type="number" min="1" max="65535" step="1"
+                class="port-input"
+                value={$mcpStore.port}
+                onchange={(e) => mcpStore.setPort(parseInt((e.target as HTMLInputElement).value) || 7420)}
+              />
+            </div>
+
+            <div class="setting-row">
+              <div class="setting-label">
+                <span class="label-text">Status</span>
+                <span class="label-hint">
+                  {#if $mcpStore.running}
+                    <span class="osc-status-dot listening"></span>
+                    Serving on http://127.0.0.1:{$mcpStore.port}/
+                  {:else if $mcpStore.lastError}
+                    <span class="osc-status-dot error"></span>
+                    {$mcpStore.lastError}
+                  {:else}
+                    <span class="osc-status-dot idle"></span>
+                    Not running
+                  {/if}
+                </span>
+              </div>
+            </div>
+
+            {#if $mcpStore.running && $mcpStore.token}
+              <div class="setting-row">
+                <div class="setting-label">
+                  <span class="label-text">Token</span>
+                  <span class="label-hint">
+                    Send as <code>Authorization: Bearer &lt;token&gt;</code>. A new one is
+                    issued each time this is switched on, so toggling it off and back
+                    on revokes whatever a client is holding.
+                  </span>
+                </div>
+                <button
+                  class="osc-add-btn"
+                  onclick={() => navigator.clipboard?.writeText($mcpStore.token ?? '')}
+                >Copy token</button>
+              </div>
+            {/if}
+
+            {#if $mcpStore.recentCalls.length > 0}
+              <div class="setting-row">
+                <div class="setting-label">
+                  <span class="label-text">Recent calls</span>
+                  <span class="label-hint">
+                    {#each $mcpStore.recentCalls.slice(0, 5) as call (call.at)}
+                      <span class="mcp-call" class:failed={!call.ok}>{call.name}</span>
+                    {/each}
+                  </span>
+                </div>
+              </div>
+            {/if}
+          {/if}
+
           <!-- Output / feedback. Receive-only OSC leaves a surface guessing:
                a fader moved in the app never reaches the hardware. Sending
                state back is what makes a layout track the app. -->
@@ -3184,6 +3271,24 @@
     margin-right: 6px;
     vertical-align: middle;
   }
+  /* Names what an agent has been doing, so its work is visible rather than
+     inferred from the output changing on its own. */
+  .mcp-call {
+    display: inline-block;
+    margin: 0 4px 2px 0;
+    padding: 1px 5px;
+    border-radius: 2px;
+    background: rgba(163, 230, 53, 0.12);
+    border: 1px solid rgba(163, 230, 53, 0.3);
+    color: #a3e635;
+    font-size: 9px;
+  }
+  .mcp-call.failed {
+    background: rgba(255, 176, 0, 0.12);
+    border-color: rgba(255, 176, 0, 0.35);
+    color: #ffb000;
+  }
+
   .osc-status-dot.listening { background: #4ade80; box-shadow: 0 0 6px rgba(74,222,128,0.6); }
   .osc-status-dot.error     { background: #ff5252; }
   .osc-status-dot.idle      { background: #555; }
