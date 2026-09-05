@@ -78,6 +78,7 @@
   import { compositionTransition } from './lib/stores/compositionTransition';
   import { layerSequencer } from './lib/stores/layerSequencer';
   import { NATIVE_ENGINE_ONLY, settings, outputFrozen } from './lib/stores/settings';
+  import { screenSetups } from './lib/stores/screenSetups';
   import { checkForUpdate, type VersionCheckResult } from './lib/utils/versionCheck';
   import { startRecording as startRec, formatRecordingDuration, type RecorderHandle } from './lib/recording/recorder';
   import { vjClipLauncher } from './lib/stores/vjClipLauncher';
@@ -5003,7 +5004,11 @@
     // new project inherits the last one's screens (the project saves
     // outputSlices and restores them, but a new project has none to overwrite
     // them with) along with any latched dome, warp or blackout.
-    settings.resetOutputStageForNewProject();
+    //
+    // A saved default setup takes priority: a permanent install's rig belongs
+    // to the room, not to whichever project happened to be open, and should
+    // not have to be rebuilt every time someone starts fresh.
+    settings.resetOutputStageForNewProject(screenSetups.defaultSnapshot());
     currentFileHandle = null; // Clear file handle for new project
     // Also clear the Electron path so Save doesn't accidentally overwrite
     // the previously-loaded .gha with a fresh empty project.
