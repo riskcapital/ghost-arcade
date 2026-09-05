@@ -33,6 +33,7 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
 const { parseOSCPacket, encodeOSCMessage } = require('./osc-parser.cjs');
+const { randomUUID } = require('crypto');
 const nativeRendererBroker = createNativeRendererBroker({
   appRoot: path.join(__dirname, '..'),
   resourcesPath: process.resourcesPath,
@@ -4541,6 +4542,76 @@ function listSpoutSenders() {
 // IPC Handlers
 // ============================================================
 
+// ─── MCP server (AI clients operating the app) ──────────────────────
+// The protocol and its auth live in mcp-server.cjs. This is lifecycle plus
+// the bridge to the renderer: tools run there, because that is where the
+// stores are, so each call crosses IPC and waits for a reply.
+const { createMcpHttpServer } = require('./mcp-server.cjs');
+
+let mcpServer = null;
+let mcpToken = null;
+let mcpPort = 7420;
+const mcpPending = new Map();
+let mcpCallSeq = 0;
+
+/** How long to wait for the renderer before giving up on a tool call.
+ *  Long enough for a frame readback, short enough that a wedged renderer
+ *  does not hold a client forever. */
+const MCP_CALL_TIMEOUT_MS = 20_000;
+
+function mcpCallRenderer(win, name, args) {
+  return new Promise((resolve, reject) => {
+    if (!win || win.isDestroyed()) return reject(new Error('app window is not available'));
+    const callId = `mcp-${++mcpCallSeq}`;
+    const timer = setTimeout(() => {
+      mcpPending.delete(callId);
+      reject(new Error(`tool "${name}" timed out`));
+    }, MCP_CALL_TIMEOUT_MS);
+    mcpPending.set(callId, { resolve, reject, timer });
+    win.webContents.send('mcp-tool-call', { callId, name, args });
+  });
+}
+
+async function startMcpServer(win, port) {
+  if (mcpServer) return { ok: true, port: mcpPort, token: mcpToken };
+  mcpPort = Number(port) || 7420;
+  // A fresh token per enable, so revoking access is just toggling it off and
+  // on again rather than hunting for who still holds the old one.
+  mcpToken = randomUUID();
+  try {
+    mcpServer = await createMcpHttpServer({
+      token: mcpToken,
+      port: mcpPort,
+      callRenderer: (name, args) => mcpCallRenderer(win, name, args),
+      onLog: (msg) => console.log('[MCP]', msg),
+    });
+    return { ok: true, port: mcpPort, token: mcpToken };
+  } catch (err) {
+    mcpServer = null;
+    mcpToken = null;
+    const message = err?.code === 'EADDRINUSE'
+      ? `port ${mcpPort} is already in use`
+      : (err?.message || String(err));
+    console.warn('[MCP] failed to start:', message);
+    return { ok: false, error: message };
+  }
+}
+
+function stopMcpServer() {
+  if (mcpServer) {
+    try { mcpServer.close(); } catch {}
+    mcpServer = null;
+  }
+  mcpToken = null;
+  // Anything still waiting will never be answered now, so fail it rather than
+  // leaving the promise dangling.
+  for (const [, pending] of mcpPending) {
+    clearTimeout(pending.timer);
+    pending.reject(new Error('MCP server stopped'));
+  }
+  mcpPending.clear();
+}
+
 // ─── OSC output (feedback to control surfaces) ──────────────
 // Receive-only OSC is fire-and-forget: a fader moved inside the app never
 // reaches the surface, so the two drift apart and a layout cannot show
@@ -4787,6 +4858,24 @@ function registerIpcHandlers() {
     error: oscLastError,
   }));
   ipcMain.handle('osc_send', (_, { host, port, messages }) => sendOscBatch(host, port, messages));
+
+  // --- MCP ---
+  ipcMain.handle('mcp_start', async (_, { port } = {}) => startMcpServer(mainWindow, port));
+  ipcMain.handle('mcp_stop', () => { stopMcpServer(); return { ok: true }; });
+  ipcMain.handle('mcp_status', () => ({
+    running: mcpServer !== null,
+    port: mcpPort,
+    token: mcpToken,
+  }));
+  // The renderer answers a tool call here; resolve whoever is waiting on it.
+  ipcMain.on('mcp-tool-result', (_e, { callId, result, error }) => {
+    const pending = mcpPending.get(callId);
+    if (!pending) return;
+    mcpPending.delete(callId);
+    clearTimeout(pending.timer);
+    if (error) pending.reject(new Error(error));
+    else pending.resolve(result);
+  });
   ipcMain.handle('osc_send_stop', () => {
     closeOscSendSocket();
     return { ok: true };

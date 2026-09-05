@@ -79,6 +79,7 @@
   import { layerSequencer } from './lib/stores/layerSequencer';
   import { NATIVE_ENGINE_ONLY, settings, outputFrozen } from './lib/stores/settings';
   import { screenSetups } from './lib/stores/screenSetups';
+  import { mcpStore } from './lib/mcp/mcpStore';
   import { checkForUpdate, type VersionCheckResult } from './lib/utils/versionCheck';
   import { startRecording as startRec, formatRecordingDuration, type RecorderHandle } from './lib/recording/recorder';
   import { vjClipLauncher } from './lib/stores/vjClipLauncher';
@@ -1472,6 +1473,9 @@
     // Attach OSC bridge listeners + restore the saved enable/port state
     // so the listener comes back on boot without a Settings visit.
     void oscStore.initialize();
+    // Restores the server if it was enabled last session, and attaches the
+    // tool bridge either way so a later enable does not need a restart.
+    void mcpStore.initialize();
 
     // Rejoin the Ableton Link session if the user had it enabled last
     // run (no-op otherwise; lazy — doesn't load the native addon until
