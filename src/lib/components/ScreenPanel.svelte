@@ -554,8 +554,8 @@
 
       <p class="setup-hint">
         New projects start from a clean output stage. Save this rig as the default
-        and they will start from it instead — for an installed dome or projector
-        wall that does not change between shows.
+        and they will start from it instead. Useful for an installed dome or
+        projector wall that does not change between shows.
       </p>
 
       <div class="master-row">

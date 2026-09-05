@@ -1943,7 +1943,7 @@
               <span class="label-text">Send feedback</span>
               <span class="label-hint">
                 Mirror app state back to your controller, so faders follow and clip
-                buttons light when their clip is live. Uses the bindings below —
+                buttons light when their clip is live. Uses the bindings below:
                 whatever address you map, we answer on.
               </span>
             </div>
