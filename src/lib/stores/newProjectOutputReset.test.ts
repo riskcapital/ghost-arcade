@@ -23,10 +23,16 @@ const settingsSource = readFileSync(
 );
 const appSource = readFileSync(join(process.cwd(), 'src', 'App.svelte'), 'utf8');
 
-function resetBody(): string {
-  const start = settingsSource.indexOf('    resetOutputStageForNewProject() {');
-  expect(start, 'resetOutputStageForNewProject not found').toBeGreaterThan(-1);
-  return settingsSource.slice(start, settingsSource.indexOf('\n    },', start));
+/**
+ * The single list capture, apply and reset all work from. Checking it rather
+ * than any one method's body is what keeps the three from disagreeing about
+ * what "the screen setup" means.
+ */
+function outputStageKeys(): string[] {
+  const start = settingsSource.indexOf('export const OUTPUT_STAGE_KEYS = [');
+  expect(start, 'OUTPUT_STAGE_KEYS not found').toBeGreaterThan(-1);
+  const block = settingsSource.slice(start, settingsSource.indexOf('] as const', start));
+  return [...block.matchAll(/'([a-zA-Z0-9_]+)'/g)].map((m) => m[1]);
 }
 
 /** Every key the defaults factory sets under `output`. */
@@ -82,10 +88,10 @@ const MACHINE_PREFERENCES = new Set([
 
 describe('new project output reset', () => {
   it('clears every output setting that shapes the image', () => {
-    const body = resetBody();
+    const staged = new Set(outputStageKeys());
     const missing = defaultOutputKeys()
       .filter((key) => !MACHINE_PREFERENCES.has(key))
-      .filter((key) => !body.includes(key));
+      .filter((key) => !staged.has(key));
 
     expect(
       missing,
@@ -97,7 +103,12 @@ describe('new project output reset', () => {
   it('takes its values from the defaults factory', () => {
     // Restating the literals here is how the reset drifts from the defaults
     // and starts restoring values that are no longer correct.
-    expect(resetBody()).toContain('createDefaultSettings().output');
+    const start = settingsSource.indexOf('    resetOutputStageForNewProject(');
+    const body = settingsSource.slice(start, settingsSource.indexOf('\n    },', start));
+    expect(body).toContain('createDefaultSettings().output');
+    // A saved default has to win, or a permanent install rebuilds its rig
+    // on every new project.
+    expect(body).toContain('defaultSetup');
   });
 
   it('is actually called when a new project is created', () => {
@@ -111,9 +122,9 @@ describe('new project output reset', () => {
     // Clearing any of these breaks a rig that is already working: the output
     // lands on the wrong monitor, a downstream Spout receiver goes quiet, or
     // the output window shuts mid-show.
-    const body = resetBody();
+    const staged = new Set(outputStageKeys());
     for (const key of MACHINE_PREFERENCES) {
-      expect(body, `${key} is machine wiring, not project state`).not.toContain(key);
+      expect(staged.has(key), `${key} is machine wiring, not project state`).toBe(false);
     }
   });
 });

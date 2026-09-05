@@ -11,6 +11,7 @@
   import { screens, selectedScreenId, selectedScreen, screenActions } from '../stores/screens';
   import { settings, identityOutputMesh, masterWarpIsActive, type OutputSettings, type OutputSlice } from '../stores/settings';
   import { maxOutputSlices } from '../stores/license';
+  import { screenSetups } from '../stores/screenSetups';
   import { isDesktopApp, getTextureShareLabel, invoke } from '$lib/bridge';
   import OutputCanvasPreview from './OutputCanvasPreview.svelte';
   import ScreenInspector from './ScreenInspector.svelte';
@@ -265,6 +266,33 @@
     }));
   }
 
+  // ─── Saved screen setups ────────────────────────────────────────────
+  // New Project clears the output stage so a project cannot inherit the last
+  // one's screens or a latched dome. That is right for a laptop moving
+  // between gigs and wrong for a permanent install, where the rig belongs to
+  // the room. A saved default is what New Project restores instead.
+  let newSetupName = '';
+  let setupFeedback = '';
+  let feedbackTimer: ReturnType<typeof setTimeout> | null = null;
+
+  function flashFeedback(message: string) {
+    setupFeedback = message;
+    if (feedbackTimer) clearTimeout(feedbackTimer);
+    feedbackTimer = setTimeout(() => { setupFeedback = ''; }, 2600);
+  }
+
+  function saveCurrentSetup() {
+    const entry = screenSetups.save(newSetupName || `Setup ${$screenSetups.saved.length + 1}`);
+    newSetupName = '';
+    flashFeedback(`Saved "${entry.name}"`);
+  }
+
+  function makeCurrentDefault() {
+    const entry = screenSetups.setCurrentAsDefault(newSetupName || 'Default screen setup');
+    newSetupName = '';
+    flashFeedback(`New projects will start from "${entry.name}"`);
+  }
+
   // ─── Drag-reorder for the screen list ───────────────────────────────
   let dragFromIdx = -1;
   function onDragStart(i: number) { dragFromIdx = i; }
@@ -516,6 +544,68 @@
       {/if}
     </details>
 
+    <!-- Saved setups. Sits after the rig controls because it acts on all of
+         them at once: what is saved is the whole output stage, not one screen. -->
+    <details class="master-details" open={$screenSetups.defaultSetup !== null}>
+      <summary>
+        Screen setups
+        {#if $screenSetups.defaultSetup}<span class="mw-active-dot" title="A default setup is set"></span>{/if}
+      </summary>
+
+      <p class="setup-hint">
+        New projects start from a clean output stage. Save this rig as the default
+        and they will start from it instead — for an installed dome or projector
+        wall that does not change between shows.
+      </p>
+
+      <div class="master-row">
+        <input
+          type="text"
+          class="setup-name"
+          placeholder="Name this setup"
+          bind:value={newSetupName}
+        />
+      </div>
+      <div class="master-row">
+        <button class="mini-btn" onclick={makeCurrentDefault}>Make default</button>
+        <button class="mini-btn" onclick={saveCurrentSetup}>Save setup</button>
+      </div>
+
+      {#if $screenSetups.defaultSetup}
+        <div class="setup-default-row">
+          <span class="setup-default-label">
+            New projects use <strong>{$screenSetups.defaultSetup.name}</strong>
+            <span class="setup-summary">{$screenSetups.defaultSetup.summary}</span>
+          </span>
+          <button class="row-act" title="Back to factory defaults" onclick={() => { screenSetups.clearDefault(); flashFeedback('New projects will start clean'); }}>Clear</button>
+        </div>
+      {/if}
+
+      {#if $screenSetups.saved.length > 0}
+        <div class="setup-list">
+          {#each $screenSetups.saved as entry (entry.id)}
+            <div class="setup-row">
+              <span class="setup-row-name" title={entry.summary}>
+                {entry.name}
+                <span class="setup-summary">{entry.summary}</span>
+              </span>
+              <button class="mini-btn" onclick={() => { screenSetups.load(entry.id); flashFeedback(`Loaded "${entry.name}"`); }}>Load</button>
+              <button
+                class="mini-btn"
+                title="Start new projects from this setup"
+                onclick={() => { screenSetups.setDefaultFromSaved(entry.id); flashFeedback(`New projects will start from "${entry.name}"`); }}
+              >Default</button>
+              <button class="row-act danger" title="Delete" onclick={() => screenSetups.remove(entry.id)}>×</button>
+            </div>
+          {/each}
+        </div>
+      {/if}
+
+      {#if setupFeedback}
+        <div class="setup-feedback">{setupFeedback}</div>
+      {/if}
+    </details>
+
     <div class="inspector-section">
       {#if $selectedScreen}
         <ScreenInspector
@@ -662,6 +752,72 @@
   }
   .add-btn:hover:not(:disabled) { background: rgba(187, 134, 252, 0.15); }
   .add-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  .setup-hint {
+    margin: 6px 0 8px;
+    font-size: 10px;
+    line-height: 1.45;
+    color: #6b7280;
+  }
+  .setup-name {
+    flex: 1;
+    min-width: 0;
+    background: #111827;
+    border: 1px solid #374151;
+    border-radius: 3px;
+    color: #d1d5db;
+    font-size: 11px;
+    padding: 3px 6px;
+  }
+  .setup-default-row {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 8px;
+    padding: 5px 6px;
+    border: 1px solid rgba(163, 230, 53, 0.35);
+    border-radius: 3px;
+    background: rgba(163, 230, 53, 0.07);
+  }
+  .setup-default-label {
+    flex: 1;
+    min-width: 0;
+    font-size: 10px;
+    color: #9ca3af;
+  }
+  .setup-default-label strong { color: #d1d5db; }
+  .setup-summary {
+    display: block;
+    font-size: 9px;
+    color: #6b7280;
+  }
+  .setup-list {
+    margin-top: 8px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+  .setup-row {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    padding: 4px 6px;
+    border: 1px solid #1f2937;
+    border-radius: 3px;
+  }
+  .setup-row-name {
+    flex: 1;
+    min-width: 0;
+    font-size: 10px;
+    color: #d1d5db;
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+  .setup-feedback {
+    margin-top: 8px;
+    font-size: 10px;
+    color: #a3e635;
+  }
 
   .master-details {
     margin-top: 12px;

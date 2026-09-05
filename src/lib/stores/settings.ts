@@ -877,6 +877,54 @@ export function getFileExtension(formatId: string): string {
 }
 
 // Default settings
+/**
+ * The output stage: every setting that changes what the composition looks
+ * like on the way out.
+ *
+ * Deliberately excludes how this machine is plugged in — display assignments,
+ * output window state, output resolution, Spout sender wiring, cursor
+ * preferences. Clearing those breaks a rig that is already working: the output
+ * lands on the wrong monitor, or a downstream app listening for a Spout name
+ * goes quiet. They are not decisions a project made.
+ *
+ * One list, used by capture, apply and the new-project reset, so the three
+ * cannot disagree about what "the screen setup" means.
+ */
+export const OUTPUT_STAGE_KEYS = [
+  'slices',
+  'masterCanvasWidth',
+  'masterCanvasHeight',
+  'masterWarp',
+  'blackout',
+  'testPattern',
+  'domeEnabled',
+  'domeMode',
+  'domeFOV',
+  'domeRotation',
+  'domeTilt',
+  'domeOffsetX',
+  'domeOffsetY',
+  'domeCurvature',
+  'domeTruncation',
+  'outputRotation',
+  'outputCropX',
+  'outputCropY',
+  'outputCropWidth',
+  'outputCropHeight',
+  'edgeBlendLeft',
+  'edgeBlendRight',
+  'edgeBlendTop',
+  'edgeBlendBottom',
+  'edgeBlendGamma',
+  'brightness',
+  'contrast',
+  'gamma',
+] as const satisfies readonly (keyof OutputSettings)[];
+
+/** A saved output stage. Partial because a setup saved by an older build
+ *  will not carry settings added since. */
+export type OutputStageSnapshot = Partial<Record<(typeof OUTPUT_STAGE_KEYS)[number], unknown>>;
+
 function createDefaultSettings(): AppSettings {
   // Find best supported format
   const supported = getSupportedFormats().filter(f => f.supported);
@@ -1650,7 +1698,34 @@ function createSettingsStore() {
 
     // Dome projection settings
     /**
-     * Clear the output stage back to defaults for a brand-new project.
+     * Snapshot the output stage — everything that shapes the image, nothing
+     * about how this computer is wired.
+     */
+    captureOutputStage(): OutputStageSnapshot {
+      const out = get({ subscribe }).output as unknown as Record<string, unknown>;
+      const snapshot: Record<string, unknown> = {};
+      for (const key of OUTPUT_STAGE_KEYS) snapshot[key] = out[key];
+      return structuredClone(snapshot) as OutputStageSnapshot;
+    },
+
+    /** Apply a snapshot taken by captureOutputStage. */
+    applyOutputStage(snapshot: OutputStageSnapshot) {
+      update(s => {
+        const output = { ...s.output } as unknown as Record<string, unknown>;
+        for (const key of OUTPUT_STAGE_KEYS) {
+          // Only keys the snapshot actually carries, so a setup saved before a
+          // new setting existed leaves that setting alone rather than
+          // blanking it to undefined.
+          if (key in snapshot) output[key] = structuredClone((snapshot as any)[key]);
+        }
+        const next = { ...s, output } as unknown as AppSettings;
+        saveSettings(next);
+        return next;
+      });
+    },
+
+    /**
+     * Reset the output stage for a brand-new project.
      *
      * Output settings live in global localStorage, not the project, so
      * everything the last session set up stays on: a user hit dome projection
@@ -1659,55 +1734,27 @@ function createSettingsStore() {
      * project saves outputSlices and restores them on load, so a NEW project
      * (which has none) simply inherited the previous project's screens.
      *
-     * Reset is the whole output stage: screens, dome, master warp, crop,
-     * rotation, edge blend, colour grade, and the latched blackout / test
-     * pattern modes. The rule is that a new project should look like its
-     * composition and nothing else.
+     * A saved default setup wins over the factory defaults. A permanent
+     * install — a dome, a projector wall — has a rig that is a property of the
+     * room, not of any one project, and should not be dismantled every time
+     * someone starts fresh.
      *
-     * Cursor preferences are left alone. They are a UI preference about this
-     * machine, not something that changes what the output looks like.
+     * Machine wiring is untouched either way: display assignments, output
+     * window state, resolution, Spout sender name, cursor preferences. Those
+     * are how the computer is plugged in, not decisions a project made.
      */
-    resetOutputStageForNewProject() {
+    resetOutputStageForNewProject(defaultSetup?: OutputStageSnapshot | null) {
       // Taken from the defaults factory rather than restated, so a new output
       // setting cannot be added there and silently miss this reset.
-      const defaults = createDefaultSettings().output;
+      const defaults = createDefaultSettings().output as unknown as Record<string, unknown>;
       update(s => {
-        const next: AppSettings = {
-          ...s,
-          output: {
-            ...s.output,
-            slices: [],
-            masterCanvasWidth: defaults.masterCanvasWidth,
-            masterCanvasHeight: defaults.masterCanvasHeight,
-            // createDefaultSettings builds a fresh object per call, so this
-            // is not a shared reference and needs no defensive copy.
-            masterWarp: defaults.masterWarp,
-            blackout: defaults.blackout,
-            testPattern: defaults.testPattern,
-            domeEnabled: defaults.domeEnabled,
-            domeMode: defaults.domeMode,
-            domeFOV: defaults.domeFOV,
-            domeRotation: defaults.domeRotation,
-            domeTilt: defaults.domeTilt,
-            domeOffsetX: defaults.domeOffsetX,
-            domeOffsetY: defaults.domeOffsetY,
-            domeCurvature: defaults.domeCurvature,
-            domeTruncation: defaults.domeTruncation,
-            outputRotation: defaults.outputRotation,
-            outputCropX: defaults.outputCropX,
-            outputCropY: defaults.outputCropY,
-            outputCropWidth: defaults.outputCropWidth,
-            outputCropHeight: defaults.outputCropHeight,
-            edgeBlendLeft: defaults.edgeBlendLeft,
-            edgeBlendRight: defaults.edgeBlendRight,
-            edgeBlendTop: defaults.edgeBlendTop,
-            edgeBlendBottom: defaults.edgeBlendBottom,
-            edgeBlendGamma: defaults.edgeBlendGamma,
-            brightness: defaults.brightness,
-            contrast: defaults.contrast,
-            gamma: defaults.gamma,
-          },
-        };
+        const output = { ...s.output } as unknown as Record<string, unknown>;
+        for (const key of OUTPUT_STAGE_KEYS) {
+          output[key] = structuredClone(
+            defaultSetup && key in defaultSetup ? (defaultSetup as any)[key] : defaults[key],
+          );
+        }
+        const next = { ...s, output } as unknown as AppSettings;
         saveSettings(next);
         return next;
       });
