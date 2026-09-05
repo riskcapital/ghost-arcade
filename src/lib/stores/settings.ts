@@ -1649,6 +1649,70 @@ function createSettingsStore() {
     },
 
     // Dome projection settings
+    /**
+     * Clear the output stage back to defaults for a brand-new project.
+     *
+     * Output settings live in global localStorage, not the project, so
+     * everything the last session set up stays on: a user hit dome projection
+     * that had latched from an earlier session and could not tell what was
+     * transforming their output. Screens are worse than confusing — the
+     * project saves outputSlices and restores them on load, so a NEW project
+     * (which has none) simply inherited the previous project's screens.
+     *
+     * Reset is the whole output stage: screens, dome, master warp, crop,
+     * rotation, edge blend, colour grade, and the latched blackout / test
+     * pattern modes. The rule is that a new project should look like its
+     * composition and nothing else.
+     *
+     * Cursor preferences are left alone. They are a UI preference about this
+     * machine, not something that changes what the output looks like.
+     */
+    resetOutputStageForNewProject() {
+      // Taken from the defaults factory rather than restated, so a new output
+      // setting cannot be added there and silently miss this reset.
+      const defaults = createDefaultSettings().output;
+      update(s => {
+        const next: AppSettings = {
+          ...s,
+          output: {
+            ...s.output,
+            slices: [],
+            masterCanvasWidth: defaults.masterCanvasWidth,
+            masterCanvasHeight: defaults.masterCanvasHeight,
+            // createDefaultSettings builds a fresh object per call, so this
+            // is not a shared reference and needs no defensive copy.
+            masterWarp: defaults.masterWarp,
+            blackout: defaults.blackout,
+            testPattern: defaults.testPattern,
+            domeEnabled: defaults.domeEnabled,
+            domeMode: defaults.domeMode,
+            domeFOV: defaults.domeFOV,
+            domeRotation: defaults.domeRotation,
+            domeTilt: defaults.domeTilt,
+            domeOffsetX: defaults.domeOffsetX,
+            domeOffsetY: defaults.domeOffsetY,
+            domeCurvature: defaults.domeCurvature,
+            domeTruncation: defaults.domeTruncation,
+            outputRotation: defaults.outputRotation,
+            outputCropX: defaults.outputCropX,
+            outputCropY: defaults.outputCropY,
+            outputCropWidth: defaults.outputCropWidth,
+            outputCropHeight: defaults.outputCropHeight,
+            edgeBlendLeft: defaults.edgeBlendLeft,
+            edgeBlendRight: defaults.edgeBlendRight,
+            edgeBlendTop: defaults.edgeBlendTop,
+            edgeBlendBottom: defaults.edgeBlendBottom,
+            edgeBlendGamma: defaults.edgeBlendGamma,
+            brightness: defaults.brightness,
+            contrast: defaults.contrast,
+            gamma: defaults.gamma,
+          },
+        };
+        saveSettings(next);
+        return next;
+      });
+    },
+
     setDomeEnabled(enabled: boolean) {
       update(s => {
         const newSettings = { ...s, output: { ...s.output, domeEnabled: enabled } };

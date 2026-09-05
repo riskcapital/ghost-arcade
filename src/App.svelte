@@ -4999,6 +4999,11 @@
     macros.reset();
     // Same for snapshots — fresh project, empty 16-slot bank.
     snapshots.reset();
+    // Output settings are global rather than per-project, so without this a
+    // new project inherits the last one's screens (the project saves
+    // outputSlices and restores them, but a new project has none to overwrite
+    // them with) along with any latched dome, warp or blackout.
+    settings.resetOutputStageForNewProject();
     currentFileHandle = null; // Clear file handle for new project
     // Also clear the Electron path so Save doesn't accidentally overwrite
     // the previously-loaded .gha with a fresh empty project.
