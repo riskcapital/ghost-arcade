@@ -2333,7 +2333,19 @@ function startNativeEditorPreviewPump() {
   // shared texture. Either presenter is enough to run the pump.
   const dxgiPresenter = typeof addon?.presentSharedTexture === 'function';
   if (!addon || (typeof addon.presentIOSurface !== 'function' && !dxgiPresenter)) return false;
-  const nativeDisplayLinkPump = typeof addon.setIOSurface === 'function';
+  // Both platforms can now pace presentation natively, off the JS thread:
+  // macOS via a CVDisplayLink (setIOSurface), Windows via a pump thread inside
+  // dxgi_preview_addon that blocks on DXGI vblank (setSharedTexture). Where one
+  // exists this timer stops being the clock and only republishes which texture
+  // to show, so it drops to a slow bookkeeping tick.
+  //
+  // Without it the JS interval WAS the clock, and on Windows it shared the
+  // Electron main thread with the texture-share output pump and the whole UI:
+  // it could not hold 60Hz and slipped unevenly, delivering 15-27fps against a
+  // core rendering a steady 55. The jitter, not the average, is what read as
+  // stutter in the editor viewport.
+  const nativeDisplayLinkPump = typeof addon.setIOSurface === 'function'
+    || (dxgiPresenter && typeof addon.setSharedTexture === 'function');
   const intervalMs = nativeDisplayLinkPump ? 250 : Math.max(4, Math.round(1000 / OSR_PAINT_FPS));
   nativePreviewLastLogTime = Date.now();
   nativePreviewLastAddonFrameCount = Number(addon.status?.().framesPresented ?? 0);
@@ -2384,7 +2396,10 @@ function startNativeEditorPreviewPump() {
         return;
       }
       const ok = dxgiPresenter
-        ? addon.presentSharedTexture(sharedName, width, height, false)
+        ? (nativeDisplayLinkPump
+          // Publish only; the addon's vblank thread decides when to present.
+          ? addon.setSharedTexture(sharedName, width, height)
+          : addon.presentSharedTexture(sharedName, width, height, false))
         : nativeDisplayLinkPump
           ? addon.setIOSurface(surfaceId, width, height, false)
           : addon.presentIOSurface(surfaceId, width, height, false);
@@ -2403,7 +2418,8 @@ function startNativeEditorPreviewPump() {
           const addonFrames = Number(addon.status?.().framesPresented ?? nativePreviewLastAddonFrameCount);
           const delta = Math.max(0, addonFrames - nativePreviewLastAddonFrameCount);
           nativePreviewLastAddonFrameCount = addonFrames;
-          console.log(`[NativePreview] display-link presented ${delta} native IOSurface frame(s) @ ${(delta / elapsed).toFixed(1)} fps`);
+          const transport = dxgiPresenter ? 'DXGI vblank' : 'display-link';
+          console.log(`[NativePreview] ${transport} presented ${delta} native frame(s) @ ${(delta / elapsed).toFixed(1)} fps`);
         } else {
           console.log(`[NativePreview] presented ${nativePreviewFrameCount} native IOSurface frame(s) @ ${(nativePreviewFrameCount / elapsed).toFixed(1)} fps`);
           nativePreviewFrameCount = 0;

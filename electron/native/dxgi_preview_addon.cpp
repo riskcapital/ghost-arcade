@@ -29,9 +29,13 @@
 #include <d3dcompiler.h>
 
 #include <algorithm>
+#include <atomic>
+#include <condition_variable>
 #include <map>
 #include <memory>
+#include <mutex>
 #include <string>
+#include <thread>
 #include <vector>
 
 #pragma comment(lib, "d3d11.lib")
@@ -339,7 +343,16 @@ class PreviewSurface {
   }
 
   // Opens (or reuses) the named shared texture and blits it to the swapchain.
-  bool Present(const std::string& sharedName, uint32_t width, uint32_t height, std::string* error) {
+  // `syncInterval` is passed straight to IDXGISwapChain::Present. The JS
+  // thread must use 0 (never block the Electron main thread), but the native
+  // pump thread uses 1 so DXGI itself paces presentation to the display's
+  // vblank. That is what replaces the JS setInterval as the clock.
+  // `allowReposition` must be false off the UI thread. PositionBehind calls
+  // SetWindowPos on windows the UI thread owns, which blocks on that thread's
+  // message queue; doing it from the pump while holding g_surfaceMutex would
+  // deadlock against any JS-side call waiting for the same mutex.
+  bool Present(const std::string& sharedName, uint32_t width, uint32_t height,
+               UINT syncInterval, bool allowReposition, std::string* error) {
     if (!attached_ || !device_ || !child_) {
       *error = "preview surface is not attached";
       return false;
@@ -417,7 +430,7 @@ class PreviewSurface {
     rtv->Release();
     backBuffer->Release();
 
-    hr = swapchain_->Present(0, 0);
+    hr = swapchain_->Present(syncInterval, 0);
     if (FAILED(hr)) {
       *error = "swapchain Present failed (hr=0x" + HexOf(hr) + ")";
       return false;
@@ -425,7 +438,7 @@ class PreviewSurface {
     framesPresented_++;
     // The editor window moves/resizes without notifying us, so re-assert the
     // behind-host position periodically to keep tracking the canvas hole.
-    if ((framesPresented_ % 30) == 0) PositionBehind();
+    if (allowReposition && (framesPresented_ % 30) == 0) PositionBehind();
     return true;
   }
 
@@ -448,6 +461,9 @@ class PreviewSurface {
 
   bool attached() const { return attached_; }
   uint64_t framesPresented() const { return framesPresented_; }
+
+  // Called from the JS thread only (see Present's allowReposition note).
+  void Reposition() { PositionBehind(); }
   uint32_t width() const { return sourceWidth_; }
   uint32_t height() const { return sourceHeight_; }
   const Rect& rect() const { return rect_; }
@@ -795,6 +811,78 @@ class PreviewSurface {
 };
 
 PreviewSurface g_primary;
+
+// ── Native vsync pump ────────────────────────────────────────────────────
+// Windows had no equivalent of the macOS display link, so every preview frame
+// was presented by a JS setInterval on the Electron main thread — the same
+// thread running the texture-share output pump and the whole UI. It could not
+// hold 60Hz and, worse, it slipped unevenly: measured 15-27fps swinging by
+// +/-10 while the core itself rendered a steady 55. Uneven delivery is what
+// reads as stutter, so the preview looked far worse than the renderer was.
+//
+// This thread presents with syncInterval=1, so DXGI blocks it until the
+// display's vblank and paces us exactly. Nothing about the cadence depends on
+// the JS event loop any more; JS only publishes which texture to show.
+//
+// g_surfaceMutex serialises every touch of g_primary. The pump holds it across
+// its Present, which can block for up to a frame, so JS-side calls (overlay
+// updates, resizes) may wait that long. That is the intended trade: a rare
+// ~16ms wait on a UI-rate call, in exchange for a preview that never judders.
+std::mutex g_surfaceMutex;
+
+std::mutex g_frameMutex;
+std::string g_frameName;
+uint32_t g_frameWidth = 0;
+uint32_t g_frameHeight = 0;
+
+std::thread g_pumpThread;
+std::atomic<bool> g_pumpRunning{false};
+std::atomic<uint64_t> g_pumpFrames{0};
+std::atomic<uint64_t> g_pumpFailures{0};
+
+void PumpMain() {
+  std::string lastError;
+  while (g_pumpRunning.load(std::memory_order_acquire)) {
+    std::string name;
+    uint32_t width = 0;
+    uint32_t height = 0;
+    {
+      std::lock_guard<std::mutex> lock(g_frameMutex);
+      name = g_frameName;
+      width = g_frameWidth;
+      height = g_frameHeight;
+    }
+    if (name.empty() || width == 0 || height == 0) {
+      // Nothing published yet. Idle at roughly a frame rather than spinning.
+      std::this_thread::sleep_for(std::chrono::milliseconds(16));
+      continue;
+    }
+    bool ok = false;
+    {
+      std::lock_guard<std::mutex> lock(g_surfaceMutex);
+      // syncInterval 1: this call is the clock.
+      ok = g_primary.Present(name, width, height, 1, /*allowReposition=*/false, &lastError);
+    }
+    if (ok) {
+      g_pumpFrames.fetch_add(1, std::memory_order_relaxed);
+    } else {
+      g_pumpFailures.fetch_add(1, std::memory_order_relaxed);
+      // A failed Present does not block, so without this the loop would spin a
+      // core while detached or between resizes.
+      std::this_thread::sleep_for(std::chrono::milliseconds(16));
+    }
+  }
+}
+
+void StartPumpThread() {
+  if (g_pumpRunning.exchange(true, std::memory_order_acq_rel)) return;
+  g_pumpThread = std::thread(PumpMain);
+}
+
+void StopPumpThread() {
+  if (!g_pumpRunning.exchange(false, std::memory_order_acq_rel)) return;
+  if (g_pumpThread.joinable()) g_pumpThread.join();
+}
 std::map<std::string, std::unique_ptr<PreviewSurface>> g_monitors;
 std::string g_lastError;
 
@@ -843,6 +931,7 @@ Napi::Value Attach(const Napi::CallbackInfo& info) {
     }
   }
   std::string error;
+  std::lock_guard<std::mutex> lock(g_surfaceMutex);
   if (!host) {
     g_lastError = "main window native handle was not a usable HWND buffer";
   } else if (!g_primary.Attach(host, rect, &error)) {
@@ -863,13 +952,25 @@ Napi::Value Update(const Napi::CallbackInfo& info) {
     if (!info[i].IsObject() || info[i].IsBuffer()) continue;
     Napi::Object candidate = info[i].As<Napi::Object>();
     if (!candidate.Has("width") || !candidate.Has("height")) continue;
+    std::lock_guard<std::mutex> lock(g_surfaceMutex);
     g_primary.Update(RectFromObject(candidate));
     break;
   }
+  std::lock_guard<std::mutex> lock(g_surfaceMutex);
   return StatusObject(env, g_primary);
 }
 
 Napi::Value Detach(const Napi::CallbackInfo& info) {
+  // Order matters: join the pump first, or it can present into a swapchain
+  // that Detach has already released.
+  StopPumpThread();
+  {
+    std::lock_guard<std::mutex> lock(g_frameMutex);
+    g_frameName.clear();
+    g_frameWidth = 0;
+    g_frameHeight = 0;
+  }
+  std::lock_guard<std::mutex> lock(g_surfaceMutex);
   g_primary.Detach();
   return Napi::Boolean::New(info.Env(), true);
 }
@@ -882,7 +983,14 @@ Napi::Value PresentSharedTexture(const Napi::CallbackInfo& info) {
   uint32_t width = info[1].IsNumber() ? info[1].As<Napi::Number>().Uint32Value() : 0;
   uint32_t height = info[2].IsNumber() ? info[2].As<Napi::Number>().Uint32Value() : 0;
   std::string error;
-  if (!g_primary.Present(name, width, height, &error)) {
+  bool ok;
+  {
+    std::lock_guard<std::mutex> lock(g_surfaceMutex);
+    // syncInterval 0: this runs on the Electron main thread and must never
+    // block on vblank. The native pump is the path that paces to the display.
+    ok = g_primary.Present(name, width, height, 0, /*allowReposition=*/true, &error);
+  }
+  if (!ok) {
     g_lastError = error;
     return Napi::Boolean::New(env, false);
   }
@@ -890,11 +998,51 @@ Napi::Value PresentSharedTexture(const Napi::CallbackInfo& info) {
   return Napi::Boolean::New(env, true);
 }
 
+// Publish the texture the native pump should present, and make sure the pump
+// is running. This is the Windows counterpart of the macOS setIOSurface: JS
+// says *what* to show and the native thread decides *when*, at vblank.
+Napi::Value SetSharedTexture(const Napi::CallbackInfo& info) {
+  Napi::Env env = info.Env();
+  if (info.Length() < 3) return Napi::Boolean::New(env, false);
+  std::string name = info[0].IsString() ? info[0].As<Napi::String>().Utf8Value() : std::string();
+  uint32_t width = info[1].IsNumber() ? info[1].As<Napi::Number>().Uint32Value() : 0;
+  uint32_t height = info[2].IsNumber() ? info[2].As<Napi::Number>().Uint32Value() : 0;
+  if (name.empty() || width == 0 || height == 0) return Napi::Boolean::New(env, false);
+  {
+    std::lock_guard<std::mutex> lock(g_frameMutex);
+    g_frameName = name;
+    g_frameWidth = width;
+    g_frameHeight = height;
+  }
+  {
+    // The editor window moves and resizes without telling us, and the pump can
+    // no longer re-assert this itself, so do it here on the UI thread.
+    std::lock_guard<std::mutex> lock(g_surfaceMutex);
+    g_primary.Reposition();
+  }
+  StartPumpThread();
+  return Napi::Boolean::New(env, true);
+}
+
+Napi::Value StartPump(const Napi::CallbackInfo& info) {
+  StartPumpThread();
+  return Napi::Boolean::New(info.Env(), true);
+}
+
 Napi::Value Status(const Napi::CallbackInfo& info) {
   return StatusObject(info.Env(), g_primary);
 }
 
 Napi::Value StopPump(const Napi::CallbackInfo& info) {
+  // Joins the pump thread. Must happen before Detach tears the swapchain down,
+  // otherwise the pump could present against a released device.
+  StopPumpThread();
+  {
+    std::lock_guard<std::mutex> lock(g_frameMutex);
+    g_frameName.clear();
+    g_frameWidth = 0;
+    g_frameHeight = 0;
+  }
   return Napi::Boolean::New(info.Env(), true);
 }
 
@@ -960,7 +1108,10 @@ Napi::Value SetOverlay(const Napi::CallbackInfo& info) {
     }
   }
   if (overlay.IsEmpty()) {
-    g_primary.SetOverlay(lines, points);
+    {
+      std::lock_guard<std::mutex> lock(g_surfaceMutex);
+      g_primary.SetOverlay(lines, points);
+    }
     return StatusObject(env, g_primary);
   }
 
@@ -1013,7 +1164,10 @@ Napi::Value SetOverlay(const Napi::CallbackInfo& info) {
     }
   }
 
-  g_primary.SetOverlay(lines, points);
+  {
+    std::lock_guard<std::mutex> lock(g_surfaceMutex);
+    g_primary.SetOverlay(lines, points);
+  }
   return StatusObject(env, g_primary);
 }
 
@@ -1058,7 +1212,9 @@ Napi::Value MonitorSetSharedTexture(const Napi::CallbackInfo& info) {
   uint32_t width = info[2].IsNumber() ? info[2].As<Napi::Number>().Uint32Value() : 0;
   uint32_t height = info[3].IsNumber() ? info[3].As<Napi::Number>().Uint32Value() : 0;
   std::string error;
-  if (!it->second->Present(shared, width, height, &error)) {
+  // Deck monitors are presented from the JS thread like the old primary path,
+  // so syncInterval 0 — blocking here would stall the Electron main thread.
+  if (!it->second->Present(shared, width, height, 0, /*allowReposition=*/true, &error)) {
     g_lastError = error;
     return Napi::Boolean::New(env, false);
   }
@@ -1082,6 +1238,8 @@ Napi::Object Init(Napi::Env env, Napi::Object exports) {
   exports.Set("update", Napi::Function::New(env, Update));
   exports.Set("detach", Napi::Function::New(env, Detach));
   exports.Set("presentSharedTexture", Napi::Function::New(env, PresentSharedTexture));
+  exports.Set("setSharedTexture", Napi::Function::New(env, SetSharedTexture));
+  exports.Set("startPump", Napi::Function::New(env, StartPump));
   exports.Set("status", Napi::Function::New(env, Status));
   exports.Set("stopPump", Napi::Function::New(env, StopPump));
   exports.Set("setOverlay", Napi::Function::New(env, SetOverlay));

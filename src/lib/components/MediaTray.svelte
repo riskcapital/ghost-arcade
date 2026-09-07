@@ -1267,9 +1267,22 @@
         if (mediaTrayDestroyed) return;
         preGenMap = manifest.thumbnails || {};
         console.log(`[Thumbnails] Found ${Object.keys(preGenMap).length} pre-generated thumbnails`);
+      } else {
+        console.warn(
+          `[Thumbnails] manifest.json returned ${manifestResp.status}; falling back to runtime WebGL`
+          + ' generation for every shader. Run `npm run isf:thumbnails` to rebuild it.',
+        );
       }
-    } catch {
-      // No pre-generated thumbnails available, will generate at runtime
+    } catch (err) {
+      // Losing the manifest is not fatal, but it is expensive: every shader
+      // then re-renders through WebGL on the UI thread to recreate a JPEG that
+      // is already on disk, which saturates the renderer and freezes the
+      // editor. This used to fail silently, so say so loudly.
+      console.warn(
+        '[Thumbnails] could not read thumbnails/manifest.json; falling back to runtime WebGL'
+        + ' generation for every shader. Run `npm run isf:thumbnails` to rebuild it.',
+        err,
+      );
     }
 
     // Sequential generation loop — one shader at a time

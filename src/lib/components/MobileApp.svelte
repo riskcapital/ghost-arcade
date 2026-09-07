@@ -3091,7 +3091,7 @@
       {#if isCapacitorNative}
         <button class="switch-mode-link" onclick={switchMobileMode}>‹ Switch mode</button>
       {/if}
-      <img class="connect-logo" src="{import.meta.env.BASE_URL}logo.png" alt="Ghost Arcade" />
+      <img class="connect-logo" src="{import.meta.env.BASE_URL}icon-new.png" alt="Ghost Arcade" />
 
       {#if connecting}
         <div class="connecting-indicator">
@@ -3126,7 +3126,7 @@
       {#if showInstallBanner}
         <div class="pwa-install-banner">
           <div class="pwa-install-content">
-            <img src="{import.meta.env.BASE_URL}logo.png" alt="" class="pwa-install-icon" />
+            <img src="{import.meta.env.BASE_URL}icon-new.png" alt="" class="pwa-install-icon" />
             <div class="pwa-install-text">
               <strong>Install Ghost Arcade</strong>
               <span>Launch fullscreen from your home screen</span>
