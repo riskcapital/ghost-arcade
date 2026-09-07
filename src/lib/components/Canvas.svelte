@@ -2267,17 +2267,59 @@
       let previewMirrorCtx: CanvasRenderingContext2D | null = null;
       let previewMirrorChecked = false;
 
+      // The presenter does not exist yet at first frame — it attaches a moment
+      // after the core comes up. The original single-shot check therefore
+      // asked "is there a presenter?" during the one window where the answer
+      // is always no, latched previewMirrorChecked, and left a 1024px/30fps
+      // CPU readback running for the rest of the session even once the real
+      // presenter attached. Profiling a live Windows session put
+      // decodeSnapshotInto at 13% of renderer samples plus 6% in atob, all of
+      // it recreating a composite the GPU was already presenting.
+      //
+      // So: keep re-checking while the answer can still change, and release
+      // the mirror if a presenter turns up later.
+      const PREVIEW_FALLBACK_GRACE_MS = 15_000;
+      let previewFallbackFirstCheckAt = 0;
+      let previewFallbackNextCheckAt = 0;
+
+      function releaseEditorPreviewFallback(reason: string): void {
+        if (!previewMirror) return;
+        previewMirror.release();
+        previewMirror = null;
+        previewMirrorCtx = null;
+        if (canvas.width && canvas.height) {
+          const ctx = canvas.getContext('2d');
+          ctx?.clearRect(0, 0, canvas.width, canvas.height);
+        }
+        console.log(`[EditorPreview] released composite fallback (${reason})`);
+      }
+
       async function ensureEditorPreviewFallback(): Promise<void> {
         if (previewMirrorChecked) return;
-        previewMirrorChecked = true;
+        const now = performance.now();
+        if (now < previewFallbackNextCheckAt) return;
+        // Cheap poll: one capability call a second, not one per frame.
+        previewFallbackNextCheckAt = now + 1000;
+        if (!previewFallbackFirstCheckAt) previewFallbackFirstCheckAt = now;
         try {
           const { getNativeRendererCapabilities } = await import('$lib/api/native-renderer');
           const caps = await getNativeRendererCapabilities() as any;
           const preview = caps?.native_editor_preview;
-          // `parented` is the core's own report that it has a presenting
-          // underlay. Trust it rather than sniffing the platform, so this
-          // stops engaging by itself if a real presenter lands later.
-          if (preview?.parented === true) return;
+          // `parented` is the live report that a presenter owns the viewport.
+          if (preview?.parented === true) {
+            // Settled: a presenter exists. Stop checking, and undo the mirror
+            // if an earlier check engaged it before the presenter attached.
+            previewMirrorChecked = true;
+            releaseEditorPreviewFallback('native presenter attached');
+            return;
+          }
+
+          if (previewMirror) return; // already mirroring, keep watching
+
+          // No presenter yet. Within the grace window this is probably just
+          // startup, so wait rather than paying for a readback we will throw
+          // away a second later.
+          if (now - previewFallbackFirstCheckAt < PREVIEW_FALLBACK_GRACE_MS) return;
 
           const { acquireNativeCompositeMirror } = await import('$lib/sync/nativeCompositeMirror');
           previewMirror = acquireNativeCompositeMirror({ maxDim: 1024, fps: 30 });
@@ -2288,10 +2330,11 @@
             // leave the pump running for nobody.
             previewMirror.release();
             previewMirror = null;
+            previewMirrorChecked = true;
             console.warn('[EditorPreview] no 2D context available for the composite fallback');
             return;
           }
-          console.log('[EditorPreview] native presenter unavailable; mirroring composite into the editor canvas');
+          console.log('[EditorPreview] no native presenter after grace period; mirroring composite into the editor canvas');
         } catch (err) {
           console.warn('[EditorPreview] composite fallback unavailable:', err);
         }

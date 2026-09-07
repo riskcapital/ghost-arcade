@@ -45,9 +45,22 @@ function decodeSnapshotInto(snap: {
   padded_bytes_per_row?: number;
 }): boolean {
   if (!snap?.rgba_b64 || !snap.width || !snap.height || !mirrorCanvas || !mirrorCtx) return false;
-  const raw = atob(snap.rgba_b64);
-  const bytes = new Uint8Array(raw.length);
-  for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+  // A 1024px mirror frame is ~4MB of base64, and the obvious
+  // atob-then-charCodeAt-per-byte decode showed up in a live profile at 13%
+  // of renderer samples with another 6% in atob itself. Uint8Array.fromBase64
+  // does the whole thing in native code; the loop stays as the fallback for
+  // runtimes without it.
+  let bytes: Uint8Array;
+  const fromBase64 = (Uint8Array as unknown as {
+    fromBase64?: (s: string) => Uint8Array;
+  }).fromBase64;
+  if (typeof fromBase64 === 'function') {
+    bytes = fromBase64(snap.rgba_b64);
+  } else {
+    const raw = atob(snap.rgba_b64);
+    bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+  }
   const w = snap.width;
   const h = snap.height;
   const stride = snap.padded_bytes_per_row || snap.bytes_per_row || w * 4;
