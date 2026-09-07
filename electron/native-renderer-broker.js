@@ -419,9 +419,18 @@ class NativeRendererBroker {
     this.child = null;
     this.nextId = 1;
     this.pending = new Map();
+    this.writeQueue = [];
+    this.pendingBytes = 0;
+    this.writeBlocked = false;
+    this.maxPendingBytes = 64 * 1024 * 1024;
+    this.maxPendingRequests = 256;
     this.stdoutBuffer = '';
     this.tempFrameDir = null;
     this.tempFrameSerial = 1;
+    this.tempFrameDirPromise = null;
+    this.fileHandoffBytes = 0;
+    this.fileHandoffJobs = 0;
+    this.preparedFiles = new Map();
     this.lastStatus = makeDefaultStatus({
       backend: platform === 'darwin' ? 'metal' : platform === 'win32' ? 'd3d12' : 'vulkan',
       platform,
@@ -651,6 +660,8 @@ class NativeRendererBroker {
           const result = await this.send(
             'prefetch_media',
             {
+              prefetch_mode: args.prefetch_mode ?? args.prefetchMode ?? (sourceId.startsWith('library:') ? 'preroll' : 'frame'),
+              seek_generation: args.seek_generation ?? args.seekGeneration,
               source_id: sourceId,
               uri,
               source_type: 'video',
@@ -870,6 +881,7 @@ class NativeRendererBroker {
   async getStats() {
     const result = await this.sendIfRunning('stats', {}, { fallback: this.stats, timeoutMs: 1000 });
     this.stats = normalizeStats(result, this.stats);
+    this.stats.broker_transport = { pending_requests: this.pending.size, pending_bytes: this.pendingBytes, pipe_blocked: this.writeBlocked, file_handoff_bytes: this.fileHandoffBytes, file_handoff_jobs: this.fileHandoffJobs };
     return this.stats;
   }
 
@@ -1652,30 +1664,36 @@ class NativeRendererBroker {
 
   async sendNativeCommandPayloadIfRunning(method, params, { fallback = null, timeoutMs = 2500 } = {}) {
     if (!this.child || this.child.killed) return fallback;
+    const child = this.child;
     let prepared = params;
     try {
-      prepared = this.prepareNativeCommandPayload(params);
+      prepared = await this.prepareNativeCommandPayload(params);
     } catch (err) {
-      console.warn('[NativeRenderer] native command file handoff failed; falling back to JSON payload', err);
+      this.noteTransientRpcFailure(method, err);
+      return fallback;
     }
+    if (this.child !== child || child.killed) { await this.cleanupPreparedPayload(prepared); return fallback; }
     return this.send(method, prepared, { timeoutMs }).catch((err) => {
       this.noteTransientRpcFailure(method, err);
       return fallback;
-    });
+    }).finally(() => this.cleanupPreparedPayload(prepared));
   }
 
   async sendNativeComputeGraphPayloadIfRunning(method, params, { fallback = null, timeoutMs = 10000 } = {}) {
     if (!this.child || this.child.killed) return fallback;
+    const child = this.child;
     let prepared = params;
     try {
-      prepared = this.prepareNativeComputeGraphPayload(params);
+      prepared = await this.prepareNativeComputeGraphPayload(params);
     } catch (err) {
-      console.warn('[NativeRenderer] native compute graph file handoff failed; falling back to JSON payload', err);
+      this.noteTransientRpcFailure(method, err);
+      return fallback;
     }
+    if (this.child !== child || child.killed) { await this.cleanupPreparedPayload(prepared); return fallback; }
     return this.send(method, prepared, { timeoutMs }).catch((err) => {
       this.noteTransientRpcFailure(method, err);
       return fallback;
-    });
+    }).finally(() => this.cleanupPreparedPayload(prepared));
   }
 
   noteTransientRpcFailure(method, err) {
@@ -1714,40 +1732,110 @@ class NativeRendererBroker {
     };
   }
 
+  finishPending(id) {
+    const item = this.pending.get(id);
+    if (!item) return null;
+    clearTimeout(item.timer);
+    this.pending.delete(id);
+    this.pendingBytes -= item.bytes || 0;
+    // A timeout cancels work that has not yet entered the pipe.
+    this.writeQueue = this.writeQueue.filter(entry => entry.id !== id);
+    return item;
+  }
+
+  flushWrites() {
+    const child = this.child;
+    if (!child?.stdin?.writable || this.writeBlocked) return;
+    while (this.writeQueue.length && this.child === child && !this.writeBlocked) {
+      const item = this.writeQueue.shift();
+      if (!this.pending.has(item.id)) continue;
+      const payload = item.payload;
+      item.payload = null;
+      const writable = child.stdin.write(payload, err => {
+        if (!err || this.child !== child) return;
+        this.finishPending(item.id)?.reject(err);
+      });
+      if (writable === false) {
+        this.writeBlocked = true;
+        child.stdin.once('drain', () => {
+          if (this.child !== child) return;
+          this.writeBlocked = false;
+          this.flushWrites();
+        });
+      }
+    }
+  }
+
   send(method, params = {}, { timeoutMs = 2500 } = {}) {
     if (!this.child || !this.child.stdin?.writable) {
       return Promise.reject(new Error('Native render core process is not running'));
     }
     const id = this.nextId++;
-    const payload = JSON.stringify({ id, method, params });
+    const payload = `${JSON.stringify({ id, method, params })}\n`;
+    const bytes = Buffer.byteLength(payload);
+    if (this.pending.size >= this.maxPendingRequests || bytes + this.pendingBytes > this.maxPendingBytes) {
+      return Promise.reject(new Error('Native render core command queue is full; retry after current work completes'));
+    }
     return new Promise((resolve, reject) => {
       const timer = setTimeout(() => {
-        this.pending.delete(id);
-        reject(new Error(`Native render core timed out handling ${method}`));
+        this.finishPending(id)?.reject(new Error(`Native render core timed out handling ${method}`));
       }, timeoutMs);
       timer.unref?.();
-      this.pending.set(id, { resolve, reject, timer, method });
-      this.child.stdin.write(`${payload}\n`, (err) => {
-        if (!err) return;
-        clearTimeout(timer);
-        this.pending.delete(id);
-        reject(err);
-      });
+      const item = { id, payload, bytes, resolve, reject, timer, method };
+      this.pending.set(id, item);
+      this.pendingBytes += bytes;
+      this.writeQueue.push(item);
+      this.flushWrites();
     });
   }
 
   notify(method, params = {}) {
-    if (!this.child || !this.child.stdin?.writable) return false;
-    const payload = JSON.stringify({ id: 0, method, params });
-    return this.child.stdin.write(`${payload}\n`);
+    if (!this.child?.stdin?.writable || this.writeBlocked || this.pending.size >= this.maxPendingRequests) return false;
+    const child = this.child;
+    const payload = `${JSON.stringify({ id: 0, method, params })}\n`;
+    if (Buffer.byteLength(payload) + this.pendingBytes > this.maxPendingBytes) return false;
+    if (child.stdin.write(payload) === false) {
+      this.writeBlocked = true;
+      child.stdin.once('drain', () => {
+        if (this.child !== child) return;
+        this.writeBlocked = false;
+        this.flushWrites();
+      });
+    }
+    return true;
   }
 
-  prepareNativeCommandPayload(params) {
+  async preparePayloadItems(items, prepare) {
+    const prepared = [];
+    try {
+      for (const item of items) prepared.push(await prepare(item));
+      return prepared;
+    } catch (error) {
+      await this.cleanupPreparedPayload({ commands: prepared, buffers: prepared });
+      throw error;
+    }
+  }
+
+  async cleanupPreparedPayload(payload) {
+    const batch = payload?.batch || payload;
+    const entries = [...(batch?.commands || []), ...(batch?.buffers || [])];
+    for (const entry of entries) {
+      for (const file of [entry?.rgba_file, entry?.initial_file]) {
+        const bytes = this.preparedFiles.get(file);
+        if (bytes === undefined) continue;
+        this.preparedFiles.delete(file);
+        this.fileHandoffBytes -= bytes;
+        await fs.promises.unlink(file).catch(() => {});
+      }
+    }
+  }
+
+  async prepareNativeCommandPayload(params) {
     if (!params || typeof params !== 'object') return params;
     if (Array.isArray(params.commands)) {
       return {
         ...params,
-        commands: params.commands.map((command) => this.prepareNativeCommand(
+        commands: await this.preparePayloadItems(params.commands, (command) => this.prepareNativeCommand(
           this.prepareSharedTextureHandlesForNativeCore(command),
         )),
       };
@@ -1757,7 +1845,7 @@ class NativeRendererBroker {
         ...params,
         batch: {
           ...params.batch,
-          commands: params.batch.commands.map((command) => this.prepareNativeCommand(
+          commands: await this.preparePayloadItems(params.batch.commands, (command) => this.prepareNativeCommand(
             this.prepareSharedTextureHandlesForNativeCore(command),
           )),
         },
@@ -1789,15 +1877,15 @@ class NativeRendererBroker {
     }
   }
 
-  prepareNativeComputeGraphPayload(params) {
+  async prepareNativeComputeGraphPayload(params) {
     if (!params || typeof params !== 'object' || !Array.isArray(params.buffers)) return params;
     return {
       ...params,
-      buffers: params.buffers.map((buffer) => this.prepareNativeComputeGraphBuffer(buffer)),
+      buffers: await this.preparePayloadItems(params.buffers, (buffer) => this.prepareNativeComputeGraphBuffer(buffer)),
     };
   }
 
-  prepareNativeComputeGraphBuffer(buffer) {
+  async prepareNativeComputeGraphBuffer(buffer) {
     if (!buffer || typeof buffer !== 'object') return buffer;
     const rawBuffer = normalizeSourceFrameBuffer(
       buffer.initial_buffer ?? buffer.initial_bytes ?? buffer.initial_data,
@@ -1813,7 +1901,7 @@ class NativeRendererBroker {
       ...rest
     } = buffer;
     if (rawBuffer.length <= 0) return rest;
-    const initialFile = this.writeNativePayloadTempFile(rawBuffer, 'graph-buffer');
+    const initialFile = await this.writeNativePayloadTempFile(rawBuffer, 'graph-buffer');
     return {
       ...rest,
       initial_file: initialFile,
@@ -1822,7 +1910,7 @@ class NativeRendererBroker {
     };
   }
 
-  prepareNativeCommand(command) {
+  async prepareNativeCommand(command) {
     if (!command || command.type !== 'upload_source_frame') return command;
     const rawBuffer = normalizeSourceFrameBuffer(command.rgba_buffer ?? command.rgba_bytes);
     if (rawBuffer) {
@@ -1831,7 +1919,7 @@ class NativeRendererBroker {
       const expected = Math.max(0, Math.floor(width)) * Math.max(0, Math.floor(height)) * 4;
       const { rgba_buffer: _discardedBuffer, rgba_bytes: _discardedBytes, rgba_b64: _discardedB64, ...rest } = command;
       if (expected <= 0 || rawBuffer.length < expected) return rest;
-      const rgbaFile = this.writeSourceFrameTempFile(rawBuffer);
+      const rgbaFile = await this.writeSourceFrameTempFile(rawBuffer);
       return {
         ...rest,
         rgba_file: rgbaFile,
@@ -1848,7 +1936,7 @@ class NativeRendererBroker {
     const expected = Math.max(0, Math.floor(width)) * Math.max(0, Math.floor(height)) * 4;
     const raw = Buffer.from(encoded, 'base64');
     if (expected <= 0 || raw.length < expected) return command;
-    const rgbaFile = this.writeSourceFrameTempFile(raw);
+    const rgbaFile = await this.writeSourceFrameTempFile(raw);
     const { rgba_b64: _discarded, ...rest } = command;
     return {
       ...rest,
@@ -1858,19 +1946,39 @@ class NativeRendererBroker {
     };
   }
 
-  writeSourceFrameTempFile(bytes) {
+  async writeSourceFrameTempFile(bytes) {
     return this.writeNativePayloadTempFile(bytes, 'frame');
   }
 
-  writeNativePayloadTempFile(bytes, prefix) {
-    if (!this.tempFrameDir) {
-      this.tempFrameDir = fs.mkdtempSync(path.join(os.tmpdir(), 'ghost-render-core-frames-'));
+  async writeNativePayloadTempFile(bytes, prefix) {
+    if (this.fileHandoffJobs >= 16 || this.fileHandoffBytes + bytes.length > 64 * 1024 * 1024) {
+      throw new Error('Native file handoff budget exceeded');
     }
-    const safePrefix = String(prefix || 'payload').replace(/[^a-z0-9_-]/gi, '-').slice(0, 32) || 'payload';
-    const name = `${safePrefix}-${process.pid}-${Date.now()}-${this.tempFrameSerial++}.rgba`;
-    const filePath = path.join(this.tempFrameDir, name);
-    fs.writeFileSync(filePath, bytes);
-    return filePath;
+    this.fileHandoffJobs++;
+    this.fileHandoffBytes += bytes.length;
+    let filePath;
+    let retained = false;
+    try {
+      if (!this.tempFrameDirPromise) {
+        this.tempFrameDirPromise = fs.promises.mkdtemp(path.join(os.tmpdir(), 'ghost-render-core-frames-'))
+          .then(dir => { this.tempFrameDir = dir; return dir; })
+          .catch(error => { this.tempFrameDirPromise = null; throw error; });
+      }
+      const dir = await this.tempFrameDirPromise;
+      const safePrefix = String(prefix || 'payload').replace(/[^a-z0-9_-]/gi, '-').slice(0, 32) || 'payload';
+      const name = `${safePrefix}-${process.pid}-${Date.now()}-${this.tempFrameSerial++}.rgba`;
+      filePath = path.join(dir, name);
+      await fs.promises.writeFile(filePath, bytes);
+      this.preparedFiles.set(filePath, bytes.length);
+      retained = true;
+      return filePath;
+    } finally {
+      this.fileHandoffJobs--;
+      if (!retained) {
+        this.fileHandoffBytes -= bytes.length;
+        if (filePath) await fs.promises.unlink(filePath).catch(() => {});
+      }
+    }
   }
 
   ensureProcess(executable) {
@@ -1907,8 +2015,11 @@ class NativeRendererBroker {
       stdio: ['pipe', 'pipe', 'pipe'],
       env: childEnv,
     });
+    const child = this.child;
+    this.stdoutBuffer = '';
+    this.writeBlocked = false;
     this.child.stdout.setEncoding('utf8');
-    this.child.stdout.on('data', (chunk) => this.handleStdout(chunk));
+    this.child.stdout.on('data', (chunk) => { if (this.child === child) this.handleStdout(chunk); });
     this.child.stderr.setEncoding('utf8');
     this.child.stderr.on('data', (chunk) => {
       String(chunk).split(/\r?\n/).filter(Boolean).forEach((line) => {
@@ -1916,6 +2027,7 @@ class NativeRendererBroker {
       });
     });
     this.child.on('exit', (code, signal) => {
+      if (this.child !== child) return;
       console.log(`[NativeRenderer] exited code=${code} signal=${signal}`);
       this.child = null;
       this.rejectPending(new Error(`Native render core exited (${code ?? signal ?? 'unknown'})`));
@@ -1927,6 +2039,7 @@ class NativeRendererBroker {
       };
     });
     this.child.on('error', (err) => {
+      if (this.child !== child) return;
       this.rejectPending(err);
       this.lastStatus = {
         ...this.lastStatus,
@@ -1957,10 +2070,8 @@ class NativeRendererBroker {
       console.log(`[NativeRenderer] ${line}`);
       return;
     }
-    const pending = this.pending.get(message.id);
+    const pending = this.finishPending(message.id);
     if (!pending) return;
-    clearTimeout(pending.timer);
-    this.pending.delete(message.id);
     if (message.ok) {
       this.clearTransientRpcFailure();
       pending.resolve(message.result);
@@ -1975,6 +2086,9 @@ class NativeRendererBroker {
       pending.reject(err);
     }
     this.pending.clear();
+    this.writeQueue = [];
+    this.pendingBytes = 0;
+    this.writeBlocked = false;
   }
 
   killProcess() {
@@ -2007,6 +2121,7 @@ class NativeRendererBroker {
     if (!this.tempFrameDir) return;
     try { fs.rmSync(this.tempFrameDir, { recursive: true, force: true }); } catch {}
     this.tempFrameDir = null;
+    this.tempFrameDirPromise = null;
   }
 }
 
@@ -2837,7 +2952,7 @@ function normalizeStatus(status, previous = makeDefaultStatus()) {
     shader_precompile_queue_cap: Number(status.shader_precompile_queue_cap ?? previous.shader_precompile_queue_cap ?? 4096),
     shader_precompile_per_frame: Number(status.shader_precompile_per_frame ?? previous.shader_precompile_per_frame ?? 4),
     shader_metadata_cache_cap: Number(status.shader_metadata_cache_cap ?? previous.shader_metadata_cache_cap ?? 16384),
-    pipeline_metadata_cache_cap: Number(status.pipeline_metadata_cache_cap ?? previous.pipeline_metadata_cache_cap ?? 16384),
+    pipeline_metadata_cache_cap: Number(status.pipeline_metadata_cache_cap ?? previous.pipeline_metadata_cache_cap ?? 512),
     texture_pool_cap_mb: Number(status.texture_pool_cap_mb ?? previous.texture_pool_cap_mb ?? 512),
     shader_cache_entries: Number(status.shader_cache_entries ?? previous.shader_cache_entries ?? 0),
     pipeline_cache_entries: Number(status.pipeline_cache_entries ?? previous.pipeline_cache_entries ?? 0),
@@ -3350,7 +3465,7 @@ function makeDefaultStatus(overrides = {}) {
     shader_precompile_queue_cap: 4096,
     shader_precompile_per_frame: 4,
     shader_metadata_cache_cap: 16384,
-    pipeline_metadata_cache_cap: 16384,
+    pipeline_metadata_cache_cap: 512,
     decode_backend_ready: true,
     decode_backend_last_error: null,
     last_frame_error: overrides.last_frame_error ?? null,

@@ -1,0 +1,22 @@
+Final npm run native:full-check: exit 0
+Windows cross-compilation: passed
+Native macOS preview addon: built successfully
+git diff --check: passed
+
+svelte-check found 0 errors and 1036 warnings in 60 files
+test result: ok. 55 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+ Test Files  19 passed (19)
+      Tests  211 passed (211)
+Native broker contract passed: backend=metal adapter=Apple M1 Max graphs=21
+native preview/output golden OK · 160x90 · checksum=ad73a5da38579425 · maxDelta=0
+ Test Files  28 passed (28)
+      Tests  201 passed (201)
+ Test Files  28 passed (28)
+      Tests  201 passed (201)
+[native-frame-sequence] ok frames=6 size=160x90 pixFmt=bgra first=c693f0e7e75894a5 last=622e736b7a7baf5d
+Native compositor parity passed: backend=metal adapter=Apple M1 Max blends=26 effects=9 blendChecksum=79e93bb7a104f8c8 effectChecksum=65ea544ec83198a4
+Native/WebGL effect-pass golden passed (183/183 manifest effects covered, 111 native-only): gradient:source:0f92ade7bb505525 none mean=0.00 p95=0 p99=0 max=0 gradient:invert:e6fd19e519443725 none mean=0.00 p95=0 p99=0 max=1 gradient:grayscale:5844912e91278f3a none mean=0.00 p95=0 p99=0 max=1 gradient:brightness:918307be3fa61da5 none mean=0.01 p95=0 p99=0 max=1 gradient:contrast:4b445721af76b6a5 none mean=0.01 p95=0 p99=0 max=1 gradient:gamma:b7e0c0e5ccca43a5 none mean=0.00 p95=0 p99=0 max=1 gradient:saturation:00341b47e5ef9816 none mean=0.02 p95=0 p99=1 max=1 gradient:hue:6bd3e55105b053b6 none mean=0.00 p95=0 p99=0 max=1 gradient:posterize:a14b7e99f64a7625 none mean=0.08 p95=0 p99=0 max=13 gradient:pixelate:99aee20482174325 none mean=0.00 p95=0 p99=0 max=1 gradient:vignette:9ac0893c1803cef1 none mean=0.03 p95=0 p99=1 max=1 gradient:rgb-shift:27be30c43d6f4b25 none mean=0.15 p95=1 p99=1 max=1 gradient:scanlines:08784d6d8190dcda none mean=0.39 p95=1 p99=4 max=51 gradient:fm-scanlines:fc46d3a7fa0dc098 none mean=0.89 p95=6 p99=7 max=8 gradient:vhs:a327bd4f8da77b94 none mean=0.16 p95=1 p99=1 max=1 gradient:plasma:33c7224f76f5c49c none mean=0.10 p95=1 p99=1 max=1 gradient:halftone:35b6fd593b9cf423 none mean=0.06 p95=1 p99=1 max=6 gradient:toon:2c1989824f2d0110 none mean=0.05 p95=0 p99=0 max=41 gradient:kuwahara:7d4ddb347bfbbe9d none mean=0.18 p95=0 p99=6 max=40 gradient:defocus-bokeh:
+Native WGSL compatibility check passed: 88 shaders parsed by naga.
+Native ISF corpus: 413/413 100.0% rendered=413/413 (100.0%) unique=413 knownBlank=20 (allowlisted)
+[native-smoke] managed output did not present in this harness; continuing with core graph/source-frame validation {"output_swapchain_ready":false,"frames_presented":38,"swapchain_presented":0,"swapchain_last_present_result":"occluded","output_present_consecutive_failures":38}
+Native renderer smoke passed: baseline=84d3a925378a4b25 color=08be53aaaa2ea2a5 preview=28a323914d4925e6 frameFile=632019bdb405810e nativeImage=02f8391302d96669/1 frameExport=02f8391302d96669 frameShared=0581d45512a94b86 wgsl=d6efb52f616b3386->d0e2ef04b03df5cc isfGlsl=598f5305261ec880->1417b3c90575562a uv=ff2d42cab3f3e7fa/f241056070d2fb41 shape=8c163ef16237820b/9bcd584efecb4eb8 compute=15ef37af73a355b2/256 graph=cbf80f97357255e5/2 blendParity=79e93bb7a104f8c8 effectParity=65ea544ec83198a4 graphRender=8a09c960e8c34a1d graphSource=e5e2c009abcc0de0 graphRuns=8/11 graphSrcFrames=1 persist=c36e262edf8160c5/24727 gpu=1e7e876e5fc907e1->1f9027c8a295b3b3/legacyProxy=off particle=9c92a308769236f3->d29eda17a511c3fd catalog=10/10 blends=15 frameSize=1024 frameFormat=rgba8unorm mips=5 tier=insane quality=balanced@0.72 gpuMs=0.42 samples=49 f16=on last_luma=0.1450 nonzero=57600

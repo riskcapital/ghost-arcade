@@ -2620,3 +2620,36 @@ describe('generic passthru effect routing', () => {
     ] })).toEqual(['gpuFluidSim']);
   });
 });
+
+describe('native image load ownership', () => {
+  it('releases an unfinished image on stop and ignores its late completion', async () => {
+    const originalImage = globalThis.Image;
+    class PendingImage {
+      src = '';
+      crossOrigin = '';
+      complete = false;
+      naturalWidth = 64;
+      naturalHeight = 64;
+      onload: (() => void) | null = null;
+      onerror: (() => void) | null = null;
+    }
+    Object.defineProperty(globalThis, 'Image', { configurable: true, writable: true, value: PendingImage });
+    try {
+      const sync = new NativeRendererSyncCtor() as any;
+      sync.running = true;
+      sync.clearRuntimeCaches = vi.fn();
+      sync.resolvePreviewElement({ id: 'pending-image', src: 'fixture.png' }, 'image');
+      const image = [...sync.previewImageElements.values()][0] as PendingImage;
+      expect(image).toBeDefined();
+      const lateCompletion = image.onload!;
+      await sync.stop({ stopCore: false });
+      expect(image.src).toBe('');
+      expect(image.onload).toBeNull();
+      expect(sync.previewImageElements.size).toBe(0);
+      lateCompletion();
+      expect(sync.previewImageElements.size).toBe(0);
+    } finally {
+      Object.defineProperty(globalThis, 'Image', { configurable: true, writable: true, value: originalImage });
+    }
+  });
+});

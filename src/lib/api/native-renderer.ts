@@ -1317,7 +1317,7 @@ export async function startNativeRenderer(config?: Partial<RendererStartConfig>)
       shader_precompile_queue_cap: config?.shader_precompile_queue_cap ?? 4096,
       shader_precompile_per_frame: config?.shader_precompile_per_frame ?? 4,
       shader_metadata_cache_cap: config?.shader_metadata_cache_cap ?? 16384,
-      pipeline_metadata_cache_cap: config?.pipeline_metadata_cache_cap ?? 16384,
+      pipeline_metadata_cache_cap: config?.pipeline_metadata_cache_cap ?? 512,
       texture_pool_cap_mb: config?.texture_pool_cap_mb ?? 512,
       native_quality_policy: config?.native_quality_policy ?? 'fixed',
       ffmpeg_path: config?.ffmpeg_path ?? null,
@@ -1375,6 +1375,7 @@ export async function uploadNativeRendererSourceGpuSharedTexture(
 }
 
 export type NativeMediaPrefetchOptions = {
+  mode?: 'preroll' | 'frame';
   timeSeconds?: number;
   decodeWidth?: number;
   decodeHeight?: number;
@@ -1397,6 +1398,7 @@ export async function prefetchNativeRendererMedia(
   options: NativeMediaPrefetchOptions = {},
 ) {
   return invoke<RendererStatus>('native_renderer_prefetch_media', {
+    prefetch_mode: options.mode,
     source_id: sourceId,
     uri,
     priority,

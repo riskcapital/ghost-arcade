@@ -1,0 +1,348 @@
+{
+  "brokerBackpressure": {
+    "requests": 100,
+    "pendingAfterTimeout": 0,
+    "bufferedBytesAfterTimeout": 1084,
+    "highWaterMark": 1024
+  },
+  "adapter": "Apple M1 Max",
+  "withInvert": {
+    "output": {
+      "checksum": "2a1b964ac4505085",
+      "format": "Bgra8Unorm",
+      "dark_frame": false,
+      "average_luma": 0.7941094311548157,
+      "mean_rgba": [
+        0.8877418300653594,
+        0.7791263616557734,
+        0.6668191721132898,
+        1
+      ],
+      "nonzero_pixels": 14400,
+      "firstPixel": [
+        200,
+        219,
+        237,
+        255
+      ]
+    },
+    "snapshot": {
+      "checksum": "2a1b964ac4505085",
+      "format": "Bgra8Unorm",
+      "dark_frame": false,
+      "average_luma": 0.7941094311548157,
+      "mean_rgba": [
+        0.8877418300653594,
+        0.7791263616557734,
+        0.6668191721132898,
+        1
+      ],
+      "nonzero_pixels": 14400,
+      "firstPixel": [
+        200,
+        219,
+        237,
+        255
+      ]
+    }
+  },
+  "capture": {
+    "average_luma": 0.7941094311548157,
+    "bright_pixels": 14400,
+    "byte_length": 57600,
+    "bytes_per_row": 640,
+    "bytes_written": 57600,
+    "checksum": "2a1b964ac4505085",
+    "dark_frame": false,
+    "format": "Bgra8Unorm",
+    "frame_index": 11,
+    "height": 90,
+    "includes_pixels": false,
+    "max_luma": 0.8684509803921568,
+    "mean_rgba": [
+      0.8877418300653594,
+      0.7791263616557734,
+      0.6668191721132898,
+      1
+    ],
+    "nonzero_pixels": 14400,
+    "padded_bytes_per_row": 768,
+    "path": "/var/folders/n4/2tqhcfhx5gj5q3nv79wjzdj00000gn/T/ghost-live-reliability-capture-52650.rgba",
+    "storage_format": "raw-texture",
+    "time_seconds": null,
+    "timestamp_ms": 1788740115513,
+    "transparent_pixels": 0,
+    "width": 160
+  },
+  "blackoutWithInvert": {
+    "checksum": "57d5e2a7b1402d25",
+    "format": "Bgra8Unorm",
+    "dark_frame": true,
+    "average_luma": 0,
+    "mean_rgba": [
+      0,
+      0,
+      0,
+      1
+    ],
+    "nonzero_pixels": 0,
+    "firstPixel": [
+      0,
+      0,
+      0,
+      255
+    ]
+  },
+  "frozenBlackout": {
+    "checksum": "57d5e2a7b1402d25",
+    "format": "Bgra8Unorm",
+    "dark_frame": true,
+    "average_luma": 0,
+    "mean_rgba": [
+      0,
+      0,
+      0,
+      1
+    ],
+    "nonzero_pixels": 0,
+    "firstPixel": [
+      0,
+      0,
+      0,
+      255
+    ]
+  },
+  "blackoutWithoutInvert": {
+    "checksum": "57d5e2a7b1402d25",
+    "format": "Bgra8Unorm",
+    "dark_frame": true,
+    "average_luma": 0,
+    "mean_rgba": [
+      0,
+      0,
+      0,
+      1
+    ],
+    "nonzero_pixels": 0,
+    "firstPixel": [
+      0,
+      0,
+      0,
+      255
+    ]
+  },
+  "sliceCleanup": {
+    "before": {
+      "available": true,
+      "platform": "iosurface",
+      "slices": [
+        {
+          "frame": 8,
+          "handle": "464",
+          "handle_encoding": "integer",
+          "height": 90,
+          "id": "review-slice",
+          "width": 160
+        }
+      ]
+    },
+    "afterRemove": {
+      "available": true,
+      "platform": "iosurface",
+      "slices": []
+    }
+  },
+  "pipelineVariants": {
+    "before": 1,
+    "samples": [
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1,
+      1
+    ],
+    "afterRemove": 1
+  },
+  "commandDrain": {
+    "rejectedAtomically": true
+  },
+  "endurance": {
+    "churnCount": 60,
+    "soakSeconds": 5,
+    "samples": [
+      {
+        "iteration": 0,
+        "at": 1788740117723,
+        "rssKiB": 192672,
+        "outputChecksum": "04cf48cc5da5b4cd",
+        "submittedFrames": 105,
+        "pipelines": 2,
+        "resources": {
+          "capture_busy": false,
+          "decoded_video_cache_bytes": 0,
+          "graph_buffer_bytes": 96,
+          "image_decode_active": 0,
+          "image_decode_queued": 0,
+          "output_texture_bytes": 345600,
+          "pipeline_workers": 1,
+          "rpc_queued_bytes": 0,
+          "rpc_queued_requests": 0,
+          "slice_texture_bytes": 115200,
+          "source_array_texture_bytes": 368836608,
+          "uniform_pool_bytes": 0,
+          "video_dropped_frames": 0,
+          "video_prefetch_reserved_bytes": 0,
+          "video_prefetch_workers": 0,
+          "video_reserved_bytes": 0
+        },
+        "submissionIntervals": {
+          "coverage": "program submission cadence, not physical display timing",
+          "max_ms": 85.56916700000001,
+          "p999_ms": 85.56916700000001,
+          "p99_ms": 82.668167,
+          "samples": 104
+        },
+        "lastError": null
+      },
+      {
+        "iteration": 20,
+        "at": 1788740120281,
+        "rssKiB": 340528,
+        "outputChecksum": "13b326acfb280615",
+        "submittedFrames": 185,
+        "pipelines": 7,
+        "resources": {
+          "capture_busy": false,
+          "decoded_video_cache_bytes": 0,
+          "graph_buffer_bytes": 96,
+          "image_decode_active": 0,
+          "image_decode_queued": 0,
+          "output_texture_bytes": 345600,
+          "pipeline_workers": 1,
+          "rpc_queued_bytes": 0,
+          "rpc_queued_requests": 0,
+          "slice_texture_bytes": 115200,
+          "source_array_texture_bytes": 368836608,
+          "uniform_pool_bytes": 0,
+          "video_dropped_frames": 0,
+          "video_prefetch_reserved_bytes": 0,
+          "video_prefetch_workers": 0,
+          "video_reserved_bytes": 0
+        },
+        "submissionIntervals": {
+          "coverage": "program submission cadence, not physical display timing",
+          "max_ms": 85.56916700000001,
+          "p999_ms": 85.56916700000001,
+          "p99_ms": 82.668167,
+          "samples": 184
+        },
+        "lastError": null
+      },
+      {
+        "iteration": 40,
+        "at": 1788740122834,
+        "rssKiB": 409328,
+        "outputChecksum": "0ca47cc5a48eb965",
+        "submittedFrames": 266,
+        "pipelines": 7,
+        "resources": {
+          "capture_busy": false,
+          "decoded_video_cache_bytes": 0,
+          "graph_buffer_bytes": 96,
+          "image_decode_active": 0,
+          "image_decode_queued": 0,
+          "output_texture_bytes": 345600,
+          "pipeline_workers": 1,
+          "rpc_queued_bytes": 0,
+          "rpc_queued_requests": 0,
+          "slice_texture_bytes": 115200,
+          "source_array_texture_bytes": 368836608,
+          "uniform_pool_bytes": 0,
+          "video_dropped_frames": 0,
+          "video_prefetch_reserved_bytes": 0,
+          "video_prefetch_workers": 0,
+          "video_reserved_bytes": 0
+        },
+        "submissionIntervals": {
+          "coverage": "program submission cadence, not physical display timing",
+          "max_ms": 85.56916700000001,
+          "p999_ms": 85.56916700000001,
+          "p99_ms": 79.779708,
+          "samples": 265
+        },
+        "lastError": null
+      },
+      {
+        "iteration": 60,
+        "at": 1788740130282,
+        "rssKiB": 407616,
+        "outputChecksum": "b0b521801be46685",
+        "submittedFrames": 614,
+        "pipelines": 8,
+        "resources": {
+          "capture_busy": false,
+          "decoded_video_cache_bytes": 0,
+          "graph_buffer_bytes": 96,
+          "image_decode_active": 0,
+          "image_decode_queued": 0,
+          "output_texture_bytes": 345600,
+          "pipeline_workers": 0,
+          "rpc_queued_bytes": 0,
+          "rpc_queued_requests": 0,
+          "slice_texture_bytes": 0,
+          "source_array_texture_bytes": 368836608,
+          "uniform_pool_bytes": 0,
+          "video_dropped_frames": 0,
+          "video_prefetch_reserved_bytes": 0,
+          "video_prefetch_workers": 0,
+          "video_reserved_bytes": 0
+        },
+        "submissionIntervals": {
+          "coverage": "program submission cadence, not physical display timing",
+          "max_ms": 85.56916700000001,
+          "p999_ms": 85.56916700000001,
+          "p99_ms": 77.121291,
+          "samples": 427
+        },
+        "lastError": null
+      },
+      {
+        "iteration": 60,
+        "at": 1788740130292,
+        "rssKiB": 407680,
+        "outputChecksum": "b0b521801be46685",
+        "submittedFrames": 615,
+        "pipelines": 8,
+        "resources": {
+          "capture_busy": false,
+          "decoded_video_cache_bytes": 0,
+          "graph_buffer_bytes": 96,
+          "image_decode_active": 0,
+          "image_decode_queued": 0,
+          "output_texture_bytes": 345600,
+          "pipeline_workers": 0,
+          "rpc_queued_bytes": 87,
+          "rpc_queued_requests": 1,
+          "slice_texture_bytes": 0,
+          "source_array_texture_bytes": 368836608,
+          "uniform_pool_bytes": 0,
+          "video_dropped_frames": 0,
+          "video_prefetch_reserved_bytes": 0,
+          "video_prefetch_workers": 0,
+          "video_reserved_bytes": 0
+        },
+        "submissionIntervals": {
+          "coverage": "program submission cadence, not physical display timing",
+          "max_ms": 85.56916700000001,
+          "p999_ms": 85.56916700000001,
+          "p99_ms": 76.800208,
+          "samples": 614
+        },
+        "lastError": null
+      }
+    ]
+  }
+}

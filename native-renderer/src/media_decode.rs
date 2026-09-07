@@ -5,11 +5,11 @@ use std::{
     path::{Path, PathBuf},
     process::{Child, ChildStdout, Command, Stdio},
     sync::{
-        Arc, Mutex,
-        atomic::{AtomicBool, Ordering},
+        Arc, Condvar, Mutex,
+        atomic::{AtomicBool, AtomicU64, Ordering},
     },
     thread,
-    time::{Duration, UNIX_EPOCH},
+    time::{Duration, Instant, UNIX_EPOCH},
 };
 
 pub const MAX_NATIVE_IMAGE_DECODE_BYTES: u64 = 256 * 1024 * 1024;
@@ -31,6 +31,7 @@ pub struct NativeVideoFrameDecodeOutput {
 
 #[derive(Debug)]
 pub struct NativeVideoStreamFrame {
+    pub presentation_frame: u64,
     pub width: usize,
     pub height: usize,
     pub rgba: Vec<u8>,
@@ -41,11 +42,20 @@ pub struct NativeVideoStream {
     stop: Arc<AtomicBool>,
     playing: Arc<AtomicBool>,
     children: Arc<Mutex<Vec<Child>>>,
+    wake: Arc<Condvar>,
+    clock: Mutex<Option<(Instant, u64)>>,
+    next_frame: AtomicU64,
+    wanted_frame: Arc<AtomicU64>,
+    dropped_frames: Arc<AtomicU64>,
+    capacity: usize,
+    frame_bytes: usize,
+    free_frames: Arc<Mutex<Vec<Vec<u8>>>>,
 }
 
 impl NativeVideoStream {
     pub fn stop(&self) {
         self.stop.store(true, Ordering::Release);
+        self.wake.notify_all();
         // Kill decoder processes immediately. Without this, a producer thread
         // blocked in read_exact() only notices the stop flag when ffmpeg emits
         // its next frame — which can be arbitrarily late right after a seek —
@@ -60,7 +70,32 @@ impl NativeVideoStream {
     }
 
     pub fn set_playing(&self, playing: bool) {
-        self.playing.store(playing, Ordering::Release);
+        if self.playing.swap(playing, Ordering::AcqRel) != playing {
+            if let Ok(mut clock) = self.clock.lock() {
+                *clock = playing.then(|| (Instant::now(), self.next_frame.load(Ordering::Acquire)));
+            }
+        }
+    }
+
+    pub fn recycle(&self, frame: Vec<u8>) {
+        if frame.len() != self.frame_bytes {
+            return;
+        }
+        if let Ok(mut free) = self.free_frames.lock() {
+            if free.len() < 2 {
+                free.push(frame);
+            }
+        }
+    }
+
+    pub fn memory_bytes(&self) -> usize {
+        self.frame_bytes.saturating_mul(self.capacity + 2)
+    }
+    pub fn ready_frames(&self) -> usize {
+        self.capacity.saturating_sub(1).min(6).max(1)
+    }
+    pub fn dropped_frames(&self) -> u64 {
+        self.dropped_frames.load(Ordering::Relaxed)
     }
 
     pub fn buffered_frames(&self) -> usize {
@@ -68,7 +103,35 @@ impl NativeVideoStream {
     }
 
     pub fn try_pop(&self) -> Option<Result<NativeVideoStreamFrame, String>> {
-        self.frames.lock().ok()?.pop_front()
+        let mut frames = self.frames.lock().ok()?;
+        let target = self.clock.lock().ok()?.as_ref().map(|(anchor, origin)| {
+            origin.saturating_add((anchor.elapsed().as_secs_f64() * 60.0).floor() as u64)
+        });
+        let mut latest: Option<Result<NativeVideoStreamFrame, String>> = None;
+        if let Some(target) = target {
+            self.wanted_frame.store(target, Ordering::Release);
+            while frames.front().is_some_and(|frame| {
+                frame
+                    .as_ref()
+                    .map_or(true, |f| f.presentation_frame <= target)
+            }) {
+                if let Some(previous) = latest.take() {
+                    self.dropped_frames.fetch_add(1, Ordering::Relaxed);
+                    if let Ok(frame) = previous {
+                        self.recycle(frame.rgba);
+                    }
+                }
+                latest = frames.pop_front();
+            }
+        } else {
+            latest = frames.pop_front();
+        }
+        if let Some(Ok(frame)) = &latest {
+            self.next_frame
+                .store(frame.presentation_frame + 1, Ordering::Release);
+        }
+        self.wake.notify_one();
+        latest
     }
 }
 
@@ -90,10 +153,21 @@ pub fn spawn_native_video_stream(
     duration_seconds: Option<f64>,
     trim_start: f64,
     trim_end: f64,
+    capacity: usize,
 ) -> NativeVideoStream {
-    let frames = Arc::new(Mutex::new(VecDeque::with_capacity(
-        NATIVE_VIDEO_PREROLL_FRAMES,
-    )));
+    let capacity = capacity.clamp(2, NATIVE_VIDEO_PREROLL_FRAMES);
+    let frame_bytes = width.clamp(16, MAX_NATIVE_VIDEO_FRAME_DECODE_DIMENSION)
+        * height.clamp(16, MAX_NATIVE_VIDEO_FRAME_DECODE_DIMENSION)
+        * 4;
+    let wake = Arc::new(Condvar::new());
+    let thread_wake = Arc::clone(&wake);
+    let free_frames = Arc::new(Mutex::new(Vec::<Vec<u8>>::new()));
+    let thread_free = free_frames.clone();
+    let wanted_frame = Arc::new(AtomicU64::new(0));
+    let thread_wanted = Arc::clone(&wanted_frame);
+    let dropped_frames = Arc::new(AtomicU64::new(0));
+    let thread_dropped = Arc::clone(&dropped_frames);
+    let frames = Arc::new(Mutex::new(VecDeque::with_capacity(capacity)));
     let stop = Arc::new(AtomicBool::new(false));
     let playing = Arc::new(AtomicBool::new(false));
     let children = Arc::new(Mutex::new(Vec::<Child>::new()));
@@ -176,9 +250,9 @@ pub fn spawn_native_video_stream(
             if let Some(mut stderr) = child.stderr.take() {
                 let stderr_pid = child.id();
                 thread::spawn(move || {
-                    let mut buf = String::new();
-                    let _ = stderr.read_to_string(&mut buf);
-                    let trimmed = buf.trim();
+                    let buf = read_tail(&mut stderr, 16 * 1024);
+                    let text = String::from_utf8_lossy(&buf);
+                    let trimmed = text.trim();
                     if !trimmed.is_empty() {
                         eprintln!("[native-video] ffmpeg stderr (pid {stderr_pid}): {trimmed}");
                     }
@@ -204,6 +278,7 @@ pub fn spawn_native_video_stream(
 
         // A pre-spawned decoder for the next loop iteration, handed off at EOF.
         let mut pending_standby: Option<(u32, ChildStdout)> = None;
+        let mut presentation_frame = 0u64;
         'stream: loop {
             if thread_stop.load(Ordering::Acquire) {
                 break;
@@ -229,7 +304,11 @@ pub fn spawn_native_video_stream(
                     reap(pid);
                     break 'stream;
                 }
-                let mut rgba = vec![0u8; frame_bytes];
+                let mut rgba = thread_free
+                    .lock()
+                    .ok()
+                    .and_then(|mut free| free.pop())
+                    .unwrap_or_else(|| vec![0u8; frame_bytes]);
                 if let Err(err) = stdout.read_exact(&mut rgba) {
                     if err.kind() != std::io::ErrorKind::UnexpectedEof {
                         if let Ok(mut queue) = thread_frames.lock() {
@@ -242,6 +321,17 @@ pub fn spawn_native_video_stream(
                     break;
                 }
                 emitted_frames = emitted_frames.saturating_add(1);
+                let current_frame = presentation_frame;
+                presentation_frame = presentation_frame.saturating_add(1);
+                if current_frame.saturating_add(1) < thread_wanted.load(Ordering::Acquire) {
+                    thread_dropped.fetch_add(1, Ordering::Relaxed);
+                    if let Ok(mut free) = thread_free.lock() {
+                        if free.len() < 2 {
+                            free.push(rgba);
+                        }
+                    }
+                    continue;
+                }
 
                 // Near the loop boundary, warm the next segment's decoder so
                 // the handoff at EOF is seamless. The standby blocks on its
@@ -267,16 +357,17 @@ pub fn spawn_native_video_stream(
                         break 'stream;
                     }
                     if let Ok(mut queue) = thread_frames.lock() {
-                        if queue.len() < NATIVE_VIDEO_PREROLL_FRAMES {
+                        if queue.len() < capacity {
                             queue.push_back(Ok(NativeVideoStreamFrame {
+                                presentation_frame: current_frame,
                                 width: target_width,
                                 height: target_height,
                                 rgba,
                             }));
                             break;
                         }
+                        let _ = thread_wake.wait_timeout(queue, Duration::from_millis(100));
                     }
-                    thread::sleep(Duration::from_millis(2));
                 }
             }
             reap(pid);
@@ -299,6 +390,14 @@ pub fn spawn_native_video_stream(
         stop,
         playing,
         children,
+        wake,
+        clock: Mutex::new(None),
+        next_frame: AtomicU64::new(0),
+        wanted_frame,
+        dropped_frames,
+        capacity,
+        frame_bytes,
+        free_frames,
     }
 }
 
@@ -419,23 +518,25 @@ fn decode_native_video_frame_rgba_with_seek(
     } else {
         command.arg("-ss").arg(seek_time).arg("-i").arg(path);
     }
-    let output = command
-        .arg("-frames:v")
-        .arg("1")
-        .arg("-vf")
-        .arg(format!("{scale},{pad},format=rgba"))
-        .arg("-f")
-        .arg("rawvideo")
-        .arg("-pix_fmt")
-        .arg("rgba")
-        .arg("pipe:1")
-        .output()
-        .map_err(|err| {
-            format!(
-                "native video frame decode failed to launch `{ffmpeg}` for `{}`: {err}",
-                path.display()
-            )
-        })?;
+    let output = bounded_output(
+        command
+            .arg("-frames:v")
+            .arg("1")
+            .arg("-vf")
+            .arg(format!("{scale},{pad},format=rgba"))
+            .arg("-f")
+            .arg("rawvideo")
+            .arg("-pix_fmt")
+            .arg("rgba")
+            .arg("pipe:1"),
+        expected_bytes,
+    )
+    .map_err(|err| {
+        format!(
+            "native video frame decode failed to launch `{ffmpeg}` for `{}`: {err}",
+            path.display()
+        )
+    })?;
     if !output.status.success() {
         let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(format!(
@@ -501,31 +602,33 @@ pub fn decode_native_video_frame_window_rgba(
     let scale =
         format!("scale={target_width}:{target_height}:force_original_aspect_ratio=decrease");
     let pad = format!("pad={target_width}:{target_height}:(ow-iw)/2:(oh-ih)/2:color=black");
-    let output = Command::new(&ffmpeg)
-        .arg("-hide_banner")
-        .arg("-loglevel")
-        .arg("error")
-        .arg("-nostdin")
-        .arg("-ss")
-        .arg(format!("{:.3}", time_seconds.clamp(0.0, 3600.0)))
-        .arg("-i")
-        .arg(path)
-        .arg("-frames:v")
-        .arg(count.to_string())
-        .arg("-vf")
-        .arg(format!("{scale},{pad},fps={sample_fps:.3},format=rgba"))
-        .arg("-f")
-        .arg("rawvideo")
-        .arg("-pix_fmt")
-        .arg("rgba")
-        .arg("pipe:1")
-        .output()
-        .map_err(|err| {
-            format!(
-                "native video frame window decode failed to launch `{ffmpeg}` for `{}`: {err}",
-                path.display()
-            )
-        })?;
+    let output = bounded_output(
+        Command::new(&ffmpeg)
+            .arg("-hide_banner")
+            .arg("-loglevel")
+            .arg("error")
+            .arg("-nostdin")
+            .arg("-ss")
+            .arg(format!("{:.3}", time_seconds.clamp(0.0, 3600.0)))
+            .arg("-i")
+            .arg(path)
+            .arg("-frames:v")
+            .arg(count.to_string())
+            .arg("-vf")
+            .arg(format!("{scale},{pad},fps={sample_fps:.3},format=rgba"))
+            .arg("-f")
+            .arg("rawvideo")
+            .arg("-pix_fmt")
+            .arg("rgba")
+            .arg("pipe:1"),
+        expected_bytes.saturating_mul(count as usize),
+    )
+    .map_err(|err| {
+        format!(
+            "native video frame window decode failed to launch `{ffmpeg}` for `{}`: {err}",
+            path.display()
+        )
+    })?;
     if !output.status.success() {
         let detail = String::from_utf8_lossy(&output.stderr).trim().to_string();
         return Err(format!(
@@ -728,4 +831,127 @@ fn windows_drive_path(path: &str) -> bool {
         && bytes[1] == b':'
         && (bytes[2] == b'/' || bytes[2] == b'\\')
         && bytes[0].is_ascii_alphabetic()
+}
+
+// Keep diagnostics useful without retaining a process's entire error history.
+fn read_tail(reader: &mut impl Read, cap: usize) -> Vec<u8> {
+    let mut tail = Vec::new();
+    let mut chunk = [0u8; 4096];
+    loop {
+        let Ok(n) = reader.read(&mut chunk) else {
+            break;
+        };
+        if n == 0 {
+            break;
+        }
+        tail.extend_from_slice(&chunk[..n]);
+        if tail.len() > cap {
+            tail.drain(..tail.len() - cap);
+        }
+    }
+    tail
+}
+
+fn bounded_output(command: &mut Command, expected: usize) -> std::io::Result<std::process::Output> {
+    if expected > 256 * 1024 * 1024 {
+        return Err(std::io::Error::other(
+            "decode output exceeds 256 MiB job budget",
+        ));
+    }
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let stdout = child.stdout.take().expect("piped stdout");
+    let mut stderr = child.stderr.take().expect("piped stderr");
+    let out = thread::spawn(move || {
+        let mut bytes = Vec::new();
+        stdout
+            .take(expected as u64 + 1)
+            .read_to_end(&mut bytes)
+            .map(|_| bytes)
+    });
+    let err = thread::spawn(move || read_tail(&mut stderr, 16 * 1024));
+    let deadline = Instant::now() + Duration::from_secs(10);
+    let status = loop {
+        match child.try_wait() {
+            Ok(Some(status)) => break Ok(status),
+            Err(error) => break Err(error),
+            _ if Instant::now() >= deadline => {
+                break Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    "video decode exceeded 10 seconds",
+                ));
+            }
+            _ => thread::sleep(Duration::from_millis(5)),
+        }
+    };
+    if status.is_err() {
+        let _ = child.kill();
+    }
+    let _ = child.wait();
+    let stdout = out
+        .join()
+        .map_err(|_| std::io::Error::other("decode stdout worker failed"))??;
+    let stderr = err
+        .join()
+        .map_err(|_| std::io::Error::other("decode stderr worker failed"))?;
+    Ok(std::process::Output {
+        status: status?,
+        stdout,
+        stderr,
+    })
+}
+
+#[cfg(test)]
+mod lifecycle_tests {
+    use super::*;
+    fn test_stream() -> NativeVideoStream {
+        NativeVideoStream {
+            frames: Arc::new(Mutex::new(
+                (0..8)
+                    .map(|index| {
+                        Ok(NativeVideoStreamFrame {
+                            presentation_frame: index,
+                            width: 1,
+                            height: 1,
+                            rgba: vec![index as u8; 4],
+                        })
+                    })
+                    .collect(),
+            )),
+            stop: Arc::new(AtomicBool::new(false)),
+            playing: Arc::new(AtomicBool::new(true)),
+            children: Arc::new(Mutex::new(Vec::new())),
+            wake: Arc::new(Condvar::new()),
+            clock: Mutex::new(Some((Instant::now() - Duration::from_millis(500), 0))),
+            next_frame: AtomicU64::new(0),
+            wanted_frame: Arc::new(AtomicU64::new(0)),
+            dropped_frames: Arc::new(AtomicU64::new(0)),
+            capacity: 8,
+            frame_bytes: 4,
+            free_frames: Arc::new(Mutex::new(Vec::new())),
+        }
+    }
+    #[test]
+    fn stalled_playback_discards_obsolete_frames() {
+        let stream = test_stream();
+        assert_eq!(stream.try_pop().unwrap().unwrap().presentation_frame, 7);
+        assert_eq!(stream.dropped_frames(), 7);
+        assert_eq!(stream.buffered_frames(), 0);
+    }
+    #[test]
+    fn armed_playback_does_not_skip_preroll() {
+        let stream = test_stream();
+        stream.set_playing(false);
+        assert_eq!(stream.try_pop().unwrap().unwrap().presentation_frame, 0);
+        assert_eq!(stream.buffered_frames(), 7);
+        assert_eq!(stream.dropped_frames(), 0);
+        assert_eq!(stream.memory_bytes(), 40);
+    }
+    #[test]
+    fn diagnostics_keep_only_a_bounded_tail() {
+        let mut bytes = std::io::Cursor::new(vec![42; 100_000]);
+        assert_eq!(read_tail(&mut bytes, 16384), vec![42; 16384]);
+    }
 }

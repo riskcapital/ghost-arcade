@@ -1,0 +1,26 @@
+{
+  "baseline_commit": "a2ffde53c84afc7715e0429436714c1c2f6eea41",
+  "binary_sha256": "5ed3aa8ac010ea58cb9c6dd16cf0e950a754b598883f3c8609f22e3df952afdd",
+  "source_sha256": {
+    "electron/native-renderer-broker.js": "a56127beaca668c2abba106747bd2d57e4049c3fccdbf606d447e75d19d0dfe4",
+    "electron/native/native_preview_addon.mm": "dc0277decc338a84992a3a460599f3999a549a990b2eccdd774adafa27b05359",
+    "native-renderer/src/compute_graph.rs": "d4a0c5db86f8df5d7df2ba6e3cc460fbc12deab44c30e480e2457c89ee2c44b8",
+    "native-renderer/src/heartbeat.wgsl": "220dee88acdd20fbb366035ab8c1cb9be68ecdc89dd57f877042ca7fb3366d80",
+    "native-renderer/src/main.rs": "2e5d9a8931e0641d7777623d7df580079af914780227b91c5b0a4601b3467ad3",
+    "native-renderer/src/media_decode.rs": "fa52bfa891ab0cbccc6ea99bd0a5acaec2f0aa04d55c494f90614e96b3c9ed2f",
+    "native-renderer/src/native_quality.rs": "7ea46bc3c6c33fe91774a3ef607711ff51c425eea3d73d0d84942ac34ecfb166",
+    "package.json": "d304cb73816fc6696dd1c40992cbeb1d5ac73c319cc010f0d9fbbc6aeeb7f573",
+    "scripts/native-broker-contract.mjs": "3c39732619db6326020beb8cac62c48deeca2bfe8fd1215ccfefc53e3c39d3ba",
+    "scripts/native-renderer-smoke.mjs": "5d7a61c01e5b5da51cf78f21956024cfdabae0fd4fe4cd1e9f794c85742c4f12",
+    "src/lib/api/native-renderer.ts": "56837006ff7d2980cf313a5250bff7e19a6bf7148577580e1b1375eefebfda34",
+    "src/lib/renderer/nativeRendererBroker.native.test.ts": "94d49418ea8a9293d65330a2cc71df4b386852233cb009e91ac302aae3f6beef",
+    "src/lib/renderer/nativeRendererCore.native.test.ts": "302f7647692ff95d24c893d3c2a97a6a3de4520d83ee3b4e121e0a1fd10b8f70",
+    "src/lib/renderer/svgNative.native.test.ts": "58721e68b0d756e1b32438885099983636ab27338169a13d146e8f7f255642ba",
+    "src/lib/sync/nativeRendererSync.native.test.ts": "438a916bc5934b3e877f7776683410e5b45e92d29f3bb89fbc2395a3dcce8c9f",
+    "src/lib/sync/nativeRendererSync.ts": "bedf6d1173a7eedb1585bf9412d7fb2414be68e47df9fb8b7a5356f0c7e03151",
+    "tests/native/webgpu3DSmoke.native.integration.test.ts": "c1335ee07f99adad7323889c63e892d7e5501fd19d0a71bd5be5cac518e889e7",
+    "native-renderer/src/output_present.rs": "a92eeace463044091123ca3d464005455d82514798e74016260e19ae45ea12ba",
+    "scripts/native-live-reliability.mjs": "8e90cf800deef3df2a10dd4f95f707c8a8387a5aa54178bf4d7c937ae0cef62b"
+  },
+  "excluded_preexisting_edit": "src/lib/mcp/mcpTools.ts"
+}

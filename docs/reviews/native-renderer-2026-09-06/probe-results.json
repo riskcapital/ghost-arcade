@@ -1,0 +1,273 @@
+{
+  "brokerBackpressure": {
+    "requests": 100,
+    "pendingAfterTimeout": 0,
+    "bufferedBytesAfterTimeout": 108492,
+    "highWaterMark": 1024
+  },
+  "adapter": "Apple M1 Max",
+  "withInvert": {
+    "output": {
+      "checksum": "2a1b964ac4505085",
+      "format": "Bgra8Unorm",
+      "dark_frame": false,
+      "average_luma": 0.7941094311548157,
+      "mean_rgba": [
+        0.8877418300653594,
+        0.7791263616557734,
+        0.6668191721132898,
+        1
+      ],
+      "nonzero_pixels": 14400,
+      "firstPixel": [
+        200,
+        219,
+        237,
+        255
+      ]
+    },
+    "snapshot": {
+      "checksum": "80ee01860d3e283d",
+      "format": "Bgra8Unorm",
+      "dark_frame": false,
+      "average_luma": 0.2058905688452629,
+      "mean_rgba": [
+        0.11225816993464052,
+        0.2208736383442266,
+        0.3331808278867102,
+        1
+      ],
+      "nonzero_pixels": 14400,
+      "firstPixel": [
+        55,
+        36,
+        18,
+        255
+      ]
+    }
+  },
+  "blackoutWithInvert": {
+    "checksum": "8bb8b2d904d1e025",
+    "format": "Bgra8Unorm",
+    "dark_frame": false,
+    "average_luma": 0.9999999999999999,
+    "mean_rgba": [
+      1,
+      1,
+      1,
+      1
+    ],
+    "nonzero_pixels": 14400,
+    "firstPixel": [
+      255,
+      255,
+      255,
+      255
+    ]
+  },
+  "blackoutWithoutInvert": {
+    "checksum": "57d5e2a7b1402d25",
+    "format": "Bgra8Unorm",
+    "dark_frame": true,
+    "average_luma": 0,
+    "mean_rgba": [
+      0,
+      0,
+      0,
+      1
+    ],
+    "nonzero_pixels": 0,
+    "firstPixel": [
+      0,
+      0,
+      0,
+      255
+    ]
+  },
+  "sliceCleanup": {
+    "before": {
+      "available": true,
+      "platform": "iosurface",
+      "slices": [
+        {
+          "frame": 8,
+          "handle": "792",
+          "handle_encoding": "integer",
+          "height": 90,
+          "id": "review-slice",
+          "width": 160
+        }
+      ]
+    },
+    "afterRemove": {
+      "available": true,
+      "platform": "iosurface",
+      "slices": [
+        {
+          "frame": 8,
+          "handle": "792",
+          "handle_encoding": "integer",
+          "height": 90,
+          "id": "review-slice",
+          "width": 160
+        }
+      ]
+    }
+  },
+  "pipelineVariants": {
+    "before": 1,
+    "samples": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      7,
+      8,
+      9
+    ],
+    "afterRemove": 9
+  },
+  "commandDrain": {
+    "applied": 10,
+    "command_drain_limit": 2,
+    "command_queue_peak": 10,
+    "dropped": 0,
+    "explicit_present_requested": false,
+    "invalid_payload": false,
+    "total": 10,
+    "unknown_types": []
+  },
+  "workloads": [
+    {
+      "label": "1080p / 1 translucent layer / 60fps target",
+      "seconds": 4.0254197089999995,
+      "completedFps": 53.65900095263831,
+      "backpressureSkips": 10,
+      "cpuEmaMs": 0.7748366797489012,
+      "gpuEmaMs": 6.671002344415693,
+      "sourceFrameSize": 1024,
+      "quality": {
+        "active_tier": "performance",
+        "caps_tier": "insane",
+        "cpu_ema_ms": 0.7748366797489012,
+        "gpu_ema_ms": 6.671002344415693,
+        "overload_frames": 0,
+        "policy": "performance",
+        "quality_scale": 0.5600000023841858,
+        "recovery_frames": 0,
+        "step_downs": 0,
+        "step_ups": 0,
+        "target_frame_ms": 16.666666666666668
+      },
+      "readbackCount": 0,
+      "readbackMaxMs": 0,
+      "readbackMeanMs": 0,
+      "lastError": null
+    },
+    {
+      "label": "1080p / 16 translucent layers",
+      "seconds": 4.022998417000001,
+      "completedFps": 28.088502228212526,
+      "backpressureSkips": 113,
+      "cpuEmaMs": 0.6941160876497406,
+      "gpuEmaMs": 24.726855389245245,
+      "sourceFrameSize": 1024,
+      "quality": {
+        "active_tier": "performance",
+        "caps_tier": "insane",
+        "cpu_ema_ms": 0.6941160876497406,
+        "gpu_ema_ms": 24.726855389245245,
+        "overload_frames": 0,
+        "policy": "performance",
+        "quality_scale": 0.5600000023841858,
+        "recovery_frames": 0,
+        "step_downs": 0,
+        "step_ups": 0,
+        "target_frame_ms": 16.666666666666668
+      },
+      "readbackCount": 0,
+      "readbackMaxMs": 0,
+      "readbackMeanMs": 0,
+      "lastError": null
+    },
+    {
+      "label": "1080p / 16 layers / 4 composition FX",
+      "seconds": 4.026600708,
+      "completedFps": 18.87448135818487,
+      "backpressureSkips": 150,
+      "cpuEmaMs": 1.1463462838911682,
+      "gpuEmaMs": 19.99452429762315,
+      "sourceFrameSize": 1024,
+      "quality": {
+        "active_tier": "performance",
+        "caps_tier": "insane",
+        "cpu_ema_ms": 1.1463462838911682,
+        "gpu_ema_ms": 19.99452429762315,
+        "overload_frames": 0,
+        "policy": "performance",
+        "quality_scale": 0.5600000023841858,
+        "recovery_frames": 0,
+        "step_downs": 0,
+        "step_ups": 0,
+        "target_frame_ms": 16.666666666666668
+      },
+      "readbackCount": 0,
+      "readbackMaxMs": 0,
+      "readbackMeanMs": 0,
+      "lastError": null
+    },
+    {
+      "label": "same + 30Hz full-output readback",
+      "seconds": 4.011537292000001,
+      "completedFps": 19.942479447851532,
+      "backpressureSkips": 1,
+      "cpuEmaMs": 0.3885724009451312,
+      "gpuEmaMs": 20.496853964327748,
+      "sourceFrameSize": 1024,
+      "quality": {
+        "active_tier": "performance",
+        "caps_tier": "insane",
+        "cpu_ema_ms": 0.3885724009451312,
+        "gpu_ema_ms": 20.496853964327748,
+        "overload_frames": 0,
+        "policy": "performance",
+        "quality_scale": 0.5600000023841858,
+        "recovery_frames": 0,
+        "step_downs": 0,
+        "step_ups": 0,
+        "target_frame_ms": 16.666666666666668
+      },
+      "readbackCount": 81,
+      "readbackMaxMs": 53.74604200000249,
+      "readbackMeanMs": 48.20593208641946,
+      "lastError": null
+    },
+    {
+      "label": "same / no readback / 2 extra 1080p slices",
+      "seconds": 4.022186916999999,
+      "completedFps": 12.431048340561247,
+      "backpressureSkips": 177,
+      "cpuEmaMs": 0.7129888853995098,
+      "gpuEmaMs": 57.041780253651545,
+      "sourceFrameSize": 1024,
+      "quality": {
+        "active_tier": "performance",
+        "caps_tier": "insane",
+        "cpu_ema_ms": 0.7129888853995098,
+        "gpu_ema_ms": 57.041780253651545,
+        "overload_frames": 0,
+        "policy": "performance",
+        "quality_scale": 0.5600000023841858,
+        "recovery_frames": 0,
+        "step_downs": 0,
+        "step_ups": 0,
+        "target_frame_ms": 16.666666666666668
+      },
+      "readbackCount": 0,
+      "readbackMaxMs": 0,
+      "readbackMeanMs": 0,
+      "lastError": null
+    }
+  ]
+}

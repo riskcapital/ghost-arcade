@@ -138,6 +138,7 @@ pub(crate) struct NativeComputeGraphBufferSpec {
     pub(crate) indirect: bool,
 }
 
+#[derive(Clone)]
 pub(crate) struct NativeComputeGraphGpuBuffer {
     pub(crate) buffer: wgpu::Buffer,
     pub(crate) byte_length: u64,

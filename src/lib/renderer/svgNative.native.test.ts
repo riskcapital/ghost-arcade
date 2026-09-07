@@ -308,8 +308,15 @@ describe('native SVG graph', () => {
         ],
       }, 15000);
       await new Promise((resolve) => setTimeout(resolve, 150));
+      // Live graph compilation is asynchronous; wait for the queued graph,
+      // not a machine-dependent fixed shader compilation delay.
+      const readyDeadline = Date.now() + 3000;
+      let status = await rpc.send('status', {}, 5000);
+      while (Number(status.compute_graph_source_frame_renders ?? 0) === 0 && Date.now() < readyDeadline) {
+        await new Promise((resolve) => setTimeout(resolve, 25));
+        status = await rpc.send('status', {}, 5000);
+      }
       const snapshot = await rpc.send('frame_snapshot', { include_pixels: true }, 10000);
-      const status = await rpc.send('status', {}, 5000);
       expect(status.last_shader_error, JSON.stringify(result)).toBeNull();
       expect(status.shader_cache_entries).toBeGreaterThan(0);
       expect(Number(status.compute_graph_source_frame_renders ?? 0)).toBeGreaterThan(0);

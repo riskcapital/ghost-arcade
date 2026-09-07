@@ -1,0 +1,29 @@
+{
+  "adapter": "Apple M1 Max",
+  "backend": "Metal",
+  "output": "1920x1080",
+  "target_fps": 120,
+  "quality_policy": "fixed",
+  "reported_quality": "native@1",
+  "sample_seconds_per_workload": 5,
+  "workloads": [
+    {
+      "workload": "one-layer-compositor",
+      "completed_fps": 82.8,
+      "avg_cpu_ms": 0.625,
+      "avg_gpu_ms": 3.03,
+      "submitted_frames": 414,
+      "completed_frames": 414,
+      "backpressure_skips": 15
+    },
+    {
+      "workload": "planet-native-graph",
+      "completed_fps": 24.2,
+      "avg_cpu_ms": 0.8,
+      "avg_gpu_ms": 26.76,
+      "submitted_frames": 121,
+      "completed_frames": 121,
+      "backpressure_skips": 311
+    }
+  ]
+}
