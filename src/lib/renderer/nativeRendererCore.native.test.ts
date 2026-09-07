@@ -283,7 +283,14 @@ describe('Native render-core RPC contract', () => {
           ],
         }, 20000);
         await new Promise((resolve) => setTimeout(resolve, 120));
-        const snapshot = await rpc.send('frame_snapshot', { include_pixels: index === 0 }, 10000);
+        // Cold pipelines compile off the presentation thread. Wait for the
+        // fixture's first frame rather than assuming compilation fits 120 ms.
+        const readyDeadline = Date.now() + 2000;
+        let snapshot = await rpc.send('frame_snapshot', { include_pixels: index === 0 }, 10000);
+        while (snapshot.dark_frame && Date.now() < readyDeadline) {
+          await new Promise(resolve => setTimeout(resolve, 40));
+          snapshot = await rpc.send('frame_snapshot', { include_pixels: index === 0 }, 10000);
+        }
         expect(snapshot.nonzero_pixels, fixture.name).toBeGreaterThan(0);
         expect(snapshot.dark_frame, fixture.name).toBe(false);
         if (index === 0) {

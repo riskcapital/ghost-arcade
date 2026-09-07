@@ -5215,6 +5215,9 @@ export class NativeRendererSync {
   private nativeBlockedSourceLayerCount = 0;
   private nativeBlockedLayerLastReason: string | null = null;
   private nativePointCloudDataCache = new Map<string, Promise<PointCloudFXNativePointData>>();
+  private nativePointCloudBytes = new Map<string, number>();
+  private nativePointCloudLoads = new Map<string, AbortController>();
+  private activePointCloudKeys = new Set<string>();
   private nativePointCloudUploadSignatures = new Map<string, string>();
   private nativeSourceFrameSize = SOURCE_FRAME_SIZE_FALLBACK;
   private latestNativeStatus: RendererStatus | null = null;
@@ -5696,12 +5699,20 @@ export class NativeRendererSync {
     const cacheKey = this.nativePointCloudCacheKey(input);
     let promise = this.nativePointCloudDataCache.get(cacheKey);
     if (!promise) {
-      promise = fetch(src.src)
+      if (this.nativePointCloudLoads.size >= 2) throw new Error('Point-cloud loader is busy; retry after an active load completes');
+      const generation = this.lifecycleGeneration;
+      const controller = new AbortController();
+      this.nativePointCloudLoads.set(cacheKey, controller);
+      promise = fetch(src.src, { signal: controller.signal })
         .then(async (response) => {
           if (!response.ok) {
             throw new Error(`point cloud fetch failed: ${response.status} ${response.statusText}`);
           }
-          const buffer = await response.arrayBuffer();
+          const declaredBytes = Number(response.headers.get('content-length') || 0);
+          if (declaredBytes > 512 * 1024 * 1024) throw new Error('Point-cloud input exceeds the 512 MiB load budget');
+          const buffer = await readNativeAssetBounded(response, 512 * 1024 * 1024);
+          if (controller.signal.aborted || generation !== this.lifecycleGeneration) throw new Error('Point-cloud load superseded');
+          if (buffer.byteLength > 512 * 1024 * 1024) throw new Error('Point-cloud input exceeds the 512 MiB load budget');
           const pointData = isSplat
             ? pointCloudBuffersFromPLYData(parseSplatBuffer(buffer), {
                 maxPoints: NATIVE_POINT_CLOUD_MAX_POINTS,
@@ -5734,9 +5745,23 @@ export class NativeRendererSync {
             sphericalHarmonicsCoefficientCount: pointData.sphericalHarmonicsCoefficientCount,
           });
         })
+        .then(data => {
+          if (controller.signal.aborted || generation !== this.lifecycleGeneration) throw new Error('Point-cloud load superseded');
+          const bytes = data.homeByteLength + data.liveByteLength + data.sortByteLength;
+          const resident = [...this.nativePointCloudBytes.values()].reduce((sum, size) => sum + size, 0);
+          if (resident + bytes > 256 * 1024 * 1024) throw new Error('Active point clouds exceed the 256 MiB CPU buffer budget');
+          this.nativePointCloudBytes.set(cacheKey, bytes);
+          return data;
+        })
         .catch((err) => {
-          this.nativePointCloudDataCache.delete(cacheKey);
+          if (this.nativePointCloudDataCache.get(cacheKey) === promise) {
+            this.nativePointCloudDataCache.delete(cacheKey);
+            this.nativePointCloudBytes.delete(cacheKey);
+          }
           throw err;
+        })
+        .finally(() => {
+          if (this.nativePointCloudLoads.get(cacheKey) === controller) this.nativePointCloudLoads.delete(cacheKey);
         });
       this.nativePointCloudDataCache.set(cacheKey, promise);
     }
@@ -6191,6 +6216,17 @@ export class NativeRendererSync {
     }
     const activeRouteKeys = new Set<string>();
     layers = this.resolveNativeGroupLayers(layers);
+    this.activePointCloudKeys = new Set(layers.flatMap(layer => {
+      const input = this.nativeGraphRouteForLayer(layer, true)?.inputSource;
+      return input ? [this.nativePointCloudCacheKey(input)] : [];
+    }));
+    this.nativePointCloudDataCache.forEach((_value, key) => {
+      if (this.activePointCloudKeys.has(key)) return;
+      this.nativePointCloudLoads.get(key)?.abort();
+      this.nativePointCloudLoads.delete(key);
+      this.nativePointCloudDataCache.delete(key);
+      this.nativePointCloudBytes.delete(key);
+    });
     for (const layer of layers) {
       const possibleRoute = this.nativeGraphRouteForLayer(layer, true);
       if (!possibleRoute) continue;
@@ -7076,6 +7112,7 @@ export class NativeRendererSync {
     const timeSeconds = this.nativeVideoPlaybackTimeSeconds(src, now);
     const decodeDimensions = this.nativeVideoDecodeDimensions(src);
     return {
+      mode: 'preroll' as const,
       timeSeconds: useNativePlaybackClock ? undefined : timeSeconds,
       decodeWidth: decodeDimensions.width,
       decodeHeight: decodeDimensions.height,
@@ -7450,7 +7487,7 @@ export class NativeRendererSync {
       max_frame_latency: 1,
       use_waitable_object: true,
       shader_metadata_cache_cap: 16384,
-      pipeline_metadata_cache_cap: 16384,
+      pipeline_metadata_cache_cap: 512,
       vram_budget_mb: 4096,
       decode_upload_queue_cap_mb: this.decodeUploadQueueCapMb,
       decode_handoff_byte_cap_mb: this.decodeHandoffByteCapMb,
@@ -7686,13 +7723,25 @@ export class NativeRendererSync {
     this.resetNativeVideoDecodeTracking();
     this.resetNativeGraphRouteTelemetry();
     this.latestNativeStatus = null;
+    this.previewImageElements.forEach(img => { img.onload = null; img.onerror = null; img.src = ''; });
     this.previewImageElements.clear();
+    this.nativeTextState.clear();
+    this.nativeSvgState.clear();
+    this.nativeModel3DState.clear();
+    this.nativeSplatState.clear();
+    this.sharedTextureInfoCache.clear();
+    this.sharedTextureInfoInFlight.clear();
+    this.sharedTextureInfoNextPollAt.clear();
     this.previewImageLoads.clear();
     this.nativeComputeGraphSourceFrames = false;
     this.nativeGraphCatalogComplete = false;
     this.nativeGraphReadyKinds.clear();
     this.nativeEffectPassDescriptorIds.clear();
     this.nativeGraphRoutes.clear();
+    this.nativePointCloudLoads.forEach(controller => controller.abort());
+    this.nativePointCloudLoads.clear();
+    this.nativePointCloudBytes.clear();
+    this.activePointCloudKeys.clear();
     this.nativePointCloudDataCache.clear();
     this.nativePointCloudUploadSignatures.clear();
     this.nativeGraphInstruments.clear();
@@ -9073,6 +9122,14 @@ export class NativeRendererSync {
      * leak a few hundred bytes per capture-session restart; that is the better
      * trade during a show.
      */
+    const liveImageKeys = new Set(this.resolveNativeGroupLayers(layers).flatMap(layer =>
+      layer.source ? [this.sourceCacheKey(layer.source.id, layer.source.src)] : []));
+    this.previewImageElements.forEach((img, key) => {
+      if (liveImageKeys.has(key)) return;
+      img.onload = null; img.onerror = null; img.src = '';
+      this.previewImageElements.delete(key);
+      this.previewImageLoads.delete(key);
+    });
     const liveLayerIds = new Set(layers.map((layer) => layer.id));
     this.nativeTextState.forEach((_state, layerId) => {
       if (!liveLayerIds.has(layerId)) this.nativeTextState.delete(layerId);
@@ -9778,9 +9835,15 @@ fn fs_main() -> @location(0) vec4<f32> {
     if (cached && cached.complete && cached.naturalWidth > 0) return cached;
     if (!this.previewImageLoads.has(key)) {
       this.previewImageLoads.add(key);
+      const generation = this.lifecycleGeneration;
       const img = new Image();
       img.crossOrigin = 'anonymous';
       img.onload = () => {
+        if (generation !== this.lifecycleGeneration || !this.running || this.previewImageElements.get(key) !== img) { img.onload = null; img.onerror = null; img.src = ''; return; }
+        this.previewImageLoads.delete(key);
+        const bytes = img.naturalWidth * img.naturalHeight * 4;
+        const resident = [...this.previewImageElements.values()].reduce((n, entry) => n + (entry === img ? 0 : entry.naturalWidth * entry.naturalHeight * 4), 0);
+        if (bytes + resident > 128 * 1024 * 1024) { this.previewImageElements.delete(key); img.onload = null; img.onerror = null; img.src = ''; return; }
         this.previewImageElements.set(key, img);
         if (img.naturalWidth > 0 && img.naturalHeight > 0) {
           this.nativeSourceAspectCache.set(
@@ -9792,9 +9855,13 @@ fn fs_main() -> @location(0) vec4<f32> {
         if (this.running) this.scheduleSync(this.desiredWidth, this.desiredHeight, this.latestLayers);
       };
       img.onerror = () => {
+        if (generation !== this.lifecycleGeneration || this.previewImageElements.get(key) !== img) return;
+        this.previewImageElements.delete(key);
         this.previewImageLoads.delete(key);
         this.sourcePreviewFailures.set(key, (this.sourcePreviewFailures.get(key) ?? 0) + 1);
       };
+      // Own pending loads too, so removal/stop can detach their callbacks.
+      this.previewImageElements.set(key, img);
       img.src = src.src;
     }
     return null;
@@ -10156,4 +10223,29 @@ export function getProjectOutputSize() {
     width: p.width || 1920,
     height: p.height || 1080,
   };
+}
+
+// Read incrementally so a missing/incorrect Content-Length cannot bypass admission.
+async function readNativeAssetBounded(response: Response, cap: number): Promise<ArrayBuffer> {
+  if (!response.body) {
+    const buffer = await response.arrayBuffer();
+    if (buffer.byteLength > cap) throw new Error('Native asset exceeds load budget');
+    return buffer;
+  }
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  try {
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      bytes += value.byteLength;
+      if (bytes > cap) { await reader.cancel(); throw new Error('Native asset exceeds load budget'); }
+      chunks.push(value);
+    }
+  } finally { reader.releaseLock(); }
+  const result = new Uint8Array(bytes);
+  let offset = 0;
+  for (const chunk of chunks) { result.set(chunk, offset); offset += chunk.byteLength; }
+  return result.buffer;
 }

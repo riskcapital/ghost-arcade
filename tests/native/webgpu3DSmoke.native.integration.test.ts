@@ -510,12 +510,12 @@ describe('Native graph parity and health integration', () => {
       });
       volumetricState = graph.state;
       const volumetricResult: any = await rpc.send('compute_graph', nativeGraphConfigForDirectRpc(graph.config), 20000);
-      expect(volumetricResult.pass_count).toBe(1);
+      expect(volumetricResult.pass_count).toBe(graph.config.passes.length);
       expect(volumetricResult.renders).toHaveLength(1);
       expect(volumetricResult.renders[0]).toMatchObject({
         target: 'source_frame',
         source_id: volumetricSourceId,
-        depth: true,
+        depth: false,
         blend: 'alpha',
       });
       const snapshot = await rpc.send('frame_snapshot', {

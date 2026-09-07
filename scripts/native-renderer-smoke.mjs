@@ -1668,6 +1668,15 @@ async function main() {
     if (Number(drainStatus?.command_drain_limit ?? 0) !== 4) {
       throw new Error(`native command drain policy did not apply: ${JSON.stringify(drainStatus)}`);
     }
+    let rejectedOversizedBatch = false;
+    try {
+      await rpc.send('submit_commands', { commands: Array.from({ length: 5 }, () => ({ type: 'present' })) }, 5000);
+    } catch (error) {
+      rejectedOversizedBatch = /No commands applied/.test(String(error));
+    }
+    if (!rejectedOversizedBatch) throw new Error('oversized command transaction was not rejected atomically');
+    // The rest of this fixture submits larger legitimate scene transactions.
+    await rpc.send('set_command_drain_policy', { config: { max_commands_per_tick: 1024 } }, 5000);
     const autoPresentStatus = await rpc.send('set_auto_present_policy', {
       config: { auto_present_on_state_change: true },
     }, 5000);
@@ -2527,7 +2536,7 @@ async function main() {
     if (
       status.present_mode !== 'vsync' ||
       Number(status.max_frame_latency ?? 0) !== 1 ||
-      Number(status.command_drain_limit ?? 0) !== 4 ||
+      Number(status.command_drain_limit ?? 0) !== 1024 ||
       !status.auto_present_on_state_change ||
       !status.output_window_attached
     ) {

@@ -144,6 +144,7 @@ struct LayerData {
   mask: array<vec4<f32>, 64>,
   mesh: array<vec4<f32>, 128>,
   source_rect: vec4<f32>,
+  fast_flags: vec4<u32>,
 }
 
 @group(0) @binding(1)
@@ -1574,6 +1575,12 @@ fn native_edge_fill_color(
 }
 
 fn apply_native_edge_effects(base: vec3<f32>, uv: vec2<f32>, shape_mask: f32, layer_index: u32, t: f32) -> vec4<f32> {
+  var has_edge_effect = false;
+  for (var i: i32 = 0; i < 4; i = i + 1) {
+    let info = layers[layer_index].edge_effects[i][0];
+    has_edge_effect = has_edge_effect || (info.x >= 0.5 && info.y > 0.001);
+  }
+  if (!has_edge_effect) { return vec4<f32>(base, 0.0); }
   var result = base;
   var coverage = 0.0;
   let signed_dist = native_shape_signed_distance(uv, layer_index);
@@ -1767,6 +1774,28 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     let tr = layers[layer_index].p0.zw;
     let br = layers[layer_index].p1.xy;
     let bl = layers[layer_index].p1.zw;
+    // Reject outside the conservative quad bounds before inverse mapping,
+    // mesh search, masks and effects. Hierarchy masks run in their own pass.
+    let quad_min = min(min(tl, tr), min(br, bl));
+    let quad_max = max(max(tl, tr), max(br, bl));
+    let bounds_pad = vec2<f32>(max(1.0, max(quad_max.x - quad_min.x, quad_max.y - quad_min.y)) * 0.001);
+    let bounds_min = quad_min - bounds_pad;
+    let bounds_max = quad_max + bounds_pad;
+    if (any(canvas_uv < bounds_min) || any(canvas_uv > bounds_max)) {
+      continue;
+    }
+    if (layers[layer_index].fast_flags.x != 0u) {
+      // CPU-classified plain rectangles keep the same shape AA and blend order.
+      let uv = (canvas_uv - tl) / (br - tl);
+      if (all(uv >= vec2<f32>(-0.0005)) && all(uv <= vec2<f32>(1.0005))) {
+        let coverage = native_layer_shape(clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)), layer_index).x;
+        if (coverage > 0.001) {
+          color = native_blend(color, layers[layer_index].color.rgb,
+            layers[layer_index].color.a * 0.56 * coverage, layers[layer_index].style.x);
+        }
+      }
+      continue;
+    }
     let local = quad_local_uv(canvas_uv, tl, tr, br, bl);
     let inside = local.x > 0.5;
     // Hierarchy mask layer (blend code 26): instead of drawing content,
@@ -1784,6 +1813,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     }
     let mesh_sample = layer_mesh_uv(local.yz, layer_index);
     let inside_mesh = inside && mesh_sample.x > 0.5;
+    if (!inside_mesh) { continue; }
     let uv_sample = layer_sample_uv(mesh_sample.yz, layer_index);
     let sample_uv = uv_sample.xy;
     let content_mask = uv_sample.z;
@@ -1857,6 +1887,32 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
   } else {
     color = output_color_grade(color);
     color = color * dome_mask * edge_blend_alpha(in.uv);
+  }
+  return vec4<f32>(clamp(color * u.output_gate, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
+}
+
+@group(1) @binding(0) var creative_master: texture_2d<f32>;
+@group(1) @binding(1) var creative_sampler: sampler;
+
+@fragment
+fn fs_output(in: VertexOut) -> @location(0) vec4<f32> {
+  // Blackout is independent of every creative operation and calibration.
+  if (u.output_gate <= 0.0) { return vec4<f32>(0.0, 0.0, 0.0, 1.0); }
+  let aspect = max(0.01, u.resolution.x / max(1.0, u.resolution.y));
+  let source = output_source_uv(in.uv);
+  var uv = source.xy;
+  var mask = source.z;
+  if (u.dome0.x > 0.5) {
+    let domed = dome_source_uv(uv, aspect);
+    uv = domed.xy;
+    mask *= domed.z;
+  }
+  var color = textureSampleLevel(creative_master, creative_sampler, vec2<f32>(uv.x, 1.0 - uv.y), 0.0).rgb;
+  color = apply_test_pattern(color, in.uv, aspect);
+  if (u.dome2.z > 0.5) {
+    color = slice_output_grade(color, in.uv) * mask;
+  } else {
+    color = output_color_grade(color) * mask * edge_blend_alpha(in.uv);
   }
   return vec4<f32>(clamp(color * u.output_gate, vec3<f32>(0.0), vec3<f32>(1.0)), 1.0);
 }

@@ -1,3 +1,5 @@
+import { existsSync } from 'node:fs';
+import { Writable } from 'node:stream';
 import { describe, expect, it } from 'vitest';
 // @ts-expect-error The Electron broker is authored as ESM JavaScript; this test exercises it directly.
 import { createNativeRendererBroker } from '../../../electron/native-renderer-broker.js';
@@ -980,6 +982,43 @@ describe('native renderer broker capability overlay', () => {
       params: { layer_id: 'layer-1' },
     });
     expect(broker.pending.size).toBe(0);
+  });
+
+  it('bounds a blocked pipe and cancels unsent expired requests', async () => {
+    const broker = createBroker({ encoderAvailable: true });
+    const pipe = new Writable({ highWaterMark: 1024, write() {} });
+    broker.child = { stdin: pipe };
+    const waits = Array.from({ length: 30 }, () => broker.send('submit_commands', {
+      padding: 'x'.repeat(1024),
+    }, { timeoutMs: 15 }).catch(() => null));
+    await new Promise(resolve => setTimeout(resolve, 30));
+    await Promise.all(waits);
+    expect(broker.pending.size).toBe(0);
+    expect(broker.pendingBytes).toBe(0);
+    expect(broker.writeQueue.length).toBe(0);
+    expect(pipe.writableLength).toBeLessThan(2048);
+    pipe.destroy();
+  });
+
+  it('removes asynchronous file handoffs after a failed request', async () => {
+    const broker = createBroker({ encoderAvailable: true });
+    broker.child = { stdin: { writable: true }, killed: false };
+    let handoff = '';
+    broker.send = async (_method: string, params: any) => {
+      handoff = params.commands[0].rgba_file;
+      expect(existsSync(handoff)).toBe(true);
+      expect(broker.fileHandoffBytes).toBe(16);
+      throw new Error('injected request failure');
+    };
+    try {
+      const result = await broker.sendNativeCommandPayloadIfRunning('submit_commands', {
+        commands: [{ type: 'upload_source_frame', source_id: 'test', width: 2, height: 2, rgba_buffer: Buffer.alloc(16) }],
+      });
+      expect(result).toBeNull();
+      expect(existsSync(handoff)).toBe(false);
+      expect(broker.fileHandoffBytes).toBe(0);
+      expect(broker.preparedFiles.size).toBe(0);
+    } finally { broker.cleanupTempFrameDir(); }
   });
 
   it('keeps status polling timeouts from poisoning native output driver readiness', async () => {

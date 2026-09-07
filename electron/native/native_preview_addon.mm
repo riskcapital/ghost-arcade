@@ -74,6 +74,8 @@ static CVReturn GhostNativePreviewDisplayLinkCallback(
   CVDisplayLinkRef displayLink_;
   dispatch_source_t fallbackTimer_;
   IOSurfaceID activeSurfaceID_;
+  IOSurfaceRef cachedSurface_;
+  id<MTLTexture> cachedSurfaceTexture_;
   NSUInteger activeWidth_;
   NSUInteger activeHeight_;
   BOOL activeFlipped_;
@@ -331,7 +333,8 @@ static CVReturn GhostNativePreviewDisplayLinkCallback(
     return NO;
   }
 
-  IOSurfaceRef surface = IOSurfaceLookup(surfaceID);
+  IOSurfaceRef surface = (cachedSurface_ && IOSurfaceGetID(cachedSurface_) == surfaceID)
+    ? (IOSurfaceRef)CFRetain(cachedSurface_) : IOSurfaceLookup(surfaceID);
   if (!surface) {
     lastError_ = [NSString stringWithFormat:@"IOSurfaceLookup(%u) returned nil", surfaceID];
     return NO;
@@ -349,15 +352,23 @@ static CVReturn GhostNativePreviewDisplayLinkCallback(
     return NO;
   }
 
+  id<MTLTexture> texture = cachedSurface_ == surface ? cachedSurfaceTexture_ : nil;
+  if (!texture) {
   MTLTextureDescriptor* textureDescriptor =
     [MTLTextureDescriptor texture2DDescriptorWithPixelFormat:MTLPixelFormatBGRA8Unorm
                                                        width:surfaceWidth
                                                       height:surfaceHeight
                                                    mipmapped:NO];
   textureDescriptor.usage = MTLTextureUsageShaderRead;
-  id<MTLTexture> texture = [device_ newTextureWithDescriptor:textureDescriptor
+  texture = [device_ newTextureWithDescriptor:textureDescriptor
                                                    iosurface:surface
                                                        plane:0];
+  if (texture) {
+    if (cachedSurface_) CFRelease(cachedSurface_);
+    cachedSurface_ = (IOSurfaceRef)CFRetain(surface);
+    cachedSurfaceTexture_ = texture;
+  }
+  }
   CFRelease(surface);
 
   if (!texture) {
@@ -647,6 +658,8 @@ static CVReturn GhostNativePreviewDisplayLinkCallback(
 }
 
 - (void)stopPump {
+  cachedSurfaceTexture_ = nil;
+  if (cachedSurface_) { CFRelease(cachedSurface_); cachedSurface_ = nullptr; }
   if (displayLink_) {
     CVDisplayLinkStop(displayLink_);
     CVDisplayLinkRelease(displayLink_);

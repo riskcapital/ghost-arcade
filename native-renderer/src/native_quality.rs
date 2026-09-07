@@ -132,6 +132,10 @@ impl NativeQualityState {
             };
         }
 
+        if render_gpu_ms.is_none() {
+            self.gpu_ema_ms = 0.0;
+        }
+
         if self.policy != "auto" || native_task_count == 0 {
             self.overload_frames = 0;
             self.recovery_frames = 0;
@@ -140,11 +144,7 @@ impl NativeQualityState {
 
         let overload_ms = target_ms * 0.88;
         let recovery_ms = target_ms * 0.42;
-        let budget_ms = if self.gpu_ema_ms > 0.0 {
-            self.gpu_ema_ms
-        } else {
-            self.cpu_ema_ms
-        };
+        let budget_ms = self.gpu_ema_ms.max(self.cpu_ema_ms);
         if budget_ms > overload_ms {
             self.overload_frames = self.overload_frames.saturating_add(1);
             self.recovery_frames = 0;
@@ -322,5 +322,29 @@ fn tier_quality_scale(tier: &str) -> f32 {
         "ultra" => 0.90,
         "insane" => 1.0,
         _ => 0.72,
+    }
+}
+
+#[cfg(test)]
+mod pressure_tests {
+    use super::*;
+    #[test]
+    fn cpu_overload_reduces_quality_even_with_fast_gpu() {
+        let mut quality = NativeQualityState::default();
+        quality.rebase_to_caps("insane");
+        for _ in 0..100 {
+            quality.observe_frame(30.0, Some(1.0), 60, 1);
+        }
+        assert!(quality.step_downs > 0);
+    }
+    #[test]
+    fn manual_quality_lock_ignores_overload() {
+        let mut quality = NativeQualityState::default();
+        quality.set_policy("fixed");
+        for _ in 0..100 {
+            quality.observe_frame(40.0, Some(40.0), 60, 1);
+        }
+        assert_eq!(quality.step_downs, 0);
+        assert_eq!(quality.quality_scale, 1.0);
     }
 }

@@ -96,3 +96,6 @@ native-mobile/android/keystore.properties
 .worktrees/
 *.blend
 *.blend1
+
+# Local render scratch (1.5GB of project output, not source)
+output/

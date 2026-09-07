@@ -35,7 +35,7 @@
     {
       id: 'threejs-embryo',
       name: 'Embryo',
-      src: '/threejs/embryo/index.html',
+      src: `${import.meta.env.BASE_URL}threejs/embryo/index.html`,
       thumbnail: undefined, // generated on mount
     },
   ];

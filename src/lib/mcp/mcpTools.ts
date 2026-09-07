@@ -123,12 +123,15 @@ async function outputFrame(): Promise<McpToolResult> {
     return { text: 'No output frame available; the native renderer may not be running.', isError: true };
   }
 
-  const pixels = snapshot.pixels;
+  // The core returns pixels as base64 under `rgba_b64`. The name is a
+  // misnomer: it is the raw readback, and this texture is bgra8unorm, which
+  // is why the channel swap below exists.
+  const encoded: string | undefined = snapshot.rgba_b64;
   const { width, height } = snapshot;
-  if (!pixels || !width || !height) {
+  if (!encoded || !width || !height) {
     return {
       text: 'The output snapshot came back without pixels. This usually means no '
-        + 'output surface is active yet.',
+        + 'output surface is active yet: open an output window and try again.',
       isError: true,
     };
   }
@@ -142,7 +145,9 @@ async function outputFrame(): Promise<McpToolResult> {
   const ctx = canvas.getContext('2d');
   if (!ctx) return { text: 'Could not create a 2D context to encode the frame.', isError: true };
 
-  const bytes = pixels instanceof Uint8Array ? pixels : new Uint8Array(pixels as number[]);
+  const binary = atob(encoded);
+  const bytes = new Uint8Array(binary.length);
+  for (let i = 0; i < binary.length; i += 1) bytes[i] = binary.charCodeAt(i);
   // The readback is row-padded for GPU alignment, so copy row by row rather than
   // assuming a width*4 stride. Assuming it shears the image.
   const stride = snapshot.padded_bytes_per_row || width * 4;
