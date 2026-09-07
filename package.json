@@ -69,7 +69,10 @@
     "test": "vitest run",
     "lint": "eslint src",
     "format": "prettier --write src",
-    "postinstall": "node scripts/sign-dev-electron.mjs"
+    "postinstall": "node scripts/sign-dev-electron.mjs",
+    "prebuild": "node scripts/generate-isf-thumbnail-manifest.mjs",
+    "predev": "node scripts/generate-isf-thumbnail-manifest.mjs",
+    "isf:thumbnails": "node scripts/generate-isf-thumbnail-manifest.mjs"
   },
   "dependencies": {
     "@ffmpeg/core": "^0.12.6",
