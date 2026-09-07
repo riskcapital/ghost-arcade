@@ -2247,6 +2247,80 @@
       canvas.addEventListener('mouseleave', handleCanvasMouseLeave);
       canvas.addEventListener('mouseenter', handleCanvasMouseEnter);
 
+      // ── Editor preview fallback ────────────────────────────────────
+      // The native core presents the editor preview by parenting a child
+      // window underneath Electron's transparent content view. That path is
+      // wrapped in cfg!(target_os = "macos"), and the Windows equivalent
+      // (dxgi_preview_addon) is compiled but never loaded, so on Windows and
+      // Linux the core has no presenter at all: the output window shows the
+      // composite and the in-app preview shows the cleared underlay. Reported
+      // as "video plays on the output but not in the preview", which is not a
+      // video problem — nothing reaches that viewport.
+      //
+      // Rather than block on finishing a native presenter per platform, mirror
+      // the composite into this canvas the way the VJ preview, projection
+      // simulator and WLED sampling already do. It is a CPU readback so it is
+      // not free, which is why it only runs where the native presenter is
+      // absent, and at a downscale the core does on the GPU before reading
+      // back (~590KB per frame at 512px against ~8MB at 1080p).
+      let previewMirror: import('$lib/sync/nativeCompositeMirror').CompositeMirrorHandle | null = null;
+      let previewMirrorCtx: CanvasRenderingContext2D | null = null;
+      let previewMirrorChecked = false;
+
+      async function ensureEditorPreviewFallback(): Promise<void> {
+        if (previewMirrorChecked) return;
+        previewMirrorChecked = true;
+        try {
+          const { getNativeRendererCapabilities } = await import('$lib/api/native-renderer');
+          const caps = await getNativeRendererCapabilities() as any;
+          const preview = caps?.native_editor_preview;
+          // `parented` is the core's own report that it has a presenting
+          // underlay. Trust it rather than sniffing the platform, so this
+          // stops engaging by itself if a real presenter lands later.
+          if (preview?.parented === true) return;
+
+          const { acquireNativeCompositeMirror } = await import('$lib/sync/nativeCompositeMirror');
+          previewMirror = acquireNativeCompositeMirror({ maxDim: 1024, fps: 30 });
+          previewMirrorCtx = canvas.getContext('2d');
+          if (!previewMirrorCtx) {
+            // A WebGL context was already taken on this canvas, so 2D is
+            // unavailable and this fallback cannot draw. Release rather than
+            // leave the pump running for nobody.
+            previewMirror.release();
+            previewMirror = null;
+            console.warn('[EditorPreview] no 2D context available for the composite fallback');
+            return;
+          }
+          console.log('[EditorPreview] native presenter unavailable; mirroring composite into the editor canvas');
+        } catch (err) {
+          console.warn('[EditorPreview] composite fallback unavailable:', err);
+        }
+      }
+
+      function drawEditorPreviewFallback(): void {
+        if (!previewMirror || !previewMirrorCtx) return;
+        const src = previewMirror.canvas;
+        if (!src.width || !src.height) return;
+        const dw = canvas.width;
+        const dh = canvas.height;
+        if (!dw || !dh) return;
+        // Letterbox rather than stretch: the preview is what the operator
+        // judges framing from, so the aspect has to match the composite.
+        const scale = Math.min(dw / src.width, dh / src.height);
+        const w = Math.round(src.width * scale);
+        const h = Math.round(src.height * scale);
+        previewMirrorCtx.clearRect(0, 0, dw, dh);
+        previewMirrorCtx.drawImage(src, Math.round((dw - w) / 2), Math.round((dh - h) / 2), w, h);
+      }
+
+      nativeTeardownCallbacks.push(() => {
+        if (previewMirror) {
+          previewMirror.release();
+          previewMirror = null;
+        }
+        previewMirrorCtx = null;
+      });
+
       let _nativeShellFrames = 0;
       function animateNativeShell() {
         nativeRendererSync?.setRenderClock(null);
@@ -2255,6 +2329,8 @@
         // updates while still following live resize, zoom, and pan each frame.
         publishEditorCanvasGeometry();
         scheduleNativePreviewWindowSync('layout-frame');
+        void ensureEditorPreviewFallback();
+        drawEditorPreviewFallback();
         fpsFrameCount++;
         const fpsNow = performance.now();
         const fpsElapsed = fpsNow - fpsLastTime;
