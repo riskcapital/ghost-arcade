@@ -208,12 +208,64 @@ jobs:
       - name: Build native render core
         run: npm run native:build:universal
 
+      # Build our own signing keychain instead of letting electron-builder
+      # make one.
+      #
+      # Its internal setup ends with `security set-key-partition-list -k
+      # <password>`, which started failing with "the user name or passphrase
+      # you entered is not correct" on the macos-26-arm64 image published
+      # 2026-08-31. The password is correct; the newer image will not accept
+      # it against a keychain in that state. The correlation is exact across
+      # four builds: every run on image 20260728.0273.1 signed, every run on
+      # 20260831.0337.3 failed, on two different electron-builder versions.
+      # 20260728 is no longer being handed out, so this is now permanent.
+      #
+      # Creating, unlocking and importing ourselves, then adding the keychain
+      # to the search list before setting the partition list, is the sequence
+      # the newer image accepts. electron-builder is pointed at the result
+      # with CSC_KEYCHAIN and is NOT given CSC_LINK, so it uses the identity
+      # already imported rather than repeating the setup that fails.
+      - name: Prepare signing keychain
+        env:
+          CSC_LINK: ${{ secrets.CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
+        run: |
+          set -euo pipefail
+          KEYCHAIN="$RUNNER_TEMP/ghost-signing.keychain-db"
+          KEYCHAIN_PASSWORD="$(uuidgen)"
+          CERT="$RUNNER_TEMP/certificate.p12"
+
+          echo "$CSC_LINK" | base64 --decode > "$CERT"
+          if [ ! -s "$CERT" ]; then
+            echo "CSC_LINK did not decode to a certificate" >&2
+            exit 1
+          fi
+
+          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          # Without this the keychain relocks on a timer mid-build.
+          security set-keychain-settings -lut 21600 "$KEYCHAIN"
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN"
+          security import "$CERT" -k "$KEYCHAIN" -P "$CSC_KEY_PASSWORD" \
+            -T /usr/bin/codesign -T /usr/bin/security -T /usr/bin/productsign
+          # The keychain has to be in the search list before the partition
+          # list is set, or the entry cannot be found to update.
+          security list-keychains -d user -s "$KEYCHAIN" $(security list-keychains -d user | tr -d '"')
+          security set-key-partition-list -S apple-tool:,apple:,codesign: \
+            -s -k "$KEYCHAIN_PASSWORD" "$KEYCHAIN" > /dev/null
+          rm -f "$CERT"
+
+          echo "CSC_KEYCHAIN=$KEYCHAIN" >> "$GITHUB_ENV"
+          echo "Signing identities available:"
+          security find-identity -v -p codesigning "$KEYCHAIN"
+
       - name: Build Electron (macOS DMG - signed + notarized)
         # --publish never: see windows job comment.
         run: npx electron-builder --mac dmg --x64 --arm64 --publish never
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CSC_LINK: ${{ secrets.CSC_LINK }}
+          # CSC_LINK deliberately omitted: the identity is already in
+          # CSC_KEYCHAIN, and passing it makes electron-builder rebuild the
+          # keychain the way that fails on this image.
           CSC_KEY_PASSWORD: ${{ secrets.CSC_KEY_PASSWORD }}
           APPLE_ID: ${{ secrets.APPLE_ID }}
           APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
