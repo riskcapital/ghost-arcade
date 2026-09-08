@@ -152,7 +152,15 @@ jobs:
 
   build-macos:
     needs: create-release
-    runs-on: macos-latest
+    # Pinned rather than macos-latest, matching windows-2022 above. This is
+    # the image macos-latest resolves to today, so it changes nothing now and
+    # stops a macOS major bump arriving unannounced in a signing job.
+    #
+    # It does NOT pin the image build: 20260728 rolled to 20260831 inside this
+    # same label and broke signing. Nothing on GitHub-hosted runners can pin
+    # that. The keychain setup below is what makes signing survive it; this
+    # only keeps the OS version a deliberate choice.
+    runs-on: macos-26
     steps:
       - uses: actions/checkout@v4
 
