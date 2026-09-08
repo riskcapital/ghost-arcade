@@ -16053,13 +16053,51 @@ impl RenderState {
         thread::Builder::new()
             .name("ghost-gpu-completion".to_string())
             .spawn(move || {
-                while let Ok(submission) = gpu_completion_rx.recv() {
-                    if let Err(error) = completion_device.poll(wgpu::PollType::Wait {
-                        submission_index: Some(submission),
-                        timeout: Some(Duration::from_secs(5)),
-                    }) {
-                        let _ = event_proxy.send_event(UserEvent::GpuFrameFailed(format!("GPU completion failed: {error}; restart the renderer process to recover")));
-                        break;
+                // A submission taking longer than one wait slice is SLOW, not
+                // broken. The previous version waited a flat 5s and, on
+                // timeout, reported a fault and `break`ed out of the loop --
+                // killing the completion thread for the life of the process.
+                // Every later frame then went unwatched, `running` stayed
+                // false and the app was dead until restart.
+                //
+                // A 400k-point cloud exceeds 5s on its first submit, so
+                // loading one bricked the session. Keep waiting across slices
+                // instead, and only call it a fault once the device has failed
+                // to retire a single submission for GPU_COMPLETION_HARD_LIMIT
+                // -- which is a hang, not a heavy frame.
+                const GPU_COMPLETION_WAIT_SLICE: Duration = Duration::from_secs(2);
+                const GPU_COMPLETION_HARD_LIMIT: Duration = Duration::from_secs(60);
+                'completion: while let Ok(submission) = gpu_completion_rx.recv() {
+                    let started = Instant::now();
+                    let mut slow_reported = false;
+                    loop {
+                        match completion_device.poll(wgpu::PollType::Wait {
+                            submission_index: Some(submission.clone()),
+                            timeout: Some(GPU_COMPLETION_WAIT_SLICE),
+                        }) {
+                            Ok(_) => break,
+                            Err(wgpu::PollError::Timeout) => {
+                                let waited = started.elapsed();
+                                if waited >= GPU_COMPLETION_HARD_LIMIT {
+                                    let _ = event_proxy.send_event(UserEvent::GpuFrameFailed(format!(
+                                        "GPU completion stalled for {}s (device is not retiring work); restart the renderer process to recover",
+                                        waited.as_secs(),
+                                    )));
+                                    break 'completion;
+                                }
+                                if !slow_reported {
+                                    slow_reported = true;
+                                    eprintln!(
+                                        "[ghost-core] GPU submission still running after {}s; continuing to wait (heavy frame, not a fault)",
+                                        waited.as_secs().max(1),
+                                    );
+                                }
+                            }
+                            Err(error) => {
+                                let _ = event_proxy.send_event(UserEvent::GpuFrameFailed(format!("GPU completion failed: {error}; restart the renderer process to recover")));
+                                break 'completion;
+                            }
+                        }
                     }
                     completion_counter.fetch_add(1, Ordering::Release);
                     let _ = event_proxy.send_event(UserEvent::GpuFrameCompleted);

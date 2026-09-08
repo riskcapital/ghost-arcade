@@ -464,6 +464,17 @@ class PreviewSurface {
 
   // Called from the JS thread only (see Present's allowReposition note).
   void Reposition() { PositionBehind(); }
+
+  // AddRef'd; the caller releases. Lets the pump wait for vblank WITHOUT
+  // holding the surface mutex -- see PumpMain.
+  IDXGIOutput* AcquireVBlankOutput() {
+    if (!swapchain_) return nullptr;
+    IDXGIOutput* output = nullptr;
+    if (FAILED(swapchain_->GetContainingOutput(&output))) return nullptr;
+    return output;
+  }
+
+  bool HostMinimized() const { return host_ && IsIconic(host_); }
   uint32_t width() const { return sourceWidth_; }
   uint32_t height() const { return sourceHeight_; }
   const Rect& rect() const { return rect_; }
@@ -857,11 +868,43 @@ void PumpMain() {
       std::this_thread::sleep_for(std::chrono::milliseconds(16));
       continue;
     }
+    // The vblank wait happens OUTSIDE g_surfaceMutex.
+    //
+    // Presenting with syncInterval=1 while holding the mutex meant the pump
+    // owned it for a whole frame, and every JS-thread call that needs the
+    // surface -- setSharedTexture on its 250ms tick, overlay updates while
+    // dragging a warp handle, resizes -- blocked behind it. That is the
+    // Electron MAIN thread: blocking it stalls clicks, scrolling and window
+    // management. Minimised it was far worse, because presenting to an
+    // occluded swapchain can stall for much longer than a frame, which is why
+    // a minimised window could not be restored.
+    //
+    // So: block on the display OUTSIDE the lock, then take the lock only for
+    // a syncInterval=0 present, which returns immediately. Pacing is
+    // unchanged -- the display is still the clock -- but the main thread now
+    // waits microseconds instead of frames.
+    if (g_primary.HostMinimized()) {
+      // Nothing is visible; do not present into an occluded swapchain.
+      std::this_thread::sleep_for(std::chrono::milliseconds(100));
+      continue;
+    }
+    IDXGIOutput* output = nullptr;
+    {
+      std::lock_guard<std::mutex> lock(g_surfaceMutex);
+      output = g_primary.AcquireVBlankOutput();
+    }
+    if (output) {
+      output->WaitForVBlank();
+      output->Release();
+    } else {
+      // No swapchain yet (or it has gone away): pace off the clock instead of
+      // spinning, and let the next iteration retry.
+      std::this_thread::sleep_for(std::chrono::milliseconds(8));
+    }
     bool ok = false;
     {
       std::lock_guard<std::mutex> lock(g_surfaceMutex);
-      // syncInterval 1: this call is the clock.
-      ok = g_primary.Present(name, width, height, 1, /*allowReposition=*/false, &lastError);
+      ok = g_primary.Present(name, width, height, 0, /*allowReposition=*/false, &lastError);
     }
     if (ok) {
       g_pumpFrames.fetch_add(1, std::memory_order_relaxed);

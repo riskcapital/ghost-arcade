@@ -875,7 +875,55 @@ class NativeRendererBroker {
   async getStatus() {
     const result = await this.sendIfRunning('status', {}, { fallback: this.lastStatus, timeoutMs: 1000 });
     this.lastStatus = normalizeStatus(result, this.lastStatus);
+    void this.recoverFromGpuFault();
     return this.lastStatus;
+  }
+
+  /**
+   * Restart the core after a GPU fault.
+   *
+   * When the core's completion watchdog gives up it sets running=false and
+   * says, in its own status, "restart the renderer process to recover". Until
+   * now nothing did: the core sat alive but idle, the editor preview detached
+   * as native-preview-inactive, and the viewport showed NATIVE ENGINE STARTING
+   * for the rest of the session. One bad frame cost the whole session, with no
+   * way back short of quitting the app.
+   *
+   * The desktop build is native-only, so there is no renderer to fall back to
+   * and doing nothing is the worst option available. Respawn instead.
+   *
+   * Guarded so a core that faults immediately on start cannot become a restart
+   * loop: after MAX_GPU_FAULT_RESTARTS the fault is left standing and reported.
+   */
+  async recoverFromGpuFault() {
+    const MAX_GPU_FAULT_RESTARTS = 3;
+    // Only the explicit marker. `running === false` alone is NOT a fault --
+    // it is also the normal state between spawn and the first start(), and
+    // treating it as one would restart the core during every boot.
+    const faulted = String(this.lastStatus?.swapchain_last_present_result || '') === 'gpu-fault';
+    if (!faulted) {
+      // Any healthy poll clears the budget: faults far apart in time are
+      // unrelated incidents, not a loop.
+      this.gpuFaultRestarts = 0;
+      return;
+    }
+    if (this.gpuFaultRestartInFlight) return;
+    this.gpuFaultRestarts = (this.gpuFaultRestarts || 0) + 1;
+    if (this.gpuFaultRestarts > MAX_GPU_FAULT_RESTARTS) return;
+
+    this.gpuFaultRestartInFlight = true;
+    const detail = this.lastStatus?.swapchain_last_present_error || 'gpu fault';
+    console.warn(`[NativeRenderer] GPU fault detected (${detail}); restarting the render core `
+      + `(attempt ${this.gpuFaultRestarts}/${MAX_GPU_FAULT_RESTARTS})`);
+    try {
+      this.killProcess();
+      await this.start({});
+      console.log('[NativeRenderer] render core restarted after GPU fault');
+    } catch (err) {
+      console.error('[NativeRenderer] GPU fault restart failed:', err?.message || err);
+    } finally {
+      this.gpuFaultRestartInFlight = false;
+    }
   }
 
   async getStats() {
