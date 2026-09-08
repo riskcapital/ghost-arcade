@@ -45,7 +45,35 @@ describe('editor preview fallback', () => {
   it('does nothing when the core is already presenting', () => {
     // On macOS the core reports parented/underlay-zero-copy, and a CPU
     // readback on top of a working zero-copy presenter is pure waste.
-    expect(fallbackBlock()).toMatch(/if\s*\(\s*preview\?\.parented\s*===\s*true\s*\)\s*return;/);
+    const block = fallbackBlock();
+    expect(block).toMatch(/preview\?\.parented\s*===\s*true/);
+    const branch = block.slice(block.indexOf('preview?.parented === true'));
+    expect(branch.slice(0, 400)).toContain('releaseEditorPreviewFallback');
+  });
+
+  it('keeps checking until a presenter settles it, rather than deciding once', () => {
+    // The original asked exactly once, on an early animation frame, inside
+    // the one window where the presenter has not attached yet. It therefore
+    // always engaged, then latched, leaving a 1024px/30fps CPU readback
+    // running for the whole session against a presenter that showed up
+    // seconds later. Profiling a live Windows session put the decode at 13%
+    // of renderer samples for a composite already on screen.
+    const block = fallbackBlock();
+    expect(block).toContain('previewFallbackNextCheckAt');
+    // The latch may only be set once the answer is actually settled.
+    const earlyLatch = block.slice(0, block.indexOf('preview?.parented === true'));
+    expect(
+      /previewMirrorChecked\s*=\s*true/.test(earlyLatch),
+      'the fallback must not latch before it knows whether a presenter exists',
+    ).toBe(false);
+  });
+
+  it('waits out a grace period before paying for a readback', () => {
+    // A presenter attaches shortly after the core comes up. Engaging inside
+    // that gap buys nothing and costs the most expensive mirror consumer.
+    const block = fallbackBlock();
+    expect(block).toContain('PREVIEW_FALLBACK_GRACE_MS');
+    expect(block).toMatch(/previewFallbackFirstCheckAt\s*<\s*PREVIEW_FALLBACK_GRACE_MS/);
   });
 
   it('releases the mirror on teardown', () => {
