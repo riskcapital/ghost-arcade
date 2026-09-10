@@ -87,9 +87,28 @@ if (PROJECTION_SAFE_MODE) {
 app.commandLine.appendSwitch('autoplay-policy', 'no-user-gesture-required');
 // Disable pinch-to-zoom at the browser level (we handle zoom ourselves)
 app.commandLine.appendSwitch('disable-pinch');
-// Force high DPI support — ensures CSS pixels match layout pixels
+// High-DPI. `high-dpi-support` stays on; the forced device scale factor does
+// not.
+//
+// force-device-scale-factor=1 made Chromium ignore the OS display scale
+// entirely. On macOS that is inert -- AppKit owns the backing scale, and the
+// app measures devicePixelRatio 2 on a Retina panel with overlays aligned. On
+// Windows it is not: display scaling IS the device scale factor there, so a
+// machine set to 150% or 200% got a UI drawn at 1x physical pixels. Reported
+// as "the whole interface was extremely tiny -- I could change my display
+// setting, but then everything else is changed", which is exactly the
+// workaround this forces on someone.
+//
+// It has been here since the v0.5.0 fork. The comment claimed it made CSS
+// pixels match layout pixels, but macOS already runs at 2x with warp handles
+// and the native preview underlay aligned, so the renderer does not depend on
+// a 1:1 ratio -- Canvas and the slice sync both read devicePixelRatio and
+// per-display scaleFactor directly.
+//
+// Windows is the platform this changes, and the things to watch there are
+// overlay alignment: warp handles, mapping-mode drag hit-testing, and the
+// preview underlay tracking the DOM canvas.
 app.commandLine.appendSwitch('high-dpi-support', '1');
-app.commandLine.appendSwitch('force-device-scale-factor', '1');
 
 // Debug log to file (stdout doesn't always flush from background Electron)
 // In production, __dirname is inside the asar (read-only), so write to %LOCALAPPDATA%
