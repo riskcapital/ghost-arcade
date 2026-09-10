@@ -5796,6 +5796,31 @@ function registerIpcHandlers() {
           };
         }
       }
+    } else if (process.platform === 'win32') {
+      // Windows blocks camera access for desktop apps behind a privacy
+      // setting, and enumeration is not gated by it: cameras list fine and
+      // then starting one fails. Without this the failure surfaced as
+      // "camera did not start", which does not tell anyone what to change.
+      //
+      // There is no programmatic prompt on Windows -- askForMediaAccess is
+      // macOS-only -- so the most that can be done is name the setting.
+      //
+      // Only an explicit refusal is treated as fatal. getMediaAccessStatus
+      // returns 'granted' for every media type on older Windows and can
+      // report 'not-determined' or 'unknown' on setups where capture works,
+      // so failing on anything but denied/restricted would block working
+      // machines to make a message nicer.
+      let status = 'unknown';
+      try { status = systemPreferences.getMediaAccessStatus('camera'); }
+      catch (err) { console.warn('[LiveCapture] getMediaAccessStatus threw:', err?.message || err); }
+      console.log(`[LiveCapture] camera permission status: ${status}`);
+      if (status === 'denied' || status === 'restricted') {
+        return {
+          ok: false,
+          error: 'Windows is blocking camera access for desktop apps. Enable it in '
+            + 'Settings > Privacy & security > Camera, including "Let desktop apps access your camera".',
+        };
+      }
     }
     try {
       const ok = !!addon.startCamera({
