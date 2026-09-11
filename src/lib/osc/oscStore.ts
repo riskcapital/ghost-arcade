@@ -91,6 +91,38 @@ const INITIAL_STATE: OscState = {
   outputPort: 9000,
 };
 
+/**
+ * Clean up bindings coming back from a saved project before they reach the
+ * store.
+ *
+ * hydrate used to trust saved bindings as-is. Two things could go wrong. A
+ * binding with no `path` made normalizeControlPath call `.trim()` on
+ * undefined, which threw inside importProject and failed the whole project
+ * load, taking every layer with it over one malformed OSC row. And missing or
+ * repeated ids were passed straight through to a keyed each block, which in
+ * a release build silently reuses the wrong row. Neither can come from this
+ * app's own saves, which always write ids and paths, but a project is a file
+ * and files get edited, merged and imported.
+ */
+function sanitizeHydratedBindings(raw: unknown): OscBinding[] {
+  if (!Array.isArray(raw)) return [];
+  const seen = new Set<string>();
+  const out: OscBinding[] = [];
+  for (const entry of raw) {
+    if (!entry || typeof entry !== 'object') continue;
+    const binding = entry as Partial<OscBinding>;
+    let id = typeof binding.id === 'string' ? binding.id.trim() : '';
+    if (!id || seen.has(id)) id = generateUUID();
+    seen.add(id);
+    out.push({
+      ...(binding as OscBinding),
+      id,
+      path: normalizeControlPath(typeof binding.path === 'string' ? binding.path : ''),
+    });
+  }
+  return out;
+}
+
 function createOscStore() {
   const { subscribe, update, set } = writable<OscState>({ ...INITIAL_STATE });
 
@@ -360,10 +392,7 @@ function createOscStore() {
       update(s => ({
         ...INITIAL_STATE,
         ...state,
-        bindings: (state.bindings ?? []).map(binding => ({
-          ...binding,
-          path: normalizeControlPath(binding.path),
-        })),
+        bindings: sanitizeHydratedBindings(state.bindings),
         // Always reset transient runtime fields on hydrate.
         listening: false,
         lastError: null,
