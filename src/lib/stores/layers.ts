@@ -13,6 +13,7 @@ import { macros } from './macros';
 import { snapshots } from './snapshots';
 import { layerSequencer } from './layerSequencer';
 import { surfaceStore } from './surface';
+import { migrateStageLayerCorners } from '../utils/stageTextureOrientation';
 import {
   captureStagePresetSurfaceState,
   cloneStagePresetSurface,
@@ -394,7 +395,7 @@ void main() {
 
     update(currentProject => ({
       ...currentProject,
-      layers: structuredClone(preset.layers),
+      layers: structuredClone(preset.layers).map(migrateStageLayerCorners),
     }));
     vjClipLauncher.setStagePreset(preset.id);
 
@@ -571,19 +572,18 @@ void main() {
             cpIn:  p.cpIn  ? { x: (p.cpIn.x  - minX) / bw, y: 1 - (p.cpIn.y  - minY) / bh } : undefined,
             cpOut: p.cpOut ? { x: (p.cpOut.x - minX) / bw, y: 1 - (p.cpOut.y - minY) / bh } : undefined,
           }));
-          // 3. corners in project-normalized 0..1, SAME Y-down convention
-          //    as the canvas/engine (y=0 top). Previously these were
-          //    Y-flipped ("UV convention") — but the engine renders and
-          //    unified-crops corners as Y-down (verified empirically:
-          //    a quad with corner y .85-.95 displays at the BOTTOM of
-          //    the canvas), so flipped corners made every Apply-Stage
-          //    layout render vertically mirrored. Symmetric layouts hid
-          //    the placement mirror, but unified-group screens sampled
-          //    the mirrored band of the shared texture — the "VJ stage
-          //    bands are reversed vs 3D stage" bug.
+          // 3. corners in project-normalized 0..1, Y-UP (y=1 top) — the
+          //    convention createDefaultCorners, the warp handles and the
+          //    native compositor all use. Surface coords are SVG-style
+          //    Y-down, so the slice's top edge becomes the LARGER y.
+          //    These were written Y-down until 2026-09-11, which placed
+          //    every applied slice in the mirrored half of the canvas and
+          //    drew its content upside down; saved layers carrying
+          //    `stageTextureFlipV: true` are converted on load by
+          //    migrateStageLayerCorners.
           const cMinX = minX / sw, cMaxX = maxX / sw;
-          const cTop  = minY / sh;
-          const cBot  = maxY / sh;
+          const cTop  = 1 - minY / sh;
+          const cBot  = 1 - maxY / sh;
           const corners = {
             topLeft:     { x: cMinX, y: cTop },
             topRight:    { x: cMaxX, y: cTop },
@@ -599,7 +599,7 @@ void main() {
               ...l,
               name: slice.name,
               corners,
-              stageTextureFlipV: true,
+              stageTextureFlipV: false,
               layerShape: {
                 type: 'custom' as const,
                 enabled: true,
@@ -624,7 +624,7 @@ void main() {
             const fresh: Layer = {
               ...createLayer(id, slice.name, 'screen'),
               vjLayerIndex: 0,
-              stageTextureFlipV: true,
+              stageTextureFlipV: false,
             };
             fresh.corners = corners;
             fresh.layerShape = {
@@ -5156,7 +5156,7 @@ void main() {
         };
       }
 
-      return {
+      const imported: Layer = {
         id: layer.id || generateUUID(),
         name: layer.name || 'Layer',
         type: migratedType,
@@ -5202,6 +5202,8 @@ void main() {
         groupConfig: layer.groupConfig,
         groupCollapsed: layer.groupCollapsed,
       };
+      // Screens applied from a Stage before 2026-09-11 carry Y-down corners.
+      return migrateStageLayerCorners(imported);
     },
 
     /**
@@ -5915,7 +5917,13 @@ void main() {
           mappingComposition: normalizeMappingCompositionState(proj.mappingComposition),
           vjMode: importedVjMode,
           mediaFolders: normalizeMediaTrayFolders(proj.mediaFolders),
-          stagePresets: (proj as any).stagePresets || [],
+          // Stage presets carry their own copies of the screen layers, and
+          // they reach the project without passing through _importLayer.
+          stagePresets: ((proj as any).stagePresets || []).map((preset: any) => (
+            Array.isArray(preset?.layers)
+              ? { ...preset, layers: preset.layers.map(migrateStageLayerCorners) }
+              : preset
+          )),
           svKeyboardPresets: (proj as any).svKeyboardPresets || [],
           surfaces: (proj as any).surfaces || [],
           activeSurfaceId: (proj as any).activeSurfaceId ?? null,

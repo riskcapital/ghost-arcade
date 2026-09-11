@@ -27,6 +27,7 @@ import {
   nativePreviewRectSignature,
   normalizeNativePreviewRect,
 } from './native-preview-geometry.js';
+import { createJsSourceHost, JS_SOURCE_SCHEME } from './js-source-host.js';
 // License system removed in OSS build — see src/lib/stores/license.ts.
 
 const __filename = fileURLToPath(import.meta.url);
@@ -34,6 +35,13 @@ const __dirname = path.dirname(__filename);
 const require = createRequire(import.meta.url);
 const { parseOSCPacket, encodeOSCMessage } = require('./osc-parser.cjs');
 const { randomUUID } = require('crypto');
+
+// Development runs can use a throwaway profile, so a test boot never shares
+// Local Storage (and the project autosave kept there) or the single-instance
+// lock with an installed copy that is open at the same time.
+if (!app.isPackaged && process.env.GA_USER_DATA_DIR) {
+  app.setPath('userData', process.env.GA_USER_DATA_DIR);
+}
 const nativeRendererBroker = createNativeRendererBroker({
   appRoot: path.join(__dirname, '..'),
   resourcesPath: process.resourcesPath,
@@ -52,6 +60,19 @@ const nativeRendererBroker = createNativeRendererBroker({
   nativeEditorPreviewStatusProvider: () => getNativePreviewStatus(),
   nativeFrameEncoderStatusProvider: () => getNativeFrameEncoderStatus(),
   sharedTextureHandlePreparer: prepareSharedTextureHandlesForNativeCore,
+});
+
+// three.js / p5.js media sources render in offscreen windows and send their
+// frames to the core through the broker above (see js-source-host.js).
+const jsSourceHost = createJsSourceHost({
+  broker: nativeRendererBroker,
+  libDir: app.isPackaged
+    ? path.join(__dirname, '..', 'dist', 'lib')
+    : path.join(__dirname, '..', 'public', 'lib'),
+  // A production dependency, so it ships inside the app package as well.
+  threeDir: path.join(__dirname, '..', 'node_modules', 'three'),
+  preloadPath: path.join(__dirname, 'js-source-preload.cjs'),
+  isPackaged: app.isPackaged,
 });
 
 // Force Chromium to use the discrete GPU (NVIDIA/AMD) on Optimus laptops.
@@ -267,6 +288,16 @@ protocol.registerSchemesAsPrivileged([
       stream: true,
       corsEnabled: true,
       bypassCSP: true,
+    },
+  },
+  {
+    // Origin for the pages the three.js / p5.js source hosts serve.
+    scheme: JS_SOURCE_SCHEME,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      corsEnabled: true,
     },
   },
 ]);
@@ -1783,6 +1814,10 @@ function spawnFfmpegConversion({
 }
 
 function closeAuxiliaryWindows() {
+  // Hidden offscreen page hosts count as open windows and would keep the app
+  // from quitting once the main window closes.
+  jsSourceHost.closeAll();
+
   if (stage3dWindow && !stage3dWindow.isDestroyed()) {
     const win = stage3dWindow;
     stage3dWindow = null;
@@ -7461,6 +7496,8 @@ function registerIpcHandlers() {
       if (cmd !== 'native_renderer_start') {
         if (cmd === 'native_renderer_stop') {
           detachNativeEditorPreview('native-renderer-stop');
+          // Their frames have nowhere to go; the sync reopens them on restart.
+          jsSourceHost.closeAll();
         }
         return nativeRendererBroker.invoke(cmd, args);
       }
@@ -7488,6 +7525,13 @@ function registerIpcHandlers() {
       return nativeRendererBroker.invoke(cmd, { ...startArgs, config });
     });
   }
+
+  ipcMain.handle('js_source_open', (_event, args = {}) => jsSourceHost.open(args));
+  ipcMain.handle('js_source_close', (_event, args = {}) => jsSourceHost.close(args?.id));
+  ipcMain.handle('js_source_params', (_event, args = {}) => jsSourceHost.setParams(args?.id, args?.values));
+  ipcMain.handle('js_source_audio', (_event, args = {}) => jsSourceHost.setAudio(args?.fields));
+  ipcMain.handle('js_source_status', () => jsSourceHost.status());
+  ipcMain.handle('js_source_thumbnail', (_event, args = {}) => jsSourceHost.thumbnail(args));
 
   // License IPC removed in OSS build — every install is unlocked, no
   // activation, no machine fingerprinting, no online validation.

@@ -312,6 +312,81 @@ describe('Native render-core RPC contract', () => {
     }
   }, 60000);
 
+  // A Mask Layer clips only the layers below it in the stack. It used to be
+  // applied to the whole finished composite, clipping layers above it too.
+  itIfNativeCore('clips only the layers below a mask layer', async () => {
+    const rpc = createNativeRpc();
+    const leftHalf = {
+      topLeft: { x: 0, y: 0 },
+      topRight: { x: 0.5, y: 0 },
+      bottomRight: { x: 0.5, y: 1 },
+      bottomLeft: { x: 0, y: 1 },
+    };
+    const fullFrame = {
+      topLeft: { x: 0, y: 0 },
+      topRight: { x: 1, y: 0 },
+      bottomRight: { x: 1, y: 1 },
+      bottomLeft: { x: 0, y: 1 },
+    };
+    try {
+      await rpc.send('start', {
+        config: { backend: nativeBackend, width: 128, height: 72, target_fps: 30 },
+      }, 15000);
+      // Higher z composites first, so z 2 is the bottom of the stack.
+      await rpc.send('submit_commands', {
+        commands: [
+          { type: 'upsert_layer', layer_id: 'mask-order-bottom', z_index: 2, opacity: 1, blend_mode: 'normal', corners: fullFrame },
+          { type: 'set_layer_visibility', layer_id: 'mask-order-bottom', visible: true },
+          { type: 'set_layer_color', layer_id: 'mask-order-bottom', rgba: [0, 1, 0, 1] },
+          {
+            type: 'upsert_layer',
+            layer_id: 'mask-order-mask',
+            z_index: 1,
+            opacity: 1,
+            blend_mode: 'hierarchy-mask',
+            corners: fullFrame,
+            // The right half of the frame: [x, y, next point, shape].
+            mask_info: [1, 0, 0, 4],
+            mask_points: [[0.5, 0, 1, 0], [1, 0, 2, 0], [1, 1, 3, 0], [0.5, 1, 0, 0]],
+          },
+          { type: 'set_layer_visibility', layer_id: 'mask-order-mask', visible: true },
+          { type: 'upsert_layer', layer_id: 'mask-order-top', z_index: 0, opacity: 1, blend_mode: 'normal', corners: leftHalf },
+          { type: 'set_layer_visibility', layer_id: 'mask-order-top', visible: true },
+          { type: 'set_layer_color', layer_id: 'mask-order-top', rgba: [0, 0, 1, 1] },
+          { type: 'present' },
+        ],
+      }, 10000);
+
+      const deadline = Date.now() + 3000;
+      let snapshot = await rpc.send('frame_snapshot', { include_pixels: true }, 10000);
+      while (snapshot.dark_frame && Date.now() < deadline) {
+        await new Promise((resolve) => setTimeout(resolve, 40));
+        snapshot = await rpc.send('frame_snapshot', { include_pixels: true }, 10000);
+      }
+      const pixels = assertSnapshotPixels('mask order', snapshot);
+      const width = Number(snapshot.width);
+      const height = Number(snapshot.height);
+      const bgra = String(snapshot.format ?? '').toLowerCase().includes('bgra');
+      const channel = (xRatio: number, yRatio: number, name: 'blue' | 'green') => {
+        const x = Math.round((width - 1) * xRatio);
+        const y = Math.round((height - 1) * yRatio);
+        const offset = (y * width + x) * 4;
+        const index = name === 'green' ? 1 : bgra ? 0 : 2;
+        return pixels[offset + index];
+      };
+
+      // Left half: the top layer sits above the mask and keeps its blue, while
+      // the green layer below is clipped away outside the mask.
+      expect(channel(0.25, 0.5, 'blue'), 'layer above the mask is not clipped').toBeGreaterThan(80);
+      expect(channel(0.25, 0.5, 'green'), 'layer below is clipped outside the mask').toBeLessThan(20);
+      // Right half: inside the mask the green layer below shows.
+      expect(channel(0.75, 0.5, 'green'), 'layer below shows inside the mask').toBeGreaterThan(80);
+      expect(channel(0.75, 0.5, 'blue'), 'top layer does not reach the right half').toBeLessThan(20);
+    } finally {
+      await rpc.close();
+    }
+  }, 45000);
+
   itIfNativeCore('advances bound ISF shaders on the core clock while Electron is idle', async () => {
     const rpc = createNativeRpc();
     try {
@@ -375,6 +450,101 @@ void main() {
       await rpc.close();
     }
   }, 25000);
+
+  itIfNativeCore('keeps every shader layer on its own frame through repeated content swaps', async () => {
+    // Each shader (and each edit of one) renders under its own source id.
+    // Those ids were never counted as in use or released, so once clip
+    // switches filled the slot pool the next swap took over another layer's
+    // slot and both layers showed the same shader.
+    const rpc = createNativeRpc();
+    try {
+      const started = await rpc.send('start', {
+        config: { backend: nativeBackend, width: 128, height: 72, target_fps: 30 },
+      }, 15000);
+      expect(started?.backend_ready).toBe(true);
+      const halfCorners = (x0: number, x1: number) => ({
+        topLeft: { x: x0, y: 0 },
+        topRight: { x: x1, y: 0 },
+        bottomRight: { x: x1, y: 1 },
+        bottomLeft: { x: x0, y: 1 },
+      });
+      const bind = (layerId: string, shaderId: string, rgb: string) => [
+        {
+          type: 'precompile_shader',
+          shader_id: shaderId,
+          stage: 'pixel',
+          entry: 'main',
+          source: `/*{"ISFVSN":"2","INPUTS":[]}*/
+void main() { gl_FragColor = vec4(${rgb}, 1.0); }`,
+        },
+        { type: 'bind_isf_shader', layer_id: layerId, shader_id: shaderId },
+        {
+          type: 'update_isf_uniforms',
+          shader_id: shaderId,
+          time: 0,
+          time_delta: 1 / 30,
+          frame_index: 0,
+          render_width: 128,
+          render_height: 72,
+          float_inputs: {},
+          point_inputs: {},
+          color_inputs: {},
+        },
+        { type: 'render_isf_to_layer', layer_id: layerId },
+      ];
+      await rpc.send('submit_commands', {
+        commands: [
+          { type: 'upsert_layer', layer_id: 'swap-left', z_index: 1, opacity: 1, blend_mode: 'normal', corners: halfCorners(0, 0.5) },
+          { type: 'set_layer_visibility', layer_id: 'swap-left', visible: true },
+          { type: 'upsert_layer', layer_id: 'swap-right', z_index: 0, opacity: 1, blend_mode: 'normal', corners: halfCorners(0.5, 1) },
+          { type: 'set_layer_visibility', layer_id: 'swap-right', visible: true },
+          ...bind('swap-left', 'swap-magenta', '1.0, 0.0, 1.0'),
+          ...bind('swap-right', 'swap-start', '0.0, 0.0, 0.0'),
+        ],
+      }, 10000);
+      // More swaps than the core has source slots, on the layer rendering
+      // into the higher slot: eviction always took the lowest one.
+      for (let i = 0; i < 32; i += 1) {
+        await rpc.send('submit_commands', {
+          commands: bind('swap-right', `swap-right-${i}`, `0.0, ${(0.1 + i * 0.01).toFixed(3)}, 0.0`),
+        }, 10000);
+      }
+      await rpc.send('submit_commands', { commands: bind('swap-right', 'swap-green', '0.0, 1.0, 0.0') }, 10000);
+
+      // Magenta and green read the same in RGBA and BGRA byte order.
+      let left: number[] = [];
+      let right: number[] = [];
+      for (let attempt = 0; attempt < 40; attempt += 1) {
+        await new Promise((resolve) => setTimeout(resolve, 100));
+        const snapshot = await rpc.send('frame_snapshot', { include_pixels: true }, 8000);
+        const pixels = assertSnapshotPixels('shader swap snapshot', snapshot);
+        const width = Number(snapshot.width);
+        const row = Math.floor(Number(snapshot.height) / 2);
+        const at = (fx: number) => {
+          const offset = (row * width + Math.floor(width * fx)) * 4;
+          return [pixels[offset], pixels[offset + 1], pixels[offset + 2]];
+        };
+        left = at(0.25);
+        right = at(0.75);
+        if (left[0] > 200 && left[1] < 60 && right[1] > 200 && right[0] < 60) break;
+      }
+      expect(left[0], `left ${left}`).toBeGreaterThan(200);
+      expect(left[1], `left ${left}`).toBeLessThan(60);
+      expect(left[2], `left ${left}`).toBeGreaterThan(200);
+      expect(right[0], `right ${right}`).toBeLessThan(60);
+      expect(right[1], `right ${right}`).toBeGreaterThan(200);
+      expect(right[2], `right ${right}`).toBeLessThan(60);
+
+      const snapshotLayers = await rpc.send('layers_snapshot', {}, 5000);
+      const slots = (snapshotLayers?.layers ?? [])
+        .filter((layer: { layer_id: string }) => layer.layer_id.startsWith('swap-'))
+        .map((layer: { shader_frame_slot: number | null }) => layer.shader_frame_slot);
+      expect(slots).toHaveLength(2);
+      expect(new Set(slots).size).toBe(2);
+    } finally {
+      await rpc.close();
+    }
+  }, 30000);
 
   itIfNativeCore('renders shader-backed JavaScript media entirely in the native core', async () => {
     const htmlCode = readFileSync(join(process.cwd(), 'public', 'threejs', 'embryo', 'index.html'), 'utf8');

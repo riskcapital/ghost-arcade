@@ -40,6 +40,9 @@ let nativeGraphInstrumentSourceId: typeof import('./nativeRendererSync').nativeG
 let nativeLayerSourceFromMediaSource: typeof import('./nativeRendererSync').nativeLayerSourceFromMediaSource;
 let isNativeCoreOwnedGraphKind: typeof import('./nativeRendererSync').isNativeCoreOwnedGraphKind;
 let isNativeExternallyQueuedGraphKind: typeof import('./nativeRendererSync').isNativeExternallyQueuedGraphKind;
+let nativeOutputCropY: typeof import('./nativeRendererSync').nativeOutputCropY;
+let nativeWarpCorners: typeof import('./nativeRendererSync').nativeWarpCorners;
+let nativeWarpMeshGrid: typeof import('./nativeRendererSync').nativeWarpMeshGrid;
 
 beforeAll(async () => {
   const storage = new Map<string, string>();
@@ -94,6 +97,9 @@ beforeAll(async () => {
     nativeLayerSourceFromMediaSource,
     isNativeCoreOwnedGraphKind,
     isNativeExternallyQueuedGraphKind,
+    nativeOutputCropY,
+    nativeWarpCorners,
+    nativeWarpMeshGrid,
   } = await import('./nativeRendererSync'));
 });
 
@@ -178,6 +184,120 @@ describe('native renderer sync render clock routing', () => {
     // A new native video with no decoded/browser time always starts at frame
     // zero. It must never inherit time elapsed since the renderer booted.
     expect(sync.nativeVideoPlaybackTimeSeconds({ videoElement: { currentTime: Number.NaN } }, 2500)).toBe(0);
+  });
+});
+
+describe('native unified group crops', () => {
+  const cornersFor = (top: number, bottom: number) => ({
+    topLeft: { x: 0, y: top },
+    topRight: { x: 1, y: top },
+    bottomRight: { x: 1, y: bottom },
+    bottomLeft: { x: 0, y: bottom },
+  });
+
+  it('crops each child to its own canvas band, with no flip for core-rendered feeds', () => {
+    const sync = new NativeRendererSyncCtor() as any;
+    const shaderSource = {
+      id: 'group-shader',
+      type: 'shader',
+      name: 'Gradient',
+      src: '',
+      shaderCode: 'void main() {}',
+    };
+    const group = {
+      id: 'grp',
+      type: 'group',
+      visible: true,
+      opacity: 1,
+      groupConfig: { shaderMode: 'unified', overrideStyles: false, shaderSource },
+    };
+    const upper = {
+      id: 'upper',
+      type: 'screen',
+      visible: true,
+      opacity: 1,
+      parentGroupId: 'grp',
+      corners: cornersFor(0.9, 0.6),
+      flipV: false,
+    };
+    const lower = {
+      id: 'lower',
+      type: 'screen',
+      visible: true,
+      opacity: 1,
+      parentGroupId: 'grp',
+      corners: cornersFor(0.4, 0.1),
+      flipV: false,
+    };
+
+    const resolved = sync.resolveNativeGroupLayers([group, upper, lower] as any);
+    const byId = new Map(resolved.map((layer: any) => [layer.id, layer]));
+
+    // The container is dropped; children render flat.
+    expect(resolved.some((layer: any) => layer.type === 'group')).toBe(false);
+    // A child shows the band of the shared shader it actually covers, and the
+    // shader is upright inside it — the old pre-flip mirrored the whole group.
+    const upperOut: any = byId.get('upper');
+    expect(upperOut.cropRegion.y).toBeCloseTo(0.6, 5);
+    expect(upperOut.cropRegion.height).toBeCloseTo(0.3, 5);
+    expect(upperOut.flipV).toBe(false);
+    expect(upperOut.source).toEqual(shaderSource);
+    const lowerOut: any = byId.get('lower');
+    expect(lowerOut.cropRegion.y).toBeCloseTo(0.1, 5);
+    expect(lowerOut.flipV).toBe(false);
+  });
+});
+
+describe('native output stage coordinates', () => {
+  // Settings store crops, corners and meshes with y = 0 at the top of the
+  // canvas; the core's output stage puts y = 0 at the bottom.
+  it('converts a top-edge crop to the core origin', () => {
+    expect(nativeOutputCropY(0, 0.5)).toBeCloseTo(0.5);
+    expect(nativeOutputCropY(0.25, 0.25)).toBeCloseTo(0.5);
+    expect(nativeOutputCropY(0, 1)).toBe(0);
+  });
+
+  it('keeps identity warps identity and puts the top handles on the top edge', () => {
+    const identity = {
+      topLeft: { x: 0, y: 0 },
+      topRight: { x: 1, y: 0 },
+      bottomLeft: { x: 0, y: 1 },
+      bottomRight: { x: 1, y: 1 },
+    };
+    expect(nativeWarpCorners(identity)).toEqual(identity);
+    const topPulledIn = {
+      topLeft: { x: 0.25, y: 0 },
+      topRight: { x: 0.75, y: 0 },
+      bottomLeft: { x: 0, y: 1 },
+      bottomRight: { x: 1, y: 1 },
+    };
+    const sent = nativeWarpCorners(topPulledIn);
+    // Core corners are y-up, so the narrowed pair must end on y = 1.
+    expect([sent?.bottomLeft, sent?.bottomRight]).toEqual([{ x: 0.25, y: 1 }, { x: 0.75, y: 1 }]);
+    expect([sent?.topLeft, sent?.topRight]).toEqual([{ x: 0, y: 0 }, { x: 1, y: 0 }]);
+    expect(nativeWarpCorners(null)).toBeNull();
+  });
+
+  it('flips a mesh into the core row order', () => {
+    const identity = {
+      rows: 2,
+      cols: 2,
+      points: [
+        [{ x: 0, y: 0 }, { x: 1, y: 0 }],
+        [{ x: 0, y: 1 }, { x: 1, y: 1 }],
+      ],
+    };
+    expect(nativeWarpMeshGrid(identity)).toEqual(identity);
+    const topBent = {
+      rows: 2,
+      cols: 2,
+      points: [
+        [{ x: 0.2, y: 0.1 }, { x: 0.8, y: 0.1 }],
+        [{ x: 0, y: 1 }, { x: 1, y: 1 }],
+      ],
+    };
+    expect(nativeWarpMeshGrid(topBent)?.points[1]).toEqual([{ x: 0.2, y: 0.9 }, { x: 0.8, y: 0.9 }]);
+    expect(nativeWarpMeshGrid(null)).toBeNull();
   });
 });
 
@@ -1117,6 +1237,23 @@ describe('native renderer sync effect-pass descriptors', () => {
         jsAnimation: {
           animationType: 'p5js',
           htmlCode: '<script>function draw(){ circle(20, 20, 10); }</script>',
+        },
+      },
+    })).toBeNull();
+
+    // Canvas pages run in an offscreen host; only a source with no page is unrenderable.
+    expect(nativeUnsupportedSourceReason({
+      id: 'media-js-empty',
+      type: 'media',
+      visible: true,
+      source: {
+        id: 'js-empty-a',
+        type: 'p5js',
+        src: 'js-animation',
+        name: 'Empty JS',
+        jsAnimation: {
+          animationType: 'p5js',
+          htmlCode: '',
         },
       },
     })).toBe('p5js:native-scene-graph-required');

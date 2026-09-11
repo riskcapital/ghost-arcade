@@ -214,7 +214,7 @@ Everything here was run on Windows hardware. Landed in commit `16a7fee`.
 | **Cold boot 51s → ~7s** | wgpu's default `Dx12Compiler::Auto` fell back to FXC for the 63-shader warm-up. Now `DynamicDxc`. |
 | **`start` RPC timed out** | 8s (fine for Metal) left the core alive but the app stuck on NATIVE OFFLINE while FXC ground away. Now 180s on win32. |
 | **Silent export failure** | `create_output_export_target(...).ok()` swallowed its error. Now logged, plus the selected adapter/backend is printed at startup. |
-| **Hierarchy mask was a no-op** | Three stacked bugs: the sync filtered every shape on a `closed` flag the mask editor never sets; the mask ran *before* the content it was supposed to clip (layers sort descending by z, so the multiply hit an empty composite); and mask layers carry `color=(0,0,0,0)` so an `a > 0.001` gate skipped them. Mask now runs as a second pass over the accumulated composite. |
+| **Hierarchy mask was a no-op** | Three stacked bugs: the sync filtered every shape on a `closed` flag the mask editor never sets; the mask ran *before* the content it was supposed to clip (layers sort descending by z, so the multiply hit an empty composite); and mask layers carry `color=(0,0,0,0)` so an `a > 0.001` gate skipped them. The mask was then moved to a second pass over the whole composite, which clipped layers above it too. Since 2026-09-11 it runs inside the layer loop at its own position (before the alpha gate), so it clips only the layers below it, as 1.9 did. |
 | **Editor preview was blank** | Windows had no presenter at all. `dxgi_preview_addon.cpp` is the DXGI twin of `native_preview_addon.mm`. |
 | **Live capture did not exist** | `win_capture_addon.cpp` — Media Foundation webcam + WGC screen/window. |
 

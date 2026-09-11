@@ -669,6 +669,18 @@
   // in LayerPanel flips this to `edit` so the toolbar appears even when
   // the user re-enters edit mode after closing all shapes.
   let maskPenMode: 'edit' | 'add' | 'remove' = 'edit';
+  // Add and Remove only act on closed shapes, and their toolbar stays hidden
+  // until a shape is closed. A mode left over from an earlier mask turned
+  // every click on a new one into a silent no-op, so each mask editing session
+  // starts in Edit, and without a closed shape the pen always draws.
+  let maskPenModeTarget: string | null = null;
+  $: if (($maskEditingLayerId ?? null) !== maskPenModeTarget) {
+    maskPenModeTarget = $maskEditingLayerId ?? null;
+    maskPenMode = 'edit';
+  }
+  function activeMaskPenMode(): 'edit' | 'add' | 'remove' {
+    return $selectedLayer?.mask?.shapes?.some((shape) => shape.closed) ? maskPenMode : 'edit';
+  }
   // Currently-hovered edge index keyed by shape, for add-mode visual.
   // -1 means "no edge under cursor."
   let maskHoverShapeIdx: number = -1;
@@ -5570,7 +5582,8 @@
     // on closed shapes; empty-canvas clicks while in add mode and not over
     // any edge are intentionally a no-op so the user doesn't accidentally
     // start a new shape.
-    if (maskPenMode === 'add') {
+    const penMode = activeMaskPenMode();
+    if (penMode === 'add') {
       const rect = (e.currentTarget as HTMLElement).getBoundingClientRect();
       const svgX = e.clientX - rect.left;
       const svgY = e.clientY - rect.top;
@@ -5583,7 +5596,7 @@
     }
     // Remove mode: empty-canvas clicks are no-op; user must click an
     // anchor (handled by handleMaskAnchorMouseDown which checks the mode).
-    if (maskPenMode === 'remove') return;
+    if (penMode === 'remove') return;
 
     const norm = mouseToCanvasCoords(e);
     const clampedAnchor: Point2D = {
@@ -5693,7 +5706,7 @@
     // Remove mode: left-click on anchor deletes it. Match the
     // CustomShapeHandles behaviour where the toolbar shifts what a
     // click does without forcing the user to right-click.
-    if (maskPenMode === 'remove' && mask) {
+    if (activeMaskPenMode() === 'remove' && mask) {
       const shape = mask.shapes[shapeIndex];
       // Don't drop a closed shape below 3 anchors — that's the minimum
       // for a valid polygon. The store would otherwise nuke the whole
@@ -5719,7 +5732,7 @@
 
   // Track cursor over the mask overlay for add-mode hover feedback.
   function handleMaskOverlayMouseMove(e: MouseEvent) {
-    if (maskPenMode !== 'add' || !$selectedLayer?.mask?.enabled) {
+    if (activeMaskPenMode() !== 'add' || !$selectedLayer?.mask?.enabled) {
       if (maskHoverEdgeIdx !== -1) {
         maskHoverEdgeIdx = -1;
         maskHoverShapeIdx = -1;
@@ -6994,8 +7007,8 @@
           {@const maskHasClosedShape = maskShapes.some(s => s.closed)}
           <div
             class="mask-overlay"
-            class:add-mode={maskPenMode === 'add'}
-            class:remove-mode={maskPenMode === 'remove'}
+            class:add-mode={maskHasClosedShape && maskPenMode === 'add'}
+            class:remove-mode={maskHasClosedShape && maskPenMode === 'remove'}
             onmousedown={handleMaskMouseDown}
             onmousemove={handleMaskOverlayMouseMove}
             oncontextmenu={handleMaskOverlayContextMenu}

@@ -272,6 +272,8 @@ COLOR PALETTES (use these for pro results):
 - Always use 'const' or 'let', NEVER 'var'
 - Use THREE.Clock() for timing
 - Include 4-6 parameters in window.shaderParams
+- window.shaderParams must be ONE flat object literal of plain numbers and booleans (no nested objects, arrays, negative numbers or hex values): the app reads that literal to build the sliders. Read window.shaderParams inside the animation loop every frame, never copy values out once, so slider moves take effect
+- For audio reactivity read window.ghostAudio inside the loop: level, bass, mid, treble, high, beat, beatPhase, kick and snare run 0 to 1, bpm is the tempo. Guard with (window.ghostAudio || {}) and keep some idle motion, because every value is 0 when no audio is playing
 - NEVER import from subpaths (no 'three/examples/...') — only use core Three.js
 - Keep draw calls under 2000 for smooth 60fps
 - Use InstancedMesh when creating >50 similar objects
@@ -378,6 +380,8 @@ PARTICLE SYSTEMS (200-500 particles):
 - NEVER create objects in draw() — reuse and recycle
 - Use push()/pop() for ALL coordinate transforms
 - Include 4-6 parameters in window.shaderParams
+- window.shaderParams must be ONE flat object literal of plain numbers and booleans (no nested objects, arrays, negative numbers or hex values): the app reads that literal to build the sliders. Read window.shaderParams inside draw() every frame so slider moves take effect
+- For audio reactivity read window.ghostAudio inside draw(): level, bass, mid, treble, high, beat, beatPhase, kick and snare run 0 to 1, bpm is the tempo. Guard with (window.ghostAudio || {}) and keep some idle motion, because every value is 0 when no audio is playing
 - Black background always (projection mapping)
 
 ═══ OUTPUT ═══

@@ -185,9 +185,15 @@ describe('Layer persistence', () => {
       // instrument. An override that silently reverted to "match global" on
       // reload is the kind of thing found mid-set.
       renderQuality: 0.56,
-      // Stage Designer's texture orientation. Without this the reload falls
-      // back to inferring from corner geometry.
+      // A Stage screen saved before 2026-09-11: Y-down corners plus the
+      // marker Apply Stage wrote beside them.
       stageTextureFlipV: true,
+      corners: {
+        topLeft: { x: 0.1, y: 0.2 },
+        topRight: { x: 0.9, y: 0.2 },
+        bottomLeft: { x: 0.1, y: 0.6 },
+        bottomRight: { x: 0.9, y: 0.6 },
+      },
       contentFit: 'crop' as const,
       vjLayerIndex: 2,
       source: source as any,
@@ -208,7 +214,11 @@ describe('Layer persistence', () => {
     const restored = layers.project._importLayer(JSON.parse(JSON.stringify(exported)));
 
     expect(restored.renderQuality).toBe(0.56);
-    expect(restored.stageTextureFlipV).toBe(true);
+    // Converted on the way in: corners lifted to the canvas Y-up convention
+    // and the marker cleared, so re-importing cannot flip them back.
+    expect(restored.stageTextureFlipV).toBe(false);
+    expect(restored.corners.topLeft).toEqual({ x: 0.1, y: 0.8 });
+    expect(restored.corners.topLeft.y).toBeGreaterThan(restored.corners.bottomLeft.y);
     expect(restored.contentFit).toBe('crop');
     expect(restored.vjLayerIndex).toBe(2);
     expect((restored.gpuLayerContent as any)?.shaderId).toBe('flythrough');

@@ -11,6 +11,7 @@ import { parseISF } from '../isf/parser';
 import { vjLayerSequencer } from './vjLayerSequencer';
 import { isNativeSelectableEffect } from '../renderer/nativeEffectCoverage';
 import { NATIVE_ENGINE_ONLY } from './settings';
+import { isDesktopApp } from '../bridge';
 import { armNativeLibraryVideo } from '../sync/nativeRendererSync';
 import { clipAudioBus, type ClipAudioTransport } from '../audio/clipAudioBus';
 import {
@@ -1262,8 +1263,11 @@ function createVJClipLauncherStore() {
           clip.iframeElement = context.iframe;
         }
 
-        // If setting an AI-generated JS animation (threejs or p5js with jsAnimation)
-        if (clip && (clip.type === 'jsanimation' || clip.type === 'p5js') && clip.jsAnimation) {
+        // If setting an AI-generated JS animation (threejs or p5js with jsAnimation).
+        // Under the native engine the sync runs these pages in offscreen hosts
+        // while the clip is live; an editor iframe here would run the page a
+        // second time, on the editor's own thread, and never be disposed.
+        if (clip && (clip.type === 'jsanimation' || clip.type === 'p5js') && clip.jsAnimation && !(NATIVE_ENGINE_ONLY && isDesktopApp)) {
           const context = createJSAnimationContext(clip.id, clip.jsAnimation);
           clip.iframeElement = context.iframe;
         }

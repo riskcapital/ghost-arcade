@@ -1,5 +1,6 @@
 import { writable } from 'svelte/store';
 import { project } from './layers';
+import { migrateStageLayerCorners } from '../utils/stageTextureOrientation';
 import type { Point2D, WarpCorners } from '../types';
 
 interface ConnectionState {
@@ -137,7 +138,10 @@ function handleMessage(msg: { type: string; [key: string]: unknown }) {
       // Full state sync from server
       const { project: projectData } = (msg as unknown) as { project: import('../types').Project };
       if (projectData) {
-        project.set(projectData);
+        project.set({
+          ...projectData,
+          layers: (projectData.layers ?? []).map(migrateStageLayerCorners),
+        });
       }
       break;
     }

@@ -6,6 +6,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { findSnapTarget, getOtherLayerOutlines, type SnapTarget } from '../utils/snapUtils';
   import { normalizedWarpNudge } from '../utils/warpNudge';
+  import { releaseFormControlFocus } from '../utils/formFocus';
 
   export let containerWidth: number = 800;
   export let containerHeight: number = 600;
@@ -111,6 +112,7 @@
     if ($selectedLayer?.locked) return;
     e.preventDefault();
     e.stopPropagation();
+    releaseFormControlFocus();
     cancelDrag(false);
     dragging = { row, col };
     selectedPoint = { row, col };  // Set selected point for keyboard navigation

@@ -35,8 +35,11 @@ fallback.
 ### Partial ⚠️
 - **Editor embedded preview presenter** — works, but core still reports
   `production_ready: false` / `needs_underlay_lock_in` (main.rs ~2670).
-- **JS/three.js/p5 sources** — native only when a fragment shader can be
-  extracted; real scene-graph JS renders blank.
+- **JS/three.js/p5 sources** — pages that reduce to one fragment shader render
+  as core shaders; every other page (real three.js scenes, p5 sketches) runs
+  in an offscreen host window (`electron/js-source-host.js`) and uploads its
+  frames to the core as `file-rect` source frames (updated 2026-09-11).
+  Frame-locked export still samples these at wall-clock speed.
 - **MediaPipe HandFX** — render graph native; landmark inference still browser
   WASM pushed into the core.
 - **Loop Creator** — encodes via Electron FFmpeg (not core), and is missing 12

@@ -170,7 +170,8 @@ export function nativeStageScreenPlacement(layer: Layer, mount: ScreenMount['led
   return {
     position: [
       mount.centerX + (cx - 0.5) * mount.width,
-      mount.centerY + (0.5 - cy) * mount.height,
+      // Corner space and mount space are both Y-up.
+      mount.centerY + (cy - 0.5) * mount.height,
       mount.centerZ + 0.1,
     ],
     width,
