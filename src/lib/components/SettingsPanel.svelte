@@ -112,7 +112,7 @@
   // Multi-Output / per-slice config (createDefaultSlice, maxOutputSlices,
   // OutputCanvasPreview) moved to the Screens tab — see ScreenPanel.svelte.
   import { isDesktopApp, getTextureShareLabel, invoke } from '$lib/bridge';
-  import { getErrorLog, clearErrorLog, type ErrorEntry } from '../utils/errorReporter';
+  import { getErrorLog, clearErrorLog, recordError, type ErrorEntry } from '../utils/errorReporter';
   import { isWebGPUSupported, probeWebGPU, getWebGPUInfo, type WebGPUInfo } from '../renderer/webgpuCapability';
 
   // Renderer panel state. Desktop native builds keep the legacy bridge flags
@@ -377,6 +377,49 @@
     }
   } catch { /* ignore */ }
   $: try { localStorage.setItem('ghostarcade-settings-section', selectedSection); } catch { /* */ }
+
+  // A section that throws while rendering used to take the whole panel down:
+  // no boundary, so the error unwound the component and left a black panel
+  // with no sidebar. Worse, the section is persisted above and restored on
+  // open, so the panel reopened straight into the broken section every time,
+  // and a reinstall kept it because user data survives reinstalls.
+  //
+  // Each section now renders inside a boundary. On failure the error goes to
+  // Diagnostics, which is the only place a user can copy it from, and the
+  // saved section is cleared so the next open lands on the default instead
+  // of the thing that just failed.
+  //
+  // The fallback is rendered from this state, as one {#if} beside the
+  // boundary, rather than through the boundary's `failed` snippet. Svelte
+  // builds that snippet in a microtask per error, and a bad value used in
+  // several expressions throws several times in one flush: every call found
+  // no fallback yet to tear down, so they stacked, and reset only cleared the
+  // last one, leaving stale fallbacks on screen beside the recovered section.
+  // Keeping the section alongside the error also stops a fallback following
+  // the user into a different section.
+  let sectionFailure: { section: SectionId; error: unknown; reset: () => void } | null = null;
+
+  function handleSectionError(error: unknown, reset: () => void) {
+    // One failure can arrive as several calls in the same flush; record it once.
+    if (sectionFailure?.section !== selectedSection) {
+      recordError(error, `settings-section:${selectedSection}`);
+      console.error('[Settings] section failed to render:', selectedSection, error);
+    }
+    // Keep the latest reset: each call replaced the boundary's previous state.
+    sectionFailure = { section: selectedSection, error, reset };
+    try { localStorage.removeItem('ghostarcade-settings-section'); } catch { /* */ }
+  }
+
+  function retrySection() {
+    const failure = sectionFailure;
+    sectionFailure = null;
+    failure?.reset();
+  }
+
+  function leaveFailedSection() {
+    sectionFailure = null;
+    selectedSection = 'app:appearance';
+  }
 
   // Is the NDI native addon built + the NDI runtime initialized? Drives
   // the "NDI" option's disabled state in the per-slice transport
@@ -680,6 +723,8 @@
           </div>
         {/if}
 
+        {#key selectedSection}
+        <svelte:boundary onerror={handleSectionError}>
         <!-- Appearance Section -->
         {#if selectedSection === 'app:appearance'}
         <section class="settings-section">
@@ -2013,7 +2058,7 @@
                 <div class="setting-label">
                   <span class="label-text">Recent calls</span>
                   <span class="label-hint">
-                    {#each $mcpStore.recentCalls.slice(0, 5) as call (call.at)}
+                    {#each $mcpStore.recentCalls.slice(0, 5) as call (call.seq)}
                       <span class="mcp-call" class:failed={!call.ok}>{call.name}</span>
                     {/each}
                   </span>
@@ -2677,6 +2722,28 @@
 
         </section>
         {/if}
+
+        </svelte:boundary>
+
+        {#if sectionFailure && sectionFailure.section === selectedSection}
+          <section class="settings-section settings-section-failed">
+            <h3>This section could not load</h3>
+            <p class="settings-failed-text">
+              Something in this part of Settings failed. Everything else still works,
+              so you can pick another section on the left.
+            </p>
+            <code class="settings-failed-message">{sectionFailure.error instanceof Error ? sectionFailure.error.message : String(sectionFailure.error)}</code>
+            <div class="settings-failed-actions">
+              <button class="osc-add-btn" onclick={retrySection}>Try again</button>
+              <button class="osc-add-btn" onclick={leaveFailedSection}>Go to Appearance</button>
+            </div>
+            <p class="label-hint">
+              The error was saved under Diagnostics at the bottom of this panel, so it can be
+              copied into a bug report.
+            </p>
+          </section>
+        {/if}
+        {/key}
       </div>
       </div><!-- /.settings-body -->
 
@@ -3273,6 +3340,36 @@
   }
   /* Names what an agent has been doing, so its work is visible rather than
      inferred from the output changing on its own. */
+  /* Section render failure. Amber like the other notices in this panel:
+     it reports a problem, it is not an alarm the user caused. */
+  .settings-section-failed {
+    border: 1px solid rgba(255, 176, 0, 0.35);
+    border-radius: 4px;
+    padding: 14px 16px;
+  }
+  .settings-failed-text {
+    margin: 6px 0 10px;
+    font-size: 12px;
+    line-height: 1.5;
+    color: #9ca3af;
+  }
+  .settings-failed-message {
+    display: block;
+    margin-bottom: 12px;
+    padding: 8px 10px;
+    border-radius: 3px;
+    background: rgba(0, 0, 0, 0.35);
+    color: #ffb000;
+    font-size: 11px;
+    white-space: pre-wrap;
+    word-break: break-word;
+  }
+  .settings-failed-actions {
+    display: flex;
+    gap: 8px;
+    margin-bottom: 8px;
+  }
+
   .mcp-call {
     display: inline-block;
     margin: 0 4px 2px 0;

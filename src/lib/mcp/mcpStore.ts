@@ -21,7 +21,7 @@ export interface McpState {
   lastError: string | null;
   /** Rolling record of what has been called, so the user can see what an agent
    *  actually did rather than inferring it from the output changing. */
-  recentCalls: Array<{ name: string; at: number; ok: boolean }>;
+  recentCalls: Array<{ seq: number; name: string; at: number; ok: boolean }>;
 }
 
 const INITIAL: McpState = {
@@ -40,6 +40,10 @@ function createMcpStore() {
   const { subscribe, update } = writable<McpState>({ ...INITIAL });
   let unsubscribeBridge: (() => void) | null = null;
   let initialized = false;
+  /** Stable key for the recent-calls list. `at` was used before, but two
+   *  calls landing in the same millisecond share a timestamp, and a batched
+   *  agent does exactly that. */
+  let callSeq = 0;
 
   function persist() {
     if (typeof localStorage === 'undefined') return;
@@ -65,7 +69,7 @@ function createMcpStore() {
       }
       update(s => ({
         ...s,
-        recentCalls: [{ name, at: Date.now(), ok }, ...s.recentCalls].slice(0, MAX_RECENT_CALLS),
+        recentCalls: [{ seq: ++callSeq, name, at: Date.now(), ok }, ...s.recentCalls].slice(0, MAX_RECENT_CALLS),
       }));
     });
   }

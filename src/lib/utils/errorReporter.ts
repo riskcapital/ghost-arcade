@@ -66,6 +66,23 @@ export function initErrorReporter() {
   });
 }
 
+/**
+ * Record an error that was caught before it could reach the global handlers.
+ *
+ * A <svelte:boundary> handles the error itself, so window.onerror never sees
+ * it. Without this, a section that fails to render would show its fallback
+ * and leave nothing in Diagnostics, which is the one place a user can copy
+ * the actual message from to report it.
+ */
+export function recordError(error: unknown, source: string) {
+  pushEntry({
+    timestamp: new Date().toISOString(),
+    message: error instanceof Error ? error.message : String(error),
+    stack: error instanceof Error ? error.stack : undefined,
+    source,
+  });
+}
+
 /** Get all captured error entries (most recent last). */
 export function getErrorLog(): ErrorEntry[] {
   return getLog();
