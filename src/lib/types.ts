@@ -2916,9 +2916,10 @@ export interface Layer {
   // Stage Mode: which VJ layer feeds this mapping layer (undefined = use own source, -1 = VJ Mix)
   vjLayerIndex?: number;
 
-  // Stage Designer surfaces use canvas Y-down coordinates while source
-  // textures use UV Y-up coordinates. Set on Stage-generated screen layers
-  // so source orientation remains stable after users rotate or warp them.
+  // Legacy marker: true means this Stage-generated screen still carries the
+  // Y-down corners Apply Stage wrote before 2026-09-11. migrateStageLayerCorners
+  // converts those to the Y-up convention on load and clears the flag; Apply
+  // Stage writes false.
   stageTextureFlipV?: boolean;
 
   // ── Deck confidence monitors (native crossfade mode) ───────────────────

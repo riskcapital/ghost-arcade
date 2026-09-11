@@ -43,6 +43,12 @@ import {
 } from '$lib/renderer/cameraLiveSource';
 import { rasterizeSvg, svgRasterSignature, type SvgRaster } from '$lib/renderer/svgRaster';
 import { nativeShaderSourceFromJavascript } from '$lib/renderer/nativeJsShaderSource';
+import {
+  isNativeJsCanvasSource,
+  jsCanvasHostSize,
+  nativeJsCanvasHosts,
+  nativeJsCanvasUri,
+} from '$lib/renderer/nativeJsCanvasHosts';
 import { resolveAssetRefForRuntime } from '$lib/storage/assetRegistry';
 import {
   receiveSpoutTextureInfo,
@@ -4206,7 +4212,9 @@ function nativeMediaSourceUnsupportedReason(
       : 'shader:source-required';
   }
   if (sourceType === 'threejs' || sourceType === 'p5js' || sourceType === 'javascript') {
-    return nativeShaderSourceFromJavascript(src.jsAnimation)
+    // A page that reduces to one fragment shader renders in the core; any
+    // other page runs in an offscreen host and arrives as frames.
+    return nativeShaderSourceFromJavascript(src.jsAnimation) || isNativeJsCanvasSource(src)
       ? null
       : `${sourceType}:native-scene-graph-required`;
   }
@@ -4241,6 +4249,19 @@ export function nativeLayerSourceFromMediaSource(
       source: src,
       shouldPrefetch: false,
       shouldPreview: true,
+      previewElement: null,
+    };
+  }
+  if (isNativeJsCanvasSource(src)) {
+    // Frames come from the page's offscreen host under this source id. The
+    // core samples them like a still image; nothing here decodes or captures.
+    return {
+      id: src.id,
+      uri: nativeJsCanvasUri(src),
+      sourceType: 'image',
+      source: src,
+      shouldPrefetch: false,
+      shouldPreview: false,
       previewElement: null,
     };
   }
@@ -4587,7 +4608,7 @@ function nativeLayerNeedsContinuousSync(layer: Layer): boolean {
 
   const src = layer.source;
   if (src && nativeLiveSourceType(src)) return true;
-  if (src?.jsAnimation && nativeShaderSourceFromJavascript(src.jsAnimation)) return true;
+  if (src?.jsAnimation && (nativeShaderSourceFromJavascript(src.jsAnimation) || isNativeJsCanvasSource(src))) return true;
   if (src?.type === 'video' && isNativeLocalMediaUri(nativeReadableMediaUri(src))) return true;
   if (
     src?.type === 'spout' ||
@@ -4863,6 +4884,57 @@ export function armNativeLibraryVideo(item: NativeLibraryVideoArmRequest): void 
   }
 }
 
+/* Output-stage geometry crosses one coordinate boundary. Screens and the
+   master output stage are authored in canvas space — `OutputSlice.cropY` is
+   the TOP edge, `cornersFromRect` puts topLeft at the smallest y, and the
+   Screens overlays draw with y growing downward. The core's output stage
+   samples with y growing upward. Sent raw, a crop showed the band mirrored
+   about the canvas middle and the top warp handles moved the bottom of the
+   projected image. Layer corners do NOT pass through here: those are already
+   authored y-up. */
+type NativeWarpPoint = { x: number; y: number };
+type NativeWarpCornerSet = {
+  topLeft: NativeWarpPoint;
+  topRight: NativeWarpPoint;
+  bottomLeft: NativeWarpPoint;
+  bottomRight: NativeWarpPoint;
+};
+type NativeWarpMesh = { rows: number; cols: number; points: NativeWarpPoint[][] };
+
+export function nativeOutputCropY(y: number, height: number): number {
+  return clampNumber(1 - y - height, 0, 1);
+}
+
+/** Flip y and swap the edges, so the corners the operator drags as "top"
+ *  land on the top of the projected image. Identity stays identity. */
+export function nativeWarpCorners(
+  corners: NativeWarpCornerSet | null | undefined,
+): NativeWarpCornerSet | null {
+  if (!corners) return null;
+  const flip = (point: NativeWarpPoint): NativeWarpPoint => ({ x: point.x, y: 1 - point.y });
+  return {
+    topLeft: flip(corners.bottomLeft),
+    topRight: flip(corners.bottomRight),
+    bottomLeft: flip(corners.topLeft),
+    bottomRight: flip(corners.topRight),
+  };
+}
+
+/** Same conversion for a warp mesh: the row the operator sees first is the
+ *  top one, which is the LAST row in the core's y-up grid. */
+export function nativeWarpMeshGrid(
+  grid: NativeWarpMesh | null | undefined,
+): NativeWarpMesh | null {
+  if (!grid || !Array.isArray(grid.points)) return null;
+  return {
+    rows: grid.rows,
+    cols: grid.cols,
+    points: [...grid.points]
+      .reverse()
+      .map((row) => (Array.isArray(row) ? row.map((point) => ({ x: point.x, y: 1 - point.y })) : row)),
+  };
+}
+
 export class NativeRendererSync {
   private running = false;
   private startupReady = false;
@@ -4917,6 +4989,7 @@ export class NativeRendererSync {
   private videoMetadataWatches = new WeakSet<HTMLVideoElement>();
   private videoRefreshAt = new Map<string, number>();
   private nativeVideoPrefetchAt = new Map<string, number>();
+  private readonly jsCanvasHosts = nativeJsCanvasHosts;
   private sourcePreviewSeq = new Map<string, number>();
   // Text layers: CPU-rasterized glyph atlas + cached layout, re-uploaded
   // only when the text signature changes (never per frame).
@@ -5963,6 +6036,20 @@ export class NativeRendererSync {
     };
   }
 
+  private useJsCanvasHost(
+    src: NonNullable<Layer['source']>,
+    outputWidth: number,
+    outputHeight: number,
+    now: number,
+  ): void {
+    const { width, height } = jsCanvasHostSize(outputWidth, outputHeight, this.nativeSourceFrameSize);
+    if (!this.jsCanvasHosts.use(src, width, height, now)) return;
+    // The host uploads under this source id. Effect routes wait for an
+    // uploaded input before they take the layer, so record that frames flow.
+    const key = this.sourceCacheKey(src.id, src.src);
+    if (!this.sourcePreviewSeq.has(key)) this.sourcePreviewSeq.set(key, 1);
+  }
+
   private nativeSourceFrameUploaded(source: NativeLayerSource | null): boolean {
     if (source?.id === DEFAULT_GPU_SOURCE_ID) return this.defaultGpuSourceUploaded;
     const src = source?.source;
@@ -6154,7 +6241,11 @@ export class NativeRendererSync {
       if (config?.overrideStyles && (group.effects?.length ?? 0) > 0) {
         (child as { effects: Layer['effects'] }).effects = group.effects;
       }
-      if (hasGroupVj) {
+      // A mask child has no content to replace; given the group's source it
+      // would be routed as a media layer and stop masking.
+      if (child.type === 'mask') {
+        // keeps its own (empty) source
+      } else if (hasGroupVj) {
         (child as { vjLayerIndex?: number }).vjLayerIndex = Math.round(groupVjRaw);
       } else if (shaderSource) {
         (child as { source: Layer['source'] }).source = shaderSource;
@@ -6168,29 +6259,21 @@ export class NativeRendererSync {
             const maxX = clampNumber(Math.max(c.topLeft.x, c.topRight.x, c.bottomLeft.x, c.bottomRight.x), 0, 1);
             const minY = clampNumber(Math.min(c.topLeft.y, c.topRight.y, c.bottomLeft.y, c.bottomRight.y), 0, 1);
             const maxY = clampNumber(Math.max(c.topLeft.y, c.topRight.y, c.bottomLeft.y, c.bottomRight.y), 0, 1);
-            // The crop pipeline's `1 - y - h` convention matches decoded
-            // media frames (stored bottom-up). Core-rendered content —
-            // shader/effect sources AND vj_layer_index feeds (the core
-            // samples its own rendered deck frames, top-down regardless
-            // of clip type) — stores top-down, which needs BOTH
-            // corrections: the band-order pre-flip AND an intra-band
-            // vertical flip. The core applies uv flips inside the crop
-            // window (heartbeat.wgsl flips sampled_uv before the uv0
-            // crop transform), so the pre-flip alone reverses band
-            // order but leaves each band's content upside down — a
-            // continuous image then reads as a clean global mirror.
-            const src = child.source as { type?: string; shaderCode?: string } | null;
-            const coreRendered = hasGroupVj
-              || (!!src && (src.type === 'shader' || src.type === 'effect' || !!src.shaderCode));
+            // Corners are canvas Y-up and the crop pipeline takes a
+            // top-origin rect (nativeLayerUvState converts it with
+            // `1 - y - h`), so the band a child shows is simply its own
+            // corner box — same for decoded media and for core-rendered
+            // feeds (group shader, vj_layer_index). Core-rendered content
+            // used to get a band-order pre-flip plus an intra-band flipV
+            // here, compensating for the Y-down corners Apply Stage wrote
+            // until 2026-09-11; that compensation mirrored every
+            // editor-made unified group instead.
             (child as { cropRegion: Layer['cropRegion'] }).cropRegion = {
               x: minX,
-              y: coreRendered ? clampNumber(1 - maxY, 0, 1) : minY,
+              y: minY,
               width: Math.max(0.001, maxX - minX),
               height: Math.max(0.001, maxY - minY),
             };
-            if (coreRendered) {
-              (child as { flipV?: boolean }).flipV = !child.flipV;
-            }
           }
           (child as { contentFit: Layer['contentFit'] }).contentFit = 'stretch';
         } else if (config?.overrideStyles && group.contentFit) {
@@ -7333,7 +7416,7 @@ export class NativeRendererSync {
       type: 'set_output_stage' as const,
       rotation: out.outputRotation ?? 0,
       cropX: out.outputCropX ?? 0,
-      cropY: out.outputCropY ?? 0,
+      cropY: nativeOutputCropY(out.outputCropY ?? 0, out.outputCropHeight ?? 1),
       cropWidth: out.outputCropWidth ?? 1,
       cropHeight: out.outputCropHeight ?? 1,
       brightness: out.brightness ?? 1,
@@ -7359,14 +7442,15 @@ export class NativeRendererSync {
       testPattern: Math.max(0,
         ['none', 'grid', 'crosshair', 'color-bars', 'white', 'gradient', 'checkerboard']
           .indexOf(String(out.testPattern ?? 'none'))),
-      // Master warp travels as-is; the core reads only the mesh belonging to
-      // the declared mode, so a stale grid from the other mode is ignored.
+      // The core reads only the mesh belonging to the declared mode, so a
+      // stale grid from the other mode is ignored. Points get the same y
+      // conversion as the crop above.
       masterWarp: out.masterWarp && masterWarpIsActive(out.masterWarp)
         ? {
             enabled: true,
             mode: out.masterWarp.mode ?? 'corners',
-            corners: out.masterWarp.corners ?? null,
-            meshGrid: out.masterWarp.meshGrid ?? null,
+            corners: nativeWarpCorners(out.masterWarp.corners),
+            meshGrid: nativeWarpMeshGrid(out.masterWarp.meshGrid),
           }
         : { enabled: false },
     };
@@ -7397,7 +7481,7 @@ export class NativeRendererSync {
         width: Math.round((display?.width ?? out?.masterCanvasWidth ?? 1920) * scale),
         height: Math.round((display?.height ?? out?.masterCanvasHeight ?? 1080) * scale),
         cropX: s.cropX ?? 0,
-        cropY: s.cropY ?? 0,
+        cropY: nativeOutputCropY(s.cropY ?? 0, s.cropH ?? 1),
         cropW: s.cropW ?? 1,
         cropH: s.cropH ?? 1,
         rotation: s.rotation ?? 0,
@@ -7418,8 +7502,8 @@ export class NativeRendererSync {
         blackLevelB: s.blackLevelB ?? 0,
         blackLevelFeather: s.blackLevelFeather ?? 0.5,
         warpMode: s.warpMode ?? 'rect',
-        corners: s.corners ?? null,
-        meshGrid: s.meshGrid ?? null,
+        corners: nativeWarpCorners(s.corners),
+        meshGrid: nativeWarpMeshGrid(s.meshGrid),
         };
       });
     const sig = JSON.stringify(slices);
@@ -7717,6 +7801,7 @@ export class NativeRendererSync {
     this.sourcePreviewNextAt.clear();
     this.sourcePreviewSig.clear();
     this.sourcePreviewFailures.clear();
+    this.jsCanvasHosts.closeAll();
     this.defaultGpuSourceUploaded = false;
     this.resetSharedTextureUploadTracking();
     this.resetNativeImageDecodeTracking();
@@ -8297,6 +8382,8 @@ export class NativeRendererSync {
 
     const now = Date.now();
     this.scheduleNativeStatusPoll(now);
+    this.jsCanvasHosts.sweep(now);
+    this.jsCanvasHosts.pushAudio(visual, now);
     const overloadActive =
       this.degradedModeActive ||
       this.decodeBackpressureActive ||
@@ -8418,6 +8505,12 @@ export class NativeRendererSync {
       const effectiveVisible = layer.visible && !nativeLayerBlocked;
       const nativeGraphRoute = nativeLayerBlocked ? null : nativeGraphRouteCandidate;
       const nativeSource = nativeGraphRoute?.source ?? nativeLayerSource(layer);
+      // A three.js / p5 page keeps running while its layer is visible,
+      // including behind an effect route, whose input is the page.
+      const jsCanvasSource = nativeGraphRoute?.inputSource?.source ?? nativeSource.source;
+      if (effectiveVisible && jsCanvasSource && isNativeJsCanvasSource(jsCanvasSource)) {
+        this.useJsCanvasHost(jsCanvasSource, width, height, now);
+      }
       const sourceType = nativeSource.sourceType;
       const nativeParams = nativeGpuParams(layer);
       const nativeUv = this.nativeLayerUvState(layer, nativeSource, width, height);

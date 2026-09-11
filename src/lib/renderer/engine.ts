@@ -2419,7 +2419,10 @@ export class RenderEngine {
       // uCropRegion: sampledUv = xy + sampledUv * zw
       // So xy = offset, zw = scale (portion of texture to show)
       obj.material.uniforms.uCropEnabled.value = true;
-      obj.material.uniforms.uCropRegion.value.set(minX, 1 - maxY, maxX - minX, maxY - minY);
+      // Corners and texture V both grow upward, so the band a child shows is
+      // its own corner box (Apply Stage wrote Y-down corners until
+      // 2026-09-11; those are converted on load).
+      obj.material.uniforms.uCropRegion.value.set(minX, minY, maxX - minX, maxY - minY);
 
       // CRITICAL: when the child screen has a polygon shape with fit
       // mode 'warp' or 'fill', the shader's custom-shape pass (further

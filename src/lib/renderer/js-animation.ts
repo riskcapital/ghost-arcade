@@ -234,6 +234,18 @@ export function updateAllJSAnimationTextures(): void {
   }
 }
 
+type JSAnimationParamForwarder = (id: string, params: Record<string, number | boolean | number[]>) => void;
+let paramForwarder: JSAnimationParamForwarder | null = null;
+
+/**
+ * Deliver slider changes somewhere besides an editor iframe. The native
+ * engine's offscreen page hosts register here, so the Mapping and VJ param
+ * controls need no idea which runtime is playing the page.
+ */
+export function setJSAnimationParamForwarder(forwarder: JSAnimationParamForwarder | null): void {
+  paramForwarder = forwarder;
+}
+
 /**
  * Update parameters for a specific animation
  */
@@ -242,6 +254,7 @@ export function updateJSAnimationParams(id: string, params: Record<string, numbe
   if (context) {
     context.updateParams(params);
   }
+  paramForwarder?.(id, params);
 }
 
 /**

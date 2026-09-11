@@ -6,6 +6,7 @@
   import { onMount, onDestroy } from 'svelte';
   import { findSnapTarget, getOtherLayerOutlines, type SnapTarget } from '../utils/snapUtils';
   import { normalizedWarpNudge, warpNudgeStepPixels } from '../utils/warpNudge';
+  import { releaseFormControlFocus } from '../utils/formFocus';
   import {
     scaleWarpCornersFromSelectionEdge,
     type SelectionBounds,
@@ -277,6 +278,7 @@
     if ($selectedLayer?.locked) return;
     e.preventDefault();
     e.stopPropagation();
+    releaseFormControlFocus();
     dragging = 'corner';
     dragTarget = corner;
     selectedCorner = corner;  // Set selected corner for keyboard navigation
@@ -347,6 +349,12 @@
       return;
     }
 
+    // In mesh mode the corners are hidden and the mesh points are the shape;
+    // MeshWarpHandles nudges the selected point. Shifting the hidden corners
+    // here changed nothing on screen and left the layer offset once it went
+    // back to corner warp.
+    if ($selectedLayer.warpMode === 'mesh') return;
+
     const ids = get(selectedLayerIds);
     const selectedIds = ids.length ? ids : [$selectedLayer.id];
     const allLayers = get(layers);
@@ -402,6 +410,7 @@
     if ($selectedLayer?.locked) return;
     e.preventDefault();
     e.stopPropagation();
+    releaseFormControlFocus();
     dragging = 'move';
     dragTarget = 'center';
 

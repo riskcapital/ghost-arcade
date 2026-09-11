@@ -611,6 +611,12 @@ fn fs_color(_in: VertexOut) -> @location(0) vec4<f32> {
 `;
 }
 
+// Same bindings as queuedGraphRenderWgsl but draws nothing: a layer whose own
+// frame is transparent, so anything visible through it came from elsewhere.
+function queuedGraphTransparentRenderWgsl() {
+  return queuedGraphRenderWgsl().replace('return color_in[0];', 'return color_in[0] * 0.0;');
+}
+
 async function readSourceFrameProbe(
   rpc: NativeRpc,
   sourceId: string,
@@ -1451,6 +1457,114 @@ describe('Native graph instrument runtime fixtures', () => {
       expect(g).toBeGreaterThan(0.45);
       expect(r).toBeGreaterThan(0.05);
       expect(b).toBeGreaterThan(0.12);
+    } finally {
+      await rpc.close();
+    }
+  }, 45000);
+
+  // Deleting a Lines layer and adding a Light Painting layer showed the old
+  // lines for several frames: the new graph source was handed the freed slot
+  // with the previous image still in it, and composited from it while its
+  // own pipeline compiled.
+  itIfNativeCore('never shows a removed layer through a new graph layer that reuses its slot', async () => {
+    const rpc = createNativeRpc();
+    const colorBufferId = 'native-graph-slot-reuse:color';
+    const coldRenderShaderId = `native-graph-slot-reuse/cold-render-${Date.now()}`;
+    const fullFrame = {
+      topLeft: { x: 0, y: 0 },
+      topRight: { x: 1, y: 0 },
+      bottomRight: { x: 1, y: 1 },
+      bottomLeft: { x: 0, y: 1 },
+    };
+    const addGraphLayer = (layerId: string, sourceId: string) => [
+      { type: 'upsert_layer', layer_id: layerId, z_index: 0, opacity: 1, blend_mode: 'normal', corners: fullFrame },
+      { type: 'set_layer_visibility', layer_id: layerId, visible: true },
+      {
+        type: 'bind_media_source',
+        layer_id: layerId,
+        source_id: sourceId,
+        uri: `native-graph://slot-reuse/${layerId}`,
+        source_type: 'gpu:slot-reuse',
+      },
+    ];
+    const renderInto = (sourceId: string, shaderId: string, seq: number) => ({
+      type: 'queue_compute_graph',
+      buffers: [{ id: colorBufferId, kind: 'storage', byte_length: 16, persistent: true, clear: true }],
+      passes: [{
+        name: 'slot-reuse-seed-color',
+        shader_id: QUEUED_GRAPH_COMPUTE_SHADER_ID,
+        entry: 'cs_seed',
+        dispatch: [1, 1, 1],
+        bindings: [{ binding: 0, resource: colorBufferId, kind: 'storage' }],
+      }],
+      render_passes: [{
+        name: 'slot-reuse-render-source-frame',
+        shader_id: shaderId,
+        vertex_entry: 'vs_full',
+        fragment_entry: 'fs_color',
+        target: 'source_frame',
+        source_id: sourceId,
+        seq,
+        clear: true,
+        clear_color: [0, 0, 0, 0],
+        blend: 'replace',
+        vertex_count: 3,
+        bindings: [{ binding: 0, resource: colorBufferId, kind: 'read-only-storage' }],
+      }],
+      readbacks: [],
+    });
+    try {
+      await rpc.send('start', {
+        config: {
+          backend: process.platform === 'darwin' ? 'metal' : process.platform === 'win32' ? 'd3d12' : 'vulkan',
+          width: 128,
+          height: 72,
+          target_fps: 30,
+          native_quality_policy: 'performance',
+        },
+      }, 12000);
+      await delay(80);
+      await rpc.send('submit_commands', {
+        commands: [
+          { type: 'precompile_shader', shader_id: QUEUED_GRAPH_COMPUTE_SHADER_ID, stage: 'compute', entry: 'cs_seed', source: queuedGraphComputeWgsl() },
+          { type: 'precompile_shader', shader_id: QUEUED_GRAPH_RENDER_SHADER_ID, stage: 'module', entry: 'fs_color', source: queuedGraphRenderWgsl() },
+          { type: 'precompile_shader', shader_id: coldRenderShaderId, stage: 'module', entry: 'fs_color', source: queuedGraphTransparentRenderWgsl() },
+        ],
+      }, 8000);
+
+      // A green graph layer, rendered until it is on screen.
+      const first = 'gpu:slot-reuse-a:lines';
+      await rpc.send('submit_commands', {
+        commands: [...addGraphLayer('slot-reuse-a', first), renderInto(first, QUEUED_GRAPH_RENDER_SHADER_ID, 1), { type: 'present' }],
+      }, 12000);
+      let snapshot = await rpc.send('frame_snapshot', {}, 10000);
+      const deadline = Date.now() + 4000;
+      for (let seq = 2; snapshot.dark_frame && Date.now() < deadline; seq++) {
+        await delay(60);
+        await rpc.send('submit_commands', {
+          commands: [renderInto(first, QUEUED_GRAPH_RENDER_SHADER_ID, seq), { type: 'present' }],
+        }, 12000);
+        snapshot = await rpc.send('frame_snapshot', {}, 10000);
+      }
+      expect(snapshot.dark_frame, 'the first layer reaches the output').toBe(false);
+
+      await rpc.send('submit_commands', {
+        commands: [{ type: 'remove_layer', layer_id: 'slot-reuse-a' }, { type: 'present' }],
+      }, 12000);
+      await delay(150);
+      snapshot = await rpc.send('frame_snapshot', {}, 10000);
+      expect(snapshot.dark_frame, 'removing the layer clears the output').toBe(true);
+
+      // A new transparent layer whose pipeline nothing has compiled yet.
+      const second = 'gpu:slot-reuse-b:light-painting';
+      await rpc.send('submit_commands', {
+        commands: [...addGraphLayer('slot-reuse-b', second), renderInto(second, coldRenderShaderId, 1), { type: 'present' }],
+      }, 12000);
+      for (let frame = 0; frame < 10; frame++) {
+        snapshot = await rpc.send('frame_snapshot', {}, 10000);
+        expect(snapshot.dark_frame, `frame ${frame} after adding the new layer`).toBe(true);
+        await delay(25);
+      }
     } finally {
       await rpc.close();
     }

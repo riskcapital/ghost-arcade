@@ -4,6 +4,7 @@
 
   import { onMount, onDestroy } from 'svelte';
   import { isMac, isDesktopApp, getTextureShareLabel, invoke } from '$lib/bridge';
+  import { jsAnimationFromHtml } from '../renderer/jsAnimationPage';
   import { nativePreviewHostEl } from '../stores/nativePreviewHost';
   import { get } from 'svelte/store';
   import { mediaLibrary, type MediaItem } from '../stores/media';
@@ -2730,6 +2731,28 @@
     }
   }
 
+  // Built-in pages are stored as JS animation clips carrying their HTML and
+  // sliders. A clip holding only the page URL renders nothing under the
+  // native engine, which takes JavaScript sources from their HTML alone.
+  async function setBuiltInPageClip(
+    item: ThreeJSItem,
+    layerIndex: number,
+    columnIndex: number,
+    bank: Parameters<typeof vjClipLauncher.setClip>[3],
+  ) {
+    let clip: VJClip = { id: generateUUID(), type: 'threejs', name: item.name, src: item.src, thumbnail: item.thumbnail };
+    try {
+      const resp = await fetch(item.src);
+      if (resp.ok) {
+        const jsAnimation = jsAnimationFromHtml(await resp.text());
+        clip = { ...clip, type: jsAnimation.animationType === 'p5js' ? 'p5js' : 'jsanimation', jsAnimation };
+      }
+    } catch (err) {
+      console.warn('[VJModePanel] could not load built-in page:', item.src, err);
+    }
+    vjClipLauncher.setClip(layerIndex, columnIndex, clip, bank);
+  }
+
   function createVJClipFromMediaTrayPayload(payload: MediaTrayDropPayload): VJClip | null {
     if (payload.type === 'preset') {
       // Mapping preset dragged in from the bottom Presets tray (VJ MAP
@@ -3060,14 +3083,7 @@
     } else if (draggedClip.type === 'threejs') {
       const threejsItem = threejsItems.find(t => t.id === draggedClip!.id);
       if (threejsItem) {
-        const vjClip: VJClip = {
-          id: generateUUID(),
-          type: 'threejs',
-          name: threejsItem.name,
-          src: threejsItem.src,
-          thumbnail: threejsItem.thumbnail,
-        };
-        vjClipLauncher.setClip(layerIndex, columnIndex, vjClip, bank);
+        void setBuiltInPageClip(threejsItem, layerIndex, columnIndex, bank);
       }
     } else if (draggedClip.type === 'spout') {
       // Spout drag — covers two cases distinguished by whether the

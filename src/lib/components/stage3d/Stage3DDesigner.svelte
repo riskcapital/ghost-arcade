@@ -27,6 +27,7 @@
     setStage3DMultiSelection,
   } from '../../stage3d/store';
   import { project } from '../../stores/layers';
+  import { migrateStageLayerCorners } from '../../utils/stageTextureOrientation';
   import { ELEMENT_TYPES, makeUserElement } from '../../stage3d/elementTypes';
   import { buildNativeStage3DScene } from '../../stage3d/nativeSceneBridge';
   import { buildVenue, paPresetElements, type PAPreset } from '../../stage3d/venues';
@@ -281,7 +282,7 @@
             // already has (videos, shaders, lights, etc.).
             layers: [
               ...p.layers.filter(l => l.type !== 'screen'),
-              ...data.project.screenLayers,
+              ...data.project.screenLayers.map(migrateStageLayerCorners),
             ],
             surfaces: Array.isArray(data.project.surfaces) && data.project.surfaces.length
               ? data.project.surfaces

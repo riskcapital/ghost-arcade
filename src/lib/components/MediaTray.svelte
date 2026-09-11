@@ -25,6 +25,7 @@
   } from '../api/ai-client';
   import { settings } from '../stores/settings';
   import { updateJSAnimationParams } from '../renderer/js-animation';
+  import { jsAnimationFromHtml } from '../renderer/jsAnimationPage';
   import { confirmDeleteIfSafeMode } from '../utils/safeMode';
   // Tier-related imports removed — FluidGen plugin always available.
   import AIShaderGenerator from './AIShaderGenerator.svelte';
@@ -1412,21 +1413,12 @@
           continue;
         }
         const htmlCode = await resp.text();
-        const params = parseShaderParamDefs(htmlCode);
-        const values = parseShaderParamValues(htmlCode);
-        const paramValues: Record<string, number | boolean | number[]> = {};
-        for (const p of params) paramValues[p.name] = values[p.name] ?? p.default;
-        const isP5 = /p5\.(min\.)?js|new\s+p5\s*\(/.test(htmlCode);
+        const jsAnimation = jsAnimationFromHtml(htmlCode);
         const item: JSAnimationItem = {
           id: def.id,
           name: def.name,
-          type: isP5 ? 'p5js' : 'threejs',
-          jsAnimation: {
-            animationType: isP5 ? 'p5js' : 'threejs',
-            htmlCode,
-            params: params.length > 0 ? params : undefined,
-            paramValues: params.length > 0 ? paramValues : undefined,
-          },
+          type: jsAnimation.animationType,
+          jsAnimation,
           thumbnail: undefined,
         };
         jsAnimations = [...jsAnimations, item];
@@ -1695,30 +1687,11 @@
       try {
         const htmlCode = await file.text();
         const baseName = file.name.replace(/\.html?$/i, '');
-        // Auto-detect p5 vs three by looking for the import. Defaults to
-        // threejs so single-canvas pages without either work too.
-        const isP5 = /p5\.(min\.)?js|new p5\(/.test(htmlCode);
-        const animationType: 'threejs' | 'p5js' = isP5 ? 'p5js' : 'threejs';
-
-        // Parse window.shaderParamDefs out of the HTML so the slider UI
-        // can render the right controls. Without this users have to
-        // manually re-declare every param in the app — defeats the point
-        // of supporting param-aware files.
-        const parsedDefs = parseShaderParamDefs(htmlCode);
-        // Also parse window.shaderParams for the live values; falls back
-        // to the def's default if not present.
-        const parsedValues = parseShaderParamValues(htmlCode);
-        const paramValues: Record<string, number | boolean | number[]> = {};
-        for (const def of parsedDefs) {
-          paramValues[def.name] = parsedValues[def.name] ?? def.default;
-        }
-
-        const jsAnimation: JSAnimationSource = {
-          animationType,
-          htmlCode,
-          params: parsedDefs.length > 0 ? parsedDefs : undefined,
-          paramValues: parsedDefs.length > 0 ? paramValues : undefined,
-        };
+        // p5 or three.js, and sliders from the page's shaderParamDefs, or
+        // from its flat `window.shaderParams = {...}` when it declares none.
+        // The literals are parsed as data, never evaluated.
+        const jsAnimation: JSAnimationSource = jsAnimationFromHtml(htmlCode);
+        const animationType = jsAnimation.animationType;
 
         // Snapshot the first rendered frame as a thumbnail. Best-effort —
         // failures (cross-origin, no canvas, slow first frame) fall back
@@ -1743,91 +1716,18 @@
   }
 
   /**
-   * Extract a balanced object-or-array literal from `html` starting after
-   * the first match of `pattern`. Handles nested brackets (e.g. a defs
-   * array whose entries contain `default: [0.4, 0.7, 1.0]`) and strings
-   * with brackets inside them. Returns the literal text including its
-   * outer brackets, or null when no match / unbalanced.
-   *
-   * Why this exists: the original regex match `\[[\s\S]*?\]` is non-
-   * greedy and stops at the FIRST closing bracket, so a color default
-   * like `[0.4, 0.7, 1.0]` truncates the entire defs array and the
-   * caller falls back to "no params" — exactly the user-visible bug we
-   * just hit with the Embryo defaults.
-   */
-  function extractBracketedAfter(html: string, pattern: RegExp): string | null {
-    const m = html.match(pattern);
-    if (!m || m.index === undefined) return null;
-    let i = m.index + m[0].length;
-    while (i < html.length && /\s/.test(html[i])) i++;
-    if (i >= html.length) return null;
-    const open = html[i];
-    if (open !== '[' && open !== '{') return null;
-    const close = open === '[' ? ']' : '}';
-    let depth = 0;
-    let inStr = false;
-    let strCh = '';
-    for (let j = i; j < html.length; j++) {
-      const c = html[j];
-      if (inStr) {
-        if (c === '\\') { j++; continue; }
-        if (c === strCh) inStr = false;
-      } else {
-        if (c === '"' || c === "'" || c === '`') { inStr = true; strCh = c; }
-        else if (c === open) depth++;
-        else if (c === close) {
-          depth--;
-          if (depth === 0) return html.slice(i, j + 1);
-        }
-      }
-    }
-    return null;
-  }
-
-  function parseShaderParamDefs(html: string): Array<{
-    name: string;
-    type: 'number' | 'boolean' | 'color';
-    default: number | boolean | number[];
-    min?: number;
-    max?: number;
-    label?: string;
-  }> {
-    const lit = extractBracketedAfter(html, /window\.shaderParamDefs\s*=\s*/);
-    if (!lit) return [];
-    try {
-      const arr = new Function('return ' + lit)();
-      if (!Array.isArray(arr)) return [];
-      return arr.filter(d => d && typeof d.name === 'string' && d.type).map(d => ({
-        name: String(d.name),
-        type: d.type as 'number' | 'boolean' | 'color',
-        default: d.default,
-        min: typeof d.min === 'number' ? d.min : undefined,
-        max: typeof d.max === 'number' ? d.max : undefined,
-        label: typeof d.label === 'string' ? d.label : d.name,
-      }));
-    } catch (err) {
-      console.warn('[MediaTray] failed to parse shaderParamDefs:', err);
-      return [];
-    }
-  }
-
-  function parseShaderParamValues(html: string): Record<string, number | boolean | number[]> {
-    const lit = extractBracketedAfter(html, /window\.shaderParams\s*=\s*/);
-    if (!lit) return {};
-    try {
-      const obj = new Function('return ' + lit)();
-      return (obj && typeof obj === 'object') ? obj : {};
-    } catch {
-      return {};
-    }
-  }
-
-  /**
    * Mount the HTML in a hidden iframe long enough to capture the first
    * frame as a 160×90 JPEG thumbnail. Cleans up the iframe after. Fails
    * silently on cross-origin / no-canvas / slow-load.
    */
   async function captureJSAnimationThumbnail(html: string): Promise<string | undefined> {
+    // On desktop the page draws in an offscreen host with the bundled three
+    // and p5 it expects, instead of running inside the editor for a moment.
+    if (isDesktopApp) {
+      const result = await bridgeInvoke<{ ok: boolean; data_url?: string }>('js_source_thumbnail', { html })
+        .catch(() => null);
+      return result?.ok ? result.data_url : undefined;
+    }
     return new Promise((resolve) => {
       const blob = new Blob([html], { type: 'text/html' });
       const url = URL.createObjectURL(blob);

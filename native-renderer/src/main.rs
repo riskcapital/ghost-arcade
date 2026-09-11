@@ -1708,6 +1708,10 @@ struct SceneLayer {
     /// separate from frame_slot so an effect chain can DISPLAY its output on
     /// the layer while still SAMPLING the raw shader render as input.
     shader_frame_slot: Option<usize>,
+    /// Source id that owns shader_frame_slot. A shader's output is not the
+    /// layer's source_id (that is the shader's INPUT), so without this the
+    /// slot looks unreferenced and the pool hands it to another layer.
+    shader_source_id: Option<String>,
     color: [f32; 4],
     corners: [[f32; 2]; 4],
     native_params: [f32; 8],
@@ -2272,6 +2276,7 @@ impl SceneLayer {
             preview_slot: None,
             frame_slot: None,
             shader_frame_slot: None,
+            shader_source_id: None,
             corners: [[0.0, 1.0], [1.0, 1.0], [1.0, 0.0], [0.0, 0.0]],
             native_params: default_native_params(),
             blend_code: 0.0,
@@ -9846,8 +9851,10 @@ impl App {
         let pipeline_warming = render_result.as_ref().err().is_some_and(|error| error.starts_with("native pipeline is warming"));
         if pipeline_warming {
             // Keep unrelated live sources, transforms and output controls moving
-            // while a new graph warms. Its own cached source frame stays intact;
-            // composition uses the most recent chain that actually rendered.
+            // while a new graph warms. A graph that has rendered before keeps its
+            // cached source frame; a new one composites as transparent, because
+            // its slot was cleared when it was assigned. Composition uses the
+            // most recent chain that actually rendered.
             self.pending_native_graph_jobs.extend(native_graph_jobs.split_off(generated_graph_jobs));
             self.pending_render_retry = true;
             render_result = renderer.render(
@@ -12563,11 +12570,17 @@ impl App {
             })
         });
         let mut rendered_frame_slot = None;
+        let mut shader_output_source_id = None;
         if let Some((source, source_kind, fragment_entry, source_hash, pipeline_key)) =
             native_shader
         {
             let source_id = format!("native-shader:{layer_id}:{shader_id}:{source_hash:016x}");
+            // Free the frame this layer drew before (another clip, an edited
+            // shader) first, so the new render reuses a free slot instead of
+            // displacing another layer's.
+            self.release_layer_shader_output(&layer_id, Some(&source_id));
             let slot = self.assign_source_frame_slot(&source_id);
+            shader_output_source_id = Some(source_id.clone());
             /* The quality tier finally reaches the renderer. quality_scale has
                been maintained and reported in status since this was written and
                never applied to anything, so every tier rendered identically.
@@ -12608,12 +12621,15 @@ impl App {
                     self.last_shader_error = Some("native renderer is not ready".to_string());
                 }
             }
+        } else {
+            self.release_layer_shader_output(&layer_id, None);
         }
         let entry = self
             .scene_layers
             .entry(layer_id.clone())
             .or_insert_with(|| SceneLayer::new(layer_id, 0));
         entry.shader_id = Some(shader_id);
+        entry.shader_source_id = shader_output_source_id;
         entry.shader_rendered = rendered_frame_slot.is_some();
         entry.source_kind = if rendered_frame_slot.is_some() {
             NATIVE_SHADER_SOURCE_KIND
@@ -12741,6 +12757,7 @@ impl App {
             .is_some_and(|uri| uri.starts_with("native-effect-pass://"));
         if effective_source_type != "shader" && !effect_pass_display {
             self.isf_layer_bindings.remove(&layer_id);
+            self.release_layer_shader_output(&layer_id, None);
         }
         let new_source_id = source_id.clone();
         let entry = self
@@ -12794,6 +12811,7 @@ impl App {
         for (layer_id, binding) in ready_layers {
             self.pending_media_bindings.remove(&layer_id);
             self.isf_layer_bindings.remove(&layer_id);
+            self.release_layer_shader_output(&layer_id, None);
             let entry = self
                 .scene_layers
                 .entry(layer_id.clone())
@@ -12823,9 +12841,10 @@ impl App {
         if source_id == EMPTY_SOURCE_FRAME_ID {
             return true;
         }
-        self.scene_layers
-            .values()
-            .any(|layer| layer.source_id.as_deref() == Some(source_id))
+        self.scene_layers.values().any(|layer| {
+            layer.source_id.as_deref() == Some(source_id)
+                || layer.shader_source_id.as_deref() == Some(source_id)
+        })
             || self
                 .pending_media_bindings
                 .values()
@@ -12834,6 +12853,28 @@ impl App {
                 .native_graph_layers
                 .values()
                 .any(|layer| layer.input_source_id == source_id || layer.source_id == source_id)
+    }
+
+    /// Let go of the frame a shader layer rendered, unless it is `keep`.
+    /// Every shader (and every edit of one) renders under its own
+    /// `native-shader:` id, so each clip switch or content swap would
+    /// otherwise strand a slot until the pool is full.
+    fn release_layer_shader_output(&mut self, layer_id: &str, keep: Option<&str>) {
+        let Some(layer) = self.scene_layers.get_mut(layer_id) else {
+            return;
+        };
+        let Some(previous) = layer.shader_source_id.clone() else {
+            return;
+        };
+        if keep == Some(previous.as_str()) {
+            return;
+        }
+        layer.shader_source_id = None;
+        let previous_slot = self.source_frame_slots.get(&previous).copied();
+        if previous_slot.is_some() && layer.shader_frame_slot == previous_slot {
+            layer.shader_frame_slot = None;
+        }
+        self.release_media_source_if_orphaned(&previous);
     }
 
     /// Free every per-source resource for a media source that no layer,
@@ -14710,7 +14751,11 @@ impl App {
             .map(|renderer| renderer.source_frame_size)
             .unwrap_or(SOURCE_FRAME_SIZE_DEFAULT);
         let is_native_video = transport.starts_with("native-video");
-        let (uploaded_bytes, source_rect) = if is_native_video {
+        // Rect placement only applies when the frame fits the slot as sent;
+        // a larger frame still has to be resampled down or it would clip.
+        let is_rect_placement =
+            transport.ends_with("-rect") && width <= dst_size && height <= dst_size;
+        let (uploaded_bytes, source_rect) = if is_native_video || is_rect_placement {
             let upload_width = width.min(dst_size);
             let upload_height = height.min(dst_size);
             let origin_x = (dst_size.saturating_sub(upload_width)) / 2;
@@ -14755,7 +14800,7 @@ impl App {
         self.stats.source_frame_resampled_bytes_uploaded = self
             .stats
             .source_frame_resampled_bytes_uploaded
-            .saturating_add(if is_native_video {
+            .saturating_add(if is_native_video || is_rect_placement {
                 0
             } else {
                 uploaded_bytes as u64
@@ -14813,7 +14858,7 @@ impl App {
             self.apply_shared_texture_source_frame(source_id, seq, command, width, height);
             return;
         }
-        let Some(rgba) = rgba_bytes_from_command(command, width, height) else {
+        let Some(mut rgba) = rgba_bytes_from_command(command, width, height) else {
             self.reject_source_frame_upload(
                 width,
                 height,
@@ -14822,13 +14867,33 @@ impl App {
             );
             return;
         };
+        // Pages captured offscreen (three.js / p5 sources) arrive in the
+        // compositor's BGRA order. Swap here: doing it in the Electron main
+        // process would be a per-frame JS loop over megabytes, on the thread
+        // that answers every editor IPC call.
+        if string_at(command, &["pixel_format"]).as_deref() == Some("bgra") {
+            for pixel in rgba.chunks_exact_mut(4) {
+                pixel.swap(0, 2);
+            }
+        }
+        // `placement: "rect"` writes the frame into its slot as sent, the way
+        // decoded video is, instead of resampling it to the square slot and
+        // rebuilding the mip chain. Continuous sources need this: the
+        // resample runs on the render thread and grows with frame size.
+        let rect_transport;
+        let transport_label = if string_at(command, &["placement"]).as_deref() == Some("rect") {
+            rect_transport = format!("{}-rect", transport.as_str());
+            rect_transport.as_str()
+        } else {
+            transport.as_str()
+        };
         self.upload_source_frame_pixels(
             source_id,
             seq,
             width,
             height,
             &rgba,
-            transport.as_str(),
+            transport_label,
             transport.is_cpu_fallback(),
         );
         match transport {
@@ -14985,6 +15050,17 @@ impl App {
         slot
     }
 
+    /// A slot handed to a new source still holds its previous owner's last
+    /// image. Graph sources count as having a frame the moment their job is
+    /// queued, and while a cold pipeline warms the compositor samples the slot
+    /// anyway, so a deleted Lines layer showed through a new Light Painting
+    /// layer for several frames. Every new assignment starts transparent.
+    fn clear_new_source_frame_slot(&self, slot: usize) {
+        if let Some(renderer) = self.renderer.as_ref() {
+            renderer.clear_source_frame_slot(slot);
+        }
+    }
+
     fn ensure_empty_source_frame_slot(&mut self) -> usize {
         let slot = self.assign_source_frame_slot(EMPTY_SOURCE_FRAME_ID);
         if self.source_frames.contains_key(EMPTY_SOURCE_FRAME_ID) {
@@ -15011,6 +15087,7 @@ impl App {
             self.source_frame_slots.values().copied().collect();
         if let Some(slot) = (0..MAX_SOURCE_FRAME_SLOTS).find(|slot| !used.contains(slot)) {
             self.source_frame_slots.insert(source_id.to_string(), slot);
+            self.clear_new_source_frame_slot(slot);
             return slot;
         }
 
@@ -15030,10 +15107,16 @@ impl App {
             self.source_frame_signatures.remove(&old_source_id);
             self.native_video_frame_signatures.remove(&old_source_id);
             self.source_frame_slots.insert(source_id.to_string(), slot);
+            self.clear_new_source_frame_slot(slot);
             return slot;
         }
 
-        let slot = stable_slot(source_id, MAX_SOURCE_FRAME_SLOTS);
+        let mut slot = stable_slot(source_id, MAX_SOURCE_FRAME_SLOTS);
+        // Never displace the empty sentinel: every shader layer samples it as
+        // input, so writing another source into it bleeds into all of them.
+        if self.source_frame_slots.get(EMPTY_SOURCE_FRAME_ID) == Some(&slot) {
+            slot = (slot + 1) % MAX_SOURCE_FRAME_SLOTS;
+        }
         if let Some(old_source_id) =
             self.source_frame_slots
                 .iter()
@@ -15049,22 +15132,34 @@ impl App {
             self.source_frames.remove(&old_source_id);
             self.source_frame_signatures.remove(&old_source_id);
             self.native_video_frame_signatures.remove(&old_source_id);
+            // Detach every layer still pointing at the slot, or it keeps
+            // drawing whatever the new owner renders into it.
             for layer in self.scene_layers.values_mut() {
                 if layer.source_id.as_deref() == Some(old_source_id.as_str()) {
                     layer.frame_slot = None;
                 }
+                if layer.shader_source_id.as_deref() == Some(old_source_id.as_str()) {
+                    layer.shader_source_id = None;
+                    layer.shader_frame_slot = None;
+                    layer.shader_rendered = false;
+                    if layer.frame_slot == Some(slot) {
+                        layer.frame_slot = None;
+                    }
+                }
             }
         }
         self.source_frame_slots.insert(source_id.to_string(), slot);
+        self.clear_new_source_frame_slot(slot);
         slot
     }
 
     fn apply_remove_layer(&mut self, command: &Value) {
         if let Some(layer_id) = string_at(command, &["layer_id"]) {
-            let removed_source = self
+            let (removed_source, removed_shader_output) = self
                 .scene_layers
                 .remove(&layer_id)
-                .and_then(|layer| layer.source_id);
+                .map(|layer| (layer.source_id, layer.shader_source_id))
+                .unwrap_or((None, None));
             let pending_source = self
                 .pending_media_bindings
                 .remove(&layer_id)
@@ -15073,6 +15168,9 @@ impl App {
             let graph_sources = self.release_native_graph_layer_state(&layer_id);
             self.native_point_cloud_assets.remove(&layer_id);
             if let Some(source_id) = removed_source {
+                self.release_media_source_if_orphaned(&source_id);
+            }
+            if let Some(source_id) = removed_shader_output {
                 self.release_media_source_if_orphaned(&source_id);
             }
             if let Some(source_id) = pending_source {
@@ -18714,6 +18812,48 @@ impl RenderState {
                 label: Some("Ghost Render Core Source Frame Mip Encoder"),
             });
         self.generate_source_frame_mips(&mut encoder, safe_slot);
+        self.queue.submit(Some(encoder.finish()));
+    }
+
+    /// Erase one source frame slot, every mip level, to transparent.
+    fn clear_source_frame_slot(&self, slot: usize) {
+        let safe_slot = slot.min(MAX_SOURCE_FRAME_SLOTS - 1) as u32;
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Ghost Render Core Source Frame Slot Clear"),
+            });
+        for mip_level in 0..self.source_frame_mip_levels.max(1) {
+            let view = self
+                .source_frame_texture
+                .create_view(&wgpu::TextureViewDescriptor {
+                    label: Some("Ghost Render Core Source Frame Slot Clear View"),
+                    format: Some(self.source_frame_format),
+                    dimension: Some(wgpu::TextureViewDimension::D2),
+                    base_mip_level: mip_level,
+                    mip_level_count: Some(1),
+                    base_array_layer: safe_slot,
+                    array_layer_count: Some(1),
+                    ..Default::default()
+                });
+            // A pass with no draws is just its clear.
+            drop(encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
+                label: Some("Ghost Render Core Source Frame Slot Clear"),
+                color_attachments: &[Some(wgpu::RenderPassColorAttachment {
+                    view: &view,
+                    depth_slice: None,
+                    resolve_target: None,
+                    ops: wgpu::Operations {
+                        load: wgpu::LoadOp::Clear(wgpu::Color::TRANSPARENT),
+                        store: wgpu::StoreOp::Store,
+                    },
+                })],
+                depth_stencil_attachment: None,
+                timestamp_writes: None,
+                occlusion_query_set: None,
+                multiview_mask: None,
+            }));
+        }
         self.queue.submit(Some(encoder.finish()));
     }
 

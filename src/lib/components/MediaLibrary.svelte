@@ -7,6 +7,7 @@
   import { generateUUID } from '../types';
   import { createDurableAssetRefFromFile } from '../storage/assetRegistry';
   import AIShaderGenerator from './AIShaderGenerator.svelte';
+  import { jsAnimationFromHtml } from '../renderer/jsAnimationPage';
 
   // Library state
   let libraryItems: MediaSource[] = [];
@@ -242,63 +243,19 @@
       const resp = await fetch(item.src);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const htmlCode = await resp.text();
-      const isP5 = /p5\.(min\.)?js|new\s+p5\s*\(/.test(htmlCode);
-      const animationType: 'threejs' | 'p5js' = isP5 ? 'p5js' : 'threejs';
-      const params = parseShaderParamDefs(htmlCode);
-      const values = parseShaderParamValues(htmlCode);
-      const paramValues: Record<string, number | boolean | number[]> = {};
-      for (const p of params) paramValues[p.name] = values[p.name] ?? p.default;
+      const jsAnimation = jsAnimationFromHtml(htmlCode);
 
       const layerSource: MediaSource = {
         id: generateUUID(),
-        type: animationType,
+        type: jsAnimation.animationType,
         src: item.src,
         name: item.name,
-        jsAnimation: {
-          animationType,
-          htmlCode,
-          params: params.length > 0 ? params : undefined,
-          paramValues: params.length > 0 ? paramValues : undefined,
-        },
+        jsAnimation,
       };
       project.setLayerSource($selectedLayerId, layerSource);
     } catch (err) {
       console.error('[MediaLibrary] failed to load built-in Three.js item:', item.src, err);
     }
-  }
-
-  // ---- shaderParamDefs parsers ----
-  // Shared with the file-upload path in MediaTray. Both need to extract
-  // the same object-literal-with-unquoted-keys format from raw HTML.
-  function parseShaderParamDefs(html: string): Array<{
-    name: string; type: 'number' | 'boolean' | 'color';
-    default: number | boolean | number[];
-    min?: number; max?: number; label?: string;
-  }> {
-    const m = html.match(/window\.shaderParamDefs\s*=\s*(\[[\s\S]*?\])\s*;?/);
-    if (!m) return [];
-    try {
-      const arr = new Function('return ' + m[1])();
-      if (!Array.isArray(arr)) return [];
-      return arr.filter(d => d && typeof d.name === 'string' && d.type).map(d => ({
-        name: String(d.name),
-        type: d.type as 'number' | 'boolean' | 'color',
-        default: d.default,
-        min: typeof d.min === 'number' ? d.min : undefined,
-        max: typeof d.max === 'number' ? d.max : undefined,
-        label: typeof d.label === 'string' ? d.label : d.name,
-      }));
-    } catch {
-      return [];
-    }
-  }
-  function parseShaderParamValues(html: string): Record<string, number | boolean | number[]> {
-    const m = html.match(/window\.shaderParams\s*=\s*(\{[\s\S]*?\})\s*;?/);
-    if (!m) return {};
-    try {
-      const obj = new Function('return ' + m[1])();
-      return (obj && typeof obj === 'object') ? obj : {};
-    } catch { return {}; }
   }
 
   // Drag Three.js item

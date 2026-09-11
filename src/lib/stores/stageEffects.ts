@@ -365,8 +365,10 @@ function rectFromLayer(layer: Pick<Layer, 'corners'>): Rect01 | null {
   const ys = [c.topLeft.y, c.topRight.y, c.bottomLeft.y, c.bottomRight.y];
   const minX = Math.max(0, Math.min(...xs));
   const maxX = Math.min(1, Math.max(...xs));
-  const minY = Math.max(0, Math.min(...ys));
-  const maxY = Math.min(1, Math.max(...ys));
+  // Layer corners are canvas Y-up; slice rects below are surface Y-down, so
+  // the two only overlap after this conversion.
+  const minY = Math.max(0, 1 - Math.max(...ys));
+  const maxY = Math.min(1, 1 - Math.min(...ys));
   if (maxX - minX <= 0.0001 || maxY - minY <= 0.0001) return null;
   return { minX, minY, maxX, maxY };
 }

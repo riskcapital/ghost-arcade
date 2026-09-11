@@ -327,11 +327,11 @@ function screenLayerPlacement(layer: Layer, wall: VenueBuild['ledWall']):
   return {
     position: [
       wall.centerX + (cx - 0.5) * wall.width,
-      // Corner space is canvas Y-DOWN (y=0 top); wall space is Y-up.
-      // A screen at the top of the 2D canvas belongs at the top of the
-      // LED wall. (Was `cy - 0.5`, which matched the old Y-flipped
-      // Apply-Stage corners — both sides now use the canvas convention.)
-      wall.centerY + (0.5 - cy) * wall.height,
+      // Corner space and wall space are both Y-up, so a screen at the top
+      // of the 2D canvas belongs at the top of the LED wall. Apply Stage
+      // wrote Y-down corners until 2026-09-11; those are converted on load
+      // by migrateStageLayerCorners.
+      wall.centerY + (cy - 0.5) * wall.height,
       wall.centerZ + 0.1,
     ],
     width: w,
@@ -537,8 +537,10 @@ function domeScreenPlacement(layer: Layer, dome: LedDome):
   const ys = [corners.topLeft.y, corners.topRight.y, corners.bottomLeft.y, corners.bottomRight.y];
   const u0 = Math.max(0, Math.min(...xs));
   const u1 = Math.min(1, Math.max(...xs));
-  const yTop = Math.max(0, Math.min(...ys));
-  const yBottom = Math.min(1, Math.max(...ys));
+  // Corners are canvas Y-up; dome elevation is measured downward from the
+  // top of the sweep, so the box is converted here.
+  const yTop = Math.max(0, 1 - Math.max(...ys));
+  const yBottom = Math.min(1, 1 - Math.min(...ys));
   if (u1 - u0 < 0.005 || yBottom - yTop < 0.005) return null;
 
   const vRange = dome.vEndDeg - dome.vStartDeg;
@@ -1167,11 +1169,11 @@ export class Stage3DRenderer {
           texture = parentTex;
           useUnifiedCrop = true;
           // (offsetX, offsetY, width, height) in texture UV space.
-          // Corners are canvas Y-DOWN (y=0 top); the texture is GL V-up.
-          // offsetY = 1 - maxY converts between the two — the SAME math
-          // engine.ts uses for the 2D unified crop, so both views sample
-          // identical bands of the shared group texture.
-          u.uCropRegion.value.set(minX, 1 - maxY, maxX - minX, maxY - minY);
+          // Corners and GL texture V both grow upward, so the offset is the
+          // corner box's own minY — the SAME math engine.ts uses for the 2D
+          // unified crop, so both views sample identical bands of the shared
+          // group texture.
+          u.uCropRegion.value.set(minX, minY, maxX - minX, maxY - minY);
         }
       }
       if (!texture) texture = textureForLayer(layer, masterTexture);

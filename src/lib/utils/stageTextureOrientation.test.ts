@@ -1,70 +1,57 @@
 import { describe, expect, it } from 'vitest';
-import type { WarpCorners } from '../types';
-import {
-  layerUsesStageTextureCoordinates,
-  stageTextureNeedsVerticalFlip,
-} from './stageTextureOrientation';
+import { migrateStageLayerCorners } from './stageTextureOrientation';
 
-const yDownCorners: WarpCorners = {
-  topLeft: { x: 0, y: 0.1 },
-  topRight: { x: 1, y: 0.1 },
-  bottomLeft: { x: 0, y: 0.9 },
-  bottomRight: { x: 1, y: 0.9 },
+const savedStageLayer = {
+  stageTextureFlipV: true,
+  corners: {
+    topLeft: { x: 0.1, y: 0.2 },
+    topRight: { x: 0.9, y: 0.2 },
+    bottomLeft: { x: 0.1, y: 0.6 },
+    bottomRight: { x: 0.9, y: 0.6 },
+  },
 };
 
-const yUpCorners: WarpCorners = {
-  topLeft: { x: 0, y: 0.9 },
-  topRight: { x: 1, y: 0.9 },
-  bottomLeft: { x: 0, y: 0.1 },
-  bottomRight: { x: 1, y: 0.1 },
-};
-
-describe('stageTextureNeedsVerticalFlip', () => {
-  it('migrates legacy Stage layers authored in canvas Y-down coordinates', () => {
-    expect(stageTextureNeedsVerticalFlip({ corners: yDownCorners })).toBe(true);
+describe('migrateStageLayerCorners', () => {
+  it('lifts a saved Stage layer into canvas Y-up corners', () => {
+    const migrated = migrateStageLayerCorners(savedStageLayer);
+    expect(migrated.corners.topLeft).toEqual({ x: 0.1, y: 0.8 });
+    expect(migrated.corners.bottomRight).toEqual({ x: 0.9, y: 0.4 });
+    // The slice's top edge must end up above its bottom edge.
+    expect(migrated.corners.topLeft.y).toBeGreaterThan(migrated.corners.bottomLeft.y);
+    expect(migrated.stageTextureFlipV).toBe(false);
   });
 
-  it('leaves older UV Y-up Stage layers unchanged', () => {
-    expect(stageTextureNeedsVerticalFlip({ corners: yUpCorners })).toBe(false);
+  it('is idempotent, so re-imported state cannot flip twice', () => {
+    const once = migrateStageLayerCorners(savedStageLayer);
+    expect(migrateStageLayerCorners(once)).toEqual(once);
   });
 
-  it('keeps the explicit Stage contract after the user rotates or warps a layer', () => {
-    expect(stageTextureNeedsVerticalFlip({
-      corners: yUpCorners,
-      stageTextureFlipV: true,
-    })).toBe(true);
+  it('leaves layers the Stage did not author untouched', () => {
+    const ordinary = {
+      corners: {
+        topLeft: { x: 0, y: 1 },
+        topRight: { x: 1, y: 1 },
+        bottomLeft: { x: 0, y: 0 },
+        bottomRight: { x: 1, y: 0 },
+      },
+    };
+    expect(migrateStageLayerCorners(ordinary)).toBe(ordinary);
   });
 
-  it('lets an explicit compatibility override win over corner inference', () => {
-    expect(stageTextureNeedsVerticalFlip({
-      corners: yDownCorners,
-      stageTextureFlipV: false,
-    })).toBe(false);
-  });
-});
-
-describe('layerUsesStageTextureCoordinates', () => {
-  it('recognizes a generated Stage screen directly', () => {
-    expect(layerUsesStageTextureCoordinates(
-      { id: 'screen-1', type: 'screen', stageTextureFlipV: true },
-      [],
-    )).toBe(true);
-  });
-
-  it('inherits the coordinate contract for a unified group of Stage screens', () => {
-    expect(layerUsesStageTextureCoordinates(
-      { id: 'group-1', type: 'group' },
-      [
-        { parentGroupId: 'group-1', stageTextureFlipV: true },
-        { parentGroupId: 'group-1', stageTextureFlipV: true },
-      ],
-    )).toBe(true);
-  });
-
-  it('does not tag an ordinary mapping group', () => {
-    expect(layerUsesStageTextureCoordinates(
-      { id: 'group-1', type: 'group' },
-      [{ parentGroupId: 'group-1' }],
-    )).toBe(false);
+  it('flips a mesh grid and reverses its rows so row 0 stays the top row', () => {
+    const withMesh = {
+      ...savedStageLayer,
+      meshGrid: {
+        rows: 2,
+        cols: 2,
+        points: [
+          [{ x: 0, y: 0.2 }, { x: 1, y: 0.2 }],
+          [{ x: 0, y: 0.6 }, { x: 1, y: 0.6 }],
+        ],
+      },
+    };
+    const migrated = migrateStageLayerCorners(withMesh);
+    expect(migrated.meshGrid.points[0]).toEqual([{ x: 0, y: 0.4 }, { x: 1, y: 0.4 }]);
+    expect(migrated.meshGrid.points[1]).toEqual([{ x: 0, y: 0.8 }, { x: 1, y: 0.8 }]);
   });
 });
