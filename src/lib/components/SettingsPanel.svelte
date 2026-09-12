@@ -1994,7 +1994,7 @@
                 the token below.
               </span>
             </div>
-            <label class="toggle-switch">
+            <label class="toggle">
               <input
                 type="checkbox"
                 checked={$mcpStore.enabled}
@@ -2079,7 +2079,7 @@
                 whatever address you map, we answer on.
               </span>
             </div>
-            <label class="toggle-switch">
+            <label class="toggle">
               <input
                 type="checkbox"
                 checked={$oscStore.outputEnabled}
@@ -3633,7 +3633,15 @@
     height: 0;
   }
 
-  .toggle-slider {
+  /* Scoped to .toggle on purpose. These rules are what give the slider its
+     size, and it is absolutely positioned with all four offsets pinned: on a
+     label that is not .toggle (no position, no width) the containing block
+     becomes .settings-overlay and one slider paints an opaque box over the
+     whole window, swallowing every click. That shipped in 2.0.3 as two
+     toggles in the OSC section written with a class that has no CSS, and read
+     as "the OSC tab blanks the app". Requiring the parent makes a stray
+     slider render nothing instead of a full-screen blackout. */
+  .toggle .toggle-slider {
     position: absolute;
     cursor: pointer;
     top: 0;
@@ -3645,7 +3653,7 @@
     border-radius: 26px;
   }
 
-  .toggle-slider::before {
+  .toggle .toggle-slider::before {
     position: absolute;
     content: "";
     height: 20px;
