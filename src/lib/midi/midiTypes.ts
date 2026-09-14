@@ -71,6 +71,12 @@ export interface MidiStoreState {
   selectedOutputId: string | null;  // Currently selected output device for clock send
   mappings: MidiMapping[];     // All current mappings
   editMode: boolean;           // Is MIDI edit/overlay mode active
+  /** Settings > MIDI is waiting for a control to be pressed so it can
+   *  show what that control is bound to. Routing is suppressed while it
+   *  is on: the whole point is to press the pad you want to unbind, and
+   *  firing everything it triggers on the way would be the opposite of
+   *  helpful. Session state, never persisted. */
+  identifyMode: boolean;
   learn: MidiLearnState;       // Current learn state
   lastMessage: {               // Last received MIDI message (for display)
     channel: number;
