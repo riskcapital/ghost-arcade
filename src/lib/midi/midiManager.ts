@@ -342,8 +342,11 @@ class MidiManager {
       return;
     }
 
-    // Route to parameter updates (only when NOT in edit mode to avoid unintended changes while mapping)
-    if (!state.editMode) {
+    // Route to parameter updates. Suppressed in edit mode to avoid
+    // unintended changes while mapping, and in identify mode, where the user
+    // is pressing a control precisely to find out what it is bound to: firing
+    // all of it at them would be the opposite of what they asked for.
+    if (!state.editMode && !state.identifyMode) {
       midiRouter.routeMessage(channel, type, number, value);
     }
   }
