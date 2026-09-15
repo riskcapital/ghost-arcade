@@ -12,6 +12,7 @@ import {
   type VJMixRow,
 } from '$lib/renderer/vjMixNative';
 import type { Layer, Model3DContent, SplatContent } from '$lib/types';
+import { layerRenderMeshGrid } from '$lib/utils/meshWarp';
 import { project } from '$lib/stores/layers';
 import { mediaLibrary, type MediaItem } from '$lib/stores/media';
 import { keyframeTimeline } from '$lib/stores/keyframeTimeline';
@@ -3547,8 +3548,8 @@ function geometrySignature(layer: Layer): string {
     c.bottomRight.x, c.bottomRight.y,
     c.bottomLeft.x, c.bottomLeft.y,
   ].map((v) => Number.isFinite(v) ? v.toFixed(5) : 'nan').join(':');
-  if (layer.warpMode !== 'mesh' || !layer.meshGrid) return `corners:${corners}`;
-  const grid = layer.meshGrid;
+  const grid = layerRenderMeshGrid(layer);
+  if (!grid) return `corners:${corners}`;
   const points = grid.points
     .flatMap((row) => row.flatMap((point) => [point.x, point.y]))
     .map((value) => Number.isFinite(value) ? value.toFixed(5) : 'nan')
@@ -8012,7 +8013,7 @@ export class NativeRendererSync {
           shape_points: nativeShape.shapePoints,
           mask_info: nativeMask.info,
           mask_points: nativeMask.points,
-          mesh_grid: layer.warpMode === 'mesh' ? layer.meshGrid : null,
+          mesh_grid: layerRenderMeshGrid(layer),
         });
       }
 
@@ -8661,7 +8662,7 @@ export class NativeRendererSync {
           shape_points: nativeShape.shapePoints,
           mask_info: nativeMask.info,
           mask_points: nativeMask.points,
-          mesh_grid: layer.warpMode === 'mesh' ? layer.meshGrid : null,
+          mesh_grid: layerRenderMeshGrid(layer),
         });
         commands.push({
           type: 'set_layer_visibility',
