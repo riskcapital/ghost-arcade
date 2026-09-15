@@ -7541,7 +7541,10 @@
       }
       const rect = nativePreviewEmbeddedRect();
       if (!rect) return;
-      const signature = `embedded:${rect.x},${rect.y},${rect.width}x${rect.height}:content=${rect.contentX.toFixed(2)},${rect.contentY.toFixed(2)},${rect.contentWidth.toFixed(2)}x${rect.contentHeight.toFixed(2)}`;
+      // Windows places the preview in physical pixels, so moving the window to
+      // a monitor with a different display scale has to re-send the rect.
+      const pixelRatio = window.devicePixelRatio || 1;
+      const signature = `embedded:${rect.x},${rect.y},${rect.width}x${rect.height}:content=${rect.contentX.toFixed(2)},${rect.contentY.toFixed(2)},${rect.contentWidth.toFixed(2)}x${rect.contentHeight.toFixed(2)}@${pixelRatio}`;
       // AppKit can adjust child-view geometry while a live resize is being
       // committed. Re-verify the acknowledged canvas rectangle periodically
       // even when the DOM signature is unchanged; normal animation frames
@@ -7555,6 +7558,7 @@
       ) return;
       const requestRect = {
         ...rect,
+        pixelRatio,
         generation: ++nativePreviewRequestGeneration,
       };
       try {

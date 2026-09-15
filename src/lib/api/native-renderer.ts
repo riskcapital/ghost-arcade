@@ -88,6 +88,9 @@ export interface NativeEditorPreviewRect {
   contentY?: number;
   contentWidth?: number;
   contentHeight?: number;
+  /** CSS-to-device pixel ratio. The Windows presenter positions in physical
+   *  pixels and scales the rect by it. */
+  pixelRatio?: number;
   generation?: number;
 }
 

@@ -25,6 +25,7 @@ import { createNativeRendererBroker, nativeRendererCommandNames } from './native
 import {
   nativePreviewGeometryMatches,
   nativePreviewRectSignature,
+  nativePreviewRectToDevicePixels,
   normalizeNativePreviewRect,
 } from './native-preview-geometry.js';
 import { createJsSourceHost, JS_SOURCE_SCHEME } from './js-source-host.js';
@@ -2956,6 +2957,25 @@ function stopDeckMonitorPump() {
   deckMonitorLastFrame.clear();
 }
 
+// The rectangle the platform presenter takes. Windows positions the preview in
+// physical pixels (see nativePreviewRectToDevicePixels). The renderer sends its
+// devicePixelRatio, which tracks the monitor the window is on right now; the
+// display lookup covers a renderer that did not.
+function nativePreviewAddonRect(rect, rectArgs) {
+  if (process.platform !== 'win32') return rect;
+  let ratio = Number(rectArgs?.pixelRatio);
+  if (!Number.isFinite(ratio) || ratio <= 0) {
+    try {
+      ratio = mainWindow && !mainWindow.isDestroyed()
+        ? screen.getDisplayMatching(mainWindow.getBounds()).scaleFactor
+        : 1;
+    } catch {
+      ratio = 1;
+    }
+  }
+  return nativePreviewRectToDevicePixels(rect, ratio);
+}
+
 function attachNativeEditorPreview(rectArgs = {}) {
   const addon = loadNativePreviewAddon();
   if (!addon || typeof addon.attach !== 'function') {
@@ -2975,11 +2995,12 @@ function attachNativeEditorPreview(rectArgs = {}) {
     if (!Buffer.isBuffer(handle) || handle.length === 0) {
       return getNativePreviewStatus({ attached: false, error: 'main window native handle is unavailable' });
     }
+    const addonRect = nativePreviewAddonRect(rect, rectArgs);
     const status = nativePreviewAttached && signature === nativePreviewLastRectSignature
-      ? addon.update(rect)
-      : addon.attach(handle, rect);
+      ? addon.update(addonRect)
+      : addon.attach(handle, addonRect);
     nativePreviewAttached = !!status?.attached;
-    const geometryMatches = nativePreviewGeometryMatches(rect, status);
+    const geometryMatches = nativePreviewGeometryMatches(addonRect, status);
     nativePreviewLastRectSignature = geometryMatches ? signature : '';
     startNativeEditorPreviewPump();
     return getNativePreviewStatus({ rect, geometryMatches });
@@ -3022,9 +3043,10 @@ function updateNativeEditorPreview(rectArgs = {}) {
         error: 'main window native handle is unavailable',
       });
     }
-    const status = addon.update(handle, rect);
+    const addonRect = nativePreviewAddonRect(rect, rectArgs);
+    const status = addon.update(handle, addonRect);
     nativePreviewAttached = !!status?.attached;
-    const geometryMatches = nativePreviewGeometryMatches(rect, status);
+    const geometryMatches = nativePreviewGeometryMatches(addonRect, status);
     nativePreviewLastRectSignature = geometryMatches ? signature : '';
     startNativeEditorPreviewPump();
     return getNativePreviewStatus({ rect, geometryMatches });

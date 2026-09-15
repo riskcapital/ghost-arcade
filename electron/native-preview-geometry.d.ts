@@ -28,6 +28,11 @@ export function normalizeNativePreviewRect(
   generation?: number,
 ): NativePreviewRect;
 
+export function nativePreviewRectToDevicePixels(
+  rect: NativePreviewRect,
+  pixelRatio: number | null | undefined,
+): NativePreviewRect;
+
 export function nativePreviewRectSignature(rect: NativePreviewRect): string;
 
 export function nativePreviewGeometryMatches(
