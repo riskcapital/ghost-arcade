@@ -14,6 +14,8 @@
  * frame), source-frame texture bindings, replace-blend render passes.
  */
 
+import { buildVJCrossfadeGraph } from './vjCrossfadeNative';
+
 export const VJ_MIX_SHADER_ID = 'vj-mix/render';
 
 // Mirrors native-renderer/src/compositor.rs blend_mode_code — the per-row
@@ -360,7 +362,9 @@ export function buildVJMixGraph(options: VJMixGraphOptions) {
         ? options.outputSourceId
         : `${options.outputSourceId}:step:${index % 2}`,
       // Higher seq than the vj-xfade passes (seq: frameIndex) so the mix
-      // consumes this frame's crossfade output, not last frame's.
+      // consumes this frame's crossfade output, not last frame's. The order
+      // the jobs actually run in comes from the core, which runs every
+      // crossfade before any mix (frame_job_stage in main.rs).
       seq: options.frameIndex * 16 + 8 + index,
       clear: true,
       generate_mips: false,
@@ -388,4 +392,57 @@ export function buildVJMixGraph(options: VJMixGraphOptions) {
       readbacks: [],
     },
   };
+}
+
+/**
+ * One-shot queued graphs that make the core build the VJ crossfade and VJ Mix
+ * pipelines at startup, before a live trigger needs them. While any pipeline
+ * warms the core runs no graph jobs, and a Screen bound to a row gets a brand
+ * new crossfade graph when that row starts crossfading, so a first-use compile
+ * shows up as a black Screen at the moment of the trigger.
+ */
+export function buildVJPipelineWarmupCommands(): Array<Record<string, unknown>> {
+  const size = 16;
+  const sourceId = 'warmup:vj:src';
+  const rgba = new Uint8Array(size * size * 4);
+  for (let i = 3; i < rgba.length; i += 4) rgba[i] = 255;
+  const crossfade = buildVJCrossfadeGraph({
+    outputSourceId: 'warmup:vj-crossfade:out',
+    sourceAId: sourceId,
+    sourceBId: sourceId,
+    width: size,
+    height: size,
+    mix: 0,
+    transition: 'dissolve',
+    blendMode: 'normal',
+    opacityA: 1,
+    opacityB: 1,
+    time: 0,
+    frameIndex: 0,
+  });
+  // Two rows, so a pass that reads the accumulator is built as well as the
+  // first pass, which has none yet.
+  const mix = buildVJMixGraph({
+    outputSourceId: 'warmup:vj-mix:out',
+    rows: [
+      { frameId: sourceId, opacity: 1, blendMode: 'normal' },
+      { frameId: sourceId, opacity: 1, blendMode: 'normal' },
+    ],
+    width: size,
+    height: size,
+    time: 0,
+    frameIndex: 0,
+  });
+  return [
+    {
+      type: 'upload_source_frame',
+      source_id: sourceId,
+      seq: 1,
+      width: size,
+      height: size,
+      rgba_b64: bufferToBase64(rgba.buffer),
+    },
+    { type: 'queue_compute_graph', ...crossfade.config },
+    { type: 'queue_compute_graph', ...mix.config },
+  ];
 }
