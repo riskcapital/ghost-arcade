@@ -420,6 +420,23 @@ function encodeNativeGraphConfigForRpc(config: Record<string, any>): Record<stri
   };
 }
 
+/** Poll frame snapshots until `ready` holds or the timeout passes; returns the
+ *  last snapshot either way, so the caller's assertions report what was seen. */
+async function waitForSnapshot(
+  rpc: NativeRpc,
+  ready: (snapshot: Record<string, any>) => boolean | Promise<boolean>,
+  timeoutMs = 5000,
+): Promise<Record<string, any>> {
+  const deadline = Date.now() + timeoutMs;
+  let snapshot: Record<string, any> = {};
+  do {
+    snapshot = await rpc.send('frame_snapshot', { include_pixels: false }, 8000);
+    if (await ready(snapshot)) return snapshot;
+    await delay(50);
+  } while (Date.now() < deadline);
+  return snapshot;
+}
+
 function assertVisibleSnapshot(label: string, snapshot: Record<string, unknown>, minLuma = 0.015) {
   expect(snapshot.dark_frame, label).toBe(false);
   expect(Number(snapshot.average_luma ?? 0), label).toBeGreaterThan(minLuma);
@@ -922,6 +939,7 @@ describe('Native graph instrument runtime fixtures', () => {
       ]) {
         const layerId = `core-owned-${fixture.kind}`;
         const sourceId = `core-owned-${fixture.kind}-output`;
+        const runsBefore = Number((await rpc.send('status', {}, 5000))?.compute_graph_runs ?? 0);
         await rpc.send('submit_commands', {
           commands: [
             {
@@ -945,11 +963,27 @@ describe('Native graph instrument runtime fixtures', () => {
             },
           ],
         }, 8000);
-        await delay(350);
-        const first = await rpc.send('frame_snapshot', { include_pixels: false }, 8000);
+        // Wait for the instrument's own first frame rather than sleeping a
+        // fixed 350 ms. The core compiles pipelines asynchronously, so a new
+        // layer shows a brief placeholder, then goes dark, then draws once its
+        // pipelines are warm (the same on HEAD before the particle work). With
+        // the whole suite running cores in parallel that warm-up can outlast a
+        // short fixed delay, and a bare "is it visible" poll accepts the
+        // placeholder and then reads the drop to dark as "advancing". So: the
+        // graph has to have actually run, and both frames have to be visible.
+        const visible = (snapshot: Record<string, any>) =>
+          !snapshot.dark_frame && Number(snapshot.average_luma ?? 0) > 0.0002;
+        const first = await waitForSnapshot(rpc, async (snapshot) => {
+          if (!visible(snapshot)) return false;
+          const status = await rpc.send('status', {}, 5000);
+          return Number(status.compute_graph_runs ?? 0) > runsBefore;
+        });
         assertVisibleSnapshot(`core-owned ${fixture.kind}`, first, 0.0002);
-        await delay(250);
-        const second = await rpc.send('frame_snapshot', { include_pixels: false }, 8000);
+        const second = await waitForSnapshot(
+          rpc,
+          (snapshot) => visible(snapshot) && snapshot.checksum !== first.checksum,
+          3000,
+        );
         assertVisibleSnapshot(`advancing core-owned ${fixture.kind}`, second, 0.0002);
         expect(second.checksum, fixture.kind).not.toBe(first.checksum);
         await rpc.send('submit_commands', {
@@ -1445,9 +1479,16 @@ describe('Native graph instrument runtime fixtures', () => {
         ],
       }, 12000);
       expect(Number(liveSummary?.dropped ?? 0)).toBe(0);
-      await delay(180);
-
-      const status = await rpc.send('status', {}, 5000);
+      // Poll for the run instead of assuming 180 ms. Pipelines warm
+      // asynchronously and, with the suite's native cores all compiling at
+      // once, a fixed wait was flaky on HEAD too (1 in 10 on its own).
+      let status: Record<string, any> = {};
+      const deadline = Date.now() + 5000;
+      do {
+        status = await rpc.send('status', {}, 5000);
+        if (Number(status?.compute_graph_source_frame_renders ?? 0) >= 1) break;
+        await delay(50);
+      } while (Date.now() < deadline);
       expect(Number(status?.compute_graph_runs ?? 0)).toBeGreaterThanOrEqual(1);
       expect(Number(status?.compute_graph_passes ?? 0)).toBeGreaterThanOrEqual(1);
       expect(Number(status?.compute_graph_source_frame_renders ?? 0)).toBeGreaterThanOrEqual(1);

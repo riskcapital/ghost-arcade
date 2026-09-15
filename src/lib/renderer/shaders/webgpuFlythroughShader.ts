@@ -24,6 +24,7 @@
 import { WebGPUFlythrough } from '../webgpuFlythrough';
 import type { GpuShaderImpl, ParamControl } from '../gpuShaderTypes';
 import { deriveDefaults } from '../gpuShaderTypes';
+import { particleDirectorParamControls } from '../particleDirector';
 
 // Param schema — declarative + grouped. Each control's `group` drives
 // the panel's section headers. Defaults match the renderer's internal
@@ -75,6 +76,13 @@ export const flythroughParamSchema: ParamControl[] = [
     min: 0.5, max: 8, step: 0.05, default: 2.0 },
   { kind: 'slider', key: 'anchorPull',   label: 'Anchor Pull',   group: 'Flow & Anchor',
     min: 0, max: 3, step: 0.01, default: 1.2 },
+  // Anchor pull is a spring, so strong flow can still carry particles far
+  // enough to lose the picture. Limit Wander is the hard guarantee: no
+  // particle travels further than Wander Radius from its own pixel.
+  { kind: 'toggle', key: 'limitWander',  label: 'Limit Wander',  group: 'Flow & Anchor', default: false },
+  { kind: 'slider', key: 'wanderRadius', label: 'Wander Radius', group: 'Flow & Anchor',
+    min: 0.01, max: 1, step: 0.01, default: 0.2,
+    showWhen: { limitWander: true } },
   { kind: 'slider', key: 'depthStrength',label: 'Depth Strength',group: 'Flow & Anchor',
     min: 0, max: 1.5, step: 0.01, default: 0.5 },
 
@@ -117,6 +125,43 @@ export const flythroughParamSchema: ParamControl[] = [
   // method on the wrapper each frame.
   { kind: 'toggle', key: 'audioReactive', label: 'Audio Reactive', group: 'Audio',
     default: false },
+
+  // ── Grains (points) ───────────────────────────────────────────
+  // Lit Grains draws each point as a small sphere with real depth, so the
+  // near end of the tunnel hides the far end instead of the stack adding up
+  // to haze. Strokes are not spheres and always render soft.
+  { kind: 'select', key: 'grainShading', label: 'Shading', group: 'Grains',
+    options: [
+      { value: 'soft', label: 'Soft Glow' },
+      { value: 'lit',  label: 'Lit Grains' },
+    ],
+    default: 'soft', showWhen: { topology: 'points' } },
+  { kind: 'slider', key: 'lightX',         label: 'Light X',   group: 'Grains', min: -1, max: 1, step: 0.01, default: 0.5,  showWhen: { topology: 'points', grainShading: 'lit' } },
+  { kind: 'slider', key: 'lightY',         label: 'Light Y',   group: 'Grains', min: -1, max: 1, step: 0.01, default: 0.7,  showWhen: { topology: 'points', grainShading: 'lit' } },
+  { kind: 'slider', key: 'lightZ',         label: 'Light Z',   group: 'Grains', min: -1, max: 1, step: 0.01, default: -0.5, showWhen: { topology: 'points', grainShading: 'lit' } },
+  { kind: 'slider', key: 'lightIntensity', label: 'Intensity', group: 'Grains', min: 0, max: 3, step: 0.01, default: 1.2,  showWhen: { topology: 'points', grainShading: 'lit' } },
+  { kind: 'slider', key: 'lightAmbient',   label: 'Ambient',   group: 'Grains', min: 0, max: 1, step: 0.01, default: 0.25, showWhen: { topology: 'points', grainShading: 'lit' } },
+  { kind: 'slider', key: 'grainSpecular',  label: 'Sheen',     group: 'Grains', min: 0, max: 1.5, step: 0.01, default: 0.35, showWhen: { topology: 'points', grainShading: 'lit' } },
+
+  // ── Focus (points) ────────────────────────────────────────────
+  { kind: 'slider', key: 'aperture',      label: 'Aperture',       group: 'Focus', min: 0, max: 2, step: 0.01, default: 0,   showWhen: { topology: 'points' } },
+  { kind: 'slider', key: 'focusDistance', label: 'Focus Distance', group: 'Focus', min: 0.2, max: 6, step: 0.01, default: 1.5, showWhen: { topology: 'points' } },
+
+  // ── Motion ────────────────────────────────────────────────────
+  // Driven by the source itself: a particle whose pixel is changing bursts
+  // along the flow toward the camera and swells, then settles as the pixel
+  // holds still. A still image never triggers it, so it is safe to leave on
+  // for a set that mixes stills and video.
+  { kind: 'slider', key: 'motionReactive', label: 'Motion Reactivity', group: 'Motion',
+    min: 0, max: 2, step: 0.01, default: 0 },
+  { kind: 'slider', key: 'motionDecay',    label: 'Motion Recovery',   group: 'Motion',
+    min: 0.5, max: 12, step: 0.1, default: 3 },
+
+  // ── Auto Camera ───────────────────────────────────────────────
+  // In the tunnel the director slows the flight on detail shots and aims
+  // into the slab at its subject, so the loop alternates travelling with
+  // looking.
+  ...particleDirectorParamControls(),
 ];
 
 export const flythroughParamDefaults = deriveDefaults(flythroughParamSchema);
@@ -184,6 +229,9 @@ export class WebGPUFlythroughShader implements GpuShaderImpl {
       cameraYaw: p.cameraYaw ?? 0,
       cameraPitch: p.cameraPitch ?? 0,
       particleCount: Math.round(p.particleCount ?? 250000),
+      wanderRadius: p.limitWander === true ? Math.max(0, Number(p.wanderRadius ?? 0.2)) : 0,
+      motionReactive: Math.max(0, Number(p.motionReactive ?? 0)),
+      motionDecay: Math.max(0, Number(p.motionDecay ?? 3)),
     });
     // Blend mode is owned by the gpu LAYER (engine compositor), not
     // the inner renderer — we always composite normal-blended into

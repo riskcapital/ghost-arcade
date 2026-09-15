@@ -1,5 +1,6 @@
 import { getGhostGpuRuntime } from './webgpuShared';
 import { createAndWarmWgslShaderModule, resolveGhostWgsl } from './wgsl';
+import { getParticleDirectorShaderSource } from './particleDirector';
 
 /**
  * WebGPUFlythrough — endless point-cloud tunnel through any 2D source.
@@ -57,7 +58,7 @@ import { createAndWarmWgslShaderModule, resolveGhostWgsl } from './wgsl';
  *   vel:         vec3<f32>     // current velocity (used for stroke direction)
  *   depthAnchor: f32           // source-derived Z anchor
  *   anchor:      vec2<f32>     // fixed XY anchor in [-1..1]
- *   _pad:        vec2<f32>     // pad to 48 (16-byte alignment for vec4)
+ *   signal:      vec2<f32>     // x = remembered luma (<0 = unread), y = change
  */
 
 const PARTICLE_BYTES = 48;
@@ -112,7 +113,110 @@ function translate(x: number, y: number, z: number): Float32Array {
 }
 
 /* ============================================================== */
-/* COMPUTE SHADER — curl-noise advection + anchor pull            */
+/* CURL FIELD — baked once into a storage buffer                   */
+/* ============================================================== */
+/*
+ * The flow used to be evaluated per particle, per frame: curl by central
+ * differences is twelve value-noise lookups, each eight sin-hashes, so 96
+ * hashes for every particle every frame. At a million particles that was the
+ * bulk of the compute pass.
+ *
+ * The field is static in its own coordinates (time only ever slid the sample
+ * point along Z), so it is baked once into a periodic grid and particles read
+ * it with one trilinear lookup. Periodic so the grid can wrap with no seam:
+ * the lattice hash is taken modulo CURL_PERIOD, which makes the noise, and so
+ * its curl, exactly repeat. The period is wide enough that even at the top of
+ * the Flow Scale slider a slab is two thirds of one repeat across, so the
+ * repeat never shows inside the frame.
+ *
+ * The hash is integer (PCG3D) rather than fract(sin()). sin-hashes lose
+ * precision at large lattice coordinates and band on some GPUs; a baked field
+ * would freeze any banding in place, so it is worth not having.
+ */
+export const FLYTHROUGH_CURL_GRID_N = 80;
+export const FLYTHROUGH_CURL_PERIOD = 24;
+export const FLYTHROUGH_CURL_BYTES = FLYTHROUGH_CURL_GRID_N ** 3 * 16;
+
+const CURL_BAKE_WGSL = /* wgsl */ `
+struct BakeU {
+  n:      u32,
+  period: u32,
+  _a:     u32,
+  _b:     u32,
+};
+
+@group(0) @binding(0) var<storage, read_write> curlField: array<vec4<f32>>;
+@group(0) @binding(1) var<uniform> bu: BakeU;
+
+fn pcg3d(input: vec3<u32>) -> vec3<u32> {
+  var v = input * 1664525u + 1013904223u;
+  v.x = v.x + v.y * v.z;
+  v.y = v.y + v.z * v.x;
+  v.z = v.z + v.x * v.y;
+  v = v ^ (v >> vec3<u32>(16u));
+  v.x = v.x + v.y * v.z;
+  v.y = v.y + v.z * v.x;
+  v.z = v.z + v.x * v.y;
+  return v;
+}
+
+fn latticeHash(i: vec3<f32>) -> f32 {
+  let period = i32(bu.period);
+  let x = ((i32(i.x) % period) + period) % period;
+  let y = ((i32(i.y) % period) + period) % period;
+  let z = ((i32(i.z) % period) + period) % period;
+  let h = pcg3d(vec3<u32>(u32(x), u32(y), u32(z)));
+  return f32(h.x) / 4294967295.0;
+}
+
+fn noise3(p: vec3<f32>) -> f32 {
+  let i = floor(p);
+  let f = p - i;
+  let u = f * f * (3.0 - 2.0 * f);
+  let n000 = latticeHash(i);
+  let n100 = latticeHash(i + vec3<f32>(1.0, 0.0, 0.0));
+  let n010 = latticeHash(i + vec3<f32>(0.0, 1.0, 0.0));
+  let n110 = latticeHash(i + vec3<f32>(1.0, 1.0, 0.0));
+  let n001 = latticeHash(i + vec3<f32>(0.0, 0.0, 1.0));
+  let n101 = latticeHash(i + vec3<f32>(1.0, 0.0, 1.0));
+  let n011 = latticeHash(i + vec3<f32>(0.0, 1.0, 1.0));
+  let n111 = latticeHash(i + vec3<f32>(1.0, 1.0, 1.0));
+  let nx00 = mix(n000, n100, u.x);
+  let nx10 = mix(n010, n110, u.x);
+  let nx01 = mix(n001, n101, u.x);
+  let nx11 = mix(n011, n111, u.x);
+  return mix(mix(nx00, nx10, u.y), mix(nx01, nx11, u.y), u.z) * 2.0 - 1.0;
+}
+
+// curl(A) for a vector potential A made of three decorrelated noise fields,
+// by central differences. Divergence-free, so the flow swirls rather than
+// sources or sinks. The offsets (11, 31, 47) decorrelate the three fields and
+// stay inside one period.
+fn curl(p: vec3<f32>) -> vec3<f32> {
+  let e = 0.05;
+  let dx = vec3<f32>(e, 0.0, 0.0);
+  let dy = vec3<f32>(0.0, e, 0.0);
+  let dz = vec3<f32>(0.0, 0.0, e);
+  let ox = vec3<f32>(0.0, 0.0, 11.0);
+  let oy = vec3<f32>(31.0, 0.0, 0.0);
+  let oz = vec3<f32>(0.0, 47.0, 0.0);
+  let cx = (noise3(p + dy + ox) - noise3(p - dy + ox)) - (noise3(p + dz + ox) - noise3(p - dz + ox));
+  let cy = (noise3(p + dz + oy) - noise3(p - dz + oy)) - (noise3(p + dx + oy) - noise3(p - dx + oy));
+  let cz = (noise3(p + dx + oz) - noise3(p - dx + oz)) - (noise3(p + dy + oz) - noise3(p - dy + oz));
+  return vec3<f32>(cx, cy, cz) / (2.0 * e);
+}
+
+@compute @workgroup_size(4, 4, 4)
+fn cs_bake(@builtin(global_invocation_id) gid: vec3<u32>) {
+  if (gid.x >= bu.n || gid.y >= bu.n || gid.z >= bu.n) { return; }
+  let cell = f32(bu.period) / f32(bu.n);
+  let c = curl(vec3<f32>(gid) * cell);
+  curlField[gid.x + bu.n * (gid.y + bu.n * gid.z)] = vec4<f32>(c, 0.0);
+}
+`;
+
+/* ============================================================== */
+/* COMPUTE SHADER — baked curl advection + anchor + wander + signal */
 /* ============================================================== */
 const COMPUTE_WGSL = /* wgsl */ `
 struct Particle {
@@ -121,7 +225,9 @@ struct Particle {
   vel:         vec3<f32>,
   depthAnchor: f32,
   anchor:      vec2<f32>,
-  _pad:        vec2<f32>,
+  // x = the source luma this particle remembers (negative until the first
+  //     frame has been read), y = how much its pixel is changing right now.
+  signal:      vec2<f32>,
 };
 
 struct U {
@@ -136,83 +242,40 @@ struct U {
   depthSource:     u32,
   flyDistance:     f32,
   mirrorX:         u32,
+  wanderRadius:    f32,   // 0 = unbounded
+  motionReactive:  f32,   // 0 = off
+  motionDecay:     f32,   // how fast the remembered luma catches up, 1/s
+  curlGridN:       u32,
+  curlPeriod:      f32,
 };
 
 @group(0) @binding(0) var<storage, read_write> particles: array<Particle>;
 @group(0) @binding(1) var<uniform> u: U;
 @group(0) @binding(2) var sourceTexture: texture_2d<f32>;
 @group(0) @binding(3) var sourceSampler: sampler;
+@group(0) @binding(4) var<storage, read> curlField: array<vec4<f32>>;
 
-// Cheap value-noise gradient hash. Good enough for the curl field —
-// we're not after physically-correct flow, just smooth swirly motion.
-fn hash3(p: vec3<f32>) -> f32 {
-  let q = vec3<f32>(
-    dot(p, vec3<f32>(127.1, 311.7, 74.7)),
-    dot(p, vec3<f32>(269.5, 183.3, 246.1)),
-    dot(p, vec3<f32>(113.5, 271.9, 124.6)),
-  );
-  return fract(sin(q.x + q.y + q.z) * 43758.5453);
+fn curlAt(x: i32, y: i32, z: i32) -> vec3<f32> {
+  let n = i32(u.curlGridN);
+  let wx = ((x % n) + n) % n;
+  let wy = ((y % n) + n) % n;
+  let wz = ((z % n) + n) % n;
+  return curlField[u32(wx + n * (wy + n * wz))].xyz;
 }
 
-fn noise3(p: vec3<f32>) -> f32 {
-  let i = floor(p);
-  let f = fract(p);
-  let u = f * f * (3.0 - 2.0 * f);
-  let n000 = hash3(i + vec3<f32>(0.0, 0.0, 0.0));
-  let n100 = hash3(i + vec3<f32>(1.0, 0.0, 0.0));
-  let n010 = hash3(i + vec3<f32>(0.0, 1.0, 0.0));
-  let n110 = hash3(i + vec3<f32>(1.0, 1.0, 0.0));
-  let n001 = hash3(i + vec3<f32>(0.0, 0.0, 1.0));
-  let n101 = hash3(i + vec3<f32>(1.0, 0.0, 1.0));
-  let n011 = hash3(i + vec3<f32>(0.0, 1.0, 1.0));
-  let n111 = hash3(i + vec3<f32>(1.0, 1.0, 1.0));
-  let nx00 = mix(n000, n100, u.x);
-  let nx10 = mix(n010, n110, u.x);
-  let nx01 = mix(n001, n101, u.x);
-  let nx11 = mix(n011, n111, u.x);
-  let nxy0 = mix(nx00, nx10, u.y);
-  let nxy1 = mix(nx01, nx11, u.y);
-  return mix(nxy0, nxy1, u.z) * 2.0 - 1.0;
-}
-
-// curl(noise) — divergence-free flow field, gives smooth swirly motion
-// that looks like fluid. Cheap finite-difference approximation.
-fn curl(p: vec3<f32>) -> vec3<f32> {
-  let e = 0.05;
-  let dx = vec3<f32>(e, 0.0, 0.0);
-  let dy = vec3<f32>(0.0, e, 0.0);
-  let dz = vec3<f32>(0.0, 0.0, e);
-  // Three independent noise fields (offset by large constants to
-  // decorrelate them) define a vector potential A; curl(A) is the
-  // divergence-free velocity field.
-  let a_x = vec2<f32>(
-    noise3(p + dy + vec3<f32>(0.0, 0.0, 11.0)),
-    noise3(p - dy + vec3<f32>(0.0, 0.0, 11.0)),
-  );
-  let a_y = vec2<f32>(
-    noise3(p + dz + vec3<f32>(31.0, 0.0, 0.0)),
-    noise3(p - dz + vec3<f32>(31.0, 0.0, 0.0)),
-  );
-  let a_z = vec2<f32>(
-    noise3(p + dx + vec3<f32>(0.0, 47.0, 0.0)),
-    noise3(p - dx + vec3<f32>(0.0, 47.0, 0.0)),
-  );
-  let b_x = vec2<f32>(
-    noise3(p + dz + vec3<f32>(0.0, 0.0, 11.0)),
-    noise3(p - dz + vec3<f32>(0.0, 0.0, 11.0)),
-  );
-  let b_y = vec2<f32>(
-    noise3(p + dx + vec3<f32>(31.0, 0.0, 0.0)),
-    noise3(p - dx + vec3<f32>(31.0, 0.0, 0.0)),
-  );
-  let b_z = vec2<f32>(
-    noise3(p + dy + vec3<f32>(0.0, 47.0, 0.0)),
-    noise3(p - dy + vec3<f32>(0.0, 47.0, 0.0)),
-  );
-  let cx = (a_x.x - a_x.y) - (b_x.x - b_x.y);
-  let cy = (a_y.x - a_y.y) - (b_y.x - b_y.y);
-  let cz = (a_z.x - a_z.y) - (b_z.x - b_z.y);
-  return vec3<f32>(cx, cy, cz) / (2.0 * e);
+// One trilinear read of the baked field, wrapping at the period.
+fn sampleCurl(p: vec3<f32>) -> vec3<f32> {
+  let g = p / u.curlPeriod * f32(u.curlGridN);
+  let base = floor(g);
+  let f = g - base;
+  let ix = i32(base.x);
+  let iy = i32(base.y);
+  let iz = i32(base.z);
+  let c00 = mix(curlAt(ix, iy, iz),         curlAt(ix + 1, iy, iz),         f.x);
+  let c10 = mix(curlAt(ix, iy + 1, iz),     curlAt(ix + 1, iy + 1, iz),     f.x);
+  let c01 = mix(curlAt(ix, iy, iz + 1),     curlAt(ix + 1, iy, iz + 1),     f.x);
+  let c11 = mix(curlAt(ix, iy + 1, iz + 1), curlAt(ix + 1, iy + 1, iz + 1), f.x);
+  return mix(mix(c00, c10, f.y), mix(c01, c11, f.y), f.z);
 }
 
 fn sourceLumaAt(uv: vec2<f32>) -> f32 {
@@ -248,30 +311,59 @@ fn cs_main(@builtin(global_invocation_id) gid: vec3<u32>) {
   p.depthAnchor = mix(p.depthAnchor, sourceDepth, sourceMix);
   p.alpha = max(0.02, sourceColor.a);
 
-  // Curl-noise velocity in the slab-local frame. Scale the sample
-  // position so flowScale knob is intuitive — flowScale=1 gives ~one
-  // swirl across the slab; higher = tighter swirls.
-  let samplePos = vec3<f32>(p.pos.x, p.pos.y, p.pos.z) * u.flowScale + vec3<f32>(0.0, 0.0, u.time * 0.1);
-  let flow = curl(samplePos) * u.flowStrength;
+  // ── Signal: how much this particle's pixel is changing ──
+  // A remembered luma that catches up at motionDecay per second. The gap
+  // between it and the live luma is the change, so a still image settles to
+  // zero and only moving video drives anything. Always tracked, even with
+  // reactivity off, so switching it on mid-set does not fire every particle
+  // at once against a stale memory.
+  let luma = dot(sourceColor.rgb, vec3<f32>(0.299, 0.587, 0.114));
+  if (p.signal.x < 0.0) { p.signal.x = luma; }
+  let change = abs(luma - p.signal.x);
+  p.signal.x = mix(p.signal.x, luma, 1.0 - exp(-u.dt * max(u.motionDecay, 0.0)));
+  p.signal.y = mix(p.signal.y, change, clamp(u.dt * 20.0, 0.0, 1.0));
 
-  // Anchor pull — keeps the image legible by yanking particles
-  // toward their UV-anchor home position. Without this the image
-  // dissolves into chaos within a second.
+  // Baked curl, sampled in the slab-local frame. flowScale=1 is roughly one
+  // swirl across a slab; time slides the sample point along Z so the flow
+  // keeps evolving without re-baking anything.
+  let samplePos = p.pos * u.flowScale + vec3<f32>(0.0, 0.0, u.time * 0.1);
+  let flow = sampleCurl(samplePos) * u.flowStrength;
+
+  // Anchor pull keeps the image legible by drawing particles back to where
+  // their pixel lives.
   let homeXY = vec3<f32>(p.anchor.x, p.anchor.y, p.depthAnchor * u.depthStrength);
   let pull = (homeXY - p.pos) * u.anchorPull;
 
-  // Critically-damped-ish blend toward the target velocity. dt-scaled
-  // so the visual is frame-rate independent.
-  let targetVel = flow + pull;
+  var targetVel = flow + pull;
+  if (u.motionReactive > 0.0) {
+    // Changing pixels burst along their flow and toward the camera.
+    let along = flow / max(length(flow), 0.0001);
+    targetVel = targetVel + (along + vec3<f32>(0.0, 0.0, -0.6)) * p.signal.y * u.motionReactive * 6.0;
+  }
   p.vel = mix(p.vel, targetVel, clamp(u.dt * 6.0, 0.0, 1.0));
-
-  // Integrate position.
   p.pos = p.pos + p.vel * u.dt;
 
-  // Keep particles inside the slab Z range — the slab itself wraps
-  // in the vertex shader, but per-particle Z still needs to live in
-  // ~[-tunnelDepth/2, +tunnelDepth/2] or strokes will pierce slab
-  // boundaries and read as glitches.
+  // ── Wander radius ──
+  // A hard limit on how far a particle may travel from its pixel. Anchor
+  // pull is a spring, so strong flow or a burst of reactivity can still carry
+  // particles far enough to lose the picture; this is the guarantee. Outward
+  // velocity is cancelled as a particle nears the rim so it slides along the
+  // boundary instead of piling onto it.
+  if (u.wanderRadius > 0.0) {
+    let offset = p.pos - homeXY;
+    let r = length(offset);
+    if (r > 0.00001) {
+      let dir = offset / r;
+      let rim = smoothstep(u.wanderRadius * 0.7, u.wanderRadius, r);
+      p.vel = p.vel - dir * max(dot(p.vel, dir), 0.0) * rim;
+      if (r > u.wanderRadius) {
+        p.pos = homeXY + dir * u.wanderRadius;
+      }
+    }
+  }
+
+  // Keep particles inside the slab's Z range. The slab itself wraps in the
+  // vertex shader, but a particle outside it would pierce the next slab.
   let halfDepth = u.tunnelDepth * 0.5;
   if (p.pos.z >  halfDepth) { p.pos.z = -halfDepth; }
   if (p.pos.z < -halfDepth) { p.pos.z =  halfDepth; }
@@ -290,7 +382,7 @@ struct Particle {
   vel:         vec3<f32>,
   depthAnchor: f32,
   anchor:      vec2<f32>,
-  _pad:        vec2<f32>,
+  signal:      vec2<f32>,
 };
 
 struct U {
@@ -315,7 +407,23 @@ struct U {
   fadeNearAlpha:   f32,        // alpha at the camera-nearest slab boundary
   fadeFarAlpha:    f32,        // alpha at the farthest slab boundary
   mirrorX:         u32,
+  motionReactive:  f32,        // grows particles whose pixel is changing
+  // Shared with RENDER_LIT_WGSL. The soft render reads lens, for depth of
+  // field on points.
+  light:           vec4<f32>,  // xyz = light in sprite space, w = ambient
+  material:        vec4<f32>,  // x = diffuse, y = specular, z = shininess
+  lens:            vec4<f32>,  // x = focus distance, y = aperture, z = max blur (NDC)
+  proj:            vec4<f32>,  // x = near, y = far, z = focal (proj[5])
 };
+
+// Uniform 0..1 from an instance index, for depth-of-field thinning. Integer
+// because a sin-hash of indices in the millions has no fractional bits left.
+fn instance_rand(index: u32) -> f32 {
+  var v = index * 747796405u + 2891336453u;
+  v = ((v >> ((v >> 28u) + 4u)) ^ v) * 277803737u;
+  v = (v >> 22u) ^ v;
+  return f32(v) / 4294967295.0;
+}
 
 @group(0) @binding(0) var<storage, read> particles: array<Particle>;
 @group(0) @binding(1) var<uniform> u: U;
@@ -364,6 +472,7 @@ fn vs_main(
   // Per-vertex corner offset depends on topology.
   var cornerUV: vec2<f32> = vec2<f32>(0.0, 0.0);
   var offset:   vec3<f32> = vec3<f32>(0.0, 0.0, 0.0);
+  var dofFade = 1.0;
 
   if (u.topology == 1u) {
     // STROKE TOPOLOGY — quad extruded along velocity vector.
@@ -407,8 +516,28 @@ fn vs_main(
     );
     let q = xy[vid];
     cornerUV = vec2<f32>(q.x * 0.5 + 0.5, q.y * 0.5 + 0.5);
-    offset = u.camRight * (q.x * u.baseSize) + u.camUp * (q.y * u.baseSize);
+    var pointSize = u.baseSize;
+    if (u.lens.y > 0.0) {
+      // Depth of field, thinned rather than only faded: see the lit render.
+      let w = max((u.viewProj * vec4<f32>(worldPos, 1.0)).w, 0.0001);
+      let blurNdc = min(u.lens.y * 0.08 * abs(w - u.lens.x) / w, u.lens.z);
+      let grown = pointSize + blurNdc * w / max(u.proj.z, 0.0001);
+      let ratio = (pointSize * pointSize) / (grown * grown);
+      let keep = min(1.0, ratio * 3.0);
+      if (instance_rand(iid) > keep) {
+        var thinned: VSOut;
+        thinned.pos = vec4<f32>(2.0, 2.0, 0.0, 1.0);
+        return thinned;
+      }
+      dofFade = ratio / keep;
+      pointSize = grown;
+    }
+    offset = u.camRight * (q.x * pointSize) + u.camUp * (q.y * pointSize);
   }
+
+  // Motion reactivity swells a particle while its pixel changes, so movement
+  // in the source reads in the frame even where flow hides the displacement.
+  offset = offset * (1.0 + p.signal.y * u.motionReactive * 3.0);
 
   let finalWorld = worldPos + offset;
 
@@ -425,7 +554,9 @@ fn vs_main(
   out.pos    = u.viewProj * vec4<f32>(finalWorld, 1.0);
   out.uv     = cornerUV;
   out.anchor = anchorUV;
-  out.alpha  = p.alpha * depthAlpha * u.opacity;
+  // Particles passing the lens fade out rather than smearing across the frame.
+  let lensFade = smoothstep(0.06, 0.45, max(out.pos.w, 0.0));
+  out.alpha  = p.alpha * depthAlpha * u.opacity * dofFade * lensFade;
   return out;
 }
 
@@ -457,6 +588,202 @@ fn fs_main(in: VSOut) -> @location(0) vec4<f32> {
 `;
 
 /* ============================================================== */
+/* LIT GRAINS — sphere impostors with real depth (points only)     */
+/* ============================================================== */
+/*
+ * The same idea as Pixel Particles' lit grains (see RENDER_LIT_WGSL there):
+ * each point is a small sphere, lit by one directional light, writing its own
+ * depth so the tunnel's near grains genuinely hide the far ones instead of
+ * the whole stack adding up to haze.
+ *
+ * Two things differ here. Points are sized in world units, so the sphere's
+ * radius is simply the point size. And the slab wrap fade cannot be alpha on
+ * an opaque grain, so grains shrink to nothing at the ends of the stack
+ * instead of fading.
+ *
+ * Strokes stay soft: a streak is not a sphere.
+ */
+const RENDER_LIT_WGSL = /* wgsl */ `
+struct Particle {
+  pos:         vec3<f32>,
+  alpha:       f32,
+  vel:         vec3<f32>,
+  depthAnchor: f32,
+  anchor:      vec2<f32>,
+  signal:      vec2<f32>,
+};
+
+struct U {
+  viewProj:        mat4x4<f32>,
+  camRight:        vec3<f32>,
+  _pad0:           f32,
+  camUp:           vec3<f32>,
+  _pad1:           f32,
+  baseSize:        f32,
+  strokeLength:    f32,
+  strokeWidth:     f32,
+  topology:        u32,
+  slabCount:       u32,
+  tunnelDepth:     f32,
+  flyDistance:     f32,
+  particleCount:   u32,
+  opacity:         f32,
+  fadeNearAlpha:   f32,
+  fadeFarAlpha:    f32,
+  mirrorX:         u32,
+  motionReactive:  f32,
+  light:           vec4<f32>,
+  material:        vec4<f32>,
+  lens:            vec4<f32>,
+  proj:            vec4<f32>,
+};
+
+@group(0) @binding(0) var<storage, read> particles: array<Particle>;
+@group(0) @binding(1) var<uniform> u: U;
+@group(0) @binding(2) var sourceTexture: texture_2d<f32>;
+@group(0) @binding(3) var sourceSampler: sampler;
+
+fn instance_rand(index: u32) -> f32 {
+  var v = index * 747796405u + 2891336453u;
+  v = ((v >> ((v >> 28u) + 4u)) ^ v) * 277803737u;
+  v = (v >> 22u) ^ v;
+  return f32(v) / 4294967295.0;
+}
+
+fn slabZ(slabIndex: u32) -> f32 {
+  let total = f32(u.slabCount) * u.tunnelDepth;
+  let raw   = f32(slabIndex) * u.tunnelDepth - u.flyDistance;
+  let m     = raw - floor(raw / total) * total;
+  return m - u.tunnelDepth * 0.5;
+}
+
+struct LitOut {
+  @builtin(position) pos: vec4<f32>,
+  @location(0) uv:           vec2<f32>,
+  @location(1) color:        vec3<f32>,
+  @location(2) depthCenter:  f32,
+  @location(3) depthScale:   f32,
+  @location(4) alpha:        f32,
+};
+
+fn culled() -> LitOut {
+  var out: LitOut;
+  out.pos = vec4<f32>(2.0, 2.0, 0.0, 1.0);
+  return out;
+}
+
+// pass_id: 0 = lit, no depth of field; 1 = sharp grains only; 2 = blurred only
+fn grain_vertex(vid: u32, iid: u32, pass_id: u32) -> LitOut {
+  let pIdx = iid % u.particleCount;
+  let sIdx = iid / u.particleCount;
+  let p = particles[pIdx];
+
+  let worldPos = vec3<f32>(p.pos.x, p.pos.y, p.pos.z + slabZ(sIdx));
+  let total = f32(u.slabCount) * u.tunnelDepth;
+  let t = clamp((worldPos.z + u.tunnelDepth * 0.5) / total, 0.0, 1.0);
+  // Grains cannot fade, so the stack's ends shrink them away instead.
+  let edge = smoothstep(0.0, 0.15, t) * (1.0 - smoothstep(0.85, 1.0, t));
+  var size = u.baseSize * edge * (1.0 + p.signal.y * u.motionReactive * 3.0);
+  if (size <= 0.00001) { return culled(); }
+
+  let center = u.viewProj * vec4<f32>(worldPos, 1.0);
+  let w = max(center.w, 0.0001);
+  // Grains passing the lens shrink away instead of filling the frame. On a
+  // long lens a slab sliding past the camera otherwise becomes a wall of
+  // spheres the size of the screen.
+  size = size * smoothstep(0.06, 0.45, w);
+  if (size <= 0.00001) { return culled(); }
+  var alpha = p.alpha * u.opacity;
+  if (pass_id > 0u) {
+    let blurNdc = min(u.lens.y * 0.08 * abs(w - u.lens.x) / w, u.lens.z);
+    let blurWorld = blurNdc * w / max(u.proj.z, 0.0001);
+    let blurred = blurWorld > size * 0.6;
+    if (pass_id == 1u && blurred) { return culled(); }
+    if (pass_id == 2u && !blurred) { return culled(); }
+    if (pass_id == 2u) {
+      let grown = size + blurWorld;
+      let ratio = (size * size) / (grown * grown);
+      let keep = min(1.0, ratio * 3.0);
+      if (instance_rand(iid) > keep) { return culled(); }
+      alpha = alpha * (ratio / keep);
+      size = grown;
+    }
+  }
+
+  let corners = array<vec2<f32>, 6>(
+    vec2<f32>(-1.0, -1.0), vec2<f32>( 1.0, -1.0), vec2<f32>(-1.0,  1.0),
+    vec2<f32>(-1.0,  1.0), vec2<f32>( 1.0, -1.0), vec2<f32>( 1.0,  1.0),
+  );
+  let q = corners[vid];
+  let world = worldPos + u.camRight * (q.x * size) + u.camUp * (q.y * size);
+
+  var anchorUV = vec2<f32>(p.anchor.x * 0.5 + 0.5, 1.0 - (p.anchor.y * 0.5 + 0.5));
+  if (u.mirrorX == 1u) { anchorUV.x = 1.0 - anchorUV.x; }
+  let c = textureSampleLevel(sourceTexture, sourceSampler, anchorUV, 0.0);
+
+  // Forward-Z projection: depth moves by near*far / ((far-near) * w^2) per
+  // world unit toward the camera, and the sphere's front is one radius closer.
+  let near = u.proj.x;
+  let far = u.proj.y;
+  var out: LitOut;
+  out.pos = u.viewProj * vec4<f32>(world, 1.0);
+  out.uv = q;
+  out.color = c.rgb;
+  out.depthCenter = center.z / w;
+  out.depthScale = size * near * far / ((far - near) * w * w);
+  out.alpha = alpha * c.a;
+  return out;
+}
+
+@vertex
+fn vs_lit(@builtin(vertex_index) vid: u32, @builtin(instance_index) iid: u32) -> LitOut {
+  return grain_vertex(vid, iid, 0u);
+}
+
+@vertex
+fn vs_sharp(@builtin(vertex_index) vid: u32, @builtin(instance_index) iid: u32) -> LitOut {
+  return grain_vertex(vid, iid, 1u);
+}
+
+@vertex
+fn vs_blur(@builtin(vertex_index) vid: u32, @builtin(instance_index) iid: u32) -> LitOut {
+  return grain_vertex(vid, iid, 2u);
+}
+
+struct GrainFragment {
+  @location(0) color: vec4<f32>,
+  @builtin(frag_depth) depth: f32,
+};
+
+@fragment
+fn fs_lit(in: LitOut) -> GrainFragment {
+  let r2 = dot(in.uv, in.uv);
+  if (r2 > 1.0) { discard; }
+  let nz = sqrt(1.0 - r2);
+  let n = vec3<f32>(in.uv.x, in.uv.y, nz);
+  let l = normalize(u.light.xyz);
+  let ndl = dot(n, l);
+  let wrapped = clamp(ndl * 0.5 + 0.5, 0.0, 1.0);
+  let diffuse = mix(wrapped * wrapped, max(ndl, 0.0), 0.6);
+  let halfway = normalize(l + vec3<f32>(0.0, 0.0, 1.0));
+  let spec = pow(max(dot(n, halfway), 0.0), max(u.material.z, 1.0)) * u.material.y;
+  var out: GrainFragment;
+  out.color = vec4<f32>(in.color * (u.light.w + u.material.x * diffuse) + vec3<f32>(spec), 1.0);
+  out.depth = clamp(in.depthCenter - nz * in.depthScale, 0.0, 1.0);
+  return out;
+}
+
+@fragment
+fn fs_bokeh(in: LitOut) -> @location(0) vec4<f32> {
+  let r = length(in.uv);
+  if (r > 1.0) { discard; }
+  let facing = clamp(normalize(u.light.xyz).z * 0.5 + 0.5, 0.0, 1.0);
+  let a = in.alpha * (1.0 - smoothstep(0.3, 1.0, r));
+  return vec4<f32>(in.color * (u.light.w + u.material.x * facing) * a, a);
+}
+`;
+
+/* ============================================================== */
 /* TYPESCRIPT WRAPPER                                              */
 /* ============================================================== */
 
@@ -479,6 +806,26 @@ interface FlythroughParams {
   cameraYaw: number;
   cameraPitch: number;
   particleCount: number;
+  /** Farthest a particle may travel from its pixel. 0 = unbounded. */
+  wanderRadius: number;
+  /** How hard a changing pixel pushes its particle. 0 = off. */
+  motionReactive: number;
+  /** How quickly a particle's remembered luma catches up, per second. */
+  motionDecay: number;
+  /** 'lit' draws points as sphere grains with depth. Strokes stay soft. */
+  grainShading: 'soft' | 'lit';
+  /** World-space direction the light comes from. */
+  lightX: number;
+  lightY: number;
+  lightZ: number;
+  lightIntensity: number;
+  lightAmbient: number;
+  grainSpecular: number;
+  grainShininess: number;
+  /** Distance ahead of the camera, in world units, that is in focus. */
+  focusDistance: number;
+  /** 0 = everything sharp. Points only. */
+  aperture: number;
 }
 
 /** Internal default params. Used as the starting state of the renderer
@@ -504,11 +851,29 @@ const DEFAULT_PARAMS: FlythroughParams = {
   cameraYaw: 0,
   cameraPitch: 0,
   particleCount: DEFAULT_PARTICLES,
+  wanderRadius: 0,
+  motionReactive: 0,
+  motionDecay: 3,
+  grainShading: 'soft',
+  lightX: 0.5,
+  lightY: 0.7,
+  lightZ: -0.5,
+  lightIntensity: 1.2,
+  lightAmbient: 0.25,
+  grainSpecular: 0.35,
+  grainShininess: 24,
+  focusDistance: 1.5,
+  aperture: 0,
 };
 
+const FLYTHROUGH_NEAR = 0.05;
+const FLYTHROUGH_FAR = 100;
+
 export const FLYTHROUGH_NATIVE_SHADER_IDS = Object.freeze({
+  curlBake: 'flythrough/curl-bake',
   compute: 'flythrough/compute',
   render: 'flythrough/render',
+  renderLit: 'flythrough/render-lit',
 });
 
 export type FlythroughNativeShaderStage = 'compute' | 'render';
@@ -569,8 +934,83 @@ type FlythroughNativeGraphRenderPass = {
   blend: 'replace' | 'alpha' | 'add';
   vertex_count: number;
   instance_count: number;
+  depth_test?: boolean;
+  depth_write?: boolean;
+  depth_load?: boolean;
   bindings: FlythroughNativeGraphBinding[];
 };
+
+/**
+ * Soft (and every strokes frame): one blended pass. Lit points: opaque grains
+ * with depth, and with an aperture, sharp grains then blurred grains over
+ * them against the depth the sharp pass kept. Mirrors the Rust job.
+ */
+function buildFlythroughRenderPasses(
+  params: FlythroughParams,
+  sourceId: string,
+  opts: { seq: number; includeSnapshot: boolean; instanceCount: number; bindings: FlythroughNativeGraphBinding[] },
+): FlythroughNativeGraphRenderPass[] {
+  const common = {
+    target: 'source_frame' as const,
+    source_id: sourceId,
+    seq: opts.seq,
+    clear_color: [0, 0, 0, 0] as [number, number, number, number],
+    include_snapshot: opts.includeSnapshot,
+    vertex_count: 6,
+    instance_count: opts.instanceCount,
+    bindings: opts.bindings,
+  };
+  if (params.grainShading !== 'lit' || params.topology !== 'points') {
+    return [{
+      ...common,
+      name: 'flythrough-render',
+      shader_id: FLYTHROUGH_NATIVE_SHADER_IDS.render,
+      vertex_entry: 'vs_main',
+      fragment_entry: 'fs_main',
+      clear: true,
+      blend: 'alpha',
+    }];
+  }
+  if (params.aperture <= 0) {
+    return [{
+      ...common,
+      name: 'flythrough-render-lit',
+      shader_id: FLYTHROUGH_NATIVE_SHADER_IDS.renderLit,
+      vertex_entry: 'vs_lit',
+      fragment_entry: 'fs_lit',
+      clear: true,
+      blend: 'replace',
+      depth_test: true,
+      depth_write: true,
+    }];
+  }
+  return [
+    {
+      ...common,
+      name: 'flythrough-render-sharp',
+      shader_id: FLYTHROUGH_NATIVE_SHADER_IDS.renderLit,
+      vertex_entry: 'vs_sharp',
+      fragment_entry: 'fs_lit',
+      clear: true,
+      blend: 'replace',
+      depth_test: true,
+      depth_write: true,
+    },
+    {
+      ...common,
+      name: 'flythrough-render-blur',
+      shader_id: FLYTHROUGH_NATIVE_SHADER_IDS.renderLit,
+      vertex_entry: 'vs_blur',
+      fragment_entry: 'fs_bokeh',
+      clear: false,
+      include_snapshot: false,
+      blend: 'alpha',
+      depth_test: true,
+      depth_write: false,
+      depth_load: true,
+    },
+  ];
+}
 
 export interface FlythroughNativeGraphState {
   particleCount: number;
@@ -620,6 +1060,13 @@ const BLEND_PREMULT_OVER: any = {
 export function getFlythroughNativeShaderSources(): FlythroughNativeShaderSource[] {
   return [
     {
+      shaderId: FLYTHROUGH_NATIVE_SHADER_IDS.curlBake,
+      label: 'flythrough/curl-bake',
+      stage: 'compute',
+      entry: 'cs_bake',
+      source: resolveGhostWgsl(CURL_BAKE_WGSL, 'flythrough/curl-bake'),
+    },
+    {
       shaderId: FLYTHROUGH_NATIVE_SHADER_IDS.compute,
       label: 'flythrough/compute',
       stage: 'compute',
@@ -633,6 +1080,15 @@ export function getFlythroughNativeShaderSources(): FlythroughNativeShaderSource
       entry: 'fs_main',
       source: resolveGhostWgsl(RENDER_WGSL, 'flythrough/render'),
     },
+    {
+      shaderId: FLYTHROUGH_NATIVE_SHADER_IDS.renderLit,
+      label: 'flythrough/render-lit',
+      stage: 'render',
+      entry: 'fs_lit',
+      source: resolveGhostWgsl(RENDER_LIT_WGSL, 'flythrough/render-lit'),
+    },
+    // Auto Camera's points of interest; the core runs it, not this module.
+    getParticleDirectorShaderSource(),
   ];
 }
 
@@ -678,7 +1134,44 @@ function normalizeFlythroughParams(raw: Partial<FlythroughParams> & Record<strin
     cameraYaw: clampFinite(src.cameraYaw, -3600, 3600, DEFAULT_PARAMS.cameraYaw),
     cameraPitch: clampFinite(src.cameraPitch, -3600, 3600, DEFAULT_PARAMS.cameraPitch),
     particleCount: Math.round(clampFinite(src.particleCount, 1024, MAX_PARTICLES, DEFAULT_PARAMS.particleCount)),
+    // The panel exposes Limit Wander + Wander Radius; the shader only needs
+    // the effective radius, with 0 meaning unbounded.
+    wanderRadius: src.limitWander === true
+      ? clampFinite(src.wanderRadius, 0, 8, 0.2)
+      : 0,
+    motionReactive: clampFinite(src.motionReactive, 0, 8, DEFAULT_PARAMS.motionReactive),
+    motionDecay: clampFinite(src.motionDecay, 0, 60, DEFAULT_PARAMS.motionDecay),
+    grainShading: src.grainShading === 'lit' ? 'lit' : 'soft',
+    lightX: clampFinite(src.lightX, -16, 16, DEFAULT_PARAMS.lightX),
+    lightY: clampFinite(src.lightY, -16, 16, DEFAULT_PARAMS.lightY),
+    lightZ: clampFinite(src.lightZ, -16, 16, DEFAULT_PARAMS.lightZ),
+    lightIntensity: clampFinite(src.lightIntensity, 0, 16, DEFAULT_PARAMS.lightIntensity),
+    lightAmbient: clampFinite(src.lightAmbient, 0, 4, DEFAULT_PARAMS.lightAmbient),
+    grainSpecular: clampFinite(src.grainSpecular, 0, 4, DEFAULT_PARAMS.grainSpecular),
+    grainShininess: clampFinite(src.grainShininess, 1, 256, DEFAULT_PARAMS.grainShininess),
+    focusDistance: clampFinite(src.focusDistance, 0.05, 64, DEFAULT_PARAMS.focusDistance),
+    aperture: clampFinite(src.aperture, 0, 4, DEFAULT_PARAMS.aperture),
   };
+}
+
+/** The world light expressed in a billboard's own frame: x along camRight,
+ *  y along camUp, z toward the camera. That is the frame fs_lit builds its
+ *  sphere normal in, so the light has to meet it there. */
+export function flythroughLightSpriteDir(
+  params: Pick<FlythroughParams, 'lightX' | 'lightY' | 'lightZ'>,
+  camRight: ArrayLike<number>,
+  camUp: ArrayLike<number>,
+): [number, number, number] {
+  const len = Math.hypot(params.lightX, params.lightY, params.lightZ) || 1;
+  const l = [params.lightX / len, params.lightY / len, params.lightZ / len];
+  // The camera looks down +Z, so toward-camera is -(right x up).
+  const toCam = [
+    -(camRight[1] * camUp[2] - camRight[2] * camUp[1]),
+    -(camRight[2] * camUp[0] - camRight[0] * camUp[2]),
+    -(camRight[0] * camUp[1] - camRight[1] * camUp[0]),
+  ];
+  const dot = (a: ArrayLike<number>) => l[0] * a[0] + l[1] * a[1] + l[2] * a[2];
+  return [dot(camRight), dot(camUp), dot(toCam)];
 }
 
 function bytesToBase64(bytes: Uint8Array): string {
@@ -720,7 +1213,9 @@ function flythroughParticleInitialBuffer(count: number): ArrayBuffer {
     seed[off + 7] = (Math.sin(ax * 7.3 + ay * 11.1) * 0.5 + 0.5);
     seed[off + 8] = ax;
     seed[off + 9] = ay;
-    seed[off + 10] = 0;
+    // signal.x < 0 means the particle has not read its pixel yet, so the
+    // first frame does not register the whole image as a change.
+    seed[off + 10] = -1;
     seed[off + 11] = 0;
   }
   return seed.buffer;
@@ -753,12 +1248,17 @@ function buildFlythroughComputeUniform(params: FlythroughParams, state: Flythrou
   u[8] = DEPTH_SRC_IDS[params.depthSource] >>> 0;
   f[9] = state.flyDistance;
   u[10] = params.mirrorX ? 1 : 0;
+  f[11] = params.wanderRadius;
+  f[12] = params.motionReactive;
+  f[13] = params.motionDecay;
+  u[14] = FLYTHROUGH_CURL_GRID_N;
+  f[15] = FLYTHROUGH_CURL_PERIOD;
   return bufferToBase64(buffer);
 }
 
 function buildFlythroughRenderUniform(params: FlythroughParams, state: FlythroughNativeGraphState, width: number, height: number): string {
   const aspect = Math.max(1, width) / Math.max(1, height);
-  const proj = perspective(params.fovDeg, aspect, 0.05, 100);
+  const proj = perspective(params.fovDeg, aspect, FLYTHROUGH_NEAR, FLYTHROUGH_FAR);
   const yawRad = (params.cameraYaw ?? 0) * Math.PI / 180;
   const pitchRad = (params.cameraPitch ?? 0) * Math.PI / 180;
   const cy = Math.cos(yawRad), sy = Math.sin(yawRad);
@@ -786,6 +1286,21 @@ function buildFlythroughRenderUniform(params: FlythroughParams, state: Flythroug
   f[33] = 1;
   f[34] = 1;
   u[35] = params.mirrorX ? 1 : 0;
+  f[36] = params.motionReactive;
+  const light = flythroughLightSpriteDir(params, [rot[0], rot[1], rot[2]], [rot[4], rot[5], rot[6]]);
+  f[40] = light[0];
+  f[41] = light[1];
+  f[42] = light[2];
+  f[43] = params.lightAmbient;
+  f[44] = params.lightIntensity;
+  f[45] = params.grainSpecular;
+  f[46] = params.grainShininess;
+  f[48] = params.focusDistance;
+  f[49] = params.topology === 'points' ? params.aperture : 0;
+  f[50] = 0.03;
+  f[52] = FLYTHROUGH_NEAR;
+  f[53] = FLYTHROUGH_FAR;
+  f[54] = proj[5];
   return bufferToBase64(buffer);
 }
 
@@ -814,6 +1329,8 @@ export function buildFlythroughNativeComputeGraph(options: FlythroughNativeGraph
 
   const prefix = flythroughSourcePrefix(sourceId, params);
   const id = (name: string) => `${prefix}:${name}`;
+  // Keyed on the source alone so a Count change keeps the baked field.
+  const curlFieldId = `flythrough:${String(sourceId || 'source').replace(/[^a-zA-Z0-9:_-]+/g, '_').slice(0, 160)}:curl-field`;
   const width = Math.round(options.width || 1920);
   const height = Math.round(options.height || 1080);
   const buffers: FlythroughNativeGraphBuffer[] = [
@@ -837,12 +1354,42 @@ export function buildFlythroughNativeComputeGraph(options: FlythroughNativeGraph
       clear: mustReset,
       initial_buffer: mustReset ? flythroughParticleInitialBuffer(params.particleCount) : undefined,
     },
+    {
+      id: curlFieldId,
+      kind: 'storage',
+      byte_length: FLYTHROUGH_CURL_BYTES,
+      persistent: true,
+      clear: mustReset,
+    },
   ];
+  // The curl field is baked in the same frame its buffer is created, which is
+  // exactly the frame the particle buffer resets. After that it is only read.
+  if (mustReset) {
+    buffers.push({
+      id: id('curl-bake-uniform'),
+      kind: 'uniform',
+      byte_length: 16,
+      initial_b64: bufferToBase64(new Uint32Array([FLYTHROUGH_CURL_GRID_N, FLYTHROUGH_CURL_PERIOD, 0, 0]).buffer),
+    });
+  }
 
   const sourceTextureBinding: FlythroughNativeGraphBinding = mediaSourceId
     ? { binding: 2, kind: 'source-frame-texture', source_id: mediaSourceId }
     : { binding: 2, kind: 'source-frame-texture', allow_missing: true };
+  const curlGroups = Math.ceil(FLYTHROUGH_CURL_GRID_N / 4);
   const passes: FlythroughNativeGraphPass[] = [
+    ...(mustReset
+      ? [{
+          name: 'flythrough-curl-bake',
+          shader_id: FLYTHROUGH_NATIVE_SHADER_IDS.curlBake,
+          entry: 'cs_bake',
+          dispatch: [curlGroups, curlGroups, curlGroups] as [number, number, number],
+          bindings: [
+            { binding: 0, resource: curlFieldId, kind: 'storage' },
+            { binding: 1, resource: id('curl-bake-uniform'), kind: 'uniform' },
+          ],
+        }]
+      : []),
     {
       name: 'flythrough-compute',
       shader_id: FLYTHROUGH_NATIVE_SHADER_IDS.compute,
@@ -853,34 +1400,23 @@ export function buildFlythroughNativeComputeGraph(options: FlythroughNativeGraph
         { binding: 1, resource: id('compute-uniform'), kind: 'uniform' },
         sourceTextureBinding,
         { binding: 3, kind: 'source-frame-sampler' },
+        { binding: 4, resource: curlFieldId, kind: 'read-only-storage' },
       ],
     },
   ];
 
   const slabs = Math.max(1, Math.min(8, params.slabCount | 0));
-  const renderPasses: FlythroughNativeGraphRenderPass[] = [
-    {
-      name: 'flythrough-render',
-      shader_id: FLYTHROUGH_NATIVE_SHADER_IDS.render,
-      vertex_entry: 'vs_main',
-      fragment_entry: 'fs_main',
-      target: 'source_frame',
-      source_id: sourceId,
-      seq: Math.max(0, Math.round(options.frameIndex ?? 0)),
-      clear: true,
-      clear_color: [0, 0, 0, 0],
-      include_snapshot: !!options.includeSnapshot,
-      blend: 'alpha',
-      vertex_count: 6,
-      instance_count: slabs * params.particleCount,
-      bindings: [
-        { binding: 0, resource: id('particles'), kind: 'read-only-storage' },
-        { binding: 1, resource: id('render-uniform'), kind: 'uniform' },
-        sourceTextureBinding,
-        { binding: 3, kind: 'source-frame-sampler' },
-      ],
-    },
-  ];
+  const renderPasses = buildFlythroughRenderPasses(params, sourceId, {
+    seq: Math.max(0, Math.round(options.frameIndex ?? 0)),
+    includeSnapshot: !!options.includeSnapshot,
+    instanceCount: slabs * params.particleCount,
+    bindings: [
+      { binding: 0, resource: id('particles'), kind: 'read-only-storage' },
+      { binding: 1, resource: id('render-uniform'), kind: 'uniform' },
+      sourceTextureBinding,
+      { binding: 3, kind: 'source-frame-sampler' },
+    ],
+  });
 
   return {
     config: {
@@ -904,6 +1440,7 @@ export class WebGPUFlythrough {
 
   // GPU resources
   private particleBuffer: any = null;
+  private curlBuffer: any = null;
   private computeUniformBuffer: any = null;
   private renderUniformBuffer: any = null;
   private sourceTexture: any = null;
@@ -993,8 +1530,50 @@ export class WebGPUFlythrough {
       addressModeV: 'clamp-to-edge',
     });
 
-    // ── Compute pipeline ─────────────────────────────────────────
+    // ── Curl field ───────────────────────────────────────────────
+    // Baked once here; see CURL_BAKE_WGSL for why it is not evaluated per
+    // particle any more.
     const shaderRuntime = getGhostGpuRuntime() ?? this.device;
+    this.curlBuffer = this.device.createBuffer({
+      size: FLYTHROUGH_CURL_BYTES,
+      usage: GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+    {
+      const bakeModule = createAndWarmWgslShaderModule(shaderRuntime, CURL_BAKE_WGSL, 'flythrough/curl-bake');
+      const bakeLayout = this.device.createBindGroupLayout({
+        entries: [
+          { binding: 0, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'storage' } },
+          { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
+        ],
+      });
+      const bakeUniform = this.device.createBuffer({
+        size: 16,
+        usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      });
+      this.device.queue.writeBuffer(bakeUniform, 0, new Uint32Array([FLYTHROUGH_CURL_GRID_N, FLYTHROUGH_CURL_PERIOD, 0, 0]));
+      const bakePipeline = this.device.createComputePipeline({
+        layout: this.device.createPipelineLayout({ bindGroupLayouts: [bakeLayout] }),
+        compute: { module: bakeModule, entryPoint: 'cs_bake' },
+      });
+      const bakeGroup = this.device.createBindGroup({
+        layout: bakeLayout,
+        entries: [
+          { binding: 0, resource: { buffer: this.curlBuffer } },
+          { binding: 1, resource: { buffer: bakeUniform } },
+        ],
+      });
+      const encoder = this.device.createCommandEncoder();
+      const pass = encoder.beginComputePass();
+      pass.setPipeline(bakePipeline);
+      pass.setBindGroup(0, bakeGroup);
+      const groups = Math.ceil(FLYTHROUGH_CURL_GRID_N / 4);
+      pass.dispatchWorkgroups(groups, groups, groups);
+      pass.end();
+      this.device.queue.submit([encoder.finish()]);
+      try { bakeUniform.destroy?.(); } catch { /* released after submit */ }
+    }
+
+    // ── Compute pipeline ─────────────────────────────────────────
     const computeModule = createAndWarmWgslShaderModule(shaderRuntime, COMPUTE_WGSL, 'flythrough/compute');
     this.computeBindGroupLayout = this.device.createBindGroupLayout({
       entries: [
@@ -1002,6 +1581,7 @@ export class WebGPUFlythrough {
         { binding: 1, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'uniform' } },
         { binding: 2, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'float' } },
         { binding: 3, visibility: GPUShaderStage.COMPUTE, sampler: { type: 'filtering' } },
+        { binding: 4, visibility: GPUShaderStage.COMPUTE, buffer: { type: 'read-only-storage' } },
       ],
     });
     this.computePipeline = this.device.createComputePipeline({
@@ -1015,6 +1595,7 @@ export class WebGPUFlythrough {
         { binding: 1, resource: { buffer: this.computeUniformBuffer } },
         { binding: 2, resource: this.sourceTextureView },
         { binding: 3, resource: this.sourceSampler },
+        { binding: 4, resource: { buffer: this.curlBuffer } },
       ],
     });
 
@@ -1083,6 +1664,7 @@ export class WebGPUFlythrough {
         { binding: 1, resource: { buffer: this.computeUniformBuffer } },
         { binding: 2, resource: this.sourceTextureView },
         { binding: 3, resource: this.sourceSampler },
+        { binding: 4, resource: { buffer: this.curlBuffer } },
       ],
     });
     this.renderBindGroup = this.device.createBindGroup({
@@ -1231,7 +1813,11 @@ export class WebGPUFlythrough {
     new Uint32Array(cu.buffer, cu.byteOffset)[8] = DEPTH_SRC_IDS[this.params.depthSource] >>> 0;
     cu[9]  = this.flyDistance;
     new Uint32Array(cu.buffer, cu.byteOffset)[10] = this.params.mirrorX ? 1 : 0;
-    // remaining padding stays zero
+    cu[11] = this.params.wanderRadius;
+    cu[12] = this.params.motionReactive;
+    cu[13] = this.params.motionDecay;
+    new Uint32Array(cu.buffer, cu.byteOffset)[14] = FLYTHROUGH_CURL_GRID_N;
+    cu[15] = FLYTHROUGH_CURL_PERIOD;
     this.device.queue.writeBuffer(this.computeUniformBuffer, 0, cu);
 
     // ── Compute pass ──────────────────────────────────────────────
@@ -1296,6 +1882,8 @@ export class WebGPUFlythrough {
     ruF[33] = 1.0;   // fadeNearAlpha — fully visible at near edge of stack
     ruF[34] = 1.0;   // fadeFarAlpha  — fully visible at far edge of stack
     ruU[35] = this.params.mirrorX ? 1 : 0;
+    ruF[36] = this.params.motionReactive;
+    // Lens stays zero here: depth of field and lit grains are native-only.
     this.device.queue.writeBuffer(this.renderUniformBuffer, 0, ru);
 
     // ── Render pass ───────────────────────────────────────────────
@@ -1316,10 +1904,12 @@ export class WebGPUFlythrough {
 
   dispose(): void {
     try { this.particleBuffer?.destroy?.(); } catch { /* */ }
+    try { this.curlBuffer?.destroy?.(); } catch { /* */ }
     try { this.computeUniformBuffer?.destroy?.(); } catch { /* */ }
     try { this.renderUniformBuffer?.destroy?.(); } catch { /* */ }
     try { this.sourceTexture?.destroy?.(); } catch { /* */ }
     this.particleBuffer = null;
+    this.curlBuffer = null;
     this.computeUniformBuffer = null;
     this.renderUniformBuffer = null;
     this.sourceTexture = null;
