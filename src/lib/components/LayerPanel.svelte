@@ -11,6 +11,7 @@
     scheduleHistorySnapshot();
   }
   import { confirmDeleteIfSafeMode } from '../utils/safeMode';
+  import { layerRenderMeshGrid } from '../utils/meshWarp';
   // import AutoMapPanel from './AutoMapPanel.svelte';
   import { vjClipLauncher } from '../stores/vjClipLauncher';
   import { probeHasAudioTrack } from '../audio/clipAudioBus';
@@ -2583,6 +2584,13 @@
             <button class="btn-reset" onclick={() => project.resetCorners(layer.id)}>
               Reset Warp
             </button>
+            <!-- A warped mesh stays applied under Corner mode, so it can be
+                 cleared from here without switching back to Mesh. -->
+            {#if layerRenderMeshGrid(layer)}
+              <button class="btn-reset" onclick={() => project.resetMeshGrid(layer.id)}>
+                Reset Mesh
+              </button>
+            {/if}
           {/if}
         </div>
 

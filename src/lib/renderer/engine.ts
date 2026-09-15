@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { Layer, WarpCorners, BlendMode, MeshWarpGrid, Effect, ColorContent, MaskConfig, LayerShapeType, Point2D, ContentFitMode, EdgeEffect, GroupConfig, TransitionStyle } from '../types';
 import { GpuEffectRunner, isGpuEffect } from './gpuEffectRunner';
 import { getShapeVertices } from '../types';
+import { layerRenderMeshGrid } from '../utils/meshWarp';
 
 // ── Group rendering types ──────────────────────────────────────────────────
 type RenderUnit =
@@ -678,12 +679,14 @@ export class RenderEngine {
     // Always use 'quad' for geometry. Shape type only used for legacy control point warping.
     const currentShapeType: LayerShapeType | 'quad' = 'quad';
 
-    // Check if we need to recreate for mesh warp mode change
+    // Check if we need to recreate for mesh warp mode change. A warped mesh
+    // stays applied in corner mode too (see layerRenderMeshGrid).
+    const renderMesh = layerRenderMeshGrid(layer);
     const needsRecreate = obj && (
-      (layer.warpMode === 'mesh' && obj.warpMode !== 'mesh') ||
-      (layer.warpMode !== 'mesh' && obj.warpMode === 'mesh') ||
-      (layer.warpMode === 'mesh' && layer.meshGrid &&
-        (obj.meshGridSize?.rows !== layer.meshGrid.rows || obj.meshGridSize?.cols !== layer.meshGrid.cols))
+      (renderMesh && obj.warpMode !== 'mesh') ||
+      (!renderMesh && obj.warpMode === 'mesh') ||
+      (renderMesh &&
+        (obj.meshGridSize?.rows !== renderMesh.rows || obj.meshGridSize?.cols !== renderMesh.cols))
     );
 
     // Store existing texture before recreating
@@ -701,10 +704,10 @@ export class RenderEngine {
       let geometry: THREE.BufferGeometry;
       const defaultControlPoints: Point2D[] | undefined = undefined;
 
-      if (layer.warpMode === 'mesh' && layer.meshGrid) {
+      if (renderMesh) {
         // For mesh warp, create geometry that matches the grid
-        const segmentsX = layer.meshGrid.cols - 1;
-        const segmentsY = layer.meshGrid.rows - 1;
+        const segmentsX = renderMesh.cols - 1;
+        const segmentsY = renderMesh.rows - 1;
         geometry = new THREE.PlaneGeometry(2, 2, segmentsX, segmentsY);
       } else {
         // For corner warp, use higher subdivisions for smooth bilinear interpolation
@@ -736,8 +739,8 @@ export class RenderEngine {
         material,
         renderTarget,
         geometry,
-        warpMode: layer.warpMode === 'mesh' ? 'mesh' : 'corners',
-        meshGridSize: layer.meshGrid ? { rows: layer.meshGrid.rows, cols: layer.meshGrid.cols } : undefined,
+        warpMode: renderMesh ? 'mesh' : 'corners',
+        meshGridSize: renderMesh ? { rows: renderMesh.rows, cols: renderMesh.cols } : undefined,
         originalUVs,
         shapeType: currentShapeType,
         defaultControlPoints,
@@ -2392,8 +2395,9 @@ export class RenderEngine {
       }
     }
 
-    if (layer.warpMode === 'mesh' && layer.meshGrid && obj.originalUVs) {
-      this.applyMeshWarp(obj.geometry, layer.meshGrid, layer.corners, obj.originalUVs);
+    const renderMesh = layerRenderMeshGrid(layer);
+    if (renderMesh && obj.originalUVs) {
+      this.applyMeshWarp(obj.geometry, renderMesh, layer.corners, obj.originalUVs);
       obj.material.uniforms.uUseMeshPosition.value = true;
     } else {
       obj.material.uniforms.uUseMeshPosition.value = false;

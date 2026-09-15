@@ -45,6 +45,7 @@
   import { showToast } from '../stores/errorToast';
   import { getTextureShareLabel, invoke, isDesktopApp, isOsrMode, isOutputMode } from '$lib/bridge';
   import { drawTestPattern, type TestPatternType } from '../utils/testPatterns';
+  import { layerRenderMeshGrid } from '../utils/meshWarp';
   import { applyEdgeBlending } from '../output/outputPostProcess';
   import { renderSlicePixelsAsync, pruneSliceReadbackStates, isBlendRendererAvailable } from '../output/blendRenderer';
   import { isAtlasSenderSlice } from '../output/atlasLayout';
@@ -235,7 +236,7 @@
     const liveIds = new Set<string>();
     for (const layer of projectLayers) {
       liveIds.add(layer.id);
-      const meshGrid = layer.warpMode === 'mesh' ? layer.meshGrid ?? null : null;
+      const meshGrid = layerRenderMeshGrid(layer);
       const signature = JSON.stringify([layer.corners, meshGrid]);
       if (nativeInteractionSignatures.get(layer.id) === signature) continue;
       nativeInteractionSignatures.set(layer.id, signature);
