@@ -261,7 +261,13 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
     NativeGraphInstrumentSpec {
         id: "flythrough",
         label: "Flythrough",
-        shader_ids: &["flythrough/compute", "flythrough/render"],
+        shader_ids: &[
+            "flythrough/curl-bake",
+            "flythrough/compute",
+            "flythrough/render",
+            "flythrough/render-lit",
+            "particle-director/poi-grid",
+        ],
         features: &[
             "compute_graph_host",
             "compute_graph_render",
@@ -277,7 +283,12 @@ pub const NATIVE_GRAPH_INSTRUMENT_SPECS: &[NativeGraphInstrumentSpec] = &[
     NativeGraphInstrumentSpec {
         id: "pixel-particles",
         label: "Pixel Particles",
-        shader_ids: &["pixel-particles/compute", "pixel-particles/render"],
+        shader_ids: &[
+            "pixel-particles/compute",
+            "pixel-particles/render",
+            "pixel-particles/render-lit",
+            "particle-director/poi-grid",
+        ],
         features: &[
             "compute_graph_host",
             "compute_graph_render",

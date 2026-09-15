@@ -8,6 +8,7 @@ mod media_decode;
 mod native_graph_manifest;
 mod native_quality;
 mod output_present;
+mod particle_director;
 mod shared_texture;
 
 use std::{
@@ -59,6 +60,7 @@ use media_decode::{
     decode_native_video_frame_window_rgba, local_media_path_from_uri, native_image_file_signature,
     native_video_frame_bucket, native_video_frame_file_signature, spawn_native_video_stream,
 };
+use particle_director::{DirectorCamera, DirectorParams, DirectorState, points_of_interest_from_grid};
 use native_graph_manifest::{
     native_graph_instrument_ids, native_graph_instrument_manifest, native_graph_instruments_note,
 };
@@ -1948,6 +1950,7 @@ struct NativePixelParticlesGraphState {
     particle_count: u32,
     input_source_id: String,
     prev_frame_time: f32,
+    director: ParticleDirectorTrack,
 }
 
 impl NativePixelParticlesGraphState {
@@ -1957,8 +1960,119 @@ impl NativePixelParticlesGraphState {
             particle_count,
             input_source_id,
             prev_frame_time: time,
+            director: ParticleDirectorTrack::default(),
         }
     }
+}
+
+/// Auto Camera state for one particle layer: the director itself, and where
+/// its points of interest are in the readback cycle.
+#[derive(Clone, Debug, Default)]
+struct ParticleDirectorTrack {
+    director: DirectorState,
+    /// Frame time a contrast grid was last requested and has not landed yet.
+    poi_pending_since: Option<f32>,
+    /// Frame time the last grid landed.
+    poi_received_at: Option<f32>,
+    /// Input the points were read from; a new input reads again at once.
+    poi_input: String,
+}
+
+/// Cells per side of the contrast grid; matches PARTICLE_DIRECTOR_POI_GRID in
+/// particleDirector.ts.
+const PARTICLE_DIRECTOR_POI_GRID: u32 = 24;
+/// Pictures change; a live source is re-read this often.
+const PARTICLE_DIRECTOR_POI_REFRESH_SECONDS: f32 = 20.0;
+/// A grid that has not landed after this long (a warming pipeline dropped the
+/// frame, say) is asked for again.
+const PARTICLE_DIRECTOR_POI_RETRY_SECONDS: f32 = 2.0;
+
+fn normalize_particle_director_params(params: &Value) -> DirectorParams {
+    DirectorParams {
+        enabled: params
+            .get("directorEnabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        pace: match native_particle_field_enum(params, "directorPace", "medium").as_str() {
+            "slow" => 0.6,
+            "fast" => 1.7,
+            _ => 1.0,
+        },
+        closeness: native_graph_param_f32(params, "directorCloseness", 0.0, 1.0, 0.7),
+        depth_of_field: params
+            .get("directorDepthOfField")
+            .and_then(Value::as_bool)
+            .unwrap_or(true),
+        beat_sync: params
+            .get("directorBeatSync")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        seed: native_graph_param_u32(params, "directorSeed", 1, 99, 1),
+    }
+}
+
+/// Point Pixel Particles' render camera where the director says. Only the
+/// render camera moves: the cloud stays laid out by the operator's Camera
+/// group (its anchors span that camera's view extent), which is what makes a
+/// push-in bring the picture closer instead of rescaling it to fill the frame.
+fn apply_director_to_pixel_particles(
+    view: &mut NativePixelParticlesParams,
+    base: &NativePixelParticlesParams,
+    camera: &DirectorCamera,
+    width: u32,
+    height: u32,
+    depth_of_field: bool,
+) {
+    view.fov_deg = director_fov_deg(base.fov_deg, camera.focal_mm).clamp(4.0, 120.0);
+    view.camera_z = (base.camera_z * camera.distance).max(0.1);
+    view.camera_yaw = base.camera_yaw + camera.orbit[0];
+    view.camera_pitch = base.camera_pitch + camera.orbit[1];
+    // The subject's world position comes from the operator's framing, and pan
+    // is applied after rotation, so centre the rotated subject.
+    let aspect = width.max(1) as f32 / height.max(1) as f32;
+    let view_y = (base.fov_deg.to_radians() * 0.5).tan() * base.camera_z;
+    let subject = [camera.target[0] * view_y * aspect, camera.target[1] * view_y];
+    let (sy, cy) = view.camera_yaw.to_radians().sin_cos();
+    let (sp, cp) = view.camera_pitch.to_radians().sin_cos();
+    let x1 = cy * subject[0];
+    let z1 = sy * subject[0];
+    let y2 = cp * subject[1] - sp * z1;
+    view.pan_x = base.pan_x - x1;
+    view.pan_y = base.pan_y - y2;
+    view.focus_depth = camera.focus;
+    if depth_of_field {
+        view.aperture = camera.aperture;
+    }
+}
+
+/// Point Flythrough's camera where the director says: zoom by focal length,
+/// aim into the slab ahead at the subject, and pull focus along the tunnel.
+fn apply_director_to_flythrough(
+    view: &mut NativeFlythroughParams,
+    base: &NativeFlythroughParams,
+    camera: &DirectorCamera,
+    depth_of_field: bool,
+) {
+    view.fov_deg = director_fov_deg(base.fov_deg, camera.focal_mm).clamp(4.0, 140.0);
+    view.focus_distance = 0.4 + camera.focus * 2.6;
+    // Aim at the subject as it sits in the slab at the focus distance. The
+    // 0.6 keeps a subject at the image edge inside the frame instead of
+    // swinging the camera out past the slab.
+    let ahead = view.focus_distance.max(0.3);
+    let aim_yaw = (camera.target[0] * 0.6 / ahead).atan().to_degrees();
+    let aim_pitch = -(camera.target[1] * 0.6 / ahead).atan().to_degrees();
+    view.camera_yaw = base.camera_yaw + camera.orbit[0] + aim_yaw;
+    view.camera_pitch = base.camera_pitch + camera.orbit[1] + aim_pitch;
+    if depth_of_field {
+        view.aperture = camera.aperture;
+    }
+}
+
+/// Field of view for a director focal length, relative to the operator's: 45 mm
+/// reproduces `base_fov_deg` exactly, 90 mm halves the frame.
+fn director_fov_deg(base_fov_deg: f32, focal_mm: f32) -> f32 {
+    let half = (base_fov_deg.to_radians() * 0.5).tan() * 45.0 / focal_mm.max(1.0);
+    (2.0 * half.atan()).to_degrees()
 }
 
 #[derive(Clone, Debug)]
@@ -1967,6 +2081,11 @@ struct NativeFlythroughGraphState {
     input_source_id: String,
     prev_frame_time: f32,
     fly_distance: f32,
+    director: ParticleDirectorTrack,
+    /// Frames that included the curl bake with every pipeline already compiled.
+    /// See build_native_flythrough_graph_job for why this is counted rather
+    /// than inferred from the field's buffer existing.
+    curl_bake_ready_frames: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -2009,6 +2128,8 @@ impl NativeFlythroughGraphState {
             input_source_id,
             prev_frame_time: time,
             fly_distance: 0.0,
+            director: ParticleDirectorTrack::default(),
+            curl_bake_ready_frames: 0,
         }
     }
 }
@@ -2252,11 +2373,24 @@ enum NativeGraphLayerState {
     VolumetricSpheres(NativeVolumetricSpheresGraphState),
 }
 
+/// One asynchronous graph buffer readback: a MAP_READ copy made in the frame's
+/// encoder, mapped after that frame is submitted, collected when the map lands.
+struct PendingGraphReadback {
+    id: String,
+    staging: wgpu::Buffer,
+    byte_length: u64,
+    mapped: Option<mpsc::Receiver<Result<(), wgpu::BufferAsyncError>>>,
+}
+
 #[derive(Clone, Debug)]
 struct NativeGraphFrameJob {
     buffers: Vec<NativeComputeGraphBufferSpec>,
     pass_plans: Vec<NativeComputeGraphPassPlan>,
     render_plans: Vec<NativeComputeGraphRenderPlan>,
+    /// Buffers to copy back to the CPU once this job has run. Asynchronous:
+    /// the bytes land in `graph_readback_results` a frame or more later, and
+    /// a frame never waits for them.
+    readback_buffer_ids: Vec<String>,
 }
 
 impl SceneLayer {
@@ -2641,6 +2775,11 @@ struct RenderState {
     native_compute_pipelines: HashMap<String, NativeComputePipeline>,
     native_graph_render_pipelines: HashMap<String, NativeGraphRenderPipeline>,
     native_compute_graph_buffers: HashMap<String, NativeComputeGraphGpuBuffer>,
+    /// Copies of graph buffers on their way back to the CPU. See
+    /// NativeGraphFrameJob::readback_buffer_ids.
+    pending_graph_readbacks: Vec<PendingGraphReadback>,
+    /// Finished readbacks by buffer id, taken by whoever asked for them.
+    graph_readback_results: HashMap<String, Vec<u8>>,
     output_mirror_texture: wgpu::Texture,
     /// Two full-resolution textures that composition FX ping-pong between.
     /// Deliberately separate textures rather than one two-layer array: wgpu
@@ -6104,6 +6243,7 @@ impl App {
             depth_enabled: false,
             depth_write: false,
             depth_compare,
+            depth_load: false,
             bindings: vec![binding],
         };
         self.source_frames
@@ -6119,6 +6259,7 @@ impl App {
                 buffers: vec![buffer_spec],
                 pass_plans: Vec::new(),
                 render_plans: vec![render_plan],
+                readback_buffer_ids: Vec::new(),
             },
         ))
     }
@@ -6386,6 +6527,7 @@ impl App {
                 depth_enabled: false,
                 depth_write: false,
                 depth_compare: NativeComputeGraphDepthCompare::Less,
+                depth_load: false,
                 bindings: bg_bindings,
             },
             NativeComputeGraphRenderPlan {
@@ -6415,6 +6557,7 @@ impl App {
                 depth_enabled: false,
                 depth_write: false,
                 depth_compare: NativeComputeGraphDepthCompare::Less,
+                depth_load: false,
                 bindings: render_bindings,
             },
         ];
@@ -6431,6 +6574,7 @@ impl App {
                 buffers,
                 pass_plans,
                 render_plans,
+                readback_buffer_ids: Vec::new(),
             },
         ))
     }
@@ -6848,6 +6992,7 @@ impl App {
             depth_enabled: false,
             depth_write: false,
             depth_compare: NativeComputeGraphDepthCompare::Less,
+            depth_load: false,
             bindings: render_bindings,
         };
         self.source_frames
@@ -6863,6 +7008,7 @@ impl App {
                 buffers,
                 pass_plans,
                 render_plans: vec![render_plan],
+                readback_buffer_ids: Vec::new(),
             },
         ))
     }
@@ -7228,6 +7374,7 @@ impl App {
                 depth_enabled: false,
                 depth_write: false,
                 depth_compare: NativeComputeGraphDepthCompare::Less,
+                depth_load: false,
                 bindings,
             });
         }
@@ -7281,6 +7428,7 @@ impl App {
             depth_enabled: sphere_depth,
             depth_write: sphere_depth,
             depth_compare: NativeComputeGraphDepthCompare::Less,
+            depth_load: false,
             bindings,
         });
         if params.connect_enabled {
@@ -7337,6 +7485,7 @@ impl App {
                 depth_enabled: false,
                 depth_write: false,
                 depth_compare: NativeComputeGraphDepthCompare::Less,
+                depth_load: false,
                 bindings,
             });
         }
@@ -7353,8 +7502,132 @@ impl App {
                 buffers,
                 pass_plans,
                 render_plans,
+                readback_buffer_ids: Vec::new(),
             },
         ))
+    }
+
+    /// Advance one layer's Auto Camera and, when due, schedule a contrast grid of
+    /// its input so the director has real subjects. Returns this frame's
+    /// camera (the rest camera when Auto Camera is off).
+    #[allow(clippy::too_many_arguments)]
+    fn step_particle_director(
+        &mut self,
+        track: &mut ParticleDirectorTrack,
+        director_params: &DirectorParams,
+        buffer_prefix: &str,
+        input_source_id: &str,
+        input_slot: usize,
+        time: f32,
+        buffers: &mut Vec<NativeComputeGraphBufferSpec>,
+        pass_plans: &mut Vec<NativeComputeGraphPassPlan>,
+        readback_buffer_ids: &mut Vec<String>,
+    ) -> Result<DirectorCamera, String> {
+        if !director_params.enabled {
+            track.poi_pending_since = None;
+            return Ok(track.director.camera_at(director_params, time, 0.0));
+        }
+        let grid_id = format!("{buffer_prefix}:poi-grid");
+        if let Some(bytes) = self
+            .renderer
+            .as_mut()
+            .and_then(|renderer| renderer.graph_readback_results.remove(&grid_id))
+        {
+            let scores: Vec<f32> = bytes
+                .chunks_exact(4)
+                .map(|word| f32::from_le_bytes([word[0], word[1], word[2], word[3]]))
+                .collect();
+            let points = points_of_interest_from_grid(&scores, PARTICLE_DIRECTOR_POI_GRID as usize);
+            if std::env::var("GHOST_DEBUG_DIRECTOR").is_ok() {
+                eprintln!("[director] {grid_id} points {points:?}");
+            }
+            track.director.set_points(points);
+            track.poi_pending_since = None;
+            track.poi_received_at = Some(time);
+        }
+        if track.poi_input != input_source_id {
+            track.poi_input = input_source_id.to_string();
+            track.poi_received_at = None;
+            track.poi_pending_since = None;
+        }
+        let stale = track
+            .poi_received_at
+            .map_or(true, |at| time - at >= PARTICLE_DIRECTOR_POI_REFRESH_SECONDS);
+        let waiting = track
+            .poi_pending_since
+            .is_some_and(|since| time - since < PARTICLE_DIRECTOR_POI_RETRY_SECONDS);
+        if stale && !waiting {
+            let shader_id = "particle-director/poi-grid";
+            let (hash, source) = self.native_graph_shader_source(shader_id, "cs_poi")?;
+            let uniform_id = format!("{buffer_prefix}:poi-uniform");
+            let cells = u64::from(PARTICLE_DIRECTOR_POI_GRID * PARTICLE_DIRECTOR_POI_GRID);
+            let mut uniform = vec![0_u8; 16];
+            write_u32_le(&mut uniform, 0, PARTICLE_DIRECTOR_POI_GRID);
+            buffers.push(NativeComputeGraphBufferSpec {
+                id: grid_id.clone(),
+                byte_length: cells * 4,
+                kind: NativeComputeBufferBindingKind::StorageReadWrite,
+                initial_bytes: Vec::new(),
+                persistent: false,
+                clear: false,
+                indirect: false,
+            });
+            buffers.push(NativeComputeGraphBufferSpec {
+                id: uniform_id.clone(),
+                byte_length: 16,
+                kind: NativeComputeBufferBindingKind::Uniform,
+                initial_bytes: uniform,
+                persistent: false,
+                clear: false,
+                indirect: false,
+            });
+            let bindings = vec![
+                NativeComputeGraphBindingSpec {
+                    binding: 0,
+                    resource_id: grid_id.clone(),
+                    kind: NativeComputeGraphBindingKind::Buffer(
+                        NativeComputeBufferBindingKind::StorageReadWrite,
+                    ),
+                    source_slot: None,
+                },
+                NativeComputeGraphBindingSpec {
+                    binding: 1,
+                    resource_id: uniform_id,
+                    kind: NativeComputeGraphBindingKind::Buffer(
+                        NativeComputeBufferBindingKind::Uniform,
+                    ),
+                    source_slot: None,
+                },
+                NativeComputeGraphBindingSpec {
+                    binding: 2,
+                    resource_id: input_source_id.to_string(),
+                    kind: NativeComputeGraphBindingKind::SourceFrameTexture(
+                        NativeComputeGraphTextureDimension::D2,
+                    ),
+                    source_slot: Some(input_slot),
+                },
+                NativeComputeGraphBindingSpec {
+                    binding: 3,
+                    resource_id: "source-frame-sampler".to_string(),
+                    kind: NativeComputeGraphBindingKind::SourceFrameSampler,
+                    source_slot: None,
+                },
+            ];
+            let layout = native_graph_binding_layout_signature(&bindings);
+            let groups = PARTICLE_DIRECTOR_POI_GRID.div_ceil(8);
+            pass_plans.push(NativeComputeGraphPassPlan {
+                name: "particle-director-poi-grid".to_string(),
+                cache_key: format!("graph:{shader_id}:{hash}:cs_poi:{layout}"),
+                source,
+                entry: "cs_poi".to_string(),
+                dispatch: [groups, groups, 1],
+                bindings,
+            });
+            readback_buffer_ids.push(grid_id);
+            track.poi_pending_since = Some(time);
+        }
+        let bpm = self.audio1[3];
+        Ok(track.director.camera_at(director_params, time, bpm))
     }
 
     fn build_native_pixel_particles_graph_job(
@@ -7390,12 +7663,16 @@ impl App {
             || state.particle_count != params.particle_count
             || state.input_source_id != graph_layer.input_source_id;
         if reset {
+            // The camera is not part of what a reset clears: switching mode or
+            // count mid-shot must not snap the Auto Camera back to rest.
+            let director = std::mem::take(&mut state.director);
             state = NativePixelParticlesGraphState::new(
                 params.mode_id,
                 params.particle_count,
                 graph_layer.input_source_id.clone(),
                 time,
             );
+            state.director = director;
         }
         let mut dt = if self.render_clock_mode == "manual" {
             self.native_graph_step_delta_this_render
@@ -7441,10 +7718,38 @@ impl App {
             .as_ref()
             .map(|renderer| renderer.source_frame_size.max(1) as f32)
             .unwrap_or_else(|| self.pending_width.max(self.pending_height).max(1) as f32);
-        let buffers = vec![
+        let director_params = normalize_particle_director_params(&graph_layer.params);
+        let mut director_buffers = Vec::new();
+        let mut director_passes = Vec::new();
+        let mut readback_buffer_ids = Vec::new();
+        let mut track = std::mem::take(&mut state.director);
+        let camera = self.step_particle_director(
+            &mut track,
+            &director_params,
+            &format!("pixel-particles:{}", native_graph_buffer_safe_id(&source_id)),
+            &graph_layer.input_source_id,
+            input_slot,
+            time,
+            &mut director_buffers,
+            &mut director_passes,
+            &mut readback_buffer_ids,
+        )?;
+        state.director = track;
+        let mut view_params = params.clone();
+        if director_params.enabled {
+            apply_director_to_pixel_particles(
+                &mut view_params,
+                &params,
+                &camera,
+                self.pending_width,
+                self.pending_height,
+                director_params.depth_of_field,
+            );
+        }
+        let mut buffers = vec![
             NativeComputeGraphBufferSpec {
                 id: globals_id.clone(),
-                byte_length: 176,
+                byte_length: PIXEL_PARTICLES_GLOBALS_BYTES,
                 kind: NativeComputeBufferBindingKind::Uniform,
                 initial_bytes: build_pixel_particles_globals_bytes(
                     &params,
@@ -7460,10 +7765,10 @@ impl App {
             },
             NativeComputeGraphBufferSpec {
                 id: render_uniform_id.clone(),
-                byte_length: 96,
+                byte_length: PIXEL_PARTICLES_RENDER_UNIFORM_BYTES,
                 kind: NativeComputeBufferBindingKind::Uniform,
                 initial_bytes: build_pixel_particles_render_bytes(
-                    &params,
+                    &view_params,
                     self.pending_width,
                     self.pending_height,
                 ),
@@ -7529,7 +7834,7 @@ impl App {
             },
         ];
         let compute_layout = native_graph_binding_layout_signature(&compute_bindings);
-        let pass_plans = vec![NativeComputeGraphPassPlan {
+        let mut pass_plans = vec![NativeComputeGraphPassPlan {
             name: "pixel-particles-compute".to_string(),
             cache_key: format!("graph:{compute_shader_id}:{compute_hash}:cs_main:{compute_layout}"),
             source: compute_source,
@@ -7537,6 +7842,8 @@ impl App {
             dispatch: [params.particle_count.div_ceil(64).max(1), 1, 1],
             bindings: compute_bindings,
         }];
+        buffers.extend(director_buffers);
+        pass_plans.extend(director_passes);
 
         let output_slot = self.assign_source_frame_slot(&source_id);
         let seq = self.native_frame_index();
@@ -7566,37 +7873,114 @@ impl App {
             },
         ];
         let render_layout = native_graph_binding_layout_signature(&render_bindings);
-        let render_plans = vec![NativeComputeGraphRenderPlan {
-            name: "pixel-particles-render".to_string(),
-            cache_key: format!(
-                "graph-render:{render_shader_id}:{render_hash}:vs_main:fs_main:{}:{}:nodepth:read:{}:{render_layout}",
-                NativeComputeGraphRenderBlend::Alpha.signature(),
-                NativeComputeGraphPrimitiveTopology::TriangleList.signature(),
-                NativeComputeGraphDepthCompare::Less.signature(),
-            ),
-            source: render_source,
-            vertex_entry: "vs_main".to_string(),
-            fragment_entry: "fs_main".to_string(),
-            clear: true,
-            include_snapshot: false,
-            generate_mips: false,
-            target: NativeComputeGraphRenderTarget::SourceFrame {
-                source_id: source_id.clone(),
-                slot: output_slot,
-                seq,
-            },
-            blend: NativeComputeGraphRenderBlend::Alpha,
-            vertex_count: 6,
-            instance_count: params.particle_count,
-            indirect_buffer_id: None,
-            indirect_offset: 0,
-            clear_color: [0.0, 0.0, 0.0, 0.0],
-            primitive_topology: NativeComputeGraphPrimitiveTopology::TriangleList,
-            depth_enabled: false,
-            depth_write: false,
-            depth_compare: NativeComputeGraphDepthCompare::Less,
-            bindings: render_bindings,
-        }];
+        let target = NativeComputeGraphRenderTarget::SourceFrame {
+            source_id: source_id.clone(),
+            slot: output_slot,
+            seq,
+        };
+        // Soft: one blended pass, no depth (the original look). Lit: opaque
+        // sphere grains with depth; with an aperture, sharp grains first and
+        // blurred grains blended over them, depth-tested against what the
+        // sharp pass kept. buildPixelParticlesRenderPasses mirrors this.
+        let make_plan = |name: &str,
+                         shader_id: &str,
+                         hash: u64,
+                         source: &Arc<str>,
+                         vertex_entry: &str,
+                         fragment_entry: &str,
+                         blend: NativeComputeGraphRenderBlend,
+                         clear: bool,
+                         depth: (bool, bool, bool)| {
+            let (depth_enabled, depth_write, depth_load) = depth;
+            NativeComputeGraphRenderPlan {
+                name: name.to_string(),
+                cache_key: format!(
+                    "graph-render:{shader_id}:{hash}:{vertex_entry}:{fragment_entry}:{}:{}:{}:{}:{}:{render_layout}",
+                    blend.signature(),
+                    NativeComputeGraphPrimitiveTopology::TriangleList.signature(),
+                    if depth_enabled { "depth" } else { "nodepth" },
+                    if depth_write { "write" } else { "read" },
+                    NativeComputeGraphDepthCompare::Less.signature(),
+                ),
+                source: source.clone(),
+                vertex_entry: vertex_entry.to_string(),
+                fragment_entry: fragment_entry.to_string(),
+                clear,
+                include_snapshot: false,
+                generate_mips: false,
+                target: target.clone(),
+                blend,
+                vertex_count: 6,
+                instance_count: params.particle_count,
+                indirect_buffer_id: None,
+                indirect_offset: 0,
+                clear_color: [0.0, 0.0, 0.0, 0.0],
+                primitive_topology: NativeComputeGraphPrimitiveTopology::TriangleList,
+                depth_enabled,
+                depth_write,
+                depth_compare: NativeComputeGraphDepthCompare::Less,
+                depth_load,
+                bindings: render_bindings.clone(),
+            }
+        };
+        let render_plans = if !view_params.grain_lit {
+            vec![make_plan(
+                "pixel-particles-render",
+                render_shader_id,
+                render_hash,
+                &render_source,
+                "vs_main",
+                "fs_main",
+                NativeComputeGraphRenderBlend::Alpha,
+                true,
+                (false, false, false),
+            )]
+        } else {
+            let lit_shader_id = "pixel-particles/render-lit";
+            let (lit_hash, lit_source) = self.native_graph_shader_source(lit_shader_id, "fs_lit")?;
+            if view_params.aperture <= 0.0 {
+                self.native_graph_shader_source(lit_shader_id, "vs_lit")?;
+                vec![make_plan(
+                    "pixel-particles-render-lit",
+                    lit_shader_id,
+                    lit_hash,
+                    &lit_source,
+                    "vs_lit",
+                    "fs_lit",
+                    NativeComputeGraphRenderBlend::Replace,
+                    true,
+                    (true, true, false),
+                )]
+            } else {
+                self.native_graph_shader_source(lit_shader_id, "vs_sharp")?;
+                self.native_graph_shader_source(lit_shader_id, "vs_blur")?;
+                self.native_graph_shader_source(lit_shader_id, "fs_bokeh")?;
+                vec![
+                    make_plan(
+                        "pixel-particles-render-sharp",
+                        lit_shader_id,
+                        lit_hash,
+                        &lit_source,
+                        "vs_sharp",
+                        "fs_lit",
+                        NativeComputeGraphRenderBlend::Replace,
+                        true,
+                        (true, true, false),
+                    ),
+                    make_plan(
+                        "pixel-particles-render-blur",
+                        lit_shader_id,
+                        lit_hash,
+                        &lit_source,
+                        "vs_blur",
+                        "fs_bokeh",
+                        NativeComputeGraphRenderBlend::Alpha,
+                        false,
+                        (true, false, true),
+                    ),
+                ]
+            }
+        };
         self.source_frames
             .insert(source_id.clone(), SourceFrame::full(seq));
         for layer in self.scene_layers.values_mut() {
@@ -7610,6 +7994,7 @@ impl App {
                 buffers,
                 pass_plans,
                 render_plans,
+                readback_buffer_ids,
             },
         ))
     }
@@ -7646,11 +8031,44 @@ impl App {
         let mut reset = state.particle_count != params.particle_count
             || state.input_source_id != graph_layer.input_source_id;
         if reset {
+            // Keep the Auto Camera through a Count or input change.
+            let director = std::mem::take(&mut state.director);
             state = NativeFlythroughGraphState::new(
                 params.particle_count,
                 graph_layer.input_source_id.clone(),
                 time,
             );
+            state.director = director;
+        }
+        let director_params = normalize_particle_director_params(&graph_layer.params);
+        let mut director_buffers = Vec::new();
+        let mut director_passes = Vec::new();
+        let mut readback_buffer_ids = Vec::new();
+        let mut track = std::mem::take(&mut state.director);
+        let camera = self.step_particle_director(
+            &mut track,
+            &director_params,
+            &format!("flythrough:{}", native_graph_buffer_safe_id(&graph_layer.source_id)),
+            &graph_layer.input_source_id,
+            input_slot,
+            time,
+            &mut director_buffers,
+            &mut director_passes,
+            &mut readback_buffer_ids,
+        )?;
+        state.director = track;
+        let mut view_params = params.clone();
+        // Flight slows as the shot tightens, so a detail shot looks at its
+        // subject instead of rushing past it.
+        let mut director_speed = 1.0;
+        if director_params.enabled {
+            apply_director_to_flythrough(
+                &mut view_params,
+                &params,
+                &camera,
+                director_params.depth_of_field,
+            );
+            director_speed = (1.4 / camera.zoom()).clamp(0.25, 1.0);
         }
         let mut dt = if self.render_clock_mode == "manual" {
             self.native_graph_step_delta_this_render
@@ -7664,6 +8082,7 @@ impl App {
         let bass = self.audio0[1].clamp(0.0, 4.0);
         let treble = self.audio0[3].clamp(0.0, 4.0);
         state.fly_distance += params.fly_speed
+            * director_speed
             * if params.audio_reactive {
                 1.0 + bass * 1.8
             } else {
@@ -7671,6 +8090,7 @@ impl App {
             }
             * dt;
 
+        let curl_bake_shader_id = "flythrough/curl-bake";
         let compute_shader_id = "flythrough/compute";
         let render_shader_id = "flythrough/render";
         let (compute_hash, compute_source) =
@@ -7688,6 +8108,14 @@ impl App {
         let compute_uniform_id = id("compute-uniform");
         let render_uniform_id = id("render-uniform");
         let particle_id = id("particles");
+        // Keyed on the layer's source, not the particle count, so changing
+        // Count keeps the field it already baked instead of allocating a
+        // second 8 MB copy under the new prefix.
+        let curl_field_id = format!(
+            "flythrough:{}:curl-field",
+            native_graph_buffer_safe_id(&source_id)
+        );
+        let curl_bake_uniform_id = id("curl-bake-uniform");
         let particle_buffer_missing = self
             .renderer
             .as_ref()
@@ -7698,7 +8126,34 @@ impl App {
             })
             .unwrap_or(true);
         reset |= particle_buffer_missing;
-        let buffers = vec![
+        // The curl field is baked in the frame its buffer is created and only
+        // read after that. Keyed on the buffer, not on `reset`, so a particle
+        // reset (count change, new input) reuses the field it already has.
+        let curl_field_missing = self
+            .renderer
+            .as_ref()
+            .map(|renderer| {
+                !renderer
+                    .native_compute_graph_buffers
+                    .contains_key(&curl_field_id)
+            })
+            .unwrap_or(true);
+        // Bake until a frame that includes the bake has every pipeline it needs
+        // already compiled, twice. Keying the bake on "the buffer is missing"
+        // was the first version, and it never worked in the app: per-frame
+        // jobs compile pipelines asynchronously, so the first frames of a new
+        // layer fail with "pipeline is warming" AFTER their persistent buffers
+        // were upserted. The field's buffer then existed, zeroed, the bake was
+        // never scheduled again, and the flow was silently zero forever. The
+        // RPC graph path compiles synchronously, which is why an A/B through
+        // it looked fine. Two ready frames rather than one covers a frame that
+        // fails for some other reason after its pipelines were warm.
+        if curl_field_missing {
+            state.curl_bake_ready_frames = 0;
+        }
+        let include_curl_bake = state.curl_bake_ready_frames < 2;
+        let mut curl_bake_cache_key: Option<String> = None;
+        let mut buffers = vec![
             NativeComputeGraphBufferSpec {
                 id: compute_uniform_id.clone(),
                 byte_length: 64,
@@ -7713,7 +8168,7 @@ impl App {
                 byte_length: 256,
                 kind: NativeComputeBufferBindingKind::Uniform,
                 initial_bytes: build_flythrough_render_bytes(
-                    &params,
+                    &view_params,
                     &state,
                     self.pending_width,
                     self.pending_height,
@@ -7736,7 +8191,30 @@ impl App {
                 clear: reset,
                 indirect: false,
             },
+            NativeComputeGraphBufferSpec {
+                id: curl_field_id.clone(),
+                byte_length: u64::from(FLYTHROUGH_CURL_GRID_N).pow(3) * 16,
+                kind: NativeComputeBufferBindingKind::StorageReadWrite,
+                initial_bytes: Vec::new(),
+                persistent: true,
+                clear: curl_field_missing,
+                indirect: false,
+            },
         ];
+        if include_curl_bake {
+            let mut bake_uniform = vec![0_u8; 16];
+            write_u32_le(&mut bake_uniform, 0, FLYTHROUGH_CURL_GRID_N);
+            write_u32_le(&mut bake_uniform, 1, FLYTHROUGH_CURL_PERIOD);
+            buffers.push(NativeComputeGraphBufferSpec {
+                id: curl_bake_uniform_id.clone(),
+                byte_length: 16,
+                kind: NativeComputeBufferBindingKind::Uniform,
+                initial_bytes: bake_uniform,
+                persistent: false,
+                clear: false,
+                indirect: false,
+            });
+        }
         let source_texture = NativeComputeGraphBindingSpec {
             binding: 2,
             resource_id: graph_layer.input_source_id.clone(),
@@ -7769,16 +8247,64 @@ impl App {
                 kind: NativeComputeGraphBindingKind::SourceFrameSampler,
                 source_slot: None,
             },
+            NativeComputeGraphBindingSpec {
+                binding: 4,
+                resource_id: curl_field_id.clone(),
+                kind: NativeComputeGraphBindingKind::Buffer(
+                    NativeComputeBufferBindingKind::StorageRead,
+                ),
+                source_slot: None,
+            },
         ];
         let compute_layout = native_graph_binding_layout_signature(&compute_bindings);
-        let pass_plans = vec![NativeComputeGraphPassPlan {
+        let compute_cache_key =
+            format!("graph:{compute_shader_id}:{compute_hash}:cs_main:{compute_layout}");
+        let mut pass_plans = Vec::with_capacity(2);
+        if include_curl_bake {
+            let (bake_hash, bake_source) =
+                self.native_graph_shader_source(curl_bake_shader_id, "cs_bake")?;
+            let bake_bindings = vec![
+                NativeComputeGraphBindingSpec {
+                    binding: 0,
+                    resource_id: curl_field_id.clone(),
+                    kind: NativeComputeGraphBindingKind::Buffer(
+                        NativeComputeBufferBindingKind::StorageReadWrite,
+                    ),
+                    source_slot: None,
+                },
+                NativeComputeGraphBindingSpec {
+                    binding: 1,
+                    resource_id: curl_bake_uniform_id,
+                    kind: NativeComputeGraphBindingKind::Buffer(
+                        NativeComputeBufferBindingKind::Uniform,
+                    ),
+                    source_slot: None,
+                },
+            ];
+            let bake_layout = native_graph_binding_layout_signature(&bake_bindings);
+            let groups = FLYTHROUGH_CURL_GRID_N.div_ceil(4);
+            let bake_cache_key =
+                format!("graph:{curl_bake_shader_id}:{bake_hash}:cs_bake:{bake_layout}");
+            curl_bake_cache_key = Some(bake_cache_key.clone());
+            pass_plans.push(NativeComputeGraphPassPlan {
+                name: "flythrough-curl-bake".to_string(),
+                cache_key: bake_cache_key,
+                source: bake_source,
+                entry: "cs_bake".to_string(),
+                dispatch: [groups, groups, groups],
+                bindings: bake_bindings,
+            });
+        }
+        pass_plans.push(NativeComputeGraphPassPlan {
             name: "flythrough-compute".to_string(),
-            cache_key: format!("graph:{compute_shader_id}:{compute_hash}:cs_main:{compute_layout}"),
+            cache_key: compute_cache_key.clone(),
             source: compute_source,
             entry: "cs_main".to_string(),
             dispatch: [params.particle_count.div_ceil(64).max(1), 1, 1],
             bindings: compute_bindings,
-        }];
+        });
+        buffers.extend(director_buffers);
+        pass_plans.extend(director_passes);
         let output_slot = self.assign_source_frame_slot(&source_id);
         let seq = self.native_frame_index();
         let render_bindings = vec![
@@ -7807,42 +8333,141 @@ impl App {
             },
         ];
         let render_layout = native_graph_binding_layout_signature(&render_bindings);
-        let render_plans = vec![NativeComputeGraphRenderPlan {
-            name: "flythrough-render".to_string(),
-            cache_key: format!(
-                "graph-render:{render_shader_id}:{render_hash}:vs_main:fs_main:{}:{}:nodepth:read:{}:{render_layout}",
-                NativeComputeGraphRenderBlend::Alpha.signature(),
-                NativeComputeGraphPrimitiveTopology::TriangleList.signature(),
-                NativeComputeGraphDepthCompare::Less.signature(),
-            ),
-            source: render_source,
-            vertex_entry: "vs_main".to_string(),
-            fragment_entry: "fs_main".to_string(),
-            clear: true,
-            include_snapshot: false,
-            generate_mips: false,
-            target: NativeComputeGraphRenderTarget::SourceFrame {
-                source_id: source_id.clone(),
-                slot: output_slot,
-                seq,
-            },
-            blend: NativeComputeGraphRenderBlend::Alpha,
-            vertex_count: 6,
-            instance_count: params.slab_count.saturating_mul(params.particle_count),
-            indirect_buffer_id: None,
-            indirect_offset: 0,
-            clear_color: [0.0, 0.0, 0.0, 0.0],
-            primitive_topology: NativeComputeGraphPrimitiveTopology::TriangleList,
-            depth_enabled: false,
-            depth_write: false,
-            depth_compare: NativeComputeGraphDepthCompare::Less,
-            bindings: render_bindings,
-        }];
+        let target = NativeComputeGraphRenderTarget::SourceFrame {
+            source_id: source_id.clone(),
+            slot: output_slot,
+            seq,
+        };
+        let instance_count = params.slab_count.saturating_mul(params.particle_count);
+        // Soft (and all strokes): one blended pass. Lit points: opaque grains
+        // with depth; with an aperture, sharp then blurred grains over them
+        // against the kept depth. buildFlythroughRenderPasses mirrors this.
+        let make_plan = |name: &str,
+                         shader_id: &str,
+                         hash: u64,
+                         source: &Arc<str>,
+                         vertex_entry: &str,
+                         fragment_entry: &str,
+                         blend: NativeComputeGraphRenderBlend,
+                         clear: bool,
+                         depth: (bool, bool, bool)| {
+            let (depth_enabled, depth_write, depth_load) = depth;
+            NativeComputeGraphRenderPlan {
+                name: name.to_string(),
+                cache_key: format!(
+                    "graph-render:{shader_id}:{hash}:{vertex_entry}:{fragment_entry}:{}:{}:{}:{}:{}:{render_layout}",
+                    blend.signature(),
+                    NativeComputeGraphPrimitiveTopology::TriangleList.signature(),
+                    if depth_enabled { "depth" } else { "nodepth" },
+                    if depth_write { "write" } else { "read" },
+                    NativeComputeGraphDepthCompare::Less.signature(),
+                ),
+                source: source.clone(),
+                vertex_entry: vertex_entry.to_string(),
+                fragment_entry: fragment_entry.to_string(),
+                clear,
+                include_snapshot: false,
+                generate_mips: false,
+                target: target.clone(),
+                blend,
+                vertex_count: 6,
+                instance_count,
+                indirect_buffer_id: None,
+                indirect_offset: 0,
+                clear_color: [0.0, 0.0, 0.0, 0.0],
+                primitive_topology: NativeComputeGraphPrimitiveTopology::TriangleList,
+                depth_enabled,
+                depth_write,
+                depth_compare: NativeComputeGraphDepthCompare::Less,
+                depth_load,
+                bindings: render_bindings.clone(),
+            }
+        };
+        let render_plans = if !view_params.grain_lit || view_params.topology_id != 0 {
+            vec![make_plan(
+                "flythrough-render",
+                render_shader_id,
+                render_hash,
+                &render_source,
+                "vs_main",
+                "fs_main",
+                NativeComputeGraphRenderBlend::Alpha,
+                true,
+                (false, false, false),
+            )]
+        } else {
+            let lit_shader_id = "flythrough/render-lit";
+            let (lit_hash, lit_source) = self.native_graph_shader_source(lit_shader_id, "fs_lit")?;
+            if view_params.aperture <= 0.0 {
+                self.native_graph_shader_source(lit_shader_id, "vs_lit")?;
+                vec![make_plan(
+                    "flythrough-render-lit",
+                    lit_shader_id,
+                    lit_hash,
+                    &lit_source,
+                    "vs_lit",
+                    "fs_lit",
+                    NativeComputeGraphRenderBlend::Replace,
+                    true,
+                    (true, true, false),
+                )]
+            } else {
+                self.native_graph_shader_source(lit_shader_id, "vs_sharp")?;
+                self.native_graph_shader_source(lit_shader_id, "vs_blur")?;
+                self.native_graph_shader_source(lit_shader_id, "fs_bokeh")?;
+                vec![
+                    make_plan(
+                        "flythrough-render-sharp",
+                        lit_shader_id,
+                        lit_hash,
+                        &lit_source,
+                        "vs_sharp",
+                        "fs_lit",
+                        NativeComputeGraphRenderBlend::Replace,
+                        true,
+                        (true, true, false),
+                    ),
+                    make_plan(
+                        "flythrough-render-blur",
+                        lit_shader_id,
+                        lit_hash,
+                        &lit_source,
+                        "vs_blur",
+                        "fs_bokeh",
+                        NativeComputeGraphRenderBlend::Alpha,
+                        false,
+                        (true, false, true),
+                    ),
+                ]
+            }
+        };
         self.source_frames
             .insert(source_id.clone(), SourceFrame::full(seq));
         for layer in self.scene_layers.values_mut() {
             if layer.source_id.as_deref() == Some(source_id.as_str()) {
                 layer.frame_slot = Some(output_slot);
+            }
+        }
+        // A bake only counts once everything this frame runs is compiled, so a
+        // frame that is about to fail with "pipeline is warming" does not.
+        if let Some(bake_key) = curl_bake_cache_key.as_deref() {
+            let ready = self
+                .renderer
+                .as_ref()
+                .map(|renderer| {
+                    renderer.native_compute_pipelines.contains_key(bake_key)
+                        && renderer
+                            .native_compute_pipelines
+                            .contains_key(&compute_cache_key)
+                        && render_plans.iter().all(|plan| {
+                            renderer
+                                .native_graph_render_pipelines
+                                .contains_key(&plan.cache_key)
+                        })
+                })
+                .unwrap_or(false);
+            if ready {
+                state.curl_bake_ready_frames = state.curl_bake_ready_frames.saturating_add(1);
             }
         }
         Ok((
@@ -7851,6 +8476,7 @@ impl App {
                 buffers,
                 pass_plans,
                 render_plans,
+                readback_buffer_ids,
             },
         ))
     }
@@ -8228,6 +8854,7 @@ impl App {
             depth_enabled: false,
             depth_write: false,
             depth_compare: NativeComputeGraphDepthCompare::Less,
+            depth_load: false,
             bindings: render_bindings,
         }];
         self.source_frames
@@ -8243,6 +8870,7 @@ impl App {
                 buffers,
                 pass_plans,
                 render_plans,
+                readback_buffer_ids: Vec::new(),
             },
         ))
     }
@@ -9210,6 +9838,7 @@ impl App {
             depth_enabled: false,
             depth_write: false,
             depth_compare: NativeComputeGraphDepthCompare::Less,
+            depth_load: false,
             bindings: render_bindings,
         };
         self.source_frames
@@ -9225,6 +9854,7 @@ impl App {
                 buffers,
                 pass_plans,
                 render_plans: vec![render_plan],
+                readback_buffer_ids: Vec::new(),
             },
         ))
     }
@@ -9656,6 +10286,7 @@ impl App {
             depth_enabled: false,
             depth_write: false,
             depth_compare: NativeComputeGraphDepthCompare::Less,
+            depth_load: false,
             bindings: render_bindings,
         };
         self.source_frames
@@ -9671,6 +10302,7 @@ impl App {
                 buffers,
                 pass_plans,
                 render_plans: vec![render_plan],
+                readback_buffer_ids: Vec::new(),
             },
         ))
     }
@@ -10577,6 +11209,7 @@ impl App {
             buffers: buffer_specs,
             pass_plans,
             render_plans,
+            readback_buffer_ids: Vec::new(),
         })
     }
 
@@ -11201,6 +11834,10 @@ impl App {
             .or_else(|| string_at(render, &["depthCompare"]))
             .map(|label| NativeComputeGraphDepthCompare::from_label(&label))
             .unwrap_or(NativeComputeGraphDepthCompare::Less);
+        let depth_load = depth_enabled
+            && bool_at(render, &["depth_load"])
+                .or_else(|| bool_at(render, &["depthLoad"]))
+                .unwrap_or(false);
         let primitive_topology = string_at(render, &["primitive"])
             .or_else(|| string_at(render, &["topology"]))
             .or_else(|| string_at(render, &["primitive_topology"]))
@@ -11288,6 +11925,7 @@ impl App {
             depth_enabled,
             depth_write,
             depth_compare,
+            depth_load,
             bindings,
         })
     }
@@ -16262,6 +16900,8 @@ impl RenderState {
             native_compute_pipelines: HashMap::new(),
             native_graph_render_pipelines: HashMap::new(),
             native_compute_graph_buffers: HashMap::new(),
+            pending_graph_readbacks: Vec::new(),
+            graph_readback_results: HashMap::new(),
             output_mirror_texture,
             composite_frame_textures,
             output_mirror_view,
@@ -17000,6 +17640,7 @@ impl RenderState {
         if let Some(gpu_timing) = self.gpu_timing.as_mut() {
             gpu_timing.poll_readback();
         }
+        self.poll_graph_readbacks();
     }
 
     fn gpu_frames_completed(&self) -> u64 {
@@ -17663,12 +18304,16 @@ impl RenderState {
                 && matches!(render.target, NativeComputeGraphRenderTarget::Snapshot)
         });
         let mut render_results = Vec::with_capacity(render_plans.len());
-        for render in &render_plans {
+        for (index, render) in render_plans.iter().enumerate() {
+            let store_depth = render_plans
+                .get(index + 1)
+                .is_some_and(|next| next.depth_load);
             render_results.push(self.render_native_compute_graph(
                 &mut encoder,
                 &transient_buffers,
                 render,
                 true,
+                store_depth,
             )?);
         }
 
@@ -17781,11 +18426,85 @@ impl RenderState {
                     false,
                 )?;
             }
-            for render_plan in &job.render_plans {
-                self.render_native_compute_graph(encoder, &transient_buffers, render_plan, false)?;
+            for (index, render_plan) in job.render_plans.iter().enumerate() {
+                let store_depth = job
+                    .render_plans
+                    .get(index + 1)
+                    .is_some_and(|next| next.depth_load);
+                self.render_native_compute_graph(
+                    encoder,
+                    &transient_buffers,
+                    render_plan,
+                    false,
+                    store_depth,
+                )?;
+            }
+            for id in &job.readback_buffer_ids {
+                // One in flight per buffer: a slow map must not pile up copies.
+                if self.pending_graph_readbacks.iter().any(|pending| &pending.id == id) {
+                    continue;
+                }
+                let Some(source) = self.compute_graph_buffer(&transient_buffers, id) else {
+                    continue;
+                };
+                let byte_length = source.byte_length;
+                let staging = self.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("Ghost Graph Readback Staging"),
+                    size: byte_length,
+                    usage: wgpu::BufferUsages::MAP_READ | wgpu::BufferUsages::COPY_DST,
+                    mapped_at_creation: false,
+                });
+                encoder.copy_buffer_to_buffer(&source.buffer, 0, &staging, 0, byte_length);
+                self.pending_graph_readbacks.push(PendingGraphReadback {
+                    id: id.clone(),
+                    staging,
+                    byte_length,
+                    mapped: None,
+                });
             }
         }
         Ok(())
+    }
+
+    /// Start mapping every readback copied in the frame just submitted.
+    fn begin_graph_readbacks(&mut self) {
+        for pending in &mut self.pending_graph_readbacks {
+            if pending.mapped.is_some() {
+                continue;
+            }
+            let (tx, rx) = mpsc::channel();
+            pending
+                .staging
+                .slice(0..pending.byte_length)
+                .map_async(wgpu::MapMode::Read, move |result| {
+                    let _ = tx.send(result);
+                });
+            pending.mapped = Some(rx);
+        }
+    }
+
+    /// Collect finished readbacks without waiting on the GPU.
+    fn poll_graph_readbacks(&mut self) {
+        let mut index = 0;
+        while index < self.pending_graph_readbacks.len() {
+            let landed = match self.pending_graph_readbacks[index].mapped.as_ref() {
+                Some(rx) => rx.try_recv().ok(),
+                None => None,
+            };
+            let Some(result) = landed else {
+                index += 1;
+                continue;
+            };
+            let pending = self.pending_graph_readbacks.swap_remove(index);
+            if result.is_ok() {
+                let slice = pending.staging.slice(0..pending.byte_length);
+                if let Ok(view) = slice.get_mapped_range() {
+                    self.graph_readback_results
+                        .insert(pending.id.clone(), view.to_vec());
+                }
+                pending.staging.unmap();
+            }
+        }
     }
 
     fn encode_native_compute_graph_pass(
@@ -17861,6 +18580,10 @@ impl RenderState {
         transient_buffers: &HashMap<String, NativeComputeGraphGpuBuffer>,
         render_plan: &NativeComputeGraphRenderPlan,
         report: bool,
+        // Keep this pass's depth for the next one. Only set when the next pass
+        // in the same graph is depth_load: storing is not free on tile-based
+        // GPUs, which can otherwise leave depth in on-chip memory.
+        store_depth: bool,
     ) -> Result<Value, String> {
         let (output_format, target_name, target_width, target_height, source_id, source_slot) =
             match &render_plan.target {
@@ -17985,8 +18708,17 @@ impl RenderState {
             Some(wgpu::RenderPassDepthStencilAttachment {
                 view: depth_view,
                 depth_ops: Some(wgpu::Operations {
-                    load: wgpu::LoadOp::Clear(1.0),
-                    store: wgpu::StoreOp::Discard,
+                    // A depth_load pass reads what the pass before it stored.
+                    load: if render_plan.depth_load {
+                        wgpu::LoadOp::Load
+                    } else {
+                        wgpu::LoadOp::Clear(1.0)
+                    },
+                    store: if store_depth {
+                        wgpu::StoreOp::Store
+                    } else {
+                        wgpu::StoreOp::Discard
+                    },
                 }),
                 stencil_ops: None,
             })
@@ -18060,6 +18792,7 @@ impl RenderState {
             "depth": render_plan.depth_enabled,
             "depth_write": render_plan.depth_write,
             "depth_compare": render_plan.depth_compare.signature(),
+            "depth_load": render_plan.depth_load,
             "format": texture_format_label(output_format),
             "include_snapshot": render_plan.include_snapshot,
             "generate_mips": render_plan.generate_mips,
@@ -19664,6 +20397,7 @@ impl RenderState {
             }
         }
         self.queue.submit(Some(encoder.finish()));
+        self.begin_graph_readbacks();
         if should_record_timing {
             if let Some(gpu_timing) = self.gpu_timing.as_mut() {
                 gpu_timing.begin_readback();
@@ -19844,6 +20578,7 @@ impl RenderState {
             }
         }
         self.submit_frame(mirror_encoder);
+        self.begin_graph_readbacks();
         if should_record_timing {
             if let Some(gpu_timing) = self.gpu_timing.as_mut() {
                 gpu_timing.begin_readback();
@@ -21847,6 +22582,12 @@ fn build_particle_field_line_uniform_bytes(
 
 const PIXEL_PARTICLES_PARTICLE_BYTES: u64 = 32;
 const PIXEL_PARTICLES_MAX: u32 = 1_000_000;
+/// Must match PIXEL_PARTICLES_GLOBALS_BYTES / _RENDER_UNIFORM_BYTES in
+/// webgpuPixelParticles.ts.
+const PIXEL_PARTICLES_GLOBALS_BYTES: u64 = 208;
+const PIXEL_PARTICLES_RENDER_UNIFORM_BYTES: u64 = 160;
+const PIXEL_PARTICLES_NEAR: f32 = 0.1;
+const PIXEL_PARTICLES_FAR: f32 = 100.0;
 
 #[derive(Clone, Debug)]
 struct NativePixelParticlesParams {
@@ -21883,6 +22624,19 @@ struct NativePixelParticlesParams {
     depth_motion_coupling: f32,
     depth_motion_phase: f32,
     mirror_x: bool,
+    motion_reactive: f32,
+    motion_decay: f32,
+    /// Sphere grains with depth instead of the soft glow disc.
+    grain_lit: bool,
+    grain_specular: f32,
+    grain_shininess: f32,
+    shadow_strength: f32,
+    shadow_reach: f32,
+    shadow_softness: f32,
+    /// 0 = nearest part of the relief in focus, 1 = farthest.
+    focus_depth: f32,
+    /// 0 = no depth of field.
+    aperture: f32,
 }
 
 fn normalize_pixel_particles_native_params(params: &Value) -> NativePixelParticlesParams {
@@ -22018,13 +22772,54 @@ fn normalize_pixel_particles_native_params(params: &Value) -> NativePixelParticl
             .get("mirrorX")
             .and_then(Value::as_bool)
             .unwrap_or(false),
+        motion_reactive: native_graph_param_f32(params, "motionReactive", 0.0, 8.0, 0.0),
+        motion_decay: native_graph_param_f32(params, "motionDecay", 0.0, 60.0, 3.0),
+        grain_lit: native_particle_field_enum(params, "grainShading", "soft") == "lit",
+        grain_specular: native_graph_param_f32(params, "grainSpecular", 0.0, 4.0, 0.35),
+        grain_shininess: native_graph_param_f32(params, "grainShininess", 1.0, 256.0, 24.0),
+        shadow_strength: native_graph_param_f32(params, "shadowStrength", 0.0, 1.0, 0.65),
+        shadow_reach: native_graph_param_f32(params, "shadowReach", 0.001, 0.5, 0.06),
+        shadow_softness: native_graph_param_f32(params, "shadowSoftness", 0.001, 1.0, 0.08),
+        focus_depth: native_graph_param_f32(params, "focusDepth", 0.0, 1.0, 0.5),
+        aperture: native_graph_param_f32(params, "aperture", 0.0, 4.0, 0.0),
     }
+}
+
+/// The scene light turned into view space, where grains are shaded. Same
+/// rotation order as pixel_particles_view_proj.
+fn pixel_particles_light_view_dir(params: &NativePixelParticlesParams) -> [f32; 3] {
+    let len = (params.light[0] * params.light[0]
+        + params.light[1] * params.light[1]
+        + params.light[2] * params.light[2])
+        .sqrt();
+    let len = if len > 0.0 { len } else { 1.0 };
+    let (x, y, z) = (
+        params.light[0] / len,
+        params.light[1] / len,
+        params.light[2] / len,
+    );
+    let (sy, cy) = params.camera_yaw.to_radians().sin_cos();
+    let (sp, cp) = params.camera_pitch.to_radians().sin_cos();
+    let x1 = cy * x - sy * z;
+    let z1 = sy * x + cy * z;
+    let y2 = cp * y - sp * z1;
+    let z2 = sp * y + cp * z1;
+    [x1, y2, z2]
+}
+
+/// Focus distance in view units for a 0..1 focus depth across the relief.
+fn pixel_particles_focus_distance(params: &NativePixelParticlesParams) -> f32 {
+    let depth = params.knobs[0];
+    let nearest = (1.0 - params.depth_center) * depth;
+    let farthest = -params.depth_center * depth;
+    params.camera_z - (nearest + (farthest - nearest) * params.focus_depth)
 }
 
 fn build_pixel_particles_initial_bytes(count: u32) -> Vec<u8> {
     let mut bytes = vec![0_u8; count as usize * PIXEL_PARTICLES_PARTICLE_BYTES as usize];
     for index in 0..count as usize {
-        write_f32_le(&mut bytes, index * 8 + 7, 1.0);
+        // life < 0: depth-shift has not remembered this pixel's luma yet.
+        write_f32_le(&mut bytes, index * 8 + 7, -1.0);
     }
     bytes
 }
@@ -22035,8 +22830,8 @@ fn pixel_particles_view_proj(
     height: u32,
 ) -> [f32; 16] {
     let aspect = width.max(1) as f32 / height.max(1) as f32;
-    let near = 0.1;
-    let far = 100.0;
+    let near = PIXEL_PARTICLES_NEAR;
+    let far = PIXEL_PARTICLES_FAR;
     let f = 1.0 / (params.fov_deg.to_radians() * 0.5).tan();
     let mut proj = [0.0_f32; 16];
     proj[0] = f / aspect.max(0.0001);
@@ -22066,7 +22861,7 @@ fn build_pixel_particles_globals_bytes(
     height: u32,
     source_frame_size: f32,
 ) -> Vec<u8> {
-    let mut bytes = vec![0_u8; 176];
+    let mut bytes = vec![0_u8; PIXEL_PARTICLES_GLOBALS_BYTES as usize];
     write_f32_le(&mut bytes, 0, time);
     write_f32_le(&mut bytes, 1, dt);
     write_u32_le(&mut bytes, 2, params.particle_count);
@@ -22106,6 +22901,12 @@ fn build_pixel_particles_globals_bytes(
     write_f32_le(&mut bytes, 37, params.depth_motion_coupling);
     write_f32_le(&mut bytes, 38, params.depth_motion_phase);
     write_f32_le(&mut bytes, 42, 1.0);
+    write_f32_le(&mut bytes, 44, params.motion_reactive);
+    write_f32_le(&mut bytes, 45, params.motion_decay);
+    write_f32_le(&mut bytes, 48, if params.grain_lit { 1.0 } else { 0.0 });
+    write_f32_le(&mut bytes, 49, params.shadow_strength);
+    write_f32_le(&mut bytes, 50, params.shadow_reach);
+    write_f32_le(&mut bytes, 51, params.shadow_softness);
     bytes
 }
 
@@ -22114,7 +22915,7 @@ fn build_pixel_particles_render_bytes(
     width: u32,
     height: u32,
 ) -> Vec<u8> {
-    let mut bytes = vec![0_u8; 96];
+    let mut bytes = vec![0_u8; PIXEL_PARTICLES_RENDER_UNIFORM_BYTES as usize];
     for (index, value) in pixel_particles_view_proj(params, width, height)
         .iter()
         .enumerate()
@@ -22128,11 +22929,34 @@ fn build_pixel_particles_render_bytes(
     write_f32_le(&mut bytes, 20, if params.mirror_x { 1.0 } else { 0.0 });
     write_f32_le(&mut bytes, 21, params.particle_count as f32);
     write_f32_le(&mut bytes, 22, params.anchor_jitter);
+    write_f32_le(&mut bytes, 23, if params.motion_reactive > 0.0 { 2.5 } else { 0.0 });
+    let light = pixel_particles_light_view_dir(params);
+    write_f32_le(&mut bytes, 24, light[0]);
+    write_f32_le(&mut bytes, 25, light[1]);
+    write_f32_le(&mut bytes, 26, light[2]);
+    write_f32_le(&mut bytes, 27, params.light_ambient);
+    write_f32_le(&mut bytes, 28, params.light_intensity);
+    write_f32_le(&mut bytes, 29, params.grain_specular);
+    write_f32_le(&mut bytes, 30, params.grain_shininess);
+    write_f32_le(&mut bytes, 32, pixel_particles_focus_distance(params));
+    write_f32_le(&mut bytes, 33, params.aperture);
+    write_f32_le(&mut bytes, 34, 0.03);
+    write_f32_le(&mut bytes, 36, PIXEL_PARTICLES_NEAR);
+    write_f32_le(&mut bytes, 37, PIXEL_PARTICLES_FAR);
+    write_f32_le(
+        &mut bytes,
+        38,
+        1.0 / (params.fov_deg.to_radians() * 0.5).tan(),
+    );
     bytes
 }
 
 const FLYTHROUGH_PARTICLE_BYTES: u64 = 48;
 const FLYTHROUGH_MAX_PARTICLES: u32 = 1_000_000;
+/// Baked curl field: FLYTHROUGH_CURL_GRID_N^3 vec4 cells covering one period of
+/// FLYTHROUGH_CURL_PERIOD lattice units. Must match webgpuFlythrough.ts.
+const FLYTHROUGH_CURL_GRID_N: u32 = 80;
+const FLYTHROUGH_CURL_PERIOD: u32 = 24;
 
 #[derive(Clone, Debug)]
 struct NativeFlythroughParams {
@@ -22155,7 +22979,22 @@ struct NativeFlythroughParams {
     particle_count: u32,
     audio_reactive: bool,
     mirror_x: bool,
+    wander_radius: f32,
+    motion_reactive: f32,
+    motion_decay: f32,
+    /// Sphere grains with depth for points. Strokes always render soft.
+    grain_lit: bool,
+    light: [f32; 3],
+    light_intensity: f32,
+    light_ambient: f32,
+    grain_specular: f32,
+    grain_shininess: f32,
+    focus_distance: f32,
+    aperture: f32,
 }
+
+const FLYTHROUGH_NEAR: f32 = 0.05;
+const FLYTHROUGH_FAR: f32 = 100.0;
 
 fn normalize_flythrough_native_params(params: &Value) -> NativeFlythroughParams {
     NativeFlythroughParams {
@@ -22200,7 +23039,52 @@ fn normalize_flythrough_native_params(params: &Value) -> NativeFlythroughParams 
             .get("mirrorX")
             .and_then(Value::as_bool)
             .unwrap_or(false),
+        // Limit Wander + Wander Radius in the panel; 0 means unbounded.
+        wander_radius: if params
+            .get("limitWander")
+            .and_then(Value::as_bool)
+            .unwrap_or(false)
+        {
+            native_graph_param_f32(params, "wanderRadius", 0.0, 8.0, 0.2)
+        } else {
+            0.0
+        },
+        motion_reactive: native_graph_param_f32(params, "motionReactive", 0.0, 8.0, 0.0),
+        motion_decay: native_graph_param_f32(params, "motionDecay", 0.0, 60.0, 3.0),
+        grain_lit: native_particle_field_enum(params, "grainShading", "soft") == "lit",
+        light: [
+            native_graph_param_f32(params, "lightX", -16.0, 16.0, 0.5),
+            native_graph_param_f32(params, "lightY", -16.0, 16.0, 0.7),
+            native_graph_param_f32(params, "lightZ", -16.0, 16.0, -0.5),
+        ],
+        light_intensity: native_graph_param_f32(params, "lightIntensity", 0.0, 16.0, 1.2),
+        light_ambient: native_graph_param_f32(params, "lightAmbient", 0.0, 4.0, 0.25),
+        grain_specular: native_graph_param_f32(params, "grainSpecular", 0.0, 4.0, 0.35),
+        grain_shininess: native_graph_param_f32(params, "grainShininess", 1.0, 256.0, 24.0),
+        focus_distance: native_graph_param_f32(params, "focusDistance", 0.05, 64.0, 1.5),
+        aperture: native_graph_param_f32(params, "aperture", 0.0, 4.0, 0.0),
     }
+}
+
+/// The world light in a billboard's own frame (x along camRight, y along camUp,
+/// z toward the camera), which is where fs_lit builds its sphere normal.
+fn flythrough_light_sprite_dir(params: &NativeFlythroughParams, rot: &[f32; 16]) -> [f32; 3] {
+    let len = (params.light[0] * params.light[0]
+        + params.light[1] * params.light[1]
+        + params.light[2] * params.light[2])
+        .sqrt();
+    let len = if len > 0.0 { len } else { 1.0 };
+    let l = [params.light[0] / len, params.light[1] / len, params.light[2] / len];
+    let right = [rot[0], rot[1], rot[2]];
+    let up = [rot[4], rot[5], rot[6]];
+    // The camera looks down +Z, so toward-camera is -(right x up).
+    let to_cam = [
+        -(right[1] * up[2] - right[2] * up[1]),
+        -(right[2] * up[0] - right[0] * up[2]),
+        -(right[0] * up[1] - right[1] * up[0]),
+    ];
+    let dot = |a: [f32; 3]| l[0] * a[0] + l[1] * a[1] + l[2] * a[2];
+    [dot(right), dot(up), dot(to_cam)]
 }
 
 fn reverse_bits_32(mut bits: u32) -> u32 {
@@ -22229,6 +23113,9 @@ fn build_flythrough_initial_bytes(count: u32) -> Vec<u8> {
         );
         write_f32_le(&mut bytes, base + 8, ax);
         write_f32_le(&mut bytes, base + 9, ay);
+        // signal.x < 0: the particle has not read its pixel yet, so the first
+        // frame does not register the whole image as a change.
+        write_f32_le(&mut bytes, base + 10, -1.0);
     }
     bytes
 }
@@ -22257,6 +23144,11 @@ fn build_flythrough_compute_bytes(
     write_u32_le(&mut bytes, 8, params.depth_source_id);
     write_f32_le(&mut bytes, 9, state.fly_distance);
     write_u32_le(&mut bytes, 10, u32::from(params.mirror_x));
+    write_f32_le(&mut bytes, 11, params.wander_radius);
+    write_f32_le(&mut bytes, 12, params.motion_reactive);
+    write_f32_le(&mut bytes, 13, params.motion_decay);
+    write_u32_le(&mut bytes, 14, FLYTHROUGH_CURL_GRID_N);
+    write_f32_le(&mut bytes, 15, FLYTHROUGH_CURL_PERIOD as f32);
     bytes
 }
 
@@ -22266,8 +23158,8 @@ fn flythrough_view_proj(
     height: u32,
 ) -> ([f32; 16], [f32; 16]) {
     let aspect = width.max(1) as f32 / height.max(1) as f32;
-    let near = 0.05;
-    let far = 100.0;
+    let near = FLYTHROUGH_NEAR;
+    let far = FLYTHROUGH_FAR;
     let f = 1.0 / (params.fov_deg.to_radians() * 0.5).tan();
     let mut proj = [0.0_f32; 16];
     proj[0] = f / aspect.max(0.0001);
@@ -22317,6 +23209,25 @@ fn build_flythrough_render_bytes(
     write_f32_le(&mut bytes, 33, 1.0);
     write_f32_le(&mut bytes, 34, 1.0);
     write_u32_le(&mut bytes, 35, u32::from(params.mirror_x));
+    write_f32_le(&mut bytes, 36, params.motion_reactive);
+    let light = flythrough_light_sprite_dir(params, &rot);
+    write_f32_le(&mut bytes, 40, light[0]);
+    write_f32_le(&mut bytes, 41, light[1]);
+    write_f32_le(&mut bytes, 42, light[2]);
+    write_f32_le(&mut bytes, 43, params.light_ambient);
+    write_f32_le(&mut bytes, 44, params.light_intensity);
+    write_f32_le(&mut bytes, 45, params.grain_specular);
+    write_f32_le(&mut bytes, 46, params.grain_shininess);
+    write_f32_le(&mut bytes, 48, params.focus_distance);
+    write_f32_le(
+        &mut bytes,
+        49,
+        if params.topology_id == 0 { params.aperture } else { 0.0 },
+    );
+    write_f32_le(&mut bytes, 50, 0.03);
+    write_f32_le(&mut bytes, 52, FLYTHROUGH_NEAR);
+    write_f32_le(&mut bytes, 53, FLYTHROUGH_FAR);
+    write_f32_le(&mut bytes, 54, 1.0 / (params.fov_deg.to_radians() * 0.5).tan());
     bytes
 }
 
@@ -27528,6 +28439,105 @@ void main() { gl_FragColor = vec4(fractalDepth); }"#,
         assert!(on.mirror_x);
         assert_eq!(read_u32(&build_flythrough_compute_bytes(&on, &state, 0.016, 1.0, 0.0), 10), 1);
         assert_eq!(read_u32(&build_flythrough_render_bytes(&on, &state, 160, 90), 35), 1);
+    }
+
+    /// Grain, focus and motion fields land where RENDER_LIT_WGSL and the
+    /// compute Globals read them, matching webgpuPixelParticles.ts.
+    #[test]
+    fn pixel_particles_grain_focus_and_motion_uniform_slots() {
+        let read_f32 = |bytes: &[u8], word: usize| {
+            f32::from_le_bytes(bytes[word * 4..word * 4 + 4].try_into().unwrap())
+        };
+        let defaults = normalize_pixel_particles_native_params(&serde_json::json!({}));
+        assert!(!defaults.grain_lit, "soft glow stays the default look");
+        let globals = build_pixel_particles_globals_bytes(&defaults, 1.0, 0.016, 160, 90, 1024.0);
+        assert_eq!(globals.len() as u64, PIXEL_PARTICLES_GLOBALS_BYTES);
+        assert_eq!(read_f32(&globals, 44), 0.0);
+        assert_eq!(read_f32(&globals, 48), 0.0);
+        assert_eq!(
+            build_pixel_particles_render_bytes(&defaults, 160, 90).len() as u64,
+            PIXEL_PARTICLES_RENDER_UNIFORM_BYTES
+        );
+
+        let lit = normalize_pixel_particles_native_params(&serde_json::json!({
+            "grainShading": "lit",
+            "shadowStrength": 0.5,
+            "aperture": 0.8,
+            "focusDepth": 0.0,
+            "cameraZ": 2.0,
+            "depthAmount": 0.6,
+            "depthCenter": 0.5,
+            "motionReactive": 1.0,
+            "lightX": 0.0, "lightY": 0.0, "lightZ": 1.0
+        }));
+        let globals = build_pixel_particles_globals_bytes(&lit, 1.0, 0.016, 160, 90, 1024.0);
+        assert_eq!(read_f32(&globals, 44), 1.0);
+        assert_eq!(read_f32(&globals, 48), 1.0);
+        assert!((read_f32(&globals, 49) - 0.5).abs() < 1e-6);
+        let render = build_pixel_particles_render_bytes(&lit, 160, 90);
+        assert!((read_f32(&render, 26) - 1.0).abs() < 1e-5, "unrotated light faces the camera");
+        // Relief spans z in [-0.3, 0.3]; focus depth 0 is its nearest point.
+        assert!((read_f32(&render, 32) - 1.7).abs() < 1e-5);
+        assert!((read_f32(&render, 33) - 0.8).abs() < 1e-6);
+        assert_eq!(read_f32(&render, 36), PIXEL_PARTICLES_NEAR);
+        assert_eq!(read_f32(&render, 37), PIXEL_PARTICLES_FAR);
+
+        let turned = normalize_pixel_particles_native_params(&serde_json::json!({
+            "lightX": 0.0, "lightY": 0.0, "lightZ": 1.0, "cameraYaw": 90.0
+        }));
+        let dir = pixel_particles_light_view_dir(&turned);
+        assert!((dir[0].abs() - 1.0).abs() < 1e-5 && dir[2].abs() < 1e-5);
+
+        let init = build_pixel_particles_initial_bytes(1024);
+        for particle in (0..1024).step_by(101) {
+            assert_eq!(read_f32(&init, particle * 8 + 7), -1.0);
+        }
+    }
+
+    /// Wander, motion and the curl grid land in the slots the WGSL `U` struct
+    /// declares, matching webgpuFlythrough.ts word for word.
+    #[test]
+    fn flythrough_wander_motion_and_curl_grid_uniform_slots() {
+        let read_f32 = |bytes: &[u8], word: usize| {
+            f32::from_le_bytes(bytes[word * 4..word * 4 + 4].try_into().unwrap())
+        };
+        let read_u32 = |bytes: &[u8], word: usize| {
+            u32::from_le_bytes(bytes[word * 4..word * 4 + 4].try_into().unwrap())
+        };
+        let state = NativeFlythroughGraphState::new(1024, "src".to_string(), 0.0);
+
+        let defaults = normalize_flythrough_native_params(&serde_json::json!({}));
+        let bytes = build_flythrough_compute_bytes(&defaults, &state, 0.016, 1.0, 0.0);
+        assert_eq!(read_f32(&bytes, 11), 0.0, "wander is unbounded by default");
+        assert_eq!(read_f32(&bytes, 12), 0.0, "motion reactivity is off by default");
+        assert_eq!(read_f32(&bytes, 13), 3.0);
+        assert_eq!(read_u32(&bytes, 14), FLYTHROUGH_CURL_GRID_N);
+        assert_eq!(read_f32(&bytes, 15), FLYTHROUGH_CURL_PERIOD as f32);
+
+        // A radius alone is inert; Limit Wander arms it.
+        let radius_only =
+            normalize_flythrough_native_params(&serde_json::json!({ "wanderRadius": 0.4 }));
+        assert_eq!(radius_only.wander_radius, 0.0);
+
+        let on = normalize_flythrough_native_params(&serde_json::json!({
+            "limitWander": true,
+            "wanderRadius": 0.4,
+            "motionReactive": 1.25,
+            "motionDecay": 6.0
+        }));
+        let bytes = build_flythrough_compute_bytes(&on, &state, 0.016, 1.0, 0.0);
+        assert!((read_f32(&bytes, 11) - 0.4).abs() < 1e-6);
+        assert!((read_f32(&bytes, 12) - 1.25).abs() < 1e-6);
+        assert!((read_f32(&bytes, 13) - 6.0).abs() < 1e-6);
+        let render = build_flythrough_render_bytes(&on, &state, 160, 90);
+        assert!((read_f32(&render, 36) - 1.25).abs() < 1e-6);
+
+        // Every particle starts without a remembered luma, so the first frame
+        // is not read as the whole image changing at once.
+        let init = build_flythrough_initial_bytes(1024);
+        for particle in (0..1024).step_by(97) {
+            assert_eq!(read_f32(&init, particle * 12 + 10), -1.0);
+        }
     }
 }
 

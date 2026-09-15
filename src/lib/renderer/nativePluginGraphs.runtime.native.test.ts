@@ -191,8 +191,16 @@ describe('native plugin graphs (runtime, real core)', () => {
       ],
     });
 
-    await new Promise((resolve) => setTimeout(resolve, 250));
-    const snapshot = await rpc!.send('frame_snapshot', { include_pixels: false });
+    // Poll for the overlay instead of assuming 250 ms: the core warms pipelines
+    // asynchronously, and under the full suite's parallel native cores a fixed
+    // wait misses the first drawn frame intermittently.
+    let snapshot: Record<string, any> = {};
+    const deadline = Date.now() + 5000;
+    do {
+      snapshot = await rpc!.send('frame_snapshot', { include_pixels: false });
+      if (Number(snapshot.nonzero_pixels ?? 0) > 320 * 180 * 0.01 && Number(snapshot.max_luma ?? 0) > 0.05) break;
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    } while (Date.now() < deadline);
     const status = await rpc!.send('status');
     expect(
       Number(status.shader_precompile_failed ?? -1),

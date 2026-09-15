@@ -3,8 +3,17 @@ import {
   buildPixelParticlesNativeComputeGraph,
   buildPixelParticlesNativePrecompileCommands,
   getPixelParticlesNativeShaderSources,
+  PIXEL_PARTICLES_GLOBALS_BYTES,
   PIXEL_PARTICLES_NATIVE_SHADER_IDS,
+  PIXEL_PARTICLES_RENDER_UNIFORM_BYTES,
+  pixelParticlesFocusDistance,
+  pixelParticlesLightViewDir,
 } from './webgpuPixelParticles';
+
+function words(b64: string | undefined): Float32Array {
+  const bytes = Buffer.from(String(b64 ?? ''), 'base64');
+  return new Float32Array(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+}
 
 if (typeof (globalThis as any).btoa !== 'function') {
   (globalThis as any).btoa = (value: string) =>
@@ -16,9 +25,13 @@ describe('Pixel Particles native shader bundle', () => {
     const sources = getPixelParticlesNativeShaderSources();
     const byId = new Map(sources.map((source) => [source.shaderId, source]));
 
-    expect(sources).toHaveLength(2);
+    expect(sources).toHaveLength(4);
     expect(byId.has(PIXEL_PARTICLES_NATIVE_SHADER_IDS.compute)).toBe(true);
     expect(byId.has(PIXEL_PARTICLES_NATIVE_SHADER_IDS.render)).toBe(true);
+    const lit = byId.get(PIXEL_PARTICLES_NATIVE_SHADER_IDS.renderLit)?.source ?? '';
+    for (const entry of ['fn vs_lit', 'fn vs_sharp', 'fn vs_blur', 'fn fs_lit', 'fn fs_bokeh', 'frag_depth']) {
+      expect(lit).toContain(entry);
+    }
     expect(byId.get(PIXEL_PARTICLES_NATIVE_SHADER_IDS.compute)?.source).toContain('@compute');
     expect(byId.get(PIXEL_PARTICLES_NATIVE_SHADER_IDS.compute)?.source).toContain('fn cs_main');
     expect(byId.get(PIXEL_PARTICLES_NATIVE_SHADER_IDS.render)?.source).toContain('@vertex');
@@ -141,5 +154,70 @@ describe('Pixel Particles native shader bundle', () => {
 
     expect(second.mode).toBe('dissolve');
     expect(second.config.buffers.find((buffer) => buffer.id.endsWith(':particles'))?.clear).toBe(true);
+  });
+
+  it('sizes the uniforms for the grain, focus and motion fields', () => {
+    const graph = buildPixelParticlesNativeComputeGraph({ sourceId: 'gpu:pp', params: {}, reset: true });
+    expect(graph.config.buffers.find((b) => b.id.endsWith(':globals'))?.byte_length).toBe(PIXEL_PARTICLES_GLOBALS_BYTES);
+    expect(graph.config.buffers.find((b) => b.id.endsWith(':render-uniform'))?.byte_length).toBe(PIXEL_PARTICLES_RENDER_UNIFORM_BYTES);
+  });
+
+  it('keeps the soft look by default, and marks every particle unread', () => {
+    const graph = buildPixelParticlesNativeComputeGraph({ sourceId: 'gpu:pp', params: { particleCount: 2048 }, reset: true });
+    expect(graph.config.render_passes).toHaveLength(1);
+    expect(graph.config.render_passes[0]).toMatchObject({ shader_id: PIXEL_PARTICLES_NATIVE_SHADER_IDS.render, blend: 'alpha' });
+    expect(graph.config.render_passes[0].depth_test).toBeUndefined();
+    const g = words(graph.config.buffers.find((b) => b.id.endsWith(':globals'))?.initial_b64);
+    expect(g[44]).toBe(0);  // motion off
+    expect(g[48]).toBe(0);  // grains off
+    const init = new Float32Array(graph.config.buffers.find((b) => b.id.endsWith(':particles'))?.initial_buffer as ArrayBuffer);
+    for (let i = 0; i < 2048; i += 257) expect(init[i * 8 + 7]).toBe(-1);
+  });
+
+  it('draws lit grains in one depth-writing pass without an aperture', () => {
+    const graph = buildPixelParticlesNativeComputeGraph({ sourceId: 'gpu:pp', params: { grainShading: 'lit' }, reset: true });
+    expect(graph.config.render_passes).toHaveLength(1);
+    expect(graph.config.render_passes[0]).toMatchObject({
+      shader_id: PIXEL_PARTICLES_NATIVE_SHADER_IDS.renderLit,
+      vertex_entry: 'vs_lit',
+      fragment_entry: 'fs_lit',
+      blend: 'replace',
+      depth_test: true,
+      depth_write: true,
+      clear: true,
+    });
+    const g = words(graph.config.buffers.find((b) => b.id.endsWith(':globals'))?.initial_b64);
+    expect(g[48]).toBe(1);
+    expect(g[49]).toBeCloseTo(0.65);
+  });
+
+  it('splits lit grains into sharp then blurred passes with an aperture', () => {
+    const graph = buildPixelParticlesNativeComputeGraph({
+      sourceId: 'gpu:pp',
+      params: { grainShading: 'lit', aperture: 0.8, focusDepth: 0.2 },
+      reset: true,
+    });
+    const [sharp, blur] = graph.config.render_passes;
+    expect(sharp).toMatchObject({ vertex_entry: 'vs_sharp', fragment_entry: 'fs_lit', depth_write: true, clear: true });
+    expect(sharp.depth_load).toBeUndefined();
+    // The blurred pass keeps the sharp pass's depth and colour, blends, and
+    // does not write depth, so grains in front still hide it.
+    expect(blur).toMatchObject({ vertex_entry: 'vs_blur', fragment_entry: 'fs_bokeh', blend: 'alpha', depth_test: true, depth_write: false, depth_load: true, clear: false });
+    const r = words(graph.config.buffers.find((b) => b.id.endsWith(':render-uniform'))?.initial_b64);
+    expect(r[33]).toBeCloseTo(0.8);
+  });
+
+  it('turns the light with the camera and places focus across the relief', () => {
+    const still = pixelParticlesLightViewDir({ lightX: 0, lightY: 0, lightZ: 1, cameraYaw: 0, cameraPitch: 0 });
+    expect(still[2]).toBeCloseTo(1);
+    // A quarter turn of yaw swings a light that faced the camera to the side.
+    const turned = pixelParticlesLightViewDir({ lightX: 0, lightY: 0, lightZ: 1, cameraYaw: 90, cameraPitch: 0 });
+    expect(Math.abs(turned[0])).toBeCloseTo(1);
+    expect(turned[2]).toBeCloseTo(0);
+
+    const base = { cameraZ: 2, depthCenter: 0.5, knobs: [0.6, 0, 0, 0] as [number, number, number, number] };
+    // Relief spans z in [-0.3, 0.3]; the camera sits at z = 2.
+    expect(pixelParticlesFocusDistance({ ...base, focusDepth: 0 })).toBeCloseTo(1.7);
+    expect(pixelParticlesFocusDistance({ ...base, focusDepth: 1 })).toBeCloseTo(2.3);
   });
 });

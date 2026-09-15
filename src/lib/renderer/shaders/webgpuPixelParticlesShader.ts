@@ -26,6 +26,7 @@
 import { WebGPUPixelParticles, type PixelDepthMotion, type PixelDepthSource, type PixelEffectMode } from '../webgpuPixelParticles';
 import type { GpuShaderImpl, ParamControl } from '../gpuShaderTypes';
 import { deriveDefaults } from '../gpuShaderTypes';
+import { particleDirectorParamControls } from '../particleDirector';
 
 // Param schema — declarative + grouped. The panel renders each
 // group as a section and only the controls relevant to the current
@@ -139,11 +140,44 @@ export const pixelParticlesParamSchema: ParamControl[] = [
   { kind: 'slider', key: 'lightAmbient',    label: 'Ambient',         group: 'Light', min: 0, max: 1, step: 0.01, default: 0.25, showWhen: { mode: 'depth-shift' } },
   { kind: 'slider', key: 'lightHeightStrength', label: 'Surface Strength', group: 'Light', min: 0, max: 4, step: 0.01, default: 1.5, showWhen: { mode: 'depth-shift' } },
 
+  // ── Grains (depth-shift) ──
+  // Soft Glow is the original look: blended discs, no depth. Lit Grains
+  // draws each particle as a small sphere with real depth, shaded by the
+  // Light group's direction, so a dense cloud reads as a physical surface.
+  // Shadows are cast across the depth relief toward that light.
+  { kind: 'select', key: 'grainShading', label: 'Shading', group: 'Grains',
+    options: [
+      { value: 'soft', label: 'Soft Glow' },
+      { value: 'lit',  label: 'Lit Grains' },
+    ],
+    default: 'soft', showWhen: { mode: 'depth-shift' } },
+  { kind: 'slider', key: 'grainSpecular',  label: 'Sheen',           group: 'Grains', min: 0, max: 1.5, step: 0.01, default: 0.35, showWhen: { mode: 'depth-shift', grainShading: 'lit' } },
+  { kind: 'slider', key: 'grainShininess', label: 'Sheen Tightness', group: 'Grains', min: 4, max: 96, step: 1, default: 24, showWhen: { mode: 'depth-shift', grainShading: 'lit' } },
+  { kind: 'slider', key: 'shadowStrength', label: 'Shadows',         group: 'Grains', min: 0, max: 1, step: 0.01, default: 0.65, showWhen: { mode: 'depth-shift', grainShading: 'lit' } },
+  { kind: 'slider', key: 'shadowReach',    label: 'Shadow Length',   group: 'Grains', min: 0.01, max: 0.2, step: 0.005, default: 0.06, showWhen: { mode: 'depth-shift', grainShading: 'lit' } },
+  { kind: 'slider', key: 'shadowSoftness', label: 'Shadow Softness', group: 'Grains', min: 0.01, max: 0.5, step: 0.01, default: 0.08, showWhen: { mode: 'depth-shift', grainShading: 'lit' } },
+
+  // ── Focus (depth-shift) ──
+  // Per-particle depth of field. Aperture 0 keeps everything sharp.
+  { kind: 'slider', key: 'aperture',   label: 'Aperture',    group: 'Focus', min: 0, max: 2, step: 0.01, default: 0, showWhen: { mode: 'depth-shift' } },
+  { kind: 'slider', key: 'focusDepth', label: 'Focus Depth', group: 'Focus', min: 0, max: 1, step: 0.01, default: 0.5, showWhen: { mode: 'depth-shift' } },
+
+  // ── Motion (depth-shift) ──
+  // Driven by the source: a changing pixel lifts toward the camera and
+  // brightens, then settles as it holds still. Stills never trigger it.
+  { kind: 'slider', key: 'motionReactive', label: 'Motion Reactivity', group: 'Motion', min: 0, max: 2, step: 0.01, default: 0, showWhen: { mode: 'depth-shift' } },
+  { kind: 'slider', key: 'motionDecay',    label: 'Motion Recovery',   group: 'Motion', min: 0.5, max: 12, step: 0.1, default: 3, showWhen: { mode: 'depth-shift' } },
+
   // ── Noise (depth-shift only) ──
   { kind: 'slider', key: 'noiseAmpXY',      label: 'Wobble XY',       group: 'Noise Flow', min: 0, max: 0.5, step: 0.005, default: 0, showWhen: { mode: 'depth-shift' } },
   { kind: 'slider', key: 'noiseAmpZ',       label: 'Wobble Z',        group: 'Noise Flow', min: 0, max: 2, step: 0.01, default: 0, showWhen: { mode: 'depth-shift' } },
   { kind: 'slider', key: 'noiseFreq',       label: 'Frequency',       group: 'Noise Flow', min: 0.5, max: 30, step: 0.1, default: 4, showWhen: { mode: 'depth-shift' } },
   { kind: 'slider', key: 'noiseSpeed',      label: 'Speed',           group: 'Noise Flow', min: 0, max: 3, step: 0.01, default: 0.5, showWhen: { mode: 'depth-shift' } },
+
+  // ── Auto Camera ──
+  // Moves its own camera around the cloud the Camera group lays out, so
+  // 45 mm on the director is the framing set there.
+  ...particleDirectorParamControls(),
 ];
 
 export const pixelParticlesParamDefaults = deriveDefaults(pixelParticlesParamSchema);

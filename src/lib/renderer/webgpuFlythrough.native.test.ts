@@ -2,9 +2,18 @@ import { describe, expect, it } from 'vitest';
 import {
   buildFlythroughNativeComputeGraph,
   buildFlythroughNativePrecompileCommands,
+  FLYTHROUGH_CURL_BYTES,
+  FLYTHROUGH_CURL_GRID_N,
+  FLYTHROUGH_CURL_PERIOD,
   FLYTHROUGH_NATIVE_SHADER_IDS,
   getFlythroughNativeShaderSources,
 } from './webgpuFlythrough';
+
+function uniformWords(b64: string | undefined): { f: Float32Array; u: Uint32Array } {
+  const bytes = Buffer.from(String(b64 ?? ''), 'base64');
+  const copy = bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength);
+  return { f: new Float32Array(copy), u: new Uint32Array(copy) };
+}
 
 if (typeof (globalThis as any).btoa !== 'function') {
   (globalThis as any).btoa = (value: string) =>
@@ -16,9 +25,14 @@ describe('Flythrough native shader bundle', () => {
     const sources = getFlythroughNativeShaderSources();
     const byId = new Map(sources.map((source) => [source.shaderId, source]));
 
-    expect(sources).toHaveLength(2);
+    expect(sources).toHaveLength(5);
+    expect(byId.has(FLYTHROUGH_NATIVE_SHADER_IDS.curlBake)).toBe(true);
     expect(byId.has(FLYTHROUGH_NATIVE_SHADER_IDS.compute)).toBe(true);
     expect(byId.has(FLYTHROUGH_NATIVE_SHADER_IDS.render)).toBe(true);
+    expect(byId.get(FLYTHROUGH_NATIVE_SHADER_IDS.curlBake)?.source).toContain('fn cs_bake');
+    // The per-particle curl is gone: the compute pass reads the baked field.
+    expect(byId.get(FLYTHROUGH_NATIVE_SHADER_IDS.compute)?.source).toContain('fn sampleCurl');
+    expect(byId.get(FLYTHROUGH_NATIVE_SHADER_IDS.compute)?.source).not.toContain('fn noise3');
 
     const compute = byId.get(FLYTHROUGH_NATIVE_SHADER_IDS.compute);
     const render = byId.get(FLYTHROUGH_NATIVE_SHADER_IDS.render);
@@ -73,17 +87,32 @@ describe('Flythrough native shader bundle', () => {
     expect(first.topology).toBe('strokes');
     expect(first.mediaSourceId).toBe('media:input-source');
     expect(first.config.readbacks).toEqual([]);
-    expect(first.config.passes).toHaveLength(1);
+    // A reset frame bakes the curl field first, then advances the particles.
+    expect(first.config.passes).toHaveLength(2);
+    const curlGroups = Math.ceil(FLYTHROUGH_CURL_GRID_N / 4);
     expect(first.config.passes[0]).toMatchObject({
+      shader_id: FLYTHROUGH_NATIVE_SHADER_IDS.curlBake,
+      entry: 'cs_bake',
+      dispatch: [curlGroups, curlGroups, curlGroups],
+    });
+    const curlField = first.config.buffers.find((buffer) => buffer.id.endsWith(':curl-field'));
+    expect(curlField).toMatchObject({ kind: 'storage', byte_length: FLYTHROUGH_CURL_BYTES, persistent: true, clear: true });
+    const bakeUniform = uniformWords(first.config.buffers.find((buffer) => buffer.id.endsWith(':curl-bake-uniform'))?.initial_b64);
+    expect(Array.from(bakeUniform.u.slice(0, 2))).toEqual([FLYTHROUGH_CURL_GRID_N, FLYTHROUGH_CURL_PERIOD]);
+
+    expect(first.config.passes[1]).toMatchObject({
       shader_id: FLYTHROUGH_NATIVE_SHADER_IDS.compute,
       entry: 'cs_main',
       dispatch: [64, 1, 1],
     });
-    expect(first.config.passes[0].bindings).toContainEqual(
+    expect(first.config.passes[1].bindings).toContainEqual(
       expect.objectContaining({ binding: 2, kind: 'source-frame-texture', source_id: 'media:input-source' }),
     );
-    expect(first.config.passes[0].bindings).toContainEqual(
+    expect(first.config.passes[1].bindings).toContainEqual(
       expect.objectContaining({ binding: 3, kind: 'source-frame-sampler' }),
+    );
+    expect(first.config.passes[1].bindings).toContainEqual(
+      expect.objectContaining({ binding: 4, resource: curlField?.id, kind: 'read-only-storage' }),
     );
     expect(first.config.buffers.find((buffer) => buffer.id.endsWith(':particles'))).toMatchObject({
       kind: 'storage',
@@ -130,6 +159,51 @@ describe('Flythrough native shader bundle', () => {
     expect(particleBuffer?.initial_b64).toBeUndefined();
     expect(particleBuffer?.initial_buffer).toBeUndefined();
     expect(second.config.render_passes[0].source_id).toBe(first.config.render_passes[0].source_id);
+    // No re-bake once the field exists: one compute pass, and the field is kept.
+    expect(second.config.passes.map((pass) => pass.shader_id)).toEqual([FLYTHROUGH_NATIVE_SHADER_IDS.compute]);
+    expect(second.config.buffers.find((buffer) => buffer.id.endsWith(':curl-field'))?.clear).toBe(false);
+  });
+
+  it('keys the curl field on the source, so a Count change keeps it', () => {
+    const small = buildFlythroughNativeComputeGraph({ sourceId: 'gpu:fly', params: { particleCount: 4096 }, reset: true });
+    const large = buildFlythroughNativeComputeGraph({ sourceId: 'gpu:fly', params: { particleCount: 8192 }, reset: true });
+    const field = (graph: typeof small) => graph.config.buffers.find((buffer) => buffer.id.endsWith(':curl-field'))?.id;
+    const particles = (graph: typeof small) => graph.config.buffers.find((buffer) => buffer.id.endsWith(':particles'))?.id;
+    expect(field(small)).toBe(field(large));
+    expect(particles(small)).not.toBe(particles(large));
+  });
+
+  it('writes wander, motion and curl grid into the compute uniform', () => {
+    const off = buildFlythroughNativeComputeGraph({ sourceId: 'gpu:fly', params: {}, reset: true });
+    const offU = uniformWords(off.config.buffers.find((buffer) => buffer.id.endsWith(':compute-uniform'))?.initial_b64);
+    expect(offU.f[11]).toBe(0);  // wander radius: unbounded unless Limit Wander is on
+    expect(offU.f[12]).toBe(0);  // motion reactivity off by default
+    expect(offU.f[13]).toBeCloseTo(3);
+    expect(offU.u[14]).toBe(FLYTHROUGH_CURL_GRID_N);
+    expect(offU.f[15]).toBe(FLYTHROUGH_CURL_PERIOD);
+
+    // A radius without Limit Wander does nothing; the toggle is what arms it.
+    const radiusOnly = buildFlythroughNativeComputeGraph({ sourceId: 'gpu:fly', params: { wanderRadius: 0.4 }, reset: true });
+    expect(uniformWords(radiusOnly.config.buffers.find((b) => b.id.endsWith(':compute-uniform'))?.initial_b64).f[11]).toBe(0);
+
+    const on = buildFlythroughNativeComputeGraph({
+      sourceId: 'gpu:fly',
+      params: { limitWander: true, wanderRadius: 0.4, motionReactive: 1.25, motionDecay: 6 },
+      reset: true,
+    });
+    const onU = uniformWords(on.config.buffers.find((buffer) => buffer.id.endsWith(':compute-uniform'))?.initial_b64);
+    expect(onU.f[11]).toBeCloseTo(0.4);
+    expect(onU.f[12]).toBeCloseTo(1.25);
+    expect(onU.f[13]).toBeCloseTo(6);
+    const renderU = uniformWords(on.config.buffers.find((buffer) => buffer.id.endsWith(':render-uniform'))?.initial_b64);
+    expect(renderU.f[36]).toBeCloseTo(1.25);
+  });
+
+  it('marks every particle as not having read its pixel yet', () => {
+    const graph = buildFlythroughNativeComputeGraph({ sourceId: 'gpu:fly', params: { particleCount: 2048 }, reset: true });
+    const init = graph.config.buffers.find((buffer) => buffer.id.endsWith(':particles'))?.initial_buffer as ArrayBuffer;
+    const words = new Float32Array(init);
+    for (let i = 0; i < 2048; i += 311) expect(words[i * 12 + 10]).toBe(-1);
   });
 
   it('marks the source texture binding optional when no media source is supplied', () => {
@@ -146,7 +220,8 @@ describe('Flythrough native shader bundle', () => {
     expect(graph.config.render_passes[0].bindings).toContainEqual(
       expect.objectContaining({ binding: 2, kind: 'source-frame-texture', allow_missing: true }),
     );
-    expect(graph.config.passes[0].bindings).toContainEqual(
+    const compute = graph.config.passes.find((pass) => pass.shader_id === FLYTHROUGH_NATIVE_SHADER_IDS.compute);
+    expect(compute?.bindings).toContainEqual(
       expect.objectContaining({ binding: 2, kind: 'source-frame-texture', allow_missing: true }),
     );
   });

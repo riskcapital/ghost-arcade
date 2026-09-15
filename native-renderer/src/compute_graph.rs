@@ -325,6 +325,13 @@ pub(crate) struct NativeComputeGraphRenderPlan {
     pub(crate) depth_enabled: bool,
     pub(crate) depth_write: bool,
     pub(crate) depth_compare: NativeComputeGraphDepthCompare,
+    /// Keep the depth an earlier pass in the same frame wrote instead of
+    /// clearing it. Lets a blended pass depth-test against an opaque pass
+    /// drawn just before it into the same target (particle depth of field:
+    /// sharp grains opaque with depth, then out-of-focus grains blended over
+    /// them without drawing through the grains in front). Only meaningful
+    /// with depth_enabled.
+    pub(crate) depth_load: bool,
     pub(crate) bindings: Vec<NativeComputeGraphBindingSpec>,
 }
 
