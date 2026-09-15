@@ -8,6 +8,7 @@ import {
   buildVJMixGraph,
   buildVJMixPrecompileCommands,
   buildVJMixUniformUpdate,
+  buildVJPipelineWarmupCommands,
   type VJMixRow,
 } from '$lib/renderer/vjMixNative';
 import type { Layer, Model3DContent, SplatContent } from '$lib/types';
@@ -9847,6 +9848,7 @@ fn fs_main() -> @location(0) vec4<f32> {
     });
     this.nativeWgslStdlibWarmed = true;
     void this.warmNativeEffectPassPipeline();
+    void this.warmNativeVjPipelines();
     const status = await getNativeRendererStatus().catch(() => null);
     if (status) {
       console.log(
@@ -9906,6 +9908,27 @@ fn fs_main() -> @location(0) vec4<f32> {
       console.log('[NativeRendererSync] effect-pass pipeline warmed at startup');
     } catch (err) {
       console.warn('[NativeRendererSync] effect-pass warm-up failed (first effect will compile lazily):', err);
+    }
+  }
+
+  /** Build the VJ crossfade and VJ Mix pipelines at startup, before a live
+   *  trigger needs them (see buildVJPipelineWarmupCommands). */
+  private async warmNativeVjPipelines() {
+    if (!this.running) return;
+    if (
+      !this.supportsNativeFeature('compute_graph_texture_sampling') ||
+      !this.supportsNativeFeature('compute_graph_source_frame_target')
+    ) {
+      return;
+    }
+    try {
+      await submitNativeRendererBatch({
+        frame_id: ++this.frameId,
+        commands: buildVJPipelineWarmupCommands() as unknown as RendererCommand[],
+      });
+      console.log('[NativeRendererSync] VJ crossfade + mix pipelines warmed at startup');
+    } catch (err) {
+      console.warn('[NativeRendererSync] VJ pipeline warm-up failed (first A/B row will compile lazily):', err);
     }
   }
 

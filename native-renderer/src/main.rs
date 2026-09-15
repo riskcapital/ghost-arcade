@@ -2232,6 +2232,21 @@ impl NativeGraphLayerKind {
         }
     }
 
+    /// Where this kind's frame job runs in a frame. Jobs share one encoder and
+    /// the VJ plugins sample other layers' source frames (`layer-frame:`): a
+    /// crossfade reads its two bank rows, the mix reads every row including
+    /// crossfade carriers. A reader encoded before its writer samples the
+    /// previous frame, and in the frame a writer first appears it samples a
+    /// freshly cleared slot, so the row under it flashes through. Content
+    /// runs first, then crossfades, then the mix.
+    fn frame_job_stage(&self) -> u8 {
+        match self {
+            Self::VjCrossfade => 1,
+            Self::VjMix => 2,
+            _ => 0,
+        }
+    }
+
     fn is_supported(&self) -> bool {
         matches!(
             self,
@@ -2258,6 +2273,21 @@ impl NativeGraphLayerKind {
                 | Self::VjMix
         )
     }
+}
+
+fn graph_layer_frame_order(
+    a: (&NativeGraphLayerKind, &str),
+    b: (&NativeGraphLayerKind, &str),
+) -> std::cmp::Ordering {
+    a.0.frame_job_stage()
+        .cmp(&b.0.frame_job_stage())
+        .then_with(|| a.1.cmp(b.1))
+}
+
+fn sort_graph_layers_for_frame(layers: &mut [NativeGraphLayer]) {
+    layers.sort_by(|a, b| {
+        graph_layer_frame_order((&a.kind, a.layer_id.as_str()), (&b.kind, b.layer_id.as_str()))
+    });
 }
 
 /// Per-layer running state for the GhostFX Liquid injection engine — beat
@@ -5537,11 +5567,15 @@ impl App {
             return Vec::new();
         }
         let mut jobs = Vec::new();
-        let graph_layers = self
+        let mut graph_layers = self
             .native_graph_layers
             .values()
             .cloned()
             .collect::<Vec<_>>();
+        // HashMap order is arbitrary and shifts as layers come and go. Building
+        // in stage order also registers each writer's target slot before a
+        // later reader resolves its `layer-frame:` bindings.
+        sort_graph_layers_for_frame(&mut graph_layers);
         for graph_layer in graph_layers {
             let layer_visible = self
                 .scene_layers
@@ -27950,6 +27984,26 @@ fn present_mode_label(mode: wgpu::PresentMode) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn vj_graph_jobs_run_after_the_frames_they_sample() {
+        // Ids chosen so plain id order would put the mix and the Screen
+        // copies ahead of the crossfade carrier they read.
+        let mut layers = vec![
+            (NativeGraphLayerKind::VjMix, "__vj-mix__"),
+            (NativeGraphLayerKind::VjMix, "0a-screen"),
+            (NativeGraphLayerKind::VjCrossfade, "vj-xfade-0"),
+            (NativeGraphLayerKind::VjCrossfade, "1b-screen"),
+            (NativeGraphLayerKind::Flythrough, "vj-layer-0-B"),
+            (NativeGraphLayerKind::GhostFx, "vj-layer-1-A"),
+        ];
+        layers.sort_by(|a, b| graph_layer_frame_order((&a.0, a.1), (&b.0, b.1)));
+        let ids = layers.iter().map(|(_, id)| *id).collect::<Vec<_>>();
+        assert_eq!(
+            ids,
+            ["vj-layer-0-B", "vj-layer-1-A", "1b-screen", "vj-xfade-0", "0a-screen", "__vj-mix__"]
+        );
+    }
 
     #[test]
     fn compositor_allows_fully_opaque_layers() {

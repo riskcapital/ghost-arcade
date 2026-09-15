@@ -1982,6 +1982,23 @@
         });
         return effective === mappingLive ? mappingLive.map((l) => ({ ...l })) : effective;
       };
+      // Stage FX opacity for the native scene: layerId → multiplier, refreshed
+      // once per frame by the Stage FX driver below. It is applied to EVERY
+      // native sync rather than to one sync the driver makes itself: the
+      // sync keeps only the newest layer list, and in VJ mode the launcher,
+      // keyframe and sequencer stores push their own unmodulated lists many
+      // times a second, so a one-shot modulated push was replaced before it
+      // was drawn and Screen FX showed up on the odd frame at best.
+      let stageFxNativeOpacity = new Map<string, number>();
+      const withStageFxOpacity = (list: Layer[]): Layer[] => {
+        if (stageFxNativeOpacity.size === 0) return list;
+        return list.map((layer) => {
+          const multiplier = stageFxNativeOpacity.get(layer.id);
+          return multiplier === undefined
+            ? layer
+            : { ...layer, opacity: layer.opacity * multiplier };
+        });
+      };
       let __vjFeedDebugAt = 0;
       type NativeVjLayersSyncDetail = {
         urgent?: boolean;
@@ -1995,7 +2012,8 @@
         triggeredAtMs?: number,
       ) => {
         const p = get(project);
-        const effective = nativeEffectiveLayers();
+        const built = nativeEffectiveLayers();
+        const effective = built ? withStageFxOpacity(built) : null;
         if (!effective) {
           // A trigger updates the launcher and derived VJ layers in adjacent
           // store emissions. Give the derived layer one microtask to settle,
@@ -2064,10 +2082,10 @@
       // When the native core owns the frame, the WebGL animate() loop
       // never runs — so nothing was ticking the stage-effect engines
       // into the native scene. This RAF loop is the native-mode driver:
-      // while either FX engine is live it modulates the bound layers'
-      // opacity in place, pushes the scene (the sync captures values by
-      // copy at call time), then restores the stashed opacities. Idle
-      // frames cost two map-size checks and nothing else.
+      // while either FX engine is live it works out this frame's opacity
+      // multiplier for each bound layer into stageFxNativeOpacity, which
+      // every native sync applies, then pushes the scene. Idle frames cost
+      // two map-size checks and nothing else.
       let stageFxNativeRaf: number | null = null;
       const stageFxNativeTick = () => {
         stageFxNativeRaf = requestAnimationFrame(stageFxNativeTick);
@@ -2076,13 +2094,19 @@
         const mc = p.mappingComposition;
         const surfaceFx = stageRt.sliceOutputs.size > 0;
         const mappingFx = !!(mc?.enabled && (mc.stageEffects?.length ?? 0) > 0);
-        if (!surfaceFx && !mappingFx) return;
-        const vjState = get(vjClipLauncher);
-        const vjLayers = get(vjOutputLayers);
-        const normalLayers = get(layers) as Layer[];
-        const working: Layer[] = vjState.isLive && vjState.stageMode
-          ? [...(vjLayers ?? []), ...normalLayers]
-          : [...normalLayers];
+        if (!surfaceFx && !mappingFx) {
+          // Put the layers back at their own opacity once, when FX stop.
+          if (stageFxNativeOpacity.size > 0) {
+            stageFxNativeOpacity = new Map();
+            scheduleNativeLayersSync();
+          }
+          return;
+        }
+        // Screens and slices only. The VJ feed layers are what every Screen
+        // samples, so dimming one would dim every Screen at once; a
+        // full-canvas slice can match them through the geometry fallback.
+        const working = (get(layers) as Layer[]).filter((layer) => !String(layer.id).startsWith('vj-'));
+        const next = new Map<string, number>();
         let fxMatched = 0;
         if (surfaceFx) {
           for (const layer of working) {
@@ -2093,20 +2117,23 @@
             if (!out.sliceId) continue;
             fxMatched += 1;
             if (out.brightness >= 1) continue;
-            applyLayerOpacityModulation(layer, out.brightness);
+            next.set(layer.id, Math.max(0, out.brightness));
           }
         }
         if (mappingFx) {
-          applyMappingCompositionStageEffects(mc, working, performance.now());
-        }
-        scheduleNativeLayersSync();
-        for (const layer of working) {
-          const mutable = layer as { _stageOrigOpacity?: number; opacity: number };
-          if (mutable._stageOrigOpacity !== undefined) {
-            mutable.opacity = mutable._stageOrigOpacity;
-            delete mutable._stageOrigOpacity;
+          // The composition engine modulates layers in place; run it on
+          // copies and keep only the multiplier it applied.
+          const copies = working.map((layer) => ({ ...layer }));
+          applyMappingCompositionStageEffects(mc, copies, performance.now());
+          for (const copy of copies) {
+            const base = (copy as { _stageOrigOpacity?: number })._stageOrigOpacity;
+            if (base === undefined) continue;
+            const multiplier = base > 0 ? copy.opacity / base : 0;
+            next.set(copy.id, (next.get(copy.id) ?? 1) * multiplier);
           }
         }
+        stageFxNativeOpacity = next;
+        scheduleNativeLayersSync();
         const nowDbg = performance.now();
         if (nowDbg - ((window as unknown as { __stageFxNativeDbgAt?: number }).__stageFxNativeDbgAt ?? 0) > 2000) {
           (window as unknown as { __stageFxNativeDbgAt?: number }).__stageFxNativeDbgAt = nowDbg;
