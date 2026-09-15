@@ -4,6 +4,7 @@ import { fileURLToPath } from 'node:url';
 import {
   nativePreviewGeometryMatches,
   nativePreviewRectSignature,
+  nativePreviewRectToDevicePixels,
   normalizeNativePreviewRect,
 } from '../../../electron/native-preview-geometry.js';
 
@@ -29,6 +30,43 @@ describe('native preview geometry contract', () => {
       contentHeight: 640,
       generation: 12,
     });
+  });
+
+  it('scales the rect to physical pixels for display scaling, edge-aligned', () => {
+    const rect = normalizeNativePreviewRect({
+      x: 353,
+      y: 416,
+      width: 594,
+      height: 334,
+      contentX: 10.5,
+      contentY: 0,
+      contentWidth: 573,
+      contentHeight: 334,
+    }, 3);
+    // Windows at 150%: the canvas the warp box sits on starts at 529.5 and
+    // ends at 1420.5 physical pixels.
+    expect(nativePreviewRectToDevicePixels(rect, 1.5)).toEqual({
+      x: 530,
+      y: 624,
+      width: 891,
+      height: 501,
+      contentX: 16,
+      contentY: 0,
+      contentWidth: 859,
+      contentHeight: 501,
+      generation: 3,
+    });
+    // 125% puts x on a half pixel: rounding each edge keeps the right edge
+    // where rounding the size alone would drift it.
+    const scaled = nativePreviewRectToDevicePixels(
+      normalizeNativePreviewRect({ x: 101, y: 0, width: 101, height: 10 }),
+      1.25,
+    );
+    expect(scaled.x + scaled.width).toBe(Math.round(202 * 1.25));
+    // No scaling, or a ratio that makes no sense, leaves the rect alone.
+    expect(nativePreviewRectToDevicePixels(rect, 1)).toBe(rect);
+    expect(nativePreviewRectToDevicePixels(rect, 0)).toBe(rect);
+    expect(nativePreviewRectToDevicePixels(rect, Number.NaN)).toBe(rect);
   });
 
   it('invalidates the signature when the canvas-owned rectangle changes', () => {

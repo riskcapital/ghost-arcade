@@ -23,6 +23,40 @@ export function normalizeNativePreviewRect(rect = {}, generation = 0) {
   };
 }
 
+/**
+ * The editor sends the preview rectangle in CSS pixels. The macOS presenter
+ * works in AppKit points, which CSS pixels already are. The Windows presenter
+ * does not: its window and swapchain cover the host's client area in physical
+ * pixels, and it used the CSS rectangle as its viewport as-is. That lined up
+ * only while the app forced a device scale factor of 1, which 2.0.5 stopped
+ * doing so the UI would follow Windows display scaling. At 150% the preview
+ * was drawn at two thirds of its size, up and to the left of the canvas, so
+ * the picture no longer sat under its warp box.
+ *
+ * Edges are rounded rather than sizes, so a rectangle and its neighbours
+ * still meet without a gap.
+ */
+export function nativePreviewRectToDevicePixels(rect, pixelRatio) {
+  const ratio = Number(pixelRatio);
+  if (!Number.isFinite(ratio) || ratio <= 0 || ratio === 1) return rect;
+  const edge = (value) => Math.round(value * ratio);
+  const x = edge(rect.x);
+  const y = edge(rect.y);
+  const contentX = edge(rect.contentX);
+  const contentY = edge(rect.contentY);
+  return {
+    ...rect,
+    x,
+    y,
+    width: Math.max(1, edge(rect.x + rect.width) - x),
+    height: Math.max(1, edge(rect.y + rect.height) - y),
+    contentX,
+    contentY,
+    contentWidth: Math.max(1, edge(rect.contentX + rect.contentWidth) - contentX),
+    contentHeight: Math.max(1, edge(rect.contentY + rect.contentHeight) - contentY),
+  };
+}
+
 export function nativePreviewRectSignature(rect) {
   const values = [
     rect.x,
