@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   CONTROL_PATH_EXAMPLES,
+  isVideoScratchPath,
   normalizeControlPath,
   validateControlPath,
 } from './controlPaths';
@@ -19,6 +20,17 @@ describe('control parameter paths', () => {
         normalized: example.path,
         reason: null,
       });
+    }
+  });
+
+  it('keeps scratch control distinct from external timeline position', () => {
+    for (const path of ['map:media:scratch', 'vj:0:video:scratch', 'vj-b:2:video:scratch', 'VJ:Layer:3:Video:Scratch']) {
+      expect(isVideoScratchPath(path), path).toBe(true);
+      expect(validateControlPath(path).valid, path).toBe(true);
+    }
+    for (const path of ['map:media:position', 'vj:0:video:position', 'vj-b:2:video:play']) {
+      expect(isVideoScratchPath(path), path).toBe(false);
+      expect(validateControlPath(path).valid, path).toBe(true);
     }
   });
 

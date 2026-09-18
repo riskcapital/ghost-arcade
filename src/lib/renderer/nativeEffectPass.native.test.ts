@@ -3319,7 +3319,7 @@ describe('Native effect-pass template', () => {
     }
   }, 30000);
 
-  itIfNativeCore('renders an ordered native effect-pass chain in one compute graph', async () => {
+  itIfNativeCore.each([2, 12, 16])('renders an ordered %i-pass native effect chain in one compute graph', async (passCount) => {
     const rpc = createNativeRpc();
     try {
       await rpc.send('start', {
@@ -3409,6 +3409,9 @@ describe('Native effect-pass template', () => {
               animAmount: 0,
             },
           },
+          // Pairs of inversion passes preserve the expected picture while
+          // exercising the full chain and intermediate-texture reuse.
+          ...Array.from({ length: passCount - 2 }, () => ({ effect: 'invert' as const, amount: 1 })),
         ],
         width: 160,
         height: 90,
@@ -3418,12 +3421,12 @@ describe('Native effect-pass template', () => {
         seq: 40,
       });
       const graphResult = await rpc.send('compute_graph', graph.config, 8000);
-      expect(graphResult?.renders).toHaveLength(2);
+      expect(graphResult?.renders).toHaveLength(passCount);
       expect(graphResult?.renders?.[0]).toMatchObject({
         target: 'source_frame',
         source_id: 'native-effect-pass-chain-step:step:0',
       });
-      expect(graphResult?.renders?.[1]).toMatchObject({
+      expect(graphResult?.renders?.[passCount - 1]).toMatchObject({
         target: 'source_frame',
         source_id: targetSourceId,
       });

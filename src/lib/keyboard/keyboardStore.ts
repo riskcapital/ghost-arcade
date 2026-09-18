@@ -142,6 +142,11 @@ function isEditableTarget(): boolean {
   return tag === 'INPUT' || tag === 'TEXTAREA' || tag === 'SELECT' || el.isContentEditable;
 }
 
+function isNativeVideoFrameKey(e: KeyboardEvent): boolean {
+  return (e.code === 'ArrowLeft' || e.code === 'ArrowRight')
+    && document.activeElement?.hasAttribute('data-native-video-timeline') === true;
+}
+
 function createKeyboardStore() {
   const { subscribe, update, set } = writable<KeyboardState>({ ...INITIAL_STATE });
 
@@ -201,7 +206,9 @@ function createKeyboardStore() {
     // learn mode above this guard so users can still remap a key there.
     if (get(synthVisionStore).keyboardActive) return;
 
-    if (isEditableTarget()) return;
+    // The focused video timeline owns frame stepping. Learn mode still takes
+    // priority above, and mappings remain active for other controls and keys.
+    if (isEditableTarget() || isNativeVideoFrameKey(e)) return;
 
     let consumed = false;
     for (const b of state.bindings) {
@@ -245,7 +252,7 @@ function createKeyboardStore() {
   function onKeyUp(e: KeyboardEvent) {
     if (MODIFIER_CODES.has(e.code)) return;
     if (get(synthVisionStore).keyboardActive) return;
-    if (isEditableTarget()) return;
+    if (isEditableTarget() || isNativeVideoFrameKey(e)) return;
     const state = get({ subscribe });
     for (const b of state.bindings) {
       if (b.mode !== 'momentary' || !matches(b, e)) continue;

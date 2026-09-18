@@ -945,10 +945,6 @@ function triggerNativeVJVideoClip(clip: VJClip): number {
   clip._nativePlaybackSeekSeq = Number.isFinite(Number(clip._nativePlaybackSeekSeq))
     ? Math.floor(Number(clip._nativePlaybackSeekSeq)) + 1
     : 1;
-  // Replenish the consumed warm decoder after the urgent live-layer sync has
-  // had a chance to claim it. The next click then remains a session handoff,
-  // including repeated triggers of the same cell.
-  setTimeout(() => armVJVideoClip(clip), 75);
   return timeSeconds;
 }
 
@@ -960,7 +956,19 @@ function requestImmediateNativeVJSync(clips: Array<VJClip | null | undefined> = 
       .map((clip) => clip.id),
   ));
   window.dispatchEvent(new CustomEvent('ghost:native-vj-layers-sync', {
-    detail: { urgent: true, videoSourceIds, triggeredAtMs: performance.now() },
+    detail: {
+      urgent: true,
+      videoSourceIds,
+      triggeredAtMs: performance.now(),
+      // Start preparing the next trigger as soon as the core has claimed
+      // this one. A fixed 75 ms timer wasted most of a sixteenth note and
+      // could also reap the warm session before a delayed handoff claimed it.
+      onVideoHandoff: () => {
+        for (const clip of clips) {
+          if (clip?.type === 'video') armVJVideoClip(clip);
+        }
+      },
+    },
   }));
 }
 

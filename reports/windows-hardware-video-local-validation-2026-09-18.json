@@ -1,0 +1,30 @@
+{
+  "date": "2026-09-18",
+  "host": "macOS / Apple M1 Max",
+  "windows": {
+    "check": "cargo check --manifest-path native-renderer/Cargo.toml --target x86_64-pc-windows-msvc --all-targets --offline",
+    "type_check_passed": true,
+    "test_targets_type_check_passed": true,
+    "windows_link_or_installer_build_performed": false,
+    "physical_windows_gpu_playback_tested": false,
+    "windows_performance_claims": null
+  },
+  "mac_regression": {
+    "release_build_passed": true,
+    "rust_tests": {
+      "passed": 84,
+      "failed": 0,
+      "ignored": 4
+    },
+    "hardware_runtime_suites": {
+      "files_passed": 3,
+      "passed": 15,
+      "failed": 0,
+      "windows_only_skipped": 1
+    },
+    "benchmark_note": "Separate four-source smoke validates platform adaptation on Mac only; command acknowledgments are not input-to-display latency."
+  },
+  "diff_check_passed": true,
+  "windows_qualification_checklist": "docs/WINDOWS_HARDWARE_VIDEO_VALIDATION.md",
+  "ci_note": "Non-publishing Windows compile/link/unit-test workflow added locally; not dispatched."
+}

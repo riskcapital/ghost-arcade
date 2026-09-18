@@ -2717,6 +2717,18 @@ function normalizeStatus(status, previous = makeDefaultStatus()) {
     native_video_frame_decode_failures: Number(
       status.native_video_frame_decode_failures ?? previous.native_video_frame_decode_failures ?? 0,
     ),
+    native_video_hardware_frames: Number(
+      status.native_video_hardware_frames ?? previous.native_video_hardware_frames ?? 0,
+    ),
+    native_video_software_frames: Number(
+      status.native_video_software_frames ?? previous.native_video_software_frames ?? 0,
+    ),
+    native_video_hardware_fallbacks: Number(
+      status.native_video_hardware_fallbacks ?? previous.native_video_hardware_fallbacks ?? 0,
+    ),
+    native_video_last_pixel_format: String(
+      status.native_video_last_pixel_format ?? previous.native_video_last_pixel_format ?? '',
+    ),
     native_video_frame_decode_bytes_uploaded: Number(
       status.native_video_frame_decode_bytes_uploaded ??
         previous.native_video_frame_decode_bytes_uploaded ??
@@ -2745,9 +2757,29 @@ function normalizeStatus(status, previous = makeDefaultStatus()) {
     native_video_sessions: Array.isArray(status.native_video_sessions)
       ? status.native_video_sessions.map((session) => ({
           source_id: String(session?.source_id ?? ''),
+          signature: String(session?.signature ?? ''),
+          frames_dropped: Number(session?.frames_dropped ?? 0),
+          reserved_bytes: Number(session?.reserved_bytes ?? 0),
+          playback_rate: Number(session?.playback_rate ?? 1),
+          clock_seconds: Number(session?.clock_seconds ?? 0),
+          next_frame_seconds: session?.next_frame_seconds == null ? null : Number(session.next_frame_seconds),
+          source_time_seconds: session?.source_time_seconds == null ? null : Number(session.source_time_seconds),
+          source_frame_duration_seconds: session?.source_frame_duration_seconds == null ? null : Number(session.source_frame_duration_seconds),
+          source_fps: session?.source_fps == null ? null : Number(session.source_fps),
+          source_duration_seconds: session?.source_duration_seconds == null ? null : Number(session.source_duration_seconds),
+          source_frame_step_exact: session?.source_frame_step_exact === true,
+          scrub_cache_hits: Number(session?.scrub_cache_hits ?? 0),
+          scrub_cache_misses: Number(session?.scrub_cache_misses ?? 0),
+          forward_continuations: Number(session?.forward_continuations ?? 0),
+          optional_cache_bytes: Number(session?.optional_cache_bytes ?? 0),
+          seek_generation: Number(session?.seek_generation ?? 0),
+          play_state_changes: Number(session?.play_state_changes ?? 0),
           state: String(session?.state ?? 'armed'),
           buffered_frames: Number(session?.buffered_frames ?? 0),
           frames_presented: Number(session?.frames_presented ?? 0),
+          waiting_for_memory_bytes: Number(session?.waiting_for_memory_bytes ?? 0),
+          backend: String(session?.backend ?? 'unknown'),
+          fallback_reason: String(session?.fallback_reason ?? ''),
         }))
       : (previous.native_video_sessions ?? []),
     native_video_sessions_armed: Number(
@@ -2897,7 +2929,7 @@ function normalizeStatus(status, previous = makeDefaultStatus()) {
       status.decode_upload_queue_cap_mb ?? previous.decode_upload_queue_cap_mb ?? 256,
     ),
     decode_handoff_byte_cap_mb: Number(
-      status.decode_handoff_byte_cap_mb ?? previous.decode_handoff_byte_cap_mb ?? 128,
+      status.decode_handoff_byte_cap_mb ?? previous.decode_handoff_byte_cap_mb ?? 512,
     ),
     decode_handoff_predecode_shed_pct: Number(
       status.decode_handoff_predecode_shed_pct ?? previous.decode_handoff_predecode_shed_pct ?? 90,
@@ -3130,6 +3162,18 @@ function normalizeStats(stats, previous = makeDefaultStats()) {
     ),
     native_video_frame_decode_failures: Number(
       stats.native_video_frame_decode_failures ?? previous.native_video_frame_decode_failures ?? 0,
+    ),
+    native_video_hardware_frames: Number(
+      stats.native_video_hardware_frames ?? previous.native_video_hardware_frames ?? 0,
+    ),
+    native_video_software_frames: Number(
+      stats.native_video_software_frames ?? previous.native_video_software_frames ?? 0,
+    ),
+    native_video_hardware_fallbacks: Number(
+      stats.native_video_hardware_fallbacks ?? previous.native_video_hardware_fallbacks ?? 0,
+    ),
+    native_video_last_pixel_format: String(
+      stats.native_video_last_pixel_format ?? previous.native_video_last_pixel_format ?? '',
     ),
     native_video_frame_decode_bytes_uploaded: Number(
       stats.native_video_frame_decode_bytes_uploaded ??
@@ -3481,6 +3525,10 @@ function makeDefaultStatus(overrides = {}) {
     native_video_frame_cache_hits: 0,
     native_video_frame_cache_misses: 0,
     native_video_frame_cache_evictions: 0,
+    native_video_hardware_frames: 0,
+    native_video_software_frames: 0,
+    native_video_hardware_fallbacks: 0,
+    native_video_last_pixel_format: '',
     native_video_sessions: [],
     native_video_sessions_armed: 0,
     native_video_sessions_prerolled: 0,
@@ -3508,7 +3556,7 @@ function makeDefaultStatus(overrides = {}) {
     decode_target_height: outputHeight,
     decode_preview_cache_bypassed: false,
     decode_upload_queue_cap_mb: 256,
-    decode_handoff_byte_cap_mb: 128,
+    decode_handoff_byte_cap_mb: 512,
     decode_handoff_predecode_shed_pct: 90,
     shader_precompile_queue_cap: 4096,
     shader_precompile_per_frame: 4,
@@ -3847,6 +3895,10 @@ function makeDefaultStats() {
     native_image_decode_last_error: 'none',
     native_video_frame_decodes: 0,
     native_video_frame_decode_failures: 0,
+    native_video_hardware_frames: 0,
+    native_video_software_frames: 0,
+    native_video_hardware_fallbacks: 0,
+    native_video_last_pixel_format: '',
     native_video_frame_decode_bytes_uploaded: 0,
     native_video_frame_decode_last_error: 'none',
     native_video_frame_cache_entries: 0,

@@ -35,9 +35,11 @@
   import { createDurableAssetRefFromFile } from '../storage/assetRegistry';
   import { NATIVE_ENGINE_ONLY, settings } from '../stores/settings';
   import { nativeRendererRuntime, nativeFailedRouteLayers } from '../stores/nativeRenderer';
-  import { submitNativeRendererCommands } from '../api/native-renderer';
+  import { createNativeVideoScrubber } from '../renderer/nativeVideoScrubber';
+  import { showToast } from '../stores/errorToast';
   import { maskEditingLayerId } from '../stores/maskEditing';
   import { nativeUnsupportedEffectTypes, nativeUnsupportedSourceReason } from '../sync/nativeRendererSync';
+  import { nativeEffectChainWarning } from '../renderer/nativeEffectChainPolicy';
 
   // WebGPU capability — reactive store, NOT a snapshot. The probe is
   // async and may not have resolved when this panel first mounts;
@@ -322,16 +324,23 @@
   let timelineScrubbing = false;
   let timelineEl: HTMLDivElement | null = null;
   let videoTickFrame: number | null = null;
-  let timelinePendingSeekTime = 0;
-  let timelineScrubFrame: number | null = null;
-  let timelineScrubRequestSeq = 0;
-  let timelineScrubRequest: { source: MediaSource; time: number } | null = null;
+  const videoScrubber = createNativeVideoScrubber();
+  let videoStepBusy = false;
+  let videoScrubRevision = 0;
+  let videoScrubSelection = '';
+  let stopTimelineDrag: (() => void) | null = null;
+  type VideoScrubPatch = {
+    isPlaying: boolean;
+    _nativePlaybackTimeSeconds: number;
+    _nativePlaybackUpdatedAtMs: number;
+    _nativePlaybackSeekSeq: number;
+  };
 
   function formatTime(seconds: number): string {
-    if (!isFinite(seconds) || isNaN(seconds)) return '0:00';
-    const m = Math.floor(seconds / 60);
-    const s = Math.floor(seconds % 60);
-    return `${m}:${s.toString().padStart(2, '0')}`;
+    const millis = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds * 1000)) : 0;
+    const minutes = Math.floor(millis / 60000);
+    const secondsPart = String(Math.floor(millis / 1000) % 60).padStart(2, '0');
+    return `${minutes}:${secondsPart}.${String(millis % 1000).padStart(3, '0')}`;
   }
 
   function sourceDuration(source: MediaSource): number {
@@ -372,16 +381,10 @@
     source._nativePlaybackUpdatedAtMs = performance.now();
     source._nativePlaybackSeekSeq = Math.max(0, source._nativePlaybackSeekSeq ?? 0) + 1;
     videoCurrentTime = nextTime;
-    if (source.videoElement) {
+    if (source.audioPlayback && source.videoElement) {
       try { source.videoElement.currentTime = nextTime; } catch { /* native transport remains authoritative */ }
     }
     project.updateLayer(layerId, { source: { ...source } });
-  }
-
-  function previewPlaybackTime(source: MediaSource, time: number) {
-    const duration = sourceDuration(source);
-    const nextTime = Math.max(0, duration > 0 ? Math.min(duration, time) : time);
-    videoCurrentTime = nextTime;
   }
 
   function startVideoTick() {
@@ -390,7 +393,7 @@
       const layer = $selectedLayer;
       if (layer?.source?.type === 'video') {
         videoDuration = sourceDuration(layer.source);
-        if (!timelineScrubbing) videoCurrentTime = sourcePlaybackTime(layer.source);
+        if (!timelineScrubbing && !videoStepBusy) videoCurrentTime = sourcePlaybackTime(layer.source);
       }
       videoTickFrame = requestAnimationFrame(tick);
     }
@@ -413,9 +416,7 @@
 
   onDestroy(() => {
     stopVideoTick();
-    if (timelineScrubFrame !== null) cancelAnimationFrame(timelineScrubFrame);
-    timelineScrubFrame = null;
-    timelineScrubRequest = null;
+    cancelVideoScrub();
   });
 
   function setPlaybackMode(layerId: string, source: MediaSource, mode: VideoPlaybackMode) {
@@ -463,76 +464,103 @@
     project.updateLayer(layerId, { source: { ...source } });
   }
 
+  function cancelVideoScrub() {
+    videoScrubRevision++;
+    stopTimelineDrag?.();
+    stopTimelineDrag = null;
+    videoScrubber.cancel();
+    videoStepBusy = false;
+  }
+
+  function syncVideoScrubSelection(key: string) {
+    if (key === videoScrubSelection) return;
+    videoScrubSelection = key;
+    cancelVideoScrub();
+  }
+
+  $: syncVideoScrubSelection(JSON.stringify([
+    $selectedLayer?.id, $selectedLayer?.source?.id, $selectedLayer?.source?.src, $selectedLayer?.source?.type,
+  ]));
+
+  function currentScrubSource(layerId: string, source: MediaSource, revision: number): MediaSource | null {
+    const current = $selectedLayer;
+    return revision === videoScrubRevision && current?.id === layerId
+      && current.source?.type === 'video' && current.source.id === source.id && current.source.src === source.src
+      ? current.source : null;
+  }
+
+  function commitVideoScrub(layerId: string, source: MediaSource, revision: number, patch: VideoScrubPatch) {
+    const current = currentScrubSource(layerId, source, revision);
+    if (!current || Number(current._nativePlaybackSeekSeq ?? 0) > patch._nativePlaybackSeekSeq) return;
+    videoCurrentTime = patch._nativePlaybackTimeSeconds;
+    project.updateLayer(layerId, { source: { ...current, ...patch } });
+  }
+
   function handleTimelineMouseDown(e: MouseEvent, layerId: string, source: MediaSource) {
-    if (!timelineEl) return;
+    if (!timelineEl || e.button !== 0 || videoStepBusy) return;
     e.stopPropagation();
     e.preventDefault();
+    cancelVideoScrub();
+    const revision = videoScrubRevision;
+    const wasPlaying = source.isPlaying !== false;
+    const timeline = timelineEl;
+    timeline.focus();
     timelineScrubbing = true;
-    seekToPosition(e, source);
-
-    const onMove = (me: MouseEvent) => seekToPosition(me, source);
-    const onUp = (me: MouseEvent) => {
-      seekToPosition(me, source, true);
-      setNativePlaybackTime(layerId, source, timelinePendingSeekTime);
+    let latestTime = sourcePlaybackTime(source);
+    const commit = (patch: VideoScrubPatch) => commitVideoScrub(layerId, source, revision, patch);
+    const seek = (event: MouseEvent, playing = false, flush = false) => {
+      const current = currentScrubSource(layerId, source, revision);
+      if (!current) return;
+      const rect = timeline.getBoundingClientRect();
+      const pct = Math.max(current.trimStart ?? 0, Math.min(current.trimEnd ?? 1,
+        (event.clientX - rect.left) / (rect.width || 1)));
+      latestTime = pct * sourceDuration(current);
+      videoCurrentTime = latestTime;
+      videoScrubber.seek(current, latestTime, commit, { playing, flush });
+    };
+    const cleanup = () => {
       timelineScrubbing = false;
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('blur', onBlur);
+      if (stopTimelineDrag === cleanup) stopTimelineDrag = null;
     };
+    const onMove = (event: MouseEvent) => seek(event);
+    const onUp = (event: MouseEvent) => { seek(event, wasPlaying, true); cleanup(); };
+    const onBlur = () => {
+      const current = currentScrubSource(layerId, source, revision);
+      if (current) videoScrubber.seek(current, latestTime, commit, { playing: wasPlaying, flush: true });
+      cleanup();
+    };
+    stopTimelineDrag = cleanup;
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
+    window.addEventListener('blur', onBlur);
+    seek(e);
   }
 
-  function seekToPosition(e: MouseEvent, source: MediaSource, flush = false) {
-    if (!timelineEl) return;
-    const rect = timelineEl.getBoundingClientRect();
-    const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / (rect.width || 1)));
-    const nextTime = pct * sourceDuration(source);
-    timelinePendingSeekTime = nextTime;
-    previewPlaybackTime(source, nextTime);
-    queueNativeScrubPreview(source, nextTime, flush);
-  }
-
-  function nativeScrubDimensions(source: MediaSource): { width: number; height: number } {
-    const sourceWidth = Math.max(1, Math.round(source.videoElement?.videoWidth || 1280));
-    const sourceHeight = Math.max(1, Math.round(source.videoElement?.videoHeight || 720));
-    const scale = Math.min(1, 1280 / Math.max(sourceWidth, sourceHeight));
-    return {
-      width: Math.max(1, Math.round(sourceWidth * scale)),
-      height: Math.max(1, Math.round(sourceHeight * scale)),
-    };
-  }
-
-  function queueNativeScrubPreview(source: MediaSource, time: number, flush = false) {
-    if (!$nativeRendererRuntime.running || !source.src) return;
-    timelineScrubRequest = { source, time };
-
-    const submitLatest = () => {
-      timelineScrubFrame = null;
-      const request = timelineScrubRequest;
-      timelineScrubRequest = null;
-      if (!request) return;
-      const dimensions = nativeScrubDimensions(request.source);
-      void submitNativeRendererCommands([{
-        type: 'decode_media_source',
-        source_id: request.source.id,
-        uri: request.source.src,
-        source_type: 'video',
-        decode_width: dimensions.width,
-        decode_height: dimensions.height,
-        time_seconds: request.time,
-        scrub_preview: true,
-        seq: ++timelineScrubRequestSeq,
-      }]).catch((error) => {
-        console.warn('[native video scrub] exact-frame request failed', error);
-      });
-    };
-
-    if (flush) {
-      if (timelineScrubFrame !== null) cancelAnimationFrame(timelineScrubFrame);
-      submitLatest();
-    } else if (timelineScrubFrame === null) {
-      timelineScrubFrame = requestAnimationFrame(submitLatest);
+  async function stepVideoFrame(layerId: string, source: MediaSource, direction: -1 | 1) {
+    if (videoStepBusy || timelineScrubbing) return;
+    cancelVideoScrub();
+    const revision = videoScrubRevision;
+    videoStepBusy = true;
+    try {
+      await videoScrubber.step(source, direction,
+        patch => commitVideoScrub(layerId, source, revision, patch));
+    } catch (error) {
+      if (currentScrubSource(layerId, source, revision)) {
+        showToast(error instanceof Error ? error.message : 'Could not step to the next video frame.', 'error');
+      }
+    } finally {
+      if (revision === videoScrubRevision) videoStepBusy = false;
     }
+  }
+
+  function handleTimelineKeyDown(e: KeyboardEvent, layerId: string, source: MediaSource) {
+    if (e.target !== e.currentTarget || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    void stepVideoFrame(layerId, source, e.key === 'ArrowLeft' ? -1 : 1);
   }
 
   function handleTrimMouseDown(e: MouseEvent, which: 'start' | 'end', layerId: string, source: MediaSource) {
@@ -1178,6 +1206,9 @@
         </div>
 
         {#if compositionTab === 'effects'}
+          {#if nativeInventoryLocked && nativeEffectChainWarning(mappingComposition.effects)}
+            <p class="effect-chain-warning" role="status">{nativeEffectChainWarning(mappingComposition.effects)}</p>
+          {/if}
           <div class="composition-section-header">
             <span>Output Effects</span>
             <button
@@ -2217,6 +2248,7 @@
                 data-midi-max="1"
                 data-midi-mode="toggle"
                 onclick={() => {
+                  cancelVideoScrub();
                   const playing = vSrc.isPlaying !== false;
                   vSrc._nativePlaybackTimeSeconds = sourcePlaybackTime(vSrc);
                   vSrc._nativePlaybackUpdatedAtMs = performance.now();
@@ -2226,7 +2258,7 @@
 	                  } else {
 	                    vSrc.isPlaying = true;
 	                    vSrc._lastFrameTime = performance.now();
-	                    vSrc.videoElement?.play().catch(() => {});
+	                    if (vSrc.audioPlayback) vSrc.videoElement?.play().catch(() => {});
 	                  }
 	                  project.updateLayer(layer.id, { source: { ...vSrc } });
 	                }}
@@ -2246,10 +2278,11 @@
                 data-midi-max="1"
                 data-midi-mode="toggle"
                 onclick={() => {
+                  cancelVideoScrub();
                   setNativePlaybackTime(layer.id, vSrc, (vSrc.trimStart ?? 0) * sourceDuration(vSrc));
 	                  vSrc.isPlaying = true;
 	                  vSrc._nativePlaybackUpdatedAtMs = performance.now();
-	                  vSrc.videoElement?.play().catch(() => {});
+	                  if (vSrc.audioPlayback) vSrc.videoElement?.play().catch(() => {});
 	                  project.updateLayer(layer.id, { source: { ...vSrc } });
 	                }}
                 title="Restart"
@@ -2257,6 +2290,14 @@
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                   <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
                 </svg>
+              </button>
+              <button class="vt-btn" disabled={videoStepBusy || timelineScrubbing}
+                onclick={() => stepVideoFrame(layer.id, vSrc, -1)} title="Previous frame (Left arrow)" aria-label="Previous frame">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="2" height="16"/><path d="M19 4L8 12l11 8z"/></svg>
+              </button>
+              <button class="vt-btn" disabled={videoStepBusy || timelineScrubbing}
+                onclick={() => stepVideoFrame(layer.id, vSrc, 1)} title="Next frame (Right arrow)" aria-label="Next frame">
+                <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M5 4l11 8-11 8z"/><rect x="18" y="4" width="2" height="16"/></svg>
               </button>
               <span class="vt-time">{formatTime(videoCurrentTime)} / {formatTime(videoDuration)}</span>
               <select
@@ -2277,15 +2318,21 @@
             <div
               class="vt-timeline"
               bind:this={timelineEl}
-              data-midi-path="map:media:position"
-              data-midi-label="Media Position"
+              data-native-video-timeline
+              data-midi-path="map:media:scratch"
+              data-midi-label="Media Scratch (hold frame)"
               data-midi-min="0"
               data-midi-max="1"
-              data-midi-step="0.001"
+              data-midi-step="0"
+              data-midi-mode="absolute"
               onmousedown={(e) => handleTimelineMouseDown(e, layer.id, vSrc)}
+              onkeydown={(e) => handleTimelineKeyDown(e, layer.id, vSrc)}
               role="slider"
               tabindex="0"
               aria-label="Video timeline"
+              aria-valuetext={formatTime(videoCurrentTime)}
+              aria-busy={videoStepBusy}
+              title="Drag to scrub. Left and Right arrows step one frame."
               aria-valuemin={0}
               aria-valuemax={100}
               aria-valuenow={videoDuration > 0 ? Math.round(videoCurrentTime / videoDuration * 100) : 0}
@@ -2980,6 +3027,9 @@
             </div>
 
             <!-- Effect List -->
+            {#if nativeInventoryLocked && nativeEffectChainWarning(layer.effects)}
+              <p class="effect-chain-warning" role="status">{nativeEffectChainWarning(layer.effects)}</p>
+            {/if}
             {#if layer.effects.length > 0}
               <div class="effect-list">
               {#each layer.effects as effect, index (effect.id)}
@@ -3306,6 +3356,7 @@
 
 
 <style>
+  .effect-chain-warning { color: #f4c46a; font-size: 11px; line-height: 1.5; padding: 6px 8px; }
   .layer-panel {
     width: 300px;
     background: var(--ga-panel, #0b0d11);
@@ -4332,6 +4383,7 @@
 
   .vt-transport {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 4px;
     margin-bottom: 8px;
@@ -4352,6 +4404,7 @@
     flex-shrink: 0;
   }
   .vt-btn:hover { background: rgba(255, 255, 255, 0.15); color: #fff; }
+  .vt-btn:disabled { opacity: 0.4; cursor: wait; }
 
   .vt-play {
     background: #BB86FC;

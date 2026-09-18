@@ -1,0 +1,307 @@
+{
+  "date": "2026-09-18",
+  "host": "macOS, Apple M1 Max",
+  "clip": "Second_Nature_Wire_Circuit_8s_PREVIEW.mp4, 960x540, 30fps, 8s, one keyframe at 0s",
+  "measurement": "Actual createNativeVideoScrubber helper through native core RPC; desktop app closed for both runs. 480 desired-time events over 8 seconds, triangular position 3 to 5 to 3 seconds repeated twice. Presented source PTS observed through status; not an input-to-display latency measurement.",
+  "helper_sha256": "744d2a21b4b888485934e0c3b938b9271174fecb3852db703790057b75024f98",
+  "helper_unchanged_between_runs": true,
+  "runs": {
+    "before_native_history": {
+      "binary_sha256": "24d63388ba45991bdb07f64d43df52ceb8b29e0e025ca871fb33480db13c21fb",
+      "input_count": 480,
+      "submitted_seeks_during_movement": 90,
+      "observed_presented_pts_changes": 78,
+      "observed_pts_changes_per_second": 9.75,
+      "observed_change_gaps_ms": {
+        "count": 77,
+        "mean": 102.86643506493508,
+        "p50": 98.63941599999998,
+        "p95": 182.4461250000004,
+        "max": 433.0697499999999
+      },
+      "legs": [
+        {
+          "start_ms": 0,
+          "direction": "forward",
+          "observed_changes": 18,
+          "first_pts": 3,
+          "last_pts": 4.8,
+          "unique_pts": 18
+        },
+        {
+          "start_ms": 2000,
+          "direction": "reverse",
+          "observed_changes": 20,
+          "first_pts": 4.9,
+          "last_pts": 3.2333333333333334,
+          "unique_pts": 20
+        },
+        {
+          "start_ms": 4000,
+          "direction": "forward",
+          "observed_changes": 19,
+          "first_pts": 3.033333333333333,
+          "last_pts": 4.8,
+          "unique_pts": 19
+        },
+        {
+          "start_ms": 6000,
+          "direction": "reverse",
+          "observed_changes": 21,
+          "first_pts": 4.9,
+          "last_pts": 3.1666666666666665,
+          "unique_pts": 20
+        }
+      ],
+      "final": {
+        "requested": 4.25,
+        "expected_pts": 4.233333333333333,
+        "actual_pts": 4.233333333333333,
+        "correct": true,
+        "release_to_confirmation_ms": 87.31324999999924,
+        "held": true
+      },
+      "reserved_bytes": 14114592,
+      "optional_cache_bytes": null,
+      "waiting_for_memory_bytes": 0,
+      "scrub_cache_hits": null,
+      "scrub_cache_misses": null,
+      "forward_continuations": null,
+      "hardware_backend": "videotoolbox",
+      "upload_transport": "native-video-iosurface",
+      "telemetry": {
+        "native_video_hardware_frames": {
+          "before": 1,
+          "during": 91,
+          "after": 92,
+          "delta": 91
+        },
+        "native_video_software_frames": {
+          "before": 0,
+          "during": 0,
+          "after": 0,
+          "delta": 0
+        },
+        "native_video_hardware_fallbacks": {
+          "before": 0,
+          "during": 0,
+          "after": 0,
+          "delta": 0
+        },
+        "source_frame_input_bytes_uploaded": {
+          "before": 0,
+          "during": 0,
+          "after": 0,
+          "delta": 0
+        },
+        "source_frame_cpu_fallback_uploads": {
+          "before": 0,
+          "during": 0,
+          "after": 0,
+          "delta": 0
+        },
+        "source_frame_file_uploads": {
+          "before": 0,
+          "during": 0,
+          "after": 0,
+          "delta": 0
+        },
+        "source_frame_base64_uploads": {
+          "before": 0,
+          "during": 0,
+          "after": 0,
+          "delta": 0
+        },
+        "source_frame_json_uploads": {
+          "before": 0,
+          "during": 0,
+          "after": 0,
+          "delta": 0
+        },
+        "video_oneshot_decodes_during_playback": {
+          "before": 0,
+          "during": 0,
+          "after": 0,
+          "delta": 0
+        },
+        "native_video_frame_decode_failures": {
+          "before": 0,
+          "during": 0,
+          "after": 0,
+          "delta": 0
+        }
+      },
+      "toast_count": 0
+    },
+    "bounded_dense_history": {
+      "binary_sha256": "2b67a9d0fb22c1d37cee5f3387e4e1b68dbb5ed775e4bf7b6eee12d58cf67fc4",
+      "input_count": 480,
+      "submitted_seeks_during_movement": 436,
+      "observed_presented_pts_changes": 235,
+      "observed_pts_changes_per_second": 29.375,
+      "observed_change_gaps_ms": {
+        "count": 234,
+        "mean": 34.05702332478633,
+        "p50": 34.14845800000148,
+        "p95": 49.95820800000001,
+        "max": 156.18279200000006
+      },
+      "legs": [
+        {
+          "start_ms": 0,
+          "direction": "forward",
+          "observed_changes": 55,
+          "first_pts": 3,
+          "last_pts": 4.966666666666667,
+          "unique_pts": 55
+        },
+        {
+          "start_ms": 2000,
+          "direction": "reverse",
+          "observed_changes": 60,
+          "first_pts": 5,
+          "last_pts": 3.033333333333333,
+          "unique_pts": 60
+        },
+        {
+          "start_ms": 4000,
+          "direction": "forward",
+          "observed_changes": 60,
+          "first_pts": 3,
+          "last_pts": 4.966666666666667,
+          "unique_pts": 60
+        },
+        {
+          "start_ms": 6000,
+          "direction": "reverse",
+          "observed_changes": 60,
+          "first_pts": 5,
+          "last_pts": 3.033333333333333,
+          "unique_pts": 60
+        }
+      ],
+      "final": {
+        "requested": 4.25,
+        "expected_pts": 4.233333333333333,
+        "actual_pts": 4.233333333333333,
+        "correct": true,
+        "release_to_confirmation_ms": 12.592749999999796,
+        "held": true
+      },
+      "reserved_bytes": 77630256,
+      "optional_cache_bytes": 63515664,
+      "waiting_for_memory_bytes": 0,
+      "scrub_cache_hits": 435,
+      "scrub_cache_misses": 2,
+      "forward_continuations": 67,
+      "hardware_backend": "videotoolbox",
+      "upload_transport": "native-video-iosurface",
+      "telemetry": {
+        "native_video_hardware_frames": {
+          "before": 1,
+          "during": 437,
+          "after": 438,
+          "delta": 437
+        },
+        "native_video_software_frames": {
+          "before": 0,
+          "during": 0,
+          "after": 0,
+          "delta": 0
+        },
+        "native_video_hardware_fallbacks": {
+          "before": 0,
+          "during": 0,
+          "after": 0,
+          "delta": 0
+        },
+        "source_frame_input_bytes_uploaded": {
+          "before": 0,
+          "during": 0,
+          "after": 0,
+          "delta": 0
+        },
+        "source_frame_cpu_fallback_uploads": {
+          "before": 0,
+          "during": 0,
+          "after": 0,
+          "delta": 0
+        },
+        "source_frame_file_uploads": {
+          "before": 0,
+          "during": 0,
+          "after": 0,
+          "delta": 0
+        },
+        "source_frame_base64_uploads": {
+          "before": 0,
+          "during": 0,
+          "after": 0,
+          "delta": 0
+        },
+        "source_frame_json_uploads": {
+          "before": 0,
+          "during": 0,
+          "after": 0,
+          "delta": 0
+        },
+        "video_oneshot_decodes_during_playback": {
+          "before": 0,
+          "during": 0,
+          "after": 0,
+          "delta": 0
+        },
+        "native_video_frame_decode_failures": {
+          "before": 0,
+          "during": 0,
+          "after": 0,
+          "delta": 0
+        }
+      },
+      "toast_count": 0
+    }
+  },
+  "limits": [
+    "One clip and one Mac performance probe in a warmed 3\u20135 second window; not input-to-display latency.",
+    "Uncached long-GOP seeks still require decode work.",
+    "Physical MIDI controller and Windows GPU runtime are not qualified."
+  ],
+  "controls_validation": {
+    "unit_tests_passed": 133,
+    "files": 9,
+    "desktop_check_errors": 0,
+    "desktop_check_existing_warnings": 1036,
+    "physical_midi_tested": false
+  },
+  "final_validation": {
+    "release_binary_sha256": "63bc20be85e6f3f33d5d7190cc808070b583328714bcce90e395e56c51deb6a2",
+    "release_build_passed": true,
+    "rust_tests": {
+      "passed": 96,
+      "failed": 0,
+      "ignored": 5
+    },
+    "windows_all_targets_check_passed": true,
+    "mac_gpu_suites": {
+      "passed": 22,
+      "failed": 0,
+      "skipped": 1,
+      "skip_reason": "Windows-only DXGI texture ownership runtime case"
+    },
+    "memory_cases": [
+      "new live clip with unchanged cap",
+      "new live clip after cap reduction",
+      "ample headroom preserves scratch history"
+    ],
+    "desktop_ui": [
+      "restored saved Wire Circuit test project",
+      "mouse forward and reverse drag in Mapping and VJ",
+      "both timelines enter Scratch (hold frame) MIDI Learn",
+      "playing drag resumes after release"
+    ],
+    "notes": [
+      "Final admission-only fix followed the recorded performance run; no repeated performance claim for a different binary.",
+      "No physical MIDI device or Windows GPU runtime tested."
+    ]
+  }
+}

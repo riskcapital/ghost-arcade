@@ -741,10 +741,8 @@ void main() { gl_FragColor = vec4(${rgb}, 1.0); }`,
         Number(immediateVideoStatus.native_video_trigger_last_latency_us ?? Number.MAX_SAFE_INTEGER),
         JSON.stringify(immediateVideoStatus.native_video_sessions),
       ).toBeLessThan(16_000);
-      // Target the claimed playing session by id: after a warm-claim the pump
-      // immediately re-arms a fresh `library:` slot for instant re-triggering,
-      // and session order in status is map-iteration order — indexing [0]
-      // races the re-warm.
+      // Status uses map iteration order; identify the claimed live session
+      // explicitly instead of relying on its position in the array.
       const triggeredSession = (immediateVideoStatus.native_video_sessions ?? []).find(
         (session: { source_id?: string }) => session?.source_id === 'native-video',
       );
@@ -764,7 +762,9 @@ void main() { gl_FragColor = vec4(${rgb}, 1.0); }`,
       expect(secondVideo.nonzero_pixels).toBeGreaterThan(0);
       expect(secondVideo.checksum).not.toBe(firstVideo.checksum);
       expect(Number(videoStatus.native_video_frame_decodes ?? 0)).toBeGreaterThanOrEqual(5);
-      expect(videoStatus.source_frame_last_upload_transport).toBe('native-video-stream');
+      expect(videoStatus.source_frame_last_upload_transport).toBe(
+        Number(videoStatus.native_video_hardware_frames ?? 0) > 0 ? 'native-video-iosurface' : 'native-video-stream',
+      );
       expect(Number(videoStatus.video_oneshot_decodes_during_playback ?? -1)).toBe(0);
       expect(Number(videoStatus.native_video_sessions_playing ?? 0)).toBe(1);
       expect(
@@ -778,12 +778,13 @@ void main() { gl_FragColor = vec4(${rgb}, 1.0); }`,
         }),
       ).toBeLessThan(16_000);
       expect(Number(videoStatus.native_video_stream_underflows ?? -1)).toBe(0);
-      // Target the playing session by id — the re-warmed `library:` slot
-      // shares the status array in map-iteration order.
+      // Count frames for the claimed playing session.
       const playingSession = (videoStatus.native_video_sessions ?? []).find(
         (session: { source_id?: string }) => session?.source_id === 'native-video',
       );
-      expect(Number(playingSession?.frames_presented ?? 0)).toBeGreaterThanOrEqual(60);
+      // The fixture is 24 fps: native playback no longer duplicates every
+      // frame to 60 fps, so about 27 distinct frames arrive in this window.
+      expect(Number(playingSession?.frames_presented ?? 0)).toBeGreaterThanOrEqual(24);
       expect(Number(videoStatus.source_frame_last_upload_width ?? 0)).toBe(128);
       expect(Number(videoStatus.source_frame_last_upload_height ?? 0)).toBe(72);
     } finally {
@@ -853,7 +854,7 @@ void main() { gl_FragColor = vec4(${rgb}, 1.0); }`,
         ],
       }, 10000);
 
-      await new Promise((resolve) => setTimeout(resolve, 100));
+      await waitForPrerolledSession(rpc, 'late-video');
       const snapshot = await rpc.send('frame_snapshot', { include_pixels: false }, 10000);
       expect(snapshot.nonzero_pixels).toBeGreaterThan(0);
       expect(snapshot.dark_frame).toBe(false);

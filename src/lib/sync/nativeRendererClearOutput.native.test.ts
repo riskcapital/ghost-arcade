@@ -12,6 +12,8 @@
 import { beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const invokeCalls: Array<{ command: string; args: any }> = [];
+let failNextBatch = false;
+let coreLayers: any[] = [];
 
 vi.mock('$lib/bridge', async (importOriginal) => {
   const actual = await importOriginal<Record<string, unknown>>();
@@ -20,8 +22,13 @@ vi.mock('$lib/bridge', async (importOriginal) => {
     invoke: async (command: string, args?: any) => {
       invokeCalls.push({ command, args });
       if (command === 'native_renderer_submit_batch' || command === 'native_renderer_submit_commands') {
+        if (failNextBatch) {
+          failNextBatch = false;
+          throw new Error('test transport interruption');
+        }
         return { total: 0, applied: 0, dropped: 0, unknown_types: [] };
       }
+      if (command === 'native_renderer_get_layers_snapshot') return { layers: coreLayers };
       return null;
     },
   };
@@ -59,10 +66,53 @@ beforeAll(async () => {
 
 beforeEach(() => {
   invokeCalls.length = 0;
+  failNextBatch = false;
+  coreLayers = [];
+});
+
+describe('native video trigger and live diagnostics', () => {
+  const source = () => ({
+    id: 'clip', src: 'file:///tmp/video.mp4', type: 'video', isPlaying: true,
+    playbackRate: 1, durationSeconds: 8, _nativePlaybackTimeSeconds: 0,
+    _nativePlaybackUpdatedAtMs: performance.now(), _nativePlaybackSeekSeq: 7,
+  });
+
+  it.each([false, true])('preserves successful transport state and retries failed handoffs (failure=%s)', async (fail) => {
+    const sync = new NativeRendererSyncCtor() as any;
+    sync.running = true;
+    sync.startupReady = true;
+    sync.lastLayers.set('row', {});
+    const src = source();
+    failNextBatch = fail;
+    await sync.syncUrgentVideoSources(1920, 1080, [
+      { id: 'row', type: 'video', visible: true, opacity: 1, source: src, effects: [] },
+    ], ['clip']);
+    const batch = lastSubmittedBatch()!;
+    expect(batch.find(command => command.type === 'set_media_source_playback'))
+      .toMatchObject({ source_id: 'clip', time_seconds: 0, seek_generation: 7 });
+    expect(batch.at(-1)?.type).toBe('present');
+    const followingTransport = sync.nativeVideoPlaybackCommandIfChanged(src, 'video', Date.now(), { mode: 'live' });
+    if (fail) expect(followingTransport?.source_id).toBe('clip');
+    else expect(followingTransport).toBeNull();
+    expect(sync.prefetchedSources.size).toBe(fail ? 0 : 1);
+  });
+
+  it('does not read output pixels during ordinary live scene reconciliation', async () => {
+    const sync = new NativeRendererSyncCtor() as any;
+    sync.nativeLayerReconcileAt = -Infinity;
+    sync.lastLayers.set('row', { geometrySig: '', visible: true, opacity: 1 });
+    coreLayers = [{ layer_id: 'row', visible: true, opacity: 1 }];
+    await sync.reconcileNativeLayerGeometry();
+    expect(invokeCalls.some(call => call.command === 'native_renderer_get_layers_snapshot')).toBe(true);
+    expect(invokeCalls.some(call => call.command === 'native_renderer_get_frame_snapshot')).toBe(false);
+  });
 });
 
 function lastSubmittedBatch(): any[] | null {
   for (let i = invokeCalls.length - 1; i >= 0; i -= 1) {
+    if (invokeCalls[i].command === 'native_renderer_submit_commands') {
+      return invokeCalls[i].args?.commands ?? null;
+    }
     if (invokeCalls[i].command === 'native_renderer_submit_batch') {
       return invokeCalls[i].args?.batch?.commands ?? null;
     }

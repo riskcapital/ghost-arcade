@@ -1,0 +1,29 @@
+{
+  "date": "2026-09-18",
+  "host": "macOS, Apple M1 Max",
+  "scope": "Local development build; native scrubbing and source-timestamp frame stepping",
+  "checks": {
+    "desktop_typecheck": { "errors": 0, "existing_warnings": 1036 },
+    "rust": { "passed": 87, "ignored": 5 },
+    "mac_decoder_hardware": { "passed": 6, "adjacent_trim_continuation_checks": 696 },
+    "hardware_runtime_suites": { "passed": 18, "windows_only_skipped": 1 },
+    "helper_broker_scene_sync": { "passed": 83 },
+    "helper_keyboard_routing": { "passed": 12 },
+    "mac_release_build": "passed",
+    "windows_all_targets_compile": "passed"
+  },
+  "app_verification": {
+    "clip": "Second_Nature_Wire_Circuit_8s_PREVIEW.mp4",
+    "mapping_next_previous_seconds": [5.600, 5.633, 5.600],
+    "vj_next_seconds": [6.333, 6.366],
+    "mapping_paused_drag_and_focused_arrows": "passed",
+    "vj_drag_restores_playing_on_release": "passed",
+    "project_preserved_across_restart": true
+  },
+  "limits": [
+    "Windows hardware runtime is not validated on this Mac.",
+    "Frame selection checks do not establish zero latency for arbitrary compressed-video seeks.",
+    "Exact UI stepping requires a prepared hardware session; compatibility clips retain direct seeking.",
+    "No release was published."
+  ]
+}

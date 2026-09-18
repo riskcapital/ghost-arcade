@@ -1,4 +1,5 @@
 import { get } from 'svelte/store';
+import { NATIVE_EFFECT_PASS_LIMIT } from '$lib/renderer/nativeEffectChainPolicy';
 import {
   buildVJCrossfadeGraph,
   buildVJCrossfadePrecompileCommands,
@@ -3343,9 +3344,11 @@ export function nativeEffectPassFromDescriptor(descriptor: string | null): Nativ
   };
 }
 
-function nativeEffectPassesForLayer(layer: Layer): NativeEffectPassRuntime[] | null {
-  const enabled = (layer.effects || []).filter((effect: any) => effect && effect.enabled !== false);
-  if (!enabled.length || enabled.length > 4) return null;
+export function nativeEffectPassesForLayer(layer: Layer): NativeEffectPassRuntime[] | null {
+  const enabled = (layer.effects || [])
+    .filter((effect: any) => effect && effect.enabled !== false)
+    .slice(0, NATIVE_EFFECT_PASS_LIMIT);
+  if (!enabled.length) return null;
   const passes = enabled.map((effect: any) =>
     nativeEffectPassFromDescriptor(effectToNativeDescriptor(effect)),
   );
@@ -3355,8 +3358,10 @@ function nativeEffectPassesForLayer(layer: Layer): NativeEffectPassRuntime[] | n
 
 export function nativeUnsupportedEffectTypes(layer: Pick<Layer, 'effects'>): string[] {
   const unsupported = new Set<string>();
-  for (const effect of layer.effects || []) {
-    if (!effect || effect.enabled === false) continue;
+  const rendered = (layer.effects || [])
+    .filter(effect => effect && effect.enabled !== false)
+    .slice(0, NATIVE_EFFECT_PASS_LIMIT);
+  for (const effect of rendered) {
     if (nativeEffectPassFromDescriptor(effectToNativeDescriptor(effect))) continue;
     unsupported.add(String(effect.type || 'unknown'));
   }
@@ -5313,7 +5318,7 @@ export class NativeRendererSync {
   private decodePreviewCacheMb = 128;
   private decodeUseOutputResolution = true;
   private decodeUploadQueueCapMb = 256;
-  private decodeHandoffByteCapMb = 128;
+  private decodeHandoffByteCapMb = 512;
   private decodeHandoffPredecodeShedPct = 90;
   private decodePredecodeEstimateCacheCapEntries = 8192;
   private mediaDropCommandPressurePct = 90;
@@ -7039,10 +7044,18 @@ export class NativeRendererSync {
     const nativeTime = Number(src._nativePlaybackTimeSeconds);
     if (Number.isFinite(nativeTime) && nativeTime >= 0) {
       const anchorMs = Number(src._nativePlaybackUpdatedAtMs);
+      // Transport anchors use performance.now(); `now` is epoch time for
+      // queue/cache bookkeeping and cannot be subtracted from this anchor.
       const elapsedSeconds = src.isPlaying === false || !Number.isFinite(anchorMs)
         ? 0
-        : Math.max(0, now - anchorMs) / 1000;
+        : Math.max(0, performance.now() - anchorMs) / 1000;
       return Math.max(0, nativeTime + elapsedSeconds * (Number(src.playbackRate) || 1));
+    }
+    if (!this.nativeVideoPlaybackState.has(this.sourceCacheKey(src.id, src.src))) {
+      const duration = Number(src.durationSeconds ?? src.videoElement?.duration);
+      return Number.isFinite(duration) && duration > 0
+        ? duration * Math.max(0, Math.min(1, Number(src.trimStart ?? 0)))
+        : 0;
     }
     const videoTime = Number(src.videoElement?.currentTime);
     return Number.isFinite(videoTime)
@@ -7087,6 +7100,8 @@ export class NativeRendererSync {
       : 0;
     const timeSeconds = Number.isFinite(explicitNativeTime) && explicitNativeTime >= 0
       ? explicitNativeTime
+      : !previous
+      ? this.nativeVideoPlaybackTimeSeconds(src, now)
       : Number.isFinite(elementTime) && elementTime >= 0
       ? elementTime
       : Math.max(0, estimatedPreviousTime);
@@ -7194,7 +7209,12 @@ export class NativeRendererSync {
     prefetchWindowFrames = 0,
     useNativePlaybackClock = false,
   ) {
-    const timeSeconds = this.nativeVideoPlaybackTimeSeconds(src, now);
+    const explicitTime = Number(src._nativePlaybackTimeSeconds);
+    // Preroll and the eventual transport command must start at the same
+    // requested frame, even when prefetch spends time waiting in the queue.
+    const timeSeconds = Number.isFinite(explicitTime) && explicitTime >= 0
+      ? explicitTime
+      : this.nativeVideoPlaybackTimeSeconds(src, now);
     const decodeDimensions = this.nativeVideoDecodeDimensions(src);
     return {
       mode: 'preroll' as const,
@@ -7210,6 +7230,7 @@ export class NativeRendererSync {
         : undefined,
       trimStart: Math.max(0, Math.min(1, Number(src.trimStart ?? 0))),
       trimEnd: Math.max(0, Math.min(1, Number(src.trimEnd ?? 1))),
+      seekGeneration: Math.max(0, Math.round(Number(src._nativePlaybackSeekSeq ?? 0))),
       seq: Math.max(1, Math.round(timeSeconds * 1000)),
     };
   }
@@ -7322,7 +7343,7 @@ export class NativeRendererSync {
         pass: nativeEffectPassFromDescriptor(effectToNativeDescriptor(effect)),
       }))
       .filter((entry) => !!entry.pass)
-      .slice(0, 4);
+      .slice(0, NATIVE_EFFECT_PASS_LIMIT);
     if (!effectPasses.length) return noChain();
     if (!this.supportsNativeEffectPassRoute(effectPasses.map((entry) => entry.pass!))) {
       return noChain();
@@ -7973,6 +7994,8 @@ export class NativeRendererSync {
     }
     this.pendingSync = false;
     this.urgentVideoRevision += 1;
+    const revision = this.urgentVideoRevision;
+    const handoffSourceKeys = new Set<string>();
 
     const requested = new Set(sourceIds);
     const renderClock = this.renderClockCommand();
@@ -8017,16 +8040,19 @@ export class NativeRendererSync {
         });
       }
 
-      const explicitTime = Number(src._nativePlaybackTimeSeconds);
       // Playback comes first so the core claims/drains the armed session before
       // bind_media_source resolves the layer's texture for this presentation.
-      commands.push(this.nativeVideoPlaybackCommand(
+      // Record the handoff just like a regular sync: its following scene diff
+      // must not enqueue another preroll or repeat this transport update.
+      const sourceKey = this.sourceCacheKey(src.id, src.src);
+      handoffSourceKeys.add(sourceKey);
+      this.prefetchedSources.add(sourceKey);
+      commands.push(this.nativeVideoPlaybackCommandIfChanged(
         src,
         'video',
         now,
         renderClock,
-        Number.isFinite(explicitTime) && explicitTime >= 0 ? explicitTime : undefined,
-      ));
+      ) ?? this.nativeVideoPlaybackCommand(src, 'video', now, renderClock));
       commands.push({
         type: 'bind_media_source',
         layer_id: layer.id,
@@ -8043,9 +8069,21 @@ export class NativeRendererSync {
 
     if (commands.length === 1) return;
     commands.push({ type: 'present' });
+    const retryHandoff = () => {
+      // A failed older trigger must not invalidate a newer successful one.
+      if (revision !== this.urgentVideoRevision) return;
+      for (const key of handoffSourceKeys) {
+        this.prefetchedSources.delete(key);
+        this.nativeVideoPlaybackState.delete(key);
+      }
+    };
     return submitNativeRendererCommands(commands)
-      .then((summary) => this.warnNativeCommandDrops(summary, 'urgent-vj-video-handoff'))
+      .then((summary) => {
+        this.warnNativeCommandDrops(summary, 'urgent-vj-video-handoff');
+        if (summary.dropped > 0) retryHandoff();
+      })
       .catch((error) => {
+        retryHandoff();
         console.warn('[NativeRendererSync] urgent VJ video handoff failed', error);
       });
   }
@@ -9355,7 +9393,9 @@ export class NativeRendererSync {
         if (drift) drifted.push(`${id}: ${drift}`);
         if (drift) this.lastLayers.delete(id);
       });
-      if ((window as any).__NATIVE_SCENE_DEBUG__ !== false) {
+      // Full-frame readback + base64 decoding on the UI thread can block
+      // live triggers for hundreds of milliseconds. Diagnostics are opt-in.
+      if ((window as any).__NATIVE_SCENE_DEBUG__ === true) {
         const nowMs = Date.now();
         if (this.lastLayers.size > 0 && nowMs - ((this as any).__sceneBboxAt ?? 0) > 15000) {
           (this as any).__sceneBboxAt = nowMs;

@@ -195,6 +195,8 @@ fn auto_start_tier(caps_tier: &str) -> &'static str {
 pub(crate) fn native_optional_features() -> wgpu::Features {
     wgpu::Features::SHADER_F16
         | wgpu::Features::FLOAT32_FILTERABLE
+        // Native P010 video imports its ten-bit planes as normalized u16 textures.
+        | wgpu::Features::TEXTURE_FORMAT_16BIT_NORM
         | wgpu::Features::TIMESTAMP_QUERY
         | wgpu::Features::TIMESTAMP_QUERY_INSIDE_ENCODERS
         | wgpu::Features::TIMESTAMP_QUERY_INSIDE_PASSES
