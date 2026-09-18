@@ -81,6 +81,7 @@
   import { screenSetups } from './lib/stores/screenSetups';
   import { mcpStore } from './lib/mcp/mcpStore';
   import { checkForUpdate, type VersionCheckResult } from './lib/utils/versionCheck';
+  import { fitToolbar } from './lib/utils/toolbarFit';
   import { startRecording as startRec, formatRecordingDuration, type RecorderHandle } from './lib/recording/recorder';
   import { vjClipLauncher } from './lib/stores/vjClipLauncher';
   import { audioStore } from './lib/stores/audio';
@@ -6012,6 +6013,7 @@
     <!-- Header / Toolbar -->
     <header
       class="toolbar"
+      use:fitToolbar
       class:vj-native-hidden={vjNativeUnderlayActive}
       class:frameless-drag={isDesktopApp && !isMac}
       onmousedown={(event) => {
@@ -6204,8 +6206,10 @@
           class="output-btn"
           class:active={outputMode === 'window'}
           onclick={outputIsOpen ? closeOutputWindow : openOutputWindow}
+          title={outputIsOpen ? 'Close Output Window' : 'Open Output Window'}
         >
-          {outputIsOpen ? 'Close Output' : 'Output Window'}
+          <span class="tb-long">{outputIsOpen ? 'Close Output' : 'Output Window'}</span>
+          <span class="tb-short">{outputIsOpen ? 'Close Output' : 'Output'}</span>
         </button>
         <button
           class="output-btn"
@@ -6229,7 +6233,7 @@
             <path d="M7.2 8.6 12 11.5l4.8-2.9" />
             <path d="M12 5.5v6" />
           </svg>
-          Stage Sim
+          <span class="tb-label">Stage Sim</span>
         </button>
         <button
           class="output-btn sim-launch-btn map-sim-btn"
@@ -6246,7 +6250,7 @@
             <path d="M5.5 15.8v2.3" />
             <path d="M4.4 18.1h3.4" />
           </svg>
-          Map Sim
+          <span class="tb-label">Map Sim</span>
         </button>
       </div>
 
@@ -6418,7 +6422,7 @@
             <path d="M13.5 19.5h6" />
             <path d="M16.5 16.5v6" />
           </svg>
-          Stage
+          <span class="tb-label">Stage</span>
         </button>
 
         <!-- Settings Button -->
@@ -6434,6 +6438,7 @@
             class="connection-btn"
             class:connected={mobileConnected}
             class:error={!!connectionError}
+            title={mobileConnected ? `Mobile: ${clientCount - 1} connected` : 'Connect Mobile'}
             onclick={async () => {
               showMobileInfo = !showMobileInfo;
               if (showMobileInfo) {
@@ -6447,9 +6452,11 @@
           >
             <span class="dot"></span>
             {#if mobileConnected}
-              Mobile: {clientCount - 1} connected
+              <span class="tb-long">Mobile: {clientCount - 1} connected</span>
+              <span class="tb-short">Mobile {clientCount - 1}</span>
             {:else}
-              Connect Mobile
+              <span class="tb-long">Connect Mobile</span>
+              <span class="tb-short">Mobile</span>
             {/if}
           </button>
 
@@ -8138,6 +8145,62 @@
     display: flex;
     align-items: center;
     gap: 10px;
+  }
+
+  /* Compact levels, stepped through by fitToolbar (lib/utils/toolbarFit.ts)
+     only as far as the window needs. Each level adds to the one before.
+     Gaps and paddings carry !important because studio-skin.css sets them
+     that way. Buttons that lose their label keep a title, and the Sim and
+     Stage buttons keep their aria-label. */
+  .tb-short {
+    display: none;
+  }
+
+  /* 1: tighter spacing. */
+  .toolbar:global(.tb-compact-1) {
+    padding: 0 10px !important;
+    gap: 6px !important;
+  }
+  .toolbar:global(.tb-compact-1) :is(.toolbar-left, .toolbar-center, .toolbar-right) {
+    gap: 6px !important;
+  }
+  .toolbar:global(.tb-compact-1) .header-logo {
+    margin-right: 2px !important;
+  }
+  .toolbar:global(.tb-compact-1) :is(.output-btn, .connection-btn, .file-menu-btn) {
+    padding: 0 9px !important;
+  }
+  .toolbar:global(.tb-compact-1) :is(.vj-btn, .stage-btn) {
+    padding: 0 12px !important;
+  }
+
+  /* 2: short labels, and the Sim and Stage buttons show only their icons. */
+  .toolbar:global(.tb-compact-2) .tb-long {
+    display: none;
+  }
+  .toolbar:global(.tb-compact-2) .tb-short {
+    display: inline;
+  }
+  .toolbar:global(.tb-compact-2) :is(.sim-launch-btn, .stage-btn) .tb-label {
+    display: none;
+  }
+  .toolbar:global(.tb-compact-2) :is(.sim-launch-btn, .stage-btn) {
+    padding: 0 8px !important;
+  }
+
+  /* 4: last resort. The centre group scrolls sideways instead of pushing
+     Settings and the right-hand controls out of the window. */
+  .toolbar:global(.tb-compact-4) .toolbar-center {
+    min-width: 0;
+    overflow-x: auto;
+    justify-content: flex-start;
+    scrollbar-width: none;
+  }
+  .toolbar:global(.tb-compact-4) .toolbar-center::-webkit-scrollbar {
+    display: none;
+  }
+  .toolbar:global(.tb-compact-4) .toolbar-center > * {
+    flex-shrink: 0;
   }
 
   .header-logo {
