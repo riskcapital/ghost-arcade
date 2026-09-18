@@ -231,10 +231,6 @@ const BGRA8: OutputFormat = OutputFormat {
     dxgi: DXGI_FORMAT_B8G8R8A8_UNORM,
     wgpu: wgpu::TextureFormat::Bgra8Unorm,
 };
-const RGBA16: OutputFormat = OutputFormat {
-    dxgi: DXGI_FORMAT_R16G16B16A16_FLOAT,
-    wgpu: wgpu::TextureFormat::Rgba16Float,
-};
 const RGB10: OutputFormat = OutputFormat {
     dxgi: DXGI_FORMAT_R10G10B10A2_UNORM,
     wgpu: wgpu::TextureFormat::Rgb10a2Unorm,
@@ -296,7 +292,11 @@ fn color_spaces(
 
 fn output_candidates(fourcc: u32) -> &'static [OutputFormat] {
     if fourcc == P010 {
-        &[RGBA16, RGB10]
+        // The atlas stores encoded SDR RGB. Some Windows video processors
+        // emit linear values into float targets even when G22 is requested.
+        // RGB10 preserves Main10 precision and the encoded transfer curve;
+        // unsupported devices must fail instead of silently darkening video.
+        &[RGB10]
     } else {
         &[BGRA8]
     }
@@ -476,9 +476,8 @@ impl WindowsVideoWorker {
                     processor: processor.clone(),
                     output_format,
                 };
-                // Float video processing may be supported while float resource
-                // sharing is not. Try the precision-preserving RGB10 alternative
-                // at initialization too, never falling back to eight-bit RGB.
+                // Require both color conversion and resource-sharing support;
+                // never fall back to an eight-bit bridge for Main10 input.
                 match self.create_output(&candidate) {
                     Ok(output) => {
                         // Existing frames retain their old, immutable slots.
@@ -925,11 +924,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn windows_video_p010_never_chooses_eight_bit_output() {
-        assert!(output_candidates(P010).iter().all(|format| matches!(
-            format.wgpu,
-            wgpu::TextureFormat::Rgba16Float | wgpu::TextureFormat::Rgb10a2Unorm
-        )));
+    fn windows_video_p010_preserves_precision_and_encoded_sdr_output() {
+        assert!(!output_candidates(P010).is_empty());
+        assert!(output_candidates(P010).iter().all(|format|
+            format.wgpu == wgpu::TextureFormat::Rgb10a2Unorm));
         assert_eq!(
             output_candidates(NV12)[0].wgpu,
             wgpu::TextureFormat::Bgra8Unorm

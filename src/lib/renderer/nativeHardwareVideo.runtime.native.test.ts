@@ -332,7 +332,10 @@ hardwareDescribe(`${platform.label} playback through the presented shared textur
         await rpc.commands([{ ...trigger('step', settings), paused: true, frame_step: direction, seek_generation: ++generation }]);
         await waitUntil<Status>(() => rpc.send('status'), status => status.native_video_sessions.some(session =>
           session.source_id === 'step' && session.seek_generation === generation && session.frames_presented > 0), 'stepped generation');
-        const picture = await waitUntil(() => presented(rpc), frame => frameNumber(frame) === target, `adjacent frame ${target}`);
+        const picture = await waitUntil(async () => {
+          const frame = await presented(rpc);
+          return { ...frame, number: frameNumber(frame), session: (await rpc.send('status')).native_video_sessions.find((item: Session) => item.source_id === 'step') };
+        }, frame => frameNumber(frame) === target, `adjacent frame ${target}, direction ${direction}, generation ${generation}`);
         expect(frameNumber(picture)).toBe(target);
         const status: Status = await rpc.send('status');
         const session = status.native_video_sessions.find(item => item.source_id === 'step')!;
