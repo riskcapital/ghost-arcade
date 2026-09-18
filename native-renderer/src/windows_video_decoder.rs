@@ -118,6 +118,7 @@ struct OutputFormat {
     color_matrix: u32,
     full_range: bool,
     p010: bool,
+    interlace_mode: u32,
 }
 
 fn unpack_ratio(value: u64) -> (u32, u32) {
@@ -147,12 +148,27 @@ fn sample_end(pts: i64, duration: i64) -> Option<i64> {
     (duration > 0).then(|| pts.checked_add(duration)).flatten()
 }
 
+fn before_trim_end(pts: i64, end: i64) -> bool {
+    // MF truncates some rational MP4 timestamps to 100 ns while user times
+    // round to the nearest tick. The exclusive trim boundary must not admit
+    // the next frame merely because its timestamp is one tick below the cut.
+    pts < end.saturating_sub(1)
+}
+
 fn validate_geometry(media_type: &IMFMediaType) -> Result<(u32, u32), String> {
+    validate_output_geometry(media_type, None)
+}
+
+fn validate_output_geometry(media_type: &IMFMediaType, visible: Option<(u32, u32)>) -> Result<(u32, u32), String> {
     let size = unsafe { media_type.GetUINT64(&MF_MT_FRAME_SIZE) }
         .map_err(|e| failure("Read video frame dimensions", e))?;
     let (width, height) = unpack_ratio(size);
     if width == 0 || height == 0 || width > 16384 || height > 16384 {
         return Err("Video has invalid or unsupported frame dimensions".into());
+    }
+    let (visible_width, visible_height) = visible.unwrap_or((width, height));
+    if visible_width > width || visible_height > height {
+        return Err("Decoder output is smaller than the source display geometry".into());
     }
     if unsafe { media_type.GetUINT32(&MF_MT_ALPHA_MODE) }.unwrap_or(0) != 0 {
         return Err(
@@ -172,7 +188,10 @@ fn validate_geometry(media_type: &IMFMediaType) -> Result<(u32, u32), String> {
         }
     }
     if let Ok(interlace) = unsafe { media_type.GetUINT32(&MF_MT_INTERLACE_MODE) } {
-        if interlace != 0 && interlace != MFVideoInterlace_Progressive.0 as u32 {
+        if interlace != 0
+            && interlace != MFVideoInterlace_Progressive.0 as u32
+            && interlace != MFVideoInterlace_MixedInterlaceOrProgressive.0 as u32
+        {
             return Err("Interlaced video requires the compatibility decoder".into());
         }
     }
@@ -181,6 +200,7 @@ fn validate_geometry(media_type: &IMFMediaType) -> Result<(u32, u32), String> {
             "Video pan-and-scan requires the compatibility decoder to preserve geometry".into(),
         );
     }
+    let mut has_display_aperture = false;
     for key in [MF_MT_GEOMETRIC_APERTURE, MF_MT_MINIMUM_DISPLAY_APERTURE] {
         if let Ok(length) = unsafe { media_type.GetBlobSize(&key) } {
             if length as usize != size_of::<MFVideoArea>() {
@@ -194,21 +214,48 @@ fn validate_geometry(media_type: &IMFMediaType) -> Result<(u32, u32), String> {
                 || area.OffsetX.fract != 0
                 || area.OffsetY.value != 0
                 || area.OffsetY.fract != 0
-                || area.Area.cx != width as i32
-                || area.Area.cy != height as i32
+                || area.Area.cx != visible_width as i32
+                || area.Area.cy != visible_height as i32
             {
                 return Err("Video display-aperture cropping requires the compatibility decoder to preserve geometry".into());
             }
+            has_display_aperture = true;
         }
     }
-    Ok((width, height))
+    // DXVA aligns coded surfaces (for example 960x540 to 960x544). Accept
+    // padding only when MF explicitly identifies the unchanged source image.
+    // The GPU processor already uses that visible rectangle for its blit.
+    if (width, height) != (visible_width, visible_height) && !has_display_aperture {
+        return Err("Decoder padded output has no matching display aperture".into());
+    }
+    Ok((visible_width, visible_height))
+}
+
+fn validate_sample_progressive(sample: &IMFSample, interlace_mode: u32) -> Result<(), String> {
+    // MP4/H.264 sources can advertise mixed mode even for progressive clips.
+    // In mixed mode the decoded sample, not the container type, is authoritative.
+    // Never send an actual interlaced frame through the progressive GPU blit.
+    let interlaced = unsafe { sample.GetUINT32(&MFSampleExtension_Interlaced) }.ok();
+    if interlaced.is_some_and(|value| value != 0)
+        || (interlace_mode == MFVideoInterlace_MixedInterlaceOrProgressive.0 as u32
+            && interlaced.is_none())
+    {
+        return Err("Interlaced or unclassified mixed-mode video frame requires the compatibility decoder".into());
+    }
+    Ok(())
 }
 
 fn color_info(media_type: &IMFMediaType, height: u32) -> Result<(u32, bool), String> {
+    color_info_with_matrix(media_type, height, None)
+}
+
+fn color_info_with_matrix(media_type: &IMFMediaType, height: u32, source_matrix: Option<u32>) -> Result<(u32, bool), String> {
     let matrix = unsafe { media_type.GetUINT32(&MF_MT_YUV_MATRIX) }.unwrap_or(0);
     let matrix = match matrix {
         0 => {
-            if height <= 576 {
+            if let Some(matrix) = source_matrix {
+                matrix
+            } else if height <= 576 {
                 1
             } else {
                 2
@@ -473,6 +520,7 @@ impl WindowsVideoDecoder {
                 color_matrix,
                 full_range,
                 p010,
+                interlace_mode: 0,
             },
             pending: None,
             start_hns: 0,
@@ -665,7 +713,8 @@ impl WindowsVideoDecoder {
                 .GetCurrentMediaType(VIDEO_STREAM)
         }
         .map_err(|e| failure("Inspect negotiated hardware output", e))?;
-        let (width, height) = validate_geometry(&output)?;
+        let (width, height) = validate_output_geometry(&output, Some((self.metadata.width, self.metadata.height)))?;
+        self.output.interlace_mode = unsafe { output.GetUINT32(&MF_MT_INTERLACE_MODE) }.unwrap_or(0);
         if (width, height) != (self.metadata.width, self.metadata.height) {
             return Err("Video resolution changes require a new frame memory budget".into());
         }
@@ -679,7 +728,10 @@ impl WindowsVideoDecoder {
         if subtype != expected {
             return Err("Decoder did not preserve the negotiated video bit depth".into());
         }
-        let (matrix, range) = color_info(&output, height)?;
+        // The Windows HEVC decoder can omit the matrix while publishing
+        // primaries (including on a dynamic format change). Validate against
+        // the known source matrix, not a resolution-based SD/HD guess.
+        let (matrix, range) = color_info_with_matrix(&output, height, Some(self.output.color_matrix))?;
         // Decoders sometimes omit color metadata; retain the source values.
         if unsafe { output.GetUINT32(&MF_MT_YUV_MATRIX) }.is_ok() {
             self.output.color_matrix = matrix;
@@ -731,6 +783,7 @@ impl WindowsVideoDecoder {
                 }
                 continue;
             };
+            validate_sample_progressive(&sample, self.output.interlace_mode)?;
             let pts = unsafe { sample.GetSampleTime() }.unwrap_or(timestamp);
             let duration = unsafe { sample.GetSampleDuration() }
                 .ok()
@@ -745,7 +798,7 @@ impl WindowsVideoDecoder {
             if sample_end(pts, duration).is_none_or(|end| end <= self.start_hns) {
                 continue;
             }
-            if pts >= self.end_hns {
+            if !before_trim_end(pts, self.end_hns) {
                 self.ended = true;
                 return Ok(None);
             }
@@ -937,9 +990,65 @@ mod tests {
     }
 
     #[test]
+    fn exclusive_trim_end_tolerates_media_foundation_timestamp_quantization() {
+        let cut = hns(20.0 / 30.0).unwrap();
+        assert!(before_trim_end(6_333_333, cut));
+        assert!(!before_trim_end(6_666_666, cut));
+        assert!(!before_trim_end(6_666_667, cut));
+        assert!(!before_trim_end(7_000_000, cut));
+        assert!(before_trim_end(0, 10_000));
+    }
+
+    #[test]
     fn media_foundation_dimensions_and_rates_unpack_without_float_loss() {
         assert_eq!(unpack_ratio((960u64 << 32) | 540), (960, 540));
         assert_eq!(unpack_ratio((30000u64 << 32) | 1001), (30000, 1001));
+    }
+
+    #[test]
+    fn decoder_padding_requires_an_explicit_unchanged_display_aperture() {
+        let _apartment = ComApartment::initialize().unwrap();
+        let _platform = MediaPlatform::initialize().unwrap();
+        let output = unsafe { MFCreateMediaType() }.unwrap();
+        unsafe { output.SetUINT64(&MF_MT_FRAME_SIZE, (960u64 << 32) | 544) }.unwrap();
+        assert!(validate_output_geometry(&output, Some((960, 540))).is_err());
+        let mut area = MFVideoArea::default();
+        area.Area.cx = 960;
+        area.Area.cy = 540;
+        let set_aperture = |area: &MFVideoArea| unsafe {
+            output.SetBlob(&MF_MT_MINIMUM_DISPLAY_APERTURE,
+                std::slice::from_raw_parts((area as *const MFVideoArea).cast::<u8>(), size_of::<MFVideoArea>())).unwrap();
+        };
+        set_aperture(&area);
+        assert_eq!(validate_output_geometry(&output, Some((960, 540))).unwrap(), (960, 540));
+        assert!(validate_geometry(&output).is_err());
+        area.OffsetY.value = 2;
+        set_aperture(&area);
+        assert!(validate_output_geometry(&output, Some((960, 540))).is_err());
+    }
+
+    #[test]
+    fn mixed_mode_requires_progressive_decoded_samples() {
+        let _apartment = ComApartment::initialize().unwrap();
+        let _platform = MediaPlatform::initialize().unwrap();
+        let media_type = unsafe { MFCreateMediaType() }.unwrap();
+        let sample = unsafe { MFCreateSample() }.unwrap();
+        let mixed = MFVideoInterlace_MixedInterlaceOrProgressive.0 as u32;
+        let progressive = MFVideoInterlace_Progressive.0 as u32;
+        unsafe {
+            media_type.SetUINT64(&MF_MT_FRAME_SIZE, (128u64 << 32) | 96).unwrap();
+            media_type.SetUINT32(&MF_MT_INTERLACE_MODE, mixed).unwrap();
+        }
+        assert_eq!(validate_geometry(&media_type).unwrap(), (128, 96));
+        assert!(validate_sample_progressive(&sample, mixed).is_err());
+        assert!(validate_sample_progressive(&sample, progressive).is_ok());
+        unsafe { sample.SetUINT32(&MFSampleExtension_Interlaced, 0) }.unwrap();
+        assert!(validate_sample_progressive(&sample, mixed).is_ok());
+        unsafe { sample.SetUINT32(&MFSampleExtension_Interlaced, 1) }.unwrap();
+        assert!(validate_sample_progressive(&sample, mixed).is_err());
+        assert!(validate_sample_progressive(&sample, progressive).is_err());
+        unsafe { media_type.SetUINT32(&MF_MT_INTERLACE_MODE, MFVideoInterlace_FieldInterleavedUpperFirst.0 as u32) }.unwrap();
+        assert!(validate_geometry(&media_type).is_err());
     }
 
     #[test]
@@ -966,6 +1075,17 @@ mod tests {
             unsafe { media_type.SetUINT32(&MF_MT_VIDEO_NOMINAL_RANGE, 1) }.unwrap();
             assert_eq!(color_info(&media_type, 1080).unwrap(), (expected, true));
         }
+    }
+
+    #[test]
+    fn decoded_color_metadata_inherits_missing_source_matrix() {
+        let _apartment = ComApartment::initialize().unwrap();
+        let _platform = MediaPlatform::initialize().unwrap();
+        let output = unsafe { MFCreateMediaType() }.unwrap();
+        unsafe { output.SetUINT32(&MF_MT_VIDEO_PRIMARIES, 2) }.unwrap();
+        assert_eq!(color_info_with_matrix(&output, 96, Some(2)).unwrap(), (2, false));
+        unsafe { output.SetUINT32(&MF_MT_YUV_MATRIX, 2) }.unwrap();
+        assert!(color_info_with_matrix(&output, 96, Some(2)).is_err());
     }
 
     #[test]

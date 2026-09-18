@@ -11,8 +11,12 @@ import { closeNativeTestCore, hardwareTestPlatform as platform } from './nativeH
 
 const binary = platform.binary;
 const hardwareDescribe = platform.runnable ? describe : describe.skip;
-const WIDTH = 128;
-const HEIGHT = 96;
+// Stay above the HEVC hardware decoder's minimum dimensions. On the RTX
+// 4070/Windows MF path, 128x96 returns CPU-writable dynamic textures even
+// with D3D-required output; 256x192 returns actual decoder-bound surfaces.
+// Keep all strict GPU-only assertions below unchanged.
+const WIDTH = 256;
+const HEIGHT = 192;
 const FRAMES = 12;
 const FPS = 30;
 // The two different rows make an upside-down shared texture fail the same color

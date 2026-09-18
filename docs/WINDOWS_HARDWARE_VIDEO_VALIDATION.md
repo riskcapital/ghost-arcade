@@ -1,6 +1,6 @@
 # Windows native video qualification
 
-The Windows hardware implementation is present locally. It has been type-checked from macOS, including Rust test targets. It has **not** been run on a physical Windows GPU or packaged as a Windows installer in this session.
+The Windows hardware implementation has now been exercised on a physical NVIDIA RTX 4070 Laptop GPU (2026-09-18), using D3D12 and Media Foundation. See [the Windows validation report](../reports/windows-hardware-video-validation-2026-09-18.md) for fixes, results and remaining qualification. Packaged installers, other GPU vendors and extended show workloads still need separate verification.
 
 ## Run on Windows
 
@@ -10,12 +10,17 @@ For a source checkout, install Node.js, Rust 1.96 or newer, and the Visual Studi
 
 ```powershell
 npm ci
+node node_modules/electron/install.js
 npm run native:build
+npm --prefix electron/native install --ignore-scripts
+npm --prefix electron/native run build
 cargo test --manifest-path native-renderer/Cargo.toml windows_video
 npx vitest run --config vitest.native.config.ts --maxWorkers=1 src/lib/renderer/nativeHardwareVideo.runtime.native.test.ts src/lib/renderer/nativeHardware10Bit.runtime.native.test.ts src/lib/renderer/nativeVideoFallback.runtime.native.test.ts
 ```
 
 Launch the development app with `npm run desktop` after the build. Select your MIDI device in Settings → MIDI, then use **Ctrl+M → click the video timeline → move the knob/fader → Esc** to assign scratching. MIDI holds the selected frame until Play; mouse release resumes playback if the clip was playing before the drag.
+
+HEVC qualification fixtures use 256×192 pixels. On the tested NVIDIA driver, 128×96 HEVC returns a CPU-writable dynamic surface even with D3D-required output; the strict hardware path correctly rejects it. Automatic playback may use compatibility decoding for such files. Do not weaken the GPU-only assertions to accommodate undersized fixtures.
 
 Run the prepared-trigger benchmark with representative show media:
 
