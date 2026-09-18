@@ -109,6 +109,7 @@
     effectToNativeDescriptor,
     nativeEffectPassFromDescriptor,
   } from '$lib/sync/nativeRendererSync';
+  import { NATIVE_EFFECT_PASS_LIMIT } from '$lib/renderer/nativeEffectChainPolicy';
   import {
     attachNativeEditorPreview,
     detachNativeEditorPreview,
@@ -1714,12 +1715,11 @@
       // itself, it only keeps the mix frame rendering.
       // Composition FX that the native effect-pass chain can actually run.
       //
-      // nativeEffectPassesForLayer is all-or-nothing and caps at 4: one
+      // nativeEffectPassesForLayer is all-or-nothing: one
       // effect without a native pass makes it return null and the whole
       // chain is dropped, so an exotic pick would silently take the working
       // effects down with it. Filtering here keeps the supported ones live
       // and degrades one effect at a time instead of all of them.
-      const NATIVE_EFFECT_PASS_LIMIT = 4;
       const nativeCompositionEffects = (source: unknown): Effect[] => {
         const list = Array.isArray(source) ? (source as Effect[]) : [];
         const usable = list.filter(
@@ -1797,8 +1797,8 @@
             // Filtered rather than passed whole: nativeEffectPassesForLayer
             // is all-or-nothing (one unsupported effect returns null and the
             // entire chain falls back), so a single exotic effect would take
-            // the working ones down with it. Capped at 4 for the same
-            // reason.
+            // the working ones down with it. All chains use the shared cap;
+            // the effects panels explain when extra effects are bypassed.
             effects: nativeCompositionEffects(get(vjClipLauncher)?.compositionEffects),
             edgeEffects: null,
           } as Layer,
@@ -2005,12 +2005,14 @@
         urgent?: boolean;
         videoSourceIds?: string[];
         triggeredAtMs?: number;
+        onVideoHandoff?: () => void;
       };
       const scheduleNativeLayersSync = (
         urgent = false,
         retry = true,
         videoSourceIds: string[] = [],
         triggeredAtMs?: number,
+        onVideoHandoff?: () => void,
       ) => {
         const p = get(project);
         const built = nativeEffectiveLayers();
@@ -2020,7 +2022,7 @@
           // store emissions. Give the derived layer one microtask to settle,
           // then push the complete launch transaction immediately.
           if (urgent && retry) {
-            queueMicrotask(() => scheduleNativeLayersSync(true, false, videoSourceIds, triggeredAtMs));
+            queueMicrotask(() => scheduleNativeLayersSync(true, false, videoSourceIds, triggeredAtMs, onVideoHandoff));
           }
           return;
         }
@@ -2056,6 +2058,7 @@
             // Keep full graph/effect reconciliation behind the tiny decoder
             // handoff so it cannot delay the first moving video frame.
             void handoff.finally(() => {
+              onVideoHandoff?.();
               if (typeof triggeredAtMs === 'number') {
                 console.log(
                   `[NativeRendererSync] vj-trigger handoff acked in ${(performance.now() - triggeredAtMs).toFixed(1)}ms`,
@@ -2173,6 +2176,7 @@
           true,
           Array.isArray(detail?.videoSourceIds) ? detail.videoSourceIds : [],
           Number(detail?.triggeredAtMs) || undefined,
+          detail?.onVideoHandoff,
         );
       };
       window.addEventListener('ghost:native-vj-layers-sync', handleVjLayersSyncEvent);

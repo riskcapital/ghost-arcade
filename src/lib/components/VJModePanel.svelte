@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { nativeEffectChainWarning } from '../renderer/nativeEffectChainPolicy';
+  import { createNativeVideoScrubber } from '../renderer/nativeVideoScrubber';
   // VJ Mode Panel - Layers/Columns Grid
   // Uses vjClipLauncher store for state management
 
@@ -552,12 +554,23 @@
   let vjTimelineScrubbing = false;
   let vjTimelineEl: HTMLDivElement | null = null;
   let vjVideoTickFrame: number | null = null;
+  const vjVideoScrubber = createNativeVideoScrubber();
+  let vjVideoStepBusy = false;
+  let vjVideoScrubRevision = 0;
+  let vjVideoScrubSelection = '';
+  let stopVjTimelineDrag: (() => void) | null = null;
+  type VjVideoScrubPatch = {
+    isPlaying: boolean;
+    _nativePlaybackTimeSeconds: number;
+    _nativePlaybackUpdatedAtMs: number;
+    _nativePlaybackSeekSeq: number;
+  };
 
   function vjFormatTime(seconds: number): string {
-    if (!isFinite(seconds) || isNaN(seconds)) return '0:00';
-    const m = Math.floor(seconds / 60);
-    const s = Math.floor(seconds % 60);
-    return `${m}:${s.toString().padStart(2, '0')}`;
+    const millis = Number.isFinite(seconds) ? Math.max(0, Math.floor(seconds * 1000)) : 0;
+    const minutes = Math.floor(millis / 60000);
+    const secondsPart = String(Math.floor(millis / 1000) % 60).padStart(2, '0');
+    return `${minutes}:${secondsPart}.${String(millis % 1000).padStart(3, '0')}`;
   }
 
   function vjClipDuration(clip: VJClip): number {
@@ -593,7 +606,7 @@
   function vjSetNativePlaybackTime(layerIdx: number, clip: VJClip, time: number, play = clip.isPlaying !== false) {
     const duration = vjClipDuration(clip);
     const nextTime = Math.max(0, duration > 0 ? Math.min(duration, time) : time);
-    if (clip.videoElement) {
+    if (clip.audioPlayback && clip.videoElement) {
       try { clip.videoElement.currentTime = nextTime; } catch { /* native transport remains authoritative */ }
     }
     vjVideoCurrentTime = nextTime;
@@ -613,7 +626,7 @@
       const v = clip?.videoElement;
       if (clip?.type === 'video') {
         vjVideoDuration = vjClipDuration(clip);
-        if (!vjTimelineScrubbing) vjVideoCurrentTime = vjClipPlaybackTime(clip);
+        if (!vjTimelineScrubbing && !vjVideoStepBusy) vjVideoCurrentTime = vjClipPlaybackTime(clip);
       } else if (v) {
         vjVideoCurrentTime = v.currentTime;
         vjVideoDuration = v.duration || 0;
@@ -630,38 +643,111 @@
     }
   }
 
-  function vjSeekToPosition(e: MouseEvent, vEl: HTMLVideoElement) {
-    if (!vjTimelineEl || !vEl) return;
-    const rect = vjTimelineEl.getBoundingClientRect();
-    const pct = Math.max(0, Math.min(1, (e.clientX - rect.left) / (rect.width || 1)));
-    // Clamp to the active trim region — Canvas.svelte's per-frame loop will
-    // pull currentTime back to trimStart anyway if we seek outside, but
-    // clamping at the input layer makes the playhead "stick" inside the
-    // trim region the moment the user releases (no visual snap-back).
-    const clip = selectedLayerState?.activeClip;
-    const trimS = clip?.trimStart ?? 0;
-    const trimE = clip?.trimEnd ?? 1;
-    const clamped = Math.max(trimS, Math.min(trimE, pct));
-    if (!clip || selectedLayerIndex === null) {
-      vEl.currentTime = clamped * (vEl.duration || 0);
-      return;
-    }
-    vjSetNativePlaybackTime(selectedLayerIndex, clip, clamped * vjClipDuration(clip));
+  function cancelVjVideoScrub() {
+    vjVideoScrubRevision++;
+    stopVjTimelineDrag?.();
+    stopVjTimelineDrag = null;
+    vjVideoScrubber.cancel();
+    vjVideoStepBusy = false;
   }
 
-  function vjHandleTimelineMouseDown(e: MouseEvent, vEl: HTMLVideoElement) {
-    if (!vjTimelineEl || !vEl) return;
+  function syncVjVideoScrubSelection(key: string) {
+    if (key === vjVideoScrubSelection) return;
+    vjVideoScrubSelection = key;
+    cancelVjVideoScrub();
+  }
+
+  $: syncVjVideoScrubSelection(JSON.stringify([
+    $vjClipLauncher.isOpen, paramDeck, selectedLayerIndex,
+    selectedLayerState?.activeClip?.id, selectedLayerState?.activeClip?.src, selectedLayerState?.activeClip?.type,
+  ]));
+
+  function currentVjScrubClip(layerIdx: number, clip: VJClip, deck: VJDeck, revision: number): VJClip | null {
+    const currentDeck = $vjClipLauncher.crossfaderEnabled ? $vjClipLauncher.selectedDeck : 'A';
+    const current = (deck === 'B' ? $vjClipLauncher.bankBLayerStates : $vjClipLauncher.layerStates)[layerIdx]?.activeClip;
+    return revision === vjVideoScrubRevision && currentDeck === deck && selectedLayerIndex === layerIdx
+      && current?.type === 'video' && current.id === clip.id && current.src === clip.src
+      ? current : null;
+  }
+
+  function commitVjVideoScrub(layerIdx: number, clip: VJClip, deck: VJDeck, revision: number, patch: VjVideoScrubPatch) {
+    const current = currentVjScrubClip(layerIdx, clip, deck, revision);
+    if (!current || Number(current._nativePlaybackSeekSeq ?? 0) > patch._nativePlaybackSeekSeq) return;
+    vjVideoCurrentTime = patch._nativePlaybackTimeSeconds;
+    vjClipLauncher.updateActiveClipVideoProps(layerIdx, patch, deck);
+  }
+
+  function vjHandleTimelineMouseDown(e: MouseEvent) {
+    const clip = selectedLayerState?.activeClip;
+    if (!vjTimelineEl || selectedLayerIndex === null || clip?.type !== 'video' || e.button !== 0 || vjVideoStepBusy) return;
     e.stopPropagation();
+    e.preventDefault();
+    cancelVjVideoScrub();
+    const revision = vjVideoScrubRevision;
+    const layerIdx = selectedLayerIndex;
+    const deck = paramDeck;
+    const wasPlaying = clip.isPlaying !== false;
+    const timeline = vjTimelineEl;
+    timeline.focus();
     vjTimelineScrubbing = true;
-    vjSeekToPosition(e, vEl);
-    const onMove = (me: MouseEvent) => vjSeekToPosition(me, vEl);
-    const onUp = () => {
+    let latestTime = vjClipPlaybackTime(clip);
+    const commit = (patch: VjVideoScrubPatch) => commitVjVideoScrub(layerIdx, clip, deck, revision, patch);
+    const seek = (event: MouseEvent, playing = false, flush = false) => {
+      const current = currentVjScrubClip(layerIdx, clip, deck, revision);
+      if (!current) return;
+      const rect = timeline.getBoundingClientRect();
+      const pct = Math.max(current.trimStart ?? 0, Math.min(current.trimEnd ?? 1,
+        (event.clientX - rect.left) / (rect.width || 1)));
+      latestTime = pct * vjClipDuration(current);
+      vjVideoCurrentTime = latestTime;
+      vjVideoScrubber.seek(current, latestTime, commit, { playing, flush });
+    };
+    const cleanup = () => {
       vjTimelineScrubbing = false;
       window.removeEventListener('mousemove', onMove);
       window.removeEventListener('mouseup', onUp);
+      window.removeEventListener('blur', onBlur);
+      if (stopVjTimelineDrag === cleanup) stopVjTimelineDrag = null;
     };
+    const onMove = (event: MouseEvent) => seek(event);
+    const onUp = (event: MouseEvent) => { seek(event, wasPlaying, true); cleanup(); };
+    const onBlur = () => {
+      const current = currentVjScrubClip(layerIdx, clip, deck, revision);
+      if (current) vjVideoScrubber.seek(current, latestTime, commit, { playing: wasPlaying, flush: true });
+      cleanup();
+    };
+    stopVjTimelineDrag = cleanup;
     window.addEventListener('mousemove', onMove);
     window.addEventListener('mouseup', onUp);
+    window.addEventListener('blur', onBlur);
+    seek(e);
+  }
+
+  async function vjStepVideoFrame(direction: -1 | 1) {
+    const clip = selectedLayerState?.activeClip;
+    if (vjVideoStepBusy || vjTimelineScrubbing || selectedLayerIndex === null || clip?.type !== 'video') return;
+    cancelVjVideoScrub();
+    const revision = vjVideoScrubRevision;
+    const layerIdx = selectedLayerIndex;
+    const deck = paramDeck;
+    vjVideoStepBusy = true;
+    try {
+      await vjVideoScrubber.step(clip, direction,
+        patch => commitVjVideoScrub(layerIdx, clip, deck, revision, patch));
+    } catch (error) {
+      if (currentVjScrubClip(layerIdx, clip, deck, revision)) {
+        showToast(error instanceof Error ? error.message : 'Could not step to the next video frame.', 'error');
+      }
+    } finally {
+      if (revision === vjVideoScrubRevision) vjVideoStepBusy = false;
+    }
+  }
+
+  function vjHandleTimelineKeyDown(e: KeyboardEvent) {
+    if (e.target !== e.currentTarget || (e.key !== 'ArrowLeft' && e.key !== 'ArrowRight')) return;
+    e.preventDefault();
+    e.stopPropagation();
+    void vjStepVideoFrame(e.key === 'ArrowLeft' ? -1 : 1);
   }
 
   function vjHandleTrimMouseDown(e: MouseEvent, which: 'start' | 'end', layerIdx: number) {
@@ -691,14 +777,15 @@
   }
 
   function vjSetVideoPlaying(layerIdx: number, playing: boolean) {
+    cancelVjVideoScrub();
     const clip = paramLayerStates[layerIdx]?.activeClip;
     const v = clip?.videoElement;
-    if (!clip || !v) return;
+    if (!clip) return;
     const time = vjClipPlaybackTime(clip);
-    if (playing) {
-      v.play().catch(() => {});
+    if (playing && clip.audioPlayback) {
+      v?.play().catch(() => {});
     } else {
-      v.pause();
+      v?.pause();
     }
     vjClipLauncher.updateActiveClipVideoProps(layerIdx, {
       isPlaying: playing,
@@ -709,11 +796,12 @@
   }
 
   function vjRestartVideo(layerIdx: number) {
+    cancelVjVideoScrub();
     const clip = paramLayerStates[layerIdx]?.activeClip;
     const v = clip?.videoElement;
-    if (!clip || !v) return;
+    if (!clip) return;
     vjSetNativePlaybackTime(layerIdx, clip, (clip.trimStart ?? 0) * vjClipDuration(clip), true);
-    v.play().catch(() => {});
+    if (clip.audioPlayback) v?.play().catch(() => {});
   }
 
   function vjSetPlaybackRate(layerIdx: number, rate: number) {
@@ -890,6 +978,7 @@
     stopCrossfaderAutoLoop();
     stopCrossfaderGlide();
     stopVjVideoTick();
+    cancelVjVideoScrub();
     vjStopNdiScan();
     stopAllVjLiveSources();
     window.removeEventListener('midi-stage-preset', stagePresetHandler);
@@ -1151,6 +1240,12 @@
     }
   })();
   $: nativeInventoryLocked = NATIVE_ENGINE_ONLY && Boolean($settings.experimental?.outputNativeCore);
+  $: effectChainWarning = nativeInventoryLocked ? nativeEffectChainWarning(
+    effectsTab === 'composition' ? currentEffects : [
+      ...(selectedLayerState?.activeClip?.effects ?? []),
+      ...(selectedLayerState?.effects ?? []),
+    ],
+  ) : null;
 
   function nativeEffectPending(effectType: EffectType | string): boolean {
     return nativeInventoryLocked && !isNativeSelectableEffect(effectType);
@@ -3818,7 +3913,7 @@
   // Drive the video-controls polling tick from the selected clip type. Same
   // pattern as LayerPanel's startVideoTick — only run when a video clip is
   // selected, so the rAF loop is dormant for shader/splat/model3d clips.
-  $: if (selectedLayerState?.activeClip?.type === 'video' && selectedLayerState.activeClip.videoElement) {
+  $: if (selectedLayerState?.activeClip?.type === 'video') {
     startVjVideoTick();
   } else {
     stopVjVideoTick();
@@ -4318,6 +4413,9 @@
                   <button class="add-effect-btn" onclick={() => showEffectPicker = true}>+ Add</button>
                 </div>
                 <div class="effects-list">
+                  {#if effectChainWarning}
+                    <p class="effect-chain-warning" role="status">{effectChainWarning}</p>
+                  {/if}
                   {#each currentEffects as effect (effect.id)}
                     {@const pendingNativeEffect = nativeEffectPending(effect.type)}
                     <div class="effect-item" class:disabled={!effect.enabled} class:native-pending={pendingNativeEffect}>
@@ -4946,9 +5044,9 @@
           {/if}
 
           <!-- Video Controls Panel (matches LayerPanel mapping-mode controls) -->
-          {#if selectedLayerIndex !== null && selectedLayerState?.activeClip?.type === 'video' && selectedLayerState?.activeClip?.videoElement}
+          {#if selectedLayerIndex !== null && selectedLayerState?.activeClip?.type === 'video'}
             {@const vClip = selectedLayerState.activeClip}
-            {@const vEl = vClip.videoElement!}
+            {@const vEl = vClip.videoElement}
             {@const vMode = vClip.playbackMode || 'loop'}
             {@const vRate = vClip.playbackRate ?? 1.0}
             {@const vSyncBeats = vClip.playbackSyncBeats ?? null}
@@ -4981,7 +5079,7 @@
                       class="vt-btn vt-play"
                       onclick={() => vjSetVideoPlaying(selectedLayerIndex!, !vIsPlaying)}
                       title={vIsPlaying ? 'Pause' : 'Play'}
-                      data-midi-path="vj:{selectedLayerIndex}:video:play"
+                      data-midi-path="{paramDeck === 'B' ? 'vj-b' : 'vj'}:{selectedLayerIndex}:video:play"
                       data-midi-label="{vClip.name} Play/Pause"
                       data-midi-discrete="true"
                     >
@@ -4995,13 +5093,21 @@
                       class="vt-btn"
                       onclick={() => vjRestartVideo(selectedLayerIndex!)}
                       title="Restart"
-                      data-midi-path="vj:{selectedLayerIndex}:video:restart"
+                      data-midi-path="{paramDeck === 'B' ? 'vj-b' : 'vj'}:{selectedLayerIndex}:video:restart"
                       data-midi-label="{vClip.name} Restart"
                       data-midi-discrete="true"
                     >
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
                         <polyline points="1 4 1 10 7 10"/><path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10"/>
                       </svg>
+                    </button>
+                    <button class="vt-btn" disabled={vjVideoStepBusy || vjTimelineScrubbing}
+                      onclick={() => vjStepVideoFrame(-1)} title="Previous frame (Left arrow)" aria-label="Previous frame">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><rect x="4" y="4" width="2" height="16"/><path d="M19 4L8 12l11 8z"/></svg>
+                    </button>
+                    <button class="vt-btn" disabled={vjVideoStepBusy || vjTimelineScrubbing}
+                      onclick={() => vjStepVideoFrame(1)} title="Next frame (Right arrow)" aria-label="Next frame">
+                      <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M5 4l11 8-11 8z"/><rect x="18" y="4" width="2" height="16"/></svg>
                     </button>
                     <span class="vt-time">{vjFormatTime(vjVideoCurrentTime)} / {vjFormatTime(vjVideoDuration)}</span>
                     <select
@@ -5040,10 +5146,21 @@
                   <div
                     class="vt-timeline"
                     bind:this={vjTimelineEl}
-                    onmousedown={(e) => vjHandleTimelineMouseDown(e, vEl)}
+                    data-native-video-timeline
+                    data-midi-path="{paramDeck === 'B' ? 'vj-b' : 'vj'}:{selectedLayerIndex}:video:scratch"
+                    data-midi-label="{vClip.name} Scratch (hold frame)"
+                    data-midi-min="0"
+                    data-midi-max="1"
+                    data-midi-step="0"
+                    data-midi-mode="absolute"
+                    onmousedown={vjHandleTimelineMouseDown}
+                    onkeydown={vjHandleTimelineKeyDown}
                     role="slider"
                     tabindex="0"
                     aria-label="Video timeline"
+                    aria-valuetext={vjFormatTime(vjVideoCurrentTime)}
+                    aria-busy={vjVideoStepBusy}
+                    title="Drag to scrub. Left and Right arrows step one frame."
                     aria-valuemin={0}
                     aria-valuemax={100}
                     aria-valuenow={vjVideoDuration > 0 ? Math.round(vjVideoCurrentTime / vjVideoDuration * 100) : 0}
@@ -6321,6 +6438,7 @@
 />
 
 <style>
+  .effect-chain-warning { color: #f4c46a; font-size: 11px; line-height: 1.5; padding: 6px 8px; }
   /* VJ Overlay */
   .vj-overlay {
     position: fixed;
@@ -10976,6 +11094,7 @@
   }
   .vt-transport {
     display: flex;
+    flex-wrap: wrap;
     align-items: center;
     gap: 4px;
     margin-bottom: 8px;
@@ -10995,6 +11114,7 @@
     flex-shrink: 0;
   }
   .vt-btn:hover { background: rgba(255, 255, 255, 0.15); color: #fff; }
+  .vt-btn:disabled { opacity: 0.4; cursor: wait; }
   .vt-play {
     background: var(--accent-primary, #BB86FC);
     color: #111;

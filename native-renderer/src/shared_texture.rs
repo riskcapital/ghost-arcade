@@ -120,7 +120,7 @@ impl SharedTextureSourceFrameDescriptor {
         )
     }
 
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", test))]
     pub fn iosurface_id(&self) -> Result<u32, String> {
         if self.platform != "iosurface" {
             return Err(format!(
@@ -187,7 +187,7 @@ impl SharedTextureSourceFrameDescriptor {
     }
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", test))]
 fn parse_u32_handle(handle: &str) -> Result<u32, String> {
     let trimmed = handle.trim();
     let parsed = trimmed
@@ -213,7 +213,7 @@ fn parse_u64_handle(handle: &str, label: &str) -> Result<u64, String> {
         .map_err(|_| format!("{label} `{trimmed}` is not an integer HANDLE"))
 }
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", test))]
 fn iosurface_id_from_bytes(bytes: &[u8]) -> Result<u32, String> {
     match bytes.len() {
         4 => Ok(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])),

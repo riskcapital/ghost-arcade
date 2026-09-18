@@ -15,6 +15,8 @@ export const CONTROL_PATH_EXAMPLES: ControlPathExample[] = [
   { path: 'vj:0:opacity', label: 'Deck A layer 1 opacity' },
   { path: 'vj:0:video:play', label: 'Deck A layer 1 play / pause' },
   { path: 'vj:0:video:restart', label: 'Deck A layer 1 restart' },
+  { path: 'vj:0:video:scratch', label: 'Deck A layer 1 video scratch (hold frame)' },
+  { path: 'vj-b:0:video:scratch', label: 'Deck B layer 1 video scratch (hold frame)' },
   { path: 'vj:master:opacity', label: 'VJ master opacity' },
   { path: 'vj:crossfader:value', label: 'A/B crossfader' },
   { path: 'vj:stopall', label: 'Stop all VJ clips' },
@@ -22,6 +24,7 @@ export const CONTROL_PATH_EXAMPLES: ControlPathExample[] = [
   { path: 'map:layer:opacity', label: 'Selected mapping layer opacity' },
   { path: 'map:media:play', label: 'Selected media play / pause' },
   { path: 'map:media:restart', label: 'Selected media restart' },
+  { path: 'map:media:scratch', label: 'Selected media scratch (hold frame)' },
 ];
 
 /** Accept old documentation/user syntax while keeping one router contract. */
@@ -31,6 +34,10 @@ export function normalizeControlPath(path: string): string {
     .replace(/^mapping:/i, 'map:')
     .replace(/^(vj(?:-b)?):layer:(\d+):/i, '$1:$2:')
     .toLowerCase();
+}
+
+export function isVideoScratchPath(path: string): boolean {
+  return /^(?:map:media:scratch|vj(?:-b)?:\d+:video:scratch)$/.test(normalizeControlPath(path));
 }
 
 function isIndex(value: string | undefined): boolean {
@@ -65,9 +72,9 @@ export function validateControlPath(path: string): ControlPathValidation {
         : { valid: false, normalized, reason: 'Mapping preset paths use map:preset:<zero-based index>.' };
     }
     if (target === 'media') {
-      return ['play', 'restart', 'position'].includes(parts[2] ?? '')
+      return ['play', 'restart', 'position', 'scratch'].includes(parts[2] ?? '')
         ? { valid: true, normalized, reason: null }
-        : { valid: false, normalized, reason: 'Media actions are play, restart, or position.' };
+        : { valid: false, normalized, reason: 'Media actions are play, restart, position, or scratch.' };
     }
     if (['layer', 'effect', 'gpu', 'shader', 'plugin', 'splat', 'model3d', 'stage-effect'].includes(target ?? '')) {
       return parts.length >= 3
@@ -86,9 +93,9 @@ export function validateControlPath(path: string): ControlPathValidation {
         : { valid: false, normalized, reason: 'Clip triggers use vj:<layer>:trigger:<column>.' };
     }
     if (property === 'video') {
-      return ['play', 'restart', 'mirror', 'position'].includes(parts[3] ?? '')
+      return ['play', 'restart', 'mirror', 'position', 'scratch'].includes(parts[3] ?? '')
         ? { valid: true, normalized, reason: null }
-        : { valid: false, normalized, reason: 'Video actions are play, restart, mirror, or position.' };
+        : { valid: false, normalized, reason: 'Video actions are play, restart, mirror, position, or scratch.' };
     }
     if (['opacity', 'blend', 'solo', 'mute', 'shader', 'splat', 'model3d', 'plugin'].includes(property ?? '')) {
       return { valid: true, normalized, reason: null };

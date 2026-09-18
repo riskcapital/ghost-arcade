@@ -703,7 +703,9 @@ describe('Native graph parity and health integration', () => {
       });
       flyState = graph.state;
       const flyResult: any = await rpc.send('compute_graph', nativeGraphConfigForDirectRpc(graph.config), 20000);
-      expect(flyResult.pass_count).toBe(1);
+      // Reset bakes the persistent curl field before simulating particles;
+      // subsequent frames reuse that field and need only the simulation.
+      expect(flyResult.pass_count).toBe(frame === 0 ? 2 : 1);
       expect(flyResult.renders).toHaveLength(1);
       expect(flyResult.renders[0]).toMatchObject({
         target: 'source_frame',

@@ -1,5 +1,6 @@
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { DEFAULT_GPU_SOURCE_ID } from '../renderer/defaultSourceImage';
+import { nativeEffectChainWarning } from '../renderer/nativeEffectChainPolicy';
 import type {
   NativeEffectPassRuntime,
 } from './nativeRendererSync';
@@ -26,6 +27,7 @@ let nativeGraphRouteRequirements: () => ReadonlyArray<{
 }>;
 let nativeEffectPassDescriptorIds: (capabilities: any) => string[];
 let nativeUnsupportedEffectTypes: (layer: any) => string[];
+let nativeEffectPassesForLayer: (layer: any) => NativeEffectPassRuntime[] | null;
 let nativeUnsupportedSourceReason: (
   layer: any,
   hasNativeGraphRoute?: boolean,
@@ -87,6 +89,7 @@ beforeAll(async () => {
     nativeEffectPassDescriptorIds,
     nativeEffectPassFromDescriptor,
     nativeUnsupportedEffectTypes,
+    nativeEffectPassesForLayer,
     nativeUnsupportedSourceReason,
     buildNativeSharedTextureSourceFrameCommand,
     NativeRendererSync: NativeRendererSyncCtor,
@@ -174,7 +177,7 @@ describe('native renderer sync render clock routing', () => {
       videoElement: { currentTime: 12.5 },
     };
 
-    expect(sync.nativeVideoPlaybackTimeSeconds(src, 5000)).toBe(12.5);
+    expect(sync.nativeVideoPlaybackTimeSeconds(src, 5000)).toBe(0);
 
     sync.setRenderClock(4.25);
     expect(sync.nativeVideoPlaybackTimeSeconds(src, 5000)).toBe(4.25);
@@ -583,6 +586,33 @@ describe('native renderer sync graph effect routing', () => {
     expect(nativeGraphCompositeSourceId(withoutDescriptor)).toBe('gpu:gpu-layer-a:planet');
   });
 
+  it('keeps long effect chains active and warns only about enabled overflow', () => {
+    const effects = Array.from({ length: 17 }, (_, index) => ({
+      id: `invert-${index}`, type: 'invert', enabled: true, params: {},
+    }));
+    for (const length of [12, 16]) {
+      const chain = effects.slice(0, length);
+      expect(nativeEffectPassesForLayer({ effects: chain })).toHaveLength(length);
+      expect(nativeEffectChainWarning(chain)).toBeNull();
+    }
+    expect(nativeEffectPassesForLayer({ effects })).toHaveLength(16);
+    expect(nativeEffectChainWarning(effects)).toContain('1 extra effect is bypassed');
+    effects[0].enabled = false;
+    expect(nativeEffectPassesForLayer({ effects })).toHaveLength(16);
+    expect(nativeEffectChainWarning(effects)).toBeNull();
+  });
+
+  it('does not let an unsupported overflow effect blank a supported chain', () => {
+    const effects = [
+      ...Array.from({ length: 16 }, () => ({ type: 'invert', enabled: true, params: {} })),
+      { type: 'unknown-plugin', enabled: true, params: {} },
+    ];
+    expect(nativeUnsupportedEffectTypes({ effects })).toEqual([]);
+    expect(nativeEffectPassesForLayer({ effects })).toHaveLength(16);
+    effects[0].enabled = false;
+    expect(nativeUnsupportedEffectTypes({ effects })).toEqual(['unknown-plugin']);
+  });
+
   it('keeps core-owned graph effects out of the UI-driven graph queue', async () => {
     const sync = new NativeRendererSyncCtor() as any;
     sync.nativeComputeGraphSourceFrames = true;
@@ -894,6 +924,30 @@ describe('native renderer sync graph effect routing', () => {
 });
 
 describe('native renderer sync native video pump routing', () => {
+  it('uses the monotonic clock for playback and the exact anchor for preroll', () => {
+    const sync = new NativeRendererSyncCtor() as any;
+    const clock = vi.spyOn(performance, 'now').mockReturnValue(2500);
+    try {
+      const source = { id: 'clip', src: '/clip.mp4', type: 'video', durationSeconds: 12,
+        _nativePlaybackTimeSeconds: 3, _nativePlaybackUpdatedAtMs: 2000,
+        _nativePlaybackSeekSeq: 7, playbackRate: 2 };
+      expect(sync.nativeVideoPlaybackTimeSeconds(source, Date.now())).toBe(4);
+      expect(sync.nativeVideoPrefetchOptions(source, Date.now())).toMatchObject({
+        timeSeconds: 3, seekGeneration: 7,
+      });
+    } finally { clock.mockRestore(); }
+  });
+
+  it('starts a newly placed mapping video at trim-in, independent of its library preview', () => {
+    const sync = new NativeRendererSyncCtor() as any;
+    const source = { id: 'mapping', src: '/clip.mp4', type: 'video', durationSeconds: 12,
+      trimStart: 0.25, videoElement: { currentTime: 8, videoWidth: 960, videoHeight: 540,
+        addEventListener() {} } };
+    expect(sync.nativeVideoPrefetchOptions(source, Date.now()).timeSeconds).toBe(3);
+    expect(sync.nativeVideoPlaybackCommandIfChanged(source, 'video', Date.now(), { time: 0 }))
+      .toMatchObject({ time_seconds: 3 });
+  });
+
   it('arms library videos at their exact trim-in with the initial trigger generation', () => {
     const sync = new NativeRendererSyncCtor() as any;
     sync.desiredWidth = 1920;

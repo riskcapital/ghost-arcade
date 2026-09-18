@@ -1,0 +1,32 @@
+name: Windows renderer checks
+
+on:
+  pull_request:
+    paths:
+      - 'native-renderer/**'
+      - '.github/workflows/windows-renderer-check.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  compile-and-unit-tests:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            native-renderer/target
+          key: windows-renderer-check-${{ hashFiles('native-renderer/Cargo.lock') }}
+      # GitHub's hosted VM cannot qualify hardware video. Compile and link
+      # every test, then run the pure policy/metadata tests. The runtime suites
+      # and hardware benchmark must run on a physical Windows GPU.
+      - name: Compile and link renderer tests
+        run: cargo test --manifest-path native-renderer/Cargo.toml --locked --no-run
+      - name: Test Windows video policies
+        run: cargo test --manifest-path native-renderer/Cargo.toml --locked windows_video

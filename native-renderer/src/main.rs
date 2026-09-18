@@ -5,6 +5,16 @@ mod capabilities;
 mod compositor;
 mod compute_graph;
 mod media_decode;
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+mod hardware_video;
+#[cfg(target_os = "windows")]
+mod windows_video_decoder;
+#[cfg(target_os = "windows")]
+mod windows_video_texture;
+#[cfg(target_os = "macos")]
+mod mac_video_decoder;
+#[cfg(target_os = "macos")]
+mod video_texture;
 mod native_graph_manifest;
 mod native_quality;
 mod output_present;
@@ -55,7 +65,8 @@ use compute_graph::{
 use media_decode::{
     MAX_NATIVE_VIDEO_FRAME_DECODE_DIMENSION, NATIVE_VIDEO_PREFETCH_WINDOW_DEFAULT_FPS,
     NATIVE_VIDEO_PREFETCH_WINDOW_MAX_FPS, NATIVE_VIDEO_PREFETCH_WINDOW_MAX_FRAMES,
-    NATIVE_VIDEO_PREFETCH_WINDOW_MIN_FPS, NativeVideoFrameDecodeOutput, NativeVideoStream,
+    NATIVE_VIDEO_PREFETCH_WINDOW_MIN_FPS, NativeVideoFrameDecodeOutput, NativeVideoStream, NativeVideoStreamFrame,
+    NativeVideoMemoryBudget, NativeVideoMemoryLease,
     decode_native_image_rgba, decode_native_video_frame_exact_rgba, decode_native_video_frame_rgba,
     decode_native_video_frame_window_rgba, local_media_path_from_uri, native_image_file_signature,
     native_video_frame_bucket, native_video_frame_file_signature, spawn_native_video_stream,
@@ -770,13 +781,30 @@ struct VideoPrefetchResult {
 
 #[derive(Clone, Debug, Serialize)]
 struct NativeVideoSessionStatus {
+    playback_rate: f64,
+    clock_seconds: f64,
+    next_frame_seconds: Option<f64>,
+    play_state_changes: u64,
+    backend: String,
+    fallback_reason: String,
     source_id: String,
     state: String,
     signature: String,
     buffered_frames: u32,
     frames_presented: u64,
+    seek_generation: u64,
+    source_time_seconds: Option<f64>,
+    source_frame_duration_seconds: Option<f64>,
+    source_fps: Option<f64>,
+    source_duration_seconds: Option<f64>,
+    source_frame_step_exact: bool,
+    scrub_cache_hits: u64,
+    scrub_cache_misses: u64,
+    forward_continuations: u64,
+    optional_cache_bytes: u64,
     frames_dropped: u64,
     reserved_bytes: u64,
+    waiting_for_memory_bytes: u64,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -891,6 +919,10 @@ struct CoreStatus {
     native_image_decode_bytes_uploaded: u64,
     native_image_decode_last_error: String,
     native_video_frame_decodes: u64,
+    native_video_hardware_frames: u64,
+    native_video_last_pixel_format: String,
+    native_video_software_frames: u64,
+    native_video_hardware_fallbacks: u64,
     native_video_frame_decode_failures: u64,
     native_video_frame_decode_bytes_uploaded: u64,
     native_video_frame_decode_last_error: String,
@@ -1027,6 +1059,10 @@ struct CoreStats {
     native_image_decode_bytes_uploaded: u64,
     native_image_decode_last_error: String,
     native_video_frame_decodes: u64,
+    native_video_hardware_frames: u64,
+    native_video_last_pixel_format: String,
+    native_video_software_frames: u64,
+    native_video_hardware_fallbacks: u64,
     native_video_frame_decode_failures: u64,
     native_video_frame_decode_bytes_uploaded: u64,
     native_video_frame_decode_last_error: String,
@@ -2466,6 +2502,10 @@ impl SceneLayer {
 
     fn gpu(&self) -> LayerGpu {
         let [tl, tr, br, bl] = self.corners;
+        // Missing media pixels are not a solid-colour source. This also
+        // covers a video whose texture was evicted under pool pressure.
+        let waiting_for_video = self.source_kind == source_kind("video")
+            && self.frame_slot.is_none();
         let plain_fill = !self.shader_rendered && self.source_kind < 9.0
             && self.frame_slot.is_none() && self.preview_slot.is_none()
             && self.effect_count < 0.5 && self.mesh_rows < 2 && self.mesh_cols < 2
@@ -2492,7 +2532,9 @@ impl SceneLayer {
                 self.color[0],
                 self.color[1],
                 self.color[2],
-                self.opacity.clamp(0.0, 1.0) * self.color[3].clamp(0.0, 1.0),
+                if waiting_for_video { 0.0 } else {
+                    self.opacity.clamp(0.0, 1.0) * self.color[3].clamp(0.0, 1.0)
+                },
             ],
             meta: [
                 if self.visible { 1.0 } else { 0.0 },
@@ -2768,6 +2810,12 @@ struct RenderState {
     source_frame_format: wgpu::TextureFormat,
     source_frame_mip_levels: u32,
     source_frame_blitter: TextureBlitter,
+    #[cfg(target_os = "macos")]
+    video_converter: video_texture::GpuVideoConverter,
+    #[cfg(target_os = "windows")]
+    video_converter: windows_video_texture::GpuVideoConverter,
+    #[cfg(target_os = "windows")]
+    video_device: Result<windows_video_texture::WindowsVideoDevice, String>,
     composite_frame_blitter: TextureBlitter,
     output_presenter: output_present::OutputPresenter,
     creative_frame_index: usize,
@@ -2907,6 +2955,7 @@ struct NativeVideoFrameCacheEntry {
 
 struct NativeVideoStreamState {
     signature: String,
+    start_time_seconds: f64,
     stream: NativeVideoStream,
     seek_generation: u64,
     seq: u64,
@@ -2915,6 +2964,7 @@ struct NativeVideoStreamState {
     last_used_frame: u64,
     frames_presented: u64,
     triggered_at: Option<Instant>,
+    fallback_counted: bool,
 }
 
 #[derive(Clone)]
@@ -2977,6 +3027,7 @@ struct App {
     decode_use_output_resolution: bool,
     decode_upload_queue_cap_mb: u32,
     decode_handoff_byte_cap_mb: u32,
+    video_memory_budget: Arc<NativeVideoMemoryBudget>,
     decode_handoff_predecode_shed_pct: u32,
     decode_predecode_estimate_cache_cap_entries: u32,
     vram_budget_mb: u32,
@@ -3311,7 +3362,8 @@ impl App {
             decode_preview_cache_mb: 128,
             decode_use_output_resolution: true,
             decode_upload_queue_cap_mb: 256,
-            decode_handoff_byte_cap_mb: 128,
+            decode_handoff_byte_cap_mb: 512,
+            video_memory_budget: Arc::new(NativeVideoMemoryBudget::new(512 * 1024 * 1024)),
             decode_handoff_predecode_shed_pct: 90,
             decode_predecode_estimate_cache_cap_entries: 8192,
             vram_budget_mb: 4096,
@@ -3863,7 +3915,14 @@ impl App {
             .map(|(source_id, session)| {
                 let buffered_frames =
                     session.stream.buffered_frames().min(u32::MAX as usize) as u32;
+                let (clock_seconds, next_frame_seconds, play_state_changes) = session.stream.timing();
+                let (source_time_seconds, source_frame_duration_seconds, source_fps, source_duration_seconds) = session.stream.source_timing();
+                let (scrub_cache_hits, scrub_cache_misses, forward_continuations) = session.stream.scrub_cache_stats();
                 NativeVideoSessionStatus {
+                    playback_rate: self.media_sources.get(source_id).map_or(1.0, |state| state.playback_rate),
+                    clock_seconds, next_frame_seconds, play_state_changes,
+                    backend: session.stream.backend().to_string(),
+                    fallback_reason: session.stream.fallback_reason(),
                     source_id: source_id.clone(),
                     signature: session.signature.clone(),
                     state: if session.playing {
@@ -3875,8 +3934,14 @@ impl App {
                     },
                     buffered_frames,
                     frames_presented: session.frames_presented,
+                    seek_generation: session.seek_generation,
+                    source_time_seconds, source_frame_duration_seconds, source_fps, source_duration_seconds,
+                    source_frame_step_exact: session.stream.frame_step_exact(),
+                    scrub_cache_hits, scrub_cache_misses, forward_continuations,
+                    optional_cache_bytes: session.stream.optional_memory_bytes(),
                     frames_dropped: session.stream.dropped_frames(),
                     reserved_bytes: session.stream.memory_bytes() as u64,
+                    waiting_for_memory_bytes: session.stream.memory_waiting_bytes(),
                 }
             })
             .collect::<Vec<_>>();
@@ -4082,6 +4147,10 @@ impl App {
                 self.stats.native_image_decode_last_error.clone()
             },
             native_video_frame_decodes: self.stats.native_video_frame_decodes,
+            native_video_hardware_frames: self.stats.native_video_hardware_frames,
+            native_video_last_pixel_format: self.stats.native_video_last_pixel_format.clone(),
+            native_video_software_frames: self.stats.native_video_software_frames,
+            native_video_hardware_fallbacks: self.stats.native_video_hardware_fallbacks,
             native_video_frame_decode_failures: self.stats.native_video_frame_decode_failures,
             native_video_frame_decode_bytes_uploaded: self
                 .stats
@@ -12117,6 +12186,7 @@ impl App {
             .unwrap_or(self.decode_handoff_byte_cap_mb as f64)
             .round()
             .clamp(1.0, 65_536.0) as u32;
+        self.video_memory_budget.set_limit((u64::from(self.decode_handoff_byte_cap_mb) * 1024 * 1024).min(1024 * 1024 * 1024));
         self.decode_handoff_predecode_shed_pct =
             number_at(config, &["decode_handoff_predecode_shed_pct"])
                 .unwrap_or(self.decode_handoff_predecode_shed_pct as f64)
@@ -13410,6 +13480,13 @@ impl App {
             .as_deref()
             .is_some_and(|id| self.source_frames.contains_key(id));
         if effective_source_type == "video" && (frame_slot.is_none() || !has_delivered_frame) {
+            let entry = self.scene_layers.entry(layer_id.clone())
+                .or_insert_with(|| SceneLayer::new(layer_id.clone(), 0));
+            if entry.source_id.is_none() && !entry.shader_rendered {
+                // No outgoing picture exists on a new row. Mark it as
+                // waiting media so gpu() cannot paint its debug fill.
+                entry.source_kind = source_kind("video");
+            }
             if let Some(source_id) = source_id {
                 self.pending_media_bindings.insert(
                     layer_id,
@@ -13619,12 +13696,12 @@ impl App {
             return;
         }
         let render_clock_time = self.native_graph_time_seconds() as f64;
-        let playback_time_seconds = number_at(command, &["time_seconds"])
+        let mut playback_time_seconds = number_at(command, &["time_seconds"])
             .or_else(|| number_at(command, &["time"]))
             .or_else(|| existing.as_ref().map(|state| state.playback_time_seconds))
             .unwrap_or(0.0)
             .clamp(0.0, 3600.0);
-        let seek_generation = number_at(command, &["seek_generation"])
+        let mut seek_generation = number_at(command, &["seek_generation"])
             .or_else(|| number_at(command, &["seekGeneration"]))
             .or_else(|| existing.as_ref().map(|state| state.seek_generation as f64))
             .unwrap_or(0.0)
@@ -13672,13 +13749,45 @@ impl App {
             .unwrap_or(1.0)
             .round()
             .max(0.0) as u64;
+        let frame_step = number_at(command, &["frame_step"]);
+        if frame_step.is_some_and(|step| step != -1.0 && step != 1.0)
+            || (command.get("frame_step").is_some_and(|value| !value.is_null()) && frame_step.is_none())
+        {
+            self.stats.native_video_frame_decode_last_error = "Native video frame_step must be -1 or +1".into();
+            return;
+        }
+        if frame_step.is_some() && (self.render_clock_mode != "live" || source_type != "video") {
+            self.stats.native_video_frame_decode_last_error = "Native frame stepping requires a live video source".into();
+            return;
+        }
+        let mut exact_step_reference = None;
+        if let Some(direction) = frame_step {
+            let session = self.native_video_streams.get(&source_id);
+            let timing = session.map(|session| session.stream.source_timing());
+            let reference = timing.and_then(|timing| timing.0).unwrap_or(playback_time_seconds);
+            if session.is_some_and(|session| session.stream.frame_step_exact()) {
+                exact_step_reference = Some(reference);
+                playback_time_seconds = reference;
+            } else if let Some(fps) = timing.and_then(|timing| timing.2) {
+                // Compatibility decoding advertises estimated stepping. The
+                // input FPS is separate from its capped/rate-adjusted output.
+                let duration = timing.and_then(|timing| timing.3).or(duration_seconds);
+                let start = duration.map_or(0.0, |duration| duration * trim_start);
+                let end = duration.map_or(3600.0, |duration| (duration * trim_end - 1.0 / fps).max(start));
+                playback_time_seconds = (reference + direction / fps).clamp(start, end);
+            } else {
+                self.stats.native_video_frame_decode_last_error = "Native video frame timing is unavailable; wait for the source to prepare before stepping".into();
+                return;
+            }
+            seek_generation = seek_generation.max(existing.as_ref().map_or(1, |state| state.seek_generation.saturating_add(1)));
+        }
         let next_state = NativeMediaSourceState {
             uri,
             source_type,
             playback_time_seconds,
             seek_generation,
             playback_rate,
-            paused: bool_at(command, &["paused"])
+            paused: frame_step.is_some() || bool_at(command, &["paused"])
                 .unwrap_or_else(|| existing.as_ref().map(|state| state.paused).unwrap_or(false)),
             loop_enabled: bool_at(command, &["loop_enabled"])
                 .or_else(|| bool_at(command, &["loop"]))
@@ -13703,9 +13812,30 @@ impl App {
             .clamp(0.0, 1.0e9),
             seq,
         };
-        self.media_sources
-            .insert(source_id.clone(), next_state.clone());
-
+        if self.render_clock_mode == "live" && next_state.source_type == "video" {
+            let (width, height) = self.native_video_decode_dimensions();
+            if let (Some(direction), Some(reference)) = (frame_step, exact_step_reference) {
+                let signature = Self::native_video_session_signature(&next_state,
+                    next_state.decode_width.unwrap_or(width), next_state.decode_height.unwrap_or(height));
+                if let Some(session) = self.native_video_streams.get_mut(&source_id)
+                    .filter(|session| session.signature == signature)
+                    && session.stream.step_frame(reference, direction as i32)
+                {
+                    session.start_time_seconds = reference;
+                    session.seek_generation = seek_generation;
+                    session.playing = false;
+                    session.frames_presented = 0;
+                    session.next_frame_at = Instant::now();
+                    session.triggered_at = None;
+                    self.media_sources.insert(source_id.clone(), next_state);
+                    self.stats.native_video_frame_decode_last_error.clear();
+                    return;
+                }
+                self.stats.native_video_frame_decode_last_error = "Native video session changed before the frame step; prepare it again".into();
+                return;
+            }
+        }
+        self.media_sources.insert(source_id.clone(), next_state.clone());
         if self.render_clock_mode == "live" && next_state.source_type == "video" {
             let (width, height) = self.native_video_decode_dimensions();
             self.ensure_native_video_stream(
@@ -14055,6 +14185,14 @@ impl App {
         if source_type == "image" {
             self.decode_native_image_source(&source_id, &uri);
         } else if source_type == "video" {
+            // Prefetch is advisory. A delayed scene warm-up must never
+            // overwrite a transport command or replace its live decoder.
+            if self.native_video_streams.get(&source_id).is_some_and(|s| s.playing)
+                || (self.media_sources.get(&source_id).is_some_and(|s| s.seq > 0)
+                    && self.media_source_is_referenced(&source_id))
+            {
+                return Ok(json!(self.status()));
+            }
             let width = number_at(params, &["decode_width"])
                 .or_else(|| number_at(params, &["decodeWidth"]))
                 .or_else(|| number_at(params, &["width"]))
@@ -14445,6 +14583,75 @@ impl App {
         }
     }
 
+    fn record_native_video_presentation(&mut self, source_id: &str, source_time: Option<f64>, source_duration: Option<f64>) {
+        if let Some(session) = self.native_video_streams.get_mut(source_id) {
+            session.stream.record_presented(source_time, source_duration);
+            session.frames_presented += 1;
+            if let Some(triggered_at) = session.triggered_at.take() {
+                let latency = triggered_at.elapsed().as_micros().min(u64::MAX as u128) as u64;
+                self.stats.native_video_trigger_last_latency_us = latency;
+                self.stats.native_video_trigger_max_latency_us = self.stats.native_video_trigger_max_latency_us.max(latency);
+            }
+        }
+        if let Some(state) = self.media_sources.get_mut(source_id)
+            && state.paused
+            && let Some(source_time) = source_time
+        {
+            state.playback_time_seconds = source_time;
+        }
+    }
+
+    fn present_native_video_frame(&mut self, source_id: &str, seq: u64,
+        frame: NativeVideoStreamFrame, transport: &str) -> bool {
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        if let Some(gpu) = frame.gpu {
+            let slot = self.assign_source_frame_slot(source_id);
+            self.stats.native_video_last_pixel_format = String::from_utf8_lossy(&gpu.pixel_format.to_be_bytes()).into_owned();
+            let result = self.renderer.as_ref().ok_or_else(|| "Renderer unavailable".to_string())
+                .and_then(|renderer| renderer.import_native_video_frame(slot, gpu, frame.memory_lease));
+            let source_rect = match result {
+                Ok(rect) => rect,
+                Err(error) => {
+                    self.stats.native_video_frame_decode_failures += 1;
+                    self.stats.native_video_frame_decode_last_error = error;
+                    return false;
+                }
+            };
+            self.record_native_video_presentation(source_id, frame.source_time_seconds, frame.source_frame_duration_seconds);
+            self.stats.native_video_hardware_frames += 1;
+            self.stats.native_video_frame_decodes += 1;
+            self.stats.source_frame_uploads += 1;
+            self.stats.source_frame_shared_texture_uploads += 1;
+            self.stats.source_frame_last_input_bytes = 0;
+            self.stats.source_frame_last_upload_bytes = 0;
+            self.stats.source_frame_last_upload_width = frame.width as u32;
+            self.stats.source_frame_last_upload_height = frame.height as u32;
+            self.stats.source_frame_last_upload_transport = hardware_video::TRANSPORT.into();
+            self.stats.source_frame_last_reject_reason.clear();
+            self.stats.native_video_frame_decode_last_error.clear();
+            self.source_frame_signatures.remove(source_id);
+            self.native_video_frame_signatures.remove(source_id);
+            self.source_frames.insert(source_id.to_string(), SourceFrame::with_rect(seq, source_rect));
+            for layer in self.scene_layers.values_mut() {
+                if layer.source_id.as_deref() == Some(source_id) {
+                    layer.frame_slot = Some(slot);
+                    layer.source_rect = source_rect;
+                }
+            }
+            self.commit_pending_media_bindings_for_source(source_id, slot, source_rect);
+            return true;
+        }
+        let uploaded = self.upload_source_frame_pixels(source_id.to_string(), seq,
+            frame.width, frame.height, &frame.rgba, transport, false);
+        if let Some(session) = self.native_video_streams.get(source_id) { session.stream.recycle(frame.rgba); }
+        if uploaded > 0 { self.record_native_video_presentation(source_id, frame.source_time_seconds, frame.source_frame_duration_seconds); }
+        self.stats.native_video_software_frames += 1;
+        self.stats.native_video_frame_decodes += 1;
+        self.stats.native_video_frame_decode_bytes_uploaded += uploaded as u64;
+        self.stats.native_video_frame_decode_last_error.clear();
+        uploaded > 0
+    }
+
     fn drain_native_video_streams(&mut self) {
         let now = Instant::now();
         let source_ids = self
@@ -14465,24 +14672,17 @@ impl App {
             let Some(state) = self.native_video_streams.get_mut(&source_id) else {
                 continue;
             };
+            if state.stream.hardware_fallback() && !state.fallback_counted {
+                state.fallback_counted = true;
+                self.stats.native_video_hardware_fallbacks += 1;
+            }
             if !state.playing || now < state.next_frame_at {
                 continue;
             }
             match state.stream.try_pop() {
                 Some(Ok(frame)) => {
-                    if let Some(triggered_at) = state.triggered_at.take() {
-                        let latency_us = now
-                            .saturating_duration_since(triggered_at)
-                            .as_micros()
-                            .min(u64::MAX as u128) as u64;
-                        self.stats.native_video_trigger_last_latency_us = latency_us;
-                        self.stats.native_video_trigger_max_latency_us = self
-                            .stats
-                            .native_video_trigger_max_latency_us
-                            .max(latency_us);
-                    }
                     state.seq = state.seq.saturating_add(1);
-                    state.frames_presented = state.frames_presented.saturating_add(1);
+
                     state.last_used_frame = self.stats.frames_presented;
                     state.next_frame_at = if now.saturating_duration_since(state.next_frame_at)
                         > NATIVE_VIDEO_FRAME_INTERVAL.saturating_mul(2)
@@ -14514,23 +14714,7 @@ impl App {
             self.stats.native_video_frame_decode_last_error = err;
         }
         for (source_id, seq, frame) in ready {
-            let uploaded = self.upload_source_frame_pixels(
-                source_id.clone(),
-                seq,
-                frame.width,
-                frame.height,
-                &frame.rgba,
-                "native-video-stream",
-                false,
-            );
-            if let Some(session) = self.native_video_streams.get(&source_id) { session.stream.recycle(frame.rgba); }
-            self.stats.native_video_frame_decodes =
-                self.stats.native_video_frame_decodes.saturating_add(1);
-            self.stats.native_video_frame_decode_bytes_uploaded = self
-                .stats
-                .native_video_frame_decode_bytes_uploaded
-                .saturating_add(uploaded as u64);
-            self.stats.native_video_frame_decode_last_error.clear();
+            self.present_native_video_frame(&source_id, seq, frame, "native-video-stream");
         }
     }
 
@@ -14611,6 +14795,20 @@ impl App {
             .filter(|stream_state| stream_state.signature == signature)
             .map(|stream_state| (stream_state.playing, stream_state.seek_generation));
         if let Some((was_playing, existing_seek_generation)) = existing_stream_state {
+            if existing_seek_generation != state.seek_generation {
+                if let Some(session) = self.native_video_streams.get_mut(source_id) {
+                    if session.stream.retrigger(state.playback_time_seconds, !playing) {
+                        session.start_time_seconds = state.playback_time_seconds;
+                        session.seek_generation = state.seek_generation;
+                        session.playing = playing;
+                        session.frames_presented = 0;
+                        session.next_frame_at = Instant::now();
+                        session.triggered_at = playing.then(Instant::now);
+                        session.stream.set_playing(playing);
+                        return;
+                    }
+                }
+            }
             if existing_seek_generation == state.seek_generation {
                 if was_playing != playing {
                     if !self.evict_native_video_session_for(playing) { return; }
@@ -14675,16 +14873,18 @@ impl App {
             }
         }
 
-        // Claim a compatible armed session (for example one warmed from the
-        // media library) instead of spawning ffmpeg on the trigger path.
+        // Claim a compatible armed session instead of spawning ffmpeg on
+        // the trigger path. Even a session still preparing its first frame
+        // is ahead of a fresh process; preserve that work on an early hit.
         if let Some(warm_source_id) = self
             .native_video_streams
             .iter()
             .filter(|(candidate_id, candidate)| {
-                candidate_id.starts_with("library:")
+                !source_id.starts_with("library:")
+                    && candidate_id.starts_with("library:")
                     && !candidate.playing
                     && candidate.signature == signature
-                    && candidate.stream.buffered_frames() > 0
+                    && (candidate.start_time_seconds - state.playback_time_seconds).abs() < 0.001
             })
             .max_by_key(|(_, candidate)| candidate.stream.buffered_frames())
             .map(|(candidate_id, _)| candidate_id.clone())
@@ -14701,6 +14901,9 @@ impl App {
             warm.next_frame_at = Instant::now();
             warm.triggered_at = playing.then(Instant::now);
             warm.stream.set_playing(playing);
+            // Removing only the decoder leaves its library transport record
+            // behind; the next pump would resurrect that consumed session.
+            self.media_sources.remove(&warm_source_id);
             self.native_video_streams
                 .insert(source_id.to_string(), warm);
             return;
@@ -14711,10 +14914,40 @@ impl App {
             return;
         }
         let start_time = state.current_time_seconds(Some(self.native_graph_time_seconds()));
-        let resident: usize = self.native_video_streams.values().map(|s| s.stream.memory_bytes()).sum();
-        let budget = (self.decode_handoff_byte_cap_mb as usize * 1024 * 1024).min(512 * 1024 * 1024);
+        // Optional scratch history can yield to this decoder. Estimate only
+        // mandatory resident bytes here, so history cannot reject a session
+        // before its worker registers the required admission request. The
+        // shared atomic budget still charges every retained GPU surface.
+        let mut resident: usize = self.native_video_streams.values()
+            .map(|s| s.stream.memory_bytes().saturating_sub(s.stream.optional_memory_bytes() as usize)).sum();
+        let budget = (self.decode_handoff_byte_cap_mb as usize * 1024 * 1024).min(1024 * 1024 * 1024);
         let frame_bytes = width.clamp(16, 4096).saturating_mul(height.clamp(16, 4096)).saturating_mul(4);
-        let capacity = budget.saturating_sub(resident).checked_div(frame_bytes).unwrap_or(0).saturating_sub(2).min(8);
+        // Speculative library preroll must never prevent an on-stage clip
+        // from starting. Reclaim unused prepared sessions until the new
+        // decoder has room for its minimum ring plus producer/consumer.
+        while resident.saturating_add(frame_bytes.saturating_mul(4)) > budget {
+            let victim = self.native_video_streams.iter()
+                .filter(|(id, session)| id.starts_with("library:") && !session.playing
+                    && !self.media_source_is_referenced(id))
+                .min_by_key(|(_, session)| session.last_used_frame)
+                .map(|(id, _)| id.clone());
+            let Some(victim) = victim else { break; };
+            if let Some(session) = self.native_video_streams.remove(&victim) {
+                resident = resident.saturating_sub(session.stream.memory_bytes()
+                    .saturating_sub(session.stream.optional_memory_bytes() as usize));
+            }
+            self.media_sources.remove(&victim);
+            self.source_frame_slots.remove(&victim);
+            self.source_frames.remove(&victim);
+            self.stats.native_video_session_evictions =
+                self.stats.native_video_session_evictions.saturating_add(1);
+        }
+        // A shorter preroll ring leaves room to prepare the next hit for
+        // every live row. Eight buffered RGBA frames per library entry
+        // exhausted the default budget with only a few HD clips. Claimed
+        // sessions keep this ring and refill continuously during playback.
+        let target_capacity = if playing { 8 } else { 4 };
+        let capacity = budget.saturating_sub(resident).checked_div(frame_bytes).unwrap_or(0).saturating_sub(2).min(target_capacity);
         if capacity < 2 {
             self.stats.native_video_frame_decode_last_error = "decoded video session budget exceeded".to_string();
             return;
@@ -14730,12 +14963,17 @@ impl App {
             state.trim_start,
             state.trim_end,
             capacity,
+            self.video_memory_budget.clone(),
+            #[cfg(target_os = "windows")]
+            self.renderer.as_ref().ok_or_else(|| "Renderer unavailable for hardware video".to_string())
+                .and_then(|renderer| renderer.video_device.clone()),
         );
         stream.set_playing(playing);
         self.native_video_streams.insert(
             source_id.to_string(),
             NativeVideoStreamState {
                 signature,
+                start_time_seconds: start_time,
                 stream,
                 seek_generation: state.seek_generation,
                 seq: self
@@ -14748,6 +14986,7 @@ impl App {
                 last_used_frame: self.stats.frames_presented,
                 frames_presented: 0,
                 triggered_at: playing.then(Instant::now),
+                fallback_counted: false,
             },
         );
         if let Some(session) = self.native_video_streams.get(source_id) {
@@ -14775,23 +15014,7 @@ impl App {
         };
         session.seq = session.seq.saturating_add(1);
         let seq = session.seq;
-        let uploaded = self.upload_source_frame_pixels(
-            source_id.to_string(),
-            seq,
-            frame.width,
-            frame.height,
-            &frame.rgba,
-            "native-video-preroll",
-            false,
-        );
-        if let Some(session) = self.native_video_streams.get(source_id) { session.stream.recycle(frame.rgba); }
-        self.stats.native_video_frame_decodes =
-            self.stats.native_video_frame_decodes.saturating_add(1);
-        self.stats.native_video_frame_decode_bytes_uploaded = self
-            .stats
-            .native_video_frame_decode_bytes_uploaded
-            .saturating_add(uploaded as u64);
-        true
+        self.present_native_video_frame(source_id, seq, frame, "native-video-preroll")
     }
 
     fn prime_armed_native_video_sources(&mut self) {
@@ -14811,10 +15034,10 @@ impl App {
             .iter()
             .filter(|(source_id, session)| {
                 !session.playing
-                    && !self.source_frames.contains_key(*source_id)
+                    && (!self.source_frames.contains_key(*source_id) || session.frames_presented == 0)
                     && (pending_sources.contains(*source_id)
                         || visible_sources.contains(*source_id))
-                    && session.stream.buffered_frames() > session.stream.ready_frames()
+                    && session.stream.buffered_frames() > 0
             })
             .map(|(source_id, _)| source_id.clone())
             .collect::<Vec<_>>();
@@ -14823,10 +15046,53 @@ impl App {
         }
     }
 
+    fn reclaim_hardware_video_memory(&mut self) {
+        let required_waiting = self.native_video_streams.values()
+            .any(|session| session.stream.memory_waiting_bytes() > session.stream.memory_bytes() as u64);
+        // Only actual admission pressure interrupts scratch history; a
+        // library preload that fits available headroom need not discard it.
+        let reclaim_optional = required_waiting || self.video_memory_budget.is_over_limit();
+        self.video_memory_budget.set_optional_cache_allowed(!reclaim_optional);
+        if reclaim_optional && self.native_video_streams.values()
+            .any(|session| session.stream.optional_memory_bytes() > 0)
+        {
+            // Worker loops first release optional scratch history and unused
+            // driver surfaces. Do not evict a prepared clip for those bytes.
+            return;
+        }
+        let waiting: u64 = self.native_video_streams.values()
+            .filter(|session| session.playing)
+            .map(|session| session.stream.memory_waiting_bytes()
+                .saturating_sub(session.stream.memory_bytes() as u64))
+            .sum();
+        if waiting == 0 { return; }
+        // Retired workers/GPU submissions remain atomically charged until
+        // completion. Their eventual release is already excluded from this
+        // map, so do not evict extra library clips while that release is pending.
+        let mut resident: u64 = self.native_video_streams.values()
+            .map(|session| session.stream.memory_bytes() as u64).sum();
+        while resident.saturating_add(waiting) > self.video_memory_budget.limit_bytes() {
+            let victim = self.native_video_streams.iter()
+                .filter(|(source_id, session)| source_id.starts_with("library:")
+                    && !session.playing && !self.media_source_is_referenced(source_id))
+                .min_by_key(|(_, session)| session.last_used_frame)
+                .map(|(source_id, _)| source_id.clone());
+            let Some(source_id) = victim else { break; };
+            if let Some(session) = self.native_video_streams.remove(&source_id) {
+                resident = resident.saturating_sub(session.stream.memory_bytes() as u64);
+            }
+            self.media_sources.remove(&source_id);
+            self.source_frame_slots.remove(&source_id);
+            self.source_frames.remove(&source_id);
+            self.stats.native_video_session_evictions = self.stats.native_video_session_evictions.saturating_add(1);
+        }
+    }
+
     fn pump_native_video_decodes(&mut self) {
         if self.renderer.is_none() {
             return;
         }
+        self.reclaim_hardware_video_memory();
         // An armed session is not ready until its first real frame is resident
         // in the GPU source texture. Keep at least the minimum pre-roll behind
         // it so triggering can immediately drain motion frames.
@@ -16360,6 +16626,12 @@ impl RenderState {
         let source_frame_blitter = TextureBlitterBuilder::new(&device, source_frame_format)
             .sample_type(wgpu::FilterMode::Linear)
             .build();
+        #[cfg(target_os = "macos")]
+        let video_converter = video_texture::GpuVideoConverter::new(&device, source_frame_format);
+        #[cfg(target_os = "windows")]
+        let video_converter = windows_video_texture::GpuVideoConverter::new(&device, source_frame_format);
+        #[cfg(target_os = "windows")]
+        let video_device = windows_video_texture::WindowsVideoDevice::new(&device);
         // Same size and format as the mirror, so this is a straight copy of
         // the pixels rather than a rescale.
         let composite_frame_blitter = TextureBlitterBuilder::new(&device, format)
@@ -16900,6 +17172,10 @@ impl RenderState {
             source_frame_format,
             source_frame_mip_levels,
             source_frame_blitter,
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            video_converter,
+            #[cfg(target_os = "windows")]
+            video_device,
             composite_frame_blitter,
             output_presenter,
             creative_frame_index: 0,
@@ -19911,6 +20187,37 @@ impl RenderState {
             .saturating_mul(self.source_frame_size)
             .saturating_mul(texture_format_bytes_per_texel(self.source_frame_format))
             .min(u64::MAX as usize) as u64)
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    fn import_native_video_frame(&self, slot: usize, frame: hardware_video::GpuVideoFrame,
+        memory_lease: Option<Arc<NativeVideoMemoryLease>>) -> Result<[f32; 4], String> {
+        let safe_slot = slot.min(MAX_SOURCE_FRAME_SLOTS - 1);
+        let size = self.source_frame_size as f32;
+        let scale = (size / frame.width.max(1) as f32).min(size / frame.height.max(1) as f32).min(1.0);
+        let width = (frame.width as f32 * scale).round().max(1.0);
+        let height = (frame.height as f32 * scale).round().max(1.0);
+        let viewport = [((size - width) * 0.5).floor(), ((size - height) * 0.5).floor(), width, height];
+        let target = self.source_frame_texture.create_view(&wgpu::TextureViewDescriptor {
+            label: Some("Native hardware video target"),
+            format: Some(self.source_frame_format),
+            dimension: Some(wgpu::TextureViewDimension::D2),
+            base_mip_level: 0, mip_level_count: Some(1),
+            base_array_layer: safe_slot as u32, array_layer_count: Some(1),
+            ..Default::default()
+        });
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Native hardware video conversion") });
+        #[cfg(target_os = "macos")]
+        self.video_converter.encode(&self.device, &mut encoder, &frame, &target, viewport)?;
+        #[cfg(target_os = "windows")]
+        self.video_converter.encode(&self.device, &self.queue, &mut encoder, &frame, &target, viewport)?;
+        self.generate_source_frame_mips(&mut encoder, safe_slot);
+        let gpu_lease = memory_lease.as_ref().map(|lease| lease.begin_gpu_work());
+        self.queue.submit(Some(encoder.finish()));
+        // The decoder/bridge may recycle this surface only after rendering
+        // has completed. Submission alone does not establish lifetime.
+        self.queue.on_submitted_work_done(move || { drop(frame); drop(gpu_lease); });
+        Ok([viewport[0] / size, viewport[1] / size, width / size, height / size])
     }
 
     fn generate_source_frame_mips(&self, encoder: &mut wgpu::CommandEncoder, slot: usize) {

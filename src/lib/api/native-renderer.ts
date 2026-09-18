@@ -261,6 +261,7 @@ export type RendererCommand =
       decode_width?: number;
       decode_height?: number;
       seek_generation?: number;
+      frame_step?: -1 | 1;
       seq?: number;
     }
   | { type: 'set_command_drain_limit'; max_commands_per_tick: number }
@@ -685,6 +686,10 @@ export interface RendererStatus {
   native_image_decode_last_error: string;
   native_video_frame_decodes: number;
   native_video_frame_decode_failures: number;
+  native_video_hardware_frames: number;
+  native_video_software_frames: number;
+  native_video_hardware_fallbacks: number;
+  native_video_last_pixel_format: string;
   native_video_frame_decode_bytes_uploaded: number;
   native_video_frame_decode_last_error: string;
   native_video_frame_cache_entries: number;
@@ -694,9 +699,29 @@ export interface RendererStatus {
   native_video_frame_cache_evictions: number;
   native_video_sessions: Array<{
     source_id: string;
+    signature: string;
+    frames_dropped: number;
+    reserved_bytes: number;
+    playback_rate: number;
+    clock_seconds: number;
+    next_frame_seconds: number | null;
+    source_time_seconds?: number | null;
+    source_frame_duration_seconds?: number | null;
+    source_fps?: number | null;
+    source_duration_seconds?: number | null;
+    source_frame_step_exact?: boolean;
+    scrub_cache_hits?: number;
+    scrub_cache_misses?: number;
+    forward_continuations?: number;
+    optional_cache_bytes?: number;
+    seek_generation?: number;
+    play_state_changes: number;
     state: 'armed' | 'prerolled' | 'playing' | 'evicted';
     buffered_frames: number;
     frames_presented: number;
+    waiting_for_memory_bytes: number;
+    backend: string;
+    fallback_reason: string;
   }>;
   native_video_sessions_armed: number;
   native_video_sessions_prerolled: number;
@@ -958,6 +983,10 @@ export interface RendererStats {
   native_image_decode_last_error: string;
   native_video_frame_decodes: number;
   native_video_frame_decode_failures: number;
+  native_video_hardware_frames: number;
+  native_video_software_frames: number;
+  native_video_hardware_fallbacks: number;
+  native_video_last_pixel_format: string;
   native_video_frame_decode_bytes_uploaded: number;
   native_video_frame_decode_last_error: string;
   native_video_frame_cache_entries: number;
@@ -1311,7 +1340,7 @@ export async function startNativeRenderer(config?: Partial<RendererStartConfig>)
       decode_preview_size: config?.decode_preview_size ?? 96,
       decode_preview_cache_mb: config?.decode_preview_cache_mb ?? 128,
       decode_upload_queue_cap_mb: config?.decode_upload_queue_cap_mb ?? 256,
-      decode_handoff_byte_cap_mb: config?.decode_handoff_byte_cap_mb ?? 128,
+      decode_handoff_byte_cap_mb: config?.decode_handoff_byte_cap_mb ?? 512,
       decode_handoff_predecode_shed_pct: config?.decode_handoff_predecode_shed_pct ?? 90,
       decode_predecode_estimate_cache_cap_entries:
         config?.decode_predecode_estimate_cache_cap_entries ?? 8192,
