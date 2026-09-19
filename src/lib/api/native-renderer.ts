@@ -243,6 +243,8 @@ export type RendererCommand =
       type: 'set_slice_outputs';
       slices: Array<Record<string, unknown>>;
     }
+  | { type: 'set_clip_audio_mix'; sources: string[]; voices: Array<{ id: string; source_id: string; gain: number; pan: number }> }
+  | { type: 'set_media_source_phase'; source_id: string; uri: string; seek_generation: number; time_seconds: number; reverse: boolean }
   | { type: 'set_target_fps'; target_fps: number }
   | { type: 'set_render_clock'; mode: 'live' | 'manual' | 'reset'; time?: number; time_delta?: number; frame_index?: number }
   | {
@@ -255,6 +257,7 @@ export type RendererCommand =
       playback_rate: number;
       paused: boolean;
       loop_enabled: boolean;
+      bounce_enabled?: boolean;
       trim_start?: number;
       trim_end?: number;
       duration_seconds?: number;
@@ -687,6 +690,7 @@ export interface RendererStatus {
   native_video_frame_decodes: number;
   native_video_frame_decode_failures: number;
   native_video_hardware_frames: number;
+  native_video_hap_frames?: number;
   native_video_software_frames: number;
   native_video_hardware_fallbacks: number;
   native_video_last_pixel_format: string;
@@ -698,6 +702,7 @@ export interface RendererStatus {
   native_video_frame_cache_misses: number;
   native_video_frame_cache_evictions: number;
   native_video_sessions: Array<{
+    phase_error_seconds?: number | null;
     source_id: string;
     signature: string;
     frames_dropped: number;
@@ -984,6 +989,7 @@ export interface RendererStats {
   native_video_frame_decodes: number;
   native_video_frame_decode_failures: number;
   native_video_hardware_frames: number;
+  native_video_hap_frames?: number;
   native_video_software_frames: number;
   native_video_hardware_fallbacks: number;
   native_video_last_pixel_format: string;
@@ -1128,6 +1134,7 @@ export interface RendererStats {
 }
 
 export interface NativeCommandApplySummary {
+  errors?: Array<{ type: string; message: string }>;
   total: number;
   applied: number;
   dropped: number;
@@ -1416,6 +1423,7 @@ export type NativeMediaPrefetchOptions = {
   seekGeneration?: number;
   playbackRate?: number;
   loopEnabled?: boolean;
+  bounceEnabled?: boolean;
   durationSeconds?: number;
   trimStart?: number;
   trimEnd?: number;
@@ -1443,6 +1451,7 @@ export async function prefetchNativeRendererMedia(
     seek_generation: options.seekGeneration,
     playback_rate: options.playbackRate,
     loop_enabled: options.loopEnabled,
+    bounce_enabled: options.bounceEnabled,
     duration_seconds: options.durationSeconds,
     trim_start: options.trimStart,
     trim_end: options.trimEnd,
@@ -1636,6 +1645,43 @@ export async function getNativeRendererLayersSnapshot() {
   return invoke<{ layers: NativeRendererLayerSnapshot[] }>('native_renderer_get_layers_snapshot');
 }
 
+export interface NativeLayerSourceReadiness {
+  ready: boolean;
+  pending?: boolean;
+  layer_id?: string;
+  actual_source_id?: string | null;
+  requested_source_id?: string | null;
+  frame_sequence?: number;
+  seek_generation?: number;
+  frames_presented?: number;
+}
+
+export async function getNativeLayerSourceReadiness(
+  layerId: string,
+  sourceId?: string,
+  seekGeneration?: number,
+): Promise<NativeLayerSourceReadiness> {
+  return invoke<NativeLayerSourceReadiness>('native_renderer_get_layer_source_readiness', {
+    layer_id: layerId, source_id: sourceId, seek_generation: seekGeneration,
+  });
+}
+
+export async function captureNativeLayerSourceFrame(layerId: string, sourceId: string) {
+  return invoke<{ captured: boolean; source_id: string } | null>(
+    'native_renderer_capture_layer_source_frame', { layer_id: layerId, source_id: sourceId },
+  );
+}
+
+export async function getNativeSourceFrameReadiness(sourceId: string, seekGeneration?: number) {
+  return invoke<NativeLayerSourceReadiness>('native_renderer_get_source_frame_readiness', {
+    source_id: sourceId, seek_generation: seekGeneration,
+  });
+}
+
+export async function releaseNativeSourceFrame(sourceId: string) {
+  return invoke<{ released?: boolean; referenced?: boolean } | null>('native_renderer_release_source_frame', { source_id: sourceId });
+}
+
 export async function getNativeRendererStats() {
   return invoke<RendererStats>('native_renderer_get_stats');
 }
@@ -1703,3 +1749,8 @@ export async function exportNativeRendererSnapshotJson(path: string) {
 export async function resetNativeRendererStats() {
   return invoke<void>('native_renderer_reset_stats');
 }
+
+export interface NativeClipAudioStatus { running: boolean; device?: string; error?: string; assets: Array<{ uri: string; seconds_ready: number; complete: boolean; error: string }> }
+export const getNativeAudioDevices = () => invoke<string[]>('native_renderer_audio_devices');
+export const getNativeAudioStatus = () => invoke<NativeClipAudioStatus>('native_renderer_audio_status');
+export const setNativeAudioOutput = (device: string) => invoke<boolean>('native_renderer_audio_output', { device });

@@ -542,6 +542,74 @@ hardwareDescribe(`${platform.label} playback through the presented shared textur
     } finally { await rpc.close(); }
   }, 25000);
 
+  it.each([
+    { name: 'forward', direction: 1, bounce: false },
+    { name: 'reverse', direction: -1, bounce: false },
+    { name: 'bounce', direction: 1, bounce: true },
+  ])('smoothly phase-locks $name playback and expires stale corrections', async ({ direction, bounce }) => {
+    const rpc = core();
+    try {
+      await start(rpc, WIDTH, HEIGHT);
+      const settings = { playback_rate: direction, bounce_enabled: bounce,
+        time_seconds: direction < 0 ? DURATION : 0 };
+      await rpc.commands([layer(), trigger('phase', settings), bind('phase')]);
+      const initial = await waitUntil<Status>(() => rpc.send('status'), value =>
+        (value.native_video_sessions.find(s => s.source_id === 'phase')?.frames_presented ?? 0) >= 4,
+        'phase initial frames');
+      const startSession = initial.native_video_sessions.find(s => s.source_id === 'phase')!;
+      const cycle = DURATION * (bounce ? 2 : 1);
+      const position = startSession.source_time_seconds ?? 0;
+      const origin = (direction < 0 ? cycle - position : position) + 0.1;
+      const started = performance.now();
+      let status = initial;
+      while (performance.now() - started < 5500) {
+        const phase = (origin + (performance.now() - started) / 1000) % cycle;
+        const reverse = bounce ? phase >= DURATION : direction < 0;
+        await rpc.commands([{ type: 'set_media_source_phase', source_id: 'phase', uri,
+          seek_generation: 1, time_seconds: reverse ? cycle - phase : phase, reverse }]);
+        await sleep(100);
+        status = await rpc.send('status');
+      }
+      const session = status.native_video_sessions.find(s => s.source_id === 'phase') as Session & { phase_error_seconds: number | null };
+      expect(session.frames_presented).toBeGreaterThan(startSession.frames_presented + 60);
+      expect(session.phase_error_seconds).not.toBeNull();
+      expect(Math.abs(session.phase_error_seconds!)).toBeLessThan(0.025);
+      await waitUntil<Status>(() => rpc.send('status'), value =>
+        (value.native_video_sessions.find(s => s.source_id === 'phase') as any)?.phase_error_seconds === null,
+        'phase correction expires');
+    } finally { await rpc.close(); }
+  }, 15000);
+
+  it.each([
+    { name: 'forward', direction: 1, bounce: false },
+    { name: 'reverse', direction: -1, bounce: false },
+    { name: 'bounce', direction: 1, bounce: true },
+  ])('retimes $name playback without replacing the hardware session', async ({ direction, bounce }) => {
+    const rpc = core();
+    try {
+      const baseline = await start(rpc, WIDTH, HEIGHT);
+      const settings = { playback_rate: direction, bounce_enabled: bounce,
+        time_seconds: direction < 0 ? DURATION : 0 };
+      await arm(rpc, 'library:retime', settings);
+      await rpc.commands([layer(), trigger('retime', settings), bind('retime')]);
+      let status = await waitUntil<Status>(() => rpc.send('status'), value =>
+        (value.native_video_sessions.find(s => s.source_id === 'retime')?.frames_presented ?? 0) >= 5,
+        'initial retime frames');
+      for (const speed of [1.04, 0.96, 1.0001, 0.75, 1.25]) {
+        const previous = status.native_video_sessions.find(s => s.source_id === 'retime')!;
+        await rpc.commands([trigger('retime', { ...settings, playback_rate: speed * direction,
+          time_seconds: previous.source_time_seconds ?? 0 })]);
+        status = await rpc.send('status');
+        expect(status.native_video_sessions.find(s => s.source_id === 'retime')?.frames_presented,
+          'rate changes must retain the session frame counter').toBeGreaterThanOrEqual(previous.frames_presented);
+        status = await waitUntil<Status>(() => rpc.send('status'), value =>
+          (value.native_video_sessions.find(s => s.source_id === 'retime')?.frames_presented ?? 0) >= previous.frames_presented + 2,
+          'retimed playback continues');
+      }
+      assertHardware(status, baseline, ['retime']);
+    } finally { await rpc.close(); }
+  }, 20000);
+
   it('keeps four simultaneous clips on hardware through repeated prepared triggers', async () => {
     const rpc = core();
     try {

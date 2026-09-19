@@ -1,3 +1,4 @@
+import { launchClockPosition } from '../stores/launchClock';
 // Parameter Modulation Engine
 // Maps shader uniform parameters to modulation sources (audio bands, BPM, LFO/time)
 // Runs each frame, applying modulated values to active VJ clips and mapping layers
@@ -1013,6 +1014,7 @@ class ModulationEngine {
   private applyModulations() {
     const audio = get(audioStore);
     const now = (performance.now() - this.startTime) / 1000;
+    const frameBeat = launchClockPosition().beat;
     // Every ~1s, dump the full parsedCache contents so we can see
     // whether multiple mods are actually present and being iterated.
     // Set window.__modCacheDebug=true in console to enable.
@@ -1113,7 +1115,7 @@ class ModulationEngine {
       // any legacy 'auto' mods loaded from old projects don't
       // double-write on top of the autoEngine's output.
 
-      let signal = this.getSignal(mod.source, audio, now, mod.speed, mod.bpmSync === true, mod);
+      let signal = this.getSignal(mod.source, audio, now, mod.speed, mod.bpmSync === true, mod, frameBeat);
       if (mod.invert) signal = 1 - signal;
 
       // ===== Special: crossfader value =====
@@ -1397,7 +1399,7 @@ class ModulationEngine {
     }
   }
 
-  private getSignal(source: ModSource, audio: AudioState, time: number, speed: number, bpmSync: boolean, mod?: ParamModulation): number {
+  private getSignal(source: ModSource, audio: AudioState, time: number, speed: number, bpmSync: boolean, mod?: ParamModulation, frameBeat?: number): number {
     const visual = getVisualAudioSnapshot();
     // Audio bands/envelopes are unipolar control signals: silence should
     // mean "stay at the user's base value", not "pull below base". Map
@@ -1422,24 +1424,26 @@ class ModulationEngine {
       // ~150ms decay window matches the eye's perception of a flash.
       case 'kick':      return audioUp(visual.kick);
       case 'snare':     return audioUp(visual.snare);
-      // LFOs: bpmSync reinterprets `speed` from "cycles per second" to
-      // "cycles per beat". effectiveRate = speed × (bpm/60). When no BPM
-      // is detected (bpm=0) fall back to the manual speed so the LFO
-      // keeps running instead of freezing.
+      // Synced LFOs use shared continuous beat phase, so tempo changes
+      // preserve phase and Resync aligns every beat division to the downbeat.
       case 'lfo-sine': {
-        const rate = bpmSync && audio.bpm > 0 ? speed * (audio.bpm / 60) : speed;
+        const rate = speed;
+        if (bpmSync) time = frameBeat ?? launchClockPosition().beat;
         return (Math.sin(time * rate * Math.PI * 2) + 1) / 2;
       }
       case 'lfo-saw': {
-        const rate = bpmSync && audio.bpm > 0 ? speed * (audio.bpm / 60) : speed;
+        const rate = speed;
+        if (bpmSync) time = frameBeat ?? launchClockPosition().beat;
         return (time * rate) % 1;
       }
       case 'lfo-square': {
-        const rate = bpmSync && audio.bpm > 0 ? speed * (audio.bpm / 60) : speed;
+        const rate = speed;
+        if (bpmSync) time = frameBeat ?? launchClockPosition().beat;
         return (Math.sin(time * rate * Math.PI * 2) > 0) ? 1 : 0;
       }
       case 'lfo-tri': {
-        const rate = bpmSync && audio.bpm > 0 ? speed * (audio.bpm / 60) : speed;
+        const rate = speed;
+        if (bpmSync) time = frameBeat ?? launchClockPosition().beat;
         const phase = (time * rate) % 1;
         return phase < 0.5 ? phase * 2 : 2 - phase * 2;
       }

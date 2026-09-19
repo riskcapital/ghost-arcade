@@ -11,6 +11,9 @@ export interface MediaItem {
   src: string;
   type: 'video' | 'image';
   thumbnail?: string;
+  durationSeconds?: number;
+  videoWidth?: number;
+  videoHeight?: number;
   videoElement?: HTMLVideoElement;
   texture?: THREE.Texture; // Cached texture for this media item
   broken?: boolean;        // True when src failed to load (404, missing file, decode error)

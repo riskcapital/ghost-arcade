@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { localServerFetch } from '../remote/remotePairing';
   import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
   import { RenderEngine, loadImageTexture, createVideoTexture, getThreeJSIframeContext, createThreeJSIframeContext, getJSAnimationContext, createJSAnimationContext } from '../renderer/engine';
@@ -13,7 +14,10 @@
   import { Stage3DRenderer } from '../stage3d/Stage3DRenderer';
   import { mediaLibrary } from '../stores/media';
   import { phoneVision } from '../stores/phoneVision';
-  import { vjOutputLayers, vjClipLauncher } from '../stores/vjClipLauncher';
+  import { vjOutputLayers, vjTransitionOutputLayers, vjClipLauncher } from '../stores/vjClipLauncher';
+  import { vjClipTransitions, vjClipTransitionKey } from '../stores/vjClipTransitions';
+  import { buildVJClipTransitionLayers, makeVJClipTransitionCarrier, vjClipTransitionInputId, vjClipTransitionSourceId, type VJClipTransitionState } from '../renderer/vjClipTransitionNative';
+  import { createNativeClipTransitionCoordinator } from '../renderer/nativeClipTransitionCoordinator';
   import {
     nativePerformerWorldOverlays,
     type NativePerformerWorldOverlay,
@@ -111,6 +115,10 @@
   } from '$lib/sync/nativeRendererSync';
   import { NATIVE_EFFECT_PASS_LIMIT } from '$lib/renderer/nativeEffectChainPolicy';
   import {
+    captureNativeLayerSourceFrame,
+    getNativeLayerSourceReadiness,
+    getNativeSourceFrameReadiness,
+    releaseNativeSourceFrame,
     attachNativeEditorPreview,
     detachNativeEditorPreview,
     detachNativeRendererOutputWindow,
@@ -848,6 +856,7 @@
     };
     collectFrom(get(layers));
     collectFrom(get(vjOutputLayers));
+    collectFrom(get(vjTransitionOutputLayers).map(entry => entry.layer));
 
     const targetCount = Math.max(TEXTURE_CACHE_MAX, pinned.size);
     if (textureCache.size <= targetCount) return;
@@ -1865,12 +1874,35 @@
             return presetLayers;
           }
           if (vjState.stoppedAll) return stageWrap([]);
-          const vjLayers = get(vjOutputLayers);
+          const incomingLayers = get(vjOutputLayers);
+          const transitions = get(vjClipTransitions);
+          // Capture the already mixed picture before replacing any graph
+          // bindings. Further retriggers share that held scene while copying.
+          if (Array.from(transitions.values()).some(entry => entry.requiresSnapshot)) return null;
+          const retained = get(vjTransitionOutputLayers);
+          const clipFades = new Map<string, VJClipTransitionState>();
+          for (const current of transitions.values()) {
+            const retainedEntry = retained.find(entry => entry.transition.token === current.token);
+            if (!retainedEntry) return null;
+            const outgoing = retainedEntry.layer;
+            const incoming = incomingLayers?.find(layer => layer.id === outgoing.id);
+            // Muted/solo-hidden rows do not block other rows. The coordinator
+            // waits until that row is visible before starting its fade.
+            if (!incoming) continue;
+            if (incoming.source?.id !== current.incomingClipId) return null;
+            clipFades.set(outgoing.id, {
+              outgoing, token: current.token, style: current.style,
+              progress: current.startedAtMs === null ? 0
+                : Math.max(0, Math.min(1, (performance.now() - current.startedAtMs) / (current.duration * 1000))),
+              snapshotSourceId: current.frozenSourceId,
+            });
+          }
+          const vjLayers = buildVJClipTransitionLayers(incomingLayers ?? [], clipFades, true);
           if (!vjLayers?.length) return stageWrap([]);
           const weights = nativeCrossfadeWeights(vjState);
           if (!weights) {
             return stageWrap(appendNativeVjMixCarrier(
-              appendNativePerformerWorldLayers(vjLayers, vjLayers, weights),
+              appendNativePerformerWorldLayers(vjLayers, incomingLayers ?? [], weights),
             ));
           }
           // A/B crossfade with a paired transition shader: both banks stay
@@ -1906,46 +1938,32 @@
             : applyFaderCurve(rawFader, xfadeCurve);
           const stateA = vjState.layerStates ?? [];
           const stateB = vjState.bankBLayerStates ?? [];
+          const visibleRow = (rows: typeof stateA, idx: number) => !!rows[idx]?.activeClip
+            && !rows[idx].mute && (!rows.some(row => row.solo) || rows[idx].solo);
           for (const [idx, slot] of byIndex.entries()) {
             // Derived-store lag guard: the launcher state says both decks
             // hold a clip on this row, but vjOutputLayers has only one bank
             // materialized. Emitting the single-bank weighted version now
             // would flip the scene shape for one tick (visible as a black
             // blink and constant template churn). Signal "stale" instead.
-            const bothActive = !!stateA[idx]?.activeClip && !!stateB[idx]?.activeClip;
+            const bothActive = visibleRow(stateA, idx) && visibleRow(stateB, idx);
             if (bothActive && (!slot.a || !slot.b)) {
               return null;
             }
             if (slot.a && slot.b) {
               output.push({ ...slot.a, opacity: 0, _deckMonitorBank: 'a', _deckMonitorOpacity: slot.a.opacity });
               output.push({ ...slot.b, opacity: 0, _deckMonitorBank: 'b', _deckMonitorOpacity: slot.b.opacity });
-              output.push({
-                ...slot.a,
-                id: `vj-xfade-${idx}`,
-                // Bank opacity is applied inside the native transition pass.
-                // Keep the carrier fully live so either side can fade all the
-                // way to transparent without double-applying its envelope.
-                opacity: 1,
-                // Blend modes are discrete, so hand the carrier to whichever
-                // bank currently owns the larger share of the fader.
-                blendMode: shapedMix < 0.5 ? slot.a.blendMode : slot.b.blendMode,
-                source: {
-                  id: `vj-xfade-src-${idx}`,
-                  type: 'effect',
-                  src: `plugin://vj-crossfade/${idx}`,
-                  name: 'VJ Crossfade',
-                  effectSource: {
-                    effectType: 'vj-crossfade',
-                    vjxfadeLayerA: slot.a.id,
-                    vjxfadeLayerB: slot.b.id,
-                    vjxfadeOpacityA: slot.a.opacity,
-                    vjxfadeOpacityB: slot.b.opacity,
-                    vjxfadeMix: Number(shapedMix.toFixed(4)),
-                    vjxfadeTransition: vjState.crossfaderTransition || 'dissolve',
-                    vjxfadeBlend: vjState.crossfaderBlendMode || 'normal',
-                  },
-                } as NonNullable<Layer['source']>,
-              });
+              const carrier = makeVJClipTransitionCarrier(
+                shapedMix < 0.5 ? slot.a : slot.b,
+                slot.a.id, slot.b.id, shapedMix,
+                vjState.crossfaderTransition || 'dissolve',
+                {
+                  id: `vj-xfade-${idx}`,
+                  opacityA: slot.a.opacity, opacityB: slot.b.opacity,
+                  blendMode: vjState.crossfaderBlendMode || 'normal',
+                },
+              );
+              output.push(carrier);
               continue;
             }
             const single = slot.a ?? slot.b;
@@ -1959,7 +1977,7 @@
             });
           }
           return stageWrap(appendNativeVjMixCarrier(
-            appendNativePerformerWorldLayers(output, vjLayers, weights),
+            appendNativePerformerWorldLayers(output, incomingLayers ?? [], weights),
           ));
         }
         // MAPPING mode. Mid-transition this is BOTH compositions' layer
@@ -2007,6 +2025,18 @@
         triggeredAtMs?: number;
         onVideoHandoff?: () => void;
       };
+      let deferredUrgent = false;
+      let nativeClipSyncDisposed = false;
+      let forceNativeSceneResync = false;
+      const deferredVideoSources = new Set<string>();
+      const deferredHandoffs = new Map<string, () => void>();
+      let deferredTriggerTime: number | undefined;
+      const publishNativeScene = (width: number, height: number, scene: Layer[]) => {
+        if (forceNativeSceneResync) {
+          forceNativeSceneResync = false;
+          nativeRendererSync?.forceSync(width, height, scene);
+        } else nativeRendererSync?.syncNow(width, height, scene);
+      };
       const scheduleNativeLayersSync = (
         urgent = false,
         retry = true,
@@ -2014,6 +2044,13 @@
         triggeredAtMs?: number,
         onVideoHandoff?: () => void,
       ) => {
+        if (nativeClipSyncDisposed) return;
+        if (urgent) {
+          deferredUrgent = true;
+          videoSourceIds.forEach(id => deferredVideoSources.add(id));
+          if (onVideoHandoff) videoSourceIds.forEach(id => deferredHandoffs.set(id, onVideoHandoff));
+          if (triggeredAtMs !== undefined) deferredTriggerTime = triggeredAtMs;
+        }
         const p = get(project);
         const built = nativeEffectiveLayers();
         const effective = built ? withStageFxOpacity(built) : null;
@@ -2045,7 +2082,18 @@
             }));
           }
         }
-        if (urgent) {
+        if (deferredUrgent) {
+          const presentSources = new Set(effective.map(layer => layer.source?.id));
+          videoSourceIds = [...deferredVideoSources].filter(id => presentSources.has(id));
+          const callbacks = [...new Set(videoSourceIds.flatMap(id => {
+            const callback = deferredHandoffs.get(id);
+            return callback ? [callback] : [];
+          }))];
+          triggeredAtMs = deferredTriggerTime;
+          deferredUrgent = false;
+          deferredVideoSources.clear();
+          deferredHandoffs.clear();
+          deferredTriggerTime = undefined;
           const handoff = videoSourceIds.length > 0
             ? nativeRendererSync?.syncUrgentVideoSources(
               p.width || 1920,
@@ -2058,22 +2106,76 @@
             // Keep full graph/effect reconciliation behind the tiny decoder
             // handoff so it cannot delay the first moving video frame.
             void handoff.finally(() => {
-              onVideoHandoff?.();
+              if (nativeClipSyncDisposed) return;
+              callbacks.forEach(callback => callback());
               if (typeof triggeredAtMs === 'number') {
                 console.log(
                   `[NativeRendererSync] vj-trigger handoff acked in ${(performance.now() - triggeredAtMs).toFixed(1)}ms`,
                   videoSourceIds.join(','),
                 );
               }
-              nativeRendererSync?.syncNow(p.width || 1920, p.height || 1080, effective);
+              // A newer trigger may have arrived during decoder handoff.
+              // Rebuild from current state instead of restoring stale inputs.
+              const latest = nativeEffectiveLayers();
+              const currentProject = get(project);
+              if (latest) publishNativeScene(currentProject.width || 1920, currentProject.height || 1080, withStageFxOpacity(latest));
             });
           } else {
-            nativeRendererSync?.syncNow(p.width || 1920, p.height || 1080, effective);
+            callbacks.forEach(callback => callback());
+            publishNativeScene(p.width || 1920, p.height || 1080, effective);
           }
         } else {
-          nativeRendererSync?.scheduleSync(p.width || 1920, p.height || 1080, effective);
+          if (forceNativeSceneResync) publishNativeScene(p.width || 1920, p.height || 1080, effective);
+          else nativeRendererSync?.scheduleSync(p.width || 1920, p.height || 1080, effective);
         }
       };
+      const clipTransitionCoordinator = createNativeClipTransitionCoordinator({
+        read: () => {
+          const state = get(vjClipLauncher);
+          const incoming = get(vjOutputLayers) ?? [];
+          return Array.from(get(vjClipTransitions).values()).map(entry => {
+            const canonicalId = `vj-layer-${entry.layerIndex}${state.crossfaderEnabled ? `-${entry.deck}` : ''}`;
+            const layer = incoming.find(layer => layer.id === canonicalId);
+            return {
+              ...entry, key: vjClipTransitionKey(entry.deck, entry.layerIndex), canonicalId,
+              incomingLayer: layer?.source?.id === entry.incomingClipId ? layer : undefined,
+            };
+          });
+        },
+        capture: async task => {
+          const result = await captureNativeLayerSourceFrame(task.canonicalId, `vj-clip-snapshot-${task.deck}-${task.layerIndex}`);
+          return result?.captured ? result.source_id : null;
+        },
+        ready: async task => {
+          const source = task.incomingLayer?.source;
+          if (!source) return false;
+          const isVideo = source.type === 'video';
+          const [incoming, carrier, video] = await Promise.all([
+            getNativeLayerSourceReadiness(
+              vjClipTransitionInputId(task.canonicalId, 'in', task.token),
+            ),
+            getNativeLayerSourceReadiness(task.canonicalId, vjClipTransitionSourceId(task.canonicalId)),
+            isVideo ? getNativeSourceFrameReadiness(source.id, Math.max(0, Math.round(source._nativePlaybackSeekSeq ?? 0)))
+              : Promise.resolve({ ready: true }),
+          ]);
+          return incoming.ready && carrier.ready && video.ready;
+        },
+        release: releaseNativeSourceFrame,
+        onFrozen: (task, id) => { vjClipTransitions.setFrozenSource(task.deck, task.layerIndex, task.token, id); },
+        onReady: (task, now) => { vjClipTransitions.markReady(task.deck, task.layerIndex, task.token, now); },
+        onComplete: task => { vjClipTransitions.complete(task.deck, task.layerIndex, task.token); },
+        onFrame: () => scheduleNativeLayersSync(),
+        onError: message => showToast(message, 'error'),
+      });
+      const releaseClipSnapshots = vjClipTransitions.setReleaseHandler(clipTransitionCoordinator.retire);
+      const nativeClipTransitionsUnsub = vjClipTransitions.subscribe(() => {
+        clipTransitionCoordinator.refresh();
+        scheduleNativeLayersSync();
+      });
+      const nativeRetainedClipsUnsub = vjTransitionOutputLayers.subscribe(() => {
+        clipTransitionCoordinator.refresh();
+        scheduleNativeLayersSync();
+      });
       nativeProjectUnsub = project.subscribe(($project) => {
         queueNativeLayerInteractions($project.layers || []);
         scheduleNativeLayersSync();
@@ -2182,9 +2284,17 @@
       window.addEventListener('ghost:native-vj-layers-sync', handleVjLayersSyncEvent);
       const previousNativeProjectUnsub = nativeProjectUnsub;
       nativeProjectUnsub = () => {
+        nativeClipSyncDisposed = true;
+        deferredHandoffs.clear();
+        deferredVideoSources.clear();
         previousNativeProjectUnsub();
         nativeVjLayersUnsub();
         nativeVjStateUnsub();
+        nativeClipTransitionsUnsub();
+        nativeRetainedClipsUnsub();
+        vjClipTransitions.clear();
+        releaseClipSnapshots();
+        clipTransitionCoordinator.destroy();
         nativeSequencerUnsub();
         nativeKeyframeUnsub();
         nativeCompositionXfadeUnsub();
@@ -2197,8 +2307,8 @@
       };
 
       const handleNativeOutputSceneResync = () => {
-        const p = get(project);
-        nativeRendererSync?.forceSync(p.width || 1920, p.height || 1080, get(layers));
+        forceNativeSceneResync = true;
+        scheduleNativeLayersSync();
       };
       window.addEventListener('ghost:native-output-scene-resync', handleNativeOutputSceneResync);
       nativeOutputSceneResyncUnsub = () => {
@@ -3608,7 +3718,7 @@
                   invoke('spout_send_image', { data: sendBytes, width: sw, height: sh, senderName })
                     .catch(() => {}).finally(() => { sliceSendInFlight.delete(slice.id); });
                 } else {
-                  fetch(`http://127.0.0.1:9002/spout/send?width=${sw}&height=${sh}&sender=${encodeURIComponent(senderName)}`, {
+                  localServerFetch(`/spout/send?width=${sw}&height=${sh}&sender=${encodeURIComponent(senderName)}`, {
                     method: 'POST',
                     // BodyInit doesn't include the Uint8Array<ArrayBufferLike>
                     // shape that TS 5.7+ produces for our bytes; coerce via
@@ -3636,7 +3746,7 @@
                   .catch(() => {}).finally(() => { spoutSendInFlight = false; });
               } else {
                 // Tauri / browser: HTTP binary POST to sidecar on port 9002
-                fetch(`http://127.0.0.1:9002/spout/send?width=${w}&height=${h}`, {
+                localServerFetch(`/spout/send?width=${w}&height=${h}`, {
                   method: 'POST',
                   body: spoutSendPixels as BodyInit,
                 }).then(resp => {
@@ -4981,7 +5091,7 @@
 
                 httpRecvInFlight = true;
                 try {
-                  const resp = await fetch(`http://127.0.0.1:9002/spout/receive/${encodeURIComponent(senderName)}`);
+                  const resp = await localServerFetch(`/spout/receive/${encodeURIComponent(senderName)}`);
                   if (resp.status === 204 || !resp.ok) {
                     // No frame available yet
                     httpRecvInFlight = false;

@@ -216,6 +216,7 @@ function createOscStore() {
   }
 
   async function stopListener() {
+    midiRouter.releaseInputs('osc:');
     const api = (window as any).ghostOSC;
     if (api) await api.stop();
     update(s => ({ ...s, listening: false }));
@@ -261,7 +262,7 @@ function createOscStore() {
       if (b.address !== msg.address) continue;
       const value = resolveOscBindingValue(b, msg.args);
       if (value === null) continue;
-      midiRouter.dispatchPath(b.path, value);
+      midiRouter.dispatchPath(b.path, value, { inputId: `osc:${b.id}` });
     }
   }
 
@@ -466,6 +467,7 @@ function createOscStore() {
     },
 
     destroy() {
+      midiRouter.releaseInputs('osc:');
       this.stopOutput();
       if (messageUnsub) { messageUnsub(); messageUnsub = null; }
       if (statusUnsub) { statusUnsub(); statusUnsub = null; }

@@ -1,4 +1,14 @@
+import { nativeVideoLaunchTime, nativeVideoAnchorRate } from '../media/nativeTransport';
 import { get } from 'svelte/store';
+import { screenOutputError } from '../stores/screenOutputStatus';
+import { createLayer } from '$lib/types';
+import {
+  buildVJClipTransitionGraph,
+  buildVJClipTransitionUniformUpdate,
+  buildVJClipTransitionPrecompileCommands,
+  buildVJClipTransitionWarmupCommands,
+  type VJClipTransitionBranch,
+} from '$lib/renderer/vjClipTransitionNative';
 import { NATIVE_EFFECT_PASS_LIMIT } from '$lib/renderer/nativeEffectChainPolicy';
 import {
   buildVJCrossfadeGraph,
@@ -4518,6 +4528,8 @@ function mediaItemToNativeLayerSource(item: MediaItem): NativeLayerSource {
     name: item.name,
     type: item.type,
     videoElement: item.videoElement,
+    durationSeconds: item.durationSeconds,
+    videoWidth: item.videoWidth, videoHeight: item.videoHeight,
     texture: item.texture,
     _assetRef: item._assetRef,
   } as NonNullable<Layer['source']>;
@@ -4761,8 +4773,10 @@ type NativeLibraryVideoArmRequest = {
   videoElement?: HTMLVideoElement | null;
   seekGeneration?: number;
   playbackRate?: number;
-  playbackMode?: 'loop' | 'once';
+  playbackMode?: 'loop' | 'once' | 'bounce';
   durationSeconds?: number;
+  videoWidth?: number;
+  videoHeight?: number;
   trimStart?: number;
   trimEnd?: number;
 };
@@ -4791,6 +4805,8 @@ function nativeLibraryArmSignature(item: NativeLibraryVideoArmRequest): string {
     Number(item.playbackRate ?? 1) || 1,
     item.playbackMode ?? 'loop',
     Number.isFinite(duration) && duration > 0 ? duration : null,
+    item.videoWidth ?? null,
+    item.videoHeight ?? null,
     trimStart,
     trimEnd,
     nativeLibraryArmGeneration(item),
@@ -4819,7 +4835,7 @@ function prefetchArmedLibraryVideo(
   const durationSeconds = Number.isFinite(duration) && duration > 0 ? duration : undefined;
   const trimStart = Math.max(0, Math.min(1, Number(item.trimStart ?? 0)));
   const trimEnd = Math.max(trimStart, Math.min(1, Number(item.trimEnd ?? 1)));
-  const trimStartSeconds = durationSeconds ? durationSeconds * trimStart : 0;
+  const trimStartSeconds = nativeVideoLaunchTime(item, durationSeconds);
   const syntheticSrc = {
     id: item.id,
     src: item.src,
@@ -4829,6 +4845,7 @@ function prefetchArmedLibraryVideo(
     playbackRate: Number(item.playbackRate ?? 1) || 1,
     playbackMode: item.playbackMode ?? 'loop',
     durationSeconds,
+    videoWidth: item.videoWidth, videoHeight: item.videoHeight,
     trimStart,
     trimEnd,
     _nativePlaybackTimeSeconds: trimStartSeconds,
@@ -7053,9 +7070,7 @@ export class NativeRendererSync {
     }
     if (!this.nativeVideoPlaybackState.has(this.sourceCacheKey(src.id, src.src))) {
       const duration = Number(src.durationSeconds ?? src.videoElement?.duration);
-      return Number.isFinite(duration) && duration > 0
-        ? duration * Math.max(0, Math.min(1, Number(src.trimStart ?? 0)))
-        : 0;
+      return nativeVideoLaunchTime(src, duration);
     }
     const videoTime = Number(src.videoElement?.currentTime);
     return Number.isFinite(videoTime)
@@ -7072,6 +7087,7 @@ export class NativeRendererSync {
       src.isPlaying !== false ? 'play' : 'pause',
       Number(src.playbackRate ?? element?.playbackRate ?? 1).toFixed(6),
       src.playbackMode ?? (element?.loop ? 'loop' : 'loop'),
+      src._nativePlaybackDirection ?? '',
       Number(src.trimStart ?? 0).toFixed(6),
       Number(src.trimEnd ?? 1).toFixed(6),
       Number.isFinite(duration) && duration > 0 ? duration.toFixed(6) : 'unknown',
@@ -7136,9 +7152,10 @@ export class NativeRendererSync {
       source_type: sourceType,
       time_seconds: Number((explicitTimeSeconds ?? this.nativeVideoPlaybackTimeSeconds(src, now)).toFixed(6)),
       clock_time_seconds: Number((renderClock.time ?? 0).toFixed(6)),
-      playback_rate: Number((Number(src.playbackRate ?? element?.playbackRate) || 1).toFixed(6)),
+      playback_rate: Number(nativeVideoAnchorRate(src).toFixed(6)),
       paused: src.isPlaying === false,
       loop_enabled: playbackMode !== 'once',
+      bounce_enabled: playbackMode === 'bounce',
       trim_start: Math.max(0, Math.min(1, Number(src.trimStart ?? 0))),
       trim_end: Math.max(0, Math.min(1, Number(src.trimEnd ?? 1))),
       duration_seconds: Number.isFinite(duration) && duration > 0 ? Number(duration.toFixed(6)) : undefined,
@@ -7171,8 +7188,8 @@ export class NativeRendererSync {
         }
       }, { once: true });
     }
-    const sourceWidth = Number(element?.videoWidth ?? (src as any).videoWidth ?? (src as any).width ?? 0);
-    const sourceHeight = Number(element?.videoHeight ?? (src as any).videoHeight ?? (src as any).height ?? 0);
+    const sourceWidth = (Number(element?.videoWidth) || Number(src.videoWidth ?? (src as any).width ?? 0));
+    const sourceHeight = (Number(element?.videoHeight) || Number(src.videoHeight ?? (src as any).height ?? 0));
     const hasMetadata = sourceWidth > 0 && sourceHeight > 0;
     if (hasMetadata) {
       this.nativeSourceAspectCache.set(
@@ -7223,8 +7240,9 @@ export class NativeRendererSync {
       decodeHeight: decodeDimensions.height,
       prefetchWindowFrames,
       prefetchFps: NATIVE_VIDEO_PREFETCH_WINDOW_FPS,
-      playbackRate: Number(src.playbackRate ?? 1) || 1,
+      playbackRate: nativeVideoAnchorRate(src),
       loopEnabled: (src.playbackMode ?? 'loop') !== 'once',
+      bounceEnabled: src.playbackMode === 'bounce',
       durationSeconds: Number.isFinite(Number(src.durationSeconds ?? src.videoElement?.duration))
         ? Number(src.durationSeconds ?? src.videoElement?.duration)
         : undefined,
@@ -7248,10 +7266,10 @@ export class NativeRendererSync {
     const seekGeneration = Number.isFinite(rawSeekGeneration)
       ? Math.max(0, Math.floor(rawSeekGeneration))
       : NATIVE_LIBRARY_TRIGGER_SEEK_GENERATION;
-    const trimStartSeconds =
-      Number.isFinite(duration) && duration > 0 ? duration * options.trimStart : 0;
+    const trimStartSeconds = nativeVideoLaunchTime(src, duration);
     return {
       ...options,
+      playbackRate: Number(src.playbackRate) || 1,
       timeSeconds: trimStartSeconds,
       seekGeneration,
       seq: Math.max(1, Math.round(trimStartSeconds * 1000)),
@@ -7546,7 +7564,14 @@ export class NativeRendererSync {
       );
     }
     void submitNativeRendererCommands([{ type: 'set_slice_outputs', slices }])
-      .catch(() => { /* core without slice-output support */ });
+      .then(result => {
+        if (this.lastSliceOutputsSig !== sig || !result) return;
+        const error = result.errors?.find(entry => entry.type === 'set_slice_outputs');
+        screenOutputError.set(error?.message ?? null);
+      })
+      .catch(error => {
+        if (this.lastSliceOutputsSig === sig) screenOutputError.set(String(error?.message ?? error));
+      });
   }
 
   /** Which slice windows are open is main-process state, so poll it. It
@@ -8568,6 +8593,8 @@ export class NativeRendererSync {
         ? stableNativeGraphKey({
             layerA: nativeGraphScaledParams?.vjxfadeLayerA ?? '',
             layerB: nativeGraphScaledParams?.vjxfadeLayerB ?? '',
+            clipTransition: nativeGraphScaledParams?.vjclipTransition === true,
+            frozenSourceA: nativeGraphScaledParams?.vjclipSourceA ?? '',
           })
         : nativeGraphRoute?.kind === 'vj-mix'
           ? stableNativeGraphKey({
@@ -8856,6 +8883,7 @@ export class NativeRendererSync {
         if (pluginRoute) this.nativeGraphRoutes.set(nativeGraphRoute.key, routeState);
         let installPluginGraph = true;
         let crossfadeGraphOptions: Parameters<typeof buildVJCrossfadeGraph>[0] | null = null;
+        let clipTransitionGraphOptions: Parameters<typeof buildVJClipTransitionGraph>[0] | null = null;
         if (nativeGraphRoute.kind === 'vj-crossfade') {
           crossfadeGraphOptions = {
             outputSourceId: graphSource.id,
@@ -8871,14 +8899,42 @@ export class NativeRendererSync {
             time: graphTime,
             frameIndex: graphFrameIndex,
           };
+          if (nativeGraphScaledParams?.vjclipTransition === true) {
+            const branchFor = (id: string, opacity: number, frozen = false): VJClipTransitionBranch => {
+              const input = frozen ? null : layers.find((candidate) => candidate.id === id);
+              if (!input) return {
+                layer: createLayer('__vj-clip-frozen__', 'Frozen transition', 'media'),
+                opacity, premultiplied: true, uvTransform: [0, 0, 1, 1], uvFlags: [0, 1, 0, 0],
+                ready: frozen,
+              };
+              const route = this.nativeGraphRouteForLayer(input);
+              const source = route?.source ?? nativeLayerSource(input);
+              const uv = this.nativeLayerUvState(input, source, width, height);
+              return {
+                layer: input, opacity, premultiplied: source.sourceType.startsWith('gpu:') || !!source.source?.shaderCode,
+                uvTransform: uv.uvTransform, uvFlags: uv.uvFlags,
+              };
+            };
+            const snapshotId = String(nativeGraphScaledParams?.vjclipSourceA ?? '');
+            clipTransitionGraphOptions = {
+              ...crossfadeGraphOptions,
+              sourceAId: snapshotId || crossfadeGraphOptions.sourceAId,
+              branchA: branchFor(String(nativeGraphScaledParams?.vjxfadeLayerA ?? ''), crossfadeGraphOptions.opacityA, !!snapshotId),
+              branchB: branchFor(String(nativeGraphScaledParams?.vjxfadeLayerB ?? ''), crossfadeGraphOptions.opacityB),
+            };
+          }
           const topologySig = [
+            clipTransitionGraphOptions ? 'clip-transition' : 'bank-crossfade',
+            clipTransitionGraphOptions?.sourceAId ?? crossfadeGraphOptions.sourceAId,
             crossfadeGraphOptions.outputSourceId,
             crossfadeGraphOptions.sourceAId,
             crossfadeGraphOptions.sourceBId,
             width,
             height,
           ].join(':');
-          const uniform = buildVJCrossfadeUniformUpdate(crossfadeGraphOptions);
+          const uniform = clipTransitionGraphOptions
+            ? buildVJClipTransitionUniformUpdate(clipTransitionGraphOptions)
+            : buildVJCrossfadeUniformUpdate(crossfadeGraphOptions);
           installPluginGraph = routeState.lastVJCrossfadeTopologySig !== topologySig;
           if (!installPluginGraph && routeState.lastVJCrossfadeUniformSig !== uniform.signature) {
             commands.push({
@@ -8947,7 +9003,9 @@ export class NativeRendererSync {
         }
         const pluginGraph = nativeGraphRoute.kind === 'vj-crossfade'
           ? installPluginGraph && crossfadeGraphOptions
-            ? buildVJCrossfadeGraph(crossfadeGraphOptions)
+            ? clipTransitionGraphOptions
+              ? buildVJClipTransitionGraph(clipTransitionGraphOptions)
+              : buildVJCrossfadeGraph(crossfadeGraphOptions)
             : null
           : nativeGraphRoute.kind === 'vj-mix'
           ? installPluginGraph && vjMixGraphOptions
@@ -9881,6 +9939,7 @@ fn fs_main() -> @location(0) vec4<f32> {
     commands.push(...buildPointCloudFXNativePrecompileCommands());
     commands.push(...buildNativePluginPrecompileCommands());
     commands.push(...buildVJCrossfadePrecompileCommands());
+    commands.push(...buildVJClipTransitionPrecompileCommands());
     commands.push(...buildVJMixPrecompileCommands());
     commands.push(...buildNativeEffectPassPrecompileCommands());
     await submitNativeRendererBatch({
@@ -9965,7 +10024,7 @@ fn fs_main() -> @location(0) vec4<f32> {
     try {
       await submitNativeRendererBatch({
         frame_id: ++this.frameId,
-        commands: buildVJPipelineWarmupCommands() as unknown as RendererCommand[],
+        commands: [...buildVJPipelineWarmupCommands(), ...buildVJClipTransitionWarmupCommands()] as unknown as RendererCommand[],
       });
       console.log('[NativeRendererSync] VJ crossfade + mix pipelines warmed at startup');
     } catch (err) {

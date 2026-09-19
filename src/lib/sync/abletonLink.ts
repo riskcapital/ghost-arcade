@@ -60,13 +60,14 @@ function createAbletonLinkStore() {
   let lastBridgedTempo: number | null = null;
   let audioUnsub: (() => void) | null = null;
   /** Anchor for beat-phase extrapolation between polls. */
-  let anchor: { phase: number; tempo: number; quantum: number; atMs: number } | null = null;
+  let anchor: { beat: number; phase: number; tempo: number; quantum: number; atMs: number } | null = null;
 
   async function poll() {
     try {
       const s: any = await invoke('link_get_state');
       if (!s || !s.enabled) return;
-      anchor = { phase: s.phase, tempo: s.tempo, quantum: s.quantum, atMs: performance.now() };
+      anchor = { beat: Number.isFinite(s.beat) ? s.beat : s.phase,
+        phase: s.phase, tempo: s.tempo, quantum: s.quantum, atMs: performance.now() };
       update(st => ({
         ...st,
         available: true,
@@ -97,7 +98,10 @@ function createAbletonLinkStore() {
     // app → Link: user tempo changes (tap / manual entry) push to the
     // session. Our own inbound writes set lastBridgedTempo first, so
     // they no-op here.
+    let initialSnapshot = true;
     audioUnsub = audioStore.subscribe(a => {
+      // Subscribing emits the existing value immediately; joining is not a user edit.
+      if (initialSnapshot) { initialSnapshot = false; return; }
       const st = get({ subscribe });
       if (!st.enabled || a.manualBPM == null) return;
       const bpm = Math.round(a.manualBPM * 100) / 100;
@@ -109,6 +113,12 @@ function createAbletonLinkStore() {
 
   return {
     subscribe,
+
+    /** Continuous session beats; unlike phaseNow this does not wrap each bar. */
+    beatNow(): number {
+      if (!anchor) return 0;
+      return anchor.beat + (performance.now() - anchor.atMs) / 1000 * (anchor.tempo / 60);
+    },
 
     /** Beat phase 0..quantum extrapolated to "now" from the last poll —
      *  frame-accurate between 4 Hz polls for visual phase consumers. */

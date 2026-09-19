@@ -1,5 +1,5 @@
 export interface VideoTrimPlaybackState {
-  playbackMode?: 'loop' | 'once' | 'timelapse';
+  playbackMode?: 'loop' | 'once' | 'bounce' | 'timelapse';
   trimStart?: number;
   trimEnd?: number;
   isPlaying?: boolean;
@@ -49,7 +49,7 @@ export function getVideoTrimAction(
   ended = false,
 ): VideoTrimAction {
   const bounds = getVideoTrimBounds(duration, state);
-  if (!bounds || state.playbackMode === 'timelapse') return null;
+  if (!bounds || state.playbackMode === 'timelapse' || state.playbackMode === 'bounce') return null;
 
   const mode = state.playbackMode ?? 'loop';
   if (ended || currentTime >= bounds.end - END_EPSILON_SECONDS) {

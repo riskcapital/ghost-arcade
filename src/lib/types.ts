@@ -768,7 +768,7 @@ export interface ImageInputRef {
   name: string;
 }
 
-export type VideoPlaybackMode = 'loop' | 'once' | 'timelapse';
+export type VideoPlaybackMode = 'loop' | 'once' | 'bounce' | 'timelapse';
 
 export interface MediaSource {
   id: string;
@@ -803,7 +803,11 @@ export interface MediaSource {
   audioPlayback?: boolean; // Play this source's audio track (default false)
   audioVolume?: number; // 0-1 per-source level (default 1)
   audioMuted?: boolean; // Per-source mute, independent of audioPlayback (default false)
-  durationSeconds?: number; // Native transport metadata; retained when no browser video is attached
+  // Native metadata retained when no browser video is attached.
+  durationSeconds?: number;
+  videoWidth?: number;
+  videoHeight?: number;
+  _nativePlaybackDirection?: number; // Direction at the native time anchor
   _nativePlaybackTimeSeconds?: number; // Runtime anchor for the native decoder clock
   _nativePlaybackUpdatedAtMs?: number; // performance.now() corresponding to the native time anchor
   _nativePlaybackSeekSeq?: number; // Incremented for every explicit native seek/restart

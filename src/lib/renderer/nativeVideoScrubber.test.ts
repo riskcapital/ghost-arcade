@@ -4,7 +4,7 @@ vi.mock('../api/native-renderer', () => ({
   submitNativeRendererCommands: rpc.submit, getNativeRendererStatus: rpc.status,
 }));
 vi.mock('../stores/errorToast', () => ({ showToast: rpc.toast }));
-import { clampVideoScrubTime, createNativeVideoScrubber, type ScrubSource } from './nativeVideoScrubber';
+import { seekNativeVideoImmediately, clampVideoScrubTime, createNativeVideoScrubber, type ScrubSource } from './nativeVideoScrubber';
 
 describe('direct native video scrubbing', () => {
   let callbacks: Map<number, FrameRequestCallback>;
@@ -28,6 +28,28 @@ describe('direct native video scrubbing', () => {
     vi.stubGlobal('cancelAnimationFrame', (id: number) => callbacks.delete(id));
   });
   afterEach(() => vi.unstubAllGlobals());
+
+  it('submits a cue immediately, before committing state, without a RAF wait', () => {
+    const clip = source('cue-immediate');
+    const commit = vi.fn(() => expect(rpc.submit).toHaveBeenCalledTimes(1));
+    seekNativeVideoImmediately(clip, 3.25, true, commit);
+    expect(callbacks.size).toBe(0);
+    expect(rpc.submit.mock.calls[0][0][0]).toMatchObject({ type: 'set_media_source_playback',
+      source_id: clip.id, time_seconds: 3.25, paused: false, seek_generation: 5 });
+    expect(commit).toHaveBeenCalledWith(expect.objectContaining({ _nativePlaybackTimeSeconds: 3.25, isPlaying: true, _nativePlaybackSeekSeq: 5 }));
+  });
+
+  it('cue jumps and scrubbing share monotonically increasing seek generations', () => {
+    const clip = source('cue-generations');
+    const scrubber = createNativeVideoScrubber();
+    scrubber.seek(clip, 1, vi.fn());
+    scrubber.cancel();
+    seekNativeVideoImmediately(clip, 2, false, vi.fn());
+    seekNativeVideoImmediately(clip, 3, false, vi.fn());
+    flush();
+    expect(rpc.submit.mock.calls.map(call => call[0][0].seek_generation)).toEqual([5, 6]);
+    expect(rpc.submit.mock.calls.map(call => call[0][0].time_seconds)).toEqual([2, 3]);
+  });
 
   it('coalesces drag positions into one paused transport seek, with no preview decode', () => {
     const scrubber = createNativeVideoScrubber();

@@ -49,26 +49,26 @@
 @font-face { font-family: 'Manrope'; font-style: normal; font-weight: 200 800; font-display: swap; src: url('/fonts/manrope.woff2') format('woff2'); }
 
 :root {
-  /* The font FAMILY is owned by the theme tokens (theming/themes/*.ts),
-     which the theme store writes as inline styles on <html> — those beat
-     any stylesheet rule, so setting --ga-font-ui here would do nothing.
-     Size and weight compensation live here instead.
-
-     Genos has a small x-height, narrow letterforms and a light default
-     stroke, so at Geist's 15px/400 it reads both smaller and fainter —
-     which matters in a dark room mid-show. Scale the base up and carry a
-     heavier default weight; it is a variable font (100..900), so this
-     costs nothing in file size or extra requests. */
-  --ga-font-ui-scale: 1.06;
+  /* Satoshi is the shared UI face. Do not apply the old Genos x-height
+     compensation to it: unstyled labels otherwise dwarf adjacent controls. */
+  --ga-font-ui-scale: 1;
   --ga-font-ui-weight: 500;
-  --ga-font-ui-weight-strong: 700;
+  --ga-font-ui-weight-strong: 650;
+  --ga-type-body: 13px;
+  --ga-type-control: 12px;
+  --ga-type-caption: 11px;
+  --ga-type-title: 14px;
+  --ga-selection-bg: #172a5b;
+  --ga-selection-line: #3d59b8;
+  --ga-selection-ink: #e0e8ff;
+  --ga-focus: #7996ff;
 }
 
 body {
   font-family: var(--ga-font-ui, 'Geist', system-ui, sans-serif);
   -webkit-font-smoothing: antialiased;
   font-weight: var(--ga-font-ui-weight, 400);
-  font-size: calc(15px * var(--ga-font-ui-scale, 1));
+  font-size: var(--ga-type-body, 13px);
   /* Studio: neon green glow trail under the knob. Solid (not
      color-mixed with transparent) so the fill reads bright against the
      dark slot. The glow comes from the box-shadow on the fill via the
@@ -2295,7 +2295,7 @@ html.native-primary-presenter .viewport-content {
   .stage3d-root .ghd,
   .projection-sim-root h3
 ) {
-  font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace) !important;
+  font-family: var(--ga-font-ui, 'Satoshi', system-ui, sans-serif) !important;
   font-weight: 600 !important;
   letter-spacing: var(--ga-type-label-tracking) !important;
   text-transform: uppercase !important;
@@ -2324,7 +2324,6 @@ html.native-primary-presenter .viewport-content {
   .success-meta,
   .error-msg,
   .osc-last,
-  .shader-param-name,
   .slider-val
 ) {
   font-family: var(--ga-font-mono, 'Geist Mono', ui-monospace, monospace) !important;
@@ -2439,4 +2438,61 @@ html :is(button, .tab, .menu-item, .pill, .status-pill):is(.active, .on) svg,
 html :is(button, .tab, .menu-item, .pill, .status-pill)[aria-pressed="true"] svg,
 html :is(button, .tab, .menu-item, .pill, .status-pill)[aria-selected="true"] svg {
   color: inherit !important;
+}
+
+/* Performance UI refinements. These rules affect chrome only: never the
+   native preview aperture, artwork text or output surfaces. */
+:is(.effects-info-label, .vt-section-title, .library-section-label, .section-title, .palette-section) {
+  font-size: var(--ga-type-caption) !important;
+  font-family: var(--ga-font-ui, 'Satoshi', system-ui, sans-serif) !important;
+  font-weight: 650 !important;
+  letter-spacing: .06em !important;
+  color: var(--ga-ink-1) !important;
+}
+:is(.shader-param-name, .property-label, .param-label, .setting-label, .vt-tf-label) {
+  font-family: var(--ga-font-ui, 'Satoshi', system-ui, sans-serif) !important;
+  font-size: var(--ga-type-control) !important;
+  letter-spacing: 0 !important;
+}
+:is(.hint, .label-hint, .empty, .no-effects, .vt-audio-note, .vt-direction, .help-text) {
+  font-size: var(--ga-type-caption) !important;
+  line-height: 1.45 !important;
+  color: var(--ga-ink-1) !important;
+}
+:is(.vt-time, .param-value, .param-val, .slider-val, input[type="number"]) {
+  font-variant-numeric: tabular-nums !important;
+}
+:is(.vt-speed, .vt-btn, .vt-toggle-btn, .vt-audio-toggle) {
+  border-radius: var(--ga-r-hard, 5px) !important;
+  font-size: var(--ga-type-control) !important;
+}
+:is(.transition-controls, .autopilot-controls, .clip-launch-options, .video-controls-panel) {
+  border-radius: var(--ga-r-soft, 8px) !important;
+}
+:is(.fx-tab, .left-tab, .tab-btn, .seg-btn)[aria-selected="true"],
+:is(.fx-tab, .left-tab, .tab-btn, .seg-btn).active {
+  background: var(--ga-selection-bg) !important;
+  color: var(--ga-selection-ink) !important;
+  border-color: var(--ga-selection-line) !important;
+}
+:is(button, input, select, textarea):focus-visible {
+  outline: 2px solid var(--ga-focus) !important;
+  outline-offset: 2px;
+}
+html[data-theme="arcade"] input[type="checkbox"] {
+  border-radius: 4px !important;
+}
+html[data-theme="arcade"] input[type="checkbox"]:checked {
+  background: var(--ga-selection-line) !important;
+  border-color: var(--ga-focus) !important;
+}
+html[data-theme="arcade"] input[type="checkbox"]:checked::after {
+  border-color: var(--ga-selection-ink) !important;
+}
+html[data-theme="arcade"] :is(input[type="text"], input[type="number"], input[type="search"], select, textarea) {
+  border-radius: var(--ga-r-hard, 5px) !important;
+}
+html[data-theme="arcade"] :is(input[type="text"], input[type="number"], input[type="search"], select, textarea):focus {
+  border-color: var(--ga-focus) !important;
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--ga-focus) 18%, transparent) !important;
 }

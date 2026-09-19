@@ -17,6 +17,12 @@
   // Mapping mode top bar uses this — no clutter when audio is off.
   export let alwaysShow: boolean = false;
 
+  function commitBpm(event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    const value = Number(input.value);
+    if (input.value.trim() && Number.isFinite(value) && value > 0) audioStore.setManualBPM(value);
+    input.value = $audioStore.bpm > 0 ? String($audioStore.bpm) : '';
+  }
   function handleTap() { audioStore.tapTempo(); }
   function clearTap() { audioStore.clearManualBPM(); }
 </script>
@@ -24,9 +30,13 @@
 {#if alwaysShow || $audioStore.isActive}
   <div class="bpm-tap-widget">
     <button class="bpm-tap-btn" onclick={handleTap} title="Tap to set tempo manually">TAP</button>
-    <span class="bpm-readout" class:confident={$audioStore.bpmConfidence > 0.5}>
-      {$audioStore.bpm > 0 ? $audioStore.bpm : '--'} BPM
-    </span>
+    <label class="bpm-readout" class:confident={$audioStore.bpmConfidence > 0.5}>
+      <input class="bpm-input" type="number" min="30" max="300" step="0.1" placeholder="—"
+        aria-label="Tempo in BPM" title="Type a tempo (30–300 BPM); Enter to apply"
+        value={$audioStore.bpm > 0 ? $audioStore.bpm : ''}
+        onchange={commitBpm} onkeydown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
+      <span>BPM</span>
+    </label>
     {#if $audioStore.manualBPM}
       <button class="bpm-auto-btn" onclick={clearTap} title="Clear manual BPM and resume auto-detection">AUTO</button>
     {/if}
@@ -69,7 +79,11 @@
     color: #160f2e;
   }
 
+  .bpm-input { width: 48px; min-width: 0; height: 26px; box-sizing: border-box; padding: 2px 3px; border: 1px solid var(--ga-line-2, #34363c); border-radius: 4px; background: #090b0f; color: var(--ga-selection-ink, #e0e8ff); font: inherit; text-align: right; appearance: textfield; }
+  .bpm-input::-webkit-inner-spin-button, .bpm-input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  .bpm-input:focus { outline: 1px solid var(--ga-focus, #7996ff); }
   .bpm-readout {
+    display: inline-flex; align-items: center; gap: 4px;
     font-family: var(--ga-font-mono, ui-monospace, monospace);
     font-size: 13px;
     font-weight: 700;

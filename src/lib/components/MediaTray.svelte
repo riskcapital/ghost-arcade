@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { prepareVideoImport } from '../video/videoImport';
   import { onMount, onDestroy } from 'svelte';
   import { get } from 'svelte/store';
   import { project, selectedLayerId, selectedLayer, layers } from '../stores/layers';
@@ -120,6 +121,9 @@
     shaderImageInputs?: Record<string, ImageInputRef | null>;
     jsAnimation?: JSAnimationSource;
     _assetRef?: any;
+    durationSeconds?: number;
+    videoWidth?: number;
+    videoHeight?: number;
   };
 
   type VJTrayAddPayload = VJTrayLiveSourcePayload | VJTrayPluginPayload | VJTrayCreatorPayload | VJTrayMediaPayload;
@@ -1612,20 +1616,19 @@
       video.preload = 'auto';
       video.src = url;
 
-      // `.src=` already initiated the load — don't call `.load()`.
-      await new Promise<void>((resolve) => {
-        const done = () => { video.removeEventListener('loadeddata', done); resolve(); };
-        video.addEventListener('loadeddata', done, { once: true });
-        if (video.readyState >= 2) done();
+      const imported = await prepareVideoImport(video, assetRef).catch(error => {
+        video.pause();
+        showToast(`${file.name}: ${error instanceof Error ? error.message : 'Could not import video.'}`, 'error');
+        return null;
       });
-
+      if (!imported) return;
       const item: MediaItem = {
         id: generateUUID(),
         name: file.name,
         src: url,
         type: 'video',
         videoElement: video,
-        thumbnail: await captureVideoThumbnail(video),
+        ...imported,
         _assetRef: assetRef,
       };
       mediaLibrary.addItem(item);
@@ -1855,6 +1858,8 @@
           // can find the original disk file. Without this the layer ends up
           // with a dead blob: URL by save time and reload comes back empty.
           _assetRef: (item as any)._assetRef,
+          durationSeconds: (item as MediaItem).durationSeconds,
+      videoWidth: (item as MediaItem).videoWidth, videoHeight: (item as MediaItem).videoHeight,
         };
 
         if (item.type === 'video' && item.videoElement) {
@@ -2880,6 +2885,9 @@
       id: item.id,
       src: item.src,
       videoElement: (item as MediaItem).videoElement ?? null,
+      durationSeconds: (item as MediaItem).durationSeconds,
+      videoWidth: (item as MediaItem).videoWidth, videoHeight: (item as MediaItem).videoHeight,
+      assetRef: (item as MediaItem)._assetRef,
     });
   }
 
@@ -3080,6 +3088,8 @@
       src: item.src,
       thumbnail: item.thumbnail,
       _assetRef: (item as any)._assetRef,
+      durationSeconds: (item as MediaItem).durationSeconds,
+      videoWidth: (item as MediaItem).videoWidth, videoHeight: (item as MediaItem).videoHeight,
     };
   }
 

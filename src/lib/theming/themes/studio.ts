@@ -30,9 +30,9 @@ export const STUDIO_THEME: Theme = {
     ink2: '#5e6571',
     ink3: '#3a404a',
 
-    rHard: '2px',
-    rSoft: '7px',
-    rTile: '9px',
+    rHard: '5px',
+    rSoft: '8px',
+    rTile: '7px',
     rPill: '999px',
 
     violet:     '#ff7a66',

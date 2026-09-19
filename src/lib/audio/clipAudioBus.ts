@@ -943,7 +943,9 @@ export class ClipAudioBus {
       return;
     }
 
-    if (transport.paused) {
+    // Browser audio cannot run backwards. Hold it silent until forward
+    // playback resumes; never play an unrelated forward soundtrack.
+    if (transport.paused || transport.playbackRate < 0) {
       if (!el.paused) { try { el.pause(); } catch { /* ignore */ } }
       return;
     }

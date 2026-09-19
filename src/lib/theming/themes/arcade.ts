@@ -27,13 +27,13 @@ export const ARCADE_THEME: Theme = {
     line3: 'rgba(245,236,222,.24)',
 
     ink0: '#f2ede4',
-    ink1: '#998f81',
-    ink2: '#5e564a',
+    ink1: '#ada9a2',
+    ink2: '#89857e',
     ink3: '#39342c',
 
-    rHard: '3px',
-    rSoft: '3px',
-    rTile: '3px',
+    rHard: '5px',
+    rSoft: '8px',
+    rTile: '7px',
     rPill: '3px',
 
     // Ghost chrome is the single "live" accent — a ghostly white core
@@ -69,8 +69,8 @@ export const ARCADE_THEME: Theme = {
     '--bg-tertiary':      '#16140f',
     '--bg-overlay':       'rgba(10,9,8,.88)',
     '--text-primary':     '#f2ede4',
-    '--text-secondary':   '#998f81',
-    '--text-muted':       '#5e564a',
+    '--text-secondary':   '#ada9a2',
+    '--text-muted':       '#89857e',
     '--border-secondary': 'rgba(245,236,222,.13)',
   },
   // Metallic gradient pass — solid accent FILLS pick up the chrome
@@ -87,7 +87,7 @@ html[data-theme="arcade"] .vj-btn {
   color: #16202b !important;
 }
 html[data-theme="arcade"] input[type="checkbox"]:checked {
-  background: var(--ga-accent-gradient) !important;
+  background: var(--ga-selection-line, #3d59b8) !important;
 }
 html[data-theme="arcade"] .toggle input:checked + .toggle-slider::before {
   background: var(--ga-accent-gradient) !important;

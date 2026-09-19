@@ -561,6 +561,18 @@ describe('drift convergence', () => {
 // ═══════════════════════════════════════════════════════════════════════════
 
 describe('sync tick', () => {
+  it('holds browser audio during reverse and resumes on forward transport', () => {
+    const bus = makeBus(new FakeAudioContext());
+    const el = fakeMediaElement({ paused: false, currentTime: .6 });
+    let rate = -1;
+    bus.attachClip('a', el, { provider: () => transport({ timeSeconds:.6, playbackRate:rate }) });
+    bus.tick();
+    expect(el.paused).toBe(true);
+    rate = 1;
+    bus.tick();
+    expect(el.paused).toBe(false);
+  });
+
   it('pauses the element when the authority says paused', () => {
     const ctx = new FakeAudioContext();
     const bus = makeBus(ctx);

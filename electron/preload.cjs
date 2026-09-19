@@ -72,6 +72,8 @@ const ALLOWED_IPC_COMMANDS = new Set([
   // destination path without round-tripping its bytes through base64+IPC.
   // Saves seconds per gigabyte over save_file_binary for large videos/.glb.
   'copy_file_to_project',
+  'project_media_scan', 'project_media_relink', 'project_media_collect',
+  'inspect_video_import',
   'open_project_dialog',
   'download_demo_zip', 'read_project_file',
   // Update installer download + launch
@@ -101,6 +103,7 @@ const ALLOWED_IPC_COMMANDS = new Set([
   // License machine ID
   'license_get_machine_id',
   // Native renderer process bridge
+  'native_renderer_audio_devices', 'native_renderer_audio_status', 'native_renderer_audio_output',
   'native_renderer_start', 'native_renderer_stop', 'native_renderer_submit_batch',
   'native_renderer_submit_commands', 'native_renderer_run_compute_graph',
   'native_renderer_upload_source_gpu_shared_texture',
@@ -123,6 +126,10 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'native_renderer_set_metadata_cache_caps', 'native_renderer_attach_output_window',
   'native_renderer_detach_output_window', 'native_renderer_get_status',
   'native_renderer_get_layers_snapshot',
+  'native_renderer_capture_layer_source_frame',
+  'native_renderer_get_layer_source_readiness',
+  'native_renderer_get_source_frame_readiness',
+  'native_renderer_release_source_frame',
   'native_renderer_get_stats', 'native_renderer_get_snapshot',
 	  'native_renderer_get_frame_snapshot',
 	  'native_renderer_export_frame_snapshot',
@@ -174,7 +181,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
    * Returns a cleanup function that removes the listener.
    */
   on: (channel, callback) => {
-    const allowed = ['director-stream-chunk', 'director-stream-end', 'demo-download-progress', 'update-download-progress', 'spout-osr-status', 'texshare-atlas-status', 'stage3d-fullscreen-changed', 'projection-sim-fullscreen-changed', 'sim-window-moved', 'video-converter-progress', 'video-loop-progress'];
+    const allowed = ['app-before-quit', 'director-stream-chunk', 'director-stream-end', 'demo-download-progress', 'update-download-progress', 'spout-osr-status', 'texshare-atlas-status', 'stage3d-fullscreen-changed', 'projection-sim-fullscreen-changed', 'sim-window-moved', 'video-converter-progress', 'video-loop-progress'];
     if (!allowed.includes(channel)) return () => {};
     const handler = (_event, ...args) => callback(...args);
     ipcRenderer.on(channel, handler);
@@ -276,6 +283,13 @@ contextBridge.exposeInMainWorld('ghostOSC', {
     ipcRenderer.on('osc-status', handler);
     return () => ipcRenderer.removeListener('osc-status', handler);
   },
+});
+
+// LAN remote pairing. info() → { token, wsPort, httpPort }; reset() issues a
+// new token, which disconnects and unpairs every phone, and returns the same.
+contextBridge.exposeInMainWorld('ghostRemote', {
+  info: () => ipcRenderer.invoke('remote_pairing_info'),
+  reset: () => ipcRenderer.invoke('remote_pairing_reset'),
 });
 
 // MCP bridge. The server lives in main (it owns the socket); tools run here

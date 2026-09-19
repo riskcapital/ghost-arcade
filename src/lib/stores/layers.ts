@@ -1,9 +1,12 @@
+import { normalizeCuePoints } from './vjCuePoints';
+import { normalizeAutopilot } from './vjAutopilot';
 import { writable, derived, get } from 'svelte/store';
 import type { Layer, Project, WarpCorners, Point2D, BezierPoint, MaskShape, MediaSource, BlendMode, WarpMode, Effect, EffectType, EffectParams, LayerType, SVGContent, SVGFillMode, SVGColorMode, ColorContent, LightPaintingContent, LightPaintingStroke, CropRegion, LayerShape, LayerShapeType, Composition, VJModeState, VJDeck, Timeline, TimelineClip, TextContent, TextAnimation, SplatContent, Model3DContent, MediaTrayFolder, StagePreset, SVKeyboardPreset, EdgeEffect, EdgeEffectsConfig, PixelFXContent, GPULayerContent, AutoConfig, WLEDController, WLEDEffect, WLEDEffectAutomation, WLEDGroup, StageEffect, SurfaceEffectAutomation, MappingCompositionState } from '../types';
 import { createLayer, createProject, createDefaultCorners, createMeshGrid, createLinesLayer, createSVGLayer, createColorLayer, createLightPaintingLayer, createAdvLightPaintingLayer, createTextLayer, createSplatLayer, createDefaultSVGContent, createDefaultCropRegion, createDefaultLayerShape, createDefaultVJModeState, createDefaultMappingCompositionState, createDefaultTimeline, generateUUID, createDefaultModel3DContent, createDefaultEdgeEffect, convertShapeToCustom, createGroupLayer, createDefaultPixelFXContent, createDefaultGPULayerContent } from '../types';
 import type { GroupConfig } from '../types';
 import { mediaLibrary } from './media';
 import { vjClipLauncher, type VJClip, type VJBlock, type VJLayerState, DEFAULT_VJ_LAYERS, DEFAULT_VJ_COLUMNS } from './vjClipLauncher';
+import { normalizedTransitionDuration, normalizedTransitionStyle } from './vjClipTransitions';
 import { disposeJSAnimationContext } from '../renderer/js-animation';
 import { synthVisionStore } from './synthVision';
 import { modulationStore, type ParamModulation } from '../audio/modulation';
@@ -4564,6 +4567,9 @@ void main() {
           aiPrompt: layer.source.aiPrompt,
           playbackMode: layer.source.playbackMode,
           playbackRate: layer.source.playbackRate,
+          durationSeconds: layer.source.durationSeconds,
+          videoWidth: layer.source.videoWidth,
+          videoHeight: layer.source.videoHeight,
           trimStart: (layer.source as any).trimStart,
           trimEnd: (layer.source as any).trimEnd,
           // Opt-in audio playback for mapping-mode media layers. Absent on
@@ -4770,6 +4776,8 @@ void main() {
       // the library entries restore to the same disk file on reload — without
       // it the saved src is just a dead blob: URL.
       const exportMedia = currentMedia.map(item => ({
+        durationSeconds: item.durationSeconds,
+        videoWidth: item.videoWidth, videoHeight: item.videoHeight,
         id: item.id,
         name: item.name,
         src: item.src,
@@ -4803,15 +4811,21 @@ void main() {
           shaderCode: clip.shaderCode,
           shaderValues: clip.shaderValues,
           playbackMode: clip.playbackMode,
+          transitionDuration: clip.transitionDuration,
+          transitionStyle: clip.transitionStyle,
+          triggerStyle: clip.triggerStyle,
+          faderStart: clip.faderStart,
+          ignoreColumnTrigger: clip.ignoreColumnTrigger,
+          autopilot: normalizeAutopilot(clip.autopilot),
+          cuePoints: normalizeCuePoints(clip.cuePoints),
           playbackRate: clip.playbackRate,
           trimStart: clip.trimStart,
           trimEnd: clip.trimEnd,
           isPlaying: clip.isPlaying,
-          // Opt-in clip audio. Carried so a saved show keeps whichever clips
-          // the user chose to make audible; absent on every pre-existing
-          // project file, which imports back as silent (default false).
+          // Preserve explicit clip audio choices; absent means native audio enabled.
           audioPlayback: clip.audioPlayback,
           audioVolume: clip.audioVolume,
+          audioPan: clip.audioPan,
           audioMuted: clip.audioMuted,
           zoom: clip.zoom,
           fit: clip.fit,
@@ -4840,6 +4854,7 @@ void main() {
           mirrorX: (clip as any).mirrorX,
           playbackSyncBeats: (clip as any).playbackSyncBeats,
           durationSeconds: (clip as any).durationSeconds,
+          videoWidth: (clip as any).videoWidth, videoHeight: (clip as any).videoHeight,
           _assetRef: recoveredAssetRef,
           // Exclude runtime objects: videoElement / iframeElement / synthVisionCanvas
         };
@@ -4847,6 +4862,15 @@ void main() {
 
       // Common per-layer-state serializer (used for both Bank A and Bank B)
       const exportLayerState = (ls: any) => ({
+        faderStart: ls.faderStart === true,
+            audioVolume: Number.isFinite(ls.audioVolume) ? Math.max(0, Math.min(1, ls.audioVolume)) : 1,
+            audioPan: Number.isFinite(ls.audioPan) ? Math.max(-1, Math.min(1, ls.audioPan)) : 0,
+            autopilot: normalizeAutopilot(ls.autopilot),
+            autopilotPaused: ls.autopilotPaused === true,
+        ignoreColumnTrigger: ls.ignoreColumnTrigger === true,
+        locked: ls.locked === true,
+        transitionDuration: normalizedTransitionDuration(ls.transitionDuration),
+        transitionStyle: normalizedTransitionStyle(ls.transitionStyle),
         opacity: ls.opacity,
         blendMode: ls.blendMode,
         solo: ls.solo,
@@ -5465,6 +5489,9 @@ void main() {
             mediaLibrary.addItem({
               id: item.id || generateUUID(),
               name: item.name || 'Media',
+              durationSeconds: Number.isFinite(item.durationSeconds) && item.durationSeconds > 0 ? item.durationSeconds : undefined,
+              videoWidth: Number.isFinite(item.videoWidth) && item.videoWidth > 0 ? item.videoWidth : undefined,
+              videoHeight: Number.isFinite(item.videoHeight) && item.videoHeight > 0 ? item.videoHeight : undefined,
               src: resolvedSrc,
               type: mediaType,
               thumbnail: savedThumbnail || (mediaType === 'image' ? resolvedSrc : item.thumbnail),
@@ -5536,6 +5563,13 @@ void main() {
               shaderCode: clip.shaderCode,
               shaderValues: clip.shaderValues || {},
               playbackMode: clip.playbackMode || 'loop',
+              transitionDuration: typeof clip.transitionDuration === 'number' && Number.isFinite(clip.transitionDuration) ? normalizedTransitionDuration(clip.transitionDuration) : undefined,
+              autopilot: normalizeAutopilot(clip.autopilot),
+              cuePoints: normalizeCuePoints(clip.cuePoints),
+              faderStart: typeof clip.faderStart === 'boolean' ? clip.faderStart : undefined,
+              ignoreColumnTrigger: typeof clip.ignoreColumnTrigger === 'boolean' ? clip.ignoreColumnTrigger : undefined,
+              triggerStyle: ['normal', 'toggle', 'piano'].includes(clip.triggerStyle) ? clip.triggerStyle : 'normal',
+              transitionStyle: clip.transitionStyle == null ? undefined : normalizedTransitionStyle(clip.transitionStyle),
               playbackRate: clip.playbackRate ?? 1,
               trimStart: clip.trimStart ?? 0,
               trimEnd: clip.trimEnd ?? 1,
@@ -5543,8 +5577,9 @@ void main() {
               // Audio stays OFF unless the saved project explicitly says
               // otherwise — `=== true` so a stray truthy value from a
               // hand-edited file can't silently un-mute a show.
-              audioPlayback: clip.audioPlayback === true,
+              audioPlayback: clip.audioPlayback !== false,
               audioVolume: clip.audioVolume ?? 1,
+              audioPan: Number.isFinite(clip.audioPan) ? Math.max(-1, Math.min(1, clip.audioPan)) : 0,
               audioMuted: clip.audioMuted === true,
               zoom: clip.zoom ?? 1,
               fit: clip.fit || 'cover',
@@ -5566,6 +5601,7 @@ void main() {
               mirrorX: clip.mirrorX,
               playbackSyncBeats: clip.playbackSyncBeats ?? null,
               durationSeconds: clip.durationSeconds,
+              videoWidth: clip.videoWidth, videoHeight: clip.videoHeight,
               _assetRef: clip._assetRef,
               // videoElement will be recreated at runtime
             } as any;
@@ -5611,6 +5647,15 @@ void main() {
             mute: ls.mute || false,
             activeColumn: ls.activeColumn ?? null,
             activeClip: importClip(ls.activeClip),
+            faderStart: ls.faderStart === true,
+            audioVolume: Number.isFinite(ls.audioVolume) ? Math.max(0, Math.min(1, ls.audioVolume)) : 1,
+            audioPan: Number.isFinite(ls.audioPan) ? Math.max(-1, Math.min(1, ls.audioPan)) : 0,
+            autopilot: normalizeAutopilot(ls.autopilot),
+            autopilotPaused: ls.autopilotPaused === true,
+            ignoreColumnTrigger: ls.ignoreColumnTrigger === true,
+            locked: ls.locked === true,
+            transitionDuration: normalizedTransitionDuration(ls.transitionDuration),
+            transitionStyle: normalizedTransitionStyle(ls.transitionStyle),
             effects: ls.effects || [],
           }));
 
@@ -5623,6 +5668,8 @@ void main() {
               mute: false,
               activeColumn: null,
               activeClip: null,
+              transitionDuration: 0,
+              transitionStyle: 'dissolve',
               effects: [],
             });
           }
@@ -5645,6 +5692,8 @@ void main() {
             mute: false,
             activeColumn: null,
             activeClip: null,
+            transitionDuration: 0,
+            transitionStyle: 'dissolve',
             effects: [],
           });
 
@@ -5676,6 +5725,15 @@ void main() {
               mute: ls.mute || false,
               activeColumn: ls.activeColumn ?? null,
               activeClip: importClip(ls.activeClip),
+              faderStart: ls.faderStart === true,
+            audioVolume: Number.isFinite(ls.audioVolume) ? Math.max(0, Math.min(1, ls.audioVolume)) : 1,
+            audioPan: Number.isFinite(ls.audioPan) ? Math.max(-1, Math.min(1, ls.audioPan)) : 0,
+            autopilot: normalizeAutopilot(ls.autopilot),
+            autopilotPaused: ls.autopilotPaused === true,
+              ignoreColumnTrigger: ls.ignoreColumnTrigger === true,
+              locked: ls.locked === true,
+              transitionDuration: normalizedTransitionDuration(ls.transitionDuration),
+              transitionStyle: normalizedTransitionStyle(ls.transitionStyle),
               effects: ls.effects || [],
             }));
             // Pad with defaults if the saved array is shorter than current dims
@@ -6124,7 +6182,7 @@ function mediaSourceAudioTransport(source: MediaSource): ClipAudioTransport {
       : 0;
   const anchorMs = Number(source._nativePlaybackUpdatedAtMs);
   const rate = Number(source.playbackRate) || 1;
-  const paused = source.isPlaying === false;
+  const paused = source.isPlaying === false || source.playbackMode === 'bounce';
   if (!paused && Number.isFinite(anchorMs)) {
     time += Math.max(0, performance.now() - anchorMs) / 1000 * rate;
   }

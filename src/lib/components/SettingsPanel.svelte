@@ -54,6 +54,7 @@
   }
   let isCheckingUpdate = false;
   import { midiStore } from '../midi/midiStore';
+  import ControllerLightsSettings from './ControllerLightsSettings.svelte';
   import { midiManager } from '../midi/midiManager';
   import {
     groupMappingsByControl,
@@ -1961,6 +1962,8 @@
                 {/if}
               </div>
             {/if}
+
+            <ControllerLightsSettings />
 
             <!-- MIDI Clock — sync to / from external transport -->
             <h3 style="margin-top: 18px;">MIDI Clock</h3>

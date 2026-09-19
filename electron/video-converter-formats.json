@@ -1,0 +1,8 @@
+[
+  { "id": "h264", "label": "H.264 / MP4", "extension": "mp4", "alpha": false, "preview": true, "description": "Compact files for sharing and general playback." },
+  { "id": "hap", "label": "HAP", "extension": "mov", "alpha": false, "preview": false, "description": "Independent frames for VJ playback; large files." },
+  { "id": "hap_alpha", "label": "HAP Alpha", "extension": "mov", "alpha": true, "preview": false, "description": "HAP with transparency from a source that includes an alpha channel." },
+  { "id": "hap_q", "label": "HAP Q", "extension": "mov", "alpha": false, "preview": false, "description": "Higher-quality HAP color; larger files, without transparency." },
+  { "id": "prores", "label": "ProRes 422 HQ", "extension": "mov", "alpha": false, "preview": false, "description": "High-quality editing and playback with independent frames." },
+  { "id": "prores_alpha", "label": "ProRes 4444 Alpha", "extension": "mov", "alpha": true, "preview": false, "description": "High-quality color and transparency for compositing." }
+]

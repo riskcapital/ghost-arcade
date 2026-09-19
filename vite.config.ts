@@ -77,7 +77,8 @@ export default defineConfig({
     strictPort: true,
     host: true, // Listen on all network interfaces for mobile access
     watch: {
-      ignored: ['**/src-tauri/**'],
+      // Native builds and isolated Electron profiles change continuously during playback.
+      ignored: ['**/src-tauri/**', '**/native-renderer/target/**', '**/scratchpad/**', '**/reports/**', '**/*.log'],
     },
     // Required headers for FFmpeg.wasm (SharedArrayBuffer support)
     // Note: Using 'credentialless' instead of 'require-corp' for COEP

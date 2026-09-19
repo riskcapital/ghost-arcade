@@ -1044,6 +1044,21 @@ describe('native renderer sync native video pump routing', () => {
     expect(sync.canUseNativeVideoDecodePump(nativeSource, 'video')).toBe(false);
   });
 
+  it('carries bounce mode and anchor direction through prepared and active playback', () => {
+    const sync = new NativeRendererSyncCtor() as any;
+    const source = { id:'bounce', src:'/bounce.mp4', type:'video', durationSeconds:10,
+      playbackMode:'bounce', playbackRate:2, _nativePlaybackDirection:-1,
+      _nativePlaybackTimeSeconds:5, _nativePlaybackUpdatedAtMs:1000, _nativePlaybackSeekSeq:3,
+      trimStart:.2, trimEnd:.8, isPlaying:false };
+    expect(sync.nativeVideoPrefetchOptions(source, 1000)).toMatchObject({bounceEnabled:true, playbackRate:-2, timeSeconds:5});
+    expect(sync.nativeVideoPlaybackCommandIfChanged(source,'video',1000,{time:1})).toMatchObject({bounce_enabled:true, playback_rate:-2, time_seconds:5,paused:true});
+    expect(sync.nativeVideoPlaybackCommandIfChanged(source,'video',1016,{time:1.016})).toBeNull();
+    source.isPlaying = true;
+    expect(sync.nativeVideoPlaybackCommandIfChanged(source,'video',1032,{time:1.032})).toMatchObject({bounce_enabled:true,playback_rate:-2,paused:false});
+    expect(sync.libraryVideoPrefetchOptions(source)).toMatchObject({bounceEnabled:true,playbackRate:2,timeSeconds:2});
+    expect(sync.libraryVideoPrefetchOptions({...source,playbackRate:-1})).toMatchObject({bounceEnabled:true,playbackRate:-1,timeSeconds:8});
+  });
+
   it('sends video playback controls once and leaves frame advancement to the core', () => {
     const sync = new NativeRendererSyncCtor() as any;
     const source = {
@@ -2841,6 +2856,30 @@ describe('native image load ownership', () => {
       expect(sync.previewImageElements.size).toBe(0);
     } finally {
       Object.defineProperty(globalThis, 'Image', { configurable: true, writable: true, value: originalImage });
+    }
+  });
+});
+
+describe('screen output rejection feedback', () => {
+  it('shows rejected changes and clears the message after an accepted update', async () => {
+    const api = await import('../api/native-renderer');
+    const { screenOutputError } = await import('../stores/screenOutputStatus');
+    const { get } = await import('svelte/store');
+    const submit = vi.spyOn(api, 'submitNativeRendererCommands');
+    const sync = new NativeRendererSyncCtor() as any;
+    try {
+      submit.mockResolvedValue({ applied: 0, dropped: 1, errors: [{ type: 'set_slice_outputs', message: 'Screen budget exceeded' }] } as any);
+      sync.pushSliceOutputs();
+      await Promise.resolve();
+      expect(get(screenOutputError)).toBe('Screen budget exceeded');
+      submit.mockResolvedValue({ applied: 1, dropped: 0, errors: [] } as any);
+      sync.lastSliceOutputsSig = '';
+      sync.pushSliceOutputs();
+      await Promise.resolve();
+      expect(get(screenOutputError)).toBeNull();
+    } finally {
+      submit.mockRestore();
+      screenOutputError.set(null);
     }
   });
 });

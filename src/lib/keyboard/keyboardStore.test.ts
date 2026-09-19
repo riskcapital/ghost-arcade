@@ -73,6 +73,31 @@ describe('keyboard mappings with a focused native video timeline', () => {
     expect(router.dispatchPath).toHaveBeenCalledTimes(2);
   });
 
+  it('releases a held clip after focus moves into an editable control', () => {
+    keyboardStore.hydrate({ enabled: true, bindings: [{
+      id: 'clip', code: 'KeyA', ctrl: false, shift: false, alt: false, meta: false,
+      path: 'vj:0:trigger:0', mode: 'trigger', min: 0, max: 1, step: 0, value: 1,
+    }] });
+    press('keydown', 'KeyA');
+    vi.stubGlobal('document', { activeElement: { tagName: 'INPUT' } });
+    press('keyup', 'KeyA');
+    expect(router.dispatchPath.mock.calls).toEqual([
+      ['vj:0:trigger:0', 1, { inputId: 'keyboard:clip' }],
+      ['vj:0:trigger:0', 0, { inputId: 'keyboard:clip' }],
+    ]);
+  });
+
+  it('learns cue pads as trigger controls rather than alternating toggles', () => {
+    keyboardStore.startLearn('vj:0:video:cue:0');
+    press('keydown', 'KeyC');
+    expect(get(keyboardStore).bindings[0].mode).toBe('trigger');
+    press('keyup', 'KeyC');
+    press('keydown', 'KeyC');
+    press('keyup', 'KeyC');
+    press('keydown', 'KeyC');
+    expect(router.dispatchPath.mock.calls.map(call => call[1])).toEqual([1, 1]);
+  });
+
   it('still learns an arrow mapping from the focused video timeline', () => {
     keyboardStore.startLearn('vj:layer:0:opacity');
     expect(press('keydown', 'ArrowLeft').defaultPrevented).toBe(true);

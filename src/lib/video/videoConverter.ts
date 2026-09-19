@@ -1,4 +1,7 @@
 import { invoke, isDesktopApp } from '../bridge';
+import formats from '../../../electron/video-converter-formats.json';
+export type VideoConversionFormat = 'h264' | 'hap' | 'hap_alpha' | 'hap_q' | 'prores' | 'prores_alpha';
+export const videoConversionFormats = formats;
 
 export type VideoConversionStage =
   | 'idle'
@@ -40,6 +43,7 @@ export interface VideoConversionResult {
 }
 
 export interface NativeConversionOptions {
+  format?: VideoConversionFormat;
   crf: number;
   preset: string;
 }
@@ -78,9 +82,9 @@ export async function pickImageSequenceFolder(): Promise<PickedSequenceFolder | 
   return invoke<PickedSequenceFolder | null>('video_converter_pick_sequence_folder');
 }
 
-export async function pickVideoOutputPath(defaultPath?: string, defaultName?: string): Promise<string | null> {
+export async function pickVideoOutputPath(defaultPath?: string, defaultName?: string, format: VideoConversionFormat = 'h264'): Promise<string | null> {
   requireDesktop();
-  const result = await invoke<{ path: string } | null>('video_converter_pick_output', { defaultPath, defaultName });
+  const result = await invoke<{ path: string } | null>('video_converter_pick_output', { defaultPath, defaultName, format });
   return result?.path ?? null;
 }
 
@@ -119,6 +123,7 @@ export async function convertWebMToMp4(
       mode: 'webm',
       inputPath,
       outputPath,
+      format: options.format ?? 'h264',
       crf: options.crf,
       preset: options.preset,
     });
@@ -150,6 +155,7 @@ export async function convertImageSequenceToMp4(
       folderPath,
       outputPath,
       fps,
+      format: options.format ?? 'h264',
       crf: options.crf,
       preset: options.preset,
     });

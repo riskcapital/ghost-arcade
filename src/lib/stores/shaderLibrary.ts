@@ -6,6 +6,7 @@
 
 import { writable, derived, get } from 'svelte/store';
 import type { GenerationType } from '../api/ai-client';
+import { localServerFetch } from '../remote/remotePairing';
 
 export interface SavedShader {
   id: string;
@@ -401,7 +402,7 @@ export const p5jsShaders = derived(shaderLibrary, $state =>
  */
 async function saveShaderToServer(shader: SavedShader): Promise<void> {
   try {
-    const response = await fetch('http://localhost:9002/api/shaders', {
+    const response = await localServerFetch('/api/shaders', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(shader),
@@ -421,7 +422,7 @@ async function saveShaderToServer(shader: SavedShader): Promise<void> {
  */
 async function deleteShaderFromServer(shader: SavedShader): Promise<void> {
   try {
-    const response = await fetch(`http://localhost:9002/api/shaders/${shader.id}`, {
+    const response = await localServerFetch(`/api/shaders/${shader.id}`, {
       method: 'DELETE',
     });
 
@@ -440,7 +441,7 @@ export async function loadShadersFromServer(): Promise<void> {
   shaderLibrary.setLoading(true);
 
   try {
-    const response = await fetch('http://localhost:9002/api/shaders');
+    const response = await localServerFetch('/api/shaders');
 
     if (response.ok) {
       const shaders = await response.json();
