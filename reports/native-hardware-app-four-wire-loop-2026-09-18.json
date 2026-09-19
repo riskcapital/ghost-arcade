@@ -1,0 +1,558 @@
+{
+  "armed": [
+    {
+      "source_id": "library:four-wire-1:g1",
+      "state": "prerolled",
+      "buffered_frames": 4,
+      "frames_presented": 0,
+      "waiting_for_memory_bytes": 0,
+      "backend": "videotoolbox",
+      "fallback_reason": ""
+    },
+    {
+      "source_id": "library:four-wire-3:g1",
+      "state": "prerolled",
+      "buffered_frames": 4,
+      "frames_presented": 0,
+      "waiting_for_memory_bytes": 0,
+      "backend": "videotoolbox",
+      "fallback_reason": ""
+    },
+    {
+      "source_id": "library:four-wire-2:g1",
+      "state": "prerolled",
+      "buffered_frames": 4,
+      "frames_presented": 0,
+      "waiting_for_memory_bytes": 0,
+      "backend": "videotoolbox",
+      "fallback_reason": ""
+    },
+    {
+      "source_id": "library:four-wire-0:g1",
+      "state": "prerolled",
+      "buffered_frames": 4,
+      "frames_presented": 0,
+      "waiting_for_memory_bytes": 0,
+      "backend": "videotoolbox",
+      "fallback_reason": ""
+    }
+  ],
+  "acks": [
+    "[NativeRendererSync] vj-trigger handoff acked in 5.8ms"
+  ],
+  "first": [
+    {
+      "source_id": "four-wire-2",
+      "state": "playing",
+      "buffered_frames": 4,
+      "frames_presented": 15,
+      "waiting_for_memory_bytes": 0,
+      "backend": "videotoolbox",
+      "fallback_reason": ""
+    },
+    {
+      "source_id": "four-wire-0",
+      "state": "playing",
+      "buffered_frames": 4,
+      "frames_presented": 15,
+      "waiting_for_memory_bytes": 0,
+      "backend": "videotoolbox",
+      "fallback_reason": ""
+    },
+    {
+      "source_id": "four-wire-3",
+      "state": "playing",
+      "buffered_frames": 4,
+      "frames_presented": 15,
+      "waiting_for_memory_bytes": 0,
+      "backend": "videotoolbox",
+      "fallback_reason": ""
+    },
+    {
+      "source_id": "library:four-wire-3:g2",
+      "state": "prerolled",
+      "buffered_frames": 4,
+      "frames_presented": 0,
+      "waiting_for_memory_bytes": 0,
+      "backend": "videotoolbox",
+      "fallback_reason": ""
+    },
+    {
+      "source_id": "library:four-wire-2:g2",
+      "state": "prerolled",
+      "buffered_frames": 4,
+      "frames_presented": 0,
+      "waiting_for_memory_bytes": 0,
+      "backend": "videotoolbox",
+      "fallback_reason": ""
+    },
+    {
+      "source_id": "four-wire-1",
+      "state": "playing",
+      "buffered_frames": 4,
+      "frames_presented": 15,
+      "waiting_for_memory_bytes": 0,
+      "backend": "videotoolbox",
+      "fallback_reason": ""
+    },
+    {
+      "source_id": "library:four-wire-0:g2",
+      "state": "prerolled",
+      "buffered_frames": 4,
+      "frames_presented": 0,
+      "waiting_for_memory_bytes": 0,
+      "backend": "videotoolbox",
+      "fallback_reason": ""
+    },
+    {
+      "source_id": "library:four-wire-1:g2",
+      "state": "prerolled",
+      "buffered_frames": 4,
+      "frames_presented": 0,
+      "waiting_for_memory_bytes": 0,
+      "backend": "videotoolbox",
+      "fallback_reason": ""
+    }
+  ],
+  "final": [
+    {
+      "source_id": "four-wire-2",
+      "state": "playing",
+      "buffered_frames": 0,
+      "frames_presented": 238,
+      "waiting_for_memory_bytes": 0,
+      "backend": "videotoolbox",
+      "fallback_reason": ""
+    },
+    {
+      "source_id": "four-wire-0",
+      "state": "playing",
+      "buffered_frames": 0,
+      "frames_presented": 238,
+      "waiting_for_memory_bytes": 0,
+      "backend": "videotoolbox",
+      "fallback_reason": ""
+    },
+    {
+      "source_id": "four-wire-3",
+      "state": "playing",
+      "buffered_frames": 0,
+      "frames_presented": 238,
+      "waiting_for_memory_bytes": 0,
+      "backend": "videotoolbox",
+      "fallback_reason": ""
+    },
+    {
+      "source_id": "library:four-wire-3:g2",
+      "state": "prerolled",
+      "buffered_frames": 4,
+      "frames_presented": 0,
+      "waiting_for_memory_bytes": 0,
+      "backend": "videotoolbox",
+      "fallback_reason": ""
+    },
+    {
+      "source_id": "library:four-wire-2:g2",
+      "state": "prerolled",
+      "buffered_frames": 4,
+      "frames_presented": 0,
+      "waiting_for_memory_bytes": 0,
+      "backend": "videotoolbox",
+      "fallback_reason": ""
+    },
+    {
+      "source_id": "four-wire-1",
+      "state": "playing",
+      "buffered_frames": 0,
+      "frames_presented": 238,
+      "waiting_for_memory_bytes": 0,
+      "backend": "videotoolbox",
+      "fallback_reason": ""
+    },
+    {
+      "source_id": "library:four-wire-0:g2",
+      "state": "prerolled",
+      "buffered_frames": 4,
+      "frames_presented": 0,
+      "waiting_for_memory_bytes": 0,
+      "backend": "videotoolbox",
+      "fallback_reason": ""
+    },
+    {
+      "source_id": "library:four-wire-1:g2",
+      "state": "prerolled",
+      "buffered_frames": 4,
+      "frames_presented": 0,
+      "waiting_for_memory_bytes": 0,
+      "backend": "videotoolbox",
+      "fallback_reason": ""
+    }
+  ],
+  "initialUnderflows": 0,
+  "firstUnderflows": 0,
+  "underflows": 20,
+  "error": "none",
+  "layers": 5,
+  "frames": [
+    {
+      "ms": 28,
+      "checksum": "0d88600a10f1625e",
+      "mean": [
+        0.12339449626301137,
+        0.2715337577160494,
+        0.33571663943355123,
+        1
+      ]
+    },
+    {
+      "ms": 194,
+      "checksum": "6d8ca566cfaa9c83",
+      "mean": [
+        0.12204409873517308,
+        0.26665523064935853,
+        0.3298651336692084,
+        1
+      ]
+    },
+    {
+      "ms": 360,
+      "checksum": "3b756dc756d22122",
+      "mean": [
+        0.11929305290789155,
+        0.26224012421326554,
+        0.3226563823832002,
+        1
+      ]
+    },
+    {
+      "ms": 578,
+      "checksum": "a33a3606bddff6fc",
+      "mean": [
+        0.11803605551016703,
+        0.25634187394093444,
+        0.3161661522633745,
+        1
+      ]
+    },
+    {
+      "ms": 801,
+      "checksum": "972551dd0ae9ec0d",
+      "mean": [
+        0.11455595837872186,
+        0.25103505128903414,
+        0.308738083620794,
+        1
+      ]
+    },
+    {
+      "ms": 1005,
+      "checksum": "a0151593d401f5ed",
+      "mean": [
+        0.11507227366255145,
+        0.24778113274630842,
+        0.30607198620188814,
+        1
+      ]
+    },
+    {
+      "ms": 1227,
+      "checksum": "cfc493021b56d110",
+      "mean": [
+        0.11464653118191721,
+        0.24638454671992255,
+        0.3041860513495521,
+        1
+      ]
+    },
+    {
+      "ms": 1418,
+      "checksum": "f3d09924fa1c9116",
+      "mean": [
+        0.1140806535191237,
+        0.24869632239469863,
+        0.3043435476428225,
+        1
+      ]
+    },
+    {
+      "ms": 1650,
+      "checksum": "440cd862cc19768d",
+      "mean": [
+        0.11693832266702978,
+        0.25095556463326074,
+        0.3082297813029533,
+        1
+      ]
+    },
+    {
+      "ms": 1853,
+      "checksum": "7b4078d666bbc5d3",
+      "mean": [
+        0.11755453620491406,
+        0.25531490748305496,
+        0.31135225656620674,
+        1
+      ]
+    },
+    {
+      "ms": 2107,
+      "checksum": "a65f30b3af9243a3",
+      "mean": [
+        0.11907542438271604,
+        0.2566092785493827,
+        0.31457884554284676,
+        1
+      ]
+    },
+    {
+      "ms": 2347,
+      "checksum": "ba10267c78adee72",
+      "mean": [
+        0.11786860778261922,
+        0.25692959104938273,
+        0.31473760704127335,
+        1
+      ]
+    },
+    {
+      "ms": 2562,
+      "checksum": "d20bc60361a17b96",
+      "mean": [
+        0.11673916727184702,
+        0.2557207716805858,
+        0.31532490619704673,
+        1
+      ]
+    },
+    {
+      "ms": 2782,
+      "checksum": "5d9f1ce7a6ab41b9",
+      "mean": [
+        0.11522280849068023,
+        0.2559742987472767,
+        0.31700295025417574,
+        1
+      ]
+    },
+    {
+      "ms": 3005,
+      "checksum": "a4ffbfd592143238",
+      "mean": [
+        0.11622880923202615,
+        0.2608778821713871,
+        0.3236448688271605,
+        1
+      ]
+    },
+    {
+      "ms": 3197,
+      "checksum": "bf88b1f861d99ecf",
+      "mean": [
+        0.12046423951525054,
+        0.2691683290214234,
+        0.33399838492495765,
+        1
+      ]
+    },
+    {
+      "ms": 3416,
+      "checksum": "7ec41fe82ee4d6c9",
+      "mean": [
+        0.1234823741224885,
+        0.27682620922597434,
+        0.3443397123123941,
+        1
+      ]
+    },
+    {
+      "ms": 3627,
+      "checksum": "2066219e92ea24b7",
+      "mean": [
+        0.12618581495098039,
+        0.2848648934882595,
+        0.3549937117979908,
+        1
+      ]
+    },
+    {
+      "ms": 3837,
+      "checksum": "a332f59fca89ad53",
+      "mean": [
+        0.12923810253267976,
+        0.29505293247700315,
+        0.3659307068506415,
+        1
+      ]
+    },
+    {
+      "ms": 4049,
+      "checksum": "8b6cc6ac216be1e3",
+      "mean": [
+        0.133307529956427,
+        0.3024643075980392,
+        0.3762693790093198,
+        1
+      ]
+    },
+    {
+      "ms": 4288,
+      "checksum": "2a299619779c8475",
+      "mean": [
+        0.13622761778322443,
+        0.3103825231481481,
+        0.3849962951615832,
+        1
+      ]
+    },
+    {
+      "ms": 4489,
+      "checksum": "40de3ed4e926c9fa",
+      "mean": [
+        0.1418526310215444,
+        0.32085475482631326,
+        0.3971710920479303,
+        1
+      ]
+    },
+    {
+      "ms": 4707,
+      "checksum": "97e1628412dd28ae",
+      "mean": [
+        0.1461142258986928,
+        0.3252905376270879,
+        0.403991676879085,
+        1
+      ]
+    },
+    {
+      "ms": 4898,
+      "checksum": "7509b823f7bcc8b9",
+      "mean": [
+        0.14944970573105787,
+        0.3309009716926894,
+        0.4098142228727911,
+        1
+      ]
+    },
+    {
+      "ms": 5126,
+      "checksum": "51e136fb8abb21ad",
+      "mean": [
+        0.15249708000484144,
+        0.335457801909344,
+        0.4148313003056161,
+        1
+      ]
+    },
+    {
+      "ms": 5325,
+      "checksum": "7a4e0cdedc6c3a21",
+      "mean": [
+        0.15218506604030502,
+        0.33850575677801986,
+        0.41636493698559673,
+        1
+      ]
+    },
+    {
+      "ms": 5541,
+      "checksum": "67675452073a2eda",
+      "mean": [
+        0.15244839324618736,
+        0.3374371917362624,
+        0.41686078960905354,
+        1
+      ]
+    },
+    {
+      "ms": 5949,
+      "checksum": "423d3977bfb0f9a4",
+      "mean": [
+        0.14963075866920844,
+        0.33412812613471315,
+        0.41265667173505205,
+        1
+      ]
+    },
+    {
+      "ms": 6167,
+      "checksum": "1e51384acab4ca0b",
+      "mean": [
+        0.1466748800986444,
+        0.3306465973735173,
+        0.4077861992404987,
+        1
+      ]
+    },
+    {
+      "ms": 6384,
+      "checksum": "c231d0610c40f529",
+      "mean": [
+        0.14560542430706852,
+        0.3272545445261438,
+        0.40380270364318566,
+        1
+      ]
+    },
+    {
+      "ms": 6634,
+      "checksum": "908e137df65bde1c",
+      "mean": [
+        0.14458470822742678,
+        0.321383691902687,
+        0.39825809050472044,
+        1
+      ]
+    },
+    {
+      "ms": 6869,
+      "checksum": "3b959b882b96ffb1",
+      "mean": [
+        0.14163205980694746,
+        0.31530530780985233,
+        0.3903518631989833,
+        1
+      ]
+    },
+    {
+      "ms": 7104,
+      "checksum": "205ca8275afc4d6b",
+      "mean": [
+        0.1380718500363108,
+        0.30776577629508595,
+        0.38182401733841687,
+        1
+      ]
+    },
+    {
+      "ms": 7322,
+      "checksum": "244eef5e47b1b4dd",
+      "mean": [
+        0.13225088129387558,
+        0.2989027229333091,
+        0.37007468492798357,
+        1
+      ]
+    },
+    {
+      "ms": 8235,
+      "checksum": "14316bab2d9a1cae",
+      "mean": [
+        0.12924742609235051,
+        0.29006617836177684,
+        0.3591128491134108,
+        1
+      ]
+    },
+    {
+      "ms": 8478,
+      "checksum": "79877618c47f27a8",
+      "mean": [
+        0.12185203718833212,
+        0.2673723031650932,
+        0.33027389516763495,
+        1
+      ]
+    }
+  ]
+}

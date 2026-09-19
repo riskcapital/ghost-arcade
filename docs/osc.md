@@ -111,3 +111,26 @@ address for them. Bind those by hand or with Learn.
 - Several bindings can share one address; each one dispatches.
 - Bindings are saved with the project. The port and feedback settings are
   remembered per machine.
+
+### Piano clip triggers
+
+For a clip configured as Piano, send a positive value to its clip trigger binding when pressing the pad and `0` when releasing it. A bang-only sender cannot provide hold/release behavior. Disabling the OSC listener releases its holds; a disconnected UDP sender cannot be detected, so use Stop All if its release packet is lost.
+
+### Video cue pads
+
+Each active video has eight cue slots stored in source seconds. Cue jumps bypass launch quantization, keep the current play/pause state, and clamp into the current trim range without changing the saved timestamp. An empty cue pad saves the current transport position. To set a precise source-frame cue, pause and frame-step first.
+
+Bind an OSC address of your choice to these control paths (deck A is `vj`, deck B is `vj-b`; layer and cue indices are zero-based):
+
+| Control path | Positive value or bang |
+| --- | --- |
+| `vj:0:video:cue:0` | Save empty cue 1, otherwise jump to it |
+| `vj:0:video:cue-set:0` | Replace cue 1 with the current position |
+| `vj:0:video:cue-clear:0` | Clear cue 1 |
+
+Zero releases do nothing. The visible cue pads also support MIDI and keyboard learning. These cue routes can be added as custom bindings; the existing OSC template does not create them automatically.
+
+
+### Tempo bend and phrase resync
+
+Custom bindings may target `vj:tempo:nudge-down`, `vj:tempo:nudge-up`, or `vj:tempo:resync`. Nudge requires a positive press followed by zero on release; each binding owns its hold independently. Resync accepts a positive press or bang and ignores release. These local controls do nothing while Ableton Link has connected peers. A silent UDP sender cannot report release; send zero explicitly or stop/close the mixer to clear holds.

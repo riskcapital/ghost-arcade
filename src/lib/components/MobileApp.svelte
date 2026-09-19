@@ -26,6 +26,18 @@
     type PhoneVisionCaptureProfile,
     type PhoneVisionPointCloudPreset,
   } from '../stores/phoneVision';
+  import {
+    PAIRING_QUERY_PARAM,
+    PAIRING_RESET_CLOSE_CODE,
+    UNPAIRED_MESSAGE,
+    checkPairing,
+    cleanPairingCode,
+    forgetPairingToken,
+    formatPairingCode,
+    recallPairingToken,
+    rememberPairingToken,
+    withPairingToken,
+  } from '../remote/remotePairing';
 
   // Connection state
   let connected = false;
@@ -34,6 +46,19 @@
   let error = '';
   let ws: WebSocket | null = null;
   let connectTimeout: ReturnType<typeof setTimeout> | null = null;
+  // The desktop only lets in devices that present its pairing code. A scanned
+  // QR link fills this in; otherwise it is typed from the Connect Mobile panel.
+  let pairingCode = '';
+
+  // The desktop refused this device's code, or reset its pairing while we
+  // were connected. Retrying with it can only be refused again, so drop it and
+  // say what to do instead.
+  function handleUnpaired() {
+    stopReconnect();
+    forgetPairingToken();
+    pairingCode = '';
+    error = UNPAIRED_MESSAGE;
+  }
 
   // Auto-reconnect state
   let reconnectTimer: ReturnType<typeof setTimeout> | null = null;
@@ -53,6 +78,7 @@
 
   function scheduleReconnect() {
     if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS || !serverUrl) return;
+    if (reconnectTimer) clearTimeout(reconnectTimer);
     const delay = getReconnectDelay();
     console.log(`[Mobile] Reconnecting in ${delay / 1000}s (attempt ${reconnectAttempts + 1}/${MAX_RECONNECT_ATTEMPTS})`);
     error = `Disconnected. Reconnecting in ${Math.round(delay / 1000)}s...`;
@@ -1293,24 +1319,40 @@
 
     // Determine server URL: prefer saved, then derive from page hostname
     const hostname = window.location.hostname;
+    const params = new URLSearchParams(window.location.search);
+    // The desktop's QR link names the WebSocket port when it is not the
+    // default, and a link is fresher than whatever was saved last time.
+    const linkedPort = Number(params.get('ws'));
+    const defaultUrl = `ws://${hostname}:${Number.isInteger(linkedPort) && linkedPort > 0 && linkedPort < 65536 ? linkedPort : 9001}`;
+    const openedFromLink = params.has(PAIRING_QUERY_PARAM) || params.has('ws');
     let savedUrl: string | null = null;
     try { savedUrl = localStorage.getItem('ghost-arcade_server_url'); } catch { /* private browsing */ }
 
-    if (savedUrl) {
+    if (savedUrl && !openedFromLink) {
       // Validate saved URL matches current hostname (IP may have changed via DHCP)
       try {
         const savedHost = new URL(savedUrl).hostname;
         if (savedHost === hostname || savedHost === 'localhost' || savedHost === '127.0.0.1') {
           serverUrl = savedUrl;
         } else {
-          serverUrl = `ws://${hostname}:9001`;
+          serverUrl = defaultUrl;
         }
       } catch {
-        serverUrl = `ws://${hostname}:9001`;
+        serverUrl = defaultUrl;
       }
     } else {
-      serverUrl = `ws://${hostname}:9001`;
+      serverUrl = defaultUrl;
     }
+
+    // A scanned QR link carries the pairing code. Keep it, then take it back
+    // out of the address bar so it is not left on screen or in a bookmark.
+    const linkedCode = cleanPairingCode(params.get(PAIRING_QUERY_PARAM) ?? '');
+    if (linkedCode && rememberPairingToken(linkedCode)) {
+      params.delete(PAIRING_QUERY_PARAM);
+      const query = params.toString();
+      history.replaceState(history.state, '', `${window.location.pathname}${query ? `?${query}` : ''}${window.location.hash}`);
+    }
+    pairingCode = formatPairingCode(linkedCode || recallPairingToken());
 
     updateViewportSize();
     window.addEventListener('resize', updateViewportSize);
@@ -1321,8 +1363,10 @@
     loadShaderManifestFallback();
     void refreshNativeVisionCapabilities();
 
-	    // If running as PWA, auto-connect
-    if (isPWA && serverUrl) {
+	    // If running as PWA, auto-connect. Likewise once this device has a
+    // pairing code: that is what makes a scan, and every visit after it,
+    // connect without another tap.
+    if ((isPWA || pairingCode) && serverUrl) {
       connect();
     }
   });
@@ -1342,6 +1386,13 @@
   }
 
   function connect() {
+    // The server refuses a device without one, and this says why up front.
+    const token = cleanPairingCode(pairingCode);
+    if (!token) {
+      error = 'Enter the pairing code shown in Ghost Arcade, or scan its QR code.';
+      return;
+    }
+
     if (ws) {
       ws.close();
     }
@@ -1363,9 +1414,11 @@
     // Store the current serverUrl so we can reference it in callbacks
     const targetUrl = serverUrl;
     let socket: WebSocket;
+    let opened = false;
+    let timedOut = false;
 
     try {
-      socket = new WebSocket(targetUrl);
+      socket = new WebSocket(withPairingToken(targetUrl, token));
     } catch (err) {
       error = 'Invalid URL format. Use format: ws://IP_ADDRESS:9001';
       connecting = false;
@@ -1376,7 +1429,8 @@
 
     // Timeout if connection doesn't complete within 6 seconds
     connectTimeout = setTimeout(() => {
-      if (!connected && socket.readyState !== WebSocket.OPEN) {
+      if (ws === socket && !connected && socket.readyState !== WebSocket.OPEN) {
+        timedOut = true;
         socket.close();
         connecting = false;
         error = `Could not reach server at ${targetUrl}. Check that the desktop app is running and both devices are on the same network.`;
@@ -1384,11 +1438,14 @@
     }, 6000);
 
     socket.onopen = () => {
+      if (ws !== socket) return;
+      opened = true;
       console.log('[Mobile] WebSocket connected to', targetUrl);
       // Reset reconnect state on successful connection
       stopReconnect();
       // Update state — use setTimeout to guarantee Svelte picks up the change
       setTimeout(() => {
+        if (ws !== socket || socket.readyState !== WebSocket.OPEN) return;
         connected = true;
         connecting = false;
         error = '';
@@ -1400,6 +1457,8 @@
         connectTimeout = null;
       }
       try { localStorage.setItem('ghost-arcade_server_url', targetUrl); } catch { /* private browsing */ }
+      // Accepted, so keep the code: reloads and reconnects need no new scan.
+      rememberPairingToken(token);
       // Request initial sync
       socket.send(JSON.stringify({ type: 'sync_request' }));
       // Retry sync_request after delays in case desktop hasn't sent state yet
@@ -1415,34 +1474,46 @@
       }, 5000);
     };
 
-    socket.onclose = () => {
+    socket.onclose = (event) => {
+      // A socket that a newer attempt (or disconnect) replaced closing late
+      // says nothing about the current one.
+      if (ws !== socket) return;
       console.log('[Mobile] WebSocket closed');
-      const wasConnected = connected;
+      const wasConnected = connected || opened;
       stopPhoneVision(false);
       connected = false;
-      connecting = false;
       if (connectTimeout) {
         clearTimeout(connectTimeout);
         connectTimeout = null;
       }
-      // Auto-reconnect if we were previously connected (not a manual disconnect or first-time failure)
-      if (wasConnected && serverUrl) {
-        scheduleReconnect();
+      if (event.code === PAIRING_RESET_CLOSE_CODE) {
+        // The desktop reset its pairing; this code is refused from now on.
+        connecting = false;
+        handleUnpaired();
+        return;
       }
+      // Auto-reconnect if we were previously connected (not a manual disconnect or first-time failure)
+      if (wasConnected) {
+        connecting = false;
+        if (serverUrl) scheduleReconnect();
+        return;
+      }
+      if (timedOut) {
+        // The timeout already said so. Mid-reconnect, keep trying.
+        if (reconnectAttempts > 0) scheduleReconnect();
+        return;
+      }
+      void explainFailedConnect(socket, targetUrl, token);
     };
 
     socket.onerror = (evt) => {
+      if (ws !== socket) return;
       console.error('[Mobile] WebSocket error:', evt);
-      error = `Connection failed to ${targetUrl}. Check the server URL and ensure both devices are on the same WiFi.`;
-      connected = false;
-      connecting = false;
-      if (connectTimeout) {
-        clearTimeout(connectTimeout);
-        connectTimeout = null;
-      }
+      // onclose always follows, and works out what to tell the user.
     };
 
     socket.onmessage = (e) => {
+      if (ws !== socket) return;
       try {
         const msg = JSON.parse(e.data);
         handleMessage(msg);
@@ -1452,7 +1523,24 @@
     };
   }
 
+  // The socket never opened. A browser reports a refused handshake exactly
+  // like an unreachable host, so ask the server whether the code was the
+  // reason: "scan again" and "check the Wi-Fi" are different fixes.
+  async function explainFailedConnect(socket: WebSocket, targetUrl: string, token: string) {
+    const result = await checkPairing(targetUrl, token);
+    if (ws !== socket) return; // superseded while the check was out
+    connecting = false;
+    if (result === 'unpaired') {
+      handleUnpaired();
+      return;
+    }
+    error = `Connection failed to ${targetUrl}. Check the server URL and ensure both devices are on the same WiFi.`;
+    // Part of reconnecting after a drop: keep at it until the desktop is back.
+    if (reconnectAttempts > 0) scheduleReconnect();
+  }
+
   function disconnect() {
+    stopReconnect();
     stopPhoneVision(true);
     if (ws) {
       ws.close();
@@ -3108,6 +3196,15 @@
           bind:value={serverUrl}
           placeholder="ws://192.168.x.x:9001"
         />
+        <input
+          type="text"
+          bind:value={pairingCode}
+          placeholder="Pairing code"
+          aria-label="Pairing code"
+          autocomplete="off"
+          autocapitalize="characters"
+          spellcheck="false"
+        />
         <button onclick={connect}>
           {connecting ? 'Connecting...' : 'Connect'}
         </button>
@@ -3118,7 +3215,7 @@
       {/if}
 
       <div class="help">
-        <p>Enter the WebSocket URL shown in your desktop app.</p>
+        <p>Enter the WebSocket URL and pairing code shown in your desktop app.</p>
         <p>Make sure both devices are on the same WiFi network.</p>
       </div>
 

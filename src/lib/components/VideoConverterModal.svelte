@@ -9,6 +9,8 @@
     pickVideoOutputPath,
     pickWebMVideo,
     revealVideoOutput,
+    videoConversionFormats,
+    type VideoConversionFormat,
     type PickedSequenceFolder,
     type PickedVideoFile,
     type VideoConversionProgress,
@@ -33,6 +35,9 @@
   let fps = 30;
   let crf = 18;
   let preset = 'veryfast';
+  let format: VideoConversionFormat = 'h264';
+  let resultFormat: VideoConversionFormat = 'h264';
+  $: outputFormat = videoConversionFormats.find(f => f.id === format)!;
   let progress: VideoConversionProgress = { stage: 'idle', progress: 0, message: '' };
 
   $: progressPct = Math.round((progress.progress || 0) * 100);
@@ -41,12 +46,12 @@
     : selectedSequence ? `${selectedSequence.name} (${selectedSequence.frameCount} frames)` : '';
   $: canStart = Boolean(outputPath && (mode === 'webm' ? selectedVideo : selectedSequence));
 
-  function defaultOutputFromPath(filePath: string, fallback = 'converted-video.mp4'): string {
-    if (!filePath) return fallback;
+  function defaultOutputFromPath(filePath: string, fallback = 'converted-video'): string {
+    if (!filePath) return `${fallback}-${format}.${outputFormat.extension}`;
     const dot = filePath.lastIndexOf('.');
     const slash = Math.max(filePath.lastIndexOf('/'), filePath.lastIndexOf('\\'));
-    if (dot > slash) return `${filePath.slice(0, dot)}.mp4`;
-    return `${filePath}.mp4`;
+    if (dot > slash) return `${filePath.slice(0, dot)}-${format}.${outputFormat.extension}`;
+    return `${filePath}-${format}.${outputFormat.extension}`;
   }
 
   function resetResult() {
@@ -81,9 +86,19 @@
     mode = next;
     resetMessages();
     resetResult();
-    outputPath = next === 'webm'
-      ? selectedVideo?.defaultOutputPath ?? (selectedVideo ? defaultOutputFromPath(selectedVideo.path) : '')
-      : selectedSequence?.defaultOutputPath ?? '';
+    refreshOutputPath();
+  }
+
+  function refreshOutputPath() {
+    const source = mode === 'webm' ? selectedVideo?.path : selectedSequence?.defaultOutputPath;
+    outputPath = source ? defaultOutputFromPath(source) : '';
+  }
+
+  function changeFormat(value: VideoConversionFormat) {
+    format = value;
+    // Svelte's reactive declaration flushes later; derive the extension here.
+    outputFormat = videoConversionFormats.find(f => f.id === format)!;
+    refreshOutputPath(); resetMessages(); resetResult();
   }
 
   async function chooseWebM() {
@@ -95,7 +110,7 @@
       if (!picked) return;
       selectedVideo = picked;
       mode = 'webm';
-      outputPath = picked.defaultOutputPath ?? defaultOutputFromPath(picked.path);
+      refreshOutputPath();
     } catch (error: any) {
       errorMessage = error?.message || String(error);
     }
@@ -110,7 +125,7 @@
       if (!picked) return;
       selectedSequence = picked;
       mode = 'sequence';
-      outputPath = picked.defaultOutputPath ?? '';
+      refreshOutputPath();
     } catch (error: any) {
       errorMessage = error?.message || String(error);
     }
@@ -123,7 +138,7 @@
         || (mode === 'webm'
           ? selectedVideo?.defaultOutputPath ?? (selectedVideo ? defaultOutputFromPath(selectedVideo.path) : undefined)
           : selectedSequence?.defaultOutputPath);
-      const picked = await pickVideoOutputPath(defaultPath, activeSourceName || 'converted-video');
+      const picked = await pickVideoOutputPath(defaultPath, activeSourceName || 'converted-video', format);
       if (picked) outputPath = picked;
     } catch (error: any) {
       errorMessage = error?.message || String(error);
@@ -134,7 +149,7 @@
     if (!file || isConverting) return;
     const filePath = window.electronAPI?.getPathForFile?.(file) || '';
     if (!filePath) {
-      errorMessage = 'Drag a file from disk, or use Choose WebM so Ghost can access the source path.';
+      errorMessage = 'Drag a file from disk, or use Choose Video so Ghost can access the source path.';
       return;
     }
     resetMessages();
@@ -188,13 +203,14 @@
     progress = { stage: mode === 'sequence' ? 'scanning' : 'preparing', progress: 0, message: 'Preparing encoder...' };
 
     try {
-      const options = { crf, preset };
+      const options = { crf, preset, format };
       const result = mode === 'sequence'
         ? await convertImageSequenceToMp4(selectedSequence!.path, outputPath, fps, options, (p) => { progress = p; })
         : await convertWebMToMp4(selectedVideo!.path, outputPath, options, (p) => { progress = p; });
+      resultFormat = format;
       resultPath = result.outputPath;
       resultUrl = pathToFileUrl(result.outputPath);
-      noticeMessage = 'MP4 ready.';
+      noticeMessage = `${outputFormat.label} ready.`;
       progress = { stage: 'complete', progress: 1, message: 'Conversion complete.', outputPath: result.outputPath };
     } catch (error: any) {
       if (isVideoConversionCancelled(error)) {
@@ -241,15 +257,15 @@
     <header class="modal-head">
       <div>
         <h2>Video Converter</h2>
-        <p>Native FFmpeg export for WebM files and JPG frame sequences.</p>
+        <p>Prepare videos and image sequences for playback or sharing.</p>
       </div>
       <button class="close-btn" onclick={closeModal} disabled={isConverting} title={isConverting ? 'Conversion is running' : 'Close'}>×</button>
     </header>
 
     <div class="modal-body">
       <div class="mode-tabs">
-        <button class:active={mode === 'webm'} onclick={() => switchMode('webm')} disabled={isConverting}>WebM to MP4</button>
-        <button class:active={mode === 'sequence'} onclick={() => switchMode('sequence')} disabled={isConverting}>JPG Sequence</button>
+        <button class:active={mode === 'webm'} onclick={() => switchMode('webm')} disabled={isConverting}>Video file</button>
+        <button class:active={mode === 'sequence'} onclick={() => switchMode('sequence')} disabled={isConverting}>Image sequence</button>
       </div>
 
       {#if mode === 'webm'}
@@ -262,28 +278,35 @@
           ondragleave={onDragLeave}
           disabled={isConverting}
         >
-          <span class="drop-title">{selectedVideo ? selectedVideo.name : 'Choose WebM Video'}</span>
+          <span class="drop-title">{selectedVideo ? selectedVideo.name : 'Choose Video Video'}</span>
           <span class="drop-meta">
             {#if selectedVideo}
               {formatBytes(selectedVideo.size) || selectedVideo.path}
             {:else}
-              Drop a .webm file here or browse
+              Drop a video file here or browse
             {/if}
           </span>
         </button>
       {:else}
         <button class="drop-zone sequence-zone" onclick={chooseSequence} disabled={isConverting}>
-          <span class="drop-title">{selectedSequence ? selectedSequence.name : 'Choose JPG Sequence Folder'}</span>
+          <span class="drop-title">{selectedSequence ? selectedSequence.name : 'Choose Image Sequence Folder'}</span>
           <span class="drop-meta">
             {#if selectedSequence}
               {selectedSequence.frameCount} frames · {selectedSequence.firstFrame} → {selectedSequence.lastFrame}
             {:else}
-              Select a folder of numbered .jpg/.jpeg frames
+              Select a folder of numbered JPG or PNG frames
             {/if}
           </span>
         </button>
       {/if}
 
+      <label class="field">
+        <span>Output format</span>
+        <select aria-label="Output format" value={format} disabled={isConverting}
+          onchange={(e) => changeFormat(e.currentTarget.value as VideoConversionFormat)}>
+          {#each videoConversionFormats as f}<option value={f.id}>{f.label}</option>{/each}
+        </select>
+      </label>
       <div class="settings-grid">
         {#if mode === 'sequence'}
           <label class="field">
@@ -291,6 +314,7 @@
             <input type="number" min="1" max="240" step="1" bind:value={fps} disabled={isConverting} />
           </label>
         {/if}
+        {#if format === 'h264'}
         <label class="field">
           <span>Quality CRF</span>
           <input type="number" min="10" max="32" step="1" bind:value={crf} disabled={isConverting} />
@@ -306,18 +330,21 @@
             <option value="medium">medium</option>
           </select>
         </label>
+        {/if}
       </div>
 
       <div class="path-row">
         <div>
           <span>Output</span>
-          <strong>{outputPath || 'Choose an MP4 output path'}</strong>
+          <strong>{outputPath || 'Choose an output path'}</strong>
         </div>
         <button class="btn-secondary" onclick={chooseOutput} disabled={isConverting}>Choose</button>
       </div>
 
       <div class="summary">
-        Output: <strong>MP4 / H.264</strong>, <strong>yuv420p</strong>, <strong>+faststart</strong>{mode === 'webm' ? ', with AAC audio when present.' : '.'}
+        <strong>{outputFormat.label}</strong> — {outputFormat.description}
+        {#if format.startsWith('hap')}<br />HAP playback performance in Ghost Arcade still requires qualification.{/if}
+
       </div>
 
       {#if isConverting}
@@ -348,9 +375,9 @@
 
       {#if resultPath}
         <div class="success-box">
-          <strong>MP4 saved</strong>
+          <strong>Video saved</strong>
           <span>{resultPath}</span>
-          {#if resultUrl}
+          {#if resultUrl && resultFormat === 'h264'}
             <video src={resultUrl} controls muted></video>
           {/if}
         </div>

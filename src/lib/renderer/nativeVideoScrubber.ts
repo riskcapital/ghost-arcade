@@ -16,6 +16,7 @@ export interface ScrubSource {
   _nativePlaybackSeekSeq?: number;
 }
 export interface ScrubUpdate {
+  _nativePlaybackDirection?: number;
   isPlaying: boolean;
   _nativePlaybackTimeSeconds: number;
   _nativePlaybackUpdatedAtMs: number;
@@ -54,6 +55,7 @@ function command(source: ScrubSource, time: number, playing: boolean, generation
     source_type: 'video', time_seconds: time, clock_time_seconds: 0,
     playback_rate: Number(source.playbackRate) || 1, paused: !playing,
     loop_enabled: (source.playbackMode ?? 'loop') !== 'once',
+    bounce_enabled: source.playbackMode === 'bounce',
     trim_start: source.trimStart ?? 0, trim_end: source.trimEnd ?? 1,
     duration_seconds: duration > 0 && Number.isFinite(duration) ? duration : undefined,
     seek_generation: generation, frame_step: step,
@@ -62,16 +64,26 @@ function command(source: ScrubSource, time: number, playing: boolean, generation
 }
 
 function commitTime(source: ScrubSource, time: number, playing: boolean, generation: number, commit: Commit) {
-  commit({ isPlaying: playing, _nativePlaybackTimeSeconds: time,
+  commit({ _nativePlaybackDirection: (source.playbackRate ?? 1) < 0 ? -1 : 1, isPlaying: playing, _nativePlaybackTimeSeconds: time,
     _nativePlaybackUpdatedAtMs: performance.now(), _nativePlaybackSeekSeq: generation });
   // Silent clips use the native decoder exclusively. Audible clips still need
   // their audio element to follow the native transport.
   const video = source.videoElement;
-  if (video && !playing) video.pause();
+  if (video && (!playing || source.playbackMode === 'bounce' || (source.playbackRate ?? 1) < 0)) video.pause();
   if (video && source.audioPlayback === true) {
     try { video.currentTime = time; } catch { /* metadata may still be loading */ }
-    if (playing) void video.play().catch(() => {});
+    if (playing && source.playbackMode !== 'bounce' && (source.playbackRate ?? 1) > 0) void video.play().catch(() => {});
   }
+}
+
+/** Discrete cue jumps bypass RAF coalescing and share seek generations with
+ * scrubbing/stepping, so a rapid pad press cannot reuse an older generation. */
+export function seekNativeVideoImmediately(source: ScrubSource, time: number, playing: boolean, commit: Commit): void {
+  const target = clampVideoScrubTime(source, time);
+  const generation = nextGeneration(source);
+  const submitted = submitNativeRendererCommands([command(source, target, playing, generation)]);
+  commitTime(source, target, playing, generation, commit);
+  void submitted.catch(error => showToast(error instanceof Error ? error.message : 'The video cue seek failed.'));
 }
 
 export function createNativeVideoScrubber() {

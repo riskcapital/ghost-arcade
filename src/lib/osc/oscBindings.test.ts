@@ -41,6 +41,8 @@ describe('OSC binding values', () => {
     expect(inferOscBindingMode('vj-b:column:2')).toBe('trigger');
     expect(inferOscBindingMode('vj:stopall')).toBe('trigger');
     expect(inferOscBindingMode('vj:master:opacity')).toBe('continuous');
+    expect(inferOscBindingMode('vj:0:video:cue:0')).toBe('trigger');
+    expect(inferOscBindingMode('vj-b:1:video:cue-clear:7')).toBe('trigger');
   });
 });
 

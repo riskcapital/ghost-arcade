@@ -5,7 +5,7 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { performance } from 'node:perf_hooks';
 import { createInterface } from 'node:readline';
 
@@ -15,6 +15,9 @@ const args = Object.fromEntries(process.argv.slice(2).map(arg => {
 }));
 const durationSeconds = Number(args['duration-seconds'] ?? 8);
 const intervalMs = Number(args['interval-ms'] ?? 125);
+const playbackRate = Number(args.rate ?? 1);
+const bounce = args.bounce === 'true';
+if (![1, -1].includes(playbackRate)) throw new Error('Use --rate=1 or --rate=-1');
 if (!(durationSeconds > 0 && durationSeconds <= 120 && intervalMs >= 16)) {
   throw new Error('Use --duration-seconds in (0, 120] and --interval-ms >= 16');
 }
@@ -42,7 +45,7 @@ const percentile = (values, fraction) => {
 };
 
 try {
-  const uri = args.input ?? join(directory, 'bframes.mp4');
+  const uri = args.input ? resolve(args.input) : join(directory, 'bframes.mp4');
   if (!args.input) execFileSync('ffmpeg', [
     '-hide_banner', '-loglevel', 'error', '-f', 'lavfi', '-i', 'testsrc2=size=256x144:rate=30:duration=2',
     '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-g', '120', '-bf', '3',
@@ -101,8 +104,8 @@ try {
     if (typeof baseline[counter] !== 'number') throw new Error(`Missing required upload telemetry: ${counter}`);
   }
   const playback = (sourceId, generation) => ({
-    source_id: sourceId, uri, source_type: 'video', time_seconds: 0,
-    decode_width: 1024, decode_height: 576, playback_rate: 1, loop_enabled: true,
+    source_id: sourceId, uri, source_type: 'video', time_seconds: playbackRate < 0 ? clipDuration : 0,
+    decode_width: 1024, decode_height: 576, playback_rate: playbackRate, loop_enabled: true, bounce_enabled: bounce,
     duration_seconds: clipDuration, trim_start: 0, trim_end: 1, seek_generation: generation, seq: generation,
   });
   for (let row = 0; row < 4; row++) await send('prefetch_media', playback(`library:row-${row}:g1`, 1));
@@ -177,7 +180,7 @@ try {
     renderer_backend: rendererBackend, pixel_format: finalStatus.native_video_last_pixel_format,
     upload_transport: finalStatus.source_frame_last_upload_transport,
     input: args.input ?? 'generated testsrc2', media: media.streams[0],
-    backend: decoderBackend, simultaneous_clips: 4, requested_interval_ms: intervalMs,
+    backend: decoderBackend, playback_rate: playbackRate, bounce_enabled: bounce, simultaneous_clips: 4, requested_interval_ms: intervalMs,
     requested_duration_seconds: durationSeconds, trigger_batches: samples.length,
     retriggers: samples.length * 4, elapsed_ms: performance.now() - started,
     cadence_ms: { median: percentile(cadence, 0.5), p95: percentile(cadence, 0.95), max: Math.max(0, ...cadence) },

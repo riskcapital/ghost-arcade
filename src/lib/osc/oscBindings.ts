@@ -23,7 +23,9 @@ const TRIGGER_PATHS = new Set([
 export function inferOscBindingMode(path: string): OscBindingMode {
   if (
     TRIGGER_PATHS.has(path)
+    || /^vj:tempo:(nudge-up|nudge-down|resync)$/.test(path)
     || path.includes(':trigger:')
+    || /:video:cue(?:-set|-clear)?:[0-7]$/.test(path)
     || path.startsWith('vj:column:')
     || path.startsWith('vj-b:column:')
     || path.startsWith('vj:block:')

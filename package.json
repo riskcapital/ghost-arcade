@@ -39,6 +39,7 @@
     "native:build:universal": "node scripts/build-native-core.mjs",
     "native:test": "cargo test --manifest-path native-renderer/Cargo.toml",
     "native:check:windows": "cargo check --manifest-path native-renderer/Cargo.toml --target x86_64-pc-windows-msvc",
+    "native:owner-lifetime": "npm run native:build && node scripts/native-owner-lifetime.mjs",
     "native:doctor": "node scripts/native-renderer-doctor.mjs",
     "native:smoke": "npm run native:build && node scripts/native-renderer-smoke.mjs",
     "native:graph-parity": "npm run native:build && node scripts/native-graph-parity-vitest.mjs",

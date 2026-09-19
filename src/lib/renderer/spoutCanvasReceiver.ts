@@ -1,3 +1,4 @@
+import { localServerFetch } from '../remote/remotePairing';
 /**
  * SpoutCanvasReceiver — minimal, self-contained receiver that turns a
  * Spout (Windows) / Syphon (macOS) sender into a raw RGBA frame
@@ -184,7 +185,7 @@ export class SpoutCanvasReceiver {
       if (state.inFlight) { state.rafId = requestAnimationFrame(tick); return; }
       state.inFlight = true;
       try {
-        const resp = await fetch(`http://127.0.0.1:9002/spout/receive/${encodeURIComponent(state.senderName)}`);
+        const resp = await localServerFetch(`/spout/receive/${encodeURIComponent(state.senderName)}`);
         if (resp.ok && resp.status !== 204) {
           const buf = await resp.arrayBuffer();
           this.acceptFrame(state, buf, state.width, state.height);

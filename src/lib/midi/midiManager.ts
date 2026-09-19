@@ -4,12 +4,24 @@ import { midiRouter } from './midiRouter';
 import { audioStore } from '../stores/audio';
 import type { MidiDevice, MidiMessageType } from './midiTypes';
 import { get } from 'svelte/store';
+import { vjClipLauncher } from '../stores/vjClipLauncher';
+import { ControllerLights, pairedOutput } from './controllerLights';
+import { controllerLightsStore } from './controllerLightsStore';
+import { controllerProfiles, controllerCell, detectControllerProfile } from './controllerProfiles';
 
-class MidiManager {
+export class MidiManager {
   private access: MIDIAccess | null = null;
   private activeInput: MIDIInput | null = null;
   private activeClockInput: MIDIInput | null = null;
   private activeOutput: MIDIOutput | null = null;
+  private lights = new ControllerLights(message => controllerLightsStore.status(message));
+  private lightsFrame: number | null = null;
+  private lightsSubscriptions: (() => void)[] = [];
+  private gridHolds = new Map<string, string>();
+  private lightsRequest = 0;
+  private clockSubscription?: () => void;
+  private onWindowClose = () => this.destroy();
+  private quitSubscription?: () => void;
   private boundMessageHandler = this.handleMessage.bind(this);
 
   // MIDI CC sweeps / aftertouch / pitch-bend can emit 500+ msg/sec. The
@@ -84,7 +96,8 @@ class MidiManager {
       // last-bridged value, used to dedupe subscriber notifications.
       // setClockInEnabled(false) resets it so a re-enable at the same
       // tempo doesn't get stale-skipped.
-      midiStore.subscribe(s => {
+      this.clockSubscription?.();
+      this.clockSubscription = midiStore.subscribe(s => {
         if (!s.clockInEnabled) return;
         if (s.clockInRunning && s.clockInBPM != null && s.clockInBPM !== this._clockInBpmCache) {
           this._clockInBpmCache = s.clockInBPM;
@@ -92,6 +105,7 @@ class MidiManager {
         }
       });
 
+      this.startControllerLights();
       console.log('[MIDI] Initialized successfully');
       return true;
     } catch (err) {
@@ -99,6 +113,80 @@ class MidiManager {
       midiStore.setAvailable(false);
       return false;
     }
+  }
+
+  private scheduleControllerLights = () => {
+    if (this.lightsFrame !== null || typeof requestAnimationFrame === 'undefined') return;
+    this.lightsFrame = requestAnimationFrame(now => {
+      this.lightsFrame = null;
+      const settings = get(controllerLightsStore);
+      const state = get(vjClipLauncher);
+      this.lights.render(state, get(midiStore), settings, [...(this.access?.outputs.values() ?? [])], this.access?.sysexEnabled === true, now);
+      if (settings.enabled && state.isOpen && state.pendingTriggers.length) this.scheduleControllerLights();
+    });
+  };
+
+  private startControllerLights() {
+    if (this.lightsSubscriptions.length || (typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('mode'))) return;
+    if (typeof window !== 'undefined') window.addEventListener('beforeunload', this.onWindowClose);
+    if (typeof window !== 'undefined') this.quitSubscription = (window as any).electronAPI?.on?.('app-before-quit', this.onWindowClose);
+    this.lightsSubscriptions = [midiStore.subscribe(this.scheduleControllerLights),
+      vjClipLauncher.subscribe(this.scheduleControllerLights), controllerLightsStore.subscribe(this.scheduleControllerLights)];
+  }
+
+  async enableControllerLights(enabled: boolean) {
+    const request = ++this.lightsRequest;
+    controllerLightsStore.configure({ enabled: false });
+    controllerLightsStore.status(enabled ? 'Connecting controller…' : 'Off');
+    this.lights.clear();
+    midiRouter.releaseInputs('midi:grid:'); this.gridHolds.clear();
+    if (!enabled) return;
+    try {
+      // Device initialization requires SysEx. Ask only when the performer
+      // explicitly enables controller lights; ordinary MIDI remains unchanged.
+      if (!this.access?.sysexEnabled) {
+        const access = await navigator.requestMIDIAccess({ sysex: true });
+        if (request !== this.lightsRequest) return;
+        if (this.access) this.access.onstatechange = null;
+        this.detachInput(); this.detachClockInput();
+        this.access = access;
+        this.access.onstatechange = () => this.refreshDevices();
+        this.refreshDevices();
+      }
+      if (request !== this.lightsRequest) return;
+      controllerLightsStore.configure({ enabled: true });
+      this.startControllerLights();
+    } catch (error) {
+      controllerLightsStore.status(`Controller setup unavailable: ${error instanceof Error ? error.message : 'MIDI permission denied'}`);
+    }
+  }
+
+  private routeControllerGrid(channel: number, type: MidiMessageType, note: number, value: number): boolean {
+    if (type !== 'note') return false;
+    const input = `midi:grid:${channel}:${note}`;
+    const held = this.gridHolds.get(input);
+    if (held && value === 0) {
+      midiRouter.dispatchPath(held, 0, { inputId: input }); this.gridHolds.delete(input); return true;
+    }
+    const settings = get(controllerLightsStore), midi = get(midiStore), state = get(vjClipLauncher);
+    if (!settings.enabled || !settings.gridInput || !state.isOpen || !state.isLive || midi.editMode || midi.identifyMode || midi.learn.active) return false;
+    if (midi.mappings.some(m => m.type === type && m.number === note && (m.channel === -1 || m.channel === channel))) return false;
+    const outputs = [...(this.access?.outputs.values() ?? [])];
+    const output = settings.outputId ? outputs.find(o => o.id === settings.outputId)
+      : pairedOutput(midi.devices.find(d => d.id === midi.selectedDeviceId), outputs);
+    if (!output || output.state !== 'connected') return false;
+    const profile = controllerProfiles[settings.profile === 'auto' ? detectControllerProfile(output.name ?? '') : settings.profile];
+    const cell = controllerCell(profile, note);
+    if (!cell || channel !== 0) return false;
+    const deck = settings.deck === 'selected' ? state.selectedDeck : settings.deck;
+    if (deck === 'B' && !state.crossfaderEnabled) return true;
+    const path = `${deck === 'A' ? 'vj' : 'vj-b'}:${cell[0] + settings.rowPage * profile.rows}:trigger:${cell[1] + settings.columnPage * profile.columns}`;
+    if (value > 0) {
+      if (held) midiRouter.dispatchPath(held, 0, { inputId: input });
+      this.gridHolds.set(input, path);
+    }
+    midiRouter.dispatchPath(path, value > 0 ? 1 : 0, { inputId: input });
+    return true;
   }
 
   private requestMIDIAccessWithRetry(): Promise<MIDIAccess> {
@@ -245,6 +333,8 @@ class MidiManager {
   }
 
   private detachInput() {
+    midiRouter.releaseInputs('midi:');
+    this.gridHolds.clear();
     if (this.activeInput) {
       if (this.activeInput !== this.activeClockInput) {
         this.activeInput.onmidimessage = null;
@@ -333,6 +423,9 @@ class MidiManager {
       this._lastMsgTs = nowMs;
       midiStore.setLastMessage({ channel, type, number, value });
     }
+
+    // A held pad must release its original deck/page even after navigation.
+    if (this.routeControllerGrid(channel, type, number, value)) return;
 
     // Check if we're in learn mode
     if (state.learn.active && state.learn.targetPath) {
@@ -510,6 +603,15 @@ class MidiManager {
   }
 
   destroy() {
+    this.quitSubscription?.(); this.quitSubscription = undefined;
+    if (typeof window !== 'undefined') window.removeEventListener('beforeunload', this.onWindowClose);
+    this.clockSubscription?.(); this.clockSubscription = undefined;
+    this.detachClockInput();
+    ++this.lightsRequest;
+    this.lightsSubscriptions.splice(0).forEach(unsubscribe => unsubscribe());
+    if (this.lightsFrame !== null) cancelAnimationFrame(this.lightsFrame);
+    this.lightsFrame = null;
+    this.lights.clear();
     this.detachInput();
     this.stopClockOut();
     this.disarmClockStaleTimer();

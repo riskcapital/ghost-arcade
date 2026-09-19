@@ -445,7 +445,7 @@ function naturalCompare(a, b) {
 function listImageSequenceFrames(folderPath) {
   const folder = assertAbsolutePath(folderPath, 'sequence folder');
   if (!fs.existsSync(folder) || !fs.statSync(folder).isDirectory()) {
-    throw new Error('Choose a folder that contains JPG frames.');
+    throw new Error('Choose a folder that contains image frames.');
   }
 
   const exts = new Set(['.jpg', '.jpeg', '.png']);
@@ -1234,23 +1234,10 @@ async function cancelMp4FrameEncoderJob(jobIdInput) {
   return { success: true };
 }
 
-function quoteFfconcatPath(filePath) {
-  const normalized = path.resolve(filePath).replace(/\\/g, '/');
-  return `'${normalized.replace(/'/g, "'\\''")}'`;
-}
-
 function makeConcatList(frames, fps) {
   const tmpDir = fs.mkdtempSync(path.join(app.getPath('temp'), 'ghost-arcade-seq-'));
   const listPath = path.join(tmpDir, 'frames.ffconcat');
-  const duration = (1 / Math.max(1, fps)).toFixed(8);
-  const lines = ['ffconcat version 1.0'];
-  for (const frame of frames) {
-    lines.push(`file ${quoteFfconcatPath(frame.path)}`);
-    lines.push(`duration ${duration}`);
-  }
-  // ffconcat uses the last file's duration only when the file appears twice.
-  lines.push(`file ${quoteFfconcatPath(frames[frames.length - 1].path)}`);
-  fs.writeFileSync(listPath, `${lines.join('\n')}\n`, 'utf8');
+  fs.writeFileSync(listPath, sequenceConcatText(frames.map(frame => frame.path), fps), 'utf8');
   return { tmpDir, listPath };
 }
 
@@ -1674,6 +1661,8 @@ function publishVideoConverterProgress(sender, payload) {
   });
 }
 
+const { conversionFormat, conversionOutputArgs, stageConversionOutput, sequenceConcatText, probeConversionInput } = require('./video-converter-options.cjs');
+
 function spawnFfmpegConversion({
   sender,
   jobId,
@@ -1683,20 +1672,24 @@ function spawnFfmpegConversion({
   startMessage,
   completeMessage,
   cleanup,
+  finalize,
   progressMode = 'time',
   totalFrames = 0,
+  reservedJob,
 }) {
-  if (activeVideoConverterJob) {
+  if (activeVideoConverterJob && activeVideoConverterJob !== reservedJob) {
     throw new Error('A video conversion is already running.');
   }
 
   return new Promise((resolve, reject) => {
     const ffmpegPath = resolveFfmpegPath();
     const child = spawn(ffmpegPath, args, { windowsHide: true });
-    const job = { id: jobId, process: child, cancelled: false, cleanup };
+    const job = reservedJob || { id: jobId, cancelled: false, cleanup };
+    job.process = child;
     activeVideoConverterJob = job;
 
     let stderr = '';
+    let pendingLine = '';
     let settled = false;
     let bestProgress = 0;
     let detectedDuration = durationSec > 0 ? durationSec : 0;
@@ -1725,17 +1718,14 @@ function spawnFfmpegConversion({
     const sendPercent = (rawProgress) => {
       const bounded = clampNumber(rawProgress, 0, 0.99, 0);
       const pct = Math.max(1, Math.min(99, Math.floor(bounded * 100)));
-      send(bounded, `Encoding MP4 (${pct}%)...`);
+      send(bounded, `Encoding video (${pct}%)...`);
     };
 
     publishVideoConverterProgress(sender, { jobId, stage: 'converting', progress: 0.01, message: startMessage, outputPath });
 
     const heartbeat = setInterval(() => {
       const elapsed = (Date.now() - startedAt) / 1000;
-      const drift = detectedDuration > 0
-        ? Math.min(0.96, elapsed / Math.max(1, detectedDuration))
-        : Math.min(0.88, 0.04 + (1 - Math.exp(-elapsed / 90)) * 0.84);
-      send(drift, `Encoding MP4 (${Math.floor(elapsed)}s elapsed)...`);
+      send(bestProgress, `Encoding video (${Math.floor(elapsed)}s elapsed)...`);
     }, 1000);
     heartbeat.unref?.();
 
@@ -1745,7 +1735,10 @@ function spawnFfmpegConversion({
       stderr += text;
       if (stderr.length > 12_000) stderr = stderr.slice(-12_000);
 
-      for (const rawLine of text.split(/\r?\n/)) {
+      pendingLine += text;
+      const lines = pendingLine.split(/\r?\n/);
+      pendingLine = (lines.pop() ?? '').slice(-16000);
+      for (const rawLine of lines) {
         const line = rawLine.trim();
         if (!line) continue;
         const duration = parseDurationLine(line);
@@ -1761,11 +1754,11 @@ function spawnFfmpegConversion({
               sendPercent(frame / totalFrames);
             }
           } else if (key === 'progress' && value === 'end') {
-            send(0.99, 'Finalizing MP4...');
+            send(0.99, 'Finalizing video...');
           } else if (progressMode !== 'frames' && (key === 'out_time_ms' || key === 'out_time_us')) {
             const raw = Number(value);
             if (Number.isFinite(raw) && detectedDuration > 0) {
-              const seconds = raw > 10_000 ? raw / 1_000_000 : raw / 1000;
+              const seconds = raw / 1_000_000;
               sendPercent(seconds / detectedDuration);
             }
           } else if (progressMode !== 'frames' && key === 'out_time') {
@@ -1808,6 +1801,7 @@ function spawnFfmpegConversion({
         settle(reject, new Error(`FFmpeg exited with code ${code}${signal ? ` (${signal})` : ''}.${tail ? `\n${tail}` : ''}`));
         return;
       }
+      try { finalize?.(); } catch (err) { settle(reject, err); return; }
       publishVideoConverterProgress(sender, { jobId, stage: 'complete', progress: 1, message: completeMessage, outputPath });
       settle(resolve, { success: true, outputPath, ffmpegPath });
     });
@@ -1982,6 +1976,77 @@ let atlasSendFailCount = 0;
 // Sidecar: Rust WS/HTTP/Spout backend
 // ============================================================
 
+// The LAN remote's ports. Development builds can move them with WS_PORT /
+// HTTP_PORT so a second copy runs beside another without the stale-port sweep
+// in startNodeServer() killing the other copy's server. Packaged builds ignore
+// the variables: WS_PORT is a generic name, and a stray one would point that
+// sweep at somebody else's process.
+function remotePort(value, fallback) {
+  const port = Number(value);
+  return !app.isPackaged && Number.isInteger(port) && port > 0 && port < 65536 ? port : fallback;
+}
+const REMOTE_WS_PORT = remotePort(process.env.WS_PORT, 9001);
+const REMOTE_HTTP_PORT = remotePort(process.env.HTTP_PORT, 9002);
+
+// ─── LAN remote pairing ─────────────────────────────────────────────
+// The token a phone must present to the remote's WebSocket and HTTP servers
+// (server/pairing.cjs). One per install, kept in userData beside the rest of
+// the app's state, so a paired phone still connects after a restart.
+//
+// Deliberately not the MCP token. That one is issued fresh each time MCP is
+// switched on, and Settings promises that toggling it revokes a client; a
+// token that persists and travels over venue Wi-Fi in a QR code cannot keep
+// that promise. The two share the checking code instead.
+const {
+  generatePairingToken,
+  loadOrCreatePairingToken,
+  writePairingToken,
+} = require('../server/pairing.cjs');
+
+let remotePairingToken = null;
+
+function remotePairingFile() {
+  return path.join(app.getPath('userData'), 'remote-pairing.json');
+}
+
+function getRemotePairingToken() {
+  if (remotePairingToken) return remotePairingToken;
+  try {
+    remotePairingToken = loadOrCreatePairingToken(remotePairingFile());
+  } catch (err) {
+    // An unwritable profile should not leave the remote dead. A token for this
+    // session still pairs; phones just scan again after a restart.
+    console.error('[Main] Could not save the remote pairing token:', err?.message || err);
+    remotePairingToken = generatePairingToken();
+  }
+  return remotePairingToken;
+}
+
+function remotePairingInfo() {
+  return { token: getRemotePairingToken(), wsPort: REMOTE_WS_PORT, httpPort: REMOTE_HTTP_PORT };
+}
+
+/** New token, which unpairs every phone, the ones connected right now too. */
+async function resetRemotePairing() {
+  const token = generatePairingToken();
+  // Do not claim revocation if the old on-disk token would return at restart.
+  writePairingToken(remotePairingFile(), token);
+  remotePairingToken = token;
+  if (embeddedServerModule?.setPairingToken) {
+    embeddedServerModule.setPairingToken(token);
+  } else if (sidecarProcess) {
+    // The fallback child got its token in its environment at spawn, so a new
+    // token means a new child. Killing the old one drops its connections.
+    const oldChild = sidecarProcess;
+    const exited = new Promise(resolve => oldChild.once('exit', resolve));
+    killChildProcess(oldChild, 'server sidecar');
+    sidecarProcess = null;
+    await Promise.race([exited, new Promise(resolve => setTimeout(resolve, 3000))]);
+    await startNodeServer();
+  }
+  return remotePairingInfo();
+}
+
 async function startNodeServer() {
   // Start the Node.js WS/HTTP server (server/ws-server.js)
   const serverPath = path.join(__dirname, '..', 'server', 'ws-server.js');
@@ -1990,29 +2055,14 @@ async function startNodeServer() {
     return;
   }
 
-  // Kill any stale process on port 9001 before starting
-  try {
-    if (process.platform === 'win32') {
-      execSync('for /f "tokens=5" %a in (\'netstat -ano ^| findstr :9001 ^| findstr LISTENING\') do taskkill /F /PID %a', {
-        shell: 'cmd.exe', stdio: 'ignore', timeout: 5000
-      });
-    } else {
-      // macOS / Linux: use lsof to find and kill process on port 9001
-      execSync("lsof -ti:9001 | xargs kill -9 2>/dev/null || true", {
-        stdio: 'ignore', timeout: 5000
-      });
-    }
-    // Small delay to let the port release
-    await new Promise(r => setTimeout(r, 500));
-  } catch {
-    // No process on the port — good
-  }
+  // A busy port may belong to another live show. Never kill an unrelated
+  // listener; report startup failure and leave the existing process alone.
 
   console.log('[Main] Starting Node.js server:', serverPath);
 
   // Set env vars the server expects
-  process.env.WS_PORT = '9001';
-  process.env.HTTP_PORT = '9002';
+  process.env.WS_PORT = String(REMOTE_WS_PORT);
+  process.env.HTTP_PORT = String(REMOTE_HTTP_PORT);
 
   // Import the server module in-process — it auto-starts on import.
   // On Windows, dynamic import() needs a file:// URL, not a raw path.
@@ -2020,27 +2070,60 @@ async function startNodeServer() {
     const serverUrl = new URL(`file:///${serverPath.replace(/\\/g, '/')}`).href;
     console.log('[Main] Importing server from:', serverUrl);
     embeddedServerModule = await import(serverUrl);
+    await embeddedServerModule.listening;
     console.log('[Main] Server module loaded in-process');
   } catch (e) {
     console.error('[Main] Failed to load server in-process:', e.message);
+    if (embeddedServerModule) {
+      embeddedServerModule.shutdownServer?.({ force: true });
+      embeddedServerModule = null;
+      return; // A bind failure is not fixed by starting another process.
+    }
     // Fallback: spawn with ELECTRON_RUN_AS_NODE
     console.log('[Main] Trying ELECTRON_RUN_AS_NODE spawn fallback...');
     try {
-      sidecarProcess = spawn(process.execPath, [serverPath], {
-        stdio: ['ignore', 'pipe', 'pipe'],
+      const child = spawn(process.execPath, [serverPath], {
+        stdio: ['ignore', 'pipe', 'pipe', 'ipc'],
         cwd: path.join(__dirname, '..'),
-        env: { ...process.env, WS_PORT: '9001', HTTP_PORT: '9002', ELECTRON_RUN_AS_NODE: '1' },
+        // The token goes in this child's environment only, never main's own
+        // process.env, which every other child would inherit.
+        env: {
+          ...process.env,
+          WS_PORT: String(REMOTE_WS_PORT),
+          HTTP_PORT: String(REMOTE_HTTP_PORT),
+          GA_PAIRING_TOKEN: getRemotePairingToken(),
+          ELECTRON_RUN_AS_NODE: '1',
+        },
         windowsHide: true,
         shell: false,
       });
-      sidecarProcess.stdout?.on('data', (d) => console.log(`[Server] ${d.toString().trim()}`));
-      sidecarProcess.stderr?.on('data', (d) => console.error(`[Server] ${d.toString().trim()}`));
-      sidecarProcess.on('exit', (code) => { console.log(`[Main] Server exited ${code}`); sidecarProcess = null; });
-      sidecarProcess.on('error', (err) => { console.error(`[Main] Server spawn error: ${err.message}`); });
+      sidecarProcess = child;
+      child.stdout?.on('data', (d) => console.log(`[Server] ${d.toString().trim()}`));
+      child.stderr?.on('data', (d) => console.error(`[Server] ${d.toString().trim()}`));
+      // A pairing reset replaces the child, and the old one's exit arrives
+      // after its replacement is already running.
+      child.on('exit', (code) => {
+        console.log(`[Main] Server exited ${code}`);
+        if (sidecarProcess === child) sidecarProcess = null;
+      });
+      child.on('error', (err) => { console.error(`[Main] Server spawn error: ${err.message}`); });
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => finish(new Error('Remote server startup timed out')), 10000);
+        const onMessage = message => { if (message?.type === 'remote-server-ready') finish(); };
+        const onExit = () => finish(new Error('Remote server exited before listening'));
+        const finish = error => {
+          clearTimeout(timeout); child.off('message', onMessage); child.off('exit', onExit); child.off('error', finish);
+          if (error) { killChildProcess(child, 'failed remote server'); reject(error); } else resolve();
+        };
+        child.on('message', onMessage); child.once('exit', onExit); child.once('error', finish);
+      });
     } catch (e2) {
       console.error('[Main] Server spawn fallback also failed:', e2.message);
     }
   }
+
+  // The in-process server refuses every connection until it has the token.
+  embeddedServerModule?.setPairingToken?.(getRemotePairingToken());
 }
 
 function stopServer() {
@@ -4951,6 +5034,12 @@ function registerIpcHandlers() {
   }));
   ipcMain.handle('osc_send', (_, { host, port, messages }) => sendOscBatch(host, port, messages));
 
+  // --- LAN remote pairing ---
+  // The editor shows the token beside the Connect Mobile QR code, puts it in
+  // the QR link, and presents it on its own connection to the server.
+  ipcMain.handle('remote_pairing_info', () => remotePairingInfo());
+  ipcMain.handle('remote_pairing_reset', () => resetRemotePairing());
+
   // --- MCP ---
   ipcMain.handle('mcp_start', async (_, { port } = {}) => startMcpServer(mainWindow, port));
   ipcMain.handle('mcp_stop', () => { stopMcpServer(); return { ok: true }; });
@@ -6268,6 +6357,32 @@ function registerIpcHandlers() {
   });
 
   // --- Project save dialog ---
+  const projectMedia = require('./project-media.cjs');
+  ipcMain.handle('inspect_video_import', async (_, args) => {
+    const inputPath = assertAbsolutePath(args?.inputPath, 'input video path');
+    if (!fs.statSync(inputPath).isFile()) throw new Error('Choose a video file.');
+    return require('./video-import.cjs').inspectVideoForImport(resolveFfmpegPath(), inputPath);
+  });
+  const mediaRequest = args => {
+    if (typeof args?.json !== 'string') throw new Error('Project data is required.');
+    const data = JSON.parse(args.json);
+    if (!data || typeof data !== 'object' || Array.isArray(data)) throw new Error('Invalid project data.');
+    const dir = args.projectPath ? path.dirname(assertAbsolutePath(args.projectPath, 'project path')) : undefined;
+    return { data, dir };
+  };
+  ipcMain.handle('project_media_scan', async (_, args) => {
+    const { data, dir } = mediaRequest(args);
+    return projectMedia.scanProjectMedia(data, dir);
+  });
+  ipcMain.handle('project_media_relink', async (_, args) => {
+    const { data, dir } = mediaRequest(args);
+    return JSON.stringify(await projectMedia.relinkProjectMedia(data, dir, args.id, args.replacementPath));
+  });
+  ipcMain.handle('project_media_collect', async (_, args) => {
+    const { data, dir } = mediaRequest(args);
+    return projectMedia.collectProjectMedia(data, dir, assertAbsolutePath(args.outputPath, 'output path'));
+  });
+
   // Returns the user-chosen file path (absolute) or null if cancelled.
   // Renderer uses this to save .gha files to a known directory so we can
   // materialize blob URLs alongside as portable sibling files.
@@ -7038,9 +7153,8 @@ function registerIpcHandlers() {
   ipcMain.handle('video_converter_pick_webm', async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
       properties: ['openFile'],
-      title: 'Choose WebM Video',
+      title: 'Choose Video',
       filters: [
-        { name: 'WebM Video', extensions: ['webm'] },
         { name: 'Video Files', extensions: ['webm', 'mkv', 'mov', 'mp4'] },
         { name: 'All Files', extensions: ['*'] },
       ],
@@ -7060,7 +7174,7 @@ function registerIpcHandlers() {
   ipcMain.handle('video_converter_pick_sequence_folder', async () => {
     const result = await dialog.showOpenDialog(mainWindow, {
       properties: ['openDirectory'],
-      title: 'Choose JPG Frame Sequence Folder',
+      title: 'Choose Image Sequence Folder',
     });
     if (result.canceled || !result.filePaths[0]) return null;
     const sequence = listImageSequenceFrames(result.filePaths[0]);
@@ -7076,18 +7190,13 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('video_converter_pick_output', async (_, args = {}) => {
-    const suggested = typeof args.defaultPath === 'string' && args.defaultPath
-      ? args.defaultPath
-      : path.join(app.getPath('videos'), `${sanitizeOutputBase(args.defaultName, 'converted-video')}.mp4`);
-    const result = await dialog.showSaveDialog(mainWindow, {
-      title: 'Save MP4',
-      defaultPath: suggested,
-      filters: [
-        { name: 'MP4 Video', extensions: ['mp4'] },
-      ],
-    });
+    const format = conversionFormat(args.format);
+    const suggested = typeof args.defaultPath === 'string' && args.defaultPath ? args.defaultPath
+      : path.join(app.getPath('videos'), `${sanitizeOutputBase(args.defaultName, 'converted-video')}-${format.id}.${format.extension}`);
+    const result = await dialog.showSaveDialog(mainWindow, { title: `Save ${format.label}`, defaultPath: suggested,
+      filters: [{ name: format.label, extensions: [format.extension] }] });
     if (result.canceled || !result.filePath) return null;
-    return { path: result.filePath.toLowerCase().endsWith('.mp4') ? result.filePath : `${result.filePath}.mp4` };
+    return { path: result.filePath.toLowerCase().endsWith(`.${format.extension}`) ? result.filePath : `${result.filePath}.${format.extension}` };
   });
 
   ipcMain.handle('video_converter_reveal_path', async (_, args = {}) => {
@@ -7111,100 +7220,47 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('video_converter_start', async (event, args = {}) => {
+    if (activeVideoConverterJob) throw new Error('A video conversion is already running.');
     const mode = args.mode === 'sequence' ? 'sequence' : 'webm';
+    const format = conversionFormat(args.format);
     const jobId = typeof args.jobId === 'string' && args.jobId ? args.jobId : `vc-${Date.now().toString(36)}`;
     const outputPath = assertAbsolutePath(args.outputPath, 'output path');
-    fs.mkdirSync(path.dirname(outputPath), { recursive: true });
-
-    const crf = Math.round(clampNumber(args.crf, 10, 32, 18));
-    const preset = ['ultrafast', 'superfast', 'veryfast', 'faster', 'fast', 'medium'].includes(args.preset)
-      ? args.preset
-      : 'veryfast';
-    const commonOutput = [
-      '-c:v', 'libx264',
-      '-preset', preset,
-      '-crf', String(crf),
-      '-pix_fmt', 'yuv420p',
-      '-movflags', '+faststart',
-      outputPath,
-    ];
-
-    if (mode === 'sequence') {
-      const sequence = listImageSequenceFrames(args.folderPath);
-      const fps = clampNumber(args.fps, 1, 240, 30);
-      const { tmpDir, listPath } = makeConcatList(sequence.frames, fps);
-      const durationSec = sequence.frameCount / fps;
-      publishVideoConverterProgress(event.sender, {
-        jobId,
-        stage: 'scanning',
-        progress: 0,
-        message: `Found ${sequence.frameCount} frames. Preparing encoder...`,
-        outputPath,
+    const staged = stageConversionOutput(outputPath, format.id);
+    let sequenceTemp = null;
+    const cleanup = () => {
+      staged.cleanup();
+      if (sequenceTemp) fs.rmSync(sequenceTemp, { recursive: true, force: true });
+    };
+    const reservedJob = { id: jobId, process: null, cancelled: false, cleanup };
+    activeVideoConverterJob = reservedJob;
+    try {
+      const input = [];
+      let durationSec = 0, totalFrames = 0;
+      if (mode === 'sequence') {
+        const sequence = listImageSequenceFrames(args.folderPath);
+        const fps = clampNumber(args.fps, 1, 240, 30);
+        const { tmpDir, listPath } = makeConcatList(sequence.frames, fps);
+        sequenceTemp = tmpDir;
+        totalFrames = sequence.frameCount;
+        durationSec = totalFrames / fps;
+        input.push('-f', 'concat', '-safe', '0', '-i', listPath, '-r', String(fps), '-frames:v', String(totalFrames), '-an');
+      } else {
+        const inputPath = assertAbsolutePath(args.inputPath, 'input video path');
+        if (!fs.existsSync(inputPath)) throw new Error('Input video not found.');
+        const decoderArgs = format.alpha ? await probeConversionInput(resolveFfmpegPath(), inputPath, reservedJob) : [];
+        if (reservedJob.cancelled) throw new Error('Conversion cancelled.');
+        input.push('-fflags', '+genpts', ...decoderArgs, '-i', inputPath, '-map', '0:v:0', '-map', '0:a:0?');
+      }
+      return await spawnFfmpegConversion({ sender: event.sender, jobId, durationSec, totalFrames, outputPath, reservedJob,
+        startMessage: `Converting to ${format.label}...`, completeMessage: `${format.label} conversion complete.`,
+        progressMode: mode === 'sequence' ? 'frames' : 'time', cleanup, finalize: () => staged.complete(),
+        args: ['-hide_banner', '-nostdin', '-n', '-progress', 'pipe:2', '-nostats', ...input,
+          ...conversionOutputArgs(format.id, args), staged.temporaryPath],
       });
-      return spawnFfmpegConversion({
-        sender: event.sender,
-        jobId,
-        durationSec,
-        outputPath,
-        startMessage: `Encoding ${sequence.frameCount} frames at ${fps} fps...`,
-        completeMessage: 'Image sequence MP4 complete.',
-        progressMode: 'frames',
-        totalFrames: sequence.frameCount,
-        cleanup: () => {
-          try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch { /* ignore */ }
-        },
-        args: [
-          '-hide_banner',
-          '-nostdin',
-          '-y',
-          '-progress', 'pipe:2',
-          '-nostats',
-          '-f', 'concat',
-          '-safe', '0',
-          '-i', listPath,
-          '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p',
-          '-r', String(fps),
-          ...commonOutput,
-        ],
-      });
+    } catch (error) {
+      if (activeVideoConverterJob === reservedJob) activeVideoConverterJob = null;
+      cleanup(); throw error;
     }
-
-    const inputPath = assertAbsolutePath(args.inputPath, 'input video path');
-    if (!fs.existsSync(inputPath)) throw new Error('Input video not found.');
-    publishVideoConverterProgress(event.sender, {
-      jobId,
-      stage: 'preparing',
-      progress: 0,
-      message: 'Preparing native FFmpeg encoder...',
-      outputPath,
-    });
-    return spawnFfmpegConversion({
-      sender: event.sender,
-      jobId,
-      durationSec: 0,
-      outputPath,
-      startMessage: 'Converting WebM to MP4...',
-      completeMessage: 'WebM MP4 conversion complete.',
-      args: [
-        '-hide_banner',
-        '-nostdin',
-        '-y',
-        '-progress', 'pipe:2',
-        '-nostats',
-        '-fflags', '+genpts',
-        '-i', inputPath,
-        '-map', '0:v:0',
-        '-map', '0:a:0?',
-        '-vf', 'scale=trunc(iw/2)*2:trunc(ih/2)*2,format=yuv420p',
-        '-c:a', 'aac',
-        '-b:a', '192k',
-        '-ar', '48000',
-        '-ac', '2',
-        '-avoid_negative_ts', 'make_zero',
-        '-max_muxing_queue_size', '1024',
-        ...commonOutput,
-      ],
-    });
   });
 
   // --- Save binary file from base64 ---
@@ -8658,11 +8714,23 @@ function cleanupAndQuit() {
   }
   isQuitting = true;
   console.log('[Main] Cleaning up before quit...');
+  // app.exit skips renderer beforeunload. Notify MIDI owners explicitly so
+  // Cmd+Q also clears pads and releases controller modes before exiting.
+  runCleanupStep('notifyRendererQuit', () => {
+    if (mainWindow && !mainWindow.isDestroyed()) mainWindow.webContents.send('app-before-quit');
+  });
 
   // Schedule first so a stuck native addon/socket teardown cannot keep the
   // single-instance lock alive in Task Manager.
   scheduleHardExit(750);
 
+  runCleanupStep('stopVideoConverter', () => {
+    if (!activeVideoConverterJob) return;
+    activeVideoConverterJob.cancelled = true;
+    killChildProcess(activeVideoConverterJob.process, 'video converter');
+    activeVideoConverterJob.cleanup?.();
+    activeVideoConverterJob = null;
+  });
   runCleanupStep('closeAuxiliaryWindows', closeAuxiliaryWindows);
   runCleanupStep('detachNativeEditorPreview', () => detachNativeEditorPreview('app-quit'));
   runCleanupStep('stopSpoutSender', stopSpoutSender);
@@ -8677,5 +8745,5 @@ function cleanupAndQuit() {
   runCleanupStep('closeAllWledSockets', closeAllWledSockets);
   runCleanupStep('killPluginProcesses', killPluginProcesses);
 
-  app.exit(0);
+  setTimeout(() => app.exit(0), 150);
 }

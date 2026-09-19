@@ -8,6 +8,7 @@
    * separate lower scroll area.
    */
   import { onMount } from 'svelte';
+  import { screenOutputError } from '../stores/screenOutputStatus';
   import { screens, selectedScreenId, selectedScreen, screenActions } from '../stores/screens';
   import { settings, identityOutputMesh, masterWarpIsActive, type OutputSettings, type OutputSlice } from '../stores/settings';
   import { maxOutputSlices } from '../stores/license';
@@ -314,6 +315,13 @@
 </script>
 
 <div class="screen-panel">
+  {#if $screenOutputError}
+    <div class="screen-output-error" role="alert">
+      <strong>Output change not applied</strong>
+      <span>{$screenOutputError}</span>
+      <span>Previously active outputs are preserved.</span>
+    </div>
+  {/if}
   <div class="screens-section">
     <div class="section-head">
       <span class="section-title">Screens</span>
@@ -626,6 +634,9 @@
 </div>
 
 <style>
+  .screen-output-error { display: grid; gap: 5px; margin: 8px; padding: 10px; border: 1px solid #9c7139; border-radius: 6px; background: #241e16; color: #e8d5b5; font-size: 12px; line-height: 1.4; }
+  .screen-output-error strong { font-weight: 600; }
+
   .screen-panel {
     width: 280px;
     background: var(--bg-secondary, #111114);

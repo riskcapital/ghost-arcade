@@ -1,0 +1,381 @@
+{
+  "captured_at": "2026-09-19T01:39:47.882Z",
+  "platform": "darwin",
+  "adapter": "Apple M1 Max",
+  "format": "hap_alpha",
+  "playback_rate": -1,
+  "streams": 16,
+  "source_resolution": "1920x1080",
+  "source_fps": 60,
+  "output_resolution": "1920x1080",
+  "atlas_slot_size": 512,
+  "decode_budget_mb": 1024,
+  "elapsed_seconds": 10.06572925,
+  "compositor_fps": 41.527045842207606,
+  "session_fps": [
+    {
+      "source_id": "clip-3",
+      "backend": "hap-texture",
+      "fps": 60.10493477161627,
+      "frames_dropped": 0,
+      "reserved_bytes": 56646144
+    },
+    {
+      "source_id": "clip-6",
+      "backend": "hap-texture",
+      "fps": 60.10493477161627,
+      "frames_dropped": 0,
+      "reserved_bytes": 56646144
+    },
+    {
+      "source_id": "clip-1",
+      "backend": "hap-texture",
+      "fps": 60.10493477161627,
+      "frames_dropped": 0,
+      "reserved_bytes": 56646144
+    },
+    {
+      "source_id": "clip-4",
+      "backend": "hap-texture",
+      "fps": 60.10493477161627,
+      "frames_dropped": 0,
+      "reserved_bytes": 56646144
+    },
+    {
+      "source_id": "clip-11",
+      "backend": "hap-texture",
+      "fps": 60.10493477161627,
+      "frames_dropped": 0,
+      "reserved_bytes": 56646144
+    },
+    {
+      "source_id": "clip-13",
+      "backend": "hap-texture",
+      "fps": 60.10493477161627,
+      "frames_dropped": 0,
+      "reserved_bytes": 56646144
+    },
+    {
+      "source_id": "clip-10",
+      "backend": "hap-texture",
+      "fps": 60.10493477161627,
+      "frames_dropped": 0,
+      "reserved_bytes": 56646144
+    },
+    {
+      "source_id": "clip-12",
+      "backend": "hap-texture",
+      "fps": 60.10493477161627,
+      "frames_dropped": 0,
+      "reserved_bytes": 56646144
+    },
+    {
+      "source_id": "clip-15",
+      "backend": "hap-texture",
+      "fps": 60.10493477161627,
+      "frames_dropped": 0,
+      "reserved_bytes": 56646144
+    },
+    {
+      "source_id": "clip-9",
+      "backend": "hap-texture",
+      "fps": 60.10493477161627,
+      "frames_dropped": 0,
+      "reserved_bytes": 56646144
+    },
+    {
+      "source_id": "clip-0",
+      "backend": "hap-texture",
+      "fps": 60.10493477161627,
+      "frames_dropped": 0,
+      "reserved_bytes": 56646144
+    },
+    {
+      "source_id": "clip-5",
+      "backend": "hap-texture",
+      "fps": 60.10493477161627,
+      "frames_dropped": 0,
+      "reserved_bytes": 56646144
+    },
+    {
+      "source_id": "clip-14",
+      "backend": "hap-texture",
+      "fps": 60.10493477161627,
+      "frames_dropped": 0,
+      "reserved_bytes": 56646144
+    },
+    {
+      "source_id": "clip-2",
+      "backend": "hap-texture",
+      "fps": 60.10493477161627,
+      "frames_dropped": 0,
+      "reserved_bytes": 56646144
+    },
+    {
+      "source_id": "clip-7",
+      "backend": "hap-texture",
+      "fps": 60.10493477161627,
+      "frames_dropped": 0,
+      "reserved_bytes": 56646144
+    },
+    {
+      "source_id": "clip-8",
+      "backend": "hap-texture",
+      "fps": 60.10493477161627,
+      "frames_dropped": 0,
+      "reserved_bytes": 56646144
+    }
+  ],
+  "render_cpu_ms": 0.26314588526538873,
+  "render_gpu_ms": 7.183104487422426,
+  "compressed_upload_bytes": 20072448000,
+  "hap_frames": 9680,
+  "software_frames": 0,
+  "hardware_fallbacks": 0,
+  "decode_failures": 0,
+  "underflows": 0,
+  "samples": [
+    {
+      "elapsed_ms": 251.89500000000044,
+      "frames": 62,
+      "hap_frames": 1265,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 503.8229170000004,
+      "frames": 73,
+      "hap_frames": 1505,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 754.7792920000002,
+      "frames": 83,
+      "hap_frames": 1745,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 1005.8238330000004,
+      "frames": 96,
+      "hap_frames": 1985,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 1257.5165829999996,
+      "frames": 107,
+      "hap_frames": 2209,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 1509.0935829999999,
+      "frames": 117,
+      "hap_frames": 2465,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 1760.653292,
+      "frames": 129,
+      "hap_frames": 2705,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 2012.2064170000003,
+      "frames": 136,
+      "hap_frames": 2929,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 2263.8530419999997,
+      "frames": 146,
+      "hap_frames": 3185,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 2514.80425,
+      "frames": 158,
+      "hap_frames": 3441,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 2766.4816250000003,
+      "frames": 170,
+      "hap_frames": 3681,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 3017.7857080000003,
+      "frames": 182,
+      "hap_frames": 3905,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 3269.471542,
+      "frames": 194,
+      "hap_frames": 4161,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 3521.538958,
+      "frames": 204,
+      "hap_frames": 4401,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 3773.2381250000008,
+      "frames": 212,
+      "hap_frames": 4625,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 4024.7683750000006,
+      "frames": 223,
+      "hap_frames": 4897,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 4276.292625000001,
+      "frames": 233,
+      "hap_frames": 5121,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 4527.832708000001,
+      "frames": 244,
+      "hap_frames": 5361,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 4779.414458,
+      "frames": 251,
+      "hap_frames": 5585,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 5031.011083,
+      "frames": 261,
+      "hap_frames": 5841,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 5282.537958,
+      "frames": 269,
+      "hap_frames": 6081,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 5534.088667000001,
+      "frames": 280,
+      "hap_frames": 6337,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 5785.007583,
+      "frames": 289,
+      "hap_frames": 6577,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 6036.8027919999995,
+      "frames": 299,
+      "hap_frames": 6817,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 6288.545542000001,
+      "frames": 312,
+      "hap_frames": 7057,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 6542.924458,
+      "frames": 323,
+      "hap_frames": 7281,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 6795.141458000001,
+      "frames": 333,
+      "hap_frames": 7521,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 7047.943167,
+      "frames": 342,
+      "hap_frames": 7777,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 7299.476333,
+      "frames": 352,
+      "hap_frames": 8017,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 7550.636750000001,
+      "frames": 363,
+      "hap_frames": 8257,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 7801.164833,
+      "frames": 373,
+      "hap_frames": 8497,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 8052.760625,
+      "frames": 382,
+      "hap_frames": 8753,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 8305.001667,
+      "frames": 394,
+      "hap_frames": 8993,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 8556.617917,
+      "frames": 406,
+      "hap_frames": 9233,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 8808.144417,
+      "frames": 418,
+      "hap_frames": 9473,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 9059.697499999998,
+      "frames": 428,
+      "hap_frames": 9697,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 9311.186249999999,
+      "frames": 438,
+      "hap_frames": 9953,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 9562.804499999998,
+      "frames": 450,
+      "hap_frames": 10193,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 9813.729583,
+      "frames": 460,
+      "hap_frames": 10449,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 10065.362249999998,
+      "frames": 471,
+      "hap_frames": 10689,
+      "underflows": 0
+    }
+  ],
+  "visible_tiles": 16,
+  "accepted": false
+}

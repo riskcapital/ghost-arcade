@@ -21,6 +21,7 @@ pub struct NativeReadinessCheck {
 }
 
 pub const CORE_RPC_METHODS: &[&str] = &[
+    "audio_devices", "audio_status", "audio_output",
     "start",
     "stop",
     "status",
@@ -33,6 +34,10 @@ pub const CORE_RPC_METHODS: &[&str] = &[
     "get_snapshot",
     "frame_snapshot",
     "get_frame_snapshot",
+    "capture_layer_source_frame",
+    "get_layer_source_readiness",
+    "get_source_frame_readiness",
+    "release_source_frame",
     "export_frame_snapshot",
     "prefetch_media",
     "clear_prefetch_cache",
@@ -114,6 +119,8 @@ pub const CORE_COMMAND_TYPES: &[&str] = &[
     "set_decode_handoff_policy",
     "set_decode_estimate_cache_policy",
     "set_media_source_playback",
+    "set_media_source_phase",
+    "set_clip_audio_mix",
     "upsert_layer",
     "set_layer_visibility",
     "set_layer_color",

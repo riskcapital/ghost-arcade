@@ -1,4 +1,7 @@
 <script lang="ts">
+  import VideoPlaybackDirection from './VideoPlaybackDirection.svelte';
+  import VideoPlaybackModes from './VideoPlaybackModes.svelte';
+  import { nativeVideoTransportSnapshot, nativeVideoLaunchTime } from '../media/nativeTransport';
   import { project, layers, selectedLayer, selectedLayerId, selectedLayerIds, getGroupLayers, scheduleHistorySnapshot } from '../stores/layers';
 
   // updateEffectParams itself stays un-hooked in the store: the audio-reactive
@@ -319,6 +322,7 @@
 
   // ─── Video Timeline State ───────────────────────────────────────────
   let videoCurrentTime = 0;
+  let videoCurrentDirection = 1;
   let videoDuration = 0;
   let trimDragging: 'start' | 'end' | null = null;
   let timelineScrubbing = false;
@@ -349,34 +353,14 @@
   }
 
   function sourcePlaybackTime(source: MediaSource, now = performance.now()): number {
-    const duration = sourceDuration(source);
-    const nativeTime = Number(source._nativePlaybackTimeSeconds);
-    const elementTime = Number(source.videoElement?.currentTime);
-    let time = Number.isFinite(nativeTime) && nativeTime >= 0
-      ? nativeTime
-      : Number.isFinite(elementTime) && elementTime >= 0
-        ? elementTime
-        : 0;
-    const anchorMs = Number(source._nativePlaybackUpdatedAtMs);
-    if (source.isPlaying !== false && Number.isFinite(anchorMs)) {
-      time += Math.max(0, now - anchorMs) / 1000 * (Number(source.playbackRate) || 1);
-    }
-    if (duration <= 0) return Math.max(0, time);
-    const start = duration * Math.max(0, Math.min(1, source.trimStart ?? 0));
-    const end = duration * Math.max(0, Math.min(1, source.trimEnd ?? 1));
-    const range = Math.max(0.001, end - start);
-    if ((source.playbackMode ?? 'loop') !== 'once') {
-      time = start + ((time - start) % range + range) % range;
-    } else {
-      time = Math.max(start, Math.min(end, time));
-    }
-    return time;
+    return nativeVideoTransportSnapshot(source, now).timeSeconds;
   }
 
   function setNativePlaybackTime(layerId: string, source: MediaSource, time: number) {
     const duration = sourceDuration(source);
     const nextTime = Math.max(0, duration > 0 ? Math.min(duration, time) : time);
     source.durationSeconds = duration || source.durationSeconds;
+    source._nativePlaybackDirection = (source.playbackRate ?? 1) < 0 ? -1 : 1;
     source._nativePlaybackTimeSeconds = nextTime;
     source._nativePlaybackUpdatedAtMs = performance.now();
     source._nativePlaybackSeekSeq = Math.max(0, source._nativePlaybackSeekSeq ?? 0) + 1;
@@ -393,7 +377,11 @@
       const layer = $selectedLayer;
       if (layer?.source?.type === 'video') {
         videoDuration = sourceDuration(layer.source);
-        if (!timelineScrubbing && !videoStepBusy) videoCurrentTime = sourcePlaybackTime(layer.source);
+        if (!timelineScrubbing && !videoStepBusy) {
+          const transport = nativeVideoTransportSnapshot(layer.source);
+          videoCurrentTime = transport.timeSeconds;
+          videoCurrentDirection = transport.direction;
+        }
       }
       videoTickFrame = requestAnimationFrame(tick);
     }
@@ -422,6 +410,8 @@
   function setPlaybackMode(layerId: string, source: MediaSource, mode: VideoPlaybackMode) {
     source._nativePlaybackTimeSeconds = sourcePlaybackTime(source);
     source._nativePlaybackUpdatedAtMs = performance.now();
+    source._nativePlaybackDirection = (source.playbackRate ?? 1) < 0 ? -1 : 1;
+    source._nativePlaybackSeekSeq = (source._nativePlaybackSeekSeq ?? 0) + 1;
     source.playbackMode = mode;
     source._lastFrameTime = performance.now();
     project.updateLayer(layerId, { source: { ...source } });
@@ -430,6 +420,8 @@
   function setPlaybackRate(layerId: string, source: MediaSource, rate: number) {
     source._nativePlaybackTimeSeconds = sourcePlaybackTime(source);
     source._nativePlaybackUpdatedAtMs = performance.now();
+    source._nativePlaybackDirection = rate < 0 ? -1 : 1;
+    source._nativePlaybackSeekSeq = (source._nativePlaybackSeekSeq ?? 0) + 1;
     source.playbackRate = rate;
     project.updateLayer(layerId, { source: { ...source } });
   }
@@ -443,9 +435,11 @@
    *  clock, and without a fresh anchor its first correction would be an
    *  audible hard seek from wherever the element happened to be. */
   function setSourceAudioPlayback(layerId: string, source: MediaSource, enabled: boolean) {
-    source._nativePlaybackTimeSeconds = sourcePlaybackTime(source);
+    const transport = nativeVideoTransportSnapshot(source);
+    source._nativePlaybackTimeSeconds = transport.timeSeconds;
     source._nativePlaybackUpdatedAtMs = performance.now();
     source._nativePlaybackSeekSeq = Math.max(0, source._nativePlaybackSeekSeq ?? 0) + 1;
+    source._nativePlaybackDirection = transport.direction;
     source.audioPlayback = enabled;
     source.audioVolume = source.audioVolume ?? 1;
     source.audioMuted = source.audioMuted === true;
@@ -2250,7 +2244,9 @@
                 onclick={() => {
                   cancelVideoScrub();
                   const playing = vSrc.isPlaying !== false;
-                  vSrc._nativePlaybackTimeSeconds = sourcePlaybackTime(vSrc);
+                  const transport = nativeVideoTransportSnapshot(vSrc);
+                  vSrc._nativePlaybackDirection = transport.direction;
+                  vSrc._nativePlaybackTimeSeconds = transport.timeSeconds;
                   vSrc._nativePlaybackUpdatedAtMs = performance.now();
                   if (playing) {
                     vSrc.videoElement?.pause();
@@ -2258,7 +2254,7 @@
 	                  } else {
 	                    vSrc.isPlaying = true;
 	                    vSrc._lastFrameTime = performance.now();
-	                    if (vSrc.audioPlayback) vSrc.videoElement?.play().catch(() => {});
+	                    if (vSrc.audioPlayback && vSrc.playbackMode !== 'bounce' && (vSrc.playbackRate ?? 1) > 0) vSrc.videoElement?.play().catch(() => {});
 	                  }
 	                  project.updateLayer(layer.id, { source: { ...vSrc } });
 	                }}
@@ -2279,10 +2275,10 @@
                 data-midi-mode="toggle"
                 onclick={() => {
                   cancelVideoScrub();
-                  setNativePlaybackTime(layer.id, vSrc, (vSrc.trimStart ?? 0) * sourceDuration(vSrc));
+                  setNativePlaybackTime(layer.id, vSrc, nativeVideoLaunchTime(vSrc, sourceDuration(vSrc)));
 	                  vSrc.isPlaying = true;
 	                  vSrc._nativePlaybackUpdatedAtMs = performance.now();
-	                  if (vSrc.audioPlayback) vSrc.videoElement?.play().catch(() => {});
+	                  if (vSrc.audioPlayback && vSrc.playbackMode !== 'bounce' && (vSrc.playbackRate ?? 1) > 0) vSrc.videoElement?.play().catch(() => {});
 	                  project.updateLayer(layer.id, { source: { ...vSrc } });
 	                }}
                 title="Restart"
@@ -2300,10 +2296,15 @@
                 <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M5 4l11 8-11 8z"/><rect x="18" y="4" width="2" height="16"/></svg>
               </button>
               <span class="vt-time">{formatTime(videoCurrentTime)} / {formatTime(videoDuration)}</span>
-              <select
+              </div>
+                  <div class="vt-playback-options">
+                    <VideoPlaybackDirection rate={vRate} bounce={vMode === 'bounce'}
+              onselect={(direction) => setPlaybackRate(layer.id, vSrc, Math.abs(vRate) * direction)} />
+                    <select
                 class="vt-speed"
-                value={String(vRate)}
-                onchange={(e) => setPlaybackRate(layer.id, vSrc, parseFloat((e.target as HTMLSelectElement).value))}
+                aria-label="Playback speed"
+                value={String(Math.abs(vRate))}
+                onchange={(e) => setPlaybackRate(layer.id, vSrc, Math.abs(parseFloat((e.target as HTMLSelectElement).value)) * (vRate < 0 ? -1 : 1))}
               >
                 <option value="0.25">0.25x</option>
                 <option value="0.5">0.5x</option>
@@ -2313,6 +2314,7 @@
                 <option value="4">4x</option>
               </select>
             </div>
+
 
             <!-- Timeline bar -->
             <div
@@ -2365,26 +2367,17 @@
               ></div>
             </div>
 
-            <!-- Mode buttons row -->
-            <div class="vt-modes">
-              <button class="vt-mode-btn" class:active={vMode === 'loop'} onclick={() => setPlaybackMode(layer.id, vSrc, 'loop')} title="Loop">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                  <polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/>
-                  <polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>
-                </svg>
-                Loop
-              </button>
-              <button class="vt-mode-btn" class:active={vMode === 'once'} onclick={() => setPlaybackMode(layer.id, vSrc, 'once')} title="Play Once">
-                <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
-                Once
-              </button>
-            </div>
+            <VideoPlaybackModes mode={vMode} direction={videoCurrentDirection}
+              onselect={(mode) => setPlaybackMode(layer.id, vSrc, mode)} />
 
             <!-- Audio: OPT-IN, default off. Same contract as the VJ clip
                  panel — enabling it un-mutes this layer's video element and
                  wires it into clipAudioBus, which chases the native core's
                  render clock. Off = silent, exactly as before. -->
             <div class="vt-audio-block">
+              {#if vMode === 'bounce'}
+                <div class="vt-audio-note">Audio is silent during bounce playback.</div>
+              {/if}
               <div class="vt-audio-head">
                 <span class="vt-audio-title">Audio</span>
                 <button
@@ -4381,6 +4374,8 @@
     border: 1px solid rgba(255, 255, 255, 0.06);
   }
 
+  .vt-playback-options { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .vt-playback-options .vt-speed { height: 28px; border-radius: 5px; }
   .vt-transport {
     display: flex;
     flex-wrap: wrap;
@@ -4510,37 +4505,7 @@
   }
 
   /* Mode buttons */
-  .vt-modes {
-    display: flex;
-    gap: 2px;
-  }
 
-  .vt-mode-btn {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 4px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    color: var(--text-muted, #888);
-    font-size: 11px;
-    padding: 4px 2px;
-    border-radius: 3px;
-    cursor: pointer;
-    transition: all 0.15s;
-    white-space: nowrap;
-  }
-  .vt-mode-btn:hover {
-    background: rgba(255, 255, 255, 0.1);
-    color: #bbb;
-    border-color: rgba(255, 255, 255, 0.15);
-  }
-  .vt-mode-btn.active {
-    background: rgba(187, 134, 252, 0.2);
-    color: #BB86FC;
-    border-color: rgba(187, 134, 252, 0.4);
-  }
 
   .file-label {
     cursor: pointer;

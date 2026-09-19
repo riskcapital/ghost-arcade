@@ -93,11 +93,11 @@ export function validateControlPath(path: string): ControlPathValidation {
         : { valid: false, normalized, reason: 'Clip triggers use vj:<layer>:trigger:<column>.' };
     }
     if (property === 'video') {
-      return ['play', 'restart', 'mirror', 'position', 'scratch'].includes(parts[3] ?? '')
+      return ['play', 'restart', 'mirror', 'position', 'scratch', 'audio', 'audiomute', 'audiovolume', 'audiopan'].includes(parts[3] ?? '')
         ? { valid: true, normalized, reason: null }
         : { valid: false, normalized, reason: 'Video actions are play, restart, mirror, position, or scratch.' };
     }
-    if (['opacity', 'blend', 'solo', 'mute', 'shader', 'splat', 'model3d', 'plugin'].includes(property ?? '')) {
+    if (['opacity', 'blend', 'solo', 'mute', 'audiovolume', 'audiopan', 'autopilot', 'shader', 'splat', 'model3d', 'plugin'].includes(property ?? '')) {
       return { valid: true, normalized, reason: null };
     }
     return { valid: false, normalized, reason: `Unknown VJ layer property "${property ?? ''}".` };

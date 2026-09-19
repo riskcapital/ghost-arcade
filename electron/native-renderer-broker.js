@@ -291,8 +291,15 @@ const RENDERER_COMMANDS = [
   'native_renderer_set_metadata_cache_caps',
   'native_renderer_attach_output_window',
   'native_renderer_detach_output_window',
+  'native_renderer_audio_devices',
+  'native_renderer_audio_status',
+  'native_renderer_audio_output',
   'native_renderer_get_status',
   'native_renderer_get_layers_snapshot',
+  'native_renderer_capture_layer_source_frame',
+  'native_renderer_get_layer_source_readiness',
+  'native_renderer_get_source_frame_readiness',
+  'native_renderer_release_source_frame',
   'native_renderer_get_stats',
   'native_renderer_get_snapshot',
   'native_renderer_get_frame_snapshot',
@@ -481,12 +488,25 @@ class NativeRendererBroker {
         return this.start(args);
       case 'native_renderer_stop':
         return this.stop();
+      case 'native_renderer_audio_devices':
+      case 'native_renderer_audio_status':
+      case 'native_renderer_audio_output':
+        if (!this.child || this.child.killed) throw new Error('Start the native renderer first');
+        return this.send(command.replace('native_renderer_', ''), args, { timeoutMs: 5000 });
       case 'native_renderer_get_status':
         return this.getStatus();
       case 'native_renderer_get_stats':
         return this.getStats();
       case 'native_renderer_get_snapshot':
         return this.snapshot();
+      case 'native_renderer_capture_layer_source_frame':
+        return this.sendIfRunning('capture_layer_source_frame', args, { fallback: null, timeoutMs: 5000 });
+      case 'native_renderer_get_layer_source_readiness':
+        return this.sendIfRunning('get_layer_source_readiness', args, { fallback: { ready: false }, timeoutMs: 2500 });
+      case 'native_renderer_get_source_frame_readiness':
+        return this.sendIfRunning('get_source_frame_readiness', args, { fallback: { ready: false }, timeoutMs: 2500 });
+      case 'native_renderer_release_source_frame':
+        return this.sendIfRunning('release_source_frame', args, { fallback: null, timeoutMs: 2500 });
       case 'native_renderer_get_frame_snapshot':
         return this.sendIfRunning('frame_snapshot', args, { fallback: null, timeoutMs: 5000 });
       case 'native_renderer_export_frame_snapshot':
@@ -674,6 +694,7 @@ class NativeRendererBroker {
               prefetch_fps: args.prefetch_fps ?? args.prefetchFps ?? args.fps,
               playback_rate: args.playback_rate ?? args.playbackRate,
               loop_enabled: args.loop_enabled ?? args.loopEnabled,
+              bounce_enabled: args.bounce_enabled ?? args.bounceEnabled,
               duration_seconds: args.duration_seconds ?? args.durationSeconds,
               trim_start: args.trim_start ?? args.trimStart,
               trim_end: args.trim_end ?? args.trimEnd,
@@ -2717,6 +2738,7 @@ function normalizeStatus(status, previous = makeDefaultStatus()) {
     native_video_frame_decode_failures: Number(
       status.native_video_frame_decode_failures ?? previous.native_video_frame_decode_failures ?? 0,
     ),
+    native_video_hap_frames: Number(status.native_video_hap_frames ?? previous.native_video_hap_frames ?? 0),
     native_video_hardware_frames: Number(
       status.native_video_hardware_frames ?? previous.native_video_hardware_frames ?? 0,
     ),
@@ -3163,6 +3185,7 @@ function normalizeStats(stats, previous = makeDefaultStats()) {
     native_video_frame_decode_failures: Number(
       stats.native_video_frame_decode_failures ?? previous.native_video_frame_decode_failures ?? 0,
     ),
+    native_video_hap_frames: Number(stats.native_video_hap_frames ?? previous.native_video_hap_frames ?? 0),
     native_video_hardware_frames: Number(
       stats.native_video_hardware_frames ?? previous.native_video_hardware_frames ?? 0,
     ),
@@ -3526,6 +3549,7 @@ function makeDefaultStatus(overrides = {}) {
     native_video_frame_cache_misses: 0,
     native_video_frame_cache_evictions: 0,
     native_video_hardware_frames: 0,
+    native_video_hap_frames: 0,
     native_video_software_frames: 0,
     native_video_hardware_fallbacks: 0,
     native_video_last_pixel_format: '',
@@ -3896,6 +3920,7 @@ function makeDefaultStats() {
     native_video_frame_decodes: 0,
     native_video_frame_decode_failures: 0,
     native_video_hardware_frames: 0,
+    native_video_hap_frames: 0,
     native_video_software_frames: 0,
     native_video_hardware_fallbacks: 0,
     native_video_last_pixel_format: '',

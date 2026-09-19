@@ -1,10 +1,14 @@
 #![recursion_limit = "512"]
 
+mod video_phase;
+mod clip_audio;
 mod audio;
 mod capabilities;
 mod compositor;
 mod compute_graph;
 mod media_decode;
+mod hap_video;
+mod hap_texture;
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 mod hardware_video;
 #[cfg(target_os = "windows")]
@@ -113,7 +117,10 @@ const LAYER_EDGE_EFFECT_VEC4S: usize = 7;
 const MAX_SOURCE_PREVIEWS: usize = 16;
 const SOURCE_PREVIEW_SIZE: usize = 256;
 const SOURCE_PREVIEW_PIXELS: usize = SOURCE_PREVIEW_SIZE * SOURCE_PREVIEW_SIZE;
-const MAX_SOURCE_FRAME_SLOTS: usize = 24;
+// Enough for eight rows retaining outgoing + incoming clips, clip carriers,
+// deck carriers, and bounded interruption snapshots. Source sizing still
+// accounts for all three stores against the explicit tier memory budget.
+const MAX_SOURCE_FRAME_SLOTS: usize = 48;
 /// Ping-pong layers for the full-resolution composite used by composition FX.
 /// Two is all an effect chain needs: read one, write the other, swap.
 const COMPOSITE_FRAME_SLOTS: usize = 2;
@@ -127,7 +134,10 @@ const NATIVE_VIDEO_FRAME_CACHE_MAX_BYTES: usize = 192 * 1024 * 1024;
 const NATIVE_VIDEO_DECODE_MAX_IN_FLIGHT: usize = 2;
 const NATIVE_VIDEO_DECODE_PUMP_PER_TICK: usize = 1;
 const NATIVE_VIDEO_DECODE_PUMP_WINDOW_FRAMES: u32 = 12;
-const NATIVE_VIDEO_SESSION_MAX_PLAYING: usize = 8;
+// Admission is also constrained by the shared decoder byte budget. Sixteen
+// texture-codec streams need independent clocks even when hardware decoders
+// on a particular GPU reach their throughput limit sooner.
+const NATIVE_VIDEO_SESSION_MAX_PLAYING: usize = 16;
 const NATIVE_VIDEO_SESSION_MAX_ARMED: usize = 8;
 const NATIVE_VIDEO_FRAME_INTERVAL: Duration = Duration::from_nanos(16_666_667);
 const SOURCE_FRAME_FORMAT_FALLBACK: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
@@ -562,6 +572,8 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 
 #[derive(Debug)]
 enum UserEvent {
+    /// The owning broker closed its command pipe (including app crashes).
+    OwnerDisconnected,
     Rpc(RpcRequest),
     NativeVideoFrameDecoded(NativeVideoFrameDecodeResult),
     NativeImageDecoded(String, String, Result<(usize, usize, Vec<u8>), String>),
@@ -781,6 +793,7 @@ struct VideoPrefetchResult {
 
 #[derive(Clone, Debug, Serialize)]
 struct NativeVideoSessionStatus {
+    phase_error_seconds: Option<f64>,
     playback_rate: f64,
     clock_seconds: f64,
     next_frame_seconds: Option<f64>,
@@ -920,6 +933,7 @@ struct CoreStatus {
     native_image_decode_last_error: String,
     native_video_frame_decodes: u64,
     native_video_hardware_frames: u64,
+    native_video_hap_frames: u64,
     native_video_last_pixel_format: String,
     native_video_software_frames: u64,
     native_video_hardware_fallbacks: u64,
@@ -1060,6 +1074,7 @@ struct CoreStats {
     native_image_decode_last_error: String,
     native_video_frame_decodes: u64,
     native_video_hardware_frames: u64,
+    native_video_hap_frames: u64,
     native_video_last_pixel_format: String,
     native_video_software_frames: u64,
     native_video_hardware_fallbacks: u64,
@@ -1306,6 +1321,7 @@ struct NativeMediaSourceState {
     playback_rate: f64,
     paused: bool,
     loop_enabled: bool,
+    bounce_enabled: bool,
     duration_seconds: Option<f64>,
     trim_start: f64,
     trim_end: f64,
@@ -1316,6 +1332,20 @@ struct NativeMediaSourceState {
 }
 
 impl NativeMediaSourceState {
+    fn current_playback_rate(&self, render_clock_time: Option<f32>) -> f64 {
+        if !self.bounce_enabled || self.paused { return self.playback_rate; }
+        let Some(duration) = self.duration_seconds.filter(|duration| *duration > 0.0) else {
+            return self.playback_rate;
+        };
+        let lo = duration * self.trim_start;
+        let span = (duration * self.trim_end - lo).max(f64::EPSILON);
+        let elapsed = render_clock_time.map_or(0.0, |clock| (clock as f64 - self.clock_time_seconds).max(0.0));
+        let phase = (self.playback_time_seconds + elapsed * self.playback_rate - lo).rem_euclid(2.0 * span);
+        if phase.abs() < 1e-9 { self.playback_rate.abs() }
+        else if (phase - span).abs() < 1e-9 { -self.playback_rate.abs() }
+        else if phase < span { self.playback_rate } else { -self.playback_rate }
+    }
+
     fn current_time_seconds(&self, render_clock_time: Option<f32>) -> f64 {
         let clock_delta = render_clock_time
             .map(|clock| clock as f64 - self.clock_time_seconds)
@@ -1329,7 +1359,10 @@ impl NativeMediaSourceState {
             let range_start = duration * self.trim_start.clamp(0.0, 1.0);
             let range_end = duration * self.trim_end.clamp(self.trim_start, 1.0);
             let range_duration = (range_end - range_start).max(f64::EPSILON);
-            if self.loop_enabled {
+            if self.bounce_enabled {
+                let phase = (time - range_start).rem_euclid(2.0 * range_duration);
+                time = range_start + if phase <= range_duration { phase } else { 2.0 * range_duration - phase };
+            } else if self.loop_enabled && !(self.playback_rate < 0.0 && (time - range_end).abs() < 1e-9) {
                 time = range_start + (time - range_start) % range_duration;
                 if time < range_start {
                     time += range_duration;
@@ -1583,7 +1616,30 @@ fn warp_mesh_at(params: Option<&Value>) -> (f32, f32, [[f32; 4]; 128]) {
 /// Upper bound on simultaneously-presented slice displays. Each one costs a
 /// full composite pass per frame, so this is a guardrail against a project
 /// with dozens of configured screens stalling the render loop.
-const MAX_SLICE_OUTPUTS: usize = 8;
+const MAX_SLICE_OUTPUTS: usize = 32;
+const MAX_SLICE_TEXTURE_BYTES: u64 = 512 * 1024 * 1024;
+
+fn validate_slice_outputs(params: &Value) -> Result<(), String> {
+    let entries = params.get("slices").and_then(Value::as_array)
+        .ok_or_else(|| "screen outputs must be an array".to_string())?;
+    if entries.len() > MAX_SLICE_OUTPUTS {
+        return Err(format!("At most {MAX_SLICE_OUTPUTS} screen outputs can be open at once."));
+    }
+    let mut ids = HashSet::new();
+    let mut bytes = 0u64;
+    for entry in entries {
+        let id = entry.get("id").and_then(Value::as_str).filter(|id| !id.trim().is_empty())
+            .ok_or_else(|| "Every screen output needs an ID.".to_string())?;
+        if !ids.insert(id) { return Err(format!("Duplicate screen output: {id}")); }
+        let width = number_at(entry, &["width"]).unwrap_or(1920.0).clamp(16.0, 16384.0) as u64;
+        let height = number_at(entry, &["height"]).unwrap_or(1080.0).clamp(16.0, 16384.0) as u64;
+        bytes = bytes.saturating_add(width * height * 8);
+    }
+    if bytes > MAX_SLICE_TEXTURE_BYTES {
+        return Err("Screen outputs exceed the 512 MiB texture budget. Close an output or lower its display resolution.".to_string());
+    }
+    Ok(())
+}
 
 /// Editor-side description of a slice output: where it presents and how the
 /// master composition maps onto it.
@@ -2324,6 +2380,73 @@ fn sort_graph_layers_for_frame(layers: &mut [NativeGraphLayer]) {
     layers.sort_by(|a, b| {
         graph_layer_frame_order((&a.kind, a.layer_id.as_str()), (&b.kind, b.layer_id.as_str()))
     });
+    // Stage order is only a tie breaker: clip fades, deck fades, and Screen
+    // copies may share a kind. Follow the textures they actually read so a
+    // freshly installed nested graph never samples a cleared/previous slot.
+    let writers = layers.iter().enumerate().flat_map(|(index, layer)| {
+        [(format!("layer-frame:{}", layer.layer_id), index),
+         (format!("shader-frame:{}", layer.layer_id), index),
+         (layer.source_id.clone(), index)]
+    }).collect::<HashMap<_, _>>();
+    let dependencies = layers.iter().enumerate().map(|(index, layer)| {
+        let mut resources = vec![layer.input_source_id.as_str()];
+        if let Some(job) = &layer.effect_job_template {
+            resources.extend(job.render_plans.iter().flat_map(|plan| plan.bindings.iter())
+                .chain(job.pass_plans.iter().flat_map(|plan| plan.bindings.iter()))
+                .map(|binding| binding.resource_id.as_str()));
+        }
+        resources.into_iter().filter_map(|resource| writers.get(resource).copied())
+            .filter(|writer| *writer != index).collect::<HashSet<_>>()
+    }).collect::<Vec<_>>();
+    let order = graph_dependency_order(&dependencies);
+    let ordered = order.into_iter().map(|index| layers[index].clone()).collect::<Vec<_>>();
+    layers.clone_from_slice(&ordered);
+}
+
+fn graph_dependency_order(dependencies: &[HashSet<usize>]) -> Vec<usize> {
+    let mut remaining = (0..dependencies.len()).collect::<Vec<_>>();
+    let mut finished = HashSet::new();
+    let mut order = Vec::with_capacity(remaining.len());
+    while !remaining.is_empty() {
+        // A malformed cyclic graph has no same-frame solution. Keep its
+        // fallback deterministic, rather than hanging the live render loop.
+        let next = remaining.iter().position(|index| dependencies[*index].iter()
+            .all(|dependency| finished.contains(dependency))).unwrap_or(0);
+        let index = remaining.remove(next);
+        finished.insert(index);
+        order.push(index);
+    }
+    order
+}
+
+fn is_clip_snapshot_source_id(source_id: &str) -> bool {
+    source_id.strip_prefix("vj-clip-snapshot-")
+        .and_then(|suffix| suffix.split_once('-'))
+        .is_some_and(|(deck, row)| matches!(deck, "A" | "B")
+            && row.parse::<u8>().is_ok_and(|index| index < 32 && row == index.to_string()))
+}
+
+#[derive(Default)]
+struct SourceFrameGpuReadiness {
+    epoch: AtomicU64,
+    submitted_epoch: AtomicU64,
+    completed_epoch: AtomicU64,
+}
+
+impl SourceFrameGpuReadiness {
+    fn invalidate(&self) {
+        self.epoch.fetch_add(1, Ordering::AcqRel);
+    }
+
+    fn ready(&self) -> bool {
+        let epoch = self.epoch.load(Ordering::Acquire);
+        epoch > 0 && self.completed_epoch.load(Ordering::Acquire) == epoch
+    }
+
+    fn submitted(&self) -> bool {
+        let epoch = self.epoch.load(Ordering::Acquire);
+        epoch > 0 && self.submitted_epoch.load(Ordering::Acquire) == epoch
+    }
 }
 
 /// Per-layer running state for the GhostFX Liquid injection engine — beat
@@ -2457,6 +2580,46 @@ struct NativeGraphFrameJob {
     /// the bytes land in `graph_readback_results` a frame or more later, and
     /// a frame never waits for them.
     readback_buffer_ids: Vec<String>,
+}
+
+fn graph_job_references_source(job: &NativeGraphFrameJob, source_id: &str) -> bool {
+    job.render_plans.iter().flat_map(|plan| plan.bindings.iter())
+        .chain(job.pass_plans.iter().flat_map(|plan| plan.bindings.iter()))
+        .any(|binding| binding.resource_id == source_id)
+}
+
+fn graph_job_structure_signature(job: &NativeGraphFrameJob) -> String {
+    // Uniform values (mix/time/audio) do not invalidate a published picture;
+    // a new shader, output, or input identity must render before it is ready.
+    format!("{:?}:{:?}",
+        job.render_plans.iter().map(|plan| (&plan.cache_key, match &plan.target {
+            NativeComputeGraphRenderTarget::SourceFrame { source_id, slot, .. } => format!("{source_id}:{slot}"),
+            target => format!("{target:?}"),
+        },
+            plan.bindings.iter().map(|binding| (&binding.resource_id, binding.binding, binding.kind)).collect::<Vec<_>>()
+        )).collect::<Vec<_>>(),
+        job.pass_plans.iter().map(|plan| (&plan.cache_key,
+            plan.bindings.iter().map(|binding| (&binding.resource_id, binding.binding, binding.kind)).collect::<Vec<_>>()
+        )).collect::<Vec<_>>())
+}
+
+fn graph_frame_job_order(jobs: &[NativeGraphFrameJob]) -> Vec<usize> {
+    let mut writers = HashMap::<usize, Vec<usize>>::new();
+    for (index, job) in jobs.iter().enumerate() {
+        for plan in &job.render_plans {
+            if let NativeComputeGraphRenderTarget::SourceFrame { slot, .. } = plan.target {
+                writers.entry(slot).or_default().push(index);
+            }
+        }
+    }
+    let dependencies = jobs.iter().enumerate().map(|(index, job)| {
+        job.render_plans.iter().flat_map(|plan| plan.bindings.iter())
+            .chain(job.pass_plans.iter().flat_map(|plan| plan.bindings.iter()))
+            .filter_map(|binding| binding.source_slot.and_then(|slot| writers.get(&slot)))
+            .flat_map(|writers| writers.iter().copied()).filter(|writer| *writer != index)
+            .collect::<HashSet<_>>()
+    }).collect::<Vec<_>>();
+    graph_dependency_order(&dependencies)
 }
 
 impl SceneLayer {
@@ -2771,6 +2934,14 @@ impl GpuTimingState {
     }
 }
 
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+#[derive(Default)]
+struct NativeHapUploadBatch {
+    commands: Vec<wgpu::CommandBuffer>,
+    frames: Vec<(hardware_video::GpuVideoFrame, Option<media_decode::NativeVideoGpuLease>)>,
+    slots: Vec<usize>,
+}
+
 struct RenderState {
     window: Arc<Window>,
     adapter_name: String,
@@ -2803,6 +2974,7 @@ struct RenderState {
     /// `layer_count`, so skipping is observationally identical.
     layer_upload_last: Vec<u8>,
     source_frame_texture: wgpu::Texture,
+    source_frame_gpu_readiness: Vec<Arc<SourceFrameGpuReadiness>>,
     native_graph_source_frame_sample_texture: wgpu::Texture,
     source_frame_sampler: wgpu::Sampler,
     native_shader_input_texture: wgpu::Texture,
@@ -2810,6 +2982,9 @@ struct RenderState {
     source_frame_format: wgpu::TextureFormat,
     source_frame_mip_levels: u32,
     source_frame_blitter: TextureBlitter,
+    hap_converter: hap_texture::HapTextureConverter,
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    hap_upload_batch: Mutex<Option<NativeHapUploadBatch>>,
     #[cfg(target_os = "macos")]
     video_converter: video_texture::GpuVideoConverter,
     #[cfg(target_os = "windows")]
@@ -2954,7 +3129,11 @@ struct NativeVideoFrameCacheEntry {
 }
 
 struct NativeVideoStreamState {
+    start_reverse: bool,
+    phase_until: Option<Instant>,
+    phase_error_seconds: Option<f64>,
     signature: String,
+    transport_rate: f64,
     start_time_seconds: f64,
     stream: NativeVideoStream,
     seek_generation: u64,
@@ -3086,6 +3265,7 @@ struct App {
     source_preview_dirty: bool,
     source_frames: HashMap<String, SourceFrame>,
     source_frame_slots: HashMap<String, usize>,
+    captured_graph_holds: HashSet<String>,
     source_frame_signatures: HashMap<String, String>,
     image_decode_queue: VecDeque<(String, String, PathBuf)>,
     image_decode_active: usize,
@@ -3101,6 +3281,8 @@ struct App {
     native_video_frame_cache_order: VecDeque<String>,
     native_video_frame_cache_bytes: usize,
     media_sources: HashMap<String, NativeMediaSourceState>,
+    clip_audio: Option<clip_audio::ClipAudio>,
+    clip_audio_mix: Value,
     native_video_decode_pending: HashSet<String>,
     native_video_decode_failed: HashSet<String>,
     native_video_streams: HashMap<String, NativeVideoStreamState>,
@@ -3396,7 +3578,8 @@ impl App {
             source_preview_slots: HashMap::new(),
             source_preview_dirty: true,
             source_frames: HashMap::new(),
-            source_frame_slots: HashMap::new(),
+            source_frame_slots: HashMap::from([(EMPTY_SOURCE_FRAME_ID.to_string(), 0)]),
+            captured_graph_holds: HashSet::new(),
             source_frame_signatures: HashMap::new(),
             image_decode_queue: VecDeque::new(),
             image_decode_active: 0,
@@ -3412,6 +3595,8 @@ impl App {
             native_video_frame_cache_order: VecDeque::new(),
             native_video_frame_cache_bytes: 0,
             media_sources: HashMap::new(),
+            clip_audio: None,
+            clip_audio_mix: json!([]),
             native_video_decode_pending: HashSet::new(),
             native_video_decode_failed: HashSet::new(),
             native_video_streams: HashMap::new(),
@@ -3599,6 +3784,8 @@ impl App {
             "video_frame_prefetch": true,
             "native_media_source_playback_state": true,
             "native_video_decode_pump": true,
+            "native_hap_compressed_textures": cfg!(any(target_os = "macos", target_os = "windows")) && self.renderer.as_ref().is_some_and(|r| r.device.features().contains(wgpu::Features::TEXTURE_COMPRESSION_BC)),
+            "native_hap_formats": ["Hap1", "Hap5", "HapY"],
             "native_video_decode_pump_window": true,
             "decode_policy_controls": true,
             "decode_preview_cache_clear": true,
@@ -3919,6 +4106,7 @@ impl App {
                 let (source_time_seconds, source_frame_duration_seconds, source_fps, source_duration_seconds) = session.stream.source_timing();
                 let (scrub_cache_hits, scrub_cache_misses, forward_continuations) = session.stream.scrub_cache_stats();
                 NativeVideoSessionStatus {
+                    phase_error_seconds: session.phase_error_seconds,
                     playback_rate: self.media_sources.get(source_id).map_or(1.0, |state| state.playback_rate),
                     clock_seconds, next_frame_seconds, play_state_changes,
                     backend: session.stream.backend().to_string(),
@@ -4148,6 +4336,7 @@ impl App {
             },
             native_video_frame_decodes: self.stats.native_video_frame_decodes,
             native_video_hardware_frames: self.stats.native_video_hardware_frames,
+            native_video_hap_frames: self.stats.native_video_hap_frames,
             native_video_last_pixel_format: self.stats.native_video_last_pixel_format.clone(),
             native_video_software_frames: self.stats.native_video_software_frames,
             native_video_hardware_fallbacks: self.stats.native_video_hardware_fallbacks,
@@ -4385,6 +4574,8 @@ impl App {
             "capture_busy": LIVE_CAPTURE_BUSY.load(Ordering::Acquire),
             "diagnostic_readback_busy": LIVE_DIAGNOSTIC_BUSY.load(Ordering::Acquire),
             "output_texture_bytes": self.renderer.as_ref().map_or(0, |r| r.config.width as u64 * r.config.height as u64 * 24),
+            "slice_output_limit": MAX_SLICE_OUTPUTS,
+            "slice_texture_budget_bytes": MAX_SLICE_TEXTURE_BYTES,
             "slice_texture_bytes": self.slice_outputs.iter().map(|s| s.width as u64 * s.height as u64 * 8).sum::<u64>(),
             "source_array_texture_bytes": self.renderer.as_ref().map_or(0, |r| estimate_source_frame_texture_bytes(r.source_frame_size, if r.source_frame_format == wgpu::TextureFormat::Rgba16Float { 8 } else { 4 })),
             "decoded_video_cache_bytes": self.native_video_frame_cache_bytes,
@@ -4496,6 +4687,7 @@ impl App {
             }
             "stop" => {
                 self.running = false;
+                self.refresh_clip_audio();
                 Ok(json!(true))
             }
             "status" | "get_status" => Ok(json!(self.status())),
@@ -4512,6 +4704,10 @@ impl App {
                 "shader_registry": self.shader_registry_snapshot(),
             })),
             "frame_snapshot" | "get_frame_snapshot" => self.frame_snapshot(&req.params),
+            "capture_layer_source_frame" => self.capture_layer_source_frame(&req.params),
+            "get_layer_source_readiness" => self.layer_source_readiness(&req.params),
+            "get_source_frame_readiness" => self.source_frame_readiness(&req.params),
+            "release_source_frame" => self.release_source_frame(&req.params),
             "export_frame_snapshot" => self.export_frame_snapshot(&req.params),
             "prefetch_media" => self.prefetch_media(&req.params),
             "clear_prefetch_cache" => Ok(self.clear_prefetch_cache()),
@@ -4811,6 +5007,12 @@ impl App {
                 Ok(json!(self.status()))
             }
             "clear_runtime_caches" => Ok(self.clear_runtime_caches(&req.params)),
+            "audio_devices" => Ok(clip_audio::ClipAudio::devices()),
+            "audio_status" => Ok(self.clip_audio.as_ref().map(|audio| audio.status()).unwrap_or_else(|| json!({"running": false, "assets": []}))),
+            "audio_output" => {
+                let name = string_at(&req.params, &["device"]).unwrap_or_else(|| "default".into());
+                self.clip_audio.get_or_insert_with(clip_audio::ClipAudio::new).select_output(&name).map(|_| json!(true))
+            }
             "shutdown" => {
                 self.running = false;
                 event_loop.exit();
@@ -5047,10 +5249,9 @@ impl App {
     /// composite a full-resolution frame per display rather than having each
     /// slice window re-render the whole scene in WebGL and crop it.
     fn apply_slice_outputs(&mut self, params: &Value) -> Result<Value, String> {
+        validate_slice_outputs(params)?;
         let mut specs: Vec<SliceOutputSpec> = Vec::new();
         if let Some(entries) = params.get("slices").and_then(Value::as_array) {
-            if entries.len() > MAX_SLICE_OUTPUTS { return Err(format!("at most {MAX_SLICE_OUTPUTS} slice outputs are supported")); }
-            let mut slice_bytes = 0u64;
             for entry in entries {
                 let Some(id) = string_at(entry, &["id"]).filter(|id| !id.trim().is_empty()) else {
                     continue;
@@ -5058,9 +5259,6 @@ impl App {
                 let read = |keys: &[&str], fallback: f64| number_at(entry, keys).unwrap_or(fallback);
                 let width = read(&["width"], 1920.0).clamp(16.0, 16384.0) as u32;
                 let height = read(&["height"], 1080.0).clamp(16.0, 16384.0) as u32;
-                // Each output owns render and export textures, four bytes per pixel each.
-                slice_bytes = slice_bytes.saturating_add(width as u64 * height as u64 * 8);
-                if slice_bytes > 512 * 1024 * 1024 { return Err("slice outputs exceed 512 MiB texture budget".to_string()); }
                 let crop_x = read(&["cropX"], 0.0).clamp(0.0, 0.99) as f32;
                 let crop_y = read(&["cropY"], 0.0).clamp(0.0, 0.99) as f32;
                 let crop_w = read(&["cropW"], 1.0).clamp(0.01, 1.0 - crop_x as f64) as f32;
@@ -5131,7 +5329,6 @@ impl App {
                 specs.push(SliceOutputSpec { id, width, height, stage });
             }
         }
-        specs.truncate(MAX_SLICE_OUTPUTS);
         let ids: Vec<String> = specs.iter().map(|spec| spec.id.clone()).collect();
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         if let Some(renderer) = self.renderer.as_mut() {
@@ -5411,6 +5608,7 @@ impl App {
         let mut applied = 0u64;
         let mut dropped = 0u64;
         let mut unknown_types = Vec::<String>::new();
+        let mut errors = Vec::<Value>::new();
         let mut explicit_present_requested = false;
         self.stats.command_queue_peak = self.stats.command_queue_peak.max(count);
         if count > self.command_drain_limit as u64 {
@@ -5436,7 +5634,11 @@ impl App {
                     let _ = self.apply_output_stage(command);
                 }
                 "set_slice_outputs" => {
-                    let _ = self.apply_slice_outputs(command);
+                    if let Err(error) = self.apply_slice_outputs(command) {
+                        if errors.len() < 16 { errors.push(json!({ "type": command_type, "message": error })); }
+                        dropped = dropped.saturating_add(1);
+                        continue;
+                    }
                 }
                 "upsert_layer" => self.apply_upsert_layer(command),
                 "set_layer_visibility" => self.apply_layer_visibility(command),
@@ -5499,6 +5701,15 @@ impl App {
                 }
                 "set_audio_state" => self.apply_audio_state(command),
                 "set_render_clock" => self.apply_render_clock(command),
+                "set_clip_audio_mix" => {
+                    self.clip_audio_mix = command.get("voices").cloned().unwrap_or_else(|| json!([]));
+                    let sources = command.get("sources").and_then(Value::as_array).into_iter().flatten()
+                        .filter_map(|value| value.as_str()).take(64)
+                        .filter_map(|uri| local_media_path_from_uri(uri).map(|path| (uri.to_string(), path))).collect();
+                    self.clip_audio.get_or_insert_with(clip_audio::ClipAudio::new).prepare(sources);
+                    self.refresh_clip_audio();
+                }
+                "set_media_source_phase" => self.apply_media_source_phase(command),
                 "set_media_source_playback" => self.apply_media_source_playback(command),
                 "bind_media_source" => self.apply_media_source(command),
                 "decode_media_source" => self.apply_decode_media_source(command),
@@ -5546,6 +5757,7 @@ impl App {
             "applied": applied,
             "dropped": dropped,
             "unknown_types": unknown_types,
+            "errors": errors,
             "invalid_payload": false,
             "command_drain_limit": self.command_drain_limit,
             "command_queue_peak": self.stats.command_queue_peak,
@@ -5646,6 +5858,9 @@ impl App {
         // later reader resolves its `layer-frame:` bindings.
         sort_graph_layers_for_frame(&mut graph_layers);
         for graph_layer in graph_layers {
+            if self.captured_graph_holds.contains(&graph_layer.layer_id) {
+                continue;
+            }
             let layer_visible = self
                 .scene_layers
                 .get(&graph_layer.layer_id)
@@ -5675,7 +5890,7 @@ impl App {
                     self.last_shader_error = Some(message);
                     continue;
                 };
-                let job = self.native_plugin_graph_frame_job(&graph_layer, template);
+                let job = self.native_plugin_graph_frame_job(&graph_layer, template, &jobs);
                 self.register_compute_graph_source_frame_targets(&job.render_plans);
                 jobs.push(job);
                 self.last_shader_error = None;
@@ -5779,8 +5994,30 @@ impl App {
         &mut self,
         graph_layer: &NativeGraphLayer,
         template: &NativeGraphFrameJob,
+        earlier_jobs: &[NativeGraphFrameJob],
     ) -> NativeGraphFrameJob {
         let mut job = template.clone();
+        let clip_sources = if graph_layer.kind == NativeGraphLayerKind::VjCrossfade {
+            [2, 3].map(|number| job.render_plans.iter().flat_map(|plan| plan.bindings.iter())
+                .find(|binding| binding.binding == number).and_then(|binding| {
+                    let (rect, slot) = if let Some(layer_id) = binding.resource_id.strip_prefix("layer-frame:") {
+                        let layer = self.scene_layers.get(layer_id)?;
+                        (layer.source_rect, layer.frame_slot)
+                    } else {
+                        (self.source_frames.get(&binding.resource_id)?.source_rect,
+                            self.source_frame_slots.get(&binding.resource_id).copied())
+                    };
+                    // Queue ordering makes an already submitted snapshot or
+                    // video safe to sample even before the CPU sees its GPU
+                    // callback. Allocated/warming graph slots remain false.
+                    let ready = slot.is_some_and(|slot| self.renderer.as_ref()
+                        .is_some_and(|renderer| renderer.source_frame_gpu_readiness[slot].submitted())
+                        || earlier_jobs.iter().chain(self.pending_native_graph_jobs.iter())
+                            .flat_map(|job| job.render_plans.iter()).any(|plan|
+                            matches!(plan.target, NativeComputeGraphRenderTarget::SourceFrame { slot: writer, .. } if writer == slot)));
+                    Some((rect, ready))
+                }).unwrap_or(([0.0, 0.0, 1.0, 1.0], false)))
+        } else { [([0.0, 0.0, 1.0, 1.0], false); 2] };
         // `layer-frame:` bindings must track the CURRENT frame slot of their
         // scene layer every replay — at install time a shader layer may not
         // have rendered yet (its binding would pin to the empty placeholder
@@ -6015,6 +6252,18 @@ impl App {
                 // animates glitch/liquid/strobe. Mix and transition are
                 // updated in place by the renderer sync.
                 write_f32_le(&mut buffer.initial_bytes, 3, time);
+                continue;
+            }
+            if graph_layer.kind == NativeGraphLayerKind::VjCrossfade
+                && buffer.initial_bytes.len() == 224
+            {
+                write_f32_le(&mut buffer.initial_bytes, 3, time);
+                for (branch, (rect, ready)) in clip_sources.iter().enumerate() {
+                    write_f32_le(&mut buffer.initial_bytes, 6 + branch, if *ready { 1.0 } else { 0.0 });
+                    for (index, value) in rect.iter().enumerate() {
+                        write_f32_le(&mut buffer.initial_bytes, 28 + branch * 24 + index, *value);
+                    }
+                }
                 continue;
             }
             if graph_layer.kind == NativeGraphLayerKind::GhostFx {
@@ -6292,7 +6541,7 @@ impl App {
             time,
         );
         let source_id = graph_layer.source_id.clone();
-        let slot = self.assign_source_frame_slot(&source_id);
+        let slot = self.assign_source_frame_slot(&source_id)?;
         let uniform_id = format!("planet:{}:uniform", native_graph_buffer_safe_id(&source_id));
         let seq = self.native_frame_index();
         let buffer_spec = NativeComputeGraphBufferSpec {
@@ -6570,7 +6819,7 @@ impl App {
             bindings: sim_bindings,
         }];
 
-        let slot = self.assign_source_frame_slot(&source_id);
+        let slot = self.assign_source_frame_slot(&source_id)?;
         let target = NativeComputeGraphRenderTarget::SourceFrame {
             source_id: source_id.clone(),
             slot,
@@ -7049,7 +7298,7 @@ impl App {
         let (render_hash, render_source) =
             self.native_graph_shader_source(render_shader_id, "fs_main")?;
         self.native_graph_shader_source(render_shader_id, "vs_main")?;
-        let slot = self.assign_source_frame_slot(&source_id);
+        let slot = self.assign_source_frame_slot(&source_id)?;
         let seq = self.native_frame_index();
         let render_bindings = vec![
             binding(
@@ -7434,7 +7683,7 @@ impl App {
             });
         }
 
-        let slot = self.assign_source_frame_slot(&source_id);
+        let slot = self.assign_source_frame_slot(&source_id)?;
         let seq = self.native_frame_index();
         let target = NativeComputeGraphRenderTarget::SourceFrame {
             source_id: source_id.clone(),
@@ -7948,7 +8197,7 @@ impl App {
         buffers.extend(director_buffers);
         pass_plans.extend(director_passes);
 
-        let output_slot = self.assign_source_frame_slot(&source_id);
+        let output_slot = self.assign_source_frame_slot(&source_id)?;
         let seq = self.native_frame_index();
         let render_bindings = vec![
             NativeComputeGraphBindingSpec {
@@ -8408,7 +8657,7 @@ impl App {
         });
         buffers.extend(director_buffers);
         pass_plans.extend(director_passes);
-        let output_slot = self.assign_source_frame_slot(&source_id);
+        let output_slot = self.assign_source_frame_slot(&source_id)?;
         let seq = self.native_frame_index();
         let render_bindings = vec![
             NativeComputeGraphBindingSpec {
@@ -8891,7 +9140,7 @@ impl App {
             }
         }
 
-        let output_slot = self.assign_source_frame_slot(&graph_layer.source_id);
+        let output_slot = self.assign_source_frame_slot(&graph_layer.source_id)?;
         let seq = self.native_frame_index();
         let render_bindings = vec![
             NativeComputeGraphBindingSpec {
@@ -9881,7 +10130,7 @@ impl App {
         let (render_hash, render_source) =
             self.native_graph_shader_source(render_shader_id, "fs_main")?;
         self.native_graph_shader_source(render_shader_id, "vs_main")?;
-        let slot = self.assign_source_frame_slot(&source_id);
+        let slot = self.assign_source_frame_slot(&source_id)?;
         let seq = self.native_frame_index();
         let render_bindings = vec![
             binding(
@@ -10348,7 +10597,7 @@ impl App {
             self.native_graph_shader_source(render_shader, "fs_main")?;
         self.native_graph_shader_source(render_shader, "vs_main")?;
         let seq = self.native_frame_index();
-        let slot = self.assign_source_frame_slot(&source_id);
+        let slot = self.assign_source_frame_slot(&source_id)?;
         let render_bindings = vec![
             binding(0, render_uniform_id, uni),
             binding(1, spheres_id, ro),
@@ -11675,7 +11924,7 @@ impl App {
                             eprintln!(
                                 "[GhostRenderCore] compute_graph {context} `{shader_id}` binding {binding_number} source-frame `{resource_id}` has no frame yet; assigning a slot"
                             );
-                            self.assign_source_frame_slot(&resource_id)
+                            self.assign_source_frame_slot(&resource_id)?
                         }
                     })
                 };
@@ -11982,7 +12231,7 @@ impl App {
                         "compute_graph render target `source_frame` requires source_id".to_string(),
                     );
                 };
-                let slot = self.assign_source_frame_slot(&source_id);
+                let slot = self.assign_source_frame_slot(&source_id)?;
                 let seq = number_at(render, &["seq"])
                     .or_else(|| number_at(render, &["frame_index"]))
                     .unwrap_or_else(|| self.stats.commands_applied.saturating_add(1) as f64)
@@ -12720,6 +12969,25 @@ impl App {
                     None
                 }
             });
+        if command.get("effect_graph").or_else(|| command.get("effectGraph"))
+            .is_some_and(|config| !config.is_null()) && effect_job_template.is_none() {
+            // Failed optional graph admission must preserve the outgoing
+            // layer, not replace it with a carrier that cannot draw.
+            return;
+        }
+        self.captured_graph_holds.remove(&layer_id);
+        if let Some(template) = effect_job_template.as_ref() {
+            let changed = self.native_graph_layers.get(&layer_id)
+                .and_then(|layer| layer.effect_job_template.as_ref())
+                .is_none_or(|old| graph_job_structure_signature(old) != graph_job_structure_signature(template));
+            if changed && let Some(renderer) = self.renderer.as_ref() {
+                for plan in &template.render_plans {
+                    if let NativeComputeGraphRenderTarget::SourceFrame { slot, .. } = plan.target {
+                        renderer.source_frame_gpu_readiness[slot].invalidate();
+                    }
+                }
+            }
+        }
         // Re-arm the template's first-run clear when its IDENTITY changes
         // (scene switch produces different buffer id prefixes). Param tweaks
         // reuse the same ids and must NOT reset accumulated sim state.
@@ -12919,6 +13187,9 @@ impl App {
         entry.shader_rendered = false;
         entry.preview_slot = None;
         entry.frame_slot = self.source_frame_slots.get(&composite_source_id).copied();
+        // A reused video layer may retain the decoder's centered sub-rect.
+        // Graph outputs already cover their full canvas and must not inherit it.
+        entry.source_rect = [0.0, 0.0, 1.0, 1.0];
     }
 
     fn apply_update_native_graph_buffer(&mut self, command: &Value) -> Result<(), String> {
@@ -13321,7 +13592,10 @@ impl App {
             // shader) first, so the new render reuses a free slot instead of
             // displacing another layer's.
             self.release_layer_shader_output(&layer_id, Some(&source_id));
-            let slot = self.assign_source_frame_slot(&source_id);
+            let slot = match self.assign_source_frame_slot(&source_id) {
+                Ok(slot) => slot,
+                Err(error) => { self.last_shader_error = Some(error); return; }
+            };
             shader_output_source_id = Some(source_id.clone());
             /* The quality tier finally reaches the renderer. quality_scale has
                been maintained and reported in status since this was written and
@@ -13601,7 +13875,9 @@ impl App {
             || self
                 .native_graph_layers
                 .values()
-                .any(|layer| layer.input_source_id == source_id || layer.source_id == source_id)
+                .any(|layer| layer.input_source_id == source_id || layer.source_id == source_id
+                    || layer.effect_job_template.as_ref().is_some_and(|job| graph_job_references_source(job, source_id)))
+            || self.pending_native_graph_jobs.iter().any(|job| graph_job_references_source(job, source_id))
     }
 
     /// Let go of the frame a shader layer rendered, unless it is `keep`.
@@ -13634,6 +13910,12 @@ impl App {
     /// random churn, and the *incoming* source's session can be evicted
     /// before it pre-rolls — observed as "switching clips stops working
     /// after several swaps" with the layer stuck on PENDING.
+    fn release_source_frame_slot(&mut self, source_id: &str) {
+        if let Some(slot) = self.source_frame_slots.remove(source_id) {
+            if let Some(renderer) = &self.renderer { renderer.hap_converter.release(slot); }
+        }
+    }
+
     fn release_media_source_if_orphaned(&mut self, source_id: &str) {
         if source_id.is_empty()
             || source_id.starts_with("library:")
@@ -13644,12 +13926,131 @@ impl App {
         self.media_sources.remove(source_id);
         self.native_video_streams.remove(source_id);
         self.native_video_scrub_requests.remove(source_id);
-        self.source_frame_slots.remove(source_id);
+        self.release_source_frame_slot(source_id);
         self.source_frames.remove(source_id);
         self.source_frame_signatures.remove(source_id);
         self.native_video_frame_signatures.remove(source_id);
         self.stats.media_source_orphan_releases =
             self.stats.media_source_orphan_releases.saturating_add(1);
+    }
+
+    fn source_frame_readiness(&self, params: &Value) -> Result<Value, String> {
+        let source_id = string_at(params, &["source_id"])
+            .ok_or_else(|| "get_source_frame_readiness requires source_id".to_string())?;
+        let expected_generation = params.get("seek_generation").and_then(Value::as_u64);
+        let slot = self.source_frame_slots.get(&source_id).copied();
+        let frame = self.source_frames.get(&source_id);
+        let session = self.native_video_streams.get(&source_id);
+        let generation = session.map(|session| session.seek_generation)
+            .or_else(|| self.media_sources.get(&source_id).map(|state| state.seek_generation));
+        let gpu_ready = self.renderer.as_ref().is_some_and(|renderer| {
+            let _ = renderer.device.poll(wgpu::PollType::Poll);
+            slot.is_some_and(|slot| renderer.source_frame_gpu_readiness[slot].ready())
+        });
+        let ready = frame.is_some() && gpu_ready
+            && expected_generation.is_none_or(|expected| generation == Some(expected))
+            && session.is_none_or(|session| session.frames_presented > 0);
+        Ok(json!({ "source_id": source_id, "ready": ready, "gpu_ready": gpu_ready,
+            "source_slot": slot, "frame_sequence": frame.map(|frame| frame.seq),
+            "seek_generation": generation, "frames_presented": session.map(|session| session.frames_presented) }))
+    }
+
+    fn layer_source_readiness(&self, params: &Value) -> Result<Value, String> {
+        let layer_id = string_at(params, &["layer_id"])
+            .ok_or_else(|| "get_layer_source_readiness requires layer_id".to_string())?;
+        let expected_source = string_at(params, &["source_id"]);
+        let expected_generation = params.get("seek_generation").and_then(Value::as_u64);
+        let layer = self.scene_layers.get(&layer_id);
+        let actual_source = layer.and_then(|layer| {
+            if layer.shader_rendered && layer.frame_slot == layer.shader_frame_slot {
+                layer.shader_source_id.as_deref()
+            } else { layer.source_id.as_deref() }
+        });
+        let pending = self.pending_media_bindings.get(&layer_id);
+        let slot = layer.and_then(|layer| layer.frame_slot);
+        let source_frame = actual_source.and_then(|source| self.source_frames.get(source));
+        let session = actual_source.and_then(|source| self.native_video_streams.get(source));
+        let media = actual_source.and_then(|source| self.media_sources.get(source));
+        let seek_generation = session.map(|session| session.seek_generation)
+            .or_else(|| media.map(|state| state.seek_generation));
+        let gpu_ready = self.renderer.as_ref().is_some_and(|renderer| {
+            let _ = renderer.device.poll(wgpu::PollType::Poll);
+            slot.is_some_and(|slot| renderer.source_frame_gpu_readiness[slot].ready())
+        });
+        let ready = pending.is_none() && source_frame.is_some() && gpu_ready
+            && expected_source.as_deref().is_none_or(|expected| actual_source == Some(expected))
+            && expected_generation.is_none_or(|expected| seek_generation == Some(expected))
+            && session.is_none_or(|session| session.frames_presented > 0);
+        Ok(json!({
+            "layer_id": layer_id, "ready": ready,
+            "actual_source_id": actual_source,
+            "requested_source_id": pending.map(|binding| binding.source_id.as_str()).or(expected_source.as_deref()),
+            "pending": pending.is_some(), "gpu_ready": gpu_ready,
+            "source_slot": slot, "source_rect": layer.map(|layer| layer.source_rect),
+            "frame_sequence": source_frame.map(|frame| frame.seq),
+            "seek_generation": seek_generation,
+            "frames_presented": session.map(|session| session.frames_presented),
+        }))
+    }
+
+    fn capture_layer_source_frame(&mut self, params: &Value) -> Result<Value, String> {
+        let layer_id = string_at(params, &["layer_id"])
+            .ok_or_else(|| "capture_layer_source_frame requires layer_id".to_string())?;
+        let source_id = string_at(params, &["source_id"])
+            .filter(|source| is_clip_snapshot_source_id(source))
+            .ok_or_else(|| "capture_layer_source_frame requires a bounded vj-clip-snapshot-{A|B}-{0..31} source_id".to_string())?;
+        let readiness = self.layer_source_readiness(&json!({"layer_id": layer_id}))?;
+        if readiness["ready"] != true {
+            return Err(format!("layer `{layer_id}` has no completed source frame to capture"));
+        }
+        let layer = self.scene_layers.get(&layer_id).expect("ready layer exists");
+        let input_slot = layer.frame_slot.expect("ready layer has a slot");
+        let source_rect = layer.source_rect;
+        let seq = readiness["frame_sequence"].as_u64().unwrap_or(0);
+        let output_slot = if let Some(slot) = self.source_frame_slots.get(&source_id) {
+            *slot
+        } else {
+            // A transition must never evict the incoming or outgoing live
+            // picture to make room for its optional interruption snapshot.
+            let used = self.source_frame_slots.values().copied().collect::<HashSet<_>>();
+            let slot = (0..MAX_SOURCE_FRAME_SLOTS).find(|slot| !used.contains(slot))
+                .ok_or_else(|| "no free GPU source slot for clip transition snapshot".to_string())?;
+            self.source_frame_slots.insert(source_id.clone(), slot);
+            self.clear_new_source_frame_slot(slot);
+            slot
+        };
+        if input_slot == output_slot {
+            return Err("cannot capture a snapshot into its own source slot".to_string());
+        }
+        self.renderer.as_ref().ok_or_else(|| "renderer unavailable".to_string())?
+            .copy_source_frame_slot(input_slot, output_slot);
+        // Reusing a row's snapshot can overwrite an input of its old fade.
+        // Freeze that carrier's last output until the host installs the new
+        // fade, or a native tick in the RPC gap would blend the picture twice.
+        if self.native_graph_layers.contains_key(&layer_id) {
+            self.captured_graph_holds.insert(layer_id.clone());
+        }
+        self.source_frames.insert(source_id.clone(), SourceFrame::with_rect(seq, source_rect));
+        for layer in self.scene_layers.values_mut() {
+            if layer.source_id.as_deref() == Some(&source_id) {
+                layer.frame_slot = Some(output_slot);
+                layer.source_rect = source_rect;
+            }
+        }
+        Ok(json!({ "captured": true, "layer_id": layer_id, "source_id": source_id,
+            "source_slot": output_slot, "source_rect": source_rect, "frame_sequence": seq,
+            "transport": "gpu-copy" }))
+    }
+
+    fn release_source_frame(&mut self, params: &Value) -> Result<Value, String> {
+        let source_id = string_at(params, &["source_id"])
+            .filter(|source| is_clip_snapshot_source_id(source))
+            .ok_or_else(|| "release_source_frame requires a clip snapshot source_id".to_string())?;
+        if self.media_source_is_referenced(&source_id) {
+            return Ok(json!({ "released": false, "referenced": true, "source_id": source_id, "reason": "source is still referenced" }));
+        }
+        self.release_media_source_if_orphaned(&source_id);
+        Ok(json!({ "released": true, "referenced": false, "source_id": source_id }))
     }
 
     fn upsert_media_source_binding(&mut self, source_id: &str, uri: &str, source_type: &str) {
@@ -13671,6 +14072,7 @@ impl App {
                 playback_rate: 1.0,
                 paused: true,
                 loop_enabled: false,
+                bounce_enabled: false,
                 duration_seconds: None,
                 trim_start: 0.0,
                 trim_end: 1.0,
@@ -13698,7 +14100,7 @@ impl App {
         let render_clock_time = self.native_graph_time_seconds() as f64;
         let mut playback_time_seconds = number_at(command, &["time_seconds"])
             .or_else(|| number_at(command, &["time"]))
-            .or_else(|| existing.as_ref().map(|state| state.playback_time_seconds))
+            .or_else(|| existing.as_ref().map(|state| state.current_time_seconds(Some(render_clock_time as f32))))
             .unwrap_or(0.0)
             .clamp(0.0, 3600.0);
         let mut seek_generation = number_at(command, &["seek_generation"])
@@ -13709,7 +14111,7 @@ impl App {
             .max(0.0) as u64;
         let playback_rate = number_at(command, &["playback_rate"])
             .or_else(|| number_at(command, &["rate"]))
-            .or_else(|| existing.as_ref().map(|state| state.playback_rate))
+            .or_else(|| existing.as_ref().map(|state| state.current_playback_rate(Some(render_clock_time as f32))))
             .unwrap_or(1.0)
             .clamp(-16.0, 16.0);
         let duration_seconds = number_at(command, &["duration_seconds"])
@@ -13797,6 +14199,8 @@ impl App {
                         .map(|state| state.loop_enabled)
                         .unwrap_or(false)
                 }),
+            bounce_enabled: bool_at(command, &["bounce_enabled"])
+                .unwrap_or_else(|| existing.as_ref().is_some_and(|state| state.bounce_enabled)),
             duration_seconds,
             trim_start,
             trim_end,
@@ -13812,6 +14216,14 @@ impl App {
             .clamp(0.0, 1.0e9),
             seq,
         };
+        if existing.as_ref().is_some_and(|state| state.seek_generation != next_state.seek_generation)
+            && let Some(slot) = self.source_frame_slots.get(&source_id).copied()
+            && let Some(renderer) = self.renderer.as_ref()
+        {
+            // A completed frame from the previous seek is still a valid
+            // held picture, but cannot satisfy readiness for the new seek.
+            renderer.source_frame_gpu_readiness[slot].invalidate();
+        }
         if self.render_clock_mode == "live" && next_state.source_type == "video" {
             let (width, height) = self.native_video_decode_dimensions();
             if let (Some(direction), Some(reference)) = (frame_step, exact_step_reference) {
@@ -13819,9 +14231,13 @@ impl App {
                     next_state.decode_width.unwrap_or(width), next_state.decode_height.unwrap_or(height));
                 if let Some(session) = self.native_video_streams.get_mut(&source_id)
                     .filter(|session| session.signature == signature)
-                    && session.stream.step_frame(reference, direction as i32)
+                    && session.stream.step_frame(reference, direction as i32, next_state.playback_rate)
                 {
                     session.start_time_seconds = reference;
+                    session.start_reverse = next_state.playback_rate < 0.0;
+                    session.stream.retime_hardware_clock(next_state.playback_rate);
+                    session.phase_until = None;
+                    session.phase_error_seconds = None;
                     session.seek_generation = seek_generation;
                     session.playing = false;
                     session.frames_presented = 0;
@@ -14235,11 +14651,12 @@ impl App {
                 playback_rate: number_at(params, &["playback_rate"])
                     .or_else(|| number_at(params, &["playbackRate"]))
                     .unwrap_or(1.0)
-                    .clamp(0.01, 16.0),
+                    .clamp(-16.0, 16.0),
                 paused: true,
                 loop_enabled: bool_at(params, &["loop_enabled"])
                     .or_else(|| bool_at(params, &["loop"]))
                     .unwrap_or(true),
+                bounce_enabled: bool_at(params, &["bounce_enabled"]).unwrap_or(false),
                 duration_seconds: number_at(params, &["duration_seconds"])
                     .or_else(|| number_at(params, &["duration"]))
                     .filter(|duration| duration.is_finite() && *duration > 0.0),
@@ -14605,8 +15022,12 @@ impl App {
         frame: NativeVideoStreamFrame, transport: &str) -> bool {
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         if let Some(gpu) = frame.gpu {
-            let slot = self.assign_source_frame_slot(source_id);
+            let slot = match self.assign_source_frame_slot(source_id) {
+                Ok(slot) => slot,
+                Err(error) => { self.stats.native_video_frame_decode_last_error = error; return false; }
+            };
             self.stats.native_video_last_pixel_format = String::from_utf8_lossy(&gpu.pixel_format.to_be_bytes()).into_owned();
+            let hap_bytes = match &gpu.storage { hardware_video::FrameStorage::Hap(hap) => hap.blocks.len() as u64, _ => 0 };
             let result = self.renderer.as_ref().ok_or_else(|| "Renderer unavailable".to_string())
                 .and_then(|renderer| renderer.import_native_video_frame(slot, gpu, frame.memory_lease));
             let source_rect = match result {
@@ -14618,15 +15039,17 @@ impl App {
                 }
             };
             self.record_native_video_presentation(source_id, frame.source_time_seconds, frame.source_frame_duration_seconds);
-            self.stats.native_video_hardware_frames += 1;
+            if hap_bytes > 0 { self.stats.native_video_hap_frames += 1; } else { self.stats.native_video_hardware_frames += 1; }
             self.stats.native_video_frame_decodes += 1;
             self.stats.source_frame_uploads += 1;
-            self.stats.source_frame_shared_texture_uploads += 1;
-            self.stats.source_frame_last_input_bytes = 0;
-            self.stats.source_frame_last_upload_bytes = 0;
+            if hap_bytes == 0 { self.stats.source_frame_shared_texture_uploads += 1; }
+            self.stats.source_frame_bytes_uploaded = self.stats.source_frame_bytes_uploaded.saturating_add(hap_bytes);
+            self.stats.source_frame_input_bytes_uploaded = self.stats.source_frame_input_bytes_uploaded.saturating_add(hap_bytes);
+            self.stats.source_frame_last_input_bytes = hap_bytes;
+            self.stats.source_frame_last_upload_bytes = hap_bytes;
             self.stats.source_frame_last_upload_width = frame.width as u32;
             self.stats.source_frame_last_upload_height = frame.height as u32;
-            self.stats.source_frame_last_upload_transport = hardware_video::TRANSPORT.into();
+            self.stats.source_frame_last_upload_transport = if hap_bytes > 0 { "native-video-hap-bc" } else { hardware_video::TRANSPORT }.into();
             self.stats.source_frame_last_reject_reason.clear();
             self.stats.native_video_frame_decode_last_error.clear();
             self.source_frame_signatures.remove(source_id);
@@ -14652,6 +15075,64 @@ impl App {
         uploaded > 0
     }
 
+    fn apply_media_source_phase(&mut self, command: &Value) {
+        if self.render_clock_mode != "live" { return; }
+        let Some(id) = string_at(command, &["source_id"]) else { return; };
+        let Some(media) = self.media_sources.get(&id) else { return; };
+        if media.paused || !media.loop_enabled || media.source_type != "video"
+            || string_at(command, &["uri"]).as_deref() != Some(media.uri.as_str())
+            || number_at(command, &["seek_generation"]) != Some(media.seek_generation as f64) { return; }
+        let Some(duration) = media.duration_seconds else { return; };
+        let span = duration * (media.trim_end - media.trim_start);
+        if span <= 0.0 { return; }
+        let Some(target_time) = number_at(command, &["time_seconds"]).filter(|n| n.is_finite()) else { return; };
+        let Some(session) = self.native_video_streams.get_mut(&id) else { return; };
+        if !session.playing || session.seek_generation != media.seek_generation { return; }
+        let Some(elapsed) = session.stream.elapsed_source_seconds() else { return; };
+        let lo = duration * media.trim_start;
+        let cycle = span * if media.bounce_enabled { 2.0 } else { 1.0 };
+        let actual = video_phase::phase_position(session.start_time_seconds, lo, span,
+            session.start_reverse, media.bounce_enabled) + elapsed;
+        let target = video_phase::phase_position(target_time, lo, span,
+            bool_at(command, &["reverse"]).unwrap_or(media.playback_rate < 0.0), media.bounce_enabled);
+        let error = video_phase::phase_error(target, actual, cycle);
+        let rate = media.playback_rate * video_phase::correction(error, media.playback_rate);
+        if session.stream.retime_hardware_clock(rate) {
+            session.phase_until = Some(Instant::now() + Duration::from_millis(500));
+            session.phase_error_seconds = Some(error);
+        }
+    }
+
+    fn refresh_clip_audio(&mut self) {
+        if self.clip_audio.is_none() { return; }
+        let mut voices = Vec::new();
+        if self.running && self.render_clock_mode == "live" {
+            for config in self.clip_audio_mix.as_array().into_iter().flatten().take(32) {
+                let Some(source_id) = string_at(config, &["source_id"]) else { continue; };
+                let Some(media) = self.media_sources.get(&source_id) else { continue; };
+                let Some(duration) = media.duration_seconds else { continue; };
+                let Some(session) = self.native_video_streams.get(&source_id) else { continue; };
+                let Some(elapsed) = session.stream.elapsed_source_seconds() else { continue; };
+                let lo = duration * media.trim_start;
+                let hi = duration * media.trim_end;
+                let span = hi - lo;
+                if span <= 0.0 { continue; }
+                let cycle = span * if media.bounce_enabled { 2.0 } else { 1.0 };
+                let origin = video_phase::phase_position(session.start_time_seconds, lo, span, session.start_reverse, media.bounce_enabled);
+                let phase = if media.loop_enabled { (origin + elapsed).rem_euclid(cycle) } else { origin + elapsed };
+                let reverse = if media.bounce_enabled { phase >= span } else { media.playback_rate < 0.0 };
+                let time = lo + if reverse { cycle - phase } else { phase };
+                voices.push(clip_audio::Voice { id: string_at(config, &["id"]).unwrap_or(source_id), uri: media.uri.clone(), time,
+                    rate: session.stream.effective_rate().abs() * if reverse { -1.0 } else { 1.0 }, lo, hi,
+                    looping: media.loop_enabled, bounce: media.bounce_enabled,
+                    gain: number_at(config, &["gain"]).unwrap_or(1.0).clamp(0.0, 1.0) as f32,
+                    pan: number_at(config, &["pan"]).unwrap_or(0.0).clamp(-1.0, 1.0) as f32,
+                    playing: session.playing && !media.paused });
+            }
+        }
+        if let Some(audio) = self.clip_audio.as_mut() { audio.update(voices); }
+    }
+
     fn drain_native_video_streams(&mut self) {
         let now = Instant::now();
         let source_ids = self
@@ -14672,6 +15153,11 @@ impl App {
             let Some(state) = self.native_video_streams.get_mut(&source_id) else {
                 continue;
             };
+            if state.phase_until.is_some_and(|deadline| now >= deadline) {
+                state.stream.retime_hardware_clock(state.transport_rate);
+                state.phase_until = None;
+                state.phase_error_seconds = None;
+            }
             if state.stream.hardware_fallback() && !state.fallback_counted {
                 state.fallback_counted = true;
                 self.stats.native_video_hardware_fallbacks += 1;
@@ -14713,9 +15199,18 @@ impl App {
                 .saturating_add(1);
             self.stats.native_video_frame_decode_last_error = err;
         }
+        // Each source occurs once in this drain. Its compressed texture can
+        // therefore be written now and all HAP conversions submitted together.
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        if let Some(renderer) = &self.renderer {
+            *renderer.hap_upload_batch.lock().unwrap() = Some(NativeHapUploadBatch::default());
+        }
         for (source_id, seq, frame) in ready {
             self.present_native_video_frame(&source_id, seq, frame, "native-video-stream");
         }
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        if let Some(renderer) = &self.renderer { renderer.flush_hap_upload_batch(); }
+        self.refresh_clip_audio();
     }
 
     fn native_video_session_signature(
@@ -14725,19 +15220,26 @@ impl App {
     ) -> String {
         let duration = state.duration_seconds.unwrap_or(0.0);
         format!(
-            "{}:{width}x{height}:{:.6}:{:.6}:{:.6}:{:.6}:{}",
+            "{}:{width}x{height}:{:.6}:{:.6}:{:.6}:{:.6}:{}:{}",
             state.uri,
-            state.playback_rate,
+            if state.bounce_enabled { state.playback_rate.abs() } else { state.playback_rate },
             state.trim_start,
             state.trim_end,
             duration,
             state.loop_enabled,
+            state.bounce_enabled,
         )
     }
 
     fn evict_native_video_session_for(&mut self, playing: bool) -> bool {
         let cap = if playing {
-            NATIVE_VIDEO_SESSION_MAX_PLAYING
+            // A clip fade retains its outgoing decoder until the new picture
+            // is ready. Reserve bounded overlap without relaxing the shared
+            // decoder memory budget or consuming the armed-session allowance.
+            NATIVE_VIDEO_SESSION_MAX_PLAYING + self.native_graph_layers.values()
+                .filter(|layer| layer.kind == NativeGraphLayerKind::VjCrossfade
+                    && bool_at(&layer.params, &["vjclipTransitionActive"]).unwrap_or(false))
+                .count().min(NATIVE_VIDEO_SESSION_MAX_PLAYING)
         } else {
             NATIVE_VIDEO_SESSION_MAX_ARMED
         };
@@ -14779,7 +15281,7 @@ impl App {
         fallback_height: usize,
         playing: bool,
     ) {
-        if state.playback_rate <= 0.0 {
+        if state.playback_rate == 0.0 {
             return;
         }
         let Some(path) = local_media_path_from_uri(&state.uri) else {
@@ -14789,6 +15291,17 @@ impl App {
         let width = state.decode_width.unwrap_or(fallback_width);
         let height = state.decode_height.unwrap_or(fallback_height);
         let signature = Self::native_video_session_signature(state, width, height);
+        if let Some(session) = self.native_video_streams.get_mut(source_id) {
+            if session.signature != signature && session.seek_generation == state.seek_generation {
+                let mut previous_rate_state = state.clone();
+                previous_rate_state.playback_rate = session.transport_rate;
+                if Self::native_video_session_signature(&previous_rate_state, width, height) == session.signature
+                    && session.stream.retime_hardware_clock(state.playback_rate) {
+                    session.signature = signature.clone();
+                    session.transport_rate = state.playback_rate;
+                }
+            }
+        }
         let existing_stream_state = self
             .native_video_streams
             .get(source_id)
@@ -14797,8 +15310,12 @@ impl App {
         if let Some((was_playing, existing_seek_generation)) = existing_stream_state {
             if existing_seek_generation != state.seek_generation {
                 if let Some(session) = self.native_video_streams.get_mut(source_id) {
-                    if session.stream.retrigger(state.playback_time_seconds, !playing) {
+                    if session.stream.retrigger_with_rate(state.playback_time_seconds, !playing, state.playback_rate) {
                         session.start_time_seconds = state.playback_time_seconds;
+                        session.start_reverse = state.playback_rate < 0.0;
+                        session.stream.retime_hardware_clock(state.playback_rate);
+                        session.phase_until = None;
+                        session.phase_error_seconds = None;
                         session.seek_generation = state.seek_generation;
                         session.playing = playing;
                         session.frames_presented = 0;
@@ -14847,7 +15364,7 @@ impl App {
             for key in stale {
                 self.native_video_streams.remove(&key);
                 self.media_sources.remove(&key);
-                self.source_frame_slots.remove(&key);
+                self.release_source_frame_slot(&key);
                 self.source_frames.remove(&key);
             }
         }
@@ -14867,7 +15384,7 @@ impl App {
                 for (key, _) in armed.iter().take(armed.len() + 1 - NATIVE_LIBRARY_SESSION_CAP) {
                     self.native_video_streams.remove(key);
                     self.media_sources.remove(key);
-                    self.source_frame_slots.remove(key);
+                    self.release_source_frame_slot(key);
                     self.source_frames.remove(key);
                 }
             }
@@ -14937,7 +15454,7 @@ impl App {
                     .saturating_sub(session.stream.optional_memory_bytes() as usize));
             }
             self.media_sources.remove(&victim);
-            self.source_frame_slots.remove(&victim);
+            self.release_source_frame_slot(&victim);
             self.source_frames.remove(&victim);
             self.stats.native_video_session_evictions =
                 self.stats.native_video_session_evictions.saturating_add(1);
@@ -14957,13 +15474,15 @@ impl App {
             width,
             height,
             start_time,
-            state.playback_rate,
+            state.current_playback_rate(Some(self.native_graph_time_seconds())),
             state.loop_enabled,
+            state.bounce_enabled,
             state.duration_seconds,
             state.trim_start,
             state.trim_end,
             capacity,
             self.video_memory_budget.clone(),
+            self.renderer.as_ref().is_some_and(|r| r.device.features().contains(wgpu::Features::TEXTURE_COMPRESSION_BC)),
             #[cfg(target_os = "windows")]
             self.renderer.as_ref().ok_or_else(|| "Renderer unavailable for hardware video".to_string())
                 .and_then(|renderer| renderer.video_device.clone()),
@@ -14973,6 +15492,10 @@ impl App {
             source_id.to_string(),
             NativeVideoStreamState {
                 signature,
+                transport_rate: state.playback_rate,
+                start_reverse: state.current_playback_rate(Some(self.native_graph_time_seconds())) < 0.0,
+                phase_until: None,
+                phase_error_seconds: None,
                 start_time_seconds: start_time,
                 stream,
                 seek_generation: state.seek_generation,
@@ -15082,7 +15605,7 @@ impl App {
                 resident = resident.saturating_sub(session.stream.memory_bytes() as u64);
             }
             self.media_sources.remove(&source_id);
-            self.source_frame_slots.remove(&source_id);
+            self.release_source_frame_slot(&source_id);
             self.source_frames.remove(&source_id);
             self.stats.native_video_session_evictions = self.stats.native_video_session_evictions.saturating_add(1);
         }
@@ -15682,7 +16205,11 @@ impl App {
         count_cpu_fallback: bool,
     ) -> usize {
         let input_byte_len = rgba.len() as u64;
-        let slot = self.assign_source_frame_slot(&source_id);
+        let slot = match self.assign_source_frame_slot(&source_id) {
+            Ok(slot) => slot,
+            Err(error) => { self.reject_source_frame_upload(width, height, transport, &error); return 0; }
+        };
+        if let Some(renderer) = &self.renderer { renderer.hap_converter.release(slot); }
         let dst_size = self
             .renderer
             .as_ref()
@@ -15885,7 +16412,10 @@ impl App {
             return;
         }
 
-        let slot = self.assign_source_frame_slot(&source_id);
+        let slot = match self.assign_source_frame_slot(&source_id) {
+            Ok(slot) => slot,
+            Err(error) => { self.reject_shared_texture_source_frame(width, height, &error); return; }
+        };
         let renderer = self
             .renderer
             .as_ref()
@@ -15893,7 +16423,7 @@ impl App {
         let uploaded_bytes = match renderer.import_shared_texture_source_frame(slot, &descriptor) {
             Ok(uploaded_bytes) => uploaded_bytes,
             Err(err) => {
-                self.source_frame_slots.remove(&source_id);
+                self.release_source_frame_slot(&source_id);
                 self.reject_shared_texture_source_frame(width, height, &err);
                 return;
             }
@@ -16000,7 +16530,8 @@ impl App {
     }
 
     fn ensure_empty_source_frame_slot(&mut self) -> usize {
-        let slot = self.assign_source_frame_slot(EMPTY_SOURCE_FRAME_ID);
+        // Slot zero is reserved at App construction and never released.
+        let slot = self.source_frame_slots[EMPTY_SOURCE_FRAME_ID];
         if self.source_frames.contains_key(EMPTY_SOURCE_FRAME_ID) {
             return slot;
         }
@@ -16017,82 +16548,43 @@ impl App {
         slot
     }
 
-    fn assign_source_frame_slot(&mut self, source_id: &str) -> usize {
+    fn assign_source_frame_slot(&mut self, source_id: &str) -> Result<usize, String> {
         if let Some(slot) = self.source_frame_slots.get(source_id).copied() {
-            return slot;
+            return Ok(slot);
         }
         let used: std::collections::HashSet<usize> =
             self.source_frame_slots.values().copied().collect();
         if let Some(slot) = (0..MAX_SOURCE_FRAME_SLOTS).find(|slot| !used.contains(slot)) {
             self.source_frame_slots.insert(source_id.to_string(), slot);
             self.clear_new_source_frame_slot(slot);
-            return slot;
+            return Ok(slot);
         }
 
         // All slots occupied: evict an occupant nothing references anymore.
-        // The hash-slot fallback below can land on a source that is still
-        // actively uploading, and the two sources then fight over the slot
-        // every frame — the incoming one loses to whoever uploads faster.
+        // Live sources and explicit transition snapshots are never displaced.
+        // A caller that cannot acquire a slot must retain its prior picture.
         if let Some((old_source_id, slot)) = self
             .source_frame_slots
             .iter()
-            .filter(|(id, _)| id.as_str() != source_id && !self.media_source_is_referenced(id))
+            .filter(|(id, _)| id.as_str() != source_id && !is_clip_snapshot_source_id(id) && !self.media_source_is_referenced(id))
             .min_by_key(|(_, slot)| **slot)
             .map(|(id, slot)| (id.clone(), *slot))
         {
-            self.source_frame_slots.remove(&old_source_id);
+            self.release_source_frame_slot(&old_source_id);
             self.source_frames.remove(&old_source_id);
             self.source_frame_signatures.remove(&old_source_id);
             self.native_video_frame_signatures.remove(&old_source_id);
             self.source_frame_slots.insert(source_id.to_string(), slot);
             self.clear_new_source_frame_slot(slot);
-            return slot;
+            return Ok(slot);
         }
 
-        let mut slot = stable_slot(source_id, MAX_SOURCE_FRAME_SLOTS);
-        // Never displace the empty sentinel: every shader layer samples it as
-        // input, so writing another source into it bleeds into all of them.
-        if self.source_frame_slots.get(EMPTY_SOURCE_FRAME_ID) == Some(&slot) {
-            slot = (slot + 1) % MAX_SOURCE_FRAME_SLOTS;
-        }
-        if let Some(old_source_id) =
-            self.source_frame_slots
-                .iter()
-                .find_map(|(id, existing_slot)| {
-                    if *existing_slot == slot {
-                        Some(id.clone())
-                    } else {
-                        None
-                    }
-                })
-        {
-            self.source_frame_slots.remove(&old_source_id);
-            self.source_frames.remove(&old_source_id);
-            self.source_frame_signatures.remove(&old_source_id);
-            self.native_video_frame_signatures.remove(&old_source_id);
-            // Detach every layer still pointing at the slot, or it keeps
-            // drawing whatever the new owner renders into it.
-            for layer in self.scene_layers.values_mut() {
-                if layer.source_id.as_deref() == Some(old_source_id.as_str()) {
-                    layer.frame_slot = None;
-                }
-                if layer.shader_source_id.as_deref() == Some(old_source_id.as_str()) {
-                    layer.shader_source_id = None;
-                    layer.shader_frame_slot = None;
-                    layer.shader_rendered = false;
-                    if layer.frame_slot == Some(slot) {
-                        layer.frame_slot = None;
-                    }
-                }
-            }
-        }
-        self.source_frame_slots.insert(source_id.to_string(), slot);
-        self.clear_new_source_frame_slot(slot);
-        slot
+        Err(format!("GPU source-frame capacity reached ({MAX_SOURCE_FRAME_SLOTS} slots); retaining existing live pictures"))
     }
 
     fn apply_remove_layer(&mut self, command: &Value) {
         if let Some(layer_id) = string_at(command, &["layer_id"]) {
+            self.captured_graph_holds.remove(&layer_id);
             let (removed_source, removed_shader_output) = self
                 .scene_layers
                 .remove(&layer_id)
@@ -16186,6 +16678,10 @@ impl ApplicationHandler<UserEvent> for App {
 
     fn user_event(&mut self, event_loop: &ActiveEventLoop, event: UserEvent) {
         match event {
+            UserEvent::OwnerDisconnected => {
+                self.running = false;
+                event_loop.exit();
+            }
             UserEvent::Rpc(req) => {
                 self.handle_rpc(event_loop, req);
                 // A stream of RPCs must not indefinitely postpone the window redraw event.
@@ -16227,7 +16723,7 @@ impl ApplicationHandler<UserEvent> for App {
                 let frame_duration = self.frame_duration();
                 let next_frame_at = self.last_redraw + frame_duration;
                 let now = Instant::now();
-                if now >= next_frame_at {
+                if let Some(scheduled) = completed_gpu_frame_schedule(self.last_redraw, now, frame_duration, self.pending_render_retry) {
                     if self.output_window_attached {
                         if let Some(renderer) = self.renderer.as_ref() {
                             renderer.window.request_redraw();
@@ -16235,8 +16731,8 @@ impl ApplicationHandler<UserEvent> for App {
                     } else {
                         self.render();
                     }
-                    self.last_redraw = now;
-                    event_loop.set_control_flow(ControlFlow::WaitUntil(now + frame_duration));
+                    self.last_redraw = scheduled;
+                    event_loop.set_control_flow(ControlFlow::WaitUntil(self.last_redraw + frame_duration));
                 } else {
                     event_loop.set_control_flow(ControlFlow::WaitUntil(next_frame_at));
                 }
@@ -16340,8 +16836,8 @@ impl ApplicationHandler<UserEvent> for App {
             } else {
                 self.render();
             }
-            self.last_redraw = now;
-            event_loop.set_control_flow(ControlFlow::WaitUntil(now + frame_duration));
+            self.last_redraw = scheduled_frame_start(next_frame_at, now, frame_duration);
+            event_loop.set_control_flow(ControlFlow::WaitUntil(self.last_redraw + frame_duration));
         } else {
             event_loop.set_control_flow(ControlFlow::WaitUntil(next_frame_at));
         }
@@ -16626,6 +17122,7 @@ impl RenderState {
         let source_frame_blitter = TextureBlitterBuilder::new(&device, source_frame_format)
             .sample_type(wgpu::FilterMode::Linear)
             .build();
+        let hap_converter = hap_texture::HapTextureConverter::new(&device, source_frame_format);
         #[cfg(target_os = "macos")]
         let video_converter = video_texture::GpuVideoConverter::new(&device, source_frame_format);
         #[cfg(target_os = "windows")]
@@ -17165,6 +17662,8 @@ impl RenderState {
             layer_upload_scratch: vec![LayerGpu::zeroed(); MAX_SCENE_LAYERS],
             layer_upload_last: Vec::new(),
             source_frame_texture,
+            source_frame_gpu_readiness: (0..MAX_SOURCE_FRAME_SLOTS)
+                .map(|_| Arc::new(SourceFrameGpuReadiness::default())).collect(),
             native_graph_source_frame_sample_texture,
             source_frame_sampler,
             native_shader_input_texture,
@@ -17172,6 +17671,9 @@ impl RenderState {
             source_frame_format,
             source_frame_mip_levels,
             source_frame_blitter,
+            hap_converter,
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            hap_upload_batch: Mutex::new(None),
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             video_converter,
             #[cfg(target_os = "windows")]
@@ -18655,6 +19157,9 @@ impl RenderState {
         }
 
         self.queue.submit(Some(encoder.finish()));
+        self.mark_graph_frames_submitted(render_plans.iter().filter_map(|plan| match plan.target {
+            NativeComputeGraphRenderTarget::SourceFrame { slot, .. } => Some(slot), _ => None,
+        }));
 
         let mut readback_json = serde_json::Map::new();
         for (readback, readback_buffer, byte_length) in readback_buffers {
@@ -18712,7 +19217,11 @@ impl RenderState {
         encoder: &mut wgpu::CommandEncoder,
         jobs: &[NativeGraphFrameJob],
     ) -> Result<(), String> {
-        for job in jobs {
+        // Queued per-clip FX/generator jobs can arrive after persistent
+        // transition carriers. Their actual slot writers still run first.
+        // Keep the outer list intact so compile retries retain queued jobs.
+        for index in graph_frame_job_order(jobs) {
+            let job = &jobs[index];
             let mut transient_buffers = HashMap::<String, NativeComputeGraphGpuBuffer>::new();
             for spec in &job.buffers {
                 if spec.persistent {
@@ -19757,8 +20266,55 @@ impl RenderState {
         }
         self.generate_source_frame_mips(&mut encoder, safe_slot);
         self.queue.submit(Some(encoder.finish()));
+        self.mark_source_frame_slots_submitted([safe_slot]);
         self.last_frame_error = None;
         Ok(())
+    }
+
+    fn mark_source_frame_slots_submitted(&self, slots: impl IntoIterator<Item = usize>) {
+        let states = slots.into_iter().collect::<HashSet<_>>().into_iter().map(|slot| {
+            let state = Arc::clone(&self.source_frame_gpu_readiness[slot]);
+            let epoch = state.epoch.load(Ordering::Acquire);
+            state.submitted_epoch.store(epoch, Ordering::Release);
+            (state, epoch)
+        }).collect::<Vec<_>>();
+        if !states.is_empty() {
+            self.queue.on_submitted_work_done(move || {
+                for (state, epoch) in states {
+                    // Slot reuse invalidates old in-flight callbacks. An old
+                    // completion must not make a new, still blank owner ready.
+                    if state.epoch.load(Ordering::Acquire) == epoch {
+                        // Polling can dispatch callbacks on another thread.
+                        // A delayed older callback must not regress a newer
+                        // completion after this epoch check races with reuse.
+                        state.completed_epoch.fetch_max(epoch, Ordering::AcqRel);
+                    }
+                }
+            });
+        }
+    }
+
+    fn mark_graph_frames_submitted(&self, plans: impl Iterator<Item = usize>) {
+        self.mark_source_frame_slots_submitted(plans);
+    }
+
+    fn copy_source_frame_slot(&self, input_slot: usize, output_slot: usize) {
+        self.source_frame_gpu_readiness[output_slot].invalidate();
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor {
+            label: Some("Clip transition GPU source snapshot"),
+        });
+        for mip_level in 0..self.source_frame_mip_levels {
+            let size = ((self.source_frame_size as u32) >> mip_level).max(1);
+            encoder.copy_texture_to_texture(
+                wgpu::TexelCopyTextureInfo { texture: &self.source_frame_texture, mip_level,
+                    origin: wgpu::Origin3d { x: 0, y: 0, z: input_slot as u32 }, aspect: wgpu::TextureAspect::All },
+                wgpu::TexelCopyTextureInfo { texture: &self.source_frame_texture, mip_level,
+                    origin: wgpu::Origin3d { x: 0, y: 0, z: output_slot as u32 }, aspect: wgpu::TextureAspect::All },
+                wgpu::Extent3d { width: size, height: size, depth_or_array_layers: 1 },
+            );
+        }
+        self.queue.submit(Some(encoder.finish()));
+        self.mark_source_frame_slots_submitted([output_slot]);
     }
 
     fn write_source_frame_level_zero(&self, slot: usize, rgba: &[u8]) -> Option<usize> {
@@ -19842,6 +20398,8 @@ impl RenderState {
                 depth_or_array_layers: 1,
             },
         );
+        self.queue.submit(std::iter::empty());
+        self.mark_source_frame_slots_submitted([safe_slot]);
         Some(payload.len())
     }
 
@@ -19856,10 +20414,12 @@ impl RenderState {
             });
         self.generate_source_frame_mips(&mut encoder, safe_slot);
         self.queue.submit(Some(encoder.finish()));
+        self.mark_source_frame_slots_submitted([safe_slot]);
     }
 
     /// Erase one source frame slot, every mip level, to transparent.
     fn clear_source_frame_slot(&self, slot: usize) {
+        self.source_frame_gpu_readiness[slot.min(MAX_SOURCE_FRAME_SLOTS - 1)].invalidate();
         let safe_slot = slot.min(MAX_SOURCE_FRAME_SLOTS - 1) as u32;
         let mut encoder = self
             .device
@@ -20051,6 +20611,7 @@ impl RenderState {
             .copy(&self.device, &mut encoder, &source_view, &target_view);
         self.generate_source_frame_mips(&mut encoder, safe_slot);
         self.queue.submit(Some(encoder.finish()));
+        self.mark_source_frame_slots_submitted([safe_slot]);
         Ok(self
             .source_frame_size
             .saturating_mul(self.source_frame_size)
@@ -20182,6 +20743,7 @@ impl RenderState {
             .copy(&self.device, &mut encoder, &source_view, &target_view);
         self.generate_source_frame_mips(&mut encoder, safe_slot);
         self.queue.submit(Some(encoder.finish()));
+        self.mark_source_frame_slots_submitted([safe_slot]);
         Ok(self
             .source_frame_size
             .saturating_mul(self.source_frame_size)
@@ -20207,17 +20769,42 @@ impl RenderState {
             ..Default::default()
         });
         let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Native hardware video conversion") });
-        #[cfg(target_os = "macos")]
-        self.video_converter.encode(&self.device, &mut encoder, &frame, &target, viewport)?;
-        #[cfg(target_os = "windows")]
-        self.video_converter.encode(&self.device, &self.queue, &mut encoder, &frame, &target, viewport)?;
+        match &frame.storage {
+            hardware_video::FrameStorage::Hap(hap) => self.hap_converter.encode(&self.device, &self.queue, &mut encoder, safe_slot, hap, &target, viewport)?,
+            hardware_video::FrameStorage::Native(native) => {
+                self.hap_converter.release(safe_slot);
+                #[cfg(target_os = "macos")]
+                self.video_converter.encode(&self.device, &mut encoder, native, &target, viewport)?;
+                #[cfg(target_os = "windows")]
+                self.video_converter.encode(&self.device, &self.queue, &mut encoder, native, &target, viewport)?;
+            }
+        }
         self.generate_source_frame_mips(&mut encoder, safe_slot);
         let gpu_lease = memory_lease.as_ref().map(|lease| lease.begin_gpu_work());
+        if matches!(&frame.storage, hardware_video::FrameStorage::Hap(_)) {
+            let mut batch = self.hap_upload_batch.lock().unwrap();
+            if let Some(batch) = batch.as_mut() {
+                batch.commands.push(encoder.finish());
+                batch.frames.push((frame, gpu_lease));
+                batch.slots.push(safe_slot);
+                return Ok([viewport[0] / size, viewport[1] / size, width / size, height / size]);
+            }
+        }
         self.queue.submit(Some(encoder.finish()));
+        self.mark_source_frame_slots_submitted([safe_slot]);
         // The decoder/bridge may recycle this surface only after rendering
         // has completed. Submission alone does not establish lifetime.
         self.queue.on_submitted_work_done(move || { drop(frame); drop(gpu_lease); });
         Ok([viewport[0] / size, viewport[1] / size, width / size, height / size])
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    fn flush_hap_upload_batch(&self) {
+        let Some(batch) = self.hap_upload_batch.lock().unwrap().take() else { return; };
+        if batch.commands.is_empty() { return; }
+        self.queue.submit(batch.commands);
+        self.mark_source_frame_slots_submitted(batch.slots);
+        self.queue.on_submitted_work_done(move || drop(batch.frames));
     }
 
     fn generate_source_frame_mips(&self, encoder: &mut wgpu::CommandEncoder, slot: usize) {
@@ -20919,6 +21506,11 @@ impl RenderState {
             }
         }
         self.submit_frame(mirror_encoder);
+        if !frozen && output_gate > 0.0 {
+            self.mark_graph_frames_submitted(native_graph_jobs.iter().flat_map(|job| job.render_plans.iter()).filter_map(|plan| match plan.target {
+                NativeComputeGraphRenderTarget::SourceFrame { slot, .. } => Some(slot), _ => None,
+            }));
+        }
         self.begin_graph_readbacks();
         if should_record_timing {
             if let Some(gpu_timing) = self.gpu_timing.as_mut() {
@@ -21025,6 +21617,10 @@ fn spawn_stdin_reader(
                 }
             }
         }
+        // EOF and terminal read failures mean there is no longer an owner.
+        // Exit through the event loop, just like the explicit shutdown RPC,
+        // so native windows and GPU resources receive normal teardown.
+        let _ = proxy.send_event(UserEvent::OwnerDisconnected);
     });
 }
 
@@ -26599,11 +27195,11 @@ fn source_frame_mip_levels(size: usize) -> u32 {
 fn source_frame_size_budget_bytes(tier: &str) -> usize {
     let mb = match normalize_native_tier(tier) {
         "insane" => 896usize,
-        "ultra" => 384usize,
-        // Three source stores (two with mips) need ~352 MiB at 1024 RGBA8.
-        // Keep the established SDR sampling resolution while budgeting all of it.
-        "balanced" => 384usize,
-        "performance" => 384usize,
+        "ultra" => 768usize,
+        // Forty-eight slots across three stores (two with mips) need
+        // ~704 MiB at 1024 RGBA8; retain SDR resolution during clip fades.
+        "balanced" => 768usize,
+        "performance" => 768usize,
         _ => 256usize,
     };
     mb * 1024 * 1024
@@ -28288,9 +28884,140 @@ fn present_mode_label(mode: wgpu::PresentMode) -> &'static str {
     }
 }
 
+// Preserve the clock phase across ordinary wake-up / media-pump jitter.
+// Rebase after a whole missed interval, so a stall never causes catch-up bursts.
+fn scheduled_frame_start(deadline: Instant, now: Instant, period: Duration) -> Instant {
+    if now.saturating_duration_since(deadline) < period { deadline } else { now }
+}
+
+fn completed_gpu_frame_schedule(last: Instant, now: Instant, period: Duration, retry: bool) -> Option<Instant> {
+    let deadline = last + period;
+    if now >= deadline { Some(scheduled_frame_start(deadline, now, period)) }
+    // The missed slot was already charged when render() hit backpressure.
+    // Retry it as soon as the GPU is free, without consuming the next slot.
+    else if retry { Some(last) }
+    else { None }
+}
+
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn screen_output_admission_is_bounded_by_count_and_memory() {
+        use serde_json::json;
+        let screens = |count: usize, width: u32, height: u32| json!({ "slices": (0..count)
+            .map(|i| json!({ "id": format!("screen-{i}"), "width": width, "height": height })).collect::<Vec<_>>() });
+        assert!(super::validate_slice_outputs(&screens(32, 1920, 1080)).is_ok());
+        assert!(super::validate_slice_outputs(&screens(33, 64, 64)).is_err());
+        assert!(super::validate_slice_outputs(&screens(9, 3840, 2160)).is_err());
+        assert!(super::validate_slice_outputs(&screens(8, 3840, 2160)).is_ok());
+        assert!(super::validate_slice_outputs(&screens(0, 64, 64)).is_ok());
+        assert!(super::validate_slice_outputs(&json!({})).is_err());
+        assert!(super::validate_slice_outputs(&json!({ "slices": [{"id":"a"}, {"id":"a"}] })).is_err());
+        assert!(super::validate_slice_outputs(&json!({ "slices": [{"id":" "}] })).is_err());
+    }
+
+    #[test]
+    fn gpu_completion_retries_a_blocked_slot_without_skipping_the_next_one() {
+        use std::time::{Duration, Instant};
+        let start = Instant::now();
+        let period = Duration::from_millis(16);
+        let blocked_slot = start + period;
+        assert_eq!(super::completed_gpu_frame_schedule(blocked_slot, start + Duration::from_millis(18), period, true), Some(blocked_slot));
+        assert_eq!(super::completed_gpu_frame_schedule(blocked_slot, start + Duration::from_millis(22), period, false), None);
+        assert_eq!(super::completed_gpu_frame_schedule(blocked_slot, start + period * 2, period, false), Some(start + period * 2));
+        let stalled = start + period * 10;
+        assert_eq!(super::completed_gpu_frame_schedule(blocked_slot, stalled, period, true), Some(stalled));
+    }
+    #[test]
+    fn presentation_deadline_keeps_phase_but_does_not_catch_up_after_stalls() {
+        let start = std::time::Instant::now();
+        let period = std::time::Duration::from_millis(16);
+        let mut scheduled = start;
+        for frame in 1..=120 {
+            let deadline = scheduled + period;
+            scheduled = super::scheduled_frame_start(deadline, deadline + std::time::Duration::from_millis(3), period);
+            assert_eq!(scheduled, start + period * frame);
+        }
+        let late = scheduled + period * 10;
+        assert_eq!(super::scheduled_frame_start(scheduled + period, late, period), late);
+    }
     use super::*;
+
+    #[test]
+    fn nested_graph_dependencies_override_kind_and_id_order() {
+        // Screen, deck fade, clip fade, and its outgoing generator arrive in
+        // deliberately reversed order. Same-kind nesting must still work.
+        let dependencies = vec![HashSet::from([1]), HashSet::from([2]),
+            HashSet::from([3]), HashSet::new()];
+        assert_eq!(graph_dependency_order(&dependencies), [3, 2, 1, 0]);
+        assert_eq!(graph_dependency_order(&[HashSet::from([1]), HashSet::from([0])]), [0, 1]);
+    }
+
+    fn graph_test_job(output: usize, input: Option<usize>) -> NativeGraphFrameJob {
+        NativeGraphFrameJob { buffers: Vec::new(), pass_plans: Vec::new(), readback_buffer_ids: Vec::new(),
+            render_plans: vec![NativeComputeGraphRenderPlan {
+                name: "test".into(), cache_key: "shader".into(), source: Arc::from(""),
+                vertex_entry: "vs".into(), fragment_entry: "fs".into(), clear: true,
+                include_snapshot: false, generate_mips: false,
+                target: NativeComputeGraphRenderTarget::SourceFrame { source_id: format!("out{output}"), slot: output, seq: 0 },
+                blend: NativeComputeGraphRenderBlend::Replace, vertex_count: 3, instance_count: 1,
+                indirect_buffer_id: None, indirect_offset: 0, clear_color: [0.0; 4],
+                primitive_topology: NativeComputeGraphPrimitiveTopology::TriangleList,
+                depth_enabled: false, depth_write: false, depth_compare: NativeComputeGraphDepthCompare::Always,
+                depth_load: false,
+                bindings: input.into_iter().map(|slot| NativeComputeGraphBindingSpec {
+                    binding: 2, resource_id: format!("out{slot}"), source_slot: Some(slot),
+                    kind: NativeComputeGraphBindingKind::SourceFrameTexture(NativeComputeGraphTextureDimension::D2),
+                }).collect(),
+            }] }
+    }
+
+    #[test]
+    fn queued_effect_jobs_run_before_persistent_transition_readers() {
+        let jobs = [graph_test_job(3, Some(2)), graph_test_job(2, Some(1)), graph_test_job(1, None)];
+        assert_eq!(graph_frame_job_order(&jobs), [2, 1, 0]);
+    }
+
+    #[test]
+    fn graph_readiness_changes_with_inputs_but_not_frame_sequence() {
+        let job = graph_test_job(3, Some(2));
+        let signature = graph_job_structure_signature(&job);
+        let mut next = job.clone();
+        if let NativeComputeGraphRenderTarget::SourceFrame { seq, .. } = &mut next.render_plans[0].target {
+            *seq = 123;
+        }
+        assert_eq!(graph_job_structure_signature(&next), signature);
+        next.render_plans[0].bindings[0].resource_id = "next-clip".into();
+        assert_ne!(graph_job_structure_signature(&next), signature);
+    }
+
+    #[test]
+    fn reused_source_slot_cannot_inherit_gpu_readiness() {
+        let state = SourceFrameGpuReadiness::default();
+        assert!(!state.ready());
+        state.invalidate();
+        state.submitted_epoch.store(1, Ordering::Release);
+        assert!(state.submitted());
+        assert!(!state.ready());
+        state.completed_epoch.store(1, Ordering::Release);
+        assert!(state.ready());
+        state.invalidate();
+        assert!(!state.submitted());
+        assert!(!state.ready());
+        state.completed_epoch.fetch_max(2, Ordering::AcqRel);
+        state.completed_epoch.fetch_max(1, Ordering::AcqRel);
+        assert!(state.ready());
+    }
+
+    #[test]
+    fn clip_snapshot_names_bound_resource_ownership_to_two_decks() {
+        assert!(is_clip_snapshot_source_id("vj-clip-snapshot-A-0"));
+        assert!(is_clip_snapshot_source_id("vj-clip-snapshot-B-31"));
+        for name in ["media:video", "vj-clip-snapshot-A-32", "vj-clip-snapshot-B-01",
+            "vj-clip-snapshot-C-0", "vj-clip-snapshot-A--1", "vj-clip-snapshot-A-0-extra"] {
+            assert!(!is_clip_snapshot_source_id(name));
+        }
+    }
 
     #[test]
     fn vj_graph_jobs_run_after_the_frames_they_sample() {
@@ -28504,6 +29231,7 @@ mod tests {
             playback_rate: 1.0,
             paused: false,
             loop_enabled: true,
+            bounce_enabled: false,
             duration_seconds: Some(10.0),
             trim_start: 0.2,
             trim_end: 0.6,
@@ -28516,6 +29244,34 @@ mod tests {
 
         state.loop_enabled = false;
         assert!((state.current_time_seconds(Some(20.0)) - 6.0).abs() < 0.0001);
+        state.playback_rate = -1.0;
+        state.playback_time_seconds = 6.0;
+        state.loop_enabled = true;
+        assert_eq!(state.current_time_seconds(Some(0.0)), 6.0);
+        assert_eq!(state.current_time_seconds(Some(1.0)), 5.0);
+        assert_eq!(state.current_time_seconds(Some(5.0)), 5.0);
+        state.loop_enabled = false;
+        assert_eq!(state.current_time_seconds(Some(20.0)), 2.0);
+
+        state.bounce_enabled = true;
+        state.playback_rate = 1.0;
+        state.playback_time_seconds = 2.0;
+        for (clock, time, direction) in [(0.0, 2.0, 1.0), (4.0, 6.0, -1.0), (5.0, 5.0, -1.0), (8.0, 2.0, 1.0), (600.0, 2.0, 1.0)] {
+            assert_eq!(state.current_time_seconds(Some(clock)), time);
+            assert_eq!(state.current_playback_rate(Some(clock)), direction);
+        }
+        state.playback_time_seconds = state.current_time_seconds(Some(5.0));
+        state.playback_rate = -1.0;
+        state.clock_time_seconds = 5.0;
+        state.paused = true;
+        assert_eq!(state.current_time_seconds(Some(50.0)), 5.0);
+        assert_eq!(state.current_playback_rate(Some(50.0)), -1.0);
+        state.paused = false;
+        state.clock_time_seconds = 50.0;
+        assert_eq!(state.current_time_seconds(Some(51.0)), 4.0);
+        assert_eq!(state.current_time_seconds(Some(54.0)), 3.0);
+        assert_eq!(state.current_playback_rate(Some(54.0)), 1.0);
+
     }
 
     #[test]

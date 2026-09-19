@@ -1,0 +1,135 @@
+{
+  "captured_at": "2026-09-19T02:24:51.132Z",
+  "platform": "darwin",
+  "adapter": "Apple M1 Max",
+  "renderer_backend": "metal",
+  "pixel_format": "420v",
+  "upload_transport": "native-video-iosurface",
+  "input": "scratchpad/clip-transition-test/portable-moved/Media-tboFTy/b4e515471f6b-Second_Nature_Wire_Circuit_8s_PREVIEW.mp4",
+  "media": {
+    "codec_name": "h264",
+    "width": 960,
+    "height": 540
+  },
+  "backend": "videotoolbox",
+  "playback_rate": 1,
+  "bounce_enabled": true,
+  "simultaneous_clips": 4,
+  "requested_interval_ms": 16000,
+  "requested_duration_seconds": 34,
+  "trigger_batches": 3,
+  "retriggers": 12,
+  "elapsed_ms": 32015.087167,
+  "cadence_ms": {
+    "median": 16000.787791,
+    "p95": 16000.787791,
+    "max": 16000.787791
+  },
+  "command_ack_ms": {
+    "median": 2.303834000002098,
+    "p95": 3.582166000000143,
+    "max": 3.582166000000143
+  },
+  "max_dispatch_lateness_ms": 1.2445829999996931,
+  "hardware_frames": 3848,
+  "software_frames": 0,
+  "hardware_fallbacks": 0,
+  "cpu_pixel_upload_bytes": 0,
+  "cpu_upload_counter_deltas": {
+    "source_frame_input_bytes_uploaded": 0,
+    "source_frame_cpu_fallback_uploads": 0,
+    "source_frame_file_uploads": 0,
+    "source_frame_base64_uploads": 0,
+    "source_frame_json_uploads": 0
+  },
+  "stream_underflows": 0,
+  "samples": [
+    {
+      "trigger": 1,
+      "generation": 2,
+      "dispatched_ms": 1.2045829999999569,
+      "lateness_ms": 1.2045829999999569,
+      "command_ack_ms": 2.0989170000000286,
+      "core_trigger_latency_us": 256,
+      "hardware_frames": 8,
+      "export_frame": 4,
+      "checksum": "c9be19a3e860341d",
+      "session_frames": [
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 2,
+      "generation": 3,
+      "dispatched_ms": 16000.456791999999,
+      "lateness_ms": 0.45679200000085984,
+      "command_ack_ms": 3.582166000000143,
+      "core_trigger_latency_us": 256,
+      "hardware_frames": 488,
+      "export_frame": 964,
+      "checksum": "c9be19a3e860341d",
+      "session_frames": [
+        {
+          "source_id": "clip-0",
+          "frames_presented": 121
+        },
+        {
+          "source_id": "clip-2",
+          "frames_presented": 121
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 121
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 121
+        }
+      ]
+    },
+    {
+      "trigger": 3,
+      "generation": 4,
+      "dispatched_ms": 32001.244583,
+      "lateness_ms": 1.2445829999996931,
+      "command_ack_ms": 2.303834000002098,
+      "core_trigger_latency_us": 461,
+      "hardware_frames": 2408,
+      "export_frame": 1924,
+      "checksum": "c9be19a3e860341d",
+      "session_frames": [
+        {
+          "source_id": "clip-0",
+          "frames_presented": 121
+        },
+        {
+          "source_id": "clip-2",
+          "frames_presented": 121
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 121
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 121
+        }
+      ]
+    }
+  ]
+}

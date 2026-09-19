@@ -1045,3 +1045,22 @@ describe('native renderer broker capability overlay', () => {
     expect(status.last_rpc_error_method).toBe('status');
   });
 });
+
+describe('clip transition RPC bridge', () => {
+  it.each([
+    ['native_renderer_get_layer_source_readiness', 'get_layer_source_readiness'],
+    ['native_renderer_get_source_frame_readiness', 'get_source_frame_readiness'],
+    ['native_renderer_capture_layer_source_frame', 'capture_layer_source_frame'],
+    ['native_renderer_release_source_frame', 'release_source_frame'],
+  ])('forwards %s without changing source identity or generation', async (command, method) => {
+    const broker = createBroker();
+    const args = { layer_id: '__vj-clip:vj-layer-0:2:in', source_id: 'clip-b', seek_generation: 8 };
+    const result = { ready: true, captured: true, released: true };
+    broker.send = async (actualMethod: string, actualArgs: unknown) => {
+      expect(actualMethod).toBe(method);
+      expect(actualArgs).toEqual(args);
+      return result;
+    };
+    expect(await broker.invoke(command, args)).toEqual(result);
+  });
+});

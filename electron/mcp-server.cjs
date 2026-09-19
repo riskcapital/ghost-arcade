@@ -17,10 +17,14 @@
  * carry a bearer token generated at enable time. Neither is a substitute for
  * the other: loopback keeps the network out, the token keeps other local
  * processes out.
+ *
+ * The token is checked with the same code as the LAN remote's pairing token
+ * (server/pairing.cjs) but is not that token: see the note in main.js.
  */
 
 const http = require('http');
 const { randomUUID } = require('crypto');
+const { bearerToken, tokensEqual } = require('../server/pairing.cjs');
 
 const HOST = '127.0.0.1';
 
@@ -165,8 +169,8 @@ function createMcpHttpServer({ token, port, callRenderer, onLog }) {
       return send(403, { error: 'forbidden' });
     }
 
-    const auth = req.headers.authorization || '';
-    if (auth !== `Bearer ${token}`) {
+    // Constant-time: a plain !== returns sooner the earlier a guess goes wrong.
+    if (!tokensEqual(token, bearerToken(req.headers.authorization))) {
       return send(401, { error: 'unauthorized' });
     }
 

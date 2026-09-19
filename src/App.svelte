@@ -53,6 +53,7 @@
   import ProjectionSimulatorPanel from './lib/components/ProjectionSimulatorPanel.svelte';
   import OfflineRenderModal from './lib/components/OfflineRenderModal.svelte';
   import VideoConverterModal from './lib/components/VideoConverterModal.svelte';
+  import ProjectMediaModal from './lib/components/ProjectMediaModal.svelte';
   import { workspace } from './lib/stores/workspace';
   import PresetTray from './lib/components/PresetTray.svelte';
   import BottomDock from './lib/components/BottomDock.svelte';
@@ -135,6 +136,16 @@
   import { startSpoutScanner, stopSpoutScanner } from './lib/stores/spout';
   import { preloadShaderLibrary, populateShaderListForSync } from './lib/preload';
   import { invoke, isMac, isDesktopApp, openExternalUrl } from './lib/bridge';
+  import {
+    DEFAULT_REMOTE_HTTP_PORT,
+    DEFAULT_REMOTE_WS_PORT,
+    PAIRING_QUERY_PARAM,
+    formatPairingCode,
+    getRemotePairingInfo,
+    localServerFetch,
+    resetRemotePairing,
+    withPairingToken,
+  } from './lib/remote/remotePairing';
   import type { Point2D, BezierPoint, Layer, WarpCorners, MediaSource, LayerShapeParams, LayerShapeType } from './lib/types';
   import { createDefaultCorners, generateUUID } from './lib/types';
   import { createDefaultFreehandLine, createDefaultPointClickLine } from './lib/lines/types';
@@ -761,6 +772,7 @@
       showShortcutHelp ||
       showOfflineRender ||
       showVideoConverter ||
+      showProjectMedia ||
       showWelcome ||
       showCloseModal ||
       showRecoveryModal ||
@@ -799,6 +811,14 @@
   // the offlineRender store.
   let showOfflineRender = false;
   let showVideoConverter = false;
+  let showProjectMedia = false;
+
+  function applyMediaRelinks(json: string) {
+    const sep = currentProjectPath?.includes('\\') ? '\\' : '/';
+    const dir = currentProjectPath?.substring(0, currentProjectPath.lastIndexOf(sep) + 1);
+    vjClipLauncher.stopAll();
+    if (!project.importProjectJSON(json, dir)) throw new Error('Could not reload the relinked project.');
+  }
 
   // Keyboard shortcut help overlay
   let showShortcutHelp = false;
@@ -1500,13 +1520,15 @@
     let autoConnectTimeout: ReturnType<typeof setTimeout> | null = null;
     let retryInterval: ReturnType<typeof setInterval> | null = null;
     if (!isMobile) {
-      const autoConnect = () => {
+      const autoConnect = async () => {
+        // The server refuses anyone without the pairing token, this window included.
+        await loadRemotePairing();
         if (!ws || ws.readyState === WebSocket.CLOSED) {
           connectToServer();
         }
       };
       // Initial attempt after 1s (give Rust server time to bind)
-      autoConnectTimeout = setTimeout(autoConnect, 1000);
+      autoConnectTimeout = setTimeout(() => void autoConnect(), 1000);
       // Retry every 5s if not connected
       retryInterval = setInterval(() => {
         if (wsServerReady) {
@@ -1515,7 +1537,7 @@
             retryInterval = null;
           }
         } else {
-          autoConnect();
+          void autoConnect();
         }
       }, 5000);
     }
@@ -2472,8 +2494,20 @@
   let wsServerReady = false;   // Desktop is connected to WS server (can show QR)
   let mobileConnected = false; // At least one mobile client is connected
   let clientCount = 0;
-  let wsPort = 9001;
-  let httpPort = 9002; // HTTP info server port
+  let wsPort = DEFAULT_REMOTE_WS_PORT;
+  let httpPort = DEFAULT_REMOTE_HTTP_PORT; // HTTP info server port
+  // Every device on the remote's servers presents this, the desktop included.
+  let pairingToken = '';
+
+  // Token and ports for the LAN remote, from main. Outside the desktop app
+  // there are none and the defaults stand.
+  async function loadRemotePairing() {
+    const info = await getRemotePairingInfo();
+    if (!info) return;
+    pairingToken = info.token;
+    wsPort = info.wsPort;
+    httpPort = info.httpPort;
+  }
   const LP_LIVE_PREVIEW_SYNC_INTERVAL_MS = 50;
   const LP_LIVE_PREVIEW_MAX_POINTS = 300;
 
@@ -3321,7 +3355,7 @@
 
   function connectToServer() {
     connectionError = '';
-    const url = `ws://127.0.0.1:${wsPort}`;
+    const url = withPairingToken(`ws://127.0.0.1:${wsPort}`, pairingToken);
 
     if (ws) {
       ws.onopen = null;
@@ -4524,7 +4558,7 @@
     // Method 1: Ask the WebSocket server for IPs (most reliable)
     // The server uses Node's os.networkInterfaces() which is accurate
     try {
-      const response = await fetch(`http://localhost:${httpPort}/info`, {
+      const response = await localServerFetch('/info', {
         signal: AbortSignal.timeout(2000)
       });
       if (response.ok) {
@@ -4592,16 +4626,47 @@
 
   function getMobileUrl(ip?: string) {
     const host = ip || selectedIP || localIPs[0] || window.location.hostname;
-    // In production: serve from the HTTP server on port 9002 (accessible over LAN)
-    // In dev: use Vite dev server on port 1420
-    const isDev = window.location.protocol !== 'file:' && window.location.port === '1420';
-    const port = isDev ? 1420 : 9002;
-    return `http://${host}:${port}/#/mobile`;
+    // In production: serve from the remote's HTTP server (accessible over LAN)
+    // In dev: use the Vite dev server this window was loaded from
+    const isDev = window.location.protocol !== 'file:' && !!window.location.port;
+    const port = isDev ? window.location.port : httpPort;
+    const url = new URL(`http://${host}:${port}/`);
+    // The token rides in the link, so pairing is still one scan.
+    if (pairingToken) url.searchParams.set(PAIRING_QUERY_PARAM, pairingToken);
+    // The phone assumes the default WebSocket port unless told otherwise.
+    if (wsPort !== DEFAULT_REMOTE_WS_PORT) url.searchParams.set('ws', String(wsPort));
+    url.hash = '/mobile';
+    return url.toString();
   }
 
   function getWebSocketUrl(ip?: string) {
     const host = ip || selectedIP || localIPs[0] || window.location.hostname;
-    return `ws://${host}:9001`;
+    return `ws://${host}:${wsPort}`;
+  }
+
+  // Reset asks first: it disconnects every phone, mid-set if that is when
+  // someone presses it.
+  let confirmingPairingReset = false;
+  let pairingResetBusy = false;
+
+  async function confirmPairingReset() {
+    pairingResetBusy = true;
+    try {
+      const info = await resetRemotePairing();
+      if (info) {
+        pairingToken = info.token;
+        // The server dropped every connection made with the old token, this
+        // window's included, so come back with the new one.
+        connectToServer();
+        await generateQRCode();
+      }
+    } catch (err) {
+      console.error('[Remote] Pairing reset failed:', err);
+      connectionError = 'Pairing could not be reset. The existing code is still active.';
+    } finally {
+      pairingResetBusy = false;
+      confirmingPairingReset = false;
+    }
   }
 
   // Generate QR code for the mobile URL
@@ -6144,6 +6209,11 @@
                 </span>
                 <span class="menu-label">Video Converter...</span>
               </button>
+              {#if isDesktopApp}
+                <button class="menu-item" onclick={() => { fileMenuOpen = false; showProjectMedia = true; }}>
+                  <span class="menu-icon">▣</span><span class="menu-label">Project Media...</span>
+                </button>
+              {/if}
               <div class="menu-separator"></div>
               <button class="menu-item" onclick={importPresetsFromFile}>
                 <span class="menu-icon">
@@ -6441,7 +6511,9 @@
             title={mobileConnected ? `Mobile: ${clientCount - 1} connected` : 'Connect Mobile'}
             onclick={async () => {
               showMobileInfo = !showMobileInfo;
+              confirmingPairingReset = false;
               if (showMobileInfo) {
+                await loadRemotePairing();
                 await fetchLocalIPs();
                 await generateQRCode();
                 if (!wsServerReady && !ws) {
@@ -6483,6 +6555,30 @@
                 <div class="qr-container">
                   <img src={qrCodeDataUrl} alt="QR Code for mobile connection" class="qr-code" />
                   <p class="qr-hint">Scan with your phone/iPad camera</p>
+                  {#if pairingToken}
+                    <!-- The QR link carries this already; it is shown for devices
+                         that cannot scan, such as the native app. -->
+                    <div class="pairing-code">
+                      <span class="pairing-code-label">Pairing code</span>
+                      <code class="pairing-code-value">{formatPairingCode(pairingToken)}</code>
+                    </div>
+                  {/if}
+                </div>
+              {/if}
+
+              {#if pairingToken}
+                <div class="pairing-reset">
+                  {#if confirmingPairingReset}
+                    <p>Every paired phone and tablet disconnects and has to scan the new code to connect again.</p>
+                    <div class="pairing-reset-actions">
+                      <button onclick={() => (confirmingPairingReset = false)} disabled={pairingResetBusy}>Cancel</button>
+                      <button class="pairing-reset-confirm" onclick={confirmPairingReset} disabled={pairingResetBusy}>
+                        Reset pairing
+                      </button>
+                    </div>
+                  {:else}
+                    <button onclick={() => (confirmingPairingReset = true)}>Reset pairing...</button>
+                  {/if}
                 </div>
               {/if}
 
@@ -6515,7 +6611,7 @@
                 <ol>
                   <li>Connect iPad to same WiFi/hotspot</li>
                   <li>Scan QR code or enter URL manually</li>
-                  <li>Enter WebSocket URL when prompted</li>
+                  <li>If asked, enter the WebSocket URL and pairing code</li>
                   <li>Tap Connect - drag corners to warp!</li>
                 </ol>
               </div>
@@ -7459,6 +7555,10 @@
       isOpen={showVideoConverter}
       onClose={() => showVideoConverter = false}
     />
+    {#if showProjectMedia}
+      <ProjectMediaModal projectPath={currentProjectPath} exportProject={() => project.exportProjectJSONForSave()}
+        applyProject={applyMediaRelinks} onClose={() => showProjectMedia = false} />
+    {/if}
 
     <!-- Welcome Modal (first run) — EULA gate removed in OSS build. -->
     {#if showWelcome}
@@ -9457,6 +9557,59 @@
 
   .connection-btn.error .dot {
     background: #FF6B6B;
+  }
+
+  /* Pairing code beside the QR, and the reset under it */
+  .pairing-code {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 4px;
+    margin-top: 12px;
+  }
+
+  .pairing-code-label {
+    font-size: 11px;
+    color: #777;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+
+  .pairing-code-value {
+    font-size: 17px;
+    letter-spacing: 0.08em;
+    color: var(--accent-primary);
+    background: transparent;
+    padding: 0;
+    user-select: all;
+  }
+
+  .pairing-reset {
+    margin-bottom: 12px;
+  }
+
+  .pairing-reset p {
+    font-size: 12px;
+    color: #999;
+    margin: 0 0 8px;
+  }
+
+  .pairing-reset button {
+    margin-top: 0;
+  }
+
+  .pairing-reset-actions {
+    display: flex;
+    gap: 8px;
+  }
+
+  .mobile-info-popup .pairing-reset-confirm {
+    background: rgba(255, 68, 68, 0.18);
+    color: #FF8888;
+  }
+
+  .mobile-info-popup .pairing-reset-confirm:hover {
+    background: rgba(255, 68, 68, 0.28);
   }
 
   /* Main Content */

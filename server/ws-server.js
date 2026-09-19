@@ -4,6 +4,10 @@
  * Standalone WebSocket server for mobile control.
  * Run with: node server/ws-server.js
  *
+ * Only paired devices get in: every WebSocket upgrade and HTTP request must
+ * carry the pairing token (see pairing.cjs). Run on its own, the server uses
+ * GA_PAIRING_TOKEN or prints a fresh code to type into the phone.
+ *
  * This will be integrated into Tauri/Rust backend later.
  */
 
@@ -12,11 +16,21 @@ import http from 'http';
 import os from 'os';
 import fs from 'fs';
 import path from 'path';
+import { createRequire } from 'module';
 import { fileURLToPath } from 'url';
 
 // Get current directory for ES modules
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
+const require = createRequire(import.meta.url);
+const {
+  PAIRING_QUERY_PARAM,
+  PAIRING_RESET_CLOSE_CODE,
+  generatePairingToken,
+  normalizePairingToken,
+  pairingTokenMatches,
+  presentedPairingToken,
+} = require('./pairing.cjs');
 
 // Shader library directory - in packaged Electron, extraResources land in resources/
 // while __dirname is inside app.asar/server/, so we need to go up two levels to resources/
@@ -27,6 +41,75 @@ const SHADERS_DIR = _isPackaged
 
 const PORT = process.env.WS_PORT || 9001;
 const HTTP_PORT = process.env.HTTP_PORT || 9002;
+const BIND_HOST = process.env.GA_REMOTE_BIND_HOST || '0.0.0.0';
+
+function isMainModule() {
+  try {
+    return !!process.argv[1] && fs.realpathSync(process.argv[1]) === fs.realpathSync(__filename);
+  } catch {
+    return false;
+  }
+}
+
+// Every WebSocket upgrade and every HTTP request has to present this. Inside
+// the desktop app, main hands over the per-install token with
+// setPairingToken() right after import. Run on its own, the server takes
+// GA_PAIRING_TOKEN or makes one up and prints it. Until one arrives it is
+// null, which matches nothing, so the moment between listening and hand-over
+// refuses everyone rather than admitting everyone.
+const runStandalone = isMainModule();
+let pairingToken = normalizePairingToken(process.env.GA_PAIRING_TOKEN || '') || null;
+const generatedStandaloneToken = !pairingToken && runStandalone;
+if (generatedStandaloneToken) pairingToken = generatePairingToken();
+
+// Per port, so two copies of the app on one machine do not overwrite each
+// other's cookie (cookies ignore ports).
+const PAIRING_COOKIE = `ga_pair_${HTTP_PORT}`;
+
+const UNPAIRED_MESSAGE = "This device isn't paired. Scan the QR code in Ghost Arcade to pair it again.";
+
+// Shown when a browser opens the app without a valid token: a stale bookmark,
+// a home screen icon, or a phone that was unpaired. The form is for devices
+// that cannot scan: it reloads the app with the code as ?pair=.
+const UNPAIRED_PAGE = `<!DOCTYPE html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <title>Ghost Arcade</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+  </head>
+  <body style="font-family: sans-serif; padding: 24px; text-align: center; background: #111; color: #eee;">
+    <h1>Ghost Arcade</h1>
+    <p>${UNPAIRED_MESSAGE}</p>
+    <form method="get" action="/#/mobile" style="margin-top: 24px;">
+      <p><label for="pair">Or type the pairing code from Connect Mobile in Ghost Arcade:</label></p>
+      <input id="pair" name="${PAIRING_QUERY_PARAM}" autocomplete="off" autocapitalize="characters" spellcheck="false"
+        style="font-size: 18px; padding: 10px; text-align: center; width: 16em; max-width: 90%;">
+      <p><button type="submit" style="font-size: 16px; padding: 10px 24px;">Pair</button></p>
+    </form>
+  </body>
+</html>`;
+
+// Something probing the ports can be refused thousands of times a second. One
+// line every few seconds is enough to see that it is happening.
+let refusedSinceReport = 0;
+let lastRefusalReportAt = 0;
+function noteRefused(req, what) {
+  refusedSinceReport++;
+  const now = Date.now();
+  if (now - lastRefusalReportAt < 5000) return;
+  console.warn(`[!] Refused unpaired ${what} from ${req.socket.remoteAddress} (${refusedSinceReport} since last report)`);
+  refusedSinceReport = 0;
+  lastRefusalReportAt = now;
+}
+
+function requestPathname(req) {
+  try {
+    return new URL(req.url || '/', 'http://localhost').pathname;
+  } catch {
+    return '';
+  }
+}
 
 // Get local IP addresses
 function getLocalIPs() {
@@ -175,12 +258,41 @@ let shaderLibraryState = [];
 const clients = new Set();
 let desktopClient = null;
 
-// Create WebSocket server — bind to 0.0.0.0 so mobile devices on the LAN can connect
-const wss = new WebSocketServer({
-  host: '0.0.0.0',
-  port: PORT,
-  maxPayload: 10 * 1024 * 1024, // 10 MB max message size (prevents OOM DoS)
+// The WebSocket port's own HTTP server. Upgrades go to the WebSocket server
+// below; the only plain request it answers is /pair/check. Browsers hide why a
+// WebSocket handshake failed, so a phone whose socket was refused asks there
+// whether its token was the reason, and can say so instead of blaming the
+// Wi-Fi.
+const wsHttpServer = http.createServer((req, res) => {
+  const paired = pairingTokenMatches(pairingToken, presentedPairingToken(req));
+  if (requestPathname(req) === '/pair/check') {
+    // Readable from any origin. It only says whether the presented token is
+    // right, which a WebSocket attempt from any page already reveals.
+    res.writeHead(paired ? 204 : 401, { 'Access-Control-Allow-Origin': '*', 'Cache-Control': 'no-store' });
+    res.end();
+    return;
+  }
+  if (!paired) noteRefused(req, 'request');
+  res.writeHead(paired ? 426 : 401, { 'Content-Type': 'text/plain' });
+  res.end(paired ? 'Upgrade Required' : 'Unauthorized');
 });
+wsHttpServer.on('error', (err) => {
+  console.error(`[!] WebSocket server could not listen on port ${PORT}:`, err.message);
+});
+
+// Bound to 0.0.0.0 so mobile devices on the LAN can connect, which is why an
+// upgrade without the pairing token is refused before a socket exists.
+const wss = new WebSocketServer({
+  server: wsHttpServer,
+  maxPayload: 10 * 1024 * 1024, // 10 MB max message size (prevents OOM DoS)
+  verifyClient: ({ req }) => {
+    const paired = pairingTokenMatches(pairingToken, presentedPairingToken(req));
+    if (!paired) noteRefused(req, 'WebSocket connection');
+    return paired; // false answers 401 Unauthorized
+  },
+});
+wss.on('error', err => console.error('[Remote] WebSocket listener error:', err.message));
+wsHttpServer.listen(PORT, BIND_HOST);
 
 console.log(`
 ╔═══════════════════════════════════════════════════════════════╗
@@ -195,10 +307,39 @@ for (const ip of ips) {
   console.log(`║  ws://${ip}:${PORT}`.padEnd(64) + '║');
 }
 
+if (generatedStandaloneToken && pairingToken) {
+  console.log('║                                                               ║');
+  console.log(`║  Pairing code: ${pairingToken.replace(/(.{4})(?=.)/g, '$1-')}`.padEnd(64) + '║');
+}
+
 console.log(`║                                                               ║
 ║  Or scan the QR code displayed in the desktop app             ║
 ╚═══════════════════════════════════════════════════════════════╝
 `);
+
+/**
+ * Replace the pairing token. Every connection open now was made with the old
+ * one, the desktop's own included, so all of them are closed: that is what
+ * makes a reset cut off a phone that is connected right now, not just the
+ * next one to try. The desktop reconnects with the new token.
+ */
+export function setPairingToken(token) {
+  const next = normalizePairingToken(token) || null;
+  if (next === pairingToken) return;
+  pairingToken = next;
+  for (const client of Array.from(clients)) {
+    try {
+      client.close(PAIRING_RESET_CLOSE_CODE, 'unpaired');
+    } catch {}
+    // A client can stall the closing handshake for up to 30 seconds. Nothing
+    // it sends meanwhile is handled (see the readyState check below), and
+    // this makes sure the socket is actually gone.
+    const reap = setTimeout(() => {
+      try { client.terminate(); } catch {}
+    }, 1000);
+    reap.unref?.();
+  }
+}
 
 wss.on('connection', (ws, req) => {
   const clientIp = req.socket.remoteAddress;
@@ -258,6 +399,10 @@ wss.on('connection', (ws, req) => {
   let msgResetTime = Date.now();
 
   ws.on('message', (data) => {
+    // A socket being closed (a pairing reset, say) still delivers whatever
+    // its peer sends until the closing handshake ends. It no longer speaks
+    // for a paired device, so none of that is handled.
+    if (ws.readyState !== WebSocket.OPEN) return;
     try {
       // Rate limit check
       const now = Date.now();
@@ -990,23 +1135,52 @@ function parseBody(req) {
   });
 }
 
+// A browser opening a page gets something it can act on; anything else gets
+// a status it can check.
+function sendUnpaired(req, res) {
+  const wantsPage = req.method === 'GET' && String(req.headers.accept || '').includes('text/html');
+  if (wantsPage) {
+    res.writeHead(401, { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(UNPAIRED_PAGE);
+  } else {
+    res.writeHead(401, { 'Content-Type': 'application/json', 'Cache-Control': 'no-store' });
+    res.end(JSON.stringify({ error: 'unpaired' }));
+  }
+}
+
 // Simple HTTP server to serve mobile PWA and shader API
 const httpServer = http.createServer(async (req, res) => {
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Cache-Control', 'no-store');
   // Add CORS headers — allow local origins only (desktop app + mobile on LAN)
   const origin = req.headers.origin || '';
   const isLocalOrigin = !origin || /^https?:\/\/(localhost|127\.0\.0\.1|192\.168\.\d+\.\d+|10\.\d+\.\d+\.\d+|172\.(1[6-9]|2\d|3[01])\.\d+\.\d+)(:\d+)?$/.test(origin);
   res.setHeader('Access-Control-Allow-Origin', isLocalOrigin ? (origin || '*') : 'null');
   res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
-  res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+  res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
 
-  // Handle preflight requests
+  // Handle preflight requests. Browsers never send credentials on these, and
+  // answering one reads and changes nothing, so it comes before the token check.
   if (req.method === 'OPTIONS') {
     res.writeHead(204);
     res.end();
     return;
   }
 
+  if (!pairingTokenMatches(pairingToken, presentedPairingToken(req, { cookieName: ['GET', 'HEAD'].includes(req.method) ? PAIRING_COOKIE : undefined }))) {
+    noteRefused(req, 'HTTP request');
+    sendUnpaired(req, res);
+    return;
+  }
+
   const url = new URL(req.url, `http://localhost:${HTTP_PORT}`);
+
+  // A phone that came through the QR code has the token in its URL, but the
+  // page's own scripts, styles and images do not, so hand it a cookie for
+  // those. SameSite=Strict keeps pages from other sites from riding on it.
+  if (url.searchParams.has(PAIRING_QUERY_PARAM)) {
+    res.setHeader('Set-Cookie', `${PAIRING_COOKIE}=${pairingToken}; Path=/; HttpOnly; SameSite=Strict; Max-Age=31536000`);
+  }
 
   // Shader API endpoints
   if (url.pathname === '/api/shaders') {
@@ -1079,13 +1253,15 @@ const httpServer = http.createServer(async (req, res) => {
 
   // Map URL path to file in dist/
   let filePath;
-  let reqPath = url.pathname === '/' ? '/index.html' : decodeURIComponent(url.pathname);
+  let reqPath;
+  try { reqPath = url.pathname === '/' ? '/index.html' : decodeURIComponent(url.pathname); }
+  catch { res.writeHead(400); res.end('Invalid path'); return; }
 
   // For hash-based routing (#/mobile), always serve index.html
   filePath = path.resolve(distDir, '.' + reqPath);
 
   // Security: prevent path traversal outside dist directory
-  if (!filePath.startsWith(distDir)) {
+  if (path.relative(distDir, filePath).startsWith('..') || path.isAbsolute(path.relative(distDir, filePath))) {
     res.writeHead(403, { 'Content-Type': 'text/plain' });
     res.end('Forbidden');
     return;
@@ -1146,9 +1322,25 @@ const httpServer = http.createServer(async (req, res) => {
   }
 });
 
-httpServer.listen(HTTP_PORT, '0.0.0.0', () => {
-  console.log(`[*] HTTP server on port ${HTTP_PORT} (0.0.0.0 — LAN accessible)`);
+httpServer.on('error', (err) => {
+  console.error(`[!] HTTP server could not listen on port ${HTTP_PORT}:`, err.message);
 });
+httpServer.listen(HTTP_PORT, BIND_HOST, () => {
+  console.log(`[*] HTTP server on port ${HTTP_PORT} (${BIND_HOST})`);
+});
+
+function onceListening(server) {
+  return new Promise((resolve, reject) => {
+    server.once('listening', () => resolve(server.address().port));
+    server.once('error', reject);
+  });
+}
+
+/** Resolves with the bound ports once both servers are listening. */
+export const listening = Promise.all([onceListening(wsHttpServer), onceListening(httpServer)])
+  .then(([wsPort, httpPort]) => ({ wsPort, httpPort }));
+// The error handlers above already report a failure to listen.
+listening.then(() => { if (process.send) process.send({ type: 'remote-server-ready' }); }, () => {});
 
 let serverShuttingDown = false;
 
@@ -1171,6 +1363,9 @@ export function shutdownServer({ force = false } = {}) {
   desktopClient = null;
 
   try { wss.close(); } catch {}
+  // wss.close() leaves a server it was handed alone.
+  try { wsHttpServer.closeAllConnections?.(); } catch {}
+  try { wsHttpServer.close(); } catch {}
   try { httpServer.closeIdleConnections?.(); } catch {}
   try { httpServer.closeAllConnections?.(); } catch {}
   try { httpServer.close(); } catch {}

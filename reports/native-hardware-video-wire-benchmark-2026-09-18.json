@@ -1,0 +1,1891 @@
+{
+  "captured_at": "2026-09-18T06:13:27.048Z",
+  "adapter": "Apple M1 Max",
+  "input": "/Users/justinwood/Downloads/Second_Nature_Wire_Circuit_8s_PREVIEW.mp4",
+  "media": {
+    "codec_name": "h264",
+    "width": 960,
+    "height": 540
+  },
+  "backend": "videotoolbox",
+  "simultaneous_clips": 4,
+  "requested_interval_ms": 125,
+  "requested_duration_seconds": 8,
+  "trigger_batches": 64,
+  "retriggers": 256,
+  "elapsed_ms": 7902.2948750000005,
+  "cadence_ms": {
+    "median": 124.96116600000005,
+    "p95": 126.00162499999988,
+    "max": 127.02420799999982
+  },
+  "command_ack_ms": {
+    "median": 2.26825000000008,
+    "p95": 2.6762080000003152,
+    "max": 2.7947919999996884
+  },
+  "max_dispatch_lateness_ms": 2.112040999999408,
+  "hardware_frames": 1016,
+  "software_frames": 0,
+  "hardware_fallbacks": 0,
+  "cpu_pixel_upload_bytes": 0,
+  "stream_underflows": 0,
+  "samples": [
+    {
+      "trigger": 1,
+      "generation": 2,
+      "dispatched_ms": 1.3258330000000456,
+      "lateness_ms": 1.3258330000000456,
+      "command_ack_ms": 2.398249999999962,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 8,
+      "export_frame": 5,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 2,
+      "generation": 3,
+      "dispatched_ms": 126.72454100000004,
+      "lateness_ms": 1.7245410000000447,
+      "command_ack_ms": 2.0523339999999735,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 24,
+      "export_frame": 12,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 3,
+      "generation": 4,
+      "dispatched_ms": 251.123375,
+      "lateness_ms": 1.12337500000001,
+      "command_ack_ms": 2.0832080000000133,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 40,
+      "export_frame": 19,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 4,
+      "generation": 5,
+      "dispatched_ms": 376.478125,
+      "lateness_ms": 1.4781249999999773,
+      "command_ack_ms": 2.2170000000000982,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 56,
+      "export_frame": 26,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 5,
+      "generation": 6,
+      "dispatched_ms": 502.027375,
+      "lateness_ms": 2.0273750000000064,
+      "command_ack_ms": 2.5094159999999874,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 72,
+      "export_frame": 33,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 6,
+      "generation": 7,
+      "dispatched_ms": 626.7162910000001,
+      "lateness_ms": 1.716291000000183,
+      "command_ack_ms": 2.3686669999999594,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 88,
+      "export_frame": 40,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 7,
+      "generation": 8,
+      "dispatched_ms": 751.832916,
+      "lateness_ms": 1.8329160000000684,
+      "command_ack_ms": 2.2097089999999753,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 104,
+      "export_frame": 47,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 8,
+      "generation": 9,
+      "dispatched_ms": 877.089208,
+      "lateness_ms": 2.0892080000000988,
+      "command_ack_ms": 2.196666999999934,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 120,
+      "export_frame": 54,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 9,
+      "generation": 10,
+      "dispatched_ms": 1001.9477499999999,
+      "lateness_ms": 1.9477500000000418,
+      "command_ack_ms": 2.4019580000001497,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 136,
+      "export_frame": 61,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 10,
+      "generation": 11,
+      "dispatched_ms": 1126.5714160000002,
+      "lateness_ms": 1.5714160000002266,
+      "command_ack_ms": 2.4960839999998825,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 152,
+      "export_frame": 68,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 11,
+      "generation": 12,
+      "dispatched_ms": 1249.4012080000002,
+      "lateness_ms": 0,
+      "command_ack_ms": 1.8253330000000005,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 168,
+      "export_frame": 75,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 12,
+      "generation": 13,
+      "dispatched_ms": 1376.425416,
+      "lateness_ms": 1.425416000000041,
+      "command_ack_ms": 2.1867500000000746,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 184,
+      "export_frame": 82,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 13,
+      "generation": 14,
+      "dispatched_ms": 1501.6894160000002,
+      "lateness_ms": 1.6894160000001648,
+      "command_ack_ms": 1.7538339999998698,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 200,
+      "export_frame": 89,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 14,
+      "generation": 15,
+      "dispatched_ms": 1626.942708,
+      "lateness_ms": 1.9427080000000387,
+      "command_ack_ms": 1.6154579999999896,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 216,
+      "export_frame": 96,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 15,
+      "generation": 16,
+      "dispatched_ms": 1751.3425000000002,
+      "lateness_ms": 1.3425000000002,
+      "command_ack_ms": 2.3405830000001515,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 232,
+      "export_frame": 103,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 16,
+      "generation": 17,
+      "dispatched_ms": 1876.864791,
+      "lateness_ms": 1.8647909999999683,
+      "command_ack_ms": 1.9851670000002741,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 248,
+      "export_frame": 110,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 17,
+      "generation": 18,
+      "dispatched_ms": 2001.341875,
+      "lateness_ms": 1.3418750000000728,
+      "command_ack_ms": 2.295333000000028,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 264,
+      "export_frame": 117,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 18,
+      "generation": 19,
+      "dispatched_ms": 2126.700166,
+      "lateness_ms": 1.7001660000000811,
+      "command_ack_ms": 2.082792000000154,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 280,
+      "export_frame": 124,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 19,
+      "generation": 20,
+      "dispatched_ms": 2250.333958,
+      "lateness_ms": 0.33395800000016607,
+      "command_ack_ms": 2.4767080000001442,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 296,
+      "export_frame": 131,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 20,
+      "generation": 21,
+      "dispatched_ms": 2376.335583,
+      "lateness_ms": 1.3355830000000424,
+      "command_ack_ms": 2.5201670000001286,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 312,
+      "export_frame": 138,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 21,
+      "generation": 22,
+      "dispatched_ms": 2500.608458,
+      "lateness_ms": 0.6084580000001552,
+      "command_ack_ms": 2.481582999999773,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 328,
+      "export_frame": 145,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 22,
+      "generation": 23,
+      "dispatched_ms": 2626.5977080000002,
+      "lateness_ms": 1.5977080000002388,
+      "command_ack_ms": 2.7947919999996884,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 344,
+      "export_frame": 152,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 23,
+      "generation": 24,
+      "dispatched_ms": 2751.9196660000002,
+      "lateness_ms": 1.919666000000234,
+      "command_ack_ms": 2.6178749999999127,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 360,
+      "export_frame": 159,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 24,
+      "generation": 25,
+      "dispatched_ms": 2876.7951660000003,
+      "lateness_ms": 1.7951660000003358,
+      "command_ack_ms": 2.2882089999998243,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 376,
+      "export_frame": 166,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 25,
+      "generation": 26,
+      "dispatched_ms": 3001.08575,
+      "lateness_ms": 1.0857500000001892,
+      "command_ack_ms": 2.158665999999812,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 392,
+      "export_frame": 173,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 26,
+      "generation": 27,
+      "dispatched_ms": 3126.774708,
+      "lateness_ms": 1.7747079999999187,
+      "command_ack_ms": 2.34637500000008,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 408,
+      "export_frame": 180,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 27,
+      "generation": 28,
+      "dispatched_ms": 3251.357125,
+      "lateness_ms": 1.3571249999999964,
+      "command_ack_ms": 2.6762080000003152,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 424,
+      "export_frame": 187,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 28,
+      "generation": 29,
+      "dispatched_ms": 3376.4929580000003,
+      "lateness_ms": 1.4929580000002716,
+      "command_ack_ms": 2.5663329999997586,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 440,
+      "export_frame": 194,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 29,
+      "generation": 30,
+      "dispatched_ms": 3501.843375,
+      "lateness_ms": 1.8433749999999236,
+      "command_ack_ms": 2.1422080000002097,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 456,
+      "export_frame": 201,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 30,
+      "generation": 31,
+      "dispatched_ms": 3626.5852910000003,
+      "lateness_ms": 1.5852910000003249,
+      "command_ack_ms": 2.155166999999892,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 472,
+      "export_frame": 208,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 31,
+      "generation": 32,
+      "dispatched_ms": 3751.369875,
+      "lateness_ms": 1.3698749999994106,
+      "command_ack_ms": 1.9662500000004002,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 488,
+      "export_frame": 215,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 32,
+      "generation": 33,
+      "dispatched_ms": 3875.463375,
+      "lateness_ms": 0.4633749999993597,
+      "command_ack_ms": 2.3829160000004777,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 504,
+      "export_frame": 222,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 33,
+      "generation": 34,
+      "dispatched_ms": 4001.8678750000004,
+      "lateness_ms": 1.8678749999999127,
+      "command_ack_ms": 2.72204099999999,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 520,
+      "export_frame": 229,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 34,
+      "generation": 35,
+      "dispatched_ms": 4126.265665999999,
+      "lateness_ms": 1.265665999999328,
+      "command_ack_ms": 2.387209000000439,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 536,
+      "export_frame": 236,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 35,
+      "generation": 36,
+      "dispatched_ms": 4251.483958,
+      "lateness_ms": 1.4839579999998023,
+      "command_ack_ms": 2.4221669999997175,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 552,
+      "export_frame": 243,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 36,
+      "generation": 37,
+      "dispatched_ms": 4376.705207999999,
+      "lateness_ms": 1.705207999999402,
+      "command_ack_ms": 2.342999999999847,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 568,
+      "export_frame": 250,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 37,
+      "generation": 38,
+      "dispatched_ms": 4501.593666,
+      "lateness_ms": 1.5936659999997573,
+      "command_ack_ms": 2.64049999999952,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 584,
+      "export_frame": 257,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 38,
+      "generation": 39,
+      "dispatched_ms": 4626.205833,
+      "lateness_ms": 1.2058329999999842,
+      "command_ack_ms": 2.4556249999996,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 600,
+      "export_frame": 264,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 39,
+      "generation": 40,
+      "dispatched_ms": 4751.889791,
+      "lateness_ms": 1.8897909999996045,
+      "command_ack_ms": 2.2413750000005166,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 616,
+      "export_frame": 271,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 40,
+      "generation": 41,
+      "dispatched_ms": 4876.421125,
+      "lateness_ms": 1.4211249999998472,
+      "command_ack_ms": 2.2182910000001357,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 632,
+      "export_frame": 278,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 41,
+      "generation": 42,
+      "dispatched_ms": 5001.799040999999,
+      "lateness_ms": 1.7990409999993062,
+      "command_ack_ms": 2.2412090000007083,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 648,
+      "export_frame": 285,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 42,
+      "generation": 43,
+      "dispatched_ms": 5126.631915999999,
+      "lateness_ms": 1.6319159999993644,
+      "command_ack_ms": 2.239875000000211,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 664,
+      "export_frame": 292,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 43,
+      "generation": 44,
+      "dispatched_ms": 5251.320124999999,
+      "lateness_ms": 1.3201249999992797,
+      "command_ack_ms": 1.9782080000004498,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 680,
+      "export_frame": 299,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 44,
+      "generation": 45,
+      "dispatched_ms": 5376.87775,
+      "lateness_ms": 1.8777499999996508,
+      "command_ack_ms": 2.4984160000003612,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 696,
+      "export_frame": 306,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 45,
+      "generation": 46,
+      "dispatched_ms": 5501.838916,
+      "lateness_ms": 1.8389159999996991,
+      "command_ack_ms": 2.3937089999999444,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 712,
+      "export_frame": 313,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 46,
+      "generation": 47,
+      "dispatched_ms": 5626.676415999999,
+      "lateness_ms": 1.6764159999993353,
+      "command_ack_ms": 2.26825000000008,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 728,
+      "export_frame": 320,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 47,
+      "generation": 48,
+      "dispatched_ms": 5751.893625,
+      "lateness_ms": 1.8936249999997017,
+      "command_ack_ms": 2.614915999999539,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 744,
+      "export_frame": 327,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 48,
+      "generation": 49,
+      "dispatched_ms": 5876.330583,
+      "lateness_ms": 1.3305829999999332,
+      "command_ack_ms": 2.1003329999994094,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 760,
+      "export_frame": 334,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 49,
+      "generation": 50,
+      "dispatched_ms": 6001.701416,
+      "lateness_ms": 1.701415999999881,
+      "command_ack_ms": 2.603208999999879,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 776,
+      "export_frame": 341,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 50,
+      "generation": 51,
+      "dispatched_ms": 6126.180875,
+      "lateness_ms": 1.1808750000000146,
+      "command_ack_ms": 2.482332999999926,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 792,
+      "export_frame": 348,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 51,
+      "generation": 52,
+      "dispatched_ms": 6251.566583,
+      "lateness_ms": 1.5665829999998095,
+      "command_ack_ms": 2.167083000000275,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 808,
+      "export_frame": 355,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 52,
+      "generation": 53,
+      "dispatched_ms": 6377.012791,
+      "lateness_ms": 2.0127910000001066,
+      "command_ack_ms": 2.684291999999914,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 824,
+      "export_frame": 362,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 53,
+      "generation": 54,
+      "dispatched_ms": 6502.112040999999,
+      "lateness_ms": 2.112040999999408,
+      "command_ack_ms": 2.630750000000262,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 840,
+      "export_frame": 369,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 54,
+      "generation": 55,
+      "dispatched_ms": 6626.990583,
+      "lateness_ms": 1.9905829999997877,
+      "command_ack_ms": 2.6019999999998618,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 856,
+      "export_frame": 376,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 55,
+      "generation": 56,
+      "dispatched_ms": 6751.621791,
+      "lateness_ms": 1.6217909999995754,
+      "command_ack_ms": 2.2189589999998134,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 872,
+      "export_frame": 383,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 56,
+      "generation": 57,
+      "dispatched_ms": 6876.94425,
+      "lateness_ms": 1.9442499999995562,
+      "command_ack_ms": 2.214625000000524,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 888,
+      "export_frame": 390,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 57,
+      "generation": 58,
+      "dispatched_ms": 7001.2721249999995,
+      "lateness_ms": 1.2721249999995052,
+      "command_ack_ms": 2.022791000000325,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 904,
+      "export_frame": 397,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 58,
+      "generation": 59,
+      "dispatched_ms": 7126.821333,
+      "lateness_ms": 1.8213329999998678,
+      "command_ack_ms": 1.9827919999997903,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 920,
+      "export_frame": 404,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 59,
+      "generation": 60,
+      "dispatched_ms": 7251.995207999999,
+      "lateness_ms": 1.9952079999993657,
+      "command_ack_ms": 2.158292000000074,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 936,
+      "export_frame": 411,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 60,
+      "generation": 61,
+      "dispatched_ms": 7376.677874999999,
+      "lateness_ms": 1.6778749999994034,
+      "command_ack_ms": 2.2522079999998823,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 952,
+      "export_frame": 418,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 61,
+      "generation": 62,
+      "dispatched_ms": 7501.258666,
+      "lateness_ms": 1.258665999999721,
+      "command_ack_ms": 2.1829170000000886,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 968,
+      "export_frame": 425,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 62,
+      "generation": 63,
+      "dispatched_ms": 7625.303041,
+      "lateness_ms": 0.30304100000012113,
+      "command_ack_ms": 1.932916999999179,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 984,
+      "export_frame": 432,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 63,
+      "generation": 64,
+      "dispatched_ms": 7752.085333,
+      "lateness_ms": 2.0853329999999914,
+      "command_ack_ms": 2.188916999999492,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 1000,
+      "export_frame": 439,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    },
+    {
+      "trigger": 64,
+      "generation": 65,
+      "dispatched_ms": 7876.368750000001,
+      "lateness_ms": 1.3687500000014552,
+      "command_ack_ms": 1.8926249999985885,
+      "core_trigger_latency_us": 0,
+      "hardware_frames": 1016,
+      "export_frame": 446,
+      "checksum": "fa71c8a614032865",
+      "session_frames": [
+        {
+          "source_id": "clip-2",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-3",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-1",
+          "frames_presented": 1
+        },
+        {
+          "source_id": "clip-0",
+          "frames_presented": 1
+        }
+      ]
+    }
+  ]
+}

@@ -1,3 +1,5 @@
+import { nativeAudioMaster } from '../audio/nativeClipAudio';
+import { releaseTempoNudgeInputs, setTempoNudgeInput, resyncLaunchClock } from '../stores/launchClock';
 // MIDI Router - Routes MIDI messages to correct store update functions
 // Uses a prebuilt lookup table for O(1) dispatch with 16ms throttle per path
 import { get } from 'svelte/store';
@@ -125,9 +127,13 @@ class MidiRouter {
       // Channel filter
       if (mapping.channel !== -1 && mapping.channel !== channel) continue;
 
-      // Scratch keeps the final controller value even within a MIDI burst.
+      const isClipTrigger = /^(vj|vj-b):\d+:trigger:\d+$/.test(normalizeControlPath(mapping.path));
+      const isTempoNudge = /^vj:tempo:(nudge-up|nudge-down|resync)$/.test(normalizeControlPath(mapping.path));
+      const isVideoCue = /^(vj|vj-b):\d+:video:cue(?:-set|-clear)?:[0-7]$/.test(normalizeControlPath(mapping.path));
+      const isLayerFader = /^(vj|vj-b):\d+:opacity$/.test(normalizeControlPath(mapping.path));
+      // Preserve fader zero crossings, pad releases and final scratch targets.
       // The native scrubber coalesces pending targets without dropping it.
-      if (!isVideoScratchPath(mapping.path)) {
+      if (!isVideoScratchPath(mapping.path) && !isClipTrigger && !isLayerFader && !isVideoCue && !isTempoNudge) {
         const lastTime = lastUpdateTime.get(mapping.path) || 0;
         if (now - lastTime < THROTTLE_MS) continue;
         lastUpdateTime.set(mapping.path, now);
@@ -141,7 +147,7 @@ class MidiRouter {
       const targetValue = this.convertValue(value, mapping, type);
 
       // Dispatch to correct store
-      this.dispatch(mapping.path, targetValue, mapping);
+      this.dispatch(mapping.path, (isClipTrigger || isVideoCue || isTempoNudge) && type === 'note' && value === 0 ? 0 : targetValue, mapping, `midi:${mapping.id}:${channel}:${number}`);
     }
   }
 
@@ -192,7 +198,9 @@ class MidiRouter {
    * `discreteValues` lets callers target the discrete-cycle params
    * (e.g. crossfader transition, blend mode) with named values.
    */
-  public dispatchPath(path: string, value: number, opts: { discreteValues?: string[] } = {}) {
+  public releaseInputs(prefix: string) { vjClipLauncher.releaseInputs(prefix); releaseTempoNudgeInputs(prefix); }
+
+  public dispatchPath(path: string, value: number, opts: { discreteValues?: string[]; inputId?: string } = {}) {
     const mapping: MidiMapping = {
       id: '__macro__',
       channel: -1,
@@ -207,13 +215,13 @@ class MidiRouter {
       discreteValues: opts.discreteValues,
     };
     try {
-      this.dispatch(path, value, mapping);
+      this.dispatch(path, value, mapping, opts.inputId ?? `path:${path}`);
     } catch (err) {
       console.warn(`[MIDI Router] dispatchPath failed for ${path}:`, err);
     }
   }
 
-  private dispatch(path: string, value: number, mapping: MidiMapping) {
+  private dispatch(path: string, value: number, mapping: MidiMapping, inputId?: string) {
     path = normalizeControlPath(path);
     const parts = path.split(':');
     const scope = parts[0]; // 'map', 'vj', 'vj-b', 'sv'
@@ -225,13 +233,13 @@ class MidiRouter {
           break;
         case 'vj':
           // Bank A is the canonical deck — most controllers use this scope.
-          this.dispatchVJ(parts, value, mapping, 'A');
+          this.dispatchVJ(parts, value, mapping, 'A', inputId);
           break;
         case 'vj-b':
           // Bank B parallels vj: opacity / solo / mute / trigger / column /
           // block all route to bankBLayerStates + bankBClipGrid via the
           // same dispatcher with bank='B'. Same path shape minus the scope.
-          this.dispatchVJ(parts, value, mapping, 'B');
+          this.dispatchVJ(parts, value, mapping, 'B', inputId);
           break;
         case 'sv':
           this.dispatchPerformer(parts, value, mapping);
@@ -462,10 +470,16 @@ class MidiRouter {
     }
   }
 
-  private dispatchVJ(parts: string[], value: number, mapping: MidiMapping, bank: 'A' | 'B' = 'A') {
+  private dispatchVJ(parts: string[], value: number, mapping: MidiMapping, bank: 'A' | 'B' = 'A', inputId?: string) {
     // parts: ['vj' | 'vj-b', layerIndex|'master'|'crossfader'|..., property, ...]
     const layerPart = parts[1];
     const property = parts[2];
+    if (parts[1] === 'tempo' && ['nudge-up', 'nudge-down', 'resync'].includes(parts[2])) {
+      if (parts[2] === 'resync') { if (value > 0) resyncLaunchClock(); }
+      else setTempoNudgeInput(inputId ?? `path:${parts.join(':')}`, value > 0 ? (parts[2] === 'nudge-up' ? 1 : -1) : 0);
+      return;
+    }
+
 
     // VJ Mode toggle: vj:mode. Rising edge enters/leaves the full VJ
     // workspace so controller users can return to regular mapping mode
@@ -482,6 +496,8 @@ class MidiRouter {
     }
 
     if (layerPart === 'master') {
+      if (property === 'audiovolume') nativeAudioMaster.update(v => ({ ...v, volume: Math.max(0, Math.min(1, value)) }));
+      if (property === 'audiomute' && value > 0) nativeAudioMaster.update(v => ({ ...v, muted: !v.muted }));
       if (property === 'opacity') {
         vjClipLauncher.setMasterOpacity(value);
       }
@@ -714,6 +730,13 @@ class MidiRouter {
           vjClipLauncher.setLayerBlendMode(layerIndex, blendVal as BlendMode, bank);
         }
         break;
+      case 'audiovolume':
+      case 'audiopan':
+        vjClipLauncher.setLayerAudio(layerIndex, { [property === 'audiovolume' ? 'audioVolume' : 'audioPan']: value }, bank);
+        break;
+      case 'autopilot':
+        if (value > 0) vjClipLauncher.toggleLayerAutopilot(layerIndex, bank);
+        break;
       case 'solo':
         if (value > 0) vjClipLauncher.toggleLayerSolo(layerIndex, bank);
         break;
@@ -755,7 +778,26 @@ class MidiRouter {
         const clip = layerStates[layerIndex]?.activeClip;
         const video = clip?.type === 'video' ? clip.videoElement : undefined;
         if (!clip || clip.type !== 'video') break;
+        if (action === 'audiovolume' || action === 'audiopan') {
+          vjClipLauncher.updateActiveClipVideoProps(layerIndex, { [action === 'audiovolume' ? 'audioVolume' : 'audioPan']: value }, bank);
+          break;
+        }
+        if (action === 'audio' || action === 'audiomute') {
+          if (value > 0) vjClipLauncher.updateActiveClipVideoProps(layerIndex, action === 'audio'
+            ? { audioPlayback: clip.audioPlayback === false } : { audioMuted: !clip.audioMuted }, bank);
+          break;
+        }
         const scratchKey = `${bank}:${layerIndex}`;
+        if (['cue', 'cue-set', 'cue-clear'].includes(action)) {
+          if (value <= 0 || !/^[0-7]$/.test(parts[4] ?? '')) break;
+          const cueIndex = Number(parts[4]);
+          if (action === 'cue') {
+            videoScratch.cancel(scratchKey);
+            vjClipLauncher.pressCuePoint(layerIndex, cueIndex, bank);
+          } else vjClipLauncher.setActiveClipCuePoint(layerIndex, cueIndex,
+            action === 'cue-clear' ? null : predictNativePlayheadSeconds(clip), bank);
+          break;
+        }
         if (action === 'scratch') {
           if (mapping.mode === 'absolute') {
             observeVideoScratch();
@@ -825,8 +867,9 @@ class MidiRouter {
       }
       case 'trigger': {
         const colIdx = parseInt(parts[3], 10);
-        if (!isNaN(colIdx) && value > 0) {
-          vjClipLauncher.triggerClip(layerIndex, colIdx, bank);
+        if (!isNaN(colIdx)) {
+          if (value > 0) vjClipLauncher.triggerClip(layerIndex, colIdx, bank, inputId);
+          else vjClipLauncher.releaseClip(layerIndex, colIdx, bank, inputId);
         }
         break;
       }

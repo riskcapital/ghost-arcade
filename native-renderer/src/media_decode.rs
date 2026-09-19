@@ -64,6 +64,7 @@ pub struct NativeVideoStream {
     capacity: Arc<AtomicUsize>,
     frame_bytes: usize,
     playback_rate: f64,
+    bounce_enabled: bool,
     free_frames: Arc<Mutex<Vec<Vec<u8>>>>,
     backend: Arc<AtomicU64>,
     fallback_reason: Arc<Mutex<String>>,
@@ -223,6 +224,7 @@ struct HardwareStreamControl {
     generation: u64,
     reset: Option<HardwareStreamReset>,
     cache_start: f64,
+    cache_reverse: bool,
     // Paused scrubbing reuses the opening cache's reservation, rather than
     // retaining an additional history alongside the loop's opening surfaces.
     scrub_history: bool,
@@ -235,8 +237,8 @@ struct HardwareStreamControl {
 
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 enum HardwareStreamReset {
-    Seek { start: f64, resume: f64 },
-    Step { reference: f64, direction: i32 },
+    Seek { start: f64, resume: f64, replay_frames: usize, playback_rate: f64 },
+    Step { reference: f64, direction: i32, playback_rate: f64 },
 }
 
 const VIDEO_TIMESTAMP_EPSILON: f64 = 0.000001;
@@ -330,6 +332,42 @@ impl NativeVideoStream {
         }
     }
 
+    pub fn effective_rate(&self) -> f64 {
+        self.playback_rate * f64::from_bits(self.output_fps.load(Ordering::Acquire)) / 1_000_000.0
+    }
+
+    pub fn elapsed_source_seconds(&self) -> Option<f64> {
+        if !matches!(self.backend.load(Ordering::Acquire), 1 | 5)
+            || self.awaiting_first_frame.load(Ordering::Acquire) { return None; }
+        let clock = self.clock.lock().ok()?;
+        let ticks = match clock.as_ref() {
+            Some((anchor, origin)) => *origin as f64 + anchor.elapsed().as_secs_f64()
+                * f64::from_bits(self.output_fps.load(Ordering::Acquire)),
+            None => self.next_frame.load(Ordering::Acquire) as f64,
+        };
+        Some(ticks / 1_000_000.0 * self.playback_rate.abs())
+    }
+
+    /// Hardware workers timestamp frames in a stable, initial-rate timeline.
+    /// Retiming its consumer clock preserves queued frames and decoder state.
+    pub fn retime_hardware_clock(&self, rate: f64) -> bool {
+        if !matches!(self.backend.load(Ordering::Acquire), 1 | 5)
+            || !rate.is_finite() || rate == 0.0 || self.playback_rate == 0.0
+            || (!self.bounce_enabled && rate.signum() != self.playback_rate.signum()) {
+            return false;
+        }
+        let Ok(mut clock) = self.clock.lock() else { return false; };
+        let now = Instant::now();
+        let old_fps = f64::from_bits(self.output_fps.load(Ordering::Acquire));
+        if let Some((anchor, origin)) = clock.as_mut() {
+            *origin = origin.saturating_add((now.duration_since(*anchor).as_secs_f64() * old_fps).floor() as u64);
+            *anchor = now;
+        }
+        self.output_fps.store((1_000_000.0 * (rate / self.playback_rate).abs()).to_bits(), Ordering::Release);
+        self.wake.notify_all();
+        true
+    }
+
     pub fn set_playing(&self, playing: bool) {
         if self.playing.swap(playing, Ordering::AcqRel) != playing {
             self.play_state_changes.fetch_add(1, Ordering::Relaxed);
@@ -381,7 +419,7 @@ impl NativeVideoStream {
     pub fn backend(&self) -> &'static str {
         match self.backend.load(Ordering::Acquire) {
             #[cfg(any(target_os = "macos", target_os = "windows"))]
-            1 => crate::hardware_video::BACKEND, 2 | 3 => "ffmpeg", 4 => "failed", _ => "preparing",
+            1 => crate::hardware_video::BACKEND, 5 => "hap-texture", 2 | 3 => "ffmpeg", 4 => "failed", _ => "preparing",
         }
     }
     pub fn fallback_reason(&self) -> String {
@@ -404,7 +442,7 @@ impl NativeVideoStream {
          optional_video_number(&self.source_metadata.duration).filter(|value| *value > 0.0))
     }
 
-    pub fn frame_step_exact(&self) -> bool { self.backend.load(Ordering::Acquire) == 1 }
+    pub fn frame_step_exact(&self) -> bool { matches!(self.backend.load(Ordering::Acquire), 1 | 5) }
 
     pub fn record_presented(&self, time: Option<f64>, duration: Option<f64>) {
         self.source_metadata.presented_duration.store(duration.unwrap_or(f64::NAN).to_bits(), Ordering::Release);
@@ -413,7 +451,7 @@ impl NativeVideoStream {
 
     /// Queue an exact adjacent-frame request on the existing decoder worker.
     /// The caller supplies the last presented PTS, never the playback clock.
-    pub fn step_frame(&self, reference: f64, direction: i32) -> bool {
+    pub fn step_frame(&self, reference: f64, direction: i32, playback_rate: f64) -> bool {
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         if self.frame_step_exact() && reference.is_finite() && matches!(direction, -1 | 1) {
             self.set_playing(false);
@@ -423,7 +461,7 @@ impl NativeVideoStream {
             control.opening.clear();
             control.scrub_history = false;
             control.generation = control.generation.wrapping_add(1);
-            control.reset = Some(HardwareStreamReset::Step { reference, direction });
+            control.reset = Some(HardwareStreamReset::Step { reference, direction, playback_rate });
             self.next_frame.store(0, Ordering::Release);
             self.wanted_frame.store(0, Ordering::Release);
             self.awaiting_first_frame.store(true, Ordering::Release);
@@ -436,14 +474,34 @@ impl NativeVideoStream {
 
     /// Reset the prepared hardware session without touching the filesystem on
     /// the render thread. Opening surfaces are shared, never copied or mapped.
+    #[cfg(test)]
     pub fn retrigger(&self, start: f64, scrubbing: bool) -> bool {
+        self.retrigger_with_rate(start, scrubbing, self.playback_rate)
+    }
+
+    pub fn retrigger_with_rate(&self, start: f64, scrubbing: bool, playback_rate: f64) -> bool {
         #[cfg(any(target_os = "macos", target_os = "windows"))]
-        if self.backend.load(Ordering::Acquire) == 1 {
+        if matches!(self.backend.load(Ordering::Acquire), 1 | 5) {
             let Ok(mut frames) = self.frames.lock() else { return false; };
             let Ok(mut control) = self.hardware_control.lock() else { return false; };
-            let same_start = !control.scrub_history && (control.cache_start - start).abs() < 0.0001;
+            let same_start = !control.scrub_history && (control.cache_start - start).abs() < 0.0001
+                && (playback_rate < 0.0) == control.cache_reverse;
             let mut resume = start;
-            if scrubbing {
+            if playback_rate < 0.0 {
+                frames.clear();
+                if same_start && !scrubbing {
+                    // Reverse openings already carry increasing presentation
+                    // times and decreasing source times. Replay immediately.
+                    for frame in &control.opening {
+                        if let Some(pts) = frame.source_time_seconds { resume = resume.min(pts); }
+                        frames.push_back(Ok(frame.clone()));
+                    }
+                } else {
+                    control.opening.clear();
+                }
+                control.scrub_history = false;
+                control.cache_start = start;
+            } else if scrubbing && !self.bounce_enabled {
                 let history_limit = control.history_capacity.max(self.capacity.load(Ordering::Acquire).min(4));
                 let replay = cached_video_suffix(
                     control.opening.iter().chain(frames.iter().filter_map(|frame| frame.as_ref().ok())),
@@ -482,8 +540,9 @@ impl NativeVideoStream {
                 control.scrub_history = false;
                 control.cache_start = start;
             }
+            control.cache_reverse = playback_rate < 0.0;
             control.generation = control.generation.wrapping_add(1);
-            control.reset = Some(HardwareStreamReset::Seek { start, resume });
+            control.reset = Some(HardwareStreamReset::Seek { start, resume, replay_frames: frames.len(), playback_rate });
             self.next_frame.store(0, Ordering::Release);
             self.wanted_frame.store(0, Ordering::Release);
             self.awaiting_first_frame.store(true, Ordering::Release);
@@ -639,11 +698,13 @@ pub fn spawn_native_video_stream(
     start_time_seconds: f64,
     playback_rate: f64,
     loop_enabled: bool,
+    bounce_enabled: bool,
     duration_seconds: Option<f64>,
     trim_start: f64,
     trim_end: f64,
     capacity: usize,
     memory_budget: Arc<NativeVideoMemoryBudget>,
+    hap_supported: bool,
     #[cfg(target_os = "windows")] video_device: Result<crate::windows_video_texture::WindowsVideoDevice, String>,
 ) -> NativeVideoStream {
     let capacity = capacity.clamp(2, NATIVE_VIDEO_PREROLL_FRAMES);
@@ -677,7 +738,7 @@ pub fn spawn_native_video_stream(
     let memory_lease = memory_budget.lease();
     let thread_memory_lease = memory_lease.clone();
     #[cfg(any(target_os = "macos", target_os = "windows"))]
-    let hardware_control = Arc::new(Mutex::new(HardwareStreamControl { cache_start: start_time_seconds, ..Default::default() }));
+    let hardware_control = Arc::new(Mutex::new(HardwareStreamControl { cache_start: start_time_seconds, cache_reverse: playback_rate < 0.0, ..Default::default() }));
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     let thread_control = hardware_control.clone();
     #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -687,27 +748,25 @@ pub fn spawn_native_video_stream(
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         if backend_policy != "software" {
             #[cfg(target_os = "macos")]
-            let opened = crate::hardware_video::HardwareVideoDecoder::open(&path);
+            let opened = crate::hardware_video::HardwareVideoDecoder::open(&path, hap_supported);
             #[cfg(target_os = "windows")]
-            let opened = video_device.and_then(|device| {
-                let mut decoder = crate::hardware_video::HardwareVideoDecoder::open_with_device(&path, &device)?;
+            let opened = (|| {
+                let mut decoder = crate::hardware_video::HardwareVideoDecoder::open_with_device(&path, video_device, hap_supported)?;
                 // Require real decoder output before reporting hardware. Admit the
                 // bounded probe before it allocates its first GPU bridge surface.
-                let metadata = decoder.metadata();
-                let probe = (metadata.width as u64).saturating_mul(metadata.height as u64)
-                    .saturating_mul(12).saturating_add(65_536).saturating_mul(2);
+                let probe = decoder.probe_surface_bytes().saturating_mul(2);
                 if !wait_for_video_memory(&thread_memory_lease, probe, &thread_stop) {
                     return Err("Hardware video preparation cancelled".to_string());
                 }
                 decoder.set_queue_capacity(2)?;
                 decoder.prime_hardware()?;
                 Ok(decoder)
-            });
+            })();
             match opened {
                 Ok(decoder) => {
                     thread_output_fps.store(1_000_000.0f64.to_bits(), Ordering::Release);
                     if let Err(error) = run_hardware_stream(decoder, start_time_seconds, playback_rate,
-                        loop_enabled, duration_seconds, trim_start, trim_end, capacity,
+                        loop_enabled, bounce_enabled, duration_seconds, trim_start, trim_end, capacity,
                         &thread_frames, &thread_stop, &thread_wake, &thread_control,
                         &thread_memory_lease, &thread_capacity, &thread_backend, &thread_source_metadata) {
                         thread_backend.store(4, Ordering::Release);
@@ -732,6 +791,13 @@ pub fn spawn_native_video_stream(
         if backend_policy == "hardware" {
             thread_backend.store(4, Ordering::Release);
             if let Ok(mut queue) = thread_frames.lock() { queue.push_back(Err("Hardware video backend is not implemented on this platform".into())); }
+            return;
+        }
+        if playback_rate < 0.0 {
+            let error = "Reverse playback requires the native hardware or HAP decoder".to_string();
+            thread_backend.store(4, Ordering::Release);
+            if let Ok(mut reason) = thread_fallback.lock() { *reason = error.clone(); }
+            if let Ok(mut queue) = thread_frames.lock() { queue.push_back(Err(error)); }
             return;
         }
         if thread_backend.load(Ordering::Acquire) == 0 { thread_backend.store(2, Ordering::Release); }
@@ -761,6 +827,12 @@ pub fn spawn_native_video_stream(
         // (-stream_loop), which is seamless. Restarting ffmpeg for every pass
         // was not: each pass hung on the next process starting, which took
         // anywhere from 40 ms to over a second, then skipped ahead to catch up.
+        if bounce_enabled {
+            if let Ok(mut queue) = thread_frames.lock() {
+                queue.push_back(Err("Bounce playback requires native video decoding".into()));
+            }
+            return;
+        }
         let continuous_loop = loop_enabled && !trimmed;
         let mut segment_start = start_time_seconds.max(range_start).clamp(0.0, 3600.0);
 
@@ -1054,7 +1126,8 @@ pub fn spawn_native_video_stream(
         awaiting_first_frame: AtomicBool::new(true),
         capacity: effective_capacity,
         frame_bytes,
-        playback_rate: playback_rate.clamp(0.01, 16.0),
+        playback_rate: playback_rate.clamp(-16.0, 16.0),
+        bounce_enabled,
         free_frames,
         backend, fallback_reason, memory_lease, source_metadata,
         #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -1065,7 +1138,7 @@ pub fn spawn_native_video_stream(
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 fn run_hardware_stream(
     mut decoder: crate::hardware_video::HardwareVideoDecoder,
-    start: f64, playback_rate: f64, loop_enabled: bool, _duration: Option<f64>,
+    start: f64, playback_rate: f64, loop_enabled: bool, bounce_enabled: bool, _duration: Option<f64>,
     trim_start: f64, trim_end: f64, capacity: usize,
     frames: &Arc<Mutex<VecDeque<Result<NativeVideoStreamFrame, String>>>>,
     stop: &AtomicBool, wake: &Condvar, control: &Mutex<HardwareStreamControl>,
@@ -1074,6 +1147,13 @@ fn run_hardware_stream(
     backend: &AtomicU64,
     source_metadata: &NativeVideoSourceMetadata,
 ) -> Result<(), String> {
+    if playback_rate < 0.0 || bounce_enabled {
+        return run_reverse_hardware_stream(decoder, start, playback_rate, loop_enabled, bounce_enabled,
+            trim_start, trim_end, frames, stop, wake, control, memory_lease,
+            effective_capacity, backend, source_metadata);
+    }
+    let backend_id = decoder.backend_id();
+    let index_bytes = decoder.index_bytes();
     let metadata = decoder.metadata();
     if !metadata.hardware { return Err("Native decoder did not activate hardware decoding".into()); }
     source_metadata.fps.store(metadata.fps.to_bits(), Ordering::Release);
@@ -1102,9 +1182,8 @@ fn run_hardware_stream(
     // a small allocation-size discrepancy; no unadmitted frame is published.
     // Windows also owns an RGB bridge surface. Budget a float target plus
     // the native input until the driver reports its allocation requirements.
-    let probe_bytes_per_pixel = if cfg!(target_os = "windows") { 12 } else { 3 };
-    let probe_surface_bytes = (metadata.width as u64).saturating_mul(metadata.height as u64).saturating_mul(probe_bytes_per_pixel);
-    let mut decoder_capacity = if cfg!(target_os = "windows") { 2 } else { 8 };
+    let probe_surface_bytes = decoder.probe_surface_bytes();
+    let mut decoder_capacity = decoder.queue_capacity();
     if !memory_lease.try_resize(probe_surface_bytes.saturating_mul(decoder_capacity as u64)) {
         decoder_capacity = decoder_capacity.min(4);
         while !memory_lease.try_resize(probe_surface_bytes.saturating_mul(decoder_capacity as u64)) {
@@ -1113,8 +1192,12 @@ fn run_hardware_stream(
         }
     }
     decoder.set_queue_capacity(decoder_capacity)?;
-    let requested_capacity = capacity;
-    let mut capacity = capacity;
+    // HAP has independent indexed frames and no inter-frame decode pipeline.
+    // A three-frame ring is enough to bridge a scheduling tick, and prevents
+    // the first large-alpha streams reserving the whole budget before their
+    // peers can prepare. Native inter-frame decoders retain their usual ring.
+    let requested_capacity = if backend_id == 5 { capacity.min(3) } else { capacity };
+    let mut capacity = requested_capacity;
     let mut accounted_surface_bytes = 0u64;
     let mut last_history_growth_generation = None;
     if segment_start < range_end {
@@ -1170,7 +1253,7 @@ fn run_hardware_stream(
             ended = false;
             selected_frame = None;
             match request {
-                HardwareStreamReset::Step { reference, direction } => {
+                HardwareStreamReset::Step { reference, direction, .. } => {
                     decoder_cursor_end = None;
                     selected_frame = decoder.step_frame(reference, direction, range_start, range_end)?;
                     if let Some(selected) = &selected_frame {
@@ -1183,7 +1266,7 @@ fn run_hardware_stream(
                         return Err("Native video trim contains no frame to step to".into());
                     }
                 }
-                HardwareStreamReset::Seek { start: requested, resume } => {
+                HardwareStreamReset::Seek { start: requested, resume, .. } => {
                     segment_start = requested.max(range_start).min(range_end);
                     skip_before = resume.max(segment_start).min(range_end);
                     if skip_before >= range_end {
@@ -1269,7 +1352,7 @@ fn run_hardware_stream(
             continue;
         };
         // Platform allocation includes bit depth, bridge storage and padding. Never publish a GPU frame before admission has succeeded.
-        let surface_bytes = crate::hardware_video::allocation_bytes(&gpu)?;
+        let surface_bytes = crate::hardware_video::allocation_bytes(&gpu)?.saturating_add(index_bytes);
         if surface_bytes == 0 { return Err("Hardware video frame has an empty allocation".into()); }
         if surface_bytes > accounted_surface_bytes {
             {
@@ -1314,7 +1397,7 @@ fn run_hardware_stream(
             }
             memory_lease.optional_bytes.store(0, Ordering::Release);
             effective_capacity.store(capacity, Ordering::Release);
-            backend.store(1, Ordering::Release);
+            backend.store(backend_id, Ordering::Release);
         }
         let frame_duration = if gpu.duration_seconds > 0.0 { gpu.duration_seconds } else { 1.0 / metadata.fps.max(1.0) };
         if gpu.pts_seconds >= range_end { continue; }
@@ -1347,6 +1430,267 @@ fn run_hardware_stream(
         }
         queue.push_back(Ok(frame));
         segment_frames += 1;
+    }
+    Ok(())
+}
+
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn reserve_reverse_window(memory: &NativeVideoMemoryLease, bytes: u64,
+    decoder_capacity: usize, maximum: usize, stop: &AtomicBool) -> Option<usize> {
+    loop {
+        for window in (4..=maximum).rev() {
+            // Separate reverse window, presentation queue and opening cache.
+            let owners = (decoder_capacity + window * 3 + 3) as u64;
+            if memory.try_resize(bytes.saturating_mul(owners)) { return Some(window); }
+        }
+        if stop.load(Ordering::Acquire) { return None; }
+        thread::sleep(Duration::from_millis(25));
+    }
+}
+
+#[cfg(all(test, any(target_os = "macos", target_os = "windows")))]
+#[test]
+fn reverse_window_adapts_to_shared_memory_and_cancels_when_full() {
+    let budget = Arc::new(NativeVideoMemoryBudget::new(100));
+    let other = budget.lease();
+    assert!(other.try_resize(30));
+    let reverse = budget.lease();
+    // Four decoder frames + three owners per cached frame + three in-flight
+    // owners: ten two-byte frames use 74 bytes, nine use 68 and fit.
+    assert_eq!(reserve_reverse_window(&reverse, 2, 4, 16, &AtomicBool::new(false)), Some(9));
+    assert_eq!(reverse.bytes.load(Ordering::Acquire), 68);
+    assert_eq!(reserve_reverse_window(&reverse, 20, 4, 16, &AtomicBool::new(true)), None);
+    assert_eq!(reverse.bytes.load(Ordering::Acquire), 68);
+}
+
+/// Reverse transport keeps compressed HAP reads independent and retains only a
+/// small GPU window for inter-frame codecs. The render thread never seeks.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+fn run_reverse_hardware_stream(
+    mut decoder: crate::hardware_video::HardwareVideoDecoder,
+    start: f64, playback_rate: f64, loop_enabled: bool, bounce_enabled: bool,
+    trim_start: f64, trim_end: f64,
+    frames: &Arc<Mutex<VecDeque<Result<NativeVideoStreamFrame, String>>>>,
+    stop: &AtomicBool, wake: &Condvar, control: &Mutex<HardwareStreamControl>,
+    memory_lease: &Arc<NativeVideoMemoryLease>, effective_capacity: &AtomicUsize,
+    backend: &AtomicU64, source_metadata: &NativeVideoSourceMetadata,
+) -> Result<(), String> {
+    const WINDOW: usize = 16;
+    let metadata = decoder.metadata();
+    if !metadata.hardware { return Err("Reverse playback requires native decoding".into()); }
+    let lo = metadata.duration_seconds * trim_start.clamp(0.0, 1.0);
+    let hi = metadata.duration_seconds * trim_end.clamp(trim_start, 1.0);
+    if hi <= lo { return Err("Reverse video trim is empty".into()); }
+    let rate = playback_rate.abs().clamp(0.01, 16.0);
+    let hap = decoder.backend_id() == 5;
+    // Keep a complete presentation window queued while an inter-frame
+    // decoder seeks the preceding GOP. HAP has no such decode latency.
+    let mut window_capacity = WINDOW;
+    let mut ring = if hap { 3 } else { WINDOW };
+    let mut opening_capacity = if hap { 1 } else { WINDOW };
+    let decoder_capacity = decoder.queue_capacity().min(4);
+    // One scanning frame, decoder pending outputs, reverse window, render ring
+    // and two GPU submissions are all charged before any decode allocation.
+    let mut owners = (decoder_capacity + if hap { 1 } else { WINDOW } + ring + opening_capacity + 3) as u64;
+    let probe_bytes = decoder.probe_surface_bytes().saturating_add(decoder.index_bytes());
+    // Probe only the decoder's bounded pending outputs plus the first picture.
+    // Before retaining a window, replace this conservative format estimate with
+    // the real surface allocation. Otherwise four NV12 clips can deadlock on
+    // reservations sized as if every input used the larger P010 format.
+    if !wait_for_video_memory(memory_lease, probe_bytes.saturating_mul((decoder_capacity + 2) as u64), stop) { return Ok(()); }
+    let mut surface_bytes = 0;
+    decoder.set_queue_capacity(decoder_capacity)?;
+    effective_capacity.store(ring, Ordering::Release);
+    source_metadata.fps.store(metadata.fps.to_bits(), Ordering::Release);
+    source_metadata.duration.store(metadata.duration_seconds.to_bits(), Ordering::Release);
+    let mut cache = VecDeque::<crate::hardware_video::GpuVideoFrame>::new();
+    let mut cursor = start.clamp(lo, hi);
+    let mut inclusive = true;
+    let mut reverse = playback_rate < 0.0;
+    let mut forward_seek = true;
+    let mut generation = 0;
+    let mut presentation: f64 = 0.0;
+    let mut ended = false;
+    let mut segment_frames = 0usize;
+    let mut selected = None;
+    let mut opening_start = cursor;
+    let mut first_pass = true;
+    while !stop.load(Ordering::Acquire) {
+        let reset = {
+            let mut state = control.lock().map_err(|_| "Video control lock poisoned")?;
+            state.reset.take().map(|r| (state.generation, r))
+        };
+        if let Some((next_generation, request)) = reset {
+            generation = next_generation;
+            cache.clear();
+            selected = None;
+            inclusive = true;
+            presentation = 0.0;
+            ended = false;
+            segment_frames = 0;
+            first_pass = true;
+            match request {
+                HardwareStreamReset::Seek { start, resume, replay_frames: replayed, playback_rate } => {
+                    reverse = playback_rate < 0.0;
+                    forward_seek = true;
+                    opening_start = start.clamp(lo, hi);
+                    cursor = if replayed > 0 { resume.clamp(lo, hi) } else { opening_start };
+                    if replayed > 0 {
+                        inclusive = false;
+                        presentation = ((opening_start - cursor).abs() / rate).max(VIDEO_TIMESTAMP_EPSILON);
+                        segment_frames = replayed;
+                    }
+                }
+                HardwareStreamReset::Step { reference, direction, playback_rate } => {
+                    reverse = playback_rate < 0.0;
+                    selected = decoder.step_frame(reference, direction, lo, hi)?;
+                    cursor = selected.as_ref().ok_or("Reverse trim contains no adjacent frame")?.pts_seconds;
+                    opening_start = cursor;
+                    forward_seek = true;
+                }
+            }
+        }
+        {
+            let queue = frames.lock().map_err(|_| "Video queue lock poisoned")?;
+            if queue.len() >= ring || ended {
+                let _ = wake.wait_timeout(queue, Duration::from_millis(25));
+                continue;
+            }
+        }
+        if selected.is_none() && cache.is_empty() {
+            if !reverse {
+                if forward_seek {
+                    decoder.seek(cursor.min((hi - VIDEO_TIMESTAMP_EPSILON * 2.0).max(lo)), Some(hi))?;
+                    forward_seek = false;
+                }
+                if cursor < hi - VIDEO_TIMESTAMP_EPSILON {
+                    selected = decoder.next_frame()?.filter(|f| f.pts_seconds < hi);
+                }
+            } else if hap {
+                // HAP samples are independent; exact predecessor lookup needs
+                // no extra retained frames or GOP decode.
+                if inclusive {
+                    decoder.seek(cursor.min((hi - VIDEO_TIMESTAMP_EPSILON * 2.0).max(lo)), Some(hi))?;
+                    selected = decoder.next_frame()?;
+                } else if cursor > lo + VIDEO_TIMESTAMP_EPSILON {
+                    selected = decoder.step_frame(cursor, -1, lo, hi)?
+                        .filter(|f| f.pts_seconds < cursor - VIDEO_TIMESTAMP_EPSILON);
+                }
+            } else if inclusive || cursor > lo + VIDEO_TIMESTAMP_EPSILON {
+                let begin = (cursor - (window_capacity as f64 / metadata.fps.max(1.0))).max(lo);
+                decoder.seek(begin, Some(hi))?;
+                // Bound malformed/VFR scans as well as retained surfaces.
+                for scanned in 0..4096 {
+                    if scanned == 4095 { return Err("Reverse decode exceeded its bounded frame scan".into()); }
+                    if stop.load(Ordering::Acquire) { return Ok(()); }
+                    if control.lock().map_err(|_| "Video control lock poisoned")?.generation != generation { break; }
+                    let Some(frame) = decoder.next_frame()? else { break; };
+                    let bytes = crate::hardware_video::allocation_bytes(&frame)?.saturating_add(decoder.index_bytes());
+                    if bytes > surface_bytes {
+                        if surface_bytes == 0 && !hap {
+                            let Some(admitted) = reserve_reverse_window(memory_lease, bytes, decoder_capacity, WINDOW, stop) else { return Ok(()); };
+                            window_capacity = admitted;
+                            ring = admitted;
+                            opening_capacity = admitted;
+                            owners = (decoder_capacity + admitted * 3 + 3) as u64;
+                            effective_capacity.store(ring, Ordering::Release);
+                        } else if !wait_for_video_memory(memory_lease, bytes.saturating_mul(owners), stop) { return Ok(()); }
+                        surface_bytes = bytes;
+                    }
+                    let beyond = if inclusive { frame.pts_seconds > cursor + VIDEO_TIMESTAMP_EPSILON }
+                        else { frame.pts_seconds >= cursor - VIDEO_TIMESTAMP_EPSILON };
+                    if beyond || frame.pts_seconds >= hi { break; }
+                    if frame.pts_seconds + frame.duration_seconds > lo {
+                        if cache.len() == window_capacity { cache.pop_front(); }
+                        cache.push_back(frame);
+                    }
+                }
+                // Sparse variable-rate media can have no picture in the short
+                // window. Platform exact-step finds the adjacent presentation.
+                if cache.is_empty() && !inclusive && cursor > lo + VIDEO_TIMESTAMP_EPSILON {
+                    selected = decoder.step_frame(cursor, -1, lo, hi)?
+                        .filter(|f| f.pts_seconds < cursor - VIDEO_TIMESTAMP_EPSILON);
+                }
+            }
+        }
+        if control.lock().map_err(|_| "Video control lock poisoned")?.generation != generation {
+            cache.clear(); selected = None; continue;
+        }
+        let Some(gpu) = selected.take().or_else(|| cache.pop_back()) else {
+            if segment_frames == 0 && !(bounce_enabled && !reverse && cursor >= hi - VIDEO_TIMESTAMP_EPSILON) {
+                return Err("Reverse video trim contains no decodable frames".into());
+            }
+            if bounce_enabled {
+                reverse = !reverse;
+                cursor = if reverse { hi } else { lo };
+                inclusive = true;
+                forward_seek = true;
+                segment_frames = 0;
+                first_pass = false;
+            } else if loop_enabled {
+                cursor = hi; inclusive = true; segment_frames = 0;
+                first_pass = false;
+            } else {
+                effective_capacity.fetch_min(segment_frames.saturating_add(1).max(2), Ordering::AcqRel);
+                ended = true;
+            }
+            continue;
+        };
+        let bytes = crate::hardware_video::allocation_bytes(&gpu)?.saturating_add(decoder.index_bytes());
+        if bytes > surface_bytes {
+            if surface_bytes == 0 && !hap {
+                let Some(admitted) = reserve_reverse_window(memory_lease, bytes, decoder_capacity, WINDOW, stop) else { return Ok(()); };
+                window_capacity = admitted; ring = admitted; opening_capacity = admitted;
+                owners = (decoder_capacity + admitted * 3 + 3) as u64;
+                effective_capacity.store(ring, Ordering::Release);
+            } else if !wait_for_video_memory(memory_lease, bytes.saturating_mul(owners), stop) { return Ok(()); }
+            surface_bytes = bytes;
+        }
+        let duration = if gpu.duration_seconds > 0.0 { gpu.duration_seconds } else { 1.0 / metadata.fps.max(1.0) };
+        // At an interior seek only the portion before the cursor remains.
+        // Using a whole frame here would add phase drift on every trim loop.
+        let hold = if reverse {
+            (cursor - gpu.pts_seconds.max(lo)).max(VIDEO_TIMESTAMP_EPSILON)
+        } else {
+            ((gpu.pts_seconds + duration).min(hi) - cursor.max(lo)).max(VIDEO_TIMESTAMP_EPSILON)
+        };
+        cursor = if reverse { gpu.pts_seconds } else { (gpu.pts_seconds + duration).min(hi) };
+        inclusive = false;
+        let frame = NativeVideoStreamFrame {
+            memory_lease: Some(memory_lease.clone()),
+            presentation_frame: (presentation * 1_000_000.0).round().max(0.0) as u64,
+            source_time_seconds: Some(gpu.pts_seconds), source_frame_duration_seconds: Some(duration),
+            width: gpu.width as usize, height: gpu.height as usize, rgba: Vec::new(), gpu: Some(gpu),
+        };
+        presentation += hold / rate;
+        let mut queue = frames.lock().map_err(|_| "Video queue lock poisoned")?;
+        let mut state = control.lock().map_err(|_| "Video control lock poisoned")?;
+        if state.generation != generation { continue; }
+        if first_pass && state.opening.is_empty() && (state.cache_start - opening_start).abs() < 0.0001 {
+            // The reverse window is decoded before preroll is declared ready.
+            // Retain its opening now, even while the presentation ring is full,
+            // so a rapid retrigger cannot repeatedly truncate it to three frames.
+            state.opening.push(frame.clone());
+            for cached in cache.iter().rev().take(if reverse { opening_capacity.saturating_sub(1) } else { 0 }) {
+                let duration = if cached.duration_seconds > 0.0 { cached.duration_seconds } else { 1.0 / metadata.fps.max(1.0) };
+                let pts = ((opening_start - (cached.pts_seconds + duration)).max(0.0) / rate * 1_000_000.0).round() as u64;
+                let previous = state.opening.last().map_or(0, |f| f.presentation_frame);
+                state.opening.push(NativeVideoStreamFrame {
+                    memory_lease: Some(memory_lease.clone()), presentation_frame: pts.max(previous.saturating_add(1)),
+                    source_time_seconds: Some(cached.pts_seconds), source_frame_duration_seconds: Some(duration),
+                    width: cached.width as usize, height: cached.height as usize,
+                    rgba: Vec::new(), gpu: Some(cached.clone()),
+                });
+            }
+        }
+        if first_pass && (state.cache_start - opening_start).abs() < 0.0001
+            && state.opening.len() < opening_capacity
+            && state.opening.last().is_none_or(|last| last.presentation_frame < frame.presentation_frame) {
+            state.opening.push(frame.clone());
+        }
+        queue.push_back(Ok(frame));
+        segment_frames += 1;
+        backend.store(decoder.backend_id(), Ordering::Release);
     }
     Ok(())
 }
@@ -1891,6 +2235,7 @@ mod lifecycle_tests {
             capacity: Arc::new(AtomicUsize::new(8)),
             frame_bytes: 4,
             playback_rate: 1.0,
+            bounce_enabled: false,
             free_frames: Arc::new(Mutex::new(Vec::new())),
             backend: Arc::new(AtomicU64::new(2)),
             fallback_reason: Arc::new(Mutex::new(String::new())),
@@ -1900,6 +2245,33 @@ mod lifecycle_tests {
             hardware_control: Arc::new(Mutex::new(HardwareStreamControl::default())),
         }
     }
+    #[test]
+    fn hardware_retime_preserves_queue_and_clock_position() {
+        let stream = test_stream();
+        stream.backend.store(1, Ordering::Release);
+        stream.output_fps.store(1_000_000.0f64.to_bits(), Ordering::Release);
+        let before = stream.buffered_frames();
+        assert!(stream.retime_hardware_clock(1.04));
+        assert_eq!(stream.buffered_frames(), before);
+        assert_eq!(f64::from_bits(stream.output_fps.load(Ordering::Acquire)), 1_040_000.0);
+        let origin = stream.clock.lock().unwrap().unwrap().1;
+        assert!(origin >= 500_000, "old clock must be settled before applying the new rate");
+        assert!(!stream.retime_hardware_clock(-1.0));
+        assert!(!stream.retime_hardware_clock(f64::NAN));
+    }
+
+    #[test]
+    fn retime_keeps_paused_hardware_paused_and_rejects_software() {
+        let stream = test_stream();
+        assert!(!stream.retime_hardware_clock(2.0));
+        stream.backend.store(5, Ordering::Release);
+        stream.set_playing(false);
+        let next = stream.next_frame.load(Ordering::Acquire);
+        assert!(stream.retime_hardware_clock(0.5));
+        assert!(stream.clock.lock().unwrap().is_none());
+        assert_eq!(stream.next_frame.load(Ordering::Acquire), next);
+    }
+
     #[test]
     fn shared_memory_admission_is_atomic_across_decoder_workers() {
         let budget = Arc::new(NativeVideoMemoryBudget::new(100));
@@ -2068,15 +2440,15 @@ mod lifecycle_tests {
         let stream = test_stream();
         stream.backend.store(1, Ordering::Release);
         stream.record_presented(Some(0.417), Some(0.083));
-        assert!(stream.step_frame(0.417, -1));
+        assert!(stream.step_frame(0.417, -1, 1.0));
         assert!(!stream.playing.load(Ordering::Acquire));
         assert_eq!(stream.buffered_frames(), 0);
         assert_eq!(stream.source_timing().0, Some(0.417));
         let control = stream.hardware_control.lock().unwrap();
         assert_eq!(control.generation, 1);
-        assert!(matches!(control.reset, Some(HardwareStreamReset::Step { reference, direction: -1 }) if reference == 0.417));
+        assert!(matches!(control.reset, Some(HardwareStreamReset::Step { reference, direction: -1, .. }) if reference == 0.417));
         drop(control);
-        assert!(!stream.step_frame(0.417, 2));
+        assert!(!stream.step_frame(0.417, 2, 1.0));
     }
     #[test]
     fn source_duration_parsing_never_invents_unknown_metadata() {

@@ -1,4 +1,12 @@
 <script lang="ts">
+  import { videoBeatFit } from '../media/videoBeatFit';
+  import { launchClock, TEMPO_NUDGE_AMOUNT } from '../stores/launchClock';
+  import { abletonLink } from '../sync/abletonLink';
+  $: fitTempo = $abletonLink.enabled && $abletonLink.peers > 0 ? $abletonLink.tempo : ($audioStore.manualBPM || $audioStore.bpm || 120) * (1 + $launchClock.nudge * TEMPO_NUDGE_AMOUNT);
+  import VJAudioOutput from './VJAudioOutput.svelte';
+  import VideoPlaybackDirection from './VideoPlaybackDirection.svelte';
+  import VideoPlaybackModes from './VideoPlaybackModes.svelte';
+  import { nativeVideoLaunchTime, nativeVideoTransportSnapshot } from '../media/nativeTransport';
   import { nativeEffectChainWarning } from '../renderer/nativeEffectChainPolicy';
   import { createNativeVideoScrubber } from '../renderer/nativeVideoScrubber';
   // VJ Mode Panel - Layers/Columns Grid
@@ -9,6 +17,7 @@
   import { jsAnimationFromHtml } from '../renderer/jsAnimationPage';
   import { nativePreviewHostEl } from '../stores/nativePreviewHost';
   import { get } from 'svelte/store';
+  import { prepareVideoImport } from '../video/videoImport';
   import { mediaLibrary, type MediaItem } from '../stores/media';
   import { vjClipLauncher, type VJClip, type VJBlock, type VJDeck } from '../stores/vjClipLauncher';
   import { probeHasAudioTrack } from '../audio/clipAudioBus';
@@ -44,6 +53,10 @@
   import PluginLayerPanel from './PluginLayerPanel.svelte';
   import MediaTray from './MediaTray.svelte';
   import VJClipTransform from './VJClipTransform.svelte';
+  import VJTempoControls from './VJTempoControls.svelte';
+  import VJClipLaunchOptions from './VJClipLaunchOptions.svelte';
+  import VJLayerSettings from './VJLayerSettings.svelte';
+  import VJTransitionControls from './VJTransitionControls.svelte';
   import AIShaderGenerator from './AIShaderGenerator.svelte';
   import AIVideoGenerator from './AIVideoGenerator.svelte';
   import { shaderLibrary } from '../stores/shaderLibrary';
@@ -549,6 +562,7 @@
   // so the timeline scrubber + time readout stay live without forcing
   // store updates 60×/sec.
   let vjVideoCurrentTime = 0;
+  let vjVideoCurrentDirection = 1;
   let vjVideoDuration = 0;
   let vjTrimDragging: 'start' | 'end' | null = null;
   let vjTimelineScrubbing = false;
@@ -579,28 +593,7 @@
   }
 
   function vjClipPlaybackTime(clip: VJClip, now = performance.now()): number {
-    const duration = vjClipDuration(clip);
-    const nativeTime = Number(clip._nativePlaybackTimeSeconds);
-    const elementTime = Number(clip.videoElement?.currentTime);
-    let time = Number.isFinite(nativeTime) && nativeTime >= 0
-      ? nativeTime
-      : Number.isFinite(elementTime) && elementTime >= 0
-        ? elementTime
-        : 0;
-    const anchorMs = Number(clip._nativePlaybackUpdatedAtMs);
-    if (clip.isPlaying !== false && Number.isFinite(anchorMs)) {
-      time += Math.max(0, now - anchorMs) / 1000 * (Number(clip.playbackRate) || 1);
-    }
-    if (duration <= 0) return Math.max(0, time);
-    const start = duration * Math.max(0, Math.min(1, clip.trimStart ?? 0));
-    const end = duration * Math.max(0, Math.min(1, clip.trimEnd ?? 1));
-    const range = Math.max(0.001, end - start);
-    if ((clip.playbackMode ?? 'loop') !== 'once') {
-      time = start + ((time - start) % range + range) % range;
-    } else {
-      time = Math.max(start, Math.min(end, time));
-    }
-    return time;
+    return nativeVideoTransportSnapshot(clip, now).timeSeconds;
   }
 
   function vjSetNativePlaybackTime(layerIdx: number, clip: VJClip, time: number, play = clip.isPlaying !== false) {
@@ -626,7 +619,11 @@
       const v = clip?.videoElement;
       if (clip?.type === 'video') {
         vjVideoDuration = vjClipDuration(clip);
-        if (!vjTimelineScrubbing && !vjVideoStepBusy) vjVideoCurrentTime = vjClipPlaybackTime(clip);
+        if (!vjTimelineScrubbing && !vjVideoStepBusy) {
+          const transport = nativeVideoTransportSnapshot(clip);
+          vjVideoCurrentTime = transport.timeSeconds;
+          vjVideoCurrentDirection = transport.direction;
+        }
       } else if (v) {
         vjVideoCurrentTime = v.currentTime;
         vjVideoDuration = v.duration || 0;
@@ -649,6 +646,24 @@
     stopVjTimelineDrag = null;
     vjVideoScrubber.cancel();
     vjVideoStepBusy = false;
+  }
+
+  onMount(() => {
+    const cancelForCue = (event: Event) => {
+      const detail = (event as CustomEvent).detail;
+      if (detail?.layerIndex === selectedLayerIndex && detail?.deck === paramDeck) cancelVjVideoScrub();
+    };
+    window.addEventListener('ghost:vj-cue-seek', cancelForCue);
+    return () => window.removeEventListener('ghost:vj-cue-seek', cancelForCue);
+  });
+
+  function vjPressCue(event: MouseEvent, cueIndex: number) {
+    if (selectedLayerIndex === null) return;
+    cancelVjVideoScrub();
+    const clip = selectedLayerState?.activeClip;
+    if (!clip || clip.type !== 'video') return;
+    if (event.shiftKey) vjClipLauncher.setActiveClipCuePoint(selectedLayerIndex, cueIndex, vjClipPlaybackTime(clip), paramDeck);
+    else vjClipLauncher.pressCuePoint(selectedLayerIndex, cueIndex, paramDeck);
   }
 
   function syncVjVideoScrubSelection(key: string) {
@@ -782,7 +797,7 @@
     const v = clip?.videoElement;
     if (!clip) return;
     const time = vjClipPlaybackTime(clip);
-    if (playing && clip.audioPlayback) {
+    if (playing && clip.audioPlayback && clip.playbackMode !== 'bounce' && (clip.playbackRate ?? 1) > 0) {
       v?.play().catch(() => {});
     } else {
       v?.pause();
@@ -800,20 +815,22 @@
     const clip = paramLayerStates[layerIdx]?.activeClip;
     const v = clip?.videoElement;
     if (!clip) return;
-    vjSetNativePlaybackTime(layerIdx, clip, (clip.trimStart ?? 0) * vjClipDuration(clip), true);
-    if (clip.audioPlayback) v?.play().catch(() => {});
+    vjSetNativePlaybackTime(layerIdx, clip, nativeVideoLaunchTime(clip, vjClipDuration(clip)), true);
+    if (clip.audioPlayback && clip.playbackMode !== 'bounce' && (clip.playbackRate ?? 1) > 0) v?.play().catch(() => {});
   }
 
-  function vjSetPlaybackRate(layerIdx: number, rate: number) {
+  function vjSetPlaybackRate(layerIdx: number, rate: number, preserveSync = false) {
     const clip = paramLayerStates[layerIdx]?.activeClip;
     const v = clip?.videoElement;
     if (!clip) return;
     const time = vjClipPlaybackTime(clip);
-    if (v) v.playbackRate = rate;
+    if (v && rate > 0) v.playbackRate = rate;
+    if (v && rate < 0) v.pause();
     // Picking a manual speed releases beat/bar sync (release parity).
     vjClipLauncher.updateActiveClipVideoProps(layerIdx, {
       playbackRate: rate,
-      playbackSyncBeats: null,
+      _nativePlaybackSeekSeq: Math.max(0, clip._nativePlaybackSeekSeq ?? 0) + 1,
+      playbackSyncBeats: preserveSync ? clip.playbackSyncBeats : null,
       durationSeconds: vjClipDuration(clip) || clip.durationSeconds,
       _nativePlaybackTimeSeconds: time,
       _nativePlaybackUpdatedAtMs: performance.now(),
@@ -824,14 +841,7 @@
     vjClipLauncher.updateActiveClipVideoProps(layerIdx, { playbackSyncBeats: beats }, paramDeck);
   }
 
-  /** Toggle opt-in audio for the selected clip.
-   *
-   *  The store does the real work (swapping the clip onto a dedicated,
-   *  never-pooled element and attaching/detaching the clip audio bus). All
-   *  that's needed here is to re-anchor the native transport so the audio
-   *  element, which is about to appear or disappear, starts life on the same
-   *  playhead the core is rendering — otherwise the first drift correction
-   *  would be a hard seek from wherever the fresh element happened to load. */
+  /** Enable or mute a clip audio track without disturbing its video transport. */
   function vjSetClipAudioPlayback(layerIdx: number, enabled: boolean) {
     const clip = paramLayerStates[layerIdx]?.activeClip;
     if (!clip) return;
@@ -839,18 +849,15 @@
       audioPlayback: enabled,
       audioVolume: clip.audioVolume ?? 1,
       audioMuted: clip.audioMuted === true,
-      durationSeconds: vjClipDuration(clip) || clip.durationSeconds,
-      _nativePlaybackTimeSeconds: vjClipPlaybackTime(clip),
-      _nativePlaybackUpdatedAtMs: performance.now(),
-      _nativePlaybackSeekSeq: Math.max(0, clip._nativePlaybackSeekSeq ?? 0) + 1,
     }, paramDeck);
   }
 
-  function vjSetPlaybackMode(layerIdx: number, mode: 'loop' | 'once') {
+  function vjSetPlaybackMode(layerIdx: number, mode: 'loop' | 'once' | 'bounce') {
     const clip = paramLayerStates[layerIdx]?.activeClip;
     if (!clip) return;
     vjClipLauncher.updateActiveClipVideoProps(layerIdx, {
       playbackMode: mode,
+      _nativePlaybackSeekSeq: Math.max(0, clip._nativePlaybackSeekSeq ?? 0) + 1,
       durationSeconds: vjClipDuration(clip) || clip.durationSeconds,
       _nativePlaybackTimeSeconds: vjClipPlaybackTime(clip),
       _nativePlaybackUpdatedAtMs: performance.now(),
@@ -965,6 +972,7 @@
 
   // Cleanup on destroy
   onDestroy(() => {
+    vjClipLauncher.releaseInputs('panel:');
     if (deckMonitorTimer) {
       clearInterval(deckMonitorTimer);
       deckMonitorTimer = null;
@@ -1082,6 +1090,9 @@
     shaderValues?: Record<string, any>;
     jsAnimation?: JSAnimationSource;
     _assetRef?: any;
+    durationSeconds?: number;
+    videoWidth?: number;
+    videoHeight?: number;
   };
 
   type MediaTrayLiveSourcePayload = {
@@ -1193,6 +1204,7 @@
 
   // Selected layer for effects editing
   let selectedLayerIndex: number | null = null;
+  let selectedTriggerCell: { row: number; column: number; bank: VJDeck; clipId: string; blockId: string } | null = null;
   // Keep vjClipLauncher store's selectedLayerIndex in sync so keyframe timeline can pick it up
   $: vjClipLauncher.setSelectedLayerIndex(selectedLayerIndex);
 
@@ -2601,6 +2613,7 @@
 
   // Drag handlers
   function handleDragStart(e: DragEvent, clip: VJDragPayload) {
+    vjClipLauncher.releaseInputs('panel:pointer:');
     cellDragInProgress = true;
     cellPress = null;
     draggedClip = clip;
@@ -2635,20 +2648,6 @@
     return null;
   }
 
-  async function vjCaptureVideoThumb(video: HTMLVideoElement): Promise<string> {
-    return new Promise((resolve) => {
-      const grab = () => {
-        const canvas = document.createElement('canvas');
-        canvas.width = 120; canvas.height = 68;
-        const ctx = canvas.getContext('2d');
-        if (ctx) { ctx.drawImage(video, 0, 0, canvas.width, canvas.height); resolve(canvas.toDataURL('image/jpeg', 0.7)); }
-        else resolve('');
-      };
-      if (video.readyState >= 2) { video.currentTime = 0.1; video.onseeked = grab; setTimeout(() => { if (video.onseeked) grab(); }, 300); }
-      else { video.onloadeddata = () => { video.currentTime = 0.1; video.onseeked = grab; }; }
-    });
-  }
-
   async function vjAddMediaFile(file: File): Promise<MediaItem | null> {
     const kind = vjMediaGetType(file);
     if (!kind) { console.warn('[VJ Media] Unsupported file type:', file.name); return null; }
@@ -2660,20 +2659,19 @@
       // crossOrigin BEFORE src — order matters on Chromium 130.
       video.crossOrigin = 'anonymous'; video.loop = true; video.muted = true; video.playsInline = true; video.preload = 'auto';
       video.src = url;
-      // `.src=` already initiated the load — don't call `.load()`.
-      await new Promise<void>((resolve) => {
-        const done = () => { video.removeEventListener('loadeddata', done); video.removeEventListener('error', done); resolve(); };
-        video.addEventListener('loadeddata', done, { once: true });
-        video.addEventListener('error', done, { once: true });
-        if (video.readyState >= 2) done();
+      const imported = await prepareVideoImport(video, assetRef).catch(error => {
+        video.pause();
+        showToast(`${file.name}: ${error instanceof Error ? error.message : 'Could not import video.'}`, 'error');
+        return null;
       });
+      if (!imported) return null;
       const item: MediaItem = {
         id: generateUUID(),
         name: file.name,
         src: url,
         type: 'video',
         videoElement: video,
-        thumbnail: await vjCaptureVideoThumb(video),
+        ...imported,
         _assetRef: assetRef,
       };
       mediaLibrary.addItem(item);
@@ -2725,6 +2723,7 @@
   function handleClipCellDragStart(e: DragEvent, layerIndex: number, columnIndex: number, bank: VJDeck = 'A') {
     const clip = deckGrid(bank)[layerIndex]?.[columnIndex];
     if (!clip || !e.dataTransfer) return;
+    vjClipLauncher.releaseInputs('panel:pointer:');
     cellDragInProgress = true;
     cellPress = null;
     dragSourceCell = { layer: layerIndex, column: columnIndex, bank };
@@ -2942,6 +2941,8 @@
         src: payload.src,
         thumbnail: payload.thumbnail,
         _assetRef: payload._assetRef,
+        durationSeconds: payload.durationSeconds,
+      videoWidth: payload.videoWidth, videoHeight: payload.videoHeight,
       };
     }
 
@@ -2977,6 +2978,8 @@
       src: item.src,
       thumbnail: item.thumbnail,
       _assetRef: item._assetRef,
+      durationSeconds: item.durationSeconds,
+      videoWidth: item.videoWidth, videoHeight: item.videoHeight,
     };
   }
 
@@ -3055,10 +3058,24 @@
     }
   }
 
+  function isLockedPlayingCell(row: number, column: number, bank: VJDeck): boolean {
+    const layer = (bank === 'A' ? $vjClipLauncher.layerStates : $vjClipLauncher.bankBLayerStates)[row];
+    return layer?.locked === true && !!layer.activeClip && layer.activeClip.id === deckGrid(bank)[row]?.[column]?.id;
+  }
+
   function handleCellDrop(e: DragEvent, layerIndex: number, columnIndex: number, bank: VJDeck = 'A') {
     e.preventDefault();
     e.stopPropagation();
     dragOverCell = null;
+
+    if (isLockedPlayingCell(layerIndex, columnIndex, bank)
+      || (dragSourceCell && isLockedPlayingCell(dragSourceCell.layer, dragSourceCell.column, dragSourceCell.bank))) {
+      draggedClip = null;
+      dragSourceCell = null;
+      cellPress = null;
+      cellDragInProgress = false;
+      return;
+    }
 
     // Direct OS-file → deck cell drop (release v1.9.99x behavior).
     const externalFiles = Array.from(e.dataTransfer?.files ?? []);
@@ -3312,6 +3329,8 @@
           src: media.src,
           thumbnail: media.thumbnail,
           _assetRef: (media as any)._assetRef,
+          durationSeconds: media.durationSeconds,
+      videoWidth: media.videoWidth, videoHeight: media.videoHeight,
         };
         vjClipLauncher.setClip(layerIndex, columnIndex, vjClip, bank);
       } else {
@@ -3330,8 +3349,10 @@
   }
 
   // Click on clip cell to trigger it and auto-select layer for shader params
-  function handleCellClick(layerIndex: number, columnIndex: number, bank: VJDeck = 'A') {
-    vjClipLauncher.triggerClip(layerIndex, columnIndex, bank);
+  function handleCellClick(layerIndex: number, columnIndex: number, bank: VJDeck = 'A', inputId?: string) {
+    const selected = deckGrid(bank)[layerIndex]?.[columnIndex];
+    selectedTriggerCell = selected ? { row: layerIndex, column: columnIndex, bank, clipId: selected.id, blockId: $vjClipLauncher.activeBlockId } : null;
+    vjClipLauncher.triggerClip(layerIndex, columnIndex, bank, inputId);
     // Auto-select this layer so shader params show, and remember which deck
     // we're operating on (panels follow this when the crossfader is on).
     selectedLayerIndex = layerIndex;
@@ -3355,6 +3376,10 @@
 
   function handleCellPointerDown(e: PointerEvent, layerIndex: number, columnIndex: number, bank: VJDeck) {
     if (!e.isPrimary || e.button !== 0 || isCellControlTarget(e.target)) return;
+    if (deckGrid(bank)[layerIndex]?.[columnIndex]?.triggerStyle === 'piano') {
+      handleCellClick(layerIndex, columnIndex, bank, `panel:pointer:${e.pointerId}`);
+      lastPointerTriggerAt = performance.now();
+    }
     cellPress = {
       pointerId: e.pointerId,
       layer: layerIndex,
@@ -3373,7 +3398,12 @@
 
   function handleCellPointerUp(e: PointerEvent, layerIndex: number, columnIndex: number, bank: VJDeck) {
     const press = cellPress;
+    vjClipLauncher.releaseInputs(`panel:pointer:${e.pointerId}`);
     cellPress = null;
+    if (deckGrid(bank)[layerIndex]?.[columnIndex]?.triggerStyle === 'piano') {
+      lastPointerTriggerAt = performance.now();
+      return;
+    }
     if (
       !press ||
       press.pointerId !== e.pointerId ||
@@ -3389,6 +3419,7 @@
   }
 
   function handleCellPointerCancel() {
+    vjClipLauncher.releaseInputs('panel:pointer:');
     cellPress = null;
   }
 
@@ -3396,13 +3427,16 @@
     // Pointerup already handled physical clicks. Keep zero-detail synthetic
     // clicks available for accessibility and external control integrations.
     if (e.detail > 0 && performance.now() - lastPointerTriggerAt < 350) return;
-    handleCellClick(layerIndex, columnIndex, bank);
+    // Accessibility activation has no held pointer or key: send a complete tap.
+    handleCellClick(layerIndex, columnIndex, bank, 'panel:activation');
+    vjClipLauncher.releaseInputs('panel:activation');
   }
 
   function handleCellKeyDown(e: KeyboardEvent, layerIndex: number, columnIndex: number, bank: VJDeck) {
     if (e.key !== 'Enter' && e.key !== ' ') return;
     e.preventDefault();
-    handleCellClick(layerIndex, columnIndex, bank);
+    if (e.repeat) return;
+    handleCellClick(layerIndex, columnIndex, bank, `panel:key:${e.code}`);
   }
 
   // Clear a clip from cell
@@ -3922,6 +3956,10 @@
 
 <!-- VJ Mode Full Overlay -->
 <svelte:window
+  onpointerup={(e) => vjClipLauncher.releaseInputs(`panel:pointer:${e.pointerId}`)}
+  onpointercancel={() => handleCellPointerCancel()}
+  onkeyup={(e) => vjClipLauncher.releaseInputs(`panel:key:${e.code}`)}
+  onblur={() => vjClipLauncher.releaseInputs('panel:')}
   onclick={(e) => { const t = e.target as HTMLElement; if (vjFileMenuOpen && !t.closest?.('.vj-file-menu-container')) vjFileMenuOpen = false; }}
 />
 
@@ -4400,6 +4438,23 @@
               <div class="no-effects">Click a layer to edit effects</div>
             {:else if effectsTab === 'clip' && selectedLayerIndex !== null && paramLayerStates[selectedLayerIndex].activeColumn === null}
               <div class="no-effects">No active clip on layer {selectedLayerIndex + 1}</div>
+              {#if selectedTriggerCell && selectedTriggerCell.row === selectedLayerIndex && selectedTriggerCell.bank === paramDeck && selectedTriggerCell.blockId === $vjClipLauncher.activeBlockId}
+                {@const selectedCell = selectedTriggerCell}
+                {@const selectedClip = deckGrid(paramDeck)[selectedCell.row]?.[selectedCell.column]}
+                {#if selectedClip?.id === selectedCell.clipId}
+                  <VJClipLaunchOptions clip={selectedClip}
+                    onChange={(patch) => vjClipLauncher.setClipLaunchOptions(selectedCell.row, selectedCell.column, patch, paramDeck)} />
+                  <label class="launch-option-row">
+                    Trigger
+                    <select aria-label="Clip trigger mode" value={selectedClip.triggerStyle ?? 'normal'}
+                      onchange={(e) => vjClipLauncher.setClipTriggerStyle(selectedCell.row, selectedCell.column, e.currentTarget.value as 'normal' | 'toggle' | 'piano', paramDeck)}>
+                      <option value="normal">Normal — restart</option>
+                      <option value="toggle">Toggle — start / stop</option>
+                      <option value="piano">Piano — hold to play</option>
+                    </select>
+                  </label>
+                {/if}
+              {/if}
             {:else}
               <div class="effects-info">
                 <span class="effects-info-label">{effectsTabLabel}</span>
@@ -4407,6 +4462,29 @@
                   <p class="effects-info-hint">Applied to all output</p>
                 {/if}
               </div>
+              {#if !$vjClipLauncher.mapMode && selectedLayerIndex !== null && (effectsTab === 'layer' || effectsTab === 'clip')}
+                {@const transitionLayer = paramLayerStates[selectedLayerIndex]}
+                {#if effectsTab === 'clip' && transitionLayer.activeClip && transitionLayer.activeColumn !== null}
+                  <VJClipLaunchOptions clip={transitionLayer.activeClip}
+                    onChange={(patch) => vjClipLauncher.setClipLaunchOptions(selectedLayerIndex!, transitionLayer.activeColumn!, patch, paramDeck)} />
+                  <label class="launch-option-row">
+                    Trigger
+                    <select aria-label="Clip trigger mode" value={transitionLayer.activeClip.triggerStyle ?? 'normal'}
+                      onchange={(e) => vjClipLauncher.setClipTriggerStyle(selectedLayerIndex!, transitionLayer.activeColumn!, e.currentTarget.value as 'normal' | 'toggle' | 'piano', paramDeck)}>
+                      <option value="normal">Normal — restart</option>
+                      <option value="toggle">Toggle — start / stop</option>
+                      <option value="piano">Piano — hold to play</option>
+                    </select>
+                  </label>
+                  <VJTransitionControls clipOverride
+                    duration={transitionLayer.activeClip.transitionDuration}
+                    style={transitionLayer.activeClip.transitionStyle}
+                    inheritedDuration={transitionLayer.transitionDuration ?? 0}
+                    inheritedStyle={transitionLayer.transitionStyle ?? 'dissolve'}
+                    onChange={(patch) => vjClipLauncher.setClipTransition(selectedLayerIndex!, transitionLayer.activeColumn!, patch, paramDeck)}
+                  />
+                {/if}
+              {/if}
               <div class="effects-section">
                 <div class="effects-header">
                   <span>Effects</span>
@@ -5052,6 +5130,7 @@
             {@const vSyncBeats = vClip.playbackSyncBeats ?? null}
             {@const vTrimS = vClip.trimStart ?? 0}
             {@const vTrimE = vClip.trimEnd ?? 1}
+            {@const beatFit = vSyncBeats ? videoBeatFit(vClip.durationSeconds || vEl?.duration || 0, vTrimS, vTrimE, vSyncBeats, fitTempo, vMode === 'bounce', vRate) : null}
             {@const vIsPlaying = vClip.isPlaying !== false}
             {@const vZoom = vClip.zoom ?? 1}
             {@const vFit = vClip.fit ?? 'cover'}
@@ -5060,7 +5139,7 @@
             {@const vRotation = vClip.rotation ?? 0}
             {@const vOpacity = vClip.opacity ?? 1}
             {@const vMirrorX = !!vClip.mirrorX}
-            {@const vAudioOn = vClip.audioPlayback === true}
+            {@const vAudioOn = isDesktopApp ? vClip.audioPlayback !== false : vClip.audioPlayback === true}
             {@const vAudioVolume = vClip.audioVolume ?? 1}
             {@const vAudioMuted = vClip.audioMuted === true}
             {@const vHasAudioTrack = probeHasAudioTrack(vEl)}
@@ -5110,10 +5189,14 @@
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M5 4l11 8-11 8z"/><rect x="18" y="4" width="2" height="16"/></svg>
                     </button>
                     <span class="vt-time">{vjFormatTime(vjVideoCurrentTime)} / {vjFormatTime(vjVideoDuration)}</span>
+                    </div>
+                  <div class="vt-playback-options">
+                    <VideoPlaybackDirection rate={vRate} bounce={vMode === 'bounce'}
+                    onselect={(direction) => vjSetPlaybackRate(selectedLayerIndex!, Math.abs(vRate) * direction, true)} />
                     <select
                       class="vt-speed"
-                      value={String(vRate)}
-                      onchange={(e) => vjSetPlaybackRate(selectedLayerIndex!, parseFloat((e.target as HTMLSelectElement).value))}
+                      value={String(Math.abs(vRate))}
+                      onchange={(e) => vjSetPlaybackRate(selectedLayerIndex!, Math.abs(parseFloat((e.target as HTMLSelectElement).value)) * (vRate < 0 ? -1 : 1))}
                       disabled={!!vSyncBeats}
                       title={vSyncBeats ? 'Speed is locked to beat/bar sync' : 'Playback speed'}
                     >
@@ -5131,7 +5214,7 @@
                         const raw = (e.target as HTMLSelectElement).value;
                         vjSetPlaybackSync(selectedLayerIndex!, raw ? parseFloat(raw) : null);
                       }}
-                      title="Fit this video to the master BPM"
+                      title="Beat sync: fit this cycle to the master tempo; hardware loops follow beat phase with smooth speed corrections"
                     >
                       <option value="">Free</option>
                       <option value="1">1 beat</option>
@@ -5141,6 +5224,10 @@
                       <option value="16">4 bars</option>
                     </select>
                   </div>
+
+                  {#if beatFit?.limited}
+                    <p class="beat-fit-warning" role="status">Tempo fit limited to {Math.abs(beatFit.rate)}× — this cycle takes {beatFit.actualBeats.toFixed(2)} beats. Choose a different beat length or trim the clip.</p>
+                  {/if}
 
                   <!-- Timeline bar -->
                   <div
@@ -5193,27 +5280,33 @@
                     ></div>
                   </div>
 
-                  <!-- Mode buttons row -->
-                  <div class="vt-modes">
-                    <button class="vt-mode-btn" class:active={vMode === 'loop'} onclick={() => vjSetPlaybackMode(selectedLayerIndex!, 'loop')} title="Loop">
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
-                        <polyline points="17 1 21 5 17 9"/><path d="M3 11V9a4 4 0 0 1 4-4h14"/>
-                        <polyline points="7 23 3 19 7 15"/><path d="M21 13v2a4 4 0 0 1-4 4H3"/>
-                      </svg>
-                      Loop
-                    </button>
-                    <button class="vt-mode-btn" class:active={vMode === 'once'} onclick={() => vjSetPlaybackMode(selectedLayerIndex!, 'once')} title="Play Once">
-                      <svg width="12" height="12" viewBox="0 0 24 24" fill="currentColor"><polygon points="5,3 19,12 5,21"/></svg>
-                      Once
-                    </button>
+                  <div class="vt-cues" aria-label="Video cue points">
+                    <div class="vt-cues-label">CUE POINTS</div>
+                    <div class="vt-cue-pads">
+                      {#each Array.from({ length: 8 }, (_, index) => index) as cueIndex}
+                        {@const cueTime = vClip.cuePoints?.[cueIndex]}
+                        <div class="vt-cue-slot">
+                          <button class="vt-cue-pad" class:saved={cueTime != null}
+                            aria-label={cueTime == null ? `Set cue ${cueIndex + 1}` : `Jump to cue ${cueIndex + 1}, ${vjFormatTime(cueTime)}`}
+                            title={cueTime == null ? 'Save current position' : `${vjFormatTime(cueTime)} — Shift-click to replace`}
+                            disabled={vjVideoDuration <= 0}
+                            onclick={(event) => vjPressCue(event, cueIndex)}
+                            data-midi-path="{paramDeck === 'B' ? 'vj-b' : 'vj'}:{selectedLayerIndex}:video:cue:{cueIndex}"
+                            data-midi-label="{vClip.name} Cue {cueIndex + 1}"
+                            data-midi-mode="toggle" data-midi-min="0" data-midi-max="1">{cueIndex + 1}</button>
+                          <button class="vt-cue-clear" aria-label="Clear cue {cueIndex + 1}" title="Clear cue {cueIndex + 1}"
+                            disabled={cueTime == null}
+                            onclick={() => vjClipLauncher.setActiveClipCuePoint(selectedLayerIndex!, cueIndex, null, paramDeck)}>×</button>
+                        </div>
+                      {/each}
+                    </div>
+                    <p>Empty pad: save position. Saved pad: jump. Shift-click: replace.</p>
                   </div>
 
-                  <!-- Audio: OPT-IN, default off. Turning this on is the only
-                       thing in the app that un-mutes a media element. It gives
-                       the clip a dedicated (non-pooled) <video> wired into
-                       clipAudioBus, which chases the native core's render
-                       clock. Off = exactly today's behaviour: silent, no
-                       AudioContext work, no second decoder. -->
+                  <VideoPlaybackModes mode={vMode} direction={vjVideoCurrentDirection}
+                    onselect={(mode) => vjSetPlaybackMode(selectedLayerIndex!, mode)} />
+
+                  <!-- Desktop audio follows the native video clock. -->
                   <div class="vt-transform vt-audio">
                     <div class="vt-section-title">Audio</div>
 
@@ -5226,7 +5319,7 @@
                         title={vHasAudioTrack === false
                           ? 'This file has no audio track'
                           : 'Play this clip’s audio track through the master output'}
-                        data-midi-path="vj:{selectedLayerIndex}:video:audio"
+                        data-midi-path="{paramDeck === 'B' ? 'vj-b' : 'vj'}:{selectedLayerIndex}:video:audio"
                         data-midi-label="{vClip.name} Audio"
                         data-midi-discrete="true"
                       >
@@ -5234,7 +5327,10 @@
                       </button>
                     </label>
 
-                    {#if vHasAudioTrack === false}
+                    {#if !isDesktopApp && (vRate < 0 || vMode === 'bounce')}
+                      <div class="vt-audio-note">Audio is silent during {vMode === 'bounce' ? 'bounce' : 'reverse'} playback.</div>
+                    {/if}
+                    {#if !isDesktopApp && vHasAudioTrack === false}
                       <div class="vt-audio-note">No audio track detected in this file.</div>
                     {/if}
 
@@ -5247,12 +5343,19 @@
                           value={vAudioVolume}
                           disabled={vAudioMuted}
                           oninput={(e) => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { audioVolume: +(e.target as HTMLInputElement).value }, paramDeck)}
-                          data-midi-path="vj:{selectedLayerIndex}:video:audioVolume"
+                          data-midi-path="{paramDeck === 'B' ? 'vj-b' : 'vj'}:{selectedLayerIndex}:video:audioVolume"
                           data-midi-label="{vClip.name} Audio Volume"
                         />
                         <span class="vt-tf-num">{Math.round(vAudioVolume * 100)}%</span>
                       </label>
 
+                      <label class="vt-tf-row">
+                        <span class="vt-tf-label">Pan</span>
+                        <input type="range" min="-1" max="1" step="0.01" value={vClip.audioPan ?? 0}
+                          aria-label="Clip audio pan" oninput={(e) => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { audioPan: +e.currentTarget.value }, paramDeck)}
+                          data-midi-path="{paramDeck === 'B' ? 'vj-b' : 'vj'}:{selectedLayerIndex}:video:audioPan" data-midi-label="Clip audio pan" data-midi-min="-1" data-midi-max="1" />
+                        <span class="vt-tf-num">{Math.abs(vClip.audioPan ?? 0) < .01 ? 'C' : `${Math.round(Math.abs(vClip.audioPan ?? 0) * 100)}${(vClip.audioPan ?? 0) < 0 ? 'L' : 'R'}`}</span>
+                      </label>
                       <label class="vt-tf-row vt-tf-toggle-row">
                         <span class="vt-tf-label">Mute</span>
                         <button
@@ -5260,7 +5363,7 @@
                           class:active={vAudioMuted}
                           onclick={() => vjClipLauncher.updateActiveClipVideoProps(selectedLayerIndex!, { audioMuted: !vAudioMuted }, paramDeck)}
                           title="Duck this clip without losing its volume setting"
-                          data-midi-path="vj:{selectedLayerIndex}:video:audioMute"
+                          data-midi-path="{paramDeck === 'B' ? 'vj-b' : 'vj'}:{selectedLayerIndex}:video:audioMute"
                           data-midi-label="{vClip.name} Audio Mute"
                           data-midi-discrete="true"
                         >
@@ -5382,17 +5485,15 @@
                 {/if}
               </div>
             {/each}
+            <button class="add-block-btn" onclick={handleAddBlock} title="Add new block" aria-label="Add new block">+</button>
           </div>
-          <button class="add-block-btn" onclick={handleAddBlock} title="Add new block">
-            +
-          </button>
           <div class="grid-snaps">
             <SnapshotBank placement="inline" />
           </div>
         </div>
 
-        <!-- Grid dimension controls -->
-        <div class="grid-dimension-controls">
+      <div class="vj-dock" role="toolbar" aria-label="Deck controls">
+<div class="grid-dimension-controls">
           <div class="dim-group">
             <span class="dim-label">Layers</span>
             <button class="dim-btn" onclick={() => vjClipLauncher.removeLayer()} title="Remove layer">−</button>
@@ -5406,6 +5507,76 @@
             <button class="dim-btn" onclick={() => vjClipLauncher.addColumn()} title="Add column">+</button>
           </div>
         </div>
+        <div class="vj-dock-group">
+          <AudioMeterPanel openUp={false} alwaysShow={true} />
+          <VJTempoControls />
+
+          <!-- Same picker component mapping and Performer use; state flows
+               through audioStore, so toggling here flips every mode. -->
+          <AudioInputPicker showWaveform={false} openUp={false} />
+          {#if isDesktopApp}<VJAudioOutput />{/if}
+
+          <!-- Launch quantization. OFF = instant trigger (default); 1/4..4bar
+               align launches to detected beats (or the virtual clock at the
+               current BPM when audio is off). -->
+          <div class="dock-quant" title="Launch quantize — clips and columns fire together on the next selected beat boundary">
+            <span class="dock-quant-label">QUANT</span>
+            <select
+              class="dock-quant-select"
+              aria-label="Launch quantization"
+              value={$vjClipLauncher.quantization}
+              onchange={(e) => vjClipLauncher.setQuantization((e.target as HTMLSelectElement).value as any)}
+              data-midi-path="vj:quantize"
+              data-midi-label="Launch Quantize"
+              data-midi-discrete="true"
+            >
+              <option value="off">OFF</option>
+              <option value="1/4">1/4</option>
+              <option value="1/2">1/2</option>
+              <option value="1bar">1 BAR</option>
+              <option value="2bar">2 BAR</option>
+              <option value="4bar">4 BAR</option>
+            </select>
+            {#if $vjClipLauncher.pendingTriggers.length > 0}
+              <span class="dock-quant-pending" title="{$vjClipLauncher.pendingTriggers.length} launch{$vjClipLauncher.pendingTriggers.length === 1 ? '' : 'es'} queued">
+                {$vjClipLauncher.pendingTriggers.length} ·
+              </span>
+            {/if}
+          </div>
+        </div>
+
+        <div class="vj-dock-group vj-dock-tools">
+          <button
+            class="vj-seq-toggle-btn dock-labelled-btn"
+            class:active={$vjLayerSequencer.isOpen}
+            onclick={() => vjLayerSequencer.toggleOpen()}
+            title="Layer Sequencer"
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+              <rect x="3" y="5" width="4" height="14" rx="1.2" fill="#ff7a66"/>
+              <rect x="10" y="8" width="4" height="11" rx="1.2" fill="#ffd166"/>
+              <rect x="17" y="3" width="4" height="16" rx="1.2" fill="#46d18a"/>
+              <path d="M4 20h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+            </svg>
+            Sequencer
+          </button>
+
+          {#if $vjClipLauncher.isLive}
+            <button
+              class="ab-toggle-btn dock-labelled-btn"
+              class:active={$vjClipLauncher.crossfaderEnabled}
+              onclick={() => vjClipLauncher.setCrossfaderEnabled(!$vjClipLauncher.crossfaderEnabled)}
+              title="Split the deck into two independent banks with a transition fader between them"
+              data-midi-path="vj:crossfader:enabled"
+              data-midi-label="Crossfader Enabled"
+              data-midi-mode="toggle"
+            >
+              Split Deck A/B
+            </button>
+          {/if}
+
+        </div>
+      </div>
 
         <!-- ====================================================================
              DECK SNIPPET: renders one full deck (column triggers + layer rows
@@ -5426,10 +5597,13 @@
             <div class="live-preview-header">LIVE</div>
             <div class="layer-controls-header"></div>
             {#each columnIndices as colIdx (colIdx)}
+              {@const columnQueued = $vjClipLauncher.pendingTriggers.some(p => p.kind === 'column' && p.columnIndex === colIdx && p.bank === bank)}
               <button
                 class="column-trigger"
+                class:queued={columnQueued}
+                aria-pressed={columnQueued}
                 onclick={() => handleColumnTrigger(colIdx, bank)}
-                title={`Trigger column ${colIdx + 1} on Deck ${bank}`}
+                title={columnQueued ? `Cancel queued column ${colIdx + 1} on Deck ${bank}` : `Trigger column ${colIdx + 1} on Deck ${bank}`}
                 data-midi-path="{midiPrefix}:column:{colIdx}"
                 data-midi-label="Deck {bank} Column {colIdx + 1}"
                 data-midi-mode="toggle"
@@ -5482,7 +5656,7 @@
                     title="Select layer {layerIdx + 1} on Deck {bank}">
                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2L2 7l10 5 10-5-10-5z"/><path d="M2 12l10 5 10-5"/></svg>
                   </button>
-                  <span class="layer-num">{layerIdx + 1}</span>
+                  <span class="layer-num" title={states[layerIdx].locked ? 'Content locked' : states[layerIdx].ignoreColumnTrigger ? 'Ignores column triggers' : ''}>{layerIdx + 1}</span>
                   <div class="layer-buttons">
                     <button
                       class="layer-btn solo"
@@ -5504,6 +5678,7 @@
                     >M</button>
                     <button
                       class="layer-btn stop"
+                      disabled={states[layerIdx].locked === true}
                       onclick={(e) => { e.stopPropagation(); handleStopLayer(layerIdx, bank); }}
                       title="Stop layer (Deck {bank})"
                     >■</button>
@@ -5527,7 +5702,10 @@
                   data-midi-max="1"
                   data-midi-step="0.01"
                 />
+                <div class="layer-bottom-row">
                 <select
+                  aria-label="Blend mode for layer {layerIdx + 1} on Deck {bank}"
+                  title={states[layerIdx].blendMode}
                   class="blend-select"
                   value={states[layerIdx].blendMode}
                   onchange={(e) => handleLayerBlendChange(layerIdx, e, bank)}
@@ -5540,6 +5718,8 @@
                     <option value={mode}>{mode}</option>
                   {/each}
                 </select>
+                <VJLayerSettings layer={states[layerIdx]} index={layerIdx} deck={bank} columns={$vjClipLauncher.numColumns} />
+                </div>
               </div>
 
               <!-- Clip cells -->
@@ -5547,7 +5727,7 @@
                 {@const clip = grid[layerIdx]?.[colIdx]}
                 {@const isActive = activeClip !== null && clip != null && activeClip.id === clip.id}
                 {@const isPresetActive = clip != null && clip.type === 'preset' && clip.presetId === $activeCompositionId}
-                {@const isQueued = $vjClipLauncher.pendingTriggers.some(p => p.layerIndex === layerIdx && p.columnIndex === colIdx && p.bank === bank)}
+                {@const isQueued = $vjClipLauncher.pendingTriggers.some(p => (p.kind === 'column' ? (!states[layerIdx].locked && !states[layerIdx].ignoreColumnTrigger && (!p.layerIndices || p.layerIndices.includes(layerIdx))) : p.layerIndex === layerIdx) && p.columnIndex === colIdx && p.bank === bank)}
                 {@const isClipFirable = clip == null || (clip.type === 'preset' ? $vjClipLauncher.mapMode : !$vjClipLauncher.mapMode)}
                 <div
                   class="clip-cell"
@@ -6263,80 +6443,7 @@
       </div>
       </div> <!-- End vj-bottom -->
 
-      <!-- Deck dock — the performance strip that belongs with the grid rather
-           than the app chrome. Audio (analyzer, input, launch quantize) on the
-           left; deck tools (sequencer, A/B, Performer) on the right. These
-           lived in the header until the audio cluster's width started pushing
-           the header's right-hand controls off the edge. Popovers raised from
-           here open UPWARD — there is no room below the bar. -->
-      <div class="vj-dock">
-        <div class="vj-dock-group">
-          <AudioMeterPanel openUp={true} />
 
-          <!-- Same picker component mapping and Performer use; state flows
-               through audioStore, so toggling here flips every mode. -->
-          <AudioInputPicker showWaveform={false} openUp={true} />
-
-          <!-- Launch quantization. OFF = instant trigger (default); 1/4..4bar
-               align launches to detected beats (or the virtual clock at the
-               current BPM when audio is off). -->
-          <div class="dock-quant" title="Launch quantize — clips fire on the next beat boundary instead of instantly">
-            <span class="dock-quant-label">QUANT</span>
-            <select
-              class="dock-quant-select"
-              value={$vjClipLauncher.quantization}
-              onchange={(e) => vjClipLauncher.setQuantization((e.target as HTMLSelectElement).value as any)}
-              data-midi-path="vj:quantize"
-              data-midi-label="Launch Quantize"
-              data-midi-discrete="true"
-            >
-              <option value="off">OFF</option>
-              <option value="1/4">1/4</option>
-              <option value="1/2">1/2</option>
-              <option value="1bar">1 BAR</option>
-              <option value="2bar">2 BAR</option>
-              <option value="4bar">4 BAR</option>
-            </select>
-            {#if $vjClipLauncher.pendingTriggers.length > 0}
-              <span class="dock-quant-pending" title="{$vjClipLauncher.pendingTriggers.length} clip{$vjClipLauncher.pendingTriggers.length === 1 ? '' : 's'} queued">
-                {$vjClipLauncher.pendingTriggers.length} ·
-              </span>
-            {/if}
-          </div>
-        </div>
-
-        <div class="vj-dock-group vj-dock-tools">
-          <button
-            class="vj-seq-toggle-btn dock-labelled-btn"
-            class:active={$vjLayerSequencer.isOpen}
-            onclick={() => vjLayerSequencer.toggleOpen()}
-            title="Layer Sequencer"
-          >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <rect x="3" y="5" width="4" height="14" rx="1.2" fill="#ff7a66"/>
-              <rect x="10" y="8" width="4" height="11" rx="1.2" fill="#ffd166"/>
-              <rect x="17" y="3" width="4" height="16" rx="1.2" fill="#46d18a"/>
-              <path d="M4 20h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-            </svg>
-            Sequencer
-          </button>
-
-          {#if $vjClipLauncher.isLive}
-            <button
-              class="ab-toggle-btn dock-labelled-btn"
-              class:active={$vjClipLauncher.crossfaderEnabled}
-              onclick={() => vjClipLauncher.setCrossfaderEnabled(!$vjClipLauncher.crossfaderEnabled)}
-              title="Split the deck into two independent banks with a transition fader between them"
-              data-midi-path="vj:crossfader:enabled"
-              data-midi-label="Crossfader Enabled"
-              data-midi-mode="toggle"
-            >
-              Split Deck A/B
-            </button>
-          {/if}
-
-        </div>
-      </div>
     </div>
 
     <VJLayerSequencer />
@@ -6438,6 +6545,21 @@
 />
 
 <style>
+  .beat-fit-warning { margin: 6px 0; padding: 7px 9px; border: 1px solid #80612d; border-radius: 5px; color: #e6c888; font-size: 11px; line-height: 1.4; }
+  .launch-option-row { display:flex; gap:9px; align-items:center; min-height:34px; padding:6px 10px;
+    font-size:var(--ga-type-control, 12px); line-height:1.4; color:var(--ga-ink-0, #eef0f4); }
+  .launch-option-row input { flex:0 0 auto; }
+
+  .vt-cues { margin: 8px 0; }
+  .vt-cues-label { font-size: 10px; color: #aaa; margin-bottom: 5px; }
+  .vt-cue-pads { display: grid; grid-template-columns: repeat(8, minmax(0, 1fr)); gap: 3px; }
+  .vt-cue-slot { display: flex; flex-direction: column; gap: 2px; }
+  .vt-cue-pad { min-width: 0; padding: 7px 0; border: 1px solid #555; border-radius: 4px; background: #252525; color: #ccc; cursor: pointer; }
+  .vt-cue-pad.saved { background: #153b38; border-color: #40baa7; color: #c9fff3; }
+  .vt-cue-clear { padding: 0; border: none; background: transparent; color: #aaa; cursor: pointer; }
+  .vt-cue-clear:disabled { opacity: 0.2; cursor: default; }
+  .vt-cues p { margin: 4px 0; color: #999; font-size: 10px; }
+
   .effect-chain-warning { color: #f4c46a; font-size: 11px; line-height: 1.5; padding: 6px 8px; }
   /* VJ Overlay */
   .vj-overlay {
@@ -8490,6 +8612,10 @@
 
   /* Deck dock — fixed strip under the grid + media tray. */
   .vj-dock {
+    flex-wrap: wrap;
+    row-gap: 8px;
+    margin-bottom: 8px;
+    border-radius: 6px;
     display: flex;
     align-items: center;
     justify-content: space-between;
@@ -8511,6 +8637,7 @@
     min-width: 0;
   }
   .vj-dock-tools {
+    margin-left: auto;
     gap: var(--vj-right-gap);
     flex: 0 0 auto;
   }
@@ -8789,14 +8916,19 @@
     box-shadow: 0 0 8px rgba(187, 134, 252, 0.6);
   }
 
+  .layer-bottom-row { display: flex; align-items: center; gap: 4px; min-width: 0; }
+
   .blend-select {
-    width: 100%;
+    flex: 1 1 0;
+    min-width: 0;
+    width: 0;
+    height: 20px;
     background-color: var(--bg-tertiary, #161618);
     border: 1px solid #444;
     color: var(--text-secondary, #aaa);
-    padding: 5px 8px;
+    padding: 0 2px;
     border-radius: 3px;
-    font-size: 11px;
+    font-size: 10px;
     cursor: pointer;
   }
 
@@ -8834,6 +8966,7 @@
   /* Queued (waiting to fire on the next quantize boundary). Pulses the
      border so the user can see exactly which clips are armed without
      having to read the queue counter in the header. */
+  .column-trigger.queued,
   .clip-cell.queued {
     border-color: #f97316;
     animation: cellQueuedPulse 0.7s ease-in-out infinite;
@@ -9388,11 +9521,15 @@
 
   /* Blocks Tab Bar */
   .blocks-tab-bar {
+    background: #08090b;
+    border: 1px solid #24262b;
+    border-radius: 7px;
+    min-height: 42px;
     display: flex;
     align-items: center;
     gap: 8px;
     margin-bottom: 8px;
-    padding: 4px 0;
+    padding: 6px 8px;
   }
 
   .blocks-tabs {
@@ -9517,10 +9654,11 @@
   }
 
   .add-block-btn {
-    width: 28px;
-    height: 28px;
+    width: 80px;
+    align-self: stretch;
+    min-height: 30px;
     background: #222;
-    border: 1px dashed #444;
+    border: 1px dashed #505665;
     border-radius: 4px;
     color: #666;
     font-size: 19px;
@@ -10643,9 +10781,11 @@
   .grid-dimension-controls {
     display: flex;
     align-items: center;
-    gap: 16px;
-    padding: 6px 0;
-    margin-bottom: 8px;
+    flex-shrink: 0;
+    gap: 12px;
+    padding: 0 12px 0 0;
+    border-right: 1px solid #34363c;
+    margin: 0;
   }
 
   .dim-group {
@@ -11092,6 +11232,8 @@
     border-radius: 6px;
     border: 1px solid rgba(255, 255, 255, 0.06);
   }
+  .vt-playback-options { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .vt-playback-options .vt-speed { height: 28px; border-radius: 5px; }
   .vt-transport {
     display: flex;
     flex-wrap: wrap;
@@ -11207,10 +11349,6 @@
   .vt-trim-handle:hover { background: rgba(187, 134, 252, 0.25); }
   .vt-trim-handle:hover::after { background: var(--accent-primary, #BB86FC); }
 
-  .vt-modes {
-    display: flex;
-    gap: 2px;
-  }
 
   /* Per-clip transform section — sits below the trim/playback row.
      Compact rows with label + range + numeric readout. */
@@ -11278,19 +11416,13 @@
     background: rgba(109, 240, 255, 0.16);
     color: #6df;
   }
-  /* Audio opt-in block. Amber accent rather than the panel's cyan so the
-     one control that makes noise reads as distinct from the visual params. */
   .vt-audio .vt-toggle-btn.active {
-    border-color: rgba(251, 191, 36, 0.45);
-    background: rgba(251, 191, 36, 0.16);
-    color: #fbbf24;
+    border-color: #3d59b8;
+    background: #172a5b;
+    color: #e0e8ff;
   }
-  .vt-audio input[type="range"] {
-    accent-color: #fbbf24;
-  }
-  .vt-audio .vt-tf-num {
-    color: #fbbf24;
-  }
+  .vt-audio input[type="range"] { accent-color: #3d59b8; }
+  .vt-audio .vt-tf-num { color: #dce3f3; }
   .vt-audio-note {
     font-size: 10px;
     color: var(--text-muted, #888);
@@ -11309,31 +11441,5 @@
   .vt-tf-reset:hover {
     background: rgba(255, 255, 255, 0.1);
     color: #fff;
-  }
-  .vt-mode-btn {
-    flex: 1;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    gap: 4px;
-    background: rgba(255, 255, 255, 0.05);
-    border: 1px solid rgba(255, 255, 255, 0.08);
-    color: var(--text-muted, #888);
-    font-size: 11px;
-    padding: 4px 2px;
-    border-radius: 3px;
-    cursor: pointer;
-    transition: all 0.15s;
-    white-space: nowrap;
-  }
-  .vt-mode-btn:hover {
-    background: rgba(255, 255, 255, 0.1);
-    color: #bbb;
-    border-color: rgba(255, 255, 255, 0.15);
-  }
-  .vt-mode-btn.active {
-    background: rgba(187, 134, 252, 0.2);
-    color: var(--accent-primary, #BB86FC);
-    border-color: rgba(187, 134, 252, 0.4);
   }
 </style>
