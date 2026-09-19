@@ -8610,16 +8610,20 @@
     min-height: 200px;
   }
 
-  /* Deck dock — fixed strip under the grid + media tray. */
+  /* Single-row deck controls; keep popovers outside the strip unclipped. */
   .vj-dock {
-    flex-wrap: wrap;
-    row-gap: 8px;
+    flex-wrap: nowrap;
+    white-space: nowrap;
+    --vj-header-font: 11px;
+    --vj-control-h: 28px;
+    --vj-meter-gap: 4px;
+    --vj-right-gap: 4px;
     margin-bottom: 8px;
     border-radius: 6px;
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: var(--vj-header-gap);
+    justify-content: flex-start;
+    gap: 8px;
     flex: 0 0 auto;
     box-sizing: border-box;
     padding: 5px var(--vj-header-pad-x);
@@ -8631,6 +8635,8 @@
     z-index: 15;
   }
   .vj-dock-group {
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
     display: flex;
     align-items: center;
     gap: var(--vj-meter-gap);
