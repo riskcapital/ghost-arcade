@@ -1332,4 +1332,117 @@ describe('quantized VJ columns', () => {
     tick(due + 1);
     expect(activeIds()).toEqual(['a0', 'a2']);
   });
+
+  it('admits whole prepared columns and falls back if any participating row is unsupported', async () => {
+    const { buildNativeQueuedCutPlan, resolveNativeQueuedCutBindings, vjOutputLayers } = await import('./vjClipLauncher');
+    const { nativeRendererRuntime } = await import('./nativeRenderer');
+    const { keyframeTimeline } = await import('./keyframeTimeline');
+    const previousRuntime = get(nativeRendererRuntime);
+    keyframeTimeline.reset();
+    nativeRendererRuntime.update(value => ({ ...value, running: true }));
+    try {
+      launcher.setCrossfaderEnabled(false);
+      launcher.setOpen(true);
+      const base = get(launcher);
+      const video = (id: string) => ({ ...image(id), type: 'video', src: `/tmp/${id}.mp4`,
+        durationSeconds: 4, videoWidth: 128, videoHeight: 96 }) as any;
+      const state = { ...base, isOpen: true, isLive: true, stoppedAll: false,
+        clipGrid: [[video('old0'), video('new0'), null], [video('old1'), video('new1'), null]],
+        layerStates: base.layerStates.map((row, index) => ({ ...row, activeClip: video(`old${index}`), activeColumn: 0 })) };
+      const trigger = { id: 'column-test', kind: 'column', bank: 'A', columnIndex: 1,
+        layerIndex: 0, layerIndices: [0, 1], blockId: state.activeBlockId, fireAt: now + 1000 } as any;
+      const plan = buildNativeQueuedCutPlan(trigger, state);
+      expect(plan?.rows.map(row => row.layerIndex)).toEqual([0, 1]);
+      expect(plan?.lane).toBe('vj-column:A');
+      const {vjClipTransitions}=await import('./vjClipTransitions');
+      const fadeState={...state,layerStates:state.layerStates.map((row,index)=>index===0?{...row,transitionDuration:1}:row)};
+      const fadeTrigger={...trigger,kind:'clip',layerIndices:undefined};
+      expect(buildNativeQueuedCutPlan(trigger,fadeState)?.rows.map(row=>row.transition.duration)).toEqual([1,0]);
+      const allFades={...fadeState,layerStates:fadeState.layerStates.map((row,index)=>({...row,transitionDuration:index+1,transitionStyle:index===0?'wipe' as const:'dissolve' as const}))};
+      expect(buildNativeQueuedCutPlan(trigger,allFades)?.rows.map(row=>row.transition))
+        .toEqual([{duration:1,style:'wipe'},{duration:2,style:'dissolve'}]);
+
+      const fadePlan=buildNativeQueuedCutPlan(fadeTrigger,fadeState)!;
+      expect(fadePlan.rows[0].transition.duration).toBe(1);
+      launcher.set(fadeState);
+      const prepared={...fadeState.clipGrid[0][1]!,isPlaying:false,_nativePlaybackSeekSeq:1};
+      const fade=vjClipTransitions.begin('A',0,fadeState.layerStates[0].activeClip,prepared,1,'dissolve',undefined,trigger.id)!;
+      expect(get(launcher).layerStates[0].activeClip?.id).toBe('old0');
+      expect(get(vjOutputLayers)?.find(row=>row.id==='vj-layer-0')?.source).toMatchObject({id:'new0',isPlaying:false,_nativeLaunchPreparation:true});
+      expect(buildNativeQueuedCutPlan(fadeTrigger,get(launcher))?.signature).toBe(fadePlan.signature);
+      vjClipTransitions.cancel('A',0,fade.token);
+      expect(get(vjOutputLayers)?.find(row=>row.id==='vj-layer-0')?.source?.id).toBe('old0');
+      launcher.set(allFades);
+      const columnPlan=buildNativeQueuedCutPlan(trigger,allFades)!;
+      const preparedRows=columnPlan.rows.map(row=>vjClipTransitions.begin('A',row.layerIndex,row.outgoing,
+        {...row.incoming,isPlaying:false},row.transition.duration,row.transition.style,undefined,trigger.id)!);
+      expect(get(launcher).layerStates.map(row=>row.activeClip?.id)).toEqual(['old0','old1']);
+      expect(get(vjOutputLayers)?.map(row=>row.source?.id)).toEqual(['new0','new1']);
+      expect(buildNativeQueuedCutPlan(trigger,get(launcher))?.signature).toBe(columnPlan.signature);
+      for(const entry of preparedRows) vjClipTransitions.cancel('A',entry.layerIndex,entry.token);
+      expect(get(vjOutputLayers)?.map(row=>row.source?.id)).toEqual(['old0','old1']);
+      launcher.set(state);
+
+      const wrapped=state.layerStates.flatMap((row,index)=>[
+        {layer_id:`vj-layer-${index}`,source_id:`plugin:vj-layer-${index}:vj-crossfade`},
+        {layer_id:`__vj-clip:vj-layer-${index}:steady:in`,source_id:row.activeClip.id},
+      ]);
+      wrapped.push({layer_id:'__vj-mix__',source_id:'plugin:__vj-mix__:vj-mix'});
+      const mixedPlan=buildNativeQueuedCutPlan(trigger,fadeState)!;
+      mixedPlan.rows[0].fadeToken=42;
+      const mixedLayers=wrapped.filter(row=>row.layer_id!=='__vj-clip:vj-layer-0:steady:in').concat([
+        {layer_id:'__vj-clip:vj-layer-0:42:out',source_id:'old0'},
+        {layer_id:'__vj-clip:vj-layer-0:42:in',source_id:'new0'},
+      ]);
+      expect([...resolveNativeQueuedCutBindings(mixedPlan,mixedLayers)!]).toEqual([
+        [0,'__vj-clip:vj-layer-0:42:out'],[1,'__vj-clip:vj-layer-1:steady:in'],
+      ]);
+      expect(resolveNativeQueuedCutBindings(mixedPlan,mixedLayers.map(row=>row.layer_id.endsWith(':42:in')?{...row,source_id:'wrong'}:row))).toBeNull();
+
+      expect([...resolveNativeQueuedCutBindings(plan!,wrapped)!]).toEqual([
+        [0,'__vj-clip:vj-layer-0:steady:in'],[1,'__vj-clip:vj-layer-1:steady:in'],
+      ]);
+      expect(resolveNativeQueuedCutBindings(plan!,wrapped.filter(row=>row.layer_id!=='__vj-clip:vj-layer-1:steady:in'))).toBeNull();
+      expect(resolveNativeQueuedCutBindings(plan!,wrapped.map(row=>row.layer_id==='vj-layer-0'?{...row,source_id:'foreign-graph'}:row))).toBeNull();
+      expect(resolveNativeQueuedCutBindings(plan!,[...wrapped,{layer_id:'__vj-clip:vj-layer-0:42:out',source_id:'old0'}])).toBeNull();
+      expect([...resolveNativeQueuedCutBindings(plan!,state.layerStates.map((row,index)=>({layer_id:`vj-layer-${index}`,source_id:row.activeClip.id})))!])
+        .toEqual([[0,'vj-layer-0'],[1,'vj-layer-1']]);
+
+      const dual = { ...state, crossfaderEnabled: true,
+        bankBClipGrid: [[video('b-old0'), video('b-new0'), null], [video('b-old1'), video('b-new1'), null]],
+        bankBLayerStates: state.layerStates.map((row,index)=>({...row,activeClip:video(`b-old${index}`)})) };
+      const bTrigger = { ...trigger, bank: 'B' } as any;
+      expect(buildNativeQueuedCutPlan(bTrigger,dual)?.rows.map(row=>[row.layerId,row.incoming.id]))
+        .toEqual([['vj-layer-0-B','b-new0'],['vj-layer-1-B','b-new1']]);
+      expect(buildNativeQueuedCutPlan(trigger,dual)?.rows.map(row=>row.layerId)).toEqual(['vj-layer-0-A','vj-layer-1-A']);
+      expect(buildNativeQueuedCutPlan(bTrigger,dual)?.lane).toBe('vj-column:B');
+      const dualWrapped=['A','B'].flatMap(bank=>[0,1].flatMap(index=>[
+        {layer_id:`vj-layer-${index}-${bank}`,source_id:`plugin:vj-layer-${index}-${bank}:vj-crossfade`},
+        {layer_id:`__vj-clip:vj-layer-${index}-${bank}:steady:in`,source_id:bank==='B'?`b-old${index}`:`old${index}`},
+      ]));
+      dualWrapped.push({layer_id:'vj-xfade-0',source_id:'plugin:vj-xfade-0:vj-crossfade'});
+      expect([...resolveNativeQueuedCutBindings(buildNativeQueuedCutPlan(bTrigger,dual)!,dualWrapped)!])
+        .toEqual([[0,'__vj-clip:vj-layer-0-B:steady:in'],[1,'__vj-clip:vj-layer-1-B:steady:in']]);
+
+      expect(buildNativeQueuedCutPlan(bTrigger,{...dual,crossfaderValue:0.75})?.signature).toBe(buildNativeQueuedCutPlan(bTrigger,dual)?.signature);
+      expect(buildNativeQueuedCutPlan(bTrigger,{...dual,crossfaderEnabled:false})).toBeNull();
+      expect(buildNativeQueuedCutPlan(bTrigger,{...dual,layerStates:dual.layerStates.map(row=>({...row,solo:true}))})).not.toBeNull();
+      expect(buildNativeQueuedCutPlan(bTrigger,{...dual,bankBLayerStates:dual.bankBLayerStates.map(row=>({...row,solo:true}))})).toBeNull();
+      expect(buildNativeQueuedCutPlan(trigger,{...dual,bankBLayerStates:[{...dual.bankBLayerStates[0],activeClip:state.layerStates[0].activeClip},dual.bankBLayerStates[1]]})).toBeNull();
+      expect(buildNativeQueuedCutPlan(trigger,dual)?.signature).not.toBe(plan?.signature);
+
+      for (const replacement of [null, { ...video('new1'), type: 'image' },
+        { ...video('new1'), videoWidth: 256 }, { ...video('new1'), audioPlayback: true }]) {
+        expect(buildNativeQueuedCutPlan(trigger, { ...state,
+          clipGrid: [state.clipGrid[0], [state.clipGrid[1][0], replacement, null]] })).toBeNull();
+      }
+      for (const protection of [{ locked: true }, { ignoreColumnTrigger: true }]) {
+        const protectedState = { ...state, layerStates: [state.layerStates[0], { ...state.layerStates[1], ...protection }] };
+        expect(buildNativeQueuedCutPlan(trigger, protectedState)?.rows.map(row => row.layerIndex)).toEqual([0]);
+      }
+    } finally {
+      nativeRendererRuntime.set(previousRuntime);
+    }
+  });
+
 });

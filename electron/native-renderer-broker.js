@@ -264,6 +264,7 @@ const RENDERER_COMMANDS = [
   'native_renderer_stop',
   'native_renderer_submit_batch',
   'native_renderer_submit_commands',
+  'native_renderer_schedule_launch', 'native_renderer_cancel_launch', 'native_renderer_launch_status',
   'native_renderer_run_compute_graph',
   'native_renderer_upload_source_gpu_shared_texture',
   'native_renderer_prefetch_media',
@@ -493,6 +494,9 @@ class NativeRendererBroker {
       case 'native_renderer_audio_output':
         if (!this.child || this.child.killed) throw new Error('Start the native renderer first');
         return this.send(command.replace('native_renderer_', ''), args, { timeoutMs: 5000 });
+      case 'native_renderer_stream_output_frame':
+        if (!this.child || this.child.killed) throw new Error('Start the native renderer first');
+        return this.send('stream_output_frame', args, { timeoutMs: 15000 });
       case 'native_renderer_get_status':
         return this.getStatus();
       case 'native_renderer_get_stats':
@@ -545,6 +549,12 @@ class NativeRendererBroker {
         return this.sendIfRunning('reset_stats', args, { fallback: null });
       case 'native_renderer_submit_batch':
         return this.sendNativeCommandPayloadIfRunning('submit_batch', args, { fallback: null, timeoutMs: 5000 });
+      case 'native_renderer_schedule_launch':
+        return this.sendNativeCommandPayloadIfRunning('schedule_launch', args, { fallback: null, timeoutMs: 5000 });
+      case 'native_renderer_cancel_launch':
+        return this.sendNativeCommandPayloadIfRunning('cancel_launch', args, { fallback: null, timeoutMs: 5000 });
+      case 'native_renderer_launch_status':
+        return this.sendNativeCommandPayloadIfRunning('launch_status', args, { fallback: null, timeoutMs: 5000 });
       case 'native_renderer_submit_commands':
         return this.sendNativeCommandPayloadIfRunning('submit_commands', args, { fallback: null, timeoutMs: 5000 });
       case 'native_renderer_run_compute_graph':

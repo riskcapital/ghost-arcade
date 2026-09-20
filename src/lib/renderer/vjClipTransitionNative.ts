@@ -14,6 +14,8 @@ export type VJClipTransitionState = {
   style: string;
   snapshotSourceId?: string;
   token?: number | string;
+  duration?: number;
+  running?: boolean;
 };
 export type VJClipTransitionBranch = {
   layer: Layer;
@@ -79,6 +81,9 @@ export function makeVJClipTransitionCarrier(
     opacityB?: number;
     blendMode?: string;
     active?: boolean;
+    clockToken?: number | string;
+    clockDuration?: number;
+    clockRunning?: boolean;
   } = {},
 ): Layer {
   const id = overrides.id ?? base.id;
@@ -94,6 +99,9 @@ export function makeVJClipTransitionCarrier(
         effectType: 'vj-crossfade',
         vjclipTransition: true,
         vjclipTransitionActive: overrides.active === true,
+        vjclipClockToken: overrides.clockToken,
+        vjclipClockDuration: overrides.clockDuration,
+        vjclipClockRunning: overrides.clockRunning === true,
         vjxfadeLayerA: outgoingLayerId,
         vjxfadeLayerB: incomingLayerId,
         vjclipSourceA: overrides.sourceAId,
@@ -143,6 +151,7 @@ export function buildVJClipTransitionLayers(
     result.push(makeVJClipTransitionCarrier(incoming, outgoingId, incomingId, state.progress, state.style, {
       sourceAId: state.snapshotSourceId,
       active: true,
+      clockToken: state.token, clockDuration: state.duration, clockRunning: state.running,
       opacityA: state.snapshotSourceId ? 1 : state.outgoing.opacity,
       opacityB: incoming.opacity,
     }));

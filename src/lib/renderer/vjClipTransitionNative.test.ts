@@ -31,13 +31,14 @@ describe('native per-row clip transitions', () => {
     const a = { ...layer('vj-layer-0-A', 0.8), bank: 'A' as const };
     const b = { ...layer('vj-layer-0-B', 0.3), bank: 'B' as const };
     const expanded = buildVJClipTransitionLayers([a, b], new Map([
-      [a.id, { outgoing: layer(a.id, 0.6), progress: 0.2, style: 'wipe', token: 42 }],
+      [a.id, { outgoing: layer(a.id, 0.6), progress: 0.2, style: 'wipe', token: 42, duration: 1.5, running: true }],
       [b.id, { outgoing: layer(b.id, 0.2), progress: 0.7, style: 'slide', token: 43 }],
     ]));
     expect(expanded.filter((l) => /^vj-layer-\d+(?:-[AB])?$/.test(l.id)).map((l) => l.id)).toEqual([a.id, b.id]);
     expect(new Set(expanded.map((l) => l.id)).size).toBe(6);
     expect(expanded.filter((l) => l.id.startsWith('__')).every((l) => l.opacity === 0 && !l.bank && !l._deckMonitorBank)).toBe(true);
     expect(expanded[2].bank).toBe('A');
+    expect(expanded[2].source?.effectSource).toMatchObject({vjclipClockToken:42,vjclipClockDuration:1.5,vjclipClockRunning:true});
     expect(expanded[5].bank).toBe('B');
     expect(expanded[2].source?.effectSource?.vjxfadeLayerB).toBe(vjClipTransitionInputId(a.id, 'in', 42));
     expect(vjClipTransitionInputId(a.id, 'in', 43)).not.toBe(vjClipTransitionInputId(a.id, 'in', 42));

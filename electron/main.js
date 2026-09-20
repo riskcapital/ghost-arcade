@@ -1151,7 +1151,7 @@ async function writeMp4FrameEncoderFrameFile(args = {}) {
   if (!resolvedFramePath.startsWith(`${resolvedTempDir}${path.sep}`)) {
     throw new Error('MP4 raw frame must live in its temp folder.');
   }
-  const stat = fs.statSync(resolvedFramePath);
+  const stat = await fs.promises.stat(resolvedFramePath);
   if (!stat.isFile()) throw new Error('MP4 raw frame path is not a file.');
   if (stat.size !== job.frameBytes) {
     throw new Error(`MP4 raw frame file has ${stat.size} bytes; expected ${job.frameBytes}.`);
@@ -1166,7 +1166,7 @@ async function writeMp4FrameEncoderFrameFile(args = {}) {
     throw new Error(`MP4 frame order mismatch: got ${frameIndex}, expected ${job.writtenFrames}.`);
   }
 
-  const buffer = fs.readFileSync(resolvedFramePath);
+  const buffer = await fs.promises.readFile(resolvedFramePath);
   await writeEncoderStdin(job, buffer, frameIndex, 'MP4 frame');
   job.writtenFrames++;
   if (args.deleteAfterWrite || args.delete_after_write || args.delete) {
@@ -1175,10 +1175,41 @@ async function writeMp4FrameEncoderFrameFile(args = {}) {
   return { success: true, writtenFrames: job.writtenFrames };
 }
 
+async function captureLiveMp4Frame(args = {}, clockOwned = false) {
+    const job = activeMp4FrameEncoderJobs.get(String(args.jobId || ''));
+    if (!job || job.settled || job.cancelled || job.closing) return { success: false, error: 'Recording encoder is not running' };
+    if (job.liveClock && !clockOwned) return { success: false, error: 'Recording capture is owned by the live clock' };
+    if (job.captureBusy) return { success: false, error: 'Recording capture already in progress' };
+    const from = Number(args.fromIndex), to = Number(args.toIndex);
+    if (!Number.isSafeInteger(from) || !Number.isSafeInteger(to) || from !== job.writtenFrames || to < from || to - from >= 120) {
+      return { success: false, error: 'Invalid recording frame range' };
+    }
+    if (job.pixelFormat !== 'bgra') return { success: false, error: 'Native live capture requires BGRA' };
+    job.captureBusy = true;
+    try {
+      const { createNativeFrameSink } = require('./native-frame-stream.cjs');
+      job.frameSink ??= await createNativeFrameSink({ write: chunk => writeEncoderStdin(job, chunk, job.writtenFrames, 'Native live frame') });
+      const snapshot = await job.frameSink.capture(job.frameBytes * (to - from + 1),
+        sink => nativeRendererBroker.invoke('native_renderer_stream_output_frame', {
+          ...sink, width: job.width, height: job.height, copies: to - from + 1,
+        }));
+      job.writtenFrames = to + 1;
+      return { success: true, snapshot };
+    } catch (error) {
+      // A partial raw frame cannot safely be retried into the same encoder.
+      await cancelMp4FrameEncoderJob(job.id);
+      return { success: false, error: error?.message || String(error) };
+    } finally { job.captureBusy = false; }
+}
+
 async function finishMp4FrameEncoderJob(jobIdInput) {
   const jobId = String(jobIdInput || '').trim();
   const job = activeMp4FrameEncoderJobs.get(jobId);
   if (!job) return { success: true, alreadyFinished: true };
+  job.detachCaptureOwner?.();
+  await job.liveClock?.stop();
+  job.closing = true;
+  await job.frameSink?.close();
 
   try {
     if (!job.process.stdin.destroyed && !job.process.stdin.writableEnded) {
@@ -1219,6 +1250,9 @@ async function cancelMp4FrameEncoderJob(jobIdInput) {
   const job = activeMp4FrameEncoderJobs.get(jobId);
   if (!job) return { success: true };
   job.cancelled = true;
+  job.detachCaptureOwner?.();
+  job.liveClock?.cancel();
+  await job.frameSink?.close();
   try {
     job.process.stdin?.destroy?.();
   } catch { /* ignore */ }
@@ -3360,6 +3394,16 @@ let linkAddon = null;
 let linkAddonLoadAttempted = false;
 let linkAddonLoadError = null;
 let linkSession = null;
+// Feed the native clock from main; editor long tasks cannot suspend phase following.
+const nativeLinkClockTimer = setInterval(() => {
+  if (!linkSession) return;
+  try {
+    const state = linkSession.getState();
+    nativeRendererBroker.notify('submit_commands', { commands: [{ type: 'set_link_clock',
+      enabled: !!state.enabled && state.peers > 0, beat: state.beat, tempo: state.tempo }] });
+  } catch { /* The core expires a stale clock after 500 ms. */ }
+}, 100);
+nativeLinkClockTimer.unref();
 
 function loadLinkAddon() {
   if (linkAddon) return linkAddon;
@@ -6902,6 +6946,36 @@ function registerIpcHandlers() {
       console.error('[Main] mp4_frame_encoder_write_frame error:', err?.message || err);
       return { success: false, error: err?.message || String(err) };
     }
+  });
+
+  ipcMain.handle('mp4_frame_encoder_capture_live', (_, args) => captureLiveMp4Frame(args));
+  ipcMain.handle('mp4_frame_encoder_live_control', async (event, args = {}) => {
+    const job = activeMp4FrameEncoderJobs.get(String(args.jobId || ''));
+    if (!job || job.cancelled || job.closing || job.settled) return { success: false, error: 'Recording encoder is not running' };
+    if (args.action === 'start') {
+      if (job.liveClock || job.captureBusy || job.writtenFrames) return { success: false, error: 'Recording already started' };
+      const owner = event.sender;
+      const ownerGone = () => {
+        job.detachCaptureOwner?.();
+        // Preserve completed footage if the editor closes or crashes.
+        void finishMp4FrameEncoderJob(job.id).catch(() => cancelMp4FrameEncoderJob(job.id));
+      };
+      job.detachCaptureOwner = () => {
+        owner.removeListener('destroyed', ownerGone);
+        owner.removeListener('render-process-gone', ownerGone);
+        job.detachCaptureOwner = null;
+      };
+      owner.once('destroyed', ownerGone);
+      owner.once('render-process-gone', ownerGone);
+      const { createLiveCaptureClock } = require('./live-capture-clock.cjs');
+      job.liveClock = createLiveCaptureClock({ fps: job.fps, capture: async (fromIndex, toIndex) => {
+        const result = await captureLiveMp4Frame({ jobId: job.id, fromIndex, toIndex }, true);
+        if (!result.success) throw new Error(result.error);
+      } });
+    } else if (args.action === 'stop') {
+      await job.liveClock?.stop();
+    } else if (args.action !== 'status') return { success: false, error: 'Invalid live recording action' };
+    return { success: true, ...job.liveClock?.status(), frames: job.writtenFrames };
   });
 
   ipcMain.handle('mp4_frame_encoder_write_frame_file', async (_, args = {}) => {

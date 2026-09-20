@@ -5,6 +5,7 @@ export interface NativeClipTransitionTask {
   startedAtMs: number | null;
   requiresSnapshot: boolean;
   frozenSourceId?: string;
+  queuedTriggerId?: string;
 }
 
 interface Options<T extends NativeClipTransitionTask> {
@@ -93,6 +94,7 @@ export function createNativeClipTransitionCoordinator<T extends NativeClipTransi
     for (const key of retryAt.keys()) if (!generations.has(key)) retryAt.delete(key);
     for (const [key, flight] of flights) if (!keys.has(key)) flight.cancelled = true;
     for (const task of tasks) {
+      if (task.queuedTriggerId) continue;
       if (task.startedAtMs !== null && !task.requiresSnapshot) {
         if (now - task.startedAtMs >= task.duration * 1000) options.onComplete(task);
         continue;

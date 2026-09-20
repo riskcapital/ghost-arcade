@@ -49,6 +49,7 @@ pub struct Voice {
 #[derive(Clone)]
 struct MixVoice { voice: Voice, asset: Arc<Asset> }
 struct MixState { voices: Vec<MixVoice>, at: Instant }
+fn voice_reader_key(voice: &MixVoice) -> (String, PathBuf) { (voice.voice.id.clone(), voice.asset.path.clone()) }
 struct Reader { file: File, start: u64, samples: Vec<[f32; 2]>, bytes: Vec<u8> }
 impl Reader {
     fn sample(&mut self, asset: &Asset, frame: u64) -> [f32; 2] {
@@ -178,34 +179,38 @@ impl ClipAudio {
         self.stop.store(false, Ordering::Release);
         let stop = self.stop.clone(); let ring = self.ring.clone(); let mix = self.mix.clone(); let latency = self.latency.clone(); let rate = self.output_rate as f64; let callback_frames = self.callback_frames.clone();
         self.worker = Some(thread::spawn(move || {
-            let mut readers: HashMap<PathBuf, Reader> = HashMap::new();
+            let mut readers: HashMap<(String, PathBuf), Reader> = HashMap::new();
             let mut gains: HashMap<String, (f32, f32)> = HashMap::new();
             while !stop.load(Ordering::Acquire) {
                 if ring.len() >= (callback_frames.load(Ordering::Relaxed).saturating_mul(4).max(1024)).min(RING - 256) { thread::sleep(Duration::from_millis(1)); continue; }
                 let snapshot = mix.lock().ok().map(|s| (s.voices.clone(), s.at));
                 let Some((voices, at)) = snapshot else { continue; };
-                readers.retain(|path, _| voices.iter().any(|v| v.asset.path == *path));
+                readers.retain(|(id, path), _| voices.iter().any(|v| v.voice.id == *id && v.asset.path == *path));
                 gains.retain(|id, _| voices.iter().any(|v| v.voice.id == *id));
                 for entry in &voices { gains.entry(entry.voice.id.clone()).or_insert((0.0, 0.0)); }
                 let age = at.elapsed().as_secs_f64();
                 let ahead = ring.len() as f64 / 2.0 / rate + latency.load(Ordering::Acquire) as f64 / 1e9;
-                for frame in 0..128 {
-                    let mut sum = [0.0_f32; 2];
-                    for entry in &voices {
-                        let voice = &entry.voice;
-                        // A stale render clock must not leave sound running after app/output loss.
-                        let (left, right) = balance(voice.pan);
-                        let target = if voice.playing && age <= 0.5 { voice.gain } else { 0.0 };
-                        let gain = gains.get_mut(&voice.id).unwrap();
-                        let smoothing = (1.0 / (rate * 0.003)) as f32;
+                let smoothing = (1.0 / (rate * 0.003)) as f32;
+                let mut block = [[0.0_f32; 2]; 128];
+                // Mix each voice as a block: resolve its independent cursor and
+                // gain once, not 128 times. Assets remain shared and bounded.
+                for entry in &voices {
+                    let voice = &entry.voice;
+                    let (left, right) = balance(voice.pan);
+                    let target = if voice.playing && age <= 0.5 { voice.gain } else { 0.0 };
+                    let gain = gains.get_mut(&voice.id).unwrap();
+                    if target == 0.0 && gain.0.abs() + gain.1.abs() < 0.00001 { continue; }
+                    let key = voice_reader_key(entry);
+                    if !readers.contains_key(&key) {
+                        let Ok(file) = File::open(&key.1) else { continue; };
+                        readers.insert(key.clone(), Reader { file, start: 0, samples: Vec::new(), bytes: Vec::new() });
+                    }
+                    let reader = readers.get_mut(&key).unwrap();
+                    for (frame, sum) in block.iter_mut().enumerate() {
                         gain.0 += (target * left - gain.0) * smoothing;
                         gain.1 += (target * right - gain.1) * smoothing;
                         if gain.0.abs() + gain.1.abs() < 0.00001 { continue; }
                         let Some(time) = transport_time(voice.time + (age + ahead + frame as f64 / rate) * voice.rate, voice.lo, voice.hi, voice.looping, voice.bounce) else { continue; };
-                        if !readers.contains_key(&entry.asset.path) {
-                            if let Ok(file) = File::open(&entry.asset.path) { readers.insert(entry.asset.path.clone(), Reader { file, start: 0, samples: Vec::new(), bytes: Vec::new() }); } else { continue; }
-                        }
-                        let reader = readers.get_mut(&entry.asset.path).unwrap();
                         let position = time.max(0.0) * RATE;
                         let a = reader.sample(&entry.asset, position.floor() as u64);
                         let next_time = transport_time(time + 1.0 / RATE, voice.lo, voice.hi, voice.looping, voice.bounce).unwrap_or(time);
@@ -214,6 +219,8 @@ impl ClipAudio {
                         sum[0] += (a[0] + (b[0] - a[0]) * fraction) * gain.0;
                         sum[1] += (a[1] + (b[1] - a[1]) * fraction) * gain.1;
                     }
+                }
+                for sum in block {
                     // Linked stereo peak protection preserves balance when layers sum above unity.
                     let peak = sum[0].abs().max(sum[1].abs()).max(1.0);
                     ring.push(sum[0] / peak, sum[1] / peak);
@@ -260,6 +267,28 @@ impl Drop for ClipAudio {
 }
 #[cfg(test)] mod tests {
     use super::*;
+    #[test] fn same_asset_voices_keep_independent_read_windows() {
+        let path = std::env::temp_dir().join(format!("ghost-voice-reader-{}.pcm", std::process::id()));
+        let samples: Vec<u8> = (0..96000).flat_map(|i| {
+            let x = if i < 48000 { 0.25f32 } else { -0.5f32 };
+            [x.to_le_bytes(), x.to_le_bytes()].concat()
+        }).collect();
+        std::fs::write(&path, samples).unwrap();
+        let asset = Arc::new(Asset { path: path.clone(), frames: AtomicU64::new(96000), bytes: AtomicU64::new(0),
+            done: AtomicBool::new(true), cancelled: AtomicBool::new(false), error: Mutex::new(String::new()), child: Mutex::new(None), budget: Arc::new(AtomicU64::new(0)) });
+        let voices: Vec<_> = ["deck-a", "deck-b"].iter().map(|id| MixVoice { asset: asset.clone(), voice: Voice {
+            id: id.to_string(), uri: "same-file".to_string(), time: 0.0, rate: 1.0, lo: 0.0, hi: 2.0, looping: true, bounce: false, gain: 1.0, pan: 0.0, playing: true,
+        }}).collect();
+        let mut readers: HashMap<_, _> = voices.iter().map(|v| (voice_reader_key(v), Reader { file: File::open(&path).unwrap(), start: 0, samples: Vec::new(), bytes: Vec::new() })).collect();
+        assert_eq!(readers.len(), 2);
+        for i in 0..128 {
+            assert_eq!(readers.get_mut(&voice_reader_key(&voices[0])).unwrap().sample(&asset, i), [0.25; 2]);
+            assert_eq!(readers.get_mut(&voice_reader_key(&voices[1])).unwrap().sample(&asset, 48000+i), [-0.5; 2]);
+        }
+        assert_eq!(readers[&voice_reader_key(&voices[0])].start, 0);
+        assert_eq!(readers[&voice_reader_key(&voices[1])].start, 45056);
+        drop(readers); drop(voices); drop(asset);
+    }
     #[test] fn reverse_bounce_and_trim_coordinates() {
         assert_eq!(transport_time(1.5, 2.0, 6.0, true, false), Some(5.5));
         assert_eq!(transport_time(6.5, 2.0, 6.0, true, true), Some(5.5));

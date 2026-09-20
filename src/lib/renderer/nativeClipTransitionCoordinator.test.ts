@@ -72,6 +72,14 @@ describe('native clip transition coordination', () => {
     vi.unstubAllGlobals();
   });
 
+  it('does not start or complete a fade owned by the native launch queue', async () => {
+    tasks=[task(1,{queuedTriggerId:'pending'})];
+    const options=start();
+    await draw(0);await draw(20000);
+    expect(options.ready).not.toHaveBeenCalled();
+    expect(options.onReady).not.toHaveBeenCalled();expect(options.onComplete).not.toHaveBeenCalled();
+  });
+
   it('starts duration at the first ready picture and completes only after that duration', async () => {
     const pending = deferred<boolean>();
     const options = start({ ready: vi.fn(() => pending.promise) });

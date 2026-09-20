@@ -4813,6 +4813,7 @@
   // coming up". The mutex is the fix — second invocation no-ops while the
   // first is still in flight.
   async function saveComposition() {
+    await (await import('./lib/stores/settings')).flushSettings();
     if (saveInFlight) {
       console.log('[Save] suppressed — save already in flight');
       return;
@@ -4906,6 +4907,7 @@
   // The actual Save As work. Always shows a file picker. Caller owns the
   // mutex — split out so saveComposition can re-use it without lock thrash.
   async function saveCompositionAsInner() {
+    await (await import('./lib/stores/settings')).flushSettings();
     const jsonStr = await project.exportProjectJSONForSave();
     const suggestedName = `${$project.name.replace(/[^a-z0-9]/gi, '_')}_${new Date().toISOString().split('T')[0]}.gha`;
 
