@@ -85,6 +85,7 @@
   // Tier-related imports removed — recording / Particles3D always available.
   import { getDefaultEffectParams as getRendererDefaultEffectParams } from '../renderer/effects';
   import EffectPickerModal from './EffectPickerModal.svelte';
+  import EffectChainPresets from './EffectChainPresets.svelte';
   import SplatPanel from './SplatPanel.svelte';
   import Model3DPanel from './Model3DPanel.svelte';
   import VJGPUClipPanel from './VJGPUClipPanel.svelte';
@@ -4476,7 +4477,7 @@
                       <option value="piano">Piano — hold to play</option>
                     </select>
                   </label>
-                  <VJTransitionControls clipOverride
+                  <VJTransitionControls clipOverride contextKey={`${paramDeck}:${selectedLayerIndex}:${transitionLayer.activeColumn}:${transitionLayer.activeClip.id}`}
                     duration={transitionLayer.activeClip.transitionDuration}
                     style={transitionLayer.activeClip.transitionStyle}
                     inheritedDuration={transitionLayer.transitionDuration ?? 0}
@@ -4490,6 +4491,16 @@
                   <span>Effects</span>
                   <button class="add-effect-btn" onclick={() => showEffectPicker = true}>+ Add</button>
                 </div>
+                {#key `${effectsTab}:${paramDeck}:${selectedLayerIndex}:${selectedLayerState?.activeClip?.id ?? ''}`}
+                  <EffectChainPresets effects={currentEffects} nativeOnly={nativeInventoryLocked}
+                    companionEffects={effectsTab === 'composition' ? [] : effectsTab === 'clip' ? (selectedLayerState?.effects ?? []) : (selectedLayerState?.activeClip?.effects ?? [])}
+                    disabled={effectsTab !== 'composition' && (selectedLayerIndex === null || (effectsTab === 'clip' && !selectedLayerState?.activeClip))}
+                    onApply={(effects) => {
+                      if (effectsTab === 'composition' || effectsTab === 'layer' || effectsTab === 'clip')
+                        vjClipLauncher.setEffectChain(effectsTab, effects, selectedLayerIndex ?? 0, paramDeck);
+                      expandedEffectId = null;
+                    }} />
+                {/key}
                 <div class="effects-list">
                   {#if effectChainWarning}
                     <p class="effect-chain-warning" role="status">{effectChainWarning}</p>
@@ -4596,18 +4607,19 @@
                                       }}
                                       style="flex:0 0 40px; height:22px; padding:0; border:1px solid #444; border-radius:3px; cursor:pointer;" />
                                   </div>
-                                {:else if effectsTab === 'layer' && selectedLayerIndex !== null}
+                                {:else if effectsTab === 'composition' || ((effectsTab === 'layer' || effectsTab === 'clip') && selectedLayerIndex !== null)}
                                   <EffectParamRow
                                     label={meta.label}
                                     value={(effect.params as Record<string, number>)[paramKey] ?? meta.default}
                                     min={meta.min as number}
                                     max={meta.max as number}
                                     step={meta.step as number}
-                                    layerIndex={selectedLayerIndex}
+                                    layerIndex={selectedLayerIndex ?? 0}
                                     effectId={effect.id}
                                     paramName={paramKey}
                                     target="vj"
                                     vjBank={paramDeck}
+                                    vjEffectScope={effectsTab === 'composition' ? 'composition' : effectsTab === 'clip' ? 'clip' : 'layer'}
                                     displayValue={(v) => (meta.max as number) <= 1 ? (v * 100).toFixed(0) + '%' : v.toFixed(2)}
                                     onChange={(v) => updateEffectParam(effect.id, paramKey, v)}
                                   />
@@ -4633,18 +4645,19 @@
                                    get sliders (0..1 range, 0.01 step) for
                                    every adjustable param. -->
                               {#each _fallbackKeys as paramKey}
-                                {#if effectsTab === 'layer' && selectedLayerIndex !== null}
+                                {#if effectsTab === 'composition' || ((effectsTab === 'layer' || effectsTab === 'clip') && selectedLayerIndex !== null)}
                                   <EffectParamRow
                                     label={paramKey}
                                     value={(effect.params as Record<string, number>)[paramKey] ?? 0.5}
                                     min={0}
                                     max={1}
                                     step={0.01}
-                                    layerIndex={selectedLayerIndex}
+                                    layerIndex={selectedLayerIndex ?? 0}
                                     effectId={effect.id}
                                     paramName={paramKey}
                                     target="vj"
                                     vjBank={paramDeck}
+                                    vjEffectScope={effectsTab === 'composition' ? 'composition' : effectsTab === 'clip' ? 'clip' : 'layer'}
                                     displayValue={(v) => (v * 100).toFixed(0) + '%'}
                                     onChange={(v) => updateEffectParam(effect.id, paramKey, v)}
                                   />

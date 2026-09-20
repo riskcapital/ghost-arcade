@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { numericExpression } from '../utils/numericExpression';
   /**
    * NumericInput — slider + click-to-type readout.
    *
@@ -49,6 +50,7 @@
   // typing (intermediate states like "-" or "0." that aren't valid
   // numbers yet) without immediately reformatting.
   let editBuffer = '';
+  let editError = '';
 
   function defaultDisplay(v: number): string {
     if (Number.isNaN(v)) return '—';
@@ -60,6 +62,7 @@
   $: shown = displayValue ? displayValue(value) : defaultDisplay(value);
 
   async function startEdit() {
+    editError = "";
     editBuffer = String(value);
     editing = true;
     await tick();
@@ -67,18 +70,24 @@
     inputEl?.select();
   }
 
-  function commit() {
-    const parsed = parseFloat(editBuffer);
-    if (!Number.isNaN(parsed)) {
-      const clamped = Math.max(min, Math.min(max, parsed));
-      dispatch('input', clamped);
-      dispatch('change', clamped);
+  function commit(blurred = false) {
+    if (!editing) return;
+    const parsed = numericExpression(editBuffer);
+    if (parsed === null) {
+      editError = 'Use numbers, +, −, *, / and parentheses. Value unchanged.';
+      if (blurred) editing = false;
+      return;
     }
+    const clamped = Math.max(min, Math.min(max, parsed));
     editing = false;
+    editError = '';
+    dispatch('input', clamped);
+    dispatch('change', clamped);
   }
 
   function cancel() {
     editing = false;
+    editError = '';
   }
 
   function onSlider(e: Event) {
@@ -104,17 +113,22 @@
         bind:this={inputEl}
         bind:value={editBuffer}
         type="text"
-        inputmode="decimal"
+        inputmode="text"
         class="ni-edit"
-        onblur={commit}
+        onblur={() => commit(true)}
+          aria-invalid={!!editError}
+          aria-label={`${label}: number or arithmetic expression`}
+          title={editError || 'Number or expression, e.g. 120/2'}
+          oninput={() => editError = ''}
         onkeydown={onKeyDown}
       />
     {:else}
-      <button type="button" class="ni-display" title="Click to type a value" onclick={startEdit}>
+      <button type="button" class="ni-display" title="Type a number or expression, e.g. 120/2" onclick={startEdit}>
         {shown}
       </button>
     {/if}
   </label>
+  {#if editError}<span class="expression-error" role="status">{editError}</span>{/if}
   <input
     type="range"
     {min}
@@ -132,6 +146,8 @@
 </div>
 
 <style>
+  .expression-error { font-size: 11px; line-height: 1.4; color: #e0b29d; }
+  input[aria-invalid="true"] { border-color: #c88d74; }
   .ni { display: flex; flex-direction: column; gap: 2px; }
   .ni-label {
     font-size: 11.5px;

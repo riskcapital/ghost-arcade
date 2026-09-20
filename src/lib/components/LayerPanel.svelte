@@ -29,6 +29,7 @@
   import { isNativeReadyGpuShaderId } from '../renderer/gpuShaderCatalog';
   import { createDefaultStageEffect, getEffectDef, STAGE_EFFECT_CATALOG } from '../stores/stageEffects';
   import EffectPickerModal from './EffectPickerModal.svelte';
+  import EffectChainPresets from './EffectChainPresets.svelte';
   import EdgeEffectsPanel from './EdgeEffectsPanel.svelte';
   import EffectParamRow from './EffectParamRow.svelte';
   import PluginIcon from './PluginIcon.svelte';
@@ -1215,6 +1216,8 @@
             >+ Add</button>
           </div>
 
+          <EffectChainPresets effects={mappingComposition.effects} nativeOnly={nativeInventoryLocked}
+            onApply={(effects) => project.setEffectChain(null, effects)} />
           {#if mappingComposition.effects.length > 0}
             <div class="composition-effect-list">
               {#each mappingComposition.effects as effect, index (effect.id)}
@@ -1342,36 +1345,17 @@
                                   />
                                 </div>
                               {:else}
-                                <div class="param-row">
-                                  <span class="param-label">{meta.label}</span>
-                                  <input
-                                    type="range"
-                                    min={meta.min as number}
-                                    max={meta.max as number}
-                                    step={meta.step as number}
-                                    value={(effect.params as Record<string, number>)[paramKey] ?? meta.default}
-                                    oninput={(e) => project.updateMappingCompositionEffectParams(effect.id, { [paramKey]: parseFloat((e.target as HTMLInputElement).value) })}
-                                  />
-                                  <span class="param-value">
-                                    {((effect.params as Record<string, number>)[paramKey] ?? meta.default).toFixed(2)}
-                                  </span>
-                                </div>
+                                <EffectParamRow label={meta.label} value={(effect.params as Record<string, number>)[paramKey] ?? meta.default}
+                                  min={meta.min as number} max={meta.max as number} step={meta.step as number}
+                                  layerIndex={0} effectId={effect.id} paramName={paramKey} mappingComposition
+                                  onChange={(value) => project.updateMappingCompositionEffectParams(effect.id, { [paramKey]: value })} />
                               {/if}
                             {/each}
                           {:else}
                             {#each getNumericEffectParams(effect.type) as paramKey}
-                              <div class="param-row">
-                                <span class="param-label">{paramKey}</span>
-                                <input
-                                  type="range"
-                                  min="0"
-                                  max="1"
-                                  step="0.01"
-                                  value={(effect.params as Record<string, number>)[paramKey] ?? 0.5}
-                                  oninput={(e) => project.updateMappingCompositionEffectParams(effect.id, { [paramKey]: parseFloat((e.target as HTMLInputElement).value) })}
-                                />
-                                <span class="param-value">{((effect.params as Record<string, number>)[paramKey] ?? 0.5).toFixed(2)}</span>
-                              </div>
+                              <EffectParamRow label={paramKey} value={(effect.params as Record<string, number>)[paramKey] ?? 0.5}
+                                min={0} max={1} step={0.01} layerIndex={0} effectId={effect.id} paramName={paramKey} mappingComposition
+                                onChange={(value) => project.updateMappingCompositionEffectParams(effect.id, { [paramKey]: value })} />
                             {/each}
                           {/if}
                         </details>
@@ -3019,6 +3003,10 @@
               >+ Add Effect</button>
             </div>
 
+            {#key layer.id}
+              <EffectChainPresets effects={layer.effects} nativeOnly={nativeInventoryLocked}
+                onApply={(effects) => project.setEffectChain(layer.id, effects)} />
+            {/key}
             <!-- Effect List -->
             {#if nativeInventoryLocked && nativeEffectChainWarning(layer.effects)}
               <p class="effect-chain-warning" role="status">{nativeEffectChainWarning(layer.effects)}</p>

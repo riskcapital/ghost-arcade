@@ -328,6 +328,36 @@ describe('VJ clip persistence', () => {
 });
 
 describe('Layer persistence', () => {
+  it('preserves new easing curves through a project save and reopen', async () => {
+    const { keyframeTimeline } = await import('./keyframeTimeline');
+    const { KEYFRAME_EASINGS } = await import('../keyframes/easing');
+    const layer = types.createLayer('easing-layer', 'Animated', 'gpu');
+    expect(layers.project.importProject({ version: '2.0.8', project: { id: 'easing', name: 'Easing', width: 1920, height: 1080, layers: [layer] } })).toBe(true);
+    const tracks = KEYFRAME_EASINGS.map(({ value }, index) => ({ key: `test:${index}`, label: value, type: 'number' as const,
+      keyframes: [{ time: 0, value: 0, easing: value }, { time: 1, value: 1, easing: value }], boolKeyframes: [] }));
+    keyframeTimeline.importAll([{ layerId: layer.id, tracks }]);
+    const saved = JSON.parse(JSON.stringify(layers.project.exportProject()));
+    keyframeTimeline.importAll([]);
+    expect(layers.project.importProject(saved)).toBe(true);
+    expect(keyframeTimeline.exportAll().find(item => item.layerId === layer.id)?.tracks).toEqual(tracks);
+    keyframeTimeline.importAll([]);
+  });
+
+  it('applies complete mapping chains and exports their settings without sharing mutable data', () => {
+    const layer = types.createLayer('preset-layer', 'Preset layer', 'gpu');
+    expect(layers.project.importProject({ version: '2.0.8', project: { id: 'presets', name: 'Presets', width: 1920, height: 1080, layers: [layer] } })).toBe(true);
+    const chain = [{ id: 'saved-blur', type: 'blur' as const, enabled: false, params: { amount: .25 }, opacity: .5 }];
+    layers.project.setEffectChain(layer.id, chain);
+    layers.project.setEffectChain(null, chain);
+    chain[0].params.amount = 9;
+    expect(get(layers.project).layers[0].effects[0].params.amount).toBe(.25);
+    expect(get(layers.project).mappingComposition?.effects[0].params.amount).toBe(.25);
+    const saved = JSON.parse(JSON.stringify(layers.project.exportProject()));
+    expect(layers.project.importProject(saved)).toBe(true);
+    expect(get(layers.project).layers[0].effects[0]).toMatchObject({ enabled: false, opacity: .5, params: { amount: .25 } });
+    expect(get(layers.project).mappingComposition?.effects[0].params.amount).toBe(.25);
+  });
+
   it('exports every Layer field that is not runtime-only', () => {
     const exporter = exporterSource();
     const missing = layerInterfaceFields()
@@ -518,6 +548,145 @@ describe('quantized VJ columns', () => {
     frames.clear();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it.each(['A', 'B'] as const)('routes clip LFO on deck %s without modulating another clip or bank', async deck => {
+    const { modulationStore, modulationEngine, registerEffectParamRange, modKeyClipEffect } = await import('../audio/modulation');
+    modulationStore.clearAll(); modulationEngine.stop();
+    launcher.triggerClipNow(0, 0, deck);
+    launcher.setEffectChain('clip', [{ id: 'local-lfo', type: 'blur', enabled: true, params: { amount: .5 } }], 0, deck);
+    const rows = () => deck === 'A' ? get(launcher).layerStates : get(launcher).bankBLayerStates;
+    const clip = rows()[0].activeClip!;
+    const mod = { source: 'lfo-saw' as const, amount: 1, speed: 1, invert: false, bpmSync: false };
+    registerEffectParamRange(0, 'local-lfo', 'amount', 0, 1, clip.id);
+    try {
+      modulationStore.setClipEffectModulation(clip.id, 'local-lfo', 'amount', mod, deck);
+      tick(10250);
+      expect(rows()[0].activeClip?.effects?.[0].params.amount).toBeCloseTo(.25);
+      expect(rows()[0].effects).toEqual([]);
+      launcher.triggerClipNow(0, 1, deck); tick(10500);
+      expect(rows()[0].activeClip?.effects ?? []).toEqual([]);
+      launcher.setClip(1, 0, (deck === 'A' ? get(launcher).clipGrid : get(launcher).bankBClipGrid)[0][0], deck);
+      launcher.triggerClipNow(1, 0, deck); tick(10750);
+      expect(rows()[1].activeClip?.effects?.[0].params.amount).toBeCloseTo(.75);
+      const other = deck === 'A' ? get(launcher).bankBLayerStates : get(launcher).layerStates;
+      expect(other.every(row => !row.activeClip)).toBe(true);
+      const key = modKeyClipEffect(clip.id, 'local-lfo', 'amount', deck);
+      expect(get(modulationStore).get(key)?.clipEffect).toEqual({ base: .5, min: 0, max: 1 });
+      const saved = JSON.parse(JSON.stringify(layers.project.exportProject()));
+      expect(layers.project.importProject(saved)).toBe(true);
+      expect(get(modulationStore).get(key)?.clipEffect).toEqual({ base: .5, min: 0, max: 1 });
+      modulationStore.setClipEffectModulation(clip.id, 'local-lfo', 'amount', { ...mod, source: 'manual' }, deck);
+      launcher.updateClipEffectParams(1, 0, 'local-lfo', { amount: .8 }, deck);
+      modulationStore.setClipEffectModulation(clip.id, 'local-lfo', 'amount', mod, deck);
+      tick(11000);
+      expect(rows()[1].activeClip?.effects?.[0].params.amount).toBeCloseTo(.3);
+    } finally {
+      modulationStore.setClipEffectModulation(clip.id, 'local-lfo', 'amount', { ...mod, source: 'manual' }, deck);
+      modulationStore.clearAll(); modulationEngine.stop();
+    }
+  });
+
+  it('drives Mapping composition Auto and holds when the composition is disabled', async () => {
+    const engine = await import('../audio/autoEngine');
+    engine.stopAutoEngine();
+    layers.project.setEffectChain(null, [{ id: 'map-mix', type: 'blur', enabled: true, params: { amount: 0 } }]);
+    const config = { phase: 0, mode: 'loop' as const, speedHz: .5, min: 0, max: 1, playing: true };
+    layers.project.setMappingCompositionEffectParamAuto('map-mix', 'amount', config);
+    const effect = () => get(layers.project).mappingComposition!.effects[0];
+    try {
+      engine.startAutoEngine(); tick(10000); tick(10100);
+      expect(effect().params.amount).toBeCloseTo(.05);
+      layers.project.setMappingCompositionEffectParamAuto('map-mix', 'amount', { ...config, timing: 'crossfader' });
+      launcher.setCrossfaderValue(.6); tick(10150);
+      expect(effect().params.amount).toBe(.6);
+      layers.project.setMappingCompositionEnabled(false);
+      launcher.setCrossfaderValue(.9); tick(10200);
+      expect(effect().params.amount).toBe(.6);
+      const saved = JSON.parse(JSON.stringify(layers.project.exportProject()));
+      expect(layers.project.importProject(saved)).toBe(true);
+      expect(effect().paramAuto?.amount.timing).toBe('crossfader');
+      layers.project.setMappingCompositionEffectParamAuto('map-mix', 'amount', null);
+      expect(effect().paramAuto).toBeUndefined();
+    } finally { engine.stopAutoEngine(); }
+  });
+
+  it('drives composition effects through Auto ticks and preserves their configuration', async () => {
+    const engine = await import('../audio/autoEngine');
+    engine.stopAutoEngine();
+    launcher.setEffectChain('composition', [{ id: 'mix-blur', type: 'blur', enabled: true, params: { amount: 0 } }]);
+    const config = { phase: 0, mode: 'loop' as const, speedHz: .5, min: 0, max: 1, playing: true };
+    launcher.setCompositionEffectParamAuto('mix-blur', 'amount', config);
+    const effect = () => get(launcher).compositionEffects[0];
+    try {
+      engine.startAutoEngine();
+      tick(10000); tick(10100);
+      expect(effect().params.amount).toBeCloseTo(.05);
+      launcher.setCompositionEffectParamAuto('mix-blur', 'amount', { ...config, timing: 'crossfader' });
+      launcher.setCrossfaderValue(.8);
+      tick(10150);
+      expect(effect().params.amount).toBe(.8);
+      launcher.setCompositionEffectParamAuto('mix-blur', 'amount', { ...config, playing: false });
+      tick(10200);
+      expect(effect().params.amount).toBe(.8);
+      launcher.setCompositionEffectParamAuto('mix-blur', 'amount', { ...config, timing: 'clip' });
+      tick(10250);
+      expect(effect().params.amount).toBe(.8);
+      const saved = JSON.parse(JSON.stringify(layers.project.exportProject()));
+      expect(layers.project.importProject(saved)).toBe(true);
+      expect(effect().paramAuto?.amount.timing).toBe('clip');
+      launcher.setCompositionEffectParamAuto('mix-blur', 'amount', null);
+      expect(effect().paramAuto).toBeUndefined();
+      expect(get(launcher).layerStates[0].effects).toEqual([]);
+    } finally { engine.stopAutoEngine(); }
+  });
+
+  it.each(['A', 'B'] as const)('stores clip-local Auto on deck %s without changing layer effects', deck => {
+    launcher.triggerClipNow(0, 0, deck);
+    launcher.setEffectChain('clip', [{ id: 'clip-fx', type: 'blur', enabled: true, params: { amount: 0 } }], 0, deck);
+    const auto = { phase: .25, mode: 'loop' as const, speedHz: .2, min: 0, max: 1, playing: true, timing: 'clip' as const };
+    launcher.setActiveClipEffectParamAuto(0, 'clip-fx', 'amount', auto, deck);
+    const state = get(launcher);
+    const rows = deck === 'A' ? state.layerStates : state.bankBLayerStates;
+    const block = state.blocks.find(b => b.id === state.activeBlockId)!;
+    expect(rows[0].activeClip?.effects?.[0].paramAuto?.amount).toEqual(auto);
+    expect((deck === 'A' ? block.clipGrid : block.bankBClipGrid)?.[0][0]?.effects?.[0].paramAuto?.amount).toEqual(auto);
+    expect(rows[0].effects).toEqual([]);
+    launcher.updateClipEffectParams(0, 0, 'clip-fx', { amount: .75 }, deck);
+    launcher.triggerClipNow(0, 1, deck);
+    launcher.triggerClipNow(0, 0, deck);
+    const active = () => (deck === 'A' ? get(launcher).layerStates : get(launcher).bankBLayerStates)[0].activeClip!;
+    expect(active().effects?.[0].params.amount).toBe(.75);
+    expect(active().effects?.[0].paramAuto?.amount).toEqual(auto);
+    launcher.setActiveClipEffectParamAuto(0, 'clip-fx', 'amount', null, deck);
+    expect(active().effects?.[0].paramAuto).toBeUndefined();
+  });
+
+  it.each(['A', 'B'] as const)('applies an effect chain atomically and persists the active clip on deck %s', deck => {
+    launcher.triggerClipNow(0, 0, deck);
+    const chain = [{ id: 'chain-blur', type: 'blur' as const, enabled: true, params: { amount: .25 } }];
+    let notifications = 0;
+    const stop = launcher.subscribe(() => notifications++);
+    notifications = 0;
+    launcher.setEffectChain('clip', chain, 0, deck);
+    expect(notifications).toBe(1);
+    stop();
+    chain[0].params.amount = 8;
+    const state = get(launcher);
+    const grid = deck === 'A' ? state.clipGrid : state.bankBClipGrid;
+    const rows = deck === 'A' ? state.layerStates : state.bankBLayerStates;
+    const other = deck === 'A' ? state.bankBClipGrid : state.clipGrid;
+    const block = state.blocks.find(block => block.id === state.activeBlockId)!;
+    expect(rows[0].activeClip?.effects?.[0].params.amount).toBe(.25);
+    expect(grid[0][0]?.effects).toEqual(rows[0].activeClip?.effects);
+    expect((deck === 'A' ? block.clipGrid : block.bankBClipGrid)?.[0][0]?.effects).toEqual(grid[0][0]?.effects);
+    expect(other[0][0]?.effects ?? []).toEqual([]);
+    launcher.setEffectChain('layer', chain, 1, deck);
+    launcher.setEffectChain('composition', chain);
+    expect(get(launcher).compositionEffects).toEqual(chain);
+    expect((deck === 'A' ? get(launcher).layerStates : get(launcher).bankBLayerStates)[1].effects).toEqual(chain);
+    launcher.setEffectChain('clip', [], 0, deck);
+    expect((deck === 'A' ? get(launcher).clipGrid : get(launcher).bankBClipGrid)[0][0]?.effects).toEqual([]);
   });
 
   it.each(['A', 'B'] as const)('clip column protection overrides the layer and persists on deck %s', deck => {

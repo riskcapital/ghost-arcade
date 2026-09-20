@@ -2603,6 +2603,16 @@ void main() {
       recordDiscreteAction();
     },
 
+    setEffectChain(layerId: string | null, effects: Effect[]) {
+      if (NATIVE_ENGINE_ONLY && effects.some(effect => !isNativeSelectableEffect(effect.type))) return;
+      const chain = JSON.parse(JSON.stringify(effects)) as Effect[];
+      update(p => layerId === null ? {
+        ...p,
+        mappingComposition: { ...normalizeMappingCompositionState(p.mappingComposition), enabled: true, effects: chain },
+      } : { ...p, layers: p.layers.map(layer => layer.id === layerId ? { ...layer, effects: chain } : layer) });
+      recordDiscreteAction();
+    },
+
     // Effect management
     addEffect(layerId: string, effectType: EffectType, params?: EffectParams) {
       if (NATIVE_ENGINE_ONLY && !isNativeSelectableEffect(effectType)) {
@@ -2940,6 +2950,21 @@ void main() {
           },
         };
       });
+    },
+
+    setMappingCompositionEffectParamAuto(effectId: string, paramName: string, auto: AutoConfig | null) {
+      update(p => {
+        const composition = normalizeMappingCompositionState(p.mappingComposition);
+        return { ...p, mappingComposition: { ...composition, effects: composition.effects.map(effect => {
+          if (effect.id !== effectId) return effect;
+          const paramAuto = { ...effect.paramAuto };
+          if (auto === null) delete paramAuto[paramName];
+          else paramAuto[paramName] = { ...auto };
+          const { paramAuto: _old, ...rest } = effect;
+          return Object.keys(paramAuto).length ? { ...rest, paramAuto } : rest;
+        }) } };
+      });
+      recordDiscreteAction();
     },
 
     updateMappingCompositionEffectParams(effectId: string, params: Partial<EffectParams>) {
