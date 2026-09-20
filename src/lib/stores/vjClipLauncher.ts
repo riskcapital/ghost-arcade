@@ -2111,6 +2111,30 @@ function createVJClipLauncherStore() {
       update(state => ({ ...state, isLive }));
     },
 
+    /** Apply a complete preset in one store notification, including the saved block. */
+    setEffectChain(scope: 'composition' | 'layer' | 'clip', effects: Effect[], layerIndex = 0, deck: VJDeck = 'A') {
+      if (!effects.every(effect => allowNativeOnlyEffect(effect, scope))) return;
+      const chain = JSON.parse(JSON.stringify(effects)) as Effect[];
+      update(state => {
+        if (scope === 'composition') return { ...state, compositionEffects: chain };
+        const rows = [...pickLayerStates(state, deck)];
+        const row = rows[layerIndex];
+        if (!row) return state;
+        if (scope === 'layer') {
+          rows[layerIndex] = { ...row, effects: chain };
+          return withDeck(state, deck, rows);
+        }
+        const column = row.activeColumn;
+        const grid = pickGrid(state, deck).map(cells => [...cells]);
+        const clip = column === null ? null : grid[layerIndex]?.[column];
+        if (!clip || !row.activeClip || clip.id !== row.activeClip.id) return state;
+        const nextClip = { ...clip, effects: chain };
+        grid[layerIndex][column!] = nextClip;
+        rows[layerIndex] = { ...row, activeClip: nextClip };
+        return { ...withDeck(state, deck, rows, grid), blocks: blocksWithDeckGrid(state, deck, grid) };
+      });
+    },
+
     // Add effect to layer on the given deck
     addLayerEffect(layerIndex: number, effect: Effect, deck: VJDeck = 'A') {
       if (!allowNativeOnlyEffect(effect, 'layer')) return;
@@ -2744,6 +2768,17 @@ function createVJClipLauncherStore() {
       }));
     },
 
+    setCompositionEffectParamAuto(effectId: string, paramName: string, auto: import('../types').AutoConfig | null) {
+      update(state => ({ ...state, compositionEffects: state.compositionEffects.map(effect => {
+        if (effect.id !== effectId) return effect;
+        const paramAuto = { ...effect.paramAuto };
+        if (auto === null) delete paramAuto[paramName];
+        else paramAuto[paramName] = { ...auto };
+        const { paramAuto: _old, ...rest } = effect;
+        return Object.keys(paramAuto).length ? { ...rest, paramAuto } : rest;
+      }) }));
+    },
+
     updateCompositionEffectParams(effectId: string, params: Record<string, any>) {
       update(state => ({
         ...state,
@@ -2869,11 +2904,22 @@ function createVJClipLauncherStore() {
       });
     },
 
-    /** Set or clear the Auto playhead config for a single param on a
-     *  VJ-layer-state effect. Effects live on the layer slot (not the
-     *  clip) so the routing is by (layerIndex, bank, effectId). The
-     *  autoEngine reads paramAuto from layerStates / bankBLayerStates
-     *  and writes resolved values via updateLayerEffectParams. */
+    /** Configure the active clip without leaking automation onto its layer. */
+    setActiveClipEffectParamAuto(layerIndex: number, effectId: string, paramName: string, auto: import('../types').AutoConfig | null, bank: VJDeck = 'A') {
+      const state = get({ subscribe });
+      const clip = pickLayerStates(state, bank)[layerIndex]?.activeClip;
+      if (!clip?.effects?.some(effect => effect.id === effectId)) return;
+      const effects = clip.effects.map(effect => {
+        if (effect.id !== effectId) return effect;
+        const paramAuto = { ...effect.paramAuto };
+        if (auto === null) delete paramAuto[paramName];
+        else paramAuto[paramName] = auto;
+        const { paramAuto: _old, ...rest } = effect;
+        return Object.keys(paramAuto).length ? { ...rest, paramAuto } : rest;
+      });
+      this.setEffectChain('clip', effects, layerIndex, bank);
+    },
+
     setLayerEffectParamAuto(layerIndex: number, effectId: string, paramName: string, auto: import('../types').AutoConfig | null, bank: VJDeck = 'A') {
       update(state => {
         const targetStates = bank === 'B' ? state.bankBLayerStates : state.layerStates;

@@ -3,8 +3,8 @@
  *
  * Separate from the audio modulation engine because:
  *   - Audio modulation is REACTIVE (mic / band amplitude → param).
- *   - Auto is GENERATIVE (sawtooth / triangle phase advances on its
- *     own timetable regardless of any external signal).
+ *   - Auto is GENERATIVE: free sweeps advance at speedHz; beat-synced
+ *     sweeps read the shared performance clock directly.
  *
  * Auto state lives directly on the data being automated:
  *   - `layer.effects[i].paramAuto[paramName]` for mapping effects
@@ -33,6 +33,8 @@
  */
 
 import { get } from 'svelte/store';
+import { resolveAutoValue as resolveValue, advanceAutoPhase, autoClipPosition } from './autoWave';
+import { launchClockPosition } from '../stores/launchClock';
 import { project } from '../stores/layers';
 import { vjClipLauncher } from '../stores/vjClipLauncher';
 import type { AutoConfig, Layer, Effect } from '../types';
@@ -40,33 +42,6 @@ import type { AutoConfig, Layer, Effect } from '../types';
 // ─────────────────────────────────────────────────────────────────
 // Wave shaping
 // ─────────────────────────────────────────────────────────────────
-
-/** Map a 0..1 phase onto a 0..1 sweep position according to mode.
- *  loop = saw, pingpong = triangle. */
-function shapePhase(phase: number, mode: 'loop' | 'pingpong'): number {
-  if (mode === 'pingpong') {
-    return phase < 0.5 ? phase * 2 : 2 - phase * 2;
-  }
-  return phase;
-}
-
-/** Advance phase by dt × speedHz, wrap into [0, 1). NaN-safe. */
-function advancePhase(auto: AutoConfig, dt: number): number {
-  const speedHz = Number.isFinite(auto.speedHz) ? auto.speedHz : 0.15;
-  const prev = Number.isFinite(auto.phase) ? auto.phase : 0;
-  const safeDt = Number.isFinite(dt) ? dt : 0;
-  const next = (prev + speedHz * safeDt) % 1;
-  return next < 0 ? next + 1 : next;
-}
-
-/** Compute the absolute value the param should currently sit at,
- *  given an AutoConfig and its current phase. */
-function resolveValue(auto: AutoConfig): number {
-  const shaped = shapePhase(auto.phase ?? 0, auto.mode ?? 'loop');
-  const lo = Number.isFinite(auto.min) ? auto.min : 0;
-  const hi = Number.isFinite(auto.max) ? auto.max : 1;
-  return lo + shaped * (hi - lo);
-}
 
 // ─────────────────────────────────────────────────────────────────
 // Tick loop
@@ -84,10 +59,12 @@ function tick(now: number) {
   rafId = requestAnimationFrame(tick);
   const dt = lastTime === 0 ? 0 : (now - lastTime) / 1000;
   lastTime = now;
-  // Skip the first frame (dt=0 means undefined motion) and skip
-  // long stalls > 100ms (tab backgrounded, GPU hiccup) so the phase
-  // doesn't jump after a freeze.
-  if (dt <= 0 || dt > 0.1) return;
+  if (dt <= 0 || !Number.isFinite(dt)) return;
+  // One shared phase sample keeps all synced parameters aligned. Free sweeps
+  // still skip stalls; beat sweeps catch up to the grid immediately.
+  const beat = launchClockPosition(now).beat;
+  const vj = get(vjClipLauncher);
+  const crossfader = vj.crossfaderEnabled ? vj.crossfaderValue : undefined;
 
   const p = get(project);
   const layers = p.layers;
@@ -103,6 +80,7 @@ function tick(now: number) {
   for (let layerIdx = 0; layerIdx < layers.length; layerIdx++) {
     const layer = layers[layerIdx];
     if (!layer) continue;
+    const clipPosition = autoClipPosition(layer.source, now);
 
     // Effects — paramAuto sidecar on each Effect
     if (layer.effects) {
@@ -110,7 +88,7 @@ function tick(now: number) {
         if (!fx.paramAuto) continue;
         for (const [paramName, auto] of Object.entries(fx.paramAuto)) {
           if (!auto || !auto.playing) continue;
-          auto.phase = advancePhase(auto, dt);
+          auto.phase = advanceAutoPhase(auto, dt, beat, crossfader, clipPosition);
           const value = resolveValue(auto);
           // Bucket the write
           let layerEffectBatch = effectBatches.get(layer.id);
@@ -146,7 +124,7 @@ function tick(now: number) {
         const subWrites: Record<string, Record<string, number>> = {};
         for (const [path, auto] of Object.entries(ee.paramAuto)) {
           if (!auto || !auto.playing) continue;
-          auto.phase = advancePhase(auto, dt);
+          auto.phase = advanceAutoPhase(auto, dt, beat, crossfader, clipPosition);
           const value = resolveValue(auto);
           const dot = path.indexOf('.');
           if (dot < 0) {
@@ -175,7 +153,7 @@ function tick(now: number) {
     if (layer.source?.shaderValueAuto) {
       for (const [paramName, auto] of Object.entries(layer.source.shaderValueAuto)) {
         if (!auto || !auto.playing) continue;
-        auto.phase = advancePhase(auto, dt);
+        auto.phase = advanceAutoPhase(auto, dt, beat, crossfader, clipPosition);
         const value = resolveValue(auto);
         let batch = shaderBatches.get(layer.id);
         if (!batch) {
@@ -190,7 +168,7 @@ function tick(now: number) {
     if (layer.gpuLayerContent?.paramAuto) {
       for (const [paramKey, auto] of Object.entries(layer.gpuLayerContent.paramAuto)) {
         if (!auto || !auto.playing) continue;
-        auto.phase = advancePhase(auto, dt);
+        auto.phase = advanceAutoPhase(auto, dt, beat, crossfader, clipPosition);
         const value = resolveValue(auto);
         let batch = gpuBatches.get(layer.id);
         if (!batch) {
@@ -199,6 +177,19 @@ function tick(now: number) {
         }
         batch[paramKey] = value;
       }
+    }
+  }
+
+  if (p.mappingComposition?.enabled) {
+    for (const fx of p.mappingComposition.effects) {
+      if (!fx.paramAuto) continue;
+      const writes: Record<string, number> = {};
+      for (const [paramName, auto] of Object.entries(fx.paramAuto)) {
+        if (!auto?.playing || auto.timing === 'clip') continue;
+        auto.phase = advanceAutoPhase(auto, dt, beat, crossfader);
+        writes[paramName] = resolveValue(auto);
+      }
+      if (Object.keys(writes).length) project.updateMappingCompositionEffectParams(fx.id, writes);
     }
   }
 
@@ -227,7 +218,19 @@ function tick(now: number) {
   // Both banks (A + B) are walked because the crossfader can sit
   // anywhere in between and both decks render.
   // ──────────────────────────────────────────────────────────
-  const vj = get(vjClipLauncher);
+  // The final VJ mix has no single clip playhead. Position-driven presets
+  // hold here instead of silently choosing a deck or row.
+  for (const fx of vj.compositionEffects) {
+    if (!fx.paramAuto) continue;
+    const writes: Record<string, number> = {};
+    for (const [paramName, auto] of Object.entries(fx.paramAuto)) {
+      if (!auto?.playing || auto.timing === 'clip') continue;
+      auto.phase = advanceAutoPhase(auto, dt, beat, crossfader);
+      writes[paramName] = resolveValue(auto);
+    }
+    if (Object.keys(writes).length) vjClipLauncher.updateCompositionEffectParams(fx.id, writes);
+  }
+
   const decks: Array<{ states: any; bank: 'A' | 'B' }> = [
     { states: vj.layerStates, bank: 'A' },
     { states: vj.bankBLayerStates, bank: 'B' },
@@ -240,18 +243,35 @@ function tick(now: number) {
 
       // (1) Shader params on the active clip
       const clip = layerState.activeClip;
+      const clipPosition = autoClipPosition(clip, now);
       if (clip?.shaderValueAuto) {
         const writes: Record<string, number> = {};
         let any = false;
         for (const [paramName, auto] of Object.entries(clip.shaderValueAuto)) {
           const a = auto as AutoConfig;
           if (!a || !a.playing) continue;
-          a.phase = advancePhase(a, dt);
+          a.phase = advanceAutoPhase(a, dt, beat, crossfader, clipPosition);
           writes[paramName] = resolveValue(a);
           any = true;
         }
         if (any) {
           vjClipLauncher.batchUpdateShaderValues(i, writes, bank);
+        }
+      }
+
+      // Clip-local effects retain their own automation through re-triggering.
+      if (clip?.effects && layerState.activeColumn !== null) {
+        for (const fx of clip.effects as Effect[]) {
+          if (!fx.paramAuto) continue;
+          const writes: Record<string, number> = {};
+          for (const [paramName, auto] of Object.entries(fx.paramAuto)) {
+            if (!auto?.playing) continue;
+            auto.phase = advanceAutoPhase(auto, dt, beat, crossfader, clipPosition);
+            writes[paramName] = resolveValue(auto);
+          }
+          if (Object.keys(writes).length) {
+            vjClipLauncher.updateClipEffectParams(i, layerState.activeColumn, fx.id, writes, bank);
+          }
         }
       }
 
@@ -264,7 +284,7 @@ function tick(now: number) {
           for (const [paramName, auto] of Object.entries(fx.paramAuto)) {
             const a = auto as AutoConfig;
             if (!a || !a.playing) continue;
-            a.phase = advancePhase(a, dt);
+            a.phase = advanceAutoPhase(a, dt, beat, crossfader, clipPosition);
             writes[paramName] = resolveValue(a);
             any = true;
           }

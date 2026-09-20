@@ -1,5 +1,28 @@
 import type { KeyframeEasing, Keyframe, BoolKeyframe, KeyframeTrack } from '../types';
 
+/** Shared labels keep the inspector and context menu in sync. */
+export const KEYFRAME_EASINGS: { value: KeyframeEasing; label: string; hint: string }[] = [
+  { value: 'linear', label: 'Linear', hint: 'Constant speed' },
+  { value: 'ease-in', label: 'Ease In', hint: 'Accelerate into the next value' },
+  { value: 'ease-out', label: 'Ease Out', hint: 'Slow down into the next value' },
+  { value: 'ease-in-out', label: 'Ease In-Out', hint: 'Accelerate then slow down' },
+  { value: 'sine', label: 'Sine', hint: 'Smooth sinusoidal start and finish' },
+  { value: 'exponential', label: 'Exponential Out', hint: 'Fast attack with a long settling tail' },
+  { value: 'bounce', label: 'Bounce Out', hint: 'Bounce into the next value without overshoot' },
+  { value: 'elastic', label: 'Elastic Out', hint: 'Spring past the next value, then settle; may overshoot' },
+  { value: 'step', label: 'Hold', hint: 'Hold until the next keyframe' },
+];
+
+function bounceOut(t: number): number {
+  const n = 7.5625;
+  const d = 2.75;
+  if (t < 1 / d) return n * t * t;
+  if (t < 2 / d) { t -= 1.5 / d; return n * t * t + .75; }
+  if (t < 2.5 / d) { t -= 2.25 / d; return n * t * t + .9375; }
+  t -= 2.625 / d;
+  return n * t * t + .984375;
+}
+
 // ── Easing functions ─────────────────────────────────────────────────────
 
 function easeIn(t: number): number {
@@ -19,7 +42,13 @@ function step(t: number): number {
 }
 
 export function applyEasing(t: number, easing: KeyframeEasing): number {
+  if (t <= 0) return 0;
+  if (t >= 1) return 1;
   switch (easing) {
+    case 'sine': return (1 - Math.cos(Math.PI * t)) / 2;
+    case 'exponential': return 1 - Math.pow(2, -10 * t);
+    case 'bounce': return bounceOut(t);
+    case 'elastic': return 1 + Math.pow(2, -10 * t) * Math.sin((10 * t - .75) * (2 * Math.PI / 3));
     case 'ease-in': return easeIn(t);
     case 'ease-out': return easeOut(t);
     case 'ease-in-out': return easeInOut(t);

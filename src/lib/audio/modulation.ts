@@ -131,6 +131,8 @@ export type ModTarget = 'vj' | 'mapping';
 
 // A single parameter modulation assignment
 export interface ParamModulation {
+  /** Clip-effect baseline/range survive save/reopen without relying on an open panel. */
+  clipEffect?: { base: number; min: number; max: number };
   source: ModSource;
   /** Which render-graph side this modulation drives. Optional for
    *  back-compat with old project saves; when absent the engine
@@ -265,6 +267,10 @@ export function modKeyShader(
   if (clipId) return `vjc:${clipId}:${paramName}`;
   return bank === 'B' ? `B:${layerIndex}:${paramName}` : `${layerIndex}:${paramName}`;
 }
+export function modKeyClipEffect(clipId: string, effectId: string, paramName: string, bank: 'A' | 'B' = 'A'): string {
+  return `vjcf:${bank}:${clipId}:${effectId}:${paramName}`;
+}
+
 export function modKeyEffect(
   layerIndex: number,
   effectId: string,
@@ -356,7 +362,9 @@ export function registerEffectParamRange(
   paramName: string,
   min: number,
   max: number,
+  clipId?: string,
 ) {
+  if (clipId) effectParamRanges.set(`clip:${clipId}:fx:${effectId}:${paramName}`, { min, max });
   effectParamRanges.set(`${layerIndex}:fx:${effectId}:${paramName}`, { min, max });
 }
 
@@ -521,6 +529,13 @@ function rebuildParsedCache(map: ModulationMap) {
     let target: ModTarget = 'vj';
     let bank: 'A' | 'B' = 'A';
     let cursor = 0;
+    if (parts[0] === 'vjcf') {
+      if (!['A', 'B'].includes(parts[1]) || parts.length < 5) continue;
+      parsedCache.push({ mod, bank: parts[1] as 'A' | 'B', target: 'vj', clipId: parts[2],
+        layerIndex: -1, isEffect: true, isEdgeEffect: false, isGPU: false, isSplat: false,
+        effectId: parts[3], paramName: parts.slice(4).join(':') });
+      continue;
+    }
     if (parts[0] === 'vjc') {
       // vjc:CLIPID:paramName  — layerIndex is resolved per-frame by
       // searching deck layerStates for the clip ID. paramName can
@@ -693,6 +708,31 @@ function createModulationStore() {
      *  the VJ deck updater. The `target` field on the stored mod is
      *  stamped to match the key prefix so engine routing stays in
      *  sync. */
+    setClipEffectModulation(clipId: string, effectId: string, paramName: string, mod: ParamModulation, bank: 'A' | 'B' = 'A') {
+      const key = modKeyClipEffect(clipId, effectId, paramName, bank);
+      const existing = get({ subscribe }).get(key);
+      if (!existing || mod.source === 'manual' || existing.source !== mod.source) {
+        baseValues.delete(key);
+        lastModulatedValues.delete(key);
+      }
+      let descriptor = existing?.clipEffect;
+      if (!descriptor && mod.source !== 'manual') {
+        const state = get(vjClipLauncher);
+        const rows = bank === 'A' ? state.layerStates : state.bankBLayerStates;
+        const clip = rows.find(row => row.activeClip?.id === clipId)?.activeClip;
+        const params = clip?.effects?.find(effect => effect.id === effectId)?.params as Record<string, unknown> | undefined;
+        const base = params?.[paramName];
+        const range = effectParamRanges.get(`clip:${clipId}:fx:${effectId}:${paramName}`);
+        if (typeof base === 'number' && Number.isFinite(base)) descriptor = { base, min: range?.min ?? 0, max: range?.max ?? 1 };
+      }
+      update(map => {
+        const next = new Map(map);
+        if (mod.source === 'manual') next.delete(key);
+        else next.set(key, { ...mod, target: 'vj', clipEffect: descriptor });
+        return next;
+      });
+    },
+
     setEffectModulation(layerIndex: number, effectId: string, paramName: string, mod: ParamModulation, bank: 'A' | 'B' = 'A', target?: ModTarget) {
       const t = target ?? mod.target ?? 'vj';
       const stored: ParamModulation = { ...mod, target: t };
@@ -1074,14 +1114,14 @@ class ModulationEngine {
       if (entry.clipId) {
         let foundLayer = -1;
         let foundBank: 'A' | 'B' = 'A';
-        for (let i = 0; i < vjState.layerStates.length; i++) {
+        for (let i = 0; (!entry.isEffect || entry.bank === 'A') && i < vjState.layerStates.length; i++) {
           if (vjState.layerStates[i]?.activeClip?.id === entry.clipId) {
             foundLayer = i;
             foundBank = 'A';
             break;
           }
         }
-        if (foundLayer < 0) {
+        if (foundLayer < 0 && (!entry.isEffect || entry.bank === 'B')) {
           for (let i = 0; i < vjState.bankBLayerStates.length; i++) {
             if (vjState.bankBLayerStates[i]?.activeClip?.id === entry.clipId) {
               foundLayer = i;
@@ -1242,15 +1282,20 @@ class ModulationEngine {
         // Base-value cache key — mapping uses bank='A' implicitly (no
         // banks in mapping mode), VJ uses the real bank so A and B effects
         // on the same row don't share a base.
-        const fxKey = `${bank}:${layerIndex}:fx:${effectId}:${paramName}`;
-        let fxBase = baseValues.get(fxKey);
+        const clipEffect = !isMapping && entry.clipId ? layerStates[layerIndex]?.activeClip?.effects?.find(e => e.id === effectId) : undefined;
+        if (entry.clipId && !clipEffect) continue;
+        const fxKey = entry.clipId ? modKeyClipEffect(entry.clipId, effectId, paramName, bank) : `${bank}:${layerIndex}:fx:${effectId}:${paramName}`;
+        const savedClipRange = entry.clipId && mod.clipEffect
+          && [mod.clipEffect.base, mod.clipEffect.min, mod.clipEffect.max].every(Number.isFinite)
+          && mod.clipEffect.min <= mod.clipEffect.max ? mod.clipEffect : undefined;
+        let fxBase = savedClipRange?.base ?? baseValues.get(fxKey);
         if (fxBase === undefined) {
           let sv: number | undefined;
           if (isMapping && _mappingEffectReader) {
             sv = _mappingEffectReader(layerIndex, effectId, paramName);
           } else if (!isMapping) {
             const layerState = layerStates[layerIndex];
-            const effect = layerState?.effects.find(e => e.id === effectId);
+            const effect = clipEffect ?? layerState?.effects.find(e => e.id === effectId);
             if (!effect) continue;
             const fxParam = (effect.params as Record<string, number>)[paramName];
             sv = typeof fxParam === 'number' ? fxParam : undefined;
@@ -1280,9 +1325,9 @@ class ModulationEngine {
         // to the param's actual scope (e.g. a 0..10 displacement amplitude
         // doesn't get clamped to 0..1). Falls back to 0..1 for legacy
         // unregistered params so the old VJ-mode behavior is preserved.
-        const fxRange = effectParamRanges.get(`${layerIndex}:fx:${effectId}:${paramName}`);
-        const fxMin = fxRange?.min ?? 0;
-        const fxMax = fxRange?.max ?? 1;
+        const fxRange = effectParamRanges.get(entry.clipId ? `clip:${entry.clipId}:fx:${effectId}:${paramName}` : `${layerIndex}:fx:${effectId}:${paramName}`);
+        const fxMin = savedClipRange?.min ?? fxRange?.min ?? 0;
+        const fxMax = savedClipRange?.max ?? fxRange?.max ?? 1;
         const fxSpan = fxMax - fxMin;
         const raw = fxBase + (signal - 0.5) * mod.amount * fxSpan;
         const modulated = Math.max(fxMin, Math.min(fxMax, raw));
@@ -1306,7 +1351,10 @@ class ModulationEngine {
             }
           }
         } else {
-          vjClipLauncher.updateLayerEffectParams(layerIndex, effectId, { [paramName]: modulated }, bank);
+          if (entry.clipId) {
+            const column = layerStates[layerIndex]?.activeColumn;
+            if (column !== null && column !== undefined) vjClipLauncher.updateClipEffectParams(layerIndex, column, effectId, { [paramName]: modulated }, bank);
+          } else vjClipLauncher.updateLayerEffectParams(layerIndex, effectId, { [paramName]: modulated }, bank);
         }
         lastModulatedValues.set(fxKey, modulated);
       } else if (!isEffect) {

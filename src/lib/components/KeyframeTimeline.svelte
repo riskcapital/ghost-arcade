@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { KEYFRAME_EASINGS } from '../keyframes/easing';
   import { keyframeTimeline } from '../stores/keyframeTimeline';
   import { project, selectedLayer } from '../stores/layers';
   import { vjClipLauncher, vjOutputLayers } from '../stores/vjClipLauncher';
@@ -304,11 +305,9 @@
               value={selectedKf.easing || 'linear'}
               onchange={(e) => keyframeTimeline.updateKeyframeEasing(selectedKf!.layerId, selectedKf!.trackKey, selectedKf!.time, (e.target as HTMLSelectElement).value as any)}
             >
-              <option value="linear">Linear</option>
-              <option value="ease-in">Ease In</option>
-              <option value="ease-out">Ease Out</option>
-              <option value="ease-in-out">Ease In-Out</option>
-              <option value="step">Step</option>
+              {#each KEYFRAME_EASINGS as easing}
+                <option value={easing.value} title={easing.hint}>{easing.label}</option>
+              {/each}
             </select>
           </label>
         {/if}

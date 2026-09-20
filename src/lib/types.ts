@@ -4773,6 +4773,11 @@ export interface EffectParams {
  * a full Svelte rerender per tick (see autoEngine).
  */
 export interface AutoConfig {
+  /** Free uses speedHz; beat follows the clock; crossfader follows the A/B position. */
+  timing?: 'free' | 'beat' | 'crossfader' | 'clip';
+  cycleBeats?: number;
+  /** Optional curve; older projects keep their linear sweep. */
+  easing?: KeyframeEasing;
   /** Internal sweep counter, 0..1. Advanced by `speedHz × dt` per frame
    *  when `playing` is true. */
   phase: number;
@@ -5093,7 +5098,7 @@ export interface SequencerConfig {
 // Keyframe Timeline Types
 // ═══════════════════════════════════════════════════
 
-export type KeyframeEasing = 'linear' | 'ease-in' | 'ease-out' | 'ease-in-out' | 'step';
+export type KeyframeEasing = 'linear' | 'ease-in' | 'ease-out' | 'ease-in-out' | 'step' | 'sine' | 'exponential' | 'bounce' | 'elastic';
 
 export interface Keyframe {
   time: number;            // seconds from timeline start

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { KEYFRAME_EASINGS } from '../../keyframes/easing';
   import { keyframeTimeline } from '../../stores/keyframeTimeline';
   import type { KeyframeableParam } from '../../keyframes/paramDiscovery';
   import type { KeyframeEasing } from '../../types';
@@ -235,6 +236,18 @@
     kind: 'keyframe' | 'empty-track';
   } | null = null;
 
+  // Measure the actual menu: extra curves and small windows must not hide actions.
+  function fitContextMenu(node: HTMLElement, anchor: { x: number; y: number }) {
+    function fit() {
+      const rect = node.getBoundingClientRect();
+      node.style.left = `${Math.max(8, Math.min(anchor.x, window.innerWidth - rect.width - 8))}px`;
+      node.style.top = `${Math.max(8, Math.min(anchor.y, window.innerHeight - rect.height - 8))}px`;
+    }
+    fit();
+    window.addEventListener('resize', fit);
+    return { update(next: { x: number; y: number }) { anchor = next; fit(); }, destroy() { window.removeEventListener('resize', fit); } };
+  }
+
   function setEasing(easing: KeyframeEasing) {
     if (!contextMenu) return;
     keyframeTimeline.updateKeyframeEasing(contextMenu.layerId, contextMenu.paramKey, contextMenu.time, easing);
@@ -412,15 +425,13 @@
 
 <!-- Context menu -->
 {#if contextMenu && contextMenu.kind === 'keyframe'}
-  <div class="context-menu" style="left: {contextMenu.x}px; top: {contextMenu.y}px"
+  <div class="context-menu" use:fitContextMenu={contextMenu} style="left: {contextMenu.x}px; top: {contextMenu.y}px"
     onclick={(e) => e.stopPropagation()}
     onmousedown={(e) => e.stopPropagation()}
     oncontextmenu={(e) => e.preventDefault()}>
-    <button class="ctx-item" onclick={(e) => { e.stopPropagation(); setEasing('linear'); }}>Linear</button>
-    <button class="ctx-item" onclick={(e) => { e.stopPropagation(); setEasing('ease-in'); }}>Ease In</button>
-    <button class="ctx-item" onclick={(e) => { e.stopPropagation(); setEasing('ease-out'); }}>Ease Out</button>
-    <button class="ctx-item" onclick={(e) => { e.stopPropagation(); setEasing('ease-in-out'); }}>Ease In-Out</button>
-    <button class="ctx-item" onclick={(e) => { e.stopPropagation(); setEasing('step'); }}>Step</button>
+    {#each KEYFRAME_EASINGS as easing}
+      <button class="ctx-item" title={easing.hint} onclick={(e) => { e.stopPropagation(); setEasing(easing.value); }}>{easing.label}</button>
+    {/each}
     <div class="ctx-sep"></div>
     <button class="ctx-item" onclick={(e) => { e.stopPropagation(); copyKeyframe(); }}>
       Copy Keyframe <span class="ctx-shortcut">Ctrl+C</span>
@@ -433,7 +444,7 @@
     <button class="ctx-item ctx-delete" onclick={(e) => { e.stopPropagation(); deleteKeyframe(); }}>Delete</button>
   </div>
 {:else if contextMenu && contextMenu.kind === 'empty-track'}
-  <div class="context-menu" style="left: {contextMenu.x}px; top: {contextMenu.y}px"
+  <div class="context-menu" use:fitContextMenu={contextMenu} style="left: {contextMenu.x}px; top: {contextMenu.y}px"
     onclick={(e) => e.stopPropagation()}
     onmousedown={(e) => e.stopPropagation()}
     oncontextmenu={(e) => e.preventDefault()}>
@@ -552,7 +563,10 @@
     border-radius: 4px;
     padding: 4px 0;
     box-shadow: 0 4px 16px rgba(0,0,0,0.5);
-    min-width: 110px;
+    min-width: 160px;
+    max-width: calc(100vw - 16px);
+    max-height: calc(100vh - 16px);
+    overflow-y: auto;
   }
   .ctx-item {
     display: block;

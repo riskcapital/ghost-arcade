@@ -12,31 +12,61 @@
    * is already gated upstream.
    */
   import { audioStore } from '../stores/audio';
+  import { numericExpression } from '../utils/numericExpression';
 
   // When false (default) the widget self-hides if audio isn't active.
   // Mapping mode top bar uses this — no clutter when audio is off.
   export let alwaysShow: boolean = false;
 
-  function commitBpm(event: Event) {
-    const input = event.currentTarget as HTMLInputElement;
-    const value = Number(input.value);
-    if (input.value.trim() && Number.isFinite(value) && value > 0) audioStore.setManualBPM(value);
-    input.value = $audioStore.bpm > 0 ? String($audioStore.bpm) : '';
+  let editing = false;
+  let draft = '';
+  let error = '';
+  // Live detection can update BPM while typing; never replace an unfinished expression.
+  $: if (!editing) draft = $audioStore.bpm > 0 ? String($audioStore.bpm) : '';
+  function beginEdit() { editing = true; error = ''; }
+  function commitBpm(blurred = false): boolean {
+    if (!editing) return true;
+    const value = numericExpression(draft);
+    if (value === null || value <= 0) {
+      error = 'Enter a positive tempo or expression, such as 120/2. Tempo unchanged.';
+      if (blurred) editing = false;
+      return false;
+    }
+    // Clear ownership before updating the shared clock or triggering blur.
+    editing = false;
+    error = '';
+    audioStore.setManualBPM(value);
+    draft = String($audioStore.bpm);
+    return true;
   }
-  function handleTap() { audioStore.tapTempo(); }
-  function clearTap() { audioStore.clearManualBPM(); }
+  function tempoKey(event: KeyboardEvent) {
+    if (event.key === 'Enter') {
+      event.preventDefault();
+      if (commitBpm()) (event.currentTarget as HTMLInputElement).blur();
+    } else if (event.key === 'Escape') {
+      event.preventDefault();
+      editing = false;
+      error = '';
+      draft = $audioStore.bpm > 0 ? String($audioStore.bpm) : '';
+      (event.currentTarget as HTMLInputElement).blur();
+    }
+  }
+  function handleTap() { editing = false; error = ''; audioStore.tapTempo(); }
+  function clearTap() { editing = false; error = ''; audioStore.clearManualBPM(); }
 </script>
 
 {#if alwaysShow || $audioStore.isActive}
   <div class="bpm-tap-widget">
     <button class="bpm-tap-btn" onclick={handleTap} title="Tap to set tempo manually">TAP</button>
     <label class="bpm-readout" class:confident={$audioStore.bpmConfidence > 0.5}>
-      <input class="bpm-input" type="number" min="30" max="300" step="0.1" placeholder="—"
-        aria-label="Tempo in BPM" title="Type a tempo (30–300 BPM); Enter to apply"
-        value={$audioStore.bpm > 0 ? $audioStore.bpm : ''}
-        onchange={commitBpm} onkeydown={(e) => { if (e.key === 'Enter') e.currentTarget.blur(); }} />
+      <input class="bpm-input" type="text" inputmode="text" maxlength="256" placeholder="—"
+        aria-label="Tempo in BPM: number or expression" aria-invalid={!!error}
+        title={error || 'Type a tempo or expression (30–300 BPM), e.g. 120/2; Enter applies, Escape cancels'}
+        bind:value={draft} onfocus={beginEdit} oninput={() => { editing = true; error = ''; }}
+        onblur={() => commitBpm(true)} onkeydown={tempoKey} />
       <span>BPM</span>
     </label>
+    {#if error}<span class="tempo-error" role="status">{error}</span>{/if}
     {#if $audioStore.manualBPM}
       <button class="bpm-auto-btn" onclick={clearTap} title="Clear manual BPM and resume auto-detection">AUTO</button>
     {/if}
@@ -45,6 +75,7 @@
 
 <style>
   .bpm-tap-widget {
+    position: relative;
     display: inline-flex;
     align-items: center;
     gap: 6px;
@@ -80,7 +111,8 @@
   }
 
   .bpm-input { width: 48px; min-width: 0; height: 26px; box-sizing: border-box; padding: 2px 3px; border: 1px solid var(--ga-line-2, #34363c); border-radius: 4px; background: #090b0f; color: var(--ga-selection-ink, #e0e8ff); font: inherit; text-align: right; appearance: textfield; }
-  .bpm-input::-webkit-inner-spin-button, .bpm-input::-webkit-outer-spin-button { -webkit-appearance: none; margin: 0; }
+  .bpm-input[aria-invalid="true"] { border-color: #c88d74; }
+  .tempo-error { position: absolute; top: calc(100% + 6px); right: 0; width: 220px; padding: 8px 10px; border: 1px solid #725447; border-radius: 6px; background: #191b22; color: #e0b29d; font-size: 11px; line-height: 1.4; z-index: 30; pointer-events: none; }
   .bpm-input:focus { outline: 1px solid var(--ga-focus, #7996ff); }
   .bpm-readout {
     display: inline-flex; align-items: center; gap: 4px;

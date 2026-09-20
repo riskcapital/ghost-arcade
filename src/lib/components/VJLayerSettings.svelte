@@ -50,7 +50,7 @@
       oninput={(e) => vjClipLauncher.setLayerAudio(index, { audioPan: +e.currentTarget.value }, deck)}
       data-midi-path="{deck === 'B' ? 'vj-b' : 'vj'}:{index}:audioPan" data-midi-label="Layer audio pan" data-midi-min="-1" data-midi-max="1" /></label>
   </fieldset>
-  <VJTransitionControls duration={layer.transitionDuration} style={layer.transitionStyle} onChange={(patch) => vjClipLauncher.setLayerTransition(index, patch, deck)} />
+  <VJTransitionControls contextKey={`${deck}:${index}`} duration={layer.transitionDuration} style={layer.transitionStyle} onChange={(patch) => vjClipLauncher.setLayerTransition(index, patch, deck)} />
 </div>
 
 <style>

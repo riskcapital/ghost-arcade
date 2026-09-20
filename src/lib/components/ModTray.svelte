@@ -54,7 +54,8 @@
   import type { ModSource, ParamModulation } from '../audio/modulation';
   import { getVisualAudioSnapshot } from '../audio/visualAudio';
   import { audioStore } from '../stores/audio';
-  import type { AutoConfig } from '../types';
+  import type { AutoConfig, KeyframeEasing } from '../types';
+  import { KEYFRAME_EASINGS } from '../keyframes/easing';
 
   export let label: string;
   /** Anchor element (the mod chip button) the tray positions against. */
@@ -67,6 +68,8 @@
   export let auto: AutoConfig | undefined = undefined;
   /** Hide the Auto tab for surfaces that don't support the playhead. */
   export let supportsAuto = true;
+  export let supportsModulation = true;
+  export let supportsClipPosition = true;
   export let autoHint = 'Drag the cyan handles on the param slider to clip the sweep range.';
   export let onClose: () => void;
   export let onSetSource: (s: ModSource) => void;
@@ -261,9 +264,11 @@
   <!-- Category row -->
   <div class="mt-cats">
     <button class:active={category === 'manual'} onclick={() => pickCategory('manual')}>Manual</button>
+    {#if supportsModulation}
     <button class:active={category === 'audio'} class="cat-audio" onclick={() => pickCategory('audio')}>Audio</button>
     <button class:active={category === 'lfo'} class="cat-lfo" onclick={() => pickCategory('lfo')}>LFO</button>
     <button class:active={category === 'sync'} class="cat-sync" onclick={() => pickCategory('sync')}>Beat</button>
+    {/if}
     {#if supportsAuto}
       <button class:active={category === 'auto'} class="cat-auto" onclick={() => pickCategory('auto')}>Auto</button>
     {/if}
@@ -351,23 +356,60 @@
         <button class="mt-play" class:playing={auto.playing}
           onclick={() => onPatchAuto({ playing: !auto!.playing })}
           title={auto.playing ? 'Pause' : 'Play'}>{auto.playing ? '❚❚' : '▶'}</button>
+        {#if auto.timing !== 'crossfader' && auto.timing !== 'clip'}
         <div class="mt-mode">
           <button class:active={auto.mode === 'loop'} onclick={() => onPatchAuto({ mode: 'loop' })}>Loop</button>
           <button class:active={auto.mode === 'pingpong'} onclick={() => onPatchAuto({ mode: 'pingpong' })}>Ping-pong</button>
         </div>
+        {/if}
       </div>
+      <label class="mt-row">
+        <span class="mt-row-label">Driver</span>
+        <select class="mt-curve" aria-label="Auto movement driver" value={auto.timing ?? 'free'}
+          onchange={(event) => onPatchAuto({ timing: event.currentTarget.value as AutoConfig['timing'] })}>
+          <option value="free">Free</option><option value="beat">Beat sync</option><option value="crossfader">Crossfader A/B</option>{#if supportsClipPosition || auto.timing === 'clip'}<option value="clip" disabled={!supportsClipPosition}>Clip position{supportsClipPosition ? '' : ' (unavailable)'}</option>{/if}
+        </select>
+      </label>
+      {#if auto.timing === 'beat'}
+        <label class="mt-row">
+          <span class="mt-row-label">Cycle</span>
+          <select class="mt-curve" aria-label="Beats per Auto cycle" value={auto.cycleBeats ?? 4}
+            onchange={(event) => onPatchAuto({ cycleBeats: Number(event.currentTarget.value) })}>
+            {#each [.25, .5, 1, 2, 4, 8, 16, 32] as beats}
+              <option value={beats}>{beats} {beats === 1 ? 'beat' : 'beats'}</option>
+            {/each}
+          </select>
+        </label>
+        <div class="mt-hint">One full loop or round trip per cycle. Resume rejoins the shared beat grid.</div>
+      {:else if auto.timing === 'clip'}
+        <div class="mt-hint">{supportsClipPosition ? 'Follows the current layer’s video from trim start to trim end, including reverse and scrubbing. Holds when no video position is available.' : 'This composition has no single clip playhead. Choose Free, Beat sync or Crossfader to animate it.'}</div>
+      {:else if auto.timing === 'crossfader'}
+        <div class="mt-hint">Deck A uses the range start; Deck B uses its end. Enable Split Deck to follow the fader. Pause or disable Split Deck to hold the value.</div>
+      {:else}
       <div class="mt-row">
         <span class="mt-row-label">Speed</span>
         <input type="range" min="0.01" max="1" step="0.005" value={auto.speedHz}
           oninput={(e) => onPatchAuto({ speedHz: parseFloat((e.target as HTMLInputElement).value) })} />
         <span class="mt-row-val">{auto.speedHz.toFixed(2)}Hz</span>
       </div>
-      <div class="mt-hint">{autoHint}</div>
+      {/if}
+      <label class="mt-row">
+        <span class="mt-row-label">Curve</span>
+        <select class="mt-curve" aria-label="Auto movement curve" value={auto.easing ?? 'linear'}
+          onchange={(event) => onPatchAuto({ easing: event.currentTarget.value as KeyframeEasing })}>
+          {#each KEYFRAME_EASINGS.filter(curve => curve.value !== 'step') as curve}
+            <option value={curve.value}>{curve.label}</option>
+          {/each}
+        </select>
+      </label>
+      <div class="mt-hint">{autoHint} Curves stay within your selected range.</div>
     </div>
   {/if}
 </div>
 
 <style>
+  .mt-curve { flex: 1; min-width: 0; padding: 5px 7px; border: 1px solid #343d50; border-radius: 5px; background: #121925; color: #dde6fa; font: inherit; }
+  .mt-curve:focus-visible { outline: 2px solid #7397ed; outline-offset: 2px; }
   .mt {
     position: fixed;
     z-index: 4000;
