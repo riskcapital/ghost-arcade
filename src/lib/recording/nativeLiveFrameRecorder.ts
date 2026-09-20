@@ -1,7 +1,7 @@
 import { mediaLibrary } from '../stores/media';
 import { pathToFileUrl, type AssetRef } from '../storage/assetRegistry';
 import { generateUUID } from '../utils/uuid';
-import { isElectron } from '../bridge';
+import { isElectron, invoke } from '../bridge';
 import {
   getNativeRendererCapabilities,
   getNativeRendererFrameSnapshot,
@@ -19,7 +19,6 @@ import {
   thumbnailFromVideoUrl,
   writeNativeMp4Frame,
   writeNativeRendererMp4Frame,
-  writeNativeRendererMp4FrameLiveSpan,
   type NativeMp4FrameEncoderSession,
 } from './offlineRender';
 
@@ -120,7 +119,7 @@ async function saveMp4ToLibrary(
     }
   }
   const url = pathToFileUrl(encoded.outputPath);
-  const durationSeconds = frames / Math.max(1, session.fps);
+  const durationSeconds = encoded.frames / Math.max(1, session.fps);
   const thumbnail = await thumbnailFromVideoUrl(url, Math.min(2, durationSeconds * 0.4));
   const name = recordingName(namePrefix);
   const assetRef: AssetRef = {
@@ -275,7 +274,7 @@ export async function startNativeLiveFrameRecording(
  * Desktop live recorder backed by native renderer snapshots.
  *
  * This path keeps rendering and readback inside the Rust render core,
- * then hands each raw snapshot file directly to the desktop MP4 frame
+ * then streams raw snapshots directly to the desktop MP4 frame
  * encoder. It is the live-recording equivalent of the offline native
  * render path and avoids browser canvas capture entirely.
  */
@@ -352,6 +351,15 @@ export async function startNativeRendererLiveFrameRecording(
     filename: namePrefix,
   }, 0, pixelFormat);
 
+  const liveControl = (action: 'start' | 'stop' | 'status') => invoke<{ success: boolean; frames: number; error?: string }>(
+    'mp4_frame_encoder_live_control', { jobId: session.jobId, action });
+  if (liveClock) {
+    try {
+      const result = await liveControl('start');
+      if (!result.success) throw new Error(result.error || 'Could not start live recording');
+    } catch (error) { await cancelNativeMp4FrameEncoder(session); await restoreOnce(); throw error; }
+  }
+
   let active = true;
   let finishing = false;
   let duration = 0;
@@ -362,10 +370,17 @@ export async function startNativeRendererLiveFrameRecording(
   const frameMs = 1000 / fps;
   let nextFrameAt = startedAt;
 
+  let statusPending = false;
   const durationTimer = window.setInterval(() => {
     if (!active && !finishing) return;
     duration = Math.max(0, Math.floor((performance.now() - startedAt) / 1000));
     options.onDurationUpdate?.(duration);
+    if (liveClock && active && !statusPending) {
+      statusPending = true;
+      void liveControl('status').then(async result => {
+        if (active && (!result.success || result.error)) await fail(new Error(result.error || 'Recording stopped'));
+      }).catch(async error => { if (active) await fail(error); }).finally(() => { statusPending = false; });
+    }
   }, 250);
 
   const cleanupTimers = () => {
@@ -389,22 +404,8 @@ export async function startNativeRendererLiveFrameRecording(
       const timeSeconds = frameIndex / fps;
       if (!liveClock) await options.prepareFrame?.(frameIndex, timeSeconds);
       if (!active || finishing) return;
-      if (liveClock) {
-        // Pace by the wall clock: one capture covers every frame slot
-        // that elapsed since the last one (duplicates keep real-time
-        // playback; cap runaway spans at 2s so a long stall can't
-        // spiral into thousands of writes).
-        const elapsed = (performance.now() - startedAt) / 1000;
-        const targetIndex = Math.min(
-          frameIndex + fps * 2,
-          Math.max(frameIndex, Math.floor(elapsed * fps)),
-        );
-        await writeNativeRendererMp4FrameLiveSpan(session, frameIndex, targetIndex);
-        frameIndex = targetIndex + 1;
-      } else {
-        await writeNativeRendererMp4Frame(session, frameIndex, timeSeconds);
-        frameIndex++;
-      }
+      await writeNativeRendererMp4Frame(session, frameIndex, timeSeconds);
+      frameIndex++;
     } catch (err) {
       if (!active || finishing) return;
       await fail(err);
@@ -437,6 +438,11 @@ export async function startNativeRendererLiveFrameRecording(
       await Promise.race([pumpPromise.catch(() => {}), delay(1500)]);
     }
     try {
+      if (liveClock) {
+        const result = await liveControl('stop');
+        if (!result.success || result.error) throw new Error(result.error || 'Recording stopped');
+        frameIndex = result.frames;
+      }
       if (frameIndex <= 0) {
         await cancelNativeMp4FrameEncoder(session);
         throw new Error('Recording stopped before any native renderer frames were captured.');
@@ -454,7 +460,7 @@ export async function startNativeRendererLiveFrameRecording(
     }
   };
 
-  schedule();
+  if (!liveClock) schedule();
 
   return {
     stop() {

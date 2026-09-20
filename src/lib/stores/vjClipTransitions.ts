@@ -38,6 +38,8 @@ export interface VJClipTransition {
   startedAtMs: number | null;
   requiresSnapshot: boolean;
   frozenSourceId?: string;
+  queuedTriggerId?: string;
+  preparedIncoming?: VJClip;
 }
 
 export function createVJClipTransitions() {
@@ -72,7 +74,7 @@ export function createVJClipTransitions() {
       releaseIfUnused(active.frozenSourceId);
       return true;
     },
-    begin(deck: VJDeck, layerIndex: number, outgoing: VJClip | null, incoming: VJClip, duration: number, style: CrossfaderTransition, frozenSourceId?: string) {
+    begin(deck: VJDeck, layerIndex: number, outgoing: VJClip | null, incoming: VJClip, duration: number, style: CrossfaderTransition, frozenSourceId?: string, queuedTriggerId?: string) {
       const key = vjClipTransitionKey(deck, layerIndex);
       const old = get(state).get(key);
       const returnsToWaitingOutgoing = old?.startedAtMs === null && !old.requiresSnapshot
@@ -91,17 +93,24 @@ export function createVJClipTransitions() {
         incomingSeekGeneration: Math.max(0, Math.round(incoming._nativePlaybackSeekSeq ?? 0)),
         duration: normalizedTransitionDuration(duration), style: normalizedTransitionStyle(style),
         startedAtMs: null,
-        requiresSnapshot: !!old && (old.startedAtMs !== null || old.requiresSnapshot) && !frozenSourceId,
+        ...(queuedTriggerId ? {queuedTriggerId,preparedIncoming:{...incoming}} : {}),
+        requiresSnapshot: !!old && (old.startedAtMs !== null || old.requiresSnapshot || !!old.queuedTriggerId) && !frozenSourceId,
         ...(frozenSourceId ? { frozenSourceId } : old?.startedAtMs === null && old.frozenSourceId ? { frozenSourceId: old.frozenSourceId } : {}),
       };
       state.update(entries => new Map(entries).set(key, entry));
       releaseIfUnused(old?.frozenSourceId);
       return entry;
     },
+    confirmScheduled(deck: VJDeck, layerIndex: number, token: number, nowMs: number) {
+      const key=vjClipTransitionKey(deck,layerIndex), active=get(state).get(key);
+      if (!active || active.token!==token || !active.queuedTriggerId || !Number.isFinite(nowMs)) return false;
+      state.update(entries=>new Map(entries).set(key,{...active,queuedTriggerId:undefined,preparedIncoming:undefined,startedAtMs:nowMs}));
+      return true;
+    },
     markReady(deck: VJDeck, layerIndex: number, token: number, nowMs: number) {
       const key = vjClipTransitionKey(deck, layerIndex);
       const active = get(state).get(key);
-      if (!active || active.token !== token || active.requiresSnapshot || active.startedAtMs !== null || !Number.isFinite(nowMs)) return false;
+      if (!active || active.token !== token || active.queuedTriggerId || active.requiresSnapshot || active.startedAtMs !== null || !Number.isFinite(nowMs)) return false;
       state.update(entries => new Map(entries).set(key, { ...active, startedAtMs: nowMs }));
       return true;
     },

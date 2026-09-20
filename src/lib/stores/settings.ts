@@ -1,3 +1,4 @@
+import { createCoalescedWriter } from '../utils/coalescedWriter';
 // Settings Store
 // Manages app-wide settings including recording preferences
 
@@ -1257,28 +1258,21 @@ function loadSettings(): AppSettings {
 }
 
 // Save settings to localStorage (with API key encryption)
-function saveSettings(settings: AppSettings) {
-  try {
-    settings = enforceNativeEngineOnly(settings);
-    // Don't save the directory handle (not serializable)
-    const toSave = {
-      ...settings,
-      recording: {
-        ...settings.recording,
-        saveDirectoryHandle: null,
-      },
-    };
-    // Encrypt API keys before saving
-    encryptApiKeys(toSave.ai).then(encryptedAi => {
-      toSave.ai = encryptedAi;
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
-    }).catch(() => {
-      // Fallback: save without encryption
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(toSave));
-    });
-  } catch (err) {
-    console.warn('Failed to save settings:', err);
-  }
+// Settings setters stay synchronous for live controls; persistence is coalesced.
+const settingsWriter = createCoalescedWriter<AppSettings, AppSettings>(async settings => {
+  const normalized = enforceNativeEngineOnly(settings);
+  return { ...normalized, recording: { ...normalized.recording, saveDirectoryHandle: null },
+    ai: await encryptApiKeys(normalized.ai) };
+}, value => localStorage.setItem(STORAGE_KEY, JSON.stringify(value)),
+error => console.warn('Failed to save settings:', error));
+
+function saveSettings(settings: AppSettings) { settingsWriter.write(settings); }
+export const flushSettings = () => settingsWriter.flush();
+if (typeof window !== 'undefined') {
+  window.addEventListener?.('pagehide', () => { void flushSettings(); });
+  if (typeof document !== 'undefined') document.addEventListener?.('visibilitychange', () => {
+    if (document.visibilityState === 'hidden') void flushSettings();
+  });
 }
 
 import { encryptValue, decryptValue, isEncrypted } from '../utils/crypto';

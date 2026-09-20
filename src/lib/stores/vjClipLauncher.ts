@@ -1,7 +1,10 @@
+import { showToast } from './errorToast';
+import { createNativeQueuedLaunches, type LaunchReceipt } from '../renderer/nativeQueuedLaunch';
+import { vjClipTransitionInputId, vjClipTransitionSourceId } from '../renderer/vjClipTransitionNative';
 import { nativeRendererRuntime } from './nativeRenderer';
 import { nativeClipAudioMix, nativeAudioMaster } from '../audio/nativeClipAudio';
 import { VideoBeatPhase } from '../media/videoBeatPhase';
-import { submitNativeRendererCommands, type RendererCommand } from '../api/native-renderer';
+import { scheduleNativeLaunch, cancelNativeLaunch, getNativeLaunchStatus, getNativeRendererCapabilities, getNativeRendererLayersSnapshot, getNativeSourceFrameReadiness, getNativeLayerSourceReadiness, submitNativeRendererCommands, type RendererCommand } from '../api/native-renderer';
 import { videoBeatFit } from '../media/videoBeatFit';
 // VJ Clip Launcher Store
 // Manages the clip grid state for the VJ clip launcher workflow
@@ -11,7 +14,7 @@ import { writable, derived, get } from 'svelte/store';
 import type { BlendMode, Layer, MediaSource, Effect, JSAnimationSource, IntegratedEffectSource, SplatContent, Model3DContent, GPULayerContent, TextContent, ISFInputDef } from '../types';
 import { createDefaultSplatContent, createDefaultModel3DContent, createDefaultGPULayerContent, createDefaultTextContent } from '../types';
 import { createThreeJSIframeContext, getThreeJSIframeContext, createJSAnimationContext, updateJSAnimationParams } from '../renderer/engine';
-import { launchClock, launchClockPosition, launchClockTempo, nextLaunchBoundary, onLaunchClockResync, releaseTempoNudgeInputs } from './launchClock';
+import { launchClock, launchClockPosition, launchClockTempo, launchClockFollowsLink, nextLaunchBoundary, onLaunchClockResync, releaseTempoNudgeInputs } from './launchClock';
 import { normalizeCuePoints, validCueIndex, VJ_CUE_POINT_COUNT } from './vjCuePoints';
 import { seekNativeVideoImmediately } from '../renderer/nativeVideoScrubber';
 import { VJAutopilotClock, normalizeAutopilot, type VJAutopilot, type AutopilotSample } from './vjAutopilot';
@@ -22,7 +25,7 @@ import { effectiveClipTransition, normalizedTransitionDuration, normalizedTransi
 import { isNativeSelectableEffect } from '../renderer/nativeEffectCoverage';
 import { NATIVE_ENGINE_ONLY } from './settings';
 import { isDesktopApp } from '../bridge';
-import { armNativeLibraryVideo } from '../sync/nativeRendererSync';
+import { getActiveNativeRendererSync, armNativeLibraryVideo } from '../sync/nativeRendererSync';
 import { clipAudioBus, type ClipAudioTransport } from '../audio/clipAudioBus';
 import {
   nativeVideoLaunchTime,
@@ -592,6 +595,7 @@ function launchDeadline(grid: QuantizationGrid) {
 }
 
 // rAF tick state — only runs when there are pending triggers
+let nativeOwnsQueuedTrigger: (id: string) => boolean = () => false;
 let quantTickHandle: number | null = null;
 function ensureQuantTickRunning(launcher: { update: any }) {
   if (quantTickHandle !== null) return;
@@ -606,6 +610,7 @@ function ensureQuantTickRunning(launcher: { update: any }) {
       const remaining: PendingTrigger[] = [];
       const clock = launchClockPosition(now);
       for (const p of s.pendingTriggers) {
+        if (nativeOwnsQueuedTrigger(p.id)) { remaining.push(p); continue; }
         const entry = p.fireBeat === undefined ? p : { ...p, fireAt: now + Math.max(0, p.fireBeat - clock.beat) * clock.beatMs };
         if (entry.fireAt <= now + 0.00001) due.push(entry);
         else remaining.push(entry);
@@ -3617,6 +3622,7 @@ if (typeof window !== 'undefined') {
   const follower = new VideoBeatPhase();
   let phaseTimer: ReturnType<typeof setTimeout> | null = null;
   let sending = false;
+  let phaseSources = new Set<string>();
   const eligible = () => {
     const state = get(vjClipLauncher);
     if (!isDesktopApp || !state.isOpen || !state.isLive || state.mapMode || state.stoppedAll
@@ -3634,17 +3640,23 @@ if (typeof window !== 'undefined') {
     const clips = eligible();
     follower.retain(new Set(clips.map(item => item.key)));
     const commands: RendererCommand[] = [];
+    const currentSources = new Set<string>();
     const now = performance.now();
     const beat = launchClockPosition(now).beat;
+    const link = get(abletonLink);
     for (const { key, clip } of clips) {
       const fit = videoBeatFit(Number(clip.durationSeconds ?? clip.videoElement?.duration),
         clip.trimStart ?? 0, clip.trimEnd ?? 1, Number(clip.playbackSyncBeats), launchClockTempo(),
         clip.playbackMode === 'bounce', clip.playbackRate ?? 1);
       if (!fit || fit.limited) continue;
       const target = follower.sample(key, clip, beat, get(launchClock).resyncedAt, now);
-      if (target) commands.push({ type: 'set_media_source_phase', source_id: clip.id, uri: clip.src,
-        seek_generation: clip._nativePlaybackSeekSeq ?? 0, time_seconds: target.timeSeconds, reverse: target.reverse });
+      if (target) { currentSources.add(clip.id); commands.push({ type: 'set_media_source_phase', source_id: clip.id, uri: clip.src,
+        seek_generation: clip._nativePlaybackSeekSeq ?? 0, time_seconds: target.timeSeconds, reverse: target.reverse,
+        ...(link.enabled && link.peers > 0 ? { clock: 'link', beat_position: beat, beats_per_cycle: Number(clip.playbackSyncBeats) } : {}),
+      }); }
     }
+    for (const id of phaseSources) if (!currentSources.has(id)) commands.push({ type: 'set_media_source_phase', source_id: id, enabled: false });
+    phaseSources = currentSources;
     if (commands.length) {
       sending = true;
       try { await submitNativeRendererCommands(commands); }
@@ -3658,7 +3670,12 @@ if (typeof window !== 'undefined') {
     follower.retain(new Set(clips.map(item => item.key)));
     if (!clips.length) {
       if (phaseTimer !== null) clearTimeout(phaseTimer);
-      phaseTimer = null; follower.clear(); return;
+      phaseTimer = null; follower.clear();
+      if (phaseSources.size) {
+        const commands: RendererCommand[] = [...phaseSources].map(source_id => ({ type: 'set_media_source_phase', source_id, enabled: false }));
+        phaseSources.clear(); void submitNativeRendererCommands(commands).catch(() => {});
+      }
+      return;
     }
     if (phaseTimer === null && !sending) phaseTimer = setTimeout(publish, 100);
   };
@@ -4041,10 +4058,18 @@ export function buildVJClipLayer(activeLayer: ActiveVJLayer, launcherState: VJCl
 
 // Normal output stays unchanged; retained outgoing clips have a separate feed.
 export const vjOutputLayers = derived(
-  [vjClipLauncher, activeVJLayers, vjLayerSequencer],
-  ([state, active, sequencer]) => {
+  [vjClipLauncher, activeVJLayers, vjLayerSequencer, vjClipTransitions],
+  ([state, active, sequencer, transitions]) => {
     if (!state.isLive) return null;
-    const output = active.map(entry => buildVJClipLayer(entry, state, sequencer));
+    const output = active.map(entry => {
+      const prepared=transitions.get(`${entry.bank??'A'}:${entry.layerIndex}`);
+      if (prepared?.queuedTriggerId && prepared.preparedIncoming && prepared.outgoingClip.id===entry.clip.id
+        && prepared.outgoingClip._nativePlaybackSeekSeq===entry.clip._nativePlaybackSeekSeq) {
+        const layer=buildVJClipLayer({...entry,clip:prepared.preparedIncoming},state,sequencer);
+        return {...layer,source:layer.source?{...layer.source,_nativeLaunchPreparation:true}:layer.source};
+      }
+      return buildVJClipLayer(entry,state,sequencer);
+    });
     return output.length ? output : null;
   },
 );
@@ -4076,3 +4101,215 @@ export function getVJClipLauncherState(): VJClipLauncherState {
 // Don't clear source cache when VJ mode toggles - let textures persist
 // This was causing issues because textures need to be reloaded each time
 // The cache is small and keyed by vj-layer-index + clip-id, so it won't grow unbounded
+
+// Prepared video cuts on either deck. Columns are admitted as one transaction;
+// if any participating row needs another route, the whole column stays there.
+type NativeCutRow = { layerIndex: number; incoming: VJClip; outgoing: VJClip; layerId: string; start: number; transition: ReturnType<typeof effectiveClipTransition>; fadeToken?:number; signature: string };
+type NativeCutPlan = { trigger: PendingTrigger; rows: NativeCutRow[]; lane: string; dualDeck: boolean; signature: string };
+export function buildNativeQueuedCutPlan(trigger: PendingTrigger, state: VJClipLauncherState): NativeCutPlan | null {
+  if (trigger.autopilotSource || (trigger.bank === 'B' && !state.crossfaderEnabled) || state.mapMode
+    || !state.isLive || !state.isOpen || state.stoppedAll || !queuedTriggerStillMatches(trigger,state)
+    || !get(nativeRendererRuntime).running || get(vjLayerSequencer).isPlaying
+    || Object.values(get(keyframeTimeline).timelines).some(timeline=>timeline.tracks.length>0)) return null;
+  if (!launchClockFollowsLink() && (get(audioStore).isActive || get(launchClock).nudge !== 0)) return null;
+  const deck=trigger.bank;
+  const deckRows=pickLayerStates(state,deck), grid=pickGrid(state,deck);
+  const column=trigger.kind==='column';
+  const participants=column
+    ? (trigger.layerIndices??deckRows.map((_,index)=>index)).filter(index=> {
+      const row=deckRows[index]; return row && !row.locked && !ignoresColumn(row);
+    }) : [trigger.layerIndex];
+  if (!participants.length || new Set(participants).size!==participants.length) return null;
+  const rows: NativeCutRow[]=[];
+  const incomingIds=new Set<string>();
+  for (const layerIndex of participants) {
+    const row=deckRows[layerIndex];
+    const incoming=grid[layerIndex]?.[trigger.columnIndex];
+    const outgoing=row?.activeClip;
+    if (!incoming || !outgoing || incoming.triggerStyle==='piano' || incoming.id===outgoing.id || row.locked || row.mute
+      || deckRows.some(r=>r.solo) || row.effects.length || [...get(vjClipTransitions).values()].some(value=>value.queuedTriggerId!==trigger.id)
+      || vjClipLauncher.hasHeldInput(layerIndex,deck)) return null;
+    for (const clip of [incoming,outgoing]) {
+      if (clip.type!=='video' || clip.src.startsWith('live://') || clip.audioPlayback || clip.effects?.length
+        || clip.playbackSyncBeats || clip.playbackMode==='bounce' || clip.playbackMode==='once'
+        || (clip.playbackRate??1)<=0 || !knownClipDurationSeconds(clip)
+        || !(clip.videoWidth && clip.videoHeight)) return null;
+    }
+    const geometry=(clip:VJClip)=>JSON.stringify([clip.zoom??1,clip.rotation??0,clip.opacity??1,!!clip.mirrorX,
+      clip.anchorX??0.5,clip.anchorY??0.5,clip.fit??'cover',clip.videoWidth!/clip.videoHeight!]);
+    if (geometry(incoming)!==geometry(outgoing) || incomingIds.has(incoming.id)) return null;
+    if ([...state.layerStates,...state.bankBLayerStates].some(r=>r.activeClip?.id===incoming.id)) return null;
+    if ([...state.layerStates,...state.bankBLayerStates].filter(r=>r.activeClip?.id===outgoing.id).length>1) return null;
+    incomingIds.add(incoming.id);
+    const start=clipLaunchTimeSeconds(incoming,knownClipDurationSeconds(incoming));
+    const signature=JSON.stringify([layerIndex,outgoing.id,outgoing._nativePlaybackSeekSeq,
+      incoming.id,incoming.src,incoming.playbackRate,incoming.trimStart,incoming.trimEnd,incoming.durationSeconds,
+      incoming._nativePlaybackSeekSeq,geometry(incoming),row.opacity,row.blendMode,effectiveClipTransition(row,incoming)]);
+    rows.push({layerIndex,incoming:{...incoming},outgoing:{...outgoing},layerId:`vj-layer-${layerIndex}${state.crossfaderEnabled?`-${deck}`:''}`,start,transition:effectiveClipTransition(row,incoming),signature});
+  }
+  return {trigger,rows,dualDeck:state.crossfaderEnabled,lane:column?`vj-column:${deck}`:`vj-cut:${deck}:${trigger.layerIndex}`,
+    signature:JSON.stringify([trigger.id,deck,state.crossfaderEnabled,state.activeBlockId,rows.map(row=>row.signature),state.masterOpacity,
+      launchClockFollowsLink(),launchClockFollowsLink()?null:launchClockTempo(),get(launchClock).resyncedAt])};
+}
+/** Resolve only the steady graph shape Canvas installs. Active transition
+ * helpers and foreign/mapped layers keep the whole launch on the old route. */
+export function resolveNativeQueuedCutBindings(plan: NativeCutPlan, layers: Array<{layer_id:string;source_id?:string|null}>): Map<number,string> | null {
+  const canonical = plan.dualDeck ? /^vj-layer-\d+-[AB]$/ : /^vj-layer-\d+$/;
+  const allowed = (id:string) => plan.rows.some(row=>row.fadeToken!==undefined && (id===vjClipTransitionInputId(row.layerId,'in',row.fadeToken) || id===vjClipTransitionInputId(row.layerId,'out',row.fadeToken))) || canonical.test(id) || id==='__vj-mix__'
+    || (plan.dualDeck && /^vj-xfade-\d+$/.test(id))
+    || (id.startsWith('__vj-clip:') && id.endsWith(':steady:in') && canonical.test(id.slice('__vj-clip:'.length,-':steady:in'.length)));
+  if (layers.some(layer=>!allowed(layer.layer_id))) return null;
+  const result=new Map<number,string>();
+  for (const row of plan.rows) {
+    const outer=layers.find(layer=>layer.layer_id===row.layerId);
+    if (row.fadeToken!==undefined) {
+      const outgoing=vjClipTransitionInputId(row.layerId,'out',row.fadeToken);
+      const incoming=vjClipTransitionInputId(row.layerId,'in',row.fadeToken);
+      if (outer?.source_id!==vjClipTransitionSourceId(row.layerId)
+        || layers.find(layer=>layer.layer_id===outgoing)?.source_id!==row.outgoing.id
+        || layers.find(layer=>layer.layer_id===incoming)?.source_id!==row.incoming.id) return null;
+      result.set(row.layerIndex,outgoing);continue;
+    }
+    if (outer?.source_id===row.outgoing.id) { result.set(row.layerIndex,row.layerId); continue; }
+    const inputId=vjClipTransitionInputId(row.layerId,'in','steady');
+    const input=layers.find(layer=>layer.layer_id===inputId);
+    if (outer?.source_id!==vjClipTransitionSourceId(row.layerId) || input?.source_id!==row.outgoing.id) return null;
+    result.set(row.layerIndex,inputId);
+  }
+  return result;
+}
+if (typeof window !== 'undefined' && isDesktopApp && !new URLSearchParams(window.location?.search??'').has('mode')) {
+  type PreparedCut = {row:NativeCutRow; bindingLayerId:string; uri:string; incoming:VJClip};
+  const manager=createNativeQueuedLaunches<NativeCutPlan>({
+    resources: plan=>plan.rows.flatMap(row=>[`layer:${row.layerId}`,`source:${row.incoming.id}`]),
+    release: plan=> {
+      for (const row of plan.rows) {
+        if (row.fadeToken===undefined) continue;
+        const entry=get(vjClipTransitions).get(`${plan.trigger.bank}:${row.layerIndex}`);
+        if (entry?.queuedTriggerId===plan.trigger.id) vjClipTransitions.cancel(plan.trigger.bank,row.layerIndex,row.fadeToken);
+      }
+    },
+    prepare: async (plan,isCurrent) => {
+      const sync=getActiveNativeRendererSync(); if (!sync) return null;
+      const capabilities=await getNativeRendererCapabilities();
+      if (!capabilities?.implemented_methods?.includes('schedule_launch') || !capabilities.features?.native_launch_resource_fences) return null;
+      const fade=plan.rows.some(row=>row.transition.duration>0);
+      if (fade && !capabilities.features?.native_prepared_fade_playback) return null;
+      if (fade && plan.rows.some(row=>row.transition.duration===0) && !capabilities.features?.native_mixed_column_launch) return null;
+      const snapshot=await getNativeRendererLayersSnapshot();
+      const bindings=resolveNativeQueuedCutBindings(plan,snapshot.layers);
+      if (!bindings) return null;
+      if (!isCurrent() || buildNativeQueuedCutPlan(plan.trigger,get(vjClipLauncher))?.signature!==plan.signature) return null;
+      // Wait for every preparation response before releasing ownership; a late
+      // paused-source write must not race a fallback column trigger.
+      const results=await Promise.allSettled(plan.rows.map(async row=> {
+        const incoming={...row.incoming,isPlaying:false,_nativePlaybackTimeSeconds:row.start,
+          _nativePlaybackUpdatedAtMs:performance.now(),_nativePlaybackSeekSeq:(row.incoming._nativePlaybackSeekSeq??0)+1};
+        const source={...incoming,type:'video',durationSeconds:knownClipDurationSeconds(incoming),
+          videoElement:incoming.videoElement??videoElementCache.get(incoming.id)} as MediaSource;
+        if (!isCurrent()) return null;
+        const command=await sync.prepareScheduledVideo(source);
+        return command?.type==='set_media_source_playback'?{row,bindingLayerId:bindings.get(row.layerIndex)!,uri:command.uri,incoming}:null;
+      }));
+      if (!isCurrent() || results.some(result=>result.status==='rejected' || !result.value)) return null;
+      const cuts=results.map(result=>(result as PromiseFulfilledResult<PreparedCut>).value);
+      if (fade) {
+        for (const {row,incoming} of cuts.filter(cut=>cut.row.transition.duration>0)) {
+          if (!isCurrent() || buildNativeQueuedCutPlan(plan.trigger,get(vjClipLauncher))?.signature!==plan.signature) return null;
+          const transition=vjClipTransitions.begin(plan.trigger.bank,row.layerIndex,row.outgoing,incoming,row.transition.duration,row.transition.style,undefined,plan.trigger.id);
+          if (!transition) return null;
+          row.fadeToken=transition.token;
+        }
+      }
+      const deadline=performance.now()+Math.min(1500,Math.max(0,plan.trigger.fireAt-performance.now()-50));
+      while (isCurrent() && performance.now()<deadline) {
+        const ready=await Promise.allSettled(cuts.map(cut=>getNativeSourceFrameReadiness(cut.incoming.id,cut.incoming._nativePlaybackSeekSeq)));
+        if (ready.every(result=>result.status==='fulfilled' && result.value.ready)) {
+          if (!fade) return cuts;
+          const graphReady=await Promise.all(cuts.filter(cut=>cut.row.fadeToken!==undefined).flatMap(({row,incoming})=>[
+            getNativeLayerSourceReadiness(row.layerId,vjClipTransitionSourceId(row.layerId)),
+            getNativeLayerSourceReadiness(vjClipTransitionInputId(row.layerId,'in',row.fadeToken!),incoming.id,incoming._nativePlaybackSeekSeq),
+            getNativeLayerSourceReadiness(vjClipTransitionInputId(row.layerId,'out',row.fadeToken!),row.outgoing.id,row.outgoing._nativePlaybackSeekSeq??0),
+          ]));
+          if (graphReady.every(value=>value.ready)) return cuts;
+        }
+        await new Promise(resolve=>setTimeout(resolve,10));
+      }
+      return null;
+    },
+    submit: async (plan,prepared,revision) => {
+      const cuts=prepared as PreparedCut[];
+      if (buildNativeQueuedCutPlan(plan.trigger,get(vjClipLauncher))?.signature!==plan.signature) throw new Error('Queued clips changed');
+      const bindings=resolveNativeQueuedCutBindings(plan,(await getNativeRendererLayersSnapshot()).layers);
+      if (!bindings || cuts.some(({row,bindingLayerId})=>row.fadeToken===undefined
+        ? bindings.get(row.layerIndex)!==bindingLayerId
+        : get(vjClipTransitions).get(`${plan.trigger.bank}:${row.layerIndex}`)?.token!==row.fadeToken)) {
+        throw new Error('Queued render route changed');
+      }
+      const clock=launchClockPosition(performance.now());
+      const delay=plan.trigger.fireBeat===undefined?plan.trigger.fireAt-performance.now():(plan.trigger.fireBeat-clock.beat)*clock.beatMs;
+      if (delay<20) throw new Error('Native preparation missed the launch deadline');
+      await scheduleNativeLaunch({id:plan.trigger.id,lane:plan.lane,revision,delay_ms:delay,
+        ...(launchClockFollowsLink()?{beat:plan.trigger.fireBeat}:{}),
+        expected_sources:Object.fromEntries(cuts.map(({row,bindingLayerId})=>[row.fadeToken===undefined?bindingLayerId:vjClipTransitionInputId(row.layerId,'out',row.fadeToken),{source_id:row.outgoing.id,seek_generation:row.outgoing._nativePlaybackSeekSeq??0}])),
+        commands:cuts.flatMap(({row,bindingLayerId,incoming,uri})=>[
+          {type:'set_media_source_playback' as const,source_id:incoming.id,uri,paused:false,time_seconds:row.start,seek_generation:incoming._nativePlaybackSeekSeq},
+          ...(row.fadeToken===undefined
+            ? [{type:'bind_media_source' as const,layer_id:bindingLayerId,source_id:incoming.id,uri,source_type:'video'}]
+            : [{type:'start_prepared_transition' as const,layer_id:row.layerId,token:row.fadeToken,sources:[
+                {source_id:row.outgoing.id,seek_generation:row.outgoing._nativePlaybackSeekSeq??0},
+                {source_id:incoming.id,seek_generation:incoming._nativePlaybackSeekSeq}]}])])});
+    },
+    cancel: async (plan,revision) => (await cancelNativeLaunch(plan.lane,revision)).receipts,
+    receipts: async () => (await getNativeLaunchStatus()).receipts,
+    applied: (plan,receipt:LaunchReceipt) => {
+      const applied:Array<{incoming:VJClip;outgoing:VJClip}>=[];
+      const restoreRows:number[]=[];
+      vjClipLauncher.update(state=> {
+        const rows=[...pickLayerStates(state,plan.trigger.bank)];
+        const grid=pickGrid(state,plan.trigger.bank);
+        for (const cut of plan.rows) {
+          const current=rows[cut.layerIndex]?.activeClip;
+          if (!state.isLive || !state.isOpen || state.stoppedAll || state.mapMode || state.crossfaderEnabled!==plan.dualDeck
+            || state.activeBlockId!==plan.trigger.blockId || current?.id!==cut.outgoing.id
+            || current?.src!==cut.outgoing.src || current?._nativePlaybackSeekSeq!==cut.outgoing._nativePlaybackSeekSeq
+            || grid[cut.layerIndex]?.[plan.trigger.columnIndex]?.id!==cut.incoming.id) {
+            restoreRows.push(cut.layerIndex); continue;
+          }
+          const duration=knownClipDurationSeconds(cut.incoming)!;
+          const lo=duration*(cut.incoming.trimStart??0), span=duration*((cut.incoming.trimEnd??1)-(cut.incoming.trimStart??0));
+          const time=lo+((cut.start-lo+(receipt.age_ms??0)/1000*(cut.incoming.playbackRate??1))%Math.max(span,0.001));
+          const incoming:VJClip={...grid[cut.layerIndex][plan.trigger.columnIndex]!,isPlaying:true,_launchGeneration:++launchGeneration,
+            _nativePlaybackTimeSeconds:time,_nativePlaybackUpdatedAtMs:performance.now(),_nativePlaybackDirection:1,
+            _nativePlaybackSeekSeq:(cut.incoming._nativePlaybackSeekSeq??0)+1};
+          applied.push({incoming,outgoing:cut.outgoing});
+          rows[cut.layerIndex]={...rows[cut.layerIndex],activeClip:incoming,activeColumn:plan.trigger.columnIndex};
+        }
+        return {...withDeck(state,plan.trigger.bank,rows),pendingTriggers:state.pendingTriggers.filter(p=>p.id!==plan.trigger.id)};
+      });
+      const startedAt=performance.now()-(receipt.age_ms??0);
+      for (const row of plan.rows) if (row.fadeToken!==undefined && applied.some(value=>value.incoming.id===row.incoming.id)) {
+        vjClipTransitions.confirmScheduled(plan.trigger.bank,row.layerIndex,row.fadeToken,startedAt);
+      }
+      for (const {incoming,outgoing} of applied) syncBrowserVideoAfterNativeTrigger(incoming,outgoing,incoming._nativePlaybackTimeSeconds??0);
+      if (restoreRows.length) requestImmediateNativeVJSync(restoreRows.map(index=>pickLayerStates(get(vjClipLauncher),plan.trigger.bank)[index]?.activeClip));
+    },
+    failed: (plan,message) => {
+      vjClipLauncher.update(state=>({...state,pendingTriggers:state.pendingTriggers.filter(p=>p.id!==plan.trigger.id)}));
+      console.warn('[Native launch]',message);
+      showToast(plan.trigger.kind==='column'?'Queued column could not launch. Trigger it again.':'Queued clip could not launch. Trigger it again.', 'error');
+    },
+  });
+  nativeOwnsQueuedTrigger=manager.owns;
+  const refresh=()=> {
+    const state=get(vjClipLauncher);
+    manager.sync(state.pendingTriggers.flatMap(trigger=> {
+      const plan=buildNativeQueuedCutPlan(trigger,state);return plan?[{id:trigger.id,signature:plan.signature,value:plan}]:[];
+    }));
+  };
+  vjClipLauncher.subscribe(refresh);
+  launchClock.subscribe(refresh); audioStore.subscribe(refresh); abletonLink.subscribe(refresh);
+  keyframeTimeline.subscribe(refresh);
+  vjClipTransitions.subscribe(refresh);
+  nativeRendererRuntime.subscribe(refresh);
+}

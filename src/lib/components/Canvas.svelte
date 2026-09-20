@@ -1892,6 +1892,7 @@
             if (incoming.source?.id !== current.incomingClipId) return null;
             clipFades.set(outgoing.id, {
               outgoing, token: current.token, style: current.style,
+              duration: current.duration, running: current.startedAtMs !== null,
               progress: current.startedAtMs === null ? 0
                 : Math.max(0, Math.min(1, (performance.now() - current.startedAtMs) / (current.duration * 1000))),
               snapshotSourceId: current.frozenSourceId,

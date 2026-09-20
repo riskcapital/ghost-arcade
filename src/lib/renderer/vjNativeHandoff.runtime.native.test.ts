@@ -11,6 +11,8 @@ import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { createInterface } from 'node:readline';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { createLayer } from '../types';
+import { buildVJClipTransitionGraph, buildVJClipTransitionPrecompileCommands } from './vjClipTransitionNative';
 import { buildVJCrossfadeGraph, buildVJCrossfadePrecompileCommands } from './vjCrossfadeNative';
 import { buildVJMixGraph, buildVJMixPrecompileCommands, buildVJPipelineWarmupCommands } from './vjMixNative';
 
@@ -190,6 +192,86 @@ async function startCore(rpc: Rpc, targetFps: number) {
 }
 
 describe('native VJ A/B row hand-off', () => {
+  itIfNativeCore('scheduled cuts reach VJ Mix through the steady transition wrapper', async () => {
+    const rpc=createRpc();
+    try {
+      await startCore(rpc,60);
+      const row='vj-layer-0', input='__vj-clip:vj-layer-0:steady:in';
+      const output=`plugin:${row}:vj-crossfade`;
+      const branch={layer:createLayer(row,'','media'),opacity:1,premultiplied:false,
+        uvTransform:[0,0,1,1],uvFlags:[0,1,0,0]};
+      const wrapper=buildVJClipTransitionGraph({outputSourceId:output,sourceAId:`layer-frame:${input}`,
+        sourceBId:`layer-frame:${input}`,width:W,height:H,mix:1,transition:'dissolve',
+        branchA:branch,branchB:branch,time:0,frameIndex:0}).config;
+      const mix=buildVJMixGraph({outputSourceId:'plugin:__vj-mix__:vj-mix',
+        rows:[{frameId:`layer-frame:${row}`,opacity:1,blendMode:'normal'}],width:W,height:H,time:0,frameIndex:0}).config;
+      await rpc.send('submit_commands',{commands:[...buildVJClipTransitionPrecompileCommands(),
+        ...mediaLayer(input,0,'src:red',0),...graphLayer(row,1,'vj-crossfade',wrapper,0),
+        ...graphLayer('__vj-mix__',2,'vj-mix',mix,1)]});
+      await settleOn(rpc,'red');
+      await rpc.send('submit_commands',{commands:[{type:'upload_source_frame',source_id:'src:blue',
+        width:16,height:16,rgba_b64:solidB64(COLOURS['src:blue']),seq:1}]});
+      // Images must be registered for a prepared binding just like video sources.
+      await rpc.send('submit_commands',{commands:[{type:'set_media_source_playback',source_id:'src:blue',uri:'upload://src:blue',source_type:'image',paused:true}]});
+      await rpc.send('schedule_launch',{id:'wrapped-cut',lane:'vj-cut:A:0',revision:1,delay_ms:100,
+        expected_sources:{[input]:{source_id:'src:red'}},
+        commands:[{type:'bind_media_source',layer_id:input,source_id:'src:blue',uri:'upload://src:blue',source_type:'image'}]});
+      await new Promise(resolve=>setTimeout(resolve,180));
+      expect((await rpc.send('launch_status')).receipts.at(-1).state).toBe('applied');
+      await settleOn(rpc,'blue');
+      // A delayed pre-cut scene sync must not restore the old input.
+      await rpc.send('submit_commands',{commands:[{type:'bind_media_source',layer_id:input,source_id:'src:red',uri:'upload://src:red',source_type:'image'}]});
+      expect(await watch(rpc,'frame_snapshot',150)).toEqual(['blue']);
+      const rows=(await rpc.send('layers_snapshot')).layers;
+      expect(rows.find((value:any)=>value.layer_id===row).source_id).toBe(output);
+      expect(rows.find((value:any)=>value.layer_id===input).source_id).toBe('src:blue');
+    } finally { rpc.close(); }
+  },20000);
+
+  itIfNativeCore('scheduled deck cuts preserve the live crossfade graph and opposite deck', async () => {
+    const rpc=createRpc();
+    try {
+      await startCore(rpc,60);
+      const output='plugin:vj-xfade-0:vj-crossfade';
+      const config=buildVJCrossfadeGraph({outputSourceId:output,sourceAId:'layer-frame:vj-layer-0-A',
+        sourceBId:'layer-frame:vj-layer-0-B',width:W,height:H,mix:0.5,transition:'dissolve',
+        blendMode:'normal',opacityA:1,opacityB:1,time:0,frameIndex:0}).config;
+      await rpc.send('submit_commands',{commands:[
+        ...mediaLayer('vj-layer-0-A',0,'src:red',0),
+        ...mediaLayer('vj-layer-0-B',1,'src:blue',0),
+        ...mediaLayer('prepare',2,'src:green',0),
+        ...graphLayer('vj-xfade-0',3,'vj-crossfade',config,1),
+      ]});
+      const mean=async()=> (await rpc.send('frame_snapshot')).mean_rgba as number[];
+      let before=await mean();
+      for(let i=0;i<100 && !(before[0]>0.15 && before[2]>0.15);i++) {
+        await new Promise(resolve=>setTimeout(resolve,20)); before=await mean();
+      }
+      expect(before[0]).toBeGreaterThan(0.15); expect(before[2]).toBeGreaterThan(0.15);
+      await rpc.send('schedule_launch',{id:'deck-b',lane:'vj-cut:B:0',revision:1,delay_ms:80,
+        expected_sources:{'vj-layer-0-B':{source_id:'src:blue'}},
+        commands:[{type:'bind_media_source',layer_id:'vj-layer-0-B',source_id:'src:green',uri:'upload://src:green',source_type:'image'}]});
+      await new Promise(resolve=>setTimeout(resolve,180));
+      expect((await rpc.send('launch_status')).receipts.at(-1).state).toBe('applied');
+      const after=await mean();
+      expect(after[0]).toBeCloseTo(before[0],1);
+      expect(after[1]).toBeGreaterThan(0.15); expect(after[2]).toBeLessThan(0.05);
+      const rows=(await rpc.send('layers_snapshot')).layers;
+      expect(rows.find((row:any)=>row.layer_id==='vj-layer-0-A').source_id).toBe('src:red');
+      expect(rows.find((row:any)=>row.layer_id==='vj-layer-0-B').source_id).toBe('src:green');
+      await rpc.send('submit_commands',{commands:mediaLayer('prepare-a',2,'src:blue',0)});
+      await rpc.send('schedule_launch',{id:'deck-a',lane:'vj-cut:A:0',revision:2,delay_ms:80,
+        expected_sources:{'vj-layer-0-A':{source_id:'src:red'}},
+        commands:[{type:'bind_media_source',layer_id:'vj-layer-0-A',source_id:'src:blue',uri:'upload://src:blue',source_type:'image'}]});
+      await new Promise(resolve=>setTimeout(resolve,180));
+      expect((await rpc.send('launch_status')).receipts.at(-1).state).toBe('applied');
+      const final=await mean();
+      expect(final[0]).toBeLessThan(0.05); expect(final[2]).toBeGreaterThan(0.15);
+      expect(final[1]).toBeCloseTo(after[1],1);
+
+    } finally { rpc.close(); }
+  },20000);
+
   itIfNativeCore('the VJ Mix never shows the row beneath while a row moves onto its crossfade carrier', async () => {
     for (let run = 0; run < 4; run++) {
       const rpc = createRpc();

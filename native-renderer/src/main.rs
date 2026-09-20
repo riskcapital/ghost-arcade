@@ -1,6 +1,8 @@
 #![recursion_limit = "512"]
 
 mod video_phase;
+mod launch_scheduler;
+mod transition_clock;
 mod clip_audio;
 mod audio;
 mod capabilities;
@@ -3283,6 +3285,14 @@ struct App {
     media_sources: HashMap<String, NativeMediaSourceState>,
     clip_audio: Option<clip_audio::ClipAudio>,
     clip_audio_mix: Value,
+    scheduled_transition_tokens: HashMap<String, u64>,
+    transition_clocks: HashMap<String, Option<transition_clock::TransitionClock>>,
+    launch_scheduler: launch_scheduler::Scheduler,
+    scheduled_binding_guards: HashMap<String, (String, String, Option<u64>)>,
+    prepared_launch_sources: HashMap<String, Instant>,
+    link_clock: Option<(f64, f64, Instant)>,
+    link_phase_anchors: HashMap<String, Value>,
+    deferred_source_releases: HashSet<String>,
     native_video_decode_pending: HashSet<String>,
     native_video_decode_failed: HashSet<String>,
     native_video_streams: HashMap<String, NativeVideoStreamState>,
@@ -3597,6 +3607,14 @@ impl App {
             media_sources: HashMap::new(),
             clip_audio: None,
             clip_audio_mix: json!([]),
+            scheduled_transition_tokens: HashMap::new(),
+            transition_clocks: HashMap::new(),
+            launch_scheduler: launch_scheduler::Scheduler::default(),
+            scheduled_binding_guards: HashMap::new(),
+            prepared_launch_sources: HashMap::new(),
+            link_clock: None,
+            link_phase_anchors: HashMap::new(),
+            deferred_source_releases: HashSet::new(),
             native_video_decode_pending: HashSet::new(),
             native_video_decode_failed: HashSet::new(),
             native_video_streams: HashMap::new(),
@@ -3859,6 +3877,10 @@ impl App {
             "native_projection_sim_xyz_mesh_transforms": true,
             "native_projection_sim_output_renderer": true,
             "native_projection_sim_recording_parity": true,
+            "native_launch_resource_fences": true,
+            "native_scheduled_transition_start": true,
+            "native_prepared_fade_playback": true,
+            "native_mixed_column_launch": true,
             "native_recording": false,
             "native_stage3d": true,
             "native_projection_sim": true
@@ -4642,7 +4664,7 @@ impl App {
             }
         }
         #[cfg(any(target_os = "macos", target_os = "windows"))]
-        if matches!(req.method.as_str(), "output_shared_texture_snapshot" | "get_output_shared_texture_snapshot")
+        if matches!(req.method.as_str(), "stream_output_frame" | "output_shared_texture_snapshot" | "get_output_shared_texture_snapshot")
             || (req.method == "export_frame_snapshot" && string_at(&req.params, &["source"]).is_some_and(|v| v.eq_ignore_ascii_case("output"))) {
             let result = self.start_live_capture(&req);
             if let Err(error) = result { if req.id != 0 { self.send_error(req.id, error); } }
@@ -4686,6 +4708,7 @@ impl App {
                 })
             }
             "stop" => {
+                self.launch_scheduler.clear(); self.scheduled_binding_guards.clear();
                 self.running = false;
                 self.refresh_clip_audio();
                 Ok(json!(true))
@@ -4884,6 +4907,29 @@ impl App {
                 }
                 Ok(summary)
             }
+            "schedule_launch" => {
+                if !self.running || self.render_clock_mode != "live" { Err("scheduled launches require a running live renderer".into()) }
+                else {
+                    self.launch_scheduler.enqueue(&req.params, Instant::now(), self.command_drain_limit as usize)
+                }
+            }
+            "cancel_launch" => {
+                let lane = string_at(&req.params, &["lane"]).unwrap_or_default();
+                let revision = req.params["revision"].as_u64().unwrap_or(0);
+                match self.launch_scheduler.cancel(&lane, revision) {
+                    Ok(()) => {
+                        self.scheduled_binding_guards.retain(|_, (_, owner, _)| owner != &lane);
+                        Ok(json!({"cancelled":true, "receipts":self.launch_scheduler.status()["receipts"]}))
+                    }
+                    Err(error) if error == "stale launch cancellation" && bool_at(&req.params, &["settle_superseded"]) == Some(true) => {
+                        // The newer lane revision already replaced this intention.
+                        // Acknowledge its outcome without cancelling the newer owner.
+                        Ok(json!({"cancelled":true,"superseded":true,"receipts":self.launch_scheduler.status()["receipts"]}))
+                    }
+                    Err(error) => Err(error),
+                }
+            }
+            "launch_status" => Ok(self.launch_scheduler.status()),
             "submit_commands" => {
                 let summary =
                     self.apply_commands(req.params.get("commands").unwrap_or(&req.params));
@@ -5538,6 +5584,7 @@ impl App {
             .trim()
             .to_ascii_lowercase();
         if mode == "reset" {
+            self.launch_scheduler.clear(); self.scheduled_binding_guards.clear();
             self.render_clock_mode = "live".to_string();
             self.render_clock_time = None;
             self.render_clock_frame_index = None;
@@ -5547,6 +5594,7 @@ impl App {
             return;
         }
         let next_mode = if mode == "manual" { "manual" } else { "live" };
+        if next_mode == "manual" { self.launch_scheduler.clear(); self.scheduled_binding_guards.clear(); }
         if next_mode != self.render_clock_mode {
             // Leaving or entering manual export: forget the last stepped
             // virtual frame so the next manual run always steps.
@@ -5643,6 +5691,12 @@ impl App {
                 "upsert_layer" => self.apply_upsert_layer(command),
                 "set_layer_visibility" => self.apply_layer_visibility(command),
                 "set_layer_color" => self.apply_layer_color(command),
+                "start_prepared_transition" => {
+                    if !self.prepared_transition_ready(command) {
+                        dropped = dropped.saturating_add(1); continue;
+                    }
+                    self.start_prepared_transition(command);
+                }
                 "set_layer_native_params" => self.apply_layer_native_params(command),
                 "set_layer_edge_effects" => self.apply_layer_edge_effects(command),
                 "set_native_graph_layer" => self.apply_native_graph_layer(command),
@@ -5708,6 +5762,12 @@ impl App {
                         .filter_map(|uri| local_media_path_from_uri(uri).map(|path| (uri.to_string(), path))).collect();
                     self.clip_audio.get_or_insert_with(clip_audio::ClipAudio::new).prepare(sources);
                     self.refresh_clip_audio();
+                }
+                "set_link_clock" => {
+                    self.link_clock = match (number_at(command, &["beat"]), number_at(command, &["tempo"])) {
+                        (Some(beat), Some(tempo)) if beat.is_finite() && tempo.is_finite() && tempo > 0.0 && bool_at(command, &["enabled"]).unwrap_or(false) => Some((beat, tempo, Instant::now())),
+                        _ => None,
+                    };
                 }
                 "set_media_source_phase" => self.apply_media_source_phase(command),
                 "set_media_source_playback" => self.apply_media_source_playback(command),
@@ -6258,6 +6318,16 @@ impl App {
                 && buffer.initial_bytes.len() == 224
             {
                 write_f32_le(&mut buffer.initial_bytes, 3, time);
+                self.transition_clocks.retain(|id, _| self.native_graph_layers.contains_key(id));
+                let token = graph_layer.params["vjclipClockToken"].as_u64();
+                let duration = graph_layer.params["vjclipClockDuration"].as_f64().filter(|d| d.is_finite() && *d > 0.0 && *d <= 10.0);
+                if self.render_clock_mode == "live" && token.is_some() && duration.is_some()
+                    && graph_layer.params["vjclipClockRunning"] == true {
+                    let progress = graph_layer.params["vjxfadeMix"].as_f64().filter(|p| p.is_finite()).unwrap_or(0.0);
+                    let clock = self.transition_clocks.entry(graph_layer.layer_id.clone()).or_default();
+                    let mix = transition_clock::TransitionClock::sample(clock, token.unwrap(), progress, duration.unwrap(), Instant::now());
+                    write_f32_le(&mut buffer.initial_bytes, 2, mix);
+                } else { self.transition_clocks.remove(&graph_layer.layer_id); }
                 for (branch, (rect, ready)) in clip_sources.iter().enumerate() {
                     write_f32_le(&mut buffer.initial_bytes, 6 + branch, if *ready { 1.0 } else { 0.0 });
                     for (index, value) in rect.iter().enumerate() {
@@ -10699,11 +10769,114 @@ impl App {
         }
     }
 
+    fn prepared_transition_ready(&self, command: &Value) -> bool {
+        if !self.running || self.render_clock_mode != "live" { return false; }
+        let Some(id) = command["layer_id"].as_str() else { return false; };
+        let Some(graph) = self.native_graph_layers.get(id) else { return false; };
+        let Some(token) = command["token"].as_u64().filter(|token| *token > 0) else { return false; };
+        if graph.kind != NativeGraphLayerKind::VjCrossfade || graph.params["vjclipTransition"] != true
+            || Some(token) != graph.params["vjclipClockToken"].as_u64()
+            || graph.params["vjclipClockRunning"] == true
+            || graph.params["vjclipClockDuration"].as_f64().is_none_or(|d| !d.is_finite() || d <= 0.0 || d > 10.0) { return false; }
+        if !self.source_frame_readiness(&json!({"source_id":graph.source_id})).ok()
+            .is_some_and(|ready| ready["ready"] == true) { return false; }
+        let Some(template) = graph.effect_job_template.as_ref() else { return false; };
+        if !template.buffers.iter().any(|buffer| buffer.initial_bytes.len() == 224) { return false; }
+        let Some(sources) = command["sources"].as_array().filter(|s| s.len() == 2) else { return false; };
+        sources.iter().enumerate().all(|(index, expected)| {
+            let Some(source_id) = expected["source_id"].as_str() else { return false; };
+            let binding = template.render_plans.iter().flat_map(|plan| plan.bindings.iter())
+                .find(|binding| binding.binding == (index + 2) as u32);
+            let Some(binding) = binding else { return false; };
+            let actual = if let Some(layer) = binding.resource_id.strip_prefix("layer-frame:") {
+                self.scene_layers.get(layer).and_then(|layer| layer.source_id.as_deref())
+            } else { Some(binding.resource_id.as_str()) };
+            if actual != Some(source_id) { return false; }
+            if let Some(media) = self.media_sources.get(source_id) {
+                if media.source_type == "video" && expected["seek_generation"].as_u64() != Some(media.seek_generation) { return false; }
+            }
+            self.source_frame_readiness(expected).ok().is_some_and(|ready| ready["ready"] == true)
+        })
+    }
+
+    fn start_prepared_transition(&mut self, command: &Value) {
+        let id = command["layer_id"].as_str().unwrap();
+        let token = command["token"].as_u64().unwrap();
+        let graph = self.native_graph_layers.get_mut(id).unwrap();
+        let duration = graph.params["vjclipClockDuration"].as_f64().unwrap();
+        graph.params["vjclipClockRunning"] = json!(true);
+        graph.params["vjxfadeMix"] = json!(0);
+        let mut clock = None;
+        transition_clock::TransitionClock::sample(&mut clock, token, 0.0, duration, Instant::now());
+        self.transition_clocks.insert(id.to_string(), clock);
+        self.scheduled_transition_tokens.insert(id.to_string(), token);
+    }
+
+    fn pump_scheduled_launches(&mut self) {
+        if !self.running || self.render_clock_mode != "live" { self.scheduled_transition_tokens.clear(); self.transition_clocks.clear(); self.launch_scheduler.clear(); self.scheduled_binding_guards.clear(); return; }
+        let now = Instant::now();
+        let beat = self.link_clock.filter(|(_, _, at)| at.elapsed() <= Duration::from_millis(500))
+            .map(|(beat, tempo, at)| beat + at.elapsed().as_secs_f64() * tempo / 60.0);
+        for launch in self.launch_scheduler.take_due(now, beat) {
+            // Validate the whole transaction before mutating any participating row.
+            let guards_valid = launch.expected_sources.as_object().is_none_or(|guards| guards.iter().all(|(layer, expected)| {
+                self.scene_layers.get(layer).and_then(|l| l.source_id.as_deref()) == expected["source_id"].as_str()
+                    && expected["seek_generation"].as_u64().is_none_or(|generation|
+                        expected["source_id"].as_str().and_then(|id| self.media_sources.get(id)).is_some_and(|m| m.seek_generation == generation))
+            }));
+            let valid = guards_valid && launch.commands.as_array().unwrap().iter().all(|command| {
+                let kind = command["type"].as_str().unwrap_or("");
+                if kind != "set_media_source_playback" && !self.scene_layers.contains_key(command["layer_id"].as_str().unwrap_or("")) { return false; }
+                if kind == "start_prepared_transition" {
+                    if !self.prepared_transition_ready(command) { return false; }
+                    let graph = &self.native_graph_layers[command["layer_id"].as_str().unwrap()];
+                    // A cut on another row is safe. Rebinding this carrier or
+                    // one of its prepared inputs would invalidate the readiness
+                    // check, so reject the entire transaction before mutations.
+                    return !launch.commands.as_array().unwrap().iter().any(|other| {
+                        if other["type"] != "bind_media_source" { return false; }
+                        let layer = other["layer_id"].as_str().unwrap_or("");
+                        layer == graph.layer_id || graph.effect_job_template.as_ref().is_some_and(|template|
+                            template.render_plans.iter().flat_map(|plan| plan.bindings.iter()).any(|binding|
+                                binding.resource_id.strip_prefix("layer-frame:") == Some(layer)))
+                    });
+                }
+                if matches!(kind, "bind_media_source" | "set_media_source_playback") {
+                    let id = command["source_id"].as_str().unwrap_or("");
+                    let Some(media) = self.media_sources.get(id) else { return false; };
+                    if command["uri"].as_str().is_some_and(|uri| uri != media.uri) { return false; }
+                    if command["source_type"].as_str().is_some_and(|kind| kind != media.source_type) { return false; }
+                    // A ready texture may belong to a newer seek than the
+                    // frame prepared for this launch. Never rewind that intent.
+                    if command["seek_generation"].as_u64().is_some_and(|generation| generation != media.seek_generation) { return false; }
+                    return self.source_frame_readiness(&json!({"source_id":id,"seek_generation":media.seek_generation})).ok()
+                        .is_some_and(|value| value["ready"] == true);
+                }
+                true
+            });
+            if !valid { self.launch_scheduler.reject(&launch, "prepared layer/source is no longer ready"); continue; }
+            let lateness_ms = now.saturating_duration_since(launch.due).as_secs_f64() * 1000.0;
+            let summary = self.apply_commands(&launch.commands);
+            if let Some(guards) = launch.expected_sources.as_object() {
+                for (layer, expected) in guards {
+                    if let Some(previous) = expected["source_id"].as_str() {
+                        if self.scene_layers.get(layer).and_then(|l| l.source_id.as_deref()) != Some(previous) {
+                            self.scheduled_binding_guards.insert(layer.clone(), (previous.to_string(), launch.lane.clone(), expected["seek_generation"].as_u64()));
+                        }
+                    }
+                }
+            }
+            self.pending_render_retry = true;
+            self.launch_scheduler.complete(&launch, json!({"summary":summary,"estimated_deadline_lateness_ms":lateness_ms}));
+        }
+    }
+
     fn render(&mut self) {
         let started = Instant::now();
         if !self.running {
             return;
         }
+        self.pump_scheduled_launches();
         self.sync_gpu_frame_stats();
         if self
             .renderer
@@ -11236,6 +11409,12 @@ impl App {
                 .or_else(|| string_at(&req.params, &["output_path"]))
                 .ok_or_else(|| "export_frame_snapshot requires path".to_string())?)
         } else { None };
+        let sink = if req.method == "stream_output_frame" {
+            let port = req.params.get("port").and_then(Value::as_u64).filter(|p| *p > 0 && *p <= 65535).ok_or("invalid frame stream port")? as u16;
+            let token = req.params.get("token").and_then(Value::as_str).filter(|s| s.len() == 64 && s.bytes().all(|c| c.is_ascii_hexdigit())).ok_or("invalid frame stream token")?.to_string();
+            let copies = req.params.get("copies").and_then(Value::as_u64).filter(|n| *n > 0 && *n <= 120).ok_or("invalid frame repetition count")?;
+            Some((port, token, copies))
+        } else { None };
         let include_pixels = path.is_none() && bool_at(&req.params, &["include_pixels"])
             .or_else(|| bool_at(&req.params, &["pixels"])).unwrap_or(false);
         let format = string_at(&req.params, &["format"]).or_else(|| string_at(&req.params, &["storage_format"]))
@@ -11244,11 +11423,15 @@ impl App {
             return Err("unsupported frame snapshot export format".to_string());
         }
         // Diagnostic polling must not take the recording/export slot.
-        let busy = if path.is_some() { &LIVE_CAPTURE_BUSY } else { &LIVE_DIAGNOSTIC_BUSY };
+        let busy = if path.is_some() || sink.is_some() { &LIVE_CAPTURE_BUSY } else { &LIVE_DIAGNOSTIC_BUSY };
         if busy.swap(true, Ordering::AcqRel) { return Err("live readback busy; drop this capture frame".to_string()); }
         let permit = LiveCapturePermit(busy);
         let renderer = self.renderer.as_ref().ok_or_else(|| "native renderer unavailable".to_string())?;
         let export = renderer.output_export.as_ref().ok_or_else(|| "output export unavailable".to_string())?;
+        if sink.is_some() && (req.params.get("width").and_then(Value::as_u64) != Some(export.width as u64)
+            || req.params.get("height").and_then(Value::as_u64) != Some(export.height as u64)) {
+            return Err("recording dimensions differ from native output".to_string());
+        }
         // Copy is enqueued now, preserving the requested frame while mapping,
         // metrics and storage execute away from the presentation loop.
         let pending = prepare_texture_readback(&renderer.device, &renderer.queue, &export.texture,
@@ -11263,7 +11446,31 @@ impl App {
             let result = (|| -> Result<Value, String> {
                 let frame = pending.finish()?;
                 let mut value = frame.to_json(include_pixels);
-                if let Some(path) = path {
+                if let Some((port, token, copies)) = sink {
+                    use std::io::{Read, Write};
+                    let mut cached = LIVE_FRAME_STREAM.lock().map_err(|_| "frame stream lock poisoned")?;
+                    if cached.as_ref().is_none_or(|(p, t, _)| *p != port || *t != token) {
+                        let address = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+                        let mut stream = std::net::TcpStream::connect_timeout(&address, Duration::from_secs(2)).map_err(|e| e.to_string())?;
+                        stream.set_write_timeout(Some(Duration::from_secs(10))).map_err(|e| e.to_string())?;
+                        stream.set_read_timeout(Some(Duration::from_secs(10))).map_err(|e| e.to_string())?;
+                        stream.set_nodelay(true).map_err(|e| e.to_string())?;
+                        stream.write_all(token.as_bytes()).map_err(|e| e.to_string())?;
+                        *cached = Some((port, token, stream));
+                    }
+                    let result = (|| -> Result<(), String> {
+                        let stream = &mut cached.as_mut().unwrap().2;
+                        for _ in 0..copies { stream.write_all(&frame.pixels).map_err(|e| e.to_string())?; }
+                        let mut ack = [0u8; 2]; stream.read_exact(&mut ack).map_err(|e| e.to_string())?;
+                        if &ack != b"OK" { return Err("encoder did not accept frame".to_string()); }
+                        Ok(())
+                    })();
+                    if result.is_err() { *cached = None; }
+                    result?;
+                    value["bytes_written"] = json!(frame.pixels.len());
+                    value["storage_format"] = json!("raw-texture");
+                    value["transport"] = json!("native-binary-stream");
+                } else if let Some(path) = path {
                     let target = Path::new(&path);
                     if let Some(parent) = target.parent().filter(|p| !p.as_os_str().is_empty()) {
                         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -11287,6 +11494,7 @@ impl App {
                 }
                 Ok(value)
             })();
+            drop(_permit);
             if id != 0 {
                 let reply = match result { Ok(result) => json!({"id":id,"ok":true,"result":result}),
                     Err(error) => json!({"id":id,"ok":false,"error":error}) };
@@ -12951,7 +13159,7 @@ impl App {
         let input_source_id = string_at(command, &["input_source_id"])
             .or_else(|| string_at(command, &["inputSourceId"]))
             .unwrap_or_default();
-        let effect_job_template = command
+        let mut effect_job_template = command
             .get("effect_graph")
             .or_else(|| command.get("effectGraph"))
             .filter(|value| !value.is_null())
@@ -13008,7 +13216,20 @@ impl App {
                 self.native_plugin_templates_initialized.remove(&layer_id);
             }
         }
-        let params = command.get("params").cloned().unwrap_or(Value::Null);
+        let mut params = command.get("params").cloned().unwrap_or(Value::Null);
+        // A late frontend snapshot may still describe the prepared, stopped
+        // graph. Once native scheduling starts this token it owns the clock.
+        if let Some(token) = self.scheduled_transition_tokens.get(&layer_id).copied() {
+            if params["vjclipClockToken"].as_u64() == Some(token) && params["vjclipTransition"] == true {
+                params["vjclipClockRunning"] = json!(true);
+                params["vjxfadeMix"] = json!(0);
+                if effect_job_template.is_none() {
+                    effect_job_template = self.native_graph_layers.get(&layer_id)
+                        .filter(|previous| previous.kind == kind && previous.source_id == source_id)
+                        .and_then(|previous| previous.effect_job_template.clone());
+                }
+            } else { self.scheduled_transition_tokens.remove(&layer_id); }
+        }
         if !kind.is_supported() {
             self.native_graph_layers.remove(&layer_id);
             self.last_shader_error = Some(format!(
@@ -13302,6 +13523,8 @@ impl App {
     /// would keep painting the dead layer's `layer-frame:<id>` slot for
     /// whatever else binds it.
     fn release_native_graph_layer_state(&mut self, layer_id: &str) -> Vec<String> {
+        self.scheduled_transition_tokens.remove(layer_id);
+        self.transition_clocks.remove(layer_id);
         let removed = self.native_graph_layers.remove(layer_id);
         self.native_graph_workload.remove(layer_id);
         self.native_plugin_liquid_states.remove(layer_id);
@@ -13710,6 +13933,13 @@ impl App {
             return;
         };
         let source_id = string_at(command, &["source_id"]);
+        if self.scheduled_binding_guards.get(&layer_id).is_some_and(|(previous, _, generation)| {
+            source_id.as_ref() == Some(previous) && generation.is_none_or(|expected|
+                self.media_sources.get(previous).is_none_or(|media| media.seek_generation == expected))
+        }) {
+            return; // The editor has not yet acknowledged the scheduled handoff.
+        }
+        self.scheduled_binding_guards.remove(&layer_id);
         let source_id_for_decode = source_id.clone();
         let uri_for_decode = string_at(command, &["uri"]);
         let source_type =
@@ -13864,7 +14094,7 @@ impl App {
         if source_id == EMPTY_SOURCE_FRAME_ID {
             return true;
         }
-        self.scene_layers.values().any(|layer| {
+        self.launch_scheduler.references_source(source_id) || self.scene_layers.values().any(|layer| {
             layer.source_id.as_deref() == Some(source_id)
                 || layer.shader_source_id.as_deref() == Some(source_id)
         })
@@ -13924,6 +14154,8 @@ impl App {
             return;
         }
         self.media_sources.remove(source_id);
+        self.link_phase_anchors.remove(source_id);
+        self.deferred_source_releases.remove(source_id);
         self.native_video_streams.remove(source_id);
         self.native_video_scrub_requests.remove(source_id);
         self.release_source_frame_slot(source_id);
@@ -14044,9 +14276,10 @@ impl App {
 
     fn release_source_frame(&mut self, params: &Value) -> Result<Value, String> {
         let source_id = string_at(params, &["source_id"])
-            .filter(|source| is_clip_snapshot_source_id(source))
-            .ok_or_else(|| "release_source_frame requires a clip snapshot source_id".to_string())?;
+            .filter(|source| is_clip_snapshot_source_id(source) || source.starts_with("native-splat-video-"))
+            .ok_or_else(|| "release_source_frame requires an owned temporary source_id".to_string())?;
         if self.media_source_is_referenced(&source_id) {
+            if source_id.starts_with("native-splat-video-") { self.deferred_source_releases.insert(source_id.clone()); }
             return Ok(json!({ "released": false, "referenced": true, "source_id": source_id, "reason": "source is still referenced" }));
         }
         self.release_media_source_if_orphaned(&source_id);
@@ -14087,7 +14320,28 @@ impl App {
         let Some(source_id) = string_at(command, &["source_id"]) else {
             return;
         };
+        if bool_at(command, &["prepare_for_launch"]) == Some(true) && self.prepared_launch_sources.len() < 64 {
+            self.prepared_launch_sources.insert(source_id.clone(), Instant::now() + Duration::from_secs(2));
+        }
         let existing = self.media_sources.get(&source_id).cloned();
+        // Prepared scene snapshots can arrive after a scheduled fade started.
+        // Only ignore preparation writes for that exact running generation;
+        // deliberate transport changes and newer preparations remain valid.
+        if command["prepare_for_launch"] == true && existing.as_ref().is_some_and(|media|
+            command["seek_generation"].as_u64() == Some(media.seek_generation)
+                && command["uri"].as_str().is_none_or(|uri| uri == media.uri))
+            && self.scheduled_transition_tokens.iter().any(|(layer_id, token)| {
+                self.native_graph_layers.get(layer_id).is_some_and(|graph|
+                    graph.params["vjclipClockToken"].as_u64() == Some(*token)
+                    && graph.effect_job_template.as_ref().is_some_and(|template|
+                        template.render_plans.iter().flat_map(|plan| plan.bindings.iter()).any(|binding| {
+                            if binding.binding != 3 { return false; }
+                            if let Some(input) = binding.resource_id.strip_prefix("layer-frame:") {
+                                self.scene_layers.get(input).and_then(|layer| layer.source_id.as_deref()) == Some(source_id.as_str())
+                            } else { binding.resource_id == source_id }
+                        })))
+            }) { return; }
+
         let uri = string_at(command, &["uri"])
             .or_else(|| existing.as_ref().map(|state| state.uri.clone()))
             .unwrap_or_default();
@@ -15076,9 +15330,15 @@ impl App {
     }
 
     fn apply_media_source_phase(&mut self, command: &Value) {
-        if self.render_clock_mode != "live" { return; }
         let Some(id) = string_at(command, &["source_id"]) else { return; };
+        if bool_at(command, &["enabled"]) == Some(false) { self.link_phase_anchors.remove(&id); return; }
+        if self.render_clock_mode != "live" { return; }
         let Some(media) = self.media_sources.get(&id) else { return; };
+        if !bool_at(command, &["native_tick"]).unwrap_or(false) {
+            if string_at(command, &["clock"]).as_deref() == Some("link") {
+                self.link_phase_anchors.insert(id.clone(), command.clone());
+            } else { self.link_phase_anchors.remove(&id); }
+        }
         if media.paused || !media.loop_enabled || media.source_type != "video"
             || string_at(command, &["uri"]).as_deref() != Some(media.uri.as_str())
             || number_at(command, &["seek_generation"]) != Some(media.seek_generation as f64) { return; }
@@ -15100,6 +15360,37 @@ impl App {
         if session.stream.retime_hardware_clock(rate) {
             session.phase_until = Some(Instant::now() + Duration::from_millis(500));
             session.phase_error_seconds = Some(error);
+        }
+    }
+
+    /// Recompute Link phase on the native pump even while the frontend is busy.
+    fn refresh_link_phase(&mut self) {
+        if self.render_clock_mode != "live" { return; }
+        let Some((beat, tempo, at)) = self.link_clock else { return; };
+        if at.elapsed() > Duration::from_millis(500) { return; }
+        let beat = beat + at.elapsed().as_secs_f64() * tempo / 60.0;
+        let anchors: Vec<_> = self.link_phase_anchors.iter().map(|(id, v)| (id.clone(), v.clone())).collect();
+        for (id, anchor) in anchors {
+            let Some(media) = self.media_sources.get_mut(&id) else { self.link_phase_anchors.remove(&id); continue; };
+            if media.paused || !media.loop_enabled || number_at(&anchor, &["seek_generation"]) != Some(media.seek_generation as f64)
+                || string_at(&anchor, &["uri"]).as_deref() != Some(media.uri.as_str()) { self.link_phase_anchors.remove(&id); continue; }
+            let (Some(duration), Some(anchor_beat), Some(beats), Some(time)) = (media.duration_seconds,
+                number_at(&anchor, &["beat_position"]), number_at(&anchor, &["beats_per_cycle"]), number_at(&anchor, &["time_seconds"])) else { continue; };
+            let lo = duration * media.trim_start;
+            let span = duration * (media.trim_end - media.trim_start);
+            let cycle = span * if media.bounce_enabled { 2.0 } else { 1.0 };
+            if span <= 0.0 || beats <= 0.0 { continue; }
+            let rate = cycle * tempo / (60.0 * beats);
+            if !(0.05..=8.0).contains(&rate) { continue; }
+            let reverse = media.playback_rate < 0.0;
+            let phase = (video_phase::phase_position(time, lo, span, bool_at(&anchor, &["reverse"]).unwrap_or(reverse), media.bounce_enabled)
+                + (beat - anchor_beat) * cycle / beats).rem_euclid(cycle);
+            let returning = if media.bounce_enabled { phase >= span } else { reverse };
+            media.playback_rate = rate * if reverse { -1.0 } else { 1.0 };
+            if let Some(session) = self.native_video_streams.get_mut(&id) { session.transport_rate = media.playback_rate; }
+            let command = json!({ "source_id": id, "uri": media.uri, "seek_generation": media.seek_generation,
+                "time_seconds": lo + if returning { cycle - phase } else { phase }, "reverse": returning, "native_tick": true });
+            self.apply_media_source_phase(&command);
         }
     }
 
@@ -15134,6 +15425,10 @@ impl App {
     }
 
     fn drain_native_video_streams(&mut self) {
+        for id in self.deferred_source_releases.iter().cloned().collect::<Vec<_>>() {
+            self.release_media_source_if_orphaned(&id);
+        }
+        self.refresh_link_phase();
         let now = Instant::now();
         let source_ids = self
             .native_video_streams
@@ -15541,6 +15836,7 @@ impl App {
     }
 
     fn prime_armed_native_video_sources(&mut self) {
+        self.prepared_launch_sources.retain(|_, expires| *expires > Instant::now());
         let pending_sources = self
             .pending_media_bindings
             .values()
@@ -15559,7 +15855,9 @@ impl App {
                 !session.playing
                     && (!self.source_frames.contains_key(*source_id) || session.frames_presented == 0)
                     && (pending_sources.contains(*source_id)
-                        || visible_sources.contains(*source_id))
+                        || visible_sources.contains(*source_id)
+                        || self.prepared_launch_sources.contains_key(*source_id)
+                        || self.launch_scheduler.references_source(source_id))
                     && session.stream.buffered_frames() > 0
             })
             .map(|(source_id, _)| source_id.clone())
@@ -15651,7 +15949,10 @@ impl App {
                     continue;
                 };
                 if state.source_type == "video" && state.seq > 0 {
-                    let playing = visible_sources.contains(&source_id) && !state.paused;
+                    // Splat textures are owned auxiliary sources, not scene-layer bindings.
+                    // Their owner explicitly releases them when the texture changes.
+                    let playing = (visible_sources.contains(&source_id)
+                        || source_id.starts_with("native-splat-video-")) && !state.paused;
                     self.ensure_native_video_stream(&source_id, &state, width, height, playing);
                 }
             }
@@ -16584,6 +16885,7 @@ impl App {
 
     fn apply_remove_layer(&mut self, command: &Value) {
         if let Some(layer_id) = string_at(command, &["layer_id"]) {
+            self.scheduled_binding_guards.remove(&layer_id);
             self.captured_graph_holds.remove(&layer_id);
             let (removed_source, removed_shader_output) = self
                 .scene_layers
@@ -16805,6 +17107,7 @@ impl ApplicationHandler<UserEvent> for App {
         }
 
         let frame_duration = self.frame_duration();
+        self.pump_scheduled_launches();
         let pump_started = Instant::now();
         self.pump_native_video_decodes();
         self.media_pump_ms = pump_started.elapsed().as_secs_f64() * 1000.0;
@@ -16815,6 +17118,7 @@ impl ApplicationHandler<UserEvent> for App {
                 // owing one clear-and-present, and the last picture stays
                 // resident in every output surface.
                 self.pending_render_retry
+                    || self.launch_scheduler.has_pending()
                     || !self.scene_layers.is_empty()
                     || !self.native_graph_layers.is_empty()
                     || !self.pending_native_graph_jobs.is_empty()
@@ -27529,6 +27833,7 @@ fn prepare_texture_readback(
 
     Ok(PendingFrameReadback { device: device.clone(), buffer, format, width, height, unpadded_bytes_per_row, padded_bytes_per_row })
 }
+static LIVE_FRAME_STREAM: Mutex<Option<(u16, String, std::net::TcpStream)>> = Mutex::new(None);
 static LIVE_CAPTURE_BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 static LIVE_DIAGNOSTIC_BUSY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 struct LiveCapturePermit(&'static std::sync::atomic::AtomicBool);

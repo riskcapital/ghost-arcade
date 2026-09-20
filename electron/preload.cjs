@@ -61,7 +61,7 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'pick_directory', 'save_file_binary', 'save_file_bytes', 'save_file_text', 'save_project_dialog',
   'jpeg_sequence_start', 'jpeg_sequence_write_frame', 'jpeg_sequence_write_frame_file', 'jpeg_sequence_finish', 'jpeg_sequence_cancel',
   // Native frame encoders — offline render + native live REC
-  'mp4_frame_encoder_start', 'mp4_frame_encoder_write_frame', 'mp4_frame_encoder_write_frame_file', 'mp4_frame_encoder_finish', 'mp4_frame_encoder_cancel',
+  'mp4_frame_encoder_live_control', 'mp4_frame_encoder_capture_live', 'mp4_frame_encoder_start', 'mp4_frame_encoder_write_frame', 'mp4_frame_encoder_write_frame_file', 'mp4_frame_encoder_finish', 'mp4_frame_encoder_cancel',
   'jpeg_frame_encoder_start', 'jpeg_frame_encoder_encode_file', 'jpeg_frame_encoder_finish', 'jpeg_frame_encoder_cancel',
   'save_generated_asset',
   'video_loop_create', 'video_append_segment',
@@ -106,6 +106,7 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'native_renderer_audio_devices', 'native_renderer_audio_status', 'native_renderer_audio_output',
   'native_renderer_start', 'native_renderer_stop', 'native_renderer_submit_batch',
   'native_renderer_submit_commands', 'native_renderer_run_compute_graph',
+  'native_renderer_schedule_launch', 'native_renderer_cancel_launch', 'native_renderer_launch_status',
   'native_renderer_upload_source_gpu_shared_texture',
   // Offscreen hosts for three.js / p5.js sources (js-source-host.js)
   'js_source_open', 'js_source_close', 'js_source_params', 'js_source_audio', 'js_source_status',

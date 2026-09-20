@@ -771,6 +771,8 @@ export interface ImageInputRef {
 export type VideoPlaybackMode = 'loop' | 'once' | 'bounce' | 'timelapse';
 
 export interface MediaSource {
+  /** Transient paused input prepared for a native launch. Never persist. */
+  _nativeLaunchPreparation?: boolean;
   id: string;
   type: MediaType;
   src: string; // URL or path

@@ -6,6 +6,24 @@ import { createVJClipTransitions, effectiveClipTransition, normalizedTransitionD
 const clip = (id: string): VJClip => ({ id, name: id, type: 'video', src: `/show/${id}.mp4`, _nativePlaybackSeekSeq: 7 });
 
 describe('VJ clip transition lifecycle', () => {
+  it('holds a queued fade until its native receipt and protects a replacement', () => {
+    const store=createVJClipTransitions();
+    const entry=store.begin('A',0,clip('a'),{...clip('b'),isPlaying:false},1,'dissolve',undefined,'queued-1')!;
+    expect(entry.preparedIncoming?.isPlaying).toBe(false);
+    expect(store.markReady('A',0,entry.token,100)).toBe(false);
+    expect(store.confirmScheduled('A',0,entry.token,80)).toBe(true);
+    expect(get(store).get('A:0')).toMatchObject({startedAtMs:80,queuedTriggerId:undefined,preparedIncoming:undefined});
+    const next=store.begin('A',0,clip('b'),clip('c'),1,'wipe')!;
+    expect(store.confirmScheduled('A',0,entry.token,100)).toBe(false);
+    expect(store.cancel('A',0,entry.token)).toBe(false);
+    expect(get(store).get('A:0')?.token).toBe(next.token);
+  });
+  it('captures the displayed picture when interrupting a queued fade with an uncertain start', () => {
+    const store=createVJClipTransitions();
+    store.begin('B',0,clip('a'),clip('b'),1,'dissolve',undefined,'queued');
+    expect(store.begin('B',0,clip('a'),clip('c'),1,'wipe')?.requiresSnapshot).toBe(true);
+  });
+
   it('inherits duration and style separately, preserving an explicit immediate cut', () => {
     const layer = { transitionDuration: 2, transitionStyle: 'wipe' as const };
     expect(effectiveClipTransition(layer, clip('b'))).toEqual({ duration: 2, style: 'wipe' });

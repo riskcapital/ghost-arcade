@@ -630,13 +630,14 @@ export async function writeNativeRendererMp4FrameLiveSpan(
   fromIndex: number,
   toIndex: number,
 ): Promise<NativeRendererFrameSnapshotExportResult> {
-  const rawName = `native_mp4_${session.jobId}_${String(fromIndex).padStart(6, '0')}.${session.pixelFormat}`;
-  const rawPath = joinNativeTempPath(session.tempDir, rawName);
-  const snapshot = await exportNativeRendererFrameSnapshot(rawPath, { source: 'output' });
-  assertNativeRendererFrameExport(snapshot, fromIndex, session);
+  let snapshot!: NativeRendererFrameSnapshotExportResult;
   const last = Math.max(fromIndex, toIndex);
-  for (let i = fromIndex; i <= last; i++) {
-    await writeNativeMp4FrameFile(session, i, rawPath, i === last);
+  for (let first = fromIndex; first <= last; first += 120) {
+    const result = await invoke<{ success: boolean; error?: string; snapshot: NativeRendererFrameSnapshotExportResult }>(
+      'mp4_frame_encoder_capture_live', { jobId: session.jobId, fromIndex: first, toIndex: Math.min(last, first + 119) });
+    if (!result?.success) throw new Error(result?.error || 'Native live frame capture failed');
+    snapshot = result.snapshot;
+    assertNativeRendererFrameExport(snapshot, first, session);
   }
   return snapshot;
 }

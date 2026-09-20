@@ -5065,6 +5065,7 @@ export class NativeRendererSync {
     /** Set by requestVideoFrameCallback whenever the element presented a
      *  new frame, so uploads pace to the video, not a timer. */
     textureVideoFrameReady: boolean;
+    nativeTextureSourceId: string;
   }>();
 
   private nativeSplatStateFor(layerId: string) {
@@ -5074,7 +5075,7 @@ export class NativeRendererSync {
         fileSig: '', uploadedSig: '', loading: false, packed: null,
         textureSig: '', textureUploadedSig: '', texture: null, textureSeq: 0,
         textureVideo: null, textureCanvas: null, textureVideoUploadedAt: 0,
-        textureVideoFrameReady: false,
+        textureVideoFrameReady: false, nativeTextureSourceId: '',
       };
       this.nativeSplatState.set(layerId, state);
     }
@@ -5084,7 +5085,12 @@ export class NativeRendererSync {
   private releaseNativeSplatTextureVideo(state: {
     textureVideo: HTMLVideoElement | null;
     textureCanvas: unknown | null;
+    nativeTextureSourceId?: string;
   }) {
+    if (state.nativeTextureSourceId) {
+      void invoke('native_renderer_release_source_frame', { source_id: state.nativeTextureSourceId }).catch(() => {});
+      state.nativeTextureSourceId = '';
+    }
     if (state.textureVideo) {
       try {
         state.textureVideo.pause();
@@ -5096,11 +5102,9 @@ export class NativeRendererSync {
     state.textureCanvas = null;
   }
 
-  /** Load the splat projection texture. Images decode once; videos become a
-   *  looping muted element that the splat route pumps into the texture
-   *  source frame every frame (same canvas transport the composite mirror
-   *  uses — the panel stores texturePath as a data URL, so the core's own
-   *  video decoder can't take it directly). */
+  /** Browser fallback for embedded/remote or manually clocked splat textures.
+   * File-backed live video uses the native decoder in the graph route below.
+   * Images decode once; fallback videos upload only on new presented frames. */
   private async loadNativeSplatTexture(layerId: string, content: SplatContent, textureSig: string) {
     const state = this.nativeSplatStateFor(layerId);
     const path = String(content.texturePath ?? '');
@@ -6681,15 +6685,24 @@ export class NativeRendererSync {
             // While the file parses, render an empty frame — throwing here
             // would warning-disable the route before the load resolves.
             const audio = getVisualAudioSnapshot();
-            const textureSourceId = `${graphSource.id}:splat-texture`;
+            const textureUri = resolveAssetRefForRuntime((content as any)._textureAssetRef, undefined, content.texturePath) ?? content.texturePath;
+            const nativeTexture = content.textureEnabled && content.textureType === 'video'
+              && clock.mode !== 'manual' && isNativeLocalMediaUri(textureUri);
+            let textureSourceId = `${graphSource.id}:splat-texture`;
             const textureSig = content.textureEnabled && content.texturePath
-              ? `${content.texturePath}|${content.textureType ?? 'image'}`
+              ? `${nativeTexture ? 'native' : 'browser'}|${textureUri}|${content.textureType ?? 'image'}`
               : '';
             if (state.textureSig !== textureSig) {
               state.textureSig = textureSig;
               state.texture = null;
               this.releaseNativeSplatTextureVideo(state);
-              if (textureSig) void this.loadNativeSplatTexture(layer.id, content, textureSig);
+              if (nativeTexture) {
+                state.textureSeq += 1;
+                state.nativeTextureSourceId = `native-splat-video-${graphSource.id}:${state.textureSeq}`;
+                queuedCommands.push({ type: 'set_media_source_playback', source_id: state.nativeTextureSourceId,
+                  uri: textureUri, source_type: 'video', time_seconds: 0, clock_time_seconds: Number(clock.time ?? 0), playback_rate: 1,
+                  paused: false, loop_enabled: true, seek_generation: state.textureSeq });
+              } else if (textureSig) void this.loadNativeSplatTexture(layer.id, content, textureSig);
             }
             // Upload when the element presented a new frame (rVFC-paced).
             // Under the offline render's manual clock the element must NOT
@@ -6750,6 +6763,7 @@ export class NativeRendererSync {
               } as unknown as RendererCommand);
               state.textureUploadedSig = state.textureSig;
             }
+            if (nativeTexture) textureSourceId = state.nativeTextureSourceId;
             const graph = buildSplatNativeComputeGraph({
               sourceId: graphSource.id,
               content,
@@ -6759,7 +6773,7 @@ export class NativeRendererSync {
                 ? encodeSplatBufferBase64(state.packed.buffer)
                 : null,
               textureSourceId,
-              hasTexture: !!state.texture && state.textureUploadedSig === state.textureSig,
+              hasTexture: !!state.nativeTextureSourceId || (!!state.texture && state.textureUploadedSig === state.textureSig),
               width,
               height,
               time: graphTime,
@@ -7154,6 +7168,7 @@ export class NativeRendererSync {
       clock_time_seconds: Number((renderClock.time ?? 0).toFixed(6)),
       playback_rate: Number(nativeVideoAnchorRate(src).toFixed(6)),
       paused: src.isPlaying === false,
+      prepare_for_launch: src._nativeLaunchPreparation === true,
       loop_enabled: playbackMode !== 'once',
       bounce_enabled: playbackMode === 'bounce',
       trim_start: Math.max(0, Math.min(1, Number(src.trimStart ?? 0))),
@@ -7999,6 +8014,16 @@ export class NativeRendererSync {
    * core can claim the warm decoder and present its first moving frame in one
    * small transaction. The regular sync still follows to reconcile the scene.
    */
+  async prepareScheduledVideo(source: NonNullable<Layer['source']>): Promise<RendererCommand | null> {
+    if (!this.running || !this.startupReady || this.renderClockCommand().mode === 'manual') return null;
+    const native = nativeLayerSourceFromMediaSource(source);
+    if (native.sourceType !== 'video' || !isNativeLocalMediaUri(native.uri)) return null;
+    const command = this.nativeVideoPlaybackCommand({...source, src: native.uri, isPlaying: false}, 'video', Date.now(), this.renderClockCommand());
+    const summary = await submitNativeRendererCommands([{...command, prepare_for_launch: true} as RendererCommand]);
+    if (summary.dropped) return null;
+    return command;
+  }
+
   syncUrgentVideoSources(
     width: number,
     height: number,
@@ -8595,6 +8620,9 @@ export class NativeRendererSync {
             layerB: nativeGraphScaledParams?.vjxfadeLayerB ?? '',
             clipTransition: nativeGraphScaledParams?.vjclipTransition === true,
             frozenSourceA: nativeGraphScaledParams?.vjclipSourceA ?? '',
+            clockToken: nativeGraphScaledParams?.vjclipClockToken ?? null,
+            clockDuration: nativeGraphScaledParams?.vjclipClockDuration ?? null,
+            clockRunning: nativeGraphScaledParams?.vjclipClockRunning === true,
           })
         : nativeGraphRoute?.kind === 'vj-mix'
           ? stableNativeGraphKey({
@@ -8925,6 +8953,9 @@ export class NativeRendererSync {
           }
           const topologySig = [
             clipTransitionGraphOptions ? 'clip-transition' : 'bank-crossfade',
+            nativeGraphScaledParams?.vjclipClockToken ?? '',
+            nativeGraphScaledParams?.vjclipClockDuration ?? '',
+            nativeGraphScaledParams?.vjclipClockRunning === true,
             clipTransitionGraphOptions?.sourceAId ?? crossfadeGraphOptions.sourceAId,
             crossfadeGraphOptions.outputSourceId,
             crossfadeGraphOptions.sourceAId,

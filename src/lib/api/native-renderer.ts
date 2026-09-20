@@ -244,7 +244,8 @@ export type RendererCommand =
       slices: Array<Record<string, unknown>>;
     }
   | { type: 'set_clip_audio_mix'; sources: string[]; voices: Array<{ id: string; source_id: string; gain: number; pan: number }> }
-  | { type: 'set_media_source_phase'; source_id: string; uri: string; seek_generation: number; time_seconds: number; reverse: boolean }
+  | { type: 'set_media_source_phase'; source_id: string; uri: string; seek_generation: number; time_seconds: number; reverse: boolean; clock?: 'link'; beat_position?: number; beats_per_cycle?: number }
+  | { type: 'set_media_source_phase'; source_id: string; enabled: false }
   | { type: 'set_target_fps'; target_fps: number }
   | { type: 'set_render_clock'; mode: 'live' | 'manual' | 'reset'; time?: number; time_delta?: number; frame_index?: number }
   | {
@@ -263,6 +264,7 @@ export type RendererCommand =
       duration_seconds?: number;
       decode_width?: number;
       decode_height?: number;
+      prepare_for_launch?: boolean;
       seek_generation?: number;
       frame_step?: -1 | 1;
       seq?: number;
@@ -341,6 +343,7 @@ export type RendererCommand =
       mask_info?: [number, number, number, number];
       mask_points?: Array<[number, number, number, number]>;
     }
+  | { type: 'start_prepared_transition'; layer_id: string; token: number; sources: Array<{source_id: string; seek_generation?: number}> }
   | { type: 'set_layer_visibility'; layer_id: string; visible: boolean }
   | { type: 'set_layer_color'; layer_id: string; rgba: [number, number, number, number] }
   | { type: 'set_layer_source_color'; layer_id: string; rgb: [number, number, number] }
@@ -1754,3 +1757,25 @@ export interface NativeClipAudioStatus { running: boolean; device?: string; erro
 export const getNativeAudioDevices = () => invoke<string[]>('native_renderer_audio_devices');
 export const getNativeAudioStatus = () => invoke<NativeClipAudioStatus>('native_renderer_audio_status');
 export const setNativeAudioOutput = (device: string) => invoke<boolean>('native_renderer_audio_output', { device });
+
+/** Prepared native transactions; launcher integration must reconcile receipts before publishing UI state. */
+export async function scheduleNativeLaunch(launch: {
+  id: string; lane: string; revision: number; delay_ms: number; beat?: number;
+  commands: Array<RendererCommand | {type: 'set_media_source_playback'; source_id: string; uri?: string; paused?: boolean; time_seconds?: number; seek_generation?: number}>;
+  expected_sources?: Record<string, {source_id: string; seek_generation?: number}>;
+}) {
+  const result = await invoke<{ accepted: boolean; id: string; lane: string; revision: number } | null>('native_renderer_schedule_launch', launch);
+  if (!result?.accepted) throw new Error('Native launch was not accepted');
+  return result;
+}
+export async function cancelNativeLaunch(lane: string, revision: number) {
+  const result = await invoke<{ cancelled: boolean; receipts?: Array<{id:string; state:string; age_ms?:number}> } | null>('native_renderer_cancel_launch', { lane, revision, settle_superseded: true });
+  if (!result?.cancelled) throw new Error('Native launch cancellation was not acknowledged');
+  return result;
+}
+export async function getNativeLaunchStatus() {
+  const result = await invoke<{ pending: Array<{ id: string; lane: string; revision: number }>; serial: number;
+    receipts: Array<{ id: string; lane: string; revision: number; serial: number; state: string; age_ms?: number; detail: unknown }> } | null>('native_renderer_launch_status');
+  if (!result) throw new Error('Native launch status is unavailable');
+  return result;
+}
