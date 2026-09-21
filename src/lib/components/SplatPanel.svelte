@@ -415,7 +415,7 @@
 {/snippet}
 
 {#if isVJMode ? sc : layer && sc}
-  <div class="splat-panel" class:compact>
+  <div data-help-page="point-clouds" class="splat-panel" class:compact>
     {#if !compact}<h3>Splat / Point Cloud</h3>{/if}
 
     <!-- File Loading -->
@@ -2687,7 +2687,7 @@
     </div>
   </div>
 {:else}
-  <div class="no-layer">
+  <div data-help-page="point-clouds" class="no-layer">
     <p>Select a splat layer to edit its properties</p>
   </div>
 {/if}

@@ -325,13 +325,14 @@ void main() {
   };
 
   // Auto-apply default shader to a newly created layer (fire-and-forget)
-  const autoApplyDefaultShader = (layerId: string) => {
+  const autoApplyDefaultShader = (layerId: string, requireReference = false) => {
     (async () => {
       try {
         // Get the user's preferred default shader from settings
         const { settings: settingsStore } = await import('./settings');
         const appSettings = get(settingsStore);
-        const shaderChoice = appSettings.defaultLayerShader || 'grid';
+        const preferred = appSettings.defaultLayerShader || 'grid';
+        const shaderChoice = requireReference && preferred === 'none' ? 'grid' : preferred;
 
         // 'none' = blank layer, no shader
         if (shaderChoice === 'none') return;
@@ -655,7 +656,7 @@ void main() {
       // (crosshair / grid / whatever the user has configured) instead
       // of being blank until content is dropped in. Matches the
       // addScreenLayer behavior — same code path.
-      for (const id of freshIds) autoApplyDefaultShader(id);
+      for (const id of freshIds) autoApplyDefaultShader(id, true);
       return links;
     },
 

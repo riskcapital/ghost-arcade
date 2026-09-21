@@ -1074,6 +1074,7 @@ describe('quantized VJ columns', () => {
     expect(activeIds()[0]).toBeNull();
     launcher.triggerClipNow(0, 0);
     launcher.setOpen(false, { fromWorkspace: true });
+    expect(get(launcher).isLive).toBe(false);
     tick(30000);
     expect(activeIds()[0]).toBe('a0');
   });

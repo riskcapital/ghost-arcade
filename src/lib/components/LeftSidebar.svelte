@@ -17,7 +17,7 @@
   }
 </script>
 
-<div class="left-sidebar">
+<div data-help-page="interface" class="left-sidebar">
   <div class="left-tabs" role="tablist" aria-label="Left sidebar tab">
     <button
       class="left-tab"

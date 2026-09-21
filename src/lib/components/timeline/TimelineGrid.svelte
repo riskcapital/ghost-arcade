@@ -375,7 +375,7 @@
 
 <svelte:window onclick={closeContext} />
 
-<div class="grid-container" bind:this={gridEl}
+<div data-help-page="show-timeline" class="grid-container" bind:this={gridEl}
   onclick={seekFromClick}
   onmousedown={handleMouseDown}
   oncontextmenu={handleContextMenu}
@@ -425,7 +425,7 @@
 
 <!-- Context menu -->
 {#if contextMenu && contextMenu.kind === 'keyframe'}
-  <div class="context-menu" use:fitContextMenu={contextMenu} style="left: {contextMenu.x}px; top: {contextMenu.y}px"
+  <div data-help-page="show-timeline" class="context-menu" use:fitContextMenu={contextMenu} style="left: {contextMenu.x}px; top: {contextMenu.y}px"
     onclick={(e) => e.stopPropagation()}
     onmousedown={(e) => e.stopPropagation()}
     oncontextmenu={(e) => e.preventDefault()}>
@@ -444,7 +444,7 @@
     <button class="ctx-item ctx-delete" onclick={(e) => { e.stopPropagation(); deleteKeyframe(); }}>Delete</button>
   </div>
 {:else if contextMenu && contextMenu.kind === 'empty-track'}
-  <div class="context-menu" use:fitContextMenu={contextMenu} style="left: {contextMenu.x}px; top: {contextMenu.y}px"
+  <div data-help-page="show-timeline" class="context-menu" use:fitContextMenu={contextMenu} style="left: {contextMenu.x}px; top: {contextMenu.y}px"
     onclick={(e) => e.stopPropagation()}
     onmousedown={(e) => e.stopPropagation()}
     oncontextmenu={(e) => e.preventDefault()}>

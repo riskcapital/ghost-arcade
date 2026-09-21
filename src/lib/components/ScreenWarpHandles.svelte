@@ -359,7 +359,7 @@
   }
 </script>
 
-<div
+<div data-help-page="projection-mapping"
   class="screen-warp-handles"
   bind:this={containerEl}
   style="width: {containerWidth}px; height: {containerHeight}px;"

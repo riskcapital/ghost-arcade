@@ -321,7 +321,7 @@
   });
 </script>
 
-<article class="wled-card">
+<article data-help-page="wled" class="wled-card">
   <header class="controller-header">
     <label class="power-toggle" title="Send LED data">
       <input

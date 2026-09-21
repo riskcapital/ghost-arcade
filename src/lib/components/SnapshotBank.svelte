@@ -91,7 +91,7 @@
 
 <svelte:window onclick={onWindowClick} />
 
-<div class="snap-bank" class:expanded class:inline title="Snapshots — click to recall · shift-click to save · right-click for menu">
+<div data-help-page="macros-snapshots" class="snap-bank" class:expanded class:inline title="Snapshots — click to recall · shift-click to save · right-click for menu">
   <button class="snap-handle" onclick={() => expanded = !expanded} title={expanded ? 'Collapse snapshots' : 'Expand snapshots'}>
     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
       <rect x="3" y="3" width="7" height="7"/>
@@ -150,7 +150,7 @@
 
 {#if ctxIndex !== null}
   {@const slot = $snapshots.snapshots[ctxIndex]}
-  <div class="snap-ctx" bind:this={ctxEl} style="left:{ctxX}px;top:{ctxY}px">
+  <div data-help-page="macros-snapshots" class="snap-ctx" bind:this={ctxEl} style="left:{ctxX}px;top:{ctxY}px">
     {#if slot && slot.capturedAt > 0}
       <button class="snap-ctx-item snap-ctx-primary" onclick={ctxRecall}>Recall</button>
       <button class="snap-ctx-item" onclick={ctxSave}>Overwrite with current state</button>
@@ -242,12 +242,16 @@
 
   .snap-grid {
     display: grid;
-    grid-template-columns: repeat(8, 1fr);
+    grid-template-columns: repeat(8, minmax(0, 1fr));
     gap: 4px;
     margin-top: 6px;
     width: 290px;
+    box-sizing: border-box;
+    max-width: calc(100vw - 32px);
   }
   .snap-bank.inline .snap-grid {
+    /* Eight 32px pads, seven 4px gaps, padding and border. */
+    width: 302px;
     position: absolute;
     top: calc(100% + 8px);
     right: 0;
@@ -261,6 +265,7 @@
   }
 
   .snap-cell-wrap {
+    min-width: 0;
     display: flex;
     flex-direction: column;
     align-items: center;
@@ -269,7 +274,11 @@
 
   .snap-cell {
     position: relative;
-    width: 32px;
+    width: 100%;
+    max-width: 32px;
+    min-width: 0;
+    box-sizing: border-box;
+    padding: 0;
     height: 32px;
     background: rgba(255, 255, 255, 0.04);
     border: 1px solid rgba(255, 255, 255, 0.08);
@@ -326,7 +335,10 @@
   }
 
   .snap-rename {
-    width: 32px;
+    width: 100%;
+    max-width: 32px;
+    min-width: 0;
+    box-sizing: border-box;
     background: rgba(0, 0, 0, 0.4);
     border: 1px solid rgba(255, 255, 255, 0.18);
     color: #fff;

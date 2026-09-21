@@ -133,7 +133,7 @@
 </script>
 
 {#if $isDirectorOpen}
-  <div class="director-panel">
+  <div data-help-page="ai-generation" class="director-panel">
     <!-- HEADER -->
     <div class="dp-header">
       <div class="dp-header-top">
@@ -147,7 +147,7 @@
           {#if isVJLive}
             <span class="dp-live-badge"><span class="dp-live-dot"></span>LIVE</span>
           {/if}
-          <button class="dp-close" onclick={() => directorStore.setOpen(false)}>×</button>
+          <button aria-label="Close Director" class="dp-close" onclick={() => directorStore.setOpen(false)}>×</button>
         </div>
       </div>
 

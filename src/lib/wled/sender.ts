@@ -21,18 +21,17 @@
  *    next frame's send until the previous one resolves. Prevents
  *    runaway IPC queueing if a controller is unreachable.
  *
- * 3. **Rate-limited to ~60Hz.** WLED handles up to a few hundred Hz
- *    but the controller's WS2812B driver typically refreshes at
- *    ~400Hz max. Sending faster than display refresh is wasted
- *    bandwidth. We use 16ms minimum interval (matches RAF cadence).
+ * 3. **Bounded update rate.** A 16ms minimum interval caps legacy
+ *    render-loop sends. Native output follows fresh frames from the
+ *    shared composite mirror (requested at 20fps).
  *
  * 4. **Physical mapping.** Auto grids, linear strips, serpentine
  *    matrices, source regions, and custom LED points all resolve to
  *    deterministic sample coordinates in physical LED order.
  *
  * 5. **Brightness + gamma applied in JS, not GLSL.** Keeps the
- *    WebGL render path untouched. The cost is one pass over 32-490
- *    bytes per frame — trivial.
+ *    WebGL render path untouched. The cost is one pass over up to 490 RGB
+ *    pixels per frame — trivial.
  */
 
 import { writable } from 'svelte/store';
@@ -72,7 +71,7 @@ export interface WLEDTelemetry {
 
 export const wledTelemetry = writable<Record<string, WLEDTelemetry>>({});
 
-export type WLEDSourceRole = 'editor' | 'output' | 'osr';
+export type WLEDSourceRole = 'editor' | 'output' | 'osr' | 'native';
 
 interface RegisteredSource {
   canvas: HTMLCanvasElement;
@@ -93,17 +92,18 @@ let currentBpm = 120;
 const MIN_SEND_INTERVAL_MS = 16;
 
 const SOURCE_ROLE_PRIORITY: Record<WLEDSourceRole, number> = {
+  native: 4,
   editor: 3,
   output: 2,
   osr: 1,
 };
 
-/** Choose the authoritative render source. The editor wins while it is
- *  mounted; output/OSR canvases are failover sources only. */
+/** Choose the authoritative render source. The native mirror wins when
+ *  registered; browser editor/output/OSR canvases are fallback sources. */
 function activeSource(): RegisteredSource | null {
   let best: RegisteredSource | null = null;
   for (const source of registeredSources.values()) {
-    if (!source.canvas.isConnected) continue;
+    if (source.role !== 'native' && !source.canvas.isConnected) continue;
     if (!best || SOURCE_ROLE_PRIORITY[source.role] > SOURCE_ROLE_PRIORITY[best.role]) {
       best = source;
     }
@@ -190,13 +190,13 @@ function ensureFrameTap(sourceCanvas: HTMLCanvasElement): CanvasRenderingContext
   return frameTapCtx;
 }
 
-function captureComposite(sourceCanvas: HTMLCanvasElement): ImageData | null {
+function captureComposite(sourceCanvas: HTMLCanvasElement, flipY: boolean): ImageData | null {
   const context = ensureFrameTap(sourceCanvas);
   if (!context || !frameTapCanvas) return null;
   context.setTransform(1, 0, 0, 1, 0, 0);
   context.clearRect(0, 0, frameTapCanvas.width, frameTapCanvas.height);
   context.save();
-  context.setTransform(1, 0, 0, -1, 0, frameTapCanvas.height);
+  if (flipY) context.setTransform(1, 0, 0, -1, 0, frameTapCanvas.height);
   context.drawImage(sourceCanvas, 0, 0, frameTapCanvas.width, frameTapCanvas.height);
   context.restore();
   return context.getImageData(0, 0, frameTapCanvas.width, frameTapCanvas.height);
@@ -294,7 +294,7 @@ export function tickWLEDSenders(canvas: HTMLCanvasElement) {
 
     try {
       if (imageData === undefined && (state.controller.testPattern ?? 'off') === 'off') {
-        imageData = captureComposite(canvas);
+        imageData = captureComposite(canvas, activeSource()?.role !== 'native');
       }
       packRGB(state, imageData ?? null, now);
     } catch (err) {
@@ -342,7 +342,7 @@ export function startWLEDSenders(canvas: HTMLCanvasElement, role: WLEDSourceRole
     }
   });
   unsubAudio = audioStore.subscribe(state => {
-    currentBpm = state.bpm > 0 ? state.bpm : state.manualBPM ?? 120;
+    currentBpm = (state.manualBPM ?? 0) > 0 ? state.manualBPM! : state.bpm > 0 ? state.bpm : 120;
   });
 }
 

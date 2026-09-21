@@ -370,7 +370,7 @@
   let expandedSection: string | null = 'shapes';
 </script>
 
-<div class="drawing-panel">
+<div data-help-page="layers" class="drawing-panel">
   <div class="panel-header">
     <h3>Shape Editor</h3>
   </div>

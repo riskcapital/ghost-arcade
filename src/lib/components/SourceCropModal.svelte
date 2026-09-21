@@ -270,7 +270,7 @@
 
 {#if open}
   <!-- svelte-ignore a11y_no_static_element_interactions -->
-  <div
+  <div data-help-page="masks-slices"
     class="source-crop-overlay"
     onclick={restoreAndClose}
     onkeydown={handleKeydown}

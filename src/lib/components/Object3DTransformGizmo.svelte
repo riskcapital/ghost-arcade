@@ -242,7 +242,7 @@
 </script>
 
 {#if layer && content && (layer.type === 'splat' || layer.type === 'model3d')}
-  <div
+  <div data-help-page="layers"
     class="object-gizmo"
     class:dragging={!!drag}
     style="left: {centerX}px; top: {centerY}px; --gizmo-scale: {displayScale};"

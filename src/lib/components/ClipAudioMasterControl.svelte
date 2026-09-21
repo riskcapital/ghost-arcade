@@ -45,7 +45,7 @@
 <svelte:window on:click={onWindowClick} />
 
 {#if active}
-  <div class="clip-audio-master" bind:this={rootEl}>
+  <div data-help-page="midi-audio" class="clip-audio-master" bind:this={rootEl}>
     <button
       class="cam-btn"
       class:muted

@@ -127,7 +127,7 @@
 </script>
 
 {#if orientation === 'vertical'}
-  <div class="vj-fader vertical" style="--fader-color: {color}; --fader-height: {height}px;">
+  <div data-help-page="mobile-control" class="vj-fader vertical" style="--fader-color: {color}; --fader-height: {height}px;">
     {#if label}
       <span class="fader-label">{label}</span>
     {/if}
@@ -179,7 +179,7 @@
     <span class="fader-value">{displayPercent}%</span>
   </div>
 {:else}
-  <div class="vj-fader horizontal" style="--fader-color: {color};">
+  <div data-help-page="mobile-control" class="vj-fader horizontal" style="--fader-color: {color};">
     {#if label}
       <span class="fader-label">{label}</span>
     {/if}

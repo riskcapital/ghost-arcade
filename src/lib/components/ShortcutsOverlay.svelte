@@ -7,9 +7,9 @@
 </script>
 
 {#if visible}
-  <div class="shortcut-overlay-backdrop" onclick={onClose}>
+  <div data-help-page="interface" class="shortcut-overlay-backdrop" onclick={onClose}>
     <div class="shortcut-overlay" onclick={(e) => e.stopPropagation()}>
-      <button class="shortcut-overlay-close" onclick={onClose}>&times;</button>
+      <button aria-label="Close keyboard shortcuts" class="shortcut-overlay-close" onclick={onClose}>&times;</button>
       <h2 class="shortcut-overlay-title">Keyboard Shortcuts</h2>
       <div class="shortcut-columns">
         <div class="shortcut-section">
@@ -19,21 +19,27 @@
           <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>S</kbd><span>Save</span></div>
           <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>Shift</kbd>+<kbd>S</kbd><span>Save As</span></div>
           <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>Z</kbd><span>Undo</span></div>
-          <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>Y</kbd><span>Redo</span></div>
+          <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd><span>Redo</span></div>
         </div>
         <div class="shortcut-section">
           <h3>Layers</h3>
           <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>C</kbd><span>Copy layer(s)</span></div>
           <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>V</kbd><span>Paste layer(s)</span></div>
           <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>D</kbd><span>Duplicate layer</span></div>
-          <div class="shortcut-row"><kbd>Delete</kbd><span>Remove layer</span></div>
-          <div class="shortcut-row"><kbd>{isMac ? 'Fn+Delete' : 'Backspace'}</kbd><span>Remove layer</span></div>
+          <div class="shortcut-row"><kbd>Delete</kbd><span>Remove selected keyframe or layer</span></div>
+          <div class="shortcut-row"><kbd>{isMac ? 'Fn+Delete' : 'Backspace'}</kbd><span>Remove selected keyframe or layer</span></div>
         </div>
         <div class="shortcut-section">
-          <h3>View</h3>
-          <div class="shortcut-row"><kbd>Space</kbd><span>Hold to pan viewport</span></div>
-          <div class="shortcut-row"><kbd>Esc</kbd><span>Exit drawing / edit mode</span></div>
+          <h3>Control &amp; View</h3>
+          <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>M</kbd><span>Toggle MIDI Learn</span></div>
+          <div class="shortcut-row"><kbd>{mod}</kbd>+<kbd>,</kbd><span>Settings</span></div>
+          <div class="shortcut-row"><kbd>Space</kbd><span>Hold + drag to pan (show tray closed)</span></div>
+          <div class="shortcut-row"><kbd>Esc</kbd><span>Exit drawing, MIDI / keyboard edit, or help</span></div>
           <div class="shortcut-row"><kbd>?</kbd><span>Toggle this help</span></div>
+        </div>
+        <div class="shortcut-section">
+          <h3>Show Timeline</h3>
+          <div class="shortcut-row"><kbd>Space</kbd><span>Play / pause (show tray open)</span></div>
         </div>
         <div class="shortcut-section">
           <h3>Output</h3>
@@ -72,7 +78,7 @@
   .shortcut-overlay {
     position: relative;
     background: #15151a;
-    border: 1px solid rgba(187, 134, 252, 0.4);
+    border: 1px solid rgba(78, 112, 210, 0.5);
     border-radius: 10px;
     padding: 24px 28px;
     max-width: 760px;
@@ -106,7 +112,7 @@
     margin: 0 0 18px;
     font-size: 19px;
     font-weight: 600;
-    color: #BB86FC;
+    color: #b7c9fa;
   }
   .shortcut-columns {
     display: grid;
@@ -117,7 +123,7 @@
     margin: 0 0 8px;
     font-size: 12px;
     font-weight: 600;
-    color: #BB86FC;
+    color: #b7c9fa;
     text-transform: uppercase;
     letter-spacing: 0.5px;
   }

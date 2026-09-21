@@ -275,7 +275,7 @@
   $: triggers = $performanceStore.triggers;
 </script>
 
-<div class="perf-pad-container">
+<div data-help-page="synthvision" class="perf-pad-container">
   <!-- XY Pad -->
   <div class="xy-pad-wrapper">
     <div class="xy-pad-header">

@@ -7,11 +7,11 @@
   export let onClose: () => void;
 </script>
 
-<div class="picker-bg" onclick={onClose} role="presentation">
+<div data-help-page="stage-simulator" class="picker-bg" onclick={onClose} role="presentation">
   <div class="picker-card" onclick={(e) => e.stopPropagation()} role="presentation">
     <header>
       <h2>Pick a venue</h2>
-      <button class="close-x" onclick={onClose}>✕</button>
+      <button aria-label="Close venue picker" class="close-x" onclick={onClose}>✕</button>
     </header>
     <p class="lead">Sets the stage scenery — truss, ceiling, walls, lighting baseline, floor finish. LED layout still flows from your 2D Stage Designer.</p>
 

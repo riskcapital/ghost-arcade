@@ -151,7 +151,7 @@
 
 {#if active}
   {#key revision}
-    <div class="mp-learn-layer" aria-hidden="true">
+    <div data-help-page="midi-audio" class="mp-learn-layer" aria-hidden="true">
       {#each items as item (item.path + ':' + item.rect.left + ':' + item.rect.top)}
         {#if item.visible}
           {@const existing = bindingsForPath(item.path)}

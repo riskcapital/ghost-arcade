@@ -990,9 +990,9 @@
   }
 </script>
 
-<div class="layer-panel">
+<div data-help-page="layers" class="layer-panel">
   <!-- Layers Section (top half when effects are shown) -->
-  <div class="layers-section">
+  <div class="layers-section" class:composition-open={mappingComposition.enabled && compositionPanelOpen}>
     <div class="panel-header">
       <h3>Layers</h3>
       <div class="add-layer-wrapper">
@@ -1195,7 +1195,8 @@
     </div>
 
     {#if mappingComposition.enabled && compositionPanelOpen}
-      <div class="mapping-composition-panel">
+      <!-- svelte-ignore a11y_no_noninteractive_tabindex (Focusable scroll region supports keyboard scrolling.) -->
+      <div class="mapping-composition-panel" data-help-page="effects" role="region" aria-label="Composition effects controls" tabindex="0">
         <div class="composition-tabs">
           <button class:active={compositionTab === 'effects'} onclick={() => compositionTab = 'effects'}>Effects</button>
           <button class:active={compositionTab === 'stage'} onclick={() => compositionTab = 'stage'}>Screen FX</button>
@@ -1287,7 +1288,9 @@
                         <div class="effect-blend-ctrl">
                           <span class="param-label">Blend</span>
                           <select
-                            value={effect.blendMode ?? 'normal'}
+                            value={nativeInventoryLocked ? 'normal' : effect.blendMode ?? 'normal'}
+                            disabled={nativeInventoryLocked}
+                            title={nativeInventoryLocked ? 'Per-effect blend modes are not available in the native renderer. Use effect opacity or the layer blend mode.' : 'Blend the effect result with its input'}
                             onchange={(e) => project.updateMappingCompositionEffect(effect.id, { blendMode: (e.target as HTMLSelectElement).value as BlendMode })}
                           >
                             {#each blendModes as mode}
@@ -1488,6 +1491,7 @@
 
                   {#if expandedMappingStageEffectId === eff.id}
                     <div class="effect-params">
+                      {#if def?.description}<p class="stage-effect-description">{def.description}</p>{/if}
                       <div class="param-row">
                         <span class="param-label">Opacity</span>
                         <input
@@ -3121,7 +3125,9 @@
                         <div class="effect-blend-ctrl">
                           <label>Blend</label>
                           <select
-                            value={effect.blendMode ?? 'normal'}
+                            value={nativeInventoryLocked ? 'normal' : effect.blendMode ?? 'normal'}
+                            disabled={nativeInventoryLocked}
+                            title={nativeInventoryLocked ? 'Per-effect blend modes are not available in the native renderer. Use effect opacity or the layer blend mode.' : 'Blend the effect result with its input'}
                             onchange={(e) => project.updateEffect(layer.id, effect.id, { blendMode: (e.target as HTMLSelectElement).value as BlendMode })}
                           >
                             {#each blendModes as mode}
@@ -3352,6 +3358,7 @@
 
 
 <style>
+  .stage-effect-description { font-size: 12px; line-height: 1.5; color: var(--text-secondary, #aab2c2); margin: 0 0 10px; }
   .effect-chain-warning { color: #f4c46a; font-size: 11px; line-height: 1.5; padding: 6px 8px; }
   .layer-panel {
     width: 300px;
@@ -3392,6 +3399,7 @@
   }
 
   .properties-effects-content {
+    min-height: 0;
     flex: 1;
     overflow-y: auto;
     padding: 13px 14px;
@@ -3517,7 +3525,27 @@
     color: #63d6ff;
   }
 
+  .layers-section.composition-open {
+    flex: 1 1 70%;
+    max-height: 70%;
+    min-height: 0;
+  }
+  .layer-panel:has(.layers-section.composition-open) .properties-effects-panel {
+    flex: 1 1 30%;
+  }
+  .layers-section.composition-open .layer-list {
+    flex: 0 1 30%;
+    min-height: 64px;
+  }
+  .layers-section > .panel-header,
+  .mapping-composition-row { flex-shrink: 0; }
+
   .mapping-composition-panel {
+    flex: 1 1 0;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior: contain;
+
     border-bottom: 1px solid var(--ga-line, rgba(255, 255, 255, 0.07));
     padding: 8px;
     background: rgba(7, 11, 16, 0.72);

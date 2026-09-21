@@ -14,7 +14,7 @@
   }
 </script>
 
-<div class="welcome-overlay">
+<div data-help-page="getting-started" class="welcome-overlay">
   <div class="welcome-panel">
     <div class="welcome-logo">
       <img src="{import.meta.env.BASE_URL}icon-new.png" alt="Ghost Arcade" class="logo-img" />

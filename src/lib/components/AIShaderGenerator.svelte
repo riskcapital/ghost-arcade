@@ -208,10 +208,10 @@
   }
 </script>
 
-<div class="ai-generator">
+<div data-help-page="ai-generation" class="ai-generator">
   <div class="header">
     <h3>{isEditMode ? 'Edit AI Content' : 'AI Content Generator'}</h3>
-    <button class="btn-close" onclick={() => dispatch('close')}>×</button>
+    <button aria-label="Close shader generator" class="btn-close" onclick={() => dispatch('close')}>×</button>
   </div>
 
   <!-- Compact AI provider status bar -->

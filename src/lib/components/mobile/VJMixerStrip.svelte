@@ -46,7 +46,7 @@
 
 {#if isTablet}
   <!-- VERTICAL channel strip for iPad -->
-  <div class="mixer-strip vertical" class:compact style="--strip-color: {color}">
+  <div data-help-page="mobile-control" class="mixer-strip vertical" class:compact style="--strip-color: {color}">
     <span class="strip-label">L{layerIndex + 1}</span>
     <span class="strip-clip-name" class:active={isPlaying}>{clipName}</span>
     <VJFader
@@ -75,7 +75,7 @@
   </div>
 {:else}
   <!-- HORIZONTAL strip for phone -->
-  <div class="mixer-strip horizontal" style="--strip-color: {color}">
+  <div data-help-page="mobile-control" class="mixer-strip horizontal" style="--strip-color: {color}">
     <span class="strip-label">L{layerIndex + 1}</span>
     <div class="strip-fader-area">
       <VJFader

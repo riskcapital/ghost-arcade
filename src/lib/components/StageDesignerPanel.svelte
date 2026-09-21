@@ -775,7 +775,7 @@
   });
 </script>
 
-<div class="stage-overlay">
+<div data-help-page="stage-simulator" class="stage-overlay">
   <!-- Header ── tools, surface name, close button ───────────────── -->
   <header class="stage-header">
     <div class="header-left">

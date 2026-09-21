@@ -15,7 +15,7 @@
   export let compact: boolean = false;
 </script>
 
-<div class="bank-toggle" class:compact>
+<div data-help-page="mobile-control" class="bank-toggle" class:compact>
   <button
     class="bank-btn a"
     class:active={activeBank === 'A'}

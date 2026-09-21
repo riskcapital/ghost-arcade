@@ -19,7 +19,7 @@
   }
 </script>
 
-<div class="strip-tools">
+<div data-help-page="clip-launcher" class="strip-tools">
   <button class:active={layer.locked} aria-pressed={layer.locked === true}
     aria-label="Lock layer {index + 1} on Deck {deck}" title="Lock content — faders and effects remain available"
     onclick={(e) => { e.stopPropagation(); vjClipLauncher.setLayerLaunchProtection(index, { locked: !layer.locked }, deck); }}>
@@ -35,9 +35,9 @@
     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" aria-hidden="true"><path d="m9 3-1 3-3 1 1 3-2 2 2 2-1 3 3 1 1 3h6l1-3 3-1-1-3 2-2-2-2 1-3-3-1-1-3Z"/><circle cx="12" cy="12" r="3"/></svg>
   </button>
 </div>
-<div bind:this={tray} popover="auto" class="settings-tray" style:left="{left}px" style:top="{top}px" style:max-height="calc(100vh - {top + 8}px)"
+<div data-help-page="clip-launcher" bind:this={tray} popover="auto" class="settings-tray" style:left="{left}px" style:top="{top}px" style:max-height="calc(100vh - {top + 8}px)"
   ontoggle={(event) => { open = (event as ToggleEvent).newState === 'open'; }}>
-  <header><strong>Layer {index + 1} <span>· Deck {deck}</span></strong><button aria-label="Close layer settings" onclick={() => tray.hidePopover()}>×</button></header>
+  <header><strong>Layer {index + 1} defaults <span>· Deck {deck}</span></strong><button aria-label="Close layer settings" onclick={() => tray.hidePopover()}>×</button></header>
   <p class="status">{layer.autopilot && !layer.autopilotPaused ? 'Autopilot enabled' : 'Autopilot off'}</p>
   <VJAutopilotControls value={layer.autopilot} {columns} onChange={(value) => vjClipLauncher.setLayerAutopilot(index, value, deck)} />
   <label title="Keep this layer playing when a column is launched."><input type="checkbox" checked={layer.ignoreColumnTrigger === true} onchange={(e) => vjClipLauncher.setLayerLaunchProtection(index, { ignoreColumnTrigger: e.currentTarget.checked }, deck)} />Ignore Column Trigger</label>

@@ -1602,6 +1602,7 @@ struct EffectPassUniforms {
   params1: vec4<f32>,
   params2: vec4<f32>,
   params3: vec4<f32>,
+  source_rect: vec4<f32>,
 }
 
 struct VsOut {
@@ -1743,7 +1744,9 @@ fn vhs_noise(st: vec2<f32>) -> f32 {
 }
 
 fn sample_clamped(uv: vec2<f32>) -> vec4<f32> {
-  return textureSampleLevel(source_tex, source_sampler, clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)), 0.0);
+  let half_texel = vec2<f32>(0.5) / vec2<f32>(textureDimensions(source_tex));
+  let mapped = u.source_rect.xy + clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)) * u.source_rect.zw;
+  return textureSampleLevel(source_tex, source_sampler, clamp(mapped, u.source_rect.xy + half_texel, u.source_rect.xy + u.source_rect.zw - half_texel), 0.0);
 }
 
 fn sample_rgb(uv: vec2<f32>) -> vec3<f32> {
@@ -2447,7 +2450,7 @@ fn apply_effect(src: vec4<f32>, uv: vec2<f32>) -> vec4<f32> {
     let cell_id = floor(uv / pixel_size);
     let cell_uv = clamp((cell_id + vec2<f32>(0.5)) * pixel_size, vec2<f32>(0.0), vec2<f32>(1.0));
     let cell_local = clamp((uv - cell_id * pixel_size) / pixel_size, vec2<f32>(0.0), vec2<f32>(1.0));
-    let sample0 = textureSampleLevel(source_tex, source_sampler, cell_uv, 0.0);
+    let sample0 = sample_clamped(cell_uv);
     var rgb = sample0.rgb;
     if (mode == 1u) {
       rgb = floor(sample0.rgb * vec3<f32>(4.0)) / vec3<f32>(3.0);
@@ -9030,7 +9033,7 @@ fn vs_full(@builtin(vertex_index) vertex_index: u32) -> VsOut {
 @fragment
 fn fs_effect(in: VsOut) -> @location(0) vec4<f32> {
   let uv = clamp(in.uv, vec2<f32>(0.0), vec2<f32>(1.0));
-  let src = textureSampleLevel(source_tex, source_sampler, uv, 0.0);
+  let src = sample_clamped(uv);
   let effected = apply_effect(src, uv);
   let mixed = mix(src, effected, clamp(u.effect.z, 0.0, 1.0));
   return vec4<f32>(saturate3(mixed.rgb), clamp(mixed.a, 0.0, 1.0));
@@ -9803,7 +9806,9 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param11 = 0;
   } else if (options.effect === 'phase-lab') {
     amount = clampNumber(options.amount ?? params.phaseLabIntensity ?? params.amount, 0, 4, 1.35);
-    mix = clampNumber(params.phaseLabMix ?? options.mix, 0, 1, 0.92);
+    mix = params.phaseLabMix == null
+      ? clampNumber(options.mix, 0, 1, 0.92)
+      : clampNumber(params.phaseLabMix, 0, 1, 0.92) * mix;
     param0 = clampNumber(params.phaseLabMode ?? params.mode ?? params.param0, 0, 7, 0);
     param1 = clampNumber(params.phaseLabScale ?? params.scale ?? params.param1, 0.1, 32, 6);
     param2 = clampNumber(params.phaseLabSpeed ?? params.speed ?? params.param2, 0, 4, 0.35);
@@ -9840,7 +9845,9 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param11 = 0;
   } else if (options.effect === 'diffusion-promist') {
     amount = clampNumber(options.amount ?? params.diffAmount ?? params.amount, 0, 1, 0.5);
-    mix = clampNumber(params.diffMix ?? options.mix, 0, 1, 1);
+    mix = params.diffMix == null
+      ? clampNumber(options.mix, 0, 1, 1)
+      : clampNumber(params.diffMix, 0, 1, 1) * mix;
     param0 = clampNumber(params.diffRadius ?? params.param0, 1, 30, 12);
     param1 = clampNumber(params.diffThreshold ?? params.param1, 0, 1, 0.6);
     param2 = clampNumber(params.diffShadowLift ?? params.param2, 0, 1, 0.3);
@@ -9897,7 +9904,9 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param11 = 0;
   } else if (options.effect === 'tape-dropout') {
     amount = clampNumber(options.amount ?? params.tapeDropoutDensity ?? params.amount, 0, 1, 0.4);
-    mix = clampNumber(params.tapeDropoutMix ?? options.mix, 0, 1, 1);
+    mix = params.tapeDropoutMix == null
+      ? clampNumber(options.mix, 0, 1, 1)
+      : clampNumber(params.tapeDropoutMix, 0, 1, 1) * mix;
     param0 = clampNumber(params.tapeDropoutLength ?? params.param0, 0, 1, 0.5);
     param1 = clampNumber(params.tapeDropoutColor ?? params.param1, 0, 2, 0);
     param2 = clampNumber(params.tapeDropoutSpeed ?? params.param2, 0, 3, 1);
@@ -9940,7 +9949,9 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param11 = 0;
   } else if (options.effect === 'droste-recursive') {
     amount = clampNumber(options.amount ?? params.drosteZoom ?? params.amount, 1.05, 3, 1.5);
-    mix = clampNumber(params.drosteMix ?? options.mix, 0, 1, 1);
+    mix = params.drosteMix == null
+      ? clampNumber(options.mix, 0, 1, 1)
+      : clampNumber(params.drosteMix, 0, 1, 1) * mix;
     param0 = clampNumber(params.drosteRotation ?? params.param0, -360, 360, 5);
     param1 = clampNumber(params.drosteIterations ?? params.param1, 1, 12, 6);
     param2 = clampNumber(params.drosteOffsetX ?? params.param2, 0, 1, 0.5);
@@ -10025,7 +10036,9 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param11 = 0;
   } else if (options.effect === 'topo-warp') {
     amount = clampNumber(options.amount ?? params.twDisplacement ?? params.amount, 0, 1, 0.5);
-    mix = clampNumber(params.twMix ?? options.mix, 0, 1, 0.85);
+    mix = params.twMix == null
+      ? clampNumber(options.mix, 0, 1, 0.85)
+      : clampNumber(params.twMix, 0, 1, 0.85) * mix;
     param0 = clampNumber(params.twContourCount ?? params.param0, 1, 32, 12);
     param1 = clampNumber(params.twContourWidth ?? params.param1, 0.001, 0.05, 0.008);
     param2 = clampNumber(params.twChromaticEdge ?? params.param2, 0, 1, 0.3);
@@ -10849,7 +10862,9 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
   } else if (options.effect === 'thermal-contour') {
     // effectUX vocabulary (tc*); tcIntensity folds into amount, tcMix into mix.
     amount = clampNumber(options.amount ?? params.tcIntensity ?? params.amount, 0, 2, 1);
-    mix = clampNumber(params.tcMix ?? options.mix, 0, 1, 0.85);
+    mix = params.tcMix == null
+      ? clampNumber(options.mix, 0, 1, 0.85)
+      : clampNumber(params.tcMix, 0, 1, 0.85) * mix;
     param0 = clampNumber(params.tcPalette ?? params.param0, 0, 3, 0);
     param1 = clampNumber(params.tcContourCount ?? params.param1, 1, 12, 8);
     param2 = clampNumber(params.tcContourWidth ?? params.param2, 0.001, 0.02, 0.005);
@@ -10910,6 +10925,7 @@ export function packNativeEffectPassUniforms(options: NativeEffectPassOptions): 
     param13,
     param14,
     param15,
+    0, 0, 1, 1, // Filled from live source-frame content bounds by the core.
   ];
 }
 
@@ -10971,7 +10987,7 @@ export function buildNativeEffectPassGraph(options: NativeEffectPassOptions): Na
       buffers: [{
         id: uniformId,
         kind: 'uniform',
-        byte_length: 96,
+        byte_length: 112,
         initial_f32: packNativeEffectPassUniforms(options),
       }],
       passes: [],
@@ -11027,7 +11043,7 @@ export function buildCompositeEffectPassChainGraph(
     buffers.push({
       id: uniformId,
       kind: 'uniform',
-      byte_length: 96,
+      byte_length: 112,
       initial_f32: packNativeEffectPassUniforms(passOptions),
     });
     renderPasses.push({
@@ -11100,7 +11116,7 @@ export function buildNativeEffectPassChainGraph(options: NativeEffectPassChainOp
     buffers.push({
       id: uniformId,
       kind: 'uniform',
-      byte_length: 96,
+      byte_length: 112,
       initial_f32: packNativeEffectPassUniforms(passOptions),
     });
     renderPasses.push(buildNativeEffectPassRenderPass(passOptions, manifest, uniformId, `-${index + 1}`));

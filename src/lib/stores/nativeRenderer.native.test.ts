@@ -1,3 +1,4 @@
+import { NATIVE_EFFECT_COVERAGE } from '../renderer/nativeEffectCoverage';
 import { describe, expect, it } from 'vitest';
 import { get } from 'svelte/store';
 import {
@@ -378,11 +379,11 @@ describe('native renderer runtime state', () => {
     expect(state.sharedTextureOutputExportReady).toBe(true);
     expect(state.nativeEffectPassReady).toBe(true);
     expect(state.nativeEffectPassDetail).toContain('source-frame layer effects');
-    expect(state.nativeEffectCoverageNative).toBe(182);
-    expect(state.nativeEffectCoverageTotal).toBe(182);
+    expect(state.nativeEffectCoverageNative).toBe(NATIVE_EFFECT_COVERAGE.nativeSourceFramePassEffectCount);
+    expect(state.nativeEffectCoverageTotal).toBe(NATIVE_EFFECT_COVERAGE.sourceFramePassEligibleEffectCount);
     expect(state.nativeEffectCoverageMissing).toBe(0);
     expect(state.nativeEffectCoverageComplete).toBe(true);
-    expect(state.nativeEffectCoverageDetail).toContain('native source-frame effect-pass coverage 182/182');
+    expect(state.nativeEffectCoverageDetail).toContain(`native source-frame effect-pass coverage ${NATIVE_EFFECT_COVERAGE.nativeSourceFramePassEffectCount}/${NATIVE_EFFECT_COVERAGE.sourceFramePassEligibleEffectCount}`);
     expect(state.nativeEffectCoverageDetail).toContain('stateful/multi-frame effects tracked outside the effect-pass route');
     expect(state.nativeTextureShareSenderReady).toBe(false);
     expect(state.nativeTextureShareSenderDetail).toContain('waiting for the first rendered frame');

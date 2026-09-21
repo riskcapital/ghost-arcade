@@ -210,7 +210,7 @@
 </script>
 
 {#if $keyboardStore.editMode}
-  <div class="keyboard-overlay-root">
+  <div data-help-page="keyboard-mapping" class="keyboard-overlay-root">
     {#key overlayRevision}
       {#each overlayItems as item (item.path)}
         {#if item.visible}

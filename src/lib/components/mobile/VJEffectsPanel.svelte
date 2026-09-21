@@ -146,7 +146,7 @@
   }
 </script>
 
-<div class="effects-panel">
+<div data-help-page="mobile-control" class="effects-panel">
   <!-- ══ COMP / LAYER / CLIP Tabs ══ -->
   <div class="effects-tabs">
     <button class="fx-tab" class:active={effectsTab === 'comp'} on:click={() => { effectsTab = 'comp'; expandedEffectId = null; }}>
@@ -217,7 +217,7 @@
                 >{effect.enabled ? '●' : '○'}</button>
                 <span class="effect-name">{effect.type}</span>
                 <span class="expand-arrow">{expandedEffectId === effect.id ? '▲' : '▼'}</span>
-                <button class="fx-remove" on:click|stopPropagation={() => handleRemoveEffect(effect.id)}>×</button>
+                <button aria-label="Remove this effect" class="fx-remove" on:click|stopPropagation={() => handleRemoveEffect(effect.id)}>×</button>
               </div>
 
               {#if expandedEffectId === effect.id}

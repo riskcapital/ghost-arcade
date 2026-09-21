@@ -1795,6 +1795,8 @@ struct SceneLayer {
     opacity: f32,
     source_kind: f32,
     source_id: Option<String>,
+    /// Raw media retained while the layer displays its processed effect output.
+    effect_input_source_id: Option<String>,
     shader_id: Option<String>,
     shader_rendered: bool,
     /// Per-layer override for the global quality tier's render scale. None
@@ -2643,6 +2645,7 @@ impl SceneLayer {
             opacity: 1.0,
             source_kind: 0.0,
             source_id: None,
+            effect_input_source_id: None,
             shader_id: None,
             shader_rendered: false,
             render_quality: None,
@@ -11766,6 +11769,25 @@ impl App {
                 "queued compute_graph requires at least one pass or render pass".to_string(),
             );
         }
+        // Hardware/HAP frames occupy an aspect-preserving rectangle in the
+        // shared square texture. Effects operate in normalized content space.
+        for (plan, descriptor) in render_plans.iter().zip(params["render_passes"].as_array().into_iter().flatten()) {
+            if descriptor["shader_id"].as_str() != Some("effect-pass/render") { continue; }
+            let source = plan.bindings.iter().find(|b| b.binding == 0);
+            let uniform = plan.bindings.iter().find(|b| b.binding == 2);
+            if let (Some(source), Some(uniform)) = (source, uniform) {
+                let rect = if let Some(id) = source.resource_id.strip_prefix("layer-frame:") {
+                    self.scene_layers.get(id).map(|layer| layer.source_rect)
+                } else { self.source_frames.get(&source.resource_id).map(|frame| frame.source_rect) }
+                    .unwrap_or([0.0, 0.0, 1.0, 1.0]);
+                if let Some(buffer) = buffer_specs.iter_mut().find(|buffer| buffer.id == uniform.resource_id)
+                    && buffer.initial_bytes.len() >= 112 {
+                    for (index, value) in rect.iter().enumerate() {
+                        buffer.initial_bytes[96 + index * 4..100 + index * 4].copy_from_slice(&value.to_le_bytes());
+                    }
+                }
+            }
+        }
         let readbacks = compute_graph_readbacks(params, &buffer_specs);
         if !readbacks.is_empty() {
             return Err(
@@ -11821,6 +11843,7 @@ impl App {
                 for layer in self.scene_layers.values_mut() {
                     if layer.source_id.as_deref() == Some(source_id.as_str()) {
                         layer.frame_slot = Some(*slot);
+                        layer.source_rect = [0.0, 0.0, 1.0, 1.0];
                     }
                 }
             }
@@ -12015,6 +12038,7 @@ impl App {
                 for layer in self.scene_layers.values_mut() {
                     if layer.source_id.as_deref() == Some(source_id.as_str()) {
                         layer.frame_slot = Some(slot);
+                        layer.source_rect = [0.0, 0.0, 1.0, 1.0];
                     }
                 }
             }
@@ -14050,6 +14074,10 @@ impl App {
             .entry(layer_id.clone())
             .or_insert_with(|| SceneLayer::new(layer_id.clone(), 0));
         let previous_source_id = entry.source_id.clone();
+        let previous_effect_input = entry.effect_input_source_id.take();
+        entry.effect_input_source_id = if effect_pass_display {
+            string_at(command, &["effect_input_source_id"])
+        } else { None };
         entry.source_kind = source_kind(&effective_source_type);
         entry.source_id = source_id;
         entry.preview_slot = preview_slot;
@@ -14070,6 +14098,9 @@ impl App {
         if let Some(previous) = previous_source_id
             && new_source_id.as_deref() != Some(previous.as_str())
         {
+            self.release_media_source_if_orphaned(&previous);
+        }
+        if let Some(previous) = previous_effect_input {
             self.release_media_source_if_orphaned(&previous);
         }
         if effective_source_type == "image" {
@@ -14106,6 +14137,9 @@ impl App {
             {
                 replaced_sources.push(previous);
             }
+            if let Some(previous_input) = entry.effect_input_source_id.take() {
+                replaced_sources.push(previous_input);
+            }
             entry.source_kind = source_kind(&binding.source_type);
             entry.source_id = Some(binding.source_id);
             entry.preview_slot = None;
@@ -14128,6 +14162,7 @@ impl App {
         }
         self.launch_scheduler.references_source(source_id) || self.scene_layers.values().any(|layer| {
             layer.source_id.as_deref() == Some(source_id)
+                || layer.effect_input_source_id.as_deref() == Some(source_id)
                 || layer.shader_source_id.as_deref() == Some(source_id)
         })
             || self
@@ -15965,16 +16000,17 @@ impl App {
             if !layer.visible {
                 continue;
             }
-            let Some(source_id) = layer.source_id.as_deref() else {
-                continue;
-            };
-            if active_sources
-                .iter()
-                .any(|existing: &String| existing == source_id)
+            // A processed layer displays the effect texture, but its raw
+            // video input still needs an advancing decoder. Retaining that
+            // source prevents eviction; admitting it here prevents the live
+            // pump from demoting it to a paused/prerolled session.
+            for source_id in [layer.source_id.as_ref(), layer.effect_input_source_id.as_ref()]
+                .into_iter().flatten()
             {
-                continue;
+                if !active_sources.contains(source_id) {
+                    active_sources.push(source_id.clone());
+                }
             }
-            active_sources.push(source_id.to_string());
         }
 
         // Pending bindings preserve the old visible source until this one is ready.
@@ -16928,11 +16964,11 @@ impl App {
         if let Some(layer_id) = string_at(command, &["layer_id"]) {
             self.scheduled_binding_guards.remove(&layer_id);
             self.captured_graph_holds.remove(&layer_id);
-            let (removed_source, removed_shader_output) = self
+            let (removed_source, removed_shader_output, removed_effect_input) = self
                 .scene_layers
                 .remove(&layer_id)
-                .map(|layer| (layer.source_id, layer.shader_source_id))
-                .unwrap_or((None, None));
+                .map(|layer| (layer.source_id, layer.shader_source_id, layer.effect_input_source_id))
+                .unwrap_or((None, None, None));
             let pending_source = self
                 .pending_media_bindings
                 .remove(&layer_id)
@@ -16941,6 +16977,9 @@ impl App {
             let graph_sources = self.release_native_graph_layer_state(&layer_id);
             self.native_point_cloud_assets.remove(&layer_id);
             if let Some(source_id) = removed_source {
+                self.release_media_source_if_orphaned(&source_id);
+            }
+            if let Some(source_id) = removed_effect_input {
                 self.release_media_source_if_orphaned(&source_id);
             }
             if let Some(source_id) = removed_shader_output {
@@ -27729,6 +27768,12 @@ fn effective_scene_source_type(
     uri: Option<&str>,
     _has_source_frame: bool,
 ) -> String {
+    // Effect passes preserve straight RGBA (including decoded HAP alpha).
+    // GPU instruments use premultiplied coverage; treating effect output as
+    // one of those divides RGB by alpha a second time and washes it out.
+    if source_type == "image" && uri.is_some_and(|value| value.starts_with("native-effect-pass://")) {
+        return "image".to_string();
+    }
     if source_type == "image"
         && uri.is_some_and(|value| is_native_generated_source_frame_uri(value))
     {
@@ -29854,7 +29899,6 @@ void main() { gl_FragColor = vec4(fractalDepth); }"#,
             "native-graph://planet/layer-a",
             "native-graph-reactivity://smoke/layer-a",
             "native-graph-fixture://probe",
-            "native-effect-pass://layer-a",
         ] {
             assert_eq!(
                 effective_scene_source_type("image", Some(uri), false),
@@ -29862,6 +29906,10 @@ void main() { gl_FragColor = vec4(fractalDepth); }"#,
             );
         }
 
+        assert_eq!(
+            effective_scene_source_type("image", Some("native-effect-pass://layer-a"), false),
+            "image"
+        );
         assert_eq!(
             effective_scene_source_type("image", Some("file:///tmp/still.png"), false),
             "image"

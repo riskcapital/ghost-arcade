@@ -47,7 +47,7 @@
   $: beats = Array.from({ length: quantum }, (_, i) => i);
 </script>
 
-<div class="link-monitor" class:compact class:live={inSession}>
+<div data-help-page="midi-audio" class="link-monitor" class:compact class:live={inSession}>
   <div class="beats" role="img" aria-label={`Link beat ${currentBeat + 1} of ${quantum}`}>
     {#each beats as beat (beat)}
       <span

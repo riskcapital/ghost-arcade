@@ -250,7 +250,7 @@
 
 {#if open}
   <!-- svelte-ignore a11y_no_noninteractive_element_interactions -->
-  <div
+  <div data-help-page="effects"
     class="modal-overlay"
     onclick={handleOverlayClick}
     onkeydown={handleKeydown}

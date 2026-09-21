@@ -173,7 +173,7 @@
   $: deckBBias = localValue;
 </script>
 
-<div class="xfade {orientation}" class:disabled={!enabled} class:compact>
+<div data-help-page="mobile-control" class="xfade {orientation}" class:disabled={!enabled} class:compact>
   <div class="xfade-header">
     <button
       class="xfade-power"

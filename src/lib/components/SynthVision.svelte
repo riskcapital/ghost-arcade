@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
   import * as THREE from 'three';
+  import { WORLD_PALETTES, worldPaletteIndex } from '../performer/worldPalettes';
   import {
     synthVisionStore,
     sessionClipCache,
@@ -2241,6 +2242,11 @@ void main() {
   function getBlend(): THREE.Blending { return BLEND_MAP[activeLayer().blend] || THREE.AdditiveBlending; }
 
   function sCol(u: number): THREE.Color {
+    const scheme = worldPaletteIndex(state.worldParams[activeLayer().world]?.palette ?? 0);
+    if (scheme > 0) {
+      const colors = WORLD_PALETTES[scheme].colors;
+      return new THREE.Color(colors[0]).lerp(new THREE.Color(colors[1]), 0.5 + 0.5 * Math.sin(u * 6.2831853));
+    }
     const c = activeLayer().p.color;
     const s = activeLayer().style;
     const col = new THREE.Color();
@@ -3876,9 +3882,9 @@ void main() {
       x: Math.max(0, Math.min(1, state.mx ?? 0.5)),
       y: Math.max(0, Math.min(1, state.my ?? 0.5)),
       pointerDown: !!state.mDown,
-      params: (worldDefinition?.params ?? []).map((param) =>
+      params: [...(worldDefinition?.params ?? []).map((param) =>
         Number(worldValues[param.k] ?? param.d),
-      ),
+      ), Number(worldValues.palette ?? 0)],
       pump: Math.max(0, Number(state.pump ?? 0)),
     });
   }
@@ -4962,14 +4968,14 @@ void main() {
 </script>
 
 <!-- Hidden canvases for rendering (output goes to VJ layer) -->
-<div class="sv-hidden-canvases">
+<div data-help-page="synthvision" class="sv-hidden-canvases">
   <canvas bind:this={shaderCanvas}></canvas>
   <canvas bind:this={threeCanvas}></canvas>
   <canvas bind:this={outputCanvas}></canvas>
   <canvas bind:this={camCanvas}></canvas>
 </div>
 
-<div class="sv-root" on:click={() => { if (state.showSplash) dismissSplash(); }}>
+<div data-help-page="synthvision" class="sv-root" on:click={() => { if (state.showSplash) dismissSplash(); }}>
   <!-- HEADER -->
   <div class="sv-header">
     <div class="sv-logo">PERFORMER</div>
@@ -5275,7 +5281,7 @@ void main() {
                   </button>
                   <span class="sv-fx-name">{effect.type}</span>
                   <span class="sv-fx-expand">{expandedEffectId === effect.id ? '▼' : '▶'}</span>
-                  <button class="sv-fx-delete"
+                  <button aria-label="Delete this effect" class="sv-fx-delete"
                     on:click|stopPropagation={() => deleteSvEffect(effect.id)}>×</button>
                 </div>
                 {#if expandedEffectId === effect.id}
@@ -5482,6 +5488,12 @@ void main() {
         <div class="sv-shader-info world">
           <span class="sv-shader-name world">{worldDef?.name ?? 'WORLD'}</span>
         </div>
+        <label class="sv-world-palette">Color scheme
+          <select aria-label="World color scheme" value={worldPaletteIndex(worldParams.palette ?? 0)}
+            on:change={e => synthVisionStore.setWorldParam(currentWorldIdx, 'palette', Number(e.currentTarget.value) / (WORLD_PALETTES.length - 1))}>
+            {#each WORLD_PALETTES as palette, index}<option value={index}>{palette.name}</option>{/each}
+          </select>
+        </label>
         <div class="sv-dial-grid sv-world-params">
           {#if worldDef?.params}
             {#each worldDef.params as param}
@@ -5617,7 +5629,7 @@ void main() {
 </div>
 
 <!-- Hidden video element for camera -->
-<video bind:this={camVideo} class="sv-cam-video" playsinline muted></video>
+<video data-help-page="synthvision" bind:this={camVideo} class="sv-cam-video" playsinline muted></video>
 
 <!-- Effect Picker Modal (full catalog, multi-select, 3-col grid) -->
 <EffectPickerModal
@@ -5627,6 +5639,9 @@ void main() {
 />
 
 <style>
+  .sv-world-palette { display: flex; align-items: center; justify-content: space-between; gap: 10px; margin: 10px 0; color: #adb9ce; font-size: 12px; }
+  .sv-world-palette select { min-width: 0; padding: 6px 9px; border: 1px solid #344568; border-radius: 6px; background: #121c30; color: #e3ecff; font: inherit; }
+
   :root {
     /* Use global theme variables for consistent styling */
     --sv-c: var(--accent-primary, #FF6B6B);

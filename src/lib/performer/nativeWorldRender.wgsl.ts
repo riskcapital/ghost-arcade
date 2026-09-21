@@ -1,3 +1,7 @@
+import { WORLD_PALETTES } from './worldPalettes';
+const rgb = (hex: string) => `vec3<f32>(${[1, 3, 5].map(i => (parseInt(hex.slice(i, i + 2), 16) / 255).toFixed(6)).join(', ')})`;
+const paletteCases = WORLD_PALETTES.slice(1).map((palette, i) =>
+  `case ${i + 1}u: { tinted = mix(${rgb(palette.colors[0])}, ${rgb(palette.colors[1])}, shade); }`).join('\n');
 export const PERFORMER_WORLD_RENDER_WGSL = /* wgsl */ `
 struct WorldUniform {
   resolution: vec2<f32>,
@@ -6,7 +10,7 @@ struct WorldUniform {
   world: u32,
   space: u32,
   pointerDown: u32,
-  pad0: u32,
+  colorScheme: u32,
   xy: vec2<f32>,
   audio: vec2<f32>,
   params0: vec4<f32>,
@@ -307,11 +311,9 @@ fn ringsWorld(p: vec2<f32>) -> vec4<f32> {
   return vec4<f32>(palette(r + u.params1.z + u.time * 0.03), alpha);
 }
 
-@fragment
-fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+fn sampleWorld(inputP: vec2<f32>) -> vec4<f32> {
+  var p = inputP;
   let aspect = u.resolution.x / max(u.resolution.y, 1.0);
-  var p = (input.uv - vec2<f32>(0.5)) * vec2<f32>(aspect, 1.0) * 2.0;
-  p = spaceTransform(p);
   let pointer = (u.xy - vec2<f32>(0.5)) * vec2<f32>(aspect, -1.0) * 2.0;
   if (u.pointerDown != 0u) {
     let pull = exp(-length(p - pointer) * 3.0);
@@ -335,10 +337,43 @@ fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
     case 12u: { result = swarmWorld(p); }
     default: { result = ringsWorld(p); }
   }
+  return result;
+}
+
+@fragment
+fn fs_main(input: VertexOutput) -> @location(0) vec4<f32> {
+  let aspect = u.resolution.x / max(u.resolution.y, 1.0);
+  var p = (input.uv - vec2<f32>(0.5)) * vec2<f32>(aspect, 1.0) * 2.0;
+  p = spaceTransform(p);
+
+  var result: vec4<f32>;
+  if (u.space == 3u) {
+    // atan2 has a branch cut on the left. World patterns are not periodic
+    // in x, so overlap both ends of the unwrapped cylinder symmetrically.
+    // At either boundary the same two samples meet with equal weights.
+    let x = fract((p.x + 1.0) * 0.5) * 2.0 - 1.0;
+    let wrapped = vec2<f32>(x, p.y);
+    let opposite = vec2<f32>(x - select(-2.0, 2.0, x >= 0.0), p.y);
+    let overlap = smoothstep(0.6, 1.0, abs(x)) * 0.5;
+    result = mix(sampleWorld(wrapped), sampleWorld(opposite), overlap);
+  } else {
+    result = sampleWorld(p);
+  }
 
   let audioBoost = 0.75 + u.audio.x * 0.8 + u.audio.y * 0.9;
   let alpha = clamp(result.a * audioBoost, 0.0, 1.0);
-  let color = result.rgb * (0.8 + u.audio.x * 1.2);
+  var base = result.rgb;
+  if (u.colorScheme != 0u) {
+    let intensity = max(base.r, max(base.g, base.b));
+    let shade = clamp(dot(base, vec3<f32>(0.2126, 0.7152, 0.0722)) / max(intensity, 0.0001), 0.0, 1.0);
+    var tinted = vec3<f32>(1.0);
+    switch u.colorScheme {
+      ${paletteCases}
+      default: {}
+    }
+    base = tinted * intensity;
+  }
+  let color = base * (0.8 + u.audio.x * 1.2);
   return vec4<f32>(color * alpha, alpha);
 }
 `;

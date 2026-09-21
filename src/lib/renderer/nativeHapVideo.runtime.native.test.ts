@@ -1,3 +1,6 @@
+import { createLayer } from '../types';
+import { buildVJClipTransitionGraph, buildVJClipTransitionPrecompileCommands } from './vjClipTransitionNative';
+import { buildNativeEffectPassChainGraph, buildNativeEffectPassPrecompileCommands } from './nativeEffectPass';
 import { execFileSync, spawn } from 'node:child_process';
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -78,7 +81,7 @@ async function waitUntil<T>(read: () => Promise<T>, ready: (value: T) => boolean
     if (ready(value)) return value;
     await sleep(10);
   } while (Date.now() < deadline);
-  throw new Error(`${label}: ${JSON.stringify(value, (key, item) => key === 'rgba' ? '[pixel buffer]' : item)}`);
+  throw new Error(`${label}: ${JSON.stringify(value, (key, item) => key === 'rgba' || key === 'rgba_b64' ? '[pixel buffer]' : item)}`);
 }
 
 
@@ -96,7 +99,7 @@ testSuite('HAP compressed textures through native output', () => {
     const input=join(directory,'input.rgba');writeFileSync(input,raw);
     const h264=join(directory,'interframe.mp4');
     execFileSync(ffmpeg,['-v','error','-f','rawvideo','-pixel_format','rgba','-video_size','64x64','-framerate','25','-i',input,'-c:v','libx264','-pix_fmt','yuv420p','-g','25','-bf','2',h264],{timeout:30000});
-    fixtures.set('h264',{uri:h264,reference:Buffer.alloc(0)});
+    fixtures.set('h264',{uri:h264,reference:execFileSync(ffmpeg,['-v','error','-i',h264,'-pix_fmt','rgba','-f','rawvideo','pipe:1'],{maxBuffer:1024*1024,timeout:30000})});
     for(const format of ['hap','hap_alpha','hap_q']) {
       const uri=join(directory,format+'.mov');
       execFileSync(ffmpeg,['-v','error','-f','rawvideo','-pixel_format','rgba','-video_size','64x64','-framerate','25','-i',input,'-c:v','hap','-format',format,'-compressor','snappy','-chunks','4',uri],{timeout:30000});
@@ -105,6 +108,77 @@ testSuite('HAP compressed textures through native output', () => {
     }
   },30000);
   afterAll(()=>{if(directory)rmSync(directory,{recursive:true,force:true});});
+  it.each(['hap', 'hap_alpha', 'h264'])('applies video effects to %s without an extra raw-media layer', async (format) => {
+    const rpc = core();
+    const { uri, reference } = fixtures.get(format)!;
+    const inverted = Buffer.from(reference.subarray(0, 64*64*4));
+    for (let i=0;i<inverted.length;i+=4) for (let c=0;c<3;c++) inverted[i+c]=255-inverted[i+c];
+    try {
+      await rpc.send('start', { config: { backend: platform.rendererBackend, width: 64, height: 64, source_frame_size: 256, target_fps: 60, native_quality_policy: 'fixed' } });
+      await rpc.commands([
+        ...buildNativeEffectPassPrecompileCommands(),
+        { type: 'upsert_layer', layer_id: 'alpha', opacity: 1, z_index: 0, blend_mode: 'normal', corners: { topLeft: {x:0,y:1}, topRight:{x:1,y:1}, bottomRight:{x:1,y:0}, bottomLeft:{x:0,y:0} } },
+        { type: 'bind_media_source', layer_id: 'alpha', source_id: 'raw-hap', uri, source_type: 'video' },
+        { type: 'set_media_source_playback', source_id: 'raw-hap', uri, source_type: 'video', time_seconds: 0, paused: true, decode_width:64, decode_height:64, duration_seconds:1, seek_generation:1 },
+      ]);
+      await waitUntil(() => rpc.send('status'), s => s.native_video_sessions.some((v:any) => v.source_id==='raw-hap' && v.frames_presented > 0), 'video first frame');
+      const graph = buildNativeEffectPassChainGraph({ sourceId:'raw-hap', targetSourceId:'effect-pass:alpha', effects:[{effect:'invert',amount:1,mix:1}], width:64,height:64,time:0,frameDelta:1/60,frameIndex:1,seq:1 });
+      await rpc.commands([
+        {type:'bind_media_source',layer_id:'alpha',source_id:'effect-pass:alpha',uri:'native-effect-pass://alpha',source_type:'image',effect_input_source_id:'raw-hap'},
+        {type:'queue_compute_graph',...graph.config},
+        {type:'upsert_layer',layer_id:'alpha',opacity:1,z_index:0,corners:{topLeft:{x:0,y:1},topRight:{x:.5,y:1},bottomRight:{x:.5,y:0},bottomLeft:{x:0,y:0}}},
+        {type:'upsert_layer',layer_id:'expected',opacity:1,z_index:0,corners:{topLeft:{x:.5,y:1},topRight:{x:1,y:1},bottomRight:{x:1,y:0},bottomLeft:{x:.5,y:0}}},
+        {type:'upload_source_frame',source_id:'inverted-reference',width:64,height:64,seq:1,rgba_b64:inverted.toString('base64')},
+        {type:'bind_media_source',layer_id:'expected',source_id:'inverted-reference',source_type:'image'},
+      ]);
+      // Exercise the same hidden clip input -> row carrier path as VJ mode.
+      const branchLayer = createLayer('alpha', 'Video input', 'media');
+      branchLayer.corners = {topLeft:{x:0,y:1},topRight:{x:.5,y:1},bottomRight:{x:.5,y:0},bottomLeft:{x:0,y:0}};
+      const branch = {layer:branchLayer, opacity:1, premultiplied:false, uvTransform:[0,0,1,1], uvFlags:[0,1,0,0]};
+      const carrier = buildVJClipTransitionGraph({outputSourceId:'row-output',sourceAId:'layer-frame:alpha',sourceBId:'layer-frame:alpha',
+        width:64,height:64,mix:1,transition:'dissolve',branchA:branch,branchB:branch,time:0,frameIndex:0});
+      await rpc.commands([
+        ...buildVJClipTransitionPrecompileCommands(),
+        {type:'upsert_layer',layer_id:'alpha',opacity:0},
+        {type:'upsert_layer',layer_id:'row',opacity:1,z_index:0,corners:{topLeft:{x:0,y:1},topRight:{x:1,y:1},bottomRight:{x:1,y:0},bottomLeft:{x:0,y:0}}},
+        {type:'set_native_graph_layer',layer_id:'row',kind:'vj-crossfade',instrument_source_id:'row-output',composite_source_id:'row-output',params:{},effect_graph:carrier.config},
+      ]);
+      await waitUntil(() => rpc.send('output_shared_texture_snapshot', {include_pixels:true}), snap => {
+        if (!snap.rgba_b64) return false;
+        const bytes=Buffer.from(snap.rgba_b64,'base64');
+        const red=snap.format.toLowerCase().startsWith('bgra')?2:0;
+        for (const x of [.125,.5,.875]) {
+          const actual=(Math.floor(snap.height*.25)*snap.width+Math.floor(snap.width*x*.5))*4;
+          const expected=(Math.floor(snap.height*.25)*snap.width+Math.floor(snap.width*(.5+x*.5)))*4;
+          for(let c=0;c<4;c++) if(Math.abs(bytes[actual+c]-bytes[expected+c])>10) { snap.probe={x,actual:Array.from(bytes.subarray(actual,actual+4)),expected:Array.from(bytes.subarray(expected,expected+4))}; return false; }
+          if(x===.875 && !(bytes[actual+red]<80 && bytes[actual+2-red]>150)) return false;
+        }
+        return true;
+      }, 'inverted video colors with transparent background');
+      const status = await rpc.send('status');
+      expect(status.native_video_sessions.some((v:any) => v.source_id === 'raw-hap')).toBe(true);
+      // A retained input must also remain active in the decoder pump.
+      // The clip input is hidden (opacity zero), as it is in the VJ mixer.
+      await rpc.commands([{type:'set_media_source_playback',source_id:'raw-hap',uri,source_type:'video',
+        time_seconds:0,paused:false,playback_rate:1,loop_enabled:false,decode_width:64,decode_height:64,
+        duration_seconds:1,seek_generation:2}]);
+      await waitUntil(() => rpc.send('status'), state => state.native_video_sessions.some((v:any) =>
+        v.source_id==='raw-hap' && v.seek_generation===2 && v.frames_presented>=12 && v.source_time_seconds>=.52),
+        'effect input continues playing', 5000);
+      await waitUntil(async () => {
+        await rpc.commands([{type:'queue_compute_graph',...graph.config}]);
+        return rpc.send('output_shared_texture_snapshot',{include_pixels:true});
+      }, snap => {
+        if(!snap.rgba_b64)return false;
+        const pixels=Buffer.from(snap.rgba_b64,'base64');
+        const red=snap.format.toLowerCase().startsWith('bgra')?2:0;
+        const offset=(Math.floor(snap.height*.25)*snap.width+Math.floor(snap.width*.4375))*4;
+        return pixels[offset+red]>150 && pixels[offset+2-red]<80;
+      }, 'processed video advances to its second color');
+      await rpc.commands([{type:'remove_layer',layer_id:'row'}, {type:'remove_layer',layer_id:'alpha'}]);
+      expect((await rpc.send('status')).native_video_sessions.some((v:any) => v.source_id === 'raw-hap')).toBe(false);
+    } finally { await rpc.close(); }
+  }, 30000);
   it.each(['hap','hap_alpha','hap_q'])('renders %s with reference colors and seeks on the prepared session',async format=>{
     const rpc=core();const {uri,reference}=fixtures.get(format)!;
     const source='hap-video';

@@ -65,7 +65,7 @@
   }
 </script>
 
-<section class="transition-controls" aria-label={clipOverride ? 'Clip transition' : 'Layer transition'}>
+<section data-help-page="clip-launcher" class="transition-controls" aria-label={clipOverride ? 'Clip transition' : 'Layer transition'}>
   <h4>Transition</h4>
   {#if clipOverride}
     <label class="inherit">
@@ -87,12 +87,12 @@
     <span>s</span>
   </div>
   {#if durationError}<p class="duration-error" role="status">{durationError}</p>{/if}
-  <input class="duration-slider" type="range" min="0" max="10" step="0.05"
+  <input data-help="Set the time to blend from the outgoing clip to the incoming clip. Zero seconds cuts immediately." class="duration-slider" type="range" min="0" max="10" step="0.05"
     aria-label={clipOverride ? 'Clip transition duration slider' : 'Layer transition duration slider'}
     value={effectiveDuration} disabled={useLayerDuration} oninput={changeDuration} />
   <label class="style-row">
     Style
-    <select aria-label={clipOverride ? 'Clip transition style' : 'Layer transition style'}
+    <select data-help="Choose the visual transition between clips. A clip can inherit the layer transition style." aria-label={clipOverride ? 'Clip transition style' : 'Layer transition style'}
       value={clipOverride ? style ?? '' : effectiveStyle}
       onchange={(event) => onChange({ style: (event.currentTarget.value || null) as CrossfaderTransition | null })}>
       {#if clipOverride}

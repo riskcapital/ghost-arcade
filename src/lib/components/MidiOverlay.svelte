@@ -215,7 +215,7 @@
 </script>
 
 {#if $midiStore.editMode}
-  <div class="midi-overlay-root">
+  <div data-help-page="midi-audio" class="midi-overlay-root">
     <!-- Overlay indicators on each control — keyed by revision to batch position updates -->
     {#key overlayRevision}
       {#each overlayItems as item (item.path)}

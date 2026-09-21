@@ -6,7 +6,7 @@
     { key: 'ignoreColumnTrigger', label: 'Ignore Column Trigger', hint: 'Keep this clip playing when another column is launched.' }] as const;
   const value = (raw: string) => raw === 'inherit' ? null : raw === 'on';
 </script>
-<div class="launch-options">
+<div data-help-page="clip-launcher" class="launch-options">
   {#each options as option}
     <label title={option.hint}>
       {option.label}

@@ -75,7 +75,7 @@
   });
 </script>
 
-<div class="proj-overlay" bind:this={containerEl}>
+<div data-help-page="projection-mapping" class="proj-overlay" bind:this={containerEl}>
   {#if corners}
     <!-- Edge lines between handles -->
     <svg class="proj-lines" width="100%" height="100%" pointer-events="none">

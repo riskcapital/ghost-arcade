@@ -334,7 +334,7 @@
 </script>
 
 {#if warp.enabled}
-  <div class="master-warp-handles" style="width: {containerWidth}px; height: {containerHeight}px;">
+  <div data-help-page="projection-mapping" class="master-warp-handles" style="width: {containerWidth}px; height: {containerHeight}px;">
     <!-- Outline / grid lines -->
     <svg class="lines-overlay" width={containerWidth} height={containerHeight}>
       {#if mode === 'corners'}

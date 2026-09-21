@@ -151,7 +151,7 @@
 </script>
 
 {#if content && layerId}
-  <div class="pfx-panel">
+  <div data-help-page="gpu-instruments" class="pfx-panel">
     <div class="sec-label">
       Source
       {#if selectedMedia}
@@ -485,7 +485,7 @@
     {/if}
   </div>
 {:else}
-  <div class="empty">Select a Pixel FX layer.</div>
+  <div data-help-page="gpu-instruments" class="empty">Select a Pixel FX layer.</div>
 {/if}
 
 <style>

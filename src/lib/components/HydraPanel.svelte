@@ -84,7 +84,7 @@
   onDestroy(() => { window.removeEventListener('keydown', onKeydown); });
 </script>
 
-<div class="hy-panel">
+<div data-help-page="gpu-instruments" class="hy-panel">
   <!-- Transport -->
   <div class="hy-transport">
     <button class="hy-btn" title="Previous sketch" onclick={() => fire('prev')}>◀</button>

@@ -50,7 +50,7 @@
   $: bpmSource = manualBPM != null ? 'TAP' : (bpm > 0 ? 'AUTO' : '--');
 </script>
 
-<div class="tempo-strip" class:compact>
+<div data-help-page="mobile-control" class="tempo-strip" class:compact>
   <!-- TAP button — large, central, pulses on beat -->
   <button
     class="tap-btn"

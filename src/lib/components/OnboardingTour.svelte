@@ -213,9 +213,9 @@
 <svelte:window onkeydown={handleKey} />
 
 {#if $onboarding.open}
-  <div class="ot-backdrop" onclick={() => onboarding.close()} role="presentation"></div>
+  <div data-help-page="getting-started" class="ot-backdrop" onclick={() => onboarding.close()} role="presentation"></div>
 
-  <div class="ot-modal" role="dialog" aria-modal="true" aria-labelledby="ot-title">
+  <div data-help-page="getting-started" class="ot-modal" role="dialog" aria-modal="true" aria-labelledby="ot-title">
     <button class="ot-close" onclick={() => onboarding.close()} title="Close (Esc) — picks up where you left off">×</button>
 
     <div class="ot-progress">

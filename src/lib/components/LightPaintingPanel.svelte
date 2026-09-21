@@ -1016,7 +1016,7 @@
 {#if layer && content}
   <!-- ============ OVERLAY MODE (inside viewport) ============ -->
   {#if overlayOnly}
-    <div
+    <div data-help-page="layers"
       class="lp-draw-overlay"
       data-editor-pointer-owner="light-painting"
       class:recording={isDrawing}
@@ -1188,7 +1188,7 @@
 
   <!-- ============ SIDEBAR MODE (outside viewport, right panel) ============ -->
   {#if !overlayOnly}
-    <div class="lp-sidebar">
+    <div data-help-page="layers" class="lp-sidebar">
       <!-- Header -->
       <div class="lp-header">
         <span class="lp-title">Light Painting</span>

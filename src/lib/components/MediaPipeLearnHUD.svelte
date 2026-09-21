@@ -103,7 +103,7 @@
 </script>
 
 {#if active}
-  <div class="mp-learn-modal" role="dialog" aria-label="MediaPipe Learn">
+  <div data-help-page="midi-audio" class="mp-learn-modal" role="dialog" aria-label="MediaPipe Learn">
     <header class="mp-learn-head">
       <span class="mp-learn-dot"></span>
       <span class="mp-learn-title">MediaPipe Learn</span>

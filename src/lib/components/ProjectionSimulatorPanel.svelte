@@ -709,7 +709,7 @@
   $: renderer?.setSelections([...$selectedProjectionSimTargets]);
 </script>
 
-<div class="projection-sim-root" bind:this={rootEl}>
+<div data-help-page="projection-simulator" class="projection-sim-root" bind:this={rootEl}>
   <canvas class="sim-canvas" bind:this={canvas}></canvas>
 
   {#if !panelsHidden}

@@ -104,7 +104,7 @@
   });
 </script>
 
-<div class="mk-panel">
+<div data-help-page="gpu-instruments" class="mk-panel">
   <!-- Transport row -->
   <div class="mk-transport">
     <button class="mk-btn" title="Previous preset" onclick={() => fire('prev')}>◀</button>

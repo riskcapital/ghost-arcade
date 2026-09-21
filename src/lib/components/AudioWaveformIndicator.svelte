@@ -92,7 +92,7 @@
   });
 </script>
 
-<canvas
+<canvas data-help-page="midi-audio"
   bind:this={canvas}
   class="awi"
   title="Live audio waveform"

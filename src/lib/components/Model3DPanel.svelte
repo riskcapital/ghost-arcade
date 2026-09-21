@@ -335,7 +335,7 @@
 </script>
 
 {#if (isVJMode ? mc : layer && mc)}
-  <div class="model3d-panel" class:compact>
+  <div data-help-page="layers" class="model3d-panel" class:compact>
     {#if !compact}<h3>3D Model</h3>{/if}
 
     <!-- File Loading -->
@@ -2002,7 +2002,7 @@
 
   </div>
 {:else}
-  <div class="no-layer">
+  <div data-help-page="layers" class="no-layer">
     <p>Select a 3D model layer to edit its properties</p>
   </div>
 {/if}

@@ -1,5 +1,5 @@
 import { get } from 'svelte/store';
-import { beforeAll, describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it, vi } from 'vitest';
 
 // The layers store pulls in settings, which paints CSS variables on import.
 let project: typeof import('./layers').project;
@@ -90,4 +90,26 @@ describe('applyStageSurfaceToLayers', () => {
     // load-time migration must not touch them.
     expect(top!.stageTextureFlipV).toBe(false);
   });
+});
+
+
+it('gives new stage slices a calibration grid even when ordinary new layers are blank', async () => {
+  const { settings } = await import('./settings');
+  const original = get(settings);
+  try {
+    settings.update(s => ({ ...s, defaultLayerShader: 'none' }));
+    const surface = twoBandSurface();
+    const links = project.applyStageSurfaceToLayers(surface);
+    await vi.waitFor(() => {
+      for (const id of Object.values(links)) {
+        expect(get(project).layers.find(l => l.id === id)?.source?.src).toBe('builtin:grid');
+      }
+    });
+    const firstId = Object.values(links)[0];
+    const content = { id: 'test-content', type: 'image', src: '/stage-image.png', name: 'User content' } as const;
+    project.setLayerSource(firstId, content);
+    const reapplied = project.applyStageSurfaceToLayers(surface, links);
+    expect(reapplied).toEqual(links);
+    expect(get(project).layers.find(l => l.id === firstId)?.source).toEqual(content);
+  } finally { settings.update(() => original); }
 });

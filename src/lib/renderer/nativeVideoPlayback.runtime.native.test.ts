@@ -57,8 +57,8 @@ function core(backend?: 'software' | 'hardware') {
 }
 
 type Core = ReturnType<typeof core>;
-async function waitUntil<T>(read: () => Promise<T>, ready: (value: T) => boolean, label: string): Promise<T> {
-  const deadline = Date.now() + 10000;
+async function waitUntil<T>(read: () => Promise<T>, ready: (value: T) => boolean, label: string, timeoutMs = 10000): Promise<T> {
+  const deadline = Date.now() + timeoutMs;
   let value: T;
   do {
     value = await read();
@@ -86,10 +86,11 @@ nativeDescribe('native video startup and handoff', () => {
   beforeAll(() => {
     directory = mkdtempSync(join(tmpdir(), 'ghost-video-startup-'));
     uri = join(directory, 'framecode.mp4');
+    // Use a hardware-decodable size: VideoToolbox rejects the old 64x36 fixture.
     // 60 uniquely coloured frames, one keyframe. The first second is red,
     // the second blue, with a green ramp to identify motion within each half.
     execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi',
-      '-i', 'color=c=black:s=64x36:r=30:d=2', '-vf',
+      '-i', 'color=c=black:s=320x180:r=30:d=2', '-vf',
       "geq=r='if(lt(N,30),220,16)':g='16+3*mod(N,30)':b='if(lt(N,30),16,220)'",
       '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-g', '1000', '-sc_threshold', '0', uri]);
   });
@@ -168,8 +169,11 @@ nativeDescribe('native video startup and handoff', () => {
       expect(playing).toHaveLength(3);
       expect(playing.every((session: any) => session.seek_generation === 2 && session.frames_presented > 0)).toBe(true);
       expect(status.native_video_sessions.filter((session: any) => session.source_id.startsWith('library:'))).toHaveLength(0);
-      const ready = await Promise.all(rows.map(row => rpc.send('get_source_frame_readiness', { source_id: `clip-${row}`, seek_generation: 2 })));
-      expect(ready.every(result => result.ready)).toBe(true);
+      // The prepared frame must be handed off in the command batch above;
+      // GPU completion is explicitly asynchronous and must not be faked ready.
+      await waitUntil(() => Promise.all(rows.map(row => rpc.send('get_source_frame_readiness', {
+        source_id: `clip-${row}`, seek_generation: 2,
+      }))), ready => ready.every(result => result.ready), 'column GPU completion', 1000);
     } finally { await rpc.close(); }
   }, 20000);
 
@@ -197,10 +201,13 @@ nativeDescribe('native video startup and handoff', () => {
           { type: 'set_media_source_playback', ...clip, paused: false },
           { ...bind(clip.source_id), uri: clip.uri, layer_id: `grid-row-${row}` },
         ]));
-        const ready = await Promise.all(incoming.map(clip => rpc.send('get_source_frame_readiness', {
+        const launched = (await rpc.send('status')).native_video_sessions;
+        expect(incoming.every(clip => launched.some((session: any) =>
+          session.source_id === clip.source_id && session.state === 'playing'
+          && session.seek_generation === 1 && session.frames_presented > 0))).toBe(true);
+        await waitUntil(() => Promise.all(incoming.map(clip => rpc.send('get_source_frame_readiness', {
           source_id: clip.source_id, seek_generation: 1,
-        })));
-        expect(ready.every(value => value.ready)).toBe(true);
+        }))), ready => ready.every(value => value.ready), 'grid GPU completion', 1000);
       }
       const status = await rpc.send('status');
       expect(status.native_video_hardware_fallbacks).toBe(0);

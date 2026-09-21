@@ -1,3 +1,4 @@
+import { WORLD_PALETTES } from '../performer/worldPalettes';
 // Performer Store - Visual Synthesizer State Management
 import { writable, get } from 'svelte/store';
 import type { Effect } from '../types';
@@ -99,7 +100,7 @@ export type WorldParams = { [key: string]: number };
 export const defaultWorldParams = (worldIdx: number): WorldParams => {
   const def = SV_WORLD_DEFS[worldIdx];
   if (!def) return {};
-  const params: WorldParams = {};
+  const params: WorldParams = { palette: 0 };
   def.params.forEach(p => { params[p.k] = p.d; });
   return params;
 };
@@ -676,7 +677,7 @@ function createSynthVisionStore() {
       const newWorldParams = [...s.worldParams];
       const worldDef = SV_WORLD_DEFS[l.world];
       if (worldDef) {
-        const wp: WorldParams = {};
+        const wp: WorldParams = { palette: Math.floor(Math.random() * WORLD_PALETTES.length) / (WORLD_PALETTES.length - 1) };
         worldDef.params.forEach(p => { wp[p.k] = Math.random(); });
         newWorldParams[l.world] = wp;
       }

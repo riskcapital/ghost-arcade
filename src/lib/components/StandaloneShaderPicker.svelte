@@ -55,7 +55,7 @@
   $: warming = warmTotal > 0 && warmDone < warmTotal;
 </script>
 
-<div class="picker-bg" onclick={onClose} role="presentation">
+<div data-help-page="synthvision" class="picker-bg" onclick={onClose} role="presentation">
   <div class="picker-sheet" onclick={(e) => e.stopPropagation()} role="presentation">
     <header class="picker-head">
       <h2>Pick a shader</h2>

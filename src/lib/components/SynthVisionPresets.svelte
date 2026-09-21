@@ -63,7 +63,7 @@
   }
 </script>
 
-<div class="sv-preset-bar">
+<div data-help-page="synthvision" class="sv-preset-bar">
   <div class="sv-preset-left">
     {#if showNameInput}
       <input class="sv-preset-input" type="text" placeholder="Preset name..." bind:value={nameInput}
@@ -111,8 +111,8 @@
 </div>
 
 {#if presetCtxMenu}
-  <div class="sv-ctx-backdrop" on:click={closePresetCtx} role="presentation"></div>
-  <div class="sv-ctx-menu" style="left:{presetCtxMenu.x}px;top:{presetCtxMenu.y}px">
+  <div data-help-page="synthvision" class="sv-ctx-backdrop" on:click={closePresetCtx} role="presentation"></div>
+  <div data-help-page="synthvision" class="sv-ctx-menu" style="left:{presetCtxMenu.x}px;top:{presetCtxMenu.y}px">
     {#if onUpdate}
       <button class="sv-ctx-item sv-ctx-primary" on:click={ctxUpdate}>Update Preset</button>
     {/if}

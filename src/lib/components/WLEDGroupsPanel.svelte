@@ -29,7 +29,7 @@
   }
 </script>
 
-<section class="groups-panel">
+<section data-help-page="settings" class="groups-panel">
   <header>
     <div>
       <h4>Fixture Groups</h4>

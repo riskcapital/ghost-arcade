@@ -406,7 +406,7 @@
 
 {#if !embedded}
 <!-- Toggle button -->
-<button class="tray-toggle" class:open={isOpen} onclick={toggleTray}>
+<button data-help-page="custom-shaders" class="tray-toggle" class:open={isOpen} onclick={toggleTray}>
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
     {#if isOpen}
       <path d="M9 18l6-6-6-6" />
@@ -419,7 +419,7 @@
 {/if}
 
 <!-- Slide-out tray -->
-<div class="svg-tray" class:open={isOpen || embedded} class:embedded>
+<div data-help-page="custom-shaders" class="svg-tray" class:open={isOpen || embedded} class:embedded>
   <div class="tray-header">
     <h3>SVG Controls</h3>
   </div>

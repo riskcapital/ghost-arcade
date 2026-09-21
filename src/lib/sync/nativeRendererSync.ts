@@ -1,3 +1,4 @@
+import { composeNativeGraphs } from '../renderer/nativeGraphComposition';
 import { vjGroupSourceId, buildVJGroupedMixGraph, type VJGroupedMixOptions } from '../renderer/vjGroupNative';
 import { cubeLutHandle } from '../color/cubeLutAssets';
 import { nativeVideoLaunchTime, nativeVideoAnchorRate } from '../media/nativeTransport';
@@ -341,6 +342,7 @@ export type NativeEffectPassRuntime = {
   effect: NativeEffectPassId;
   descriptor: string;
   amount?: number;
+  mix?: number;
   params?: NativeEffectPassOptions['params'];
 };
 export type NativeGraphRouteRequirement = {
@@ -3365,9 +3367,12 @@ export function nativeEffectPassesForLayer(layer: Layer): NativeEffectPassRuntim
     .filter((effect: any) => effect && effect.enabled !== false)
     .slice(0, NATIVE_EFFECT_PASS_LIMIT);
   if (!enabled.length) return null;
-  const passes = enabled.map((effect: any) =>
-    nativeEffectPassFromDescriptor(effectToNativeDescriptor(effect)),
-  );
+  const passes = enabled.map((effect: any) => {
+    const pass = nativeEffectPassFromDescriptor(effectToNativeDescriptor(effect));
+    if (!pass) return null;
+    const mix = Number(effect.opacity ?? 1);
+    return { ...pass, mix: Number.isFinite(mix) ? clampNumber(mix, 0, 1) : 1 };
+  });
   if (passes.some((effect) => !effect)) return null;
   return passes as NativeEffectPassRuntime[];
 }
@@ -5009,6 +5014,10 @@ export class NativeRendererSync {
   private sentWidth = 0;
   private sentHeight = 0;
   private lastLayers = new Map<string, LayerSnapshot>();
+  // Scene ownership survives geometry-cache invalidation. The core also
+  // survives editor remounts, so a new synchronizer must adopt its old IDs.
+  private nativeSceneLayerIds = new Set<string>();
+  private nativeSceneAdopted = false;
   private precompiledShaders = new Set<string>();
   private nativeWgslStdlibWarmed = false;
   private nativeCoreMethods = new Set<string>();
@@ -6215,7 +6224,7 @@ export class NativeRendererSync {
       if (String(layer.type) === 'group' || (layer as { parentGroupId?: string | null }).parentGroupId) {
         hasGroups = true;
       }
-      if (String(layer.id).startsWith('vj-')) hasVjFeed = true;
+      if (String(layer.id).startsWith('vj-') || layer.id === '__vj-mix__' || layer.vjLayerIndex != null || layer.vjGroupId) hasVjFeed = true;
     }
     if (!hasGroups && !hasVjFeed) return layers;
     // VJ feed lookup: crossfade output preferred over single-bank rows.
@@ -6229,7 +6238,11 @@ export class NativeRendererSync {
       const row = /^vj-layer-(\d+)/.exec(String(layer.id));
       if (row && !vjFeed.has(Number(row[1]))) vjFeed.set(Number(row[1]), layer);
     }
+    const vjRoutingActive = vjFeed.size > 0 || get(vjClipLauncher).isLive;
     const redirectVjSource = (target: Layer) => {
+      // Mapping screens retain their own calibration shader/content until
+      // VJ playback owns the output. A saved row assignment is not a feed.
+      if (!vjRoutingActive) return;
       if (String(target.id).startsWith('vj-')) return;
       if (target.vjGroupId) {
         const group = get(vjClipLauncher).groups?.find(group => group.id === target.vjGroupId);
@@ -6246,8 +6259,10 @@ export class NativeRendererSync {
         } as NonNullable<Layer['source']>;
         return;
       }
-      const raw = Number((target as { vjLayerIndex?: number | null }).vjLayerIndex);
-      if (!Number.isFinite(raw) || vjFeed.size === 0) return;
+      const selection = target.vjLayerIndex;
+      if (selection == null) return;
+      const raw = Number(selection);
+      if (!Number.isFinite(raw)) return;
       const index = Math.round(raw);
       // VJ Mix (-1): the native composite carrier when present, else fall
       // back to the lowest active row's feed (legacy approximation).
@@ -6256,7 +6271,15 @@ export class NativeRendererSync {
           ?? vjFeed.get(Math.min(...Array.from(vjFeed.keys()).filter((key) => key >= 0)))
         : vjFeed.get(index);
       if (feed?.source) {
-        (target as { source: Layer['source'] }).source = feed.source;
+        // Sample the completed producer frame, including its clip/layer or
+        // composition FX. Copying feed.source recreated an unprocessed graph.
+        target.source = {
+          id: `vj-shared-feed:${target.id}`, type: 'effect', name: feed.name, src: 'plugin://vj-mix',
+          effectSource: { effectType: 'vj-mix', vjmixSharedFeed: true,
+            vjmixRows: [{ layerId: feed.id, opacity: 1, blendMode: 'normal' }] },
+        } as NonNullable<Layer['source']>;
+      } else {
+        target.visible = false; // An explicit missing row must not show stale media.
       }
     };
     const byId = new Map(layers.map((layer) => [layer.id, layer]));
@@ -6278,7 +6301,7 @@ export class NativeRendererSync {
       // A group set to a VJ source (VJ Mix = -1, or a specific deck row)
       // routes that stream into every child — the group's own VJ selection
       // is the master feed for its slices.
-      const groupVjRaw = Number((group as { vjLayerIndex?: number | null }).vjLayerIndex);
+      const groupVjRaw = group.vjLayerIndex == null ? NaN : Number(group.vjLayerIndex);
       const hasGroupVj = Number.isFinite(groupVjRaw);
       const child = { ...layer } as Layer;
       (child as { opacity: number }).opacity = clampNumber((layer.opacity ?? 1) * (group.opacity ?? 1), 0, 1);
@@ -6299,8 +6322,13 @@ export class NativeRendererSync {
         // keeps its own (empty) source
       } else if (hasGroupVj) {
         (child as { vjLayerIndex?: number }).vjLayerIndex = Math.round(groupVjRaw);
+        child.vjGroupId = undefined;
       } else if (shaderSource) {
         (child as { source: Layer['source'] }).source = shaderSource;
+        // The group owns the effective source. Keep saved child assignments
+        // intact, but prevent their VJ row/group routes replacing this shader.
+        child.vjLayerIndex = undefined;
+        child.vjGroupId = undefined;
       }
       redirectVjSource(child);
       if (hasGroupVj || shaderSource) {
@@ -6480,7 +6508,7 @@ export class NativeRendererSync {
         routeQuality,
       );
       const graphSource = nativeGraphRenderSource(route);
-      const effectPassSig = route.effectPasses?.map((effectPass) => effectPass.descriptor).join('>') ?? 'none';
+      const effectPassSig = route.effectPasses?.map((effectPass) => `${effectPass.descriptor}@${effectPass.mix ?? 1}`).join('>') ?? 'none';
       const inputSourceFrameSeq = route.inputSource?.source
         ? this.sourcePreviewSeq.get(this.sourceCacheKey(route.inputSource.source.id, route.inputSource.source.src)) ?? 0
         : 0;
@@ -6551,7 +6579,7 @@ export class NativeRendererSync {
             effects: route.effectPasses.map((effectPass) => ({
               effect: effectPass.effect,
               amount: effectPass.amount,
-              mix: 1,
+              mix: effectPass.mix ?? 1,
               params: { ...effectPass.params, audioLevel: getVisualAudioSnapshot().level },
             })),
             width,
@@ -7033,7 +7061,7 @@ export class NativeRendererSync {
             effects: route.effectPasses.map((effectPass) => ({
               effect: effectPass.effect,
               amount: effectPass.amount,
-              mix: 1,
+              mix: effectPass.mix ?? 1,
               params: { ...effectPass.params, audioLevel: getVisualAudioSnapshot().level },
             })),
             width,
@@ -7382,8 +7410,15 @@ export class NativeRendererSync {
     };
     if (!this.supportsNativeFeature('native_post_composite_graph')) return noChain();
     const mappingComposition = get(project)?.mappingComposition;
+    const vjState = get(vjClipLauncher);
+    // Mix composition FX already run on __vj-mix__. Maps mode has no mix
+    // carrier; its composition FX belong on the final preset composite.
+    // Mapping FX belong only to Mapping or the mapped Stage composition.
+    const outputEffects = vjState.isLive && !vjState.stageMode
+      ? (vjState.mapMode ? vjState.compositionEffects ?? [] : [])
+      : (mappingComposition?.enabled ? mappingComposition.effects ?? [] : []);
     const candidates = [
-      ...(mappingComposition?.enabled ? mappingComposition.effects ?? [] : [])
+      ...outputEffects
         .map((effect) => ({ effect, mix: Number(effect.opacity ?? 1) })),
       ...(get(macros)?.macros ?? []).flatMap((macro) => {
         const value = Number.isFinite(macro.value) ? Math.max(0, Math.min(1, macro.value)) : 0;
@@ -7839,6 +7874,7 @@ export class NativeRendererSync {
     this.audioUnsub = null;
     this.lastAudioSig = '';
     this.lastLayers.clear();
+    this.nativeSceneAdopted = false;
     this.latestLayers = [];
     this.precompiledShaders.clear();
     this.prefetchedSources.clear();
@@ -8051,7 +8087,7 @@ export class NativeRendererSync {
       // layer yet. Create only that layer here; waiting for the full scene diff
       // would reintroduce the visible first-click delay this path avoids.
       if (!this.lastLayers.has(layer.id)) {
-        const rawVjIndex = Number((layer as any).vjLayerIndex);
+        const rawVjIndex = layer.vjLayerIndex == null ? NaN : Number(layer.vjLayerIndex);
         const vjLayerIndex = Number.isFinite(rawVjIndex) ? Math.round(rawVjIndex) : null;
         const nativeUv = this.nativeLayerUvState(layer, nativeSource, width, height);
         const nativeShape = nativeLayerShapeState(layer);
@@ -8099,6 +8135,9 @@ export class NativeRendererSync {
         ) ?? this.nativeVideoPlaybackCommand(src, 'video', now, renderClock,
           Number.isFinite(src._nativePlaybackTimeSeconds) ? src._nativePlaybackTimeSeconds : undefined));
       }
+      // The handoff changes the display binding outside the regular diff.
+      // Force that diff to restore any effect output, even on a retrigger.
+      this.lastLayers.delete(layer.id);
       commands.push({
         type: 'bind_media_source',
         layer_id: layer.id,
@@ -8435,6 +8474,13 @@ export class NativeRendererSync {
   private async flushOnce(width: number, height: number, layers: Layer[]) {
     if (!this.running || !this.startupReady) return;
 
+    const lifecycleGeneration = this.lifecycleGeneration;
+    if (!this.nativeSceneAdopted) {
+      const snapshot = await getNativeRendererLayersSnapshot();
+      if (!this.running || lifecycleGeneration !== this.lifecycleGeneration) return;
+      for (const layer of snapshot?.layers ?? []) this.nativeSceneLayerIds.add(String(layer.layer_id));
+      this.nativeSceneAdopted = true;
+    }
     const urgentVideoRevisionAtStart = this.urgentVideoRevision;
     this.latestLayers = layers;
     const commands: RendererCommand[] = [];
@@ -8564,7 +8610,7 @@ export class NativeRendererSync {
     }
 
     layers.forEach((layer, index) => {
-      const rawVjIndex = Number((layer as any).vjLayerIndex);
+      const rawVjIndex = layer.vjLayerIndex == null ? NaN : Number(layer.vjLayerIndex);
       const vjLayerIndex = Number.isFinite(rawVjIndex) ? Math.round(rawVjIndex) : null;
       const unsupportedNativeEffects = nativeUnsupportedEffectTypes(layer);
       const nativeGraphRouteCandidate = unsupportedNativeEffects.length > 0
@@ -8627,7 +8673,7 @@ export class NativeRendererSync {
                 : []).map((row: { layerId?: string }) => String(row?.layerId ?? '')).join(','),
             })
           : nativeGraphParamsSig;
-      const nativeGraphEffectSig = nativeGraphRoute?.effectPasses?.map((effectPass) => effectPass.descriptor).join('>') ?? 'none';
+      const nativeGraphEffectSig = nativeGraphRoute?.effectPasses?.map((effectPass) => `${effectPass.descriptor}@${effectPass.mix ?? 1}`).join('>') ?? 'none';
       const effectIds = nativeLayerBlocked || nativeGraphRoute?.kind === 'effect-pass' || nativeGraphRoute?.effectPasses?.length
         ? []
         : nativeHeartbeatEffectDescriptors(layer);
@@ -8784,6 +8830,8 @@ export class NativeRendererSync {
           source_id: nativeSource.id,
           uri: nativeSource.uri,
           source_type: sourceType,
+          effect_input_source_id: nativeGraphRoute?.kind === 'effect-pass'
+            ? nativeGraphRoute.inputSource?.id : undefined,
         });
         // Real content source, not the effect route's synthetic output
         // (source: null). This block owns precompile + bind_isf_shader —
@@ -8948,6 +8996,8 @@ export class NativeRendererSync {
             };
           }
           const topologySig = [
+            JSON.stringify(nativeGraphRoute.effectPasses ?? []),
+            nativeGraphRoute.source.id,
             clipTransitionGraphOptions ? 'clip-transition' : 'bank-crossfade',
             nativeGraphScaledParams?.vjclipClockToken ?? '',
             nativeGraphScaledParams?.vjclipClockDuration ?? '',
@@ -9010,12 +9060,12 @@ export class NativeRendererSync {
               }));
               groupedMixGraph = buildVJGroupedMixGraph({ ...vjMixGraphOptions, rows, groups, time: 0, frameIndex: 0 } as VJGroupedMixOptions);
             }
-            const topologySig = groupedMixGraph ? JSON.stringify(groupedMixGraph.config) : [
+            const topologySig = JSON.stringify([nativeGraphRoute.source.id, nativeGraphRoute.effectPasses ?? []]) + ':' + (groupedMixGraph ? JSON.stringify(groupedMixGraph.config) : [
               vjMixGraphOptions.outputSourceId,
               ...rows.map((row) => row.frameId),
               width,
               height,
-            ].join(':');
+            ].join(':'));
             const uniform = buildVJMixUniformUpdate(vjMixGraphOptions);
             installPluginGraph = routeState.lastVJMixTopologySig !== topologySig;
             if (!groupedMixGraph && !installPluginGraph && routeState.lastVJMixUniformSig !== uniform.signature) {
@@ -9085,7 +9135,7 @@ export class NativeRendererSync {
               effects: nativeGraphRoute.effectPasses.map((effectPass) => ({
                 effect: effectPass.effect,
                 amount: effectPass.amount,
-                mix: 1,
+                mix: effectPass.mix ?? 1,
                 params: { ...effectPass.params, audioLevel: getVisualAudioSnapshot().level },
               })),
               width,
@@ -9107,7 +9157,7 @@ export class NativeRendererSync {
             instrument_source_id: nativeGraphInstrumentSourceId(nativeGraphRoute),
             composite_source_id: nativeGraphCompositeSourceId(nativeGraphRoute),
             input_source_id: nativeGraphRoute.inputSource?.id ?? null,
-            effect_graph: pluginGraph?.config ?? effectGraph?.config ?? null,
+            effect_graph: composeNativeGraphs(pluginGraph?.config, effectGraph?.config),
             params: nativeGraphScaledParams ?? {},
           });
         }
@@ -9304,7 +9354,7 @@ export class NativeRendererSync {
     this.nativeBlockedSourceLayerCount = blockedSourceLayerCount;
     this.nativeBlockedLayerLastReason = blockedLayerLastReason;
 
-    this.lastLayers.forEach((_snap, id) => {
+    new Set([...this.nativeSceneLayerIds, ...this.lastLayers.keys()]).forEach((id) => {
       if (!current.has(id)) {
         this.nativePointCloudUploadSignatures.delete(id);
         const splatState = this.nativeSplatState.get(id);
@@ -9388,6 +9438,7 @@ export class NativeRendererSync {
     // A clip was fired while this expensive scene frame was being assembled.
     // Do not let stale pre-trigger commands overwrite the urgent warm-session
     // handoff; the flush loop will immediately rebuild from latestLayers.
+    if (!this.running || lifecycleGeneration !== this.lifecycleGeneration) return;
     if (urgentVideoRevisionAtStart !== this.urgentVideoRevision) {
       this.flushAgain = true;
       return;
@@ -9404,7 +9455,14 @@ export class NativeRendererSync {
 
     const batchSummary = await submitNativeRendererBatch(batch);
     this.warnNativeCommandDrops(batchSummary, 'frame-batch');
-    this.lastLayers = current;
+    if (!this.running || lifecycleGeneration !== this.lifecycleGeneration) return;
+    if (Number(batchSummary?.dropped ?? 0) > 0) {
+      for (const id of current.keys()) this.nativeSceneLayerIds.add(id);
+      this.lastLayers.clear();
+    } else {
+      this.nativeSceneLayerIds = new Set(current.keys());
+      this.lastLayers = current;
+    }
     void this.reconcileNativeLayerGeometry();
   }
 
@@ -9437,6 +9495,7 @@ export class NativeRendererSync {
         }
         return;
       }
+      for (const layer of snapshot.layers) this.nativeSceneLayerIds.add(String(layer.layer_id));
       const coreLayers = new Map(snapshot.layers.map((layer) => [String(layer.layer_id), layer]));
       const drifted: string[] = [];
       this.lastLayers.forEach((snap, id) => {

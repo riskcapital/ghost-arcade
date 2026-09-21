@@ -595,6 +595,12 @@
     return Number.isFinite(duration) && duration > 0 ? duration : 0;
   }
 
+  function hasClipOverrides(clip: VJClip): boolean {
+    return clip.faderStart !== undefined || clip.ignoreColumnTrigger !== undefined
+      || clip.transitionDuration !== undefined || clip.transitionStyle !== undefined
+      || (clip.triggerStyle !== undefined && clip.triggerStyle !== 'normal');
+  }
+
   function vjClipPlaybackTime(clip: VJClip, now = performance.now()): number {
     return nativeVideoTransportSnapshot(clip, now).timeSeconds;
   }
@@ -3967,7 +3973,7 @@
 />
 
 {#if $vjClipLauncher.isOpen}
-  <div
+  <div data-help-page="vj-mode"
     class="vj-overlay"
     class:kf-tray-open={$keyframeTimeline.isOpen}
     class:native-underlay={nativePreviewActive}
@@ -4400,6 +4406,7 @@
                         </div>
                         {#if expandedEffectId === eff.id}
                           <div class="effect-params">
+                      {#if def?.description}<p class="stage-effect-description">{def.description}</p>{/if}
                             <div class="param-row">
                               <span>Opacity</span>
                               <input
@@ -4445,6 +4452,9 @@
                 {@const selectedCell = selectedTriggerCell}
                 {@const selectedClip = deckGrid(paramDeck)[selectedCell.row]?.[selectedCell.column]}
                 {#if selectedClip?.id === selectedCell.clipId}
+                  <details class="clip-overrides" data-help-page="clip-launcher">
+                    <summary>Clip overrides <span class:custom={hasClipOverrides(selectedClip)}>{hasClipOverrides(selectedClip) ? 'Custom' : 'Default'}</span></summary>
+                    <p>Use the layer settings by default. Changes here apply only to this clip.</p>
                   <VJClipLaunchOptions clip={selectedClip}
                     onChange={(patch) => vjClipLauncher.setClipLaunchOptions(selectedCell.row, selectedCell.column, patch, paramDeck)} />
                   <label class="launch-option-row">
@@ -4456,6 +4466,7 @@
                       <option value="piano">Piano — hold to play</option>
                     </select>
                   </label>
+                  </details>
                 {/if}
               {/if}
             {:else}
@@ -4468,6 +4479,9 @@
               {#if !$vjClipLauncher.mapMode && selectedLayerIndex !== null && (effectsTab === 'layer' || effectsTab === 'clip')}
                 {@const transitionLayer = paramLayerStates[selectedLayerIndex]}
                 {#if effectsTab === 'clip' && transitionLayer.activeClip && transitionLayer.activeColumn !== null}
+                  <details class="clip-overrides" data-help-page="clip-launcher">
+                    <summary>Clip overrides <span class:custom={hasClipOverrides(transitionLayer.activeClip)}>{hasClipOverrides(transitionLayer.activeClip) ? 'Custom' : 'Default'}</span></summary>
+                    <p>Fader Start, column protection and transitions use the layer settings unless overridden here. Trigger mode belongs to this clip.</p>
                   <VJClipLaunchOptions clip={transitionLayer.activeClip}
                     onChange={(patch) => vjClipLauncher.setClipLaunchOptions(selectedLayerIndex!, transitionLayer.activeColumn!, patch, paramDeck)} />
                   <label class="launch-option-row">
@@ -4486,6 +4500,7 @@
                     inheritedStyle={transitionLayer.transitionStyle ?? 'dissolve'}
                     onChange={(patch) => vjClipLauncher.setClipTransition(selectedLayerIndex!, transitionLayer.activeColumn!, patch, paramDeck)}
                   />
+                  </details>
                 {/if}
               {/if}
               <div class="effects-section">
@@ -4519,7 +4534,7 @@
                         </button>
                         <span class="effect-name">{effect.type}</span>
                         <span class="effect-expand">{expandedEffectId === effect.id ? '▼' : '▶'}</span>
-                        <button class="effect-delete" onclick={(e) => { e.stopPropagation(); deleteEffect(effect.id); }}>×</button>
+                        <button aria-label="Delete this effect" class="effect-delete" onclick={(e) => { e.stopPropagation(); deleteEffect(effect.id); }}>×</button>
                       </div>
                       {#if expandedEffectId === effect.id}
                         <div class="effect-params">
@@ -4776,7 +4791,7 @@
                        INPUT.DEFAULT. Sits beside close — matches the
                        per-effect reset button pattern in LayerPanel. -->
                   <button class="shader-params-reset" onclick={resetShaderParamsToDefaults} title="Reset all params to defaults" aria-label="Reset all params to defaults">↺</button>
-                  <button class="shader-params-close" onclick={() => showShaderParams = false}>×</button>
+                  <button aria-label="Close shader parameters" class="shader-params-close" onclick={() => showShaderParams = false}>×</button>
                 </div>
                 <!-- Audio-warn: only show when there's an actual AUDIO
                      source bound to a param (not Auto / not Manual).
@@ -5787,7 +5802,7 @@
                         </div>
                       {/if}
                       <span class="clip-name">{clip.name}</span>
-                      <button class="clear-btn" onclick={(e) => handleClearClip(layerIdx, colIdx, e, bank)}>×</button>
+                      <button aria-label="Remove clip from this slot" class="clear-btn" onclick={(e) => handleClearClip(layerIdx, colIdx, e, bank)}>×</button>
                     </div>
                   {:else}
                     <div class="empty-cell"></div>
@@ -6472,7 +6487,7 @@
 {/if}
 
 {#if vjScreenPickerOpen}
-  <div
+  <div data-help-page="vj-mode"
     class="capture-picker-backdrop"
     onclick={closeVjScreenPicker}
     role="dialog"
@@ -6540,7 +6555,7 @@
 
 <!-- Performer - persists outside VJ panel lifecycle to avoid destroy/recreate on VJ close -->
 {#if performerStarted}
-  <div class="performer-overlay" class:hidden={!showPerformer || !$vjClipLauncher.isOpen} style="top: {performerTop}px">
+  <div data-help-page="vj-mode" class="performer-overlay" class:hidden={!showPerformer || !$vjClipLauncher.isOpen} style="top: {performerTop}px">
     <div
       class="performer-resize-handle"
       onpointerdown={onPerformerResizeStart}
@@ -6566,6 +6581,14 @@
 />
 
 <style>
+  .stage-effect-description { font-size: 12px; line-height: 1.5; color: var(--text-secondary, #aab2c2); margin: 0 0 10px; }
+  .clip-overrides { margin: 8px 12px 12px; border: 1px solid var(--ga-line-2, #303540); border-radius: 7px; }
+  .clip-overrides summary { padding: 9px 12px; cursor: pointer; color: var(--ga-ink-1, #adb3bf); font-size: 12px; font-weight: 600; }
+  .clip-overrides summary span { float: right; font-size: 10px; font-weight: 400; opacity: .75; }
+  .clip-overrides summary span.custom { color: #a9bfff; opacity: 1; }
+  .clip-overrides[open] summary { color: var(--ga-selection-ink, #e0e8ff); background: var(--ga-selection-bg, #172a5b); border-radius: 6px 6px 0 0; }
+  .clip-overrides > p { margin: 10px 12px; color: var(--ga-ink-1, #adb3bf); font-size: 11px; line-height: 1.5; }
+
   .beat-fit-warning { margin: 6px 0; padding: 7px 9px; border: 1px solid #80612d; border-radius: 5px; color: #e6c888; font-size: 11px; line-height: 1.4; }
   .launch-option-row { display:flex; gap:9px; align-items:center; min-height:34px; padding:6px 10px;
     font-size:var(--ga-type-control, 12px); line-height:1.4; color:var(--ga-ink-0, #eef0f4); }
@@ -9577,7 +9600,9 @@
     margin-left: auto;
     flex: 0 0 auto;
     position: relative;
-    z-index: 12;
+    /* The snapshot tray opens over the transport dock (z-index: 15).
+       Its parent must also sit above that dock's stacking context. */
+    z-index: 20;
   }
 
   .blocks-tabs::-webkit-scrollbar {

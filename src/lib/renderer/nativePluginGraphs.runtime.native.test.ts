@@ -114,7 +114,7 @@ describe('native plugin graphs (runtime, real core)', () => {
     expect(Number(status.shader_precompile_compiled ?? 0)).toBeGreaterThanOrEqual(expected);
   }, 30000);
 
-  itIfNativeCore('renders an original Performer world as a visible native overlay', async () => {
+  itIfNativeCore.each([0, 1 / 7, 1])('renders a visible Performer world with palette %s', async (palette) => {
     const layerId = 'performer-world-runtime';
     const sourceId = 'plugin:performer-world:A:0';
     const built = buildNativePluginGraph({
@@ -126,7 +126,7 @@ describe('native plugin graphs (runtime, real core)', () => {
         performerWorldX: 0.72,
         performerWorldY: 0.38,
         performerWorldPointerDown: true,
-        performerWorldParams: [0.65, 0.55, 0.7, 0.6, 0.75, 0.5],
+        performerWorldParams: [0.65, 0.55, 0.7, 0.6, 0.75, 0.5, palette],
         performerWorldPump: 0.4,
       },
       width: 320,
@@ -177,7 +177,7 @@ describe('native plugin graphs (runtime, real core)', () => {
             performerWorldX: 0.72,
             performerWorldY: 0.38,
             performerWorldPointerDown: true,
-            performerWorldParams: [0.65, 0.55, 0.7, 0.6, 0.75, 0.5],
+            performerWorldParams: [0.65, 0.55, 0.7, 0.6, 0.75, 0.5, palette],
             performerWorldPump: 0.4,
           },
         },

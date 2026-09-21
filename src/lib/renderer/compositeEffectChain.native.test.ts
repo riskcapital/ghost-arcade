@@ -1,3 +1,4 @@
+import { composeNativeGraphs } from './nativeGraphComposition';
 import { buildVJGroupedMixGraph } from './vjGroupNative';
 import { buildVJMixGraph, buildVJMixPrecompileCommands } from './vjMixNative';
 import { spawn } from 'node:child_process';
@@ -5,6 +6,7 @@ import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
+  buildNativeEffectPassChainGraph,
   buildCompositeEffectPassChainGraph,
   buildNativeEffectPassPrecompileCommands,
 } from './nativeEffectPass';
@@ -215,5 +217,116 @@ itIfNativeCore('renders group effects after children and applies group opacity o
         return [...bytes.subarray(offset, offset + 4)];
       });
     }, { timeout: 5000, interval: 20 }).toEqual([[64, 0, 64, 255], [64, 0, 64, 255]]);
+  } finally { await rpc.close(); }
+}, 60000);
+
+itIfNativeCore('retains VJ composition FX with the mix graph and shares their processed frame with stage slices', async () => {
+  const rpc = createNativeRpc();
+  try {
+    await rpc.send('start', { config: { backend: nativeBackend, width: 32, height: 32, source_frame_size: 32, target_fps: 30 } }, 20000);
+    await rpc.send('submit_commands', { commands: [...buildVJMixPrecompileCommands(), ...buildNativeEffectPassPrecompileCommands(),
+      { type: 'upload_source_frame', source_id: 'review-red', width: 32, height: 32, seq: 1,
+        rgba_b64: Buffer.from(Array.from({ length: 1024 }, () => [255, 0, 0, 255]).flat()).toString('base64') },
+    ] }, 20000);
+    const mix = buildVJMixGraph({ outputSourceId: 'review-mix', width: 32, height: 32, time: 0, frameIndex: 0,
+      rows: [{ frameId: 'review-red', opacity: 1, blendMode: 'normal' }] });
+    const effects = buildNativeEffectPassChainGraph({ sourceId: 'review-mix', targetSourceId: 'review-fx',
+      effects: [{ effect: 'invert', amount: 1, mix: 1 }], width: 32, height: 32, time: 0, frameIndex: 0 });
+    const corners = { topLeft: { x: 0, y: 1 }, topRight: { x: 1, y: 1 }, bottomRight: { x: 1, y: 0 }, bottomLeft: { x: 0, y: 0 } };
+    const producer = (withFx: boolean) => ({ type: 'set_native_graph_layer', layer_id: '__vj-mix__', kind: 'vj-mix',
+      instrument_source_id: 'review-mix', composite_source_id: withFx ? 'review-fx' : 'review-mix',
+      effect_graph: composeNativeGraphs(mix.config, withFx ? effects.config : null), params: {} });
+    await rpc.send('submit_commands', { commands: [
+      { type: 'upsert_layer', layer_id: '__vj-mix__', z_index: 0, opacity: 1, blend_mode: 'normal', corners },
+      { type: 'bind_media_source', layer_id: '__vj-mix__', source_id: 'review-fx', uri: 'native-graph://vj-mix/review', source_type: 'gpu:vj-mix' },
+      { type: 'set_layer_visibility', layer_id: '__vj-mix__', visible: true }, producer(true),
+    ] });
+    const pixel = async () => {
+      const frame = await rpc.send('frame_snapshot', { include_pixels: true });
+      const bytes = Buffer.from(frame.rgba_b64, 'base64');
+      const p = [...bytes.subarray((16 * Number(frame.width) + 16) * 4, (16 * Number(frame.width) + 16) * 4 + 4)];
+      if (String(frame.format).toLowerCase().startsWith('bgra')) [p[0], p[2]] = [p[2], p[0]];
+      return p;
+    };
+    await expect.poll(pixel, { timeout: 5000, interval: 20 }).toEqual([0, 255, 255, 255]);
+    for (const [mixAmount, expected] of [[0, [255, 0, 0, 255]], [0.25, [191, 64, 64, 255]]] as const) {
+      const partial = buildNativeEffectPassChainGraph({ sourceId: 'review-mix', targetSourceId: 'review-fx',
+        effects: [{ effect: 'invert', amount: 1, mix: mixAmount }], width: 32, height: 32, time: 0, frameIndex: 0 });
+      await rpc.send('submit_commands', { commands: [{ ...producer(true), effect_graph: composeNativeGraphs(mix.config, partial.config) }] });
+      await expect.poll(pixel, { timeout: 5000, interval: 20 }).toEqual([...expected]);
+    }
+    await rpc.send('submit_commands', { commands: [producer(true)] });
+    const reader = buildVJMixGraph({ outputSourceId: 'review-slice', width: 32, height: 32, time: 0, frameIndex: 0,
+      rows: [{ frameId: 'layer-frame:__vj-mix__', opacity: 1, blendMode: 'normal' }] });
+    await rpc.send('submit_commands', { commands: [
+      { type: 'upsert_layer', layer_id: '__vj-mix__', z_index: 0, opacity: 0 },
+      { type: 'upsert_layer', layer_id: 'stage-reader', z_index: 1, opacity: 1, blend_mode: 'normal', corners },
+      { type: 'bind_media_source', layer_id: 'stage-reader', source_id: 'review-slice', uri: 'native-graph://vj-mix/slice', source_type: 'gpu:vj-mix' },
+      { type: 'set_layer_visibility', layer_id: 'stage-reader', visible: true },
+      { type: 'set_native_graph_layer', layer_id: 'stage-reader', kind: 'vj-mix', instrument_source_id: 'review-slice', composite_source_id: 'review-slice', effect_graph: reader.config, params: {} },
+    ] });
+    await expect.poll(pixel, { timeout: 5000, interval: 20 }).toEqual([0, 255, 255, 255]);
+    await rpc.send('submit_commands', { commands: [producer(false)] });
+    await expect.poll(pixel, { timeout: 5000, interval: 20 }).toEqual([255, 0, 0, 255]);
+  } finally { await rpc.close(); }
+}, 60000);
+
+itIfNativeCore('keeps warped mesh cells opaque across concave bends and distant grid cells', async () => {
+  const rpc = createNativeRpc();
+  try {
+    await rpc.send('start', { config: { backend: nativeBackend, width: 64, height: 64, source_frame_size: 64, target_fps: 30 } }, 20000);
+    const corners = { topLeft: { x: 0, y: 1 }, topRight: { x: 1, y: 1 }, bottomRight: { x: 1, y: 0 }, bottomLeft: { x: 0, y: 0 } };
+    await rpc.send('submit_commands', { commands: [
+      ...[['mesh-back', [0, 0, 255, 255]], ['mesh-front', [255, 0, 0, 255]]].flatMap(([id, color], index) => [
+        { type: 'upload_source_frame', source_id: id, width: 64, height: 64, seq: 1,
+          rgba_b64: Buffer.from(Array.from({ length: 4096 }, () => color).flat() as number[]).toString('base64') },
+        { type: 'upsert_layer', layer_id: id, opacity: 1, z_index: 1 - index, corners },
+        { type: 'bind_media_source', layer_id: id, source_id: id, source_type: 'image', uri: `memory://${id}` },
+      ]),
+    ] });
+    for (const size of [3, 12]) {
+      const points = Array.from({ length: size }, (_, row) => Array.from({ length: size }, (_, col) => ({
+        x: size === 12 ? Math.pow(col / (size - 1), 4) : col / (size - 1), y: 1 - row / (size - 1),
+      })));
+      if (size === 3) points[1][1] = { x: 0.94, y: 0.08 };
+      await rpc.send('submit_commands', { commands: [
+        { type: 'upsert_layer', layer_id: 'mesh-front', opacity: 1, z_index: 0, corners, mesh_grid: { rows: size, cols: size, points } },
+        { type: 'present' },
+      ] });
+      await expect.poll(async () => {
+        const frame = await rpc.send('frame_snapshot', { include_pixels: true });
+        const bytes = Buffer.from(frame.rgba_b64, 'base64');
+        let exposed = 0;
+        for (let y = 2; y < 62; y++) for (let x = 2; x < 62; x++) {
+          const offset = (y * Number(frame.width) + x) * 4;
+          const bgra = String(frame.format).toLowerCase().startsWith('bgra');
+          if (bytes[offset + (bgra ? 2 : 0)] < 250 || bytes[offset + (bgra ? 0 : 2)] > 5) exposed++;
+        }
+        return exposed;
+      }, { timeout: 3000, interval: 30, message: `${size}x${size} mesh must not expose the blue layer` }).toBe(0);
+    }
+  } finally { await rpc.close(); }
+}, 60000);
+
+itIfNativeCore('does not paint an affine duplicate outside a folded corner-warp surface', async () => {
+  const rpc = createNativeRpc();
+  try {
+    await rpc.send('start', { config: { backend: nativeBackend, width: 64, height: 64, source_frame_size: 64, target_fps: 30 } }, 20000);
+    await rpc.send('submit_commands', { commands: [
+      { type: 'upload_source_frame', source_id: 'fold-red', width: 64, height: 64, seq: 1,
+        rgba_b64: Buffer.from(Array.from({ length: 4096 }, () => [255, 0, 0, 255]).flat()).toString('base64') },
+      { type: 'upsert_layer', layer_id: 'fold', opacity: 1, z_index: 0,
+        corners: { topLeft: { x: 0, y: 1 }, topRight: { x: 1, y: 1 }, bottomRight: { x: 1, y: 0 }, bottomLeft: { x: 0.9, y: 0.78 } } },
+      { type: 'bind_media_source', layer_id: 'fold', source_id: 'fold-red', source_type: 'image', uri: 'memory://fold-red' },
+      { type: 'present' },
+    ] });
+    await expect.poll(async () => {
+      const frame = await rpc.send('frame_snapshot', { include_pixels: true });
+      const bytes = Buffer.from(frame.rgba_b64, 'base64');
+      const redAt = (x: number, y: number) => bytes[(y * Number(frame.width) + x) * 4 + (String(frame.format).toLowerCase().startsWith('bgra') ? 2 : 0)];
+      // (0.60,0.45) is inside the fallback triangle but outside the actual
+      // bilinear patch (negative inverse discriminant). The top still draws.
+      return [redAt(38, 28), redAt(32, 3)];
+    }, { timeout: 3000, interval: 30 }).toEqual([0, 255]);
   } finally { await rpc.close(); }
 }, 60000);

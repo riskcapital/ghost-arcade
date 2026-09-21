@@ -66,7 +66,7 @@
 </script>
 
 {#if layer && tc}
-  <div class="text-panel">
+  <div data-help-page="layers" class="text-panel">
     <h3>Text Layer</h3>
 
     <!-- Text Input -->

@@ -153,7 +153,7 @@
   });
 </script>
 
-<div class="led-fx-panel">
+<div data-help-page="settings" class="led-fx-panel">
   <header class="panel-heading">
     <div>
       <strong>LED FX</strong>

@@ -4,7 +4,7 @@
   export let onSetBlock: (blockId: string) => void = () => {};
 </script>
 
-<div class="block-selector">
+<div data-help-page="mobile-control" class="block-selector">
   <div class="block-tabs" role="tablist">
     {#each blocks as block}
       <button

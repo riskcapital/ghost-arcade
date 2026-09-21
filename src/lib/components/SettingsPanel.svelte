@@ -1,5 +1,6 @@
 <script lang="ts">
   import { onMount, onDestroy } from 'svelte';
+  import { tooltipsEnabled } from '../help/preferences';
   import { NATIVE_ENGINE_ONLY, settings, getSupportedFormats, COLOR_SCHEMES, CLAUDE_MODELS, GEMINI_MODELS, VEO_MODELS, LUMA_MODELS, DEFAULT_LAYER_SHADERS, type RecordingSettings, type OutputSettings, type ColorSchemeId, type FluidQualityMode, type ShaderQualityMode, type GpuInstrumentQualityMode, type ShaderAIProvider, type VideoAIProvider } from '../stores/settings';
   // Theme template registry — full visual style swap (fonts + surfaces
   // + corners + accents). See src/lib/theming/themes/.
@@ -692,7 +693,7 @@
 <svelte:window onkeydown={handleKeydown} />
 
 {#if isOpen}
-  <div class="settings-overlay" onclick={handleOverlayClick} role="dialog" aria-modal="true">
+  <div data-help-page="settings" class="settings-overlay" onclick={handleOverlayClick} role="dialog" aria-modal="true">
     <div class="settings-panel">
       <div class="settings-header">
         <h2>Settings</h2>
@@ -757,6 +758,13 @@
         {#if selectedSection === 'app:appearance'}
         <section class="settings-section">
           <h3>Appearance</h3>
+          <div class="setting-row">
+            <div class="setting-label">
+              <label class="label-text" for="tooltips-enabled">Tooltips</label>
+              <span class="label-hint">Show feature explanations and documentation links when hovering or focusing controls.</span>
+            </div>
+            <input id="tooltips-enabled" type="checkbox" checked={$tooltipsEnabled} onchange={e => tooltipsEnabled.set(e.currentTarget.checked)} />
+          </div>
 
           <!-- Theme Templates — a complete style overhaul (fonts,
                surfaces, accents, corner system) vs just an accent
@@ -2652,8 +2660,9 @@
         {#if selectedSection === 'integrations:wled'}
         <section class="settings-section">
           <h3>WLED LED Controllers</h3>
+          <button class="osc-add-btn" onclick={() => openExternalUrl('https://ghostarcade.live/docs/wled')}>WLED setup guide ↗</button>
           <p class="settings-hint" style="margin-bottom: 12px;">
-            Send the final composite to WLED LEDs on your local network. Colors and bright regions are spatially sampled across the image and shipped over UDP at ~60Hz. WLED's default port is 21324; max 490 LEDs per controller for the DRGB protocol.
+            Send the final composite to WLED LEDs on your local network. Colors and bright regions are spatially sampled across the image and shipped over UDP. Native output uses a shared preview stream, targeting 20 updates per second. WLED's default port is 21324; max 490 LEDs per controller for the DRGB protocol.
           </p>
 
           {#if ($project.wledControllers ?? []).length === 0}

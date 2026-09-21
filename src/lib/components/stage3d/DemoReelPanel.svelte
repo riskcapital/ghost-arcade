@@ -161,7 +161,7 @@
   }
 </script>
 
-<div class="reel-panel">
+<div data-help-page="stage-simulator" class="reel-panel">
   <div class="reel-head">
     <span class="reel-title">🎬 Demo Reel</span>
     <span class="reel-total">{shots.length} shot{shots.length === 1 ? '' : 's'} · {fmtSec(totalSec)}</span>
