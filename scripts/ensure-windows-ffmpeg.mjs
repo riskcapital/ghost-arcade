@@ -11,6 +11,36 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const run = promisify(execFile);
 const bundle = join(root, 'build-resources', 'ffmpeg', 'win32-x64');
+// Windows 11's tar.exe (libarchive) reads this LZMA 7z archive, but the one
+// on Windows 10 and Windows Server 2022, which the release runners use, stops
+// with "LZMA codec is unsupported". 7-Zip reads it everywhere and ships on the
+// GitHub runner images, so it is the fallback. The archive's SHA-256 is
+// checked before either runs, so the extractor does not change what is shipped.
+async function extractMembers(archive, destination, members) {
+  const options = { windowsHide: true, timeout: 180000 };
+  try {
+    await run('tar.exe', ['-xf', archive, '-C', destination, ...members], options);
+    return;
+  } catch (tarError) {
+    const sevenZipMembers = members.map(member => member.replaceAll('/', '\\'));
+    const candidates = ['7z.exe', join(process.env.ProgramFiles || 'C:\\Program Files', '7-Zip', '7z.exe')];
+    let sevenZipError = null;
+    for (const sevenZip of candidates) {
+      try {
+        await run(sevenZip, ['x', archive, `-o${destination}`, '-y', '-bso0', '-bsp0', ...sevenZipMembers], options);
+        return;
+      } catch (error) {
+        if (error.code !== 'ENOENT') sevenZipError = error;
+      }
+    }
+    const tarDetail = String(tarError.stderr || tarError.message).trim();
+    const sevenZipDetail = sevenZipError
+      ? `7-Zip also failed: ${String(sevenZipError.stderr || sevenZipError.message).trim()}`
+      : '7-Zip was not found; install 7-Zip and rerun.';
+    throw new Error(`Could not extract the FFmpeg archive. tar.exe failed: ${tarDetail}\n${sevenZipDetail}`);
+  }
+}
+
 async function sha256(file) {
   const hash = createHash('sha256');
   for await (const bytes of createReadStream(file)) hash.update(bytes);
@@ -47,10 +77,10 @@ export async function ensureWindowsFfmpeg({ platform = process.platform, arch = 
     const archive = join(temporary, 'ffmpeg.7z');
     await pipeline(Readable.fromWeb(response.body), createWriteStream(archive));
     if (await sha256(archive) !== pin.sha256) throw new Error('Windows FFmpeg archive SHA-256 mismatch');
-    // Windows tar/libarchive reads 7z. Extract only the pinned executable and
-    // its notices; ffplay/ffprobe and their duplicate payloads are not shipped.
-    await run('tar.exe', ['-xf', archive, '-C', temporary,
-      `${pin.archiveRoot}/bin/ffmpeg.exe`, `${pin.archiveRoot}/LICENSE`, `${pin.archiveRoot}/README.txt`], { windowsHide: true, timeout: 180000 });
+    // Extract only the pinned executable and its notices; ffplay/ffprobe and
+    // their duplicate payloads are not shipped.
+    await extractMembers(archive, temporary,
+      [`${pin.archiveRoot}/bin/ffmpeg.exe`, `${pin.archiveRoot}/LICENSE`, `${pin.archiveRoot}/README.txt`]);
     const extracted = join(temporary, pin.archiveRoot);
     await copyFile(join(extracted, 'bin', 'ffmpeg.exe'), join(bundle, 'ffmpeg.exe'));
     for (const file of ['LICENSE', 'README.txt']) await copyFile(join(extracted, file), join(bundle, file));
