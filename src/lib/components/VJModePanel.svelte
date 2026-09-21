@@ -5508,21 +5508,51 @@
           <div class="grid-snaps">
             <SnapshotBank placement="inline" />
           </div>
+          <div class="vj-dock-group vj-dock-tools">
+            <button
+              class="vj-seq-toggle-btn dock-labelled-btn"
+              class:active={$vjLayerSequencer.isOpen}
+              onclick={() => vjLayerSequencer.toggleOpen()}
+              title="Layer Sequencer"
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <rect x="3" y="5" width="4" height="14" rx="1.2" fill="#ff7a66"/>
+                <rect x="10" y="8" width="4" height="11" rx="1.2" fill="#ffd166"/>
+                <rect x="17" y="3" width="4" height="16" rx="1.2" fill="#46d18a"/>
+                <path d="M4 20h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+              </svg>
+              Sequencer
+            </button>
+
+            {#if $vjClipLauncher.isLive}
+              <button
+                class="ab-toggle-btn dock-labelled-btn"
+                class:active={$vjClipLauncher.crossfaderEnabled}
+                onclick={() => vjClipLauncher.setCrossfaderEnabled(!$vjClipLauncher.crossfaderEnabled)}
+                title="Split the deck into two independent banks with a transition fader between them"
+                data-midi-path="vj:crossfader:enabled"
+                data-midi-label="Crossfader Enabled"
+                data-midi-mode="toggle"
+              >
+                Split Deck A/B
+              </button>
+            {/if}
+          </div>
         </div>
 
       <div class="vj-dock" role="toolbar" aria-label="Deck controls">
-<div class="grid-dimension-controls">
+        <div class="grid-dimension-controls">
           <div class="dim-group">
-            <span class="dim-label">Layers</span>
-            <button class="dim-btn" onclick={() => vjClipLauncher.removeLayer()} title="Remove layer">−</button>
+            <span class="dim-label">Rows</span>
+            <button class="dim-btn" onclick={() => vjClipLauncher.removeLayer()} title="Remove row" aria-label="Remove row">−</button>
             <span class="dim-value">{$vjClipLauncher.numLayers}</span>
-            <button class="dim-btn" onclick={() => vjClipLauncher.addLayer()} title="Add layer">+</button>
+            <button class="dim-btn" onclick={() => vjClipLauncher.addLayer()} title="Add row" aria-label="Add row">+</button>
           </div>
           <div class="dim-group">
-            <span class="dim-label">Columns</span>
-            <button class="dim-btn" onclick={() => vjClipLauncher.removeColumn()} title="Remove column">−</button>
+            <span class="dim-label">Cols</span>
+            <button class="dim-btn" onclick={() => vjClipLauncher.removeColumn()} title="Remove column" aria-label="Remove column">−</button>
             <span class="dim-value">{$vjClipLauncher.numColumns}</span>
-            <button class="dim-btn" onclick={() => vjClipLauncher.addColumn()} title="Add column">+</button>
+            <button class="dim-btn" onclick={() => vjClipLauncher.addColumn()} title="Add column" aria-label="Add column">+</button>
           </div>
         </div>
         <VJGroups />
@@ -5564,37 +5594,7 @@
           </div>
         </div>
 
-        <div class="vj-dock-group vj-dock-tools">
-          <button
-            class="vj-seq-toggle-btn dock-labelled-btn"
-            class:active={$vjLayerSequencer.isOpen}
-            onclick={() => vjLayerSequencer.toggleOpen()}
-            title="Layer Sequencer"
-          >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-              <rect x="3" y="5" width="4" height="14" rx="1.2" fill="#ff7a66"/>
-              <rect x="10" y="8" width="4" height="11" rx="1.2" fill="#ffd166"/>
-              <rect x="17" y="3" width="4" height="16" rx="1.2" fill="#46d18a"/>
-              <path d="M4 20h16" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
-            </svg>
-            Sequencer
-          </button>
 
-          {#if $vjClipLauncher.isLive}
-            <button
-              class="ab-toggle-btn dock-labelled-btn"
-              class:active={$vjClipLauncher.crossfaderEnabled}
-              onclick={() => vjClipLauncher.setCrossfaderEnabled(!$vjClipLauncher.crossfaderEnabled)}
-              title="Split the deck into two independent banks with a transition fader between them"
-              data-midi-path="vj:crossfader:enabled"
-              data-midi-label="Crossfader Enabled"
-              data-midi-mode="toggle"
-            >
-              Split Deck A/B
-            </button>
-          {/if}
-
-        </div>
       </div>
 
         <!-- ====================================================================
@@ -5622,6 +5622,8 @@
                 class:queued={columnQueued}
                 aria-pressed={columnQueued}
                 onclick={() => handleColumnTrigger(colIdx, bank)}
+                onpointerenter={() => vjClipLauncher.prepareColumn(colIdx, bank)}
+                onfocus={() => vjClipLauncher.prepareColumn(colIdx, bank)}
                 title={columnQueued ? `Cancel queued column ${colIdx + 1} on Deck ${bank}` : `Trigger column ${colIdx + 1} on Deck ${bank}`}
                 data-midi-path="{midiPrefix}:column:{colIdx}"
                 data-midi-label="Deck {bank} Column {colIdx + 1}"
@@ -8629,9 +8631,9 @@
     min-height: 200px;
   }
 
-  /* Single-row deck controls; keep popovers outside the strip unclipped. */
+  /* Compact controls wrap as groups on narrow decks; popovers stay unclipped. */
   .vj-dock {
-    flex-wrap: nowrap;
+    flex-wrap: wrap;
     white-space: nowrap;
     --vj-header-font: 11px;
     --vj-control-h: 28px;
@@ -8654,14 +8656,18 @@
     z-index: 15;
   }
   .vj-dock-group {
-    flex: 0 0 auto;
-    flex-wrap: nowrap;
+    flex: 1 1 auto;
+    flex-wrap: wrap;
     display: flex;
     align-items: center;
     gap: var(--vj-meter-gap);
     min-width: 0;
   }
   .vj-dock-tools {
+    flex-wrap: nowrap;
+    --vj-header-font: 11px;
+    --vj-control-h: 28px;
+    --vj-right-gap: 4px;
     margin-left: auto;
     gap: var(--vj-right-gap);
     flex: 0 0 auto;
@@ -10807,32 +10813,39 @@
     display: flex;
     align-items: center;
     flex-shrink: 0;
-    gap: 12px;
-    padding: 0 12px 0 0;
+    gap: 6px;
+    padding: 0 6px 0 0;
     border-right: 1px solid #34363c;
     margin: 0;
   }
 
   .dim-group {
     display: flex;
+    box-sizing: border-box;
     align-items: center;
-    gap: 4px;
+    gap: 0;
+    height: 28px;
+    border: 1px solid #34363c;
+    border-radius: 4px;
+    background: #1b1b1b;
+    overflow: hidden;
   }
 
   .dim-label {
-    font-size: 11px;
+    font-size: 10px;
     color: var(--text-muted, #888);
     text-transform: uppercase;
     letter-spacing: 0.5px;
-    margin-right: 4px;
+    margin-right: 0;
+    padding: 0 5px;
   }
 
   .dim-btn {
     width: 22px;
-    height: 22px;
+    height: 26px;
     background: #222;
-    border: 1px solid #444;
-    border-radius: 4px;
+    border: 0;
+    border-radius: 0;
     color: var(--text-primary, #ccc);
     font-size: 15px;
     font-weight: 600;
@@ -10850,11 +10863,17 @@
     color: #000;
   }
 
+  .dim-btn:focus-visible {
+    outline: 2px solid var(--accent-primary, #BB86FC);
+    outline-offset: -2px;
+  }
+
   .dim-value {
     font-size: 13px;
     color: #fff;
     font-weight: 600;
-    min-width: 20px;
+    min-width: 16px;
+    font-variant-numeric: tabular-nums;
     text-align: center;
   }
 

@@ -8,6 +8,7 @@ directories:
   output: dist-electron
   buildResources: build-resources
 
+beforePack: build-resources/beforePack.cjs
 afterPack: build-resources/afterPack.cjs
 
 files:
@@ -74,6 +75,14 @@ fileAssociations:
 
 # ─── Windows ───────────────────────────────────────────────────────────────
 win:
+  extraResources:
+    - from: build-resources/ffmpeg/win32-x64/
+      to: ffmpeg/
+      filter:
+        - ffmpeg.exe
+        - LICENSE
+        - README.txt
+        - provenance.json
   target: nsis
   icon: build-resources/icons/icon.ico
   # Azure Trusted Signing — short-lived certs issued per-build, RFC 3161

@@ -36,6 +36,7 @@
     "check:desktop": "svelte-check --tsconfig ./tsconfig.desktop.json",
     "check:native-mobile": "svelte-check --tsconfig ./tsconfig.native-mobile.json",
     "native:build": "node scripts/build-native-core.mjs --arch=host",
+    "windows:ffmpeg": "node scripts/ensure-windows-ffmpeg.mjs",
     "native:build:universal": "node scripts/build-native-core.mjs",
     "native:test": "cargo test --manifest-path native-renderer/Cargo.toml",
     "native:check:windows": "cargo check --manifest-path native-renderer/Cargo.toml --target x86_64-pc-windows-msvc",

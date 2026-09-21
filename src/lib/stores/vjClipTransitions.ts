@@ -39,12 +39,14 @@ export interface VJClipTransition {
   requiresSnapshot: boolean;
   frozenSourceId?: string;
   queuedTriggerId?: string;
+  launchGroup?: number;
   preparedIncoming?: VJClip;
 }
 
 export function createVJClipTransitions() {
   const state = writable<ReadonlyMap<string, VJClipTransition>>(new Map());
   let nextToken = 0;
+  const readyTokens = new Set<number>();
   let release: ((sourceId: string) => void) | null = null;
 
   const releaseIfUnused = (sourceId: string | undefined) => {
@@ -55,6 +57,7 @@ export function createVJClipTransitions() {
     const current = get(state).get(key);
     if (token !== undefined && current?.token !== token) return false;
     if (!current) return false;
+    readyTokens.delete(current.token);
     state.update(entries => { const next = new Map(entries); next.delete(key); return next; });
     releaseIfUnused(current.frozenSourceId);
     return true;
@@ -74,9 +77,10 @@ export function createVJClipTransitions() {
       releaseIfUnused(active.frozenSourceId);
       return true;
     },
-    begin(deck: VJDeck, layerIndex: number, outgoing: VJClip | null, incoming: VJClip, duration: number, style: CrossfaderTransition, frozenSourceId?: string, queuedTriggerId?: string) {
+    begin(deck: VJDeck, layerIndex: number, outgoing: VJClip | null, incoming: VJClip, duration: number, style: CrossfaderTransition, frozenSourceId?: string, queuedTriggerId?: string, launchGroup?: number) {
       const key = vjClipTransitionKey(deck, layerIndex);
       const old = get(state).get(key);
+      if (old) readyTokens.delete(old.token);
       const returnsToWaitingOutgoing = old?.startedAtMs === null && !old.requiresSnapshot
         && !old.frozenSourceId && old.outgoingClip.id === incoming.id;
       if (!outgoing || outgoing.id === incoming.id || returnsToWaitingOutgoing || outgoing.type === 'preset' || incoming.type === 'preset' || normalizedTransitionDuration(duration) <= 0) {
@@ -93,6 +97,7 @@ export function createVJClipTransitions() {
         incomingSeekGeneration: Math.max(0, Math.round(incoming._nativePlaybackSeekSeq ?? 0)),
         duration: normalizedTransitionDuration(duration), style: normalizedTransitionStyle(style),
         startedAtMs: null,
+        launchGroup,
         ...(queuedTriggerId ? {queuedTriggerId,preparedIncoming:{...incoming}} : {}),
         requiresSnapshot: !!old && (old.startedAtMs !== null || old.requiresSnapshot || !!old.queuedTriggerId) && !frozenSourceId,
         ...(frozenSourceId ? { frozenSourceId } : old?.startedAtMs === null && old.frozenSourceId ? { frozenSourceId: old.frozenSourceId } : {}),
@@ -111,12 +116,27 @@ export function createVJClipTransitions() {
       const key = vjClipTransitionKey(deck, layerIndex);
       const active = get(state).get(key);
       if (!active || active.token !== token || active.queuedTriggerId || active.requiresSnapshot || active.startedAtMs !== null || !Number.isFinite(nowMs)) return false;
-      state.update(entries => new Map(entries).set(key, { ...active, startedAtMs: nowMs }));
+      readyTokens.add(token);
+      // A column is one visual launch. Publish all ready rows in a single
+      // store emission, with the same clock, instead of revealing each RPC
+      // result independently. Replaced/cancelled rows no longer participate.
+      const participants = active.launchGroup === undefined ? [active]
+        : Array.from(get(state).values()).filter(entry => entry.launchGroup === active.launchGroup && entry.startedAtMs === null);
+      if (participants.some(entry => entry.queuedTriggerId || entry.requiresSnapshot || !readyTokens.has(entry.token))) return false;
+      state.update(entries => {
+        const next = new Map(entries);
+        for (const entry of participants) {
+          readyTokens.delete(entry.token);
+          next.set(vjClipTransitionKey(entry.deck, entry.layerIndex), { ...entry, startedAtMs: nowMs });
+        }
+        return next;
+      });
       return true;
     },
     complete: cancel,
     cancel,
     clear() {
+      readyTokens.clear();
       const snapshots = new Set(Array.from(get(state).values()).flatMap(entry => entry.frozenSourceId ? [entry.frozenSourceId] : []));
       state.set(new Map());
       for (const sourceId of snapshots) releaseIfUnused(sourceId);

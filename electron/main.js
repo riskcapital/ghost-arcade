@@ -1710,13 +1710,13 @@ function spawnFfmpegConversion({
   progressMode = 'time',
   totalFrames = 0,
   reservedJob,
+  ffmpegPath = resolveFfmpegPath(),
 }) {
   if (activeVideoConverterJob && activeVideoConverterJob !== reservedJob) {
     throw new Error('A video conversion is already running.');
   }
 
   return new Promise((resolve, reject) => {
-    const ffmpegPath = resolveFfmpegPath();
     const child = spawn(ffmpegPath, args, { windowsHide: true });
     const job = reservedJob || { id: jobId, cancelled: false, cleanup };
     job.process = child;
@@ -7308,6 +7308,8 @@ function registerIpcHandlers() {
     const reservedJob = { id: jobId, process: null, cancelled: false, cleanup };
     activeVideoConverterJob = reservedJob;
     try {
+      const ffmpegPath = await require('./conversion-ffmpeg.cjs').resolveConversionFfmpeg(resolveFfmpegPath(), format.id);
+      if (reservedJob.cancelled) throw new Error('Conversion cancelled.');
       const input = [];
       let durationSec = 0, totalFrames = 0;
       if (mode === 'sequence') {
@@ -7321,11 +7323,11 @@ function registerIpcHandlers() {
       } else {
         const inputPath = assertAbsolutePath(args.inputPath, 'input video path');
         if (!fs.existsSync(inputPath)) throw new Error('Input video not found.');
-        const decoderArgs = format.alpha ? await probeConversionInput(resolveFfmpegPath(), inputPath, reservedJob) : [];
+        const decoderArgs = format.alpha ? await probeConversionInput(ffmpegPath, inputPath, reservedJob) : [];
         if (reservedJob.cancelled) throw new Error('Conversion cancelled.');
         input.push('-fflags', '+genpts', ...decoderArgs, '-i', inputPath, '-map', '0:v:0', '-map', '0:a:0?');
       }
-      return await spawnFfmpegConversion({ sender: event.sender, jobId, durationSec, totalFrames, outputPath, reservedJob,
+      return await spawnFfmpegConversion({ sender: event.sender, jobId, durationSec, totalFrames, outputPath, reservedJob, ffmpegPath,
         startMessage: `Converting to ${format.label}...`, completeMessage: `${format.label} conversion complete.`,
         progressMode: mode === 'sequence' ? 'frames' : 'time', cleanup, finalize: () => staged.complete(),
         args: ['-hide_banner', '-nostdin', '-n', '-progress', 'pipe:2', '-nostats', ...input,

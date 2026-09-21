@@ -11,10 +11,17 @@ git fetch origin
 git switch codex/clip-transitions
 git pull --ff-only origin codex/clip-transitions
 npm ci
+npm run windows:ffmpeg
 npm run desktop:native
 ```
 
 If Git reports divergence or local changes, stop and resolve that rather than forcing the pull. `desktop:native` rebuilds the Windows native core before starting the app; an old renderer executable will not contain this checkpoint's LUT support and render-order fixes. Keep the native build output, especially any DXC/FFmpeg warnings. Record `git log -1 --oneline` with test results.
+
+## Windows HAP encoder
+
+`npm run windows:ffmpeg` provisions the checksum-pinned FFmpeg 8.0.1 full build from the upstream Gyan release. Windows packaging runs this automatically and rejects a package without HAP, HAP Alpha, HAP Q or Snappy support. The executable, upstream license/readme and provenance ship in `resources/ffmpeg`; end users do not need a separate FFmpeg installation. Downloaded binaries are ignored by Git. `node scripts/ensure-windows-ffmpeg.mjs --verify` checks the local bundle without downloading.
+
+HAP conversions prefer that bundle; `GA_FFMPEG_PATH` remains an explicit override. H.264 and ProRes keep their existing encoder selection. The native renderer plays HAP through its compressed-texture backend. The pinned archive URL, SHA-256, source revision and upstream release are recorded in `build-resources/windows-ffmpeg.json`; updating the bundle requires updating that pin and rerunning conversion and native playback tests.
 
 ## What is ready to test
 

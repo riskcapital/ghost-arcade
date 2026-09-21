@@ -4,7 +4,7 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { existsSync, mkdtempSync, rmSync, writeFileSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve, relative, isAbsolute } from 'node:path';
 import { createRequire } from 'node:module';
 import { createInterface } from 'node:readline';
 import { performance } from 'node:perf_hooks';
@@ -16,7 +16,8 @@ const windows=process.platform==='win32';
 if(!windows&&process.platform!=='darwin')throw new Error('A supported native GPU host is required');
 const binary=join(process.cwd(),'native-renderer/target/release',windows?'ghost-render-core.exe':'ghost-render-core');
 if(!existsSync(binary))throw new Error('Build the native core first');
-const ffmpeg=createRequire(import.meta.url)('ffmpeg-static');
+const require=createRequire(import.meta.url);
+const ffmpeg=await require('../electron/conversion-ffmpeg.cjs').resolveConversionFfmpeg(require('ffmpeg-static'),format);
 const directory=mkdtempSync(join(tmpdir(),'ghost-hap-throughput-'));
 const sleep=ms=>new Promise(resolve=>setTimeout(resolve,ms));
 let child,send;
@@ -111,5 +112,7 @@ try {
 } finally {
   if(send)try{await send('shutdown',{},1000)}catch{}
   if(child&&child.exitCode===null&&child.signalCode===null)await new Promise(resolve=>{const timer=setTimeout(resolve,2000);child.once('exit',()=>{clearTimeout(timer);resolve()});child.kill();});
+  const owned=relative(resolve(tmpdir()),resolve(directory));
+  if(!owned.startsWith('ghost-hap-throughput-')||owned.includes('..')||isAbsolute(owned))throw new Error('Unexpected benchmark cleanup path');
   rmSync(directory,{recursive:true,force:true});
 }

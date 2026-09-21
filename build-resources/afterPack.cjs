@@ -103,6 +103,11 @@ async function packNativeCore(context) {
 
 exports.default = async function afterPack(context) {
   await packNativeCore(context);
+  if (context.electronPlatformName === 'win32') {
+    const { verifyWindowsFfmpeg } = await import('../scripts/ensure-windows-ffmpeg.mjs');
+    await verifyWindowsFfmpeg(path.join(context.appOutDir, 'resources', 'ffmpeg'));
+    console.log('[afterPack] bundled HAP/HAP Alpha/HAP Q encoder and notices verified');
+  }
 
   if (context.electronPlatformName !== 'darwin') return;
 

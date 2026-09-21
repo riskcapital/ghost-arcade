@@ -3,6 +3,7 @@ dist/
 dist-native-mobile/
 dist-electron*/
 dist-release/
+build-resources/ffmpeg/
 .vite/
 *.log
 .DS_Store

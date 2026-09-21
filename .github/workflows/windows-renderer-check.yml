@@ -4,6 +4,14 @@ on:
   pull_request:
     paths:
       - 'native-renderer/**'
+      - 'electron/conversion-ffmpeg.cjs'
+      - 'electron/video-converter-*'
+      - 'scripts/ensure-windows-ffmpeg.mjs'
+      - 'build-resources/windows-ffmpeg.json'
+      - 'build-resources/beforePack.cjs'
+      - 'build-resources/afterPack.cjs'
+      - 'electron-builder.yml'
+      - 'src/lib/video/**'
       - '.github/workflows/windows-renderer-check.yml'
   workflow_dispatch:
 
@@ -11,6 +19,18 @@ permissions:
   contents: read
 
 jobs:
+  hap-conversion:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+      - run: npm ci
+      - run: npm run windows:ffmpeg
+      - run: node scripts/ensure-windows-ffmpeg.mjs --verify
+      - run: npx vitest run src/lib/video/conversionFfmpeg.test.ts src/lib/video/videoConverter.native.test.ts
   compile-and-unit-tests:
     runs-on: windows-2022
     steps:

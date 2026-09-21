@@ -1,0 +1,173 @@
+{
+  "captured_at": "2026-09-21T02:09:13.992Z",
+  "platform": "win32",
+  "adapter": "NVIDIA GeForce RTX 4070 Laptop GPU",
+  "format": "hap",
+  "playback_rate": 1,
+  "bounce_enabled": false,
+  "streams": 3,
+  "source_resolution": "1920x1080",
+  "source_fps": 60,
+  "output_resolution": "1920x1080",
+  "atlas_slot_size": 512,
+  "decode_budget_mb": 1024,
+  "elapsed_seconds": 5.127043100000001,
+  "compositor_fps": 60.268656606378045,
+  "session_fps": [
+    {
+      "source_id": "clip-1",
+      "backend": "hap-texture",
+      "fps": 60.268656606378045,
+      "frames_dropped": 0,
+      "reserved_bytes": 28617984
+    },
+    {
+      "source_id": "clip-0",
+      "backend": "hap-texture",
+      "fps": 60.268656606378045,
+      "frames_dropped": 0,
+      "reserved_bytes": 28617984
+    },
+    {
+      "source_id": "clip-2",
+      "backend": "hap-texture",
+      "fps": 60.268656606378045,
+      "frames_dropped": 0,
+      "reserved_bytes": 28617984
+    }
+  ],
+  "render_cpu_ms": 0.8996175452330379,
+  "render_gpu_ms": 0.7558642590598343,
+  "media_pump_cpu_ms": 0.0159,
+  "gpu_backpressure_skips": 0,
+  "compressed_upload_bytes": 961113600,
+  "hap_frames": 927,
+  "software_frames": 0,
+  "hardware_fallbacks": 0,
+  "decode_failures": 0,
+  "underflows": 0,
+  "samples": [
+    {
+      "elapsed_ms": 258.3971999999999,
+      "frames": 80,
+      "hap_frames": 232,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 512.9904000000001,
+      "frames": 95,
+      "hap_frames": 277,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 769.8629999999998,
+      "frames": 110,
+      "hap_frames": 322,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 1022.3692999999998,
+      "frames": 125,
+      "hap_frames": 367,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 1278.6145000000001,
+      "frames": 141,
+      "hap_frames": 415,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 1537.4067,
+      "frames": 156,
+      "hap_frames": 460,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 1793.9343000000003,
+      "frames": 172,
+      "hap_frames": 508,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 2047.9895000000001,
+      "frames": 187,
+      "hap_frames": 553,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 2312.4357999999997,
+      "frames": 203,
+      "hap_frames": 601,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 2569.8086,
+      "frames": 218,
+      "hap_frames": 646,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 2826.6649999999995,
+      "frames": 234,
+      "hap_frames": 694,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 3078.8088000000002,
+      "frames": 249,
+      "hap_frames": 739,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 3329.6959,
+      "frames": 264,
+      "hap_frames": 784,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 3581.3651999999997,
+      "frames": 279,
+      "hap_frames": 829,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 3840.4872,
+      "frames": 295,
+      "hap_frames": 877,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 4096.552,
+      "frames": 310,
+      "hap_frames": 922,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 4354.6903,
+      "frames": 325,
+      "hap_frames": 967,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 4606.2778,
+      "frames": 340,
+      "hap_frames": 1012,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 4866.335999999999,
+      "frames": 356,
+      "hap_frames": 1060,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 5126.407999999999,
+      "frames": 372,
+      "hap_frames": 1108,
+      "underflows": 0
+    }
+  ],
+  "visible_tiles": 3,
+  "accepted": true
+}

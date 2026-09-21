@@ -16,7 +16,7 @@ import { buildVJClipTransitionGraph, buildVJClipTransitionPrecompileCommands } f
 import { buildVJCrossfadeGraph, buildVJCrossfadePrecompileCommands } from './vjCrossfadeNative';
 import { buildVJMixGraph, buildVJMixPrecompileCommands, buildVJPipelineWarmupCommands } from './vjMixNative';
 
-const nativeCoreBin = join(process.cwd(), 'native-renderer/target/release/ghost-render-core');
+const nativeCoreBin = join(process.cwd(), 'native-renderer/target/release', process.platform === 'win32' ? 'ghost-render-core.exe' : 'ghost-render-core');
 const itIfNativeCore = existsSync(nativeCoreBin) ? it : it.skip;
 // The live output readback the Screen case watches exists on macOS and Windows.
 const itIfLiveOutput = existsSync(nativeCoreBin) && process.platform !== 'linux' ? it : it.skip;

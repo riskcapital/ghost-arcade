@@ -1,0 +1,120 @@
+{
+  "clips": [
+    "archimedes.mp4",
+    "atommy.mp4",
+    "building tubes.mp4",
+    "cycloid.mp4",
+    "firegrid.mp4",
+    "gerschwinn.mp4",
+    "glytchghost.mp4",
+    "homie_(loop) (1080p).mp4",
+    "membrane.mp4",
+    "meta_build.mp4",
+    "mocircshii.mp4",
+    "moonvirus_(loop) (1080p).mp4"
+  ],
+  "adapter": "NVIDIA GeForce RTX 4070 Laptop GPU",
+  "launches": [
+    {
+      "column": 0,
+      "ready_ms": 29.866299999999683,
+      "all_ready": true,
+      "trigger_max_us": 9521
+    },
+    {
+      "column": 1,
+      "ready_ms": 29.707800000000134,
+      "all_ready": true,
+      "trigger_max_us": 9521
+    },
+    {
+      "column": 2,
+      "ready_ms": 17.6200000000008,
+      "all_ready": true,
+      "trigger_max_us": 9521
+    },
+    {
+      "column": 3,
+      "ready_ms": 23.20219999999972,
+      "all_ready": true,
+      "trigger_max_us": 9521
+    },
+    {
+      "column": 0,
+      "ready_ms": 14.760000000000218,
+      "all_ready": true,
+      "trigger_max_us": 9521
+    },
+    {
+      "column": 1,
+      "ready_ms": 24.61120000000119,
+      "all_ready": true,
+      "trigger_max_us": 9521
+    },
+    {
+      "column": 2,
+      "ready_ms": 17.760200000000623,
+      "all_ready": true,
+      "trigger_max_us": 9521
+    },
+    {
+      "column": 3,
+      "ready_ms": 22.129799999998795,
+      "all_ready": true,
+      "trigger_max_us": 9521
+    },
+    {
+      "column": 0,
+      "ready_ms": 33.49539999999979,
+      "all_ready": true,
+      "trigger_max_us": 9521
+    },
+    {
+      "column": 1,
+      "ready_ms": 23.506499999999505,
+      "all_ready": true,
+      "trigger_max_us": 9521
+    },
+    {
+      "column": 2,
+      "ready_ms": 26.802299999999377,
+      "all_ready": true,
+      "trigger_max_us": 9521
+    },
+    {
+      "column": 3,
+      "ready_ms": 26.609700000000885,
+      "all_ready": true,
+      "trigger_max_us": 9521
+    },
+    {
+      "column": 0,
+      "ready_ms": 17.885800000000017,
+      "all_ready": true,
+      "trigger_max_us": 9521
+    },
+    {
+      "column": 1,
+      "ready_ms": 22.58889999999883,
+      "all_ready": true,
+      "trigger_max_us": 9521
+    },
+    {
+      "column": 2,
+      "ready_ms": 34.916699999997945,
+      "all_ready": true,
+      "trigger_max_us": 9521
+    },
+    {
+      "column": 3,
+      "ready_ms": 27.242599999997765,
+      "all_ready": true,
+      "trigger_max_us": 9521
+    }
+  ],
+  "evictions": 0,
+  "software_frames": 0,
+  "hardware_fallbacks": 0,
+  "decode_failures": 0,
+  "reserved_bytes": 862978048
+}

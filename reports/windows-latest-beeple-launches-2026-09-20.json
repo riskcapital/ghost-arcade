@@ -1,0 +1,187 @@
+{
+  "base_commit": "e03ed945b464ca9b38379f8d2f631c54e42d52e6",
+  "platform": "Windows",
+  "adapter": "NVIDIA GeForce RTX 4070 Laptop GPU",
+  "scenario": "Two alternating columns of three Beeple videos, quantization off, isolated Electron profile with the decoder eviction fix. Source GPU readiness is measured, not physical scanout.",
+  "clips": [
+    "building tubes.mp4",
+    "mocircshii.mp4",
+    "triangle_field.mp4",
+    "atommy.mp4",
+    "archimedes.mp4",
+    "cycloid.mp4"
+  ],
+  "column_launches": 10,
+  "source_ready_min_ms": 34.27500009536743,
+  "source_ready_max_ms": 48.96499991416931,
+  "samples": [
+    {
+      "trial": 0,
+      "column": 0,
+      "readyMs": [
+        35.14999985694885,
+        35.14999985694885,
+        35.15499997138977
+      ],
+      "prerolledBefore": 6,
+      "evictions": 0,
+      "triggerUs": 584,
+      "backends": [
+        "media-foundation"
+      ]
+    },
+    {
+      "trial": 1,
+      "column": 1,
+      "readyMs": [
+        48.74000000953674,
+        48.75,
+        48.75
+      ],
+      "prerolledBefore": 5,
+      "evictions": 0,
+      "triggerUs": 2010,
+      "backends": [
+        "media-foundation",
+        "preparing"
+      ]
+    },
+    {
+      "trial": 2,
+      "column": 0,
+      "readyMs": [
+        40.47500014305115,
+        40.480000019073486,
+        40.480000019073486
+      ],
+      "prerolledBefore": 5,
+      "evictions": 0,
+      "triggerUs": 1204,
+      "backends": [
+        "media-foundation",
+        "preparing"
+      ]
+    },
+    {
+      "trial": 3,
+      "column": 1,
+      "readyMs": [
+        35.544999837875366,
+        35.5699999332428,
+        35.579999923706055
+      ],
+      "prerolledBefore": 5,
+      "evictions": 0,
+      "triggerUs": 2040,
+      "backends": [
+        "media-foundation",
+        "preparing"
+      ]
+    },
+    {
+      "trial": 4,
+      "column": 0,
+      "readyMs": [
+        37.875,
+        37.88000011444092,
+        37.88000011444092
+      ],
+      "prerolledBefore": 5,
+      "evictions": 0,
+      "triggerUs": 2063,
+      "backends": [
+        "media-foundation",
+        "preparing"
+      ]
+    },
+    {
+      "trial": 5,
+      "column": 1,
+      "readyMs": [
+        48.96000003814697,
+        48.96499991416931,
+        48.96499991416931
+      ],
+      "prerolledBefore": 5,
+      "evictions": 0,
+      "triggerUs": 2550,
+      "backends": [
+        "media-foundation",
+        "preparing"
+      ]
+    },
+    {
+      "trial": 6,
+      "column": 0,
+      "readyMs": [
+        34.27500009536743,
+        34.27999997138977,
+        34.27999997138977
+      ],
+      "prerolledBefore": 5,
+      "evictions": 0,
+      "triggerUs": 1308,
+      "backends": [
+        "media-foundation",
+        "preparing"
+      ]
+    },
+    {
+      "trial": 7,
+      "column": 1,
+      "readyMs": [
+        35.86999988555908,
+        35.875,
+        35.875
+      ],
+      "prerolledBefore": 5,
+      "evictions": 0,
+      "triggerUs": 1205,
+      "backends": [
+        "media-foundation",
+        "preparing"
+      ]
+    },
+    {
+      "trial": 8,
+      "column": 0,
+      "readyMs": [
+        36.69000005722046,
+        36.69000005722046,
+        36.69000005722046
+      ],
+      "prerolledBefore": 5,
+      "evictions": 0,
+      "triggerUs": 2087,
+      "backends": [
+        "preparing",
+        "media-foundation"
+      ]
+    },
+    {
+      "trial": 9,
+      "column": 1,
+      "readyMs": [
+        35.984999895095825,
+        35.99000000953674,
+        35.99499988555908
+      ],
+      "prerolledBefore": 5,
+      "evictions": 0,
+      "triggerUs": 1071,
+      "backends": [
+        "media-foundation",
+        "preparing"
+      ]
+    }
+  ],
+  "counters": {
+    "native_video_session_evictions": 0,
+    "native_video_hardware_frames": 904,
+    "native_video_software_frames": 0,
+    "native_video_hardware_fallbacks": 0,
+    "native_video_stream_underflows": 0,
+    "native_video_trigger_max_latency_us": 3994,
+    "dropped_commands": 0
+  }
+}
