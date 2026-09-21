@@ -314,7 +314,9 @@ jobs:
       # libfuse2 is required for AppImage runtime (Ubuntu 22+ ships
       # libfuse3 by default; AppImages need the legacy lib). The other
       # apt deps are electron-builder Linux extras that are routinely
-      # needed for icon / desktop-entry generation.
+      # needed for icon / desktop-entry generation. libasound2-dev and
+      # pkg-config are for the native core: clip audio plays through cpal,
+      # whose ALSA backend (alsa-sys) links against libasound at build time.
       - name: Install Linux build prerequisites
         run: |
           sudo apt-get update
@@ -322,7 +324,9 @@ jobs:
             libfuse2 \
             rpm \
             fakeroot \
-            dpkg
+            dpkg \
+            libasound2-dev \
+            pkg-config
 
       - name: Install dependencies
         run: npm ci
