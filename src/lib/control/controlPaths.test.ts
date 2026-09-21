@@ -43,3 +43,8 @@ describe('control parameter paths', () => {
     expect(validateControlPath('map:preset:not-a-number').reason).toContain('zero-based index');
   });
 });
+
+it('validates stable group control paths without accepting incomplete actions', () => {
+  for (const path of ['vj:group:group-id:level', 'vj-b:group:group-id:column:2', 'vj:group:group-id:fx:fx-id:mix', 'vj:group:group-id:fx:fx-id:param:blurRadius']) expect(validateControlPath(path).valid).toBe(true);
+  for (const path of ['vj:group::level', 'vj:group:group-id:column:bad', 'vj:group:group-id:fx:fx-id:param', 'vj:group:group-id:unknown']) expect(validateControlPath(path).valid).toBe(false);
+});

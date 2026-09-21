@@ -338,7 +338,8 @@ export interface IntegratedEffectSource {
   vjxfadeBlend?: string;                // overlap blend mode
   // VJ Mix carrier params (__vj-mix__ synthetic layer): all VJ rows,
   // ordered bottom→top, post-crossfade, with per-row opacity + blend.
-  vjmixRows?: Array<{ layerId: string; opacity: number; blendMode: string }>;
+  vjmixRows?: Array<{ layerId?: string; frameId?: string; groupId?: string; opacity: number; blendMode: string }>;
+  vjmixSharedFeed?: boolean;
 }
 
 // Spout source configuration (for plugin integrations)
@@ -2921,6 +2922,8 @@ export interface Layer {
 
   // Stage Mode: which VJ layer feeds this mapping layer (undefined = use own source, -1 = VJ Mix)
   vjLayerIndex?: number;
+  /** VJ group feed for a mapped slice; independent of physical output routing. */
+  vjGroupId?: string;
 
   // Legacy marker: true means this Stage-generated screen still carries the
   // Y-down corners Apply Stage wrote before 2026-09-11. migrateStageLayerCorners
@@ -2959,6 +2962,7 @@ export interface Layer {
 
 // Effect types — 81 curated effects with unique shader implementations
 export type EffectType =
+  | 'cubeLut'
   // ── WebGPU compute / fragment effects ──
   // Names are prefixed `gpu` so the engine can dispatch them via the
   // gpuEffectRunner instead of the regular WebGL effect chain.
@@ -3170,6 +3174,8 @@ export type EffectType =
   | 'donutConstellation';
 
 export interface EffectParams {
+  cubeLut?: import('./color/cubeLut').CubeLut;
+  lutStrength?: number;
   // ── WebGPU Fluid Sim params (gpuFluidSim) ──
   // Real-time Navier-Stokes simulation. The source layer feeds dye
   // (color) + force (luminance gradient) into the fluid; the result

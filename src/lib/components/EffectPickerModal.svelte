@@ -95,7 +95,7 @@
   const combinedCatalog = $derived<EffectCatalogEntry[]>([
     ...customEntries.map((c) => ({ ...c, category: 'Custom' })),
     ...EFFECT_CATALOG,
-  ].filter((entry) => !entry.requiresWebGPU || $webgpuSupportedStore));
+  ].filter((entry) => (!entry.requiresWebGPU || $webgpuSupportedStore) && (!entry.requiresNative || (NATIVE_ENGINE_ONLY && Boolean($settings.experimental?.outputNativeCore)))));
 
   // All categories (Custom first if present, then built-in order).
   // Drop categories that ended up empty after capability filtering — e.g.

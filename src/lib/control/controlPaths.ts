@@ -103,6 +103,16 @@ export function validateControlPath(path: string): ControlPathValidation {
     return { valid: false, normalized, reason: `Unknown VJ layer property "${property ?? ''}".` };
   }
 
+  if (target === 'group') {
+    const valid = !!parts[2] && (
+      (parts[3] === 'level' && parts.length === 4) ||
+      (parts[3] === 'column' && parts.length === 5 && isIndex(parts[4])) ||
+      (parts[3] === 'fx' && !!parts[4] && (
+        (['mix', 'enabled'].includes(parts[5]) && parts.length === 6) ||
+        (parts[5] === 'param' && !!parts[6] && parts.length === 7)))
+    );
+    return { valid, normalized, reason: valid ? null : 'Group paths require an ID and level, column, or effect parameter.' };
+  }
   if (['column', 'block', 'stage', 'snapshot'].includes(target ?? '')) {
     return isIndex(parts[2])
       ? { valid: true, normalized, reason: null }

@@ -23,6 +23,7 @@ export interface ParamMeta {
 // The keys match the generic param names in EffectParams (amount, amount2, etc.)
 // but the labels give them meaningful names in the UI.
 export const effectParamLabels: Partial<Record<EffectType, Record<string, ParamMeta>>> = {
+  cubeLut: { lutStrength: { label: 'Strength', min: 0, max: 1, step: 0.01, default: 1 } },
   eulerianMagnify: {
     eulerianMode: {
       label: 'Mode', min: 0, max: 3, step: 1, default: 0, type: 'select',

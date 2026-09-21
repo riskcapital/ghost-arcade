@@ -1772,15 +1772,16 @@
         if (!rowsByIdx.size) return list;
         // Bottom→top: VJ row 0 is topmost (the engine reverses the render
         // plan), so the composite stacks from the highest index upward.
+        const groups = get(vjClipLauncher).groups ?? [];
         const rows = Array.from(rowsByIdx.entries())
           .sort((a, b) => b[0] - a[0])
-          .map(([, entry]) => entry);
+          .map(([index, entry]) => ({ ...entry, groupId: groups.find(g => index >= g.first && index <= g.last)?.id }));
         return [
-          ...list,
+          ...list.map(layer => groups.length ? { ...layer, opacity: 0 } : layer),
           {
             ...createLayer('__vj-mix__', 'VJ Mix', 'media'),
             visible: true,
-            opacity: 0,
+            opacity: groups.length ? 1 : 0,
             blendMode: 'normal',
             source: {
               id: '__vj-mix-src__',
@@ -1790,6 +1791,7 @@
               effectSource: {
                 effectType: 'vj-mix',
                 vjmixRows: rows,
+                vjmixGroups: groups,
               },
             } as NonNullable<Layer['source']>,
             // Composition FX ride the carrier's own effect chain.

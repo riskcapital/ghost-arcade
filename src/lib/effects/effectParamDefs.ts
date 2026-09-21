@@ -19,6 +19,7 @@ export interface EffectParamDef {
 }
 
 export const EFFECT_PARAM_DEFS: Record<string, EffectParamDef[]> = {
+  cubeLut: [{ name: 'Strength', param: 'lutStrength', min: 0, max: 1, step: 0.01, default: 1 }],
   eulerianMagnify: [
     { name: 'Mode', param: 'eulerianMode', min: 0, max: 3, step: 1, default: 0, type: 'select',
       options: [

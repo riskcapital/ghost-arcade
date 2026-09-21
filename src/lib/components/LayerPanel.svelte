@@ -32,6 +32,7 @@
   import EffectChainPresets from './EffectChainPresets.svelte';
   import EdgeEffectsPanel from './EdgeEffectsPanel.svelte';
   import EffectParamRow from './EffectParamRow.svelte';
+  import CubeLutControls from './CubeLutControls.svelte';
   import PluginIcon from './PluginIcon.svelte';
   import SourceCropModal from './SourceCropModal.svelte';
   import { generateCachedThumbnail } from '../isf/thumbnail';
@@ -1318,6 +1319,9 @@
                         </details>
                       {/if}
 
+                      {#if effect.type === 'cubeLut'}
+                        <CubeLutControls lut={effect.params.cubeLut} contextKey={`mapping-comp:${effect.id}`} onChange={(cubeLut) => project.updateMappingCompositionEffectParams(effect.id, { cubeLut })} />
+                      {/if}
                       {#each [effectParamLabels[effect.type]] as paramMeta}
                         <details open>
                           <summary>Controls</summary>
@@ -2152,13 +2156,21 @@
         {:else if layer.type === 'screen'}
           <!-- Screen layer: VJ Layer assignment -->
           <div class="screen-layer-config">
-            <label class="screen-label">VJ Layer Source</label>
+            <label class="screen-label">Slice source</label>
             <select
               class="screen-vj-select"
-              value={String(layer.vjLayerIndex ?? 0)}
-              onchange={(e) => project.setLayerVJIndex(layer.id, parseInt(e.currentTarget.value))}
+              value={layer.vjGroupId ? `group:${layer.vjGroupId}` : String(layer.vjLayerIndex ?? 0)}
+              onchange={(e) => {
+                const value = e.currentTarget.value;
+                if (value.startsWith('group:')) project.setLayerVJGroup(layer.id, value.slice(6));
+                else project.setLayerVJIndex(layer.id, parseInt(value));
+              }}
             >
               <option value={String(VJ_MIX_SOURCE_INDEX)}>VJ Mix</option>
+              {#if layer.vjGroupId && !($vjClipLauncher.groups ?? []).some(group => group.id === layer.vjGroupId)}
+                <option value={`group:${layer.vjGroupId}`}>Unavailable group</option>
+              {/if}
+              {#each $vjClipLauncher.groups ?? [] as group}<option value={`group:${group.id}`}>{group.name} · Group</option>{/each}
               {#each Array($vjClipLauncher.numLayers) as _, i}
                 <option value={String(i)}>VJ Layer {i + 1}</option>
               {/each}
@@ -3143,6 +3155,9 @@
 
                       <details open>
                         <summary>Controls</summary>
+                      {#if effect.type === 'cubeLut'}
+                        <CubeLutControls lut={effect.params.cubeLut} contextKey={`${layer.id}:${effect.id}`} onChange={(cubeLut) => updateEffectParamsTracked(layer.id, effect.id, { cubeLut })} />
+                      {/if}
                       {#if effect.type === 'gpuFluidSim'}
                         <!-- ── WebGPU Fluid Simulation ──
                              Real-time Navier-Stokes fluid running on

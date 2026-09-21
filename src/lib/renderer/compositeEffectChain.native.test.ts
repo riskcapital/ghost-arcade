@@ -1,3 +1,5 @@
+import { buildVJGroupedMixGraph } from './vjGroupNative';
+import { buildVJMixGraph, buildVJMixPrecompileCommands } from './vjMixNative';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -146,3 +148,72 @@ describe('composition FX run as a post-composite pass on the native core', () =>
     }
   }, 60000);
 });
+
+
+itIfNativeCore('renders group effects after children and applies group opacity once', async () => {
+  const rpc = createNativeRpc();
+  try {
+    await rpc.send('start', { config: { backend: nativeBackend, width: 32, height: 32, source_frame_size: 32, target_fps: 30 } }, 20000);
+    await rpc.send('submit_commands', { commands: [...buildVJMixPrecompileCommands(), ...buildNativeEffectPassPrecompileCommands()] }, 20000);
+    const commands: Record<string, unknown>[] = [];
+    for (const [id, color] of [['group-red', [255, 0, 0, 255]], ['group-green', [0, 255, 0, 255]], ['group-black', [0, 0, 0, 255]]] as const) {
+      commands.push(
+        { type: 'upload_source_frame', source_id: id, width: 32, height: 32, seq: 1, rgba_b64: Buffer.from(Array.from({ length: 1024 }, () => [...color]).flat()).toString('base64') },
+        { type: 'upsert_layer', layer_id: id, z_index: -1, opacity: 0 },
+        { type: 'bind_media_source', layer_id: id, source_id: id, uri: `group-test://${id}`, source_type: 'image' },
+        { type: 'set_layer_visibility', layer_id: id, visible: false },
+      );
+    }
+    await rpc.send('submit_commands', { commands });
+    const grouped = buildVJGroupedMixGraph({ outputSourceId: 'group-parent', width: 32, height: 32, time: 0, frameIndex: 1,
+      rows: [{ frameId: 'group-black', opacity: 1, blendMode: 'normal' },
+        { frameId: 'group-red', opacity: 1, blendMode: 'normal', groupId: 'g' },
+        { frameId: 'group-green', opacity: 1, blendMode: 'normal', groupId: 'g' }],
+      groups: [{ id: 'g', effects: [{ effect: 'invert', amount: 1, mix: 1 }], opacity: 0.25, blendMode: 'normal' }],
+    });
+    await rpc.send('submit_commands', { commands: [{ type: 'queue_compute_graph', ...grouped.config }] }, 20000);
+    await expect.poll(async () => {
+      await rpc.send('frame_snapshot', {});
+      return (await rpc.send('get_source_frame_readiness', { source_id: 'group-parent' })).ready;
+    }, { timeout: 5000, interval: 20 }).toBe(true);
+    await rpc.send('submit_commands', { commands: [
+      { type: 'upsert_layer', layer_id: 'group-display', z_index: 0, opacity: 1, blend_mode: 'normal', corners: { topLeft: { x: 0, y: 1 }, topRight: { x: 1, y: 1 }, bottomRight: { x: 1, y: 0 }, bottomLeft: { x: 0, y: 0 } } },
+      { type: 'bind_media_source', layer_id: 'group-display', source_id: 'group-parent', uri: 'group-test://output', source_type: 'image' },
+      { type: 'set_layer_visibility', layer_id: 'group-display', visible: true },
+    ] });
+    // Opaque green covers red inside the group; inversion makes magenta.
+    // Fading the combined group over black should yield quarter magenta.
+    await expect.poll(async () => {
+      const frame = await rpc.send('frame_snapshot', { include_pixels: true });
+      const bytes = Buffer.from(frame.rgba_b64, 'base64');
+      const pixel = [...bytes.subarray((16 * Number(frame.width) + 16) * 4, (16 * Number(frame.width) + 16) * 4 + 4)];
+      if (String(frame.format).toLowerCase().startsWith('bgra')) [pixel[0], pixel[2]] = [pixel[2], pixel[0]];
+      return Math.abs(pixel[0] - 64) <= 2 && pixel[1] <= 2 && Math.abs(pixel[2] - 64) <= 2 && pixel[3] === 255;
+    }, { timeout: 5000, interval: 20 }).toBe(true);
+    // Two mapped slices share one resident group producer inside one output.
+    // The readers intentionally sort before the producer lexically.
+    await rpc.send('submit_commands', { commands: [
+      { type: 'set_layer_visibility', layer_id: 'group-display', visible: false },
+      { type: 'upsert_layer', layer_id: '__vj-mix__', z_index: -1, opacity: 0 },
+      { type: 'set_native_graph_layer', layer_id: '__vj-mix__', kind: 'vj-mix', instrument_source_id: 'group-parent', composite_source_id: 'group-parent', effect_graph: grouped.config, params: {} },
+    ] });
+    for (const [id, left, right] of [['0-left-slice', 0, 0.5], ['1-right-slice', 0.5, 1]] as const) {
+      const reader = buildVJMixGraph({ outputSourceId: `${id}-texture`, width: 32, height: 32, time: 0, frameIndex: 1,
+        rows: [{ frameId: 'group-parent:group:g', opacity: 0.25, blendMode: 'normal' }] });
+      await rpc.send('submit_commands', { commands: [
+        { type: 'upsert_layer', layer_id: id, z_index: 1, opacity: 1, blend_mode: 'normal', corners: { topLeft: { x: left, y: 1 }, topRight: { x: right, y: 1 }, bottomRight: { x: right, y: 0 }, bottomLeft: { x: left, y: 0 } } },
+        { type: 'bind_media_source', layer_id: id, source_id: `${id}-texture`, uri: `native-graph://vj-mix/${id}`, source_type: 'gpu:vj-mix' },
+        { type: 'set_layer_visibility', layer_id: id, visible: true },
+        { type: 'set_native_graph_layer', layer_id: id, kind: 'vj-mix', instrument_source_id: `${id}-texture`, composite_source_id: `${id}-texture`, effect_graph: reader.config, params: {} },
+      ] });
+    }
+    await expect.poll(async () => {
+      const frame = await rpc.send('frame_snapshot', { include_pixels: true });
+      const bytes = Buffer.from(frame.rgba_b64, 'base64');
+      return [8, 24].map(x => {
+        const offset = (16 * Number(frame.width) + x) * 4;
+        return [...bytes.subarray(offset, offset + 4)];
+      });
+    }, { timeout: 5000, interval: 20 }).toEqual([[64, 0, 64, 255], [64, 0, 64, 255]]);
+  } finally { await rpc.close(); }
+}, 60000);

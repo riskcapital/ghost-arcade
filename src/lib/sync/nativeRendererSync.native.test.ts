@@ -2883,3 +2883,80 @@ describe('screen output rejection feedback', () => {
     }
   });
 });
+
+
+it('routes an embedded LUT without putting table data in live descriptors', async () => {
+  const { parseCubeLut } = await import('../color/cubeLut');
+  const lut = parseCubeLut('LUT_3D_SIZE 2\n0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1');
+  const effect = { type: 'cubeLut', enabled: true, params: { cubeLut: lut, lutStrength: .3 } };
+  const descriptor = effectToNativeDescriptor(effect)!;
+  expect(descriptor.length).toBeLessThan(100);
+  const pass = nativeEffectPassFromDescriptor(descriptor)!;
+  expect(pass.effect).toBe('cube-lut');
+  expect(pass.params!.amount).toBe(.3);
+  expect(effectToNativeDescriptor(effect)).toBe(descriptor);
+  expect(nativeEffectPassFromDescriptor(effectToNativeDescriptor({ type: 'cubeLut', params: {} }))!.params!.lutHandle).toBe(0);
+});
+
+describe('global macro post-composite rendering', () => {
+  it('runs spatial macro effects without Mapping enabled, scales mix, and clears when closed', async () => {
+    const { project } = await import('../stores/layers');
+    const { macros } = await import('../stores/macros');
+    const { get } = await import('svelte/store');
+    const originalProject = get(project);
+    const originalMacros = get(macros);
+    const sync = new NativeRendererSyncCtor() as any;
+    sync.nativeFeatureFlags = {
+      native_post_composite_graph: true,
+      native_effect_pass_manifest: true,
+      compute_graph_texture_sampling: true,
+      compute_graph_source_frame_target: true,
+    };
+    sync.nativeEffectPassDescriptorIds = new Set(['blur', 'invert']);
+    try {
+      project.setMappingCompositionEnabled(false);
+      project.update(p => ({ ...p, mappingComposition: { ...p.mappingComposition!, enabled: false, effects: [] } }));
+      macros.set({ macros: [{ id: 'test', name: 'Test', color: '#123456', value: 0.5,
+        effects: [{ id: 'blur', type: 'blur', enabled: true, opacity: 0.4, blendMode: 'normal', params: { blurRadius: 5 } }] }] });
+      const graph = sync.compositeEffectGraphCommand(320, 180);
+      expect(graph.render_passes.map((pass: any) => pass.name)).toEqual(['composite-fx-blur-0']);
+      expect(graph.buffers[0].initial_f32[6]).toBeCloseTo(0.2);
+      expect(sync.compositeFxResident).toBe(true);
+
+      project.update(p => ({ ...p, mappingComposition: { ...p.mappingComposition!, enabled: true,
+        effects: [{ id: 'invert', type: 'invert', enabled: true, opacity: 1, blendMode: 'normal', params: {} }] } }));
+      expect(sync.compositeEffectGraphCommand(320, 180).render_passes.map((pass: any) => pass.name))
+        .toEqual(['composite-fx-invert-0', 'composite-fx-blur-1']);
+      macros.setMacroValue('test', 0);
+      expect(sync.compositeEffectGraphCommand(320, 180).render_passes).toHaveLength(1);
+      project.setMappingCompositionEnabled(false);
+      expect(sync.compositeEffectGraphCommand(320, 180)).toBeNull();
+      expect(sync.compositeFxResident).toBe(false);
+    } finally {
+      project.set(originalProject);
+      macros.set(originalMacros);
+    }
+  });
+});
+
+it('routes mapped slices to a shared group texture and blanks unavailable groups', async () => {
+  const { vjClipLauncher } = await import('../stores/vjClipLauncher');
+  const { get } = await import('svelte/store');
+  const { createLayer } = await import('../types');
+  const original = get(vjClipLauncher);
+  try {
+    vjClipLauncher.set({ ...original, groups: [{ id: 'g1', name: 'Group', first: 0, last: 1, opacity: 0.4, blendMode: 'add', effects: [] }] });
+    const mix = createLayer('__vj-mix__', 'Mix', 'media');
+    mix.source = { id: 'mix-source', type: 'effect', src: 'plugin://vj-mix', effectSource: { effectType: 'vj-mix', vjmixRows: [{ groupId: 'g1', layerId: 'vj-layer-0' }] } } as any;
+    const slice = createLayer('slice', 'Slice', 'screen');
+    slice.vjGroupId = 'g1';
+    const sync = new NativeRendererSyncCtor() as any;
+    const resolved = sync.resolveNativeGroupLayers([mix, createLayer('vj-layer-0', 'Row', 'media'), slice]);
+    const result = resolved.find((layer: any) => layer.id === 'slice');
+    expect(result.source.effectSource.vjmixRows).toEqual([{ frameId: 'plugin:__vj-mix__:vj-mix:group:g1', opacity: 0.4, blendMode: 'normal' }]);
+    expect(result.corners).toEqual(slice.corners);
+    expect(resolved).toHaveLength(3);
+    vjClipLauncher.set({ ...original, groups: [] });
+    expect(sync.resolveNativeGroupLayers([mix, createLayer('vj-layer-0', 'Row', 'media'), slice]).find((layer: any) => layer.id === 'slice').visible).toBe(false);
+  } finally { vjClipLauncher.set(original); }
+});

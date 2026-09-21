@@ -1,42 +1,9 @@
 /**
- * Macros — one knob → an effect-bundle wet/dry mix.
- *
- * v2 redesign (May 2026): macros stopped being a MIDI-routing layer
- * (one knob → many parameter destinations with curves and ranges) and
- * became something simpler: a knob is a wet/dry mix amount for a chain
- * of effects applied to the dual-deck composite output.
- *
- *   value = 0    → effect chain disabled (dry passthrough)
- *   value = 0.5  → 50% of the effect chain blended in
- *   value = 1    → effect chain at full strength
- *
- * Mental model: each macro is a preset bank of post-fx (glitch + bloom +
- * chromatic aberration, say) that you keep silent until you want it,
- * then knob it on for build-ups, drops, transitions, etc.
- *
- * Architecture:
- *   - Pure Svelte writable. State persists in project save format.
- *   - Each macro carries an `effects: Effect[]` chain (same Effect type
- *     used by layer/clip/composition effects — the engine's existing
- *     applyEffects() ping-pong renderer handles them all the same way).
- *   - On render, the engine walks the macro list. For each macro with
- *     value > 0 and at least one enabled effect, it scales each effect's
- *     opacity by `value` then runs the chain on the composite. Stacks
- *     cleanly when multiple macros are partially open.
- *   - MIDI hardware can still drive `vj:macro:N:value` directly via
- *     registerMacroValueSetter — that's the wet/dry mix knob, exactly
- *     what a CC sweep would expect.
- *   - Auto-pulse (beat-synced cycling of the value) is preserved.
- *
- * v1 fields preserved for backward-compat:
- *   - `destinations` field is hydrated from disk and written back on
- *     save so old projects round-trip cleanly. The new code ignores it
- *     entirely; it's just data we don't lose.
- *   - learnMacroId / enterLearnMode / etc. were removed — that whole
- *     flow doesn't exist in the new model. MIDI Learn now lives where
- *     it belongs (mapping a hardware controller to any param exposed
- *     via data-midi-path).
+ * Eight performance macros: output effect bundles plus stable parameter routes.
+ * Parameter assignments have independent endpoint ranges and exclusive ownership.
+ * Legacy v1 destinations remain opaque and round-trip unchanged.
  */
+import { applyMacroAssignments, macroTargetKey, normalizeMacroAssignment, type MacroAssignment, type MacroTarget } from './macroAssignments';
 import { writable, get } from 'svelte/store';
 import { registerMacroValueSetter } from '../midi/midiRouter';
 import { audioStore } from './audio';
@@ -61,6 +28,7 @@ export interface Macro {
   /** Effect chain — same Effect type as layer/clip/composition effects.
    *  Order in this array = render order (top → bottom = first → last). */
   effects: Effect[];
+  assignments?: MacroAssignment[];
   pulseMode?: MacroPulseMode;
   pulseShape?: MacroPulseShape;
   /** v1 destinations field — preserved verbatim on disk for projects
@@ -137,6 +105,7 @@ function createMacrosStore() {
       const defaults = createDefaultMacros();
       const validPulse = ['off', '1/4', '1/2', '1bar', '2bar', '4bar'];
       const validShape = ['sine', 'saw-up', 'saw-down', 'tri', 'square', 'pulse'];
+      const restoredTargets = new Set<string>();
       const macros: Macro[] = defaults.map((d, i) => {
         const saved = p.macros![i] as Record<string, unknown> | undefined;
         if (!saved) return d;
@@ -146,8 +115,15 @@ function createMacrosStore() {
           id: typeof saved.id === 'string' ? saved.id : d.id,
           name: typeof saved.name === 'string' ? saved.name : d.name,
           color: typeof saved.color === 'string' ? saved.color : d.color,
-          value: typeof saved.value === 'number' ? Math.max(0, Math.min(1, saved.value)) : 0,
+          value: typeof saved.value === 'number' && Number.isFinite(saved.value) ? Math.max(0, Math.min(1, saved.value)) : 0,
           effects,
+          assignments: Array.isArray(saved.assignments) ? saved.assignments.map(normalizeMacroAssignment).filter((a): a is MacroAssignment => {
+            if (!a) return false;
+            const key = macroTargetKey(a.target);
+            if (restoredTargets.has(key)) return false;
+            restoredTargets.add(key);
+            return true;
+          }) : [],
           pulseMode: validPulse.includes(saved.pulseMode as string) ? (saved.pulseMode as MacroPulseMode) : 'off',
           pulseShape: validShape.includes(saved.pulseShape as string) ? (saved.pulseShape as MacroPulseShape) : 'sine',
           _legacyDestinations: legacyDests,
@@ -156,15 +132,34 @@ function createMacrosStore() {
       set({ macros });
     },
 
-    /** Set a macro's normalized value 0..1. The renderer reads this on
-     *  each frame to scale the effect chain's opacity — no dispatch
-     *  happens here. */
+    /** Mouse, MIDI and auto-pulse share this route to both effect bundles
+     * and assigned effect parameters. */
     setMacroValue(macroId: string, value: number) {
+      if (!Number.isFinite(value)) return;
       const v = Math.max(0, Math.min(1, value));
       update(s => ({
         ...s,
         macros: s.macros.map(m => m.id === macroId ? { ...m, value: v } : m),
       }));
+      applyMacroAssignments(get({ subscribe }).macros.find(m => m.id === macroId)?.assignments ?? [], v);
+    },
+
+    assignParameter(macroId: string, input: MacroAssignment) {
+      const assignment = normalizeMacroAssignment(input);
+      if (!assignment || !get({ subscribe }).macros.some(m => m.id === macroId)) return;
+      const key = macroTargetKey(assignment.target);
+      update(s => ({ ...s, macros: s.macros.map(m => ({ ...m,
+        assignments: [...(m.assignments ?? []).filter(a => macroTargetKey(a.target) !== key), ...(m.id === macroId ? [assignment] : [])],
+      })) }));
+      const macro = get({ subscribe }).macros.find(m => m.id === macroId)!;
+      applyMacroAssignments([assignment], macro.value);
+    },
+
+    unassignParameter(target: MacroTarget) {
+      const key = macroTargetKey(target);
+      update(s => ({ ...s, macros: s.macros.map(m => ({ ...m,
+        assignments: (m.assignments ?? []).filter(a => macroTargetKey(a.target) !== key),
+      })) }));
     },
 
     setMacroName(macroId: string, name: string) {
@@ -307,6 +302,7 @@ function createMacrosStore() {
           color: m.color,
           value: m.value,
           effects: m.effects,
+          assignments: m.assignments ?? [],
           pulseMode: m.pulseMode,
           pulseShape: m.pulseShape,
           // Round-trip the v1 destinations array if present so older
@@ -320,9 +316,7 @@ function createMacrosStore() {
 
 export const macros = createMacrosStore();
 
-// MIDI bridge: hardware CC → macro.value. The macro's effect chain
-// runs on every render frame regardless of how value got set, so this
-// is now a pure value setter (no dispatch chain to walk like v1).
+// Hardware and mouse use the same assignment dispatch and output mix.
 registerMacroValueSetter((macroId: string, value: number) => {
   macros.setMacroValue(macroId, value);
 });

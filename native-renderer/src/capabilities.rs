@@ -1080,6 +1080,7 @@ pub fn native_effect_pass_manifest() -> Value {
         {"id": "motion-trails", "code": 180, "default_amount": 0.4, "amount_min": 0, "amount_max": 1},
         {"id": "echo-repeat", "code": 181, "default_amount": 0.7, "amount_min": 0.05, "amount_max": 0.95},
         {"id": "light-paint", "code": 182, "default_amount": 0.7, "amount_min": 0, "amount_max": 2},
+        {"id": "cube-lut", "code": 184, "default_amount": 1, "amount_min": 0, "amount_max": 1},
         {"id": "recursive-echo", "code": 183, "default_amount": 0.6, "amount_min": 0.05, "amount_max": 0.95},
     ])
 }

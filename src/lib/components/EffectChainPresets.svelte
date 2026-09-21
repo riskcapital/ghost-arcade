@@ -50,7 +50,7 @@
     if (!file) return;
     importing = true;
     try {
-      if (file.size > MAX_PRESET_FILE_BYTES) throw new Error('Choose a preset file smaller than 2 MB.');
+      if (file.size > MAX_PRESET_FILE_BYTES) throw new Error('Choose a preset file smaller than 32 MB.');
       const ids = effectChainPresets.importLibrary(await file.text());
       selected = ids[0];
       message = `Imported ${ids.length} preset${ids.length === 1 ? '' : 's'}. Choose Add chain or Replace to apply.`;

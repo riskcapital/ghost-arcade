@@ -16,6 +16,7 @@ export interface EffectCatalogEntry {
    * silently no-op.
    */
   requiresWebGPU?: boolean;
+  requiresNative?: boolean;
 }
 
 // Internal type without tier — we compute tier from category below
@@ -33,6 +34,7 @@ type RawEntry = Omit<EffectCatalogEntry, 'tier'>;
 // wormhole) are now consolidated with the rest of the category instead
 // of dangling at the bottom of the file.
 const RAW_CATALOG: RawEntry[] = [
+  { type: 'cubeLut', requiresNative: true, label: 'Color LUT', category: 'Color', description: 'Import a 3D .cube color look. GPU grading with adjustable strength; the LUT travels with your project.', previewCSS: 'linear-gradient(135deg, #16386b, #bd6585, #e8b475)' },
   // ── WebGPU (1) — GPU-edition exclusive ──
   { type: 'gpuFluidSim', label: 'Fluid Sim', category: 'WebGPU',
     description: 'Real-time Navier-Stokes fluid simulation on GPU compute. The source feeds dye + force into the fluid; colors swirl, billow, and dissipate like watercolor in water. Try over a video for surreal flowing imagery.',

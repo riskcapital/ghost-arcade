@@ -10,12 +10,12 @@ import { NATIVE_EFFECT_PASS_MANIFEST } from './nativeEffectPass';
 
 describe('native effect coverage', () => {
   it('tracks public effect coverage separately from native helper passes', () => {
-    expect(PUBLIC_EFFECT_TYPES).toHaveLength(184);
-    expect(NATIVE_EFFECT_PASS_MANIFEST).toHaveLength(183);
-    expect(NATIVE_EFFECT_COVERAGE.nativePublicEffectCount).toBe(182);
+    expect(PUBLIC_EFFECT_TYPES).toHaveLength(185);
+    expect(NATIVE_EFFECT_PASS_MANIFEST).toHaveLength(184);
+    expect(NATIVE_EFFECT_COVERAGE.nativePublicEffectCount).toBe(183);
     expect(NATIVE_EFFECT_COVERAGE.missingPublicEffectCount).toBe(2);
-    expect(NATIVE_EFFECT_COVERAGE.sourceFramePassEligibleEffectCount).toBe(182);
-    expect(NATIVE_EFFECT_COVERAGE.nativeSourceFramePassEffectCount).toBe(182);
+    expect(NATIVE_EFFECT_COVERAGE.sourceFramePassEligibleEffectCount).toBe(183);
+    expect(NATIVE_EFFECT_COVERAGE.nativeSourceFramePassEffectCount).toBe(183);
     expect(NATIVE_EFFECT_COVERAGE.missingSourceFramePassEffectCount).toBe(0);
     expect(NATIVE_EFFECT_COVERAGE.deferredNativeGraphEffectTypes).toEqual([
       'gpuFluidSim',
@@ -34,7 +34,7 @@ describe('native effect coverage', () => {
     expect(NATIVE_EFFECT_COVERAGE.missingSourceFramePassEffectTypes).not.toContain('kuwahara');
     expect(NATIVE_EFFECT_COVERAGE.missingSourceFramePassEffectTypes).not.toContain('phaseLab');
     expect(NATIVE_EFFECT_COVERAGE.missingSourceFramePassEffectTypes).toHaveLength(0);
-    expect(NATIVE_EFFECT_COVERAGE.detail).toContain('native source-frame effect-pass coverage 182/182');
+    expect(NATIVE_EFFECT_COVERAGE.detail).toContain('native source-frame effect-pass coverage 183/183');
     expect(NATIVE_EFFECT_COVERAGE.detail).toContain('stateful/multi-frame effects tracked outside the effect-pass route');
   });
 

@@ -16,6 +16,11 @@
    * can drive the wet/dry mix directly.
    */
   import { macros, type Macro } from '../stores/macros';
+  import { findMacroTargetEffect, type MacroAssignment } from '../stores/macroAssignments';
+  import { vjClipLauncher } from '../stores/vjClipLauncher';
+  import { project } from '../stores/layers';
+  import { nativeEffectChainWarning } from '../renderer/nativeEffectChainPolicy';
+  import CubeLutControls from './CubeLutControls.svelte';
   import EffectPickerModal from './EffectPickerModal.svelte';
   import { effectParamLabels, type ParamMeta } from '../effects/effectUX';
   import { EFFECT_CATALOG } from '../effects/effectCatalog';
@@ -51,6 +56,27 @@
   let renamingId: string | null = null;
   let renameDraft = '';
   $: nativeInventoryLocked = NATIVE_ENGINE_ONLY && Boolean($settings.experimental?.outputNativeCore);
+
+  $: chainWarning = nativeInventoryLocked ? nativeEffectChainWarning([
+    ...($project.mappingComposition?.enabled ? $project.mappingComposition.effects ?? [] : []),
+    ...$macros.macros.filter(macro => macro.value > 0.001).flatMap(macro => macro.effects ?? []),
+  ]) : null;
+
+  function knobKey(event: KeyboardEvent, macro: Macro) {
+    const step = event.shiftKey ? 0.001 : 0.01;
+    const changes: Record<string, number> = { ArrowUp: step, ArrowRight: step, ArrowDown: -step, ArrowLeft: -step };
+    if (event.key === 'Home' || event.key === 'End' || event.key in changes) {
+      event.preventDefault();
+      macros.setMacroValue(macro.id, event.key === 'Home' ? 0 : event.key === 'End' ? 1 : macro.value + changes[event.key]);
+    }
+  }
+
+  function setAssignmentRange(macroId: string, assignment: MacroAssignment, field: 'from' | 'to', event: Event) {
+    const input = event.currentTarget as HTMLInputElement;
+    const value = input.valueAsNumber;
+    if (!Number.isFinite(value)) { input.value = String(assignment[field]); return; }
+    macros.assignParameter(macroId, { ...assignment, [field]: value });
+  }
 
   function nativeEffectPending(effectType: EffectType | string): boolean {
     return nativeInventoryLocked && !isNativeSelectableEffect(effectType);
@@ -175,13 +201,21 @@
 <div class="macro-bar">
   {#each $macros.macros as m (m.id)}
     {@const fxCount = m.effects.length}
+    {@const assignmentCount = m.assignments?.length ?? 0}
     {@const enabledFxCount = m.effects.filter(e => e.enabled).length}
     <div
       class="macro-slot"
-      title="{m.name} — {enabledFxCount}/{fxCount} effect{fxCount === 1 ? '' : 's'} · drag vertically · right-click to edit"
+      title="{m.name} — {enabledFxCount}/{fxCount} effect{fxCount === 1 ? '' : 's'} · {m.assignments?.length ?? 0} parameters · drag vertically · right-click to edit"
     >
       <button
         class="macro-knob"
+        role="slider"
+        aria-label={`Macro ${m.name}`}
+        aria-valuemin={0}
+        aria-valuemax={100}
+        aria-valuenow={Math.round(m.value * 100)}
+        aria-valuetext={`${Math.round(m.value * 100)} percent; ${assignmentCount} parameter assignments`}
+        onkeydown={(event) => knobKey(event, m)}
         style="--macro-color: {m.color}"
         onpointerdown={(e) => knobStartDrag(e, m)}
         onpointermove={(e) => knobOnPointerMove(e, m)}
@@ -213,8 +247,8 @@
           style="transform: rotate({-135 + m.value * 270}deg)"
           aria-hidden="true"
         ></span>
-        {#if fxCount > 0}
-          <span class="macro-dest-count" style="--macro-color: {m.color}" title="{enabledFxCount} of {fxCount} effects enabled">{fxCount}</span>
+        {#if fxCount + assignmentCount > 0}
+          <span class="macro-dest-count" style="--macro-color: {m.color}" title="{assignmentCount} parameter assignments · {enabledFxCount} of {fxCount} effects enabled">{fxCount + assignmentCount}</span>
         {/if}
       </button>
 
@@ -238,6 +272,10 @@
   {/each}
 </div>
 
+{#if chainWarning}
+  <div class="macro-chain-warning" role="status">Output effects: {chainWarning}</div>
+{/if}
+
 {#if editPopoverFor}
   {@const m = $macros.macros.find(x => x.id === editPopoverFor)}
   {#if m}
@@ -256,6 +294,26 @@
           title="Knob color"
         />
         <button class="macro-popover-close" onclick={closePopover} title="Close">×</button>
+      </div>
+
+      <div class="macro-popover-section">
+        <div class="macro-popover-section-title">PARAMETER ASSIGNMENTS</div>
+        {#if !m.assignments?.length}
+          <div class="macro-assignment-hint">Choose this macro beside an effect parameter to connect it.</div>
+        {/if}
+        {#each m.assignments ?? [] as assignment}
+          {@const available = !!findMacroTargetEffect(assignment.target, $project, $vjClipLauncher)}
+          <div class="macro-assignment" class:unavailable={!available}>
+            <span title={assignment.label}>{assignment.label}</span>
+            {#if !available}<div class="macro-assignment-missing">Target unavailable — assignment retained</div>{/if}
+            <div class="macro-assignment-range">
+              <label>Start <input type="number" aria-label={`${assignment.label} start`} min={assignment.min} max={assignment.max} step="any" value={assignment.from} onchange={(e) => setAssignmentRange(m.id, assignment, 'from', e)} /></label>
+              <label>End <input type="number" aria-label={`${assignment.label} end`} min={assignment.min} max={assignment.max} step="any" value={assignment.to} onchange={(e) => setAssignmentRange(m.id, assignment, 'to', e)} /></label>
+              <button title="Invert range" onclick={() => macros.assignParameter(m.id, { ...assignment, from: assignment.to, to: assignment.from })}>⇄</button>
+              <button title="Remove assignment" onclick={() => macros.unassignParameter(assignment.target)}>×</button>
+            </div>
+          </div>
+        {/each}
       </div>
 
       <!-- Beat-pulse: auto-cycle the macro value at a beat division.
@@ -410,6 +468,9 @@
                         Pending native port. Disable or remove this effect before using the macro in native v2.
                       </div>
                     {/if}
+                    {#if fx.type === 'cubeLut'}
+                      <CubeLutControls lut={fx.params.cubeLut} contextKey={`macro:${m.id}:${fx.id}`} onChange={(cubeLut) => macros.updateEffectParams(m.id, fx.id, { cubeLut })} />
+                    {/if}
                     {#if paramMetas.length === 0}
                       <div class="macro-fx-params-empty">
                         This effect has no editable parameters — just toggle on/off
@@ -475,6 +536,24 @@
 />
 
 <style>
+  .macro-assignment-missing { color: #dcb67c; font-size: 10px; margin-bottom: 5px; }
+  .macro-assignment.unavailable { border-left: 2px solid #806437; padding-left: 6px; }
+  .macro-assignment-hint { font-size: 11px; color: #a4aab5; }
+  .macro-assignment { padding: 7px 0; font-size: 11px; }
+  .macro-assignment > span { display: block; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-bottom: 5px; }
+  .macro-assignment-range { display: flex; align-items: center; gap: 6px; }
+  .macro-assignment-range label { display: flex; align-items: center; gap: 4px; }
+  .macro-assignment-range input { width: 65px; min-width: 0; padding: 4px; border-radius: 5px; background: #11151c; color: #dce6fa; border: 1px solid #344467; }
+  .macro-assignment-range button { border: 1px solid #344467; border-radius: 5px; background: #172747; color: #dce6fa; cursor: pointer; }
+
+  .macro-chain-warning {
+    font-size: 11px;
+    color: #e4ba7b;
+    padding: 6px 8px;
+    border-radius: 6px;
+    background: #221d15;
+  }
+
   .macro-bar {
     display: inline-flex;
     align-items: center;

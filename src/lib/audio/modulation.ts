@@ -10,6 +10,13 @@ import { getVisualAudioSnapshot } from './visualAudio';
 import { vjClipLauncher } from '../stores/vjClipLauncher';
 import type { ISFInput } from '../isf/parser';
 
+let compositionReader: ((effectId: string, paramName: string) => number | undefined) | null = null;
+let compositionWriter: ((effectId: string, values: Record<string, number>) => void) | null = null;
+export function registerCompositionModulationHandlers(reader: NonNullable<typeof compositionReader>, writer: NonNullable<typeof compositionWriter>) {
+  compositionReader = reader;
+  compositionWriter = writer;
+}
+
 // Callback for applying modulated values to mapping mode layers
 // Registered by the layers store to avoid circular imports
 // (layerIndex, values) => void
@@ -133,6 +140,7 @@ export type ModTarget = 'vj' | 'mapping';
 export interface ParamModulation {
   /** Clip-effect baseline/range survive save/reopen without relying on an open panel. */
   clipEffect?: { base: number; min: number; max: number };
+  compositionEffect?: { base: number; min: number; max: number };
   source: ModSource;
   /** Which render-graph side this modulation drives. Optional for
    *  back-compat with old project saves; when absent the engine
@@ -198,7 +206,7 @@ interface ParsedModEntry {
   mod: ParamModulation;
   // Special target sentinel — when set, takes precedence over layer/effect
   // routing. 'xfade-value' modulates the global VJ crossfader fader.
-  special?: 'xfade-value';
+  special?: 'xfade-value' | 'composition-effect';
   // Bank tag for layer/effect targets. Default 'A'. Ignored when `special` is set.
   bank: 'A' | 'B';
   /** Which render-graph side this entry writes to. 'vj' or 'mapping'.
@@ -267,6 +275,10 @@ export function modKeyShader(
   if (clipId) return `vjc:${clipId}:${paramName}`;
   return bank === 'B' ? `B:${layerIndex}:${paramName}` : `${layerIndex}:${paramName}`;
 }
+export function modKeyCompositionEffect(target: ModTarget, effectId: string, paramName: string): string {
+  return `comp:${target}:${effectId}:${paramName}`;
+}
+
 export function modKeyClipEffect(clipId: string, effectId: string, paramName: string, bank: 'A' | 'B' = 'A'): string {
   return `vjcf:${bank}:${clipId}:${effectId}:${paramName}`;
 }
@@ -503,6 +515,14 @@ function rebuildParsedCache(map: ModulationMap) {
   for (const [key, mod] of map) {
     const parts = key.split(':');
 
+    if (parts[0] === 'comp') {
+      if (!['vj', 'mapping'].includes(parts[1]) || parts.length < 4) continue;
+      parsedCache.push({ mod, bank: 'A', target: parts[1] as ModTarget, special: 'composition-effect',
+        layerIndex: -1, isEffect: true, isEdgeEffect: false, isGPU: false, isSplat: false,
+        effectId: parts[2], paramName: parts.slice(3).join(':') });
+      continue;
+    }
+
     // Special: crossfader value target
     if (parts[0] === 'xfade' && parts[1] === 'value') {
       parsedCache.push({
@@ -708,6 +728,16 @@ function createModulationStore() {
      *  the VJ deck updater. The `target` field on the stored mod is
      *  stamped to match the key prefix so engine routing stays in
      *  sync. */
+    setCompositionEffectModulation(target: ModTarget, effectId: string, paramName: string, mod: ParamModulation, range: { base: number; min: number; max: number }) {
+      const key = modKeyCompositionEffect(target, effectId, paramName);
+      update(map => {
+        const next = new Map(map);
+        if (mod.source === 'manual') next.delete(key);
+        else next.set(key, { ...mod, target, compositionEffect: map.get(key)?.compositionEffect ?? { ...range } });
+        return next;
+      });
+    },
+
     setClipEffectModulation(clipId: string, effectId: string, paramName: string, mod: ParamModulation, bank: 'A' | 'B' = 'A') {
       const key = modKeyClipEffect(clipId, effectId, paramName, bank);
       const existing = get({ subscribe }).get(key);
@@ -1157,6 +1187,19 @@ class ModulationEngine {
 
       let signal = this.getSignal(mod.source, audio, now, mod.speed, mod.bpmSync === true, mod, frameBeat);
       if (mod.invert) signal = 1 - signal;
+
+      if (special === 'composition-effect') {
+        const range = mod.compositionEffect;
+        if (!range || ![range.base, range.min, range.max].every(Number.isFinite) || range.min > range.max) continue;
+        const current = entry.target === 'mapping'
+          ? compositionReader?.(effectId, paramName)
+          : (vjState.compositionEffects.find(effect => effect.id === effectId)?.params as Record<string, unknown> | undefined)?.[paramName];
+        if (typeof current !== 'number') continue;
+        const value = Math.max(range.min, Math.min(range.max, range.base + (signal - .5) * mod.amount * (range.max - range.min)));
+        if (entry.target === 'mapping') compositionWriter?.(effectId, { [paramName]: value });
+        else vjClipLauncher.updateCompositionEffectParams(effectId, { [paramName]: value });
+        continue;
+      }
 
       // ===== Special: crossfader value =====
       // Modulates the global A/B fader 0..1 directly. No base-value tracking

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { writable } from 'svelte/store';
 
 /*
@@ -56,6 +56,7 @@ vi.mock('../sync/abletonLink', () => ({
   abletonLink: {
     subscribe: (run: (v: unknown) => void) => linkState.subscribe(run),
     phaseNow: () => linkPhaseNow,
+    beatNow: () => linkPhaseNow,
   },
 }));
 
@@ -82,13 +83,16 @@ vi.mock('./audio', () => {
 });
 
 const { nextQuantumWallTime } = await import('./vjClipLauncher');
+const { resyncLaunchClock } = await import('./launchClock');
 
 function setLink(patch: Record<string, unknown>) {
   linkState.update((s) => ({ ...s, ...patch }));
 }
 
 describe('clip quantization under Ableton Link', () => {
+  afterEach(() => vi.restoreAllMocks());
   beforeEach(() => {
+    vi.spyOn(performance, 'now').mockReturnValue(10000);
     linkPhaseNow = 0;
     setLink({ enabled: false, peers: 0, tempo: 120, quantum: 4 });
     audioState.set({
@@ -97,6 +101,7 @@ describe('clip quantization under Ableton Link', () => {
       manualBPM: null,
       beat: { beatCount: 0, timeSinceLastBeat: -1 },
     });
+    resyncLaunchClock();
   });
 
   it('uses the session tempo, not the local one, for the grid', () => {

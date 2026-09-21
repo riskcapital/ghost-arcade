@@ -1,4 +1,7 @@
+import { cubeLutForHandle } from '../color/cubeLutAssets';
+import { buildNativeCubeLutGraph, buildNativeCubeLutPrecompileCommand } from './nativeCubeLut';
 export type NativeEffectPassId =
+  | 'cube-lut'
   | 'invert'
   | 'grayscale'
   | 'brightness'
@@ -203,6 +206,7 @@ export interface NativeEffectPassOptions {
   amount?: number;
   mix?: number;
   params?: Partial<{
+    lutHandle: number;
     scale: number;
     seed: number;
     amount: number;
@@ -1583,6 +1587,7 @@ export const NATIVE_EFFECT_PASS_MANIFEST: NativeEffectPassManifestEntry[] = [
   { id: 'echo-repeat', code: 181, defaultAmount: 0.7, amountMin: 0.05, amountMax: 0.95 },
   { id: 'light-paint', code: 182, defaultAmount: 0.7, amountMin: 0, amountMax: 2 },
   { id: 'recursive-echo', code: 183, defaultAmount: 0.6, amountMin: 0.05, amountMax: 0.95 },
+  { id: 'cube-lut', code: 184, defaultAmount: 1, amountMin: 0, amountMax: 1 },
 ];
 
 const NATIVE_EFFECT_PASS_BY_ID = new Map(
@@ -9049,7 +9054,7 @@ export function buildNativeEffectPassPrecompileCommands(): NativeEffectPassPreco
     stage: source.stage,
     entry: source.entry,
     source: source.source,
-  }];
+  }, buildNativeCubeLutPrecompileCommand()];
 }
 
 function clampNumber(value: unknown, min: number, max: number, fallback: number): number {
@@ -10935,13 +10940,32 @@ function buildNativeEffectPassRenderPass(
   };
 }
 
+
+function withCubeLuts(graph: NativeEffectPassGraph, options: NativeEffectPassChainOptions): NativeEffectPassGraph {
+  options.effects.forEach((effect, index) => {
+    if (effect.effect !== 'cube-lut') return;
+    const pass = graph.config.render_passes[index];
+    const bindings = pass.bindings as Array<Record<string, unknown>>;
+    const uniformId = String(bindings[2].resource);
+    const handle = effect.params?.lutHandle ?? 0;
+    const lut = cubeLutForHandle(handle);
+    const replacement = buildNativeCubeLutGraph({ lut, sourceId: '__input', targetSourceId: '__output', strength: handle === 0 ? 0 : (effect.params?.amount ?? effect.amount ?? 1) * (effect.mix ?? 1) });
+    const tableId = `${uniformId}:lut:${handle}`;
+    graph.config.buffers = graph.config.buffers.filter(buffer => buffer.id !== uniformId);
+    graph.config.buffers.push({ ...replacement.buffers[0], id: uniformId }, { ...replacement.buffers[1], id: tableId, persistent: true, immutable_lut: true });
+    pass.shader_id = replacement.render_passes[0].shader_id;
+    bindings.push({ binding: 3, kind: 'read-only-storage', resource: tableId });
+  });
+  return graph;
+}
+
 export function buildNativeEffectPassGraph(options: NativeEffectPassOptions): NativeEffectPassGraph {
   const manifest = nativeEffectPassManifestEntry(options.effect);
   const targetSourceId = options.targetSourceId || `${options.sourceId}:effect:${options.effect}`;
   const safeTarget = safeGraphId(targetSourceId);
   const uniformId = `effect-pass:${safeTarget}:uniform`;
   const renderOptions = { ...options, targetSourceId };
-  return {
+  return withCubeLuts({
     effect: manifest.id,
     config: {
       buffers: [{
@@ -10954,7 +10978,7 @@ export function buildNativeEffectPassGraph(options: NativeEffectPassOptions): Na
       readbacks: [],
       render_passes: [buildNativeEffectPassRenderPass(renderOptions, manifest, uniformId)],
     },
-  };
+  }, { ...options, effects: [options] });
 }
 
 /** Ping-pong layers in the core's full-resolution composite texture. */
@@ -11028,11 +11052,11 @@ export function buildCompositeEffectPassChainGraph(
     });
   });
 
-  return {
+  return withCubeLuts({
     effect: effects[0].effect,
     effects: effects.map((effect) => effect.effect),
     config: { buffers, passes: [], readbacks: [], render_passes: renderPasses },
-  };
+  }, { ...options, effects });
 }
 
 export function buildNativeEffectPassChainGraph(options: NativeEffectPassChainOptions): NativeEffectPassGraph {
@@ -11083,7 +11107,7 @@ export function buildNativeEffectPassChainGraph(options: NativeEffectPassChainOp
     currentSourceId = targetSourceId;
   });
 
-  return {
+  return withCubeLuts({
     effect: effects[0].effect,
     effects: effects.map((effect) => effect.effect),
     config: {
@@ -11092,5 +11116,5 @@ export function buildNativeEffectPassChainGraph(options: NativeEffectPassChainOp
       readbacks: [],
       render_passes: renderPasses,
     },
-  };
+  }, { ...options, effects });
 }

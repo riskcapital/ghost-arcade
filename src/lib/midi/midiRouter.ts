@@ -1,3 +1,4 @@
+import { effectParamLabels } from '../effects/effectUX';
 import { nativeAudioMaster } from '../audio/nativeClipAudio';
 import { releaseTempoNudgeInputs, setTempoNudgeInput, resyncLaunchClock } from '../stores/launchClock';
 // MIDI Router - Routes MIDI messages to correct store update functions
@@ -474,6 +475,30 @@ class MidiRouter {
     // parts: ['vj' | 'vj-b', layerIndex|'master'|'crossfader'|..., property, ...]
     const layerPart = parts[1];
     const property = parts[2];
+    if (layerPart === 'group') {
+      if (!Number.isFinite(value)) return;
+      let id: string;
+      try { id = decodeURIComponent(parts[2]); } catch { return; }
+      const group = get(vjClipLauncher).groups?.find(group => group.id === id);
+      if (!group) return;
+      if (parts[3] === 'level') vjClipLauncher.updateGroup(id, { opacity: Math.max(0, Math.min(1, value)) });
+      else if (parts[3] === 'column' && value > 0 && /^\d+$/.test(parts[4] ?? '')) vjClipLauncher.triggerColumn(Number(parts[4]), bank, id);
+      else if (parts[3] === 'fx') {
+        const effect = group.effects.find(effect => effect.id === parts[4]);
+        if (!effect) return;
+        const key = parts[5];
+        if (key === 'mix') vjClipLauncher.updateGroupEffect(id, effect.id, { opacity: Math.max(0, Math.min(1, value)) });
+        else if (key === 'enabled') vjClipLauncher.updateGroupEffect(id, effect.id, { enabled: value >= 0.5 });
+        else if (key === 'param') {
+          const schema = effectParamLabels[effect.type] ?? {};
+          const param = Object.keys(schema).find(key => key.toLowerCase() === parts[6]);
+          const meta = param ? schema[param] : undefined;
+          if (meta && param) vjClipLauncher.updateGroupEffect(id, effect.id, { params: { [param]: Math.max(meta.min, Math.min(meta.max, value)) } });
+        }
+      }
+      return;
+    }
+
     if (parts[1] === 'tempo' && ['nudge-up', 'nudge-down', 'resync'].includes(parts[2])) {
       if (parts[2] === 'resync') { if (value > 0) resyncLaunchClock(); }
       else setTempoNudgeInput(inputId ?? `path:${parts.join(':')}`, value > 0 ? (parts[2] === 'nudge-up' ? 1 : -1) : 0);

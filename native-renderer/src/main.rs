@@ -2373,8 +2373,13 @@ fn graph_layer_frame_order(
     a: (&NativeGraphLayerKind, &str),
     b: (&NativeGraphLayerKind, &str),
 ) -> std::cmp::Ordering {
-    a.0.frame_job_stage()
-        .cmp(&b.0.frame_job_stage())
+    // The shared VJ mix produces group textures. Mapped slice readers must
+    // consume those textures only after the producer has rendered this frame.
+    let stage = |kind: &NativeGraphLayerKind, id: &str| {
+        if matches!(kind, NativeGraphLayerKind::VjMix) && id != "__vj-mix__" { 3 } else { kind.frame_job_stage() }
+    };
+    stage(a.0, a.1)
+        .cmp(&stage(b.0, b.1))
         .then_with(|| a.1.cmp(b.1))
 }
 
@@ -11765,6 +11770,30 @@ impl App {
                     .to_string(),
             );
         }
+        // Install immutable LUT data before acknowledging a queued graph. Otherwise
+        // coalescing could discard the first upload in favour of a reference-only job.
+        // Resident jobs retain no table payload and never rewrite the table per frame.
+        for (value, spec) in buffers_value.iter().zip(buffer_specs.iter_mut()) {
+            if value.get("immutable_lut").and_then(Value::as_bool) != Some(true) { continue; }
+            if !matches!(spec.kind.signature(), "storage-read" | "storage-rw") || spec.byte_length > 65 * 65 * 65 * 16
+                || !spec.persistent || spec.clear {
+                return Err("invalid immutable LUT storage buffer".to_string());
+            }
+            let renderer = self.renderer.as_mut().ok_or("LUT upload requires a ready renderer")?;
+            let existing = renderer.native_compute_graph_buffers.get(&spec.id);
+            if spec.initial_bytes.is_empty() {
+                if existing.is_none_or(|buffer| buffer.byte_length != spec.byte_length) {
+                    return Err(format!("LUT buffer {} was released; upload it again", spec.id));
+                }
+            } else {
+                let growth = spec.byte_length.saturating_sub(existing.map_or(0, |buffer| buffer.byte_length));
+                if renderer.native_compute_graph_buffer_bytes().saturating_add(growth) > renderer.graph_budget_bytes {
+                    return Err("LUT upload exceeds the graph buffer budget".to_string());
+                }
+                renderer.upsert_native_compute_graph_buffer(spec)?;
+                spec.initial_bytes = Vec::new();
+            }
+        }
         Ok(NativeGraphFrameJob {
             buffers: buffer_specs,
             pass_plans,
@@ -20234,6 +20263,10 @@ impl RenderState {
                 })
                 .unwrap_or(true);
         if recreate {
+            // Reserved LUT references must never become zero-filled after eviction.
+            if spec.id.contains(":uniform:lut:") && spec.initial_bytes.is_empty() {
+                return Err(format!("LUT buffer {} needs its initial upload", spec.id));
+            }
             let previous = self.native_compute_graph_buffers.get(&spec.id).map_or(0, |b| b.byte_length);
             if self.native_compute_graph_buffer_bytes().saturating_sub(previous).saturating_add(spec.byte_length) > self.graph_budget_bytes {
                 return Err("persistent graph buffer budget exceeded".to_string());
@@ -29340,7 +29373,7 @@ mod tests {
         let ids = layers.iter().map(|(_, id)| *id).collect::<Vec<_>>();
         assert_eq!(
             ids,
-            ["vj-layer-0-B", "vj-layer-1-A", "1b-screen", "vj-xfade-0", "0a-screen", "__vj-mix__"]
+            ["vj-layer-0-B", "vj-layer-1-A", "1b-screen", "vj-xfade-0", "__vj-mix__", "0a-screen"]
         );
     }
 

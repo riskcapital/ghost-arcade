@@ -246,12 +246,14 @@ fn fsMain(in: VsOut) -> @location(0) vec4<f32> {
   // alpha application. Preserve accumulated coverage (no forced opaque) so
   // an all-transparent mix stays transparent over the stack below.
   let cover = clamp(src.a, 0.0, 1.0) * opacity;
-  let outRgb = nativeBlend(dst.rgb, src.rgb, cover, u.blendMode);
   let outA = clamp(dst.a + cover * (1.0 - dst.a), 0.0, 1.0);
-  // RGB is re-premultiplied by coverage: the compositor unpremultiplies
-  // native source frames before applying their alpha (same convention the
-  // crossfade output uses).
-  return vec4<f32>(outRgb * outA, outA);
+  let blended = nativeBlend(dst.rgb, src.rgb, 1.0, u.blendMode);
+  // Blend only where destination coverage exists, then source-over in
+  // premultiplied space. Multiplying an already coverage-weighted RGB by
+  // outA again darkens a lone/translucent group (25% becomes 6.25%).
+  let sourceRgb = mix(src.rgb, blended, dst.a);
+  let outPremultiplied = sourceRgb * cover + dst.rgb * dst.a * (1.0 - cover);
+  return vec4<f32>(outPremultiplied, outA);
 }
 `;
 

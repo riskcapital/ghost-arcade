@@ -1,3 +1,4 @@
+import { buildNativeCubeLutPrecompileCommand } from './nativeCubeLut';
 import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
@@ -355,6 +356,7 @@ describe('Native effect-pass template', () => {
       ['echo-repeat', 181],
       ['light-paint', 182],
       ['recursive-echo', 183],
+      ['cube-lut', 184],
     ]);
     expect(nativeEffectPassManifestEntry('posterize')).toMatchObject({
       code: 8,
@@ -453,7 +455,7 @@ describe('Native effect-pass template', () => {
       stage: source.stage,
       entry: source.entry,
       source: source.source,
-    }]);
+    }, buildNativeCubeLutPrecompileCommand()]);
   });
 
   it('packs a stable 80-byte effect uniform block', () => {

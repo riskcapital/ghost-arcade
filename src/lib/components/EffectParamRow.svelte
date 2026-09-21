@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { macros } from '../stores/macros';
+  import { macroTargetKey, type MacroTarget } from '../stores/macroAssignments';
   import { numericExpression } from '../utils/numericExpression';
   /**
    * EffectParamRow — every effect parameter renders as a three-row
@@ -20,7 +22,7 @@
    * in both editor and projector output windows (the engine ticks in
    * both via modulationBroadcast).
    */
-  import { modKeyClipEffect, modulationStore, registerEffectParamRange, registerEdgeEffectParamRange, registerGPUParamRange, registerSplatParamRange, type ModSource, type ParamModulation } from '../audio/modulation';
+  import { modKeyCompositionEffect, modKeyClipEffect, modulationStore, registerEffectParamRange, registerEdgeEffectParamRange, registerGPUParamRange, registerSplatParamRange, type ModSource, type ParamModulation } from '../audio/modulation';
   import { project, layers } from '../stores/layers';
   import { vjClipLauncher } from '../stores/vjClipLauncher';
   import { defaultAutoFor } from '../audio/autoEngine';
@@ -97,6 +99,23 @@
     registerEffectParamRange(layerIndex, effectId, paramName, min, max, target === 'vj' && vjEffectScope === 'clip' ? currentVjLayerState?.activeClip?.id : undefined);
   }
 
+  $: macroTarget = effectKind !== 'fx' ? null : (
+    target === 'mapping'
+      ? mappingComposition ? { scope: 'mapping-composition', effectId, param: paramName }
+        : currentMappingLayer ? { scope: 'mapping-layer', layerId: currentMappingLayer.id, effectId, param: paramName } : null
+      : vjEffectScope === 'composition' ? { scope: 'vj-composition', effectId, param: paramName }
+        : vjEffectScope === 'clip' ? currentVjLayerState?.activeClip
+          ? { scope: 'vj-clip', bank: vjBank, clipId: currentVjLayerState.activeClip.id, effectId, param: paramName } : null
+          : { scope: 'vj-layer', bank: vjBank, effectId, param: paramName }
+  ) as MacroTarget | null;
+  $: assignedMacro = macroTarget ? $macros.macros.find(m => m.assignments?.some(a => macroTargetKey(a.target) === macroTargetKey(macroTarget!))) : undefined;
+  function assignMacro(id: string) {
+    if (!macroTarget) return;
+    if (!id) { macros.unassignParameter(macroTarget); return; }
+    setSource('manual');
+    macros.assignParameter(id, { target: macroTarget, label: `${target === 'mapping' ? mappingComposition ? 'Mapping composition' : currentMappingLayer?.name ?? 'Mapping layer' : vjEffectScope === 'composition' ? 'VJ composition' : `Deck ${vjBank} · ${vjEffectScope === 'clip' ? currentVjLayerState?.activeClip?.name ?? 'Clip' : `Layer ${layerIndex + 1}`}`} · ${currentEffect?.type ?? 'Effect'} · ${label}`, min, max, from: min, to: max });
+  }
+
   // ---- Click-to-type editor for the value chip ----
   let editing = false;
   let editEl: HTMLInputElement | null = null;
@@ -151,7 +170,9 @@
   //   - 'mapping' reads/writes project.layers (and uses 'map:' modKey prefix)
   //   - 'vj'      reads/writes vjClipLauncher.layerStates (uses bank-prefixed key)
   $: vjLauncherState = $vjClipLauncher;
-  $: modKey = target === 'vj' && vjEffectScope === 'clip' && currentVjLayerState?.activeClip
+  $: modKey = mappingComposition || (target === 'vj' && vjEffectScope === 'composition')
+    ? modKeyCompositionEffect(target, effectId, paramName)
+    : target === 'vj' && vjEffectScope === 'clip' && currentVjLayerState?.activeClip
     ? modKeyClipEffect(currentVjLayerState.activeClip.id, effectId, paramName, vjBank)
     : effectKind === 'edge'
     ? `map:${layerIndex}:edge:${effectId}:${paramName}`
@@ -192,6 +213,10 @@
   $: isModulated = isAuto || (currentSource !== 'manual');
 
   function writeMod(mod: ParamModulation) {
+    if (mappingComposition || (target === 'vj' && vjEffectScope === 'composition')) {
+      modulationStore.setCompositionEffectModulation(target, effectId, paramName, mod, { base: value, min, max });
+      return;
+    }
     if (target === 'vj' && vjEffectScope === 'clip') {
       if (currentVjLayerState?.activeClip) modulationStore.setClipEffectModulation(currentVjLayerState.activeClip.id, effectId, paramName, mod, vjBank);
       return;
@@ -243,6 +268,7 @@
     }
   }
   function setSource(source: ModSource) {
+    if (macroTarget) macros.unassignParameter(macroTarget);
     if (source === 'auto') {
       // Switching TO auto. Clear any audio modulation (mutually
       // exclusive) and seed a fresh AutoConfig spanning the param's
@@ -324,6 +350,13 @@
             }} />
         {/if}
       </div>
+      {#if macroTarget}
+        <select class="epr-macro" aria-label={`Assign ${label} to macro`} title="Assign to a macro; edit its range in the macro editor"
+          value={assignedMacro?.id ?? ''} onchange={(event) => assignMacro(event.currentTarget.value)}>
+          <option value="">Macro</option>
+          {#each $macros.macros as macro}<option value={macro.id}>{macro.name}</option>{/each}
+        </select>
+      {/if}
       <button
         bind:this={chipEl}
         type="button"
@@ -338,6 +371,13 @@
     <!-- Row 1: label · source dropdown · value -->
     <div class="epr-head">
       <span class="epr-label" title={label}>{label}</span>
+      {#if macroTarget}
+        <select class="epr-macro" aria-label={`Assign ${label} to macro`} title="Assign to a macro; edit its range in the macro editor"
+          value={assignedMacro?.id ?? ''} onchange={(event) => assignMacro(event.currentTarget.value)}>
+          <option value="">Macro</option>
+          {#each $macros.macros as macro}<option value={macro.id}>{macro.name}</option>{/each}
+        </select>
+      {/if}
       <button
         bind:this={chipEl}
         type="button"
@@ -426,7 +466,6 @@
       source={currentSource === 'auto' ? 'manual' : currentSource as ModSource}
       mod={existingMod}
       auto={existingAuto}
-      supportsModulation={!mappingComposition && !(target === 'vj' && vjEffectScope === 'composition')}
       supportsClipPosition={!mappingComposition && !(target === 'vj' && vjEffectScope === 'composition')}
       onClose={() => trayOpen = false}
       onSetSource={setSource}
@@ -437,6 +476,8 @@
 </div>
 
 <style>
+  .epr-macro { max-width: 85px; min-width: 0; border: 1px solid #344467; border-radius: 5px; background: #172747; color: #cbd9f5; font-size: 10px; padding: 2px; }
+
   .expression-error { font-size: 11px; line-height: 1.4; color: #e0b29d; }
   input[aria-invalid="true"] { border-color: #c88d74; }
   .epr {

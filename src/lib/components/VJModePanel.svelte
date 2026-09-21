@@ -1,4 +1,5 @@
 <script lang="ts">
+  import VJGroups from './VJGroups.svelte';
   import { videoBeatFit } from '../media/videoBeatFit';
   import { launchClock, TEMPO_NUDGE_AMOUNT } from '../stores/launchClock';
   import { abletonLink } from '../sync/abletonLink';
@@ -82,6 +83,7 @@
   import { EFFECT_PARAM_DEFS } from '../effects/effectParamDefs';
   import { isNativeSelectableEffect } from '../renderer/nativeEffectCoverage';
   import EffectParamRow from './EffectParamRow.svelte';
+  import CubeLutControls from './CubeLutControls.svelte';
   // Tier-related imports removed — recording / Particles3D always available.
   import { getDefaultEffectParams as getRendererDefaultEffectParams } from '../renderer/effects';
   import EffectPickerModal from './EffectPickerModal.svelte';
@@ -3710,7 +3712,7 @@
     expandedEffectId = null;
   }
 
-  function updateEffectParam(effectId: string, paramName: string, value: number | boolean) {
+  function updateEffectParam(effectId: string, paramName: string, value: number | boolean | import('../color/cubeLut').CubeLut | undefined) {
     if (effectsTab === 'composition') {
       vjClipLauncher.updateCompositionEffectParams(effectId, { [paramName]: value });
     } else if (effectsTab === 'clip') {
@@ -4551,6 +4553,9 @@
 
                           <details open>
                             <summary>Controls</summary>
+                          {#if effect.type === 'cubeLut'}
+                            <CubeLutControls lut={effect.params.cubeLut} contextKey={`${effectsTab}:${paramDeck}:${selectedLayerIndex}:${selectedLayerState?.activeClip?.id ?? ''}:${effect.id}`} onChange={(lut) => updateEffectParam(effect.id, 'cubeLut', lut)} />
+                          {/if}
                           <!-- Param renderer mirrors LayerPanel: try
                                effectParamLabels (rich metadata covering
                                every effect with curated min/max/step),
@@ -5520,6 +5525,7 @@
             <button class="dim-btn" onclick={() => vjClipLauncher.addColumn()} title="Add column">+</button>
           </div>
         </div>
+        <VJGroups />
         <div class="vj-dock-group">
           <AudioMeterPanel openUp={false} alwaysShow={true} />
           <VJTempoControls />
