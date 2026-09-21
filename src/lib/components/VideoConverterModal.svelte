@@ -278,7 +278,7 @@
           ondragleave={onDragLeave}
           disabled={isConverting}
         >
-          <span class="drop-title">{selectedVideo ? selectedVideo.name : 'Choose Video Video'}</span>
+          <span class="drop-title">{selectedVideo ? selectedVideo.name : 'Choose Video'}</span>
           <span class="drop-meta">
             {#if selectedVideo}
               {formatBytes(selectedVideo.size) || selectedVideo.path}
