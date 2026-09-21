@@ -80,6 +80,12 @@ jobs:
       - name: Install dependencies
         run: npm ci
 
+      - name: Provision and verify Windows HAP encoder
+        run: npm run windows:ffmpeg
+
+      - name: Test bundled video conversion
+        run: npx vitest run src/lib/video/conversionFfmpeg.test.ts src/lib/video/videoConverter.native.test.ts
+
       - name: Install native addon dependencies
         run: npm ci --ignore-scripts
         working-directory: electron/native

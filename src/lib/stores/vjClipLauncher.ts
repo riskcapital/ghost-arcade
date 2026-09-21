@@ -896,7 +896,7 @@ function clipLaunchTimeSeconds(
   return nativeVideoLaunchTime(clip, duration);
 }
 
-function armVJVideoClip(clip: VJClip): HTMLVideoElement | undefined {
+function armVJVideoClip(clip: VJClip, force = false): HTMLVideoElement | undefined {
   if (clip.type !== 'video' || !clip.src || clip.src.startsWith('live://')) {
     return ensureClipVideoElement(clip);
   }
@@ -921,7 +921,7 @@ function armVJVideoClip(clip: VJClip): HTMLVideoElement | undefined {
     videoWidth: clip.videoWidth, videoHeight: clip.videoHeight,
     trimStart: clip.trimStart ?? 0,
     trimEnd: clip.trimEnd ?? 1,
-  });
+  }, force);
 
   if (!duration && video && !pendingNativeVideoMetadataArms.has(clip.id)) {
     pendingNativeVideoMetadataArms.add(clip.id);
@@ -948,7 +948,7 @@ export function predictedClipPlayheadSeconds(clip: VJClip, nowMs = performance.n
   return predictNativePlayheadSeconds(clip, nowMs);
 }
 
-function triggerNativeVJVideoClip(clip: VJClip): number {
+function triggerNativeVJVideoClip(clip: VJClip, nowMs = performance.now()): number {
   // Trigger is a pure handoff to an already-armed native decoder. Never call
   // ensure/arm here: creating browser media or issuing a prefetch RPC on the
   // click path lets decoder setup race ahead of the urgent native bind.
@@ -959,7 +959,7 @@ function triggerNativeVJVideoClip(clip: VJClip): number {
   clip.isPlaying = true;
   clip._nativePlaybackDirection = (clip.playbackRate ?? 1) < 0 ? -1 : 1;
   clip._nativePlaybackTimeSeconds = timeSeconds;
-  clip._nativePlaybackUpdatedAtMs = performance.now();
+  clip._nativePlaybackUpdatedAtMs = nowMs;
   clip._nativePlaybackSeekSeq = Number.isFinite(Number(clip._nativePlaybackSeekSeq))
     ? Math.floor(Number(clip._nativePlaybackSeekSeq)) + 1
     : 1;
@@ -1073,12 +1073,12 @@ function cancelHiddenVJClipTransitions(state: VJClipLauncherState, deck: VJDeck)
   }
 }
 
-function beginVJClipTransition(state: VJClipLauncherState, deck: VJDeck, layerIndex: number, incoming: VJClip): void {
+function beginVJClipTransition(state: VJClipLauncherState, deck: VJDeck, layerIndex: number, incoming: VJClip, launchGroup?: number): void {
   const layer = pickLayerStates(state, deck)[layerIndex];
   if (!layer) return;
   const config = effectiveClipTransition(layer, incoming);
   vjClipTransitions.begin(deck, layerIndex, layer.activeClip, incoming,
-    vjTransitionRowIsVisible(state, deck, layerIndex) ? config.duration : 0, config.style);
+    vjTransitionRowIsVisible(state, deck, layerIndex) ? config.duration : 0, config.style, undefined, undefined, launchGroup);
 }
 
 // Capture queued content identity, not mutable clip objects. Grid edits and
@@ -1796,6 +1796,16 @@ function createVJClipLauncherStore() {
     // Full-column launches replace that deck's column queue. Disjoint group
     // launches coexist; repeat presses cancel their own group. All targeted
     // rows share one deadline and one state update.
+    prepareColumn(columnIndex: number, deck: VJDeck = 'A') {
+      const state = get({ subscribe });
+      for (const row of pickGrid(state, deck)) {
+        const clip = row[columnIndex];
+        // Intent refreshes preparations evicted by larger grids or memory
+        // pressure; it must bypass the library's twenty-second debounce.
+        if (clip?.type === 'video') armVJVideoClip(clip, true);
+      }
+    },
+
     triggerColumn(columnIndex: number, deck: VJDeck = 'A', groupId?: string) {
       const state = get({ subscribe });
       if (!Number.isInteger(columnIndex) || columnIndex < 0 || columnIndex >= state.numColumns) return;
@@ -1825,6 +1835,8 @@ function createVJClipLauncherStore() {
     /** Immediate column transaction shared by quantized and direct launches. */
     triggerColumnNow(columnIndex: number, deck: VJDeck = 'A', layerIndices?: number[]) {
       if (!Number.isInteger(columnIndex) || columnIndex < 0 || columnIndex >= get({ subscribe }).numColumns) return;
+      const launchedAtMs = performance.now();
+      const columnLaunchGroup = ++launchGeneration;
       let didTrigger = false;
       const incomingVideos: Array<{ clip: VJClip; startSeconds: number }> = [];
       const outgoingVideos: VJClip[] = [];
@@ -1840,14 +1852,14 @@ function createVJClipLauncherStore() {
           if (clip) {
             let triggeredClip = { ...clip, _launchGeneration: ++launchGeneration };
             if (clip.type === 'video') {
-              const startSeconds = triggerNativeVJVideoClip(clip);
+              const startSeconds = triggerNativeVJVideoClip(clip, launchedAtMs);
               triggeredClip = { ...clip, _launchGeneration: triggeredClip._launchGeneration };
               incomingVideos.push({ clip: triggeredClip, startSeconds });
             }
             if (layerState.activeClip && layerState.activeClip.id !== clip.id) {
               outgoingVideos.push(layerState.activeClip);
             }
-            beginVJClipTransition(state, deck, layerIndex, triggeredClip);
+            beginVJClipTransition(state, deck, layerIndex, triggeredClip, columnLaunchGroup);
             didTrigger = true;
             return { ...layerState, activeColumn: columnIndex, activeClip: triggeredClip };
           }

@@ -90,7 +90,7 @@ describe('Cube LUT on the native GPU', () => {
   nativeIt('renders identity, channel permutation, interpolation, strength and input domains', async () => {
     const rpc = createNativeRpc();
     try {
-      const started = await rpc.send('start', { config: { backend: process.platform === 'darwin' ? 'metal' : process.platform === 'win32' ? 'dx12' : 'vulkan', width: 32, height: 32, source_frame_size: 32, target_fps: 30 } });
+      const started = await rpc.send('start', { config: { backend: process.platform === 'darwin' ? 'metal' : process.platform === 'win32' ? 'd3d12' : 'vulkan', width: 32, height: 32, source_frame_size: 32, target_fps: 30 } });
       expect(started.backend_ready).toBe(true);
       const compiled = await rpc.send('submit_commands', { commands: [buildNativeCubeLutPrecompileCommand()] });
       expect(compiled.dropped ?? 0).toBe(0);
@@ -146,7 +146,7 @@ nativeIt('keeps LUT tables resident across coalesced queues and restores them af
   const { NativeLutResidency } = await import('./nativeLutResidency');
   const rpc = createNativeRpc();
   try {
-    await rpc.send('start', { config: { backend: process.platform === 'darwin' ? 'metal' : process.platform === 'win32' ? 'dx12' : 'vulkan', width: 32, height: 32, source_frame_size: 32, target_fps: 30 } });
+    await rpc.send('start', { config: { backend: process.platform === 'darwin' ? 'metal' : process.platform === 'win32' ? 'd3d12' : 'vulkan', width: 32, height: 32, source_frame_size: 32, target_fps: 30 } });
     await rpc.send('submit_commands', { commands: buildNativeEffectPassPrecompileCommands() });
     const lut = parseCubeLut(`LUT_3D_SIZE 2\n${swapRows}`);
     const handle = cubeLutHandle(lut);

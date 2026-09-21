@@ -924,6 +924,33 @@ describe('native renderer sync graph effect routing', () => {
 });
 
 describe('native renderer sync native video pump routing', () => {
+  it('hands off three column sources once each at their prepared anchor in one batch', async () => {
+    const api = await import('../api/native-renderer');
+    const { createLayer } = await import('../types');
+    const submit = vi.spyOn(api, 'submitNativeRendererCommands').mockResolvedValue({ applied: 1, dropped: 0, errors: [] } as any);
+    const sync = new NativeRendererSyncCtor() as any;
+    sync.running = true;
+    sync.startupReady = true;
+    const sources = [0, 1, 2].map(row => ({ id: `clip-${row}`, type: 'video' as const, src: `C:/show/${row}.mp4`,
+      durationSeconds: 12, videoWidth: 640, videoHeight: 360, isPlaying: true,
+      _nativePlaybackTimeSeconds: row, _nativePlaybackUpdatedAtMs: performance.now() - 500,
+      _nativePlaybackSeekSeq: 2 }));
+    const layers = [...sources, sources[0]].map((source, index) => ({ ...createLayer(`row-${index}`, 'Video', 'media'), visible: true, source }));
+    try {
+      // Also exercise the path where a scene sync has already recorded the
+      // transport: its urgent repeat must still use the exact prepared time.
+      sync.nativeVideoPlaybackCommandIfChanged(sources[0], 'video', Date.now(), { time: 0 });
+      await sync.syncUrgentVideoSources(640, 360, layers, sources.map(source => source.id));
+      expect(submit).toHaveBeenCalledOnce();
+      const commands = submit.mock.calls[0][0];
+      const playback = commands.filter(command => command.type === 'set_media_source_playback') as any[];
+      expect(playback.map(command => [command.source_id, command.time_seconds])).toEqual([['clip-0', 0], ['clip-1', 1], ['clip-2', 2]]);
+      expect(new Set(playback.map(command => command.clock_time_seconds)).size).toBe(1);
+      expect(commands.filter(command => command.type === 'bind_media_source')).toHaveLength(4);
+      expect(commands.at(-1)?.type).toBe('present');
+    } finally { submit.mockRestore(); }
+  });
+
   it('uses the monotonic clock for playback and the exact anchor for preroll', () => {
     const sync = new NativeRendererSyncCtor() as any;
     const clock = vi.spyOn(performance, 'now').mockReturnValue(2500);

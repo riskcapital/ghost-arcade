@@ -1196,7 +1196,14 @@ fn run_hardware_stream(
     // A three-frame ring is enough to bridge a scheduling tick, and prevents
     // the first large-alpha streams reserving the whole budget before their
     // peers can prepare. Native inter-frame decoders retain their usual ring.
-    let requested_capacity = if backend_id == 5 { capacity.min(3) } else { capacity };
+    // Windows retains both the decoder image and an RGB bridge per frame.
+    // A speculative four-frame ring plus opening history used ~64 MB even
+    // for 720p and exhausted the pool after seven clips. Two queued frames
+    // cover the handoff; the persistent decoder refills the ring on playback.
+    // Keep the larger ring for cold live starts and the other platforms.
+    let requested_capacity = if cfg!(target_os = "windows") && capacity <= 4 {
+        capacity.min(2)
+    } else if backend_id == 5 { capacity.min(3) } else { capacity };
     let mut capacity = requested_capacity;
     let mut accounted_surface_bytes = 0u64;
     let mut last_history_growth_generation = None;

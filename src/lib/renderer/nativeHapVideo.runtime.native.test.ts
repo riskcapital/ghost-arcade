@@ -6,7 +6,8 @@ import { createRequire } from 'node:module';
 import { createInterface } from 'node:readline';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { closeNativeTestCore, hardwareTestPlatform as platform } from './nativeHardwareTestPlatform';
-const ffmpeg = createRequire(import.meta.url)('ffmpeg-static');
+const require = createRequire(import.meta.url);
+let ffmpeg = require('ffmpeg-static');
 const binary = platform.binary;
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
 type Command = Record<string, unknown>;
@@ -85,7 +86,8 @@ const testSuite = platform.runnable ? describe : describe.skip;
 testSuite('HAP compressed textures through native output', () => {
   let directory: string;
   const fixtures = new Map<string, {uri:string; reference:Buffer}>();
-  beforeAll(() => {
+  beforeAll(async () => {
+    ffmpeg = await require('../../../electron/conversion-ffmpeg.cjs').resolveConversionFfmpeg(ffmpeg, 'hap');
     directory = mkdtempSync(join(tmpdir(), 'ghost-hap-gpu-'));
     const raw=Buffer.alloc(64*64*4*25);
     for(let frame=0;frame<25;frame++) for(let p=0;p<64*64;p++) {

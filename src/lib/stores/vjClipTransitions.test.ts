@@ -6,6 +6,32 @@ import { createVJClipTransitions, effectiveClipTransition, normalizedTransitionD
 const clip = (id: string): VJClip => ({ id, name: id, type: 'video', src: `/show/${id}.mp4`, _nativePlaybackSeekSeq: 7 });
 
 describe('VJ clip transition lifecycle', () => {
+  it('publishes a three-row column together when readiness replies arrive out of order', () => {
+    const store = createVJClipTransitions();
+    const entries = [0, 1, 2].map(row => store.begin('A', row, clip(`old-${row}`), clip(`new-${row}`),
+      1, 'dissolve', undefined, undefined, 42)!);
+    const seen: Array<Array<number | null>> = [];
+    const unsubscribe = store.subscribe(state => seen.push([...state.values()].map(entry => entry.startedAtMs)));
+    expect(store.markReady('A', 2, entries[2].token, 100)).toBe(false);
+    expect(store.markReady('A', 0, entries[0].token, 110)).toBe(false);
+    expect(seen).toEqual([[null, null, null]]);
+    expect(store.markReady('A', 1, entries[1].token, 120)).toBe(true);
+    expect(seen).toEqual([[null, null, null], [120, 120, 120]]);
+    unsubscribe();
+  });
+
+  it('does not let an old column readiness reply start a replacement or block surviving rows', () => {
+    const store = createVJClipTransitions();
+    const a = store.begin('A', 0, clip('a'), clip('b'), 1, 'wipe', undefined, undefined, 1)!;
+    const b = store.begin('A', 1, clip('c'), clip('d'), 1, 'wipe', undefined, undefined, 1)!;
+    store.markReady('A', 0, a.token, 10);
+    const replacement = store.begin('A', 1, clip('d'), clip('e'), 1, 'wipe')!;
+    expect(store.markReady('A', 1, b.token, 20)).toBe(false);
+    expect(store.markReady('A', 0, a.token, 20)).toBe(true);
+    expect(get(store).get('A:1')?.startedAtMs).toBeNull();
+    expect(store.markReady('A', 1, replacement.token, 30)).toBe(true);
+  });
+
   it('holds a queued fade until its native receipt and protects a replacement', () => {
     const store=createVJClipTransitions();
     const entry=store.begin('A',0,clip('a'),{...clip('b'),isPlaying:false},1,'dissolve',undefined,'queued-1')!;

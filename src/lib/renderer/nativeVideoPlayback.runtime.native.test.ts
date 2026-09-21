@@ -1,5 +1,5 @@
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, rmSync, copyFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
@@ -124,6 +124,89 @@ nativeDescribe('native video startup and handoff', () => {
         .toBeGreaterThanOrEqual(before.native_video_sessions.find((s: any) => s.source_id === 'clip').frames_presented);
     } finally { await rpc.close(); }
   });
+
+  it('does not resurrect evicted prerolls and churn the Windows decoder pool', async () => {
+    const rpc = core();
+    try {
+      await start(rpc);
+      for (let row = 0; row < 17; row++) {
+        await rpc.commands([layer(`paused-${row}`),
+          { type: 'set_media_source_playback', ...playback(`paused-${row}`), paused: true },
+          { ...bind(`paused-${row}`), layer_id: `paused-${row}` }]);
+      }
+      for (let index = 0; index < 16; index++) await rpc.send('prefetch_media', playback(`library:next-${index}:g1`));
+      const before = await waitUntil(() => rpc.send('status'), status =>
+        status.native_video_sessions.length === 32 && status.native_video_sessions
+          .filter((s: any) => s.source_id.startsWith('library:'))
+          .every((s: any) => s.state === 'prerolled'), 'bounded pool prepared');
+      await sleep(500);
+      const after = await rpc.send('status');
+      expect(after.native_video_session_evictions).toBe(before.native_video_session_evictions);
+      expect(after.native_video_sessions).toHaveLength(32);
+      expect(after.native_video_sessions.filter((s: any) => s.source_id.startsWith('library:')).every((s: any) => s.state === 'prerolled')).toBe(true);
+    } finally { await rpc.close(); }
+  }, 20000);
+
+  it('restarts all three column rows from prepared frames without independent decoder seeks', async () => {
+    const rpc = core();
+    try {
+      await start(rpc);
+      const rows = [0, 1, 2];
+      const launch = (generation: number) => rows.flatMap(row => [
+        layer(`row-${row}`),
+        { type: 'set_media_source_playback', ...playback(`clip-${row}`), seek_generation: generation, seq: generation, paused: false },
+        { ...bind(`clip-${row}`), layer_id: `row-${row}` },
+      ]);
+      for (const row of rows) await arm(rpc, `library:clip-${row}:g1`);
+      await rpc.commands(launch(1));
+      for (const row of rows) await arm(rpc, `library:clip-${row}:g2`);
+      await rpc.commands(launch(2));
+      // Inspect immediately after the one command batch, without polling for
+      // stragglers. All three must have presented a frame of the new seek.
+      const status = await rpc.send('status');
+      const playing = status.native_video_sessions.filter((session: any) => session.state === 'playing');
+      expect(playing).toHaveLength(3);
+      expect(playing.every((session: any) => session.seek_generation === 2 && session.frames_presented > 0)).toBe(true);
+      expect(status.native_video_sessions.filter((session: any) => session.source_id.startsWith('library:'))).toHaveLength(0);
+      const ready = await Promise.all(rows.map(row => rpc.send('get_source_frame_readiness', { source_id: `clip-${row}`, seek_generation: 2 })));
+      expect(ready.every(result => result.ready)).toBe(true);
+    } finally { await rpc.close(); }
+  }, 20000);
+
+  it('keeps a twelve-video grid warm and launches its oldest column without cold decoders', async () => {
+    const rpc = core('hardware');
+    try {
+      await start(rpc);
+      const clips = Array.from({ length: 12 }, (_, index) => {
+        const file = join(directory, `grid-${index}.mp4`);
+        copyFileSync(uri, file);
+        return { ...playback(`clip-${index}`), uri: file };
+      });
+      for (const [index, clip] of clips.entries()) {
+        const id = `library:grid-${index}:g1`;
+        await rpc.send('prefetch_media', { ...clip, source_id: id });
+        await waitUntil(() => rpc.send('status'), s => s.native_video_sessions.some(
+          (v: any) => v.source_id === id && v.state === 'prerolled'), 'grid preroll');
+      }
+      expect((await rpc.send('status')).native_video_sessions.filter((s: any) => s.state === 'prerolled')).toHaveLength(12);
+      // Row-major loading made the first column's earlier rows the oldest
+      // preparations. Unique URIs prevent accidentally claiming another clip.
+      for (const column of [0, 1, 2, 3]) {
+        const incoming = [clips[column], clips[4 + column], clips[8 + column]];
+        await rpc.commands(incoming.flatMap((clip, row) => [layer(`grid-row-${row}`),
+          { type: 'set_media_source_playback', ...clip, paused: false },
+          { ...bind(clip.source_id), uri: clip.uri, layer_id: `grid-row-${row}` },
+        ]));
+        const ready = await Promise.all(incoming.map(clip => rpc.send('get_source_frame_readiness', {
+          source_id: clip.source_id, seek_generation: 1,
+        })));
+        expect(ready.every(value => value.ready)).toBe(true);
+      }
+      const status = await rpc.send('status');
+      expect(status.native_video_hardware_fallbacks).toBe(0);
+      expect(status.native_video_frame_decode_failures).toBe(0);
+    } finally { await rpc.close(); }
+  }, 30000);
 
   it('does not claim preroll from a different playhead position', async () => {
     const rpc = core();

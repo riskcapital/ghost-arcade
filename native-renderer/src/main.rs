@@ -140,7 +140,10 @@ const NATIVE_VIDEO_DECODE_PUMP_WINDOW_FRAMES: u32 = 12;
 // texture-codec streams need independent clocks even when hardware decoders
 // on a particular GPU reach their throughput limit sooner.
 const NATIVE_VIDEO_SESSION_MAX_PLAYING: usize = 16;
-const NATIVE_VIDEO_SESSION_MAX_ARMED: usize = 8;
+// A full four-row/four-column grid needs sixteen preparations, in addition
+// to paused on-stage sources. The shared byte budget still bounds residency.
+const NATIVE_LIBRARY_SESSION_CAP: usize = 16;
+const NATIVE_VIDEO_SESSION_MAX_ARMED: usize = NATIVE_VIDEO_SESSION_MAX_PLAYING + NATIVE_LIBRARY_SESSION_CAP;
 const NATIVE_VIDEO_FRAME_INTERVAL: Duration = Duration::from_nanos(16_666_667);
 const SOURCE_FRAME_FORMAT_FALLBACK: wgpu::TextureFormat = wgpu::TextureFormat::Rgba8Unorm;
 const SOURCE_FRAME_FORMAT_HDR: wgpu::TextureFormat = wgpu::TextureFormat::Rgba16Float;
@@ -15580,16 +15583,20 @@ impl App {
             .iter()
             .filter(|(source_id, state)| {
                 state.playing == playing
-                    && !self.scene_layers.values().any(|layer| layer.source_id.as_deref() == Some(source_id.as_str()))
-                    && !self
-                        .pending_media_bindings
-                        .values()
-                        .any(|binding| binding.source_id == **source_id)
+                    && !self.media_source_is_referenced(source_id)
+                    && !self.prepared_launch_sources.get(*source_id).is_some_and(|expires| *expires > Instant::now())
             })
             .min_by_key(|(_, state)| state.last_used_frame)
             .map(|(source_id, _)| source_id.clone())
         {
             self.native_video_streams.remove(&source_id);
+            // Retiring only the decoder leaves an active transport record.
+            // The decode pump walks those records every frame and would
+            // immediately recreate this session, evicting another preroll.
+            // This churn is especially expensive for Media Foundation.
+            self.media_sources.remove(&source_id);
+            self.release_source_frame_slot(&source_id);
+            self.source_frames.remove(&source_id);
             self.stats.native_video_session_evictions =
                 self.stats.native_video_session_evictions.saturating_add(1);
             return true;
@@ -15631,6 +15638,47 @@ impl App {
             .get(source_id)
             .filter(|stream_state| stream_state.signature == signature)
             .map(|stream_state| (stream_state.playing, stream_state.seek_generation));
+        // Prefer prepared frames to seeking a running decoder on a retrigger.
+        // A column must not wait for three independent hardware seeks when
+        // its next generations are already buffered. Unchanged transports
+        // retain their current session; cold preparations retain their work.
+        if let Some(warm_source_id) = self
+            .native_video_streams
+            .iter()
+            .filter(|(candidate_id, candidate)| {
+                existing_stream_state.map_or(true, |(_, generation)| generation != state.seek_generation)
+                    && !source_id.starts_with("library:")
+                    && candidate_id.starts_with("library:")
+                    && !candidate.playing
+                    && candidate.signature == signature
+                    && (existing_stream_state.is_none() || candidate.stream.buffered_frames() > 0)
+                    && (candidate.start_time_seconds - state.playback_time_seconds).abs() < 0.001
+            })
+            .max_by_key(|(_, candidate)| candidate.stream.buffered_frames())
+            .map(|(candidate_id, _)| candidate_id.clone())
+            && let Some(mut warm) = self.native_video_streams.remove(&warm_source_id)
+        {
+            if playing && existing_stream_state.map_or(true, |(was_playing, _)| !was_playing)
+                && !self.evict_native_video_session_for(true) {
+                self.native_video_streams.insert(warm_source_id, warm);
+                self.stats.native_video_frame_decode_last_error = "playing video session limit reached".to_string();
+                return;
+            }
+            warm.playing = playing;
+            warm.seek_generation = state.seek_generation;
+            warm.last_used_frame = self.stats.frames_presented;
+            warm.next_frame_at = Instant::now();
+            warm.triggered_at = playing.then(Instant::now);
+            warm.stream.set_playing(playing);
+            // Removing only the decoder leaves its library transport record
+            // behind; the next pump would resurrect that consumed session.
+            self.media_sources.remove(&warm_source_id);
+            self.native_video_streams
+                .insert(source_id.to_string(), warm);
+            return;
+        }
+
+
         if let Some((was_playing, existing_seek_generation)) = existing_stream_state {
             if existing_seek_generation != state.seek_generation {
                 if let Some(session) = self.native_video_streams.get_mut(source_id) {
@@ -15695,7 +15743,6 @@ impl App {
         // Hard cap on the armed pool: beyond it, paused decode sessions cost
         // more in pump time than a cold start would. Evict the least recently
         // touched armed session first.
-        const NATIVE_LIBRARY_SESSION_CAP: usize = 6;
         if source_id.starts_with("library:") {
             let mut armed = self
                 .native_video_streams
@@ -15714,41 +15761,6 @@ impl App {
             }
         }
 
-        // Claim a compatible armed session instead of spawning ffmpeg on
-        // the trigger path. Even a session still preparing its first frame
-        // is ahead of a fresh process; preserve that work on an early hit.
-        if let Some(warm_source_id) = self
-            .native_video_streams
-            .iter()
-            .filter(|(candidate_id, candidate)| {
-                !source_id.starts_with("library:")
-                    && candidate_id.starts_with("library:")
-                    && !candidate.playing
-                    && candidate.signature == signature
-                    && (candidate.start_time_seconds - state.playback_time_seconds).abs() < 0.001
-            })
-            .max_by_key(|(_, candidate)| candidate.stream.buffered_frames())
-            .map(|(candidate_id, _)| candidate_id.clone())
-            && let Some(mut warm) = self.native_video_streams.remove(&warm_source_id)
-        {
-            if playing && !self.evict_native_video_session_for(true) {
-                self.native_video_streams.insert(warm_source_id, warm);
-                self.stats.native_video_frame_decode_last_error = "playing video session limit reached".to_string();
-                return;
-            }
-            warm.playing = playing;
-            warm.seek_generation = state.seek_generation;
-            warm.last_used_frame = self.stats.frames_presented;
-            warm.next_frame_at = Instant::now();
-            warm.triggered_at = playing.then(Instant::now);
-            warm.stream.set_playing(playing);
-            // Removing only the decoder leaves its library transport record
-            // behind; the next pump would resurrect that consumed session.
-            self.media_sources.remove(&warm_source_id);
-            self.native_video_streams
-                .insert(source_id.to_string(), warm);
-            return;
-        }
 
         if !self.evict_native_video_session_for(playing) {
             self.stats.native_video_frame_decode_last_error = "video session limit reached; active sessions preserved".to_string();

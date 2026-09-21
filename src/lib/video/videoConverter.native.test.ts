@@ -1,4 +1,4 @@
-import { afterAll, describe, expect, it } from 'vitest';
+import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { createRequire } from 'node:module';
 import { execFileSync } from 'node:child_process';
 import fs from 'node:fs';
@@ -6,7 +6,8 @@ import os from 'node:os';
 import path from 'node:path';
 const require = createRequire(import.meta.url);
 const { formats, conversionOutputArgs, stageConversionOutput, sequenceConcatText, probeConversionInput } = require('../../../electron/video-converter-options.cjs');
-const ffmpeg = require('ffmpeg-static');
+let ffmpeg = require('ffmpeg-static');
+beforeAll(async () => { ffmpeg = await require('../../../electron/conversion-ffmpeg.cjs').resolveConversionFfmpeg(ffmpeg, 'hap'); });
 const { inspectVideoForImport } = require('../../../electron/video-import.cjs');
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'ghost-converter-test-'));
 afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));

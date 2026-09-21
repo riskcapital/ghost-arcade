@@ -4899,7 +4899,7 @@ function flushPendingLibraryVideoArms(sync: NativeRendererSync): void {
  * Fire-and-forget and safe to over-call: re-arms are debounced per item, and
  * core-side the armed-session cap plus orphan GC bound the pool.
  */
-export function armNativeLibraryVideo(item: NativeLibraryVideoArmRequest): void {
+export function armNativeLibraryVideo(item: NativeLibraryVideoArmRequest, force = false): void {
   if (!item?.id || !item?.src) return;
   const armKey = nativeLibraryArmKey(item);
   for (const [key, pending] of pendingLibraryVideoArms) {
@@ -4910,7 +4910,7 @@ export function armNativeLibraryVideo(item: NativeLibraryVideoArmRequest): void 
   }
   pendingLibraryVideoArms.set(armKey, item);
   if (activeNativeRendererSync) {
-    prefetchArmedLibraryVideo(activeNativeRendererSync, item);
+    prefetchArmedLibraryVideo(activeNativeRendererSync, item, force);
   }
 }
 
@@ -5345,7 +5345,10 @@ export class NativeRendererSync {
   private decodePreviewCacheMb = 128;
   private decodeUseOutputResolution = true;
   private decodeUploadQueueCapMb = 256;
-  private decodeHandoffByteCapMb = 512;
+  // Windows owns RGB bridge textures in addition to decoder surfaces. Keep
+  // room for a prepared grid plus the playing rows; allocation stays lazy
+  // and the core enforces this shared limit across all sessions.
+  private decodeHandoffByteCapMb = isWindows ? 1024 : 512;
   private decodeHandoffPredecodeShedPct = 90;
   private decodePredecodeEstimateCacheCapEntries = 8192;
   private mediaDropCommandPressurePct = 90;
@@ -8036,6 +8039,7 @@ export class NativeRendererSync {
     const renderClock = this.renderClockCommand();
     const now = Date.now();
     const commands: RendererCommand[] = [renderClock];
+    const handedOffSources = new Set<string>();
 
     for (const [index, layer] of layers.entries()) {
       if (!layer.visible) continue;
@@ -8082,12 +8086,19 @@ export class NativeRendererSync {
       const sourceKey = this.sourceCacheKey(src.id, src.src);
       handoffSourceKeys.add(sourceKey);
       this.prefetchedSources.add(sourceKey);
-      commands.push(this.nativeVideoPlaybackCommandIfChanged(
-        src,
-        'video',
-        now,
-        renderClock,
-      ) ?? this.nativeVideoPlaybackCommand(src, 'video', now, renderClock));
+      // A source may feed several graph inputs. Restart it once, at its
+      // exact prepared anchor; predicting elapsed time here misses the warm
+      // session's seek position and can turn a column click into cold seeks.
+      if (!handedOffSources.has(src.id)) {
+        handedOffSources.add(src.id);
+        commands.push(this.nativeVideoPlaybackCommandIfChanged(
+          src,
+          'video',
+          now,
+          renderClock,
+        ) ?? this.nativeVideoPlaybackCommand(src, 'video', now, renderClock,
+          Number.isFinite(src._nativePlaybackTimeSeconds) ? src._nativePlaybackTimeSeconds : undefined));
+      }
       commands.push({
         type: 'bind_media_source',
         layer_id: layer.id,
