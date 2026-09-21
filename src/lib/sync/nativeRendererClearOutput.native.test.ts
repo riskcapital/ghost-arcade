@@ -169,3 +169,43 @@ describe('native renderer sync clears the output when the scene empties', () => 
     expect(sync.pendingSync).toBe(false);
   });
 });
+
+
+describe('native scene ownership across editor and workspace changes', () => {
+  it('removes stale core layers after remount even with an empty editor diff cache', async () => {
+    const sync = new NativeRendererSyncCtor() as any;
+    sync.running = true; sync.startupReady = true;
+    coreLayers = [{ layer_id: '__vj-mix__' }, { layer_id: 'old-mapping-media' }];
+    await sync.flushOnce(1920, 1080, []);
+    const removals = lastSubmittedBatch()!.filter(c => c.type === 'remove_layer').map(c => c.layer_id);
+    expect(removals).toEqual(expect.arrayContaining(['__vj-mix__', 'old-mapping-media']));
+    expect(lastSubmittedBatch()!.at(-1).type).toBe('present');
+  });
+  it('replaces an old VJ scene with Mapping media without removing the incoming layer', async () => {
+    const { createLayer } = await import('../types');
+    const sync = new NativeRendererSyncCtor() as any;
+    sync.running = true; sync.startupReady = true;
+    sync.nativeFeatureFlags = { native_static_image_decode: true };
+    coreLayers = [{ layer_id: '__vj-mix__' }, { layer_id: 'vj-layer-0' }, { layer_id: 'mapping-media' }];
+    const media = createLayer('mapping-media', 'Mapping media', 'media');
+    media.source = { id: 'mapping-image', type: 'image', src: '/mapping.png', name: 'Mapping image', width: 1920, height: 1080 } as any;
+    await sync.flushOnce(1920, 1080, [media]);
+    const commands = lastSubmittedBatch()!;
+    expect(commands).toContainEqual({ type: 'remove_layer', layer_id: '__vj-mix__' });
+    expect(commands).toContainEqual({ type: 'remove_layer', layer_id: 'vj-layer-0' });
+    expect(commands.some(c => c.type === 'remove_layer' && c.layer_id === media.id)).toBe(false);
+    expect(commands.some(c => c.type === 'bind_media_source' && c.layer_id === media.id && c.source_id === 'mapping-image')).toBe(true);
+  });
+  it('retains removal ownership when reconciliation invalidates a geometry snapshot', async () => {
+    const sync = new NativeRendererSyncCtor() as any;
+    sync.running = true; sync.startupReady = true; sync.nativeSceneAdopted = true;
+    sync.nativeLayerReconcileAt = -Infinity;
+    sync.lastLayers.set('vj-layer-0', { geometrySig: '', visible: true, opacity: 1 });
+    coreLayers = [{ layer_id: 'vj-layer-0', visible: false, opacity: 1 }];
+    await sync.reconcileNativeLayerGeometry();
+    expect(sync.lastLayers.has('vj-layer-0')).toBe(false);
+    coreLayers = [];
+    await sync.flushOnce(1920, 1080, []);
+    expect(lastSubmittedBatch()).toContainEqual({ type: 'remove_layer', layer_id: 'vj-layer-0' });
+  });
+});

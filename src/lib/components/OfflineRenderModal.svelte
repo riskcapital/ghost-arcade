@@ -238,8 +238,8 @@
 <svelte:window onkeydown={onKey} />
 
 {#if isOpen}
-<div class="modal-backdrop" onclick={closeAndReset} role="presentation"></div>
-<div class="modal-shell" role="dialog" aria-label="Render to video">
+<div data-help-page="frame-locked-export" class="modal-backdrop" onclick={closeAndReset} role="presentation"></div>
+<div data-help-page="frame-locked-export" class="modal-shell" role="dialog" aria-label="Render to video">
   <header class="modal-head">
     <h2>Render to Video</h2>
     <button class="close-btn" onclick={closeAndReset} disabled={isRunning} title={isRunning ? 'Cancel before closing' : 'Close'}>×</button>

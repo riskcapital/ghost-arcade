@@ -116,7 +116,7 @@
   ];
 </script>
 
-<div class="inspector">
+<div data-help-page="masks-slices" class="inspector">
   <!-- Identity & target ─────────────────────────────────────────── -->
   <section class="sec">
     <input

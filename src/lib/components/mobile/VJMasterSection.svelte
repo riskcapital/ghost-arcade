@@ -18,7 +18,7 @@
   export let showLiveButton: boolean = false;
 </script>
 
-<div class="master-section" class:compact>
+<div data-help-page="mobile-control" class="master-section" class:compact>
   <div class="master-fader-row">
     <span class="master-label">MASTER</span>
     <div class="master-fader">

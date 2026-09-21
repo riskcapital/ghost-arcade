@@ -49,7 +49,7 @@
 </script>
 
 {#if state.isOpen}
-  <div class="vj-seq-tray" class:minimized={state.minimized}>
+  <div data-help-page="clip-launcher" class="vj-seq-tray" class:minimized={state.minimized}>
     <div class="vj-seq-head">
       <div class="vj-seq-left">
         <span class="vj-seq-title">LAYER SEQUENCER</span>

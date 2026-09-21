@@ -387,7 +387,7 @@
 </script>
 
 {#if content && layerId && shaderDef}
-  <div class="gpu-panel">
+  <div data-help-page="gpu-instruments" class="gpu-panel">
     <div class="sec-label">
       Shader
       <span class="active-name">{shaderDef.label}</span>
@@ -651,9 +651,9 @@
        as a 2D image / video. The browser sniffs mime as
        application/octet-stream for those formats so we have to list
        extensions explicitly. -->
-  <input type="file" bind:this={fileInput} accept="image/*,video/*,.ply,.splat" onchange={onFileSelected} style="display:none" />
+  <input data-help-page="gpu-instruments" type="file" bind:this={fileInput} accept="image/*,video/*,.ply,.splat" onchange={onFileSelected} style="display:none" />
 {:else}
-  <div class="empty">Select a GPU layer.</div>
+  <div data-help-page="gpu-instruments" class="empty">Select a GPU layer.</div>
 {/if}
 
 <style>

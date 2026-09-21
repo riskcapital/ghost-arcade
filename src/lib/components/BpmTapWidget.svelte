@@ -56,7 +56,7 @@
 </script>
 
 {#if alwaysShow || $audioStore.isActive}
-  <div class="bpm-tap-widget">
+  <div data-help-page="midi-audio" class="bpm-tap-widget">
     <button class="bpm-tap-btn" onclick={handleTap} title="Tap to set tempo manually">TAP</button>
     <label class="bpm-readout" class:confident={$audioStore.bpmConfidence > 0.5}>
       <input class="bpm-input" type="text" inputmode="text" maxlength="256" placeholder="—"

@@ -465,7 +465,7 @@
 </script>
 
 <!-- svelte-ignore a11y-no-static-element-interactions -->
-<div
+<div data-help-page="projection-mapping"
   class="custom-shape-handles"
   class:draw-mode={isCustom && !isClosed}
   class:remove-mode={isClosed && penMode === 'remove'}

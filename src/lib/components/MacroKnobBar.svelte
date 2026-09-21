@@ -198,7 +198,7 @@
 
 <svelte:window onclick={onWindowClick} />
 
-<div class="macro-bar">
+<div data-help-page="macros-snapshots" class="macro-bar">
   {#each $macros.macros as m (m.id)}
     {@const fxCount = m.effects.length}
     {@const assignmentCount = m.assignments?.length ?? 0}
@@ -273,13 +273,13 @@
 </div>
 
 {#if chainWarning}
-  <div class="macro-chain-warning" role="status">Output effects: {chainWarning}</div>
+  <div data-help-page="macros-snapshots" class="macro-chain-warning" role="status">Output effects: {chainWarning}</div>
 {/if}
 
 {#if editPopoverFor}
   {@const m = $macros.macros.find(x => x.id === editPopoverFor)}
   {#if m}
-    <div class="macro-popover" bind:this={popoverEl} style="left:{popoverX}px;top:{popoverY}px">
+    <div data-help-page="macros-snapshots" class="macro-popover" bind:this={popoverEl} style="left:{popoverX}px;top:{popoverY}px">
       <div class="macro-popover-head">
         <input
           class="macro-popover-name"

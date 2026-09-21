@@ -4,7 +4,7 @@
   import { controllerLightsStore } from '../midi/controllerLightsStore';
   import { controllerProfiles } from '../midi/controllerProfiles';
 </script>
-<section class="controller-lights">
+<section data-help-page="midi-audio" class="controller-lights">
   <h3>Controller lights</h3>
   <label><input type="checkbox" checked={$controllerLightsStore.enabled}
     onchange={(e) => midiManager.enableControllerLights(e.currentTarget.checked)} /> Enable controller lights</label>

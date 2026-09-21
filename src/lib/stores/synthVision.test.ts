@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, vi } from 'vitest';
 import { get } from 'svelte/store';
 import { synthVisionStore, SV_SHADER_DEFS } from './synthVision';
 import type { Effect } from '../types';
@@ -72,4 +72,22 @@ describe('synthVision store', () => {
       expect(s.worldParams[worldIdx]).toBeDefined();
     });
   });
+});
+
+it('Tab randomization chooses a discrete world color scheme', () => {
+  const random = vi.spyOn(Math, 'random').mockReturnValue(0.5);
+  try {
+    synthVisionStore.doFullRandom();
+    const state = get(synthVisionStore);
+    expect(state.worldParams[state.layers[state.focus].world].palette).toBe(4 / 7);
+  } finally { random.mockRestore(); }
+});
+it('keeps color schemes independent for each world and restores saved parameters', () => {
+  synthVisionStore.setWorldParam(0, 'palette', 1);
+  synthVisionStore.setWorldParam(1, 'palette', 2 / 7);
+  const saved = JSON.parse(JSON.stringify(get(synthVisionStore).worldParams));
+  synthVisionStore.reset();
+  synthVisionStore.loadSerializable({ worldParams: saved });
+  expect(get(synthVisionStore).worldParams[0].palette).toBe(1);
+  expect(get(synthVisionStore).worldParams[1].palette).toBe(2 / 7);
 });

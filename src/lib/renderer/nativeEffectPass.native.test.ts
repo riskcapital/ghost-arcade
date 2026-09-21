@@ -414,6 +414,7 @@ describe('Native effect-pass template', () => {
       0, 0, 0, 0,
       0, 0, 0, 0,
     0, 0, 0, 0,
+      0, 0, 1, 1, // Default full-source bounds.
     ]);
   });
 
@@ -444,6 +445,7 @@ describe('Native effect-pass template', () => {
       0.85, 1, 0, 0,
       0, 0, 0, 0,
     0, 0, 0, 0,
+      0, 0, 1, 1, // Default full-source bounds.
     ]);
   });
 
@@ -458,7 +460,7 @@ describe('Native effect-pass template', () => {
     }, buildNativeCubeLutPrecompileCommand()]);
   });
 
-  it('packs a stable 80-byte effect uniform block', () => {
+  it('packs a stable 112-byte effect uniform block', () => {
     expect(packNativeEffectPassUniforms({
       sourceId: 'src',
       targetSourceId: 'dst',
@@ -496,6 +498,7 @@ describe('Native effect-pass template', () => {
       0,
       0,
       0,
+      0, 0, 1, 1, // Default full-source bounds.
     ]);
 
     expect(packNativeEffectPassUniforms({
@@ -545,6 +548,7 @@ describe('Native effect-pass template', () => {
       0,
       0,
       0,
+      0, 0, 1, 1, // Default full-source bounds.
     ]);
 
     expect(packNativeEffectPassUniforms({
@@ -594,6 +598,7 @@ describe('Native effect-pass template', () => {
       0,
       0,
       0,
+      0, 0, 1, 1, // Default full-source bounds.
     ]);
   });
 
@@ -639,6 +644,7 @@ describe('Native effect-pass template', () => {
       0,
       0,
       0,
+      0, 0, 1, 1, // Default full-source bounds.
     ]);
 
     expect(packNativeEffectPassUniforms({
@@ -688,6 +694,7 @@ describe('Native effect-pass template', () => {
       0,
       0,
       0,
+      0, 0, 1, 1, // Default full-source bounds.
     ]);
 
     expect(packNativeEffectPassUniforms({
@@ -733,6 +740,7 @@ describe('Native effect-pass template', () => {
       0,
       0,
       0,
+      0, 0, 1, 1, // Default full-source bounds.
     ]);
   });
 
@@ -782,6 +790,7 @@ describe('Native effect-pass template', () => {
       0,
       0,
       0,
+      0, 0, 1, 1, // Default full-source bounds.
     ]);
   });
 
@@ -831,6 +840,7 @@ describe('Native effect-pass template', () => {
       0,
       0,
       0,
+      0, 0, 1, 1, // Default full-source bounds.
     ]);
     expect(packNativeEffectPassUniforms({
       sourceId: 'src',
@@ -875,6 +885,7 @@ describe('Native effect-pass template', () => {
       0,
       0,
       0,
+      0, 0, 1, 1, // Default full-source bounds.
     ]);
   });
 
@@ -918,6 +929,7 @@ describe('Native effect-pass template', () => {
       0,
       0,
       0,
+      0, 0, 1, 1, // Default full-source bounds.
     ]);
     expect(packNativeEffectPassUniforms({
       sourceId: 'src',
@@ -959,6 +971,7 @@ describe('Native effect-pass template', () => {
       0,
       0,
       0,
+      0, 0, 1, 1, // Default full-source bounds.
     ]);
     expect(packNativeEffectPassUniforms({
       sourceId: 'src',
@@ -1002,6 +1015,7 @@ describe('Native effect-pass template', () => {
       0,
       0,
       0,
+      0, 0, 1, 1, // Default full-source bounds.
     ]);
     expect(packNativeEffectPassUniforms({
       sourceId: 'src',
@@ -1048,6 +1062,7 @@ describe('Native effect-pass template', () => {
       0,
       0,
       0,
+      0, 0, 1, 1, // Default full-source bounds.
     ]);
   });
 
@@ -1094,6 +1109,7 @@ describe('Native effect-pass template', () => {
       0,
       0,
       0,
+      0, 0, 1, 1, // Default full-source bounds.
     ]);
     expect(packNativeEffectPassUniforms({
       sourceId: 'src',
@@ -1140,6 +1156,7 @@ describe('Native effect-pass template', () => {
       0,
       0,
       0,
+      0, 0, 1, 1, // Default full-source bounds.
     ]);
   });
 
@@ -1188,6 +1205,7 @@ describe('Native effect-pass template', () => {
       0,
       0,
       0,
+      0, 0, 1, 1, // Default full-source bounds.
     ]);
 
     expect(packNativeEffectPassUniforms({
@@ -1230,6 +1248,7 @@ describe('Native effect-pass template', () => {
       0,
       0,
       0,
+      0, 0, 1, 1, // Default full-source bounds.
     ]);
   });
 
@@ -1278,6 +1297,7 @@ describe('Native effect-pass template', () => {
       0,
       0,
       0,
+      0, 0, 1, 1, // Default full-source bounds.
     ]);
 
     expect(packNativeEffectPassUniforms({
@@ -1324,6 +1344,7 @@ describe('Native effect-pass template', () => {
       0,
       0,
       0,
+      0, 0, 1, 1, // Default full-source bounds.
     ]);
   });
 
@@ -1371,6 +1392,7 @@ describe('Native effect-pass template', () => {
       0,
       0,
       0,
+      0, 0, 1, 1, // Default full-source bounds.
     ]);
 
     expect(packNativeEffectPassUniforms({
@@ -1418,6 +1440,7 @@ describe('Native effect-pass template', () => {
       0,
       0,
       0,
+      0, 0, 1, 1, // Default full-source bounds.
     ]);
 
     expect(packNativeEffectPassUniforms({
@@ -1463,6 +1486,7 @@ describe('Native effect-pass template', () => {
       0,
       0,
       0,
+      0, 0, 1, 1, // Default full-source bounds.
     ]);
 
     expect(packNativeEffectPassUniforms({
@@ -1510,6 +1534,7 @@ describe('Native effect-pass template', () => {
       0,
       0,
       0,
+      0, 0, 1, 1, // Default full-source bounds.
     ]);
 
     expect(packNativeEffectPassUniforms({
@@ -1556,6 +1581,7 @@ describe('Native effect-pass template', () => {
       0,
       0,
       0,
+      0, 0, 1, 1, // Default full-source bounds.
     ]);
 
     expect(packNativeEffectPassUniforms({
@@ -1599,6 +1625,7 @@ describe('Native effect-pass template', () => {
       0,
       0,
       0,
+      0, 0, 1, 1, // Default full-source bounds.
     ]);
 
     expect(packNativeEffectPassUniforms({
@@ -1644,6 +1671,7 @@ describe('Native effect-pass template', () => {
       0,
       0,
       0,
+      0, 0, 1, 1, // Default full-source bounds.
     ]);
 
     expect(packNativeEffectPassUniforms({
@@ -1688,6 +1716,7 @@ describe('Native effect-pass template', () => {
       0,
       0,
       0,
+      0, 0, 1, 1, // Default full-source bounds.
     ]);
   });
 
@@ -1710,7 +1739,7 @@ describe('Native effect-pass template', () => {
       expect.objectContaining({
         id: 'effect-pass:gpu:layer-a:effect:invert:uniform',
         kind: 'uniform',
-        byte_length: 96,
+        byte_length: 112,
         initial_f32: expect.arrayContaining([1280, 720, 3, 1 / 60, 1, 0.8, 1, 180]),
       }),
     ]);
@@ -3459,4 +3488,21 @@ describe('Native effect-pass template', () => {
       await rpc.close();
     }
   }, 30000);
+});
+
+
+describe('internal effect mix respects master opacity', () => {
+  it.each([
+    ['phase-lab', 'phaseLabMix'], ['diffusion-promist', 'diffMix'],
+    ['tape-dropout', 'tapeDropoutMix'], ['droste-recursive', 'drosteMix'],
+    ['topo-warp', 'twMix'], ['thermal-contour', 'tcMix'],
+  ] as const)('%s multiplies its wet mix by master opacity', (effect, parameter) => {
+    for (const opacity of [0, 0.25, 1]) {
+      const values = packNativeEffectPassUniforms({
+        sourceId: 'source', targetSourceId: 'target', effect,
+        mix: opacity, params: { [parameter]: 0.8 },
+      });
+      expect(values[6]).toBeCloseTo(0.8 * opacity);
+    }
+  });
 });

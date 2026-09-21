@@ -23,7 +23,7 @@
     return '#' + [keys.r, keys.g, keys.b].map(key => Math.round(Math.max(0, Math.min(1, value(effect, key, 1))) * 255).toString(16).padStart(2, '0')).join('');
   }
 </script>
-<details class="fx">
+<details data-help-page="vj-mode" class="fx">
   <summary>Effects <span>{group.effects.length}</span></summary>
   <p>Applied to the combined group before its level and blend.</p>
   {#if warning}<p class="warning" role="status">{warning}</p>{/if}

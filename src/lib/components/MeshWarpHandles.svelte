@@ -356,7 +356,7 @@
     : null;
 </script>
 
-<div
+<div data-help-page="projection-mapping"
   class="mesh-warp-handles"
   class:interaction-only={interactionOnly}
   bind:this={containerEl}

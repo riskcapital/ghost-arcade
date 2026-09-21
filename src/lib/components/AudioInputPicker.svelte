@@ -129,7 +129,7 @@
 
 <svelte:window onclick={handleWindowClick} />
 
-<div class="audio-input-picker" bind:this={pickerEl}>
+<div data-help-page="midi-audio" class="audio-input-picker" bind:this={pickerEl}>
   <!-- Mic button + device-picker chevron, grouped as one visual unit -->
   <div class="aip-mic-group">
     <button

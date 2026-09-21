@@ -252,8 +252,8 @@
 <svelte:window onkeydown={onKey} />
 
 {#if isOpen}
-  <div class="modal-backdrop" onclick={closeModal} role="presentation"></div>
-  <div class="modal-shell" role="dialog" aria-label="Video Converter">
+  <div data-help-page="performance" class="modal-backdrop" onclick={closeModal} role="presentation"></div>
+  <div data-help-page="performance" class="modal-shell" role="dialog" aria-label="Video Converter">
     <header class="modal-head">
       <div>
         <h2>Video Converter</h2>

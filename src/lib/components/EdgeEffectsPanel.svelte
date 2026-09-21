@@ -168,7 +168,7 @@
 </script>
 
 {#if $selectedLayer}
-  <div class="edge-effects-panel">
+  <div data-help-page="layers" class="edge-effects-panel">
     <div class="section-header-row">
       <span class="section-title">Edge Effects</span>
       {#if !$selectedLayer.edgeEffects}
@@ -211,7 +211,7 @@
             <input type="range" class="opacity-slider" min="0" max="1" step="0.05"
               value={effect.opacity}
               oninput={(e) => updateEffect(effect.id, { opacity: parseFloat((e.target as HTMLInputElement).value) })} />
-            <button class="btn-remove" onclick={() => project.removeEdgeEffect($selectedLayer.id, effect.id)}>&times;</button>
+            <button aria-label="Remove this edge effect" class="btn-remove" onclick={() => project.removeEdgeEffect($selectedLayer.id, effect.id)}>&times;</button>
           </div>
 
           {#if expandedEffectId === effect.id}

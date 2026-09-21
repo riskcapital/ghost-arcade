@@ -8,22 +8,22 @@
     onChange({ target: 'next', unit: 'beats', count: 4, ...value, ...patch });
   }
 </script>
-<div class="autopilot">
+<div data-help-page="clip-launcher" class="autopilot">
   <label>Autopilot
-    <select aria-label="Autopilot action" value={value?.target ?? 'none'}
+    <select aria-label="Autopilot action" data-help="Choose how this layer advances through its clips. Launch a clip to start; empty cells are skipped." value={value?.target ?? 'none'}
       onchange={(e) => e.currentTarget.value === 'none' ? onChange(undefined) : change({ target: e.currentTarget.value as AutopilotTarget })}>
       {#each autopilotTargets as target}<option value={target.value}>{target.label}</option>{/each}
     </select>
   </label>
   {#if value && value.target !== 'none'}
-    <label>After <input aria-label="Autopilot count" type="number" min="1" max="999" step="1" value={value.count}
+    <label>After <input aria-label="Autopilot count" data-help="Wait this many beats or video loops before advancing the layer." type="number" min="1" max="999" step="1" value={value.count}
       onchange={(e) => change({ count: Number(e.currentTarget.value) })} />
-      <select aria-label="Autopilot timing" value={value.unit} onchange={(e) => change({ unit: e.currentTarget.value as 'beats' | 'loops' })}>
+      <select aria-label="Autopilot timing" data-help="Beats follows the performance clock; Loops counts completed video loops. Use Beats for mixed media." value={value.unit} onchange={(e) => change({ unit: e.currentTarget.value as 'beats' | 'loops' })}>
         <option value="beats">beats</option><option value="loops">loops</option>
       </select>
     </label>
     {#if value.target === 'column'}
-      <label>Column <input aria-label="Autopilot target column" type="number" min="1" max={columns} value={(value.column ?? 0) + 1}
+      <label>Column <input aria-label="Autopilot target column" data-help="Choose the destination column for this layer when the autopilot interval completes." type="number" min="1" max={columns} value={(value.column ?? 0) + 1}
         onchange={(e) => change({ column: Math.max(0, Math.min(columns - 1, Number(e.currentTarget.value) - 1)) })} /></label>
     {/if}
     <p>Launch a clip to start. Continues across this layer; empty cells are skipped. Launches follow QUANT. Loops require video clips; use beats for mixed media. Held Piano clips wait for manual control.</p>

@@ -104,7 +104,7 @@
   }
 </script>
 
-<div class="snap-bank" class:compact class:top-row={topRow}>
+<div data-help-page="mobile-control" class="snap-bank" class:compact class:top-row={topRow}>
   {#if !topRow}
     <div class="bank-header">
       <span class="bank-label">SNAPS</span>

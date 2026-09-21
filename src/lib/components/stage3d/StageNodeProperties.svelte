@@ -79,7 +79,7 @@
 </script>
 
 {#if layer}
-<div class="props">
+<div data-help-page="stage-simulator" class="props">
   <header class="props-head">
     <div class="layer-name">{layer.name}</div>
     <span class="badge">screen</span>
@@ -248,7 +248,7 @@
   <button class="reset-btn" onclick={reset}>Reset 3D tweaks for this screen</button>
 </div>
 {:else}
-  <p class="missing">Screen no longer in the project.</p>
+  <p data-help-page="stage-simulator" class="missing">Screen no longer in the project.</p>
 {/if}
 
 <style>

@@ -16,7 +16,7 @@
 </script>
 
 {#if available}
-  <div class="midi-selector">
+  <div data-help-page="midi-audio" class="midi-selector">
     <select value={selectedId || ''} onchange={handleDeviceChange} title="MIDI Input Device">
       <option value="">No MIDI Device</option>
       {#each devices as device}

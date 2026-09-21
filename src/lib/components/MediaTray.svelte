@@ -3626,7 +3626,7 @@
 
 {#if !embedded}
 <!-- Toggle button -->
-<button class="tray-toggle" class:open={isOpen} onclick={toggleTray}>
+<button data-help-page="custom-shaders" class="tray-toggle" class:open={isOpen} onclick={toggleTray}>
   <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
     {#if isOpen}
       <path d="M9 18l6-6-6-6" />
@@ -3639,7 +3639,7 @@
 {/if}
 
 <!-- Slide-out tray -->
-<div class="media-tray" class:open={isOpen || embedded} class:embedded>
+<div data-help-page="custom-shaders" class="media-tray" class:open={isOpen || embedded} class:embedded>
   <div class="tray-header">
     <h3>Media Library</h3>
   </div>
@@ -4860,7 +4860,7 @@
 {#if showLoopOptions}
   {@const loopItem = videos.find(i => i.id === showLoopOptions)}
   {#if loopItem}
-    <div
+    <div data-help-page="custom-shaders"
       class="loop-options-popover"
       style="left: {loopPopoverPos.x}px; top: {loopPopoverPos.y}px; transform: translate(-50%, -100%);"
       onclick={(e) => e.stopPropagation()}
@@ -4912,7 +4912,7 @@
 
 <!-- Fixed-position timelapse popover -->
 {#if showTimelapsePopover}
-  <div
+  <div data-help-page="custom-shaders"
     class="timelapse-popover"
     style="left: {timelapsePopoverPos.x}px; top: {timelapsePopoverPos.y}px; transform: translate(-50%, -100%);"
     onclick={(e) => e.stopPropagation()}
@@ -5001,7 +5001,7 @@
   same "Zoom-style" chooser UX.
 -->
 {#if screenPickerOpen}
-  <div
+  <div data-help-page="custom-shaders"
     class="capture-picker-backdrop"
     onclick={closeScreenPicker}
     role="dialog"

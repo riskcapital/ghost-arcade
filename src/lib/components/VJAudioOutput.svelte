@@ -42,7 +42,7 @@
     });
     const timer = setInterval(() => { if (opened) void refresh(); }, 1500); return () => { clearInterval(timer); unsubscribe(); }; });
 </script>
-<div class="audio-output">
+<div data-help-page="midi-audio" class="audio-output">
   <button class="output-button" class:muted={$nativeAudioMaster.muted} aria-expanded={opened} onclick={open} title="Clip audio output and master volume">Audio Out <span>{$nativeAudioMaster.muted ? 'Muted' : `${Math.round($nativeAudioMaster.volume * 100)}%`}</span></button>
     <div bind:this={tray} popover="auto" class="output-panel" role="group" aria-label="Clip audio output"
       style:left="{left}px" style:top="{top}px" style:max-height="calc(100vh - {top + 8}px)"

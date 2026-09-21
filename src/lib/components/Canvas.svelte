@@ -113,6 +113,7 @@
     effectToNativeDescriptor,
     nativeEffectPassFromDescriptor,
   } from '$lib/sync/nativeRendererSync';
+  import { appendNativeVjMixCarrier, vjStageScreenLayers } from '$lib/renderer/vjCompositionNative';
   import { NATIVE_EFFECT_PASS_LIMIT } from '$lib/renderer/nativeEffectChainPolicy';
   import {
     captureNativeLayerSourceFrame,
@@ -1720,8 +1721,8 @@
       // opacity + blend, post-crossfade per row) into one source frame.
       // Mapping layers bound to "VJ Mix" (vjLayerIndex === -1) get this
       // carrier's source via resolveNativeGroupLayers, replacing the old
-      // lowest-active-row approximation. Opacity 0 — it never composites
-      // itself, it only keeps the mix frame rendering.
+      // lowest-active-row approximation. The processed carrier owns the
+      // visible VJ output; Stage mode hides it when presenting mapped slices.
       // Composition FX that the native effect-pass chain can actually run.
       //
       // nativeEffectPassesForLayer is all-or-nothing: one
@@ -1740,80 +1741,9 @@
         return usable.slice(0, NATIVE_EFFECT_PASS_LIMIT);
       };
 
-      const appendNativeVjMixCarrier = (list: Layer[]): Layer[] => {
-        type MixRowEntry = { layerId: string; opacity: number; blendMode: string };
-        const rowsByIdx = new Map<number, MixRowEntry>();
-        for (const layer of list) {
-          const id = String(layer.id);
-          const xfade = /^vj-xfade-(\d+)$/.exec(id);
-          if (xfade) {
-            // Crossfade carrier: bank opacities are baked into the native
-            // transition pass output, so the row rides at full opacity.
-            rowsByIdx.set(Number(xfade[1]), {
-              layerId: id,
-              opacity: 1,
-              blendMode: String(layer.blendMode || 'normal'),
-            });
-            continue;
-          }
-          const parsed = parseVjLayerId(id);
-          if (!parsed) continue;
-          const existing = rowsByIdx.get(parsed.idx);
-          // A crossfade carrier always wins; among plain/bank rows keep the
-          // most visible entry (dual-bank residents ride at opacity 0).
-          if (existing?.layerId.startsWith('vj-xfade-')) continue;
-          const entry: MixRowEntry = {
-            layerId: id,
-            opacity: Math.max(0, Math.min(1, layer.opacity ?? 1)),
-            blendMode: String(layer.blendMode || 'normal'),
-          };
-          if (!existing || entry.opacity >= existing.opacity) rowsByIdx.set(parsed.idx, entry);
-        }
-        if (!rowsByIdx.size) return list;
-        // Bottom→top: VJ row 0 is topmost (the engine reverses the render
-        // plan), so the composite stacks from the highest index upward.
-        const groups = get(vjClipLauncher).groups ?? [];
-        const rows = Array.from(rowsByIdx.entries())
-          .sort((a, b) => b[0] - a[0])
-          .map(([index, entry]) => ({ ...entry, groupId: groups.find(g => index >= g.first && index <= g.last)?.id }));
-        return [
-          ...list.map(layer => groups.length ? { ...layer, opacity: 0 } : layer),
-          {
-            ...createLayer('__vj-mix__', 'VJ Mix', 'media'),
-            visible: true,
-            opacity: groups.length ? 1 : 0,
-            blendMode: 'normal',
-            source: {
-              id: '__vj-mix-src__',
-              type: 'effect',
-              src: 'plugin://vj-mix',
-              name: 'VJ Mix',
-              effectSource: {
-                effectType: 'vj-mix',
-                vjmixRows: rows,
-                vjmixGroups: groups,
-              },
-            } as NonNullable<Layer['source']>,
-            // Composition FX ride the carrier's own effect chain.
-            //
-            // This is the whole VJ-mode fix for "composition FX do nothing".
-            // The carrier renders the full row stack into ONE source frame,
-            // and nativeEffectPassRouteForLayer already chains a layer's
-            // effects onto its source frame with real intermediate textures
-            // — the same path that makes layer and clip FX work. Leaving
-            // this empty meant composition FX only ever reached the
-            // compositor's inline colour ops, which implement nine simple
-            // operations and silently drop everything else.
-            //
-            // Filtered rather than passed whole: nativeEffectPassesForLayer
-            // is all-or-nothing (one unsupported effect returns null and the
-            // entire chain falls back), so a single exotic effect would take
-            // the working ones down with it. All chains use the shared cap;
-            // the effects panels explain when extra effects are bypassed.
-            effects: nativeCompositionEffects(get(vjClipLauncher)?.compositionEffects),
-            edgeEffects: null,
-          } as Layer,
-        ];
+      const appendMix = (list: Layer[]) => {
+        const state = get(vjClipLauncher);
+        return appendNativeVjMixCarrier(list, state.groups ?? [], nativeCompositionEffects(state.compositionEffects));
       };
       const nativeEffectiveLayers = (): Layer[] | null => {
         const vjState = get(vjClipLauncher);
@@ -1822,7 +1752,7 @@
         // via vj_layer_index. Both lists must reach the native sync.
         const stageWrap = (list: Layer[]): Layer[] => {
           if (!vjState.stageMode) return list;
-          const mappingLayers = (get(layers) as Layer[])
+          const mappingLayers = vjStageScreenLayers(get(layers) as Layer[])
             .filter((l) => !String(l.id).startsWith('vj-'))
             .map((l) => ({ ...l }));
           return [
@@ -1904,7 +1834,7 @@
           if (!vjLayers?.length) return stageWrap([]);
           const weights = nativeCrossfadeWeights(vjState);
           if (!weights) {
-            return stageWrap(appendNativeVjMixCarrier(
+            return stageWrap(appendMix(
               appendNativePerformerWorldLayers(vjLayers, incomingLayers ?? [], weights),
             ));
           }
@@ -1979,7 +1909,7 @@
               _deckMonitorOpacity: single.opacity,
             });
           }
-          return stageWrap(appendNativeVjMixCarrier(
+          return stageWrap(appendMix(
             appendNativePerformerWorldLayers(output, incomingLayers ?? [], weights),
           ));
         }
@@ -2365,13 +2295,18 @@
       // runs while an enabled controller exists, so projects without WLED
       // pay nothing.
       let wledMirror: import('$lib/sync/nativeCompositeMirror').CompositeMirrorHandle | null = null;
+      let wledDisposed = false;
+      let wledWanted = false;
       const wledUnsub = project.subscribe((p) => {
         const wantsWled = (p.wledControllers ?? []).some((c: { enabled?: boolean }) => c.enabled);
+        wledWanted = wantsWled;
         if (wantsWled && !wledMirror) {
           void import('$lib/sync/nativeCompositeMirror').then(({ acquireNativeCompositeMirror }) => {
-            if (wledMirror) return;
-            wledMirror = acquireNativeCompositeMirror({ maxDim: 384, fps: 20 });
-            startWLEDSenders(wledMirror.canvas, 'editor');
+            if (wledDisposed || !wledWanted || wledMirror) return;
+            wledMirror = acquireNativeCompositeMirror({ maxDim: 384, fps: 20,
+              onFrame: () => { if (wledMirror) tickWLEDSenders(wledMirror.canvas); },
+            });
+            startWLEDSenders(wledMirror.canvas, 'native');
           });
         } else if (!wantsWled && wledMirror) {
           stopWLEDSenders(wledMirror.canvas);
@@ -2380,6 +2315,7 @@
         }
       });
       nativeTeardownCallbacks.push(() => {
+        wledDisposed = true;
         wledUnsub();
         if (wledMirror) {
           stopWLEDSenders(wledMirror.canvas);
@@ -3044,7 +2980,8 @@
           // ── STAGE MODE: VJ layers feed into mapping layers ──
 
           // 1. Build combined layer list
-          const allManagedLayers: Layer[] = [...(vjLayers || []), ...normalLayers];
+          const stageScreens = vjStageScreenLayers(normalLayers);
+          const allManagedLayers: Layer[] = [...(vjLayers || []), ...stageScreens];
 
           // 2. Update all textures in one batch
           if (browserEditorPreviewActive()) {
@@ -3136,8 +3073,8 @@
           //    clips swap. The layer clone + merged effects array are
           //    cached per layer (injectVjIntoLayer) and rebuilt only on
           //    identity change.
-          pruneStageInjectCache(normalLayers);
-          layersToRender = normalLayers.map(layer => {
+          pruneStageInjectCache(stageScreens);
+          layersToRender = stageScreens.map(layer => {
             if (layer.vjLayerIndex !== undefined) {
               const resolved = vjResolved.get(layer.vjLayerIndex);
               if (resolved) return injectVjIntoLayer(layer, resolved);

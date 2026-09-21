@@ -16,7 +16,7 @@
   const durations = [10, 15, 30, 60, 120, 300];
 </script>
 
-<div class="transport">
+<div data-help-page="show-timeline" class="transport">
   <div class="transport-left">
     <button class="transport-btn" class:active={config.isPlaying}
       onclick={() => config.isPlaying ? keyframeTimeline.pause() : keyframeTimeline.play()}

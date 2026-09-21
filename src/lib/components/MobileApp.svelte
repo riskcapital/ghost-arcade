@@ -3172,7 +3172,7 @@
   ontouchend={handleTouchEnd}
 />
 
-<div class="mobile-app">
+<div data-help-page="mobile-control" class="mobile-app">
   {#if !connected}
     <!-- Connection Screen -->
     <div class="connect-screen">
@@ -3239,7 +3239,7 @@
               Tap <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#007AFF" stroke-width="2"><path d="M12 5v14M5 12l7-7 7 7"/><rect x="3" y="15" width="18" height="6" rx="2" fill="none"/></svg> then <strong>"Add to Home Screen"</strong>
             </div>
           {/if}
-          <button class="pwa-dismiss" onclick={() => showInstallBanner = false}>×</button>
+          <button aria-label="Dismiss install suggestion" class="pwa-dismiss" onclick={() => showInstallBanner = false}>×</button>
         </div>
       {/if}
 

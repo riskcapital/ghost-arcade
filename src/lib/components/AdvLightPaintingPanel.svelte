@@ -102,7 +102,7 @@
 </script>
 
 {#if c}
-  <div class="adv-paint-panel">
+  <div data-help-page="layers" class="adv-paint-panel">
     <div class="panel-title">Adv Light Paint <span class="badge">WebGPU</span></div>
     <div class="panel-hint">click + drag over the editor canvas to paint</div>
 

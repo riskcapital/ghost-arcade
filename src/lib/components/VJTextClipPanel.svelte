@@ -26,7 +26,7 @@
   }
 </script>
 
-<div class="text-clip-panel">
+<div data-help-page="clip-launcher" class="text-clip-panel">
   <section>
     <div class="section-label">Text</div>
     <textarea rows="3" value={content.text} oninput={(event) => onUpdate({ text: (event.target as HTMLTextAreaElement).value })}></textarea>

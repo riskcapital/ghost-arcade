@@ -6,7 +6,7 @@
   export let type: 'error' | 'warning' | 'info' = 'error';
 </script>
 
-<div class="toast toast-{type}">
+<div data-help-page="troubleshooting" class="toast toast-{type}">
   <div class="toast-content">
     <span class="toast-message">{message}</span>
   </div>

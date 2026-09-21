@@ -48,7 +48,7 @@
 </script>
 
 {#if !vjOpen}
-<div class="bottom-dock">
+<div data-help-page="interface" class="bottom-dock">
   <button class="pill" class:on={presetsOpen} onclick={onTogglePresets} title="Presets (⌘P)">
     <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
       <path d="M6 15l6-6 6 6"/>

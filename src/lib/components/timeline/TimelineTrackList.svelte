@@ -52,7 +52,7 @@
   }
 </script>
 
-<div class="track-list" bind:this={scrollEl}>
+<div data-help-page="show-timeline" class="track-list" bind:this={scrollEl}>
   <!-- Spacer to match the grid's ruler height -->
   <div class="ruler-spacer"></div>
   {#if !layerId}

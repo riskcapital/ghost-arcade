@@ -125,7 +125,7 @@
   });
 </script>
 
-<div class="macro-bank" class:compact>
+<div data-help-page="mobile-control" class="macro-bank" class:compact>
   <!-- "MACROS" header label removed — was eating ~16px of vertical
        real estate in the new tablet bottom row, pushing the macros
        below the viewport on smaller iPads. Knobs are self-explanatory

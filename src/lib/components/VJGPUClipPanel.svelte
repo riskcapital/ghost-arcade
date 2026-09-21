@@ -105,7 +105,7 @@
   }
 </script>
 
-<div class="gpu-clip-panel">
+<div data-help-page="gpu-instruments" class="gpu-clip-panel">
   <div class="section-label">Shader</div>
   <div class="shader-grid">
     {#each GPU_SHADER_CATALOG as shader}
@@ -210,7 +210,7 @@
   {/each}
 </div>
 
-<input bind:this={fileInput} type="file" accept="image/*,video/*,.ply,.splat" onchange={onFileSelected} hidden />
+<input data-help-page="gpu-instruments" bind:this={fileInput} type="file" accept="image/*,video/*,.ply,.splat" onchange={onFileSelected} hidden />
 
 <style>
   .gpu-clip-panel { display: flex; flex-direction: column; gap: 8px; padding: 8px 10px 14px; color: #c9cbd3; font-size: 12px; }

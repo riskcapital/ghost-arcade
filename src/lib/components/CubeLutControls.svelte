@@ -34,13 +34,13 @@
     }
   }
 </script>
-<div class="lut-control">
+<div data-help-page="effects" class="lut-control">
   <input bind:this={input} type="file" accept=".cube" onchange={load} aria-label="Import color LUT" />
   <div class="lut-info"><span class="lut-name" title={lut?.title}>{lut ? (lut.title || 'Untitled LUT') : 'No LUT loaded'}</span><span class="lut-detail">{lut ? `${lut.size} × ${lut.size} × ${lut.size} · Saved with project` : '3D .cube · Original color until loaded'}</span></div>
   <button class="load" disabled={busy} onclick={() => input.click()}>{busy ? 'Loading…' : lut ? 'Replace' : 'Load .cube'}</button>
   {#if lut}<button class="clear" disabled={busy} aria-label="Remove color LUT" title="Remove LUT" onclick={() => { error = ''; onChange(undefined); }}>×</button>{/if}
 </div>
-{#if error}<p class="lut-error" role="alert">{error}</p>{/if}
+{#if error}<p data-help-page="effects" class="lut-error" role="alert">{error}</p>{/if}
 <style>
   .lut-control { display:flex; align-items:center; gap:8px; padding:10px; margin:4px 0 12px; border:1px solid #303744; border-radius:8px; background:#101319; }
   input { display:none; }

@@ -32,7 +32,7 @@
   }
 </script>
 
-<div class="clip-grid" class:tablet={isTablet}>
+<div data-help-page="mobile-control" class="clip-grid" class:tablet={isTablet}>
   {#each clipGrid as row, layerIndex}
     <div class="grid-row">
       <!-- Layer label -->

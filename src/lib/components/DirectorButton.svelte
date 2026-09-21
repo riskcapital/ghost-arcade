@@ -6,7 +6,7 @@
   }
 </script>
 
-<button
+<button data-help-page="ai-generation"
   class="director-btn"
   class:streaming={$isDirectorStreaming}
   onclick={toggle}

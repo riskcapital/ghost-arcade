@@ -256,7 +256,7 @@
 <svelte:window on:keydown={handleKeydown} />
 
 {#if isOpen}
-  <div class="shader-library-backdrop" on:click={onClose}>
+  <div data-help-page="custom-shaders" class="shader-library-backdrop" on:click={onClose}>
     <div class="shader-library-modal" on:click|stopPropagation>
       <!-- Header -->
       <div class="sl-header">
@@ -284,7 +284,7 @@
               Find Latest
             {/if}
           </button>
-          <button class="sl-close" on:click={onClose}>×</button>
+          <button aria-label="Close shader library" class="sl-close" on:click={onClose}>×</button>
         </div>
       </div>
 

@@ -1,0 +1,16 @@
+.ga-context-help {
+  margin: 0; inset: auto; max-height: calc(100vh - 20px); overflow: auto;
+  position: fixed; z-index: 2147483647; box-sizing: border-box;
+  width: min(310px, calc(100vw - 20px)); padding: 12px 14px;
+  border: 1px solid #34466f; border-radius: 9px;
+  background: #111722; color: #e8edf7; box-shadow: 0 8px 28px #0008;
+  font-family: 'Space Grotesk', system-ui, sans-serif; font-size: 12px; line-height: 1.5;
+  text-align: left; white-space: normal; overflow-wrap: anywhere;
+}
+.ga-context-help[hidden] { display: none; }
+.ga-context-help strong { display: block; font-size: 12px; font-weight: 600; }
+.ga-context-help p { margin: 5px 0 9px; color: #bbc5d6; }
+.ga-context-help a { color: #a9bfff; display: inline-block; text-decoration: none; border-radius: 3px; }
+.ga-context-help a:hover { text-decoration: underline; }
+.ga-context-help a:focus-visible { outline: 2px solid #728eff; outline-offset: 3px; }
+.ga-context-help small { display: block; margin-top: 7px; color: #8997ad; font-size: 10px; }

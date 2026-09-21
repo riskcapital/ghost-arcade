@@ -93,11 +93,11 @@
 </script>
 
 {#if !pluginManifest || !effectSource}
-  <div class="panel-empty">
+  <div data-help-page="custom-effects" class="panel-empty">
     <p>No plugin controls</p>
   </div>
 {:else}
-  <div class="plugin-panel">
+  <div data-help-page="custom-effects" class="plugin-panel">
     <!-- Header -->
     <div class="panel-header">
       <span class="header-icon">{pluginManifest.icon}</span>

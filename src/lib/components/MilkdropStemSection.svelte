@@ -153,7 +153,7 @@
   });
 </script>
 
-<div class="ss-panel">
+<div data-help-page="gpu-instruments" class="ss-panel">
   <div class="ss-header">
     <span class="ss-title">Stem Routing</span>
     <span class="ss-sub">multi-channel input → bass / mid / treb</span>

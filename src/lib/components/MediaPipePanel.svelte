@@ -143,7 +143,7 @@
   }
 </script>
 
-<section class="mp-panel">
+<section data-help-page="midi-audio" class="mp-panel">
   <header class="mp-head">
     <span class="mp-title">MediaPipe</span>
     <span class="mp-sub">camera gesture input · powered by @mediapipe/tasks-vision · Apache-2.0</span>

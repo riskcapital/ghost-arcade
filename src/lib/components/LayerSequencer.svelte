@@ -91,14 +91,14 @@
 </script>
 
 <!-- Toggle Button -->
-<button class="seq-toggle" class:open={isOpen} onclick={toggleTray}>
+<button data-help-page="clip-launcher" class="seq-toggle" class:open={isOpen} onclick={toggleTray}>
   <span class="toggle-icon">{isOpen ? '\u25BC' : '\u25B2'}</span>
   <span class="toggle-label">Sequencer</span>
 </button>
 
 <!-- Slide-up Tray -->
 {#if isOpen}
-  <div class="seq-tray">
+  <div data-help-page="clip-launcher" class="seq-tray">
     <!-- Header -->
     <div class="seq-header">
       <div class="seq-header-left">

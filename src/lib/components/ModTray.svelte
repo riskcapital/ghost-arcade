@@ -247,7 +247,7 @@
   $: if (category && trayEl) requestAnimationFrame(position);
 </script>
 
-<div
+<div data-help-page="effects"
   class="mt"
   bind:this={trayEl}
   style="top:{top}px; left:{left}px; width:{WIDTH}px; transform-origin: {flipped ? 'bottom' : 'top'} right"

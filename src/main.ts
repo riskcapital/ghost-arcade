@@ -195,7 +195,10 @@ async function init() {
       target: document.getElementById('app')!,
     });
   } else {
-    // Normal mode: full UI
+    // Normal mode: full UI. Keep interactive help out of projection outputs.
+    const { installContextHelp } = await import('./lib/help/contextHelp');
+    const disposeHelp = installContextHelp();
+    import.meta.hot?.dispose(disposeHelp);
     const { default: App } = await import('./App.svelte');
     mount(App, {
       target: document.getElementById('app')!,

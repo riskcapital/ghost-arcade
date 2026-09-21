@@ -1630,7 +1630,7 @@
       // Toggle MIDI Learn edit mode. Kept on Cmd/Ctrl+M so it is easy to
       // reach during setup without stealing normal single-key performance
       // shortcuts from VJ mode.
-      if ((e.metaKey || e.ctrlKey) && (e.key === 'm' || e.key === 'M') && !e.shiftKey && !e.altKey) {
+      if ((e.metaKey || e.ctrlKey) && (e.key === 'm' || e.key === 'M') && !e.shiftKey && !e.altKey && !e.repeat) {
         const currentMidi = get(midiStore);
         midiStore.setEditMode(!currentMidi.editMode);
         e.preventDefault();
@@ -1716,6 +1716,20 @@
         e.preventDefault();
         handleRedo();
         return;
+      }
+
+      // File actions use the same guarded flows as the File menu.
+      if ((e.ctrlKey || e.metaKey) && !e.altKey && !e.repeat) {
+        const key = e.key.toLowerCase();
+        if (key === 'n' && !e.shiftKey && !inInput) {
+          e.preventDefault(); newComposition(); return;
+        }
+        if (key === 'o' && !e.shiftKey && !inInput) {
+          e.preventDefault(); loadComposition(); return;
+        }
+        if (key === 's' && e.shiftKey) {
+          e.preventDefault(); saveCompositionAs(); return;
+        }
       }
 
       // Save: Ctrl+S
@@ -6045,7 +6059,7 @@
 {#if isMobile}
   <MobileApp />
 {:else}
-  <div class="app" class:native-primary-presenter={nativePreviewGlassActive}>
+  <div data-help-page="interface" class="app" class:native-primary-presenter={nativePreviewGlassActive}>
     {#if isDesktopApp && isMac}
       <div class="mac-window-titlebar" aria-hidden="true"></div>
     {/if}
@@ -7761,7 +7775,7 @@
 
 <!-- Close Confirmation Modal -->
 {#if showNewProjectModal}
-  <div class="close-modal-backdrop" onclick={newProjectCancel}>
+  <div data-help-page="interface" class="close-modal-backdrop" onclick={newProjectCancel}>
     <div class="close-modal" onclick={(e) => e.stopPropagation()}>
       <div class="close-modal-icon">
         <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -7790,7 +7804,7 @@
 {/if}
 
 {#if showCloseModal}
-  <div class="close-modal-backdrop" onclick={closeModalCancel}>
+  <div data-help-page="interface" class="close-modal-backdrop" onclick={closeModalCancel}>
     <div class="close-modal" onclick={(e) => e.stopPropagation()}>
       <div class="close-modal-icon">
         <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="var(--warning)" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
@@ -7827,7 +7841,7 @@
 
 <!-- Crash Recovery Modal -->
 {#if showRecoveryModal}
-  <div class="close-modal-backdrop" onclick={discardAutosave}>
+  <div data-help-page="interface" class="close-modal-backdrop" onclick={discardAutosave}>
     <div class="close-modal" onclick={(e) => e.stopPropagation()}>
       <div class="close-modal-icon">
         <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#4ecdc4" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">

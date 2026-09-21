@@ -16,11 +16,11 @@
   }
 </script>
 
-<div class="picker-bg" onclick={onClose} role="presentation">
+<div data-help-page="stage-simulator" class="picker-bg" onclick={onClose} role="presentation">
   <div class="picker-card" onclick={(e) => e.stopPropagation()} role="presentation">
     <header>
       <h2>Pick a stage</h2>
-      <button class="close-x" onclick={onClose}>✕</button>
+      <button aria-label="Close stage presets" class="close-x" onclick={onClose}>✕</button>
     </header>
 
     <div class="picker-grid">

@@ -44,7 +44,7 @@
   onMount(scan);
 </script>
 
-<div class="backdrop">
+<div data-help-page="projects" class="backdrop">
   <section role="dialog" aria-modal="true" aria-labelledby="media-title" class="modal">
     <header><h2 id="media-title">Project Media</h2><button disabled={busy} onclick={onClose} aria-label="Close media manager">×</button></header>
     <p>Check local media, locate missing files, or collect a portable copy of this show.</p>

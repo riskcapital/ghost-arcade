@@ -474,17 +474,13 @@ fn point_in_quad(p: vec2<f32>, tl: vec2<f32>, tr: vec2<f32>, br: vec2<f32>, bl: 
 }
 
 fn barycentric(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>, c: vec2<f32>) -> vec3<f32> {
-  let v0 = b - a;
-  let v1 = c - a;
-  let v2 = p - a;
-  let d00 = dot(v0, v0);
-  let d01 = dot(v0, v1);
-  let d11 = dot(v1, v1);
-  let d20 = dot(v2, v0);
-  let d21 = dot(v2, v1);
-  let denom = max(d00 * d11 - d01 * d01, 0.000001);
-  let v = (d11 * d20 - d01 * d21) / denom;
-  let w = (d00 * d21 - d01 * d20) / denom;
+  let ab = b - a;
+  let ac = c - a;
+  let ap = p - a;
+  let determinant = cross2(ab, ac);
+  if (abs(determinant) < 0.0000000001) { return vec3<f32>(-1.0); }
+  let v = cross2(ap, ac) / determinant;
+  let w = cross2(ab, ap) / determinant;
   return vec3<f32>(1.0 - v - w, v, w);
 }
 
@@ -492,7 +488,18 @@ fn barycentric_inside(b: vec3<f32>) -> bool {
   return b.x >= -0.0005 && b.y >= -0.0005 && b.z >= -0.0005;
 }
 
+// A corner warp is one bilinear surface, not a pair of filled triangles.
+// Beyond a fold its inverse has no solution; triangle fallback there draws
+// an extra affine copy of the content under the actual folded surface.
 fn quad_local_uv(p: vec2<f32>, tl: vec2<f32>, tr: vec2<f32>, br: vec2<f32>, bl: vec2<f32>) -> vec3<f32> {
+  let uv = inverse_bilinear(p, tl, tr, br, bl);
+  if (all(uv >= vec2<f32>(-0.0005)) && all(uv <= vec2<f32>(1.0005))) {
+    return vec3<f32>(1.0, clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)));
+  }
+  return vec3<f32>(0.0);
+}
+
+fn mesh_cell_uv(p: vec2<f32>, tl: vec2<f32>, tr: vec2<f32>, br: vec2<f32>, bl: vec2<f32>) -> vec3<f32> {
   // Smooth inverse-bilinear mapping across the whole warped quad. The old
   // two-triangle barycentric split was affine per triangle, which sheared
   // content along the tl-br diagonal into a visible hard edge. The
@@ -561,30 +568,36 @@ fn layer_mesh_uv(local_uv: vec2<f32>, layer_index: u32) -> vec3<f32> {
   if (rows < 2u || cols < 2u) {
     return vec3<f32>(1.0, local_uv);
   }
-  // Small grids are cheap enough to search exactly. Larger grids use the
-  // regular-grid cell as a spatial index and inspect its immediate neighbors.
-  // This keeps interactive 12x12 warps bounded to nine inverse solves instead
-  // of 121 for every output pixel.
+  // Try nearby cells first. A strong warp can move a cell far beyond its
+  // original grid neighborhood, so unresolved pixels also search the rest.
+  // Bounds reject unrelated cells before any inverse/triangle solve.
   let exact_search = rows <= 4u && cols <= 4u;
   let estimated_row = min(rows - 2u, u32(clamp(floor(local_uv.y * f32(rows - 1u)), 0.0, f32(rows - 2u))));
   let estimated_col = min(cols - 2u, u32(clamp(floor(local_uv.x * f32(cols - 1u)), 0.0, f32(cols - 2u))));
-  for (var row = 0u; row < 15u; row = row + 1u) {
-    if (row >= rows - 1u) { break; }
-    if (!exact_search && (row + 1u < estimated_row || row > estimated_row + 1u)) { continue; }
-    for (var col = 0u; col < 15u; col = col + 1u) {
-      if (col >= cols - 1u) { break; }
-      if (!exact_search && (col + 1u < estimated_col || col > estimated_col + 1u)) { continue; }
-      let top_left = layer_mesh_point(layer_index, row * cols + col);
-      let top_right = layer_mesh_point(layer_index, row * cols + col + 1u);
-      let bottom_right = layer_mesh_point(layer_index, (row + 1u) * cols + col + 1u);
-      let bottom_left = layer_mesh_point(layer_index, (row + 1u) * cols + col);
-      let cell_uv = inverse_bilinear(local_uv, top_left, top_right, bottom_right, bottom_left);
-      if (cell_uv.x >= 0.0 && cell_uv.x <= 1.0 && cell_uv.y >= 0.0 && cell_uv.y <= 1.0) {
-        return vec3<f32>(
-          1.0,
-          (f32(col) + cell_uv.x) / f32(cols - 1u),
-          (f32(row) + cell_uv.y) / f32(rows - 1u),
-        );
+  for (var search = 0u; search < 2u; search = search + 1u) {
+    if (search == 1u && exact_search) { break; }
+    for (var row = 0u; row < 15u; row = row + 1u) {
+      if (row >= rows - 1u) { break; }
+      for (var col = 0u; col < 15u; col = col + 1u) {
+        if (col >= cols - 1u) { break; }
+        let nearby = exact_search || (row + 1u >= estimated_row && row <= estimated_row + 1u
+          && col + 1u >= estimated_col && col <= estimated_col + 1u);
+        if ((search == 0u && !nearby) || (search == 1u && nearby)) { continue; }
+        let a = layer_mesh_point(layer_index, row * cols + col);
+        let b = layer_mesh_point(layer_index, row * cols + col + 1u);
+        let c = layer_mesh_point(layer_index, (row + 1u) * cols + col + 1u);
+        let d = layer_mesh_point(layer_index, (row + 1u) * cols + col);
+        let bounds_min = min(min(a, b), min(c, d)) - vec2<f32>(0.000001);
+        let bounds_max = max(max(a, b), max(c, d)) + vec2<f32>(0.000001);
+        if (any(local_uv < bounds_min) || any(local_uv > bounds_max)) { continue; }
+        // Concave/folded cells use the same two triangles as the mesh, rather
+        // than turning an unsolved bilinear inverse into transparent pixels.
+        let cell = mesh_cell_uv(local_uv, a, b, c, d);
+        if (cell.x > 0.5) {
+          return vec3<f32>(1.0,
+            (f32(col) + cell.y) / f32(cols - 1u),
+            (f32(row) + cell.z) / f32(rows - 1u));
+        }
       }
     }
   }

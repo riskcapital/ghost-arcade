@@ -80,7 +80,7 @@
 </script>
 
 {#if element && def}
-<div class="props-body">
+<div data-help-page="stage-simulator" class="props-body">
   <div class="ptitle">
     {def.label}
     <span class="badge">{element.type}</span>
@@ -167,7 +167,7 @@
   </div>
 </div>
 {:else}
-  <div class="missing">Element no longer in scene.</div>
+  <div data-help-page="stage-simulator" class="missing">Element no longer in scene.</div>
 {/if}
 
 <style>

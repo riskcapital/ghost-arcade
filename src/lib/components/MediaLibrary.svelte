@@ -411,7 +411,7 @@
 
 </script>
 
-<div class="media-library" class:collapsed={!isExpanded}>
+<div data-help-page="projects" class="media-library" class:collapsed={!isExpanded}>
   <div class="library-header" onclick={() => isExpanded = !isExpanded}>
     <h3>
       <span class="toggle-icon">{isExpanded ? '▼' : '▶'}</span>

@@ -131,6 +131,7 @@
   {#if editError}<span class="expression-error" role="status">{editError}</span>{/if}
   <input
     type="range"
+    aria-label={label}
     {min}
     {max}
     {step}

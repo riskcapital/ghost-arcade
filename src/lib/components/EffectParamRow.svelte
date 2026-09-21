@@ -309,12 +309,13 @@
   }
 </script>
 
-<div bind:this={rootEl} class="epr" class:modulated={isModulated} class:button-only={buttonOnly}>
+<div data-help-page="effects" bind:this={rootEl} class="epr" class:modulated={isModulated} class:button-only={buttonOnly}>
   {#if buttonOnly}
     <div class="epr-compact-track">
       <div class="epr-track-wrap">
         <input
           class="epr-slider"
+          aria-label={label}
           type="range"
           {min}
           {max}
@@ -415,6 +416,7 @@
     <div class="epr-track-wrap">
       <input
         class="epr-slider"
+          aria-label={label}
         type="range"
         {min}
         {max}

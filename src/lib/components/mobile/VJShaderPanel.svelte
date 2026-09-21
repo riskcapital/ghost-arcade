@@ -67,7 +67,7 @@
   }
 </script>
 
-<div class="shader-panel">
+<div data-help-page="mobile-control" class="shader-panel">
   <!-- Layer selector -->
   <div class="layer-selector">
     {#each layerStates as ls, i}

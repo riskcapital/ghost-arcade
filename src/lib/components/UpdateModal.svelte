@@ -34,7 +34,7 @@
 <svelte:window onkeydown={handleKey} />
 
 {#if open}
-  <div class="update-modal-backdrop" onclick={close}>
+  <div data-help-page="troubleshooting" class="update-modal-backdrop" onclick={close}>
     <div class="update-modal" onclick={(e) => e.stopPropagation()}>
       <div class="update-modal-header">
         <div>

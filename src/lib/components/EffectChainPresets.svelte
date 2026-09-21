@@ -60,7 +60,7 @@
 
 </script>
 
-<details class="chain-presets">
+<details data-help-page="effects" class="chain-presets">
   <summary>Presets</summary>
   <div class="tray">
     <label>Saved chains

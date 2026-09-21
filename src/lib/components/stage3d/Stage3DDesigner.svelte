@@ -669,7 +669,7 @@
   });
 </script>
 
-<div class="stage3d-root" class:external={!renderViewport}>
+<div data-help-page="stage-simulator" class="stage3d-root" class:external={!renderViewport}>
   {#if renderViewport}
     <div class="viewport-fallback">
       <p>Open Stage 3D in the pop-out window for the live view.</p>

@@ -1,3 +1,4 @@
+import { worldPaletteIndex } from '../performer/worldPalettes';
 import type { RendererCommand } from '$lib/api/native-renderer';
 import { buildDriftWgsl } from '$lib/effects/ghostfx/scenes/drift.wgsl';
 import {
@@ -1339,7 +1340,7 @@ function buildPerformerWorldGraph(options: NativePluginGraphOptions): NativePlug
   uints[4] = Math.max(0, Math.min(13, Math.round(Number(params.performerWorldIndex) || 0)));
   uints[5] = Math.max(0, Math.min(5, Math.round(Number(params.performerWorldSpace) || 0)));
   uints[6] = params.performerWorldPointerDown ? 1 : 0;
-  uints[7] = 0;
+  uints[7] = worldPaletteIndex(Number(worldParams[6] ?? 0));
   floats[8] = clamp(params.performerWorldX, 0, 1, 0.5);
   floats[9] = clamp(params.performerWorldY, 0, 1, 0.5);
   floats[10] = options.audio.active ? clamp(options.audio.energy, 0, 4, 0) : 0;

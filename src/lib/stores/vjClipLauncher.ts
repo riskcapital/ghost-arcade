@@ -1330,7 +1330,10 @@ function createVJClipLauncherStore() {
     setOpen(isOpen: boolean, opts?: { fromWorkspace?: boolean }) {
       if (!isOpen) releaseTempoNudgeInputs('');
       if (!isOpen) vjClipTransitions.clear();
-      update(state => ({ ...state, isOpen }));
+      // Closing or leaving the VJ workspace relinquishes output ownership in
+      // the same notification. Otherwise Canvas can keep presenting VJ while
+      // its transports have already stopped, leaving a frozen frame in Mapping.
+      update(state => ({ ...state, isOpen, isLive: isOpen ? state.isLive : false }));
       if (!opts?.fromWorkspace) {
         void import('./workspace').then(({ workspace }) => {
           workspace.setActive(isOpen ? 'vj' : 'main');

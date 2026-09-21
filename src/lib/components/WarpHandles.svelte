@@ -886,7 +886,7 @@
     : [];
 </script>
 
-<div
+<div data-help-page="projection-mapping"
   class="warp-handles"
   class:interaction-only={interactionOnly}
   bind:this={containerEl}

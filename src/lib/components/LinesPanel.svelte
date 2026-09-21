@@ -263,7 +263,7 @@
 </script>
 
 {#if lc}
-  <div class="lines-panel" class:compact>
+  <div data-help-page="layers" class="lines-panel" class:compact>
     <!-- Header -->
     <div class="lp-header">
       <span class="lp-title">Lines</span>
@@ -1046,7 +1046,7 @@
     </div>
   </div>
 {:else}
-  <div class="lines-panel">
+  <div data-help-page="layers" class="lines-panel">
     <div class="empty-msg">No Lines layer selected</div>
   </div>
 {/if}

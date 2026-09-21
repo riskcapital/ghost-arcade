@@ -17,7 +17,7 @@
   }
 </script>
 <svelte:window onblur={release} onkeyup={(e) => setTempoNudgeInput(`panel-tempo:key:${e.code}`, 0)} />
-<div class="tempo-controls" title={following ? 'Ableton Link controls tempo and phase' : 'Bend the local beat clock or set a new downbeat'}>
+<div data-help-page="midi-audio" class="tempo-controls" title={following ? 'Ableton Link controls tempo and phase' : 'Bend the local beat clock or set a new downbeat'}>
   <div class="nudge-group">
   <span class="nudge-label">NUDGE</span>
   {#each [-1, 1] as direction}

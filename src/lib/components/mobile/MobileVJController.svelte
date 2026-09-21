@@ -186,7 +186,7 @@
 </script>
 
 {#if !vjClipsState}
-  <div class="vj-empty">
+  <div data-help-page="mobile-control" class="vj-empty">
     <div class="empty-icon">
       <svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1" stroke-linecap="round">
         <rect x="2" y="3" width="20" height="14" rx="2"/>
@@ -220,7 +220,7 @@
   <!--    - Bottom row groups all build / energy / safety controls      -->
   <!--      (macros, tempo, master, STOP) on one easy-to-reach line.    -->
   <!-- ═══════════════════════════════════════════════════════════════ -->
-  <div class="vj-controller tablet" class:landscape={isLandscape} class:portrait={!isLandscape} bind:this={controllerEl}>
+  <div data-help-page="mobile-control" class="vj-controller tablet" class:landscape={isLandscape} class:portrait={!isLandscape} bind:this={controllerEl}>
 
     <!-- ROW 1: Snapshots (single dense row across the top) -->
     {#if vjClipsState.snapshots && vjClipsState.snapshots.length > 0}
@@ -492,7 +492,7 @@
   <!--  Bottom: master section                                          -->
   <!--  Crossfader gets a slim horizontal strip when enabled           -->
   <!-- ═══════════════════════════════════════════════════════════════ -->
-  <div class="vj-controller phone" class:landscape={isLandscape} bind:this={controllerEl}>
+  <div data-help-page="mobile-control" class="vj-controller phone" class:landscape={isLandscape} bind:this={controllerEl}>
     <!-- Top: tempo strip (always visible — primary surface) -->
     <div class="phone-top-strip">
       <MobileTempoStrip

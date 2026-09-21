@@ -314,7 +314,7 @@
   }
 </script>
 
-<div class="screen-panel">
+<div data-help-page="masks-slices" class="screen-panel">
   {#if $screenOutputError}
     <div class="screen-output-error" role="alert">
       <strong>Output change not applied</strong>

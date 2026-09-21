@@ -33,7 +33,7 @@
                        contentFit fields. Each input writes immediately via
                        vjClipLauncher.updateActiveClipVideoProps so the change
                        is visible on the next frame. -->
-                  <div class="vt-transform">
+                  <div data-help-page="vj-mode" class="vt-transform">
                     <div class="vt-section-title">Transform</div>
 
                     <label class="vt-tf-row">

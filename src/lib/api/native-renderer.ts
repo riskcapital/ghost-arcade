@@ -432,7 +432,7 @@ export type RendererCommand =
       sender_name?: string;
     }
   | { type: 'remove_layer'; layer_id: string }
-  | { type: 'bind_media_source'; layer_id: string; source_id: string; uri: string; source_type: string }
+  | { type: 'bind_media_source'; layer_id: string; source_id: string; uri: string; source_type: string; effect_input_source_id?: string }
   | {
       type: 'decode_media_source';
       source_id: string;

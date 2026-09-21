@@ -2987,3 +2987,131 @@ it('routes mapped slices to a shared group texture and blanks unavailable groups
     expect(sync.resolveNativeGroupLayers([mix, createLayer('vj-layer-0', 'Row', 'media'), slice]).find((layer: any) => layer.id === 'slice').visible).toBe(false);
   } finally { vjClipLauncher.set(original); }
 });
+
+it('shares processed VJ frames with slices without replacing cleared or unrelated sources', async () => {
+  const { createLayer } = await import('../types');
+  const { vjClipLauncher } = await import('../stores/vjClipLauncher');
+  const { get } = await import('svelte/store');
+  const originalVj = get(vjClipLauncher);
+  vjClipLauncher.set({ ...originalVj, isLive: true });
+  try {
+  const sync = new NativeRendererSyncCtor() as any;
+  const row = createLayer('vj-layer-0', 'Row', 'media');
+  row.source = { id: 'row-source', type: 'image', src: '/row.png' } as any;
+  row.effects = [{ id: 'invert', type: 'invert', enabled: true, params: {} }] as any;
+  const mix = { ...row, id: '__vj-mix__', name: 'Mix' };
+  const screen = createLayer('screen', 'Screen', 'screen');
+  screen.vjLayerIndex = -1;
+  const cleared = createLayer('cleared', 'Cleared', 'media');
+  (cleared as any).vjLayerIndex = null;
+  cleared.source = { id: 'original', type: 'image', src: '/own.png' } as any;
+  const resolve = (input: any[]) => sync.resolveNativeGroupLayers(input);
+  const result = resolve([row, mix, screen, cleared]);
+  expect(result.find((l: any) => l.id === 'screen').source.effectSource.vjmixRows)
+    .toEqual([{ layerId: '__vj-mix__', opacity: 1, blendMode: 'normal' }]);
+  expect(result.find((l: any) => l.id === 'cleared').source).toEqual(cleared.source);
+  screen.vjLayerIndex = 0;
+  expect(resolve([row, screen])[1].source.effectSource.vjmixRows[0].layerId).toBe('vj-layer-0');
+  expect(resolve([screen])[0].visible).toBe(false);
+  screen.vjLayerIndex = 9;
+  expect(resolve([row, screen])[1].visible).toBe(false);
+  const group = createLayer('container', 'Container', 'group');
+  (group as any).vjLayerIndex = null;
+  const child = { ...cleared, id: 'child', parentGroupId: group.id };
+  expect(resolve([row, group, child]).find((l: any) => l.id === 'child').source).toEqual(cleared.source);
+  vjClipLauncher.set({ ...originalVj, isLive: false });
+  screen.source = { id: 'reference', type: 'shader', src: 'builtin:grid' } as any;
+  const mappingScreen = resolve([screen])[0];
+  expect(mappingScreen.visible).toBe(true);
+  expect(mappingScreen.source).toEqual(screen.source);
+  } finally { vjClipLauncher.set(originalVj); }
+});
+
+it('isolates Mapping, VJ Mix, VJ Maps and Stage composition effect ownership', async () => {
+  const { project } = await import('../stores/layers');
+  const { macros } = await import('../stores/macros');
+  const { vjClipLauncher } = await import('../stores/vjClipLauncher');
+  const { get } = await import('svelte/store');
+  const original = { project: get(project), macros: get(macros), vj: get(vjClipLauncher) };
+  const sync = new NativeRendererSyncCtor() as any;
+  sync.nativeFeatureFlags = { native_post_composite_graph: true, native_effect_pass_manifest: true, compute_graph_texture_sampling: true, compute_graph_source_frame_target: true };
+  sync.nativeEffectPassDescriptorIds = new Set(['blur', 'invert']);
+  try {
+    macros.set({ macros: [] });
+    project.update(p => ({ ...p, mappingComposition: { ...p.mappingComposition!, enabled: true,
+      effects: [{ id: 'map', type: 'invert', enabled: true, opacity: 1, blendMode: 'normal', params: {} }] } }));
+    const mode = (isLive: boolean, mapMode: boolean, stageMode: boolean) => {
+      vjClipLauncher.set({ ...original.vj, isLive, mapMode, stageMode,
+        compositionEffects: [{ id: 'vj', type: 'blur', enabled: true, opacity: 1, blendMode: 'normal', params: { blurRadius: 5 } }] });
+      return sync.compositeEffectGraphCommand(32, 32)?.render_passes.map((p: any) => p.name) ?? [];
+    };
+    expect(mode(false, false, false)).toEqual(['composite-fx-invert-0']);
+    expect(mode(true, false, false)).toEqual([]);
+    expect(mode(true, true, false)).toEqual(['composite-fx-blur-0']);
+    expect(mode(true, false, true)).toEqual(['composite-fx-invert-0']);
+  } finally { project.set(original.project); macros.set(original.macros); vjClipLauncher.set(original.vj); }
+});
+
+it('preserves per-effect wet/dry mix, including a true zero, on native layer chains', () => {
+  for (const mix of [0, 0.25, 1]) {
+    const passes = nativeEffectPassesForLayer({ effects: [{ id: 'fx', type: 'invert', enabled: true, opacity: mix, params: {} }] });
+    expect(passes?.[0].mix).toBe(mix);
+    expect(passes?.[0].effect).toBe('invert');
+  }
+  expect(nativeEffectPassesForLayer({ effects: [{ type: 'invert', enabled: true, params: {} }] })?.[0].mix).toBe(1);
+});
+
+
+it('uses the group shader over saved child VJ routes and restores group VJ routing when selected', async () => {
+  const { createLayer } = await import('../types');
+  const { vjClipLauncher } = await import('../stores/vjClipLauncher');
+  const { get } = await import('svelte/store');
+  const original = get(vjClipLauncher);
+  vjClipLauncher.set({ ...original, isLive: true });
+  try {
+    const sync = new NativeRendererSyncCtor() as any;
+    const shader = { id: 'test-bars', type: 'shader', src: 'builtin:testpattern', shaderCode: 'void main() {}' };
+    const group = { ...createLayer('group-test', 'Group', 'group'),
+      groupConfig: { shaderMode: 'unified', overrideStyles: false, shaderSource: shader } } as any;
+    const child = { ...createLayer('slice-test', 'Slice', 'screen'), parentGroupId: group.id,
+      vjLayerIndex: 0, vjGroupId: 'old-vj-group' };
+    const row = { ...createLayer('vj-layer-0', 'Live row', 'media'),
+      source: { id: 'live', type: 'image', src: '/live.png' } };
+    for (const selection of [undefined, null]) {
+      group.vjLayerIndex = selection;
+      for (const feeds of [[], [row]]) {
+        const result = sync.resolveNativeGroupLayers([group, child, ...feeds]).find((l: any) => l.id === child.id);
+        expect(result.source).toEqual(shader);
+        expect(result.visible).toBe(true);
+        expect(result.vjLayerIndex).toBeUndefined();
+        expect(result.vjGroupId).toBeUndefined();
+      }
+    }
+    group.vjLayerIndex = 0;
+    const live = sync.resolveNativeGroupLayers([group, child, row])[0];
+    expect(live.source.effectSource.vjmixRows[0].layerId).toBe(row.id);
+    expect(child.vjLayerIndex).toBe(0);
+    expect(child.vjGroupId).toBe('old-vj-group');
+  } finally { vjClipLauncher.set(original); }
+});
+
+it('invalidates the regular display binding after an urgent video retrigger', async () => {
+  const api = await import('../api/native-renderer');
+  const { createLayer } = await import('../types');
+  const submit = vi.spyOn(api, 'submitNativeRendererCommands').mockResolvedValue({ applied: 3, dropped: 0 } as any);
+  const sync = new NativeRendererSyncCtor() as any;
+  sync.running = true;
+  sync.startupReady = true;
+  const layer = createLayer('video-fx', 'Video with effects', 'media');
+  layer.source = { id: 'video', type: 'video', src: '/tmp/video.mov', isPlaying: true } as any;
+  layer.effects = [{ id: 'invert', type: 'invert', enabled: true, params: {} }] as any;
+  sync.lastLayers.set(layer.id, { sourceSig: 'effect-pass:video-fx' });
+  try {
+    await sync.syncUrgentVideoSources(64, 64, [layer], ['video']);
+    expect(submit).toHaveBeenCalled();
+    expect(submit.mock.calls[0][0]).toContainEqual(expect.objectContaining({ type: 'bind_media_source', source_id: 'video' }));
+    // The next regular diff must rebind the processed output even though
+    // the user's source and effect settings did not change on retrigger.
+    expect(sync.lastLayers.has(layer.id)).toBe(false);
+  } finally { submit.mockRestore(); }
+});

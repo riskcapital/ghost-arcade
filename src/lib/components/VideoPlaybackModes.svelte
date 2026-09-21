@@ -12,7 +12,7 @@
   ] as const;
 </script>
 
-<div class="playback-modes" role="group" aria-label="Playback mode">
+<div data-help-page="clip-launcher" class="playback-modes" role="group" aria-label="Playback mode">
   {#each modes as choice}
     <button class:active={mode === choice.value} aria-pressed={mode === choice.value}
       title={choice.description} onclick={() => onselect(choice.value)}>

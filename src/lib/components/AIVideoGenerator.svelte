@@ -306,10 +306,10 @@
   });
 </script>
 
-<div class="veo-generator">
+<div data-help-page="ai-generation" class="veo-generator">
   <div class="header">
     <h4>AI Video Generator</h4>
-    <button class="close-btn" onclick={() => dispatch('close')}>&times;</button>
+    <button aria-label="Close video generator" class="close-btn" onclick={() => dispatch('close')}>&times;</button>
   </div>
 
   <!-- Provider tabs -->

@@ -401,7 +401,7 @@
 </script>
 
 <!-- Preset Tray Toggle Button -->
-<button class="tray-toggle" class:open={isOpen} class:vj-drag={vjDragMode} onclick={toggleTray}>
+<button data-help-page="projects" class="tray-toggle" class:open={isOpen} class:vj-drag={vjDragMode} onclick={toggleTray}>
   <span class="toggle-icon">{isOpen ? '▼' : '▲'}</span>
   <span class="toggle-label">Presets</span>
   {#if $compositions.length > 0}
@@ -411,7 +411,7 @@
 
 <!-- Preset Tray Content -->
 {#if isOpen}
-  <div class="preset-tray" class:vj-drag={vjDragMode}>
+  <div data-help-page="projects" class="preset-tray" class:vj-drag={vjDragMode}>
     <div class="tray-header">
       <div class="header-left">
         <span class="tray-title">MAPPING PRESETS</span>

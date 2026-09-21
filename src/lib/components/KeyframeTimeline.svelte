@@ -226,7 +226,7 @@
 <!-- Toggle button + tray are hidden in VJ mode (content-creation tool,
      not a live-performance one). See `hiddenInVJ` reactive above. -->
 {#if !hiddenInVJ}
-  <button
+  <button data-help-page="show-timeline"
     class="kf-toggle"
     class:active={isOpen}
     onclick={() => keyframeTimeline.toggleOpen()}
@@ -246,7 +246,7 @@
 
 <!-- Slide-up panel -->
 {#if isOpen && !hiddenInVJ}
-  <div class="kf-tray">
+  <div data-help-page="show-timeline" class="kf-tray">
     <div class="kf-header-btns">
       <button class="kf-clear" onclick={() => { console.log('[KF Timeline] Clear All clicked'); showClearConfirm = true; }} title="Clear all keyframes">
         Clear All

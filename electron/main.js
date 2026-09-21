@@ -326,6 +326,7 @@ let pendingOutputWindowConfig = null;
 let pendingOutputWindowConfigTimer = null;
 let sidecarProcess = null;
 let embeddedServerModule = null;
+const { buildWLEDRealtimePacket } = require('./wled-packet.cjs');
 const wledSockets = new Map();  // controllerId -> dgram.Socket
 let activeVideoConverterJob = null;
 const activeJpegSequenceJobs = new Map();
@@ -5011,7 +5012,8 @@ function registerIpcHandlers() {
   //
   // DRGB packet format (WLED protocol 2):
   //   [0]    = 2          (protocol id)
-  //   [1]    = 255        (timeout in seconds; 255 ~= "stay live, don't fall back to effect")
+  //   [1]    = 2          (timeout in seconds; return to normal when frames stop)
+  // 255 would hold realtime indefinitely; use a finite timeout for clean shutdown.
   //   [2..]  = R,G,B,R,G,B,...  for each LED (max ~490 LEDs per packet)
   //
   // For >490 LEDs we'd need DNRGB (protocol 4) with a 16-bit start
@@ -5037,14 +5039,14 @@ function registerIpcHandlers() {
     // pixels arrives as a Buffer (Node serializes Uint8Array → Buffer
     // across IPC). Either way the bytes are R,G,B triples already
     // packed by the renderer.
-    const payload = Buffer.isBuffer(pixels) ? pixels : Buffer.from(pixels);
-    const packet = Buffer.alloc(2 + payload.length);
-    packet[0] = 2;     // DRGB
-    packet[1] = 255;   // timeout
-    payload.copy(packet, 2);
+    let packet;
+    try { packet = buildWLEDRealtimePacket(pixels); }
+    catch (error) { return { ok: false, error: error.message }; }
+    const udpPort = port ?? 21324;
+    if (!Number.isInteger(udpPort) || udpPort < 1 || udpPort > 65535) return { ok: false, error: 'Invalid WLED UDP port' };
     sock._gaInFlight = (sock._gaInFlight || 0) + 1;
     return new Promise((resolve) => {
-      sock.send(packet, 0, packet.length, port || 21324, ip, (err) => {
+      sock.send(packet, 0, packet.length, udpPort, ip, (err) => {
         sock._gaInFlight = Math.max(0, (sock._gaInFlight || 1) - 1);
         resolve({ ok: !err, error: err?.message });
       });
@@ -7974,7 +7976,7 @@ function createMainWindow() {
       {
         label: 'Window',
         submenu: [
-          { label: 'Minimize', accelerator: 'Cmd+M', role: 'minimize' },
+          { label: 'Minimize', accelerator: 'Cmd+Alt+M', role: 'minimize' },
           { label: 'Close', accelerator: 'Cmd+W', role: 'close' },
           { type: 'separator' },
           { label: 'Bring All to Front', role: 'front' },

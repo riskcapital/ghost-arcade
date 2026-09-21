@@ -35,6 +35,7 @@ let timer: ReturnType<typeof setInterval> | null = null;
 let inFlight = false;
 let failureStreak = 0;
 let scratch: ImageData | null = null;
+const frameListeners = new Set<() => void>();
 
 function decodeSnapshotInto(snap: {
   rgba_b64?: string;
@@ -97,6 +98,9 @@ async function pumpOnce(maxDim: number): Promise<void> {
     }) as Parameters<typeof decodeSnapshotInto>[0] | null;
     if (snap && decodeSnapshotInto(snap)) {
       failureStreak = 0;
+      for (const listener of frameListeners) {
+        try { listener(); } catch (error) { console.warn('[CompositeMirror] consumer failed:', error); }
+      }
     }
   } catch (err) {
     failureStreak += 1;
@@ -112,7 +116,7 @@ async function pumpOnce(maxDim: number): Promise<void> {
 /** Hold a live mirror of the native composite. Call `release()` when done —
  *  the snapshot pump stops as soon as the last consumer lets go. */
 export function acquireNativeCompositeMirror(
-  options: { maxDim?: number; fps?: number } = {},
+  options: { maxDim?: number; fps?: number; onFrame?: () => void } = {},
 ): CompositeMirrorHandle {
   const maxDim = Math.max(64, Math.min(2048, Math.round(options.maxDim ?? DEFAULT_MAX_DIM)));
   const fps = Math.max(1, Math.min(30, Math.round(options.fps ?? DEFAULT_FPS)));
@@ -123,6 +127,7 @@ export function acquireNativeCompositeMirror(
     mirrorCtx = mirrorCanvas.getContext('2d');
   }
   consumers += 1;
+  if (options.onFrame) frameListeners.add(options.onFrame);
   if (!timer) {
     void pumpOnce(maxDim);
     timer = setInterval(() => void pumpOnce(maxDim), Math.round(1000 / fps));
@@ -133,6 +138,7 @@ export function acquireNativeCompositeMirror(
     release() {
       if (released) return;
       released = true;
+      if (options.onFrame) frameListeners.delete(options.onFrame);
       consumers = Math.max(0, consumers - 1);
       if (consumers === 0 && timer) {
         clearInterval(timer);

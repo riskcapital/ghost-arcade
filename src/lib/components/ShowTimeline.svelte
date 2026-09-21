@@ -624,7 +624,7 @@
 <svelte:window onkeydown={handleKeydown} bind:innerHeight={viewportH} />
 
 {#if !hiddenInVJ}
-  <button
+  <button data-help-page="show-timeline"
     class="show-toggle"
     class:active={isOpen}
     onclick={() => showTimeline.toggleOpen()}
@@ -640,7 +640,7 @@
 {/if}
 
 {#if isOpen && !hiddenInVJ}
-  <div
+  <div data-help-page="show-timeline"
     class="show-tray"
     class:resizing={resizingTray}
     style="height: {trayHeight}px"
@@ -999,7 +999,7 @@
         </label>
 
         <button class="insp-delete" onclick={deleteSelected}>Delete</button>
-        <button class="insp-close" onclick={() => showTimeline.select(null)}>×</button>
+        <button aria-label="Close selected timeline item" class="insp-close" onclick={() => showTimeline.select(null)}>×</button>
       </div>
     {:else if selectedTransitionClip}
       <!-- Transition inspector. The element on the timeline is the primary
@@ -1053,7 +1053,7 @@
           >clamped from {requestedTransitionDuration(selectedTransitionClip).toFixed(2)}s</span>
         {/if}
         <button class="insp-delete" onclick={deleteSelected} title="Remove the transition — the junction goes back to a hard cut">Delete</button>
-        <button class="insp-close" onclick={() => showTimeline.select(null)}>×</button>
+        <button aria-label="Close selected timeline item" class="insp-close" onclick={() => showTimeline.select(null)}>×</button>
       </div>
     {:else if selectedAudio}
       <div class="show-inspector" bind:clientHeight={inspectorH}>
@@ -1105,7 +1105,7 @@
           <span class="insp-warn">Media missing — re-add the file</span>
         {/if}
         <button class="insp-delete" onclick={deleteSelected}>Delete</button>
-        <button class="insp-close" onclick={() => showTimeline.select(null)}>×</button>
+        <button aria-label="Close selected timeline item" class="insp-close" onclick={() => showTimeline.select(null)}>×</button>
       </div>
     {/if}
 

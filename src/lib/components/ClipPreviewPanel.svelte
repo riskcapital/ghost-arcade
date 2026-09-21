@@ -129,9 +129,9 @@
   }
 </script>
 
-<div class="clip-preview-backdrop" on:click={onClose} role="presentation"></div>
+<div data-help-page="clip-launcher" class="clip-preview-backdrop" on:click={onClose} role="presentation"></div>
 
-<aside class="clip-preview-panel" role="dialog" aria-label="Clip preview">
+<aside data-help-page="clip-launcher" class="clip-preview-panel" role="dialog" aria-label="Clip preview">
   <header class="cpp-header">
     <div class="cpp-header-left">
       <div class="cpp-eyebrow">DECK {bank} · L{layerIndex + 1} · C{columnIndex + 1}</div>

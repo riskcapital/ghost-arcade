@@ -23,6 +23,7 @@ import { writable, get, derived } from 'svelte/store';
 import type { Layer, StageEffect, StageEffectType, Surface } from '../types';
 import { generateUUID } from '../utils/uuid';
 import { audioStore } from './audio';
+import { launchClockPosition, launchClockFollowsLink } from './launchClock';
 import { getVisualAudioSnapshot } from '../audio/visualAudio';
 
 // ─── Per-effect-type catalog (UI + default params) ──────────────────
@@ -31,6 +32,7 @@ export interface StageEffectDef {
   type: StageEffectType;
   label: string;
   icon: string;
+  description?: string;
   defaultParams: Record<string, number>;
   paramSpecs: { key: string; label: string; min: number; max: number; step?: number; }[];
 }
@@ -168,6 +170,7 @@ export const STAGE_EFFECT_CATALOG: StageEffectDef[] = [
   {
     type: 'beat-pulse',
     label: 'Beat Pulse',
+    description: 'Flashes to typed, tapped, MIDI or Link tempo when selected; otherwise reacts to detected audio beats. With audio off, uses the shared BPM clock.',
     icon: '♪',
     // Audio-onset reactive — every tick where RMS spikes above the
     // recent average triggers a global flash that decays over `decay`
@@ -217,6 +220,7 @@ export const STAGE_EFFECT_CATALOG: StageEffectDef[] = [
   {
     type: 'random-hits',
     label: 'Random Hits',
+    description: 'Random flashes across the slices. Rate is the total hits per second across the stage; no audio input is needed.',
     icon: '!',
     // Per-slice random one-shot strobes — a slice randomly fires,
     // brightens to peak, decays over `duration`. rate = average
@@ -612,12 +616,18 @@ function evalSineWave(eff: StageEffect, cx: number, _cy: number, tSec: number, _
   return 1 - (1 - v) * depth;
 }
 
-function evalBeatPulse(eff: StageEffect, _cx: number, _cy: number, _tSec: number, state: any): number {
+function evalBeatPulse(eff: StageEffect, _cx: number, _cy: number, tSec: number, state: any): number {
   const sensitivity = eff.params.sensitivity ?? 1.4;
   const decay = Math.max(0.01, eff.params.decay ?? 0.25);
   const threshold = eff.params.threshold ?? 0.08;
   const audio = get(audioStore);
-  const raw = audio?.isActive ? (audio.rms ?? 0) : 0;
+  if (!audio?.isActive || (audio.manualBPM ?? 0) > 0 || launchClockFollowsLink()) {
+    const { beat, beatMs } = launchClockPosition();
+    const phase = ((beat % 1) + 1) % 1;
+    return Math.max(0, 1 - (phase * beatMs / 1000) / decay);
+  }
+  const raw = audio.rms ?? 0;
+  if (state._lastBeatTime > tSec) state._lastBeatTime = undefined;
   // Primary trigger: the analyzer's tuned kick/beat onset detection —
   // event-driven, per the Milkdrop model, instead of amplitude-tracking.
   // `threshold` still gates out quiet-room noise. The legacy RMS spike
@@ -630,9 +640,9 @@ function evalBeatPulse(eff: StageEffect, _cx: number, _cy: number, _tSec: number
   const hostOnset = !!(audio?.isActive && (audio.kickSnare?.isKick || audio.beat?.isBeat));
   const spikeOnset = raw > baseline * sensitivity;
   if (raw > threshold && (hostOnset || spikeOnset)) {
-    state._lastBeatTime = performance.now() / 1000;
+    state._lastBeatTime = tSec;
   }
-  const since = (performance.now() / 1000) - (state._lastBeatTime ?? -10);
+  const since = tSec - (state._lastBeatTime ?? -10);
   if (since > decay) return 0;
   return 1 - (since / decay);
 }
@@ -676,20 +686,21 @@ function evalCascade(eff: StageEffect, _cx: number, cy: number, tSec: number, _s
   return 1 - Math.abs(local - 0.5) * 2;
 }
 
-function evalRandomHits(eff: StageEffect, cx: number, cy: number, _tSec: number, state: any): number {
+function evalRandomHits(eff: StageEffect, cx: number, cy: number, tSec: number, state: any): number {
   const rate = eff.params.rate ?? 3;
   const duration = Math.max(0.01, eff.params.duration ?? 0.18);
   const peak = eff.params.peak ?? 1;
   const totalSlices = state._sliceCount ?? 1;
-  const nowSec = performance.now() / 1000;
-  // Per-slice last-hit time stored in state, keyed by slice index.
-  // Probability of firing this frame ≈ rate * dt / totalSlices.
-  const lastFire = state._lastFireTime ?? nowSec;
-  const dt = Math.max(0, Math.min(0.1, nowSec - lastFire));
-  state._lastFireTime = nowSec;
-  // Compute slice-local hit time map (lazy init).
-  if (!state._hitTimes) state._hitTimes = new Map<number, number>();
+  const nowSec = tSec;
   const idx = state._sliceIndex ?? 0;
+  // Surface slices share effect state. Each slice needs its own elapsed
+  // time; otherwise the first slice consumes the entire frame interval.
+  if (!state._lastFireTimes) state._lastFireTimes = new Map<number, number>();
+  if (!state._hitTimes) state._hitTimes = new Map<number, number>();
+  const previous = state._lastFireTimes.get(idx) ?? nowSec;
+  if (nowSec < previous) state._hitTimes.delete(idx);
+  const dt = Math.max(0, Math.min(0.1, nowSec - previous));
+  state._lastFireTimes.set(idx, nowSec);
   // Stochastic test — chance proportional to dt × per-slice rate.
   const perSliceRate = rate / Math.max(1, totalSlices);
   if (Math.random() < perSliceRate * dt) {

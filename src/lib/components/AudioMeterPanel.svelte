@@ -77,7 +77,7 @@
 <svelte:window onclick={handleWindowClick} onresize={() => showEq && positionPopover()} />
 
 {#if alwaysShow || $audioStore.isActive}
-  <div class="amp-strip" bind:this={anchorEl}>
+  <div data-help-page="midi-audio" class="amp-strip" bind:this={anchorEl}>
     <!-- FFT bars — clickable to open the EQ popover -->
     <button class="amp-fft-btn" onclick={toggleEq}
       class:open={showEq}

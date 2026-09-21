@@ -13,7 +13,7 @@
   }
 </script>
 
-<div class="column-triggers" class:tablet={isTablet}>
+<div data-help-page="mobile-control" class="column-triggers" class:tablet={isTablet}>
   <div class="trigger-label">
     <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
       <polygon points="5,3 19,12 5,21"/>

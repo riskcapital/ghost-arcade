@@ -73,6 +73,7 @@ describe('native plugin graphs', () => {
     expect(integers[4]).toBe(7);
     expect(integers[5]).toBe(3);
     expect(integers[6]).toBe(1);
+    expect(integers[7]).toBe(5); // normalized palette 0.7 selects Rose
     expect(floats[8]).toBeCloseTo(0.25);
     expect(floats[9]).toBeCloseTo(0.75);
     expect(floats[12]).toBeCloseTo(0.1);

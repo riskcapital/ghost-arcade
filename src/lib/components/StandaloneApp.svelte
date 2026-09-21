@@ -1694,7 +1694,7 @@
   onresize={updateStackSize}
 />
 
-<input
+<input data-help-page="synthvision"
   bind:this={mediaInput}
   type="file"
   accept="image/*,video/*"
@@ -1702,7 +1702,7 @@
   onchange={(e) => void handleMediaPicked(e)}
 />
 
-<div
+<div data-help-page="synthvision"
   class="vj-root"
   class:clean={cleanOutput}
   onpointerdown={onCanvasPointerDown}
