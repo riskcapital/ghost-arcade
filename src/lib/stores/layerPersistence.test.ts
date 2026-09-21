@@ -92,6 +92,32 @@ describe('VJ clip transition persistence', () => {
     };
   }
 
+  it('saves embedded LUTs in Mapping and both VJ decks without external files', async () => {
+    const { parseCubeLut } = await import('../color/cubeLut');
+    const { vjClipLauncher } = await import('./vjClipLauncher');
+    const lut = parseCubeLut('TITLE "Portable look"\nLUT_3D_SIZE 2\n0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1');
+    const effect = { id: 'lut', type: 'cubeLut' as const, enabled: true, params: { cubeLut: lut, lutStrength: .4 } };
+    const payload: any = transitionProject();
+    payload.project.layers = [{ ...types.createLayer('mapped', 'Mapped', 'media'), effects: [effect] }];
+    payload.project.mappingComposition = { enabled: true, effects: [effect] };
+    expect(layers.project.importProject(payload)).toBe(true);
+    for (const bank of ['A', 'B'] as const) {
+      vjClipLauncher.setEffectChain('layer', [effect], 0, bank);
+      vjClipLauncher.setEffectChain('clip', [effect], 0, bank);
+    }
+    vjClipLauncher.setEffectChain('composition', [effect]);
+    const saved = JSON.parse(JSON.stringify(layers.project.exportProject()));
+    expect(layers.project.importProject(saved)).toBe(true);
+    const project = get(layers.project), vj = get(vjClipLauncher);
+    expect(project.layers[0].effects[0].params).toEqual(effect.params);
+    expect(project.mappingComposition!.effects[0].params).toEqual(effect.params);
+    expect(vj.compositionEffects[0].params).toEqual(effect.params);
+    for (const rows of [vj.layerStates, vj.bankBLayerStates]) {
+      expect(rows[0].effects[0].params).toEqual(effect.params);
+      expect(rows[0].activeClip!.effects![0].params).toEqual(effect.params);
+    }
+  });
+
   it('round-trips native clip and layer audio on both decks', async () => {
     const { vjClipLauncher } = await import('./vjClipLauncher');
     const payload: any = transitionProject();
@@ -548,6 +574,35 @@ describe('quantized VJ columns', () => {
     frames.clear();
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it('routes composition LFO independently and preserves its range through save/reopen', async () => {
+    const { modulationStore, modulationEngine, modKeyCompositionEffect } = await import('../audio/modulation');
+    modulationStore.clearAll(); modulationEngine.stop();
+    layers.project.setEffectChain(null, [{ id: 'shared-fx', type: 'blur', enabled: true, params: { amount: .5 } }]);
+    launcher.setEffectChain('composition', [{ id: 'shared-fx', type: 'blur', enabled: true, params: { amount: .75 } }]);
+    const mod = { source: 'lfo-saw' as const, amount: 1, speed: 1, invert: false, bpmSync: false };
+    const mappingValue = () => get(layers.project).mappingComposition!.effects[0].params.amount;
+    const vjValue = () => get(launcher).compositionEffects[0].params.amount;
+    try {
+      modulationStore.setCompositionEffectModulation('mapping', 'shared-fx', 'amount', mod, { base: .5, min: 0, max: 1 });
+      modulationStore.setCompositionEffectModulation('vj', 'shared-fx', 'amount', { ...mod, amount: .5 }, { base: .75, min: 0, max: 1 });
+      tick(10250);
+      expect(mappingValue()).toBeCloseTo(.25);
+      expect(vjValue()).toBeCloseTo(.625);
+      layers.project.setMappingCompositionEnabled(false);
+      tick(10500);
+      expect(mappingValue()).toBeCloseTo(.25);
+      expect(vjValue()).toBeCloseTo(.75);
+      const saved = JSON.parse(JSON.stringify(layers.project.exportProject()));
+      expect(layers.project.importProject(saved)).toBe(true);
+      expect(get(modulationStore).get(modKeyCompositionEffect('mapping', 'shared-fx', 'amount'))?.compositionEffect?.base).toBe(.5);
+      expect(get(modulationStore).get(modKeyCompositionEffect('vj', 'shared-fx', 'amount'))?.compositionEffect?.base).toBe(.75);
+      modulationStore.setCompositionEffectModulation('vj', 'shared-fx', 'amount', { ...mod, source: 'manual' }, { base: .75, min: 0, max: 1 });
+      const held = vjValue(); tick(10750);
+      expect(vjValue()).toBe(held);
+      expect(get(launcher).layerStates[0].effects).toEqual([]);
+    } finally { modulationStore.clearAll(); modulationEngine.stop(); }
   });
 
   it.each(['A', 'B'] as const)('routes clip LFO on deck %s without modulating another clip or bank', async deck => {
@@ -1614,4 +1669,180 @@ describe('quantized VJ columns', () => {
     }
   });
 
+});
+
+describe('macro parameter assignments', () => {
+  it('drives multiple scoped effects, transfers ownership, and preserves routes through project save', async () => {
+    const { macros } = await import('./macros');
+    const { vjClipLauncher } = await import('./vjClipLauncher');
+    const originalProject = get(layers.project);
+    const originalLauncher = get(vjClipLauncher);
+    const originalMacros = get(macros);
+    try {
+      macros.reset();
+      const layer = types.createLayer('Macro target', 'color');
+      const fx = { id: 'macro-brightness', type: 'blur' as const, enabled: true, params: { blurRadius: 1 } };
+      layer.effects = [fx];
+      layers.project.set({ ...originalProject, layers: [layer] });
+      vjClipLauncher.set({ ...originalLauncher, compositionEffects: [{ ...fx, id: 'comp-fx' }] });
+      const target = { scope: 'mapping-layer' as const, layerId: layer.id, effectId: fx.id, param: 'blurRadius' };
+      macros.assignParameter('macro-1', { target, label: 'Mapping brightness', min: 0, max: 2, from: 0, to: 2 });
+      macros.assignParameter('macro-1', { target: { scope: 'vj-composition', effectId: 'comp-fx', param: 'blurRadius' }, label: 'VJ brightness', min: 0, max: 2, from: 2, to: 0 });
+      macros.setMacroValue('macro-1', 0.25);
+      expect(get(layers.project).layers[0].effects[0].params.blurRadius).toBe(0.5);
+      expect(get(vjClipLauncher).compositionEffects[0].params.blurRadius).toBe(1.5);
+      macros.assignParameter('macro-2', { target, label: 'Transferred', min: 0, max: 2, from: 1, to: 2 });
+      expect(get(macros).macros[0].assignments).toHaveLength(1);
+      macros.setMacroValue('macro-1', 1);
+      expect(get(layers.project).layers[0].effects[0].params.blurRadius).toBe(1);
+      const saved = layers.project.exportProject();
+      macros.reset();
+      expect(layers.project.importProject(JSON.parse(JSON.stringify(saved)))).toBe(true);
+      expect(get(macros).macros[1].assignments?.[0].target).toEqual(target);
+      macros.setMacroValue('macro-2', 0.5);
+      expect(get(layers.project).layers[0].effects[0].params.blurRadius).toBe(1.5);
+      macros.unassignParameter(target);
+      macros.setMacroValue('macro-2', 0);
+      expect(get(layers.project).layers[0].effects[0].params.blurRadius).toBe(1.5);
+    } finally {
+      layers.project.set(originalProject);
+      vjClipLauncher.set(originalLauncher);
+      macros.set(originalMacros);
+    }
+  });
+});
+
+describe('macro clip identity routing', () => {
+  it('updates inactive blocks on the addressed deck without touching matching IDs on the other deck', async () => {
+    const { vjClipLauncher } = await import('./vjClipLauncher');
+    const { macros } = await import('./macros');
+    const original = get(vjClipLauncher);
+    const originalMacros = get(macros);
+    const clip = { id: 'macro-clip', type: 'image', name: 'Target', src: '/test.png', effects: [{ id: 'clip-fx', type: 'blur', enabled: true, params: { blurRadius: 1 } }] } as any;
+    try {
+      macros.reset();
+      vjClipLauncher.set({ ...original, clipGrid: [[clip]], bankBClipGrid: [[null]],
+        blocks: [{ id: 'hidden', name: 'Hidden', clipGrid: [[clip]], bankBClipGrid: [[clip]] }],
+        layerStates: original.layerStates.map((row, i) => i ? row : { ...row, activeClip: clip }),
+        bankBLayerStates: original.bankBLayerStates.map(row => ({ ...row, activeClip: null })),
+      });
+      macros.assignParameter('macro-1', { target: { scope: 'vj-clip', bank: 'B', clipId: clip.id, effectId: 'clip-fx', param: 'blurRadius' }, label: 'B clip', min: 0, max: 2, from: 0, to: 2 });
+      macros.setMacroValue('macro-1', 0.25);
+      const state = get(vjClipLauncher);
+      expect(state.blocks[0].bankBClipGrid?.[0][0]?.effects?.[0].params.blurRadius).toBe(0.5);
+      expect(state.blocks[0].clipGrid[0][0]?.effects?.[0].params.blurRadius).toBe(1);
+      expect(state.layerStates[0].activeClip?.effects?.[0].params.blurRadius).toBe(1);
+      expect(state.bankBClipGrid[0][0]).toBeNull();
+      const { findMacroTargetEffect } = await import('./macroAssignments');
+      const target = get(macros).macros[0].assignments![0].target;
+      expect(findMacroTargetEffect(target, get(layers.project), state)?.params.blurRadius).toBe(0.5);
+      const removed = { ...state, blocks: [] };
+      expect(findMacroTargetEffect(target, get(layers.project), removed)).toBeUndefined();
+      expect(get(macros).macros[0].assignments).toHaveLength(1);
+
+    } finally { vjClipLauncher.set(original); macros.set(originalMacros); }
+  });
+});
+
+it('persists VJ groups and preserves children when ungrouping', async () => {
+  const { vjClipLauncher } = await import('./vjClipLauncher');
+  const original = get(vjClipLauncher);
+  const originalProject = get(layers.project);
+  try {
+    vjClipLauncher.set({ ...original, groups: [], numLayers: Math.max(2, original.numLayers) });
+    vjClipLauncher.addGroup(0, 1);
+    const id = get(vjClipLauncher).groups![0].id;
+    vjClipLauncher.updateGroup(id, { name: 'Foreground', opacity: 0.4, blendMode: 'screen' });
+    const saved = JSON.parse(JSON.stringify(layers.project.exportProject()));
+    expect(layers.project.importProject(saved)).toBe(true);
+    expect(get(vjClipLauncher).groups?.[0]).toMatchObject({ id, name: 'Foreground', first: 0, last: 1, opacity: 0.4, blendMode: 'screen' });
+    const grid = get(vjClipLauncher).clipGrid;
+    vjClipLauncher.removeGroup(id);
+    expect(get(vjClipLauncher).groups).toEqual([]);
+    expect(get(vjClipLauncher).clipGrid).toBe(grid);
+  } finally { vjClipLauncher.set(original); layers.project.set(originalProject); }
+});
+
+it('edits group effects independently and round-trips their order, bypass and parameters', async () => {
+  const { vjClipLauncher } = await import('./vjClipLauncher');
+  const original = get(vjClipLauncher);
+  const originalProject = get(layers.project);
+  try {
+    vjClipLauncher.set({ ...original, groups: [] });
+    vjClipLauncher.addGroup(0, 0);
+    const id = get(vjClipLauncher).groups![0].id;
+    expect(vjClipLauncher.addGroupEffects(id, ['blur', 'invert'])).toBeNull();
+    const [blur, invert] = get(vjClipLauncher).groups![0].effects;
+    expect(blur.id).not.toBe(invert.id);
+    vjClipLauncher.updateGroupEffect(id, blur.id, { params: { blurRadius: 12 }, opacity: 0.3, enabled: false });
+    vjClipLauncher.moveGroupEffect(id, invert.id, -1);
+    const saved = JSON.parse(JSON.stringify(layers.project.exportProject()));
+    expect(layers.project.importProject(saved)).toBe(true);
+    const effects = get(vjClipLauncher).groups![0].effects;
+    expect(effects.map(effect => effect.id)).toEqual([invert.id, blur.id]);
+    expect(effects[1]).toMatchObject({ params: { blurRadius: 12 }, opacity: 0.3, enabled: false });
+    expect(get(vjClipLauncher).compositionEffects).toEqual(original.compositionEffects);
+    const before = get(vjClipLauncher).groups![0].effects;
+    expect(vjClipLauncher.addGroupEffects(id, Array(16).fill('invert'))).toContain('16');
+    expect(get(vjClipLauncher).groups![0].effects).toBe(before);
+    vjClipLauncher.removeGroupEffect(id, invert.id);
+    expect(get(vjClipLauncher).groups![0].effects.map(effect => effect.id)).toEqual([blur.id]);
+    expect(vjClipLauncher.addGroupEffects('missing-group', ['blur'])).toContain('no longer');
+  } finally { vjClipLauncher.set(original); layers.project.set(originalProject); }
+});
+
+it('launches only group members and keeps disjoint quantized group queues independent', async () => {
+  const { vjClipLauncher } = await import('./vjClipLauncher');
+  const original = get(vjClipLauncher);
+  try {
+    const rows = Array.from({ length: 4 }, (_, i) => ({ ...original.layerStates[0], activeClip: null, activeColumn: null, locked: i === 1, ignoreColumnTrigger: false }));
+    const grid = rows.map((_, i) => [{ id: `group-launch-${i}`, name: `Clip ${i}`, type: 'image', src: `/group-${i}.png` } as any]);
+    vjClipLauncher.set({ ...original, numLayers: 4, numColumns: 1, layerStates: rows, clipGrid: grid, quantization: 'off', pendingTriggers: [], groups: [
+      { id: 'g1', name: 'One', first: 0, last: 1, opacity: 1, blendMode: 'normal', effects: [] },
+      { id: 'g2', name: 'Two', first: 2, last: 3, opacity: 1, blendMode: 'normal', effects: [] },
+    ] });
+    vjClipLauncher.triggerColumn(0, 'A', 'g1');
+    expect(get(vjClipLauncher).layerStates.map(row => row.activeClip?.id ?? null)).toEqual(['group-launch-0', null, null, null]);
+    vjClipLauncher.set({ ...get(vjClipLauncher), quantization: '4bar', pendingTriggers: [] });
+    vjClipLauncher.triggerColumn(0, 'A', 'g1');
+    vjClipLauncher.triggerColumn(0, 'A', 'g2');
+    expect(get(vjClipLauncher).pendingTriggers.map(trigger => trigger.layerIndices)).toEqual([[0], [2, 3]]);
+    vjClipLauncher.triggerColumn(0, 'A', 'g1');
+    expect(get(vjClipLauncher).pendingTriggers.map(trigger => trigger.groupId)).toEqual(['g2']);
+    vjClipLauncher.removeGroup('g2');
+    expect(get(vjClipLauncher).pendingTriggers).toEqual([]);
+    vjClipLauncher.triggerColumn(0, 'A', 'missing');
+    expect(get(vjClipLauncher).pendingTriggers).toEqual([]);
+  } finally { vjClipLauncher.set(original); }
+});
+
+it('persists a mapped slice group source and switches cleanly back to a layer feed', () => {
+  const original = get(layers.project);
+  try {
+    const screen = types.createLayer('group-screen', 'Stage slice', 'screen');
+    layers.project.set({ ...original, layers: [screen] });
+    layers.project.setLayerVJGroup(screen.id, 'group-source');
+    expect(layers.project.importProject(JSON.parse(JSON.stringify(layers.project.exportProject())))).toBe(true);
+    expect(get(layers.project).layers[0]).toMatchObject({ type: 'screen', vjGroupId: 'group-source' });
+    layers.project.setLayerVJIndex(screen.id, -1);
+    expect(get(layers.project).layers[0].vjGroupId).toBeUndefined();
+    expect(get(layers.project).layers[0].vjLayerIndex).toBe(-1);
+  } finally { layers.project.set(original); }
+});
+
+it('routes MIDI group levels and FX by identity without creating outputs', async () => {
+  const { midiRouter } = await import('../midi/midiRouter');
+  const { vjClipLauncher } = await import('./vjClipLauncher');
+  const original = get(vjClipLauncher);
+  try {
+    vjClipLauncher.set({ ...original, groups: [{ id: 'midi-group', name: 'Stage', first: 0, last: 0, opacity: 1, blendMode: 'normal', effects: [{ id: 'group-fx', type: 'blur', enabled: true, params: { blurRadius: 1 } }] }] });
+    midiRouter.dispatchPath('vj:group:midi-group:level', 0.4);
+    midiRouter.dispatchPath('vj-b:group:midi-group:fx:group-fx:param:blurRadius', 12);
+    midiRouter.dispatchPath('vj:group:midi-group:fx:group-fx:mix', 0.25);
+    expect(get(vjClipLauncher).groups![0]).toMatchObject({ opacity: 0.4, effects: [{ opacity: 0.25, params: { blurRadius: 12 } }] });
+    midiRouter.dispatchPath('vj:group:midi-group:fx:group-fx:param:unknown', 9);
+    expect((get(vjClipLauncher).groups![0].effects[0].params as any).unknown).toBeUndefined();
+    midiRouter.dispatchPath('vj:group:deleted:level', 0);
+    expect(get(vjClipLauncher).groups).toHaveLength(1);
+  } finally { vjClipLauncher.set(original); }
 });

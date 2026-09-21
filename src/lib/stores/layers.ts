@@ -1,3 +1,4 @@
+import { normalizeVJGroups } from './vjGroups';
 import { normalizeCuePoints } from './vjCuePoints';
 import { normalizeAutopilot } from './vjAutopilot';
 import { writable, derived, get } from 'svelte/store';
@@ -1143,10 +1144,16 @@ void main() {
       recordDiscreteAction();
     },
 
+    setLayerVJGroup(id: string, groupId: string) {
+      update(state => ({ ...state, layers: state.layers.map(layer => layer.id === id
+        ? { ...layer, vjGroupId: groupId, vjLayerIndex: undefined } : layer) }));
+      recordDiscreteAction();
+    },
+
     setLayerVJIndex(id: string, vjLayerIndex: number | undefined) {
       update((project) => ({
         ...project,
-        layers: project.layers.map((l) => (l.id === id ? { ...l, vjLayerIndex } : l)),
+        layers: project.layers.map((l) => (l.id === id ? { ...l, vjLayerIndex, vjGroupId: undefined } : l)),
       }));
       recordDiscreteAction();
     },
@@ -3152,7 +3159,7 @@ void main() {
       update((project) => ({
         ...project,
         layers: project.layers.map((l) =>
-          l.id === layerId ? { ...l, vjLayerIndex } : l
+          l.id === layerId ? { ...l, vjLayerIndex, vjGroupId: undefined } : l
         ),
       }));
     },
@@ -4565,6 +4572,7 @@ void main() {
         effects: layer.effects,
         edgeEffects: layer.edgeEffects,
         vjLayerIndex: layer.vjLayerIndex,
+        vjGroupId: layer.vjGroupId,
         contentFit: layer.contentFit,
         renderQuality: layer.renderQuality,
         parentGroupId: layer.parentGroupId,
@@ -4941,6 +4949,7 @@ void main() {
         isOpen: currentVjClipLauncher.isOpen,
         isLive: false, // Don't persist live state
         compositionEffects: currentVjClipLauncher.compositionEffects || [],
+        groups: currentVjClipLauncher.groups ?? [],
         stageMode: false, // Don't persist stage mode active state
         stagePresetId: currentVjClipLauncher.stagePresetId,
       };
@@ -5244,6 +5253,7 @@ void main() {
         layerShape: layer.layerShape || null,
         edgeEffects: layer.edgeEffects || null,
         vjLayerIndex: layer.vjLayerIndex,
+        vjGroupId: layer.vjGroupId,
         contentFit: layer.contentFit,
         renderQuality: layer.renderQuality,
         stageTextureFlipV: layer.stageTextureFlipV,
@@ -5819,6 +5829,7 @@ void main() {
             isOpen: false,
             isLive: false, // Never import as live
             compositionEffects: vjcl.compositionEffects || [],
+            groups: normalizeVJGroups(vjcl.groups, importNumLayers),
             stageMode: false, // Never import as stage mode active
             stagePresetId: vjcl.stagePresetId || null,
             mapMode: false, // Never import as map mode active
@@ -6474,7 +6485,17 @@ export function getGroupLayers(layers: Layer[]): Layer[] {
 
 // Register mapping mode callbacks for the modulation engine
 // This lets audio modulation work on mapping mode layers (not just VJ clips)
-import { registerMappingLayerCallbacks } from '../audio/modulation';
+import { registerCompositionModulationHandlers, registerMappingLayerCallbacks } from '../audio/modulation';
+
+registerCompositionModulationHandlers(
+  (effectId, paramName) => {
+    const composition = get(project).mappingComposition;
+    if (!composition?.enabled) return undefined;
+    const value = (composition.effects.find(effect => effect.id === effectId)?.params as Record<string, unknown> | undefined)?.[paramName];
+    return typeof value === 'number' ? value : undefined;
+  },
+  (effectId, values) => project.updateMappingCompositionEffectParams(effectId, values),
+);
 
 registerMappingLayerCallbacks(
   // updater: apply modulated values to a mapping layer's shader
@@ -6590,3 +6611,24 @@ registerMappingLayerCallbacks(
     return typeof value === 'number' ? value : undefined;
   },
 );
+
+// Registered after both stores exist; macros remain independent of project initialization.
+import { registerMacroAssignmentWriter } from './macroAssignments';
+registerMacroAssignmentWriter((target, value) => {
+  const patch = { [target.param]: value };
+  if (target.scope === 'mapping-layer') {
+    const effect = get(project).layers.find(layer => layer.id === target.layerId)?.effects?.find(e => e.id === target.effectId);
+    if (effect) project.updateEffectParams(target.layerId, target.effectId, patch);
+  } else if (target.scope === 'mapping-composition') {
+    if (get(project).mappingComposition?.effects.some(e => e.id === target.effectId)) project.updateMappingCompositionEffectParams(target.effectId, patch);
+  } else if (target.scope === 'vj-composition') {
+    if (get(vjClipLauncher).compositionEffects.some(e => e.id === target.effectId)) vjClipLauncher.updateCompositionEffectParams(target.effectId, patch);
+  } else if (target.scope === 'vj-layer') {
+    const state = get(vjClipLauncher);
+    const rows = target.bank === 'B' ? state.bankBLayerStates : state.layerStates;
+    const index = rows.findIndex(row => row.effects?.some(e => e.id === target.effectId));
+    if (index >= 0) vjClipLauncher.updateLayerEffectParams(index, target.effectId, patch, target.bank);
+  } else if (target.scope === 'vj-clip') {
+    vjClipLauncher.updateClipEffectParamsById(target.clipId, target.effectId, patch, target.bank);
+  }
+});

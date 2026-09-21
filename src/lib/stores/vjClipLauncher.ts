@@ -1,3 +1,6 @@
+import { getDefaultEffectParams } from '../renderer/effects';
+import { NATIVE_EFFECT_PASS_LIMIT } from '../renderer/nativeEffectChainPolicy';
+import { normalizeVJGroups, removeVJGroupRow, type VJGroup } from './vjGroups';
 import { showToast } from './errorToast';
 import { createNativeQueuedLaunches, type LaunchReceipt } from '../renderer/nativeQueuedLaunch';
 import { vjClipTransitionInputId, vjClipTransitionSourceId } from '../renderer/vjClipTransitionNative';
@@ -307,6 +310,7 @@ export type QuantizationGrid = 'off' | '1/4' | '1/2' | '1bar' | '2bar' | '4bar';
 export interface PendingTrigger {
   id: string;
   kind?: 'clip' | 'column';
+  groupId?: string;
   blockId?: string;
   clipIds?: (string | null)[];
   autopilotSource?: string;
@@ -352,6 +356,7 @@ export interface VJClipLauncherState {
   isLive: boolean;
   // Composition-level effects (applied to final composite output)
   compositionEffects: Effect[];
+  groups?: VJGroup[];
   // Stage mode: bridge VJ layers to mapping layers
   stageMode: boolean;
   stagePresetId: string | null;
@@ -457,6 +462,7 @@ function createDefaultState(): VJClipLauncherState {
     isOpen: false,
     isLive: false,
     compositionEffects: [],
+    groups: [],
     stageMode: false,
     mapMode: false,
     stagePresetId: null,
@@ -1787,25 +1793,31 @@ function createVJClipLauncherStore() {
       immediateTriggerClip(layerIndex, columnIndex, deck);
     },
 
-    // One pending column per deck; a repeated press cancels it, another
-    // column replaces it. All rows share one deadline and one state update.
-    triggerColumn(columnIndex: number, deck: VJDeck = 'A') {
+    // Full-column launches replace that deck's column queue. Disjoint group
+    // launches coexist; repeat presses cancel their own group. All targeted
+    // rows share one deadline and one state update.
+    triggerColumn(columnIndex: number, deck: VJDeck = 'A', groupId?: string) {
       const state = get({ subscribe });
       if (!Number.isInteger(columnIndex) || columnIndex < 0 || columnIndex >= state.numColumns) return;
+      const group = groupId ? state.groups?.find(g => g.id === groupId) : undefined;
+      if (groupId && !group) return;
+      const groupRows = group ? Array.from({ length: group.last - group.first + 1 }, (_, i) => group.first + i) : undefined;
       if (state.quantization === 'off') {
-        this.triggerColumnNow(columnIndex, deck);
+        this.triggerColumnNow(columnIndex, deck, groupRows);
         return;
       }
-      const layerIndices = pickLayerStates(state, deck).flatMap((row, index) => row.locked || ignoresColumn(row) ? [] : [index]);
+      const layerIndices = pickLayerStates(state, deck).flatMap((row, index) => row.locked || ignoresColumn(row) || (groupRows && !groupRows.includes(index)) ? [] : [index]);
       if (!layerIndices.length) return;
-      const existing = state.pendingTriggers.some(p => p.kind === 'column' && p.bank === deck && p.columnIndex === columnIndex);
+      const existing = state.pendingTriggers.some(p => p.kind === 'column' && p.bank === deck && p.columnIndex === columnIndex && p.groupId === groupId);
       const entry: PendingTrigger = {
-        id: generateUUID(), kind: 'column', layerIndex: -1, columnIndex, bank: deck, layerIndices,
+        id: generateUUID(), kind: 'column', groupId, layerIndex: -1, columnIndex, bank: deck, layerIndices,
         blockId: state.activeBlockId, clipIds: queuedClipIds(state, deck, columnIndex),
         ...launchDeadline(state.quantization), queuedAt: performance.now(),
       };
       update(s => ({ ...s, pendingTriggers: [
-        ...s.pendingTriggers.filter(p => p.bank !== deck || (p.kind !== 'column' && !layerIndices.includes(p.layerIndex))), ...(existing ? [] : [entry]),
+        ...s.pendingTriggers.filter(p => p.bank !== deck || (p.kind === 'column'
+          ? !!groupId && p.groupId !== groupId && !(p.layerIndices ?? []).some(index => layerIndices.includes(index))
+          : !layerIndices.includes(p.layerIndex))), ...(existing ? [] : [entry]),
       ] }));
       if (!existing) ensureQuantTickRunning({ update });
     },
@@ -2981,6 +2993,26 @@ function createVJClipLauncherStore() {
       });
     },
 
+    /** Macro routes address clips by identity, including inactive blocks. */
+    updateClipEffectParamsById(clipId: string, effectId: string, params: Record<string, number>, deck: VJDeck) {
+      update(state => {
+        let changed = false;
+        const apply = (clip: VJClip | null): VJClip | null => {
+          if (!clip || clip.id !== clipId || !clip.effects?.some(e => e.id === effectId)) return clip;
+          changed = true;
+          return { ...clip, effects: clip.effects.map(e => e.id === effectId ? { ...e, params: { ...e.params, ...params } } : e) };
+        };
+        const grid = (rows: (VJClip | null)[][]) => rows.map(row => row.map(apply));
+        const states = pickLayerStates(state, deck).map(row => ({ ...row, activeClip: apply(row.activeClip) }));
+        const nextGrid = grid(pickGrid(state, deck));
+        const blocks = state.blocks.map(block => deck === 'A'
+          ? { ...block, clipGrid: grid(block.clipGrid) }
+          : { ...block, bankBClipGrid: block.bankBClipGrid ? grid(block.bankBClipGrid) : undefined });
+        if (!changed) return state;
+        return { ...withDeck(state, deck, states, nextGrid), blocks };
+      });
+    },
+
     updateClipEffectParams(layerIndex: number, columnIndex: number, effectId: string, params: Record<string, any>, deck: VJDeck = 'A') {
       update(state => {
         const targetGrid = pickGrid(state, deck);
@@ -3247,6 +3279,48 @@ function createVJClipLauncherStore() {
       });
     },
 
+    addGroup(first: number, last: number) {
+      const id = `group-${crypto.randomUUID()}`;
+      update(state => ({ ...state, groups: normalizeVJGroups([...(state.groups ?? []),
+        { id, name: `Group ${(state.groups?.length ?? 0) + 1}`, first, last, opacity: 1, blendMode: 'normal', effects: [] }], state.numLayers) }));
+    },
+    updateGroup(id: string, patch: Partial<Pick<VJGroup, 'name' | 'opacity' | 'blendMode' | 'effects'>>) {
+      update(state => ({ ...state, groups: normalizeVJGroups((state.groups ?? []).map(g => g.id === id ? { ...g, ...patch } : g), state.numLayers) }));
+    },
+    addGroupEffects(id: string, types: import('../types').EffectType[]): string | null {
+      const state = get({ subscribe });
+      const group = state.groups?.find(g => g.id === id);
+      if (!group) return 'Group is no longer available.';
+      if (types.some(type => !isNativeSelectableEffect(type))) return 'Choose effects supported by the native renderer.';
+      if (group.effects.filter(effect => effect.enabled !== false).length + types.length > NATIVE_EFFECT_PASS_LIMIT) return `A group supports ${NATIVE_EFFECT_PASS_LIMIT} enabled effects. Disable or remove effects first.`;
+      const added: Effect[] = types.map(type => ({ id: crypto.randomUUID(), type, enabled: true, opacity: 1, blendMode: 'normal', params: { ...getDefaultEffectParams(type) } }));
+      this.updateGroup(id, { effects: [...group.effects, ...added] });
+      return null;
+    },
+    updateGroupEffect(id: string, effectId: string, patch: Partial<Pick<Effect, 'enabled' | 'opacity' | 'params'>>) {
+      const group = get({ subscribe }).groups?.find(g => g.id === id);
+      if (!group) return;
+      this.updateGroup(id, { effects: group.effects.map(effect => effect.id === effectId
+        ? { ...effect, ...patch, params: { ...effect.params, ...patch.params } } : effect) });
+    },
+    removeGroupEffect(id: string, effectId: string) {
+      const group = get({ subscribe }).groups?.find(g => g.id === id);
+      if (group) this.updateGroup(id, { effects: group.effects.filter(effect => effect.id !== effectId) });
+    },
+    moveGroupEffect(id: string, effectId: string, offset: number) {
+      const group = get({ subscribe }).groups?.find(g => g.id === id);
+      if (!group || (offset !== 1 && offset !== -1)) return;
+      const effects = [...group.effects];
+      const index = effects.findIndex(effect => effect.id === effectId);
+      if (index < 0 || index + offset < 0 || index + offset >= effects.length) return;
+      [effects[index], effects[index + offset]] = [effects[index + offset], effects[index]];
+      this.updateGroup(id, { effects });
+    },
+
+    removeGroup(id: string) {
+      update(state => ({ ...state, groups: (state.groups ?? []).filter(g => g.id !== id), pendingTriggers: state.pendingTriggers.filter(trigger => trigger.groupId !== id) }));
+    },
+
     // Remove a layer (default: last) from BOTH banks across ALL blocks.
     removeLayer(index?: number) {
       const current = get({ subscribe });
@@ -3275,6 +3349,7 @@ function createVJClipLauncherStore() {
 
         return {
           ...state,
+          groups: removeVJGroupRow(state.groups ?? [], removeIdx, newNumLayers),
           numLayers: newNumLayers,
           clipGrid: newClipGrid,
           blocks: newBlocks,

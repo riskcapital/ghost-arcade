@@ -1,3 +1,5 @@
+import { vjGroupSourceId, buildVJGroupedMixGraph, type VJGroupedMixOptions } from '../renderer/vjGroupNative';
+import { cubeLutHandle } from '../color/cubeLutAssets';
 import { nativeVideoLaunchTime, nativeVideoAnchorRate } from '../media/nativeTransport';
 import { get } from 'svelte/store';
 import { screenOutputError } from '../stores/screenOutputStatus';
@@ -983,6 +985,10 @@ export function effectToNativeDescriptor(effect: any): string | null {
   const params = effect.params || {};
   if (!type) return null;
 
+  if (type === 'cubelut') {
+    try { return `passthru:cube-lut:lutHandle=${cubeLutHandle(params.cubeLut)},amount=${clampNumber(firstFiniteParam(params, ['lutStrength'], 1), 0, 1)}`; }
+    catch { return null; }
+  }
   if (type === 'invert') {
     const invAmount = clampNumber(firstFiniteParam(params, ['invertAmount', 'amount'], 1), 0, 1);
     const invMode = clampNumber(Math.round(firstFiniteParam(params, ['invertMode', 'mode'], 0)), 0, 4);
@@ -6222,6 +6228,21 @@ export class NativeRendererSync {
     }
     const redirectVjSource = (target: Layer) => {
       if (String(target.id).startsWith('vj-')) return;
+      if (target.vjGroupId) {
+        const group = get(vjClipLauncher).groups?.find(group => group.id === target.vjGroupId);
+        const mix = vjFeed.get(-1);
+        const rows = (mix?.source?.effectSource as any)?.vjmixRows as Array<{ groupId?: string }> | undefined;
+        if (!group || !rows?.some(row => row.groupId === group.id)) {
+          target.visible = false; // Retain the saved assignment; never fall back to another live feed.
+          return;
+        }
+        target.source = {
+          id: `vj-group-feed:${target.id}`, type: 'effect', name: group.name, src: 'plugin://vj-mix',
+          effectSource: { effectType: 'vj-mix', vjmixSharedFeed: true,
+            vjmixRows: [{ frameId: vjGroupSourceId('plugin:__vj-mix__:vj-mix', group.id), opacity: group.opacity, blendMode: 'normal' }] },
+        } as NonNullable<Layer['source']>;
+        return;
+      }
       const raw = Number((target as { vjLayerIndex?: number | null }).vjLayerIndex);
       if (!Number.isFinite(raw) || vjFeed.size === 0) return;
       const index = Math.round(raw);
@@ -7311,12 +7332,8 @@ export class NativeRendererSync {
     ]).catch(() => { /* core without output-state support */ });
   }
 
-  /** Mirror the composite-stage effect chain into the core: composition
-   *  effects first, then each open macro's effect bundle scaled by its knob.
-   *  The WebGL engine ran both after layer blending (`applyEffects` on the
-   *  composite, then a wet/dry mix per bundle); the native compositor now
-   *  does the same inside the heartbeat shader. Effects outside the
-   *  compositor's in-shader op set are reported back as skipped. */
+  /** Coalesce clearing the legacy inline chain; all composition and macro
+   * effects now use the full post-composite pass route below. */
   private scheduleCompositeEffects() {
     // Auto-pulse rewrites macro values on every animation frame, so both
     // subscriptions can fire many times per frame. Coalesce to one rebuild
@@ -7333,7 +7350,7 @@ export class NativeRendererSync {
   }
 
   /**
-   * Mapping-mode composition FX as a post-composite effect-pass chain.
+   * Mapping composition FX followed by global macro FX as a post-composite chain.
    *
    * These cannot ride a layer's chain the way VJ composition FX do: mapping
    * layers are warped, masked and blended inside the compositor, so there is
@@ -7342,8 +7359,8 @@ export class NativeRendererSync {
    * composite and runs this chain over it — which is why blur and everything
    * else that samples neighbouring pixels now works here at all.
    *
-   * Rebuilt every frame rather than on change: the core drains its
-   * post-composite queue each render, and the uniforms carry time.
+   * Refreshed on every flush so time, audio and macro uniforms stay live.
+   * The core retains the latest chain between flushes.
    */
   private compositeEffectGraphCommand(width: number, height: number): RendererCommand | null {
     // The core keeps the last chain resident on purpose: it renders on its
@@ -7362,20 +7379,27 @@ export class NativeRendererSync {
     };
     if (!this.supportsNativeFeature('native_post_composite_graph')) return noChain();
     const mappingComposition = get(project)?.mappingComposition;
-    if (!mappingComposition?.enabled) return noChain();
-    const candidates = (mappingComposition.effects ?? []).filter(
-      (effect: any) => effect && effect.enabled !== false,
-    );
+    const candidates = [
+      ...(mappingComposition?.enabled ? mappingComposition.effects ?? [] : [])
+        .map((effect) => ({ effect, mix: Number(effect.opacity ?? 1) })),
+      ...(get(macros)?.macros ?? []).flatMap((macro) => {
+        const value = Number.isFinite(macro.value) ? Math.max(0, Math.min(1, macro.value)) : 0;
+        if (value <= 0.001) return [];
+        return (macro.effects ?? []).map((effect) => ({
+          effect, mix: value * Number(effect.opacity ?? 1),
+        }));
+      }),
+    ].filter(({ effect, mix }) => effect && effect.enabled !== false && Number.isFinite(mix) && mix > 0);
     if (!candidates.length) return noChain();
 
-    // Same all-or-nothing rule the layer chain has: drop what the core cannot
-    // run rather than losing the whole chain to one unsupported pick.
+    // Keep only advertised passes so one unsupported saved effect cannot
+    // invalidate the output chain. The editor exposes the shared pass limit.
     const effectPasses = candidates
-      .map((effect: any) => ({
-        effect,
+      .map(({ effect, mix }) => ({
+        effect, mix,
         pass: nativeEffectPassFromDescriptor(effectToNativeDescriptor(effect)),
       }))
-      .filter((entry) => !!entry.pass)
+      .filter((entry) => !!entry.pass && this.nativeEffectPassDescriptorIds.has(entry.pass.effect))
       .slice(0, NATIVE_EFFECT_PASS_LIMIT);
     if (!effectPasses.length) return noChain();
     if (!this.supportsNativeEffectPassRoute(effectPasses.map((entry) => entry.pass!))) {
@@ -7391,7 +7415,7 @@ export class NativeRendererSync {
         effects: effectPasses.map((entry) => ({
           effect: entry.pass!.effect,
           amount: entry.pass!.amount,
-          mix: Math.max(0, Math.min(1, Number(entry.effect.opacity ?? 1))),
+          mix: Math.max(0, Math.min(1, entry.mix)),
           params: { ...entry.pass!.params, audioLevel: getVisualAudioSnapshot().level },
         })),
         width,
@@ -7411,53 +7435,14 @@ export class NativeRendererSync {
   }
 
   private pushCompositeEffects() {
-    const entries: Array<{ descriptor: string; mix: number }> = [];
-    const unsupported: string[] = [];
-    const push = (effect: any, mix: number) => {
-      const descriptor = effectToNativeDescriptor(effect);
-      if (!descriptor) return;
-      // The composite stage runs inside the heartbeat shader, which only
-      // implements the compositor's colour ops. Anything needing its own
-      // pass (blur, colorama, displacement, …) is dropped by the core, so
-      // name it here rather than letting it silently do nothing.
-      if (!HEARTBEAT_NATIVE_EFFECT_IDS.has(descriptor.split(':', 1)[0])) {
-        unsupported.push(descriptor.split(':', 1)[0]);
-        return;
-      }
-      entries.push({ descriptor, mix });
-    };
-    // VJ composition FX are NOT pushed here any more. They now ride the VJ
-    // mix carrier's effect-pass chain (see appendNativeVjMixCarrier in
-    // Canvas.svelte), which runs the full native effect set instead of the
-    // nine inline colour ops this path supports. Pushing them here as well
-    // would apply brightness/contrast/etc twice — once in the chain and
-    // again in the compositor.
-    //
-    // Mapping composition FX are not pushed here either: they run as a
-    // post-composite effect-pass chain (compositeEffectGraphCommand), so
-    // sending them again would apply the colour ops twice.
-    //
-    // What is left below is macros, which genuinely do want the compositor's
-    // cheap inline path — they modulate the whole output continuously and
-    // never need to sample neighbouring pixels.
-    for (const macro of get(macros)?.macros ?? []) {
-      if (macro.value <= 0.001 || !macro.effects?.length) continue;
-      for (const effect of macro.effects) {
-        if (effect.enabled === false) continue;
-        push(effect, macro.value);
-      }
-    }
-    const sig = entries.map((e) => `${e.descriptor}@${e.mix.toFixed(4)}`).join('|');
-    if (sig === this.lastCompositeEffectsSig) return;
-    this.lastCompositeEffectsSig = sig;
-    if (unsupported.length) {
-      console.warn(
-        `[NativeRendererSync] composite-stage effects without a native op: ${[...new Set(unsupported)].join(', ')}`,
-      );
-    }
+    // Clear the old nine-op path once per renderer connection. Keeping any
+    // entries here would apply macro color effects twice. The full graph is
+    // rebuilt by flush, including time/audio uniforms and current knob values.
+    if (this.lastCompositeEffectsSig === '') return;
+    this.lastCompositeEffectsSig = '';
     void submitNativeRendererCommands([
-      { type: 'set_composite_effects', effects: entries },
-    ]).catch(() => { /* core without composite-effect support */ });
+      { type: 'set_composite_effects', effects: [] },
+    ]).catch(() => { this.lastCompositeEffectsSig = null; });
   }
 
   /** Mirror the output stage — crop, rotation, colour grade, projector edge
@@ -8978,15 +8963,17 @@ export class NativeRendererSync {
           routeState.lastVJCrossfadeTopologySig = topologySig;
           routeState.lastVJCrossfadeUniformSig = uniform.signature;
         }
+        let groupedMixGraph: ReturnType<typeof buildVJGroupedMixGraph> | null = null;
         let vjMixGraphOptions: Parameters<typeof buildVJMixGraph>[0] | null = null;
         if (nativeGraphRoute.kind === 'vj-mix') {
           const rawRows = Array.isArray(nativeGraphScaledParams?.vjmixRows)
-            ? nativeGraphScaledParams.vjmixRows as Array<{ layerId?: string; opacity?: number; blendMode?: string }>
+            ? nativeGraphScaledParams.vjmixRows as Array<{ layerId?: string; frameId?: string; opacity?: number; blendMode?: string; groupId?: string }>
             : [];
           const rows: VJMixRow[] = rawRows
-            .filter((row) => String(row?.layerId ?? '').length > 0)
+            .filter((row) => String(row?.frameId ?? row?.layerId ?? '').length > 0)
             .map((row) => ({
-              frameId: `layer-frame:${String(row.layerId)}`,
+              frameId: row.frameId || `layer-frame:${String(row.layerId)}`,
+              groupId: row.groupId,
               opacity: Number(row.opacity ?? 1),
               blendMode: String(row.blendMode ?? 'normal'),
             }));
@@ -9001,7 +8988,18 @@ export class NativeRendererSync {
               time: graphTime,
               frameIndex: graphFrameIndex,
             };
-            const topologySig = [
+            const rawGroups = Array.isArray(nativeGraphScaledParams?.vjmixGroups) ? nativeGraphScaledParams.vjmixGroups as any[] : [];
+            if (rawGroups.length) {
+              const groups = rawGroups.map(group => ({
+                id: String(group.id), opacity: Number(group.opacity), blendMode: String(group.blendMode),
+                effects: (group.effects ?? []).filter((fx: any) => fx.enabled !== false).map((fx: any) => {
+                  const pass = nativeEffectPassFromDescriptor(effectToNativeDescriptor(fx));
+                  return pass ? { ...pass, mix: Number(fx.opacity ?? 1) } : null;
+                }).filter((pass: any) => pass && this.nativeEffectPassDescriptorIds.has(pass.effect)).slice(0, NATIVE_EFFECT_PASS_LIMIT),
+              }));
+              groupedMixGraph = buildVJGroupedMixGraph({ ...vjMixGraphOptions, rows, groups, time: 0, frameIndex: 0 } as VJGroupedMixOptions);
+            }
+            const topologySig = groupedMixGraph ? JSON.stringify(groupedMixGraph.config) : [
               vjMixGraphOptions.outputSourceId,
               ...rows.map((row) => row.frameId),
               width,
@@ -9009,7 +9007,7 @@ export class NativeRendererSync {
             ].join(':');
             const uniform = buildVJMixUniformUpdate(vjMixGraphOptions);
             installPluginGraph = routeState.lastVJMixTopologySig !== topologySig;
-            if (!installPluginGraph && routeState.lastVJMixUniformSig !== uniform.signature) {
+            if (!groupedMixGraph && !installPluginGraph && routeState.lastVJMixUniformSig !== uniform.signature) {
               for (const entry of uniform.buffers) {
                 commands.push({
                   type: 'update_native_graph_buffer',
@@ -9040,7 +9038,7 @@ export class NativeRendererSync {
             : null
           : nativeGraphRoute.kind === 'vj-mix'
           ? installPluginGraph && vjMixGraphOptions
-            ? buildVJMixGraph(vjMixGraphOptions)
+            ? groupedMixGraph ?? buildVJMixGraph(vjMixGraphOptions)
             : null
           : pluginRoute
           ? buildNativePluginGraph({
@@ -9993,12 +9991,13 @@ fn fs_main() -> @location(0) vec4<f32> {
    *  `precompile_shader` only PARSES the effect-pass module (naga front
    *  end) — Metal's expensive MSL translation + pipeline compile happens at
    *  first `queue_compute_graph`, which is why the first effect a user
-   *  added stalled the output for seconds and then "snapped in". All 184
+   *  added stalled the output for seconds and then "snapped in". Standard
    *  effects share one module and one entry (per-effect behaviour is a
    *  uniform code), so warming a single 16px brightness chain compiles the
    *  pipeline every standard effect chain reuses. History-buffer effects
    *  (motion-trails etc.) have a different binding layout and still pay a
-   *  smaller first-use cost. */
+   *  smaller first-use cost. The separate LUT storage-table pipeline is
+   *  warmed with an identity LUT in the same chain. */
   private async warmNativeEffectPassPipeline() {
     if (!this.running) return;
     if (
@@ -10023,7 +10022,10 @@ fn fs_main() -> @location(0) vec4<f32> {
       const graph = buildNativeEffectPassChainGraph({
         sourceId: 'warmup:effect-pass:src',
         targetSourceId: 'warmup:effect-pass:out',
-        effects: [{ effect: 'brightness' as NativeEffectPassId, amount: 1, mix: 1, params: {} }],
+        effects: [
+          { effect: 'brightness' as NativeEffectPassId, amount: 1, mix: 1, params: {} },
+          ...(this.nativeEffectPassDescriptorIds.has('cube-lut') ? [{ effect: 'cube-lut' as NativeEffectPassId, amount: 1, mix: 1, params: { lutHandle: 0 } }] : []),
+        ],
         width: size,
         height: size,
         time: 0,

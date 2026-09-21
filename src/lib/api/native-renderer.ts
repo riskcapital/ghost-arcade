@@ -1,4 +1,7 @@
+import { NativeLutResidency } from '../renderer/nativeLutResidency';
 import { invoke } from '$lib/bridge';
+
+const lutResidency = new NativeLutResidency();
 
 export type BackendKind = 'd3d11' | 'd3d12' | 'vulkan' | 'metal';
 export type DecodeBackendKind = 'synthetic' | 'ffmpeg_software' | 'ffmpeg_d3d11va';
@@ -1325,6 +1328,7 @@ export interface RendererReadinessReport {
 }
 
 export async function startNativeRenderer(config?: Partial<RendererStartConfig>) {
+  lutResidency.reset();
   return invoke<RendererStatus>('native_renderer_start', {
     config: {
       backend: config?.backend ?? 'd3d11',
@@ -1371,15 +1375,26 @@ export async function startNativeRenderer(config?: Partial<RendererStartConfig>)
 }
 
 export async function stopNativeRenderer() {
+  lutResidency.reset();
   return invoke<void>('native_renderer_stop');
 }
 
 export async function submitNativeRendererBatch(batch: CommandBatch) {
-  return invoke<NativeCommandApplySummary>('native_renderer_submit_batch', { batch });
+  const prepared = lutResidency.prepare(batch.commands);
+  try {
+    const result = await invoke<NativeCommandApplySummary>('native_renderer_submit_batch', { batch: { ...batch, commands: prepared.commands } });
+    prepared.finish(!!result && !result.dropped && !result.invalid_payload && !result.errors?.length);
+    return result;
+  } catch (error) { prepared.finish(false); throw error; }
 }
 
 export async function submitNativeRendererCommands(commands: RendererCommand[]) {
-  return invoke<NativeCommandApplySummary>('native_renderer_submit_commands', { commands });
+  const prepared = lutResidency.prepare(commands);
+  try {
+    const result = await invoke<NativeCommandApplySummary>('native_renderer_submit_commands', { commands: prepared.commands });
+    prepared.finish(!!result && !result.dropped && !result.invalid_payload && !result.errors?.length);
+    return result;
+  } catch (error) { prepared.finish(false); throw error; }
 }
 
 export async function runNativeRendererComputeGraph(config: Record<string, unknown>) {
@@ -1471,6 +1486,7 @@ export async function clearNativeRendererDecodePreviewCache() {
 }
 
 export async function clearNativeRendererRuntimeCaches(config: ClearRuntimeCachesConfig) {
+  lutResidency.reset();
   return invoke<void>('native_renderer_clear_runtime_caches', { config });
 }
 

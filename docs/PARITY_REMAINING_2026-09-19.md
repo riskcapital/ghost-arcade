@@ -2,6 +2,25 @@
 
 This is a development checkpoint, not a release. See RESOLUME_PARITY_STATUS_2026-09-18.md and reports for implementation evidence. Direct image-sequence clips are excluded at Justin's request.
 
+## Windows handoff — September 20
+
+Feature work is paused for Windows acceptance. Use [the Windows acceptance checklist](WINDOWS_ACCEPTANCE_2026-09-20.md) for the current testable scope and intentionally unfinished items. Later dated checkpoints below supersede earlier implementation notes; earlier "not yet connected" and "uncommitted" statements describe those historical steps, not the final handoff. This is a source checkpoint, not a website/installer release.
+
+## Approved implementation scope — September 20
+
+Justin selected items 1, 2, 7, 8, 14, 15 and 28 from the decision list, plus Windows acceptance. Projection mapping is central, so 16–18 are included:
+
+- Dashboard macros: multiple parameter destinations, ranges/inversion, clip/layer/composition scope and full native effects.
+- Real VJ groups: compositing, effects, level/blend, column triggering and Screen routing.
+- Native clip audio in recordings and audio fades matching video transitions.
+- Individual layer/Screen recording and alpha export (HAP Alpha / ProRes 4444).
+- Shared rendered VJ feeds across mapped Screens.
+- Direct native Windows output/deck windows, Bezier warping and per-Screen polygon masks.
+- Mapping mask brush: non-destructive Erase/Restore, size/softness/opacity, undo/redo, clear/invert, mask overlay and project persistence; combine with polygon masks and keep painting responsive through GPU-resident masks.
+- Windows hardware acceptance of the selected and previously implemented features.
+
+Other open items below remain deferred unless separately selected. Follow this selected work and audit with MadMapper parity research, then choose additions together. Cross-compilation is not Windows hardware acceptance.
+
 ## 1. Windows acceptance of implemented features
 
 - Cold/warm video launches, first picture, trim points, seamless loops, exact frame stepping, mouse/MIDI scrubbing and cue jumps.
@@ -47,11 +66,11 @@ This is a development checkpoint, not a release. See RESOLUME_PARITY_STATUS_2026
 
 - Authenticated REST/WebSocket API sharing the MCP tool schema, parameter subscriptions and output snapshots.
 - Clip/layer/composition dashboard macros: multiple parameter targets, ranges/inversion and full native effect support.
-- Qualify the new Auto curves, beat sync and crossfader/clip-position drivers live; complete composition Audio/LFO routing; clip Audio/LFO is implemented with live-input acceptance pending. Mapping and VJ composition Auto are implemented. Dedicated envelope presets remain separate scope.
+- Qualify the new Auto curves, beat sync and crossfader/clip-position drivers live; qualify clip/composition Audio/LFO/Beat routing with live inputs. These routes are implemented. Mapping and VJ composition Auto are implemented. Dedicated envelope presets remain separate scope.
 - Real VJ group compositing, group effects/level/blend/column triggering and Screen routing.
 - Complete ISF multipass, persistent buffers and live audio/FFT inputs.
 - Record individual layers/Screens; alpha clip rendering to HAP Alpha/ProRes 4444.
-- .cube LUTs and expression support in remaining standalone numeric fields. Shared slider/effect readouts now accept arithmetic. User effect-chain presets are implemented; visual acceptance in the desktop app remains.
+- Expression support in remaining standalone numeric fields. Shared slider/effect readouts now accept arithmetic. User effect-chain presets and native 3D .cube LUT import are implemented; Windows GPU/live-show acceptance remains.
 - Continue intentional UI/UX review for each feature and compact-window usability.
 
 ## 6. Decisions and deliberately excluded work
@@ -166,3 +185,97 @@ VJ clip effect parameters now expose Audio, LFO and Beat alongside Manual/Auto. 
 Validation: 140 routing/Auto/preset/project tests pass. Real modulation-engine tests on both decks cover LFO output, dormant clips, row movement, deck isolation, save/reopen baseline/range persistence and manual re-baselining. Physical audio-input/beat testing and visual acceptance remain pending. Assignments persist with the project, not with the effect-chain library. Changes remain local and uncommitted.
 
 Desktop type checking passes with zero errors (1038 existing warnings); final routing regressions and whitespace checks pass.
+
+## Composition Audio/LFO/Beat routing — September 20
+
+Mapping and VJ composition effect parameters now expose Audio/LFO/Beat through dedicated composition keys, independent of selected rows and decks. Each assignment saves its base value and range. The engine checks that its target effect exists before writing, and disabled Mapping compositions hold their values. Manual removes the assignment; switching to Auto uses the same mutual-exclusion path as other parameter controls.
+
+Validation: 141 modulation, Auto, preset and project tests pass. Real engine tests cover independent Mapping/VJ output even with identical effect IDs, Mapping disable/hold, save/reopen of distinct baselines and manual removal without changing layer effects. Live audio/beat input and visual acceptance remain pending. The preceding controls checkpoint is committed as d3993b27; this follow-up remains uncommitted.
+
+Final desktop type checking passes with zero errors (1038 existing warnings); whitespace checks pass.
+
+## 3D .cube LUT rendering foundation — September 20
+
+Added a bounded standalone 3D Cube parser and native GPU LUT graph. The parser accepts sizes 2–65, quoted titles, comments, decimal/exponent values, per-channel DOMAIN_MIN/MAX and standalone LUT_3D_INPUT_RANGE. It rejects truncated/extra rows, invalid numeric values, duplicate/unknown headers, degenerate float32 domains, ambiguous domain headers and unsupported 1D/combined shapers. Inputs are immutable after validation. Format reference: [Adobe Cube LUT specification 1.0 (mirror)](https://kono.phpage.fr/images/a/a1/Adobe-cube-lut-specification-1.0.pdf).
+
+The dedicated WGSL pass uses an RGBA-aligned GPU storage table, red-fastest addressing, trilinear interpolation, clamped input-domain sampling, adjustable strength and unchanged source alpha. It does not infer camera profiles or perform automatic color-space conversion. Table initialization is separate from the 48-byte strength/domain uniform payload; integration must install the table only when the LUT changes, rather than resending it every frame.
+
+Validation: 27 parser/packing tests pass. A standalone real Metal render-core test checks actual output pixels for identity, channel permutation, interpolation, zero/partial/full strength, per-channel domains, boundary clamping, composited fractional/zero alpha and the largest 65³ table. Desktop checking reports zero errors (1038 existing warnings). No running app restart or Windows hardware test was performed.
+
+**Foundation checkpoint, superseded by the integration below:** the parser/shader initially shipped without picker or persistence integration.
+
+
+## Color LUT import and native effect integration — September 20
+
+Finished the 3D LUT feature. In clip, layer or composition Effects, add **Color LUT**, then **Load .cube**. The compact control shows the title and table dimensions, supports Replace/Remove, and retains the previous look if parsing fails. Import parsing runs in a worker; changing the selected target or closing the control cancels late results. Strength uses the shared numeric/Auto/Audio/LFO/Beat/MIDI control path. Unloaded/removed LUTs bypass grading, including out-of-range color inputs.
+
+LUT data is embedded in `.gha` projects and effect-chain presets, so reopening or transferring does not depend on the original file path. Both decks, clip and layer chains, VJ composition and Mapping layer/composition persistence are covered. Preset transfer limits now allow 32 MB; the browser's local preset-storage quota still applies and failed saves preserve the existing library. This is standalone 3D Cube support (sizes 2–65), not 1D/combined shaper support or automatic camera color management.
+
+Native chains use a dedicated LUT shader and GPU storage table. Large tables are cached as binary float32 uploads, kept out of live descriptors, and omitted from subsequent acknowledged submissions. Queued graphs install the table before acknowledgment so coalescing cannot discard its only upload. Retained jobs contain no table payload. Cache clears, restarts and failed submissions invalidate frontend residency, and missing LUT resources fail explicitly rather than allocating black tables. The LUT pipeline is warmed with an identity table during startup. Mapping composition routing checks the running core's advertised effects for compatibility.
+
+Validation: 224 focused parser/asset/routing/preset/project/residency tests passed; 26 native/effect-chain tests passed, including real Metal pixel checks, a 65³ table, reference-only queued updates, coalescing, cache recovery and post-composite grading. 127 Rust tests passed (6 ignored), Windows cross-compilation passed, and desktop checking reports zero errors with 1038 existing warnings. The actual Svelte control was checked in an isolated browser preview for layout, successful worker import, invalid replacement preserving the active look, and removal. The production build passes and includes the import worker. Full live-app/Windows GPU acceptance remains pending; the running app was not restarted. Changes remain local and uncommitted.
+
+## Selected scope: native macro effects foundation
+
+Global macro effect bundles now use the full post-composite GPU chain instead of the nine inline color operations. Mapping composition effects run first, then active macro bundles in knob order; each effect's mix is its opacity multiplied by the macro value. Macro-only chains work with Mapping composition disabled. Closing all knobs explicitly clears the retained graph when no composition effects remain, and the legacy inline chain is cleared to prevent double application.
+
+The macro editor includes Color LUT loading and a visible shared output-chain capacity warning. The existing 16-pass output limit applies across Mapping composition and active macro effects. This completes the native effect-route foundation only: multi-target dashboard parameter assignments, ranges/inversion and per-scope dashboards remain open. Other approved scope items above remain open; no Windows hardware acceptance is claimed.
+
+Validation: 64 native-sync regression tests and the real Mac GPU post-composite chain test pass. Desktop checking passes with zero errors (1038 existing warnings); the production build and whitespace check pass. Changes are uncommitted.
+
+## Selected scope: multi-target effect parameter assignments
+
+The eight existing performance macros can now drive multiple effect parameters across Mapping layers/composition and VJ clips/layers/composition. Use the Macro selector beside a shared effect parameter, then right-click the macro knob to edit each assignment's Start/End range, invert it, or remove it. Assigning clears that parameter's Audio/LFO/Beat/Auto route; choosing a modulation source removes its macro assignment. One macro owns a parameter at a time. Mouse, MIDI, auto-pulse and snapshot knob recall use the same dispatch path.
+
+Routes use effect/clip identities and explicit deck addressing, including inactive block clips. Missing targets remain dormant. Assignments persist in project saves; legacy destinations remain opaque and preserved. This extends the existing global eight-knob dashboard. Non-effect parameter assignments remain open; the placement clarification below supersedes the earlier proposal for independent knob banks. Visual and physical MIDI/Windows acceptance remain pending.
+
+Validation: 180 focused routing, persistence and native-sync tests pass. Desktop checking has zero errors (1038 existing warnings), and the production build passes. Changes remain local and uncommitted.
+
+
+## Macro dashboard placement clarification
+
+Keep the existing eight macro knobs at the top as the single performance dashboard. Clip/layer/composition refers to assignment targets, not additional knob banks. Separate scoped dashboard banks are no longer planned. Existing knobs now count parameter assignments alongside bundled effects, expose keyboard adjustment (arrows, Shift for fine adjustment, Home/End), and identify unavailable targets in their editor while retaining the saved route. Inactive clips in other blocks remain valid targets. Erase/Restore masking stays in the approved mapping scope.
+
+Validation for the placement follow-up: 116 assignment/persistence tests pass; desktop checking passes with zero errors. Windows and visual acceptance remain pending.
+
+## Selected scope: true VJ group GPU foundation
+
+Added a native group graph builder that combines child frames using their own levels/blends, applies the group effect chain to that combined texture, and returns one source row with group opacity/blend for the parent mixer. Group level is never multiplied into individual children. Fading to zero preserves the graph, separate groups use isolated intermediates, and invalid self-feedback/empty groups/over-limit effect chains are rejected explicitly. Pass ordering is assigned across the combined child/effect graph.
+
+This is a renderer foundation, not an exposed group feature: the live Canvas/store/UI, persistence, column triggering and Screen routing are not yet connected. The existing Mapping group flattening path is unchanged. Next step is integrating group identities and ordered membership into the VJ stack without changing ungrouped playback or double-applying composition FX.
+
+Validation: ten group/mixer tests pass; two real Mac GPU tests pass, including a pixel assertion that opaque child composition followed by inversion and 25% group opacity produces quarter-strength magenta over black. Windows hardware acceptance remains pending. Changes are uncommitted.
+
+## Selected scope: VJ group membership and live mixing
+
+A compact Groups tray in the deck toolbar now creates non-overlapping contiguous layer ranges, names groups, adjusts group level/blend, and ungroups without deleting clips. Groups are global post-deck-crossfade ranges (shared by A/B), not independent per-deck group banks. Mix and Stage modes use the native grouped mix; Maps preset mode remains separate. Deleting rows adjusts membership, and project export/import preserves groups.
+
+Canvas tags post-crossfade rows by group identity, hides the individual output carriers while groups are active, and presents the resulting mix once. The native route installs one dependency-ordered graph for child mixes, group effects and the final mix. Unchanged grouped graphs stay resident; changes reinstall the graph. The final VJ Mix feed includes groups, so Screens already assigned to VJ Mix receive them.
+
+Remaining group work: dedicated group FX editing, group-only column triggers, individual group-to-Screen selection, MIDI mapping, performance qualification during dense grouped fader changes, and live Mac/Windows visual acceptance. This does not complete group parity. The normal ungrouped path is retained.
+
+Validation: 185 focused tests pass across group membership, grouped graphs, project persistence and native sync. Two real Mac GPU tests pass, including the exact grouped graph builder now used by the live route. Changes are uncommitted.
+
+## Selected scope: group FX editing and scoped column launches
+
+Each group now has an Effects disclosure in the Groups tray: shared effect picker, bypass, order controls, remove, per-effect mix and shared numeric parameter controls (including expressions), categorical/color controls and Color LUT loading. New effects receive catalog defaults and independent IDs. Adding a selection that exceeds 16 enabled passes is rejected atomically with an inline explanation; imported/reenabled oversized chains retain the existing visible pass-limit warning. Group FX edits persist with the group. Parameter automation/MIDI assignment for group FX remains separate work.
+
+Numbered group launch buttons address the displayed selected deck and launch only that group's eligible rows through the existing immediate/quantized column transaction. Layer locks and Ignore Column Trigger still apply. Disjoint group queues coexist, repeated presses cancel their own launch, overlapping/full-column launches replace conflicting queues, and removing a group cancels its queued launch.
+
+Validation: 197 tests pass covering group FX persistence/mutations/limits, group launch isolation/cancellation, native routing and launch clocks. The older Link test fixture was updated to provide the current beatNow API and a controlled/resynced clock; product clock behavior was not changed. Desktop checking passes with zero errors (1038 existing warnings). Individual group-to-Screen selection, MIDI mapping and live Mac/Windows acceptance remain open. Changes are uncommitted.
+
+## Stage slice group feeds and MIDI controls
+
+Screens remain mapped slices in the existing stage composition, not physical outputs. The Screen layer's Slice source selector now offers VJ Mix, individual VJ layers and VJ groups. Selecting a group preserves the slice's geometry/crop/mask and physical-output configuration. The group is rendered once by the shared VJ mix producer; each slice samples its group texture and applies the group's level. Group blend applies against the VJ stack, while isolated group feeds use normal source blending before the slice's own blend. No output window or display is created by a source assignment.
+
+Group source IDs persist with Screen layers. Switching to a layer or Mix clears the group assignment; deleting a group retains an unavailable assignment and hides the resolved slice rather than showing a different live feed. Native frame ordering now explicitly runs the shared producer before mapped mix readers.
+
+MIDI Learn targets now cover group level, group column launch buttons (explicit A/B deck paths), effect mix and numeric effect parameters. Stable group/effect identities are used. The dispatcher handles normalized parameter-path casing and ignores missing groups/unknown parameters. Group blend, categorical/color parameters and hardware feedback remain additional MIDI coverage.
+
+The two-slice GPU test exposed and fixed repeated alpha multiplication in the VJ mixer over transparent destinations. The mixer now uses premultiplied source-over with blend contributions weighted by destination coverage. This preserves quarter-strength groups as 25%, not 6.25%, without changing opaque-destination blend behavior.
+
+Validation: 192 focused persistence/routing/control-path/group tests pass. Eight mixer/GPU tests pass, including two real Mac GPU tests and two mapped half-frame slices sharing one group producer in one output. The native frame-order test, Mac native build, Windows cross-compilation, desktop checks (zero errors) and production build pass. Real stage UI and Windows GPU/MIDI hardware acceptance remain pending. Changes are uncommitted.
+
+## Final Windows checkpoint verification
+
+The handoff rerun passes: 264 focused TypeScript regressions, 27 native/effect tests including Mac GPU checks, 127 Rust tests (6 ignored), Windows cross-compilation, desktop checking (zero errors; 1038 existing warnings), production build and whitespace checks. Feature work is paused for Windows acceptance; follow WINDOWS_ACCEPTANCE_2026-09-20.md. No version bump, website deployment or release tag is included.

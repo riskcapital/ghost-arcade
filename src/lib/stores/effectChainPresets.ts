@@ -1,3 +1,4 @@
+import { validateCubeLut } from '../color/cubeLutAssets';
 import { KEYFRAME_EASINGS } from '../keyframes/easing';
 import { writable } from 'svelte/store';
 import type { Effect } from '../types';
@@ -5,7 +6,7 @@ import { generateUUID } from '../utils/uuid';
 import { EFFECT_CATALOG } from '../effects/effectCatalog';
 
 export interface EffectChainPreset { id: string; name: string; effects: Effect[] }
-export const MAX_PRESET_FILE_BYTES = 2 * 1024 * 1024;
+export const MAX_PRESET_FILE_BYTES = 32 * 1024 * 1024;
 const KEY = 'ghost-arcade-effect-chain-presets-v1';
 const knownTypes = new Set<string>(EFFECT_CATALOG.map(effect => effect.type));
 const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
@@ -29,7 +30,7 @@ function validateJson(value: unknown, depth = 0): void {
 
 export function parseEffectChainPresets(raw: string | null): EffectChainPreset[] {
   if (!raw) return [];
-  if (raw.length > MAX_PRESET_FILE_BYTES) throw new Error('Preset library exceeds the 2 MB limit.');
+  if (raw.length > MAX_PRESET_FILE_BYTES) throw new Error('Preset library exceeds the 32 MB limit.');
   const data = JSON.parse(raw);
   validateJson(data);
   if (!Array.isArray(data) || data.length > 128) throw new Error('Invalid preset library.');
@@ -44,6 +45,7 @@ export function parseEffectChainPresets(raw: string | null): EffectChainPreset[]
       if (!effect || typeof effect.id !== 'string' || !knownTypes.has(effect.type)
         || typeof effect.enabled !== 'boolean' || !effect.params || typeof effect.params !== 'object' || Array.isArray(effect.params))
         throw new Error('A saved preset contains an unsupported effect.');
+      if (effect.type === 'cubeLut' && effect.params.cubeLut != null) validateCubeLut(effect.params.cubeLut);
       if (effect.opacity !== undefined && (typeof effect.opacity !== 'number' || effect.opacity < 0 || effect.opacity > 1))
         throw new Error('Invalid effect opacity.');
       if (effect.blendMode !== undefined && typeof effect.blendMode !== 'string') throw new Error('Invalid effect blend mode.');
@@ -90,11 +92,11 @@ export function createEffectChainPresetLibrary(storage: Pick<Storage, 'getItem' 
     exportLibrary() {
       if (loadError) throw new Error(loadError);
       const file = JSON.stringify({ format: 'ghost-arcade-effect-chains', version: 1, presets: values }, null, 2);
-      if (new TextEncoder().encode(file).byteLength > MAX_PRESET_FILE_BYTES) throw new Error('Library export exceeds 2 MB. Remove unused presets first.');
+      if (new TextEncoder().encode(file).byteLength > MAX_PRESET_FILE_BYTES) throw new Error('Library export exceeds 32 MB. Remove unused presets first.');
       return file;
     },
     importLibrary(raw: string) {
-      if (raw.length > MAX_PRESET_FILE_BYTES || new TextEncoder().encode(raw).byteLength > MAX_PRESET_FILE_BYTES) throw new Error('Choose a preset file smaller than 2 MB.');
+      if (raw.length > MAX_PRESET_FILE_BYTES || new TextEncoder().encode(raw).byteLength > MAX_PRESET_FILE_BYTES) throw new Error('Choose a preset file smaller than 32 MB.');
       const file = JSON.parse(raw);
       if (file?.format !== 'ghost-arcade-effect-chains' || file.version !== 1)
         throw new Error('Choose a Ghost Arcade effect-chain file (version 1).');

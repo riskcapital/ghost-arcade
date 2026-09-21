@@ -290,6 +290,7 @@ export { effectVertexShader, polygonMaskShader, polygonMaskAlphaShader, applyExt
 // ============================================================================
 
 export const effectShaders: Record<EffectType, string> = {
+  cubeLut: '', // Native GPU storage-table pass; no GLSL material.
   // ── WebGPU effects (no GLSL shader; dispatched via gpuEffectRunner) ──
   // The engine's applyEffects() short-circuits before reaching the
   // GLSL material path for these. The empty string here is just to
@@ -4158,6 +4159,7 @@ export function updateEffectUniforms(
  * Get default params for an effect type
  */
 export function getDefaultEffectParams(type: EffectType): EffectParams {
+  if (type === 'cubeLut') return { lutStrength: 1 };
   // Custom effects: return their stored defaults (scalars keyed by uniform name;
   // colors stay as the [r,g,b,a] tuple in params so the slider UI can read them).
   const custom = getCustomEffect(type as unknown as string);

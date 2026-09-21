@@ -74,7 +74,7 @@ describe('portable preset libraries', () => {
     expect(() => library.importLibrary(JSON.stringify(file))).toThrow('automation');
     expect(library.exportLibrary()).toBe(snapshot);
     expect(() => library.importLibrary('{"format":"other","version":1}')).toThrow('Ghost Arcade');
-    expect(() => library.importLibrary('x'.repeat(2 * 1024 * 1024 + 1))).toThrow('2 MB');
+    expect(() => library.importLibrary('x'.repeat(32 * 1024 * 1024 + 1))).toThrow('32 MB');
   });
   it.each(['crossfader', 'clip'] as const)('transfers the %s driver without changing its curve or range', driver => {
     const source = createEffectChainPresetLibrary(storage());
@@ -110,5 +110,20 @@ describe('portable preset libraries', () => {
     const raw = library.exportLibrary().replace('"amount": 0.4', '"__proto__": {"polluted":true}');
     expect(() => library.importLibrary(raw)).toThrow('property');
     expect(() => parseEffectChainPresets('[{"id":"x","name":"X","effects":[{"id":"e","type":"blur","enabled":true,"params":{"amount":1e999}}]}]')).toThrow('number');
+  });
+});
+
+
+describe('portable LUT presets', () => {
+  it('exports and reimports an embedded LUT and rejects damaged tables atomically', async () => {
+    const { parseCubeLut } = await import('../color/cubeLut');
+    const lut = parseCubeLut('LUT_3D_SIZE 2\n0 0 0\n1 0 0\n0 1 0\n1 1 0\n0 0 1\n1 0 1\n0 1 1\n1 1 1');
+    const library = createEffectChainPresetLibrary(storage());
+    library.save('Look', [{ id: 'look', type: 'cubeLut', enabled: true, params: { cubeLut: lut, lutStrength: .75 } }]);
+    const second = createEffectChainPresetLibrary(storage());
+    second.importLibrary(library.exportLibrary());
+    expect(get(second).presets[0].effects[0].params).toEqual({ cubeLut: lut, lutStrength: .75 });
+    const broken = get(second).presets.map(p => ({ ...p, effects: p.effects.map(e => ({ ...e, params: { ...e.params, cubeLut: { ...lut, rgba: [0] } } })) }));
+    expect(() => parseEffectChainPresets(JSON.stringify(broken))).toThrow('Invalid saved');
   });
 });
