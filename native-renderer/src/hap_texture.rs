@@ -16,12 +16,19 @@ pub struct HapTextureConverter {
     layout: wgpu::BindGroupLayout,
     sampler: wgpu::Sampler,
     textures: Mutex<HashMap<usize, TextureSlot>>,
+    staging: Mutex<wgpu::util::StagingBelt>,
 }
 impl HapTextureConverter {
     pub fn release(&self, slot: usize) {
         if let Ok(mut textures) = self.textures.lock() {
             textures.remove(&slot);
         }
+    }
+    /// Call once after encoding all HAP frames in a submission. Mapping is
+    /// deferred until GPU completion, so in-flight pixels cannot be overwritten.
+    pub fn finish_uploads(&self, encoder: &wgpu::CommandEncoder) {
+        self.staging.lock().expect("HAP staging lock poisoned")
+            .finish_and_recall_on_submit(encoder);
     }
     pub fn new(device: &wgpu::Device, target: wgpu::TextureFormat) -> Self {
         let layout = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
@@ -99,12 +106,12 @@ impl HapTextureConverter {
             layout,
             sampler,
             textures: Mutex::new(HashMap::new()),
+            staging: Mutex::new(wgpu::util::StagingBelt::new(device.clone(), 4 * 1024 * 1024)),
         }
     }
     pub fn encode(
         &self,
         device: &wgpu::Device,
-        queue: &wgpu::Queue,
         encoder: &mut wgpu::CommandEncoder,
         slot: usize,
         frame: &HapFrame,
@@ -201,24 +208,43 @@ impl HapTextureConverter {
             );
         }
         let texture = &textures[&slot].texture;
-        queue.write_texture(
+        // Reuse mapped upload memory instead of queue.write_texture's fresh
+        // staging allocation for every video frame. Padding is in BC rows,
+        // not pixel rows, and the GPU performs the actual texture transfer.
+        let row_bytes = width / 4 * frame.format.block_bytes() as u32;
+        let pitch = row_bytes.div_ceil(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT)
+            * wgpu::COPY_BYTES_PER_ROW_ALIGNMENT;
+        let rows = height / 4;
+        if frame.blocks.len() != row_bytes as usize * rows as usize {
+            return Err("HAP block data does not match texture dimensions".into());
+        }
+        let mut staging = self.staging.lock().map_err(|_| "HAP staging lock poisoned")?;
+        let upload = staging.allocate(
+            wgpu::BufferSize::new(pitch as u64 * rows as u64).ok_or("Empty HAP frame")?,
+            wgpu::BufferSize::new(wgpu::COPY_BYTES_PER_ROW_ALIGNMENT as u64).unwrap(),
+        );
+        {
+            let mut mapped = upload.get_mapped_range_mut().map_err(|e| e.to_string())?;
+            if row_bytes == pitch {
+                mapped.copy_from_slice(&frame.blocks);
+            } else {
+                for (row, source) in frame.blocks.chunks_exact(row_bytes as usize).enumerate() {
+                    let start = row * pitch as usize;
+                    mapped.slice(start..start + row_bytes as usize).copy_from_slice(source);
+                }
+            }
+        }
+        encoder.copy_buffer_to_texture(
+            wgpu::TexelCopyBufferInfo {
+                buffer: upload.buffer(),
+                layout: wgpu::TexelCopyBufferLayout {
+                    offset: upload.offset(), bytes_per_row: Some(pitch), rows_per_image: Some(rows),
+                },
+            },
             wgpu::TexelCopyTextureInfo {
-                texture,
-                mip_level: 0,
-                origin: wgpu::Origin3d::ZERO,
-                aspect: wgpu::TextureAspect::All,
+                texture, mip_level: 0, origin: wgpu::Origin3d::ZERO, aspect: wgpu::TextureAspect::All,
             },
-            &frame.blocks,
-            wgpu::TexelCopyBufferLayout {
-                offset: 0,
-                bytes_per_row: Some(width / 4 * frame.format.block_bytes() as u32),
-                rows_per_image: Some(height / 4),
-            },
-            wgpu::Extent3d {
-                width,
-                height,
-                depth_or_array_layers: 1,
-            },
+            wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
         );
         let mut pass = encoder.begin_render_pass(&wgpu::RenderPassDescriptor {
             label: Some("HAP GPU color conversion"),

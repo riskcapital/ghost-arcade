@@ -1,6 +1,6 @@
 <script lang="ts">
   /**
-   * BpmTapWidget — TAP tempo button + live BPM readout + AUTO clear.
+   * BpmTapWidget — TAP tempo button + live BPM readout + persistent AUTO mode.
    *
    * Reusable across mapping mode top bar and VJ audio bar so the user can
    * tap a tempo (or read auto-detected BPM) from anywhere in the app
@@ -21,8 +21,17 @@
   let editing = false;
   let draft = '';
   let error = '';
+  $: automatic = $audioStore.manualBPM === null;
+  $: waitingForAudio = automatic && !$audioStore.isActive;
+  $: displayedBpm = waitingForAudio ? 0 : $audioStore.bpm;
+  $: autoStatus = !automatic ? 'Use audio tempo'
+    : waitingForAudio ? 'Waiting for audio'
+    : $audioStore.bpm > 0 && $audioStore.bpmConfidence > 0.5 ? 'Following audio' : 'Detecting tempo';
+  $: autoHelp = !automatic ? 'Switch from manual tempo to incoming audio tempo. Connect audio to detect BPM.'
+    : waitingForAudio ? 'Automatic tempo is enabled. Connect an audio source to detect BPM, or type a BPM or tap to set tempo manually.'
+    : 'Automatic tempo is enabled. Type a BPM or tap to switch to manual tempo.';
   // Live detection can update BPM while typing; never replace an unfinished expression.
-  $: if (!editing) draft = $audioStore.bpm > 0 ? String($audioStore.bpm) : '';
+  $: if (!editing) draft = displayedBpm > 0 ? String(displayedBpm) : '';
   function beginEdit() { editing = true; error = ''; }
   function commitBpm(blurred = false): boolean {
     if (!editing) return true;
@@ -47,7 +56,7 @@
       event.preventDefault();
       editing = false;
       error = '';
-      draft = $audioStore.bpm > 0 ? String($audioStore.bpm) : '';
+      draft = displayedBpm > 0 ? String(displayedBpm) : '';
       (event.currentTarget as HTMLInputElement).blur();
     }
   }
@@ -58,7 +67,7 @@
 {#if alwaysShow || $audioStore.isActive}
   <div data-help-page="midi-audio" class="bpm-tap-widget">
     <button class="bpm-tap-btn" onclick={handleTap} title="Tap to set tempo manually">TAP</button>
-    <label class="bpm-readout" class:confident={$audioStore.bpmConfidence > 0.5}>
+    <label class="bpm-readout" class:confident={!waitingForAudio && $audioStore.bpmConfidence > 0.5}>
       <input class="bpm-input" type="text" inputmode="text" maxlength="256" placeholder="—"
         aria-label="Tempo in BPM: number or expression" aria-invalid={!!error}
         title={error || 'Type a tempo or expression (30–300 BPM), e.g. 120/2; Enter applies, Escape cancels'}
@@ -67,9 +76,11 @@
       <span>BPM</span>
     </label>
     {#if error}<span class="tempo-error" role="status">{error}</span>{/if}
-    {#if $audioStore.manualBPM}
-      <button class="bpm-auto-btn" onclick={clearTap} title="Clear manual BPM and resume auto-detection">AUTO</button>
-    {/if}
+    <button class="bpm-auto-btn" class:active={automatic} aria-pressed={automatic}
+      aria-label="Automatic tempo" onclick={clearTap} title={autoHelp}>
+      <span class="auto-label">AUTO</span>
+      <span class="auto-status" aria-live="polite">{autoStatus}</span>
+    </button>
   </div>
 {/if}
 
@@ -129,10 +140,18 @@
   }
 
   .bpm-auto-btn {
-    height: 24px;
-    padding: 0 6px;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    flex: 0 0 108px;
+    width: 108px;
+    height: 32px;
+    box-sizing: border-box;
+    padding: 2px 6px;
+    gap: 2px;
     border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12));
-    border-radius: var(--ga-r-hard, 2px);
+    border-radius: 5px;
     background: transparent;
     color: var(--ga-ink-2, #5e6571);
     font-family: var(--ga-font-mono, ui-monospace, monospace);
@@ -142,8 +161,12 @@
     cursor: pointer;
   }
 
+  .auto-label { font-size: 11px; line-height: 12px; }
+  .auto-status { font-family: var(--ga-font-sans, inherit); font-size: 10px; line-height: 11px; font-weight: 500; letter-spacing: 0; white-space: nowrap; }
+  .bpm-auto-btn.active { background: var(--ga-selection-bg, #182b59); border-color: var(--ga-focus, #5274cc); color: var(--ga-selection-ink, #e0e8ff); }
+  .bpm-auto-btn:focus-visible { outline: 2px solid var(--ga-focus, #7996ff); outline-offset: 2px; }
   .bpm-auto-btn:hover {
-    color: var(--ga-ink-1, #9aa0ac);
+    color: var(--ga-selection-ink, #e0e8ff);
     border-color: var(--ga-line-3, rgba(255, 255, 255, 0.20));
   }
 </style>
