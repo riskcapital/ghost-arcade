@@ -2950,7 +2950,7 @@ impl GpuTimingState {
 #[cfg(any(target_os = "macos", target_os = "windows"))]
 #[derive(Default)]
 struct NativeHapUploadBatch {
-    commands: Vec<wgpu::CommandBuffer>,
+    encoder: Option<wgpu::CommandEncoder>,
     frames: Vec<(hardware_video::GpuVideoFrame, Option<media_decode::NativeVideoGpuLease>)>,
     slots: Vec<usize>,
 }
@@ -21156,9 +21156,14 @@ impl RenderState {
             base_array_layer: safe_slot as u32, array_layer_count: Some(1),
             ..Default::default()
         });
-        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Native hardware video conversion") });
+        let is_hap = matches!(&frame.storage, hardware_video::FrameStorage::Hap(_));
+        let mut batch_guard = self.hap_upload_batch.lock().unwrap();
+        let mut encoder = if is_hap {
+            batch_guard.as_mut().and_then(|batch| batch.encoder.take())
+        } else { None }.unwrap_or_else(|| self.device.create_command_encoder(
+            &wgpu::CommandEncoderDescriptor { label: Some("Native video conversion batch") }));
         match &frame.storage {
-            hardware_video::FrameStorage::Hap(hap) => self.hap_converter.encode(&self.device, &self.queue, &mut encoder, safe_slot, hap, &target, viewport)?,
+            hardware_video::FrameStorage::Hap(hap) => self.hap_converter.encode(&self.device, &mut encoder, safe_slot, hap, &target, viewport)?,
             hardware_video::FrameStorage::Native(native) => {
                 self.hap_converter.release(safe_slot);
                 #[cfg(target_os = "macos")]
@@ -21167,17 +21172,21 @@ impl RenderState {
                 self.video_converter.encode(&self.device, &self.queue, &mut encoder, native, &target, viewport)?;
             }
         }
-        self.generate_source_frame_mips(&mut encoder, safe_slot);
+        // Live-source sampling is explicitly clamped to level zero (as on
+        // the software-video path). Building four unused mip levels for
+        // every decoded frame multiplies render-pass/driver work for no
+        // visible benefit; static sources still generate their mip chain.
         let gpu_lease = memory_lease.as_ref().map(|lease| lease.begin_gpu_work());
-        if matches!(&frame.storage, hardware_video::FrameStorage::Hap(_)) {
-            let mut batch = self.hap_upload_batch.lock().unwrap();
-            if let Some(batch) = batch.as_mut() {
-                batch.commands.push(encoder.finish());
+        if is_hap {
+            if let Some(batch) = batch_guard.as_mut() {
+                batch.encoder = Some(encoder);
                 batch.frames.push((frame, gpu_lease));
                 batch.slots.push(safe_slot);
                 return Ok([viewport[0] / size, viewport[1] / size, width / size, height / size]);
             }
+            self.hap_converter.finish_uploads(&encoder);
         }
+        drop(batch_guard);
         self.queue.submit(Some(encoder.finish()));
         self.mark_source_frame_slots_submitted([safe_slot]);
         // The decoder/bridge may recycle this surface only after rendering
@@ -21189,8 +21198,9 @@ impl RenderState {
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     fn flush_hap_upload_batch(&self) {
         let Some(batch) = self.hap_upload_batch.lock().unwrap().take() else { return; };
-        if batch.commands.is_empty() { return; }
-        self.queue.submit(batch.commands);
+        let Some(encoder) = batch.encoder else { return; };
+        self.hap_converter.finish_uploads(&encoder);
+        self.queue.submit(Some(encoder.finish()));
         self.mark_source_frame_slots_submitted(batch.slots);
         self.queue.on_submitted_work_done(move || drop(batch.frames));
     }
@@ -21914,7 +21924,14 @@ impl RenderState {
 }
 
 fn main() -> Result<(), Box<dyn std::error::Error>> {
-    let event_loop = EventLoop::<UserEvent>::with_user_event().build()?;
+    let mut builder = EventLoop::<UserEvent>::with_user_event();
+    #[cfg(target_os = "macos")]
+    {
+        use winit::platform::macos::{ActivationPolicy, EventLoopBuilderExtMacOS};
+        builder.with_activation_policy(ActivationPolicy::Accessory)
+            .with_default_menu(false).with_activate_ignoring_other_apps(false);
+    }
+    let event_loop = builder.build()?;
     let proxy = event_loop.create_proxy();
     let (response_tx, response_rx) = mpsc::channel::<String>();
     let fast_path = Arc::new(RpcFastPath::new());

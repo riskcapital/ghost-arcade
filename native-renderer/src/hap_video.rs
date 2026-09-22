@@ -101,6 +101,7 @@ struct Sample {
 }
 pub struct HapVideoDecoder {
     file: File,
+    packet: Vec<u8>,
     metadata: HapMetadata,
     format: HapFormat,
     samples: Vec<Sample>,
@@ -224,6 +225,7 @@ impl HapVideoDecoder {
                     let fps = samples.len() as f64 / duration_seconds;
                     return Ok(Self {
                         file,
+                        packet: Vec::new(),
                         metadata: HapMetadata {
                             width,
                             height,
@@ -284,11 +286,11 @@ impl HapVideoDecoder {
         if sample.size > expected.saturating_mul(2).saturating_add(65536) {
             return Err("HAP packet exceeds its bounded frame budget".into());
         }
-        let mut packet = vec![0u8; sample.size];
+        self.packet.resize(sample.size, 0);
         self.file
-            .read_exact(&mut packet)
+            .read_exact(&mut self.packet)
             .map_err(|e| e.to_string())?;
-        let blocks = decode_packet(&packet, self.format, expected)?;
+        let blocks = decode_packet(&self.packet, self.format, expected)?;
         self.cursor += 1;
         Ok(Some(HapFrame {
             width: self.metadata.width,
