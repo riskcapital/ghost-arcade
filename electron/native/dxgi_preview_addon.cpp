@@ -37,6 +37,8 @@
 #include <string>
 #include <thread>
 #include <vector>
+#include <stdexcept>
+#include "dxgi_readback.h"
 
 #pragma comment(lib, "d3d11.lib")
 #pragma comment(lib, "dxgi.lib")
@@ -239,11 +241,38 @@ Rect RectFromObject(const Napi::Object& obj) {
   return rect;
 }
 
-// One presentation surface: a child HWND plus the swapchain that feeds it.
+// UI-thread-only window regions. The primary surface supplies the full app
+// backdrop; auxiliary views occupy just their own rectangles. Cut those areas
+// out of the backdrop so its periodic reposition cannot cover a deck view.
+struct AuxiliaryRegion { HWND host; Rect rect; };
+std::map<HWND, AuxiliaryRegion> g_auxiliaryRegions;
+std::map<HWND, HWND> g_backdropWindows;
+void RefreshBackdropRegion(HWND host) {
+  auto backdrop = g_backdropWindows.find(host);
+  if (backdrop == g_backdropWindows.end() || !IsWindow(backdrop->second)) return;
+  RECT client{};
+  if (!GetClientRect(host, &client)) return;
+  HRGN region = CreateRectRgn(0, 0, client.right, client.bottom);
+  for (const auto& entry : g_auxiliaryRegions) {
+    if (entry.second.host != host) continue;
+    const auto& rect = entry.second.rect;
+    HRGN hole = CreateRectRgn(rect.x, rect.y, rect.x + rect.width, rect.y + rect.height);
+    CombineRgn(region, region, hole, RGN_DIFF);
+    DeleteObject(hole);
+  }
+  HRGN previous = CreateRectRgn(0, 0, 0, 0);
+  const bool unchanged = GetWindowRgn(backdrop->second, previous) != ERROR && EqualRgn(previous, region);
+  DeleteObject(previous);
+  if (unchanged || !SetWindowRgn(backdrop->second, region, TRUE)) DeleteObject(region);
+  // On success Windows owns the region.
+}
+
+// One presentation surface: an underlay HWND plus its swapchain.
 // The primary editor preview uses one of these; each deck monitor / slice
 // output gets its own, keyed by name.
 class PreviewSurface {
  public:
+  explicit PreviewSurface(bool fullHostBackdrop = true) : fullHostBackdrop_(fullHostBackdrop) {}
   ~PreviewSurface() { Detach(); }
 
   bool Attach(HWND host, const Rect& rect, std::string* error) {
@@ -283,6 +312,29 @@ class PreviewSurface {
     PositionBehind();
 
     if (!device_ && !CreateDevice(error)) return false;
+    // A deck can be attached before it has any clips. Give DWM an opaque
+    // surface before cutting its opening in the primary backdrop.
+    if (!fullHostBackdrop_ && !backingReady_) {
+      if (!EnsureSwapchain(error)) return false;
+      ID3D11Texture2D* buffer = nullptr;
+      ID3D11RenderTargetView* target = nullptr;
+      HRESULT hr = swapchain_->GetBuffer(0, __uuidof(ID3D11Texture2D), (void**)&buffer);
+      if (SUCCEEDED(hr)) hr = device_->CreateRenderTargetView(buffer, nullptr, &target);
+      SafeRelease(buffer);
+      if (FAILED(hr) || !target) {
+        *error = "Could not initialize the deck preview backdrop";
+        return false;
+      }
+      const float black[4] = {5.0f / 255.0f, 7.0f / 255.0f, 11.0f / 255.0f, 1.0f};
+      context_->ClearRenderTargetView(target, black);
+      SafeRelease(target);
+      if (FAILED(swapchain_->Present(0, 0))) {
+        *error = "Could not present the deck preview backdrop";
+        return false;
+      }
+      backingReady_ = true;
+      PositionBehind();
+    }
     attached_ = true;
     return true;
   }
@@ -305,15 +357,30 @@ class PreviewSurface {
     if (!child_ || !IsWindow(host_)) return;
     RECT client = {};
     if (!GetClientRect(host_, &client)) return;
-    hostClientW_ = (uint32_t)(std::max)(1L, client.right - client.left);
-    hostClientH_ = (uint32_t)(std::max)(1L, client.bottom - client.top);
+    hostClientW_ = fullHostBackdrop_ ? (uint32_t)(std::max)(1L, client.right - client.left) : (uint32_t)(std::max)(1, rect_.width);
+    hostClientH_ = fullHostBackdrop_ ? (uint32_t)(std::max)(1L, client.bottom - client.top) : (uint32_t)(std::max)(1, rect_.height);
     POINT origin = {0, 0};
     ClientToScreen(host_, &origin);
+    if (fullHostBackdrop_) {
+      g_backdropWindows[host_] = child_;
+    } else {
+      origin.x += rect_.x;
+      origin.y += rect_.y;
+      if (backingReady_) g_auxiliaryRegions[child_] = {host_, rect_};
+    }
+    RefreshBackdropRegion(host_);
     SetWindowPos(child_, host_, origin.x, origin.y, (int)hostClientW_, (int)hostClientH_,
                  SWP_NOACTIVATE | SWP_SHOWWINDOW);
   }
 
   void Detach() {
+    if (fullHostBackdrop_) {
+      auto backdrop = g_backdropWindows.find(host_);
+      if (backdrop != g_backdropWindows.end() && backdrop->second == child_) g_backdropWindows.erase(backdrop);
+    } else {
+      g_auxiliaryRegions.erase(child_);
+      RefreshBackdropRegion(host_);
+    }
     ReleaseShared();
     SafeRelease(overlayVS_);
     SafeRelease(overlayPS_);
@@ -338,6 +405,7 @@ class PreviewSurface {
     }
     host_ = nullptr;
     attached_ = false;
+    backingReady_ = false;
     sourceWidth_ = 0;
     sourceHeight_ = 0;
   }
@@ -401,8 +469,8 @@ class PreviewSurface {
     context_->ClearRenderTargetView(rtv, backdrop);
 
     D3D11_VIEWPORT vp = {};
-    vp.TopLeftX = (float)rect_.x;
-    vp.TopLeftY = (float)rect_.y;
+    vp.TopLeftX = fullHostBackdrop_ ? (float)rect_.x : 0.0f;
+    vp.TopLeftY = fullHostBackdrop_ ? (float)rect_.y : 0.0f;
     vp.Width = (float)(std::max)(1, rect_.width);
     vp.Height = (float)(std::max)(1, rect_.height);
     vp.MaxDepth = 1.0f;
@@ -787,6 +855,7 @@ class PreviewSurface {
   }
 
   HWND host_ = nullptr;
+  const bool fullHostBackdrop_;
   HWND child_ = nullptr;
   ID3D11Device* device_ = nullptr;
   ID3D11Device1* device1_ = nullptr;
@@ -798,6 +867,7 @@ class PreviewSurface {
   uint32_t sourceWidth_ = 0;
   uint32_t sourceHeight_ = 0;
   uint64_t framesPresented_ = 0;
+  bool backingReady_ = false;
   bool attached_ = false;
   Rect rect_;
   std::vector<OverlayVertex> overlayLines_;
@@ -1233,7 +1303,7 @@ Napi::Value MonitorAttach(const Napi::CallbackInfo& info) {
   }
   auto it = g_monitors.find(name);
   if (it == g_monitors.end()) {
-    g_monitors[name] = std::make_unique<PreviewSurface>();
+    g_monitors[name] = std::make_unique<PreviewSurface>(false);
     it = g_monitors.find(name);
   }
   std::string error;
@@ -1277,6 +1347,9 @@ Napi::Value MonitorDetach(const Napi::CallbackInfo& info) {
 }
 
 Napi::Object Init(Napi::Env env, Napi::Object exports) {
+  exports.Set("readSharedTexturePixels", Napi::Function::New(env, ghost_readback::Read));
+  exports.Set("releaseReadback", Napi::Function::New(env, ghost_readback::Release));
+  env.AddCleanupHook([]() { ghost_readback::capture.Reset(); });
   exports.Set("attach", Napi::Function::New(env, Attach));
   exports.Set("update", Napi::Function::New(env, Update));
   exports.Set("detach", Napi::Function::New(env, Detach));

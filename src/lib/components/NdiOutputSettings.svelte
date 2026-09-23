@@ -35,7 +35,7 @@
     <li>Select that sender in the receiving app on your local network.</li>
   </ol>
   <p>NDI currently sends one full composition. Screen crops and individual screen warps are not sent separately. Select the local transport again to stop NDI.</p>
-  <p>NDI output currently supports macOS with the optional NDI runtime and addon. Windows users can use Spout for local app-to-app output. NDI input availability is separate from output support.</p>
+  <p>NDI output requires the optional NDI runtime and native addon on Windows or macOS. Check availability above. NDI input availability is separate from output support.</p>
 </div>
 
 <style>

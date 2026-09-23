@@ -3020,26 +3020,31 @@ function stopSliceNativePump() {
 const deckMonitorAttachedNames = new Set();
 let deckMonitorPump = null;
 let deckMonitorPumpInFlight = false;
+let deckMonitorPumpGeneration = 0;
 const deckMonitorLastBinding = new Map(); // name -> `${handle}:${w}x${h}`
 const deckMonitorLastFrame = new Map();   // name -> { frame, at }
 
 function startDeckMonitorPump() {
   if (deckMonitorPump) return;
+  const generation = deckMonitorPumpGeneration;
   deckMonitorPump = setInterval(async () => {
-    if (deckMonitorPumpInFlight || deckMonitorAttachedNames.size === 0) return;
+    if (generation !== deckMonitorPumpGeneration || deckMonitorPumpInFlight || deckMonitorAttachedNames.size === 0) return;
     deckMonitorPumpInFlight = true;
     try {
       const addon = nativePreviewAddon;
-      if (!addon || typeof addon.monitorSetIOSurface !== 'function') return;
+      const windows = process.platform === 'win32';
+      if (!addon || typeof addon[windows ? 'monitorSetSharedTexture' : 'monitorSetIOSurface'] !== 'function') return;
       const state = await nativeRendererBroker.invoke('native_renderer_get_deck_monitor_state', {});
+      if (generation !== deckMonitorPumpGeneration) return;
       if (!state?.available || !Array.isArray(state.banks)) return;
       for (const bank of state.banks) {
         const name = bank?.bank === 'b' ? 'deck-b' : 'deck-a';
         if (!deckMonitorAttachedNames.has(name)) continue;
         const surfaceId = Number(bank?.handle ?? 0);
+        const sharedName = String(bank?.shared_name ?? '');
         const width = Number(bank?.width ?? 0);
         const height = Number(bank?.height ?? 0);
-        if (!Number.isFinite(surfaceId) || surfaceId <= 0 || width <= 0 || height <= 0) continue;
+        if ((windows ? !sharedName : !Number.isFinite(surfaceId) || surfaceId <= 0) || width <= 0 || height <= 0) continue;
         const frame = Number(bank?.frame ?? 0);
         const now = Date.now();
         const last = deckMonitorLastFrame.get(name);
@@ -3049,24 +3054,32 @@ function startDeckMonitorPump() {
           continue;
         }
         if (!last || last.frame !== frame) deckMonitorLastFrame.set(name, { frame, at: now });
-        const binding = `${surfaceId}:${width}x${height}`;
+        // The Windows API presents once per call; macOS installs a display-link
+        // source. Windows must present each new frame, not just bind once.
+        const binding = windows ? `${sharedName}:${width}x${height}:${frame}` : `${surfaceId}:${width}x${height}`;
         if (deckMonitorLastBinding.get(name) === binding) continue;
-        if (addon.monitorSetIOSurface(name, surfaceId, width, height, false)) {
+        const presented = windows
+          ? addon.monitorSetSharedTexture(name, sharedName, width, height)
+          : addon.monitorSetIOSurface(name, surfaceId, width, height, false);
+        if (presented) {
+          const firstBinding = !deckMonitorLastBinding.has(name);
           deckMonitorLastBinding.set(name, binding);
-          console.log(`[DeckMonitor] ${name} bound iosurface:${surfaceId} ${width}x${height}`);
+          if (firstBinding) console.log(`[DeckMonitor] ${name} bound ${windows ? sharedName : `iosurface:${surfaceId}`} ${width}x${height}`);
         }
       }
     } catch (err) {
       // Broker restarts surface as transient failures; keep polling.
     } finally {
-      deckMonitorPumpInFlight = false;
+      if (generation === deckMonitorPumpGeneration) deckMonitorPumpInFlight = false;
     }
-  }, 250);
+  }, process.platform === 'win32' ? 1000 / 30 : 250);
   deckMonitorPump.unref?.();
   console.log('[DeckMonitor] pump started');
 }
 
 function stopDeckMonitorPump() {
+  deckMonitorPumpGeneration++;
+  deckMonitorPumpInFlight = false;
   if (deckMonitorPump) {
     clearInterval(deckMonitorPump);
     deckMonitorPump = null;
@@ -3230,7 +3243,7 @@ function loadNdiAddon() {
       return null;
     }
     ndiAddonLoadPath = addonPath;
-    ndiAddon = require(addonPath);
+    ndiAddon = require('./ndi-runtime.cjs').loadWithNdiRuntime(addonPath);
     if (!ndiAddon.available()) {
       ndiAddonLoadError = 'NDI runtime not available. Install NDI and restart Ghost Arcade.';
       console.warn(`[NDI] Addon loaded but ${ndiAddonLoadError}.`);
@@ -3248,14 +3261,15 @@ function loadNdiAddon() {
 const ndiSenders = new Set();    // tracks live sender names so we can destroy on quit
 const ndiReceivers = new Set();  // tracks live receiver source names
 
-// ── NDI output pump (macOS, native composite) ────────────────────────
+// ── NDI output pump (macOS/Windows, native composite) ────────────────────────
 // Streams the native renderer's composite output over NDI. Modeled on
 // nativeOutputTextureSharePump: polls the core's shared-texture
 // metadata, dedupes on frame counter, and on macOS reads the IOSurface
 // pixels via the presenter addon (same full-rate CPU tap the native
 // recorder uses), then hands the BGRA buffer to the NDI addon's async
-// sender. Windows support lands with the DXGI groundwork — until then
-// status reports unavailable there.
+// sender. Windows uses a nonblocking two-slot DXGI readback ring.
+let ndiOutputPumpGeneration = 0;
+let ndiOutputPumpTextureKey = null;
 let ndiOutputPumpTimer = null;
 let ndiOutputPumpName = null;
 let ndiOutputPumpFps = 0;
@@ -3267,16 +3281,20 @@ let ndiOutputPumpLastLogTime = 0;
 let ndiOutputPumpLastError = null;
 
 function ndiOutputUnavailableReason() {
-  if (!isMac) return 'NDI composite output is macOS-only for now (Windows DXGI path pending)';
+  if (!isMac && process.platform !== 'win32') return 'NDI composite output requires macOS or Windows';
   if (!loadNdiAddon()) return getNdiLoadStatus()?.error || 'NDI addon not available';
   const preview = nativePreviewAddon || loadNativePreviewAddon();
-  if (!preview || typeof preview.readIOSurfacePixels !== 'function') {
-    return 'Presenter addon lacks IOSurface capture support';
+  const capture = isMac ? 'readIOSurfacePixels' : 'readSharedTexturePixels';
+  if (!preview || typeof preview[capture] !== 'function') {
+    return `Presenter addon lacks ${isMac ? 'IOSurface' : 'DXGI'} capture support`;
   }
   return null;
 }
 
 function stopNdiOutputPump() {
+  ndiOutputPumpGeneration++;
+  ndiOutputPumpTextureKey = null;
+  try { nativePreviewAddon?.releaseReadback?.(); } catch { /* device already gone */ }
   if (ndiOutputPumpTimer) {
     clearInterval(ndiOutputPumpTimer);
     ndiOutputPumpTimer = null;
@@ -3324,36 +3342,47 @@ function startNdiOutputPump({ name, fps } = {}) {
   ndiOutputPumpLastError = null;
 
   const preview = nativePreviewAddon || loadNativePreviewAddon();
+  const generation = ndiOutputPumpGeneration;
   const tick = async () => {
-    if (!ndiOutputPumpTimer || ndiOutputPumpInFlight) return;
+    if (generation !== ndiOutputPumpGeneration || !ndiOutputPumpTimer || ndiOutputPumpInFlight) return;
     ndiOutputPumpInFlight = true;
     try {
       const texture = await getNativeOutputSharedTextureMetadata();
-      if (!ndiOutputPumpTimer) return;
+      if (generation !== ndiOutputPumpGeneration || !ndiOutputPumpTimer) return;
+      const textureKey = isMac ? String(texture?.handle ?? 0) : String(texture?.shared_name ?? texture?.name ?? '');
       const surfaceId = Number(texture?.handle ?? 0);
       const width = Number(texture?.width ?? 0);
       const height = Number(texture?.height ?? 0);
       const frameId = Math.max(0, Math.floor(Number(texture?.frame ?? 0)));
-      if (!texture?.available || !Number.isFinite(surfaceId) || surfaceId <= 0 ||
+      if (!texture?.available || (isMac ? !Number.isFinite(surfaceId) || surfaceId <= 0 : !textureKey) ||
           width <= 0 || height <= 0 || frameId <= 0) {
         ndiOutputPumpFailCount++;
         if (ndiOutputPumpFailCount === 5) {
+          ndiOutputPumpLastError = 'Native output shared texture is unavailable';
           console.warn('[NDI Out] native output shared texture unavailable:', JSON.stringify(texture ?? null));
         }
         return;
       }
-      // Frame dedupe — don't resend an unchanged composite.
-      if (frameId === ndiOutputPumpLastFrame) return;
-      let frame = null;
-      try { frame = preview.readIOSurfacePixels(surfaceId); } catch { frame = null; }
+      if (textureKey !== ndiOutputPumpTextureKey) {
+        ndiOutputPumpTextureKey = textureKey;
+        ndiOutputPumpLastFrame = 0;
+      }
+      // Windows must drain queued readback even when the core stops advancing.
+      if (isMac && frameId === ndiOutputPumpLastFrame) return;
+      const frame = isMac ? preview.readIOSurfacePixels(surfaceId)
+        : preview.readSharedTexturePixels(textureKey, frameId);
+      if (!isMac && !frame) return; // Pending GPU copy: never block the UI.
+      const capturedFrame = isMac ? frameId : Number(frame?.frame ?? 0);
+      if (capturedFrame === ndiOutputPumpLastFrame) return;
       if (!frame?.data || frame.width !== width || frame.height !== height) {
         ndiOutputPumpFailCount++;
         return;
       }
       const a2 = loadNdiAddon();
       if (!a2) return;
-      a2.sendImage({ name: ndiOutputPumpName, data: frame.data, width, height });
-      ndiOutputPumpLastFrame = frameId;
+      a2.sendImage({ name: senderName, data: frame.data, width, height, fps: rate });
+      ndiOutputPumpLastFrame = capturedFrame;
+      ndiOutputPumpLastError = null;
       ndiOutputPumpFailCount = 0;
       ndiOutputPumpFrameCount++;
       const now = Date.now();
@@ -3364,13 +3393,14 @@ function startNdiOutputPump({ name, fps } = {}) {
         ndiOutputPumpLastLogTime = now;
       }
     } catch (err) {
+      if (generation !== ndiOutputPumpGeneration) return;
       ndiOutputPumpFailCount++;
       ndiOutputPumpLastError = String(err?.message || err);
       if (ndiOutputPumpFailCount <= 5) {
         console.error('[NDI Out] pump error:', ndiOutputPumpLastError);
       }
     } finally {
-      ndiOutputPumpInFlight = false;
+      if (generation === ndiOutputPumpGeneration) ndiOutputPumpInFlight = false;
     }
   };
   ndiOutputPumpTimer = setInterval(tick, Math.max(4, Math.floor(1000 / rate)));
@@ -7608,7 +7638,7 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('deck_monitor_attach', async (_event, args = {}) => {
-    if (process.platform !== 'darwin') return { attached: false, reason: 'macos-only' };
+    if (!['darwin', 'win32'].includes(process.platform)) return { attached: false, reason: 'unsupported platform' };
     const addon = nativePreviewAddon || loadNativePreviewAddon();
     if (!addon || typeof addon.monitorAttach !== 'function') {
       return { attached: false, reason: 'presenter addon lacks monitor support' };
@@ -7621,8 +7651,9 @@ function registerIpcHandlers() {
       for (const monitor of monitors) {
         const name = typeof monitor?.name === 'string' ? monitor.name : '';
         if (!name || !monitor?.rect) continue;
-        addon.monitorAttach(name, handle, nativePreviewRectToDevicePixels(normalizeNativePreviewRect(monitor.rect), mainWindow.webContents.getZoomFactor()));
-        deckMonitorAttachedNames.add(name);
+        if (addon.monitorAttach(name, handle, nativePreviewAddonRect(normalizeNativePreviewRect(monitor.rect), monitor.rect))) {
+          deckMonitorAttachedNames.add(name);
+        }
       }
       startDeckMonitorPump();
       return { attached: deckMonitorAttachedNames.size > 0 };
@@ -7636,7 +7667,9 @@ function registerIpcHandlers() {
     stopDeckMonitorPump();
     const addon = nativePreviewAddon;
     if (addon && typeof addon.monitorDetach === 'function') {
-      try { addon.monitorDetach(); } catch { /* teardown best-effort */ }
+      for (const name of deckMonitorAttachedNames) {
+        try { addon.monitorDetach(name); } catch { /* teardown best-effort */ }
+      }
     }
     deckMonitorAttachedNames.clear();
     return { attached: false };

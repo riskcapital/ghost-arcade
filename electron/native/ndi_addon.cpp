@@ -70,6 +70,7 @@ struct NdiSender {
   // frame's storage rather than pushing the caller's V8 buffer (which
   // could be GC'd between calls).
   std::vector<uint8_t> frameStorage;
+  std::vector<uint8_t> nextFrameStorage;
 };
 
 std::map<std::string, std::unique_ptr<NdiSender>> g_senders;
@@ -115,7 +116,7 @@ Napi::Value CreateSender(const Napi::CallbackInfo& info) {
   NDIlib_send_create_t desc = {};
   desc.p_ndi_name = name.c_str();
   desc.p_groups = nullptr;
-  desc.clock_video = true;   // pace at the configured framerate
+  desc.clock_video = false;  // The output pump owns pacing; don't block Electron.
   desc.clock_audio = false;
 
   auto sender = std::make_unique<NdiSender>();
@@ -191,21 +192,32 @@ Napi::Value SendImage(const Napi::CallbackInfo& info) {
   // send retains the buffer until the next send call returns; using
   // the caller's V8 buffer directly would be a use-after-free since
   // GC could reclaim it between calls.
-  sender->frameStorage.assign(data.Data(), data.Data() + expected);
+  // Keep the previous buffer intact until async send returns. Reassigning
+  // frameStorage first overwrote bytes still owned by NDI (or freed them on
+  // resize). Swap only after the SDK releases its previous frame.
+  auto& nextFrame = sender->nextFrameStorage;
+  nextFrame.assign(data.Data(), data.Data() + expected);
 
   NDIlib_video_frame_v2_t frame = {};
   frame.xres = width;
   frame.yres = height;
   frame.FourCC = NDIlib_FourCC_type_BGRA;
   frame.line_stride_in_bytes = width * 4;
-  frame.p_data = sender->frameStorage.data();
+  frame.p_data = nextFrame.data();
   frame.frame_format_type = NDIlib_frame_format_type_progressive;
+  const double fps = opts.Has("fps") && opts.Get("fps").IsNumber()
+      ? opts.Get("fps").As<Napi::Number>().DoubleValue() : 60.0;
+  frame.frame_rate_N = (fps >= 1 && fps <= 60) ? static_cast<int>(fps * 1000) : 60000;
+  frame.frame_rate_D = 1000;
+  frame.picture_aspect_ratio = static_cast<float>(width) / height;
+  frame.timecode = NDIlib_send_timecode_synthesize;
 
   // Async send pumps the network IO on the SDK's own thread. We
   // return immediately; next send_send_video call blocks if the
   // previous one is still in flight, which gives us natural back-
   // pressure without needing a per-sender inFlight flag.
   NDIlib_send_send_video_async_v2(sender->instance, &frame);
+  sender->frameStorage.swap(nextFrame);
   return Napi::Boolean::New(env, true);
 }
 

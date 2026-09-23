@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { readdirSync, readFileSync, statSync } from 'node:fs';
 import { join } from 'node:path';
+import viteConfig from '../../../vite.config';
 
 /**
  * Bundled assets must be referenced relative to BASE_URL, never root-absolute.
@@ -30,6 +31,20 @@ function svelteFiles(dir: string): string[] {
 }
 
 describe('bundled asset paths', () => {
+  it('resolves the generated Three.js catalog inside a packaged Windows app', () => {
+    const page = 'file:///C:/Ghost%20Arcade/resources/app.asar/dist/index.html';
+    // Exercise the generated module with the production relative base. Vitest's
+    // own dev-server config uses '/', which cannot reproduce file:// packaging.
+    const plugin = (viteConfig as any).plugins.find((p: any) => p.name === 'ghost-arcade-threejs-bundles');
+    plugin.configResolved({ base: './' });
+    const generated = plugin.load('\0virtual:threejs-bundles');
+    const items = JSON.parse(generated.replace(/^export default /, '').replace(/;$/, ''));
+    expect(items.length).toBeGreaterThan(0);
+    for (const item of items) {
+      const url = new URL(item.url, page);
+      expect(url.href).toBe(`file:///C:/Ghost%20Arcade/resources/app.asar/dist/threejs/${encodeURIComponent(item.folder)}/index.html`);
+    }
+  });
   it('never references a bundled directory root-absolutely', () => {
     const pattern = new RegExp(`['"\`]/(${BUNDLED_DIRS.join('|')})/`);
     const offenders: string[] = [];

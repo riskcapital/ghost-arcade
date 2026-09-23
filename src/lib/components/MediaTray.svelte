@@ -4367,7 +4367,7 @@
                 </div>
                 <div class="library-preview">
                   {#if saved.thumbnail}
-                    <img src={saved.thumbnail} alt={saved.name} class="library-thumb" />
+                    <img src={saved.thumbnail} alt={saved.name} class="library-thumb" draggable="false" />
                   {:else}
                     <div class="library-icon">
                       {#if saved.type === 'shader-isf'}
@@ -4607,7 +4607,7 @@
               title={trayItemActionTitle()}
             >
               {#if 'shaderCode' in item && item.thumbnail}
-                <img src={item.thumbnail} alt={item.name} class="shader-thumb" />
+                <img src={item.thumbnail} alt={item.name} class="shader-thumb" draggable="false" />
               {:else if 'shaderCode' in item && (item.loadingProgress || 0) < 1}
                 <div class="shader-icon loading">
                   <div class="loading-bar-container">
@@ -4620,7 +4620,7 @@
                   <span class="shader-placeholder-text">ISF</span>
                 </div>
               {:else if 'thumbnail' in item && item.thumbnail}
-                <img src={item.thumbnail} alt={item.name} />
+                <img src={item.thumbnail} alt={item.name} draggable="false" />
               {:else}
                 <div class="placeholder-thumb"></div>
               {/if}

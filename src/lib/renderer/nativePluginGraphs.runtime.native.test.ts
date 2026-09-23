@@ -16,7 +16,8 @@ import {
 
 const nativeCoreBin = join(
   process.cwd(),
-  'native-renderer/target/release/ghost-render-core',
+  'native-renderer/target/release',
+  process.platform === 'win32' ? 'ghost-render-core.exe' : 'ghost-render-core',
 );
 const itIfNativeCore = existsSync(nativeCoreBin) ? it : it.skip;
 
