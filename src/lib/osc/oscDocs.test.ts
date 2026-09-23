@@ -25,8 +25,10 @@ function documentedFamilies(): Set<string> {
   const found = new Set<string>();
   for (const match of docs.matchAll(/`(\/ghost\/[^`]+)`/g)) {
     // {L}, {C}, {N} are all just indices; {deck} is not — keep it, because
-    // the template's a/b is normalized to {deck} on the other side.
-    found.add(match[1].replace(/\/\{(?!deck\})[A-Za-z]+\}/g, '/{n}'));
+    // the template's a/b is normalized to {deck} on the other side. A
+    // concrete example (/ghost/vj/a/layer/1/opacity) names the same family as
+    // its placeholder form, so both ends go through family().
+    found.add(family(match[1].replace(/\/\{(?!deck\})[A-Za-z]+\}/g, '/{n}')));
   }
   return found;
 }
