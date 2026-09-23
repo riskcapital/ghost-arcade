@@ -5028,6 +5028,23 @@ export function nativeWarpCorners(
   };
 }
 
+/** Screen masks get the same flip: their vertices are authored in the
+ *  screen's content space with y=0 at the top, and the core cuts them in
+ *  its y-up screen UV. Disabled masks and ones that cannot form a polygon
+ *  are left out so the core never sees a mask it would have to ignore. */
+export function nativeScreenMasks(
+  masks: Array<{ enabled?: boolean; invert?: boolean; feather?: number; points?: NativeWarpPoint[] }> | null | undefined,
+): Array<{ invert: boolean; feather: number; points: NativeWarpPoint[] }> {
+  if (!Array.isArray(masks)) return [];
+  return masks
+    .filter((mask) => mask && mask.enabled !== false && Array.isArray(mask.points) && mask.points.length >= 3)
+    .map((mask) => ({
+      invert: mask.invert === true,
+      feather: clampNumber(Number(mask.feather) || 0, 0, 1),
+      points: mask.points!.map((point) => ({ x: point.x, y: 1 - point.y })),
+    }));
+}
+
 /** Same conversion for a warp mesh: the row the operator sees first is the
  *  top one, which is the LAST row in the core's y-up grid. */
 export function nativeWarpMeshGrid(
@@ -7704,6 +7721,7 @@ export class NativeRendererSync {
         warpMode: s.warpMode ?? 'rect',
         corners: nativeWarpCorners(s.corners),
         meshGrid: nativeWarpMeshGrid(s.meshGrid),
+        masks: nativeScreenMasks(s.masks),
         };
       });
     const sig = JSON.stringify(slices);
