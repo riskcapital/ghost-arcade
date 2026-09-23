@@ -1181,6 +1181,11 @@ struct OutputStage {
     /// Control points, two per vec4, row-major, up to 16x16.
     swarp_mesh: [[f32; 4]; 128],
     mwarp_mesh: [[f32; 4]; 128],
+    /// Per-screen masks: (mask count, keep count, _, _), one info vec4 per
+    /// mask and the packed vertices; slice mode only. See screen_masks_at.
+    smask: [f32; 4],
+    smask_info: [[f32; 4]; MAX_SCREEN_MASKS],
+    smask_pts: [[f32; 4]; MAX_SCREEN_MASK_VEC4S],
 }
 
 impl Default for OutputStage {
@@ -1202,6 +1207,9 @@ impl Default for OutputStage {
             mwarp_c1: [1.0, 1.0, 0.0, 1.0],
             swarp_mesh: [[0.0; 4]; 128],
             mwarp_mesh: [[0.0; 4]; 128],
+            smask: [0.0; 4],
+            smask_info: [[0.0; 4]; MAX_SCREEN_MASKS],
+            smask_pts: [[0.0; 4]; MAX_SCREEN_MASK_VEC4S],
         }
     }
 }
@@ -1240,6 +1248,9 @@ struct Uniforms {
     mwarp_c1: [f32; 4],
     swarp_mesh: [[f32; 4]; 128],
     mwarp_mesh: [[f32; 4]; 128],
+    smask: [f32; 4],
+    smask_info: [[f32; 4]; MAX_SCREEN_MASKS],
+    smask_pts: [[f32; 4]; MAX_SCREEN_MASK_VEC4S],
 }
 
 #[repr(C)]
@@ -1616,6 +1627,85 @@ fn warp_mesh_at(params: Option<&Value>) -> (f32, f32, [[f32; 4]; 128]) {
         }
     }
     (rows as f32, cols as f32, mesh)
+}
+
+/// Per-screen polygon masks, packed like the layer mask: up to 8 masks per
+/// screen, 32 vertices each, two points per vec4. Masks past the cap are
+/// dropped whole rather than truncated into a different shape.
+const MAX_SCREEN_MASKS: usize = 8;
+const SCREEN_MASK_POINTS_PER_MASK: usize = 32;
+const MAX_SCREEN_MASK_POINTS: usize = MAX_SCREEN_MASKS * SCREEN_MASK_POINTS_PER_MASK;
+const MAX_SCREEN_MASK_VEC4S: usize = MAX_SCREEN_MASK_POINTS / 2;
+
+/// Screen mask block for the uniforms: header (mask count, keep count), one
+/// info vec4 per mask (point start, point count, feather, invert) and the
+/// packed vertex list. Points arrive already in the core's y-up screen UV;
+/// the editor flips them once at the sync boundary, as it does the warp
+/// corners. A disabled mask or one with fewer than 3 usable points is
+/// skipped so it can never black out the screen.
+fn screen_masks_at(
+    params: Option<&Value>,
+) -> ([f32; 4], [[f32; 4]; MAX_SCREEN_MASKS], [[f32; 4]; MAX_SCREEN_MASK_VEC4S]) {
+    let mut info = [[0.0f32; 4]; MAX_SCREEN_MASKS];
+    let mut points = [[0.0f32; 4]; MAX_SCREEN_MASK_VEC4S];
+    let mut mask_count = 0usize;
+    let mut keep_count = 0usize;
+    let mut cursor = 0usize;
+    let Some(entries) = params.and_then(Value::as_array) else {
+        return ([0.0; 4], info, points);
+    };
+    for entry in entries {
+        if mask_count >= MAX_SCREEN_MASKS {
+            break;
+        }
+        if !bool_at(entry, &["enabled"]).unwrap_or(true) {
+            continue;
+        }
+        let Some(vertices) = entry.get("points").and_then(Value::as_array) else {
+            continue;
+        };
+        let vertices: Vec<[f32; 2]> = vertices
+            .iter()
+            .filter_map(|point| {
+                let x = number_at(point, &["x"])?;
+                let y = number_at(point, &["y"])?;
+                if !x.is_finite() || !y.is_finite() {
+                    return None;
+                }
+                // A vertex may sit outside the screen so a mask can run off
+                // its edge; only nonsense values are rejected.
+                Some([x.clamp(-4.0, 5.0) as f32, y.clamp(-4.0, 5.0) as f32])
+            })
+            .take(SCREEN_MASK_POINTS_PER_MASK)
+            .collect();
+        if vertices.len() < 3 || cursor + vertices.len() > MAX_SCREEN_MASK_POINTS {
+            continue;
+        }
+        let invert = bool_at(entry, &["invert"]).unwrap_or(false);
+        let feather = number_at(entry, &["feather"]).unwrap_or(0.0).clamp(0.0, 1.0) as f32;
+        info[mask_count] = [
+            cursor as f32,
+            vertices.len() as f32,
+            feather,
+            if invert { 1.0 } else { 0.0 },
+        ];
+        for vertex in &vertices {
+            let slot = cursor / 2;
+            if cursor % 2 == 0 {
+                points[slot][0] = vertex[0];
+                points[slot][1] = vertex[1];
+            } else {
+                points[slot][2] = vertex[0];
+                points[slot][3] = vertex[1];
+            }
+            cursor += 1;
+        }
+        if !invert {
+            keep_count += 1;
+        }
+        mask_count += 1;
+    }
+    ([mask_count as f32, keep_count as f32, 0.0, 0.0], info, points)
 }
 
 /// Upper bound on simultaneously-presented slice displays. Each one costs a
@@ -5298,6 +5388,10 @@ impl App {
             mwarp_c1: master_c1,
             swarp_mesh: [[0.0; 4]; 128],
             mwarp_mesh: master_mesh,
+            // Masks are cut per screen, so the main output carries none.
+            smask: [0.0; 4],
+            smask_info: [[0.0; 4]; MAX_SCREEN_MASKS],
+            smask_pts: [[0.0; 4]; MAX_SCREEN_MASK_VEC4S],
         };
         Ok(json!({ "domeEnabled": dome_enabled, "masterWarp": master_warp[0] > 0.5 }))
     }
@@ -5341,6 +5435,10 @@ impl App {
                     "mesh" if slice_rows >= 2.0 && slice_cols >= 2.0 => 2.0,
                     _ => 0.0,
                 };
+                // Masks are evaluated in the screen's own UV after the crop
+                // and warp have been resolved, so they stay put on the
+                // projector when the screen is re-pinned.
+                let (mask_header, mask_info, mask_points) = screen_masks_at(entry.get("masks"));
                 // A slice inherits the master dome so a domed rig can still be
                 // split across projectors, but overrides every flat transform.
                 let stage = OutputStage {
@@ -5383,6 +5481,9 @@ impl App {
                     mwarp_c1: self.output_stage.mwarp_c1,
                     swarp_mesh: slice_mesh,
                     mwarp_mesh: self.output_stage.mwarp_mesh,
+                    smask: mask_header,
+                    smask_info: mask_info,
+                    smask_pts: mask_points,
                 };
                 specs.push(SliceOutputSpec { id, width, height, stage });
             }
@@ -11343,7 +11444,18 @@ impl App {
         let scene_overlay_items = self.scene_overlay_items();
         let output_gate = self.output_gate();
         let post_effects = self.composite_effect_slots();
-        let output_stage = self.preview_output_stage();
+        // `slice_id` reads one screen's output (its crop, warp, grade, blend
+        // and masks) through the same presenter pass a slice display uses,
+        // instead of the editor preview's master stage.
+        let output_stage = match string_at(params, &["slice_id"]) {
+            Some(slice_id) => self
+                .slice_outputs
+                .iter()
+                .find(|spec| spec.id == slice_id)
+                .map(|spec| spec.stage)
+                .ok_or_else(|| format!("unknown screen output: {slice_id}"))?,
+            None => self.preview_output_stage(),
+        };
         let Some(renderer) = self.renderer.as_mut() else {
             return Err("native renderer has not created a wgpu device".to_string());
         };
@@ -17543,6 +17655,9 @@ impl RenderState {
                 mwarp_c1: [1.0, 1.0, 0.0, 1.0],
                 swarp_mesh: [[0.0; 4]; 128],
                 mwarp_mesh: [[0.0; 4]; 128],
+                smask: [0.0; 4],
+                smask_info: [[0.0; 4]; MAX_SCREEN_MASKS],
+                smask_pts: [[0.0; 4]; MAX_SCREEN_MASK_VEC4S],
                 audio0: [0.0; 4],
                 audio1: [0.0; 4],
                 audio2: [0.0; 4],
@@ -21588,6 +21703,9 @@ impl RenderState {
             mwarp_c1: stage.mwarp_c1,
             swarp_mesh: stage.swarp_mesh,
             mwarp_mesh: stage.mwarp_mesh,
+            smask: stage.smask,
+            smask_info: stage.smask_info,
+            smask_pts: stage.smask_pts,
             post: {
                 let mut slots = [[0.0f32; 4]; 8];
                 for (slot, value) in slots.iter_mut().zip(post_effects.iter().take(8)) {
@@ -29488,6 +29606,34 @@ mod tests {
         assert!(super::validate_slice_outputs(&json!({})).is_err());
         assert!(super::validate_slice_outputs(&json!({ "slices": [{"id":"a"}, {"id":"a"}] })).is_err());
         assert!(super::validate_slice_outputs(&json!({ "slices": [{"id":" "}] })).is_err());
+    }
+
+    #[test]
+    fn screen_masks_pack_enabled_polygons_and_skip_unusable_ones() {
+        use serde_json::json;
+        let masks = json!([
+            { "enabled": true, "invert": false, "feather": 0.3,
+              "points": [{ "x": 0.1, "y": 0.1 }, { "x": 0.9, "y": 0.1 }, { "x": 0.5, "y": 0.9 }] },
+            // Disabled, and too few points: neither may reach the shader.
+            { "enabled": false, "points": [{ "x": 0.0, "y": 0.0 }, { "x": 1.0, "y": 0.0 }, { "x": 1.0, "y": 1.0 }] },
+            { "points": [{ "x": 0.0, "y": 0.0 }, { "x": 1.0, "y": 0.0 }] },
+            { "invert": true, "feather": 4.0,
+              "points": [{ "x": 0.4, "y": 0.4 }, { "x": 0.6, "y": 0.4 }, { "x": 0.6, "y": 0.6 }, { "x": 0.4, "y": "nope" }] },
+        ]);
+        let (header, info, points) = super::screen_masks_at(Some(&masks));
+        assert_eq!(header, [2.0, 1.0, 0.0, 0.0]);
+        assert_eq!(info[0], [0.0, 3.0, 0.3, 0.0]);
+        // The inverted mask starts after the first mask's 3 vertices, drops
+        // its unusable vertex and clamps feather into range.
+        assert_eq!(info[1], [3.0, 3.0, 1.0, 1.0]);
+        assert_eq!(points[0], [0.1, 0.1, 0.9, 0.1]);
+        assert_eq!(points[1], [0.5, 0.9, 0.4, 0.4]);
+        assert_eq!(points[2], [0.6, 0.4, 0.6, 0.6]);
+        assert_eq!(super::screen_masks_at(None).0, [0.0; 4]);
+        assert_eq!(super::screen_masks_at(Some(&json!("x"))).0, [0.0; 4]);
+        // Past the per-screen cap, extra masks are dropped whole.
+        let many = json!((0..12).map(|_| json!({ "points": [{ "x": 0.0, "y": 0.0 }, { "x": 1.0, "y": 0.0 }, { "x": 1.0, "y": 1.0 }] })).collect::<Vec<_>>());
+        assert_eq!(super::screen_masks_at(Some(&many)).0[0], super::MAX_SCREEN_MASKS as f32);
     }
 
     #[test]
