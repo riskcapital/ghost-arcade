@@ -1,0 +1,287 @@
+{
+  "captured_at": "2026-09-23T18:32:47.965Z",
+  "platform": "win32",
+  "adapter": "NVIDIA GeForce RTX 4070 Laptop GPU",
+  "format": "hap",
+  "playback_rate": 1,
+  "bounce_enabled": false,
+  "streams": 3,
+  "source_resolution": "1920x1080",
+  "source_fps": 60,
+  "output_resolution": "1920x1080",
+  "atlas_slot_size": 512,
+  "decode_budget_mb": 1024,
+  "elapsed_seconds": 10.018640900000001,
+  "compositor_fps": 60.08799057764411,
+  "session_fps": [
+    {
+      "source_id": "clip-0",
+      "backend": "hap-texture",
+      "fps": 60.08799057764411,
+      "frames_dropped": 0,
+      "reserved_bytes": 28617984
+    },
+    {
+      "source_id": "clip-2",
+      "backend": "hap-texture",
+      "fps": 60.08799057764411,
+      "frames_dropped": 0,
+      "reserved_bytes": 28617984
+    },
+    {
+      "source_id": "clip-1",
+      "backend": "hap-texture",
+      "fps": 60.08799057764411,
+      "frames_dropped": 0,
+      "reserved_bytes": 28617984
+    }
+  ],
+  "render_cpu_ms": 2.9372888954373693,
+  "render_gpu_ms": 2.1647671472428542,
+  "media_pump_cpu_ms": 2.2361,
+  "gpu_backpressure_skips": 0,
+  "compressed_upload_bytes": 1872460800,
+  "hap_frames": 1806,
+  "software_frames": 0,
+  "hardware_fallbacks": 0,
+  "decode_failures": 0,
+  "underflows": 0,
+  "samples": [
+    {
+      "elapsed_ms": 257.7177999999999,
+      "frames": 81,
+      "hap_frames": 236,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 509.7127999999998,
+      "frames": 96,
+      "hap_frames": 281,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 766.3528000000001,
+      "frames": 111,
+      "hap_frames": 326,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 1024.5290999999997,
+      "frames": 127,
+      "hap_frames": 374,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 1276.2560000000003,
+      "frames": 142,
+      "hap_frames": 419,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 1530.3125,
+      "frames": 157,
+      "hap_frames": 464,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 1791.2447999999995,
+      "frames": 173,
+      "hap_frames": 512,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 2042.7637999999997,
+      "frames": 188,
+      "hap_frames": 557,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 2299.4411,
+      "frames": 203,
+      "hap_frames": 602,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 2564.6452,
+      "frames": 219,
+      "hap_frames": 650,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 2824.2943999999998,
+      "frames": 235,
+      "hap_frames": 698,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 3075.8864999999996,
+      "frames": 250,
+      "hap_frames": 743,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 3332.3449,
+      "frames": 265,
+      "hap_frames": 788,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 3591.2878,
+      "frames": 281,
+      "hap_frames": 836,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 3841.9304999999995,
+      "frames": 296,
+      "hap_frames": 881,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 4113.7789999999995,
+      "frames": 312,
+      "hap_frames": 929,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 4364.2504,
+      "frames": 327,
+      "hap_frames": 974,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 4621.4232,
+      "frames": 343,
+      "hap_frames": 1022,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 4879.4956999999995,
+      "frames": 358,
+      "hap_frames": 1067,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 5132.214899999999,
+      "frames": 373,
+      "hap_frames": 1112,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 5391.194299999999,
+      "frames": 389,
+      "hap_frames": 1160,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 5643.6432,
+      "frames": 404,
+      "hap_frames": 1205,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 5906.2562,
+      "frames": 420,
+      "hap_frames": 1253,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 6157.5304,
+      "frames": 435,
+      "hap_frames": 1298,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 6408.654399999999,
+      "frames": 450,
+      "hap_frames": 1343,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 6661.1121,
+      "frames": 465,
+      "hap_frames": 1388,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 6924.601500000001,
+      "frames": 481,
+      "hap_frames": 1436,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 7175.7246,
+      "frames": 496,
+      "hap_frames": 1481,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 7432.2029,
+      "frames": 511,
+      "hap_frames": 1526,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 7692.359200000001,
+      "frames": 527,
+      "hap_frames": 1574,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 7957.992399999999,
+      "frames": 543,
+      "hap_frames": 1622,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 8214.0716,
+      "frames": 558,
+      "hap_frames": 1667,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 8474.122299999999,
+      "frames": 574,
+      "hap_frames": 1715,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 8730.546,
+      "frames": 589,
+      "hap_frames": 1760,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 8982.2396,
+      "frames": 604,
+      "hap_frames": 1805,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 9239.7404,
+      "frames": 620,
+      "hap_frames": 1853,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 9496.3586,
+      "frames": 635,
+      "hap_frames": 1898,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 9754.6604,
+      "frames": 651,
+      "hap_frames": 1946,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 10016.3285,
+      "frames": 666,
+      "hap_frames": 1991,
+      "underflows": 0
+    }
+  ],
+  "visible_tiles": 3,
+  "accepted": true
+}

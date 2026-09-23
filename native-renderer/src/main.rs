@@ -18838,10 +18838,20 @@ impl RenderState {
         }
         #[cfg(target_os = "windows")]
         {
-            if self.deck_monitor_targets.is_some() {
+            if let Some(targets) = self.deck_monitor_targets.as_ref() {
+                let bank = |target: &DeckMonitorTarget, name: &str| {
+                    json!({
+                        "bank": name,
+                        "shared_name": target.export.shared_name,
+                        "width": target.export.width,
+                        "height": target.export.height,
+                        "frame": target.export.frame,
+                    })
+                };
                 return json!({
-                    "available": false,
-                    "reason": "deck monitor shared-texture presentation is not yet implemented on DXGI",
+                    "available": true,
+                    "platform": "dxgi",
+                    "banks": [bank(&targets[0], "a"), bank(&targets[1], "b")],
                 });
             }
         }

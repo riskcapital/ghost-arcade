@@ -8,6 +8,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createInterface } from 'node:readline';
+import { createRequire } from 'node:module';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { closeNativeTestCore, hardwareTestPlatform as platform } from './nativeHardwareTestPlatform';
 const scrubBridge = vi.hoisted(() => ({ status: vi.fn(), submit: vi.fn(), toast: vi.fn() }));
@@ -282,6 +283,37 @@ hardwareDescribe(`${platform.label} playback through the presented shared textur
       { ...trigger(sourceId, overrides), paused: true },
     ]);
   };
+
+  it.skipIf(!platform.windows)('keeps both Windows deck monitors moving when deck B has zero program opacity', async () => {
+    const addon = createRequire(import.meta.url)(join(process.cwd(), 'electron/native/build/Release/dxgi_preview_addon.node'));
+    const rpc = core();
+    try {
+      const baseline = await start(rpc);
+      await rpc.commands(['a', 'b'].flatMap(bank => [
+        { ...layer(`deck-${bank}`), opacity: bank === 'a' ? 1 : 0, deck_monitor_bank: bank, deck_monitor_opacity: 1 },
+        trigger(`source-${bank}`), bind(`source-${bank}`, `deck-${bank}`),
+      ]));
+      const state = await waitUntil(() => rpc.send('deck_monitor_state'), s => s.available && s.banks.every((b: any) => b.frame > 0), 'deck exports');
+      expect(state.platform).toBe('dxgi');
+      expect(state.banks[0].shared_name).not.toBe(state.banks[1].shared_name);
+      for (const bank of ['a', 'b']) {
+        const numbers = new Set<number>();
+        for (let attempt = 0; attempt < 80 && numbers.size < 4; attempt++) {
+          const metadata = (await rpc.send('deck_monitor_state')).banks.find((b: any) => b.bank === bank);
+          const pixels = addon.readSharedTexturePixels(metadata.shared_name, metadata.frame);
+          if (pixels) {
+            const rgba = Buffer.from(pixels.data);
+            for (let i = 0; i < rgba.length; i += 4) [rgba[i], rgba[i + 2]] = [rgba[i + 2], rgba[i]];
+            const number = frameNumber({ width: pixels.width, height: pixels.height, rgba, exportFrame: pixels.frame });
+            if (number >= 0) numbers.add(number);
+          }
+          await sleep(25);
+        }
+        expect(numbers.size, `deck ${bank} must show changing decoded frames`).toBeGreaterThanOrEqual(4);
+      }
+      assertHardware(await rpc.send('status'), baseline, ['source-a', 'source-b']);
+    } finally { addon.releaseReadback(); await rpc.close(); }
+  }, 30000);
 
   it('presents the first B-frame clip picture with correct BT.709 limited-range NV12 conversion', async () => {
     const rpc = core();

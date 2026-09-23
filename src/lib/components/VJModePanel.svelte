@@ -535,6 +535,7 @@
       contentWidth: width,
       contentHeight: height,
       generation: ++deckMonitorGeneration,
+      pixelRatio: window.devicePixelRatio || 1,
     };
   }
 
@@ -549,7 +550,7 @@
     }
     const rectA = deckMonitorRect(deckMonitorAEl);
     const rectB = deckMonitorRect(deckMonitorBEl);
-    const sig = `${rectA.x}:${rectA.y}:${rectA.width}:${rectA.height}|${rectB.x}:${rectB.y}:${rectB.width}:${rectB.height}`;
+    const sig = `${rectA.x}:${rectA.y}:${rectA.width}:${rectA.height}:${rectA.pixelRatio}|${rectB.x}:${rectB.y}:${rectB.width}:${rectB.height}:${rectB.pixelRatio}`;
     if (deckMonitorsAttached && sig === deckMonitorLastSig) return;
     try {
       const result = await invoke('deck_monitor_attach', {
@@ -3109,9 +3110,14 @@
       return;
     }
 
-    // Direct OS-file → deck cell drop (release v1.9.99x behavior).
+    // Windows Chromium can include the dragged thumbnail in files alongside
+    // our shader/clip payload. Only treat a drop as external when no internal
+    // drag exists; otherwise an animated shader becomes its still JPEG.
     const externalFiles = Array.from(e.dataTransfer?.files ?? []);
-    if (externalFiles.length > 0) {
+    const internalDrop = draggedClip || dragSourceCell
+      || mediaTrayPayloadFromDataTransfer(e.dataTransfer)
+      || e.dataTransfer?.getData('application/x-ghost-vj-clip');
+    if (externalFiles.length > 0 && !internalDrop) {
       void importDroppedFilesToDeck(externalFiles, layerIndex, columnIndex, bank);
       draggedClip = null;
       dragSourceCell = null;
@@ -4052,6 +4058,13 @@
               <div class="vj-menu-sep"></div>
               <button class="vj-menu-item" onclick={() => vjFileAction('undo')}>Undo<span class="vj-menu-sc">Ctrl+Z</span></button>
               <button class="vj-menu-item" onclick={() => vjFileAction('redo')}>Redo<span class="vj-menu-sc">Ctrl+Y</span></button>
+              {#if isDesktopApp && !isMac}
+                <div class="vj-menu-sep"></div>
+                <button class="vj-menu-item" onclick={() => { vjFileMenuOpen = false; void invoke('win_minimize'); }}>Minimize</button>
+                <button class="vj-menu-item" onclick={() => { vjFileMenuOpen = false; void invoke('win_maximize_toggle'); }}>Maximize / Restore</button>
+                <div class="vj-menu-sep"></div>
+                <button class="vj-menu-item" onclick={() => { vjFileMenuOpen = false; void invoke('win_close'); }}>Exit Ghost Arcade<span class="vj-menu-sc">Alt+F4</span></button>
+              {/if}
             </div>
           {/if}
         </div>
@@ -5834,7 +5847,7 @@
                   {#if clip}
                     <div class="clip-content">
                       {#if clip.thumbnail}
-                        <img src={clip.thumbnail} alt={clip.name} class="clip-thumb" />
+                        <img src={clip.thumbnail} alt={clip.name} class="clip-thumb" draggable="false" />
                       {:else}
                         <div class="clip-placeholder {clip.type}">
                           {clip.type === 'shader' ? 'ISF' : clip.type === 'video' ? 'VID' : clip.type === 'spout' ? 'SPT' : clip.type === 'threejs' ? '3JS' : clip.type === 'splat' ? 'PLY' : clip.type === 'model3d' ? '3DM' : clip.type === 'gpu' ? 'GPU' : clip.type === 'text' ? 'TXT' : clip.type === 'effect' ? 'FX' : clip.type === 'preset' ? 'MAP' : clip.type === 'synthvision' ? 'PERF' : 'IMG'}
@@ -6454,7 +6467,7 @@
                 >
                   <div class="item-thumb">
                     {#if saved.thumbnail}
-                      <img src={saved.thumbnail} alt={saved.name} />
+                      <img src={saved.thumbnail} alt={saved.name} draggable="false" />
                     {:else}
                       <div class="thumb-placeholder shader"><span>ISF</span></div>
                     {/if}
@@ -6469,7 +6482,7 @@
                 <div class="media-item" draggable="true" ondragstart={(e) => handleDragStart(e, { type: 'video', id: vid.id })} ondragend={handleDragEnd} role="button" tabindex="0">
                   <div class="item-thumb">
                     {#if vid.thumbnail}
-                      <img src={vid.thumbnail} alt={vid.name} />
+                      <img src={vid.thumbnail} alt={vid.name} draggable="false" />
                     {:else}
                       <div class="thumb-placeholder video"><span>VID</span></div>
                     {/if}
@@ -6499,7 +6512,7 @@
               >
                 <div class="item-thumb">
                   {#if item.thumbnail}
-                    <img src={item.thumbnail} alt={item.name} />
+                    <img src={item.thumbnail} alt={item.name} draggable="false" />
                   {:else}
                     <div class="thumb-placeholder {item.itemType}">
                       <span>{item.itemType === 'shader' ? 'ISF' : item.itemType === 'video' ? 'VID' : item.itemType === 'threejs' ? '3JS' : 'IMG'}</span>

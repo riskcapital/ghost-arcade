@@ -126,7 +126,7 @@ describe('native preview geometry contract', () => {
       '../../../electron/native/native_preview_addon.mm',
       import.meta.url,
     ));
-    const source = readFileSync(addonPath, 'utf8');
+    const source = readFileSync(addonPath, 'utf8').replace(/\r\n/g, '\n');
     const setFrameBody = source.match(
       /- \(void\)setFrame:\(NSRect\)frame \{([\s\S]*?)\n\}\n\n- \(void\)setContentRect:/,
     )?.[1] ?? '';
@@ -157,7 +157,7 @@ describe('native preview geometry contract', () => {
       import.meta.url,
     ));
     const appPath = fileURLToPath(new URL('../../App.svelte', import.meta.url));
-    const canvasSource = readFileSync(canvasPath, 'utf8');
+    const canvasSource = readFileSync(canvasPath, 'utf8').replace(/\r\n/g, '\n');
     const appSource = readFileSync(appPath, 'utf8');
     const embeddedRectBody = canvasSource.match(
       /function nativePreviewEmbeddedRect\(\):[\s\S]*?\n  \}\n\n  function scheduleNativePreviewWindowSync/,

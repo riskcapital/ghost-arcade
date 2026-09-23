@@ -6281,6 +6281,20 @@
                 <span class="menu-label">Redo</span>
                 <span class="menu-shortcut">Ctrl+Y</span>
               </button>
+              {#if isDesktopApp && !isMac}
+                <div class="menu-separator"></div>
+                <button class="menu-item" onclick={() => { fileMenuOpen = false; void invoke('win_minimize'); }}>
+                  <span class="menu-icon"></span><span class="menu-label">Minimize</span>
+                </button>
+                <button class="menu-item" onclick={async () => { fileMenuOpen = false; winMaximized = await invoke('win_maximize_toggle'); }}>
+                  <span class="menu-icon"></span><span class="menu-label">Maximize / Restore</span>
+                </button>
+                <div class="menu-separator"></div>
+                <button class="menu-item" onclick={() => { fileMenuOpen = false; void invoke('win_close'); }}>
+                  <span class="menu-icon"></span><span class="menu-label">Exit Ghost Arcade</span>
+                  <span class="menu-shortcut">Alt+F4</span>
+                </button>
+              {/if}
             </div>
           {/if}
         </div>

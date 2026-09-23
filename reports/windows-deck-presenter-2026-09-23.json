@@ -1,0 +1,7 @@
+{
+  "passed": true,
+  "platform": "win32",
+  "nativeWindowAttach": true,
+  "presents": 60,
+  "bothMonitorsDetached": true
+}

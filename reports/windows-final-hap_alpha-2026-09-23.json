@@ -1,0 +1,287 @@
+{
+  "captured_at": "2026-09-23T18:33:02.947Z",
+  "platform": "win32",
+  "adapter": "NVIDIA GeForce RTX 4070 Laptop GPU",
+  "format": "hap_alpha",
+  "playback_rate": 1,
+  "bounce_enabled": false,
+  "streams": 3,
+  "source_resolution": "1920x1080",
+  "source_fps": 60,
+  "output_resolution": "1920x1080",
+  "atlas_slot_size": 512,
+  "decode_budget_mb": 1024,
+  "elapsed_seconds": 10.0426571,
+  "compositor_fps": 60.0438702621839,
+  "session_fps": [
+    {
+      "source_id": "clip-1",
+      "backend": "hap-texture",
+      "fps": 59.74514453948647,
+      "frames_dropped": 3,
+      "reserved_bytes": 56611584
+    },
+    {
+      "source_id": "clip-2",
+      "backend": "hap-texture",
+      "fps": 59.74514453948647,
+      "frames_dropped": 3,
+      "reserved_bytes": 56611584
+    },
+    {
+      "source_id": "clip-0",
+      "backend": "hap-texture",
+      "fps": 59.74514453948647,
+      "frames_dropped": 3,
+      "reserved_bytes": 56611584
+    }
+  ],
+  "render_cpu_ms": 0.5562036797819656,
+  "render_gpu_ms": 1.2115790077195006,
+  "media_pump_cpu_ms": 1.3472,
+  "gpu_backpressure_skips": 1,
+  "compressed_upload_bytes": 3732480000,
+  "hap_frames": 1800,
+  "software_frames": 0,
+  "hardware_fallbacks": 0,
+  "decode_failures": 0,
+  "underflows": 0,
+  "samples": [
+    {
+      "elapsed_ms": 251.70390000000043,
+      "frames": 80,
+      "hap_frames": 234,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 515.7541000000001,
+      "frames": 96,
+      "hap_frames": 280,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 768.2290000000003,
+      "frames": 111,
+      "hap_frames": 325,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 1024.8618000000006,
+      "frames": 127,
+      "hap_frames": 373,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 1282.8507,
+      "frames": 142,
+      "hap_frames": 416,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 1534.1794,
+      "frames": 157,
+      "hap_frames": 461,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 1790.2399000000005,
+      "frames": 173,
+      "hap_frames": 509,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 2050.6988,
+      "frames": 188,
+      "hap_frames": 554,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 2315.3483000000006,
+      "frames": 204,
+      "hap_frames": 602,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 2567.9921000000004,
+      "frames": 219,
+      "hap_frames": 647,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 2823.9561000000003,
+      "frames": 235,
+      "hap_frames": 695,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 3082.4551,
+      "frames": 250,
+      "hap_frames": 740,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 3336.2959,
+      "frames": 266,
+      "hap_frames": 788,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 3595.8063,
+      "frames": 281,
+      "hap_frames": 833,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 3845.9175999999998,
+      "frames": 296,
+      "hap_frames": 878,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 4100.6925,
+      "frames": 311,
+      "hap_frames": 923,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 4367.6696,
+      "frames": 327,
+      "hap_frames": 971,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 4630.351600000001,
+      "frames": 343,
+      "hap_frames": 1019,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 4883.704700000001,
+      "frames": 358,
+      "hap_frames": 1064,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 5147.4019,
+      "frames": 374,
+      "hap_frames": 1112,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 5399.4762,
+      "frames": 389,
+      "hap_frames": 1157,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 5650.5621,
+      "frames": 404,
+      "hap_frames": 1202,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 5906.889700000001,
+      "frames": 420,
+      "hap_frames": 1250,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 6166.1729000000005,
+      "frames": 435,
+      "hap_frames": 1295,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 6430.510300000001,
+      "frames": 451,
+      "hap_frames": 1343,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 6691.6365,
+      "frames": 467,
+      "hap_frames": 1391,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 6954.364700000001,
+      "frames": 483,
+      "hap_frames": 1439,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 7220.2594,
+      "frames": 498,
+      "hap_frames": 1484,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 7472.9284,
+      "frames": 514,
+      "hap_frames": 1532,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 7731.5644,
+      "frames": 529,
+      "hap_frames": 1577,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 7990.2699,
+      "frames": 545,
+      "hap_frames": 1625,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 8250.4512,
+      "frames": 560,
+      "hap_frames": 1670,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 8502.966800000002,
+      "frames": 575,
+      "hap_frames": 1715,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 8763.8685,
+      "frames": 591,
+      "hap_frames": 1756,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 9018.0608,
+      "frames": 606,
+      "hap_frames": 1801,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 9270.933,
+      "frames": 622,
+      "hap_frames": 1849,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 9529.181199999999,
+      "frames": 637,
+      "hap_frames": 1894,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 9785.652300000002,
+      "frames": 652,
+      "hap_frames": 1939,
+      "underflows": 0
+    },
+    {
+      "elapsed_ms": 10040.9614,
+      "frames": 668,
+      "hap_frames": 1987,
+      "underflows": 0
+    }
+  ],
+  "visible_tiles": 3,
+  "accepted": true
+}

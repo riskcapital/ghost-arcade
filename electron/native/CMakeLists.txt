@@ -438,6 +438,8 @@ if(APPLE)
     endforeach()
 elseif(WIN32)
     list(APPEND NDI_SDK_CANDIDATES
+        "C:/Program Files/NDI/NDI 6 SDK"
+        "C:/Program Files/NDI/NDI 5 SDK"
         "C:/Program Files/NDI/NDI Advanced SDK"
         "C:/Program Files/NDI/NDI SDK"
         "C:/Program Files/NewTek/NDI SDK"
