@@ -3,6 +3,11 @@ use std::time::Instant;
 /// A started fade owns its clock until the transition token changes.
 pub struct TransitionClock { token: u64, start: Instant, progress: f64, duration: f64 }
 impl TransitionClock {
+    pub fn token(&self) -> u64 { self.token }
+    /// Read-only picture progress at `now`, for followers such as the audio fade.
+    pub fn progress(&self, now: Instant) -> f64 {
+        (self.progress + now.saturating_duration_since(self.start).as_secs_f64() / self.duration).clamp(0.0, 1.0)
+    }
     pub fn sample(slot: &mut Option<Self>, token: u64, progress: f64, duration: f64, now: Instant) -> f32 {
         if slot.as_ref().is_none_or(|clock| clock.token != token) {
             *slot = Some(Self { token, start: now, progress: progress.clamp(0.0, 1.0), duration });

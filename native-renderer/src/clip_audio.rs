@@ -8,8 +8,11 @@ const RATE: f64 = 48_000.0;
 const CACHE_BUDGET: u64 = 2 * 1024 * 1024 * 1024;
 const FILE_BUDGET: u64 = 512 * 1024 * 1024;
 const RING: usize = 32768;
+/// Recording tap capacity in f32 slots: 262144 stereo frames, about 5.4 s at 48 kHz.
+const TAP_RING: usize = 1 << 19;
+const TAP_MAGIC: &[u8; 4] = b"GATP";
 
-struct Ring { data: Vec<AtomicU32>, read: AtomicUsize, write: AtomicUsize }
+pub struct Ring { data: Vec<AtomicU32>, read: AtomicUsize, write: AtomicUsize }
 impl Ring {
     fn new() -> Self { Self { data: (0..RING).map(|_| AtomicU32::new(0)).collect(), read: AtomicUsize::new(0), write: AtomicUsize::new(0) } }
     fn len(&self) -> usize { self.write.load(Ordering::Acquire).wrapping_sub(self.read.load(Ordering::Acquire)) }
@@ -26,6 +29,111 @@ impl Ring {
         self.read.store(r.wrapping_add(2), Ordering::Release); Some(pair)
     }
 }
+/// Post-mix, pre-device stereo tap for recordings. The output callback
+/// mirrors every frame it hands the device; a full ring counts the frame as
+/// dropped instead of blocking. One producer (the callback), one consumer.
+pub struct Tap {
+    data: Vec<AtomicU32>, read: AtomicUsize, write: AtomicUsize,
+    enabled: AtomicBool, dropped: AtomicU64, pushed: AtomicU64, rate: AtomicU32,
+}
+impl Tap {
+    pub fn new() -> Self {
+        Self { data: (0..TAP_RING).map(|_| AtomicU32::new(0)).collect(), read: AtomicUsize::new(0), write: AtomicUsize::new(0),
+            enabled: AtomicBool::new(false), dropped: AtomicU64::new(0), pushed: AtomicU64::new(0), rate: AtomicU32::new(48000) }
+    }
+    pub fn rate(&self) -> u32 { self.rate.load(Ordering::Acquire) }
+    pub fn pushed(&self) -> u64 { self.pushed.load(Ordering::Relaxed) }
+    pub fn dropped(&self) -> u64 { self.dropped.load(Ordering::Relaxed) }
+    pub fn arm(&self, rate: u32) {
+        while self.pop().is_some() {}
+        self.dropped.store(0, Ordering::Relaxed); self.pushed.store(0, Ordering::Relaxed);
+        self.rate.store(rate, Ordering::Release); self.enabled.store(true, Ordering::Release);
+    }
+    pub fn disarm(&self) { self.enabled.store(false, Ordering::Release); }
+    pub fn push(&self, left: f32, right: f32) {
+        if !self.enabled.load(Ordering::Relaxed) { return; }
+        let w = self.write.load(Ordering::Relaxed);
+        if w.wrapping_sub(self.read.load(Ordering::Acquire)) + 2 > TAP_RING { self.dropped.fetch_add(1, Ordering::Relaxed); return; }
+        self.data[w % TAP_RING].store(left.to_bits(), Ordering::Relaxed);
+        self.data[(w + 1) % TAP_RING].store(right.to_bits(), Ordering::Relaxed);
+        self.write.store(w.wrapping_add(2), Ordering::Release);
+        self.pushed.fetch_add(1, Ordering::Relaxed);
+    }
+    pub fn pop(&self) -> Option<(f32, f32)> {
+        let r = self.read.load(Ordering::Relaxed);
+        if self.write.load(Ordering::Acquire).wrapping_sub(r) < 2 { return None; }
+        let pair = (f32::from_bits(self.data[r % TAP_RING].load(Ordering::Relaxed)), f32::from_bits(self.data[(r + 1) % TAP_RING].load(Ordering::Relaxed)));
+        self.read.store(r.wrapping_add(2), Ordering::Release); Some(pair)
+    }
+}
+/// Linear resampler used only when the device rate differs from the rate the
+/// tap was armed with (an output device change during a recording).
+#[derive(Default)]
+pub struct TapResampler { phase: f64, prev: Option<(f32, f32)> }
+impl TapResampler {
+    pub fn push(&mut self, tap: &Tap, device_rate: u32, left: f32, right: f32) {
+        let tap_rate = tap.rate();
+        if device_rate == tap_rate || tap_rate == 0 { self.prev = None; self.phase = 0.0; tap.push(left, right); return; }
+        let Some(prev) = self.prev else { self.prev = Some((left, right)); return; };
+        let step = device_rate as f64 / tap_rate as f64;
+        while self.phase < 1.0 {
+            let t = self.phase as f32;
+            tap.push(prev.0 + (left - prev.0) * t, prev.1 + (right - prev.1) * t);
+            self.phase += step;
+        }
+        self.phase -= 1.0; self.prev = Some((left, right));
+    }
+}
+/// One device callback: the ring feeds the device buffer and the tap mirrors
+/// exactly the clamped stereo frames the device receives. Returns block peaks.
+pub fn render_output<S: cpal::Sample + cpal::FromSample<f32>>(output: &mut [S], channels: usize, ring: &Ring, tap: &Tap,
+    resampler: &mut TapResampler, device_rate: u32, underflows: &AtomicU64) -> [f32; 2] {
+    let mut peaks = [0.0_f32; 2];
+    for frame in output.chunks_mut(channels) {
+        let (left, right) = ring.pop().unwrap_or_else(|| { underflows.fetch_add(1, Ordering::Relaxed); (0.0, 0.0) });
+        peaks[0] = peaks[0].max(left.abs()); peaks[1] = peaks[1].max(right.abs());
+        let (left, right) = (left.clamp(-1.0, 1.0), right.clamp(-1.0, 1.0));
+        let (left, right) = if channels == 1 { ((left + right) * 0.5, (left + right) * 0.5) } else { (left, right) };
+        for (channel, value) in frame.iter_mut().enumerate() {
+            let sample = if channel == 0 { left } else if channel == 1 { right } else { 0.0 };
+            *value = S::from_sample_(sample);
+        }
+        resampler.push(tap, device_rate, left, right);
+    }
+    peaks
+}
+fn write_tap_chunk(stream: &mut std::net::TcpStream, rate: u32, frame_index: u64, dropped: u64, samples: &[f32]) -> std::io::Result<()> {
+    let mut bytes = Vec::with_capacity(32 + samples.len() * 4);
+    bytes.extend_from_slice(TAP_MAGIC);
+    bytes.extend_from_slice(&rate.to_le_bytes());
+    bytes.extend_from_slice(&((samples.len() / 2) as u32).to_le_bytes());
+    bytes.extend_from_slice(&0_u32.to_le_bytes());
+    bytes.extend_from_slice(&frame_index.to_le_bytes());
+    bytes.extend_from_slice(&dropped.to_le_bytes());
+    for sample in samples { bytes.extend_from_slice(&sample.to_le_bytes()); }
+    stream.write_all(&bytes)
+}
+struct TapSession { stop: Arc<AtomicBool>, worker: Option<thread::JoinHandle<(u64, String)>>, started_unix_ms: u64, rate: u32 }
+
+/// Equal-power fade of one clip voice across a picture transition. The angle
+/// is the state, so an interrupted fade continues from its current level.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum FadeRole { In, Out }
+pub fn fade_target(role: FadeRole) -> f64 { match role { FadeRole::In => std::f64::consts::FRAC_PI_2, FadeRole::Out => 0.0 } }
+/// Angle for a voice first seen while its transition is already at picture progress `progress` (0..1).
+pub fn fade_start(role: FadeRole, progress: Option<f64>) -> f64 {
+    let p = progress.unwrap_or(0.0).clamp(0.0, 1.0);
+    (match role { FadeRole::In => p, FadeRole::Out => 1.0 - p }) * std::f64::consts::FRAC_PI_2
+}
+pub fn advance_fade(theta: f64, role: FadeRole, duration: f64, running: bool, dt: f64) -> f64 {
+    let target = fade_target(role);
+    if !duration.is_finite() || duration <= 0.0 { return target; }
+    if !running || !dt.is_finite() || dt <= 0.0 { return theta.clamp(0.0, std::f64::consts::FRAC_PI_2); }
+    let step = dt * std::f64::consts::FRAC_PI_2 / duration;
+    if theta < target { (theta + step).min(target) } else { (theta - step).max(target) }
+}
+pub fn fade_level(theta: f64) -> f32 { theta.clamp(0.0, std::f64::consts::FRAC_PI_2).sin() as f32 }
+
 struct Asset {
     path: PathBuf, frames: AtomicU64, bytes: AtomicU64, done: AtomicBool,
     cancelled: AtomicBool, error: Mutex<String>, child: Mutex<Option<Child>>, budget: Arc<AtomicU64>,
@@ -116,6 +224,7 @@ pub struct ClipAudio {
     stream: Option<cpal::Stream>, output_rate: u32, device: String,
     error: Arc<Mutex<String>>, underflows: Arc<AtomicU64>, callbacks: Arc<AtomicU64>,
     latency: Arc<AtomicU64>, peak_left: Arc<AtomicU32>, peak_right: Arc<AtomicU32>, callback_frames: Arc<AtomicUsize>, last_attempt: Option<Instant>, decoders: Vec<thread::JoinHandle<()>>, worker: Option<thread::JoinHandle<()>>,
+    tap: Arc<Tap>, stream_active: Arc<AtomicBool>, tap_session: Option<TapSession>,
 }
 impl ClipAudio {
     pub fn new() -> Self {
@@ -128,7 +237,8 @@ impl ClipAudio {
         Self { assets: HashMap::new(), budget: Arc::new(AtomicU64::new(0)), serial: 0, directory, jobs: Some(tx),
             mix: Arc::new(Mutex::new(MixState { voices: Vec::new(), at: Instant::now() })), stop: Arc::new(AtomicBool::new(false)), ring: Arc::new(Ring::new()),
             stream: None, output_rate: 48000, device: "default".into(), error: Arc::new(Mutex::new(String::new())),
-            underflows: Arc::new(AtomicU64::new(0)), callbacks: Arc::new(AtomicU64::new(0)), latency: Arc::new(AtomicU64::new(0)), peak_left: Arc::new(AtomicU32::new(0)), peak_right: Arc::new(AtomicU32::new(0)), callback_frames: Arc::new(AtomicUsize::new(256)), last_attempt: None, decoders, worker: None }
+            underflows: Arc::new(AtomicU64::new(0)), callbacks: Arc::new(AtomicU64::new(0)), latency: Arc::new(AtomicU64::new(0)), peak_left: Arc::new(AtomicU32::new(0)), peak_right: Arc::new(AtomicU32::new(0)), callback_frames: Arc::new(AtomicUsize::new(256)), last_attempt: None, decoders, worker: None,
+            tap: Arc::new(Tap::new()), stream_active: Arc::new(AtomicBool::new(false)), tap_session: None }
     }
     pub fn devices() -> Value {
         let host = cpal::default_host();
@@ -155,20 +265,14 @@ impl ClipAudio {
         let callback_frames = self.callback_frames.clone();
         let ring = self.ring.clone(); let underflows = self.underflows.clone(); let callbacks = self.callbacks.clone(); let latency = self.latency.clone();
         let error = self.error.clone(); let peak_left = self.peak_left.clone(); let peak_right = self.peak_right.clone();
+        let tap = self.tap.clone(); let device_rate = self.output_rate;
         macro_rules! stream { ($sample:ty) => {{
+            let mut resampler = TapResampler::default();
             device.build_output_stream(&stream_config, move |output: &mut [$sample], info: &cpal::OutputCallbackInfo| {
                 callbacks.fetch_add(1, Ordering::Relaxed);
                 callback_frames.store(output.len() / channels, Ordering::Relaxed);
                 if let Some(delay) = info.timestamp().playback.duration_since(&info.timestamp().callback) { latency.store(delay.as_nanos().min(u64::MAX as u128) as u64, Ordering::Release); }
-                let mut peaks = [0.0_f32; 2];
-                for frame in output.chunks_mut(channels) {
-                    let (left, right) = ring.pop().unwrap_or_else(|| { underflows.fetch_add(1, Ordering::Relaxed); (0.0, 0.0) });
-                    peaks[0] = peaks[0].max(left.abs()); peaks[1] = peaks[1].max(right.abs());
-                    for (channel, value) in frame.iter_mut().enumerate() {
-                        let sample = if channels == 1 { (left + right) * 0.5 } else if channel == 0 { left } else if channel == 1 { right } else { 0.0 };
-                        *value = <$sample as cpal::FromSample<f32>>::from_sample_(sample.clamp(-1.0, 1.0));
-                    }
-                }
+                let peaks = render_output(output, channels, &ring, &tap, &mut resampler, device_rate, &underflows);
                 peak_left.store(peaks[0].to_bits(), Ordering::Relaxed); peak_right.store(peaks[1].to_bits(), Ordering::Relaxed);
             }, move |err| { if let Ok(mut value) = error.try_lock() { *value = err.to_string(); } }, None)
         }}; }
@@ -227,12 +331,68 @@ impl ClipAudio {
                 }
             }
         }));
-        if let Err(error) = output.play() { self.stop_output(); return Err(error.to_string()); } self.stream = Some(output); *self.error.lock().unwrap() = String::new(); Ok(())
+        if let Err(error) = output.play() { self.stop_output(); return Err(error.to_string()); } self.stream = Some(output); *self.error.lock().unwrap() = String::new();
+        self.stream_active.store(true, Ordering::Release); Ok(())
     }
     fn stop_output(&mut self) {
+        self.stream_active.store(false, Ordering::Release);
         self.stream = None; self.stop.store(true, Ordering::Release);
         if let Some(worker) = self.worker.take() { let _ = worker.join(); }
         self.ring = Arc::new(Ring::new());
+    }
+    /// Stream the device mix to a loopback sink while a recording runs. The
+    /// timeline starts now and stays continuous whether or not an output
+    /// stream exists: silence stands in for a closed device and for frames
+    /// the ring had to drop, so the sink never has to reason about gaps.
+    pub fn start_tap(&mut self, port: u16, token: &str) -> Result<Value, String> {
+        self.stop_tap();
+        let address = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+        let mut stream = std::net::TcpStream::connect_timeout(&address, Duration::from_secs(2)).map_err(|e| e.to_string())?;
+        stream.set_write_timeout(Some(Duration::from_secs(10))).map_err(|e| e.to_string())?;
+        stream.set_nodelay(true).map_err(|e| e.to_string())?;
+        stream.write_all(token.as_bytes()).map_err(|e| e.to_string())?;
+        let rate = self.output_rate;
+        let started_unix_ms = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_millis() as u64).unwrap_or(0);
+        let started = Instant::now();
+        self.tap.arm(rate);
+        let stop = Arc::new(AtomicBool::new(false));
+        let (tap, stream_active, stop_flag) = (self.tap.clone(), self.stream_active.clone(), stop.clone());
+        let worker = thread::spawn(move || {
+            let mut sent: u64 = 0; let mut padded_drops: u64 = 0; let mut samples: Vec<f32> = Vec::new(); let mut error = String::new();
+            loop {
+                let stopping = stop_flag.load(Ordering::Acquire);
+                samples.clear();
+                while let Some((left, right)) = tap.pop() { samples.push(left); samples.push(right); }
+                let dropped = tap.dropped();
+                if dropped > padded_drops { samples.resize(samples.len() + ((dropped - padded_drops) * 2) as usize, 0.0); padded_drops = dropped; }
+                if !stream_active.load(Ordering::Acquire) && !stopping {
+                    let expected = (started.elapsed().as_secs_f64() * rate as f64) as u64;
+                    let have = sent + (samples.len() / 2) as u64;
+                    if expected > have { samples.resize(samples.len() + ((expected - have) * 2) as usize, 0.0); }
+                }
+                if !samples.is_empty() {
+                    if let Err(e) = write_tap_chunk(&mut stream, rate, sent, dropped, &samples) { error = e.to_string(); break; }
+                    sent += (samples.len() / 2) as u64;
+                }
+                if stopping { break; }
+                thread::sleep(Duration::from_millis(5));
+            }
+            let _ = stream.flush(); let _ = stream.shutdown(std::net::Shutdown::Both);
+            (sent, error)
+        });
+        self.tap_session = Some(TapSession { stop, worker: Some(worker), started_unix_ms, rate });
+        Ok(json!({ "sample_rate": rate, "started_unix_ms": started_unix_ms, "channels": 2, "format": "f32le" }))
+    }
+    pub fn stop_tap(&mut self) -> Value {
+        let Some(mut session) = self.tap_session.take() else { return json!({ "active": false, "frames": 0, "dropped": 0 }); };
+        self.tap.disarm();
+        session.stop.store(true, Ordering::Release);
+        let (frames, error) = session.worker.take().and_then(|worker| worker.join().ok()).unwrap_or((0, "audio tap thread panicked".into()));
+        json!({ "active": false, "frames": frames, "dropped": self.tap.dropped(), "sample_rate": session.rate, "started_unix_ms": session.started_unix_ms, "error": error })
+    }
+    pub fn tap_status(&self) -> Value {
+        json!({ "active": self.tap_session.is_some(), "frames": self.tap.pushed(), "dropped": self.tap.dropped(), "sample_rate": self.tap.rate(),
+            "started_unix_ms": self.tap_session.as_ref().map(|s| s.started_unix_ms).unwrap_or(0) })
     }
     pub fn prepare(&mut self, sources: Vec<(String, PathBuf)>) {
         self.assets.retain(|uri, asset| { let keep = sources.iter().any(|(source, _)| source == uri); if !keep { asset.cancel(); } keep });
@@ -256,14 +416,14 @@ impl ClipAudio {
             "peak_left": f32::from_bits(self.peak_left.load(Ordering::Relaxed)), "peak_right": f32::from_bits(self.peak_right.load(Ordering::Relaxed)),
             "voices": self.mix.lock().map(|s| s.voices.iter().map(|v| json!({"id": v.voice.id, "time": v.voice.time, "rate": v.voice.rate, "playing": v.voice.playing, "gain": v.voice.gain, "pan": v.voice.pan})).collect::<Vec<_>>()).unwrap_or_default(),
             "callbacks": self.callbacks.load(Ordering::Relaxed), "underflow_frames": self.underflows.load(Ordering::Relaxed),
-            "latency_ms": self.latency.load(Ordering::Acquire) as f64 / 1e6,
+            "latency_ms": self.latency.load(Ordering::Acquire) as f64 / 1e6, "tap": self.tap_status(),
             "cache_bytes": self.budget.load(Ordering::Acquire), "error": self.error.lock().map(|s| s.clone()).unwrap_or_default(),
             "assets": self.assets.iter().map(|(uri, a)| json!({ "uri": uri, "seconds_ready": a.frames.load(Ordering::Acquire) as f64 / RATE,
                 "complete": a.done.load(Ordering::Acquire), "error": a.error.lock().map(|s| s.clone()).unwrap_or_default() })).collect::<Vec<_>>() })
     }
 }
 impl Drop for ClipAudio {
-    fn drop(&mut self) { self.stop_output(); for asset in self.assets.values() { asset.cancel(); } self.jobs.take(); for worker in self.decoders.drain(..) { let _ = worker.join(); } self.assets.clear(); if let Ok(mut mix) = self.mix.lock() { mix.voices.clear(); } let _ = std::fs::remove_dir(&self.directory); }
+    fn drop(&mut self) { self.stop_tap(); self.stop_output(); for asset in self.assets.values() { asset.cancel(); } self.jobs.take(); for worker in self.decoders.drain(..) { let _ = worker.join(); } self.assets.clear(); if let Ok(mut mix) = self.mix.lock() { mix.voices.clear(); } let _ = std::fs::remove_dir(&self.directory); }
 }
 #[cfg(test)] mod tests {
     use super::*;
@@ -300,5 +460,90 @@ impl Drop for ClipAudio {
         for index in 0..1000 { ring.push(index as f32, -(index as f32)); }
         for index in 0..1000 { assert_eq!(ring.pop(), Some((index as f32, -(index as f32)))); }
         assert_eq!(ring.len(), 0);
+    }
+    #[test] fn recording_tap_mirrors_the_device_mix_including_clamp_and_underflow() {
+        let ring = Ring::new(); let tap = Tap::new(); let underflows = AtomicU64::new(0);
+        let mut resampler = TapResampler::default();
+        tap.arm(48000);
+        // 300 mixed frames, then the device asks for 320: the last 20 underflow to silence.
+        for index in 0..300 { let x = (index as f32 / 300.0) * 2.5 - 1.25; ring.push(x, -x * 0.5); }
+        let mut device = vec![0.0_f32; 320 * 2];
+        let peaks = render_output(&mut device, 2, &ring, &tap, &mut resampler, 48000, &underflows);
+        assert_eq!(underflows.load(Ordering::Relaxed), 20);
+        assert!(peaks[0] > 1.0);
+        assert_eq!(tap.pushed(), 320);
+        for frame in device.chunks(2) { let (l, r) = tap.pop().unwrap(); assert_eq!((l, r), (frame[0], frame[1])); assert!(l.abs() <= 1.0); }
+        assert_eq!(tap.pop(), None);
+        // A mono device carries the folded signal; the tap carries the same fold on both channels.
+        ring.push(0.5, -0.1);
+        let mut mono = vec![0.0_f32; 1];
+        render_output(&mut mono, 1, &ring, &tap, &mut resampler, 48000, &underflows);
+        assert_eq!(tap.pop(), Some((mono[0], mono[0])));
+        // Integer devices receive the converted sample; the tap keeps float.
+        ring.push(0.25, 0.25);
+        let mut i16s = vec![0_i16; 2];
+        render_output(&mut i16s, 2, &ring, &tap, &mut resampler, 48000, &underflows);
+        assert_eq!(i16s[0], <i16 as cpal::FromSample<f32>>::from_sample_(0.25));
+        assert_eq!(tap.pop(), Some((0.25, 0.25)));
+        // Disarmed: the device still plays but the tap records nothing.
+        tap.disarm(); ring.push(0.5, 0.5);
+        render_output(&mut device[..2], 2, &ring, &tap, &mut resampler, 48000, &underflows);
+        assert_eq!(tap.pop(), None);
+    }
+    #[test] fn recording_tap_counts_overflow_drops_without_blocking() {
+        let tap = Tap::new(); tap.arm(48000);
+        let capacity = TAP_RING / 2;
+        for index in 0..capacity + 25 { tap.push(index as f32, 0.0); }
+        assert_eq!(tap.dropped(), 25);
+        assert_eq!(tap.pushed() as usize, capacity);
+        assert_eq!(tap.pop(), Some((0.0, 0.0)));
+        assert_eq!(tap.pop(), Some((1.0, 0.0)));
+        // Draining one frame frees one slot for the next push.
+        tap.push(-1.0, 0.0);
+        assert_eq!(tap.dropped(), 25);
+        let mut drained = 2;
+        while tap.pop().is_some() { drained += 1; }
+        assert_eq!(drained, capacity + 1);
+    }
+    #[test] fn recording_tap_resamples_when_the_device_rate_differs() {
+        let tap = Tap::new(); tap.arm(48000);
+        let mut resampler = TapResampler::default();
+        for index in 0..961 { resampler.push(&tap, 96000, index as f32, 0.0); }
+        let mut count = 0; let mut last = -1.0_f32;
+        while let Some((left, _)) = tap.pop() { assert!(left > last); last = left; count += 1; }
+        assert!((count as i64 - 480).abs() <= 1, "{count}");
+    }
+    #[test] fn transition_fade_is_equal_power_and_continuous_when_interrupted() {
+        use std::f64::consts::FRAC_PI_2;
+        let (mut incoming, mut outgoing) = (fade_start(FadeRole::In, None), fade_start(FadeRole::Out, None));
+        assert_eq!((fade_level(incoming), fade_level(outgoing)), (0.0, 1.0));
+        // A transition that has not started yet holds both levels.
+        incoming = advance_fade(incoming, FadeRole::In, 2.0, false, 0.5);
+        assert_eq!(fade_level(incoming), 0.0);
+        // 2 s transition sampled every 10 ms: sin^2 + cos^2 stays 1 and both reach their ends at 2 s.
+        for step in 1..=200 {
+            incoming = advance_fade(incoming, FadeRole::In, 2.0, true, 0.01);
+            outgoing = advance_fade(outgoing, FadeRole::Out, 2.0, true, 0.01);
+            let (a, b) = (fade_level(incoming) as f64, fade_level(outgoing) as f64);
+            assert!((a * a + b * b - 1.0).abs() < 1e-4, "step {step}: {a} {b}");
+            if step == 100 { assert!((a - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-3); }
+        }
+        assert!((fade_level(incoming) - 1.0).abs() < 1e-6 && fade_level(outgoing).abs() < 1e-6);
+        assert_eq!(fade_level(advance_fade(incoming, FadeRole::In, 2.0, true, 5.0)), 1.0);
+        // Interrupted at 1 s of a 2 s fade: the incoming voice becomes the outgoing voice of a 1 s fade
+        // and continues from its current level instead of jumping to full.
+        let mut theta = fade_start(FadeRole::In, None);
+        for _ in 0..100 { theta = advance_fade(theta, FadeRole::In, 2.0, true, 0.01); }
+        let before = fade_level(theta);
+        theta = advance_fade(theta, FadeRole::Out, 1.0, true, 0.0);
+        assert_eq!(fade_level(theta), before);
+        for _ in 0..50 { theta = advance_fade(theta, FadeRole::Out, 1.0, true, 0.01); }
+        assert!(fade_level(theta) < 1e-6);
+        // A voice first seen mid-transition starts at the picture's progress.
+        assert!((fade_start(FadeRole::In, Some(0.5)) - FRAC_PI_2 * 0.5).abs() < 1e-12);
+        assert!((fade_level(fade_start(FadeRole::Out, Some(0.5))) as f64 - std::f64::consts::FRAC_1_SQRT_2).abs() < 1e-6);
+        // 0 s stays a cut.
+        assert_eq!(fade_level(advance_fade(0.0, FadeRole::In, 0.0, false, 0.0)), 1.0);
+        assert_eq!(fade_level(advance_fade(FRAC_PI_2, FadeRole::Out, 0.0, true, 0.0)), 0.0);
     }
 }
