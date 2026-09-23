@@ -32,7 +32,7 @@ import * as THREE from 'three';
 import { mediaPipeSource } from '../mediapipe/mediaPipeSource';
 import type { SignalFrame } from '../mediapipe/signals';
 
-export type HandFXMode = 'panel' | 'trails' | 'aurora' | 'skeleton' | 'bursts';
+export type HandFXMode = 'panel' | 'trails' | 'aurora' | 'skeleton' | 'bursts' | 'bridge' | 'orbit' | 'lasers';
 export type HandFXColorMode = 'rainbow' | 'coral' | 'white' | 'cyan';
 
 export interface HandFXParams {

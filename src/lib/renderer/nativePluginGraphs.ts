@@ -40,6 +40,7 @@ export type NativePluginGraphState = {
   historyHead: number;
   historyPhase?: number;
   handPoints?: number[];
+  handSides?: string[];
   liquidVelIsA?: boolean;
   liquidDyeIsA?: boolean;
   liquidPrevBeatPulse?: number;
@@ -261,6 +262,7 @@ struct U {
   panelColor: vec4<f32>, skeletonColor: vec4<f32>,
   velocityScale: f32, sparkDensity: f32, inkOpacity: f32, panelPadding: f32,
   panelRadius: f32, predictSeconds: f32, cameraOpacity: f32, pad1: f32,
+  performance: vec4<f32>,
 };
 struct LandmarkBuffer { values: array<vec4<f32>, 42> };
 struct Particle { pos: vec2<f32>, vel: vec2<f32>, life: f32, seed: f32, hand: u32, pad: u32 };
@@ -273,7 +275,12 @@ fn hash(x: f32) -> f32 { return fract(sin(x*91.3458+17.13)*47453.5453); }
 fn cs_update(@builtin(global_invocation_id) gid: vec3<u32>) {
   if (gid.x >= 8192u) { return; }
   var p = particles.values[gid.x];
-  if (u.handCount == 0u || u.mode >= 3u) { p.life = 0.0; particles.values[gid.x] = p; return; }
+  if (u.mode >= 3u) { p.life = 0.0; particles.values[gid.x] = p; return; }
+  if (u.handCount == 0u) {
+    p.pos += p.vel * clamp(u.dt * 60.0, 0.0, 3.0);
+    p.life = max(0.0, p.life - u.dt * 1.4);
+    particles.values[gid.x] = p; return;
+  }
   let hand = (gid.x / 5u) % u.handCount;
   let tips = array<u32,5>(4u,8u,12u,16u,20u);
   let fingerSlot = gid.x % 5u;
@@ -324,13 +331,14 @@ fn cs_update(@builtin(global_invocation_id) gid: vec3<u32>) {
     } else {
       p.vel = (p.vel+vec2(0.0,-0.00018))*0.994;
     }
-    p.pos += p.vel;
+    p.pos += p.vel * clamp(u.dt * 60.0, 0.0, 3.0);
     var decay = 0.55;
     if (u.mode == 1u) { decay = 0.32; }
     if (u.mode == 2u) { decay = 1.35; }
     p.life -= u.dt*decay*mix(1.8,0.35,clamp((u.fade-0.9)/0.099,0.0,1.0));
   } else {
-    p.life = 0.0;
+    p.pos += p.vel * clamp(u.dt * 60.0, 0.0, 3.0);
+    p.life = max(0.0, p.life - u.dt * 1.4);
   }
   particles.values[gid.x] = p;
 }
@@ -345,6 +353,7 @@ struct U {
   panelColor: vec4<f32>, skeletonColor: vec4<f32>,
   velocityScale: f32, sparkDensity: f32, inkOpacity: f32, panelPadding: f32,
   panelRadius: f32, predictSeconds: f32, cameraOpacity: f32, pad1: f32,
+  performance: vec4<f32>,
 };
 struct LandmarkBuffer { values: array<vec4<f32>, 42> };
 struct Particle { pos: vec2<f32>, vel: vec2<f32>, life: f32, seed: f32, hand: u32, pad: u32 };
@@ -357,6 +366,10 @@ fn palette(seed: f32) -> vec3<f32> {
   if (u.colorMode == 1u) { return vec3(1.0,0.42,0.42); }
   if (u.colorMode == 2u) { return vec3(0.18,0.92,1.0); }
   if (u.colorMode == 3u) { return vec3(1.0); }
+  if (u.colorMode == 4u) { return mix(vec3(0.08,0.22,1.0),vec3(0.1,1.0,0.87),seed); }
+  if (u.colorMode == 5u) { return mix(vec3(1.0,0.12,0.035),vec3(1.0,0.78,0.22),seed); }
+  if (u.colorMode == 6u) { return mix(vec3(0.24,0.08,0.95),vec3(1.0,0.24,0.68),seed); }
+  if (u.colorMode == 7u) { return mix(vec3(0.1,0.8,0.3),vec3(0.75,1.0,0.16),seed); }
   return hsv(vec3(fract(seed+u.time*0.04),0.82,1.0));
 }
 struct V { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32>, @location(1) color: vec4<f32> };
@@ -364,8 +377,72 @@ struct V { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32>, @locat
   var p=array<vec2<f32>,3>(vec2(-1.0,-1.0),vec2(3.0,-1.0),vec2(-1.0,3.0));
   var o:V; o.pos=vec4(p[i],0.0,1.0); o.uv=p[i]*0.5+0.5; o.color=vec4(0.0); return o;
 }
+fn beam(p:vec2<f32>, a:vec2<f32>, b:vec2<f32>, width:f32)->f32 {
+  let ab=b-a; let t=clamp(dot(p-a,ab)/max(dot(ab,ab),0.000001),0.0,1.0);
+  let d=length(p-a-ab*t);
+  return exp(-d*d/max(width*width,0.0000001)) + exp(-d/max(width*4.0,0.00001))*0.18;
+}
+fn hand_field(uv:vec2<f32>)->vec3<f32> {
+  let aspect=vec2(u.resolution.x/max(1.0,u.resolution.y),1.0);
+  let p=uv*aspect;
+  let width=(0.0015+u.thickness*0.00045)*u.performance.y;
+  let drive=1.0+u.performance.w*0.7;
+  var light=vec3(0.0);
+  if (u.mode==5u && u.handCount>=2u) {
+    let a=landmarks.values[9u].xy*aspect;
+    let b=landmarks.values[30u].xy*aspect;
+    let delta=b-a; let span=max(length(delta),0.001);
+    let axis=delta/span; let normal=vec2(-axis.y,axis.x);
+    let along=dot(p-a,axis)/span;
+    let across=dot(p-a,normal);
+    let envelope=sin(clamp(along,0.0,1.0)*3.14159265);
+    let ends=smoothstep(-0.015,0.025,along)*(1.0-smoothstep(0.975,1.015,along));
+    for(var strand=0u;strand<8u;strand++) {
+      if(f32(strand)>=u.performance.z) { break; }
+      let phase=f32(strand)*0.8976;
+      let wave=sin(along*12.0-u.time*3.0+phase)*envelope*0.045*u.performance.y*drive;
+      let d=abs(across-wave);
+      light+=palette(f32(strand)/7.0)*(exp(-d*d/(width*width))+exp(-d/(width*5.0))*0.12)*ends*0.55;
+    }
+  }
+  for(var hand=0u;hand<2u;hand++) {
+    if(hand>=u.handCount) { break; }
+    let base=hand*21u;
+    let palm=landmarks.values[base+9u].xy*aspect;
+    let wrist=landmarks.values[base].xy*aspect;
+    let handSize=max(0.035,distance(palm,wrist));
+    let pinch=clamp(distance(landmarks.values[base+4u].xy*aspect,landmarks.values[base+8u].xy*aspect)/handSize,0.0,1.0);
+    if(u.mode==6u) {
+      let q=p-palm; let angle=atan2(q.y,q.x); let radius=length(q);
+      for(var ring=0u;ring<8u;ring++) {
+        if(f32(ring)>=u.performance.z) { break; }
+        let r=handSize*(0.65+f32(ring)*0.24)*(0.65+pinch*0.75)*u.performance.y;
+        let d=abs(radius-r*(1.0+0.04*sin(angle*5.0+u.time*2.0)));
+        let arcs=0.25+0.75*pow(0.5+0.5*sin(angle*3.0-u.time*(1.0+f32(ring)*0.2)+f32(ring)),3.0);
+        light+=palette(fract(f32(ring)*0.17+f32(hand)*0.4))*(exp(-d*d/(width*width))*arcs+exp(-d/(width*5.0))*0.06)*drive;
+      }
+    }
+    if(u.mode==7u) {
+      let tips=array<u32,5>(4u,8u,12u,16u,20u);
+      for(var finger=0u;finger<5u;finger++) {
+        let tip=landmarks.values[base+tips[finger]].xy*aspect;
+        let direction=(tip-palm)/max(distance(tip,palm),0.001);
+        let reach=tip+direction*(0.12+pinch*0.32)*u.performance.y;
+        light+=palette(fract(f32(finger)*0.19+f32(hand)*0.35))*beam(p,palm,reach,width)*drive;
+        light+=vec3(0.65,0.85,1.0)*exp(-length(p-tip)/(width*3.0))*0.55;
+      }
+    }
+    if(u.mode==5u) { light+=palette(f32(hand)*0.6)*exp(-length(p-palm)/(width*8.0))*drive; }
+  }
+  return light*u.performance.x;
+}
 @fragment fn fs_bg(in:V)->@location(0) vec4<f32> {
   var base = vec4(vec3(0.008,0.008,0.018)*u.bgAlpha,u.bgAlpha);
+  if (u.mode >= 5u) {
+    let color=hand_field(in.uv);
+    let alpha=clamp(max(color.r,max(color.g,color.b)),0.0,1.0);
+    return vec4(base.rgb+color,max(base.a,alpha));
+  }
   if (u.mode != 4u || u.handCount < 2u) { return base; }
   let left = landmarks.values[9u];
   let right = landmarks.values[30u];
@@ -378,7 +455,8 @@ struct V { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32>, @locat
   let q = abs(in.uv-center)-halfSize+vec2(radius);
   let d = length(max(q,vec2(0.0)))+min(max(q.x,q.y),0.0)-radius;
   let a = smoothstep(0.004,-0.004,d)*u.panelColor.a;
-  return vec4(mix(base.rgb,u.panelColor.rgb,a),max(base.a,a));
+  let panelTint=select(u.panelColor.rgb,palette(0.5),u.pad0==1u)*u.performance.x*(1.0+u.performance.w*0.6);
+  return vec4(mix(base.rgb,panelTint,a),max(base.a,a));
 }
 @vertex fn vs_particle(@builtin(vertex_index) vi:u32,@builtin(instance_index) ii:u32)->V {
   let p=particles.values[ii];
@@ -390,7 +468,7 @@ struct V { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32>, @locat
   let size = vec2(sizePx/max(1.0,u.resolution.x),sizePx/max(1.0,u.resolution.y))*2.0;
   var o:V; o.pos=vec4((p.pos*2.0-1.0)+corners[vi]*size,0.0,1.0); o.uv=corners[vi];
   let opacity = select(max(0.0,p.life),max(0.0,p.life)*u.inkOpacity,u.mode==1u);
-  o.color=vec4(palette(p.seed),opacity); return o;
+  o.color=vec4(palette(p.seed)*u.performance.x*(1.0+u.performance.w*0.6),opacity); return o;
 }
 @fragment fn fs_particle(in:V)->@location(0) vec4<f32> {
   let softness = select(4.5,2.0,u.mode==1u);
@@ -414,7 +492,8 @@ struct V { @builtin(position) pos: vec4<f32>, @location(0) uv: vec2<f32>, @locat
   var o:V;
   o.pos=vec4(mix(a,b,corner.x)+offset*corner.y,0.0,1.0);
   o.uv=corner;
-  o.color=vec4(u.skeletonColor.rgb*max(0.0,u.skeletonColor.a),valid);
+  let tint=select(u.skeletonColor.rgb,palette(f32(ii%20u)/20.0),u.pad0==1u);
+  o.color=vec4(tint*max(0.0,u.skeletonColor.a)*u.performance.x*(1.0+u.performance.w*0.6),valid);
   return o;
 }
 @fragment fn fs_skeleton(in:V)->@location(0) vec4<f32>{return vec4(in.color.rgb*in.color.a,in.color.a);}
@@ -1203,12 +1282,25 @@ function buildAnalyzerGraph(options: NativePluginGraphOptions): NativePluginGrap
   };
 }
 
+export function handFxDemoHands(time: number): SignalFrame['hands'] {
+  const template = [[0,0.12],[-0.055,0.075],[-0.09,0.025],[-0.12,-0.01],[-0.15,-0.05],[-0.055,0],[-0.06,-0.065],[-0.06,-0.12],[-0.065,-0.17],[0,-0.01],[0,-0.085],[0,-0.145],[0,-0.20],[0.05,0],[0.06,-0.065],[0.065,-0.12],[0.07,-0.165],[0.09,0.025],[0.115,-0.015],[0.13,-0.06],[0.14,-0.10]];
+  return ['Left', 'Right'].map((handedness, index) => {
+    const phase = time * 0.65 + index * Math.PI;
+    const x = 0.5 + (index ? 1 : -1) * (0.22 + Math.sin(time * 0.4) * 0.06);
+    const y = 0.53 + Math.sin(phase) * 0.10;
+    return { handedness, landmarks: template.map(([px, py]) => ({
+      x: x + px * (index ? -1 : 1) * (0.8 + Math.sin(phase) * 0.15),
+      y: y + py, z: 0,
+    })) };
+  });
+}
+
 function buildHandGraph(options: NativePluginGraphOptions): NativePluginGraphBuildResult {
   const params = options.params;
   const state = pluginState(options, 'handfx');
   const prefix = `handfx:${safeId(options.sourceId)}`;
   const id = (name: string) => `${prefix}:${name}`;
-  const hands = [...(options.handFrame?.hands?.slice(0, 2) ?? [])]
+  const hands = [...(params.handfxInput === 'demo' ? handFxDemoHands(options.time) : params.handfxCameraOn === false ? [] : options.handFrame?.hands?.slice(0, 2) ?? [])]
     .sort((left, right) => (left.handedness === 'Left' ? 0 : 1) - (right.handedness === 'Left' ? 0 : 1));
   const landmarks = new Float32Array(42 * 4);
   const nextHandPoints = new Array<number>(42 * 4).fill(0);
@@ -1221,7 +1313,7 @@ function buildHandGraph(options: NativePluginGraphOptions): NativePluginGraphBui
       const offset = (handIndex * 21 + pointIndex) * 4;
       const rawX = point.x;
       const rawY = 1 - point.y;
-      const previousValid = previousHandPoints[offset + 3] > 0.5;
+      const previousValid = previousHandPoints[offset + 3] > 0.5 && state.handSides?.[handIndex] === hand.handedness;
       const previousX = previousValid ? previousHandPoints[offset] : rawX;
       const previousY = previousValid ? previousHandPoints[offset + 1] : rawY;
       const previousZ = previousValid ? previousHandPoints[offset + 2] : point.z;
@@ -1247,21 +1339,23 @@ function buildHandGraph(options: NativePluginGraphOptions): NativePluginGraphBui
     });
   });
   state.handPoints = nextHandPoints;
+  state.handSides = hands.map(hand => hand.handedness);
   const modeLabel = String(params.handfxMode ?? 'trails');
-  const mode = Math.max(0, ['trails', 'aurora', 'bursts', 'skeleton', 'panel'].indexOf(modeLabel));
+  const mode = Math.max(0, ['trails', 'aurora', 'bursts', 'skeleton', 'panel', 'bridge', 'orbit', 'lasers'].indexOf(modeLabel));
   const panelColor = hexRgb(params.handfxPanelColor, [1, 1, 1]);
   const skeletonColor = hexRgb(params.handfxSkeletonColor, [1, 0.42, 0.42]);
-  const colorModeLabel = String(mode === 1
+  const colorModeLabel = String(params.handfxPalette && params.handfxPalette !== 'legacy' ? params.handfxPalette : mode === 1
     ? params.handfxInkColorMode ?? 'coral'
     : mode === 2
       ? params.handfxSprayColorMode ?? 'rainbow'
       : params.handfxTrailColorMode ?? 'rainbow');
-  const colorMode = Math.max(0, ['rainbow', 'coral', 'cyan', 'white'].indexOf(colorModeLabel));
-  const uniform = new ArrayBuffer(128);
+  const colorMode = Math.max(0, ['rainbow', 'coral', 'cyan', 'white', 'ocean', 'ember', 'orchid', 'acid'].indexOf(colorModeLabel));
+  const uniform = new ArrayBuffer(144);
   const f = new Float32Array(uniform);
   const u = new Uint32Array(uniform);
   f[0] = Math.max(1, options.width); f[1] = Math.max(1, options.height); f[2] = options.time; f[3] = options.frameDelta;
   u[4] = hands.length; u[5] = mode; u[6] = colorMode;
+  u[7] = params.handfxPalette && params.handfxPalette !== 'legacy' ? 1 : 0;
   f[8] = smoothing;
   f[9] = mode === 1 ? clamp(params.handfxInkSize, 10, 120, 55) : clamp(params.handfxTrailThickness, 1, 8, 3);
   f[10] = mode === 2 ? clamp(params.handfxSprayIntensity, 0.1, 3, 1.5) : 1;
@@ -1278,6 +1372,10 @@ function buildHandGraph(options: NativePluginGraphOptions): NativePluginGraphBui
   f[28] = clamp(params.handfxPanelCornerRadius, 0, 0.1, 0.02);
   f[29] = predictSeconds;
   f[30] = clamp(params.handfxCameraOpacity, 0, 1, 0.5);
+  f[32] = clamp(params.handfxBrightness, 0, 2, 1);
+  f[33] = clamp(params.handfxScale, 0.3, 3, 1);
+  f[34] = clamp(params.handfxDetail, 1, 8, 5);
+  f[35] = options.audio.active ? clamp(params.handfxAudioResponse, 0, 2, 0.65) * Math.max(options.audio.bass, options.audio.beatPulse) : 0;
   const bindings = [
     { binding: 0, resource: id('uniform'), kind: 'uniform' },
     { binding: 1, resource: id('landmarks'), kind: 'read-only-storage' },
@@ -1287,7 +1385,7 @@ function buildHandGraph(options: NativePluginGraphOptions): NativePluginGraphBui
     state,
     config: {
       buffers: [
-        { id: id('uniform'), kind: 'uniform', byte_length: 128, initial_b64: bufferToBase64(uniform) },
+        { id: id('uniform'), kind: 'uniform', byte_length: 144, initial_b64: bufferToBase64(uniform) },
         { id: id('landmarks'), kind: 'storage', byte_length: landmarks.byteLength, initial_b64: bufferToBase64(landmarks.buffer) },
         { id: id('particles'), kind: 'storage', byte_length: HAND_FX_PARTICLE_COUNT * 32, persistent: true, clear: !!options.reset },
       ],

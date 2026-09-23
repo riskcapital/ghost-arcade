@@ -25,6 +25,7 @@
   import { vjLayerSequencer } from '../stores/vjLayerSequencer';
   import { keyframeTimeline } from '../stores/keyframeTimeline';
   import { workspace } from '../stores/workspace';
+  import { vjStageEdit } from '../stores/vjStageEdit';
   import { project, stagePresets, compositions, activeCompositionId } from '../stores/layers';
   import { STAGE_EFFECT_CATALOG, getEffectDef } from '../stores/stageEffects';
   import { surfaceStore, activeSurface } from '../stores/surface';
@@ -165,6 +166,28 @@
   let vjMacroBindings: Record<string, { m1?: string; m2?: string }> = {};
 
   let stageSaveScope: 'project' | 'global' = 'project';
+
+  async function openLiveStageEditor() {
+    if (!$project.layers.some(layer => layer.type === 'screen')) {
+      if ($activeSurface?.slices.length) {
+        await surfaceStore.applyStage({ stayInVJ: true });
+        for (const layer of get(project).layers) {
+          if (layer.type === 'screen' && layer.vjLayerIndex === 0 && !layer.vjGroupId) project.setLayerVJIndex(layer.id, -1);
+        }
+      } else {
+        project.addScreenLayer('Main Screen');
+        const screenId = get(project).selectedLayerId;
+        if (screenId) {
+          project.setLayerVJIndex(screenId, -1);
+          const screen = get(project).layers.find(layer => layer.id === screenId);
+          if (screen) surfaceStore.registerLiveScreenLayer(screen);
+        }
+      }
+    }
+    // This view change must not clear active clip transitions.
+    vjClipLauncher.setStageMode(true);
+    vjStageEdit.set(true);
+  }
 
   $: allStagePresets = [
     ...$stagePresets.map(p => ({ ...p, _scope: (p.scope || 'project') as 'project' | 'global' })),
@@ -454,7 +477,7 @@
   // 2D canvas blit only exists for the legacy browser renderer.
   const nativePreviewActive = isDesktopApp && NATIVE_ENGINE_ONLY;
   $: if (nativePreviewActive) {
-    if ($vjClipLauncher.isOpen && previewContainerEl) {
+    if ($vjClipLauncher.isOpen && !$vjStageEdit && previewContainerEl) {
       nativePreviewHostEl.set(previewContainerEl);
     } else if ($nativePreviewHostEl === previewContainerEl) {
       nativePreviewHostEl.set(null);
@@ -3978,6 +4001,7 @@
     class:kf-tray-open={$keyframeTimeline.isOpen}
     class:native-underlay={nativePreviewActive}
     class:mac-titlebar-offset={isMac}
+    class:stage-edit-hidden={$vjStageEdit}
   >
     <!-- Header -->
     <div
@@ -4119,6 +4143,10 @@
             <path d="M12 5.5v6" />
           </svg>
           Stage Sim
+        </button>
+        <button class="minimize-btn stage-sim-btn" onclick={openLiveStageEditor} title="Edit live 2D stage screens, warp, and VJ routing" aria-label="Edit live 2D stage">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect x="3" y="4" width="18" height="15" rx="2"/><path d="M7 15 17 8M17 8l-1 4M17 8l-4 1"/></svg>
+          Stage Edit
         </button>
         <button class="minimize-btn" onclick={() => window.dispatchEvent(new CustomEvent('open-settings'))} title="Settings">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
@@ -4714,6 +4742,17 @@
           <div class="preview-layout">
             <div class="preview-container program-preview" class:native-hole={nativePreviewActive} bind:this={previewContainerEl}>
               <canvas bind:this={previewCanvas} class="preview-canvas" class:hidden-for-native={nativePreviewActive}></canvas>
+              {#if $vjClipLauncher.stageMode && !$vjClipLauncher.layerStates.some(state => state.activeClip) && !$vjClipLauncher.bankBLayerStates.some(state => state.activeClip)}
+                {#if $project.layers.some(layer => layer.type === 'screen' && layer.visible)}
+                  <svg class="stage-preview-guides" viewBox="0 0 100 100" preserveAspectRatio="none" aria-label="Stage screen slice boundaries">
+                    {#each $project.layers.filter(layer => layer.type === 'screen' && layer.visible) as screen (screen.id)}
+                      <polygon points={`${screen.corners.topLeft.x * 100},${(1 - screen.corners.topLeft.y) * 100} ${screen.corners.topRight.x * 100},${(1 - screen.corners.topRight.y) * 100} ${screen.corners.bottomRight.x * 100},${(1 - screen.corners.bottomRight.y) * 100} ${screen.corners.bottomLeft.x * 100},${(1 - screen.corners.bottomLeft.y) * 100}`} />
+                    {/each}
+                  </svg>
+                {:else}
+                  <div class="stage-preview-empty">No stage screens · open Stage Edit to create one</div>
+                {/if}
+              {/if}
               <div class="preview-label">{deckMonitorsVisible ? 'PROGRAM' : 'OUTPUT PREVIEW'}</div>
               {#if activeOutputOverrides.length > 0}
                 <div
@@ -8335,6 +8374,7 @@
   .vj-overlay.native-underlay {
     background: transparent;
   }
+  .vj-overlay.stage-edit-hidden { display: none; }
   /* Keep the VJ header clear of the macOS traffic-light strip — the app
      titlebar (30px, z-index 2000) always paints above this overlay. */
   .vj-overlay.mac-titlebar-offset {
@@ -8349,6 +8389,9 @@
   .preview-canvas.hidden-for-native {
     display: none;
   }
+  .stage-preview-guides { position:absolute; inset:0; width:100%; height:100%; pointer-events:none; overflow:visible; }
+  .stage-preview-guides polygon { fill:rgba(55,105,175,.07); stroke:#75b7ff; stroke-width:1.2; stroke-dasharray:5 3; vector-effect:non-scaling-stroke; }
+  .stage-preview-empty { position:absolute; inset:auto 12px 12px; text-align:center; color:#b9c9df; font-size:11px; pointer-events:none; }
 
   .preview-canvas {
     width: 100%;

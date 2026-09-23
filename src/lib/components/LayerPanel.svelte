@@ -420,12 +420,15 @@
   }
 
   function setPlaybackRate(layerId: string, source: MediaSource, rate: number) {
-    source._nativePlaybackTimeSeconds = sourcePlaybackTime(source);
-    source._nativePlaybackUpdatedAtMs = performance.now();
-    source._nativePlaybackDirection = rate < 0 ? -1 : 1;
-    source._nativePlaybackSeekSeq = (source._nativePlaybackSeekSeq ?? 0) + 1;
-    source.playbackRate = rate;
-    project.updateLayer(layerId, { source: { ...source } });
+    cancelVideoScrub();
+    project.updateLayer(layerId, { source: {
+      ...source,
+      _nativePlaybackTimeSeconds: sourcePlaybackTime(source),
+      _nativePlaybackUpdatedAtMs: performance.now(),
+      _nativePlaybackDirection: rate < 0 ? -1 : 1,
+      _nativePlaybackSeekSeq: (source._nativePlaybackSeekSeq ?? 0) + 1,
+      playbackRate: rate,
+    } });
   }
 
   /** Opt this media layer in/out of audio playback.
@@ -1998,57 +2001,12 @@
           {/if}
           {:else}
 
-          <div class="layer-properties">
+          <div class="layer-properties media-properties">
         <h4>Properties ({layer.type === 'lines' ? 'Lines' : layer.type === 'svg' ? 'SVG' : layer.type === 'color' ? 'Color' : layer.type === 'splat' ? 'Point Cloud' : layer.type === 'model3d' ? '3D Model' : 'Media'})</h4>
 
         <!-- VJ Source dropdown — only on screen/VJ-slice layers, NOT standard media layers -->
         <!-- Group layers and screen layers have their own VJ source selectors -->
 
-
-        <!-- Orientation Arrows (all layer types) -->
-        <div class="orientation-controls">
-          <span class="orient-label">Flip</span>
-          <button
-            class="orient-btn"
-            class:active={!layer.flipV}
-            onclick={() => { if (layer.flipV) project.toggleLayerFlipV(layer.id); }}
-            title="Normal vertical"
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-              <path d="M12 19V5M5 12l7-7 7 7"/>
-            </svg>
-          </button>
-          <button
-            class="orient-btn"
-            class:active={layer.flipV}
-            onclick={() => { if (!layer.flipV) project.toggleLayerFlipV(layer.id); }}
-            title="Flip vertically"
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-              <path d="M12 5v14M5 12l7 7 7-7"/>
-            </svg>
-          </button>
-          <button
-            class="orient-btn"
-            class:active={layer.flipH}
-            onclick={() => { if (!layer.flipH) project.toggleLayerFlipH(layer.id); }}
-            title="Flip horizontally"
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-              <path d="M19 12H5M12 5l-7 7 7 7"/>
-            </svg>
-          </button>
-          <button
-            class="orient-btn"
-            class:active={!layer.flipH}
-            onclick={() => { if (layer.flipH) project.toggleLayerFlipH(layer.id); }}
-            title="Normal horizontal"
-          >
-            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
-              <path d="M5 12h14M12 5l7 7-7 7"/>
-            </svg>
-          </button>
-        </div>
 
         {#if layer.type === 'color' && layer.colorContent}
           <!-- Solid color layer controls -->
@@ -2232,6 +2190,7 @@
           {@const vHasAudioTrack = probeHasAudioTrack(vSrc.videoElement)}
 
           <div class="video-controls-panel">
+            <div class="inspector-section-title">Playback</div>
             <!-- Transport row -->
             <div class="vt-transport">
               <button
@@ -2442,6 +2401,53 @@
           </div>
         {/if}
 
+        <div class="inspector-section-title">Appearance</div>
+        <!-- Orientation Arrows (all layer types) -->
+        <div class="orientation-controls">
+          <span class="orient-label">Flip</span>
+          <button
+            class="orient-btn"
+            class:active={!layer.flipV}
+            onclick={() => { if (layer.flipV) project.toggleLayerFlipV(layer.id); }}
+            title="Normal vertical"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <path d="M12 19V5M5 12l7-7 7 7"/>
+            </svg>
+          </button>
+          <button
+            class="orient-btn"
+            class:active={layer.flipV}
+            onclick={() => { if (!layer.flipV) project.toggleLayerFlipV(layer.id); }}
+            title="Flip vertically"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <path d="M12 5v14M5 12l7 7 7-7"/>
+            </svg>
+          </button>
+          <button
+            class="orient-btn"
+            class:active={layer.flipH}
+            onclick={() => { if (!layer.flipH) project.toggleLayerFlipH(layer.id); }}
+            title="Flip horizontally"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <path d="M19 12H5M12 5l-7 7 7 7"/>
+            </svg>
+          </button>
+          <button
+            class="orient-btn"
+            class:active={!layer.flipH}
+            onclick={() => { if (layer.flipH) project.toggleLayerFlipH(layer.id); }}
+            title="Normal horizontal"
+          >
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5">
+              <path d="M5 12h14M12 5l7 7-7 7"/>
+            </svg>
+          </button>
+        </div>
+
+
         <!-- Opacity -->
         <div class="property-row">
           <label>Opacity</label>
@@ -2570,6 +2576,7 @@
           </div>
         {/if}
 
+        <div class="inspector-section-title">Warp</div>
         <!-- Warp Mode -->
         <div class="property-row">
           <label>Warp Mode</label>
@@ -2615,7 +2622,7 @@
         {/if}
 
         <!-- Reset warp -->
-        <div class="property-row">
+        <div class="property-row inspector-actions">
           {#if layer.warpMode === 'mesh'}
             <button class="btn-reset" onclick={() => project.resetMeshGrid(layer.id)}>
               Reset Mesh
@@ -2636,6 +2643,7 @@
 
         <!-- Mask Section -->
         <div class="mask-section">
+          <div class="inspector-section-title">Mask</div>
           <div class="property-row">
             <label>
               <input
@@ -2651,7 +2659,7 @@
                   }
                 }}
               />
-              Enable Mask
+              Enable mask
             </label>
             <span class="mask-point-count">
               {#if layer.mask?.shapes}
@@ -2759,10 +2767,11 @@
 
         <!-- Layer Shape Section -->
         <div class="shape-mask-section">
+          <div class="inspector-section-title">Shape</div>
           {#if layer.type === 'media'}
             {@const shapeType = layer.layerShape?.type ?? 'rectangle'}
             <div class="property-row">
-              <label>Layer Shape</label>
+              <label>Shape</label>
               <div class="shape-icon-row">
                 <button
                   class="shape-icon-btn"
@@ -2809,7 +2818,7 @@
             </div>
 
             {#if shapeType === 'circle' || shapeType === 'triangle' || shapeType === 'ellipse' || shapeType === 'polygon' || shapeType === 'star'}
-              <div class="property-row">
+              <div class="property-row inspector-actions">
                 <button class="btn-secondary" onclick={toggleShapeWarpEditing}>
                   {shapeWarpEditing ? 'Done Warping' : 'Warp Shape'}
                 </button>
@@ -2822,7 +2831,7 @@
             {/if}
 
             {#if layer.layerShape && layer.layerShape.type !== 'custom'}
-              <div class="property-row">
+              <div class="property-row inspector-actions">
                 <button class="btn-secondary" onclick={() => project.convertToCustomShape(layer.id)} title="Convert shape to editable polygon with draggable vertices">
                   <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="1.5" fill="currentColor"/><path d="M12 5v2m0 10v2m-7-7h2m10 0h2"/></svg>
                   Edit Points
@@ -5668,4 +5677,41 @@
     width: 14px;
     height: 14px;
   }
+
+  /* Mapping inspector: consistent density, full-width actions, quiet surfaces. */
+  .media-properties { font-size: 12px; line-height: 1.4; min-width: 0; }
+  .media-properties h4 { font-size: 13px; font-weight: 600; margin-bottom: 10px; }
+  .inspector-section-title { font-size: 10px; font-weight: 650; letter-spacing: .09em;
+    text-transform: uppercase; color: var(--ga-ink-1, #9aa0ac); margin: 14px 0 8px;
+    padding-top: 10px; border-top: 1px solid var(--ga-line-2, #303540); }
+  .video-controls-panel .inspector-section-title,
+  .mask-section .inspector-section-title,
+  .shape-mask-section .inspector-section-title { border: 0; padding: 0; margin: 0 0 8px; }
+  .media-properties .property-row { grid-template-columns: 76px minmax(0, 1fr) auto; gap: 6px; margin-bottom: 8px; min-width: 0; }
+  .media-properties .property-row > :not(label) { min-width: 0; }
+  .media-properties .property-row label { font-size: 12px; font-weight: 500; }
+  .media-properties .property-row select { width: 100%; font-size: 12px; height: 28px; padding-left: 8px; border-radius: 5px; }
+  .media-properties .property-row input[type='range'] { width: 100%; min-width: 0; }
+  .media-properties .property-row .value { font-size: 11px; font-variant-numeric: tabular-nums; }
+  .media-properties .property-row.inspector-actions { display: flex; flex-wrap: wrap; gap: 6px; }
+  .media-properties .inspector-actions button { width: auto; flex: 1 1 auto; white-space: nowrap; }
+  .media-properties .btn-reset, .media-properties .btn-secondary,
+  .media-properties .btn-small, .media-properties .warp-mode-btn { font-size: 12px; font-weight: 500; min-height: 28px; height: auto; padding: 5px 8px; border-radius: 5px; line-height: 1.3; }
+  .media-properties .warp-mode-buttons { border-radius: 5px; }
+  .media-properties .warp-mode-btn { border-radius: 0; }
+  .media-properties .shape-icon-row { grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 4px; }
+  .media-properties .shape-icon-btn { height: 28px; padding: 0; border-radius: 5px; }
+  .media-properties .shape-icon-btn.active, .media-properties .warp-mode-btn.active,
+  .media-properties .vt-audio-toggle.active { color: var(--ga-selection-ink, #e0e8ff);
+    background: var(--ga-selection-bg, #172a5b); border-color: var(--ga-selection-line, #3d59b8); }
+  .media-properties .mask-section, .media-properties .shape-mask-section { margin-top: 12px; padding-top: 10px; }
+  .media-properties .mask-section .property-row label { white-space: nowrap; flex-shrink: 0; }
+  .media-properties .mask-point-count { font-size: 11px; text-align: right; }
+  .media-properties .mask-hint { font-size: 11px; font-style: normal; line-height: 1.5; }
+  .media-properties .media-drop-zone { border-radius: 6px; padding: 8px; }
+  .media-properties .source-name { font-size: 12px; font-weight: 500; color: var(--ga-ink-0, #eef0f4); overflow-wrap: anywhere; }
+  .media-properties .video-controls-panel { padding: 8px; }
+  .media-properties .vt-time { font-size: 11px; font-variant-numeric: tabular-nums; margin-left: auto; }
+  .media-properties .vt-audio-num { color: var(--ga-ink-1, #9aa0ac); }
+  .media-properties button:focus-visible, .media-properties select:focus-visible { outline: 2px solid var(--ga-focus, #7996ff); outline-offset: 2px; }
 </style>

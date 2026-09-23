@@ -1,5 +1,7 @@
 <script lang="ts">
   import { onDestroy } from 'svelte';
+  import { get } from 'svelte/store';
+  import { getNativeRendererFrameSnapshot } from '../api/native-renderer';
   import { project } from '../stores/layers';
   import type { CropRegion, MediaSource } from '../types';
   import { createDefaultCropRegion } from '../types';
@@ -11,6 +13,10 @@
   export let onClose: () => void = () => {};
 
   const MIN_CROP = 0.01;
+  // This is an editing guide, not a second program output. Downsample on
+  // the GPU before readback; keep crop handles at full UI resolution.
+  const PREVIEW_MAX_DIM = 384;
+  const PREVIEW_INTERVAL_MS = 1000 / 12;
 
   type DragHandle = 'move' | 'n' | 's' | 'e' | 'w' | 'ne' | 'nw' | 'se' | 'sw';
 
@@ -204,6 +210,9 @@
   }
 
   function syncPreviewSizeFromSource() {
+    const composition = get(project);
+    previewWidth = source?.videoWidth || composition.width || 1920;
+    previewHeight = source?.videoHeight || composition.height || 1080;
     const video = source?.videoElement;
     if (video?.videoWidth && video.videoHeight) {
       previewWidth = video.videoWidth;
@@ -223,48 +232,59 @@
     }
   }
 
-  function previewVideo(node: HTMLVideoElement, media: MediaSource | null) {
-    const apply = (next: MediaSource | null) => {
-      const srcVideo = next?.videoElement;
-      if (srcVideo?.srcObject) {
-        node.srcObject = srcVideo.srcObject;
-      } else {
-        node.srcObject = null;
-        node.src = next?.src || '';
-      }
-      node.muted = true;
-      node.playsInline = true;
-      node.loop = true;
-      const updateSize = () => {
-        if (node.videoWidth && node.videoHeight) {
-          previewWidth = node.videoWidth;
-          previewHeight = node.videoHeight;
+  let previewReady = false;
+  let previewMessage = 'Preparing source preview…';
+
+  function nativeSourcePreview(node: HTMLCanvasElement, media: MediaSource | null) {
+    let key = '';
+    let revision = 0;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const start = (next: MediaSource | null) => {
+      const nextKey = `${next?.id ?? ''}:${next?.src ?? ''}`;
+      if (nextKey === key) return;
+      key = nextKey;
+      const generation = ++revision;
+      clearTimeout(timer);
+      previewReady = false;
+      previewMessage = 'Preparing source preview…';
+      const id = next?.id;
+      let failures = 0;
+      const draw = async () => {
+        const startedAt = performance.now();
+        try {
+          if (!id) return;
+          const frame = await getNativeRendererFrameSnapshot(true, { source_id: id, layer_id: layerId, max_dim: PREVIEW_MAX_DIM });
+          if (generation !== revision) return;
+          if (!frame?.rgba_b64) throw new Error('Preview is not ready');
+          const binary = atob(frame.rgba_b64);
+          const bytes = new Uint8ClampedArray(binary.length);
+          for (let i = 0; i < binary.length; i++) bytes[i] = binary.charCodeAt(i);
+          if (bytes.length !== frame.width * frame.height * 4) throw new Error('Incomplete preview');
+          if (node.width !== frame.width) node.width = frame.width;
+          if (node.height !== frame.height) node.height = frame.height;
+          node.getContext('2d')?.putImageData(new ImageData(bytes, frame.width, frame.height), 0, 0);
+          if (next?.type === 'video') {
+            previewWidth = next.videoWidth || frame.width;
+            previewHeight = next.videoHeight || frame.height;
+          }
+          previewReady = true;
+          failures = 0;
+        } catch {
+          if (generation !== revision) return;
+          if (++failures >= 5) previewMessage = 'Waiting for the source to render…';
+        } finally {
+          // One request at a time, only while this modal is mounted. Never
+          // decode a second video or capture the cropped program output.
+          // Include capture time in the refresh interval instead of adding
+          // another full delay after every frame. Never queue overlapping reads.
+          if (generation === revision) timer = setTimeout(draw,
+            failures ? 250 : Math.max(16, PREVIEW_INTERVAL_MS - (performance.now() - startedAt)));
         }
       };
-      node.onloadedmetadata = updateSize;
-      node.onresize = updateSize;
-      updateSize();
-      node.play().catch(() => {});
+      void draw();
     };
-    apply(media);
-    return {
-      update(next: MediaSource | null) {
-        apply(next);
-      },
-      destroy() {
-        node.pause();
-        node.srcObject = null;
-        node.removeAttribute('src');
-      },
-    };
-  }
-
-  function handleImageLoad(e: Event) {
-    const img = e.currentTarget as HTMLImageElement;
-    if (img.naturalWidth && img.naturalHeight) {
-      previewWidth = img.naturalWidth;
-      previewHeight = img.naturalHeight;
-    }
+    start(media);
+    return { update: start, destroy() { revision++; clearTimeout(timer); } };
   }
 </script>
 
@@ -297,16 +317,9 @@
             bind:this={previewEl}
             style="aspect-ratio: {sourceAspect};"
           >
-            {#if source?.videoElement}
-              <!-- svelte-ignore a11y_media_has_caption -->
-              <video class="source-crop-media" use:previewVideo={source} muted playsinline autoplay></video>
-            {:else if source?.type === 'image' && source.src}
-              <img class="source-crop-media" src={source.src} alt="" onload={handleImageLoad} />
-            {:else}
-              <div class="source-crop-placeholder">
-                <span>Live Texture</span>
-                <small>Use the fields on the right when a direct preview is not available.</small>
-              </div>
+            <canvas class="source-crop-media" use:nativeSourcePreview={source} aria-label="Full uncropped source preview"></canvas>
+            {#if !previewReady}
+              <div class="source-crop-placeholder" role="status"><span>{previewMessage}</span></div>
             {/if}
 
             <!-- svelte-ignore a11y_no_static_element_interactions -->
@@ -479,7 +492,7 @@
     width: 100%;
     max-height: min(64vh, 620px);
     overflow: hidden;
-    background: #050607;
+    background: repeating-conic-gradient(#17191f 0% 25%, #101217 0% 50%) 0 / 16px 16px;
     border: 1px solid rgba(255, 255, 255, 0.16);
     border-radius: 4px;
   }
@@ -512,12 +525,6 @@
     font-weight: 700;
   }
 
-  .source-crop-placeholder small {
-    max-width: 260px;
-    color: var(--ga-ink-2, #5e6571);
-    font-size: 12px;
-    line-height: 1.4;
-  }
 
   .source-crop-box {
     position: absolute;

@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { nativeVideoLaunchTime, nativeVideoTransportSnapshot, nativeVideoAnchorRate, nativeVideoLoopProgress, predictNativePlayheadSeconds } from './nativeTransport';
+import { nativeVideoMetadataPatch, nativeVideoLaunchTime, nativeVideoTransportSnapshot, nativeVideoAnchorRate, nativeVideoLoopProgress, predictNativePlayheadSeconds } from './nativeTransport';
 
 describe('native directional launch', () => {
   it('uses trim-in forward and the exclusive trim-out backwards', () => {
@@ -47,5 +47,31 @@ describe('bounce transport clock', () => {
   it('bounds empty ranges and ignores non-finite duration', () => {
     expect(nativeVideoTransportSnapshot({...clip,trimEnd:.2},999999).timeSeconds).toBe(2);
     expect(nativeVideoTransportSnapshot({...clip,durationSeconds:NaN},2000).timeSeconds).toBe(3);
+  });
+});
+
+describe('mapping native-only video metadata', () => {
+  it('recovers the actual HAP playhead and keeps reverse-to-forward inside the clip', () => {
+    const source = { durationSeconds: undefined, videoElement: { duration: NaN, currentTime: 0 },
+      playbackMode: 'loop', playbackRate: 1, isPlaying: true,
+      _nativePlaybackTimeSeconds: 450, _nativePlaybackUpdatedAtMs: 1000, _nativePlaybackSeekSeq: 2 };
+    const patch = nativeVideoMetadataPatch(source, { source_duration_seconds: 8,
+      source_time_seconds: 3, seek_generation: 2, frames_presented: 30, playback_rate: 1 }, 2000)!;
+    const ready = { ...source, ...patch };
+    expect(ready.durationSeconds).toBe(8);
+    expect(nativeVideoTransportSnapshot(ready, 2000).timeSeconds).toBe(3);
+    const reverse = { ...ready, playbackRate: -1, _nativePlaybackTimeSeconds: 3, _nativePlaybackUpdatedAtMs: 2000 };
+    const atSwitch = nativeVideoTransportSnapshot(reverse, 12000);
+    expect(atSwitch.timeSeconds).toBe(1);
+    const forward = { ...reverse, playbackRate: 1, _nativePlaybackTimeSeconds: atSwitch.timeSeconds, _nativePlaybackUpdatedAtMs: 12000 };
+    expect(nativeVideoTransportSnapshot(forward, 13000).timeSeconds).toBe(2);
+    expect(nativeVideoMetadataPatch(forward, {source_duration_seconds:8, source_time_seconds:0,
+      frames_presented:1, seek_generation:2, playback_rate:1})).toBeNull();
+  });
+  it('does not replace a newer seek with an old decoder position', () => {
+    expect(nativeVideoMetadataPatch({_nativePlaybackSeekSeq:4}, {source_duration_seconds:8,
+      source_time_seconds:3,seek_generation:3,frames_presented:10,playback_rate:-1},1000))
+      .toEqual({durationSeconds:8});
+    expect(nativeVideoMetadataPatch({}, {source_duration_seconds:NaN,frames_presented:0,playback_rate:1})).toBeNull();
   });
 });

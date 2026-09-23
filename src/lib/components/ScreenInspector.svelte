@@ -28,11 +28,13 @@
   // the NDI transport option below. Probed once on mount (same probe
   // SettingsPanel uses); false outside Electron / without the addon.
   let ndiAvailable = $state(false);
+  let ndiReason = $state('Checking NDI output support…');
   onMount(async () => {
     try {
-      const r = await (window as any).ghostNDI?.available?.();
+      const r = await (window as any).ghostNDI?.outputStatus?.();
       ndiAvailable = !!r?.available;
-    } catch { ndiAvailable = false; }
+      ndiReason = r?.reason || 'NDI output requires the desktop app and optional NDI runtime.';
+    } catch { ndiAvailable = false; ndiReason = 'Could not check NDI output support. See Settings → Output → NDI Output.'; }
   });
 
   type DisplayInfo = {
@@ -155,11 +157,16 @@
           }}
         >
           <option value="local">{tsLabel} (local)</option>
-          <option value="ndi" disabled={!ndiAvailable}>NDI® (network)</option>
+          <option value="ndi" disabled={!ndiAvailable}>NDI® (full composition)</option>
         </select>
       </label>
     {/if}
 
+    {#if !ndiAvailable}
+      <p class="ndi-attribution">{ndiReason}</p>
+    {:else if screen.outputType === 'ndi'}
+      <p class="ndi-attribution">Sends one full composition. This screen’s crop and warp do not apply to NDI.</p>
+    {/if}
     <p class="ndi-attribution">
       <a href="https://ndi.video/" target="_blank" rel="noreferrer">NDI®</a>
       is a registered trademark of Vizrt NDI AB.
