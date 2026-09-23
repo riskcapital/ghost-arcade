@@ -3411,6 +3411,13 @@ struct NativePointCloudAsset {
     sort_bytes: Vec<u8>,
 }
 
+/// Audio follower of one clip voice across picture transitions (see
+/// `refresh_clip_audio`). The fade angle is the state; `ghost` is the last
+/// transport seen, so a voice whose source was replaced by a transition
+/// snapshot can finish fading out.
+struct ClipAudioFade { theta: f64, role: clip_audio::FadeRole, row: String, at: Instant, ghost: Option<ClipAudioGhost> }
+struct ClipAudioGhost { uri: String, time: f64, rate: f64, lo: f64, hi: f64, looping: bool, bounce: bool, gain: f32, pan: f32, at: Instant }
+
 struct App {
     response_tx: Sender<String>,
     /// Shared with the stdin reader thread so read-only queries can be answered
@@ -3526,6 +3533,7 @@ struct App {
     media_sources: HashMap<String, NativeMediaSourceState>,
     clip_audio: Option<clip_audio::ClipAudio>,
     clip_audio_mix: Value,
+    clip_audio_fades: HashMap<String, ClipAudioFade>,
     scheduled_transition_tokens: HashMap<String, u64>,
     transition_clocks: HashMap<String, Option<transition_clock::TransitionClock>>,
     launch_scheduler: launch_scheduler::Scheduler,
@@ -3848,6 +3856,7 @@ impl App {
             media_sources: HashMap::new(),
             clip_audio: None,
             clip_audio_mix: json!([]),
+            clip_audio_fades: HashMap::new(),
             scheduled_transition_tokens: HashMap::new(),
             transition_clocks: HashMap::new(),
             launch_scheduler: launch_scheduler::Scheduler::default(),
@@ -4120,6 +4129,8 @@ impl App {
             "native_projection_sim_recording_parity": true,
             "native_launch_resource_fences": true,
             "native_scheduled_transition_start": true,
+            "native_clip_audio_tap": true,
+            "native_clip_audio_transition_fades": true,
             "native_prepared_fade_playback": true,
             "native_mixed_column_launch": true,
             "native_recording": false,
@@ -5300,6 +5311,18 @@ impl App {
                 let name = string_at(&req.params, &["device"]).unwrap_or_else(|| "default".into());
                 self.clip_audio.get_or_insert_with(clip_audio::ClipAudio::new).select_output(&name).map(|_| json!(true))
             }
+            // Recording tap: the mixer streams its device mix to a loopback
+            // sink owned by the app, silence included, until stopped.
+            "audio_tap_start" => {
+                let port = req.params.get("port").and_then(Value::as_u64).filter(|p| *p > 0 && *p <= 65535).map(|p| p as u16);
+                let token = req.params.get("token").and_then(Value::as_str).filter(|s| s.len() == 64 && s.bytes().all(|c| c.is_ascii_hexdigit()));
+                match (port, token) {
+                    (Some(port), Some(token)) => self.clip_audio.get_or_insert_with(clip_audio::ClipAudio::new).start_tap(port, token),
+                    (None, _) => Err("invalid audio tap port".to_string()),
+                    (_, None) => Err("invalid audio tap token".to_string()),
+                }
+            }
+            "audio_tap_stop" => Ok(self.clip_audio.as_mut().map(|audio| audio.stop_tap()).unwrap_or_else(|| json!({ "active": false, "frames": 0, "dropped": 0 }))),
             "shutdown" => {
                 self.running = false;
                 event_loop.exit();
@@ -15714,12 +15737,34 @@ impl App {
         }
     }
 
+    /// Picture-side state of the transition a voice config points at: the
+    /// core's own clock when it exists (exact for scheduled launches), else
+    /// the frontend's running flag.
+    fn clip_transition_state(clocks: &HashMap<String, Option<transition_clock::TransitionClock>>, transition: &Value, now: Instant) -> (clip_audio::FadeRole, f64, bool, Option<f64>) {
+        let role = if string_at(transition, &["role"]).as_deref() == Some("out") { clip_audio::FadeRole::Out } else { clip_audio::FadeRole::In };
+        let duration = number_at(transition, &["duration"]).filter(|d| d.is_finite()).unwrap_or(0.0).clamp(0.0, 10.0);
+        let progress = transition.get("token").and_then(Value::as_u64)
+            .and_then(|token| clocks.values().flatten().find(|clock| clock.token() == token).map(|clock| clock.progress(now)));
+        (role, duration, progress.is_some() || bool_at(transition, &["running"]).unwrap_or(false), progress)
+    }
+
     fn refresh_clip_audio(&mut self) {
         if self.clip_audio.is_none() { return; }
+        let now = Instant::now();
         let mut voices = Vec::new();
+        let mut keep: HashSet<String> = HashSet::new();
+        // Rows mid-transition, with the running state and duration their audio follows.
+        let mut rows: HashMap<String, (bool, f64)> = HashMap::new();
         if self.running && self.render_clock_mode == "live" {
             for config in self.clip_audio_mix.as_array().into_iter().flatten().take(32) {
                 let Some(source_id) = string_at(config, &["source_id"]) else { continue; };
+                let id = string_at(config, &["id"]).unwrap_or_else(|| source_id.clone());
+                let row = string_at(config, &["row"]).unwrap_or_default();
+                let transition = config.get("transition").filter(|t| t.is_object())
+                    .map(|transition| Self::clip_transition_state(&self.transition_clocks, transition, now));
+                if let Some((_, fade_duration, running, _)) = transition { rows.insert(row.clone(), (running, fade_duration)); }
+                // A listed voice without a live source is left to the ghost pass
+                // below (its picture may already be a transition snapshot).
                 let Some(media) = self.media_sources.get(&source_id) else { continue; };
                 let Some(duration) = media.duration_seconds else { continue; };
                 let Some(session) = self.native_video_streams.get(&source_id) else { continue; };
@@ -15733,14 +15778,43 @@ impl App {
                 let phase = if media.loop_enabled { (origin + elapsed).rem_euclid(cycle) } else { origin + elapsed };
                 let reverse = if media.bounce_enabled { phase >= span } else { media.playback_rate < 0.0 };
                 let time = lo + if reverse { cycle - phase } else { phase };
-                voices.push(clip_audio::Voice { id: string_at(config, &["id"]).unwrap_or(source_id), uri: media.uri.clone(), time,
-                    rate: session.stream.effective_rate().abs() * if reverse { -1.0 } else { 1.0 }, lo, hi,
-                    looping: media.loop_enabled, bounce: media.bounce_enabled,
-                    gain: number_at(config, &["gain"]).unwrap_or(1.0).clamp(0.0, 1.0) as f32,
-                    pan: number_at(config, &["pan"]).unwrap_or(0.0).clamp(-1.0, 1.0) as f32,
+                let rate = session.stream.effective_rate().abs() * if reverse { -1.0 } else { 1.0 };
+                let gain = number_at(config, &["gain"]).unwrap_or(1.0).clamp(0.0, 1.0) as f32;
+                let pan = number_at(config, &["pan"]).unwrap_or(0.0).clamp(-1.0, 1.0) as f32;
+                // Audio follows the picture transition: equal-power in/out from
+                // the voice's current level, held while the picture waits.
+                let level = match transition {
+                    Some((role, fade_duration, running, progress)) => {
+                        let fade = self.clip_audio_fades.entry(id.clone()).or_insert_with(|| ClipAudioFade {
+                            theta: clip_audio::fade_start(role, progress), role, row: row.clone(), at: now, ghost: None });
+                        fade.theta = clip_audio::advance_fade(fade.theta, role, fade_duration, running, now.duration_since(fade.at).as_secs_f64());
+                        fade.role = role; fade.row = row.clone(); fade.at = now;
+                        fade.ghost = Some(ClipAudioGhost { uri: media.uri.clone(), time, rate, lo, hi, looping: media.loop_enabled, bounce: media.bounce_enabled, gain, pan, at: now });
+                        keep.insert(id.clone());
+                        clip_audio::fade_level(fade.theta)
+                    }
+                    None => { self.clip_audio_fades.remove(&id); 1.0 }
+                };
+                voices.push(clip_audio::Voice { id, uri: media.uri.clone(), time, rate, lo, hi,
+                    looping: media.loop_enabled, bounce: media.bounce_enabled, gain: gain * level, pan,
                     playing: session.playing && !media.paused });
             }
+            // An interrupted fade replaces the outgoing picture with a snapshot
+            // and releases its source. Its sound keeps fading out with the row's
+            // new transition instead of cutting: a ghost voice on extrapolated time.
+            for (id, fade) in self.clip_audio_fades.iter_mut() {
+                if keep.contains(id) || fade.role != clip_audio::FadeRole::Out { continue; }
+                let (Some(&(running, fade_duration)), Some(ghost)) = (rows.get(&fade.row), fade.ghost.as_ref()) else { continue; };
+                fade.theta = clip_audio::advance_fade(fade.theta, clip_audio::FadeRole::Out, fade_duration, running, now.duration_since(fade.at).as_secs_f64());
+                fade.at = now;
+                let level = clip_audio::fade_level(fade.theta);
+                if level <= 0.0001 || now.duration_since(ghost.at).as_secs_f64() > 10.0 { continue; }
+                keep.insert(id.clone());
+                voices.push(clip_audio::Voice { id: id.clone(), uri: ghost.uri.clone(), time: ghost.time + now.duration_since(ghost.at).as_secs_f64() * ghost.rate,
+                    rate: ghost.rate, lo: ghost.lo, hi: ghost.hi, looping: ghost.looping, bounce: ghost.bounce, gain: ghost.gain * level, pan: ghost.pan, playing: true });
+            }
         }
+        self.clip_audio_fades.retain(|id, _| keep.contains(id));
         if let Some(audio) = self.clip_audio.as_mut() { audio.update(voices); }
     }
 
