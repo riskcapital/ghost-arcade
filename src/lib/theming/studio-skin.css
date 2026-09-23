@@ -421,7 +421,7 @@ html[data-theme="arcade"] body {
 }
 
 /* Property rows */
-.layer-panel .property-row {
+.layer-panel .property-row:not(.media-properties .property-row) {
   display: grid !important;
   grid-template-columns: 90px 1fr !important;
   align-items: center !important;
@@ -429,7 +429,7 @@ html[data-theme="arcade"] body {
   padding: 7px 14px !important;
   margin-bottom: 4px !important;
 }
-.layer-panel .property-row label,
+.layer-panel .property-row:not(.media-properties .property-row) label,
 .layer-panel .property-label {
   font-size: 13.5px !important;
   color: var(--ga-ink-1, #9aa0ac) !important;
@@ -494,8 +494,8 @@ html[data-theme="arcade"] body {
 }
 
 /* Selects inside left panel */
-.layer-panel select,
-.property-row select {
+.layer-panel select:not(.media-properties select),
+.property-row select:not(.media-properties select) {
   height: 32px !important;
   padding: 0 11px !important;
   border: 1px solid var(--ga-line-2, rgba(255, 255, 255, 0.12)) !important;
@@ -2495,4 +2495,12 @@ html[data-theme="arcade"] :is(input[type="text"], input[type="number"], input[ty
 html[data-theme="arcade"] :is(input[type="text"], input[type="number"], input[type="search"], select, textarea):focus {
   border-color: var(--ga-focus) !important;
   box-shadow: 0 0 0 2px color-mix(in srgb, var(--ga-focus) 18%, transparent) !important;
+}
+
+/* Mapping's media inspector owns its compact row layout and selected controls. */
+html .layer-panel .media-properties :is(.shape-icon-btn.active, .warp-mode-btn.active, .vt-audio-toggle.active) {
+  background: var(--ga-selection-bg, #172a5b) !important;
+  color: var(--ga-selection-ink, #e0e8ff) !important;
+  border-color: var(--ga-selection-line, #3d59b8) !important;
+  box-shadow: none !important;
 }

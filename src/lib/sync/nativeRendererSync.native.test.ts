@@ -45,6 +45,9 @@ let isNativeExternallyQueuedGraphKind: typeof import('./nativeRendererSync').isN
 let nativeOutputCropY: typeof import('./nativeRendererSync').nativeOutputCropY;
 let nativeWarpCorners: typeof import('./nativeRendererSync').nativeWarpCorners;
 let nativeWarpMeshGrid: typeof import('./nativeRendererSync').nativeWarpMeshGrid;
+let isFullQuadStageShape: typeof import('./nativeRendererSync').isFullQuadStageShape;
+let expandCustomScreenRenderBounds: typeof import('./nativeRendererSync').expandCustomScreenRenderBounds;
+let nativeLayerShapeState: typeof import('./nativeRendererSync').nativeLayerShapeState;
 
 beforeAll(async () => {
   const storage = new Map<string, string>();
@@ -103,7 +106,55 @@ beforeAll(async () => {
     nativeOutputCropY,
     nativeWarpCorners,
     nativeWarpMeshGrid,
+    isFullQuadStageShape,
+    expandCustomScreenRenderBounds,
+    nativeLayerShapeState,
   } = await import('./nativeRendererSync'));
+});
+
+it('extends a custom stage screen render quad around vertices beyond its original rectangle', async () => {
+  const { createLayer } = await import('../types');
+  const screen = createLayer('screen', 'Screen', 'screen');
+  screen.corners = {
+    topLeft: { x: 0.1, y: 0.8 }, topRight: { x: 0.2, y: 0.8 },
+    bottomLeft: { x: 0.1, y: 0.2 }, bottomRight: { x: 0.2, y: 0.2 },
+  };
+  screen.layerShape = {
+    enabled: true, type: 'custom', params: {
+      customClosed: true,
+      customPoints: [
+        { x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1.5, y: 1 }, { x: 0, y: 1 },
+      ],
+      customBasePoints: [
+        { x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 },
+      ],
+    },
+  } as any;
+  const expanded = expandCustomScreenRenderBounds(screen);
+  expect(expanded.corners.topRight.x).toBeCloseTo(0.25);
+  expect(expanded.corners.bottomRight.x).toBeCloseTo(0.25);
+  expect(expanded.layerShape?.params.customPoints?.[2].x).toBeCloseTo(1);
+  expect(expanded.layerShape?.params.customPoints?.[1].x).toBeCloseTo(2 / 3);
+  expect(expanded.layerShape?.params.customBasePoints?.[2].x).toBe(1);
+  expect(screen.corners.topRight.x).toBe(0.2);
+});
+
+it('lets a rectangular stage screen use the entire warped quad without a second custom crop', async () => {
+  const { createLayer } = await import('../types');
+  const screen = createLayer('screen', 'Screen', 'screen');
+  screen.layerShape = {
+    enabled: true,
+    type: 'custom',
+    params: { customClosed: true, customPoints: [
+      { x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 },
+    ] },
+  } as any;
+  expect(isFullQuadStageShape(screen)).toBe(true);
+  expect(nativeLayerShapeState(screen).shape[0]).toBe(0);
+
+  screen.layerShape!.params.customPoints![1].x = 0.8;
+  expect(isFullQuadStageShape(screen)).toBe(false);
+  expect(nativeLayerShapeState(screen).shape[0]).toBe(6);
 });
 
 function graphCapabilities() {
@@ -249,6 +300,35 @@ describe('native unified group crops', () => {
     expect(lowerOut.cropRegion.y).toBeCloseTo(0.1, 5);
     expect(lowerOut.flipV).toBe(false);
   });
+});
+
+it('repeats a group VJ feed per screen or crops one feed across the group', async () => {
+  const { createGroupLayer, createLayer, VJ_MIX_SOURCE_INDEX } = await import('../types');
+  const sync = new NativeRendererSyncCtor() as any;
+  const group = createGroupLayer('stage-group', 'Stage Group');
+  group.vjLayerIndex = VJ_MIX_SOURCE_INDEX;
+  const screen = createLayer('stage-screen', 'Screen', 'screen');
+  screen.parentGroupId = group.id;
+  screen.vjLayerIndex = 0;
+  screen.corners = {
+    topLeft: { x: 0.2, y: 0.8 }, topRight: { x: 0.4, y: 0.8 },
+    bottomLeft: { x: 0.2, y: 0.2 }, bottomRight: { x: 0.4, y: 0.2 },
+  };
+  const mix = createLayer('__vj-mix__', 'VJ Mix', 'media');
+  mix.source = { id: 'mix', type: 'effect', name: 'Mix', src: 'plugin://vj-mix' } as any;
+
+  group.groupConfig!.shaderMode = 'individual';
+  const individual = sync.resolveNativeGroupLayers([group, screen, mix]).find((layer: any) => layer.id === screen.id);
+  expect(individual.source.effectSource.vjmixRows[0].layerId).toBe(mix.id);
+  expect(individual.cropRegion).toBeNull();
+
+  group.groupConfig!.shaderMode = 'unified';
+  const unified = sync.resolveNativeGroupLayers([group, screen, mix]).find((layer: any) => layer.id === screen.id);
+  expect(unified.source.effectSource.vjmixRows[0].layerId).toBe(mix.id);
+  expect(unified.cropRegion.x).toBeCloseTo(0.2);
+  expect(unified.cropRegion.y).toBeCloseTo(0.2);
+  expect(unified.cropRegion.width).toBeCloseTo(0.2);
+  expect(unified.cropRegion.height).toBeCloseTo(0.6);
 });
 
 describe('native output stage coordinates', () => {
@@ -1069,6 +1149,32 @@ describe('native renderer sync native video pump routing', () => {
     expect(sync.sourcePreviewSig.has(sourceKey)).toBe(false);
     expect(sync.sourcePreviewSeq.has(sourceKey)).toBe(false);
     expect(sync.canUseNativeVideoDecodePump(nativeSource, 'video')).toBe(false);
+  });
+
+  it('hydrates mapping HAP metadata from the decoder before switching direction', async () => {
+    const { project } = await import('../stores/layers');
+    const { get } = await import('svelte/store');
+    const { createLayer } = await import('../types');
+    const { nativeVideoTransportSnapshot } = await import('../media/nativeTransport');
+    const original = get(project);
+    const sync = new NativeRendererSyncCtor() as any;
+    const layer = createLayer('hap-map', 'HAP', 'media');
+    layer.source = {id:'hap-map-source',name:'HAP',type:'video',src:'/clip.mov',isPlaying:true,
+      playbackRate:-1,_nativePlaybackSeekSeq:2,_nativePlaybackTimeSeconds:450,_nativePlaybackUpdatedAtMs:0};
+    try {
+      project.update(state => ({...state,layers:[layer]}));
+      sync.reconcileNativeVideoDecodes({native_video_sessions:[{source_id:'hap-map-source',
+        source_duration_seconds:8,source_time_seconds:3,seek_generation:2,frames_presented:10,playback_rate:-1}]});
+      const source = get(project).layers[0].source!;
+      expect(source.durationSeconds).toBe(8);
+      expect(source._nativePlaybackTimeSeconds).toBe(3);
+      const forward = {...source, playbackRate:1,_nativePlaybackSeekSeq:3,
+        _nativePlaybackTimeSeconds:nativeVideoTransportSnapshot(source).timeSeconds};
+      const command = sync.nativeVideoPlaybackCommandIfChanged(forward,'video',1000,{time:1});
+      expect(command).toMatchObject({playback_rate:1,paused:false,duration_seconds:8,seek_generation:3});
+      expect(command.time_seconds).toBeGreaterThan(2.5);
+      expect(command.time_seconds).toBeLessThanOrEqual(3);
+    } finally { project.set(original); }
   });
 
   it('carries bounce mode and anchor direction through prepared and active playback', () => {

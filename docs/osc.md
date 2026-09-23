@@ -18,6 +18,42 @@ have selected.
 
 ## Addresses
 
+### Parameter paths for manual bindings
+
+An OSC **address** is the incoming message, such as `/ghost/vj/a/layer/1/opacity`.
+The binding's **parameter path** identifies the control inside Ghost Arcade,
+such as `vj:0:opacity`. These are different fields: addresses use slashes;
+parameter paths use colons. Parameter-path layer, clip and preset indices start
+at **0**, while the template's OSC addresses start at **1**.
+
+| Parameter path | Target |
+| --- | --- |
+| `vj:0:trigger:0` | Deck A, layer 1, clip 1 |
+| `vj-b:0:trigger:0` | Deck B, layer 1, clip 1 |
+| `vj:0:opacity` | Deck A, layer 1 opacity (0–1) |
+| `vj:0:video:play` | Deck A, layer 1 play/pause |
+| `vj:0:video:restart` | Restart Deck A, layer 1's active video |
+| `vj:0:video:position` | Follow an external timeline (0–1) |
+| `vj:0:video:scratch` | Scratch/hold a video position (0–1) |
+| `vj:master:opacity` | Master opacity (0–1) |
+| `vj:crossfader:value` | Crossfader (0 = A, 1 = B) |
+| `map:layer:opacity` | Selected Mapping layer opacity (0–1) |
+| `map:media:play` | Selected Mapping media play/pause |
+| `map:media:restart` | Restart selected Mapping media |
+| `map:media:scratch` | Scratch selected Mapping media (0–1) |
+| `map:preset:0` | Recall Mapping preset 1 |
+
+Replace `vj:` with `vj-b:` for Deck B layer controls. Legacy paths such as
+`vj:layer:0:opacity` are normalized automatically. MIDI and keyboard bindings
+use these same parameter paths; MIDI Learn can assign the visible restart
+button in either VJ or Mapping mode. For a button action, use a trigger binding
+and send a positive press value, followed by a release value of zero.
+
+The Settings binding editor includes examples and validates paths. To avoid
+typing paths, use **Install template** or **Learn**.
+
+### Template addresses
+
 `{deck}` is `a` or `b`. Indices in addresses are **1-based** — layer 1 is the
 top layer, matching what the UI shows.
 

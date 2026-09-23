@@ -120,3 +120,8 @@ export const currentLinesPoints = {
     return linesStore.subscribe((state) => fn(state.currentPoints));
   },
 };
+
+/** The canvas uses `none` for selection; the toolbox calls it `select`. */
+export function linesDrawingModeForTool(mode: unknown): 'none' | 'freehand' | 'pointClick' {
+  return mode === 'freehand' || mode === 'pointClick' ? mode : 'none';
+}

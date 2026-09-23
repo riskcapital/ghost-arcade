@@ -260,7 +260,13 @@ export interface IntegratedEffectSource {
   analyzerLabBgAlpha?: number;           // 0..1
   analyzerLabShowLabels?: boolean;
   // HandFX params (MediaPipe-driven hand visualizer)
-  handfxMode?: 'panel' | 'trails' | 'aurora' | 'skeleton' | 'bursts';
+  handfxMode?: 'panel' | 'trails' | 'aurora' | 'skeleton' | 'bursts' | 'bridge' | 'orbit' | 'lasers';
+  handfxInput?: 'live' | 'demo';
+  handfxPalette?: string;
+  handfxBrightness?: number;
+  handfxScale?: number;
+  handfxDetail?: number;
+  handfxAudioResponse?: number;
   handfxCameraOn?: boolean;
   handfxSmoothing?: number;
   handfxPredictMs?: number;

@@ -146,10 +146,18 @@
       />
     {/if}
 
+    {#if effectSource.effectType === 'handfx'}
+      <div class="handfx-guide">
+        <span class="handfx-eyebrow">HAND PERFORMANCE</span>
+        <p>{getVal('handfxInput', 'live') === 'demo' ? 'Rehearsal animates two virtual hands. Switch to Live hands and enable Camera On to perform.' : 'Enable Camera On, then bring your hands into view. Audio response follows the app’s connected audio input.'}</p>
+        <p class="handfx-gesture">{getVal('handfxMode', 'trails') === 'bridge' ? 'Two hands stretch the bridge. Move them together to compress its energy.' : getVal('handfxMode', 'trails') === 'orbit' ? 'Each palm carries an orbital field. Pinch to contract it; open your hand to expand.' : getVal('handfxMode', 'trails') === 'lasers' ? 'Spread your fingers to fan the beams. Rotate your hands to aim them.' : getVal('handfxMode', 'trails') === 'bursts' ? 'Pinch thumb and index to spray. Release to let the particles drift away.' : 'Move your hands to shape the visual. Layer it over video using Add or Screen blend.'}</p>
+      </div>
+    {/if}
+
     <!-- All controls, flat -->
     <div class="controls">
       {#each pluginManifest.paramDefs as def (def.param)}
-        {#if !def.showWhen || (def.showWhen.values || []).includes(getVal(def.showWhen.param, undefined))}
+        {#if (!def.showWhen || (def.showWhen.values || []).includes(getVal(def.showWhen.param, undefined))) && !(effectSource.effectType === 'handfx' && ['handfxTrailColorMode', 'handfxInkColorMode', 'handfxSprayColorMode'].includes(def.param) && getVal('handfxPalette', 'legacy') !== 'legacy')}
         {#if def.type === 'select'}
           {@const optValues = (def.options ?? []).map(o => String(o.value))}
           <div
@@ -162,6 +170,11 @@
             data-midi-discrete={optValues.join(',')}
           >
             <span class="label">{def.name}</span>
+            {#if effectSource.effectType === 'handfx'}
+              <select aria-label={def.name} value={getVal(def.param, def.default)} onchange={(e) => setParam(def.param, e.currentTarget.value)}>
+                {#each (def.options || []) as opt}<option value={opt.value}>{opt.label}</option>{/each}
+              </select>
+            {:else}
             <div class="select-row">
               {#each (def.options || []) as opt}
                 <button
@@ -171,6 +184,7 @@
                 >{opt.label}</button>
               {/each}
             </div>
+            {/if}
           </div>
 
         {:else if def.type === 'toggle'}
@@ -228,6 +242,12 @@
 {/if}
 
 <style>
+  .handfx-guide { padding: 14px; margin: 10px 0 16px; border: 1px solid #304a78; border-radius: 10px; background: linear-gradient(135deg, #142542, #101820); }
+  .handfx-eyebrow { color: #a9c6fa; font-size: 10px; font-weight: 700; letter-spacing: .12em; }
+  .handfx-guide p { color: #bac8dc; font-size: 12px; line-height: 1.5; margin: 8px 0 0; }
+  .handfx-guide .handfx-gesture { color: #e1edff; }
+  .control-row select { width: 100%; min-height: 34px; padding: 6px 9px; color: #e1edff; background: #101722; border: 1px solid #34445d; border-radius: 7px; font: inherit; font-size: 12px; }
+
   .panel-empty {
     padding: 20px;
     text-align: center;

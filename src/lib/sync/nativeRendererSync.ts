@@ -1,7 +1,7 @@
 import { composeNativeGraphs } from '../renderer/nativeGraphComposition';
 import { vjGroupSourceId, buildVJGroupedMixGraph, type VJGroupedMixOptions } from '../renderer/vjGroupNative';
 import { cubeLutHandle } from '../color/cubeLutAssets';
-import { nativeVideoLaunchTime, nativeVideoAnchorRate } from '../media/nativeTransport';
+import { nativeVideoLaunchTime, nativeVideoAnchorRate, nativeVideoMetadataPatch } from '../media/nativeTransport';
 import { get } from 'svelte/store';
 import { screenOutputError } from '../stores/screenOutputStatus';
 import { createLayer } from '$lib/types';
@@ -3626,9 +3626,80 @@ function shapeContentModeFromFit(fit: Layer['contentFit']): 'follow' | 'mask' | 
   return 'follow';
 }
 
-function nativeLayerShapeState(layer: Layer): NativeLayerShapeState {
+/** Stage templates encode plain rectangles as four-point custom outlines.
+ *  Their outline is the entire local quad, so retaining a second polygon
+ *  mask needlessly clips a corner/mesh warp against that authored rectangle.
+ *  As soon as an operator edits an outline point, it stops taking this path. */
+export function isFullQuadStageShape(layer: Layer): boolean {
+  if (layer.type !== 'screen' || !layer.layerShape?.enabled || layer.layerShape.type !== 'custom') return false;
+  const { customPoints, customClosed } = layer.layerShape.params;
+  if (!customClosed || customPoints?.length !== 4 || layer.layerShape.params.invert) return false;
+  const corners = new Set<string>();
+  for (const point of customPoints) {
+    if (point.cpIn || point.cpOut) return false;
+    const x = Math.abs(point.x) < 0.0001 ? 0 : Math.abs(point.x - 1) < 0.0001 ? 1 : -1;
+    const y = Math.abs(point.y) < 0.0001 ? 0 : Math.abs(point.y - 1) < 0.0001 ? 1 : -1;
+    if (x < 0 || y < 0) return false;
+    corners.add(`${x}:${y}`);
+  }
+  return corners.size === 4;
+}
+
+/** A custom stage outline can extend outside its original corner quad when a
+ * vertex is dragged. Reframe the render quad around the whole outline while
+ * keeping the authored base points in source UV space. Otherwise the native
+ * compositor rejects the expanded area before it evaluates the shape mask. */
+export function expandCustomScreenRenderBounds(layer: Layer): Layer {
+  if (layer.type !== 'screen' || layer.layerShape?.type !== 'custom' || !layer.layerShape.enabled) return layer;
+  const points = layer.layerShape.params.customPoints;
+  if (!points?.length || !layer.corners) return layer;
+  let minX = 0, maxX = 1, minY = 0, maxY = 1;
+  for (const point of points) {
+    for (const candidate of [point, point.cpIn, point.cpOut]) {
+      if (!candidate || !Number.isFinite(candidate.x) || !Number.isFinite(candidate.y)) continue;
+      minX = Math.min(minX, candidate.x);
+      maxX = Math.max(maxX, candidate.x);
+      minY = Math.min(minY, candidate.y);
+      maxY = Math.max(maxY, candidate.y);
+    }
+  }
+  if (minX === 0 && maxX === 1 && minY === 0 && maxY === 1) return layer;
+  const c = layer.corners;
+  const project = (u: number, v: number) => ({
+    x: (c.bottomLeft.x + (c.bottomRight.x - c.bottomLeft.x) * u) * (1 - v)
+      + (c.topLeft.x + (c.topRight.x - c.topLeft.x) * u) * v,
+    y: (c.bottomLeft.y + (c.bottomRight.y - c.bottomLeft.y) * u) * (1 - v)
+      + (c.topLeft.y + (c.topRight.y - c.topLeft.y) * u) * v,
+  });
+  const width = maxX - minX;
+  const height = maxY - minY;
+  const normalize = (point: { x: number; y: number }) => ({
+    x: (point.x - minX) / width,
+    y: (point.y - minY) / height,
+  });
+  return {
+    ...layer,
+    corners: {
+      topLeft: project(minX, maxY), topRight: project(maxX, maxY),
+      bottomLeft: project(minX, minY), bottomRight: project(maxX, minY),
+    },
+    layerShape: {
+      ...layer.layerShape,
+      params: {
+        ...layer.layerShape.params,
+        customPoints: points.map(point => ({
+          ...normalize(point),
+          cpIn: point.cpIn ? normalize(point.cpIn) : undefined,
+          cpOut: point.cpOut ? normalize(point.cpOut) : undefined,
+        })),
+      },
+    },
+  };
+}
+
+export function nativeLayerShapeState(layer: Layer): NativeLayerShapeState {
   const shape = layer.layerShape;
-  const activeType = shape?.enabled ? shape.type : 'rectangle';
+  const activeType = shape?.enabled && !isFullQuadStageShape(layer) ? shape.type : 'rectangle';
   const params = shape?.params ?? {};
   const invert = params.invert ? 1 : 0;
 
@@ -5586,6 +5657,21 @@ export class NativeRendererSync {
   }
 
   private reconcileNativeVideoDecodes(status: RendererStatus) {
+    // Mapping media cannot get HAP duration from Chromium. Feed native
+    // metadata back into the inspector/transport without creating undo steps.
+    const sessions = new Map((status.native_video_sessions ?? []).map(session => [session.source_id, session]));
+    const patches = new Map<string, Partial<NonNullable<Layer['source']>>>();
+    for (const layer of get(project).layers) {
+      const source = layer.source;
+      const session = source?.type === 'video' ? sessions.get(source.id) : undefined;
+      if (!source || !session) continue;
+      const patch = nativeVideoMetadataPatch(source, session);
+      if (patch) patches.set(source.id, patch);
+    }
+    if (patches.size) project.update(state => ({ ...state, layers: state.layers.map(layer => {
+      const patch = layer.source && patches.get(layer.source.id);
+      return patch ? { ...layer, source: { ...layer.source!, ...patch } } : layer;
+    }) }));
     const failures = Number(status.native_video_frame_decode_failures ?? 0);
     const decodes = Number(status.native_video_frame_decodes ?? 0);
     if (!Number.isFinite(failures) || !Number.isFinite(decodes)) return;
@@ -6226,7 +6312,7 @@ export class NativeRendererSync {
       }
       if (String(layer.id).startsWith('vj-') || layer.id === '__vj-mix__' || layer.vjLayerIndex != null || layer.vjGroupId) hasVjFeed = true;
     }
-    if (!hasGroups && !hasVjFeed) return layers;
+    if (!hasGroups && !hasVjFeed) return layers.map(expandCustomScreenRenderBounds);
     // VJ feed lookup: crossfade output preferred over single-bank rows.
     const vjFeed = new Map<number, Layer>();
     for (const layer of layers) {
@@ -6303,6 +6389,8 @@ export class NativeRendererSync {
       // is the master feed for its slices.
       const groupVjRaw = group.vjLayerIndex == null ? NaN : Number(group.vjLayerIndex);
       const hasGroupVj = Number.isFinite(groupVjRaw);
+      const groupVjGroupId = group.vjGroupId;
+      const hasGroupVjGroup = !!groupVjGroupId;
       const child = { ...layer } as Layer;
       (child as { opacity: number }).opacity = clampNumber((layer.opacity ?? 1) * (group.opacity ?? 1), 0, 1);
       // The native scene has no group compositing pass — the container is
@@ -6323,6 +6411,9 @@ export class NativeRendererSync {
       } else if (hasGroupVj) {
         (child as { vjLayerIndex?: number }).vjLayerIndex = Math.round(groupVjRaw);
         child.vjGroupId = undefined;
+      } else if (hasGroupVjGroup) {
+        child.vjLayerIndex = undefined;
+        child.vjGroupId = groupVjGroupId;
       } else if (shaderSource) {
         (child as { source: Layer['source'] }).source = shaderSource;
         // The group owns the effective source. Keep saved child assignments
@@ -6331,7 +6422,7 @@ export class NativeRendererSync {
         child.vjGroupId = undefined;
       }
       redirectVjSource(child);
-      if (hasGroupVj || shaderSource) {
+      if (hasGroupVj || hasGroupVjGroup || shaderSource) {
         if (config?.shaderMode === 'unified') {
           const c = layer.corners;
           if (c) {
@@ -6362,7 +6453,7 @@ export class NativeRendererSync {
       }
       out.push(child);
     }
-    return out;
+    return out.map(expandCustomScreenRenderBounds);
   }
 
   private async renderNativeGraphSources(
@@ -6422,13 +6513,15 @@ export class NativeRendererSync {
           };
           this.nativeGraphRoutes.set(possibleRoute.key, routeState);
           const params = nativeGraphParamsForLayer(layer, possibleRoute.kind);
-          if (params.handfxCameraOn !== false && !mediaPipeSource.isRunning()) {
+          if (params.handfxInput !== 'demo' && params.handfxCameraOn === true && !mediaPipeSource.isRunning()) {
             void mediaPipeSource.start({ useGesture: false, targetFps: 60, numHands: 2 }).catch((error) => {
               console.warn('[NativeRendererSync] HandFX MediaPipe input failed to start', error);
             });
           }
           const handFrame = mediaPipeSource.getLastFrame();
-          if (handFrame.timestamp !== routeState.lastHandFrameTimestamp) {
+          // Refresh the small input buffers even when tracking/audio stops so
+          // the GPU receives silence and Camera Off instead of stale input.
+          {
             const graphTime = typeof clock.time === 'number'
               ? clock.time
               : Math.max(0, (performance.now() - this.liveClockOriginMs) / 1000);
@@ -9084,7 +9177,8 @@ export class NativeRendererSync {
         }
         if (
           nativeGraphRoute.kind === 'handfx' &&
-          nativeGraphScaledParams?.handfxCameraOn !== false &&
+          nativeGraphScaledParams?.handfxInput !== 'demo' &&
+          nativeGraphScaledParams?.handfxCameraOn === true &&
           !mediaPipeSource.isRunning()
         ) {
           void mediaPipeSource.start({ useGesture: false, targetFps: 60, numHands: 2 }).catch((error) => {
@@ -9896,6 +9990,7 @@ export class NativeRendererSync {
     const layerAspect = layerAspectFromCorners(layer, outputWidth, outputHeight);
     const ratio = clampNumber(sourceAspect / Math.max(0.001, layerAspect), 0.001, 128);
     const shapeActive = !!layer.layerShape?.enabled &&
+      !isFullQuadStageShape(layer) &&
       layer.layerShape.type !== 'rectangle' &&
       layer.layerShape.type !== 'line' &&
       layer.layerShape.type !== 'polyline';

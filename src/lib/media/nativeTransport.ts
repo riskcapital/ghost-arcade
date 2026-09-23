@@ -174,3 +174,26 @@ export function nativeVideoLoopProgress(target: NativeVideoTransportTarget, nowM
   const launchPhase = (target.playbackRate ?? 1) < 0 ? 1 : 0;
   return ((phase - launchPhase + 2) % 2) / 2;
 }
+
+/** Browser metadata is unavailable for native-only codecs such as HAP.
+ * Adopt decoder metadata once, anchoring at its presented frame rather than
+ * an unbounded browser clock. Never overwrite a newer UI seek. */
+export function nativeVideoMetadataPatch(target: NativeVideoTransportTarget, session: {
+  source_duration_seconds?: number | null;
+  source_time_seconds?: number | null;
+  seek_generation?: number;
+  frames_presented: number;
+  playback_rate: number;
+}, nowMs = performance.now()): Partial<Pick<NativeVideoTransportTarget, 'durationSeconds' | '_nativePlaybackTimeSeconds' | '_nativePlaybackUpdatedAtMs' | '_nativePlaybackDirection'>> | null {
+  if (Number.isFinite(target.durationSeconds) && target.durationSeconds! > 0) return null;
+  const duration = session.source_duration_seconds;
+  if (!(typeof duration === 'number' && Number.isFinite(duration) && duration > 0)) return null;
+  const patch: Partial<Pick<NativeVideoTransportTarget, 'durationSeconds' | '_nativePlaybackTimeSeconds' | '_nativePlaybackUpdatedAtMs' | '_nativePlaybackDirection'>> = { durationSeconds: duration };
+  if (session.frames_presented > 0 && session.seek_generation === (target._nativePlaybackSeekSeq ?? 0)
+    && typeof session.source_time_seconds === 'number' && Number.isFinite(session.source_time_seconds)) {
+    patch._nativePlaybackTimeSeconds = Math.max(0, Math.min(duration, session.source_time_seconds));
+    patch._nativePlaybackUpdatedAtMs = nowMs;
+    patch._nativePlaybackDirection = session.playback_rate < 0 ? -1 : 1;
+  }
+  return patch;
+}

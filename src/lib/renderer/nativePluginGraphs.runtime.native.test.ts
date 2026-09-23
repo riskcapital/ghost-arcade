@@ -114,6 +114,48 @@ describe('native plugin graphs (runtime, real core)', () => {
     expect(Number(status.shader_precompile_compiled ?? 0)).toBeGreaterThanOrEqual(expected);
   }, 30000);
 
+  itIfNativeCore.each(['bridge', 'orbit', 'lasers'])('renders HandFX %s without a camera', async (mode) => {
+    const layerId = 'handfx-runtime';
+    const sourceId = 'plugin:handfx:runtime';
+    const params = { handfxMode: mode, handfxInput: 'demo', handfxCameraOn: false, handfxPalette: 'ocean' };
+    const built = buildNativePluginGraph({
+      kind: 'handfx', sourceId, params, width: 320, height: 180,
+      time: 1, frameDelta: 1 / 60, frameIndex: 60, reset: true,
+      audio: { active: true, bass: 0.7, mid: 0.4, treble: 0.3, energy: 0.6, beatPhase: 0.25, beatPulse: 0.5, amplitude: 0.5 },
+    });
+    await rpc!.send('submit_commands', { commands: [
+      { type: 'upsert_layer', layer_id: layerId, z_index: 0, opacity: 1, blend_mode: 'normal',
+        corners: { topLeft: { x: 0, y: 0 }, topRight: { x: 1, y: 0 }, bottomRight: { x: 1, y: 1 }, bottomLeft: { x: 0, y: 1 } } },
+      { type: 'set_layer_visibility', layer_id: layerId, visible: true },
+      { type: 'set_native_graph_layer', layer_id: layerId, kind: 'handfx', instrument_source_id: sourceId,
+        composite_source_id: sourceId, input_source_id: null, effect_graph: built.config, params },
+      { type: 'bind_media_source', layer_id: layerId, source_id: sourceId, uri: 'plugin://handfx', source_type: 'video' },
+    ] });
+    let snapshot: any = {};
+    for (let attempt = 0; attempt < 80; attempt++) {
+      snapshot = await rpc!.send('frame_snapshot', { include_pixels: !!process.env.HANDFX_CAPTURE_DIR });
+      if (Number(snapshot.nonzero_pixels) > 576 && Number(snapshot.max_luma) > 0.05) break;
+      await new Promise(resolve => setTimeout(resolve, 50));
+    }
+    const status = await rpc!.send('status');
+    expect(Number(status.shader_precompile_failed), String(status.last_shader_error ?? '')).toBe(0);
+    expect(Number(snapshot.nonzero_pixels), mode).toBeGreaterThan(576);
+    expect(Number(snapshot.max_luma), mode).toBeGreaterThan(0.05);
+    if (process.env.HANDFX_CAPTURE_DIR) {
+      const { mkdirSync, writeFileSync } = await import('node:fs');
+      mkdirSync(process.env.HANDFX_CAPTURE_DIR, { recursive: true });
+      writeFileSync(join(process.env.HANDFX_CAPTURE_DIR, mode + '.json'), JSON.stringify(snapshot));
+    }
+    await rpc!.send('submit_commands', { commands: [{ type: 'remove_layer', layer_id: layerId }] });
+    // Verify the next case cannot pass by seeing a previous mode's stale frame.
+    for (let attempt = 0; attempt < 80; attempt++) {
+      snapshot = await rpc!.send('frame_snapshot', { include_pixels: false });
+      if (Number(snapshot.nonzero_pixels) === 0) break;
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    expect(Number(snapshot.nonzero_pixels)).toBe(0);
+  }, 15000);
+
   itIfNativeCore.each([0, 1 / 7, 1])('renders a visible Performer world with palette %s', async (palette) => {
     const layerId = 'performer-world-runtime';
     const sourceId = 'plugin:performer-world:A:0';

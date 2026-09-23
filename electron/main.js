@@ -3080,7 +3080,10 @@ function stopDeckMonitorPump() {
 // devicePixelRatio, which tracks the monitor the window is on right now; the
 // display lookup covers a renderer that did not.
 function nativePreviewAddonRect(rect, rectArgs) {
-  if (process.platform !== 'win32') return rect;
+  if (process.platform !== 'win32') {
+    // CSS pixels shrink as Chromium zoom increases; AppKit needs host points.
+    return nativePreviewRectToDevicePixels(rect, mainWindow?.webContents.getZoomFactor() || 1);
+  }
   let ratio = Number(rectArgs?.pixelRatio);
   if (!Number.isFinite(ratio) || ratio <= 0) {
     try {
@@ -4999,6 +5002,17 @@ function startOSC(port, win) {
 
 function registerIpcHandlers() {
   // --- Diagnostics ---
+  ipcMain.handle('set_interface_scale', (event, { scale } = {}) => {
+    if (!mainWindow || mainWindow.isDestroyed() || event.sender !== mainWindow.webContents) {
+      throw new Error('Interface scale is only available in the main editor');
+    }
+    const value = Number(scale);
+    if (!Number.isFinite(value) || value < 0.75 || value > 2) throw new Error('Invalid interface scale');
+    mainWindow.webContents.setZoomFactor(value);
+    nativePreviewLastRectSignature = '';
+    return { scale: value };
+  });
+
   ipcMain.handle('ping', () => {
     console.log('[IPC] ping received from renderer!');
     return 'pong';
@@ -5270,8 +5284,14 @@ function registerIpcHandlers() {
   // Composite NDI output — pump the native renderer's full-frame
   // composite over NDI (macOS IOSurface CPU tap; see startNdiOutputPump).
   ipcMain.handle('ndi_output_start', (_, args) => {
-    try { return startNdiOutputPump(args || {}); }
-    catch (err) { return { ok: false, active: false, reason: String(err?.message || err) }; }
+    try {
+      const result = startNdiOutputPump(args || {});
+      if (!result.ok) ndiOutputPumpLastError = result.reason || 'Could not start NDI output';
+      return result;
+    } catch (err) {
+      ndiOutputPumpLastError = String(err?.message || err);
+      return { ok: false, active: false, reason: ndiOutputPumpLastError };
+    }
   });
   ipcMain.handle('ndi_output_stop', () => {
     try { stopNdiOutputPump(); return { ok: true, active: false }; }
@@ -7601,7 +7621,7 @@ function registerIpcHandlers() {
       for (const monitor of monitors) {
         const name = typeof monitor?.name === 'string' ? monitor.name : '';
         if (!name || !monitor?.rect) continue;
-        addon.monitorAttach(name, handle, monitor.rect);
+        addon.monitorAttach(name, handle, nativePreviewRectToDevicePixels(normalizeNativePreviewRect(monitor.rect), mainWindow.webContents.getZoomFactor()));
         deckMonitorAttachedNames.add(name);
       }
       startDeckMonitorPump();

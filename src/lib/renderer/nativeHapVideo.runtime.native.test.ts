@@ -122,6 +122,13 @@ testSuite('HAP compressed textures through native output', () => {
         { type: 'set_media_source_playback', source_id: 'raw-hap', uri, source_type: 'video', time_seconds: 0, paused: true, decode_width:64, decode_height:64, duration_seconds:1, seek_generation:1 },
       ]);
       await waitUntil(() => rpc.send('status'), s => s.native_video_sessions.some((v:any) => v.source_id==='raw-hap' && v.frames_presented > 0), 'video first frame');
+      const cropPreview = await rpc.send('frame_snapshot', {source_id:'raw-hap',max_dim:64,include_pixels:true});
+      expect([cropPreview.width,cropPreview.height]).toEqual([64,64]);
+      const cropPixels = Buffer.from(cropPreview.rgba_b64,'base64');
+      for (const y of [16,48]) for (const x of [8,32,56]) for (let c=0;c<4;c++) {
+        const offset=(y*64+x)*4+c;
+        expect(Math.abs(cropPixels[offset]-reference[offset])).toBeLessThanOrEqual(10);
+      }
       const graph = buildNativeEffectPassChainGraph({ sourceId:'raw-hap', targetSourceId:'effect-pass:alpha', effects:[{effect:'invert',amount:1,mix:1}], width:64,height:64,time:0,frameDelta:1/60,frameIndex:1,seq:1 });
       await rpc.commands([
         {type:'bind_media_source',layer_id:'alpha',source_id:'effect-pass:alpha',uri:'native-effect-pass://alpha',source_type:'image',effect_input_source_id:'raw-hap'},
@@ -238,6 +245,8 @@ testSuite('HAP compressed textures through native output', () => {
       const reverseSession=looped.native_video_sessions.find((v:any)=>v.source_id===source);
       expect(reverseSession.source_time_seconds).toBeGreaterThanOrEqual(.2-1e-6);
       expect(reverseSession.source_time_seconds).toBeLessThan(.8);
+      await rpc.commands([{type:'set_media_source_playback',...playback(.3,9),playback_rate:1,trim_start:.2,trim_end:.8,paused:false}]);
+      await waitUntil(()=>rpc.send('status'),s=>s.native_video_sessions.some((v:any)=>v.source_id===source&&v.seek_generation===9&&v.frames_presented>=8&&v.source_time_seconds>.5),'forward HAP after reverse');
       const status=await rpc.send('status');const session=status.native_video_sessions.find((s:any)=>s.source_id===source);
       expect(session.backend).toBe('hap-texture');expect(session.source_frame_step_exact).toBe(true);
       expect(status.native_video_hap_frames).toBeGreaterThan(0);expect(status.native_video_software_frames).toBe(0);
@@ -245,6 +254,36 @@ testSuite('HAP compressed textures through native output', () => {
       expect(status.source_frame_last_upload_transport).toBe('native-video-hap-bc');
     } finally {await rpc.close();}
   },30000);
+  it('previews full image and shader sources independently of the mapped output', async () => {
+    const rpc=core();
+    try {
+      await rpc.send('start',{config:{backend:platform.rendererBackend,width:64,height:64,source_frame_size:256,target_fps:30}});
+      const pixels=Buffer.alloc(64*64*4);
+      for(let y=0;y<64;y++) for(let x=0;x<64;x++) {
+        const offset=(y*64+x)*4; pixels[offset]=x<32?255:0; pixels[offset+1]=x<32?0:255;
+        pixels[offset+3]=y<32?255:128;
+      }
+      await rpc.commands([{type:'upload_source_frame',source_id:'crop-image',width:64,height:64,seq:1,rgba_b64:pixels.toString('base64')}]);
+      const image=await rpc.send('frame_snapshot',{source_id:'crop-image',max_dim:64});
+      const actual=Buffer.from(image.rgba_b64,'base64');
+      for(const y of [16,48]) for(const x of [16,48]) for(let c=0;c<4;c++) {
+        const offset=(y*64+x)*4+c;expect(Math.abs(actual[offset]-pixels[offset])).toBeLessThanOrEqual(2);
+      }
+      await rpc.commands([
+        {type:'upsert_layer',layer_id:'crop-shader',opacity:1,corners:{topLeft:{x:0,y:1},topRight:{x:.25,y:1},bottomRight:{x:.25,y:0},bottomLeft:{x:0,y:0}}},
+        {type:'precompile_shader',shader_id:'crop-gradient',stage:'pixel',entry:'main',source:'/*{"ISFVSN":"2","INPUTS":[]}*/ void main(){gl_FragColor=vec4(isf_FragNormCoord.x,0.25,0.75,1.0);}'},
+        {type:'bind_isf_shader',layer_id:'crop-shader',shader_id:'crop-gradient'},
+        {type:'render_isf_to_layer',layer_id:'crop-shader'}
+      ]);
+      const shader=await rpc.send('frame_snapshot',{source_id:'browser-shader-id',layer_id:'crop-shader',max_dim:64});
+      const shaderPixels=Buffer.from(shader.rgba_b64,'base64');
+      expect(shaderPixels[(32*64+8)*4]).toBeLessThan(60);
+      expect(shaderPixels[(32*64+56)*4]).toBeGreaterThan(200);
+      expect(shaderPixels[(32*64+56)*4+2]).toBeGreaterThan(180);
+      expect(shader.width).toBe(64);
+    } finally { await rpc.close(); }
+  });
+
   it('reverses hardware H.264 across decoded windows, seeks and resumes forward',async()=>{
     const rpc=core();const {uri}=fixtures.get('h264')!;
     const playback=(time:number,rate:number,generation:number)=>({type:'set_media_source_playback',source_id:'reverse-h264',uri,source_type:'video',time_seconds:time,decode_width:64,decode_height:64,playback_rate:rate,loop_enabled:false,duration_seconds:1,trim_start:0,trim_end:1,seek_generation:generation,seq:generation,paused:false});

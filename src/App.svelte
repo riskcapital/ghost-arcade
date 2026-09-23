@@ -49,7 +49,11 @@
     catch { return false; }
   };
   import VJModePanel from './lib/components/VJModePanel.svelte';
-  import StageDesignerPanel from './lib/components/StageDesignerPanel.svelte';
+  import VJStageEditPanel from './lib/components/VJStageEditPanel.svelte';
+  import VJStageInspector from './lib/components/VJStageInspector.svelte';
+  import StageEditorHeader from './lib/components/StageEditorHeader.svelte';
+  import { stageScreenGuidePath } from './lib/utils/stageScreenGuide';
+  import { vjStageEdit } from './lib/stores/vjStageEdit';
   import ProjectionSimulatorPanel from './lib/components/ProjectionSimulatorPanel.svelte';
   import OfflineRenderModal from './lib/components/OfflineRenderModal.svelte';
   import VideoConverterModal from './lib/components/VideoConverterModal.svelte';
@@ -119,7 +123,8 @@
   import { initLicense, destroyLicense } from './lib/stores/license';
   import { startUpdateChecker, stopUpdateChecker } from './lib/stores/updateChecker';
   import { startAutoEngine, stopAutoEngine } from './lib/audio/autoEngine';
-  import { linesStore } from './lib/stores/lines';
+  import { linesStore, linesDrawingModeForTool } from './lib/stores/lines';
+  import { startInterfaceScale } from './lib/stores/interfaceScale';
   import { loadShadersFromServer, loadCloudShadersFromDisk, shaderLibrary } from './lib/stores/shaderLibrary';
   import { mediaTrayShaders } from './lib/stores/mediaTrayShaders';
   import {
@@ -541,7 +546,8 @@
   // Metal underlay; the editor DOM must not bleed through that hole.
   let vjNativeUnderlayActive = false;
   $: nativePrimaryRenderer = isDesktopApp && NATIVE_ENGINE_ONLY;
-  $: vjNativeUnderlayActive = nativePrimaryRenderer && $vjClipLauncher.isOpen;
+  $: vjNativeUnderlayActive = nativePrimaryRenderer && $vjClipLauncher.isOpen && !$vjStageEdit;
+  $: if ($vjStageEdit && $vjClipLauncher.isOpen && !$vjClipLauncher.stageMode) vjStageEdit.set(false);
   $: nativePreviewGlassActive = !!(
     nativePrimaryRenderer
     && $nativeRendererRuntime.running
@@ -1247,6 +1253,7 @@
 
   onMount(() => {
     let appMounted = true;
+    const stopInterfaceScale = startInterfaceScale();
     // Sim windows report where they settle so the assignment follows a drag.
     void refreshDisplays();
     const offSimMoved = (window as any).electronAPI?.on?.('sim-window-moved', handleSimWindowMoved);
@@ -1543,8 +1550,8 @@
     }
 
     // Listen for drawing mode changes from LinesPanel
-    const handleLinesModeChange = (e: CustomEvent<{ mode: 'none' | 'freehand' | 'pointClick' }>) => {
-      linesDrawingMode = e.detail.mode;
+    const handleLinesModeChange = (e: CustomEvent<{ mode: unknown }>) => {
+      linesDrawingMode = linesDrawingModeForTool(e.detail.mode);
       linesDrawingPoints = [];
       isLinesDrawing = false;
     };
@@ -1912,6 +1919,7 @@
 
     return () => {
       appMounted = false;
+      stopInterfaceScale();
       setShowTransitionSink(null);
       compositionTransition.clear();
       unsubscribeSettings();
@@ -6096,6 +6104,7 @@
       class="toolbar"
       use:fitToolbar
       class:vj-native-hidden={vjNativeUnderlayActive}
+      class:stage-edit-toolbar-hidden={$vjStageEdit}
       class:frameless-drag={isDesktopApp && !isMac}
       onmousedown={(event) => {
         // Caption drag: empty toolbar space moves the window. The main process
@@ -6492,13 +6501,11 @@
           VJ
         </button>
 
-        <!-- Stage Designer Button — opens the SVG-import / polygon-slice
-             projection-mapping workspace. Mutually exclusive with VJ
-             mode via the activeWorkspace flag in the workspace store. -->
+        <!-- Mapping and VJ open the same live stage screen editor. -->
         <button
           class="stage-btn stage-edit-btn"
-          class:active={$workspace === 'stage'}
-          onclick={() => workspace.openStage()}
+          class:active={$vjStageEdit}
+          onclick={() => vjStageEdit.set(true)}
           title="Open Stage Editor"
           aria-label="Open Stage Editor"
         >
@@ -6662,6 +6669,10 @@
       </div>
     </header>
 
+    {#if $vjStageEdit}
+      <StageEditorHeader onUndo={handleUndo} onRedo={handleRedo} onFit={resetViewportTransform} zoom={viewportZoom} />
+    {/if}
+
     <!-- Main Content -->
     <main
       class="main-content"
@@ -6676,7 +6687,11 @@
            LeftSidebar swaps LayerPanel ↔ ScreenPanel based on the
            active tab (uiState.leftSidebarTab). Screens tab also
            enables the warp-handle overlay in the editor viewport. -->
-      <LeftSidebar />
+      {#if $vjStageEdit}
+        <VJStageEditPanel />
+      {:else}
+        <LeftSidebar />
+      {/if}
 
       <!-- Viewport with canvas and warp handles -->
       <div
@@ -6746,6 +6761,22 @@
           >
             <GridOverlay />
           </div>
+        {/if}
+        {#if $vjStageEdit}
+          <svg class="vj-stage-guides" style="left: {canvasOffsetX}px; top: {canvasOffsetY}px; width: {canvasWidth}px; height: {canvasHeight}px;" viewBox={`0 0 ${canvasWidth} ${canvasHeight}`} aria-label="Live VJ screen outlines">
+            <defs><pattern id="live-stage-grid" width={canvasWidth / 8} height={canvasHeight / 4} patternUnits="userSpaceOnUse"><path d={`M ${canvasWidth / 8} 0 L 0 0 0 ${canvasHeight / 4}`} fill="none" stroke="#6e819e" stroke-width="0.6" opacity="0.28" /></pattern></defs>
+            <rect width={canvasWidth} height={canvasHeight} fill="url(#live-stage-grid)" pointer-events="none" />
+            {#each $project.layers.filter(layer => layer.type === 'screen' && layer.visible) as screen, index (screen.id)}
+              <path
+                d={stageScreenGuidePath(screen, canvasWidth, canvasHeight)}
+                class:selected={screen.id === $project.selectedLayerId}
+                onclick={(event) => { event.stopPropagation(); project.selectLayer(screen.id); }}
+                role="button"
+                aria-label={`Select ${screen.name}`}
+              />
+              <text x={screen.corners.topLeft.x * canvasWidth + 8} y={(1 - screen.corners.topLeft.y) * canvasHeight - 9} class="vj-stage-screen-label">{index + 1} · {screen.name}</text>
+            {/each}
+          </svg>
         {/if}
         <!-- Screen warp overlay (Screens tab only).
              Mounted at the same offset as the layer warp handles so
@@ -6960,7 +6991,12 @@
                     <div xmlns="http://www.w3.org/1999/xhtml" style="width: 100%; height: 100%;">
                       <button
                         class="warp-mode-btn"
-                        onclick={() => { warpModeEnabled = !warpModeEnabled; }}
+                        onmousedown={(e) => e.stopPropagation()}
+                        onclick={(e) => {
+                          e.stopPropagation();
+                          warpModeEnabled = !warpModeEnabled;
+                          window.dispatchEvent(new CustomEvent('lines-mode-change', { detail: { mode: 'select' } }));
+                        }}
                         style="
                           background: {warpModeEnabled ? 'rgba(0, 255, 255, 0.3)' : 'rgba(60, 60, 60, 0.9)'};
                           border: 1px solid {warpModeEnabled ? '#00ffff' : '#666'};
@@ -7405,6 +7441,9 @@
       </div>
 
       <!-- Right sidebar panel (always present to keep viewport size stable) -->
+      {#if $vjStageEdit}
+        <VJStageInspector />
+      {:else}
       <div class="right-sidebar">
         {#if $selectedLinesLayer}
           <LinesPanel />
@@ -7481,6 +7520,7 @@
           {/if}
         {/if}
       </div>
+      {/if}
 
     </main>
 
@@ -7513,7 +7553,7 @@
     <ShowTimeline />
 
     <!-- Bottom dock pills (Presets / Sequencer / Keyframes) — coral-active. -->
-    {#if !vjNativeUnderlayActive}
+    {#if !vjNativeUnderlayActive && !$vjStageEdit}
       <BottomDock
         presetsOpen={presetTrayOpen}
         onTogglePresets={() => presetTrayOpen = !presetTrayOpen}
@@ -7541,13 +7581,7 @@
       </button>
     {/if}
 
-    <!-- Stage Designer overlay (fullscreen, z=999 — same pattern as
-         VJModePanel). Mutual exclusion guaranteed by activeWorkspace
-         setter in workspace.ts. -->
-    {#if $workspace === 'stage'}
-      <StageDesignerPanel />
-    {/if}
-
+    <!-- Projection simulator remains a separate workspace. -->
     {#if $workspace === 'projection-sim'}
       <!-- Native mode: the browser canvas is a cleared underlay, so the sim
            projects the composite mirror instead — the true native output,
@@ -7615,7 +7649,7 @@
     <MediaPipeLearnHUD />
 
     <!-- Footer / Status bar -->
-    <footer class="statusbar">
+    <footer class="statusbar" class:stage-edit-status-hidden={$vjStageEdit}>
       <span>Project: {$project.name}</span>
       <span>Layers: {$project.layers.length}</span>
       {#if $selectedLayer}
@@ -9636,6 +9670,12 @@
        geometry publishing keep running while VJ mode owns the screen. */
     visibility: hidden;
   }
+  .toolbar.stage-edit-toolbar-hidden { display: none !important; }
+  .statusbar.stage-edit-status-hidden { display: none !important; }
+  .vj-stage-guides { position: absolute; z-index: 11; overflow: visible; pointer-events: none; }
+  .vj-stage-guides path { fill: rgba(35, 75, 125, 0.025); stroke: #7fb4f9; stroke-width: 1.5; stroke-dasharray: 7 5; vector-effect: non-scaling-stroke; pointer-events: visiblePainted; cursor: pointer; }
+  .vj-stage-guides path.selected { stroke: #e6f2ff; stroke-width: 2; stroke-dasharray: none; }
+  .vj-stage-screen-label { fill: #c6dbf7; font: 600 11px Inter, system-ui, sans-serif; paint-order: stroke; stroke: #0d1119; stroke-width: 3px; pointer-events: none; }
 
   .main-content {
     flex: 1;
@@ -10344,6 +10384,7 @@
     overflow-y: auto;
     overflow-x: hidden;
   }
+  .right-sidebar.stage-edit-hidden { display: none; }
 
   /* ─── Close Confirmation Modal ─── */
   .close-modal-backdrop {

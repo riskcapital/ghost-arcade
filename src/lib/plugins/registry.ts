@@ -698,31 +698,46 @@ registerPlugin({
   },
 });
 
-// ─── HandFX (MediaPipe POC) ────────────────────────────────────────────
-// Original hand-gesture visualizer driven by the shared MediaPipe worker.
-// 5 modes; the headline "Panel" mode pairs with the layer's Difference
-// blend mode to invert colors of layers beneath the rectangle between
-// the user's palms.
+// ─── HandFX — GPU hand performance instrument ─────────────────────────
 registerPlugin({
   id: 'handfx',
   name: 'HandFX',
-  description: 'Conduct visuals with your hands — paint, ink, pinch spray, neon skeleton, blend-mode panel',
+  description: 'Conduct energy bridges, orbital fields, laser fans and living particles with your hands. Rehearse without a camera; perform with audio-reactive color and light.',
   category: 'Generators',
-  version: '0.2.0',
+  version: '0.3.0',
   author: 'Ghost Arcade (original) · MediaPipe by Google (Apache-2.0)',
   tier: 'free',
   icon: '✋',
   previewCSS: 'radial-gradient(circle at 30% 50%, #FF6B6B 0%, transparent 30%), radial-gradient(circle at 70% 50%, #ff80c0 0%, transparent 30%), #0a0a10',
   effectType: 'handfx',
   paramDefs: [
-    { name: 'Mode', param: 'handfxMode', type: 'select', default: 'trails',
+    { name: 'Mode', param: 'handfxMode', type: 'select', default: 'bridge',
       options: [
+        { value: 'bridge', label: 'Energy Bridge' },
+        { value: 'orbit', label: 'Orbital Field' },
+        { value: 'lasers', label: 'Laser Fan' },
         { value: 'trails',   label: 'Paint (velocity brushstrokes + sparks)' },
         { value: 'aurora',   label: 'Ink (drifting smoke blobs)' },
         { value: 'bursts',   label: 'Pinch Spray (continuous from pinch)' },
         { value: 'skeleton', label: 'Neon Skeleton' },
         { value: 'panel',    label: 'Panel (set blend → Difference to invert)' },
       ]},
+    { name: 'Input', param: 'handfxInput', type: 'select', default: 'live', options: [
+      { value: 'live', label: 'Live hands' }, { value: 'demo', label: 'Rehearsal · no camera' },
+    ]},
+    { name: 'Palette', param: 'handfxPalette', type: 'select', default: 'ocean', options: [
+      { value: 'ocean', label: 'Deep Ocean' }, { value: 'ember', label: 'Ember Gold' },
+      { value: 'orchid', label: 'Ultraviolet' }, { value: 'acid', label: 'Acid Green' },
+      { value: 'white', label: 'Pure Light' }, { value: 'coral', label: 'Coral' },
+      { value: 'cyan', label: 'Ice' }, { value: 'rainbow', label: 'Spectrum' },
+      { value: 'legacy', label: 'Original mode colors' },
+    ]},
+    { name: 'Brightness', param: 'handfxBrightness', type: 'slider', min: 0, max: 2, step: 0.01, default: 1 },
+    { name: 'Audio response', param: 'handfxAudioResponse', type: 'slider', min: 0, max: 2, step: 0.01, default: 0.65 },
+    { name: 'Field size', param: 'handfxScale', type: 'slider', min: 0.3, max: 3, step: 0.01, default: 1,
+      showWhen: { param: 'handfxMode', values: ['bridge','orbit','lasers'] } },
+    { name: 'Strands / rings', param: 'handfxDetail', type: 'slider', min: 1, max: 8, step: 1, default: 5,
+      showWhen: { param: 'handfxMode', values: ['bridge','orbit'] } },
     { name: 'Camera On', param: 'handfxCameraOn', type: 'toggle', default: false },
     { name: 'Smoothing', param: 'handfxSmoothing', type: 'slider', min: 0, max: 1, step: 0.01, default: 0.15 },
     { name: 'Predict Ahead (ms)', param: 'handfxPredictMs', type: 'slider', min: 0, max: 40, step: 1, default: 18 },
@@ -746,8 +761,8 @@ registerPlugin({
       showWhen: { param: 'handfxMode', values: ['trails'] } },
     { name: 'Linger', param: 'handfxTrailFade', type: 'slider', min: 0.9, max: 0.999, step: 0.001, default: 0.985,
       showWhen: { param: 'handfxMode', values: ['trails'] } },
-    { name: 'Brush Thickness', param: 'handfxTrailThickness', type: 'slider', min: 1, max: 8, step: 0.5, default: 3,
-      showWhen: { param: 'handfxMode', values: ['trails'] } },
+    { name: 'Stroke width', param: 'handfxTrailThickness', type: 'slider', min: 1, max: 8, step: 0.5, default: 3,
+      showWhen: { param: 'handfxMode', values: ['trails', 'bridge', 'orbit', 'lasers'] } },
     { name: 'Velocity → Width', param: 'handfxTrailVelocityScale', type: 'slider', min: 0, max: 3, step: 0.05, default: 1.5,
       showWhen: { param: 'handfxMode', values: ['trails'] } },
     { name: 'Spark Density', param: 'handfxTrailSparkDensity', type: 'slider', min: 0, max: 2, step: 0.05, default: 0.5,
@@ -790,7 +805,13 @@ registerPlugin({
       showWhen: { param: 'handfxMode', values: ['bursts'] } },
   ],
   defaultSourceParams: {
-    handfxMode: 'trails',
+    handfxMode: 'bridge',
+    handfxInput: 'live',
+    handfxPalette: 'ocean',
+    handfxBrightness: 1,
+    handfxScale: 1,
+    handfxDetail: 5,
+    handfxAudioResponse: 0.65,
     handfxCameraOn: false,
     handfxSmoothing: 0.15,
     handfxPredictMs: 18,

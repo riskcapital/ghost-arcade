@@ -3071,6 +3071,7 @@ struct RenderState {
     /// (composite mirror: projection sim, WLED sampling). Recreated only
     /// when the requested size changes.
     snapshot_preview: Option<(wgpu::Texture, TextureBlitter, u32, u32)>,
+    source_crop_preview: Option<(wgpu::Texture, wgpu::Texture, TextureBlitter, u32, u32, u32, u32)>,
     last_frame_metrics: Option<SnapshotMetrics>,
     bind_group: wgpu::BindGroup,
     start_time: Instant,
@@ -11395,6 +11396,21 @@ impl App {
     }
 
     fn frame_snapshot(&mut self, params: &Value) -> Result<Value, String> {
+        if params.get("source_id").is_some() || params.get("layer_id").is_some() {
+            let layer = string_at(params, &["layer_id"]).and_then(|id| self.scene_layers.get(&id));
+            let source_id = layer.and_then(|layer| layer.shader_source_id.clone())
+                .or_else(|| string_at(params, &["source_id"]))
+                .or_else(|| layer.and_then(|layer| layer.source_id.clone()))
+                .ok_or("Source preview is not ready")?;
+            let slot = *self.source_frame_slots.get(&source_id).ok_or("Source preview is not ready")?;
+            let frame = self.source_frames.get(&source_id).ok_or("Source preview is not ready")?;
+            let rect = frame.source_rect;
+            let max_dim = number_at(params, &["max_dim"]).unwrap_or(640.0).clamp(64.0, 1024.0) as u32;
+            let renderer = self.renderer.as_mut().ok_or("Native renderer is unavailable")?;
+            let snapshot = renderer.source_crop_snapshot(slot, rect, max_dim)?;
+            self.note_frame_snapshot(&snapshot);
+            return Ok(snapshot);
+        }
         let include_pixels = bool_at(params, &["include_pixels"]).unwrap_or(false);
         let max_dim = number_at(params, &["max_dim"])
             .map(|value| value.round().clamp(0.0, 4096.0) as u32)
@@ -18111,6 +18127,7 @@ impl RenderState {
             snapshot_texture,
             snapshot_view,
             snapshot_preview: None,
+            source_crop_preview: None,
             last_frame_metrics: None,
             bind_group,
             start_time: Instant::now(),
@@ -21288,6 +21305,43 @@ impl RenderState {
             *h,
             "Ghost Snapshot Preview",
         )
+    }
+
+    // Read only the raw source, before layer crop/warp/FX. Reuse bounded
+    // GPU targets and downsample before the modal's occasional readback.
+    fn source_crop_snapshot(&mut self, slot: usize, rect: [f32; 4], max_dim: u32) -> Result<Value, String> {
+        let size = self.source_frame_size as u32;
+        let x = (rect[0] * size as f32).round().max(0.0) as u32;
+        let y = (rect[1] * size as f32).round().max(0.0) as u32;
+        let x = x.min(size - 1);
+        let y = y.min(size - 1);
+        let width = ((rect[2] * size as f32).round() as u32).clamp(1, size - x);
+        let height = ((rect[3] * size as f32).round() as u32).clamp(1, size - y);
+        let scale = (max_dim as f32 / width.max(height) as f32).min(1.0);
+        let w = (width as f32 * scale).round().max(1.0) as u32;
+        let h = (height as f32 * scale).round().max(1.0) as u32;
+        if !matches!(&self.source_crop_preview, Some((raw, _, _, sw, sh, pw, ph)) if (*sw,*sh,*pw,*ph)==(width,height,w,h) && raw.format() == self.source_frame_format) {
+            let make = |label, width, height, format, usage| self.device.create_texture(&wgpu::TextureDescriptor {
+                label: Some(label), size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
+                mip_level_count: 1, sample_count: 1, dimension: wgpu::TextureDimension::D2,
+                format, usage, view_formats: &[],
+            });
+            let raw = make("Crop source", width, height, self.source_frame_format,
+                wgpu::TextureUsages::COPY_DST | wgpu::TextureUsages::TEXTURE_BINDING);
+            let target = make("Crop preview", w, h, wgpu::TextureFormat::Rgba8Unorm,
+                wgpu::TextureUsages::RENDER_ATTACHMENT | wgpu::TextureUsages::COPY_SRC);
+            let blitter = TextureBlitterBuilder::new(&self.device, wgpu::TextureFormat::Rgba8Unorm).build();
+            self.source_crop_preview = Some((raw, target, blitter, width, height, w, h));
+        }
+        let (raw, target, blitter, _, _, _, _) = self.source_crop_preview.as_ref().unwrap();
+        let mut encoder = self.device.create_command_encoder(&wgpu::CommandEncoderDescriptor { label: Some("Crop preview") });
+        encoder.copy_texture_to_texture(
+            wgpu::TexelCopyTextureInfo { texture: &self.source_frame_texture, mip_level: 0,
+                origin: wgpu::Origin3d { x, y, z: slot as u32 }, aspect: wgpu::TextureAspect::All },
+            raw.as_image_copy(), wgpu::Extent3d { width, height, depth_or_array_layers: 1 });
+        blitter.copy(&self.device, &mut encoder, &raw.create_view(&Default::default()), &target.create_view(&Default::default()));
+        self.queue.submit(Some(encoder.finish()));
+        Ok(read_texture_to_frame(&self.device, &self.queue, target, wgpu::TextureFormat::Rgba8Unorm, w, h, "Crop preview")?.to_json(true))
     }
 
     fn read_frame_snapshot(&mut self) -> Result<FrameSnapshotReadback, String> {

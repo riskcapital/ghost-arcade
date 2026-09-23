@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import type { SignalFrame } from '../mediapipe/signals';
 import {
   HAND_FX_PARTICLE_COUNT,
   buildNativeHandInputUpdate,
@@ -273,4 +274,29 @@ describe('native plugin graphs', () => {
     ]);
     expect(update.buffers.some((buffer) => buffer.id.endsWith(':particles'))).toBe(false);
   });
+  it('keeps hand identity when the left hand leaves, and honors camera off', () => {
+    const options = { kind: 'handfx' as const, sourceId: 'hand-test', params: { handfxSmoothing: 1, handfxPredictMs: 0 },
+      width: 320, height: 180, time: 1, frameDelta: 1 / 60, frameIndex: 60, audio };
+    const hand = (handedness: string, x: number) => ({ handedness, landmarks: Array.from({ length: 21 }, () => ({ x, y: 0.5, z: 0 })) });
+    const frame: SignalFrame = { timestamp: 1, values: {}, confidence: {}, gestures: { 'gesture.right': '', 'gesture.left': '' }, hands: [hand('Left', 0.5), hand('Right', 0.51)] };
+    const first = buildNativePluginGraph({ ...options, handFrame: frame });
+    const next = buildNativePluginGraph({ ...options, state: first.state, handFrame: { ...frame, hands: [hand('Right', 0.51)] } });
+    expect(next.state.handPoints![0]).toBeCloseTo(0.51, 6);
+    const off = buildNativePluginGraph({ ...options, params: { handfxCameraOn: false }, handFrame: frame });
+    expect(off.state.handSides).toEqual([]);
+  });
+
+  it('rehearses with moving hands and updates audio without resetting particles', () => {
+    const options = { sourceId: 'hand-test', params: { handfxMode: 'bridge', handfxInput: 'demo', handfxCameraOn: false, handfxAudioResponse: 1 },
+      width: 320, height: 180, time: 1, frameDelta: 1 / 60, frameIndex: 60, audio };
+    const first = buildNativeHandInputUpdate(options);
+    const next = buildNativeHandInputUpdate({ ...options, time: 2, state: first.state, audio: { ...audio, active: false } });
+    const uniform = (update: typeof first) => new Float32Array(Uint8Array.from(atob(update.buffers[0].initialB64), c => c.charCodeAt(0)).buffer);
+    expect(first.state.handSides).toEqual(['Left', 'Right']);
+    expect(next.buffers[1].initialB64).not.toEqual(first.buffers[1].initialB64);
+    expect(uniform(first)[35]).toBeCloseTo(0.9);
+    expect(uniform(next)[35]).toBe(0);
+    expect(next.buffers).toHaveLength(2);
+  });
+
 });

@@ -1711,7 +1711,7 @@ export async function getNativeRendererSnapshot() {
 
 export async function getNativeRendererFrameSnapshot(
   includePixels = false,
-  options: { time?: number; frame_index?: number } = {},
+  options: { time?: number; frame_index?: number; source_id?: string; layer_id?: string; max_dim?: number } = {},
 ) {
   return invoke<RendererFrameSnapshot>('native_renderer_get_frame_snapshot', {
     include_pixels: includePixels,

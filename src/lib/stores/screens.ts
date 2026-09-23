@@ -24,6 +24,7 @@
  */
 
 import { derived, get, writable } from 'svelte/store';
+import { showToast } from './errorToast';
 import {
   settings,
   createDefaultSlice,
@@ -281,6 +282,8 @@ export function hydrateScreensFromProject(
 // restart the pump under the new name (outputStart is idempotent for
 // an unchanged name). No-ops outside Electron (bridge absent).
 let lastNdiOutputName: string | null = null;
+let ndiOutputChange = 0;
+let ndiOutputQueue: Promise<void> = Promise.resolve();
 if (typeof window !== 'undefined') {
   screens.subscribe((slices) => {
     const bridge = (window as unknown as {
@@ -296,10 +299,22 @@ if (typeof window !== 'undefined') {
     const wanted = ndiSlice ? (ndiSlice.spoutName || 'Ghost Arcade') : null;
     if (wanted === lastNdiOutputName) return;
     lastNdiOutputName = wanted;
-    if (wanted) {
-      void bridge.outputStart({ name: wanted }).catch(() => {});
-    } else {
-      void bridge.outputStop?.().catch(() => {});
-    }
+    const change = ++ndiOutputChange;
+    // Serialize start/stop so a slow start cannot resurrect a removed sender.
+    ndiOutputQueue = ndiOutputQueue.then(async () => {
+      if (change !== ndiOutputChange) return;
+      try {
+        const result = wanted
+          ? await bridge.outputStart!({ name: wanted })
+          : await bridge.outputStop?.();
+        if (change !== ndiOutputChange) return;
+        const status = result as { ok?: boolean; reason?: string; error?: string } | undefined;
+        if (status?.ok === false) {
+          showToast(`NDI output: ${status.reason || status.error || 'Could not change output state.'}`, 'error');
+        }
+      } catch (error) {
+        if (change === ndiOutputChange) showToast(`NDI output: ${error instanceof Error ? error.message : String(error)}`, 'error');
+      }
+    });
   });
 }

@@ -1,4 +1,6 @@
 <script lang="ts">
+  import NdiOutputSettings from './NdiOutputSettings.svelte';
+  import { interfaceScale } from '../stores/interfaceScale';
   import { onMount, onDestroy } from 'svelte';
   import { tooltipsEnabled } from '../help/preferences';
   import { NATIVE_ENGINE_ONLY, settings, getSupportedFormats, COLOR_SCHEMES, CLAUDE_MODELS, GEMINI_MODELS, VEO_MODELS, LUMA_MODELS, DEFAULT_LAYER_SHADERS, type RecordingSettings, type OutputSettings, type ColorSchemeId, type FluidQualityMode, type ShaderQualityMode, type GpuInstrumentQualityMode, type ShaderAIProvider, type VideoAIProvider } from '../stores/settings';
@@ -330,7 +332,7 @@
   //     was demoted to a power-user no-op.
   type SectionId =
     | 'app:appearance' | 'app:updates'
-    | 'output:display'
+    | 'output:display' | 'output:ndi'
     | 'performance:gpu' | 'performance:render-quality' | 'performance:video-decoding'
     | 'recording'
     | 'integrations:midi' | 'integrations:osc' | 'integrations:keyboard' | 'integrations:wled' | 'integrations:mediapipe'
@@ -347,6 +349,7 @@
       // rotation, blackout, plus Canvas (size/aspect) and Layers
       // (default layer behavior) which used to live under "Project".
       { id: 'output:display', label: 'Display' },
+      { id: 'output:ndi', label: 'NDI Output' },
     ]},
     { id: 'performance', label: 'Performance', sections: [
       { id: 'performance:gpu', label: 'Renderer' },
@@ -755,9 +758,26 @@
         {#key selectedSection}
         <svelte:boundary onerror={handleSectionError}>
         <!-- Appearance Section -->
+        {#if selectedSection === 'output:ndi'}
+          <section class="settings-section"><h3>NDI Output</h3><NdiOutputSettings /></section>
+        {/if}
+
         {#if selectedSection === 'app:appearance'}
         <section class="settings-section">
           <h3>Appearance</h3>
+          {#if isDesktopApp}
+          <div class="setting-row">
+            <div class="setting-label">
+              <label class="label-text" for="interface-scale">Interface size</label>
+              <span class="label-hint">Resize controls and text for your display. Projector output resolution stays unchanged.</span>
+            </div>
+            <select id="interface-scale" value={$interfaceScale} onchange={e => interfaceScale.set(Number(e.currentTarget.value))}>
+              {#each [0.75, 0.9, 1, 1.1, 1.25, 1.5, 1.75, 2] as scale}
+                <option value={scale}>{Math.round(scale * 100)}%{scale === 1 ? ' · Default' : ''}</option>
+              {/each}
+            </select>
+          </div>
+          {/if}
           <div class="setting-row">
             <div class="setting-label">
               <label class="label-text" for="tooltips-enabled">Tooltips</label>
