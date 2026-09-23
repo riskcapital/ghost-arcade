@@ -54,6 +54,14 @@ struct Uniforms {
   mwarp_c1: vec4<f32>,
   swarp_mesh: array<vec4<f32>, 128>,
   mwarp_mesh: array<vec4<f32>, 128>,
+  // Per-screen polygon masks, cut from the projector's frame after the
+  // crop and warp have been resolved (slice mode only):
+  //   smask      = (mask count, keep count, _, _)
+  //   smask_info = per mask (point start, point count, feather, invert)
+  //   smask_pts  = vertices in screen UV, two per vec4, up to 8 x 32
+  smask: vec4<f32>,
+  smask_info: array<vec4<f32>, 8>,
+  smask_pts: array<vec4<f32>, 128>,
 }
 
 @group(0) @binding(0)
@@ -1062,6 +1070,64 @@ fn master_warp_uv(uv: vec2<f32>) -> vec3<f32> {
   return vec3<f32>(q, 0.0);
 }
 
+const SCREEN_MASK_MAX: i32 = 8;
+const SCREEN_MASK_POINTS_PER_MASK: i32 = 32;
+
+fn screen_mask_point(index: i32) -> vec2<f32> {
+  let slot = clamp(index / 2, 0, 127);
+  let packed = u.smask_pts[slot];
+  return select(packed.zw, packed.xy, (index % 2) == 0);
+}
+
+/// Coverage of one screen mask polygon at `uv`: 1 inside, ramping to 0 over
+/// `feather` UV units measured inward from the edge, 0 outside. Same ray
+/// crossing and edge distance test as native_polygon_mask.
+fn screen_mask_coverage(uv: vec2<f32>, mask_index: i32) -> f32 {
+  let info = u.smask_info[mask_index];
+  let start = i32(floor(info.x + 0.5));
+  let count = min(i32(floor(info.y + 0.5)), SCREEN_MASK_POINTS_PER_MASK);
+  if (count < 3) { return 0.0; }
+  var crossings = 0;
+  var min_edge_distance = 1000.0;
+  for (var i: i32 = 0; i < SCREEN_MASK_POINTS_PER_MASK; i = i + 1) {
+    if (i >= count) { break; }
+    let a = screen_mask_point(start + i);
+    let b = screen_mask_point(start + ((i + 1) % count));
+    let crosses = ((a.y <= uv.y && b.y > uv.y) || (a.y > uv.y && b.y <= uv.y)) &&
+      (uv.x < (b.x - a.x) * (uv.y - a.y) / max(abs(b.y - a.y), 0.000001) * sign(b.y - a.y) + a.x);
+    if (crosses) { crossings = crossings + 1; }
+    min_edge_distance = min(min_edge_distance, segment_distance(uv, a, b));
+  }
+  if ((crossings % 2) != 1) { return 0.0; }
+  let feather = max(0.0, info.z);
+  if (feather > 0.001) {
+    return smoothstep(0.0, feather, min_edge_distance);
+  }
+  return 1.0;
+}
+
+/// Per-screen mask stack, evaluated in the screen's content UV (after
+/// rotation, before the crop / warp sample) so it rides along with a
+/// re-pinned projector. Normal masks keep the union of their insides (no
+/// normal mask keeps everything); each inverted mask then cuts a hole.
+fn screen_mask_alpha(uv: vec2<f32>) -> f32 {
+  let count = min(i32(floor(u.smask.x + 0.5)), SCREEN_MASK_MAX);
+  if (count <= 0) { return 1.0; }
+  let keep_count = i32(floor(u.smask.y + 0.5));
+  var keep = select(1.0, 0.0, keep_count > 0);
+  var cut = 1.0;
+  for (var m: i32 = 0; m < SCREEN_MASK_MAX; m = m + 1) {
+    if (m >= count) { break; }
+    let coverage = screen_mask_coverage(uv, m);
+    if (u.smask_info[m].w > 0.5) {
+      cut = cut * (1.0 - coverage);
+    } else {
+      keep = max(keep, coverage);
+    }
+  }
+  return clamp(keep * cut, 0.0, 1.0);
+}
+
 /// Alignment test patterns, drawn OVER the composited frame on the output.
 /// Codes mirror TestPatternType: 1 grid, 2 crosshair, 3 colour bars,
 /// 4 white, 5 gradient, 6 checkerboard. Patterns draw in screen space
@@ -1866,7 +1932,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
   color = apply_composite_effects(color, canvas_uv, t);
   color = apply_test_pattern(color, in.uv, aspect);
   if (u.dome2.z > 0.5) {
-    color = slice_output_grade(color, in.uv) * dome_mask;
+    color = slice_output_grade(color, in.uv) * dome_mask * screen_mask_alpha(output_rotate_uv(in.uv));
   } else {
     color = output_color_grade(color);
     color = color * dome_mask * edge_blend_alpha(in.uv);
@@ -1893,7 +1959,7 @@ fn fs_output(in: VertexOut) -> @location(0) vec4<f32> {
   var color = textureSampleLevel(creative_master, creative_sampler, vec2<f32>(uv.x, 1.0 - uv.y), 0.0).rgb;
   color = apply_test_pattern(color, in.uv, aspect);
   if (u.dome2.z > 0.5) {
-    color = slice_output_grade(color, in.uv) * mask;
+    color = slice_output_grade(color, in.uv) * mask * screen_mask_alpha(output_rotate_uv(in.uv));
   } else {
     color = output_color_grade(color) * mask * edge_blend_alpha(in.uv);
   }
