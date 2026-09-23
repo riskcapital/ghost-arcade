@@ -44,6 +44,7 @@ let isNativeCoreOwnedGraphKind: typeof import('./nativeRendererSync').isNativeCo
 let isNativeExternallyQueuedGraphKind: typeof import('./nativeRendererSync').isNativeExternallyQueuedGraphKind;
 let nativeOutputCropY: typeof import('./nativeRendererSync').nativeOutputCropY;
 let nativeWarpCorners: typeof import('./nativeRendererSync').nativeWarpCorners;
+let nativeScreenMasks: typeof import('./nativeRendererSync').nativeScreenMasks;
 let nativeWarpMeshGrid: typeof import('./nativeRendererSync').nativeWarpMeshGrid;
 let isFullQuadStageShape: typeof import('./nativeRendererSync').isFullQuadStageShape;
 let expandCustomScreenRenderBounds: typeof import('./nativeRendererSync').expandCustomScreenRenderBounds;
@@ -105,6 +106,7 @@ beforeAll(async () => {
     isNativeExternallyQueuedGraphKind,
     nativeOutputCropY,
     nativeWarpCorners,
+    nativeScreenMasks,
     nativeWarpMeshGrid,
     isFullQuadStageShape,
     expandCustomScreenRenderBounds,
@@ -338,6 +340,23 @@ describe('native output stage coordinates', () => {
     expect(nativeOutputCropY(0, 0.5)).toBeCloseTo(0.5);
     expect(nativeOutputCropY(0.25, 0.25)).toBeCloseTo(0.5);
     expect(nativeOutputCropY(0, 1)).toBe(0);
+  });
+
+  it('sends screen masks y-up and leaves out the ones the core would ignore', () => {
+    const sent = nativeScreenMasks([
+      { enabled: true, invert: false, feather: 0.3, points: [{ x: 0.1, y: 0.25 }, { x: 0.9, y: 0.25 }, { x: 0.5, y: 0.75 }] },
+      { enabled: false, invert: true, feather: 0, points: [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }] },
+      { enabled: true, invert: true, feather: 2, points: [{ x: 0, y: 0 }, { x: 1, y: 0 }] },
+      { enabled: true, invert: true, feather: -1, points: [{ x: 0.5, y: 0.5 }, { x: 0.75, y: 0.5 }, { x: 0.5, y: 0.75 }] },
+    ]);
+    // A vertex drawn near the top of the screen (y 0.25) must land near the
+    // top of the projected image, which is y 0.75 in the core's frame.
+    expect(sent).toEqual([
+      { invert: false, feather: 0.3, points: [{ x: 0.1, y: 0.75 }, { x: 0.9, y: 0.75 }, { x: 0.5, y: 0.25 }] },
+      { invert: true, feather: 0, points: [{ x: 0.5, y: 0.5 }, { x: 0.75, y: 0.5 }, { x: 0.5, y: 0.25 }] },
+    ]);
+    expect(nativeScreenMasks(undefined)).toEqual([]);
+    expect(nativeScreenMasks(null)).toEqual([]);
   });
 
   it('keeps identity warps identity and puts the top handles on the top edge', () => {

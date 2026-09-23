@@ -336,6 +336,55 @@ function projectExporterSource(): string {
   return source.slice(start, end);
 }
 
+describe('Screen mask persistence', () => {
+  function screenProject(slice: Record<string, unknown>) {
+    return {
+      version: '2.0.11',
+      project: { id: 'screens', name: 'Screens', width: 1920, height: 1080, layers: [], outputSlices: [slice] },
+    };
+  }
+  const baseSlice = {
+    id: 'screen-left', name: 'Left', enabled: true, cropX: 0, cropY: 0, cropW: 0.5, cropH: 1,
+    spoutName: 'ghostArcade-Left', edgeBlendLeft: 0, edgeBlendRight: 0.1, edgeBlendTop: 0, edgeBlendBottom: 0,
+    edgeBlendGamma: 2.2, brightness: 1, contrast: 1, gamma: 1, rotation: 0,
+  };
+
+  it('round-trips per-screen masks through a save and reopen', async () => {
+    const { settings } = await import('./settings');
+    const masks = [
+      { id: 'mask-door', name: 'Doorway', enabled: true, invert: true, feather: 0,
+        points: [{ x: 0.4, y: 0.5 }, { x: 0.6, y: 0.5 }, { x: 0.6, y: 1 }, { x: 0.4, y: 1 }] },
+      { id: 'mask-arch', name: 'Arch', enabled: false, invert: false, feather: 0.3,
+        points: [{ x: 0.1, y: 0.1 }, { x: 0.9, y: 0.1 }, { x: 0.5, y: 0.9 }] },
+    ];
+    expect(layers.project.importProject(screenProject({ ...baseSlice, masks }))).toBe(true);
+    expect(get(settings).output.slices[0].masks).toEqual(masks);
+    const saved = JSON.parse(JSON.stringify(layers.project.exportProject()));
+    expect(saved.project.outputSlices[0].masks).toEqual(masks);
+    expect(layers.project.importProject(saved)).toBe(true);
+    expect(get(settings).output.slices[0].masks).toEqual(masks);
+  });
+
+  it('opens projects saved before masks existed unchanged, with no masks', async () => {
+    const { settings } = await import('./settings');
+    expect(layers.project.importProject(screenProject(baseSlice))).toBe(true);
+    const slice = get(settings).output.slices[0];
+    expect(slice.masks).toEqual([]);
+    expect(slice).toMatchObject(baseSlice);
+    // A damaged list keeps the usable vertices and never throws.
+    expect(layers.project.importProject(screenProject({
+      ...baseSlice,
+      masks: [{ points: [{ x: 0.2, y: 0.2 }, { x: 'x', y: 0.2 }, { x: 0.8, y: 0.2 }, { x: 0.5, y: 0.8 }], feather: 9 }, 'junk'],
+    }))).toBe(true);
+    const repaired = get(settings).output.slices[0].masks!;
+    expect(repaired).toHaveLength(2);
+    expect(repaired[0]).toMatchObject({ enabled: true, invert: false, feather: 1, name: 'Mask 1',
+      points: [{ x: 0.2, y: 0.2 }, { x: 0.8, y: 0.2 }, { x: 0.5, y: 0.8 }] });
+    expect(repaired[0].id).toBeTruthy();
+    expect(repaired[1].points).toEqual([]);
+  });
+});
+
 describe('VJ clip persistence', () => {
   it('exports every VJClip field that is not runtime scratch', () => {
     const exporter = projectExporterSource();

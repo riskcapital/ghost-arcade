@@ -4,7 +4,7 @@ import { createCoalescedWriter } from '../utils/coalescedWriter';
 
 import { writable, get } from 'svelte/store';
 import { invoke, isDesktopApp } from '$lib/bridge';
-import type { WarpCorners, MeshWarpGrid, Effect } from '../types';
+import type { WarpCorners, MeshWarpGrid, Effect, Point2D } from '../types';
 
 // ============================================================================
 // COLOR SCHEME DEFINITIONS
@@ -386,6 +386,31 @@ export interface OutputSlice {
   // for each projector pixel — content stays bounded by the original
   // screen rectangle even when the warp pushes corners inward.
   outputWarp?: OutputWarp;
+
+  // ─── Masks ───────────────────────────────────────────────────────
+  // Polygon masks cut from THIS screen's frame, after its crop and warp
+  // have been resolved (the same place edge blend runs). Points are
+  // normalized 0..1 in the screen's own content space with y=0 at the
+  // top, so a mask drawn around a doorway stays on the doorway when the
+  // screen is corner-pinned or mesh-warped. Absent on files saved
+  // before masks existed; migrateOutputSlice fills in an empty list.
+  masks?: ScreenMask[];
+}
+
+/** One polygon mask on a Screen. See OutputSlice.masks for the
+ *  coordinate space. */
+export interface ScreenMask {
+  id: string;
+  name: string;
+  enabled: boolean;
+  /** Polygon vertices, straight edges. Fewer than 3 renders nothing. */
+  points: Point2D[];
+  /** Edge softness 0..1 in screen units, ramping inward from the edge. */
+  feather: number;
+  /** false keeps the inside of the polygon, true cuts a hole instead.
+   *  Normal masks keep the union of their insides; when a screen has
+   *  only inverted masks the whole frame stays and the holes are cut. */
+  invert: boolean;
 }
 
 /** Output warp — see OutputSlice.outputWarp for context. */
@@ -435,7 +460,36 @@ export function createDefaultSlice(id: string, name: string, spoutSuffix: string
     effects: [],
     stageEffectId: null,
     outputWarp: { enabled: false, mode: 'corners' },
+    masks: [],
   };
+}
+
+/** True when a mask would actually change the screen's output. */
+export function screenMaskIsActive(mask: ScreenMask | null | undefined): boolean {
+  return !!mask && mask.enabled !== false && Array.isArray(mask.points) && mask.points.length >= 3;
+}
+
+/** Bring a saved mask list to the current shape. Files from before masks
+ *  existed have no list at all and come back empty; a damaged vertex is
+ *  dropped rather than failing the whole screen. */
+export function migrateScreenMasks(masks: unknown): ScreenMask[] {
+  if (!Array.isArray(masks)) return [];
+  return masks.map((m: any, index: number) => {
+    const points = Array.isArray(m?.points)
+      ? m.points
+          .filter((p: any) => Number.isFinite(p?.x) && Number.isFinite(p?.y))
+          .map((p: any) => ({ x: Number(p.x), y: Number(p.y) }))
+      : [];
+    const feather = Number(m?.feather);
+    return {
+      id: typeof m?.id === 'string' && m.id ? m.id : `mask-${Date.now()}-${index}-${Math.random().toString(36).slice(2, 7)}`,
+      name: typeof m?.name === 'string' && m.name ? m.name : `Mask ${index + 1}`,
+      enabled: m?.enabled !== false,
+      points,
+      feather: Number.isFinite(feather) ? Math.max(0, Math.min(1, feather)) : 0,
+      invert: m?.invert === true,
+    };
+  });
 }
 
 /** Identity output-warp corners — the projector's unit quad untouched.
@@ -575,6 +629,7 @@ export function migrateOutputSlice(s: Partial<OutputSlice> & { id: string }): Ou
     // Output warp — projector-side distortion. Defaults to disabled
     // so legacy slices behave unchanged.
     outputWarp: s.outputWarp ?? { enabled: false, mode: 'corners' },
+    masks: migrateScreenMasks(s.masks),
   };
 }
 

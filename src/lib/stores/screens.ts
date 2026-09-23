@@ -32,7 +32,9 @@ import {
   cornersFromRect,
   meshFromRect,
   type OutputSlice,
+  type ScreenMask,
 } from './settings';
+import type { Point2D } from '../types';
 import { maxOutputSlices } from './license';
 import type { Effect, EffectType } from '../types';
 import { getDefaultEffectParams } from '../renderer/effects';
@@ -53,12 +55,36 @@ export const selectedScreen = derived(
   ([$ss, $id]) => ($id ? $ss.find(s => s.id === $id) ?? null : null)
 );
 
+// Which of the selected screen's masks is being edited. Its vertices get
+// handles on the editor canvas; the others only draw their outline.
+export const selectedScreenMaskId = writable<string | null>(null);
+// True while the operator is placing vertices: each click on the editor
+// canvas appends a point to the selected mask. Cleared by Done, Escape,
+// or selecting a different screen.
+export const screenMaskPlacing = writable(false);
+selectedScreenId.subscribe(() => {
+  selectedScreenMaskId.set(null);
+  screenMaskPlacing.set(false);
+});
+
 function update(fn: (slices: OutputSlice[]) => OutputSlice[]) {
   settings.update(s => ({ ...s, output: { ...s.output, slices: fn(s.output.slices) } }));
 }
 
 function generateId(prefix = 'screen'): string {
   return `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 7)}`;
+}
+
+function cloneMasks(masks: ScreenMask[] | undefined, freshIds = false): ScreenMask[] {
+  return (masks ?? []).map(m => ({
+    ...m,
+    id: freshIds ? generateId('mask') : m.id,
+    points: m.points.map(p => ({ x: p.x, y: p.y })),
+  }));
+}
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, Number.isFinite(value) ? value : 0));
 }
 
 // ─── Lifecycle ─────────────────────────────────────────────────────────
@@ -116,6 +142,8 @@ export const screenActions = {
         // Offset crop slightly so the dupe is visible.
         cropX: Math.min(0.9, src.cropX + 0.05),
         cropY: Math.min(0.9, src.cropY + 0.05),
+        // Masks are edited in place, so the copy needs its own vertices.
+        masks: cloneMasks(src.masks, true),
       };
       return [...slices, copy];
     });
@@ -244,6 +272,86 @@ export const screenActions = {
   // ─── Stage effect binding ─────────────────────────────────────────────
   bindStageEffect(screenId: string, stageEffectId: string | null) {
     this.update(screenId, { stageEffectId });
+  },
+
+  // ─── Masks ────────────────────────────────────────────────────────────
+  // Every mutation rebuilds the masks array (never mutates in place) so
+  // the settings store, the canvas overlay and the native sync all see a
+  // new reference and re-run.
+  /** Add an empty mask, select it and enter placing mode: the operator
+   *  clicks on the canvas to drop its vertices. Returns the mask id. */
+  addMask(screenId: string): string | null {
+    const s = get(screens).find(sc => sc.id === screenId);
+    if (!s) return null;
+    const id = generateId('mask');
+    const mask: ScreenMask = {
+      id,
+      name: `Mask ${(s.masks?.length ?? 0) + 1}`,
+      enabled: true,
+      points: [],
+      feather: 0,
+      invert: false,
+    };
+    this.update(screenId, { masks: [...cloneMasks(s.masks), mask] });
+    selectedScreenMaskId.set(id);
+    screenMaskPlacing.set(true);
+    return id;
+  },
+
+  removeMask(screenId: string, maskId: string) {
+    const s = get(screens).find(sc => sc.id === screenId);
+    if (!s) return;
+    this.update(screenId, { masks: cloneMasks(s.masks).filter(m => m.id !== maskId) });
+    if (get(selectedScreenMaskId) === maskId) {
+      selectedScreenMaskId.set(null);
+      screenMaskPlacing.set(false);
+    }
+  },
+
+  updateMask(screenId: string, maskId: string, partial: Partial<Omit<ScreenMask, 'id'>>) {
+    const s = get(screens).find(sc => sc.id === screenId);
+    if (!s) return;
+    this.update(screenId, {
+      masks: cloneMasks(s.masks).map(m => (m.id === maskId
+        ? { ...m, ...partial, ...(partial.feather != null ? { feather: clamp01(partial.feather) } : {}) }
+        : m)),
+    });
+  },
+
+  /** Append a vertex, or insert it before `index` (edge midpoint
+   *  handles use this so a point lands between its two neighbours). */
+  addMaskPoint(screenId: string, maskId: string, point: Point2D, index?: number) {
+    const s = get(screens).find(sc => sc.id === screenId);
+    if (!s) return;
+    this.update(screenId, {
+      masks: cloneMasks(s.masks).map(m => {
+        if (m.id !== maskId) return m;
+        const points = m.points.slice();
+        const at = index == null ? points.length : Math.max(0, Math.min(points.length, index));
+        points.splice(at, 0, { x: clamp01(point.x), y: clamp01(point.y) });
+        return { ...m, points };
+      }),
+    });
+  },
+
+  updateMaskPoint(screenId: string, maskId: string, index: number, point: Point2D) {
+    const s = get(screens).find(sc => sc.id === screenId);
+    if (!s) return;
+    this.update(screenId, {
+      masks: cloneMasks(s.masks).map(m => (m.id === maskId
+        ? { ...m, points: m.points.map((p, i) => (i === index ? { x: clamp01(point.x), y: clamp01(point.y) } : p)) }
+        : m)),
+    });
+  },
+
+  removeMaskPoint(screenId: string, maskId: string, index: number) {
+    const s = get(screens).find(sc => sc.id === screenId);
+    if (!s) return;
+    this.update(screenId, {
+      masks: cloneMasks(s.masks).map(m => (m.id === maskId
+        ? { ...m, points: m.points.filter((_, i) => i !== index) }
+        : m)),
+    });
   },
   // Per-Screen output-warp actions removed — geometric warping is now
   // done globally by the Master Warp; a Screen is just a rect slice.
