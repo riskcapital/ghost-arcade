@@ -11086,6 +11086,19 @@ impl App {
                 composite_graph_jobs.is_empty() && stage3d_mesh_frame.is_none() && scene_overlay_items.is_empty() && !self.output_frozen && output_gate > 0.0,
             );
         }
+        if render_result.is_ok() && !pipeline_warming {
+            for plan in native_graph_jobs.iter().flat_map(|job| job.render_plans.iter()) {
+                let NativeComputeGraphRenderTarget::SourceFrame { source_id, slot, .. } = &plan.target else { continue; };
+                if !source_id.starts_with("effect-pass:") { continue; }
+                for layer in self.scene_layers.values_mut() {
+                    if layer.source_id.as_deref() == Some(source_id.as_str()) {
+                        layer.frame_slot = Some(*slot);
+                        layer.source_rect = [0.0, 0.0, 1.0, 1.0];
+                        layer.source_kind = source_kind("image");
+                    }
+                }
+            }
+        }
         if render_result.is_ok() {
             renderer.finish_frame();
             let now = Instant::now();
@@ -11858,8 +11871,13 @@ impl App {
                     .insert(source_id.clone(), SourceFrame::full(*seq));
                 for layer in self.scene_layers.values_mut() {
                     if layer.source_id.as_deref() == Some(source_id.as_str()) {
-                        layer.frame_slot = Some(*slot);
-                        layer.source_rect = [0.0, 0.0, 1.0, 1.0];
+                        // Queueing allocates an effect slot before its first
+                        // pass renders. Keep the raw frame visible until a
+                        // successful GPU submission publishes this slot.
+                        if !source_id.starts_with("effect-pass:") {
+                            layer.frame_slot = Some(*slot);
+                            layer.source_rect = [0.0, 0.0, 1.0, 1.0];
+                        }
                     }
                 }
             }
@@ -13451,7 +13469,7 @@ impl App {
                     time,
                 )
             });
-        self.native_graph_layers.insert(
+        let replaced_graph = self.native_graph_layers.insert(
             layer_id.clone(),
             NativeGraphLayer {
                 layer_id: layer_id.clone(),
@@ -13479,10 +13497,23 @@ impl App {
         entry.source_kind = source_kind(&format!("gpu:{}", kind.signature()));
         entry.shader_rendered = false;
         entry.preview_slot = None;
-        entry.frame_slot = self.source_frame_slots.get(&composite_source_id).copied();
+        if !composite_source_id.starts_with("effect-pass:") {
+            entry.frame_slot = self.source_frame_slots.get(&composite_source_id).copied();
+        }
         // A reused video layer may retain the decoder's centered sub-rect.
         // Graph outputs already cover their full canvas and must not inherit it.
         entry.source_rect = [0.0, 0.0, 1.0, 1.0];
+        // Switching a GPU shader or its media input replaces the retained
+        // graph without a remove command. Release the old graph's private
+        // source frames now; otherwise repeated live edits fill the bounded
+        // source-slot pool with pictures from no-longer-active shaders.
+        if let Some(previous) = replaced_graph {
+            for old_id in [previous.source_id, previous.input_source_id] {
+                if !old_id.is_empty() {
+                    self.release_media_source_if_orphaned(&old_id);
+                }
+            }
+        }
     }
 
     fn apply_update_native_graph_buffer(&mut self, command: &Value) -> Result<(), String> {
@@ -13579,7 +13610,9 @@ impl App {
 
     fn apply_remove_native_graph_layer(&mut self, command: &Value) {
         if let Some(layer_id) = string_at(command, &["layer_id"]) {
-            self.release_native_graph_layer_state(&layer_id);
+            for source_id in self.release_native_graph_layer_state(&layer_id) {
+                self.release_media_source_if_orphaned(&source_id);
+            }
         }
     }
 
@@ -14094,11 +14127,36 @@ impl App {
         entry.effect_input_source_id = if effect_pass_display {
             string_at(command, &["effect_input_source_id"])
         } else { None };
-        entry.source_kind = source_kind(&effective_source_type);
+        // An effect output may have a slot before the first graph pass has
+        // rendered, or may still contain the previous clip after an input
+        // switch. Keep showing the raw, resident input until the new pass has
+        // actually been submitted. Otherwise the operator sees black or a
+        // ghost frame while the pipeline warms.
+        let effect_input_changed = previous_effect_input != entry.effect_input_source_id;
+        let raw_input_slot = entry.effect_input_source_id.as_ref().and_then(|id| {
+            if self.source_frames.contains_key(id) {
+                self.source_frame_slots.get(id).copied()
+            } else { None }
+        }).or(entry.shader_frame_slot);
+        let raw_input_rect = entry.effect_input_source_id.as_ref()
+            .and_then(|id| self.source_frames.get(id).map(|frame| frame.source_rect));
+        let hold_effect_input = effect_pass_display &&
+            (effect_input_changed || !self.source_frames.contains_key(new_source_id.as_deref().unwrap_or("")));
+        let held_slot = if hold_effect_input { raw_input_slot.or(entry.frame_slot) } else { frame_slot };
+        let held_rect = if hold_effect_input { raw_input_rect.unwrap_or(entry.source_rect) } else { source_rect };
+        let held_kind = if hold_effect_input && held_slot.is_some() {
+            entry.effect_input_source_id.as_ref()
+                .and_then(|id| self.media_sources.get(id))
+                .map(|state| source_kind(&state.source_type))
+                .unwrap_or_else(|| if entry.shader_frame_slot == held_slot && entry.shader_rendered {
+                    NATIVE_SHADER_SOURCE_KIND
+                } else { entry.source_kind })
+        } else { source_kind(&effective_source_type) };
+        entry.source_kind = held_kind;
         entry.source_id = source_id;
         entry.preview_slot = preview_slot;
-        entry.frame_slot = frame_slot;
-        entry.source_rect = source_rect;
+        entry.frame_slot = held_slot;
+        entry.source_rect = held_rect;
         if !effect_pass_display {
             entry.shader_rendered = false;
         }
@@ -16029,6 +16087,22 @@ impl App {
             }
         }
 
+        // Source-driven GPU shaders display their own graph output, so their
+        // input video never appears as a scene layer's source_id. Admit that
+        // input to the decode pump while the graph's layer is visible.
+        // Otherwise still images work (they upload once), but video sources
+        // remain permanently prerolled and the graph samples a frozen frame.
+        for graph in self.native_graph_layers.values() {
+            if graph.input_source_id.is_empty()
+                || !self.scene_layers.get(&graph.layer_id).is_some_and(|layer| layer.visible)
+            {
+                continue;
+            }
+            if !active_sources.contains(&graph.input_source_id) {
+                active_sources.push(graph.input_source_id.clone());
+            }
+        }
+
         // Pending bindings preserve the old visible source until this one is ready.
         // They must participate in decode admission or manual-clock first frames never arrive.
         for binding in self.pending_media_bindings.values() {
@@ -16992,6 +17066,24 @@ impl App {
             self.isf_layer_bindings.remove(&layer_id);
             let graph_sources = self.release_native_graph_layer_state(&layer_id);
             self.native_point_cloud_assets.remove(&layer_id);
+            let effect_output_id = format!("effect-pass:{layer_id}");
+            let effect_prefix = format!("{effect_output_id}:");
+            let gpu_prefix = format!("gpu:{layer_id}:");
+            let plugin_prefix = format!("plugin:{layer_id}:");
+            let owned_by_removed_layer = |id: &str| {
+                id == effect_output_id || id.starts_with(&effect_prefix)
+                    || id.starts_with(&gpu_prefix) || id.starts_with(&plugin_prefix)
+            };
+            // Externally queued effect chains have no NativeGraphLayer entry.
+            // A still-pending chain otherwise keeps both its old media input
+            // and output slots referenced after the layer has been deleted.
+            self.pending_native_graph_jobs.retain(|job| {
+                !job.render_plans.iter().any(|plan| match &plan.target {
+                    NativeComputeGraphRenderTarget::SourceFrame { source_id, .. } =>
+                        owned_by_removed_layer(source_id),
+                    _ => false,
+                })
+            });
             if let Some(source_id) = removed_source {
                 self.release_media_source_if_orphaned(&source_id);
             }
@@ -17010,6 +17102,12 @@ impl App {
             // that binds `layer-frame:<id>` (VJ crossfade/mix rows, ISF
             // image inputs) after the layer is gone.
             for source_id in graph_sources {
+                self.release_media_source_if_orphaned(&source_id);
+            }
+            let owned_slots = self.source_frame_slots.keys()
+                .filter(|id| owned_by_removed_layer(id))
+                .cloned().collect::<Vec<_>>();
+            for source_id in owned_slots {
                 self.release_media_source_if_orphaned(&source_id);
             }
             // Removing a layer changes what the output should show, and this

@@ -3488,6 +3488,186 @@ describe('Native effect-pass template', () => {
       await rpc.close();
     }
   }, 30000);
+  itIfNativeCore('keeps effect output current when its media input changes', async () => {
+    const rpc = createNativeRpc();
+    try {
+      await rpc.send('start', {
+        config: {
+          backend: process.platform === 'darwin' ? 'metal' : process.platform === 'win32' ? 'd3d12' : 'vulkan',
+          width: 160,
+          height: 90,
+          target_fps: 30,
+        },
+      }, 12000);
+      await rpc.send('submit_commands', { commands: buildNativeEffectPassPrecompileCommands() });
+      const layerId = 'swapping-effect-media';
+      const outputId = `effect-pass:${layerId}`;
+      const first = makeSourceBytes(32, 32);
+      const second = Uint8Array.from(first, (_, index) => index % 4 === 3 ? 255 : 255 - first[index]);
+      await rpc.send('submit_commands', { commands: [
+        { type: 'upload_source_frame', source_id: 'first-media', width: 32, height: 32, rgba_b64: Buffer.from(first).toString('base64'), seq: 1 },
+        { type: 'upload_source_frame', source_id: 'second-media', width: 32, height: 32, rgba_b64: Buffer.from(second).toString('base64'), seq: 1 },
+        { type: 'upsert_layer', layer_id: layerId, z_index: 0, blend_mode: 'normal', opacity: 1, corners: FULLSCREEN_CORNERS },
+        { type: 'set_layer_visibility', layer_id: layerId, visible: true },
+        { type: 'bind_media_source', layer_id: layerId, source_id: 'first-media', uri: 'test://first', source_type: 'image' },
+      ] });
+      const raw = await rpc.send('frame_snapshot', { include_pixels: false, frame_index: 1 });
+      assertVisibleSnapshot('raw media before effect', raw);
+      const submitEffect = async (inputId: string, frameIndex: number) => {
+        const graph = buildNativeEffectPassGraph({ sourceId: inputId, targetSourceId: outputId,
+          effect: 'invert', width: 160, height: 90, time: frameIndex / 30,
+          frameDelta: 1 / 30, frameIndex, amount: 1, mix: 1 });
+        return rpc.send('submit_commands', { commands: [
+          { type: 'bind_media_source', layer_id: layerId, source_id: outputId,
+            uri: `native-effect-pass://${layerId}`, source_type: 'image', effect_input_source_id: inputId },
+          { type: 'queue_compute_graph', ...graph.config },
+          { type: 'present' },
+        ] });
+      };
+      const firstResult = await submitEffect('first-media', 2);
+      expect(firstResult.dropped).toBe(0);
+      const warming = await rpc.send('frame_snapshot', { include_pixels: false, frame_index: 2 });
+      assertVisibleSnapshot('raw input while effect pipeline warms', warming);
+      await delay(200);
+      const firstEffect = await rpc.send('frame_snapshot', { include_pixels: false, frame_index: 2 });
+      assertVisibleSnapshot('first effect input', firstEffect);
+      expect(firstEffect.checksum).not.toBe(raw.checksum);
+
+      const secondResult = await submitEffect('second-media', 3);
+      expect(secondResult.dropped).toBe(0);
+      const switching = await rpc.send('frame_snapshot', { include_pixels: false, frame_index: 3 });
+      assertVisibleSnapshot('replacement input while effect updates', switching);
+      expect(switching.checksum).not.toBe(firstEffect.checksum);
+      await delay(200);
+      const secondEffect = await rpc.send('frame_snapshot', { include_pixels: false, frame_index: 3 });
+      assertVisibleSnapshot('replacement effect input', secondEffect);
+      expect(secondEffect.checksum).not.toBe(firstEffect.checksum);
+    } finally {
+      await rpc.close();
+    }
+  }, 30000);
+
+  itIfNativeCore('keeps a shader visible while its effect and shader replacement render', async () => {
+    const rpc = createNativeRpc();
+    try {
+      await rpc.send('start', { config: {
+        backend: process.platform === 'darwin' ? 'metal' : process.platform === 'win32' ? 'd3d12' : 'vulkan',
+        width: 160, height: 90, target_fps: 30,
+      } }, 12000);
+      const layerId = 'shader-effect-handoff';
+      const shader = (id: string, color: string) => ({ type: 'precompile_shader', shader_id: id,
+        stage: 'pixel', entry: 'main',
+        source: `/*{"ISFVSN":"2","INPUTS":[]}*/ void main() { gl_FragColor = vec4(${color}, 1.0); }` });
+      await rpc.send('submit_commands', { commands: [
+        ...buildNativeEffectPassPrecompileCommands(),
+        shader('first-shader', '0.2, 0.6, 0.8'),
+        { type: 'upsert_layer', layer_id: layerId, z_index: 0, blend_mode: 'normal', opacity: 1, corners: FULLSCREEN_CORNERS },
+        { type: 'set_layer_visibility', layer_id: layerId, visible: true },
+        { type: 'bind_isf_shader', layer_id: layerId, shader_id: 'first-shader' },
+        { type: 'render_isf_to_layer', layer_id: layerId },
+      ] });
+      await delay(150);
+      const raw = await rpc.send('frame_snapshot', { include_pixels: false });
+      assertVisibleSnapshot('raw shader before effect', raw);
+      const graph = (frameIndex: number) => buildNativeEffectPassGraph({
+        sourceId: `shader-frame:${layerId}`, targetSourceId: `effect-pass:${layerId}`,
+        effect: 'invert', width: 160, height: 90, time: frameIndex / 30,
+        frameDelta: 1 / 30, frameIndex, amount: 1, mix: 1,
+      });
+      await rpc.send('submit_commands', { commands: [
+        { type: 'bind_media_source', layer_id: layerId, source_id: `effect-pass:${layerId}`,
+          uri: `native-effect-pass://${layerId}`, source_type: 'image', effect_input_source_id: 'first-shader' },
+        { type: 'queue_compute_graph', ...graph(2).config },
+      ] });
+      const warming = await rpc.send('frame_snapshot', { include_pixels: false });
+      assertVisibleSnapshot('shader while effect warms', warming);
+      await delay(200);
+      const firstEffect = await rpc.send('frame_snapshot', { include_pixels: false });
+      assertVisibleSnapshot('shader with effect', firstEffect);
+      expect(firstEffect.checksum).not.toBe(raw.checksum);
+      await rpc.send('submit_commands', { commands: [
+        shader('second-shader', '0.9, 0.1, 0.2'),
+        { type: 'bind_media_source', layer_id: layerId, source_id: `effect-pass:${layerId}`,
+          uri: `native-effect-pass://${layerId}`, source_type: 'image', effect_input_source_id: 'second-shader' },
+        { type: 'bind_isf_shader', layer_id: layerId, shader_id: 'second-shader' },
+        { type: 'render_isf_to_layer', layer_id: layerId },
+        { type: 'queue_compute_graph', ...graph(3).config },
+      ] });
+      await delay(200);
+      const switched = await rpc.send('frame_snapshot', { include_pixels: false });
+      assertVisibleSnapshot('replacement shader with effect', switched);
+      expect(switched.checksum).not.toBe(firstEffect.checksum);
+    } finally {
+      await rpc.close();
+    }
+  }, 30000);
+
+  itIfNativeCore('releases queued effect frames when repeatedly replacing recorded loops', async () => {
+    const rpc = createNativeRpc();
+    try {
+      await rpc.send('start', { config: {
+        backend: process.platform === 'darwin' ? 'metal' : process.platform === 'win32' ? 'd3d12' : 'vulkan',
+        width: 160, height: 90, target_fps: 30,
+      } }, 12000);
+      await rpc.send('submit_commands', { commands: buildNativeEffectPassPrecompileCommands() });
+      const bytes = Buffer.from(makeSourceBytes(32, 32)).toString('base64');
+      for (let index = 0; index < 55; index += 1) {
+        const layerId = `recorded-loop-${index}`;
+        const inputId = `recorded-input-${index}`;
+        const outputId = `effect-pass:${layerId}`;
+        const graph = buildNativeEffectPassGraph({ sourceId: inputId, targetSourceId: outputId,
+          effect: 'invert', width: 160, height: 90, time: index / 30,
+          frameDelta: 1 / 30, frameIndex: index + 1, amount: 1, mix: 1 });
+        const result = await rpc.send('submit_commands', { commands: [
+          { type: 'upload_source_frame', source_id: inputId, width: 32, height: 32, rgba_b64: bytes, seq: 1 },
+          { type: 'upsert_layer', layer_id: layerId, z_index: 0, blend_mode: 'normal', opacity: 1, corners: FULLSCREEN_CORNERS },
+          { type: 'set_layer_visibility', layer_id: layerId, visible: true },
+          { type: 'bind_media_source', layer_id: layerId, source_id: inputId, uri: `recorded-loop://${index}`, source_type: 'image' },
+          { type: 'bind_media_source', layer_id: layerId, source_id: outputId,
+            uri: `native-effect-pass://${layerId}`, source_type: 'image', effect_input_source_id: inputId },
+          { type: 'queue_compute_graph', ...graph.config },
+          { type: 'remove_layer', layer_id: layerId },
+        ] });
+        expect(result.dropped, `loop ${index}: ${JSON.stringify(result.errors)}`).toBe(0);
+      }
+      const status = await rpc.send('status');
+      expect(Number(status.source_frames_active)).toBeLessThanOrEqual(2);
+      expect(Number(status.scene_layers_active)).toBe(0);
+    } finally {
+      await rpc.close();
+    }
+  }, 30000);
+
+  itIfNativeCore('releases replaced GPU shader frames during a long editing session', async () => {
+    const rpc = createNativeRpc();
+    try {
+      await rpc.send('start', { config: {
+        backend: process.platform === 'darwin' ? 'metal' : process.platform === 'win32' ? 'd3d12' : 'vulkan',
+        width: 160, height: 90, target_fps: 30,
+      } }, 12000);
+      await rpc.send('submit_commands', { commands: [
+        ...buildPlanetNativePrecompileCommands(),
+        { type: 'upsert_layer', layer_id: 'shader-cycle', z_index: 0,
+          blend_mode: 'normal', opacity: 1, corners: FULLSCREEN_CORNERS },
+        { type: 'set_layer_visibility', layer_id: 'shader-cycle', visible: true },
+      ] });
+      for (let index = 0; index < 8; index += 1) {
+        const sourceId = `gpu:shader-cycle:planet-${index}`;
+        await rpc.send('submit_commands', { commands: [
+          { type: 'set_native_graph_layer', layer_id: 'shader-cycle', kind: 'planet',
+            instrument_source_id: sourceId, composite_source_id: sourceId, params: {} },
+        ] });
+        await delay(70);
+        await rpc.send('frame_snapshot', { include_pixels: false, frame_index: index + 1 });
+      }
+      const status = await rpc.send('status');
+      expect(Number(status.source_frames_active)).toBeLessThanOrEqual(3);
+      const finalFrame = await rpc.send('frame_snapshot', { include_pixels: false, frame_index: 9 });
+      assertVisibleSnapshot('shader after repeated replacements', finalFrame);
+    } finally {
+      await rpc.close();
+    }
+  }, 30000);
 });
 
 

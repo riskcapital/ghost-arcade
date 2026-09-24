@@ -666,6 +666,36 @@ describe('native renderer sync graph effect routing', () => {
     expect(nativeGraphCompositeSourceId(withoutDescriptor)).toBe('gpu:gpu-layer-a:planet');
   });
 
+  it('recovers a failed GPU effect route when its effect changes or retry time elapses', async () => {
+    const { createLayer } = await import('../types');
+    const sync = new NativeRendererSyncCtor() as any;
+    sync.nativeComputeGraphSourceFrames = true;
+    sync.nativeWgslStdlibWarmed = true;
+    sync.nativeGraphReadyKinds = new Set(['planet']);
+    sync.nativeFeatureFlags = {
+      native_effect_pass_manifest: true,
+      compute_graph_texture_sampling: true,
+      compute_graph_source_frame_target: true,
+    };
+    sync.nativeEffectPassDescriptorIds = new Set(['invert', 'blur']);
+    const layer = createLayer('recover-planet', 'Planet', 'gpu');
+    layer.gpuLayerContent = { shaderId: 'planet', params: {} } as any;
+    layer.effects = [{ id: 'fx', type: 'invert', enabled: true, params: {} }] as any;
+    const route = sync.nativeGraphRouteForLayer(layer);
+    expect(route).not.toBeNull();
+    const state: any = { inFlight: false, seq: 0, warnings: 0, state: null, bufferPrefixes: [] };
+    sync.nativeGraphRoutes.set(route.key, state);
+    sync.nativeGraphRouteForLayer(layer);
+    state.warnings = 3;
+    state.lastFailureAtMs = Date.now();
+    expect(sync.nativeGraphRouteForLayer(layer)).toBeNull();
+    layer.effects = [{ id: 'fx', type: 'blur', enabled: true, params: { blurRadius: 5 } }] as any;
+    expect(sync.nativeGraphRouteForLayer(layer)).not.toBeNull();
+    state.warnings = 3;
+    state.lastFailureAtMs = Date.now() - 3100;
+    expect(sync.nativeGraphRouteForLayer(layer)).not.toBeNull();
+  });
+
   it('keeps long effect chains active and warns only about enabled overflow', () => {
     const effects = Array.from({ length: 17 }, (_, index) => ({
       id: `invert-${index}`, type: 'invert', enabled: true, params: {},
