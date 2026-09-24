@@ -1,5 +1,6 @@
-import { spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
+import { execFileSync, spawn } from 'node:child_process';
+import { existsSync, mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
@@ -1741,6 +1742,88 @@ describe('Native graph instrument runtime fixtures', () => {
       await rpc.close();
     }
   }, 60000);
+
+  itIfNativeCore('keeps a video source moving when it feeds GPU shader layers', async () => {
+    const directory = mkdtempSync(join(tmpdir(), 'ghost-gpu-video-source-'));
+    const uri = join(directory, 'moving.mp4');
+    const rpc = createNativeRpc();
+    try {
+      execFileSync('ffmpeg', ['-hide_banner', '-loglevel', 'error', '-f', 'lavfi',
+        '-i', 'color=c=black:s=320x180:r=30:d=4', '-vf',
+        "geq=r='if(lt(N,60),220,16)':g='16':b='if(lt(N,60),16,220)'",
+        '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-g', '120', '-sc_threshold', '0', uri]);
+      await rpc.send('start', { config: {
+        backend: process.platform === 'darwin' ? 'metal' : process.platform === 'win32' ? 'd3d12' : 'vulkan',
+        width: 160, height: 90, source_frame_size: 160, target_fps: 30,
+      } }, 12000);
+      const videoId = 'gpu-shader-video-input';
+      const commands: Record<string, unknown>[] = [
+        ...buildPixelParticlesNativePrecompileCommands(),
+        ...buildFlythroughNativePrecompileCommands(),
+        { type: 'precompile_shader', shader_id: SOURCE_FRAME_PROBE_SHADER_ID,
+          stage: 'compute', entry: 'cs_probe', source: sourceFrameProbeWgsl() },
+        { type: 'set_media_source_playback', source_id: videoId, uri, source_type: 'video',
+          time_seconds: 0, clock_time_seconds: 0, playback_rate: 1, paused: false,
+          loop_enabled: true, duration_seconds: 4, decode_width: 160, decode_height: 90,
+          seek_generation: 1, seq: 1 },
+      ];
+      for (const [index, kind] of ['flythrough', 'pixel-particles'].entries()) {
+        const layerId = `gpu-video-${kind}`;
+        const outputId = `${layerId}-output`;
+        commands.push(
+          { type: 'upsert_layer', layer_id: layerId, z_index: index,
+            blend_mode: 'normal', opacity: 1, corners: FULLSCREEN_CORNERS },
+          { type: 'set_layer_visibility', layer_id: layerId, visible: true },
+          { type: 'set_native_graph_layer', layer_id: layerId, kind,
+            instrument_source_id: outputId, composite_source_id: outputId,
+            input_source_id: videoId, effect_graph: null,
+            params: kind === 'flythrough'
+              ? { particleCount: 2048, topology: 'strokes', flySpeed: 1.2 }
+              : { particleCount: 2048, mode: 'identity', baseSize: 0.03 } },
+        );
+      }
+      await rpc.send('submit_commands', { commands }, 12000);
+      const deadline = Date.now() + 6000;
+      let first: Record<string, unknown> | null = null;
+      while (Date.now() < deadline) {
+        const status = await rpc.send('status');
+        const session = status.native_video_sessions.find((item: any) => item.source_id === videoId);
+        if (session?.state === 'playing' && session.frames_presented > 0 && status.compute_graph_runs > 0) {
+          first = await readSourceFrameProbe(rpc, videoId, 'gpu-video-first', 16, 16);
+          break;
+        }
+        await delay(40);
+      }
+      expect(first, 'GPU shader input should be decoded and playing').not.toBeNull();
+      expect(Number(first!.nonzero_words ?? 0)).toBeGreaterThan(0);
+      let second: Record<string, unknown> | null = null;
+      const secondDeadline = Date.now() + 4500;
+      while (Date.now() < secondDeadline) {
+        second = await readSourceFrameProbe(rpc, videoId, 'gpu-video-next', 16, 16);
+        if (second.checksum !== first!.checksum) break;
+        await delay(75);
+      }
+      expect(second, 'GPU shader input should advance to another frame').not.toBeNull();
+      expect(second!.checksum).not.toBe(first!.checksum);
+      const status = await rpc.send('status');
+      expect(status.native_video_sessions.find((item: any) => item.source_id === videoId)?.frames_presented).toBeGreaterThan(1);
+      expect(status.compute_graph_runs).toBeGreaterThan(2);
+      await rpc.send('submit_commands', { commands: ['flythrough', 'pixel-particles'].map(kind => ({
+        type: 'set_layer_visibility', layer_id: `gpu-video-${kind}`, visible: false,
+      })) });
+      const hiddenDeadline = Date.now() + 2000;
+      let hiddenState = 'playing';
+      while (Date.now() < hiddenDeadline && hiddenState === 'playing') {
+        const hiddenStatus = await rpc.send('status');
+        hiddenState = hiddenStatus.native_video_sessions.find((item: any) => item.source_id === videoId)?.state ?? 'released';
+        if (hiddenState === 'playing') await delay(40);
+      }
+      expect(hiddenState).not.toBe('playing');
+    } finally {
+      await rpc.close();
+      rmSync(directory, { recursive: true, force: true });
+    }
+  }, 30000);
 
   itIfNativeCore('renders representative native graph instruments into source frames', async () => {
     const rpc = createNativeRpc();

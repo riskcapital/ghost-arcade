@@ -614,6 +614,8 @@ type NativeGraphRouteState = {
   lastQueuedClockFrame?: number;
   queuedThisClockFrame?: number;
   lastQueuedAtMs?: number;
+  routeFingerprint?: string;
+  lastFailureAtMs?: number;
 };
 
 type NativeGraphManifestEntry = NonNullable<NativeRendererCapabilities['native_graph_instrument_manifest']>[number];
@@ -5546,6 +5548,7 @@ export class NativeRendererSync {
       this.nativeGraphRouteSuppressedFailures += 1;
     }
     routeState.warnings += 1;
+    routeState.lastFailureAtMs = Date.now();
     if (routeState.warnings === 3) {
       nativeFailedRouteLayers.update((ids) => (ids.includes(layerId) ? ids : [...ids, layerId]));
       // The kill switch used to trip silently AND suppress its own warnings,
@@ -5554,7 +5557,7 @@ export class NativeRendererSync {
       // when a layer "mysteriously" stops rendering.
       console.error(
         `[NativeRendererSync] ${route.kind} route for layer ${layerId} DISABLED after 3 failures — `
-        + `the layer will stay blank until it is edited or the app restarts. Last error: ${message}`,
+        + `retrying automatically after 3 seconds or on the next source/effect edit. Last error: ${message}`,
       );
     }
     this.nativeGraphRouteFailures += 1;
@@ -5796,6 +5799,31 @@ export class NativeRendererSync {
     return `${kind}:${sourceId}`;
   }
 
+  private nativeGraphRouteSuppressed(
+    key: string,
+    layer: Layer,
+    inputSource: NativeLayerSource | null,
+    effectPasses: NativeEffectPassRuntime[] | null | undefined,
+    includeWarningDisabled: boolean,
+  ): boolean {
+    const state = this.nativeGraphRoutes.get(key);
+    if (!state) return false;
+    const fingerprint = [
+      sourceSignature(layer),
+      nativeSourceIdentity(inputSource),
+      (effectPasses ?? []).map(pass => pass.descriptor).join('>'),
+    ].join('|');
+    const changedAfterFailure = state.warnings >= 3 && state.routeFingerprint !== fingerprint;
+    const retryDue = state.warnings >= 3 && Date.now() - (state.lastFailureAtMs ?? 0) > 3000;
+    if (changedAfterFailure || retryDue) {
+      state.warnings = 0;
+      state.state = null;
+      nativeFailedRouteLayers.update(ids => ids.filter(id => id !== layer.id));
+    }
+    state.routeFingerprint = fingerprint;
+    return !includeWarningDisabled && state.warnings >= 3;
+  }
+
   private nativeGraphSourceParamForLayer(layer: Layer): NativeLayerSource | null {
     const params = layer.gpuLayerContent?.params ?? {};
     const sourceParam = params.source;
@@ -5997,7 +6025,7 @@ export class NativeRendererSync {
     if (!inputReady) return null;
     const source = nativeEffectPassOutputSource(layer, inputSource);
     const key = this.nativeGraphRouteKey('effect-pass', source.id);
-    if (!includeWarningDisabled && (this.nativeGraphRoutes.get(key)?.warnings ?? 0) >= 3) {
+    if (this.nativeGraphRouteSuppressed(key, layer, inputSource, effectPasses, includeWarningDisabled)) {
       return null;
     }
     return {
@@ -6026,11 +6054,11 @@ export class NativeRendererSync {
   ): NativeGraphLayerRoute | null {
     const baseSource = nativeGraphOutputSource(layer, kind);
     const key = this.nativeGraphRouteKey(kind, baseSource.id);
-    if (!includeWarningDisabled && (this.nativeGraphRoutes.get(key)?.warnings ?? 0) >= 3) return null;
     const candidateEffectPasses = nativeEffectPassesForLayer(layer);
     const effectPasses = candidateEffectPasses?.length && this.supportsNativeEffectPassRoute(candidateEffectPasses)
       ? candidateEffectPasses
       : null;
+    if (this.nativeGraphRouteSuppressed(key, layer, null, effectPasses, includeWarningDisabled)) return null;
     return {
       kind,
       key,
@@ -6049,7 +6077,7 @@ export class NativeRendererSync {
       if (nativePluginUnavailableReason(layer.source?.effectSource)) return null;
       const source = nativeGraphOutputSource(layer, pluginKind);
       const key = this.nativeGraphRouteKey(pluginKind, source.id);
-      if (!includeWarningDisabled && (this.nativeGraphRoutes.get(key)?.warnings ?? 0) >= 3) return null;
+      if (this.nativeGraphRouteSuppressed(key, layer, null, null, includeWarningDisabled)) return null;
       return { kind: pluginKind, key, source, inputSource: null };
     }
     const effectPassRoute = this.nativeEffectPassRouteForLayer(layer, includeWarningDisabled);
@@ -6155,7 +6183,7 @@ export class NativeRendererSync {
       ? nativeEffectPassOutputSource(layer, baseSource)
       : baseSource;
     const key = this.nativeGraphRouteKey(kind, baseSource.id);
-    if (!includeWarningDisabled && (this.nativeGraphRoutes.get(key)?.warnings ?? 0) >= 3) {
+    if (this.nativeGraphRouteSuppressed(key, layer, inputSource, effectPasses, includeWarningDisabled)) {
       return null;
     }
     return {
