@@ -27,6 +27,7 @@ if (!target) {
 const ws = new WebSocket(target.webSocketDebuggerUrl, { maxPayload: 256 * 1024 * 1024 });
 await new Promise((res, rej) => { ws.on('open', res); ws.on('error', rej); });
 
+let timeout;
 const result = await new Promise((res, rej) => {
   const id = 1;
   ws.on('message', (data) => {
@@ -38,8 +39,10 @@ const result = await new Promise((res, rej) => {
     method: 'Runtime.evaluate',
     params: { expression, awaitPromise: true, returnByValue: true },
   }));
-  setTimeout(() => rej(new Error('CDP evaluate timeout (30s)')), 30000);
+  timeout = setTimeout(() => rej(new Error('CDP evaluate timeout (30s)')), 30000);
 });
+// A pending timer keeps node alive for the full 30s after the reply.
+clearTimeout(timeout);
 ws.close();
 
 if (result.result?.exceptionDetails) {
