@@ -181,6 +181,21 @@ pub fn transport_time(time: f64, lo: f64, hi: f64, looping: bool, bounce: bool) 
     else if looping { Some(lo + (time - lo).rem_euclid(span)) }
     else if time >= lo && time < hi { Some(time) } else { None }
 }
+/// Continuous read position (unwrapped media seconds) for one voice at the
+/// start of a mix block. The wall-clock target moves in steps of up to one
+/// device buffer as the ring drains in bursts; reading at it directly put a
+/// discontinuity at every refill. Advance by exactly the frames played and
+/// slew toward the target by at most 0.5% speed; re-sync only on real jumps
+/// (seek, retrigger, direction change). `period` is the loop/bounce cycle.
+pub fn follow_cursor(cursor: Option<f64>, target: f64, advance: f64, period: Option<f64>) -> f64 {
+    let Some(cursor) = cursor.filter(|c| c.is_finite()) else { return target; };
+    let expected = cursor + advance;
+    let mut error = target - expected;
+    if let Some(period) = period.filter(|p| *p > 0.0) { error = (error + period / 2.0).rem_euclid(period) - period / 2.0; }
+    if !error.is_finite() || error.abs() > 0.04 { return target; }
+    let limit = advance.abs() * 0.005;
+    expected + (error * 0.02).clamp(-limit, limit)
+}
 pub fn balance(pan: f32) -> (f32, f32) {
     // Stereo balance retains both channels at center; full pan attenuates the opposite channel.
     let p = pan.clamp(-1.0, 1.0); ((1.0 - p.max(0.0)).sqrt(), (1.0 + p.min(0.0)).sqrt())
@@ -300,6 +315,11 @@ impl ClipAudio {
                 let due = started + Duration::from_secs_f64(frames as f64 / 48000.0);
                 let now = Instant::now();
                 if now < due { thread::sleep(due - now); continue; }
+                // Catching up after this (non-realtime) thread was descheduled:
+                // a hardware clock never bursts, so give the mixer a moment to
+                // refill instead of reading an empty ring.
+                let wait_until = now + Duration::from_millis(5);
+                while ring.len() < 512 && Instant::now() < wait_until && !stop.load(Ordering::Acquire) { thread::sleep(Duration::from_micros(250)); }
                 callbacks.fetch_add(1, Ordering::Relaxed); callback_frames.store(256, Ordering::Relaxed);
                 let peaks = render_output(&mut buffer, 2, &ring, &tap, &mut resampler, 48000, &underflows);
                 peak_left.store(peaks[0].to_bits(), Ordering::Relaxed); peak_right.store(peaks[1].to_bits(), Ordering::Relaxed);
@@ -315,12 +335,14 @@ impl ClipAudio {
         self.worker = Some(thread::spawn(move || {
             let mut readers: HashMap<(String, PathBuf), Reader> = HashMap::new();
             let mut gains: HashMap<String, (f32, f32)> = HashMap::new();
+            let mut cursors: HashMap<String, f64> = HashMap::new();
             while !stop.load(Ordering::Acquire) {
                 if ring.len() >= (callback_frames.load(Ordering::Relaxed).saturating_mul(4).max(1024)).min(RING - 256) { thread::sleep(Duration::from_millis(1)); continue; }
                 let snapshot = mix.lock().ok().map(|s| (s.voices.clone(), s.at));
                 let Some((voices, at)) = snapshot else { continue; };
                 readers.retain(|(id, path), _| voices.iter().any(|v| v.voice.id == *id && v.asset.path == *path));
                 gains.retain(|id, _| voices.iter().any(|v| v.voice.id == *id));
+                cursors.retain(|id, _| voices.iter().any(|v| v.voice.id == *id));
                 for entry in &voices { gains.entry(entry.voice.id.clone()).or_insert((0.0, 0.0)); }
                 let age = at.elapsed().as_secs_f64();
                 let ahead = ring.len() as f64 / 2.0 / rate + latency.load(Ordering::Acquire) as f64 / 1e9;
@@ -333,7 +355,10 @@ impl ClipAudio {
                     let (left, right) = balance(voice.pan);
                     let target = if voice.playing && age <= 0.5 { voice.gain } else { 0.0 };
                     let gain = gains.get_mut(&voice.id).unwrap();
-                    if target == 0.0 && gain.0.abs() + gain.1.abs() < 0.00001 { continue; }
+                    if target == 0.0 && gain.0.abs() + gain.1.abs() < 0.00001 { cursors.remove(&voice.id); continue; }
+                    let period = if voice.bounce { Some(2.0 * (voice.hi - voice.lo)) } else if voice.looping { Some(voice.hi - voice.lo) } else { None };
+                    let start = follow_cursor(cursors.get(&voice.id).copied(), voice.time + (age + ahead) * voice.rate, block.len() as f64 / rate * voice.rate, period);
+                    cursors.insert(voice.id.clone(), start);
                     let key = voice_reader_key(entry);
                     if !readers.contains_key(&key) {
                         let Ok(file) = File::open(&key.1) else { continue; };
@@ -344,7 +369,7 @@ impl ClipAudio {
                         gain.0 += (target * left - gain.0) * smoothing;
                         gain.1 += (target * right - gain.1) * smoothing;
                         if gain.0.abs() + gain.1.abs() < 0.00001 { continue; }
-                        let Some(time) = transport_time(voice.time + (age + ahead + frame as f64 / rate) * voice.rate, voice.lo, voice.hi, voice.looping, voice.bounce) else { continue; };
+                        let Some(time) = transport_time(start + frame as f64 / rate * voice.rate, voice.lo, voice.hi, voice.looping, voice.bounce) else { continue; };
                         let position = time.max(0.0) * RATE;
                         let a = reader.sample(&entry.asset, position.floor() as u64);
                         let next_time = transport_time(time + 1.0 / RATE, voice.lo, voice.hi, voice.looping, voice.bounce).unwrap_or(time);
@@ -522,6 +547,28 @@ impl Drop for ClipAudio {
         tap.disarm(); ring.push(0.5, 0.5);
         render_output(&mut device[..2], 2, &ring, &tap, &mut resampler, 48000, &underflows);
         assert_eq!(tap.pop(), None);
+    }
+    #[test] fn voice_cursor_is_continuous_under_bursty_targets_and_resyncs_on_jumps() {
+        let block = 128.0 / 48000.0;
+        // Target jitters by a full 256-frame device buffer; the cursor must not.
+        let mut cursor = None; let mut previous: Option<f64> = None;
+        for index in 0..2000 {
+            let jitter = if index % 2 == 0 { 0.0 } else { 256.0 / 48000.0 };
+            let start = follow_cursor(cursor, 1.0 + index as f64 * block + jitter, block, None);
+            if let Some(previous) = previous { assert!(((start - previous) / block - 1.0).abs() <= 0.0051, "block {index}"); }
+            previous = Some(start); cursor = Some(start);
+        }
+        // Slewing keeps the cursor within the jitter band of the target.
+        let target = 1.0 + 2000.0 * block;
+        assert!((cursor.unwrap() + block - target).abs() < 0.006);
+        // A seek re-syncs at once.
+        assert_eq!(follow_cursor(cursor, 3.5, block, None), 3.5);
+        // A loop wrap in the target is the same position: no re-sync, no jump.
+        let near_end = follow_cursor(Some(5.999), 1.999 + block, block, Some(4.0));
+        assert!((near_end - (5.999 + block)).abs() < 1e-9);
+        // Reverse playback advances backwards.
+        let back = follow_cursor(Some(3.0), 3.0 - block, -block, None);
+        assert!((back - (3.0 - block)).abs() < 1e-12);
     }
     #[test] fn recording_tap_counts_overflow_drops_without_blocking() {
         let tap = Tap::new(); tap.arm(48000);
