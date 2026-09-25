@@ -12,6 +12,23 @@ describe('live stage screen guides', () => {
     expect(path).toContain('50.00,25.00');
   });
 
+  it('draws a Bezier mesh edge along its curve', () => {
+    const screen = createLayer('bezier-guide', 'Screen', 'screen');
+    screen.warpMode = 'mesh';
+    screen.meshGrid = createMeshGrid(2, 2);
+    screen.meshGrid.bezier = true;
+    // Both top handles lifted by 0.2: the top edge bows up by 0.15 midway.
+    screen.meshGrid.tangents = [
+      [{ right: { x: 1 / 3, y: 0.2 } }, { left: { x: -1 / 3, y: 0.2 } }],
+      [null, null],
+    ];
+    const path = stageScreenGuidePath(screen, 100, 100);
+    // The top edge's midpoint: y = 1 + 0.75 * 0.2 = 1.15, i.e. 15px above the canvas.
+    expect(path).toContain('50.00,-15.00');
+    screen.meshGrid.bezier = false;
+    expect(stageScreenGuidePath(screen, 100, 100)).toContain('50.00,0.00');
+  });
+
   it('outlines the custom slice instead of its bounding rectangle', () => {
     const screen = createLayer('custom-guide', 'Triangle', 'screen');
     screen.layerShape = {
