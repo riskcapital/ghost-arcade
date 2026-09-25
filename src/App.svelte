@@ -2241,6 +2241,7 @@
   const VIEWPORT_SELECTION_INTERACTIVE_SELECTOR = [
     '.viewport-info',
     '.warp-handles-offset .handle',
+    '.warp-handles-offset .tangent-handle',
     '.custom-shape-handles',
     '.layer-shape-warp-overlay',
     '.shape-interaction-overlay',
