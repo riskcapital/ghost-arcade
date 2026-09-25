@@ -1,6 +1,7 @@
 // Main-process capture cadence. Only one capture may be in flight.
-function createLiveCaptureClock({ fps, capture, now = () => performance.now() }) {
-  const started = now();
+// `started` (in `now()` units) may lie in the past: the first capture then
+// fills every slot since then with copies of one frame.
+function createLiveCaptureClock({ fps, capture, now = () => performance.now(), started = now() }) {
   let frames = 0, timer, running = true, active = Promise.resolve(), error = null;
   async function tick() {
     if (!running) return;
