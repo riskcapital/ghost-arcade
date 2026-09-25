@@ -2645,9 +2645,10 @@ function nativeOutputRecorderEncoderArgs(width, height, fps, quality, outputPath
   ];
   if (process.platform === 'darwin') {
     const bitrate = quality === 'maximum' ? '40M' : quality === 'high' ? '20M' : quality === 'medium' ? '10M' : '6M';
-    // -realtime favors encode latency over marginal quality — the whole
-    // point of this path is keeping pace with the live output.
-    return [...base, '-c:v', 'h264_videotoolbox', '-realtime', '1', '-b:v', bitrate, '-pix_fmt', 'yuv420p', '-movflags', '+faststart', outputPath];
+    // No -realtime: it caps VideoToolbox near real time (about 100 fps for
+    // 1080p here, against 375 without it), and the pump needs headroom to
+    // write the frames it queued while the encoder was starting.
+    return [...base, '-c:v', 'h264_videotoolbox', '-b:v', bitrate, '-pix_fmt', 'yuv420p', '-movflags', '+faststart', outputPath];
   }
   return [...base, '-c:v', 'libx264', '-pix_fmt', 'yuv420p', '-crf', crfForVideoQuality(quality), '-preset', presetForVideoQuality(quality), '-movflags', '+faststart', outputPath];
 }
