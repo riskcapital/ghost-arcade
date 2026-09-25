@@ -224,7 +224,7 @@ pub struct ClipAudio {
     stream: Option<cpal::Stream>, output_rate: u32, device: String,
     error: Arc<Mutex<String>>, underflows: Arc<AtomicU64>, callbacks: Arc<AtomicU64>,
     latency: Arc<AtomicU64>, peak_left: Arc<AtomicU32>, peak_right: Arc<AtomicU32>, callback_frames: Arc<AtomicUsize>, last_attempt: Option<Instant>, decoders: Vec<thread::JoinHandle<()>>, worker: Option<thread::JoinHandle<()>>,
-    tap: Arc<Tap>, stream_active: Arc<AtomicBool>, tap_session: Option<TapSession>,
+    tap: Arc<Tap>, stream_active: Arc<AtomicBool>, tap_session: Option<TapSession>, null_output: Option<thread::JoinHandle<()>>,
 }
 impl ClipAudio {
     pub fn new() -> Self {
@@ -238,7 +238,7 @@ impl ClipAudio {
             mix: Arc::new(Mutex::new(MixState { voices: Vec::new(), at: Instant::now() })), stop: Arc::new(AtomicBool::new(false)), ring: Arc::new(Ring::new()),
             stream: None, output_rate: 48000, device: "default".into(), error: Arc::new(Mutex::new(String::new())),
             underflows: Arc::new(AtomicU64::new(0)), callbacks: Arc::new(AtomicU64::new(0)), latency: Arc::new(AtomicU64::new(0)), peak_left: Arc::new(AtomicU32::new(0)), peak_right: Arc::new(AtomicU32::new(0)), callback_frames: Arc::new(AtomicUsize::new(256)), last_attempt: None, decoders, worker: None,
-            tap: Arc::new(Tap::new()), stream_active: Arc::new(AtomicBool::new(false)), tap_session: None }
+            tap: Arc::new(Tap::new()), stream_active: Arc::new(AtomicBool::new(false)), tap_session: None, null_output: None }
     }
     pub fn devices() -> Value {
         let host = cpal::default_host();
@@ -250,7 +250,10 @@ impl ClipAudio {
         self.stop_output(); self.device = name.to_string(); self.start_output()
     }
     fn start_output(&mut self) -> Result<(), String> {
-        if self.stream.is_some() { return Ok(()); }
+        if self.stream.is_some() || self.null_output.is_some() { return Ok(()); }
+        // Test hook: a paced software device with the exact callback path, so
+        // tests can verify the mix and the recording tap without speakers.
+        if std::env::var_os("GA_CLIP_AUDIO_NULL_OUTPUT").is_some_and(|v| v == "1") { return self.start_null_output(); }
         let host = cpal::default_host();
         let device = if self.device == "default" { host.default_output_device() }
             else { host.output_devices().ok().and_then(|mut devices| devices.find(|d| d.name().ok().as_deref() == Some(&self.device))) }.ok_or("Audio output device unavailable")?;
@@ -280,6 +283,33 @@ impl ClipAudio {
             cpal::SampleFormat::F32 => stream!(f32), cpal::SampleFormat::I16 => stream!(i16), cpal::SampleFormat::U16 => stream!(u16),
             format => return Err(format!("Unsupported audio output format: {format:?}")),
         }.map_err(|e| e.to_string())?;
+        self.spawn_mixer();
+        if let Err(error) = output.play() { self.stop_output(); return Err(error.to_string()); } self.stream = Some(output); *self.error.lock().unwrap() = String::new();
+        self.stream_active.store(true, Ordering::Release); Ok(())
+    }
+    fn start_null_output(&mut self) -> Result<(), String> {
+        self.last_attempt = Some(Instant::now());
+        self.output_rate = 48000;
+        self.spawn_mixer();
+        let (stop, ring, tap, underflows, callbacks) = (self.stop.clone(), self.ring.clone(), self.tap.clone(), self.underflows.clone(), self.callbacks.clone());
+        let (callback_frames, peak_left, peak_right) = (self.callback_frames.clone(), self.peak_left.clone(), self.peak_right.clone());
+        self.null_output = Some(thread::spawn(move || {
+            let mut resampler = TapResampler::default(); let mut buffer = vec![0.0_f32; 512];
+            let started = Instant::now(); let mut frames: u64 = 0;
+            while !stop.load(Ordering::Acquire) {
+                let due = started + Duration::from_secs_f64(frames as f64 / 48000.0);
+                let now = Instant::now();
+                if now < due { thread::sleep(due - now); continue; }
+                callbacks.fetch_add(1, Ordering::Relaxed); callback_frames.store(256, Ordering::Relaxed);
+                let peaks = render_output(&mut buffer, 2, &ring, &tap, &mut resampler, 48000, &underflows);
+                peak_left.store(peaks[0].to_bits(), Ordering::Relaxed); peak_right.store(peaks[1].to_bits(), Ordering::Relaxed);
+                frames += 256;
+            }
+        }));
+        *self.error.lock().unwrap() = String::new();
+        self.stream_active.store(true, Ordering::Release); Ok(())
+    }
+    fn spawn_mixer(&mut self) {
         self.stop.store(false, Ordering::Release);
         let stop = self.stop.clone(); let ring = self.ring.clone(); let mix = self.mix.clone(); let latency = self.latency.clone(); let rate = self.output_rate as f64; let callback_frames = self.callback_frames.clone();
         self.worker = Some(thread::spawn(move || {
@@ -331,13 +361,12 @@ impl ClipAudio {
                 }
             }
         }));
-        if let Err(error) = output.play() { self.stop_output(); return Err(error.to_string()); } self.stream = Some(output); *self.error.lock().unwrap() = String::new();
-        self.stream_active.store(true, Ordering::Release); Ok(())
     }
     fn stop_output(&mut self) {
         self.stream_active.store(false, Ordering::Release);
         self.stream = None; self.stop.store(true, Ordering::Release);
         if let Some(worker) = self.worker.take() { let _ = worker.join(); }
+        if let Some(null_output) = self.null_output.take() { let _ = null_output.join(); }
         self.ring = Arc::new(Ring::new());
     }
     /// Stream the device mix to a loopback sink while a recording runs. The
@@ -381,15 +410,19 @@ impl ClipAudio {
             (sent, error)
         });
         self.tap_session = Some(TapSession { stop, worker: Some(worker), started_unix_ms, rate });
-        Ok(json!({ "sample_rate": rate, "started_unix_ms": started_unix_ms, "channels": 2, "format": "f32le" }))
+        Ok(json!({ "sample_rate": rate, "started_unix_ms": started_unix_ms, "channels": 2, "format": "f32le", "latency_ms": self.latency_ms() }))
     }
     pub fn stop_tap(&mut self) -> Value {
         let Some(mut session) = self.tap_session.take() else { return json!({ "active": false, "frames": 0, "dropped": 0 }); };
         self.tap.disarm();
         session.stop.store(true, Ordering::Release);
         let (frames, error) = session.worker.take().and_then(|worker| worker.join().ok()).unwrap_or((0, "audio tap thread panicked".into()));
-        json!({ "active": false, "frames": frames, "dropped": self.tap.dropped(), "sample_rate": session.rate, "started_unix_ms": session.started_unix_ms, "error": error })
+        // Frame n of the tap was handed to the device at started_unix_ms + n / rate
+        // and heard `latency_ms` later, which is when the mixer aligned it to the picture.
+        json!({ "active": false, "frames": frames, "dropped": self.tap.dropped(), "sample_rate": session.rate, "started_unix_ms": session.started_unix_ms,
+            "latency_ms": self.latency_ms(), "error": error })
     }
+    fn latency_ms(&self) -> f64 { if self.stream.is_some() { self.latency.load(Ordering::Acquire) as f64 / 1e6 } else { 0.0 } }
     pub fn tap_status(&self) -> Value {
         json!({ "active": self.tap_session.is_some(), "frames": self.tap.pushed(), "dropped": self.tap.dropped(), "sample_rate": self.tap.rate(),
             "started_unix_ms": self.tap_session.as_ref().map(|s| s.started_unix_ms).unwrap_or(0) })
@@ -405,14 +438,14 @@ impl ClipAudio {
     }
     pub fn update(&mut self, voices: Vec<Voice>) {
         let voices: Vec<_> = voices.into_iter().filter_map(|voice| self.assets.get(&voice.uri).map(|asset| MixVoice { voice, asset: asset.clone() })).collect();
-        if self.stream.is_none() && self.last_attempt.is_none_or(|at| at.elapsed() >= Duration::from_secs(2)) && voices.iter().any(|v| v.voice.playing && v.voice.gain > 0.0 && v.asset.frames.load(Ordering::Acquire) > 0) {
+        if self.stream.is_none() && self.null_output.is_none() && self.last_attempt.is_none_or(|at| at.elapsed() >= Duration::from_secs(2)) && voices.iter().any(|v| v.voice.playing && v.voice.gain > 0.0 && v.asset.frames.load(Ordering::Acquire) > 0) {
             self.last_attempt = Some(Instant::now());
             if let Err(error) = self.start_output() { *self.error.lock().unwrap() = error; }
         }
         if let Ok(mut mix) = self.mix.try_lock() { mix.voices = voices; mix.at = Instant::now(); }
     }
     pub fn status(&self) -> Value {
-        json!({ "running": self.stream.is_some(), "device": self.device, "sample_rate": self.output_rate,
+        json!({ "running": self.stream.is_some() || self.null_output.is_some(), "device": self.device, "sample_rate": self.output_rate,
             "peak_left": f32::from_bits(self.peak_left.load(Ordering::Relaxed)), "peak_right": f32::from_bits(self.peak_right.load(Ordering::Relaxed)),
             "voices": self.mix.lock().map(|s| s.voices.iter().map(|v| json!({"id": v.voice.id, "time": v.voice.time, "rate": v.voice.rate, "playing": v.voice.playing, "gain": v.voice.gain, "pan": v.voice.pan})).collect::<Vec<_>>()).unwrap_or_default(),
             "callbacks": self.callbacks.load(Ordering::Relaxed), "underflow_frames": self.underflows.load(Ordering::Relaxed),
