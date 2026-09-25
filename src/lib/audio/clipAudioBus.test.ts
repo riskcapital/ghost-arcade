@@ -24,6 +24,8 @@ import {
   CLIP_AUDIO_NUDGE_SECONDS,
   CLIP_AUDIO_MAX_NUDGE,
   CLIP_AUDIO_BLOCK_TEXT,
+  getRecordingAudioStream,
+  recordingAudioWarning,
   type ClipAudioBlockReason,
   type ClipAudioMasterState,
   type ClipAudioTransport,
@@ -945,5 +947,42 @@ describe('autoplay failures', () => {
     } finally {
       warn.mockRestore();
     }
+  });
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// Recording audio warning
+// ═══════════════════════════════════════════════════════════════════════════
+
+describe('recording audio warning', () => {
+  it('warns when nothing will reach the file', () => {
+    expect(recordingAudioWarning({ includeAudio: true, rendererAudio: false })).toMatch(/NO audio track/);
+    expect(recordingAudioWarning({ includeAudio: true, rendererAudio: true, silentReason: 'the clip output is muted' }))
+      .toMatch(/SILENT.*the clip output is muted/);
+  });
+
+  it('stays quiet when the native clip audio tap feeds the file', () => {
+    expect(recordingAudioWarning({ includeAudio: true, rendererAudio: false, externalAudio: 'native clip audio' })).toBeNull();
+    expect(recordingAudioWarning({ includeAudio: true, rendererAudio: true, silentReason: 'muted', externalAudio: 'native clip audio' }))
+      .toBeNull();
+  });
+
+  it('stays quiet when audio is switched off on purpose', () => {
+    expect(recordingAudioWarning({ includeAudio: false, rendererAudio: false })).toBeNull();
+  });
+
+  it('stays quiet when the renderer mix has sound', () => {
+    expect(recordingAudioWarning({ includeAudio: true, rendererAudio: true })).toBeNull();
+  });
+
+  it('getRecordingAudioStream only warns about a missing source without the native tap', () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    // No clip bus output and no analyzer input in this environment.
+    expect(getRecordingAudioStream({ externalAudio: 'native clip audio' })).toBeNull();
+    expect(warn).not.toHaveBeenCalled();
+    expect(log).toHaveBeenCalledWith(expect.stringContaining('native clip audio'));
+    expect(getRecordingAudioStream()).toBeNull();
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('NO audio track'));
   });
 });
