@@ -651,6 +651,11 @@
     settings.setAutoDownload(checked);
   }
 
+  function handleIncludeAudioChange(e: Event) {
+    const checked = (e.target as HTMLInputElement).checked;
+    settings.setIncludeAudio(checked);
+  }
+
   async function handlePickDirectory() {
     await settings.pickSaveDirectory();
   }
@@ -1096,6 +1101,22 @@
                 <option value={option.value}>{option.label}</option>
               {/each}
             </select>
+          </div>
+
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">Include Audio</span>
+              <span class="label-hint">Record sound with the video: playing clips, mic and system audio. Turn off for a silent video file.</span>
+            </div>
+            <label class="toggle">
+              <input
+                type="checkbox"
+                aria-label="Include audio in recordings"
+                checked={$settings.recording.includeAudio !== false}
+                onchange={handleIncludeAudioChange}
+              />
+              <span class="toggle-slider"></span>
+            </label>
           </div>
 
           <div class="setting-row">
