@@ -125,6 +125,66 @@ export function canvasToScreenContent(s: ScreenGeometry, p: Point2D): Point2D | 
   };
 }
 
+function segmentDistance(p: Point2D, a: Point2D, b: Point2D): number {
+  const bax = b.x - a.x, bay = b.y - a.y;
+  const h = Math.max(0, Math.min(1, ((p.x - a.x) * bax + (p.y - a.y) * bay) / Math.max(bax * bax + bay * bay, 1e-6)));
+  return Math.hypot(p.x - a.x - bax * h, p.y - a.y - bay * h);
+}
+
+function smoothstep(edge0: number, edge1: number, x: number): number {
+  const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
+}
+
+/** Coverage of one mask polygon at `uv` (screen content space). Mirrors
+ *  screen_mask_coverage in heartbeat.wgsl: even-odd ray crossing, then a
+ *  smoothstep ramp over `feather` measured inward from the nearest edge. */
+function screenMaskCoverage(mask: ScreenMask, uv: Point2D): number {
+  const pts = mask.points.slice(0, SCREEN_MASK_POINTS_PER_MASK);
+  const count = pts.length;
+  if (count < 3) return 0;
+  let inside = false;
+  let minEdge = 1000;
+  for (let i = 0; i < count; i++) {
+    const a = pts[i];
+    const b = pts[(i + 1) % count];
+    if ((a.y <= uv.y && b.y > uv.y) || (a.y > uv.y && b.y <= uv.y)) {
+      const x = (b.x - a.x) * (uv.y - a.y) / (b.y - a.y) + a.x;
+      if (uv.x < x) inside = !inside;
+    }
+    minEdge = Math.min(minEdge, segmentDistance(uv, a, b));
+  }
+  if (!inside) return 0;
+  const feather = Math.max(0, Math.min(1, mask.feather || 0));
+  return feather > 0.001 ? smoothstep(0, feather, minEdge) : 1;
+}
+
+/** How much of a screen's picture survives at `uv` (screen content space),
+ *  0..1. Mirrors screen_mask_alpha in heartbeat.wgsl, including the caps
+ *  the core applies (8 masks, 32 vertices each): normal masks keep the
+ *  union of their insides (no normal mask keeps everything), then each
+ *  inverted mask cuts its hole. */
+export function screenMaskAlpha(masks: ScreenMask[] | null | undefined, uv: Point2D): number {
+  const active = (masks ?? []).filter(screenMaskUsable).slice(0, SCREEN_MASK_MAX);
+  if (active.length === 0) return 1;
+  let keep = active.some(m => !m.invert) ? 0 : 1;
+  let cut = 1;
+  for (const mask of active) {
+    const coverage = screenMaskCoverage(mask, uv);
+    if (mask.invert) cut *= 1 - coverage;
+    else keep = Math.max(keep, coverage);
+  }
+  return Math.max(0, Math.min(1, keep * cut));
+}
+
+// Same limits as MAX_SCREEN_MASKS / SCREEN_MASK_POINTS_PER_MASK in the core.
+export const SCREEN_MASK_MAX = 8;
+export const SCREEN_MASK_POINTS_PER_MASK = 32;
+
+function screenMaskUsable(mask: ScreenMask): boolean {
+  return !!mask && mask.enabled !== false && Array.isArray(mask.points) && mask.points.length >= 3;
+}
+
 /** A mask's vertices on the master canvas, in order. */
 export function screenMaskCanvasPoints(s: ScreenGeometry, mask: Pick<ScreenMask, 'points'>): Point2D[] {
   return mask.points.map((p) => screenContentToCanvas(s, p));
