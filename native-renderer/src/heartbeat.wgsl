@@ -151,6 +151,9 @@ struct LayerData {
   mask_info: vec4<f32>,
   mask: array<vec4<f32>, 64>,
   mesh: array<vec4<f32>, 128>,
+  // Bezier tangents, two vec4 per point: (right.xy, down.xy), (left.xy, up.xy).
+  // Read only while fast_flags.y says the mesh is a Bezier mesh.
+  mesh_tangents: array<vec4<f32>, 512>,
   source_rect: vec4<f32>,
   fast_flags: vec4<u32>,
 }
@@ -570,11 +573,204 @@ fn layer_mesh_point(layer_index: u32, index: u32) -> vec2<f32> {
   return select(packed.zw, packed.xy, (index & 1u) == 0u);
 }
 
+// Bezier mesh: every cell is a Coons patch bounded by four cubic edges, the
+// same surface src/lib/utils/meshWarp.ts evaluates for the editor outline.
+// Its bicubic form has 16 control points, so a cell can be rejected exactly
+// by their bounds before the per-pixel Newton inverse runs.
+
+const MESH_TANGENT_RIGHT: u32 = 0u;
+const MESH_TANGENT_DOWN: u32 = 1u;
+const MESH_TANGENT_LEFT: u32 = 2u;
+const MESH_TANGENT_UP: u32 = 3u;
+
+fn layer_mesh_tangent(layer_index: u32, index: u32, side: u32) -> vec2<f32> {
+  let packed = layers[layer_index].mesh_tangents[index * 2u + (side >> 1u)];
+  return select(packed.zw, packed.xy, (side & 1u) == 0u);
+}
+
+struct MeshPatch {
+  // Corners: a = (row, col), b = (row, col + 1), c = (row + 1, col + 1), d = (row + 1, col).
+  a: vec2<f32>,
+  b: vec2<f32>,
+  c: vec2<f32>,
+  d: vec2<f32>,
+  // Inner control points of the top (a->b), bottom (d->c), left (a->d) and right (b->c) edges.
+  ab1: vec2<f32>,
+  ab2: vec2<f32>,
+  dc1: vec2<f32>,
+  dc2: vec2<f32>,
+  ad1: vec2<f32>,
+  ad2: vec2<f32>,
+  bc1: vec2<f32>,
+  bc2: vec2<f32>,
+}
+
+fn layer_mesh_patch(layer_index: u32, row: u32, col: u32, cols: u32) -> MeshPatch {
+  let ia = row * cols + col;
+  let ib = ia + 1u;
+  let id = ia + cols;
+  let ic = id + 1u;
+  var mp: MeshPatch;
+  mp.a = layer_mesh_point(layer_index, ia);
+  mp.b = layer_mesh_point(layer_index, ib);
+  mp.c = layer_mesh_point(layer_index, ic);
+  mp.d = layer_mesh_point(layer_index, id);
+  mp.ab1 = mp.a + layer_mesh_tangent(layer_index, ia, MESH_TANGENT_RIGHT);
+  mp.ab2 = mp.b + layer_mesh_tangent(layer_index, ib, MESH_TANGENT_LEFT);
+  mp.dc1 = mp.d + layer_mesh_tangent(layer_index, id, MESH_TANGENT_RIGHT);
+  mp.dc2 = mp.c + layer_mesh_tangent(layer_index, ic, MESH_TANGENT_LEFT);
+  mp.ad1 = mp.a + layer_mesh_tangent(layer_index, ia, MESH_TANGENT_DOWN);
+  mp.ad2 = mp.d + layer_mesh_tangent(layer_index, id, MESH_TANGENT_UP);
+  mp.bc1 = mp.b + layer_mesh_tangent(layer_index, ib, MESH_TANGENT_DOWN);
+  mp.bc2 = mp.c + layer_mesh_tangent(layer_index, ic, MESH_TANGENT_UP);
+  return mp;
+}
+
+fn bezier3(p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3: vec2<f32>, t: f32) -> vec2<f32> {
+  let s = 1.0 - t;
+  return s * s * s * p0 + 3.0 * s * s * t * p1 + 3.0 * s * t * t * p2 + t * t * t * p3;
+}
+
+fn bezier3_tangent(p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3: vec2<f32>, t: f32) -> vec2<f32> {
+  let s = 1.0 - t;
+  return 3.0 * (s * s * (p1 - p0) + 2.0 * s * t * (p2 - p1) + t * t * (p3 - p2));
+}
+
+/// Coons patch: blend the top/bottom edges in v and the left/right edges in
+/// u, minus the bilinear corner sheet counted twice. Straight edges reduce
+/// it to the plain bilinear cell.
+fn mesh_patch_eval(p: MeshPatch, uv: vec2<f32>) -> vec2<f32> {
+  let top = bezier3(p.a, p.ab1, p.ab2, p.b, uv.x);
+  let bottom = bezier3(p.d, p.dc1, p.dc2, p.c, uv.x);
+  let left = bezier3(p.a, p.ad1, p.ad2, p.d, uv.y);
+  let right = bezier3(p.b, p.bc1, p.bc2, p.c, uv.y);
+  let sheet = mix(mix(p.a, p.b, uv.x), mix(p.d, p.c, uv.x), uv.y);
+  return mix(top, bottom, uv.y) + mix(left, right, uv.x) - sheet;
+}
+
+/// Inner control point (i, j) in 1..2 of the patch's bicubic Bezier form.
+fn mesh_patch_inner(p: MeshPatch, i: u32, j: u32) -> vec2<f32> {
+  let fu = f32(i) / 3.0;
+  let fv = f32(j) / 3.0;
+  let top_i = select(p.ab2, p.ab1, i == 1u);
+  let bottom_i = select(p.dc2, p.dc1, i == 1u);
+  let left_j = select(p.ad2, p.ad1, j == 1u);
+  let right_j = select(p.bc2, p.bc1, j == 1u);
+  let sheet = mix(mix(p.a, p.b, fu), mix(p.d, p.c, fu), fv);
+  return mix(top_i, bottom_i, fv) + mix(left_j, right_j, fu) - sheet;
+}
+
+/// The patch lies inside the convex hull of its 16 Bezier control points,
+/// so a pixel outside their bounds can skip the solve.
+fn mesh_patch_contains_bounds(p: MeshPatch, q: vec2<f32>) -> bool {
+  var lo = min(min(p.a, p.b), min(p.c, p.d));
+  var hi = max(max(p.a, p.b), max(p.c, p.d));
+  lo = min(lo, min(min(p.ab1, p.ab2), min(p.dc1, p.dc2)));
+  hi = max(hi, max(max(p.ab1, p.ab2), max(p.dc1, p.dc2)));
+  lo = min(lo, min(min(p.ad1, p.ad2), min(p.bc1, p.bc2)));
+  hi = max(hi, max(max(p.ad1, p.ad2), max(p.bc1, p.bc2)));
+  for (var j = 1u; j <= 2u; j = j + 1u) {
+    for (var i = 1u; i <= 2u; i = i + 1u) {
+      let inner = mesh_patch_inner(p, i, j);
+      lo = min(lo, inner);
+      hi = max(hi, inner);
+    }
+  }
+  return all(q >= lo - vec2<f32>(0.002)) && all(q <= hi + vec2<f32>(0.002));
+}
+
+/// Newton steps from `start` toward the (u, v) whose patch position is `q`.
+/// Returns (found, u, v). A step that lands far outside the cell is clamped
+/// back so a wild first guess cannot run off to another cell's surface.
+fn mesh_patch_newton(q: vec2<f32>, p: MeshPatch, start: vec2<f32>) -> vec3<f32> {
+  var uv = start;
+  var residual = mesh_patch_eval(p, uv) - q;
+  for (var iteration = 0u; iteration < 10u; iteration = iteration + 1u) {
+    if (dot(residual, residual) < 1e-12) { break; }
+    let top = bezier3(p.a, p.ab1, p.ab2, p.b, uv.x);
+    let bottom = bezier3(p.d, p.dc1, p.dc2, p.c, uv.x);
+    let left = bezier3(p.a, p.ad1, p.ad2, p.d, uv.y);
+    let right = bezier3(p.b, p.bc1, p.bc2, p.c, uv.y);
+    let d_top = bezier3_tangent(p.a, p.ab1, p.ab2, p.b, uv.x);
+    let d_bottom = bezier3_tangent(p.d, p.dc1, p.dc2, p.c, uv.x);
+    let d_left = bezier3_tangent(p.a, p.ad1, p.ad2, p.d, uv.y);
+    let d_right = bezier3_tangent(p.b, p.bc1, p.bc2, p.c, uv.y);
+    let d_sheet_u = mix(p.b - p.a, p.c - p.d, uv.y);
+    let d_sheet_v = mix(p.d, p.c, uv.x) - mix(p.a, p.b, uv.x);
+    let du = mix(d_top, d_bottom, uv.y) + (right - left) - d_sheet_u;
+    let dv = (bottom - top) + mix(d_left, d_right, uv.x) - d_sheet_v;
+    let det = du.x * dv.y - dv.x * du.y;
+    if (abs(det) < 1e-9) { return vec3<f32>(0.0, uv); }
+    let delta = vec2<f32>(
+      (residual.x * dv.y - residual.y * dv.x) / det,
+      (du.x * residual.y - du.y * residual.x) / det,
+    );
+    uv = clamp(uv - delta, vec2<f32>(-0.5), vec2<f32>(1.5));
+    residual = mesh_patch_eval(p, uv) - q;
+  }
+  let inside = all(uv >= vec2<f32>(-0.0005)) && all(uv <= vec2<f32>(1.0005));
+  let converged = dot(residual, residual) < 1e-9;
+  return vec3<f32>(select(0.0, 1.0, inside && converged), clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)));
+}
+
+/// Inverse of one Bezier cell: (inside, u, v). The bilinear inverse of the
+/// corner quad is the first guess; when that misses (the pixel sits in a
+/// bulge outside the quad) the centre and quadrants are tried in turn.
+fn mesh_patch_uv(q: vec2<f32>, p: MeshPatch) -> vec3<f32> {
+  let start = inverse_bilinear(q, p.a, p.b, p.c, p.d);
+  if (all(start >= vec2<f32>(-0.25)) && all(start <= vec2<f32>(1.25))) {
+    let hit = mesh_patch_newton(q, p, clamp(start, vec2<f32>(0.0), vec2<f32>(1.0)));
+    if (hit.x > 0.5) { return hit; }
+  }
+  let centre = mesh_patch_newton(q, p, vec2<f32>(0.5));
+  if (centre.x > 0.5) { return centre; }
+  for (var quadrant = 0u; quadrant < 4u; quadrant = quadrant + 1u) {
+    let seed = vec2<f32>(
+      select(0.25, 0.75, (quadrant & 1u) == 1u),
+      select(0.25, 0.75, quadrant >= 2u),
+    );
+    let hit = mesh_patch_newton(q, p, seed);
+    if (hit.x > 0.5) { return hit; }
+  }
+  return vec3<f32>(0.0, 0.0, 0.0);
+}
+
+fn layer_mesh_uv_bezier(local_uv: vec2<f32>, layer_index: u32, rows: u32, cols: u32) -> vec3<f32> {
+  // Same nearby-first search as the straight mesh below.
+  let exact_search = rows <= 4u && cols <= 4u;
+  let estimated_row = min(rows - 2u, u32(clamp(floor(local_uv.y * f32(rows - 1u)), 0.0, f32(rows - 2u))));
+  let estimated_col = min(cols - 2u, u32(clamp(floor(local_uv.x * f32(cols - 1u)), 0.0, f32(cols - 2u))));
+  for (var search = 0u; search < 2u; search = search + 1u) {
+    if (search == 1u && exact_search) { break; }
+    for (var row = 0u; row < 15u; row = row + 1u) {
+      if (row >= rows - 1u) { break; }
+      for (var col = 0u; col < 15u; col = col + 1u) {
+        if (col >= cols - 1u) { break; }
+        let nearby = exact_search || (row + 1u >= estimated_row && row <= estimated_row + 1u
+          && col + 1u >= estimated_col && col <= estimated_col + 1u);
+        if ((search == 0u && !nearby) || (search == 1u && nearby)) { continue; }
+        let mesh_cell = layer_mesh_patch(layer_index, row, col, cols);
+        if (!mesh_patch_contains_bounds(mesh_cell, local_uv)) { continue; }
+        let cell = mesh_patch_uv(local_uv, mesh_cell);
+        if (cell.x > 0.5) {
+          return vec3<f32>(1.0,
+            (f32(col) + cell.y) / f32(cols - 1u),
+            (f32(row) + cell.z) / f32(rows - 1u));
+        }
+      }
+    }
+  }
+  return vec3<f32>(0.0, local_uv);
+}
+
 fn layer_mesh_uv(local_uv: vec2<f32>, layer_index: u32) -> vec3<f32> {
   let rows = u32(clamp(floor(layers[layer_index].style.z + 0.5), 0.0, 16.0));
   let cols = u32(clamp(floor(layers[layer_index].style.w + 0.5), 0.0, 16.0));
   if (rows < 2u || cols < 2u) {
     return vec3<f32>(1.0, local_uv);
+  }
+  if (layers[layer_index].fast_flags.y == 1u) {
+    return layer_mesh_uv_bezier(local_uv, layer_index, rows, cols);
   }
   // Try nearby cells first. A strong warp can move a cell far beyond its
   // original grid neighborhood, so unresolved pixels also search the rest.
