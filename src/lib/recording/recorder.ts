@@ -226,6 +226,9 @@ async function muxSidecarAudio(outputPath: string, sidecar: AudioSidecar | null,
 }
 
 function startNativeCoreLiveRecording(options: RecorderOptions): RecorderHandle {
+  // Frame 0 of the file is this instant, whichever video path wins and
+  // however long its encoder takes to start.
+  const requestedAtUnixMs = Date.now();
   let innerFallback: RecorderHandle | null = null;
   let mainProcessActive = false;
   let stopRequested = false;
@@ -323,6 +326,7 @@ function startNativeCoreLiveRecording(options: RecorderOptions): RecorderHandle 
       quality: 'high',
       namePrefix,
       nativeAudio: nativeClipAudio,
+      requestedAtUnixMs,
     }).catch((err) => ({ success: false, error: String(err) })) as { success?: boolean; error?: string } | null;
     if (started?.success) {
       mainProcessActive = true;
@@ -340,6 +344,7 @@ function startNativeCoreLiveRecording(options: RecorderOptions): RecorderHandle 
         quality: 'high',
         namePrefix,
         liveClock: true,
+        requestedAtUnixMs,
         promptSave: autoDownload,
         nativeAudio: nativeClipAudio,
         finalizeOutput: async (outputPath, result) => {

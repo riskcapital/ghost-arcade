@@ -2730,6 +2730,14 @@ async function settleRecordingAudioTap(audioTap, outputPath, videoStartUnixMs) {
   }
 }
 
+/** Wall-clock instant a recording's frame 0 stands for: the renderer's REC
+ *  press when it sent a plausible one (same machine, same clock), else now. */
+function recordingStartUnixMs(requestedAtUnixMs) {
+  const now = Date.now();
+  const requested = Number(requestedAtUnixMs);
+  return Number.isFinite(requested) && requested <= now && now - requested < 5000 ? requested : now;
+}
+
 async function startNativeOutputRecording(args = {}) {
   if (nativeOutputRecording) throw new Error('A native output recording is already running.');
   const addon = nativePreviewAddon || loadNativePreviewAddon();
@@ -2751,6 +2759,10 @@ async function startNativeOutputRecording(args = {}) {
     nativeOutputRecorderEncoderArgs(width, height, fps, quality, outputPath),
     { windowsHide: true, stdio: ['pipe', 'ignore', 'pipe'] },
   );
+  // Frame 0 is the REC press, not the moment the encoder became ready: the
+  // pump queues frames through the encoder's 0.3-3.5 s start-up (see
+  // recording-frame-pump.cjs), so short recordings keep their start.
+  const startedAt = recordingStartUnixMs(args.requestedAtUnixMs);
   const rec = {
     child,
     surfaceId,
@@ -2758,19 +2770,12 @@ async function startNativeOutputRecording(args = {}) {
     height,
     fps,
     outputPath,
-    startedAt: Date.now(),
-    written: 0,
-    active: true,
-    lastFrame: null,
+    startedAt,
     stderr: '',
     exitPromise: null,
-    pumpPromise: null,
+    pump: null,
     audioTap: null,
   };
-  if (args.nativeAudio === true) {
-    try { rec.audioTap = await startRecordingAudioTap(); }
-    catch (err) { console.warn('[NativeRec] clip audio tap unavailable:', err?.message || err); }
-  }
   rec.exitPromise = new Promise((resolve) => {
     child.stderr?.setEncoding?.('utf8');
     child.stderr?.on('data', (chunk) => {
@@ -2782,83 +2787,23 @@ async function startNativeOutputRecording(args = {}) {
   });
   nativeOutputRecording = rec;
 
-  const frameMs = 1000 / fps;
-  rec.pumpPromise = (async () => {
-    // ── Encoder warm-up ──
-    // VideoToolbox takes several hundred ms to initialize; if the pacing
-    // clock ran during that stall, the catch-up would duplicate one stale
-    // frame across every missed slot — a frozen, laggy first second in
-    // the file. Prime the pipe with real frames WITHOUT pacing debt, and
-    // only start the wall clock once a write completes promptly.
-    {
-      const warmupDeadline = Date.now() + 4000;
-      let warmed = false;
-      let warmupWrites = 0;
-      while (rec.active && !warmed && Date.now() < warmupDeadline) {
-        let frame = null;
-        try { frame = addon.readIOSurfacePixels(rec.surfaceId); } catch { frame = null; }
-        if (frame?.data && frame.width === rec.width && frame.height === rec.height) {
-          const writeStart = Date.now();
-          try {
-            await nativeRecorderWriteStdin(rec, frame.data);
-          } catch (err) {
-            rec.stderr += `\n${err?.message || err}`;
-            rec.active = false;
-            break;
-          }
-          rec.lastFrame = frame.data;
-          warmupWrites++;
-          // A prompt write after the first means the encoder is now
-          // consuming in real time.
-          if (warmupWrites > 1 && Date.now() - writeStart < frameMs) warmed = true;
-        }
-        if (!warmed) await new Promise((r) => setTimeout(r, 20));
-      }
-      // Restart the timeline so pacing owes nothing for the init stall:
-      // the warm-up frames occupy the first slots at the nominal rate.
-      rec.written = Math.max(1, warmupWrites);
-      rec.startedAt = Date.now() - (rec.written * 1000) / fps;
-    }
-    // ── Steady-cadence pump ──
-    // Absolute per-frame deadlines: capture as close to each slot's
-    // instant as the event loop allows, write exactly one frame per
-    // slot, and duplicate only when a genuine stall put us more than a
-    // full slot behind. The previous elapsed-time resampling quantized
-    // captures unevenly into slots, which read as judder even when
-    // nothing was actually stalling.
-    let nextAt = rec.startedAt + (rec.written * 1000) / fps;
-    while (rec.active) {
-      const now = Date.now();
-      if (now < nextAt - 1) {
-        await new Promise((r) => setTimeout(r, Math.max(1, nextAt - now - 1)));
-        continue;
-      }
-      let frame = null;
-      try { frame = addon.readIOSurfacePixels(rec.surfaceId); } catch { frame = null; }
-      if (frame?.data && frame.width === rec.width && frame.height === rec.height) {
-        rec.lastFrame = frame.data;
-      } else if (!rec.lastFrame) {
-        nextAt += frameMs;
-        continue;
-      }
-      // How far behind schedule this slot's write is starting. >1 slot
-      // means a stall — fill the missed slots with this fresh capture
-      // (capped at 2s) so the timeline stays real-time.
-      const behind = Math.max(0, Math.floor((Date.now() - nextAt) / frameMs));
-      const writes = 1 + Math.min(behind, fps * 2);
-      try {
-        for (let k = 0; k < writes && rec.active; k++) {
-          await nativeRecorderWriteStdin(rec, rec.lastFrame);
-          rec.written++;
-        }
-      } catch (err) {
-        rec.stderr += `\n${err?.message || err}`;
-        rec.active = false;
-        break;
-      }
-      nextAt += frameMs * writes;
-    }
-  })();
+  const { createPacedFramePump } = require('./recording-frame-pump.cjs');
+  rec.pump = createPacedFramePump({
+    fps,
+    startedAt,
+    capture: () => {
+      const frame = addon.readIOSurfacePixels(rec.surfaceId);
+      return frame?.data && frame.width === rec.width && frame.height === rec.height ? frame.data : null;
+    },
+    write: (data) => nativeRecorderWriteStdin(rec, data).catch((err) => {
+      rec.stderr += `\n${err?.message || err}`;
+      throw err;
+    }),
+  });
+  if (args.nativeAudio === true) {
+    try { rec.audioTap = await startRecordingAudioTap(); }
+    catch (err) { console.warn('[NativeRec] clip audio tap unavailable:', err?.message || err); }
+  }
 
   console.log(`[NativeRec] recording ${width}x${height}@${fps} iosurface:${surfaceId} -> ${outputPath}`);
   return { success: true, width, height, fps, outputPath };
@@ -2926,27 +2871,30 @@ async function stopNativeOutputRecording() {
   const rec = nativeOutputRecording;
   nativeOutputRecording = null;
   if (!rec) return { success: false, error: 'No native output recording is running.' };
-  rec.active = false;
-  try { await rec.pumpPromise; } catch { /* pump errors surface via stderr */ }
+  const pumped = await rec.pump.stop();
+  const written = pumped.written;
   try { rec.child.stdin.end(); } catch { /* already closed */ }
   const code = await rec.exitPromise;
-  if (rec.written <= 0 || code !== 0) {
+  if (written <= 0 || code !== 0) {
     await rec.audioTap?.cancel().catch(() => null);
-    if (rec.written <= 0) return { success: false, error: `Recording captured no frames.${rec.stderr ? ` ${rec.stderr.trim()}` : ''}` };
+    if (written <= 0) return { success: false, error: `Recording captured no frames.${rec.stderr ? ` ${rec.stderr.trim()}` : ''}` };
     return { success: false, error: `Recording encoder exited with code ${code}.${rec.stderr ? ` ${rec.stderr.trim()}` : ''}` };
   }
-  // rec.startedAt is the wall-clock instant of video frame 0 (the warm-up
-  // resets it so the first frames occupy the first slots).
+  // rec.startedAt (the REC press) is the wall-clock instant of video frame 0.
   const nativeAudio = await settleRecordingAudioTap(rec.audioTap, rec.outputPath, rec.startedAt);
-  const thumbnailDataUrl = rec.lastFrame
-    ? await nativeRecorderThumbnail(rec.lastFrame, rec.width, rec.height)
+  const lastFrame = rec.pump.lastFrame;
+  const thumbnailDataUrl = lastFrame
+    ? await nativeRecorderThumbnail(lastFrame, rec.width, rec.height)
     : null;
-  const durationSeconds = rec.written / rec.fps;
-  console.log(`[NativeRec] finished ${rec.written} frames (${durationSeconds.toFixed(1)}s) -> ${rec.outputPath}`);
+  if (pumped.firstWriteAt) {
+    console.log(`[NativeRec] encoder took its first frame ${pumped.firstWriteAt - rec.startedAt}ms after REC; peak queue ${(pumped.peakQueuedBytes / 1048576).toFixed(0)}MB`);
+  }
+  const durationSeconds = written / rec.fps;
+  console.log(`[NativeRec] finished ${written} frames (${durationSeconds.toFixed(1)}s) -> ${rec.outputPath}`);
   return {
     success: true,
     outputPath: rec.outputPath,
-    frames: rec.written,
+    frames: written,
     fps: rec.fps,
     nativeAudio,
     durationSeconds,
@@ -7089,8 +7037,10 @@ function registerIpcHandlers() {
         if (job.cancelled || job.closing) { await job.audioTap?.cancel().catch(() => null); job.audioTap = null; return { success: false, error: 'Recording encoder is not running' }; }
       }
       const { createLiveCaptureClock } = require('./live-capture-clock.cjs');
-      job.liveStartedUnixMs = Date.now();
-      job.liveClock = createLiveCaptureClock({ fps: job.fps, capture: async (fromIndex, toIndex) => {
+      // Frame 0 is the REC press: the first capture fills the slots the
+      // renderer spent probing and starting the encoder.
+      job.liveStartedUnixMs = recordingStartUnixMs(args.startedAtUnixMs);
+      job.liveClock = createLiveCaptureClock({ fps: job.fps, started: job.liveStartedUnixMs, now: Date.now, capture: async (fromIndex, toIndex) => {
         const result = await captureLiveMp4Frame({ jobId: job.id, fromIndex, toIndex }, true);
         if (!result.success) throw new Error(result.error);
       } });

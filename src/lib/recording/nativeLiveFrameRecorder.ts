@@ -50,6 +50,10 @@ export interface NativeRendererLiveFrameRecorderOptions {
    *  (false) is the deterministic manual-clock path used by the
    *  projection-sim reel recorder. */
   liveClock?: boolean;
+  /** Live clock only: wall-clock instant (Date.now()) frame 0 stands for,
+   *  normally the REC press. Setup before the first capture is covered by
+   *  the first captured frame instead of being cut from the file. */
+  requestedAtUnixMs?: number;
   /** After saving to the media library, show a Save dialog and copy the
    *  MP4 to the chosen path (live REC parity with the old recorder's
    *  auto-download prompt). */
@@ -356,7 +360,8 @@ export async function startNativeRendererLiveFrameRecording(
 
   const liveControl = (action: 'start' | 'stop' | 'status') => invoke<{ success: boolean; frames: number; error?: string }>(
     'mp4_frame_encoder_live_control', { jobId: session.jobId, action,
-      ...(action === 'start' && options.nativeAudio ? { nativeAudio: true } : {}) });
+      ...(action === 'start' && options.nativeAudio ? { nativeAudio: true } : {}),
+      ...(action === 'start' && options.requestedAtUnixMs ? { startedAtUnixMs: options.requestedAtUnixMs } : {}) });
   if (liveClock) {
     try {
       const result = await liveControl('start');
