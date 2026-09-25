@@ -1,7 +1,9 @@
 // Shared Recording Service
 // Centralizes canvas recording logic used by App, PresetTray, and VJModePanel
 // Supports optional audio capture: a mixdown of the opt-in clip audio bus
-// and the shared audio analyzer's live input (clipAudioBus.getRecordingAudioStream)
+// and the shared audio analyzer's live input (clipAudioBus.getRecordingAudioStream),
+// plus, for native VJ recordings, the core's clip audio device mix (the
+// main process taps it and mixes it in at stop).
 
 import { get } from 'svelte/store';
 import { project } from '../stores/layers';
@@ -13,6 +15,8 @@ import { createAssetRefFromGeneratedBlob, pathToFileUrl } from '../storage/asset
 import { NATIVE_ENGINE_ONLY } from '../stores/settings';
 import { invoke, isElectron } from '../bridge';
 import { startNativeRendererLiveFrameRecording } from './nativeLiveFrameRecorder';
+import { vjClipLauncher } from '../stores/vjClipLauncher';
+import { nativeClipAudioRecordable } from '../audio/nativeClipAudio';
 
 // ============================================================================
 // TYPES
@@ -182,23 +186,33 @@ function startRecordingAudioSidecar(): AudioSidecar | null {
   };
 }
 
-/** Mux the sidecar's audio into a finished MP4. Returns true only when the
- *  file on disk now carries the audio track; a failed mux leaves the
- *  video-only file untouched. */
-async function muxSidecarAudio(outputPath: string, sidecar: AudioSidecar | null): Promise<boolean> {
-  if (!sidecar) return false;
+/** Whether this recording should carry the native core's clip audio mix.
+ *  Only the VJ workspace plays clip audio through the core; mapping and
+ *  Map-mode recordings keep their previous audio exactly. The "include
+ *  audio" setting turns it off with the rest of the recording audio. */
+function wantsNativeClipAudio(): boolean {
+  if (settings.get().recording.includeAudio === false) return false;
+  return nativeClipAudioRecordable(get(vjClipLauncher));
+}
+
+/** Mux the sidecar's audio, the native clip audio tap, or both into a
+ *  finished MP4. Returns true only when the file on disk now carries the
+ *  audio track; a failed mux leaves the video-only file untouched. */
+async function muxSidecarAudio(outputPath: string, sidecar: AudioSidecar | null, nativeAudio = false): Promise<boolean> {
+  if (!sidecar && !nativeAudio) return false;
   let audio: Uint8Array | null = null;
   try {
-    audio = await sidecar.stop();
+    audio = sidecar ? await sidecar.stop() : null;
   } catch (err) {
     console.warn('[Recorder] audio sidecar stop failed:', err);
-    return false;
   }
-  if (!audio || audio.length === 0) return false;
+  if ((!audio || audio.length === 0) && !nativeAudio) return false;
   try {
     const result = await invoke('native_recording_mux_audio', {
       videoPath: outputPath,
-      audio,
+      ...(audio && audio.length ? { audio } : {}),
+      nativeAudio,
+      audioBitrate: settings.get().recording.audioBitrate || 192_000,
     }) as { success?: boolean; error?: string } | null;
     if (!result?.success) {
       console.warn('[Recorder] audio mux failed:', result?.error);
@@ -222,6 +236,9 @@ function startNativeCoreLiveRecording(options: RecorderOptions): RecorderHandle 
   // Started immediately so audio covers the whole capture regardless of
   // which video path (main-process pump or snapshot fallback) wins.
   const audioSidecar = startRecordingAudioSidecar();
+  // The core's clip mix (what the audience hears) is tapped in the main
+  // process alongside the video and mixed with the sidecar at stop.
+  const nativeClipAudio = wantsNativeClipAudio();
   const autoDownload = !!settings.get().recording.autoDownload;
   const namePrefix = options.namePrefix || 'Recording';
 
@@ -249,11 +266,12 @@ function startNativeCoreLiveRecording(options: RecorderOptions): RecorderHandle 
         outputPath?: string;
         durationSeconds?: number;
         thumbnailDataUrl?: string | null;
+        nativeAudio?: boolean;
       } | null;
       if (!result?.success || !result.outputPath) {
         throw new Error(result?.error || 'Native recording failed.');
       }
-      muxedAudio = await muxSidecarAudio(result.outputPath, audioSidecar);
+      muxedAudio = await muxSidecarAudio(result.outputPath, audioSidecar, result.nativeAudio === true);
       const url = pathToFileUrl(result.outputPath);
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
       const name = `${namePrefix} ${timestamp}`;
@@ -304,6 +322,7 @@ function startNativeCoreLiveRecording(options: RecorderOptions): RecorderHandle 
       fps: 60,
       quality: 'high',
       namePrefix,
+      nativeAudio: nativeClipAudio,
     }).catch((err) => ({ success: false, error: String(err) })) as { success?: boolean; error?: string } | null;
     if (started?.success) {
       mainProcessActive = true;
@@ -322,8 +341,9 @@ function startNativeCoreLiveRecording(options: RecorderOptions): RecorderHandle 
         namePrefix,
         liveClock: true,
         promptSave: autoDownload,
-        finalizeOutput: async (outputPath) => {
-          muxedAudio = await muxSidecarAudio(outputPath, audioSidecar);
+        nativeAudio: nativeClipAudio,
+        finalizeOutput: async (outputPath, result) => {
+          muxedAudio = await muxSidecarAudio(outputPath, audioSidecar, result?.nativeAudio === true);
         },
         onDurationUpdate: (seconds) => {
           duration = seconds;
@@ -377,8 +397,7 @@ function startNativeCoreLiveRecording(options: RecorderOptions): RecorderHandle 
 export function startRecording(options: RecorderOptions = {}): RecorderHandle | null {
   // Native mode: the WebGL canvas is a cleared underlay — captureStream
   // would record black. Record the core's live output via frame
-  // snapshots into the native MP4 encoder instead. Video-only for now
-  // (audio muxing into the native encoder is a separate piece).
+  // snapshots into the native MP4 encoder instead; audio is muxed in at stop.
   if (isElectron && NATIVE_ENGINE_ONLY) {
     return startNativeCoreLiveRecording(options);
   }

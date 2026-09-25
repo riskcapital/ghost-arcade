@@ -644,13 +644,14 @@ export async function writeNativeRendererMp4FrameLiveSpan(
 
 export async function finishNativeMp4FrameEncoder(
   session: NativeMp4FrameEncoderSession,
-): Promise<{ outputPath: string; size: number; frames: number }> {
+): Promise<{ outputPath: string; size: number; frames: number; nativeAudio: boolean }> {
   const result = await invoke<{
     success?: boolean;
     error?: string;
     outputPath?: string;
     size?: number;
     frames?: number;
+    nativeAudio?: boolean;
   }>('mp4_frame_encoder_finish', {
     jobId: session.jobId,
   });
@@ -661,6 +662,8 @@ export async function finishNativeMp4FrameEncoder(
     outputPath: result.outputPath,
     size: Number(result.size ?? 0),
     frames: Number(result.frames ?? session.totalFrames),
+    // Live recordings: the native clip audio tap is held for the mux.
+    nativeAudio: result.nativeAudio === true,
   };
 }
 

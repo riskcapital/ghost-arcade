@@ -1211,6 +1211,10 @@ async function finishMp4FrameEncoderJob(jobIdInput) {
   await job.liveClock?.stop();
   job.closing = true;
   await job.frameSink?.close();
+  // Frame i of a live-clock job was captured at liveStartedUnixMs + i / fps.
+  const audioTap = job.audioTap;
+  job.audioTap = null;
+  const nativeAudio = settleRecordingAudioTap(audioTap, job.outputPath, job.liveStartedUnixMs ?? 0);
 
   try {
     if (!job.process.stdin.destroyed && !job.process.stdin.writableEnded) {
@@ -1221,6 +1225,11 @@ async function finishMp4FrameEncoderJob(jobIdInput) {
   const { code, signal } = await job.exitPromise;
   activeMp4FrameEncoderJobs.delete(jobId);
   try { fs.rmSync(job.tempDir, { recursive: true, force: true }); } catch { /* ignore */ }
+  if (audioTap && (job.cancelled || code !== 0 || job.writtenFrames <= 0)) {
+    await nativeAudio;
+    discardPendingRecordingAudio(pendingNativeRecordingAudio.get(job.outputPath));
+    pendingNativeRecordingAudio.delete(job.outputPath);
+  }
 
   if (job.cancelled) return { success: false, cancelled: true };
   if (code !== 0) {
@@ -1243,6 +1252,7 @@ async function finishMp4FrameEncoderJob(jobIdInput) {
     outputPath: job.outputPath,
     size: stat.size,
     frames: job.writtenFrames,
+    nativeAudio: await nativeAudio,
   };
 }
 
@@ -1254,6 +1264,9 @@ async function cancelMp4FrameEncoderJob(jobIdInput) {
   job.detachCaptureOwner?.();
   job.liveClock?.cancel();
   await job.frameSink?.close();
+  const audioTap = job.audioTap;
+  job.audioTap = null;
+  await audioTap?.cancel().catch(() => null);
   try {
     job.process.stdin?.destroy?.();
   } catch { /* ignore */ }
@@ -2677,6 +2690,46 @@ function nativeRecorderThumbnail(buffer, width, height) {
   });
 }
 
+// ── Native clip audio in recordings ──
+// The core's clip mix plays through its own audio device, so no renderer
+// capture can hear it. While a VJ recording runs the core streams that exact
+// device mix here (native-audio-tap.cjs); at stop the FLAC waits, keyed by
+// the video path, until native_recording_mux_audio mixes it into the MP4.
+const pendingNativeRecordingAudio = new Map(); // videoPath -> { tap, videoStartUnixMs, at }
+
+async function startRecordingAudioTap() {
+  const { startNativeAudioTapRecording } = require('./native-audio-tap.cjs');
+  return startNativeAudioTapRecording({
+    ffmpegPath: resolveFfmpegPath(),
+    directory: fs.mkdtempSync(path.join(app.getPath('temp'), 'ghost-native-audio-')),
+    startCore: sink => nativeRendererBroker.invoke('native_renderer_audio_tap_start', sink),
+    stopCore: () => nativeRendererBroker.invoke('native_renderer_audio_tap_stop', {}),
+  });
+}
+
+function discardPendingRecordingAudio(entry) {
+  try { if (entry?.tap?.directory) fs.rmSync(entry.tap.directory, { recursive: true, force: true }); } catch { /* best-effort */ }
+}
+
+/** Stop a recording's tap and hold its audio for the mux. Never throws: a
+ *  failed tap leaves the recording exactly as it was before this feature. */
+async function settleRecordingAudioTap(audioTap, outputPath, videoStartUnixMs) {
+  if (!audioTap) return false;
+  try {
+    const tap = await audioTap.stop();
+    if (!tap) return false;
+    if (tap.dropped > 0) console.warn(`[NativeRec] clip audio tap dropped ${tap.dropped} frames (filled with silence)`);
+    for (const [key, entry] of pendingNativeRecordingAudio) {
+      if (key === outputPath || Date.now() - entry.at > 30 * 60 * 1000) { discardPendingRecordingAudio(entry); pendingNativeRecordingAudio.delete(key); }
+    }
+    pendingNativeRecordingAudio.set(outputPath, { tap, videoStartUnixMs, at: Date.now() });
+    return true;
+  } catch (err) {
+    console.warn('[NativeRec] clip audio tap failed:', err?.message || err);
+    return false;
+  }
+}
+
 async function startNativeOutputRecording(args = {}) {
   if (nativeOutputRecording) throw new Error('A native output recording is already running.');
   const addon = nativePreviewAddon || loadNativePreviewAddon();
@@ -2712,7 +2765,12 @@ async function startNativeOutputRecording(args = {}) {
     stderr: '',
     exitPromise: null,
     pumpPromise: null,
+    audioTap: null,
   };
+  if (args.nativeAudio === true) {
+    try { rec.audioTap = await startRecordingAudioTap(); }
+    catch (err) { console.warn('[NativeRec] clip audio tap unavailable:', err?.message || err); }
+  }
   rec.exitPromise = new Promise((resolve) => {
     child.stderr?.setEncoding?.('utf8');
     child.stderr?.on('data', (chunk) => {
@@ -2815,32 +2873,34 @@ async function startNativeOutputRecording(args = {}) {
  *  ships the bytes here at stop, and ffmpeg remuxes: video stream copied
  *  bit-for-bit (no re-encode), audio transcoded to AAC for MP4 players.
  *  `-shortest` trims whichever stream ran long, keeping A/V within one
- *  MediaRecorder chunk (~1s worst case, typically <100ms). */
+ *  MediaRecorder chunk (~1s worst case, typically <100ms).
+ *
+ *  With `nativeAudio`, the core's clip mix held by settleRecordingAudioTap
+ *  is aligned to video frame 0 by wall clock and mixed in at unity gain;
+ *  it can also be the only audio when no sidecar source was active. */
 ipcMain.handle('native_recording_mux_audio', async (_event, args = {}) => {
   const videoPath = typeof args.videoPath === 'string' ? args.videoPath : '';
-  const audio = args.audio;
+  const audio = args.audio instanceof Uint8Array && args.audio.length > 0 ? args.audio : null;
+  const native = args.nativeAudio === true ? pendingNativeRecordingAudio.get(videoPath) ?? null : null;
+  if (native) pendingNativeRecordingAudio.delete(videoPath);
   if (!videoPath || !fs.existsSync(videoPath)) {
+    discardPendingRecordingAudio(native);
     return { success: false, error: 'Video file not found for audio mux.' };
   }
-  if (!audio || !(audio instanceof Uint8Array) || audio.length === 0) {
+  if (!audio && !native) {
     return { success: false, error: 'No audio data supplied.' };
   }
-  const audioPath = `${videoPath}.audio.webm`;
+  const audioPath = audio ? `${videoPath}.audio.webm` : null;
   const muxedPath = `${videoPath}.muxed.mp4`;
   try {
-    fs.writeFileSync(audioPath, Buffer.from(audio.buffer, audio.byteOffset, audio.byteLength));
+    if (audio) fs.writeFileSync(audioPath, Buffer.from(audio.buffer, audio.byteOffset, audio.byteLength));
+    const { buildRecordingMuxArgs } = require('./native-audio-tap.cjs');
     const code = await new Promise((resolve, reject) => {
-      const child = spawn(resolveFfmpegPath(), [
-        '-hide_banner', '-loglevel', 'warning', '-y',
-        '-i', videoPath,
-        '-i', audioPath,
-        '-map', '0:v:0', '-map', '1:a:0',
-        '-c:v', 'copy',
-        '-c:a', 'aac', '-b:a', '192k',
-        '-movflags', '+faststart',
-        '-shortest',
-        muxedPath,
-      ], { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
+      const child = spawn(resolveFfmpegPath(), buildRecordingMuxArgs({
+        videoPath, outputPath: muxedPath, sidecarPath: audioPath,
+        tap: native?.tap ?? null, videoStartUnixMs: native?.videoStartUnixMs ?? 0,
+        audioBitrate: args.audioBitrate ?? 192000,
+      }), { windowsHide: true, stdio: ['ignore', 'ignore', 'pipe'] });
       let stderr = '';
       child.stderr.on('data', (c) => { stderr += c; });
       child.on('close', (c) => (c === 0 ? resolve(c) : reject(new Error(stderr.trim() || `ffmpeg exited ${c}`))));
@@ -2857,7 +2917,8 @@ ipcMain.handle('native_recording_mux_audio', async (_event, args = {}) => {
     console.warn('[NativeRec] audio mux failed:', err?.message || err);
     return { success: false, error: err?.message || String(err) };
   } finally {
-    try { fs.rmSync(audioPath, { force: true }); } catch { /* best-effort */ }
+    if (audioPath) try { fs.rmSync(audioPath, { force: true }); } catch { /* best-effort */ }
+    discardPendingRecordingAudio(native);
   }
 });
 
@@ -2869,12 +2930,14 @@ async function stopNativeOutputRecording() {
   try { await rec.pumpPromise; } catch { /* pump errors surface via stderr */ }
   try { rec.child.stdin.end(); } catch { /* already closed */ }
   const code = await rec.exitPromise;
-  if (rec.written <= 0) {
-    return { success: false, error: `Recording captured no frames.${rec.stderr ? ` ${rec.stderr.trim()}` : ''}` };
-  }
-  if (code !== 0) {
+  if (rec.written <= 0 || code !== 0) {
+    await rec.audioTap?.cancel().catch(() => null);
+    if (rec.written <= 0) return { success: false, error: `Recording captured no frames.${rec.stderr ? ` ${rec.stderr.trim()}` : ''}` };
     return { success: false, error: `Recording encoder exited with code ${code}.${rec.stderr ? ` ${rec.stderr.trim()}` : ''}` };
   }
+  // rec.startedAt is the wall-clock instant of video frame 0 (the warm-up
+  // resets it so the first frames occupy the first slots).
+  const nativeAudio = await settleRecordingAudioTap(rec.audioTap, rec.outputPath, rec.startedAt);
   const thumbnailDataUrl = rec.lastFrame
     ? await nativeRecorderThumbnail(rec.lastFrame, rec.width, rec.height)
     : null;
@@ -2885,6 +2948,7 @@ async function stopNativeOutputRecording() {
     outputPath: rec.outputPath,
     frames: rec.written,
     fps: rec.fps,
+    nativeAudio,
     durationSeconds,
     thumbnailDataUrl,
   };
@@ -7019,7 +7083,13 @@ function registerIpcHandlers() {
       };
       owner.once('destroyed', ownerGone);
       owner.once('render-process-gone', ownerGone);
+      if (args.nativeAudio === true && !job.audioTap) {
+        try { job.audioTap = await startRecordingAudioTap(); }
+        catch (err) { console.warn('[NativeRec] clip audio tap unavailable:', err?.message || err); }
+        if (job.cancelled || job.closing) { await job.audioTap?.cancel().catch(() => null); job.audioTap = null; return { success: false, error: 'Recording encoder is not running' }; }
+      }
       const { createLiveCaptureClock } = require('./live-capture-clock.cjs');
+      job.liveStartedUnixMs = Date.now();
       job.liveClock = createLiveCaptureClock({ fps: job.fps, capture: async (fromIndex, toIndex) => {
         const result = await captureLiveMp4Frame({ jobId: job.id, fromIndex, toIndex }, true);
         if (!result.success) throw new Error(result.error);
