@@ -1103,6 +1103,38 @@ export interface RecordingAudioStream {
   silentReason: string | null;
 }
 
+/** Where a recording's audio comes from besides this renderer mix. */
+export interface RecordingAudioOptions {
+  /** Audio the file gets from outside the renderer, e.g. the native core's
+   *  clip audio tap on VJ recordings. With it, a missing or silent renderer
+   *  mix does not make the file silent, so neither is worth a warning. */
+  externalAudio?: string | null;
+}
+
+/**
+ * The warning a recording should log about its audio, or null when the file
+ * will have sound (or audio is deliberately off, which is not a fault).
+ * `rendererAudio` is whether the renderer mix produced a stream at all;
+ * `silentReason` is set when it did but can only record silence.
+ */
+export function recordingAudioWarning(state: {
+  includeAudio: boolean;
+  rendererAudio: boolean;
+  silentReason?: string | null;
+  externalAudio?: string | null;
+}): string | null {
+  if (!state.includeAudio || state.externalAudio) return null;
+  if (!state.rendererAudio) {
+    return '[Recorder] No audio source is active — this capture will have NO audio track. ' +
+      'Start a mic / system input, or add audio to the show timeline, before recording.';
+  }
+  if (state.silentReason) {
+    return `[Recorder] This capture will be SILENT — ${state.silentReason}. ` +
+      'Fix the clip audio output (or start a mic / system input) and record again.';
+  }
+  return null;
+}
+
 /** Label the analyzer's live input for the recorder's log. */
 function liveInputLabel(): string | null {
   if (!audioAnalyzer.running) return null;
@@ -1129,8 +1161,9 @@ function liveInputLabel(): string | null {
  * A silent result is legitimate (nothing is playing) but is never left
  * unreported — it used to mux a dead AAC track and claim success.
  */
-export function getRecordingAudioStream(): RecordingAudioStream | null {
+export function getRecordingAudioStream(options: RecordingAudioOptions = {}): RecordingAudioStream | null {
   const inputLabel = liveInputLabel();
+  const externalAudio = options.externalAudio ?? null;
 
   // A suspended context produces nothing at all, recording included.
   clipAudioBus.ensureContextRunning();
@@ -1138,10 +1171,9 @@ export function getRecordingAudioStream(): RecordingAudioStream | null {
   const wrapAnalyzerOnly = (): RecordingAudioStream | null => {
     const fallback = audioAnalyzer.getAudioStream();
     if (!fallback) {
-      console.warn(
-        '[Recorder] No audio source is active — this capture will have NO audio track. ' +
-          'Start a mic / system input, or add audio to the show timeline, before recording.',
-      );
+      const warning = recordingAudioWarning({ includeAudio: true, rendererAudio: false, externalAudio });
+      if (warning) console.warn(warning);
+      else console.log(`[Recorder] No renderer audio source; the file gets ${externalAudio} only.`);
       return null;
     }
     return {
@@ -1203,12 +1235,8 @@ export function getRecordingAudioStream(): RecordingAudioStream | null {
   const silentReason = silent
     ? (busReason ? CLIP_AUDIO_BLOCK_TEXT[busReason] : 'the clip audio bus is not connected')
     : null;
-  if (silent) {
-    console.warn(
-      `[Recorder] This capture will be SILENT — ${silentReason}. ` +
-        'Fix the clip audio output (or start a mic / system input) and record again.',
-    );
-  }
+  const warning = recordingAudioWarning({ includeAudio: true, rendererAudio: true, silentReason, externalAudio });
+  if (warning) console.warn(warning);
 
   return {
     stream: dest.stream,

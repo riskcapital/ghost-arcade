@@ -2807,7 +2807,7 @@ async function startNativeOutputRecording(args = {}) {
   }
 
   console.log(`[NativeRec] recording ${width}x${height}@${fps} iosurface:${surfaceId} -> ${outputPath}`);
-  return { success: true, width, height, fps, outputPath };
+  return { success: true, width, height, fps, outputPath, nativeAudio: !!rec.audioTap };
 }
 
 /** Mux a renderer-captured audio track into a finished native recording.
@@ -7048,7 +7048,8 @@ function registerIpcHandlers() {
     } else if (args.action === 'stop') {
       await job.liveClock?.stop();
     } else if (args.action !== 'status') return { success: false, error: 'Invalid live recording action' };
-    return { success: true, ...job.liveClock?.status(), frames: job.writtenFrames };
+    return { success: true, ...job.liveClock?.status(), frames: job.writtenFrames,
+      ...(args.action === 'start' ? { nativeAudio: !!job.audioTap } : {}) };
   });
 
   ipcMain.handle('mp4_frame_encoder_write_frame_file', async (_, args = {}) => {

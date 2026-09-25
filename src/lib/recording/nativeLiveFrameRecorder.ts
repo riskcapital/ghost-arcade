@@ -61,6 +61,9 @@ export interface NativeRendererLiveFrameRecorderOptions {
   /** Live clock only: tap the core's clip audio mix for the duration of the
    *  recording; `finalizeOutput` then receives `nativeAudio: true`. */
   nativeAudio?: boolean;
+  /** Live clock with `nativeAudio`: whether the main process got the core's
+   *  clip audio tap running. */
+  onNativeAudioStart?: (running: boolean) => void;
   fps?: number;
   quality?: OfflineRenderSettings['quality'];
   namePrefix?: string;
@@ -358,7 +361,7 @@ export async function startNativeRendererLiveFrameRecording(
     filename: namePrefix,
   }, 0, pixelFormat);
 
-  const liveControl = (action: 'start' | 'stop' | 'status') => invoke<{ success: boolean; frames: number; error?: string }>(
+  const liveControl = (action: 'start' | 'stop' | 'status') => invoke<{ success: boolean; frames: number; error?: string; nativeAudio?: boolean }>(
     'mp4_frame_encoder_live_control', { jobId: session.jobId, action,
       ...(action === 'start' && options.nativeAudio ? { nativeAudio: true } : {}),
       ...(action === 'start' && options.requestedAtUnixMs ? { startedAtUnixMs: options.requestedAtUnixMs } : {}) });
@@ -366,6 +369,7 @@ export async function startNativeRendererLiveFrameRecording(
     try {
       const result = await liveControl('start');
       if (!result.success) throw new Error(result.error || 'Could not start live recording');
+      if (options.nativeAudio) options.onNativeAudioStart?.(result.nativeAudio === true);
     } catch (error) { await cancelNativeMp4FrameEncoder(session); await restoreOnce(); throw error; }
   }
 

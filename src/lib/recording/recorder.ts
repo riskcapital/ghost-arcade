@@ -10,7 +10,7 @@ import { project } from '../stores/layers';
 import { settings, getMimeType, getFileExtension } from '../stores/settings';
 import { mediaLibrary } from '../stores/media';
 import { generateUUID } from '../types';
-import { getRecordingAudioStream, type RecordingAudioStream } from '../audio/clipAudioBus';
+import { getRecordingAudioStream, recordingAudioWarning, type RecordingAudioStream } from '../audio/clipAudioBus';
 import { createAssetRefFromGeneratedBlob, pathToFileUrl } from '../storage/assetRegistry';
 import { NATIVE_ENGINE_ONLY } from '../stores/settings';
 import { invoke, isElectron } from '../bridge';
@@ -121,7 +121,7 @@ function resolveCanvas(source: RecorderOptions['canvas']): HTMLCanvasElement | n
  *  before. */
 type AudioSidecar = { stop(): Promise<Uint8Array | null>; discard(): void };
 
-function startRecordingAudioSidecar(): AudioSidecar | null {
+function startRecordingAudioSidecar(externalAudio: string | null = null): AudioSidecar | null {
   const recSettings = settings.get().recording;
   // Deliberate setting, not a fault — log, don't warn.
   if (recSettings.includeAudio === false) {
@@ -135,7 +135,7 @@ function startRecordingAudioSidecar(): AudioSidecar | null {
     // don't use the feature record exactly as before. Without this, a show
     // whose only sound is clip playback recorded silent: analyzer
     // getAudioStream() returns null unless an analyzer INPUT is running.
-    audioResult = getRecordingAudioStream();
+    audioResult = getRecordingAudioStream({ externalAudio });
   } catch (err) {
     console.warn('[Recorder] audio mixdown unavailable:', err);
     return null;
@@ -236,12 +236,19 @@ function startNativeCoreLiveRecording(options: RecorderOptions): RecorderHandle 
   let recording = true;
   let duration = 0;
   let muxedAudio = false;
-  // Started immediately so audio covers the whole capture regardless of
-  // which video path (main-process pump or snapshot fallback) wins.
-  const audioSidecar = startRecordingAudioSidecar();
   // The core's clip mix (what the audience hears) is tapped in the main
   // process alongside the video and mixed with the sidecar at stop.
   const nativeClipAudio = wantsNativeClipAudio();
+  // Started immediately so audio covers the whole capture regardless of
+  // which video path (main-process pump or snapshot fallback) wins. With the
+  // native tap running, an empty renderer mix is not a silent recording.
+  const audioSidecar = startRecordingAudioSidecar(nativeClipAudio ? 'native clip audio' : null);
+  // The tap is only known to be running once the main process says so.
+  const reportNativeAudioStart = (tapRunning: boolean) => {
+    if (!nativeClipAudio || tapRunning) return;
+    const warning = recordingAudioWarning({ includeAudio: true, rendererAudio: !!audioSidecar });
+    if (warning) console.warn(warning);
+  };
   const autoDownload = !!settings.get().recording.autoDownload;
   const namePrefix = options.namePrefix || 'Recording';
 
@@ -327,9 +334,10 @@ function startNativeCoreLiveRecording(options: RecorderOptions): RecorderHandle 
       namePrefix,
       nativeAudio: nativeClipAudio,
       requestedAtUnixMs,
-    }).catch((err) => ({ success: false, error: String(err) })) as { success?: boolean; error?: string } | null;
+    }).catch((err) => ({ success: false, error: String(err) })) as { success?: boolean; error?: string; nativeAudio?: boolean } | null;
     if (started?.success) {
       mainProcessActive = true;
+      reportNativeAudioStart(started.nativeAudio === true);
       if (stopRequested) void stopMainProcessRecording();
       return;
     }
@@ -347,6 +355,7 @@ function startNativeCoreLiveRecording(options: RecorderOptions): RecorderHandle 
         requestedAtUnixMs,
         promptSave: autoDownload,
         nativeAudio: nativeClipAudio,
+        onNativeAudioStart: reportNativeAudioStart,
         finalizeOutput: async (outputPath, result) => {
           muxedAudio = await muxSidecarAudio(outputPath, audioSidecar, result?.nativeAudio === true);
         },
