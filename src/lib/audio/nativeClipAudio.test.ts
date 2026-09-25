@@ -6,6 +6,7 @@ const state = (extra = {}) => ({ isOpen: true, isLive: true, stoppedAll: false, 
   crossfaderEnabled: false, crossfaderValue: 0, layerStates: [{ activeClip: clip('a') }],
   bankBLayerStates: [{ activeClip: clip('b') }], clipGrid: [[clip('a'), clip('c')]], bankBClipGrid: [[clip('b')]], ...extra,
 }) as unknown as VJClipLauncherState;
+const fades = (entries: Array<[string, Record<string, unknown>]>) => new Map(entries) as unknown as NonNullable<Parameters<typeof nativeClipAudioMix>[2]>;
 describe('Native clip audio routing', () => {
   it('enables sound by default and prepares idle clips without playing them', () => {
     const mix = nativeClipAudioMix(state());
@@ -33,7 +34,7 @@ describe('Native clip audio routing', () => {
   it('describes a running clip transition: incoming fades in, outgoing fades out on the same voice id', () => {
     const outgoing = clip('old', { audioVolume: .5 });
     const fade = { token: 7, duration: 2, startedAtMs: 100, incomingClipId: 'a', outgoingClip: outgoing };
-    const mix = nativeClipAudioMix(state(), undefined, new Map([['A:0', fade]]));
+    const mix = nativeClipAudioMix(state(), undefined, fades([['A:0', fade]]));
     expect(mix.voices).toEqual([
       { id: 'A:0:a', source_id: 'a', gain: 1, pan: 0, row: 'A:0', transition: { role: 'in', token: 7, duration: 2, running: true } },
       { id: 'A:0:old', source_id: 'old', gain: .5, pan: 0, row: 'A:0', transition: { role: 'out', token: 7, duration: 2, running: true } },
@@ -42,13 +43,13 @@ describe('Native clip audio routing', () => {
     expect(mix.sources).toContain('/clips/old.mov');
   });
   it('holds both levels until the picture starts, and holds a queued launch on its outgoing clip', () => {
-    const waiting = nativeClipAudioMix(state(), undefined, new Map([['A:0', { token: 3, duration: 1, startedAtMs: null, incomingClipId: 'a', outgoingClip: clip('old') }]]));
+    const waiting = nativeClipAudioMix(state(), undefined, fades([['A:0', { token: 3, duration: 1, startedAtMs: null, incomingClipId: 'a', outgoingClip: clip('old') }]]));
     expect(waiting.voices.map(v => v.transition?.running)).toEqual([false, false]);
-    const queued = nativeClipAudioMix(state(), undefined, new Map([['A:0', { token: 4, duration: 1, startedAtMs: null, queuedTriggerId: 'q', incomingClipId: 'next', outgoingClip: clip('a') }]]));
+    const queued = nativeClipAudioMix(state(), undefined, fades([['A:0', { token: 4, duration: 1, startedAtMs: null, queuedTriggerId: 'q', incomingClipId: 'next', outgoingClip: clip('a') }]]));
     expect(queued.voices).toEqual([{ id: 'A:0:a', source_id: 'a', gain: 1, pan: 0, row: 'A:0', transition: { role: 'out', token: 4, duration: 1, running: false } }]);
   });
   it('omits silent or non-video outgoing clips and keeps rows without a transition unchanged', () => {
-    const mix = nativeClipAudioMix(state(), undefined, new Map([['A:0', { token: 1, duration: 1, startedAtMs: 0, incomingClipId: 'a', outgoingClip: clip('img', { type: 'image' }) }],
+    const mix = nativeClipAudioMix(state(), undefined, fades([['A:0', { token: 1, duration: 1, startedAtMs: 0, incomingClipId: 'a', outgoingClip: clip('img', { type: 'image' }) }],
       ['A:5', { token: 2, duration: 1, startedAtMs: 0, incomingClipId: 'x', outgoingClip: clip('y') }]]));
     expect(mix.voices.map(v => v.id)).toEqual(['A:0:a']);
   });
