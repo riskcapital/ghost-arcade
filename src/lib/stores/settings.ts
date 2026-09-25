@@ -1409,6 +1409,17 @@ function createSettingsStore() {
       });
     },
 
+    setIncludeAudio(enabled: boolean) {
+      update(s => {
+        const newSettings = {
+          ...s,
+          recording: { ...s.recording, includeAudio: enabled }
+        };
+        saveSettings(newSettings);
+        return newSettings;
+      });
+    },
+
     // Set save directory — uses Electron native dialog or File System Access API
     async pickSaveDirectory(): Promise<boolean> {
       try {
