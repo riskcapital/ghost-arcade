@@ -3735,7 +3735,7 @@ if (typeof window !== 'undefined' && isDesktopApp) {
     scheduled = true;
     queueMicrotask(() => {
       scheduled = false;
-      const command = nativeClipAudioMix(get(vjClipLauncher), get(nativeAudioMaster));
+      const command = nativeClipAudioMix(get(vjClipLauncher), get(nativeAudioMaster), get(vjClipTransitions));
       const next = JSON.stringify(command);
       if (signature === next) return;
       signature = next;
@@ -3744,6 +3744,8 @@ if (typeof window !== 'undefined' && isDesktopApp) {
   };
   vjClipLauncher.subscribe(publishAudio);
   nativeAudioMaster.subscribe(publishAudio);
+  // Clip transitions fade the audio too: the core follows each fade's clock.
+  vjClipTransitions.subscribe(publishAudio);
   let wasRunning = false;
   nativeRendererRuntime.subscribe(runtime => {
     if (runtime.running && !wasRunning) { signature = ''; publishAudio(); }
