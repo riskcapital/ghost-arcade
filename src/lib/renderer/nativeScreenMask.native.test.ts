@@ -1,7 +1,30 @@
 import { spawn } from 'node:child_process';
 import { createInterface } from 'node:readline';
-import { describe, expect, it } from 'vitest';
+import { beforeAll, describe, expect, it } from 'vitest';
 import { closeNativeTestCore, hardwareTestPlatform as platform } from './nativeHardwareTestPlatform';
+import { screenMaskAlpha } from '../stores/screenMaskGeometry';
+import type { ScreenMask } from '../stores/settings';
+
+let nativeScreenMasks: typeof import('../sync/nativeRendererSync').nativeScreenMasks;
+
+beforeAll(async () => {
+  // The sync module touches browser globals at import time.
+  const storage = new Map<string, string>();
+  const g = globalThis as any;
+  g.localStorage ??= {
+    getItem: (key: string) => storage.get(key) ?? null,
+    setItem: (key: string, value: string) => storage.set(key, value),
+    removeItem: (key: string) => storage.delete(key),
+    clear: () => storage.clear(),
+  };
+  g.document ??= { documentElement: { style: { setProperty: () => {} } } };
+  g.window ??= {
+    addEventListener: () => {},
+    removeEventListener: () => {},
+    matchMedia: () => ({ matches: false, addEventListener: () => {}, removeEventListener: () => {} }),
+  };
+  ({ nativeScreenMasks } = await import('../sync/nativeRendererSync'));
+});
 
 /**
  * Per-screen masks on the real GPU.
@@ -185,6 +208,62 @@ suite('Native screen masks', () => {
       const status = await rpc.send('status', {}, 5000);
       expect(status.last_shader_error ?? null).toBeNull();
       expect(status.last_frame_error ?? null).toBeNull();
+    } finally {
+      await rpc.close();
+    }
+  }, 90000);
+
+  it('matches the editor preview mask shading pixel for pixel, including through a corner pin', async () => {
+    // Authored the way the Screens inspector stores them: screen content
+    // space, y=0 at the top. They reach the core through the real sync
+    // conversion, and the snapshot is top row first, so snapshot pixel
+    // (col, row) and editor point ((col + .5) / SIZE, (row + .5) / SIZE)
+    // are the same spot on the projector with no flips in this test.
+    const editorMasks: ScreenMask[] = [
+      { id: 'a', name: 'Arch', enabled: true, invert: false, feather: 0.3,
+        points: [{ x: 0.08, y: 0.9 }, { x: 0.12, y: 0.2 }, { x: 0.5, y: 0.04 }, { x: 0.93, y: 0.22 }, { x: 0.9, y: 0.92 }] },
+      { id: 'b', name: 'Door', enabled: true, invert: true, feather: 0,
+        points: [{ x: 0.42, y: 0.55 }, { x: 0.61, y: 0.55 }, { x: 0.61, y: 0.97 }, { x: 0.42, y: 0.97 }] },
+    ];
+    const rpc = core();
+    try {
+      await rpc.send('start', { config: { backend: platform.rendererBackend, width: SIZE, height: SIZE, source_frame_size: 32, target_fps: 30 } });
+      await rpc.commands([
+        { type: 'upload_source_frame', source_id: 'white', width: 32, height: 32, seq: 1,
+          rgba_b64: Buffer.from(Array.from({ length: 32 * 32 }, () => [255, 255, 255, 255]).flat()).toString('base64') },
+        { type: 'upsert_layer', layer_id: 'white', z_index: 0, opacity: 1, blend_mode: 'normal',
+          corners: { topLeft: { x: 0, y: 1 }, topRight: { x: 1, y: 1 }, bottomRight: { x: 1, y: 0 }, bottomLeft: { x: 0, y: 0 } } },
+        { type: 'bind_media_source', layer_id: 'white', source_id: 'white', uri: 'mask-test://white', source_type: 'image' },
+        { type: 'set_layer_visibility', layer_id: 'white', visible: true },
+      ]);
+      await expect.poll(async () => pixel(await rpc.send('frame_snapshot', { include_pixels: true }), 64, 64),
+        { timeout: 8000, interval: 30 }).toEqual([255, 255, 255]);
+      await rpc.send('set_slice_outputs', { slices: [
+        slice('flat', { masks: nativeScreenMasks(editorMasks) }),
+        slice('pinned', { warpMode: 'corners', masks: nativeScreenMasks(editorMasks), corners: {
+          topLeft: { x: 0.2, y: 0.05 }, topRight: { x: 0.9, y: 0.1 },
+          bottomRight: { x: 0.8, y: 0.95 }, bottomLeft: { x: 0.05, y: 0.85 },
+        } }),
+      ] });
+      for (const id of ['flat', 'pinned']) {
+        const frame = await rpc.send('frame_snapshot', { include_pixels: true, slice_id: id });
+        let worst = 0;
+        let off = 0;
+        for (let row = 0; row < SIZE; row++) {
+          for (let c = 0; c < SIZE; c++) {
+            const expected = 255 * screenMaskAlpha(editorMasks, { x: (c + 0.5) / SIZE, y: (row + 0.5) / SIZE });
+            const diff = Math.abs(pixel(frame, c, row)[0] - expected);
+            worst = Math.max(worst, diff);
+            if (diff > 2) off++;
+          }
+        }
+        // The core evaluates in f32, the preview in f64; allow rounding only.
+        expect(off, `${id}: ${off} pixels differ by more than 2 levels, worst ${worst}`).toBe(0);
+      }
+      // The doorway is on the bottom edge of the projected image, as drawn.
+      const flat = await rpc.send('frame_snapshot', { include_pixels: true, slice_id: 'flat' });
+      expect(pixel(flat, col(0.5), SIZE - 4)).toEqual([0, 0, 0]);
+      expect(pixel(flat, col(0.5), 51)).toEqual([255, 255, 255]);
     } finally {
       await rpc.close();
     }
