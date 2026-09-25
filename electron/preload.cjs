@@ -104,6 +104,7 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'license_get_machine_id',
   // Native renderer process bridge
   'native_renderer_audio_devices', 'native_renderer_audio_status', 'native_renderer_audio_output',
+  'native_renderer_audio_tap_start', 'native_renderer_audio_tap_stop',
   'native_renderer_start', 'native_renderer_stop', 'native_renderer_submit_batch',
   'native_renderer_submit_commands', 'native_renderer_run_compute_graph',
   'native_renderer_schedule_launch', 'native_renderer_cancel_launch', 'native_renderer_launch_status',

@@ -38,7 +38,7 @@ export interface NativeLiveFrameRecorderOptions {
   /** Runs after the MP4 is finalized on disk but before it is registered
    *  in the media library — the hook the audio-sidecar mux uses so the
    *  library entry already carries its audio track. */
-  finalizeOutput?: (outputPath: string) => Promise<void> | void;
+  finalizeOutput?: (outputPath: string, result?: { nativeAudio: boolean }) => Promise<void> | void;
 }
 
 export interface NativeRendererLiveFrameRecorderOptions {
@@ -54,6 +54,9 @@ export interface NativeRendererLiveFrameRecorderOptions {
    *  MP4 to the chosen path (live REC parity with the old recorder's
    *  auto-download prompt). */
   promptSave?: boolean;
+  /** Live clock only: tap the core's clip audio mix for the duration of the
+   *  recording; `finalizeOutput` then receives `nativeAudio: true`. */
+  nativeAudio?: boolean;
   fps?: number;
   quality?: OfflineRenderSettings['quality'];
   namePrefix?: string;
@@ -66,7 +69,7 @@ export interface NativeRendererLiveFrameRecorderOptions {
   /** Runs after the MP4 is finalized on disk but before it is registered
    *  in the media library — the hook the audio-sidecar mux uses so the
    *  library entry already carries its audio track. */
-  finalizeOutput?: (outputPath: string) => Promise<void> | void;
+  finalizeOutput?: (outputPath: string, result?: { nativeAudio: boolean }) => Promise<void> | void;
 }
 
 function delay(ms: number): Promise<void> {
@@ -106,12 +109,12 @@ async function saveMp4ToLibrary(
   session: NativeMp4FrameEncoderSession,
   frames: number,
   namePrefix: string,
-  finalizeOutput?: (outputPath: string) => Promise<void> | void,
+  finalizeOutput?: (outputPath: string, result?: { nativeAudio: boolean }) => Promise<void> | void,
 ): Promise<{ outputPath: string; name: string }> {
   const encoded = await finishNativeMp4FrameEncoder(session);
   if (finalizeOutput) {
     try {
-      await finalizeOutput(encoded.outputPath);
+      await finalizeOutput(encoded.outputPath, { nativeAudio: encoded.nativeAudio });
     } catch (err) {
       // The video is already safe on disk; a failed finalize (audio mux)
       // degrades to a silent recording rather than losing the capture.
@@ -352,7 +355,8 @@ export async function startNativeRendererLiveFrameRecording(
   }, 0, pixelFormat);
 
   const liveControl = (action: 'start' | 'stop' | 'status') => invoke<{ success: boolean; frames: number; error?: string }>(
-    'mp4_frame_encoder_live_control', { jobId: session.jobId, action });
+    'mp4_frame_encoder_live_control', { jobId: session.jobId, action,
+      ...(action === 'start' && options.nativeAudio ? { nativeAudio: true } : {}) });
   if (liveClock) {
     try {
       const result = await liveControl('start');
