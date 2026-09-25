@@ -194,6 +194,27 @@ suite('Native screen masks', () => {
       const warped = await rpc.send('frame_snapshot', { include_pixels: true, slice_id: 'pinned' });
       expect(Buffer.from(warped.rgba_b64, 'base64').equals(Buffer.from(plain.rgba_b64, 'base64'))).toBe(true);
 
+      // Same under the Master Warp, which is how the Screens panel corner-
+      // pins today: the screen samples the master-warped frame, the mask is
+      // still cut from the screen's own frame. The pull-in (0.03) stays
+      // inside the region the keep mask already blacks out.
+      await rpc.send('submit_commands', { commands: [{ type: 'set_output_stage', masterWarp: {
+        enabled: true, mode: 'corners', corners: {
+          topLeft: { x: 0.03, y: 0.02 }, topRight: { x: 0.98, y: 0.03 },
+          bottomRight: { x: 0.97, y: 0.98 }, bottomLeft: { x: 0.02, y: 0.97 },
+        },
+      } }] });
+      await rpc.send('set_slice_outputs', { slices: [slice('plain', { masks }), slice('bare')] });
+      const masterWarped = await rpc.send('frame_snapshot', { include_pixels: true, slice_id: 'plain' });
+      expect(Buffer.from(masterWarped.rgba_b64, 'base64').equals(Buffer.from(plain.rgba_b64, 'base64'))).toBe(true);
+      // The warp really is on: an unmasked screen loses its outer corner.
+      const bareWarped = await rpc.send('frame_snapshot', { include_pixels: true, slice_id: 'bare' });
+      expect(pixel(bareWarped, 0, 0)).toEqual([0, 0, 0]);
+      expect(pixel(bareWarped, 64, 64)).toEqual([255, 255, 255]);
+      await rpc.send('submit_commands', { commands: [{ type: 'set_output_stage', masterWarp: { enabled: false } }] });
+      // Slices copy the master warp when applied, so re-send them unwarped.
+      await rpc.send('set_slice_outputs', { slices: [slice('plain', { masks }), slice('bare')] });
+
       // A screen without masks, and a screen whose only masks are unusable,
       // show the full frame.
       const bare = await rpc.send('frame_snapshot', { include_pixels: true, slice_id: 'bare' });

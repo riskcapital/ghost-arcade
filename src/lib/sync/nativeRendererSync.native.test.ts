@@ -3042,6 +3042,34 @@ describe('native image load ownership', () => {
   });
 });
 
+describe('screen mask payload', () => {
+  it('sends an open screen\'s masks with its slice output', async () => {
+    const api = await import('../api/native-renderer');
+    const { settings, createDefaultSlice } = await import('../stores/settings');
+    const { get } = await import('svelte/store');
+    const submit = vi.spyOn(api, 'submitNativeRendererCommands').mockResolvedValue({ applied: 1, dropped: 0, errors: [] } as any);
+    const original = get(settings).output.slices;
+    const sync = new NativeRendererSyncCtor() as any;
+    try {
+      settings.update(s => ({ ...s, output: { ...s.output, slices: [{
+        ...createDefaultSlice('masked', 'Masked', 'Masked'),
+        masks: [{ id: 'm', name: 'Hole', enabled: true, invert: true, feather: 0.25,
+          points: [{ x: 0.2, y: 0.25 }, { x: 0.8, y: 0.25 }, { x: 0.5, y: 0.75 }] }],
+      }] } }));
+      sync.openSliceWindowIds = ['masked'];
+      sync.pushSliceOutputs();
+      const command = submit.mock.calls.at(-1)?.[0]?.[0] as any;
+      expect(command.type).toBe('set_slice_outputs');
+      expect(command.slices[0].masks).toEqual([
+        { invert: true, feather: 0.25, points: [{ x: 0.2, y: 0.75 }, { x: 0.8, y: 0.75 }, { x: 0.5, y: 0.25 }] },
+      ]);
+    } finally {
+      submit.mockRestore();
+      settings.update(s => ({ ...s, output: { ...s.output, slices: original } }));
+    }
+  });
+});
+
 describe('screen output rejection feedback', () => {
   it('shows rejected changes and clears the message after an accepted update', async () => {
     const api = await import('../api/native-renderer');
