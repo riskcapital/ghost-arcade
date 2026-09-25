@@ -2619,6 +2619,19 @@
               <option value="12x12">12x12</option>
             </select>
           </div>
+          <!-- Bezier mesh: each selected point shows tangent handles that
+               bend the cell edges, so a curved surface needs far fewer
+               points than a straight grid. -->
+          <div class="property-row">
+            <label>
+              <input
+                type="checkbox"
+                checked={layer.meshGrid.bezier ?? false}
+                onchange={(e) => project.setMeshBezier(layer.id, (e.target as HTMLInputElement).checked)}
+              />
+              Bezier curves
+            </label>
+          </div>
         {/if}
 
         <!-- Reset warp -->
