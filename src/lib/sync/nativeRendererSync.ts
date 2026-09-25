@@ -26,7 +26,7 @@ import {
   type VJMixRow,
 } from '$lib/renderer/vjMixNative';
 import type { Layer, Model3DContent, SplatContent } from '$lib/types';
-import { layerRenderMeshGrid } from '$lib/utils/meshWarp';
+import { layerRenderMeshGrid, meshGridHasTangents, resolveMeshTangents } from '$lib/utils/meshWarp';
 import { project } from '$lib/stores/layers';
 import { mediaLibrary, type MediaItem } from '$lib/stores/media';
 import { keyframeTimeline } from '$lib/stores/keyframeTimeline';
@@ -3582,7 +3582,14 @@ function geometrySignature(layer: Layer): string {
     .flatMap((row) => row.flatMap((point) => [point.x, point.y]))
     .map((value) => Number.isFinite(value) ? value.toFixed(5) : 'nan')
     .join(':');
-  return `mesh:${corners}:${grid.rows}x${grid.cols}:${points}`;
+  // Bezier tangents change the surface without moving a point.
+  const tangents = meshGridHasTangents(grid)
+    ? ':' + grid.points.flatMap((row, r) => row.flatMap((_, c) => {
+      const t = resolveMeshTangents(grid, r, c);
+      return [t.right.x, t.right.y, t.down.x, t.down.y, t.left.x, t.left.y, t.up.x, t.up.y];
+    })).map((value) => Number.isFinite(value) ? value.toFixed(5) : 'nan').join(':')
+    : '';
+  return `mesh:${corners}:${grid.rows}x${grid.cols}:${points}${tangents}`;
 }
 
 function contentFitCode(value: Layer['contentFit']): number {

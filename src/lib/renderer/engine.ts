@@ -2,7 +2,7 @@ import * as THREE from 'three';
 import type { Layer, WarpCorners, BlendMode, MeshWarpGrid, Effect, ColorContent, MaskConfig, LayerShapeType, Point2D, ContentFitMode, EdgeEffect, GroupConfig, TransitionStyle } from '../types';
 import { GpuEffectRunner, isGpuEffect } from './gpuEffectRunner';
 import { getShapeVertices } from '../types';
-import { layerRenderMeshGrid } from '../utils/meshWarp';
+import { evaluateMeshGrid, layerRenderMeshGrid, meshGridHasTangents } from '../utils/meshWarp';
 
 // ── Group rendering types ──────────────────────────────────────────────────
 type RenderUnit =
@@ -49,6 +49,8 @@ interface LayerRenderObject {
   geometry: THREE.BufferGeometry;
   warpMode: 'corners' | 'mesh';
   meshGridSize?: { rows: number; cols: number };
+  // A Bezier mesh is tessellated finer than its grid, so it needs new geometry
+  meshBezier?: boolean;
   // Store original UV coordinates for mesh warp (so we can reapply warp each frame)
   originalUVs?: Float32Array;
   // Track the shape type for geometry recreation when shape changes
@@ -682,11 +684,13 @@ export class RenderEngine {
     // Check if we need to recreate for mesh warp mode change. A warped mesh
     // stays applied in corner mode too (see layerRenderMeshGrid).
     const renderMesh = layerRenderMeshGrid(layer);
+    const renderMeshBezier = meshGridHasTangents(renderMesh);
     const needsRecreate = obj && (
       (renderMesh && obj.warpMode !== 'mesh') ||
       (!renderMesh && obj.warpMode === 'mesh') ||
       (renderMesh &&
-        (obj.meshGridSize?.rows !== renderMesh.rows || obj.meshGridSize?.cols !== renderMesh.cols))
+        (obj.meshGridSize?.rows !== renderMesh.rows || obj.meshGridSize?.cols !== renderMesh.cols
+          || (obj.meshBezier ?? false) !== renderMeshBezier))
     );
 
     // Store existing texture before recreating
@@ -705,9 +709,11 @@ export class RenderEngine {
       const defaultControlPoints: Point2D[] | undefined = undefined;
 
       if (renderMesh) {
-        // For mesh warp, create geometry that matches the grid
-        const segmentsX = renderMesh.cols - 1;
-        const segmentsY = renderMesh.rows - 1;
+        // For mesh warp, create geometry that matches the grid. Bezier cells
+        // are curved, so each one gets 8 segments a side to stay smooth.
+        const perCell = renderMeshBezier ? 8 : 1;
+        const segmentsX = (renderMesh.cols - 1) * perCell;
+        const segmentsY = (renderMesh.rows - 1) * perCell;
         geometry = new THREE.PlaneGeometry(2, 2, segmentsX, segmentsY);
       } else {
         // For corner warp, use higher subdivisions for smooth bilinear interpolation
@@ -741,6 +747,7 @@ export class RenderEngine {
         geometry,
         warpMode: renderMesh ? 'mesh' : 'corners',
         meshGridSize: renderMesh ? { rows: renderMesh.rows, cols: renderMesh.cols } : undefined,
+        meshBezier: renderMeshBezier,
         originalUVs,
         shapeType: currentShapeType,
         defaultControlPoints,
@@ -756,38 +763,17 @@ export class RenderEngine {
   // originalUVs: the original UV coordinates (0-1) stored when geometry was created
   private applyMeshWarp(geometry: THREE.BufferGeometry, meshGrid: MeshWarpGrid, corners: WarpCorners, originalUVs: Float32Array): void {
     const positions = geometry.attributes.position;
-    const rows = meshGrid.rows;
-    const cols = meshGrid.cols;
 
     for (let i = 0; i < positions.count; i++) {
       // Get original UV coordinates (0-1) from stored array
       // This is critical - we can't read from positions because they get modified each frame
       const uvX = originalUVs[i * 2];
-      // Flip Y coordinate - Three.js plane has Y going up, but we need it going down for proper orientation
-      const uvY = 1.0 - originalUVs[i * 2 + 1];
+      const uvY = originalUVs[i * 2 + 1];
 
-      // First: get mesh deformation (local coords 0-1)
-      const gridX = uvX * (cols - 1);
-      const gridY = uvY * (rows - 1);
-
-      const col0 = Math.floor(gridX);
-      const col1 = Math.min(col0 + 1, cols - 1);
-      const row0 = Math.floor(gridY);
-      const row1 = Math.min(row0 + 1, rows - 1);
-
-      const tx = gridX - col0;
-      const ty = gridY - row0;
-
-      // Bilinear interpolation of mesh grid points
-      const p00 = meshGrid.points[row0][col0];
-      const p10 = meshGrid.points[row0][col1];
-      const p01 = meshGrid.points[row1][col0];
-      const p11 = meshGrid.points[row1][col1];
-
-      const meshX = (1 - tx) * (1 - ty) * p00.x + tx * (1 - ty) * p10.x +
-                    (1 - tx) * ty * p01.x + tx * ty * p11.x;
-      const meshY = (1 - tx) * (1 - ty) * p00.y + tx * (1 - ty) * p10.y +
-                    (1 - tx) * ty * p01.y + tx * ty * p11.y;
+      // First: get mesh deformation (local coords 0-1). The plane's Y goes
+      // up, which is the mesh's own convention (row 0 is y=1): bilinear for
+      // straight cells, the Coons patch of a Bezier cell otherwise.
+      const { x: meshX, y: meshY } = evaluateMeshGrid(meshGrid, uvX, uvY);
 
       // Second: apply corner warp to the mesh-deformed position
       // Bilinear interpolation using the corner positions

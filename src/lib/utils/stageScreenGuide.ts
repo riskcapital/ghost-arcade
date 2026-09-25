@@ -1,4 +1,5 @@
 import type { Layer, Point2D } from '../types';
+import { evaluateMeshGrid } from './meshWarp';
 
 /** Canvas outline for a live VJ screen, using the same corner and mesh
  * transforms as the mapping renderer. This is editor UI only. */
@@ -54,19 +55,10 @@ export function stageScreenGuidePoints(screen: Layer): Point2D[] {
   const warp = (point: Point2D): Point2D => {
     let { x, y } = point;
     const mesh = screen.warpMode === 'mesh' ? screen.meshGrid : null;
-    if (mesh && mesh.rows >= 2 && mesh.cols >= 2) {
-      const gx = Math.max(0, Math.min(mesh.cols - 1, x * (mesh.cols - 1)));
-      const gy = Math.max(0, Math.min(mesh.rows - 1, (1 - y) * (mesh.rows - 1)));
-      const col = Math.min(mesh.cols - 2, Math.floor(gx));
-      const row = Math.min(mesh.rows - 2, Math.floor(gy));
-      const tx = gx - col;
-      const ty = gy - row;
-      const a = mesh.points[row]?.[col]; const b = mesh.points[row]?.[col + 1];
-      const c = mesh.points[row + 1]?.[col]; const d = mesh.points[row + 1]?.[col + 1];
-      if (a && b && c && d) {
-        x = (1-tx)*(1-ty)*a.x + tx*(1-ty)*b.x + (1-tx)*ty*c.x + tx*ty*d.x;
-        y = (1-tx)*(1-ty)*a.y + tx*(1-ty)*b.y + (1-tx)*ty*c.y + tx*ty*d.y;
-      }
+    if (mesh && mesh.rows >= 2 && mesh.cols >= 2 && mesh.points.length === mesh.rows
+      && mesh.points.every((row) => row?.length === mesh.cols)) {
+      // Straight cells interpolate bilinearly; a Bezier mesh follows its curves.
+      ({ x, y } = evaluateMeshGrid(mesh, x, y));
     }
     const q = screen.corners;
     const u = 1 - x, v = 1 - y;
