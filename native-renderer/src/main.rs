@@ -113,6 +113,9 @@ const MAX_SCENE_LAYERS: usize = 64;
 const MAX_LAYER_MESH_SIDE: usize = 16;
 const MAX_LAYER_MESH_POINTS: usize = MAX_LAYER_MESH_SIDE * MAX_LAYER_MESH_SIDE;
 const MAX_LAYER_MESH_VEC4S: usize = MAX_LAYER_MESH_POINTS / 2;
+/// Bezier mesh tangents: two vec4 per point, (right.xy, down.xy) then
+/// (left.xy, up.xy), as offsets from the point in quad-local coordinates.
+const MAX_LAYER_MESH_TANGENT_VEC4S: usize = MAX_LAYER_MESH_POINTS * 2;
 const MAX_LAYER_MASK_POINTS: usize = 64;
 const MAX_LAYER_EDGE_EFFECTS: usize = 4;
 const LAYER_EDGE_EFFECT_VEC4S: usize = 7;
@@ -1277,6 +1280,7 @@ struct LayerGpu {
     mask_info: [f32; 4],
     mask: [[f32; 4]; MAX_LAYER_MASK_POINTS],
     mesh: [[f32; 4]; MAX_LAYER_MESH_VEC4S],
+    mesh_tangents: [[f32; 4]; MAX_LAYER_MESH_TANGENT_VEC4S],
     source_rect: [f32; 4],
     fast_flags: [u32; 4],
 }
@@ -1921,6 +1925,10 @@ struct SceneLayer {
     mesh_rows: u32,
     mesh_cols: u32,
     mesh_points: Vec<[f32; 2]>,
+    /// Resolved Bezier tangents per mesh point (right, down, left, up), in
+    /// the same y-up layer coordinates as `mesh_points`. Empty for a
+    /// straight-edged mesh, which keeps the original bilinear cell path.
+    mesh_tangents: Vec<[[f32; 2]; 4]>,
     source_rect: [f32; 4],
     /// VJ deck-monitor tag: Some(0)=bank A, Some(1)=bank B. Tagged layers
     /// re-render into the deck confidence monitor targets at
@@ -2760,6 +2768,7 @@ impl SceneLayer {
             mesh_rows: 0,
             mesh_cols: 0,
             mesh_points: Vec::new(),
+            mesh_tangents: Vec::new(),
             source_rect: [0.0, 0.0, 1.0, 1.0],
             deck_monitor_bank: None,
             deck_monitor_opacity: 1.0,
@@ -2847,9 +2856,38 @@ impl SceneLayer {
             mask_info: self.mask_info,
             mask: self.mask_gpu(),
             mesh: self.mesh_gpu(),
+            mesh_tangents: self.mesh_tangents_gpu(),
             source_rect: self.source_rect,
-            fast_flags: [u32::from(plain_fill), 0, 0, 0],
+            fast_flags: [u32::from(plain_fill), u32::from(self.mesh_is_bezier()), 0, 0],
         }
+    }
+
+    /// A mesh renders as Bezier patches only when it carries a tangent for
+    /// every point. Anything else takes the bilinear cell path unchanged.
+    fn mesh_is_bezier(&self) -> bool {
+        self.mesh_rows >= 2
+            && self.mesh_cols >= 2
+            && self.mesh_tangents.len() == (self.mesh_rows * self.mesh_cols) as usize
+    }
+
+    fn mesh_tangents_gpu(&self) -> [[f32; 4]; MAX_LAYER_MESH_TANGENT_VEC4S] {
+        let mut packed = [[0.0; 4]; MAX_LAYER_MESH_TANGENT_VEC4S];
+        if !self.mesh_is_bezier() {
+            return packed;
+        }
+        for (index, tangents) in self
+            .mesh_tangents
+            .iter()
+            .take(MAX_LAYER_MESH_POINTS)
+            .enumerate()
+        {
+            let [right, down, left, up] = *tangents;
+            // Offsets flip with the points: y-up layer space to the
+            // compositor's y-down quad-local space.
+            packed[index * 2] = [right[0], -right[1], down[0], -down[1]];
+            packed[index * 2 + 1] = [left[0], -left[1], up[0], -up[1]];
+        }
+        packed
     }
 
     fn shape_pts_gpu(&self) -> [[f32; 4]; 32] {
@@ -2890,6 +2928,107 @@ impl SceneLayer {
         }
         packed
     }
+}
+
+/// Parse a `mesh_grid` command value onto a layer: the control points and,
+/// for a Bezier mesh, the resolved tangent of every point. A grid the
+/// compositor cannot take clears the mesh rather than drawing a partial one.
+fn apply_layer_mesh_grid(entry: &mut SceneLayer, mesh: Option<&Value>) {
+    entry.mesh_rows = 0;
+    entry.mesh_cols = 0;
+    entry.mesh_points.clear();
+    entry.mesh_tangents.clear();
+    let Some(mesh) = mesh.and_then(Value::as_object) else { return };
+    let rows = mesh
+        .get("rows")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        .clamp(0, MAX_LAYER_MESH_SIDE as u64) as u32;
+    let cols = mesh
+        .get("cols")
+        .and_then(Value::as_u64)
+        .unwrap_or(0)
+        .clamp(0, MAX_LAYER_MESH_SIDE as u64) as u32;
+    let expected = rows.saturating_mul(cols) as usize;
+    if rows < 2 || cols < 2 || expected > MAX_LAYER_MESH_POINTS {
+        return;
+    }
+    let mut points = Vec::with_capacity(expected);
+    if let Some(point_rows) = mesh.get("points").and_then(Value::as_array) {
+        for row in point_rows.iter().take(rows as usize) {
+            let Some(row_points) = row.as_array() else {
+                break;
+            };
+            for point in row_points.iter().take(cols as usize) {
+                let x = number_at(point, &["x"]);
+                let y = number_at(point, &["y"]);
+                let (Some(x), Some(y)) = (x, y) else { break };
+                points.push([x.clamp(-8.0, 8.0) as f32, y.clamp(-8.0, 8.0) as f32]);
+            }
+        }
+    }
+    if points.len() != expected {
+        return;
+    }
+    entry.mesh_rows = rows;
+    entry.mesh_cols = cols;
+    entry.mesh_tangents = parse_layer_mesh_tangents(mesh.get("tangents"), rows as usize, cols as usize, &points);
+    entry.mesh_points = points;
+}
+
+/// Resolve the editor's sparse `tangents` grid (`[row][col]` of
+/// `{right, down, left, up}` offsets or null) into an explicit tangent for
+/// every point, with the same rules as resolveMeshTangents in
+/// src/lib/utils/meshWarp.ts: a stored side wins, a missing side mirrors a
+/// stored opposite (linked handles), and an axis with nothing stored keeps a
+/// straight edge, i.e. a control point one third along the chord to the
+/// neighbour. Returns an empty vec, meaning "not a Bezier mesh", when no
+/// point carries a tangent, so a tangent-free grid renders exactly as before.
+fn parse_layer_mesh_tangents(
+    tangents: Option<&Value>,
+    rows: usize,
+    cols: usize,
+    points: &[[f32; 2]],
+) -> Vec<[[f32; 2]; 4]> {
+    let Some(tangent_rows) = tangents.and_then(Value::as_array) else { return Vec::new() };
+    let stored_at = |row: usize, col: usize, side: &str| -> Option<[f32; 2]> {
+        let entry = tangent_rows.get(row)?.as_array()?.get(col)?;
+        let side = entry.get(side)?;
+        let x = number_at(side, &["x"])?;
+        let y = number_at(side, &["y"])?;
+        if !x.is_finite() || !y.is_finite() {
+            return None;
+        }
+        Some([x.clamp(-8.0, 8.0) as f32, y.clamp(-8.0, 8.0) as f32])
+    };
+    let mut any = false;
+    let mut resolved = Vec::with_capacity(rows * cols);
+    for row in 0..rows {
+        for col in 0..cols {
+            let point = points[row * cols + col];
+            let chord = |r: isize, c: isize| -> [f32; 2] {
+                if r < 0 || c < 0 || r as usize >= rows || c as usize >= cols {
+                    return [0.0, 0.0];
+                }
+                let next = points[r as usize * cols + c as usize];
+                [(next[0] - point[0]) / 3.0, (next[1] - point[1]) / 3.0]
+            };
+            let neg = |t: [f32; 2]| [-t[0], -t[1]];
+            let right = stored_at(row, col, "right");
+            let left = stored_at(row, col, "left");
+            let down = stored_at(row, col, "down");
+            let up = stored_at(row, col, "up");
+            any |= right.is_some() || left.is_some() || down.is_some() || up.is_some();
+            let (r, c) = (row as isize, col as isize);
+            resolved.push([
+                right.or_else(|| left.map(neg)).unwrap_or_else(|| chord(r, c + 1)),
+                down.or_else(|| up.map(neg)).unwrap_or_else(|| chord(r + 1, c)),
+                left.or_else(|| right.map(neg)).unwrap_or_else(|| chord(r, c - 1)),
+                up.or_else(|| down.map(neg)).unwrap_or_else(|| chord(r - 1, c)),
+            ]);
+        }
+    }
+    if any { resolved } else { Vec::new() }
 }
 
 fn set_scene_layer_color(layer: &mut SceneLayer, rgba: [f32; 4]) {
@@ -13177,43 +13316,7 @@ impl App {
             }
         }
         if command_has_key(command, "mesh_grid") {
-            entry.mesh_rows = 0;
-            entry.mesh_cols = 0;
-            entry.mesh_points.clear();
-            if let Some(mesh) = command.get("mesh_grid").and_then(Value::as_object) {
-                let rows = mesh
-                    .get("rows")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0)
-                    .clamp(0, MAX_LAYER_MESH_SIDE as u64) as u32;
-                let cols = mesh
-                    .get("cols")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0)
-                    .clamp(0, MAX_LAYER_MESH_SIDE as u64) as u32;
-                let expected = rows.saturating_mul(cols) as usize;
-                if rows >= 2 && cols >= 2 && expected <= MAX_LAYER_MESH_POINTS {
-                    let mut points = Vec::with_capacity(expected);
-                    if let Some(point_rows) = mesh.get("points").and_then(Value::as_array) {
-                        for row in point_rows.iter().take(rows as usize) {
-                            let Some(row_points) = row.as_array() else {
-                                break;
-                            };
-                            for point in row_points.iter().take(cols as usize) {
-                                let x = number_at(point, &["x"]);
-                                let y = number_at(point, &["y"]);
-                                let (Some(x), Some(y)) = (x, y) else { break };
-                                points.push([x.clamp(-8.0, 8.0) as f32, y.clamp(-8.0, 8.0) as f32]);
-                            }
-                        }
-                    }
-                    if points.len() == expected {
-                        entry.mesh_rows = rows;
-                        entry.mesh_cols = cols;
-                        entry.mesh_points = points;
-                    }
-                }
-            }
+            apply_layer_mesh_grid(entry, command.get("mesh_grid"));
         }
     }
 
@@ -13228,43 +13331,7 @@ impl App {
             entry.corners = corners;
         }
         if command_has_key(command, "mesh_grid") {
-            entry.mesh_rows = 0;
-            entry.mesh_cols = 0;
-            entry.mesh_points.clear();
-            if let Some(mesh) = command.get("mesh_grid").and_then(Value::as_object) {
-                let rows = mesh
-                    .get("rows")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0)
-                    .clamp(0, MAX_LAYER_MESH_SIDE as u64) as u32;
-                let cols = mesh
-                    .get("cols")
-                    .and_then(Value::as_u64)
-                    .unwrap_or(0)
-                    .clamp(0, MAX_LAYER_MESH_SIDE as u64) as u32;
-                let expected = rows.saturating_mul(cols) as usize;
-                if rows >= 2 && cols >= 2 && expected <= MAX_LAYER_MESH_POINTS {
-                    let mut points = Vec::with_capacity(expected);
-                    if let Some(point_rows) = mesh.get("points").and_then(Value::as_array) {
-                        for row in point_rows.iter().take(rows as usize) {
-                            let Some(row_points) = row.as_array() else {
-                                break;
-                            };
-                            for point in row_points.iter().take(cols as usize) {
-                                let x = number_at(point, &["x"]);
-                                let y = number_at(point, &["y"]);
-                                let (Some(x), Some(y)) = (x, y) else { break };
-                                points.push([x.clamp(-8.0, 8.0) as f32, y.clamp(-8.0, 8.0) as f32]);
-                            }
-                        }
-                    }
-                    if points.len() == expected {
-                        entry.mesh_rows = rows;
-                        entry.mesh_cols = cols;
-                        entry.mesh_points = points;
-                    }
-                }
-            }
+            apply_layer_mesh_grid(entry, command.get("mesh_grid"));
         }
     }
 
@@ -30257,6 +30324,54 @@ void main() { gl_FragColor = vec4(fractalDepth); }"#,
         assert_eq!(gpu.style[3], 2.0);
         assert_eq!(gpu.mesh[0], [0.0, 0.0, 1.0, 0.0]);
         assert_eq!(gpu.mesh[1], [0.1, 1.0, 0.9, 1.0]);
+        // No tangents: not a Bezier mesh, so the shader keeps the bilinear path.
+        assert_eq!(gpu.fast_flags[1], 0);
+        assert!(gpu.mesh_tangents.iter().all(|v| *v == [0.0; 4]));
+    }
+
+    /// Sparse editor tangents resolve like resolveMeshTangents in
+    /// meshWarp.ts: stored sides win, a missing opposite mirrors (linked
+    /// handles), and untouched axes fall back to a straight edge. The
+    /// packed offsets flip y with the points. A grid whose `tangents` carry
+    /// nothing must stay a plain mesh so old projects render unchanged.
+    #[test]
+    fn scene_layer_mesh_tangents_resolve_and_pack_for_the_bezier_path() {
+        let mut layer = SceneLayer::new("bezier-layer".to_string(), 0);
+        let grid = serde_json::json!({
+            "rows": 2, "cols": 3,
+            "points": [
+                [{"x": 0.0, "y": 1.0}, {"x": 0.5, "y": 1.0}, {"x": 1.0, "y": 1.0}],
+                [{"x": 0.0, "y": 0.0}, {"x": 0.5, "y": 0.0}, {"x": 1.0, "y": 0.0}],
+            ],
+            "tangents": [
+                [null, {"right": {"x": 0.1, "y": 0.2}}, null],
+                [null, {"right": {"x": 0.1, "y": 0.0}, "left": {"x": -0.05, "y": 0.3}, "up": {"x": 0.0, "y": 0.25}}, null],
+            ],
+        });
+        apply_layer_mesh_grid(&mut layer, Some(&grid));
+        assert_eq!((layer.mesh_rows, layer.mesh_cols), (2, 3));
+        assert_eq!(layer.mesh_tangents.len(), 6);
+        // Top-middle: right stored, left mirrors it, down/up are chord thirds.
+        assert_eq!(layer.mesh_tangents[1], [[0.1, 0.2], [0.0, -1.0 / 3.0], [-0.1, -0.2], [0.0, 0.0]]);
+        // Bottom-middle: unlinked left, stored up mirrored into down.
+        assert_eq!(layer.mesh_tangents[4], [[0.1, 0.0], [0.0, -0.25], [-0.05, 0.3], [0.0, 0.25]]);
+        // Top-left corner: nothing stored, straight edges toward its neighbours.
+        assert_eq!(layer.mesh_tangents[0], [[0.5 / 3.0, 0.0], [0.0, -1.0 / 3.0], [0.0, 0.0], [0.0, 0.0]]);
+
+        let gpu = layer.gpu();
+        assert_eq!(gpu.fast_flags[1], 1);
+        assert_eq!(gpu.mesh_tangents[2], [0.1, -0.2, 0.0, 1.0 / 3.0]);
+        assert_eq!(gpu.mesh_tangents[3], [-0.1, 0.2, 0.0, 0.0]);
+
+        let empty = serde_json::json!({
+            "rows": 2, "cols": 2,
+            "points": [[{"x": 0.0, "y": 1.0}, {"x": 1.0, "y": 1.0}], [{"x": 0.0, "y": 0.0}, {"x": 1.0, "y": 0.0}]],
+            "tangents": [[null, null], [null, {}]],
+        });
+        apply_layer_mesh_grid(&mut layer, Some(&empty));
+        assert_eq!((layer.mesh_rows, layer.mesh_cols), (2, 2));
+        assert!(layer.mesh_tangents.is_empty());
+        assert_eq!(layer.gpu().fast_flags[1], 0);
     }
 
     /// The selfie flip has to survive the whole hop from the panel's `mirrorX`
