@@ -15,6 +15,7 @@
   import { mediaLibrary } from '../stores/media';
   import { phoneVision } from '../stores/phoneVision';
   import { vjOutputLayers, vjTransitionOutputLayers, vjClipLauncher } from '../stores/vjClipLauncher';
+  import { buildMapPresetLayers, mapPresetRows, type MapPresetCacheEntry } from '../renderer/mapPresetLayers';
   import { vjClipTransitions, vjClipTransitionKey } from '../stores/vjClipTransitions';
   import { buildVJClipTransitionLayers, makeVJClipTransitionCarrier, vjClipTransitionInputId, vjClipTransitionSourceId, type VJClipTransitionState } from '../renderer/vjClipTransitionNative';
   import { createNativeClipTransitionCoordinator } from '../renderer/nativeClipTransitionCoordinator';
@@ -352,16 +353,10 @@
   // fresh clone replaced the layer. Result: video presets froze on
   // their first frame because needsUpdate=true never fired again.
   //
-  // Cache key = `mapvj-<slotIdx>-<clipId>`. We rebuild only when the
-  // slot's clip changes (different cache key) or the underlying saved
-  // composition object reference changes (preset was edited). The
-  // group layer is mutated in-place each frame for opacity/blendMode
-  // updates — those are pure scalars, no runtime refs to leak.
-  interface MapPresetCacheEntry {
-    compositionRef: import('../types').Composition;
-    group: Layer;
-    layers: Layer[];  // cloned + namespaced preset layers (does NOT include group)
-  }
+  // Cache key = the row key (`0`, `B0`…). Clones are rebuilt only when a
+  // row's composition object changes; ids stay keyed by row + surface so a
+  // preset switch keeps every shared surface's native layer (and decoder).
+  // See renderer/mapPresetLayers.ts.
   const mapPresetLayerCache = new Map<string, MapPresetCacheEntry>();
 
   // ── VJ→layer injection cache (stage mode + mapping-mode bindings) ──
@@ -472,89 +467,6 @@
       if (rt) return rt.texture;
     }
     return (vjLayer.source.texture as THREE.Texture | null | undefined) ?? null;
-  }
-
-  // JSON sanitizer for MAP-mode layer clones. Strips runtime THREE
-  // refs that would (a) re-introduce circular structure if persisted
-  // by syncState and (b) crash JSON.stringify on the wrapped DOM
-  // elements (HTMLVideoElement, HTMLIFrameElement). Keys starting
-  // with `_` and objects whose constructor begins with `_` are
-  // private-by-convention runtime state; same treatment.
-  function _mapCleanCloneLayer(l: Layer): Layer {
-    return JSON.parse(JSON.stringify(l, (key, value) => {
-      if (key === 'texture' || key === 'videoElement' || key === 'renderTarget' || key === 'iframeElement' || key === 'synthVisionCanvas') return undefined;
-      if (typeof key === 'string' && key.startsWith('_')) return undefined;
-      if (value && typeof value === 'object' && value.constructor?.name?.startsWith('_')) return undefined;
-      return value;
-    }));
-  }
-
-  // Construct a synthetic group + cloned layer stack for one MAP-mode
-  // preset slot. Called only on cache miss / composition edit — see
-  // mapPresetLayerCache. The returned `group` is mutated in-place each
-  // frame for opacity/blendMode updates; the `layers` array is the
-  // namespaced clone of the composition's saved layers, suitable for
-  // the engine to attach runtime refs (texture, videoElement) to on
-  // first updateTexturesSync pass and reuse forever after.
-  function buildMapPresetCacheEntry(
-    groupId: string,
-    comp: import('../types').Composition,
-    slotIdx: number,
-    opacity: number,
-    blendMode: any,
-  ): MapPresetCacheEntry {
-    const group: Layer = {
-      id: groupId,
-      name: `MAP L${slotIdx + 1}: ${comp.name}`,
-      type: 'group',
-      visible: true,
-      locked: false,
-      opacity,
-      blendMode,
-      source: null,
-      linesContent: null,
-      svgContent: null,
-      colorContent: null,
-      lightPaintingContent: null,
-      advLightPaintingContent: null,
-      textContent: null,
-      splatContent: null,
-      model3dContent: null,
-      pixelFXContent: null,
-      gpuLayerContent: null,
-      arcadeContent: null,
-      position: { x: 0, y: 0 },
-      scale: { x: 1, y: 1 },
-      rotation: 0,
-      flipH: false,
-      flipV: false,
-      warpMode: 'none',
-      corners: {
-        topLeft: { x: 0, y: 1 },
-        topRight: { x: 1, y: 1 },
-        bottomLeft: { x: 0, y: 0 },
-        bottomRight: { x: 1, y: 0 },
-      },
-      meshGrid: null,
-      mask: null,
-      cropRegion: null,
-      layerShape: null,
-      effects: [],
-      edgeEffects: null,
-      groupConfig: { shaderMode: 'individual', overrideStyles: false, shaderSource: null },
-    };
-    const layers: Layer[] = [];
-    for (const layer of comp.layers) {
-      const cloned = _mapCleanCloneLayer(layer);
-      // Namespace the child id so the same preset on two VJ layer
-      // slots doesn't fight over the engine's per-layer texture /
-      // render-target cache.
-      cloned.id = `${groupId}::${cloned.id}`;
-      cloned.parentGroupId = groupId;
-      cloned.bank = undefined;
-      layers.push(cloned);
-    }
-    return { compositionRef: comp, group, layers };
   }
 
   const mappingCompositionAutomationState: {
@@ -1764,47 +1676,15 @@
         if (vjState.isLive) {
           if (vjState.mapMode) {
             // ── MAP sub-mode, native path ──
-            // The WebGL preset mixer above never runs when the core owns
-            // the frame, so build the same synthetic group + namespaced
-            // preset children here. resolveNativeGroupLayers drops the
-            // group container and multiplies its opacity into the
+            // Presets render as row groups over the shared map (see
+            // renderer/mapPresetLayers.ts). resolveNativeGroupLayers drops
+            // the group container and multiplies its opacity into the
             // children, so slot faders act on the whole preset.
             if (vjState.stoppedAll) return [];
-            const comps = get(compositions);
-            const seqState = get(vjLayerSequencer);
-            const presetLayers: Layer[] = [];
-            const lsArr = vjState.layerStates;
-            const hasSolo = lsArr.some((l) => l.solo);
-            const activeKeys = new Set<string>();
-            for (let i = 0; i < lsArr.length; i++) {
-              const ls = lsArr[i];
-              if (ls.mute) continue;
-              if (hasSolo && !ls.solo) continue;
-              const clip = ls.activeClip;
-              if (!clip || clip.type !== 'preset' || !clip.presetId) continue;
-              const comp = comps.find((c) => c.id === clip.presetId);
-              if (!comp) continue;
-              const sequenceOpacity = seqState.isPlaying
-                ? (seqState.opacityOverrides?.[i] ?? 1)
-                : 1;
-              const groupOpacity = ls.opacity * sequenceOpacity * (vjState.masterOpacity ?? 1);
-              if (groupOpacity <= 0) continue;
-              const groupId = `mapvj-${i}-${clip.id}`;
-              activeKeys.add(groupId);
-              let entry = mapPresetLayerCache.get(groupId);
-              if (!entry || entry.compositionRef !== comp) {
-                entry = buildMapPresetCacheEntry(groupId, comp, i, groupOpacity, ls.blendMode);
-                mapPresetLayerCache.set(groupId, entry);
-              }
-              entry.group.opacity = groupOpacity;
-              entry.group.blendMode = ls.blendMode;
-              presetLayers.push(entry.group);
-              for (const child of entry.layers) presetLayers.push(child);
-            }
-            for (const key of mapPresetLayerCache.keys()) {
-              if (!activeKeys.has(key)) mapPresetLayerCache.delete(key);
-            }
-            return presetLayers;
+            return buildMapPresetLayers(
+              mapPresetRows(vjState, get(compositions), get(vjLayerSequencer), null),
+              { liveLayers: get(layers) as Layer[], surfaces: get(project).mapSurfaces, cache: mapPresetLayerCache },
+            );
           }
           if (vjState.stoppedAll) return stageWrap([]);
           const incomingLayers = get(vjOutputLayers);
@@ -2913,67 +2793,18 @@
           // overlap).
           //
           // CACHING: cloned layers + the synthetic group live across
-          // frames in mapPresetLayerCache, keyed by `mapvj-<i>-<clipId>`.
-          // We rebuild only on slot/clip changes or composition edits
-          // (compositionRef !== entry.compositionRef). Previously we
+          // frames in mapPresetLayerCache, keyed by row. Clones are
+          // rebuilt only when a row's composition changes. Previously we
           // cloned every frame, which threw away the videoElement that
           // updateTexturesSync had just attached to source.videoElement
           // — videos in MAP-mode presets ended up with a texture but
           // no live needsUpdate signal, so they froze on the first
-          // frame. Opacity / blendMode are mutated in-place each frame
-          // (pure scalars, safe to write).
-          const presetLayers: Layer[] = [];
-          const lsArr = vjState.layerStates;
-          const hasSolo = lsArr.some((l) => l.solo);
-          const activeKeys = new Set<string>();
-          for (let i = 0; i < lsArr.length; i++) {
-            const ls = lsArr[i];
-            if (ls.mute) continue;
-            if (hasSolo && !ls.solo) continue;
-            const clip = ls.activeClip;
-            if (!clip || clip.type !== 'preset' || !clip.presetId) continue;
-            const comp = $compositions.find((c) => c.id === clip.presetId);
-            if (!comp) continue;
-            const seqState = $vjLayerSequencer;
-            const sequenceOpacity = seqState.isPlaying
-              ? (seqState.opacityOverrides?.[i] ?? 1)
-              : 1;
-            const groupOpacity = ls.opacity * sequenceOpacity * (vjState.masterOpacity ?? 1);
-            if (groupOpacity <= 0) continue;
-
-            const groupId = `mapvj-${i}-${clip.id}`;
-            activeKeys.add(groupId);
-
-            let entry = mapPresetLayerCache.get(groupId);
-            if (!entry || entry.compositionRef !== comp) {
-              entry = buildMapPresetCacheEntry(groupId, comp, i, groupOpacity, ls.blendMode);
-              mapPresetLayerCache.set(groupId, entry);
-            }
-            // Live updates — these are scalars / array-of-data refs, safe
-            // to mutate without invalidating cached child layers.
-            entry.group.opacity = groupOpacity;
-            entry.group.blendMode = ls.blendMode;
-            entry.group.name = `MAP L${i + 1}: ${comp.name}`;
-            // VJ-layer FX chain → applied to the preset's group composite
-            // as a single post-pass (see renderGroupToTexture's
-            // `_postCompositeEffects` handler). Echo / displacement /
-            // chroma key on the VJ layer now wrap the entire preset
-            // render, matching the user's mental model of "this slot's
-            // effects act on whatever's playing in this slot." Empty
-            // array is a no-op in applyEffects so it's safe to set even
-            // when the slot has no effects.
-            (entry.group as any)._postCompositeEffects = ls.effects ?? [];
-
-            presetLayers.push(entry.group);
-            for (const child of entry.layers) presetLayers.push(child);
-          }
-          // Prune cache entries whose slot+clip no longer maps to a
-          // live preset (slot emptied, clip removed, mode toggled).
-          // Keeps the cache from growing unbounded across a session of
-          // shuffling clips between slots.
-          for (const key of mapPresetLayerCache.keys()) {
-            if (!activeKeys.has(key)) mapPresetLayerCache.delete(key);
-          }
+          // frame. Shared geometry is applied per frame with a shallow
+          // copy that keeps the same `source` object.
+          const presetLayers = buildMapPresetLayers(
+            mapPresetRows(vjState, $compositions, $vjLayerSequencer, null),
+            { liveLayers: normalLayers, surfaces: $project.mapSurfaces, cache: mapPresetLayerCache },
+          );
           layersToRender = presetLayers;
           compEffects = vjState.compositionEffects;
           if (browserEditorPreviewActive()) {
