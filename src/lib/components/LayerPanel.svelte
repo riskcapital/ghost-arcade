@@ -45,6 +45,7 @@
   import { maskEditingLayerId } from '../stores/maskEditing';
   import { nativeUnsupportedEffectTypes, nativeUnsupportedSourceReason } from '../sync/nativeRendererSync';
   import { nativeEffectChainWarning } from '../renderer/nativeEffectChainPolicy';
+  import MapSurfaceControls from './MapSurfaceControls.svelte';
 
   // WebGPU capability — reactive store, NOT a snapshot. The probe is
   // async and may not have resolved when this panel first mounts;
@@ -1829,6 +1830,7 @@
           <!-- ── Group Properties ── -->
           <div class="layer-properties">
             <h4>Properties (Group)</h4>
+            <MapSurfaceControls {layer} />
 
             <div class="property-row">
               <label>Shader Mode</label>
@@ -2003,6 +2005,7 @@
 
           <div class="layer-properties media-properties">
         <h4>Properties ({layer.type === 'lines' ? 'Lines' : layer.type === 'svg' ? 'SVG' : layer.type === 'color' ? 'Color' : layer.type === 'splat' ? 'Point Cloud' : layer.type === 'model3d' ? '3D Model' : 'Media'})</h4>
+        <MapSurfaceControls {layer} />
 
         <!-- VJ Source dropdown — only on screen/VJ-slice layers, NOT standard media layers -->
         <!-- Group layers and screen layers have their own VJ source selectors -->
