@@ -33,7 +33,7 @@ struct ObjectData {
   n0: vec4<f32>,
   n1: vec4<f32>,
   n2: vec4<f32>,
-  // x: receives projection.
+  // x: receives projection, y: the floor.
   flags: vec4<f32>,
 };
 
@@ -53,6 +53,7 @@ struct VsOut {
   @location(0) world: vec3<f32>,
   @location(1) normal: vec3<f32>,
   @location(2) @interpolate(flat) receive: f32,
+  @location(3) @interpolate(flat) floor: f32,
 };
 
 @vertex
@@ -64,6 +65,7 @@ fn vs_main(v: VsIn, @builtin(instance_index) instance: u32) -> VsOut {
   out.world = world.xyz;
   out.normal = mat3x3<f32>(o.n0.xyz, o.n1.xyz, o.n2.xyz) * v.normal;
   out.receive = o.flags.x;
+  out.floor = o.flags.y;
   return out;
 }
 
@@ -102,7 +104,8 @@ fn fs_main(in: VsOut) -> @location(0) vec4<f32> {
     // Model shading for calibration: the virtual model as a grey relief,
     // lit from this projector, so it can be lined up with the real one.
     let lit = max(dot(n, normalize(u.own_position.xyz - in.world)), 0.0);
-    return vec4<f32>(vec3<f32>(0.06 + 0.6 * lit) * edge, 1.0);
+    let base = select(0.06 + 0.6 * lit, 0.03 + 0.1 * lit, in.floor > 0.5);
+    return vec4<f32>(vec3<f32>(base) * edge, 1.0);
   }
   if (u.params.x > 0.5 || in.receive < 0.5 || u.params.y < 0.5) {
     return black;

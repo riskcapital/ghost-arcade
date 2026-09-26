@@ -27,6 +27,8 @@ pub(crate) const PROJECTOR_VIEW_MAX_MARKERS: usize = 32;
 const MAX_MESH_VERTICES: usize = 4_000_000;
 const MAX_MESH_INDICES: usize = 12_000_000;
 const MAP_DEPTH_SIZE: u32 = 2048;
+/// Mesh key the editor uses for the Map Sim floor.
+const FLOOR_MESH_KEY: &str = "floor";
 pub(crate) const PROJECTOR_VIEW_DEPTH_FORMAT: wgpu::TextureFormat = wgpu::TextureFormat::Depth32Float;
 /// Occlusion bias along the mapping lens axis: 3 mm plus 0.2% of depth.
 const MAP_DEPTH_BIAS_ABS: f32 = 0.003;
@@ -761,7 +763,14 @@ impl ProjectorViewRenderer {
             .map(|object| ObjectGpu {
                 model: to_f32_mat(&object.model),
                 normal: normal_matrix(&object.model),
-                flags: [if object.receive { 1.0 } else { 0.0 }, 0.0, 0.0, 0.0],
+                flags: [
+                    if object.receive { 1.0 } else { 0.0 },
+                    // The floor stays dark in model shading so the object's
+                    // up-facing surfaces stand out against it.
+                    if object.mesh == FLOOR_MESH_KEY { 1.0 } else { 0.0 },
+                    0.0,
+                    0.0,
+                ],
             })
             .collect();
         if !objects.is_empty() {
