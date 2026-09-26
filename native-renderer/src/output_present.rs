@@ -173,6 +173,8 @@ impl OutputPresenter {
             smask: stage.smask,
             smask_info: stage.smask_info,
             smask_pts: stage.smask_pts,
+            swarp_tangents: stage.swarp_tangents,
+            mwarp_tangents: stage.mwarp_tangents,
             ..Uniforms::zeroed()
         };
         queue.write_buffer(&self.uniform, 0, bytemuck::bytes_of(&uniforms));

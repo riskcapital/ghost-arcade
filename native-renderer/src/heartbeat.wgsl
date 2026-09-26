@@ -43,7 +43,7 @@ struct Uniforms {
   // can sit under a master warp exactly as the WebGL two-pass path does:
   //   swarp  = per-slice screen warp   (mode 0 rect, 1 corners, 2 mesh)
   //   mwarp  = master warp             (mode 0 off,  3 corners+mesh)
-  // Each block is (mode, rows, cols, _) with its corner quad in c0/c1 as
+  // Each block is (mode, rows, cols, bezier) with its corner quad in c0/c1 as
   // (TL.xy, TR.xy) and (BR.xy, BL.xy), and its control points packed two
   // per vec4 in the matching mesh array (row-major, up to 16x16).
   swarp: vec4<f32>,
@@ -62,6 +62,11 @@ struct Uniforms {
   smask: vec4<f32>,
   smask_info: array<vec4<f32>, 8>,
   smask_pts: array<vec4<f32>, 128>,
+  // Bezier tangents of the screen and master meshes, two vec4 per point
+  // exactly like LayerData.mesh_tangents. Read only while swarp.w / mwarp.w
+  // is 1, so a tangent-free mesh keeps its straight bilinear cells.
+  swarp_tangents: array<vec4<f32>, 512>,
+  mwarp_tangents: array<vec4<f32>, 512>,
 }
 
 @group(0) @binding(0)
@@ -620,25 +625,45 @@ struct MeshPatch {
   bc2: vec2<f32>,
 }
 
+/// A cell's patch from its four corners and the eight tangents that bend
+/// its edges. Every mesh builds its cells here: layer meshes, screen meshes
+/// and the Master Warp only differ in where their points are stored.
+fn mesh_patch_build(
+  a: vec2<f32>, b: vec2<f32>, c: vec2<f32>, d: vec2<f32>,
+  a_right: vec2<f32>, a_down: vec2<f32>,
+  b_left: vec2<f32>, b_down: vec2<f32>,
+  c_left: vec2<f32>, c_up: vec2<f32>,
+  d_right: vec2<f32>, d_up: vec2<f32>,
+) -> MeshPatch {
+  var mp: MeshPatch;
+  mp.a = a;
+  mp.b = b;
+  mp.c = c;
+  mp.d = d;
+  mp.ab1 = a + a_right;
+  mp.ab2 = b + b_left;
+  mp.dc1 = d + d_right;
+  mp.dc2 = c + c_left;
+  mp.ad1 = a + a_down;
+  mp.ad2 = d + d_up;
+  mp.bc1 = b + b_down;
+  mp.bc2 = c + c_up;
+  return mp;
+}
+
 fn layer_mesh_patch(layer_index: u32, row: u32, col: u32, cols: u32) -> MeshPatch {
   let ia = row * cols + col;
   let ib = ia + 1u;
   let id = ia + cols;
   let ic = id + 1u;
-  var mp: MeshPatch;
-  mp.a = layer_mesh_point(layer_index, ia);
-  mp.b = layer_mesh_point(layer_index, ib);
-  mp.c = layer_mesh_point(layer_index, ic);
-  mp.d = layer_mesh_point(layer_index, id);
-  mp.ab1 = mp.a + layer_mesh_tangent(layer_index, ia, MESH_TANGENT_RIGHT);
-  mp.ab2 = mp.b + layer_mesh_tangent(layer_index, ib, MESH_TANGENT_LEFT);
-  mp.dc1 = mp.d + layer_mesh_tangent(layer_index, id, MESH_TANGENT_RIGHT);
-  mp.dc2 = mp.c + layer_mesh_tangent(layer_index, ic, MESH_TANGENT_LEFT);
-  mp.ad1 = mp.a + layer_mesh_tangent(layer_index, ia, MESH_TANGENT_DOWN);
-  mp.ad2 = mp.d + layer_mesh_tangent(layer_index, id, MESH_TANGENT_UP);
-  mp.bc1 = mp.b + layer_mesh_tangent(layer_index, ib, MESH_TANGENT_DOWN);
-  mp.bc2 = mp.c + layer_mesh_tangent(layer_index, ic, MESH_TANGENT_UP);
-  return mp;
+  return mesh_patch_build(
+    layer_mesh_point(layer_index, ia), layer_mesh_point(layer_index, ib),
+    layer_mesh_point(layer_index, ic), layer_mesh_point(layer_index, id),
+    layer_mesh_tangent(layer_index, ia, MESH_TANGENT_RIGHT), layer_mesh_tangent(layer_index, ia, MESH_TANGENT_DOWN),
+    layer_mesh_tangent(layer_index, ib, MESH_TANGENT_LEFT), layer_mesh_tangent(layer_index, ib, MESH_TANGENT_DOWN),
+    layer_mesh_tangent(layer_index, ic, MESH_TANGENT_LEFT), layer_mesh_tangent(layer_index, ic, MESH_TANGENT_UP),
+    layer_mesh_tangent(layer_index, id, MESH_TANGENT_RIGHT), layer_mesh_tangent(layer_index, id, MESH_TANGENT_UP),
+  );
 }
 
 fn bezier3(p0: vec2<f32>, p1: vec2<f32>, p2: vec2<f32>, p3: vec2<f32>, t: f32) -> vec2<f32> {
@@ -1207,9 +1232,81 @@ fn warp_inverse_bilinear(p: vec2<f32>, a: vec2<f32>, b: vec2<f32>, c: vec2<f32>,
   return inverse_bilinear(p, a, b, c, d);
 }
 
+fn swarp_mesh_tangent(index: u32, side: u32) -> vec2<f32> {
+  let packed = u.swarp_tangents[min(index * 2u + (side >> 1u), 511u)];
+  return select(packed.zw, packed.xy, (side & 1u) == 0u);
+}
+
+fn mwarp_mesh_tangent(index: u32, side: u32) -> vec2<f32> {
+  let packed = u.mwarp_tangents[min(index * 2u + (side >> 1u), 511u)];
+  return select(packed.zw, packed.xy, (side & 1u) == 0u);
+}
+
+fn swarp_mesh_patch(row: u32, col: u32, cols: u32) -> MeshPatch {
+  let ia = row * cols + col;
+  let ib = ia + 1u;
+  let id = ia + cols;
+  let ic = id + 1u;
+  return mesh_patch_build(
+    swarp_mesh_point(ia), swarp_mesh_point(ib), swarp_mesh_point(ic), swarp_mesh_point(id),
+    swarp_mesh_tangent(ia, MESH_TANGENT_RIGHT), swarp_mesh_tangent(ia, MESH_TANGENT_DOWN),
+    swarp_mesh_tangent(ib, MESH_TANGENT_LEFT), swarp_mesh_tangent(ib, MESH_TANGENT_DOWN),
+    swarp_mesh_tangent(ic, MESH_TANGENT_LEFT), swarp_mesh_tangent(ic, MESH_TANGENT_UP),
+    swarp_mesh_tangent(id, MESH_TANGENT_RIGHT), swarp_mesh_tangent(id, MESH_TANGENT_UP),
+  );
+}
+
+fn mwarp_mesh_patch(row: u32, col: u32, cols: u32) -> MeshPatch {
+  let ia = row * cols + col;
+  let ib = ia + 1u;
+  let id = ia + cols;
+  let ic = id + 1u;
+  return mesh_patch_build(
+    mwarp_mesh_point(ia), mwarp_mesh_point(ib), mwarp_mesh_point(ic), mwarp_mesh_point(id),
+    mwarp_mesh_tangent(ia, MESH_TANGENT_RIGHT), mwarp_mesh_tangent(ia, MESH_TANGENT_DOWN),
+    mwarp_mesh_tangent(ib, MESH_TANGENT_LEFT), mwarp_mesh_tangent(ib, MESH_TANGENT_DOWN),
+    mwarp_mesh_tangent(ic, MESH_TANGENT_LEFT), mwarp_mesh_tangent(ic, MESH_TANGENT_UP),
+    mwarp_mesh_tangent(id, MESH_TANGENT_RIGHT), mwarp_mesh_tangent(id, MESH_TANGENT_UP),
+  );
+}
+
+/// Master Warp Bezier mesh: the control points are destinations, so each
+/// pixel inverts the Coons patch of the cell it lands in, with the same
+/// nearby-first search and bounds rejection as layer_mesh_uv_bezier. It is a
+/// separate loop only because the fs_output pipeline has no layer buffer.
+fn mwarp_mesh_uv_bezier(q: vec2<f32>, rows: u32, cols: u32) -> vec3<f32> {
+  let exact_search = rows <= 4u && cols <= 4u;
+  let estimated_row = min(rows - 2u, u32(clamp(floor(q.y * f32(rows - 1u)), 0.0, f32(rows - 2u))));
+  let estimated_col = min(cols - 2u, u32(clamp(floor(q.x * f32(cols - 1u)), 0.0, f32(cols - 2u))));
+  for (var search = 0u; search < 2u; search = search + 1u) {
+    if (search == 1u && exact_search) { break; }
+    for (var row = 0u; row < WARP_MESH_MAX_DIM - 1u; row = row + 1u) {
+      if (row >= rows - 1u) { break; }
+      for (var col = 0u; col < WARP_MESH_MAX_DIM - 1u; col = col + 1u) {
+        if (col >= cols - 1u) { break; }
+        let nearby = exact_search || (row + 1u >= estimated_row && row <= estimated_row + 1u
+          && col + 1u >= estimated_col && col <= estimated_col + 1u);
+        if ((search == 0u && !nearby) || (search == 1u && nearby)) { continue; }
+        let mesh_cell = mwarp_mesh_patch(row, col, cols);
+        if (!mesh_patch_contains_bounds(mesh_cell, q)) { continue; }
+        let cell = mesh_patch_uv(q, mesh_cell);
+        if (cell.x > 0.5) {
+          return vec3<f32>(
+            (f32(col) + cell.y) / f32(cols - 1u),
+            (f32(row) + cell.z) / f32(rows - 1u),
+            1.0,
+          );
+        }
+      }
+    }
+  }
+  return vec3<f32>(q, 0.0);
+}
+
 /// Per-slice screen warp: projector UV -> master-canvas sample position.
 /// Corners and mesh control points are already sample positions, so this is
-/// a direct forward interpolation with no solve.
+/// a direct forward interpolation with no solve. A Bezier mesh evaluates
+/// its cell as the Coons patch instead of the bilinear sheet.
 fn slice_warp_uv(uv: vec2<f32>) -> vec2<f32> {
   let mode = i32(floor(u.swarp.x + 0.5));
   if (mode == 1) {
@@ -1226,6 +1323,9 @@ fn slice_warp_uv(uv: vec2<f32>) -> vec2<f32> {
     let ri = u32(clamp(floor(fy), 0.0, f32(rows - 2u)));
     let su = clamp(fx - f32(ci), 0.0, 1.0);
     let sv = clamp(fy - f32(ri), 0.0, 1.0);
+    if (u.swarp.w > 0.5) {
+      return mesh_patch_eval(swarp_mesh_patch(ri, ci, cols), vec2<f32>(su, sv));
+    }
     let p00 = swarp_mesh_point(ri * cols + ci);
     let p10 = swarp_mesh_point(ri * cols + ci + 1u);
     let p01 = swarp_mesh_point((ri + 1u) * cols + ci);
@@ -1252,6 +1352,9 @@ fn master_warp_uv(uv: vec2<f32>) -> vec3<f32> {
   let cols = u32(clamp(u.mwarp.z, 0.0, f32(WARP_MESH_MAX_DIM)));
   if (rows < 2u || cols < 2u) {
     return vec3<f32>(q, 1.0);
+  }
+  if (u.mwarp.w > 0.5) {
+    return mwarp_mesh_uv_bezier(q, rows, cols);
   }
   // The mesh deforms within the corner-pinned quad, so its cells have to be
   // searched: unlike the slice mesh, the control points are destinations.

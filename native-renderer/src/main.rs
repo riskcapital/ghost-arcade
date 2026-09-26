@@ -1195,6 +1195,10 @@ struct OutputStage {
     /// Control points, two per vec4, row-major, up to 16x16.
     swarp_mesh: [[f32; 4]; 128],
     mwarp_mesh: [[f32; 4]; 128],
+    /// Bezier tangents of those meshes, read only while swarp.w / mwarp.w
+    /// is 1. See WarpMesh.
+    swarp_tangents: [[f32; 4]; WARP_MESH_TANGENT_VEC4S],
+    mwarp_tangents: [[f32; 4]; WARP_MESH_TANGENT_VEC4S],
     /// Per-screen masks: (mask count, keep count, _, _), one info vec4 per
     /// mask and the packed vertices; slice mode only. See screen_masks_at.
     smask: [f32; 4],
@@ -1221,6 +1225,8 @@ impl Default for OutputStage {
             mwarp_c1: [1.0, 1.0, 0.0, 1.0],
             swarp_mesh: [[0.0; 4]; 128],
             mwarp_mesh: [[0.0; 4]; 128],
+            swarp_tangents: [[0.0; 4]; WARP_MESH_TANGENT_VEC4S],
+            mwarp_tangents: [[0.0; 4]; WARP_MESH_TANGENT_VEC4S],
             smask: [0.0; 4],
             smask_info: [[0.0; 4]; MAX_SCREEN_MASKS],
             smask_pts: [[0.0; 4]; MAX_SCREEN_MASK_VEC4S],
@@ -1265,6 +1271,8 @@ struct Uniforms {
     smask: [f32; 4],
     smask_info: [[f32; 4]; MAX_SCREEN_MASKS],
     smask_pts: [[f32; 4]; MAX_SCREEN_MASK_VEC4S],
+    swarp_tangents: [[f32; 4]; WARP_MESH_TANGENT_VEC4S],
+    mwarp_tangents: [[f32; 4]; WARP_MESH_TANGENT_VEC4S],
 }
 
 #[repr(C)]
@@ -1614,24 +1622,55 @@ fn warp_corners_at(params: Option<&Value>) -> ([f32; 4], [f32; 4]) {
     ([tl[0], tl[1], tr[0], tr[1]], [br[0], br[1], bl[0], bl[1]])
 }
 
-/// Flatten a `{rows, cols, points: [[{x,y}]]}` grid into the packed control
-/// point array (two points per vec4, row-major). Returns (rows, cols, mesh)
-/// with rows/cols zeroed when the grid is absent or unusable, which the
-/// shader reads as "no mesh".
-fn warp_mesh_at(params: Option<&Value>) -> (f32, f32, [[f32; 4]; 128]) {
-    let mut mesh = [[0.0f32; 4]; 128];
-    let Some(grid) = params else { return (0.0, 0.0, mesh) };
+/// Bezier tangents of an output-stage mesh: two vec4 per point, (right.xy,
+/// down.xy) then (left.xy, up.xy), packed exactly like a layer mesh's.
+const WARP_MESH_TANGENT_VEC4S: usize = WARP_MESH_MAX_DIM * WARP_MESH_MAX_DIM * 2;
+
+/// An output-stage warp mesh (a screen's or the Master Warp's) packed for
+/// the uniforms. `rows`/`cols` are zero when the grid is absent or unusable,
+/// which the shader reads as "no mesh". `bezier` is set only when the grid
+/// carries tangents; everything else stays on the straight bilinear path.
+#[derive(Clone, Copy)]
+struct WarpMesh {
+    rows: f32,
+    cols: f32,
+    points: [[f32; 4]; 128],
+    bezier: bool,
+    tangents: [[f32; 4]; WARP_MESH_TANGENT_VEC4S],
+}
+
+impl WarpMesh {
+    fn none() -> Self {
+        Self {
+            rows: 0.0,
+            cols: 0.0,
+            points: [[0.0; 4]; 128],
+            bezier: false,
+            tangents: [[0.0; 4]; WARP_MESH_TANGENT_VEC4S],
+        }
+    }
+}
+
+/// Flatten a `{rows, cols, points: [[{x,y}]], bezier?, tangents?}` grid into
+/// the packed control point array (two points per vec4, row-major) and, for
+/// a Bezier grid, the resolved tangent of every point. Tangents resolve with
+/// the layer mesh rules (parse_layer_mesh_tangents); the editor has already
+/// moved them into the core's y-up frame along with the points.
+fn warp_mesh_at(params: Option<&Value>) -> WarpMesh {
+    let mut out = WarpMesh::none();
+    let Some(grid) = params else { return out };
     let rows = number_at(grid, &["rows"]).unwrap_or(0.0) as usize;
     let cols = number_at(grid, &["cols"]).unwrap_or(0.0) as usize;
     if !(2..=WARP_MESH_MAX_DIM).contains(&rows) || !(2..=WARP_MESH_MAX_DIM).contains(&cols) {
-        return (0.0, 0.0, mesh);
+        return out;
     }
     let Some(points) = grid.get("points").and_then(Value::as_array) else {
-        return (0.0, 0.0, mesh);
+        return out;
     };
+    let mut resolved_points = Vec::with_capacity(rows * cols);
     for row in 0..rows {
         let Some(row_points) = points.get(row).and_then(Value::as_array) else {
-            return (0.0, 0.0, mesh);
+            return WarpMesh::none();
         };
         for col in 0..cols {
             // Identity fallback keeps a short row from folding the warp onto
@@ -1641,21 +1680,34 @@ fn warp_mesh_at(params: Option<&Value>) -> (f32, f32, [[f32; 4]; 128]) {
                 row as f32 / (rows - 1) as f32,
             ];
             let point = warp_point_at(row_points.get(col), fallback);
+            resolved_points.push(point);
             let index = row * cols + col;
             let slot = index / 2;
-            if slot >= mesh.len() {
+            if slot >= out.points.len() {
                 break;
             }
             if index % 2 == 0 {
-                mesh[slot][0] = point[0];
-                mesh[slot][1] = point[1];
+                out.points[slot][0] = point[0];
+                out.points[slot][1] = point[1];
             } else {
-                mesh[slot][2] = point[0];
-                mesh[slot][3] = point[1];
+                out.points[slot][2] = point[0];
+                out.points[slot][3] = point[1];
             }
         }
     }
-    (rows as f32, cols as f32, mesh)
+    out.rows = rows as f32;
+    out.cols = cols as f32;
+    if bool_at(grid, &["bezier"]) != Some(false) && resolved_points.len() == rows * cols {
+        let tangents = parse_layer_mesh_tangents(grid.get("tangents"), rows, cols, &resolved_points);
+        if tangents.len() == rows * cols {
+            for (index, [right, down, left, up]) in tangents.into_iter().enumerate() {
+                out.tangents[index * 2] = [right[0], right[1], down[0], down[1]];
+                out.tangents[index * 2 + 1] = [left[0], left[1], up[0], up[1]];
+            }
+            out.bezier = true;
+        }
+    }
+    out
 }
 
 /// Per-screen polygon masks, packed like the layer mask: up to 8 masks per
@@ -5530,16 +5582,17 @@ impl App {
             .and_then(|value| string_at(value, &["mode"]))
             .unwrap_or_else(|| "corners".to_string());
         let (master_c0, master_c1) = warp_corners_at(warp.and_then(|v| v.get("corners")));
-        let (mesh_rows, mesh_cols, master_mesh) = if warp_enabled && warp_mode == "mesh" {
+        let master_mesh = if warp_enabled && warp_mode == "mesh" {
             warp_mesh_at(warp.and_then(|v| v.get("meshGrid")))
         } else {
-            (0.0, 0.0, [[0.0f32; 4]; 128])
+            WarpMesh::none()
         };
         let master_warp = [
             if warp_enabled { 1.0 } else { 0.0 },
-            mesh_rows,
-            mesh_cols,
-            0.0,
+            master_mesh.rows,
+            master_mesh.cols,
+            // Bezier cells are inverted as Coons patches (mwarp_mesh_uv_bezier).
+            if master_mesh.bezier { 1.0 } else { 0.0 },
         ];
         self.output_stage = OutputStage {
             out0: [crop_x, crop_y, crop_w, crop_h],
@@ -5587,7 +5640,9 @@ impl App {
             mwarp_c0: master_c0,
             mwarp_c1: master_c1,
             swarp_mesh: [[0.0; 4]; 128],
-            mwarp_mesh: master_mesh,
+            mwarp_mesh: master_mesh.points,
+            swarp_tangents: [[0.0; 4]; WARP_MESH_TANGENT_VEC4S],
+            mwarp_tangents: master_mesh.tangents,
             // Masks are cut per screen, so the main output carries none.
             smask: [0.0; 4],
             smask_info: [[0.0; 4]; MAX_SCREEN_MASKS],
@@ -5623,18 +5678,19 @@ impl App {
                 let warp_mode = string_at(entry, &["warpMode"])
                     .unwrap_or_else(|| "rect".to_string());
                 let (slice_c0, slice_c1) = warp_corners_at(entry.get("corners"));
-                let (slice_rows, slice_cols, slice_mesh) = if warp_mode == "mesh" {
+                let slice_mesh = if warp_mode == "mesh" {
                     warp_mesh_at(entry.get("meshGrid"))
                 } else {
-                    (0.0, 0.0, [[0.0f32; 4]; 128])
+                    WarpMesh::none()
                 };
                 let warp_code = match warp_mode.as_str() {
                     "corners" => 1.0,
                     // A mesh that failed validation falls back to the rect
                     // crop instead of collapsing the screen to a point.
-                    "mesh" if slice_rows >= 2.0 && slice_cols >= 2.0 => 2.0,
+                    "mesh" if slice_mesh.rows >= 2.0 && slice_mesh.cols >= 2.0 => 2.0,
                     _ => 0.0,
                 };
+                let slice_bezier = if warp_code == 2.0 && slice_mesh.bezier { 1.0 } else { 0.0 };
                 // Masks are evaluated in the screen's own UV after the crop
                 // and warp have been resolved, so they stay put on the
                 // projector when the screen is re-pinned.
@@ -5670,7 +5726,7 @@ impl App {
                         read(&["blackLevelB"], 0.0).clamp(0.0, 1.0) as f32,
                         read(&["blackLevelFeather"], 0.5).clamp(0.0, 1.0) as f32,
                     ],
-                    swarp: [warp_code, slice_rows, slice_cols, 0.0],
+                    swarp: [warp_code, slice_mesh.rows, slice_mesh.cols, slice_bezier],
                     swarp_c0: slice_c0,
                     swarp_c1: slice_c1,
                     // Slices sample the master-warped composite, so they
@@ -5679,8 +5735,10 @@ impl App {
                     mwarp: self.output_stage.mwarp,
                     mwarp_c0: self.output_stage.mwarp_c0,
                     mwarp_c1: self.output_stage.mwarp_c1,
-                    swarp_mesh: slice_mesh,
+                    swarp_mesh: slice_mesh.points,
                     mwarp_mesh: self.output_stage.mwarp_mesh,
+                    swarp_tangents: slice_mesh.tangents,
+                    mwarp_tangents: self.output_stage.mwarp_tangents,
                     smask: mask_header,
                     smask_info: mask_info,
                     smask_pts: mask_points,
@@ -17815,6 +17873,8 @@ impl RenderState {
                 smask: [0.0; 4],
                 smask_info: [[0.0; 4]; MAX_SCREEN_MASKS],
                 smask_pts: [[0.0; 4]; MAX_SCREEN_MASK_VEC4S],
+                swarp_tangents: [[0.0; 4]; WARP_MESH_TANGENT_VEC4S],
+                mwarp_tangents: [[0.0; 4]; WARP_MESH_TANGENT_VEC4S],
                 audio0: [0.0; 4],
                 audio1: [0.0; 4],
                 audio2: [0.0; 4],
@@ -21863,6 +21923,8 @@ impl RenderState {
             smask: stage.smask,
             smask_info: stage.smask_info,
             smask_pts: stage.smask_pts,
+            swarp_tangents: stage.swarp_tangents,
+            mwarp_tangents: stage.mwarp_tangents,
             post: {
                 let mut slots = [[0.0f32; 4]; 8];
                 for (slot, value) in slots.iter_mut().zip(post_effects.iter().take(8)) {
@@ -30034,6 +30096,39 @@ mod tests {
         assert!(super::validate_slice_outputs(&json!({})).is_err());
         assert!(super::validate_slice_outputs(&json!({ "slices": [{"id":"a"}, {"id":"a"}] })).is_err());
         assert!(super::validate_slice_outputs(&json!({ "slices": [{"id":" "}] })).is_err());
+    }
+
+    /// Screen and Master Warp meshes take the layer mesh's tangent rules
+    /// and packing. A grid without tangents, or with Bezier switched off,
+    /// must stay off the Bezier path so it renders exactly as before.
+    #[test]
+    fn output_warp_meshes_pack_bezier_tangents_only_when_curved() {
+        use serde_json::json;
+        let points = json!([
+            [{ "x": 0.0, "y": 0.0 }, { "x": 0.5, "y": 0.0 }, { "x": 1.0, "y": 0.0 }],
+            [{ "x": 0.0, "y": 1.0 }, { "x": 0.5, "y": 1.0 }, { "x": 1.0, "y": 1.0 }],
+        ]);
+        let straight = super::warp_mesh_at(Some(&json!({ "rows": 2, "cols": 3, "points": points })));
+        assert_eq!((straight.rows, straight.cols, straight.bezier), (2.0, 3.0, false));
+        assert_eq!(straight.points[0], [0.0, 0.0, 0.5, 0.0]);
+        assert!(straight.tangents.iter().all(|v| *v == [0.0; 4]));
+
+        let curved_json = json!({ "rows": 2, "cols": 3, "points": points, "bezier": true,
+            "tangents": [[null, { "right": { "x": 0.1, "y": -0.2 } }, null], [null, null, null]] });
+        let curved = super::warp_mesh_at(Some(&curved_json));
+        assert!(curved.bezier);
+        // Top-middle: right stored, left mirrors it, down is a chord third.
+        assert_eq!(curved.tangents[2], [0.1, -0.2, 0.0, 1.0 / 3.0]);
+        assert_eq!(curved.tangents[3], [-0.1, 0.2, 0.0, 0.0]);
+        assert_eq!(curved.points, straight.points);
+
+        let mut off = curved_json.clone();
+        off["bezier"] = json!(false);
+        assert!(!super::warp_mesh_at(Some(&off)).bezier);
+        let mut empty = curved_json;
+        empty["tangents"] = json!([[null, null, null], [null, {}, null]]);
+        assert!(!super::warp_mesh_at(Some(&empty)).bezier);
+        assert_eq!(super::warp_mesh_at(Some(&json!({ "rows": 1, "cols": 3, "points": [] }))).rows, 0.0);
     }
 
     #[test]
