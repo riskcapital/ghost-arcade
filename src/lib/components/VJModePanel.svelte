@@ -4305,7 +4305,7 @@
               <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="7"/><circle cx="12" cy="12" r="11"/></svg>
               Stage
             </button>
-            {#if ($project.wledControllers ?? []).some(controller => controller.enabled)}
+            {#if ($project.wledControllers ?? []).some(controller => controller.enabled) || ($project.pixelMap?.fixtures ?? []).some(fixture => fixture.enabled)}
               <button class="fx-tab" class:active={effectsTab === 'led'} onclick={() => effectsTab = 'led'} title="LED patterns and performance controls">
                 <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="5" cy="12" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="19" cy="12" r="2"/><path d="M7 12h3m4 0h3"/></svg>
                 LED
