@@ -73,6 +73,7 @@
   import { keyboardStore, formatKeyCombo, type KeyActionMode } from '../keyboard/keyboardStore';
   import WLEDMappingPanel from './WLEDMappingPanel.svelte';
   import WLEDGroupsPanel from './WLEDGroupsPanel.svelte';
+  import PixelMapPanel from './PixelMapPanel.svelte';
 
   // ── MIDI mappings table ──
   // Grouped by the control rather than by the parameter, because a parameter
@@ -335,7 +336,7 @@
     | 'output:display' | 'output:ndi'
     | 'performance:gpu' | 'performance:render-quality' | 'performance:video-decoding'
     | 'recording'
-    | 'integrations:midi' | 'integrations:osc' | 'integrations:keyboard' | 'integrations:wled' | 'integrations:mediapipe'
+    | 'integrations:midi' | 'integrations:osc' | 'integrations:keyboard' | 'integrations:wled' | 'integrations:pixelmap' | 'integrations:mediapipe'
     | 'ai';
   interface SidebarSection { id: SectionId; label: string; advanced?: boolean }
   interface SidebarCategory { id: string; label: string; sections: SidebarSection[] }
@@ -364,6 +365,7 @@
       { id: 'integrations:osc', label: 'OSC' },
       { id: 'integrations:keyboard', label: 'Keyboard' },
       { id: 'integrations:wled', label: 'WLED' },
+      { id: 'integrations:pixelmap', label: 'Pixel Mapping' },
       { id: 'integrations:mediapipe', label: 'MediaPipe' },
     ]},
     { id: 'ai', label: 'AI', sections: [
@@ -383,6 +385,7 @@
     osc: 'integrations:osc',
     keyboard: 'integrations:keyboard',
     wled: 'integrations:wled',
+    pixelmap: 'integrations:pixelmap',
     mediapipe: 'integrations:mediapipe',
     ai: 'ai',
   };
@@ -2761,6 +2764,18 @@
           <WLEDGroupsPanel />
         </section>
 
+        {/if}
+        <!-- Art-Net / sACN pixel mapping. Fixtures sample regions of the
+             final composite and are sent as DMX universes from the main
+             process. See src/lib/pixelmap/ + electron/pixelmap-output.cjs. -->
+        {#if selectedSection === 'integrations:pixelmap'}
+        <section class="settings-section">
+          <h3>Art-Net and sACN Pixel Mapping</h3>
+          <p class="settings-hint" style="margin-bottom: 12px;">
+            Drive LED fixtures on Art-Net or sACN (E1.31) nodes from the final composite. Each fixture samples a region of the image, like a WLED controller, and is patched across universes automatically: 170 RGB or 128 RGBW pixels per universe, never splitting a pixel. Output runs at the frame rate you set, up to 60 fps. Turning output off, blackout, or disabling a fixture sends one black frame and then stops; sACN streams are terminated cleanly.
+          </p>
+          <PixelMapPanel />
+        </section>
         {/if}
         <!-- MediaPipe gesture input — runs Hand Landmarker + Gesture
              Recognizer in a worker, maps signals (palm position,
