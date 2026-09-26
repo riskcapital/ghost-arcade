@@ -7,6 +7,8 @@ import type { Composition, Layer, MapSurface, Project } from '../types';
 let createLayer: typeof import('../types').createLayer;
 let buildMapPresetLayers: typeof import('./mapPresetLayers').buildMapPresetLayers;
 let mapPresetRows: typeof import('./mapPresetLayers').mapPresetRows;
+let mapLiveSurfaceLayers: typeof import('./mapPresetLayers').mapLiveSurfaceLayers;
+let composeMapOutputLayers: typeof import('./mapPresetLayers').composeMapOutputLayers;
 let migrateMapSurfaces: typeof import('../stores/mapSurfaces').migrateMapSurfaces;
 let NativeRendererSyncCtor: typeof import('../sync/nativeRendererSync').NativeRendererSync;
 let api: typeof import('../api/native-renderer');
@@ -42,7 +44,7 @@ beforeAll(async () => {
     value: class { crossOrigin = ''; onload: unknown = null; onerror: unknown = null; src = ''; naturalWidth = 0; naturalHeight = 0; },
   });
   ({ createLayer } = await import('../types'));
-  ({ buildMapPresetLayers, mapPresetRows } = await import('./mapPresetLayers'));
+  ({ buildMapPresetLayers, mapPresetRows, mapLiveSurfaceLayers, composeMapOutputLayers } = await import('./mapPresetLayers'));
   ({ migrateMapSurfaces } = await import('../stores/mapSurfaces'));
   ({ NativeRendererSync: NativeRendererSyncCtor } = await import('../sync/nativeRendererSync'));
   api = await import('../api/native-renderer');
@@ -245,5 +247,63 @@ describe('VJ MAP presets on the shared map', () => {
       expect(byNewId).toEqual(byLegacyId);
       expect(byNewId.length).toBeGreaterThan(0);
     }
+  });
+
+  it('draws a live-bound editor surface once, over the presets', () => {
+    const bound = { ...surfaceLayer('bound', [0, 0, 0.5, 0.5]), vjLayerIndex: 0 };
+    const own = surfaceLayer('own', [0.5, 0.5, 1, 1]);
+    const group = createLayer('g', 'Group', 'group');
+    const child = { ...surfaceLayer('child', [0, 0.5, 0.5, 1]), parentGroupId: 'g', vjLayerIndex: 1 };
+    const live = mapLiveSurfaceLayers([bound, own, group, child], []);
+    expect(live.map((l) => l.id)).toEqual(['bound', 'g', 'child']);
+    // A preset already routing the same surface to the same row keeps it.
+    const presetCopy = { ...bound, id: 'mapvj-2::bound' };
+    expect(mapLiveSurfaceLayers([bound], [presetCopy]).map((l) => l.id)).toEqual([]);
+    expect(mapLiveSurfaceLayers([bound], [{ ...presetCopy, vjLayerIndex: 3 }]).map((l) => l.id)).toEqual(['bound']);
+  });
+
+  it('routes surfaces bound to a VJ row to that row\'s live picture, crossfade carrier included', async () => {
+    const { vjClipLauncher } = await import('../stores/vjClipLauncher');
+    const { get } = await import('svelte/store');
+    const original = get(vjClipLauncher);
+    vjClipLauncher.set({ ...original, isLive: true, mapMode: true });
+    try {
+      const row = (id: string) => ({ ...createLayer(id, id, 'media'), source: { id: `clip-${id}`, type: 'image', src: `/${id}.png` } as any });
+      const bound = { ...surfaceLayer('wall', [0, 0, 0.5, 1]), vjLayerIndex: 1 };
+      const inPreset = { ...surfaceLayer('floor', [0.5, 0, 1, 1]), vjLayerIndex: 1 };
+      const project = migrateMapSurfaces({ layers: [bound, inPreset], vjMode: { compositions: [preset('P', [inPreset])] } } as unknown as Project);
+      const presetLayers = mapOutput(launcher(['P']), project.vjMode!.compositions, project.layers, project.mapSurfaces);
+      const sync = new NativeRendererSyncCtor() as any;
+      const route = (feeds: Layer[]) => {
+        const scene = composeMapOutputLayers(feeds, project.layers, presetLayers);
+        // Feeds render but never show by themselves.
+        expect(scene.filter((l) => l.id.startsWith('vj-')).every((l) => l.opacity === 0)).toBe(true);
+        const resolved = sync.resolveNativeGroupLayers(scene);
+        const rowOf = (id: string) => resolved.find((l: any) => l.id === id)?.source?.effectSource?.vjmixRows?.[0]?.layerId;
+        return { wall: rowOf('wall'), floor: rowOf('mapvj-0::floor'), ids: scene.map((l) => l.id) };
+      };
+      // Crossfader off: the row's own layer.
+      const single = route([row('vj-layer-1')]);
+      expect(single).toMatchObject({ wall: 'vj-layer-1', floor: 'vj-layer-1' });
+      // Live surfaces sit above the preset rows.
+      expect(single.ids.indexOf('wall')).toBeLessThan(single.ids.indexOf('mapvj-0::floor'));
+      // A/B on: the crossfade carrier, which is where the fader acts.
+      expect(route([row('vj-layer-1-A'), row('vj-layer-1-B'), row('vj-xfade-1')])).toMatchObject({ wall: 'vj-xfade-1', floor: 'vj-xfade-1' });
+      // Nothing on the row: the surface is hidden rather than showing stale media.
+      const empty = sync.resolveNativeGroupLayers(composeMapOutputLayers([row('vj-layer-0')], project.layers, presetLayers));
+      expect(empty.find((l: any) => l.id === 'wall').visible).toBe(false);
+    } finally {
+      vjClipLauncher.set(original);
+    }
+  });
+
+  it('weights deck B preset rows by the crossfader', () => {
+    const s = surfaceLayer('s', [0, 0, 1, 1]);
+    const comps = [preset('A', [s]), preset('B', [s])];
+    const state = launcher(['A'], { crossfaderEnabled: true });
+    state.bankBLayerStates[0] = { ...state.layerStates[0], activeClip: { id: 'clip-B', type: 'preset', presetId: 'B', name: 'B', src: '' } };
+    const rows = mapPresetRows(state, comps, sequencer, { a: 0.25, b: 0.75 });
+    expect(rows.map((r) => [r.key, r.opacity])).toEqual([['0', 0.25], ['B0', 0.75]]);
+    expect(mapPresetRows(state, comps, sequencer, null).map((r) => r.key)).toEqual(['0']);
   });
 });

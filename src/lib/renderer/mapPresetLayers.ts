@@ -191,3 +191,54 @@ export function mapPresetRows(
   return rows;
 }
 
+const hasLiveSource = (layer: Layer) => !!layer.vjGroupId
+  || (layer.vjLayerIndex != null && Number.isFinite(Number(layer.vjLayerIndex)));
+
+const sameLiveSource = (a: Layer, b: Layer) => (a.vjGroupId || null) === (b.vjGroupId || null)
+  && (a.vjGroupId ? true : Math.round(Number(a.vjLayerIndex)) === Math.round(Number(b.vjLayerIndex)));
+
+/**
+ * Editor (shared map) layers whose Source is a VJ row, the deck mix or a VJ
+ * group. In MAP they play live next to the presets, drawn above them. A
+ * bound group brings its children, a bound child brings its group container
+ * so the native group pass still applies. A surface an active preset already
+ * routes to the same source is left to the preset, so it is not drawn twice.
+ */
+export function mapLiveSurfaceLayers(projectLayers: readonly Layer[], presetLayers: readonly Layer[]): Layer[] {
+  const presetBySurface = new Map<string, Layer[]>();
+  for (const layer of presetLayers) {
+    const at = layer.id.indexOf('::');
+    if (at < 0 || !hasLiveSource(layer)) continue;
+    const surfaceId = layer.id.slice(at + 2);
+    const list = presetBySurface.get(surfaceId) ?? [];
+    list.push(layer);
+    presetBySurface.set(surfaceId, list);
+  }
+  const include = new Set<string>();
+  const boundGroups = new Set<string>();
+  for (const layer of projectLayers) {
+    if (!hasLiveSource(layer)) continue;
+    if (presetBySurface.get(layer.id)?.some((preset) => sameLiveSource(preset, layer))) continue;
+    include.add(layer.id);
+    if (layer.type === 'group') boundGroups.add(layer.id);
+    if (layer.parentGroupId) include.add(layer.parentGroupId);
+  }
+  for (const layer of projectLayers) {
+    if (layer.parentGroupId && boundGroups.has(layer.parentGroupId)) include.add(layer.id);
+  }
+  return projectLayers.filter((layer) => include.has(layer.id)).map((layer) => ({ ...layer }));
+}
+
+/**
+ * The whole MAP scene, top first: live-bound editor surfaces, then the preset
+ * rows. The VJ row feeds (clips, transition and crossfade carriers, the deck
+ * mix) come along at opacity 0, as in STAGE: the core keeps rendering their
+ * frames and a bound surface samples them, but they never show on their own.
+ */
+export function composeMapOutputLayers(feeds: readonly Layer[], editorLayers: readonly Layer[], presetLayers: readonly Layer[]): Layer[] {
+  return [
+    ...feeds.map((layer) => ({ ...layer, opacity: 0 })),
+    ...mapLiveSurfaceLayers(editorLayers, presetLayers),
+    ...presetLayers,
+  ];
+}
