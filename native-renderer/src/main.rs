@@ -1698,6 +1698,19 @@ struct SliceOutputTarget {
     projector_view_source: Option<(wgpu::Texture, wgpu::TextureView, wgpu::BindGroup)>,
 }
 
+/// The recording target: one extra composite pass over the layers being
+/// recorded (a single layer, a VJ row, or the whole composition with its
+/// transparency), at composition size, exported as a shared texture the
+/// main-process recorder reads like the output export. Same shape as a deck
+/// monitor.
+#[cfg(any(target_os = "macos", target_os = "windows"))]
+struct RecordOutputTarget {
+    _render_texture: wgpu::Texture,
+    render_view: wgpu::TextureView,
+    export: NativeOutputExport,
+    alpha: bool,
+}
+
 /// Largest output-warp control grid the compositor stores, matching the
 /// per-layer mesh cap. Larger grids from the editor are rejected rather than
 /// silently truncated into a scrambled warp.
@@ -2040,6 +2053,93 @@ struct SliceOutputSpec {
     /// Map Sim projector whose view this slice shows instead of a crop of
     /// the master.
     projector_view: Option<String>,
+}
+
+/// Which layers the recording target renders.
+#[derive(Clone, Debug, PartialEq)]
+enum RecordTargetSource {
+    /// Every layer, with composition effects: the composition itself, kept
+    /// transparent where nothing is drawn.
+    Composition,
+    /// Mapping layers by id (a VJ clip transition can briefly add a second).
+    Layers(Vec<String>),
+    /// Every layer on one VJ row, including both sides of a clip transition.
+    VjLayer(i32),
+}
+
+/// Editor request for a recording of one source, before or instead of the
+/// program composite.
+#[derive(Clone, Debug, PartialEq)]
+struct RecordTargetSpec {
+    source: RecordTargetSource,
+    /// Straight alpha out (transparent background). Off: the layer over black.
+    alpha: bool,
+}
+
+impl RecordTargetSpec {
+    fn kind(&self) -> &'static str {
+        match self.source {
+            RecordTargetSource::Composition => "composition",
+            RecordTargetSource::Layers(_) => "layer",
+            RecordTargetSource::VjLayer(_) => "vj_layer",
+        }
+    }
+
+    fn includes(&self, layer: &SceneLayer) -> bool {
+        match &self.source {
+            RecordTargetSource::Composition => true,
+            RecordTargetSource::Layers(ids) => ids.iter().any(|id| *id == layer.id),
+            RecordTargetSource::VjLayer(index) => layer.vj_layer_index == Some(*index),
+        }
+    }
+}
+
+/// `set_record_target` params. `kind: "none"` (or no kind) clears it.
+fn parse_record_target(params: &Value) -> Result<Option<RecordTargetSpec>, String> {
+    let kind = string_at(params, &["kind"]).unwrap_or_default().to_ascii_lowercase();
+    let alpha = bool_at(params, &["alpha"]).unwrap_or(false);
+    let source = match kind.as_str() {
+        "" | "none" | "off" => return Ok(None),
+        "composition" => RecordTargetSource::Composition,
+        "layer" => {
+            let mut ids: Vec<String> = params
+                .get("layer_ids")
+                .and_then(Value::as_array)
+                .map(|ids| ids.iter().filter_map(Value::as_str).map(str::to_string).collect())
+                .unwrap_or_default();
+            if let Some(id) = string_at(params, &["layer_id"]) {
+                ids.push(id);
+            }
+            ids.retain(|id| !id.trim().is_empty());
+            ids.dedup();
+            if ids.is_empty() {
+                return Err("record target layer needs layer_id".to_string());
+            }
+            RecordTargetSource::Layers(ids)
+        }
+        "vj_layer" => {
+            let index = number_at(params, &["vj_layer_index"])
+                .filter(|value| value.is_finite() && *value >= 0.0 && *value < 1024.0)
+                .ok_or("record target vj_layer needs vj_layer_index")?;
+            RecordTargetSource::VjLayer(index.round() as i32)
+        }
+        other => return Err(format!("unknown record target kind: {other}")),
+    };
+    Ok(Some(RecordTargetSpec { source, alpha }))
+}
+
+/// `export_frame_snapshot` sources served from an already-rendered shared
+/// texture rather than by re-rendering the scene.
+fn live_capture_export_source(source: &str) -> bool {
+    source.eq_ignore_ascii_case("output") || source == "record_target" || source.starts_with("slice:")
+}
+
+/// Output stage for the recording pass: the untransformed composition, with
+/// the compositor's straight-alpha output switched on when asked.
+fn record_target_output_stage(alpha: bool) -> OutputStage {
+    let mut stage = OutputStage::default();
+    stage.smask[2] = if alpha { 1.0 } else { 0.0 };
+    stage
 }
 
 /// Output stage for a slice fed by a Map Sim projector view. The view is
@@ -3700,6 +3800,10 @@ struct RenderState {
     /// Per-slice display targets, keyed by the editor's slice id.
     #[cfg(any(target_os = "macos", target_os = "windows"))]
     slice_targets: HashMap<String, SliceOutputTarget>,
+    /// Recording target (single layer / VJ row / transparent composition),
+    /// created while a recording of such a source runs.
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    record_target: Option<RecordOutputTarget>,
     /// Map Sim projector-view renderer, created on first use.
     projector_view: Option<projector_view::ProjectorViewRenderer>,
     snapshot_texture: wgpu::Texture,
@@ -3984,6 +4088,8 @@ struct App {
     output_stage: OutputStage,
     /// Multi-output slices currently presenting on their own displays.
     slice_outputs: Vec<SliceOutputSpec>,
+    /// Source the recorder asked for besides the program output, if any.
+    record_target: Option<RecordTargetSpec>,
     render_clock_mode: String,
     render_clock_time: Option<f32>,
     render_clock_delta: f32,
@@ -4311,6 +4417,7 @@ impl App {
             composite_effects: Vec::new(),
             output_stage: OutputStage::default(),
             slice_outputs: Vec::new(),
+            record_target: None,
             render_clock_mode: "live".to_string(),
             render_clock_time: None,
             render_clock_delta: 1.0 / 60.0,
@@ -5378,7 +5485,7 @@ impl App {
         }
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         if matches!(req.method.as_str(), "stream_output_frame" | "output_shared_texture_snapshot" | "get_output_shared_texture_snapshot")
-            || (req.method == "export_frame_snapshot" && string_at(&req.params, &["source"]).is_some_and(|v| v.eq_ignore_ascii_case("output"))) {
+            || (req.method == "export_frame_snapshot" && string_at(&req.params, &["source"]).is_some_and(|v| live_capture_export_source(&v))) {
             let result = self.start_live_capture(&req);
             if let Err(error) = result { if req.id != 0 { self.send_error(req.id, error); } }
             return;
@@ -5677,6 +5784,8 @@ impl App {
                 .as_ref()
                 .map(RenderState::slice_output_metadata)
                 .unwrap_or_else(|| json!({ "available": false }))),
+            "set_record_target" => self.apply_record_target(&req.params),
+            "record_target_state" | "get_record_target_state" => Ok(self.record_target_state()),
             "set_output_window" => {
                 self.apply_output_window_config(&req.params);
                 Ok(json!(self.status()))
@@ -11702,6 +11811,15 @@ impl App {
         let deck_monitor_a = self.deck_monitor_layer_data(0);
         #[cfg(any(target_os = "macos", target_os = "windows"))]
         let deck_monitor_b = self.deck_monitor_layer_data(1);
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        let record_target = self.record_target.as_ref().map(|spec| {
+            let post = if spec.source == RecordTargetSource::Composition {
+                self.composite_effect_slots()
+            } else {
+                Vec::new()
+            };
+            (self.record_target_layer_data(spec), post, spec.alpha)
+        });
         let source_preview_pixels = if self.source_preview_dirty {
             Some(self.source_preview_pixel_data())
         } else {
@@ -11855,6 +11973,24 @@ impl App {
                     overlays: &self.projection_sim_overlays,
                 },
             );
+        }
+        // The recording target rides the same frame, after the program render,
+        // for the same reason: it samples the source frames just made current.
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        if render_result.is_ok() {
+            if let Some((layers, post, alpha)) = record_target.as_ref() {
+                renderer.render_record_target(
+                    self.command_phase,
+                    render_time,
+                    frame_index,
+                    layers,
+                    self.audio0,
+                    self.audio1,
+                    self.audio2,
+                    post,
+                    *alpha,
+                );
+            }
         }
         if render_result.is_ok() && !pipeline_warming {
             for plan in native_graph_jobs.iter().flat_map(|job| job.render_plans.iter()) {
@@ -12249,7 +12385,27 @@ impl App {
         if busy.swap(true, Ordering::AcqRel) { return Err("live readback busy; drop this capture frame".to_string()); }
         let permit = LiveCapturePermit(busy);
         let renderer = self.renderer.as_ref().ok_or_else(|| "native renderer unavailable".to_string())?;
-        let export = renderer.output_export.as_ref().ok_or_else(|| "output export unavailable".to_string())?;
+        // Which shared texture to read: the program output (default), the
+        // recording target (one layer / transparent composition) or one
+        // Screen's slice output. export_frame_snapshot names it in `source`,
+        // stream_output_frame in `capture_source`.
+        let capture_source = if req.method == "export_frame_snapshot" {
+            string_at(&req.params, &["source"])
+        } else {
+            string_at(&req.params, &["capture_source"])
+        }.unwrap_or_else(|| "output".to_string());
+        let (export, alpha_mode, render_source) = match capture_source.as_str() {
+            "record_target" => {
+                let target = renderer.record_target.as_ref().ok_or_else(|| "record target is not rendering".to_string())?;
+                (&target.export, if target.alpha { "straight" } else { "opaque" }, "core-record-target")
+            }
+            source if source.starts_with("slice:") => {
+                let id = &source["slice:".len()..];
+                let target = renderer.slice_targets.get(id).ok_or_else(|| format!("screen output {id} is not rendering"))?;
+                (&target.export, "opaque", "core-slice-output")
+            }
+            _ => (renderer.output_export.as_ref().ok_or_else(|| "output export unavailable".to_string())?, "opaque", "core-output-composite"),
+        };
         if sink.is_some() && (req.params.get("width").and_then(Value::as_u64) != Some(export.width as u64)
             || req.params.get("height").and_then(Value::as_u64) != Some(export.height as u64)) {
             return Err("recording dimensions differ from native output".to_string());
@@ -12308,9 +12464,9 @@ impl App {
                     value["color_space"] = json!("srgb");
                     value["storage_format"] = json!("bgra8unorm");
                     value["storage_encoding"] = json!("srgb-encoded-bgra8unorm");
-                    value["alpha_mode"] = json!("opaque");
+                    value["alpha_mode"] = json!(alpha_mode);
                     value["premultiplied_alpha"] = json!(false);
-                    value["single_render_source"] = json!("core-output-composite");
+                    value["single_render_source"] = json!(render_source);
                     value["zero_conversions"] = json!(true);
                     value["export_frame"] = json!(export_frame);
                 }
@@ -18109,6 +18265,66 @@ impl App {
             .collect()
     }
 
+    /// Layer list for the recording target. A layer or VJ row renders on its
+    /// own, pre-composite: its blend mode says how it meets the layers below,
+    /// and there are none here, so it records as Normal (hierarchy masks keep
+    /// their code — they clip the recorded layers under them).
+    fn record_target_layer_data(&self, spec: &RecordTargetSpec) -> Vec<LayerGpu> {
+        if spec.source == RecordTargetSource::Composition {
+            return self.gpu_layer_data();
+        }
+        let mut layers: Vec<&SceneLayer> = self
+            .scene_layers
+            .values()
+            .filter(|layer| spec.includes(layer))
+            .collect();
+        layers.sort_by(|a, b| b.z_index.cmp(&a.z_index).then_with(|| a.id.cmp(&b.id)));
+        layers
+            .into_iter()
+            .take(MAX_SCENE_LAYERS)
+            .map(|layer| {
+                let mut gpu = layer.gpu();
+                if gpu.style[0] != blend_mode_code("hierarchy-mask") {
+                    gpu.style[0] = blend_mode_code("normal");
+                }
+                gpu
+            })
+            .collect()
+    }
+
+    fn apply_record_target(&mut self, params: &Value) -> Result<Value, String> {
+        let spec = parse_record_target(params)?;
+        if spec.is_some() && !cfg!(any(target_os = "macos", target_os = "windows")) {
+            return Err("recording a single source needs the macOS or Windows shared-texture path".to_string());
+        }
+        self.record_target = spec;
+        #[cfg(any(target_os = "macos", target_os = "windows"))]
+        if self.record_target.is_none() {
+            // Release the target's VRAM as soon as the recording ends.
+            if let Some(renderer) = self.renderer.as_mut() {
+                renderer.record_target = None;
+            }
+        }
+        self.pending_render_retry = true;
+        Ok(self.record_target_state())
+    }
+
+    fn record_target_state(&self) -> Value {
+        let mut state = self
+            .renderer
+            .as_ref()
+            .map(RenderState::record_target_metadata)
+            .unwrap_or_else(|| json!({ "available": false }));
+        if let Some(spec) = self.record_target.as_ref() {
+            state["kind"] = json!(spec.kind());
+            state["alpha"] = json!(spec.alpha);
+            state["layer_count"] = json!(self.scene_layers.values().filter(|layer| spec.includes(layer)).count());
+        } else {
+            state["kind"] = json!("none");
+        }
+        state
+    }
+
     fn source_preview_pixel_data(&self) -> Vec<PreviewPixel> {
         let mut pixels = vec![PreviewPixel::zeroed(); MAX_SOURCE_PREVIEWS * SOURCE_PREVIEW_PIXELS];
         for preview in self.source_previews.values() {
@@ -19258,6 +19474,8 @@ impl RenderState {
             deck_monitor_targets: None,
             #[cfg(any(target_os = "macos", target_os = "windows"))]
             slice_targets: HashMap::new(),
+            #[cfg(any(target_os = "macos", target_os = "windows"))]
+            record_target: None,
             projector_view: None,
             snapshot_texture,
             snapshot_view,
@@ -19805,6 +20023,102 @@ impl RenderState {
         true
     }
 
+    /// Create (or resize) the recording target and its shared-texture export.
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    fn ensure_record_target(&mut self, width: u32, height: u32, alpha: bool) -> bool {
+        if let Some(existing) = self.record_target.as_mut() {
+            if existing.export.width == width && existing.export.height == height {
+                existing.alpha = alpha;
+                return true;
+            }
+        }
+        let (render_texture, render_view) = Self::create_offscreen_target(
+            &self.device,
+            width,
+            height,
+            self.config.format,
+            "Ghost Record Target Render Target",
+        );
+        let export = match Self::create_output_export_target(
+            &self.device,
+            width,
+            height,
+            native_output_export_format(self.config.format),
+        ) {
+            Ok(export) => export,
+            Err(err) => {
+                eprintln!("[ghost-core] record target export failed: {err}");
+                self.record_target = None;
+                return false;
+            }
+        };
+        self.record_target = Some(RecordOutputTarget {
+            _render_texture: render_texture,
+            render_view,
+            export,
+            alpha,
+        });
+        true
+    }
+
+    /// Render the recording target: one fullscreen composite pass over just
+    /// the recorded layers, after the program render so every source frame
+    /// it samples is already current (no extra decode or source render).
+    /// With `alpha` the compositor returns straight colour plus coverage;
+    /// without it the layers land over black exactly as a solo would look.
+    #[cfg(any(target_os = "macos", target_os = "windows"))]
+    #[allow(clippy::too_many_arguments)]
+    fn render_record_target(
+        &mut self,
+        command_phase: f32,
+        time_seconds: Option<f32>,
+        frame_count: u64,
+        layers: &[LayerGpu],
+        audio0: [f32; 4],
+        audio1: [f32; 4],
+        audio2: [f32; 4],
+        post_effects: &[[f32; 4]],
+        alpha: bool,
+    ) -> bool {
+        let (width, height) = (self.config.width, self.config.height);
+        if !self.ensure_record_target(width, height, alpha) {
+            return false;
+        }
+        self.write_frame_inputs(
+            command_phase,
+            layers.len() as u32,
+            time_seconds,
+            frame_count,
+            layers,
+            None,
+            audio0,
+            audio1,
+            audio2,
+            // A recording of a source is not the live output: blackout is
+            // the projector kill switch and must not blank the take.
+            1.0,
+            post_effects,
+            record_target_output_stage(alpha),
+        );
+        let mut encoder = self
+            .device
+            .create_command_encoder(&wgpu::CommandEncoderDescriptor {
+                label: Some("Ghost Record Target Encoder"),
+            });
+        {
+            let Some(target) = self.record_target.as_ref() else {
+                return false;
+            };
+            self.draw_fullscreen_to_view(&mut encoder, &target.render_view, "Ghost Record Target Pass", None);
+            target.export.blitter.copy(&self.device, &mut encoder, &target.render_view, &target.export.view);
+        }
+        self.queue.submit(Some(encoder.finish()));
+        if let Some(target) = self.record_target.as_mut() {
+            target.export.frame = target.export.frame.saturating_add(1);
+        }
+        true
+    }
+
     /// Create (or resize) one slice display's offscreen target and its
     /// shared-texture export.
     #[cfg(any(target_os = "macos", target_os = "windows"))]
@@ -20140,6 +20454,37 @@ impl RenderState {
                     "banks": [bank(&targets[0], "a"), bank(&targets[1], "b")],
                 });
             }
+        }
+        json!({ "available": false })
+    }
+
+    /// Shared-texture metadata for the recording target, in the output
+    /// export's shape so the main-process recorder reads it the same way.
+    fn record_target_metadata(&self) -> Value {
+        #[cfg(target_os = "macos")]
+        if let Some(target) = self.record_target.as_ref() {
+            return json!({
+                "available": true,
+                "platform": "iosurface",
+                "handle": target.export.surface.id().to_string(),
+                "handle_encoding": "integer",
+                "width": target.export.width,
+                "height": target.export.height,
+                "frame": target.export.frame,
+                "alpha": target.alpha,
+            });
+        }
+        #[cfg(target_os = "windows")]
+        if let Some(target) = self.record_target.as_ref() {
+            return json!({
+                "available": true,
+                "platform": "dxgi",
+                "shared_name": target.export.shared_name,
+                "width": target.export.width,
+                "height": target.export.height,
+                "frame": target.export.frame,
+                "alpha": target.alpha,
+            });
         }
         json!({ "available": false })
     }
@@ -31709,6 +32054,44 @@ mod tests {
 
         let no_outline = parse_layer_edge_effects(&json!({ "layer_id": "edge", "edge_effects": [effect(1.0, 0.0)] }));
         assert!(!no_outline.active(), "effects without an outline have nothing to draw on");
+    }
+
+    #[test]
+    fn record_target_parses_sources_and_selects_their_layers() {
+        use super::{RecordTargetSource, parse_record_target, record_target_output_stage};
+        assert_eq!(parse_record_target(&json!({})).unwrap(), None);
+        assert_eq!(parse_record_target(&json!({ "kind": "none", "alpha": true })).unwrap(), None);
+        let layer = parse_record_target(&json!({ "kind": "layer", "layer_id": "a", "layer_ids": ["b", "b"], "alpha": true }))
+            .unwrap()
+            .unwrap();
+        assert_eq!(layer.source, RecordTargetSource::Layers(vec!["b".to_string(), "a".to_string()]));
+        assert!(layer.alpha);
+        assert!(parse_record_target(&json!({ "kind": "layer", "layer_ids": [" "] })).is_err());
+        assert!(parse_record_target(&json!({ "kind": "vj_layer" })).is_err());
+        assert!(parse_record_target(&json!({ "kind": "vj_layer", "vj_layer_index": -1 })).is_err());
+        assert!(parse_record_target(&json!({ "kind": "screen" })).is_err());
+
+        let row = parse_record_target(&json!({ "kind": "vj_layer", "vj_layer_index": 3 })).unwrap().unwrap();
+        assert!(!row.alpha, "alpha is opt-in");
+        let mut on_row = SceneLayer::new("clip-1".to_string(), 0);
+        on_row.vj_layer_index = Some(3);
+        let mut other_row = SceneLayer::new("clip-2".to_string(), 1);
+        other_row.vj_layer_index = Some(1);
+        assert!(row.includes(&on_row));
+        assert!(!row.includes(&other_row));
+        assert!(layer.includes(&SceneLayer::new("a".to_string(), 0)));
+        assert!(!layer.includes(&on_row));
+        let composition = parse_record_target(&json!({ "kind": "composition", "alpha": true })).unwrap().unwrap();
+        assert!(composition.includes(&on_row) && composition.includes(&other_row));
+
+        // Only the alpha pass flips the compositor's straight-alpha switch;
+        // everything else is the untransformed composition.
+        assert_eq!(record_target_output_stage(true).smask, [0.0, 0.0, 1.0, 0.0]);
+        assert_eq!(record_target_output_stage(false).smask, [0.0; 4]);
+        assert_eq!(record_target_output_stage(true).out0, [0.0, 0.0, 1.0, 1.0]);
+        assert!(super::live_capture_export_source("record_target"));
+        assert!(super::live_capture_export_source("slice:screen-2"));
+        assert!(!super::live_capture_export_source("scene"));
     }
 
     #[test]

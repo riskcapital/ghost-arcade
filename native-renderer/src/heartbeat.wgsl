@@ -56,7 +56,10 @@ struct Uniforms {
   mwarp_mesh: array<vec4<f32>, 128>,
   // Per-screen polygon masks, cut from the projector's frame after the
   // crop and warp have been resolved (slice mode only):
-  //   smask        = (mask count, keep count, _, _)
+  //   smask        = (mask count, keep count, alpha output, _)
+  //                  alpha output (z > 0.5) is set only by the recording
+  //                  target pass: fs_main then returns straight colour and
+  //                  the blended layers' coverage instead of an opaque frame.
   //   smask_info   = per mask (point start, point count, feather, invert)
   //   smask_bounds = per mask vertex bounds (x0, y0, x1, y1), padded
   //   smask_pts    = vertices in screen UV, two per vec4, up to 8 x 128
@@ -3356,6 +3359,10 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
 
   let layer_energy = clamp(u.layer_count / 16.0, 0.0, 1.0);
   var color = vec3<f32>(0.0);
+  // Coverage of everything blended so far. `color` is that stack composited
+  // over black, i.e. premultiplied by this; only the alpha recording pass
+  // reads it.
+  var out_alpha = 0.0;
   if (u.layer_count < -0.5) {
     let vignette = smoothstep(1.45, 0.18, length(p));
     color += vec3<f32>(0.006, 0.008, 0.012);
@@ -3405,6 +3412,7 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
           coverage = native_polygon_mask(mask_local.yz, layer_index);
         }
         color = color * coverage;
+        out_alpha = out_alpha * coverage;
       }
       continue;
     }
@@ -3441,8 +3449,9 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
       if (all(uv >= vec2<f32>(-0.0005)) && all(uv <= vec2<f32>(1.0005))) {
         let coverage = native_layer_shape(clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)), layer_index).x;
         if (coverage > 0.001) {
-          color = native_blend(color, layers[layer_index].color.rgb,
-            layers[layer_index].color.a * 0.56 * coverage, layers[layer_index].style.x);
+          let fill_alpha = clamp(layers[layer_index].color.a * 0.56 * coverage, 0.0, 1.0);
+          color = native_blend(color, layers[layer_index].color.rgb, fill_alpha, layers[layer_index].style.x);
+          out_alpha = fill_alpha + out_alpha * (1.0 - fill_alpha);
         }
       }
       continue;
@@ -3495,11 +3504,21 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
       content_alpha = edged.a;
     }
     if (content_alpha > 0.0) {
-      color = native_blend(color, layer_rgb, layers[layer_index].color.a * content_alpha, layers[layer_index].style.x);
+      let layer_alpha = clamp(layers[layer_index].color.a * content_alpha, 0.0, 1.0);
+      color = native_blend(color, layer_rgb, layer_alpha, layers[layer_index].style.x);
+      out_alpha = layer_alpha + out_alpha * (1.0 - layer_alpha);
     }
   }
 
   color = apply_composite_effects(color, canvas_uv, t);
+  if (u.smask.z > 0.5) {
+    // Recording with transparency: un-premultiply so empty regions carry
+    // alpha 0 and content its own coverage (ProRes 4444 / HAP Alpha expect
+    // straight alpha). No output stage: this is the composition itself.
+    let a = clamp(out_alpha, 0.0, 1.0);
+    let straight = select(vec3<f32>(0.0), color / max(a, 0.0001), a > 0.0001);
+    return vec4<f32>(clamp(straight, vec3<f32>(0.0), vec3<f32>(1.0)), a);
+  }
   color = apply_test_pattern(color, in.uv, aspect);
   if (u.dome2.z > 0.5) {
     color = slice_output_grade(color, in.uv) * dome_mask * screen_mask_alpha(output_rotate_uv(in.uv));
