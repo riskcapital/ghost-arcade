@@ -1545,7 +1545,7 @@ export class DrawingRenderer {
     let color = 0xff00ff; // Default magenta
     let opacity = 1;
     if (element.stroke.type !== 'none' && 'color' in element.stroke) {
-      const c = element.stroke.color;
+      const c = element.stroke.color as [number, number, number, number];
       color = (Math.round(c[0] * 255) << 16) | (Math.round(c[1] * 255) << 8) | Math.round(c[2] * 255);
       opacity = c[3];
     }
