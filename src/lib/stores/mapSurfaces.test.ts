@@ -8,6 +8,7 @@ import { get } from 'svelte/store';
 
 let layers: typeof import('./layers');
 let types: typeof import('../types');
+let launcher: typeof import('./vjClipLauncher');
 
 function installDomShim(): void {
   const storage = new Map<string, string>();
@@ -53,6 +54,7 @@ beforeAll(async () => {
   installDomShim();
   layers = await import('./layers');
   types = await import('../types');
+  launcher = await import('./vjClipLauncher');
 });
 
 const box = (x0: number, y0: number, x1: number, y1: number) => ({
@@ -118,6 +120,30 @@ describe('shared map surfaces', () => {
     expect(layers.project.importProject(saved)).toBe(true);
     expect(get(layers.project).mapSurfaces).toEqual(project.mapSurfaces);
     expect(presetLayer('B', 'left').surfaceDetached).toBe(true);
+  });
+
+  it('fires a preset in VJ MAP without touching the editor layers', async () => {
+    expect(layers.project.importProject(oldProject())).toBe(true);
+    // Unsaved editor work that a preset load used to throw away.
+    layers.project.update((p) => ({ ...p, layers: [...p.layers, surface('unsaved', box(0, 0, 0.2, 0.2)) as any] }));
+    layers.project.update((p) => ({ ...p, layers: p.layers.map((l) => l.id === 'left' ? { ...l, opacity: 0.3 } : l) }));
+    const before = JSON.parse(JSON.stringify(get(layers.project).layers));
+    const activeBefore = get(layers.project).vjMode!.activeCompositionId;
+    launcher.vjClipLauncher.update((s) => ({ ...s, isOpen: true, isLive: true, mapMode: true, quantization: 'off' }));
+    try {
+      launcher.vjClipLauncher.triggerClip(0, 1, 'A');
+      launcher.vjClipLauncher.triggerClip(1, 0, 'A');
+      launcher.vjClipLauncher.triggerClip(0, 0, 'A');
+      // The MIX/STAGE path loads presets through a dynamic import; let any
+      // such work land before comparing.
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(JSON.parse(JSON.stringify(get(layers.project).layers))).toEqual(before);
+      expect(get(layers.project).vjMode!.activeCompositionId).toBe(activeBefore);
+      const rows = get(launcher.vjClipLauncher).layerStates;
+      expect(rows.map((row) => row.activeClip?.presetId)).toEqual(['A', 'C']);
+    } finally {
+      launcher.vjClipLauncher.update((s) => ({ ...s, isOpen: false, isLive: false, mapMode: false }));
+    }
   });
 
   it('saves presets as references and loads them with the current shared geometry', () => {

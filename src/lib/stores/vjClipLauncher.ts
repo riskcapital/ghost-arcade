@@ -97,9 +97,9 @@ export interface VJClip {
   id: string;
   type: 'shader' | 'video' | 'image' | 'threejs' | 'p5js' | 'jsanimation' | 'synthvision' | 'spout' | 'effect' | 'splat' | 'model3d' | 'gpu' | 'text' | 'preset';
   /** For type='preset' clips: id of the saved Composition (mapping preset)
-   *  this cell loads when fired. Firing a preset clip calls
-   *  project.loadComposition() — a side effect on the mapping layers —
-   *  rather than feeding content into a VJ layer like the other types. */
+   *  this cell shows when fired. In MAP the row renders the preset over the
+   *  shared map and project.layers is left alone; in MIX / STAGE firing it
+   *  calls project.loadComposition(), a side effect on the mapping layers. */
   presetId?: string;
   name: string;
   src: string;
@@ -1191,6 +1191,7 @@ function createVJClipLauncherStore() {
     let outgoingClip: VJClip | null = null;
     let incomingClip: VJClip | null = null;
     let incomingStartSeconds = 0;
+    let presetOnly = false;
 
     update(state => {
       const targetGrid = pickGrid(state, deck);
@@ -1199,21 +1200,21 @@ function createVJClipLauncherStore() {
       const clip = targetGrid[layerIndex]?.[columnIndex];
       if (!clip) return state;
       // Preset clips:
-      //   - ALWAYS load the composition into project.layers (side
-      //     effect). In STAGE mode this immediately swaps the mapping
-      //     topology, exiting VJ shows the loaded preset, etc.
-      //   - In MAP mode ALSO occupy the VJ layer slot via activeClip
-      //     so the Canvas MAP render branch composites this preset
-      //     into the output stack. The cell highlight + per-VJ-layer
-      //     opacity + blend mode all flow from that.
-      //   - In MIX / STAGE the slot stays available for the user's
-      //     real VJ content. Otherwise firing a preset would lock
-      //     a VJ layer to "no content" (the preset is filtered out
-      //     of vjOutputLayers) and shader/video fires on the same
-      //     layer would appear to do nothing visually.
+      //   - In MAP mode the preset occupies the VJ layer slot via
+      //     activeClip and the Canvas MAP render branch composites it
+      //     from the saved preset over the shared map. project.layers
+      //     is NOT touched: the editor keeps its unsaved edits and the
+      //     sequencer / keyframe transports keep running.
+      //   - In MIX / STAGE firing a preset loads it into project.layers
+      //     (a side effect; in STAGE it swaps the mapping topology) and
+      //     the slot stays available for the user's real VJ content.
+      //     Otherwise firing a preset would lock a VJ layer to "no
+      //     content" (the preset is filtered out of vjOutputLayers) and
+      //     shader/video fires on the same layer would appear to do
+      //     nothing visually.
       if (clip.type === 'preset') {
         vjClipTransitions.cancel(deck, layerIndex);
-        if (clip.presetId) {
+        if (clip.presetId && !state.mapMode) {
           void import('./layers').then(({ project }) => {
             project.loadComposition(clip.presetId!);
           }).catch((err) => {
@@ -1237,6 +1238,7 @@ function createVJClipLauncherStore() {
           activeClip: clip,
         };
         didTrigger = true;
+        presetOnly = true;
         incomingClip = clip;
         const next = withDeck(state, deck, newLayerStates);
         return { ...next, stoppedAll: false };
@@ -1284,8 +1286,12 @@ function createVJClipLauncherStore() {
     if (didTrigger) {
       requestImmediateNativeVJSync([inc]);
       syncBrowserVideoAfterNativeTrigger(inc, out, incomingStartSeconds);
-      keyframeTimeline.seek(0);
-      keyframeTimeline.play();
+      // A MAP preset renders from its saved copy; restarting the editor's
+      // keyframe transport would animate project.layers underneath it.
+      if (!presetOnly) {
+        keyframeTimeline.seek(0);
+        keyframeTimeline.play();
+      }
     }
   };
 
