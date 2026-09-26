@@ -396,6 +396,13 @@ export interface OutputSlice {
   // screen is corner-pinned or mesh-warped. Absent on files saved
   // before masks existed; migrateOutputSlice fills in an empty list.
   masks?: ScreenMask[];
+
+  // ─── Source ──────────────────────────────────────────────────────
+  /** When set, this Screen shows what that Map Sim projector must emit
+   *  (the 3D model seen through its calibrated lens, with the content
+   *  mapped onto it) instead of a slice of the master. Rendered by the
+   *  native core on physical-display outputs. */
+  mapSimProjectorId?: string | null;
 }
 
 /** One polygon mask on a Screen. See OutputSlice.masks for the

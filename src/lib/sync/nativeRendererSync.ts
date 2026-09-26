@@ -7744,6 +7744,8 @@ export class NativeRendererSync {
         corners: nativeWarpCorners(s.corners),
         meshGrid: nativeWarpMeshGrid(s.meshGrid),
         masks: nativeScreenMasks(s.masks),
+        // A Map Sim projector view replaces the master crop for this Screen.
+        mapSimProjectorId: s.mapSimProjectorId ? String(s.mapSimProjectorId) : null,
         };
       });
     const sig = JSON.stringify(slices);
@@ -7928,6 +7930,16 @@ export class NativeRendererSync {
     this.outputStateUnsubs.push(settings.subscribe(() => this.pushOutputState()));
     this.outputStateUnsubs.push(settings.subscribe(() => this.pushOutputStage()));
     this.outputStateUnsubs.push(settings.subscribe(() => this.pushSliceOutputs()));
+    // Map Sim projector views for Screens that show one. Loaded lazily so
+    // the 3D loaders stay out of the startup path.
+    {
+      let stopProjectorViews: (() => void) | null = null;
+      let torn = false;
+      this.outputStateUnsubs.push(() => { torn = true; stopProjectorViews?.(); });
+      void import('$lib/projectionSim/nativeProjectorViewSync').then(({ startProjectionSimNativeViewSync }) => {
+        if (!torn) stopProjectorViews = startProjectionSimNativeViewSync();
+      }).catch((err) => console.warn('[NativeRendererSync] Map Sim projector views unavailable', err));
+    }
     if (!this.sliceWindowPoll) {
       void this.refreshOpenSliceWindows();
       this.sliceWindowPoll = setInterval(() => { void this.refreshOpenSliceWindows(); }, 1000);

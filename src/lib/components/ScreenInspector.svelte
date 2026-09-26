@@ -24,6 +24,7 @@
   import { screenActions, selectedScreenMaskId, screenMaskPlacing } from '../stores/screens';
   import { recordDiscreteAction, scheduleHistorySnapshot } from '../stores/historyHooks';
   import { isDesktopApp, getTextureShareLabel } from '$lib/bridge';
+  import { projectionSimScene } from '../projectionSim/store';
 
   // Is the NDI native addon built + the NDI runtime initialized? Gates
   // the NDI transport option below. Probed once on mount (same probe
@@ -54,6 +55,13 @@
   let { screen, displays, openWindowIds, onOpenOnDisplay, onCloseOnDisplay, onRefreshDisplays }: Props = $props();
 
   const tsLabel = getTextureShareLabel();
+
+  // A Screen shows either a slice of the master or a Map Sim projector view.
+  const mapSimProjector = $derived(
+    screen.mapSimProjectorId
+      ? $projectionSimScene.projectors.find((p) => p.id === screen.mapSimProjectorId) ?? null
+      : null,
+  );
 
   // Inspector edits are undoable; a slider drag or a burst of typing
   // settles into one step.
@@ -180,6 +188,38 @@
       <a href="https://ndi.video/" target="_blank" rel="noreferrer">NDI®</a>
       is a registered trademark of Vizrt NDI AB.
     </p>
+
+    <label class="field">
+      <span class="lbl">Source</span>
+      <select
+        aria-label="Screen source"
+        value={screen.mapSimProjectorId ?? ''}
+        onchange={(e) => {
+          const v = (e.target as HTMLSelectElement).value;
+          update({ mapSimProjectorId: v || null });
+        }}
+      >
+        <option value="">Slice of the output</option>
+        {#each $projectionSimScene.projectors as projector (projector.id)}
+          <option value={projector.id}>Map Sim: {projector.name}</option>
+        {/each}
+        {#if screen.mapSimProjectorId && !mapSimProjector}
+          <option value={screen.mapSimProjectorId}>Map Sim: missing projector</option>
+        {/if}
+      </select>
+    </label>
+    {#if screen.mapSimProjectorId}
+      <p class="hint">
+        {#if mapSimProjector}
+          Shows what {mapSimProjector.name} must emit: the 3D model through its lens with the content mapped on. Calibrate it in Map Sim.
+        {:else}
+          The Map Sim projector this Screen showed is gone. Pick another source.
+        {/if}
+        {#if (screen.targetType ?? 'sender') !== 'display'}
+          Map Sim views render on physical display outputs; switch Send to to Physical display.
+        {/if}
+      </p>
+    {/if}
 
     {#if (screen.targetType ?? 'sender') === 'display'}
       <label class="field">
