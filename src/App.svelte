@@ -2242,6 +2242,7 @@
     '.viewport-info',
     '.warp-handles-offset .handle',
     '.warp-handles-offset .tangent-handle',
+    '.warp-handles-offset .mask-place-layer',
     '.custom-shape-handles',
     '.layer-shape-warp-overlay',
     '.shape-interaction-overlay',
