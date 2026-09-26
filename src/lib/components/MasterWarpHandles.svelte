@@ -30,6 +30,8 @@
   import { normalizedWarpNudge } from '../utils/warpNudge';
   import { releaseFormControlFocus } from '../utils/formFocus';
   import { claimWarpKeys, ownsWarpKeys } from '../utils/warpKeyOwner';
+  import { insetHandle, meshMoveGrip } from '../utils/warpHandleLayout';
+  import { screens, selectedScreenId } from '../stores/screens';
   import {
     MESH_CURVE_SEGMENTS,
     cloneMeshGrid,
@@ -61,6 +63,11 @@
   let mode = $derived(warp.mode === 'mesh' && warp.meshGrid ? 'mesh' : 'corners');
   let corners = $derived(warp.corners ?? IDENTITY_CORNERS);
   let meshGrid = $derived(warp.meshGrid ?? null);
+  // While a screen is selected on the Screens tab its handles are the ones
+  // being edited, so they sit above these where the two overlap (a
+  // screen's corner mesh point under a Master Warp corner could not be
+  // picked). ScreenWarpHandles only draws an enabled selected screen.
+  let yieldToScreen = $derived($screens.some((s) => s.id === $selectedScreenId && s.enabled));
 
   // ─── Drag state ────────────────────────────────────────────────────
   type DragKind =
@@ -344,6 +351,34 @@
   // ─── Pixel helpers ─────────────────────────────────────────────────
   const px = (nx: number) => nx * containerWidth;
   const py = (ny: number) => ny * containerHeight;
+  // Handles are drawn whole inside the canvas (a point on the right edge
+  // would otherwise be half under the sidebar); `half` is the handle's
+  // half-size in px. Lines keep the true positions.
+  const hx = (x: number, half: number) => insetHandle(x, containerWidth, half);
+  const hy = (y: number, half: number) => insetHandle(y, containerHeight, half);
+
+  // A corner grip sits inside its corner, toward the middle of the quad, on
+  // a short leader. The corner itself is often exactly where a screen's
+  // corner point is (a full-canvas screen under an identity warp), and
+  // there the selected screen's point is on top; the grip keeps the Master
+  // Warp corner reachable beside it. It steps in far enough along both
+  // axes to clear a corner point drawn at the same corner.
+  const CORNER_GRIP_AXIS_INSET_PX = 22;
+  const CORNER_GRIP_MAX_INSET_PX = 64;
+  function cornerGrip(cn: keyof WarpCorners): { x: number; y: number; ox: number; oy: number } {
+    const ox = px(corners[cn].x);
+    const oy = py(corners[cn].y);
+    const ctr = cornersCenter(corners);
+    const dx = ctr.x - ox;
+    const dy = ctr.y - oy;
+    const len = Math.hypot(dx, dy);
+    if (len < 1e-6) return { x: hx(ox, 10), y: hy(oy, 10), ox, oy };
+    const ux = dx / len;
+    const uy = dy / len;
+    const axis = Math.max(1e-3, Math.min(Math.abs(ux), Math.abs(uy)));
+    const inset = Math.min(CORNER_GRIP_MAX_INSET_PX, len * 0.25, CORNER_GRIP_AXIS_INSET_PX / axis);
+    return { x: hx(ox + ux * inset, 10), y: hy(oy + uy * inset, 10), ox, oy };
+  }
 
   // Mesh points are quad-LOCAL 0..1 (they deform within the corner quad),
   // so handle display/drag must map through the corner quad — same as the
@@ -406,13 +441,11 @@
     };
   }
   function meshCenter(g: MeshWarpGrid) {
-    // Average the points in master-canvas space (each pushed through the
-    // corner quad) so the move handle sits at the visual center.
-    let sx = 0, sy = 0, n = 0;
-    for (const row of g.points) for (const p of row) {
-      const np = meshLocalToNorm(p.x, p.y); sx += np.x; sy += np.y; n++;
-    }
-    return { x: px(sx / Math.max(1, n)), y: py(sy / Math.max(1, n)) };
+    // The middle of the central cell, pushed through the corner quad: never
+    // on a mesh point (the centre point of a 5x5 mesh used to be under it).
+    const grip = meshMoveGrip(g.points, g.rows, g.cols);
+    const np = meshLocalToNorm(grip.x, grip.y);
+    return { x: px(np.x), y: py(np.y) };
   }
   const cornersPath = (c: WarpCorners) =>
     `${px(c.topLeft.x)},${py(c.topLeft.y)} ${px(c.topRight.x)},${py(c.topRight.y)} ${px(c.bottomRight.x)},${py(c.bottomRight.y)} ${px(c.bottomLeft.x)},${py(c.bottomLeft.y)}`;
@@ -458,11 +491,15 @@
 </script>
 
 {#if warp.enabled}
-  <div data-help-page="projection-mapping" class="master-warp-handles" style="width: {containerWidth}px; height: {containerHeight}px;">
+  <div data-help-page="projection-mapping" class="master-warp-handles" class:yield-to-screen={yieldToScreen} style="width: {containerWidth}px; height: {containerHeight}px;">
     <!-- Outline / grid lines -->
     <svg class="lines-overlay" width={containerWidth} height={containerHeight}>
       {#if mode === 'corners'}
         <polygon points={cornersPath(corners)} fill="none" stroke="#f0a35e" stroke-width="2" />
+        {#each CORNER_KEYS as cn}
+          {@const grip = cornerGrip(cn)}
+          <line x1={grip.ox} y1={grip.oy} x2={grip.x} y2={grip.y} stroke="#f0a35e" stroke-width="1.5" stroke-opacity="0.8" />
+        {/each}
         <text x={px(corners.topLeft.x) + 6} y={py(corners.topLeft.y) + 16} fill="#f0a35e"
           font-size="13" font-family="Geist Mono, ui-monospace, monospace"
           paint-order="stroke" stroke="rgba(0,0,0,0.7)" stroke-width="3">Master warp</text>
@@ -494,17 +531,17 @@
     <!-- Handles -->
     {#if mode === 'corners'}
       {#each CORNER_KEYS as cn}
-        {@const cp = corners[cn]}
+        {@const grip = cornerGrip(cn)}
         <div class="handle corner-handle" class:dragging={drag?.kind.kind === 'corner' && drag?.kind.corner === cn}
           class:selected={selectedCorner === cn}
-          style="left:{px(cp.x)}px; top:{py(cp.y)}px;"
+          style="left:{grip.x}px; top:{grip.y}px;"
           onmousedown={(e) => startDrag(e, { kind: 'corner', corner: cn })}>
           <span class="handle-label">{CORNER_LABEL[cn]}</span>
         </div>
       {/each}
       {@const ctr = cornersCenter(corners)}
       <div class="handle move-handle" class:dragging={drag?.kind.kind === 'corners-move'}
-        style="left:{ctr.x}px; top:{ctr.y}px;"
+        style="left:{hx(ctr.x, 18)}px; top:{hy(ctr.y, 18)}px;"
         onmousedown={(e) => startDrag(e, { kind: 'corners-move' })}
         title="Drag to move the whole warp">✥</div>
     {:else if mode === 'mesh' && meshGrid}
@@ -513,6 +550,7 @@
         {#each row as p, ci}
           {@const isCorner = (ri === 0 || ri === g.rows - 1) && (ci === 0 || ci === g.cols - 1)}
           {@const isEdge = ri === 0 || ri === g.rows - 1 || ci === 0 || ci === g.cols - 1}
+          {@const half = isCorner ? 8 : isEdge ? 6 : 5}
           <div
             class="handle mesh-handle"
             class:corner={isCorner}
@@ -520,14 +558,14 @@
             class:inner={!isEdge}
             class:dragging={drag?.kind.kind === 'mesh' && drag?.kind.row === ri && drag?.kind.col === ci}
             class:selected={selectedMeshPoint?.row === ri && selectedMeshPoint?.col === ci}
-            style="left:{meshPx(p.x, p.y)}px; top:{meshPy(p.x, p.y)}px;"
+            style="left:{hx(meshPx(p.x, p.y), half)}px; top:{hy(meshPy(p.x, p.y), half)}px;"
             onmousedown={(e) => startDrag(e, { kind: 'mesh', row: ri, col: ci })}
           ></div>
         {/each}
       {/each}
       {@const ctr = meshCenter(g)}
       <div class="handle move-handle" class:dragging={drag?.kind.kind === 'mesh-move'}
-        style="left:{ctr.x}px; top:{ctr.y}px;"
+        style="left:{hx(ctr.x, 18)}px; top:{hy(ctr.y, 18)}px;"
         onmousedown={(e) => startDrag(e, { kind: 'mesh-move' })}
         title="Drag to move the whole warp">✥</div>
       <!-- Tangent handles: drag to bend (Alt-drag unlinks the pair),
@@ -540,7 +578,7 @@
             class:unlinked={!handle.linked}
             class:dragging={drag?.kind.kind === 'tangent' && drag.kind.side === handle.side}
             class:selected={selectedTangent === handle.side && drag?.kind.kind !== 'tangent'}
-            style="left:{handle.x}px; top:{handle.y}px;"
+            style="left:{hx(handle.x, 5)}px; top:{hy(handle.y, 5)}px;"
             onmousedown={(e) => startDrag(e, { kind: 'tangent', row: tp.row, col: tp.col, side: handle.side })}
             ondblclick={(e) => { e.preventDefault(); e.stopPropagation(); straightenTangent(tp.row, tp.col, handle.side); }}
             role="button"
@@ -559,11 +597,14 @@
     position: absolute;
     top: 0; left: 0;
     pointer-events: none;
-    /* Above the purple screen handles so the global warp wins clicks. */
+    /* Above the purple screen handles so the global warp wins clicks... */
     z-index: 55;
     user-select: none;
     -webkit-user-select: none;
   }
+  /* ...except while a screen is selected: its handles are the ones being
+     edited, so they win where the two overlap. */
+  .master-warp-handles.yield-to-screen { z-index: 45; }
   .lines-overlay { position: absolute; top: 0; left: 0; pointer-events: none; }
 
   .handle {
@@ -601,7 +642,8 @@
   .move-handle:hover { background: rgba(240, 163, 94, 0.2); }
   .move-handle.dragging { cursor: grabbing; background: rgba(255, 255, 0, 0.2); border-color: #ffff00; color: #ffff00; }
 
-  .mesh-handle { cursor: grab; }
+  /* Above the move grip, so a point under it can always be picked. */
+  .mesh-handle { cursor: grab; z-index: 56; }
   .mesh-handle.corner {
     width: 16px; height: 16px; margin-left: -8px; margin-top: -8px;
     background: #f0a35e; border: 2px solid #fff; border-radius: 50%;

@@ -77,6 +77,7 @@
     screenMaskCanvasPoints,
     screenOutlineCanvasPoints,
   } from '../stores/screenMaskGeometry';
+  import { insetHandle, meshMoveGrip } from '../utils/warpHandleLayout';
 
   interface Props {
     containerWidth: number;
@@ -593,6 +594,11 @@
   // ─── Pixel helpers ─────────────────────────────────────────────────
   function px(nx: number): number { return nx * containerWidth; }
   function py(ny: number): number { return ny * containerHeight; }
+  // Handles are drawn whole inside the canvas (a point on the right edge
+  // would otherwise be half under the sidebar); `half` is the handle's
+  // half-size in px. Lines keep the true positions.
+  function hx(x: number, half: number): number { return insetHandle(x, containerWidth, half); }
+  function hy(y: number, half: number): number { return insetHandle(y, containerHeight, half); }
 
   function rectCenter(s: OutputSlice): { x: number; y: number } {
     return { x: px(s.cropX + s.cropW / 2), y: py(s.cropY + s.cropH / 2) };
@@ -603,10 +609,11 @@
       y: py((c.topLeft.y + c.topRight.y + c.bottomLeft.y + c.bottomRight.y) / 4),
     };
   }
+  /** The mesh move grip sits in the middle of the central cell, never on
+   *  a mesh point (the centre point of a 5x5 mesh used to be under it). */
   function meshCenter(g: MeshWarpGrid): { x: number; y: number } {
-    let sx = 0, sy = 0, n = 0;
-    for (const row of g.points) for (const p of row) { sx += p.x; sy += p.y; n++; }
-    return { x: px(sx / Math.max(1, n)), y: py(sy / Math.max(1, n)) };
+    const grip = meshMoveGrip(g.points, g.rows, g.cols);
+    return { x: px(grip.x), y: py(grip.y) };
   }
 
   function rectPath(s: OutputSlice): string {
@@ -743,7 +750,7 @@
           {#each mask.points as _p, i}
             {#if i < mask.points.length - 1 || mask.points.length >= 3}
               {@const mid = screenContentToCanvas(s, screenMaskEdgeMidpoint(mask.points, i))}
-              <div class="handle mask-insert-handle" style="left:{px(mid.x)}px; top:{py(mid.y)}px;"
+              <div class="handle mask-insert-handle" style="left:{hx(px(mid.x), 7)}px; top:{hy(py(mid.y), 7)}px;"
                 role="button" tabindex="-1" title="Add a point here"
                 onmousedown={(e) => insertMaskPoint(e, s, mask, i)}>+</div>
             {/if}
@@ -769,7 +776,7 @@
                 {@const hc = screenContentToCanvas(s, h)}
                 <div class="handle mask-cp-handle"
                   class:dragging={drag?.kind.kind === 'mask-cp' && drag.kind.maskId === mask.id && drag.kind.index === i && drag.kind.which === which}
-                  style="left:{px(hc.x)}px; top:{py(hc.y)}px;"
+                  style="left:{hx(px(hc.x), 5)}px; top:{hy(py(hc.y), 5)}px;"
                   role="button" tabindex="-1"
                   title="Drag to bend. Alt-drag to move this handle on its own."
                   aria-label="{which === 'cpIn' ? 'Curve handle into' : 'Curve handle out of'} mask point {i + 1}"
@@ -782,7 +789,7 @@
           {@const closable = $screenMaskPlacing && i === 0 && canvasPts.length >= 3}
           <div class="handle mask-point-handle" class:first={i === 0} class:closable
             class:dragging={drag?.kind.kind === 'mask-point' && drag?.kind.maskId === mask.id && drag?.kind.index === i}
-            style="left:{px(cp.x)}px; top:{py(cp.y)}px;"
+            style="left:{hx(px(cp.x), 6)}px; top:{hy(py(cp.y), 6)}px;"
             role="button" tabindex="-1"
             class:curved={!!(mask.points[i]?.cpIn || mask.points[i]?.cpOut)}
             title={closable ? 'Click to close the mask' : $screenMaskPlacing ? 'Drag to move. Right-click to close the mask.' : 'Drag to move. Double-click for a curve or a corner. Right-click or Alt-click to remove.'}
@@ -806,22 +813,22 @@
         {@const cy1 = py(s.cropY + s.cropH)}
         <!-- 4 round corner handles -->
         <div class="handle corner-handle" class:dragging={drag?.kind.kind === 'rect-corner' && drag?.kind.corner === 'nw'}
-          style="left:{cx0}px; top:{cy0}px;"
+          style="left:{hx(cx0, 10)}px; top:{hy(cy0, 10)}px;"
           onmousedown={(e) => startDrag(e, s.id, { kind: 'rect-corner', corner: 'nw' })}>
           <span class="handle-label">{s.name} TL</span>
         </div>
         <div class="handle corner-handle" class:dragging={drag?.kind.kind === 'rect-corner' && drag?.kind.corner === 'ne'}
-          style="left:{cx1}px; top:{cy0}px;"
+          style="left:{hx(cx1, 10)}px; top:{hy(cy0, 10)}px;"
           onmousedown={(e) => startDrag(e, s.id, { kind: 'rect-corner', corner: 'ne' })}>
           <span class="handle-label">{s.name} TR</span>
         </div>
         <div class="handle corner-handle" class:dragging={drag?.kind.kind === 'rect-corner' && drag?.kind.corner === 'sw'}
-          style="left:{cx0}px; top:{cy1}px;"
+          style="left:{hx(cx0, 10)}px; top:{hy(cy1, 10)}px;"
           onmousedown={(e) => startDrag(e, s.id, { kind: 'rect-corner', corner: 'sw' })}>
           <span class="handle-label">{s.name} BL</span>
         </div>
         <div class="handle corner-handle" class:dragging={drag?.kind.kind === 'rect-corner' && drag?.kind.corner === 'se'}
-          style="left:{cx1}px; top:{cy1}px;"
+          style="left:{hx(cx1, 10)}px; top:{hy(cy1, 10)}px;"
           onmousedown={(e) => startDrag(e, s.id, { kind: 'rect-corner', corner: 'se' })}>
           <span class="handle-label">{s.name} BR</span>
         </div>
@@ -830,22 +837,22 @@
         {@const ex = (cx0 + cx1) / 2}
         {@const ey = (cy0 + cy1) / 2}
         <div class="handle edge-handle edge-top" class:dragging={drag?.kind.kind === 'rect-edge' && drag?.kind.edge === 'top'}
-          style="left:{ex}px; top:{cy0}px;"
+          style="left:{hx(ex, 20)}px; top:{hy(cy0, 6)}px;"
           onmousedown={(e) => startDrag(e, s.id, { kind: 'rect-edge', edge: 'top' })}></div>
         <div class="handle edge-handle edge-bottom" class:dragging={drag?.kind.kind === 'rect-edge' && drag?.kind.edge === 'bottom'}
-          style="left:{ex}px; top:{cy1}px;"
+          style="left:{hx(ex, 20)}px; top:{hy(cy1, 6)}px;"
           onmousedown={(e) => startDrag(e, s.id, { kind: 'rect-edge', edge: 'bottom' })}></div>
         <div class="handle edge-handle edge-left" class:dragging={drag?.kind.kind === 'rect-edge' && drag?.kind.edge === 'left'}
-          style="left:{cx0}px; top:{ey}px;"
+          style="left:{hx(cx0, 6)}px; top:{hy(ey, 20)}px;"
           onmousedown={(e) => startDrag(e, s.id, { kind: 'rect-edge', edge: 'left' })}></div>
         <div class="handle edge-handle edge-right" class:dragging={drag?.kind.kind === 'rect-edge' && drag?.kind.edge === 'right'}
-          style="left:{cx1}px; top:{ey}px;"
+          style="left:{hx(cx1, 6)}px; top:{hy(ey, 20)}px;"
           onmousedown={(e) => startDrag(e, s.id, { kind: 'rect-edge', edge: 'right' })}></div>
 
         <!-- Center move handle -->
         {@const ctr = rectCenter(s)}
         <div class="handle move-handle" class:dragging={drag?.kind.kind === 'rect-move'}
-          style="left:{ctr.x}px; top:{ctr.y}px;"
+          style="left:{hx(ctr.x, 18)}px; top:{hy(ctr.y, 18)}px;"
           onmousedown={(e) => startDrag(e, s.id, { kind: 'rect-move' })}
           title="Drag to move {s.name}">✥</div>
 
@@ -853,14 +860,14 @@
         {#each (['topLeft', 'topRight', 'bottomLeft', 'bottomRight'] as Array<keyof WarpCorners>) as cn}
           {@const cp = s.corners[cn]}
           <div class="handle corner-handle" class:dragging={drag?.kind.kind === 'corner' && drag?.kind.corner === cn}
-            style="left:{px(cp.x)}px; top:{py(cp.y)}px;"
+            style="left:{hx(px(cp.x), 10)}px; top:{hy(py(cp.y), 10)}px;"
             onmousedown={(e) => startDrag(e, s.id, { kind: 'corner', corner: cn })}>
             <span class="handle-label">{s.name} {cn}</span>
           </div>
         {/each}
         {@const ctr = cornersCenter(s.corners)}
         <div class="handle move-handle" class:dragging={drag?.kind.kind === 'corners-move'}
-          style="left:{ctr.x}px; top:{ctr.y}px;"
+          style="left:{hx(ctr.x, 18)}px; top:{hy(ctr.y, 18)}px;"
           onmousedown={(e) => startDrag(e, s.id, { kind: 'corners-move' })}
           title="Drag to move {s.name}">✥</div>
 
@@ -870,6 +877,7 @@
           {#each row as p, ci}
             {@const isCorner = (ri === 0 || ri === g.rows - 1) && (ci === 0 || ci === g.cols - 1)}
             {@const isEdge = ri === 0 || ri === g.rows - 1 || ci === 0 || ci === g.cols - 1}
+            {@const half = isCorner ? 8 : isEdge ? 6 : 5}
             <div
               class="handle mesh-handle"
               class:corner={isCorner}
@@ -877,14 +885,14 @@
               class:inner={!isEdge}
               class:dragging={drag?.kind.kind === 'mesh' && drag?.kind.row === ri && drag?.kind.col === ci}
               class:selected={selectedMeshPoint?.sliceId === s.id && selectedMeshPoint.row === ri && selectedMeshPoint.col === ci}
-              style="left:{px(p.x)}px; top:{py(p.y)}px;"
+              style="left:{hx(px(p.x), half)}px; top:{hy(py(p.y), half)}px;"
               onmousedown={(e) => startDrag(e, s.id, { kind: 'mesh', row: ri, col: ci })}
             ></div>
           {/each}
         {/each}
         {@const ctr = meshCenter(g)}
         <div class="handle move-handle" class:dragging={drag?.kind.kind === 'mesh-move'}
-          style="left:{ctr.x}px; top:{ctr.y}px;"
+          style="left:{hx(ctr.x, 18)}px; top:{hy(ctr.y, 18)}px;"
           onmousedown={(e) => startDrag(e, s.id, { kind: 'mesh-move' })}
           title="Drag to move {s.name}">✥</div>
         <!-- Tangent handles: drag to bend (Alt-drag unlinks the pair),
@@ -895,7 +903,7 @@
             class:unlinked={!handle.linked}
             class:dragging={drag?.kind.kind === 'tangent' && drag.kind.side === handle.side}
             class:selected={selectedTangent === handle.side && drag?.kind.kind !== 'tangent'}
-            style="left:{handle.x}px; top:{handle.y}px;"
+            style="left:{hx(handle.x, 5)}px; top:{hy(handle.y, 5)}px;"
             onmousedown={(e) => startDrag(e, s.id, { kind: 'tangent', row: handle.row, col: handle.col, side: handle.side })}
             ondblclick={(e) => { e.preventDefault(); e.stopPropagation(); straightenTangent(s.id, handle.row, handle.col, handle.side); }}
             role="button"
@@ -1046,8 +1054,9 @@
     color: #ffff00;
   }
 
-  /* Mesh handles — same as MeshWarpHandles. */
-  .mesh-handle { cursor: grab; }
+  /* Mesh handles — same as MeshWarpHandles. Above the move grip, so a
+     point under it can always be picked. */
+  .mesh-handle { cursor: grab; z-index: 51; }
   .mesh-handle.corner {
     width: 16px; height: 16px;
     margin-left: -8px; margin-top: -8px;
