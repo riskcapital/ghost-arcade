@@ -404,6 +404,7 @@ export class ProjectionSimulatorRenderer {
   private snapToVertices = true;
   private onModelPick: ((pick: ProjectionSimModelPick) => void) | null = null;
   private previewTarget: THREE.WebGLRenderTarget | null = null;
+  private viewInsetBottom = 0;
   private sourceTexture: THREE.CanvasTexture | null = null;
   private sourceCanvas: HTMLCanvasElement | null = null;
   private lastHash = '';
@@ -563,7 +564,7 @@ export class ProjectionSimulatorRenderer {
       if (child.userData.projectionSimTarget) box.expandByObject(child);
     }
     const sceneSize = box.isEmpty() ? 4 : box.getSize(new THREE.Vector3()).length();
-    const radius = THREE.MathUtils.clamp(sceneSize * 0.006, 0.012, 0.08);
+    const radius = THREE.MathUtils.clamp(sceneSize * 0.012, 0.025, 0.12);
     for (const marker of markers) {
       const color = marker.selected ? '#4fe3ff' : marker.matched ? '#ffcf3a' : '#ff5a7a';
       const sphere = new THREE.Mesh(
@@ -926,7 +927,28 @@ export class ProjectionSimulatorRenderer {
     if (!force && size.x === targetW && size.y === targetH) return;
     this.renderer.setSize(targetW, targetH, false);
     this.camera.aspect = targetW / Math.max(1, targetH);
+    this.applyViewInset(targetW, targetH);
     this.camera.updateProjectionMatrix();
+  }
+
+  /** Recentre the orbit view on the area above a panel covering the bottom
+   *  of the canvas (the calibration dock), so the model stays pickable. */
+  setViewInsetBottom(pixels: number): void {
+    const next = Math.max(0, Math.round(pixels));
+    if (next === this.viewInsetBottom) return;
+    this.viewInsetBottom = next;
+    const size = new THREE.Vector2();
+    this.renderer.getSize(size);
+    this.applyViewInset(size.x, size.y);
+    this.camera.updateProjectionMatrix();
+  }
+
+  private applyViewInset(width: number, height: number): void {
+    // setViewOffset works in canvas pixels; the offset is in CSS pixels.
+    const scale = height / Math.max(1, this.canvas.clientHeight || height);
+    const shift = (this.recordingMode ? 0 : this.viewInsetBottom * scale) / 2;
+    if (shift > 0) this.camera.setViewOffset(width, height, 0, shift, width, height);
+    else this.camera.clearViewOffset();
   }
 
   private updateSourceTexture(canvas: HTMLCanvasElement | null): void {

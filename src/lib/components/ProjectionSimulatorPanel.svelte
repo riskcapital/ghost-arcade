@@ -100,6 +100,7 @@
   let overlayInFlight = false;
   let overlayQueued = false;
   let overlaySentFor: string | null = null;
+  let dockHeight = 0;
 
   const primitiveKinds: ProjectionSimPrimitiveKind[] = ['box', 'sphere', 'cylinder', 'cone', 'pyramid', 'column', 'plane'];
   const BLANK_PRESET_ID = '__blank__';
@@ -135,6 +136,8 @@
         ? `Click a feature on the model (${calibrationMatched} of ${MIN_CALIBRATION_POINTS} matched).`
         : 'Click another feature to add a point, or pick a point to adjust it.';
   $: renderer?.setSnapToVertices(calibrationSnap);
+  // Keep the model centred above the calibration dock.
+  $: renderer?.setViewInsetBottom(calibratingProjector && !panelsHidden ? dockHeight + 18 : 0);
   $: renderer?.setCalibrationMarkers(calibration
     ? calibration.points.map((point, index) => ({
         id: point.id,
@@ -1588,13 +1591,13 @@
       {/if}
     </aside>
     {#if calibratingProjector && calibration}
-      <div class="psim-calibration-dock" aria-label="Projector calibration">
+      <div class="psim-calibration-dock" aria-label="Projector calibration" bind:clientHeight={dockHeight}>
         <div class="calib-pad-wrap">
           <canvas
             class="psim-calibration-pad"
             class:armed={!!calibrationPointId}
             bind:this={padCanvas}
-            style={`aspect-ratio: ${calibration.imageSize[0]} / ${calibration.imageSize[1]}`}
+            style={`aspect-ratio: ${calibration.imageSize[0]} / ${calibration.imageSize[1]}; width: min(100%, calc(30vh * ${calibration.imageSize[0] / calibration.imageSize[1]}))`}
             onpointerdown={handlePadPointerDown}
             onpointermove={handlePadPointerMove}
             onpointerup={handlePadPointerUp}
@@ -2051,12 +2054,13 @@
     bottom: 18px;
     z-index: 3;
     display: grid;
-    grid-template-columns: minmax(0, 1fr) 270px;
+    grid-template-columns: minmax(0, 1fr) 260px;
     gap: 12px;
-    padding: 12px;
+    padding: 10px;
     border: 1px solid var(--ga-line-2, rgba(255,255,255,0.12));
     background: color-mix(in srgb, var(--ga-panel, #0b0d11) 97%, #05070b);
-    max-height: calc(100% - 110px);
+    /* Keep the upper half of the view free for picking points on the model. */
+    max-height: 44%;
     overflow: auto;
   }
   .calib-pad-wrap {
@@ -2066,8 +2070,7 @@
     align-content: start;
   }
   .psim-calibration-pad {
-    width: 100%;
-    max-height: 46vh;
+    justify-self: center;
     background: #000;
     border: 1px solid rgba(255,255,255,0.16);
     cursor: default;
