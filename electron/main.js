@@ -13,7 +13,7 @@
  * No pixels touch CPU memory in the send path.
  */
 
-import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, net as electronNet, powerSaveBlocker, protocol, screen, session, shell, systemPreferences, utilityProcess } from 'electron';
+import { app, BrowserWindow, desktopCapturer, dialog, ipcMain, net as electronNet, powerSaveBlocker, protocol, safeStorage, screen, session, shell, systemPreferences, utilityProcess } from 'electron';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { spawn, fork, execSync } from 'child_process';
@@ -55,6 +55,13 @@ ipcMain.on('show_startup_session', (event) => {
 });
 ipcMain.handle('show_startup_get', () => showStartup.get());
 ipcMain.handle('show_startup_set', (_, patch) => showStartup.set(patch));
+
+// PJLink passwords live here, encrypted with safeStorage, never in project
+// files and never sent back to the renderer (electron/pjlink-credentials.cjs).
+const { createPjlinkClient } = require('./pjlink.cjs');
+const { createPjlinkCredentials } = require('./pjlink-credentials.cjs');
+const pjlinkCredentials = createPjlinkCredentials({ safeStorage, dir: app.getPath('userData') });
+const pjlinkClient = createPjlinkClient({ credentials: pjlinkCredentials });
 const nativeRendererBroker = createNativeRendererBroker({
   appRoot: path.join(__dirname, '..'),
   resourcesPath: process.resourcesPath,
@@ -341,8 +348,6 @@ let embeddedServerModule = null;
 const { buildWLEDRealtimePacket } = require('./wled-packet.cjs');
 const wledSockets = new Map();  // controllerId -> dgram.Socket
 const { createPixelMapOutput } = require('./pixelmap-output.cjs');
-const { createPjlinkClient } = require('./pjlink.cjs');
-const pjlinkClient = createPjlinkClient();
 // Art-Net / sACN pixel mapping. One socket for every fixture and node.
 const pixelMapOutput = createPixelMapOutput({ dgram });
 const { createDmxInput } = require('./dmx-input.cjs');
@@ -5182,17 +5187,24 @@ function registerIpcHandlers() {
   // One short session per request, serialised per projector. Actions are a
   // fixed vocabulary (power, shutter, input, status); the client builds and
   // validates the wire commands, so the renderer cannot send arbitrary ones.
-  ipcMain.handle('pjlink_command', async (_, { host, port, password, action, input, timeoutMs } = {}) => {
+  // The password comes from the credential store by projector id; the
+  // renderer never sends one and never gets one back.
+  ipcMain.handle('pjlink_command', async (_, { projectorId, host, port, action, input, timeoutMs } = {}) => {
     if (typeof host !== 'string' || !host.trim()) return { ok: false, error: 'no host', responses: [] };
     return pjlinkClient.run({
+      projectorId: typeof projectorId === 'string' ? projectorId : '',
       host: host.trim(),
       port: Number(port) || 4352,
-      password: typeof password === 'string' ? password : '',
       action,
       input,
       timeoutMs: Math.max(500, Math.min(15000, Number(timeoutMs) || 5000)),
     });
   });
+  ipcMain.handle('pjlink_set_password', async (_, { projectorId, password } = {}) => {
+    const { ok, persisted, error } = pjlinkCredentials.set(projectorId, password);
+    return { ok, persisted, ...(error ? { error } : {}) };
+  });
+  ipcMain.handle('pjlink_has_password', async (_, { projectorId } = {}) => pjlinkCredentials.has(projectorId));
 
   // --- OSC ---
   ipcMain.handle('osc_start', async (_, { port }) => {

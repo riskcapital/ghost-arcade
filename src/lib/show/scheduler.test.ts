@@ -21,10 +21,10 @@ import {
   type ShowSchedule,
 } from './scheduler';
 import { CueEngine } from './cueList';
-import { projectors, setPjlinkTransport, type PjlinkRequest } from './projectors';
+import { projectors } from './projectors';
+import { installProjectorHarness, type ProjectorHarness } from './pjlinkHarness.testutil';
 
 const require = createRequire(import.meta.url);
-const { createPjlinkClient } = require('../../../electron/pjlink.cjs');
 const { startFakePjlink } = require('../../../scripts/fake-pjlink-server.cjs');
 
 const originalTZ = process.env.TZ;
@@ -244,7 +244,10 @@ describe('runner with a fake clock', () => {
 
 describe('scheduled start and stop drive cues and projectors', () => {
   const servers: Array<{ close(): Promise<void> }> = [];
+  let harness: ProjectorHarness | null = null;
   afterEach(async () => {
+    harness?.dispose();
+    harness = null;
     projectors._resetForTest();
     while (servers.length) await servers.pop()!.close();
   });
@@ -252,9 +255,9 @@ describe('scheduled start and stop drive cues and projectors', () => {
   it('the fake projector receives authenticated POWR and AVMT from the scheduler', async () => {
     const server = await startFakePjlink({ password: 'venue' });
     servers.push(server);
-    const client = createPjlinkClient();
-    setPjlinkTransport((req: PjlinkRequest) => client.run(req));
-    projectors.add({ name: 'Main', host: '127.0.0.1', port: server.port, password: 'venue' });
+    harness = installProjectorHarness();
+    const main = projectors.add({ name: 'Main', host: '127.0.0.1', port: server.port });
+    await projectors.setPassword(main, 'venue');
 
     const cues = new CueEngine();
     const fired: string[] = [];

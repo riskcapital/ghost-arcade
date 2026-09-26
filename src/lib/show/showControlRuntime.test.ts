@@ -11,7 +11,6 @@ import { get } from 'svelte/store';
 import { createRequire } from 'node:module';
 
 const require = createRequire(import.meta.url);
-const { createPjlinkClient } = require('../../../electron/pjlink.cjs');
 const { startFakePjlink } = require('../../../scripts/fake-pjlink-server.cjs');
 
 let layers: typeof import('../stores/layers');
@@ -24,6 +23,7 @@ let macrosMod: typeof import('../stores/macros');
 let tc: typeof import('./timecode/timecodeChase');
 let proj: typeof import('./projectors');
 let teardown: () => void;
+let harnessMod: typeof import('./pjlinkHarness.testutil');
 
 function installDomShim(): void {
   const storage = new Map<string, string>();
@@ -79,6 +79,7 @@ beforeAll(async () => {
   tc = await import('./timecode/timecodeChase');
   proj = await import('./projectors');
   runtime = await import('./showControlRuntime');
+  harnessMod = await import('./pjlinkHarness.testutil');
   teardown = runtime.installShowControl();
 });
 
@@ -200,11 +201,11 @@ describe('projectors from a cue', () => {
   it('a cue fired by GO sends authenticated POWR and AVMT through the app executor', async () => {
     freshList();
     const server = await startFakePjlink({ password: 'house' });
+    const harness = harnessMod.installProjectorHarness();
     try {
-      const client = createPjlinkClient();
-      proj.setPjlinkTransport((req) => client.run(req));
       proj.projectors.hydrate(null);
-      const pid = proj.projectors.add({ name: 'Booth', host: '127.0.0.1', port: server.port, password: 'house' });
+      const pid = proj.projectors.add({ name: 'Booth', host: '127.0.0.1', port: server.port });
+      await proj.projectors.setPassword(pid, 'house');
       const { cueList } = cues;
       const id = cueList.addCue();
       const on = cueList.addAction(id, 'projector');
@@ -220,6 +221,7 @@ describe('projectors from a cue', () => {
         ['%1AVMT 31', true],
       ]);
     } finally {
+      harness.dispose();
       proj.projectors._resetForTest();
       await server.close();
     }

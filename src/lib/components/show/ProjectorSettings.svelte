@@ -2,6 +2,10 @@
   /**
    * Settings > Show Control > Projectors (PJLink class 1). Saved with the
    * project. Cues and the scheduler address these by id, or all of them.
+   *
+   * Passwords are write-only here: committing the field stores the value in
+   * this computer's credential store (never the project file) and clears
+   * the field again. The placeholder says whether one is saved.
    */
   import { projectors, PJLINK_DEFAULT_PORT, type Projector, type ProjectorStatus } from '../../show/projectors';
   import type { ProjectorCommand } from '../../show/cueList';
@@ -38,6 +42,26 @@
     ].filter(Boolean);
     return parts.join(', ');
   }
+  async function commitPassword(p: Projector, input: HTMLInputElement) {
+    const value = input.value;
+    input.value = '';
+    if (!value) return;
+    busy = { ...busy, [p.id]: true };
+    try {
+      await projectors.setPassword(p.id, value);
+    } finally {
+      busy = { ...busy, [p.id]: false };
+    }
+  }
+  async function clearPassword(p: Projector) {
+    busy = { ...busy, [p.id]: true };
+    try {
+      await projectors.setPassword(p.id, '');
+    } finally {
+      busy = { ...busy, [p.id]: false };
+    }
+  }
+
   function faults(s: ProjectorStatus | undefined): string {
     if (!s?.errors) return '';
     return Object.entries(s.errors).filter(([, v]) => v !== 'ok').map(([k, v]) => `${k} ${v}`).join(', ');
@@ -57,8 +81,30 @@
       <div class="pj-fields">
         <label>Address <input type="text" placeholder="192.168.1.50" value={p.host} onchange={(e) => projectors.update(p.id, { host: e.currentTarget.value })} data-projector-host /></label>
         <label>Port <input class="pj-port" type="number" min="1" max="65535" value={p.port} onchange={(e) => projectors.update(p.id, { port: Number(e.currentTarget.value) || PJLINK_DEFAULT_PORT })} data-projector-port /></label>
-        <label>Password <input type="password" autocomplete="off" placeholder="none" value={p.password} onchange={(e) => projectors.update(p.id, { password: e.currentTarget.value })} data-projector-password /></label>
+        <label>Password
+          <input
+            type="password"
+            autocomplete="new-password"
+            placeholder={p.hasPassword ? 'Saved on this computer' : 'none'}
+            value=""
+            onchange={(e) => commitPassword(p, e.currentTarget)}
+            data-projector-password
+          />
+        </label>
+        {#if p.hasPassword}
+          <button class="pj-clear" disabled={busy[p.id]} onclick={() => clearPassword(p)} title="Delete the saved password from this computer" data-projector-clear-password>Clear</button>
+        {/if}
       </div>
+      {#if s?.credentialError}
+        <div class="pj-cred-error" data-projector-credential-error>
+          {s.credentialError}
+          <button class="pj-clear" onclick={() => projectors.retryPasswordMigration(p.id)}>Retry</button>
+        </div>
+      {:else if s?.passwordSessionOnly}
+        <div class="pj-cred-note" data-projector-session-only>Password saved for this session only: this computer has no secure storage for it. Enter it again after a restart.</div>
+      {:else if s?.passwordMissing}
+        <div class="pj-cred-note" data-projector-password-missing>This project expects a password that is not saved on this computer. Enter it again.</div>
+      {/if}
       <div class="pj-status" data-projector-status>
         {statusText(s)}
         {#if faults(s)}<span class="pj-faults">Faults: {faults(s)}</span>{/if}
@@ -101,6 +147,18 @@
   .pj-fields { display: flex; gap: 10px; flex-wrap: wrap; }
   .pj-fields label { display: inline-flex; align-items: center; gap: 6px; font-size: 12px; color: #888; }
   .pj-port { width: 72px; }
+  .pj-fields { align-items: center; }
+  .pj-clear {
+    font-size: 11px;
+    padding: 3px 8px;
+    border-radius: 4px;
+    border: 1px solid #33333a;
+    background: #15151b;
+    color: #ddd;
+    cursor: pointer;
+  }
+  .pj-cred-note { font-size: 12px; color: #f0c674; }
+  .pj-cred-error { font-size: 12px; color: #ff8a80; display: flex; gap: 8px; align-items: center; }
   .pj-status { font-size: 12px; color: #bbb; display: flex; flex-direction: column; gap: 2px; }
   .pj-faults { color: #f0c674; }
   .pj-last { color: #888; }

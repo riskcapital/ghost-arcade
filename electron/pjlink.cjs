@@ -183,7 +183,13 @@ function commandsFor(action, input) {
   }
 }
 
-function createPjlinkClient({ net = nodeNet } = {}) {
+/**
+ * `credentials` (electron/pjlink-credentials.cjs) supplies the password by
+ * projector id, so callers pass `projectorId` and never a password. An
+ * explicit `password` is only honoured when no credential store is wired
+ * (tests of the wire protocol).
+ */
+function createPjlinkClient({ net = nodeNet, credentials = null } = {}) {
   const queues = new Map();
   function enqueue(key, job) {
     const prev = queues.get(key) || Promise.resolve();
@@ -192,8 +198,9 @@ function createPjlinkClient({ net = nodeNet } = {}) {
     return next;
   }
   return {
-    /** { host, port, password, action, input, timeoutMs } */
-    async run({ host, port = PJLINK_PORT, password = '', action, input, commands, timeoutMs = 5000 } = {}) {
+    /** { projectorId, host, port, action, input, timeoutMs } */
+    async run({ projectorId, host, port = PJLINK_PORT, password: explicitPassword = '', action, input, commands, timeoutMs = 5000 } = {}) {
+      const password = credentials ? (projectorId ? credentials.get(projectorId) : '') : explicitPassword;
       const cmds = commands || commandsFor(action, input);
       if (!cmds) return { ok: false, authenticated: false, responses: [], sessionError: 'unknown action', error: `unknown action "${action}"` };
       const result = await enqueue(`${host}:${port}`, () => runSession({ host, port, password, commands: cmds, timeoutMs, net }));

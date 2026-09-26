@@ -5,13 +5,15 @@
  * projector is scripts/fake-pjlink-server.cjs. Covers the wire protocol
  * (greeting, MD5 digest on the first command only, one reply per command),
  * wrong and missing passwords, ERR1-ERR4 replies, status parsing, and the
- * projector store driven by a cue.
+ * projector store driven by a cue, with passwords coming from the
+ * main-process credential store by projector id.
  */
 
 import { afterEach, describe, expect, it } from 'vitest';
 import { createRequire } from 'node:module';
 import net from 'node:net';
-import { projectors, setPjlinkTransport, type PjlinkRequest } from './projectors';
+import { projectors } from './projectors';
+import { installProjectorHarness, type ProjectorHarness } from './pjlinkHarness.testutil';
 import { CueEngine } from './cueList';
 
 const require = createRequire(import.meta.url);
@@ -26,7 +28,10 @@ async function fake(opts: Record<string, unknown> = {}): Promise<Fake> {
   return s;
 }
 
+let harness: ProjectorHarness | null = null;
 afterEach(async () => {
+  harness?.dispose();
+  harness = null;
   projectors._resetForTest();
   while (servers.length) await servers.pop()!.close();
 });
@@ -142,15 +147,16 @@ describe('PJLink wire protocol', () => {
 });
 
 describe('projector store driven by a cue', () => {
-  it('a cue sends authenticated POWR and AVMT to every enabled projector', async () => {
+  it('a cue sends authenticated POWR and AVMT, using the passwords stored on this computer', async () => {
+    harness = installProjectorHarness();
     const a = await fake({ password: 'alpha' });
     const b = await fake({ password: 'beta' });
     const off = await fake();
-    const client = createPjlinkClient();
-    setPjlinkTransport((req: PjlinkRequest) => client.run(req));
-    projectors.add({ name: 'Left', host: '127.0.0.1', port: a.port, password: 'alpha' });
-    projectors.add({ name: 'Right', host: '127.0.0.1', port: b.port, password: 'beta' });
+    const left = projectors.add({ name: 'Left', host: '127.0.0.1', port: a.port });
+    const right = projectors.add({ name: 'Right', host: '127.0.0.1', port: b.port });
     projectors.add({ name: 'Spare', host: '127.0.0.1', port: off.port, enabled: false });
+    expect(await projectors.setPassword(left, 'alpha')).toEqual({ ok: true, persisted: true });
+    expect(await projectors.setPassword(right, 'beta')).toEqual({ ok: true, persisted: true });
 
     const engine = new CueEngine();
     const pending: Promise<unknown>[] = [];
@@ -177,16 +183,45 @@ describe('projector store driven by a cue', () => {
       ]);
     }
     expect(off.received).toHaveLength(0);
+    // The renderer side never sent a password, only the projector id.
+    expect(harness.requests.length).toBe(4);
+    for (const req of harness.requests) {
+      expect(Object.keys(req)).not.toContain('password');
+      expect(JSON.stringify(req)).not.toMatch(/alpha|beta/);
+    }
     const status = (await import('svelte/store')).get(projectors).status;
     expect(Object.values(status).map((st) => st.lastCommand?.ok)).toEqual([true, true]);
   });
 
+  it('a wrong stored password is refused, and fixing it through setPassword works', async () => {
+    harness = installProjectorHarness();
+    const s = await fake({ password: 'right' });
+    const id = projectors.add({ host: '127.0.0.1', port: s.port });
+    await projectors.setPassword(id, 'wrong');
+    const [bad] = await projectors.command(id, 'power-on');
+    expect(bad.sessionError).toBe('authentication failed');
+    await projectors.setPassword(id, 'right');
+    const [good] = await projectors.command(id, 'power-on');
+    expect(good.ok).toBe(true);
+    expect(s.state.power).toBe(1);
+  });
+
+  it('clearing a password deletes it from the store and the projector', async () => {
+    harness = installProjectorHarness();
+    const id = projectors.add({ host: '127.0.0.1' });
+    await projectors.setPassword(id, 'x');
+    expect(projectors.get(id)?.hasPassword).toBe(true);
+    await projectors.setPassword(id, '');
+    expect(projectors.get(id)?.hasPassword).toBe(false);
+    expect(harness.credentials.has(id).has).toBe(false);
+  });
+
   it('a poll marks an unreachable projector offline and a live one with its state', async () => {
+    harness = installProjectorHarness({ timeoutMs: 500 });
     const live = await fake({ password: 'x' });
     live.state.power = 1;
-    const client = createPjlinkClient();
-    setPjlinkTransport((req: PjlinkRequest) => client.run({ ...req, timeoutMs: 500 }));
-    const up = projectors.add({ host: '127.0.0.1', port: live.port, password: 'x' });
+    const up = projectors.add({ host: '127.0.0.1', port: live.port });
+    await projectors.setPassword(up, 'x');
     const down = projectors.add({ host: '127.0.0.1', port: 1 });
     await projectors.poll();
     const { get } = await import('svelte/store');
@@ -195,13 +230,22 @@ describe('projector store driven by a cue', () => {
     expect(st[down]).toMatchObject({ online: false });
   });
 
-  it('round-trips projectors through the project payload', () => {
-    projectors.add({ name: 'P1', host: '10.0.0.5', password: 'pw' });
+  it('round-trips projectors through the project payload without any password', async () => {
+    harness = installProjectorHarness();
+    const id = projectors.add({ name: 'P1', host: '10.0.0.5' });
+    await projectors.setPassword(id, 'hunter2');
     projectors.setPollSeconds(12);
     const saved = JSON.parse(JSON.stringify(projectors.serialize()));
+    expect(saved.projectors[0]).toEqual({ id, name: 'P1', host: '10.0.0.5', port: 4352, hasPassword: true, enabled: true });
+    expect(JSON.stringify(saved)).not.toContain('hunter2');
     projectors._resetForTest();
+    harness.dispose();
+    harness = installProjectorHarness();
     projectors.hydrate(saved);
+    await projectors.whenCredentialsSettled();
     expect(projectors.serialize()).toEqual(saved);
-    expect(saved.projectors[0]).toMatchObject({ name: 'P1', host: '10.0.0.5', port: 4352, password: 'pw', enabled: true });
+    // A fresh machine store has no password for it: flagged, not hidden.
+    const { get } = await import('svelte/store');
+    expect(get(projectors).status[id]).toMatchObject({ passwordMissing: true });
   });
 });

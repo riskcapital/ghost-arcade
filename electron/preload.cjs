@@ -158,7 +158,7 @@ const ALLOWED_IPC_COMMANDS = new Set([
   // Art-Net / sACN pixel mapping — DMX universes over UDP
   'pixelmap_send_frame', 'pixelmap_stop', 'pixelmap_get_stats',
   // PJLink projector control — power, shutter, input and status over TCP 4352
-  'pjlink_command',
+  'pjlink_command', 'pjlink_set_password', 'pjlink_has_password',
   // Start at boot / show mode (launch at login, startup project, prompts)
   'show_startup_get', 'show_startup_set',
   // Ableton Link — LAN tempo/beat sync (session lives in main; the

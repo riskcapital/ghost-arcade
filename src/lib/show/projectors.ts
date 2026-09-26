@@ -7,8 +7,15 @@
  * the same store at the Node client and a fake projector.
  *
  * Saved with the project, like WLED controllers: a projector belongs to the
- * rig the show was programmed for. The password is stored in the project
- * file in the clear, which is all PJLink's own MD5 scheme protects anyway.
+ * rig the show was programmed for. Its PASSWORD is not: projects are shared
+ * between machines and people, so the secret lives in the main process's
+ * credential store (electron/pjlink-credentials.cjs, encrypted with
+ * safeStorage), keyed by projector id. The project only records
+ * `hasPassword`. Commands send the projector id and the main process looks
+ * the password up; it never comes back to this side.
+ *
+ * Projects saved before this carried `password` in the clear. Loading one
+ * moves each password into the store and strips it (see `hydrate`).
  */
 
 import { writable, get } from 'svelte/store';
@@ -23,7 +30,8 @@ export interface Projector {
   name: string;
   host: string;
   port: number;
-  password: string;
+  /** A password is stored for this projector (on the machine that set it). */
+  hasPassword: boolean;
   enabled: boolean;
 }
 
@@ -41,6 +49,12 @@ export interface ProjectorStatus {
   polledAt: number | null;
   /** Result of the last command sent from a cue, the scheduler or a button. */
   lastCommand: { action: string; ok: boolean; error: string | null; at: number } | null;
+  /** The password is only held for this session (no secure storage). */
+  passwordSessionOnly: boolean;
+  /** The project says there is a password but this computer has none. */
+  passwordMissing: boolean;
+  /** Storing or moving the password failed. */
+  credentialError: string | null;
 }
 
 export interface ProjectorsState {
@@ -53,9 +67,10 @@ export interface ProjectorsState {
 export type PjlinkAction = ProjectorCommand | 'status';
 
 export interface PjlinkRequest {
+  /** The main process finds the password by this id. */
+  projectorId: string;
   host: string;
   port: number;
-  password: string;
   action: PjlinkAction;
   input?: string;
   timeoutMs?: number;
@@ -96,6 +111,38 @@ function currentTransport(): PjlinkTransport | null {
   return transport ?? defaultTransport();
 }
 
+/** The machine's password store, as the renderer sees it: write and ask,
+ *  never read. */
+export interface ProjectorCredentialStore {
+  set(projectorId: string, password: string): Promise<{ ok: boolean; persisted: boolean; error?: string }>;
+  has(projectorId: string): Promise<{ ok: boolean; has: boolean; persisted: boolean }>;
+}
+
+function defaultCredentialStore(): ProjectorCredentialStore | null {
+  if (typeof window === 'undefined') return null;
+  const api = (window as unknown as { electronAPI?: { invoke?: (c: string, a: unknown) => Promise<unknown> } }).electronAPI;
+  if (!api?.invoke) return null;
+  return {
+    set: (projectorId, password) => api.invoke!('pjlink_set_password', { projectorId, password }) as Promise<{ ok: boolean; persisted: boolean; error?: string }>,
+    has: (projectorId) => api.invoke!('pjlink_has_password', { projectorId }) as Promise<{ ok: boolean; has: boolean; persisted: boolean }>,
+  };
+}
+
+let credentialStore: ProjectorCredentialStore | null = null;
+
+export function setProjectorCredentialStore(next: ProjectorCredentialStore | null): void {
+  credentialStore = next;
+}
+
+function currentCredentialStore(): ProjectorCredentialStore | null {
+  return credentialStore ?? defaultCredentialStore();
+}
+
+/** Legacy passwords that could not be moved into the store yet, by id. Kept
+ *  in memory only, so a retry does not need the old project file. */
+const pendingLegacyPasswords = new Map<string, string>();
+let settling: Promise<void> = Promise.resolve();
+
 function emptyStatus(): ProjectorStatus {
   return {
     online: false,
@@ -108,6 +155,9 @@ function emptyStatus(): ProjectorStatus {
     lastError: null,
     polledAt: null,
     lastCommand: null,
+    passwordSessionOnly: false,
+    passwordMissing: false,
+    credentialError: null,
   };
 }
 
@@ -115,22 +165,42 @@ function initialState(): ProjectorsState {
   return { projectors: [], status: {}, pollSeconds: PROJECTOR_POLL_DEFAULT_SECONDS, polling: false };
 }
 
-export function normalizeProjector(raw: unknown, index = 0): Projector | null {
+/**
+ * A projector from any source. Accepts the legacy `password` field and hands
+ * it back separately so the caller can move it into the store; the returned
+ * projector never holds a secret.
+ */
+export function normalizeProjectorWithLegacy(raw: unknown, index = 0): { projector: Projector; legacyPassword: string } | null {
   if (!raw || typeof raw !== 'object') return null;
   const r = raw as Record<string, unknown>;
   const port = Math.round(Number(r.port));
+  const legacyPassword = typeof r.password === 'string' ? r.password : '';
   return {
-    id: typeof r.id === 'string' && r.id ? r.id : generateUUID(),
-    name: typeof r.name === 'string' && r.name.trim() ? r.name.trim() : `Projector ${index + 1}`,
-    host: typeof r.host === 'string' ? r.host.trim() : '',
-    port: Number.isFinite(port) && port > 0 && port < 65536 ? port : PJLINK_DEFAULT_PORT,
-    password: typeof r.password === 'string' ? r.password : '',
-    enabled: r.enabled !== false,
+    projector: {
+      id: typeof r.id === 'string' && r.id ? r.id : generateUUID(),
+      name: typeof r.name === 'string' && r.name.trim() ? r.name.trim() : `Projector ${index + 1}`,
+      host: typeof r.host === 'string' ? r.host.trim() : '',
+      port: Number.isFinite(port) && port > 0 && port < 65536 ? port : PJLINK_DEFAULT_PORT,
+      hasPassword: r.hasPassword === true,
+      enabled: r.enabled !== false,
+    },
+    legacyPassword,
   };
+}
+
+export function normalizeProjector(raw: unknown, index = 0): Projector | null {
+  return normalizeProjectorWithLegacy(raw, index)?.projector ?? null;
 }
 
 const store = writable<ProjectorsState>(initialState());
 let pollTimer: ReturnType<typeof setInterval> | null = null;
+
+function setHasPassword(id: string, hasPassword: boolean): void {
+  store.update((s) => ({
+    ...s,
+    projectors: s.projectors.map((p) => (p.id === id ? { ...p, hasPassword } : p)),
+  }));
+}
 
 function setStatus(id: string, patch: Partial<ProjectorStatus>): void {
   store.update((s) => ({
@@ -144,7 +214,7 @@ async function send(projector: Projector, action: PjlinkAction, input = ''): Pro
   if (!t) return { ok: false, error: 'projector control needs the desktop app' };
   if (!projector.host) return { ok: false, error: 'no address' };
   try {
-    return await t({ host: projector.host, port: projector.port, password: projector.password, action, input });
+    return await t({ projectorId: projector.id, host: projector.host, port: projector.port, action, input });
   } catch (err) {
     return { ok: false, error: err instanceof Error ? err.message : String(err) };
   }
@@ -153,26 +223,74 @@ async function send(projector: Projector, action: PjlinkAction, input = ''): Pro
 export const projectors = {
   subscribe: store.subscribe,
 
-  add(init: Partial<Projector> = {}): string {
+  add(init: Partial<Omit<Projector, 'hasPassword'>> = {}): string {
     const s = get(store);
-    const p = normalizeProjector({ ...init, id: undefined }, s.projectors.length)!;
+    const p = normalizeProjector({ ...init, id: undefined, hasPassword: false }, s.projectors.length)!;
     store.update((x) => ({ ...x, projectors: [...x.projectors, p] }));
     return p.id;
   },
 
-  update(id: string, patch: Partial<Omit<Projector, 'id'>>): void {
+  /** Edit the projector's saved fields. `hasPassword` only changes through
+   *  setPassword, which is what actually stores one. */
+  update(id: string, patch: Partial<Omit<Projector, 'id' | 'hasPassword'>>): void {
     store.update((s) => ({
       ...s,
-      projectors: s.projectors.map((p, i) => (p.id === id ? normalizeProjector({ ...p, ...patch, id }, i) ?? p : p)),
+      projectors: s.projectors.map((p, i) => {
+        if (p.id !== id) return p;
+        const { hasPassword: _ignored, ...rest } = patch as Partial<Projector>;
+        return normalizeProjector({ ...p, ...rest, id, hasPassword: p.hasPassword }, i) ?? p;
+      }),
     }));
   },
 
+  /**
+   * Store this projector's password on this computer (an empty string
+   * deletes it). Resolves with whether it will survive a restart.
+   */
+  async setPassword(id: string, password: string): Promise<{ ok: boolean; persisted: boolean; error?: string }> {
+    const creds = currentCredentialStore();
+    if (!creds) {
+      const error = 'passwords need the desktop app';
+      setStatus(id, { credentialError: error });
+      return { ok: false, persisted: false, error };
+    }
+    let result: { ok: boolean; persisted: boolean; error?: string };
+    try {
+      result = await creds.set(id, password);
+    } catch (err) {
+      result = { ok: false, persisted: false, error: err instanceof Error ? err.message : String(err) };
+    }
+    if (result.ok) {
+      pendingLegacyPasswords.delete(id);
+      setHasPassword(id, !!password);
+      setStatus(id, {
+        credentialError: null,
+        passwordMissing: false,
+        passwordSessionOnly: !!password && !result.persisted,
+      });
+    } else {
+      setStatus(id, { credentialError: `Could not store the password: ${result.error ?? 'unknown error'}` });
+    }
+    return result;
+  },
+
+  /** Try again to move a legacy project password into the store. */
+  async retryPasswordMigration(id: string): Promise<boolean> {
+    const pw = pendingLegacyPasswords.get(id);
+    if (pw === undefined) return false;
+    return (await this.setPassword(id, pw)).ok;
+  },
+
   remove(id: string): void {
+    const had = get(store).projectors.find((p) => p.id === id)?.hasPassword;
+    pendingLegacyPasswords.delete(id);
     store.update((s) => {
       const status = { ...s.status };
       delete status[id];
       return { ...s, projectors: s.projectors.filter((p) => p.id !== id), status };
     });
+    // Best effort: do not leave a secret behind for a projector that is gone.
+    if (had) void currentCredentialStore()?.set(id, '').catch(() => {});
   },
 
   get(id: string): Projector | undefined {
@@ -249,30 +367,85 @@ export const projectors = {
     store.update((s) => ({ ...s, polling: false }));
   },
 
+  /** Project payload. Never carries a password, only `hasPassword`. */
   serialize(): { version: number; projectors: Projector[]; pollSeconds: number } {
     const s = get(store);
-    return { version: 1, projectors: s.projectors.map((p) => ({ ...p })), pollSeconds: s.pollSeconds };
+    return {
+      version: 2,
+      projectors: s.projectors.map((p) => ({
+        id: p.id,
+        name: p.name,
+        host: p.host,
+        port: p.port,
+        hasPassword: p.hasPassword,
+        enabled: p.enabled,
+      })),
+      pollSeconds: s.pollSeconds,
+    };
   },
 
+  /**
+   * Project open. Legacy `password` fields are moved into this computer's
+   * store and dropped; `hasPassword` turns true only once the store has
+   * taken the password, so a failed move never claims a password exists.
+   * Projectors that say they have a password are checked against the store
+   * and flagged when this computer does not have it (a project from
+   * another machine). Idempotent: loading the same file twice stores the
+   * same password under the same id.
+   */
   hydrate(payload: unknown): void {
     const p = payload && typeof payload === 'object' ? (payload as Record<string, unknown>) : {};
-    const list = (Array.isArray(p.projectors) ? p.projectors : [])
-      .map((raw, i) => normalizeProjector(raw, i))
-      .filter((x): x is Projector => x !== null);
+    const legacy: Array<[string, string]> = [];
+    const list: Projector[] = [];
+    (Array.isArray(p.projectors) ? p.projectors : []).forEach((raw, i) => {
+      const n = normalizeProjectorWithLegacy(raw, i);
+      if (!n) return;
+      if (n.legacyPassword) {
+        legacy.push([n.projector.id, n.legacyPassword]);
+        n.projector.hasPassword = false;
+      }
+      list.push(n.projector);
+    });
     const poll = Number(p.pollSeconds);
     const wasPolling = get(store).polling;
+    pendingLegacyPasswords.clear();
     store.set({
       projectors: list,
       status: {},
       pollSeconds: Number.isFinite(poll) ? Math.max(5, Math.min(3600, Math.round(poll))) : PROJECTOR_POLL_DEFAULT_SECONDS,
       polling: false,
     });
+    for (const [id, pw] of legacy) pendingLegacyPasswords.set(id, pw);
+    const legacyIds = new Set(legacy.map(([id]) => id));
+    settling = Promise.all([
+      ...legacy.map(([id, pw]) => this.setPassword(id, pw).then(() => undefined)),
+      ...list
+        .filter((x) => x.hasPassword && !legacyIds.has(x.id))
+        .map(async (x) => {
+          const creds = currentCredentialStore();
+          if (!creds) return;
+          try {
+            const r = await creds.has(x.id);
+            setStatus(x.id, { passwordMissing: !r.has, passwordSessionOnly: r.has && !r.persisted });
+          } catch {
+            /* unknown: say nothing rather than something wrong */
+          }
+        }),
+    ]).then(() => undefined);
     if (wasPolling) this.startPolling();
+  },
+
+  /** Resolves when the last hydrate's password moves and checks are done. */
+  whenCredentialsSettled(): Promise<void> {
+    return settling;
   },
 
   _resetForTest(): void {
     this.stopPolling();
     transport = null;
+    credentialStore = null;
+    pendingLegacyPasswords.clear();
+    settling = Promise.resolve();
     store.set(initialState());
   },
 };
