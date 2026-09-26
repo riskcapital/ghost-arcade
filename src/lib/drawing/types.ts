@@ -171,10 +171,31 @@ export type Shape =
   | TextShape;
 
 // ============================================================================
+// EDGE-EFFECT-ONLY TYPES
+// ============================================================================
+// Drawn by the native core on layer outlines (see drawing/edgeEffectCatalog.ts
+// for their parameters). Drawing layers do not offer them.
+
+export type EdgeOnlyStrokeType =
+  | 'strobe' | 'half' | 'quarter' | 'line' | 'comet' | 'dashPattern' | 'marchingAnts'
+  | 'offset' | 'inner' | 'corners' | 'vertexDots' | 'wireframe' | 'zigzag' | 'wiggle';
+export type EdgeOnlyFillType =
+  | 'randomColor' | 'inside' | 'outside' | 'corner' | 'swipe' | 'globalSwipe' | 'stairs'
+  | 'hypnotic' | 'stripes' | 'doubleStripes' | 'mosaic' | 'radialGlow' | 'origami'
+  | 'halftone' | 'hatch' | 'grid' | 'iris' | 'clockWipe' | 'scanLine';
+export type EdgeOnlyAnimationType = 'flipX' | 'flipY' | 'elastic';
+
+/** Parameters live in the catalog; values are numbers, colours, strings and flags. */
+export interface EdgeOnlyStroke { type: EdgeOnlyStrokeType; [key: string]: unknown }
+export interface EdgeOnlyFill { type: EdgeOnlyFillType; [key: string]: unknown }
+export interface EdgeOnlyAnimation { type: EdgeOnlyAnimationType; [key: string]: unknown }
+
+// ============================================================================
 // FILL EFFECTS
 // ============================================================================
 
 export type FillType =
+  | EdgeOnlyFillType
   | 'none'
   | 'solid'
   | 'gradient'
@@ -284,6 +305,7 @@ export interface HolographicFill {
 }
 
 export type Fill =
+  | EdgeOnlyFill
   | { type: 'none' }
   | SolidFill
   | GradientFill
@@ -302,6 +324,7 @@ export type Fill =
 // ============================================================================
 
 export type StrokeType =
+  | EdgeOnlyStrokeType
   | 'none'
   | 'solid'
   | 'dashed'
@@ -426,6 +449,7 @@ export interface VideoStroke {
 }
 
 export type Stroke =
+  | EdgeOnlyStroke
   | { type: 'none' }
   | SolidStroke
   | DashedStroke
@@ -445,6 +469,7 @@ export type Stroke =
 // ============================================================================
 
 export type AnimationType =
+  | EdgeOnlyAnimationType
   | 'none'
   | 'concentric'
   | 'radiate'
@@ -567,6 +592,7 @@ export interface GlitchAnimation {
 }
 
 export type Animation =
+  | EdgeOnlyAnimation
   | { type: 'none' }
   | ConcentricAnimation
   | RadiateAnimation

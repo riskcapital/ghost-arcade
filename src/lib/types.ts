@@ -2881,11 +2881,23 @@ export interface EdgeEffect {
    *  or top-level `opacity`). Same role as Effect.paramAuto — see
    *  AutoConfig above. */
   paramAuto?: Record<string, AutoConfig>;
+  /** Radial effects, rotation and origami turn about this point (layer UV,
+   *  y up) instead of the outline's centroid. */
+  customCenter?: boolean;
+  centerX?: number;
+  centerY?: number;
+  /** Group chase: delay this effect by the layer's place in its group so
+   *  it travels across the map. `chaseSpread` is the delay in seconds
+   *  between the first and the last layer. */
+  chaseMode?: 'none' | 'order' | 'leftToRight' | 'radial';
+  chaseSpread?: number;
 }
 
 export interface EdgeEffectsConfig {
   enabled: boolean;
   effects: EdgeEffect[];
+  /** Rounds every corner of the outline the stack is drawn on (output px). */
+  cornerRadius?: number;
 }
 
 export const VJ_MIX_SOURCE_INDEX = -1;

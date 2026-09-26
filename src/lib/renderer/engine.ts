@@ -1,7 +1,6 @@
 import * as THREE from 'three';
 import type { Layer, WarpCorners, BlendMode, MeshWarpGrid, Effect, ColorContent, MaskConfig, LayerShapeType, Point2D, ContentFitMode, EdgeEffect, GroupConfig, TransitionStyle } from '../types';
 import { GpuEffectRunner, isGpuEffect } from './gpuEffectRunner';
-import { getShapeVertices } from '../types';
 import { evaluateMeshGrid, layerRenderMeshGrid, meshGridHasTangents } from '../utils/meshWarp';
 
 // ── Group rendering types ──────────────────────────────────────────────────
@@ -11,6 +10,8 @@ type RenderUnit =
 // Edge effects still use old drawing types for temporary element construction
 import type { DrawingElement, PointClickLineShape } from '../drawing/types';
 import { createDefaultShapeWarp, createDefaultShapeMesh } from '../drawing/types';
+import { edgeEffectOutline, normalizeEdgeEffectStyle, renderedEdgeEffects } from '../drawing/edgeEffects';
+import { DEFAULT_DRAWING_STYLE } from '../drawing/drawingStyle';
 import type { LineElement } from '../lines/types';
 import { warpVertexShader, textureFragmentShader, blendShaders, passthroughVertexShader, opaqueOutputFragmentShader } from './shaders';
 import { createEffectMaterial, updateEffectUniforms, effectVertexShader, polygonMaskShader, polygonMaskAlphaShader, applyExternalMaskShader, layerShapeMaskShader } from './effects';
@@ -2629,60 +2630,12 @@ export class RenderEngine {
       return sourceTexture;
     }
 
-    // Get polygon vertices from shape (in UV space 0-1)
-    // For layers without a custom shape, use default rectangle edges
-    const uvVertices = layer.layerShape
-      ? getShapeVertices(layer.layerShape)
-      : [{ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0, y: 1 }];
-    if (uvVertices.length < 3) return sourceTexture;
-
-    // Transform UV-space vertices through the layer's corner warp to screen space (0-1 normalized)
-    const corners = layer.corners;
-    const screenVertices = uvVertices.map(uv => {
-      const topX = corners.topLeft.x + (corners.topRight.x - corners.topLeft.x) * uv.x;
-      const topY = corners.topLeft.y + (corners.topRight.y - corners.topLeft.y) * uv.x;
-      const botX = corners.bottomLeft.x + (corners.bottomRight.x - corners.bottomLeft.x) * uv.x;
-      const botY = corners.bottomLeft.y + (corners.bottomRight.y - corners.bottomLeft.y) * uv.x;
-      return {
-        x: botX + (topX - botX) * uv.y,
-        y: botY + (topY - botY) * uv.y,
-      };
-    });
-
-    // Inset vertices toward the centroid so the stroke renders INSIDE the
-    // layer boundary, not centered on it. This means thicker strokes grow
-    // inward and the outer edge stays aligned with the layer bounds.
-    // Use aspect-corrected inset so the inset looks uniform in pixels on
-    // both axes (0-1 normalized coords are stretched on a 16:9 canvas).
-    const cx = screenVertices.reduce((s, v) => s + v.x, 0) / screenVertices.length;
-    const cy = screenVertices.reduce((s, v) => s + v.y, 0) / screenVertices.length;
+    // The outline (layer shape through the mesh and corner warp, inset so
+    // strokes grow inward) comes from the contract the native core shares.
     const targetW = this.compositeTarget?.width || 1920;
     const targetH = this.compositeTarget?.height || 1080;
-    const insetPx = 5; // pixels of inset
-    const insetVertices = screenVertices.map(v => {
-      const dx = cx - v.x;
-      const dy = cy - v.y;
-      // Convert direction to pixel space, normalize, scale by insetPx, convert back
-      const dxPx = dx * targetW;
-      const dyPx = dy * targetH;
-      const lenPx = Math.sqrt(dxPx * dxPx + dyPx * dyPx) || 1;
-      return {
-        x: v.x + (dxPx / lenPx) * insetPx / targetW,
-        y: v.y + (dyPx / lenPx) * insetPx / targetH,
-      };
-    });
-
-    // Shaders support max 64 custom vertices — downsample if needed
-    let vertices: Point2D[];
-    if (insetVertices.length <= 64) {
-      vertices = insetVertices;
-    } else {
-      vertices = [];
-      const step = insetVertices.length / 64;
-      for (let i = 0; i < 64; i++) {
-        vertices.push(insetVertices[Math.floor(i * step)]);
-      }
-    }
+    const vertices: Point2D[] = edgeEffectOutline(layer, targetW, targetH);
+    if (vertices.length < 3) return sourceTexture;
 
     // Create edge effect render target if needed
     if (!this.edgeEffectTarget) {
@@ -2692,10 +2645,9 @@ export class RenderEngine {
     let currentTexture = sourceTexture;
     const useDrawingRenderer = !!this.shapeRendererRef;
 
-    for (const effect of layer.edgeEffects.effects) {
-      if (!effect.enabled) continue;
-
+    for (const effect of renderedEdgeEffects(layer.edgeEffects)) {
       let element: any;
+      const style = normalizeEdgeEffectStyle(effect);
 
       if (useDrawingRenderer) {
         // Use DrawingRenderer — full fill, animation, and stroke support
@@ -2715,9 +2667,9 @@ export class RenderEngine {
             closed: true,
             cornerStyle: 'sharp',
           } as PointClickLineShape,
-          fill: effect.fill,
-          stroke: effect.stroke,
-          animation: effect.animation,
+          fill: style.fill,
+          stroke: style.stroke,
+          animation: style.animation,
           warpCorners: createDefaultShapeWarp(),
           warpEnabled: false,
           meshWarp: createDefaultShapeMesh(),
@@ -2757,10 +2709,9 @@ export class RenderEngine {
       }
 
       // Render the edge effect to the edge effect target
-      const effectTexture = renderer.renderElements(
-        [element],
-        this.edgeEffectTarget
-      );
+      const effectTexture = useDrawingRenderer
+        ? renderer.renderElements([element], this.edgeEffectTarget, { styleBase: DEFAULT_DRAWING_STYLE })
+        : renderer.renderElements([element], this.edgeEffectTarget);
 
       // Composite edge effect onto current texture using the effect's blend mode
       // Copy current texture to temp target
@@ -2780,7 +2731,7 @@ export class RenderEngine {
       const blendMat = this.blendMaterials.get(effect.blendMode) || this.blendMaterials.get('normal')!;
       blendMat.uniforms.uBase.value = this.tempTarget.texture;
       blendMat.uniforms.uLayer.value = effectTexture;
-      blendMat.uniforms.uOpacity.value = effect.opacity;
+      blendMat.uniforms.uOpacity.value = Math.max(0, Math.min(1, effect.opacity ?? 1));
       this.compositeQuad.material = blendMat;
 
       // Use effectTargetA as output for the blended result
