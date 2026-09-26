@@ -28,6 +28,8 @@ import { snapshots } from './snapshots';
 import { layerSequencer } from './layerSequencer';
 import { surfaceStore } from './surface';
 import { migrateStageLayerCorners } from '../utils/stageTextureOrientation';
+import { createPaintMask, migratePaintMask, PAINT_MASK_MAX_STROKES } from '../utils/paintMask';
+import type { PaintMaskConfig, PaintMaskStroke } from '../types';
 import { captureMapSurfaces, migrateMapSurfaces, presetLayersForEditing, registerMapSurfaces, tagPresetSurfaces } from './mapSurfaces';
 import {
   captureStagePresetSurfaceState,
@@ -1715,6 +1717,54 @@ void main() {
         ),
       }));
       scheduleHistorySnapshot();
+    },
+
+    // ============================================================================
+    // PAINTED MASK (brushed erase/restore strokes, see utils/paintMask.ts)
+    // ============================================================================
+    // Every change builds a new paintMask and a new strokes array (never
+    // mutates), so history snapshots and the native sync's identity check
+    // see each stroke. One stroke = one recordDiscreteAction = one undo step.
+
+    _updatePaintMask(layerId: string, fn: (mask: PaintMaskConfig) => PaintMaskConfig | null): boolean {
+      let changed = false;
+      update((project) => ({
+        ...project,
+        layers: project.layers.map((layer) => {
+          if (layer.id !== layerId || layer.locked) return layer;
+          const next = fn(layer.paintMask ?? createPaintMask());
+          if (next === layer.paintMask) return layer;
+          changed = true;
+          return { ...layer, paintMask: next };
+        }),
+      }));
+      return changed;
+    },
+
+    /** Commit one finished brush stroke (the end of a drag). */
+    addPaintMaskStroke(layerId: string, stroke: PaintMaskStroke) {
+      const changed = this._updatePaintMask(layerId, (mask) =>
+        mask.strokes.length >= PAINT_MASK_MAX_STROKES || mask.strokes.some((s) => s.id === stroke.id)
+          ? mask
+          : { ...mask, strokes: [...mask.strokes, { ...stroke }] });
+      if (changed) recordDiscreteAction();
+    },
+
+    clearPaintMask(layerId: string) {
+      const changed = this._updatePaintMask(layerId, (mask) =>
+        mask.strokes.length === 0 ? mask : { ...mask, strokes: [] });
+      if (changed) recordDiscreteAction();
+    },
+
+    setPaintMaskVisible(layerId: string, enabled: boolean) {
+      const changed = this._updatePaintMask(layerId, (mask) =>
+        mask.enabled === enabled ? mask : { ...mask, enabled });
+      if (changed) recordDiscreteAction();
+    },
+
+    togglePaintMaskInvert(layerId: string) {
+      const changed = this._updatePaintMask(layerId, (mask) => ({ ...mask, inverted: !mask.inverted }));
+      if (changed) recordDiscreteAction();
     },
 
     // ============================================================================
@@ -4769,6 +4819,7 @@ void main() {
         warpMode: layer.warpMode,
         meshGrid: layer.meshGrid,
         mask: layer.mask,
+        paintMask: layer.paintMask ?? null,
         cropRegion: layer.cropRegion,
         layerShape: layer.layerShape,
         effects: layer.effects,
@@ -5477,6 +5528,7 @@ void main() {
         gpuLayerContent: layer.gpuLayerContent || null,
         arcadeContent: layer.arcadeContent || null,
         mask: migratedMask,
+        paintMask: migratePaintMask(layer.paintMask),
         cropRegion: layer.cropRegion || null,
         layerShape: layer.layerShape || null,
         edgeEffects: layer.edgeEffects || null,
