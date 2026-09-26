@@ -129,12 +129,6 @@ export function canvasToScreenContent(s: ScreenGeometry, p: Point2D): Point2D | 
   };
 }
 
-function segmentDistance(p: Point2D, a: Point2D, b: Point2D): number {
-  const bax = b.x - a.x, bay = b.y - a.y;
-  const h = Math.max(0, Math.min(1, ((p.x - a.x) * bax + (p.y - a.y) * bay) / Math.max(bax * bax + bay * bay, 1e-6)));
-  return Math.hypot(p.x - a.x - bax * h, p.y - a.y - bay * h);
-}
-
 function smoothstep(edge0: number, edge1: number, x: number): number {
   const t = Math.max(0, Math.min(1, (x - edge0) / (edge1 - edge0)));
   return t * t * (3 - 2 * t);
@@ -235,7 +229,6 @@ function screenMaskCoverage(mask: ScreenMask, uv: Point2D): number {
   // Outside the polygon's bounds there is no crossing to count.
   if (uv.x < bounds[0] || uv.y < bounds[1] || uv.x > bounds[2] || uv.y > bounds[3]) return 0;
   let inside = false;
-  let minEdge = 1000;
   for (let i = 0; i < count; i++) {
     const a = pts[i];
     const b = pts[(i + 1) % count];
@@ -243,11 +236,22 @@ function screenMaskCoverage(mask: ScreenMask, uv: Point2D): number {
       const x = (b.x - a.x) * (uv.y - a.y) / (b.y - a.y) + a.x;
       if (uv.x < x) inside = !inside;
     }
-    minEdge = Math.min(minEdge, segmentDistance(uv, a, b));
   }
   if (!inside) return 0;
   const feather = Math.max(0, Math.min(1, mask.feather || 0));
-  return feather > 0.001 ? smoothstep(0, feather, minEdge) : 1;
+  if (feather <= 0.001) return 1;
+  // The edge distance only matters inside a feathered mask, so the preview
+  // skips it everywhere else (the result is the same).
+  let minEdge2 = 1e6;
+  for (let i = 0; i < count; i++) {
+    const a = pts[i];
+    const b = pts[(i + 1) % count];
+    const bax = b.x - a.x, bay = b.y - a.y, pax = uv.x - a.x, pay = uv.y - a.y;
+    const h = Math.max(0, Math.min(1, (pax * bax + pay * bay) / Math.max(bax * bax + bay * bay, 1e-6)));
+    const dx = pax - bax * h, dy = pay - bay * h;
+    minEdge2 = Math.min(minEdge2, dx * dx + dy * dy);
+  }
+  return smoothstep(0, feather, Math.sqrt(minEdge2));
 }
 
 /** How much of a screen's picture survives at `uv` (screen content space),
@@ -255,8 +259,14 @@ function screenMaskCoverage(mask: ScreenMask, uv: Point2D): number {
  *  the core applies (8 masks, 32 vertices each): normal masks keep the
  *  union of their insides (no normal mask keeps everything), then each
  *  inverted mask cuts its hole. */
+const activeMasks = new WeakMap<ScreenMask[], ScreenMask[]>();
+
 export function screenMaskAlpha(masks: ScreenMask[] | null | undefined, uv: Point2D): number {
-  const active = (masks ?? []).filter(screenMaskUsable).slice(0, SCREEN_MASK_MAX);
+  let active = masks ? activeMasks.get(masks) : undefined;
+  if (!active) {
+    active = (masks ?? []).filter(screenMaskUsable).slice(0, SCREEN_MASK_MAX);
+    if (masks) activeMasks.set(masks, active);
+  }
   if (active.length === 0) return 1;
   let keep = active.some(m => !m.invert) ? 0 : 1;
   let cut = 1;

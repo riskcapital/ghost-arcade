@@ -410,8 +410,10 @@ export const screenActions = {
         const ab = lerpPoint(a, c1, 0.5), bc = lerpPoint(c1, c2, 0.5), cd = lerpPoint(c2, b, 0.5);
         const abc = lerpPoint(ab, bc, 0.5), bcd = lerpPoint(bc, cd, 0.5);
         const mid = lerpPoint(abc, bcd, 0.5);
-        points[index] = { ...a, cpOut: ab };
-        points[next] = { ...points[next], cpIn: cd };
+        // A side that had no handle splits into a handle on its own point,
+        // which is the same curve, so it stays without one.
+        if (a.cpOut) points[index] = { ...a, cpOut: ab };
+        if (b.cpIn) points[next] = { ...points[next], cpIn: cd };
         points.splice(index + 1, 0, { x: mid.x, y: mid.y, cpIn: abc, cpOut: bcd });
         return { ...m, points };
       }),

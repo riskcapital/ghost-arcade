@@ -222,6 +222,14 @@ describe('curved screen mask editing', () => {
       expect(half.y).toBeCloseTo(old.y, 12);
     }
     expect(flattenScreenMask(after).length).toBeGreaterThan(4);
+    // A side with no handle keeps none after the split (it would sit on
+    // its own point): only the curved side's neighbour gains a handle.
+    screensModule.screenActions.setMaskPointHandles('screen-a', id, 2, { cpOut: { x: 0.95, y: 0.8 } });
+    screensModule.screenActions.insertMaskPointOnEdge('screen-a', id, 2);
+    const split = masksOf()[0].points;
+    expect(split[4].cpIn).toBeUndefined();
+    expect(split[3].cpIn && split[3].cpOut).toBeTruthy();
+    screensModule.screenActions.removeMaskPoint('screen-a', id, 3);
     // A straight edge still gets a plain midpoint.
     screensModule.screenActions.insertMaskPointOnEdge('screen-a', id, 3);
     const plain = masksOf()[0].points[4];
