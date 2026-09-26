@@ -82,7 +82,8 @@
   }
 </script>
 
-<details data-help-page="layers" class="edge-presets">
+<!-- Keeps a multi-layer selection alive: presets apply to every selected layer. -->
+<details data-help-page="layers" class="edge-presets" data-keep-layer-selection>
   <summary>Presets</summary>
   <div class="tray">
     <label>Saved edge effects

@@ -238,6 +238,9 @@
               onclick={() => project.moveEdgeEffect($selectedLayer.id, effect.id, -1)}>&uarr;</button>
             <button class="btn-move" aria-label="Move down" title="Move down" disabled={idx === $selectedLayer.edgeEffects.effects.length - 1}
               onclick={() => project.moveEdgeEffect($selectedLayer.id, effect.id, 1)}>&darr;</button>
+            <button aria-label="Remove this edge effect" class="btn-remove" onclick={() => project.removeEdgeEffect($selectedLayer.id, effect.id)}>&times;</button>
+          </div>
+          <div class="effect-mix">
             <select class="blend-select" aria-label="Blend mode" value={effect.blendMode}
               onchange={(e) => { updateEffect(effect.id, { blendMode: (e.target as HTMLSelectElement).value }); recordDiscreteAction(); }}>
               {#each blendModes as bm}
@@ -247,7 +250,6 @@
             <input type="range" class="opacity-slider" min="0" max="1" step="0.05" aria-label="Effect opacity"
               value={effect.opacity}
               oninput={(e) => updateEffect(effect.id, { opacity: parseFloat((e.target as HTMLInputElement).value) })} />
-            <button aria-label="Remove this edge effect" class="btn-remove" onclick={() => project.removeEdgeEffect($selectedLayer.id, effect.id)}>&times;</button>
           </div>
 
           {#if expandedEffectId === effect.id}
@@ -434,8 +436,16 @@
   .btn-move:hover:not(:disabled) { color: #fff; }
   .btn-move:disabled { opacity: 0.3; cursor: default; }
 
+  .effect-mix {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 0 8px 5px 30px;
+    background: #1a1a1c;
+  }
+
   .blend-select {
-    width: 75px;
+    width: 96px;
     background: #333;
     color: var(--text-primary, #ccc);
     border: 1px solid #444;
@@ -445,7 +455,8 @@
   }
 
   .opacity-slider {
-    width: 40px;
+    flex: 1;
+    min-width: 40px;
     accent-color: #ff9800;
   }
 

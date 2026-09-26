@@ -1381,6 +1381,8 @@
       // itself (visibility/lock/delete buttons live there and the user
       // expects those to apply to the multi-selection).
       if (tgt.closest('.viewport, .layer-row, .layer-list')) return;
+      // Controls built to act on every selected layer (Edge Effect presets).
+      if (tgt.closest('[data-keep-layer-selection]')) return;
       const active = get(selectedLayer);
       if (!active) return;
       if (ctl instanceof HTMLSelectElement) {
