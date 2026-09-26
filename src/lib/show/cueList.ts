@@ -559,9 +559,8 @@ export class CueEngine {
   stop(): void {
     this.cancelFollow();
     this.cancelFades();
-    const wasActive = this.state.active;
     this.store.update((s) => ({ ...s, active: false, pendingFollow: null }));
-    if (wasActive) this.safely(() => this.executor?.timeline('pause', 0));
+    this.safely(() => this.executor?.timeline('pause', 0));
   }
 
   /** Stop, and stand by on the first cue with nothing current. */

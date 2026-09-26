@@ -29,6 +29,7 @@
  * show by hand is not overruled on the next tick.
  */
 
+import { writable } from 'svelte/store';
 import type { CueEngine } from './cueList';
 import type { ProjectorCommand } from './cueList';
 
@@ -69,6 +70,8 @@ export interface ShowSchedule {
   shutter: boolean;
   /** Blackout the output at the stop. */
   blackoutOnStop: boolean;
+  /** Open the outputs fullscreen at the start if they are not open. */
+  openOutputs: boolean;
 }
 
 export interface ShowWindow {
@@ -91,6 +94,7 @@ export function defaultSchedule(): ShowSchedule {
     projectorsOff: false,
     shutter: false,
     blackoutOnStop: true,
+    openOutputs: true,
   };
 }
 
@@ -245,6 +249,7 @@ export function normalizeSchedule(raw: unknown): ShowSchedule {
     projectorsOff: r.projectorsOff === true,
     shutter: r.shutter === true,
     blackoutOnStop: r.blackoutOnStop !== false,
+    openOutputs: r.openOutputs !== false,
   };
 }
 
@@ -379,7 +384,7 @@ export function createScheduleHooks(getSchedule: () => ShowSchedule, deps: Sched
       if (s.shutter) run(() => deps.projector('*', 'shutter-open'));
       // Undo the blackout the previous scheduled stop left behind.
       if (s.blackoutOnStop) run(() => deps.setBlackout(false));
-      run(() => deps.onStart?.());
+      if (s.openOutputs) run(() => deps.onStart?.());
       const cueId = s.startCueId && deps.cues.state.cues.some((c) => c.id === s.startCueId)
         ? s.startCueId
         : deps.cues.state.cues[0]?.id ?? null;
@@ -399,3 +404,6 @@ export function createScheduleHooks(getSchedule: () => ShowSchedule, deps: Sched
     },
   };
 }
+
+/** The open project's schedule. Saved with the project. */
+export const showSchedule = writable<ShowSchedule>(defaultSchedule());

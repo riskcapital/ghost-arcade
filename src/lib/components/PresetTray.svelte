@@ -101,7 +101,19 @@
       if (comp) loadPreset(comp.id);
     };
     window.addEventListener('midi-mapping-preset', handler);
-    return () => window.removeEventListener('midi-mapping-preset', handler);
+    // Cue list preset recall: by id, with the tray's transition. Marks the
+    // event handled so the cue runtime does not also hard-cut to it.
+    const cueHandler = (e: Event) => {
+      const detail = (e as CustomEvent<{ compositionId: string; handled: boolean }>).detail;
+      if (!detail?.compositionId || !$compositions.some((c) => c.id === detail.compositionId)) return;
+      detail.handled = true;
+      loadPreset(detail.compositionId);
+    };
+    window.addEventListener('show-recall-preset', cueHandler);
+    return () => {
+      window.removeEventListener('midi-mapping-preset', handler);
+      window.removeEventListener('show-recall-preset', cueHandler);
+    };
   });
   // Recording state (shared recorder)
   let recorderHandle: RecorderHandle | null = null;

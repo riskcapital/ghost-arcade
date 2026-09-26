@@ -37,6 +37,7 @@ import {
 import { stage3dScene } from '../stage3d/store';
 import { projectionSimScene } from '../projectionSim/store';
 import { showTimeline, setShowCompositionLoader } from './showTimeline';
+import { serializeShowControl, hydrateShowControl } from '../show/showControlPersistence';
 // Catalog of per-effect default params. Used by resetEffectParams to
 // snap an effect back to its baseline values when the user hits the
 // per-effect reset button in LayerPanel.
@@ -5312,6 +5313,11 @@ void main() {
         // the per-tick sync relay.
         exportData.project.showTimeline = showTimeline.serialize();
       } catch { /* ditto */ }
+      try {
+        // Cue list, timecode, schedule and projectors: save-only for the
+        // same reason as the show timeline.
+        exportData.project.showControl = serializeShowControl();
+      } catch { /* ditto */ }
       return JSON.stringify(exportData, null, 2);
     },
 
@@ -5372,6 +5378,11 @@ void main() {
         syncExport.project.showTimeline = showTimeline.serialize();
       } catch (err) {
         console.warn('[Store] exportProjectForSave: show timeline snapshot failed', err);
+      }
+      try {
+        syncExport.project.showControl = serializeShowControl();
+      } catch (err) {
+        console.warn('[Store] exportProjectForSave: show control snapshot failed', err);
       }
       return syncExport;
     },
@@ -6309,6 +6320,19 @@ void main() {
             // failure mode the stage3d note above documents.
           } catch (err) {
             console.warn('[Store] importProject: show timeline restore failed', err);
+          }
+          try {
+            // Same three-way rule as the show timeline: restore a saved
+            // section, clear on a save-shaped payload without one, and leave
+            // the running cue list alone on a live state-sync payload.
+            const importedShowControl = (proj as any).showControl;
+            if (importedShowControl && typeof importedShowControl === 'object') {
+              hydrateShowControl(importedShowControl);
+            } else if ('stage3d' in (proj as any) || 'projectionSim' in (proj as any) || 'showTimeline' in (proj as any)) {
+              hydrateShowControl(null);
+            }
+          } catch (err) {
+            console.warn('[Store] importProject: show control restore failed', err);
           }
         });
         // Hydrate $settings.output from the project's multi-output

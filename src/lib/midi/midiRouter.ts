@@ -116,6 +116,18 @@ export function registerSnapshotRecaller(recaller: (index: number) => void) {
   _snapshotRecaller = recaller;
 }
 
+/**
+ * Late-bound cue list control for `show:go`, `show:back`, `show:stop`,
+ * `show:reset` and `show:cue:<index>`. Registered by the show-control
+ * runtime (src/lib/show/cueExecutor.ts) so the router does not import the
+ * cue engine. Fires on the rising edge only (value > 0), like a pad.
+ */
+export type ShowControlAction = 'go' | 'back' | 'stop' | 'reset' | { cue: number };
+let _showControl: ((action: ShowControlAction) => void) | null = null;
+export function registerShowControl(handler: ((action: ShowControlAction) => void) | null) {
+  _showControl = handler;
+}
+
 class MidiRouter {
   routeMessage(channel: number, type: MidiMessageType, number: number, value: number) {
     const key = `${type}:${number}`;
@@ -245,9 +257,22 @@ class MidiRouter {
         case 'sv':
           this.dispatchPerformer(parts, value, mapping);
           break;
+        case 'show':
+          this.dispatchShow(parts, value);
+          break;
       }
     } catch (err) {
       console.warn(`[MIDI Router] Error dispatching to ${path}:`, err);
+    }
+  }
+
+  private dispatchShow(parts: string[], value: number) {
+    if (!(value > 0) || !_showControl) return;
+    const action = parts[1];
+    if (action === 'go' || action === 'back' || action === 'stop' || action === 'reset') {
+      _showControl(action);
+    } else if (action === 'cue' && /^\d+$/.test(parts[2] ?? '')) {
+      _showControl({ cue: Number(parts[2]) });
     }
   }
 

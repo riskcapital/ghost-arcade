@@ -25,7 +25,14 @@ export const CONTROL_PATH_EXAMPLES: ControlPathExample[] = [
   { path: 'map:media:play', label: 'Selected media play / pause' },
   { path: 'map:media:restart', label: 'Selected media restart' },
   { path: 'map:media:scratch', label: 'Selected media scratch (hold frame)' },
+  { path: 'show:go', label: 'Cue list GO' },
+  { path: 'show:back', label: 'Cue list Back' },
+  { path: 'show:stop', label: 'Cue list Stop' },
+  { path: 'show:reset', label: 'Cue list Reset to the first cue' },
+  { path: 'show:cue:0', label: 'Fire cue 1 of the cue list' },
 ];
+
+export const SHOW_CONTROL_ACTIONS = ['go', 'back', 'stop', 'reset'] as const;
 
 /** Accept old documentation/user syntax while keeping one router contract. */
 export function normalizeControlPath(path: string): string {
@@ -50,12 +57,22 @@ export function validateControlPath(path: string): ControlPathValidation {
 
   const parts = normalized.split(':');
   const scope = parts[0];
-  if (!['map', 'vj', 'vj-b', 'sv'].includes(scope)) {
+  if (!['map', 'vj', 'vj-b', 'sv', 'show'].includes(scope)) {
     return {
       valid: false,
       normalized,
-      reason: 'Path must begin with map:, vj:, vj-b:, or sv:.',
+      reason: 'Path must begin with map:, vj:, vj-b:, sv:, or show:.',
     };
+  }
+
+  if (scope === 'show') {
+    if ((SHOW_CONTROL_ACTIONS as readonly string[]).includes(parts[1] ?? '') && parts.length === 2) {
+      return { valid: true, normalized, reason: null };
+    }
+    if (parts[1] === 'cue' && isIndex(parts[2]) && parts.length === 3) {
+      return { valid: true, normalized, reason: null };
+    }
+    return { valid: false, normalized, reason: 'Show paths are show:go, show:back, show:stop, show:reset or show:cue:<zero-based index>.' };
   }
 
   if (scope === 'sv') {
