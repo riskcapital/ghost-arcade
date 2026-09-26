@@ -10,7 +10,7 @@
  */
 
 import type { OutputSlice, ScreenMask } from './settings';
-import type { Point2D } from '../types';
+import type { BezierPoint, Point2D } from '../types';
 import { MESH_CURVE_SEGMENTS, evaluateMeshCell, invertMeshByRows, meshEdgePoint } from '../utils/meshWarp';
 
 export type ScreenGeometry = Pick<
@@ -140,13 +140,100 @@ function smoothstep(edge0: number, edge1: number, x: number): number {
   return t * t * (3 - 2 * t);
 }
 
+// ─── Curved edges ───────────────────────────────────────────────────────
+// A curved mask edge is cut as a polyline that stays within this distance
+// of the true cubic, in screen UV (under half a pixel on a 4K projector).
+// The core flattens with the identical rule (flatten_screen_mask in
+// main.rs), so the editor preview and the projector cut the same polygon.
+export const SCREEN_MASK_CURVE_TOLERANCE = 1 / 8192;
+export const SCREEN_MASK_CURVE_MAX_SEGMENTS = 64;
+/** Flattened vertices one mask may use in the core's uniforms. */
+export const SCREEN_MASK_FLAT_POINTS = 128;
+
+function curveSegments(a: Point2D, c1: Point2D, c2: Point2D, b: Point2D, tolerance: number): number {
+  // A cubic strays from its chord polyline by at most 3/4 of its largest
+  // second difference over n^2.
+  const d1x = a.x - 2 * c1.x + c2.x, d1y = a.y - 2 * c1.y + c2.y;
+  const d2x = c1.x - 2 * c2.x + b.x, d2y = c1.y - 2 * c2.y + b.y;
+  const dd = Math.max(Math.sqrt(d1x * d1x + d1y * d1y), Math.sqrt(d2x * d2x + d2y * d2y));
+  const n = Math.ceil(Math.sqrt((0.75 * dd) / tolerance));
+  return Math.max(1, Math.min(SCREEN_MASK_CURVE_MAX_SEGMENTS, Number.isFinite(n) ? n : 1));
+}
+
+/**
+ * A mask's outline as the polygon the core cuts: its anchors (up to 32)
+ * with each curved edge replaced by points along its cubic, spaced so the
+ * polyline stays within SCREEN_MASK_CURVE_TOLERANCE. If that would need
+ * more than SCREEN_MASK_FLAT_POINTS vertices the tolerance doubles until
+ * it fits. A mask with no handles comes back as its plain vertex list.
+ */
+export function flattenScreenMask(points: readonly BezierPoint[]): Point2D[] {
+  const anchors = points.slice(0, SCREEN_MASK_POINTS_PER_MASK);
+  const count = anchors.length;
+  if (count < 3) return anchors.map(p => ({ x: p.x, y: p.y }));
+  const edges = anchors.map((a, i) => {
+    const b = anchors[(i + 1) % count];
+    return a.cpOut || b.cpIn ? { a, b, c1: a.cpOut ?? a, c2: b.cpIn ?? b } : null;
+  });
+  let tolerance = SCREEN_MASK_CURVE_TOLERANCE;
+  let segments = edges.map(e => (e ? curveSegments(e.a, e.c1, e.c2, e.b, tolerance) : 1));
+  for (let i = 0; i < 40 && segments.reduce((sum, n) => sum + n, 0) > SCREEN_MASK_FLAT_POINTS; i++) {
+    tolerance *= 2;
+    segments = edges.map(e => (e ? curveSegments(e.a, e.c1, e.c2, e.b, tolerance) : 1));
+  }
+  const out: Point2D[] = [];
+  anchors.forEach((a, i) => {
+    out.push({ x: a.x, y: a.y });
+    const e = edges[i];
+    if (!e) return;
+    const n = segments[i];
+    for (let k = 1; k < n; k++) {
+      const t = k / n;
+      const mt = 1 - t;
+      const w0 = mt * mt * mt, w1 = 3 * mt * mt * t, w2 = 3 * mt * t * t, w3 = t * t * t;
+      out.push({
+        x: w0 * e.a.x + w1 * e.c1.x + w2 * e.c2.x + w3 * e.b.x,
+        y: w0 * e.a.y + w1 * e.c1.y + w2 * e.c2.y + w3 * e.b.y,
+      });
+    }
+  });
+  return out;
+}
+
+// The preview shades every pixel, so each mask's polygon is flattened once
+// per edit. Masks are rebuilt (never mutated) on every edit, so the points
+// array identifies the shape.
+const flattenedMasks = new WeakMap<readonly BezierPoint[], { pts: Point2D[]; bounds: [number, number, number, number] }>();
+
+/** Slack around a mask's bounds before a pixel is rejected without the
+ *  polygon test; far above rounding, far below a pixel. Same in the core. */
+export const SCREEN_MASK_BOUNDS_PAD = 1e-3;
+
+function flattenedMask(points: readonly BezierPoint[]) {
+  let entry = flattenedMasks.get(points);
+  if (!entry) {
+    const pts = flattenScreenMask(points);
+    let x0 = Infinity, y0 = Infinity, x1 = -Infinity, y1 = -Infinity;
+    for (const p of pts) {
+      x0 = Math.min(x0, p.x); y0 = Math.min(y0, p.y);
+      x1 = Math.max(x1, p.x); y1 = Math.max(y1, p.y);
+    }
+    entry = { pts, bounds: [x0 - SCREEN_MASK_BOUNDS_PAD, y0 - SCREEN_MASK_BOUNDS_PAD, x1 + SCREEN_MASK_BOUNDS_PAD, y1 + SCREEN_MASK_BOUNDS_PAD] };
+    flattenedMasks.set(points, entry);
+  }
+  return entry;
+}
+
 /** Coverage of one mask polygon at `uv` (screen content space). Mirrors
- *  screen_mask_coverage in heartbeat.wgsl: even-odd ray crossing, then a
- *  smoothstep ramp over `feather` measured inward from the nearest edge. */
+ *  screen_mask_coverage in heartbeat.wgsl: a bounds reject, even-odd ray
+ *  crossing, then a smoothstep ramp over `feather` measured inward from the
+ *  nearest edge. Curved edges are cut as their flattened polyline. */
 function screenMaskCoverage(mask: ScreenMask, uv: Point2D): number {
-  const pts = mask.points.slice(0, SCREEN_MASK_POINTS_PER_MASK);
+  const { pts, bounds } = flattenedMask(mask.points);
   const count = pts.length;
   if (count < 3) return 0;
+  // Outside the polygon's bounds there is no crossing to count.
+  if (uv.x < bounds[0] || uv.y < bounds[1] || uv.x > bounds[2] || uv.y > bounds[3]) return 0;
   let inside = false;
   let minEdge = 1000;
   for (let i = 0; i < count; i++) {
@@ -192,6 +279,14 @@ function screenMaskUsable(mask: ScreenMask): boolean {
 /** A mask's vertices on the master canvas, in order. */
 export function screenMaskCanvasPoints(s: ScreenGeometry, mask: Pick<ScreenMask, 'points'>): Point2D[] {
   return mask.points.map((p) => screenContentToCanvas(s, p));
+}
+
+/** A mask's outline on the master canvas as drawn: curved edges follow
+ *  their cubics (the flattened polygon the core cuts). While a mask has
+ *  fewer than 3 points it is an open path of its vertices. */
+export function screenMaskCanvasOutline(s: ScreenGeometry, mask: Pick<ScreenMask, 'points'>): Point2D[] {
+  const pts = mask.points.length >= 3 ? flattenScreenMask(mask.points) : mask.points;
+  return pts.map((p) => screenContentToCanvas(s, p));
 }
 
 /** The screen's own outline on the master canvas (the region its masks

@@ -1203,6 +1203,7 @@ struct OutputStage {
     /// mask and the packed vertices; slice mode only. See screen_masks_at.
     smask: [f32; 4],
     smask_info: [[f32; 4]; MAX_SCREEN_MASKS],
+    smask_bounds: [[f32; 4]; MAX_SCREEN_MASKS],
     smask_pts: [[f32; 4]; MAX_SCREEN_MASK_VEC4S],
 }
 
@@ -1229,6 +1230,7 @@ impl Default for OutputStage {
             mwarp_tangents: [[0.0; 4]; WARP_MESH_TANGENT_VEC4S],
             smask: [0.0; 4],
             smask_info: [[0.0; 4]; MAX_SCREEN_MASKS],
+            smask_bounds: [[0.0; 4]; MAX_SCREEN_MASKS],
             smask_pts: [[0.0; 4]; MAX_SCREEN_MASK_VEC4S],
         }
     }
@@ -1270,6 +1272,7 @@ struct Uniforms {
     mwarp_mesh: [[f32; 4]; 128],
     smask: [f32; 4],
     smask_info: [[f32; 4]; MAX_SCREEN_MASKS],
+    smask_bounds: [[f32; 4]; MAX_SCREEN_MASKS],
     smask_pts: [[f32; 4]; MAX_SCREEN_MASK_VEC4S],
     swarp_tangents: [[f32; 4]; WARP_MESH_TANGENT_VEC4S],
     mwarp_tangents: [[f32; 4]; WARP_MESH_TANGENT_VEC4S],
@@ -1711,29 +1714,131 @@ fn warp_mesh_at(params: Option<&Value>) -> WarpMesh {
 }
 
 /// Per-screen polygon masks, packed like the layer mask: up to 8 masks per
-/// screen, 32 vertices each, two points per vec4. Masks past the cap are
-/// dropped whole rather than truncated into a different shape.
+/// screen, 32 anchor points each, two points per vec4. Masks past the cap
+/// are dropped whole rather than truncated into a different shape. A curved
+/// edge is cut as a polyline (flatten_screen_mask), so one mask can use up
+/// to SCREEN_MASK_FLAT_POINTS vertices in the uniforms.
 const MAX_SCREEN_MASKS: usize = 8;
 const SCREEN_MASK_POINTS_PER_MASK: usize = 32;
-const MAX_SCREEN_MASK_POINTS: usize = MAX_SCREEN_MASKS * SCREEN_MASK_POINTS_PER_MASK;
+const SCREEN_MASK_FLAT_POINTS: usize = 128;
+const MAX_SCREEN_MASK_POINTS: usize = MAX_SCREEN_MASKS * SCREEN_MASK_FLAT_POINTS;
 const MAX_SCREEN_MASK_VEC4S: usize = MAX_SCREEN_MASK_POINTS / 2;
+/// A flattened curve stays within this distance of the true cubic, in
+/// screen UV: under half a pixel on a 4K projector. The editor preview
+/// (flattenScreenMask in screenMaskGeometry.ts) uses the identical rule.
+const SCREEN_MASK_CURVE_TOLERANCE: f64 = 1.0 / 8192.0;
+const SCREEN_MASK_CURVE_MAX_SEGMENTS: f64 = 64.0;
+/// Slack around a mask's bounds before a pixel skips the polygon test: far
+/// above rounding, far below a pixel, so the reject never changes a pixel.
+const SCREEN_MASK_BOUNDS_PAD: f32 = 1e-3;
+
+/// One mask vertex with its optional curve handles (absolute positions).
+#[derive(Clone, Copy)]
+struct ScreenMaskAnchor {
+    point: [f64; 2],
+    cp_in: Option<[f64; 2]>,
+    cp_out: Option<[f64; 2]>,
+}
+
+fn screen_mask_curve_segments(a: [f64; 2], c1: [f64; 2], c2: [f64; 2], b: [f64; 2], tolerance: f64) -> usize {
+    // A cubic strays from its chord polyline by at most 3/4 of its largest
+    // second difference over n^2.
+    let d1 = [a[0] - 2.0 * c1[0] + c2[0], a[1] - 2.0 * c1[1] + c2[1]];
+    let d2 = [c1[0] - 2.0 * c2[0] + b[0], c1[1] - 2.0 * c2[1] + b[1]];
+    let dd = (d1[0] * d1[0] + d1[1] * d1[1]).sqrt().max((d2[0] * d2[0] + d2[1] * d2[1]).sqrt());
+    let n = ((0.75 * dd) / tolerance).sqrt().ceil();
+    if n.is_finite() { n.clamp(1.0, SCREEN_MASK_CURVE_MAX_SEGMENTS) as usize } else { 1 }
+}
+
+/// A mask outline as the polygon the shader cuts: the anchors, with each
+/// curved edge (the anchor it leaves has cp_out, or the one it reaches has
+/// cp_in) replaced by points along its cubic spaced to stay within
+/// SCREEN_MASK_CURVE_TOLERANCE. When that needs more than
+/// SCREEN_MASK_FLAT_POINTS vertices the tolerance doubles until it fits. A
+/// mask without handles comes back as exactly its vertex list.
+fn flatten_screen_mask(anchors: &[ScreenMaskAnchor]) -> Vec<[f32; 2]> {
+    let count = anchors.len();
+    let plain = |a: &ScreenMaskAnchor| [a.point[0] as f32, a.point[1] as f32];
+    if count < 3 {
+        return anchors.iter().map(plain).collect();
+    }
+    let edges: Vec<Option<[[f64; 2]; 4]>> = (0..count)
+        .map(|i| {
+            let a = anchors[i];
+            let b = anchors[(i + 1) % count];
+            if a.cp_out.is_none() && b.cp_in.is_none() {
+                return None;
+            }
+            Some([a.point, a.cp_out.unwrap_or(a.point), b.cp_in.unwrap_or(b.point), b.point])
+        })
+        .collect();
+    let segments_for = |tolerance: f64| -> Vec<usize> {
+        edges
+            .iter()
+            .map(|edge| edge.map_or(1, |[a, c1, c2, b]| screen_mask_curve_segments(a, c1, c2, b, tolerance)))
+            .collect()
+    };
+    let mut tolerance = SCREEN_MASK_CURVE_TOLERANCE;
+    let mut segments = segments_for(tolerance);
+    for _ in 0..40 {
+        if segments.iter().sum::<usize>() <= SCREEN_MASK_FLAT_POINTS {
+            break;
+        }
+        tolerance *= 2.0;
+        segments = segments_for(tolerance);
+    }
+    let mut out = Vec::with_capacity(segments.iter().sum());
+    for (i, anchor) in anchors.iter().enumerate() {
+        out.push(plain(anchor));
+        let Some([a, c1, c2, b]) = edges[i] else { continue };
+        let n = segments[i];
+        for k in 1..n {
+            let t = k as f64 / n as f64;
+            let mt = 1.0 - t;
+            let (w0, w1, w2, w3) = (mt * mt * mt, 3.0 * mt * mt * t, 3.0 * mt * t * t, t * t * t);
+            out.push([
+                (w0 * a[0] + w1 * c1[0] + w2 * c2[0] + w3 * b[0]) as f32,
+                (w0 * a[1] + w1 * c1[1] + w2 * c2[1] + w3 * b[1]) as f32,
+            ]);
+        }
+    }
+    out
+}
 
 /// Screen mask block for the uniforms: header (mask count, keep count), one
-/// info vec4 per mask (point start, point count, feather, invert) and the
-/// packed vertex list. Points arrive already in the core's y-up screen UV;
-/// the editor flips them once at the sync boundary, as it does the warp
+/// info vec4 per mask (point start, point count, feather, invert), padded
+/// bounds per mask (x0, y0, x1, y1) and the packed vertex list. Points
+/// arrive already in the core's y-up screen UV; the editor flips them (and
+/// their curve handles) once at the sync boundary, as it does the warp
 /// corners. A disabled mask or one with fewer than 3 usable points is
 /// skipped so it can never black out the screen.
 fn screen_masks_at(
     params: Option<&Value>,
-) -> ([f32; 4], [[f32; 4]; MAX_SCREEN_MASKS], [[f32; 4]; MAX_SCREEN_MASK_VEC4S]) {
+) -> (
+    [f32; 4],
+    [[f32; 4]; MAX_SCREEN_MASKS],
+    [[f32; 4]; MAX_SCREEN_MASKS],
+    [[f32; 4]; MAX_SCREEN_MASK_VEC4S],
+) {
     let mut info = [[0.0f32; 4]; MAX_SCREEN_MASKS];
+    let mut bounds = [[0.0f32; 4]; MAX_SCREEN_MASKS];
     let mut points = [[0.0f32; 4]; MAX_SCREEN_MASK_VEC4S];
     let mut mask_count = 0usize;
     let mut keep_count = 0usize;
     let mut cursor = 0usize;
     let Some(entries) = params.and_then(Value::as_array) else {
-        return ([0.0; 4], info, points);
+        return ([0.0; 4], info, bounds, points);
+    };
+    // A vertex may sit outside the screen so a mask can run off its edge;
+    // only nonsense values are rejected.
+    let position = |value: Option<&Value>| -> Option<[f64; 2]> {
+        let value = value?;
+        let x = number_at(value, &["x"])?;
+        let y = number_at(value, &["y"])?;
+        if !x.is_finite() || !y.is_finite() {
+            return None;
+        }
+        Some([x.clamp(-4.0, 5.0), y.clamp(-4.0, 5.0)])
     };
     for entry in entries {
         if mask_count >= MAX_SCREEN_MASKS {
@@ -1745,21 +1850,22 @@ fn screen_masks_at(
         let Some(vertices) = entry.get("points").and_then(Value::as_array) else {
             continue;
         };
-        let vertices: Vec<[f32; 2]> = vertices
+        let anchors: Vec<ScreenMaskAnchor> = vertices
             .iter()
             .filter_map(|point| {
-                let x = number_at(point, &["x"])?;
-                let y = number_at(point, &["y"])?;
-                if !x.is_finite() || !y.is_finite() {
-                    return None;
-                }
-                // A vertex may sit outside the screen so a mask can run off
-                // its edge; only nonsense values are rejected.
-                Some([x.clamp(-4.0, 5.0) as f32, y.clamp(-4.0, 5.0) as f32])
+                Some(ScreenMaskAnchor {
+                    point: position(Some(point))?,
+                    cp_in: position(point.get("cpIn")),
+                    cp_out: position(point.get("cpOut")),
+                })
             })
             .take(SCREEN_MASK_POINTS_PER_MASK)
             .collect();
-        if vertices.len() < 3 || cursor + vertices.len() > MAX_SCREEN_MASK_POINTS {
+        if anchors.len() < 3 {
+            continue;
+        }
+        let vertices = flatten_screen_mask(&anchors);
+        if cursor + vertices.len() > MAX_SCREEN_MASK_POINTS {
             continue;
         }
         let invert = bool_at(entry, &["invert"]).unwrap_or(false);
@@ -1770,7 +1876,11 @@ fn screen_masks_at(
             feather,
             if invert { 1.0 } else { 0.0 },
         ];
+        let mut lo = [f32::INFINITY; 2];
+        let mut hi = [f32::NEG_INFINITY; 2];
         for vertex in &vertices {
+            lo = [lo[0].min(vertex[0]), lo[1].min(vertex[1])];
+            hi = [hi[0].max(vertex[0]), hi[1].max(vertex[1])];
             let slot = cursor / 2;
             if cursor % 2 == 0 {
                 points[slot][0] = vertex[0];
@@ -1781,12 +1891,18 @@ fn screen_masks_at(
             }
             cursor += 1;
         }
+        bounds[mask_count] = [
+            lo[0] - SCREEN_MASK_BOUNDS_PAD,
+            lo[1] - SCREEN_MASK_BOUNDS_PAD,
+            hi[0] + SCREEN_MASK_BOUNDS_PAD,
+            hi[1] + SCREEN_MASK_BOUNDS_PAD,
+        ];
         if !invert {
             keep_count += 1;
         }
         mask_count += 1;
     }
-    ([mask_count as f32, keep_count as f32, 0.0, 0.0], info, points)
+    ([mask_count as f32, keep_count as f32, 0.0, 0.0], info, bounds, points)
 }
 
 /// Upper bound on simultaneously-presented slice displays. Each one costs a
@@ -5646,6 +5762,7 @@ impl App {
             // Masks are cut per screen, so the main output carries none.
             smask: [0.0; 4],
             smask_info: [[0.0; 4]; MAX_SCREEN_MASKS],
+            smask_bounds: [[0.0; 4]; MAX_SCREEN_MASKS],
             smask_pts: [[0.0; 4]; MAX_SCREEN_MASK_VEC4S],
         };
         Ok(json!({ "domeEnabled": dome_enabled, "masterWarp": master_warp[0] > 0.5 }))
@@ -5694,7 +5811,7 @@ impl App {
                 // Masks are evaluated in the screen's own UV after the crop
                 // and warp have been resolved, so they stay put on the
                 // projector when the screen is re-pinned.
-                let (mask_header, mask_info, mask_points) = screen_masks_at(entry.get("masks"));
+                let (mask_header, mask_info, mask_bounds, mask_points) = screen_masks_at(entry.get("masks"));
                 // A slice inherits the master dome so a domed rig can still be
                 // split across projectors, but overrides every flat transform.
                 let stage = OutputStage {
@@ -5741,6 +5858,7 @@ impl App {
                     mwarp_tangents: self.output_stage.mwarp_tangents,
                     smask: mask_header,
                     smask_info: mask_info,
+                    smask_bounds: mask_bounds,
                     smask_pts: mask_points,
                 };
                 specs.push(SliceOutputSpec { id, width, height, stage });
@@ -17872,6 +17990,7 @@ impl RenderState {
                 mwarp_mesh: [[0.0; 4]; 128],
                 smask: [0.0; 4],
                 smask_info: [[0.0; 4]; MAX_SCREEN_MASKS],
+                smask_bounds: [[0.0; 4]; MAX_SCREEN_MASKS],
                 smask_pts: [[0.0; 4]; MAX_SCREEN_MASK_VEC4S],
                 swarp_tangents: [[0.0; 4]; WARP_MESH_TANGENT_VEC4S],
                 mwarp_tangents: [[0.0; 4]; WARP_MESH_TANGENT_VEC4S],
@@ -21922,6 +22041,7 @@ impl RenderState {
             mwarp_mesh: stage.mwarp_mesh,
             smask: stage.smask,
             smask_info: stage.smask_info,
+            smask_bounds: stage.smask_bounds,
             smask_pts: stage.smask_pts,
             swarp_tangents: stage.swarp_tangents,
             mwarp_tangents: stage.mwarp_tangents,
@@ -30143,8 +30263,10 @@ mod tests {
             { "invert": true, "feather": 4.0,
               "points": [{ "x": 0.4, "y": 0.4 }, { "x": 0.6, "y": 0.4 }, { "x": 0.6, "y": 0.6 }, { "x": 0.4, "y": "nope" }] },
         ]);
-        let (header, info, points) = super::screen_masks_at(Some(&masks));
+        let (header, info, bounds, points) = super::screen_masks_at(Some(&masks));
         assert_eq!(header, [2.0, 1.0, 0.0, 0.0]);
+        let pad = super::SCREEN_MASK_BOUNDS_PAD;
+        assert_eq!(bounds[0], [0.1 - pad, 0.1 - pad, 0.9 + pad, 0.9 + pad]);
         assert_eq!(info[0], [0.0, 3.0, 0.3, 0.0]);
         // The inverted mask starts after the first mask's 3 vertices, drops
         // its unusable vertex and clamps feather into range.
@@ -30157,6 +30279,65 @@ mod tests {
         // Past the per-screen cap, extra masks are dropped whole.
         let many = json!((0..12).map(|_| json!({ "points": [{ "x": 0.0, "y": 0.0 }, { "x": 1.0, "y": 0.0 }, { "x": 1.0, "y": 1.0 }] })).collect::<Vec<_>>());
         assert_eq!(super::screen_masks_at(Some(&many)).0[0], super::MAX_SCREEN_MASKS as f32);
+    }
+
+    /// Curved mask edges are cut as polylines that stay within the
+    /// flattening tolerance of their cubic; straight edges and masks
+    /// without handles pack exactly as before; a mask whose curves would
+    /// overflow its vertex budget coarsens rather than being dropped.
+    #[test]
+    fn screen_masks_flatten_curved_edges_within_tolerance() {
+        use serde_json::json;
+        let a = [0.2, 0.2];
+        let c1 = [0.5, -0.1];
+        let c2 = [0.7, 0.0];
+        let b = [0.8, 0.2];
+        let masks = json!([{ "points": [
+            { "x": a[0], "y": a[1], "cpOut": { "x": c1[0], "y": c1[1] } },
+            { "x": b[0], "y": b[1], "cpIn": { "x": c2[0], "y": c2[1] } },
+            { "x": 0.5, "y": 0.8 },
+        ] }]);
+        let (header, info, bounds, points) = super::screen_masks_at(Some(&masks));
+        assert_eq!(header[0], 1.0);
+        let count = info[0][1] as usize;
+        assert!(count > 12, "a strong curve needs many segments, got {count}");
+        let flat: Vec<[f32; 2]> = (0..count)
+            .map(|i| { let v = points[i / 2]; if i % 2 == 0 { [v[0], v[1]] } else { [v[2], v[3]] } })
+            .collect();
+        assert_eq!(flat[0], [0.2, 0.2]);
+        assert_eq!(flat[count - 2], [0.8, 0.2]);
+        assert_eq!(flat[count - 1], [0.5, 0.8]);
+        // Every chord of the flattened curve stays within tolerance of the
+        // cubic (checked densely against its midpoints).
+        let cubic = |t: f64| {
+            let mt = 1.0 - t;
+            [
+                mt * mt * mt * a[0] + 3.0 * mt * mt * t * c1[0] + 3.0 * mt * t * t * c2[0] + t * t * t * b[0],
+                mt * mt * mt * a[1] + 3.0 * mt * mt * t * c1[1] + 3.0 * mt * t * t * c2[1] + t * t * t * b[1],
+            ]
+        };
+        let n = count - 2;
+        for k in 0..n {
+            let (p, q) = (flat[k], flat[k + 1]);
+            let mid = cubic((k as f64 + 0.5) / n as f64);
+            let (dx, dy) = ((q[0] - p[0]) as f64, (q[1] - p[1]) as f64);
+            let len = (dx * dx + dy * dy).sqrt();
+            let dist = ((mid[0] - p[0] as f64) * dy - (mid[1] - p[1] as f64) * dx).abs() / len;
+            assert!(dist <= super::SCREEN_MASK_CURVE_TOLERANCE * 1.01, "segment {k} strays {dist}");
+        }
+        // The bounds cover the bulge (down to y ~ 0.01, below both anchors).
+        assert!(bounds[0][1] < 0.02);
+
+        // 32 wildly curved anchors cannot all get full detail: the mask
+        // still packs, within its budget, with every anchor kept.
+        let wild = json!([{ "points": (0..32).map(|i| {
+            let t = i as f64 / 32.0 * std::f64::consts::TAU;
+            json!({ "x": 0.5 + 0.4 * t.cos(), "y": 0.5 + 0.4 * t.sin(),
+                "cpIn": { "x": 0.5, "y": 2.0 }, "cpOut": { "x": 0.5, "y": -1.0 } })
+        }).collect::<Vec<_>>() }]);
+        let (header, info, _, _) = super::screen_masks_at(Some(&wild));
+        assert_eq!(header[0], 1.0);
+        assert!(info[0][1] as usize <= super::SCREEN_MASK_FLAT_POINTS && info[0][1] as usize >= 32);
     }
 
     #[test]

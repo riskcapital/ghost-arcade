@@ -357,6 +357,13 @@ describe('native output stage coordinates', () => {
     ]);
     expect(nativeScreenMasks(undefined)).toEqual([]);
     expect(nativeScreenMasks(null)).toEqual([]);
+    // Curve handles flip with their points; plain points stay bare.
+    const curved = nativeScreenMasks([{ points: [
+      { x: 0.1, y: 0.6, cpOut: { x: 0.3, y: 0.1 } }, { x: 0.9, y: 0.6, cpIn: { x: 0.7, y: 0.2 } }, { x: 0.5, y: 0.9 },
+    ] }]);
+    expect(curved[0].points).toEqual([
+      { x: 0.1, y: 0.4, cpOut: { x: 0.3, y: 0.9 } }, { x: 0.9, y: 0.4, cpIn: { x: 0.7, y: 0.8 } }, { x: 0.5, y: 0.09999999999999998 },
+    ]);
   });
 
   it('keeps identity warps identity and puts the top handles on the top edge', () => {

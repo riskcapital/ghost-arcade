@@ -1,7 +1,11 @@
 import { describe, expect, it } from 'vitest';
 import {
+  SCREEN_MASK_CURVE_TOLERANCE,
+  SCREEN_MASK_FLAT_POINTS,
   canvasToScreenContent,
+  flattenScreenMask,
   inverseBilinear,
+  screenMaskAlpha,
   screenContentToCanvas,
   screenMaskCanvasPoints,
   screenOutlineCanvasPoints,
@@ -123,5 +127,41 @@ describe('screen mask geometry', () => {
     // Degenerate quad: no solution rather than NaN.
     const flat = inverseBilinear({ x: 0.5, y: 0.5 }, a, a, a, a);
     expect(Number.isNaN(flat.x) || Number.isNaN(flat.y)).toBe(false);
+  });
+
+  it('flattens curved mask edges within tolerance and leaves straight masks alone', () => {
+    const straight = [{ x: 0.1, y: 0.1 }, { x: 0.9, y: 0.1 }, { x: 0.5, y: 0.9 }];
+    expect(flattenScreenMask(straight)).toEqual(straight);
+    const a = { x: 0.1, y: 0.6 }, c1 = { x: 0.3, y: 0.05 }, c2 = { x: 0.7, y: 0.05 }, b = { x: 0.9, y: 0.6 };
+    const flat = flattenScreenMask([{ ...a, cpOut: c1 }, { ...b, cpIn: c2 }, { x: 0.5, y: 0.97 }]);
+    expect(flat.length).toBeGreaterThan(10);
+    expect(flat[0]).toEqual(a);
+    expect(flat[flat.length - 2]).toEqual(b);
+    const n = flat.length - 2;
+    const cubic = (t: number) => {
+      const mt = 1 - t;
+      return {
+        x: mt ** 3 * a.x + 3 * mt * mt * t * c1.x + 3 * mt * t * t * c2.x + t ** 3 * b.x,
+        y: mt ** 3 * a.y + 3 * mt * mt * t * c1.y + 3 * mt * t * t * c2.y + t ** 3 * b.y,
+      };
+    };
+    for (let k = 0; k < n; k++) {
+      const p = flat[k], q = flat[k + 1], mid = cubic((k + 0.5) / n);
+      const dist = Math.abs((mid.x - p.x) * (q.y - p.y) - (mid.y - p.y) * (q.x - p.x)) / Math.hypot(q.x - p.x, q.y - p.y);
+      expect(dist).toBeLessThanOrEqual(SCREEN_MASK_CURVE_TOLERANCE * 1.01);
+    }
+    // The coverage follows the curve: the arch's apex is inside, the
+    // straight chord's region above it is not.
+    const mask = { id: 'm', name: 'M', enabled: true, invert: false, feather: 0, points: [{ ...a, cpOut: c1 }, { ...b, cpIn: c2 }, { x: 0.5, y: 0.97 }] };
+    expect(screenMaskAlpha([mask], { x: 0.5, y: 0.3 })).toBe(1);
+    expect(screenMaskAlpha([mask], { x: 0.5, y: 0.15 })).toBe(0);
+    // However curved, a mask fits its vertex budget.
+    const wild = Array.from({ length: 32 }, (_, i) => {
+      const t = (i / 32) * Math.PI * 2;
+      return { x: 0.5 + 0.4 * Math.cos(t), y: 0.5 + 0.4 * Math.sin(t), cpIn: { x: 0.5, y: 2 }, cpOut: { x: 0.5, y: -1 } };
+    });
+    const packed = flattenScreenMask(wild);
+    expect(packed.length).toBeLessThanOrEqual(SCREEN_MASK_FLAT_POINTS);
+    expect(packed.length).toBeGreaterThanOrEqual(32);
   });
 });

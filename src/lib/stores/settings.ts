@@ -4,7 +4,7 @@ import { createCoalescedWriter } from '../utils/coalescedWriter';
 
 import { writable, get } from 'svelte/store';
 import { invoke, isDesktopApp } from '$lib/bridge';
-import type { WarpCorners, MeshWarpGrid, Effect, Point2D } from '../types';
+import type { WarpCorners, MeshWarpGrid, Effect, Point2D, BezierPoint } from '../types';
 import { meshGridHasTangents } from '../utils/meshWarp';
 
 // ============================================================================
@@ -404,8 +404,11 @@ export interface ScreenMask {
   id: string;
   name: string;
   enabled: boolean;
-  /** Polygon vertices, straight edges. Fewer than 3 renders nothing. */
-  points: Point2D[];
+  /** Polygon vertices. An edge is straight unless the point it leaves has
+   *  a `cpOut` or the point it reaches has a `cpIn` (absolute handle
+   *  positions in the same space, as on layer custom shapes); then it is
+   *  the cubic through those handles. Fewer than 3 renders nothing. */
+  points: BezierPoint[];
   /** Edge softness 0..1 in screen units, ramping inward from the edge. */
   feather: number;
   /** false keeps the inside of the polygon, true cuts a hole instead.
@@ -476,10 +479,20 @@ export function screenMaskIsActive(mask: ScreenMask | null | undefined): boolean
 export function migrateScreenMasks(masks: unknown): ScreenMask[] {
   if (!Array.isArray(masks)) return [];
   return masks.map((m: any, index: number) => {
+    const handle = (h: any): Point2D | undefined =>
+      Number.isFinite(h?.x) && Number.isFinite(h?.y) ? { x: Number(h.x), y: Number(h.y) } : undefined;
     const points = Array.isArray(m?.points)
       ? m.points
           .filter((p: any) => Number.isFinite(p?.x) && Number.isFinite(p?.y))
-          .map((p: any) => ({ x: Number(p.x), y: Number(p.y) }))
+          .map((p: any) => {
+            // Curve handles are optional; a damaged one leaves that side straight.
+            const point: BezierPoint = { x: Number(p.x), y: Number(p.y) };
+            const cpIn = handle(p.cpIn);
+            const cpOut = handle(p.cpOut);
+            if (cpIn) point.cpIn = cpIn;
+            if (cpOut) point.cpOut = cpOut;
+            return point;
+          })
       : [];
     const feather = Number(m?.feather);
     return {

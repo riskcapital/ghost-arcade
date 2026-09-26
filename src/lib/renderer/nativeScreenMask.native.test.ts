@@ -234,6 +234,100 @@ suite('Native screen masks', () => {
     }
   }, 90000);
 
+  it('cuts a curved mask along its cubic with a monotonic feather, matching the preview', async () => {
+    // An arch: the top edge is one cubic from (0.1, 0.6) to (0.9, 0.6)
+    // through handles at (0.3, 0.05) and (0.7, 0.05), authored in the
+    // editor's screen space (y down), so snapshot rows are editor y.
+    const a = { x: 0.1, y: 0.6 }, c1 = { x: 0.3, y: 0.05 }, c2 = { x: 0.7, y: 0.05 }, b = { x: 0.9, y: 0.6 };
+    const arch = (feather: number): ScreenMask => ({
+      id: 'arch', name: 'Arch', enabled: true, invert: false, feather,
+      points: [{ ...a, cpOut: c1 }, { ...b, cpIn: c2 }, { x: 0.9, y: 0.97 }, { x: 0.1, y: 0.97 }],
+    });
+    const cubicAt = (t: number) => {
+      const mt = 1 - t;
+      const w = [mt * mt * mt, 3 * mt * mt * t, 3 * mt * t * t, t * t * t];
+      return { x: w[0] * a.x + w[1] * c1.x + w[2] * c2.x + w[3] * b.x, y: w[0] * a.y + w[1] * c1.y + w[2] * c2.y + w[3] * b.y };
+    };
+    /** The arch's y at canvas x (x(t) rises monotonically here). */
+    const archY = (x: number) => {
+      let lo = 0, hi = 1;
+      for (let i = 0; i < 60; i++) { const mid = (lo + hi) / 2; if (cubicAt(mid).x < x) lo = mid; else hi = mid; }
+      return cubicAt((lo + hi) / 2).y;
+    };
+    const rpc = core();
+    try {
+      await rpc.send('start', { config: { backend: platform.rendererBackend, width: SIZE, height: SIZE, source_frame_size: 32, target_fps: 30 } });
+      await rpc.commands([
+        { type: 'upload_source_frame', source_id: 'white', width: 32, height: 32, seq: 1,
+          rgba_b64: Buffer.from(Array.from({ length: 32 * 32 }, () => [255, 255, 255, 255]).flat()).toString('base64') },
+        { type: 'upsert_layer', layer_id: 'white', z_index: 0, opacity: 1, blend_mode: 'normal',
+          corners: { topLeft: { x: 0, y: 1 }, topRight: { x: 1, y: 1 }, bottomRight: { x: 1, y: 0 }, bottomLeft: { x: 0, y: 0 } } },
+        { type: 'bind_media_source', layer_id: 'white', source_id: 'white', uri: 'mask-test://white', source_type: 'image' },
+        { type: 'set_layer_visibility', layer_id: 'white', visible: true },
+      ]);
+      await expect.poll(async () => pixel(await rpc.send('frame_snapshot', { include_pixels: true }), 64, 64),
+        { timeout: 8000, interval: 30 }).toEqual([255, 255, 255]);
+
+      // Hard edge: the cut follows the cubic to the pixel.
+      await rpc.send('set_slice_outputs', { slices: [slice('hard', { masks: nativeScreenMasks([arch(0)]) })] });
+      const hard = await rpc.send('frame_snapshot', { include_pixels: true, slice_id: 'hard' });
+      let worst = 0;
+      for (let c = col(0.14); c <= col(0.86); c++) {
+        const x = (c + 0.5) / SIZE;
+        let first = SIZE;
+        for (let r = 0; r < SIZE; r++) if (pixel(hard, c, r)[0] > 127) { first = r; break; }
+        const expected = archY(x) * SIZE - 0.5;
+        worst = Math.max(worst, Math.abs(first - expected));
+        expect(Math.abs(first - expected), `column ${c}: first lit row ${first}, curve at ${expected.toFixed(2)}`).toBeLessThanOrEqual(1);
+      }
+      // It is a curve, not the straight chord from a to b: the apex is lit
+      // far above y = 0.6.
+      expect(pixel(hard, col(0.5), Math.round(0.35 * SIZE))).toEqual([255, 255, 255]);
+      expect(pixel(hard, col(0.5), Math.round(archY(0.5) * SIZE) - 3)).toEqual([0, 0, 0]);
+
+      // Feathered: straight down from the curve the ramp only ever rises,
+      // from black at the edge to full white once 0.1 away from it, at the apex
+      // and on the flanks.
+      await rpc.send('set_slice_outputs', { slices: [slice('soft', { masks: nativeScreenMasks([arch(0.1)]) })] });
+      const soft = await rpc.send('frame_snapshot', { include_pixels: true, slice_id: 'soft' });
+      for (const x of [0.3, 0.5, 0.72]) {
+        const c = col(x);
+        const top = Math.floor(archY((c + 0.5) / SIZE) * SIZE) - 1;
+        const ramp = Array.from({ length: Math.ceil(0.25 * SIZE) }, (_, i) => pixel(soft, c, top + i)[0]);
+        for (let i = 1; i < ramp.length; i++) expect(ramp[i], `x=${x} step ${i}: ${ramp.join(',')}`).toBeGreaterThanOrEqual(ramp[i - 1]);
+        expect(ramp[0]).toBeLessThan(10);
+        expect(ramp[ramp.length - 1]).toBe(255);
+        expect(ramp.some(v => v > 40 && v < 215), `x=${x}: ${ramp.join(',')}`).toBe(true);
+      }
+
+      // The editor preview shades exactly what the projector loses, a
+      // curved hole included.
+      const masks: ScreenMask[] = [arch(0.1), {
+        id: 'hole', name: 'Hole', enabled: true, invert: true, feather: 0.04,
+        points: [{ x: 0.4, y: 0.7, cpOut: { x: 0.5, y: 0.55 } }, { x: 0.6, y: 0.7, cpIn: { x: 0.5, y: 0.55 }, cpOut: { x: 0.6, y: 0.9 } },
+          { x: 0.4, y: 0.9, cpIn: { x: 0.6, y: 0.9 } }],
+      }];
+      await rpc.send('set_slice_outputs', { slices: [slice('both', { masks: nativeScreenMasks(masks) })] });
+      const both = await rpc.send('frame_snapshot', { include_pixels: true, slice_id: 'both' });
+      let off = 0;
+      let worstLevel = 0;
+      for (let r = 0; r < SIZE; r++) {
+        for (let c = 0; c < SIZE; c++) {
+          const expected = 255 * screenMaskAlpha(masks, { x: (c + 0.5) / SIZE, y: (r + 0.5) / SIZE });
+          const diff = Math.abs(pixel(both, c, r)[0] - expected);
+          worstLevel = Math.max(worstLevel, diff);
+          if (diff > 2) off++;
+        }
+      }
+      expect(off, `${off} pixels differ from the preview by more than 2 levels, worst ${worstLevel}`).toBe(0);
+      expect(worst).toBeLessThanOrEqual(1);
+      const status = await rpc.send('status', {}, 5000);
+      expect(status.last_shader_error ?? null).toBeNull();
+    } finally {
+      await rpc.close();
+    }
+  }, 90000);
+
   it('matches the editor preview mask shading pixel for pixel, including through a corner pin', async () => {
     // Authored the way the Screens inspector stores them: screen content
     // space, y=0 at the top. They reach the core through the real sync

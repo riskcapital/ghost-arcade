@@ -172,6 +172,7 @@ impl OutputPresenter {
             mwarp_mesh: stage.mwarp_mesh,
             smask: stage.smask,
             smask_info: stage.smask_info,
+            smask_bounds: stage.smask_bounds,
             smask_pts: stage.smask_pts,
             swarp_tangents: stage.swarp_tangents,
             mwarp_tangents: stage.mwarp_tangents,

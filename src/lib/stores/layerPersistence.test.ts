@@ -356,6 +356,9 @@ describe('Screen mask persistence', () => {
         points: [{ x: 0.4, y: 0.5 }, { x: 0.6, y: 0.5 }, { x: 0.6, y: 1 }, { x: 0.4, y: 1 }] },
       { id: 'mask-arch', name: 'Arch', enabled: false, invert: false, feather: 0.3,
         points: [{ x: 0.1, y: 0.1 }, { x: 0.9, y: 0.1 }, { x: 0.5, y: 0.9 }] },
+      // Curve handles survive the round trip on the points that have them.
+      { id: 'mask-curve', name: 'Curve', enabled: true, invert: false, feather: 0.1,
+        points: [{ x: 0.1, y: 0.6, cpOut: { x: 0.3, y: 0.1 } }, { x: 0.9, y: 0.6, cpIn: { x: 0.7, y: 0.1 } }, { x: 0.5, y: 0.95 }] },
     ];
     expect(layers.project.importProject(screenProject({ ...baseSlice, masks }))).toBe(true);
     expect(get(settings).output.slices[0].masks).toEqual(masks);
@@ -382,6 +385,12 @@ describe('Screen mask persistence', () => {
       points: [{ x: 0.2, y: 0.2 }, { x: 0.8, y: 0.2 }, { x: 0.5, y: 0.8 }] });
     expect(repaired[0].id).toBeTruthy();
     expect(repaired[1].points).toEqual([]);
+    // A damaged curve handle leaves that side straight, keeping the point.
+    expect(layers.project.importProject(screenProject({
+      ...baseSlice,
+      masks: [{ points: [{ x: 0.2, y: 0.2, cpOut: { x: 'x', y: 0 }, cpIn: { x: 0.1, y: 0.1 } }, { x: 0.8, y: 0.2 }, { x: 0.5, y: 0.8 }] }],
+    }))).toBe(true);
+    expect(get(settings).output.slices[0].masks![0].points[0]).toEqual({ x: 0.2, y: 0.2, cpIn: { x: 0.1, y: 0.1 } });
   });
 });
 

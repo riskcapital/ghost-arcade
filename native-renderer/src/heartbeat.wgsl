@@ -56,12 +56,15 @@ struct Uniforms {
   mwarp_mesh: array<vec4<f32>, 128>,
   // Per-screen polygon masks, cut from the projector's frame after the
   // crop and warp have been resolved (slice mode only):
-  //   smask      = (mask count, keep count, _, _)
-  //   smask_info = per mask (point start, point count, feather, invert)
-  //   smask_pts  = vertices in screen UV, two per vec4, up to 8 x 32
+  //   smask        = (mask count, keep count, _, _)
+  //   smask_info   = per mask (point start, point count, feather, invert)
+  //   smask_bounds = per mask vertex bounds (x0, y0, x1, y1), padded
+  //   smask_pts    = vertices in screen UV, two per vec4, up to 8 x 128
+  //                  (curved edges arrive already cut into polylines)
   smask: vec4<f32>,
   smask_info: array<vec4<f32>, 8>,
-  smask_pts: array<vec4<f32>, 128>,
+  smask_bounds: array<vec4<f32>, 8>,
+  smask_pts: array<vec4<f32>, 512>,
   // Bezier tangents of the screen and master meshes, two vec4 per point
   // exactly like LayerData.mesh_tangents. Read only while swarp.w / mwarp.w
   // is 1, so a tangent-free mesh keeps its straight bilinear cells.
@@ -1385,25 +1388,30 @@ fn master_warp_uv(uv: vec2<f32>) -> vec3<f32> {
 }
 
 const SCREEN_MASK_MAX: i32 = 8;
-const SCREEN_MASK_POINTS_PER_MASK: i32 = 32;
+const SCREEN_MASK_FLAT_POINTS: i32 = 128;
 
 fn screen_mask_point(index: i32) -> vec2<f32> {
-  let slot = clamp(index / 2, 0, 127);
+  let slot = clamp(index / 2, 0, 511);
   let packed = u.smask_pts[slot];
   return select(packed.zw, packed.xy, (index % 2) == 0);
 }
 
 /// Coverage of one screen mask polygon at `uv`: 1 inside, ramping to 0 over
 /// `feather` UV units measured inward from the edge, 0 outside. Same ray
-/// crossing and edge distance test as native_polygon_mask.
+/// crossing and edge distance test as native_polygon_mask. A curved mask is
+/// its flattened polyline (flatten_screen_mask), whose distance field stays
+/// within the flattening tolerance of the curve's, so the feather follows
+/// the curve. Pixels outside the padded bounds have no crossing to count.
 fn screen_mask_coverage(uv: vec2<f32>, mask_index: i32) -> f32 {
   let info = u.smask_info[mask_index];
   let start = i32(floor(info.x + 0.5));
-  let count = min(i32(floor(info.y + 0.5)), SCREEN_MASK_POINTS_PER_MASK);
+  let count = min(i32(floor(info.y + 0.5)), SCREEN_MASK_FLAT_POINTS);
   if (count < 3) { return 0.0; }
+  let bounds = u.smask_bounds[mask_index];
+  if (any(uv < bounds.xy) || any(uv > bounds.zw)) { return 0.0; }
   var crossings = 0;
   var min_edge_distance = 1000.0;
-  for (var i: i32 = 0; i < SCREEN_MASK_POINTS_PER_MASK; i = i + 1) {
+  for (var i: i32 = 0; i < SCREEN_MASK_FLAT_POINTS; i = i + 1) {
     if (i >= count) { break; }
     let a = screen_mask_point(start + i);
     let b = screen_mask_point(start + ((i + 1) % count));

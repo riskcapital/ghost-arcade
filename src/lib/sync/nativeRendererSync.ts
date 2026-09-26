@@ -5014,18 +5014,27 @@ export function nativeWarpCorners(
 
 /** Screen masks get the same flip: their vertices are authored in the
  *  screen's content space with y=0 at the top, and the core cuts them in
- *  its y-up screen UV. Disabled masks and ones that cannot form a polygon
- *  are left out so the core never sees a mask it would have to ignore. */
+ *  its y-up screen UV. Curve handles are positions in that same space, so
+ *  they flip too; a vertex without handles is sent as a bare point, as
+ *  before. Disabled masks and ones that cannot form a polygon are left out
+ *  so the core never sees a mask it would have to ignore. */
+type NativeMaskPoint = NativeWarpPoint & { cpIn?: NativeWarpPoint; cpOut?: NativeWarpPoint };
 export function nativeScreenMasks(
-  masks: Array<{ enabled?: boolean; invert?: boolean; feather?: number; points?: NativeWarpPoint[] }> | null | undefined,
-): Array<{ invert: boolean; feather: number; points: NativeWarpPoint[] }> {
+  masks: Array<{ enabled?: boolean; invert?: boolean; feather?: number; points?: NativeMaskPoint[] }> | null | undefined,
+): Array<{ invert: boolean; feather: number; points: NativeMaskPoint[] }> {
   if (!Array.isArray(masks)) return [];
+  const flip = (point: NativeWarpPoint): NativeWarpPoint => ({ x: point.x, y: 1 - point.y });
   return masks
     .filter((mask) => mask && mask.enabled !== false && Array.isArray(mask.points) && mask.points.length >= 3)
     .map((mask) => ({
       invert: mask.invert === true,
       feather: clampNumber(Number(mask.feather) || 0, 0, 1),
-      points: mask.points!.map((point) => ({ x: point.x, y: 1 - point.y })),
+      points: mask.points!.map((point) => {
+        const out: NativeMaskPoint = flip(point);
+        if (point.cpIn) out.cpIn = flip(point.cpIn);
+        if (point.cpOut) out.cpOut = flip(point.cpOut);
+        return out;
+      }),
     }));
 }
 
