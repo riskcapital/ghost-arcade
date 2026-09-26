@@ -2414,7 +2414,7 @@ fn edge_pattern(q: vec2<f32>, kind: i32, scale: f32, line_w: f32, aa: f32) -> f3
   let r = vec2<f32>(1.0, 1.7320508) * s;
   let h = r * 0.5;
   let a = q - r * floor(q / r) - h;
-  let b = q - r * floor((q - h) / r) - h;
+  let b = (q - h) - r * floor((q - h) / r) - h;
   let g = select(b, a, dot(a, a) < dot(b, b));
   let ag = abs(g);
   let hex = max(dot(ag, normalize(vec2<f32>(1.0, 1.7320508))), ag.x);
@@ -2471,7 +2471,11 @@ fn edge_effect_fragment(li: u32, e: i32, p: vec2<f32>, base: EdgeHit, ctx: EdgeC
   } else if (anim_type == 8 || anim_type == 9) {
     // Card flip about the shape's X (8) or Y (9) axis, with perspective.
     let theta = t * anim_speed * EDGE_TAU;
-    let focal = mix(1.0e6, max(ctx.inradius, 8.0) * 3.0, clamp(ap.x, 0.0, 1.0));
+    // Perspective 1 puts the eye 2.5 shape radii away (the near edge grows
+    // at most 1.7x); 0 is a flat projection.
+    let persp = clamp(ap.x, 0.0, 1.0);
+    let extent = max(max(ctx.bbox.z - ctx.bbox.x, ctx.bbox.w - ctx.bbox.y) * 0.5, 8.0);
+    let focal = select(1.0e7, extent * 2.5 / persp, persp > 0.001);
     let rel = p - center;
     let along = select(rel.x, rel.y, anim_type == 8);
     let across = select(rel.y, rel.x, anim_type == 8);

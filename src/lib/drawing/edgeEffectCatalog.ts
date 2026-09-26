@@ -333,7 +333,7 @@ export const EDGE_FILL_TYPES: EdgeTypeDef[] = [
   },
   {
     type: 'radialGlow', label: 'Radial glow', group: 'Structure',
-    defaults: { type: 'radialGlow', color: rgba(1, 1, 1), radius: 0.8, intensity: 1, pulseSpeed: 0 },
+    defaults: { type: 'radialGlow', color: rgba(1, 1, 1), radius: 1.5, intensity: 1.2, pulseSpeed: 0 },
     params: [color(), num('radius', 'Radius', 0.1, 3, 0.05, 'x'), num('intensity', 'Intensity', 0.1, 3, 0.05), num('pulseSpeed', 'Pulse', 0, 5, 0.1)],
   },
   {
