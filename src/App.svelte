@@ -1610,7 +1610,10 @@
     // Keyboard handlers for spacebar panning + undo/redo
     const handleKeyDown = (e: KeyboardEvent) => {
       const target = e.target as HTMLElement;
-      const inInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.isContentEditable;
+      // A focused <select> takes letters as typeahead; without it here, typing
+      // to pick an option also fired single-key shortcuts (B blacks out the
+      // output, T cycles its test pattern).
+      const inInput = target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable;
 
       // ESC exits lines drawing mode
       if (e.key === 'Escape' && linesDrawingMode !== 'none') {
