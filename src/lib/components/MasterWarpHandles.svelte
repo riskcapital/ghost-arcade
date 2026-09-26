@@ -28,6 +28,8 @@
   import { recordDiscreteAction } from '../stores/historyHooks';
   import type { WarpCorners, MeshWarpGrid, Point2D } from '../types';
   import { normalizedWarpNudge } from '../utils/warpNudge';
+  import { releaseFormControlFocus } from '../utils/formFocus';
+  import { claimWarpKeys, ownsWarpKeys } from '../utils/warpKeyOwner';
   import {
     MESH_CURVE_SEGMENTS,
     cloneMeshGrid,
@@ -84,6 +86,10 @@
   function startDrag(e: MouseEvent, kind: DragKind) {
     e.preventDefault();
     e.stopPropagation();
+    // The arrow keys nudge what was pressed, not the panel control that
+    // still has focus (a toggle just clicked, a number field).
+    releaseFormControlFocus();
+    claimWarpKeys('master');
     cancelDrag();
     if (kind.kind === 'corner') {
       selectedCorner = kind.corner;
@@ -164,7 +170,7 @@
   }
 
   function handleKeyDown(e: KeyboardEvent) {
-    if (!warp.enabled || isTextEditingTarget(e.target)) return;
+    if (!warp.enabled || isTextEditingTarget(e.target) || !ownsWarpKeys('master')) return;
 
     if (e.key === 'Escape') {
       // A selected tangent handle lets go first, then the point.

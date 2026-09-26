@@ -53,6 +53,8 @@
   import { settings, screenMaskIsActive } from '../stores/settings';
   import type { WarpCorners, MeshWarpGrid, Point2D } from '../types';
   import { normalizedWarpNudge } from '../utils/warpNudge';
+  import { releaseFormControlFocus } from '../utils/formFocus';
+  import { claimWarpKeys, ownsWarpKeys } from '../utils/warpKeyOwner';
   import {
     MESH_CURVE_SEGMENTS,
     cloneMeshGrid,
@@ -135,6 +137,10 @@
   function startDrag(e: MouseEvent, sliceId: string, kind: DragKind) {
     e.preventDefault();
     e.stopPropagation();
+    // The arrow keys nudge what was pressed, not the panel control that
+    // still has focus (a toggle just clicked, a number field).
+    releaseFormControlFocus();
+    claimWarpKeys('screen');
     const slice = $screens.find(s => s.id === sliceId);
     if (!slice) return;
     cancelDrag();
@@ -269,7 +275,7 @@
   }
 
   function handleKeyDown(e: KeyboardEvent) {
-    if (!$selectedScreenId || isTextEditingTarget(e.target)) return;
+    if (!$selectedScreenId || isTextEditingTarget(e.target) || !ownsWarpKeys('screen')) return;
     let dx = 0;
     let dy = 0;
     const proj = get(project);
@@ -317,6 +323,10 @@
     nudgeSelectedSlice(dx, dy, e.altKey);
     recordDiscreteAction();
   }
+
+  // Picking a screen in the panel hands it the arrow keys.
+  const stopScreenKeyClaim = selectedScreenId.subscribe((id) => { if (id) claimWarpKeys('screen'); });
+  onDestroy(stopScreenKeyClaim);
 
   onMount(() => {
     window.addEventListener('keydown', handleKeyDown);

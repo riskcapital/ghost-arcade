@@ -232,15 +232,12 @@
        shape live here. -->
   <section class="sec">
     <h4>Slice</h4>
-    <label class="field">
-      <span class="lbl">Shape</span>
-      <select aria-label="Screen warp shape" value={screen.warpMode ?? 'rect'}
-        onchange={(e) => screenActions.setWarpMode(screen.id, (e.target as HTMLSelectElement).value as 'rect' | 'corners' | 'mesh')}>
-        <option value="rect">Rectangle</option>
-        <option value="corners">Corner pin</option>
-        <option value="mesh">Mesh</option>
-      </select>
-    </label>
+    <div class="preset-strip" role="group" aria-label="Screen warp shape">
+      {#each [['rect', 'Rectangle'], ['corners', 'Corner pin'], ['mesh', 'Mesh']] as [mode, label] (mode)}
+        <button class="chip-btn" class:active={(screen.warpMode ?? 'rect') === mode}
+          onclick={() => screenActions.setWarpMode(screen.id, mode as 'rect' | 'corners' | 'mesh')}>{label}</button>
+      {/each}
+    </div>
     {#if (screen.warpMode ?? 'rect') === 'rect'}
       <p class="hint">This screen takes a rectangular slice of the total (master-warped) output. Drag its rectangle on the canvas or the preview above to set it.</p>
     {:else}
