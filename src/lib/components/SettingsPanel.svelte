@@ -2775,9 +2775,12 @@
         <section class="settings-section">
           <h3>Art-Net and sACN Pixel Mapping</h3>
           <p class="settings-hint" style="margin-bottom: 12px;">
-            Drive LED fixtures on Art-Net or sACN (E1.31) nodes from the final composite. Each fixture samples a region of the image, like a WLED controller, and is patched across universes automatically: 170 RGB or 128 RGBW pixels per universe, never splitting a pixel. Output runs at the frame rate you set, up to 60 fps. Turning output off, blackout, or disabling a fixture sends one black frame and then stops; sACN streams are terminated cleanly.
+            Drive LED fixtures on Art-Net or sACN (E1.31) nodes from the final composite. Each fixture samples a region of the image, like a WLED controller, and is patched across universes automatically: 170 RGB or 128 RGBW pixels per universe, never splitting a pixel. Output runs at the frame rate you set, up to 60 fps. Turning output off, blackout, or disabling a fixture sends one black frame and then stops; sACN streams are terminated cleanly. LED FX from VJ mode (chase, strobe and the rest) run on fixtures too: target a fixture directly, or add it to an LED group below.
           </p>
           <PixelMapPanel />
+          <!-- The same LED groups as the WLED section: fixtures join groups
+               here and run LED FX (VJ mode) exactly like WLED controllers. -->
+          <WLEDGroupsPanel />
         </section>
         {/if}
         {#if selectedSection === 'integrations:dmxinput'}

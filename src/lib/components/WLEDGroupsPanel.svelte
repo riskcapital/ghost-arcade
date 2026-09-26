@@ -33,7 +33,7 @@
   <header>
     <div>
       <h4>Fixture Groups</h4>
-      <p>Combine controllers and named ranges into reusable LED FX targets.</p>
+      <p>Combine WLED controllers, named ranges and Art-Net or sACN fixtures into reusable LED FX targets.</p>
     </div>
     <button onclick={addGroup}>+ Add group</button>
   </header>
@@ -69,6 +69,16 @@
               <span>{range.name}<small>{controller.name} · {range.start + 1}-{range.start + range.count}</small></span>
             </label>
           {/each}
+        {/each}
+        {#each $project.pixelMap?.fixtures ?? [] as fixture (fixture.id)}
+          <label class="fixture-member">
+            <input
+              type="checkbox"
+              checked={isMember(group, { controllerId: fixture.id })}
+              onchange={() => toggleMember(group, { controllerId: fixture.id })}
+            />
+            <span>{fixture.name}<small>{fixture.protocol === 'sacn' ? 'sACN' : 'Art-Net'} fixture · {fixture.pixelCount} pixels</small></span>
+          </label>
         {/each}
       </div>
     </article>
@@ -195,6 +205,10 @@
 
   .range-member {
     color: #b98cff;
+  }
+
+  .fixture-member {
+    color: #7fe3b0;
   }
 
   .empty {
