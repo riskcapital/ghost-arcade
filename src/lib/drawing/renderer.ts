@@ -11,14 +11,9 @@ import type {
   StarShape,
   RingShape,
   SpiralShape,
-  GlowStroke,
-  NeonStroke,
-  SnakeStroke,
-  ConcentricAnimation,
-  SolidFill,
-  PlasmaFill,
 } from './types';
 import type { Point2D } from '../types';
+import { drawingRotation, resolveDrawingStyle, type DrawingStyle, type Rgba } from './drawingStyle';
 
 // ============================================================================
 // SHADER CODE
@@ -67,6 +62,7 @@ const fragmentShader = /* glsl */ `
   uniform int uCustomVertexCount;
   uniform vec2 uCustomVertices[64];  // Up to 64 vertices for arbitrary polygons
   uniform bool uCustomVerticesClosed;  // Whether the polygon is closed
+  uniform float uCustomRotation;       // Rotate animation for custom outlines (radians)
 
   // Stroke uniforms
   uniform int uStrokeType;
@@ -1022,10 +1018,22 @@ const fragmentShader = /* glsl */ `
     float pathPos;
 
     if (uUseCustomVertices && uCustomVertexCount >= 2) {
+      // Rotate animation: turn the outline about its centroid. Rotating in
+      // pixel units keeps the shape rigid on a non-square target.
+      vec2 sp = p;
+      if (uCustomRotation != 0.0) {
+        vec2 rc = vec2(0.0);
+        for (int i = 0; i < 64; i++) {
+          if (i >= uCustomVertexCount) break;
+          rc += uCustomVertices[i];
+        }
+        rc /= float(uCustomVertexCount);
+        sp = rc + (rotate2d(uCustomRotation) * ((p - rc) * uResolution)) / uResolution;
+      }
       // Use custom polygon SDF
-      d = sdPolygonCustom(p, uCustomVertexCount, uCustomVerticesClosed);
+      d = sdPolygonCustom(sp, uCustomVertexCount, uCustomVerticesClosed);
       // Calculate path position along the custom polygon edges
-      pathPos = getCustomPolygonPathPos(p, uCustomVertexCount, uCustomVerticesClosed);
+      pathPos = getCustomPolygonPathPos(sp, uCustomVertexCount, uCustomVerticesClosed);
     } else {
       // Use parametric shape SDF
       d = getShapeSDF(p, uShapeCenter, uShapeRadius, uShapeType, uShapeSides, uInnerRadius, vec2(uWidth, uHeight));
@@ -1251,6 +1259,11 @@ export class DrawingRenderer {
   private pathMaterial: THREE.LineBasicMaterial;
   private currentPathLine: THREE.Line | null = null;
 
+  // Deterministic rendering (Edge Effects, reference captures): a fixed
+  // clock and a fixed base for fields an element does not carry.
+  private timeOverride: number | null = null;
+  private styleBase: Readonly<DrawingStyle> | null = null;
+
   constructor(renderer: THREE.WebGLRenderer, width: number, height: number) {
     this.renderer = renderer;
     this.width = width;
@@ -1307,6 +1320,7 @@ export class DrawingRenderer {
         uCustomVertexCount: { value: 0 },
         uCustomVertices: { value: this.createDefaultCustomVertices() },
         uCustomVerticesClosed: { value: true },
+        uCustomRotation: { value: 0 },
 
         // Stroke
         uStrokeType: { value: 2 },
@@ -1451,55 +1465,6 @@ export class DrawingRenderer {
     return types[type] ?? 0;
   }
 
-  private getStrokeTypeIndex(type: string): number {
-    const types: Record<string, number> = {
-      none: 0,
-      solid: 1,
-      glow: 2,
-      neon: 3,
-      snake: 4,
-      rainbow: 5,
-      dashed: 6,
-      electric: 7,
-      strobe: 8,
-      scanner: 9,
-      fire: 10,
-      pulse: 4,            // maps to snake-style rendering
-      dotted: 6,           // maps to dashed
-    };
-    return types[type] ?? 2;
-  }
-
-  private getFillTypeIndex(type: string): number {
-    const types: Record<string, number> = {
-      none: 0,
-      solid: 1,
-      plasma: 2,
-      liquid: 3,
-      fire: 4,
-      electric: 5,
-      holographic: 6,
-      noise: 7,
-      gradient: 8,
-      radialGradient: 8,
-    };
-    return types[type] ?? 0;
-  }
-
-  private getAnimationTypeIndex(type: string): number {
-    const types: Record<string, number> = {
-      none: 0,
-      concentric: 1,
-      radiate: 2,
-      breathe: 3,
-      rotate: 4,
-      ripple: 5,
-      wave: 6,
-      glitch: 7,
-    };
-    return types[type] ?? 0;
-  }
-
   /**
    * Check if a shape should be rendered as a custom vertex path/polygon.
    * This includes shapes with customVertices OR explicit point arrays (freehand, polyline, etc.)
@@ -1619,7 +1584,7 @@ export class DrawingRenderer {
 
   renderElement(element: DrawingElement): void {
     const u = this.material.uniforms;
-    const time = performance.now() / 1000 - this.startTime;
+    const time = this.timeOverride ?? performance.now() / 1000 - this.startTime;
     u.uTime.value = time;
 
     const shape = element.shape;
@@ -1728,184 +1693,132 @@ export class DrawingRenderer {
       u.uShapeRadius.value = (shape as SpiralShape).endRadius;
     }
 
-    // Stroke
-    const stroke = element.stroke;
-    u.uStrokeType.value = this.getStrokeTypeIndex(stroke.type);
-
-    if (stroke.type !== 'none' && 'color' in stroke) {
-      const c = (stroke as GlowStroke).color;
-      u.uStrokeColor.value.set(c[0], c[1], c[2], c[3]);
-    }
-    if (stroke.type !== 'none' && 'width' in stroke) {
-      u.uStrokeWidth.value = (stroke as GlowStroke).width;
-    }
-    if ('glowSize' in stroke) {
-      u.uGlowSize.value = (stroke as GlowStroke).glowSize;
-    }
-    if ('glowIntensity' in stroke) {
-      u.uGlowIntensity.value = (stroke as GlowStroke).glowIntensity;
-    }
-    if ('pulseSpeed' in stroke) {
-      u.uPulseSpeed.value = (stroke as GlowStroke).pulseSpeed;
-    }
-    if ('flickerSpeed' in stroke) {
-      u.uPulseSpeed.value = (stroke as NeonStroke).flickerSpeed;
-    }
-    if ('length' in stroke) {
-      u.uSnakeLength.value = (stroke as SnakeStroke).length;
-    }
-    if ('speed' in stroke) {
-      u.uSnakeSpeed.value = (stroke as SnakeStroke).speed;
-    }
-    if ('snakeCount' in stroke) {
-      u.uSnakeCount.value = (stroke as SnakeStroke).snakeCount;
-    } else {
-      u.uSnakeCount.value = 1;
-    }
-    // Extended stroke uniforms
-    if ('dashLength' in stroke) {
-      u.uDashLength.value = (stroke as any).dashLength;
-    }
-    if ('gapLength' in stroke) {
-      u.uGapLength.value = (stroke as any).gapLength;
-    }
-    if ('arcIntensity' in stroke) {
-      u.uElectricArc.value = (stroke as any).arcIntensity;
-    }
-    if ('beamWidth' in stroke) {
-      u.uScannerBeamWidth.value = (stroke as any).beamWidth;
-    }
-    if ('trail' in stroke) {
-      u.uScannerTrail.value = (stroke as any).trail;
-    }
-    if ('rate' in stroke) {
-      u.uStrobeRate.value = (stroke as any).rate;
-    }
-
-    // Fill
-    const fill = element.fill;
-    u.uFillType.value = this.getFillTypeIndex(fill.type);
-
-    if (fill.type !== 'none' && 'color' in fill) {
-      const c = (fill as SolidFill).color;
-      u.uFillColor.value.set(c[0], c[1], c[2], c[3]);
-    }
-    if ('speed' in fill) {
-      u.uFillSpeed.value = (fill as PlasmaFill).speed;
-    }
-    // Extended fill uniforms
-    if ('scale' in fill) {
-      u.uNoiseScale.value = (fill as any).scale;
-    }
-    if ('turbulence' in fill) {
-      u.uNoiseTurbulence.value = (fill as any).turbulence;
-    }
-    if ('shiftAmount' in fill) {
-      u.uHoloShift.value = (fill as any).shiftAmount;
-    }
-    if ('scanlines' in fill) {
-      u.uHoloScanlines.value = (fill as any).scanlines;
-    }
-    if ('angle' in fill) {
-      u.uGradAngle.value = (fill as any).angle;
-    }
-
-    // Enhanced fill parameters
-    // Plasma
-    if (fill.type === 'plasma') {
-      u.uPlasmaScale.value = (fill as any).scale ?? 8;
-      u.uPlasmaComplexity.value = (fill as any).complexity ?? 3;
-      const paletteMap: Record<string, number> = { rainbow: 0, fire: 1, ocean: 2, neon: 3 };
-      u.uPlasmaPalette.value = paletteMap[(fill as any).palette] ?? 0;
-    }
-    // Liquid
-    if (fill.type === 'liquid') {
-      u.uLiquidViscosity.value = (fill as any).viscosity ?? 0.5;
-      u.uLiquidTurbulence.value = (fill as any).turbulence ?? 0.5;
-      u.uLiquidMetallic.value = (fill as any).metallic ?? 0.5;
-    }
-    // Fire
-    if (fill.type === 'fire') {
-      u.uFireIntensity.value = (fill as any).intensity ?? 1;
-      u.uFireTurbulence.value = (fill as any).turbulence ?? 0.5;
-      const firePaletteMap: Record<string, number> = { orange: 0, blue: 1, green: 2, purple: 3 };
-      u.uFirePalette.value = firePaletteMap[(fill as any).palette] ?? 0;
-    }
-    // Electric
-    if (fill.type === 'electric') {
-      u.uElectricIntensity.value = (fill as any).intensity ?? 1;
-      u.uElectricArcCount.value = (fill as any).arcCount ?? 5;
-    }
-    // Holographic
-    if (fill.type === 'holographic') {
-      u.uHoloFlicker.value = (fill as any).flicker ?? 0.5;
-    }
-    // Noise - second color
-    if (fill.type === 'noise' && 'color2' in fill) {
-      const c2 = (fill as any).color2;
-      u.uNoiseColor2.value.set(c2[0], c2[1], c2[2], c2[3]);
-      // Also set primary color from color1
-      if ('color1' in fill) {
-        const c1 = (fill as any).color1;
-        u.uFillColor.value.set(c1[0], c1[1], c1[2], c1[3]);
-      }
-    }
-    // Gradient - second color and type
-    if (fill.type === 'gradient') {
-      if ('color2' in fill) {
-        const c2 = (fill as any).color2;
-        u.uGradColor2.value.set(c2[0], c2[1], c2[2], c2[3]);
-      }
-      if ('color' in fill) {
-        const c1 = (fill as any).color;
-        u.uFillColor.value.set(c1[0], c1[1], c1[2], c1[3]);
-      }
-      const gradTypeMap: Record<string, number> = { linear: 0, radial: 1, angular: 2 };
-      u.uGradType.value = gradTypeMap[(fill as any).gradientType] ?? 0;
-    }
-
-    // Animation
-    const animation = element.animation;
-    u.uAnimationType.value = this.getAnimationTypeIndex(animation.type);
-
-    if (animation.type === 'concentric') {
-      const anim = animation as ConcentricAnimation;
-      u.uAnimCount.value = anim.count;
-      u.uAnimSpacing.value = anim.spacing;
-      u.uAnimSpeed.value = anim.speed;
-      const directionMap: Record<string, number> = { 'out': 0, 'in': 1, 'both': 2 };
-      u.uConcentricDirection.value = directionMap[anim.direction] ?? 0;
-    } else if (animation.type === 'breathe') {
-      u.uAnimSpeed.value = (animation as any).speed ?? 1;
-      u.uBreatheMin.value = (animation as any).minScale ?? 0.8;
-      u.uBreatheMax.value = (animation as any).maxScale ?? 1.2;
-    } else if (animation.type === 'rotate') {
-      u.uAnimSpeed.value = (animation as any).speed ?? 1;
-      u.uRotateDir.value = (animation as any).direction === 'ccw' ? 1 : 0;
+    // Fill, stroke and animation: one resolver shared with the native core
+    // so both interpret every parameter the same way.
+    const style = resolveDrawingStyle(element, this.styleBase ?? this.readStyle());
+    this.writeStyle(style);
+    if (element.animation.type === 'rotate') {
       // Apply continuous rotation by modifying shape rotation
-      const time = performance.now() / 1000 - this.startTime;
-      const rotSpeed = (animation as any).speed ?? 1;
-      const dir = (animation as any).direction === 'ccw' ? -1 : 1;
-      u.uShapeRotation.value = (element.shape.rotation * Math.PI / 180) + time * rotSpeed * dir;
-    } else if (animation.type === 'radiate') {
-      u.uAnimCount.value = (animation as any).rays ?? 8;
-      u.uAnimSpeed.value = (animation as any).speed ?? 1;
-    } else if (animation.type === 'ripple') {
-      u.uAnimCount.value = (animation as any).count ?? 5;
-      u.uAnimSpacing.value = (animation as any).spacing ?? 0.04;
-      u.uAnimSpeed.value = (animation as any).speed ?? 1;
-      u.uRippleDecay.value = (animation as any).decay ?? 1;
-    } else if (animation.type === 'wave') {
-      u.uAnimSpeed.value = (animation as any).speed ?? 1;
-      u.uWaveAmplitude.value = (animation as any).amplitude ?? 1;
-      u.uWaveFrequency.value = (animation as any).frequency ?? 1;
-    } else if (animation.type === 'glitch') {
-      u.uAnimSpeed.value = (animation as any).speed ?? 1;
-      u.uGlitchIntensity.value = (animation as any).intensity ?? 1;
-      u.uGlitchBlockSize.value = (animation as any).blockSize ?? 1;
-    } else {
-      u.uAnimCount.value = 0;
+      u.uShapeRotation.value = (element.shape.rotation * Math.PI / 180) + drawingRotation(style, time);
     }
+    u.uCustomRotation.value = drawingRotation(style, time);
+  }
+
+  /** Live style uniform values, the `prev` of the historic update rule. */
+  private readStyle(): DrawingStyle {
+    const u = this.material.uniforms;
+    const v4 = (v: THREE.Vector4): Rgba => [v.x, v.y, v.z, v.w];
+    return {
+      strokeType: u.uStrokeType.value,
+      strokeColor: v4(u.uStrokeColor.value),
+      strokeWidth: u.uStrokeWidth.value,
+      glowSize: u.uGlowSize.value,
+      glowIntensity: u.uGlowIntensity.value,
+      pulseSpeed: u.uPulseSpeed.value,
+      snakeLength: u.uSnakeLength.value,
+      snakeSpeed: u.uSnakeSpeed.value,
+      snakeCount: u.uSnakeCount.value,
+      dashLength: u.uDashLength.value,
+      gapLength: u.uGapLength.value,
+      electricArc: u.uElectricArc.value,
+      scannerBeamWidth: u.uScannerBeamWidth.value,
+      scannerTrail: u.uScannerTrail.value,
+      strobeRate: u.uStrobeRate.value,
+      fillType: u.uFillType.value,
+      fillColor: v4(u.uFillColor.value),
+      fillSpeed: u.uFillSpeed.value,
+      noiseScale: u.uNoiseScale.value,
+      noiseTurbulence: u.uNoiseTurbulence.value,
+      holoShift: u.uHoloShift.value,
+      holoScanlines: u.uHoloScanlines.value,
+      gradAngle: u.uGradAngle.value,
+      plasmaScale: u.uPlasmaScale.value,
+      plasmaComplexity: u.uPlasmaComplexity.value,
+      plasmaPalette: u.uPlasmaPalette.value,
+      liquidViscosity: u.uLiquidViscosity.value,
+      liquidTurbulence: u.uLiquidTurbulence.value,
+      liquidMetallic: u.uLiquidMetallic.value,
+      fireIntensity: u.uFireIntensity.value,
+      fireTurbulence: u.uFireTurbulence.value,
+      firePalette: u.uFirePalette.value,
+      electricIntensity: u.uElectricIntensity.value,
+      electricArcCount: u.uElectricArcCount.value,
+      holoFlicker: u.uHoloFlicker.value,
+      noiseColor2: v4(u.uNoiseColor2.value),
+      gradColor2: v4(u.uGradColor2.value),
+      gradType: u.uGradType.value,
+      animationType: u.uAnimationType.value,
+      animCount: u.uAnimCount.value,
+      animSpacing: u.uAnimSpacing.value,
+      animSpeed: u.uAnimSpeed.value,
+      concentricDirection: u.uConcentricDirection.value,
+      breatheMin: u.uBreatheMin.value,
+      breatheMax: u.uBreatheMax.value,
+      rotateSpeed: u.uRotateSpeed.value,
+      rotateDir: u.uRotateDir.value,
+      waveAmplitude: u.uWaveAmplitude.value,
+      waveFrequency: u.uWaveFrequency.value,
+      rippleDecay: u.uRippleDecay.value,
+      glitchIntensity: u.uGlitchIntensity.value,
+      glitchBlockSize: u.uGlitchBlockSize.value,
+    };
+  }
+
+  private writeStyle(style: DrawingStyle): void {
+    const u = this.material.uniforms;
+    const set4 = (v: THREE.Vector4, c: Rgba) => v.set(c[0], c[1], c[2], c[3]);
+    u.uStrokeType.value = style.strokeType;
+    set4(u.uStrokeColor.value, style.strokeColor);
+    u.uStrokeWidth.value = style.strokeWidth;
+    u.uGlowSize.value = style.glowSize;
+    u.uGlowIntensity.value = style.glowIntensity;
+    u.uPulseSpeed.value = style.pulseSpeed;
+    u.uSnakeLength.value = style.snakeLength;
+    u.uSnakeSpeed.value = style.snakeSpeed;
+    u.uSnakeCount.value = style.snakeCount;
+    u.uDashLength.value = style.dashLength;
+    u.uGapLength.value = style.gapLength;
+    u.uElectricArc.value = style.electricArc;
+    u.uScannerBeamWidth.value = style.scannerBeamWidth;
+    u.uScannerTrail.value = style.scannerTrail;
+    u.uStrobeRate.value = style.strobeRate;
+    u.uFillType.value = style.fillType;
+    set4(u.uFillColor.value, style.fillColor);
+    u.uFillSpeed.value = style.fillSpeed;
+    u.uNoiseScale.value = style.noiseScale;
+    u.uNoiseTurbulence.value = style.noiseTurbulence;
+    u.uHoloShift.value = style.holoShift;
+    u.uHoloScanlines.value = style.holoScanlines;
+    u.uGradAngle.value = style.gradAngle;
+    u.uPlasmaScale.value = style.plasmaScale;
+    u.uPlasmaComplexity.value = style.plasmaComplexity;
+    u.uPlasmaPalette.value = style.plasmaPalette;
+    u.uLiquidViscosity.value = style.liquidViscosity;
+    u.uLiquidTurbulence.value = style.liquidTurbulence;
+    u.uLiquidMetallic.value = style.liquidMetallic;
+    u.uFireIntensity.value = style.fireIntensity;
+    u.uFireTurbulence.value = style.fireTurbulence;
+    u.uFirePalette.value = style.firePalette;
+    u.uElectricIntensity.value = style.electricIntensity;
+    u.uElectricArcCount.value = style.electricArcCount;
+    u.uHoloFlicker.value = style.holoFlicker;
+    set4(u.uNoiseColor2.value, style.noiseColor2);
+    set4(u.uGradColor2.value, style.gradColor2);
+    u.uGradType.value = style.gradType;
+    u.uAnimationType.value = style.animationType;
+    u.uAnimCount.value = style.animCount;
+    u.uAnimSpacing.value = style.animSpacing;
+    u.uAnimSpeed.value = style.animSpeed;
+    u.uConcentricDirection.value = style.concentricDirection;
+    u.uBreatheMin.value = style.breatheMin;
+    u.uBreatheMax.value = style.breatheMax;
+    u.uRotateSpeed.value = style.rotateSpeed;
+    u.uRotateDir.value = style.rotateDir;
+    u.uWaveAmplitude.value = style.waveAmplitude;
+    u.uWaveFrequency.value = style.waveFrequency;
+    u.uRippleDecay.value = style.rippleDecay;
+    u.uGlitchIntensity.value = style.glitchIntensity;
+    u.uGlitchBlockSize.value = style.glitchBlockSize;
   }
 
   render(layers: DrawingLayer[]): THREE.Texture {
@@ -1942,7 +1855,13 @@ export class DrawingRenderer {
    * Used for generative layers in the main layer pipeline.
    * All elements are composited together with additive blending.
    */
-  renderElements(elements: DrawingElement[], target: THREE.WebGLRenderTarget): THREE.Texture {
+  renderElements(
+    elements: DrawingElement[],
+    target: THREE.WebGLRenderTarget,
+    options: { timeSeconds?: number; styleBase?: Readonly<DrawingStyle> } = {},
+  ): THREE.Texture {
+    this.timeOverride = options.timeSeconds ?? null;
+    this.styleBase = options.styleBase ?? null;
     // Clear the target ONCE at the start
     this.renderer.setRenderTarget(target);
     this.renderer.setClearColor(0x000000, 0);
@@ -1977,6 +1896,8 @@ export class DrawingRenderer {
     }
 
     // Restore autoClear and resolution
+    this.timeOverride = null;
+    this.styleBase = null;
     this.renderer.autoClear = prevAutoClear;
     this.material.uniforms.uResolution.value.set(this.width, this.height);
 
