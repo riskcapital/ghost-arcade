@@ -75,6 +75,42 @@ function meshUsable(s: ScreenGeometry): boolean {
   return !!g && g.rows >= 2 && g.cols >= 2 && g.points.length >= g.rows;
 }
 
+type MeshGrid = NonNullable<ScreenGeometry['meshGrid']>;
+
+/**
+ * One mesh cell at (u, v), continued past the cell for the border cells.
+ * Inside it is the cell itself (evaluateMeshCell). Outside, a straight cell
+ * keeps its bilinear sheet. A Bezier cell's cubics would curl back within a
+ * fraction of a cell, so it continues along its border instead: the
+ * nearest border point plus the surface's derivatives there, including the
+ * twist past a corner. That is C1 across the border, and on straight edges
+ * it is exactly the bilinear sheet. The core only draws inside the screen,
+ * so this only decides where mask handles off the screen are drawn.
+ */
+function continuedMeshCell(g: MeshGrid, row: number, col: number, u: number, v: number): Point2D {
+  if (!g.bezier) return evaluateMeshCell(g, row, col, u, v);
+  const uc = Math.max(0, Math.min(1, u));
+  const vc = Math.max(0, Math.min(1, v));
+  const du = u - uc;
+  const dv = v - vc;
+  if (du === 0 && dv === 0) return evaluateMeshCell(g, row, col, u, v);
+  const at = (a: number, b: number) => evaluateMeshCell(g, row, col, a, b);
+  // The cell is a polynomial, so central differences at the border are its
+  // exact derivatives up to O(h^2).
+  const h = 1e-4;
+  const p = at(uc, vc);
+  const pu = { x: (at(uc + h, vc).x - at(uc - h, vc).x) / (2 * h), y: (at(uc + h, vc).y - at(uc - h, vc).y) / (2 * h) };
+  const pv = { x: (at(uc, vc + h).x - at(uc, vc - h).x) / (2 * h), y: (at(uc, vc + h).y - at(uc, vc - h).y) / (2 * h) };
+  let x = p.x + du * pu.x + dv * pv.x;
+  let y = p.y + du * pu.y + dv * pv.y;
+  if (du !== 0 && dv !== 0) {
+    const pp = at(uc + h, vc + h), pm = at(uc + h, vc - h), mp = at(uc - h, vc + h), mm = at(uc - h, vc - h);
+    x += du * dv * (pp.x - pm.x - mp.x + mm.x) / (4 * h * h);
+    y += du * dv * (pp.y - pm.y - mp.y + mm.y) / (4 * h * h);
+  }
+  return { x, y };
+}
+
 /** Screen content space (0..1, y down) -> master canvas (0..1, y down). */
 export function screenContentToCanvas(s: ScreenGeometry, p: Point2D): Point2D {
   const mode = s.warpMode ?? 'rect';
@@ -91,17 +127,147 @@ export function screenContentToCanvas(s: ScreenGeometry, p: Point2D): Point2D {
     const cell = meshCell(s, row, col);
     if (cell) {
       // A Bezier mesh samples its cells as Coons patches (slice_warp_uv).
-      if (g.bezier) return evaluateMeshCell(g, row, col, fx - col, fy - row);
+      if (g.bezier) return continuedMeshCell(g, row, col, fx - col, fy - row);
       return bilinear(cell[0], cell[1], cell[2], cell[3], fx - col, fy - row);
     }
   }
   return { x: s.cropX + p.x * s.cropW, y: s.cropY + p.y * s.cropH };
 }
 
+/** Both (u, v) that the bilinear map of quad a, b, c, d (TL, TR, BR, BL)
+ *  sends to `p`, the map continued past the quad (u, v outside 0..1). One
+ *  when the quad is a parallelogram along v, none past a fold. */
+function bilinearRoots(p: Point2D, a: Point2D, b: Point2D, c: Point2D, d: Point2D): Point2D[] {
+  const e = { x: b.x - a.x, y: b.y - a.y };
+  const f = { x: d.x - a.x, y: d.y - a.y };
+  const g = { x: a.x - b.x + c.x - d.x, y: a.y - b.y + c.y - d.y };
+  const h = { x: p.x - a.x, y: p.y - a.y };
+  const k2 = cross(g, f);
+  const k1 = cross(e, f) + cross(h, g);
+  const k0 = cross(h, e);
+  const vs: number[] = [];
+  if (Math.abs(k2) < 1e-12) {
+    if (Math.abs(k1) < 1e-12) return [];
+    vs.push(-k0 / k1);
+  } else {
+    const discriminant = k1 * k1 - 4 * k0 * k2;
+    if (discriminant < 0) return [];
+    const root = Math.sqrt(discriminant);
+    vs.push((-k1 - root) / (2 * k2), (-k1 + root) / (2 * k2));
+  }
+  const out: Point2D[] = [];
+  for (const v of vs) {
+    const denomX = e.x + g.x * v;
+    const denomY = e.y + g.y * v;
+    const u = Math.abs(denomX) >= Math.abs(denomY) ? (h.x - f.x * v) / denomX : (h.y - f.y * v) / denomY;
+    if (Number.isFinite(u) && Number.isFinite(v)) out.push({ x: u, y: v });
+  }
+  return out;
+}
+
+/** Newton on one mesh cell's continued surface (continuedMeshCell, as the
+ *  forward map draws it), with no clamp to the cell. */
+function newtonCellExtended(g: MeshGrid, row: number, col: number, q: Point2D, start: Point2D): Point2D | null {
+  let u = start.x;
+  let v = start.y;
+  const h = 1e-6;
+  for (let i = 0; i < 40; i++) {
+    const p = continuedMeshCell(g, row, col, u, v);
+    const rx = p.x - q.x;
+    const ry = p.y - q.y;
+    if (rx * rx + ry * ry < 1e-24) break;
+    const pu = continuedMeshCell(g, row, col, u + h, v);
+    const pv = continuedMeshCell(g, row, col, u, v + h);
+    const dux = (pu.x - p.x) / h, duy = (pu.y - p.y) / h;
+    const dvx = (pv.x - p.x) / h, dvy = (pv.y - p.y) / h;
+    const det = dux * dvy - dvx * duy;
+    if (Math.abs(det) < 1e-14) return null;
+    let du = (rx * dvy - ry * dvx) / det;
+    let dv = (dux * ry - duy * rx) / det;
+    // Damp long steps so a guess far out on a curved edge cannot jump to
+    // another branch of the cubic.
+    const step = Math.hypot(du, dv);
+    if (step > 0.5) { du *= 0.5 / step; dv *= 0.5 / step; }
+    u -= du;
+    v -= dv;
+    if (Math.abs(u) > 64 || Math.abs(v) > 64) return null;
+  }
+  const p = continuedMeshCell(g, row, col, u, v);
+  return (p.x - q.x) ** 2 + (p.y - q.y) ** 2 < 1e-16 ? { x: u, y: v } : null;
+}
+
+const EXTRAPOLATE_EPSILON = 1e-9;
+
+/** Orientation of a cell's continued surface at (u, v): the sign of its
+ *  Jacobian. It flips across a fold of the continuation. */
+function cellOrientation(g: MeshGrid, row: number, col: number, u: number, v: number): number {
+  const h = 1e-5;
+  const p = continuedMeshCell(g, row, col, u, v);
+  const pu = continuedMeshCell(g, row, col, u + h, v);
+  const pv = continuedMeshCell(g, row, col, u, v + h);
+  return Math.sign((pu.x - p.x) * (pv.y - p.y) - (pu.y - p.y) * (pv.x - p.x));
+}
+
+/**
+ * Grid position of a canvas point outside a mesh screen. The forward map
+ * (screenContentToCanvas) continues its border cells outward: past the
+ * left edge it evaluates column 0 at u < 0, past the corner the corner
+ * cell at u, v < 0, and so on (continuedMeshCell). This inverts exactly
+ * that, so forward(inverse(p)) lands back on p: every border cell is solved on its
+ * continued surface (closed form for a straight cell, Newton from the
+ * bilinear guess for a Bezier one) and a solution only counts where the
+ * forward map would pick that same cell and on the same side of any fold
+ * as the cell itself (a root past a fold would jump the handle across the
+ * screen). Of those, the one nearest its cell wins. Null only past a fold
+ * of the continued surface, where no position maps to `p` continuously.
+ */
+function extrapolateMeshInverse(s: ScreenGeometry, p: Point2D): Point2D | null {
+  const g = s.meshGrid!;
+  const lastRow = g.rows - 2;
+  const lastCol = g.cols - 2;
+  let best: Point2D | null = null;
+  let bestOut = Infinity;
+  for (let row = 0; row <= lastRow; row++) {
+    for (let col = 0; col <= lastCol; col++) {
+      if (row !== 0 && row !== lastRow && col !== 0 && col !== lastCol) continue;
+      const cell = meshCell(s, row, col);
+      if (!cell) continue;
+      const roots = bilinearRoots(p, cell[0], cell[1], cell[2], cell[3]);
+      const orientation = cellOrientation(g, row, col, 0.5, 0.5);
+      const candidates: Point2D[] = [];
+      if (!g.bezier) candidates.push(...roots);
+      else {
+        const seeds = roots.length ? roots : [{ x: 0.5, y: 0.5 }];
+        for (const seed of seeds) {
+          const start = { x: Math.max(-4, Math.min(5, seed.x)), y: Math.max(-4, Math.min(5, seed.y)) };
+          const hit = newtonCellExtended(g, row, col, p, start);
+          if (hit) candidates.push(hit);
+        }
+      }
+      for (const t of candidates) {
+        const e = EXTRAPOLATE_EPSILON;
+        if ((t.x < -e && col !== 0) || (t.x > 1 + e && col !== lastCol)) continue;
+        if ((t.y < -e && row !== 0) || (t.y > 1 + e && row !== lastRow)) continue;
+        const out = Math.hypot(Math.max(0, -t.x, t.x - 1), Math.max(0, -t.y, t.y - 1));
+        if (out >= bestOut) continue;
+        if (out > 0 && cellOrientation(g, row, col, t.x, t.y) !== orientation) continue;
+        bestOut = out;
+        best = { x: (col + t.x) / (g.cols - 1), y: (row + t.y) / (g.rows - 1) };
+      }
+    }
+  }
+  return best;
+}
+
 /** Master canvas (0..1, y down) -> screen content space. Outside the
- *  screen the result runs past 0..1 (rect, corners) or is null (mesh,
- *  where no cell contains the point); callers clamp when placing. */
-export function canvasToScreenContent(s: ScreenGeometry, p: Point2D): Point2D | null {
+ *  screen the result runs past 0..1, continuing the warp the way the
+ *  forward map does (rect, corners and mesh alike), so a handle dragged
+ *  off the screen keeps following the cursor. Callers clamp when placing
+ *  a vertex. Null only where the warp has no inverse at all (a folded
+ *  quad or mesh); `extrapolate: false` also returns null for any point
+ *  off a mesh, for callers that only care about the inside. */
+export function canvasToScreenContent(s: ScreenGeometry, p: Point2D, options: { extrapolate?: boolean } = {}): Point2D | null {
+  const extrapolate = options.extrapolate ?? true;
   const mode = s.warpMode ?? 'rect';
   if (mode === 'corners' && s.corners) {
     const c = s.corners;
@@ -110,18 +276,23 @@ export function canvasToScreenContent(s: ScreenGeometry, p: Point2D): Point2D | 
   }
   if (mode === 'mesh' && meshUsable(s)) {
     const g = s.meshGrid!;
-    if (g.bezier) return invertMeshByRows(g, p);
-    for (let row = 0; row < g.rows - 1; row++) {
-      for (let col = 0; col < g.cols - 1; col++) {
-        const cell = meshCell(s, row, col);
-        if (!cell) continue;
-        const t = inverseBilinear(p, cell[0], cell[1], cell[2], cell[3]);
-        if (t.x >= 0 && t.x <= 1 && t.y >= 0 && t.y <= 1) {
-          return { x: (col + t.x) / (g.cols - 1), y: (row + t.y) / (g.rows - 1) };
+    let inside: Point2D | null = null;
+    if (g.bezier) inside = invertMeshByRows(g, p);
+    else {
+      for (let row = 0; row < g.rows - 1 && !inside; row++) {
+        for (let col = 0; col < g.cols - 1; col++) {
+          const cell = meshCell(s, row, col);
+          if (!cell) continue;
+          const t = inverseBilinear(p, cell[0], cell[1], cell[2], cell[3]);
+          if (t.x >= 0 && t.x <= 1 && t.y >= 0 && t.y <= 1) {
+            inside = { x: (col + t.x) / (g.cols - 1), y: (row + t.y) / (g.rows - 1) };
+            break;
+          }
         }
       }
     }
-    return null;
+    if (inside || !extrapolate) return inside;
+    return extrapolateMeshInverse(s, p);
   }
   return {
     x: (p.x - s.cropX) / Math.max(1e-6, s.cropW),

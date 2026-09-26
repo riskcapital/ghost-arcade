@@ -76,7 +76,10 @@ describe('screen mask geometry', () => {
     for (const p of [{ x: 0.1, y: 0.9 }, { x: 0.75, y: 0.25 }, { x: 0.5, y: 0.5 }]) {
       close(canvasToScreenContent(mesh, screenContentToCanvas(mesh, p))!, p);
     }
-    expect(canvasToScreenContent(mesh, { x: 1.5, y: 0.5 })).toBeNull();
+    // Off the mesh the inverse continues the border cell (see the
+    // extrapolation tests below); the inside-only form still says null.
+    close(canvasToScreenContent(mesh, { x: 1.5, y: 0.5 })!, { x: 1.5, y: 0.5 });
+    expect(canvasToScreenContent(mesh, { x: 1.5, y: 0.5 }, { extrapolate: false })).toBeNull();
     expect(screenOutlineCanvasPoints(mesh)).toEqual([
       { x: 0, y: 0 }, { x: 0.6, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 }, { x: 0.4, y: 1 }, { x: 0, y: 1 },
     ]);
@@ -163,5 +166,106 @@ describe('screen mask geometry', () => {
     const packed = flattenScreenMask(wild);
     expect(packed.length).toBeLessThanOrEqual(SCREEN_MASK_FLAT_POINTS);
     expect(packed.length).toBeGreaterThanOrEqual(32);
+  });
+});
+
+describe('screen mask inverse past the screen', () => {
+  // Forward then inverse has to land back on the canvas point, off the
+  // surface as well as on it: that is what keeps a mask handle under the
+  // cursor while it is dragged outside a Mesh screen.
+  const roundTrip = (s: Parameters<typeof canvasToScreenContent>[0], q: { x: number; y: number }) => {
+    const content = canvasToScreenContent(s, q);
+    expect(content, `inverse of (${q.x}, ${q.y})`).not.toBeNull();
+    const back = screenContentToCanvas(s, content!);
+    expect(Math.hypot(back.x - q.x, back.y - q.y), `round trip of (${q.x}, ${q.y})`).toBeLessThan(1e-7);
+    return content!;
+  };
+  const ring = (x0: number, y0: number, x1: number, y1: number, pad: number, n = 12) => {
+    const out: Array<{ x: number; y: number }> = [];
+    for (let i = 0; i <= n; i++) {
+      const t = i / n;
+      out.push({ x: x0 - pad + (x1 - x0 + 2 * pad) * t, y: y0 - pad });
+      out.push({ x: x0 - pad + (x1 - x0 + 2 * pad) * t, y: y1 + pad });
+      out.push({ x: x0 - pad, y: y0 - pad + (y1 - y0 + 2 * pad) * t });
+      out.push({ x: x1 + pad, y: y0 - pad + (y1 - y0 + 2 * pad) * t });
+    }
+    return out;
+  };
+
+  const grid = (rows: number, cols: number, move: (x: number, y: number, r: number, c: number) => { x: number; y: number }) =>
+    Array.from({ length: rows }, (_, r) => Array.from({ length: cols }, (_, c) => move(0.2 + 0.6 * c / (cols - 1), 0.2 + 0.6 * r / (rows - 1), r, c)));
+  const warped = grid(4, 5, (x, y, r, c) => ({ x: x + 0.03 * Math.sin(r * 1.7 + c), y: y + 0.025 * Math.cos(c * 1.3 + r) }));
+  const straight = { cropX: 0, cropY: 0, cropW: 1, cropH: 1, warpMode: 'mesh' as const, meshGrid: { rows: 4, cols: 5, points: warped } };
+
+  it('continues a straight mesh past every side and corner', () => {
+    for (const pad of [0.01, 0.05, 0.12]) {
+      for (const q of ring(0.2, 0.2, 0.8, 0.8, pad)) {
+        const content = roundTrip(straight, q);
+        // Clear of the (wobbly) border, off the surface means off 0..1 in
+        // content space too.
+        if (pad >= 0.05) expect(content.x < 0 || content.x > 1 || content.y < 0 || content.y > 1).toBe(true);
+      }
+    }
+  });
+
+  it('continues a Bezier mesh past its curved border with a Newton solve', () => {
+    const tangents = warped.map((row, r) => row.map((_, c) => (r === 0 && c === 2 ? { right: { x: 0.1, y: -0.08 } }
+      : r === 3 && c === 1 ? { right: { x: 0.08, y: 0.06 } }
+        : c === 0 && r === 1 ? { down: { x: -0.07, y: 0.08 } }
+          : c === 4 && r === 2 ? { up: { x: 0.06, y: -0.07 } } : null)));
+    const curved = { ...straight, meshGrid: { ...straight.meshGrid, bezier: true, tangents } };
+    // The curve really leaves the straight border, so these points exercise
+    // Newton rather than the bilinear guess.
+    expect(screenContentToCanvas(curved, { x: 0.6, y: 0 }).y).toBeLessThan(0.17);
+    for (const pad of [0.02, 0.06, 0.1]) {
+      for (const q of ring(0.2, 0.2, 0.8, 0.8, pad)) roundTrip(curved, q);
+    }
+    // Inside it is still the plain cell inverse.
+    close(canvasToScreenContent(curved, screenContentToCanvas(curved, { x: 0.4, y: 0.6 }))!, { x: 0.4, y: 0.6 });
+  });
+
+  it('moves smoothly across the screen border', () => {
+    const tangents = warped.map((row, r) => row.map((_, c) => (r === 0 && c === 2 ? { right: { x: 0.12, y: -0.1 } } : null)));
+    const curved = { ...straight, meshGrid: { ...straight.meshGrid, bezier: true, tangents } };
+    for (const s of [straight, curved]) {
+      // A drag straight up out of the top edge, and one out past a corner.
+      for (const [from, to] of [[{ x: 0.53, y: 0.4 }, { x: 0.53, y: 0.02 }], [{ x: 0.6, y: 0.6 }, { x: 0.9, y: 0.91 }]]) {
+        let prev = roundTrip(s, from);
+        const steps: number[] = [];
+        for (let i = 1; i <= 200; i++) {
+          const t = i / 200;
+          const q = { x: from.x + (to.x - from.x) * t, y: from.y + (to.y - from.y) * t };
+          const next = roundTrip(s, q);
+          steps.push(Math.hypot(next.x - prev.x, next.y - prev.y));
+          prev = next;
+        }
+        // Equal cursor steps move the content by similar amounts: no jump
+        // where the inside solve hands over to the continued border cell.
+        const sorted = [...steps].sort((a, b) => a - b);
+        const median = sorted[sorted.length >> 1];
+        expect(Math.max(...steps) / median).toBeLessThan(3);
+      }
+    }
+  });
+
+  it('stops at a fold of the continued border instead of jumping across the screen', () => {
+    // This corner cell's right and bottom edges converge outward, so its
+    // continued sheet folds over about 0.15 past the corner. Up to the fold
+    // the inverse round-trips; past it there is no position that does, and
+    // the far branch of the solve must not be taken.
+    let last: { x: number; y: number } | null = null;
+    let sawNull = false;
+    for (let i = 0; i <= 200; i++) {
+      const t = i / 200;
+      const q = { x: 0.6 + 0.35 * t, y: 0.6 + 0.37 * t };
+      const content = canvasToScreenContent(straight, q);
+      if (!content) { sawNull = true; continue; }
+      expect(sawNull, 'no solution comes back once past the fold').toBe(false);
+      const back = screenContentToCanvas(straight, content);
+      expect(Math.hypot(back.x - q.x, back.y - q.y)).toBeLessThan(1e-7);
+      if (last) expect(Math.hypot(content.x - last.x, content.y - last.y)).toBeLessThan(0.1);
+      last = content;
+    }
+    expect(sawNull).toBe(true);
   });
 });

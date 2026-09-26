@@ -458,6 +458,8 @@
     } else if (k.kind === 'mask-cp') {
       // Same canvas-to-content trip for a curve handle. Its partner
       // mirrors through the vertex unless Alt is held, as on layer shapes.
+      // Off the screen the inverse continues the warp outward, so the
+      // handle keeps following the cursor there.
       const p0 = init.masks?.find(m => m.id === k.maskId)?.points[k.index];
       const h0 = p0?.[k.which];
       if (!p0 || !h0) return;
@@ -564,7 +566,8 @@
       const y0 = Math.max(0, Math.floor(Math.min(...ys) * h)), y1 = Math.min(h - 1, Math.ceil(Math.max(...ys) * h));
       for (let y = y0; y <= y1; y++) {
         for (let x = x0; x <= x1; x++) {
-          const uv = canvasToScreenContent(s, { x: (x + 0.5) / w, y: (y + 0.5) / h });
+          // Only the screen's own pixels shade, so skip the solve past it.
+          const uv = canvasToScreenContent(s, { x: (x + 0.5) / w, y: (y + 0.5) / h }, { extrapolate: false });
           if (!uv || uv.x < 0 || uv.x > 1 || uv.y < 0 || uv.y > 1) continue;
           const removed = 1 - screenMaskAlpha(s.masks, uv);
           const o = (y * w + x) * 4 + 3;
