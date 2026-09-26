@@ -289,6 +289,31 @@ contextBridge.exposeInMainWorld('ghostOSC', {
   },
 });
 
+// Art-Net / sACN DMX input. Off until start() is called.
+//   start(config) → { ok, error?, status }  (bindAddress, artnet, sacn,
+//     sacnMulticast, universes, mergeMode, timeoutMs, rateHz)
+//   update(patch) → merge rule, timeout and rate without reopening sockets.
+//   onChanges(cb) → cb({ universes: [{ protocol, universe, changes }] }),
+//     where changes is [channelIndex, value, ...] for changed channels only.
+contextBridge.exposeInMainWorld('ghostDMX', {
+  start: (config) => ipcRenderer.invoke('dmx_input_start', config || {}),
+  stop: () => ipcRenderer.invoke('dmx_input_stop'),
+  update: (patch) => ipcRenderer.invoke('dmx_input_update', patch || {}),
+  status: () => ipcRenderer.invoke('dmx_input_status'),
+  resync: () => ipcRenderer.invoke('dmx_input_resync'),
+  snapshot: (target) => ipcRenderer.invoke('dmx_input_snapshot', target || {}),
+  onChanges: (cb) => {
+    const handler = (_e, batch) => { try { cb(batch); } catch (err) { console.warn('[DMX in] renderer handler', err); } };
+    ipcRenderer.on('dmx-input-changes', handler);
+    return () => ipcRenderer.removeListener('dmx-input-changes', handler);
+  },
+  onStatus: (cb) => {
+    const handler = (_e, status) => { try { cb(status); } catch (err) { console.warn('[DMX in] renderer status handler', err); } };
+    ipcRenderer.on('dmx-input-status', handler);
+    return () => ipcRenderer.removeListener('dmx-input-status', handler);
+  },
+});
+
 // LAN remote pairing. info() → { token, wsPort, httpPort }; reset() issues a
 // new token, which disconnects and unpairs every phone, and returns the same.
 contextBridge.exposeInMainWorld('ghostRemote', {

@@ -332,10 +332,18 @@ function createPixelMapOutput({
     return { ok: true, terminated, stats: snapshot() };
   }
 
+  /** UDP port the output socket sends from, or null. DMX input uses it to
+   *  ignore this app's own Art-Net and sACN traffic. */
+  function localPort() {
+    if (!socket || !socket._gaReady) return null;
+    try { return socket.address().port; } catch { return null; }
+  }
+
   return {
     sendFrame,
     stop,
     stats: snapshot,
+    localPort,
   };
 }
 
