@@ -328,6 +328,9 @@ let sidecarProcess = null;
 let embeddedServerModule = null;
 const { buildWLEDRealtimePacket } = require('./wled-packet.cjs');
 const wledSockets = new Map();  // controllerId -> dgram.Socket
+const { createPixelMapOutput } = require('./pixelmap-output.cjs');
+// Art-Net / sACN pixel mapping. One socket for every fixture and node.
+const pixelMapOutput = createPixelMapOutput({ dgram });
 let activeVideoConverterJob = null;
 const activeJpegSequenceJobs = new Map();
 const activeJpegFrameEncoderJobs = new Map();
@@ -5119,6 +5122,14 @@ function registerIpcHandlers() {
     return { ok: true };
   });
 
+  // --- Art-Net / sACN pixel mapping ---
+  // The renderer packs whole DMX universes; pixelmap-output.cjs validates
+  // them, caps the rate (60fps max), drops frames under backpressure and
+  // keeps sequence numbers. Stop blacks out and terminates every stream.
+  ipcMain.handle('pixelmap_send_frame', async (_, frame) => pixelMapOutput.sendFrame(frame));
+  ipcMain.handle('pixelmap_stop', async () => pixelMapOutput.stop());
+  ipcMain.handle('pixelmap_get_stats', async () => pixelMapOutput.stats());
+
   // --- OSC ---
   ipcMain.handle('osc_start', async (_, { port }) => {
     return startOSC(port || 8000, mainWindow);
@@ -8896,6 +8907,7 @@ function cleanupAndQuit() {
   runCleanupStep('stopPowerSaveBlocker', stopPowerSaveBlocker);
   runCleanupStep('stopServer', stopServer);
   runCleanupStep('closeAllWledSockets', closeAllWledSockets);
+  runCleanupStep('stopPixelMapOutput', () => pixelMapOutput.stop());
   runCleanupStep('killPluginProcesses', killPluginProcesses);
 
   setTimeout(() => app.exit(0), 150);

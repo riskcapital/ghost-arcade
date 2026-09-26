@@ -155,6 +155,8 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'native_viewport_set_layer_interaction',
   // WLED — UDP DRGB packets to LED controllers on the LAN
   'wled_send_frame', 'wled_close_socket',
+  // Art-Net / sACN pixel mapping — DMX universes over UDP
+  'pixelmap_send_frame', 'pixelmap_stop', 'pixelmap_get_stats',
   // Ableton Link — LAN tempo/beat sync (session lives in main; the
   // renderer polls state and bridges tempo into the master BPM).
   'link_enable', 'link_disable', 'link_set_tempo', 'link_get_state',
