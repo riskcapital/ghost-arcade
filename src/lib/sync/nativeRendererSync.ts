@@ -879,6 +879,7 @@ function nativeEffectDescriptors(layer: Layer): string[] {
 }
 
 import { nativeEffectPassIdForEffectType } from '$lib/renderer/nativeEffectCoverage';
+import { statusFrameRate } from './statusFrameRate';
 const NATIVE_EFFECT_PASS_IDS = new Set<NativeEffectPassId>(
   NATIVE_EFFECT_PASS_MANIFEST.map((entry) => entry.id),
 );
@@ -5499,6 +5500,8 @@ export class NativeRendererSync {
   private lastStatusLogAt = 0;
   private lastStatusFrameCount = 0;
   private lastStatusPreviewFrameCount = 0;
+  private lastStatusNativeFps = 0;
+  private lastStatusPreviewFps = 0;
   private decodeGpuBridgePath: string | undefined =
     (import.meta as any)?.env?.VITE_DECODE_GPU_BRIDGE_PATH || undefined;
 
@@ -7902,6 +7905,8 @@ export class NativeRendererSync {
     this.lastStatusLogAt = performance.now();
     this.lastStatusFrameCount = Number(startupStatus?.frames_presented ?? 0);
     this.lastStatusPreviewFrameCount = 0;
+    this.lastStatusNativeFps = 0;
+    this.lastStatusPreviewFps = 0;
     this.audioUnsub?.();
     this.audioUnsub = visualAudio.subscribe(() => this.scheduleAudioSync());
     this.desiredWidth = width;
@@ -8102,6 +8107,8 @@ export class NativeRendererSync {
     this.lastStatusLogAt = 0;
     this.lastStatusFrameCount = 0;
     this.lastStatusPreviewFrameCount = 0;
+    this.lastStatusNativeFps = 0;
+    this.lastStatusPreviewFps = 0;
     if (!stopCore) {
       return;
     }
@@ -10426,24 +10433,29 @@ fn fs_main() -> @location(0) vec4<f32> {
       this.reconcileNativeImageDecodes(status);
       this.reconcileNativeVideoDecodes(status);
       const now = performance.now();
-      const elapsed = this.lastStatusLogAt > 0
-        ? Math.max(0.001, (now - this.lastStatusLogAt) / 1000)
-        : 0;
       const framesPresented = Number(status.frames_presented ?? 0);
-      const nativeFps = elapsed > 0
-        ? Math.max(0, framesPresented - this.lastStatusFrameCount) / elapsed
-        : 0;
       const previewFramesPresented = Number(
         (previewStatus as any)?.framesPresented ??
         (previewStatus as any)?.addonStatus?.framesPresented ??
         0,
       );
-      const previewFps = elapsed > 0
-        ? Math.max(0, previewFramesPresented - this.lastStatusPreviewFrameCount) / elapsed
-        : 0;
-      this.lastStatusLogAt = now;
-      this.lastStatusFrameCount = framesPresented;
-      this.lastStatusPreviewFrameCount = previewFramesPresented;
+      // Rates only over a real interval: the log right after start used to
+      // divide a dozen frames by a millisecond (nativeFps=12000).
+      const nativeRate = statusFrameRate(
+        this.lastStatusLogAt > 0 ? { count: this.lastStatusFrameCount, at: this.lastStatusLogAt } : null,
+        framesPresented, now, this.lastStatusNativeFps,
+      );
+      const previewRate = statusFrameRate(
+        this.lastStatusLogAt > 0 ? { count: this.lastStatusPreviewFrameCount, at: this.lastStatusLogAt } : null,
+        previewFramesPresented, now, this.lastStatusPreviewFps,
+      );
+      const nativeFps = nativeRate.fps;
+      const previewFps = previewRate.fps;
+      this.lastStatusLogAt = nativeRate.at;
+      this.lastStatusFrameCount = nativeRate.count;
+      this.lastStatusPreviewFrameCount = previewRate.count;
+      this.lastStatusNativeFps = nativeFps;
+      this.lastStatusPreviewFps = previewFps;
       const sourceUploadBreakdown =
         `${status.source_frame_cpu_fallback_uploads}cpu/` +
         `${status.source_frame_file_uploads}file/` +
