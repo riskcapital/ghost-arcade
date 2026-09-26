@@ -92,6 +92,29 @@ describe('VJ clip transition persistence', () => {
     };
   }
 
+  it('saves WLED controllers, groups and LED effects with the project', () => {
+    const payload: any = transitionProject();
+    expect(layers.project.importProject(payload)).toBe(true);
+    const controller = { id: 'wled-a', name: 'Stage left', ipAddr: '192.168.1.42', port: 21324, ledCount: 120, enabled: true };
+    const group = { id: 'grp-a', name: 'Front', members: [{ controllerId: 'wled-a' }] };
+    const effect = { id: 'fx-a', name: 'Chase', type: 'chase', enabled: true };
+    layers.project.update((p: any) => ({
+      ...p,
+      wledControllers: [controller],
+      wledGroups: [group],
+      wledEffects: [effect],
+      wledEffectAutomation: { mode: 'beat' },
+    }));
+    const saved = JSON.parse(JSON.stringify(layers.project.exportProject()));
+    saved.project.wledControllers.push({ name: 'no id' }, { id: 'bad-ip', ipAddr: 42 });
+    expect(layers.project.importProject(saved)).toBe(true);
+    const project: any = get(layers.project);
+    expect(project.wledControllers).toEqual([controller]);
+    expect(project.wledGroups).toEqual([group]);
+    expect(project.wledEffects).toEqual([effect]);
+    expect(project.wledEffectAutomation).toEqual({ mode: 'beat' });
+  });
+
   it('saves embedded LUTs in Mapping and both VJ decks without external files', async () => {
     const { parseCubeLut } = await import('../color/cubeLut');
     const { vjClipLauncher } = await import('./vjClipLauncher');

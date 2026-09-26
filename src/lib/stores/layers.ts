@@ -4,6 +4,14 @@ import { normalizeAutopilot } from './vjAutopilot';
 import { writable, derived, get } from 'svelte/store';
 import type { Layer, Project, WarpCorners, Point2D, BezierPoint, MeshPointTangents, MaskShape, MediaSource, BlendMode, WarpMode, Effect, EffectType, EffectParams, LayerType, SVGContent, SVGFillMode, SVGColorMode, ColorContent, LightPaintingContent, LightPaintingStroke, CropRegion, LayerShape, LayerShapeType, Composition, VJModeState, VJDeck, Timeline, TimelineClip, TextContent, TextAnimation, SplatContent, Model3DContent, MediaTrayFolder, StagePreset, SVKeyboardPreset, EdgeEffect, EdgeEffectsConfig, PixelFXContent, GPULayerContent, AutoConfig, WLEDController, PixelMapConfig, PixelMapFixture, WLEDEffect, WLEDEffectAutomation, WLEDGroup, StageEffect, SurfaceEffectAutomation, MappingCompositionState } from '../types';
 import { createDefaultPixelMapConfig, normalizePixelMapConfig } from '../pixelmap/fixtures';
+
+/** Keep only the object entries with a string id from a saved list; anything
+ *  else in an older or hand-edited file is dropped instead of breaking the load. */
+function identifiedEntries(raw: unknown): any[] {
+  return Array.isArray(raw)
+    ? raw.filter(entry => entry && typeof entry === 'object' && typeof (entry as any).id === 'string')
+    : [];
+}
 import { createLayer, createProject, createDefaultCorners, createMeshGrid, createLinesLayer, createSVGLayer, createColorLayer, createLightPaintingLayer, createAdvLightPaintingLayer, createTextLayer, createSplatLayer, createDefaultSVGContent, createDefaultCropRegion, createDefaultLayerShape, createDefaultVJModeState, createDefaultMappingCompositionState, createDefaultTimeline, generateUUID, createDefaultModel3DContent, createDefaultEdgeEffect, convertShapeToCustom, createGroupLayer, createDefaultPixelFXContent, createDefaultGPULayerContent } from '../types';
 import type { GroupConfig } from '../types';
 import { instantiateEdgeEffects } from './edgeEffectPresets';
@@ -5161,6 +5169,12 @@ void main() {
           activeSurfaceId: currentProject.activeSurfaceId ?? null,
           // Art-Net / sACN fixtures and output settings.
           ...(currentProject.pixelMap ? { pixelMap: currentProject.pixelMap } : {}),
+          // WLED controllers, their groups and LED effects belong to the
+          // project (the WLED guide says so); plain JSON, no runtime refs.
+          wledControllers: currentProject.wledControllers || [],
+          wledGroups: currentProject.wledGroups || [],
+          wledEffects: currentProject.wledEffects || [],
+          ...(currentProject.wledEffectAutomation ? { wledEffectAutomation: currentProject.wledEffectAutomation } : {}),
           // Multi-output slices snapshot — saved with the project so
           // the operator's projector / display layout survives a
           // reload. Read live from $settings.output because that's
@@ -6163,6 +6177,13 @@ void main() {
           surfaces: (proj as any).surfaces || [],
           activeSurfaceId: (proj as any).activeSurfaceId ?? null,
           ...((proj as any).pixelMap ? { pixelMap: normalizePixelMapConfig((proj as any).pixelMap) } : {}),
+          wledControllers: identifiedEntries((proj as any).wledControllers)
+            .filter((controller: any) => typeof controller.ipAddr === 'string'),
+          wledGroups: identifiedEntries((proj as any).wledGroups),
+          wledEffects: identifiedEntries((proj as any).wledEffects),
+          ...((proj as any).wledEffectAutomation && typeof (proj as any).wledEffectAutomation === 'object'
+            ? { wledEffectAutomation: (proj as any).wledEffectAutomation }
+            : {}),
         };
 
         set(importedProject);
