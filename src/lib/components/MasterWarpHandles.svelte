@@ -25,6 +25,7 @@
   import { get } from 'svelte/store';
   import { project } from '../stores/layers';
   import { settings } from '../stores/settings';
+  import { recordDiscreteAction } from '../stores/historyHooks';
   import type { WarpCorners, MeshWarpGrid, Point2D } from '../types';
   import { normalizedWarpNudge } from '../utils/warpNudge';
   import {
@@ -124,12 +125,19 @@
     removeDragListeners();
   }
 
-  function onMouseUp() {
+  /** A drag ends as one undo step (history skips it if nothing moved). */
+  function endDrag() {
+    const wasDragging = drag !== null;
     cancelDrag();
+    if (wasDragging) recordDiscreteAction();
+  }
+
+  function onMouseUp() {
+    endDrag();
   }
 
   function onVisibilityChange() {
-    if (document.hidden) cancelDrag();
+    if (document.hidden) endDrag();
   }
 
   function isTextEditingTarget(target: EventTarget | null) {
@@ -208,6 +216,7 @@
           [selectedCorner]: { x: clamp01(current.x + dx), y: clamp01(current.y + dy) },
         },
       });
+      recordDiscreteAction();
       return;
     }
 
@@ -221,6 +230,7 @@
         const t = resolveMeshTangents(meshGrid, row, col)[selectedTangent];
         const end = meshLocalToNorm(p.x + t.x, p.y + t.y);
         moveTangentEnd(meshGrid, row, col, selectedTangent, { x: end.x + dx, y: end.y + dy }, e.altKey);
+        recordDiscreteAction();
         return;
       }
       const curNorm = meshLocalToNorm(p.x, p.y);
@@ -229,22 +239,24 @@
         meshRow.map((pt, ci) => (ri === row && ci === col ? { x: next.u, y: next.v } : pt))
       );
       settings.setMasterWarp({ meshGrid: withMeshPoints(meshGrid, points) });
+      recordDiscreteAction();
       return;
     }
 
     nudgeCorners(dx, dy);
+    recordDiscreteAction();
   }
 
   onMount(() => {
     window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('blur', cancelDrag);
+    window.addEventListener('blur', endDrag);
     document.addEventListener('visibilitychange', onVisibilityChange);
   });
 
   onDestroy(() => {
     cancelDrag();
     window.removeEventListener('keydown', handleKeyDown);
-    window.removeEventListener('blur', cancelDrag);
+    window.removeEventListener('blur', endDrag);
     document.removeEventListener('visibilitychange', onVisibilityChange);
   });
 
@@ -266,6 +278,7 @@
     const grid = meshGrid;
     if (!grid) return;
     settings.setMasterWarp({ meshGrid: withMeshPointTangents(grid, row, col, meshTangentsAfterStraighten(grid, row, col, side)) });
+    recordDiscreteAction();
   }
 
   function onMouseMove(e: MouseEvent) {

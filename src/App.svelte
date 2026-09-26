@@ -118,7 +118,8 @@
     type PhoneVisionPointCloudPreset,
     type PhoneVisionSegmentationPipeline,
   } from './lib/stores/phoneVision';
-  import { history, canUndo, canRedo } from './lib/stores/history';
+  import { history, canUndo, canRedo, outputHistoryPatch, type HistorySnapshot } from './lib/stores/history';
+  import { selectedScreenId, selectedScreenMaskId, screenMaskPlacing } from './lib/stores/screens';
   import { recentFiles } from './lib/stores/recentFiles';
   import { initLicense, destroyLicense } from './lib/stores/license';
   import { startUpdateChecker, stopUpdateChecker } from './lib/stores/updateChecker';
@@ -5264,26 +5265,43 @@
   // Initialize history with first project state
   let historyInitialized = false;
   $: if ($project && !historyInitialized) {
-    history.init($project, keyframeTimeline.exportAll());
+    history.init($project, keyframeTimeline.exportAll(), settings.captureOutputHistory());
     historyInitialized = true;
   }
 
   // Record a snapshot — call this AFTER discrete user actions (warp end, layer
-  // add/delete, keyframe edits, etc.). Keyframe timelines live in their own
-  // store rather than inside Project, so they are captured alongside it here;
-  // this is the only place that can see both.
+  // add/delete, keyframe edits, screen and mask edits, etc.). Keyframe
+  // timelines and the output stage (Screens, Master Warp) live in their own
+  // stores rather than inside Project, so they are captured alongside it
+  // here; this is the only place that can see all three. Nothing records on
+  // a store subscription, so live automation never lands in the history.
   function recordHistory() {
-    history.record(get(project), keyframeTimeline.exportAll());
+    history.record(get(project), keyframeTimeline.exportAll(), settings.captureOutputHistory());
   }
 
   /** Restore a snapshot into every store it spans. */
-  function applyHistorySnapshot(snapshot: { project: any; keyframes: unknown }) {
+  function applyHistorySnapshot(snapshot: HistorySnapshot) {
     project.set(snapshot.project);
     // beginHistoryRestore() stops importAll() from recording the state it is
     // restoring as a fresh undo entry (which would poison the redo stack).
     beginHistoryRestore();
     try {
       keyframeTimeline.importAll(Array.isArray(snapshot.keyframes) ? snapshot.keyframes as any : []);
+      // Only what this step changed goes back into the output stage.
+      const outputPatch = outputHistoryPatch(snapshot.output, snapshot.leavingOutput);
+      if (outputPatch) {
+        settings.applyOutputStage(outputPatch);
+        // An undone screen or mask may have been the selected one.
+        const slices = get(settings).output.slices ?? [];
+        const screenId = get(selectedScreenId);
+        const screen = slices.find((s) => s.id === screenId);
+        if (screenId && !screen) selectedScreenId.set(null);
+        const maskId = get(selectedScreenMaskId);
+        if (maskId && !screen?.masks?.some((m) => m.id === maskId)) {
+          selectedScreenMaskId.set(null);
+          screenMaskPlacing.set(false);
+        }
+      }
     } finally {
       endHistoryRestore();
     }

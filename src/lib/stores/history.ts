@@ -86,6 +86,13 @@ function sanitize(value: unknown, ancestors: WeakSet<object> = new WeakSet()): u
 }
 
 /**
+ * The output-stage geometry a step carries: the Screens (crop, warp, masks)
+ * and the Master Warp, keyed as in settings.output. See
+ * settings.captureOutputHistory for what is in and what stays out.
+ */
+export type OutputHistoryState = Record<string, unknown>;
+
+/**
  * A single undo step.
  *
  * Keyframe timelines live in their own store (stores/keyframeTimeline.ts), not
@@ -93,11 +100,24 @@ function sanitize(value: unknown, ancestors: WeakSet<object> = new WeakSet()): u
  * save time. So snapshotting the project alone left every keyframe edit
  * outside undo entirely. Each step carries both, and undo/redo restore them
  * together so a keyframe and the layer edit beside it unwind as one action.
+ *
+ * Screens and the Master Warp are the same story: they live in settings
+ * (the per-frame output path reads them there) but belong to the project,
+ * so a screen crop drag, a mask edit and a Master Warp drag were outside
+ * undo. Each step now carries them too, on the one shared timeline, so a
+ * mask edit and the layer edit after it unwind in the order they happened.
  */
 export interface HistorySnapshot {
   project: Project;
   /** Output of keyframeTimeline.exportAll(); null when nothing is keyframed. */
   keyframes: unknown;
+  /** Screens + Master Warp at this step; null if the step was recorded
+   *  without them. */
+  output: OutputHistoryState | null;
+  /** The output state of the step being left. The caller restores only the
+   *  keys that differ between the two, so a step that never touched the
+   *  screens leaves them exactly as they are live. */
+  leavingOutput: OutputHistoryState | null;
 }
 
 /**
@@ -106,13 +126,17 @@ export interface HistorySnapshot {
  * hooks run — avoiding the "Unable to serialize Texture." flood that
  * otherwise starves the renderer when VJ clips hold live textures.
  */
-function serializeSnapshot(project: Project, keyframes: unknown): string {
-  return JSON.stringify({ project: sanitize(project), keyframes: sanitize(keyframes) });
+function serializeSnapshot(project: Project, keyframes: unknown, output: OutputHistoryState | null): string {
+  return JSON.stringify({ project: sanitize(project), keyframes: sanitize(keyframes), output: sanitize(output) });
 }
 
-function parseSnapshot(json: string): { project: Project; keyframes: unknown } {
-  const parsed = JSON.parse(json) as { project: Project; keyframes: unknown };
-  return { project: parsed.project, keyframes: parsed.keyframes ?? null };
+function parseSnapshot(json: string): { project: Project; keyframes: unknown; output: OutputHistoryState | null } {
+  const parsed = JSON.parse(json) as { project: Project; keyframes: unknown; output?: OutputHistoryState | null };
+  return { project: parsed.project, keyframes: parsed.keyframes ?? null, output: parsed.output ?? null };
+}
+
+function outputOf(json: string | null): OutputHistoryState | null {
+  return json ? parseSnapshot(json).output : null;
 }
 
 /**
@@ -171,19 +195,19 @@ function createHistoryStore() {
     subscribe,
 
     // Initialize with a project state
-    init(project: Project, keyframes: unknown = null) {
+    init(project: Project, keyframes: unknown = null, output: OutputHistoryState | null = null) {
       set({
         past: [],
         future: [],
-        current: serializeSnapshot(project, keyframes),
+        current: serializeSnapshot(project, keyframes, output),
       });
     },
 
     // Record a new state (called after discrete user actions)
-    record(project: Project, keyframes: unknown = null) {
+    record(project: Project, keyframes: unknown = null, output: OutputHistoryState | null = null) {
       if (suppressCount > 0) return;
 
-      const serialized = serializeSnapshot(project, keyframes);
+      const serialized = serializeSnapshot(project, keyframes, output);
 
       update((state) => {
         // Skip if identical to current state
@@ -222,6 +246,8 @@ function createHistoryStore() {
         result = {
           project: hydrateProject(parsed.project, liveProject),
           keyframes: parsed.keyframes,
+          output: parsed.output,
+          leavingOutput: outputOf(state.current),
         };
 
         return {
@@ -251,6 +277,8 @@ function createHistoryStore() {
         result = {
           project: hydrateProject(parsed.project, liveProject),
           keyframes: parsed.keyframes,
+          output: parsed.output,
+          leavingOutput: outputOf(state.current),
         };
 
         return {
@@ -272,6 +300,25 @@ function createHistoryStore() {
 }
 
 export const history = createHistoryStore();
+
+/**
+ * What an undo or redo should write back to the output stage: the keys of
+ * `to` whose value differs from `from`, or null when the step did not
+ * touch the output. Comparing the two recorded steps (not the live state)
+ * is what keeps undo from reverting anything that changed without being
+ * recorded, such as a live control or another window's edit.
+ */
+export function outputHistoryPatch(
+  to: OutputHistoryState | null,
+  from: OutputHistoryState | null,
+): OutputHistoryState | null {
+  if (!to) return null;
+  const patch: OutputHistoryState = {};
+  for (const key of Object.keys(to)) {
+    if (JSON.stringify(to[key]) !== JSON.stringify(from?.[key])) patch[key] = to[key];
+  }
+  return Object.keys(patch).length ? patch : null;
+}
 
 // Derived stores for UI
 export const canUndo = {

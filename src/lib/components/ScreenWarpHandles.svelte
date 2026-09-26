@@ -49,6 +49,7 @@
   import { get } from 'svelte/store';
   import type { OutputSlice, ScreenMask } from '../stores/settings';
   import { project } from '../stores/layers';
+  import { recordDiscreteAction } from '../stores/historyHooks';
   import { settings, screenMaskIsActive } from '../stores/settings';
   import type { WarpCorners, MeshWarpGrid, Point2D } from '../types';
   import { normalizedWarpNudge } from '../utils/warpNudge';
@@ -176,12 +177,19 @@
     removeDragListeners();
   }
 
-  function onMouseUp(_e: MouseEvent) {
+  /** A drag ends as one undo step (history skips it if nothing moved). */
+  function endDrag() {
+    const wasDragging = drag !== null;
     cancelDrag();
+    if (wasDragging) recordDiscreteAction();
+  }
+
+  function onMouseUp(_e: MouseEvent) {
+    endDrag();
   }
 
   function onVisibilityChange() {
-    if (document.hidden) cancelDrag();
+    if (document.hidden) endDrag();
   }
 
   function isTextEditingTarget(target: EventTarget | null): boolean {
@@ -257,6 +265,7 @@
     const grid = $screens.find(s => s.id === sliceId)?.meshGrid;
     if (!grid) return;
     screenActions.update(sliceId, { meshGrid: withMeshPointTangents(grid, row, col, meshTangentsAfterStraighten(grid, row, col, side)) });
+    recordDiscreteAction();
   }
 
   function handleKeyDown(e: KeyboardEvent) {
@@ -306,6 +315,7 @@
     e.preventDefault();
     e.stopPropagation();
     nudgeSelectedSlice(dx, dy, e.altKey);
+    recordDiscreteAction();
   }
 
   onMount(() => {
@@ -322,7 +332,7 @@
   });
 
   function handleWindowBlur() {
-    cancelDrag();
+    endDrag();
   }
 
 

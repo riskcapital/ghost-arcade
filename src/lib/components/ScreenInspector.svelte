@@ -22,6 +22,7 @@
   import { onMount } from 'svelte';
   import type { OutputSlice } from '../stores/settings';
   import { screenActions, selectedScreenMaskId, screenMaskPlacing } from '../stores/screens';
+  import { recordDiscreteAction, scheduleHistorySnapshot } from '../stores/historyHooks';
   import { isDesktopApp, getTextureShareLabel } from '$lib/bridge';
 
   // Is the NDI native addon built + the NDI runtime initialized? Gates
@@ -54,8 +55,11 @@
 
   const tsLabel = getTextureShareLabel();
 
+  // Inspector edits are undoable; a slider drag or a burst of typing
+  // settles into one step.
   function update(partial: Partial<OutputSlice>) {
     screenActions.update(screen.id, partial);
+    scheduleHistorySnapshot();
   }
 
   function clampNumber(value: number, min: number, max: number) {
@@ -283,10 +287,10 @@
           <div class="mask-row" class:active>
             <div class="mask-head">
               <input type="checkbox" aria-label="Enable {m.name}" checked={m.enabled}
-                onchange={(e) => screenActions.updateMask(screen.id, m.id, { enabled: (e.target as HTMLInputElement).checked })} />
+                onchange={(e) => { screenActions.updateMask(screen.id, m.id, { enabled: (e.target as HTMLInputElement).checked }); recordDiscreteAction(); }} />
               <input class="mask-name" aria-label="Mask name" value={m.name}
                 onfocus={() => selectMask(m.id)}
-                onchange={(e) => screenActions.updateMask(screen.id, m.id, { name: (e.target as HTMLInputElement).value })} />
+                onchange={(e) => { screenActions.updateMask(screen.id, m.id, { name: (e.target as HTMLInputElement).value }); recordDiscreteAction(); }} />
               <button class="chip-btn" class:active={active} onclick={() => selectMask(m.id)}
                 title="Show this mask's points on the canvas">Edit</button>
               <button class="icon-btn" aria-label="Delete {m.name}" title="Delete mask"
@@ -299,7 +303,7 @@
                   {$screenMaskPlacing ? 'Done placing' : 'Place points'}
                 </button>
                 <button class="chip-btn" class:active={m.invert}
-                  onclick={() => screenActions.updateMask(screen.id, m.id, { invert: !m.invert })}>Invert</button>
+                  onclick={() => { screenActions.updateMask(screen.id, m.id, { invert: !m.invert }); recordDiscreteAction(); }}>Invert</button>
                 <span class="mask-count" class:warn={m.points.length < 3}>
                   {m.points.length} point{m.points.length === 1 ? '' : 's'}{m.points.length < 3 ? ', needs 3' : ''}
                 </span>
@@ -307,10 +311,10 @@
               <div class="range-row">
                 <span class="range-label">Feather</span>
                 <input aria-label="Mask feather" type="range" min="0" max="1" step="0.01" value={m.feather}
-                  oninput={(e) => screenActions.updateMask(screen.id, m.id, { feather: numberFromEvent(e) })} />
+                  oninput={(e) => { screenActions.updateMask(screen.id, m.id, { feather: numberFromEvent(e) }); scheduleHistorySnapshot(); }} />
                 <span class="value-wrap">
                   <input class="value-box" aria-label="Mask feather percent" type="number" min="0" max="100" step="1" value={Math.round(m.feather * 100)}
-                    onchange={(e) => screenActions.updateMask(screen.id, m.id, { feather: numberFromEvent(e) / 100 })} />
+                    onchange={(e) => { screenActions.updateMask(screen.id, m.id, { feather: numberFromEvent(e) / 100 }); recordDiscreteAction(); }} />
                   <span class="unit">%</span>
                 </span>
               </div>
