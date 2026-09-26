@@ -62,6 +62,20 @@ const { createPjlinkClient } = require('./pjlink.cjs');
 const { createPjlinkCredentials } = require('./pjlink-credentials.cjs');
 const pjlinkCredentials = createPjlinkCredentials({ safeStorage, dir: app.getPath('userData') });
 const pjlinkClient = createPjlinkClient({ credentials: pjlinkCredentials });
+
+// Debug: measure main-thread event-loop lag (see main-lag-probe.js). Loaded
+// lazily so normal runs pay nothing for it.
+if (process.env.GA_MAIN_LAG_PROBE === '1') {
+  import('./main-lag-probe.js')
+    .then(({ startMainLagProbe }) => startMainLagProbe({
+      extras: {
+        BrowserWindow,
+        screen,
+        nativePreviewStatus: () => nativePreviewAddon?.status?.() ?? null,
+      },
+    }))
+    .catch(err => console.warn('[MainLag] probe failed to start:', err?.message || err));
+}
 const nativeRendererBroker = createNativeRendererBroker({
   appRoot: path.join(__dirname, '..'),
   resourcesPath: process.resourcesPath,
