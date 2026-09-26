@@ -360,10 +360,10 @@ export interface VJClipLauncherState {
   // Stage mode: bridge VJ layers to mapping layers
   stageMode: boolean;
   stagePresetId: string | null;
-  // Map mode: VJ layer slots hold mapping presets; output is a stack of
-  // their full composition layers, modulated by per-VJ-layer opacity +
-  // blendMode. When mapMode is true, MIX/STAGE rendering paths are
-  // bypassed and the Maps tab is the only visible source in the tray.
+  // Map mode: VJ layer slots hold mapping presets or ordinary clips. The
+  // output stacks each preset row's layers (per-row opacity + blendMode)
+  // over the shared map; rows playing clips feed any mapped surface whose
+  // Source is that row, the deck mix or a VJ group.
   // Mutually exclusive with stageMode (setters clear the other).
   mapMode: boolean;
   // Stop-all blackout: when true, all VJ output is suppressed (black)
@@ -1059,7 +1059,9 @@ function releaseClipRuntimeIfOrphaned(nextState: any, clipId: string): void {
 }
 
 function vjTransitionRowIsVisible(state: VJClipLauncherState, deck: VJDeck, layerIndex: number): boolean {
-  if (!state.isLive || state.mapMode || (deck === 'B' && !state.crossfaderEnabled)) return false;
+  // MAP rows play ordinary clips too (surfaces bound to a row show them),
+  // so their clip transitions run exactly as in MIX and STAGE.
+  if (!state.isLive || (deck === 'B' && !state.crossfaderEnabled)) return false;
   const states = pickLayerStates(state, deck);
   const layer = states[layerIndex];
   return !!layer && !layer.mute && (!states.some(entry => entry.solo) || layer.solo);
@@ -3570,8 +3572,9 @@ function autopilotSamples(state: VJClipLauncherState): AutopilotSample[] {
       const clip = row.activeClip;
       const config = normalizeAutopilot(row.autopilot);
       if (!clip || !config || row.autopilotPaused) return;
+      // Presets only fire in MAP, where rows may mix presets and clips.
       const ids = (pickGrid(state, deck)[index] ?? []).map(cell =>
-        cell && (state.mapMode ? cell.type === 'preset' : cell.type !== 'preset') ? cell.id : null);
+        cell && (state.mapMode || cell.type !== 'preset') ? cell.id : null);
       const current = ids.indexOf(clip.id);
       // Don't jump from a playing clip in an old block into unrelated content.
       if (current < 0) return;
@@ -3769,7 +3772,7 @@ if (typeof window !== 'undefined') {
   let phaseSources = new Set<string>();
   const eligible = () => {
     const state = get(vjClipLauncher);
-    if (!isDesktopApp || !state.isOpen || !state.isLive || state.mapMode || state.stoppedAll
+    if (!isDesktopApp || !state.isOpen || !state.isLive || state.stoppedAll
       || new URLSearchParams(window.location?.search ?? '').has('mode')) return [];
     return (['A', 'B'] as const).flatMap(deck => deck === 'B' && !state.crossfaderEnabled ? [] :
       pickLayerStates(state, deck).flatMap((row, index) => {
@@ -4221,7 +4224,7 @@ export const vjOutputLayers = derived(
 export const vjTransitionOutputLayers = derived(
   [vjClipLauncher, vjClipTransitions, vjLayerSequencer],
   ([state, transitions, sequencer]) => {
-    if (!state.isLive || state.mapMode) return [];
+    if (!state.isLive) return [];
     return Array.from(transitions.values()).flatMap(transition => {
       const layerState = pickLayerStates(state, transition.deck)[transition.layerIndex];
       if (!layerState || (transition.deck === 'B' && !state.crossfaderEnabled)) return [];
@@ -4251,7 +4254,7 @@ export function getVJClipLauncherState(): VJClipLauncherState {
 type NativeCutRow = { layerIndex: number; incoming: VJClip; outgoing: VJClip; layerId: string; start: number; transition: ReturnType<typeof effectiveClipTransition>; fadeToken?:number; signature: string };
 type NativeCutPlan = { trigger: PendingTrigger; rows: NativeCutRow[]; lane: string; dualDeck: boolean; signature: string };
 export function buildNativeQueuedCutPlan(trigger: PendingTrigger, state: VJClipLauncherState): NativeCutPlan | null {
-  if (trigger.autopilotSource || (trigger.bank === 'B' && !state.crossfaderEnabled) || state.mapMode
+  if (trigger.autopilotSource || (trigger.bank === 'B' && !state.crossfaderEnabled)
     || !state.isLive || !state.isOpen || state.stoppedAll || !queuedTriggerStillMatches(trigger,state)
     || !get(nativeRendererRuntime).running || get(vjLayerSequencer).isPlaying
     || Object.values(get(keyframeTimeline).timelines).some(timeline=>timeline.tracks.length>0)) return null;
@@ -4414,7 +4417,7 @@ if (typeof window !== 'undefined' && isDesktopApp && !new URLSearchParams(window
         const grid=pickGrid(state,plan.trigger.bank);
         for (const cut of plan.rows) {
           const current=rows[cut.layerIndex]?.activeClip;
-          if (!state.isLive || !state.isOpen || state.stoppedAll || state.mapMode || state.crossfaderEnabled!==plan.dualDeck
+          if (!state.isLive || !state.isOpen || state.stoppedAll || state.crossfaderEnabled!==plan.dualDeck
             || state.activeBlockId!==plan.trigger.blockId || current?.id!==cut.outgoing.id
             || current?.src!==cut.outgoing.src || current?._nativePlaybackSeekSeq!==cut.outgoing._nativePlaybackSeekSeq
             || grid[cut.layerIndex]?.[plan.trigger.columnIndex]?.id!==cut.incoming.id) {

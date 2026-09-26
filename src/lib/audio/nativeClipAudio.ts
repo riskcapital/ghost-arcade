@@ -3,9 +3,10 @@ import type { VJClip, VJClipLauncherState } from '../stores/vjClipLauncher';
 import { vjClipTransitionKey, type VJClipTransition } from '../stores/vjClipTransitions';
 export const nativeAudioMaster = writable({ volume: 1, muted: false });
 /** Recordings carry the core's clip mix whenever the VJ workspace owns the
- *  output. It is silence, not absent, while muted, stopped or not live. */
-export function nativeClipAudioRecordable(state: Pick<VJClipLauncherState, 'isOpen' | 'mapMode'>) {
-  return state.isOpen && !state.mapMode;
+ *  output, MAP included. It is silence, not absent, while muted, stopped or
+ *  not live. */
+export function nativeClipAudioRecordable(state: Pick<VJClipLauncherState, 'isOpen'>) {
+  return state.isOpen;
 }
 type ClipTransitionAudio = Pick<VJClipTransition, 'token' | 'duration' | 'startedAtMs' | 'incomingClipId' | 'outgoingClip' | 'queuedTriggerId'>;
 export interface NativeClipAudioVoice {
@@ -39,7 +40,7 @@ export function nativeClipAudioMix(state: VJClipLauncherState, master = { volume
       if (clip) add(clip.src);
       // The outgoing clip may have left the grid; keep its decoded audio.
       if (outgoing) add(outgoing.src);
-      if (!state.isOpen || !state.isLive || state.stoppedAll || state.mapMode) return;
+      if (!state.isOpen || !state.isLive || state.stoppedAll) return;
       const rowMuted = master.muted || row.mute || (solo && !row.solo);
       const voice = (source: VJClip, role: 'in' | 'out' | null): NativeClipAudioVoice => ({
         id: `${deck}:${index}:${source.id}`, source_id: source.id,

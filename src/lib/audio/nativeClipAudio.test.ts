@@ -28,8 +28,12 @@ describe('Native clip audio routing', () => {
     expect(mix.voices[0].pan).toBe(1);
     expect(mix.voices[1].gain).toBeCloseTo(Math.SQRT1_2);
   });
-  it.each([{ isOpen: false }, { isLive: false }, { stoppedAll: true }, { mapMode: true }])('silences inactive output %j', patch => {
+  it.each([{ isOpen: false }, { isLive: false }, { stoppedAll: true }])('silences inactive output %j', patch => {
     expect(nativeClipAudioMix(state(patch)).voices).toEqual([]);
+  });
+  it('plays clip audio in MAP, where rows can hold ordinary clips', () => {
+    expect(nativeClipAudioMix(state({ mapMode: true })).voices).toEqual(nativeClipAudioMix(state()).voices);
+    expect(nativeClipAudioMix(state({ mapMode: true })).voices.length).toBeGreaterThan(0);
   });
   it('describes a running clip transition: incoming fades in, outgoing fades out on the same voice id', () => {
     const outgoing = clip('old', { audioVolume: .5 });
@@ -53,10 +57,9 @@ describe('Native clip audio routing', () => {
       ['A:5', { token: 2, duration: 1, startedAtMs: 0, incomingClipId: 'x', outgoingClip: clip('y') }]]));
     expect(mix.voices.map(v => v.id)).toEqual(['A:0:a']);
   });
-  it('records clip audio only from the VJ workspace', () => {
-    expect(nativeClipAudioRecordable({ isOpen: true, mapMode: false })).toBe(true);
-    expect(nativeClipAudioRecordable({ isOpen: true, mapMode: true })).toBe(false);
-    expect(nativeClipAudioRecordable({ isOpen: false, mapMode: false })).toBe(false);
+  it('records clip audio only from the VJ workspace, MAP included', () => {
+    expect(nativeClipAudioRecordable({ isOpen: true })).toBe(true);
+    expect(nativeClipAudioRecordable({ isOpen: false })).toBe(false);
   });
   it('applies master mute to both decks while retaining prepared audio', () => {
     const mix = nativeClipAudioMix(state({ crossfaderEnabled: true }), { volume: .5, muted: true });
