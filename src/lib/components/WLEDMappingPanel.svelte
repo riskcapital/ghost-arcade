@@ -20,6 +20,7 @@
     resolveWLEDSourceRegion,
   } from '../wled/mapping';
   import { wledTelemetry } from '../wled/sender';
+  import { drawLEDMapPreview } from '../wled/mapPreview';
 
   export let controller: WLEDController;
   export let onRemove: () => void = () => {};
@@ -177,84 +178,10 @@
 
   function drawMap() {
     if (!mapCanvas) return;
-    const rect = mapCanvas.getBoundingClientRect();
-    const dpr = Math.max(1, window.devicePixelRatio || 1);
-    const cssWidth = Math.max(1, rect.width);
-    const cssHeight = Math.max(1, rect.height);
-    const pixelWidth = Math.round(cssWidth * dpr);
-    const pixelHeight = Math.round(cssHeight * dpr);
-    if (mapCanvas.width !== pixelWidth || mapCanvas.height !== pixelHeight) {
-      mapCanvas.width = pixelWidth;
-      mapCanvas.height = pixelHeight;
-    }
-    const context = mapCanvas.getContext('2d');
-    if (!context) return;
-    context.setTransform(dpr, 0, 0, dpr, 0, 0);
-    context.clearRect(0, 0, cssWidth, cssHeight);
-
-    const gradient = context.createLinearGradient(0, 0, cssWidth, cssHeight);
-    gradient.addColorStop(0, '#0f1c24');
-    gradient.addColorStop(0.5, '#101116');
-    gradient.addColorStop(1, '#251423');
-    context.fillStyle = gradient;
-    context.fillRect(0, 0, cssWidth, cssHeight);
-
-    context.strokeStyle = 'rgba(255,255,255,0.07)';
-    context.lineWidth = 1;
-    for (let column = 1; column < 8; column += 1) {
-      const x = cssWidth * column / 8;
-      context.beginPath();
-      context.moveTo(x, 0);
-      context.lineTo(x, cssHeight);
-      context.stroke();
-    }
-    for (let row = 1; row < 4; row += 1) {
-      const y = cssHeight * row / 4;
-      context.beginPath();
-      context.moveTo(0, y);
-      context.lineTo(cssWidth, y);
-      context.stroke();
-    }
-
-    const region = resolved.sourceRegion;
-    context.fillStyle = 'rgba(76,209,255,0.06)';
-    context.fillRect(region.x * cssWidth, region.y * cssHeight, region.width * cssWidth, region.height * cssHeight);
-    context.strokeStyle = '#4cd1ff';
-    context.setLineDash([5, 4]);
-    context.strokeRect(
-      region.x * cssWidth + 0.5,
-      region.y * cssHeight + 0.5,
-      region.width * cssWidth - 1,
-      region.height * cssHeight - 1
-    );
-    context.setLineDash([]);
-
-    if (resolved.points.length > 1) {
-      context.strokeStyle = 'rgba(187,134,252,0.48)';
-      context.lineWidth = 1.5;
-      context.beginPath();
-      resolved.points.forEach((point, index) => {
-        const x = point.x * cssWidth;
-        const y = point.y * cssHeight;
-        if (index === 0) context.moveTo(x, y);
-        else context.lineTo(x, y);
-      });
-      context.stroke();
-    }
-
-    const pointRadius = resolved.points.length > 160 ? 2 : resolved.points.length > 64 ? 3 : 4;
-    resolved.points.forEach((point, index) => {
-      const x = point.x * cssWidth;
-      const y = point.y * cssHeight;
-      context.beginPath();
-      context.arc(x, y, index === selectedPoint ? pointRadius + 3 : pointRadius, 0, Math.PI * 2);
-      context.fillStyle = index === selectedPoint ? '#fff' : index === 0 ? '#ff8577' : '#bb86fc';
-      context.fill();
-      if (index === selectedPoint || (resolved.points.length <= 64 && index % 8 === 0)) {
-        context.font = '10px ui-monospace, monospace';
-        context.fillStyle = index === selectedPoint ? '#fff' : '#9a8ba8';
-        context.fillText(String(index + 1), x + 7, y - 6);
-      }
+    drawLEDMapPreview(mapCanvas, {
+      points: resolved.points,
+      sourceRegion: resolved.sourceRegion,
+      selectedPoint,
     });
   }
 
