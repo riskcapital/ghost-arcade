@@ -717,7 +717,8 @@
   }
 
   .check-option.inline {
-    grid-column: span 2;
+    grid-column: span 1;
+    white-space: nowrap;
   }
 
   .check-option input {

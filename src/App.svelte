@@ -1274,6 +1274,10 @@
         project,
         settings,
         showTimeline,
+        // DMX input and the VJ deck, so a CDP check of a desk binding reads
+        // the same bindings and clip state the router writes.
+        dmxStore,
+        vjClipLauncher,
         getEngine: () => canvasComponent?.getEngine() ?? null,
       };
     } catch { /* sealed */ }
