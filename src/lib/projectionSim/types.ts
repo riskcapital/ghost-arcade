@@ -51,6 +51,53 @@ export interface ProjectionSimProjector {
   crop: [number, number, number, number];
   edgeBlend: [number, number, number, number];
   showFrustum: boolean;
+  /** Lens shift as a fraction of the image size, projector-spec style:
+   *  +x moves the image right of the lens axis, +y moves it up. 0.5 puts
+   *  the axis on the image edge. Absent on scenes saved before 2.1. */
+  lensShift?: [number, number];
+  /** Rotation about the lens axis in degrees, on top of the look-at pose. */
+  roll?: number;
+  near?: number;
+  far?: number;
+  /** Which projector's lens lays the content onto the surfaces. Null (the
+   *  default) is this projector's own lens, the classic "project the canvas"
+   *  look. Pointing it at another projector anchors the content to the
+   *  model, so this projector renders that mapping from its own pose. */
+  contentFrom?: string | null;
+  /** Point-matching calibration for this projector. */
+  calibration?: ProjectionSimCalibration;
+}
+
+export interface ProjectionSimCalibrationPoint {
+  id: string;
+  /** Picked position on the model, world space. */
+  world: ProjectionSimVec3;
+  /** Where the feature lands on the projector output, in calibration image
+   *  pixels (x right, y down). Null until the operator matches it. */
+  image: [number, number] | null;
+  objectId?: string | null;
+  enabled: boolean;
+}
+
+export interface ProjectionSimCalibrationResult {
+  ok: boolean;
+  /** RMS reprojection error in calibration image pixels. */
+  rms: number;
+  /** Reprojection error per point id, in pixels. */
+  errors: Record<string, number>;
+  mode: 'free' | 'fixed';
+  message?: string;
+  warning?: string;
+  solvedAt: number;
+}
+
+export interface ProjectionSimCalibration {
+  /** Output resolution the image points are measured in. */
+  imageSize: [number, number];
+  /** Solve the pose only and keep the current lens. */
+  fixedIntrinsics: boolean;
+  points: ProjectionSimCalibrationPoint[];
+  result?: ProjectionSimCalibrationResult | null;
 }
 
 export interface ProjectionSimEnvironment {
@@ -160,6 +207,11 @@ export function makeProjectionSimProjector(
     crop: [0, 0, 1, 1],
     edgeBlend: [0, 0, 0, 0],
     showFrustum: true,
+    lensShift: [0, 0],
+    roll: 0,
+    near: 0.1,
+    far: 120,
+    contentFrom: null,
   };
 }
 
