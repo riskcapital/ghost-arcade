@@ -653,6 +653,7 @@ export function migrateOutputSlice(s: Partial<OutputSlice> & { id: string }): Ou
     // so legacy slices behave unchanged.
     outputWarp: s.outputWarp ?? { enabled: false, mode: 'corners' },
     masks: migrateScreenMasks(s.masks),
+    mapSimProjectorId: typeof s.mapSimProjectorId === 'string' && s.mapSimProjectorId ? s.mapSimProjectorId : null,
   };
 }
 

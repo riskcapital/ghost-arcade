@@ -247,3 +247,12 @@ describe('curved screen mask editing', () => {
     expect(copy.cpOut).not.toBe(masksOf()[0].points[0].cpOut);
   });
 });
+
+describe('Screen source', () => {
+  it('keeps a Map Sim projector source through slice migration (project load and autosave recovery)', () => {
+    const { migrateOutputSlice } = settingsModule;
+    expect(migrateOutputSlice({ id: 's1', mapSimProjectorId: 'psproj-a' }).mapSimProjectorId).toBe('psproj-a');
+    expect(migrateOutputSlice({ id: 's2' }).mapSimProjectorId).toBeNull();
+    expect(migrateOutputSlice({ id: 's3', mapSimProjectorId: '' }).mapSimProjectorId).toBeNull();
+  });
+});
