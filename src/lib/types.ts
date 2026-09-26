@@ -2962,6 +2962,14 @@ export interface Layer {
   /** VJ group feed for a mapped slice; independent of physical output routing. */
   vjGroupId?: string;
 
+  /** Shared map surface this layer's geometry comes from (see MapSurface).
+   *  Preset layers carry it; editor layers use their own id. */
+  surfaceId?: string;
+  /** True when this layer keeps its own geometry instead of the shared
+   *  surface's. Set by the user ("This preset only") or by migration when an
+   *  older preset's geometry disagreed with the shared map. */
+  surfaceDetached?: boolean;
+
   // Legacy marker: true means this Stage-generated screen still carries the
   // Y-down corners Apply Stage wrote before 2026-09-11. migrateStageLayerCorners
   // converts those to the Y-up convention on load and clears the flag; Apply
@@ -5177,6 +5185,31 @@ export interface KeyframeTimelineConfig {
 }
 
 // VJ Mode state
+/** The geometry part of a mapped surface: everything that decides WHERE a
+ *  layer lands on the output, and nothing about what it shows. */
+export interface MapSurfaceGeometry {
+  position: Point2D;
+  scale: Point2D;
+  rotation: number;
+  flipH: boolean;
+  flipV: boolean;
+  warpMode: WarpMode;
+  corners: WarpCorners;
+  meshGrid: MeshWarpGrid | null;
+  mask: MaskConfig | null;
+  cropRegion: CropRegion | null;
+  layerShape: LayerShape | null;
+}
+
+/** One mapped surface of the project's shared map. Presets reference it by
+ *  id (a layer's `surfaceId`, which is the id of the layer it was made
+ *  from), so editing the warp once moves it in every preset. */
+export interface MapSurface {
+  id: string;
+  name: string;
+  geometry: MapSurfaceGeometry;
+}
+
 export interface VJModeState {
   enabled: boolean;
   compositions: Composition[];
@@ -5205,6 +5238,9 @@ export interface Project {
   compositions?: Composition[];
   // Stage Mode presets (mapping layouts with VJ layer assignments)
   stagePresets?: StagePreset[];
+  /** Shared map: geometry for every surface a mapping preset uses. Absent on
+   *  projects saved before shared surfaces; importProject migrates those. */
+  mapSurfaces?: MapSurface[];
   /** Active Ghost Stage 3D scene saved with the project file. This is
    *  explicit file persistence only; scratch scene edits are no longer
    *  auto-restored from localStorage on app launch. */

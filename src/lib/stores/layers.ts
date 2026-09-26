@@ -28,6 +28,7 @@ import { snapshots } from './snapshots';
 import { layerSequencer } from './layerSequencer';
 import { surfaceStore } from './surface';
 import { migrateStageLayerCorners } from '../utils/stageTextureOrientation';
+import { captureMapSurfaces, migrateMapSurfaces, presetLayersForEditing, registerMapSurfaces, tagPresetSurfaces } from './mapSurfaces';
 import {
   captureStagePresetSurfaceState,
   cloneStagePresetSurface,
@@ -1170,6 +1171,44 @@ void main() {
       recordDiscreteAction();
     },
 
+    /**
+     * Shared map geometry for one layer.
+     *   'detach' - this layer (and presets saved from it) keeps its own
+     *              geometry; the shared surface stops following it.
+     *   'use'    - drop the layer's own geometry and take the shared one.
+     *   'share'  - make the layer's geometry the shared one, so every
+     *              preset using the surface moves to it.
+     */
+    setLayerSurfaceSharing(id: string, action: 'detach' | 'use' | 'share') {
+      update((project) => {
+        const layer = project.layers.find((l) => l.id === id);
+        if (!layer) return project;
+        if (action === 'detach') {
+          // Store the geometry the presets were following before letting go.
+          const mapSurfaces = captureMapSurfaces(project.mapSurfaces, project.layers);
+          return {
+            ...project,
+            ...(mapSurfaces ? { mapSurfaces } : {}),
+            layers: project.layers.map((l) => (l.id === id ? { ...l, surfaceDetached: true } : l)),
+          };
+        }
+        const attached: Layer = { ...layer, surfaceDetached: undefined };
+        if (action === 'share') {
+          return {
+            ...project,
+            mapSurfaces: registerMapSurfaces(project.mapSurfaces, [attached]),
+            layers: project.layers.map((l) => (l.id === id ? attached : l)),
+          };
+        }
+        const [shared] = presetLayersForEditing([{ ...attached, surfaceId: id }], project.mapSurfaces);
+        return {
+          ...project,
+          layers: project.layers.map((l) => (l.id === id ? { ...shared, surfaceId: layer.surfaceId } : l)),
+        };
+      });
+      recordDiscreteAction();
+    },
+
     updateModel3DContent(layerId: string, updates: Partial<Model3DContent>) {
       update((project) => ({
         ...project,
@@ -2210,8 +2249,11 @@ void main() {
               ? [nextSelectedLayerId]
               : []
         );
+        // A deleted surface keeps the last geometry it had in the editor.
+        const mapSurfaces = captureMapSurfaces(project.mapSurfaces, project.layers);
         return {
           ...project,
+          ...(mapSurfaces ? { mapSurfaces } : {}),
           layers: newLayers,
           selectedLayerId: nextSelectedLayerId,
         };
@@ -4122,12 +4164,15 @@ void main() {
         wasPlaying: !!kfState.config.isPlaying,
       };
 
+      // Each layer references its shared map surface instead of owning the
+      // geometry; the snapshot keeps a copy only as a fallback.
+      const presetLayers = tagPresetSurfaces(layersSnapshot);
       const composition: Composition = {
         id: compositionId,
         name,
         thumbnail,
         createdAt: Date.now(),
-        layers: layersSnapshot,
+        layers: presetLayers,
         synthVision: synthVisionSnapshot,
         sequencer: sequencerSnap,
         keyframes: keyframesSnap,
@@ -4141,6 +4186,7 @@ void main() {
         console.log('[Store] Updating vjMode, compositions count:', newCompositions.length);
         return {
           ...project,
+          mapSurfaces: registerMapSurfaces(captureMapSurfaces(project.mapSurfaces, project.layers), presetLayers),
           vjMode: {
             ...vjMode,
             compositions: newCompositions,
@@ -4196,13 +4242,14 @@ void main() {
         wasPlaying: !!kfState.config.isPlaying,
       };
 
+      const presetLayers = tagPresetSurfaces(layersSnapshot);
       const updated: Composition = {
         ...existing,
         name: opts?.name ?? existing.name,
         thumbnail: opts?.thumbnail ?? existing.thumbnail,
         // createdAt intentionally preserved — that's the original creation
         // timestamp, not "last updated".
-        layers: layersSnapshot,
+        layers: presetLayers,
         synthVision: synthVisionSnapshot,
         sequencer: sequencerSnap,
         keyframes: keyframesSnap,
@@ -4212,6 +4259,7 @@ void main() {
         if (!project.vjMode) return project;
         return {
           ...project,
+          mapSurfaces: registerMapSurfaces(captureMapSurfaces(project.mapSurfaces, project.layers), presetLayers),
           vjMode: {
             ...project.vjMode,
             compositions: project.vjMode.compositions.map(c =>
@@ -4335,8 +4383,12 @@ void main() {
       update((project) => {
         if (!project.vjMode) return project;
 
-        // Deep clone the composition's layers
-        const loadedLayers = structuredClone(composition.layers);
+        // Keep the geometry the editor holds right now before its layers
+        // are replaced; it is the shared map for every surface it shows.
+        const mapSurfaces = captureMapSurfaces(project.mapSurfaces, project.layers);
+        // Deep clone the composition's layers; shared surfaces take the
+        // current shared geometry rather than the copy saved with the preset.
+        const loadedLayers = presetLayersForEditing(structuredClone(composition.layers), mapSurfaces);
         loadedLayers.forEach((layer) => {
           if (isVideoSource(layer.source)) {
             rehydrateVideoSource(layer.source);
@@ -4345,6 +4397,7 @@ void main() {
 
         return {
           ...project,
+          ...(mapSurfaces ? { mapSurfaces } : {}),
           layers: loadedLayers,
           vjMode: {
             ...project.vjMode,
@@ -4720,6 +4773,8 @@ void main() {
         edgeEffects: layer.edgeEffects,
         vjLayerIndex: layer.vjLayerIndex,
         vjGroupId: layer.vjGroupId,
+        surfaceId: layer.surfaceId,
+        surfaceDetached: layer.surfaceDetached,
         contentFit: layer.contentFit,
         renderQuality: layer.renderQuality,
         parentGroupId: layer.parentGroupId,
@@ -5161,6 +5216,9 @@ void main() {
           vjMode: exportVjMode,
           mediaFolders: normalizeMediaTrayFolders(currentProject.mediaFolders),
           stagePresets: currentProject.stagePresets || [],
+          // Shared map geometry for preset surfaces, refreshed from the
+          // editor so a warp edited since the last preset save is kept.
+          mapSurfaces: captureMapSurfaces(currentProject.mapSurfaces, currentProject.layers) ?? [],
           svKeyboardPresets: currentProject.svKeyboardPresets || [],
           // Stage Designer surfaces — projection geometry layouts +
           // their slice→layer bindings. Persisted as plain JSON; no
@@ -5409,6 +5467,8 @@ void main() {
         edgeEffects: layer.edgeEffects || null,
         vjLayerIndex: layer.vjLayerIndex,
         vjGroupId: layer.vjGroupId,
+        ...(typeof layer.surfaceId === 'string' && layer.surfaceId ? { surfaceId: layer.surfaceId } : {}),
+        ...(layer.surfaceDetached === true ? { surfaceDetached: true } : {}),
         contentFit: layer.contentFit,
         renderQuality: layer.renderQuality,
         stageTextureFlipV: layer.stageTextureFlipV,
@@ -6174,6 +6234,8 @@ void main() {
               : preset
           )),
           svKeyboardPresets: (proj as any).svKeyboardPresets || [],
+          // Absent on older saves; migrateMapSurfaces below builds it.
+          ...(Array.isArray((proj as any).mapSurfaces) ? { mapSurfaces: (proj as any).mapSurfaces } : {}),
           surfaces: (proj as any).surfaces || [],
           activeSurfaceId: (proj as any).activeSurfaceId ?? null,
           ...((proj as any).pixelMap ? { pixelMap: normalizePixelMapConfig((proj as any).pixelMap) } : {}),
@@ -6186,7 +6248,7 @@ void main() {
             : {}),
         };
 
-        set(importedProject);
+        set(migrateMapSurfaces(importedProject));
         selectedLayerIdsState.set(importedProject.selectedLayerId ? [importedProject.selectedLayerId] : []);
         const importedStage3d = (proj as any).stage3d;
         const incomingSyncedStage3d = (parsed as any).stage3dScene;
