@@ -175,7 +175,7 @@ describe('VJ MAP presets on the shared map', () => {
   });
 
   it('keeps native layer ids and the video binding when a row switches between presets that share a video surface', async () => {
-    const video = surfaceLayer('screen', [0, 0, 1, 1], { id: 'shared-video', type: 'video', src: '/media/loop.mov', isPlaying: true });
+    const video = surfaceLayer('screen', [0, 0, 1, 1], { id: 'shared-video', type: 'video', src: '/media/loop.mov', isPlaying: false });
     const text = surfaceLayer('banner', [0.1, 0.8, 0.9, 0.95]);
     const a = preset('A', [video]);
     const b = preset('B', [text, video]);
@@ -186,6 +186,9 @@ describe('VJ MAP presets on the shared map', () => {
       const cache = new Map();
       const first = await flushPayload(sync, mapOutput(launcher(['A']), comps, project.layers, project.mapSurfaces, cache));
       expect(first.commands.some((c) => c.type === 'bind_media_source' && c.layer_id === 'mapvj-0::screen')).toBe(true);
+      // An imported preset stores its video paused; in MAP it plays.
+      expect(mapOutput(launcher(['A']), comps, project.layers, project.mapSurfaces, cache)
+        .find((l) => l.id === 'mapvj-0::screen')!.source!.isPlaying).toBe(true);
       const switched = await flushPayload(sync, mapOutput(launcher(['B']), comps, project.layers, project.mapSurfaces, cache));
       // The shared surface is the same native layer showing the same source:
       // no remove, no rebind, so the core keeps its decoder.

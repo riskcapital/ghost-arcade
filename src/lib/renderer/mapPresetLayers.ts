@@ -102,6 +102,10 @@ function buildEntry(row: MapPresetRow): MapPresetCacheEntry {
     // has one level of grouping and the row fader must reach every child.
     cloned.parentGroupId = groupId;
     cloned.bank = undefined;
+    // A preset's video plays, as it does when the preset is loaded into
+    // the editor. The saved flag is not a user choice: project import
+    // resets every source to paused, which froze MAP videos after reopen.
+    if (cloned.source?.type === 'video') cloned.source.isPlaying = true;
     return cloned;
   });
   return { compositionRef: row.composition, group: createMapPresetGroup(row), layers };
