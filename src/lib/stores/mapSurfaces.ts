@@ -29,6 +29,7 @@ export const MAP_SURFACE_GEOMETRY_KEYS = [
   'corners',
   'meshGrid',
   'mask',
+  'paintMask',
   'cropRegion',
   'layerShape',
 ] as const satisfies ReadonlyArray<keyof MapSurfaceGeometry>;
@@ -49,6 +50,9 @@ export function layerGeometryView(layer: Layer): MapSurfaceGeometry {
     corners: layer.corners,
     meshGrid: layer.meshGrid ?? null,
     mask: layer.mask ?? null,
+    // Left out (not null) when there is none, so surfaces saved before
+    // painted masks still compare equal to their layers.
+    ...(layer.paintMask ? { paintMask: layer.paintMask } : {}),
     cropRegion: layer.cropRegion ?? null,
     layerShape: layer.layerShape ?? null,
   };
@@ -93,6 +97,7 @@ export function withSurfaceGeometry<T extends Layer>(layer: T, geometry: MapSurf
     corners: geometry.corners,
     meshGrid: geometry.meshGrid,
     mask: geometry.mask,
+    paintMask: geometry.paintMask ?? null,
     cropRegion: geometry.cropRegion,
     layerShape: geometry.layerShape,
   };

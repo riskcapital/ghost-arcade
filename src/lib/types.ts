@@ -1118,6 +1118,37 @@ export interface MaskConfig {
   feather: number;     // Feather/softness at edges (0-1)
 }
 
+/**
+ * One brush stroke of a painted mask. Stored as the stroke, not as pixels:
+ * a centreline in the layer's content space plus the brush. The native core
+ * rasterises strokes at output resolution (native-renderer/src/paint_mask.rs),
+ * so the project and every undo snapshot carry a few hundred bytes per
+ * stroke instead of a bitmap. See src/lib/utils/paintMask.ts.
+ */
+export interface PaintMaskStroke {
+  id: string;
+  mode: 'erase' | 'restore';
+  /** Brush radius in content space: x as a fraction of the layer's content
+   *  width, y of its height (a round brush on screen is an ellipse here). */
+  rx: number;
+  ry: number;
+  /** 0 = hard (anti-aliased) edge, 1 = falls off from the centre. */
+  softness: number;
+  opacity: number;
+  /** Base64 of little-endian uint16 (x, y) pairs; 0..65535 maps to content
+   *  UV -0.25..1.25, y down (0 = the top of the layer's picture). */
+  points: string;
+}
+
+/** A layer's painted mask: brushed erase/restore strokes, combined
+ *  (multiplied) with the vector mask and the layer shape. */
+export interface PaintMaskConfig {
+  /** Show/hide. Hidden keeps the strokes but renders the layer unmasked. */
+  enabled: boolean;
+  inverted: boolean;
+  strokes: PaintMaskStroke[];
+}
+
 // Input crop/slice region (what portion of the source to use)
 export interface CropRegion {
   x: number;      // Left edge (0-1)
@@ -2937,6 +2968,9 @@ export interface Layer {
 
   // Mask (click-point polygon mask)
   mask: MaskConfig | null;
+
+  // Painted mask (brushed erase/restore strokes in content space)
+  paintMask?: PaintMaskConfig | null;
 
   // Input crop/slice (what portion of the source to use)
   cropRegion: CropRegion | null;
@@ -5197,6 +5231,8 @@ export interface MapSurfaceGeometry {
   corners: WarpCorners;
   meshGrid: MeshWarpGrid | null;
   mask: MaskConfig | null;
+  /** Absent in surfaces saved before painted masks. */
+  paintMask?: PaintMaskConfig | null;
   cropRegion: CropRegion | null;
   layerShape: LayerShape | null;
 }
