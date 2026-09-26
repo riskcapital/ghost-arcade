@@ -912,4 +912,39 @@ describe('new Edge Effect types put their pixels where they belong', () => {
     expect(on / checked).toBeGreaterThan(0.97);
     expect(off / checked).toBeGreaterThan(0.9);
   }, 60000);
+
+  itIfNativeCore('draws no spike through a straight vertex that sits on a pixel centre', async () => {
+    // A mesh splits each straight edge at its cells, so the outline carries
+    // vertices whose two segments are collinear. This layer puts one on
+    // x = 200.5, the centre of pixel column 200: a pixel there is exactly
+    // at the vertex, where a miter join between parallel segments has no
+    // direction, and the dash cut used to turn that into a line across the
+    // whole reach of the effect.
+    const corners: WarpCorners = {
+      topLeft: { x: 0.25, y: 0.75 }, topRight: { x: 0.7525, y: 0.75 },
+      bottomLeft: { x: 0.25, y: 0.25 }, bottomRight: { x: 0.7525, y: 0.25 },
+    };
+    const mesh: MeshWarpGrid = {
+      rows: 3, cols: 3,
+      points: [0, 0.5, 1].map((y) => [0, 0.5, 1].map((x) => ({ x, y: 1 - y }))),
+    };
+    const spec: LayerSpec = {
+      id: 'collinear', corners, meshGrid: mesh,
+      effects: [effect(stroke('dashPattern', { width: 3, color: WHITE, dash1: 5000, gap1: 1, speed: 0, cap: 'butt' }))],
+    };
+    const outline = buildEdgeOutline(asLayer(spec), size, size)!;
+    expect(outline.points.some((p) => p.x === 200.5)).toBe(true);
+    const img = await render(spec, 0);
+    const lit = (x: number, yUp: number) => sample(img, x, yUp) > 0.1;
+    // The top and bottom edges are drawn through the vertex...
+    expect(lit(200.5, 300 - 6)).toBe(true);
+    expect(lit(200.5, 100 + 6)).toBe(true);
+    // ...and nothing crosses them along the vertex column, inside or out.
+    const stray: number[] = [];
+    for (let yUp = 40.5; yUp < 360; yUp += 1) {
+      const nearEdge = Math.abs(yUp - 300) < 12 || Math.abs(yUp - 100) < 12;
+      if (!nearEdge && lit(200.5, yUp)) stray.push(yUp);
+    }
+    expect(stray).toEqual([]);
+  }, 60000);
 });

@@ -2096,6 +2096,11 @@ fn edge_band_sd(li: u32, p: vec2<f32>, hit: EdgeHit, hw: f32, join: i32, miter_l
   if (dot(nin, rel) < 0.0) { nin = -nin; }
   var nout = vec2<f32>(-tout.y, tout.x);
   if (dot(nout, rel) < 0.0) { nout = -nout; }
+  // A straight-through vertex (a mesh or flattening split) has no join:
+  // both offset points coincide, the miter edges below would normalize a
+  // zero vector, and the NaN they give survives max() in the dash and trim
+  // cuts as a line through the vertex. The band there is the plain one.
+  if (dot(nin, nout) > 0.99999) { return sd; }
   let a = v + nin * hw;
   let b = v + nout * hw;
   let denom = max(1.0 + dot(nin, nout), 1e-4);
