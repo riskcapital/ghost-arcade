@@ -1,3 +1,4 @@
+import { EDGE_STROKE_SHAPE_PARAMS, EDGE_TRIM_PARAMS, edgeTypeDef } from '../drawing/edgeEffectCatalog';
 import type { Layer } from '../types';
 import { effectParamLabels } from '../effects/effectUX';
 import { getShaderDef } from '../renderer/gpuShaderCatalog';
@@ -152,6 +153,37 @@ export function discoverKeyframeableParams(layer: Layer): KeyframeableParam[] {
         max: 1,
         step: 0.01,
         defaultValue: edge.opacity ?? 1,
+        group: 'Edge Effects',
+      });
+      // Every numeric control of the effect's stroke, fill and animation,
+      // keyed by the same dotted path the panel and modulation use.
+      for (const kind of ['stroke', 'fill', 'animation'] as const) {
+        const part = (edge as any)[kind] as Record<string, unknown> | undefined;
+        const def = part ? edgeTypeDef(kind, String(part.type)) : undefined;
+        const extra = kind === 'stroke' && part?.type !== 'none' ? EDGE_STROKE_SHAPE_PARAMS.concat(EDGE_TRIM_PARAMS) : [];
+        for (const param of [...(def?.params ?? []), ...extra]) {
+          if (param.kind !== 'number') continue;
+          const value = part?.[param.key] ?? def?.defaults[param.key];
+          params.push({
+            key: `edge:${edge.id}:${kind}.${param.key}`,
+            label: `${def?.label ?? kind} ${param.label}`,
+            type: 'number',
+            min: param.min ?? 0,
+            max: param.max ?? 1,
+            step: param.step ?? 0.01,
+            defaultValue: typeof value === 'number' ? value : (param.min ?? 0),
+            group: 'Edge Effects',
+          });
+        }
+      }
+      params.push({
+        key: `edge:${edge.id}:chaseSpread`,
+        label: 'Group chase delay',
+        type: 'number',
+        min: 0,
+        max: 4,
+        step: 0.05,
+        defaultValue: edge.chaseSpread ?? 0.5,
         group: 'Edge Effects',
       });
     }

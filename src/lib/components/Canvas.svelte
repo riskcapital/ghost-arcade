@@ -3206,6 +3206,15 @@
                 } else if (prop === 'opacity') {
                   kfStash.push({ layer, key, orig: edge.opacity, target: edge, prop: 'opacity' });
                   edge.opacity = value as number;
+                } else if (prop) {
+                  // Dotted parameter paths (stroke.width, fill.speed, ...).
+                  const [top, nested] = prop.split('.');
+                  const target = nested ? edge[top] : edge;
+                  const leaf = nested ?? top;
+                  if (target && typeof target === 'object') {
+                    kfStash.push({ layer, key, orig: target[leaf], target, prop: leaf });
+                    target[leaf] = value;
+                  }
                 }
               }
             } else if (key.startsWith('splat:') && layer.splatContent) {

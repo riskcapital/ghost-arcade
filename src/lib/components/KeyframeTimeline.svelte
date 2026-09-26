@@ -201,6 +201,9 @@
       if (!edge) return param.defaultValue;
       if (parts[2] === 'enabled') return edge.enabled;
       if (parts[2] === 'opacity') return edge.opacity ?? 1;
+      const [top, nested] = (parts[2] ?? '').split('.');
+      const v = nested ? (edge as any)[top]?.[nested] : (edge as any)[top];
+      return typeof v === 'number' ? v : param.defaultValue;
     }
     if (param.key.startsWith('model3d:') && l.model3dContent) {
       // Walk the dot path: model3d:echo.count → l.model3dContent.echo?.count

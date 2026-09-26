@@ -6724,6 +6724,19 @@ registerMacroAssignmentWriter((target, value) => {
   if (target.scope === 'mapping-layer') {
     const effect = get(project).layers.find(layer => layer.id === target.layerId)?.effects?.find(e => e.id === target.effectId);
     if (effect) project.updateEffectParams(target.layerId, target.effectId, patch);
+  } else if (target.scope === 'mapping-edge') {
+    const edge = get(project).layers.find(layer => layer.id === target.layerId)?.edgeEffects?.effects.find(e => e.id === target.effectId);
+    if (!edge) return;
+    const dot = target.param.indexOf('.');
+    if (dot < 0) {
+      project.updateEdgeEffect(target.layerId, target.effectId, { [target.param]: value } as any);
+    } else {
+      const top = target.param.slice(0, dot);
+      const part = (edge as any)[top];
+      if (part && typeof part === 'object') {
+        project.updateEdgeEffect(target.layerId, target.effectId, { [top]: { ...part, [target.param.slice(dot + 1)]: value } } as any);
+      }
+    }
   } else if (target.scope === 'mapping-composition') {
     if (get(project).mappingComposition?.effects.some(e => e.id === target.effectId)) project.updateMappingCompositionEffectParams(target.effectId, patch);
   } else if (target.scope === 'vj-composition') {

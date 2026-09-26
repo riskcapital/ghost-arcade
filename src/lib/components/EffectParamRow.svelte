@@ -99,7 +99,9 @@
     registerEffectParamRange(layerIndex, effectId, paramName, min, max, target === 'vj' && vjEffectScope === 'clip' ? currentVjLayerState?.activeClip?.id : undefined);
   }
 
-  $: macroTarget = effectKind !== 'fx' ? null : (
+  $: macroTarget = effectKind === 'edge'
+    ? (target === 'mapping' && currentMappingLayer ? { scope: 'mapping-edge', layerId: currentMappingLayer.id, effectId, param: paramName } as MacroTarget : null)
+    : effectKind !== 'fx' ? null : (
     target === 'mapping'
       ? mappingComposition ? { scope: 'mapping-composition', effectId, param: paramName }
         : currentMappingLayer ? { scope: 'mapping-layer', layerId: currentMappingLayer.id, effectId, param: paramName } : null
@@ -113,7 +115,7 @@
     if (!macroTarget) return;
     if (!id) { macros.unassignParameter(macroTarget); return; }
     setSource('manual');
-    macros.assignParameter(id, { target: macroTarget, label: `${target === 'mapping' ? mappingComposition ? 'Mapping composition' : currentMappingLayer?.name ?? 'Mapping layer' : vjEffectScope === 'composition' ? 'VJ composition' : `Deck ${vjBank} · ${vjEffectScope === 'clip' ? currentVjLayerState?.activeClip?.name ?? 'Clip' : `Layer ${layerIndex + 1}`}`} · ${currentEffect?.type ?? 'Effect'} · ${label}`, min, max, from: min, to: max });
+    macros.assignParameter(id, { target: macroTarget, label: `${target === 'mapping' ? mappingComposition ? 'Mapping composition' : currentMappingLayer?.name ?? 'Mapping layer' : vjEffectScope === 'composition' ? 'VJ composition' : `Deck ${vjBank} · ${vjEffectScope === 'clip' ? currentVjLayerState?.activeClip?.name ?? 'Clip' : `Layer ${layerIndex + 1}`}`} · ${effectKind === 'edge' ? 'Edge effect' : currentEffect?.type ?? 'Effect'} · ${label}`, min, max, from: min, to: max });
   }
 
   // ---- Click-to-type editor for the value chip ----

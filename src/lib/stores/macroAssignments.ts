@@ -1,6 +1,8 @@
 /** Stable effect identities prevent macro routes from following selection changes. */
 export type MacroTarget =
   | { scope: 'mapping-layer'; layerId: string; effectId: string; param: string }
+  /** An Edge Effect parameter; `param` is its dotted path (stroke.width). */
+  | { scope: 'mapping-edge'; layerId: string; effectId: string; param: string }
   | { scope: 'mapping-composition' | 'vj-composition'; effectId: string; param: string }
   | { scope: 'vj-layer'; bank: 'A' | 'B'; effectId: string; param: string }
   | { scope: 'vj-clip'; bank: 'A' | 'B'; clipId: string; effectId: string; param: string };
@@ -19,9 +21,9 @@ export function normalizeMacroAssignment(input: unknown): MacroAssignment | null
   const a = input as MacroAssignment | null;
   if (!a || typeof a !== 'object' || !a.target || typeof a.target !== 'object') return null;
   const t = a.target;
-  if (!['mapping-layer', 'mapping-composition', 'vj-composition', 'vj-layer', 'vj-clip'].includes(t.scope)) return null;
+  if (!['mapping-layer', 'mapping-edge', 'mapping-composition', 'vj-composition', 'vj-layer', 'vj-clip'].includes(t.scope)) return null;
   if (!t.effectId || typeof t.effectId !== 'string' || !t.param || typeof t.param !== 'string' || ['__proto__', 'constructor', 'prototype'].includes(t.param)) return null;
-  if (t.scope === 'mapping-layer' && (typeof t.layerId !== 'string' || !t.layerId)) return null;
+  if ((t.scope === 'mapping-layer' || t.scope === 'mapping-edge') && (typeof t.layerId !== 'string' || !t.layerId)) return null;
   if ((t.scope === 'vj-layer' || t.scope === 'vj-clip') && t.bank !== 'A' && t.bank !== 'B') return null;
   if (t.scope === 'vj-clip' && (typeof t.clipId !== 'string' || !t.clipId)) return null;
   if (![a.min, a.max, a.from, a.to].every(Number.isFinite) || a.min >= a.max) return null;
@@ -36,6 +38,18 @@ let writer: ((target: MacroTarget, value: number) => void) | undefined;
 export function registerMacroAssignmentWriter(next: typeof writer) { writer = next; }
 export function applyMacroAssignments(assignments: readonly MacroAssignment[], value: number) {
   for (const assignment of assignments) writer?.(assignment.target, macroAssignmentValue(assignment, value));
+}
+
+/** Whether a macro target still exists (edge effects included). */
+export function macroTargetAvailable(
+  target: MacroTarget,
+  project: import('../types').Project,
+  launcher: import('./vjClipLauncher').VJClipLauncherState,
+): boolean {
+  if (target.scope === 'mapping-edge') {
+    return !!project.layers.find(layer => layer.id === target.layerId)?.edgeEffects?.effects.some(effect => effect.id === target.effectId);
+  }
+  return !!findMacroTargetEffect(target, project, launcher);
 }
 
 /** Read-only lookup shared by assignment status UI; inactive blocks count as available. */

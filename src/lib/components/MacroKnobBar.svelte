@@ -16,7 +16,7 @@
    * can drive the wet/dry mix directly.
    */
   import { macros, type Macro } from '../stores/macros';
-  import { findMacroTargetEffect, type MacroAssignment } from '../stores/macroAssignments';
+  import { macroTargetAvailable, type MacroAssignment } from '../stores/macroAssignments';
   import { vjClipLauncher } from '../stores/vjClipLauncher';
   import { project } from '../stores/layers';
   import { nativeEffectChainWarning } from '../renderer/nativeEffectChainPolicy';
@@ -302,7 +302,7 @@
           <div class="macro-assignment-hint">Choose this macro beside an effect parameter to connect it.</div>
         {/if}
         {#each m.assignments ?? [] as assignment}
-          {@const available = !!findMacroTargetEffect(assignment.target, $project, $vjClipLauncher)}
+          {@const available = macroTargetAvailable(assignment.target, $project, $vjClipLauncher)}
           <div class="macro-assignment" class:unavailable={!available}>
             <span title={assignment.label}>{assignment.label}</span>
             {#if !available}<div class="macro-assignment-missing">Target unavailable — assignment retained</div>{/if}

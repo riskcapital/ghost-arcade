@@ -178,4 +178,24 @@ describe('applying edge effect presets to layers', () => {
     layers.project.moveEdgeEffect(layer.id, second.id, -1);
     expect(get(layers.project).layers[1].edgeEffects!.effects[0].id).toBe(second.id);
   });
+
+  it('lets macros and keyframes reach every numeric edge parameter', async () => {
+    const { applyMacroAssignments } = await import('./macroAssignments');
+    const { discoverKeyframeableParams } = await import('../keyframes/paramDiscovery');
+    const layer = get(layers.project).layers[2];
+    const edge = layer.edgeEffects!.effects[0];
+    applyMacroAssignments([{ target: { scope: 'mapping-edge', layerId: layer.id, effectId: edge.id, param: 'stroke.width' }, label: 'w', min: 1, max: 20, from: 2, to: 12 }], 0.5);
+    applyMacroAssignments([{ target: { scope: 'mapping-edge', layerId: layer.id, effectId: edge.id, param: 'opacity' }, label: 'o', min: 0, max: 1, from: 0, to: 1 }], 0.25);
+    const updated = get(layers.project).layers[2].edgeEffects!.effects[0];
+    expect((updated.stroke as any).width).toBe(7);
+    expect(updated.opacity).toBe(0.25);
+    expect((updated.stroke as any).glowSize).toBe(15);
+    const keys = discoverKeyframeableParams(get(layers.project).layers[2]).map((p) => p.key);
+    expect(keys).toContain(`edge:${edge.id}:stroke.width`);
+    expect(keys).toContain(`edge:${edge.id}:stroke.glowSize`);
+    expect(keys).toContain(`edge:${edge.id}:stroke.trimEnd`);
+    const second = get(layers.project).layers[2].edgeEffects!.effects[1];
+    expect(keys).toContain(`edge:${second.id}:fill.band`);
+    expect(keys).toContain(`edge:${second.id}:animation.perspective`);
+  });
 });
