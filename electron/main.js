@@ -43,6 +43,18 @@ const { randomUUID } = require('crypto');
 if (!app.isPackaged && process.env.GA_USER_DATA_DIR) {
   app.setPath('userData', process.env.GA_USER_DATA_DIR);
 }
+
+// Start-at-boot / show mode (electron/show-startup.cjs). Created after the
+// userData override so a test profile keeps its own config. The session
+// query is synchronous: the renderer needs to know whether to suppress its
+// first-run prompts before its first frame.
+const { createShowStartup } = require('./show-startup.cjs');
+const showStartup = createShowStartup({ app });
+ipcMain.on('show_startup_session', (event) => {
+  try { event.returnValue = showStartup.get(); } catch { event.returnValue = null; }
+});
+ipcMain.handle('show_startup_get', () => showStartup.get());
+ipcMain.handle('show_startup_set', (_, patch) => showStartup.set(patch));
 const nativeRendererBroker = createNativeRendererBroker({
   appRoot: path.join(__dirname, '..'),
   resourcesPath: process.resourcesPath,

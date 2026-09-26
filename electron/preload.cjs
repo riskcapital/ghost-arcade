@@ -159,6 +159,8 @@ const ALLOWED_IPC_COMMANDS = new Set([
   'pixelmap_send_frame', 'pixelmap_stop', 'pixelmap_get_stats',
   // PJLink projector control — power, shutter, input and status over TCP 4352
   'pjlink_command',
+  // Start at boot / show mode (launch at login, startup project, prompts)
+  'show_startup_get', 'show_startup_set',
   // Ableton Link — LAN tempo/beat sync (session lives in main; the
   // renderer polls state and bridges tempo into the master BPM).
   'link_enable', 'link_disable', 'link_set_tempo', 'link_get_state',
@@ -371,6 +373,17 @@ contextBridge.exposeInMainWorld('electronOSR', {
 // designed. Main process configures the resulting BrowserWindow via
 // setWindowOpenHandler. See outputSharedTexturePresenter.ts and
 // OutputSharedTextureDisplayApp.svelte for the renderer-side glue.)
+
+// Show mode for THIS launch, read synchronously so the renderer can skip
+// its first-run prompts before it draws anything. Main-window only: output
+// and helper windows have no prompts to suppress.
+try {
+  const isHelperWindow = typeof window !== 'undefined' && /[?&]mode=/.test(window.location.search);
+  const startup = isHelperWindow ? null : ipcRenderer.sendSync('show_startup_session');
+  contextBridge.exposeInMainWorld('ghostShowStartup', { session: startup || null });
+} catch {
+  contextBridge.exposeInMainWorld('ghostShowStartup', { session: null });
+}
 
 // Also set a detection flag (replaces __TAURI_INTERNALS__)
 contextBridge.exposeInMainWorld('__ELECTRON__', true);
