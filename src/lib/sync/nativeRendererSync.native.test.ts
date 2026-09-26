@@ -1069,6 +1069,22 @@ describe('native renderer sync graph effect routing', () => {
     expect(state.signature).not.toBe('none');
   });
 
+  it('gives child shapes their group\'s edge effects, as the editor does', async () => {
+    const { createLayer } = await import('../types');
+    const groupEdges = { enabled: true, effects: [{ id: 'g1', enabled: true, opacity: 1, blendMode: 'normal', stroke: { type: 'glow', color: [0, 1, 0, 1], width: 3 }, fill: { type: 'none' }, animation: { type: 'none' } }] };
+    const group = { ...createLayer('grp', 'Group', 'group'), type: 'group', visible: true, edgeEffects: groupEdges, groupConfig: { shaderMode: 'individual', overrideStyles: false, shaderSource: null } } as any;
+    const own = { enabled: true, effects: [{ ...groupEdges.effects[0], id: 'own', stroke: { type: 'solid', color: [1, 1, 1, 1], width: 2 } }] };
+    const child = { ...createLayer('kid', 'Child', 'media'), parentGroupId: 'grp', visible: true, edgeEffects: own } as any;
+    const loose = { ...createLayer('solo', 'Solo', 'media'), visible: true, edgeEffects: own } as any;
+    const sync = new NativeRendererSyncCtor() as any;
+    const out = sync.resolveNativeGroupLayers([group, child, loose]);
+    expect(out.find((l: any) => l.id === 'kid').edgeEffects).toBe(groupEdges);
+    expect(out.find((l: any) => l.id === 'solo').edgeEffects).toBe(own);
+    // A group whose edge effects are off leaves the child's own stack alone.
+    const quiet = sync.resolveNativeGroupLayers([{ ...group, edgeEffects: { ...groupEdges, enabled: false } }, child]);
+    expect(quiet.find((l: any) => l.id === 'kid').edgeEffects).toBe(own);
+  });
+
   it('applies edge effect keyframes, nested parameters included, to native output', async () => {
     const { keyframeTimeline } = await import('../stores/keyframeTimeline');
     const layer = {
