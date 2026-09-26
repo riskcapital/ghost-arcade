@@ -177,6 +177,9 @@ struct LayerData {
   // Bezier tangents, two vec4 per point: (right.xy, down.xy), (left.xy, up.xy).
   // Read only while fast_flags.y says the mesh is a Bezier mesh.
   mesh_tangents: array<vec4<f32>, 512>,
+  // Quad-local (min u, min v, max u, max v) holding a Bezier mesh's whole
+  // surface. Read only while fast_flags.y says the mesh is a Bezier mesh.
+  mesh_bounds: vec4<f32>,
   source_rect: vec4<f32>,
   fast_flags: vec4<u32>,
 }
@@ -531,6 +534,70 @@ fn quad_local_uv(p: vec2<f32>, tl: vec2<f32>, tr: vec2<f32>, br: vec2<f32>, bl: 
     return vec3<f32>(1.0, clamp(uv, vec2<f32>(0.0), vec2<f32>(1.0)));
   }
   return vec3<f32>(0.0);
+}
+
+// A Bezier layer mesh can bulge past its corner quad, so its pixels are
+// bounded by the surface's reach (mesh_bounds) instead. The corner pin is
+// the bilinear map of the quad, continued outward: this inverts it on that
+// continued map and returns (inside the reach, u, v) with u, v unclamped.
+// Of the two roots the one inside the reach and nearest its centre wins,
+// which inside the quad is the same root quad_local_uv takes.
+fn quad_local_uv_reach(p: vec2<f32>, tl: vec2<f32>, tr: vec2<f32>, br: vec2<f32>, bl: vec2<f32>, reach: vec4<f32>) -> vec3<f32> {
+  let lo = min(reach.xy, vec2<f32>(0.0)) - vec2<f32>(0.0005);
+  let hi = max(reach.zw, vec2<f32>(1.0)) + vec2<f32>(0.0005);
+  let centre = (lo + hi) * 0.5;
+  let e = tr - tl;
+  let f = bl - tl;
+  let g = tl - tr + br - bl;
+  let h = p - tl;
+  let k2 = cross2(g, f);
+  let k1 = cross2(e, f) + cross2(h, g);
+  let k0 = cross2(h, e);
+  var roots = vec2<f32>(0.0);
+  if (abs(k2) < 0.0001) {
+    if (abs(k1) < 0.0001) { return vec3<f32>(0.0); }
+    roots = vec2<f32>(-k0 / k1);
+  } else {
+    let discriminant = k1 * k1 - 4.0 * k0 * k2;
+    if (discriminant < 0.0) { return vec3<f32>(0.0); }
+    let root = sqrt(discriminant);
+    roots = vec2<f32>((-k1 - root) / (2.0 * k2), (-k1 + root) / (2.0 * k2));
+  }
+  var best = vec3<f32>(0.0);
+  var best_distance = 1e30;
+  for (var i = 0u; i < 2u; i = i + 1u) {
+    let v_coord = roots[i];
+    let denom_x = e.x + g.x * v_coord;
+    let denom_y = e.y + g.y * v_coord;
+    var u_coord = 0.0;
+    if (abs(denom_x) >= abs(denom_y)) {
+      if (abs(denom_x) <= 1e-7) { continue; }
+      u_coord = (h.x - f.x * v_coord) / denom_x;
+    } else {
+      u_coord = (h.y - f.y * v_coord) / denom_y;
+    }
+    let uv = vec2<f32>(u_coord, v_coord);
+    if (any(uv < lo) || any(uv > hi)) { continue; }
+    let distance = dot(uv - centre, uv - centre);
+    if (distance < best_distance) {
+      best_distance = distance;
+      best = vec3<f32>(1.0, uv);
+    }
+  }
+  return best;
+}
+
+/// Output-space rectangle (min, max) the corner pin maps a Bezier mesh's
+/// reach to. A bilinear map keeps a rectangle inside the hull of its
+/// mapped corners, so the four corners bound it.
+fn quad_reach_bounds(tl: vec2<f32>, tr: vec2<f32>, br: vec2<f32>, bl: vec2<f32>, reach: vec4<f32>) -> vec4<f32> {
+  let lo = min(reach.xy, vec2<f32>(0.0));
+  let hi = max(reach.zw, vec2<f32>(1.0));
+  let c0 = mix(mix(tl, tr, lo.x), mix(bl, br, lo.x), lo.y);
+  let c1 = mix(mix(tl, tr, hi.x), mix(bl, br, hi.x), lo.y);
+  let c2 = mix(mix(tl, tr, hi.x), mix(bl, br, hi.x), hi.y);
+  let c3 = mix(mix(tl, tr, lo.x), mix(bl, br, lo.x), hi.y);
+  return vec4<f32>(min(min(c0, c1), min(c2, c3)), max(max(c0, c1), max(c2, c3)));
 }
 
 fn mesh_cell_uv(p: vec2<f32>, tl: vec2<f32>, tr: vec2<f32>, br: vec2<f32>, bl: vec2<f32>) -> vec3<f32> {
@@ -3329,8 +3396,16 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
       && all(canvas_uv >= edge_bounds.xy) && all(canvas_uv <= edge_bounds.zw);
     // Reject outside the conservative quad bounds before inverse mapping,
     // mesh search, masks and effects.
-    let quad_min = min(min(tl, tr), min(br, bl));
-    let quad_max = max(max(tl, tr), max(br, bl));
+    // A Bezier mesh can bulge past the corner quad: bound it by the reach
+    // of its surface instead, so the bulge keeps its content.
+    let bezier_mesh = layers[layer_index].fast_flags.y == 1u;
+    var quad_min = min(min(tl, tr), min(br, bl));
+    var quad_max = max(max(tl, tr), max(br, bl));
+    if (bezier_mesh) {
+      let reach = quad_reach_bounds(tl, tr, br, bl, layers[layer_index].mesh_bounds);
+      quad_min = min(quad_min, reach.xy);
+      quad_max = max(quad_max, reach.zw);
+    }
     let bounds_pad = vec2<f32>(max(1.0, max(quad_max.x - quad_min.x, quad_max.y - quad_min.y)) * 0.001);
     let bounds_min = quad_min - bounds_pad;
     let bounds_max = quad_max + bounds_pad;
@@ -3354,7 +3429,12 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
     // Content coverage before the layer's opacity (the editor's layer texture alpha).
     var content_alpha = 0.0;
     if (in_quad_bounds) {
-      let local = quad_local_uv(canvas_uv, tl, tr, br, bl);
+      var local: vec3<f32>;
+      if (bezier_mesh) {
+        local = quad_local_uv_reach(canvas_uv, tl, tr, br, bl, layers[layer_index].mesh_bounds);
+      } else {
+        local = quad_local_uv(canvas_uv, tl, tr, br, bl);
+      }
       let inside = local.x > 0.5;
       let mesh_sample = layer_mesh_uv(local.yz, layer_index);
       let inside_mesh = inside && mesh_sample.x > 0.5;
@@ -3362,8 +3442,12 @@ fn fs_main(in: VertexOut) -> @location(0) vec4<f32> {
         let uv_sample = layer_sample_uv(mesh_sample.yz, layer_index);
         let sample_uv = uv_sample.xy;
         let content_mask = uv_sample.z;
-        let shape_sample = native_layer_shape(local.yz, layer_index);
-        let polygon_mask = native_polygon_mask(local.yz, layer_index);
+        // A Bezier layer's shape and mask are cut in the layer's own UV
+        // before the mesh bends it, as the editor texture and the Edge
+        // Effect outline are, so they follow the surface into a bulge.
+        let shape_uv = select(local.yz, mesh_sample.yz, bezier_mesh);
+        let shape_sample = native_layer_shape(shape_uv, layer_index);
+        let polygon_mask = native_polygon_mask(shape_uv, layer_index);
         let shape_mask = shape_sample.x * polygon_mask;
         content_alpha = 0.56 * shape_mask;
         if (layers[layer_index].info.w > 0.5) {

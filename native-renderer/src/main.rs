@@ -1318,6 +1318,10 @@ struct LayerGpu {
     mask: [[f32; 4]; MAX_LAYER_MASK_POINTS],
     mesh: [[f32; 4]; MAX_LAYER_MESH_VEC4S],
     mesh_tangents: [[f32; 4]; MAX_LAYER_MESH_TANGENT_VEC4S],
+    /// Quad-local (y-down) rectangle (min u, min v, max u, max v) that holds
+    /// a Bezier mesh's whole surface, bulges past the corner quad included.
+    /// Zero, and never read, for a straight mesh.
+    mesh_bounds: [f32; 4],
     source_rect: [f32; 4],
     fast_flags: [u32; 4],
 }
@@ -3093,6 +3097,7 @@ impl SceneLayer {
             mask: self.mask_gpu(),
             mesh: self.mesh_gpu(),
             mesh_tangents: self.mesh_tangents_gpu(),
+            mesh_bounds: self.mesh_bounds_gpu(),
             source_rect: self.source_rect,
             fast_flags: [u32::from(plain_fill), u32::from(self.mesh_is_bezier()), 0, 0],
         }
@@ -3124,6 +3129,67 @@ impl SceneLayer {
             packed[index * 2 + 1] = [left[0], -left[1], up[0], -up[1]];
         }
         packed
+    }
+
+    /// The quad-local rectangle a Bezier mesh's surface can reach. Each cell
+    /// is a bicubic patch inside the hull of its 16 control points: the
+    /// corners, the eight edge handles and the four inner points of its
+    /// Bezier form (the same ones mesh_patch_inner in heartbeat.wgsl builds).
+    /// The shader bounds a Bezier layer's pixels by this instead of the
+    /// corner quad, so a bulge past the quad keeps its content.
+    fn mesh_bounds_gpu(&self) -> [f32; 4] {
+        if !self.mesh_is_bezier() {
+            return [0.0; 4];
+        }
+        let rows = self.mesh_rows as usize;
+        let cols = self.mesh_cols as usize;
+        // Same flip as mesh_gpu / mesh_tangents_gpu: y-up layer space to
+        // the compositor's y-down quad-local space.
+        let point = |row: usize, col: usize| {
+            let p = self.mesh_points[row * cols + col];
+            [p[0], 1.0 - p[1]]
+        };
+        let handle = |row: usize, col: usize, side: usize| {
+            let p = point(row, col);
+            let t = self.mesh_tangents[row * cols + col][side];
+            [p[0] + t[0], p[1] - t[1]]
+        };
+        let mut lo = [f32::INFINITY; 2];
+        let mut hi = [f32::NEG_INFINITY; 2];
+        let mut grow = |q: [f32; 2]| {
+            lo = [lo[0].min(q[0]), lo[1].min(q[1])];
+            hi = [hi[0].max(q[0]), hi[1].max(q[1])];
+        };
+        let mix = |a: [f32; 2], b: [f32; 2], t: f32| [a[0] + (b[0] - a[0]) * t, a[1] + (b[1] - a[1]) * t];
+        const RIGHT: usize = 0;
+        const DOWN: usize = 1;
+        const LEFT: usize = 2;
+        const UP: usize = 3;
+        for row in 0..rows - 1 {
+            for col in 0..cols - 1 {
+                let (a, b) = (point(row, col), point(row, col + 1));
+                let (c, d) = (point(row + 1, col + 1), point(row + 1, col));
+                let top = [handle(row, col, RIGHT), handle(row, col + 1, LEFT)];
+                let bottom = [handle(row + 1, col, RIGHT), handle(row + 1, col + 1, LEFT)];
+                // Layer-space "down" is the next row, which is further down
+                // in quad-local space too once y is flipped.
+                let left = [handle(row, col, DOWN), handle(row + 1, col, UP)];
+                let right = [handle(row, col + 1, DOWN), handle(row + 1, col + 1, UP)];
+                for q in [a, b, c, d, top[0], top[1], bottom[0], bottom[1], left[0], left[1], right[0], right[1]] {
+                    grow(q);
+                }
+                for j in 1..=2usize {
+                    for i in 1..=2usize {
+                        let (fu, fv) = (i as f32 / 3.0, j as f32 / 3.0);
+                        let tb = mix(top[i - 1], bottom[i - 1], fv);
+                        let lr = mix(left[j - 1], right[j - 1], fu);
+                        let sheet = mix(mix(a, b, fu), mix(d, c, fu), fv);
+                        grow([tb[0] + lr[0] - sheet[0], tb[1] + lr[1] - sheet[1]]);
+                    }
+                }
+            }
+        }
+        [lo[0], lo[1], hi[0], hi[1]]
     }
 
     fn has_edge_effects(&self) -> bool {
@@ -31298,6 +31364,38 @@ void main() { gl_FragColor = vec4(fractalDepth); }"#,
         assert_eq!((layer.mesh_rows, layer.mesh_cols), (2, 2));
         assert!(layer.mesh_tangents.is_empty());
         assert_eq!(layer.gpu().fast_flags[1], 0);
+    }
+
+    /// A Bezier mesh whose top edge bulges above the corner quad has to hand
+    /// the shader a reach that holds the bulge, or the compositor clips the
+    /// content at the quad while the Edge Effect outline follows the curve.
+    #[test]
+    fn scene_layer_bezier_mesh_bounds_hold_a_bulge_past_the_corner_quad() {
+        let mut layer = SceneLayer::new("bulge-layer".to_string(), 0);
+        let grid = serde_json::json!({
+            "rows": 2, "cols": 2,
+            "points": [[{"x": 0.0, "y": 1.0}, {"x": 1.0, "y": 1.0}], [{"x": 0.0, "y": 0.0}, {"x": 1.0, "y": 0.0}]],
+            "tangents": [
+                [{"right": {"x": 0.3, "y": 0.3}}, {"left": {"x": -0.3, "y": 0.3}}],
+                [null, null],
+            ],
+        });
+        apply_layer_mesh_grid(&mut layer, Some(&grid));
+        let gpu = layer.gpu();
+        assert_eq!(gpu.fast_flags[1], 1);
+        let [min_u, min_v, max_u, max_v] = gpu.mesh_bounds;
+        // Layer y-up +0.3 is quad-local y-down -0.3: the handles lift the top
+        // edge above v = 0, and nothing reaches past the other three sides.
+        assert!((min_v + 0.3).abs() < 1e-6, "min v {min_v}");
+        assert!(min_u.abs() < 1e-6 && (max_u - 1.0).abs() < 1e-6 && (max_v - 1.0).abs() < 1e-6, "{:?}", gpu.mesh_bounds);
+
+        // A straight mesh keeps the corner quad and never reads the bounds.
+        let straight = serde_json::json!({
+            "rows": 2, "cols": 2,
+            "points": [[{"x": 0.0, "y": 1.0}, {"x": 1.0, "y": 1.0}], [{"x": 0.0, "y": 0.0}, {"x": 1.0, "y": 0.0}]],
+        });
+        apply_layer_mesh_grid(&mut layer, Some(&straight));
+        assert_eq!(layer.gpu().mesh_bounds, [0.0; 4]);
     }
 
     /// The selfie flip has to survive the whole hop from the panel's `mirrorX`

@@ -2,8 +2,11 @@ import { spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import type { MeshPointTangents, MeshWarpGrid } from '../types';
+import type { EdgeEffect, Layer, MeshPointTangents, MeshWarpGrid, WarpCorners } from '../types';
 import { evaluateMeshGrid } from '../utils/meshWarp';
+import { buildEdgeEffectContext, nativeEdgeEffectPayload } from '../drawing/edgeEffects';
+import { edgeTypeDefaults } from '../drawing/edgeEffectCatalog';
+import { buildEdgeOutline, EDGE_INSET_PX } from '../drawing/edgeEffectGeometry';
 
 /**
  * Bezier mesh warp on the native compositor.
@@ -16,6 +19,8 @@ import { evaluateMeshGrid } from '../utils/meshWarp';
  * across all three cells (a kink at a cell boundary would miss the cubic
  * fit), keep doing so once the layer is corner-pinned, and a mesh without
  * tangents has to render exactly like the straight mesh it always was.
+ * A mesh that bulges past its corner quad has to keep its content in the
+ * bulge, up to the curve its Edge Effect outline follows.
  */
 
 const nativeCoreBin = join(
@@ -333,14 +338,149 @@ describe('Bezier mesh warp on the native core', () => {
       const after = await snapshot(rpc);
 
       expect(after.bytes.length).toBe(before.bytes.length);
+      // A Bezier layer cuts its shape in its own UV before the mesh bends
+      // it (as the editor and the Edge Effect outline do), so the layer's
+      // one-pixel anti-alias ramp at the outer edge follows the mesh's cell
+      // spacing there. Inside that ring the surfaces must agree: Newton
+      // lands within float precision of the bilinear inverse, so at most
+      // the odd rounding step may differ.
+      const RING = 3;
       let worst = 0;
+      let worstRing = 0;
       for (let i = 0; i < before.bytes.length; i++) {
-        worst = Math.max(worst, Math.abs(before.bytes[i] - after.bytes[i]));
+        const pixel = i >> 2;
+        const x = pixel % before.width;
+        const y = Math.floor(pixel / before.width);
+        const onRing = x < RING || y < RING || x >= before.width - RING || y >= before.height - RING;
+        const diff = Math.abs(before.bytes[i] - after.bytes[i]);
+        if (onRing) worstRing = Math.max(worstRing, diff);
+        else worst = Math.max(worst, diff);
       }
-      // Newton lands within float precision of the bilinear inverse, so at
-      // most the odd rounding step on an edge pixel may differ.
       expect(worst, 'straight-edged Bezier cells must match the bilinear mesh').toBeLessThanOrEqual(2);
-      expect(differingPixels(before, after)).toBeLessThan(0.002);
+      expect(worstRing, 'the outer anti-alias ramp stays within a few levels').toBeLessThanOrEqual(16);
+      expect(differingPixels(before, after)).toBeLessThan(0.02);
+    } finally { await rpc.close(); }
+  }, 60000);
+});
+
+/** A 2x2 mesh on a pinned quad whose top edge bows up past the quad: the
+ *  cubic (0,1) (1/3,1+h) (2/3,1+h) (1,1) peaks at 1 + 0.75 h, so h = 0.4/3
+ *  lifts its middle 10% of the quad height above the corner quad. */
+const BULGE_HANDLE = 0.4 / 3;
+const BULGE_CORNERS: WarpCorners = {
+  topLeft: { x: 0.2, y: 0.75 }, topRight: { x: 0.8, y: 0.75 },
+  bottomRight: { x: 0.8, y: 0.15 }, bottomLeft: { x: 0.2, y: 0.15 },
+};
+
+function bulgeMesh(): MeshWarpGrid {
+  return {
+    rows: 2, cols: 2, bezier: true,
+    points: [[{ x: 0, y: 1 }, { x: 1, y: 1 }], [{ x: 0, y: 0 }, { x: 1, y: 0 }]],
+    tangents: [
+      [{ right: { x: 1 / 3, y: BULGE_HANDLE } }, { left: { x: -1 / 3, y: BULGE_HANDLE } }],
+      [null, null],
+    ],
+  };
+}
+
+/** Output row (top-down, continuous) of the bulging top edge at column px. */
+function bulgeEdgeRow(mesh: MeshWarpGrid, px: number): number {
+  const cx = (px + 0.5) / SIZE;
+  const local = (cx - 0.2) / 0.6;
+  const top = evaluateMeshGrid(mesh, local, 1);
+  return (1 - (0.15 + 0.6 * top.y)) * SIZE;
+}
+
+describe('Bezier mesh bulging past its corner quad', () => {
+  itIfNativeCore('fills the bulge with content up to the curve its outline stroke follows', async () => {
+    const rpc = createNativeRpc();
+    try {
+      await startCore(rpc);
+      const mesh = bulgeMesh();
+      // The quad's top edge is at row 64; the curve peaks 10% of the quad
+      // height (0.06 of the output, about 15 rows) above it.
+      const quadTopRow = (1 - 0.75) * SIZE;
+      expect(quadTopRow - bulgeEdgeRow(mesh, SIZE / 2)).toBeGreaterThan(14);
+
+      await uploadLayer(rpc, 'bulge', solidFrame([255, 0, 0, 255]), BULGE_CORNERS, mesh);
+      await expect.poll(async () => {
+        const shot = await snapshot(rpc);
+        return channel(shot, SIZE / 2, SIZE / 2, shot.red);
+      }, { timeout: 5000, interval: 30 }).toBeGreaterThan(200);
+      const content = await snapshot(rpc);
+
+      const columns = SAMPLE_COLUMNS.filter((px) => px > 0.22 * SIZE && px < 0.78 * SIZE);
+      const contentEdge = new Map<number, number>();
+      for (const px of columns) {
+        const expected = bulgeEdgeRow(mesh, px);
+        const measured = topEdgeRow(content, px);
+        expect(Math.abs(measured - expected), `content edge at column ${px}: row ${measured}, curve ${expected.toFixed(2)}`).toBeLessThanOrEqual(1);
+        // Content, not black, all the way from the quad's edge up to the curve.
+        for (let y = Math.ceil(expected) + 1; y <= quadTopRow + 2; y++) {
+          expect(channel(content, px, y, content.red), `red at column ${px} row ${y}`).toBeGreaterThan(200);
+        }
+        expect(channel(content, px, Math.floor(expected) - 2, content.red)).toBeLessThan(32);
+        contentEdge.set(px, measured);
+      }
+
+      // The same layer with a 2 px green outline stroke. Its centerline runs
+      // EDGE_INSET_PX inside the layer outline, so it has to sit that far
+      // inside the content edge, on content, bulge included.
+      const layer = {
+        id: 'bulge', layerShape: null, corners: BULGE_CORNERS, warpMode: 'mesh', meshGrid: mesh,
+        edgeEffects: { enabled: true, effects: [{
+          id: 'bulge-stroke', enabled: true, opacity: 1, blendMode: 'normal',
+          stroke: { ...edgeTypeDefaults('stroke', 'solid'), width: 2, color: [0, 1, 0, 1] },
+          fill: { type: 'none' }, animation: { type: 'none' },
+        } as unknown as EdgeEffect] },
+      } as unknown as Layer;
+      const outline = buildEdgeOutline(layer, SIZE, SIZE)!;
+      // The outline follows the curve, 10% above the quad (less its inset).
+      expect(Math.max(...outline.points.map((p) => p.y))).toBeGreaterThan(0.75 * SIZE + 14 - EDGE_INSET_PX);
+      /** Output row (top-down) of the outline's top run at column px. */
+      const outlineRow = (px: number): number => {
+        const cx = px + 0.5;
+        let best = -Infinity;
+        outline.points.forEach((a, i) => {
+          const b = outline.points[(i + 1) % outline.points.length];
+          if ((a.x - cx) * (b.x - cx) > 0 || a.x === b.x) return;
+          best = Math.max(best, a.y + (b.y - a.y) * (cx - a.x) / (b.x - a.x));
+        });
+        return SIZE - best;
+      };
+      const payload = nativeEdgeEffectPayload(layer, SIZE, SIZE, buildEdgeEffectContext([layer], SIZE, SIZE))!;
+      await rpc.send('submit_commands', { commands: [
+        {
+          type: 'set_layer_edge_effects', layer_id: 'bulge',
+          edge_effects: payload.effects, edge_outline: payload.outline, edge_corners: payload.corners,
+          edge_diagonals: payload.diagonals, edge_geometry: payload.geometry,
+          edge_seed: payload.seed, edge_bounds: payload.bounds,
+        },
+        { type: 'present' },
+      ] });
+      await rpc.send('frame_snapshot', {});
+      const stroked = await snapshot(rpc);
+      for (const px of columns) {
+        const edge = contentEdge.get(px)!;
+        const expectedCentre = outlineRow(px);
+        const curve = bulgeEdgeRow(mesh, px);
+        let weight = 0;
+        let sum = 0;
+        for (let y = Math.floor(expectedCentre) - 5; y <= Math.floor(expectedCentre) + 5; y++) {
+          const green = channel(stroked, px, y, stroked.green);
+          weight += green;
+          sum += green * (y + 0.5);
+        }
+        expect(weight, `stroke at column ${px}`).toBeGreaterThan(255);
+        const centre = sum / weight;
+        // On the outline the editor draws...
+        expect(Math.abs(centre - expectedCentre), `stroke centre ${centre.toFixed(2)} vs outline ${expectedCentre.toFixed(2)} at column ${px}`).toBeLessThanOrEqual(1);
+        // ...which is the content edge moved in by the inset, to the pixel.
+        expect(Math.abs((centre - edge) - (expectedCentre - curve)), `stroke ${centre.toFixed(2)} vs content edge ${edge} at column ${px}`).toBeLessThanOrEqual(1);
+        // Content, not black, between the content edge and the stroke.
+        expect(channel(stroked, px, edge + 1, stroked.red)).toBeGreaterThan(200);
+        expect(channel(stroked, px, edge + 1, stroked.green)).toBeLessThan(64);
+      }
     } finally { await rpc.close(); }
   }, 60000);
 });
