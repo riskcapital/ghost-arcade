@@ -449,12 +449,30 @@ function effectReach(packed: Vec4[], outline: EdgeOutline, center: Point2D, widt
     case 5: disc = Math.max(3, an[1]) * Math.abs(an[2]) * width + w * 2 + 2; break;
     case 6: reach += Math.abs(ap[0]) * 0.02 * width; break;
     case 7: reach += Math.abs(ap[0]) * 0.025 * width; break;
-    case 8: case 9: disc = radius * 4 + reach; break;
+    // Flip perspective magnifies the near edge at most 2.5 / 1.5 times.
+    case 8: case 9: disc = radius * 1.7 + reach; break;
     case 10: reach += radius * Math.abs(ap[0]) * 1.5; break;
     case 11: case 12: case 13: reach += Math.abs(ap[0]) * 1.2; break;
     default: break;
   }
   return { reach, disc };
+}
+
+/**
+ * Distance from the centerline beyond which an effect draws nothing, for
+ * effects whose shape stays put, and whether it draws deep inside the shape.
+ * Effects that move or reshape the outline, or draw around the centre,
+ * report an unbounded reach and rely on their rectangle.
+ */
+function effectDistanceCull(packed: Vec4[], reach: number): Vec4 {
+  const strokeType = packed[0][3];
+  const fillType = packed[5][1];
+  const animType = packed[9][0];
+  const unbounded = animType !== 0 && animType !== 1;
+  const concentricInward = animType === 1 && packed[10][0] !== 0;
+  const interior = fillType !== 0 || concentricInward || strokeType === 20
+    || (strokeType === 17 && packed[11][2] !== 1);
+  return [unbounded ? 1e6 : reach, interior ? 1 : 0, reach, 0];
 }
 
 export interface NativeEdgeEffectPayload {
@@ -492,16 +510,22 @@ export function nativeEdgeEffectPayload(
     const layerCenter = toOutput ? toOutput({ x: cx, y: cy }) : outline.centroid;
     return packNativeEdgeEffect(effect, { outline, layerCenter, context: layerContext, width, height });
   });
+  const clampUv = (v: number) => Math.max(-0.01, Math.min(1.01, v));
   let minX = outline.bbox[0], minY = outline.bbox[1], maxX = outline.bbox[2], maxY = outline.bbox[3];
   for (const fx of packed) {
     const center = { x: fx[16][0], y: fx[16][1] };
     const { reach, disc } = effectReach(fx, outline, center, width);
-    minX = Math.min(minX, outline.bbox[0] - reach, center.x - disc);
-    minY = Math.min(minY, outline.bbox[1] - reach, center.y - disc);
-    maxX = Math.max(maxX, outline.bbox[2] + reach, center.x + disc);
-    maxY = Math.max(maxY, outline.bbox[3] + reach, center.y + disc);
+    const e0 = Math.min(outline.bbox[0] - reach, center.x - disc);
+    const e1 = Math.min(outline.bbox[1] - reach, center.y - disc);
+    const e2 = Math.max(outline.bbox[2] + reach, center.x + disc);
+    const e3 = Math.max(outline.bbox[3] + reach, center.y + disc);
+    minX = Math.min(minX, e0); minY = Math.min(minY, e1);
+    maxX = Math.max(maxX, e2); maxY = Math.max(maxY, e3);
+    // Per-effect culling: its own output rectangle (slot 19), and how far
+    // from the centerline it can show (slot 20: reach px, has interior).
+    fx[19] = [clampUv(e0 / width), clampUv(e1 / height), clampUv(e2 / width), clampUv(e3 / height)];
+    fx[20] = effectDistanceCull(fx, reach);
   }
-  const clampUv = (v: number) => Math.max(-0.01, Math.min(1.01, v));
   return {
     effects: packed,
     outline: outline.points.map((p, i) => [p.x, p.y, outline.cumulative[i], outline.surfaceScale[i] ?? 1]),

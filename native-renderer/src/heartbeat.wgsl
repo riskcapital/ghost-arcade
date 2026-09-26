@@ -1829,7 +1829,9 @@ fn native_layer_shape(local_uv: vec2<f32>, layer_index: u32) -> vec2<f32> {
 //  16 (centre x px, centre y px, fill progress mode, fill progress)
 //  17 dash pattern (dash, gap, dash, gap) px
 //  18 group bounds (min x, min y, max x, max y) px
-//  19 stroke params C   20 fill params C   21 animation params B
+//  19 the effect's own output-UV cull rectangle
+//  20 (cull reach px from the centerline, draws inside, reach px, _)
+//  21 unused
 
 const EDGE_PI: f32 = 3.14159265359;
 const EDGE_TAU: f32 = 6.28318530718;
@@ -2509,7 +2511,15 @@ fn edge_effect_fragment(li: u32, e: i32, p: vec2<f32>, base: EdgeHit, ctx: EdgeC
   }
   if (visible < 0.5) { return vec4<f32>(0.0); }
   var hit = base;
-  if (any(q != p)) { hit = edge_hit(li, q, ctx.count); }
+  if (any(q != p)) {
+    // A moved shape draws nothing where the moved point is beyond its box
+    // plus the effect's reach: skip the distance field there.
+    let reach = edge_fx(li, e, 20).z / max(k, 0.05);
+    if (any(q < ctx.bbox.xy - vec2<f32>(reach)) || any(q > ctx.bbox.zw + vec2<f32>(reach))) {
+      return vec4<f32>(0.0);
+    }
+    hit = edge_hit(li, q, ctx.count);
+  }
   let aa = ctx.aa / max(k, 0.05);
   let fill_px = select(p, q, anim_type >= 8);
   let uv = fill_px / res;
@@ -2918,7 +2928,11 @@ fn edge_effect_fragment(li: u32, e: i32, p: vec2<f32>, base: EdgeHit, ctx: EdgeC
       } else {
         scale = 1.0 + phase;
       }
-      let ring = edge_hit(li, center + (p - center) / scale, ctx.count);
+      let rq = center + (p - center) / scale;
+      // The distance field is 1-Lipschitz: |d(rq)| >= |d(p)| - |rq - p|, so
+      // a ring that cannot reach this pixel is skipped without a search.
+      if (abs(base.d) - length(rq - p) > max(sw.x * 2.0, aa / scale) + 1.0) { continue; }
+      let ring = edge_hit(li, rq, ctx.count);
       let stroke_alpha = edge_falloff(abs(ring.d), sw.x * 2.0, aa / scale);
       result = max(result, stroke_color_u * stroke_alpha);
     }
@@ -3036,11 +3050,22 @@ fn apply_native_edge_effects(layer: vec4<f32>, p_uv: vec2<f32>, li: u32, aa: f32
   ctx.seed = layers[li].edge_extra.x;
   ctx.bbox = layers[li].edge_extra2;
   let p = p_uv * u.resolution;
-  let base = edge_hit(li, p, ctx.count);
+  var base: EdgeHit;
+  var base_ready = false;
   var cr = layer.rgb * layer.a;
   var ca = layer.a;
   for (var e: i32 = 0; e < 16; e = e + 1) {
     if (e >= effect_count) { break; }
+    // Cull per effect: outside its own rectangle, or (for effects that keep
+    // the outline still) farther from the centerline than it can reach.
+    let rect = layers[li].edge_effects[e][19];
+    if (any(p_uv < rect.xy) || any(p_uv > rect.zw)) { continue; }
+    if (!base_ready) {
+      base = edge_hit(li, p, ctx.count);
+      base_ready = true;
+    }
+    let cull = layers[li].edge_effects[e][20];
+    if (base.d > cull.x || (cull.y < 0.5 && -base.d > cull.x)) { continue; }
     let head = layers[li].edge_effects[e][0];
     // Premultiplied effect colour.
     let frag = edge_effect_fragment(li, e, p, base, ctx);
