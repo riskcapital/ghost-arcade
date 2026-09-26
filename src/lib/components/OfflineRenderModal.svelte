@@ -9,7 +9,8 @@
    */
 
   import { offlineRender, revealOutputPath, DEFAULT_OFFLINE_SETTINGS, type OfflineRenderSettings } from '../recording/offlineRender';
-  import { isDesktopApp } from '../bridge';
+  import { isDesktopApp, invoke } from '../bridge';
+  import { mergeRecordingCodecAvailability, type RecordingCodecOption } from '../recording/recordingSources';
   import { getNativeRendererCapabilities } from '../api/native-renderer';
   import { project } from '../stores/layers';
   import { showTimeline } from '../stores/showTimeline';
@@ -31,6 +32,14 @@
   let nativeFrameCaptureAvailable = false;
   let nativeFrameCaptureMessage = 'Desktop only';
   let nativeProbeGeneration = 0;
+  // Render to Video writes the opaque program output, so only the codecs
+  // without alpha are offered (H.264, ProRes 422 HQ, HAP).
+  let offlineCodecs: RecordingCodecOption[] = mergeRecordingCodecAvailability(null).filter(codec => !codec.alpha);
+  if (isDesktopApp) {
+    void invoke<{ codecs?: Array<{ id: string; available?: boolean; reason?: string }> }>('native_recording_codecs')
+      .then((result) => { offlineCodecs = mergeRecordingCodecAvailability(result?.codecs ?? null).filter(codec => !codec.alpha); })
+      .catch(() => {});
+  }
 
   // A programmed show already knows how long it is — seed the duration
   // from it so "render my show" is one click. Falls back to the default
@@ -429,6 +438,17 @@
           </button>
         </div>
       </div>
+
+      {#if isDesktopApp && !isFrameOutput}
+        <div class="field">
+          <label>Video codec</label>
+          <select value={settings.codec ?? 'h264'} onchange={(e) => { settings = { ...settings, codec: (e.currentTarget as HTMLSelectElement).value as OfflineRenderSettings['codec'] }; }}>
+            {#each offlineCodecs as codec}
+              <option value={codec.id} disabled={!codec.available}>{codec.label}{codec.available ? '' : ' (unavailable)'}</option>
+            {/each}
+          </select>
+        </div>
+      {/if}
 
       <div class="field">
         <label>{isFrameOutput ? 'Compile quality preset' : 'Quality'}</label>

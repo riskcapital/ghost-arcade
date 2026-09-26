@@ -17,6 +17,13 @@ import { invoke, isElectron } from '../bridge';
 import { startNativeRendererLiveFrameRecording } from './nativeLiveFrameRecorder';
 import { vjClipLauncher } from '../stores/vjClipLauncher';
 import { nativeClipAudioRecordable } from '../audio/nativeClipAudio';
+import {
+  holdRecordingScreen,
+  recordingRequest,
+  recordingSource,
+  type RecordingCodecId,
+  type RecordingSource,
+} from './recordingSources';
 
 // ============================================================================
 // TYPES
@@ -33,6 +40,11 @@ export interface RecorderOptions {
   onComplete?: () => void;
   /** Called on error */
   onError?: (error: Error) => void;
+  /** Desktop recordings: what to record. Defaults to the source picked in
+   *  the recording menu (the composition unless changed). */
+  source?: RecordingSource;
+  /** Desktop recordings: codec. Defaults to Settings > Recording (H.264). */
+  codec?: RecordingCodecId;
 }
 
 export interface RecorderHandle {
@@ -225,10 +237,25 @@ async function muxSidecarAudio(outputPath: string, sidecar: AudioSidecar | null,
   }
 }
 
+/** Library name for a take: the prefix, plus the source when it is not the
+ *  composition ("Recording · VJ Layer 2 2026-…"). */
+function takeName(namePrefix: string, sourceLabel: string | null): string {
+  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+  return sourceLabel ? `${namePrefix} · ${sourceLabel} ${timestamp}` : `${namePrefix} ${timestamp}`;
+}
+
 function startNativeCoreLiveRecording(options: RecorderOptions): RecorderHandle {
   // Frame 0 of the file is this instant, whichever video path wins and
   // however long its encoder takes to start.
   const requestedAtUnixMs = Date.now();
+  const request = recordingRequest(
+    options.source ?? get(recordingSource),
+    options.codec ?? settings.get().recording.nativeCodec ?? 'h264',
+  );
+  const sourceLabel = request.source.kind === 'composition' ? null : request.label;
+  // A Screen renders in the core only while its window is open or a take
+  // holds it; hold it until this recording is finished.
+  const releaseScreen = request.source.kind === 'screen' ? holdRecordingScreen(request.source.sliceId) : null;
   let innerFallback: RecorderHandle | null = null;
   let mainProcessActive = false;
   let stopRequested = false;
@@ -263,6 +290,7 @@ function startNativeCoreLiveRecording(options: RecorderOptions): RecorderHandle 
     recording = false;
     window.clearInterval(durationTimer);
     audioSidecar?.discard();
+    releaseScreen?.();
     options.onError?.(err instanceof Error ? err : new Error(String(err)));
   };
 
@@ -277,14 +305,18 @@ function startNativeCoreLiveRecording(options: RecorderOptions): RecorderHandle 
         durationSeconds?: number;
         thumbnailDataUrl?: string | null;
         nativeAudio?: boolean;
+        extension?: string;
+        mime?: string;
       } | null;
+      releaseScreen?.();
       if (!result?.success || !result.outputPath) {
         throw new Error(result?.error || 'Native recording failed.');
       }
       muxedAudio = await muxSidecarAudio(result.outputPath, audioSidecar, result.nativeAudio === true);
       const url = pathToFileUrl(result.outputPath);
-      const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
-      const name = `${namePrefix} ${timestamp}`;
+      const name = takeName(namePrefix, sourceLabel);
+      const extension = result.extension || request.codec.extension;
+      const mime = result.mime || request.codec.mime;
       mediaLibrary.addItem({
         id: generateUUID(),
         name,
@@ -294,8 +326,8 @@ function startNativeCoreLiveRecording(options: RecorderOptions): RecorderHandle 
         _assetRef: {
           kind: 'local-file',
           originalPath: result.outputPath,
-          name: `${name}.mp4`,
-          mime: 'video/mp4',
+          name: `${name}.${extension}`,
+          mime,
           size: 0,
           lastModified: Date.now(),
         },
@@ -303,9 +335,11 @@ function startNativeCoreLiveRecording(options: RecorderOptions): RecorderHandle 
       if (autoDownload) {
         const dialog = await invoke('save_project_dialog', {
           title: 'Save Recording',
-          defaultPath: `${name}.mp4`,
+          defaultPath: `${name}.${extension}`,
           filters: [
-            { name: 'MP4 Video', extensions: ['mp4'] },
+            extension === 'mov'
+              ? { name: 'QuickTime Movie', extensions: ['mov'] }
+              : { name: 'MP4 Video', extensions: ['mp4'] },
             { name: 'All Files', extensions: ['*'] },
           ],
         }) as { canceled?: boolean; filePath?: string | null } | null;
@@ -334,6 +368,8 @@ function startNativeCoreLiveRecording(options: RecorderOptions): RecorderHandle 
       namePrefix,
       nativeAudio: nativeClipAudio,
       requestedAtUnixMs,
+      codec: request.codec.id,
+      source: request.source,
     }).catch((err) => ({ success: false, error: String(err) })) as { success?: boolean; error?: string; nativeAudio?: boolean } | null;
     if (started?.success) {
       mainProcessActive = true;
@@ -350,7 +386,9 @@ function startNativeCoreLiveRecording(options: RecorderOptions): RecorderHandle 
         height: proj.height || 1080,
         fps: 30,
         quality: 'high',
-        namePrefix,
+        namePrefix: sourceLabel ? `${namePrefix} · ${sourceLabel}` : namePrefix,
+        codec: request.codec.id,
+        source: request.source,
         liveClock: true,
         requestedAtUnixMs,
         promptSave: autoDownload,
@@ -366,6 +404,7 @@ function startNativeCoreLiveRecording(options: RecorderOptions): RecorderHandle 
         onComplete: () => {
           recording = false;
           window.clearInterval(durationTimer);
+          releaseScreen?.();
           options.onComplete?.();
         },
         onError: finishFail,

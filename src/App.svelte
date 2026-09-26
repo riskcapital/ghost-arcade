@@ -101,6 +101,7 @@
   import { checkForUpdate, type VersionCheckResult } from './lib/utils/versionCheck';
   import { fitToolbar } from './lib/utils/toolbarFit';
   import { startRecording as startRec, formatRecordingDuration, type RecorderHandle } from './lib/recording/recorder';
+  import RecordingSourcePicker from './lib/components/RecordingSourcePicker.svelte';
   import { vjClipLauncher } from './lib/stores/vjClipLauncher';
   import { audioStore } from './lib/stores/audio';
   // macros.ts registers a callback with midiRouter on import so
@@ -6616,6 +6617,9 @@
           <button class="rec-btn" onclick={startRecording} aria-label="Record output" title="Record Output (with audio if active)">
             ●
           </button>
+        {/if}
+        {#if nativePrimaryRenderer}
+          <RecordingSourcePicker disabled={isRecording} />
         {/if}
 
         <!-- VJ Mixer Button -->

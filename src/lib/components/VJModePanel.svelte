@@ -65,6 +65,7 @@
   import { videoLibrary } from '../stores/videoLibrary';
   import { NATIVE_ENGINE_ONLY, settings } from '../stores/settings';
   import { startRecording as startRec, formatRecordingDuration, type RecorderHandle } from '../recording/recorder';
+  import RecordingSourcePicker from './RecordingSourcePicker.svelte';
   import { showLoading } from '../stores/loading';
   import { showToast } from '../stores/errorToast';
   import { listScreenCaptureSources, screenCaptureSourcePickerAvailable, type ScreenCaptureSource } from '$lib/capture/screenSources';
@@ -4146,6 +4147,9 @@
           <button class="vj-rec-btn" onclick={vjStartRecording} title="Record Output">
             ● REC
           </button>
+        {/if}
+        {#if nativePreviewActive}
+          <RecordingSourcePicker disabled={vjIsRecording} compact />
         {/if}
 
         <!-- Same glyph mapping mode's Stage Sim button uses, so the two

@@ -67,6 +67,7 @@ import { generateUUID } from '../utils/uuid';
 import { createAssetRefFromGeneratedBlob, pathToFileUrl, type AssetRef } from '../storage/assetRegistry';
 import type { RenderEngine } from '../renderer/engine';
 import { invoke, isElectron } from '../bridge';
+import { recordingCodecOption, type RecordingCodecId } from './recordingSources';
 import {
   exportNativeRendererFrameSnapshot,
   getNativeRendererCapabilities,
@@ -96,6 +97,10 @@ export interface OfflineRenderSettings {
    *  renderer output directly; desktop MP4 packaging streams raw frames
    *  through native FFmpeg while browser builds keep the wasm fallback. */
   captureBackend?: 'webgl' | 'native';
+  /** Desktop native encode only: H.264 MP4 (default), ProRes 422 HQ or HAP
+   *  (MOV). Offline frames are the opaque program output, so the alpha
+   *  codecs are not offered here. */
+  codec?: RecordingCodecId;
 }
 
 export const DEFAULT_OFFLINE_SETTINGS: OfflineRenderSettings = {
@@ -213,6 +218,9 @@ export interface NativeMp4FrameEncoderSession {
   totalFrames: number;
   pixelFormat: 'rgba' | 'bgra';
   quality: OfflineRenderSettings['quality'];
+  /** Container of the encoded file: mp4 for H.264, mov for ProRes / HAP. */
+  extension: string;
+  mime: string;
 }
 
 function rawPixelFormatForNativeTextureFormat(format: string): 'rgba' | 'bgra' {
@@ -522,15 +530,19 @@ export async function cancelNativeJpegFrameEncoder(session: NativeJpegFrameEncod
 }
 
 export async function startNativeMp4FrameEncoder(
-  settings: Pick<OfflineRenderSettings, 'width' | 'height' | 'fps' | 'quality' | 'filename'>,
+  settings: Pick<OfflineRenderSettings, 'width' | 'height' | 'fps' | 'quality' | 'filename' | 'codec'>,
   totalFrames: number,
   pixelFormat: 'rgba' | 'bgra' = 'rgba',
+  /** Live fallback capture only: read the core's record target or one
+   *  Screen ("slice:<id>") instead of the program output. */
+  captureSource?: string,
 ): Promise<NativeMp4FrameEncoderSession> {
   if (!isElectron) {
     throw new Error('Native MP4 encoding requires the desktop app.');
   }
   const jobId = `mp4-frame-${generateUUID()}`;
-  const outputName = `${sanitizeFilenamePart(settings.filename || 'Offline Render', 'Offline_Render')}.mp4`;
+  const codec = recordingCodecOption(settings.codec);
+  const outputName = `${sanitizeFilenamePart(settings.filename || 'Offline Render', 'Offline_Render')}.${codec.extension}`;
   const expectedFrames = Number.isFinite(totalFrames) && totalFrames > 0 ? Math.round(totalFrames) : 0;
   const result = await invoke<{
     success?: boolean;
@@ -547,6 +559,8 @@ export async function startNativeMp4FrameEncoder(
     totalFrames: expectedFrames,
     outputName,
     pixelFormat,
+    codec: codec.id,
+    ...(captureSource && captureSource !== 'output' ? { captureSource } : {}),
   });
   if (!result?.success || !result.tempDir || !result.outputPath) {
     throw new Error(result?.error || 'Could not start native MP4 frame encoder');
@@ -561,6 +575,8 @@ export async function startNativeMp4FrameEncoder(
     totalFrames: expectedFrames,
     pixelFormat: rawPixelFormatForNativeTextureFormat(result.pixelFormat || pixelFormat),
     quality: settings.quality,
+    extension: codec.extension,
+    mime: codec.mime,
   };
 }
 
@@ -688,13 +704,16 @@ export async function promptSaveMp4(
   outputPath: string,
   name: string,
   title = 'Save Video',
+  extension = 'mp4',
 ): Promise<string | null> {
   try {
     const result = await invoke('save_project_dialog', {
       title,
-      defaultPath: `${name}.mp4`,
+      defaultPath: `${name}.${extension}`,
       filters: [
-        { name: 'MP4 Video', extensions: ['mp4'] },
+        extension === 'mov'
+          ? { name: 'QuickTime Movie', extensions: ['mov'] }
+          : { name: 'MP4 Video', extensions: ['mp4'] },
         { name: 'All Files', extensions: ['*'] },
       ],
     }) as { canceled?: boolean; filePath?: string | null } | null;
@@ -1344,8 +1363,8 @@ function createOfflineRenderStore() {
         const assetRef: AssetRef = {
           kind: 'local-file',
           originalPath: encoded.outputPath,
-          name: `${niceName}.mp4`,
-          mime: 'video/mp4',
+          name: `${niceName}.${nativeMp4FrameEncoder.extension}`,
+          mime: nativeMp4FrameEncoder.mime,
           size: encoded.size,
           lastModified: Date.now(),
         };
@@ -1360,7 +1379,7 @@ function createOfflineRenderStore() {
         // Ask where the user wants their copy. The library entry above is
         // already committed, so cancelling just means "leave it in the
         // app folder" — the completion panel surfaces that path either way.
-        const savedPath = await promptSaveMp4(encoded.outputPath, niceName);
+        const savedPath = await promptSaveMp4(encoded.outputPath, niceName, 'Save Video', nativeMp4FrameEncoder.extension);
         update(s => ({
           ...s,
           status: 'complete',

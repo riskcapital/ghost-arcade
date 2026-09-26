@@ -36,7 +36,8 @@
     nativeRendererRuntime,
   } from '../stores/nativeRenderer';
   import { checkForUpdate, getCachedVersionResult, type VersionCheckResult } from '../utils/versionCheck';
-  import { openExternalUrl } from '../bridge';
+  import { openExternalUrl, invoke as bridgeInvoke, isElectron as bridgeIsElectron } from '../bridge';
+  import { mergeRecordingCodecAvailability, recordingCodecOption, type RecordingCodecId, type RecordingCodecOption } from '../recording/recordingSources';
 
   // Version-check state for the Settings → Updates section.
   // Reads cached result on mount so the row shows last-known state
@@ -133,6 +134,14 @@
     keyboardAddOpen = false;
   }
   import MediaPipePanel from './MediaPipePanel.svelte';
+
+  // Desktop recording codecs the bundled FFmpeg can encode (H.264 always).
+  let nativeRecordingCodecs: RecordingCodecOption[] = mergeRecordingCodecAvailability(null);
+  if (NATIVE_ENGINE_ONLY && bridgeIsElectron) {
+    void bridgeInvoke<{ codecs?: Array<{ id: string; available?: boolean; reason?: string }> }>('native_recording_codecs')
+      .then((result) => { nativeRecordingCodecs = mergeRecordingCodecAvailability(result?.codecs ?? null); })
+      .catch(() => {});
+  }
   // LicensePanel + tier-related imports removed — OSS build has no license UI.
   // Multi-Output / per-slice config (createDefaultSlice, maxOutputSlices,
   // OutputCanvasPreview) moved to the Screens tab — see ScreenPanel.svelte.
@@ -1096,6 +1105,20 @@
         {#if selectedSection === 'recording'}
         <section class="settings-section">
           <h3>Recording</h3>
+
+          {#if NATIVE_ENGINE_ONLY && bridgeIsElectron}
+          <div class="setting-row">
+            <div class="setting-label">
+              <span class="label-text">Recording Format</span>
+              <span class="label-hint">File the REC button writes. ProRes 4444 and HAP Alpha keep transparency when recording a layer or the composition. Pick the source from the arrow beside REC.</span>
+            </div>
+            <select value={recordingCodecOption($settings.recording.nativeCodec).id} onchange={(e) => settings.setNativeRecordingCodec((e.currentTarget as HTMLSelectElement).value as RecordingCodecId)}>
+              {#each nativeRecordingCodecs as codec}
+                <option value={codec.id} disabled={!codec.available}>{codec.label}{codec.available ? '' : ' (unavailable)'}</option>
+              {/each}
+            </select>
+          </div>
+          {/if}
 
           <div class="setting-row">
             <div class="setting-label">

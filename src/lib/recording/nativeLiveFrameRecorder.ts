@@ -11,6 +11,12 @@ import {
 import type { OfflineRenderSettings } from './offlineRender';
 import type { RecorderHandle } from './recorder';
 import {
+  recordingRequest,
+  recordTargetParams,
+  type RecordingCodecId,
+  type RecordingSource,
+} from './recordingSources';
+import {
   cancelNativeMp4FrameEncoder,
   finishNativeMp4FrameEncoder,
   formatErr,
@@ -64,6 +70,11 @@ export interface NativeRendererLiveFrameRecorderOptions {
   /** Live clock with `nativeAudio`: whether the main process got the core's
    *  clip audio tap running. */
   onNativeAudioStart?: (running: boolean) => void;
+  /** Live clock only: record one layer / VJ row / Screen instead of the
+   *  program output (the core's record target or slice output). */
+  source?: RecordingSource;
+  /** Live clock only: codec (H.264 MP4 unless given). */
+  codec?: RecordingCodecId;
   fps?: number;
   quality?: OfflineRenderSettings['quality'];
   namePrefix?: string;
@@ -117,8 +128,9 @@ async function saveMp4ToLibrary(
   frames: number,
   namePrefix: string,
   finalizeOutput?: (outputPath: string, result?: { nativeAudio: boolean }) => Promise<void> | void,
-): Promise<{ outputPath: string; name: string }> {
+): Promise<{ outputPath: string; name: string; extension: string }> {
   const encoded = await finishNativeMp4FrameEncoder(session);
+  const extension = session.extension || 'mp4';
   if (finalizeOutput) {
     try {
       await finalizeOutput(encoded.outputPath, { nativeAudio: encoded.nativeAudio });
@@ -135,8 +147,8 @@ async function saveMp4ToLibrary(
   const assetRef: AssetRef = {
     kind: 'local-file',
     originalPath: encoded.outputPath,
-    name: `${name}.mp4`,
-    mime: 'video/mp4',
+    name: `${name}.${extension}`,
+    mime: session.mime || 'video/mp4',
     size: encoded.size,
     lastModified: Date.now(),
   };
@@ -149,7 +161,28 @@ async function saveMp4ToLibrary(
     thumbnail,
     _assetRef: assetRef,
   });
-  return { outputPath: encoded.outputPath, name };
+  return { outputPath: encoded.outputPath, name, extension };
+}
+
+/** Poll until a shared texture the core is about to render (record target
+ *  or Screen slice) exists and has drawn; returns its size. */
+async function waitForCaptureSource(captureSource: string, timeoutMs = 4000): Promise<{ width: number; height: number }> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    let state: { width?: number; height?: number; frame?: number } | null = null;
+    if (captureSource === 'record_target') {
+      state = await invoke<any>('native_renderer_get_record_target_state', {}).catch(() => null);
+    } else {
+      const id = captureSource.slice('slice:'.length);
+      const slices = await invoke<any>('native_renderer_get_slice_output_state', {}).catch(() => null);
+      state = Array.isArray(slices?.slices) ? slices.slices.find((entry: any) => entry?.id === id) ?? null : null;
+    }
+    if (state && Number(state.width) > 0 && Number(state.height) > 0 && Number(state.frame ?? 1) > 0) {
+      return { width: Number(state.width), height: Number(state.height) };
+    }
+    if (Date.now() > deadline) throw new Error('The recording source is not rendering.');
+    await delay(50);
+  }
 }
 
 /**
@@ -301,19 +334,39 @@ export async function startNativeRendererLiveFrameRecording(
   const fps = Math.max(1, Math.min(60, Math.round(options.fps ?? 30)));
   const namePrefix = options.namePrefix || 'Recording';
   let restored = false;
+  // Live REC of one layer / Screen, or a transparent composition, reads the
+  // core's record target or slice output instead of the program output.
+  const request = liveClock && (options.source || options.codec)
+    ? recordingRequest(options.source ?? { kind: 'composition' }, options.codec)
+    : null;
+  const captureSource = request?.captureSource ?? 'output';
+  const recordTarget = request ? recordTargetParams(request.source, request.alpha) : null;
+  let sourceSize: { width: number; height: number } | null = null;
+  if (recordTarget) {
+    await invoke('native_renderer_set_record_target', recordTarget);
+  }
+  if (captureSource !== 'output') {
+    try {
+      sourceSize = await waitForCaptureSource(captureSource);
+    } catch (err) {
+      if (recordTarget) await invoke('native_renderer_set_record_target', { kind: 'none' }).catch(() => {});
+      throw err;
+    }
+  }
 
   const restoreStatus = await getNativeRendererStatus().catch(() => null);
   // Live REC records the output exactly as it is being presented —
   // never resize the projector output mid-show.
-  const width = liveClock && restoreStatus
+  const width = sourceSize ? sourceSize.width : liveClock && restoreStatus
     ? Math.max(2, Math.round(restoreStatus.output_width))
     : Math.max(2, Math.round(options.width));
-  const height = liveClock && restoreStatus
+  const height = sourceSize ? sourceSize.height : liveClock && restoreStatus
     ? Math.max(2, Math.round(restoreStatus.output_height))
     : Math.max(2, Math.round(options.height));
   const restoreOnce = async () => {
     if (restored) return;
     restored = true;
+    if (recordTarget) await invoke('native_renderer_set_record_target', { kind: 'none' }).catch(() => {});
     if (!liveClock && restoreStatus) {
       await submitNativeRendererCommands([
         {
@@ -337,8 +390,7 @@ export async function startNativeRendererLiveFrameRecording(
     if (!liveClock) await options.prepareFrame?.(0, 0);
     const probe = await getNativeRendererFrameSnapshot(false, liveClock ? {} : { time: 0, frame_index: 0 });
     if (
-      probe.width !== width ||
-      probe.height !== height ||
+      (!sourceSize && (probe.width !== width || probe.height !== height)) ||
       (!liveClock && (probe.dark_frame || Number(probe.nonzero_pixels ?? 0) <= 0))
     ) {
       throw new Error(
@@ -359,7 +411,11 @@ export async function startNativeRendererLiveFrameRecording(
     fps,
     quality: options.quality ?? 'high',
     filename: namePrefix,
-  }, 0, pixelFormat);
+    codec: request?.codec.id,
+  }, 0, pixelFormat, captureSource).catch(async (err) => {
+    await restoreOnce().catch(() => {});
+    throw err;
+  });
 
   const liveControl = (action: 'start' | 'stop' | 'status') => invoke<{ success: boolean; frames: number; error?: string; nativeAudio?: boolean }>(
     'mp4_frame_encoder_live_control', { jobId: session.jobId, action,
@@ -462,7 +518,7 @@ export async function startNativeRendererLiveFrameRecording(
       }
       const saved = await saveMp4ToLibrary(session, frameIndex, namePrefix, options.finalizeOutput);
       await restoreOnce();
-      if (options.promptSave) await promptSaveMp4(saved.outputPath, saved.name, 'Save Recording');
+      if (options.promptSave) await promptSaveMp4(saved.outputPath, saved.name, 'Save Recording', saved.extension);
       options.onComplete?.();
     } catch (err) {
       await cancelNativeMp4FrameEncoder(session);

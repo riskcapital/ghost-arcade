@@ -885,6 +885,7 @@ function nativeEffectDescriptors(layer: Layer): string[] {
 
 import { nativeEffectPassIdForEffectType } from '$lib/renderer/nativeEffectCoverage';
 import { statusFrameRate } from './statusFrameRate';
+import { recordingScreenIds } from '$lib/recording/recordingSources';
 const NATIVE_EFFECT_PASS_IDS = new Set<NativeEffectPassId>(
   NATIVE_EFFECT_PASS_MANIFEST.map((entry) => entry.id),
 );
@@ -7769,10 +7770,11 @@ export class NativeRendererSync {
   /** Mirror the open multi-output slice displays into the core, which then
    *  composites one full-resolution frame per projector. Only slices with a
    *  window actually open are sent — each costs a composite pass per frame,
-   *  so a configured-but-closed screen must not be paying for one. */
+   *  so a configured-but-closed screen must not be paying for one — plus
+   *  any Screen being recorded, which renders for the take's duration. */
   private pushSliceOutputs() {
     const out = get(settings)?.output;
-    const open = new Set(this.openSliceWindowIds);
+    const open = new Set([...this.openSliceWindowIds, ...get(recordingScreenIds)]);
     const slices = (out?.slices ?? [])
       .filter((s: any) => s?.enabled !== false && open.has(s?.id))
       .map((s: any) => {
@@ -7999,6 +8001,7 @@ export class NativeRendererSync {
     this.outputStateUnsubs.push(settings.subscribe(() => this.pushOutputState()));
     this.outputStateUnsubs.push(settings.subscribe(() => this.pushOutputStage()));
     this.outputStateUnsubs.push(settings.subscribe(() => this.pushSliceOutputs()));
+    this.outputStateUnsubs.push(recordingScreenIds.subscribe(() => this.pushSliceOutputs()));
     // Map Sim projector views for Screens that show one. Loaded lazily so
     // the 3D loaders stay out of the startup path.
     {

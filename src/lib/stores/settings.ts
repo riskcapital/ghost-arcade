@@ -278,6 +278,10 @@ export interface RecordingSettings {
   includeAudio: boolean;
   // Audio bitrate in bits per second (default: 128000 = 128 kbps)
   audioBitrate: number;
+  // Desktop recordings: the file the native recorder writes. H.264 MP4 by
+  // default; ProRes / HAP (MOV) when the bundled FFmpeg can encode them.
+  // ProRes 4444 and HAP Alpha keep transparency.
+  nativeCodec?: 'h264' | 'prores_hq' | 'prores_4444' | 'hap' | 'hap_alpha';
 }
 
 /**
@@ -1030,6 +1034,7 @@ function createDefaultSettings(): AppSettings {
       saveDirectoryName: 'Downloads (default)',
       includeAudio: true,
       audioBitrate: 128000, // 128 kbps
+      nativeCodec: 'h264',
     },
     output: {
       spoutEnabled: false,
@@ -1436,6 +1441,17 @@ function createSettingsStore() {
         const newSettings = {
           ...s,
           recording: { ...s.recording, autoDownload: enabled }
+        };
+        saveSettings(newSettings);
+        return newSettings;
+      });
+    },
+
+    setNativeRecordingCodec(codec: NonNullable<RecordingSettings['nativeCodec']>) {
+      update(s => {
+        const newSettings = {
+          ...s,
+          recording: { ...s.recording, nativeCodec: codec }
         };
         saveSettings(newSettings);
         return newSettings;
