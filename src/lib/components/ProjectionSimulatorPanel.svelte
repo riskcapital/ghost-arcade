@@ -11,7 +11,17 @@
     startNativeRendererLiveFrameRecording,
   } from '../recording/nativeLiveFrameRecorder';
   import { getNativeRendererCapabilities, setNativeRendererProjectionSimScene } from '../api/native-renderer';
-  import { ProjectionSimulatorRenderer } from '../projectionSim/ProjectionSimulatorRenderer';
+  import { ProjectionSimulatorRenderer, type ProjectionSimModelPick } from '../projectionSim/ProjectionSimulatorRenderer';
+  import {
+    canSolve,
+    defaultCalibration,
+    matchedPoints,
+    MIN_CALIBRATION_POINTS,
+    newCalibrationPointId,
+    predictImagePoint,
+    solveCalibration,
+  } from '../projectionSim/calibration/calibrationSession';
+  import { fovFromThrowRatio, projectorThrowRatio } from '../projectionSim/projectorLens';
   import {
     isProjectionSimTargetLocked,
     projectionSimGizmoMode,
@@ -25,6 +35,7 @@
   import {
     createProjectionSimScene,
     makeProjectionSimProjector,
+    type ProjectionSimCalibration,
     type ProjectionSimObject,
     type ProjectionSimPrimitiveKind,
     type ProjectionSimProjector,
@@ -72,6 +83,24 @@
   let nativeScenePublishTimer: ReturnType<typeof setTimeout> | null = null;
   let nativeScenePublishWarnings = 0;
 
+  // ── Point-matching calibration ────────────────────────────────────
+  // The operator clicks a feature on the model, then drags the crosshair
+  // on the pad (shown live on the real projector) onto the same physical
+  // feature. Six or more matches solve the projector's pose and lens.
+  type CalibrationOutputMode = 'black' | 'content' | 'model';
+  let calibratingId: string | null = null;
+  let calibrationPointId: string | null = null;
+  let calibrationCursor: [number, number] | null = null;
+  let calibrationSnap = true;
+  let calibrationOutputMode: CalibrationOutputMode = 'black';
+  let padCanvas: HTMLCanvasElement | null = null;
+  let padPreview: ImageData | null = null;
+  let padPreviewAt = 0;
+  let padDrag: { pointerId: number; x: number; y: number; fine: boolean } | null = null;
+  let overlayInFlight = false;
+  let overlayQueued = false;
+  let overlaySentFor: string | null = null;
+
   const primitiveKinds: ProjectionSimPrimitiveKind[] = ['box', 'sphere', 'cylinder', 'cone', 'pyramid', 'column', 'plane'];
   const BLANK_PRESET_ID = '__blank__';
 
@@ -84,6 +113,52 @@
   $: selectedLocked = multiSelectionCount > 1
     ? selectedTargetList.every((target) => isProjectionSimTargetLocked($projectionSimScene, target))
     : isProjectionSimTargetLocked($projectionSimScene, selectedTarget);
+  $: calibratingProjector = calibratingId
+    ? $projectionSimScene.projectors.find((projector) => projector.id === calibratingId) ?? null
+    : null;
+  $: if (calibratingId && !calibratingProjector) stopCalibration();
+  $: calibration = calibratingProjector
+    ? (calibratingProjector.calibration ?? defaultCalibration(calibratingProjector))
+    : null;
+  $: calibrationPoint = calibration && calibrationPointId
+    ? calibration.points.find((point) => point.id === calibrationPointId) ?? null
+    : null;
+  $: calibrationMatched = calibration ? matchedPoints(calibration).length : 0;
+  $: calibrationScreens = calibratingId
+    ? $settings.output.slices.filter((slice) => slice.mapSimProjectorId === calibratingId)
+    : [];
+  $: calibrationStep = !calibration
+    ? ''
+    : calibrationPoint
+      ? `Drag the crosshair onto point ${calibration.points.indexOf(calibrationPoint) + 1} on the real object, then press Enter.`
+      : calibrationMatched < MIN_CALIBRATION_POINTS
+        ? `Click a feature on the model (${calibrationMatched} of ${MIN_CALIBRATION_POINTS} matched).`
+        : 'Click another feature to add a point, or pick a point to adjust it.';
+  $: renderer?.setSnapToVertices(calibrationSnap);
+  $: renderer?.setCalibrationMarkers(calibration
+    ? calibration.points.map((point, index) => ({
+        id: point.id,
+        label: String(index + 1),
+        world: point.world,
+        matched: !!point.image,
+        selected: point.id === calibrationPointId,
+      }))
+    : []);
+  $: {
+    calibratingId;
+    calibrationCursor;
+    calibration;
+    calibrationPointId;
+    calibrationOutputMode;
+    queueOverlay();
+  }
+  $: {
+    calibration;
+    calibrationCursor;
+    calibrationPointId;
+    calibratingProjector;
+    drawPad();
+  }
   $: selectedPreset = PROJECTION_SIM_PRESETS.find((preset) => preset.id === selectedPresetId) ?? PROJECTION_SIM_PRESETS[0];
   $: canCopySceneItem = Boolean(selectedObject || selectedProjector);
   $: canPasteSceneItem = Boolean(sceneClipboard);
@@ -320,6 +395,37 @@
     const target = event.target as HTMLElement | null;
     if (target?.closest('input, textarea, select')) return;
     const key = event.key.toLowerCase();
+    if (calibratingId && !(event.metaKey || event.ctrlKey)) {
+      const step = event.shiftKey ? 10 : 1;
+      const arrows: Record<string, [number, number]> = {
+        ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step],
+      };
+      if (arrows[event.key] && calibrationPointId) {
+        event.preventDefault();
+        nudgeCalibrationCursor(...arrows[event.key]);
+        return;
+      }
+      if (event.key === 'Enter' && calibrationPointId) {
+        event.preventDefault();
+        setCalibrationPointImage();
+        return;
+      }
+      if (event.key === 'Escape') {
+        event.preventDefault();
+        if (calibrationPointId) {
+          calibrationPointId = null;
+          calibrationCursor = null;
+        } else {
+          stopCalibration();
+        }
+        return;
+      }
+      if ((event.key === 'Delete' || event.key === 'Backspace') && calibrationPointId) {
+        event.preventDefault();
+        removeCalibrationPoint(calibrationPointId);
+        return;
+      }
+    }
     if ((event.metaKey || event.ctrlKey) && key === 'z') {
       event.preventDefault();
       if (event.shiftKey) redoScene();
@@ -654,8 +760,331 @@
     if (!wasNative) renderer?.endRecording();
   }
 
-  function tick() {
+  function startCalibration(projector: ProjectionSimProjector) {
+    calibratingId = projector.id;
+    calibrationPointId = null;
+    calibrationCursor = null;
+    renderer?.setPickMode('calibrate', handleModelPick);
+  }
+
+  function stopCalibration() {
+    const id = overlaySentFor;
+    calibratingId = null;
+    calibrationPointId = null;
+    calibrationCursor = null;
+    padPreview = null;
+    renderer?.setPickMode('select');
+    if (id && isDesktopApp) {
+      overlaySentFor = null;
+      void invoke('native_renderer_set_projection_sim_overlay', { projector_id: id, overlay: null }).catch(() => {});
+    }
+  }
+
+  function clampToImage(point: [number, number], size: [number, number]): [number, number] {
+    return [
+      Math.max(0, Math.min(size[0] - 1, point[0])),
+      Math.max(0, Math.min(size[1] - 1, point[1])),
+    ];
+  }
+
+  function cursorFor(pointWorld: [number, number, number]): [number, number] {
+    if (!calibratingProjector || !calibration) return [0, 0];
+    const size = calibration.imageSize;
+    const predicted = predictImagePoint(calibratingProjector, calibration, pointWorld);
+    const inside = predicted && predicted[0] >= 0 && predicted[1] >= 0 && predicted[0] < size[0] && predicted[1] < size[1];
+    return inside ? [Math.round(predicted![0]), Math.round(predicted![1])] : [Math.round(size[0] / 2), Math.round(size[1] / 2)];
+  }
+
+  /** Store a calibration edit and, with enough matches, solve and move the
+   *  projector in the same undo step. */
+  function commitCalibration(next: ProjectionSimCalibration) {
+    const projector = calibratingProjector;
+    if (!projector) return;
+    const matched = matchedPoints(next).length;
+    let patch: Partial<ProjectionSimProjector> | undefined;
+    let record = next;
+    if (canSolve(next)) {
+      const solved = solveCalibration(projector, next);
+      record = { ...next, result: solved.result };
+      if (solved.patch) patch = solved.patch;
+    } else {
+      record = {
+        ...next,
+        result: matched
+          ? {
+              ok: false,
+              rms: 0,
+              errors: {},
+              mode: next.fixedIntrinsics ? 'fixed' : 'free',
+              message: `Match ${MIN_CALIBRATION_POINTS - matched} more point${MIN_CALIBRATION_POINTS - matched === 1 ? '' : 's'} to solve.`,
+              solvedAt: Date.now(),
+            }
+          : null,
+      };
+    }
+    projectionSimScene.updateCalibration(projector.id, () => record, patch);
+  }
+
+  function handleModelPick(pick: ProjectionSimModelPick) {
+    if (!calibration) return;
+    const point = { id: newCalibrationPointId(), world: pick.world, image: null, objectId: pick.objectId, enabled: true };
+    commitCalibration({ ...calibration, points: [...calibration.points, point] });
+    calibrationPointId = point.id;
+    calibrationCursor = cursorFor(point.world);
+  }
+
+  function selectCalibrationPoint(id: string) {
+    const point = calibration?.points.find((p) => p.id === id);
+    if (!point) return;
+    calibrationPointId = id;
+    calibrationCursor = point.image ? [point.image[0], point.image[1]] : cursorFor(point.world);
+  }
+
+  function setCalibrationPointImage() {
+    if (!calibration || !calibrationPointId || !calibrationCursor) return;
+    const image = [Math.round(calibrationCursor[0] * 10) / 10, Math.round(calibrationCursor[1] * 10) / 10] as [number, number];
+    commitCalibration({
+      ...calibration,
+      points: calibration.points.map((point) => (point.id === calibrationPointId ? { ...point, image } : point)),
+    });
+    calibrationPointId = null;
+  }
+
+  function removeCalibrationPoint(id: string) {
+    if (!calibration) return;
+    commitCalibration({ ...calibration, points: calibration.points.filter((point) => point.id !== id) });
+    if (calibrationPointId === id) {
+      calibrationPointId = null;
+      calibrationCursor = null;
+    }
+  }
+
+  function clearCalibrationPoints() {
+    if (!calibration || !calibration.points.length) return;
+    if (!confirm('Remove every calibration point for this projector?')) return;
+    commitCalibration({ ...calibration, points: [], result: null });
+    calibrationPointId = null;
+    calibrationCursor = null;
+  }
+
+  function setCalibrationFixedLens(fixed: boolean) {
+    if (!calibration) return;
+    commitCalibration({ ...calibration, fixedIntrinsics: fixed });
+  }
+
+  /** Change the output resolution the points are measured in; matched
+   *  points scale with it so they stay on the same features. */
+  function setCalibrationImageSize(width: number, height: number) {
+    if (!calibration || !calibratingProjector) return;
+    const w = Math.round(Math.max(16, Math.min(16384, width || 0)));
+    const h = Math.round(Math.max(16, Math.min(16384, height || 0)));
+    const [oldW, oldH] = calibration.imageSize;
+    if (w === oldW && h === oldH) return;
+    const scale = (point: [number, number]) => [point[0] * (w / oldW), point[1] * (h / oldH)] as [number, number];
+    projectionSimScene.updateProjector(calibratingProjector.id, { aspect: w / h });
+    commitCalibration({
+      ...calibration,
+      imageSize: [w, h],
+      points: calibration.points.map((point) => (point.image ? { ...point, image: scale(point.image) } : point)),
+    });
+    if (calibrationCursor) calibrationCursor = scale(calibrationCursor);
+  }
+
+  function nudgeCalibrationCursor(dx: number, dy: number) {
+    if (!calibration || !calibrationCursor) return;
+    calibrationCursor = clampToImage([calibrationCursor[0] + dx, calibrationCursor[1] + dy], calibration.imageSize);
+  }
+
+  function queueOverlay() {
+    if (!isDesktopApp || !calibratingId) return;
+    if (overlayInFlight) {
+      overlayQueued = true;
+      return;
+    }
+    overlayInFlight = true;
+    requestAnimationFrame(() => void sendOverlay());
+  }
+
+  async function sendOverlay() {
+    const projector = calibratingProjector;
+    const current = calibration;
+    try {
+      if (projector && current) {
+        const [w, h] = current.imageSize;
+        const overlay = {
+          mode: calibrationOutputMode,
+          cursor: calibrationCursor ? [calibrationCursor[0] / w, calibrationCursor[1] / h] : null,
+          markers: current.points
+            .filter((point) => point.image)
+            .slice(0, 32)
+            .map((point) => [point.image![0] / w, point.image![1] / h, point.id === calibrationPointId ? 1 : 0]),
+        };
+        overlaySentFor = projector.id;
+        await invoke('native_renderer_set_projection_sim_overlay', { projector_id: projector.id, overlay });
+      }
+    } catch {
+      /* the core may be restarting; the next change resends */
+    } finally {
+      overlayInFlight = false;
+      if (overlayQueued) {
+        overlayQueued = false;
+        queueOverlay();
+      }
+    }
+  }
+
+  function padSize(): { w: number; h: number } {
+    const rect = padCanvas?.getBoundingClientRect();
+    return { w: Math.max(1, rect?.width ?? 1), h: Math.max(1, rect?.height ?? 1) };
+  }
+
+  function padToImage(clientX: number, clientY: number): [number, number] | null {
+    if (!padCanvas || !calibration) return null;
+    const rect = padCanvas.getBoundingClientRect();
+    const [w, h] = calibration.imageSize;
+    return clampToImage([((clientX - rect.left) / rect.width) * w, ((clientY - rect.top) / rect.height) * h], [w, h]);
+  }
+
+  function handlePadPointerDown(event: PointerEvent) {
+    if (event.button !== 0 || !calibration) return;
+    event.preventDefault();
+    padCanvas?.setPointerCapture(event.pointerId);
+    const fine = event.shiftKey || event.altKey;
+    padDrag = { pointerId: event.pointerId, x: event.clientX, y: event.clientY, fine };
+    if (!calibrationPointId) return;
+    if (!fine || !calibrationCursor) calibrationCursor = padToImage(event.clientX, event.clientY);
+  }
+
+  function handlePadPointerMove(event: PointerEvent) {
+    if (!padDrag || padDrag.pointerId !== event.pointerId || !calibration || !calibrationPointId) return;
+    if (padDrag.fine && calibrationCursor) {
+      // Fine drag: an eighth of the pointer's travel, for sub-pad-pixel aim.
+      const { w, h } = padSize();
+      const [iw, ih] = calibration.imageSize;
+      nudgeCalibrationCursor(((event.clientX - padDrag.x) / w) * iw / 8, ((event.clientY - padDrag.y) / h) * ih / 8);
+    } else {
+      calibrationCursor = padToImage(event.clientX, event.clientY);
+    }
+    padDrag = { ...padDrag, x: event.clientX, y: event.clientY };
+  }
+
+  function handlePadPointerUp(event: PointerEvent) {
+    if (padDrag?.pointerId === event.pointerId) {
+      padCanvas?.releasePointerCapture(event.pointerId);
+      padDrag = null;
+    }
+  }
+
+  function refreshPadPreview(now: number) {
+    if (!calibratingProjector || !renderer || !padCanvas) return;
+    if (now - padPreviewAt < 100) return;
+    padPreviewAt = now;
+    const { w, h } = padSize();
+    padPreview = renderer.renderProjectorPreview(calibratingProjector.id, Math.round(w), Math.round(h));
+    drawPad();
+  }
+
+  function drawPad() {
+    if (!padCanvas || !calibration || !calibratingProjector) return;
+    const dpr = Math.max(1, window.devicePixelRatio || 1);
+    const { w, h } = padSize();
+    const bw = Math.round(w * dpr);
+    const bh = Math.round(h * dpr);
+    if (padCanvas.width !== bw || padCanvas.height !== bh) {
+      padCanvas.width = bw;
+      padCanvas.height = bh;
+    }
+    const ctx = padCanvas.getContext('2d');
+    if (!ctx) return;
+    ctx.setTransform(1, 0, 0, 1, 0, 0);
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, bw, bh);
+    if (padPreview) {
+      const bitmap = document.createElement('canvas');
+      bitmap.width = padPreview.width;
+      bitmap.height = padPreview.height;
+      bitmap.getContext('2d')?.putImageData(padPreview, 0, 0);
+      ctx.globalAlpha = 0.85;
+      ctx.drawImage(bitmap, 0, 0, bw, bh);
+      ctx.globalAlpha = 1;
+    }
+    const [iw, ih] = calibration.imageSize;
+    const sx = bw / iw;
+    const sy = bh / ih;
+    ctx.font = `${Math.round(11 * dpr)}px system-ui, sans-serif`;
+    ctx.textBaseline = 'middle';
+    calibration.points.forEach((point, index) => {
+      const selected = point.id === calibrationPointId;
+      const predicted = predictImagePoint(calibratingProjector!, calibration!, point.world);
+      if (predicted) {
+        // Where the virtual projector puts this model point.
+        const px = predicted[0] * sx;
+        const py = predicted[1] * sy;
+        ctx.strokeStyle = 'rgba(255, 90, 170, 0.9)';
+        ctx.lineWidth = 1.5 * dpr;
+        ctx.beginPath();
+        ctx.moveTo(px - 5 * dpr, py - 5 * dpr); ctx.lineTo(px + 5 * dpr, py + 5 * dpr);
+        ctx.moveTo(px + 5 * dpr, py - 5 * dpr); ctx.lineTo(px - 5 * dpr, py + 5 * dpr);
+        ctx.stroke();
+        if (point.image) {
+          ctx.beginPath();
+          ctx.moveTo(px, py);
+          ctx.lineTo(point.image[0] * sx, point.image[1] * sy);
+          ctx.stroke();
+        }
+      }
+      if (!point.image) return;
+      const x = point.image[0] * sx;
+      const y = point.image[1] * sy;
+      ctx.strokeStyle = selected ? '#4fe3ff' : '#ffcf3a';
+      ctx.lineWidth = 2 * dpr;
+      ctx.beginPath();
+      ctx.arc(x, y, 7 * dpr, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = selected ? '#4fe3ff' : '#ffcf3a';
+      ctx.fillText(String(index + 1), x + 10 * dpr, y - 9 * dpr);
+    });
+    if (calibrationCursor && calibrationPointId) {
+      const x = calibrationCursor[0] * sx;
+      const y = calibrationCursor[1] * sy;
+      ctx.strokeStyle = '#ffffff';
+      ctx.lineWidth = 1 * dpr;
+      ctx.beginPath();
+      ctx.moveTo(0, y); ctx.lineTo(x - 6 * dpr, y);
+      ctx.moveTo(x + 6 * dpr, y); ctx.lineTo(bw, y);
+      ctx.moveTo(x, 0); ctx.lineTo(x, y - 6 * dpr);
+      ctx.moveTo(x, y + 6 * dpr); ctx.lineTo(x, bh);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(x, y, 12 * dpr, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.fillStyle = '#ff3355';
+      ctx.fillRect(x - 1.5 * dpr, y - 1.5 * dpr, 3 * dpr, 3 * dpr);
+    }
+  }
+
+  function formatError(value: number | undefined): string {
+    return value === undefined ? '' : value < 10 ? value.toFixed(2) : value.toFixed(1);
+  }
+
+  function updateProjectorLens(id: string, index: 0 | 1, percent: string) {
+    const projector = selectedProjector;
+    if (!projector || projector.id !== id) return;
+    const next = [...(projector.lensShift ?? [0, 0])] as [number, number];
+    next[index] = Math.max(-2, Math.min(2, (parseFloat(percent) || 0) / 100));
+    updateProjector(id, { lensShift: next });
+  }
+
+  function updateProjectorThrowRatio(id: string, value: string) {
+    const projector = selectedProjector;
+    const ratio = parseFloat(value);
+    if (!projector || projector.id !== id || !(ratio > 0)) return;
+    updateProjector(id, { fov: Math.round(fovFromThrowRatio(ratio, projector.aspect) * 1000) / 1000 });
+  }
+
+  function tick(now: number = performance.now()) {
     renderer?.render($projectionSimScene, sourceCanvas, $settings.output.slices);
+    if (calibratingId) refreshPadPreview(now);
     raf = requestAnimationFrame(tick);
   }
 
@@ -669,6 +1098,15 @@
     renderer.setSelection($selectedProjectionSimTarget);
     renderer.setSelections([...$selectedProjectionSimTargets]);
     raf = requestAnimationFrame(tick);
+    if (import.meta.env.DEV) {
+      // Test hook (dev builds only): read where the model sits on screen so
+      // automated checks can aim real CDP mouse input at it.
+      (window as any).__projectionSimDebug = {
+        worldToClient: (world: [number, number, number]) => renderer?.worldToClient(world) ?? null,
+        scene: () => get(projectionSimScene),
+        calibration: () => ({ calibratingId, calibrationPointId, calibrationCursor }),
+      };
+    }
 
     if (nativeWindowMode && isDesktopApp) {
       invoke<{ ok?: boolean; fullScreen?: boolean }>('projection_sim_get_fullscreen')
@@ -684,6 +1122,7 @@
 
   onDestroy(() => {
     if (isDesktopApp) void setNativeRendererProjectionSimScene(null).catch(() => {});
+    if (calibratingId) stopCalibration();
     cancelAnimationFrame(raf);
     window.removeEventListener('keydown', handleKeydown);
     if (snapGuideTimer !== null) window.clearTimeout(snapGuideTimer);
@@ -1064,9 +1503,39 @@
             <label>Z<input type="number" step="0.1" value={selectedProjector.target[2]} disabled={selectedProjector.locked} oninput={(e) => updateProjectorVec(selectedProjector.id, 'target', 2, (e.target as HTMLInputElement).value)} /></label>
           </div>
           <label class="field">
-            <span>FOV {Math.round(selectedProjector.fov)}°</span>
-            <input type="range" min="12" max="80" step="1" value={selectedProjector.fov} disabled={selectedProjector.locked} oninput={(e) => updateProjector(selectedProjector.id, { fov: parseFloat((e.target as HTMLInputElement).value) })} />
+            <span>FOV {selectedProjector.fov.toFixed(1)}°</span>
+            <input type="range" min="5" max="120" step="0.1" value={selectedProjector.fov} disabled={selectedProjector.locked} oninput={(e) => updateProjector(selectedProjector.id, { fov: parseFloat((e.target as HTMLInputElement).value) })} />
           </label>
+          <div class="triple">
+            <label>Throw ratio<input type="number" min="0.1" max="10" step="0.01" value={projectorThrowRatio(selectedProjector).toFixed(3)} disabled={selectedProjector.locked} onchange={(e) => updateProjectorThrowRatio(selectedProjector.id, (e.target as HTMLInputElement).value)} /></label>
+            <label>Shift X %<input type="number" step="1" value={Math.round((selectedProjector.lensShift?.[0] ?? 0) * 1000) / 10} disabled={selectedProjector.locked} onchange={(e) => updateProjectorLens(selectedProjector.id, 0, (e.target as HTMLInputElement).value)} /></label>
+            <label>Shift Y %<input type="number" step="1" value={Math.round((selectedProjector.lensShift?.[1] ?? 0) * 1000) / 10} disabled={selectedProjector.locked} onchange={(e) => updateProjectorLens(selectedProjector.id, 1, (e.target as HTMLInputElement).value)} /></label>
+          </div>
+          <label class="field">
+            <span>Roll {(selectedProjector.roll ?? 0).toFixed(1)}°</span>
+            <input type="range" min="-180" max="180" step="0.1" value={selectedProjector.roll ?? 0} disabled={selectedProjector.locked} oninput={(e) => updateProjector(selectedProjector.id, { roll: parseFloat((e.target as HTMLInputElement).value) })} />
+          </label>
+          <label class="field">
+            <span>Content from</span>
+            <select value={selectedProjector.contentFrom ?? ''} onchange={(e) => updateProjector(selectedProjector.id, { contentFrom: (e.target as HTMLSelectElement).value || null })}>
+              <option value="">This projector's lens</option>
+              {#each $projectionSimScene.projectors.filter((p) => p.id !== selectedProjector?.id) as other (other.id)}
+                <option value={other.id}>{other.name}'s lens</option>
+              {/each}
+            </select>
+          </label>
+          <p class="empty">
+            {selectedProjector.contentFrom
+              ? 'The content is fixed to the model as the other lens throws it; this projector adds it from its own position.'
+              : 'The content is thrown from this lens, as the projector itself would.'}
+          </p>
+          <button class="wide-btn" class:on={calibratingId === selectedProjector.id} disabled={selectedProjector.locked}
+            onclick={() => (calibratingId === selectedProjector?.id ? stopCalibration() : startCalibration(selectedProjector!))}>
+            {calibratingId === selectedProjector.id ? 'Close calibration' : 'Calibrate to real projector'}
+          </button>
+          {#if selectedProjector.calibration?.result?.ok}
+            <p class="empty">Calibrated: {selectedProjector.calibration.result.rms.toFixed(2)} px RMS over {Object.keys(selectedProjector.calibration.result.errors).length} points.</p>
+          {/if}
           <label class="field">
             <span>Intensity {selectedProjector.intensity.toFixed(1)}</span>
             <input type="range" min="0" max="20" step="0.1" value={selectedProjector.intensity} oninput={(e) => updateProjector(selectedProjector.id, { intensity: parseFloat((e.target as HTMLInputElement).value) })} />
@@ -1118,6 +1587,88 @@
         </section>
       {/if}
     </aside>
+    {#if calibratingProjector && calibration}
+      <div class="psim-calibration-dock" aria-label="Projector calibration">
+        <div class="calib-pad-wrap">
+          <canvas
+            class="psim-calibration-pad"
+            class:armed={!!calibrationPointId}
+            bind:this={padCanvas}
+            style={`aspect-ratio: ${calibration.imageSize[0]} / ${calibration.imageSize[1]}`}
+            onpointerdown={handlePadPointerDown}
+            onpointermove={handlePadPointerMove}
+            onpointerup={handlePadPointerUp}
+            onpointercancel={handlePadPointerUp}
+          ></canvas>
+          <p class="calib-step">{calibrationStep}</p>
+          {#if calibrationCursor && calibrationPointId}
+            <div class="calib-cursor-row">
+              <span>Crosshair {calibrationCursor[0].toFixed(1)}, {calibrationCursor[1].toFixed(1)} px</span>
+              <button class="tbtn primary" onclick={setCalibrationPointImage}>Set point</button>
+            </div>
+          {/if}
+        </div>
+        <div class="calib-side">
+          <div class="calib-head">
+            <h3>Calibrate {calibratingProjector.name}</h3>
+            <button class="tbtn" onclick={stopCalibration}>Done</button>
+          </div>
+          {#if !calibrationScreens.length}
+            <p class="calib-warn">No Screen shows this projector yet. In Screens, set a Screen's Source to Map Sim: {calibratingProjector.name} and open it on the projector's display to see the crosshair on the real object.</p>
+          {/if}
+          <div class="calib-row">
+            <label>Output W<input type="number" min="16" max="16384" step="1" value={calibration.imageSize[0]} onchange={(e) => setCalibrationImageSize(parseFloat((e.target as HTMLInputElement).value), calibration!.imageSize[1])} /></label>
+            <label>H<input type="number" min="16" max="16384" step="1" value={calibration.imageSize[1]} onchange={(e) => setCalibrationImageSize(calibration!.imageSize[0], parseFloat((e.target as HTMLInputElement).value))} /></label>
+            <label>On projector
+              <select value={calibrationOutputMode} onchange={(e) => (calibrationOutputMode = (e.target as HTMLSelectElement).value as CalibrationOutputMode)}>
+                <option value="black">Crosshair only</option>
+                <option value="model">Model outline</option>
+                <option value="content">Content</option>
+              </select>
+            </label>
+          </div>
+          <label class="check-row">
+            <input type="checkbox" checked={calibration.fixedIntrinsics} onchange={(e) => setCalibrationFixedLens((e.target as HTMLInputElement).checked)} />
+            <span>Fixed lens (solve position and aim only)</span>
+          </label>
+          <label class="check-row">
+            <input type="checkbox" bind:checked={calibrationSnap} />
+            <span>Snap to model corners</span>
+          </label>
+          <div class="calib-points">
+            {#each calibration.points as point, index (point.id)}
+              <div class="calib-point" class:selected={point.id === calibrationPointId}>
+                <button class="calib-point-main" onclick={() => selectCalibrationPoint(point.id)} title="Adjust this point's crosshair">
+                  <b>{index + 1}</b>
+                  <span>{point.image ? `${point.image[0].toFixed(0)}, ${point.image[1].toFixed(0)}` : 'not matched'}</span>
+                  <span class="calib-err">{formatError(calibration.result?.errors?.[point.id])}{calibration.result?.errors?.[point.id] !== undefined ? ' px' : ''}</span>
+                </button>
+                <button class="tree-delete" onclick={() => removeCalibrationPoint(point.id)} aria-label={`Remove point ${index + 1}`}>×</button>
+              </div>
+            {:else}
+              <p class="empty">Click a corner or edge on the model to start. Points spread across the object and at different depths give the best fit.</p>
+            {/each}
+          </div>
+          <div class="calib-result" class:bad={calibration.result && !calibration.result.ok}>
+            {#if calibration.result?.ok}
+              <b>RMS {calibration.result.rms.toFixed(2)} px</b>
+              <span>{calibrationMatched} points, {calibration.result.mode === 'fixed' ? 'fixed lens' : 'pose and lens'} solved</span>
+              {#if calibration.result.warning}<span class="calib-warn">{calibration.result.warning}</span>{/if}
+            {:else if calibration.result}
+              <span>{calibration.result.message}</span>
+            {:else}
+              <span>{calibrationMatched} of {MIN_CALIBRATION_POINTS} points matched.</span>
+            {/if}
+          </div>
+          <div class="calib-actions">
+            <button class="tbtn" disabled={!canUndoScene} onclick={undoScene}>Undo</button>
+            <button class="tbtn" disabled={!canSolve(calibration)} onclick={() => commitCalibration(calibration!)}>Solve again</button>
+            <button class="tbtn danger-mini" disabled={!calibration.points.length} onclick={clearCalibrationPoints}>Clear</button>
+          </div>
+          <p class="empty">Arrow keys nudge the crosshair 1 px (Shift: 10 px). Shift-drag on the pad for fine aim. Enter sets the point, Esc cancels.</p>
+        </div>
+      </div>
+    {/if}
   {:else}
     <button class="show-panels" onclick={togglePanels}>Show Controls</button>
   {/if}
@@ -1492,5 +2043,129 @@
     text-transform: uppercase;
     letter-spacing: 0.05em;
     box-shadow: 0 10px 28px rgba(0,0,0,0.34);
+  }
+  .psim-calibration-dock {
+    position: absolute;
+    left: 316px;
+    right: 316px;
+    bottom: 18px;
+    z-index: 3;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 270px;
+    gap: 12px;
+    padding: 12px;
+    border: 1px solid var(--ga-line-2, rgba(255,255,255,0.12));
+    background: color-mix(in srgb, var(--ga-panel, #0b0d11) 97%, #05070b);
+    max-height: calc(100% - 110px);
+    overflow: auto;
+  }
+  .calib-pad-wrap {
+    min-width: 0;
+    display: grid;
+    gap: 8px;
+    align-content: start;
+  }
+  .psim-calibration-pad {
+    width: 100%;
+    max-height: 46vh;
+    background: #000;
+    border: 1px solid rgba(255,255,255,0.16);
+    cursor: default;
+    touch-action: none;
+  }
+  .psim-calibration-pad.armed {
+    cursor: crosshair;
+    border-color: rgba(79, 227, 255, 0.55);
+  }
+  .calib-step {
+    margin: 0;
+    font-size: 11px;
+    color: var(--ga-ink-1, #d7dbe2);
+  }
+  .calib-cursor-row,
+  .calib-head,
+  .calib-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    justify-content: space-between;
+    font-size: 11px;
+    color: var(--ga-ink-2, #9ca3af);
+  }
+  .calib-head h3 { margin: 0; }
+  .calib-actions { justify-content: flex-start; margin: 10px 0 8px; }
+  .calib-side { min-width: 0; }
+  .calib-row {
+    display: grid;
+    grid-template-columns: 64px 64px minmax(0, 1fr);
+    gap: 8px;
+    margin: 10px 0;
+  }
+  .calib-row label {
+    display: grid;
+    gap: 5px;
+    font-size: 10px;
+    color: var(--ga-ink-2, #9ca3af);
+  }
+  .calib-row input,
+  .calib-row select {
+    min-width: 0;
+    height: 28px;
+    border: 1px solid rgba(255,255,255,0.12);
+    background: rgba(0,0,0,0.25);
+    color: var(--ga-ink-0, #eef0f4);
+    padding: 0 6px;
+  }
+  .calib-points {
+    display: grid;
+    gap: 4px;
+    max-height: 180px;
+    overflow: auto;
+  }
+  .calib-point {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) 30px;
+    gap: 4px;
+  }
+  .calib-point .tree-delete { min-height: 28px; }
+  .calib-point-main {
+    min-height: 28px;
+    display: grid;
+    grid-template-columns: 22px 1fr auto;
+    gap: 8px;
+    align-items: center;
+    padding: 0 8px;
+    text-align: left;
+    font-size: 11px;
+  }
+  .calib-point.selected .calib-point-main {
+    border-color: rgba(79, 227, 255, 0.6);
+    background: rgba(79, 227, 255, 0.12);
+  }
+  .calib-err { color: #ffcf3a; font-variant-numeric: tabular-nums; }
+  .calib-result {
+    display: grid;
+    gap: 3px;
+    margin-top: 10px;
+    padding: 8px;
+    border: 1px solid rgba(97, 214, 164, 0.35);
+    background: rgba(97, 214, 164, 0.08);
+    font-size: 11px;
+    color: #cdeee0;
+  }
+  .calib-result b { font-size: 13px; color: #eafff4; }
+  .calib-result.bad {
+    border-color: rgba(255, 160, 80, 0.4);
+    background: rgba(255, 160, 80, 0.08);
+    color: #ffd9b8;
+  }
+  .calib-warn {
+    font-size: 10px;
+    line-height: 1.45;
+    color: #ffd08a;
+  }
+  .wide-btn.on {
+    background: rgba(79, 227, 255, 0.14);
+    border-color: rgba(79, 227, 255, 0.5);
   }
 </style>

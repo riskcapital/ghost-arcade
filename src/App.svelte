@@ -3,6 +3,7 @@
   import { get } from 'svelte/store';
   import Canvas from './lib/components/Canvas.svelte';
   import { projectionSimHistoryVersion } from './lib/projectionSim/store';
+  import { startProjectionSimSceneSync } from './lib/projectionSim/sceneSync';
   import WebGPUCanvas from './lib/components/WebGPUCanvas.svelte';
   import AudioInputPicker from './lib/components/AudioInputPicker.svelte';
   import ClipAudioMasterControl from './lib/components/ClipAudioMasterControl.svelte';
@@ -372,6 +373,10 @@
 
   let stage3DWindowOpen = false;
   let projectionSimWindowOpen = false;
+  // The editor owns the Map Sim scene that is saved with the project and
+  // drives the native projector views; the pop-out edits the same scene.
+  const stopProjectionSimSceneSync = startProjectionSimSceneSync('editor');
+  onDestroy(() => stopProjectionSimSceneSync());
   /*
    * Output surfaces and the screens they compete for.
    *
@@ -2313,6 +2318,9 @@
     '[data-editor-pointer-owner="light-painting"]',
     '.native-engine-pending',
     '.native-engine-pending__actions',
+    // Map Sim calibration pad (the crosshair the operator drags onto a
+    // physical feature) when Map Sim runs inside the editor window.
+    '.psim-calibration-pad',
   ].join(', ');
 
   function viewportClientToCanvasCoords(clientX: number, clientY: number): Point2D {

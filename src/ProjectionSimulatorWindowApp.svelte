@@ -18,10 +18,12 @@
   import { invoke, isDesktopApp } from '$lib/bridge';
   import { NATIVE_ENGINE_ONLY } from '$lib/stores/settings';
   import { acquireNativeCompositeMirror, type CompositeMirrorHandle } from '$lib/sync/nativeCompositeMirror';
+  import { startProjectionSimSceneSync } from '$lib/projectionSim/sceneSync';
 
   let canvasComponent: Canvas | null = null;
   let sourceCanvas: HTMLCanvasElement | null = null;
   let sourceCanvasPoll: ReturnType<typeof setInterval> | null = null;
+  let stopSceneSync: (() => void) | null = null;
   // Native desktop: project the composite mirror — the core's real output,
   // including live capture sources and native-only rendering that this
   // window's local WebGL Canvas cannot reproduce. The local Canvas stays
@@ -46,6 +48,9 @@
     }
 
     initStateBroadcast('receiver');
+    // Open on the project's scene, and hand every edit (calibration
+    // included) back to the editor, which saves it with the project.
+    stopSceneSync = startProjectionSimSceneSync('popout');
     startAudioBroadcastReceiver({ onFrame: (frame) => audioStore.injectBroadcastedFrame(frame) });
     startModulationBroadcastReceiver();
     initLicense().catch((e) => console.warn('[ProjectionSimWindow] License init:', e));
@@ -60,6 +65,8 @@
   });
 
   onDestroy(() => {
+    stopSceneSync?.();
+    stopSceneSync = null;
     mirror?.release();
     mirror = null;
     window.removeEventListener('beforeunload', notifyClosing);

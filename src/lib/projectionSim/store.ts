@@ -1,6 +1,7 @@
 import { get, writable } from 'svelte/store';
 import { recordMissingAsset, resolveAssetRefForRuntime } from '../storage/assetRegistry';
 import type {
+  ProjectionSimCalibration,
   ProjectionSimGizmoMode,
   ProjectionSimObject,
   ProjectionSimProjector,
@@ -8,6 +9,7 @@ import type {
   ProjectionSimSelection,
   ProjectionSimVec3,
 } from './types';
+import { DEFAULT_PROJECTOR_FAR, DEFAULT_PROJECTOR_NEAR, projectorImageSize } from './projectorLens';
 import { createProjectionSimScene, makeProjectionSimPrimitive, makeProjectionSimProjector, type ProjectionSimPrimitiveKind } from './types';
 import { buildProjectionSimPreset } from './presets';
 
@@ -57,13 +59,57 @@ function normalizeScene(scene: ProjectionSimScene, projectDir?: string): Project
         assetUrl,
       };
     }),
-    projectors: (scene.projectors ?? []).map((projector) => ({
-      ...projector,
-      locked: projector.locked ?? false,
-      showFrustum: projector.showFrustum ?? true,
-      aspect: projector.aspect || 16 / 9,
-    })),
+    projectors: (scene.projectors ?? []).map((projector) => normalizeProjector(projector)),
   };
+}
+
+function finite(value: unknown, fallback: number): number {
+  return typeof value === 'number' && Number.isFinite(value) ? value : fallback;
+}
+
+function normalizeCalibration(projector: ProjectionSimProjector): ProjectionSimCalibration | undefined {
+  const calibration = projector.calibration;
+  if (!calibration) return undefined;
+  const size = calibration.imageSize;
+  const imageSize: [number, number] = size && size[0] > 0 && size[1] > 0
+    ? [Math.round(size[0]), Math.round(size[1])]
+    : projectorImageSize({ ...projector, calibration: undefined });
+  return {
+    imageSize,
+    fixedIntrinsics: !!calibration.fixedIntrinsics,
+    points: (calibration.points ?? [])
+      .filter((point) => point && typeof point.id === 'string' && Array.isArray(point.world) && point.world.every(Number.isFinite))
+      .map((point) => ({
+        id: point.id,
+        world: [point.world[0], point.world[1], point.world[2]] as ProjectionSimVec3,
+        image: Array.isArray(point.image) && point.image.every(Number.isFinite)
+          ? [point.image[0], point.image[1]] as [number, number]
+          : null,
+        objectId: point.objectId ?? null,
+        enabled: point.enabled !== false,
+      })),
+    result: calibration.result ?? null,
+  };
+}
+
+/** Fill lens and calibration fields on projectors saved before they existed. */
+function normalizeProjector(projector: ProjectionSimProjector): ProjectionSimProjector {
+  const shift = projector.lensShift;
+  const next: ProjectionSimProjector = {
+    ...projector,
+    locked: projector.locked ?? false,
+    showFrustum: projector.showFrustum ?? true,
+    aspect: projector.aspect || 16 / 9,
+    lensShift: [finite(shift?.[0], 0), finite(shift?.[1], 0)],
+    roll: finite(projector.roll, 0),
+    near: finite(projector.near, DEFAULT_PROJECTOR_NEAR),
+    far: finite(projector.far, DEFAULT_PROJECTOR_FAR),
+    contentFrom: projector.contentFrom ?? null,
+  };
+  const calibration = normalizeCalibration(projector);
+  if (calibration) next.calibration = calibration;
+  else delete next.calibration;
+  return next;
 }
 
 function persist(scene: ProjectionSimScene, immediate = false): void {
@@ -92,6 +138,7 @@ function projectorPatchWithoutTransform(patch: Partial<ProjectionSimProjector>):
   const next = { ...patch };
   delete next.position;
   delete next.target;
+  delete next.roll;
   return next;
 }
 
@@ -109,6 +156,7 @@ function createProjectionSimStore() {
   const future: ProjectionSimScene[] = [];
   let suppressSnapshot = false;
   let lastSnapshotAt = 0;
+  let applyingRemote = false;
 
   function setScene(scene: ProjectionSimScene) {
     set(scene);
@@ -377,7 +425,7 @@ function createProjectionSimStore() {
       });
     },
 
-    updateTargetTransform(target: ProjectionSimSelection, transform: { position?: ProjectionSimVec3; rotation?: ProjectionSimVec3; scale?: ProjectionSimVec3; target?: ProjectionSimVec3 }) {
+    updateTargetTransform(target: ProjectionSimSelection, transform: { position?: ProjectionSimVec3; rotation?: ProjectionSimVec3; scale?: ProjectionSimVec3; target?: ProjectionSimVec3; roll?: number }) {
       if (!target) return;
       const [kind, id] = target.split(':') as ['object' | 'projector', string];
       if (kind === 'object') {
@@ -386,8 +434,60 @@ function createProjectionSimStore() {
         const patch: Partial<ProjectionSimProjector> = {};
         if (transform.position) patch.position = transform.position;
         if (transform.target) patch.target = transform.target;
+        if (typeof transform.roll === 'number') patch.roll = transform.roll;
         this.updateProjector(id, patch);
       }
+    },
+
+    /** Point-matching calibration edit: one undo step that updates the
+     *  calibration record and, when a solve lands, the projector's pose and
+     *  lens together. A locked projector keeps its pose. */
+    updateCalibration(
+      id: string,
+      updater: (calibration: ProjectionSimCalibration, projector: ProjectionSimProjector) => ProjectionSimCalibration,
+      projectorPatch?: Partial<ProjectionSimProjector>,
+    ) {
+      snapshot({ coalesce: false });
+      update((scene) => {
+        const next = {
+          ...scene,
+          projectors: scene.projectors.map((projector) => {
+            if (projector.id !== id) return projector;
+            const current = projector.calibration ?? {
+              imageSize: projectorImageSize(projector),
+              fixedIntrinsics: false,
+              points: [],
+              result: null,
+            };
+            const calibration = updater(clone(current), projector);
+            const patch = projectorPatch
+              ? (projector.locked ? projectorPatchWithoutTransform(projectorPatch) : projectorPatch)
+              : {};
+            return { ...projector, ...patch, calibration };
+          }),
+        };
+        persist(next);
+        return next;
+      });
+    },
+
+    /** A scene edited in another window (the Map Sim pop-out, or the editor
+     *  after a project load). Not an undo step here; it is one in the window
+     *  that made it. */
+    applyRemoteScene(scene: ProjectionSimScene) {
+      applyingRemote = true;
+      try {
+        setScene(normalizeScene(clone(scene)));
+      } finally {
+        applyingRemote = false;
+      }
+      const selected = get(selectedProjectionSimTarget);
+      if (selected && !sceneHasTarget(get({ subscribe }), selected)) setProjectionSimSelection(null);
+      bumpHistoryVersion();
+    },
+
+    isApplyingRemote(): boolean {
+      return applyingRemote;
     },
 
     exportJSON(): string {
