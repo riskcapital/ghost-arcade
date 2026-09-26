@@ -1728,7 +1728,10 @@
           : applyFaderCurve(rawFader, xfadeCurve);
         const stateA = vjState.layerStates ?? [];
         const stateB = vjState.bankBLayerStates ?? [];
+        // A MAP preset occupies a row without producing a feed, so it never
+        // counts as the missing half of an A/B pair.
         const visibleRow = (rows: typeof stateA, idx: number) => !!rows[idx]?.activeClip
+          && rows[idx].activeClip!.type !== 'preset'
           && !rows[idx].mute && (!rows.some(row => row.solo) || rows[idx].solo);
         for (const [idx, slot] of byIndex.entries()) {
           // Derived-store lag guard: the launcher state says both decks
