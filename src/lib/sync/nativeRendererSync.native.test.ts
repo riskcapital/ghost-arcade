@@ -1068,6 +1068,34 @@ describe('native renderer sync graph effect routing', () => {
     expect(state.bounds[0]).toBeLessThan(0.1);
     expect(state.signature).not.toBe('none');
   });
+
+  it('applies edge effect keyframes, nested parameters included, to native output', async () => {
+    const { keyframeTimeline } = await import('../stores/keyframeTimeline');
+    const layer = {
+      id: 'kf-edge', visible: true, opacity: 1,
+      edgeEffects: {
+        enabled: true,
+        effects: [{ id: 'e1', enabled: true, opacity: 1, blendMode: 'normal', stroke: { type: 'solid', color: [1, 1, 1, 1], width: 3 }, fill: { type: 'none' }, animation: { type: 'none' } }],
+      },
+    } as any;
+    keyframeTimeline.addKeyframe('kf-edge', 'edge:e1:stroke.width', 0, 2);
+    keyframeTimeline.addKeyframe('kf-edge', 'edge:e1:stroke.width', 2, 10);
+    keyframeTimeline.addKeyframe('kf-edge', 'edge:e1:opacity', 0, 0.5);
+    keyframeTimeline.setOpen(true);
+    keyframeTimeline.seek(1);
+    try {
+      const sync = new NativeRendererSyncCtor() as any;
+      const [overridden] = sync.applyTimelineOverrides([layer]);
+      expect(overridden.edgeEffects.effects[0].stroke.width).toBe(6);
+      expect(overridden.edgeEffects.effects[0].opacity).toBe(0.5);
+      expect(overridden.edgeEffects.effects[0].stroke.color).toEqual([1, 1, 1, 1]);
+      // The store's layer is never mutated.
+      expect(layer.edgeEffects.effects[0].stroke.width).toBe(3);
+    } finally {
+      keyframeTimeline.setOpen(false);
+      keyframeTimeline.clearAll();
+    }
+  });
 });
 
 describe('native renderer sync native video pump routing', () => {
